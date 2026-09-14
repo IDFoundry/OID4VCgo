@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
+	"strings"
 	"testing"
 )
 
@@ -66,7 +67,24 @@ func TestVerifyRejectsTampering(t *testing.T) {
 		t.Fatalf("Sign: %v", err)
 	}
 
-	tampered := compact[:len(compact)-1] + "x"
+	// Flip a character early in the signature segment, not the last
+	// one: a fixed-width R||S signature's final base64url character
+	// can carry unused padding bits (64 bytes % 3 == 1, so the last
+	// char only encodes the top 2 of its 6 bits), so changing only
+	// that character can legally decode to the same bytes and this
+	// test would pass for the wrong reason.
+	parts := strings.Split(compact, ".")
+	if len(parts) != 3 {
+		t.Fatalf("compact JWS has %d parts, want 3", len(parts))
+	}
+	sig := []rune(parts[2])
+	if sig[0] == 'x' {
+		sig[0] = 'y'
+	} else {
+		sig[0] = 'x'
+	}
+	parts[2] = string(sig)
+	tampered := strings.Join(parts, ".")
 	if tampered == compact {
 		t.Fatalf("tamper produced identical string")
 	}
