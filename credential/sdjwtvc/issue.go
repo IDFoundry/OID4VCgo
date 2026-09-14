@@ -21,6 +21,13 @@ const LegacyTypHeader = "vc+sd-jwt"
 // MediaType is the SD-JWT VC media type (draft-11 §3.1).
 const MediaType = "application/dc+sd-jwt"
 
+// CredentialFormat is the OID4VCI 1.0 Credential Format Identifier for
+// this format (Appendix A.3.1) — the value a Credential Issuer's
+// credential_configurations_supported metadata (§12.2.4) uses in its
+// "format" member, and a Wallet's authorization_details/Credential
+// Request use to select it.
+const CredentialFormat = "dc+sd-jwt" //nolint:gosec // an OID4VCI format identifier, not a credential
+
 // KeyBindingTyp is the required "typ" header of a Key Binding JWT
 // (RFC 9901 §4.3).
 const KeyBindingTyp = "kb+jwt"

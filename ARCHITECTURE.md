@@ -4,11 +4,13 @@
 > presentation and verification, including Key Binding), `statuslist`
 > (Token Status List issuance and checking), `attestation` (Key
 > Attestation, and the OID4VCI-specific extra claims on top of FAPIgo's
-> Wallet Attestation), and the `internal/jose` JWS helper the first three
-> build on are implemented and tested; everything else below is still
-> just the planned layout, not a finished system. Update each section as
-> the corresponding package actually lands; don't let this drift into
-> aspirational documentation for code that doesn't exist.
+> Wallet Attestation), the `internal/jose` JWS helper the first three
+> build on, and a first slice of `issuer` (Nonce Endpoint + a Metadata
+> shape covering what SD-JWT VC issuance needs) are implemented and
+> tested; everything else below is still just the planned layout, not a
+> finished system. Update each section as the corresponding package
+> actually lands; don't let this drift into aspirational documentation
+> for code that doesn't exist.
 
 ## Scope
 
@@ -23,10 +25,18 @@ HAIP requires compliance with the applicable provisions of FAPI 2.0
 Security Profile Final, with specific overrides (DPoP mandatory, PAR only
 where the Authorization Endpoint is used, Wallet Attestation in place of
 `private_key_jwt`/mTLS client auth, HAIP §7's own algorithm requirements —
-see SPECIFICATIONS.md's "HAIP's deviations from plain FAPI 2.0"). Once
-`issuer`/`wallet` exist, they will not reimplement PAR, DPoP, PKCE, or
-JARM-style protocol plumbing — they'll consume FAPIgo's public
-`server`/`client` role packages for that.
+see SPECIFICATIONS.md's "HAIP's deviations from plain FAPI 2.0"). `issuer`
+does not reimplement PAR, DPoP, PKCE, or JARM-style protocol plumbing —
+it will consume FAPIgo's public `server`/`client` role packages for that,
+once its own endpoints reach the ones OID4VCI actually relies on FAPI 2.0/
+OAuth 2.0 for (PAR, the Authorization/Token Endpoints, client
+authentication). `go.mod` depends on FAPIgo directly as of this package
+(pinned to a specific commit via a pseudo-version, not yet a tagged
+release — see the PR that added it for why); `issuer`'s first slice
+(Nonce Endpoint + Metadata) doesn't touch `fapigo/server` at all yet, only
+the root `fapi` package's `URL`/`ParseIssuerURL`/`ParseEndpointURL` for
+issuer/endpoint identifiers, the same "shared value type with identical
+semantics" reasoning that package documents itself.
 
 OID4VCIgo cannot import `go-fapi/internal/*` — Go's `internal/` visibility
 rule is scoped to the importing path's own module tree, and this is a
@@ -67,9 +77,9 @@ claim it doesn't itself model, the OID4VCI-specific ones included.
 
 ## Planned package layout
 
-Only `credential/sdjwtvc`, `statuslist`, `attestation` and `internal/jose`
-exist so far; the rest below is the target shape from the phase-by-phase
-plan, not a description of current code.
+Only `credential/sdjwtvc`, `statuslist`, `attestation`, `internal/jose`
+and a first slice of `issuer` exist so far; the rest below is the target
+shape from the phase-by-phase plan, not a description of current code.
 
 - **`credential/sdjwtvc`** (done) — SD-JWT VC (`draft-ietf-oauth-sd-jwt-vc-11`)
   on top of base SD-JWT (RFC 9901): `Issue`/`Verify`, `SD`/`SDElement`
@@ -107,10 +117,27 @@ plan, not a description of current code.
   why this package only reads claims FAPIgo's own verification discards,
   never re-verifies a signature FAPIgo already checked). Tests include
   OID4VCI 1.0's own Appendix D.1 and Appendix E worked examples.
-- **`issuer`** — the OID4VCI Credential Issuer role (server side): Issuer
-  Metadata, Credential Offer, Nonce endpoint, Credential Endpoint (batch,
-  `jwt`/`attestation` proof types, dispatches into `credential/*`),
-  Deferred + Notification endpoints. Built on `fapigo/server`.
+- **`issuer`** (in progress) — the OID4VCI Credential Issuer role (server
+  side). Done so far: `Config`/`Dependencies`/`New` (mirrors
+  `fapigo/server.Config`/`server.New`'s own shape — required fields, no
+  implicit defaults, an opt-in-gated Nonce Endpoint the same way
+  FAPIgo gates CIBA on `Endpoints.BackchannelAuthentication` being set);
+  `NonceStore`/`RequestNonce` implementing the Nonce Endpoint (§7),
+  mirroring `fapigo/storage.NonceStore`'s own Issue/Consume,
+  single-use-on-consume shape exactly; and `Metadata` (§12.2.4) covering
+  `credential_issuer`, `credential_endpoint`, `nonce_endpoint`, and
+  `credential_configurations_supported` with `format`/`scope`/
+  `cryptographic_binding_methods_supported`/`proof_types_supported`
+  (including `key_attestations_required`) — deliberately not yet
+  `credential_request_encryption`/`credential_response_encryption`,
+  `batch_credential_issuance`, `display`, or `credential_metadata`;
+  add each when a concrete consumer needs it, not speculatively. Still
+  to come: Credential Offer Endpoint (§4), the Credential Endpoint (§8,
+  batch issuance, `jwt`/`attestation` proof types dispatching into
+  `credential/sdjwtvc` and `attestation`), Deferred (§9) and
+  Notification (§11) Endpoints — once those exist, this is where
+  `fapigo/server` actually gets consumed (client authentication via PAR/
+  Token, access-token validation for the Credential Endpoint).
 - **`wallet`** — the Wallet's OID4VCI role (client side): credential-offer
   resolution, proof-of-possession generation, deferred/notification
   handling. Built on `fapigo/client`.
