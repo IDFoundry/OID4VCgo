@@ -1,8 +1,9 @@
 # Architecture
 
 > **Status: early scaffolding.** `credential/sdjwtvc` (SD-JWT VC issuance,
-> presentation and verification, including Key Binding) and its
-> `internal/jose` JWS helper are implemented and tested; everything else
+> presentation and verification, including Key Binding), `statuslist`
+> (Token Status List issuance and checking), and the `internal/jose` JWS
+> helper they both build on are implemented and tested; everything else
 > below is still just the planned layout, not a finished system. Update
 > each section as the corresponding package actually lands; don't let this
 > drift into aspirational documentation for code that doesn't exist.
@@ -52,9 +53,9 @@ cross-repo change.
 
 ## Planned package layout
 
-Only `credential/sdjwtvc` and `internal/jose` exist so far; the rest below
-is the target shape from the phase-by-phase plan, not a description of
-current code.
+Only `credential/sdjwtvc`, `statuslist` and `internal/jose` exist so far;
+the rest below is the target shape from the phase-by-phase plan, not a
+description of current code.
 
 - **`credential/sdjwtvc`** (done) — SD-JWT VC (`draft-ietf-oauth-sd-jwt-vc-11`)
   on top of base SD-JWT (RFC 9901): `Issue`/`Verify`, `SD`/`SDElement`
@@ -67,9 +68,18 @@ current code.
   Add it once `credential/mdoc` exists and the two can be compared.
 - **`credential/mdoc`** — ISO/IEC 18013-5 mdoc: CBOR/COSE
   `IssuerSigned`/`DeviceSigned` structures.
-- **`statuslist`** — Token Status List (`draft-ietf-oauth-status-list-12`):
-  issuance (bit-packed status list JWT) and status checking. Depended on by
-  `credential/sdjwtvc`'s optional `status` claim and by Wallet Attestation.
+- **`statuslist`** (done) — Token Status List (`draft-ietf-oauth-status-list-12`),
+  JWT/JOSE encoding only (§5.1, §6.2 — not the CWT/COSE encoding, which
+  belongs with `credential/mdoc`): bit-packing and ZLIB compression
+  (`Pack`/`Unpack`, `New`/`Decode`), Status List Token issuance/verification
+  (`IssueToken`/`VerifyToken`), the Referenced Token `status` claim
+  (`StatusListRef`/`ParseStatusClaim` — the same `map[string]any` shape
+  `credential/sdjwtvc`'s `Claims.Status` expects, and covered by a test
+  that wires the two packages together), and `Check`, the §8.3 steps 3-7
+  orchestration. Tests include draft-12 §4.1's own known-answer bit-packing
+  vectors and its Appendix's 2^20-entry compressed vector, not just
+  round-trip checks. Built on `internal/jose` for the same
+  `keys.KeyManager`-isn't-reusable reason `credential/sdjwtvc` is.
 - **`attestation`** — OID4VCI Appendix D (Key Attestation) and the
   OID4VCI-specific claims on top of FAPIgo's Wallet Attestation client-auth
   mechanism (Appendix E extra claims, not the base client-authentication
