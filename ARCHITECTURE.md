@@ -1,10 +1,11 @@
 # Architecture
 
-> **Status: early scaffolding.** No protocol packages exist yet — this
-> document describes the planned layout and the design rules carried over
-> from FAPIgo, not a finished system. Update each section as the
-> corresponding package actually lands; don't let this drift into
-> aspirational documentation for code that doesn't exist.
+> **Status: early scaffolding.** `credential/sdjwtvc` (SD-JWT VC issuance,
+> presentation and verification, including Key Binding) and its
+> `internal/jose` JWS helper are implemented and tested; everything else
+> below is still just the planned layout, not a finished system. Update
+> each section as the corresponding package actually lands; don't let this
+> drift into aspirational documentation for code that doesn't exist.
 
 ## Scope
 
@@ -19,14 +20,10 @@ HAIP requires compliance with the applicable provisions of FAPI 2.0
 Security Profile Final, with specific overrides (DPoP mandatory, PAR only
 where the Authorization Endpoint is used, Wallet Attestation in place of
 `private_key_jwt`/mTLS client auth, HAIP §7's own algorithm requirements —
-see SPECIFICATIONS.md's "HAIP's deviations from plain FAPI 2.0"). OID4VCIgo
-does not reimplement PAR, DPoP, PKCE, or JARM-style protocol plumbing — it
-consumes FAPIgo's public `server`/`client` role packages for that, and
-`keys` (KeyManager/Decrypter, purpose-based Sign — no raw private keys ever
-cross a package boundary) for every signing operation this repo needs
-beyond what `server`/`client` already do internally (key attestation,
-Wallet Attestation extra claims, status-list signing, SD-JWT VC key
-binding).
+see SPECIFICATIONS.md's "HAIP's deviations from plain FAPI 2.0"). Once
+`issuer`/`wallet` exist, they will not reimplement PAR, DPoP, PKCE, or
+JARM-style protocol plumbing — they'll consume FAPIgo's public
+`server`/`client` role packages for that.
 
 OID4VCIgo cannot import `go-fapi/internal/*` — Go's `internal/` visibility
 rule is scoped to the importing path's own module tree, and this is a
@@ -38,17 +35,38 @@ be, or become, one of FAPIgo's *public* packages (`server`, `client`,
 value types) — never a reason to vendor or reimplement FAPIgo's internals
 here instead.
 
+**`keys.KeyManager` turned out not to be reusable for credential-level
+signing.** Its `SigningPurpose` is a closed `iota` enum defined entirely
+inside FAPIgo (`keys/signing.go`) — `SigningRequest.Purpose` is typed to
+it directly, so OID4VCIgo cannot construct a request for a purpose FAPIgo
+hasn't defined (credential signing, Key Binding JWT signing, key/wallet
+attestation signing), the same closed-enum problem `storage.ClientAuthMethod`
+has for Wallet Attestation. Rather than block `credential/sdjwtvc` on a
+second FAPIgo change, it signs and verifies through this repo's own
+`internal/jose` (RFC 7515 compact JWS, ES256 + EdDSA for now) against a
+plain `crypto.Signer` instead. This is a real, deliberate divergence from
+"reuse FAPIgo's `keys` package everywhere" — revisit it if/when FAPIgo
+grows the purposes credential issuance needs, but don't assume that will
+happen automatically; someone has to decide it's worth another
+cross-repo change.
+
 ## Planned package layout
 
-None of these exist yet; this is the target shape from the phase-by-phase
-plan, not a description of current code.
+Only `credential/sdjwtvc` and `internal/jose` exist so far; the rest below
+is the target shape from the phase-by-phase plan, not a description of
+current code.
 
-- **`credential`** — a format-profile interface (encode/decode, selective
-  disclosure, holder-binding, proof types), implemented by:
-  - **`credential/sdjwtvc`** — SD-JWT VC (`draft-ietf-oauth-sd-jwt-vc-11`):
-    disclosures, KB-JWT, `vct`.
-  - **`credential/mdoc`** — ISO/IEC 18013-5 mdoc: CBOR/COSE
-    `IssuerSigned`/`DeviceSigned` structures.
+- **`credential/sdjwtvc`** (done) — SD-JWT VC (`draft-ietf-oauth-sd-jwt-vc-11`)
+  on top of base SD-JWT (RFC 9901): `Issue`/`Verify`, `SD`/`SDElement`
+  markers with full recursive-disclosure support, `Parse`/`Presentation`,
+  and Key Binding JWT creation/verification. Its tests include RFC 9901's
+  own known-answer disclosure/digest vectors, not just round-trip checks.
+  There's deliberately no separate `credential` package defining a
+  format-profile interface yet — with only one format implemented, any
+  interface here would be guessed, not derived from real commonality.
+  Add it once `credential/mdoc` exists and the two can be compared.
+- **`credential/mdoc`** — ISO/IEC 18013-5 mdoc: CBOR/COSE
+  `IssuerSigned`/`DeviceSigned` structures.
 - **`statuslist`** — Token Status List (`draft-ietf-oauth-status-list-12`):
   issuance (bit-packed status list JWT) and status checking. Depended on by
   `credential/sdjwtvc`'s optional `status` claim and by Wallet Attestation.
@@ -94,9 +112,14 @@ automatically to code they didn't originally govern:
   generic type that tries to behave as more than one role.
 - No implicit defaults; closed sum types over optional fields where a spec
   defines a fixed set of choices (e.g. proof types, credential formats).
-- A `KeyManager`/`Decrypter`-shaped interface for every signing/decryption
-  operation — never a raw `crypto.Signer`/private key held or passed
-  directly — so this repo stays HSM/KMS-compatible the same way FAPIgo is.
+- Never hold or pass a raw private key across a package boundary. Where
+  FAPIgo's `keys.KeyManager` is reusable (once `issuer`/`wallet` sit on
+  `fapigo/server`/`client`), use it; where it isn't — see "`keys.KeyManager`
+  turned out not to be reusable for credential-level signing" above —
+  `internal/jose`'s `crypto.Signer` parameter is the equivalent boundary:
+  a caller adapts whatever backs its key (a static key, an HSM, a future
+  KeyManager-based adapter) into that one standard interface, never a
+  bare private key value passed around directly.
 - **Shared public value types only where semantics match**: the root
   `oid4vci` package (see its own doc comment) holds a type only once two
   or more role packages need the exact same wire semantics for it — never
