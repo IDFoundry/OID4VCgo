@@ -109,7 +109,10 @@ shape from the phase-by-phase plan, not a description of current code.
   `IssuerSigned`, the MSO, or any other mdoc-specific structure — those
   are `credential/mdoc`'s own CBOR struct definitions on top of
   `fxamacker/cbor` directly, calling into this package only for the
-  `IssuerAuth` envelope.
+  `IssuerAuth` envelope. Its ECDSA DER/fixed-width R||S conversion (the
+  one piece of logic identical to `internal/jose`'s own ES256 handling,
+  since JWS and COSE made the same encoding choice) lives in
+  `internal/ecdsafixed`, shared by both rather than duplicated.
 - **`credential/mdoc`** — ISO/IEC 18013-5 mdoc: CBOR/COSE
   `IssuerSigned`/`DeviceSigned` structures, built on `internal/cose` for
   `IssuerAuth`.

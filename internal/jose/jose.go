@@ -7,13 +7,13 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
-	"encoding/asn1"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math/big"
 	"strings"
+
+	"github.com/idfoundry/oid4vcigo/internal/ecdsafixed"
 )
 
 // Alg identifies a JWS signature algorithm this package supports.
@@ -69,7 +69,7 @@ func signBytes(alg Alg, signer crypto.Signer, signingInput []byte) ([]byte, erro
 		if err != nil {
 			return nil, fmt.Errorf("jose: sign: %w", err)
 		}
-		return derToFixed(der, 32)
+		return ecdsafixed.ToFixed(der, 32)
 	case EdDSA:
 		if _, ok := signer.Public().(ed25519.PublicKey); !ok {
 			return nil, errors.New("jose: EdDSA requires an Ed25519 signer")
@@ -165,7 +165,7 @@ func verifyBytes(alg Alg, pub crypto.PublicKey, signingInput, sig []byte) error 
 		if !ok || ecPub.Curve != elliptic.P256() {
 			return errors.New("jose: ES256 requires a P-256 public key")
 		}
-		der, err := fixedToDER(sig, 32)
+		der, err := ecdsafixed.ToDER(sig, 32)
 		if err != nil {
 			return err
 		}
@@ -186,31 +186,4 @@ func verifyBytes(alg Alg, pub crypto.PublicKey, signingInput, sig []byte) error 
 	default:
 		return fmt.Errorf("jose: unsupported algorithm %q", alg)
 	}
-}
-
-// ecdsaSignature is the ASN.1 DER structure Go's crypto.Signer produces
-// for an ECDSA key (SEC1 / RFC 3279 §2.2.3), distinct from the
-// fixed-width R||S encoding JWS requires (RFC 7518 §3.4).
-type ecdsaSignature struct {
-	R, S *big.Int
-}
-
-func derToFixed(der []byte, size int) ([]byte, error) {
-	var sig ecdsaSignature
-	if _, err := asn1.Unmarshal(der, &sig); err != nil {
-		return nil, fmt.Errorf("jose: parse ECDSA signature: %w", err)
-	}
-	out := make([]byte, 2*size)
-	sig.R.FillBytes(out[:size])
-	sig.S.FillBytes(out[size:])
-	return out, nil
-}
-
-func fixedToDER(sig []byte, size int) ([]byte, error) {
-	if len(sig) != 2*size {
-		return nil, fmt.Errorf("jose: ECDSA signature has length %d, want %d", len(sig), 2*size)
-	}
-	r := new(big.Int).SetBytes(sig[:size])
-	s := new(big.Int).SetBytes(sig[size:])
-	return asn1.Marshal(ecdsaSignature{R: r, S: s})
 }

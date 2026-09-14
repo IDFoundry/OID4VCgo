@@ -7,12 +7,12 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
-	"encoding/asn1"
 	"errors"
 	"fmt"
-	"math/big"
+	"math"
 
 	"github.com/fxamacker/cbor/v2"
+	"github.com/idfoundry/oid4vcigo/internal/ecdsafixed"
 )
 
 // Alg identifies a COSE signature algorithm this package supports, by
@@ -124,6 +124,14 @@ func toInt64(v interface{}) (int64, error) {
 	case int64:
 		return n, nil
 	case uint64:
+		// A header value this large can't be a real registered COSE
+		// algorithm (RFC 9053's registry tops out in the low
+		// thousands), and this is untrusted input — DecodeUnverified
+		// reads it before any signature check — so reject it outright
+		// rather than silently wrapping it into a negative int64.
+		if n > math.MaxInt64 {
+			return 0, fmt.Errorf("integer %d overflows int64", n)
+		}
 		return int64(n), nil
 	default:
 		return 0, fmt.Errorf("expected an integer, got %T", v)
@@ -299,7 +307,7 @@ func signBytes(alg Alg, signer crypto.Signer, toSign []byte) ([]byte, error) {
 		if err != nil {
 			return nil, fmt.Errorf("cose: sign: %w", err)
 		}
-		return derToFixed(der, 32)
+		return ecdsafixed.ToFixed(der, 32)
 	case EdDSA:
 		if _, ok := signer.Public().(ed25519.PublicKey); !ok {
 			return nil, errors.New("cose: EdDSA requires an Ed25519 signer")
@@ -324,7 +332,7 @@ func verifyBytes(alg Alg, pub crypto.PublicKey, toVerify, sig []byte) error {
 		if !ok || ecPub.Curve != elliptic.P256() {
 			return errors.New("cose: ES256 requires a P-256 public key")
 		}
-		der, err := fixedToDER(sig, 32)
+		der, err := ecdsafixed.ToDER(sig, 32)
 		if err != nil {
 			return err
 		}
@@ -345,32 +353,4 @@ func verifyBytes(alg Alg, pub crypto.PublicKey, toVerify, sig []byte) error {
 	default:
 		return fmt.Errorf("cose: unsupported algorithm %d", alg)
 	}
-}
-
-// ecdsaSignature is the ASN.1 DER structure Go's crypto.Signer produces
-// for an ECDSA key (SEC1 / RFC 3279 §2.2.3), distinct from the
-// fixed-width R||S encoding COSE requires (RFC 9053 §2.1, the same rule
-// JWS uses — see internal/jose's identical helpers for that envelope).
-type ecdsaSignature struct {
-	R, S *big.Int
-}
-
-func derToFixed(der []byte, size int) ([]byte, error) {
-	var sig ecdsaSignature
-	if _, err := asn1.Unmarshal(der, &sig); err != nil {
-		return nil, fmt.Errorf("cose: parse ECDSA signature: %w", err)
-	}
-	out := make([]byte, 2*size)
-	sig.R.FillBytes(out[:size])
-	sig.S.FillBytes(out[size:])
-	return out, nil
-}
-
-func fixedToDER(sig []byte, size int) ([]byte, error) {
-	if len(sig) != 2*size {
-		return nil, fmt.Errorf("cose: ECDSA signature has length %d, want %d", len(sig), 2*size)
-	}
-	r := new(big.Int).SetBytes(sig[:size])
-	s := new(big.Int).SetBytes(sig[size:])
-	return asn1.Marshal(ecdsaSignature{R: r, S: s})
 }
