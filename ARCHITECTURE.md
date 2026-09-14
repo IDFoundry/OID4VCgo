@@ -5,12 +5,14 @@
 > (Token Status List issuance and checking), `attestation` (Key
 > Attestation, and the OID4VCI-specific extra claims on top of FAPIgo's
 > Wallet Attestation), the `internal/jose` JWS helper the first three
-> build on, and a first slice of `issuer` (Nonce Endpoint + a Metadata
-> shape covering what SD-JWT VC issuance needs) are implemented and
-> tested; everything else below is still just the planned layout, not a
-> finished system. Update each section as the corresponding package
-> actually lands; don't let this drift into aspirational documentation
-> for code that doesn't exist.
+> build on, `internal/cose` (a COSE_Sign1 signer/verifier for
+> `credential/mdoc` and, in time, `statuslist`'s CWT encoding), and a
+> first slice of `issuer` (Nonce Endpoint + a Metadata shape covering
+> what SD-JWT VC issuance needs) are implemented and tested; everything
+> else below is still just the planned layout, not a finished system.
+> Update each section as the corresponding package actually lands; don't
+> let this drift into aspirational documentation for code that doesn't
+> exist.
 
 ## Scope
 
@@ -90,8 +92,27 @@ shape from the phase-by-phase plan, not a description of current code.
   format-profile interface yet — with only one format implemented, any
   interface here would be guessed, not derived from real commonality.
   Add it once `credential/mdoc` exists and the two can be compared.
+- **`internal/cose`** (done) — a small, self-contained COSE_Sign1
+  (RFC 9052 §4.2) signer/verifier, the CBOR/COSE equivalent of
+  `internal/jose`: same curated algorithm set (ES256, EdDSA), same
+  `Sign`/`Verify`/`DecodeUnverified` shape, but with COSE's
+  protected/unprotected header split (`Headers{Alg,KID,X5Chain}`) instead
+  of JOSE's single header object. Untagged COSE_Sign1 only, matching
+  mdoc's own `IssuerAuth = COSE_Sign1` CDDL (not `COSE_Sign1_Tagged`), and
+  always-embedded payload only (COSE's detached-payload form isn't
+  needed). Built on `github.com/fxamacker/cbor/v2` for raw CBOR encoding
+  — Go's stdlib has none, and this is the repo's first non-FAPIgo
+  dependency; hand-rolling CBOR itself was ruled out as materially
+  riskier than hand-rolling JWS was (CBOR's major-type/indefinite-length/
+  canonical-encoding surface is much larger, and a subtle bug there would
+  silently break every COSE signature). It knows nothing about
+  `IssuerSigned`, the MSO, or any other mdoc-specific structure — those
+  are `credential/mdoc`'s own CBOR struct definitions on top of
+  `fxamacker/cbor` directly, calling into this package only for the
+  `IssuerAuth` envelope.
 - **`credential/mdoc`** — ISO/IEC 18013-5 mdoc: CBOR/COSE
-  `IssuerSigned`/`DeviceSigned` structures.
+  `IssuerSigned`/`DeviceSigned` structures, built on `internal/cose` for
+  `IssuerAuth`.
 - **`statuslist`** (done) — Token Status List (`draft-ietf-oauth-status-list-12`),
   JWT/JOSE encoding only (§5.1, §6.2 — not the CWT/COSE encoding, which
   belongs with `credential/mdoc`): bit-packing and ZLIB compression
