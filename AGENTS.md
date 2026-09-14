@@ -1,0 +1,59 @@
+# Agent guidance
+
+This file is for AI coding agents working in this repo. It doesn't replace
+[CONTRIBUTING.md](CONTRIBUTING.md) — read that first for the
+conformance-first philosophy, commit message format, and pre-PR checklist.
+This file adds agent-specific process notes.
+
+## Workflow
+
+- Never push directly to `main`, even if asked to just "push" — always
+  work on a feature branch, open a PR, and wait for CI to go green before
+  merging.
+- Only sync a local `main` after the user has confirmed the PR is actually
+  merged (e.g. via `gh pr view <n> --json state,mergedAt`) — don't assume,
+  and don't merge a PR yourself unless explicitly told to.
+- This repo uses [release-please](https://github.com/googleapis/release-please):
+  every commit message must be a real [Conventional Commits](https://www.conventionalcommits.org/)
+  type (`fix:`, `feat:`, `feat!:`/`fix!:` for breaking, or `docs:`/
+  `chore:`/`test:`/`refactor:`/`ci:` for anything that shouldn't bump the
+  version) — see CONTRIBUTING.md's "Commit messages" section. Don't invent
+  non-standard types.
+- Merging a PR here triggers an automatic release-please PR bumping the
+  version and `CHANGELOG.md` — that PR needs its own merge before the new
+  version is actually cut/tagged.
+- Write PR descriptions (and commit messages) as a focused summary of what
+  changed and why — never narrate the conversation that produced it.
+
+## Relationship to FAPIgo
+
+OID4VCIgo is a sister library to [FAPIgo](https://github.com/IDFoundry/FAPIgo)
+(`go-fapi` in this checkout's sibling directory), reusing FAPIgo's public
+`server`/`client`/`keys`/`storage`/`fapihttp` packages for the FAPI 2.0
+Security Profile Final machinery HAIP requires (PAR, DPoP, PKCE S256, `iss`
+in the authorization response, RFC 8414 metadata). It cannot import
+FAPIgo's `internal/` packages — that's a real Go module boundary, not a
+style choice — so anything OID4VCIgo needs from FAPIgo's protocol core must
+already be, or become, one of FAPIgo's public packages.
+
+One specific, currently-blocking dependency: HAIP requires Wallet
+Attestation (a client-attestation-JWT-based OAuth2 client authentication
+mechanism, [`draft-ietf-oauth-attestation-based-client-auth-07`](https://datatracker.ietf.org/doc/html/draft-ietf-oauth-attestation-based-client-auth-07))
+in place of FAPI 2.0's normal `private_key_jwt`/mTLS client auth. FAPIgo's
+`storage.ClientAuthMethod` is currently a closed enum without this method —
+adding it is tracked as its own change in FAPIgo, not this repo. Don't
+attempt to work around this by duplicating client-authentication logic
+against FAPIgo's `server`/`client` internals; wait for or contribute to the
+FAPIgo-side change instead.
+
+See [SPECIFICATIONS.md](SPECIFICATIONS.md) for the exact spec/draft
+versions this repo targets, and [ARCHITECTURE.md](ARCHITECTURE.md) for
+package layout and design rationale as it's built out.
+
+## Where conformance-suite knowledge lives
+
+Nowhere yet — this repo has no conformance harness or OIDF suite runs so
+far (see ARCHITECTURE.md's status section). Once one exists, it will be
+documented the way FAPIgo documents its own AS-side and RP-side findings
+(`conformance/*/README.md` in that repo) — add a pointer here when that
+happens rather than re-deriving suite behavior from scratch each time.
