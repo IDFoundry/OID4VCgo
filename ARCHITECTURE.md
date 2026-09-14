@@ -2,11 +2,13 @@
 
 > **Status: early scaffolding.** `credential/sdjwtvc` (SD-JWT VC issuance,
 > presentation and verification, including Key Binding), `statuslist`
-> (Token Status List issuance and checking), and the `internal/jose` JWS
-> helper they both build on are implemented and tested; everything else
-> below is still just the planned layout, not a finished system. Update
-> each section as the corresponding package actually lands; don't let this
-> drift into aspirational documentation for code that doesn't exist.
+> (Token Status List issuance and checking), `attestation` (Key
+> Attestation, and the OID4VCI-specific extra claims on top of FAPIgo's
+> Wallet Attestation), and the `internal/jose` JWS helper the first three
+> build on are implemented and tested; everything else below is still
+> just the planned layout, not a finished system. Update each section as
+> the corresponding package actually lands; don't let this drift into
+> aspirational documentation for code that doesn't exist.
 
 ## Scope
 
@@ -41,9 +43,8 @@ signing.** Its `SigningPurpose` is a closed `iota` enum defined entirely
 inside FAPIgo (`keys/signing.go`) — `SigningRequest.Purpose` is typed to
 it directly, so OID4VCIgo cannot construct a request for a purpose FAPIgo
 hasn't defined (credential signing, Key Binding JWT signing, key/wallet
-attestation signing), the same closed-enum problem `storage.ClientAuthMethod`
-has for Wallet Attestation. Rather than block `credential/sdjwtvc` on a
-second FAPIgo change, it signs and verifies through this repo's own
+attestation signing). Rather than block `credential/sdjwtvc` on a
+FAPIgo change, it signs and verifies through this repo's own
 `internal/jose` (RFC 7515 compact JWS, ES256 + EdDSA for now) against a
 plain `crypto.Signer` instead. This is a real, deliberate divergence from
 "reuse FAPIgo's `keys` package everywhere" — revisit it if/when FAPIgo
@@ -51,11 +52,24 @@ grows the purposes credential issuance needs, but don't assume that will
 happen automatically; someone has to decide it's worth another
 cross-repo change.
 
+`storage.ClientAuthMethod` had the identical closed-enum problem for
+Wallet Attestation client authentication — that one *was* worth a
+cross-repo change: FAPIgo now has `storage.ClientAuthMethodAttestation`
+and `internal/clientattestation` (draft-07 Client Attestation + PoP JWT
+verification), gated behind `server.Config.AttestationBasedClientAuthentication`
+(default off). `attestation` (below) builds the OID4VCI-specific pieces
+on top of that — Key Attestation is fully self-contained here since
+FAPIgo has no reason to know about it at all, while the Wallet Attestation
+extra claims (`wallet_name`/`wallet_link`/`status`) needed their own
+reader in this repo because FAPIgo's `clientattestation.VerifiedAttestation`
+only exposes `ClientID`/`ExpiresAt`/`ConfirmationJWK` — it discards every
+claim it doesn't itself model, the OID4VCI-specific ones included.
+
 ## Planned package layout
 
-Only `credential/sdjwtvc`, `statuslist` and `internal/jose` exist so far;
-the rest below is the target shape from the phase-by-phase plan, not a
-description of current code.
+Only `credential/sdjwtvc`, `statuslist`, `attestation` and `internal/jose`
+exist so far; the rest below is the target shape from the phase-by-phase
+plan, not a description of current code.
 
 - **`credential/sdjwtvc`** (done) — SD-JWT VC (`draft-ietf-oauth-sd-jwt-vc-11`)
   on top of base SD-JWT (RFC 9901): `Issue`/`Verify`, `SD`/`SDElement`
@@ -80,10 +94,19 @@ description of current code.
   vectors and its Appendix's 2^20-entry compressed vector, not just
   round-trip checks. Built on `internal/jose` for the same
   `keys.KeyManager`-isn't-reusable reason `credential/sdjwtvc` is.
-- **`attestation`** — OID4VCI Appendix D (Key Attestation) and the
-  OID4VCI-specific claims on top of FAPIgo's Wallet Attestation client-auth
-  mechanism (Appendix E extra claims, not the base client-authentication
-  handshake itself — that lives in FAPIgo).
+- **`attestation`** (done) — OID4VCI Appendix D, Key Attestation: fully
+  self-contained `Issue`/`Parse`/`Verify`, plus `VerifiedClaims.KeyAttested`
+  implementing Appendix D.1's own MUST ("the Credential Issuer MUST
+  validate that the JWT used as a proof is signed by a key contained in
+  the attestation") via a minimal JWK marshal/match for the two key types
+  `internal/jose` supports (P-256 EC, Ed25519 OKP). Also Appendix E's
+  three OID4VCI-specific Wallet Attestation claims
+  (`ParseWalletAttestationClaims`) — deliberately *not* the base
+  Client Attestation JWT handshake itself, which lives in FAPIgo's
+  `internal/clientattestation` (see "Relationship to FAPIgo" above for
+  why this package only reads claims FAPIgo's own verification discards,
+  never re-verifies a signature FAPIgo already checked). Tests include
+  OID4VCI 1.0's own Appendix D.1 and Appendix E worked examples.
 - **`issuer`** — the OID4VCI Credential Issuer role (server side): Issuer
   Metadata, Credential Offer, Nonce endpoint, Credential Endpoint (batch,
   `jwt`/`attestation` proof types, dispatches into `credential/*`),
