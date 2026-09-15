@@ -11,10 +11,12 @@
 > `internal/cose` (COSE_Sign1 and COSE_Mac0 signers/verifiers, the same
 > role for `credential/mdoc` and `statuslist`'s CWT encoding),
 > `internal/hkdf` (RFC 5869, for `credential/mdoc`'s DeviceMac key
-> derivation), and a first slice of `issuer` (Nonce Endpoint + a Metadata
-> shape covering SD-JWT VC and mso_mdoc issuance) are implemented and
-> tested; everything else below is still just the planned layout, not a
-> finished system. Update each section as the corresponding package
+> derivation), `internal/jwk` (JWK marshal/parse, shared by `attestation`
+> and `issuer`), and `issuer` (Nonce Endpoint, Metadata, and the
+> Credential Endpoint for immediate issuance of both formats) are
+> implemented and tested; everything else below is still just the
+> planned layout, not a finished system. Update each section as the
+> corresponding package
 > actually lands; don't let this drift into aspirational documentation
 > for code that doesn't exist.
 
@@ -136,6 +138,16 @@ shape from the phase-by-phase plan, not a description of current code.
   (Appendix A.1-A.3) — the one piece of key-agreement machinery
   `credential/mdoc`'s DeviceMac needs (deriving EMacKey from an ECDH
   shared secret) that `internal/cose` deliberately doesn't own.
+- **`internal/jwk`** (done) — a small, self-contained JWK (RFC 7517)
+  marshaler/parser for the two key types `internal/jose` signs with
+  (P-256 EC, Ed25519 OKP). Originally `attestation`'s own private
+  `marshalJWK`/`matchesPublicKey` (encode-and-compare only); factored
+  out once `issuer`'s Credential Endpoint also needed the reverse
+  direction — parsing a Wallet-supplied `jwk` proof header into a
+  `crypto.PublicKey` — rather than duplicating the encoding logic a
+  second time. `attestation`'s own functions are now thin wrappers
+  calling into this package, keeping their existing signatures (and
+  every one of `attestation`'s own already-merged tests) unchanged.
 - **`credential/mdoc`** (done) — ISO/IEC 18013-5 mdoc, both roles:
   - **Issuer side**: `Issue`/`Verify` for `IssuerSigned`
     (namespace/data-element digest+salt selective disclosure, §10.3.3),
@@ -223,7 +235,7 @@ shape from the phase-by-phase plan, not a description of current code.
   FAPIgo gates CIBA on `Endpoints.BackchannelAuthentication` being set);
   `NonceStore`/`RequestNonce` implementing the Nonce Endpoint (§7),
   mirroring `fapigo/storage.NonceStore`'s own Issue/Consume,
-  single-use-on-consume shape exactly; and `Metadata` (§12.2.4) covering
+  single-use-on-consume shape exactly; `Metadata` (§12.2.4) covering
   `credential_issuer`, `credential_endpoint`, `nonce_endpoint`, and
   `credential_configurations_supported` with `format`/`scope`/
   `cryptographic_binding_methods_supported`/`proof_types_supported`
@@ -239,14 +251,37 @@ shape from the phase-by-phase plan, not a description of current code.
   `credential_request_encryption`/`credential_response_encryption`,
   `batch_credential_issuance`, `display`, or `credential_metadata`
   (including mdoc's own `claims` array, which lives under
-  `credential_metadata`); add each when a concrete consumer needs it,
-  not speculatively. Still to come: Credential Offer Endpoint (§4), the
-  Credential Endpoint (§8, batch issuance, `jwt`/`attestation` proof
-  types dispatching into `credential/sdjwtvc`/`credential/mdoc` and
-  `attestation`), Deferred (§9) and Notification (§11) Endpoints — once
-  those exist, this is where `fapigo/server` actually gets consumed
-  (client authentication via PAR/Token, access-token validation for the
-  Credential Endpoint).
+  `credential_metadata`); and `RequestCredential` implementing the
+  Credential Endpoint (§8) for immediate (non-deferred) issuance, both
+  formats and both the `jwt` and `attestation` proof types, with batch
+  support native to §8.2's own `proofs` parameter (one Credential per
+  resolved binding key — a `jwt` proof contributes one, an `attestation`
+  proof contributes one per entry in its own `attested_keys`, per
+  Appendix F.3's own "SHOULD issue a Credential for each cryptographic
+  public key" guidance). `RequestCredential` takes an `AuthorizedRequest`
+  as an already-verified-access-token input rather than verifying the
+  token itself — that needs full HTTP request context this package has
+  no reason to touch, ordinarily built from
+  `fapigo/resource.Verifier.Verify`'s own result — and a
+  `CredentialRequest` carrying caller-supplied `sdjwtvc.Claims`/
+  `mdoc.Claims` templates (this package has no user database; resolving
+  what data belongs in a credential is the caller's job), with `CNF`/
+  `DeviceKey` overwritten once per resolved binding key. Signing keys
+  (`SDJWTSigner`/`MdocSigner`) and the attestation trust policy
+  (`AttestationVerifier`) are new `Dependencies` fields, each required
+  only when a configured credential/proof type actually needs it — see
+  their own doc comments. New error type `Error` (§8.3.1.2's own closed
+  set of Credential Request/Response error codes, all HTTP 400) with a
+  `WriteJSON` mirroring `fapigo/resource.Error`'s own shape (Code/
+  PublicDescription safe to expose, Unwrap for logs only). See
+  `CredentialRequest`'s own doc comment for what's deliberately out of
+  scope (`credential_identifier`, `di_vp`, kid/x5c-based key resolution,
+  request/response encryption, deferred issuance, unbound credentials —
+  add each when a concrete consumer needs it). Still to come: Credential
+  Offer Endpoint (§4), Deferred (§9) and Notification (§11) Endpoints —
+  and this is still where `fapigo/server` gets consumed for the
+  Authorization/Token Endpoints' own PAR/DPoP/client-authentication
+  machinery once those exist in this repo.
 - **`wallet`** — the Wallet's OID4VCI role (client side): credential-offer
   resolution, proof-of-possession generation, deferred/notification
   handling. Built on `fapigo/client`.

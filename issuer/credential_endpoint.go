@@ -1,0 +1,270 @@
+package issuer
+
+import (
+	"context"
+	"crypto"
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"slices"
+
+	"github.com/idfoundry/oid4vcigo/credential/mdoc"
+	"github.com/idfoundry/oid4vcigo/credential/sdjwtvc"
+)
+
+// jwtProofTyp is the required JOSE "typ" header of a jwt-type key proof
+// (Appendix F.1).
+const jwtProofTyp = "openid4vci-proof+jwt" //nolint:gosec // an OID4VCI typ value, not a credential
+
+// AuthorizedRequest is what a Credential Request needs from an
+// already-verified access token — ordinarily
+// fapigo/resource.Verifier.Verify's own AuthorizationContext, adapted
+// by the caller. RequestCredential doesn't verify the access token
+// itself: token verification needs full HTTP request context (method,
+// URL, DPoP proof or mTLS certificate) that has nothing to do with
+// Credential Request/Response protocol logic, the same separation
+// FAPIgo's own resource package draws from its client/server roles —
+// see the package doc comment.
+type AuthorizedRequest struct {
+	// ClientID, if non-empty, is checked against a jwt-type key proof's
+	// "iss" claim when that claim is present (Appendix F.1).
+	ClientID string
+
+	// Scopes is every scope the access token grants. A requested
+	// CredentialConfiguration whose Scope is non-empty must be included
+	// here (§8.2: "The corresponding object in the
+	// credential_configurations_supported map MUST contain one of the
+	// value(s) used in the scope parameter in the Authorization
+	// Request").
+	Scopes []string
+}
+
+// CredentialRequest is a Credential Request (§8.2).
+//
+// Only credential_configuration_id-based requests are supported —
+// credential_identifier (used when an authorization_details of type
+// openid_credential was returned from the Token Response) isn't yet,
+// since this repo has no Token Endpoint to produce one from. Only the
+// jwt and attestation proof types are supported (di_vp needs W3C VCDM,
+// which this repo doesn't implement). Only a jwk-conveyed binding key
+// is supported within a jwt proof — kid/x5c-based key resolution (DID
+// resolution, certificate-chain validation) isn't. Request and response
+// encryption aren't supported. A CredentialConfiguration with no
+// ProofTypesSupported at all (an unbound credential, §14.2) isn't
+// supported either, since credential/mdoc's Claims.DeviceKey is
+// unconditionally required — there is no way to satisfy "no binding"
+// for that format today.
+type CredentialRequest struct {
+	// CredentialConfigurationID selects a key in
+	// Config.CredentialConfigurationsSupported. REQUIRED.
+	CredentialConfigurationID string
+
+	// Proofs is §8.2's own "proofs" parameter: exactly one proof type
+	// (a key in this map, either ProofTypeJWT or ProofTypeAttestation)
+	// mapped to a non-empty array of raw proof values. One Credential is
+	// issued per resolved binding key — a jwt proof contributes exactly
+	// one key each; an attestation proof contributes one key per entry
+	// in its own attested_keys claim (Appendix F.3's own "SHOULD issue a
+	// Credential for each cryptographic public key" guidance) — this is
+	// what makes a multi-entry array (or a multi-key attestation) a
+	// batch issuance request.
+	Proofs map[string][]string
+
+	// SDJWTClaims is the caller-supplied credential content — REQUIRED,
+	// and used, exactly when the requested CredentialConfiguration's
+	// Format is credential/sdjwtvc.CredentialFormat. This package has no
+	// user database of its own; resolving what data belongs in the
+	// credential is the caller's job, the same division
+	// credential/sdjwtvc.Verify itself draws for key resolution. Leave
+	// CNF unset — RequestCredential overwrites it per issued instance,
+	// once per resolved binding key.
+	SDJWTClaims *sdjwtvc.Claims
+
+	// MdocClaims is SDJWTClaims' mso_mdoc counterpart. Leave DeviceKey
+	// unset — RequestCredential overwrites it per issued instance.
+	MdocClaims *mdoc.Claims
+}
+
+// IssuedCredential is one element of a Credential Response's
+// "credentials" array (§8.3).
+type IssuedCredential struct {
+	// Credential is the issued Credential, encoded per its format's own
+	// Credential Format Profile (Appendix A): the compact SD-JWT VC
+	// string for credential/sdjwtvc.CredentialFormat, or the
+	// base64url-encoded CBOR IssuerSigned structure for
+	// credential/mdoc.CredentialFormat.
+	Credential string
+}
+
+// CredentialResponse is a Credential Response (§8.3) for the immediate
+// (non-deferred) issuance case — this package doesn't implement
+// deferred issuance, so transaction_id/interval never apply, and
+// notification_id is never set since the Notification Endpoint (§11)
+// doesn't exist yet to consume it.
+type CredentialResponse struct {
+	Credentials []IssuedCredential
+}
+
+// resolvedKey is one Wallet-supplied binding key extracted from a
+// Credential Request's proofs, ready to bind one issued Credential
+// instance to. JWKRaw is always populated (see CredentialRequest's own
+// doc comment on jwk-only key resolution): a jwt proof's own "jwk"
+// header, or one entry of an attestation's attested_keys.
+type resolvedKey struct {
+	Public crypto.PublicKey
+	JWKRaw json.RawMessage
+}
+
+// RequestCredential implements the Credential Endpoint (§8): it
+// resolves the requested CredentialConfiguration, checks it against
+// auth's granted scope, verifies every key proof in req.Proofs
+// (consuming this issuer's own c_nonce once per request, not once per
+// proof — see NonceStore's own doc comment), and issues one Credential
+// per resolved binding key by dispatching into credential/sdjwtvc.Issue
+// or credential/mdoc.Issue. See CredentialRequest's own doc comment for
+// what's out of scope.
+func (iss *Issuer) RequestCredential(ctx context.Context, auth AuthorizedRequest, req CredentialRequest) (CredentialResponse, error) {
+	if req.CredentialConfigurationID == "" {
+		return CredentialResponse{}, newError(ErrorInvalidCredentialRequest, 400,
+			"credential_configuration_id is required (credential_identifier is not supported)", nil)
+	}
+	cc, ok := iss.cfg.CredentialConfigurationsSupported[req.CredentialConfigurationID]
+	if !ok {
+		return CredentialResponse{}, newError(ErrorUnknownCredentialConfig, 400, "unknown credential_configuration_id", nil)
+	}
+	if cc.Scope != "" && !slices.Contains(auth.Scopes, cc.Scope) {
+		return CredentialResponse{}, newError(ErrorInvalidCredentialRequest, 400,
+			"access token does not grant the scope required for this credential_configuration_id", nil)
+	}
+
+	proofType, values, err := singleProofType(req.Proofs, cc)
+	if err != nil {
+		return CredentialResponse{}, err
+	}
+	ptc, ok := cc.ProofTypesSupported[proofType]
+	if !ok {
+		return CredentialResponse{}, newError(ErrorInvalidProof, 400,
+			fmt.Sprintf("proof type %q is not supported for this credential_configuration_id", proofType), nil)
+	}
+
+	keys, err := iss.resolveProofKeys(ctx, auth, proofType, values, ptc)
+	if err != nil {
+		return CredentialResponse{}, err
+	}
+
+	credentials := make([]IssuedCredential, 0, len(keys))
+	for _, key := range keys {
+		credential, err := iss.issueOne(cc, req, key)
+		if err != nil {
+			return CredentialResponse{}, newError(ErrorCredentialRequestDenied, 400, "credential issuance failed", err)
+		}
+		credentials = append(credentials, IssuedCredential{Credential: credential})
+	}
+	return CredentialResponse{Credentials: credentials}, nil
+}
+
+func singleProofType(proofs map[string][]string, cc CredentialConfiguration) (proofType string, values []string, err error) {
+	if len(cc.ProofTypesSupported) == 0 {
+		return "", nil, newError(ErrorInvalidCredentialRequest, 400,
+			"this credential_configuration_id requires no cryptographic binding, which is not supported", nil)
+	}
+	if len(proofs) != 1 {
+		return "", nil, newError(ErrorInvalidProof, 400, "proofs must contain exactly one proof type", nil)
+	}
+	for pt, v := range proofs {
+		if len(v) == 0 {
+			return "", nil, newError(ErrorInvalidProof, 400, "proofs value must be a non-empty array", nil)
+		}
+		proofType, values = pt, v
+	}
+	return proofType, values, nil
+}
+
+func (iss *Issuer) resolveProofKeys(
+	ctx context.Context, auth AuthorizedRequest, proofType string, values []string, ptc ProofTypeConfiguration,
+) ([]resolvedKey, error) {
+	switch proofType {
+	case ProofTypeJWT:
+		return iss.resolveJWTProofKeys(ctx, auth, values, ptc)
+	case ProofTypeAttestation:
+		return iss.resolveAttestationProofKeys(ctx, values)
+	default:
+		return nil, newError(ErrorInvalidProof, 400, fmt.Sprintf("proof type %q is not supported", proofType), nil)
+	}
+}
+
+func (iss *Issuer) issueOne(cc CredentialConfiguration, req CredentialRequest, key resolvedKey) (string, error) {
+	switch cc.Format {
+	case sdjwtvc.CredentialFormat:
+		if req.SDJWTClaims == nil {
+			return "", fmt.Errorf("issuer: CredentialRequest.SDJWTClaims is required for format %q", cc.Format)
+		}
+		return iss.issueSDJWT(*req.SDJWTClaims, key)
+	case mdoc.CredentialFormat:
+		if req.MdocClaims == nil {
+			return "", fmt.Errorf("issuer: CredentialRequest.MdocClaims is required for format %q", cc.Format)
+		}
+		return iss.issueMdoc(*req.MdocClaims, key)
+	default:
+		return "", fmt.Errorf("issuer: format %q is not supported", cc.Format)
+	}
+}
+
+// issueSDJWT binds claims to key's public key via cnf.jwk (RFC 7800),
+// using key's original JWK bytes verbatim rather than re-deriving them
+// from the parsed crypto.PublicKey.
+func (iss *Issuer) issueSDJWT(claims sdjwtvc.Claims, key resolvedKey) (string, error) {
+	var cnfJWK map[string]any
+	if err := json.Unmarshal(key.JWKRaw, &cnfJWK); err != nil {
+		return "", fmt.Errorf("issuer: unmarshal jwk for cnf: %w", err)
+	}
+	claims.CNF = map[string]any{"jwk": cnfJWK}
+
+	sdjwt, _, err := sdjwtvc.Issue(iss.deps.SDJWTSigner.Signer, iss.deps.SDJWTSigner.Alg, claims, sdjwtvc.IssueOptions{
+		KeyID: iss.deps.SDJWTSigner.KeyID,
+	})
+	if err != nil {
+		return "", fmt.Errorf("issuer: issue sd-jwt vc: %w", err)
+	}
+	return sdjwt, nil
+}
+
+// issueMdoc binds claims to key's public key via DeviceKeyInfo.DeviceKey,
+// then encodes the result per Appendix A.2.4: base64url(CBOR(IssuerSigned)).
+func (iss *Issuer) issueMdoc(claims mdoc.Claims, key resolvedKey) (string, error) {
+	claims.DeviceKey = key.Public
+	signed, err := mdoc.Issue(iss.deps.MdocSigner.Signer, iss.deps.MdocSigner.Alg, claims, mdoc.IssueOptions{
+		X5Chain: iss.deps.MdocSigner.X5Chain,
+		KeyID:   iss.deps.MdocSigner.KeyID,
+	})
+	if err != nil {
+		return "", fmt.Errorf("issuer: issue mdoc: %w", err)
+	}
+	wire, err := signed.Marshal()
+	if err != nil {
+		return "", fmt.Errorf("issuer: marshal IssuerSigned: %w", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(wire), nil
+}
+
+// jwkHeaderKey extracts the JSON bytes of a jwt proof's "jwk" header
+// (Appendix F.1) — the only binding-key conveyance CredentialRequest
+// supports; kid/x5c are explicitly rejected rather than silently
+// ignored.
+func jwkHeaderKey(header map[string]any) (json.RawMessage, error) {
+	jwkVal, hasJWK := header["jwk"]
+	if _, hasKID := header["kid"]; hasKID {
+		return nil, fmt.Errorf("kid-based key resolution is not supported; use jwk")
+	}
+	if _, hasX5C := header["x5c"]; hasX5C {
+		return nil, fmt.Errorf("x5c-based key resolution is not supported; use jwk")
+	}
+	if !hasJWK {
+		return nil, fmt.Errorf("jwk header is required")
+	}
+	raw, err := json.Marshal(jwkVal)
+	if err != nil {
+		return nil, fmt.Errorf("marshal jwk header: %w", err)
+	}
+	return raw, nil
+}
