@@ -596,6 +596,52 @@ func TestWalletIssuerRoundTrip(t *testing.T) {
 	f.verifyIssuedSDJWT(t, result)
 }
 
+// fixedProofBindingKeyResolver plays the role of an issuer's trust
+// policy for a jwt-type proof's kid/x5c header
+// (issuer.ProofBindingKeyResolver): it always resolves to the one
+// binding key this test's proof is actually signed by, standing in for
+// whatever real trust mechanism (DID resolution, an x5c chain's own
+// trust anchor) a deployment would use.
+type fixedProofBindingKeyResolver struct{ pub crypto.PublicKey }
+
+func (r fixedProofBindingKeyResolver) ResolveProofBindingKey(context.Context, map[string]any) (crypto.PublicKey, error) {
+	return r.pub, nil
+}
+
+// TestWalletIssuerKidProofRoundTrip exercises a kid-conveyed jwt-type
+// proof end to end: wallet.GenerateProofWithKeyID signs a proof
+// pointing at a kid instead of embedding a jwk, wallet.RequestCredential
+// submits it via CredentialRequest.JWTProofs, and a real issuer.Issuer
+// resolves the binding key via issuer.ProofBindingKeyResolver before
+// issuing — proving wallet's kid-conveyed proof is exactly what
+// issuer's own inbound parsing (resolveProofBindingKey) expects.
+func TestWalletIssuerKidProofRoundTrip(t *testing.T) {
+	bindingKey := testP256Key(t)
+	f := newWalletIssuerRoundTripFixture(t, oid4vci.ProofTypeJWT,
+		issuer.ProofTypeConfiguration{ProofSigningAlgValuesSupported: []string{"ES256"}}, issuer.Dependencies{
+			ProofBindingKeys: fixedProofBindingKeyResolver{pub: &bindingKey.PublicKey},
+		})
+
+	kidProof, err := f.w.GenerateProofWithKeyID(bindingKey, "did:example:wallet#key-1", f.issuerURL.String(), f.cNonce)
+	if err != nil {
+		t.Fatalf("GenerateProofWithKeyID: %v", err)
+	}
+
+	resource := issuerCredentialFake{
+		iss:    f.iss,
+		auth:   issuer.AuthorizedRequest{Scopes: []string{"identity_credential"}},
+		claims: &sdjwtvc.Claims{VCT: walletIssuerRoundTripVCT},
+	}
+	result, err := f.w.RequestCredential(context.Background(), resource, f.credentialEndpoint, wallet.CredentialRequest{
+		CredentialConfigurationID: "IdentityCredential",
+		JWTProofs:                 []string{kidProof},
+	})
+	if err != nil {
+		t.Fatalf("RequestCredential: %v", err)
+	}
+	f.verifyIssuedSDJWT(t, result)
+}
+
 // fixedAttestationVerifier plays the role of an issuer's trust policy
 // for the attestation proof type (issuer.AttestationVerifier): it
 // always resolves to the one attestation-authority key this test

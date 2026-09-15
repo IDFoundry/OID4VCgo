@@ -29,10 +29,10 @@ type ProtectedResourceClient interface {
 }
 
 // CredentialRequest is a Wallet's own outbound Credential Request
-// (§8.2). Exactly one of Keys (jwt proof type) or Attestation
-// (attestation proof type) must be set — matching issuer's own
-// "proofs must contain exactly one proof type" rule. di_vp isn't
-// offered here yet (see the package doc comment).
+// (§8.2). At least one of Keys/JWTProofs (jwt proof type) must be set,
+// or Attestation (attestation proof type) — but not both groups,
+// matching issuer's own "proofs must contain exactly one proof type"
+// rule. di_vp isn't offered here yet (see the package doc comment).
 // credential_identifier-based requests aren't supported either,
 // matching issuer's own scope.
 type CredentialRequest struct {
@@ -43,10 +43,18 @@ type CredentialRequest struct {
 
 	// Keys is one crypto.Signer per Credential instance requested —
 	// len(Keys) > 1 requests a batch (§8.2's own multi-proof example).
-	// RequestCredential signs one jwt-type key proof per entry via
-	// GenerateProof, binding that Credential instance to that key.
-	// Set this, or Attestation, but not both.
+	// RequestCredential signs one jwk-conveyed jwt-type key proof per
+	// entry via GenerateProof, binding that Credential instance to that
+	// key. Set this, JWTProofs, or Attestation.
 	Keys []crypto.Signer
+
+	// JWTProofs is zero or more already-built jwt-type proof JWTs —
+	// typically from GenerateProofWithKeyID or GenerateProofWithX5C,
+	// for a kid- or x5c-conveyed binding key RequestCredential has no
+	// signer-driven way to build itself. Appended to Keys' own
+	// generated proofs in the outbound "jwt" proofs array — a request
+	// may set Keys, JWTProofs, or both, but not alongside Attestation.
+	JWTProofs []string
 
 	// Attestation, if non-empty, selects the attestation proof type
 	// instead of Keys (Appendix F.3): a single, already-built Key
@@ -98,8 +106,10 @@ func (w *Wallet) RequestCredential(
 	if req.CredentialConfigurationID == "" {
 		return CredentialResult{}, fmt.Errorf("wallet: request credential: credential_configuration_id is required")
 	}
-	if (len(req.Keys) == 0) == (req.Attestation == "") {
-		return CredentialResult{}, fmt.Errorf("wallet: request credential: exactly one of keys or attestation is required")
+	hasJWT := len(req.Keys) > 0 || len(req.JWTProofs) > 0
+	hasAttestation := req.Attestation != ""
+	if hasJWT == hasAttestation {
+		return CredentialResult{}, fmt.Errorf("wallet: request credential: exactly one of keys/jwt_proofs or attestation is required")
 	}
 
 	proofs, err := w.buildCredentialProofs(req)
@@ -118,15 +128,16 @@ func (w *Wallet) RequestCredential(
 }
 
 // buildCredentialProofs builds req's own "proofs" object: one jwt-type
-// proof per req.Keys entry (via GenerateProof), or req.Attestation
-// as-is under the attestation proof type — see CredentialRequest's own
-// doc comment for why these are mutually exclusive.
+// proof per req.Keys entry (via GenerateProof) plus req.JWTProofs
+// as-is, or req.Attestation as-is under the attestation proof type —
+// see CredentialRequest's own doc comment for why these two groups are
+// mutually exclusive.
 func (w *Wallet) buildCredentialProofs(req CredentialRequest) (map[string][]string, error) {
 	if req.Attestation != "" {
 		return map[string][]string{oid4vci.ProofTypeAttestation: {req.Attestation}}, nil
 	}
 
-	proofs := make([]string, 0, len(req.Keys))
+	proofs := make([]string, 0, len(req.Keys)+len(req.JWTProofs))
 	for i, signer := range req.Keys {
 		proof, err := w.GenerateProof(signer, req.CredentialIssuer, req.Nonce)
 		if err != nil {
@@ -134,5 +145,6 @@ func (w *Wallet) buildCredentialProofs(req CredentialRequest) (map[string][]stri
 		}
 		proofs = append(proofs, proof)
 	}
+	proofs = append(proofs, req.JWTProofs...)
 	return map[string][]string{oid4vci.ProofTypeJWT: proofs}, nil
 }

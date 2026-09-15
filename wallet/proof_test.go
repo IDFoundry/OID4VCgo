@@ -67,6 +67,92 @@ func TestGenerateProof(t *testing.T) {
 	}
 }
 
+func TestGenerateProofWithKeyID(t *testing.T) {
+	w, err := wallet.New(validConfig(), validDependencies())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	key := testP256Key(t)
+
+	proof, err := w.GenerateProofWithKeyID(key, "did:example:wallet#key-1", "https://issuer.example.com", "test-nonce")
+	if err != nil {
+		t.Fatalf("GenerateProofWithKeyID: %v", err)
+	}
+
+	header, payload, err := jose.Verify(jose.ES256, &key.PublicKey, proof)
+	if err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	if header["typ"] != "openid4vci-proof+jwt" {
+		t.Errorf("typ = %v, want openid4vci-proof+jwt", header["typ"])
+	}
+	if header["kid"] != "did:example:wallet#key-1" {
+		t.Errorf("kid = %v, want did:example:wallet#key-1", header["kid"])
+	}
+	if _, ok := header["jwk"]; ok {
+		t.Errorf("jwk header present, want absent")
+	}
+
+	var body struct {
+		Aud   string `json:"aud"`
+		Nonce string `json:"nonce"`
+	}
+	if err := json.Unmarshal(payload, &body); err != nil {
+		t.Fatalf("unmarshal payload: %v", err)
+	}
+	if body.Aud != "https://issuer.example.com" {
+		t.Errorf("aud = %q", body.Aud)
+	}
+	if body.Nonce != "test-nonce" {
+		t.Errorf("nonce = %q", body.Nonce)
+	}
+}
+
+func TestGenerateProofWithKeyID_RejectsEmptyKeyID(t *testing.T) {
+	w, err := wallet.New(validConfig(), validDependencies())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err := w.GenerateProofWithKeyID(testP256Key(t), "", "https://issuer.example.com", ""); err == nil {
+		t.Fatalf("GenerateProofWithKeyID = nil error, want error")
+	}
+}
+
+func TestGenerateProofWithX5C(t *testing.T) {
+	w, err := wallet.New(validConfig(), validDependencies())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	key := testP256Key(t)
+
+	proof, err := w.GenerateProofWithX5C(key, []string{"AAAA", "BBBB"}, "https://issuer.example.com", "")
+	if err != nil {
+		t.Fatalf("GenerateProofWithX5C: %v", err)
+	}
+
+	header, _, err := jose.Verify(jose.ES256, &key.PublicKey, proof)
+	if err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	x5c, ok := header["x5c"].([]any)
+	if !ok || len(x5c) != 2 || x5c[0] != "AAAA" || x5c[1] != "BBBB" {
+		t.Errorf("x5c = %v, want [AAAA BBBB]", header["x5c"])
+	}
+	if _, ok := header["jwk"]; ok {
+		t.Errorf("jwk header present, want absent")
+	}
+}
+
+func TestGenerateProofWithX5C_RejectsEmptyChain(t *testing.T) {
+	w, err := wallet.New(validConfig(), validDependencies())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err := w.GenerateProofWithX5C(testP256Key(t), nil, "https://issuer.example.com", ""); err == nil {
+		t.Fatalf("GenerateProofWithX5C = nil error, want error")
+	}
+}
+
 func TestGenerateProof_OmitsNonceWhenEmpty(t *testing.T) {
 	w, err := wallet.New(validConfig(), validDependencies())
 	if err != nil {

@@ -71,19 +71,27 @@
 // GenerateAttestationProof exists for the cases where the caller's own
 // signer can produce one directly.
 //
+// GenerateProofWithKeyID and GenerateProofWithX5C sign a jwt-type
+// proof (Appendix F.1) the same way GenerateProof does, but binding it
+// via a "kid" or "x5c" header instead of embedding the key material as
+// "jwk" — for a Credential Issuer that trusts a key by identifier or
+// certificate rather than needing it conveyed inline. This package
+// takes no position on how kid/x5c actually resolve to a trusted key
+// on the issuer's own side; see issuer.ProofBindingKeyResolver's doc
+// comment for that half. Since RequestCredential's own Keys field only
+// ever builds jwk-conveyed proofs, a caller wanting kid/x5c passes the
+// result of either method through CredentialRequest.JWTProofs instead.
+//
 // # Status
 //
 // ResolveCredentialOffer, RequestNonce, GenerateProof,
-// GenerateAttestationProof, RequestCredential, BuildAuthorizationRequest,
-// RequestDeferredCredential, RequestNotification,
-// RequestPreAuthorizedCodeToken, GenerateDPoPProof and
-// DPoPAccessTokenHash exist so far. This package does not yet cover:
+// GenerateProofWithKeyID, GenerateProofWithX5C, GenerateAttestationProof,
+// RequestCredential, BuildAuthorizationRequest, RequestDeferredCredential,
+// RequestNotification, RequestPreAuthorizedCodeToken, GenerateDPoPProof
+// and DPoPAccessTokenHash exist so far. This package does not yet cover:
 //
 //   - di_vp proofs (needs W3C VCDM, which this repo doesn't implement,
-//     matching issuer's own scope), and kid/x5c-conveyed binding keys
-//     for the jwt proof type (only jwk, matching issuer's own scope —
-//     issuer explicitly rejects kid/x5c rather than silently ignoring
-//     them).
+//     matching issuer's own scope).
 //   - Request/response encryption (§10).
 //
 // A Wallet MUST treat a Credential Offer's contents as untrustworthy
