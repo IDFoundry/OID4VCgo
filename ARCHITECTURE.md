@@ -2,18 +2,21 @@
 
 > **Status: early scaffolding.** `credential/sdjwtvc` (SD-JWT VC issuance,
 > presentation and verification, including Key Binding), `credential/mdoc`
-> (ISO/IEC 18013-5 mdoc issuer-side: IssuerSigned/MSO/IssuerAuth, DeviceSigned
-> deferred), `statuslist` (Token Status List issuance and checking),
-> `attestation` (Key Attestation, and the OID4VCI-specific extra claims on
-> top of FAPIgo's Wallet Attestation), the `internal/jose` JWS helper
-> `credential/sdjwtvc`/`statuslist`/`attestation` build on, `internal/cose`
-> (a COSE_Sign1 signer/verifier, the same role for `credential/mdoc` and,
-> in time, `statuslist`'s CWT encoding), and a first slice of `issuer`
-> (Nonce Endpoint + a Metadata shape covering what SD-JWT VC issuance
-> needs) are implemented and tested; everything else below is still just
-> the planned layout, not a finished system. Update each section as the
-> corresponding package actually lands; don't let this drift into
-> aspirational documentation for code that doesn't exist.
+> (ISO/IEC 18013-5 mdoc, both roles: IssuerSigned/MSO/IssuerAuth on the
+> issuer side, DeviceSigned/mdoc authentication on the Holder side),
+> `statuslist` (Token Status List issuance and checking, both the JWT and
+> CWT encodings), `attestation` (Key Attestation, and the OID4VCI-specific
+> extra claims on top of FAPIgo's Wallet Attestation), the `internal/jose`
+> JWS helper `credential/sdjwtvc`/`statuslist`/`attestation` build on,
+> `internal/cose` (COSE_Sign1 and COSE_Mac0 signers/verifiers, the same
+> role for `credential/mdoc` and `statuslist`'s CWT encoding),
+> `internal/hkdf` (RFC 5869, for `credential/mdoc`'s DeviceMac key
+> derivation), and a first slice of `issuer` (Nonce Endpoint + a Metadata
+> shape covering SD-JWT VC and mso_mdoc issuance) are implemented and
+> tested; everything else below is still just the planned layout, not a
+> finished system. Update each section as the corresponding package
+> actually lands; don't let this drift into aspirational documentation
+> for code that doesn't exist.
 
 ## Scope
 
@@ -98,49 +101,84 @@ shape from the phase-by-phase plan, not a description of current code.
   analog) to derive a real interface from yet — revisit once a third
   format or an actual multi-format caller (`issuer`) needs one, rather
   than guessing at the shape now.
-- **`internal/cose`** (done) — a small, self-contained COSE_Sign1
-  (RFC 9052 §4.2) signer/verifier, the CBOR/COSE equivalent of
-  `internal/jose`: same curated algorithm set (ES256, EdDSA), same
+- **`internal/cose`** (done) — small, self-contained COSE_Sign1 (RFC 9052
+  §4.2) and COSE_Mac0 (RFC 9052 §6.2) signers/verifiers, the CBOR/COSE
+  equivalent of `internal/jose`: same curated algorithm set for signing
+  (ES256, EdDSA) plus HMAC256 ("HMAC 256/256") for MACing, same
   `Sign`/`Verify`/`DecodeUnverified` shape, but with COSE's
   protected/unprotected header split (`Headers{Alg,KID,Typ,X5Chain}`)
-  instead of JOSE's single header object. Handles both the untagged form
-  (matching mdoc's own `IssuerAuth = COSE_Sign1` CDDL) via
-  `Sign`/`Verify`/`DecodeUnverified`, and `COSE_Sign1_Tagged`
+  instead of JOSE's single header object. Handles the untagged COSE_Sign1
+  form (matching mdoc's own `IssuerAuth = COSE_Sign1` CDDL) via
+  `Sign`/`Verify`/`DecodeUnverified`; `COSE_Sign1_Tagged`
   (`#6.18(COSE_Sign1)`, which `statuslist`'s CWT-format Status List Token
-  uses) via `SignTagged`/`VerifyTagged`/`DecodeUnverifiedTagged`; always-
-  embedded payload only (COSE's detached-payload form isn't needed).
-  Built on `github.com/fxamacker/cbor/v2` for raw CBOR encoding
-  — Go's stdlib has none, and this is the repo's first non-FAPIgo
-  dependency; hand-rolling CBOR itself was ruled out as materially
-  riskier than hand-rolling JWS was (CBOR's major-type/indefinite-length/
-  canonical-encoding surface is much larger, and a subtle bug there would
-  silently break every COSE signature). It knows nothing about
-  `IssuerSigned`, the MSO, `StatusList`, or any other caller-specific
-  structure — those are `credential/mdoc`'s and `statuslist`'s own CBOR
-  struct definitions on top of `fxamacker/cbor` directly, calling into
-  this package only for the COSE_Sign1 envelope. Its ECDSA DER/fixed-width R||S conversion (the
-  one piece of logic identical to `internal/jose`'s own ES256 handling,
-  since JWS and COSE made the same encoding choice) lives in
-  `internal/ecdsafixed`, shared by both rather than duplicated.
-- **`credential/mdoc`** (issuer side done) — ISO/IEC 18013-5 mdoc:
-  `Issue`/`Verify` for `IssuerSigned` (namespace/data-element digest+salt
-  selective disclosure, §10.3.3), the Mobile Security Object (§12.3.4),
-  and `IssuerAuth` (built on `internal/cose`), plus `CoseKey` for
-  `DeviceKeyInfo.DeviceKey` (the mdoc analog of SD-JWT VC's `cnf.jwk`).
-  Field order in `IssuerSignedItem`/`MobileSecurityObject` matches
-  §10.3.3/§12.3.4's own CDDL exactly and the package's CBOR encoder
-  isn't configured for canonical/sorted map keys — both deliberate,
-  since together they make the encoding reproduce a real issuer's
-  byte-for-byte: its tests include five of ISO/IEC 18013-5's own Annex
-  D.4.1.2 worked-example digests (string, tagged-date, and
-  array-of-structs element values), checked against the exact SHA-256
-  values that worked example publishes, not just round-trip checks.
-  `IssuerSigned.Marshal`/`UnmarshalIssuerSigned` handle the actual
-  §10.3.3 CBOR wire form. `DeviceSigned` (Holder proof-of-possession at
-  presentation time) and MSO revocation (`status`, §12.3.6 — `statuslist`
-  now has the CWT encoding this needs, but mdoc doesn't consume it yet)
-  are deliberately out of scope for this slice — see the package doc
-  comment.
+  uses) via `SignTagged`/`VerifyTagged`/`DecodeUnverifiedTagged`; a
+  detached COSE_Sign1 payload (mdoc's DeviceSignature, §12.4.6) via
+  `SignDetached`/`VerifyDetached`; and COSE_Mac0 (mdoc's DeviceMac,
+  §12.4.5, always detached — no embedded-payload form exists here) via
+  `ComputeMAC`/`VerifyMAC`. Built on `github.com/fxamacker/cbor/v2` for
+  raw CBOR encoding — Go's stdlib has none, and this is the repo's first
+  non-FAPIgo dependency; hand-rolling CBOR itself was ruled out as
+  materially riskier than hand-rolling JWS was (CBOR's major-type/
+  indefinite-length/canonical-encoding surface is much larger, and a
+  subtle bug there would silently break every COSE signature). It knows
+  nothing about `IssuerSigned`, the MSO, `DeviceAuthentication`,
+  `StatusList`, or any other caller-specific structure, nor about key
+  agreement (`ComputeMAC`/`VerifyMAC` take an already-derived HMAC key —
+  deriving mdoc's EMacKey via ECKA-DH/HKDF is `credential/mdoc`'s job) —
+  those are `credential/mdoc`'s and `statuslist`'s own CBOR struct
+  definitions on top of `fxamacker/cbor` directly, calling into this
+  package only for the COSE envelope itself. Its ECDSA DER/fixed-width
+  R||S conversion (the one piece of logic identical to `internal/jose`'s
+  own ES256 handling, since JWS and COSE made the same encoding choice)
+  lives in `internal/ecdsafixed`, shared by both rather than duplicated.
+- **`internal/hkdf`** (done) — HKDF (RFC 5869) using SHA-256, hand-rolled
+  and checked against the RFC's own three SHA-256 test vectors
+  (Appendix A.1-A.3) — the one piece of key-agreement machinery
+  `credential/mdoc`'s DeviceMac needs (deriving EMacKey from an ECDH
+  shared secret) that `internal/cose` deliberately doesn't own.
+- **`credential/mdoc`** (done) — ISO/IEC 18013-5 mdoc, both roles:
+  - **Issuer side**: `Issue`/`Verify` for `IssuerSigned`
+    (namespace/data-element digest+salt selective disclosure, §10.3.3),
+    the Mobile Security Object (§12.3.4), and `IssuerAuth` (built on
+    `internal/cose`), plus `CoseKey` for `DeviceKeyInfo.DeviceKey` (the
+    mdoc analog of SD-JWT VC's `cnf.jwk`). Field order in
+    `IssuerSignedItem`/`MobileSecurityObject` matches §10.3.3/§12.3.4's
+    own CDDL exactly and the package's CBOR encoder isn't configured for
+    canonical/sorted map keys — both deliberate, since together they
+    make the encoding reproduce a real issuer's byte-for-byte: its tests
+    include five of ISO/IEC 18013-5's own Annex D.4.1.2 worked-example
+    digests (string, tagged-date, and array-of-structs element values),
+    checked against the exact SHA-256 values that worked example
+    publishes, not just round-trip checks. `IssuerSigned.Marshal`/
+    `UnmarshalIssuerSigned` handle the actual §10.3.3 CBOR wire form.
+  - **Holder/presentation side**: `SignDeviceSignature`/
+    `VerifyDeviceSignature` (ECDSA/EdDSA mdoc authentication, §12.4.6)
+    and `ComputeDeviceMAC`/`VerifyDeviceMAC` (ECDH-agreed MAC
+    authentication, §12.4.5, P-256 only — see `deriveEMacKey`'s own doc
+    comment for why Ed25519 can't do this one) for `DeviceSigned`
+    (§10.3.3), plus `CheckKeyAuthorizations` (§12.8.2 step 1).
+    `SessionTranscript` construction (`DeviceEngagement`, `EReaderKey`,
+    `Handover`, §12.7.1) is explicitly out of scope — every function
+    that needs it takes `SessionTranscriptBytes` as an opaque,
+    caller-supplied value, since building it for an OID4VP presentation
+    is that spec's own "Handover" concern, not ISO/IEC 18013-5's
+    proximity-flow one. `DeviceSigned.Marshal`/`UnmarshalDeviceSigned`
+    handle the actual §10.3.3 CBOR wire form.
+  - Both `IssuerSigned` and `DeviceSigned` cache the exact bytes they
+    authenticated (`rawItems`/`nameSpacesBytes`) rather than re-deriving
+    them from the decoded Go value on every `Marshal`/`Verify` call —
+    necessary because Go randomizes map iteration order, so a
+    native-map-typed element value could otherwise encode differently
+    each time, breaking a previously-valid digest or signature purely
+    from re-encoding, not any real tampering. Both types' own doc
+    comments cover this; both have a regression test (a multi-key native
+    map element, verified reliably across many Issue/Sign →
+    Marshal/Unmarshal → Verify cycles) that fails deterministically
+    without the cache and passes reliably with it.
+  - MSO revocation (the optional `status` member, §12.3.6) is deferred:
+    `statuslist` has the CWT/COSE encoding this needs
+    (`StatusListRef.CWTStatusClaim`/`ParseCWTStatusClaim`), but
+    `MobileSecurityObject` doesn't wire it in yet.
 - **`statuslist`** (done) — Token Status List (`draft-ietf-oauth-status-list-12`),
   both encodings: bit-packing and ZLIB compression (`Pack`/`Unpack`,
   `New`/`Decode`, shared by both), Status List Token issuance/verification

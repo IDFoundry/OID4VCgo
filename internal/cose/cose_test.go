@@ -229,6 +229,63 @@ func TestSignRejectsNilPayload(t *testing.T) {
 	}
 }
 
+func TestSignVerifyDetachedRoundTrip(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	payload := []byte(`{"a":1}`)
+
+	sign1, err := SignDetached(ES256, key, Headers{}, Headers{}, payload, nil)
+	if err != nil {
+		t.Fatalf("SignDetached: %v", err)
+	}
+
+	protected, _, err := VerifyDetached(ES256, &key.PublicKey, sign1, payload, nil)
+	if err != nil {
+		t.Fatalf("VerifyDetached: %v", err)
+	}
+	if protected.Alg != ES256 {
+		t.Errorf("protected.Alg = %d, want %d", protected.Alg, ES256)
+	}
+
+	if _, _, err := VerifyDetached(ES256, &key.PublicKey, sign1, []byte(`{"a":2}`), nil); err == nil {
+		t.Errorf("VerifyDetached accepted the wrong detached payload")
+	}
+}
+
+func TestSignDetachedRejectsNilPayload(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	if _, err := SignDetached(ES256, key, Headers{}, Headers{}, nil, nil); err == nil {
+		t.Errorf("SignDetached accepted a nil payload")
+	}
+}
+
+func TestVerifyRejectsDetachedPayloadOnEmbedded(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	embedded, err := Sign(ES256, key, Headers{}, Headers{}, []byte(`{"a":1}`), nil)
+	if err != nil {
+		t.Fatalf("Sign: %v", err)
+	}
+	if _, _, err := VerifyDetached(ES256, &key.PublicKey, embedded, []byte(`{"a":1}`), nil); err == nil {
+		t.Errorf("VerifyDetached accepted a COSE_Sign1 with an embedded payload")
+	}
+
+	detached, err := SignDetached(ES256, key, Headers{}, Headers{}, []byte(`{"a":1}`), nil)
+	if err != nil {
+		t.Fatalf("SignDetached: %v", err)
+	}
+	if _, _, _, err := Verify(ES256, &key.PublicKey, detached, nil); err == nil {
+		t.Errorf("Verify accepted a COSE_Sign1 with a detached payload")
+	}
+}
+
 func TestVerifyRejectsTampering(t *testing.T) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {

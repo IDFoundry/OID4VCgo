@@ -7,6 +7,8 @@ import (
 	"math/big"
 	"time"
 
+	"github.com/fxamacker/cbor/v2"
+
 	"github.com/idfoundry/oid4vcigo/internal/cose"
 )
 
@@ -95,7 +97,7 @@ func Issue(signer crypto.Signer, alg cose.Alg, claims Claims, opts IssueOptions)
 		digestAlg = SHA256
 	}
 
-	nameSpaces, valueDigests, err := issueNameSpaces(claims.NameSpaces, digestAlg)
+	nameSpaces, rawItems, valueDigests, err := issueNameSpaces(claims.NameSpaces, digestAlg)
 	if err != nil {
 		return IssuerSigned{}, err
 	}
@@ -138,61 +140,69 @@ func Issue(signer crypto.Signer, alg cose.Alg, claims Claims, opts IssueOptions)
 		return IssuerSigned{}, fmt.Errorf("mdoc: sign IssuerAuth: %w", err)
 	}
 
-	return IssuerSigned{NameSpaces: nameSpaces, IssuerAuth: issuerAuth}, nil
+	return IssuerSigned{NameSpaces: nameSpaces, IssuerAuth: issuerAuth, rawItems: rawItems}, nil
 }
 
 func issueNameSpaces(
 	claimed map[string]map[string]interface{}, digestAlg DigestAlg,
-) (map[string][]IssuerSignedItem, map[string]DigestIDs, error) {
-	nameSpaces := make(map[string][]IssuerSignedItem, len(claimed))
-	valueDigests := make(map[string]DigestIDs, len(claimed))
+) (nameSpaces map[string][]IssuerSignedItem, rawItems map[string][]cbor.RawMessage, valueDigests map[string]DigestIDs, err error) {
+	nameSpaces = make(map[string][]IssuerSignedItem, len(claimed))
+	rawItems = make(map[string][]cbor.RawMessage, len(claimed))
+	valueDigests = make(map[string]DigestIDs, len(claimed))
 	for namespace, elements := range claimed {
 		if len(elements) == 0 {
-			return nil, nil, fmt.Errorf("mdoc: namespace %q has no data elements", namespace)
+			return nil, nil, nil, fmt.Errorf("mdoc: namespace %q has no data elements", namespace)
 		}
 		usedIDs := make(map[uint64]bool, len(elements))
 		items := make([]IssuerSignedItem, 0, len(elements))
+		itemBytesList := make([]cbor.RawMessage, 0, len(elements))
 		digests := make(DigestIDs, len(elements))
 		for identifier, value := range elements {
-			item, d, err := issueItem(identifier, value, digestAlg, usedIDs)
+			item, itemBytes, d, err := issueItem(identifier, value, digestAlg, usedIDs)
 			if err != nil {
-				return nil, nil, err
+				return nil, nil, nil, err
 			}
 			items = append(items, item)
+			itemBytesList = append(itemBytesList, itemBytes)
 			digests[item.DigestID] = d
 		}
 		nameSpaces[namespace] = items
+		rawItems[namespace] = itemBytesList
 		valueDigests[namespace] = digests
 	}
-	return nameSpaces, valueDigests, nil
+	return nameSpaces, rawItems, valueDigests, nil
 }
 
+// issueItem builds one IssuerSignedItem, returning both it and its
+// exact IssuerSignedItemBytes (for IssuerSigned's rawItems cache — see
+// that type's doc comment) alongside the digest computed over those
+// same bytes.
 func issueItem(
 	identifier string, value interface{}, digestAlg DigestAlg, usedIDs map[uint64]bool,
-) (IssuerSignedItem, []byte, error) {
+) (item IssuerSignedItem, itemBytes []byte, digestOut []byte, err error) {
 	digestID, err := randomDigestID(usedIDs)
 	if err != nil {
-		return IssuerSignedItem{}, nil, err
+		return IssuerSignedItem{}, nil, nil, err
 	}
 	random := make([]byte, randomMinLength)
 	if _, err := rand.Read(random); err != nil {
-		return IssuerSignedItem{}, nil, fmt.Errorf("mdoc: generate random salt: %w", err)
+		return IssuerSignedItem{}, nil, nil, fmt.Errorf("mdoc: generate random salt: %w", err)
 	}
-	item := IssuerSignedItem{
+	item = IssuerSignedItem{
 		DigestID:          digestID,
 		Random:            random,
 		ElementIdentifier: identifier,
 		ElementValue:      value,
 	}
-	itemBytes, err := issuerSignedItemBytes(item)
+	itemBytes, err = issuerSignedItemBytes(item)
 	if err != nil {
-		return IssuerSignedItem{}, nil, err
+		return IssuerSignedItem{}, nil, nil, err
 	}
-	d, err := digest(digestAlg, itemBytes)
+	digestOut, err = digest(digestAlg, itemBytes)
 	if err != nil {
-		return IssuerSignedItem{}, nil, err
+		return IssuerSignedItem{}, nil, nil, err
 	}
-	return item, d, nil
+	return item, itemBytes, digestOut, nil
 }
 
 // randomDigestID draws a DigestID smaller than 2^31 (§12.3.4) not
