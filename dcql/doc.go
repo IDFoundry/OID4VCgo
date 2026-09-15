@@ -21,8 +21,9 @@
 // B.3.5/B.2.3 — the two Credential Format Identifiers this repo
 // actually issues), and the Claims Path Pointer type Path (§7) exist
 // now, each with a Validate() checking the spec's own structural
-// MUSTs. Claims Path Pointer *evaluation* (walking a Path against an
-// actual credential to select the claim it addresses) has no exported
-// function here yet — that's wallet-presentation's own job once it
-// exists; see Path's own doc comment.
+// MUSTs. Path.Select implements §7.1's own JSON-based evaluation
+// semantics — the shared low-level primitive both verifier and the
+// future wallet-presentation role build their own, higher-level,
+// role-specific decisions on top of; see Path's own doc comment for
+// exactly where that split falls.
 package dcql

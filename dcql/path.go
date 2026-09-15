@@ -94,11 +94,21 @@ func (p *PathElement) UnmarshalJSON(data []byte) error {
 }
 
 // Path is a Claims Path Pointer (§7): a non-empty sequence of
-// PathElement addressing a specific claim within a Credential.
-// Evaluating a Path against an actual credential (§7.1's JSON
-// semantics for "dc+sd-jwt", §7.2's two-component form for
-// "mso_mdoc") is the wallet-presentation role's own job, not this
-// package's — see the package doc comment.
+// PathElement addressing a specific claim within a Credential. Select
+// implements §7.1's own JSON-based evaluation semantics — the one
+// shared low-level primitive both verifier (checking a returned
+// Presentation actually carries what a Claims Query asked for, §8.6
+// point 3) and the future wallet-presentation role (deciding which
+// held credential satisfies a whole Query) need identically. The
+// higher-level decision each of those makes with Select's own result —
+// picking among several held credentials, or accepting/rejecting an
+// entire multi-Credential response — stays role-specific, the same
+// "shared primitive, role-specific workflow" split this package's own
+// doc comment draws for the wire types. mdoc's §7.2 form has no
+// equivalent Select here: MdocNamespaceAndElement already reports its
+// only two possible components, and looking those up is a plain map
+// access once a caller has decoded the mdoc's own namespace structure
+// — nothing this package's own JSON-walking Select adds value to.
 type Path []PathElement
 
 // Validate checks p's own structural MUST: non-empty (§6.3's own
@@ -108,6 +118,62 @@ func (p Path) Validate() error {
 		return fmt.Errorf("dcql: path must be non-empty")
 	}
 	return nil
+}
+
+// Select evaluates p against root — the top-level JSON object of a
+// JSON-based Credential (a "dc+sd-jwt"'s own resolved claims, e.g.
+// credential/sdjwtvc.Verify's own return value) — per §7.1.1's exact
+// processing rules: a key component selects that member of every
+// currently-selected object, silently dropping an element where the
+// key is absent; a Wildcard selects every element of every
+// currently-selected array; an index component selects that index of
+// every currently-selected array, silently dropping an array lacking
+// it. Selecting a key/index/Wildcard against an element that isn't an
+// object/array/array (respectively) is a hard processing error, not a
+// silent drop — as is the selection becoming empty after any step.
+func (p Path) Select(root any) ([]any, error) {
+	if err := p.Validate(); err != nil {
+		return nil, err
+	}
+	selection := []any{root}
+	for _, elem := range p {
+		var next []any
+		switch {
+		case elem.IsKey():
+			for _, v := range selection {
+				obj, ok := v.(map[string]any)
+				if !ok {
+					return nil, fmt.Errorf("dcql: path: select %q: not an object", elem.Key())
+				}
+				if child, present := obj[elem.Key()]; present {
+					next = append(next, child)
+				}
+			}
+		case elem.IsWildcard():
+			for _, v := range selection {
+				arr, ok := v.([]any)
+				if !ok {
+					return nil, fmt.Errorf("dcql: path: select wildcard: not an array")
+				}
+				next = append(next, arr...)
+			}
+		case elem.IsIndex():
+			for _, v := range selection {
+				arr, ok := v.([]any)
+				if !ok {
+					return nil, fmt.Errorf("dcql: path: select index %d: not an array", elem.Index())
+				}
+				if elem.Index() < len(arr) {
+					next = append(next, arr[elem.Index()])
+				}
+			}
+		}
+		if len(next) == 0 {
+			return nil, fmt.Errorf("dcql: path: selection is empty")
+		}
+		selection = next
+	}
+	return selection, nil
 }
 
 // MdocNamespaceAndElement reports p's own two mdoc-specific
