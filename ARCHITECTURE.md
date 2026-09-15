@@ -11,8 +11,11 @@
 > `internal/cose` (COSE_Sign1 and COSE_Mac0 signers/verifiers, the same
 > role for `credential/mdoc` and `statuslist`'s CWT encoding),
 > `internal/hkdf` (RFC 5869, for `credential/mdoc`'s DeviceMac key
-> derivation), `internal/jwk` (JWK marshal/parse, shared by `attestation`
-> and `issuer`), the root `oid4vci` package (wire value types shared by
+> derivation), `internal/jwe` (RFC 7516 JWE Compact Serialization,
+> ECDH-ES + AES-GCM, for OID4VCI 1.0 §10 — not yet wired into
+> `issuer`/`wallet`), `internal/jwk` (JWK marshal/parse, shared by
+> `attestation` and `issuer`), the root `oid4vci` package (wire value
+> types shared by
 > `issuer` and `wallet`: `CredentialOffer` and its `Grants` family,
 > `IssuedCredential`/`CredentialResponse`, `ProofTypeJWT`/
 > `ProofTypeAttestation`, `NotificationEvent`), `issuer` (Nonce Endpoint,
@@ -153,6 +156,34 @@ shape from the phase-by-phase plan, not a description of current code.
   (Appendix A.1-A.3) — the one piece of key-agreement machinery
   `credential/mdoc`'s DeviceMac needs (deriving EMacKey from an ECDH
   shared secret) that `internal/cose` deliberately doesn't own.
+- **`internal/jwe`** (done) — a small, self-contained JWE Compact
+  Serialization (RFC 7516) encryptor/decryptor for OID4VCI 1.0 §10's
+  Encrypted Credential Requests and Responses: `Encrypt`/`Decrypt` (plus
+  `DecodeHeader`, mirroring `internal/jose.DecodeUnverified`'s own role
+  — read `kid` to pick a private key before calling `Decrypt`). Scope is
+  deliberately narrow, matching `internal/jose`'s own "curated set, not
+  the full JWA registry" restraint: ECDH-ES (RFC 7518 §4.6, Direct Key
+  Agreement only — no key wrapping) over a P-256 EC key for key
+  management, A128GCM/A192GCM/A256GCM (RFC 7518 §5.3) for content
+  encryption, and optional raw-DEFLATE compression
+  (`"zip":"DEF"`) — exactly §10's own worked example combination
+  (Appendix I.1). `crypto/ecdh` does the actual scalar multiplication;
+  this package only implements the Concat KDF (NIST SP 800-56A §5.8.1,
+  as profiled by RFC 7518 §4.6.2 — single-round only, since every `Enc`
+  this package supports needs at most 32 output bytes against SHA-256's
+  32-byte output) and the JWE framing around AES-GCM, the same
+  narrow-primitive restraint `internal/hkdf` set for RFC 5869. No
+  apu/apv (Agreement PartyUInfo/PartyVInfo) support — both are always
+  empty in the Concat KDF's own OtherInfo, since OID4VCI's own examples
+  don't use them. Cross-checked bidirectionally against Python's
+  `jwcrypto` (Go-encrypted JWEs decrypt correctly there, and vice versa)
+  for every `Enc` value and the `zip` path, not just Go-only round-trip
+  tests, since ECDH-ES's Concat KDF is exactly the kind of
+  precisely-specified-but-easy-to-get-subtly-wrong construction a
+  same-language round-trip test can't catch a shared bug in. Not yet
+  wired into `issuer`/`wallet` — see `CredentialRequest`'s own doc
+  comment (`issuer` package) for the metadata/Dependencies/request-flow
+  work that still needs building on top of this primitive.
 - **`internal/jwk`** (done) — a small, self-contained JWK (RFC 7517)
   marshaler/parser for the two key types `internal/jose` signs with
   (P-256 EC, Ed25519 OKP). Originally `attestation`'s own private
