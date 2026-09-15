@@ -143,19 +143,48 @@ func newPreAuthorizedCodeFixture(t *testing.T) preAuthorizedCodeFixture {
 	return preAuthorizedCodeFixture{iss: iss, codes: codes, replay: replay, tokens: tokens, now: now}
 }
 
-func TestExchangePreAuthorizedCode_Success(t *testing.T) {
-	f := newPreAuthorizedCodeFixture(t)
-	if err := f.codes.Issue(context.Background(), "code-1", issuer.PreAuthorizedCodeRecord{
-		Scopes: []string{"identity_credential"}, ExpiresAt: f.now.Add(time.Minute),
-	}); err != nil {
+// issue persists record under code, failing the test on error — every
+// case below issues a record it expects to be found (or deliberately
+// skips this call to exercise the unknown-code path).
+func (f preAuthorizedCodeFixture) issue(t *testing.T, code string, record issuer.PreAuthorizedCodeRecord) {
+	t.Helper()
+	if err := f.codes.Issue(context.Background(), code, record); err != nil {
 		t.Fatalf("Issue: %v", err)
 	}
+}
 
+// validProof builds a real DPoP proof, targeting testTokenEndpointURL,
+// via a throwaway *wallet.Wallet — the same reuse GenerateDPoPProof's
+// own doc comment names.
+func (f preAuthorizedCodeFixture) validProof(t *testing.T) string {
+	t.Helper()
 	w := testWalletForDPoP(t, f.now)
 	proof, err := w.GenerateDPoPProof(testP256Key(t), "POST", testTokenEndpointURL(t).String(), "", "")
 	if err != nil {
 		t.Fatalf("GenerateDPoPProof: %v", err)
 	}
+	return proof
+}
+
+// requireIssuerErrorCode fails the test unless err is an *issuer.Error
+// carrying exactly code.
+func requireIssuerErrorCode(t *testing.T, err error, code issuer.ErrorCode) {
+	t.Helper()
+	var ierr *issuer.Error
+	if !errors.As(err, &ierr) {
+		t.Fatalf("error = %v, want *issuer.Error", err)
+	}
+	if ierr.Code() != code {
+		t.Errorf("Code = %q, want %q", ierr.Code(), code)
+	}
+}
+
+func TestExchangePreAuthorizedCode_Success(t *testing.T) {
+	f := newPreAuthorizedCodeFixture(t)
+	f.issue(t, "code-1", issuer.PreAuthorizedCodeRecord{
+		Scopes: []string{"identity_credential"}, ExpiresAt: f.now.Add(time.Minute),
+	})
+	proof := f.validProof(t)
 
 	result, err := f.iss.ExchangePreAuthorizedCode(context.Background(), issuer.ExchangePreAuthorizedCodeRequest{
 		PreAuthorizedCode: "code-1", DPoPProof: proof, TokenEndpoint: testTokenEndpointURL(t),
@@ -187,156 +216,112 @@ func TestExchangePreAuthorizedCode_Success(t *testing.T) {
 	}
 }
 
-func TestExchangePreAuthorizedCode_RequiresMatchingTxCode(t *testing.T) {
-	f := newPreAuthorizedCodeFixture(t)
-	if err := f.codes.Issue(context.Background(), "code-1", issuer.PreAuthorizedCodeRecord{
-		Scopes: []string{"identity_credential"}, TxCode: "493536", ExpiresAt: f.now.Add(time.Minute),
-	}); err != nil {
-		t.Fatalf("Issue: %v", err)
-	}
-	w := testWalletForDPoP(t, f.now)
-	proof, err := w.GenerateDPoPProof(testP256Key(t), "POST", testTokenEndpointURL(t).String(), "", "")
-	if err != nil {
-		t.Fatalf("GenerateDPoPProof: %v", err)
-	}
-
-	_, err = f.iss.ExchangePreAuthorizedCode(context.Background(), issuer.ExchangePreAuthorizedCodeRequest{
-		PreAuthorizedCode: "code-1", TxCode: "wrong", DPoPProof: proof, TokenEndpoint: testTokenEndpointURL(t),
-	})
-	var ierr *issuer.Error
-	if !errors.As(err, &ierr) {
-		t.Fatalf("error = %v, want *issuer.Error", err)
-	}
-	if ierr.Code() != issuer.ErrorInvalidGrant {
-		t.Errorf("Code = %q, want %q", ierr.Code(), issuer.ErrorInvalidGrant)
-	}
-}
-
 func TestExchangePreAuthorizedCode_AcceptsMatchingTxCode(t *testing.T) {
 	f := newPreAuthorizedCodeFixture(t)
-	if err := f.codes.Issue(context.Background(), "code-1", issuer.PreAuthorizedCodeRecord{
+	f.issue(t, "code-1", issuer.PreAuthorizedCodeRecord{
 		Scopes: []string{"identity_credential"}, TxCode: "493536", ExpiresAt: f.now.Add(time.Minute),
-	}); err != nil {
-		t.Fatalf("Issue: %v", err)
-	}
-	w := testWalletForDPoP(t, f.now)
-	proof, err := w.GenerateDPoPProof(testP256Key(t), "POST", testTokenEndpointURL(t).String(), "", "")
-	if err != nil {
-		t.Fatalf("GenerateDPoPProof: %v", err)
-	}
+	})
 
 	if _, err := f.iss.ExchangePreAuthorizedCode(context.Background(), issuer.ExchangePreAuthorizedCodeRequest{
-		PreAuthorizedCode: "code-1", TxCode: "493536", DPoPProof: proof, TokenEndpoint: testTokenEndpointURL(t),
+		PreAuthorizedCode: "code-1", TxCode: "493536", DPoPProof: f.validProof(t), TokenEndpoint: testTokenEndpointURL(t),
 	}); err != nil {
 		t.Fatalf("ExchangePreAuthorizedCode: %v", err)
 	}
 }
 
-func TestExchangePreAuthorizedCode_RejectsExpiredCode(t *testing.T) {
-	f := newPreAuthorizedCodeFixture(t)
-	if err := f.codes.Issue(context.Background(), "code-1", issuer.PreAuthorizedCodeRecord{
-		Scopes: []string{"identity_credential"}, ExpiresAt: f.now.Add(-time.Minute),
-	}); err != nil {
-		t.Fatalf("Issue: %v", err)
+// TestExchangePreAuthorizedCode_Rejects table-drives every rejection
+// path that surfaces as an *issuer.Error with a specific ErrorCode —
+// wrong tx_code, an expired or unknown code, and an invalid DPoP
+// proof.
+func TestExchangePreAuthorizedCode_Rejects(t *testing.T) {
+	cases := map[string]struct {
+		setup    func(t *testing.T, f preAuthorizedCodeFixture) issuer.ExchangePreAuthorizedCodeRequest
+		wantCode issuer.ErrorCode
+	}{
+		"wrong tx_code": {
+			wantCode: issuer.ErrorInvalidGrant,
+			setup: func(t *testing.T, f preAuthorizedCodeFixture) issuer.ExchangePreAuthorizedCodeRequest {
+				f.issue(t, "code-1", issuer.PreAuthorizedCodeRecord{
+					Scopes: []string{"identity_credential"}, TxCode: "493536", ExpiresAt: f.now.Add(time.Minute),
+				})
+				return issuer.ExchangePreAuthorizedCodeRequest{
+					PreAuthorizedCode: "code-1", TxCode: "wrong", DPoPProof: f.validProof(t), TokenEndpoint: testTokenEndpointURL(t),
+				}
+			},
+		},
+		"expired code": {
+			wantCode: issuer.ErrorInvalidGrant,
+			setup: func(t *testing.T, f preAuthorizedCodeFixture) issuer.ExchangePreAuthorizedCodeRequest {
+				f.issue(t, "code-1", issuer.PreAuthorizedCodeRecord{
+					Scopes: []string{"identity_credential"}, ExpiresAt: f.now.Add(-time.Minute),
+				})
+				return issuer.ExchangePreAuthorizedCodeRequest{
+					PreAuthorizedCode: "code-1", DPoPProof: f.validProof(t), TokenEndpoint: testTokenEndpointURL(t),
+				}
+			},
+		},
+		"unknown code": {
+			wantCode: issuer.ErrorInvalidGrant,
+			setup: func(t *testing.T, f preAuthorizedCodeFixture) issuer.ExchangePreAuthorizedCodeRequest {
+				return issuer.ExchangePreAuthorizedCodeRequest{
+					PreAuthorizedCode: "unknown-code", DPoPProof: f.validProof(t), TokenEndpoint: testTokenEndpointURL(t),
+				}
+			},
+		},
+		"invalid DPoP proof": {
+			wantCode: issuer.ErrorInvalidTokenRequest,
+			setup: func(t *testing.T, f preAuthorizedCodeFixture) issuer.ExchangePreAuthorizedCodeRequest {
+				f.issue(t, "code-1", issuer.PreAuthorizedCodeRecord{
+					Scopes: []string{"identity_credential"}, ExpiresAt: f.now.Add(time.Minute),
+				})
+				return issuer.ExchangePreAuthorizedCodeRequest{
+					PreAuthorizedCode: "code-1", DPoPProof: "not-a-proof", TokenEndpoint: testTokenEndpointURL(t),
+				}
+			},
+		},
 	}
-	w := testWalletForDPoP(t, f.now)
-	proof, err := w.GenerateDPoPProof(testP256Key(t), "POST", testTokenEndpointURL(t).String(), "", "")
-	if err != nil {
-		t.Fatalf("GenerateDPoPProof: %v", err)
-	}
-
-	_, err = f.iss.ExchangePreAuthorizedCode(context.Background(), issuer.ExchangePreAuthorizedCodeRequest{
-		PreAuthorizedCode: "code-1", DPoPProof: proof, TokenEndpoint: testTokenEndpointURL(t),
-	})
-	var ierr *issuer.Error
-	if !errors.As(err, &ierr) {
-		t.Fatalf("error = %v, want *issuer.Error", err)
-	}
-	if ierr.Code() != issuer.ErrorInvalidGrant {
-		t.Errorf("Code = %q, want %q", ierr.Code(), issuer.ErrorInvalidGrant)
-	}
-}
-
-func TestExchangePreAuthorizedCode_RejectsUnknownCode(t *testing.T) {
-	f := newPreAuthorizedCodeFixture(t)
-	w := testWalletForDPoP(t, f.now)
-	proof, err := w.GenerateDPoPProof(testP256Key(t), "POST", testTokenEndpointURL(t).String(), "", "")
-	if err != nil {
-		t.Fatalf("GenerateDPoPProof: %v", err)
-	}
-
-	_, err = f.iss.ExchangePreAuthorizedCode(context.Background(), issuer.ExchangePreAuthorizedCodeRequest{
-		PreAuthorizedCode: "unknown-code", DPoPProof: proof, TokenEndpoint: testTokenEndpointURL(t),
-	})
-	var ierr *issuer.Error
-	if !errors.As(err, &ierr) {
-		t.Fatalf("error = %v, want *issuer.Error", err)
-	}
-	if ierr.Code() != issuer.ErrorInvalidGrant {
-		t.Errorf("Code = %q, want %q", ierr.Code(), issuer.ErrorInvalidGrant)
-	}
-}
-
-func TestExchangePreAuthorizedCode_RejectsInvalidDPoPProof(t *testing.T) {
-	f := newPreAuthorizedCodeFixture(t)
-	if err := f.codes.Issue(context.Background(), "code-1", issuer.PreAuthorizedCodeRecord{
-		Scopes: []string{"identity_credential"}, ExpiresAt: f.now.Add(time.Minute),
-	}); err != nil {
-		t.Fatalf("Issue: %v", err)
-	}
-
-	_, err := f.iss.ExchangePreAuthorizedCode(context.Background(), issuer.ExchangePreAuthorizedCodeRequest{
-		PreAuthorizedCode: "code-1", DPoPProof: "not-a-proof", TokenEndpoint: testTokenEndpointURL(t),
-	})
-	var ierr *issuer.Error
-	if !errors.As(err, &ierr) {
-		t.Fatalf("error = %v, want *issuer.Error", err)
-	}
-	if ierr.Code() != issuer.ErrorInvalidTokenRequest {
-		t.Errorf("Code = %q, want %q", ierr.Code(), issuer.ErrorInvalidTokenRequest)
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			f := newPreAuthorizedCodeFixture(t)
+			req := tc.setup(t, f)
+			_, err := f.iss.ExchangePreAuthorizedCode(context.Background(), req)
+			requireIssuerErrorCode(t, err, tc.wantCode)
+		})
 	}
 }
 
-func TestExchangePreAuthorizedCode_RejectsMissingCode(t *testing.T) {
-	f := newPreAuthorizedCodeFixture(t)
-	w := testWalletForDPoP(t, f.now)
-	proof, err := w.GenerateDPoPProof(testP256Key(t), "POST", testTokenEndpointURL(t).String(), "", "")
-	if err != nil {
-		t.Fatalf("GenerateDPoPProof: %v", err)
+// TestExchangePreAuthorizedCode_RejectsMissingFields table-drives the
+// remaining rejection paths, each a plain (non-*issuer.Error) error:
+// missing required request fields, and the grant not being configured
+// at all.
+func TestExchangePreAuthorizedCode_RejectsMissingFields(t *testing.T) {
+	cases := map[string]func(t *testing.T) (*issuer.Issuer, issuer.ExchangePreAuthorizedCodeRequest){
+		"missing pre-authorized_code": func(t *testing.T) (*issuer.Issuer, issuer.ExchangePreAuthorizedCodeRequest) {
+			f := newPreAuthorizedCodeFixture(t)
+			return f.iss, issuer.ExchangePreAuthorizedCodeRequest{DPoPProof: f.validProof(t), TokenEndpoint: testTokenEndpointURL(t)}
+		},
+		"missing DPoP proof": func(t *testing.T) (*issuer.Issuer, issuer.ExchangePreAuthorizedCodeRequest) {
+			f := newPreAuthorizedCodeFixture(t)
+			f.issue(t, "code-1", issuer.PreAuthorizedCodeRecord{
+				Scopes: []string{"identity_credential"}, ExpiresAt: f.now.Add(time.Minute),
+			})
+			return f.iss, issuer.ExchangePreAuthorizedCodeRequest{PreAuthorizedCode: "code-1", TokenEndpoint: testTokenEndpointURL(t)}
+		},
+		"grant not configured": func(t *testing.T) (*issuer.Issuer, issuer.ExchangePreAuthorizedCodeRequest) {
+			iss, err := issuer.New(validConfig(t), validDependencies(t))
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+			return iss, issuer.ExchangePreAuthorizedCodeRequest{PreAuthorizedCode: "code-1", DPoPProof: "irrelevant", TokenEndpoint: testTokenEndpointURL(t)}
+		},
 	}
-	_, err = f.iss.ExchangePreAuthorizedCode(context.Background(), issuer.ExchangePreAuthorizedCodeRequest{
-		DPoPProof: proof, TokenEndpoint: testTokenEndpointURL(t),
-	})
-	if err == nil {
-		t.Fatalf("ExchangePreAuthorizedCode = nil error, want error")
-	}
-}
-
-func TestExchangePreAuthorizedCode_RejectsMissingDPoPProof(t *testing.T) {
-	f := newPreAuthorizedCodeFixture(t)
-	if err := f.codes.Issue(context.Background(), "code-1", issuer.PreAuthorizedCodeRecord{
-		Scopes: []string{"identity_credential"}, ExpiresAt: f.now.Add(time.Minute),
-	}); err != nil {
-		t.Fatalf("Issue: %v", err)
-	}
-	_, err := f.iss.ExchangePreAuthorizedCode(context.Background(), issuer.ExchangePreAuthorizedCodeRequest{
-		PreAuthorizedCode: "code-1", TokenEndpoint: testTokenEndpointURL(t),
-	})
-	if err == nil {
-		t.Fatalf("ExchangePreAuthorizedCode = nil error, want error")
-	}
-}
-
-func TestExchangePreAuthorizedCode_RejectsWhenNotConfigured(t *testing.T) {
-	iss, err := issuer.New(validConfig(t), validDependencies(t))
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	_, err = iss.ExchangePreAuthorizedCode(context.Background(), issuer.ExchangePreAuthorizedCodeRequest{
-		PreAuthorizedCode: "code-1", DPoPProof: "irrelevant", TokenEndpoint: testTokenEndpointURL(t),
-	})
-	if err == nil {
-		t.Fatalf("ExchangePreAuthorizedCode = nil error, want error")
+	for name, setup := range cases {
+		t.Run(name, func(t *testing.T) {
+			iss, req := setup(t)
+			if _, err := iss.ExchangePreAuthorizedCode(context.Background(), req); err == nil {
+				t.Fatalf("ExchangePreAuthorizedCode(%s) = nil error, want error", name)
+			}
+		})
 	}
 }
 
