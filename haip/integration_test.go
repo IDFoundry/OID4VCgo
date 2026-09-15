@@ -6,16 +6,20 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"net/http"
 	"testing"
 	"time"
 
 	fapi "github.com/idfoundry/fapigo"
+
+	"github.com/idfoundry/fapigo/fapihttp"
 
 	"github.com/idfoundry/oid4vcigo/attestation"
 	"github.com/idfoundry/oid4vcigo/haip"
 	"github.com/idfoundry/oid4vcigo/internal/jose"
 	"github.com/idfoundry/oid4vcigo/issuer"
 	"github.com/idfoundry/oid4vcigo/storage"
+	"github.com/idfoundry/oid4vcigo/wallet"
 )
 
 // fixedAttestationVerifier is a minimal issuer.AttestationVerifier for
@@ -87,5 +91,29 @@ func TestRecommendedIssuerConfigWorksWithIssuerNew(t *testing.T) {
 		},
 	}); err != nil {
 		t.Fatalf("issuer.New: %v", err)
+	}
+}
+
+// TestRecommendedWalletConfigWorksWithWalletNew wires
+// RecommendedWalletConfig's own ProofSigningAlg into a real wallet.Config
+// and confirms the result passes wallet.New — the simplest way to keep
+// this recommendation from silently drifting out of sync with what
+// wallet actually accepts.
+func TestRecommendedWalletConfigWorksWithWalletNew(t *testing.T) {
+	rec := haip.RecommendedWalletConfig()
+	_, err := wallet.New(wallet.Config{
+		ProofSigningAlg: rec.ProofSigningAlg,
+		Fetch:           fapihttp.Config{MaxResponseBytes: 1 << 20, RequestTimeout: 5 * time.Second},
+	}, wallet.Dependencies{
+		// wallet.New never actually dials out — it only needs a non-nil
+		// HTTPClient to validate Dependencies, so http.DefaultClient (a
+		// real *http.Client, which trivially satisfies the interface)
+		// stands in rather than a test-only fake this package has no
+		// other use for.
+		HTTP:  http.DefaultClient,
+		Clock: wallet.ClockFunc(time.Now),
+	})
+	if err != nil {
+		t.Fatalf("wallet.New: %v", err)
 	}
 }

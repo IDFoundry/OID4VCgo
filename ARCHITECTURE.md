@@ -26,7 +26,8 @@
 > — every OID4VCI 1.0 Credential Issuer endpoint — `storage` (in-memory
 > reference implementations of every store `issuer` defines, for local
 > dev/testing only), `haip` (the profile layer's own
-> `RecommendedIssuerConfig`/`ValidateIssuerConfig`), and `wallet`
+> `RecommendedIssuerConfig`/`ValidateIssuerConfig`/`RecommendedWalletConfig`),
+> and `wallet`
 > (Credential Offer resolution, jwt-type and attestation-type key proof
 > generation, the Authorization Code Flow's own OID4VCI-specific
 > request shape, the pre-authorized_code Flow's own
@@ -607,9 +608,20 @@ shape from the phase-by-phase plan, not a description of current code.
   any Credential Configuration requires cryptographic key binding) —
   `issuer.New` never runs these itself, since they're HAIP-specific
   profiling, not something the protocol-generic `issuer` package can
-  assume every deployment wants. Still to come:
-  `RecommendedWalletConfig()`/`RecommendedVerifierConfig()`, once
-  `wallet`/`verifier` themselves exist.
+  assume every deployment wants. `RecommendedWalletConfig()` bundles
+  the one part of a `wallet.Config` HAIP actually grounds a value for —
+  `ProofSigningAlg`, the same §7 ES256 minimum — into a
+  `WalletRecommendations`; `wallet.Config`'s other field, `Fetch`
+  (SSRF/redirect/timeout policy), is deployment-specific and HAIP has
+  nothing to say about it, so it's left out the same way
+  `IssuerRecommendations` leaves out `issuer.Config`'s own ungrounded
+  fields. No `ValidateWalletConfig` — HAIP's substantive Wallet-facing
+  requirements (§4's PAR+PKCE+DPoP, §4.4.1's Wallet Attestation client
+  authentication) are entirely `fapigo/client`-level concerns
+  `wallet.Config` doesn't touch at all (see the `wallet` bullet above
+  and its own doc comment), so there's nothing in `wallet.Config`
+  itself left to structurally validate. Still to come:
+  `RecommendedVerifierConfig()`, once `verifier` itself exists.
 - **`storage`** — in-memory implementations of every store `issuer`
   defines (`NonceStore`, `CredentialOfferStore`, `DeferredTransactionStore`,
   `NotificationStore`), for local dev/testing only — never production;
