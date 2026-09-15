@@ -92,6 +92,20 @@ type Config struct {
 	// CreateCredentialOffer then only supports embedding the offer by
 	// value.
 	CredentialOfferEndpoint fapi.URL
+
+	// RequestEncryption declares this issuer's own support for
+	// encrypted Credential/Deferred Credential Requests (§10, published
+	// as Metadata's own credential_request_encryption). Nil means this
+	// issuer never accepts one — DecryptRequestBody then rejects any
+	// request claiming to be encrypted.
+	RequestEncryption *RequestEncryptionSupport
+
+	// ResponseEncryption declares this issuer's own support for
+	// encrypting Credential/Deferred Credential Responses (§10,
+	// published as Metadata's own credential_response_encryption). Nil
+	// means this issuer never encrypts a Response, even if a Wallet
+	// asks — EncryptResponseBody then rejects the request.
+	ResponseEncryption *ResponseEncryptionSupport
 }
 
 // Clock supplies the current time — a plain function value satisfies
@@ -307,6 +321,13 @@ func New(cfg Config, deps Dependencies) (*Issuer, error) {
 
 	if err := validateSignerDependencies(cfg, deps); err != nil {
 		return nil, fmt.Errorf("issuer: dependencies: %w", err)
+	}
+
+	if err := cfg.RequestEncryption.validate(); err != nil {
+		return nil, fmt.Errorf("issuer: config: request_encryption: %w", err)
+	}
+	if err := cfg.ResponseEncryption.validate(); err != nil {
+		return nil, fmt.Errorf("issuer: config: response_encryption: %w", err)
 	}
 
 	return &Issuer{cfg: cfg, deps: deps}, nil

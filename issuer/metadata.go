@@ -6,6 +6,8 @@ import (
 	fapi "github.com/idfoundry/fapigo"
 
 	"github.com/idfoundry/oid4vcigo/internal/cose"
+	"github.com/idfoundry/oid4vcigo/internal/jwe"
+	"github.com/idfoundry/oid4vcigo/internal/jwk"
 )
 
 // KeyAttestationRequirement is a proof type's key_attestations_required
@@ -117,8 +119,8 @@ func (c CredentialConfiguration) validate() error {
 // Metadata is this issuer's Credential Issuer Metadata (§12.2.4) —
 // deliberately only the REQUIRED members plus what
 // CredentialConfigurationsSupported needs so far; see
-// ARCHITECTURE.md for what's still missing (encryption, batch
-// issuance, display, authorization_servers).
+// ARCHITECTURE.md for what's still missing (batch issuance, display,
+// authorization_servers).
 type Metadata struct {
 	CredentialIssuer                  fapi.URL                            `json:"credential_issuer"`
 	CredentialEndpoint                fapi.URL                            `json:"credential_endpoint"`
@@ -126,6 +128,29 @@ type Metadata struct {
 	DeferredCredentialEndpoint        *fapi.URL                           `json:"deferred_credential_endpoint,omitempty"`
 	NotificationEndpoint              *fapi.URL                           `json:"notification_endpoint,omitempty"`
 	CredentialConfigurationsSupported map[string]metadataCredentialConfig `json:"credential_configurations_supported"`
+	CredentialRequestEncryption       *metadataRequestEncryption          `json:"credential_request_encryption,omitempty"`
+	CredentialResponseEncryption      *metadataResponseEncryption         `json:"credential_response_encryption,omitempty"`
+}
+
+// metadataRequestEncryption is Config.RequestEncryption's own wire
+// shape (§12.2.4's credential_request_encryption).
+type metadataRequestEncryption struct {
+	JWKS               []metadataJWK `json:"jwks"`
+	EncValuesSupported []jwe.Enc     `json:"enc_values_supported"`
+	ZipValuesSupported []jwe.Zip     `json:"zip_values_supported,omitempty"`
+	EncryptionRequired bool          `json:"encryption_required"`
+}
+
+// metadataResponseEncryption is Config.ResponseEncryption's own wire
+// shape (§12.2.4's credential_response_encryption). AlgValuesSupported
+// is always exactly ["ECDH-ES"] — see ResponseEncryptionSupport's own
+// doc comment for why there's no corresponding Go field to set it
+// from.
+type metadataResponseEncryption struct {
+	AlgValuesSupported []jwe.Alg `json:"alg_values_supported"`
+	EncValuesSupported []jwe.Enc `json:"enc_values_supported"`
+	ZipValuesSupported []jwe.Zip `json:"zip_values_supported,omitempty"`
+	EncryptionRequired bool      `json:"encryption_required"`
 }
 
 // metadataCredentialConfig is CredentialConfiguration's JSON wire
@@ -174,6 +199,25 @@ func (iss *Issuer) Metadata() Metadata {
 	if !iss.cfg.Endpoints.Notification.IsZero() {
 		notification := iss.cfg.Endpoints.Notification
 		md.NotificationEndpoint = &notification
+	}
+	if rs := iss.cfg.RequestEncryption; rs != nil {
+		jwks := make([]metadataJWK, len(rs.Keys))
+		for i, k := range rs.Keys {
+			// New already validated every key is P-256, so this can't
+			// fail.
+			wireJWK, _ := jwk.Marshal(&k.PrivateKey.PublicKey)
+			jwks[i] = metadataJWK{JWK: wireJWK, Kid: k.KeyID}
+		}
+		md.CredentialRequestEncryption = &metadataRequestEncryption{
+			JWKS: jwks, EncValuesSupported: rs.EncValuesSupported,
+			ZipValuesSupported: rs.ZipValuesSupported, EncryptionRequired: rs.Required,
+		}
+	}
+	if rs := iss.cfg.ResponseEncryption; rs != nil {
+		md.CredentialResponseEncryption = &metadataResponseEncryption{
+			AlgValuesSupported: []jwe.Alg{jwe.ECDHES},
+			EncValuesSupported: rs.EncValuesSupported, ZipValuesSupported: rs.ZipValuesSupported, EncryptionRequired: rs.Required,
+		}
 	}
 	for id, c := range iss.cfg.CredentialConfigurationsSupported {
 		wire := metadataCredentialConfig{

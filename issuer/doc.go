@@ -24,10 +24,15 @@
 // protocol (§9), and the Notification Endpoint (§11) all exist now.
 // See CredentialRequest's own doc comment for exactly what the
 // Credential Endpoint doesn't implement yet (credential_identifier,
-// di_vp, request/response encryption, unbound credentials — and note
-// it never defers issuance itself); a jwt-type proof's binding key may
-// be conveyed as jwk, or as kid/x5c when Dependencies.ProofBindingKeys
-// is configured (see ProofBindingKeyResolver's own doc comment),
+// di_vp, unbound credentials — and note it never defers issuance
+// itself); a jwt-type proof's binding key may be conveyed as jwk, or as
+// kid/x5c when Dependencies.ProofBindingKeys is configured (see
+// ProofBindingKeyResolver's own doc comment). Encrypted Requests and
+// Responses (§10) are supported for both the Credential and Deferred
+// Credential Endpoints via DecryptRequestBody/EncryptResponseBody —
+// see their own doc comments, and Config.RequestEncryption/
+// Config.ResponseEncryption for how an issuer opts in (published in
+// Metadata's own credential_request_encryption/credential_response_encryption).
 // CreateCredentialOffer's own doc comment for what the Credential
 // Offer doesn't cover yet (issuing/redeeming a pre-authorized_code or
 // issuer_state — this package treats both as caller-supplied, since
