@@ -52,12 +52,6 @@
 //     DPoP proof, since fapigo/client exposes no generic DPoP-signed
 //     Token Request primitive for a grant type it doesn't itself
 //     implement. Deferred pending a decision on that tradeoff.
-//   - A Credential Response that itself defers issuance (§8.3's own
-//     HTTP 202, transaction_id/interval case) — RequestCredential
-//     only handles the immediate HTTP 200 case; a caller that gets a
-//     202 there today sees a malformed *Error rather than a usable
-//     transaction_id/interval (RequestDeferredCredential's own parsing
-//     of that same shape could extend to cover this, but doesn't yet).
 //   - di_vp and attestation proof types (only jwt is supported), and
 //     kid/x5c-conveyed binding keys (only jwk, matching issuer's own
 //     scope).

@@ -363,8 +363,12 @@ shape from the phase-by-phase plan, not a description of current code.
   `GenerateProof` signs a jwt-type key proof (Appendix F.1; jwk-conveyed
   binding key only, matching `issuer`'s own scope). `RequestCredential`
   signs one proof per `crypto.Signer` in a batch, POSTs the Credential
-  Request, and parses the (HTTP 200 only) Credential Response, via a
-  narrow `ProtectedResourceClient` interface
+  Request, and parses the Credential Response — completed Credentials
+  (HTTP 200) or, if the Issuer instead defers issuance at this very
+  first response (HTTP 202, transaction_id/interval — §8.3's own
+  deferred-at-first-response case), a polling hint to pass to
+  `RequestDeferredCredential` — via a narrow `ProtectedResourceClient`
+  interface
   (`Do(ctx, *http.Request) (*http.Response, error)`) rather than
   importing `fapigo/client`'s own `*client.ResourceClient` type by
   name — satisfied by it directly (identical method signature), but
@@ -392,22 +396,25 @@ shape from the phase-by-phase plan, not a description of current code.
   use `ClientAuthMethodPrivateKeyJWT` until that lands upstream.
   `RequestDeferredCredential` polls the Deferred Credential Endpoint
   (§9.1/§9.2) via the same `ProtectedResourceClient` and access token
-  as `RequestCredential`, parsing either the completed Credentials
-  (HTTP 200) or a `transaction_id`/`interval` polling hint (HTTP 202)
-  from one shared wire shape (a caller must inspect the status to know
-  which applies — `interval` arrives as a plain JSON number of
-  seconds, converted to `time.Duration`). `RequestNotification`
-  implements the Notification Endpoint's own client side (§11.1):
-  naturally repeatable, matching §11's own idempotency requirement, so
-  there is nothing here to track as "already sent" — a
-  `NotificationHandler`-style callback belongs to `issuer`'s own side,
-  not a Wallet's. Still to come: the pre-authorized_code Flow (deferred
-  — getting it DPoP-sender-constrained would need this package to
-  build its own RFC 9449 DPoP proof, since that grant type is outside
-  `fapigo/client`'s own scope entirely and it exposes no generic
-  DPoP-signed Token Request primitive), and a Credential Response that
-  itself defers issuance (§8.3's own HTTP 202 case at the *Credential*
-  Endpoint, not the Deferred one) — see the package doc comment.
+  as `RequestCredential`. Both share one result type, `CredentialResult`,
+  and one parsing helper, `parseCredentialResult` — §9.2's own text
+  ("the Deferred Credential Response MUST use the credentials parameter
+  as defined in Section 8.3 ... MUST use the interval and transaction_id
+  parameters as defined in Section 8.3") means the two endpoints'
+  responses are one wire shape, not two; a caller inspects which of
+  `CredentialResult`'s own fields are set to know whether a result is
+  the completed Credentials or a `transaction_id`/`interval` polling
+  hint — `interval` arrives as a plain JSON number of seconds,
+  converted to `time.Duration`. `RequestNotification` implements the
+  Notification Endpoint's own client side (§11.1): naturally
+  repeatable, matching §11's own idempotency requirement, so there is
+  nothing here to track as "already sent" — a `NotificationHandler`-style
+  callback belongs to `issuer`'s own side, not a Wallet's. Still to
+  come: the pre-authorized_code Flow (deferred — getting it
+  DPoP-sender-constrained would need this package to build its own RFC
+  9449 DPoP proof, since that grant type is outside `fapigo/client`'s
+  own scope entirely and it exposes no generic DPoP-signed Token
+  Request primitive) — see the package doc comment.
 - **`verifier`** — the OID4VP Verifier role: DCQL query construction,
   Authorization Request via JAR, response modes (`direct_post`,
   `direct_post.jwt`, DC API), response verification.
