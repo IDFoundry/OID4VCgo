@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/idfoundry/oid4vcigo"
 	"github.com/idfoundry/oid4vcigo/issuer"
 	"github.com/idfoundry/oid4vcigo/storage"
 )
@@ -35,7 +36,7 @@ func TestDeferredTransactionStore_PutResolvesTransaction(t *testing.T) {
 	}
 	if err := s.Put(ctx, "txn-1", issuer.DeferredTransactionRecord{
 		Status:      issuer.DeferredTransactionIssued,
-		Credentials: []issuer.IssuedCredential{{Credential: "signed-credential"}},
+		Credentials: []oid4vci.IssuedCredential{{Credential: "signed-credential"}},
 	}); err != nil {
 		t.Fatalf("Put (issued): %v", err)
 	}

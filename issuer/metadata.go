@@ -8,21 +8,6 @@ import (
 	"github.com/idfoundry/oid4vcigo/internal/cose"
 )
 
-// Proof type identifiers (Appendix F). Only the two OID4VCIgo's
-// credential formats actually use are defined here — di_vp (W3C VCDM)
-// is out of scope; see SPECIFICATIONS.md.
-const (
-	// ProofTypeJWT is the "jwt" proof type (Appendix F.1): a JWT proves
-	// possession of the key the issued Credential is bound to.
-	ProofTypeJWT = "jwt"
-
-	// ProofTypeAttestation is the "attestation" proof type (Appendix
-	// F.3): a Key Attestation JWT (see the attestation package)
-	// conveys attested keys without itself proving possession of any
-	// one of them.
-	ProofTypeAttestation = "attestation"
-)
-
 // KeyAttestationRequirement is a proof type's key_attestations_required
 // object (§12.2.4): "the Credential Issuer expects the Wallet to send"
 // a Key Attestation meeting these constraints. A present-but-empty
@@ -85,7 +70,7 @@ type CredentialConfiguration struct {
 
 	// ProofTypesSupported is REQUIRED exactly when
 	// CryptographicBindingMethodsSupported is present, keyed by proof
-	// type identifier (ProofTypeJWT, ProofTypeAttestation).
+	// type identifier (oid4vci.ProofTypeJWT, oid4vci.ProofTypeAttestation).
 	ProofTypesSupported map[string]ProofTypeConfiguration
 
 	// VCT is credential/sdjwtvc's own format-specific metadata

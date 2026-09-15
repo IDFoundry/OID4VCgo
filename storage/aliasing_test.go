@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/idfoundry/oid4vcigo"
 	"github.com/idfoundry/oid4vcigo/issuer"
 	"github.com/idfoundry/oid4vcigo/storage"
 )
@@ -61,7 +62,7 @@ func TestDeferredTransactionStoreDoesNotAliasCallerOrInternalState(t *testing.T)
 	s := storage.NewDeferredTransactionStore()
 	ctx := context.Background()
 
-	credentials := []issuer.IssuedCredential{{Credential: "signed-credential"}}
+	credentials := []oid4vci.IssuedCredential{{Credential: "signed-credential"}}
 	if err := s.Put(ctx, "txn-1", issuer.DeferredTransactionRecord{
 		Status: issuer.DeferredTransactionIssued, Credentials: credentials,
 	}); err != nil {
@@ -100,7 +101,7 @@ func TestNoStoreRacesUnderConcurrentAccess(t *testing.T) {
 	}
 	deferredTxns := storage.NewDeferredTransactionStore()
 	if err := deferredTxns.Put(ctx, "txn-1", issuer.DeferredTransactionRecord{
-		Status: issuer.DeferredTransactionIssued, Credentials: []issuer.IssuedCredential{{Credential: "signed-credential"}},
+		Status: issuer.DeferredTransactionIssued, Credentials: []oid4vci.IssuedCredential{{Credential: "signed-credential"}},
 	}); err != nil {
 		t.Fatalf("Put: %v", err)
 	}

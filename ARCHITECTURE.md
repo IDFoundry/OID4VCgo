@@ -12,15 +12,20 @@
 > role for `credential/mdoc` and `statuslist`'s CWT encoding),
 > `internal/hkdf` (RFC 5869, for `credential/mdoc`'s DeviceMac key
 > derivation), `internal/jwk` (JWK marshal/parse, shared by `attestation`
-> and `issuer`), and `issuer` (Nonce Endpoint, Metadata, the
+> and `issuer`), the root `oid4vci` package (wire value types shared by
+> `issuer` and `wallet`: `CredentialOffer` and its `Grants` family,
+> `IssuedCredential`/`CredentialResponse`, `ProofTypeJWT`/
+> `ProofTypeAttestation`), `issuer` (Nonce Endpoint, Metadata, the
 > Credential Endpoint for immediate issuance of both formats,
 > Credential Offer construction/dereferencing, the Deferred Credential
 > Endpoint's polling protocol, and the Notification Endpoint) — every
 > OID4VCI 1.0 Credential Issuer endpoint — `storage` (in-memory
 > reference implementations of every store `issuer` defines, for local
-> dev/testing only), and `haip` (the profile layer's own
-> `RecommendedIssuerConfig`/`ValidateIssuerConfig`) are implemented and
-> tested;
+> dev/testing only), `haip` (the profile layer's own
+> `RecommendedIssuerConfig`/`ValidateIssuerConfig`), and `wallet`
+> (Credential Offer resolution, jwt-type key proof generation, and one
+> immediate-issuance Credential Request/Response round trip, given an
+> already-obtained access token) are implemented and tested;
 > everything else below is still just the
 > planned layout, not a finished system. Update each section as the
 > corresponding package
@@ -349,7 +354,28 @@ shape from the phase-by-phase plan, not a description of current code.
   this repo.
 - **`wallet`** — the Wallet's OID4VCI role (client side): credential-offer
   resolution, proof-of-possession generation, deferred/notification
-  handling. Built on `fapigo/client`.
+  handling. Built on `fapigo/client`. `ResolveCredentialOffer` decodes a
+  Credential Offer either by value or by reference (§4.1.2/§4.1.3), the
+  latter via `fapigo/fapihttp.Client.Fetch`'s own SSRF/size/redirect
+  hardening — appropriate given §13.5's own warning that an offer is
+  unauthenticated, untrustworthy input regardless of how it arrived.
+  `GenerateProof` signs a jwt-type key proof (Appendix F.1; jwk-conveyed
+  binding key only, matching `issuer`'s own scope). `RequestCredential`
+  signs one proof per `crypto.Signer` in a batch, POSTs the Credential
+  Request, and parses the (HTTP 200 only) Credential Response, via a
+  narrow `ProtectedResourceClient` interface
+  (`Do(ctx, *http.Request) (*http.Response, error)`) rather than
+  importing `fapigo/client`'s own `*client.ResourceClient` type by
+  name — satisfied by it directly (identical method signature), but
+  this package's own tests don't need `fapigo/client`'s TokenSet/DPoP
+  machinery just to exercise the wire format. `RequestNonce` covers the
+  Nonce Endpoint's own client side (§7.1). Acquiring the access token
+  `RequestCredential` sends (the Authorization Code Flow via
+  `fapigo/client`'s own `BeginAuthorization`/`ExchangeCode`, or a
+  pre-authorized_code Token Endpoint call this package doesn't build
+  yet), the Deferred Credential Endpoint, the Notification Endpoint,
+  and a Credential Response that itself defers issuance (§8.3's own
+  HTTP 202 case) are all still to come — see the package doc comment.
 - **`verifier`** — the OID4VP Verifier role: DCQL query construction,
   Authorization Request via JAR, response modes (`direct_post`,
   `direct_post.jwt`, DC API), response verification.
@@ -430,4 +456,14 @@ automatically to code they didn't originally govern:
   speculatively, and never a workflow or configuration type whose meaning
   differs between, say, a credential request a wallet is about to send and
   one an issuer has already validated. Those stay in their respective role
-  packages.
+  packages. `CredentialOffer` (and `Grants`/`GrantAuthorizationCode`/
+  `GrantPreAuthorizedCode`/`TxCode`), `IssuedCredential`/
+  `CredentialResponse`, and `ProofTypeJWT`/`ProofTypeAttestation` moved
+  here from `issuer` once `wallet` needed the exact same wire semantics
+  for each. Each type's own `Validate` method (where it has one) checks
+  only §4/§8's own structural requirements; a role package's additional,
+  role-specific constraints (e.g. `issuer`'s own check that
+  `credential_configuration_ids` are actually known to it) stay in that
+  role package as a free function over these types, not a method here —
+  Go methods can only be defined where a type is declared, and a
+  role-specific rule doesn't belong in a package every role imports.

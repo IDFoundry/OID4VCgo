@@ -9,6 +9,7 @@ import (
 
 	fapi "github.com/idfoundry/fapigo"
 
+	"github.com/idfoundry/oid4vcigo"
 	"github.com/idfoundry/oid4vcigo/issuer"
 )
 
@@ -22,7 +23,7 @@ func TestRequestDeferredCredential_ReturnsCredentialsWhenIssued(t *testing.T) {
 	store.put("txn-1", issuer.DeferredTransactionRecord{
 		ClientID:       "client-a",
 		Status:         issuer.DeferredTransactionIssued,
-		Credentials:    []issuer.IssuedCredential{{Credential: "signed-credential"}},
+		Credentials:    []oid4vci.IssuedCredential{{Credential: "signed-credential"}},
 		NotificationID: "notif-1",
 	})
 
@@ -121,7 +122,7 @@ func TestRequestDeferredCredential_RejectsMismatchedClient(t *testing.T) {
 	store.put("txn-4", issuer.DeferredTransactionRecord{
 		ClientID: "client-a",
 		Status:   issuer.DeferredTransactionIssued,
-		Credentials: []issuer.IssuedCredential{
+		Credentials: []oid4vci.IssuedCredential{
 			{Credential: "signed-credential"},
 		},
 	})
@@ -151,7 +152,7 @@ func TestRequestDeferredCredential_RejectsWhenNotConfigured(t *testing.T) {
 
 func TestDeferredCredentialResult_WriteJSON_Issued(t *testing.T) {
 	result := issuer.DeferredCredentialResult{
-		Credentials:    []issuer.IssuedCredential{{Credential: "signed-credential"}},
+		Credentials:    []oid4vci.IssuedCredential{{Credential: "signed-credential"}},
 		NotificationID: "notif-1",
 	}
 	rec := httptest.NewRecorder()

@@ -26,8 +26,8 @@
 // Credential Endpoint doesn't implement yet (credential_identifier,
 // di_vp, kid/x5c-based key resolution, request/response encryption,
 // unbound credentials — and note it never defers issuance itself),
-// CredentialOffer's own doc comment for what the Credential Offer
-// doesn't cover yet (issuing/redeeming a pre-authorized_code or
+// CreateCredentialOffer's own doc comment for what the Credential
+// Offer doesn't cover yet (issuing/redeeming a pre-authorized_code or
 // issuer_state — this package treats both as caller-supplied, since
 // there is no Token/Authorization Endpoint yet to own that),
 // DeferredTransactionRecord's own doc comment for why this package

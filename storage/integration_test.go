@@ -9,6 +9,7 @@ import (
 
 	fapi "github.com/idfoundry/fapigo"
 
+	"github.com/idfoundry/oid4vcigo"
 	"github.com/idfoundry/oid4vcigo/internal/jose"
 	"github.com/idfoundry/oid4vcigo/issuer"
 	"github.com/idfoundry/oid4vcigo/storage"
@@ -69,7 +70,7 @@ func TestStoresSatisfyIssuerDependencies(t *testing.T) {
 				Format:                               "dc+sd-jwt",
 				CryptographicBindingMethodsSupported: []string{"jwk"},
 				ProofTypesSupported: map[string]issuer.ProofTypeConfiguration{
-					issuer.ProofTypeJWT: {ProofSigningAlgValuesSupported: []string{"ES256"}},
+					oid4vci.ProofTypeJWT: {ProofSigningAlgValuesSupported: []string{"ES256"}},
 				},
 			},
 		},

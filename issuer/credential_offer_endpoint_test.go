@@ -11,6 +11,7 @@ import (
 
 	fapi "github.com/idfoundry/fapigo"
 
+	"github.com/idfoundry/oid4vcigo"
 	"github.com/idfoundry/oid4vcigo/issuer"
 )
 
@@ -23,7 +24,7 @@ func newTestIssuer(t *testing.T, cfg issuer.Config, deps issuer.Dependencies) *i
 	return iss
 }
 
-func decodeOfferURI(t *testing.T, uri, param string) issuer.CredentialOffer {
+func decodeOfferURI(t *testing.T, uri, param string) oid4vci.CredentialOffer {
 	t.Helper()
 	if !strings.HasPrefix(uri, "openid-credential-offer://?") {
 		t.Fatalf("URI = %q, want openid-credential-offer:// scheme", uri)
@@ -36,7 +37,7 @@ func decodeOfferURI(t *testing.T, uri, param string) issuer.CredentialOffer {
 	if raw == "" {
 		t.Fatalf("URI %q has no %q query parameter", uri, param)
 	}
-	var offer issuer.CredentialOffer
+	var offer oid4vci.CredentialOffer
 	if err := json.Unmarshal([]byte(raw), &offer); err != nil {
 		t.Fatalf("unmarshal %q: %v", param, err)
 	}
@@ -140,22 +141,22 @@ func TestCreateCredentialOffer_RejectsInvalidRequest(t *testing.T) {
 		},
 		"empty grants": {
 			CredentialConfigurationIDs: []string{"IdentityCredential"},
-			Grants:                     &issuer.Grants{},
+			Grants:                     &oid4vci.Grants{},
 		},
 		"authorization_code with authorization_server": {
 			CredentialConfigurationIDs: []string{"IdentityCredential"},
-			Grants: &issuer.Grants{
-				AuthorizationCode: &issuer.GrantAuthorizationCode{AuthorizationServer: "https://as.example.com"},
+			Grants: &oid4vci.Grants{
+				AuthorizationCode: &oid4vci.GrantAuthorizationCode{AuthorizationServer: "https://as.example.com"},
 			},
 		},
 		"pre-authorized_code missing code": {
 			CredentialConfigurationIDs: []string{"IdentityCredential"},
-			Grants:                     &issuer.Grants{PreAuthorizedCode: &issuer.GrantPreAuthorizedCode{}},
+			Grants:                     &oid4vci.Grants{PreAuthorizedCode: &oid4vci.GrantPreAuthorizedCode{}},
 		},
 		"pre-authorized_code with authorization_server": {
 			CredentialConfigurationIDs: []string{"IdentityCredential"},
-			Grants: &issuer.Grants{
-				PreAuthorizedCode: &issuer.GrantPreAuthorizedCode{
+			Grants: &oid4vci.Grants{
+				PreAuthorizedCode: &oid4vci.GrantPreAuthorizedCode{
 					PreAuthorizedCode:   "abc123",
 					AuthorizationServer: "https://as.example.com",
 				},
@@ -163,28 +164,28 @@ func TestCreateCredentialOffer_RejectsInvalidRequest(t *testing.T) {
 		},
 		"tx_code description too long": {
 			CredentialConfigurationIDs: []string{"IdentityCredential"},
-			Grants: &issuer.Grants{
-				PreAuthorizedCode: &issuer.GrantPreAuthorizedCode{
+			Grants: &oid4vci.Grants{
+				PreAuthorizedCode: &oid4vci.GrantPreAuthorizedCode{
 					PreAuthorizedCode: "abc123",
-					TxCode:            &issuer.TxCode{Description: strings.Repeat("x", 301)},
+					TxCode:            &oid4vci.TxCode{Description: strings.Repeat("x", 301)},
 				},
 			},
 		},
 		"tx_code invalid input_mode": {
 			CredentialConfigurationIDs: []string{"IdentityCredential"},
-			Grants: &issuer.Grants{
-				PreAuthorizedCode: &issuer.GrantPreAuthorizedCode{
+			Grants: &oid4vci.Grants{
+				PreAuthorizedCode: &oid4vci.GrantPreAuthorizedCode{
 					PreAuthorizedCode: "abc123",
-					TxCode:            &issuer.TxCode{InputMode: "hex"},
+					TxCode:            &oid4vci.TxCode{InputMode: "hex"},
 				},
 			},
 		},
 		"tx_code negative length": {
 			CredentialConfigurationIDs: []string{"IdentityCredential"},
-			Grants: &issuer.Grants{
-				PreAuthorizedCode: &issuer.GrantPreAuthorizedCode{
+			Grants: &oid4vci.Grants{
+				PreAuthorizedCode: &oid4vci.GrantPreAuthorizedCode{
 					PreAuthorizedCode: "abc123",
-					TxCode:            &issuer.TxCode{Length: -1},
+					TxCode:            &oid4vci.TxCode{Length: -1},
 				},
 			},
 		},
@@ -205,12 +206,12 @@ func TestCreateCredentialOffer_AcceptsPreAuthorizedCodeWithTxCode(t *testing.T) 
 
 	result, err := iss.CreateCredentialOffer(context.Background(), issuer.CreateCredentialOfferRequest{
 		CredentialConfigurationIDs: []string{"IdentityCredential"},
-		Grants: &issuer.Grants{
-			PreAuthorizedCode: &issuer.GrantPreAuthorizedCode{
+		Grants: &oid4vci.Grants{
+			PreAuthorizedCode: &oid4vci.GrantPreAuthorizedCode{
 				PreAuthorizedCode: "oaKazRN8I0IbtZ0C7JuMn5",
-				TxCode: &issuer.TxCode{
+				TxCode: &oid4vci.TxCode{
 					Length:      4,
-					InputMode:   issuer.TxCodeInputModeNumeric,
+					InputMode:   oid4vci.TxCodeInputModeNumeric,
 					Description: "Please provide the one-time code that was sent via e-mail",
 				},
 			},
@@ -237,8 +238,8 @@ func TestCreateCredentialOffer_AcceptsAuthorizationCodeGrant(t *testing.T) {
 
 	result, err := iss.CreateCredentialOffer(context.Background(), issuer.CreateCredentialOfferRequest{
 		CredentialConfigurationIDs: []string{"IdentityCredential"},
-		Grants: &issuer.Grants{
-			AuthorizationCode: &issuer.GrantAuthorizationCode{IssuerState: "opaque-state"},
+		Grants: &oid4vci.Grants{
+			AuthorizationCode: &oid4vci.GrantAuthorizationCode{IssuerState: "opaque-state"},
 		},
 	})
 	if err != nil {
@@ -311,14 +312,14 @@ func TestCredentialOffer_WriteJSON(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	result.Offer.WriteJSON(rec)
+	issuer.WriteCredentialOfferJSON(rec, result.Offer)
 	if rec.Code != 200 {
 		t.Errorf("HTTP status = %d, want 200", rec.Code)
 	}
 	if ct := rec.Header().Get("Content-Type"); ct != "application/json" {
 		t.Errorf("Content-Type = %q, want application/json", ct)
 	}
-	var got issuer.CredentialOffer
+	var got oid4vci.CredentialOffer
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("unmarshal response body: %v", err)
 	}

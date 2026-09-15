@@ -9,6 +9,7 @@ import (
 
 	fapi "github.com/idfoundry/fapigo"
 
+	"github.com/idfoundry/oid4vcigo"
 	"github.com/idfoundry/oid4vcigo/internal/cose"
 	"github.com/idfoundry/oid4vcigo/internal/jose"
 	"github.com/idfoundry/oid4vcigo/issuer"
@@ -50,7 +51,7 @@ func validCredentialConfigurations() map[string]issuer.CredentialConfiguration {
 			CryptographicBindingMethodsSupported: []string{"jwk"},
 			CredentialSigningAlgValuesSupported:  []string{"ES256"},
 			ProofTypesSupported: map[string]issuer.ProofTypeConfiguration{
-				issuer.ProofTypeJWT: {ProofSigningAlgValuesSupported: []string{"ES256"}},
+				oid4vci.ProofTypeJWT: {ProofSigningAlgValuesSupported: []string{"ES256"}},
 			},
 		},
 	}
@@ -194,13 +195,13 @@ func TestNewRejectsInvalidCredentialConfiguration(t *testing.T) {
 		"proof types without binding methods": {
 			Format: "dc+sd-jwt",
 			ProofTypesSupported: map[string]issuer.ProofTypeConfiguration{
-				issuer.ProofTypeJWT: {ProofSigningAlgValuesSupported: []string{"ES256"}},
+				oid4vci.ProofTypeJWT: {ProofSigningAlgValuesSupported: []string{"ES256"}},
 			},
 		},
 		"proof type with no algorithms": {
 			Format: "dc+sd-jwt", CryptographicBindingMethodsSupported: []string{"jwk"},
 			ProofTypesSupported: map[string]issuer.ProofTypeConfiguration{
-				issuer.ProofTypeJWT: {},
+				oid4vci.ProofTypeJWT: {},
 			},
 		},
 		"both JOSE and COSE signing algs set": {
@@ -224,19 +225,19 @@ func TestNewRejectsMissingSignerDependencies(t *testing.T) {
 	sdjwtConfig := issuer.CredentialConfiguration{
 		Format: "dc+sd-jwt", CryptographicBindingMethodsSupported: []string{"jwk"},
 		ProofTypesSupported: map[string]issuer.ProofTypeConfiguration{
-			issuer.ProofTypeJWT: {ProofSigningAlgValuesSupported: []string{"ES256"}},
+			oid4vci.ProofTypeJWT: {ProofSigningAlgValuesSupported: []string{"ES256"}},
 		},
 	}
 	mdocConfig := issuer.CredentialConfiguration{
 		Format: "mso_mdoc", CryptographicBindingMethodsSupported: []string{"cose_key"},
 		ProofTypesSupported: map[string]issuer.ProofTypeConfiguration{
-			issuer.ProofTypeJWT: {ProofSigningAlgValuesSupported: []string{"ES256"}},
+			oid4vci.ProofTypeJWT: {ProofSigningAlgValuesSupported: []string{"ES256"}},
 		},
 	}
 	attestationConfig := issuer.CredentialConfiguration{
 		Format: "dc+sd-jwt", CryptographicBindingMethodsSupported: []string{"jwk"},
 		ProofTypesSupported: map[string]issuer.ProofTypeConfiguration{
-			issuer.ProofTypeAttestation: {ProofSigningAlgValuesSupported: []string{"ES256"}},
+			oid4vci.ProofTypeAttestation: {ProofSigningAlgValuesSupported: []string{"ES256"}},
 		},
 	}
 

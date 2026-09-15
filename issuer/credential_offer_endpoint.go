@@ -8,6 +8,8 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+
+	"github.com/idfoundry/oid4vcigo"
 )
 
 // credentialOfferReferenceEntropyBytes sets how much randomness backs
@@ -23,11 +25,11 @@ const credentialOfferScheme = "openid-credential-offer://" //nolint:gosec // a U
 // CreateCredentialOfferRequest is the input to CreateCredentialOffer.
 type CreateCredentialOfferRequest struct {
 	// CredentialConfigurationIDs is REQUIRED — see
-	// CredentialOffer.CredentialConfigurationIDs' own doc comment.
+	// oid4vci.CredentialOffer.CredentialConfigurationIDs' own doc comment.
 	CredentialConfigurationIDs []string
 
-	// Grants is OPTIONAL — see Grants' own doc comment.
-	Grants *Grants
+	// Grants is OPTIONAL — see oid4vci.Grants' own doc comment.
+	Grants *oid4vci.Grants
 
 	// ByReference, when true, has CreateCredentialOffer store the
 	// offer and return a credential_offer_uri reference (§4.1.3)
@@ -41,7 +43,7 @@ type CreateCredentialOfferRequest struct {
 // CredentialOfferResult is returned by a successful CreateCredentialOffer.
 type CredentialOfferResult struct {
 	// Offer is the Credential Offer object itself.
-	Offer CredentialOffer
+	Offer oid4vci.CredentialOffer
 
 	// URI is the complete deep-link URI (the openid-credential-offer
 	// custom scheme, §4.1.2) a caller can render as a link or encode
@@ -69,12 +71,12 @@ type CredentialOfferResult struct {
 // generating and later redeeming them is that future endpoint's job,
 // not this method's.
 func (iss *Issuer) CreateCredentialOffer(ctx context.Context, req CreateCredentialOfferRequest) (CredentialOfferResult, error) {
-	offer := CredentialOffer{
+	offer := oid4vci.CredentialOffer{
 		CredentialIssuer:           iss.cfg.Issuer.String(),
 		CredentialConfigurationIDs: req.CredentialConfigurationIDs,
 		Grants:                     req.Grants,
 	}
-	if err := offer.validate(iss.cfg); err != nil {
+	if err := validateCredentialOffer(offer, iss.cfg); err != nil {
 		return CredentialOfferResult{}, fmt.Errorf("issuer: create credential offer: %w", err)
 	}
 
@@ -88,7 +90,7 @@ func (iss *Issuer) CreateCredentialOffer(ctx context.Context, req CreateCredenti
 	return iss.createCredentialOfferByReference(ctx, offer)
 }
 
-func (iss *Issuer) createCredentialOfferByReference(ctx context.Context, offer CredentialOffer) (CredentialOfferResult, error) {
+func (iss *Issuer) createCredentialOfferByReference(ctx context.Context, offer oid4vci.CredentialOffer) (CredentialOfferResult, error) {
 	if iss.cfg.CredentialOfferEndpoint.IsZero() {
 		return CredentialOfferResult{}, fmt.Errorf("issuer: create credential offer: credential_offer_endpoint is not configured")
 	}
@@ -113,7 +115,7 @@ func (iss *Issuer) createCredentialOfferByReference(ctx context.Context, offer C
 	return CredentialOfferResult{Offer: offer, URI: uri, Reference: reference}, nil
 }
 
-func credentialOfferURIByValue(offer CredentialOffer) (string, error) {
+func credentialOfferURIByValue(offer oid4vci.CredentialOffer) (string, error) {
 	encoded, err := json.Marshal(offer)
 	if err != nil {
 		return "", fmt.Errorf("encode credential offer: %w", err)
@@ -135,28 +137,28 @@ func (iss *Issuer) generateCredentialOfferReference() (string, error) {
 // — the domain logic behind the HTTP GET request §4.1.3 has the Wallet
 // make when dereferencing a by-reference offer. Returns an error if
 // reference is unknown or has expired.
-func (iss *Issuer) GetCredentialOffer(ctx context.Context, reference string) (CredentialOffer, error) {
+func (iss *Issuer) GetCredentialOffer(ctx context.Context, reference string) (oid4vci.CredentialOffer, error) {
 	if iss.deps.CredentialOffers == nil {
-		return CredentialOffer{}, fmt.Errorf("issuer: get credential offer: credential offers are not configured")
+		return oid4vci.CredentialOffer{}, fmt.Errorf("issuer: get credential offer: credential offers are not configured")
 	}
 	record, err := iss.deps.CredentialOffers.Get(ctx, reference)
 	if err != nil {
-		return CredentialOffer{}, fmt.Errorf("issuer: get credential offer: %w", err)
+		return oid4vci.CredentialOffer{}, fmt.Errorf("issuer: get credential offer: %w", err)
 	}
 	if !iss.deps.Clock.Now().Before(record.ExpiresAt) {
-		return CredentialOffer{}, fmt.Errorf("issuer: get credential offer: reference has expired")
+		return oid4vci.CredentialOffer{}, fmt.Errorf("issuer: get credential offer: reference has expired")
 	}
 	return record.Offer, nil
 }
 
-// WriteJSON writes o as a Credential Offer Object response to w
-// (§4.1.3: "The response from the Credential Issuer that contains a
-// Credential Offer Object MUST use the media type application/json")
-// — what an HTTP adapter's GET handler for Config.CredentialOfferEndpoint
-// calls after a successful GetCredentialOffer. Must be called before
-// anything else writes to w.
-func (o CredentialOffer) WriteJSON(w http.ResponseWriter) {
+// WriteCredentialOfferJSON writes offer as a Credential Offer Object
+// response to w (§4.1.3: "The response from the Credential Issuer that
+// contains a Credential Offer Object MUST use the media type
+// application/json") — what an HTTP adapter's GET handler for
+// Config.CredentialOfferEndpoint calls after a successful
+// GetCredentialOffer. Must be called before anything else writes to w.
+func WriteCredentialOfferJSON(w http.ResponseWriter, offer oid4vci.CredentialOffer) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(o)
+	_ = json.NewEncoder(w).Encode(offer)
 }

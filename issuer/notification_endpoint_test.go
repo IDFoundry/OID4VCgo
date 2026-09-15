@@ -8,6 +8,7 @@ import (
 
 	fapi "github.com/idfoundry/fapigo"
 
+	"github.com/idfoundry/oid4vcigo"
 	"github.com/idfoundry/oid4vcigo/issuer"
 )
 
@@ -52,7 +53,7 @@ func TestRequestCredential_LeavesNotificationIDEmptyWhenNotConfigured(t *testing
 	nonce := f.issueNonce(t)
 	proof := buildJWTProof(t, testP256Key(t), testIssuer, nonce)
 
-	result, err := requestSDJWTWithProof(f, issuer.ProofTypeJWT, proof)
+	result, err := requestSDJWTWithProof(f, oid4vci.ProofTypeJWT, proof)
 	if err != nil {
 		t.Fatalf("RequestCredential: %v", err)
 	}
@@ -78,7 +79,7 @@ func TestRequestCredential_SetsNotificationIDWhenConfigured(t *testing.T) {
 		issuer.AuthorizedRequest{ClientID: "client-a", Scopes: []string{"identity_credential"}},
 		issuer.CredentialRequest{
 			CredentialConfigurationID: "IdentityCredential",
-			Proofs:                    map[string][]string{issuer.ProofTypeJWT: {proof}},
+			Proofs:                    map[string][]string{oid4vci.ProofTypeJWT: {proof}},
 			SDJWTClaims:               testSDJWTClaims(),
 		},
 	)

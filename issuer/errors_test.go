@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/idfoundry/oid4vcigo"
 	"github.com/idfoundry/oid4vcigo/issuer"
 )
 
@@ -53,7 +54,7 @@ func TestRequestCredential_ErrorWithCause(t *testing.T) {
 	proof := buildJWTProof(t, testP256Key(t), testIssuer, nonce)
 	tampered := tamperJWTSignature(t, proof)
 
-	_, err := requestSDJWTWithProof(f, issuer.ProofTypeJWT, tampered)
+	_, err := requestSDJWTWithProof(f, oid4vci.ProofTypeJWT, tampered)
 	var ierr *issuer.Error
 	if !errors.As(err, &ierr) {
 		t.Fatalf("error = %v, want *issuer.Error", err)

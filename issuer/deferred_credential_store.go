@@ -1,6 +1,10 @@
 package issuer
 
-import "context"
+import (
+	"context"
+
+	"github.com/idfoundry/oid4vcigo"
+)
 
 // DeferredTransactionStatus is a Deferred Issuance transaction's
 // current state.
@@ -45,7 +49,7 @@ type DeferredTransactionRecord struct {
 	// transaction Issued — a value that was never issued through it
 	// fails validation at RequestNotification, since it was never
 	// persisted to Dependencies.Notifications.
-	Credentials    []IssuedCredential
+	Credentials    []oid4vci.IssuedCredential
 	NotificationID string
 }
 

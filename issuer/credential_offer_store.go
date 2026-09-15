@@ -3,6 +3,8 @@ package issuer
 import (
 	"context"
 	"time"
+
+	"github.com/idfoundry/oid4vcigo"
 )
 
 // CredentialOfferRecord is what CredentialOfferStore.Store persists for
@@ -12,7 +14,7 @@ type CredentialOfferRecord struct {
 	// the credential_offer_uri CreateCredentialOffer returned.
 	Reference string
 
-	Offer CredentialOffer
+	Offer oid4vci.CredentialOffer
 
 	// ExpiresAt bounds how long the offer remains fetchable.
 	// GetCredentialOffer checks it against the current time itself;

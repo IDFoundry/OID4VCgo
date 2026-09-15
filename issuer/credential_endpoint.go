@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"slices"
 
+	"github.com/idfoundry/oid4vcigo"
 	"github.com/idfoundry/oid4vcigo/credential/mdoc"
 	"github.com/idfoundry/oid4vcigo/credential/sdjwtvc"
 )
@@ -65,8 +66,9 @@ type CredentialRequest struct {
 	CredentialConfigurationID string
 
 	// Proofs is §8.2's own "proofs" parameter: exactly one proof type
-	// (a key in this map, either ProofTypeJWT or ProofTypeAttestation)
-	// mapped to a non-empty array of raw proof values. One Credential is
+	// (a key in this map, either oid4vci.ProofTypeJWT or
+	// oid4vci.ProofTypeAttestation) mapped to a non-empty array of raw
+	// proof values. One Credential is
 	// issued per resolved binding key — a jwt proof contributes exactly
 	// one key each; an attestation proof contributes one key per entry
 	// in its own attested_keys claim (Appendix F.3's own "SHOULD issue a
@@ -90,35 +92,6 @@ type CredentialRequest struct {
 	MdocClaims *mdoc.Claims
 }
 
-// IssuedCredential is one element of a Credential Response's
-// "credentials" array (§8.3).
-type IssuedCredential struct {
-	// Credential is the issued Credential, encoded per its format's own
-	// Credential Format Profile (Appendix A): the compact SD-JWT VC
-	// string for credential/sdjwtvc.CredentialFormat, or the
-	// base64url-encoded CBOR IssuerSigned structure for
-	// credential/mdoc.CredentialFormat.
-	Credential string
-}
-
-// CredentialResponse is a Credential Response (§8.3) for the immediate
-// issuance case — RequestCredential always issues immediately or fails
-// outright; it never defers, so transaction_id/interval never apply
-// here (see DeferredCredentialResult for that case, once some other,
-// deployment-specific process has decided to defer).
-type CredentialResponse struct {
-	Credentials []IssuedCredential
-
-	// NotificationID is set to a fresh value (see IssueNotificationID)
-	// exactly when Config.Endpoints.Notification is configured — "" if
-	// not, since a Wallet has nothing to present to a Notification
-	// Endpoint that doesn't exist. One value covers the whole issuance
-	// flow this call produced, per §11.1's own "identifying an
-	// issuance flow that contained one or more Credentials with the
-	// same Credential Configuration and Credential Dataset".
-	NotificationID string
-}
-
 // resolvedKey is one Wallet-supplied binding key extracted from a
 // Credential Request's proofs, ready to bind one issued Credential
 // instance to. JWKRaw is always populated (see CredentialRequest's own
@@ -137,52 +110,52 @@ type resolvedKey struct {
 // per resolved binding key by dispatching into credential/sdjwtvc.Issue
 // or credential/mdoc.Issue. See CredentialRequest's own doc comment for
 // what's out of scope.
-func (iss *Issuer) RequestCredential(ctx context.Context, auth AuthorizedRequest, req CredentialRequest) (CredentialResponse, error) {
+func (iss *Issuer) RequestCredential(ctx context.Context, auth AuthorizedRequest, req CredentialRequest) (oid4vci.CredentialResponse, error) {
 	if req.CredentialConfigurationID == "" {
-		return CredentialResponse{}, newError(ErrorInvalidCredentialRequest, 400,
+		return oid4vci.CredentialResponse{}, newError(ErrorInvalidCredentialRequest, 400,
 			"credential_configuration_id is required (credential_identifier is not supported)", nil)
 	}
 	cc, ok := iss.cfg.CredentialConfigurationsSupported[req.CredentialConfigurationID]
 	if !ok {
-		return CredentialResponse{}, newError(ErrorUnknownCredentialConfig, 400, "unknown credential_configuration_id", nil)
+		return oid4vci.CredentialResponse{}, newError(ErrorUnknownCredentialConfig, 400, "unknown credential_configuration_id", nil)
 	}
 	if cc.Scope != "" && !slices.Contains(auth.Scopes, cc.Scope) {
-		return CredentialResponse{}, newError(ErrorInvalidCredentialRequest, 400,
+		return oid4vci.CredentialResponse{}, newError(ErrorInvalidCredentialRequest, 400,
 			"access token does not grant the scope required for this credential_configuration_id", nil)
 	}
 
 	proofType, values, err := singleProofType(req.Proofs, cc)
 	if err != nil {
-		return CredentialResponse{}, err
+		return oid4vci.CredentialResponse{}, err
 	}
 	ptc, ok := cc.ProofTypesSupported[proofType]
 	if !ok {
-		return CredentialResponse{}, newError(ErrorInvalidProof, 400,
+		return oid4vci.CredentialResponse{}, newError(ErrorInvalidProof, 400,
 			fmt.Sprintf("proof type %q is not supported for this credential_configuration_id", proofType), nil)
 	}
 
 	keys, err := iss.resolveProofKeys(ctx, auth, proofType, values, ptc)
 	if err != nil {
-		return CredentialResponse{}, err
+		return oid4vci.CredentialResponse{}, err
 	}
 
-	credentials := make([]IssuedCredential, 0, len(keys))
+	credentials := make([]oid4vci.IssuedCredential, 0, len(keys))
 	for _, key := range keys {
 		credential, err := iss.issueOne(cc, req, key)
 		if err != nil {
-			return CredentialResponse{}, newError(ErrorCredentialRequestDenied, 400, "credential issuance failed", err)
+			return oid4vci.CredentialResponse{}, newError(ErrorCredentialRequestDenied, 400, "credential issuance failed", err)
 		}
-		credentials = append(credentials, IssuedCredential{Credential: credential})
+		credentials = append(credentials, oid4vci.IssuedCredential{Credential: credential})
 	}
 
 	var notificationID string
 	if iss.deps.Notifications != nil {
 		notificationID, err = iss.IssueNotificationID(ctx, auth)
 		if err != nil {
-			return CredentialResponse{}, fmt.Errorf("issuer: request credential: %w", err)
+			return oid4vci.CredentialResponse{}, fmt.Errorf("issuer: request credential: %w", err)
 		}
 	}
-	return CredentialResponse{Credentials: credentials, NotificationID: notificationID}, nil
+	return oid4vci.CredentialResponse{Credentials: credentials, NotificationID: notificationID}, nil
 }
 
 func singleProofType(proofs map[string][]string, cc CredentialConfiguration) (proofType string, values []string, err error) {
@@ -206,9 +179,9 @@ func (iss *Issuer) resolveProofKeys(
 	ctx context.Context, auth AuthorizedRequest, proofType string, values []string, ptc ProofTypeConfiguration,
 ) ([]resolvedKey, error) {
 	switch proofType {
-	case ProofTypeJWT:
+	case oid4vci.ProofTypeJWT:
 		return iss.resolveJWTProofKeys(ctx, auth, values, ptc)
-	case ProofTypeAttestation:
+	case oid4vci.ProofTypeAttestation:
 		return iss.resolveAttestationProofKeys(ctx, values)
 	default:
 		return nil, newError(ErrorInvalidProof, 400, fmt.Sprintf("proof type %q is not supported", proofType), nil)
