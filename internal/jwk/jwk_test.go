@@ -162,3 +162,98 @@ func TestMatchesRejectsMalformedJSON(t *testing.T) {
 		t.Errorf("Matches accepted malformed JSON")
 	}
 }
+
+// TestThumbprintEC256KnownAnswer is a P-256 EC thumbprint independently
+// cross-checked against Python's jwcrypto (JWK(**jwk).thumbprint()) —
+// this package has no RFC 7638 Appendix A.1 worked example of its own
+// to check against (that example is an RSA key; this package only
+// supports EC/OKP), so an independent cross-language computation
+// stands in, the same discipline internal/jwe's own ECDH-ES tests
+// apply to a similarly precisely-specified-but-easy-to-get-wrong
+// construction.
+func TestThumbprintEC256KnownAnswer(t *testing.T) {
+	k := JWK{
+		Kty: "EC", Crv: "P-256",
+		X: "2Tyl8GNWQ2AvlGyN1fuOAxJJgjPZoGUaPaWN3PDKT24",
+		Y: "50Bc7ATi3wJAZHoLpYaiJADdjrZQ5vgbdUDRMciX3vQ",
+	}
+	got, err := k.Thumbprint()
+	if err != nil {
+		t.Fatalf("Thumbprint: %v", err)
+	}
+	want := "-_J6uf9LweGjx5PbUVEAKEwOqF5LBkEg1nOCOv2BNLg"
+	if got != want {
+		t.Errorf("Thumbprint = %q, want %q", got, want)
+	}
+}
+
+func TestThumbprintOKP(t *testing.T) {
+	pub, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	k, err := Marshal(pub)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	got, err := k.Thumbprint()
+	if err != nil {
+		t.Fatalf("Thumbprint: %v", err)
+	}
+	if got == "" {
+		t.Fatalf("Thumbprint is empty")
+	}
+	// Deterministic and stable across repeated calls.
+	again, err := k.Thumbprint()
+	if err != nil {
+		t.Fatalf("Thumbprint: %v", err)
+	}
+	if got != again {
+		t.Errorf("Thumbprint is not deterministic: %q != %q", got, again)
+	}
+}
+
+func TestThumbprintDiffersByKey(t *testing.T) {
+	key1, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	key2, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	jwk1, err := Marshal(&key1.PublicKey)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	jwk2, err := Marshal(&key2.PublicKey)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	tp1, err := jwk1.Thumbprint()
+	if err != nil {
+		t.Fatalf("Thumbprint: %v", err)
+	}
+	tp2, err := jwk2.Thumbprint()
+	if err != nil {
+		t.Fatalf("Thumbprint: %v", err)
+	}
+	if tp1 == tp2 {
+		t.Errorf("distinct keys produced the same thumbprint")
+	}
+}
+
+func TestThumbprintRejectsUnsupportedKty(t *testing.T) {
+	if _, err := (JWK{Kty: "RSA"}).Thumbprint(); err == nil {
+		t.Errorf("Thumbprint accepted an unsupported kty")
+	}
+}
+
+func TestThumbprintRejectsUnsupportedCurve(t *testing.T) {
+	if _, err := (JWK{Kty: "EC", Crv: "P-384", X: "AA", Y: "AA"}).Thumbprint(); err == nil {
+		t.Errorf("Thumbprint accepted an unsupported EC curve")
+	}
+	if _, err := (JWK{Kty: "OKP", Crv: "X25519", X: "AA"}).Thumbprint(); err == nil {
+		t.Errorf("Thumbprint accepted an unsupported OKP curve")
+	}
+}

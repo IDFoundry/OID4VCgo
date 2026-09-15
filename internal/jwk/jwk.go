@@ -5,6 +5,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -111,4 +112,33 @@ func Matches(raw []byte, pub crypto.PublicKey) (bool, error) {
 		return false, fmt.Errorf("jwk: unmarshal: %w", err)
 	}
 	return want == candidate, nil
+}
+
+// Thumbprint computes the RFC 7638 JWK thumbprint: the base64url (no
+// padding) encoding of the SHA-256 digest of the key's required
+// members, serialized with no whitespace and in the lexicographic
+// member-name order (§3.1) RFC 7638 §3.2/RFC 8037 §2 define per key
+// type — "crv","kty","x","y" for EC, "crv","kty","x" for OKP, already
+// alphabetical. k's own X/Y/Crv fields are already the exact base64url
+// values a canonical JWK's own members would carry, so this builds the
+// canonical form directly from them rather than re-deriving coordinates
+// from a parsed crypto.PublicKey.
+func (k JWK) Thumbprint() (string, error) {
+	var canonical string
+	switch k.Kty {
+	case "EC":
+		if k.Crv != "P-256" {
+			return "", fmt.Errorf("jwk: thumbprint: unsupported EC curve %q (only P-256 is supported)", k.Crv)
+		}
+		canonical = fmt.Sprintf(`{"crv":"P-256","kty":"EC","x":%q,"y":%q}`, k.X, k.Y)
+	case "OKP":
+		if k.Crv != "Ed25519" {
+			return "", fmt.Errorf("jwk: thumbprint: unsupported OKP curve %q (only Ed25519 is supported)", k.Crv)
+		}
+		canonical = fmt.Sprintf(`{"crv":"Ed25519","kty":"OKP","x":%q}`, k.X)
+	default:
+		return "", fmt.Errorf("jwk: thumbprint: unsupported kty %q", k.Kty)
+	}
+	sum := sha256.Sum256([]byte(canonical))
+	return b64.EncodeToString(sum[:]), nil
 }
