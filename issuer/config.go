@@ -64,6 +64,24 @@ type Limits struct {
 	// again (§9.2's own "interval" member). Required only when
 	// Endpoints.DeferredCredential is set.
 	DeferredIssuancePollInterval time.Duration
+
+	// AccessTokenLifetime bounds how long an access token
+	// ExchangePreAuthorizedCode issues remains valid. Required only
+	// when Dependencies.PreAuthorizedCodes is set.
+	AccessTokenLifetime time.Duration
+
+	// MaxDPoPProofAge bounds how old (relative to Now) a DPoP proof's
+	// own "iat" may be before ExchangePreAuthorizedCode rejects it
+	// (RFC 9449 §4.3). Required only when Dependencies.PreAuthorizedCodes
+	// is set.
+	MaxDPoPProofAge time.Duration
+
+	// MaxDPoPClockSkew bounds how far in the future (relative to Now) a
+	// DPoP proof's own "iat" may be before ExchangePreAuthorizedCode
+	// rejects it. Zero means no tolerance for a future-dated proof —
+	// matching internal/dpop.VerifyRequest's own zero-value meaning, no
+	// separate "required" check.
+	MaxDPoPClockSkew time.Duration
 }
 
 // Config is this issuer's immutable configuration.
@@ -252,6 +270,27 @@ type Dependencies struct {
 	// RequestNotification still succeeds with a nil NotificationHandler,
 	// since a Wallet is never guaranteed to send a notification at all.
 	NotificationHandler NotificationHandler
+
+	// PreAuthorizedCodes persists pre-authorized_code values issued as
+	// part of a Credential Offer and lets ExchangePreAuthorizedCode
+	// redeem one exactly once. Setting this is what opts an Issuer into
+	// the Pre-Authorized Code Flow's own Token Request/Response
+	// (§6.1/§6.2) at all — there's no Config.Endpoints field for it,
+	// since (unlike the Credential/Nonce/Deferred Credential/Notification
+	// Endpoints) the Token Endpoint itself belongs to whichever
+	// Authorization Server this issuer is paired with, not to this
+	// package. Required, along with DPoPReplay and AccessTokens below,
+	// exactly when a caller wants to call ExchangePreAuthorizedCode.
+	PreAuthorizedCodes PreAuthorizedCodeStore
+
+	// DPoPReplay detects DPoP proof replay by "jti" for
+	// ExchangePreAuthorizedCode's own Token Request (RFC 9449 §11.1).
+	// Required when PreAuthorizedCodes is set.
+	DPoPReplay DPoPReplayChecker
+
+	// AccessTokens mints the access token ExchangePreAuthorizedCode
+	// returns on success. Required when PreAuthorizedCodes is set.
+	AccessTokens AccessTokenIssuer
 }
 
 // Issuer is this Credential Issuer's own role implementation — the
@@ -310,6 +349,21 @@ func New(cfg Config, deps Dependencies) (*Issuer, error) {
 
 	if !cfg.Endpoints.Notification.IsZero() && deps.Notifications == nil {
 		return nil, fmt.Errorf("issuer: dependencies: notifications is required when endpoints.notification is set")
+	}
+
+	if deps.PreAuthorizedCodes != nil {
+		if cfg.Limits.AccessTokenLifetime <= 0 {
+			return nil, fmt.Errorf("issuer: config: limits.access_token_lifetime must be positive when dependencies.pre_authorized_codes is set")
+		}
+		if cfg.Limits.MaxDPoPProofAge <= 0 {
+			return nil, fmt.Errorf("issuer: config: limits.max_dpop_proof_age must be positive when dependencies.pre_authorized_codes is set")
+		}
+		if deps.DPoPReplay == nil {
+			return nil, fmt.Errorf("issuer: dependencies: dpop_replay is required when dependencies.pre_authorized_codes is set")
+		}
+		if deps.AccessTokens == nil {
+			return nil, fmt.Errorf("issuer: dependencies: access_tokens is required when dependencies.pre_authorized_codes is set")
+		}
 	}
 
 	if deps.Clock == nil {

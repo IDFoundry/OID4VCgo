@@ -1,8 +1,9 @@
 // Package issuer implements the OID4VCI 1.0 Credential Issuer role
 // (the server side): the Nonce Endpoint (§7), Credential Issuer
 // Metadata (§12.2), the Credential Endpoint (§8), the Credential Offer
-// (§4), the Deferred Credential Endpoint (§9), and the Notification
-// Endpoint (§11).
+// (§4), the Deferred Credential Endpoint (§9), the Notification
+// Endpoint (§11), and the Pre-Authorized Code Flow's own Token
+// Request/Response (§6.1/§6.2).
 //
 // This package doesn't verify the access token authorizing a Credential
 // Request itself: that needs full HTTP request context (method, URL,
@@ -34,9 +35,10 @@
 // Config.ResponseEncryption for how an issuer opts in (published in
 // Metadata's own credential_request_encryption/credential_response_encryption).
 // CreateCredentialOffer's own doc comment for what the Credential
-// Offer doesn't cover yet (issuing/redeeming a pre-authorized_code or
-// issuer_state — this package treats both as caller-supplied, since
-// there is no Token/Authorization Endpoint yet to own that),
+// Offer doesn't cover yet (issuing a pre-authorized_code or
+// issuer_state remains caller-supplied — this package treats offer
+// construction and pre-authorized_code redemption as two separate
+// steps; see PreAuthorizedCodeStore's own doc comment for the split),
 // DeferredTransactionRecord's own doc comment for why this package
 // never creates or resolves a Deferred Issuance transaction itself,
 // and NotificationHandler's own doc comment for why reacting to a
@@ -45,13 +47,14 @@
 // this package with a real fapigo/server.Server for the Authorization
 // Code Flow's own Authorization/Token Endpoints — see its own doc
 // comment, and oid4vci.IssuerStateExtension for the shared §4.1.1
-// issuer_state parameter registration both sides need. This package
-// still has no server-side pre-authorized_code Token Request handling
-// of its own (entirely outside fapigo/server's scope, the same way
-// that grant is outside fapigo/client's) — internal/dpop.Verify (RFC
-// 9449 DPoP proof verification) and internal/jwk.JWK.Thumbprint (RFC
-// 7638, for binding the eventual access token's own cnf.jkt) exist as
-// standalone primitives for that future work but aren't wired into any
-// exported method here yet; ARCHITECTURE.md describes what's still
-// missing there and elsewhere.
+// issuer_state parameter registration both sides need.
+// ExchangePreAuthorizedCode is the one grant entirely outside
+// fapigo/server's own scope (the same way it's outside
+// fapigo/client's own scope on the wallet side) — it's this package's
+// own server-side Token Endpoint handling, built on
+// internal/dpop.Verify (RFC 9449 DPoP proof verification) and
+// internal/jwk.JWK.Thumbprint (RFC 7638, for the issued access
+// token's own cnf.jkt); see its own doc comment for what it does and
+// does not cover (no DPoP nonce challenge support yet). ARCHITECTURE.md
+// describes what's still missing elsewhere.
 package issuer

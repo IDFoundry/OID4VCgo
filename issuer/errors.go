@@ -8,8 +8,9 @@ import (
 
 // ErrorCode is the closed set of error codes this package's endpoints
 // return: §8.3.1.2's own Credential Request/Response codes, §9.3's
-// additional invalid_transaction_id, and §11.3's own separate
-// Notification Request error codes.
+// additional invalid_transaction_id, §11.3's own separate Notification
+// Request error codes, and RFC 6749 §5.2's own Token Error Response
+// codes for ExchangePreAuthorizedCode.
 type ErrorCode string
 
 const (
@@ -32,6 +33,18 @@ const (
 	// Credential/Deferred Credential Endpoint errors (§8.3.1.2/§9.3).
 	ErrorInvalidNotificationID      ErrorCode = "invalid_notification_id"
 	ErrorInvalidNotificationRequest ErrorCode = "invalid_notification_request"
+
+	// ErrorInvalidTokenRequest and ErrorInvalidGrant are
+	// ExchangePreAuthorizedCode's own error codes — RFC 6749 §5.2's own
+	// Token Error Response vocabulary ("invalid_request"/"invalid_grant"),
+	// a third, separate code set from the two above (the Pre-Authorized
+	// Code Flow's own Token Request/Response, §6.1/§6.2, isn't a
+	// Credential Request/Response or a Notification Request). The Go
+	// constant name for "invalid_request" is disambiguated from
+	// ErrorInvalidCredentialRequest above, whose own wire value is the
+	// different string "invalid_credential_request".
+	ErrorInvalidTokenRequest ErrorCode = "invalid_request"
+	ErrorInvalidGrant        ErrorCode = "invalid_grant"
 )
 
 // Error is the error type RequestCredential returns for a Credential

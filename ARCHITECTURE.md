@@ -16,7 +16,7 @@
 > `wallet`), `internal/jwk` (JWK marshal/parse plus RFC 7638 thumbprint,
 > shared by `attestation` and `issuer`), `internal/dpop` (RFC 9449 DPoP
 > proof verification — the server-side counterpart to `wallet`'s own
-> DPoP proof generation, not yet wired into `issuer`), the root
+> DPoP proof generation, wired into `issuer`'s own `ExchangePreAuthorizedCode`), the root
 > `oid4vci` package (wire value
 > types shared by
 > `issuer` and `wallet`: `CredentialOffer` and its `Grants` family,
@@ -26,7 +26,8 @@
 > Metadata, the Credential Endpoint for immediate issuance of both
 > formats with §10 Encrypted Request/Response support, Credential Offer
 > construction/dereferencing, the Deferred Credential Endpoint's polling
-> protocol, and the Notification Endpoint)
+> protocol, the Notification Endpoint, and the Pre-Authorized Code
+> Flow's own DPoP-sender-constrained Token Endpoint)
 > — every OID4VCI 1.0 Credential Issuer endpoint — `storage` (in-memory
 > reference implementations of every store `issuer` defines, for local
 > dev/testing only), `haip` (the profile layer's own
@@ -216,11 +217,11 @@ shape from the phase-by-phase plan, not a description of current code.
   subtly-wrong construction.
 - **`internal/dpop`** (done) — a small, self-contained RFC 9449 DPoP
   proof *verifier* — the server-side counterpart to `wallet`'s own
-  `GenerateDPoPProof`, built for `issuer`'s own future
-  pre-authorized_code Token Request handling (§6.1), the one grant type
-  entirely outside `fapigo/server`'s scope, the same way it's outside
-  `fapigo/client`'s (see `wallet.RequestPreAuthorizedCodeToken`'s own
-  doc comment for that boundary's client-side half).
+  `GenerateDPoPProof`, wired into `issuer.ExchangePreAuthorizedCode`
+  (§6.1), the one grant type entirely outside `fapigo/server`'s scope,
+  the same way it's outside `fapigo/client`'s (see
+  `wallet.RequestPreAuthorizedCodeToken`'s own doc comment for that
+  boundary's client-side half).
   `fapigo`'s own equivalent (`internal/dpop`, a different module's
   `internal/` package) isn't reusable here either — this package's own
   `Verify` mirrors its design (read-only reference, not an import) but
@@ -419,9 +420,13 @@ shape from the phase-by-phase plan, not a description of current code.
   `Config.CredentialOfferEndpoint`, deliberately not part of `Endpoints`
   since, unlike Credential/Nonce, this URL is never advertised in
   Credential Issuer Metadata. A pre-authorized_code grant's own code
-  (and an authorization_code grant's own issuer_state) are
-  caller-supplied: issuing and later redeeming them is the Token/
-  Authorization Endpoint's job, which doesn't exist in this repo yet.
+  (and an authorization_code grant's own issuer_state) remain
+  caller-supplied at offer-construction time — issuing one is still the
+  caller's job (see `PreAuthorizedCodeStore`'s own doc comment) — but
+  redeeming a pre-authorized_code is now this package's own job too,
+  via `ExchangePreAuthorizedCode` (see below); redeeming issuer_state
+  is still the Authorization Endpoint's job, via
+  `oid4vci.IssuerStateExtension`.
   Also implements the Deferred Credential Endpoint's own polling
   protocol (§9): `RequestDeferredCredential` retrieves a
   `DeferredTransactionRecord` by its `transaction_id` from a new
@@ -476,12 +481,31 @@ shape from the phase-by-phase plan, not a description of current code.
   by the caller directly off the incoming HTTP request instead). Still
   to come: adapting a successful `ExchangeAuthorizationCode` result into
   `RequestCredential`'s own `AuthorizedRequest` (today documented only
-  as a 2-line inline adaptation a caller does itself), and the
-  pre-authorized_code grant's own server-side Token Request handling —
-  entirely `issuer`'s own new code, since that grant type is outside
-  `fapigo/server`'s scope the same way it's outside `fapigo/client`'s
-  (see `wallet.RequestPreAuthorizedCodeToken`'s own doc comment for the
-  client-side half of that same boundary).
+  as a 2-line inline adaptation a caller does itself).
+  `ExchangePreAuthorizedCode` (done) implements the Pre-Authorized Code
+  Flow's own Token Request/Response (§6.1/§6.2) — the one grant type
+  entirely outside `fapigo/server`'s scope, the same way it's outside
+  `fapigo/client`'s (see `wallet.RequestPreAuthorizedCodeToken`'s own
+  doc comment for the client-side half of that same boundary), so this
+  is genuinely new code rather than a wrapper. It consumes a
+  `PreAuthorizedCodeRecord` via a new `Dependencies.PreAuthorizedCodes`
+  (single-use, the same shape `NonceStore` already establishes), checks
+  expiry and a `tx_code` match, verifies the presented DPoP proof via
+  `internal/dpop.Verify` (`Config.Limits.MaxDPoPProofAge`/
+  `MaxDPoPClockSkew`, a new `Dependencies.DPoPReplay` for jti-replay
+  detection), and mints an access token via a new
+  `Dependencies.AccessTokens` (`AccessTokenIssuer`) bound to the proof's
+  own key by its RFC 7638 thumbprint. `AccessTokenIssuer` is this
+  package's own independent interface rather than a reuse of
+  `fapigo/server.AccessTokenIssuer` directly — Go interface satisfaction
+  needs an exact parameter-type match, so a deployment already using
+  `server.JWTAccessTokens` for its paired Authorization Server writes a
+  thin adapter (shown in `AccessTokenIssuer`'s own doc comment) rather
+  than this package importing `fapigo/server`. DPoP nonce-challenge
+  support (RFC 9449 §8/§9) is a deliberate cut — an optional
+  hardening, not a correctness requirement — so
+  `wallet.RequestPreAuthorizedCodeToken`'s own one-retry logic never
+  actually triggers against this package yet.
 - **`wallet`** — the Wallet's OID4VCI role (client side): credential-offer
   resolution, proof-of-possession generation, deferred/notification
   handling. Built on `fapigo/client`. `ResolveCredentialOffer` decodes a

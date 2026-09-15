@@ -9,9 +9,12 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"sync"
 	"testing"
 	"time"
 
@@ -126,6 +129,75 @@ type issuerWireResponseEncryptionRequest struct {
 	Zip string          `json:"zip,omitempty"`
 }
 
+// issuerTokenFake plays the role of the network for wallet's own
+// pre-authorized_code Token Request, routing it to a real
+// issuer.Issuer's own ExchangePreAuthorizedCode — no HTTP server, but
+// genuinely the production code on both sides, the same pattern
+// issuerNonceFake/issuerCredentialFake already establish.
+type issuerTokenFake struct {
+	iss           *issuer.Issuer
+	tokenEndpoint fapi.URL
+}
+
+func (f issuerTokenFake) Do(req *http.Request) (*http.Response, error) {
+	raw, err := io.ReadAll(req.Body)
+	if err != nil {
+		return nil, err
+	}
+	form, err := url.ParseQuery(string(raw))
+	if err != nil {
+		return nil, err
+	}
+	result, reqErr := f.iss.ExchangePreAuthorizedCode(req.Context(), issuer.ExchangePreAuthorizedCodeRequest{
+		PreAuthorizedCode: form.Get("pre-authorized_code"),
+		TxCode:            form.Get("tx_code"),
+		DPoPProof:         req.Header.Get("DPoP"),
+		TokenEndpoint:     f.tokenEndpoint,
+	})
+	if reqErr != nil {
+		return issuerErrorResponse(reqErr)
+	}
+	rec := httptest.NewRecorder()
+	result.WriteJSON(rec)
+	return &http.Response{
+		StatusCode: rec.Code,
+		Body:       io.NopCloser(bytes.NewReader(rec.Body.Bytes())),
+		Header:     rec.Header(),
+	}, nil
+}
+
+// fakeTokenDPoPReplayChecker is a minimal in-memory
+// issuer.DPoPReplayChecker for TestWalletPreAuthorizedCodeRoundTrip —
+// this repo has no reference storage implementation for it, the same
+// gap issuer.Config's own doc comment on Limits.MaxDPoPProofAge notes.
+type fakeTokenDPoPReplayChecker struct {
+	mu   sync.Mutex
+	seen map[string]bool
+}
+
+func (f *fakeTokenDPoPReplayChecker) UseOnce(_ context.Context, jti string, _ time.Time) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.seen == nil {
+		f.seen = map[string]bool{}
+	}
+	if f.seen[jti] {
+		return fmt.Errorf("jti already used")
+	}
+	f.seen[jti] = true
+	return nil
+}
+
+// fakeTokenAccessTokenIssuer is a minimal issuer.AccessTokenIssuer for
+// TestWalletPreAuthorizedCodeRoundTrip — a real deployment would adapt
+// its paired fapigo/server's own AccessTokenIssuer here, per
+// issuer.AccessTokenIssuer's own doc comment.
+type fakeTokenAccessTokenIssuer struct{}
+
+func (fakeTokenAccessTokenIssuer) IssueAccessToken(context.Context, issuer.AccessTokenParams) (string, string, error) {
+	return "pre-authorized-access-token", "key-1", nil
+}
+
 // dpopProtectedResourceClient is exactly the kind of thing
 // (*Wallet).GenerateDPoPProof's own doc comment describes a caller
 // building for an access token obtained via RequestPreAuthorizedCodeToken:
@@ -180,9 +252,11 @@ func TestWalletPreAuthorizedCodeRoundTrip(t *testing.T) {
 	}
 	const vct = "https://credentials.example.com/identity_credential"
 
+	preAuthorizedCodes := storage.NewPreAuthorizedCodeStore()
 	iss, err := issuer.New(issuer.Config{
 		Issuer:    issuerURL,
 		Endpoints: issuer.Endpoints{Credential: credentialEndpoint},
+		Limits:    issuer.Limits{AccessTokenLifetime: 5 * time.Minute, MaxDPoPProofAge: time.Minute},
 		CredentialConfigurationsSupported: map[string]issuer.CredentialConfiguration{
 			"IdentityCredential": {
 				Format:                               sdjwtvc.CredentialFormat,
@@ -195,32 +269,27 @@ func TestWalletPreAuthorizedCodeRoundTrip(t *testing.T) {
 			},
 		},
 	}, issuer.Dependencies{
-		Clock:       issuer.ClockFunc(time.Now),
-		Random:      rand.Reader,
-		SDJWTSigner: &issuer.SDJWTSigner{Signer: issuerSigner, Alg: jose.ES256},
+		Clock:              issuer.ClockFunc(time.Now),
+		Random:             rand.Reader,
+		SDJWTSigner:        &issuer.SDJWTSigner{Signer: issuerSigner, Alg: jose.ES256},
+		PreAuthorizedCodes: preAuthorizedCodes,
+		DPoPReplay:         &fakeTokenDPoPReplayChecker{},
+		AccessTokens:       fakeTokenAccessTokenIssuer{},
 	})
 	if err != nil {
 		t.Fatalf("issuer.New: %v", err)
+	}
+	if err := preAuthorizedCodes.Issue(context.Background(), "oaKazRN8I0IbtZ0C7JuMn5", issuer.PreAuthorizedCodeRecord{
+		Scopes: []string{"identity_credential"}, ExpiresAt: time.Now().Add(time.Minute),
+	}); err != nil {
+		t.Fatalf("Issue pre-authorized_code: %v", err)
 	}
 
 	w, err := wallet.New(wallet.Config{
 		ProofSigningAlg: jose.ES256,
 		Fetch:           fapihttp.Config{MaxResponseBytes: 1 << 20, RequestTimeout: 5 * time.Second, AllowLoopbackHTTP: true},
 	}, wallet.Dependencies{
-		HTTP: fakeHTTPClient{do: func(*http.Request) (*http.Response, error) {
-			body, err := json.Marshal(struct {
-				AccessToken string `json:"access_token"`
-				TokenType   string `json:"token_type"`
-			}{AccessToken: "pre-authorized-access-token", TokenType: "DPoP"})
-			if err != nil {
-				return nil, err
-			}
-			return &http.Response{
-				StatusCode: http.StatusOK,
-				Body:       io.NopCloser(bytes.NewReader(body)),
-				Header:     http.Header{"Content-Type": {"application/json"}},
-			}, nil
-		}},
+		HTTP:   issuerTokenFake{iss: iss, tokenEndpoint: tokenEndpoint},
 		Clock:  wallet.ClockFunc(time.Now),
 		Random: rand.Reader,
 	})
@@ -238,6 +307,9 @@ func TestWalletPreAuthorizedCodeRoundTrip(t *testing.T) {
 	}
 	if tokenResult.AccessToken.Reveal() != "pre-authorized-access-token" {
 		t.Fatalf("AccessToken = %q", tokenResult.AccessToken.Reveal())
+	}
+	if tokenResult.TokenType != "DPoP" {
+		t.Fatalf("TokenType = %q, want DPoP", tokenResult.TokenType)
 	}
 
 	resource := dpopProtectedResourceClient{
