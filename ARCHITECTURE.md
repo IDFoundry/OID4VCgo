@@ -39,7 +39,15 @@
 > DPoP-sender-constrained Token Request, the Credential/Deferred
 > Credential/Notification Endpoints' client sides given an
 > already-obtained access token, and §10 Encrypted Request/Response
-> support) are implemented and tested;
+> support), `dcql` (the Digital Credentials Query Language, OID4VP
+> §6/§7 — query types plus structural validation, shared by `verifier`
+> and the future wallet-presentation role), and `verifier`
+> (Phase 1 of the OID4VP Verifier role: DCQL-query-carrying,
+> HAIP-§5-profiled Authorization Request construction — `BuildAuthorizationRequest`
+> builds and JAR-signs a `direct_post.jwt`/`x509_hash` redirect-flow
+> request; response parsing/decryption, VP Token validation, and mdoc's
+> `DeviceResponse`/`Handover` construction are still to come) are
+> implemented and tested;
 > everything else below is still just the
 > planned layout, not a finished system. Update each section as the
 > corresponding package
@@ -651,13 +659,76 @@ shape from the phase-by-phase plan, not a description of current code.
   `ProtectedResourceClient` needs these two primitives to do that
   itself, rather than reimplementing DPoP proof construction a second
   time.
-- **`verifier`** — the OID4VP Verifier role: DCQL query construction,
-  Authorization Request via JAR, response modes (`direct_post`,
-  `direct_post.jwt`, DC API), response verification.
+- **`dcql`** (done, Phase 1) — the Digital Credentials Query Language
+  (OID4VP §6/§7): `Query`/`CredentialQuery`/`CredentialSetQuery`/
+  `ClaimsQuery`/`TrustedAuthoritiesQuery`, each with a `Validate()`
+  checking the spec's own structural MUSTs (non-empty arrays, `id`
+  uniqueness, `meta` presence as an object, `claim_sets` referencing
+  only declared claim ids, no two `claims` entries addressing the same
+  `path`), `SDJWTVCMeta`/`MdocMeta` (Appendix B.3.5/B.2.3, the two
+  Credential Format Identifiers this repo issues), and `Path`/
+  `PathElement` (§7's own Claims Path Pointer: string/wildcard/
+  non-negative-integer components, custom JSON marshaling for the
+  string-or-null-or-integer wire form). Deliberately a *shared* package
+  rather than living inside `verifier` — both `verifier` (construction)
+  and the future wallet-presentation role (evaluation — matching a
+  Query against held credentials, not built yet) need the identical
+  wire shape, the same split the root `oid4vci` package already draws
+  for OID4VCI's own wire types. `Select`-style Path *evaluation* has no
+  exported function here yet — that's wallet-presentation's own job.
+- **`verifier`** (done, Phase 1) — the OID4VP Verifier role.
+  `BuildAuthorizationRequest` builds and signs a HAIP-§5-profiled
+  redirect-flow Authorization Request: a JAR Request Object
+  (`"typ":"oauth-authz-req+jwt"`, RFC9101) carrying `response_type:
+  "vp_token"`, `response_mode: "direct_post.jwt"` (HAIP §5.1's own
+  mandatory response encryption for the redirect flow — plain
+  `direct_post` isn't HAIP-conformant here), the `x509_hash` Client
+  Identifier Prefix (HAIP §5's own mandated prefix for a signed
+  request — the only one this package supports; `Config.ClientCertificate`'s
+  SHA-256 becomes the Client ID, its DER becomes the JWS `x5c` header
+  entry), `aud: "https://self-issued.me/v2"` (§5.8's own Static
+  Discovery value — this package does no Dynamic Discovery of its own
+  metadata), a fresh `nonce`, the caller's own `dcql.Query`, and a
+  `client_metadata.jwks` advertising a fresh ephemeral P-256 ECDH-ES
+  response-encryption key (a new `kid`/`use`/`alg` wrapper around
+  `internal/jwk.JWK`, since that shared type carries no such fields)
+  plus `encrypted_response_enc_values_supported` (`Config.EncValuesSupported`
+  — HAIP §5 requires both `jwe.A128GCM` and `jwe.A256GCM`). Notably,
+  **the presentation flow touches no FAPIgo package at all** — no PAR,
+  no Token Endpoint, no client authentication handshake in the
+  OAuth-grant sense (confirmed by grepping HAIP's full text for
+  `PAR`/`DPoP`: every hit is inside §4, issuance) — so `verifier`,
+  unlike `issuer`/`wallet`'s OID4VCI roles, has no FAPIgo dependency
+  whatsoever, built entirely on this repo's own `internal/jose`/
+  `internal/jwe`/`internal/jwk`. `TestBuildAuthorizationRequest` drives
+  a real round trip: build the signed Request Object, then parse and
+  verify it via `internal/jose.Verify`'s own production path, the same
+  "real round trip, not a simulation" discipline every other
+  cross-package wire-format claim in this repo is held to. Still to
+  come: hosting the built Request Object at a `request_uri` (this
+  package builds the JWS but doesn't host it — the same
+  "expose the pieces, don't own the transport" split
+  `issuer.CreateCredentialOffer`'s own by-reference mode already
+  draws), parsing/decrypting the resulting `direct_post.jwt` response,
+  VP Token validation (§8.6), and `OpenID4VPHandover`/`DeviceResponse`
+  CBOR construction for the `mso_mdoc` format (real but sizeable — the
+  `SessionTranscriptBytes` piece `credential/mdoc`'s own
+  `SignDeviceSignature`/`ComputeDeviceMAC` already leave as an opaque
+  caller-supplied value precisely so this package can build it). The DC
+  API flow (message shapes, `dc_api`/`dc_api.jwt`,
+  `OpenID4VPDCAPIHandover`) is deferred further still — HAIP formally
+  allows an Ecosystem to choose redirect-only, DC-API-only, or both
+  (HAIP §9.3), so a redirect-flow-only slice is a legitimate,
+  spec-sanctioned choice, not a compliance gap; actually *invoking* the
+  W3C Digital Credentials API is a browser/OS platform concern outside
+  a Go library's own transport responsibilities regardless.
 - **`wallet`** (extended) or a distinct presentation package — the
-  Wallet's OID4VP role: DCQL evaluation against held credentials, VP Token
-  construction per format. Naming TBD once `verifier` exists and the
-  shared/duplicated surface with the OID4VCI wallet role is clearer.
+  Wallet's OID4VP role: DCQL evaluation against held credentials (the
+  `dcql.Path` *evaluation* half `dcql` itself deliberately doesn't
+  implement), VP Token construction per format. Naming TBD once the
+  shared/duplicated surface with the OID4VCI wallet role is clearer —
+  needed before `verifier`'s own Phase 2 (response verification), which
+  needs a real Wallet-side VP Token to test against end-to-end.
 - **`haip`** — the profile layer: wires HAIP's own specific overrides on
   top of `issuer` (and, once they exist, `wallet`/`verifier`) — mirrors
   FAPIgo's `server.RecommendedLimits()`/`RecommendedAlgorithms()` pattern:

@@ -1,0 +1,170 @@
+package verifier
+
+import (
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"io"
+
+	"crypto/ecdsa"
+	"crypto/elliptic"
+
+	"github.com/idfoundry/oid4vcigo/dcql"
+	"github.com/idfoundry/oid4vcigo/internal/jose"
+	"github.com/idfoundry/oid4vcigo/internal/jwe"
+	"github.com/idfoundry/oid4vcigo/internal/jwk"
+)
+
+// requestObjectTyp is the Request Object JWS's own "typ" header value
+// (§5, RFC9101) — Wallets MUST reject a Request Object where it's
+// missing or has any other value.
+const requestObjectTyp = "oauth-authz-req+jwt"
+
+// selfIssuedAudience is the Request Object's own "aud" claim value
+// under Static Discovery metadata (§5.8) — the case this package's
+// x509_hash-identified Verifier always falls under, since it performs
+// no Dynamic Discovery of its own metadata. A SIOPv2-inherited
+// symbolic value, legal standalone per §5.8's own note.
+const selfIssuedAudience = "https://self-issued.me/v2"
+
+// nonceEntropyBytes matches issuer's own nonce-generation convention
+// (256-bit) for both the Authorization Request's own "nonce" and the
+// response-encryption JWK's own "kid".
+const nonceEntropyBytes = 32
+
+// BuildAuthorizationRequestRequest is the input to
+// BuildAuthorizationRequest.
+type BuildAuthorizationRequestRequest struct {
+	// Query is REQUIRED: the DCQL query (§6) describing the
+	// Credential(s)/claims being requested.
+	Query dcql.Query
+
+	// State is OPTIONAL (§5.3) — round-tripped back by the Wallet's
+	// own response.
+	State string
+}
+
+// BuildAuthorizationRequestResult is returned by a successful
+// BuildAuthorizationRequest.
+type BuildAuthorizationRequestResult struct {
+	// RequestObject is the signed JWS (JAR Request Object, RFC9101) —
+	// what a caller hosts at a request_uri (or otherwise delivers to
+	// a Wallet) to actually initiate the flow. This package doesn't
+	// host it itself — see the package doc comment.
+	RequestObject string
+
+	// ClientID is this Verifier's own "x509_hash:..." Client
+	// Identifier, for the caller's own "openid4vp://" deep-link
+	// construction (client_id + request_uri).
+	ClientID string
+
+	// Nonce is the fresh nonce baked into the Request Object
+	// (§5.2/§14.1.2) — the caller must retain it to validate the
+	// eventual response's own Holder Binding proof.
+	Nonce string
+
+	// ResponseDecryptionKey is the ephemeral P-256 private key
+	// generated for this one request's own response encryption — the
+	// caller must retain it to decrypt the eventual direct_post.jwt
+	// response (not yet implemented by this package).
+	ResponseDecryptionKey *ecdsa.PrivateKey
+}
+
+// BuildAuthorizationRequest builds a signed, HAIP-§5-profiled
+// redirect-flow Authorization Request: "response_type":"vp_token",
+// "response_mode":"direct_post.jwt" (HAIP §5.1's own mandatory
+// encryption for the redirect flow), the "x509_hash" Client Identifier
+// Prefix (HAIP §5's own mandated prefix for a signed request, the only
+// one this package supports), a fresh "nonce", req.Query as
+// "dcql_query", and a "client_metadata" advertising a fresh ephemeral
+// P-256 ECDH-ES response-encryption key plus
+// Config.EncValuesSupported.
+//
+// It doesn't host the built Request Object at a request_uri, parse a
+// response, or do anything past building and signing — see the package
+// doc comment for what's still missing.
+func (v *Verifier) BuildAuthorizationRequest(req BuildAuthorizationRequestRequest) (BuildAuthorizationRequestResult, error) {
+	if err := req.Query.Validate(); err != nil {
+		return BuildAuthorizationRequestResult{}, fmt.Errorf("verifier: build authorization request: dcql_query: %w", err)
+	}
+
+	nonce, err := randomToken(v.deps.Random)
+	if err != nil {
+		return BuildAuthorizationRequestResult{}, fmt.Errorf("verifier: build authorization request: generate nonce: %w", err)
+	}
+
+	encKey, err := ecdsa.GenerateKey(elliptic.P256(), v.deps.Random)
+	if err != nil {
+		return BuildAuthorizationRequestResult{}, fmt.Errorf("verifier: build authorization request: generate response encryption key: %w", err)
+	}
+	encJWK, err := jwk.Marshal(&encKey.PublicKey)
+	if err != nil {
+		return BuildAuthorizationRequestResult{}, fmt.Errorf("verifier: build authorization request: marshal response encryption key: %w", err)
+	}
+	kid, err := encJWK.Thumbprint()
+	if err != nil {
+		return BuildAuthorizationRequestResult{}, fmt.Errorf("verifier: build authorization request: thumbprint response encryption key: %w", err)
+	}
+
+	payload := map[string]any{
+		"iss":           v.clientID,
+		"aud":           selfIssuedAudience,
+		"response_type": "vp_token",
+		"response_mode": "direct_post.jwt",
+		"client_id":     v.clientID,
+		"response_uri":  v.cfg.ResponseURI.String(),
+		"nonce":         nonce,
+		"dcql_query":    req.Query,
+		"client_metadata": map[string]any{
+			"jwks": map[string]any{
+				"keys": []any{responseEncryptionJWK{JWK: encJWK, Kid: kid, Use: "enc", Alg: string(jwe.ECDHES)}},
+			},
+			"encrypted_response_enc_values_supported": v.cfg.EncValuesSupported,
+		},
+	}
+	if req.State != "" {
+		payload["state"] = req.State
+	}
+
+	payloadJSON, err := json.Marshal(payload)
+	if err != nil {
+		return BuildAuthorizationRequestResult{}, fmt.Errorf("verifier: build authorization request: marshal payload: %w", err)
+	}
+
+	header := map[string]any{
+		"typ": requestObjectTyp,
+		"x5c": []string{base64.StdEncoding.EncodeToString(v.cfg.ClientCertificate.Raw)},
+	}
+	requestObject, err := jose.Sign(v.cfg.SigningAlg, v.deps.Signer, header, payloadJSON)
+	if err != nil {
+		return BuildAuthorizationRequestResult{}, fmt.Errorf("verifier: build authorization request: sign request object: %w", err)
+	}
+
+	return BuildAuthorizationRequestResult{
+		RequestObject: requestObject, ClientID: v.clientID, Nonce: nonce, ResponseDecryptionKey: encKey,
+	}, nil
+}
+
+// responseEncryptionJWK is client_metadata.jwks's own per-key wire
+// shape (§5.1): a JWK plus "kid" (REQUIRED — "each JWK MUST carry a
+// kid"), "use", and "alg". jwk.JWK doesn't carry these itself (they're
+// meaningful only in a JWK Set context, not to internal/jwk's own
+// Marshal/PublicKey/Thumbprint round trip), so this package adds them
+// via embedding rather than extending that shared internal type.
+type responseEncryptionJWK struct {
+	jwk.JWK
+	Kid string `json:"kid"`
+	Use string `json:"use"`
+	Alg string `json:"alg"`
+}
+
+// randomToken generates a fresh, unpredictable, base64url-encoded
+// (RawURLEncoding, matching this repo's own nonce/notification_id
+// convention) 256-bit value from random.
+func randomToken(random io.Reader) (string, error) {
+	raw := make([]byte, nonceEntropyBytes)
+	if _, err := io.ReadFull(random, raw); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(raw), nil
+}
