@@ -24,9 +24,11 @@
 > dev/testing only), `haip` (the profile layer's own
 > `RecommendedIssuerConfig`/`ValidateIssuerConfig`), and `wallet`
 > (Credential Offer resolution, jwt-type key proof generation, the
-> Authorization Code Flow's own OID4VCI-specific request shape, and the
-> Credential/Deferred Credential/Notification Endpoints' client sides,
-> given an already-obtained access token) are implemented and tested;
+> Authorization Code Flow's own OID4VCI-specific request shape, the
+> pre-authorized_code Flow's own DPoP-sender-constrained Token Request,
+> and the Credential/Deferred Credential/Notification Endpoints' client
+> sides, given an already-obtained access token) are implemented and
+> tested;
 > everything else below is still just the
 > planned layout, not a finished system. Update each section as the
 > corresponding package
@@ -409,12 +411,36 @@ shape from the phase-by-phase plan, not a description of current code.
   Notification Endpoint's own client side (§11.1): naturally
   repeatable, matching §11's own idempotency requirement, so there is
   nothing here to track as "already sent" — a `NotificationHandler`-style
-  callback belongs to `issuer`'s own side, not a Wallet's. Still to
-  come: the pre-authorized_code Flow (deferred — getting it
-  DPoP-sender-constrained would need this package to build its own RFC
-  9449 DPoP proof, since that grant type is outside `fapigo/client`'s
-  own scope entirely and it exposes no generic DPoP-signed Token
-  Request primitive) — see the package doc comment.
+  callback belongs to `issuer`'s own side, not a Wallet's.
+  `RequestPreAuthorizedCodeToken` implements the Pre-Authorized Code
+  Flow's own Token Request/Response (§6.1/§6.2) directly, rather than
+  through `fapigo/client`: that grant type
+  (`urn:ietf:params:oauth:grant-type:pre-authorized_code`) is entirely
+  outside `fapigo/client`'s own scope (OID4VCI-specific, not a FAPI 2.0
+  or base OAuth 2.0 grant), and `fapigo/client` exposes no generic
+  DPoP-signed Token Request primitive for a grant type it doesn't itself
+  implement. It builds the RFC 9449 DPoP proof itself via the new
+  `GenerateDPoPProof`, reusing the same `internal/jose`/`internal/jwk`
+  primitives `GenerateProof` already relies on, and retries exactly once
+  on a DPoP nonce challenge (§9: HTTP 400 +
+  `WWW-Authenticate: ... use_dpop_nonce` + `DPoP-Nonce` response
+  header) — the same one-retry behavior `(*client.ResourceClient).Do`
+  applies for its own resource requests. Client authentication isn't
+  supported (§6.1 makes it OPTIONAL for this grant, and Wallet
+  Attestation client auth isn't buildable yet, per the note above), and
+  neither is `authorization_details`, matching this package's own
+  `credential_configuration_id`-only scope. `GenerateDPoPProof` and
+  `DPoPAccessTokenHash` are exported beyond this one call: this package
+  builds the Token Request's own DPoP proof, but deliberately doesn't
+  build a full sender-constrained resource client for the access token
+  it returns (unlike the Authorization Code Flow, whose resource
+  requests go through `fapigo/client`'s already-hardened
+  `(*client.Client).ProtectedResource`) — a caller wiring a
+  pre-authorized_code-obtained token into `RequestCredential`/
+  `RequestDeferredCredential`/`RequestNotification`'s own
+  `ProtectedResourceClient` needs these two primitives to do that
+  itself, rather than reimplementing DPoP proof construction a second
+  time.
 - **`verifier`** — the OID4VP Verifier role: DCQL query construction,
   Authorization Request via JAR, response modes (`direct_post`,
   `direct_post.jwt`, DC API), response verification.

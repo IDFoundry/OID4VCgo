@@ -1,6 +1,7 @@
 package wallet_test
 
 import (
+	"crypto/rand"
 	"net/http"
 	"testing"
 	"time"
@@ -37,8 +38,9 @@ func validConfig() wallet.Config {
 
 func validDependencies() wallet.Dependencies {
 	return wallet.Dependencies{
-		HTTP:  fakeHTTPClient{do: func(*http.Request) (*http.Response, error) { return nil, nil }},
-		Clock: wallet.ClockFunc(time.Now),
+		HTTP:   fakeHTTPClient{do: func(*http.Request) (*http.Response, error) { return nil, nil }},
+		Clock:  wallet.ClockFunc(time.Now),
+		Random: rand.Reader,
 	}
 }
 
