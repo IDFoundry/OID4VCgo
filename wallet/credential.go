@@ -29,8 +29,10 @@ type ProtectedResourceClient interface {
 }
 
 // CredentialRequest is a Wallet's own outbound Credential Request
-// (§8.2). Only the jwt proof type is supported — di_vp/attestation
-// aren't offered here yet (see the package doc comment).
+// (§8.2). Exactly one of Keys (jwt proof type) or Attestation
+// (attestation proof type) must be set — matching issuer's own
+// "proofs must contain exactly one proof type" rule. di_vp isn't
+// offered here yet (see the package doc comment).
 // credential_identifier-based requests aren't supported either,
 // matching issuer's own scope.
 type CredentialRequest struct {
@@ -43,15 +45,30 @@ type CredentialRequest struct {
 	// len(Keys) > 1 requests a batch (§8.2's own multi-proof example).
 	// RequestCredential signs one jwt-type key proof per entry via
 	// GenerateProof, binding that Credential instance to that key.
-	// REQUIRED: at least one.
+	// Set this, or Attestation, but not both.
 	Keys []crypto.Signer
 
+	// Attestation, if non-empty, selects the attestation proof type
+	// instead of Keys (Appendix F.3): a single, already-built Key
+	// Attestation JWT — typically from GenerateAttestationProof — is
+	// submitted as-is, with no fresh proof of possession of any
+	// attested key (Appendix F-5.2). The Credential Issuer issues one
+	// Credential per key in the attestation's own attested_keys claim,
+	// so this alone can request a batch. Set this, or Keys, but not
+	// both.
+	Attestation string
+
 	// CredentialIssuer is the Credential Issuer Identifier — the aud
-	// claim every generated proof carries (see GenerateProof). REQUIRED.
+	// claim every generated jwt-type proof carries (see GenerateProof).
+	// REQUIRED when Keys is set; unused for Attestation, since a Key
+	// Attestation JWT carries no aud claim (Appendix D.1).
 	CredentialIssuer string
 
-	// Nonce is the c_nonce every proof declares (§8.2) — from a prior
-	// RequestNonce call, or "" when the issuer has no Nonce Endpoint.
+	// Nonce is the c_nonce every jwt-type proof declares (§8.2) — from
+	// a prior RequestNonce call, or "" when the issuer has no Nonce
+	// Endpoint. Unused for Attestation: that nonce must already be
+	// baked into the signed attestation before this call (see
+	// GenerateAttestationProof's own doc comment).
 	Nonce string
 }
 
@@ -81,25 +98,41 @@ func (w *Wallet) RequestCredential(
 	if req.CredentialConfigurationID == "" {
 		return CredentialResult{}, fmt.Errorf("wallet: request credential: credential_configuration_id is required")
 	}
-	if len(req.Keys) == 0 {
-		return CredentialResult{}, fmt.Errorf("wallet: request credential: at least one key is required")
+	if (len(req.Keys) == 0) == (req.Attestation == "") {
+		return CredentialResult{}, fmt.Errorf("wallet: request credential: exactly one of keys or attestation is required")
+	}
+
+	proofs, err := w.buildCredentialProofs(req)
+	if err != nil {
+		return CredentialResult{}, err
+	}
+
+	body, err := json.Marshal(credentialRequestBody{
+		CredentialConfigurationID: req.CredentialConfigurationID,
+		Proofs:                    proofs,
+	})
+	if err != nil {
+		return CredentialResult{}, fmt.Errorf("wallet: request credential: marshal request: %w", err)
+	}
+	return w.postCredentialResult(ctx, resource, endpoint, body, "request credential")
+}
+
+// buildCredentialProofs builds req's own "proofs" object: one jwt-type
+// proof per req.Keys entry (via GenerateProof), or req.Attestation
+// as-is under the attestation proof type — see CredentialRequest's own
+// doc comment for why these are mutually exclusive.
+func (w *Wallet) buildCredentialProofs(req CredentialRequest) (map[string][]string, error) {
+	if req.Attestation != "" {
+		return map[string][]string{oid4vci.ProofTypeAttestation: {req.Attestation}}, nil
 	}
 
 	proofs := make([]string, 0, len(req.Keys))
 	for i, signer := range req.Keys {
 		proof, err := w.GenerateProof(signer, req.CredentialIssuer, req.Nonce)
 		if err != nil {
-			return CredentialResult{}, fmt.Errorf("wallet: request credential: generate proof %d: %w", i, err)
+			return nil, fmt.Errorf("wallet: request credential: generate proof %d: %w", i, err)
 		}
 		proofs = append(proofs, proof)
 	}
-
-	body, err := json.Marshal(credentialRequestBody{
-		CredentialConfigurationID: req.CredentialConfigurationID,
-		Proofs:                    map[string][]string{oid4vci.ProofTypeJWT: proofs},
-	})
-	if err != nil {
-		return CredentialResult{}, fmt.Errorf("wallet: request credential: marshal request: %w", err)
-	}
-	return w.postCredentialResult(ctx, resource, endpoint, body, "request credential")
+	return map[string][]string{oid4vci.ProofTypeJWT: proofs}, nil
 }
