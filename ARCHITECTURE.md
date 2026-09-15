@@ -16,9 +16,11 @@
 > Credential Endpoint for immediate issuance of both formats,
 > Credential Offer construction/dereferencing, the Deferred Credential
 > Endpoint's polling protocol, and the Notification Endpoint) — every
-> OID4VCI 1.0 Credential Issuer endpoint — and `storage` (in-memory
+> OID4VCI 1.0 Credential Issuer endpoint — `storage` (in-memory
 > reference implementations of every store `issuer` defines, for local
-> dev/testing only) are implemented and tested;
+> dev/testing only), and `haip` (the profile layer's own
+> `RecommendedIssuerConfig`/`ValidateIssuerConfig`) are implemented and
+> tested;
 > everything else below is still just the
 > planned layout, not a finished system. Update each section as the
 > corresponding package
@@ -355,11 +357,36 @@ shape from the phase-by-phase plan, not a description of current code.
   Wallet's OID4VP role: DCQL evaluation against held credentials, VP Token
   construction per format. Naming TBD once `verifier` exists and the
   shared/duplicated surface with the OID4VCI wallet role is clearer.
-- **`haip`** — the profile layer: `RecommendedIssuerConfig()`,
-  `RecommendedWalletConfig()`, `RecommendedVerifierConfig()` wiring HAIP's
-  specific overrides on top of `issuer`/`wallet`/`verifier` — mirrors
+- **`haip`** — the profile layer: wires HAIP's own specific overrides on
+  top of `issuer` (and, once they exist, `wallet`/`verifier`) — mirrors
   FAPIgo's `server.RecommendedLimits()`/`RecommendedAlgorithms()` pattern:
-  every value traceable to a specific HAIP section.
+  every value traceable to a specific HAIP section, nothing applied
+  automatically. `RecommendedJOSEAlgorithm`/`RecommendedCOSEAlgorithm`
+  (HAIP §7's minimum: ES256/COSE -7) back `RecommendedJWTProofType()`/
+  `RecommendedAttestationProofType()`, two `issuer.ProofTypeConfiguration`
+  builders — the latter requiring a Key Attestation with no further
+  constraint, §4.5.1's own recommended posture for Ecosystems that want
+  key-attestation-level interoperability. §4.5.1's other combination,
+  "jwt proof type using key_attestation," is deliberately not offered:
+  `issuer`'s own `resolveJWTProofKeys` rejects
+  `KeyAttestationsRequired` on the jwt proof type outright, so
+  recommending it would describe a configuration `issuer` can't
+  actually serve. `RecommendedIssuerConfig()` bundles both proof types
+  into an `IssuerRecommendations`, deliberately not a complete
+  `issuer.Config` — an Issuer's own identifier/endpoint URLs, a
+  Credential Configuration's own Format/VCT/DocType/Scope, and every
+  `issuer.Limits` duration are all deployment-specific values neither
+  OID4VCI nor HAIP number, so padding them with an unlabeled guess
+  would violate this package's own "every value traceable" rule.
+  `ValidateIssuerConfig(cfg)` separately checks `issuer.Config` against
+  §4.1's own two additional MUSTs on top of plain OID4VCI (a `Scope` on
+  every Credential Configuration; `Endpoints.Nonce` configured whenever
+  any Credential Configuration requires cryptographic key binding) —
+  `issuer.New` never runs these itself, since they're HAIP-specific
+  profiling, not something the protocol-generic `issuer` package can
+  assume every deployment wants. Still to come:
+  `RecommendedWalletConfig()`/`RecommendedVerifierConfig()`, once
+  `wallet`/`verifier` themselves exist.
 - **`storage`** — in-memory implementations of every store `issuer`
   defines (`NonceStore`, `CredentialOfferStore`, `DeferredTransactionStore`,
   `NotificationStore`), for local dev/testing only — never production;
