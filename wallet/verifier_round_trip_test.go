@@ -6,13 +6,16 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"testing"
 
 	fapi "github.com/idfoundry/fapigo"
 
+	"github.com/idfoundry/oid4vcigo/internal/cose"
 	"github.com/idfoundry/oid4vcigo/internal/jose"
 	"github.com/idfoundry/oid4vcigo/internal/jwe"
+	"github.com/idfoundry/oid4vcigo/internal/jwk"
 	"github.com/idfoundry/oid4vcigo/internal/testcert"
 	"github.com/idfoundry/oid4vcigo/verifier"
 	"github.com/idfoundry/oid4vcigo/wallet"
@@ -26,6 +29,40 @@ type issuerKeyResolverFunc func(ctx context.Context, header, payload map[string]
 
 func (f issuerKeyResolverFunc) ResolveIssuerKey(ctx context.Context, header, payload map[string]any) (crypto.PublicKey, jose.Alg, error) {
 	return f(ctx, header, payload)
+}
+
+// mdocIssuerKeyResolverFunc adapts a plain function to
+// verifier.MdocIssuerKeyResolver — the same func-type-adapter idiom as
+// issuerKeyResolverFunc, above.
+type mdocIssuerKeyResolverFunc func(ctx context.Context, x5chain [][]byte, docType string) (crypto.PublicKey, cose.Alg, error)
+
+func (f mdocIssuerKeyResolverFunc) ResolveMdocIssuerKey(ctx context.Context, x5chain [][]byte, docType string) (crypto.PublicKey, cose.Alg, error) {
+	return f(ctx, x5chain, docType)
+}
+
+// responseEncryptionThumbprintBytes computes the RFC 7638 SHA-256 JWK
+// thumbprint of key's own public key as raw bytes — the shape
+// wallet.PresentMdocParams/PresentationRequest's own
+// ResponseEncryptionJWKThumbprint field needs, and exactly what a real
+// Wallet would derive from the Authorization Request's own
+// client_metadata.jwks (that parsing isn't built yet — see
+// TestWalletVerifierPresentationRoundTrip's own discipline of feeding
+// BuildAuthorizationRequestResult's fields to wallet directly).
+func responseEncryptionThumbprintBytes(t *testing.T, key *ecdsa.PrivateKey) []byte {
+	t.Helper()
+	j, err := jwk.Marshal(&key.PublicKey)
+	if err != nil {
+		t.Fatalf("jwk.Marshal: %v", err)
+	}
+	thumbprint, err := j.Thumbprint()
+	if err != nil {
+		t.Fatalf("Thumbprint: %v", err)
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(thumbprint)
+	if err != nil {
+		t.Fatalf("decode thumbprint: %v", err)
+	}
+	return raw
 }
 
 // TestWalletVerifierPresentationRoundTrip drives OID4VP end to end
@@ -114,5 +151,89 @@ func TestWalletVerifierPresentationRoundTrip(t *testing.T) {
 	}
 	if result.Credentials[0].Claims["vct"] != testPresentationVCT {
 		t.Errorf("Claims[vct] = %v, want %q", result.Credentials[0].Claims["vct"], testPresentationVCT)
+	}
+}
+
+// TestWalletVerifierMdocPresentationRoundTrip is
+// TestWalletVerifierPresentationRoundTrip's own "mso_mdoc" counterpart:
+// the same real, independently-built halves, this time exercising
+// oid4vpmdoc's own shared Handover/DeviceResponse construction on both
+// sides.
+func TestWalletVerifierMdocPresentationRoundTrip(t *testing.T) {
+	verifierKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate verifier key: %v", err)
+	}
+	verifierCert := testcert.SelfSigned(t, "verifier mdoc round trip test", &verifierKey.PublicKey, verifierKey)
+	responseURI, err := fapi.ParseEndpointURL("https://verifier.example.com/response")
+	if err != nil {
+		t.Fatalf("ParseEndpointURL: %v", err)
+	}
+	v, err := verifier.New(verifier.Config{
+		ClientCertificate:  verifierCert,
+		ResponseURI:        responseURI,
+		SigningAlg:         jose.ES256,
+		EncValuesSupported: []jwe.Enc{jwe.A128GCM, jwe.A256GCM},
+	}, verifier.Dependencies{Signer: verifierKey, Random: rand.Reader})
+	if err != nil {
+		t.Fatalf("verifier.New: %v", err)
+	}
+
+	query := testMdocPresentationQuery(t)
+	built, err := v.BuildAuthorizationRequest(verifier.BuildAuthorizationRequestRequest{Query: query})
+	if err != nil {
+		t.Fatalf("BuildAuthorizationRequest: %v", err)
+	}
+	thumbprint := responseEncryptionThumbprintBytes(t, built.ResponseDecryptionKey)
+
+	fixture := newHeldMdoc(t)
+	vpToken, err := wallet.PresentCredentials(wallet.PresentationRequest{
+		Query:                           query,
+		Credentials:                     []wallet.HeldCredential{fixture.held},
+		Audience:                        built.ClientID,
+		Nonce:                           built.Nonce,
+		ResponseURI:                     responseURI.String(),
+		ResponseEncryptionJWKThumbprint: thumbprint,
+	})
+	if err != nil {
+		t.Fatalf("PresentCredentials: %v", err)
+	}
+
+	responseBody, err := json.Marshal(map[string]any{"vp_token": vpToken})
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	responseJWE, err := jwe.Encrypt(&built.ResponseDecryptionKey.PublicKey, jwe.A128GCM, responseBody, jwe.EncryptOptions{})
+	if err != nil {
+		t.Fatalf("jwe.Encrypt: %v", err)
+	}
+
+	parsed, err := v.ParseDirectPostJWTResponse(responseJWE, built.ResponseDecryptionKey)
+	if err != nil {
+		t.Fatalf("ParseDirectPostJWTResponse: %v", err)
+	}
+
+	mdocIssuerKeys := mdocIssuerKeyResolverFunc(func(context.Context, [][]byte, string) (crypto.PublicKey, cose.Alg, error) {
+		return &fixture.issuerKey.PublicKey, cose.ES256, nil
+	})
+	result, err := v.VerifyResponse(context.Background(), verifier.VerifyResponseRequest{
+		Query:                 query,
+		Response:              parsed,
+		ExpectedNonce:         built.Nonce,
+		MdocIssuerKeys:        mdocIssuerKeys,
+		ResponseEncryptionKey: built.ResponseDecryptionKey,
+	})
+	if err != nil {
+		t.Fatalf("VerifyResponse: %v", err)
+	}
+	if len(result.Credentials) != 1 {
+		t.Fatalf("got %d credentials, want 1", len(result.Credentials))
+	}
+	if result.Credentials[0].CredentialQueryID != "mdl" {
+		t.Errorf("CredentialQueryID = %q", result.Credentials[0].CredentialQueryID)
+	}
+	namespace, ok := result.Credentials[0].Claims["org.iso.18013.5.1"].(map[string]interface{})
+	if !ok || namespace["given_name"] != "Alice" {
+		t.Errorf("Claims[org.iso.18013.5.1] = %v", result.Credentials[0].Claims["org.iso.18013.5.1"])
 	}
 }

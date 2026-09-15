@@ -1,0 +1,100 @@
+package oid4vpmdoc
+
+import (
+	"crypto/sha256"
+	"fmt"
+
+	"github.com/fxamacker/cbor/v2"
+)
+
+// tag24 is CBOR tag 24, "encoded CBOR data item" (RFC 8949 §3.4.5.1) —
+// ISO/IEC 18013-5 §9.1.5.1's own SessionTranscriptBytes is
+// #6.24(bstr .cbor SessionTranscript).
+const tag24 = 24
+
+func wrapTag24(v any) ([]byte, error) {
+	inner, err := cbor.Marshal(v)
+	if err != nil {
+		return nil, fmt.Errorf("marshal tag 24 content: %w", err)
+	}
+	wrapped, err := cbor.Marshal(cbor.Tag{Number: tag24, Content: inner})
+	if err != nil {
+		return nil, fmt.Errorf("marshal tag 24: %w", err)
+	}
+	return wrapped, nil
+}
+
+// HandoverParams is the input to BuildSessionTranscriptBytes — the
+// Authorization Request fields Appendix B.2.6.1's own
+// OpenID4VPHandoverInfo array needs. "Unless otherwise stated, the
+// values of client_id, nonce, redirect_uri, and response_uri request
+// parameters referenced above MUST be obtained from the Authorization
+// Request query parameters if the request is unsigned, or from the
+// signed Request Object if the request is signed" — verifier's own
+// redirect-flow requests are always signed (HAIP §5.1), so these come
+// from the Request Object's own claims.
+type HandoverParams struct {
+	// ClientID is the Authorization Request's own "client_id"
+	// (Client Identifier Prefix included). REQUIRED.
+	ClientID string
+
+	// Nonce is the Authorization Request's own "nonce". REQUIRED.
+	Nonce string
+
+	// ResponseURI is whichever of "redirect_uri"/"response_uri" the
+	// Authorization Request carried. REQUIRED. This repo's own
+	// verifier package always uses "response_uri" (direct_post.jwt,
+	// HAIP §5.1's own mandatory response encryption).
+	ResponseURI string
+
+	// ResponseEncryptionJWKThumbprint is the RFC 7638 SHA-256 JWK
+	// Thumbprint, as raw bytes (NOT base64url text — a CBOR bstr,
+	// per Appendix B.2.6.1's own "jwkThumbprint = bstr"), of the
+	// Verifier's own public key used to encrypt the response.
+	// REQUIRED whenever the response is encrypted — direct_post.jwt,
+	// this package's only supported response mode, always encrypts —
+	// so this is effectively always required in practice; nil is
+	// legal only for an unencrypted response, which this repo's own
+	// verifier/wallet packages never produce.
+	ResponseEncryptionJWKThumbprint []byte
+}
+
+// BuildSessionTranscriptBytes builds SessionTranscriptBytes (ISO/IEC
+// 18013-5 §9.1.5.1's own #6.24(bstr .cbor SessionTranscript)) for the
+// OID4VP redirect flow (Appendix B.2.6.1): DeviceEngagementBytes and
+// EReaderKeyBytes are both CBOR null, and Handover is the
+// OpenID4VPHandover structure —
+// ["OpenID4VPHandover", sha256(CBOR(OpenID4VPHandoverInfo))] where
+// OpenID4VPHandoverInfo = [client_id, nonce, jwkThumbprint,
+// response_uri]. Verified byte-for-byte against Appendix B.2.6.1's
+// own worked hex example.
+func BuildSessionTranscriptBytes(p HandoverParams) ([]byte, error) {
+	if p.ClientID == "" {
+		return nil, fmt.Errorf("oid4vpmdoc: build session transcript: client_id is required")
+	}
+	if p.Nonce == "" {
+		return nil, fmt.Errorf("oid4vpmdoc: build session transcript: nonce is required")
+	}
+	if p.ResponseURI == "" {
+		return nil, fmt.Errorf("oid4vpmdoc: build session transcript: response_uri is required")
+	}
+
+	var jwkThumbprint any
+	if p.ResponseEncryptionJWKThumbprint != nil {
+		jwkThumbprint = p.ResponseEncryptionJWKThumbprint
+	}
+	info := []any{p.ClientID, p.Nonce, jwkThumbprint, p.ResponseURI}
+	infoBytes, err := cbor.Marshal(info)
+	if err != nil {
+		return nil, fmt.Errorf("oid4vpmdoc: build session transcript: marshal OpenID4VPHandoverInfo: %w", err)
+	}
+	sum := sha256.Sum256(infoBytes)
+
+	handover := []any{"OpenID4VPHandover", sum[:]}
+	sessionTranscript := []any{nil, nil, handover}
+	sessionTranscriptBytes, err := wrapTag24(sessionTranscript)
+	if err != nil {
+		return nil, fmt.Errorf("oid4vpmdoc: build session transcript: %w", err)
+	}
+	return sessionTranscriptBytes, nil
+}

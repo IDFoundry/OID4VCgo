@@ -200,15 +200,21 @@ func TestVerifyResponseRejects(t *testing.T) {
 			}
 		},
 		"unsupported format": func(t *testing.T, _ *verifier.Verifier, nonce string) verifier.VerifyResponseRequest {
-			meta, err := dcql.NewMdocMeta(dcql.MdocMeta{DoctypeValue: "org.iso.18013.5.1.mDL"})
+			meta, err := dcql.NewSDJWTVCMeta(dcql.SDJWTVCMeta{})
 			if err != nil {
-				t.Fatalf("NewMdocMeta: %v", err)
+				t.Fatalf("NewSDJWTVCMeta: %v", err)
 			}
 			return verifier.VerifyResponseRequest{
-				Query:         dcql.Query{Credentials: []dcql.CredentialQuery{{ID: "mdl", Format: "mso_mdoc", Meta: meta}}},
+				Query:         dcql.Query{Credentials: []dcql.CredentialQuery{{ID: "x", Format: "jwt_vc_json", Meta: meta}}},
 				ExpectedNonce: nonce,
-				Response:      verifier.ParsedResponse{VPToken: map[string][]string{"mdl": {"base64url-device-response"}}},
+				Response:      verifier.ParsedResponse{VPToken: map[string][]string{"x": {"irrelevant"}}},
 			}
+		},
+		"mdoc missing issuer key resolver": func(t *testing.T, v *verifier.Verifier, nonce string) verifier.VerifyResponseRequest {
+			return rejectCaseMdocMissingDependency(t, v, nonce, false)
+		},
+		"mdoc missing response encryption key": func(t *testing.T, v *verifier.Verifier, nonce string) verifier.VerifyResponseRequest {
+			return rejectCaseMdocMissingDependency(t, v, nonce, true)
 		},
 		"multiple presentations": func(t *testing.T, v *verifier.Verifier, nonce string) verifier.VerifyResponseRequest {
 			fixture := newSDJWTVCPresentation(t, v.ClientID(), nonce)
