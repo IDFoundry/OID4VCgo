@@ -61,6 +61,103 @@ func TestSignVerifyEdDSA(t *testing.T) {
 	}
 }
 
+func TestSignVerifyWithTyp(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	sign1, err := Sign(ES256, key, Headers{Typ: "application/statuslist+cwt"}, Headers{}, []byte(`{"a":1}`), nil)
+	if err != nil {
+		t.Fatalf("Sign: %v", err)
+	}
+	protected, _, _, err := Verify(ES256, &key.PublicKey, sign1, nil)
+	if err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	if protected.Typ != "application/statuslist+cwt" {
+		t.Errorf("Typ = %q, want application/statuslist+cwt", protected.Typ)
+	}
+}
+
+func TestHeadersFromMapRejectsNonStringTyp(t *testing.T) {
+	if _, err := headersFromMap(map[int]interface{}{labelTyp: 123}); err == nil {
+		t.Errorf("headersFromMap accepted a non-string typ header")
+	}
+}
+
+func TestSignVerifyTaggedRoundTrip(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	payload := []byte(`{"sub":"https://example.com/statuslists/1"}`)
+
+	sign1, err := SignTagged(ES256, key, Headers{Typ: "application/statuslist+cwt"}, Headers{}, payload, nil)
+	if err != nil {
+		t.Fatalf("SignTagged: %v", err)
+	}
+	if sign1[0] != 0xD2 {
+		t.Errorf("tagged COSE_Sign1 does not start with tag 18's byte (0xD2): got %#x", sign1[0])
+	}
+
+	protected, _, got, err := VerifyTagged(ES256, &key.PublicKey, sign1, nil)
+	if err != nil {
+		t.Fatalf("VerifyTagged: %v", err)
+	}
+	if string(got) != string(payload) {
+		t.Errorf("payload = %s, want %s", got, payload)
+	}
+	if protected.Typ != "application/statuslist+cwt" {
+		t.Errorf("Typ = %q, want application/statuslist+cwt", protected.Typ)
+	}
+
+	decProtected, _, decPayload, err := DecodeUnverifiedTagged(sign1)
+	if err != nil {
+		t.Fatalf("DecodeUnverifiedTagged: %v", err)
+	}
+	if string(decPayload) != string(payload) {
+		t.Errorf("DecodeUnverifiedTagged payload = %s, want %s", decPayload, payload)
+	}
+	if decProtected.Typ != "application/statuslist+cwt" {
+		t.Errorf("DecodeUnverifiedTagged Typ = %q, want application/statuslist+cwt", decProtected.Typ)
+	}
+}
+
+func TestVerifyTaggedRejectsUntaggedInput(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	untagged, err := Sign(ES256, key, Headers{}, Headers{}, []byte(`{"a":1}`), nil)
+	if err != nil {
+		t.Fatalf("Sign: %v", err)
+	}
+	if _, _, _, err := VerifyTagged(ES256, &key.PublicKey, untagged, nil); err == nil {
+		t.Errorf("VerifyTagged accepted untagged input")
+	}
+	if _, _, _, err := DecodeUnverifiedTagged(untagged); err == nil {
+		t.Errorf("DecodeUnverifiedTagged accepted untagged input")
+	}
+}
+
+func TestVerifyTaggedRejectsWrongTagNumber(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	untagged, err := Sign(ES256, key, Headers{}, Headers{}, []byte(`{"a":1}`), nil)
+	if err != nil {
+		t.Fatalf("Sign: %v", err)
+	}
+	wrongTag, err := cbor.Marshal(cbor.RawTag{Number: 24, Content: cbor.RawMessage(untagged)})
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if _, _, _, err := VerifyTagged(ES256, &key.PublicKey, wrongTag, nil); err == nil {
+		t.Errorf("VerifyTagged accepted the wrong tag number")
+	}
+}
+
 func TestSignVerifyWithX5Chain(t *testing.T) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
