@@ -49,7 +49,7 @@ func Verify(signed IssuerSigned, issuerPub crypto.PublicKey, alg cose.Alg, opts 
 		return VerifiedMSO{}, fmt.Errorf("mdoc: MSO version %q, want %q", mso.Version, mobileSecurityObjectVersion)
 	}
 
-	if err := checkDigests(signed.NameSpaces, mso); err != nil {
+	if err := checkDigests(signed, mso); err != nil {
 		return VerifiedMSO{}, err
 	}
 
@@ -86,20 +86,32 @@ func Verify(signed IssuerSigned, issuerPub crypto.PublicKey, alg cose.Alg, opts 
 	}, nil
 }
 
-func checkDigests(nameSpaces map[string][]IssuerSignedItem, mso MobileSecurityObject) error {
-	for namespace, items := range nameSpaces {
+// checkDigests recomputes each disclosed item's digest and checks it
+// against mso.ValueDigests. It always digests the exact bytes signed.NameSpaces'
+// backing implementation actually produced (signed.rawItems when
+// available — see IssuerSigned's own doc comment on why re-deriving
+// bytes from the decoded IssuerSignedItem isn't safe in general).
+func checkDigests(signed IssuerSigned, mso MobileSecurityObject) error {
+	for namespace, items := range signed.NameSpaces {
 		digests, ok := mso.ValueDigests[namespace]
 		if !ok {
 			return fmt.Errorf("mdoc: namespace %q has no entry in valueDigests", namespace)
 		}
-		for _, item := range items {
+		cached := signed.rawItems[namespace]
+		for i, item := range items {
 			want, ok := digests[item.DigestID]
 			if !ok {
 				return fmt.Errorf("mdoc: namespace %q digestID %d has no entry in valueDigests", namespace, item.DigestID)
 			}
-			itemBytes, err := issuerSignedItemBytes(item)
-			if err != nil {
-				return err
+			var itemBytes []byte
+			var err error
+			if i < len(cached) {
+				itemBytes = cached[i]
+			} else {
+				itemBytes, err = issuerSignedItemBytes(item)
+				if err != nil {
+					return err
+				}
 			}
 			got, err := digest(mso.DigestAlgorithm, itemBytes)
 			if err != nil {

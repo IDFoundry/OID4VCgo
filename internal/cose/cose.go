@@ -15,8 +15,10 @@ import (
 	"github.com/idfoundry/oid4vcigo/internal/ecdsafixed"
 )
 
-// Alg identifies a COSE signature algorithm this package supports, by
-// its IANA COSE Algorithms registry value (RFC 9053).
+// Alg identifies a COSE algorithm this package supports, by its IANA
+// COSE Algorithms registry value (RFC 9053) — HMAC256 (mac0.go) is
+// also one of these, drawn from the same registry as the signature
+// algorithms below.
 type Alg int64
 
 const (
@@ -198,7 +200,26 @@ func Sign(alg Alg, signer crypto.Signer, protected, unprotected Headers, payload
 	if payload == nil {
 		return nil, errors.New("cose: payload must not be nil")
 	}
+	return signSign1(alg, signer, protected, unprotected, payload, externalAAD, payload)
+}
 
+// SignDetached is Sign, but for a detached payload (RFC 9052 §4.2): the
+// wire COSE_Sign1's payload field is CBOR null, and detachedPayload is
+// never embedded — the caller must convey it out of band. mdoc's
+// DeviceSignature (ISO/IEC 18013-5 §12.4.6) uses this form.
+func SignDetached(alg Alg, signer crypto.Signer, protected, unprotected Headers, detachedPayload, externalAAD []byte) ([]byte, error) {
+	if detachedPayload == nil {
+		return nil, errors.New("cose: detachedPayload must not be nil")
+	}
+	return signSign1(alg, signer, protected, unprotected, nil, externalAAD, detachedPayload)
+}
+
+// signSign1 is Sign/SignDetached's shared core. wirePayload is what's
+// embedded in the wire COSE_Sign1's payload field (the payload itself,
+// or nil for a detached signature); sigPayload is always the actual
+// payload bytes, used to compute Sig_structure regardless of whether
+// it ends up embedded.
+func signSign1(alg Alg, signer crypto.Signer, protected, unprotected Headers, wirePayload, externalAAD, sigPayload []byte) ([]byte, error) {
 	protected.Alg = alg
 	protectedBytes, err := encMode.Marshal(protected.toMap())
 	if err != nil {
@@ -209,7 +230,7 @@ func Sign(alg Alg, signer crypto.Signer, protected, unprotected Headers, payload
 		Context:       "Signature1",
 		BodyProtected: protectedBytes,
 		ExternalAAD:   nonNil(externalAAD),
-		Payload:       payload,
+		Payload:       sigPayload,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("cose: marshal Sig_structure: %w", err)
@@ -223,7 +244,7 @@ func Sign(alg Alg, signer crypto.Signer, protected, unprotected Headers, payload
 	sign1, err := encMode.Marshal(rawSign1{
 		Protected:   protectedBytes,
 		Unprotected: unprotected.toMap(),
-		Payload:     payload,
+		Payload:     wirePayload,
 		Signature:   sig,
 	})
 	if err != nil {
@@ -241,27 +262,55 @@ func Verify(alg Alg, pub crypto.PublicKey, sign1, externalAAD []byte) (protected
 	if err != nil {
 		return Headers{}, Headers{}, nil, err
 	}
-	protected, unprotected, err = raw.headers()
+	if raw.Payload == nil {
+		return Headers{}, Headers{}, nil, errors.New("cose: COSE_Sign1 has a detached (null) payload; use VerifyDetached")
+	}
+	protected, unprotected, err = verifySign1(alg, pub, raw, externalAAD, raw.Payload)
 	if err != nil {
 		return Headers{}, Headers{}, nil, err
 	}
+	return protected, unprotected, raw.Payload, nil
+}
+
+// VerifyDetached is Verify, but expects sign1 to have a detached
+// (null) payload (see SignDetached) — the caller supplies the same
+// detachedPayload bytes used to produce it.
+func VerifyDetached(alg Alg, pub crypto.PublicKey, sign1, detachedPayload, externalAAD []byte) (protected, unprotected Headers, err error) {
+	raw, err := decodeRaw(sign1)
+	if err != nil {
+		return Headers{}, Headers{}, err
+	}
+	if raw.Payload != nil {
+		return Headers{}, Headers{}, errors.New("cose: COSE_Sign1 has an embedded payload; use Verify")
+	}
+	return verifySign1(alg, pub, raw, externalAAD, detachedPayload)
+}
+
+// verifySign1 is Verify/VerifyDetached's shared core: sigPayload is
+// always the actual payload bytes Sig_structure is computed over,
+// whether they came embedded in raw or were supplied out of band.
+func verifySign1(alg Alg, pub crypto.PublicKey, raw rawSign1, externalAAD, sigPayload []byte) (protected, unprotected Headers, err error) {
+	protected, unprotected, err = raw.headers()
+	if err != nil {
+		return Headers{}, Headers{}, err
+	}
 	if protected.Alg != alg {
-		return Headers{}, Headers{}, nil, fmt.Errorf("cose: protected alg %d does not match expected %d", protected.Alg, alg)
+		return Headers{}, Headers{}, fmt.Errorf("cose: protected alg %d does not match expected %d", protected.Alg, alg)
 	}
 
 	toVerify, err := encMode.Marshal(sigStructure{
 		Context:       "Signature1",
 		BodyProtected: raw.Protected,
 		ExternalAAD:   nonNil(externalAAD),
-		Payload:       raw.Payload,
+		Payload:       sigPayload,
 	})
 	if err != nil {
-		return Headers{}, Headers{}, nil, fmt.Errorf("cose: marshal Sig_structure: %w", err)
+		return Headers{}, Headers{}, fmt.Errorf("cose: marshal Sig_structure: %w", err)
 	}
 	if err := verifyBytes(alg, pub, toVerify, raw.Signature); err != nil {
-		return Headers{}, Headers{}, nil, err
+		return Headers{}, Headers{}, err
 	}
-	return protected, unprotected, raw.Payload, nil
+	return protected, unprotected, nil
 }
 
 // DecodeUnverified decodes an untagged COSE_Sign1's headers and payload

@@ -132,14 +132,32 @@ func TestIssueVerifyRoundTripEdDSA(t *testing.T) {
 	}
 }
 
+// TestVerifyRejectsTamperedElementValue simulates real-world tampering
+// — swapping in different bytes for an item, the way UnmarshalIssuerSigned
+// would if the wire bytes it decoded had been altered — rather than
+// mutating the decoded IssuerSignedItem.ElementValue directly. Verify
+// always digests f.signed's cached rawItems (see IssuerSigned's doc
+// comment), which mutating the exported NameSpaces field doesn't
+// touch, so this is the only way to exercise the digest-mismatch path
+// realistically.
 func TestVerifyRejectsTamperedElementValue(t *testing.T) {
 	f := newFixture(t)
 
 	items := f.signed.NameSpaces["org.iso.18013.5.1"]
+	var target IssuerSignedItem
+	for _, item := range items {
+		if item.ElementIdentifier == "family_name" {
+			target = item
+		}
+	}
+	target.ElementValue = "Tampered"
+	tamperedBytes, err := issuerSignedItemBytes(target)
+	if err != nil {
+		t.Fatalf("issuerSignedItemBytes: %v", err)
+	}
 	for i, item := range items {
 		if item.ElementIdentifier == "family_name" {
-			item.ElementValue = "Tampered"
-			items[i] = item
+			f.signed.rawItems["org.iso.18013.5.1"][i] = tamperedBytes
 		}
 	}
 
@@ -147,6 +165,47 @@ func TestVerifyRejectsTamperedElementValue(t *testing.T) {
 		Now: func() time.Time { return f.claims.Signed.Add(time.Hour) },
 	}); err == nil {
 		t.Errorf("Verify accepted a tampered element value")
+	}
+}
+
+// TestVerifyRejectsTamperedElementValueOverWire is the same scenario
+// as TestVerifyRejectsTamperedElementValue, but through an actual
+// Marshal/UnmarshalIssuerSigned round trip, confirming the real wire
+// path (not just direct field access available to this internal test
+// package) rejects tampering too.
+func TestVerifyRejectsTamperedElementValueOverWire(t *testing.T) {
+	f := newFixture(t)
+
+	items := f.signed.NameSpaces["org.iso.18013.5.1"]
+	var target IssuerSignedItem
+	for _, item := range items {
+		if item.ElementIdentifier == "family_name" {
+			target = item
+		}
+	}
+	target.ElementValue = "Tampered"
+	tamperedBytes, err := issuerSignedItemBytes(target)
+	if err != nil {
+		t.Fatalf("issuerSignedItemBytes: %v", err)
+	}
+	for i, item := range items {
+		if item.ElementIdentifier == "family_name" {
+			f.signed.rawItems["org.iso.18013.5.1"][i] = tamperedBytes
+		}
+	}
+
+	wire, err := f.signed.Marshal()
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	decoded, err := UnmarshalIssuerSigned(wire)
+	if err != nil {
+		t.Fatalf("UnmarshalIssuerSigned: %v", err)
+	}
+	if _, err := Verify(decoded, &f.issuerKey.PublicKey, cose.ES256, VerifyOptions{
+		Now: func() time.Time { return f.claims.Signed.Add(time.Hour) },
+	}); err == nil {
+		t.Errorf("Verify accepted a tampered element value received over the wire")
 	}
 }
 
@@ -260,6 +319,52 @@ func TestIssuerSignedMarshalRejectsEmptyNamespace(t *testing.T) {
 	}
 	if _, err := signed.Marshal(); err == nil {
 		t.Errorf("Marshal accepted a namespace with no data elements")
+	}
+}
+
+// TestMapValuedElementValueVerifiesReliably guards against the bug
+// IssuerSigned's rawItems cache fixes: Go randomizes map iteration
+// order per range, so encoding the same map-typed ElementValue twice
+// (once for its digest, again to produce the wire bytes) could once
+// produce different bytes and a spurious digest mismatch. Run several
+// iterations, since the bug was probabilistic — a single run could
+// pass by chance even with the bug present.
+func TestMapValuedElementValueVerifiesReliably(t *testing.T) {
+	for i := 0; i < 20; i++ {
+		f := newFixture(t)
+		claims := testClaims(t, &f.deviceKey.PublicKey)
+		claims.NameSpaces["org.iso.18013.5.1"] = map[string]interface{}{
+			"nested": map[string]interface{}{
+				"alpha": 1, "bravo": 2, "charlie": 3, "delta": 4,
+				"echo": 5, "foxtrot": 6, "golf": 7, "hotel": 8,
+			},
+		}
+		signed, err := Issue(f.issuerKey, cose.ES256, claims, IssueOptions{X5Chain: [][]byte{f.cert}})
+		if err != nil {
+			t.Fatalf("iteration %d: Issue: %v", i, err)
+		}
+
+		// In-memory path (no wire round trip).
+		if _, err := Verify(signed, &f.issuerKey.PublicKey, cose.ES256, VerifyOptions{
+			Now: func() time.Time { return claims.Signed.Add(time.Hour) },
+		}); err != nil {
+			t.Fatalf("iteration %d: Verify (in-memory): %v", i, err)
+		}
+
+		// Wire round trip.
+		wire, err := signed.Marshal()
+		if err != nil {
+			t.Fatalf("iteration %d: Marshal: %v", i, err)
+		}
+		decoded, err := UnmarshalIssuerSigned(wire)
+		if err != nil {
+			t.Fatalf("iteration %d: UnmarshalIssuerSigned: %v", i, err)
+		}
+		if _, err := Verify(decoded, &f.issuerKey.PublicKey, cose.ES256, VerifyOptions{
+			Now: func() time.Time { return claims.Signed.Add(time.Hour) },
+		}); err != nil {
+			t.Fatalf("iteration %d: Verify (wire round trip): %v", i, err)
+		}
 	}
 }
 
