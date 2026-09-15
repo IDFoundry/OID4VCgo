@@ -3,10 +3,8 @@ package verifier_test
 import (
 	"context"
 	"crypto"
-	"encoding/base64"
 	"testing"
 
-	"github.com/idfoundry/oid4vcigo/credential/mdoc"
 	"github.com/idfoundry/oid4vcigo/internal/cose"
 	"github.com/idfoundry/oid4vcigo/internal/testmdoc"
 	"github.com/idfoundry/oid4vcigo/oid4vpmdoc"
@@ -22,33 +20,6 @@ type fixedMdocIssuerKeyResolver struct {
 
 func (r fixedMdocIssuerKeyResolver) ResolveMdocIssuerKey(context.Context, [][]byte, string) (crypto.PublicKey, cose.Alg, error) {
 	return r.pub, r.alg, nil
-}
-
-// presentMdocFixture builds a base64url-encoded DeviceResponse from
-// testmdoc.Fixture f, its own DeviceSigned bound to the exact
-// clientID/nonce/responseURI/thumbprint a real verifier.VerifyResponse
-// call will reconstruct — the response-building half
-// testmdoc.Fixture itself doesn't own, since only a specific test
-// knows which aud/nonce a given case needs.
-func presentMdocFixture(t *testing.T, f testmdoc.Fixture, clientID, nonce, responseURI string, thumbprint []byte) string {
-	t.Helper()
-	sessionTranscriptBytes, err := oid4vpmdoc.BuildSessionTranscriptBytes(oid4vpmdoc.HandoverParams{
-		ClientID: clientID, Nonce: nonce, ResponseURI: responseURI, ResponseEncryptionJWKThumbprint: thumbprint,
-	})
-	if err != nil {
-		t.Fatalf("BuildSessionTranscriptBytes: %v", err)
-	}
-	deviceSigned, err := mdoc.SignDeviceSignature(f.DeviceKey, cose.ES256, sessionTranscriptBytes, testmdoc.DocType, map[string]map[string]interface{}{})
-	if err != nil {
-		t.Fatalf("SignDeviceSignature: %v", err)
-	}
-	deviceResponseBytes, err := oid4vpmdoc.MarshalDeviceResponse(oid4vpmdoc.Document{
-		DocType: testmdoc.DocType, IssuerSigned: f.IssuerSigned, DeviceSigned: deviceSigned,
-	})
-	if err != nil {
-		t.Fatalf("MarshalDeviceResponse: %v", err)
-	}
-	return base64.RawURLEncoding.EncodeToString(deviceResponseBytes)
 }
 
 // TestVerifyMdocResponse drives a real end-to-end round trip: build a
@@ -69,7 +40,9 @@ func TestVerifyMdocResponse(t *testing.T) {
 
 	thumbprint := testmdoc.ResponseEncryptionThumbprint(t, built.ResponseDecryptionKey)
 	f := testmdoc.Issue(t)
-	presented := presentMdocFixture(t, f, v.ClientID(), built.Nonce, cfg.ResponseURI.String(), thumbprint)
+	presented := testmdoc.Present(t, f, oid4vpmdoc.HandoverParams{
+		ClientID: v.ClientID(), Nonce: built.Nonce, ResponseURI: cfg.ResponseURI.String(), ResponseEncryptionJWKThumbprint: thumbprint,
+	})
 
 	result, err := v.VerifyResponse(context.Background(), verifier.VerifyResponseRequest{
 		Query:                 query,
@@ -106,7 +79,9 @@ func TestVerifyMdocResponseRejectsWrongNonce(t *testing.T) {
 	}
 	thumbprint := testmdoc.ResponseEncryptionThumbprint(t, built.ResponseDecryptionKey)
 	f := testmdoc.Issue(t)
-	presented := presentMdocFixture(t, f, v.ClientID(), "wrong-nonce", cfg.ResponseURI.String(), thumbprint)
+	presented := testmdoc.Present(t, f, oid4vpmdoc.HandoverParams{
+		ClientID: v.ClientID(), Nonce: "wrong-nonce", ResponseURI: cfg.ResponseURI.String(), ResponseEncryptionJWKThumbprint: thumbprint,
+	})
 
 	_, err = v.VerifyResponse(context.Background(), verifier.VerifyResponseRequest{
 		Query:                 query,

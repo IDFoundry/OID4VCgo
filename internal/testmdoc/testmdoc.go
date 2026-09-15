@@ -19,6 +19,7 @@ import (
 	"github.com/idfoundry/oid4vcigo/internal/cose"
 	"github.com/idfoundry/oid4vcigo/internal/jwk"
 	"github.com/idfoundry/oid4vcigo/internal/testcert"
+	"github.com/idfoundry/oid4vcigo/oid4vpmdoc"
 )
 
 // DocType is the ISO/IEC 18013-5 docType every Fixture this package
@@ -76,6 +77,34 @@ func Query(t *testing.T) dcql.Query {
 		ID: "mdl", Format: mdoc.CredentialFormat, Meta: meta,
 		Claims: []dcql.ClaimsQuery{{Path: dcql.Path{dcql.PathKey("org.iso.18013.5.1"), dcql.PathKey("given_name")}}},
 	}}}
+}
+
+// Present builds a base64url-encoded DeviceResponse from f (Appendix
+// B.2.5's own VP Token entry shape): a fresh DeviceSigned — ECDSA
+// device signature — over SessionTranscriptBytes built from params
+// (oid4vpmdoc.BuildSessionTranscriptBytes) wrapping f's own
+// IssuerSigned, with no additional self-asserted DeviceSigned
+// namespaces. Mirrors wallet.PresentMdoc's own construction — kept
+// here rather than calling that package directly so this shared
+// test-support package doesn't need a dependency on any one role
+// package.
+func Present(t *testing.T, f Fixture, params oid4vpmdoc.HandoverParams) string {
+	t.Helper()
+	sessionTranscriptBytes, err := oid4vpmdoc.BuildSessionTranscriptBytes(params)
+	if err != nil {
+		t.Fatalf("testmdoc: BuildSessionTranscriptBytes: %v", err)
+	}
+	deviceSigned, err := mdoc.SignDeviceSignature(f.DeviceKey, cose.ES256, sessionTranscriptBytes, DocType, map[string]map[string]interface{}{})
+	if err != nil {
+		t.Fatalf("testmdoc: SignDeviceSignature: %v", err)
+	}
+	deviceResponseBytes, err := oid4vpmdoc.MarshalDeviceResponse(oid4vpmdoc.Document{
+		DocType: DocType, IssuerSigned: f.IssuerSigned, DeviceSigned: deviceSigned,
+	})
+	if err != nil {
+		t.Fatalf("testmdoc: MarshalDeviceResponse: %v", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(deviceResponseBytes)
 }
 
 // ResponseEncryptionThumbprint computes the RFC 7638 SHA-256 JWK
