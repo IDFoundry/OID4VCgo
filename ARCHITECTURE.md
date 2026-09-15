@@ -16,7 +16,9 @@
 > Credential Endpoint for immediate issuance of both formats,
 > Credential Offer construction/dereferencing, the Deferred Credential
 > Endpoint's polling protocol, and the Notification Endpoint) — every
-> OID4VCI 1.0 Credential Issuer endpoint — are implemented and tested;
+> OID4VCI 1.0 Credential Issuer endpoint — and `storage` (in-memory
+> reference implementations of every store `issuer` defines, for local
+> dev/testing only) are implemented and tested;
 > everything else below is still just the
 > planned layout, not a finished system. Update each section as the
 > corresponding package
@@ -358,9 +360,19 @@ shape from the phase-by-phase plan, not a description of current code.
   specific overrides on top of `issuer`/`wallet`/`verifier` — mirrors
   FAPIgo's `server.RecommendedLimits()`/`RecommendedAlgorithms()` pattern:
   every value traceable to a specific HAIP section.
-- **`storage`** — reference in-memory implementations (credential-offer
-  state, deferred transactions) for local dev/testing only, mirroring
-  FAPIgo's `storage/memstore`.
+- **`storage`** — in-memory implementations of every store `issuer`
+  defines (`NonceStore`, `CredentialOfferStore`, `DeferredTransactionStore`,
+  `NotificationStore`), for local dev/testing only — never production;
+  mirrors FAPIgo's `storage/memstore` down to the same non-durable,
+  no-garbage-collection caveats and the same M-5 no-aliasing discipline
+  (deep-copying every slice/pointer that crosses a Store/Get boundary,
+  in both directions — see its own `clone.go` and `aliasing_test.go`).
+  `DeferredTransactionStore` has one method beyond
+  `issuer.DeferredTransactionStore` itself, `Put`: since `issuer` never
+  creates or resolves a Deferred Issuance transaction on its own (see
+  `issuer.DeferredTransactionRecord`'s own doc comment), this package's
+  reference store needs some way for a caller to actually create one
+  and later mark it Issued/Denied.
 - **`conformance`** — OIDF HAIP conformance suite harness, once one of the
   protocol packages above is far enough along to run against it. Mirrors
   FAPIgo's `conformance/` structure and its own AGENTS.md documentation
