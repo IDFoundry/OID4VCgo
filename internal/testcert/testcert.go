@@ -1,0 +1,39 @@
+// Package testcert builds throwaway self-signed X.509 certificates for
+// tests that need a *x509.Certificate (e.g. verifier.Config's own
+// ClientCertificate) — never for production use. It's a regular (not
+// _test.go) package specifically so more than one package's own test
+// files can share it; Go doesn't let a _test.go file's own symbols be
+// imported from another package's tests.
+package testcert
+
+import (
+	"crypto"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"math/big"
+	"testing"
+	"time"
+)
+
+// SelfSigned builds a self-signed leaf certificate for pub, signed by
+// signer (ordinarily pub's own corresponding private key), valid from
+// an hour ago to 24 hours from now.
+func SelfSigned(t *testing.T, commonName string, pub crypto.PublicKey, signer crypto.Signer) *x509.Certificate {
+	t.Helper()
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: commonName},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(24 * time.Hour),
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, pub, signer)
+	if err != nil {
+		t.Fatalf("testcert: CreateCertificate: %v", err)
+	}
+	cert, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatalf("testcert: ParseCertificate: %v", err)
+	}
+	return cert
+}
