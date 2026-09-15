@@ -17,12 +17,11 @@ import (
 )
 
 // Endpoints are this Credential Issuer's own endpoint URLs — what
-// Metadata advertises. Notification will join Credential, Nonce and
-// DeferredCredential as that endpoint lands (see ARCHITECTURE.md).
-// Credential is required even though there is no RequestCredential
-// method yet — §12.2.4 requires credential_endpoint in every Credential
-// Issuer's metadata unconditionally, independent of which endpoints
-// this package itself has wired up an HTTP handler for so far.
+// Metadata advertises. Credential is required even though there is no
+// RequestCredential method yet — §12.2.4 requires credential_endpoint
+// in every Credential Issuer's metadata unconditionally, independent
+// of which endpoints this package itself has wired up an HTTP handler
+// for so far.
 type Endpoints struct {
 	// Credential is this issuer's Credential Endpoint (§8). Required.
 	Credential fapi.URL
@@ -37,6 +36,13 @@ type Endpoints struct {
 	// then omits deferred_credential_endpoint, and
 	// RequestDeferredCredential always fails.
 	DeferredCredential fapi.URL
+
+	// Notification is this issuer's Notification Endpoint (§11). Zero
+	// means this issuer never accepts notifications — Metadata then
+	// omits notification_endpoint, RequestCredential never sets
+	// CredentialResponse.NotificationID, and RequestNotification
+	// always fails.
+	Notification fapi.URL
 }
 
 // Limits bounds durations this issuer enforces. None have an implicit
@@ -197,6 +203,19 @@ type Dependencies struct {
 	// DeferredTransactions persists Deferred Issuance transactions
 	// (§9). Required when Config.Endpoints.DeferredCredential is set.
 	DeferredTransactions DeferredTransactionStore
+
+	// Notifications persists notification_id values issued to Wallets
+	// (§11). Required when Config.Endpoints.Notification is set.
+	Notifications NotificationStore
+
+	// NotificationHandler reacts to a validated Notification Request's
+	// event — entirely this deployment's own business logic; this
+	// package has none of its own (§11: "These events enable the
+	// Credential Issuer to take subsequent actions after issuance").
+	// OPTIONAL even when Config.Endpoints.Notification is set:
+	// RequestNotification still succeeds with a nil NotificationHandler,
+	// since a Wallet is never guaranteed to send a notification at all.
+	NotificationHandler NotificationHandler
 }
 
 // Issuer is this Credential Issuer's own role implementation — the
@@ -251,6 +270,10 @@ func New(cfg Config, deps Dependencies) (*Issuer, error) {
 		if deps.DeferredTransactions == nil {
 			return nil, fmt.Errorf("issuer: dependencies: deferred_transactions is required when endpoints.deferred_credential is set")
 		}
+	}
+
+	if !cfg.Endpoints.Notification.IsZero() && deps.Notifications == nil {
+		return nil, fmt.Errorf("issuer: dependencies: notifications is required when endpoints.notification is set")
 	}
 
 	if deps.Clock == nil {

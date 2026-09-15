@@ -6,8 +6,10 @@ import (
 	"net/http"
 )
 
-// ErrorCode is the closed set of Credential Request/Response error
-// codes §8.3.1.2 defines.
+// ErrorCode is the closed set of error codes this package's endpoints
+// return: §8.3.1.2's own Credential Request/Response codes, §9.3's
+// additional invalid_transaction_id, and §11.3's own separate
+// Notification Request error codes.
 type ErrorCode string
 
 const (
@@ -23,6 +25,13 @@ const (
 	// was not issued by this Credential Issuer, or was already used to
 	// obtain a Credential.
 	ErrorInvalidTransactionID ErrorCode = "invalid_transaction_id"
+
+	// ErrorInvalidNotificationID and ErrorInvalidNotificationRequest
+	// are the Notification Endpoint's own, separate error code set
+	// (§11.3) — distinct from the codes above, which are all
+	// Credential/Deferred Credential Endpoint errors (§8.3.1.2/§9.3).
+	ErrorInvalidNotificationID      ErrorCode = "invalid_notification_id"
+	ErrorInvalidNotificationRequest ErrorCode = "invalid_notification_request"
 )
 
 // Error is the error type RequestCredential returns for a Credential

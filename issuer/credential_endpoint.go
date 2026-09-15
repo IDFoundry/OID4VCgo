@@ -105,11 +105,18 @@ type IssuedCredential struct {
 // issuance case — RequestCredential always issues immediately or fails
 // outright; it never defers, so transaction_id/interval never apply
 // here (see DeferredCredentialResult for that case, once some other,
-// deployment-specific process has decided to defer). notification_id
-// is never set since the Notification Endpoint (§11) doesn't exist yet
-// to consume it.
+// deployment-specific process has decided to defer).
 type CredentialResponse struct {
 	Credentials []IssuedCredential
+
+	// NotificationID is set to a fresh value (see IssueNotificationID)
+	// exactly when Config.Endpoints.Notification is configured — "" if
+	// not, since a Wallet has nothing to present to a Notification
+	// Endpoint that doesn't exist. One value covers the whole issuance
+	// flow this call produced, per §11.1's own "identifying an
+	// issuance flow that contained one or more Credentials with the
+	// same Credential Configuration and Credential Dataset".
+	NotificationID string
 }
 
 // resolvedKey is one Wallet-supplied binding key extracted from a
@@ -167,7 +174,15 @@ func (iss *Issuer) RequestCredential(ctx context.Context, auth AuthorizedRequest
 		}
 		credentials = append(credentials, IssuedCredential{Credential: credential})
 	}
-	return CredentialResponse{Credentials: credentials}, nil
+
+	var notificationID string
+	if iss.deps.Notifications != nil {
+		notificationID, err = iss.IssueNotificationID(ctx, auth)
+		if err != nil {
+			return CredentialResponse{}, fmt.Errorf("issuer: request credential: %w", err)
+		}
+	}
+	return CredentialResponse{Credentials: credentials, NotificationID: notificationID}, nil
 }
 
 func singleProofType(proofs map[string][]string, cc CredentialConfiguration) (proofType string, values []string, err error) {

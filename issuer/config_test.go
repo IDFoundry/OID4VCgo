@@ -20,6 +20,7 @@ const (
 	testNonceEndpoint              = "https://issuer.example.com/nonce"
 	testCredentialOfferEndpoint    = "https://issuer.example.com/credential-offer"
 	testDeferredCredentialEndpoint = "https://issuer.example.com/deferred_credential"
+	testNotificationEndpoint       = "https://issuer.example.com/notification"
 )
 
 func mustIssuerURL(t *testing.T, raw string) fapi.URL {
@@ -63,6 +64,7 @@ func validConfig(t *testing.T) issuer.Config {
 			Credential:         mustEndpointURL(t, testCredentialEndpoint),
 			Nonce:              mustEndpointURL(t, testNonceEndpoint),
 			DeferredCredential: mustEndpointURL(t, testDeferredCredentialEndpoint),
+			Notification:       mustEndpointURL(t, testNotificationEndpoint),
 		},
 		Limits: issuer.Limits{
 			NonceLifetime:                time.Minute,
@@ -101,6 +103,7 @@ func validDependencies(t *testing.T) issuer.Dependencies {
 		SDJWTSigner:          testSDJWTSigner(t),
 		CredentialOffers:     newFakeCredentialOfferStore(),
 		DeferredTransactions: newFakeDeferredTransactionStore(),
+		Notifications:        newFakeNotificationStore(),
 	}
 }
 
@@ -140,6 +143,25 @@ func TestNewAcceptsDeferredCredentialEndpointDisabled(t *testing.T) {
 	deps.DeferredTransactions = nil
 	if _, err := issuer.New(cfg, deps); err != nil {
 		t.Fatalf("New: %v", err)
+	}
+}
+
+func TestNewAcceptsNotificationEndpointDisabled(t *testing.T) {
+	cfg := validConfig(t)
+	cfg.Endpoints.Notification = fapi.URL{}
+	deps := validDependencies(t)
+	deps.Notifications = nil
+	if _, err := issuer.New(cfg, deps); err != nil {
+		t.Fatalf("New: %v", err)
+	}
+}
+
+func TestNewRejectsMissingNotificationsDependency(t *testing.T) {
+	cfg := validConfig(t)
+	deps := validDependencies(t)
+	deps.Notifications = nil
+	if _, err := issuer.New(cfg, deps); err == nil {
+		t.Fatalf("New = nil error, want error (endpoints.notification is set but dependencies.notifications is nil)")
 	}
 }
 

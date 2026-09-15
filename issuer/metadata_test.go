@@ -47,6 +47,9 @@ func TestMetadata(t *testing.T) {
 	if md.DeferredCredentialEndpoint == nil || md.DeferredCredentialEndpoint.String() != testDeferredCredentialEndpoint {
 		t.Errorf("DeferredCredentialEndpoint = %v, want %q", md.DeferredCredentialEndpoint, testDeferredCredentialEndpoint)
 	}
+	if md.NotificationEndpoint == nil || md.NotificationEndpoint.String() != testNotificationEndpoint {
+		t.Errorf("NotificationEndpoint = %v, want %q", md.NotificationEndpoint, testNotificationEndpoint)
+	}
 	if len(md.CredentialConfigurationsSupported) != 1 {
 		t.Fatalf("got %d credential configurations, want 1", len(md.CredentialConfigurationsSupported))
 	}
@@ -63,6 +66,9 @@ func TestMetadata(t *testing.T) {
 	}
 	if wire["deferred_credential_endpoint"] != testDeferredCredentialEndpoint {
 		t.Errorf("wire deferred_credential_endpoint = %v", wire["deferred_credential_endpoint"])
+	}
+	if wire["notification_endpoint"] != testNotificationEndpoint {
+		t.Errorf("wire notification_endpoint = %v", wire["notification_endpoint"])
 	}
 
 	configs, ok := wire["credential_configurations_supported"].(map[string]any)
@@ -133,6 +139,27 @@ func TestMetadata_OmitsDeferredCredentialEndpointWhenDisabled(t *testing.T) {
 	wire := marshalWire(t, md)
 	if _, ok := wire["deferred_credential_endpoint"]; ok {
 		t.Errorf("wire form still has deferred_credential_endpoint: %v", wire["deferred_credential_endpoint"])
+	}
+}
+
+func TestMetadata_OmitsNotificationEndpointWhenDisabled(t *testing.T) {
+	cfg := validConfig(t)
+	cfg.Endpoints.Notification = fapi.URL{}
+	deps := validDependencies(t)
+	deps.Notifications = nil
+
+	iss, err := issuer.New(cfg, deps)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	md := iss.Metadata()
+	if md.NotificationEndpoint != nil {
+		t.Errorf("NotificationEndpoint = %v, want nil", md.NotificationEndpoint)
+	}
+
+	wire := marshalWire(t, md)
+	if _, ok := wire["notification_endpoint"]; ok {
+		t.Errorf("wire form still has notification_endpoint: %v", wire["notification_endpoint"])
 	}
 }
 

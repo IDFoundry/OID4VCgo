@@ -14,9 +14,10 @@
 > derivation), `internal/jwk` (JWK marshal/parse, shared by `attestation`
 > and `issuer`), and `issuer` (Nonce Endpoint, Metadata, the
 > Credential Endpoint for immediate issuance of both formats,
-> Credential Offer construction/dereferencing, and the Deferred
-> Credential Endpoint's polling protocol) are
-> implemented and tested; everything else below is still just the
+> Credential Offer construction/dereferencing, the Deferred Credential
+> Endpoint's polling protocol, and the Notification Endpoint) — every
+> OID4VCI 1.0 Credential Issuer endpoint — are implemented and tested;
+> everything else below is still just the
 > planned layout, not a finished system. Update each section as the
 > corresponding package
 > actually lands; don't let this drift into aspirational documentation
@@ -314,8 +315,31 @@ shape from the phase-by-phase plan, not a description of current code.
   Deferred Issuance transaction itself — deciding a Credential isn't
   ready yet, and later deciding it is, is an entirely deployment-
   specific business process that writes directly to the store; see
-  `DeferredTransactionRecord`'s own doc comment. Still to come:
-  Notification Endpoint (§11) — and this is still where
+  `DeferredTransactionRecord`'s own doc comment. Also implements the
+  Notification Endpoint (§11): `RequestNotification` validates a
+  Notification Request's shape (`notification_id`, one of the three
+  `NotificationEvent` values, and an `event_description` restricted to
+  §11.1's own character set), retrieves its `NotificationRecord` from a
+  new `Dependencies.Notifications` (`NotificationStore`), checks it's
+  bound to the requesting client the same way Deferred Issuance does,
+  and — only if `Dependencies.NotificationHandler` is configured, since
+  §11 makes reacting to an event optional even for a Credential Issuer
+  that supports the endpoint — hands the event off to it; this package
+  has no notification-triggered business logic of its own. Unlike
+  `NonceStore`/`DeferredTransactionStore`, `NotificationStore` has no
+  `Consume`/`Invalidate`: §11's own idempotency requirement means a
+  repeated Notification Request for the same `notification_id` must
+  keep succeeding. `IssueNotificationID` generates and persists a fresh
+  `notification_id` (256-bit, matching this package's other reference
+  values) bound to the requesting client; `RequestCredential` now calls
+  it once per issuance flow when `Endpoints.Notification` is
+  configured, setting `CredentialResponse.NotificationID` — a caller
+  resolving a Deferred Issuance transaction should call it too, before
+  setting `DeferredTransactionRecord.NotificationID`, since an
+  unregistered value fails validation at `RequestNotification`.
+  `Endpoints.Notification` is advertised in Metadata's own
+  `notification_endpoint`. With this, every OID4VCI 1.0 Credential
+  Issuer endpoint this repo scoped in exists; what's left is where
   `fapigo/server` gets consumed for the Authorization/Token Endpoints'
   own PAR/DPoP/client-authentication machinery once those exist in
   this repo.
