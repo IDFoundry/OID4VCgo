@@ -8,6 +8,7 @@ import (
 	"github.com/idfoundry/oid4vcigo/dcql"
 	"github.com/idfoundry/oid4vcigo/internal/cose"
 	"github.com/idfoundry/oid4vcigo/internal/testmdoc"
+	"github.com/idfoundry/oid4vcigo/internal/testverify"
 	"github.com/idfoundry/oid4vcigo/oid4vpmdoc"
 	"github.com/idfoundry/oid4vcigo/verifier"
 )
@@ -78,18 +79,10 @@ func (mf mdocVerifyFixture) verify(t *testing.T, nonce string) (verifier.VerifyR
 func TestVerifyMdocResponse(t *testing.T) {
 	mf := newMdocVerifyFixture(t)
 	result, err := mf.verify(t, mf.built.Nonce)
-	if err != nil {
-		t.Fatalf("VerifyResponse: %v", err)
-	}
-	if len(result.Credentials) != 1 {
-		t.Fatalf("got %d credentials, want 1", len(result.Credentials))
-	}
-	if result.Credentials[0].CredentialQueryID != "mdl" {
-		t.Errorf("CredentialQueryID = %q", result.Credentials[0].CredentialQueryID)
-	}
-	namespace, ok := result.Credentials[0].Claims["org.iso.18013.5.1"].(map[string]interface{})
+	vc := testverify.RequireOneCredential(t, result, err, "mdl")
+	namespace, ok := vc.Claims["org.iso.18013.5.1"].(map[string]interface{})
 	if !ok || namespace["given_name"] != "Alice" {
-		t.Errorf("Claims[org.iso.18013.5.1] = %v", result.Credentials[0].Claims["org.iso.18013.5.1"])
+		t.Errorf("Claims[org.iso.18013.5.1] = %v", vc.Claims["org.iso.18013.5.1"])
 	}
 }
 

@@ -10,6 +10,7 @@ import (
 	"github.com/idfoundry/oid4vcigo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcigo/dcql"
 	"github.com/idfoundry/oid4vcigo/internal/jose"
+	"github.com/idfoundry/oid4vcigo/internal/testverify"
 	"github.com/idfoundry/oid4vcigo/verifier"
 )
 
@@ -131,17 +132,9 @@ func TestVerifyResponse(t *testing.T) {
 		ExpectedNonce: built.Nonce,
 		IssuerKeys:    fixedSDJWTVCIssuerKeyResolver{pub: &fixture.issuerKey.PublicKey, alg: jose.ES256},
 	})
-	if err != nil {
-		t.Fatalf("VerifyResponse: %v", err)
-	}
-	if len(result.Credentials) != 1 {
-		t.Fatalf("got %d credentials, want 1", len(result.Credentials))
-	}
-	if result.Credentials[0].CredentialQueryID != "identity_credential" {
-		t.Errorf("CredentialQueryID = %q", result.Credentials[0].CredentialQueryID)
-	}
-	if result.Credentials[0].Claims["given_name"] != "Alice" {
-		t.Errorf("Claims[given_name] = %v, want Alice", result.Credentials[0].Claims["given_name"])
+	vc := testverify.RequireOneCredential(t, result, err, "identity_credential")
+	if vc.Claims["given_name"] != "Alice" {
+		t.Errorf("Claims[given_name] = %v, want Alice", vc.Claims["given_name"])
 	}
 }
 

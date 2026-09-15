@@ -16,6 +16,7 @@ import (
 	"github.com/idfoundry/oid4vcigo/internal/jwe"
 	"github.com/idfoundry/oid4vcigo/internal/testcert"
 	"github.com/idfoundry/oid4vcigo/internal/testmdoc"
+	"github.com/idfoundry/oid4vcigo/internal/testverify"
 	"github.com/idfoundry/oid4vcigo/verifier"
 	"github.com/idfoundry/oid4vcigo/wallet"
 )
@@ -121,20 +122,12 @@ func TestWalletVerifierPresentationRoundTrip(t *testing.T) {
 		ExpectedNonce: built.Nonce,
 		IssuerKeys:    issuerKeys,
 	})
-	if err != nil {
-		t.Fatalf("VerifyResponse: %v", err)
+	vc := testverify.RequireOneCredential(t, result, err, "identity_credential")
+	if vc.Claims["given_name"] != "Alice" {
+		t.Errorf("Claims[given_name] = %v, want Alice", vc.Claims["given_name"])
 	}
-	if len(result.Credentials) != 1 {
-		t.Fatalf("got %d credentials, want 1", len(result.Credentials))
-	}
-	if result.Credentials[0].CredentialQueryID != "identity_credential" {
-		t.Errorf("CredentialQueryID = %q", result.Credentials[0].CredentialQueryID)
-	}
-	if result.Credentials[0].Claims["given_name"] != "Alice" {
-		t.Errorf("Claims[given_name] = %v, want Alice", result.Credentials[0].Claims["given_name"])
-	}
-	if result.Credentials[0].Claims["vct"] != testPresentationVCT {
-		t.Errorf("Claims[vct] = %v, want %q", result.Credentials[0].Claims["vct"], testPresentationVCT)
+	if vc.Claims["vct"] != testPresentationVCT {
+		t.Errorf("Claims[vct] = %v, want %q", vc.Claims["vct"], testPresentationVCT)
 	}
 }
 
@@ -191,17 +184,9 @@ func TestWalletVerifierMdocPresentationRoundTrip(t *testing.T) {
 		MdocIssuerKeys:        mdocIssuerKeys,
 		ResponseEncryptionKey: built.ResponseDecryptionKey,
 	})
-	if err != nil {
-		t.Fatalf("VerifyResponse: %v", err)
-	}
-	if len(result.Credentials) != 1 {
-		t.Fatalf("got %d credentials, want 1", len(result.Credentials))
-	}
-	if result.Credentials[0].CredentialQueryID != "mdl" {
-		t.Errorf("CredentialQueryID = %q", result.Credentials[0].CredentialQueryID)
-	}
-	namespace, ok := result.Credentials[0].Claims["org.iso.18013.5.1"].(map[string]interface{})
+	vc := testverify.RequireOneCredential(t, result, err, "mdl")
+	namespace, ok := vc.Claims["org.iso.18013.5.1"].(map[string]interface{})
 	if !ok || namespace["given_name"] != "Alice" {
-		t.Errorf("Claims[org.iso.18013.5.1] = %v", result.Credentials[0].Claims["org.iso.18013.5.1"])
+		t.Errorf("Claims[org.iso.18013.5.1] = %v", vc.Claims["org.iso.18013.5.1"])
 	}
 }
