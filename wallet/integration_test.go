@@ -22,6 +22,7 @@ import (
 	"github.com/idfoundry/oid4vcigo/attestation"
 	"github.com/idfoundry/oid4vcigo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcigo/internal/jose"
+	"github.com/idfoundry/oid4vcigo/internal/jwe"
 	"github.com/idfoundry/oid4vcigo/issuer"
 	"github.com/idfoundry/oid4vcigo/storage"
 	"github.com/idfoundry/oid4vcigo/wallet"
@@ -69,47 +70,60 @@ func (f issuerCredentialFake) Do(ctx context.Context, req *http.Request) (*http.
 	if err != nil {
 		return nil, err
 	}
-	var wire struct {
-		CredentialConfigurationID string              `json:"credential_configuration_id"`
-		Proofs                    map[string][]string `json:"proofs"`
+	plaintext, wasEncrypted, err := f.iss.DecryptRequestBody(raw, req.Header.Get("Content-Type"))
+	if err != nil {
+		return issuerErrorResponse(err)
 	}
-	if err := json.Unmarshal(raw, &wire); err != nil {
+
+	var wire struct {
+		CredentialConfigurationID string                               `json:"credential_configuration_id"`
+		Proofs                    map[string][]string                  `json:"proofs"`
+		ResponseEncryption        *issuerWireResponseEncryptionRequest `json:"credential_response_encryption"`
+	}
+	if err := json.Unmarshal(plaintext, &wire); err != nil {
 		return nil, err
 	}
 
-	result, reqErr := f.iss.RequestCredential(ctx, f.auth, issuer.CredentialRequest{
+	credReq := issuer.CredentialRequest{
 		CredentialConfigurationID: wire.CredentialConfigurationID,
 		Proofs:                    wire.Proofs,
 		SDJWTClaims:               f.claims,
-	})
-	if reqErr != nil {
-		var ierr *issuer.Error
-		if errors.As(reqErr, &ierr) {
-			body, err := json.Marshal(struct {
-				Error            string `json:"error"`
-				ErrorDescription string `json:"error_description"`
-			}{Error: string(ierr.Code()), ErrorDescription: ierr.PublicDescription()})
-			if err != nil {
-				return nil, err
-			}
-			return &http.Response{
-				StatusCode: ierr.HTTPStatus(),
-				Body:       io.NopCloser(bytes.NewReader(body)),
-				Header:     http.Header{"Content-Type": {"application/json"}},
-			}, nil
+		RequestWasEncrypted:       wasEncrypted,
+	}
+	if wire.ResponseEncryption != nil {
+		credReq.ResponseEncryption = &issuer.ResponseEncryptionRequest{
+			JWK: wire.ResponseEncryption.JWK, Enc: jwe.Enc(wire.ResponseEncryption.Enc), Zip: jwe.Zip(wire.ResponseEncryption.Zip),
 		}
-		return nil, reqErr
+	}
+
+	result, reqErr := f.iss.RequestCredential(ctx, f.auth, credReq)
+	if reqErr != nil {
+		return issuerErrorResponse(reqErr)
 	}
 
 	body, err := json.Marshal(result)
 	if err != nil {
 		return nil, err
 	}
+	encoded, contentType, err := f.iss.EncryptResponseBody(body, credReq.ResponseEncryption)
+	if err != nil {
+		return issuerErrorResponse(err)
+	}
 	return &http.Response{
 		StatusCode: http.StatusOK,
-		Body:       io.NopCloser(bytes.NewReader(body)),
-		Header:     http.Header{"Content-Type": {"application/json"}},
+		Body:       io.NopCloser(bytes.NewReader(encoded)),
+		Header:     http.Header{"Content-Type": {contentType}},
 	}, nil
+}
+
+// issuerWireResponseEncryptionRequest mirrors the actual §8.2 wire
+// shape of a Credential Request's own "credential_response_encryption"
+// object — issuerCredentialFake's own stand-in for what a real HTTP
+// handler's JSON decoding would produce.
+type issuerWireResponseEncryptionRequest struct {
+	JWK json.RawMessage `json:"jwk"`
+	Enc string          `json:"enc"`
+	Zip string          `json:"zip,omitempty"`
 }
 
 // dpopProtectedResourceClient is exactly the kind of thing
@@ -477,6 +491,7 @@ type walletIssuerRoundTripFixture struct {
 
 func newWalletIssuerRoundTripFixture(
 	t *testing.T, proofType string, ptc issuer.ProofTypeConfiguration, extraDeps issuer.Dependencies,
+	mutateConfig ...func(*issuer.Config),
 ) walletIssuerRoundTripFixture {
 	t.Helper()
 	issuerURL, err := fapi.ParseIssuerURL("http://localhost", fapi.AllowLoopbackHTTP())
@@ -503,7 +518,7 @@ func newWalletIssuerRoundTripFixture(
 	deps.Random = rand.Reader
 	deps.SDJWTSigner = &issuer.SDJWTSigner{Signer: issuerSigner, Alg: jose.ES256}
 
-	iss, err := issuer.New(issuer.Config{
+	cfg := issuer.Config{
 		Issuer: issuerURL,
 		Endpoints: issuer.Endpoints{
 			Credential: credentialEndpoint,
@@ -519,7 +534,11 @@ func newWalletIssuerRoundTripFixture(
 				ProofTypesSupported:                  map[string]issuer.ProofTypeConfiguration{proofType: ptc},
 			},
 		},
-	}, deps)
+	}
+	for _, mutate := range mutateConfig {
+		mutate(&cfg)
+	}
+	iss, err := issuer.New(cfg, deps)
 	if err != nil {
 		t.Fatalf("issuer.New: %v", err)
 	}
@@ -690,6 +709,59 @@ func TestWalletIssuerAttestationProofRoundTrip(t *testing.T) {
 	result, err := f.w.RequestCredential(context.Background(), resource, f.credentialEndpoint, wallet.CredentialRequest{
 		CredentialConfigurationID: "IdentityCredential",
 		Attestation:               attestationJWT,
+	})
+	if err != nil {
+		t.Fatalf("RequestCredential: %v", err)
+	}
+	f.verifyIssuedSDJWT(t, result)
+}
+
+// TestWalletIssuerEncryptedRoundTrip drives a full §10-encrypted
+// Credential Request/Response exchange end to end against a real
+// issuer.Issuer, both sides using their own production encryption
+// code (wallet's RequestEncryption/ResponseEncryption via
+// issuerCredentialFake's own calls to the real
+// DecryptRequestBody/EncryptResponseBody, not a test-only simulation)
+// — proving the two independently-built halves (this package's
+// Phase 3, issuer's own Phase 2) actually interoperate.
+func TestWalletIssuerEncryptedRoundTrip(t *testing.T) {
+	requestDecryptionKey := testP256Key(t)
+	f := newWalletIssuerRoundTripFixture(t, oid4vci.ProofTypeJWT,
+		issuer.ProofTypeConfiguration{ProofSigningAlgValuesSupported: []string{"ES256"}}, issuer.Dependencies{},
+		func(cfg *issuer.Config) {
+			cfg.RequestEncryption = &issuer.RequestEncryptionSupport{
+				Keys:               []issuer.RequestDecryptionKey{{KeyID: "req-1", PrivateKey: requestDecryptionKey}},
+				EncValuesSupported: []jwe.Enc{jwe.A128GCM},
+			}
+			cfg.ResponseEncryption = &issuer.ResponseEncryptionSupport{
+				EncValuesSupported: []jwe.Enc{jwe.A128GCM},
+			}
+		})
+
+	md := f.iss.Metadata()
+	if md.CredentialRequestEncryption == nil || len(md.CredentialRequestEncryption.JWKS) != 1 {
+		t.Fatalf("CredentialRequestEncryption metadata missing or malformed: %+v", md.CredentialRequestEncryption)
+	}
+	recipientJWK, err := json.Marshal(md.CredentialRequestEncryption.JWKS[0])
+	if err != nil {
+		t.Fatalf("json.Marshal recipient jwk: %v", err)
+	}
+
+	resource := issuerCredentialFake{
+		iss:    f.iss,
+		auth:   issuer.AuthorizedRequest{Scopes: []string{"identity_credential"}},
+		claims: &sdjwtvc.Claims{VCT: walletIssuerRoundTripVCT},
+	}
+	result, err := f.w.RequestCredential(context.Background(), resource, f.credentialEndpoint, wallet.CredentialRequest{
+		CredentialConfigurationID: "IdentityCredential",
+		Keys:                      []crypto.Signer{testP256Key(t)},
+		CredentialIssuer:          f.issuerURL.String(),
+		Nonce:                     f.cNonce,
+		RequestEncryption: &wallet.RequestEncryption{
+			RecipientJWK: recipientJWK,
+			Enc:          jwe.A128GCM,
+		},
+		ResponseEncryption: &wallet.ResponseEncryption{Enc: jwe.A128GCM},
 	})
 	if err != nil {
 		t.Fatalf("RequestCredential: %v", err)
