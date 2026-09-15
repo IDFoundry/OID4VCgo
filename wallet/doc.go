@@ -1,7 +1,8 @@
 // Package wallet implements the OID4VCI 1.0 Wallet role (the client
 // side): resolving a Credential Offer (§4), generating jwt-type key
 // proofs of possession (Appendix F.1), and driving the Credential
-// Endpoint (§8) and Nonce Endpoint (§7). It is built on fapigo/client
+// Endpoint (§8), Nonce Endpoint (§7), Deferred Credential Endpoint
+// (§9) and Notification Endpoint (§11). It is built on fapigo/client
 // for everything OAuth 2.0/FAPI 2.0-level — this package never
 // reimplements PAR, DPoP, or client authentication itself; see
 // ProtectedResourceClient's own doc comment for the boundary.
@@ -38,7 +39,8 @@
 // # Status
 //
 // ResolveCredentialOffer, RequestNonce, GenerateProof,
-// RequestCredential, and BuildAuthorizationRequest exist so far. This
+// RequestCredential, BuildAuthorizationRequest,
+// RequestDeferredCredential and RequestNotification exist so far. This
 // package does not yet cover:
 //
 //   - The pre-authorized_code Flow: a plain Token Endpoint POST for
@@ -50,12 +52,12 @@
 //     DPoP proof, since fapigo/client exposes no generic DPoP-signed
 //     Token Request primitive for a grant type it doesn't itself
 //     implement. Deferred pending a decision on that tradeoff.
-//   - The Deferred Credential Endpoint (§9) and Notification Endpoint
-//     (§11) — polling a transaction_id and reporting an issuance
-//     outcome are both separate, later work.
 //   - A Credential Response that itself defers issuance (§8.3's own
 //     HTTP 202, transaction_id/interval case) — RequestCredential
-//     only handles the immediate HTTP 200 case.
+//     only handles the immediate HTTP 200 case; a caller that gets a
+//     202 there today sees a malformed *Error rather than a usable
+//     transaction_id/interval (RequestDeferredCredential's own parsing
+//     of that same shape could extend to cover this, but doesn't yet).
 //   - di_vp and attestation proof types (only jwt is supported), and
 //     kid/x5c-conveyed binding keys (only jwk, matching issuer's own
 //     scope).

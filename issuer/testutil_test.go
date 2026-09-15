@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/idfoundry/oid4vcigo"
 	"github.com/idfoundry/oid4vcigo/issuer"
 )
 
@@ -182,11 +183,11 @@ type fakeNotificationHandler struct {
 
 type notificationHandlerCall struct {
 	NotificationID string
-	Event          issuer.NotificationEvent
+	Event          oid4vci.NotificationEvent
 	Description    string
 }
 
-func (f *fakeNotificationHandler) HandleNotification(_ context.Context, notificationID string, event issuer.NotificationEvent, description string) error {
+func (f *fakeNotificationHandler) HandleNotification(_ context.Context, notificationID string, event oid4vci.NotificationEvent, description string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, notificationHandlerCall{NotificationID: notificationID, Event: event, Description: description})

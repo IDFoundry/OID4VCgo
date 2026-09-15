@@ -15,17 +15,18 @@
 > and `issuer`), the root `oid4vci` package (wire value types shared by
 > `issuer` and `wallet`: `CredentialOffer` and its `Grants` family,
 > `IssuedCredential`/`CredentialResponse`, `ProofTypeJWT`/
-> `ProofTypeAttestation`), `issuer` (Nonce Endpoint, Metadata, the
-> Credential Endpoint for immediate issuance of both formats,
-> Credential Offer construction/dereferencing, the Deferred Credential
-> Endpoint's polling protocol, and the Notification Endpoint) — every
-> OID4VCI 1.0 Credential Issuer endpoint — `storage` (in-memory
+> `ProofTypeAttestation`, `NotificationEvent`), `issuer` (Nonce Endpoint,
+> Metadata, the Credential Endpoint for immediate issuance of both
+> formats, Credential Offer construction/dereferencing, the Deferred
+> Credential Endpoint's polling protocol, and the Notification Endpoint)
+> — every OID4VCI 1.0 Credential Issuer endpoint — `storage` (in-memory
 > reference implementations of every store `issuer` defines, for local
 > dev/testing only), `haip` (the profile layer's own
 > `RecommendedIssuerConfig`/`ValidateIssuerConfig`), and `wallet`
-> (Credential Offer resolution, jwt-type key proof generation, and one
-> immediate-issuance Credential Request/Response round trip, given an
-> already-obtained access token) are implemented and tested;
+> (Credential Offer resolution, jwt-type key proof generation, the
+> Authorization Code Flow's own OID4VCI-specific request shape, and the
+> Credential/Deferred Credential/Notification Endpoints' client sides,
+> given an already-obtained access token) are implemented and tested;
 > everything else below is still just the
 > planned layout, not a finished system. Update each section as the
 > corresponding package
@@ -388,14 +389,25 @@ shape from the phase-by-phase plan, not a description of current code.
   `fapigo/server` can verify one — see "Relationship to FAPIgo" above),
   but `fapigo/client` has no logic of its own yet to construct or send
   the Client Attestation + PoP JWT pair, so a HAIP-profile wallet must
-  use `ClientAuthMethodPrivateKeyJWT` until that lands upstream. Still
-  to come: the pre-authorized_code Flow (deferred — getting it
-  DPoP-sender-constrained would need this package to build its own RFC
-  9449 DPoP proof, since that grant type is outside `fapigo/client`'s
-  own scope entirely and it exposes no generic DPoP-signed Token
-  Request primitive), the Deferred Credential Endpoint, the
-  Notification Endpoint, and a Credential Response that itself defers
-  issuance (§8.3's own HTTP 202 case) — see the package doc comment.
+  use `ClientAuthMethodPrivateKeyJWT` until that lands upstream.
+  `RequestDeferredCredential` polls the Deferred Credential Endpoint
+  (§9.1/§9.2) via the same `ProtectedResourceClient` and access token
+  as `RequestCredential`, parsing either the completed Credentials
+  (HTTP 200) or a `transaction_id`/`interval` polling hint (HTTP 202)
+  from one shared wire shape (a caller must inspect the status to know
+  which applies — `interval` arrives as a plain JSON number of
+  seconds, converted to `time.Duration`). `RequestNotification`
+  implements the Notification Endpoint's own client side (§11.1):
+  naturally repeatable, matching §11's own idempotency requirement, so
+  there is nothing here to track as "already sent" — a
+  `NotificationHandler`-style callback belongs to `issuer`'s own side,
+  not a Wallet's. Still to come: the pre-authorized_code Flow (deferred
+  — getting it DPoP-sender-constrained would need this package to
+  build its own RFC 9449 DPoP proof, since that grant type is outside
+  `fapigo/client`'s own scope entirely and it exposes no generic
+  DPoP-signed Token Request primitive), and a Credential Response that
+  itself defers issuance (§8.3's own HTTP 202 case at the *Credential*
+  Endpoint, not the Deferred one) — see the package doc comment.
 - **`verifier`** — the OID4VP Verifier role: DCQL query construction,
   Authorization Request via JAR, response modes (`direct_post`,
   `direct_post.jwt`, DC API), response verification.
@@ -478,9 +490,10 @@ automatically to code they didn't originally govern:
   one an issuer has already validated. Those stay in their respective role
   packages. `CredentialOffer` (and `Grants`/`GrantAuthorizationCode`/
   `GrantPreAuthorizedCode`/`TxCode`), `IssuedCredential`/
-  `CredentialResponse`, and `ProofTypeJWT`/`ProofTypeAttestation` moved
-  here from `issuer` once `wallet` needed the exact same wire semantics
-  for each. Each type's own `Validate` method (where it has one) checks
+  `CredentialResponse`, `ProofTypeJWT`/`ProofTypeAttestation`, and
+  `NotificationEvent` moved here from `issuer` once `wallet` needed the
+  exact same wire semantics for each. Each type's own `Validate` method
+  (where it has one) checks
   only §4/§8's own structural requirements; a role package's additional,
   role-specific constraints (e.g. `issuer`'s own check that
   `credential_configuration_ids` are actually known to it) stay in that

@@ -11,6 +11,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -108,6 +109,205 @@ func (f issuerCredentialFake) Do(ctx context.Context, req *http.Request) (*http.
 		Body:       io.NopCloser(bytes.NewReader(body)),
 		Header:     http.Header{"Content-Type": {"application/json"}},
 	}, nil
+}
+
+// issuerDeferredCredentialFake plays the role of a sender-constrained
+// Deferred Credential Endpoint call, routing it to a real
+// issuer.Issuer's own RequestDeferredCredential — see
+// issuerCredentialFake's own doc comment for why sender-constraining
+// itself isn't what this proves.
+type issuerDeferredCredentialFake struct {
+	iss  *issuer.Issuer
+	auth issuer.AuthorizedRequest
+}
+
+func (f issuerDeferredCredentialFake) Do(ctx context.Context, req *http.Request) (*http.Response, error) {
+	raw, err := io.ReadAll(req.Body)
+	if err != nil {
+		return nil, err
+	}
+	var wire struct {
+		TransactionID string `json:"transaction_id"`
+	}
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		return nil, err
+	}
+
+	result, reqErr := f.iss.RequestDeferredCredential(ctx, f.auth, issuer.DeferredCredentialRequest{TransactionID: wire.TransactionID})
+	if reqErr != nil {
+		return issuerErrorResponse(reqErr)
+	}
+
+	rec := httptest.NewRecorder()
+	result.WriteJSON(rec)
+	return &http.Response{
+		StatusCode: rec.Code,
+		Body:       io.NopCloser(bytes.NewReader(rec.Body.Bytes())),
+		Header:     rec.Header(),
+	}, nil
+}
+
+// issuerNotificationFake plays the role of a sender-constrained
+// Notification Endpoint call, routing it to a real issuer.Issuer's own
+// RequestNotification.
+type issuerNotificationFake struct {
+	iss  *issuer.Issuer
+	auth issuer.AuthorizedRequest
+}
+
+func (f issuerNotificationFake) Do(ctx context.Context, req *http.Request) (*http.Response, error) {
+	raw, err := io.ReadAll(req.Body)
+	if err != nil {
+		return nil, err
+	}
+	var wire struct {
+		NotificationID   string `json:"notification_id"`
+		Event            string `json:"event"`
+		EventDescription string `json:"event_description"`
+	}
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		return nil, err
+	}
+
+	reqErr := f.iss.RequestNotification(ctx, f.auth, issuer.NotificationRequest{
+		NotificationID:   wire.NotificationID,
+		Event:            oid4vci.NotificationEvent(wire.Event),
+		EventDescription: wire.EventDescription,
+	})
+	if reqErr != nil {
+		return issuerErrorResponse(reqErr)
+	}
+	return &http.Response{StatusCode: http.StatusNoContent, Body: io.NopCloser(bytes.NewReader(nil))}, nil
+}
+
+// issuerErrorResponse converts an *issuer.Error into the HTTP response
+// a real HTTP adapter would have produced via its own WriteJSON.
+func issuerErrorResponse(err error) (*http.Response, error) {
+	var ierr *issuer.Error
+	if !errors.As(err, &ierr) {
+		return nil, err
+	}
+	rec := httptest.NewRecorder()
+	ierr.WriteJSON(rec)
+	return &http.Response{
+		StatusCode: rec.Code,
+		Body:       io.NopCloser(bytes.NewReader(rec.Body.Bytes())),
+		Header:     rec.Header(),
+	}, nil
+}
+
+// TestWalletIssuerDeferredAndNotificationRoundTrip drives the Deferred
+// Credential Endpoint's polling protocol (pending, then issued) and
+// the Notification Endpoint end-to-end against a real issuer.Issuer —
+// the transaction's own creation/resolution stands in for whatever
+// deployment-specific business process does that for real (see
+// issuer.DeferredTransactionRecord's own doc comment), exactly like
+// storage.DeferredTransactionStore.Put exists for.
+func TestWalletIssuerDeferredAndNotificationRoundTrip(t *testing.T) {
+	issuerURL, err := fapi.ParseIssuerURL("http://localhost", fapi.AllowLoopbackHTTP())
+	if err != nil {
+		t.Fatalf("ParseIssuerURL: %v", err)
+	}
+	credentialEndpoint, err := fapi.ParseEndpointURL("http://localhost/credential", fapi.AllowLoopbackHTTP())
+	if err != nil {
+		t.Fatalf("ParseEndpointURL: %v", err)
+	}
+	deferredEndpoint, err := fapi.ParseEndpointURL("http://localhost/deferred_credential", fapi.AllowLoopbackHTTP())
+	if err != nil {
+		t.Fatalf("ParseEndpointURL: %v", err)
+	}
+	notificationEndpoint, err := fapi.ParseEndpointURL("http://localhost/notification", fapi.AllowLoopbackHTTP())
+	if err != nil {
+		t.Fatalf("ParseEndpointURL: %v", err)
+	}
+
+	issuerSigner, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate issuer key: %v", err)
+	}
+	deferredTransactions := storage.NewDeferredTransactionStore()
+	notifications := storage.NewNotificationStore()
+
+	iss, err := issuer.New(issuer.Config{
+		Issuer: issuerURL,
+		Endpoints: issuer.Endpoints{
+			Credential:         credentialEndpoint,
+			DeferredCredential: deferredEndpoint,
+			Notification:       notificationEndpoint,
+		},
+		Limits: issuer.Limits{DeferredIssuancePollInterval: 30 * time.Second},
+		CredentialConfigurationsSupported: map[string]issuer.CredentialConfiguration{
+			"IdentityCredential": {
+				Format:                               sdjwtvc.CredentialFormat,
+				Scope:                                "identity_credential",
+				VCT:                                  "https://credentials.example.com/identity_credential",
+				CryptographicBindingMethodsSupported: []string{"jwk"},
+				ProofTypesSupported: map[string]issuer.ProofTypeConfiguration{
+					oid4vci.ProofTypeJWT: {ProofSigningAlgValuesSupported: []string{"ES256"}},
+				},
+			},
+		},
+	}, issuer.Dependencies{
+		Clock:                issuer.ClockFunc(time.Now),
+		Random:               rand.Reader,
+		SDJWTSigner:          &issuer.SDJWTSigner{Signer: issuerSigner, Alg: jose.ES256},
+		DeferredTransactions: deferredTransactions,
+		Notifications:        notifications,
+	})
+	if err != nil {
+		t.Fatalf("issuer.New: %v", err)
+	}
+
+	w, err := wallet.New(validConfig(), validDependencies())
+	if err != nil {
+		t.Fatalf("wallet.New: %v", err)
+	}
+
+	auth := issuer.AuthorizedRequest{ClientID: "client-a"}
+	if err := deferredTransactions.Put(context.Background(), "txn-1", issuer.DeferredTransactionRecord{
+		ClientID: "client-a", Status: issuer.DeferredTransactionPending,
+	}); err != nil {
+		t.Fatalf("Put (pending): %v", err)
+	}
+
+	pending, err := w.RequestDeferredCredential(context.Background(), issuerDeferredCredentialFake{iss: iss, auth: auth},
+		deferredEndpoint, wallet.DeferredCredentialRequest{TransactionID: "txn-1"})
+	if err != nil {
+		t.Fatalf("RequestDeferredCredential (pending): %v", err)
+	}
+	if len(pending.Credentials) != 0 || pending.TransactionID != "txn-1" || pending.Interval != 30*time.Second {
+		t.Fatalf("pending result = %+v, want still-pending with a 30s interval", pending)
+	}
+
+	if err := deferredTransactions.Put(context.Background(), "txn-1", issuer.DeferredTransactionRecord{
+		ClientID: "client-a", Status: issuer.DeferredTransactionIssued,
+		Credentials:    []oid4vci.IssuedCredential{{Credential: "signed-credential"}},
+		NotificationID: "notif-1",
+	}); err != nil {
+		t.Fatalf("Put (issued): %v", err)
+	}
+	if err := notifications.Issue(context.Background(), "notif-1", issuer.NotificationRecord{ClientID: "client-a"}); err != nil {
+		t.Fatalf("Issue notification: %v", err)
+	}
+
+	issued, err := w.RequestDeferredCredential(context.Background(), issuerDeferredCredentialFake{iss: iss, auth: auth},
+		deferredEndpoint, wallet.DeferredCredentialRequest{TransactionID: "txn-1"})
+	if err != nil {
+		t.Fatalf("RequestDeferredCredential (issued): %v", err)
+	}
+	if len(issued.Credentials) != 1 || issued.Credentials[0].Credential != "signed-credential" {
+		t.Fatalf("issued result = %+v", issued)
+	}
+	if issued.NotificationID != "notif-1" {
+		t.Fatalf("NotificationID = %q, want notif-1", issued.NotificationID)
+	}
+
+	if err := w.RequestNotification(context.Background(), issuerNotificationFake{iss: iss, auth: auth}, notificationEndpoint, wallet.NotificationRequest{
+		NotificationID: issued.NotificationID,
+		Event:          oid4vci.NotificationEventCredentialAccepted,
+	}); err != nil {
+		t.Fatalf("RequestNotification: %v", err)
+	}
 }
 
 // TestWalletIssuerRoundTrip drives a full immediate-issuance flow
