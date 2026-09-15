@@ -78,6 +78,17 @@ type CredentialRequest struct {
 	// baked into the signed attestation before this call (see
 	// GenerateAttestationProof's own doc comment).
 	Nonce string
+
+	// RequestEncryption, if set, encrypts this Credential Request's own
+	// outbound body (§10) — see RequestEncryption's own doc comment.
+	RequestEncryption *RequestEncryption
+
+	// ResponseEncryption, if set, requests an encrypted Credential
+	// Response (§10) — RequestCredential generates a fresh ephemeral
+	// key pair per call and decrypts the Response transparently; see
+	// ResponseEncryption's own doc comment, including why setting this
+	// requires RequestEncryption to also be set.
+	ResponseEncryption *ResponseEncryption
 }
 
 // credentialRequestBody is the Credential Request's own wire shape
@@ -85,8 +96,9 @@ type CredentialRequest struct {
 // go on the wire, so this stays a private type RequestCredential
 // builds internally.
 type credentialRequestBody struct {
-	CredentialConfigurationID string              `json:"credential_configuration_id"`
-	Proofs                    map[string][]string `json:"proofs"`
+	CredentialConfigurationID string                         `json:"credential_configuration_id"`
+	Proofs                    map[string][]string            `json:"proofs"`
+	ResponseEncryption        *wireResponseEncryptionRequest `json:"credential_response_encryption,omitempty"`
 }
 
 // RequestCredential implements the Credential Endpoint's own client
@@ -111,20 +123,29 @@ func (w *Wallet) RequestCredential(
 	if hasJWT == hasAttestation {
 		return CredentialResult{}, fmt.Errorf("wallet: request credential: exactly one of keys/jwt_proofs or attestation is required")
 	}
+	if req.ResponseEncryption != nil && req.RequestEncryption == nil {
+		return CredentialResult{}, fmt.Errorf("wallet: request credential: response_encryption requires request_encryption to also be set")
+	}
 
 	proofs, err := w.buildCredentialProofs(req)
 	if err != nil {
 		return CredentialResult{}, err
 	}
 
+	respEncWire, respDecryptKey, err := prepareResponseEncryption(req.ResponseEncryption)
+	if err != nil {
+		return CredentialResult{}, fmt.Errorf("wallet: request credential: %w", err)
+	}
+
 	body, err := json.Marshal(credentialRequestBody{
 		CredentialConfigurationID: req.CredentialConfigurationID,
 		Proofs:                    proofs,
+		ResponseEncryption:        respEncWire,
 	})
 	if err != nil {
 		return CredentialResult{}, fmt.Errorf("wallet: request credential: marshal request: %w", err)
 	}
-	return w.postCredentialResult(ctx, resource, endpoint, body, "request credential")
+	return w.postCredentialResult(ctx, resource, endpoint, body, req.RequestEncryption, respDecryptKey, "request credential")
 }
 
 // buildCredentialProofs builds req's own "proofs" object: one jwt-type

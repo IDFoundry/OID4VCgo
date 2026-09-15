@@ -82,6 +82,27 @@
 // ever builds jwk-conveyed proofs, a caller wanting kid/x5c passes the
 // result of either method through CredentialRequest.JWTProofs instead.
 //
+// RequestCredential/RequestDeferredCredential also implement §10's
+// Encrypted Requests/Responses, symmetric with issuer's own
+// DecryptRequestBody/EncryptResponseBody: setting
+// CredentialRequest.RequestEncryption (or DeferredCredentialRequest's
+// own field) encrypts the outbound request body to the Issuer's own
+// published credential_request_encryption key (this package doesn't
+// fetch or parse Issuer metadata itself — the caller supplies one JWK
+// from it via RequestEncryption.RecipientJWK); setting
+// .ResponseEncryption additionally requests an encrypted Response —
+// RequestCredential generates a fresh ephemeral P-256 key pair per
+// call and decrypts the Response transparently, so the CredentialResult
+// a caller receives is always plaintext regardless. Setting
+// ResponseEncryption without RequestEncryption is rejected (§8.2-18:
+// "Credential Request encryption MUST be used if the
+// credential_response_encryption parameter is included, to prevent it
+// being substituted by an attacker"), and so is a Response that
+// doesn't honor a requested encryption or that arrives encrypted when
+// none was requested — §8.3's own "this is done regardless of the
+// content" means the Issuer must always follow through on what was
+// asked for either way.
+//
 // # Status
 //
 // ResolveCredentialOffer, RequestNonce, GenerateProof,
@@ -92,7 +113,6 @@
 //
 //   - di_vp proofs (needs W3C VCDM, which this repo doesn't implement,
 //     matching issuer's own scope).
-//   - Request/response encryption (§10).
 //
 // A Wallet MUST treat a Credential Offer's contents as untrustworthy
 // (§13.5: unauthenticated, integrity-unprotected) — ResolveCredentialOffer

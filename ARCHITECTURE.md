@@ -12,7 +12,7 @@
 > role for `credential/mdoc` and `statuslist`'s CWT encoding),
 > `internal/hkdf` (RFC 5869, for `credential/mdoc`'s DeviceMac key
 > derivation), `internal/jwe` (RFC 7516 JWE Compact Serialization,
-> ECDH-ES + AES-GCM, for OID4VCI 1.0 §10 — wired into `issuer`, not yet
+> ECDH-ES + AES-GCM, for OID4VCI 1.0 §10 — wired into both `issuer` and
 > `wallet`), `internal/jwk` (JWK marshal/parse, shared by
 > `attestation` and `issuer`), the root `oid4vci` package (wire value
 > types shared by
@@ -30,9 +30,10 @@
 > (Credential Offer resolution, jwt-type and attestation-type key proof
 > generation, the Authorization Code Flow's own OID4VCI-specific
 > request shape, the pre-authorized_code Flow's own
-> DPoP-sender-constrained Token Request, and the Credential/Deferred
-> Credential/Notification Endpoints' client sides, given an
-> already-obtained access token) are implemented and tested;
+> DPoP-sender-constrained Token Request, the Credential/Deferred
+> Credential/Notification Endpoints' client sides given an
+> already-obtained access token, and §10 Encrypted Request/Response
+> support) are implemented and tested;
 > everything else below is still just the
 > planned layout, not a finished system. Update each section as the
 > corresponding package
@@ -182,9 +183,11 @@ shape from the phase-by-phase plan, not a description of current code.
   tests, since ECDH-ES's Concat KDF is exactly the kind of
   precisely-specified-but-easy-to-get-subtly-wrong construction a
   same-language round-trip test can't catch a shared bug in. Wired into
-  `issuer` (`DecryptRequestBody`/`EncryptResponseBody`, `Config.RequestEncryption`/
-  `Config.ResponseEncryption` — see the `issuer` bullet below); not yet
-  into `wallet`.
+  both `issuer` (`DecryptRequestBody`/`EncryptResponseBody`,
+  `Config.RequestEncryption`/`Config.ResponseEncryption`) and `wallet`
+  (`CredentialRequest.RequestEncryption`/`.ResponseEncryption` and
+  `DeferredCredentialRequest`'s own — see each package's own bullet
+  below).
 - **`internal/jwk`** (done) — a small, self-contained JWK (RFC 7517)
   marshaler/parser for the two key types `internal/jose` signs with
   (P-256 EC, Ed25519 OKP). Originally `attestation`'s own private
@@ -512,7 +515,31 @@ shape from the phase-by-phase plan, not a description of current code.
   `CredentialResult`'s own fields are set to know whether a result is
   the completed Credentials or a `transaction_id`/`interval` polling
   hint — `interval` arrives as a plain JSON number of seconds,
-  converted to `time.Duration`. `RequestNotification` implements the
+  converted to `time.Duration`. `RequestCredential`/`RequestDeferredCredential`
+  both also implement §10's Encrypted Requests/Responses, symmetric
+  with `issuer`'s own `DecryptRequestBody`/`EncryptResponseBody`:
+  setting the new `CredentialRequest.RequestEncryption` (or
+  `DeferredCredentialRequest`'s own field) encrypts the outbound
+  request body to the Issuer's own published
+  `credential_request_encryption` key — this package doesn't fetch or
+  parse Issuer metadata itself, so the caller supplies one JWK from it
+  via `RequestEncryption.RecipientJWK` — and setting
+  `.ResponseEncryption` additionally requests an encrypted Response:
+  `prepareResponseEncryption` generates a fresh ephemeral P-256 key
+  pair per call, and `postCredentialResult` (the shared POST/parse
+  helper both endpoints already used) decrypts the Response
+  transparently, so the `CredentialResult` a caller receives is always
+  plaintext regardless. Setting `ResponseEncryption` without
+  `RequestEncryption` is rejected client-side (§8.2-18's own
+  substitution-attack-prevention MUST), and so is a Response that
+  doesn't honor a requested encryption, or one that arrives encrypted
+  when none was requested — §8.3's own "this is done regardless of the
+  content" means the Issuer must always follow through either way. A
+  Credential Error Response is never decrypted (§8.3.1.2's own
+  "Credential Error Responses are never encrypted, even if a valid
+  Credential Response would have been"), so `postCredentialResult` only
+  attempts decryption for a 200/202 status.
+  `RequestNotification` implements the
   Notification Endpoint's own client side (§11.1): naturally
   repeatable, matching §11's own idempotency requirement, so there is
   nothing here to track as "already sent" — a `NotificationHandler`-style

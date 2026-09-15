@@ -3,6 +3,7 @@ package wallet
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -79,15 +80,31 @@ func parseCredentialResult(statusCode int, body []byte) (CredentialResult, error
 // RequestDeferredCredential share (only how each builds its own
 // outbound body differs). errPrefix names the caller in every wrapped
 // error (e.g. "request credential").
+//
+// reqEnc/respDecryptKey implement §10 for both callers identically:
+// reqEnc (nil unless the caller set CredentialRequest.RequestEncryption
+// / DeferredCredentialRequest.RequestEncryption) encrypts body before
+// it's sent; respDecryptKey (nil unless the caller set
+// .ResponseEncryption, via prepareResponseEncryption) decrypts the
+// Response — a Credential Error Response is never encrypted (§8.3.1.2's
+// own "Credential Error Responses are never encrypted, even if a valid
+// Credential Response would have been"), so decryption is only
+// attempted for a 200/202 status.
 func (w *Wallet) postCredentialResult(
-	ctx context.Context, resource ProtectedResourceClient, endpoint fapi.URL, body []byte, errPrefix string,
+	ctx context.Context, resource ProtectedResourceClient, endpoint fapi.URL, body []byte,
+	reqEnc *RequestEncryption, respDecryptKey *ecdsa.PrivateKey, errPrefix string,
 ) (CredentialResult, error) {
+	outBody, contentType, err := encryptRequestBody(body, reqEnc)
+	if err != nil {
+		return CredentialResult{}, fmt.Errorf("wallet: %s: %w", errPrefix, err)
+	}
+
 	target := endpoint.URL()
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, target.String(), bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, target.String(), bytes.NewReader(outBody))
 	if err != nil {
 		return CredentialResult{}, fmt.Errorf("wallet: %s: build request: %w", errPrefix, err)
 	}
-	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Content-Type", contentType)
 
 	res, err := resource.Do(ctx, httpReq)
 	if err != nil {
@@ -98,6 +115,13 @@ func (w *Wallet) postCredentialResult(
 	respBody, err := io.ReadAll(res.Body)
 	if err != nil {
 		return CredentialResult{}, fmt.Errorf("wallet: %s: read response: %w", errPrefix, err)
+	}
+
+	if res.StatusCode == http.StatusOK || res.StatusCode == http.StatusAccepted {
+		respBody, err = decryptResponseBody(respBody, res.Header.Get("Content-Type"), respDecryptKey)
+		if err != nil {
+			return CredentialResult{}, fmt.Errorf("wallet: %s: %w", errPrefix, err)
+		}
 	}
 
 	result, err := parseCredentialResult(res.StatusCode, respBody)
