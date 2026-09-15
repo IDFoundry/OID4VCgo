@@ -19,6 +19,7 @@ import (
 	"github.com/idfoundry/fapigo/fapihttp"
 
 	"github.com/idfoundry/oid4vcigo"
+	"github.com/idfoundry/oid4vcigo/attestation"
 	"github.com/idfoundry/oid4vcigo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcigo/internal/jose"
 	"github.com/idfoundry/oid4vcigo/issuer"
@@ -541,6 +542,136 @@ func TestWalletIssuerRoundTrip(t *testing.T) {
 		Keys:                      []crypto.Signer{walletKey},
 		CredentialIssuer:          issuerURL.String(),
 		Nonce:                     nonceResult.CNonce,
+	})
+	if err != nil {
+		t.Fatalf("RequestCredential: %v", err)
+	}
+	if len(result.Credentials) != 1 {
+		t.Fatalf("got %d credentials, want 1", len(result.Credentials))
+	}
+
+	payload, _, err := sdjwtvc.Verify(result.Credentials[0].Credential, &issuerSigner.PublicKey, jose.ES256, sdjwtvc.VerifyOptions{})
+	if err != nil {
+		t.Fatalf("sdjwtvc.Verify: %v", err)
+	}
+	if payload["vct"] != vct {
+		t.Errorf("vct = %v, want %q", payload["vct"], vct)
+	}
+}
+
+// fixedAttestationVerifier plays the role of an issuer's trust policy
+// for the attestation proof type (issuer.AttestationVerifier): it
+// always resolves to the one attestation-authority key this test
+// signs with, standing in for whatever real trust mechanism (x5c
+// chain validation, kid lookup, trust_chain resolution) a deployment
+// would use.
+type fixedAttestationVerifier struct {
+	pub crypto.PublicKey
+	alg jose.Alg
+}
+
+func (f fixedAttestationVerifier) ResolveAttestationKey(context.Context, attestation.KeyAttestation) (crypto.PublicKey, jose.Alg, error) {
+	return f.pub, f.alg, nil
+}
+
+// TestWalletIssuerAttestationProofRoundTrip exercises the attestation
+// proof type (Appendix F.3) end to end: wallet.GenerateAttestationProof
+// builds a Key Attestation JWT with the issuer's own fresh c_nonce
+// baked in, wallet.RequestCredential submits it as
+// CredentialRequest.Attestation, and a real issuer.Issuer resolves and
+// verifies it via issuer.AttestationVerifier before issuing — proving
+// wallet's attestation proof type wire format is exactly what issuer's
+// own inbound parsing (resolveAttestationProofKeys) expects.
+func TestWalletIssuerAttestationProofRoundTrip(t *testing.T) {
+	issuerURL, err := fapi.ParseIssuerURL("http://localhost", fapi.AllowLoopbackHTTP())
+	if err != nil {
+		t.Fatalf("ParseIssuerURL: %v", err)
+	}
+	credentialEndpoint, err := fapi.ParseEndpointURL("http://localhost/credential", fapi.AllowLoopbackHTTP())
+	if err != nil {
+		t.Fatalf("ParseEndpointURL: %v", err)
+	}
+	nonceEndpoint, err := fapi.ParseEndpointURL("http://localhost/nonce", fapi.AllowLoopbackHTTP())
+	if err != nil {
+		t.Fatalf("ParseEndpointURL: %v", err)
+	}
+
+	issuerSigner, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate issuer key: %v", err)
+	}
+	attestationSigner, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate attestation authority key: %v", err)
+	}
+	const vct = "https://credentials.example.com/identity_credential"
+
+	iss, err := issuer.New(issuer.Config{
+		Issuer: issuerURL,
+		Endpoints: issuer.Endpoints{
+			Credential: credentialEndpoint,
+			Nonce:      nonceEndpoint,
+		},
+		Limits: issuer.Limits{NonceLifetime: time.Minute},
+		CredentialConfigurationsSupported: map[string]issuer.CredentialConfiguration{
+			"IdentityCredential": {
+				Format:                               sdjwtvc.CredentialFormat,
+				Scope:                                "identity_credential",
+				VCT:                                  vct,
+				CryptographicBindingMethodsSupported: []string{"jwk"},
+				ProofTypesSupported: map[string]issuer.ProofTypeConfiguration{
+					oid4vci.ProofTypeAttestation: {ProofSigningAlgValuesSupported: []string{"ES256"}},
+				},
+			},
+		},
+	}, issuer.Dependencies{
+		Nonces:              storage.NewNonceStore(),
+		Clock:               issuer.ClockFunc(time.Now),
+		Random:              rand.Reader,
+		SDJWTSigner:         &issuer.SDJWTSigner{Signer: issuerSigner, Alg: jose.ES256},
+		AttestationVerifier: fixedAttestationVerifier{pub: &attestationSigner.PublicKey, alg: jose.ES256},
+	})
+	if err != nil {
+		t.Fatalf("issuer.New: %v", err)
+	}
+
+	w, err := wallet.New(wallet.Config{
+		ProofSigningAlg: jose.ES256,
+		Fetch: fapihttp.Config{
+			MaxResponseBytes: 1 << 20, RequestTimeout: 5 * time.Second, AllowLoopbackHTTP: true,
+		},
+	}, wallet.Dependencies{
+		HTTP:  issuerNonceFake{iss: iss},
+		Clock: wallet.ClockFunc(time.Now),
+	})
+	if err != nil {
+		t.Fatalf("wallet.New: %v", err)
+	}
+
+	nonceResult, err := w.RequestNonce(context.Background(), nonceEndpoint)
+	if err != nil {
+		t.Fatalf("RequestNonce: %v", err)
+	}
+	if nonceResult.CNonce == "" {
+		t.Fatalf("CNonce is empty")
+	}
+
+	attestedKeyJWK := testAttestedKeyJWK(t)
+	attestationJWT, err := w.GenerateAttestationProof(attestationSigner, jose.ES256, attestation.Header{}, attestation.Claims{
+		AttestedKeys: []json.RawMessage{attestedKeyJWK},
+	}, nonceResult.CNonce)
+	if err != nil {
+		t.Fatalf("GenerateAttestationProof: %v", err)
+	}
+
+	resource := issuerCredentialFake{
+		iss:    iss,
+		auth:   issuer.AuthorizedRequest{Scopes: []string{"identity_credential"}},
+		claims: &sdjwtvc.Claims{VCT: vct},
+	}
+	result, err := w.RequestCredential(context.Background(), resource, credentialEndpoint, wallet.CredentialRequest{
+		CredentialConfigurationID: "IdentityCredential",
+		Attestation:               attestationJWT,
 	})
 	if err != nil {
 		t.Fatalf("RequestCredential: %v", err)

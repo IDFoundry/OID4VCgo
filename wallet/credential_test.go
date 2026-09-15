@@ -13,6 +13,8 @@ import (
 
 	fapi "github.com/idfoundry/fapigo"
 
+	"github.com/idfoundry/oid4vcigo/attestation"
+	"github.com/idfoundry/oid4vcigo/internal/jose"
 	"github.com/idfoundry/oid4vcigo/wallet"
 )
 
@@ -158,6 +160,67 @@ func TestRequestCredential_ReturnsPendingWhenIssuerDefersImmediately(t *testing.
 	}
 	if result.Interval != 24*time.Hour {
 		t.Errorf("Interval = %v, want 24h", result.Interval)
+	}
+}
+
+func TestRequestCredential_Attestation(t *testing.T) {
+	w, err := wallet.New(validConfig(), validDependencies())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	attestationJWT, err := w.GenerateAttestationProof(testP256Key(t), jose.ES256, attestation.Header{}, attestation.Claims{
+		AttestedKeys: []json.RawMessage{testAttestedKeyJWK(t)},
+	}, "test-nonce")
+	if err != nil {
+		t.Fatalf("GenerateAttestationProof: %v", err)
+	}
+
+	resource := &fakeProtectedResourceClient{
+		do: func(context.Context, *http.Request) (*http.Response, error) {
+			return jsonResponse([]byte(`{"credentials":[{"credential":"c1"}]}`)), nil
+		},
+	}
+	result, err := w.RequestCredential(context.Background(), resource, testCredentialEndpoint(t), wallet.CredentialRequest{
+		CredentialConfigurationID: "IdentityCredential",
+		Attestation:               attestationJWT,
+	})
+	if err != nil {
+		t.Fatalf("RequestCredential: %v", err)
+	}
+	if len(result.Credentials) != 1 {
+		t.Fatalf("Credentials = %v, want 1", result.Credentials)
+	}
+
+	var sentBody struct {
+		Proofs map[string][]string `json:"proofs"`
+	}
+	if err := json.Unmarshal(resource.lastBody, &sentBody); err != nil {
+		t.Fatalf("unmarshal sent body: %v", err)
+	}
+	if got := sentBody.Proofs["attestation"]; len(got) != 1 || got[0] != attestationJWT {
+		t.Errorf("proofs[attestation] = %v, want [%q]", got, attestationJWT)
+	}
+	if len(sentBody.Proofs["jwt"]) != 0 {
+		t.Errorf("proofs[jwt] = %v, want absent", sentBody.Proofs["jwt"])
+	}
+}
+
+func TestRequestCredential_RejectsBothKeysAndAttestation(t *testing.T) {
+	w, err := wallet.New(validConfig(), validDependencies())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	resource := &fakeProtectedResourceClient{do: func(context.Context, *http.Request) (*http.Response, error) {
+		t.Fatalf("unexpected HTTP call")
+		return nil, nil
+	}}
+	_, err = w.RequestCredential(context.Background(), resource, testCredentialEndpoint(t), wallet.CredentialRequest{
+		CredentialConfigurationID: "IdentityCredential",
+		Keys:                      []crypto.Signer{testP256Key(t)},
+		Attestation:               "not-empty",
+	})
+	if err == nil {
+		t.Fatalf("RequestCredential = nil error, want error")
 	}
 }
 

@@ -1,8 +1,8 @@
 // Package wallet implements the OID4VCI 1.0 Wallet role (the client
-// side): resolving a Credential Offer (§4), generating jwt-type key
-// proofs of possession (Appendix F.1), and driving the Credential
-// Endpoint (§8), Nonce Endpoint (§7), Deferred Credential Endpoint
-// (§9) and Notification Endpoint (§11). It is built on fapigo/client
+// side): resolving a Credential Offer (§4), generating jwt-type and
+// attestation-type key proofs (Appendix F.1/F.3), and driving the
+// Credential Endpoint (§8), Nonce Endpoint (§7), Deferred Credential
+// Endpoint (§9) and Notification Endpoint (§11). It is built on fapigo/client
 // for everything OAuth 2.0/FAPI 2.0-level — this package never
 // reimplements PAR, DPoP, or client authentication itself; see
 // ProtectedResourceClient's own doc comment for the boundary.
@@ -56,17 +56,34 @@
 // above), and neither is authorization_details, matching this package's
 // own credential_configuration_id-only scope.
 //
+// GenerateAttestationProof builds the other key proof this package
+// supports: a Key Attestation JWT (Appendix D.1) for the attestation
+// proof type (Appendix F.3), by delegating to the attestation
+// package's own Issue — the same package issuer's Credential Endpoint
+// already verifies an attestation proof against. Unlike a jwt-type
+// proof, RequestCredential doesn't build this one itself: the c_nonce
+// must already be baked into the signed attestation before the
+// Credential Request is sent, so a caller drives RequestNonce, then
+// GenerateAttestationProof, then RequestCredential (passing the result
+// as CredentialRequest.Attestation), in that order. Building a Key
+// Attestation is, in most real deployments, a secure element's or an
+// OS attestation service's job rather than pure application logic;
+// GenerateAttestationProof exists for the cases where the caller's own
+// signer can produce one directly.
+//
 // # Status
 //
 // ResolveCredentialOffer, RequestNonce, GenerateProof,
-// RequestCredential, BuildAuthorizationRequest,
+// GenerateAttestationProof, RequestCredential, BuildAuthorizationRequest,
 // RequestDeferredCredential, RequestNotification,
 // RequestPreAuthorizedCodeToken, GenerateDPoPProof and
 // DPoPAccessTokenHash exist so far. This package does not yet cover:
 //
-//   - di_vp and attestation proof types (only jwt is supported), and
-//     kid/x5c-conveyed binding keys (only jwk, matching issuer's own
-//     scope).
+//   - di_vp proofs (needs W3C VCDM, which this repo doesn't implement,
+//     matching issuer's own scope), and kid/x5c-conveyed binding keys
+//     for the jwt proof type (only jwk, matching issuer's own scope —
+//     issuer explicitly rejects kid/x5c rather than silently ignoring
+//     them).
 //   - Request/response encryption (§10).
 //
 // A Wallet MUST treat a Credential Offer's contents as untrustworthy

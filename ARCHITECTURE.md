@@ -23,12 +23,12 @@
 > reference implementations of every store `issuer` defines, for local
 > dev/testing only), `haip` (the profile layer's own
 > `RecommendedIssuerConfig`/`ValidateIssuerConfig`), and `wallet`
-> (Credential Offer resolution, jwt-type key proof generation, the
-> Authorization Code Flow's own OID4VCI-specific request shape, the
-> pre-authorized_code Flow's own DPoP-sender-constrained Token Request,
-> and the Credential/Deferred Credential/Notification Endpoints' client
-> sides, given an already-obtained access token) are implemented and
-> tested;
+> (Credential Offer resolution, jwt-type and attestation-type key proof
+> generation, the Authorization Code Flow's own OID4VCI-specific
+> request shape, the pre-authorized_code Flow's own
+> DPoP-sender-constrained Token Request, and the Credential/Deferred
+> Credential/Notification Endpoints' client sides, given an
+> already-obtained access token) are implemented and tested;
 > everything else below is still just the
 > planned layout, not a finished system. Update each section as the
 > corresponding package
@@ -363,12 +363,33 @@ shape from the phase-by-phase plan, not a description of current code.
   hardening — appropriate given §13.5's own warning that an offer is
   unauthenticated, untrustworthy input regardless of how it arrived.
   `GenerateProof` signs a jwt-type key proof (Appendix F.1; jwk-conveyed
-  binding key only, matching `issuer`'s own scope). `RequestCredential`
-  signs one proof per `crypto.Signer` in a batch, POSTs the Credential
-  Request, and parses the Credential Response — completed Credentials
-  (HTTP 200) or, if the Issuer instead defers issuance at this very
-  first response (HTTP 202, transaction_id/interval — §8.3's own
-  deferred-at-first-response case), a polling hint to pass to
+  binding key only, matching `issuer`'s own scope). `GenerateAttestationProof`
+  builds the other key proof this package supports: a Key Attestation
+  JWT (Appendix D.1) for the attestation proof type (Appendix F.3), by
+  delegating to `attestation.Issue` — the same package `issuer`'s
+  Credential Endpoint already verifies an attestation proof against —
+  after setting `iat` and, when a c_nonce is given, `nonce` (Appendix
+  F.3's own "the c_nonce value provided by the Credential Issuer MUST
+  be provided in the key attestation's nonce parameter"). Unlike a
+  jwt-type proof, `RequestCredential` doesn't build this one itself
+  (the nonce must already be baked into the signed attestation before
+  the Credential Request goes out), so a caller drives `RequestNonce`,
+  then `GenerateAttestationProof`, then `RequestCredential` — passing
+  the result as `CredentialRequest.Attestation` — in that order.
+  Building a Key Attestation is, in most real deployments, a secure
+  element's or an OS attestation service's job rather than pure
+  application logic; `GenerateAttestationProof` exists for the cases
+  where the caller's own signer can produce one directly (e.g.
+  testing, or a software-only wallet). `RequestCredential` accepts
+  exactly one of `CredentialRequest.Keys` (jwt proof type — one proof
+  per `crypto.Signer` in a batch) or `.Attestation` (attestation proof
+  type — a single pre-built Key Attestation JWT, itself requesting a
+  batch whenever it attests multiple keys, per Appendix F-5.2's "SHOULD
+  issue a Credential for each cryptographic public key"), POSTs the
+  Credential Request, and parses the Credential Response — completed
+  Credentials (HTTP 200) or, if the Issuer instead defers issuance at
+  this very first response (HTTP 202, transaction_id/interval — §8.3's
+  own deferred-at-first-response case), a polling hint to pass to
   `RequestDeferredCredential` — via a narrow `ProtectedResourceClient`
   interface
   (`Do(ctx, *http.Request) (*http.Response, error)`) rather than
