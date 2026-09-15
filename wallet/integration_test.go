@@ -455,13 +455,30 @@ func TestWalletIssuerDeferredAndNotificationRoundTrip(t *testing.T) {
 	}
 }
 
-// TestWalletIssuerRoundTrip drives a full immediate-issuance flow
-// end-to-end — wallet requests a nonce, generates a real jwt-type key
-// proof, POSTs a real Credential Request, and parses a real Credential
-// Response, all verified by a real issuer.Issuer — to keep wallet's
-// own wire format from silently drifting out of sync with what issuer
-// actually accepts, and vice versa.
-func TestWalletIssuerRoundTrip(t *testing.T) {
+// walletIssuerRoundTripVCT is the SD-JWT VC vct every
+// walletIssuerRoundTripFixture-based test issues against.
+const walletIssuerRoundTripVCT = "https://credentials.example.com/identity_credential"
+
+// walletIssuerRoundTripFixture is a real issuer.Issuer wired to a real
+// wallet.Wallet over in-memory endpoints, with a c_nonce already drawn
+// — the setup TestWalletIssuerRoundTrip and
+// TestWalletIssuerAttestationProofRoundTrip both need, parameterized
+// only by which proof type "IdentityCredential" accepts and any extra
+// issuer.Dependencies (e.g. AttestationVerifier) that proof type
+// requires.
+type walletIssuerRoundTripFixture struct {
+	iss                *issuer.Issuer
+	w                  *wallet.Wallet
+	issuerURL          fapi.URL
+	credentialEndpoint fapi.URL
+	issuerSigner       *ecdsa.PrivateKey
+	cNonce             string
+}
+
+func newWalletIssuerRoundTripFixture(
+	t *testing.T, proofType string, ptc issuer.ProofTypeConfiguration, extraDeps issuer.Dependencies,
+) walletIssuerRoundTripFixture {
+	t.Helper()
 	issuerURL, err := fapi.ParseIssuerURL("http://localhost", fapi.AllowLoopbackHTTP())
 	if err != nil {
 		t.Fatalf("ParseIssuerURL: %v", err)
@@ -479,7 +496,12 @@ func TestWalletIssuerRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("generate issuer key: %v", err)
 	}
-	const vct = "https://credentials.example.com/identity_credential"
+
+	deps := extraDeps
+	deps.Nonces = storage.NewNonceStore()
+	deps.Clock = issuer.ClockFunc(time.Now)
+	deps.Random = rand.Reader
+	deps.SDJWTSigner = &issuer.SDJWTSigner{Signer: issuerSigner, Alg: jose.ES256}
 
 	iss, err := issuer.New(issuer.Config{
 		Issuer: issuerURL,
@@ -492,19 +514,12 @@ func TestWalletIssuerRoundTrip(t *testing.T) {
 			"IdentityCredential": {
 				Format:                               sdjwtvc.CredentialFormat,
 				Scope:                                "identity_credential",
-				VCT:                                  vct,
+				VCT:                                  walletIssuerRoundTripVCT,
 				CryptographicBindingMethodsSupported: []string{"jwk"},
-				ProofTypesSupported: map[string]issuer.ProofTypeConfiguration{
-					oid4vci.ProofTypeJWT: {ProofSigningAlgValuesSupported: []string{"ES256"}},
-				},
+				ProofTypesSupported:                  map[string]issuer.ProofTypeConfiguration{proofType: ptc},
 			},
 		},
-	}, issuer.Dependencies{
-		Nonces:      storage.NewNonceStore(),
-		Clock:       issuer.ClockFunc(time.Now),
-		Random:      rand.Reader,
-		SDJWTSigner: &issuer.SDJWTSigner{Signer: issuerSigner, Alg: jose.ES256},
-	})
+	}, deps)
 	if err != nil {
 		t.Fatalf("issuer.New: %v", err)
 	}
@@ -530,33 +545,55 @@ func TestWalletIssuerRoundTrip(t *testing.T) {
 		t.Fatalf("CNonce is empty")
 	}
 
-	walletKey := testP256Key(t)
-	resource := issuerCredentialFake{
-		iss:    iss,
-		auth:   issuer.AuthorizedRequest{Scopes: []string{"identity_credential"}},
-		claims: &sdjwtvc.Claims{VCT: vct},
+	return walletIssuerRoundTripFixture{
+		iss: iss, w: w, issuerURL: issuerURL, credentialEndpoint: credentialEndpoint,
+		issuerSigner: issuerSigner, cNonce: nonceResult.CNonce,
 	}
+}
 
-	result, err := w.RequestCredential(context.Background(), resource, credentialEndpoint, wallet.CredentialRequest{
+// verifyIssuedSDJWT checks result carries exactly one Credential and
+// that it verifies as an SD-JWT VC signed by f's own issuer key with
+// the expected vct — the common final assertion both
+// walletIssuerRoundTripFixture-based tests share.
+func (f walletIssuerRoundTripFixture) verifyIssuedSDJWT(t *testing.T, result wallet.CredentialResult) {
+	t.Helper()
+	if len(result.Credentials) != 1 {
+		t.Fatalf("got %d credentials, want 1", len(result.Credentials))
+	}
+	payload, _, err := sdjwtvc.Verify(result.Credentials[0].Credential, &f.issuerSigner.PublicKey, jose.ES256, sdjwtvc.VerifyOptions{})
+	if err != nil {
+		t.Fatalf("sdjwtvc.Verify: %v", err)
+	}
+	if payload["vct"] != walletIssuerRoundTripVCT {
+		t.Errorf("vct = %v, want %q", payload["vct"], walletIssuerRoundTripVCT)
+	}
+}
+
+// TestWalletIssuerRoundTrip drives a full immediate-issuance flow
+// end-to-end — wallet requests a nonce, generates a real jwt-type key
+// proof, POSTs a real Credential Request, and parses a real Credential
+// Response, all verified by a real issuer.Issuer — to keep wallet's
+// own wire format from silently drifting out of sync with what issuer
+// actually accepts, and vice versa.
+func TestWalletIssuerRoundTrip(t *testing.T) {
+	f := newWalletIssuerRoundTripFixture(t, oid4vci.ProofTypeJWT,
+		issuer.ProofTypeConfiguration{ProofSigningAlgValuesSupported: []string{"ES256"}}, issuer.Dependencies{})
+
+	resource := issuerCredentialFake{
+		iss:    f.iss,
+		auth:   issuer.AuthorizedRequest{Scopes: []string{"identity_credential"}},
+		claims: &sdjwtvc.Claims{VCT: walletIssuerRoundTripVCT},
+	}
+	result, err := f.w.RequestCredential(context.Background(), resource, f.credentialEndpoint, wallet.CredentialRequest{
 		CredentialConfigurationID: "IdentityCredential",
-		Keys:                      []crypto.Signer{walletKey},
-		CredentialIssuer:          issuerURL.String(),
-		Nonce:                     nonceResult.CNonce,
+		Keys:                      []crypto.Signer{testP256Key(t)},
+		CredentialIssuer:          f.issuerURL.String(),
+		Nonce:                     f.cNonce,
 	})
 	if err != nil {
 		t.Fatalf("RequestCredential: %v", err)
 	}
-	if len(result.Credentials) != 1 {
-		t.Fatalf("got %d credentials, want 1", len(result.Credentials))
-	}
-
-	payload, _, err := sdjwtvc.Verify(result.Credentials[0].Credential, &issuerSigner.PublicKey, jose.ES256, sdjwtvc.VerifyOptions{})
-	if err != nil {
-		t.Fatalf("sdjwtvc.Verify: %v", err)
-	}
-	if payload["vct"] != vct {
-		t.Errorf("vct = %v, want %q", payload["vct"], vct)
-	}
+	f.verifyIssuedSDJWT(t, result)
 }
 
 // fixedAttestationVerifier plays the role of an issuer's trust policy
@@ -583,108 +620,33 @@ func (f fixedAttestationVerifier) ResolveAttestationKey(context.Context, attesta
 // wallet's attestation proof type wire format is exactly what issuer's
 // own inbound parsing (resolveAttestationProofKeys) expects.
 func TestWalletIssuerAttestationProofRoundTrip(t *testing.T) {
-	issuerURL, err := fapi.ParseIssuerURL("http://localhost", fapi.AllowLoopbackHTTP())
-	if err != nil {
-		t.Fatalf("ParseIssuerURL: %v", err)
-	}
-	credentialEndpoint, err := fapi.ParseEndpointURL("http://localhost/credential", fapi.AllowLoopbackHTTP())
-	if err != nil {
-		t.Fatalf("ParseEndpointURL: %v", err)
-	}
-	nonceEndpoint, err := fapi.ParseEndpointURL("http://localhost/nonce", fapi.AllowLoopbackHTTP())
-	if err != nil {
-		t.Fatalf("ParseEndpointURL: %v", err)
-	}
-
-	issuerSigner, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatalf("generate issuer key: %v", err)
-	}
 	attestationSigner, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatalf("generate attestation authority key: %v", err)
 	}
-	const vct = "https://credentials.example.com/identity_credential"
+	f := newWalletIssuerRoundTripFixture(t, oid4vci.ProofTypeAttestation,
+		issuer.ProofTypeConfiguration{ProofSigningAlgValuesSupported: []string{"ES256"}}, issuer.Dependencies{
+			AttestationVerifier: fixedAttestationVerifier{pub: &attestationSigner.PublicKey, alg: jose.ES256},
+		})
 
-	iss, err := issuer.New(issuer.Config{
-		Issuer: issuerURL,
-		Endpoints: issuer.Endpoints{
-			Credential: credentialEndpoint,
-			Nonce:      nonceEndpoint,
-		},
-		Limits: issuer.Limits{NonceLifetime: time.Minute},
-		CredentialConfigurationsSupported: map[string]issuer.CredentialConfiguration{
-			"IdentityCredential": {
-				Format:                               sdjwtvc.CredentialFormat,
-				Scope:                                "identity_credential",
-				VCT:                                  vct,
-				CryptographicBindingMethodsSupported: []string{"jwk"},
-				ProofTypesSupported: map[string]issuer.ProofTypeConfiguration{
-					oid4vci.ProofTypeAttestation: {ProofSigningAlgValuesSupported: []string{"ES256"}},
-				},
-			},
-		},
-	}, issuer.Dependencies{
-		Nonces:              storage.NewNonceStore(),
-		Clock:               issuer.ClockFunc(time.Now),
-		Random:              rand.Reader,
-		SDJWTSigner:         &issuer.SDJWTSigner{Signer: issuerSigner, Alg: jose.ES256},
-		AttestationVerifier: fixedAttestationVerifier{pub: &attestationSigner.PublicKey, alg: jose.ES256},
-	})
-	if err != nil {
-		t.Fatalf("issuer.New: %v", err)
-	}
-
-	w, err := wallet.New(wallet.Config{
-		ProofSigningAlg: jose.ES256,
-		Fetch: fapihttp.Config{
-			MaxResponseBytes: 1 << 20, RequestTimeout: 5 * time.Second, AllowLoopbackHTTP: true,
-		},
-	}, wallet.Dependencies{
-		HTTP:  issuerNonceFake{iss: iss},
-		Clock: wallet.ClockFunc(time.Now),
-	})
-	if err != nil {
-		t.Fatalf("wallet.New: %v", err)
-	}
-
-	nonceResult, err := w.RequestNonce(context.Background(), nonceEndpoint)
-	if err != nil {
-		t.Fatalf("RequestNonce: %v", err)
-	}
-	if nonceResult.CNonce == "" {
-		t.Fatalf("CNonce is empty")
-	}
-
-	attestedKeyJWK := testAttestedKeyJWK(t)
-	attestationJWT, err := w.GenerateAttestationProof(attestationSigner, jose.ES256, attestation.Header{}, attestation.Claims{
-		AttestedKeys: []json.RawMessage{attestedKeyJWK},
-	}, nonceResult.CNonce)
+	attestationJWT, err := f.w.GenerateAttestationProof(attestationSigner, jose.ES256, attestation.Header{}, attestation.Claims{
+		AttestedKeys: []json.RawMessage{testAttestedKeyJWK(t)},
+	}, f.cNonce)
 	if err != nil {
 		t.Fatalf("GenerateAttestationProof: %v", err)
 	}
 
 	resource := issuerCredentialFake{
-		iss:    iss,
+		iss:    f.iss,
 		auth:   issuer.AuthorizedRequest{Scopes: []string{"identity_credential"}},
-		claims: &sdjwtvc.Claims{VCT: vct},
+		claims: &sdjwtvc.Claims{VCT: walletIssuerRoundTripVCT},
 	}
-	result, err := w.RequestCredential(context.Background(), resource, credentialEndpoint, wallet.CredentialRequest{
+	result, err := f.w.RequestCredential(context.Background(), resource, f.credentialEndpoint, wallet.CredentialRequest{
 		CredentialConfigurationID: "IdentityCredential",
 		Attestation:               attestationJWT,
 	})
 	if err != nil {
 		t.Fatalf("RequestCredential: %v", err)
 	}
-	if len(result.Credentials) != 1 {
-		t.Fatalf("got %d credentials, want 1", len(result.Credentials))
-	}
-
-	payload, _, err := sdjwtvc.Verify(result.Credentials[0].Credential, &issuerSigner.PublicKey, jose.ES256, sdjwtvc.VerifyOptions{})
-	if err != nil {
-		t.Fatalf("sdjwtvc.Verify: %v", err)
-	}
-	if payload["vct"] != vct {
-		t.Errorf("vct = %v, want %q", payload["vct"], vct)
-	}
+	f.verifyIssuedSDJWT(t, result)
 }
