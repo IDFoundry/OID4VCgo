@@ -189,16 +189,26 @@ shape from the phase-by-phase plan, not a description of current code.
   `credential_issuer`, `credential_endpoint`, `nonce_endpoint`, and
   `credential_configurations_supported` with `format`/`scope`/
   `cryptographic_binding_methods_supported`/`proof_types_supported`
-  (including `key_attestations_required`) — deliberately not yet
+  (including `key_attestations_required`), plus both formats'
+  format-specific parameters: `vct` (`credential/sdjwtvc`, JOSE-alg-string
+  `credential_signing_alg_values_supported`) and `doctype`
+  (`credential/mdoc`, numeric-COSE-alg-number
+  `credential_signing_alg_values_supported` via a distinct
+  `CredentialSigningAlgValuesSupportedCOSE []cose.Alg` field — the wire
+  form needs bare JSON numbers here, not JOSE strings, per OID4VCI 1.0
+  Appendix A.2.2, checked against that appendix's own non-normative
+  example) — deliberately not yet
   `credential_request_encryption`/`credential_response_encryption`,
-  `batch_credential_issuance`, `display`, or `credential_metadata`;
-  add each when a concrete consumer needs it, not speculatively. Still
-  to come: Credential Offer Endpoint (§4), the Credential Endpoint (§8,
-  batch issuance, `jwt`/`attestation` proof types dispatching into
-  `credential/sdjwtvc` and `attestation`), Deferred (§9) and
-  Notification (§11) Endpoints — once those exist, this is where
-  `fapigo/server` actually gets consumed (client authentication via PAR/
-  Token, access-token validation for the Credential Endpoint).
+  `batch_credential_issuance`, `display`, or `credential_metadata`
+  (including mdoc's own `claims` array, which lives under
+  `credential_metadata`); add each when a concrete consumer needs it,
+  not speculatively. Still to come: Credential Offer Endpoint (§4), the
+  Credential Endpoint (§8, batch issuance, `jwt`/`attestation` proof
+  types dispatching into `credential/sdjwtvc`/`credential/mdoc` and
+  `attestation`), Deferred (§9) and Notification (§11) Endpoints — once
+  those exist, this is where `fapigo/server` actually gets consumed
+  (client authentication via PAR/Token, access-token validation for the
+  Credential Endpoint).
 - **`wallet`** — the Wallet's OID4VCI role (client side): credential-offer
   resolution, proof-of-possession generation, deferred/notification
   handling. Built on `fapigo/client`.

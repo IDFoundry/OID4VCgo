@@ -10,6 +10,13 @@ import (
 	"github.com/idfoundry/oid4vcigo/internal/cose"
 )
 
+// CredentialFormat is the OID4VCI 1.0 Credential Format Identifier for
+// this format (Appendix A.2.1) — the value a Credential Issuer's
+// credential_configurations_supported metadata (§12.2.4) uses in its
+// "format" member, and a Wallet's authorization_details/Credential
+// Request use to select it.
+const CredentialFormat = "mso_mdoc" //nolint:gosec // an OID4VCI format identifier, not a credential
+
 // maxDigestID is §12.3.4's bound: "The value shall be smaller than 2^31."
 const maxDigestID = 1 << 31
 
