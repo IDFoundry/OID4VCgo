@@ -29,7 +29,7 @@ func marshalWire(t *testing.T, v any) map[string]any {
 
 func TestMetadata(t *testing.T) {
 	cfg := validConfig(t)
-	iss, err := issuer.New(cfg, validDependencies())
+	iss, err := issuer.New(cfg, validDependencies(t))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -90,7 +90,7 @@ func TestMetadata_OmitsNonceEndpointWhenDisabled(t *testing.T) {
 	cfg := validConfig(t)
 	cfg.Endpoints.Nonce = fapi.URL{}
 	cfg.Limits.NonceLifetime = 0
-	deps := validDependencies()
+	deps := validDependencies(t)
 	deps.Nonces = nil
 
 	iss, err := issuer.New(cfg, deps)
@@ -124,7 +124,9 @@ func TestMetadata_MdocFormat(t *testing.T) {
 		},
 	}
 
-	iss, err := issuer.New(cfg, validDependencies())
+	deps := validDependencies(t)
+	deps.MdocSigner = testMdocSigner(t)
+	iss, err := issuer.New(cfg, deps)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -162,7 +164,7 @@ func TestMetadata_KeyAttestationRequirement(t *testing.T) {
 	}
 	cfg.CredentialConfigurationsSupported["IdentityCredential"] = cc
 
-	iss, err := issuer.New(cfg, validDependencies())
+	iss, err := issuer.New(cfg, validDependencies(t))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

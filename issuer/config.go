@@ -1,11 +1,19 @@
 package issuer
 
 import (
+	"context"
+	"crypto"
 	"fmt"
 	"io"
 	"time"
 
 	fapi "github.com/idfoundry/fapigo"
+
+	"github.com/idfoundry/oid4vcigo/attestation"
+	"github.com/idfoundry/oid4vcigo/credential/mdoc"
+	"github.com/idfoundry/oid4vcigo/credential/sdjwtvc"
+	"github.com/idfoundry/oid4vcigo/internal/cose"
+	"github.com/idfoundry/oid4vcigo/internal/jose"
 )
 
 // Endpoints are this Credential Issuer's own endpoint URLs — what
@@ -62,6 +70,68 @@ type ClockFunc func() time.Time
 // Now implements Clock.
 func (f ClockFunc) Now() time.Time { return f() }
 
+// SDJWTSigner configures how this issuer signs
+// credential/sdjwtvc.CredentialFormat ("dc+sd-jwt") credentials.
+type SDJWTSigner struct {
+	Signer crypto.Signer
+	Alg    jose.Alg
+
+	// KeyID optionally sets the JOSE "kid" header on issued credentials.
+	KeyID string
+}
+
+func (s *SDJWTSigner) validate() error {
+	if s == nil {
+		return fmt.Errorf("sdjwt_signer is required when a credential_configurations_supported entry uses format %q", sdjwtvc.CredentialFormat)
+	}
+	if s.Signer == nil {
+		return fmt.Errorf("sdjwt_signer.signer is required")
+	}
+	if s.Alg == "" {
+		return fmt.Errorf("sdjwt_signer.alg is required")
+	}
+	return nil
+}
+
+// MdocSigner configures how this issuer signs
+// credential/mdoc.CredentialFormat ("mso_mdoc") credentials.
+type MdocSigner struct {
+	Signer crypto.Signer
+	Alg    cose.Alg
+
+	// X5Chain is the issuer's certificate (DER), followed by any
+	// intermediates, leaf first — see credential/mdoc.IssueOptions.X5Chain.
+	X5Chain [][]byte
+
+	// KeyID optionally sets the COSE "kid" header on issued credentials.
+	KeyID []byte
+}
+
+func (s *MdocSigner) validate() error {
+	if s == nil {
+		return fmt.Errorf("mdoc_signer is required when a credential_configurations_supported entry uses format %q", mdoc.CredentialFormat)
+	}
+	if s.Signer == nil {
+		return fmt.Errorf("mdoc_signer.signer is required")
+	}
+	if s.Alg == 0 {
+		return fmt.Errorf("mdoc_signer.alg is required")
+	}
+	if len(s.X5Chain) == 0 {
+		return fmt.Errorf("mdoc_signer.x5chain must include at least one certificate")
+	}
+	return nil
+}
+
+// AttestationVerifier resolves the trusted public key (and its JOSE
+// algorithm) to verify a parsed Key Attestation JWT's signature with —
+// entirely this issuer's own trust policy for which attestation
+// providers it accepts, the same "resolving trust is the caller's job"
+// split attestation.Verify itself draws.
+type AttestationVerifier interface {
+	ResolveAttestationKey(ctx context.Context, a attestation.KeyAttestation) (crypto.PublicKey, jose.Alg, error)
+}
+
 // Dependencies are this issuer's external collaborators.
 type Dependencies struct {
 	// Nonces persists issued c_nonce values. Required when
@@ -74,6 +144,22 @@ type Dependencies struct {
 	// Random is the source of cryptographically secure randomness for
 	// generating c_nonce values — ordinarily crypto/rand.Reader.
 	Random io.Reader
+
+	// SDJWTSigner signs issued dc+sd-jwt credentials. Required when any
+	// Config.CredentialConfigurationsSupported entry uses
+	// credential/sdjwtvc.CredentialFormat.
+	SDJWTSigner *SDJWTSigner
+
+	// MdocSigner signs issued mso_mdoc credentials. Required when any
+	// Config.CredentialConfigurationsSupported entry uses
+	// credential/mdoc.CredentialFormat.
+	MdocSigner *MdocSigner
+
+	// AttestationVerifier resolves the trust key for a Key Attestation
+	// JWT's signature. Required when any
+	// Config.CredentialConfigurationsSupported entry supports the
+	// "attestation" proof type.
+	AttestationVerifier AttestationVerifier
 }
 
 // Issuer is this Credential Issuer's own role implementation — the
@@ -117,5 +203,32 @@ func New(cfg Config, deps Dependencies) (*Issuer, error) {
 		return nil, fmt.Errorf("issuer: dependencies: random is required")
 	}
 
+	if err := validateSignerDependencies(cfg, deps); err != nil {
+		return nil, fmt.Errorf("issuer: dependencies: %w", err)
+	}
+
 	return &Issuer{cfg: cfg, deps: deps}, nil
+}
+
+// validateSignerDependencies checks that Dependencies carries whichever
+// of SDJWTSigner/MdocSigner/AttestationVerifier the configured
+// credentials actually need — each is otherwise optional, so an issuer
+// that only issues one format doesn't have to configure the other.
+func validateSignerDependencies(cfg Config, deps Dependencies) error {
+	for id, c := range cfg.CredentialConfigurationsSupported {
+		switch c.Format {
+		case sdjwtvc.CredentialFormat:
+			if err := deps.SDJWTSigner.validate(); err != nil {
+				return fmt.Errorf("credential_configurations_supported[%q]: %w", id, err)
+			}
+		case mdoc.CredentialFormat:
+			if err := deps.MdocSigner.validate(); err != nil {
+				return fmt.Errorf("credential_configurations_supported[%q]: %w", id, err)
+			}
+		}
+		if _, ok := c.ProofTypesSupported[ProofTypeAttestation]; ok && deps.AttestationVerifier == nil {
+			return fmt.Errorf("credential_configurations_supported[%q]: attestation_verifier is required when proof_types_supported includes %q", id, ProofTypeAttestation)
+		}
+	}
+	return nil
 }

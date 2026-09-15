@@ -14,7 +14,7 @@ func TestRequestNonce(t *testing.T) {
 	nonces := newFakeNonceStore()
 	now := time.Now()
 	cfg := validConfig(t)
-	deps := validDependencies()
+	deps := validDependencies(t)
 	deps.Nonces = nonces
 	deps.Clock = fixedClock{now: now}
 
@@ -47,7 +47,7 @@ func TestRequestNonce(t *testing.T) {
 
 func TestRequestNonce_ProducesDistinctValues(t *testing.T) {
 	cfg := validConfig(t)
-	iss, err := issuer.New(cfg, validDependencies())
+	iss, err := issuer.New(cfg, validDependencies(t))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -68,7 +68,7 @@ func TestRequestNonce_RejectsWhenNotConfigured(t *testing.T) {
 	cfg := validConfig(t)
 	cfg.Endpoints.Nonce = fapi.URL{}
 	cfg.Limits.NonceLifetime = 0
-	deps := validDependencies()
+	deps := validDependencies(t)
 	deps.Nonces = nil
 
 	iss, err := issuer.New(cfg, deps)
@@ -82,7 +82,7 @@ func TestRequestNonce_RejectsWhenNotConfigured(t *testing.T) {
 
 func TestRequestNonce_PropagatesRandomError(t *testing.T) {
 	cfg := validConfig(t)
-	deps := validDependencies()
+	deps := validDependencies(t)
 	deps.Random = errReader{}
 	iss, err := issuer.New(cfg, deps)
 	if err != nil {
@@ -97,7 +97,7 @@ func TestRequestNonce_PropagatesStoreError(t *testing.T) {
 	cfg := validConfig(t)
 	nonces := newFakeNonceStore()
 	nonces.issueErr = errNonceNotFound
-	deps := validDependencies()
+	deps := validDependencies(t)
 	deps.Nonces = nonces
 	iss, err := issuer.New(cfg, deps)
 	if err != nil {
