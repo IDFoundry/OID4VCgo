@@ -12,8 +12,9 @@
 > role for `credential/mdoc` and `statuslist`'s CWT encoding),
 > `internal/hkdf` (RFC 5869, for `credential/mdoc`'s DeviceMac key
 > derivation), `internal/jwk` (JWK marshal/parse, shared by `attestation`
-> and `issuer`), and `issuer` (Nonce Endpoint, Metadata, and the
-> Credential Endpoint for immediate issuance of both formats) are
+> and `issuer`), and `issuer` (Nonce Endpoint, Metadata, the
+> Credential Endpoint for immediate issuance of both formats, and
+> Credential Offer construction/dereferencing) are
 > implemented and tested; everything else below is still just the
 > planned layout, not a finished system. Update each section as the
 > corresponding package
@@ -277,9 +278,26 @@ shape from the phase-by-phase plan, not a description of current code.
   `CredentialRequest`'s own doc comment for what's deliberately out of
   scope (`credential_identifier`, `di_vp`, kid/x5c-based key resolution,
   request/response encryption, deferred issuance, unbound credentials —
-  add each when a concrete consumer needs it). Still to come: Credential
-  Offer Endpoint (§4), Deferred (§9) and Notification (§11) Endpoints —
-  and this is still where `fapigo/server` gets consumed for the
+  add each when a concrete consumer needs it). Also implements the
+  Credential Offer (§4): `CreateCredentialOffer` builds and validates a
+  `CredentialOffer` (`credential_issuer`, `credential_configuration_ids`,
+  and `Grants` — the `authorization_code` and pre-authorized_code Grant
+  Types, including `tx_code`) and returns it either embedded by value in
+  an `openid-credential-offer://` deep-link URI, or — when
+  `CreateCredentialOfferRequest.ByReference` is set — stored via a new
+  `Dependencies.CredentialOffers` (`CredentialOfferStore`) and returned
+  as a `credential_offer_uri` reference, mirroring FAPIgo's own PAR
+  request_uri pattern (random 256-bit reference, `Config.Limits.CredentialOfferLifetime`-bounded).
+  `GetCredentialOffer` is the domain method behind the HTTP GET request
+  a Wallet makes to dereference one (§4.1.3) — served at
+  `Config.CredentialOfferEndpoint`, deliberately not part of `Endpoints`
+  since, unlike Credential/Nonce, this URL is never advertised in
+  Credential Issuer Metadata. A pre-authorized_code grant's own code
+  (and an authorization_code grant's own issuer_state) are
+  caller-supplied: issuing and later redeeming them is the Token/
+  Authorization Endpoint's job, which doesn't exist in this repo yet.
+  Still to come: Deferred (§9) and Notification (§11) Endpoints — and
+  this is still where `fapigo/server` gets consumed for the
   Authorization/Token Endpoints' own PAR/DPoP/client-authentication
   machinery once those exist in this repo.
 - **`wallet`** — the Wallet's OID4VCI role (client side): credential-offer

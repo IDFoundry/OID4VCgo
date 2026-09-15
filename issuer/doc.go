@@ -16,12 +16,18 @@
 // # Status
 //
 // The Nonce Endpoint, a Metadata shape covering SD-JWT VC and mso_mdoc
-// issuance, and the Credential Endpoint (both formats, both the jwt and
-// attestation proof types, immediate issuance with batch support) exist
-// so far. See CredentialRequest's own doc comment for exactly what the
-// Credential Endpoint doesn't implement yet (credential_identifier,
-// di_vp, kid/x5c-based key resolution, request/response encryption,
-// deferred issuance, unbound credentials), and ARCHITECTURE.md for the
-// planned shape of what's still missing at the package level (Credential
-// Offer, Deferred Credential, Notification).
+// issuance, the Credential Endpoint (both formats, both the jwt and
+// attestation proof types, immediate issuance with batch support), and
+// Credential Offer construction/dereferencing (§4: both by value and
+// by reference) exist so far. See CredentialRequest's own doc comment
+// for exactly what the Credential Endpoint doesn't implement yet
+// (credential_identifier, di_vp, kid/x5c-based key resolution,
+// request/response encryption, deferred issuance, unbound
+// credentials), CredentialOffer's own doc comment for what the
+// Credential Offer doesn't cover yet (issuing/redeeming a
+// pre-authorized_code or issuer_state — this package treats both as
+// caller-supplied, since there is no Token/Authorization Endpoint yet
+// to own that), and ARCHITECTURE.md for the planned shape of what's
+// still missing at the package level (Deferred Credential,
+// Notification).
 package issuer
