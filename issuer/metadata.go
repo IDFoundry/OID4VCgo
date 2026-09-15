@@ -4,6 +4,8 @@ import (
 	"fmt"
 
 	fapi "github.com/idfoundry/fapigo"
+
+	"github.com/idfoundry/oid4vcigo/internal/cose"
 )
 
 // Proof type identifiers (Appendix F). Only the two OID4VCIgo's
@@ -90,11 +92,28 @@ type CredentialConfiguration struct {
 	// parameter (Appendix A.3.2): REQUIRED when Format is
 	// credential/sdjwtvc.CredentialFormat, and meaningless otherwise.
 	VCT string
+
+	// DocType is credential/mdoc's own format-specific metadata
+	// parameter (Appendix A.2.2): REQUIRED when Format is
+	// credential/mdoc.CredentialFormat, and meaningless otherwise.
+	DocType string
+
+	// CredentialSigningAlgValuesSupportedCOSE is
+	// CredentialSigningAlgValuesSupported's mdoc counterpart (Appendix
+	// A.2.2): the numeric COSE algorithm identifiers (e.g. -7 for
+	// ES256) an mdoc's IssuerAuth is signed with, wire-encoded as bare
+	// JSON numbers rather than JOSE alg strings. Set this instead of
+	// CredentialSigningAlgValuesSupported when Format is
+	// credential/mdoc.CredentialFormat — setting both is rejected.
+	CredentialSigningAlgValuesSupportedCOSE []cose.Alg
 }
 
 func (c CredentialConfiguration) validate() error {
 	if c.Format == "" {
 		return fmt.Errorf("format is required")
+	}
+	if len(c.CredentialSigningAlgValuesSupported) > 0 && len(c.CredentialSigningAlgValuesSupportedCOSE) > 0 {
+		return fmt.Errorf("credential_signing_alg_values_supported must not be set in both its JOSE-alg-string and COSE-alg-number forms")
 	}
 	if len(c.CryptographicBindingMethodsSupported) > 0 && len(c.ProofTypesSupported) == 0 {
 		return fmt.Errorf("proof_types_supported is required when cryptographic_binding_methods_supported is present")
@@ -123,14 +142,21 @@ type Metadata struct {
 }
 
 // metadataCredentialConfig is CredentialConfiguration's JSON wire
-// shape.
+// shape. CredentialSigningAlgValuesSupported is interface{} rather than
+// []string because it carries either JOSE alg strings or COSE alg
+// numbers depending on the format (see CredentialConfiguration's own
+// doc comments) — Metadata sets it from whichever of
+// CredentialConfiguration's two typed fields is non-empty, leaving it
+// as the zero nil interface{} (correctly omitted by omitempty) when
+// neither is.
 type metadataCredentialConfig struct {
 	Format                               string                             `json:"format"`
 	Scope                                string                             `json:"scope,omitempty"`
 	CryptographicBindingMethodsSupported []string                           `json:"cryptographic_binding_methods_supported,omitempty"`
-	CredentialSigningAlgValuesSupported  []string                           `json:"credential_signing_alg_values_supported,omitempty"`
+	CredentialSigningAlgValuesSupported  interface{}                        `json:"credential_signing_alg_values_supported,omitempty"`
 	ProofTypesSupported                  map[string]metadataProofTypeConfig `json:"proof_types_supported,omitempty"`
 	VCT                                  string                             `json:"vct,omitempty"`
+	DocType                              string                             `json:"doctype,omitempty"`
 }
 
 type metadataProofTypeConfig struct {
@@ -158,8 +184,19 @@ func (iss *Issuer) Metadata() Metadata {
 		wire := metadataCredentialConfig{
 			Format: c.Format, Scope: c.Scope,
 			CryptographicBindingMethodsSupported: c.CryptographicBindingMethodsSupported,
-			CredentialSigningAlgValuesSupported:  c.CredentialSigningAlgValuesSupported,
 			VCT:                                  c.VCT,
+			DocType:                              c.DocType,
+		}
+		// CredentialSigningAlgValuesSupported is only assigned when one
+		// of the two typed fields is actually non-empty — otherwise
+		// assigning a nil []string/[]cose.Alg would leave the wire
+		// interface{} field non-nil (wrapping a nil slice), which
+		// omitempty does not treat as empty.
+		switch {
+		case len(c.CredentialSigningAlgValuesSupportedCOSE) > 0:
+			wire.CredentialSigningAlgValuesSupported = c.CredentialSigningAlgValuesSupportedCOSE
+		case len(c.CredentialSigningAlgValuesSupported) > 0:
+			wire.CredentialSigningAlgValuesSupported = c.CredentialSigningAlgValuesSupported
 		}
 		if len(c.ProofTypesSupported) > 0 {
 			wire.ProofTypesSupported = make(map[string]metadataProofTypeConfig, len(c.ProofTypesSupported))

@@ -5,6 +5,9 @@ import (
 	"testing"
 
 	fapi "github.com/idfoundry/fapigo"
+
+	"github.com/idfoundry/oid4vcigo/credential/mdoc"
+	"github.com/idfoundry/oid4vcigo/internal/cose"
 	"github.com/idfoundry/oid4vcigo/issuer"
 )
 
@@ -61,6 +64,10 @@ func TestMetadata(t *testing.T) {
 	if idc["vct"] != "https://credentials.example.com/identity_credential" {
 		t.Errorf("vct = %v", idc["vct"])
 	}
+	algs, ok := idc["credential_signing_alg_values_supported"].([]any)
+	if !ok || len(algs) != 1 || algs[0] != "ES256" {
+		t.Errorf("credential_signing_alg_values_supported = %v, want [ES256] as strings", idc["credential_signing_alg_values_supported"])
+	}
 	proofTypes, ok := idc["proof_types_supported"].(map[string]any)
 	if !ok {
 		t.Fatalf("proof_types_supported is not an object: %v", idc["proof_types_supported"])
@@ -96,6 +103,54 @@ func TestMetadata_OmitsNonceEndpointWhenDisabled(t *testing.T) {
 	}
 	if _, ok := wire["nonce_endpoint"]; ok {
 		t.Errorf("wire form still has nonce_endpoint: %v", wire["nonce_endpoint"])
+	}
+}
+
+// TestMetadata_MdocFormat checks the wire shape against OID4VCI 1.0
+// Appendix A.2.2's own non-normative example: numeric COSE algorithm
+// identifiers as bare JSON numbers (not JOSE alg strings), and doctype
+// present.
+func TestMetadata_MdocFormat(t *testing.T) {
+	cfg := validConfig(t)
+	cfg.CredentialConfigurationsSupported["MobileDrivingLicence"] = issuer.CredentialConfiguration{
+		Format:                                  mdoc.CredentialFormat,
+		DocType:                                 "org.iso.18013.5.1.mDL",
+		CryptographicBindingMethodsSupported:    []string{"cose_key"},
+		CredentialSigningAlgValuesSupportedCOSE: []cose.Alg{cose.ES256, -9},
+		ProofTypesSupported: map[string]issuer.ProofTypeConfiguration{
+			issuer.ProofTypeJWT: {ProofSigningAlgValuesSupported: []string{"ES256"}},
+		},
+	}
+
+	iss, err := issuer.New(cfg, validDependencies())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	raw, err := json.Marshal(iss.Metadata())
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	var wire map[string]any
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	configs := wire["credential_configurations_supported"].(map[string]any)
+	mdl, ok := configs["MobileDrivingLicence"].(map[string]any)
+	if !ok {
+		t.Fatalf("MobileDrivingLicence entry is not an object: %v", configs["MobileDrivingLicence"])
+	}
+	if mdl["format"] != mdoc.CredentialFormat {
+		t.Errorf("format = %v, want %q", mdl["format"], mdoc.CredentialFormat)
+	}
+	if mdl["doctype"] != "org.iso.18013.5.1.mDL" {
+		t.Errorf("doctype = %v", mdl["doctype"])
+	}
+	algs, ok := mdl["credential_signing_alg_values_supported"].([]any)
+	if !ok || len(algs) != 2 || algs[0] != float64(-7) || algs[1] != float64(-9) {
+		t.Errorf("credential_signing_alg_values_supported = %v, want [-7 -9] as numbers", mdl["credential_signing_alg_values_supported"])
+	}
+	if _, hasVCT := mdl["vct"]; hasVCT {
+		t.Errorf("wire form has vct for an mdoc config: %v", mdl["vct"])
 	}
 }
 

@@ -6,6 +6,8 @@ import (
 	"time"
 
 	fapi "github.com/idfoundry/fapigo"
+
+	"github.com/idfoundry/oid4vcigo/internal/cose"
 	"github.com/idfoundry/oid4vcigo/issuer"
 )
 
@@ -40,6 +42,7 @@ func validCredentialConfigurations() map[string]issuer.CredentialConfiguration {
 			Scope:                                "identity_credential",
 			VCT:                                  "https://credentials.example.com/identity_credential",
 			CryptographicBindingMethodsSupported: []string{"jwk"},
+			CredentialSigningAlgValuesSupported:  []string{"ES256"},
 			ProofTypesSupported: map[string]issuer.ProofTypeConfiguration{
 				issuer.ProofTypeJWT: {ProofSigningAlgValuesSupported: []string{"ES256"}},
 			},
@@ -120,6 +123,11 @@ func TestNewRejectsInvalidCredentialConfiguration(t *testing.T) {
 			ProofTypesSupported: map[string]issuer.ProofTypeConfiguration{
 				issuer.ProofTypeJWT: {},
 			},
+		},
+		"both JOSE and COSE signing algs set": {
+			Format:                                  "mso_mdoc",
+			CredentialSigningAlgValuesSupported:     []string{"ES256"},
+			CredentialSigningAlgValuesSupportedCOSE: []cose.Alg{cose.ES256},
 		},
 	}
 	for name, cc := range cases {
