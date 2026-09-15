@@ -48,6 +48,10 @@
 // issuer_state parameter registration both sides need. This package
 // still has no server-side pre-authorized_code Token Request handling
 // of its own (entirely outside fapigo/server's scope, the same way
-// that grant is outside fapigo/client's); ARCHITECTURE.md describes
-// what's still missing there and elsewhere.
+// that grant is outside fapigo/client's) — internal/dpop.Verify (RFC
+// 9449 DPoP proof verification) and internal/jwk.JWK.Thumbprint (RFC
+// 7638, for binding the eventual access token's own cnf.jkt) exist as
+// standalone primitives for that future work but aren't wired into any
+// exported method here yet; ARCHITECTURE.md describes what's still
+// missing there and elsewhere.
 package issuer

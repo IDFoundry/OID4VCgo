@@ -13,8 +13,11 @@
 > `internal/hkdf` (RFC 5869, for `credential/mdoc`'s DeviceMac key
 > derivation), `internal/jwe` (RFC 7516 JWE Compact Serialization,
 > ECDH-ES + AES-GCM, for OID4VCI 1.0 §10 — wired into both `issuer` and
-> `wallet`), `internal/jwk` (JWK marshal/parse, shared by
-> `attestation` and `issuer`), the root `oid4vci` package (wire value
+> `wallet`), `internal/jwk` (JWK marshal/parse plus RFC 7638 thumbprint,
+> shared by `attestation` and `issuer`), `internal/dpop` (RFC 9449 DPoP
+> proof verification — the server-side counterpart to `wallet`'s own
+> DPoP proof generation, not yet wired into `issuer`), the root
+> `oid4vci` package (wire value
 > types shared by
 > `issuer` and `wallet`: `CredentialOffer` and its `Grants` family,
 > `IssuedCredential`/`CredentialResponse`, `ProofTypeJWT`/
@@ -200,6 +203,38 @@ shape from the phase-by-phase plan, not a description of current code.
   second time. `attestation`'s own functions are now thin wrappers
   calling into this package, keeping their existing signatures (and
   every one of `attestation`'s own already-merged tests) unchanged.
+  `JWK.Thumbprint()` computes the RFC 7638 JWK thumbprint (SHA-256
+  digest of the key's required members in lexicographic order,
+  base64url-encoded) directly from `JWK`'s own already-base64url X/Y/Crv
+  fields, rather than re-deriving coordinates from a parsed
+  `crypto.PublicKey` the way `fapigo/internal/jose`'s own equivalent
+  does (that package isn't reusable here — a different module's
+  `internal/` package). Cross-checked against Python's `jwcrypto`
+  (`JWK(**jwk).thumbprint()`), the same independent-verification
+  discipline `internal/jwe`'s own ECDH-ES tests already apply, since
+  this is exactly the same kind of precisely-specified-but-easy-to-get-
+  subtly-wrong construction.
+- **`internal/dpop`** (done) — a small, self-contained RFC 9449 DPoP
+  proof *verifier* — the server-side counterpart to `wallet`'s own
+  `GenerateDPoPProof`, built for `issuer`'s own future
+  pre-authorized_code Token Request handling (§6.1), the one grant type
+  entirely outside `fapigo/server`'s scope, the same way it's outside
+  `fapigo/client`'s (see `wallet.RequestPreAuthorizedCodeToken`'s own
+  doc comment for that boundary's client-side half).
+  `fapigo`'s own equivalent (`internal/dpop`, a different module's
+  `internal/` package) isn't reusable here either — this package's own
+  `Verify` mirrors its design (read-only reference, not an import) but
+  is built on this repo's own `internal/jose`/`internal/jwk` rather than
+  `fapigo/internal/jose`. Scope matches `GenerateDPoPProof`'s own: no
+  `ath` (access token hash) checking, since a Token Request's own DPoP
+  proof is presented before any access token exists to hash. `Verify`
+  requires a `ReplayChecker` (RFC 9449 §11.1's own jti-replay MUST) —
+  no implicit default, matching every other "no implicit defaults"
+  dependency in this repo. `TestVerifyAcceptsWalletGeneratedProof`
+  drives a real round trip against `wallet.GenerateDPoPProof` (not a
+  simulation of one), the same "real round trip, not just our own
+  assumption" discipline every other cross-package wire-format claim
+  here is held to.
 - **`credential/mdoc`** (done) — ISO/IEC 18013-5 mdoc, both roles:
   - **Issuer side**: `Issue`/`Verify` for `IssuerSigned`
     (namespace/data-element digest+salt selective disclosure, §10.3.3),
