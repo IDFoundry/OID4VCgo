@@ -49,7 +49,12 @@ type AuthorizedRequest struct {
 // which this repo doesn't implement). Only a jwk-conveyed binding key
 // is supported within a jwt proof — kid/x5c-based key resolution (DID
 // resolution, certificate-chain validation) isn't. Request and response
-// encryption aren't supported. A CredentialConfiguration with no
+// encryption aren't supported. RequestCredential itself never defers
+// issuance — it always issues immediately or fails outright; see
+// RequestDeferredCredential for the Deferred Credential Endpoint (§9)
+// this repo does implement, for a transaction some other,
+// deployment-specific process has already decided to defer. A
+// CredentialConfiguration with no
 // ProofTypesSupported at all (an unbound credential, §14.2) isn't
 // supported either, since credential/mdoc's Claims.DeviceKey is
 // unconditionally required — there is no way to satisfy "no binding"
@@ -97,10 +102,12 @@ type IssuedCredential struct {
 }
 
 // CredentialResponse is a Credential Response (§8.3) for the immediate
-// (non-deferred) issuance case — this package doesn't implement
-// deferred issuance, so transaction_id/interval never apply, and
-// notification_id is never set since the Notification Endpoint (§11)
-// doesn't exist yet to consume it.
+// issuance case — RequestCredential always issues immediately or fails
+// outright; it never defers, so transaction_id/interval never apply
+// here (see DeferredCredentialResult for that case, once some other,
+// deployment-specific process has decided to defer). notification_id
+// is never set since the Notification Endpoint (§11) doesn't exist yet
+// to consume it.
 type CredentialResponse struct {
 	Credentials []IssuedCredential
 }

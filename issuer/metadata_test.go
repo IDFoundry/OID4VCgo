@@ -44,6 +44,9 @@ func TestMetadata(t *testing.T) {
 	if md.NonceEndpoint == nil || md.NonceEndpoint.String() != testNonceEndpoint {
 		t.Errorf("NonceEndpoint = %v, want %q", md.NonceEndpoint, testNonceEndpoint)
 	}
+	if md.DeferredCredentialEndpoint == nil || md.DeferredCredentialEndpoint.String() != testDeferredCredentialEndpoint {
+		t.Errorf("DeferredCredentialEndpoint = %v, want %q", md.DeferredCredentialEndpoint, testDeferredCredentialEndpoint)
+	}
 	if len(md.CredentialConfigurationsSupported) != 1 {
 		t.Fatalf("got %d credential configurations, want 1", len(md.CredentialConfigurationsSupported))
 	}
@@ -57,6 +60,9 @@ func TestMetadata(t *testing.T) {
 	}
 	if wire["nonce_endpoint"] != testNonceEndpoint {
 		t.Errorf("wire nonce_endpoint = %v", wire["nonce_endpoint"])
+	}
+	if wire["deferred_credential_endpoint"] != testDeferredCredentialEndpoint {
+		t.Errorf("wire deferred_credential_endpoint = %v", wire["deferred_credential_endpoint"])
 	}
 
 	configs, ok := wire["credential_configurations_supported"].(map[string]any)
@@ -105,6 +111,28 @@ func TestMetadata_OmitsNonceEndpointWhenDisabled(t *testing.T) {
 	wire := marshalWire(t, md)
 	if _, ok := wire["nonce_endpoint"]; ok {
 		t.Errorf("wire form still has nonce_endpoint: %v", wire["nonce_endpoint"])
+	}
+}
+
+func TestMetadata_OmitsDeferredCredentialEndpointWhenDisabled(t *testing.T) {
+	cfg := validConfig(t)
+	cfg.Endpoints.DeferredCredential = fapi.URL{}
+	cfg.Limits.DeferredIssuancePollInterval = 0
+	deps := validDependencies(t)
+	deps.DeferredTransactions = nil
+
+	iss, err := issuer.New(cfg, deps)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	md := iss.Metadata()
+	if md.DeferredCredentialEndpoint != nil {
+		t.Errorf("DeferredCredentialEndpoint = %v, want nil", md.DeferredCredentialEndpoint)
+	}
+
+	wire := marshalWire(t, md)
+	if _, ok := wire["deferred_credential_endpoint"]; ok {
+		t.Errorf("wire form still has deferred_credential_endpoint: %v", wire["deferred_credential_endpoint"])
 	}
 }
 

@@ -15,10 +15,11 @@ import (
 )
 
 const (
-	testIssuer                  = "https://issuer.example.com"
-	testCredentialEndpoint      = "https://issuer.example.com/credential"
-	testNonceEndpoint           = "https://issuer.example.com/nonce"
-	testCredentialOfferEndpoint = "https://issuer.example.com/credential-offer"
+	testIssuer                     = "https://issuer.example.com"
+	testCredentialEndpoint         = "https://issuer.example.com/credential"
+	testNonceEndpoint              = "https://issuer.example.com/nonce"
+	testCredentialOfferEndpoint    = "https://issuer.example.com/credential-offer"
+	testDeferredCredentialEndpoint = "https://issuer.example.com/deferred_credential"
 )
 
 func mustIssuerURL(t *testing.T, raw string) fapi.URL {
@@ -59,12 +60,14 @@ func validConfig(t *testing.T) issuer.Config {
 	return issuer.Config{
 		Issuer: mustIssuerURL(t, testIssuer),
 		Endpoints: issuer.Endpoints{
-			Credential: mustEndpointURL(t, testCredentialEndpoint),
-			Nonce:      mustEndpointURL(t, testNonceEndpoint),
+			Credential:         mustEndpointURL(t, testCredentialEndpoint),
+			Nonce:              mustEndpointURL(t, testNonceEndpoint),
+			DeferredCredential: mustEndpointURL(t, testDeferredCredentialEndpoint),
 		},
 		Limits: issuer.Limits{
-			NonceLifetime:           time.Minute,
-			CredentialOfferLifetime: time.Hour,
+			NonceLifetime:                time.Minute,
+			CredentialOfferLifetime:      time.Hour,
+			DeferredIssuancePollInterval: 10 * time.Second,
 		},
 		CredentialConfigurationsSupported: validCredentialConfigurations(),
 		CredentialOfferEndpoint:           mustEndpointURL(t, testCredentialOfferEndpoint),
@@ -92,11 +95,12 @@ func testMdocSigner(t *testing.T) *issuer.MdocSigner {
 func validDependencies(t *testing.T) issuer.Dependencies {
 	t.Helper()
 	return issuer.Dependencies{
-		Nonces:           newFakeNonceStore(),
-		Clock:            issuer.ClockFunc(time.Now),
-		Random:           rand.Reader,
-		SDJWTSigner:      testSDJWTSigner(t),
-		CredentialOffers: newFakeCredentialOfferStore(),
+		Nonces:               newFakeNonceStore(),
+		Clock:                issuer.ClockFunc(time.Now),
+		Random:               rand.Reader,
+		SDJWTSigner:          testSDJWTSigner(t),
+		CredentialOffers:     newFakeCredentialOfferStore(),
+		DeferredTransactions: newFakeDeferredTransactionStore(),
 	}
 }
 
@@ -128,13 +132,25 @@ func TestNewAcceptsCredentialOfferEndpointDisabled(t *testing.T) {
 	}
 }
 
+func TestNewAcceptsDeferredCredentialEndpointDisabled(t *testing.T) {
+	cfg := validConfig(t)
+	cfg.Endpoints.DeferredCredential = fapi.URL{}
+	cfg.Limits.DeferredIssuancePollInterval = 0
+	deps := validDependencies(t)
+	deps.DeferredTransactions = nil
+	if _, err := issuer.New(cfg, deps); err != nil {
+		t.Fatalf("New: %v", err)
+	}
+}
+
 func TestNewRejectsInvalidConfig(t *testing.T) {
 	cases := map[string]func(*issuer.Config){
-		"zero issuer":                                  func(c *issuer.Config) { c.Issuer = fapi.URL{} },
-		"zero credential endpoint":                     func(c *issuer.Config) { c.Endpoints.Credential = fapi.URL{} },
-		"empty credential configurations":              func(c *issuer.Config) { c.CredentialConfigurationsSupported = nil },
-		"zero nonce lifetime with endpoint":            func(c *issuer.Config) { c.Limits.NonceLifetime = 0 },
-		"zero credential offer lifetime with endpoint": func(c *issuer.Config) { c.Limits.CredentialOfferLifetime = 0 },
+		"zero issuer":                                        func(c *issuer.Config) { c.Issuer = fapi.URL{} },
+		"zero credential endpoint":                           func(c *issuer.Config) { c.Endpoints.Credential = fapi.URL{} },
+		"empty credential configurations":                    func(c *issuer.Config) { c.CredentialConfigurationsSupported = nil },
+		"zero nonce lifetime with endpoint":                  func(c *issuer.Config) { c.Limits.NonceLifetime = 0 },
+		"zero credential offer lifetime with endpoint":       func(c *issuer.Config) { c.Limits.CredentialOfferLifetime = 0 },
+		"zero deferred issuance poll interval with endpoint": func(c *issuer.Config) { c.Limits.DeferredIssuancePollInterval = 0 },
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {

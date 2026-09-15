@@ -17,6 +17,12 @@ const (
 	ErrorInvalidProof                ErrorCode = "invalid_proof"
 	ErrorInvalidNonce                ErrorCode = "invalid_nonce"
 	ErrorCredentialRequestDenied     ErrorCode = "credential_request_denied" //nolint:gosec // an OID4VCI error code, not a credential
+
+	// ErrorInvalidTransactionID is the Deferred Credential Endpoint's
+	// own additional error code (§9.3): the request's transaction_id
+	// was not issued by this Credential Issuer, or was already used to
+	// obtain a Credential.
+	ErrorInvalidTransactionID ErrorCode = "invalid_transaction_id"
 )
 
 // Error is the error type RequestCredential returns for a Credential

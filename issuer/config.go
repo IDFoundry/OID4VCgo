@@ -17,8 +17,8 @@ import (
 )
 
 // Endpoints are this Credential Issuer's own endpoint URLs — what
-// Metadata advertises. DeferredCredential and Notification will join
-// Credential and Nonce as those endpoints land (see ARCHITECTURE.md).
+// Metadata advertises. Notification will join Credential, Nonce and
+// DeferredCredential as that endpoint lands (see ARCHITECTURE.md).
 // Credential is required even though there is no RequestCredential
 // method yet — §12.2.4 requires credential_endpoint in every Credential
 // Issuer's metadata unconditionally, independent of which endpoints
@@ -31,6 +31,12 @@ type Endpoints struct {
 	// issuer has no Nonce Endpoint at all — Metadata then omits
 	// nonce_endpoint, and RequestNonce always fails.
 	Nonce fapi.URL
+
+	// DeferredCredential is this issuer's Deferred Credential Endpoint
+	// (§9). Zero means this issuer never defers issuance — Metadata
+	// then omits deferred_credential_endpoint, and
+	// RequestDeferredCredential always fails.
+	DeferredCredential fapi.URL
 }
 
 // Limits bounds durations this issuer enforces. None have an implicit
@@ -45,6 +51,12 @@ type Limits struct {
 	// Offer (§4.1.3) remains fetchable. Required only when
 	// CredentialOfferEndpoint is set.
 	CredentialOfferLifetime time.Duration
+
+	// DeferredIssuancePollInterval is the minimum time this issuer asks
+	// a Wallet to wait before polling the Deferred Credential Endpoint
+	// again (§9.2's own "interval" member). Required only when
+	// Endpoints.DeferredCredential is set.
+	DeferredIssuancePollInterval time.Duration
 }
 
 // Config is this issuer's immutable configuration.
@@ -181,6 +193,10 @@ type Dependencies struct {
 	// CredentialOffers persists Credential Offers issued by reference
 	// (§4.1.3). Required when Config.CredentialOfferEndpoint is set.
 	CredentialOffers CredentialOfferStore
+
+	// DeferredTransactions persists Deferred Issuance transactions
+	// (§9). Required when Config.Endpoints.DeferredCredential is set.
+	DeferredTransactions DeferredTransactionStore
 }
 
 // Issuer is this Credential Issuer's own role implementation — the
@@ -224,6 +240,16 @@ func New(cfg Config, deps Dependencies) (*Issuer, error) {
 		}
 		if deps.CredentialOffers == nil {
 			return nil, fmt.Errorf("issuer: dependencies: credential_offers is required when credential_offer_endpoint is set")
+		}
+	}
+
+	deferredCredentialEndpointEnabled := !cfg.Endpoints.DeferredCredential.IsZero()
+	if deferredCredentialEndpointEnabled {
+		if cfg.Limits.DeferredIssuancePollInterval <= 0 {
+			return nil, fmt.Errorf("issuer: config: limits.deferred_issuance_poll_interval must be positive when endpoints.deferred_credential is set")
+		}
+		if deps.DeferredTransactions == nil {
+			return nil, fmt.Errorf("issuer: dependencies: deferred_transactions is required when endpoints.deferred_credential is set")
 		}
 	}
 
