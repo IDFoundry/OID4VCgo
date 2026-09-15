@@ -40,13 +40,14 @@
 > Credential/Notification Endpoints' client sides given an
 > already-obtained access token, and §10 Encrypted Request/Response
 > support), `dcql` (the Digital Credentials Query Language, OID4VP
-> §6/§7 — query types plus structural validation, shared by `verifier`
-> and the future wallet-presentation role), and `verifier`
-> (Phase 1 of the OID4VP Verifier role: DCQL-query-carrying,
-> HAIP-§5-profiled Authorization Request construction — `BuildAuthorizationRequest`
-> builds and JAR-signs a `direct_post.jwt`/`x509_hash` redirect-flow
-> request; response parsing/decryption, VP Token validation, and mdoc's
-> `DeviceResponse`/`Handover` construction are still to come) are
+> §6/§7 — query types plus structural validation and §7.1's own Claims
+> Path Pointer evaluation, shared by `verifier` and the future
+> wallet-presentation role), and `verifier` (the OID4VP Verifier role:
+> HAIP-§5-profiled Authorization Request construction via
+> `BuildAuthorizationRequest`, `direct_post.jwt` response
+> parsing/decryption via `ParseDirectPostJWTResponse`, and §8.6 VP
+> Token Validation for the `dc+sd-jwt` format via `VerifyResponse` —
+> `mso_mdoc` support and the DC API flow are still to come) are
 > implemented and tested;
 > everything else below is still just the
 > planned layout, not a finished system. Update each section as the
@@ -659,7 +660,7 @@ shape from the phase-by-phase plan, not a description of current code.
   `ProtectedResourceClient` needs these two primitives to do that
   itself, rather than reimplementing DPoP proof construction a second
   time.
-- **`dcql`** (done, Phase 1) — the Digital Credentials Query Language
+- **`dcql`** (done, Phase 1+2a) — the Digital Credentials Query Language
   (OID4VP §6/§7): `Query`/`CredentialQuery`/`CredentialSetQuery`/
   `ClaimsQuery`/`TrustedAuthoritiesQuery`, each with a `Validate()`
   checking the spec's own structural MUSTs (non-empty arrays, `id`
@@ -674,9 +675,19 @@ shape from the phase-by-phase plan, not a description of current code.
   and the future wallet-presentation role (evaluation — matching a
   Query against held credentials, not built yet) need the identical
   wire shape, the same split the root `oid4vci` package already draws
-  for OID4VCI's own wire types. `Select`-style Path *evaluation* has no
-  exported function here yet — that's wallet-presentation's own job.
-- **`verifier`** (done, Phase 1) — the OID4VP Verifier role.
+  for OID4VCI's own wire types. `Path.Select` implements §7.1's own
+  JSON-based evaluation semantics (object-key/wildcard/array-index
+  selection, left to right, tested against §7.3's own worked "Arthur
+  Dent" example verbatim) — the one shared low-level primitive both
+  `verifier.VerifyResponse` (checking a returned Presentation actually
+  carries what a Claims Query asked for) and the future
+  wallet-presentation role (deciding which held credential satisfies a
+  whole Query) need identically; the higher-level decision each makes
+  with its result stays role-specific. mdoc's §7.2 form has no
+  `Select` equivalent — `MdocNamespaceAndElement` already reports its
+  only two possible components; looking those up is a plain map access
+  once a caller has decoded the mdoc's own namespace structure.
+- **`verifier`** (done, Phase 1+2a) — the OID4VP Verifier role.
   `BuildAuthorizationRequest` builds and signs a HAIP-§5-profiled
   redirect-flow Authorization Request: a JAR Request Object
   (`"typ":"oauth-authz-req+jwt"`, RFC9101) carrying `response_type:
@@ -704,24 +715,57 @@ shape from the phase-by-phase plan, not a description of current code.
   a real round trip: build the signed Request Object, then parse and
   verify it via `internal/jose.Verify`'s own production path, the same
   "real round trip, not a simulation" discipline every other
-  cross-package wire-format claim in this repo is held to. Still to
-  come: hosting the built Request Object at a `request_uri` (this
-  package builds the JWS but doesn't host it — the same
-  "expose the pieces, don't own the transport" split
-  `issuer.CreateCredentialOffer`'s own by-reference mode already
-  draws), parsing/decrypting the resulting `direct_post.jwt` response,
-  VP Token validation (§8.6), and `OpenID4VPHandover`/`DeviceResponse`
-  CBOR construction for the `mso_mdoc` format (real but sizeable — the
+  cross-package wire-format claim in this repo is held to.
+  `ParseDirectPostJWTResponse` decrypts a Wallet's own `direct_post.jwt`
+  response body (`internal/jwe.Decrypt`, using the ephemeral private
+  key `BuildAuthorizationRequestResult.ResponseDecryptionKey` returned
+  for that same request) and parses its own `vp_token`/`state`, or
+  returns a new `*ResponseError` when the Wallet reported one instead
+  (§8.1). This package still doesn't host the built Request Object at
+  a `request_uri` itself — the same "expose the pieces, don't own the
+  transport" split `issuer.CreateCredentialOffer`'s own by-reference
+  mode already draws.
+  `VerifyResponse` implements §8.6's own VP Token Validation for the
+  `dc+sd-jwt` format: for each `dcql.CredentialQuery` in the original
+  `dcql.Query`, it locates the matching Presentation by id, resolves
+  the Issuer key via a new caller-supplied `SDJWTVCIssuerKeyResolver`
+  (trust — validating the credential's own x5c chain against
+  `trusted_authorities`, DID resolution, VCT metadata lookup — stays a
+  deployment policy decision, the same split
+  `issuer.AttestationVerifier`/`ProofBindingKeyResolver` already draw
+  on the issuance side), derives the Holder Binding key **only** from
+  the credential's own already-cryptographically-verified `cnf` claim
+  (RFC 7800) — never from an externally supplied value, since accepting
+  one without deriving it from the credential itself would make the
+  binding check meaningless — verifies via
+  `credential/sdjwtvc.Verify` (checking the Key Binding JWT's own
+  `aud`/`nonce` against this Verifier's own `ClientID`/the caller's
+  `ExpectedNonce` per §14.1.2, requiring it exactly when
+  `dcql.CredentialQuery.RequiresCryptographicHolderBinding` is true),
+  and checks every one of the Credential Query's own `Claims` is
+  actually present via the new `dcql.Path.Select` (§7.1) plus that the
+  credential's own `vct` is among `SDJWTVCMeta.VCTValues` (§8.6 point
+  3). `TestVerifyResponse` is a real end-to-end round trip: build a
+  real Authorization Request, issue and present a real SD-JWT VC bound
+  to its exact `aud`/`nonce`, and verify it.
+  Phase 2a scope, explicitly: exactly one Presentation per Credential
+  Query (`multiple: true` isn't supported yet), `claim_sets` isn't
+  supported, `dc+sd-jwt` only (`mso_mdoc` returns an error), and every
+  Credential Query is treated as required (no `credential_sets`/§6.4.2
+  Credential-selection orchestration). Still to come:
+  `OpenID4VPHandover`/`DeviceResponse` CBOR construction and
+  verification for the `mso_mdoc` format (real but sizeable — the
   `SessionTranscriptBytes` piece `credential/mdoc`'s own
   `SignDeviceSignature`/`ComputeDeviceMAC` already leave as an opaque
-  caller-supplied value precisely so this package can build it). The DC
-  API flow (message shapes, `dc_api`/`dc_api.jwt`,
-  `OpenID4VPDCAPIHandover`) is deferred further still — HAIP formally
-  allows an Ecosystem to choose redirect-only, DC-API-only, or both
-  (HAIP §9.3), so a redirect-flow-only slice is a legitimate,
-  spec-sanctioned choice, not a compliance gap; actually *invoking* the
-  W3C Digital Credentials API is a browser/OS platform concern outside
-  a Go library's own transport responsibilities regardless.
+  caller-supplied value precisely so this package can build it), the
+  `multiple`/`claim_sets`/`credential_sets` selection rules (§6.4), and
+  the DC API flow entirely (message shapes, `dc_api`/`dc_api.jwt`,
+  `OpenID4VPDCAPIHandover`) — HAIP formally allows an Ecosystem to
+  choose redirect-only, DC-API-only, or both (HAIP §9.3), so a
+  redirect-flow-only slice is a legitimate, spec-sanctioned choice, not
+  a compliance gap; actually *invoking* the W3C Digital Credentials API
+  is a browser/OS platform concern outside a Go library's own transport
+  responsibilities regardless.
 - **`wallet`** (extended) or a distinct presentation package — the
   Wallet's OID4VP role: DCQL evaluation against held credentials (the
   `dcql.Path` *evaluation* half `dcql` itself deliberately doesn't

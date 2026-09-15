@@ -70,6 +70,89 @@ func TestPathValidateRejectsEmpty(t *testing.T) {
 	}
 }
 
+// testCredential981 is §7.3's own non-normative worked example
+// credential.
+func testCredential981(t *testing.T) any {
+	t.Helper()
+	const raw = `{
+		"name": "Arthur Dent",
+		"address": {
+			"street_address": "42 Market Street",
+			"locality": "Milliways",
+			"postal_code": "12345"
+		},
+		"degrees": [
+			{"type": "Bachelor of Science", "university": "University of Betelgeuse"},
+			{"type": "Master of Science", "university": "University of Betelgeuse"}
+		],
+		"nationalities": ["British", "Betelgeusian"]
+	}`
+	var v any
+	if err := json.Unmarshal([]byte(raw), &v); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	return v
+}
+
+// TestPathSelectWorkedExample mirrors §7.3's own worked example
+// exactly: each claims path pointer and its documented result.
+func TestPathSelectWorkedExample(t *testing.T) {
+	cred := testCredential981(t)
+	cases := []struct {
+		name string
+		path dcql.Path
+		want []any
+	}{
+		{"name", dcql.Path{dcql.PathKey("name")}, []any{"Arthur Dent"}},
+		{"address", dcql.Path{dcql.PathKey("address")}, []any{map[string]any{
+			"street_address": "42 Market Street", "locality": "Milliways", "postal_code": "12345",
+		}}},
+		{"street_address", dcql.Path{dcql.PathKey("address"), dcql.PathKey("street_address")}, []any{"42 Market Street"}},
+		{"all degree types", dcql.Path{dcql.PathKey("degrees"), dcql.Wildcard, dcql.PathKey("type")},
+			[]any{"Bachelor of Science", "Master of Science"}},
+		{"second nationality", dcql.Path{dcql.PathKey("nationalities"), dcql.PathIndex(1)}, []any{"Betelgeusian"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := tc.path.Select(cred)
+			if err != nil {
+				t.Fatalf("Select: %v", err)
+			}
+			gotJSON, _ := json.Marshal(got)
+			wantJSON, _ := json.Marshal(tc.want)
+			if string(gotJSON) != string(wantJSON) {
+				t.Errorf("Select() = %s, want %s", gotJSON, wantJSON)
+			}
+		})
+	}
+}
+
+func TestPathSelectRejectsWrongType(t *testing.T) {
+	cred := testCredential981(t)
+	cases := map[string]dcql.Path{
+		"key into a string":      {dcql.PathKey("name"), dcql.PathKey("nope")},
+		"wildcard into a string": {dcql.PathKey("name"), dcql.Wildcard},
+		"index into an object":   {dcql.PathKey("address"), dcql.PathIndex(0)},
+	}
+	for name, p := range cases {
+		t.Run(name, func(t *testing.T) {
+			if _, err := p.Select(cred); err == nil {
+				t.Fatalf("Select(%s) = nil error, want error", name)
+			}
+		})
+	}
+}
+
+func TestPathSelectRejectsEmptyResult(t *testing.T) {
+	cred := testCredential981(t)
+	if _, err := (dcql.Path{dcql.PathKey("no-such-key")}).Select(cred); err == nil {
+		t.Fatalf("Select = nil error, want error")
+	}
+	if _, err := (dcql.Path{dcql.PathKey("nationalities"), dcql.PathIndex(99)}).Select(cred); err == nil {
+		t.Fatalf("Select = nil error, want error")
+	}
+}
+
 func TestPathMdocNamespaceAndElement(t *testing.T) {
 	ns, el, ok := dcql.Path{dcql.PathKey("org.iso.18013.5.1"), dcql.PathKey("given_name")}.MdocNamespaceAndElement()
 	if !ok || ns != "org.iso.18013.5.1" || el != "given_name" {

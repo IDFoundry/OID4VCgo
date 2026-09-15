@@ -45,6 +45,15 @@ func testSignerAndCert(t *testing.T) (*ecdsa.PrivateKey, *x509.Certificate) {
 	return key, cert
 }
 
+func testP256Key(t *testing.T) *ecdsa.PrivateKey {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	return key
+}
+
 func testResponseURI(t *testing.T) fapi.URL {
 	t.Helper()
 	u, err := fapi.ParseEndpointURL("https://verifier.example.com/response")
