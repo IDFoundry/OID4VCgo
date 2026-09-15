@@ -38,12 +38,14 @@
 > request shape, the pre-authorized_code Flow's own
 > DPoP-sender-constrained Token Request, the Credential/Deferred
 > Credential/Notification Endpoints' client sides given an
-> already-obtained access token, and §10 Encrypted Request/Response
-> support), `dcql` (the Digital Credentials Query Language, OID4VP
-> §6/§7 — query types plus structural validation and §7.1's own Claims
-> Path Pointer evaluation, shared by `verifier` and the future
-> wallet-presentation role), and `verifier` (the OID4VP Verifier role:
-> HAIP-§5-profiled Authorization Request construction via
+> already-obtained access token, §10 Encrypted Request/Response
+> support, and — its own OID4VP Wallet role — DCQL query matching
+> against held credentials and `dc+sd-jwt` VP Token construction),
+> `dcql` (the Digital Credentials Query Language, OID4VP §6/§7 — query
+> types, structural validation, §7.1's own Claims Path Pointer
+> evaluation, and the shared Credential-Query-satisfaction check both
+> `wallet` and `verifier` use), and `verifier` (the OID4VP Verifier
+> role: HAIP-§5-profiled Authorization Request construction via
 > `BuildAuthorizationRequest`, `direct_post.jwt` response
 > parsing/decryption via `ParseDirectPostJWTResponse`, and §8.6 VP
 > Token Validation for the `dc+sd-jwt` format via `VerifyResponse` —
@@ -672,21 +674,28 @@ shape from the phase-by-phase plan, not a description of current code.
   non-negative-integer components, custom JSON marshaling for the
   string-or-null-or-integer wire form). Deliberately a *shared* package
   rather than living inside `verifier` — both `verifier` (construction)
-  and the future wallet-presentation role (evaluation — matching a
-  Query against held credentials, not built yet) need the identical
-  wire shape, the same split the root `oid4vci` package already draws
-  for OID4VCI's own wire types. `Path.Select` implements §7.1's own
-  JSON-based evaluation semantics (object-key/wildcard/array-index
-  selection, left to right, tested against §7.3's own worked "Arthur
-  Dent" example verbatim) — the one shared low-level primitive both
-  `verifier.VerifyResponse` (checking a returned Presentation actually
-  carries what a Claims Query asked for) and the future
-  wallet-presentation role (deciding which held credential satisfies a
-  whole Query) need identically; the higher-level decision each makes
+  and `wallet` (evaluation — matching a Query against held credentials)
+  need the identical wire shape, the same split the root `oid4vci`
+  package already draws for OID4VCI's own wire types. `Path.Select`
+  implements §7.1's own JSON-based evaluation semantics
+  (object-key/wildcard/array-index selection, left to right, tested
+  against §7.3's own worked "Arthur Dent" example verbatim) — the one
+  shared low-level primitive both `verifier.VerifyResponse` (checking a
+  returned Presentation actually carries what a Claims Query asked for)
+  and `wallet.MatchDCQLQuery` (deciding which held credential satisfies
+  a whole Query) need identically; the higher-level decision each makes
   with its result stays role-specific. mdoc's §7.2 form has no
   `Select` equivalent — `MdocNamespaceAndElement` already reports its
   only two possible components; looking those up is a plain map access
   once a caller has decoded the mdoc's own namespace structure.
+  `CredentialQuery.SatisfiedBySDJWTVCClaims` goes one level up from
+  `Path.Select` itself: given a "dc+sd-jwt" credential's own already-
+  resolved claims, it checks the *whole* Credential Query is satisfied
+  (every `Claims` entry present, `vct` among `SDJWTVCMeta`'s own
+  `VCTValues`) — again one shared check both `verifier` (does a
+  returned Presentation satisfy what was asked) and `wallet` (does a
+  held credential satisfy a Credential Query at all) need identically,
+  factored out after the two were caught duplicating it.
 - **`verifier`** (done, Phase 1+2a) — the OID4VP Verifier role.
   `BuildAuthorizationRequest` builds and signs a HAIP-§5-profiled
   redirect-flow Authorization Request: a JAR Request Object
@@ -766,13 +775,41 @@ shape from the phase-by-phase plan, not a description of current code.
   a compliance gap; actually *invoking* the W3C Digital Credentials API
   is a browser/OS platform concern outside a Go library's own transport
   responsibilities regardless.
-- **`wallet`** (extended) or a distinct presentation package — the
-  Wallet's OID4VP role: DCQL evaluation against held credentials (the
-  `dcql.Path` *evaluation* half `dcql` itself deliberately doesn't
-  implement), VP Token construction per format. Naming TBD once the
-  shared/duplicated surface with the OID4VCI wallet role is clearer —
-  needed before `verifier`'s own Phase 2 (response verification), which
-  needs a real Wallet-side VP Token to test against end-to-end.
+- **`wallet`** (extended, done for `dc+sd-jwt`) — the naming question
+  above is now resolved: OID4VP's Wallet role lives in the existing
+  `wallet` package rather than a distinct one — "Wallet" is genuinely
+  one real-world actor across both OID4VCI and OID4VP (the same app
+  holds credentials and presents them), the same way `issuer` already
+  covers everything the Credential Issuer role does in one package
+  regardless of internal protocol-section boundaries. New exported
+  surface, all free functions (no `*Wallet` state is actually needed,
+  the same precedent `BuildAuthorizationRequest`/`DPoPAccessTokenHash`
+  already set): `HeldCredential` (a credential this Wallet holds —
+  Format/Credential/HolderKey/HolderKeyAlg — paired with the key its
+  own `cnf` is bound to; this package never verifies a held
+  credential's own Issuer signature itself, the same "resolving trust
+  is a caller's own job" split `RequestCredential`'s own
+  `CredentialResult` already establishes at receipt time), and
+  `MatchDCQLQuery` (evaluates a `dcql.Query` against `[]HeldCredential`
+  via `dcql.CredentialQuery.SatisfiedBySDJWTVCClaims` — the exact same
+  shared check `verifier.VerifyResponse` uses, so a credential that
+  would satisfy a Verifier is also what this package picks; this is
+  the `dcql.Path` *evaluation* half `dcql` itself deliberately doesn't
+  own), `PresentSDJWTVC` (builds one Presentation: a fresh Key Binding
+  JWT bound to the caller's own aud/nonce, reusing every one of the
+  held credential's own Disclosures — no minimal-disclosure trimming
+  yet), and `PresentCredentials` (combines both into a ready-to-encrypt
+  `vp_token` map, §8.1's own shape). Same scope cut as
+  `verifier.VerifyResponse`: exactly one `HeldCredential` per
+  Credential Query, no `claim_sets`, `dc+sd-jwt` only, every Credential
+  Query required. `TestWalletVerifierPresentationRoundTrip` drives the
+  full OID4VP flow between this repo's own two independently-built
+  halves — build a real Authorization Request, match and present a
+  real held credential, encrypt the response exactly as a real Wallet
+  would (`internal/jwe.Encrypt` against the Verifier's own advertised
+  key), then parse/decrypt/verify it — the same "real round trip, not
+  a simulation" discipline `TestWalletIssuerRoundTrip` already holds
+  OID4VCI to.
 - **`haip`** — the profile layer: wires HAIP's own specific overrides on
   top of `issuer` (and, once they exist, `wallet`/`verifier`) — mirrors
   FAPIgo's `server.RecommendedLimits()`/`RecommendedAlgorithms()` pattern:

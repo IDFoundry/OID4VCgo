@@ -91,9 +91,10 @@ type VerifyResponseResult struct {
 // "aud"/"nonce" against this Verifier's own ClientID/
 // req.ExpectedNonce per §14.1.2, requiring it exactly when the
 // Credential Query's own RequiresCryptographicHolderBinding is true),
-// and checks every one of the Credential Query's own Claims is
-// actually present via dcql.Path.Select and that the credential's own
-// "vct" is among Meta's own VCTValues (§8.6 point 3).
+// and checks the result against the Credential Query itself via
+// dcql.CredentialQuery.SatisfiedBySDJWTVCClaims (§8.6 point 3) — the
+// same check the future wallet-presentation role uses to decide which
+// held credential can satisfy a Credential Query in the first place.
 //
 // Phase 2 scope, explicitly: exactly one Presentation per Credential
 // Query ("multiple: true" isn't supported yet), "claim_sets" isn't
@@ -182,7 +183,7 @@ func (v *Verifier) verifySDJWTVCPresentation(ctx context.Context, cq dcql.Creden
 		return nil, fmt.Errorf("verify: %w", err)
 	}
 
-	if err := checkSDJWTVCSatisfiesQuery(cq, claims); err != nil {
+	if err := cq.SatisfiedBySDJWTVCClaims(claims); err != nil {
 		return nil, err
 	}
 	return claims, nil
@@ -219,34 +220,4 @@ func holderPublicKeyFromCNF(cnf any) (crypto.PublicKey, jose.Alg, error) {
 	default:
 		return nil, "", fmt.Errorf("unsupported cnf.jwk key type %T", pub)
 	}
-}
-
-// checkSDJWTVCSatisfiesQuery implements §8.6 point 3 for a "dc+sd-jwt"
-// Presentation: every one of cq's own Claims must actually be present
-// in claims (dcql.Path.Select), and, when cq's own SDJWTVCMeta
-// declares VCTValues, the credential's own "vct" must be among them.
-func checkSDJWTVCSatisfiesQuery(cq dcql.CredentialQuery, claims map[string]any) error {
-	meta, err := cq.SDJWTVCMeta()
-	if err != nil {
-		return fmt.Errorf("meta: %w", err)
-	}
-	if len(meta.VCTValues) > 0 {
-		vct, _ := claims["vct"].(string)
-		found := false
-		for _, want := range meta.VCTValues {
-			if vct == want {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return fmt.Errorf("credential's own vct %q is not among the requested vct_values %v", vct, meta.VCTValues)
-		}
-	}
-	for _, cl := range cq.Claims {
-		if _, err := cl.Path.Select(claims); err != nil {
-			return fmt.Errorf("claim at path %v is not present: %w", cl.Path, err)
-		}
-	}
-	return nil
 }

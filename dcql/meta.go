@@ -62,3 +62,44 @@ func (c CredentialQuery) MdocMeta() (MdocMeta, error) {
 	}
 	return m, nil
 }
+
+// SatisfiedBySDJWTVCClaims reports whether claims — a "dc+sd-jwt"
+// credential's own already-resolved claims (RFC 9901's "Processed
+// SD-JWT Payload") — satisfies c's own "dc+sd-jwt"-specific
+// constraints (§8.6 point 3): the credential's own "vct" must be
+// among SDJWTVCMeta's own VCTValues, when declared, and every one of
+// c's own Claims must actually be present via Path.Select. Returns a
+// non-nil error naming the first unmet constraint otherwise.
+//
+// This is the one piece of matching logic a Verifier (checking a
+// returned Presentation actually carries what was asked for) and a
+// Wallet (deciding which held credential can satisfy a Credential
+// Query at all) need identically — c.Claims/c.Meta express the same
+// constraint regardless of which side is asking, so this package
+// holds the check once rather than each role package reimplementing
+// it.
+func (c CredentialQuery) SatisfiedBySDJWTVCClaims(claims map[string]any) error {
+	meta, err := c.SDJWTVCMeta()
+	if err != nil {
+		return fmt.Errorf("meta: %w", err)
+	}
+	if len(meta.VCTValues) > 0 {
+		vct, _ := claims["vct"].(string)
+		found := false
+		for _, want := range meta.VCTValues {
+			if vct == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("credential's own vct %q is not among the requested vct_values %v", vct, meta.VCTValues)
+		}
+	}
+	for _, cl := range c.Claims {
+		if _, err := cl.Path.Select(claims); err != nil {
+			return fmt.Errorf("claim at path %v is not present: %w", cl.Path, err)
+		}
+	}
+	return nil
+}
