@@ -23,7 +23,7 @@ track a moving IETF draft).
 
 ## Security profile
 
-HAIP §3.3 requires compliance with the applicable provisions of FAPI 2.0
+HAIP §4 requires compliance with the applicable provisions of FAPI 2.0
 Security Profile Final, with explicit overrides — see "HAIP's deviations from
 plain FAPI 2.0" below.
 
