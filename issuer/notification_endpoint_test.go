@@ -111,7 +111,7 @@ func TestRequestNotification_Succeeds(t *testing.T) {
 
 	err := iss.RequestNotification(context.Background(), issuer.AuthorizedRequest{ClientID: "client-a"}, issuer.NotificationRequest{
 		NotificationID:   "notif-1",
-		Event:            issuer.NotificationEventCredentialAccepted,
+		Event:            oid4vci.NotificationEventCredentialAccepted,
 		EventDescription: "stored ok",
 	})
 	if err != nil {
@@ -121,7 +121,7 @@ func TestRequestNotification_Succeeds(t *testing.T) {
 		t.Fatalf("handler calls = %d, want 1", len(handler.calls))
 	}
 	call := handler.calls[0]
-	if call.NotificationID != "notif-1" || call.Event != issuer.NotificationEventCredentialAccepted || call.Description != "stored ok" {
+	if call.NotificationID != "notif-1" || call.Event != oid4vci.NotificationEventCredentialAccepted || call.Description != "stored ok" {
 		t.Errorf("call = %+v", call)
 	}
 }
@@ -137,7 +137,7 @@ func TestRequestNotification_SucceedsWithoutHandler(t *testing.T) {
 
 	err := iss.RequestNotification(context.Background(), issuer.AuthorizedRequest{}, issuer.NotificationRequest{
 		NotificationID: "notif-1",
-		Event:          issuer.NotificationEventCredentialAccepted,
+		Event:          oid4vci.NotificationEventCredentialAccepted,
 	})
 	if err != nil {
 		t.Fatalf("RequestNotification: %v", err)
@@ -153,7 +153,7 @@ func TestRequestNotification_IsIdempotent(t *testing.T) {
 
 	store.put("notif-1", issuer.NotificationRecord{})
 
-	req := issuer.NotificationRequest{NotificationID: "notif-1", Event: issuer.NotificationEventCredentialAccepted}
+	req := issuer.NotificationRequest{NotificationID: "notif-1", Event: oid4vci.NotificationEventCredentialAccepted}
 	for i := 0; i < 3; i++ {
 		if err := iss.RequestNotification(context.Background(), issuer.AuthorizedRequest{}, req); err != nil {
 			t.Fatalf("RequestNotification (call %d): %v", i, err)
@@ -170,17 +170,17 @@ func TestRequestNotification_RejectsInvalidRequest(t *testing.T) {
 	iss := newTestIssuer(t, cfg, deps)
 
 	cases := map[string]issuer.NotificationRequest{
-		"missing notification_id": {Event: issuer.NotificationEventCredentialAccepted},
+		"missing notification_id": {Event: oid4vci.NotificationEventCredentialAccepted},
 		"missing event":           {NotificationID: "notif-1"},
 		"invalid event":           {NotificationID: "notif-1", Event: "bogus"},
 		"event_description with quote": {
-			NotificationID: "notif-1", Event: issuer.NotificationEventCredentialAccepted, EventDescription: `bad "quote"`,
+			NotificationID: "notif-1", Event: oid4vci.NotificationEventCredentialAccepted, EventDescription: `bad "quote"`,
 		},
 		"event_description with backslash": {
-			NotificationID: "notif-1", Event: issuer.NotificationEventCredentialAccepted, EventDescription: `bad\path`,
+			NotificationID: "notif-1", Event: oid4vci.NotificationEventCredentialAccepted, EventDescription: `bad\path`,
 		},
 		"event_description with control character": {
-			NotificationID: "notif-1", Event: issuer.NotificationEventCredentialAccepted, EventDescription: "bad\ndescription",
+			NotificationID: "notif-1", Event: oid4vci.NotificationEventCredentialAccepted, EventDescription: "bad\ndescription",
 		},
 	}
 	for name, req := range cases {
@@ -195,7 +195,7 @@ func TestRequestNotification_RejectsUnknownNotificationID(t *testing.T) {
 	iss := newTestIssuer(t, validConfig(t), validDependencies(t))
 	err := iss.RequestNotification(context.Background(), issuer.AuthorizedRequest{}, issuer.NotificationRequest{
 		NotificationID: "no-such-id",
-		Event:          issuer.NotificationEventCredentialAccepted,
+		Event:          oid4vci.NotificationEventCredentialAccepted,
 	})
 	assertIssuerError(t, err, issuer.ErrorInvalidNotificationID)
 }
@@ -210,7 +210,7 @@ func TestRequestNotification_RejectsMismatchedClient(t *testing.T) {
 
 	err := iss.RequestNotification(context.Background(), issuer.AuthorizedRequest{ClientID: "client-b"}, issuer.NotificationRequest{
 		NotificationID: "notif-1",
-		Event:          issuer.NotificationEventCredentialAccepted,
+		Event:          oid4vci.NotificationEventCredentialAccepted,
 	})
 	assertIssuerError(t, err, issuer.ErrorInvalidNotificationID)
 }
@@ -224,7 +224,7 @@ func TestRequestNotification_RejectsWhenNotConfigured(t *testing.T) {
 
 	err := iss.RequestNotification(context.Background(), issuer.AuthorizedRequest{}, issuer.NotificationRequest{
 		NotificationID: "anything",
-		Event:          issuer.NotificationEventCredentialAccepted,
+		Event:          oid4vci.NotificationEventCredentialAccepted,
 	})
 	if err == nil {
 		t.Fatalf("RequestNotification = nil error, want error")
@@ -242,7 +242,7 @@ func TestRequestNotification_PropagatesHandlerError(t *testing.T) {
 
 	err := iss.RequestNotification(context.Background(), issuer.AuthorizedRequest{}, issuer.NotificationRequest{
 		NotificationID: "notif-1",
-		Event:          issuer.NotificationEventCredentialFailure,
+		Event:          oid4vci.NotificationEventCredentialFailure,
 	})
 	if err == nil {
 		t.Fatalf("RequestNotification = nil error, want error")

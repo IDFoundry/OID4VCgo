@@ -5,6 +5,8 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+
+	"github.com/idfoundry/oid4vcigo"
 )
 
 // notificationIDEntropyBytes sets how much randomness backs a
@@ -19,7 +21,7 @@ const notificationIDEntropyBytes = 32
 // only ever surfaced as a plain (non-Error) error — a handler failure
 // isn't itself evidence the Notification Request was malformed.
 type NotificationHandler interface {
-	HandleNotification(ctx context.Context, notificationID string, event NotificationEvent, description string) error
+	HandleNotification(ctx context.Context, notificationID string, event oid4vci.NotificationEvent, description string) error
 }
 
 // NotificationRequest is a Notification Request (§11.1).
@@ -30,7 +32,7 @@ type NotificationRequest struct {
 	NotificationID string
 
 	// Event is REQUIRED: one of the three NotificationEvent values.
-	Event NotificationEvent
+	Event oid4vci.NotificationEvent
 
 	// EventDescription is OPTIONAL human-readable text. Its character
 	// set is restricted per §11.1 — see validateEventDescription.
@@ -84,7 +86,7 @@ func (iss *Issuer) RequestNotification(ctx context.Context, auth AuthorizedReque
 		return newError(ErrorInvalidNotificationRequest, 400, "notification_id is required", nil)
 	}
 	switch req.Event {
-	case NotificationEventCredentialAccepted, NotificationEventCredentialDeleted, NotificationEventCredentialFailure:
+	case oid4vci.NotificationEventCredentialAccepted, oid4vci.NotificationEventCredentialDeleted, oid4vci.NotificationEventCredentialFailure:
 	default:
 		return newError(ErrorInvalidNotificationRequest, 400,
 			"event must be credential_accepted, credential_failure, or credential_deleted", nil)
