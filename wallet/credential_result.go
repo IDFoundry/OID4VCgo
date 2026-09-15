@@ -1,10 +1,15 @@
 package wallet
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"time"
+
+	fapi "github.com/idfoundry/fapigo"
 
 	"github.com/idfoundry/oid4vcigo"
 )
@@ -65,4 +70,39 @@ func parseCredentialResult(statusCode int, body []byte) (CredentialResult, error
 	default:
 		return CredentialResult{}, parseError(statusCode, body)
 	}
+}
+
+// postCredentialResult POSTs an already-marshaled JSON body to
+// endpoint as a sender-constrained request via resource, and parses
+// the resulting Credential Response or Deferred Credential Response —
+// the request/response mechanics RequestCredential and
+// RequestDeferredCredential share (only how each builds its own
+// outbound body differs). errPrefix names the caller in every wrapped
+// error (e.g. "request credential").
+func (w *Wallet) postCredentialResult(
+	ctx context.Context, resource ProtectedResourceClient, endpoint fapi.URL, body []byte, errPrefix string,
+) (CredentialResult, error) {
+	target := endpoint.URL()
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, target.String(), bytes.NewReader(body))
+	if err != nil {
+		return CredentialResult{}, fmt.Errorf("wallet: %s: build request: %w", errPrefix, err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	res, err := resource.Do(ctx, httpReq)
+	if err != nil {
+		return CredentialResult{}, fmt.Errorf("wallet: %s: %w", errPrefix, err)
+	}
+	defer func() { _ = res.Body.Close() }()
+
+	respBody, err := io.ReadAll(res.Body)
+	if err != nil {
+		return CredentialResult{}, fmt.Errorf("wallet: %s: read response: %w", errPrefix, err)
+	}
+
+	result, err := parseCredentialResult(res.StatusCode, respBody)
+	if err != nil {
+		return CredentialResult{}, fmt.Errorf("wallet: %s: %w", errPrefix, err)
+	}
+	return result, nil
 }
