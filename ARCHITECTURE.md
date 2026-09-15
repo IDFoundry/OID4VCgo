@@ -12,16 +12,17 @@
 > role for `credential/mdoc` and `statuslist`'s CWT encoding),
 > `internal/hkdf` (RFC 5869, for `credential/mdoc`'s DeviceMac key
 > derivation), `internal/jwe` (RFC 7516 JWE Compact Serialization,
-> ECDH-ES + AES-GCM, for OID4VCI 1.0 §10 — not yet wired into
-> `issuer`/`wallet`), `internal/jwk` (JWK marshal/parse, shared by
+> ECDH-ES + AES-GCM, for OID4VCI 1.0 §10 — wired into `issuer`, not yet
+> `wallet`), `internal/jwk` (JWK marshal/parse, shared by
 > `attestation` and `issuer`), the root `oid4vci` package (wire value
 > types shared by
 > `issuer` and `wallet`: `CredentialOffer` and its `Grants` family,
 > `IssuedCredential`/`CredentialResponse`, `ProofTypeJWT`/
 > `ProofTypeAttestation`, `NotificationEvent`), `issuer` (Nonce Endpoint,
 > Metadata, the Credential Endpoint for immediate issuance of both
-> formats, Credential Offer construction/dereferencing, the Deferred
-> Credential Endpoint's polling protocol, and the Notification Endpoint)
+> formats with §10 Encrypted Request/Response support, Credential Offer
+> construction/dereferencing, the Deferred Credential Endpoint's polling
+> protocol, and the Notification Endpoint)
 > — every OID4VCI 1.0 Credential Issuer endpoint — `storage` (in-memory
 > reference implementations of every store `issuer` defines, for local
 > dev/testing only), `haip` (the profile layer's own
@@ -180,10 +181,10 @@ shape from the phase-by-phase plan, not a description of current code.
   for every `Enc` value and the `zip` path, not just Go-only round-trip
   tests, since ECDH-ES's Concat KDF is exactly the kind of
   precisely-specified-but-easy-to-get-subtly-wrong construction a
-  same-language round-trip test can't catch a shared bug in. Not yet
-  wired into `issuer`/`wallet` — see `CredentialRequest`'s own doc
-  comment (`issuer` package) for the metadata/Dependencies/request-flow
-  work that still needs building on top of this primitive.
+  same-language round-trip test can't catch a shared bug in. Wired into
+  `issuer` (`DecryptRequestBody`/`EncryptResponseBody`, `Config.RequestEncryption`/
+  `Config.ResponseEncryption` — see the `issuer` bullet below); not yet
+  into `wallet`.
 - **`internal/jwk`** (done) — a small, self-contained JWK (RFC 7517)
   marshaler/parser for the two key types `internal/jose` signs with
   (P-256 EC, Ed25519 OKP). Originally `attestation`'s own private
@@ -293,11 +294,11 @@ shape from the phase-by-phase plan, not a description of current code.
   `CredentialSigningAlgValuesSupportedCOSE []cose.Alg` field — the wire
   form needs bare JSON numbers here, not JOSE strings, per OID4VCI 1.0
   Appendix A.2.2, checked against that appendix's own non-normative
-  example) — deliberately not yet
-  `credential_request_encryption`/`credential_response_encryption`,
-  `batch_credential_issuance`, `display`, or `credential_metadata`
-  (including mdoc's own `claims` array, which lives under
-  `credential_metadata`); and `RequestCredential` implementing the
+  example), and `credential_request_encryption`/`credential_response_encryption`
+  (§10, §12.2.4 — `Config.RequestEncryption`/`Config.ResponseEncryption`,
+  see below) — deliberately not yet `batch_credential_issuance`,
+  `display`, or `credential_metadata` (including mdoc's own `claims`
+  array, which lives under `credential_metadata`); and `RequestCredential` implementing the
   Credential Endpoint (§8) for immediate (non-deferred) issuance, both
   formats and both the `jwt` and `attestation` proof types, with batch
   support native to §8.2's own `proofs` parameter (one Credential per
@@ -326,15 +327,43 @@ shape from the phase-by-phase plan, not a description of current code.
   `AttestationVerifier` already draws for a Key Attestation's own
   `kid`/`x5c`/`trust_chain`; a resolved key is re-marshaled as a JWK for
   `cnf.jwk` regardless of how it was conveyed, since RFC 7800 binding
-  needs a JWK either way. New error type `Error` (§8.3.1.2's own closed
+  needs a JWK either way. `DecryptRequestBody`/`EncryptResponseBody`
+  implement §10's Encrypted Requests/Responses on top of `internal/jwe`,
+  shared verbatim by both the Credential Endpoint and Deferred
+  Credential Endpoint (§9.1's own "using the parameters from the
+  credential_request_encryption object" — the same
+  `Config.RequestEncryption` governs both). `DecryptRequestBody`
+  resolves which of `Config.RequestEncryption.Keys` to decrypt an
+  incoming request with from the JWE header's own `kid`, rejecting an
+  unencrypted request when `Required` is set (§10's own "SHOULD be
+  rejected"); its second return value, `wasEncrypted`, must be passed
+  through to `CredentialRequest.RequestWasEncrypted` (or
+  `DeferredCredentialRequest`'s own field), which `RequestCredential`/
+  `RequestDeferredCredential` check against `ResponseEncryption` being
+  set, enforcing §8.2-18's own "Credential Request encryption MUST be
+  used if the credential_response_encryption parameter is included, to
+  prevent it being substituted by an attacker." `EncryptResponseBody`
+  encrypts a marshaled Response per the Wallet's own
+  `credential_response_encryption` object (a single `jwk`/`enc`/`zip`),
+  validating both against `Config.ResponseEncryption`'s own declared
+  support — Metadata's own `alg_values_supported` is always exactly
+  `["ECDH-ES"]`, the only alg `internal/jwe` implements, so there's no
+  Go field to set it from. Both functions operate purely on bytes/
+  Content-Type, deliberately not on `http.ResponseWriter` — this
+  package still doesn't own the HTTP handler; a caller's own glue calls
+  `DecryptRequestBody` before unmarshaling a request and
+  `EncryptResponseBody` after marshaling a Response, the same
+  "expose the pieces, don't own the transport" boundary
+  `AuthorizedRequest`'s own doc comment already draws for access token
+  verification. New error type `Error` (§8.3.1.2's own closed
   set of Credential Request/Response error codes, all HTTP 400) with a
   `WriteJSON` mirroring `fapigo/resource.Error`'s own shape (Code/
   PublicDescription safe to expose, Unwrap for logs only). See
   `CredentialRequest`'s own doc comment for what's deliberately out of
-  scope (`credential_identifier`, `di_vp`, request/response encryption,
-  unbound credentials — add each when a concrete consumer needs it;
-  `RequestCredential` itself never defers issuance, see the Deferred
-  Credential Endpoint below for that half).
+  scope (`credential_identifier`, `di_vp`, unbound credentials — add
+  each when a concrete consumer needs it; `RequestCredential` itself
+  never defers issuance, see the Deferred Credential Endpoint below for
+  that half).
   Also implements the
   Credential Offer (§4): `CreateCredentialOffer` builds and validates a
   `CredentialOffer` (`credential_issuer`, `credential_configuration_ids`,

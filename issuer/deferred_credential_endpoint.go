@@ -18,6 +18,22 @@ type DeferredCredentialRequest struct {
 	// never issues one itself — see DeferredTransactionRecord's own
 	// doc comment.
 	TransactionID string
+
+	// ResponseEncryption is this request's own optional
+	// "credential_response_encryption" object (§9.1) — §9.1-11's own
+	// "this object will be used for encrypting the response, regardless
+	// of what was sent in the initial Credential Request," so this is
+	// independent of whatever the original Credential Request carried.
+	// Set this from the decrypted request body's own JSON. Nil means
+	// the Deferred Credential Response isn't encrypted.
+	ResponseEncryption *ResponseEncryptionRequest
+
+	// RequestWasEncrypted reports whether this Deferred Credential
+	// Request itself arrived as a JWE (§10) — set this from
+	// DecryptRequestBody's own second return value.
+	// RequestDeferredCredential rejects ResponseEncryption being set
+	// unless this is also true (§9.1-11).
+	RequestWasEncrypted bool
 }
 
 // DeferredCredentialResult is returned by a successful
@@ -80,14 +96,20 @@ func (r DeferredCredentialResult) WriteJSON(w http.ResponseWriter) {
 // RequestCredential always issues immediately or fails outright, since
 // deciding a Credential isn't ready yet is entirely a deployment's own
 // business process; see DeferredTransactionRecord's own doc comment.
-// Request/response encryption (§10) is not supported, matching
-// RequestCredential's own scope.
+// Request/response encryption (§10) is supported the same way
+// RequestCredential's own is — see DecryptRequestBody/EncryptResponseBody
+// and DeferredCredentialRequest's own ResponseEncryption/RequestWasEncrypted
+// fields.
 func (iss *Issuer) RequestDeferredCredential(ctx context.Context, auth AuthorizedRequest, req DeferredCredentialRequest) (DeferredCredentialResult, error) {
 	if iss.deps.DeferredTransactions == nil {
 		return DeferredCredentialResult{}, fmt.Errorf("issuer: request deferred credential: deferred issuance is not configured")
 	}
 	if req.TransactionID == "" {
 		return DeferredCredentialResult{}, newError(ErrorInvalidCredentialRequest, 400, "transaction_id is required", nil)
+	}
+	if req.ResponseEncryption != nil && !req.RequestWasEncrypted {
+		return DeferredCredentialResult{}, newError(ErrorInvalidCredentialRequest, 400,
+			"credential_response_encryption requires the request itself to be encrypted", nil)
 	}
 
 	record, err := iss.deps.DeferredTransactions.Get(ctx, req.TransactionID)

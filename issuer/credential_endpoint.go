@@ -53,7 +53,13 @@ type AuthorizedRequest struct {
 // position on how kid/x5c actually resolve to a trusted key (DID
 // resolution, certificate-chain validation, ...); see
 // ProofBindingKeyResolver's own doc comment. Request and response
-// encryption aren't supported. RequestCredential itself never defers
+// encryption (§10) are supported via the separate
+// DecryptRequestBody/EncryptResponseBody — see their own doc comments
+// and ResponseEncryption/RequestWasEncrypted below for how a caller
+// wires them in; RequestCredential itself only enforces §8.2-18's own
+// "Credential Request encryption MUST be used if the
+// credential_response_encryption parameter is included." RequestCredential
+// itself never defers
 // issuance — it always issues immediately or fails outright; see
 // RequestDeferredCredential for the Deferred Credential Endpoint (§9)
 // this repo does implement, for a transaction some other,
@@ -93,6 +99,21 @@ type CredentialRequest struct {
 	// MdocClaims is SDJWTClaims' mso_mdoc counterpart. Leave DeviceKey
 	// unset — RequestCredential overwrites it per issued instance.
 	MdocClaims *mdoc.Claims
+
+	// ResponseEncryption is this request's own optional
+	// "credential_response_encryption" object (§8.2) — set this from
+	// the decrypted request body's own JSON, the same as every other
+	// field here. Nil means the Credential Response isn't encrypted;
+	// pass whatever RequestCredential doesn't reject on to
+	// EncryptResponseBody afterward.
+	ResponseEncryption *ResponseEncryptionRequest
+
+	// RequestWasEncrypted reports whether this Credential Request
+	// itself arrived as a JWE (§10) — set this from
+	// DecryptRequestBody's own second return value.
+	// RequestCredential rejects ResponseEncryption being set unless
+	// this is also true (§8.2-18).
+	RequestWasEncrypted bool
 }
 
 // resolvedKey is one Wallet-supplied binding key extracted from a
@@ -117,6 +138,10 @@ func (iss *Issuer) RequestCredential(ctx context.Context, auth AuthorizedRequest
 	if req.CredentialConfigurationID == "" {
 		return oid4vci.CredentialResponse{}, newError(ErrorInvalidCredentialRequest, 400,
 			"credential_configuration_id is required (credential_identifier is not supported)", nil)
+	}
+	if req.ResponseEncryption != nil && !req.RequestWasEncrypted {
+		return oid4vci.CredentialResponse{}, newError(ErrorInvalidCredentialRequest, 400,
+			"credential_response_encryption requires the request itself to be encrypted", nil)
 	}
 	cc, ok := iss.cfg.CredentialConfigurationsSupported[req.CredentialConfigurationID]
 	if !ok {
