@@ -6,55 +6,26 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
-	"crypto/x509"
-	"crypto/x509/pkix"
 	"encoding/json"
-	"math/big"
 	"testing"
-	"time"
 
 	fapi "github.com/idfoundry/fapigo"
 
 	"github.com/idfoundry/oid4vcigo/internal/jose"
 	"github.com/idfoundry/oid4vcigo/internal/jwe"
+	"github.com/idfoundry/oid4vcigo/internal/testcert"
 	"github.com/idfoundry/oid4vcigo/verifier"
 	"github.com/idfoundry/oid4vcigo/wallet"
 )
 
-// fixedVerifierIssuerKeyResolver always resolves to the one issuer key
-// a test signed with — the same role fixedSDJWTVCIssuerKeyResolver
-// plays in verifier's own test suite; redefined here since it's an
-// unexported type in that package's own _test.go.
-type fixedVerifierIssuerKeyResolver struct {
-	pub crypto.PublicKey
-	alg jose.Alg
-}
+// issuerKeyResolverFunc adapts a plain function to
+// verifier.SDJWTVCIssuerKeyResolver — the http.HandlerFunc idiom,
+// enough for a test standing in for whatever real trust policy a
+// deployment would apply.
+type issuerKeyResolverFunc func(ctx context.Context, header, payload map[string]any) (crypto.PublicKey, jose.Alg, error)
 
-func (r fixedVerifierIssuerKeyResolver) ResolveIssuerKey(context.Context, map[string]any, map[string]any) (crypto.PublicKey, jose.Alg, error) {
-	return r.pub, r.alg, nil
-}
-
-func testVerifierSignerAndCert(t *testing.T) (*ecdsa.PrivateKey, *x509.Certificate) {
-	t.Helper()
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatalf("generate key: %v", err)
-	}
-	tmpl := &x509.Certificate{
-		SerialNumber: big.NewInt(1),
-		Subject:      pkix.Name{CommonName: "verifier round trip test"},
-		NotBefore:    time.Now().Add(-time.Hour),
-		NotAfter:     time.Now().Add(24 * time.Hour),
-	}
-	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
-	if err != nil {
-		t.Fatalf("CreateCertificate: %v", err)
-	}
-	cert, err := x509.ParseCertificate(der)
-	if err != nil {
-		t.Fatalf("ParseCertificate: %v", err)
-	}
-	return key, cert
+func (f issuerKeyResolverFunc) ResolveIssuerKey(ctx context.Context, header, payload map[string]any) (crypto.PublicKey, jose.Alg, error) {
+	return f(ctx, header, payload)
 }
 
 // TestWalletVerifierPresentationRoundTrip drives OID4VP end to end
@@ -70,7 +41,11 @@ func testVerifierSignerAndCert(t *testing.T) (*ecdsa.PrivateKey, *x509.Certifica
 // discipline TestWalletIssuerRoundTrip already holds OID4VCI to,
 // extended to OID4VP.
 func TestWalletVerifierPresentationRoundTrip(t *testing.T) {
-	verifierKey, verifierCert := testVerifierSignerAndCert(t)
+	verifierKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate verifier key: %v", err)
+	}
+	verifierCert := testcert.SelfSigned(t, "verifier round trip test", &verifierKey.PublicKey, verifierKey)
 	responseURI, err := fapi.ParseEndpointURL("https://verifier.example.com/response")
 	if err != nil {
 		t.Fatalf("ParseEndpointURL: %v", err)
@@ -116,11 +91,14 @@ func TestWalletVerifierPresentationRoundTrip(t *testing.T) {
 		t.Fatalf("ParseDirectPostJWTResponse: %v", err)
 	}
 
+	issuerKeys := issuerKeyResolverFunc(func(context.Context, map[string]any, map[string]any) (crypto.PublicKey, jose.Alg, error) {
+		return &fixture.issuerKey.PublicKey, jose.ES256, nil
+	})
 	result, err := v.VerifyResponse(context.Background(), verifier.VerifyResponseRequest{
 		Query:         query,
 		Response:      parsed,
 		ExpectedNonce: built.Nonce,
-		IssuerKeys:    fixedVerifierIssuerKeyResolver{pub: &fixture.issuerKey.PublicKey, alg: jose.ES256},
+		IssuerKeys:    issuerKeys,
 	})
 	if err != nil {
 		t.Fatalf("VerifyResponse: %v", err)

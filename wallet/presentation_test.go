@@ -2,28 +2,36 @@ package wallet_test
 
 import (
 	"crypto/ecdsa"
-	"encoding/base64"
+	"encoding/json"
 	"testing"
 
 	"github.com/idfoundry/oid4vcigo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcigo/dcql"
 	"github.com/idfoundry/oid4vcigo/internal/jose"
+	"github.com/idfoundry/oid4vcigo/internal/jwk"
 	"github.com/idfoundry/oid4vcigo/wallet"
 )
 
 const testPresentationVCT = "https://credentials.example.com/identity_credential"
 
-func presentationJWKFromECDSA(pub *ecdsa.PublicKey) (map[string]any, error) {
-	raw, err := pub.Bytes()
+// presentationJWKMap encodes pub as a plain map[string]any — the shape
+// sdjwtvc.Claims.CNF's own "jwk" member needs — reusing internal/jwk's
+// own Marshal rather than hand-rolling EC point encoding again.
+func presentationJWKMap(t *testing.T, pub *ecdsa.PublicKey) map[string]any {
+	t.Helper()
+	j, err := jwk.Marshal(pub)
 	if err != nil {
-		return nil, err
+		t.Fatalf("jwk.Marshal: %v", err)
 	}
-	size := (len(raw) - 1) / 2
-	enc := base64.RawURLEncoding.EncodeToString
-	return map[string]any{
-		"kty": "EC", "crv": "P-256",
-		"x": enc(raw[1 : 1+size]), "y": enc(raw[1+size:]),
-	}, nil
+	raw, err := json.Marshal(j)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+	return m
 }
 
 // heldSDJWTVCFixture is a real, freshly issued "dc+sd-jwt" credential
@@ -40,10 +48,7 @@ func newHeldSDJWTVC(t *testing.T) heldSDJWTVCFixture {
 	t.Helper()
 	issuerKey := testP256Key(t)
 	holderKey := testP256Key(t)
-	holderJWK, err := presentationJWKFromECDSA(&holderKey.PublicKey)
-	if err != nil {
-		t.Fatalf("presentationJWKFromECDSA: %v", err)
-	}
+	holderJWK := presentationJWKMap(t, &holderKey.PublicKey)
 	sdjwt, _, err := sdjwtvc.Issue(issuerKey, jose.ES256, sdjwtvc.Claims{
 		VCT: testPresentationVCT,
 		CNF: map[string]any{"jwk": holderJWK},
