@@ -2,6 +2,7 @@ package wallet
 
 import (
 	"fmt"
+	"io"
 	"time"
 
 	"github.com/idfoundry/fapigo/fapihttp"
@@ -38,18 +39,26 @@ func (f ClockFunc) Now() time.Time { return f() }
 
 // Dependencies are this Wallet's external collaborators.
 type Dependencies struct {
-	// HTTP performs this Wallet's own unauthenticated calls (the Nonce
-	// Endpoint and a by-reference Credential Offer's fetch) — wrapped
-	// in a fapihttp.Client (see Config.Fetch) for SSRF/size/redirect
-	// hardening. It does not perform Credential Endpoint calls itself —
-	// see RequestCredential's own ProtectedResourceClient parameter for
-	// why that one is sender-constrained per request, not a
-	// Dependencies-level HTTP client.
+	// HTTP performs this Wallet's own unauthenticated calls: the Nonce
+	// Endpoint (wrapped in a fapihttp.Client, see Config.Fetch, for
+	// SSRF/size/redirect hardening), a by-reference Credential Offer's
+	// fetch (same wrapping), and the pre-authorized_code Token Request
+	// (§6.1) — called directly, unwrapped, since that request's own
+	// DPoP proof header has no equivalent in fapihttp.Client's fixed
+	// GET/POST shapes. It does not perform Credential Endpoint calls
+	// itself — see RequestCredential's own ProtectedResourceClient
+	// parameter for why that one is sender-constrained per request,
+	// not a Dependencies-level HTTP client.
 	HTTP fapihttp.HTTPClient
 
 	// Clock supplies the current time — the jwt-type key proof's own
-	// iat claim.
+	// iat claim, and a DPoP proof's own iat claim.
 	Clock Clock
+
+	// Random is the source of cryptographically secure randomness for
+	// a DPoP proof's own jti claim (RFC 9449 §4.2) — required only for
+	// RequestPreAuthorizedCodeToken.
+	Random io.Reader
 }
 
 // Wallet is this Wallet's own role implementation — the OID4VCIgo

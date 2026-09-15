@@ -36,22 +36,34 @@
 // today's fapigo/client must use ClientAuthMethodPrivateKeyJWT instead —
 // FAPI 2.0-compliant, but not yet what HAIP specifically asks for.
 //
+// RequestPreAuthorizedCodeToken implements the Pre-Authorized Code
+// Flow's own Token Request/Response (§6.1/§6.2) directly, rather than
+// through fapigo/client: that grant type
+// (urn:ietf:params:oauth:grant-type:pre-authorized_code) is entirely
+// outside fapigo/client's own scope (it's OID4VCI-specific, not a FAPI
+// 2.0 or base OAuth 2.0 grant), and fapigo/client exposes no generic
+// DPoP-signed Token Request primitive for a grant type it doesn't
+// itself implement. GenerateDPoPProof and DPoPAccessTokenHash build the
+// RFC 9449 DPoP proof this needs, reusing the same internal/jose and
+// internal/jwk primitives GenerateProof already relies on for key
+// proofs — see GenerateDPoPProof's own doc comment for why it's
+// exported: this package builds the Token Request's own proof, but not
+// a full sender-constrained resource client for the token it returns,
+// so a caller needs GenerateDPoPProof to build that client itself.
+// Client authentication isn't supported for this flow either (§6.1
+// makes it OPTIONAL, and Wallet Attestation client auth isn't buildable
+// yet — see this comment's own note on storage.ClientAuthMethodAttestation
+// above), and neither is authorization_details, matching this package's
+// own credential_configuration_id-only scope.
+//
 // # Status
 //
 // ResolveCredentialOffer, RequestNonce, GenerateProof,
 // RequestCredential, BuildAuthorizationRequest,
-// RequestDeferredCredential and RequestNotification exist so far. This
-// package does not yet cover:
+// RequestDeferredCredential, RequestNotification,
+// RequestPreAuthorizedCodeToken, GenerateDPoPProof and
+// DPoPAccessTokenHash exist so far. This package does not yet cover:
 //
-//   - The pre-authorized_code Flow: a plain Token Endpoint POST for
-//     grant_type=urn:ietf:params:oauth:grant-type:pre-authorized_code,
-//     entirely outside fapigo/client's own scope (it's OID4VCI-specific,
-//     not a FAPI 2.0 or base OAuth 2.0 grant) — and, unlike the
-//     Authorization Code Flow above, getting it DPoP-sender-constrained
-//     per HAIP §4 would require this package to build its own RFC 9449
-//     DPoP proof, since fapigo/client exposes no generic DPoP-signed
-//     Token Request primitive for a grant type it doesn't itself
-//     implement. Deferred pending a decision on that tradeoff.
 //   - di_vp and attestation proof types (only jwt is supported), and
 //     kid/x5c-conveyed binding keys (only jwk, matching issuer's own
 //     scope).

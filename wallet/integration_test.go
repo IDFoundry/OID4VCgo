@@ -111,6 +111,150 @@ func (f issuerCredentialFake) Do(ctx context.Context, req *http.Request) (*http.
 	}, nil
 }
 
+// dpopProtectedResourceClient is exactly the kind of thing
+// (*Wallet).GenerateDPoPProof's own doc comment describes a caller
+// building for an access token obtained via RequestPreAuthorizedCodeToken:
+// it attaches "Authorization: DPoP <token>" and a fresh DPoP proof
+// (this package's own primitive, reused rather than reimplemented) to
+// every request before forwarding to inner.
+type dpopProtectedResourceClient struct {
+	w           *wallet.Wallet
+	key         crypto.Signer
+	accessToken string
+	inner       wallet.ProtectedResourceClient
+}
+
+func (c dpopProtectedResourceClient) Do(ctx context.Context, req *http.Request) (*http.Response, error) {
+	htu := *req.URL
+	htu.RawQuery, htu.Fragment = "", ""
+	proof, err := c.w.GenerateDPoPProof(c.key, req.Method, htu.String(), "", wallet.DPoPAccessTokenHash(c.accessToken))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "DPoP "+c.accessToken)
+	req.Header.Set("DPoP", proof)
+	return c.inner.Do(ctx, req)
+}
+
+// TestWalletPreAuthorizedCodeRoundTrip drives the Pre-Authorized Code
+// Flow's own Token Request end-to-end (against a canned Token
+// Response — this repo has no OAuth Token Endpoint of its own to
+// verify a DPoP-bound access token against; that's fapigo/resource's
+// job in a real deployment), then uses the resulting access token,
+// via a caller-built dpopProtectedResourceClient, to complete a real
+// Credential Request against a real issuer.Issuer — proving the two
+// halves this package deliberately keeps separate (acquiring the
+// token, and presenting it) compose correctly.
+func TestWalletPreAuthorizedCodeRoundTrip(t *testing.T) {
+	issuerURL, err := fapi.ParseIssuerURL("http://localhost", fapi.AllowLoopbackHTTP())
+	if err != nil {
+		t.Fatalf("ParseIssuerURL: %v", err)
+	}
+	credentialEndpoint, err := fapi.ParseEndpointURL("http://localhost/credential", fapi.AllowLoopbackHTTP())
+	if err != nil {
+		t.Fatalf("ParseEndpointURL: %v", err)
+	}
+	tokenEndpoint, err := fapi.ParseEndpointURL("http://localhost/token", fapi.AllowLoopbackHTTP())
+	if err != nil {
+		t.Fatalf("ParseEndpointURL: %v", err)
+	}
+
+	issuerSigner, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate issuer key: %v", err)
+	}
+	const vct = "https://credentials.example.com/identity_credential"
+
+	iss, err := issuer.New(issuer.Config{
+		Issuer:    issuerURL,
+		Endpoints: issuer.Endpoints{Credential: credentialEndpoint},
+		CredentialConfigurationsSupported: map[string]issuer.CredentialConfiguration{
+			"IdentityCredential": {
+				Format:                               sdjwtvc.CredentialFormat,
+				Scope:                                "identity_credential",
+				VCT:                                  vct,
+				CryptographicBindingMethodsSupported: []string{"jwk"},
+				ProofTypesSupported: map[string]issuer.ProofTypeConfiguration{
+					oid4vci.ProofTypeJWT: {ProofSigningAlgValuesSupported: []string{"ES256"}},
+				},
+			},
+		},
+	}, issuer.Dependencies{
+		Clock:       issuer.ClockFunc(time.Now),
+		Random:      rand.Reader,
+		SDJWTSigner: &issuer.SDJWTSigner{Signer: issuerSigner, Alg: jose.ES256},
+	})
+	if err != nil {
+		t.Fatalf("issuer.New: %v", err)
+	}
+
+	w, err := wallet.New(wallet.Config{
+		ProofSigningAlg: jose.ES256,
+		Fetch:           fapihttp.Config{MaxResponseBytes: 1 << 20, RequestTimeout: 5 * time.Second, AllowLoopbackHTTP: true},
+	}, wallet.Dependencies{
+		HTTP: fakeHTTPClient{do: func(*http.Request) (*http.Response, error) {
+			body, err := json.Marshal(struct {
+				AccessToken string `json:"access_token"`
+				TokenType   string `json:"token_type"`
+			}{AccessToken: "pre-authorized-access-token", TokenType: "DPoP"})
+			if err != nil {
+				return nil, err
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(bytes.NewReader(body)),
+				Header:     http.Header{"Content-Type": {"application/json"}},
+			}, nil
+		}},
+		Clock:  wallet.ClockFunc(time.Now),
+		Random: rand.Reader,
+	})
+	if err != nil {
+		t.Fatalf("wallet.New: %v", err)
+	}
+
+	dpopKey := testP256Key(t)
+	tokenResult, err := w.RequestPreAuthorizedCodeToken(context.Background(), tokenEndpoint, wallet.PreAuthorizedCodeTokenRequest{
+		PreAuthorizedCode: "oaKazRN8I0IbtZ0C7JuMn5",
+		DPoPKey:           dpopKey,
+	})
+	if err != nil {
+		t.Fatalf("RequestPreAuthorizedCodeToken: %v", err)
+	}
+	if tokenResult.AccessToken.Reveal() != "pre-authorized-access-token" {
+		t.Fatalf("AccessToken = %q", tokenResult.AccessToken.Reveal())
+	}
+
+	resource := dpopProtectedResourceClient{
+		w: w, key: dpopKey, accessToken: tokenResult.AccessToken.Reveal(),
+		inner: issuerCredentialFake{
+			iss:    iss,
+			auth:   issuer.AuthorizedRequest{Scopes: []string{"identity_credential"}},
+			claims: &sdjwtvc.Claims{VCT: vct},
+		},
+	}
+
+	result, err := w.RequestCredential(context.Background(), resource, credentialEndpoint, wallet.CredentialRequest{
+		CredentialConfigurationID: "IdentityCredential",
+		Keys:                      []crypto.Signer{testP256Key(t)},
+		CredentialIssuer:          issuerURL.String(),
+	})
+	if err != nil {
+		t.Fatalf("RequestCredential: %v", err)
+	}
+	if len(result.Credentials) != 1 {
+		t.Fatalf("got %d credentials, want 1", len(result.Credentials))
+	}
+
+	payload, _, err := sdjwtvc.Verify(result.Credentials[0].Credential, &issuerSigner.PublicKey, jose.ES256, sdjwtvc.VerifyOptions{})
+	if err != nil {
+		t.Fatalf("sdjwtvc.Verify: %v", err)
+	}
+	if payload["vct"] != vct {
+		t.Errorf("vct = %v, want %q", payload["vct"], vct)
+	}
+}
+
 // issuerDeferredCredentialFake plays the role of a sender-constrained
 // Deferred Credential Endpoint call, routing it to a real
 // issuer.Issuer's own RequestDeferredCredential — see
