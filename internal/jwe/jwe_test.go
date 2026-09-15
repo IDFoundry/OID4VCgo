@@ -150,24 +150,33 @@ func TestDecryptRejectsTamperedCiphertext(t *testing.T) {
 	}
 }
 
-func TestDecryptRejectsTamperedHeader(t *testing.T) {
-	key := testP256Key(t)
-	compact, err := Encrypt(&key.PublicKey, A128GCM, []byte("secret"), EncryptOptions{KeyID: "k1"})
-	if err != nil {
-		t.Fatalf("Encrypt: %v", err)
-	}
+// tamperHeader rewrites compact's own header segment after applying
+// mutate to its decoded form, leaving every other segment untouched —
+// shared by every test that needs a JWE whose header no longer matches
+// the one AES-GCM originally authenticated as AAD.
+func tamperHeader(t *testing.T, compact string, mutate func(map[string]any)) string {
+	t.Helper()
 	header, err := DecodeHeader(compact)
 	if err != nil {
 		t.Fatalf("DecodeHeader: %v", err)
 	}
-	header["kid"] = "attacker-controlled"
+	mutate(header)
 	rawHeader, err := json.Marshal(header)
 	if err != nil {
 		t.Fatalf("marshal header: %v", err)
 	}
 	parts := strings.Split(compact, ".")
 	parts[0] = base64.RawURLEncoding.EncodeToString(rawHeader)
-	tampered := strings.Join(parts, ".")
+	return strings.Join(parts, ".")
+}
+
+func TestDecryptRejectsTamperedHeader(t *testing.T) {
+	key := testP256Key(t)
+	compact, err := Encrypt(&key.PublicKey, A128GCM, []byte("secret"), EncryptOptions{KeyID: "k1"})
+	if err != nil {
+		t.Fatalf("Encrypt: %v", err)
+	}
+	tampered := tamperHeader(t, compact, func(h map[string]any) { h["kid"] = "attacker-controlled" })
 
 	// The header is the GCM AAD, so changing it (even a field GCM
 	// doesn't otherwise interpret) must invalidate the tag.
@@ -207,18 +216,7 @@ func TestDecryptRejectsUnsupportedAlg(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Encrypt: %v", err)
 	}
-	header, err := DecodeHeader(compact)
-	if err != nil {
-		t.Fatalf("DecodeHeader: %v", err)
-	}
-	header["alg"] = "RSA-OAEP"
-	rawHeader, err := json.Marshal(header)
-	if err != nil {
-		t.Fatalf("marshal header: %v", err)
-	}
-	parts := strings.Split(compact, ".")
-	parts[0] = base64.RawURLEncoding.EncodeToString(rawHeader)
-	tampered := strings.Join(parts, ".")
+	tampered := tamperHeader(t, compact, func(h map[string]any) { h["alg"] = "RSA-OAEP" })
 
 	if _, err := Decrypt(key, tampered); err == nil {
 		t.Fatalf("Decrypt with unsupported alg = nil error, want error")
