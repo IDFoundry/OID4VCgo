@@ -47,9 +47,12 @@ type AuthorizedRequest struct {
 // openid_credential was returned from the Token Response) isn't yet,
 // since this repo has no Token Endpoint to produce one from. Only the
 // jwt and attestation proof types are supported (di_vp needs W3C VCDM,
-// which this repo doesn't implement). Only a jwk-conveyed binding key
-// is supported within a jwt proof — kid/x5c-based key resolution (DID
-// resolution, certificate-chain validation) isn't. Request and response
+// which this repo doesn't implement). A jwt proof's own binding key may
+// be conveyed as jwk (always available), or as kid/x5c when
+// Dependencies.ProofBindingKeys is configured — this package takes no
+// position on how kid/x5c actually resolve to a trusted key (DID
+// resolution, certificate-chain validation, ...); see
+// ProofBindingKeyResolver's own doc comment. Request and response
 // encryption aren't supported. RequestCredential itself never defers
 // issuance — it always issues immediately or fails outright; see
 // RequestDeferredCredential for the Deferred Credential Endpoint (§9)
@@ -243,17 +246,12 @@ func (iss *Issuer) issueMdoc(claims mdoc.Claims, key resolvedKey) (string, error
 }
 
 // jwkHeaderKey extracts the JSON bytes of a jwt proof's "jwk" header
-// (Appendix F.1) — the only binding-key conveyance CredentialRequest
-// supports; kid/x5c are explicitly rejected rather than silently
-// ignored.
+// (Appendix F.1). Only called once resolveProofBindingKey has already
+// established header carries exactly one of jwk/kid/x5c and this is
+// the jwk case, so header["jwk"]'s own presence is the only thing left
+// to check.
 func jwkHeaderKey(header map[string]any) (json.RawMessage, error) {
 	jwkVal, hasJWK := header["jwk"]
-	if _, hasKID := header["kid"]; hasKID {
-		return nil, fmt.Errorf("kid-based key resolution is not supported; use jwk")
-	}
-	if _, hasX5C := header["x5c"]; hasX5C {
-		return nil, fmt.Errorf("x5c-based key resolution is not supported; use jwk")
-	}
 	if !hasJWK {
 		return nil, fmt.Errorf("jwk header is required")
 	}

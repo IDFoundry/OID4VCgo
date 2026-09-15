@@ -168,6 +168,20 @@ type AttestationVerifier interface {
 	ResolveAttestationKey(ctx context.Context, a attestation.KeyAttestation) (crypto.PublicKey, jose.Alg, error)
 }
 
+// ProofBindingKeyResolver resolves a jwt-type key proof's own "kid" or
+// "x5c" JOSE header (Appendix F.1) to the public key it identifies —
+// entirely this issuer's own trust policy for what either one means
+// (a DID URL into a DID Document for kid; an x5c chain's own trust
+// anchor for x5c; a private key registry; ...), the same "resolving
+// trust is the caller's job" split AttestationVerifier already draws
+// for a Key Attestation's own kid/x5c/trust_chain. header is the proof
+// JWT's raw decoded JOSE header (jose.DecodeUnverified's own return
+// shape) — exactly one of its "kid"/"x5c" entries is present, whichever
+// this proof actually conveys.
+type ProofBindingKeyResolver interface {
+	ResolveProofBindingKey(ctx context.Context, header map[string]any) (crypto.PublicKey, error)
+}
+
 // Dependencies are this issuer's external collaborators.
 type Dependencies struct {
 	// Nonces persists issued c_nonce values. Required when
@@ -196,6 +210,13 @@ type Dependencies struct {
 	// Config.CredentialConfigurationsSupported entry supports the
 	// "attestation" proof type.
 	AttestationVerifier AttestationVerifier
+
+	// ProofBindingKeys resolves a jwt-type key proof's own "kid" or
+	// "x5c" header to a public key (Appendix F.1). Optional: a jwt-type
+	// proof conveying "jwk" (the common case) never needs it; required
+	// only when a Credential Request actually presents a kid- or
+	// x5c-conveyed proof, which is otherwise rejected as unsupported.
+	ProofBindingKeys ProofBindingKeyResolver
 
 	// CredentialOffers persists Credential Offers issued by reference
 	// (§4.1.3). Required when Config.CredentialOfferEndpoint is set.

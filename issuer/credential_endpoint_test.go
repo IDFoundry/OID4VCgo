@@ -48,6 +48,23 @@ func (v fixedAttestationVerifier) ResolveAttestationKey(context.Context, attesta
 	return v.pub, v.alg, nil
 }
 
+// fixedProofBindingKeyResolver resolves every jwt-type proof's kid/x5c
+// header to one fixed key (or fails with err, when set), as a real
+// deployment's ProofBindingKeyResolver would for a single trusted key
+// identifier or certificate — it never inspects header itself, since
+// what it returns is exactly what the test wants to happen next.
+type fixedProofBindingKeyResolver struct {
+	pub crypto.PublicKey
+	err error
+}
+
+func (r fixedProofBindingKeyResolver) ResolveProofBindingKey(context.Context, map[string]any) (crypto.PublicKey, error) {
+	if r.err != nil {
+		return nil, r.err
+	}
+	return r.pub, nil
+}
+
 // credentialEndpointFixture is a fully configured Issuer supporting
 // both credential formats over both proof types, plus everything
 // needed to build valid requests against it.
@@ -62,7 +79,7 @@ type credentialEndpointFixture struct {
 	now    time.Time
 }
 
-func newCredentialEndpointFixture(t *testing.T) credentialEndpointFixture {
+func newCredentialEndpointFixture(t *testing.T, mutateDeps ...func(*issuer.Dependencies)) credentialEndpointFixture {
 	t.Helper()
 	sdjwtSigner := testSDJWTSigner(t)
 	mdocSigner := testMdocSigner(t)
@@ -108,6 +125,9 @@ func newCredentialEndpointFixture(t *testing.T) credentialEndpointFixture {
 		AttestationVerifier: fixedAttestationVerifier{
 			pub: &attestationSigner.PublicKey, alg: jose.ES256,
 		},
+	}
+	for _, mutate := range mutateDeps {
+		mutate(&deps)
 	}
 
 	iss, err := issuer.New(cfg, deps)
@@ -463,6 +483,76 @@ func TestRequestCredential_RejectsKidHeader(t *testing.T) {
 		t.Fatalf("jose.Sign: %v", err)
 	}
 	_, err = requestSDJWTWithProof(f, oid4vci.ProofTypeJWT, compact)
+	assertIssuerError(t, err, issuer.ErrorInvalidProof)
+}
+
+func TestRequestCredential_JWTProof_KidResolved(t *testing.T) {
+	bindingKey := testP256Key(t)
+	f := newCredentialEndpointFixture(t, func(d *issuer.Dependencies) {
+		d.ProofBindingKeys = fixedProofBindingKeyResolver{pub: &bindingKey.PublicKey}
+	})
+	nonce := f.issueNonce(t)
+	proof, err := jose.Sign(jose.ES256, bindingKey, map[string]any{"typ": "openid4vci-proof+jwt", "kid": "did:example:wallet#key-1"},
+		[]byte(`{"aud":"`+testIssuer+`","iat":1,"nonce":"`+nonce+`"}`))
+	if err != nil {
+		t.Fatalf("jose.Sign: %v", err)
+	}
+	resp, err := requestSDJWTWithProof(f, oid4vci.ProofTypeJWT, proof)
+	if err != nil {
+		t.Fatalf("RequestCredential: %v", err)
+	}
+	if len(resp.Credentials) != 1 {
+		t.Fatalf("got %d credentials, want 1", len(resp.Credentials))
+	}
+}
+
+func TestRequestCredential_JWTProof_X5CResolved(t *testing.T) {
+	bindingKey := testP256Key(t)
+	f := newCredentialEndpointFixture(t, func(d *issuer.Dependencies) {
+		d.ProofBindingKeys = fixedProofBindingKeyResolver{pub: &bindingKey.PublicKey}
+	})
+	nonce := f.issueNonce(t)
+	proof, err := jose.Sign(jose.ES256, bindingKey, map[string]any{"typ": "openid4vci-proof+jwt", "x5c": []string{"AAAA"}},
+		[]byte(`{"aud":"`+testIssuer+`","iat":1,"nonce":"`+nonce+`"}`))
+	if err != nil {
+		t.Fatalf("jose.Sign: %v", err)
+	}
+	resp, err := requestSDJWTWithProof(f, oid4vci.ProofTypeJWT, proof)
+	if err != nil {
+		t.Fatalf("RequestCredential: %v", err)
+	}
+	if len(resp.Credentials) != 1 {
+		t.Fatalf("got %d credentials, want 1", len(resp.Credentials))
+	}
+}
+
+func TestRequestCredential_RejectsKidAndX5CTogether(t *testing.T) {
+	bindingKey := testP256Key(t)
+	f := newCredentialEndpointFixture(t, func(d *issuer.Dependencies) {
+		d.ProofBindingKeys = fixedProofBindingKeyResolver{pub: &bindingKey.PublicKey}
+	})
+	nonce := f.issueNonce(t)
+	proof, err := jose.Sign(jose.ES256, bindingKey, map[string]any{
+		"typ": "openid4vci-proof+jwt", "kid": "some-kid", "x5c": []string{"AAAA"},
+	}, []byte(`{"aud":"`+testIssuer+`","iat":1,"nonce":"`+nonce+`"}`))
+	if err != nil {
+		t.Fatalf("jose.Sign: %v", err)
+	}
+	_, err = requestSDJWTWithProof(f, oid4vci.ProofTypeJWT, proof)
+	assertIssuerError(t, err, issuer.ErrorInvalidProof)
+}
+
+func TestRequestCredential_RejectsKidWhenResolverErrors(t *testing.T) {
+	f := newCredentialEndpointFixture(t, func(d *issuer.Dependencies) {
+		d.ProofBindingKeys = fixedProofBindingKeyResolver{err: errors.New("kid is not a recognized key identifier")}
+	})
+	nonce := f.issueNonce(t)
+	proof, err := jose.Sign(jose.ES256, testP256Key(t), map[string]any{"typ": "openid4vci-proof+jwt", "kid": "unknown"},
+		[]byte(`{"aud":"`+testIssuer+`","iat":1,"nonce":"`+nonce+`"}`))
+	if err != nil {
+		t.Fatalf("jose.Sign: %v", err)
+	}
+	_, err = requestSDJWTWithProof(f, oid4vci.ProofTypeJWT, proof)
 	assertIssuerError(t, err, issuer.ErrorInvalidProof)
 }
 

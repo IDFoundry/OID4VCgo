@@ -163,6 +163,48 @@ func TestRequestCredential_ReturnsPendingWhenIssuerDefersImmediately(t *testing.
 	}
 }
 
+func TestRequestCredential_JWTProofsAlongsideKeys(t *testing.T) {
+	w, err := wallet.New(validConfig(), validDependencies())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	kidProof, err := w.GenerateProofWithKeyID(testP256Key(t), "did:example:wallet#key-1", "https://issuer.example.com", "")
+	if err != nil {
+		t.Fatalf("GenerateProofWithKeyID: %v", err)
+	}
+
+	resource := &fakeProtectedResourceClient{
+		do: func(context.Context, *http.Request) (*http.Response, error) {
+			return jsonResponse([]byte(`{"credentials":[{"credential":"c1"},{"credential":"c2"}]}`)), nil
+		},
+	}
+	result, err := w.RequestCredential(context.Background(), resource, testCredentialEndpoint(t), wallet.CredentialRequest{
+		CredentialConfigurationID: "IdentityCredential",
+		Keys:                      []crypto.Signer{testP256Key(t)},
+		JWTProofs:                 []string{kidProof},
+		CredentialIssuer:          "https://issuer.example.com",
+	})
+	if err != nil {
+		t.Fatalf("RequestCredential: %v", err)
+	}
+	if len(result.Credentials) != 2 {
+		t.Fatalf("got %d credentials, want 2", len(result.Credentials))
+	}
+
+	var sentBody struct {
+		Proofs map[string][]string `json:"proofs"`
+	}
+	if err := json.Unmarshal(resource.lastBody, &sentBody); err != nil {
+		t.Fatalf("unmarshal sent body: %v", err)
+	}
+	if len(sentBody.Proofs["jwt"]) != 2 {
+		t.Fatalf("proofs[jwt] has %d entries, want 2", len(sentBody.Proofs["jwt"]))
+	}
+	if sentBody.Proofs["jwt"][1] != kidProof {
+		t.Errorf("proofs[jwt][1] = %q, want the kid-conveyed proof appended last", sentBody.Proofs["jwt"][1])
+	}
+}
+
 func TestRequestCredential_Attestation(t *testing.T) {
 	w, err := wallet.New(validConfig(), validDependencies())
 	if err != nil {

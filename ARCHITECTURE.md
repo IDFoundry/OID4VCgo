@@ -285,15 +285,25 @@ shape from the phase-by-phase plan, not a description of current code.
   (`SDJWTSigner`/`MdocSigner`) and the attestation trust policy
   (`AttestationVerifier`) are new `Dependencies` fields, each required
   only when a configured credential/proof type actually needs it — see
-  their own doc comments. New error type `Error` (§8.3.1.2's own closed
+  their own doc comments. A jwt-type proof's own binding key may be
+  conveyed as `jwk` (always available, resolved inline), or as `kid`/
+  `x5c` when the new `Dependencies.ProofBindingKeys`
+  (`ProofBindingKeyResolver`) is configured — this package takes no
+  position on how a `kid` or `x5c` header actually maps to a trusted
+  key (DID resolution, an x5c chain's own trust anchor, a private
+  registry, ...), the same "resolving trust is the caller's job" split
+  `AttestationVerifier` already draws for a Key Attestation's own
+  `kid`/`x5c`/`trust_chain`; a resolved key is re-marshaled as a JWK for
+  `cnf.jwk` regardless of how it was conveyed, since RFC 7800 binding
+  needs a JWK either way. New error type `Error` (§8.3.1.2's own closed
   set of Credential Request/Response error codes, all HTTP 400) with a
   `WriteJSON` mirroring `fapigo/resource.Error`'s own shape (Code/
   PublicDescription safe to expose, Unwrap for logs only). See
   `CredentialRequest`'s own doc comment for what's deliberately out of
-  scope (`credential_identifier`, `di_vp`, kid/x5c-based key resolution,
-  request/response encryption, unbound credentials — add each when a
-  concrete consumer needs it; `RequestCredential` itself never defers
-  issuance, see the Deferred Credential Endpoint below for that half).
+  scope (`credential_identifier`, `di_vp`, request/response encryption,
+  unbound credentials — add each when a concrete consumer needs it;
+  `RequestCredential` itself never defers issuance, see the Deferred
+  Credential Endpoint below for that half).
   Also implements the
   Credential Offer (§4): `CreateCredentialOffer` builds and validates a
   `CredentialOffer` (`credential_issuer`, `credential_configuration_ids`,
@@ -362,8 +372,20 @@ shape from the phase-by-phase plan, not a description of current code.
   latter via `fapigo/fapihttp.Client.Fetch`'s own SSRF/size/redirect
   hardening — appropriate given §13.5's own warning that an offer is
   unauthenticated, untrustworthy input regardless of how it arrived.
-  `GenerateProof` signs a jwt-type key proof (Appendix F.1; jwk-conveyed
-  binding key only, matching `issuer`'s own scope). `GenerateAttestationProof`
+  `GenerateProof` signs a jwt-type key proof (Appendix F.1), binding it
+  via a "jwk" header — the common case, embedding the key material
+  inline. `GenerateProofWithKeyID`/`GenerateProofWithX5C` sign the same
+  proof shape but bind via "kid"/"x5c" instead, for a Credential Issuer
+  that already trusts a key by identifier or certificate rather than
+  needing it conveyed inline; this package takes no position on how
+  kid/x5c resolve to a trusted key on `issuer`'s own side (see
+  `issuer.ProofBindingKeyResolver`'s doc comment above). Since
+  `RequestCredential`'s own `Keys` field only ever builds jwk-conveyed
+  proofs, a caller wanting kid/x5c passes either method's result
+  through the new `CredentialRequest.JWTProofs` field instead — appended
+  alongside `Keys`' own generated proofs in the outbound "jwt" array, so
+  a request may mix both binding styles in one batch.
+  `GenerateAttestationProof`
   builds the other key proof this package supports: a Key Attestation
   JWT (Appendix D.1) for the attestation proof type (Appendix F.3), by
   delegating to `attestation.Issue` — the same package `issuer`'s
@@ -381,8 +403,10 @@ shape from the phase-by-phase plan, not a description of current code.
   application logic; `GenerateAttestationProof` exists for the cases
   where the caller's own signer can produce one directly (e.g.
   testing, or a software-only wallet). `RequestCredential` accepts
-  exactly one of `CredentialRequest.Keys` (jwt proof type — one proof
-  per `crypto.Signer` in a batch) or `.Attestation` (attestation proof
+  either or both of `CredentialRequest.Keys`/`.JWTProofs` (jwt proof
+  type — one generated proof per `crypto.Signer` in `Keys`, plus
+  `JWTProofs`' own pre-built proofs, concatenated into one batch) or,
+  mutually exclusive with both, `.Attestation` (attestation proof
   type — a single pre-built Key Attestation JWT, itself requesting a
   batch whenever it attests multiple keys, per Appendix F-5.2's "SHOULD
   issue a Credential for each cryptographic public key"), POSTs the
