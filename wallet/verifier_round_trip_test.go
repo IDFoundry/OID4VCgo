@@ -39,19 +39,12 @@ func (f mdocIssuerKeyResolverFunc) ResolveMdocIssuerKey(ctx context.Context, x5c
 	return f(ctx, x5chain, docType)
 }
 
-// TestWalletVerifierPresentationRoundTrip drives OID4VP end to end
-// between this repo's own two independently-built halves: a real
-// verifier.Verifier builds and signs an Authorization Request, a real
-// wallet.HeldCredential (a freshly issued "dc+sd-jwt" credential) is
-// matched against its own dcql_query and presented via
-// wallet.PresentCredentials, the resulting vp_token is encrypted into
-// a direct_post.jwt response body exactly as a real Wallet would
-// (internal/jwe.Encrypt against the Verifier's own advertised
-// response-encryption key), and verifier.Verifier parses/decrypts and
-// verifies it — the same "real round trip, not a simulation"
-// discipline TestWalletIssuerRoundTrip already holds OID4VCI to,
-// extended to OID4VP.
-func TestWalletVerifierPresentationRoundTrip(t *testing.T) {
+// newRoundTripVerifier builds a real *verifier.Verifier with a fresh
+// self-signed certificate — the setup both round trip tests below
+// need, varying only in which dcql.Query/HeldCredential format they
+// exercise afterward.
+func newRoundTripVerifier(t *testing.T) (*verifier.Verifier, fapi.URL) {
+	t.Helper()
 	verifierKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatalf("generate verifier key: %v", err)
@@ -70,6 +63,23 @@ func TestWalletVerifierPresentationRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("verifier.New: %v", err)
 	}
+	return v, responseURI
+}
+
+// TestWalletVerifierPresentationRoundTrip drives OID4VP end to end
+// between this repo's own two independently-built halves: a real
+// verifier.Verifier builds and signs an Authorization Request, a real
+// wallet.HeldCredential (a freshly issued "dc+sd-jwt" credential) is
+// matched against its own dcql_query and presented via
+// wallet.PresentCredentials, the resulting vp_token is encrypted into
+// a direct_post.jwt response body exactly as a real Wallet would
+// (internal/jwe.Encrypt against the Verifier's own advertised
+// response-encryption key), and verifier.Verifier parses/decrypts and
+// verifies it — the same "real round trip, not a simulation"
+// discipline TestWalletIssuerRoundTrip already holds OID4VCI to,
+// extended to OID4VP.
+func TestWalletVerifierPresentationRoundTrip(t *testing.T) {
+	v, _ := newRoundTripVerifier(t)
 
 	query := testPresentationQuery(t)
 	built, err := v.BuildAuthorizationRequest(verifier.BuildAuthorizationRequestRequest{Query: query})
@@ -134,24 +144,7 @@ func TestWalletVerifierPresentationRoundTrip(t *testing.T) {
 // oid4vpmdoc's own shared Handover/DeviceResponse construction on both
 // sides.
 func TestWalletVerifierMdocPresentationRoundTrip(t *testing.T) {
-	verifierKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatalf("generate verifier key: %v", err)
-	}
-	verifierCert := testcert.SelfSigned(t, "verifier mdoc round trip test", &verifierKey.PublicKey, verifierKey)
-	responseURI, err := fapi.ParseEndpointURL("https://verifier.example.com/response")
-	if err != nil {
-		t.Fatalf("ParseEndpointURL: %v", err)
-	}
-	v, err := verifier.New(verifier.Config{
-		ClientCertificate:  verifierCert,
-		ResponseURI:        responseURI,
-		SigningAlg:         jose.ES256,
-		EncValuesSupported: []jwe.Enc{jwe.A128GCM, jwe.A256GCM},
-	}, verifier.Dependencies{Signer: verifierKey, Random: rand.Reader})
-	if err != nil {
-		t.Fatalf("verifier.New: %v", err)
-	}
+	v, responseURI := newRoundTripVerifier(t)
 
 	query := testmdoc.Query(t)
 	built, err := v.BuildAuthorizationRequest(verifier.BuildAuthorizationRequestRequest{Query: query})
