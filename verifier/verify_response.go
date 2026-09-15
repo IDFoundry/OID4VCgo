@@ -159,35 +159,46 @@ func (v *Verifier) VerifyResponse(ctx context.Context, req VerifyResponseRequest
 
 	result := VerifyResponseResult{}
 	for _, cq := range req.Query.Credentials {
-		presentations := req.Response.VPToken[cq.ID]
-		if len(presentations) == 0 {
-			return VerifyResponseResult{}, fmt.Errorf("verifier: verify response: credential query %q: no presentation returned", cq.ID)
+		vc, err := v.verifyCredentialQuery(ctx, cq, req)
+		if err != nil {
+			return VerifyResponseResult{}, fmt.Errorf("verifier: verify response: credential query %q: %w", cq.ID, err)
 		}
-		if len(presentations) > 1 || cq.Multiple {
-			return VerifyResponseResult{}, fmt.Errorf("verifier: verify response: credential query %q: multiple presentations are not yet supported", cq.ID)
-		}
-		if len(cq.ClaimSets) > 0 {
-			return VerifyResponseResult{}, fmt.Errorf("verifier: verify response: credential query %q: claim_sets is not yet supported", cq.ID)
-		}
-
-		switch cq.Format {
-		case sdjwtvc.CredentialFormat:
-			claims, err := v.verifySDJWTVCPresentation(ctx, cq, presentations[0], req)
-			if err != nil {
-				return VerifyResponseResult{}, fmt.Errorf("verifier: verify response: credential query %q: %w", cq.ID, err)
-			}
-			result.Credentials = append(result.Credentials, VerifiedCredential{CredentialQueryID: cq.ID, Claims: claims})
-		case mdoc.CredentialFormat:
-			claims, err := v.verifyMdocPresentation(ctx, cq, presentations[0], req)
-			if err != nil {
-				return VerifyResponseResult{}, fmt.Errorf("verifier: verify response: credential query %q: %w", cq.ID, err)
-			}
-			result.Credentials = append(result.Credentials, VerifiedCredential{CredentialQueryID: cq.ID, Claims: claims})
-		default:
-			return VerifyResponseResult{}, fmt.Errorf("verifier: verify response: credential query %q: format %q is not yet supported", cq.ID, cq.Format)
-		}
+		result.Credentials = append(result.Credentials, vc)
 	}
 	return result, nil
+}
+
+// verifyCredentialQuery locates cq's own Presentation in
+// req.Response.VPToken, checks it against this phase's own scope
+// limits (exactly one Presentation, no claim_sets), and dispatches to
+// the format-specific verification VerifyResponse's own doc comment
+// describes.
+func (v *Verifier) verifyCredentialQuery(ctx context.Context, cq dcql.CredentialQuery, req VerifyResponseRequest) (VerifiedCredential, error) {
+	presentations := req.Response.VPToken[cq.ID]
+	if len(presentations) == 0 {
+		return VerifiedCredential{}, fmt.Errorf("no presentation returned")
+	}
+	if len(presentations) > 1 || cq.Multiple {
+		return VerifiedCredential{}, fmt.Errorf("multiple presentations are not yet supported")
+	}
+	if len(cq.ClaimSets) > 0 {
+		return VerifiedCredential{}, fmt.Errorf("claim_sets is not yet supported")
+	}
+
+	var claims map[string]any
+	var err error
+	switch cq.Format {
+	case sdjwtvc.CredentialFormat:
+		claims, err = v.verifySDJWTVCPresentation(ctx, cq, presentations[0], req)
+	case mdoc.CredentialFormat:
+		claims, err = v.verifyMdocPresentation(ctx, cq, presentations[0], req)
+	default:
+		return VerifiedCredential{}, fmt.Errorf("format %q is not yet supported", cq.Format)
+	}
+	if err != nil {
+		return VerifiedCredential{}, err
+	}
+	return VerifiedCredential{CredentialQueryID: cq.ID, Claims: claims}, nil
 }
 
 func (v *Verifier) verifySDJWTVCPresentation(ctx context.Context, cq dcql.CredentialQuery, compact string, req VerifyResponseRequest) (map[string]any, error) {

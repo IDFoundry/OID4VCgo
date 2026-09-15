@@ -149,41 +149,55 @@ func MatchDCQLQuery(query dcql.Query, candidates []HeldCredential) (map[string]H
 }
 
 func matchCredentialQuery(cq dcql.CredentialQuery, candidates []HeldCredential) (HeldCredential, error) {
+	var match func(dcql.CredentialQuery, []HeldCredential) (HeldCredential, bool)
 	switch cq.Format {
 	case sdjwtvc.CredentialFormat:
-		for _, cand := range candidates {
-			if cand.Format != cq.Format {
-				continue
-			}
-			_, _, claims, err := resolveHeldSDJWTVC(cand.Credential)
-			if err != nil {
-				continue // a malformed held credential isn't this query's fault; skip it
-			}
-			if cq.SatisfiedBySDJWTVCClaims(claims) == nil {
-				return cand, nil
-			}
-		}
+		match = matchSDJWTVCQuery
 	case mdoc.CredentialFormat:
-		for _, cand := range candidates {
-			if cand.Format != cq.Format {
-				continue
-			}
-			raw, err := base64.RawURLEncoding.DecodeString(cand.Credential)
-			if err != nil {
-				continue
-			}
-			issuerSigned, err := mdoc.UnmarshalIssuerSigned(raw)
-			if err != nil {
-				continue
-			}
-			if cq.SatisfiedByMdocClaims(cand.MdocDocType, resolveHeldMdocNameSpaces(issuerSigned)) == nil {
-				return cand, nil
-			}
-		}
+		match = matchMdocQuery
 	default:
 		return HeldCredential{}, fmt.Errorf("format %q is not yet supported", cq.Format)
 	}
+	if cand, ok := match(cq, candidates); ok {
+		return cand, nil
+	}
 	return HeldCredential{}, fmt.Errorf("no held credential satisfies this credential query")
+}
+
+func matchSDJWTVCQuery(cq dcql.CredentialQuery, candidates []HeldCredential) (HeldCredential, bool) {
+	for _, cand := range candidates {
+		if cand.Format != cq.Format {
+			continue
+		}
+		_, _, claims, err := resolveHeldSDJWTVC(cand.Credential)
+		if err != nil {
+			continue // a malformed held credential isn't this query's fault; skip it
+		}
+		if cq.SatisfiedBySDJWTVCClaims(claims) == nil {
+			return cand, true
+		}
+	}
+	return HeldCredential{}, false
+}
+
+func matchMdocQuery(cq dcql.CredentialQuery, candidates []HeldCredential) (HeldCredential, bool) {
+	for _, cand := range candidates {
+		if cand.Format != cq.Format {
+			continue
+		}
+		raw, err := base64.RawURLEncoding.DecodeString(cand.Credential)
+		if err != nil {
+			continue
+		}
+		issuerSigned, err := mdoc.UnmarshalIssuerSigned(raw)
+		if err != nil {
+			continue
+		}
+		if cq.SatisfiedByMdocClaims(cand.MdocDocType, resolveHeldMdocNameSpaces(issuerSigned)) == nil {
+			return cand, true
+		}
+	}
+	return HeldCredential{}, false
 }
 
 // PresentSDJWTVC builds a "dc+sd-jwt" Presentation (a VP Token array

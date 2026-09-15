@@ -6,7 +6,6 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
-	"encoding/base64"
 	"encoding/json"
 	"testing"
 
@@ -15,8 +14,8 @@ import (
 	"github.com/idfoundry/oid4vcigo/internal/cose"
 	"github.com/idfoundry/oid4vcigo/internal/jose"
 	"github.com/idfoundry/oid4vcigo/internal/jwe"
-	"github.com/idfoundry/oid4vcigo/internal/jwk"
 	"github.com/idfoundry/oid4vcigo/internal/testcert"
+	"github.com/idfoundry/oid4vcigo/internal/testmdoc"
 	"github.com/idfoundry/oid4vcigo/verifier"
 	"github.com/idfoundry/oid4vcigo/wallet"
 )
@@ -38,31 +37,6 @@ type mdocIssuerKeyResolverFunc func(ctx context.Context, x5chain [][]byte, docTy
 
 func (f mdocIssuerKeyResolverFunc) ResolveMdocIssuerKey(ctx context.Context, x5chain [][]byte, docType string) (crypto.PublicKey, cose.Alg, error) {
 	return f(ctx, x5chain, docType)
-}
-
-// responseEncryptionThumbprintBytes computes the RFC 7638 SHA-256 JWK
-// thumbprint of key's own public key as raw bytes — the shape
-// wallet.PresentMdocParams/PresentationRequest's own
-// ResponseEncryptionJWKThumbprint field needs, and exactly what a real
-// Wallet would derive from the Authorization Request's own
-// client_metadata.jwks (that parsing isn't built yet — see
-// TestWalletVerifierPresentationRoundTrip's own discipline of feeding
-// BuildAuthorizationRequestResult's fields to wallet directly).
-func responseEncryptionThumbprintBytes(t *testing.T, key *ecdsa.PrivateKey) []byte {
-	t.Helper()
-	j, err := jwk.Marshal(&key.PublicKey)
-	if err != nil {
-		t.Fatalf("jwk.Marshal: %v", err)
-	}
-	thumbprint, err := j.Thumbprint()
-	if err != nil {
-		t.Fatalf("Thumbprint: %v", err)
-	}
-	raw, err := base64.RawURLEncoding.DecodeString(thumbprint)
-	if err != nil {
-		t.Fatalf("decode thumbprint: %v", err)
-	}
-	return raw
 }
 
 // TestWalletVerifierPresentationRoundTrip drives OID4VP end to end
@@ -179,17 +153,18 @@ func TestWalletVerifierMdocPresentationRoundTrip(t *testing.T) {
 		t.Fatalf("verifier.New: %v", err)
 	}
 
-	query := testMdocPresentationQuery(t)
+	query := testmdoc.Query(t)
 	built, err := v.BuildAuthorizationRequest(verifier.BuildAuthorizationRequestRequest{Query: query})
 	if err != nil {
 		t.Fatalf("BuildAuthorizationRequest: %v", err)
 	}
-	thumbprint := responseEncryptionThumbprintBytes(t, built.ResponseDecryptionKey)
+	thumbprint := testmdoc.ResponseEncryptionThumbprint(t, built.ResponseDecryptionKey)
 
-	fixture := newHeldMdoc(t)
+	f := testmdoc.Issue(t)
+	held := heldMdoc(t, f)
 	vpToken, err := wallet.PresentCredentials(wallet.PresentationRequest{
 		Query:                           query,
-		Credentials:                     []wallet.HeldCredential{fixture.held},
+		Credentials:                     []wallet.HeldCredential{held},
 		Audience:                        built.ClientID,
 		Nonce:                           built.Nonce,
 		ResponseURI:                     responseURI.String(),
@@ -214,7 +189,7 @@ func TestWalletVerifierMdocPresentationRoundTrip(t *testing.T) {
 	}
 
 	mdocIssuerKeys := mdocIssuerKeyResolverFunc(func(context.Context, [][]byte, string) (crypto.PublicKey, cose.Alg, error) {
-		return &fixture.issuerKey.PublicKey, cose.ES256, nil
+		return &f.IssuerKey.PublicKey, cose.ES256, nil
 	})
 	result, err := v.VerifyResponse(context.Background(), verifier.VerifyResponseRequest{
 		Query:                 query,

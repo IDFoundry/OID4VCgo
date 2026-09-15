@@ -1,101 +1,61 @@
 package wallet_test
 
 import (
-	"crypto/ecdsa"
 	"encoding/base64"
 	"testing"
-	"time"
 
 	"github.com/idfoundry/oid4vcigo/credential/mdoc"
 	"github.com/idfoundry/oid4vcigo/dcql"
 	"github.com/idfoundry/oid4vcigo/internal/cose"
-	"github.com/idfoundry/oid4vcigo/internal/testcert"
+	"github.com/idfoundry/oid4vcigo/internal/testmdoc"
 	"github.com/idfoundry/oid4vcigo/oid4vpmdoc"
 	"github.com/idfoundry/oid4vcigo/wallet"
 )
 
-const testMdocDocType = "org.iso.18013.5.1.mDL"
-
-// heldMdocFixture is a real, freshly issued "mso_mdoc" credential
-// wrapped as a wallet.HeldCredential — the setup every
-// MatchDCQLQuery/PresentMdoc test for this format needs.
-type heldMdocFixture struct {
-	issuerKey *ecdsa.PrivateKey
-	deviceKey *ecdsa.PrivateKey
-	held      wallet.HeldCredential
-}
-
-func newHeldMdoc(t *testing.T) heldMdocFixture {
+// heldMdoc wraps a real, freshly issued testmdoc.Fixture as a
+// wallet.HeldCredential — the setup every MatchDCQLQuery/PresentMdoc
+// test for this format needs.
+func heldMdoc(t *testing.T, f testmdoc.Fixture) wallet.HeldCredential {
 	t.Helper()
-	issuerKey := testP256Key(t)
-	deviceKey := testP256Key(t)
-	cert := testcert.SelfSigned(t, "wallet mdoc test issuer", &issuerKey.PublicKey, issuerKey)
-
-	signed := time.Now()
-	issuerSigned, err := mdoc.Issue(issuerKey, cose.ES256, mdoc.Claims{
-		DocType: testMdocDocType,
-		NameSpaces: map[string]map[string]interface{}{
-			"org.iso.18013.5.1": {"given_name": "Alice", "family_name": "Doe"},
-		},
-		DeviceKey:  &deviceKey.PublicKey,
-		Signed:     signed,
-		ValidFrom:  signed,
-		ValidUntil: signed.Add(24 * time.Hour),
-	}, mdoc.IssueOptions{X5Chain: [][]byte{cert.Raw}})
-	if err != nil {
-		t.Fatalf("mdoc.Issue: %v", err)
-	}
-	encoded, err := issuerSigned.Marshal()
+	encoded, err := f.IssuerSigned.Marshal()
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)
 	}
-	return heldMdocFixture{
-		issuerKey: issuerKey, deviceKey: deviceKey,
-		held: wallet.HeldCredential{
-			Format: mdoc.CredentialFormat, Credential: base64.RawURLEncoding.EncodeToString(encoded),
-			HolderKey: deviceKey, MdocDocType: testMdocDocType,
-		},
+	return wallet.HeldCredential{
+		Format: mdoc.CredentialFormat, Credential: base64.RawURLEncoding.EncodeToString(encoded),
+		HolderKey: f.DeviceKey, MdocDocType: testmdoc.DocType,
 	}
-}
-
-func testMdocPresentationQuery(t *testing.T) dcql.Query {
-	t.Helper()
-	meta, err := dcql.NewMdocMeta(dcql.MdocMeta{DoctypeValue: testMdocDocType})
-	if err != nil {
-		t.Fatalf("NewMdocMeta: %v", err)
-	}
-	return dcql.Query{Credentials: []dcql.CredentialQuery{{
-		ID: "mdl", Format: mdoc.CredentialFormat, Meta: meta,
-		Claims: []dcql.ClaimsQuery{{Path: dcql.Path{dcql.PathKey("org.iso.18013.5.1"), dcql.PathKey("given_name")}}},
-	}}}
 }
 
 func TestMatchDCQLQueryMdoc(t *testing.T) {
-	fixture := newHeldMdoc(t)
-	matches, err := wallet.MatchDCQLQuery(testMdocPresentationQuery(t), []wallet.HeldCredential{fixture.held})
+	f := testmdoc.Issue(t)
+	held := heldMdoc(t, f)
+	matches, err := wallet.MatchDCQLQuery(testmdoc.Query(t), []wallet.HeldCredential{held})
 	if err != nil {
 		t.Fatalf("MatchDCQLQuery: %v", err)
 	}
-	if len(matches) != 1 || matches["mdl"].Credential != fixture.held.Credential {
+	if len(matches) != 1 || matches["mdl"].Credential != held.Credential {
 		t.Errorf("matches = %+v", matches)
 	}
 }
 
 func TestMatchDCQLQueryMdocRejectsWrongDoctype(t *testing.T) {
-	fixture := newHeldMdoc(t)
+	f := testmdoc.Issue(t)
+	held := heldMdoc(t, f)
 	meta, err := dcql.NewMdocMeta(dcql.MdocMeta{DoctypeValue: "org.iso.18013.5.1.mVRC"})
 	if err != nil {
 		t.Fatalf("NewMdocMeta: %v", err)
 	}
 	query := dcql.Query{Credentials: []dcql.CredentialQuery{{ID: "x", Format: mdoc.CredentialFormat, Meta: meta}}}
-	if _, err := wallet.MatchDCQLQuery(query, []wallet.HeldCredential{fixture.held}); err == nil {
+	if _, err := wallet.MatchDCQLQuery(query, []wallet.HeldCredential{held}); err == nil {
 		t.Fatalf("MatchDCQLQuery = nil error, want error")
 	}
 }
 
 func TestPresentMdoc(t *testing.T) {
-	fixture := newHeldMdoc(t)
-	presented, err := wallet.PresentMdoc(fixture.held, wallet.PresentMdocParams{
+	f := testmdoc.Issue(t)
+	held := heldMdoc(t, f)
+	presented, err := wallet.PresentMdoc(held, wallet.PresentMdocParams{
 		Audience: "x509_hash:verifier", Nonce: "nonce-1",
 		ResponseURI: "https://verifier.example.com/response", ResponseEncryptionJWKThumbprint: make([]byte, 32),
 	})
@@ -111,8 +71,8 @@ func TestPresentMdoc(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UnmarshalDeviceResponse: %v", err)
 	}
-	if doc.DocType != testMdocDocType {
-		t.Errorf("DocType = %q, want %q", doc.DocType, testMdocDocType)
+	if doc.DocType != testmdoc.DocType {
+		t.Errorf("DocType = %q, want %q", doc.DocType, testmdoc.DocType)
 	}
 
 	sessionTranscriptBytes, err := oid4vpmdoc.BuildSessionTranscriptBytes(oid4vpmdoc.HandoverParams{
@@ -122,11 +82,11 @@ func TestPresentMdoc(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildSessionTranscriptBytes: %v", err)
 	}
-	if err := mdoc.VerifyDeviceSignature(doc.DeviceSigned, &fixture.deviceKey.PublicKey, cose.ES256, sessionTranscriptBytes, testMdocDocType); err != nil {
+	if err := mdoc.VerifyDeviceSignature(doc.DeviceSigned, &f.DeviceKey.PublicKey, cose.ES256, sessionTranscriptBytes, testmdoc.DocType); err != nil {
 		t.Fatalf("VerifyDeviceSignature: %v", err)
 	}
 
-	verified, err := mdoc.Verify(doc.IssuerSigned, &fixture.issuerKey.PublicKey, cose.ES256, mdoc.VerifyOptions{})
+	verified, err := mdoc.Verify(doc.IssuerSigned, &f.IssuerKey.PublicKey, cose.ES256, mdoc.VerifyOptions{})
 	if err != nil {
 		t.Fatalf("mdoc.Verify: %v", err)
 	}
@@ -143,8 +103,8 @@ func TestPresentMdocRejectsWrongFormat(t *testing.T) {
 }
 
 func TestPresentMdocRejectsMissingDocType(t *testing.T) {
-	fixture := newHeldMdoc(t)
-	held := fixture.held
+	f := testmdoc.Issue(t)
+	held := heldMdoc(t, f)
 	held.MdocDocType = ""
 	if _, err := wallet.PresentMdoc(held, wallet.PresentMdocParams{
 		Audience: "aud", Nonce: "nonce", ResponseURI: "https://verifier.example.com/response",
