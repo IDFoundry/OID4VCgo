@@ -369,13 +369,33 @@ shape from the phase-by-phase plan, not a description of current code.
   name — satisfied by it directly (identical method signature), but
   this package's own tests don't need `fapigo/client`'s TokenSet/DPoP
   machinery just to exercise the wire format. `RequestNonce` covers the
-  Nonce Endpoint's own client side (§7.1). Acquiring the access token
-  `RequestCredential` sends (the Authorization Code Flow via
-  `fapigo/client`'s own `BeginAuthorization`/`ExchangeCode`, or a
-  pre-authorized_code Token Endpoint call this package doesn't build
-  yet), the Deferred Credential Endpoint, the Notification Endpoint,
-  and a Credential Response that itself defers issuance (§8.3's own
-  HTTP 202 case) are all still to come — see the package doc comment.
+  Nonce Endpoint's own client side (§7.1). `BuildAuthorizationRequest`
+  translates a resolved Credential Offer's own `authorization_code`
+  grant (its `issuer_state`, via `fapigo/extension.Set`) and the
+  caller's own resolved scope(s) into a `client.BeginAuthorizationRequest`
+  — the only Authorization Code Flow wiring this package adds, since
+  driving `BeginAuthorization`/`HandleAuthorizationResponse`/`ExchangeCode`
+  themselves, and turning the result into a sender-constrained client
+  via `(*client.Client).ProtectedResource`, is squarely `fapigo/client`'s
+  own public API (the `issuer`-side mirror of never wrapping
+  `fapigo/server`'s own Authorization/Token Endpoints).
+  `fapigo/client`'s own defaults already satisfy HAIP 1.0 §4's
+  Authorization Code Flow requirements with no override needed
+  (`ProfileFAPISecurity` always uses PAR+PKCE; its `SenderConstrain`
+  zero value is already DPoP; `client.RecommendedAlgorithms` already
+  picks ES256) — except HAIP §4.4.1's Wallet Attestation client
+  authentication: `storage.ClientAuthMethodAttestation` exists (added so
+  `fapigo/server` can verify one — see "Relationship to FAPIgo" above),
+  but `fapigo/client` has no logic of its own yet to construct or send
+  the Client Attestation + PoP JWT pair, so a HAIP-profile wallet must
+  use `ClientAuthMethodPrivateKeyJWT` until that lands upstream. Still
+  to come: the pre-authorized_code Flow (deferred — getting it
+  DPoP-sender-constrained would need this package to build its own RFC
+  9449 DPoP proof, since that grant type is outside `fapigo/client`'s
+  own scope entirely and it exposes no generic DPoP-signed Token
+  Request primitive), the Deferred Credential Endpoint, the
+  Notification Endpoint, and a Credential Response that itself defers
+  issuance (§8.3's own HTTP 202 case) — see the package doc comment.
 - **`verifier`** — the OID4VP Verifier role: DCQL query construction,
   Authorization Request via JAR, response modes (`direct_post`,
   `direct_post.jwt`, DC API), response verification.
