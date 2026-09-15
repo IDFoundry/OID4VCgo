@@ -11,6 +11,22 @@ import (
 	"github.com/idfoundry/oid4vcigo/issuer"
 )
 
+// marshalWire JSON-round-trips v (typically a Metadata) into a generic
+// map, for asserting on the actual wire member names/types rather than
+// Go field names.
+func marshalWire(t *testing.T, v any) map[string]any {
+	t.Helper()
+	raw, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	var wire map[string]any
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	return wire
+}
+
 func TestMetadata(t *testing.T) {
 	cfg := validConfig(t)
 	iss, err := issuer.New(cfg, validDependencies())
@@ -32,14 +48,7 @@ func TestMetadata(t *testing.T) {
 		t.Fatalf("got %d credential configurations, want 1", len(md.CredentialConfigurationsSupported))
 	}
 
-	raw, err := json.Marshal(md)
-	if err != nil {
-		t.Fatalf("Marshal: %v", err)
-	}
-	var wire map[string]any
-	if err := json.Unmarshal(raw, &wire); err != nil {
-		t.Fatalf("Unmarshal: %v", err)
-	}
+	wire := marshalWire(t, md)
 	if wire["credential_issuer"] != testIssuer {
 		t.Errorf("wire credential_issuer = %v", wire["credential_issuer"])
 	}
@@ -93,14 +102,7 @@ func TestMetadata_OmitsNonceEndpointWhenDisabled(t *testing.T) {
 		t.Errorf("NonceEndpoint = %v, want nil", md.NonceEndpoint)
 	}
 
-	raw, err := json.Marshal(md)
-	if err != nil {
-		t.Fatalf("Marshal: %v", err)
-	}
-	var wire map[string]any
-	if err := json.Unmarshal(raw, &wire); err != nil {
-		t.Fatalf("Unmarshal: %v", err)
-	}
+	wire := marshalWire(t, md)
 	if _, ok := wire["nonce_endpoint"]; ok {
 		t.Errorf("wire form still has nonce_endpoint: %v", wire["nonce_endpoint"])
 	}
@@ -126,14 +128,7 @@ func TestMetadata_MdocFormat(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	raw, err := json.Marshal(iss.Metadata())
-	if err != nil {
-		t.Fatalf("Marshal: %v", err)
-	}
-	var wire map[string]any
-	if err := json.Unmarshal(raw, &wire); err != nil {
-		t.Fatalf("Unmarshal: %v", err)
-	}
+	wire := marshalWire(t, iss.Metadata())
 	configs := wire["credential_configurations_supported"].(map[string]any)
 	mdl, ok := configs["MobileDrivingLicence"].(map[string]any)
 	if !ok {
@@ -171,14 +166,7 @@ func TestMetadata_KeyAttestationRequirement(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	raw, err := json.Marshal(iss.Metadata())
-	if err != nil {
-		t.Fatalf("Marshal: %v", err)
-	}
-	var wire map[string]any
-	if err := json.Unmarshal(raw, &wire); err != nil {
-		t.Fatalf("Unmarshal: %v", err)
-	}
+	wire := marshalWire(t, iss.Metadata())
 	configs := wire["credential_configurations_supported"].(map[string]any)
 	idc := configs["IdentityCredential"].(map[string]any)
 	proofTypes := idc["proof_types_supported"].(map[string]any)
