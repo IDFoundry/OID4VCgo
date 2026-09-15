@@ -40,7 +40,11 @@ type DeferredTransactionRecord struct {
 	Status DeferredTransactionStatus
 
 	// Credentials/NotificationID are meaningful, and should be set,
-	// only when Status is DeferredTransactionIssued.
+	// only when Status is DeferredTransactionIssued. NotificationID
+	// should come from IssueNotificationID, called before marking this
+	// transaction Issued — a value that was never issued through it
+	// fails validation at RequestNotification, since it was never
+	// persisted to Dependencies.Notifications.
 	Credentials    []IssuedCredential
 	NotificationID string
 }

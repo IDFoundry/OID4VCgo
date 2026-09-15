@@ -130,6 +130,69 @@ func (f *fakeDeferredTransactionStore) Invalidate(_ context.Context, transaction
 	return nil
 }
 
+// fakeNotificationStore is an in-memory issuer.NotificationStore for
+// tests.
+type fakeNotificationStore struct {
+	mu       sync.Mutex
+	records  map[string]issuer.NotificationRecord
+	issueErr error
+	getErr   error
+}
+
+func newFakeNotificationStore() *fakeNotificationStore {
+	return &fakeNotificationStore{records: make(map[string]issuer.NotificationRecord)}
+}
+
+func (f *fakeNotificationStore) put(notificationID string, record issuer.NotificationRecord) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.records[notificationID] = record
+}
+
+func (f *fakeNotificationStore) Issue(_ context.Context, notificationID string, record issuer.NotificationRecord) error {
+	if f.issueErr != nil {
+		return f.issueErr
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.records[notificationID] = record
+	return nil
+}
+
+func (f *fakeNotificationStore) Get(_ context.Context, notificationID string) (issuer.NotificationRecord, error) {
+	if f.getErr != nil {
+		return issuer.NotificationRecord{}, f.getErr
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	record, ok := f.records[notificationID]
+	if !ok {
+		return issuer.NotificationRecord{}, errNotificationNotFound
+	}
+	return record, nil
+}
+
+// fakeNotificationHandler is an in-memory issuer.NotificationHandler
+// for tests, recording every call it receives.
+type fakeNotificationHandler struct {
+	mu    sync.Mutex
+	calls []notificationHandlerCall
+	err   error
+}
+
+type notificationHandlerCall struct {
+	NotificationID string
+	Event          issuer.NotificationEvent
+	Description    string
+}
+
+func (f *fakeNotificationHandler) HandleNotification(_ context.Context, notificationID string, event issuer.NotificationEvent, description string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, notificationHandlerCall{NotificationID: notificationID, Event: event, Description: description})
+	return f.err
+}
+
 type fakeErr string
 
 func (e fakeErr) Error() string { return string(e) }
@@ -137,6 +200,7 @@ func (e fakeErr) Error() string { return string(e) }
 const errNonceNotFound = fakeErr("nonce not found or already consumed")
 const errCredentialOfferNotFound = fakeErr("credential offer not found")
 const errDeferredTransactionNotFound = fakeErr("deferred transaction not found")
+const errNotificationNotFound = fakeErr("notification not found")
 
 type fixedClock struct{ now time.Time }
 

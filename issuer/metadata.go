@@ -139,6 +139,7 @@ type Metadata struct {
 	CredentialEndpoint                fapi.URL                            `json:"credential_endpoint"`
 	NonceEndpoint                     *fapi.URL                           `json:"nonce_endpoint,omitempty"`
 	DeferredCredentialEndpoint        *fapi.URL                           `json:"deferred_credential_endpoint,omitempty"`
+	NotificationEndpoint              *fapi.URL                           `json:"notification_endpoint,omitempty"`
 	CredentialConfigurationsSupported map[string]metadataCredentialConfig `json:"credential_configurations_supported"`
 }
 
@@ -184,6 +185,10 @@ func (iss *Issuer) Metadata() Metadata {
 	if !iss.cfg.Endpoints.DeferredCredential.IsZero() {
 		deferred := iss.cfg.Endpoints.DeferredCredential
 		md.DeferredCredentialEndpoint = &deferred
+	}
+	if !iss.cfg.Endpoints.Notification.IsZero() {
+		notification := iss.cfg.Endpoints.Notification
+		md.NotificationEndpoint = &notification
 	}
 	for id, c := range iss.cfg.CredentialConfigurationsSupported {
 		wire := metadataCredentialConfig{

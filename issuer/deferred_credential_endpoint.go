@@ -29,9 +29,9 @@ type DeferredCredentialResult struct {
 	Credentials []IssuedCredential
 
 	// NotificationID is OPTIONAL, and only ever set alongside
-	// Credentials — see CredentialResponse's own doc comment
-	// (Notification Endpoint doesn't exist in this repo yet, so this
-	// is a pass-through value with no verification behind it so far).
+	// Credentials — a pass-through of whatever
+	// DeferredTransactionRecord.NotificationID carried; see its own
+	// doc comment for how one comes to exist.
 	NotificationID string
 
 	// TransactionID and Interval are set exactly when the transaction
