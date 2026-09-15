@@ -18,7 +18,8 @@
 > types shared by
 > `issuer` and `wallet`: `CredentialOffer` and its `Grants` family,
 > `IssuedCredential`/`CredentialResponse`, `ProofTypeJWT`/
-> `ProofTypeAttestation`, `NotificationEvent`), `issuer` (Nonce Endpoint,
+> `ProofTypeAttestation`, `NotificationEvent`, `IssuerStateExtension`),
+> `issuer` (Nonce Endpoint,
 > Metadata, the Credential Endpoint for immediate issuance of both
 > formats with §10 Encrypted Request/Response support, Credential Offer
 > construction/dereferencing, the Deferred Credential Endpoint's polling
@@ -425,10 +426,27 @@ shape from the phase-by-phase plan, not a description of current code.
   unregistered value fails validation at `RequestNotification`.
   `Endpoints.Notification` is advertised in Metadata's own
   `notification_endpoint`. With this, every OID4VCI 1.0 Credential
-  Issuer endpoint this repo scoped in exists; what's left is where
-  `fapigo/server` gets consumed for the Authorization/Token Endpoints'
-  own PAR/DPoP/client-authentication machinery once those exist in
-  this repo.
+  Issuer endpoint this repo scoped in exists. `issuer/authorization_server.go`
+  is documentation only (no exported types/functions): this package
+  deliberately doesn't wrap `fapigo/server`'s own Authorization/Token
+  Endpoints — the same "never wraps the core FAPI/OAuth flow" stance
+  `wallet` already takes on `fapigo/client`'s `BeginAuthorization`/
+  `ExchangeCode` — so a deployment pairing `issuer` with a real FAPI 2.0
+  Authorization Server constructs and drives a `*fapigo/server.Server`
+  directly, using `oid4vci.IssuerStateExtension` to register OID4VCI
+  1.0 §4.1.1's own `issuer_state` parameter in that Server's own
+  `Config.Extensions` (see that file's doc comment for the full recipe,
+  including why `issuer_state` never resurfaces through
+  `BeginAuthorization`'s own `InteractionRequest` and must be captured
+  by the caller directly off the incoming HTTP request instead). Still
+  to come: adapting a successful `ExchangeAuthorizationCode` result into
+  `RequestCredential`'s own `AuthorizedRequest` (today documented only
+  as a 2-line inline adaptation a caller does itself), and the
+  pre-authorized_code grant's own server-side Token Request handling —
+  entirely `issuer`'s own new code, since that grant type is outside
+  `fapigo/server`'s scope the same way it's outside `fapigo/client`'s
+  (see `wallet.RequestPreAuthorizedCodeToken`'s own doc comment for the
+  client-side half of that same boundary).
 - **`wallet`** — the Wallet's OID4VCI role (client side): credential-offer
   resolution, proof-of-possession generation, deferred/notification
   handling. Built on `fapigo/client`. `ResolveCredentialOffer` decodes a
@@ -669,7 +687,18 @@ automatically to code they didn't originally govern:
   `GrantPreAuthorizedCode`/`TxCode`), `IssuedCredential`/
   `CredentialResponse`, `ProofTypeJWT`/`ProofTypeAttestation`, and
   `NotificationEvent` moved here from `issuer` once `wallet` needed the
-  exact same wire semantics for each. Each type's own `Validate` method
+  exact same wire semantics for each; `IssuerStateExtension` — a
+  `fapigo/extension.Definition[string]` for OID4VCI 1.0 §4.1.1's own
+  `issuer_state` authorization parameter — lives here for the same
+  reason, since a real deployment needs the identical value on both
+  sides of the Authorization Code Flow: `wallet.BuildAuthorizationRequest`
+  attaches it client-side, and a `fapigo/server.Server` paired with
+  `issuer` must register it in its own `Config.Extensions` server-side,
+  or Pushed Authorization Request validation rejects it outright as
+  unregistered — see `issuer/authorization_server.go`'s own doc comment
+  for the full integration recipe, including the non-obvious finding
+  that it doesn't resurface through `BeginAuthorization`'s own
+  `InteractionRequest`. Each type's own `Validate` method
   (where it has one) checks
   only §4/§8's own structural requirements; a role package's additional,
   role-specific constraints (e.g. `issuer`'s own check that

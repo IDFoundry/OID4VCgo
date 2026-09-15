@@ -45,7 +45,7 @@ func TestBuildAuthorizationRequest_AttachesIssuerState(t *testing.T) {
 		t.Fatalf("BuildAuthorizationRequest: %v", err)
 	}
 
-	got, ok := extension.Get(req.Extensions, issuerStateDefForTest)
+	got, ok := extension.Get(req.Extensions, oid4vci.IssuerStateExtension)
 	if !ok {
 		t.Fatalf("issuer_state extension is not set")
 	}
@@ -74,21 +74,9 @@ func TestBuildAuthorizationRequest_OmitsIssuerStateWhenAbsent(t *testing.T) {
 			if err != nil {
 				t.Fatalf("BuildAuthorizationRequest: %v", err)
 			}
-			if _, ok := extension.Get(req.Extensions, issuerStateDefForTest); ok {
+			if _, ok := extension.Get(req.Extensions, oid4vci.IssuerStateExtension); ok {
 				t.Errorf("issuer_state extension is set, want absent")
 			}
 		})
 	}
-}
-
-// issuerStateDefForTest mirrors wallet's own unexported issuerStateDefinition
-// — extension.Get needs the exact same Definition (by wire name and
-// type) a value was Set with, and wallet's copy is intentionally
-// unexported (callers read the built request's Extensions via this
-// package's own definition, not wallet's internal one).
-var issuerStateDefForTest = extension.Definition[string]{
-	Name:           "issuer_state",
-	Cardinality:    extension.Single,
-	AllowedSources: extension.SourcePlainParameter | extension.SourceRequestObject,
-	MaxBytes:       2048,
 }
