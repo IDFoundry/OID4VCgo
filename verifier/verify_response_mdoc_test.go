@@ -5,6 +5,7 @@ import (
 	"crypto"
 	"testing"
 
+	"github.com/idfoundry/oid4vcigo/dcql"
 	"github.com/idfoundry/oid4vcigo/internal/cose"
 	"github.com/idfoundry/oid4vcigo/internal/testmdoc"
 	"github.com/idfoundry/oid4vcigo/oid4vpmdoc"
@@ -22,11 +23,22 @@ func (r fixedMdocIssuerKeyResolver) ResolveMdocIssuerKey(context.Context, [][]by
 	return r.pub, r.alg, nil
 }
 
-// TestVerifyMdocResponse drives a real end-to-end round trip: build a
-// real Authorization Request, issue and present a real "mso_mdoc"
-// credential bound to that exact clientID/nonce/responseURI/response-
-// encryption-key thumbprint, and verify it via VerifyResponse.
-func TestVerifyMdocResponse(t *testing.T) {
+// mdocVerifyFixture bundles a real *verifier.Verifier, the DCQL query
+// it was given, its own BuildAuthorizationRequest result, and a real
+// issued "mso_mdoc" credential's own response-encryption thumbprint —
+// the setup every VerifyResponse mdoc test needs before building its
+// own Presentation with whichever aud/nonce that specific case wants.
+type mdocVerifyFixture struct {
+	v          *verifier.Verifier
+	cfg        verifier.Config
+	query      dcql.Query
+	built      verifier.BuildAuthorizationRequestResult
+	thumbprint []byte
+	f          testmdoc.Fixture
+}
+
+func newMdocVerifyFixture(t *testing.T) mdocVerifyFixture {
+	t.Helper()
 	cfg, deps := validConfig(t)
 	v, err := verifier.New(cfg, deps)
 	if err != nil {
@@ -37,20 +49,35 @@ func TestVerifyMdocResponse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildAuthorizationRequest: %v", err)
 	}
-
 	thumbprint := testmdoc.ResponseEncryptionThumbprint(t, built.ResponseDecryptionKey)
 	f := testmdoc.Issue(t)
-	presented := testmdoc.Present(t, f, oid4vpmdoc.HandoverParams{
-		ClientID: v.ClientID(), Nonce: built.Nonce, ResponseURI: cfg.ResponseURI.String(), ResponseEncryptionJWKThumbprint: thumbprint,
-	})
+	return mdocVerifyFixture{v: v, cfg: cfg, query: query, built: built, thumbprint: thumbprint, f: f}
+}
 
-	result, err := v.VerifyResponse(context.Background(), verifier.VerifyResponseRequest{
-		Query:                 query,
-		Response:              verifier.ParsedResponse{VPToken: map[string][]string{"mdl": {presented}}},
-		ExpectedNonce:         built.Nonce,
-		MdocIssuerKeys:        fixedMdocIssuerKeyResolver{pub: &f.IssuerKey.PublicKey, alg: cose.ES256},
-		ResponseEncryptionKey: built.ResponseDecryptionKey,
+// verify builds a Presentation bound to nonce (not necessarily
+// mf.built.Nonce — a test deliberately mismatching it uses this to
+// build one that won't validate) and calls VerifyResponse with it.
+func (mf mdocVerifyFixture) verify(t *testing.T, nonce string) (verifier.VerifyResponseResult, error) {
+	t.Helper()
+	presented := testmdoc.Present(t, mf.f, oid4vpmdoc.HandoverParams{
+		ClientID: mf.v.ClientID(), Nonce: nonce, ResponseURI: mf.cfg.ResponseURI.String(), ResponseEncryptionJWKThumbprint: mf.thumbprint,
 	})
+	return mf.v.VerifyResponse(context.Background(), verifier.VerifyResponseRequest{
+		Query:                 mf.query,
+		Response:              verifier.ParsedResponse{VPToken: map[string][]string{"mdl": {presented}}},
+		ExpectedNonce:         mf.built.Nonce,
+		MdocIssuerKeys:        fixedMdocIssuerKeyResolver{pub: &mf.f.IssuerKey.PublicKey, alg: cose.ES256},
+		ResponseEncryptionKey: mf.built.ResponseDecryptionKey,
+	})
+}
+
+// TestVerifyMdocResponse drives a real end-to-end round trip: build a
+// real Authorization Request, issue and present a real "mso_mdoc"
+// credential bound to that exact clientID/nonce/responseURI/response-
+// encryption-key thumbprint, and verify it via VerifyResponse.
+func TestVerifyMdocResponse(t *testing.T) {
+	mf := newMdocVerifyFixture(t)
+	result, err := mf.verify(t, mf.built.Nonce)
 	if err != nil {
 		t.Fatalf("VerifyResponse: %v", err)
 	}
@@ -67,30 +94,8 @@ func TestVerifyMdocResponse(t *testing.T) {
 }
 
 func TestVerifyMdocResponseRejectsWrongNonce(t *testing.T) {
-	cfg, deps := validConfig(t)
-	v, err := verifier.New(cfg, deps)
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	query := testmdoc.Query(t)
-	built, err := v.BuildAuthorizationRequest(verifier.BuildAuthorizationRequestRequest{Query: query})
-	if err != nil {
-		t.Fatalf("BuildAuthorizationRequest: %v", err)
-	}
-	thumbprint := testmdoc.ResponseEncryptionThumbprint(t, built.ResponseDecryptionKey)
-	f := testmdoc.Issue(t)
-	presented := testmdoc.Present(t, f, oid4vpmdoc.HandoverParams{
-		ClientID: v.ClientID(), Nonce: "wrong-nonce", ResponseURI: cfg.ResponseURI.String(), ResponseEncryptionJWKThumbprint: thumbprint,
-	})
-
-	_, err = v.VerifyResponse(context.Background(), verifier.VerifyResponseRequest{
-		Query:                 query,
-		Response:              verifier.ParsedResponse{VPToken: map[string][]string{"mdl": {presented}}},
-		ExpectedNonce:         built.Nonce,
-		MdocIssuerKeys:        fixedMdocIssuerKeyResolver{pub: &f.IssuerKey.PublicKey, alg: cose.ES256},
-		ResponseEncryptionKey: built.ResponseDecryptionKey,
-	})
-	if err == nil {
+	mf := newMdocVerifyFixture(t)
+	if _, err := mf.verify(t, "wrong-nonce"); err == nil {
 		t.Fatalf("VerifyResponse = nil error, want error")
 	}
 }
