@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/idfoundry/oid4vcigo"
 	"github.com/idfoundry/oid4vcigo/issuer"
 	"github.com/idfoundry/oid4vcigo/storage"
 )
@@ -12,13 +13,13 @@ import (
 func testCredentialOfferRecord() issuer.CredentialOfferRecord {
 	return issuer.CredentialOfferRecord{
 		Reference: "ref-1",
-		Offer: issuer.CredentialOffer{
+		Offer: oid4vci.CredentialOffer{
 			CredentialIssuer:           "https://issuer.example.com",
 			CredentialConfigurationIDs: []string{"IdentityCredential"},
-			Grants: &issuer.Grants{
-				PreAuthorizedCode: &issuer.GrantPreAuthorizedCode{
+			Grants: &oid4vci.Grants{
+				PreAuthorizedCode: &oid4vci.GrantPreAuthorizedCode{
 					PreAuthorizedCode: "abc123",
-					TxCode:            &issuer.TxCode{Length: 4},
+					TxCode:            &oid4vci.TxCode{Length: 4},
 				},
 			},
 		},

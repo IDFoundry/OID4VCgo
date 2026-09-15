@@ -3,6 +3,7 @@ package haip
 import (
 	"fmt"
 
+	"github.com/idfoundry/oid4vcigo"
 	"github.com/idfoundry/oid4vcigo/issuer"
 )
 
@@ -62,8 +63,8 @@ type IssuerRecommendations struct {
 func RecommendedIssuerConfig() IssuerRecommendations {
 	return IssuerRecommendations{
 		ProofTypesSupported: map[string]issuer.ProofTypeConfiguration{
-			issuer.ProofTypeJWT:         RecommendedJWTProofType(),
-			issuer.ProofTypeAttestation: RecommendedAttestationProofType(),
+			oid4vci.ProofTypeJWT:         RecommendedJWTProofType(),
+			oid4vci.ProofTypeAttestation: RecommendedAttestationProofType(),
 		},
 	}
 }

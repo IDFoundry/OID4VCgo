@@ -5,6 +5,7 @@ import (
 
 	fapi "github.com/idfoundry/fapigo"
 
+	"github.com/idfoundry/oid4vcigo"
 	"github.com/idfoundry/oid4vcigo/haip"
 	"github.com/idfoundry/oid4vcigo/issuer"
 )
@@ -37,16 +38,16 @@ func TestRecommendedIssuerConfig(t *testing.T) {
 	if len(rec.ProofTypesSupported) != 2 {
 		t.Fatalf("ProofTypesSupported has %d entries, want 2", len(rec.ProofTypesSupported))
 	}
-	jwtPTC, ok := rec.ProofTypesSupported[issuer.ProofTypeJWT]
+	jwtPTC, ok := rec.ProofTypesSupported[oid4vci.ProofTypeJWT]
 	if !ok {
-		t.Fatalf("ProofTypesSupported is missing %q", issuer.ProofTypeJWT)
+		t.Fatalf("ProofTypesSupported is missing %q", oid4vci.ProofTypeJWT)
 	}
 	if jwtPTC.KeyAttestationsRequired != nil {
 		t.Errorf("jwt proof type KeyAttestationsRequired = %v, want nil", jwtPTC.KeyAttestationsRequired)
 	}
-	attestationPTC, ok := rec.ProofTypesSupported[issuer.ProofTypeAttestation]
+	attestationPTC, ok := rec.ProofTypesSupported[oid4vci.ProofTypeAttestation]
 	if !ok {
-		t.Fatalf("ProofTypesSupported is missing %q", issuer.ProofTypeAttestation)
+		t.Fatalf("ProofTypesSupported is missing %q", oid4vci.ProofTypeAttestation)
 	}
 	if attestationPTC.KeyAttestationsRequired == nil {
 		t.Errorf("attestation proof type KeyAttestationsRequired = nil, want non-nil")

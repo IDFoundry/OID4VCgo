@@ -6,6 +6,7 @@ import (
 
 	fapi "github.com/idfoundry/fapigo"
 
+	"github.com/idfoundry/oid4vcigo"
 	"github.com/idfoundry/oid4vcigo/credential/mdoc"
 	"github.com/idfoundry/oid4vcigo/internal/cose"
 	"github.com/idfoundry/oid4vcigo/issuer"
@@ -93,8 +94,8 @@ func TestMetadata(t *testing.T) {
 	if !ok {
 		t.Fatalf("proof_types_supported is not an object: %v", idc["proof_types_supported"])
 	}
-	if _, ok := proofTypes[issuer.ProofTypeJWT]; !ok {
-		t.Errorf("proof_types_supported is missing %q: %v", issuer.ProofTypeJWT, proofTypes)
+	if _, ok := proofTypes[oid4vci.ProofTypeJWT]; !ok {
+		t.Errorf("proof_types_supported is missing %q: %v", oid4vci.ProofTypeJWT, proofTypes)
 	}
 }
 
@@ -175,7 +176,7 @@ func TestMetadata_MdocFormat(t *testing.T) {
 		CryptographicBindingMethodsSupported:    []string{"cose_key"},
 		CredentialSigningAlgValuesSupportedCOSE: []cose.Alg{cose.ES256, -9},
 		ProofTypesSupported: map[string]issuer.ProofTypeConfiguration{
-			issuer.ProofTypeJWT: {ProofSigningAlgValuesSupported: []string{"ES256"}},
+			oid4vci.ProofTypeJWT: {ProofSigningAlgValuesSupported: []string{"ES256"}},
 		},
 	}
 
@@ -210,7 +211,7 @@ func TestMetadata_KeyAttestationRequirement(t *testing.T) {
 	cfg := validConfig(t)
 	cc := cfg.CredentialConfigurationsSupported["IdentityCredential"]
 	cc.ProofTypesSupported = map[string]issuer.ProofTypeConfiguration{
-		issuer.ProofTypeJWT: {
+		oid4vci.ProofTypeJWT: {
 			ProofSigningAlgValuesSupported: []string{"ES256"},
 			KeyAttestationsRequired: &issuer.KeyAttestationRequirement{
 				KeyStorage: []string{"iso_18045_moderate"},
@@ -227,7 +228,7 @@ func TestMetadata_KeyAttestationRequirement(t *testing.T) {
 	configs := wire["credential_configurations_supported"].(map[string]any)
 	idc := configs["IdentityCredential"].(map[string]any)
 	proofTypes := idc["proof_types_supported"].(map[string]any)
-	jwtProof := proofTypes[issuer.ProofTypeJWT].(map[string]any)
+	jwtProof := proofTypes[oid4vci.ProofTypeJWT].(map[string]any)
 	kar, ok := jwtProof["key_attestations_required"].(map[string]any)
 	if !ok {
 		t.Fatalf("key_attestations_required missing: %v", jwtProof)

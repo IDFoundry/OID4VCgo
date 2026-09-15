@@ -9,6 +9,7 @@ import (
 
 	fapi "github.com/idfoundry/fapigo"
 
+	"github.com/idfoundry/oid4vcigo"
 	"github.com/idfoundry/oid4vcigo/attestation"
 	"github.com/idfoundry/oid4vcigo/credential/mdoc"
 	"github.com/idfoundry/oid4vcigo/credential/sdjwtvc"
@@ -40,7 +41,7 @@ type Endpoints struct {
 	// Notification is this issuer's Notification Endpoint (§11). Zero
 	// means this issuer never accepts notifications — Metadata then
 	// omits notification_endpoint, RequestCredential never sets
-	// CredentialResponse.NotificationID, and RequestNotification
+	// oid4vci.CredentialResponse.NotificationID, and RequestNotification
 	// always fails.
 	Notification fapi.URL
 }
@@ -306,8 +307,8 @@ func validateSignerDependencies(cfg Config, deps Dependencies) error {
 				return fmt.Errorf("credential_configurations_supported[%q]: %w", id, err)
 			}
 		}
-		if _, ok := c.ProofTypesSupported[ProofTypeAttestation]; ok && deps.AttestationVerifier == nil {
-			return fmt.Errorf("credential_configurations_supported[%q]: attestation_verifier is required when proof_types_supported includes %q", id, ProofTypeAttestation)
+		if _, ok := c.ProofTypesSupported[oid4vci.ProofTypeAttestation]; ok && deps.AttestationVerifier == nil {
+			return fmt.Errorf("credential_configurations_supported[%q]: attestation_verifier is required when proof_types_supported includes %q", id, oid4vci.ProofTypeAttestation)
 		}
 	}
 	return nil

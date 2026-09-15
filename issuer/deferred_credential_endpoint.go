@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/http"
 	"time"
+
+	"github.com/idfoundry/oid4vcigo"
 )
 
 // DeferredCredentialRequest is a Deferred Credential Request (§9.1).
@@ -26,7 +28,7 @@ type DeferredCredentialResult struct {
 	// has completed: HTTP 200, reusing the immediate Credential
 	// Response's own "credentials" parameter (§8.3, via §9.2's own MUST
 	// clause).
-	Credentials []IssuedCredential
+	Credentials []oid4vci.IssuedCredential
 
 	// NotificationID is OPTIONAL, and only ever set alongside
 	// Credentials — a pass-through of whatever
@@ -54,8 +56,8 @@ func (r DeferredCredentialResult) WriteJSON(w http.ResponseWriter) {
 	if len(r.Credentials) > 0 {
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(struct {
-			Credentials    []IssuedCredential `json:"credentials"`
-			NotificationID string             `json:"notification_id,omitempty"`
+			Credentials    []oid4vci.IssuedCredential `json:"credentials"`
+			NotificationID string                     `json:"notification_id,omitempty"`
 		}{Credentials: r.Credentials, NotificationID: r.NotificationID})
 		return
 	}

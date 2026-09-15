@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/idfoundry/oid4vcigo"
 	"github.com/idfoundry/oid4vcigo/attestation"
 	"github.com/idfoundry/oid4vcigo/credential/mdoc"
 	"github.com/idfoundry/oid4vcigo/credential/sdjwtvc"
@@ -83,8 +84,8 @@ func newCredentialEndpointFixture(t *testing.T) credentialEndpointFixture {
 				VCT:                                  "https://credentials.example.com/identity_credential",
 				CryptographicBindingMethodsSupported: []string{"jwk"},
 				ProofTypesSupported: map[string]issuer.ProofTypeConfiguration{
-					issuer.ProofTypeJWT:         {ProofSigningAlgValuesSupported: []string{"ES256"}},
-					issuer.ProofTypeAttestation: {ProofSigningAlgValuesSupported: []string{"ES256"}},
+					oid4vci.ProofTypeJWT:         {ProofSigningAlgValuesSupported: []string{"ES256"}},
+					oid4vci.ProofTypeAttestation: {ProofSigningAlgValuesSupported: []string{"ES256"}},
 				},
 			},
 			testMdocConfigID: {
@@ -93,7 +94,7 @@ func newCredentialEndpointFixture(t *testing.T) credentialEndpointFixture {
 				CryptographicBindingMethodsSupported:    []string{"cose_key"},
 				CredentialSigningAlgValuesSupportedCOSE: []cose.Alg{cose.ES256},
 				ProofTypesSupported: map[string]issuer.ProofTypeConfiguration{
-					issuer.ProofTypeJWT: {ProofSigningAlgValuesSupported: []string{"ES256"}},
+					oid4vci.ProofTypeJWT: {ProofSigningAlgValuesSupported: []string{"ES256"}},
 				},
 			},
 		},
@@ -204,7 +205,7 @@ func TestRequestCredential_SDJWT_JWTProof(t *testing.T) {
 
 	resp, err := f.iss.RequestCredential(context.Background(), issuer.AuthorizedRequest{Scopes: []string{"identity_credential"}}, issuer.CredentialRequest{
 		CredentialConfigurationID: testSDJWTConfigID,
-		Proofs:                    map[string][]string{issuer.ProofTypeJWT: {proof}},
+		Proofs:                    map[string][]string{oid4vci.ProofTypeJWT: {proof}},
 		SDJWTClaims:               testSDJWTClaims(),
 	})
 	if err != nil {
@@ -231,7 +232,7 @@ func TestRequestCredential_SDJWT_Batch(t *testing.T) {
 
 	resp, err := f.iss.RequestCredential(context.Background(), issuer.AuthorizedRequest{Scopes: []string{"identity_credential"}}, issuer.CredentialRequest{
 		CredentialConfigurationID: testSDJWTConfigID,
-		Proofs:                    map[string][]string{issuer.ProofTypeJWT: {proof1, proof2}},
+		Proofs:                    map[string][]string{oid4vci.ProofTypeJWT: {proof1, proof2}},
 		SDJWTClaims:               testSDJWTClaims(),
 	})
 	if err != nil {
@@ -253,7 +254,7 @@ func TestRequestCredential_Mdoc_JWTProof(t *testing.T) {
 
 	resp, err := f.iss.RequestCredential(context.Background(), issuer.AuthorizedRequest{}, issuer.CredentialRequest{
 		CredentialConfigurationID: testMdocConfigID,
-		Proofs:                    map[string][]string{issuer.ProofTypeJWT: {proof}},
+		Proofs:                    map[string][]string{oid4vci.ProofTypeJWT: {proof}},
 		MdocClaims:                testMdocClaims(t),
 	})
 	if err != nil {
@@ -291,7 +292,7 @@ func TestRequestCredential_AttestationProof(t *testing.T) {
 
 	resp, err := f.iss.RequestCredential(context.Background(), issuer.AuthorizedRequest{Scopes: []string{"identity_credential"}}, issuer.CredentialRequest{
 		CredentialConfigurationID: testSDJWTConfigID,
-		Proofs:                    map[string][]string{issuer.ProofTypeAttestation: {att}},
+		Proofs:                    map[string][]string{oid4vci.ProofTypeAttestation: {att}},
 		SDJWTClaims:               testSDJWTClaims(),
 	})
 	if err != nil {
@@ -308,7 +309,7 @@ func TestRequestCredential_RejectsUnknownConfig(t *testing.T) {
 	proof := buildJWTProof(t, testP256Key(t), testIssuer, nonce)
 	_, err := f.iss.RequestCredential(context.Background(), issuer.AuthorizedRequest{}, issuer.CredentialRequest{
 		CredentialConfigurationID: "NoSuchConfig",
-		Proofs:                    map[string][]string{issuer.ProofTypeJWT: {proof}},
+		Proofs:                    map[string][]string{oid4vci.ProofTypeJWT: {proof}},
 		SDJWTClaims:               testSDJWTClaims(),
 	})
 	assertIssuerError(t, err, issuer.ErrorUnknownCredentialConfig)
@@ -326,7 +327,7 @@ func TestRequestCredential_RejectsMissingScope(t *testing.T) {
 	proof := buildJWTProof(t, testP256Key(t), testIssuer, nonce)
 	_, err := f.iss.RequestCredential(context.Background(), issuer.AuthorizedRequest{Scopes: []string{"other_scope"}}, issuer.CredentialRequest{
 		CredentialConfigurationID: testSDJWTConfigID,
-		Proofs:                    map[string][]string{issuer.ProofTypeJWT: {proof}},
+		Proofs:                    map[string][]string{oid4vci.ProofTypeJWT: {proof}},
 		SDJWTClaims:               testSDJWTClaims(),
 	})
 	assertIssuerError(t, err, issuer.ErrorInvalidCredentialRequest)
@@ -349,8 +350,8 @@ func TestRequestCredential_RejectsWrongNumberOfProofTypes(t *testing.T) {
 		_, err := f.iss.RequestCredential(context.Background(), issuer.AuthorizedRequest{Scopes: []string{"identity_credential"}}, issuer.CredentialRequest{
 			CredentialConfigurationID: testSDJWTConfigID,
 			Proofs: map[string][]string{
-				issuer.ProofTypeJWT:         {proof},
-				issuer.ProofTypeAttestation: {proof},
+				oid4vci.ProofTypeJWT:         {proof},
+				oid4vci.ProofTypeAttestation: {proof},
 			},
 			SDJWTClaims: testSDJWTClaims(),
 		})
@@ -360,7 +361,7 @@ func TestRequestCredential_RejectsWrongNumberOfProofTypes(t *testing.T) {
 	t.Run("empty proof array", func(t *testing.T) {
 		_, err := f.iss.RequestCredential(context.Background(), issuer.AuthorizedRequest{Scopes: []string{"identity_credential"}}, issuer.CredentialRequest{
 			CredentialConfigurationID: testSDJWTConfigID,
-			Proofs:                    map[string][]string{issuer.ProofTypeJWT: {}},
+			Proofs:                    map[string][]string{oid4vci.ProofTypeJWT: {}},
 			SDJWTClaims:               testSDJWTClaims(),
 		})
 		assertIssuerError(t, err, issuer.ErrorInvalidProof)
@@ -377,21 +378,21 @@ func TestRequestCredential_RejectsWrongAud(t *testing.T) {
 	f := newCredentialEndpointFixture(t)
 	nonce := f.issueNonce(t)
 	proof := buildJWTProof(t, testP256Key(t), "https://wrong-issuer.example.com", nonce)
-	_, err := requestSDJWTWithProof(f, issuer.ProofTypeJWT, proof)
+	_, err := requestSDJWTWithProof(f, oid4vci.ProofTypeJWT, proof)
 	assertIssuerError(t, err, issuer.ErrorInvalidProof)
 }
 
 func TestRequestCredential_RejectsMissingNonce(t *testing.T) {
 	f := newCredentialEndpointFixture(t)
 	proof := buildJWTProof(t, testP256Key(t), testIssuer, "")
-	_, err := requestSDJWTWithProof(f, issuer.ProofTypeJWT, proof)
+	_, err := requestSDJWTWithProof(f, oid4vci.ProofTypeJWT, proof)
 	assertIssuerError(t, err, issuer.ErrorInvalidProof)
 }
 
 func TestRequestCredential_RejectsUnknownNonce(t *testing.T) {
 	f := newCredentialEndpointFixture(t)
 	proof := buildJWTProof(t, testP256Key(t), testIssuer, "never-issued")
-	_, err := requestSDJWTWithProof(f, issuer.ProofTypeJWT, proof)
+	_, err := requestSDJWTWithProof(f, oid4vci.ProofTypeJWT, proof)
 	assertIssuerError(t, err, issuer.ErrorInvalidNonce)
 }
 
@@ -401,7 +402,7 @@ func TestRequestCredential_RejectsReusedNonce(t *testing.T) {
 	proof1 := buildJWTProof(t, testP256Key(t), testIssuer, nonce)
 	_, err := f.iss.RequestCredential(context.Background(), issuer.AuthorizedRequest{Scopes: []string{"identity_credential"}}, issuer.CredentialRequest{
 		CredentialConfigurationID: testSDJWTConfigID,
-		Proofs:                    map[string][]string{issuer.ProofTypeJWT: {proof1}},
+		Proofs:                    map[string][]string{oid4vci.ProofTypeJWT: {proof1}},
 		SDJWTClaims:               testSDJWTClaims(),
 	})
 	if err != nil {
@@ -411,7 +412,7 @@ func TestRequestCredential_RejectsReusedNonce(t *testing.T) {
 	proof2 := buildJWTProof(t, testP256Key(t), testIssuer, nonce)
 	_, err = f.iss.RequestCredential(context.Background(), issuer.AuthorizedRequest{Scopes: []string{"identity_credential"}}, issuer.CredentialRequest{
 		CredentialConfigurationID: testSDJWTConfigID,
-		Proofs:                    map[string][]string{issuer.ProofTypeJWT: {proof2}},
+		Proofs:                    map[string][]string{oid4vci.ProofTypeJWT: {proof2}},
 		SDJWTClaims:               testSDJWTClaims(),
 	})
 	assertIssuerError(t, err, issuer.ErrorInvalidNonce)
@@ -428,7 +429,7 @@ func TestRequestCredential_RejectsMismatchedNonceAcrossBatch(t *testing.T) {
 
 	_, err := f.iss.RequestCredential(context.Background(), issuer.AuthorizedRequest{Scopes: []string{"identity_credential"}}, issuer.CredentialRequest{
 		CredentialConfigurationID: testSDJWTConfigID,
-		Proofs:                    map[string][]string{issuer.ProofTypeJWT: {proof1, proof2}},
+		Proofs:                    map[string][]string{oid4vci.ProofTypeJWT: {proof1, proof2}},
 		SDJWTClaims:               testSDJWTClaims(),
 	})
 	assertIssuerError(t, err, issuer.ErrorInvalidNonce)
@@ -448,7 +449,7 @@ func TestRequestCredential_RejectsWrongTyp(t *testing.T) {
 	if err != nil {
 		t.Fatalf("jose.Sign: %v", err)
 	}
-	_, err = requestSDJWTWithProof(f, issuer.ProofTypeJWT, compact)
+	_, err = requestSDJWTWithProof(f, oid4vci.ProofTypeJWT, compact)
 	assertIssuerError(t, err, issuer.ErrorInvalidProof)
 }
 
@@ -461,7 +462,7 @@ func TestRequestCredential_RejectsKidHeader(t *testing.T) {
 	if err != nil {
 		t.Fatalf("jose.Sign: %v", err)
 	}
-	_, err = requestSDJWTWithProof(f, issuer.ProofTypeJWT, compact)
+	_, err = requestSDJWTWithProof(f, oid4vci.ProofTypeJWT, compact)
 	assertIssuerError(t, err, issuer.ErrorInvalidProof)
 }
 
@@ -494,7 +495,7 @@ func TestRequestCredential_RejectsTamperedSignature(t *testing.T) {
 	f := newCredentialEndpointFixture(t)
 	nonce := f.issueNonce(t)
 	proof := buildJWTProof(t, testP256Key(t), testIssuer, nonce)
-	_, err := requestSDJWTWithProof(f, issuer.ProofTypeJWT, tamperJWTSignature(t, proof))
+	_, err := requestSDJWTWithProof(f, oid4vci.ProofTypeJWT, tamperJWTSignature(t, proof))
 	assertIssuerError(t, err, issuer.ErrorInvalidProof)
 }
 
@@ -505,7 +506,7 @@ func TestRequestCredential_RejectsAttestationFromUntrustedSigner(t *testing.T) {
 	nonce := f.issueNonce(t)
 	att := buildAttestation(t, untrustedSigner, nonce, &walletKey.PublicKey)
 
-	_, err := requestSDJWTWithProof(f, issuer.ProofTypeAttestation, att)
+	_, err := requestSDJWTWithProof(f, oid4vci.ProofTypeAttestation, att)
 	assertIssuerError(t, err, issuer.ErrorInvalidProof)
 }
 
@@ -549,7 +550,7 @@ func TestRequestCredential_RejectsUnsupportedFormat(t *testing.T) {
 			"UnsupportedFormat": {
 				Format: "some_unknown_format", CryptographicBindingMethodsSupported: []string{"jwk"},
 				ProofTypesSupported: map[string]issuer.ProofTypeConfiguration{
-					issuer.ProofTypeJWT: {ProofSigningAlgValuesSupported: []string{"ES256"}},
+					oid4vci.ProofTypeJWT: {ProofSigningAlgValuesSupported: []string{"ES256"}},
 				},
 			},
 		},
@@ -565,7 +566,7 @@ func TestRequestCredential_RejectsUnsupportedFormat(t *testing.T) {
 	proof := buildJWTProof(t, testP256Key(t), testIssuer, nonce)
 	_, err = iss.RequestCredential(context.Background(), issuer.AuthorizedRequest{}, issuer.CredentialRequest{
 		CredentialConfigurationID: "UnsupportedFormat",
-		Proofs:                    map[string][]string{issuer.ProofTypeJWT: {proof}},
+		Proofs:                    map[string][]string{oid4vci.ProofTypeJWT: {proof}},
 		SDJWTClaims:               testSDJWTClaims(),
 	})
 	if err == nil {
@@ -582,7 +583,7 @@ func TestRequestCredential_RejectsX5CHeader(t *testing.T) {
 	if err != nil {
 		t.Fatalf("jose.Sign: %v", err)
 	}
-	_, err = requestSDJWTWithProof(f, issuer.ProofTypeJWT, compact)
+	_, err = requestSDJWTWithProof(f, oid4vci.ProofTypeJWT, compact)
 	assertIssuerError(t, err, issuer.ErrorInvalidProof)
 }
 
@@ -595,7 +596,7 @@ func TestRequestCredential_RejectsMissingJWKHeader(t *testing.T) {
 	if err != nil {
 		t.Fatalf("jose.Sign: %v", err)
 	}
-	_, err = requestSDJWTWithProof(f, issuer.ProofTypeJWT, compact)
+	_, err = requestSDJWTWithProof(f, oid4vci.ProofTypeJWT, compact)
 	assertIssuerError(t, err, issuer.ErrorInvalidProof)
 }
 
@@ -607,13 +608,13 @@ func TestRequestCredential_RejectsExpiredNonce(t *testing.T) {
 		t.Fatalf("Issue nonce: %v", err)
 	}
 	proof := buildJWTProof(t, testP256Key(t), testIssuer, "expiring-nonce")
-	_, err := requestSDJWTWithProof(f, issuer.ProofTypeJWT, proof)
+	_, err := requestSDJWTWithProof(f, oid4vci.ProofTypeJWT, proof)
 	assertIssuerError(t, err, issuer.ErrorInvalidNonce)
 }
 
 func TestRequestCredential_RejectsEmptyAttestationArray(t *testing.T) {
 	f := newCredentialEndpointFixture(t)
-	_, err := requestSDJWTWithProof(f, issuer.ProofTypeAttestation)
+	_, err := requestSDJWTWithProof(f, oid4vci.ProofTypeAttestation)
 	assertIssuerError(t, err, issuer.ErrorInvalidProof)
 }
 
@@ -623,7 +624,7 @@ func TestRequestCredential_RejectsAttestationProofTypeWhenUnconfigured(t *testin
 	att := buildAttestation(t, f.attestationSigner, nonce, &testP256Key(t).PublicKey)
 	_, err := f.iss.RequestCredential(context.Background(), issuer.AuthorizedRequest{}, issuer.CredentialRequest{
 		CredentialConfigurationID: testMdocConfigID, // this config only supports the jwt proof type
-		Proofs:                    map[string][]string{issuer.ProofTypeAttestation: {att}},
+		Proofs:                    map[string][]string{oid4vci.ProofTypeAttestation: {att}},
 		MdocClaims:                testMdocClaims(t),
 	})
 	assertIssuerError(t, err, issuer.ErrorInvalidProof)
@@ -668,7 +669,7 @@ func TestRequestCredential_RejectsMissingClaimsForFormat(t *testing.T) {
 	proof := buildJWTProof(t, testP256Key(t), testIssuer, nonce)
 	_, err := f.iss.RequestCredential(context.Background(), issuer.AuthorizedRequest{Scopes: []string{"identity_credential"}}, issuer.CredentialRequest{
 		CredentialConfigurationID: testSDJWTConfigID,
-		Proofs:                    map[string][]string{issuer.ProofTypeJWT: {proof}},
+		Proofs:                    map[string][]string{oid4vci.ProofTypeJWT: {proof}},
 	})
 	if err == nil {
 		t.Errorf("RequestCredential accepted a request with no SDJWTClaims")
@@ -679,7 +680,7 @@ func TestRequestCredential_RejectsMissingClaimsForFormat(t *testing.T) {
 // testSDJWTConfigID carrying a single proof value under proofType —
 // the shared shape every "malformed proof" test below builds on, only
 // varying in how proof itself was constructed.
-func requestSDJWTWithProof(f credentialEndpointFixture, proofType string, proofs ...string) (issuer.CredentialResponse, error) {
+func requestSDJWTWithProof(f credentialEndpointFixture, proofType string, proofs ...string) (oid4vci.CredentialResponse, error) {
 	return f.iss.RequestCredential(context.Background(), issuer.AuthorizedRequest{Scopes: []string{"identity_credential"}}, issuer.CredentialRequest{
 		CredentialConfigurationID: testSDJWTConfigID,
 		Proofs:                    map[string][]string{proofType: proofs},
