@@ -137,36 +137,9 @@ func (p Path) Select(root any) ([]any, error) {
 	}
 	selection := []any{root}
 	for _, elem := range p {
-		var next []any
-		switch {
-		case elem.IsKey():
-			for _, v := range selection {
-				obj, ok := v.(map[string]any)
-				if !ok {
-					return nil, fmt.Errorf("dcql: path: select %q: not an object", elem.Key())
-				}
-				if child, present := obj[elem.Key()]; present {
-					next = append(next, child)
-				}
-			}
-		case elem.IsWildcard():
-			for _, v := range selection {
-				arr, ok := v.([]any)
-				if !ok {
-					return nil, fmt.Errorf("dcql: path: select wildcard: not an array")
-				}
-				next = append(next, arr...)
-			}
-		case elem.IsIndex():
-			for _, v := range selection {
-				arr, ok := v.([]any)
-				if !ok {
-					return nil, fmt.Errorf("dcql: path: select index %d: not an array", elem.Index())
-				}
-				if elem.Index() < len(arr) {
-					next = append(next, arr[elem.Index()])
-				}
-			}
+		next, err := elem.selectFrom(selection)
+		if err != nil {
+			return nil, err
 		}
 		if len(next) == 0 {
 			return nil, fmt.Errorf("dcql: path: selection is empty")
@@ -174,6 +147,62 @@ func (p Path) Select(root any) ([]any, error) {
 		selection = next
 	}
 	return selection, nil
+}
+
+// selectFrom applies elem to every element of selection per §7.1.1,
+// returning the union of matches. A key or index absent from a given
+// element is silently dropped from the result (not an error); an
+// element with the wrong shape for elem (not an object for a key, not
+// an array for a Wildcard/index) is a hard processing error.
+func (elem PathElement) selectFrom(selection []any) ([]any, error) {
+	switch {
+	case elem.IsKey():
+		return selectKey(elem.Key(), selection)
+	case elem.IsWildcard():
+		return selectWildcard(selection)
+	default:
+		return selectIndex(elem.Index(), selection)
+	}
+}
+
+func selectKey(key string, selection []any) ([]any, error) {
+	var next []any
+	for _, v := range selection {
+		obj, ok := v.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("dcql: path: select %q: not an object", key)
+		}
+		if child, present := obj[key]; present {
+			next = append(next, child)
+		}
+	}
+	return next, nil
+}
+
+func selectWildcard(selection []any) ([]any, error) {
+	var next []any
+	for _, v := range selection {
+		arr, ok := v.([]any)
+		if !ok {
+			return nil, fmt.Errorf("dcql: path: select wildcard: not an array")
+		}
+		next = append(next, arr...)
+	}
+	return next, nil
+}
+
+func selectIndex(index int, selection []any) ([]any, error) {
+	var next []any
+	for _, v := range selection {
+		arr, ok := v.([]any)
+		if !ok {
+			return nil, fmt.Errorf("dcql: path: select index %d: not an array", index)
+		}
+		if index < len(arr) {
+			next = append(next, arr[index])
+		}
+	}
+	return next, nil
 }
 
 // MdocNamespaceAndElement reports p's own two mdoc-specific

@@ -145,185 +145,95 @@ func TestVerifyResponse(t *testing.T) {
 	}
 }
 
-func TestVerifyResponseRejectsWrongNonce(t *testing.T) {
-	cfg, deps := validConfig(t)
-	v, err := verifier.New(cfg, deps)
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	query := testIdentityQuery(t)
-	built, err := v.BuildAuthorizationRequest(verifier.BuildAuthorizationRequestRequest{Query: query})
-	if err != nil {
-		t.Fatalf("BuildAuthorizationRequest: %v", err)
-	}
-	fixture := newSDJWTVCPresentation(t, v.ClientID(), "wrong-nonce")
-
-	_, err = v.VerifyResponse(context.Background(), verifier.VerifyResponseRequest{
-		Query:         query,
-		Response:      verifier.ParsedResponse{VPToken: map[string][]string{"identity_credential": {fixture.compact}}},
-		ExpectedNonce: built.Nonce,
-		IssuerKeys:    fixedSDJWTVCIssuerKeyResolver{pub: &fixture.issuerKey.PublicKey, alg: jose.ES256},
-	})
-	if err == nil {
-		t.Fatalf("VerifyResponse = nil error, want error")
+// rejectCaseSDJWTVC builds a VerifyResponseRequest presenting one real
+// SD-JWT VC (bound to presAud/presNonce) against query, expecting
+// expectedNonce — the shared shape most of TestVerifyResponseRejects's
+// own cases need, varying only which of those four diverge from a
+// valid request.
+func rejectCaseSDJWTVC(t *testing.T, query dcql.Query, presAud, presNonce, expectedNonce string) verifier.VerifyResponseRequest {
+	t.Helper()
+	fixture := newSDJWTVCPresentation(t, presAud, presNonce)
+	return verifier.VerifyResponseRequest{
+		Query: query, ExpectedNonce: expectedNonce,
+		Response:   verifier.ParsedResponse{VPToken: map[string][]string{"identity_credential": {fixture.compact}}},
+		IssuerKeys: fixedSDJWTVCIssuerKeyResolver{pub: &fixture.issuerKey.PublicKey, alg: jose.ES256},
 	}
 }
 
-func TestVerifyResponseRejectsWrongAudience(t *testing.T) {
-	cfg, deps := validConfig(t)
-	v, err := verifier.New(cfg, deps)
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	query := testIdentityQuery(t)
-	built, err := v.BuildAuthorizationRequest(verifier.BuildAuthorizationRequestRequest{Query: query})
-	if err != nil {
-		t.Fatalf("BuildAuthorizationRequest: %v", err)
-	}
-	fixture := newSDJWTVCPresentation(t, "x509_hash:not-this-verifier", built.Nonce)
-
-	_, err = v.VerifyResponse(context.Background(), verifier.VerifyResponseRequest{
-		Query:         query,
-		Response:      verifier.ParsedResponse{VPToken: map[string][]string{"identity_credential": {fixture.compact}}},
-		ExpectedNonce: built.Nonce,
-		IssuerKeys:    fixedSDJWTVCIssuerKeyResolver{pub: &fixture.issuerKey.PublicKey, alg: jose.ES256},
-	})
-	if err == nil {
-		t.Fatalf("VerifyResponse = nil error, want error")
-	}
-}
-
-func TestVerifyResponseRejectsMissingRequestedClaim(t *testing.T) {
-	cfg, deps := validConfig(t)
-	v, err := verifier.New(cfg, deps)
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	meta, err := dcql.NewSDJWTVCMeta(dcql.SDJWTVCMeta{VCTValues: []string{testVCT}})
-	if err != nil {
-		t.Fatalf("NewSDJWTVCMeta: %v", err)
-	}
-	query := dcql.Query{Credentials: []dcql.CredentialQuery{{
-		ID: "identity_credential", Format: sdjwtvc.CredentialFormat, Meta: meta,
-		Claims: []dcql.ClaimsQuery{{Path: dcql.Path{dcql.PathKey("no_such_claim")}}},
-	}}}
-	built, err := v.BuildAuthorizationRequest(verifier.BuildAuthorizationRequestRequest{Query: query})
-	if err != nil {
-		t.Fatalf("BuildAuthorizationRequest: %v", err)
-	}
-	fixture := newSDJWTVCPresentation(t, v.ClientID(), built.Nonce)
-
-	_, err = v.VerifyResponse(context.Background(), verifier.VerifyResponseRequest{
-		Query:         query,
-		Response:      verifier.ParsedResponse{VPToken: map[string][]string{"identity_credential": {fixture.compact}}},
-		ExpectedNonce: built.Nonce,
-		IssuerKeys:    fixedSDJWTVCIssuerKeyResolver{pub: &fixture.issuerKey.PublicKey, alg: jose.ES256},
-	})
-	if err == nil {
-		t.Fatalf("VerifyResponse = nil error, want error")
-	}
-}
-
-func TestVerifyResponseRejectsWrongVCT(t *testing.T) {
-	cfg, deps := validConfig(t)
-	v, err := verifier.New(cfg, deps)
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	meta, err := dcql.NewSDJWTVCMeta(dcql.SDJWTVCMeta{VCTValues: []string{"https://credentials.example.com/some_other_credential"}})
-	if err != nil {
-		t.Fatalf("NewSDJWTVCMeta: %v", err)
-	}
-	query := dcql.Query{Credentials: []dcql.CredentialQuery{{
-		ID: "identity_credential", Format: sdjwtvc.CredentialFormat, Meta: meta,
-	}}}
-	built, err := v.BuildAuthorizationRequest(verifier.BuildAuthorizationRequestRequest{Query: query})
-	if err != nil {
-		t.Fatalf("BuildAuthorizationRequest: %v", err)
-	}
-	fixture := newSDJWTVCPresentation(t, v.ClientID(), built.Nonce)
-
-	_, err = v.VerifyResponse(context.Background(), verifier.VerifyResponseRequest{
-		Query:         query,
-		Response:      verifier.ParsedResponse{VPToken: map[string][]string{"identity_credential": {fixture.compact}}},
-		ExpectedNonce: built.Nonce,
-		IssuerKeys:    fixedSDJWTVCIssuerKeyResolver{pub: &fixture.issuerKey.PublicKey, alg: jose.ES256},
-	})
-	if err == nil {
-		t.Fatalf("VerifyResponse = nil error, want error")
-	}
-}
-
-func TestVerifyResponseRejectsMissingPresentation(t *testing.T) {
-	cfg, deps := validConfig(t)
-	v, err := verifier.New(cfg, deps)
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	query := testIdentityQuery(t)
-	built, err := v.BuildAuthorizationRequest(verifier.BuildAuthorizationRequestRequest{Query: query})
-	if err != nil {
-		t.Fatalf("BuildAuthorizationRequest: %v", err)
-	}
-
-	_, err = v.VerifyResponse(context.Background(), verifier.VerifyResponseRequest{
-		Query:         query,
-		Response:      verifier.ParsedResponse{VPToken: map[string][]string{}},
-		ExpectedNonce: built.Nonce,
-	})
-	if err == nil {
-		t.Fatalf("VerifyResponse = nil error, want error")
-	}
-}
-
-func TestVerifyResponseRejectsUnsupportedFormat(t *testing.T) {
-	cfg, deps := validConfig(t)
-	v, err := verifier.New(cfg, deps)
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	meta, err := dcql.NewMdocMeta(dcql.MdocMeta{DoctypeValue: "org.iso.18013.5.1.mDL"})
-	if err != nil {
-		t.Fatalf("NewMdocMeta: %v", err)
-	}
-	query := dcql.Query{Credentials: []dcql.CredentialQuery{{ID: "mdl", Format: "mso_mdoc", Meta: meta}}}
-	built, err := v.BuildAuthorizationRequest(verifier.BuildAuthorizationRequestRequest{Query: query})
-	if err != nil {
-		t.Fatalf("BuildAuthorizationRequest: %v", err)
-	}
-
-	_, err = v.VerifyResponse(context.Background(), verifier.VerifyResponseRequest{
-		Query:         query,
-		Response:      verifier.ParsedResponse{VPToken: map[string][]string{"mdl": {"base64url-device-response"}}},
-		ExpectedNonce: built.Nonce,
-	})
-	if err == nil {
-		t.Fatalf("VerifyResponse = nil error, want error")
-	}
-}
-
-func TestVerifyResponseRejectsMultiplePresentations(t *testing.T) {
-	cfg, deps := validConfig(t)
-	v, err := verifier.New(cfg, deps)
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	query := testIdentityQuery(t)
-	built, err := v.BuildAuthorizationRequest(verifier.BuildAuthorizationRequestRequest{Query: query})
-	if err != nil {
-		t.Fatalf("BuildAuthorizationRequest: %v", err)
-	}
-	fixture := newSDJWTVCPresentation(t, v.ClientID(), built.Nonce)
-
-	_, err = v.VerifyResponse(context.Background(), verifier.VerifyResponseRequest{
-		Query: query,
-		Response: verifier.ParsedResponse{
-			VPToken: map[string][]string{"identity_credential": {fixture.compact, fixture.compact}},
+// TestVerifyResponseRejects table-drives every rejection path
+// VerifyResponse's own Phase 2a scope covers: a Holder Binding JWT
+// bound to the wrong nonce/audience, a Presentation missing a
+// requested claim or carrying the wrong vct, no Presentation at all
+// for a Credential Query, an unsupported Credential Format, and more
+// than one Presentation for a single-valued Credential Query.
+func TestVerifyResponseRejects(t *testing.T) {
+	cases := map[string]func(t *testing.T, v *verifier.Verifier, nonce string) verifier.VerifyResponseRequest{
+		"wrong nonce": func(t *testing.T, v *verifier.Verifier, nonce string) verifier.VerifyResponseRequest {
+			return rejectCaseSDJWTVC(t, testIdentityQuery(t), v.ClientID(), "wrong-nonce", nonce)
 		},
-		ExpectedNonce: built.Nonce,
-		IssuerKeys:    fixedSDJWTVCIssuerKeyResolver{pub: &fixture.issuerKey.PublicKey, alg: jose.ES256},
-	})
-	if err == nil {
-		t.Fatalf("VerifyResponse = nil error, want error")
+		"wrong audience": func(t *testing.T, v *verifier.Verifier, nonce string) verifier.VerifyResponseRequest {
+			return rejectCaseSDJWTVC(t, testIdentityQuery(t), "x509_hash:not-this-verifier", nonce, nonce)
+		},
+		"missing requested claim": func(t *testing.T, v *verifier.Verifier, nonce string) verifier.VerifyResponseRequest {
+			meta, err := dcql.NewSDJWTVCMeta(dcql.SDJWTVCMeta{VCTValues: []string{testVCT}})
+			if err != nil {
+				t.Fatalf("NewSDJWTVCMeta: %v", err)
+			}
+			query := dcql.Query{Credentials: []dcql.CredentialQuery{{
+				ID: "identity_credential", Format: sdjwtvc.CredentialFormat, Meta: meta,
+				Claims: []dcql.ClaimsQuery{{Path: dcql.Path{dcql.PathKey("no_such_claim")}}},
+			}}}
+			return rejectCaseSDJWTVC(t, query, v.ClientID(), nonce, nonce)
+		},
+		"wrong vct": func(t *testing.T, v *verifier.Verifier, nonce string) verifier.VerifyResponseRequest {
+			meta, err := dcql.NewSDJWTVCMeta(dcql.SDJWTVCMeta{VCTValues: []string{"https://credentials.example.com/some_other_credential"}})
+			if err != nil {
+				t.Fatalf("NewSDJWTVCMeta: %v", err)
+			}
+			query := dcql.Query{Credentials: []dcql.CredentialQuery{{ID: "identity_credential", Format: sdjwtvc.CredentialFormat, Meta: meta}}}
+			return rejectCaseSDJWTVC(t, query, v.ClientID(), nonce, nonce)
+		},
+		"missing presentation": func(t *testing.T, _ *verifier.Verifier, nonce string) verifier.VerifyResponseRequest {
+			return verifier.VerifyResponseRequest{
+				Query: testIdentityQuery(t), ExpectedNonce: nonce,
+				Response: verifier.ParsedResponse{VPToken: map[string][]string{}},
+			}
+		},
+		"unsupported format": func(t *testing.T, _ *verifier.Verifier, nonce string) verifier.VerifyResponseRequest {
+			meta, err := dcql.NewMdocMeta(dcql.MdocMeta{DoctypeValue: "org.iso.18013.5.1.mDL"})
+			if err != nil {
+				t.Fatalf("NewMdocMeta: %v", err)
+			}
+			return verifier.VerifyResponseRequest{
+				Query:         dcql.Query{Credentials: []dcql.CredentialQuery{{ID: "mdl", Format: "mso_mdoc", Meta: meta}}},
+				ExpectedNonce: nonce,
+				Response:      verifier.ParsedResponse{VPToken: map[string][]string{"mdl": {"base64url-device-response"}}},
+			}
+		},
+		"multiple presentations": func(t *testing.T, v *verifier.Verifier, nonce string) verifier.VerifyResponseRequest {
+			fixture := newSDJWTVCPresentation(t, v.ClientID(), nonce)
+			return verifier.VerifyResponseRequest{
+				Query: testIdentityQuery(t), ExpectedNonce: nonce,
+				Response:   verifier.ParsedResponse{VPToken: map[string][]string{"identity_credential": {fixture.compact, fixture.compact}}},
+				IssuerKeys: fixedSDJWTVCIssuerKeyResolver{pub: &fixture.issuerKey.PublicKey, alg: jose.ES256},
+			}
+		},
+	}
+	for name, setup := range cases {
+		t.Run(name, func(t *testing.T) {
+			cfg, deps := validConfig(t)
+			v, err := verifier.New(cfg, deps)
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+			built, err := v.BuildAuthorizationRequest(verifier.BuildAuthorizationRequestRequest{Query: testIdentityQuery(t)})
+			if err != nil {
+				t.Fatalf("BuildAuthorizationRequest: %v", err)
+			}
+			req := setup(t, v, built.Nonce)
+			if _, err := v.VerifyResponse(context.Background(), req); err == nil {
+				t.Fatalf("VerifyResponse(%s) = nil error, want error", name)
+			}
+		})
 	}
 }
