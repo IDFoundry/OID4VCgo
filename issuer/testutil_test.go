@@ -45,11 +45,48 @@ func (f *fakeNonceStore) Consume(_ context.Context, c issuer.NonceConsumption) (
 	return issuer.NonceRecord{ExpiresAt: exp}, nil
 }
 
+// fakeCredentialOfferStore is an in-memory issuer.CredentialOfferStore
+// for tests.
+type fakeCredentialOfferStore struct {
+	mu       sync.Mutex
+	records  map[string]issuer.CredentialOfferRecord
+	storeErr error
+	getErr   error
+}
+
+func newFakeCredentialOfferStore() *fakeCredentialOfferStore {
+	return &fakeCredentialOfferStore{records: make(map[string]issuer.CredentialOfferRecord)}
+}
+
+func (f *fakeCredentialOfferStore) Store(_ context.Context, record issuer.CredentialOfferRecord) error {
+	if f.storeErr != nil {
+		return f.storeErr
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.records[record.Reference] = record
+	return nil
+}
+
+func (f *fakeCredentialOfferStore) Get(_ context.Context, reference string) (issuer.CredentialOfferRecord, error) {
+	if f.getErr != nil {
+		return issuer.CredentialOfferRecord{}, f.getErr
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	record, ok := f.records[reference]
+	if !ok {
+		return issuer.CredentialOfferRecord{}, errCredentialOfferNotFound
+	}
+	return record, nil
+}
+
 type fakeErr string
 
 func (e fakeErr) Error() string { return string(e) }
 
 const errNonceNotFound = fakeErr("nonce not found or already consumed")
+const errCredentialOfferNotFound = fakeErr("credential offer not found")
 
 type fixedClock struct{ now time.Time }
 

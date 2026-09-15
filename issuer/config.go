@@ -40,6 +40,11 @@ type Limits struct {
 	// NonceLifetime bounds how long an issued c_nonce remains valid.
 	// Required only when Endpoints.Nonce is set.
 	NonceLifetime time.Duration
+
+	// CredentialOfferLifetime bounds how long a by-reference Credential
+	// Offer (§4.1.3) remains fetchable. Required only when
+	// CredentialOfferEndpoint is set.
+	CredentialOfferLifetime time.Duration
 }
 
 // Config is this issuer's immutable configuration.
@@ -56,6 +61,18 @@ type Config struct {
 	// keyed by its Credential Configuration ID. Required — Metadata has
 	// no meaningful default for this.
 	CredentialConfigurationsSupported map[string]CredentialConfiguration
+
+	// CredentialOfferEndpoint is the base URL this issuer hosts
+	// by-reference Credential Offers under (§4.1.3): GetCredentialOffer's
+	// caller serves each offer at this URL plus "/" plus the reference
+	// CreateCredentialOffer returned. Unlike Endpoints, this is never
+	// advertised in Credential Issuer Metadata — §12.2.4 defines no such
+	// member, since the Wallet learns a specific offer's URL only from
+	// the credential_offer_uri value itself, never from discovery. Zero
+	// means this issuer never issues Credential Offers by reference;
+	// CreateCredentialOffer then only supports embedding the offer by
+	// value.
+	CredentialOfferEndpoint fapi.URL
 }
 
 // Clock supplies the current time — a plain function value satisfies
@@ -160,6 +177,10 @@ type Dependencies struct {
 	// Config.CredentialConfigurationsSupported entry supports the
 	// "attestation" proof type.
 	AttestationVerifier AttestationVerifier
+
+	// CredentialOffers persists Credential Offers issued by reference
+	// (§4.1.3). Required when Config.CredentialOfferEndpoint is set.
+	CredentialOffers CredentialOfferStore
 }
 
 // Issuer is this Credential Issuer's own role implementation — the
@@ -193,6 +214,16 @@ func New(cfg Config, deps Dependencies) (*Issuer, error) {
 		}
 		if deps.Nonces == nil {
 			return nil, fmt.Errorf("issuer: dependencies: nonces is required when endpoints.nonce is set")
+		}
+	}
+
+	credentialOfferEndpointEnabled := !cfg.CredentialOfferEndpoint.IsZero()
+	if credentialOfferEndpointEnabled {
+		if cfg.Limits.CredentialOfferLifetime <= 0 {
+			return nil, fmt.Errorf("issuer: config: limits.credential_offer_lifetime must be positive when credential_offer_endpoint is set")
+		}
+		if deps.CredentialOffers == nil {
+			return nil, fmt.Errorf("issuer: dependencies: credential_offers is required when credential_offer_endpoint is set")
 		}
 	}
 

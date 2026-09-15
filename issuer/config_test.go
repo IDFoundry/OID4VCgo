@@ -15,9 +15,10 @@ import (
 )
 
 const (
-	testIssuer             = "https://issuer.example.com"
-	testCredentialEndpoint = "https://issuer.example.com/credential"
-	testNonceEndpoint      = "https://issuer.example.com/nonce"
+	testIssuer                  = "https://issuer.example.com"
+	testCredentialEndpoint      = "https://issuer.example.com/credential"
+	testNonceEndpoint           = "https://issuer.example.com/nonce"
+	testCredentialOfferEndpoint = "https://issuer.example.com/credential-offer"
 )
 
 func mustIssuerURL(t *testing.T, raw string) fapi.URL {
@@ -61,8 +62,12 @@ func validConfig(t *testing.T) issuer.Config {
 			Credential: mustEndpointURL(t, testCredentialEndpoint),
 			Nonce:      mustEndpointURL(t, testNonceEndpoint),
 		},
-		Limits:                            issuer.Limits{NonceLifetime: time.Minute},
+		Limits: issuer.Limits{
+			NonceLifetime:           time.Minute,
+			CredentialOfferLifetime: time.Hour,
+		},
 		CredentialConfigurationsSupported: validCredentialConfigurations(),
+		CredentialOfferEndpoint:           mustEndpointURL(t, testCredentialOfferEndpoint),
 	}
 }
 
@@ -87,10 +92,11 @@ func testMdocSigner(t *testing.T) *issuer.MdocSigner {
 func validDependencies(t *testing.T) issuer.Dependencies {
 	t.Helper()
 	return issuer.Dependencies{
-		Nonces:      newFakeNonceStore(),
-		Clock:       issuer.ClockFunc(time.Now),
-		Random:      rand.Reader,
-		SDJWTSigner: testSDJWTSigner(t),
+		Nonces:           newFakeNonceStore(),
+		Clock:            issuer.ClockFunc(time.Now),
+		Random:           rand.Reader,
+		SDJWTSigner:      testSDJWTSigner(t),
+		CredentialOffers: newFakeCredentialOfferStore(),
 	}
 }
 
@@ -111,12 +117,24 @@ func TestNewAcceptsNonceEndpointDisabled(t *testing.T) {
 	}
 }
 
+func TestNewAcceptsCredentialOfferEndpointDisabled(t *testing.T) {
+	cfg := validConfig(t)
+	cfg.CredentialOfferEndpoint = fapi.URL{}
+	cfg.Limits.CredentialOfferLifetime = 0
+	deps := validDependencies(t)
+	deps.CredentialOffers = nil
+	if _, err := issuer.New(cfg, deps); err != nil {
+		t.Fatalf("New: %v", err)
+	}
+}
+
 func TestNewRejectsInvalidConfig(t *testing.T) {
 	cases := map[string]func(*issuer.Config){
-		"zero issuer":                       func(c *issuer.Config) { c.Issuer = fapi.URL{} },
-		"zero credential endpoint":          func(c *issuer.Config) { c.Endpoints.Credential = fapi.URL{} },
-		"empty credential configurations":   func(c *issuer.Config) { c.CredentialConfigurationsSupported = nil },
-		"zero nonce lifetime with endpoint": func(c *issuer.Config) { c.Limits.NonceLifetime = 0 },
+		"zero issuer":                                  func(c *issuer.Config) { c.Issuer = fapi.URL{} },
+		"zero credential endpoint":                     func(c *issuer.Config) { c.Endpoints.Credential = fapi.URL{} },
+		"empty credential configurations":              func(c *issuer.Config) { c.CredentialConfigurationsSupported = nil },
+		"zero nonce lifetime with endpoint":            func(c *issuer.Config) { c.Limits.NonceLifetime = 0 },
+		"zero credential offer lifetime with endpoint": func(c *issuer.Config) { c.Limits.CredentialOfferLifetime = 0 },
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
