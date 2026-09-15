@@ -18,6 +18,8 @@ import (
 	"github.com/idfoundry/oid4vcigo/wallet"
 )
 
+const testHTU = "https://issuer.example.com/token"
+
 // fakeReplayChecker is an in-memory dpop.ReplayChecker for tests.
 type fakeReplayChecker struct {
 	mu   sync.Mutex
@@ -69,6 +71,15 @@ func testWallet(t *testing.T, now time.Time) *wallet.Wallet {
 	return w
 }
 
+func mustJWK(t *testing.T, key *ecdsa.PrivateKey) jwk.JWK {
+	t.Helper()
+	k, err := jwk.Marshal(&key.PublicKey)
+	if err != nil {
+		t.Fatalf("jwk.Marshal: %v", err)
+	}
+	return k
+}
+
 // TestVerifyAcceptsWalletGeneratedProof is the real round trip: a
 // genuine DPoP proof from wallet.GenerateDPoPProof, verified by this
 // package's own Verify — proving the two independently-built halves
@@ -80,13 +91,13 @@ func TestVerifyAcceptsWalletGeneratedProof(t *testing.T) {
 	w := testWallet(t, now)
 	key := testP256Key(t)
 
-	proof, err := w.GenerateDPoPProof(key, "POST", "https://issuer.example.com/token", "", "")
+	proof, err := w.GenerateDPoPProof(key, "POST", testHTU, "", "")
 	if err != nil {
 		t.Fatalf("GenerateDPoPProof: %v", err)
 	}
 
 	verified, err := dpop.Verify(context.Background(), dpop.VerifyRequest{
-		Proof: proof, Method: "POST", URL: "https://issuer.example.com/token",
+		Proof: proof, Method: "POST", URL: testHTU,
 		Now: now, MaxProofAge: time.Minute, Replay: newFakeReplayChecker(),
 	})
 	if err != nil {
@@ -95,13 +106,11 @@ func TestVerifyAcceptsWalletGeneratedProof(t *testing.T) {
 	if verified.IssuedAt.Unix() != now.Unix() {
 		t.Errorf("IssuedAt = %v, want %v", verified.IssuedAt, now)
 	}
-	wantThumbprint, err := func() (string, error) {
-		wireJWK, err := jwk.Marshal(&key.PublicKey)
-		if err != nil {
-			return "", err
-		}
-		return wireJWK.Thumbprint()
-	}()
+	wireJWK, err := jwk.Marshal(&key.PublicKey)
+	if err != nil {
+		t.Fatalf("jwk.Marshal: %v", err)
+	}
+	wantThumbprint, err := wireJWK.Thumbprint()
 	if err != nil {
 		t.Fatalf("compute expected thumbprint: %v", err)
 	}
@@ -115,13 +124,13 @@ func TestVerifyAcceptsMatchingNonce(t *testing.T) {
 	w := testWallet(t, now)
 	key := testP256Key(t)
 
-	proof, err := w.GenerateDPoPProof(key, "POST", "https://issuer.example.com/token", "server-nonce", "")
+	proof, err := w.GenerateDPoPProof(key, "POST", testHTU, "server-nonce", "")
 	if err != nil {
 		t.Fatalf("GenerateDPoPProof: %v", err)
 	}
 
 	verified, err := dpop.Verify(context.Background(), dpop.VerifyRequest{
-		Proof: proof, Method: "POST", URL: "https://issuer.example.com/token",
+		Proof: proof, Method: "POST", URL: testHTU,
 		Now: now, MaxProofAge: time.Minute, RequiredNonce: "server-nonce", Replay: newFakeReplayChecker(),
 	})
 	if err != nil {
@@ -143,88 +152,28 @@ func TestVerifyIgnoresQueryAndFragmentInURL(t *testing.T) {
 	// that already carries a query/fragment to confirm Verify itself
 	// also ignores them (RFC 9449 §4.3), not just that a well-behaved
 	// caller never sends one.
-	proof, err := w.GenerateDPoPProof(key, "POST", "https://issuer.example.com/token?a=b#frag", "", "")
+	proof, err := w.GenerateDPoPProof(key, "POST", testHTU+"?a=b#frag", "", "")
 	if err != nil {
 		t.Fatalf("GenerateDPoPProof: %v", err)
 	}
 
 	if _, err := dpop.Verify(context.Background(), dpop.VerifyRequest{
-		Proof: proof, Method: "POST", URL: "https://issuer.example.com/token",
+		Proof: proof, Method: "POST", URL: testHTU,
 		Now: now, MaxProofAge: time.Minute, Replay: newFakeReplayChecker(),
 	}); err != nil {
 		t.Fatalf("Verify: %v", err)
 	}
 }
 
-func TestVerifyRejectsMethodMismatch(t *testing.T) {
-	now := time.Unix(1_700_000_000, 0)
-	w := testWallet(t, now)
-	proof, err := w.GenerateDPoPProof(testP256Key(t), "POST", "https://issuer.example.com/token", "", "")
-	if err != nil {
-		t.Fatalf("GenerateDPoPProof: %v", err)
-	}
-	if _, err := dpop.Verify(context.Background(), dpop.VerifyRequest{
-		Proof: proof, Method: "GET", URL: "https://issuer.example.com/token",
-		Now: now, MaxProofAge: time.Minute, Replay: newFakeReplayChecker(),
-	}); err == nil {
-		t.Fatalf("Verify = nil error, want error")
-	}
-}
-
-func TestVerifyRejectsURLMismatch(t *testing.T) {
-	now := time.Unix(1_700_000_000, 0)
-	w := testWallet(t, now)
-	proof, err := w.GenerateDPoPProof(testP256Key(t), "POST", "https://issuer.example.com/token", "", "")
-	if err != nil {
-		t.Fatalf("GenerateDPoPProof: %v", err)
-	}
-	if _, err := dpop.Verify(context.Background(), dpop.VerifyRequest{
-		Proof: proof, Method: "POST", URL: "https://issuer.example.com/other",
-		Now: now, MaxProofAge: time.Minute, Replay: newFakeReplayChecker(),
-	}); err == nil {
-		t.Fatalf("Verify = nil error, want error")
-	}
-}
-
-func TestVerifyRejectsExpiredProof(t *testing.T) {
-	now := time.Unix(1_700_000_000, 0)
-	w := testWallet(t, now)
-	proof, err := w.GenerateDPoPProof(testP256Key(t), "POST", "https://issuer.example.com/token", "", "")
-	if err != nil {
-		t.Fatalf("GenerateDPoPProof: %v", err)
-	}
-	if _, err := dpop.Verify(context.Background(), dpop.VerifyRequest{
-		Proof: proof, Method: "POST", URL: "https://issuer.example.com/token",
-		Now: now.Add(2 * time.Minute), MaxProofAge: time.Minute, Replay: newFakeReplayChecker(),
-	}); err == nil {
-		t.Fatalf("Verify = nil error, want error")
-	}
-}
-
-func TestVerifyRejectsFutureIAT(t *testing.T) {
-	now := time.Unix(1_700_000_000, 0)
-	w := testWallet(t, now)
-	proof, err := w.GenerateDPoPProof(testP256Key(t), "POST", "https://issuer.example.com/token", "", "")
-	if err != nil {
-		t.Fatalf("GenerateDPoPProof: %v", err)
-	}
-	if _, err := dpop.Verify(context.Background(), dpop.VerifyRequest{
-		Proof: proof, Method: "POST", URL: "https://issuer.example.com/token",
-		Now: now.Add(-time.Hour), MaxProofAge: time.Minute, Replay: newFakeReplayChecker(),
-	}); err == nil {
-		t.Fatalf("Verify = nil error, want error")
-	}
-}
-
 func TestVerifyAllowsClockSkew(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	w := testWallet(t, now)
-	proof, err := w.GenerateDPoPProof(testP256Key(t), "POST", "https://issuer.example.com/token", "", "")
+	proof, err := w.GenerateDPoPProof(testP256Key(t), "POST", testHTU, "", "")
 	if err != nil {
 		t.Fatalf("GenerateDPoPProof: %v", err)
 	}
 	if _, err := dpop.Verify(context.Background(), dpop.VerifyRequest{
-		Proof: proof, Method: "POST", URL: "https://issuer.example.com/token",
+		Proof: proof, Method: "POST", URL: testHTU,
 		Now: now.Add(-10 * time.Second), MaxProofAge: time.Minute, MaxClockSkew: 30 * time.Second,
 		Replay: newFakeReplayChecker(),
 	}); err != nil {
@@ -232,46 +181,16 @@ func TestVerifyAllowsClockSkew(t *testing.T) {
 	}
 }
 
-func TestVerifyRejectsNonceMismatch(t *testing.T) {
-	now := time.Unix(1_700_000_000, 0)
-	w := testWallet(t, now)
-	proof, err := w.GenerateDPoPProof(testP256Key(t), "POST", "https://issuer.example.com/token", "wrong-nonce", "")
-	if err != nil {
-		t.Fatalf("GenerateDPoPProof: %v", err)
-	}
-	if _, err := dpop.Verify(context.Background(), dpop.VerifyRequest{
-		Proof: proof, Method: "POST", URL: "https://issuer.example.com/token",
-		Now: now, MaxProofAge: time.Minute, RequiredNonce: "expected-nonce", Replay: newFakeReplayChecker(),
-	}); err == nil {
-		t.Fatalf("Verify = nil error, want error")
-	}
-}
-
-func TestVerifyRejectsMissingNonceWhenRequired(t *testing.T) {
-	now := time.Unix(1_700_000_000, 0)
-	w := testWallet(t, now)
-	proof, err := w.GenerateDPoPProof(testP256Key(t), "POST", "https://issuer.example.com/token", "", "")
-	if err != nil {
-		t.Fatalf("GenerateDPoPProof: %v", err)
-	}
-	if _, err := dpop.Verify(context.Background(), dpop.VerifyRequest{
-		Proof: proof, Method: "POST", URL: "https://issuer.example.com/token",
-		Now: now, MaxProofAge: time.Minute, RequiredNonce: "expected-nonce", Replay: newFakeReplayChecker(),
-	}); err == nil {
-		t.Fatalf("Verify = nil error, want error")
-	}
-}
-
 func TestVerifyRejectsReplayedJTI(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	w := testWallet(t, now)
-	proof, err := w.GenerateDPoPProof(testP256Key(t), "POST", "https://issuer.example.com/token", "", "")
+	proof, err := w.GenerateDPoPProof(testP256Key(t), "POST", testHTU, "", "")
 	if err != nil {
 		t.Fatalf("GenerateDPoPProof: %v", err)
 	}
 	replay := newFakeReplayChecker()
 	req := dpop.VerifyRequest{
-		Proof: proof, Method: "POST", URL: "https://issuer.example.com/token",
+		Proof: proof, Method: "POST", URL: testHTU,
 		Now: now, MaxProofAge: time.Minute, Replay: replay,
 	}
 	if _, err := dpop.Verify(context.Background(), req); err != nil {
@@ -279,22 +198,6 @@ func TestVerifyRejectsReplayedJTI(t *testing.T) {
 	}
 	if _, err := dpop.Verify(context.Background(), req); err == nil {
 		t.Fatalf("second Verify (same jti) = nil error, want error")
-	}
-}
-
-func TestVerifyRejectsTamperedSignature(t *testing.T) {
-	now := time.Unix(1_700_000_000, 0)
-	w := testWallet(t, now)
-	proof, err := w.GenerateDPoPProof(testP256Key(t), "POST", "https://issuer.example.com/token", "", "")
-	if err != nil {
-		t.Fatalf("GenerateDPoPProof: %v", err)
-	}
-	tampered := tamperLastChar(proof)
-	if _, err := dpop.Verify(context.Background(), dpop.VerifyRequest{
-		Proof: tampered, Method: "POST", URL: "https://issuer.example.com/token",
-		Now: now, MaxProofAge: time.Minute, Replay: newFakeReplayChecker(),
-	}); err == nil {
-		t.Fatalf("Verify = nil error, want error")
 	}
 }
 
@@ -314,79 +217,119 @@ func tamperLastChar(proof string) string {
 	return string(r)
 }
 
-func TestVerifyRejectsWrongTyp(t *testing.T) {
-	now := time.Unix(1_700_000_000, 0)
-	key := testP256Key(t)
-	// Sign a proof-shaped JWT directly with the wrong typ, bypassing
-	// wallet.GenerateDPoPProof (which always sets it correctly) to
-	// exercise this rejection path.
-	proof, err := jose.Sign(jose.ES256, key, map[string]any{
-		"typ": "wrong+jwt",
-		"jwk": mustJWK(t, key),
-	}, []byte(`{"jti":"j1","htm":"POST","htu":"https://issuer.example.com/token","iat":1700000000}`))
-	if err != nil {
-		t.Fatalf("jose.Sign: %v", err)
-	}
-	if _, err := dpop.Verify(context.Background(), dpop.VerifyRequest{
-		Proof: proof, Method: "POST", URL: "https://issuer.example.com/token",
-		Now: now, MaxProofAge: time.Minute, Replay: newFakeReplayChecker(),
-	}); err == nil {
-		t.Fatalf("Verify = nil error, want error")
-	}
-}
-
-func TestVerifyRejectsMissingJWKHeader(t *testing.T) {
-	now := time.Unix(1_700_000_000, 0)
-	key := testP256Key(t)
-	proof, err := jose.Sign(jose.ES256, key, map[string]any{"typ": "dpop+jwt"},
-		[]byte(`{"jti":"j1","htm":"POST","htu":"https://issuer.example.com/token","iat":1700000000}`))
-	if err != nil {
-		t.Fatalf("jose.Sign: %v", err)
-	}
-	if _, err := dpop.Verify(context.Background(), dpop.VerifyRequest{
-		Proof: proof, Method: "POST", URL: "https://issuer.example.com/token",
-		Now: now, MaxProofAge: time.Minute, Replay: newFakeReplayChecker(),
-	}); err == nil {
-		t.Fatalf("Verify = nil error, want error")
-	}
-}
-
-func TestVerifyRejectsMissingJTI(t *testing.T) {
-	now := time.Unix(1_700_000_000, 0)
-	key := testP256Key(t)
-	proof, err := jose.Sign(jose.ES256, key, map[string]any{"typ": "dpop+jwt", "jwk": mustJWK(t, key)},
-		[]byte(`{"htm":"POST","htu":"https://issuer.example.com/token","iat":1700000000}`))
-	if err != nil {
-		t.Fatalf("jose.Sign: %v", err)
-	}
-	if _, err := dpop.Verify(context.Background(), dpop.VerifyRequest{
-		Proof: proof, Method: "POST", URL: "https://issuer.example.com/token",
-		Now: now, MaxProofAge: time.Minute, Replay: newFakeReplayChecker(),
-	}); err == nil {
-		t.Fatalf("Verify = nil error, want error")
-	}
-}
-
-func mustJWK(t *testing.T, key *ecdsa.PrivateKey) jwk.JWK {
-	t.Helper()
-	k, err := jwk.Marshal(&key.PublicKey)
-	if err != nil {
-		t.Fatalf("jwk.Marshal: %v", err)
-	}
-	return k
-}
-
-func TestVerifyRequiresReplayChecker(t *testing.T) {
+// TestVerifyRejects table-drives every rejection Verify itself detects
+// from an otherwise-valid request/proof pair — each case starts from a
+// known-good VerifyRequest and mutates exactly one thing about it.
+func TestVerifyRejects(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	w := testWallet(t, now)
-	proof, err := w.GenerateDPoPProof(testP256Key(t), "POST", "https://issuer.example.com/token", "", "")
+	key := testP256Key(t)
+	validProof, err := w.GenerateDPoPProof(key, "POST", testHTU, "", "")
 	if err != nil {
 		t.Fatalf("GenerateDPoPProof: %v", err)
 	}
-	if _, err := dpop.Verify(context.Background(), dpop.VerifyRequest{
-		Proof: proof, Method: "POST", URL: "https://issuer.example.com/token",
-		Now: now, MaxProofAge: time.Minute,
-	}); err == nil {
-		t.Fatalf("Verify = nil error, want error (replay is required)")
+	nonceProof, err := w.GenerateDPoPProof(key, "POST", testHTU, "wrong-nonce", "")
+	if err != nil {
+		t.Fatalf("GenerateDPoPProof: %v", err)
+	}
+
+	base := func() dpop.VerifyRequest {
+		return dpop.VerifyRequest{
+			Proof: validProof, Method: "POST", URL: testHTU,
+			Now: now, MaxProofAge: time.Minute, Replay: newFakeReplayChecker(),
+		}
+	}
+
+	cases := map[string]func() dpop.VerifyRequest{
+		"method mismatch": func() dpop.VerifyRequest {
+			r := base()
+			r.Method = "GET"
+			return r
+		},
+		"url mismatch": func() dpop.VerifyRequest {
+			r := base()
+			r.URL = "https://issuer.example.com/other"
+			return r
+		},
+		"expired": func() dpop.VerifyRequest {
+			r := base()
+			r.Now = now.Add(2 * time.Minute)
+			return r
+		},
+		"future iat": func() dpop.VerifyRequest {
+			r := base()
+			r.Now = now.Add(-time.Hour)
+			return r
+		},
+		"nonce mismatch": func() dpop.VerifyRequest {
+			r := base()
+			r.Proof, r.RequiredNonce = nonceProof, "expected-nonce"
+			return r
+		},
+		"missing nonce when required": func() dpop.VerifyRequest {
+			r := base()
+			r.RequiredNonce = "expected-nonce"
+			return r
+		},
+		"tampered signature": func() dpop.VerifyRequest {
+			r := base()
+			r.Proof = tamperLastChar(validProof)
+			return r
+		},
+		"missing replay checker": func() dpop.VerifyRequest {
+			r := base()
+			r.Replay = nil
+			return r
+		},
+	}
+	for name, build := range cases {
+		t.Run(name, func(t *testing.T) {
+			if _, err := dpop.Verify(context.Background(), build()); err == nil {
+				t.Fatalf("Verify(%s) = nil error, want error", name)
+			}
+		})
+	}
+}
+
+// TestVerifyRejectsMalformedProof table-drives every rejection that
+// depends on the proof's own header/payload shape rather than the
+// VerifyRequest around it — these bypass wallet.GenerateDPoPProof
+// (which always builds a well-formed proof) and sign a
+// deliberately-malformed one directly via jose.Sign.
+func TestVerifyRejectsMalformedProof(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	key := testP256Key(t)
+	validPayload := []byte(`{"jti":"j1","htm":"POST","htu":"` + testHTU + `","iat":1700000000}`)
+
+	cases := map[string]struct {
+		header  map[string]any
+		payload []byte
+	}{
+		"wrong typ": {
+			header:  map[string]any{"typ": "wrong+jwt", "jwk": mustJWK(t, key)},
+			payload: validPayload,
+		},
+		"missing jwk": {
+			header:  map[string]any{"typ": "dpop+jwt"},
+			payload: validPayload,
+		},
+		"missing jti": {
+			header:  map[string]any{"typ": "dpop+jwt", "jwk": mustJWK(t, key)},
+			payload: []byte(`{"htm":"POST","htu":"` + testHTU + `","iat":1700000000}`),
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			proof, err := jose.Sign(jose.ES256, key, tc.header, tc.payload)
+			if err != nil {
+				t.Fatalf("jose.Sign: %v", err)
+			}
+			if _, err := dpop.Verify(context.Background(), dpop.VerifyRequest{
+				Proof: proof, Method: "POST", URL: testHTU,
+				Now: now, MaxProofAge: time.Minute, Replay: newFakeReplayChecker(),
+			}); err == nil {
+				t.Fatalf("Verify(%s) = nil error, want error", name)
+			}
+		})
 	}
 }
