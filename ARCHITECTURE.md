@@ -102,20 +102,23 @@ shape from the phase-by-phase plan, not a description of current code.
   (RFC 9052 §4.2) signer/verifier, the CBOR/COSE equivalent of
   `internal/jose`: same curated algorithm set (ES256, EdDSA), same
   `Sign`/`Verify`/`DecodeUnverified` shape, but with COSE's
-  protected/unprotected header split (`Headers{Alg,KID,X5Chain}`) instead
-  of JOSE's single header object. Untagged COSE_Sign1 only, matching
-  mdoc's own `IssuerAuth = COSE_Sign1` CDDL (not `COSE_Sign1_Tagged`), and
-  always-embedded payload only (COSE's detached-payload form isn't
-  needed). Built on `github.com/fxamacker/cbor/v2` for raw CBOR encoding
+  protected/unprotected header split (`Headers{Alg,KID,Typ,X5Chain}`)
+  instead of JOSE's single header object. Handles both the untagged form
+  (matching mdoc's own `IssuerAuth = COSE_Sign1` CDDL) via
+  `Sign`/`Verify`/`DecodeUnverified`, and `COSE_Sign1_Tagged`
+  (`#6.18(COSE_Sign1)`, which `statuslist`'s CWT-format Status List Token
+  uses) via `SignTagged`/`VerifyTagged`/`DecodeUnverifiedTagged`; always-
+  embedded payload only (COSE's detached-payload form isn't needed).
+  Built on `github.com/fxamacker/cbor/v2` for raw CBOR encoding
   — Go's stdlib has none, and this is the repo's first non-FAPIgo
   dependency; hand-rolling CBOR itself was ruled out as materially
   riskier than hand-rolling JWS was (CBOR's major-type/indefinite-length/
   canonical-encoding surface is much larger, and a subtle bug there would
   silently break every COSE signature). It knows nothing about
-  `IssuerSigned`, the MSO, or any other mdoc-specific structure — those
-  are `credential/mdoc`'s own CBOR struct definitions on top of
-  `fxamacker/cbor` directly, calling into this package only for the
-  `IssuerAuth` envelope. Its ECDSA DER/fixed-width R||S conversion (the
+  `IssuerSigned`, the MSO, `StatusList`, or any other caller-specific
+  structure — those are `credential/mdoc`'s and `statuslist`'s own CBOR
+  struct definitions on top of `fxamacker/cbor` directly, calling into
+  this package only for the COSE_Sign1 envelope. Its ECDSA DER/fixed-width R||S conversion (the
   one piece of logic identical to `internal/jose`'s own ES256 handling,
   since JWS and COSE made the same encoding choice) lives in
   `internal/ecdsafixed`, shared by both rather than duplicated.
@@ -134,21 +137,34 @@ shape from the phase-by-phase plan, not a description of current code.
   values that worked example publishes, not just round-trip checks.
   `IssuerSigned.Marshal`/`UnmarshalIssuerSigned` handle the actual
   §10.3.3 CBOR wire form. `DeviceSigned` (Holder proof-of-possession at
-  presentation time) and MSO revocation (`status`, §12.3.6, which needs
-  `statuslist`'s CWT encoding) are deliberately out of scope for this
-  slice — see the package doc comment.
+  presentation time) and MSO revocation (`status`, §12.3.6 — `statuslist`
+  now has the CWT encoding this needs, but mdoc doesn't consume it yet)
+  are deliberately out of scope for this slice — see the package doc
+  comment.
 - **`statuslist`** (done) — Token Status List (`draft-ietf-oauth-status-list-12`),
-  JWT/JOSE encoding only (§5.1, §6.2 — not the CWT/COSE encoding, which
-  belongs with `credential/mdoc`): bit-packing and ZLIB compression
-  (`Pack`/`Unpack`, `New`/`Decode`), Status List Token issuance/verification
-  (`IssueToken`/`VerifyToken`), the Referenced Token `status` claim
-  (`StatusListRef`/`ParseStatusClaim` — the same `map[string]any` shape
-  `credential/sdjwtvc`'s `Claims.Status` expects, and covered by a test
-  that wires the two packages together), and `Check`, the §8.3 steps 3-7
-  orchestration. Tests include draft-12 §4.1's own known-answer bit-packing
-  vectors and its Appendix's 2^20-entry compressed vector, not just
-  round-trip checks. Built on `internal/jose` for the same
-  `keys.KeyManager`-isn't-reusable reason `credential/sdjwtvc` is.
+  both encodings: bit-packing and ZLIB compression (`Pack`/`Unpack`,
+  `New`/`Decode`, shared by both), Status List Token issuance/verification
+  in JWT/JOSE (§5.1, §6.2 — `IssueToken`/`VerifyToken`, built on
+  `internal/jose` for the same `keys.KeyManager`-isn't-reusable reason
+  `credential/sdjwtvc` is) and CWT/COSE (§5.2, §6.3 —
+  `IssueTokenCWT`/`VerifyTokenCWT`, built on `internal/cose`'s new
+  `SignTagged`/`VerifyTagged` — the CWT profile's example is
+  COSE_Sign1_Tagged, not the untagged form `credential/mdoc`'s IssuerAuth
+  uses), the Referenced Token `status` claim for each
+  (`StatusListRef`/`ParseStatusClaim` and
+  `StatusListRef.CWTStatusClaim`/`ParseCWTStatusClaim` — the same shape
+  `credential/sdjwtvc`'s `Claims.Status` expects for JOSE, and covered by
+  a test that wires the two packages together), and `Check`/`CheckCWT`,
+  the §8.3 steps 3-7 orchestration for each. The CWT profile's ttl/
+  status_list/status claim keys (65534/65533/65535) are still "TBD
+  (requested assignment)" in the IANA CWT Claims Registry as of the
+  draft version this targets — see `cwt.go`'s own comment, and update if
+  IANA finalizes different values before this package is relied on in
+  production. Tests include draft-12 §4.1's own known-answer bit-packing
+  vectors, its Appendix's 2^20-entry compressed vector, and (for the CWT
+  profile) both of §5.2/§6.3's own non-normative COSE_Sign1_Tagged
+  examples decoded and checked field-by-field — not just round-trip
+  checks.
 - **`attestation`** (done) — OID4VCI Appendix D, Key Attestation: fully
   self-contained `Issue`/`Parse`/`Verify`, plus `VerifiedClaims.KeyAttested`
   implementing Appendix D.1's own MUST ("the Credential Issuer MUST

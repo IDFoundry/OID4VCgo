@@ -30,10 +30,11 @@ const (
 )
 
 // RFC 9052 §3.1 common header parameter labels, plus RFC 9360 §2's
-// x5chain — the only ones this package models.
+// x5chain and RFC 9596's typ — the only ones this package models.
 const (
 	labelAlg     = 1
 	labelKID     = 4
+	labelTyp     = 16
 	labelX5Chain = 33
 )
 
@@ -49,6 +50,13 @@ type Headers struct {
 	// KID is header label 4, or nil if absent.
 	KID []byte
 
+	// Typ is header label 16 (RFC 9596), a content-type string
+	// identifying the type of the signed payload — e.g.
+	// "application/statuslist+cwt". Empty if absent. RFC 9596 also
+	// permits an integer CoAP Content-Format ID; this package only
+	// models the text-string form.
+	Typ string
+
 	// X5Chain is header label 33 (RFC 9360 §2): the signer's
 	// certificate followed by any intermediates, leaf first. nil if
 	// absent. A single-certificate chain is encoded as a bare byte
@@ -63,6 +71,9 @@ func (h Headers) toMap() map[int]interface{} {
 	}
 	if h.KID != nil {
 		m[labelKID] = h.KID
+	}
+	if h.Typ != "" {
+		m[labelTyp] = h.Typ
 	}
 	switch len(h.X5Chain) {
 	case 0:
@@ -89,6 +100,13 @@ func headersFromMap(m map[int]interface{}) (Headers, error) {
 			return Headers{}, errors.New("cose: kid header is not a byte string")
 		}
 		h.KID = b
+	}
+	if v, ok := m[labelTyp]; ok {
+		s, ok := v.(string)
+		if !ok {
+			return Headers{}, errors.New("cose: typ header is not a text string")
+		}
+		h.Typ = s
 	}
 	if v, ok := m[labelX5Chain]; ok {
 		chain, err := x5ChainFromValue(v)
@@ -270,6 +288,56 @@ func decodeRaw(sign1 []byte) (rawSign1, error) {
 		return rawSign1{}, fmt.Errorf("cose: unmarshal COSE_Sign1: %w", err)
 	}
 	return raw, nil
+}
+
+// sign1Tag is COSE_Sign1_Tagged's own tag number (RFC 9052 §4.2:
+// COSE_Sign1_Tagged = #6.18(COSE_Sign1)).
+const sign1Tag = 18
+
+// SignTagged is Sign, but wraps the result as COSE_Sign1_Tagged
+// (#6.18(COSE_Sign1)) instead of a bare untagged array — for a context
+// that doesn't otherwise establish the bytes are a COSE_Sign1.
+func SignTagged(alg Alg, signer crypto.Signer, protected, unprotected Headers, payload, externalAAD []byte) ([]byte, error) {
+	untagged, err := Sign(alg, signer, protected, unprotected, payload, externalAAD)
+	if err != nil {
+		return nil, err
+	}
+	tagged, err := cbor.Marshal(cbor.RawTag{Number: sign1Tag, Content: cbor.RawMessage(untagged)})
+	if err != nil {
+		return nil, fmt.Errorf("cose: wrap tag %d: %w", sign1Tag, err)
+	}
+	return tagged, nil
+}
+
+// VerifyTagged is Verify, but expects sign1 to be COSE_Sign1_Tagged
+// (see SignTagged) rather than a bare untagged array.
+func VerifyTagged(alg Alg, pub crypto.PublicKey, sign1, externalAAD []byte) (protected, unprotected Headers, payload []byte, err error) {
+	untagged, err := stripSign1Tag(sign1)
+	if err != nil {
+		return Headers{}, Headers{}, nil, err
+	}
+	return Verify(alg, pub, untagged, externalAAD)
+}
+
+// DecodeUnverifiedTagged is DecodeUnverified, but for
+// COSE_Sign1_Tagged input (see SignTagged).
+func DecodeUnverifiedTagged(sign1 []byte) (protected, unprotected Headers, payload []byte, err error) {
+	untagged, err := stripSign1Tag(sign1)
+	if err != nil {
+		return Headers{}, Headers{}, nil, err
+	}
+	return DecodeUnverified(untagged)
+}
+
+func stripSign1Tag(sign1 []byte) ([]byte, error) {
+	var raw cbor.RawTag
+	if err := cbor.Unmarshal(sign1, &raw); err != nil {
+		return nil, fmt.Errorf("cose: unmarshal COSE_Sign1_Tagged: %w", err)
+	}
+	if raw.Number != sign1Tag {
+		return nil, fmt.Errorf("cose: expected CBOR tag %d, got %d", sign1Tag, raw.Number)
+	}
+	return raw.Content, nil
 }
 
 func (raw rawSign1) headers() (protected, unprotected Headers, err error) {

@@ -12,10 +12,15 @@
 //
 // This package only builds and verifies the COSE_Sign1 envelope itself
 // — the four-element [protected, unprotected, payload, signature] array
-// RFC 9052 §4.2 defines, untagged (mdoc's own CDDL, "IssuerAuth =
-// COSE_Sign1", uses the untagged form, not COSE_Sign1_Tagged). It knows
-// nothing about IssuerSigned, the Mobile Security Object, or any other
-// mdoc-specific CBOR structure — those are credential/mdoc's job to
+// RFC 9052 §4.2 defines. Sign/Verify/DecodeUnverified handle the
+// untagged form (mdoc's own CDDL, "IssuerAuth = COSE_Sign1", uses this
+// form, not COSE_Sign1_Tagged); SignTagged/VerifyTagged/
+// DecodeUnverifiedTagged handle #6.18(COSE_Sign1) instead, for a
+// context that doesn't otherwise establish the bytes are a COSE_Sign1
+// (draft-ietf-oauth-status-list-12 §5.2's CWT-format Status List Token
+// uses the tagged form). It knows nothing about IssuerSigned, the
+// Mobile Security Object, StatusList, or any other caller-specific CBOR
+// structure — those are credential/mdoc's and statuslist's job to
 // define with their own CBOR struct tags on top of
 // github.com/fxamacker/cbor/v2, the same layering credential/sdjwtvc
 // uses on top of internal/jose (jose knows JWS, sdjwtvc knows SD-JWT
