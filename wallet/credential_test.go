@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"testing"
+	"time"
 
 	fapi "github.com/idfoundry/fapigo"
 
@@ -125,6 +126,38 @@ func TestRequestCredential_Batch(t *testing.T) {
 	}
 	if sentBody.Proofs["jwt"][0] == sentBody.Proofs["jwt"][1] {
 		t.Errorf("both proofs are identical, want distinct (one per key)")
+	}
+}
+
+func TestRequestCredential_ReturnsPendingWhenIssuerDefersImmediately(t *testing.T) {
+	w, err := wallet.New(validConfig(), validDependencies())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	resource := &fakeProtectedResourceClient{
+		do: func(context.Context, *http.Request) (*http.Response, error) {
+			res := jsonResponse([]byte(`{"transaction_id":"txn-1","interval":86400}`))
+			res.StatusCode = http.StatusAccepted
+			return res, nil
+		},
+	}
+
+	result, err := w.RequestCredential(context.Background(), resource, testCredentialEndpoint(t), wallet.CredentialRequest{
+		CredentialConfigurationID: "IdentityCredential",
+		Keys:                      []crypto.Signer{testP256Key(t)},
+		CredentialIssuer:          "https://issuer.example.com",
+	})
+	if err != nil {
+		t.Fatalf("RequestCredential: %v", err)
+	}
+	if len(result.Credentials) != 0 {
+		t.Errorf("Credentials = %v, want empty on the deferred-at-first-response path", result.Credentials)
+	}
+	if result.TransactionID != "txn-1" {
+		t.Errorf("TransactionID = %q, want %q", result.TransactionID, "txn-1")
+	}
+	if result.Interval != 24*time.Hour {
+		t.Errorf("Interval = %v, want 24h", result.Interval)
 	}
 }
 

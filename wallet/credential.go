@@ -1,12 +1,10 @@
 package wallet
 
 import (
-	"bytes"
 	"context"
 	"crypto"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 
 	fapi "github.com/idfoundry/fapigo"
@@ -70,27 +68,28 @@ type credentialRequestBody struct {
 // side (§8.2/§8.3): it signs one jwt-type key proof per entry in
 // req.Keys (via GenerateProof), POSTs the resulting Credential Request
 // to endpoint as a sender-constrained request via resource, and parses
-// a successful (HTTP 200) Credential Response.
-//
-// A Credential Response that instead defers issuance (HTTP 202,
-// transaction_id/interval — §8.3's own deferred-at-first-response
-// case) is not supported yet — see the package doc comment. A non-200,
-// non-202 response is returned as a *Error.
+// the response — either the completed Credentials (HTTP 200) or,
+// if the Credential Issuer instead defers issuance at this very first
+// response (HTTP 202, transaction_id/interval — §8.3's own
+// deferred-at-first-response case), a polling hint to pass to
+// RequestDeferredCredential. See CredentialResult's own doc comment
+// for how to tell the two cases apart. A response outside those two
+// statuses is returned as a *Error.
 func (w *Wallet) RequestCredential(
 	ctx context.Context, resource ProtectedResourceClient, endpoint fapi.URL, req CredentialRequest,
-) (oid4vci.CredentialResponse, error) {
+) (CredentialResult, error) {
 	if req.CredentialConfigurationID == "" {
-		return oid4vci.CredentialResponse{}, fmt.Errorf("wallet: request credential: credential_configuration_id is required")
+		return CredentialResult{}, fmt.Errorf("wallet: request credential: credential_configuration_id is required")
 	}
 	if len(req.Keys) == 0 {
-		return oid4vci.CredentialResponse{}, fmt.Errorf("wallet: request credential: at least one key is required")
+		return CredentialResult{}, fmt.Errorf("wallet: request credential: at least one key is required")
 	}
 
 	proofs := make([]string, 0, len(req.Keys))
 	for i, signer := range req.Keys {
 		proof, err := w.GenerateProof(signer, req.CredentialIssuer, req.Nonce)
 		if err != nil {
-			return oid4vci.CredentialResponse{}, fmt.Errorf("wallet: request credential: generate proof %d: %w", i, err)
+			return CredentialResult{}, fmt.Errorf("wallet: request credential: generate proof %d: %w", i, err)
 		}
 		proofs = append(proofs, proof)
 	}
@@ -100,34 +99,7 @@ func (w *Wallet) RequestCredential(
 		Proofs:                    map[string][]string{oid4vci.ProofTypeJWT: proofs},
 	})
 	if err != nil {
-		return oid4vci.CredentialResponse{}, fmt.Errorf("wallet: request credential: marshal request: %w", err)
+		return CredentialResult{}, fmt.Errorf("wallet: request credential: marshal request: %w", err)
 	}
-
-	target := endpoint.URL()
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, target.String(), bytes.NewReader(body))
-	if err != nil {
-		return oid4vci.CredentialResponse{}, fmt.Errorf("wallet: request credential: build request: %w", err)
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-
-	res, err := resource.Do(ctx, httpReq)
-	if err != nil {
-		return oid4vci.CredentialResponse{}, fmt.Errorf("wallet: request credential: %w", err)
-	}
-	defer func() { _ = res.Body.Close() }()
-
-	respBody, err := io.ReadAll(res.Body)
-	if err != nil {
-		return oid4vci.CredentialResponse{}, fmt.Errorf("wallet: request credential: read response: %w", err)
-	}
-
-	if res.StatusCode != http.StatusOK {
-		return oid4vci.CredentialResponse{}, parseError(res.StatusCode, respBody)
-	}
-
-	var response oid4vci.CredentialResponse
-	if err := json.Unmarshal(respBody, &response); err != nil {
-		return oid4vci.CredentialResponse{}, fmt.Errorf("wallet: request credential: decode response: %w", err)
-	}
-	return response, nil
+	return w.postCredentialResult(ctx, resource, endpoint, body, "request credential")
 }
