@@ -1,18 +1,19 @@
 # Architecture
 
 > **Status: early scaffolding.** `credential/sdjwtvc` (SD-JWT VC issuance,
-> presentation and verification, including Key Binding), `statuslist`
-> (Token Status List issuance and checking), `attestation` (Key
-> Attestation, and the OID4VCI-specific extra claims on top of FAPIgo's
-> Wallet Attestation), the `internal/jose` JWS helper the first three
-> build on, `internal/cose` (a COSE_Sign1 signer/verifier for
-> `credential/mdoc` and, in time, `statuslist`'s CWT encoding), and a
-> first slice of `issuer` (Nonce Endpoint + a Metadata shape covering
-> what SD-JWT VC issuance needs) are implemented and tested; everything
-> else below is still just the planned layout, not a finished system.
-> Update each section as the corresponding package actually lands; don't
-> let this drift into aspirational documentation for code that doesn't
-> exist.
+> presentation and verification, including Key Binding), `credential/mdoc`
+> (ISO/IEC 18013-5 mdoc issuer-side: IssuerSigned/MSO/IssuerAuth, DeviceSigned
+> deferred), `statuslist` (Token Status List issuance and checking),
+> `attestation` (Key Attestation, and the OID4VCI-specific extra claims on
+> top of FAPIgo's Wallet Attestation), the `internal/jose` JWS helper
+> `credential/sdjwtvc`/`statuslist`/`attestation` build on, `internal/cose`
+> (a COSE_Sign1 signer/verifier, the same role for `credential/mdoc` and,
+> in time, `statuslist`'s CWT encoding), and a first slice of `issuer`
+> (Nonce Endpoint + a Metadata shape covering what SD-JWT VC issuance
+> needs) are implemented and tested; everything else below is still just
+> the planned layout, not a finished system. Update each section as the
+> corresponding package actually lands; don't let this drift into
+> aspirational documentation for code that doesn't exist.
 
 ## Scope
 
@@ -88,10 +89,15 @@ shape from the phase-by-phase plan, not a description of current code.
   markers with full recursive-disclosure support, `Parse`/`Presentation`,
   and Key Binding JWT creation/verification. Its tests include RFC 9901's
   own known-answer disclosure/digest vectors, not just round-trip checks.
-  There's deliberately no separate `credential` package defining a
-  format-profile interface yet — with only one format implemented, any
-  interface here would be guessed, not derived from real commonality.
-  Add it once `credential/mdoc` exists and the two can be compared.
+  There's deliberately still no separate `credential` package defining a
+  format-profile interface: now that `credential/mdoc` also exists, the
+  two formats' `Issue`/`Verify` shapes are similar (signer/alg/claims/opts
+  in, an issued artifact and a verified-claims value out) but not
+  identical enough (JWS-compact string vs. a Go struct plus a separate
+  `Marshal`; CBOR's namespace-scoped digest IDs have no SD-JWT VC
+  analog) to derive a real interface from yet — revisit once a third
+  format or an actual multi-format caller (`issuer`) needs one, rather
+  than guessing at the shape now.
 - **`internal/cose`** (done) — a small, self-contained COSE_Sign1
   (RFC 9052 §4.2) signer/verifier, the CBOR/COSE equivalent of
   `internal/jose`: same curated algorithm set (ES256, EdDSA), same
@@ -113,9 +119,24 @@ shape from the phase-by-phase plan, not a description of current code.
   one piece of logic identical to `internal/jose`'s own ES256 handling,
   since JWS and COSE made the same encoding choice) lives in
   `internal/ecdsafixed`, shared by both rather than duplicated.
-- **`credential/mdoc`** — ISO/IEC 18013-5 mdoc: CBOR/COSE
-  `IssuerSigned`/`DeviceSigned` structures, built on `internal/cose` for
-  `IssuerAuth`.
+- **`credential/mdoc`** (issuer side done) — ISO/IEC 18013-5 mdoc:
+  `Issue`/`Verify` for `IssuerSigned` (namespace/data-element digest+salt
+  selective disclosure, §10.3.3), the Mobile Security Object (§12.3.4),
+  and `IssuerAuth` (built on `internal/cose`), plus `CoseKey` for
+  `DeviceKeyInfo.DeviceKey` (the mdoc analog of SD-JWT VC's `cnf.jwk`).
+  Field order in `IssuerSignedItem`/`MobileSecurityObject` matches
+  §10.3.3/§12.3.4's own CDDL exactly and the package's CBOR encoder
+  isn't configured for canonical/sorted map keys — both deliberate,
+  since together they make the encoding reproduce a real issuer's
+  byte-for-byte: its tests include five of ISO/IEC 18013-5's own Annex
+  D.4.1.2 worked-example digests (string, tagged-date, and
+  array-of-structs element values), checked against the exact SHA-256
+  values that worked example publishes, not just round-trip checks.
+  `IssuerSigned.Marshal`/`UnmarshalIssuerSigned` handle the actual
+  §10.3.3 CBOR wire form. `DeviceSigned` (Holder proof-of-possession at
+  presentation time) and MSO revocation (`status`, §12.3.6, which needs
+  `statuslist`'s CWT encoding) are deliberately out of scope for this
+  slice — see the package doc comment.
 - **`statuslist`** (done) — Token Status List (`draft-ietf-oauth-status-list-12`),
   JWT/JOSE encoding only (§5.1, §6.2 — not the CWT/COSE encoding, which
   belongs with `credential/mdoc`): bit-packing and ZLIB compression
