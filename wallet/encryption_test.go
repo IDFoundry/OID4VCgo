@@ -87,6 +87,79 @@ func simulateIssuerEncryptedExchange(t *testing.T, resource *fakeProtectedResour
 	}
 }
 
+// credentialCaller abstracts over RequestCredential/RequestDeferredCredential
+// for tests exercising behavior §10 encryption applies identically to
+// both endpoints — avoids duplicating each such test once per
+// endpoint.
+type credentialCaller func(t *testing.T, w *wallet.Wallet, resource wallet.ProtectedResourceClient, reqEnc *wallet.RequestEncryption, respEnc *wallet.ResponseEncryption) (wallet.CredentialResult, error)
+
+func callRequestCredential(t *testing.T, w *wallet.Wallet, resource wallet.ProtectedResourceClient, reqEnc *wallet.RequestEncryption, respEnc *wallet.ResponseEncryption) (wallet.CredentialResult, error) {
+	t.Helper()
+	return w.RequestCredential(context.Background(), resource, testCredentialEndpoint(t), wallet.CredentialRequest{
+		CredentialConfigurationID: "IdentityCredential",
+		Keys:                      []crypto.Signer{testP256Key(t)},
+		CredentialIssuer:          "https://issuer.example.com",
+		RequestEncryption:         reqEnc,
+		ResponseEncryption:        respEnc,
+	})
+}
+
+func callRequestDeferredCredential(t *testing.T, w *wallet.Wallet, resource wallet.ProtectedResourceClient, reqEnc *wallet.RequestEncryption, respEnc *wallet.ResponseEncryption) (wallet.CredentialResult, error) {
+	t.Helper()
+	return w.RequestDeferredCredential(context.Background(), resource, testDeferredCredentialEndpoint(t), wallet.DeferredCredentialRequest{
+		TransactionID:      "txn-1",
+		RequestEncryption:  reqEnc,
+		ResponseEncryption: respEnc,
+	})
+}
+
+func credentialCallers() map[string]credentialCaller {
+	return map[string]credentialCaller{"credential": callRequestCredential, "deferred_credential": callRequestDeferredCredential}
+}
+
+func TestRejectsResponseEncryptionWithoutRequestEncryption(t *testing.T) {
+	for name, call := range credentialCallers() {
+		t.Run(name, func(t *testing.T) {
+			w, err := wallet.New(validConfig(), validDependencies())
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+			resource := &fakeProtectedResourceClient{do: func(context.Context, *http.Request) (*http.Response, error) {
+				t.Fatalf("unexpected HTTP call")
+				return nil, nil
+			}}
+			if _, err := call(t, w, resource, nil, &wallet.ResponseEncryption{Enc: jwe.A128GCM}); err == nil {
+				t.Fatalf("call = nil error, want error")
+			}
+		})
+	}
+}
+
+func TestResponseEncryptionRoundTrip(t *testing.T) {
+	for name, call := range credentialCallers() {
+		t.Run(name, func(t *testing.T) {
+			w, err := wallet.New(validConfig(), validDependencies())
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+			reqRecipientKey := testP256Key(t)
+			resource := &fakeProtectedResourceClient{}
+			resource.do = simulateIssuerEncryptedExchange(t, resource, reqRecipientKey, []byte(`{"credentials":[{"credential":"c1"}]}`))
+
+			result, err := call(t, w, resource, &wallet.RequestEncryption{
+				RecipientJWK: testEncryptionRecipientJWK(t, "req-1", &reqRecipientKey.PublicKey),
+				Enc:          jwe.A128GCM,
+			}, &wallet.ResponseEncryption{Enc: jwe.A128GCM})
+			if err != nil {
+				t.Fatalf("call: %v", err)
+			}
+			if len(result.Credentials) != 1 || result.Credentials[0].Credential != "c1" {
+				t.Errorf("Credentials = %v", result.Credentials)
+			}
+		})
+	}
+}
+
 // --- CredentialRequest ---
 
 func TestRequestCredential_EncryptsRequestWhenConfigured(t *testing.T) {
@@ -136,53 +209,6 @@ func TestRequestCredential_EncryptsRequestWhenConfigured(t *testing.T) {
 	}
 	if sentBody.CredentialConfigurationID != "IdentityCredential" {
 		t.Errorf("credential_configuration_id = %q", sentBody.CredentialConfigurationID)
-	}
-}
-
-func TestRequestCredential_RejectsResponseEncryptionWithoutRequestEncryption(t *testing.T) {
-	w, err := wallet.New(validConfig(), validDependencies())
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	resource := &fakeProtectedResourceClient{do: func(context.Context, *http.Request) (*http.Response, error) {
-		t.Fatalf("unexpected HTTP call")
-		return nil, nil
-	}}
-	_, err = w.RequestCredential(context.Background(), resource, testCredentialEndpoint(t), wallet.CredentialRequest{
-		CredentialConfigurationID: "IdentityCredential",
-		Keys:                      []crypto.Signer{testP256Key(t)},
-		CredentialIssuer:          "https://issuer.example.com",
-		ResponseEncryption:        &wallet.ResponseEncryption{Enc: jwe.A128GCM},
-	})
-	if err == nil {
-		t.Fatalf("RequestCredential = nil error, want error")
-	}
-}
-
-func TestRequestCredential_ResponseEncryptionRoundTrip(t *testing.T) {
-	w, err := wallet.New(validConfig(), validDependencies())
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	reqRecipientKey := testP256Key(t)
-	resource := &fakeProtectedResourceClient{}
-	resource.do = simulateIssuerEncryptedExchange(t, resource, reqRecipientKey, []byte(`{"credentials":[{"credential":"c1"}]}`))
-
-	result, err := w.RequestCredential(context.Background(), resource, testCredentialEndpoint(t), wallet.CredentialRequest{
-		CredentialConfigurationID: "IdentityCredential",
-		Keys:                      []crypto.Signer{testP256Key(t)},
-		CredentialIssuer:          "https://issuer.example.com",
-		RequestEncryption: &wallet.RequestEncryption{
-			RecipientJWK: testEncryptionRecipientJWK(t, "req-1", &reqRecipientKey.PublicKey),
-			Enc:          jwe.A128GCM,
-		},
-		ResponseEncryption: &wallet.ResponseEncryption{Enc: jwe.A128GCM},
-	})
-	if err != nil {
-		t.Fatalf("RequestCredential: %v", err)
-	}
-	if len(result.Credentials) != 1 || result.Credentials[0].Credential != "c1" {
-		t.Errorf("Credentials = %v", result.Credentials)
 	}
 }
 
@@ -297,48 +323,5 @@ func TestRequestDeferredCredential_EncryptsRequestWhenConfigured(t *testing.T) {
 	}
 	if sentBody.TransactionID != "txn-1" {
 		t.Errorf("transaction_id = %q, want txn-1", sentBody.TransactionID)
-	}
-}
-
-func TestRequestDeferredCredential_RejectsResponseEncryptionWithoutRequestEncryption(t *testing.T) {
-	w, err := wallet.New(validConfig(), validDependencies())
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	resource := &fakeProtectedResourceClient{do: func(context.Context, *http.Request) (*http.Response, error) {
-		t.Fatalf("unexpected HTTP call")
-		return nil, nil
-	}}
-	_, err = w.RequestDeferredCredential(context.Background(), resource, testDeferredCredentialEndpoint(t), wallet.DeferredCredentialRequest{
-		TransactionID:      "txn-1",
-		ResponseEncryption: &wallet.ResponseEncryption{Enc: jwe.A128GCM},
-	})
-	if err == nil {
-		t.Fatalf("RequestDeferredCredential = nil error, want error")
-	}
-}
-
-func TestRequestDeferredCredential_ResponseEncryptionRoundTrip(t *testing.T) {
-	w, err := wallet.New(validConfig(), validDependencies())
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	reqRecipientKey := testP256Key(t)
-	resource := &fakeProtectedResourceClient{}
-	resource.do = simulateIssuerEncryptedExchange(t, resource, reqRecipientKey, []byte(`{"credentials":[{"credential":"c1"}]}`))
-
-	result, err := w.RequestDeferredCredential(context.Background(), resource, testDeferredCredentialEndpoint(t), wallet.DeferredCredentialRequest{
-		TransactionID: "txn-1",
-		RequestEncryption: &wallet.RequestEncryption{
-			RecipientJWK: testEncryptionRecipientJWK(t, "req-1", &reqRecipientKey.PublicKey),
-			Enc:          jwe.A128GCM,
-		},
-		ResponseEncryption: &wallet.ResponseEncryption{Enc: jwe.A128GCM},
-	})
-	if err != nil {
-		t.Fatalf("RequestDeferredCredential: %v", err)
-	}
-	if len(result.Credentials) != 1 || result.Credentials[0].Credential != "c1" {
-		t.Errorf("Credentials = %v", result.Credentials)
 	}
 }
