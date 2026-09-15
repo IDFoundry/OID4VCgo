@@ -81,12 +81,62 @@ func (f *fakeCredentialOfferStore) Get(_ context.Context, reference string) (iss
 	return record, nil
 }
 
+// fakeDeferredTransactionStore is an in-memory
+// issuer.DeferredTransactionStore for tests.
+type fakeDeferredTransactionStore struct {
+	mu          sync.Mutex
+	records     map[string]issuer.DeferredTransactionRecord
+	invalidated map[string]bool
+	getErr      error
+	invalidErr  error
+}
+
+func newFakeDeferredTransactionStore() *fakeDeferredTransactionStore {
+	return &fakeDeferredTransactionStore{
+		records:     make(map[string]issuer.DeferredTransactionRecord),
+		invalidated: make(map[string]bool),
+	}
+}
+
+func (f *fakeDeferredTransactionStore) put(transactionID string, record issuer.DeferredTransactionRecord) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.records[transactionID] = record
+}
+
+func (f *fakeDeferredTransactionStore) Get(_ context.Context, transactionID string) (issuer.DeferredTransactionRecord, error) {
+	if f.getErr != nil {
+		return issuer.DeferredTransactionRecord{}, f.getErr
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.invalidated[transactionID] {
+		return issuer.DeferredTransactionRecord{}, errDeferredTransactionNotFound
+	}
+	record, ok := f.records[transactionID]
+	if !ok {
+		return issuer.DeferredTransactionRecord{}, errDeferredTransactionNotFound
+	}
+	return record, nil
+}
+
+func (f *fakeDeferredTransactionStore) Invalidate(_ context.Context, transactionID string) error {
+	if f.invalidErr != nil {
+		return f.invalidErr
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.invalidated[transactionID] = true
+	return nil
+}
+
 type fakeErr string
 
 func (e fakeErr) Error() string { return string(e) }
 
 const errNonceNotFound = fakeErr("nonce not found or already consumed")
 const errCredentialOfferNotFound = fakeErr("credential offer not found")
+const errDeferredTransactionNotFound = fakeErr("deferred transaction not found")
 
 type fixedClock struct{ now time.Time }
 

@@ -13,8 +13,9 @@
 > `internal/hkdf` (RFC 5869, for `credential/mdoc`'s DeviceMac key
 > derivation), `internal/jwk` (JWK marshal/parse, shared by `attestation`
 > and `issuer`), and `issuer` (Nonce Endpoint, Metadata, the
-> Credential Endpoint for immediate issuance of both formats, and
-> Credential Offer construction/dereferencing) are
+> Credential Endpoint for immediate issuance of both formats,
+> Credential Offer construction/dereferencing, and the Deferred
+> Credential Endpoint's polling protocol) are
 > implemented and tested; everything else below is still just the
 > planned layout, not a finished system. Update each section as the
 > corresponding package
@@ -277,8 +278,10 @@ shape from the phase-by-phase plan, not a description of current code.
   PublicDescription safe to expose, Unwrap for logs only). See
   `CredentialRequest`'s own doc comment for what's deliberately out of
   scope (`credential_identifier`, `di_vp`, kid/x5c-based key resolution,
-  request/response encryption, deferred issuance, unbound credentials —
-  add each when a concrete consumer needs it). Also implements the
+  request/response encryption, unbound credentials — add each when a
+  concrete consumer needs it; `RequestCredential` itself never defers
+  issuance, see the Deferred Credential Endpoint below for that half).
+  Also implements the
   Credential Offer (§4): `CreateCredentialOffer` builds and validates a
   `CredentialOffer` (`credential_issuer`, `credential_configuration_ids`,
   and `Grants` — the `authorization_code` and pre-authorized_code Grant
@@ -296,10 +299,26 @@ shape from the phase-by-phase plan, not a description of current code.
   (and an authorization_code grant's own issuer_state) are
   caller-supplied: issuing and later redeeming them is the Token/
   Authorization Endpoint's job, which doesn't exist in this repo yet.
-  Still to come: Deferred (§9) and Notification (§11) Endpoints — and
-  this is still where `fapigo/server` gets consumed for the
-  Authorization/Token Endpoints' own PAR/DPoP/client-authentication
-  machinery once those exist in this repo.
+  Also implements the Deferred Credential Endpoint's own polling
+  protocol (§9): `RequestDeferredCredential` retrieves a
+  `DeferredTransactionRecord` by its `transaction_id` from a new
+  `Dependencies.DeferredTransactions` (`DeferredTransactionStore`),
+  checks it's bound to the requesting client (when both the record and
+  the request carry a `ClientID`), and either returns the finished
+  `credentials` (invalidating the transaction per §9.1's own MUST), a
+  `transaction_id`/`interval` pair (`Config.Limits.DeferredIssuancePollInterval`)
+  when still pending, or `credential_request_denied` when this issuer
+  can no longer issue it. `Endpoints.DeferredCredential` is now
+  advertised in Metadata's own `deferred_credential_endpoint`, unlike
+  `CredentialOfferEndpoint`. This package never creates or resolves a
+  Deferred Issuance transaction itself — deciding a Credential isn't
+  ready yet, and later deciding it is, is an entirely deployment-
+  specific business process that writes directly to the store; see
+  `DeferredTransactionRecord`'s own doc comment. Still to come:
+  Notification Endpoint (§11) — and this is still where
+  `fapigo/server` gets consumed for the Authorization/Token Endpoints'
+  own PAR/DPoP/client-authentication machinery once those exist in
+  this repo.
 - **`wallet`** — the Wallet's OID4VCI role (client side): credential-offer
   resolution, proof-of-possession generation, deferred/notification
   handling. Built on `fapigo/client`.
