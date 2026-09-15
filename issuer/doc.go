@@ -41,7 +41,13 @@
 // never creates or resolves a Deferred Issuance transaction itself,
 // and NotificationHandler's own doc comment for why reacting to a
 // Notification Request's event is entirely the caller's business
-// logic. ARCHITECTURE.md describes what's still missing beyond this
-// package's own endpoints (Authorization/Token Endpoint machinery,
-// via fapigo/server, once this repo needs it).
+// logic. authorization_server.go documents the recipe for pairing
+// this package with a real fapigo/server.Server for the Authorization
+// Code Flow's own Authorization/Token Endpoints — see its own doc
+// comment, and oid4vci.IssuerStateExtension for the shared §4.1.1
+// issuer_state parameter registration both sides need. This package
+// still has no server-side pre-authorized_code Token Request handling
+// of its own (entirely outside fapigo/server's scope, the same way
+// that grant is outside fapigo/client's); ARCHITECTURE.md describes
+// what's still missing there and elsewhere.
 package issuer

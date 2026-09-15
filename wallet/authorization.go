@@ -9,19 +9,6 @@ import (
 	"github.com/idfoundry/oid4vcigo"
 )
 
-// issuerStateDefinition declares the issuer_state authorization
-// parameter (OID4VCI 1.0 §4.1.1) to fapigo/client's own extension
-// mechanism — a plain opaque string this package never interprets,
-// only passes through, so there is no Validate beyond the wire-shape/
-// size checks extension.Set already applies. 2048 bytes is generous
-// headroom for a value the spec places no length limit on.
-var issuerStateDefinition = extension.Definition[string]{
-	Name:           "issuer_state",
-	Cardinality:    extension.Single,
-	AllowedSources: extension.SourcePlainParameter | extension.SourceRequestObject,
-	MaxBytes:       2048,
-}
-
 // BuildAuthorizationRequest translates a resolved Credential Offer and
 // the caller's own chosen scope(s) into a client.BeginAuthorizationRequest
 // — ready to pass directly to (*client.Client).BeginAuthorization,
@@ -58,7 +45,7 @@ func BuildAuthorizationRequest(offer oid4vci.CredentialOffer, scopes []string) (
 	if offer.Grants == nil || offer.Grants.AuthorizationCode == nil || offer.Grants.AuthorizationCode.IssuerState == "" {
 		return req, nil
 	}
-	if err := extension.Set(&req.Extensions, issuerStateDefinition, offer.Grants.AuthorizationCode.IssuerState); err != nil {
+	if err := extension.Set(&req.Extensions, oid4vci.IssuerStateExtension, offer.Grants.AuthorizationCode.IssuerState); err != nil {
 		return client.BeginAuthorizationRequest{}, fmt.Errorf("wallet: build authorization request: attach issuer_state: %w", err)
 	}
 	return req, nil
