@@ -158,8 +158,8 @@ func (c CredentialQuery) SatisfiedByMdocClaims(docType string, nameSpaces map[st
 func (c CredentialQuery) claimsSatisfiedBy(present func(Path) error) error {
 	if len(c.ClaimSets) == 0 {
 		for _, cl := range c.Claims {
-			if err := present(cl.Path); err != nil {
-				return fmt.Errorf("claim at path %v is not present: %w", cl.Path, err)
+			if err := presentAt(cl.Path, present); err != nil {
+				return err
 			}
 		}
 		return nil
@@ -189,9 +189,20 @@ func claimSetOptionSatisfiedBy(option []string, byID map[string]Path, present fu
 		if !ok {
 			return fmt.Errorf("references unknown claim id %q", id)
 		}
-		if err := present(path); err != nil {
-			return fmt.Errorf("claim %q at path %v is not present: %w", id, path, err)
+		if err := presentAt(path, present); err != nil {
+			return fmt.Errorf("claim %q: %w", id, err)
 		}
+	}
+	return nil
+}
+
+// presentAt wraps a single Path.present check (§6.4.1's own atom of
+// "is this claim actually there") with a uniform error, shared by
+// both claimsSatisfiedBy branches — the no-claim_sets case and each
+// claimSetOptionSatisfiedBy option resolve to exactly the same check.
+func presentAt(p Path, present func(Path) error) error {
+	if err := present(p); err != nil {
+		return fmt.Errorf("claim at path %v is not present: %w", p, err)
 	}
 	return nil
 }
