@@ -366,12 +366,13 @@ func rejectCaseSDJWTVC(t *testing.T, query dcql.Query, presAud, presNonce, expec
 	}
 }
 
-// TestVerifyResponseRejects table-drives every rejection path
-// VerifyResponse's own Phase 2a scope covers: a Holder Binding JWT
-// bound to the wrong nonce/audience, a Presentation missing a
-// requested claim or carrying the wrong vct, no Presentation at all
-// for a Credential Query, an unsupported Credential Format, and more
-// than one Presentation for a single-valued Credential Query.
+// TestVerifyResponseRejects table-drives every dc+sd-jwt rejection
+// path VerifyResponse covers: a Holder Binding JWT bound to the wrong
+// nonce/audience, a Presentation missing a requested claim or carrying
+// the wrong vct, no Presentation at all for a Credential Query, an
+// unsupported Credential Format, and more than one Presentation for a
+// single-valued Credential Query. The mso_mdoc rejection paths have
+// their own table in verify_response_mdoc_test.go.
 func TestVerifyResponseRejects(t *testing.T) {
 	cases := map[string]func(t *testing.T, v *verifier.Verifier, nonce string) verifier.VerifyResponseRequest{
 		"wrong nonce": func(t *testing.T, v *verifier.Verifier, nonce string) verifier.VerifyResponseRequest {
