@@ -31,7 +31,8 @@
 > — every OID4VCI 1.0 Credential Issuer endpoint — `storage` (in-memory
 > reference implementations of every store `issuer` defines, for local
 > dev/testing only), `haip` (the profile layer's own
-> `RecommendedIssuerConfig`/`ValidateIssuerConfig`/`RecommendedWalletConfig`),
+> `RecommendedIssuerConfig`/`ValidateIssuerConfig`/`RecommendedWalletConfig`/
+> `RecommendedVerifierConfig`),
 > and `wallet`
 > (Credential Offer resolution, jwt-type and attestation-type key proof
 > generation, the Authorization Code Flow's own OID4VCI-specific
@@ -924,8 +925,8 @@ shape from the phase-by-phase plan, not a description of current code.
   key), then parse/decrypt/verify it — the same "real round trip, not
   a simulation" discipline `TestWalletIssuerRoundTrip` already holds
   OID4VCI to.
-- **`haip`** — the profile layer: wires HAIP's own specific overrides on
-  top of `issuer` (and, once they exist, `wallet`/`verifier`) — mirrors
+- **`haip`** (done) — the profile layer: wires HAIP's own specific
+  overrides on top of `issuer`/`wallet`/`verifier` — mirrors
   FAPIgo's `server.RecommendedLimits()`/`RecommendedAlgorithms()` pattern:
   every value traceable to a specific HAIP section, nothing applied
   automatically. `RecommendedJOSEAlgorithm`/`RecommendedCOSEAlgorithm`
@@ -963,8 +964,23 @@ shape from the phase-by-phase plan, not a description of current code.
   authentication) are entirely `fapigo/client`-level concerns
   `wallet.Config` doesn't touch at all (see the `wallet` bullet above
   and its own doc comment), so there's nothing in `wallet.Config`
-  itself left to structurally validate. Still to come:
-  `RecommendedVerifierConfig()`, once `verifier` itself exists.
+  itself left to structurally validate. `RecommendedVerifierConfig()`
+  bundles the two parts of a `verifier.Config` HAIP actually grounds a
+  value for — `SigningAlg` (the same §7 ES256 minimum, this time citing
+  "signed presentation requests" on the Wallet's own validating side)
+  and `EncValuesSupported` (§5's own explicit "MUST be supported by
+  Verifiers" pair, `jwe.A128GCM`+`jwe.A256GCM` — unlike a Wallet, which
+  HAIP only requires to support one or the other, a Verifier has no
+  choice here) — into a `VerifierRecommendations`;
+  `verifier.Config`'s other two fields, `ClientCertificate`/
+  `ResponseURI`, are deployment-specific (an Ecosystem's own Verifier
+  identity and endpoint URL) the same way `issuer.Config`'s/
+  `wallet.Config`'s own ungrounded fields are. No `ValidateVerifierConfig`
+  either, for the same reason there's no `ValidateWalletConfig`:
+  `verifier.Config` has nothing else HAIP §5 substantively constrains
+  beyond what `New` itself already enforces (JAR signing,
+  `direct_post.jwt`, both are load-bearing in `verifier`'s own
+  implementation, not optional profiling on top of it).
 - **`storage`** — in-memory implementations of every store `issuer`
   defines (`NonceStore`, `CredentialOfferStore`, `DeferredTransactionStore`,
   `NotificationStore`), for local dev/testing only — never production;
