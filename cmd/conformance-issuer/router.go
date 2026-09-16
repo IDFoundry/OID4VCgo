@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto"
+	"crypto/x509"
 	"net/http"
 	"net/url"
 
@@ -14,8 +16,11 @@ import (
 // (fapigo/server) and the OID4VCI Credential Issuer endpoints
 // (oid4vcigo/issuer) onto one plain net/http.ServeMux — mirrors
 // FAPIgo's own cmd/conformance-as/router.go's "no third-party router"
-// stance.
-func newRouter(srv *server.Server, iss *issuer.Issuer, resourceVerifier *fapires.Verifier, consent *consentHandler, credentialURL *url.URL, cfg Config) *http.ServeMux {
+// stance. metadataSigner/metadataCert are the same credential-issuer
+// signing key/certificate pair issuer.Dependencies.SDJWTSigner already
+// uses (see wiring.go) — reused here for signed Credential Issuer
+// Metadata (§12.2.3) rather than parsed a second time per request.
+func newRouter(srv *server.Server, iss *issuer.Issuer, resourceVerifier *fapires.Verifier, consent *consentHandler, credentialURL *url.URL, cfg Config, metadataSigner crypto.Signer, metadataCert *x509.Certificate) *http.ServeMux {
 	mux := http.NewServeMux()
 	metadataHandler := authorizationServerMetadataHandler(srv)
 	mux.HandleFunc("GET /.well-known/openid-configuration", metadataHandler)
@@ -37,7 +42,7 @@ func newRouter(srv *server.Server, iss *issuer.Issuer, resourceVerifier *fapires
 	mux.HandleFunc("POST /authorize/decision", consent.handleDecision)
 	mux.HandleFunc("POST /token", tokenHandler(srv))
 
-	mux.HandleFunc("GET /.well-known/openid-credential-issuer", credentialIssuerMetadataHandler(iss))
+	mux.HandleFunc("GET /.well-known/openid-credential-issuer", credentialIssuerMetadataHandler(iss, metadataSigner, metadataCert))
 	mux.HandleFunc("POST /nonce", nonceHandler(iss))
 	mux.HandleFunc("POST /credential", credentialHandler(iss, resourceVerifier, credentialURL, cfg))
 	return mux

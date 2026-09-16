@@ -148,16 +148,31 @@ matching RFC 8414 §3.1's own stance that a plain-OAuth AS (this one:
 plain-OAuth well-known path, not only the OIDC one. Re-run live after
 the fix: full pass.
 
-**`oid4vci-1_0-issuer-metadata-test-signed`: confirmed live, correctly
-`SKIPPED`** — this module tests OID4VCI's optional signed
-Credential Issuer Metadata feature, which `issuer.Issuer` doesn't
-implement (always returns plain JSON); the suite detects this via
-`Content-Type` and self-skips rather than failing. Not a gap: signed
-metadata is optional and out of scope. Confirmed against the HAIP 1.0
-spec text directly: HAIP §4.1 conditions signed metadata on ecosystem
-policy — "When Ecosystem policies require Issuer Authentication to a
-higher level than possible with TLS alone, signed Credential Issuer
-Metadata... MUST be supported" — not a universal requirement.
+**Update: `oid4vci-1_0-issuer-metadata-test-signed` — real support
+added, not just made to pass.** Previously self-`SKIPPED`: HAIP §4.1
+only conditions signed metadata on ecosystem policy ("When Ecosystem
+policies require Issuer Authentication to a higher level than possible
+with TLS alone, signed Credential Issuer Metadata... MUST be
+supported"), so it stayed genuinely optional and out of scope — this
+was scoped as a deliberate coverage improvement, not a compliance fix.
+`credentialIssuerMetadataHandler` (`credential.go`) now does real
+content negotiation per OID4VCI §12.2.2/§12.2.3: it always supports
+plain `application/json` (unchanged default), and when a request's own
+`Accept` header names `application/jwt`, signs the same
+`issuer.Metadata()` value as a compact JWS instead — every metadata
+parameter flattened as top-level JWS payload claims (§12.2.3's own
+requirement), plus `sub` (the Credential Issuer Identifier) and `iat`,
+under a `typ: "openidvci-issuer-metadata+jwt"` header and the same
+`x5c` convention this binary's issued credentials already use, signed
+with the same credential-issuer key/cert pair
+(`issuer.Dependencies.SDJWTSigner` already trusts). Confirmed live:
+`FINISHED`/`PASSED`, zero log entries at `WARNING` or worse, with the
+suite's own independent check
+(`VCIDecodeSignedCredentialIssuerMetadata`: "Successfully decoded and
+verified signed credential issuer metadata using x5c certificate")
+confirming the signature itself, not just the `Content-Type` header.
+Re-verified `metadata-test` (the plain-JSON module) and `happy-flow`
+still pass unchanged.
 
 **`client2`: fixed, confirmed both as a unit test and live.** Even
 this plan's own `happy-flow` module (not just multi-client variants)
@@ -255,8 +270,10 @@ server.FAPIRWTLSCipherSuites` on the listener — mirrors
 
 **Final results, 21/21 modules run live:**
 
-- `metadata-test`: `PASSED`. `metadata-test-signed`: correctly
-  `SKIPPED` (signed metadata is an unimplemented optional feature).
+- `metadata-test`: `PASSED`. `metadata-test-signed`: **`PASSED`** —
+  real signed-metadata support added (see the "Update" note above),
+  confirmed live with the suite independently verifying the JWS
+  signature via its own `x5c` header, not just a `Content-Type` flip.
 - `happy-flow`, `happy-flow-additional-requests`,
   `happy-flow-skip-notification`: all `FINISHED`/`PASSED`, zero log
   entries at `WARNING` or worse (see the "Update" note above).

@@ -63,8 +63,7 @@ negative-test expectations differ.
   is a full `PASSED` (fixed by serving this binary's AS metadata at
   both `/.well-known/openid-configuration` and RFC 8414's own
   `/.well-known/oauth-authorization-server` — entirely an
-  OID4VCIgo-side router fix, not FAPIgo's), `metadata-test-signed`
-  correctly self-`SKIPPED`. `client2` support was added
+  OID4VCIgo-side router fix, not FAPIgo's). `client2` support was added
   (`Config.Client2`, optional) and confirmed both by a real PAR-
   authentication unit test and live against the suite itself.
   `happy-flow` hit a `fapigo/server` design decision (`Config.Extensions`
@@ -95,10 +94,22 @@ negative-test expectations differ.
   `exp`-claim `WARNING` (`happy-flow` and its three siblings including
   `multiple-clients`, plus `fail-on-access-token-in-query`) is now
   `FINISHED`/`PASSED` with zero log entries at `WARNING` or worse.
+  **Update: `metadata-test-signed` — real support added, not just made
+  to pass.** Previously self-`SKIPPED` (HAIP §4.1 only conditions
+  signed metadata on ecosystem policy, so it stayed genuinely
+  optional); `credentialIssuerMetadataHandler` now does real content
+  negotiation (OID4VCI §12.2.2/§12.2.3) — plain JSON by default,
+  a signed compact JWS (`typ: "openidvci-issuer-metadata+jwt"`, every
+  metadata parameter as a top-level claim, the same `x5c`/signing-key
+  pair issued credentials use) when a request's `Accept` header asks
+  for `application/jwt`. Confirmed live: `FINISHED`/`PASSED`, with the
+  suite's own `VCIDecodeSignedCredentialIssuerMetadata` check
+  independently verifying the JWS signature via its `x5c` header, not
+  just the `Content-Type` header.
   **Final tally: all 21 modules `FINISHED`/`PASSED` or correctly
-  `SKIPPED`** — 10 of 10 applicable negative tests `PASSED`, 3 modules
-  correctly self-`SKIPPED` (signed metadata, batch issuance, key-
-  attestation/encryption-algorithm features this binary doesn't
-  implement). See `issuer/README.md`.
+  `SKIPPED`** — 10 of 10 applicable negative tests `PASSED`, 2 modules
+  correctly self-`SKIPPED` (batch issuance, key-attestation/
+  encryption-algorithm features this binary doesn't implement). See
+  `issuer/README.md`.
 - **Not yet started**: OID4VCI Wallet role (blocked on a FAPIgo-side
   change — see `AGENTS.md`).

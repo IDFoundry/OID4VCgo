@@ -6,7 +6,10 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
+
+	"github.com/idfoundry/oid4vcigo/internal/jose"
 )
 
 // TestNewServerMux_ServesRealMetadataAndJWKS is the same scenario this
@@ -78,6 +81,61 @@ func TestNewServerMux_ServesRealMetadataAndJWKS(t *testing.T) {
 		}
 		if cc["vct"] != cfg.VCT {
 			t.Fatalf("vct = %v, want %v", cc["vct"], cfg.VCT)
+		}
+	})
+
+	t.Run("signed credential issuer metadata", func(t *testing.T) {
+		unsigned := getJSON(t, client, ts.URL+"/.well-known/openid-credential-issuer")
+
+		req, err := http.NewRequest(http.MethodGet, ts.URL+"/.well-known/openid-credential-issuer", nil) //nolint:noctx // test-only, fixed httptest.Server URL
+		if err != nil {
+			t.Fatalf("NewRequest: %v", err)
+		}
+		req.Header.Set("Accept", "application/jwt")
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatalf("GET: %v", err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		raw, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatalf("read body: %v", err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status %d: %s", resp.StatusCode, raw)
+		}
+		if ct := resp.Header.Get("Content-Type"); ct != "application/jwt" {
+			t.Fatalf("Content-Type = %q, want application/jwt", ct)
+		}
+
+		cert, err := cfg.credentialIssuerCertificate()
+		if err != nil {
+			t.Fatalf("credentialIssuerCertificate: %v", err)
+		}
+		header, payload, err := jose.Verify(jose.ES256, cert.PublicKey, string(raw))
+		if err != nil {
+			t.Fatalf("Verify: %v", err)
+		}
+		if header["typ"] != openidVCIIssuerMetadataTyp {
+			t.Fatalf("typ = %v, want %q", header["typ"], openidVCIIssuerMetadataTyp)
+		}
+		if _, ok := header["x5c"]; !ok {
+			t.Fatalf("missing x5c header")
+		}
+		var claims map[string]any
+		if err := json.Unmarshal(payload, &claims); err != nil {
+			t.Fatalf("unmarshal payload: %v", err)
+		}
+		if claims["sub"] != cfg.Issuer {
+			t.Fatalf("sub = %v, want %v", claims["sub"], cfg.Issuer)
+		}
+		if _, ok := claims["iat"]; !ok {
+			t.Fatalf("missing iat claim")
+		}
+		for k, v := range unsigned {
+			if !reflect.DeepEqual(claims[k], v) {
+				t.Fatalf("signed claim %q = %#v, want %#v (from the unsigned response)", k, claims[k], v)
+			}
 		}
 	})
 
