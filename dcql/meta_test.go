@@ -73,26 +73,23 @@ func TestSatisfiedByMdocClaims(t *testing.T) {
 // fulfill.
 func TestSatisfiedBySDJWTVCClaimsWithClaimSets(t *testing.T) {
 	cq := claimSetsCredentialQuery(t)
+	const vct = "https://credentials.example.com/identity_credential"
 
-	// Satisfies only the first (most-preferred) option.
-	if err := cq.SatisfiedBySDJWTVCClaims(map[string]any{
-		"vct": "https://credentials.example.com/identity_credential", "last_name": "Doe", "postal_code": "12345",
-	}); err != nil {
-		t.Errorf("SatisfiedBySDJWTVCClaims (first option) = %v, want nil", err)
+	cases := map[string]struct {
+		claims  map[string]any
+		wantErr bool
+	}{
+		"first option":   {map[string]any{"vct": vct, "last_name": "Doe", "postal_code": "12345"}, false},
+		"second option":  {map[string]any{"vct": vct, "last_name": "Doe", "locality": "Anytown", "region": "CA"}, false},
+		"neither option": {map[string]any{"vct": vct, "last_name": "Doe"}, true},
 	}
-
-	// Satisfies only the second (least-preferred) option.
-	if err := cq.SatisfiedBySDJWTVCClaims(map[string]any{
-		"vct": "https://credentials.example.com/identity_credential", "last_name": "Doe", "locality": "Anytown", "region": "CA",
-	}); err != nil {
-		t.Errorf("SatisfiedBySDJWTVCClaims (second option) = %v, want nil", err)
-	}
-
-	// Satisfies neither option (missing postal_code and locality/region).
-	if err := cq.SatisfiedBySDJWTVCClaims(map[string]any{
-		"vct": "https://credentials.example.com/identity_credential", "last_name": "Doe",
-	}); err == nil {
-		t.Errorf("SatisfiedBySDJWTVCClaims (neither option) = nil, want error")
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			err := cq.SatisfiedBySDJWTVCClaims(tc.claims)
+			if tc.wantErr != (err != nil) {
+				t.Errorf("SatisfiedBySDJWTVCClaims = %v, wantErr %v", err, tc.wantErr)
+			}
+		})
 	}
 }
 

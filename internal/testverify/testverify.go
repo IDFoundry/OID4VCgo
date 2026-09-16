@@ -7,6 +7,7 @@
 package testverify
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/idfoundry/oid4vcigo/credential/sdjwtvc"
@@ -31,6 +32,18 @@ func RequireOneCredential(t *testing.T, result verifier.VerifyResponseResult, er
 	return result.Credentials[0]
 }
 
+// MustSDJWTVCMeta builds a "dc+sd-jwt" Meta value constrained to vct,
+// failing the test on error — the one-liner every "dc+sd-jwt" query
+// fixture across verifier/wallet tests needs.
+func MustSDJWTVCMeta(t *testing.T, vct string) json.RawMessage {
+	t.Helper()
+	meta, err := dcql.NewSDJWTVCMeta(dcql.SDJWTVCMeta{VCTValues: []string{vct}})
+	if err != nil {
+		t.Fatalf("NewSDJWTVCMeta: %v", err)
+	}
+	return meta
+}
+
 // ClaimSetOptionsQuery returns a dcql.Query with one CredentialQuery
 // (ID "identity_credential", format "dc+sd-jwt", VCT vct) whose
 // claim_sets has two options: an unsatisfiable first option
@@ -41,12 +54,8 @@ func RequireOneCredential(t *testing.T, result verifier.VerifyResponseResult, er
 // identically on both sides.
 func ClaimSetOptionsQuery(t *testing.T, vct string) dcql.Query {
 	t.Helper()
-	meta, err := dcql.NewSDJWTVCMeta(dcql.SDJWTVCMeta{VCTValues: []string{vct}})
-	if err != nil {
-		t.Fatalf("NewSDJWTVCMeta: %v", err)
-	}
 	return dcql.Query{Credentials: []dcql.CredentialQuery{{
-		ID: "identity_credential", Format: sdjwtvc.CredentialFormat, Meta: meta,
+		ID: "identity_credential", Format: sdjwtvc.CredentialFormat, Meta: MustSDJWTVCMeta(t, vct),
 		Claims: []dcql.ClaimsQuery{
 			{ID: "no_such_claim", Path: dcql.Path{dcql.PathKey("no_such_claim")}},
 			{ID: "given_name", Path: dcql.Path{dcql.PathKey("given_name")}},

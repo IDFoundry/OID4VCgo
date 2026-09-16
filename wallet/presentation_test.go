@@ -71,12 +71,8 @@ func newHeldSDJWTVC(t *testing.T) heldSDJWTVCFixture {
 
 func testPresentationQuery(t *testing.T) dcql.Query {
 	t.Helper()
-	meta, err := dcql.NewSDJWTVCMeta(dcql.SDJWTVCMeta{VCTValues: []string{testPresentationVCT}})
-	if err != nil {
-		t.Fatalf("NewSDJWTVCMeta: %v", err)
-	}
 	return dcql.Query{Credentials: []dcql.CredentialQuery{{
-		ID: "identity_credential", Format: sdjwtvc.CredentialFormat, Meta: meta,
+		ID: "identity_credential", Format: sdjwtvc.CredentialFormat, Meta: testverify.MustSDJWTVCMeta(t, testPresentationVCT),
 		Claims: []dcql.ClaimsQuery{{Path: dcql.Path{dcql.PathKey("given_name")}}},
 	}}}
 }
@@ -100,10 +96,7 @@ func TestMatchDCQLQueryRejectsNoCandidate(t *testing.T) {
 
 func TestMatchDCQLQueryRejectsWrongVCT(t *testing.T) {
 	fixture := newHeldSDJWTVC(t)
-	meta, err := dcql.NewSDJWTVCMeta(dcql.SDJWTVCMeta{VCTValues: []string{"https://credentials.example.com/some_other_credential"}})
-	if err != nil {
-		t.Fatalf("NewSDJWTVCMeta: %v", err)
-	}
+	meta := testverify.MustSDJWTVCMeta(t, "https://credentials.example.com/some_other_credential")
 	query := dcql.Query{Credentials: []dcql.CredentialQuery{{ID: "x", Format: sdjwtvc.CredentialFormat, Meta: meta}}}
 	if _, err := wallet.MatchDCQLQuery(query, []wallet.HeldCredential{fixture.held}); err == nil {
 		t.Fatalf("MatchDCQLQuery = nil error, want error")
@@ -129,12 +122,8 @@ func TestMatchDCQLQueryAcceptsSatisfiableClaimSetOption(t *testing.T) {
 
 func TestMatchDCQLQueryRejectsWhenNoClaimSetOptionSatisfied(t *testing.T) {
 	fixture := newHeldSDJWTVC(t)
-	meta, err := dcql.NewSDJWTVCMeta(dcql.SDJWTVCMeta{VCTValues: []string{testPresentationVCT}})
-	if err != nil {
-		t.Fatalf("NewSDJWTVCMeta: %v", err)
-	}
 	query := dcql.Query{Credentials: []dcql.CredentialQuery{{
-		ID: "identity_credential", Format: sdjwtvc.CredentialFormat, Meta: meta,
+		ID: "identity_credential", Format: sdjwtvc.CredentialFormat, Meta: testverify.MustSDJWTVCMeta(t, testPresentationVCT),
 		Claims:    []dcql.ClaimsQuery{{ID: "no_such_claim", Path: dcql.Path{dcql.PathKey("no_such_claim")}}},
 		ClaimSets: [][]string{{"no_such_claim"}},
 	}}}
