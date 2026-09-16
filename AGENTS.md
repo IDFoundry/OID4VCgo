@@ -58,19 +58,23 @@ package layout and design rationale as it's built out.
 ## Where conformance-suite knowledge lives
 
 [`conformance/README.md`](conformance/README.md) — mirrors FAPIgo's own
-`conformance/*/README.md` documentation convention. As of this note,
-`cmd/conformance-verifier` (OID4VP Verifier role) and
-`cmd/conformance-wallet-vp` (OID4VP Wallet role, direct_post.jwt module
-list only) exist, compile, are unit-tested, and have been confirmed
-live against each other end to end (a real cryptographic round trip,
-not a mock). `cmd/conformance-issuer` (OID4VCI Issuer role — a real
-`fapigo/server.Server` with `AttestationBasedClientAuthentication`
-enabled, paired with a real `issuer.Issuer`) also exists, compiles, and
-is confirmed live end to end (PAR → consent → token → nonce →
-credential, with a real Client Attestation + PoP JWT pair and DPoP
-throughout) — that test surfaced and fixed three real bugs along the
-way, see `conformance/issuer/README.md`'s own "Status". None of the
-three binaries has been run against the live OIDF suite itself. See
+`conformance/*/README.md` documentation convention. All three binaries
+(`cmd/conformance-verifier`, `cmd/conformance-wallet-vp`,
+`cmd/conformance-issuer`) exist, compile, are unit-tested, and have now
+been run against a real, locally-run OIDF conformance suite instance —
+not just against each other. `conformance-verifier`'s own
+`oid4vp-1final-verifier-haip-test-plan` is a full confirmed pass, all
+11 in-scope modules. `conformance-wallet-vp`'s own `happy-flow` module
+passes every cryptographic check. `conformance-issuer`'s own
+`oid4vci-1_0-issuer-haip-test-plan` metadata modules pass; its
+`happy-flow` module is blocked on what looks like a genuine
+`fapigo/server`-side gap in `PushAuthorizationRequest`/
+`FormRequestFromHTTP`: it rejects a PAR request carrying an
+unrecognized/extra parameter with `invalid_request`, where the OIDF
+suite's own test (citing PAR-2.1 through PAR-2.4) expects the
+Authorization Server to silently ignore it instead — the same
+"flag it, don't reach into `fapigo/server` internals" boundary this
+file already draws for the Wallet Attestation gap above. See
 `conformance/verifier/README.md`'s, `conformance/wallet-vp/README.md`'s
-and `conformance/issuer/README.md`'s own "Status" sections before
-assuming any specific suite test module passes.
+and `conformance/issuer/README.md`'s own "Status" sections for the
+full detail before assuming any specific suite test module passes.

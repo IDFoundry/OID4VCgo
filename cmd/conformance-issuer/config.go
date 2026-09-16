@@ -29,11 +29,17 @@ type Config struct {
 	TLSCertificatePEM string `json:"tls_certificate_pem"`
 	TLSPrivateKeyPEM  string `json:"tls_private_key_pem"`
 
-	// Client is the one test client this binary registers — the OIDF
-	// suite's own client1 for this test plan (client2, needed only for
-	// PS256/RSA-negative-test un-skipping in some other plans, isn't
-	// wired here — see README's own "Open questions").
+	// Client is the OIDF suite's own client1 for this test plan.
 	Client ConfigClient `json:"client"`
+
+	// Client2 is the OIDF suite's own client2, if this test plan needs
+	// a second registered client at all (confirmed live: even this
+	// plan's own happy-flow module lists client2.client_id/
+	// client2.scope/client2.jwks in its configurationFields, not just
+	// negative/multi-client variants — see README's own "Status").
+	// Optional: nil registers only Client, matching every scenario that
+	// doesn't need a second client at all.
+	Client2 *ConfigClient `json:"client2,omitempty"`
 
 	// CredentialIssuerSigningKeyPEM signs every issued "dc+sd-jwt"
 	// credential.
@@ -87,9 +93,13 @@ func loadConfig(path string) (Config, error) {
 	if cfg.Issuer == "" {
 		return Config{}, fmt.Errorf("config: issuer is required")
 	}
-	attesterJWKSEmpty := len(cfg.Client.AttesterJWKS) == 0 || string(cfg.Client.AttesterJWKS) == "null"
-	if cfg.Client.ID == "" || len(cfg.Client.RedirectURIs) == 0 || cfg.Client.ExpectedAttesterIssuer == "" || attesterJWKSEmpty {
-		return Config{}, fmt.Errorf("config: client.id, client.redirect_uris, client.expected_attester_issuer and client.attester_jwks are all required")
+	if err := validateConfigClient("client", cfg.Client); err != nil {
+		return Config{}, err
+	}
+	if cfg.Client2 != nil {
+		if err := validateConfigClient("client2", *cfg.Client2); err != nil {
+			return Config{}, err
+		}
 	}
 	if cfg.CredentialIssuerSigningKeyPEM == "" {
 		return Config{}, fmt.Errorf("config: credential_issuer_signing_key_pem is required")
@@ -101,6 +111,17 @@ func loadConfig(path string) (Config, error) {
 		cfg.DefaultSubject = "conformance-test-subject"
 	}
 	return cfg, nil
+}
+
+// validateConfigClient checks one ConfigClient's own required fields,
+// used for both Config.Client (always required) and Config.Client2
+// (required to be complete only when present at all).
+func validateConfigClient(field string, c ConfigClient) error {
+	attesterJWKSEmpty := len(c.AttesterJWKS) == 0 || string(c.AttesterJWKS) == "null"
+	if c.ID == "" || len(c.RedirectURIs) == 0 || c.ExpectedAttesterIssuer == "" || attesterJWKSEmpty {
+		return fmt.Errorf("config: %s.id, %s.redirect_uris, %s.expected_attester_issuer and %s.attester_jwks are all required", field, field, field, field)
+	}
+	return nil
 }
 
 func (c Config) tlsCertificate() (tls.Certificate, error) {

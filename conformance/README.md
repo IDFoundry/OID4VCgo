@@ -46,12 +46,19 @@ negative-test expectations differ.
   `oid4vcigo/issuer.Issuer`; the suite plays Wallet. Confirmed live
   end to end in-repo (PAR → consent → token → nonce → credential),
   a permanent regression test that surfaced and fixed three real bugs.
-  **First live attempt against the real OIDF suite** (plan creation
-  succeeded; the simplest module, `metadata-test`, surfaced a likely
-  `fapigo/server`-side gap: no RFC 8414 `/.well-known/oauth-authorization-server`
-  document served when `Config.OAuthOnly = true`) — every module past
-  that one, including `happy-flow`, is still blocked on that plus a
-  confirmed `client2` wiring gap in this binary's own `Config`. See
-  `issuer/README.md`.
+  **Confirmed live against the real OIDF suite**: `metadata-test`
+  is a full `PASSED` (fixed by serving this binary's AS metadata at
+  both `/.well-known/openid-configuration` and RFC 8414's own
+  `/.well-known/oauth-authorization-server` — entirely an
+  OID4VCIgo-side router fix, not FAPIgo's), `metadata-test-signed`
+  correctly self-`SKIPPED`. `client2` support was added
+  (`Config.Client2`, optional) and confirmed both by a real PAR-
+  authentication unit test and live against the suite itself.
+  `happy-flow` now reaches real PAR traffic before hitting a new,
+  likely genuine `fapigo/server`-side gap: it rejects a PAR request
+  carrying one deliberately-unrecognized extra parameter outright,
+  where RFC 9126/6749 expect the parameter to be silently ignored —
+  not fixed here, flagged the same way the Wallet-role FAPIgo
+  dependency already is (see `AGENTS.md`). See `issuer/README.md`.
 - **Not yet started**: OID4VCI Wallet role (blocked on a FAPIgo-side
   change — see `AGENTS.md`).
