@@ -765,9 +765,9 @@ shape from the phase-by-phase plan, not a description of current code.
   A.2's own "the client_id parameter MUST be omitted in unsigned
   requests") — checked byte-for-byte against Appendix B.2.6.2's own
   published worked hex example, the same rigor
-  `BuildSessionTranscriptBytes` was held to. Not yet wired into
-  `verifier`/`wallet` — see their own package doc comments for the DC
-  API flow's current status there.
+  `BuildSessionTranscriptBytes` was held to. Wired into both
+  `verifier` (`buildMdocSessionTranscriptBytes`) and `wallet`
+  (identically named) — see their own bullets below.
 - **`verifier`** (done, `dc+sd-jwt`+`mso_mdoc`) — the OID4VP Verifier role.
   `BuildAuthorizationRequest` builds and signs a HAIP-§5-profiled
   redirect-flow Authorization Request: a JAR Request Object
