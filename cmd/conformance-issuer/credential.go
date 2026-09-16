@@ -6,12 +6,19 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"time"
 
 	fapires "github.com/idfoundry/fapigo/resource"
 
 	"github.com/idfoundry/oid4vcigo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcigo/issuer"
 )
+
+// issuedCredentialLifetime bounds an issued credential's own "exp"
+// claim — HAIP/SD-JWT VC §11.2.3's own RECOMMENDED (not required) way
+// to limit a credential's validity, confirmed live as something the
+// OIDF conformance suite's own log flags as a WARNING when absent.
+const issuedCredentialLifetime = 365 * 24 * time.Hour
 
 // credentialIssuerMetadataHandler serves GET
 // /.well-known/openid-credential-issuer (§12.2) — issuer.Metadata is
@@ -93,12 +100,13 @@ func credentialHandler(iss *issuer.Issuer, resourceVerifier *fapires.Verifier, c
 			return
 		}
 
+		exp := time.Now().Add(issuedCredentialLifetime).Unix()
 		auth := issuer.AuthorizedRequest{ClientID: authCtx.ClientID, Scopes: authCtx.Scopes}
 		result, err := iss.RequestCredential(r.Context(), auth, issuer.CredentialRequest{
 			CredentialConfigurationID: wire.CredentialConfigurationID,
 			CredentialIdentifier:      wire.CredentialIdentifier,
 			Proofs:                    wire.Proofs,
-			SDJWTClaims:               &sdjwtvc.Claims{VCT: cfg.VCT, Additional: additional},
+			SDJWTClaims:               &sdjwtvc.Claims{VCT: cfg.VCT, Exp: &exp, Additional: additional},
 		})
 		if err != nil {
 			writeIssuerError(w, err)

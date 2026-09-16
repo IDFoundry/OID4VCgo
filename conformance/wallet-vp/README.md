@@ -138,6 +138,14 @@ harness design, not attempted here.
 
 ## Status: full module run against the real OIDF suite
 
+**Update**: the fixture credential now sets an `exp` claim (`credential.go`'s
+own `fixtureCredentialLifetime`, a year out — HAIP/SD-JWT VC §11.2.3's
+own RECOMMENDED-not-required validity limit), fixing the one WARNING
+every module below used to carry. Re-run live: `happy-flow` is now a
+clean `FINISHED`/`PASSED` with zero log entries at `WARNING` or worse,
+not just zero `FAILURE`s — every "same soft `exp`-claim note" mention
+below predates this fix.
+
 All 14 modules reachable by this binary's own scope (`direct_post.jwt`
 + `x509_hash` + `request_uri_signed`) have now been run live. The
 plan's other 2 modules (`negative-test-wrong-expected-origins`,
