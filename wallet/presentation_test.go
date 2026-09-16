@@ -47,15 +47,25 @@ type heldSDJWTVCFixture struct {
 
 func newHeldSDJWTVC(t *testing.T) heldSDJWTVCFixture {
 	t.Helper()
+	return newHeldSDJWTVCWithAdditional(t, map[string]any{"given_name": "Alice"})
+}
+
+// newHeldSDJWTVCWithAdditional is newHeldSDJWTVC's own parameterized
+// core: a real, freshly issued "dc+sd-jwt" credential bound to a
+// fresh holder key, carrying additional as its own Claims.Additional —
+// shared by newHeldSDJWTVC (a mandatory given_name, no real
+// Disclosures) and newHeldSDJWTVCWithSelectivelyDisclosableClaims (its
+// own file's sdjwtvc.SD()-wrapped twin, which needs real Disclosures
+// to trim from).
+func newHeldSDJWTVCWithAdditional(t *testing.T, additional map[string]any) heldSDJWTVCFixture {
+	t.Helper()
 	issuerKey := testP256Key(t)
 	holderKey := testP256Key(t)
 	holderJWK := presentationJWKMap(t, &holderKey.PublicKey)
 	sdjwt, _, err := sdjwtvc.Issue(issuerKey, jose.ES256, sdjwtvc.Claims{
-		VCT: testPresentationVCT,
-		CNF: map[string]any{"jwk": holderJWK},
-		Additional: map[string]any{
-			"given_name": "Alice",
-		},
+		VCT:        testPresentationVCT,
+		CNF:        map[string]any{"jwk": holderJWK},
+		Additional: additional,
 	}, sdjwtvc.IssueOptions{})
 	if err != nil {
 		t.Fatalf("Issue: %v", err)
@@ -269,16 +279,7 @@ func TestPresentSDJWTVC(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PresentSDJWTVC: %v", err)
 	}
-	claims, _, err := sdjwtvc.Verify(compact, &fixture.issuerKey.PublicKey, jose.ES256, sdjwtvc.VerifyOptions{
-		RequireKeyBinding: true,
-		HolderPublicKey:   &fixture.holderKey.PublicKey,
-		KeyBindingAlg:     jose.ES256,
-		ExpectedAudience:  "x509_hash:verifier",
-		ExpectedNonce:     "nonce-1",
-	})
-	if err != nil {
-		t.Fatalf("sdjwtvc.Verify: %v", err)
-	}
+	claims := verifiedSDJWTVCClaims(t, compact, fixture, "x509_hash:verifier")
 	if claims["given_name"] != "Alice" {
 		t.Errorf("given_name = %v, want Alice", claims["given_name"])
 	}

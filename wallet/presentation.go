@@ -267,11 +267,10 @@ func matchAllMdocQuery(cq dcql.CredentialQuery, candidates []HeldCredential) []H
 // PresentSDJWTVC builds a "dc+sd-jwt" Presentation (a VP Token array
 // entry, Appendix B.3) from held: a fresh Key Binding JWT bound to
 // aud/nonce (§14.1.2, Appendix B.3.6), reusing every one of held's own
-// Disclosures — this package doesn't yet trim down to only the
-// requested claims (RFC 9901 §7.2 lets a Holder present a subset; a
-// caller wanting minimal disclosure can trim HeldCredential's own
-// Disclosures itself before calling this, once dcql.Path.Select has
-// told it which ones a Claims Query actually needs).
+// Disclosures. RFC 9901 §7.2 lets a Holder present a subset instead —
+// see PresentSDJWTVCSelective for that; this function's own "disclose
+// everything" behavior is unchanged, for a caller with no DCQL query
+// context to trim against.
 func PresentSDJWTVC(held HeldCredential, aud, nonce string) (string, error) {
 	if held.Format != sdjwtvc.CredentialFormat {
 		return "", fmt.Errorf("wallet: present sd-jwt vc: held credential format is %q, want %q", held.Format, sdjwtvc.CredentialFormat)
@@ -280,6 +279,115 @@ func PresentSDJWTVC(held HeldCredential, aud, nonce string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("wallet: present sd-jwt vc: %w", err)
 	}
+	return signAndCompactSDJWTVCPresentation(held, pres, hashAlg, aud, nonce)
+}
+
+// PresentSDJWTVCSelective is PresentSDJWTVC's own minimal-disclosure
+// twin (RFC 9901 §7.2, §6.4.1's own "the Wallet MUST NOT send
+// selectively disclosable claims that have not been selected"): it
+// builds the same kind of Presentation, but includes only the
+// Disclosures requiredPaths actually needs
+// (credential/sdjwtvc.SelectDisclosures), dropping every other one —
+// PresentCredentials is this function's own real caller, via
+// dcql.CredentialQuery.SelectedSDJWTVCClaimPaths.
+//
+// Each Path in requiredPaths is walked as a sequence of
+// object-property names — SelectDisclosures's own contract. A Path
+// with a Wildcard/Index component (selecting into an *array*, as
+// opposed to an object property) isn't supported for trimming yet:
+// this function falls back to PresentSDJWTVC's own full disclosure
+// for the whole credential in that case, rather than guessing which
+// array elements matter — the one narrow case where this package's
+// own output can still exceed what §6.4.1 strictly allows; every
+// Claims Path Pointer either format's own DCQL query fixtures in this
+// repo actually uses today is Wildcard/Index-free, so this cut costs
+// nothing in practice yet.
+func PresentSDJWTVCSelective(held HeldCredential, aud, nonce string, requiredPaths []dcql.Path) (string, error) {
+	if held.Format != sdjwtvc.CredentialFormat {
+		return "", fmt.Errorf("wallet: present sd-jwt vc: held credential format is %q, want %q", held.Format, sdjwtvc.CredentialFormat)
+	}
+	disclosurePaths, ok := sdjwtvcDisclosurePaths(requiredPaths)
+	if !ok {
+		return PresentSDJWTVC(held, aud, nonce)
+	}
+
+	pres, hashAlg, _, err := resolveHeldSDJWTVC(held.Credential)
+	if err != nil {
+		return "", fmt.Errorf("wallet: present sd-jwt vc: %w", err)
+	}
+	payload, err := rawSDJWTVCPayload(pres)
+	if err != nil {
+		return "", fmt.Errorf("wallet: present sd-jwt vc: %w", err)
+	}
+	selected, err := sdjwtvc.SelectDisclosures(payload, hashAlg, pres.Disclosures, disclosurePaths)
+	if err != nil {
+		return "", fmt.Errorf("wallet: present sd-jwt vc: select disclosures: %w", err)
+	}
+	pres.Disclosures = selected
+
+	return signAndCompactSDJWTVCPresentation(held, pres, hashAlg, aud, nonce)
+}
+
+// presentSDJWTVCSelectively builds held's own "dc+sd-jwt" Presentation
+// trimmed to exactly what cq's own Claims/ClaimSets say are needed
+// (dcql.CredentialQuery.SelectedSDJWTVCClaimPaths) — the entry point
+// PresentCredentials uses so its own vp_token is §6.4.1-compliant by
+// construction, unlike calling PresentSDJWTVC directly.
+func presentSDJWTVCSelectively(held HeldCredential, cq dcql.CredentialQuery, aud, nonce string) (string, error) {
+	_, _, claims, err := resolveHeldSDJWTVC(held.Credential)
+	if err != nil {
+		return "", fmt.Errorf("wallet: present sd-jwt vc: %w", err)
+	}
+	paths, err := cq.SelectedSDJWTVCClaimPaths(claims)
+	if err != nil {
+		return "", fmt.Errorf("wallet: present sd-jwt vc: %w", err)
+	}
+	return PresentSDJWTVCSelective(held, aud, nonce, paths)
+}
+
+// rawSDJWTVCPayload decodes pres's own Issuer JWT payload without
+// resolving its Disclosures — the shape
+// credential/sdjwtvc.SelectDisclosures needs to walk (still carrying
+// "_sd"/"_sd_alg"), as opposed to resolveHeldSDJWTVC's own
+// fully-resolved claims.
+func rawSDJWTVCPayload(pres sdjwtvc.Presentation) (map[string]any, error) {
+	_, rawPayload, err := jose.DecodeUnverified(pres.IssuerJWT)
+	if err != nil {
+		return nil, fmt.Errorf("decode issuer jwt: %w", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(rawPayload, &payload); err != nil {
+		return nil, fmt.Errorf("unmarshal issuer jwt payload: %w", err)
+	}
+	return payload, nil
+}
+
+// sdjwtvcDisclosurePaths converts paths into the plain object-property
+// key sequences credential/sdjwtvc.SelectDisclosures needs, or
+// ok=false if any Path has a Wildcard/Index component — see
+// PresentSDJWTVCSelective's own doc comment for what a caller gets in
+// that case.
+func sdjwtvcDisclosurePaths(paths []dcql.Path) ([][]string, bool) {
+	out := make([][]string, 0, len(paths))
+	for _, p := range paths {
+		keys := make([]string, 0, len(p))
+		for _, elem := range p {
+			if !elem.IsKey() {
+				return nil, false
+			}
+			keys = append(keys, elem.Key())
+		}
+		out = append(out, keys)
+	}
+	return out, true
+}
+
+// signAndCompactSDJWTVCPresentation builds a fresh Key Binding JWT
+// over pres/hashAlg bound to aud/nonce and returns the compact
+// SD-JWT+KB string — the shared tail PresentSDJWTVC and
+// PresentSDJWTVCSelective both need once pres.Disclosures already
+// carries exactly what each of them decided to disclose.
+func signAndCompactSDJWTVCPresentation(held HeldCredential, pres sdjwtvc.Presentation, hashAlg sdjwtvc.HashAlg, aud, nonce string) (string, error) {
 	kbJWT, err := sdjwtvc.NewKeyBindingJWT(held.HolderKey, held.HolderKeyAlg, pres, hashAlg, sdjwtvc.KeyBindingClaims{
 		Audience: aud, Nonce: nonce,
 	})
@@ -436,9 +544,17 @@ type PresentationRequest struct {
 
 // PresentCredentials matches req.Query against req.Credentials
 // (MatchDCQLQuery) and builds a VP Token entry for each match — see
-// MatchDCQLQuery's own doc comment for this phase's scope. Returns the
-// vp_token map ready for a direct_post(.jwt)/dc_api(.jwt) response
-// body (§8.1): {<Credential Query id>: [<Presentation>]}.
+// MatchDCQLQuery's own doc comment for this phase's scope. For
+// "dc+sd-jwt", each Presentation is built via presentSDJWTVCSelectively
+// rather than PresentSDJWTVC directly, so it's trimmed to exactly the
+// matched Credential Query's own Claims/ClaimSets
+// (dcql.CredentialQuery.SelectedSDJWTVCClaimPaths) — §6.4.1's own
+// "MUST NOT send selectively disclosable claims that have not been
+// selected" — see PresentSDJWTVCSelective's own doc comment for the
+// one narrow case (a Wildcard/Index Claims Path) that still falls
+// back to full disclosure. Returns the vp_token map ready for a
+// direct_post(.jwt)/dc_api(.jwt) response body (§8.1):
+// {<Credential Query id>: [<Presentation>]}.
 func PresentCredentials(req PresentationRequest) (map[string][]string, error) {
 	if req.Origin == "" && req.Audience == "" {
 		return nil, fmt.Errorf("wallet: present credentials: audience is required")
@@ -455,6 +571,10 @@ func PresentCredentials(req PresentationRequest) (map[string][]string, error) {
 	if req.Origin != "" {
 		aud = "origin:" + req.Origin
 	}
+	byID := make(map[string]dcql.CredentialQuery, len(req.Query.Credentials))
+	for _, cq := range req.Query.Credentials {
+		byID[cq.ID] = cq
+	}
 
 	vpToken := make(map[string][]string, len(matches))
 	for id, helds := range matches {
@@ -463,7 +583,7 @@ func PresentCredentials(req PresentationRequest) (map[string][]string, error) {
 			var p string
 			switch held.Format {
 			case sdjwtvc.CredentialFormat:
-				p, err = PresentSDJWTVC(held, aud, req.Nonce)
+				p, err = presentSDJWTVCSelectively(held, byID[id], aud, req.Nonce)
 			case mdoc.CredentialFormat:
 				p, err = PresentMdoc(held, PresentMdocParams{
 					Audience: req.Audience, Nonce: req.Nonce, Origin: req.Origin,
