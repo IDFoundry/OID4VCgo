@@ -374,9 +374,21 @@ shape from the phase-by-phase plan, not a description of current code.
   Appendix A.2.2, checked against that appendix's own non-normative
   example), and `credential_request_encryption`/`credential_response_encryption`
   (§10, §12.2.4 — `Config.RequestEncryption`/`Config.ResponseEncryption`,
-  see below) — deliberately not yet `batch_credential_issuance`,
-  `display`, or `credential_metadata` (including mdoc's own `claims`
-  array, which lives under `credential_metadata`); and `RequestCredential` implementing the
+  see below), `batch_credential_issuance` (§12.2.4 —
+  `Config.BatchCredentialIssuance`, advertising-only: setting it changes
+  what `Metadata` advertises, not what `RequestCredential` itself
+  accepts — enforcing `BatchSize` as an actual cap on a Credential
+  Request's own proof count is a deliberate, separate follow-up),
+  top-level `display` (§12.2.4 — `Config.Display`), and
+  `credential_metadata` (Appendix A — `CredentialConfiguration.CredentialMetadata`,
+  covering its own `display` and `claims` arrays, shared verbatim by
+  both formats — mdoc's own claims use the same `credential_metadata`
+  mechanism, just with a two-element `path` of `[namespace, element]`
+  per Appendix A.2.2's own example, not a separate mdoc-specific
+  member; the `path`'s own Claims Path Pointer, per Appendix C, is kept
+  as a plain `[]any` rather than reusing `dcql.Path`, since describing
+  display metadata never needs that OID4VP-specific package's own
+  `Select`/evaluation behavior); and `RequestCredential` implementing the
   Credential Endpoint (§8) for immediate (non-deferred) issuance, both
   formats and both the `jwt` and `attestation` proof types, with batch
   support native to §8.2's own `proofs` parameter (one Credential per

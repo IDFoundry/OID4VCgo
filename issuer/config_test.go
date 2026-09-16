@@ -174,6 +174,12 @@ func TestNewRejectsInvalidConfig(t *testing.T) {
 		"zero nonce lifetime with endpoint":                  func(c *issuer.Config) { c.Limits.NonceLifetime = 0 },
 		"zero credential offer lifetime with endpoint":       func(c *issuer.Config) { c.Limits.CredentialOfferLifetime = 0 },
 		"zero deferred issuance poll interval with endpoint": func(c *issuer.Config) { c.Limits.DeferredIssuancePollInterval = 0 },
+		"invalid display": func(c *issuer.Config) {
+			c.Display = []issuer.Display{{Logo: &issuer.Logo{}}}
+		},
+		"invalid batch credential issuance": func(c *issuer.Config) {
+			c.BatchCredentialIssuance = &issuer.BatchCredentialIssuance{BatchSize: 1}
+		},
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -208,6 +214,12 @@ func TestNewRejectsInvalidCredentialConfiguration(t *testing.T) {
 			Format:                                  "mso_mdoc",
 			CredentialSigningAlgValuesSupported:     []string{"ES256"},
 			CredentialSigningAlgValuesSupportedCOSE: []cose.Alg{cose.ES256},
+		},
+		"invalid credential_metadata": {
+			Format: "dc+sd-jwt",
+			CredentialMetadata: &issuer.CredentialMetadata{
+				Claims: []issuer.ClaimsDescription{{Path: nil}},
+			},
 		},
 	}
 	for name, cc := range cases {

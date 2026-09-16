@@ -124,6 +124,18 @@ type Config struct {
 	// means this issuer never encrypts a Response, even if a Wallet
 	// asks — EncryptResponseBody then rejects the request.
 	ResponseEncryption *ResponseEncryptionSupport
+
+	// Display is this Credential Issuer's own OPTIONAL display metadata
+	// (§12.2.4's top-level "display"), one entry per locale. Empty means
+	// Metadata omits display entirely.
+	Display []Display
+
+	// BatchCredentialIssuance declares this issuer's own OPTIONAL
+	// support for batch issuance (§12.2.4's "batch_credential_issuance")
+	// — see BatchCredentialIssuance's own doc comment for what setting
+	// this does and doesn't change. Nil means Metadata omits
+	// batch_credential_issuance entirely.
+	BatchCredentialIssuance *BatchCredentialIssuance
 }
 
 // Clock supplies the current time — a plain function value satisfies
@@ -314,6 +326,16 @@ func New(cfg Config, deps Dependencies) (*Issuer, error) {
 	for id, c := range cfg.CredentialConfigurationsSupported {
 		if err := c.validate(); err != nil {
 			return nil, fmt.Errorf("issuer: config: credential_configurations_supported[%q]: %w", id, err)
+		}
+	}
+	for i, d := range cfg.Display {
+		if err := d.validate(); err != nil {
+			return nil, fmt.Errorf("issuer: config: display[%d]: %w", i, err)
+		}
+	}
+	if cfg.BatchCredentialIssuance != nil {
+		if err := cfg.BatchCredentialIssuance.validate(); err != nil {
+			return nil, fmt.Errorf("issuer: config: batch_credential_issuance: %w", err)
 		}
 	}
 
