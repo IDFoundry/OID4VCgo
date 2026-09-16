@@ -1,7 +1,8 @@
 // Package storage provides in-memory implementations of every store
 // interface the issuer package defines (NonceStore, CredentialOfferStore,
-// DeferredTransactionStore, NotificationStore) — for local development
-// and testing only. Never production.
+// DeferredTransactionStore, NotificationStore, PreAuthorizedCodeStore,
+// DPoPNonceStore, DPoPReplayChecker) — for local development and
+// testing only. Never production.
 //
 // Every type here is non-durable (an in-process map, gone on restart)
 // and grows unboundedly for the life of the process — there is no

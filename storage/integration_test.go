@@ -1,6 +1,7 @@
 package storage_test
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -15,11 +16,23 @@ import (
 	"github.com/idfoundry/oid4vcigo/storage"
 )
 
+// accessTokenStub is a minimal issuer.AccessTokenIssuer test double —
+// this package deliberately doesn't provide one of its own (see
+// issuer.AccessTokenIssuer's own doc comment: minting a real access
+// token is entirely a deployment's own concern), so
+// TestStoresSatisfyIssuerDependencies supplies just enough to satisfy
+// issuer.New's own validation when wiring the Pre-Authorized Code Flow.
+type accessTokenStub struct{}
+
+func (accessTokenStub) IssueAccessToken(context.Context, issuer.AccessTokenParams) (string, string, error) {
+	return "", "", nil
+}
+
 // TestStoresSatisfyIssuerDependencies wires every store in this
-// package into issuer.New with every optional endpoint enabled — this
-// package's real purpose, and the simplest way to keep each store's
-// method set from silently drifting out of sync with what issuer
-// actually requires.
+// package into issuer.New with every optional endpoint and flow
+// enabled — this package's real purpose, and the simplest way to keep
+// each store's method set from silently drifting out of sync with
+// what issuer actually requires.
 func TestStoresSatisfyIssuerDependencies(t *testing.T) {
 	issuerURL, err := fapi.ParseIssuerURL("https://issuer.example.com")
 	if err != nil {
@@ -63,6 +76,10 @@ func TestStoresSatisfyIssuerDependencies(t *testing.T) {
 			NonceLifetime:                time.Minute,
 			CredentialOfferLifetime:      time.Hour,
 			DeferredIssuancePollInterval: 10 * time.Second,
+			AccessTokenLifetime:          time.Hour,
+			MaxDPoPProofAge:              time.Minute,
+			MaxDPoPClockSkew:             time.Minute,
+			DPoPNonceLifetime:            time.Minute,
 		},
 		CredentialOfferEndpoint: credentialOfferEndpoint,
 		CredentialConfigurationsSupported: map[string]issuer.CredentialConfiguration{
@@ -79,6 +96,10 @@ func TestStoresSatisfyIssuerDependencies(t *testing.T) {
 		CredentialOffers:     storage.NewCredentialOfferStore(),
 		DeferredTransactions: storage.NewDeferredTransactionStore(),
 		Notifications:        storage.NewNotificationStore(),
+		PreAuthorizedCodes:   storage.NewPreAuthorizedCodeStore(),
+		DPoPReplay:           storage.NewDPoPReplayChecker(),
+		DPoPNonces:           storage.NewDPoPNonceStore(),
+		AccessTokens:         accessTokenStub{},
 		Clock:                issuer.ClockFunc(time.Now),
 		Random:               rand.Reader,
 		SDJWTSigner:          &issuer.SDJWTSigner{Signer: signer, Alg: jose.ES256},

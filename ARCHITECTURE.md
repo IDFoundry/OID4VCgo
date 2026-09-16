@@ -1231,7 +1231,8 @@ shape from the phase-by-phase plan, not a description of current code.
   implementation, not optional profiling on top of it).
 - **`storage`** — in-memory implementations of every store `issuer`
   defines (`NonceStore`, `CredentialOfferStore`, `DeferredTransactionStore`,
-  `NotificationStore`), for local dev/testing only — never production;
+  `NotificationStore`, `PreAuthorizedCodeStore`, `DPoPNonceStore`,
+  `DPoPReplayChecker`), for local dev/testing only — never production;
   mirrors FAPIgo's `storage/memstore` down to the same non-durable,
   no-garbage-collection caveats and the same M-5 no-aliasing discipline
   (deep-copying every slice/pointer that crosses a Store/Get boundary,
@@ -1241,7 +1242,14 @@ shape from the phase-by-phase plan, not a description of current code.
   creates or resolves a Deferred Issuance transaction on its own (see
   `issuer.DeferredTransactionRecord`'s own doc comment), this package's
   reference store needs some way for a caller to actually create one
-  and later mark it Issued/Denied.
+  and later mark it Issued/Denied. `DPoPNonceStore` mirrors `NonceStore`'s
+  own Issue/Consume, single-use-on-consume shape exactly, for the
+  distinct RFC 9449 §8 nonce this package now defines. `DPoPReplayChecker`
+  is `issuer.DPoPReplayChecker`'s own reference implementation — every
+  "jti" `UseOnce` sees is remembered forever (never evicted, even past
+  its own `expiresAt`), the simplest reading of RFC 9449 §11.1's literal
+  "MUST reject any DPoP proof in which the jti has been seen before",
+  and consistent with this package's own no-garbage-collection caveat.
 - **`conformance`** — OIDF HAIP conformance suite harness, once one of the
   protocol packages above is far enough along to run against it. Mirrors
   FAPIgo's `conformance/` structure and its own AGENTS.md documentation
