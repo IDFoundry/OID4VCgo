@@ -28,17 +28,21 @@ negative-test expectations differ.
   module list only (`oid4vp-1final-wallet-haip-test-plan`):
   `cmd/conformance-wallet-vp` stands up `wallet`'s own presentation
   half behind real HTTP; the suite plays Verifier. Confirmed live end
-  to end against `cmd/conformance-verifier` itself, and **confirmed
-  live against the real OIDF suite's own `happy-flow` module**. Found
-  and fixed two real gaps along the way: `credential/sdjwtvc.Issue` had
-  no `x5c` header support at all (HAIP's own SD-JWT VC trust model
-  requires it), and once added, the suite additionally rejected a
-  self-signed leaf (HAIP wants the leaf issued by a separate CA). Both
-  fixed (`sdjwtvc.IssueOptions.IssuerCertificate`,
-  `internal/conformancecert.GenerateCA`/`IssueLeafCertPEM`) and
-  re-confirmed live: zero x5c-related failures remain. Its own three
-  `dc_api.jwt` module lists are out of scope for this binary. See
-  `wallet-vp/README.md`.
+  to end against `cmd/conformance-verifier` itself, and **all 14
+  modules this binary's own scope can reach are now run live** (the
+  other 2 are DC API/JAR-JSON-Serialization-only, correctly 404 for
+  this variant). Four real gaps found and fixed along the way: the
+  same x5c-header/self-signed-leaf pair already found for
+  `credential/sdjwtvc.Issue`, plus two request-object validation gaps
+  this binary's own `requestobject.go` had — a request carrying
+  `redirect_uri` alongside `response_uri`, or an unrecognized
+  `transaction_data` type, was silently ignored and this binary POSTed
+  its response anyway instead of refusing the request. All four fixed
+  and re-confirmed live: five positive-behavior modules clean
+  (`FINISHED`/`WARNING`, zero `FAILURE`s), one correctly self-`SKIPPED`,
+  seven of seven reachable negative tests now correctly reject before
+  ever calling `response_uri`. Its own three `dc_api.jwt` module lists
+  are out of scope for this binary. See `wallet-vp/README.md`.
 - **`issuer/`** — OID4VCI 1.0 Final/HAIP Issuer role
   (`oid4vci-1_0-issuer-haip-test-plan`): `cmd/conformance-issuer` pairs
   a real `fapigo/server.Server` (FAPI 2.0 Security Profile Final,

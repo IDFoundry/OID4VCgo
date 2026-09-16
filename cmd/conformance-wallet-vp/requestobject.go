@@ -45,14 +45,25 @@ type authorizationRequest struct {
 }
 
 // wireRequestObjectPayload is the Request Object JWS's own payload
-// (§5.2) — only the members this binary actually reads.
+// (§5.2) — every member this binary actually reads, plus two it only
+// reads to reject: RedirectURI and TransactionData are never acted on
+// (this binary only ever builds a direct_post.jwt response via
+// ResponseURI, and recognizes no transaction_data type at all), but
+// their presence must still cause fetchAndVerifyRequestObject to
+// refuse the request rather than silently ignore them and proceed —
+// confirmed live against the OIDF conformance suite's own
+// negative-test-redirect-uri-with-direct-post/
+// negative-test-unknown-transaction-data-type modules, which caught
+// this binary calling response_uri anyway.
 type wireRequestObjectPayload struct {
-	ClientID       string          `json:"client_id"`
-	ResponseURI    string          `json:"response_uri"`
-	Nonce          string          `json:"nonce"`
-	State          string          `json:"state"`
-	DCQLQuery      dcql.Query      `json:"dcql_query"`
-	ClientMetadata json.RawMessage `json:"client_metadata"`
+	ClientID        string            `json:"client_id"`
+	ResponseURI     string            `json:"response_uri"`
+	RedirectURI     string            `json:"redirect_uri"`
+	Nonce           string            `json:"nonce"`
+	State           string            `json:"state"`
+	DCQLQuery       dcql.Query        `json:"dcql_query"`
+	ClientMetadata  json.RawMessage   `json:"client_metadata"`
+	TransactionData []json.RawMessage `json:"transaction_data"`
 }
 
 type wireClientMetadata struct {
@@ -117,6 +128,12 @@ func fetchAndVerifyRequestObject(requestURI, clientID string) (authorizationRequ
 	}
 	if wire.ClientID != clientID {
 		return authorizationRequest{}, fmt.Errorf("request object: payload client_id %q does not match %q", wire.ClientID, clientID)
+	}
+	if wire.RedirectURI != "" {
+		return authorizationRequest{}, fmt.Errorf("request object: redirect_uri must not be present alongside response_uri/direct_post")
+	}
+	if len(wire.TransactionData) > 0 {
+		return authorizationRequest{}, fmt.Errorf("request object: transaction_data is present but this wallet recognizes no transaction_data type")
 	}
 
 	var meta wireClientMetadata

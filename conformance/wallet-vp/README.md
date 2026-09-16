@@ -136,10 +136,75 @@ of scope for this binary; `wallet`'s own DC API support
 exists but testing it against the live suite needs its own separate
 harness design, not attempted here.
 
-## Remaining work
+## Status: full module run against the real OIDF suite
 
-- Run the plan's other 8 `direct_post.jwt` modules (`alternate-happy-flow`,
-  `request-uri-method-post`, `ignores-unusable-encryption-key`,
-  `fewer-claims-than-available`, `optional-credential-set`,
-  `no-claims-in-dcql-query`, and the two `negative-test-*` modules) —
-  only `happy-flow` has been run live so far.
+All 14 modules reachable by this binary's own scope (`direct_post.jwt`
++ `x509_hash` + `request_uri_signed`) have now been run live. The
+plan's other 2 modules (`negative-test-wrong-expected-origins`,
+`multisigned-one-invalid-signature`) 404 when requested against this
+variant — consistent with the "Scope" section below (DC API/JAR-JSON-
+Serialization-only checks, not something this binary's redirect-flow
+implementation is ever asked to handle).
+
+**Driving negative-test and fragment-redirect modules needs one extra
+step curl alone can't do.** Two distinct suite mechanisms show up
+across this module list, beyond the plain query-string callback
+`happy-flow` uses:
+
+- A **fragment-carrying `redirect_uri`** (`alternate-happy-flow`):
+  HAIP's own fragment-based response variant puts data after `#`,
+  which — by design — never reaches an HTTP server, real browser or
+  not; a real browser's own JS reads `window.location.hash` and POSTs
+  it to a suite-provided "implicit submission" URL. This binary's own
+  `handleAuthorize` correctly follows the redirect (its own response
+  text names the exact fragment it tried to send), and the suite's own
+  log/api records the same fragment (`CreateRandomCodeVerifier`) and
+  the submission URL (`CreateRandomImplicitSubmitUrl`) it's waiting
+  on — relaying that from the log to the submission URL completes the
+  module without needing an actual browser.
+- **Every negative-test module** is `REVIEW`-gated: the suite's own
+  condition text is explicit ("the wallet should display an error, a
+  screenshot of which must be uploaded for the test to transition to
+  'FINISHED'"). This binary has no UI to screenshot — the real
+  pass/fail signal for a negative test is whether this binary's own
+  `/authorize` call errored out *before* it ever POSTed to
+  `response_uri` (confirmed directly from its own HTTP response body/
+  status, and cross-checked against the suite's own log never showing
+  a `responseuri` POST) — not the suite's own overall module verdict.
+
+**Positive-behavior modules — all clean.** `alternate-happy-flow`,
+`ignores-unusable-encryption-key`, `fewer-claims-than-available`,
+`optional-credential-set`, `no-claims-in-dcql-query`: every one
+`FINISHED`/`WARNING` with zero `FAILURE`s (the same soft `exp`-claim
+`RECOMMENDED` note as `happy-flow`). `request-uri-method-post`
+correctly self-`SKIPPED` ("the specification permits this as a
+fallback when the wallet does not support POST" — this binary always
+fetches via GET).
+
+**Negative-test modules found two real gaps, now fixed.** Five of
+seven correctly rejected from the start (confirmed via this binary's
+own error response, not needing the suite's screenshot review):
+`invalid-request-object-signature`, `mismatched-client-id`,
+`missing-nonce`, `invalid-client-id-prefix`,
+`required-non-matching-credential`. Two did not:
+`redirect-uri-with-direct-post` and `unknown-transaction-data-type`
+both had this binary silently ignore the offending field and *POST to
+`response_uri` anyway* — the suite's own log calls this out directly
+("Direct post endpoint was called but the wallet should have rejected
+the request..."). Root cause: `wireRequestObjectPayload`
+(`requestobject.go`) never parsed `redirect_uri` or `transaction_data`
+at all, so their presence was invisible to this binary's own
+validation. Fixed: both fields are now parsed and, if present, rejected
+outright — `redirect_uri` because this binary only ever builds a
+`response_uri`-targeted response (the two are mutually exclusive per
+RFC 9101 §5/PAR-2.1's own logic, applied here to the Wallet's own
+incoming-request validation instead), `transaction_data` because this
+binary recognizes no transaction_data type at all, so RFC 9101 semantics
+require refusing rather than silently proceeding as if it weren't
+there. `TestFetchAndVerifyRequestObject_RejectsRedirectURI`/
+`RejectsTransactionData`/`AcceptsWellFormedRequest`
+(`requestobject_test.go`) are new permanent regression tests. Re-run
+live after the fix: both modules now correctly stop before calling
+`response_uri` (the suite's own log shows "Show redirect URI error
+page" / "REVIEW" instead of the direct-post-endpoint-was-called
+failure).
