@@ -15,32 +15,43 @@ negative-test expectations differ.
 - **`verifier/`** — OID4VP 1.0 Final/HAIP Verifier role
   (`oid4vp-1final-verifier-haip-test-plan`): `cmd/conformance-verifier`
   stands up `verifier.Verifier` behind real HTTP; the suite plays
-  Wallet. Code written, unit-tested, and smoke-tested locally (the full
-  Authorization Request → request_uri → response flow works end to
-  end against a hand-rolled client); **not yet run against the live
-  suite** — that's the next step once Docker is available. See
+  Wallet. **Confirmed live against a real, locally-run OIDF suite,
+  all 11 in-scope modules correct** (5 positive-behavior modules
+  succeed, 5 negative-test modules correctly reject their malformed
+  presentation, 1 self-skips as designed). Found and fixed one real
+  interop bug along the way: `internal/jwe`'s Concat KDF never
+  incorporated the sender's `apu`/`apv` header members, silently
+  deriving the wrong CEK against the suite's own
+  `direct_post.jwt` responses (which always set both). See
   `verifier/README.md`.
 - **`wallet-vp/`** — OID4VP 1.0 Final/HAIP Wallet role, direct_post.jwt
   module list only (`oid4vp-1final-wallet-haip-test-plan`):
   `cmd/conformance-wallet-vp` stands up `wallet`'s own presentation
   half behind real HTTP; the suite plays Verifier. Confirmed live end
-  to end against `cmd/conformance-verifier` itself (a real
-  cryptographic round trip, now a permanent regression test) — **not
-  yet run against the live OIDF suite**. Its own three `dc_api.jwt`
-  module lists are out of scope for this binary. See
+  to end against `cmd/conformance-verifier` itself, and **confirmed
+  live against the real OIDF suite's own `happy-flow` module**. Found
+  and fixed two real gaps along the way: `credential/sdjwtvc.Issue` had
+  no `x5c` header support at all (HAIP's own SD-JWT VC trust model
+  requires it), and once added, the suite additionally rejected a
+  self-signed leaf (HAIP wants the leaf issued by a separate CA). Both
+  fixed (`sdjwtvc.IssueOptions.IssuerCertificate`,
+  `internal/conformancecert.GenerateCA`/`IssueLeafCertPEM`) and
+  re-confirmed live: zero x5c-related failures remain. Its own three
+  `dc_api.jwt` module lists are out of scope for this binary. See
   `wallet-vp/README.md`.
 - **`issuer/`** — OID4VCI 1.0 Final/HAIP Issuer role
   (`oid4vci-1_0-issuer-haip-test-plan`): `cmd/conformance-issuer` pairs
   a real `fapigo/server.Server` (FAPI 2.0 Security Profile Final,
   Wallet Attestation client authentication) with a real
-  `oid4vcigo/issuer.Issuer`; the suite plays Wallet. This is the first
-  real exercise anywhere of `AttestationBasedClientAuthentication` and
-  of `issuer/resource_verifier.go`'s own recipe. Confirmed live end to
-  end: PAR → consent → token → nonce → credential, with a real Client
-  Attestation + PoP JWT pair and DPoP throughout — a permanent
-  regression test. That test surfaced and fixed three real bugs (two
-  missing header forwards, one DPoP "htu" URL bug) — see
-  `issuer/README.md`'s own "Status" for the details. **Not yet run
-  against the live OIDF suite.**
+  `oid4vcigo/issuer.Issuer`; the suite plays Wallet. Confirmed live
+  end to end in-repo (PAR → consent → token → nonce → credential),
+  a permanent regression test that surfaced and fixed three real bugs.
+  **First live attempt against the real OIDF suite** (plan creation
+  succeeded; the simplest module, `metadata-test`, surfaced a likely
+  `fapigo/server`-side gap: no RFC 8414 `/.well-known/oauth-authorization-server`
+  document served when `Config.OAuthOnly = true`) — every module past
+  that one, including `happy-flow`, is still blocked on that plus a
+  confirmed `client2` wiring gap in this binary's own `Config`. See
+  `issuer/README.md`.
 - **Not yet started**: OID4VCI Wallet role (blocked on a FAPIgo-side
   change — see `AGENTS.md`).

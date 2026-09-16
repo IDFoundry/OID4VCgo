@@ -27,7 +27,9 @@ import (
 // package's — the same split credential/sdjwtvc's own doc comment
 // draws for Verify's own issuerPub parameter, and
 // issuer.AttestationVerifier/ProofBindingKeyResolver already draw on
-// the issuance side.
+// the issuance side. X5CIssuerKeyResolver implements the x5c-chain
+// half of that policy for a deployment that just needs a trust anchor
+// set, rather than DID resolution or VCT metadata lookup.
 type SDJWTVCIssuerKeyResolver interface {
 	// ResolveIssuerKey inspects header/payload — the Issuer-signed
 	// JWT's own JOSE header and (not yet cryptographically verified)
@@ -40,7 +42,8 @@ type SDJWTVCIssuerKeyResolver interface {
 // presented "mso_mdoc" Presentation's own IssuerAuth (COSE_Sign1) —
 // the same trust-resolution split SDJWTVCIssuerKeyResolver draws for
 // "dc+sd-jwt", applied to the x5chain COSE header parameter (RFC 9360
-// §2) instead of a JOSE x5c.
+// §2) instead of a JOSE x5c. X5ChainIssuerKeyResolver implements the
+// x5chain-validating half of that policy, mirroring X5CIssuerKeyResolver.
 type MdocIssuerKeyResolver interface {
 	// ResolveMdocIssuerKey inspects x5chain — the credential's own
 	// (not yet cryptographically verified) IssuerAuth x5chain header
@@ -411,7 +414,7 @@ func (v *Verifier) verifyMdocPresentation(ctx context.Context, cq dcql.Credentia
 	if doc.DeviceSigned.AuthType != mdoc.DeviceAuthSignature {
 		return nil, fmt.Errorf("device authentication type %d is not supported (see verifyMdocPresentation's own doc comment)", doc.DeviceSigned.AuthType)
 	}
-	deviceAlg, err := mdocDeviceAlgForKey(verified.DeviceKey)
+	deviceAlg, err := mdocAlgForKey(verified.DeviceKey)
 	if err != nil {
 		return nil, fmt.Errorf("device key: %w", err)
 	}
@@ -450,18 +453,19 @@ func (v *Verifier) buildMdocSessionTranscriptBytes(req VerifyResponseRequest, th
 	})
 }
 
-// mdocDeviceAlgForKey derives the mdoc authentication COSE algorithm
-// from deviceKey's own Go type — the same "derive alg from the
-// already-trusted key, never from an unverified wire claim" discipline
-// holderPublicKeyFromCNF applies for "dc+sd-jwt".
-func mdocDeviceAlgForKey(deviceKey crypto.PublicKey) (cose.Alg, error) {
-	switch deviceKey.(type) {
+// mdocAlgForKey derives the mdoc COSE algorithm from a public key's
+// own Go type — the same "derive alg from the already-trusted key,
+// never from an unverified wire claim" discipline holderPublicKeyFromCNF
+// applies for "dc+sd-jwt", used both for the mdoc authentication
+// (device) key and X5ChainIssuerKeyResolver's own resolved issuer key.
+func mdocAlgForKey(pub crypto.PublicKey) (cose.Alg, error) {
+	switch pub.(type) {
 	case *ecdsa.PublicKey:
 		return cose.ES256, nil
 	case ed25519.PublicKey:
 		return cose.EdDSA, nil
 	default:
-		return 0, fmt.Errorf("unsupported device key type %T", deviceKey)
+		return 0, fmt.Errorf("unsupported public key type %T", pub)
 	}
 }
 
@@ -488,12 +492,24 @@ func holderPublicKeyFromCNF(cnf any) (crypto.PublicKey, jose.Alg, error) {
 	if err != nil {
 		return nil, "", fmt.Errorf("parse cnf.jwk: %w", err)
 	}
+	alg, err := sdjwtvcAlgForKey(pub)
+	if err != nil {
+		return nil, "", err
+	}
+	return pub, alg, nil
+}
+
+// sdjwtvcAlgForKey infers the JOSE algorithm a "dc+sd-jwt" JWS
+// verifies under from its own public key's type — internal/jose's own
+// ES256/EdDSA scope (see its doc comment), the same inference
+// holderPublicKeyFromCNF and X5CIssuerKeyResolver both need.
+func sdjwtvcAlgForKey(pub crypto.PublicKey) (jose.Alg, error) {
 	switch pub.(type) {
 	case *ecdsa.PublicKey:
-		return pub, jose.ES256, nil
+		return jose.ES256, nil
 	case ed25519.PublicKey:
-		return pub, jose.EdDSA, nil
+		return jose.EdDSA, nil
 	default:
-		return nil, "", fmt.Errorf("unsupported cnf.jwk key type %T", pub)
+		return "", fmt.Errorf("unsupported public key type %T", pub)
 	}
 }

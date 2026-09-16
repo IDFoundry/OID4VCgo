@@ -31,14 +31,7 @@ func SelfSignedPEM(commonName string, dnsNames []string) (certPEM, keyPEM string
 	if err != nil {
 		return "", "", err
 	}
-	tmpl := &x509.Certificate{
-		SerialNumber: big.NewInt(1),
-		Subject:      pkix.Name{CommonName: commonName},
-		NotBefore:    time.Now().Add(-time.Hour),
-		NotAfter:     time.Now().Add(10 * 365 * 24 * time.Hour),
-		DNSNames:     dnsNames,
-	}
-	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	der, err := selfSignedDER(commonName, dnsNames, &key.PublicKey, key)
 	if err != nil {
 		return "", "", err
 	}
@@ -47,6 +40,88 @@ func SelfSignedPEM(commonName string, dnsNames []string) (certPEM, keyPEM string
 		return "", "", err
 	}
 	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})), keyPEM, nil
+}
+
+// SelfSignedCertPEMForKey builds a self-signed leaf certificate for an
+// already-generated key (commonName, valid from an hour ago to 10
+// years out), returning it PEM-encoded — for wrapping a key that must
+// stay the same across calls (e.g. a credential-issuer signing key
+// whose public half a relying party already trusts), unlike
+// SelfSignedPEM's own fresh-key-every-time shape.
+func SelfSignedCertPEMForKey(commonName string, key *ecdsa.PrivateKey) (string, error) {
+	der, err := selfSignedDER(commonName, nil, &key.PublicKey, key)
+	if err != nil {
+		return "", err
+	}
+	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})), nil
+}
+
+// GenerateCA generates a fresh EC P-256 self-signed CA certificate and
+// key (commonName, valid from an hour ago to 10 years out) — the
+// trust anchor a generate-config script hands to a relying party (e.g.
+// the OIDF suite's own "*_trust_anchor_pem" test configuration). Issue
+// leaf certificates under it with IssueLeafCertPEM rather than
+// presenting a self-signed leaf directly: some relying parties reject
+// a self-signed x5c leaf outright, confirmed live against the OIDF
+// suite's own SD-JWT VC check ("Leaf certificate in x5c chain must not
+// be self-signed").
+func GenerateCA(commonName string) (cert *x509.Certificate, key *ecdsa.PrivateKey, certPEM, keyPEM string, err error) {
+	key, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, nil, "", "", err
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: commonName},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(10 * 365 * 24 * time.Hour),
+		IsCA:                  true,
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature,
+		BasicConstraintsValid: true,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		return nil, nil, "", "", err
+	}
+	cert, err = x509.ParseCertificate(der)
+	if err != nil {
+		return nil, nil, "", "", err
+	}
+	keyPEM, err = ECKeyPEM(key)
+	if err != nil {
+		return nil, nil, "", "", err
+	}
+	return cert, key, string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})), keyPEM, nil
+}
+
+// IssueLeafCertPEM issues a leaf certificate for leafKey's own public
+// key, signed by caCert/caKey (see GenerateCA), returning it
+// PEM-encoded — for a leaf whose own private key also signs something
+// else (a credential, a request object) where a self-signed leaf would
+// be rejected (see GenerateCA's own doc comment).
+func IssueLeafCertPEM(commonName string, leafKey *ecdsa.PrivateKey, caCert *x509.Certificate, caKey *ecdsa.PrivateKey) (string, error) {
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(2),
+		Subject:      pkix.Name{CommonName: commonName},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(10 * 365 * 24 * time.Hour),
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, caCert, &leafKey.PublicKey, caKey)
+	if err != nil {
+		return "", err
+	}
+	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})), nil
+}
+
+func selfSignedDER(commonName string, dnsNames []string, pub *ecdsa.PublicKey, signer *ecdsa.PrivateKey) ([]byte, error) {
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: commonName},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(10 * 365 * 24 * time.Hour),
+		DNSNames:     dnsNames,
+	}
+	return x509.CreateCertificate(rand.Reader, tmpl, tmpl, pub, signer)
 }
 
 // GenerateECKeyPEM generates a fresh EC P-256 key and returns its

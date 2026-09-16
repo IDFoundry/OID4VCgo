@@ -24,13 +24,18 @@ type Config struct {
 	TLSPrivateKeyPEM  string `json:"tls_private_key_pem"`
 
 	// CredentialIssuerPrivateKeyPEM signs this binary's own fixture
-	// SD-JWT VC (see credential.go) — credential/sdjwtvc.Issue takes a
-	// plain crypto.Signer, no x5c chain, so what to paste into the
-	// OIDF suite's own credential-trust test-configuration field (a
-	// PEM trust anchor, per the suite's own source — see
-	// conformance/wallet-vp/README.md's "Open questions") isn't
-	// confirmed yet; this key's public JWK is the starting point.
+	// SD-JWT VC (see credential.go).
 	CredentialIssuerPrivateKeyPEM string `json:"credential_issuer_private_key_pem"`
+
+	// CredentialIssuerCertificatePEM is a self-signed leaf certificate
+	// wrapping CredentialIssuerPrivateKeyPEM's own public key — set as
+	// the fixture credential's own "x5c" header (RFC 7515 §4.1.6),
+	// confirmed live as what HAIP's own SD-JWT VC trust model requires
+	// (the OIDF conformance suite's own "Credential MUST contain an x5c
+	// in the header" check) — paste its PEM into the suite's own
+	// credential-trust test-configuration field
+	// ("credential.trust_anchor_pem").
+	CredentialIssuerCertificatePEM string `json:"credential_issuer_certificate_pem"`
 
 	// HolderPrivateKeyPEM is the fixture credential's own Holder
 	// Binding key (its "cnf" claim's public half, and what signs the
@@ -60,6 +65,9 @@ func loadConfig(path string) (Config, error) {
 	}
 	if cfg.CredentialIssuerPrivateKeyPEM == "" {
 		return Config{}, fmt.Errorf("config: credential_issuer_private_key_pem is required")
+	}
+	if cfg.CredentialIssuerCertificatePEM == "" {
+		return Config{}, fmt.Errorf("config: credential_issuer_certificate_pem is required")
 	}
 	if cfg.HolderPrivateKeyPEM == "" {
 		return Config{}, fmt.Errorf("config: holder_private_key_pem is required")
@@ -91,6 +99,18 @@ func (c Config) credentialIssuerKey() (*ecdsa.PrivateKey, error) {
 		return nil, fmt.Errorf("credential_issuer_private_key_pem: %w", err)
 	}
 	return key, nil
+}
+
+func (c Config) credentialIssuerCertificate() (*x509.Certificate, error) {
+	block, _ := pem.Decode([]byte(c.CredentialIssuerCertificatePEM))
+	if block == nil {
+		return nil, fmt.Errorf("credential_issuer_certificate_pem: no PEM block found")
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("credential_issuer_certificate_pem: %w", err)
+	}
+	return cert, nil
 }
 
 func (c Config) holderPrivateKey() (*ecdsa.PrivateKey, error) {

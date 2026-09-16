@@ -4,10 +4,13 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"encoding/base64"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/idfoundry/oid4vcigo/internal/jose"
+	"github.com/idfoundry/oid4vcigo/internal/testcert"
 )
 
 func testKey(t *testing.T) *ecdsa.PrivateKey {
@@ -351,4 +354,45 @@ func TestIssue_Decoys(t *testing.T) {
 		t.Fatalf("Verify: %v", err)
 	}
 	_ = payload
+}
+
+func TestIssue_IssuerCertificate_SetsX5CHeader(t *testing.T) {
+	issuerKey := testKey(t)
+	cert := testcert.SelfSigned(t, "test-issuer", &issuerKey.PublicKey, issuerKey)
+	claims := Claims{VCT: "vc-type"}
+
+	sdjwt, _, err := Issue(issuerKey, jose.ES256, claims, IssueOptions{IssuerCertificate: cert})
+	if err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+
+	issuerJWT := strings.SplitN(sdjwt, "~", 2)[0]
+	header, _, err := jose.DecodeUnverified(issuerJWT)
+	if err != nil {
+		t.Fatalf("DecodeUnverified: %v", err)
+	}
+
+	x5c, ok := header["x5c"].([]any)
+	if !ok || len(x5c) != 1 {
+		t.Fatalf("header[\"x5c\"] = %#v, want a single-entry array", header["x5c"])
+	}
+	got, ok := x5c[0].(string)
+	if !ok {
+		t.Fatalf("x5c[0] = %#v, want a string", x5c[0])
+	}
+	want := base64.StdEncoding.EncodeToString(cert.Raw)
+	if got != want {
+		t.Errorf("x5c[0] = %q, want %q", got, want)
+	}
+}
+
+func TestIssue_IssuerCertificate_RejectsPublicKeyMismatch(t *testing.T) {
+	issuerKey := testKey(t)
+	otherKey := testKey(t)
+	cert := testcert.SelfSigned(t, "test-issuer", &otherKey.PublicKey, otherKey)
+	claims := Claims{VCT: "vc-type"}
+
+	if _, _, err := Issue(issuerKey, jose.ES256, claims, IssueOptions{IssuerCertificate: cert}); err == nil {
+		t.Error("Issue accepted an IssuerCertificate whose public key doesn't match signer")
+	}
 }

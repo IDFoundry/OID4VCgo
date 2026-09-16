@@ -103,23 +103,55 @@ Grant Management modules the base `FAPI2SPFinalTestPlan` module list
 carries but this specific HAIP variant selection may not actually
 exercise.
 
-## Open questions for the live run
+## Status: first live run against the real OIDF suite
 
-- Whether `Config.OAuthOnly = true` is actually compatible with this
-  plan's own `FAPIOpenIDConnect=plain_oauth` variant, or whether the
-  suite's own conditions expect something more specific from a
-  plain_oauth-profiled AS that this binary's minimal wiring doesn't
-  yet provide.
-- Whether the consent flow (a real rendered HTML form + POST
-  submission) is compatible with how the suite drives this specific
-  plan — mechanically proven to work end to end against a hand-rolled
-  client (`flow_test.go`), but that's not proof the *suite's own*
-  browser driver interacts with it the same way. Phase 1's own
-  wallet-role research found at least one case
-  (`CreateRandomBrowserApiSubmitUrl`) where an initially-plausible
-  mechanism turned out to be the suite's own internal fixture; the
-  same kind of surprise remains possible here.
-- The exact `client2` requirement, if any, for this specific plan
-  variant (FAPIgo's own `client_credentials` conformance work found
-  `client2` structurally required regardless of whether it's actually
-  used — see FAPIgo's own `conformance/server/oidf-config/README.md`).
+Plan creation itself succeeded (`oid4vci-1_0-issuer-haip-test-plan`,
+61 modules, `sd_jwt_vc` variant) once the plan config supplied: a
+throwaway self-signed cert wrapping this binary's own credential-issuer
+key (`credential.trust_anchor_pem`/`status_list_trust_anchor_pem`), a
+*private* EC JWKS for `client_attestation.attester_jwks` (the suite
+signs its own emulated Client Attestation JWTs with it — this binary's
+own config registers the matching *public* half as
+`client.attester_jwks`, the same "we generate one keypair, give the
+suite the private half and ourselves the public half" pattern already
+confirmed for `conformance-verifier`'s `credential.signing_jwk`), and a
+second throwaway private JWKS for `client_attestation.key_attestation_jwks`.
+
+Running the simplest module first (`oid4vci-1_0-issuer-metadata-test`,
+no client authentication at all) surfaced a real, confirmed gap: this
+binary's credential issuer metadata omits the OPTIONAL
+`authorization_servers` field, so the suite falls back to RFC 8414
+derivation from the credential issuer URL and requests
+`GET /.well-known/oauth-authorization-server` — which 404s, since
+`fapigo/server` only ever serves `/.well-known/openid-configuration`
+(OIDC-flavored discovery). This plan's own `openid=plain_oauth` variant
+(matching this binary's `Config.OAuthOnly = true`) is exactly the case
+where a plain-OAuth-flavored well-known path would be expected instead
+of (or in addition to) the OIDC one — this looks like a genuine
+`fapigo/server` gap (it has no logic to serve the RFC 8414 path even
+when `OAuthOnly` is set), the first time this exact combination
+(`OAuthOnly` + a conformance suite expecting RFC 8414 discovery) has
+been exercised in either repo. Not fixed here — this is a FAPIgo-side
+question, matching this session's standing rule to flag rather than
+work around FAPIgo-side gaps from inside OID4VCIgo.
+
+This also settled the `client2` open question below: even the
+plan's own `happy-flow` module (not just multi-client variants) lists
+`client2.client_id`/`client2.scope`/`client2.jwks` in its own
+`configurationFields` — confirming `client2` is structurally required
+for this plan, matching FAPIgo's own `client_credentials` precedent.
+Since `Config.Client` here is a single struct (`cmd/conformance-issuer/config.go`'s
+own doc comment already flagged this as deliberately out of scope),
+running `happy-flow` itself needs `Config`/`wiring.go` extended to
+register a second attestation-authenticated client before it can be
+attempted — a real, concrete piece of follow-up work, not yet started.
+
+## Not yet run live
+
+Every module past `metadata-test` (60 of 61, including `happy-flow`
+and its own `metadata-test-signed` sibling) — blocked on the
+`/.well-known/oauth-authorization-server` gap above for any module that
+fetches AS metadata, and additionally on the `client2` wiring gap for
+`happy-flow` itself. The consent-flow-compatibility and
+`Config.OAuthOnly`-compatibility open questions originally listed here
+remain unresolved, since no module reached that far yet.
