@@ -25,7 +25,8 @@ const jwtProofTyp = "openid4vci-proof+jwt" //nolint:gosec // an OID4VCI typ valu
 // URL, DPoP proof or mTLS certificate) that has nothing to do with
 // Credential Request/Response protocol logic, the same separation
 // FAPIgo's own resource package draws from its client/server roles —
-// see the package doc comment.
+// see the package doc comment. See resource_verifier.go for the
+// worked adaptation recipe.
 type AuthorizedRequest struct {
 	// ClientID, if non-empty, is checked against a jwt-type key proof's
 	// "iss" claim when that claim is present (Appendix F.1).
