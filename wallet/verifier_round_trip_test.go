@@ -229,4 +229,7 @@ func TestWalletVerifierMdocPresentationRoundTrip(t *testing.T) {
 	if !ok || namespace["given_name"] != "Alice" {
 		t.Errorf("Claims[org.iso.18013.5.1] = %v", vc.Claims["org.iso.18013.5.1"])
 	}
+	if _, hasFamilyName := namespace["family_name"]; hasFamilyName {
+		t.Errorf("Claims[org.iso.18013.5.1] discloses family_name, which testmdoc.Query never asked for: %v", namespace)
+	}
 }

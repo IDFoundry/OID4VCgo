@@ -776,10 +776,10 @@ shape from the phase-by-phase plan, not a description of current code.
   the "mso_mdoc" twins: `docType` must match `MdocMeta`'s own
   `DoctypeValue`, and `Claims`/`ClaimSets` the same way, each `Claims`
   entry a `Path.MdocNamespaceAndElement`-shaped two-component path
-  checked against the given namespace/element-value map — mdoc-side
-  disclosure trimming doesn't exist yet (see the `wallet` bullet's own
-  scope note), so `SelectedMdocClaimPaths` has no consumer today, but
-  exists for the same reason its sd-jwt-vc twin does.
+  checked against the given namespace/element-value map — its own
+  consumer is `wallet.presentMdocSelectively` (see the `wallet` bullet
+  below), the mdoc-side counterpart to `SelectedSDJWTVCClaimPaths`'s
+  own `wallet.PresentSDJWTVC` consumer.
   `selectedClaimPaths` (private, shared by both `Selected*` methods via
   a format-specific `present(Path) error` closure) implements §6.4.1
   exactly: when `ClaimSets` is empty, every `Claims` entry must
@@ -1037,17 +1037,33 @@ shape from the phase-by-phase plan, not a description of current code.
   `BuildDCAPISessionTranscriptBytes` the Verifier reconstructs, on
   whether the new `PresentMdocParams.Origin` is set — with an empty
   self-asserted `NameSpaces` either way — this package only ever proves
-  device-key possession, not additional Holder-asserted claims), and
+  device-key possession, not additional Holder-asserted claims) and its
+  own minimal-disclosure twin `PresentMdocSelective` (ISO/IEC 18013-5's
+  own namespace/data-element selective disclosure, §10.3.3 — the mdoc
+  analog of `PresentSDJWTVCSelective`): trims held's own `IssuerSigned`
+  to exactly `requiredPaths` via a new
+  `credential/mdoc.IssuerSigned.SelectNameSpaces([][2]string)` before
+  wrapping it. That method lives in `credential/mdoc`, not here, because
+  `IssuerSigned`'s own cached `IssuerSignedItemBytes` (`rawItems`, kept
+  index-aligned with `NameSpaces` — see that type's own doc comment on
+  why `Marshal`/`Verify` must never re-derive an item's bytes from its
+  decoded `ElementValue`) is a private field only that package can keep
+  correctly aligned while filtering; a `Path` that isn't exactly the
+  two-component mdoc form (`dcql.Path.MdocNamespaceAndElement`) falls
+  back to full disclosure, the same narrow, currently-costless cut
+  `PresentSDJWTVCSelective` takes for a Wildcard/Index component. And
   `PresentCredentials` (dispatches by format, combining `MatchDCQLQuery`
   with a new private `presentSDJWTVCSelectively` (calling
   `SelectedSDJWTVCClaimPaths` then `PresentSDJWTVCSelective`, so its
   own `vp_token` is §6.4.1-compliant by construction rather than by a
-  caller remembering to trim)/`PresentMdoc` into a ready-to-encrypt
-  `vp_token` map, §8.1's own shape — a new `PresentationRequest.Origin`,
-  when set, presents for the DC API flow instead of the redirect flow:
-  each Presentation is bound to Appendix A.4's own `"origin:"`-prefixed
-  audience rather than `Audience`, and `PresentMdocParams.Origin` is
-  threaded through the same way). Same scope as
+  caller remembering to trim)/`presentMdocSelectively` (calling
+  `SelectedMdocClaimPaths` then `PresentMdocSelective`, the same way)
+  into a ready-to-encrypt `vp_token` map, §8.1's own shape — a new
+  `PresentationRequest.Origin`, when set, presents for the DC API flow
+  instead of the redirect flow: each Presentation is bound to Appendix
+  A.4's own `"origin:"`-prefixed audience rather than `Audience`, and
+  `PresentMdocParams.Origin` is threaded through the same way). Same
+  scope as
   `verifier.VerifyResponse`, now that both packages implement DCQL's
   selection rules fully: `MatchDCQLQuery` returns `map[string][]HeldCredential`
   (a breaking change from the single-`HeldCredential`-per-id shape
