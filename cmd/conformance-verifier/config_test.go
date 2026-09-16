@@ -1,33 +1,21 @@
 package main
 
 import (
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
-	"crypto/x509"
 	"encoding/json"
-	"encoding/pem"
 	"os"
 	"path/filepath"
 	"testing"
 
-	"github.com/idfoundry/oid4vcigo/internal/testcert"
+	"github.com/idfoundry/oid4vcigo/internal/conformancecert"
 )
 
 func testPEMCertAndKey(t *testing.T) (certPEM, keyPEM string) {
 	t.Helper()
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	certPEM, keyPEM, err := conformancecert.SelfSignedPEM("conformance-verifier-test", nil)
 	if err != nil {
-		t.Fatalf("generate key: %v", err)
+		t.Fatalf("SelfSignedPEM: %v", err)
 	}
-	cert := testcert.SelfSigned(t, "conformance-verifier-test", &key.PublicKey, key)
-
-	keyDER, err := x509.MarshalECPrivateKey(key)
-	if err != nil {
-		t.Fatalf("marshal key: %v", err)
-	}
-	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw})),
-		string(pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}))
+	return certPEM, keyPEM
 }
 
 func baseTestConfig(t *testing.T) Config {

@@ -12,18 +12,12 @@
 package main
 
 import (
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
-	"crypto/x509"
-	"crypto/x509/pkix"
 	"encoding/json"
-	"encoding/pem"
 	"flag"
 	"fmt"
-	"math/big"
 	"os"
-	"time"
+
+	"github.com/idfoundry/oid4vcigo/internal/conformancecert"
 )
 
 type generatedConfig struct {
@@ -36,58 +30,22 @@ type generatedConfig struct {
 	Claims                        map[string]string `json:"claims"`
 }
 
-func selfSignedTLSPEM(dnsNames []string) (certPEM, keyPEM string, err error) {
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return "", "", err
-	}
-	tmpl := &x509.Certificate{
-		SerialNumber: big.NewInt(1),
-		Subject:      pkix.Name{CommonName: "conformance-wallet-vp"},
-		NotBefore:    time.Now().Add(-time.Hour),
-		NotAfter:     time.Now().Add(10 * 365 * 24 * time.Hour),
-		DNSNames:     dnsNames,
-	}
-	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
-	if err != nil {
-		return "", "", err
-	}
-	keyDER, err := x509.MarshalECPrivateKey(key)
-	if err != nil {
-		return "", "", err
-	}
-	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})),
-		string(pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})), nil
-}
-
-func generateECKeyPEM() (string, error) {
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return "", err
-	}
-	der, err := x509.MarshalECPrivateKey(key)
-	if err != nil {
-		return "", err
-	}
-	return string(pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: der})), nil
-}
-
 func main() {
 	dnsName := flag.String("dns-name", "conformance-wallet-vp", "DNS name for the TLS listener cert's SAN")
 	out := flag.String("out", "", "path to write the generated config.json to (default: stdout)")
 	flag.Parse()
 
-	tlsCert, tlsKey, err := selfSignedTLSPEM([]string{*dnsName, "localhost"})
+	tlsCert, tlsKey, err := conformancecert.SelfSignedPEM("conformance-wallet-vp", []string{*dnsName, "localhost"})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "generate tls cert:", err)
 		os.Exit(1)
 	}
-	issuerKeyPEM, err := generateECKeyPEM()
+	issuerKeyPEM, err := conformancecert.GenerateECKeyPEM()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "generate credential issuer key:", err)
 		os.Exit(1)
 	}
-	holderKeyPEM, err := generateECKeyPEM()
+	holderKeyPEM, err := conformancecert.GenerateECKeyPEM()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "generate holder key:", err)
 		os.Exit(1)

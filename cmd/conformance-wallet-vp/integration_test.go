@@ -35,15 +35,20 @@ func (r fixedIssuerKeyResolver) ResolveIssuerKey(context.Context, map[string]any
 	return r.pub, jose.ES256, nil
 }
 
-// TestHandleAuthorize_FullRoundTripAgainstARealVerifier is the same
-// scenario this binary was manually smoke-tested against
-// cmd/conformance-verifier with (see conformance/wallet-vp/README.md):
-// a real verifier.Verifier builds and signs an Authorization Request,
-// this binary's own handleAuthorize fetches/verifies it, presents its
-// fixture credential, and the Verifier cryptographically verifies the
-// resulting direct_post.jwt response end to end — not a mock on
-// either side.
-func TestHandleAuthorize_FullRoundTripAgainstARealVerifier(t *testing.T) {
+// verifyOutcome captures what the fake Verifier server's own
+// "POST /response" handler observed, for the test's own final
+// assertions.
+type verifyOutcome struct {
+	claims map[string]any
+	err    error
+}
+
+// setupWalletUnderTest issues this binary's own fixture credential
+// (the same real code path main.go uses) and returns the resulting
+// *server plus the credential issuer's own private key, which the
+// fake Verifier server needs to trust.
+func setupWalletUnderTest(t *testing.T) (*server, *ecdsa.PrivateKey) {
+	t.Helper()
 	issuerKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatalf("generate credential issuer key: %v", err)
@@ -60,8 +65,34 @@ func TestHandleAuthorize_FullRoundTripAgainstARealVerifier(t *testing.T) {
 	if err != nil {
 		t.Fatalf("issueFixtureCredential: %v", err)
 	}
-	wallet := &server{cred: cred}
+	return &server{cred: cred}, issuerKey
+}
 
+// newTestQuery builds the same DCQL query shape
+// cmd/conformance-verifier's own buildQuery does, for the two claims
+// setupWalletUnderTest's own fixture credential carries.
+func newTestQuery(t *testing.T, vct string) dcql.Query {
+	t.Helper()
+	meta, err := dcql.NewSDJWTVCMeta(dcql.SDJWTVCMeta{VCTValues: []string{vct}})
+	if err != nil {
+		t.Fatalf("NewSDJWTVCMeta: %v", err)
+	}
+	return dcql.Query{Credentials: []dcql.CredentialQuery{{
+		ID: "cred1", Format: "dc+sd-jwt", Meta: meta,
+		Claims: []dcql.ClaimsQuery{
+			{Path: dcql.Path{dcql.PathKey("given_name")}},
+			{Path: dcql.Path{dcql.PathKey("family_name")}},
+		},
+	}}}
+}
+
+// newFakeVerifierServer builds a real verifier.Verifier plus an
+// httptest.TLSServer serving its own request_uri/response_uri/
+// callback endpoints — everything this binary's handleAuthorize needs
+// on the other end of the wire, so the test exercises this binary's
+// real HTTP client code, not a mock.
+func newFakeVerifierServer(t *testing.T, query dcql.Query, issuerKey *ecdsa.PrivateKey) (*verifier.Verifier, *httptest.Server, verifier.BuildAuthorizationRequestResult, *verifyOutcome) {
+	t.Helper()
 	clientKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatalf("generate verifier client key: %v", err)
@@ -86,58 +117,54 @@ func TestHandleAuthorize_FullRoundTripAgainstARealVerifier(t *testing.T) {
 		t.Fatalf("verifier.New: %v", err)
 	}
 
-	meta, err := dcql.NewSDJWTVCMeta(dcql.SDJWTVCMeta{VCTValues: []string{cfg.VCT}})
-	if err != nil {
-		t.Fatalf("NewSDJWTVCMeta: %v", err)
-	}
-	query := dcql.Query{Credentials: []dcql.CredentialQuery{{
-		ID: "cred1", Format: "dc+sd-jwt", Meta: meta,
-		Claims: []dcql.ClaimsQuery{
-			{Path: dcql.Path{dcql.PathKey("given_name")}},
-			{Path: dcql.Path{dcql.PathKey("family_name")}},
-		},
-	}}}
 	built, err := v.BuildAuthorizationRequest(verifier.BuildAuthorizationRequestRequest{Query: query})
 	if err != nil {
 		t.Fatalf("BuildAuthorizationRequest: %v", err)
 	}
 
-	issuerJWK, err := jwk.Marshal(&issuerKey.PublicKey)
-	if err != nil {
-		t.Fatalf("marshal issuer jwk: %v", err)
-	}
-	issuerJWKRaw, err := json.Marshal(issuerJWK)
-	if err != nil {
-		t.Fatalf("marshal issuer jwk: %v", err)
-	}
-	issuerPub, err := jwk.ParsePublicKey(issuerJWKRaw)
-	if err != nil {
-		t.Fatalf("parse issuer jwk: %v", err)
-	}
-
-	type verifyOutcome struct {
-		claims map[string]any
-		err    error
-	}
-	var got verifyOutcome
+	issuerPub := parseIssuerPublicKey(t, &issuerKey.PublicKey)
+	got := &verifyOutcome{}
 
 	mux.HandleFunc("GET /request/1", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/oauth-authz-req+jwt")
 		_, _ = w.Write([]byte(built.RequestObject))
 	})
-	mux.HandleFunc("POST /response", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /response", handleFakeVerifierResponse(v, query, built, issuerPub, ts.URL+"/callback", got))
+	mux.HandleFunc("GET /callback", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+
+	return v, ts, built, got
+}
+
+func parseIssuerPublicKey(t *testing.T, pub *ecdsa.PublicKey) crypto.PublicKey {
+	t.Helper()
+	j, err := jwk.Marshal(pub)
+	if err != nil {
+		t.Fatalf("marshal issuer jwk: %v", err)
+	}
+	raw, err := json.Marshal(j)
+	if err != nil {
+		t.Fatalf("marshal issuer jwk: %v", err)
+	}
+	parsed, err := jwk.ParsePublicKey(raw)
+	if err != nil {
+		t.Fatalf("parse issuer jwk: %v", err)
+	}
+	return parsed
+}
+
+// handleFakeVerifierResponse is the fake Verifier server's own
+// "response_uri" handler: decrypts and cryptographically verifies
+// whatever this binary's handleAuthorize POSTs, recording the outcome
+// into got for the test's own final assertions.
+func handleFakeVerifierResponse(v *verifier.Verifier, query dcql.Query, built verifier.BuildAuthorizationRequestResult, issuerPub crypto.PublicKey, callbackURL string, got *verifyOutcome) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseForm(); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 		parsed, err := v.ParseDirectPostJWTResponse(r.FormValue("response"), built.ResponseDecryptionKey)
 		if err != nil {
-			var respErr *verifier.ResponseError
-			if errors.As(err, &respErr) {
-				got.err = respErr
-			} else {
-				got.err = err
-			}
+			got.err = unwrapResponseError(err)
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -157,11 +184,30 @@ func TestHandleAuthorize_FullRoundTripAgainstARealVerifier(t *testing.T) {
 		}
 		got.claims = result.Credentials[0].Claims
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]string{"redirect_uri": ts.URL + "/callback"})
-	})
-	mux.HandleFunc("GET /callback", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
+		_ = json.NewEncoder(w).Encode(map[string]string{"redirect_uri": callbackURL})
+	}
+}
+
+func unwrapResponseError(err error) error {
+	var respErr *verifier.ResponseError
+	if errors.As(err, &respErr) {
+		return respErr
+	}
+	return err
+}
+
+// TestHandleAuthorize_FullRoundTripAgainstARealVerifier is the same
+// scenario this binary was manually smoke-tested against
+// cmd/conformance-verifier with (see conformance/wallet-vp/README.md):
+// a real verifier.Verifier builds and signs an Authorization Request,
+// this binary's own handleAuthorize fetches/verifies it, presents its
+// fixture credential, and the Verifier cryptographically verifies the
+// resulting direct_post.jwt response end to end — not a mock on
+// either side.
+func TestHandleAuthorize_FullRoundTripAgainstARealVerifier(t *testing.T) {
+	wallet, issuerKey := setupWalletUnderTest(t)
+	query := newTestQuery(t, "urn:eudi:pid:1")
+	_, ts, built, got := newFakeVerifierServer(t, query, issuerKey)
 
 	previousHTTPClient := httpClient
 	httpClient = ts.Client() // trust the httptest server's own cert for this binary's outbound calls
