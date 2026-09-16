@@ -9,6 +9,7 @@ import (
 	"github.com/idfoundry/oid4vcigo/dcql"
 	"github.com/idfoundry/oid4vcigo/internal/jose"
 	"github.com/idfoundry/oid4vcigo/internal/jwk"
+	"github.com/idfoundry/oid4vcigo/internal/testverify"
 	"github.com/idfoundry/oid4vcigo/wallet"
 )
 
@@ -116,18 +117,7 @@ func TestMatchDCQLQueryRejectsWrongVCT(t *testing.T) {
 // satisfiable, just some option.
 func TestMatchDCQLQueryAcceptsSatisfiableClaimSetOption(t *testing.T) {
 	fixture := newHeldSDJWTVC(t)
-	meta, err := dcql.NewSDJWTVCMeta(dcql.SDJWTVCMeta{VCTValues: []string{testPresentationVCT}})
-	if err != nil {
-		t.Fatalf("NewSDJWTVCMeta: %v", err)
-	}
-	query := dcql.Query{Credentials: []dcql.CredentialQuery{{
-		ID: "identity_credential", Format: sdjwtvc.CredentialFormat, Meta: meta,
-		Claims: []dcql.ClaimsQuery{
-			{ID: "no_such_claim", Path: dcql.Path{dcql.PathKey("no_such_claim")}},
-			{ID: "given_name", Path: dcql.Path{dcql.PathKey("given_name")}},
-		},
-		ClaimSets: [][]string{{"no_such_claim"}, {"given_name"}},
-	}}}
+	query := testverify.ClaimSetOptionsQuery(t, testPresentationVCT)
 	matches, err := wallet.MatchDCQLQuery(query, []wallet.HeldCredential{fixture.held})
 	if err != nil {
 		t.Fatalf("MatchDCQLQuery: %v", err)

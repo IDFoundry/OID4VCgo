@@ -91,27 +91,33 @@ func TestQueryValidateAcceptsWorkedExample(t *testing.T) {
 	}
 }
 
+// claimSetsCredentialQuery mirrors §6.4.1's own worked example: a
+// required claim plus an either/or pair, expressed as two claim_sets
+// options — shared by TestQueryValidateAcceptsClaimSets (structural
+// validation) and TestSatisfiedBySDJWTVCClaimsWithClaimSets (claim
+// resolution) so the fixture exists exactly once.
+func claimSetsCredentialQuery(t *testing.T) dcql.CredentialQuery {
+	t.Helper()
+	return dcql.CredentialQuery{
+		ID: "identity_credential", Format: "dc+sd-jwt",
+		Meta: mustSDJWTVCMeta(t, "https://credentials.example.com/identity_credential"),
+		Claims: []dcql.ClaimsQuery{
+			{ID: "last_name", Path: dcql.Path{dcql.PathKey("last_name")}},
+			{ID: "postal_code", Path: dcql.Path{dcql.PathKey("postal_code")}},
+			{ID: "locality", Path: dcql.Path{dcql.PathKey("locality")}},
+			{ID: "region", Path: dcql.Path{dcql.PathKey("region")}},
+		},
+		ClaimSets: [][]string{
+			{"last_name", "postal_code"},
+			{"last_name", "locality", "region"},
+		},
+	}
+}
+
 // TestQueryValidateAcceptsClaimSets mirrors §6.4.1's own worked
 // example: required claims plus an either/or pair via claim_sets.
 func TestQueryValidateAcceptsClaimSets(t *testing.T) {
-	q := dcql.Query{
-		Credentials: []dcql.CredentialQuery{
-			{
-				ID: "pid", Format: "dc+sd-jwt",
-				Meta: mustSDJWTVCMeta(t, "https://credentials.example.com/identity_credential"),
-				Claims: []dcql.ClaimsQuery{
-					{ID: "last_name", Path: dcql.Path{dcql.PathKey("last_name")}},
-					{ID: "postal_code", Path: dcql.Path{dcql.PathKey("postal_code")}},
-					{ID: "locality", Path: dcql.Path{dcql.PathKey("locality")}},
-					{ID: "region", Path: dcql.Path{dcql.PathKey("region")}},
-				},
-				ClaimSets: [][]string{
-					{"last_name", "postal_code"},
-					{"last_name", "locality", "region"},
-				},
-			},
-		},
-	}
+	q := dcql.Query{Credentials: []dcql.CredentialQuery{claimSetsCredentialQuery(t)}}
 	if err := q.Validate(); err != nil {
 		t.Fatalf("Validate: %v", err)
 	}

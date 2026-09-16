@@ -149,18 +149,7 @@ func TestVerifyResponseAcceptsSatisfiableClaimSetOption(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	meta, err := dcql.NewSDJWTVCMeta(dcql.SDJWTVCMeta{VCTValues: []string{testVCT}})
-	if err != nil {
-		t.Fatalf("NewSDJWTVCMeta: %v", err)
-	}
-	query := dcql.Query{Credentials: []dcql.CredentialQuery{{
-		ID: "identity_credential", Format: sdjwtvc.CredentialFormat, Meta: meta,
-		Claims: []dcql.ClaimsQuery{
-			{ID: "no_such_claim", Path: dcql.Path{dcql.PathKey("no_such_claim")}},
-			{ID: "given_name", Path: dcql.Path{dcql.PathKey("given_name")}},
-		},
-		ClaimSets: [][]string{{"no_such_claim"}, {"given_name"}},
-	}}}
+	query := testverify.ClaimSetOptionsQuery(t, testVCT)
 	built, err := v.BuildAuthorizationRequest(verifier.BuildAuthorizationRequestRequest{Query: query})
 	if err != nil {
 		t.Fatalf("BuildAuthorizationRequest: %v", err)
