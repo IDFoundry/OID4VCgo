@@ -11,8 +11,12 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/json"
 	"encoding/pem"
 	"math/big"
+	"os"
+	"path/filepath"
+	"testing"
 	"time"
 )
 
@@ -59,4 +63,21 @@ func ECKeyPEM(key *ecdsa.PrivateKey) (string, error) {
 		return "", err
 	}
 	return string(pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: der})), nil
+}
+
+// WriteJSONConfig JSON-marshals cfg and writes it to a fresh file
+// under t.TempDir(), returning the path — the "write this binary's
+// own Config out so loadConfig can read it back" step every
+// cmd/conformance-*'s own config_test.go needs identically.
+func WriteJSONConfig(t *testing.T, cfg any) string {
+	t.Helper()
+	raw, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("marshal config: %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	return path
 }
