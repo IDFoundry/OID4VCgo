@@ -164,13 +164,11 @@ func TestMetadata_OmitsNotificationEndpointWhenDisabled(t *testing.T) {
 	}
 }
 
-// TestMetadata_MdocFormat checks the wire shape against OID4VCI 1.0
-// Appendix A.2.2's own non-normative example: numeric COSE algorithm
-// identifiers as bare JSON numbers (not JOSE alg strings), and doctype
-// present.
-func TestMetadata_MdocFormat(t *testing.T) {
-	cfg := validConfig(t)
-	cfg.CredentialConfigurationsSupported["MobileDrivingLicence"] = issuer.CredentialConfiguration{
+// mdlCredentialConfiguration is the shared base for every test needing
+// a mso_mdoc CredentialConfiguration — Appendix A.2.2's own
+// non-normative "org.iso.18013.5.1.mDL" example, minus credential_metadata.
+func mdlCredentialConfiguration() issuer.CredentialConfiguration {
+	return issuer.CredentialConfiguration{
 		Format:                                  mdoc.CredentialFormat,
 		DocType:                                 "org.iso.18013.5.1.mDL",
 		CryptographicBindingMethodsSupported:    []string{"cose_key"},
@@ -179,6 +177,15 @@ func TestMetadata_MdocFormat(t *testing.T) {
 			oid4vci.ProofTypeJWT: {ProofSigningAlgValuesSupported: []string{"ES256"}},
 		},
 	}
+}
+
+// TestMetadata_MdocFormat checks the wire shape against OID4VCI 1.0
+// Appendix A.2.2's own non-normative example: numeric COSE algorithm
+// identifiers as bare JSON numbers (not JOSE alg strings), and doctype
+// present.
+func TestMetadata_MdocFormat(t *testing.T) {
+	cfg := validConfig(t)
+	cfg.CredentialConfigurationsSupported["MobileDrivingLicence"] = mdlCredentialConfiguration()
 
 	deps := validDependencies(t)
 	deps.MdocSigner = testMdocSigner(t)
@@ -204,6 +211,241 @@ func TestMetadata_MdocFormat(t *testing.T) {
 	}
 	if _, hasVCT := mdl["vct"]; hasVCT {
 		t.Errorf("wire form has vct for an mdoc config: %v", mdl["vct"])
+	}
+}
+
+// TestMetadata_SpecWorkedExample mirrors OID4VCI 1.0 Appendix I.1's own
+// non-normative Credential Issuer Metadata example (batch_credential_issuance,
+// top-level display, and one credential_configurations_supported
+// entry's credential_metadata, including its claims array's own Claims
+// Path Pointers) — verifying the actual wire JSON against the spec's
+// own worked values, not just a round-trip.
+func TestMetadata_SpecWorkedExample(t *testing.T) {
+	cfg := validConfig(t)
+	cfg.Display = []issuer.Display{
+		{
+			Name: "Example University", Locale: "en-US",
+			Logo: &issuer.Logo{URI: "https://university.example.edu/public/logo.png", AltText: "a square logo of a university"},
+		},
+		{
+			Name: "Example Université", Locale: "fr-FR",
+			Logo: &issuer.Logo{URI: "https://university.example.edu/public/logo.png", AltText: "Un logo universitaire carré"},
+		},
+	}
+	cfg.BatchCredentialIssuance = &issuer.BatchCredentialIssuance{BatchSize: 10}
+	cfg.CredentialConfigurationsSupported["SD_JWT_VC_example_in_OpenID4VCI"] = issuer.CredentialConfiguration{
+		Format:                               "dc+sd-jwt",
+		Scope:                                "SD_JWT_VC_example_in_OpenID4VCI",
+		VCT:                                  "SD_JWT_VC_example_in_OpenID4VCI",
+		CryptographicBindingMethodsSupported: []string{"jwk"},
+		CredentialSigningAlgValuesSupported:  []string{"ES256"},
+		ProofTypesSupported: map[string]issuer.ProofTypeConfiguration{
+			oid4vci.ProofTypeJWT: {
+				ProofSigningAlgValuesSupported: []string{"ES256"},
+				KeyAttestationsRequired: &issuer.KeyAttestationRequirement{
+					KeyStorage:         []string{"iso_18045_moderate"},
+					UserAuthentication: []string{"iso_18045_moderate"},
+				},
+			},
+		},
+		CredentialMetadata: &issuer.CredentialMetadata{
+			Display: []issuer.CredentialDisplay{
+				{
+					Name: "IdentityCredential", Locale: "en-US",
+					Logo: &issuer.Logo{
+						URI:     "https://university.example.edu/public/logo_credential.png",
+						AltText: "a square logo of a university credential",
+					},
+					Description:     "A credential that signals the membership of a university",
+					BackgroundColor: "#12107c",
+					TextColor:       "#FFFFFF",
+				},
+			},
+			Claims: []issuer.ClaimsDescription{
+				{Path: []any{"given_name"}, Display: []issuer.ClaimDisplay{
+					{Name: "Given Name", Locale: "en-US"}, {Name: "Vorname", Locale: "de-DE"},
+				}},
+				{Path: []any{"family_name"}, Display: []issuer.ClaimDisplay{
+					{Name: "Surname", Locale: "en-US"}, {Name: "Nachname", Locale: "de-DE"},
+				}},
+				{Path: []any{"email"}},
+				{Path: []any{"phone_number"}},
+				{Path: []any{"address"}, Display: []issuer.ClaimDisplay{
+					{Name: "Place of residence", Locale: "en-US"}, {Name: "Wohnsitz", Locale: "de-DE"},
+				}},
+				{Path: []any{"address", "street_address"}},
+				{Path: []any{"address", "locality"}},
+				{Path: []any{"address", "region"}},
+				{Path: []any{"address", "country"}},
+				{Path: []any{"birthdate"}},
+				{Path: []any{"is_over_18"}},
+				{Path: []any{"is_over_21"}},
+				{Path: []any{"is_over_65"}},
+			},
+		},
+	}
+
+	iss, err := issuer.New(cfg, validDependencies(t))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	wire := marshalWire(t, iss.Metadata())
+
+	batch, ok := wire["batch_credential_issuance"].(map[string]any)
+	if !ok || batch["batch_size"] != float64(10) {
+		t.Errorf("batch_credential_issuance = %v, want batch_size 10", wire["batch_credential_issuance"])
+	}
+
+	display, ok := wire["display"].([]any)
+	if !ok || len(display) != 2 {
+		t.Fatalf("display = %v, want a 2-element array", wire["display"])
+	}
+	first := display[0].(map[string]any)
+	if first["name"] != "Example University" || first["locale"] != "en-US" {
+		t.Errorf("display[0] = %v", first)
+	}
+	firstLogo := first["logo"].(map[string]any)
+	if firstLogo["uri"] != "https://university.example.edu/public/logo.png" || firstLogo["alt_text"] != "a square logo of a university" {
+		t.Errorf("display[0].logo = %v", firstLogo)
+	}
+	second := display[1].(map[string]any)
+	if second["name"] != "Example Université" || second["locale"] != "fr-FR" {
+		t.Errorf("display[1] = %v", second)
+	}
+
+	configs := wire["credential_configurations_supported"].(map[string]any)
+	sdjwt := configs["SD_JWT_VC_example_in_OpenID4VCI"].(map[string]any)
+	cm, ok := sdjwt["credential_metadata"].(map[string]any)
+	if !ok {
+		t.Fatalf("credential_metadata missing: %v", sdjwt)
+	}
+
+	cmDisplay, ok := cm["display"].([]any)
+	if !ok || len(cmDisplay) != 1 {
+		t.Fatalf("credential_metadata.display = %v, want a 1-element array", cm["display"])
+	}
+	cd := cmDisplay[0].(map[string]any)
+	if cd["name"] != "IdentityCredential" || cd["background_color"] != "#12107c" || cd["text_color"] != "#FFFFFF" {
+		t.Errorf("credential_metadata.display[0] = %v", cd)
+	}
+	if cd["description"] != "A credential that signals the membership of a university" {
+		t.Errorf("credential_metadata.display[0].description = %v", cd["description"])
+	}
+
+	claims, ok := cm["claims"].([]any)
+	if !ok || len(claims) != 13 {
+		t.Fatalf("credential_metadata.claims = %v, want 13 entries", cm["claims"])
+	}
+	givenName := claims[0].(map[string]any)
+	gnPath, ok := givenName["path"].([]any)
+	if !ok || len(gnPath) != 1 || gnPath[0] != "given_name" {
+		t.Errorf("claims[0].path = %v, want [given_name]", givenName["path"])
+	}
+	gnDisplay, ok := givenName["display"].([]any)
+	if !ok || len(gnDisplay) != 2 {
+		t.Fatalf("claims[0].display = %v, want a 2-element array", givenName["display"])
+	}
+	if gnDisplay[0].(map[string]any)["name"] != "Given Name" || gnDisplay[1].(map[string]any)["name"] != "Vorname" {
+		t.Errorf("claims[0].display = %v", gnDisplay)
+	}
+
+	email := claims[2].(map[string]any)
+	if _, hasDisplay := email["display"]; hasDisplay {
+		t.Errorf("claims[2] (email) has display, want none: %v", email)
+	}
+	if _, hasMandatory := email["mandatory"]; hasMandatory {
+		t.Errorf("claims[2] (email) has mandatory, want omitted (default false): %v", email)
+	}
+
+	streetAddress := claims[5].(map[string]any)
+	saPath, ok := streetAddress["path"].([]any)
+	if !ok || len(saPath) != 2 || saPath[0] != "address" || saPath[1] != "street_address" {
+		t.Errorf("claims[5].path = %v, want [address street_address]", streetAddress["path"])
+	}
+}
+
+func TestMetadata_OmitsBatchCredentialIssuanceAndDisplayByDefault(t *testing.T) {
+	iss, err := issuer.New(validConfig(t), validDependencies(t))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	wire := marshalWire(t, iss.Metadata())
+	if _, ok := wire["batch_credential_issuance"]; ok {
+		t.Errorf("wire form has batch_credential_issuance: %v", wire["batch_credential_issuance"])
+	}
+	if _, ok := wire["display"]; ok {
+		t.Errorf("wire form has display: %v", wire["display"])
+	}
+	configs := wire["credential_configurations_supported"].(map[string]any)
+	idc := configs["IdentityCredential"].(map[string]any)
+	if _, ok := idc["credential_metadata"]; ok {
+		t.Errorf("wire form has credential_metadata: %v", idc["credential_metadata"])
+	}
+}
+
+// TestClaimsDescriptionIsMandatory checks IsMandatory's own "default
+// false" reader semantics (Appendix B.2).
+func TestClaimsDescriptionIsMandatory(t *testing.T) {
+	unset := issuer.ClaimsDescription{Path: []any{"x"}}
+	if unset.IsMandatory() {
+		t.Errorf("IsMandatory() = true for an unset Mandatory, want false")
+	}
+	falseVal := false
+	explicitFalse := issuer.ClaimsDescription{Path: []any{"x"}, Mandatory: &falseVal}
+	if explicitFalse.IsMandatory() {
+		t.Errorf("IsMandatory() = true for an explicit false, want false")
+	}
+	trueVal := true
+	explicitTrue := issuer.ClaimsDescription{Path: []any{"x"}, Mandatory: &trueVal}
+	if !explicitTrue.IsMandatory() {
+		t.Errorf("IsMandatory() = false for an explicit true, want true")
+	}
+}
+
+// TestMetadata_MdocCredentialMetadata mirrors Appendix A.2.2's own
+// non-normative example: mdoc claims use the exact same
+// credential_metadata mechanism as dc+sd-jwt, just with a two-element
+// path of [namespace, element] rather than a separate mdoc-specific
+// wire member.
+func TestMetadata_MdocCredentialMetadata(t *testing.T) {
+	trueVal := true
+	cfg := validConfig(t)
+	mdlConfig := mdlCredentialConfiguration()
+	mdlConfig.CredentialMetadata = &issuer.CredentialMetadata{
+		Claims: []issuer.ClaimsDescription{
+			{Path: []any{"org.iso.18013.5.1", "given_name"}, Display: []issuer.ClaimDisplay{
+				{Name: "Given Name", Locale: "en-US"},
+			}},
+			{Path: []any{"org.iso.18013.5.1", "birth_date"}, Mandatory: &trueVal},
+			{Path: []any{"org.iso.18013.5.1.aamva", "organ_donor"}},
+		},
+	}
+	cfg.CredentialConfigurationsSupported["MobileDrivingLicence"] = mdlConfig
+
+	deps := validDependencies(t)
+	deps.MdocSigner = testMdocSigner(t)
+	iss, err := issuer.New(cfg, deps)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	wire := marshalWire(t, iss.Metadata())
+	configs := wire["credential_configurations_supported"].(map[string]any)
+	mdl := configs["MobileDrivingLicence"].(map[string]any)
+	cm := mdl["credential_metadata"].(map[string]any)
+	claims := cm["claims"].([]any)
+	if len(claims) != 3 {
+		t.Fatalf("claims = %v, want 3 entries", claims)
+	}
+
+	givenName := claims[0].(map[string]any)
+	path := givenName["path"].([]any)
+	if len(path) != 2 || path[0] != "org.iso.18013.5.1" || path[1] != "given_name" {
+		t.Errorf("claims[0].path = %v, want [org.iso.18013.5.1 given_name]", path)
+	}
+
+	birthDate := claims[1].(map[string]any)
+	if birthDate["mandatory"] != true {
+		t.Errorf("claims[1].mandatory = %v, want true", birthDate["mandatory"])
 	}
 }
 
