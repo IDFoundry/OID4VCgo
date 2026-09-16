@@ -322,36 +322,50 @@ func performAuthFlowThroughNonce(t *testing.T, client *http.Client, cfg Config, 
 	return accessToken, cNonce
 }
 
-func TestFullFlow_ParAuthorizeTokenNonceCredential(t *testing.T) {
-	now := time.Now()
-	client := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}} //nolint:gosec // test-only, talks to this test's own throwaway TLS listener
+// setupFullFlowTest builds the plumbing every full-flow test in this
+// file needs before it can drive PAR: an http.Client trusting this
+// test's own throwaway TLS listener, a fresh attester/client-instance
+// key pair, a registered client (clientID/defaultSubject) with a
+// matching attester JWKS, and a running startTestIssuerServer
+// instance. Each test still generates its own holder key(s) — how
+// many it needs (1 vs N for a batch) is the one thing that actually
+// varies between callers.
+func setupFullFlowTest(t *testing.T, clientID, defaultSubject string) (client *http.Client, cfg Config, attesterKey, clientKey *ecdsa.PrivateKey) {
+	t.Helper()
+	client = &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}} //nolint:gosec // test-only, talks to this test's own throwaway TLS listener
 
-	attesterKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	var err error
+	attesterKey, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatalf("generate attester key: %v", err)
 	}
-	clientKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	clientKey, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatalf("generate client instance key: %v", err)
 	}
-	holderKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatalf("generate holder key: %v", err)
-	}
-
 	attesterJWKS, err := conformancecert.JWKSet(&attesterKey.PublicKey, "attester-1")
 	if err != nil {
 		t.Fatalf("JWKSet: %v", err)
 	}
 
-	cfg := baseTestConfig(t)
-	cfg.Client.ID = "smoke-test-client"
+	cfg = baseTestConfig(t)
+	cfg.Client.ID = clientID
 	cfg.Client.RedirectURIs = []string{"https://client.example.com/callback"}
 	cfg.Client.ExpectedAttesterIssuer = "https://attester.example.com"
 	cfg.Client.AttesterJWKS = attesterJWKS
-	cfg.DefaultSubject = "smoke-test-subject"
+	cfg.DefaultSubject = defaultSubject
 
 	startTestIssuerServer(t, &cfg)
+	return client, cfg, attesterKey, clientKey
+}
+
+func TestFullFlow_ParAuthorizeTokenNonceCredential(t *testing.T) {
+	now := time.Now()
+	client, cfg, attesterKey, clientKey := setupFullFlowTest(t, "smoke-test-client", "smoke-test-subject")
+	holderKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate holder key: %v", err)
+	}
 
 	accessToken, cNonce := performAuthFlowThroughNonce(t, client, cfg, attesterKey, clientKey, now)
 
@@ -437,16 +451,7 @@ func decodeIssuedSDJWTPayload(t *testing.T, entry any) map[string]any {
 // the other one, and not both to the same key.
 func TestFullFlow_BatchIssuanceReturnsOneCredentialPerProof(t *testing.T) {
 	now := time.Now()
-	client := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}} //nolint:gosec // test-only, talks to this test's own throwaway TLS listener
-
-	attesterKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatalf("generate attester key: %v", err)
-	}
-	clientKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatalf("generate client instance key: %v", err)
-	}
+	client, cfg, attesterKey, clientKey := setupFullFlowTest(t, "batch-test-client", "batch-test-subject")
 	holderKey1, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatalf("generate holder key 1: %v", err)
@@ -455,20 +460,6 @@ func TestFullFlow_BatchIssuanceReturnsOneCredentialPerProof(t *testing.T) {
 	if err != nil {
 		t.Fatalf("generate holder key 2: %v", err)
 	}
-
-	attesterJWKS, err := conformancecert.JWKSet(&attesterKey.PublicKey, "attester-1")
-	if err != nil {
-		t.Fatalf("JWKSet: %v", err)
-	}
-
-	cfg := baseTestConfig(t)
-	cfg.Client.ID = "batch-test-client"
-	cfg.Client.RedirectURIs = []string{"https://client.example.com/callback"}
-	cfg.Client.ExpectedAttesterIssuer = "https://attester.example.com"
-	cfg.Client.AttesterJWKS = attesterJWKS
-	cfg.DefaultSubject = "batch-test-subject"
-
-	startTestIssuerServer(t, &cfg)
 
 	accessToken, cNonce := performAuthFlowThroughNonce(t, client, cfg, attesterKey, clientKey, now)
 
