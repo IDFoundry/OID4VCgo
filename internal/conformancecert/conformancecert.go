@@ -240,3 +240,26 @@ func AssertMatchingPublicKey(t *testing.T, signingKey *ecdsa.PrivateKey, certKey
 		t.Error("certificate's public key does not match the signing key's")
 	}
 }
+
+// TestKeyAndSelfSignedCertPEM generates a fresh EC P-256 key plus a
+// self-signed certificate wrapping it (commonName), both PEM-encoded
+// — for a test's own CredentialIssuerCertificatePEM-shaped config
+// field where the suite's own self-signed-leaf rejection isn't being
+// exercised (that's GenerateSignerAndCert's own CA-issued leaf, used
+// by the real generate-config scripts, not this test-only shortcut).
+func TestKeyAndSelfSignedCertPEM(t *testing.T, commonName string) (keyPEM, certPEM string) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	keyPEM, err = ECKeyPEM(key)
+	if err != nil {
+		t.Fatalf("ECKeyPEM: %v", err)
+	}
+	certPEM, err = SelfSignedCertPEMForKey(commonName, key)
+	if err != nil {
+		t.Fatalf("SelfSignedCertPEMForKey: %v", err)
+	}
+	return keyPEM, certPEM
+}

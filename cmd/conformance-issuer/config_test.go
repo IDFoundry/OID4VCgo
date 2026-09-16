@@ -15,18 +15,7 @@ func baseTestConfig(t *testing.T) Config {
 	if err != nil {
 		t.Fatalf("SelfSignedPEM: %v", err)
 	}
-	issuerSigningKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatalf("generate credential issuer signing key: %v", err)
-	}
-	issuerKeyPEM, err := conformancecert.ECKeyPEM(issuerSigningKey)
-	if err != nil {
-		t.Fatalf("ECKeyPEM: %v", err)
-	}
-	issuerCertPEM, err := conformancecert.SelfSignedCertPEMForKey("conformance-issuer-test-credential-issuer", issuerSigningKey)
-	if err != nil {
-		t.Fatalf("SelfSignedCertPEMForKey: %v", err)
-	}
+	issuerKeyPEM, issuerCertPEM := conformancecert.TestKeyAndSelfSignedCertPEM(t, "conformance-issuer-test-credential-issuer")
 	attesterKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatalf("generate attester key: %v", err)
