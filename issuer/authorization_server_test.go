@@ -194,12 +194,16 @@ func pushedAuthorizationParameters(assertion, issuerState string) []server.FormP
 	}
 }
 
-func TestAuthorizationServerAcceptsIssuerStateExtension(t *testing.T) {
-	registry, err := extension.NewRegistry(oid4vci.IssuerStateExtension)
-	if err != nil {
-		t.Fatalf("NewRegistry: %v", err)
-	}
-	srv, clientKey, now := newTestAuthorizationServer(t, registry)
+// pushAuthorizationRequestWithIssuerState builds a test Authorization
+// Server registering extensions (nil for none), pushes one
+// Authorization Request carrying issuer_state, and asserts it
+// succeeds with a non-empty RequestURI — the shared setup/assertion
+// TestAuthorizationServerAcceptsIssuerStateExtension and
+// TestAuthorizationServerIgnoresIssuerStateWithoutExtensionRegistered
+// both need, differing only in what's registered.
+func pushAuthorizationRequestWithIssuerState(t *testing.T, extensions *extension.Registry) server.PushAuthorizationResult {
+	t.Helper()
+	srv, clientKey, now := newTestAuthorizationServer(t, extensions)
 	assertion := buildClientAssertion(t, clientKey, now)
 
 	result, err := srv.PushAuthorizationRequest(context.Background(), server.PushAuthorizationRequest{
@@ -211,6 +215,15 @@ func TestAuthorizationServerAcceptsIssuerStateExtension(t *testing.T) {
 	if result.RequestURI.String() == "" {
 		t.Errorf("RequestURI is empty")
 	}
+	return result
+}
+
+func TestAuthorizationServerAcceptsIssuerStateExtension(t *testing.T) {
+	registry, err := extension.NewRegistry(oid4vci.IssuerStateExtension)
+	if err != nil {
+		t.Fatalf("NewRegistry: %v", err)
+	}
+	pushAuthorizationRequestWithIssuerState(t, registry)
 }
 
 // TestAuthorizationServerIgnoresIssuerStateWithoutExtensionRegistered
@@ -229,16 +242,5 @@ func TestAuthorizationServerAcceptsIssuerStateExtension(t *testing.T) {
 // own test suite, not something to re-verify by reaching past this
 // package's own dependency boundary.
 func TestAuthorizationServerIgnoresIssuerStateWithoutExtensionRegistered(t *testing.T) {
-	srv, clientKey, now := newTestAuthorizationServer(t, nil)
-	assertion := buildClientAssertion(t, clientKey, now)
-
-	result, err := srv.PushAuthorizationRequest(context.Background(), server.PushAuthorizationRequest{
-		HTTP: server.FormRequest{Parameters: pushedAuthorizationParameters(assertion, "opaque-issuer-state")},
-	})
-	if err != nil {
-		t.Fatalf("PushAuthorizationRequest: %v", err)
-	}
-	if result.RequestURI.String() == "" {
-		t.Errorf("RequestURI is empty")
-	}
+	pushAuthorizationRequestWithIssuerState(t, nil)
 }
