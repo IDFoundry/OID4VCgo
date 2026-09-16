@@ -10,10 +10,16 @@
 // exactly §10's own worked example combination (Appendix I.1's
 // "alg":"ECDH-ES", enc_values_supported: ["A128GCM"]) and, like
 // internal/jose's own ES256/EdDSA scope, is meant to be extended only
-// when a real need arises (ECDH-ES+A*KW key wrapping, RSA-OAEP, apu/apv
-// party info) rather than pre-built speculatively — this package
-// currently has no apu/apv support at all, treating both as absent in
-// the RFC 7518 §4.6.2 Concat KDF's own OtherInfo.
+// when a real need arises (ECDH-ES+A*KW key wrapping, RSA-OAEP) rather
+// than pre-built speculatively. Decrypt does read a sender's own
+// "apu"/"apv" header members into the Concat KDF's own OtherInfo when
+// present (RFC 7518 §4.6.1.2/§4.6.1.3) — confirmed live against the
+// OpenID Foundation conformance suite's own direct_post.jwt responses,
+// which always set both; getting this wrong doesn't corrupt the
+// plaintext, it silently derives the wrong key and surfaces only as an
+// opaque AEAD failure. Encrypt never sets them itself (both are
+// OPTIONAL; omitting them is spec-legal) — add that side only once a
+// real peer is found to require it.
 //
 // crypto/ecdh does the actual ECDH scalar multiplication — this
 // package never touches elliptic-curve point arithmetic directly, the

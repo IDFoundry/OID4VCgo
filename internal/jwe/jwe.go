@@ -103,7 +103,7 @@ func Encrypt(recipientPub *ecdsa.PublicKey, enc Enc, payload []byte, opts Encryp
 	if err != nil {
 		return "", fmt.Errorf("jwe: ecdh: %w", err)
 	}
-	cek, err := concatKDF(z, string(enc), keyLen)
+	cek, err := concatKDF(z, string(enc), nil, nil, keyLen)
 	if err != nil {
 		return "", err
 	}
@@ -177,6 +177,14 @@ func Decrypt(priv *ecdsa.PrivateKey, compact string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	apu, err := decodePartyInfo(header, "apu")
+	if err != nil {
+		return nil, err
+	}
+	apv, err := decodePartyInfo(header, "apv")
+	if err != nil {
+		return nil, err
+	}
 	privECDH, err := priv.ECDH()
 	if err != nil {
 		return nil, fmt.Errorf("jwe: recipient private key: %w", err)
@@ -185,7 +193,7 @@ func Decrypt(priv *ecdsa.PrivateKey, compact string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("jwe: ecdh: %w", err)
 	}
-	cek, err := concatKDF(z, encStr, keyLen)
+	cek, err := concatKDF(z, encStr, apu, apv, keyLen)
 	if err != nil {
 		return nil, err
 	}
@@ -319,6 +327,26 @@ func decodeEPK(header map[string]any) (*ecdh.PublicKey, error) {
 		return nil, fmt.Errorf("jwe: epk: %w", err)
 	}
 	return pub, nil
+}
+
+// decodePartyInfo reads header's own "apu" or "apv" member (RFC 7518
+// §4.6.1.2/§4.6.1.3: base64url-encoded PartyUInfo/PartyVInfo octets)
+// — nil, nil when the member is absent entirely (both are OPTIONAL),
+// matching concatKDF's own "nil means absent" contract.
+func decodePartyInfo(header map[string]any, member string) ([]byte, error) {
+	raw, ok := header[member]
+	if !ok {
+		return nil, nil
+	}
+	s, ok := raw.(string)
+	if !ok {
+		return nil, fmt.Errorf("jwe: header %q is not a string", member)
+	}
+	decoded, err := b64.DecodeString(s)
+	if err != nil {
+		return nil, fmt.Errorf("jwe: decode %s: %w", member, err)
+	}
+	return decoded, nil
 }
 
 func deflate(data []byte) ([]byte, error) {
