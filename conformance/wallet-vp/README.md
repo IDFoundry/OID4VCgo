@@ -134,7 +134,18 @@ browser-JS-level interaction, not a plain HTTP GET) — deliberately out
 of scope for this binary; `wallet`'s own DC API support
 (`PresentMdocSelective`'s own Origin-bound path, per ARCHITECTURE.md)
 exists but testing it against the live suite needs its own separate
-harness design, not attempted here.
+harness design, not attempted here. Confirmed against the HAIP 1.0
+spec text directly: HAIP §5.2's DC API requirements are conditional
+("The following requirements apply to OpenID for Verifiable
+Presentations via the W3C Digital Credentials API") — a separate,
+optional deployment variant alongside the redirect-based flow §5.1
+profiles (and that this binary implements), not a universal mandate.
+HAIP §5.1 also never permits a JSON-serialized (non-JWT) Authorization
+Request — "Signed Authorization Requests MUST be used by utilizing
+JWT-Secured Authorization Request (JAR) [RFC9101]" — so the suite's
+"JAR JSON Serialization" module list is testing a DC API-only
+serialization variant this binary's redirect-based flow never uses
+either way.
 
 ## Status: full module run against the real OIDF suite
 
@@ -187,7 +198,10 @@ across this module list, beyond the plain query-string callback
 `RECOMMENDED` note as `happy-flow`). `request-uri-method-post`
 correctly self-`SKIPPED` ("the specification permits this as a
 fallback when the wallet does not support POST" — this binary always
-fetches via GET).
+fetches via GET). Confirmed against the HAIP 1.0 spec text directly:
+HAIP never mentions `request_uri_method` anywhere in §4 or §5 — it's
+an OPTIONAL mechanism under the base OID4VP/JAR specs (RFC 9101),
+never elevated to a requirement.
 
 **Negative-test modules found two real gaps, now fixed.** Five of
 seven correctly rejected from the start (confirmed via this binary's
