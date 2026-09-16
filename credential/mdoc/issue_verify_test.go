@@ -108,18 +108,31 @@ func TestIssueVerifyRoundTripES256(t *testing.T) {
 	}
 }
 
-// TestIssueVerifyRoundTrip_WithStatusList mirrors ISO/IEC 18013-5's own
-// Annex D.6 "Status list example" worked values (idx 1340,
-// https://example.com/statuslists/1) — §12.3.6.2/§12.3.6.5.
-func TestIssueVerifyRoundTrip_WithStatusList(t *testing.T) {
-	f := newFixture(t)
+// issueAndVerifyWithStatus issues claims (after mutate sets one of
+// Claims.Status/Claims.IdentifierList) and verifies the result,
+// returning the verified Status for the caller's own assertions. Shared
+// by the status_list and identifier_list variants of "issue with a
+// Status mechanism set, verify it round-trips" (in-memory and, via
+// wireRoundTrip, over the wire) — Issue/Verify's own plumbing is
+// identical either way, only the assigned field and expected shape
+// differ.
+func issueAndVerifyWithStatus(t *testing.T, f fixture, wireRoundTrip bool, mutate func(*Claims)) *Status {
+	t.Helper()
 	claims := f.claims
-	claims.Status = &StatusListRef{
-		Idx: 1340, URI: "https://example.com/statuslists/1", Certificate: []byte{0xaa, 0xbb, 0xcc},
-	}
+	mutate(&claims)
 	signed, err := Issue(f.issuerKey, cose.ES256, claims, IssueOptions{X5Chain: [][]byte{f.cert}})
 	if err != nil {
 		t.Fatalf("Issue: %v", err)
+	}
+	if wireRoundTrip {
+		wire, err := signed.Marshal()
+		if err != nil {
+			t.Fatalf("Marshal: %v", err)
+		}
+		signed, err = UnmarshalIssuerSigned(wire)
+		if err != nil {
+			t.Fatalf("UnmarshalIssuerSigned: %v", err)
+		}
 	}
 
 	verified, err := Verify(signed, &f.issuerKey.PublicKey, cose.ES256, VerifyOptions{
@@ -128,10 +141,23 @@ func TestIssueVerifyRoundTrip_WithStatusList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Verify: %v", err)
 	}
-	if verified.Status == nil || verified.Status.StatusList == nil {
-		t.Fatalf("Status = %v, want a populated StatusList", verified.Status)
+	return verified.Status
+}
+
+// TestIssueVerifyRoundTrip_WithStatusList mirrors ISO/IEC 18013-5's own
+// Annex D.6 "Status list example" worked values (idx 1340,
+// https://example.com/statuslists/1) — §12.3.6.2/§12.3.6.5.
+func TestIssueVerifyRoundTrip_WithStatusList(t *testing.T) {
+	f := newFixture(t)
+	status := issueAndVerifyWithStatus(t, f, false, func(c *Claims) {
+		c.Status = &StatusListRef{
+			Idx: 1340, URI: "https://example.com/statuslists/1", Certificate: []byte{0xaa, 0xbb, 0xcc},
+		}
+	})
+	if status == nil || status.StatusList == nil {
+		t.Fatalf("Status = %v, want a populated StatusList", status)
 	}
-	sl := verified.Status.StatusList
+	sl := status.StatusList
 	if sl.Idx != 1340 {
 		t.Errorf("Idx = %d, want 1340", sl.Idx)
 	}
@@ -143,41 +169,77 @@ func TestIssueVerifyRoundTrip_WithStatusList(t *testing.T) {
 	}
 }
 
+// TestIssueVerifyRoundTrip_WithIdentifierList mirrors ISO/IEC 18013-5's
+// own Annex D.6 "Identifier list example" worked values (id 0xcccc,
+// https://example.com/identifierlists/1) — §12.3.6.2/§12.3.6.4.
+func TestIssueVerifyRoundTrip_WithIdentifierList(t *testing.T) {
+	f := newFixture(t)
+	status := issueAndVerifyWithStatus(t, f, false, func(c *Claims) {
+		c.IdentifierList = &IdentifierListRef{
+			ID: []byte{0xcc, 0xcc}, URI: "https://example.com/identifierlists/1", Certificate: []byte{0xaa, 0xbb, 0xcc},
+		}
+	})
+	if status == nil || status.IdentifierList == nil {
+		t.Fatalf("Status = %v, want a populated IdentifierList", status)
+	}
+	il := status.IdentifierList
+	if !bytes.Equal(il.ID, []byte{0xcc, 0xcc}) {
+		t.Errorf("ID = %x, want cccc", il.ID)
+	}
+	if il.URI != "https://example.com/identifierlists/1" {
+		t.Errorf("URI = %q, want https://example.com/identifierlists/1", il.URI)
+	}
+	if !bytes.Equal(il.Certificate, []byte{0xaa, 0xbb, 0xcc}) {
+		t.Errorf("Certificate = %x, want aabbcc", il.Certificate)
+	}
+	if status.StatusList != nil {
+		t.Errorf("StatusList = %v, want nil", status.StatusList)
+	}
+}
+
 // TestIssuerSignedMarshalUnmarshalRoundTrip_PreservesStatus mirrors
 // TestIssuerSignedMarshalUnmarshalRoundTrip, checking that Status
 // survives a full wire round trip too — it lives inside the already-signed
 // IssuerAuth payload, so this exercises Verify's own MSO decoding on a
 // value that actually came off the wire, not just the in-memory one
-// Issue returned.
+// Issue returned. TestIssuerSignedMarshalUnmarshalRoundTrip_PreservesIdentifierList
+// is the identifier_list-mechanism sibling.
 func TestIssuerSignedMarshalUnmarshalRoundTrip_PreservesStatus(t *testing.T) {
 	f := newFixture(t)
-	claims := f.claims
-	claims.Status = &StatusListRef{Idx: 42, URI: "https://example.com/statuslists/1"}
-	signed, err := Issue(f.issuerKey, cose.ES256, claims, IssueOptions{X5Chain: [][]byte{f.cert}})
-	if err != nil {
-		t.Fatalf("Issue: %v", err)
-	}
-
-	wire, err := signed.Marshal()
-	if err != nil {
-		t.Fatalf("Marshal: %v", err)
-	}
-	decoded, err := UnmarshalIssuerSigned(wire)
-	if err != nil {
-		t.Fatalf("UnmarshalIssuerSigned: %v", err)
-	}
-
-	verified, err := Verify(decoded, &f.issuerKey.PublicKey, cose.ES256, VerifyOptions{
-		Now: func() time.Time { return claims.Signed.Add(time.Hour) },
+	status := issueAndVerifyWithStatus(t, f, true, func(c *Claims) {
+		c.Status = &StatusListRef{Idx: 42, URI: "https://example.com/statuslists/1"}
 	})
-	if err != nil {
-		t.Fatalf("Verify(decoded): %v", err)
+	if status == nil || status.StatusList == nil || status.StatusList.Idx != 42 {
+		t.Errorf("Status = %v", status)
 	}
-	if verified.Status == nil || verified.Status.StatusList == nil || verified.Status.StatusList.Idx != 42 {
-		t.Errorf("Status = %v", verified.Status)
+	if status.StatusList.Certificate != nil {
+		t.Errorf("Certificate = %x, want nil (never set)", status.StatusList.Certificate)
 	}
-	if verified.Status.StatusList.Certificate != nil {
-		t.Errorf("Certificate = %x, want nil (never set)", verified.Status.StatusList.Certificate)
+}
+
+func TestIssuerSignedMarshalUnmarshalRoundTrip_PreservesIdentifierList(t *testing.T) {
+	f := newFixture(t)
+	status := issueAndVerifyWithStatus(t, f, true, func(c *Claims) {
+		c.IdentifierList = &IdentifierListRef{ID: []byte{0xcc, 0xcc}, URI: "https://example.com/identifierlists/1"}
+	})
+	if status == nil || status.IdentifierList == nil || !bytes.Equal(status.IdentifierList.ID, []byte{0xcc, 0xcc}) {
+		t.Errorf("Status = %v", status)
+	}
+	if status.IdentifierList.Certificate != nil {
+		t.Errorf("Certificate = %x, want nil (never set)", status.IdentifierList.Certificate)
+	}
+}
+
+// TestIssueRejectsStatusAndIdentifierListTogether checks §12.3.6's own
+// mutual-exclusivity requirement between the status_list and
+// identifier_list mechanisms.
+func TestIssueRejectsStatusAndIdentifierListTogether(t *testing.T) {
+	f := newFixture(t)
+	claims := f.claims
+	claims.Status = &StatusListRef{Idx: 1, URI: "https://example.com/statuslists/1"}
+	claims.IdentifierList = &IdentifierListRef{ID: []byte{0xaa}, URI: "https://example.com/identifierlists/1"}
+	if _, err := Issue(f.issuerKey, cose.ES256, claims, IssueOptions{X5Chain: [][]byte{f.cert}}); err == nil {
+		t.Fatal("Issue: want error when both Status and IdentifierList are set")
 	}
 }
 
