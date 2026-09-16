@@ -27,9 +27,13 @@
 // caller-supplied value instead, the same "resolving trust is the
 // caller's job" split this package already draws for the Issuer's
 // public key. MSO revocation (the optional "status" member, §12.3.6)
-// is also deferred: statuslist has the CWT/COSE encoding this needs
-// (StatusListRef.CWTStatusClaim/ParseCWTStatusClaim), but this package
-// doesn't wire it into MobileSecurityObject yet.
+// is wired in for the status_list mechanism only (Claims.Status,
+// MobileSecurityObject.Status, VerifiedMSO.Status) — the same scope
+// credential/sdjwtvc.Claims.Status already takes; §12.3.6.4's own
+// ISO-specific identifier_list alternative isn't modeled, and this
+// package never fetches or checks the referenced list itself (that
+// needs statuslist.CWTStatusClaim/ParseCWTStatusClaim and an actual
+// list fetch, entirely the caller's own job).
 //
 // # Algorithm and curve support
 //

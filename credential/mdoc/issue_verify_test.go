@@ -1,6 +1,7 @@
 package mdoc
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
@@ -101,6 +102,82 @@ func TestIssueVerifyRoundTripES256(t *testing.T) {
 	}
 	if len(verified.X5Chain) != 1 {
 		t.Fatalf("X5Chain has %d entries, want 1", len(verified.X5Chain))
+	}
+	if verified.Status != nil {
+		t.Errorf("Status = %v, want nil (Claims.Status was never set)", verified.Status)
+	}
+}
+
+// TestIssueVerifyRoundTrip_WithStatusList mirrors ISO/IEC 18013-5's own
+// Annex D.6 "Status list example" worked values (idx 1340,
+// https://example.com/statuslists/1) — §12.3.6.2/§12.3.6.5.
+func TestIssueVerifyRoundTrip_WithStatusList(t *testing.T) {
+	f := newFixture(t)
+	claims := f.claims
+	claims.Status = &StatusListRef{
+		Idx: 1340, URI: "https://example.com/statuslists/1", Certificate: []byte{0xaa, 0xbb, 0xcc},
+	}
+	signed, err := Issue(f.issuerKey, cose.ES256, claims, IssueOptions{X5Chain: [][]byte{f.cert}})
+	if err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+
+	verified, err := Verify(signed, &f.issuerKey.PublicKey, cose.ES256, VerifyOptions{
+		Now: func() time.Time { return claims.Signed.Add(time.Hour) },
+	})
+	if err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	if verified.Status == nil || verified.Status.StatusList == nil {
+		t.Fatalf("Status = %v, want a populated StatusList", verified.Status)
+	}
+	sl := verified.Status.StatusList
+	if sl.Idx != 1340 {
+		t.Errorf("Idx = %d, want 1340", sl.Idx)
+	}
+	if sl.URI != "https://example.com/statuslists/1" {
+		t.Errorf("URI = %q, want https://example.com/statuslists/1", sl.URI)
+	}
+	if !bytes.Equal(sl.Certificate, []byte{0xaa, 0xbb, 0xcc}) {
+		t.Errorf("Certificate = %x, want aabbcc", sl.Certificate)
+	}
+}
+
+// TestIssuerSignedMarshalUnmarshalRoundTrip_PreservesStatus mirrors
+// TestIssuerSignedMarshalUnmarshalRoundTrip, checking that Status
+// survives a full wire round trip too — it lives inside the already-signed
+// IssuerAuth payload, so this exercises Verify's own MSO decoding on a
+// value that actually came off the wire, not just the in-memory one
+// Issue returned.
+func TestIssuerSignedMarshalUnmarshalRoundTrip_PreservesStatus(t *testing.T) {
+	f := newFixture(t)
+	claims := f.claims
+	claims.Status = &StatusListRef{Idx: 42, URI: "https://example.com/statuslists/1"}
+	signed, err := Issue(f.issuerKey, cose.ES256, claims, IssueOptions{X5Chain: [][]byte{f.cert}})
+	if err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+
+	wire, err := signed.Marshal()
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	decoded, err := UnmarshalIssuerSigned(wire)
+	if err != nil {
+		t.Fatalf("UnmarshalIssuerSigned: %v", err)
+	}
+
+	verified, err := Verify(decoded, &f.issuerKey.PublicKey, cose.ES256, VerifyOptions{
+		Now: func() time.Time { return claims.Signed.Add(time.Hour) },
+	})
+	if err != nil {
+		t.Fatalf("Verify(decoded): %v", err)
+	}
+	if verified.Status == nil || verified.Status.StatusList == nil || verified.Status.StatusList.Idx != 42 {
+		t.Errorf("Status = %v", verified.Status)
+	}
+	if verified.Status.StatusList.Certificate != nil {
+		t.Errorf("Certificate = %x, want nil (never set)", verified.Status.StatusList.Certificate)
 	}
 }
 

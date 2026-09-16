@@ -31,6 +31,14 @@ type VerifiedMSO struct {
 	// when the MSO carried none, which CheckKeyAuthorizations treats
 	// as "authorizes nothing".
 	KeyAuthorizations *KeyAuthorizations
+
+	// Status is the MSO's own Status element (§12.3.6), nil when the
+	// MSO carried none. Verify never fetches or checks the referenced
+	// MSO revocation list itself — that's optional for an mdoc reader
+	// (§12.3.6.1) and entirely the caller's own job, the same
+	// "resolving trust is the caller's job" split this package already
+	// draws for the Issuer's public key.
+	Status *Status
 }
 
 // Verify checks IssuerAuth's signature under issuerPub, decodes the
@@ -90,6 +98,7 @@ func Verify(signed IssuerSigned, issuerPub crypto.PublicKey, alg cose.Alg, opts 
 		ValidityInfo:      mso.ValidityInfo,
 		X5Chain:           unprotected.X5Chain,
 		KeyAuthorizations: mso.DeviceKeyInfo.KeyAuthorizations,
+		Status:            mso.Status,
 	}, nil
 }
 

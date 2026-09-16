@@ -16,9 +16,7 @@ const (
 const mobileSecurityObjectVersion = "1.0"
 
 // MobileSecurityObject is the MSO (§12.3.4) — the payload IssuerAuth
-// signs. Its optional "status" member (MSO revocation, §12.3.6) isn't
-// modeled yet; add it once statuslist grows the CWT/COSE encoding that
-// mechanism needs (see the package doc comment).
+// signs.
 type MobileSecurityObject struct {
 	Version         string               `cbor:"version"`
 	DigestAlgorithm DigestAlg            `cbor:"digestAlgorithm"`
@@ -26,6 +24,42 @@ type MobileSecurityObject struct {
 	DeviceKeyInfo   DeviceKeyInfo        `cbor:"deviceKeyInfo"`
 	DocType         string               `cbor:"docType"`
 	ValidityInfo    ValidityInfo         `cbor:"validityInfo"`
+
+	// Status is OPTIONAL: MSO revocation information (§12.3.6) — see
+	// its own doc comment for what's modeled.
+	Status *Status `cbor:"status,omitempty"`
+}
+
+// Status is the MSO's own optional "status" element (§12.3.6.2): a
+// pointer to an externally-hosted MSO revocation list. Only the
+// status_list mechanism is modeled here (draft-ietf-oauth-status-list,
+// via StatusListRef) — the same scope
+// credential/sdjwtvc.Claims.Status already takes. §12.3.6.4's own
+// ISO-specific identifier_list alternative isn't modeled; add it once
+// a concrete consumer needs it.
+type Status struct {
+	StatusList *StatusListRef `cbor:"status_list,omitempty"`
+}
+
+// StatusListRef is the MSO's own "status_list" element (§12.3.6.2,
+// §12.3.6.5): draft-ietf-oauth-status-list's own StatusListInfo
+// {idx, uri} — the same logical pointer statuslist.StatusListRef
+// represents, kept as this package's own independent type rather than
+// importing that package (this package never imports statuslist —
+// resolving what to do with a status pointer, including actually
+// fetching and checking the referenced list, is entirely the caller's
+// job, the same split credential/sdjwtvc.Claims.Status already draws)
+// — plus this section's own optional Certificate: a DER certificate
+// containing the public key that signed the top-level certificate in
+// the MSO revocation list's own x5chain, the mdoc reader's trust
+// anchor for that chain when present. Absent means the MSO revocation
+// list's top-level certificate must instead be signed by whatever
+// certificate signed the MSO's own IssuerAuth x5chain certificate (the
+// IACA certificate, for an mDL).
+type StatusListRef struct {
+	Idx         uint64 `cbor:"idx"`
+	URI         string `cbor:"uri"`
+	Certificate []byte `cbor:"certificate,omitempty"`
 }
 
 // DigestIDs maps a DigestID (§12.3.4: an unsigned integer smaller than
