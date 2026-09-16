@@ -3,6 +3,7 @@ package issuer_test
 import (
 	"context"
 	"crypto/rand"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -266,6 +267,125 @@ func TestExchangePreAuthorizedCode_Success(t *testing.T) {
 		PreAuthorizedCode: "code-1", DPoPProof: proof, TokenEndpoint: testTokenEndpointURL(t),
 	}); err == nil {
 		t.Fatalf("second ExchangePreAuthorizedCode = nil error, want error")
+	}
+}
+
+// TestExchangePreAuthorizedCode_MintsAuthorizationDetails checks that
+// PreAuthorizedCodeRecord.CredentialConfigurationIDs mints one
+// AuthorizationDetail per entry, that it comes back both directly on
+// the result (for WriteJSON to echo in the Token Response, §6.2) and
+// embedded in the issued access token's own claims (for a later
+// RequestCredential call to recover via AuthorizedRequest.AuthorizationDetails).
+func TestExchangePreAuthorizedCode_MintsAuthorizationDetails(t *testing.T) {
+	f := newPreAuthorizedCodeFixture(t)
+	f.issue(t, "code-1", issuer.PreAuthorizedCodeRecord{
+		Scopes: []string{"identity_credential"}, CredentialConfigurationIDs: []string{"IdentityCredential"},
+		ExpiresAt: f.now.Add(time.Minute),
+	})
+	proof := f.validProof(t)
+
+	result, err := f.iss.ExchangePreAuthorizedCode(context.Background(), issuer.ExchangePreAuthorizedCodeRequest{
+		PreAuthorizedCode: "code-1", DPoPProof: proof, TokenEndpoint: testTokenEndpointURL(t),
+	})
+	if err != nil {
+		t.Fatalf("ExchangePreAuthorizedCode: %v", err)
+	}
+	if len(result.AuthorizationDetails) != 1 {
+		t.Fatalf("AuthorizationDetails = %v, want 1 entry", result.AuthorizationDetails)
+	}
+	ad := result.AuthorizationDetails[0]
+	if ad.Type != "openid_credential" {
+		t.Errorf("Type = %q, want openid_credential", ad.Type)
+	}
+	if ad.CredentialConfigurationID != "IdentityCredential" {
+		t.Errorf("CredentialConfigurationID = %q, want IdentityCredential", ad.CredentialConfigurationID)
+	}
+	if len(ad.CredentialIdentifiers) != 1 || ad.CredentialIdentifiers[0] == "" {
+		t.Fatalf("CredentialIdentifiers = %v, want exactly one non-empty entry", ad.CredentialIdentifiers)
+	}
+
+	raw, ok := f.tokens.lastParams.Claims["authorization_details"]
+	if !ok {
+		t.Fatalf("AccessTokenParams.Claims is missing authorization_details: %v", f.tokens.lastParams.Claims)
+	}
+	var fromClaims []issuer.AuthorizationDetail
+	if err := json.Unmarshal(raw, &fromClaims); err != nil {
+		t.Fatalf("unmarshal authorization_details claim: %v", err)
+	}
+	if len(fromClaims) != 1 || fromClaims[0].CredentialConfigurationID != "IdentityCredential" {
+		t.Errorf("authorization_details claim = %v", fromClaims)
+	}
+}
+
+// TestExchangePreAuthorizedCode_OmitsAuthorizationDetailsWhenUnconfigured
+// checks that leaving CredentialConfigurationIDs empty (the default)
+// behaves exactly as it did before this field existed: no
+// AuthorizationDetails on the result, and no authorization_details
+// claim on the issued access token.
+func TestExchangePreAuthorizedCode_OmitsAuthorizationDetailsWhenUnconfigured(t *testing.T) {
+	f := newPreAuthorizedCodeFixture(t)
+	f.issue(t, "code-1", issuer.PreAuthorizedCodeRecord{
+		Scopes: []string{"identity_credential"}, ExpiresAt: f.now.Add(time.Minute),
+	})
+
+	result, err := f.iss.ExchangePreAuthorizedCode(context.Background(), issuer.ExchangePreAuthorizedCodeRequest{
+		PreAuthorizedCode: "code-1", DPoPProof: f.validProof(t), TokenEndpoint: testTokenEndpointURL(t),
+	})
+	if err != nil {
+		t.Fatalf("ExchangePreAuthorizedCode: %v", err)
+	}
+	if len(result.AuthorizationDetails) != 0 {
+		t.Errorf("AuthorizationDetails = %v, want empty", result.AuthorizationDetails)
+	}
+	if _, ok := f.tokens.lastParams.Claims["authorization_details"]; ok {
+		t.Errorf("AccessTokenParams.Claims has authorization_details: %v", f.tokens.lastParams.Claims)
+	}
+}
+
+// TestExchangePreAuthorizedCode_RejectsUnsupportedCredentialConfigurationID
+// checks that a PreAuthorizedCodeRecord naming a
+// credential_configuration_id this issuer doesn't actually support
+// fails outright, as a plain (non-*issuer.Error) error — a deployment
+// bug, not anything the Wallet did wrong.
+func TestExchangePreAuthorizedCode_RejectsUnsupportedCredentialConfigurationID(t *testing.T) {
+	f := newPreAuthorizedCodeFixture(t)
+	f.issue(t, "code-1", issuer.PreAuthorizedCodeRecord{
+		Scopes: []string{"identity_credential"}, CredentialConfigurationIDs: []string{"NoSuchConfig"},
+		ExpiresAt: f.now.Add(time.Minute),
+	})
+
+	_, err := f.iss.ExchangePreAuthorizedCode(context.Background(), issuer.ExchangePreAuthorizedCodeRequest{
+		PreAuthorizedCode: "code-1", DPoPProof: f.validProof(t), TokenEndpoint: testTokenEndpointURL(t),
+	})
+	if err == nil {
+		t.Fatalf("ExchangePreAuthorizedCode = nil error, want error")
+	}
+	var ierr *issuer.Error
+	if errors.As(err, &ierr) {
+		t.Errorf("error = %v, want a plain error, not *issuer.Error", err)
+	}
+}
+
+// TestExchangePreAuthorizedCodeResult_WriteJSON_IncludesAuthorizationDetails
+// checks WriteJSON's own body directly, independent of the full
+// ExchangePreAuthorizedCode flow.
+func TestExchangePreAuthorizedCodeResult_WriteJSON_IncludesAuthorizationDetails(t *testing.T) {
+	rec := httptest.NewRecorder()
+	issuer.ExchangePreAuthorizedCodeResult{
+		AccessToken: "tok", TokenType: "DPoP", ExpiresIn: time.Minute,
+		AuthorizationDetails: []issuer.AuthorizationDetail{
+			{Type: "openid_credential", CredentialConfigurationID: "IdentityCredential", CredentialIdentifiers: []string{"id-1"}},
+		},
+	}.WriteJSON(rec)
+
+	var body struct {
+		AuthorizationDetails []issuer.AuthorizationDetail `json:"authorization_details"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal response body: %v", err)
+	}
+	if len(body.AuthorizationDetails) != 1 || body.AuthorizationDetails[0].CredentialConfigurationID != "IdentityCredential" {
+		t.Errorf("authorization_details = %v", body.AuthorizationDetails)
 	}
 }
 

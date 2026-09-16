@@ -27,6 +27,19 @@ type PreAuthorizedCodeRecord struct {
 	// resulting access token to.
 	Scopes []string
 
+	// CredentialConfigurationIDs, if non-empty, additionally mints one
+	// fresh credential_identifier per entry (§6.2) and returns them all
+	// via the Token Response's own "authorization_details" parameter
+	// (RFC 9396 §5.1.1, this specification's own "openid_credential"
+	// type) — see ExchangePreAuthorizedCodeResult.AuthorizationDetails.
+	// Independent of Scopes — set this when the paired Credential
+	// Offer's own credential_configuration_ids should also be
+	// redeemable via credential_identifier (§8.2), entirely this
+	// caller's own choice, the same "constructing an offer and
+	// redeeming a pre-authorized_code are two separate steps" split
+	// this store's own doc comment already draws.
+	CredentialConfigurationIDs []string
+
 	// ExpiresAt bounds how long this pre-authorized_code remains
 	// redeemable.
 	ExpiresAt time.Time
