@@ -24,6 +24,19 @@ func wrapTag24(v any) ([]byte, error) {
 	return wrapped, nil
 }
 
+// nilableThumbprint returns thumbprint as an any for direct use in a
+// HandoverInfo array — nil (not a nil []byte wrapped in a non-nil
+// any, which CBOR would encode as an empty bstr rather than null) when
+// thumbprint itself is nil, so an unencrypted response's own
+// HandoverInfo correctly encodes its jwkThumbprint element as CBOR
+// null per Appendix B.2.6.1/B.2.6.2.
+func nilableThumbprint(thumbprint []byte) any {
+	if thumbprint == nil {
+		return nil
+	}
+	return thumbprint
+}
+
 // buildHandoverSessionTranscriptBytes wraps handoverType/info (either
 // flow's own [...]HandoverInfo array) into
 // [handoverType, sha256(CBOR(info))] and then into the full
@@ -103,11 +116,7 @@ func BuildSessionTranscriptBytes(p HandoverParams) ([]byte, error) {
 		return nil, fmt.Errorf("oid4vpmdoc: build session transcript: response_uri is required")
 	}
 
-	var jwkThumbprint any
-	if p.ResponseEncryptionJWKThumbprint != nil {
-		jwkThumbprint = p.ResponseEncryptionJWKThumbprint
-	}
-	info := []any{p.ClientID, p.Nonce, jwkThumbprint, p.ResponseURI}
+	info := []any{p.ClientID, p.Nonce, nilableThumbprint(p.ResponseEncryptionJWKThumbprint), p.ResponseURI}
 	sessionTranscriptBytes, err := buildHandoverSessionTranscriptBytes("OpenID4VPHandover", info)
 	if err != nil {
 		return nil, fmt.Errorf("oid4vpmdoc: build session transcript: %w", err)
@@ -158,11 +167,7 @@ func BuildDCAPISessionTranscriptBytes(p DCAPIHandoverParams) ([]byte, error) {
 		return nil, fmt.Errorf("oid4vpmdoc: build dc api session transcript: nonce is required")
 	}
 
-	var jwkThumbprint any
-	if p.ResponseEncryptionJWKThumbprint != nil {
-		jwkThumbprint = p.ResponseEncryptionJWKThumbprint
-	}
-	info := []any{p.Origin, p.Nonce, jwkThumbprint}
+	info := []any{p.Origin, p.Nonce, nilableThumbprint(p.ResponseEncryptionJWKThumbprint)}
 	sessionTranscriptBytes, err := buildHandoverSessionTranscriptBytes("OpenID4VPDCAPIHandover", info)
 	if err != nil {
 		return nil, fmt.Errorf("oid4vpmdoc: build dc api session transcript: %w", err)
