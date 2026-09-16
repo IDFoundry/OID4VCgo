@@ -67,6 +67,32 @@ func TestSatisfiedByMdocClaims(t *testing.T) {
 	}
 }
 
+// TestSatisfiedBySDJWTVCClaimsWithClaimSets mirrors §6.4.1's own
+// worked example: the second (least-preferred) claim_sets option
+// still satisfies the query when it's the only one a credential can
+// fulfill.
+func TestSatisfiedBySDJWTVCClaimsWithClaimSets(t *testing.T) {
+	cq := claimSetsCredentialQuery(t)
+	const vct = "https://credentials.example.com/identity_credential"
+
+	cases := map[string]struct {
+		claims  map[string]any
+		wantErr bool
+	}{
+		"first option":   {map[string]any{"vct": vct, "last_name": "Doe", "postal_code": "12345"}, false},
+		"second option":  {map[string]any{"vct": vct, "last_name": "Doe", "locality": "Anytown", "region": "CA"}, false},
+		"neither option": {map[string]any{"vct": vct, "last_name": "Doe"}, true},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			err := cq.SatisfiedBySDJWTVCClaims(tc.claims)
+			if tc.wantErr != (err != nil) {
+				t.Errorf("SatisfiedBySDJWTVCClaims = %v, wantErr %v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
 func TestSatisfiedByMdocClaimsRejectsNonMdocPath(t *testing.T) {
 	cq := dcql.CredentialQuery{
 		ID: "mdl", Format: "mso_mdoc",

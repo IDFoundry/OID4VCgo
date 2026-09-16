@@ -702,16 +702,28 @@ shape from the phase-by-phase plan, not a description of current code.
   `CredentialQuery.SatisfiedBySDJWTVCClaims` goes one level up from
   `Path.Select` itself: given a "dc+sd-jwt" credential's own already-
   resolved claims, it checks the *whole* Credential Query is satisfied
-  (every `Claims` entry present, `vct` among `SDJWTVCMeta`'s own
-  `VCTValues`) — again one shared check both `verifier` (does a
-  returned Presentation satisfy what was asked) and `wallet` (does a
-  held credential satisfy a Credential Query at all) need identically,
-  factored out after the two were caught duplicating it.
+  (`vct` among `SDJWTVCMeta`'s own `VCTValues`, plus `Claims`/
+  `ClaimSets` per §6.4.1's own "Selecting Claims" rule — see
+  `claimsSatisfiedBy` below) — again one shared check both `verifier`
+  (does a returned Presentation satisfy what was asked) and `wallet`
+  (does a held credential satisfy a Credential Query at all) need
+  identically, factored out after the two were caught duplicating it.
   `CredentialQuery.SatisfiedByMdocClaims` is its "mso_mdoc" twin:
-  `docType` must match `MdocMeta`'s own `DoctypeValue`, and every
-  `Claims` entry — each a `Path.MdocNamespaceAndElement`-shaped
-  two-component path — must be present in the given
-  namespace/element-value map.
+  `docType` must match `MdocMeta`'s own `DoctypeValue`, and `Claims`/
+  `ClaimSets` the same way, each `Claims` entry a
+  `Path.MdocNamespaceAndElement`-shaped two-component path checked
+  against the given namespace/element-value map.
+  `claimsSatisfiedBy` (private, shared by both `Satisfied*` methods via
+  a format-specific `present(Path) error` closure) implements §6.4.1
+  exactly: when `ClaimSets` is empty, every `Claims` entry must
+  resolve; when both are set, at least one `ClaimSets` option must
+  resolve *in full*, checked in the given order and returning
+  satisfied as soon as one does (§6.4.1's own "the Wallet SHOULD return
+  the first option that it can satisfy") — this package doesn't decide
+  *which* option a Presentation should be built from (that's
+  `wallet`'s own job once minimal-disclosure trimming exists — today
+  `wallet.PresentSDJWTVC` discloses every held Disclosure regardless of
+  which option matched), only whether *some* option is satisfiable.
 - **`oid4vpmdoc`** (done) — the OID4VP-specific wire structures the
   "mso_mdoc" Credential Format's own Presentation needs on top of
   `credential/mdoc`'s own ISO/IEC 18013-5 primitives:
@@ -822,11 +834,12 @@ shape from the phase-by-phase plan, not a description of current code.
   `dcql.CredentialQuery.SatisfiedByMdocClaims`. `TestVerifyMdocResponse`
   is the same real end-to-end round trip, for this format.
   Scope, explicitly: exactly one Presentation per Credential Query
-  (`multiple: true` isn't supported yet), `claim_sets` isn't supported,
-  and every Credential Query is treated as required (no
-  `credential_sets`/§6.4.2 Credential-selection orchestration). Still
-  to come: the `multiple`/`claim_sets`/`credential_sets` selection
-  rules (§6.4), and the DC API flow entirely (message shapes,
+  (`multiple: true` isn't supported yet — a satisfiable `claim_sets`
+  option is still just checked, not used to pick *which* claims a
+  Presentation discloses), and every Credential Query is treated as
+  required (no `credential_sets`/§6.4.2 Credential-selection
+  orchestration). Still to come: the `multiple`/`credential_sets`
+  selection rules (§6.4.2), and the DC API flow entirely (message shapes,
   `dc_api`/`dc_api.jwt`, `OpenID4VPDCAPIHandover`) — HAIP formally
   allows an Ecosystem to choose redirect-only, DC-API-only, or both
   (HAIP §9.3), so a redirect-flow-only slice is a legitimate,
@@ -871,7 +884,8 @@ shape from the phase-by-phase plan, not a description of current code.
   combining `MatchDCQLQuery` with `PresentSDJWTVC`/`PresentMdoc` into a
   ready-to-encrypt `vp_token` map, §8.1's own shape). Same scope cut as
   `verifier.VerifyResponse`: exactly one `HeldCredential` per Credential
-  Query, no `claim_sets`, every Credential Query required.
+  Query, and every Credential Query required (no `multiple`/
+  `credential_sets` orchestration yet).
   `TestWalletVerifierPresentationRoundTrip`/
   `TestWalletVerifierMdocPresentationRoundTrip` drive the full OID4VP
   flow between this repo's own two independently-built halves, one per

@@ -9,6 +9,7 @@ import (
 	"github.com/idfoundry/oid4vcigo/dcql"
 	"github.com/idfoundry/oid4vcigo/internal/jose"
 	"github.com/idfoundry/oid4vcigo/internal/jwk"
+	"github.com/idfoundry/oid4vcigo/internal/testverify"
 	"github.com/idfoundry/oid4vcigo/wallet"
 )
 
@@ -70,25 +71,30 @@ func newHeldSDJWTVC(t *testing.T) heldSDJWTVCFixture {
 
 func testPresentationQuery(t *testing.T) dcql.Query {
 	t.Helper()
-	meta, err := dcql.NewSDJWTVCMeta(dcql.SDJWTVCMeta{VCTValues: []string{testPresentationVCT}})
-	if err != nil {
-		t.Fatalf("NewSDJWTVCMeta: %v", err)
-	}
 	return dcql.Query{Credentials: []dcql.CredentialQuery{{
-		ID: "identity_credential", Format: sdjwtvc.CredentialFormat, Meta: meta,
+		ID: "identity_credential", Format: sdjwtvc.CredentialFormat, Meta: testverify.MustSDJWTVCMeta(t, testPresentationVCT),
 		Claims: []dcql.ClaimsQuery{{Path: dcql.Path{dcql.PathKey("given_name")}}},
 	}}}
 }
 
-func TestMatchDCQLQuery(t *testing.T) {
-	fixture := newHeldSDJWTVC(t)
-	matches, err := wallet.MatchDCQLQuery(testPresentationQuery(t), []wallet.HeldCredential{fixture.held})
+// matchesOneCredential asserts a successful MatchDCQLQuery call
+// (against fixture.held) matched exactly the "identity_credential"
+// query with fixture's own credential — shared by TestMatchDCQLQuery
+// and TestMatchDCQLQueryAcceptsSatisfiableClaimSetOption, which differ
+// only in which query is asked.
+func matchesOneCredential(t *testing.T, query dcql.Query, fixture heldSDJWTVCFixture) {
+	t.Helper()
+	matches, err := wallet.MatchDCQLQuery(query, []wallet.HeldCredential{fixture.held})
 	if err != nil {
 		t.Fatalf("MatchDCQLQuery: %v", err)
 	}
 	if len(matches) != 1 || matches["identity_credential"].Credential != fixture.held.Credential {
 		t.Errorf("matches = %+v", matches)
 	}
+}
+
+func TestMatchDCQLQuery(t *testing.T) {
+	matchesOneCredential(t, testPresentationQuery(t), newHeldSDJWTVC(t))
 }
 
 func TestMatchDCQLQueryRejectsNoCandidate(t *testing.T) {
@@ -99,26 +105,28 @@ func TestMatchDCQLQueryRejectsNoCandidate(t *testing.T) {
 
 func TestMatchDCQLQueryRejectsWrongVCT(t *testing.T) {
 	fixture := newHeldSDJWTVC(t)
-	meta, err := dcql.NewSDJWTVCMeta(dcql.SDJWTVCMeta{VCTValues: []string{"https://credentials.example.com/some_other_credential"}})
-	if err != nil {
-		t.Fatalf("NewSDJWTVCMeta: %v", err)
-	}
+	meta := testverify.MustSDJWTVCMeta(t, "https://credentials.example.com/some_other_credential")
 	query := dcql.Query{Credentials: []dcql.CredentialQuery{{ID: "x", Format: sdjwtvc.CredentialFormat, Meta: meta}}}
 	if _, err := wallet.MatchDCQLQuery(query, []wallet.HeldCredential{fixture.held}); err == nil {
 		t.Fatalf("MatchDCQLQuery = nil error, want error")
 	}
 }
 
-func TestMatchDCQLQueryRejectsClaimSets(t *testing.T) {
+// TestMatchDCQLQueryAcceptsSatisfiableClaimSetOption mirrors §6.4.1's
+// own rule: given two alternative claim_sets options, a held
+// credential that can only satisfy the second (least-preferred) one
+// still matches — the Wallet doesn't require the first option to be
+// satisfiable, just some option.
+func TestMatchDCQLQueryAcceptsSatisfiableClaimSetOption(t *testing.T) {
+	matchesOneCredential(t, testverify.ClaimSetOptionsQuery(t, testPresentationVCT), newHeldSDJWTVC(t))
+}
+
+func TestMatchDCQLQueryRejectsWhenNoClaimSetOptionSatisfied(t *testing.T) {
 	fixture := newHeldSDJWTVC(t)
-	meta, err := dcql.NewSDJWTVCMeta(dcql.SDJWTVCMeta{VCTValues: []string{testPresentationVCT}})
-	if err != nil {
-		t.Fatalf("NewSDJWTVCMeta: %v", err)
-	}
 	query := dcql.Query{Credentials: []dcql.CredentialQuery{{
-		ID: "identity_credential", Format: sdjwtvc.CredentialFormat, Meta: meta,
-		Claims:    []dcql.ClaimsQuery{{ID: "given_name", Path: dcql.Path{dcql.PathKey("given_name")}}},
-		ClaimSets: [][]string{{"given_name"}},
+		ID: "identity_credential", Format: sdjwtvc.CredentialFormat, Meta: testverify.MustSDJWTVCMeta(t, testPresentationVCT),
+		Claims:    []dcql.ClaimsQuery{{ID: "no_such_claim", Path: dcql.Path{dcql.PathKey("no_such_claim")}}},
+		ClaimSets: [][]string{{"no_such_claim"}},
 	}}}
 	if _, err := wallet.MatchDCQLQuery(query, []wallet.HeldCredential{fixture.held}); err == nil {
 		t.Fatalf("MatchDCQLQuery = nil error, want error")
