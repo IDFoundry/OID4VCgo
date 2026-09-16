@@ -225,8 +225,12 @@ func testMdocClaims(t *testing.T) *mdoc.Claims {
 	}
 }
 
-func TestRequestCredential_SDJWT_JWTProof(t *testing.T) {
-	f := newCredentialEndpointFixture(t)
+// requestOneSDJWTCredential drives one successful "dc+sd-jwt"
+// credential request through f — a fresh wallet key, nonce, and
+// jwt-type proof — asserting exactly one credential comes back, and
+// returns it.
+func requestOneSDJWTCredential(t *testing.T, f credentialEndpointFixture) string {
+	t.Helper()
 	walletKey := testP256Key(t)
 	nonce := f.issueNonce(t)
 	proof := buildJWTProof(t, walletKey, testIssuer, nonce)
@@ -242,8 +246,14 @@ func TestRequestCredential_SDJWT_JWTProof(t *testing.T) {
 	if len(resp.Credentials) != 1 {
 		t.Fatalf("got %d credentials, want 1", len(resp.Credentials))
 	}
+	return resp.Credentials[0].Credential
+}
 
-	_, _, err = sdjwtvc.Verify(resp.Credentials[0].Credential, &f.sdjwtSigner.Signer.(*ecdsa.PrivateKey).PublicKey, jose.ES256, sdjwtvc.VerifyOptions{
+func TestRequestCredential_SDJWT_JWTProof(t *testing.T) {
+	f := newCredentialEndpointFixture(t)
+	credential := requestOneSDJWTCredential(t, f)
+
+	_, _, err := sdjwtvc.Verify(credential, &f.sdjwtSigner.Signer.(*ecdsa.PrivateKey).PublicKey, jose.ES256, sdjwtvc.VerifyOptions{
 		RequireKeyBinding: false,
 	})
 	if err != nil {
@@ -256,23 +266,9 @@ func TestRequestCredential_SDJWT_IssuerCertificate(t *testing.T) {
 		key := deps.SDJWTSigner.Signer.(*ecdsa.PrivateKey)
 		deps.SDJWTSigner.IssuerCertificate = testcert.SelfSigned(t, "test-issuer", &key.PublicKey, key)
 	})
-	walletKey := testP256Key(t)
-	nonce := f.issueNonce(t)
-	proof := buildJWTProof(t, walletKey, testIssuer, nonce)
+	credential := requestOneSDJWTCredential(t, f)
 
-	resp, err := f.iss.RequestCredential(context.Background(), issuer.AuthorizedRequest{Scopes: []string{"identity_credential"}}, issuer.CredentialRequest{
-		CredentialConfigurationID: testSDJWTConfigID,
-		Proofs:                    map[string][]string{oid4vci.ProofTypeJWT: {proof}},
-		SDJWTClaims:               testSDJWTClaims(),
-	})
-	if err != nil {
-		t.Fatalf("RequestCredential: %v", err)
-	}
-	if len(resp.Credentials) != 1 {
-		t.Fatalf("got %d credentials, want 1", len(resp.Credentials))
-	}
-
-	header, _, err := jose.DecodeUnverified(strings.SplitN(resp.Credentials[0].Credential, "~", 2)[0])
+	header, _, err := jose.DecodeUnverified(strings.SplitN(credential, "~", 2)[0])
 	if err != nil {
 		t.Fatalf("DecodeUnverified: %v", err)
 	}

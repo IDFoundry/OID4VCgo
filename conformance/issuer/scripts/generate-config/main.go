@@ -29,9 +29,6 @@
 package main
 
 import (
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -75,24 +72,10 @@ func main() {
 		fmt.Fprintln(os.Stderr, "generate tls cert:", err)
 		os.Exit(1)
 	}
-	issuerSigningKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	_, issuerKeyPEM, issuerCertPEM, caCertPEM, err := conformancecert.GenerateSignerAndCert(
+		"conformance-issuer-credential-issuer", "conformance-issuer-credential-issuer-ca")
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "generate credential issuer signing key:", err)
-		os.Exit(1)
-	}
-	issuerKeyPEM, err := conformancecert.ECKeyPEM(issuerSigningKey)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "encode credential issuer signing key:", err)
-		os.Exit(1)
-	}
-	ca, caKey, caCertPEM, _, err := conformancecert.GenerateCA("conformance-issuer-credential-issuer-ca")
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "generate credential issuer ca:", err)
-		os.Exit(1)
-	}
-	issuerCertPEM, err := conformancecert.IssueLeafCertPEM("conformance-issuer-credential-issuer", issuerSigningKey, ca, caKey)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "generate credential issuer certificate:", err)
+		fmt.Fprintln(os.Stderr, "generate credential issuer key/certificate:", err)
 		os.Exit(1)
 	}
 

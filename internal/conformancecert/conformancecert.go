@@ -94,6 +94,35 @@ func GenerateCA(commonName string) (cert *x509.Certificate, key *ecdsa.PrivateKe
 	return cert, key, string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})), keyPEM, nil
 }
 
+// GenerateSignerAndCert generates a fresh EC P-256 key plus a leaf
+// certificate wrapping it, issued under a fresh throwaway CA — the
+// "generate a credential-issuer signing key, then wrap it in a
+// CA-issued (not self-signed) leaf" sequence every generate-config
+// script producing x5c-bearing test credentials needs identically
+// (see GenerateCA's own doc comment for why a bare self-signed leaf
+// doesn't work). leafCommonName/caCommonName name the leaf/CA
+// certificates respectively; caCertPEM is what to paste into a relying
+// party's own trust-anchor test configuration.
+func GenerateSignerAndCert(leafCommonName, caCommonName string) (key *ecdsa.PrivateKey, keyPEM, certPEM, caCertPEM string, err error) {
+	key, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, "", "", "", err
+	}
+	keyPEM, err = ECKeyPEM(key)
+	if err != nil {
+		return nil, "", "", "", err
+	}
+	ca, caKey, caCertPEM, _, err := GenerateCA(caCommonName)
+	if err != nil {
+		return nil, "", "", "", err
+	}
+	certPEM, err = IssueLeafCertPEM(leafCommonName, key, ca, caKey)
+	if err != nil {
+		return nil, "", "", "", err
+	}
+	return key, keyPEM, certPEM, caCertPEM, nil
+}
+
 // IssueLeafCertPEM issues a leaf certificate for leafKey's own public
 // key, signed by caCert/caKey (see GenerateCA), returning it
 // PEM-encoded — for a leaf whose own private key also signs something
