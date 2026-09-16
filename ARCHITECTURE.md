@@ -374,7 +374,7 @@ shape from the phase-by-phase plan, not a description of current code.
   why this package only reads claims FAPIgo's own verification discards,
   never re-verifies a signature FAPIgo already checked). Tests include
   OID4VCI 1.0's own Appendix D.1 and Appendix E worked examples.
-- **`issuer`** (in progress) — the OID4VCI Credential Issuer role (server
+- **`issuer`** (done) — the OID4VCI Credential Issuer role (server
   side). Done so far: `Config`/`Dependencies`/`New` (mirrors
   `fapigo/server.Config`/`server.New`'s own shape — required fields, no
   implicit defaults, an opt-in-gated Nonce Endpoint the same way
@@ -809,7 +809,7 @@ shape from the phase-by-phase plan, not a description of current code.
   `ProtectedResourceClient` needs these two primitives to do that
   itself, rather than reimplementing DPoP proof construction a second
   time.
-- **`dcql`** (done, Phase 1+2a) — the Digital Credentials Query Language
+- **`dcql`** (done) — the Digital Credentials Query Language
   (OID4VP §6/§7): `Query`/`CredentialQuery`/`CredentialSetQuery`/
   `ClaimsQuery`/`TrustedAuthoritiesQuery`, each with a `Validate()`
   checking the spec's own structural MUSTs (non-empty arrays, `id`
