@@ -24,6 +24,43 @@ func wrapTag24(v any) ([]byte, error) {
 	return wrapped, nil
 }
 
+// nilableThumbprint returns thumbprint as an any for direct use in a
+// HandoverInfo array — nil (not a nil []byte wrapped in a non-nil
+// any, which CBOR would encode as an empty bstr rather than null) when
+// thumbprint itself is nil, so an unencrypted response's own
+// HandoverInfo correctly encodes its jwkThumbprint element as CBOR
+// null per Appendix B.2.6.1/B.2.6.2.
+func nilableThumbprint(thumbprint []byte) any {
+	if thumbprint == nil {
+		return nil
+	}
+	return thumbprint
+}
+
+// buildHandoverSessionTranscriptBytes wraps handoverType/info (either
+// flow's own [...]HandoverInfo array) into
+// [handoverType, sha256(CBOR(info))] and then into the full
+// [null, null, Handover] SessionTranscript, tag-24-wrapped —
+// the one piece both BuildSessionTranscriptBytes and
+// BuildDCAPISessionTranscriptBytes share, since their own
+// HandoverInfo shapes (and the calling code's own field validation)
+// are the only thing that actually differs between the two flows.
+func buildHandoverSessionTranscriptBytes(handoverType string, info []any) ([]byte, error) {
+	infoBytes, err := cbor.Marshal(info)
+	if err != nil {
+		return nil, fmt.Errorf("marshal %sInfo: %w", handoverType, err)
+	}
+	sum := sha256.Sum256(infoBytes)
+
+	handover := []any{handoverType, sum[:]}
+	sessionTranscript := []any{nil, nil, handover}
+	sessionTranscriptBytes, err := wrapTag24(sessionTranscript)
+	if err != nil {
+		return nil, err
+	}
+	return sessionTranscriptBytes, nil
+}
+
 // HandoverParams is the input to BuildSessionTranscriptBytes — the
 // Authorization Request fields Appendix B.2.6.1's own
 // OpenID4VPHandoverInfo array needs. "Unless otherwise stated, the
@@ -79,22 +116,61 @@ func BuildSessionTranscriptBytes(p HandoverParams) ([]byte, error) {
 		return nil, fmt.Errorf("oid4vpmdoc: build session transcript: response_uri is required")
 	}
 
-	var jwkThumbprint any
-	if p.ResponseEncryptionJWKThumbprint != nil {
-		jwkThumbprint = p.ResponseEncryptionJWKThumbprint
-	}
-	info := []any{p.ClientID, p.Nonce, jwkThumbprint, p.ResponseURI}
-	infoBytes, err := cbor.Marshal(info)
-	if err != nil {
-		return nil, fmt.Errorf("oid4vpmdoc: build session transcript: marshal OpenID4VPHandoverInfo: %w", err)
-	}
-	sum := sha256.Sum256(infoBytes)
-
-	handover := []any{"OpenID4VPHandover", sum[:]}
-	sessionTranscript := []any{nil, nil, handover}
-	sessionTranscriptBytes, err := wrapTag24(sessionTranscript)
+	info := []any{p.ClientID, p.Nonce, nilableThumbprint(p.ResponseEncryptionJWKThumbprint), p.ResponseURI}
+	sessionTranscriptBytes, err := buildHandoverSessionTranscriptBytes("OpenID4VPHandover", info)
 	if err != nil {
 		return nil, fmt.Errorf("oid4vpmdoc: build session transcript: %w", err)
+	}
+	return sessionTranscriptBytes, nil
+}
+
+// DCAPIHandoverParams is the input to BuildDCAPISessionTranscriptBytes
+// — the DC API request fields Appendix B.2.6.2's own
+// OpenID4VPDCAPIHandoverInfo array needs.
+type DCAPIHandoverParams struct {
+	// Origin is the Verifier's own Origin (Appendix A.2), as
+	// authenticated by the user agent/platform delivering the request
+	// — NOT prefixed with "origin:" (that prefix is only for the
+	// response's own audience value, e.g. a Key Binding JWT's "aud";
+	// see Appendix A.4). REQUIRED.
+	Origin string
+
+	// Nonce is the request's own "nonce" parameter. REQUIRED.
+	Nonce string
+
+	// ResponseEncryptionJWKThumbprint is the RFC 7638 SHA-256 JWK
+	// Thumbprint, as raw bytes, of the Verifier's own public key used
+	// to encrypt the response — REQUIRED for the dc_api.jwt Response
+	// Mode (this repo's own verifier/wallet packages' only supported
+	// one, HAIP 1.0 §5.2's own mandate), nil only for the unencrypted
+	// dc_api Response Mode ("If the Response Mode is dc_api, the third
+	// element MUST be null").
+	ResponseEncryptionJWKThumbprint []byte
+}
+
+// BuildDCAPISessionTranscriptBytes builds SessionTranscriptBytes for
+// OpenID4VP over the Digital Credentials API (Appendix B.2.6.2):
+// DeviceEngagementBytes and EReaderKeyBytes are both CBOR null, and
+// Handover is the OpenID4VPDCAPIHandover structure —
+// ["OpenID4VPDCAPIHandover", sha256(CBOR(OpenID4VPDCAPIHandoverInfo))]
+// where OpenID4VPDCAPIHandoverInfo = [origin, nonce, jwkThumbprint].
+// Verified byte-for-byte against Appendix B.2.6.2's own worked hex
+// example. BuildSessionTranscriptBytes is this function's redirect-flow
+// counterpart (Appendix B.2.6.1) — the two Handover structures aren't
+// interchangeable: a Presentation built for one flow will fail
+// DeviceSigned verification under the other.
+func BuildDCAPISessionTranscriptBytes(p DCAPIHandoverParams) ([]byte, error) {
+	if p.Origin == "" {
+		return nil, fmt.Errorf("oid4vpmdoc: build dc api session transcript: origin is required")
+	}
+	if p.Nonce == "" {
+		return nil, fmt.Errorf("oid4vpmdoc: build dc api session transcript: nonce is required")
+	}
+
+	info := []any{p.Origin, p.Nonce, nilableThumbprint(p.ResponseEncryptionJWKThumbprint)}
+	sessionTranscriptBytes, err := buildHandoverSessionTranscriptBytes("OpenID4VPDCAPIHandover", info)
+	if err != nil {
+		return nil, fmt.Errorf("oid4vpmdoc: build dc api session transcript: %w", err)
 	}
 	return sessionTranscriptBytes, nil
 }

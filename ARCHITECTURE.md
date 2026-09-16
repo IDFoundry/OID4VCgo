@@ -748,10 +748,24 @@ shape from the phase-by-phase plan, not a description of current code.
   signature/MAC *over* `SessionTranscriptBytes`, so the Wallet building
   a Presentation and the Verifier checking it MUST compute byte-for-byte
   identical bytes or verification fails outright — a drift here isn't
-  just an inconsistency, it silently breaks interop. Not implemented:
-  the DC API's own `OpenID4VPDCAPIHandover` (Appendix B.2.6.2) — the
-  same redirect-flow-only cut `verifier`/`wallet`'s own OID4VP work
-  already makes.
+  just an inconsistency, it silently breaks interop.
+  `BuildDCAPISessionTranscriptBytes` implements Appendix B.2.6.2's own
+  `OpenID4VPDCAPIHandover`/`SessionTranscript` construction for the DC
+  API flow — same null `DeviceEngagementBytes`/`EReaderKeyBytes`,
+  `Handover = ["OpenID4VPDCAPIHandover", sha256(CBOR(OpenID4VPDCAPIHandoverInfo))]`
+  where `OpenID4VPDCAPIHandoverInfo = [origin, nonce, jwkThumbprint]` —
+  an Origin/nonce/response-encryption-key-thumbprint triple instead of
+  `BuildSessionTranscriptBytes`'s own client_id/nonce/thumbprint/
+  response_uri quadruple, since Appendix A.2's own supported-parameter
+  list for the DC API drops `response_uri` entirely (the response comes
+  back through the DC API's own platform transport, never an HTTP
+  POST) and unsigned DC API requests drop `client_id` too (Appendix
+  A.2's own "the client_id parameter MUST be omitted in unsigned
+  requests") — checked byte-for-byte against Appendix B.2.6.2's own
+  published worked hex example, the same rigor
+  `BuildSessionTranscriptBytes` was held to. Not yet wired into
+  `verifier`/`wallet` — see their own package doc comments for the DC
+  API flow's current status there.
 - **`verifier`** (done, `dc+sd-jwt`+`mso_mdoc`) — the OID4VP Verifier role.
   `BuildAuthorizationRequest` builds and signs a HAIP-§5-profiled
   redirect-flow Authorization Request: a JAR Request Object
