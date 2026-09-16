@@ -52,11 +52,12 @@
 > since a Presentation's own `DeviceSigned` must be computed
 > byte-for-byte identically on both sides), and `verifier` (the OID4VP
 > Verifier role: HAIP-§5-profiled Authorization Request construction
-> via `BuildAuthorizationRequest`, `direct_post.jwt` response
-> parsing/decryption via `ParseDirectPostJWTResponse`, and §8.6 VP
-> Token Validation for both `dc+sd-jwt` and `mso_mdoc` via
-> `VerifyResponse` — the DC API flow is still to come) are implemented
-> and tested;
+> via `BuildAuthorizationRequest`, the DC API flow's own signed request
+> via `BuildDCAPIAuthorizationRequest`, `direct_post.jwt`/`dc_api.jwt`
+> response parsing/decryption via `ParseDirectPostJWTResponse`, and
+> §8.6 VP Token Validation for both `dc+sd-jwt` and `mso_mdoc` via
+> `VerifyResponse` — `VerifyResponse` itself is still redirect-flow-only)
+> are implemented and tested;
 > everything else below is still just the
 > planned layout, not a finished system. Update each section as the
 > corresponding package
@@ -795,15 +796,45 @@ shape from the phase-by-phase plan, not a description of current code.
   verify it via `internal/jose.Verify`'s own production path, the same
   "real round trip, not a simulation" discipline every other
   cross-package wire-format claim in this repo is held to.
+  `BuildDCAPIAuthorizationRequest` builds the DC API flow's own signed
+  request (Appendix A.3.2.1, JWS Compact Serialization) instead:
+  `response_mode: "dc_api.jwt"` (HAIP §5.2's own mandatory encryption
+  for the DC API flow) rather than `direct_post.jwt`, a new REQUIRED
+  `expected_origins` in place of `response_uri` (dropped entirely —
+  Appendix A.2's own supported-parameter list for the DC API never
+  lists it, since the response comes back through the DC API's own
+  platform transport, never an HTTP POST to a Verifier-controlled
+  endpoint), same `x509_hash` Client Identifier Prefix/`aud`/`nonce`/
+  `dcql_query`/`client_metadata` mechanics as the redirect flow.
+  Deliberately signed-only, mirroring `BuildAuthorizationRequest`'s own
+  posture: unsigned requests (Appendix A.3.1) and multi-signed JWS JSON
+  Serialization requests (Appendix A.3.2.2, multiple Client Identifiers
+  each with their own signature) aren't offered. The two Build methods
+  share `buildResponseEncryptionMetadata` (the ephemeral P-256 key/
+  `client_metadata.jwks` construction) and `signRequestObject` (the
+  JAR-signing mechanics) — factored out once a second caller needed
+  them identically, the same "extract once genuinely reused" restraint
+  this repo applies everywhere else. `TestBuildDCAPIAuthorizationRequest`
+  checks exactly what differs from the redirect flow (`response_mode`,
+  `expected_origins` present, `response_uri` absent); the shared
+  mechanics already have their own coverage via
+  `TestBuildAuthorizationRequest`'s own assertions, so they aren't
+  re-proven a second time.
   `ParseDirectPostJWTResponse` decrypts a Wallet's own `direct_post.jwt`
   response body (`internal/jwe.Decrypt`, using the ephemeral private
   key `BuildAuthorizationRequestResult.ResponseDecryptionKey` returned
   for that same request) and parses its own `vp_token`/`state`, or
   returns a new `*ResponseError` when the Wallet reported one instead
-  (§8.1). This package still doesn't host the built Request Object at
-  a `request_uri` itself — the same "expose the pieces, don't own the
-  transport" split `issuer.CreateCredentialOffer`'s own by-reference
-  mode already draws.
+  (§8.1) — reusable as-is for a `dc_api.jwt` response too (its own
+  `BuildDCAPIAuthorizationRequestResult.ResponseDecryptionKey`), since
+  both response modes carry the exact same encrypted-JWT-wrapping-a-
+  vp_token shape; only the transport differs (an HTTP POST body vs. the
+  DC API's own resolved `data` object), a caller-side concern this
+  function's own byte-in/byte-out signature never touches. This package
+  still doesn't host the built Request Object at a `request_uri`
+  itself, or invoke the Digital Credentials API — the same "expose the
+  pieces, don't own the transport" split `issuer.CreateCredentialOffer`'s
+  own by-reference mode already draws.
   `VerifyResponse` implements §8.6's own VP Token Validation for the
   `dc+sd-jwt` format: for each `dcql.CredentialQuery` in the original
   `dcql.Query`, it locates the matching Presentation by id, resolves
@@ -870,14 +901,22 @@ shape from the phase-by-phase plan, not a description of current code.
   references, once it's present). When `req.Query.CredentialSets` is
   empty, behavior is unchanged: every Credential Query in
   `req.Query.Credentials` is required. `claim_sets` (§6.4.1): see the
-  `dcql` bullet's own `claimsSatisfiedBy`. Still to come: the DC API
-  flow entirely (message shapes,
-  `dc_api`/`dc_api.jwt`, `OpenID4VPDCAPIHandover`) — HAIP formally
+  `dcql` bullet's own `claimsSatisfiedBy`. The DC API flow's own
+  request-building half is now done (`BuildDCAPIAuthorizationRequest`,
+  above); `VerifyResponse` itself is still redirect-flow-only —
+  `verifySDJWTVCPresentation` always checks a Key Binding JWT's own
+  `aud` against `v.clientID` (never the Origin-bound `"origin:..."`
+  audience Appendix A.4 requires for a DC API response), and
+  `verifyMdocPresentation` always rebuilds `SessionTranscriptBytes` via
+  `oid4vpmdoc.BuildSessionTranscriptBytes` (the redirect flow's own
+  Handover, never `BuildDCAPISessionTranscriptBytes`). Making
+  `VerifyResponse` accept either is the next slice. HAIP formally
   allows an Ecosystem to choose redirect-only, DC-API-only, or both
-  (HAIP §9.3), so a redirect-flow-only slice is a legitimate,
-  spec-sanctioned choice, not a compliance gap; actually *invoking* the
-  W3C Digital Credentials API is a browser/OS platform concern outside
-  a Go library's own transport responsibilities regardless.
+  (HAIP §9.3), so a redirect-flow-only `VerifyResponse` remains a
+  legitimate, spec-sanctioned choice in the meantime, not a compliance
+  gap; actually *invoking* the W3C Digital Credentials API is a
+  browser/OS platform concern outside a Go library's own transport
+  responsibilities regardless.
 - **`wallet`** (extended, done for `dc+sd-jwt`+`mso_mdoc`) — the naming
   question above is now resolved: OID4VP's Wallet role lives in the
   existing `wallet` package rather than a distinct one — "Wallet" is

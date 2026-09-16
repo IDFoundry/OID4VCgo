@@ -76,3 +76,25 @@ func validConfig(t *testing.T) (verifier.Config, verifier.Dependencies) {
 			Random: rand.Reader,
 		}
 }
+
+// newTestVerifierWithConfig builds a *verifier.Verifier from a fresh
+// validConfig, returning cfg/deps alongside it for tests that also
+// need to inspect the Config/Dependencies used to build it (e.g.
+// verifying the resulting Request Object's own signature).
+func newTestVerifierWithConfig(t *testing.T) (verifier.Config, verifier.Dependencies, *verifier.Verifier) {
+	t.Helper()
+	cfg, deps := validConfig(t)
+	v, err := verifier.New(cfg, deps)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	return cfg, deps, v
+}
+
+// newTestVerifier is newTestVerifierWithConfig for tests that only
+// need the *verifier.Verifier itself.
+func newTestVerifier(t *testing.T) *verifier.Verifier {
+	t.Helper()
+	_, _, v := newTestVerifierWithConfig(t)
+	return v
+}

@@ -92,54 +92,30 @@ func (v *Verifier) BuildAuthorizationRequest(req BuildAuthorizationRequestReques
 	if err != nil {
 		return BuildAuthorizationRequestResult{}, fmt.Errorf("verifier: build authorization request: generate nonce: %w", err)
 	}
-
-	encKey, err := ecdsa.GenerateKey(elliptic.P256(), v.deps.Random)
+	clientMetadata, encKey, err := v.buildResponseEncryptionMetadata()
 	if err != nil {
-		return BuildAuthorizationRequestResult{}, fmt.Errorf("verifier: build authorization request: generate response encryption key: %w", err)
-	}
-	encJWK, err := jwk.Marshal(&encKey.PublicKey)
-	if err != nil {
-		return BuildAuthorizationRequestResult{}, fmt.Errorf("verifier: build authorization request: marshal response encryption key: %w", err)
-	}
-	kid, err := encJWK.Thumbprint()
-	if err != nil {
-		return BuildAuthorizationRequestResult{}, fmt.Errorf("verifier: build authorization request: thumbprint response encryption key: %w", err)
+		return BuildAuthorizationRequestResult{}, fmt.Errorf("verifier: build authorization request: %w", err)
 	}
 
 	payload := map[string]any{
-		"iss":           v.clientID,
-		"aud":           selfIssuedAudience,
-		"response_type": "vp_token",
-		"response_mode": "direct_post.jwt",
-		"client_id":     v.clientID,
-		"response_uri":  v.cfg.ResponseURI.String(),
-		"nonce":         nonce,
-		"dcql_query":    req.Query,
-		"client_metadata": map[string]any{
-			"jwks": map[string]any{
-				"keys": []any{responseEncryptionJWK{JWK: encJWK, Kid: kid, Use: "enc", Alg: string(jwe.ECDHES)}},
-			},
-			"encrypted_response_enc_values_supported": v.cfg.EncValuesSupported,
-		},
+		"iss":             v.clientID,
+		"aud":             selfIssuedAudience,
+		"response_type":   "vp_token",
+		"response_mode":   "direct_post.jwt",
+		"client_id":       v.clientID,
+		"response_uri":    v.cfg.ResponseURI.String(),
+		"nonce":           nonce,
+		"dcql_query":      req.Query,
+		"client_metadata": clientMetadata,
 	}
 	if req.State != "" {
 		payload["state"] = req.State
 	}
 
-	payloadJSON, err := json.Marshal(payload)
+	requestObject, err := v.signRequestObject(payload)
 	if err != nil {
-		return BuildAuthorizationRequestResult{}, fmt.Errorf("verifier: build authorization request: marshal payload: %w", err)
+		return BuildAuthorizationRequestResult{}, fmt.Errorf("verifier: build authorization request: %w", err)
 	}
-
-	header := map[string]any{
-		"typ": requestObjectTyp,
-		"x5c": []string{base64.StdEncoding.EncodeToString(v.cfg.ClientCertificate.Raw)},
-	}
-	requestObject, err := jose.Sign(v.cfg.SigningAlg, v.deps.Signer, header, payloadJSON)
-	if err != nil {
-		return BuildAuthorizationRequestResult{}, fmt.Errorf("verifier: build authorization request: sign request object: %w", err)
-	}
-
 	return BuildAuthorizationRequestResult{
 		RequestObject: requestObject, ClientID: v.clientID, Nonce: nonce, ResponseDecryptionKey: encKey,
 	}, nil
@@ -156,6 +132,56 @@ type responseEncryptionJWK struct {
 	Kid string `json:"kid"`
 	Use string `json:"use"`
 	Alg string `json:"alg"`
+}
+
+// buildResponseEncryptionMetadata generates a fresh ephemeral P-256
+// key for this one request's own response encryption and returns its
+// own "client_metadata" value (§5.1's own jwks/
+// encrypted_response_enc_values_supported shape) alongside the key —
+// the one piece BuildAuthorizationRequest and
+// BuildDCAPIAuthorizationRequest need identically, since both flows
+// decrypt whichever of direct_post.jwt/dc_api.jwt the Wallet responds
+// with the same way.
+func (v *Verifier) buildResponseEncryptionMetadata() (map[string]any, *ecdsa.PrivateKey, error) {
+	encKey, err := ecdsa.GenerateKey(elliptic.P256(), v.deps.Random)
+	if err != nil {
+		return nil, nil, fmt.Errorf("generate response encryption key: %w", err)
+	}
+	encJWK, err := jwk.Marshal(&encKey.PublicKey)
+	if err != nil {
+		return nil, nil, fmt.Errorf("marshal response encryption key: %w", err)
+	}
+	kid, err := encJWK.Thumbprint()
+	if err != nil {
+		return nil, nil, fmt.Errorf("thumbprint response encryption key: %w", err)
+	}
+	clientMetadata := map[string]any{
+		"jwks": map[string]any{
+			"keys": []any{responseEncryptionJWK{JWK: encJWK, Kid: kid, Use: "enc", Alg: string(jwe.ECDHES)}},
+		},
+		"encrypted_response_enc_values_supported": v.cfg.EncValuesSupported,
+	}
+	return clientMetadata, encKey, nil
+}
+
+// signRequestObject marshals payload and signs it as a JAR Request
+// Object (RFC9101): the "typ"/"x5c" header this package's own
+// x509_hash Client Identifier Prefix always uses, regardless of which
+// flow's own payload shape is being signed.
+func (v *Verifier) signRequestObject(payload map[string]any) (string, error) {
+	payloadJSON, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("marshal payload: %w", err)
+	}
+	header := map[string]any{
+		"typ": requestObjectTyp,
+		"x5c": []string{base64.StdEncoding.EncodeToString(v.cfg.ClientCertificate.Raw)},
+	}
+	requestObject, err := jose.Sign(v.cfg.SigningAlg, v.deps.Signer, header, payloadJSON)
+	if err != nil {
+		return "", fmt.Errorf("sign request object: %w", err)
+	}
+	return requestObject, nil
 }
 
 // randomToken generates a fresh, unpredictable, base64url-encoded
