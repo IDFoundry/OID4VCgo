@@ -637,7 +637,7 @@ shape from the phase-by-phase plan, not a description of current code.
   follows. Fixing this surfaced a real wire-format bug in
   `wallet.RequestPreAuthorizedCodeToken`'s own retry logic — see the
   `wallet` bullet below.
-- **`wallet`** — the Wallet's OID4VCI role (client side): credential-offer
+- **`wallet`** (done) — the Wallet's OID4VCI role (client side): credential-offer
   resolution, proof-of-possession generation, deferred/notification
   handling. Built on `fapigo/client`. `ResolveCredentialOffer` decodes a
   Credential Offer either by value or by reference (§4.1.2/§4.1.3), the
@@ -1229,7 +1229,7 @@ shape from the phase-by-phase plan, not a description of current code.
   beyond what `New` itself already enforces (JAR signing,
   `direct_post.jwt`, both are load-bearing in `verifier`'s own
   implementation, not optional profiling on top of it).
-- **`storage`** — in-memory implementations of every store `issuer`
+- **`storage`** (done) — in-memory implementations of every store `issuer`
   defines (`NonceStore`, `CredentialOfferStore`, `DeferredTransactionStore`,
   `NotificationStore`, `PreAuthorizedCodeStore`, `DPoPNonceStore`,
   `DPoPReplayChecker`), for local dev/testing only — never production;
