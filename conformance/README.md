@@ -65,25 +65,31 @@ negative-test expectations differ.
   plain bug; they agreed and fixed it upstream (`fix!: ignore
   unrecognized authorization request parameters at PAR/CIBA`, FAPIgo
   PR #304). `go.mod` pinned to the fix; re-run live:
-  `happy-flow` now completes — `FINISHED`, result `WARNING`, zero
-  `FAILURE`s. That full run surfaced one more real gap (the same x5c
-  requirement `wallet-vp/README.md` already documents, this time in
-  `issuer.SDJWTSigner`), fixed the same way. **All 21 OID4VCI-specific
-  modules in the plan are now run live** (the other 40 are the generic
-  FAPI 2.0 Security Profile Final battery, not yet attempted). One more
-  real gap found: this binary's TLS listener had no `MinVersion`/
-  `CipherSuites` set, so Go's own TLS 1.3 default suite (always
-  including ChaCha20-Poly1305) tripped the suite's own FAPI-RW-8.5
-  cipher probe — fixed by wiring in `fapigo/server.FAPIRWTLSCipherSuites`,
-  the exact configuration FAPIgo's own OpenID-Certified
-  `cmd/conformance-as` already uses. Final tally: happy-flow and its
-  two siblings clean, 10 of 10 applicable negative tests `PASSED`, 3
-  modules correctly self-`SKIPPED` (signed metadata, batch issuance,
-  key-attestation/encryption-algorithm features this binary doesn't
-  implement), `happy-flow-multiple-clients` still `INTERRUPTED` (a
-  real AS-config detail resolved — client2's registered redirect_uri
-  must match the suite's exact string, including its fixed query
-  component — but driving two clients' consent rounds through this
-  harness isn't fully automated yet). See `issuer/README.md`.
+  `happy-flow` now completes. That full run surfaced one more real gap
+  (the same x5c requirement `wallet-vp/README.md` already documents,
+  this time in `issuer.SDJWTSigner`), fixed the same way. **All 21
+  OID4VCI-specific modules in the plan are now run live** (the other
+  40 are the generic FAPI 2.0 Security Profile Final battery, not yet
+  attempted). Two more real gaps found and fixed: this binary's TLS
+  listener had no `MinVersion`/`CipherSuites` set, so Go's own TLS 1.3
+  default suite (always including ChaCha20-Poly1305) tripped the
+  suite's own FAPI-RW-8.5 cipher probe — fixed by wiring in
+  `fapigo/server.FAPIRWTLSCipherSuites`, the exact configuration
+  FAPIgo's own OpenID-Certified `cmd/conformance-as` already uses; and
+  a genuine RFC 9901 §10.1 linkability issue — two credentials issued
+  moments apart (`happy-flow-multiple-clients`, one per client) carried
+  `exp` values differing by the real inter-issuance gap, a correlation
+  side-channel — fixed by rounding `exp` to the start of the issuance
+  day (`internal/conformancecert.CredentialExp`). Both fixes apply
+  everywhere `exp`/TLS are exercised, not just the module that caught
+  them — re-confirmed live: every module that previously carried the
+  `exp`-claim `WARNING` (`happy-flow` and its three siblings including
+  `multiple-clients`, plus `fail-on-access-token-in-query`) is now
+  `FINISHED`/`PASSED` with zero log entries at `WARNING` or worse.
+  **Final tally: all 21 modules `FINISHED`/`PASSED` or correctly
+  `SKIPPED`** — 10 of 10 applicable negative tests `PASSED`, 3 modules
+  correctly self-`SKIPPED` (signed metadata, batch issuance, key-
+  attestation/encryption-algorithm features this binary doesn't
+  implement). See `issuer/README.md`.
 - **Not yet started**: OID4VCI Wallet role (blocked on a FAPIgo-side
   change — see `AGENTS.md`).

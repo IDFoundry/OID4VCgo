@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/idfoundry/oid4vcigo/internal/conformancecert"
 	"github.com/idfoundry/oid4vcigo/internal/jose"
 )
 
@@ -13,7 +14,8 @@ import (
 // same real issueFixtureCredential call path integration_test.go's
 // own full round-trip test exercises) rather than duplicating its own
 // key/CA/cert setup, and just checks the one thing that test doesn't:
-// the issued credential's own "exp" claim.
+// the issued credential's own "exp" claim, day-rounded per
+// conformancecert.CredentialExp's own doc comment.
 func TestIssueFixtureCredential_SetsExp(t *testing.T) {
 	before := time.Now()
 	wallet, _ := setupWalletUnderTest(t)
@@ -32,9 +34,8 @@ func TestIssueFixtureCredential_SetsExp(t *testing.T) {
 	if payload.Exp == nil {
 		t.Fatal("issued credential has no exp claim")
 	}
-	wantMin := before.Add(fixtureCredentialLifetime - time.Minute).Unix()
-	wantMax := before.Add(fixtureCredentialLifetime + time.Minute).Unix()
-	if *payload.Exp < wantMin || *payload.Exp > wantMax {
-		t.Errorf("exp = %d, want between %d and %d", *payload.Exp, wantMin, wantMax)
+	want := conformancecert.CredentialExp(before, fixtureCredentialLifetime)
+	if *payload.Exp != want {
+		t.Errorf("exp = %d, want %d (day-rounded issuance + fixtureCredentialLifetime)", *payload.Exp, want)
 	}
 }
