@@ -12,8 +12,11 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"math/big"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/idfoundry/oid4vcigo/internal/jose"
 )
 
 // SelfSigned builds a self-signed leaf certificate for pub, signed by
@@ -36,4 +39,24 @@ func SelfSigned(t *testing.T, commonName string, pub crypto.PublicKey, signer cr
 		t.Fatalf("testcert: ParseCertificate: %v", err)
 	}
 	return cert
+}
+
+// AssertSingleX5CHeader asserts compact's own JWS header — or, for a
+// compact SD-JWT VC, its Issuer-signed JWT component before the first
+// "~" — carries exactly one "x5c" entry (RFC 7515 §4.1.6), returning
+// it: the check both credential/sdjwtvc's own IssuerCertificate tests
+// and issuer's own need identically, the returned slice letting a
+// caller that wants to inspect the entry itself continue from there.
+func AssertSingleX5CHeader(t *testing.T, compact string) []any {
+	t.Helper()
+	issuerJWT, _, _ := strings.Cut(compact, "~")
+	header, _, err := jose.DecodeUnverified(issuerJWT)
+	if err != nil {
+		t.Fatalf("testcert: DecodeUnverified: %v", err)
+	}
+	x5c, ok := header["x5c"].([]any)
+	if !ok || len(x5c) != 1 {
+		t.Fatalf("header[\"x5c\"] = %#v, want a single-entry array", header["x5c"])
+	}
+	return x5c
 }

@@ -9,7 +9,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"strings"
 	"testing"
 	"time"
 
@@ -267,15 +266,7 @@ func TestRequestCredential_SDJWT_IssuerCertificate(t *testing.T) {
 		deps.SDJWTSigner.IssuerCertificate = testcert.SelfSigned(t, "test-issuer", &key.PublicKey, key)
 	})
 	credential := requestOneSDJWTCredential(t, f)
-
-	header, _, err := jose.DecodeUnverified(strings.SplitN(credential, "~", 2)[0])
-	if err != nil {
-		t.Fatalf("DecodeUnverified: %v", err)
-	}
-	x5c, ok := header["x5c"].([]any)
-	if !ok || len(x5c) != 1 {
-		t.Fatalf("header[\"x5c\"] = %#v, want a single-entry array", header["x5c"])
-	}
+	testcert.AssertSingleX5CHeader(t, credential)
 }
 
 func TestRequestCredential_SDJWT_Batch(t *testing.T) {
