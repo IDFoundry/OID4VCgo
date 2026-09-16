@@ -69,6 +69,20 @@
 // if you build one of those types directly as a struct literal rather
 // than through this package's own constructors.
 //
+// # Presenting a subset of what was issued
+//
+// IssuerSigned.SelectNameSpaces implements §10.3.3's own selective
+// disclosure mechanism on the Holder's side: a Holder may present only
+// some of the namespace/data elements an Issuer originally signed,
+// since each IssuerSignedItem's digest is checked independently
+// against the MSO's own valueDigests (Verify still succeeds against a
+// trimmed IssuerSigned, since trimming never touches an item's own
+// bytes or salt, only which items are included at all). It carries the
+// rawItems cache forward for whichever items survive the trim, for the
+// same reason Issue/UnmarshalIssuerSigned populate it in the first
+// place — see wallet.PresentMdocSelective for where this feeds into an
+// OID4VP Presentation.
+//
 // # Verifying
 //
 // Verify expects the Issuer's already-resolved public key, the same

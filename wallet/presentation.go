@@ -469,22 +469,109 @@ func buildMdocSessionTranscriptBytes(params PresentMdocParams) ([]byte, error) {
 // additional self-asserted DeviceSigned namespaces (an empty
 // NameSpaces map — this package only ever proves possession of the
 // device key, it doesn't build Holder-asserted claims of its own).
+// Discloses every namespace/element held's own IssuerSigned carries —
+// see PresentMdocSelective for a caller with DCQL query context to
+// trim against.
 func PresentMdoc(held HeldCredential, params PresentMdocParams) (string, error) {
+	issuerSigned, err := decodeHeldMdoc(held)
+	if err != nil {
+		return "", err
+	}
+	return presentMdocWithIssuerSigned(held, params, issuerSigned)
+}
+
+// PresentMdocSelective is PresentMdoc's own minimal-disclosure twin —
+// the "mso_mdoc" analog of PresentSDJWTVCSelective: ISO/IEC 18013-5's
+// own namespace/data-element selective disclosure mechanism (§10.3.3)
+// lets a Holder present only a subset of the elements an Issuer
+// originally signed. It trims held's own IssuerSigned to exactly
+// requiredPaths (credential/mdoc.IssuerSigned.SelectNameSpaces) before
+// wrapping it, dropping every other disclosed element.
+// PresentCredentials is this function's own real caller, via
+// dcql.CredentialQuery.SelectedMdocClaimPaths.
+//
+// Each Path in requiredPaths must be a two-component mdoc-form path
+// (dcql.Path.MdocNamespaceAndElement) — a Claims Path Pointer that
+// isn't (a Wildcard/Index component, or any length other than two)
+// isn't supported for trimming yet: this function falls back to
+// PresentMdoc's own full disclosure for the whole credential in that
+// case, the same narrow cut PresentSDJWTVCSelective's own doc comment
+// takes for "dc+sd-jwt" — no mdoc Claims Path Pointer either format's
+// own DCQL fixtures in this repo actually uses today has one, so this
+// cut costs nothing in practice yet.
+func PresentMdocSelective(held HeldCredential, params PresentMdocParams, requiredPaths []dcql.Path) (string, error) {
+	issuerSigned, err := decodeHeldMdoc(held)
+	if err != nil {
+		return "", err
+	}
+	if selectorPaths, ok := mdocDisclosurePaths(requiredPaths); ok {
+		issuerSigned = issuerSigned.SelectNameSpaces(selectorPaths)
+	}
+	return presentMdocWithIssuerSigned(held, params, issuerSigned)
+}
+
+// presentMdocSelectively builds held's own "mso_mdoc" Presentation
+// trimmed to exactly what cq's own Claims/ClaimSets say are needed
+// (dcql.CredentialQuery.SelectedMdocClaimPaths) — the entry point
+// PresentCredentials uses so its own vp_token is §6.4.1-compliant by
+// construction, unlike calling PresentMdoc directly.
+func presentMdocSelectively(held HeldCredential, cq dcql.CredentialQuery, params PresentMdocParams) (string, error) {
+	issuerSigned, err := decodeHeldMdoc(held)
+	if err != nil {
+		return "", err
+	}
+	paths, err := cq.SelectedMdocClaimPaths(held.MdocDocType, resolveHeldMdocNameSpaces(issuerSigned))
+	if err != nil {
+		return "", fmt.Errorf("wallet: present mdoc: %w", err)
+	}
+	return PresentMdocSelective(held, params, paths)
+}
+
+// decodeHeldMdoc validates held's own format/MdocDocType and decodes
+// its base64url-encoded IssuerSigned — the shared first step
+// PresentMdoc, PresentMdocSelective, and presentMdocSelectively all
+// need.
+func decodeHeldMdoc(held HeldCredential) (mdoc.IssuerSigned, error) {
 	if held.Format != mdoc.CredentialFormat {
-		return "", fmt.Errorf("wallet: present mdoc: held credential format is %q, want %q", held.Format, mdoc.CredentialFormat)
+		return mdoc.IssuerSigned{}, fmt.Errorf("wallet: present mdoc: held credential format is %q, want %q", held.Format, mdoc.CredentialFormat)
 	}
 	if held.MdocDocType == "" {
-		return "", fmt.Errorf("wallet: present mdoc: held credential's own mdoc_doc_type is required")
+		return mdoc.IssuerSigned{}, fmt.Errorf("wallet: present mdoc: held credential's own mdoc_doc_type is required")
 	}
 	raw, err := base64.RawURLEncoding.DecodeString(held.Credential)
 	if err != nil {
-		return "", fmt.Errorf("wallet: present mdoc: decode credential: %w", err)
+		return mdoc.IssuerSigned{}, fmt.Errorf("wallet: present mdoc: decode credential: %w", err)
 	}
 	issuerSigned, err := mdoc.UnmarshalIssuerSigned(raw)
 	if err != nil {
-		return "", fmt.Errorf("wallet: present mdoc: unmarshal issuer signed: %w", err)
+		return mdoc.IssuerSigned{}, fmt.Errorf("wallet: present mdoc: unmarshal issuer signed: %w", err)
 	}
+	return issuerSigned, nil
+}
 
+// mdocDisclosurePaths converts paths into the [namespace, element]
+// pairs credential/mdoc.IssuerSigned.SelectNameSpaces needs, or
+// ok=false if any Path isn't a valid two-component mdoc-form path —
+// see PresentMdocSelective's own doc comment for what a caller gets in
+// that case.
+func mdocDisclosurePaths(paths []dcql.Path) ([][2]string, bool) {
+	out := make([][2]string, 0, len(paths))
+	for _, p := range paths {
+		namespace, element, ok := p.MdocNamespaceAndElement()
+		if !ok {
+			return nil, false
+		}
+		out = append(out, [2]string{namespace, element})
+	}
+	return out, true
+}
+
+// presentMdocWithIssuerSigned is PresentMdoc/PresentMdocSelective's
+// shared tail: signs a fresh DeviceSigned over
+// buildMdocSessionTranscriptBytes(params) and wraps issuerSigned (as
+// given — already trimmed by the caller, if at all) into a complete
+// DeviceResponse.
+func presentMdocWithIssuerSigned(held HeldCredential, params PresentMdocParams, issuerSigned mdoc.IssuerSigned) (string, error) {
 	sessionTranscriptBytes, err := buildMdocSessionTranscriptBytes(params)
 	if err != nil {
 		return "", fmt.Errorf("wallet: present mdoc: %w", err)
@@ -544,17 +631,17 @@ type PresentationRequest struct {
 
 // PresentCredentials matches req.Query against req.Credentials
 // (MatchDCQLQuery) and builds a VP Token entry for each match — see
-// MatchDCQLQuery's own doc comment for this phase's scope. For
-// "dc+sd-jwt", each Presentation is built via presentSDJWTVCSelectively
-// rather than PresentSDJWTVC directly, so it's trimmed to exactly the
-// matched Credential Query's own Claims/ClaimSets
-// (dcql.CredentialQuery.SelectedSDJWTVCClaimPaths) — §6.4.1's own
-// "MUST NOT send selectively disclosable claims that have not been
-// selected" — see PresentSDJWTVCSelective's own doc comment for the
-// one narrow case (a Wildcard/Index Claims Path) that still falls
-// back to full disclosure. Returns the vp_token map ready for a
-// direct_post(.jwt)/dc_api(.jwt) response body (§8.1):
-// {<Credential Query id>: [<Presentation>]}.
+// MatchDCQLQuery's own doc comment for this phase's scope. Each
+// Presentation is built via presentSDJWTVCSelectively/presentMdocSelectively
+// rather than PresentSDJWTVC/PresentMdoc directly, so it's trimmed to
+// exactly the matched Credential Query's own Claims/ClaimSets
+// (dcql.CredentialQuery.SelectedSDJWTVCClaimPaths/SelectedMdocClaimPaths)
+// — §6.4.1's own "MUST NOT send selectively disclosable claims that
+// have not been selected" — see PresentSDJWTVCSelective/PresentMdocSelective's
+// own doc comments for the one narrow case each (a Wildcard/Index
+// Claims Path) that still falls back to full disclosure. Returns the
+// vp_token map ready for a direct_post(.jwt)/dc_api(.jwt) response
+// body (§8.1): {<Credential Query id>: [<Presentation>]}.
 func PresentCredentials(req PresentationRequest) (map[string][]string, error) {
 	if req.Origin == "" && req.Audience == "" {
 		return nil, fmt.Errorf("wallet: present credentials: audience is required")
@@ -585,7 +672,7 @@ func PresentCredentials(req PresentationRequest) (map[string][]string, error) {
 			case sdjwtvc.CredentialFormat:
 				p, err = presentSDJWTVCSelectively(held, byID[id], aud, req.Nonce)
 			case mdoc.CredentialFormat:
-				p, err = PresentMdoc(held, PresentMdocParams{
+				p, err = presentMdocSelectively(held, byID[id], PresentMdocParams{
 					Audience: req.Audience, Nonce: req.Nonce, Origin: req.Origin,
 					ResponseURI: req.ResponseURI, ResponseEncryptionJWKThumbprint: req.ResponseEncryptionJWKThumbprint,
 				})
