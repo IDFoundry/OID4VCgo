@@ -833,11 +833,15 @@ shape from the phase-by-phase plan, not a description of current code.
   and checks the result via
   `dcql.CredentialQuery.SatisfiedByMdocClaims`. `TestVerifyMdocResponse`
   is the same real end-to-end round trip, for this format.
-  Scope, explicitly: exactly one Presentation per Credential Query
-  (`multiple: true` isn't supported yet — a satisfiable `claim_sets`
-  option is still just checked, not used to pick *which* claims a
-  Presentation discloses). `credential_sets` (§6.4.2) is supported: a
-  new private `satisfiableCredentialSetOption` tries each
+  Scope, explicitly: DCQL's own selection rules are now all
+  implemented. `multiple` (§6.1): `verifyCredentialQuery` verifies
+  *every* Presentation `req.Response.VPToken` carries for a Credential
+  Query's own id — one when `Multiple` is false (§8.1's own "the array
+  MUST contain only one Presentation" — more than one is a hard
+  error), any number when true — and `VerifyResponse` flattens them
+  all into `VerifyResponseResult.Credentials` (several entries can
+  share one `CredentialQueryID`). `credential_sets` (§6.4.2): a private
+  `satisfiableCredentialSetOption` tries each
   `dcql.CredentialSetQuery.Options` entry in order (most-preferred
   first), returning the first one whose every referenced Credential
   Query id actually verifies; a required
@@ -850,8 +854,9 @@ shape from the phase-by-phase plan, not a description of current code.
   satisfying credential_sets" (i.e. *only* what `credential_sets`
   references, once it's present). When `req.Query.CredentialSets` is
   empty, behavior is unchanged: every Credential Query in
-  `req.Query.Credentials` is required. Still to come: `multiple`
-  (§6.1), and the DC API flow entirely (message shapes,
+  `req.Query.Credentials` is required. `claim_sets` (§6.4.1): see the
+  `dcql` bullet's own `claimsSatisfiedBy`. Still to come: the DC API
+  flow entirely (message shapes,
   `dc_api`/`dc_api.jwt`, `OpenID4VPDCAPIHandover`) — HAIP formally
   allows an Ecosystem to choose redirect-only, DC-API-only, or both
   (HAIP §9.3), so a redirect-flow-only slice is a legitimate,
@@ -894,14 +899,22 @@ shape from the phase-by-phase plan, not a description of current code.
   only ever proves device-key possession, not additional Holder-
   asserted claims), and `PresentCredentials` (dispatches by format,
   combining `MatchDCQLQuery` with `PresentSDJWTVC`/`PresentMdoc` into a
-  ready-to-encrypt `vp_token` map, §8.1's own shape). Same scope cut as
-  `verifier.VerifyResponse`: exactly one `HeldCredential` per Credential
-  Query (no `multiple`), and the same `credential_sets` (§6.4.2)
-  orchestration — a private `satisfiableCredentialSetOption`, structured
-  identically to `verifier`'s own (matching `HeldCredential`s against
-  `candidates` rather than verifying Presentations against a response) —
-  so `PresentCredentials`' own `vp_token` naturally omits an unsatisfied
-  optional Credential Set without any change to its own dispatch logic.
+  ready-to-encrypt `vp_token` map, §8.1's own shape). Same scope as
+  `verifier.VerifyResponse`, now that both packages implement DCQL's
+  selection rules fully: `MatchDCQLQuery` returns `map[string][]HeldCredential`
+  (a breaking change from the single-`HeldCredential`-per-id shape
+  earlier phases had) — `matchCredentialQuery` collects *every*
+  candidate satisfying a Credential Query via the new
+  `matchAllSDJWTVCQuery`/`matchAllMdocQuery`, trimming to the first
+  when `Multiple` is false (§6.1's own default); `PresentCredentials`
+  presents each one, so a `Multiple: true` query's own `vp_token` entry
+  naturally carries more than one Presentation. `credential_sets`
+  (§6.4.2) orchestration is the same private `satisfiableCredentialSetOption`
+  structured identically to `verifier`'s own (matching `HeldCredential`s
+  against `candidates` rather than verifying Presentations against a
+  response) — so `PresentCredentials`' own `vp_token` naturally omits
+  an unsatisfied optional Credential Set without any change to its own
+  dispatch logic.
   `TestWalletVerifierPresentationRoundTrip`/
   `TestWalletVerifierMdocPresentationRoundTrip` drive the full OID4VP
   flow between this repo's own two independently-built halves, one per

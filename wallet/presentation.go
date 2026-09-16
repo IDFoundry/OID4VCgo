@@ -121,8 +121,9 @@ func resolveHeldMdocNameSpaces(issuerSigned mdoc.IssuerSigned) map[string]map[st
 }
 
 // MatchDCQLQuery evaluates query (§6) against candidates and returns,
-// for each Credential Query it could satisfy, the HeldCredential
-// chosen to satisfy it.
+// for each Credential Query it could satisfy, the HeldCredential(s)
+// chosen to satisfy it — more than one only when the Credential
+// Query's own Multiple is true (§6.1); otherwise exactly one.
 //
 // query.CredentialSets implements §6.4.2's own "Selecting Credentials"
 // rule: when absent, every Credential Query in query.Credentials is
@@ -137,17 +138,15 @@ func resolveHeldMdocNameSpaces(issuerSigned mdoc.IssuerSigned) map[string]map[st
 // optional one is silently omitted from the result. A Credential Query
 // not referenced by any Credential Set Query is never matched.
 //
-// Phase scope, explicitly matching verifier.VerifyResponse's own
-// scope: exactly one HeldCredential per Credential Query ("multiple:
-// true" isn't supported). "claim_sets" (§6.4.1) is handled by
-// dcql.CredentialQuery's own Satisfied* methods — see their doc
-// comments for exactly how an option is chosen.
-func MatchDCQLQuery(query dcql.Query, candidates []HeldCredential) (map[string]HeldCredential, error) {
+// "claim_sets" (§6.4.1) is handled by dcql.CredentialQuery's own
+// Satisfied* methods — see their doc comments for exactly how an
+// option is chosen.
+func MatchDCQLQuery(query dcql.Query, candidates []HeldCredential) (map[string][]HeldCredential, error) {
 	if err := query.Validate(); err != nil {
 		return nil, fmt.Errorf("wallet: match dcql query: %w", err)
 	}
 	if len(query.CredentialSets) == 0 {
-		matches := make(map[string]HeldCredential, len(query.Credentials))
+		matches := make(map[string][]HeldCredential, len(query.Credentials))
 		for _, cq := range query.Credentials {
 			match, err := matchCredentialQuery(cq, candidates)
 			if err != nil {
@@ -162,7 +161,7 @@ func MatchDCQLQuery(query dcql.Query, candidates []HeldCredential) (map[string]H
 	for _, cq := range query.Credentials {
 		byID[cq.ID] = cq
 	}
-	matches := make(map[string]HeldCredential, len(query.Credentials))
+	matches := make(map[string][]HeldCredential, len(query.Credentials))
 	for _, cs := range query.CredentialSets {
 		option, err := satisfiableCredentialSetOption(cs, byID, candidates)
 		if err != nil {
@@ -183,10 +182,10 @@ func MatchDCQLQuery(query dcql.Query, candidates []HeldCredential) (map[string]H
 // whose every referenced Credential Query id actually matches some
 // candidate, or an error naming the last option's own failure if none
 // does.
-func satisfiableCredentialSetOption(cs dcql.CredentialSetQuery, byID map[string]dcql.CredentialQuery, candidates []HeldCredential) (map[string]HeldCredential, error) {
+func satisfiableCredentialSetOption(cs dcql.CredentialSetQuery, byID map[string]dcql.CredentialQuery, candidates []HeldCredential) (map[string][]HeldCredential, error) {
 	var lastErr error
 	for _, option := range cs.Options {
-		matched := make(map[string]HeldCredential, len(option))
+		matched := make(map[string][]HeldCredential, len(option))
 		satisfied := true
 		for _, id := range option {
 			match, err := matchCredentialQuery(byID[id], candidates)
@@ -204,23 +203,31 @@ func satisfiableCredentialSetOption(cs dcql.CredentialSetQuery, byID map[string]
 	return nil, fmt.Errorf("no option is satisfied: %w", lastErr)
 }
 
-func matchCredentialQuery(cq dcql.CredentialQuery, candidates []HeldCredential) (HeldCredential, error) {
-	var match func(dcql.CredentialQuery, []HeldCredential) (HeldCredential, bool)
+// matchCredentialQuery returns every candidate satisfying cq, trimmed
+// to just the first when cq.Multiple is false (§6.1's own default) —
+// or an error if none satisfy it at all.
+func matchCredentialQuery(cq dcql.CredentialQuery, candidates []HeldCredential) ([]HeldCredential, error) {
+	var matchAll func(dcql.CredentialQuery, []HeldCredential) []HeldCredential
 	switch cq.Format {
 	case sdjwtvc.CredentialFormat:
-		match = matchSDJWTVCQuery
+		matchAll = matchAllSDJWTVCQuery
 	case mdoc.CredentialFormat:
-		match = matchMdocQuery
+		matchAll = matchAllMdocQuery
 	default:
-		return HeldCredential{}, fmt.Errorf("format %q is not yet supported", cq.Format)
+		return nil, fmt.Errorf("format %q is not yet supported", cq.Format)
 	}
-	if cand, ok := match(cq, candidates); ok {
-		return cand, nil
+	matches := matchAll(cq, candidates)
+	if len(matches) == 0 {
+		return nil, fmt.Errorf("no held credential satisfies this credential query")
 	}
-	return HeldCredential{}, fmt.Errorf("no held credential satisfies this credential query")
+	if !cq.Multiple {
+		return matches[:1], nil
+	}
+	return matches, nil
 }
 
-func matchSDJWTVCQuery(cq dcql.CredentialQuery, candidates []HeldCredential) (HeldCredential, bool) {
+func matchAllSDJWTVCQuery(cq dcql.CredentialQuery, candidates []HeldCredential) []HeldCredential {
+	var matches []HeldCredential
 	for _, cand := range candidates {
 		if cand.Format != cq.Format {
 			continue
@@ -230,13 +237,14 @@ func matchSDJWTVCQuery(cq dcql.CredentialQuery, candidates []HeldCredential) (He
 			continue // a malformed held credential isn't this query's fault; skip it
 		}
 		if cq.SatisfiedBySDJWTVCClaims(claims) == nil {
-			return cand, true
+			matches = append(matches, cand)
 		}
 	}
-	return HeldCredential{}, false
+	return matches
 }
 
-func matchMdocQuery(cq dcql.CredentialQuery, candidates []HeldCredential) (HeldCredential, bool) {
+func matchAllMdocQuery(cq dcql.CredentialQuery, candidates []HeldCredential) []HeldCredential {
+	var matches []HeldCredential
 	for _, cand := range candidates {
 		if cand.Format != cq.Format {
 			continue
@@ -250,10 +258,10 @@ func matchMdocQuery(cq dcql.CredentialQuery, candidates []HeldCredential) (HeldC
 			continue
 		}
 		if cq.SatisfiedByMdocClaims(cand.MdocDocType, resolveHeldMdocNameSpaces(issuerSigned)) == nil {
-			return cand, true
+			matches = append(matches, cand)
 		}
 	}
-	return HeldCredential{}, false
+	return matches
 }
 
 // PresentSDJWTVC builds a "dc+sd-jwt" Presentation (a VP Token array
@@ -408,23 +416,27 @@ func PresentCredentials(req PresentationRequest) (map[string][]string, error) {
 	}
 
 	vpToken := make(map[string][]string, len(matches))
-	for id, held := range matches {
-		var presented string
-		switch held.Format {
-		case sdjwtvc.CredentialFormat:
-			presented, err = PresentSDJWTVC(held, req.Audience, req.Nonce)
-		case mdoc.CredentialFormat:
-			presented, err = PresentMdoc(held, PresentMdocParams{
-				Audience: req.Audience, Nonce: req.Nonce,
-				ResponseURI: req.ResponseURI, ResponseEncryptionJWKThumbprint: req.ResponseEncryptionJWKThumbprint,
-			})
-		default:
-			err = fmt.Errorf("format %q is not yet supported", held.Format)
+	for id, helds := range matches {
+		presented := make([]string, 0, len(helds))
+		for _, held := range helds {
+			var p string
+			switch held.Format {
+			case sdjwtvc.CredentialFormat:
+				p, err = PresentSDJWTVC(held, req.Audience, req.Nonce)
+			case mdoc.CredentialFormat:
+				p, err = PresentMdoc(held, PresentMdocParams{
+					Audience: req.Audience, Nonce: req.Nonce,
+					ResponseURI: req.ResponseURI, ResponseEncryptionJWKThumbprint: req.ResponseEncryptionJWKThumbprint,
+				})
+			default:
+				err = fmt.Errorf("format %q is not yet supported", held.Format)
+			}
+			if err != nil {
+				return nil, fmt.Errorf("wallet: present credentials: credential query %q: %w", id, err)
+			}
+			presented = append(presented, p)
 		}
-		if err != nil {
-			return nil, fmt.Errorf("wallet: present credentials: credential query %q: %w", id, err)
-		}
-		vpToken[id] = []string{presented}
+		vpToken[id] = presented
 	}
 	return vpToken, nil
 }

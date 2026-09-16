@@ -23,11 +23,10 @@
 // it). ParseDirectPostJWTResponse decrypts and parses the resulting
 // response (§8.1/§8.3.1). VerifyResponse implements §8.6's own VP
 // Token Validation for both the "dc+sd-jwt" and "mso_mdoc" formats,
-// including §6.4's own "claim_sets"/"credential_sets" selection rules
-// — see its own doc comment for exactly what's still cut ("multiple"
-// isn't supported). Not yet implemented: the DC API flow entirely
-// (request_uri hosting/dereferencing is also out of scope for this
-// package — like
+// including all of §6's own Credential/Claims selection rules:
+// "multiple" (§6.1), "claim_sets" (§6.4.1), and "credential_sets"
+// (§6.4.2). Not yet implemented: the DC API flow entirely (request_uri
+// hosting/dereferencing is also out of scope for this package — like
 // issuer.CreateCredentialOffer's own by-reference split, hosting the
 // built Request Object at a request_uri is the caller's own job). See
 // ARCHITECTURE.md for the full roadmap.
