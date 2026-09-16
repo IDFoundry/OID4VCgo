@@ -30,6 +30,15 @@ const httpFetchTimeout = 10 * time.Second
 // Phase 1 siblings make.
 const clientAttestationAlgorithm = fapi.ES256
 
+// conformanceBatchSize is this binary's own advertised
+// "batch_credential_issuance.batch_size" (§12.2.4) — issuer.Issuer
+// already fully implements batch issuance (RequestCredential resolves
+// and issues one Credential per proof in the proofs array); this
+// binary just never opted in before. Not deployment-specific, so a
+// fixed constant rather than a Config field, matching issProofAlgs's
+// own "conformance-fixed choice, not configurable" shape just below.
+const conformanceBatchSize = 5
+
 // newServerMux builds the full wiring — a real fapigo/server.Server
 // (FAPI 2.0 Security Profile Final, Wallet Attestation client
 // authentication, DPoP) paired with a real oid4vcigo/issuer.Issuer via
@@ -188,9 +197,10 @@ func newServerMux(cfg Config) (*http.ServeMux, error) {
 	}
 	issProofAlgs := []string{"ES256"}
 	iss, err := issuer.New(issuer.Config{
-		Issuer:    issuerURL,
-		Endpoints: issuer.Endpoints{Credential: credentialURL, Nonce: nonceURL},
-		Limits:    issuer.Limits{NonceLifetime: limits.MaxDPoPProofAge},
+		Issuer:                  issuerURL,
+		Endpoints:               issuer.Endpoints{Credential: credentialURL, Nonce: nonceURL},
+		Limits:                  issuer.Limits{NonceLifetime: limits.MaxDPoPProofAge},
+		BatchCredentialIssuance: &issuer.BatchCredentialIssuance{BatchSize: conformanceBatchSize},
 		CredentialConfigurationsSupported: map[string]issuer.CredentialConfiguration{
 			cfg.CredentialConfigurationID: {
 				Format: "dc+sd-jwt", Scope: cfg.Scope, VCT: cfg.VCT,

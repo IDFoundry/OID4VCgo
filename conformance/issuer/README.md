@@ -304,13 +304,44 @@ server.FAPIRWTLSCipherSuites` on the listener — mirrors
   `/api/runner/browser/{id}` endpoint accumulates a `urls` array across
   both clients rather than replacing it, so drive the *last* entry for
   the second client's own round, not `urls[0]` again.
-- `batch-issuance`: correctly `SKIPPED` (this binary doesn't configure
-  `BatchCredentialIssuance`, so the suite detects no batch support).
-  Confirmed against the HAIP 1.0 spec text directly: HAIP only
-  requires an Issuer to *advertise* support or non-support via the
-  `batch_credential_issuance` metadata parameter — "If batch issuance
-  is supported, the Wallet SHOULD use it" — never a MUST to actually
-  implement batch mode itself.
+**Update: `batch-issuance` — real support added, not just made to
+pass.** Previously self-`SKIPPED`: HAIP only requires an Issuer to
+*advertise* support or non-support via the `batch_credential_issuance`
+metadata parameter, never a MUST to actually implement it, so this
+stayed genuinely optional — scoped as a deliberate coverage
+improvement, not a compliance fix. Turned out `issuer.RequestCredential`
+already fully implements OID4VCI §3.3.2 batch issuance end to end
+(resolves one binding key per proof in the `proofs` array, issues one
+Credential per key, shares one consumed `c_nonce` across the whole
+request) — `cmd/conformance-issuer` just never opted in.
+`wiring.go` now sets `BatchCredentialIssuance: &issuer.BatchCredentialIssuance{BatchSize: conformanceBatchSize}`
+(5) on the `issuer.Config` it builds. Confirmed live:
+`FINISHED`/`PASSED`, zero log entries at `WARNING` or worse, with the
+suite sending a real 5-proof batch and independently verifying: all 5
+credentials share the same Credential Dataset
+(`VCIEnsureBatchSdJwtCredentialDatasetsMatch`), no two share a
+disclosure salt (`VCIEnsureBatchSdJwtDisclosureSaltsAreDistinct`), each
+credential's own `cnf` binding key matches one of the 5 sent proof
+keys and all 5 are mutually distinct
+(`VCIEnsureBatchBindingKeysMatchSentProofKeys`/
+`VCIEnsureBatchBindingKeysAreDistinct`), and the batch's own time
+claims are non-linkable (`VCIEnsureBatchTimeClaimsNotLinkable` —
+confirms the RFC 9901 §10.1 `exp`-rounding fix from earlier in this
+role's own work holds up under a real multi-credential batch, not just
+across separate multi-client requests). Re-verified `happy-flow`,
+`metadata-test`, and `metadata-test-signed` all still `FINISHED`/`PASSED`
+with no regression.
+
+*(Verification note: an earlier "happy-flow re-confirmed, no
+regression" claim in this session's own PR description for the signed-
+metadata change was driven with an incomplete script — one that never
+followed the `/authorize/decision` redirect back to the suite, so the
+run silently stopped partway through rather than actually completing.
+It showed zero `WARNING`/`FAILURE` only because it never got far enough
+to hit one, not because it passed. No functional regression resulted —
+this round's proper, complete re-drive above confirms `happy-flow`
+genuinely still passes — but the earlier claim itself wasn't backed by
+what it said it was.)*
 - 10 of 10 `fail-*` negative tests that apply to this binary's own
   configuration all `PASSED`: `fail-invalid-nonce`,
   `fail-invalid-jwt-proof-signature`,

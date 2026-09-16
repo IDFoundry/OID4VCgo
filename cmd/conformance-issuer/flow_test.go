@@ -212,40 +212,17 @@ func pkceChallenge(t *testing.T) (verifier, challenge string) {
 // building it surfaced a real bug (par.go/token.go never forwarded the
 // OAuth-Client-Attestation/-PoP headers to fapigo/server at all — fixed
 // alongside this test).
-func TestFullFlow_ParAuthorizeTokenNonceCredential(t *testing.T) {
-	now := time.Now()
-	client := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}} //nolint:gosec // test-only, talks to this test's own throwaway TLS listener
-
-	attesterKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatalf("generate attester key: %v", err)
-	}
-	clientKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatalf("generate client instance key: %v", err)
-	}
-	holderKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatalf("generate holder key: %v", err)
-	}
-
-	attesterJWKS, err := conformancecert.JWKSet(&attesterKey.PublicKey, "attester-1")
-	if err != nil {
-		t.Fatalf("JWKSet: %v", err)
-	}
-
-	cfg := baseTestConfig(t)
-	cfg.Client.ID = "smoke-test-client"
-	cfg.Client.RedirectURIs = []string{"https://client.example.com/callback"}
-	cfg.Client.ExpectedAttesterIssuer = "https://attester.example.com"
-	cfg.Client.AttesterJWKS = attesterJWKS
-	cfg.DefaultSubject = "smoke-test-subject"
-
-	startTestIssuerServer(t, &cfg)
-
-	attestationHeaders := func(endpointURL string) http.Header {
-		return clientAttestationHeaders(t, attesterKey, "attester-1", cfg.Client, clientKey, cfg.Issuer, now)
-	}
+// performAuthFlowThroughNonce drives PAR → GET /authorize → POST
+// /authorize/decision → POST /token → POST /nonce for cfg's own
+// registered client (attesterKey/clientKey identify it, matching
+// performPAR's own parameter shape), returning the access token and
+// c_nonce a POST /credential request needs next. Factored out of
+// TestFullFlow_ParAuthorizeTokenNonceCredential so
+// TestFullFlow_BatchIssuanceReturnsOneCredentialPerProof doesn't
+// duplicate this same ~80-line sequence just to reach a different
+// credential-request shape.
+func performAuthFlowThroughNonce(t *testing.T, client *http.Client, cfg Config, attesterKey, clientKey *ecdsa.PrivateKey, now time.Time) (accessToken, cNonce string) {
+	t.Helper()
 
 	// PKCE
 	verifier, challenge := pkceChallenge(t)
@@ -323,11 +300,11 @@ func TestFullFlow_ParAuthorizeTokenNonceCredential(t *testing.T) {
 	}
 	tokenReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	tokenReq.Header.Set("DPoP", tokenDPoP)
-	for k, v := range attestationHeaders(tokenURL) {
+	for k, v := range clientAttestationHeaders(t, attesterKey, "attester-1", cfg.Client, clientKey, cfg.Issuer, now) {
 		tokenReq.Header[k] = v
 	}
 	tokenResp := doJSON(t, client, tokenReq)
-	accessToken, _ := tokenResp["access_token"].(string)
+	accessToken, _ = tokenResp["access_token"].(string)
 	if accessToken == "" {
 		t.Fatalf("token response has no access_token: %+v", tokenResp)
 	}
@@ -338,12 +315,88 @@ func TestFullFlow_ParAuthorizeTokenNonceCredential(t *testing.T) {
 		t.Fatalf("new nonce request: %v", err)
 	}
 	nonceResp := doJSON(t, client, nonceReq)
-	cNonce, _ := nonceResp["c_nonce"].(string)
+	cNonce, _ = nonceResp["c_nonce"].(string)
 	if cNonce == "" {
 		t.Fatalf("nonce response has no c_nonce: %+v", nonceResp)
 	}
+	return accessToken, cNonce
+}
+
+// setupFullFlowTest builds the plumbing every full-flow test in this
+// file needs before it can drive PAR: an http.Client trusting this
+// test's own throwaway TLS listener, a fresh attester/client-instance
+// key pair, a registered client (clientID/defaultSubject) with a
+// matching attester JWKS, and a running startTestIssuerServer
+// instance. Each test still generates its own holder key(s) — how
+// many it needs (1 vs N for a batch) is the one thing that actually
+// varies between callers.
+func setupFullFlowTest(t *testing.T, clientID, defaultSubject string) (client *http.Client, cfg Config, attesterKey, clientKey *ecdsa.PrivateKey) {
+	t.Helper()
+	client = &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}} //nolint:gosec // test-only, talks to this test's own throwaway TLS listener
+
+	var err error
+	attesterKey, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate attester key: %v", err)
+	}
+	clientKey, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate client instance key: %v", err)
+	}
+	attesterJWKS, err := conformancecert.JWKSet(&attesterKey.PublicKey, "attester-1")
+	if err != nil {
+		t.Fatalf("JWKSet: %v", err)
+	}
+
+	cfg = baseTestConfig(t)
+	cfg.Client.ID = clientID
+	cfg.Client.RedirectURIs = []string{"https://client.example.com/callback"}
+	cfg.Client.ExpectedAttesterIssuer = "https://attester.example.com"
+	cfg.Client.AttesterJWKS = attesterJWKS
+	cfg.DefaultSubject = defaultSubject
+
+	startTestIssuerServer(t, &cfg)
+	return client, cfg, attesterKey, clientKey
+}
+
+func TestFullFlow_ParAuthorizeTokenNonceCredential(t *testing.T) {
+	now := time.Now()
+	client, cfg, attesterKey, clientKey := setupFullFlowTest(t, "smoke-test-client", "smoke-test-subject")
+	holderKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate holder key: %v", err)
+	}
+
+	accessToken, cNonce := performAuthFlowThroughNonce(t, client, cfg, attesterKey, clientKey, now)
 
 	// --- POST /credential ---
+	proofJWT, err := buildCredentialProofJWT(holderKey, cfg.Client.ID, cfg.Issuer, cNonce, now)
+	if err != nil {
+		t.Fatalf("buildCredentialProofJWT: %v", err)
+	}
+	credentialResp := postCredentialRequest(t, client, cfg, clientKey, accessToken, now, map[string]any{
+		"credential_configuration_id": cfg.CredentialConfigurationID,
+		"proofs":                      map[string][]string{"jwt": {proofJWT}},
+	})
+	credentials, _ := credentialResp["credentials"].([]any)
+	if len(credentials) != 1 {
+		t.Fatalf("credential response has %d credentials, want 1: %+v", len(credentials), credentialResp)
+	}
+	payload := decodeIssuedSDJWTPayload(t, credentials[0])
+	if _, ok := payload["exp"]; !ok {
+		t.Error("issued credential has no exp claim")
+	}
+}
+
+// postCredentialRequest POSTs body (already carrying
+// credential_configuration_id/credential_identifier and proofs) to
+// cfg's own Credential Endpoint, with a fresh DPoP proof
+// (RFC 9449 §4.2's own "ath" binding it to accessToken) and Authorization
+// header — the one request/response shape every full-flow test's own
+// final step needs, regardless of how many proofs body's own "proofs"
+// member carries.
+func postCredentialRequest(t *testing.T, client *http.Client, cfg Config, clientKey *ecdsa.PrivateKey, accessToken string, now time.Time, body map[string]any) map[string]any {
+	t.Helper()
 	credentialURL := cfg.Issuer + "/credential"
 	athSum := sha256.Sum256([]byte(accessToken))
 	ath := base64.RawURLEncoding.EncodeToString(athSum[:])
@@ -351,14 +404,7 @@ func TestFullFlow_ParAuthorizeTokenNonceCredential(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildDPoPProof (credential): %v", err)
 	}
-	proofJWT, err := buildCredentialProofJWT(holderKey, cfg.Client.ID, cfg.Issuer, cNonce, now)
-	if err != nil {
-		t.Fatalf("buildCredentialProofJWT: %v", err)
-	}
-	credentialBody, err := json.Marshal(map[string]any{
-		"credential_configuration_id": cfg.CredentialConfigurationID,
-		"proofs":                      map[string][]string{"jwt": {proofJWT}},
-	})
+	credentialBody, err := json.Marshal(body)
 	if err != nil {
 		t.Fatalf("marshal credential request: %v", err)
 	}
@@ -369,12 +415,17 @@ func TestFullFlow_ParAuthorizeTokenNonceCredential(t *testing.T) {
 	credentialReq.Header.Set("Content-Type", "application/json")
 	credentialReq.Header.Set("Authorization", "DPoP "+accessToken)
 	credentialReq.Header.Set("DPoP", credentialDPoP)
-	credentialResp := doJSON(t, client, credentialReq)
-	credentials, _ := credentialResp["credentials"].([]any)
-	if len(credentials) != 1 {
-		t.Fatalf("credential response has %d credentials, want 1: %+v", len(credentials), credentialResp)
-	}
-	credentialEntry, _ := credentials[0].(map[string]any)
+	return doJSON(t, client, credentialReq)
+}
+
+// decodeIssuedSDJWTPayload decodes one credentials[i] response entry
+// (an any wrapping {"credential": "<sd-jwt>~..."}) into its issuer
+// JWT's own claims — shared by every full-flow test that inspects an
+// issued credential's own payload, whether from a single-credential or
+// batch response.
+func decodeIssuedSDJWTPayload(t *testing.T, entry any) map[string]any {
+	t.Helper()
+	credentialEntry, _ := entry.(map[string]any)
 	issuedSDJWT, _ := credentialEntry["credential"].(string)
 	issuerJWT, _, _ := strings.Cut(issuedSDJWT, "~")
 	_, rawPayload, err := jose.DecodeUnverified(issuerJWT)
@@ -385,8 +436,71 @@ func TestFullFlow_ParAuthorizeTokenNonceCredential(t *testing.T) {
 	if err := json.Unmarshal(rawPayload, &payload); err != nil {
 		t.Fatalf("unmarshal payload: %v", err)
 	}
-	if _, ok := payload["exp"]; !ok {
-		t.Error("issued credential has no exp claim")
+	return payload
+}
+
+// TestFullFlow_BatchIssuanceReturnsOneCredentialPerProof proves this
+// binary's own real HTTP path — not just issuer.RequestCredential's
+// already-tested internals — actually issues a distinct Credential per
+// proof when a Credential Request's own "proofs" array holds more than
+// one: OID4VCI §3.3.2's own batch issuance shape, now wired in via
+// wiring.go's conformanceBatchSize (see its own doc comment). Sends 2
+// jwt proofs bound to 2 different holder keys and asserts exactly 2
+// credentials come back, in the same order, each cryptographically
+// bound (via its own "cnf.jwk" claim) to its own proof's key — not to
+// the other one, and not both to the same key.
+func TestFullFlow_BatchIssuanceReturnsOneCredentialPerProof(t *testing.T) {
+	now := time.Now()
+	client, cfg, attesterKey, clientKey := setupFullFlowTest(t, "batch-test-client", "batch-test-subject")
+	holderKey1, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate holder key 1: %v", err)
+	}
+	holderKey2, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate holder key 2: %v", err)
+	}
+
+	accessToken, cNonce := performAuthFlowThroughNonce(t, client, cfg, attesterKey, clientKey, now)
+
+	// --- POST /credential, 2 proofs in one request ---
+	proofJWT1, err := buildCredentialProofJWT(holderKey1, cfg.Client.ID, cfg.Issuer, cNonce, now)
+	if err != nil {
+		t.Fatalf("buildCredentialProofJWT (1): %v", err)
+	}
+	proofJWT2, err := buildCredentialProofJWT(holderKey2, cfg.Client.ID, cfg.Issuer, cNonce, now)
+	if err != nil {
+		t.Fatalf("buildCredentialProofJWT (2): %v", err)
+	}
+	credentialResp := postCredentialRequest(t, client, cfg, clientKey, accessToken, now, map[string]any{
+		"credential_configuration_id": cfg.CredentialConfigurationID,
+		"proofs":                      map[string][]string{"jwt": {proofJWT1, proofJWT2}},
+	})
+	credentials, _ := credentialResp["credentials"].([]any)
+	if len(credentials) != 2 {
+		t.Fatalf("credential response has %d credentials, want 2: %+v", len(credentials), credentialResp)
+	}
+
+	holderJWK1, err := jwk.Marshal(&holderKey1.PublicKey)
+	if err != nil {
+		t.Fatalf("jwk.Marshal (1): %v", err)
+	}
+	holderJWK2, err := jwk.Marshal(&holderKey2.PublicKey)
+	if err != nil {
+		t.Fatalf("jwk.Marshal (2): %v", err)
+	}
+	wantCNFX := []string{holderJWK1.X, holderJWK2.X}
+	if wantCNFX[0] == wantCNFX[1] {
+		t.Fatal("test bug: both holder keys have the same x — regenerate")
+	}
+	for i, entry := range credentials {
+		payload := decodeIssuedSDJWTPayload(t, entry)
+		cnf, _ := payload["cnf"].(map[string]any)
+		jwkVal, _ := cnf["jwk"].(map[string]any)
+		gotX, _ := jwkVal["x"].(string)
+		if gotX != wantCNFX[i] {
+			t.Errorf("credential %d: cnf.jwk.x = %q, want %q (proof %d's own holder key)", i, gotX, wantCNFX[i], i)
+		}
 	}
 }
 

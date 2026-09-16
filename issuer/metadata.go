@@ -320,8 +320,7 @@ func (c CredentialConfiguration) validate() error {
 // Metadata is this issuer's Credential Issuer Metadata (§12.2.4) —
 // deliberately only the REQUIRED members plus what
 // CredentialConfigurationsSupported needs so far; see
-// ARCHITECTURE.md for what's still missing (batch issuance, display,
-// authorization_servers).
+// ARCHITECTURE.md for what's still missing (authorization_servers).
 type Metadata struct {
 	CredentialIssuer                  fapi.URL                            `json:"credential_issuer"`
 	CredentialEndpoint                fapi.URL                            `json:"credential_endpoint"`
