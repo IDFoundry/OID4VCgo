@@ -52,6 +52,13 @@ type Claims struct {
 
 	// ExpectedUpdate optionally populates ValidityInfo.ExpectedUpdate.
 	ExpectedUpdate *time.Time
+
+	// Status optionally populates the MSO's own "status.status_list"
+	// element (§12.3.6.2) — see StatusListRef's own doc comment. Flat
+	// here (unlike MobileSecurityObject.Status's own nesting) matching
+	// this struct's existing ValidityInfo-flattening convention; Issue
+	// wraps it into the real wire shape.
+	Status *StatusListRef
 }
 
 // IssueOptions configures Issue.
@@ -122,6 +129,9 @@ func Issue(signer crypto.Signer, alg cose.Alg, claims Claims, opts IssueOptions)
 			ValidUntil:     claims.ValidUntil,
 			ExpectedUpdate: claims.ExpectedUpdate,
 		},
+	}
+	if claims.Status != nil {
+		mso.Status = &Status{StatusList: claims.Status}
 	}
 	payload, err := wrapTag24(mso)
 	if err != nil {

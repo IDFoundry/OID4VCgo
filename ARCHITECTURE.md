@@ -312,10 +312,23 @@ shape from the phase-by-phase plan, not a description of current code.
     map element, verified reliably across many Issue/Sign →
     Marshal/Unmarshal → Verify cycles) that fails deterministically
     without the cache and passes reliably with it.
-  - MSO revocation (the optional `status` member, §12.3.6) is deferred:
-    `statuslist` has the CWT/COSE encoding this needs
-    (`StatusListRef.CWTStatusClaim`/`ParseCWTStatusClaim`), but
-    `MobileSecurityObject` doesn't wire it in yet.
+  - MSO revocation (the optional `status` member, §12.3.6) is wired in
+    for the status_list mechanism only: a new `Status`/`StatusListRef`
+    on `MobileSecurityObject` (and a flat `Claims.Status *StatusListRef`/
+    `VerifiedMSO.Status *Status` on either side of it), matching
+    draft-ietf-oauth-status-list's own `StatusListInfo` `{idx, uri}`
+    shape plus §12.3.6.2's own additional optional `certificate` field
+    (a trust-anchor override for the MSO revocation list's own
+    `x5chain`, when present). This package still never imports
+    `statuslist` — resolving a `Status` pointer into an actual fetch
+    and bit/identifier check against the referenced list (`statuslist`
+    has the CWT/COSE encoding that needs —
+    `StatusListRef.CWTStatusClaim`/`ParseCWTStatusClaim`) is entirely
+    the caller's own job, the same split `credential/sdjwtvc.Claims.Status`
+    already draws. §12.3.6.4's own ISO-specific `identifier_list`
+    alternative isn't modeled — add it once a concrete consumer needs
+    it, the same way `dcql.SelectedMdocClaimPaths` sat unused until
+    `wallet.PresentMdocSelective` needed it.
 - **`statuslist`** (done) — Token Status List (`draft-ietf-oauth-status-list-12`),
   both encodings: bit-packing and ZLIB compression (`Pack`/`Unpack`,
   `New`/`Decode`, shared by both), Status List Token issuance/verification
