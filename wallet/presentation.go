@@ -124,27 +124,84 @@ func resolveHeldMdocNameSpaces(issuerSigned mdoc.IssuerSigned) map[string]map[st
 // for each Credential Query it could satisfy, the HeldCredential
 // chosen to satisfy it.
 //
+// query.CredentialSets implements §6.4.2's own "Selecting Credentials"
+// rule: when absent, every Credential Query in query.Credentials is
+// required (a Credential Query with no matching candidate is a hard
+// error). When present, only the Credential Queries referenced by
+// query.CredentialSets are matched at all — for each
+// dcql.CredentialSetQuery, the first Options entry (most-preferred
+// first) whose every referenced Credential Query id actually matches
+// some candidate wins; a required (dcql.CredentialSetQuery.IsRequired)
+// Credential Set with no satisfiable option fails the whole match
+// (per §6.4.2's own "MUST NOT return any Credential(s)"), while an
+// optional one is silently omitted from the result. A Credential Query
+// not referenced by any Credential Set Query is never matched.
+//
 // Phase scope, explicitly matching verifier.VerifyResponse's own
 // scope: exactly one HeldCredential per Credential Query ("multiple:
-// true" isn't supported), and every Credential Query is treated as
-// required — one with no matching candidate is a hard error, not
-// silently omitted (§6.4.2's own CredentialSets-driven "may be
-// omitted" rule isn't implemented yet). "claim_sets" (§6.4.1) is
-// handled by dcql.CredentialQuery's own Satisfied* methods — see
-// their doc comments for exactly how an option is chosen.
+// true" isn't supported). "claim_sets" (§6.4.1) is handled by
+// dcql.CredentialQuery's own Satisfied* methods — see their doc
+// comments for exactly how an option is chosen.
 func MatchDCQLQuery(query dcql.Query, candidates []HeldCredential) (map[string]HeldCredential, error) {
 	if err := query.Validate(); err != nil {
 		return nil, fmt.Errorf("wallet: match dcql query: %w", err)
 	}
-	matches := make(map[string]HeldCredential, len(query.Credentials))
-	for _, cq := range query.Credentials {
-		match, err := matchCredentialQuery(cq, candidates)
-		if err != nil {
-			return nil, fmt.Errorf("wallet: match dcql query: credential query %q: %w", cq.ID, err)
+	if len(query.CredentialSets) == 0 {
+		matches := make(map[string]HeldCredential, len(query.Credentials))
+		for _, cq := range query.Credentials {
+			match, err := matchCredentialQuery(cq, candidates)
+			if err != nil {
+				return nil, fmt.Errorf("wallet: match dcql query: credential query %q: %w", cq.ID, err)
+			}
+			matches[cq.ID] = match
 		}
-		matches[cq.ID] = match
+		return matches, nil
+	}
+
+	byID := make(map[string]dcql.CredentialQuery, len(query.Credentials))
+	for _, cq := range query.Credentials {
+		byID[cq.ID] = cq
+	}
+	matches := make(map[string]HeldCredential, len(query.Credentials))
+	for _, cs := range query.CredentialSets {
+		option, err := satisfiableCredentialSetOption(cs, byID, candidates)
+		if err != nil {
+			if cs.IsRequired() {
+				return nil, fmt.Errorf("wallet: match dcql query: credential set: %w", err)
+			}
+			continue
+		}
+		for id, match := range option {
+			matches[id] = match
+		}
 	}
 	return matches, nil
+}
+
+// satisfiableCredentialSetOption returns the HeldCredential matches
+// for the first entry in cs.Options (most-preferred first, §6.4.2)
+// whose every referenced Credential Query id actually matches some
+// candidate, or an error naming the last option's own failure if none
+// does.
+func satisfiableCredentialSetOption(cs dcql.CredentialSetQuery, byID map[string]dcql.CredentialQuery, candidates []HeldCredential) (map[string]HeldCredential, error) {
+	var lastErr error
+	for _, option := range cs.Options {
+		matched := make(map[string]HeldCredential, len(option))
+		satisfied := true
+		for _, id := range option {
+			match, err := matchCredentialQuery(byID[id], candidates)
+			if err != nil {
+				satisfied = false
+				lastErr = fmt.Errorf("credential query %q: %w", id, err)
+				break
+			}
+			matched[id] = match
+		}
+		if satisfied {
+			return matched, nil
+		}
+	}
+	return nil, fmt.Errorf("no option is satisfied: %w", lastErr)
 }
 
 func matchCredentialQuery(cq dcql.CredentialQuery, candidates []HeldCredential) (HeldCredential, error) {

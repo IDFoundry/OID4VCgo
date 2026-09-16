@@ -153,6 +153,102 @@ func TestVerifyResponseAcceptsSatisfiableClaimSetOption(t *testing.T) {
 	verifySDJWTVCRoundTrip(t, testverify.ClaimSetOptionsQuery(t, testVCT))
 }
 
+// vctCredentialQuery builds a minimal "dc+sd-jwt" Credential Query (no
+// Claims/ClaimSets) requiring testVCT — the shape credential_sets
+// tests need for each option's own member Credential Queries.
+func vctCredentialQuery(t *testing.T, id string) dcql.CredentialQuery {
+	t.Helper()
+	return dcql.CredentialQuery{ID: id, Format: sdjwtvc.CredentialFormat, Meta: testverify.MustSDJWTVCMeta(t, testVCT)}
+}
+
+// twoCredentialQueries builds the two-entry Credentials array every
+// credential_sets test below needs, one vctCredentialQuery per id.
+func twoCredentialQueries(t *testing.T, id1, id2 string) []dcql.CredentialQuery {
+	t.Helper()
+	return []dcql.CredentialQuery{vctCredentialQuery(t, id1), vctCredentialQuery(t, id2)}
+}
+
+// credentialSetsRoundTrip builds a Verifier and one real, verifiable
+// SD-JWT VC Presentation, then calls VerifyResponse against query with
+// vpToken(compact) as the response's own VP Token — the shared setup
+// every credential_sets test needs, differing only in which Credential
+// Query id(s) the caller populates the VP Token under.
+func credentialSetsRoundTrip(t *testing.T, query dcql.Query, vpToken func(compact string) map[string][]string) (verifier.VerifyResponseResult, error) {
+	t.Helper()
+	cfg, deps := validConfig(t)
+	v, err := verifier.New(cfg, deps)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	built, err := v.BuildAuthorizationRequest(verifier.BuildAuthorizationRequestRequest{Query: query})
+	if err != nil {
+		t.Fatalf("BuildAuthorizationRequest: %v", err)
+	}
+	fixture := newSDJWTVCPresentation(t, v.ClientID(), built.Nonce)
+	return v.VerifyResponse(context.Background(), verifier.VerifyResponseRequest{
+		Query:         query,
+		Response:      verifier.ParsedResponse{VPToken: vpToken(fixture.compact)},
+		ExpectedNonce: built.Nonce,
+		IssuerKeys:    fixedSDJWTVCIssuerKeyResolver{pub: &fixture.issuerKey.PublicKey, alg: jose.ES256},
+	})
+}
+
+// TestVerifyResponseCredentialSetsPrefersFirstSatisfiableOption
+// mirrors §6.4.2's own rule: given a Credential Set Query whose first
+// option's Credential Query has no Presentation in the response, the
+// second (least-preferred) option still verifies if its own
+// Presentation does.
+func TestVerifyResponseCredentialSetsPrefersFirstSatisfiableOption(t *testing.T) {
+	query := dcql.Query{
+		Credentials:    twoCredentialQueries(t, "primary", "secondary"),
+		CredentialSets: []dcql.CredentialSetQuery{{Options: [][]string{{"primary"}, {"secondary"}}}},
+	}
+	result, err := credentialSetsRoundTrip(t, query, func(compact string) map[string][]string {
+		return map[string][]string{"secondary": {compact}}
+	})
+	testverify.RequireOneCredential(t, result, err, "secondary")
+}
+
+// TestVerifyResponseCredentialSetsOmitsUnsatisfiedOptionalSet mirrors
+// §6.4.2's own rule: a Credential Set Query with required: false and
+// no satisfiable option is silently omitted from the result rather
+// than failing VerifyResponse entirely.
+func TestVerifyResponseCredentialSetsOmitsUnsatisfiedOptionalSet(t *testing.T) {
+	falseVal := false
+	query := dcql.Query{
+		Credentials: twoCredentialQueries(t, "required_cq", "optional_cq"),
+		CredentialSets: []dcql.CredentialSetQuery{
+			{Options: [][]string{{"required_cq"}}},
+			{Required: &falseVal, Options: [][]string{{"optional_cq"}}},
+		},
+	}
+	result, err := credentialSetsRoundTrip(t, query, func(compact string) map[string][]string {
+		return map[string][]string{"required_cq": {compact}}
+	})
+	testverify.RequireOneCredential(t, result, err, "required_cq")
+}
+
+// TestVerifyResponseCredentialSetsFailsWhenRequiredSetUnsatisfied
+// mirrors §6.4.2's own "MUST NOT return any Credential(s)" rule: a
+// required Credential Set Query with no satisfiable option fails
+// VerifyResponse entirely, even though another Credential Set Query
+// would otherwise be satisfiable.
+func TestVerifyResponseCredentialSetsFailsWhenRequiredSetUnsatisfied(t *testing.T) {
+	query := dcql.Query{
+		Credentials: twoCredentialQueries(t, "unsatisfiable_cq", "satisfiable_cq"),
+		CredentialSets: []dcql.CredentialSetQuery{
+			{Options: [][]string{{"unsatisfiable_cq"}}},
+			{Options: [][]string{{"satisfiable_cq"}}},
+		},
+	}
+	_, err := credentialSetsRoundTrip(t, query, func(compact string) map[string][]string {
+		return map[string][]string{"satisfiable_cq": {compact}}
+	})
+	if err == nil {
+		t.Fatalf("VerifyResponse = nil error, want error")
+	}
+}
+
 // rejectCaseSDJWTVC builds a VerifyResponseRequest presenting one real
 // SD-JWT VC (bound to presAud/presNonce) against query, expecting
 // expectedNonce — the shared shape most of TestVerifyResponseRejects's
