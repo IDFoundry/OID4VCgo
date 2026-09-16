@@ -51,12 +51,13 @@
 > `DeviceResponse`/`Document` CBOR, shared by `verifier` and `wallet`
 > since a Presentation's own `DeviceSigned` must be computed
 > byte-for-byte identically on both sides), and `verifier` (the OID4VP
-> Verifier role: HAIP-§5-profiled Authorization Request construction
-> via `BuildAuthorizationRequest`, the DC API flow's own signed request
-> via `BuildDCAPIAuthorizationRequest`, `direct_post.jwt`/`dc_api.jwt`
+> Verifier role, both the redirect and DC API flows: HAIP-§5-profiled
+> Authorization Request construction via `BuildAuthorizationRequest`,
+> the DC API flow's own signed request via
+> `BuildDCAPIAuthorizationRequest`, `direct_post.jwt`/`dc_api.jwt`
 > response parsing/decryption via `ParseDirectPostJWTResponse`, and
-> §8.6 VP Token Validation for both `dc+sd-jwt` and `mso_mdoc` via
-> `VerifyResponse` — `VerifyResponse` itself is still redirect-flow-only)
+> §8.6 VP Token Validation for both `dc+sd-jwt` and `mso_mdoc`, either
+> flow, via `VerifyResponse`)
 > are implemented and tested;
 > everything else below is still just the
 > planned layout, not a finished system. Update each section as the
@@ -849,36 +850,43 @@ shape from the phase-by-phase plan, not a description of current code.
   one without deriving it from the credential itself would make the
   binding check meaningless — verifies via
   `credential/sdjwtvc.Verify` (checking the Key Binding JWT's own
-  `aud`/`nonce` against this Verifier's own `ClientID`/the caller's
-  `ExpectedNonce` per §14.1.2, requiring it exactly when
-  `dcql.CredentialQuery.RequiresCryptographicHolderBinding` is true),
-  and checks every one of the Credential Query's own `Claims` is
-  actually present via the new `dcql.Path.Select` (§7.1) plus that the
-  credential's own `vct` is among `SDJWTVCMeta.VCTValues` (§8.6 point
-  3). `TestVerifyResponse` is a real end-to-end round trip: build a
-  real Authorization Request, issue and present a real SD-JWT VC bound
-  to its exact `aud`/`nonce`, and verify it.
+  `aud`/`nonce` against a new `expectedAudience(req.Origin)`/the
+  caller's `ExpectedNonce` per §14.1.2 — this Verifier's own `ClientID`
+  when `req.Origin` is empty (the redirect flow), or Appendix A.4's own
+  `"origin:"`-prefixed value when set (the DC API flow) — requiring it
+  exactly when `dcql.CredentialQuery.RequiresCryptographicHolderBinding`
+  is true), and checks every one of the Credential Query's own `Claims`
+  is actually present via the new `dcql.Path.Select` (§7.1) plus that
+  the credential's own `vct` is among `SDJWTVCMeta.VCTValues` (§8.6
+  point 3). `TestVerifyResponse`/`TestVerifyResponseDCAPI` are real
+  end-to-end round trips, one per flow: build a real Authorization/DC
+  API Request, issue and present a real SD-JWT VC bound to its exact
+  `aud`/`nonce`, and verify it.
   For `mso_mdoc`, `VerifyResponse` base64url-decodes the Presentation
   into an `oid4vpmdoc.Document`, resolves the Issuer key via a new
   caller-supplied `MdocIssuerKeyResolver` (from the credential's own
   unverified `IssuerAuth` x5chain — `internal/cose.DecodeUnverified`,
   the COSE analog of `jose.DecodeUnverified`), cryptographically
   verifies `IssuerSigned` (`credential/mdoc.Verify`), rebuilds
-  `SessionTranscriptBytes` *exactly* as the Wallet did
-  (`oid4vpmdoc.BuildSessionTranscriptBytes`, using a new
+  `SessionTranscriptBytes` *exactly* as the Wallet did — a new private
+  `buildMdocSessionTranscriptBytes` dispatches to
+  `oid4vpmdoc.BuildSessionTranscriptBytes` (redirect flow) or
+  `BuildDCAPISessionTranscriptBytes` (DC API flow) on the same
+  `req.Origin` check `expectedAudience` uses, both using a new
   `VerifyResponseRequest.ResponseEncryptionKey` — the same ephemeral
-  key `BuildAuthorizationRequestResult.ResponseDecryptionKey` already
-  returned — to recompute its own public key's RFC 7638 thumbprint),
-  verifies `DeviceSigned` against the now-trusted
-  `DeviceKeyInfo.DeviceKey` (`credential/mdoc.VerifyDeviceSignature` —
-  `DeviceAuthMAC` isn't supported: it needs an `EReaderKey` for ECDH
-  agreement, but the redirect flow's own `SessionTranscript` always
-  sets `EReaderKeyBytes` to null, so there's no in-band reader
-  ephemeral key to agree a MAC key from), checks §12.8.2's own
+  key `BuildAuthorizationRequestResult`/`BuildDCAPIAuthorizationRequestResult`'s
+  own `ResponseDecryptionKey` already returned — to recompute its own
+  public key's RFC 7638 thumbprint), verifies `DeviceSigned` against
+  the now-trusted `DeviceKeyInfo.DeviceKey`
+  (`credential/mdoc.VerifyDeviceSignature` — `DeviceAuthMAC` isn't
+  supported: it needs an `EReaderKey` for ECDH agreement, but neither
+  flow's own `SessionTranscript` ever sets one, so there's no in-band
+  reader ephemeral key to agree a MAC key from), checks §12.8.2's own
   key-authorization rule (`credential/mdoc.CheckKeyAuthorizations`),
   and checks the result via
-  `dcql.CredentialQuery.SatisfiedByMdocClaims`. `TestVerifyMdocResponse`
-  is the same real end-to-end round trip, for this format.
+  `dcql.CredentialQuery.SatisfiedByMdocClaims`.
+  `TestVerifyMdocResponse`/`TestVerifyMdocResponseDCAPI` are the same
+  real end-to-end round trip, for this format, one per flow.
   Scope, explicitly: DCQL's own selection rules are now all
   implemented. `multiple` (§6.1): `verifyCredentialQuery` verifies
   *every* Presentation `req.Response.VPToken` carries for a Credential
@@ -901,20 +909,16 @@ shape from the phase-by-phase plan, not a description of current code.
   references, once it's present). When `req.Query.CredentialSets` is
   empty, behavior is unchanged: every Credential Query in
   `req.Query.Credentials` is required. `claim_sets` (§6.4.1): see the
-  `dcql` bullet's own `claimsSatisfiedBy`. The DC API flow's own
-  request-building half is now done (`BuildDCAPIAuthorizationRequest`,
-  above); `VerifyResponse` itself is still redirect-flow-only —
-  `verifySDJWTVCPresentation` always checks a Key Binding JWT's own
-  `aud` against `v.clientID` (never the Origin-bound `"origin:..."`
-  audience Appendix A.4 requires for a DC API response), and
-  `verifyMdocPresentation` always rebuilds `SessionTranscriptBytes` via
-  `oid4vpmdoc.BuildSessionTranscriptBytes` (the redirect flow's own
-  Handover, never `BuildDCAPISessionTranscriptBytes`). Making
-  `VerifyResponse` accept either is the next slice. HAIP formally
-  allows an Ecosystem to choose redirect-only, DC-API-only, or both
-  (HAIP §9.3), so a redirect-flow-only `VerifyResponse` remains a
-  legitimate, spec-sanctioned choice in the meantime, not a compliance
-  gap; actually *invoking* the W3C Digital Credentials API is a
+  `dcql` bullet's own `claimsSatisfiedBy`. `VerifyResponse` now
+  verifies either flow: a new `VerifyResponseRequest.Origin` (empty
+  for the redirect flow, set for the DC API flow) drives both
+  `expectedAudience` (the Key Binding JWT `aud` check) and
+  `buildMdocSessionTranscriptBytes` (which Handover to rebuild) — see
+  its own doc comment above. This completes the DC API flow's own
+  request-building and response-verification halves
+  (`BuildDCAPIAuthorizationRequest` plus this). HAIP formally allows an
+  Ecosystem to choose redirect-only, DC-API-only, or both (HAIP §9.3);
+  actually *invoking* the W3C Digital Credentials API is still a
   browser/OS platform concern outside a Go library's own transport
   responsibilities regardless.
 - **`wallet`** (extended, done for `dc+sd-jwt`+`mso_mdoc`) — the naming

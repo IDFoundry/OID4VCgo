@@ -94,6 +94,28 @@ func Present(t *testing.T, f Fixture, params oid4vpmdoc.HandoverParams) string {
 	if err != nil {
 		t.Fatalf("testmdoc: BuildSessionTranscriptBytes: %v", err)
 	}
+	return presentWithSessionTranscript(t, f, sessionTranscriptBytes)
+}
+
+// PresentDCAPI is Present's own DC API counterpart: SessionTranscriptBytes
+// built via oid4vpmdoc.BuildDCAPISessionTranscriptBytes (Appendix
+// B.2.6.2) instead of BuildSessionTranscriptBytes (Appendix B.2.6.1) —
+// everything else about the resulting DeviceResponse is identical.
+func PresentDCAPI(t *testing.T, f Fixture, params oid4vpmdoc.DCAPIHandoverParams) string {
+	t.Helper()
+	sessionTranscriptBytes, err := oid4vpmdoc.BuildDCAPISessionTranscriptBytes(params)
+	if err != nil {
+		t.Fatalf("testmdoc: BuildDCAPISessionTranscriptBytes: %v", err)
+	}
+	return presentWithSessionTranscript(t, f, sessionTranscriptBytes)
+}
+
+// presentWithSessionTranscript is Present/PresentDCAPI's own shared
+// tail: sign DeviceSigned over sessionTranscriptBytes and marshal the
+// resulting DeviceResponse — the only piece that doesn't depend on
+// which flow's own Handover built those bytes.
+func presentWithSessionTranscript(t *testing.T, f Fixture, sessionTranscriptBytes []byte) string {
+	t.Helper()
 	deviceSigned, err := mdoc.SignDeviceSignature(f.DeviceKey, cose.ES256, sessionTranscriptBytes, DocType, map[string]map[string]interface{}{})
 	if err != nil {
 		t.Fatalf("testmdoc: SignDeviceSignature: %v", err)

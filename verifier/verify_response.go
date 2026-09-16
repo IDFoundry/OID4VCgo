@@ -84,15 +84,27 @@ type VerifyResponseRequest struct {
 	MdocIssuerKeys MdocIssuerKeyResolver
 
 	// ResponseEncryptionKey is the same ephemeral private key a prior
-	// BuildAuthorizationRequest call returned as
-	// BuildAuthorizationRequestResult.ResponseDecryptionKey. REQUIRED
-	// if Query requests any "mso_mdoc" Credential: rebuilding
-	// SessionTranscriptBytes (oid4vpmdoc.BuildSessionTranscriptBytes)
+	// BuildAuthorizationRequest/BuildDCAPIAuthorizationRequest call
+	// returned as ResponseDecryptionKey. REQUIRED if Query requests
+	// any "mso_mdoc" Credential: rebuilding SessionTranscriptBytes
 	// needs its own public key's RFC 7638 thumbprint, per Appendix
-	// B.2.6.1's own "jwkThumbprint" — the same value this Verifier
-	// already advertised in the Authorization Request's own
+	// B.2.6.1/B.2.6.2's own "jwkThumbprint" — the same value this
+	// Verifier already advertised in the Authorization Request's own
 	// client_metadata.jwks.
 	ResponseEncryptionKey *ecdsa.PrivateKey
+
+	// Origin, if set, verifies a DC API response instead of a
+	// redirect-flow one (Appendix A): the expected audience for a
+	// "dc+sd-jwt" Presentation's own Key Binding JWT becomes
+	// "origin:"+Origin (Appendix A.4's own "the audience for the
+	// response ... MUST be the Origin, prefixed with origin:") instead
+	// of this Verifier's own Client Identifier, and a "mso_mdoc"
+	// Presentation's own SessionTranscript is rebuilt via
+	// oid4vpmdoc.BuildDCAPISessionTranscriptBytes (Appendix B.2.6.2)
+	// instead of oid4vpmdoc.BuildSessionTranscriptBytes (Appendix
+	// B.2.6.1). Leave zero to verify a redirect-flow response, the
+	// same as before this field existed.
+	Origin string
 }
 
 // VerifiedCredential is one successfully verified Presentation.
@@ -113,9 +125,11 @@ type VerifyResponseResult struct {
 }
 
 // VerifyResponse implements §8.6's own VP Token Validation for both
-// the "dc+sd-jwt" and "mso_mdoc" formats: for each of req.Query's own
-// Credential Queries, it locates the matching Presentation in
-// req.Response.VPToken by id and dispatches by format.
+// the "dc+sd-jwt" and "mso_mdoc" formats, and for both the redirect
+// and DC API flows (req.Origin selects which — see its own doc
+// comment): for each of req.Query's own Credential Queries, it locates
+// the matching Presentation in req.Response.VPToken by id and
+// dispatches by format.
 //
 // For "dc+sd-jwt", it resolves the Issuer key via req.IssuerKeys,
 // derives the Holder Binding key from the credential's own
@@ -123,8 +137,8 @@ type VerifyResponseResult struct {
 // externally-supplied value, since accepting one without deriving it
 // from the credential itself would make the binding check meaningless
 // — verifies the Presentation via credential/sdjwtvc.Verify (checking
-// the Key Binding JWT's own "aud"/"nonce" against this Verifier's own
-// ClientID/req.ExpectedNonce per §14.1.2, requiring it exactly when
+// the Key Binding JWT's own "aud"/"nonce" against expectedAudience(req.Origin)/
+// req.ExpectedNonce per §14.1.2/Appendix A.4, requiring it exactly when
 // the Credential Query's own RequiresCryptographicHolderBinding is
 // true), and checks the result via
 // dcql.CredentialQuery.SatisfiedBySDJWTVCClaims (§8.6 point 3).
@@ -134,8 +148,8 @@ type VerifyResponseResult struct {
 // (from the credential's own unverified IssuerAuth x5chain),
 // cryptographically verifies IssuerSigned (credential/mdoc.Verify),
 // rebuilds SessionTranscriptBytes exactly as the Wallet did
-// (oid4vpmdoc.BuildSessionTranscriptBytes, using req.ResponseEncryptionKey's
-// own public key thumbprint per Appendix B.2.6.1), verifies
+// (buildMdocSessionTranscriptBytes, using req.ResponseEncryptionKey's
+// own public key thumbprint per Appendix B.2.6.1/B.2.6.2), verifies
 // DeviceSigned against the now-trusted DeviceKeyInfo.DeviceKey
 // (credential/mdoc.VerifyDeviceSignature — DeviceAuthMAC isn't
 // supported, see verifyMdocPresentation's own doc comment),
@@ -307,7 +321,7 @@ func (v *Verifier) verifySDJWTVCPresentation(ctx context.Context, cq dcql.Creden
 		RequireKeyBinding: requireHolderBinding,
 		HolderPublicKey:   holderPub,
 		KeyBindingAlg:     holderAlg,
-		ExpectedAudience:  v.clientID,
+		ExpectedAudience:  v.expectedAudience(req.Origin),
 		ExpectedNonce:     req.ExpectedNonce,
 		MaxKeyBindingAge:  req.MaxKeyBindingAge,
 		Now:               req.Now,
@@ -320,6 +334,17 @@ func (v *Verifier) verifySDJWTVCPresentation(ctx context.Context, cq dcql.Creden
 		return nil, err
 	}
 	return claims, nil
+}
+
+// expectedAudience returns the audience a Presentation's own Holder
+// Binding proof must be signed for: this Verifier's own Client
+// Identifier for a redirect-flow response, or origin (Appendix A.4's
+// own "origin:"-prefixed value) for a DC API one.
+func (v *Verifier) expectedAudience(origin string) string {
+	if origin != "" {
+		return "origin:" + origin
+	}
+	return v.clientID
 }
 
 // verifyMdocPresentation verifies one "mso_mdoc" Presentation —
@@ -378,10 +403,7 @@ func (v *Verifier) verifyMdocPresentation(ctx context.Context, cq dcql.Credentia
 	if err != nil {
 		return nil, fmt.Errorf("decode response encryption key thumbprint: %w", err)
 	}
-	sessionTranscriptBytes, err := oid4vpmdoc.BuildSessionTranscriptBytes(oid4vpmdoc.HandoverParams{
-		ClientID: v.clientID, Nonce: req.ExpectedNonce, ResponseURI: v.cfg.ResponseURI.String(),
-		ResponseEncryptionJWKThumbprint: thumbprintBytes,
-	})
+	sessionTranscriptBytes, err := v.buildMdocSessionTranscriptBytes(req, thumbprintBytes)
 	if err != nil {
 		return nil, fmt.Errorf("build session transcript: %w", err)
 	}
@@ -410,6 +432,22 @@ func (v *Verifier) verifyMdocPresentation(ctx context.Context, cq dcql.Credentia
 		claims[namespace] = elements
 	}
 	return claims, nil
+}
+
+// buildMdocSessionTranscriptBytes rebuilds SessionTranscriptBytes
+// exactly as the Wallet did: the redirect flow's own Handover
+// (Appendix B.2.6.1) when req.Origin is empty, the DC API flow's own
+// Handover (Appendix B.2.6.2) otherwise.
+func (v *Verifier) buildMdocSessionTranscriptBytes(req VerifyResponseRequest, thumbprintBytes []byte) ([]byte, error) {
+	if req.Origin != "" {
+		return oid4vpmdoc.BuildDCAPISessionTranscriptBytes(oid4vpmdoc.DCAPIHandoverParams{
+			Origin: req.Origin, Nonce: req.ExpectedNonce, ResponseEncryptionJWKThumbprint: thumbprintBytes,
+		})
+	}
+	return oid4vpmdoc.BuildSessionTranscriptBytes(oid4vpmdoc.HandoverParams{
+		ClientID: v.clientID, Nonce: req.ExpectedNonce, ResponseURI: v.cfg.ResponseURI.String(),
+		ResponseEncryptionJWKThumbprint: thumbprintBytes,
+	})
 }
 
 // mdocDeviceAlgForKey derives the mdoc authentication COSE algorithm
