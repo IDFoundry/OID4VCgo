@@ -2,9 +2,7 @@ package issuer
 
 import (
 	"context"
-	"encoding/base64"
 	"fmt"
-	"io"
 	"net/http"
 )
 
@@ -41,11 +39,10 @@ func (iss *Issuer) RequestNonce(ctx context.Context) (NonceResult, error) {
 		return NonceResult{}, fmt.Errorf("issuer: the nonce endpoint is not configured")
 	}
 
-	raw := make([]byte, nonceEntropyBytes)
-	if _, err := io.ReadFull(iss.deps.Random, raw); err != nil {
+	nonce, err := randomID(iss.deps.Random, nonceEntropyBytes)
+	if err != nil {
 		return NonceResult{}, fmt.Errorf("issuer: generate nonce: %w", err)
 	}
-	nonce := base64.RawURLEncoding.EncodeToString(raw)
 
 	now := iss.deps.Clock.Now()
 	if err := iss.deps.Nonces.Issue(ctx, NonceIssuance{

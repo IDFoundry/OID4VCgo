@@ -22,7 +22,15 @@ type AccessTokenParams struct {
 	Thumbprint string
 
 	// Claims are additional claims to embed in a self-contained token
-	// format, if any — this package has none of its own to add.
+	// format, if any. Set exactly when the redeemed
+	// PreAuthorizedCodeRecord's own CredentialConfigurationIDs is
+	// non-empty: Claims["authorization_details"] then carries the same
+	// []AuthorizationDetail ExchangePreAuthorizedCodeResult.AuthorizationDetails
+	// returns, JSON-marshaled (RFC 9396 §2) — a self-contained token
+	// format embeds it as a claim so a later RequestCredential call can
+	// recover it via AuthorizedRequest.AuthorizationDetails (see
+	// resource_verifier.go's own recipe); an opaque token format can
+	// simply store it alongside the token server-side instead.
 	Claims map[string]json.RawMessage
 
 	// Issuer and Audience are only meaningful to a self-contained token

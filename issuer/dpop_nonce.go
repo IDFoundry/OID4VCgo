@@ -2,9 +2,7 @@ package issuer
 
 import (
 	"context"
-	"encoding/base64"
 	"fmt"
-	"io"
 	"time"
 )
 
@@ -62,11 +60,10 @@ type DPoPNonceStore interface {
 // for iss.cfg.Limits.DPoPNonceLifetime. Only ever called once
 // iss.deps.DPoPNonces is known to be non-nil.
 func (iss *Issuer) issueDPoPNonce(ctx context.Context, now time.Time) (string, error) {
-	raw := make([]byte, nonceEntropyBytes)
-	if _, err := io.ReadFull(iss.deps.Random, raw); err != nil {
+	nonce, err := randomID(iss.deps.Random, nonceEntropyBytes)
+	if err != nil {
 		return "", fmt.Errorf("issuer: generate dpop nonce: %w", err)
 	}
-	nonce := base64.RawURLEncoding.EncodeToString(raw)
 	if err := iss.deps.DPoPNonces.Issue(ctx, DPoPNonceIssuance{
 		Nonce: nonce, ExpiresAt: now.Add(iss.cfg.Limits.DPoPNonceLifetime),
 	}); err != nil {

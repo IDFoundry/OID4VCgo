@@ -68,12 +68,26 @@ type ExchangePreAuthorizedCodeResult struct {
 	// when Dependencies.DPoPNonces is nil (nonce-challenge support
 	// disabled); otherwise always populated on success.
 	NextDPoPNonce string
+
+	// AuthorizationDetails is every "openid_credential"-typed entry
+	// (RFC 9396 §5.1.1) this exchange minted from the redeemed
+	// PreAuthorizedCodeRecord's own CredentialConfigurationIDs — WriteJSON
+	// already includes it in the Token Response's own
+	// "authorization_details" member (§6.2) when non-empty. The Wallet
+	// then presents one of its own CredentialIdentifiers values in a
+	// later Credential Request instead of credential_configuration_id
+	// (§8.2). Empty when PreAuthorizedCodeRecord.CredentialConfigurationIDs
+	// was empty — this exchange's own behavior is then unchanged from
+	// before this field existed.
+	AuthorizationDetails []AuthorizationDetail
 }
 
 // WriteJSON writes r as a complete Token Response (§6.2): the
 // DPoP-Nonce header when NextDPoPNonce is non-empty (RFC 9449 §8), HTTP
-// 200, application/json, {"access_token","token_type","expires_in"}.
-// Must be called before anything else writes to w.
+// 200, application/json, {"access_token","token_type","expires_in"},
+// plus "authorization_details" (RFC 9396 §6.2) when
+// AuthorizationDetails is non-empty. Must be called before anything
+// else writes to w.
 func (r ExchangePreAuthorizedCodeResult) WriteJSON(w http.ResponseWriter) {
 	if r.NextDPoPNonce != "" {
 		w.Header().Set("DPoP-Nonce", r.NextDPoPNonce)
@@ -81,10 +95,14 @@ func (r ExchangePreAuthorizedCodeResult) WriteJSON(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(struct { //nolint:gosec // the actual §6.2 Token Response body, meant to carry this
-		AccessToken string `json:"access_token"`
-		TokenType   string `json:"token_type"`
-		ExpiresIn   int64  `json:"expires_in"`
-	}{AccessToken: r.AccessToken, TokenType: r.TokenType, ExpiresIn: int64(r.ExpiresIn.Seconds())})
+		AccessToken          string                `json:"access_token"`
+		TokenType            string                `json:"token_type"`
+		ExpiresIn            int64                 `json:"expires_in"`
+		AuthorizationDetails []AuthorizationDetail `json:"authorization_details,omitempty"`
+	}{
+		AccessToken: r.AccessToken, TokenType: r.TokenType, ExpiresIn: int64(r.ExpiresIn.Seconds()),
+		AuthorizationDetails: r.AuthorizationDetails,
+	})
 }
 
 // ExchangePreAuthorizedCode implements the Pre-Authorized Code Flow's
@@ -116,6 +134,18 @@ func (r ExchangePreAuthorizedCodeResult) WriteJSON(w http.ResponseWriter) {
 // own NextDPoPNonce), the same "hand over the next nonce so the Wallet
 // never round-trips through a challenge it can already avoid"
 // convention DPoPNonceStore's own doc comment describes.
+//
+// When the redeemed record's own CredentialConfigurationIDs is
+// non-empty, this also mints one credential_identifier per entry
+// (mintAuthorizationDetails) and embeds the result both in the issued
+// access token itself (AccessTokenParams.Claims["authorization_details"],
+// for RequestCredential to recover later via a caller's own
+// AuthorizedRequest.AuthorizationDetails adaptation) and in
+// ExchangePreAuthorizedCodeResult.AuthorizationDetails directly, for
+// WriteJSON to echo back in the Token Response (§6.2) — this package
+// never round-trips a self-contained token's own claims back out of
+// itself, so the result carries the same value independently rather
+// than relying on the caller to decode its own freshly issued token.
 func (iss *Issuer) ExchangePreAuthorizedCode(ctx context.Context, req ExchangePreAuthorizedCodeRequest) (ExchangePreAuthorizedCodeResult, error) {
 	if iss.deps.PreAuthorizedCodes == nil {
 		return ExchangePreAuthorizedCodeResult{}, fmt.Errorf("issuer: exchange pre-authorized code: the pre-authorized_code grant is not configured")
@@ -158,17 +188,32 @@ func (iss *Issuer) ExchangePreAuthorizedCode(ctx context.Context, req ExchangePr
 		return ExchangePreAuthorizedCodeResult{}, newError(ErrorInvalidGrant, 400, "tx_code does not match", nil)
 	}
 
-	accessToken, _, err := iss.deps.AccessTokens.IssueAccessToken(ctx, AccessTokenParams{
+	params := AccessTokenParams{
 		Scope: record.Scopes, Thumbprint: verified.Thumbprint,
 		Issuer: iss.cfg.Issuer.String(), Audience: iss.cfg.Issuer.String(),
 		Now: now, Lifetime: iss.cfg.Limits.AccessTokenLifetime, Random: iss.deps.Random,
-	})
+	}
+	var authDetails []AuthorizationDetail
+	if len(record.CredentialConfigurationIDs) > 0 {
+		authDetails, err = iss.mintAuthorizationDetails(record.CredentialConfigurationIDs)
+		if err != nil {
+			return ExchangePreAuthorizedCodeResult{}, fmt.Errorf("issuer: exchange pre-authorized code: %w", err)
+		}
+		raw, err := json.Marshal(authDetails)
+		if err != nil {
+			return ExchangePreAuthorizedCodeResult{}, fmt.Errorf("issuer: exchange pre-authorized code: marshal authorization_details: %w", err)
+		}
+		params.Claims = map[string]json.RawMessage{"authorization_details": raw}
+	}
+
+	accessToken, _, err := iss.deps.AccessTokens.IssueAccessToken(ctx, params)
 	if err != nil {
 		return ExchangePreAuthorizedCodeResult{}, fmt.Errorf("issuer: exchange pre-authorized code: issue access token: %w", err)
 	}
 
 	result := ExchangePreAuthorizedCodeResult{
 		AccessToken: accessToken, TokenType: "DPoP", ExpiresIn: iss.cfg.Limits.AccessTokenLifetime,
+		AuthorizationDetails: authDetails,
 	}
 	if iss.deps.DPoPNonces != nil {
 		nextNonce, err := iss.issueDPoPNonce(ctx, now)
@@ -178,4 +223,29 @@ func (iss *Issuer) ExchangePreAuthorizedCode(ctx context.Context, req ExchangePr
 		result.NextDPoPNonce = nextNonce
 	}
 	return result, nil
+}
+
+// mintAuthorizationDetails builds one AuthorizationDetail per configID,
+// each with a single freshly generated credential_identifier (§6.2).
+// Every configID is checked against Config.CredentialConfigurationsSupported
+// first — a PreAuthorizedCodeRecord naming one this issuer doesn't
+// actually support is this deployment's own bug, not anything the
+// Wallet did wrong, so this returns a plain error rather than a
+// wallet-facing *Error.
+func (iss *Issuer) mintAuthorizationDetails(configIDs []string) ([]AuthorizationDetail, error) {
+	details := make([]AuthorizationDetail, len(configIDs))
+	for i, configID := range configIDs {
+		if _, ok := iss.cfg.CredentialConfigurationsSupported[configID]; !ok {
+			return nil, fmt.Errorf("credential_configuration_id %q is not supported", configID)
+		}
+		identifier, err := randomID(iss.deps.Random, nonceEntropyBytes)
+		if err != nil {
+			return nil, fmt.Errorf("generate credential_identifier: %w", err)
+		}
+		details[i] = AuthorizationDetail{
+			Type: authorizationDetailsTypeOpenIDCredential, CredentialConfigurationID: configID,
+			CredentialIdentifiers: []string{identifier},
+		}
+	}
+	return details, nil
 }

@@ -485,13 +485,28 @@ shape from the phase-by-phase plan, not a description of current code.
   `resolveCredentialIdentifier` pair — exactly one of
   `CredentialConfigurationID`/`CredentialIdentifier` may be set; the
   latter bypasses the `Scopes` check entirely, since the matched
-  `AuthorizationDetail` is itself the grant. This package only
-  *consumes* `authorization_details`; *minting* `credential_identifier`
-  values into a Token Response is the Authorization Server's own job
-  (`fapigo/server`, already RAR-capable, for the Authorization Code
-  Flow) — `issuer.ExchangePreAuthorizedCode` producing them for the
-  Pre-Authorized Code Flow is a deliberate, separate follow-up, not
-  implemented here.
+  `AuthorizationDetail` is itself the grant. *Minting* `credential_identifier`
+  values into a Token Response is the Authorization Server's own job:
+  for the Authorization Code Flow that's `fapigo/server`, already
+  RAR-capable; for the Pre-Authorized Code Flow,
+  `ExchangePreAuthorizedCode` does it itself now, via a new
+  `PreAuthorizedCodeRecord.CredentialConfigurationIDs` — when non-empty,
+  a new private `mintAuthorizationDetails` generates one fresh
+  `credential_identifier` per entry (the same `randomID` helper
+  `RequestNonce`/`issueDPoPNonce` already used, factored out of both
+  once a third near-identical inline copy would otherwise have existed)
+  and embeds the result both in the issued access token's own claims
+  (`AccessTokenParams.Claims["authorization_details"]`, for a later
+  `RequestCredential` call to recover via a caller's own
+  `AuthorizedRequest.AuthorizationDetails` adaptation) and directly on
+  `ExchangePreAuthorizedCodeResult.AuthorizationDetails`, which
+  `WriteJSON` echoes in the Token Response (§6.2) — this package never
+  round-trips a self-contained token's own claims back out of itself,
+  so the result carries the same value independently. Client-side
+  `credential_identifier` support (building a Credential Request that
+  presents one, on the `wallet` side) remains a further, separate
+  follow-up: `wallet.CredentialRequest` still only supports
+  `CredentialConfigurationID`.
   Also implements the
   Credential Offer (§4): `CreateCredentialOffer` builds and validates a
   `CredentialOffer` (`credential_issuer`, `credential_configuration_ids`,
