@@ -11,13 +11,17 @@ import (
 	fapires "github.com/idfoundry/fapigo/resource"
 
 	"github.com/idfoundry/oid4vcigo/credential/sdjwtvc"
+	"github.com/idfoundry/oid4vcigo/internal/conformancecert"
 	"github.com/idfoundry/oid4vcigo/issuer"
 )
 
 // issuedCredentialLifetime bounds an issued credential's own "exp"
 // claim — HAIP/SD-JWT VC §11.2.3's own RECOMMENDED (not required) way
 // to limit a credential's validity, confirmed live as something the
-// OIDF conformance suite's own log flags as a WARNING when absent.
+// OIDF conformance suite's own log flags as a WARNING when absent. See
+// conformancecert.CredentialExp's own doc comment for why the actual
+// exp value is day-rounded, not this value added to the raw issuance
+// instant.
 const issuedCredentialLifetime = 365 * 24 * time.Hour
 
 // credentialIssuerMetadataHandler serves GET
@@ -100,7 +104,7 @@ func credentialHandler(iss *issuer.Issuer, resourceVerifier *fapires.Verifier, c
 			return
 		}
 
-		exp := time.Now().Add(issuedCredentialLifetime).Unix()
+		exp := conformancecert.CredentialExp(time.Now(), issuedCredentialLifetime)
 		auth := issuer.AuthorizedRequest{ClientID: authCtx.ClientID, Scopes: authCtx.Scopes}
 		result, err := iss.RequestCredential(r.Context(), auth, issuer.CredentialRequest{
 			CredentialConfigurationID: wire.CredentialConfigurationID,

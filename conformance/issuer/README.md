@@ -254,18 +254,35 @@ server.FAPIRWTLSCipherSuites` on the listener — mirrors
 - `metadata-test`: `PASSED`. `metadata-test-signed`: correctly
   `SKIPPED` (signed metadata is an unimplemented optional feature).
 - `happy-flow`, `happy-flow-additional-requests`,
-  `happy-flow-skip-notification`: all `FINISHED`/`WARNING`, zero
-  `FAILURE`s (the same soft `exp`-claim `RECOMMENDED` note each time).
-- `happy-flow-multiple-clients`: reaches real PAR/authorize traffic for
-  *both* registered clients — resolved a real config detail along the
-  way (client2's own registered `redirect_uris` must be the suite's
-  *exact* string, including its fixed `?dummy1=lorem&dummy2=ipsum`
-  query component; `fapigo/server`'s own exact-match redirect_uri
-  check, per RFC 6749 §3.1.2.3, is correct here — an AS-side config
-  fix, not a code bug) — but interleaving two clients' own
+  `happy-flow-skip-notification`: all `FINISHED`/`PASSED`, zero log
+  entries at `WARNING` or worse (see the "Update" note above).
+- `happy-flow-multiple-clients`: **`FINISHED`/`PASSED`, zero log
+  entries at `WARNING` or worse.** Getting here needed two real fixes.
+  First, a config detail: client2's own registered `redirect_uris`
+  must be the suite's *exact* string, including its fixed
+  `?dummy1=lorem&dummy2=ipsum` query component — `fapigo/server`'s own
+  exact-match redirect_uri check, per RFC 6749 §3.1.2.3, is correct
+  here, this was an AS-side config gap, not a code bug. Second, a real
+  privacy finding: issuing credentials for both clients moments apart
+  surfaced `WARNING | Credential time information [exp] advanced by
+  ~the real inter-issuance gap between two same-dataset credentials,
+  indicating the issuer embeds the precise issuance time... RFC 9901
+  §10.1` — two credentials issued seconds apart carried two `exp`
+  values differing by exactly that gap, a linkability side-channel a
+  party holding both could exploit. Fixed by rounding `exp` down to
+  the start of the issuance day before adding the lifetime
+  (`internal/conformancecert.CredentialExp`, shared with
+  `cmd/conformance-wallet-vp`) — every credential issued on the same
+  calendar day now carries an identical `exp`, closing the channel
+  while still bounding validity. Driving both clients' own
   consent/implicit-submission rounds through this manual curl-driven
-  harness isn't fully solved yet; still `INTERRUPTED`. Left as
-  remaining work rather than force it further.
+  harness (not the suite's own headless browser) turned out to be
+  straightforward once done in the right order: complete client1's
+  entire round (authorize → decision → follow redirect → implicit
+  submit) before starting client2's — the suite's own
+  `/api/runner/browser/{id}` endpoint accumulates a `urls` array across
+  both clients rather than replacing it, so drive the *last* entry for
+  the second client's own round, not `urls[0]` again.
 - `batch-issuance`: correctly `SKIPPED` (this binary doesn't configure
   `BatchCredentialIssuance`, so the suite detects no batch support).
 - 10 of 10 `fail-*` negative tests that apply to this binary's own
@@ -278,8 +295,8 @@ server.FAPIRWTLSCipherSuites` on the listener — mirrors
   `fail-client-attestation-pop-wrong-aud`,
   `fail-mismatched-client-attestation-pop-key`, `fail-missing-proof`,
   `fail-unknown-credential-configuration`,
-  `fail-unknown-credential-identifier`. `fail-on-access-token-in-query`
-  is `WARNING` (zero `FAILURE`s, same soft note).
+  `fail-unknown-credential-identifier`,
+  `fail-on-access-token-in-query`.
 - Two more correctly self-`SKIPPED`, matching this binary's own
   documented scope: `fail-invalid-key-attestation-signature` (this
   binary never wires an `AttestationVerifier`; only the `jwt` proof

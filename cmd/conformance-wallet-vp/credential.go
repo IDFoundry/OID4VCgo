@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/idfoundry/oid4vcigo/credential/sdjwtvc"
+	"github.com/idfoundry/oid4vcigo/internal/conformancecert"
 	"github.com/idfoundry/oid4vcigo/internal/jose"
 	"github.com/idfoundry/oid4vcigo/internal/jwk"
 	"github.com/idfoundry/oid4vcigo/wallet"
@@ -18,7 +19,13 @@ import (
 // A year is generous headroom for this binary's own "issue once at
 // startup, reuse for the process's whole lifetime" shape (see
 // issueFixtureCredential's own doc comment) — this binary is never
-// expected to run anywhere near that long.
+// expected to run anywhere near that long. See
+// conformancecert.CredentialExp's own doc comment for why the actual
+// exp value is day-rounded, not this value added to the raw issuance
+// instant — this binary only ever issues one credential, so the
+// linkability risk that rounding closes doesn't apply here, but
+// rounding anyway costs nothing and keeps both conformance binaries'
+// own exp computation identical.
 const fixtureCredentialLifetime = 365 * 24 * time.Hour
 
 // issueFixtureCredential builds this binary's own held SD-JWT VC —
@@ -43,7 +50,7 @@ func issueFixtureCredential(cfg Config, issuerKey, holderKey *ecdsa.PrivateKey) 
 	for name, value := range cfg.Claims {
 		additional[name] = sdjwtvc.SD(value)
 	}
-	exp := time.Now().Add(fixtureCredentialLifetime).Unix()
+	exp := conformancecert.CredentialExp(time.Now(), fixtureCredentialLifetime)
 
 	sdjwt, _, err := sdjwtvc.Issue(issuerKey, jose.ES256, sdjwtvc.Claims{
 		VCT:        cfg.VCT,

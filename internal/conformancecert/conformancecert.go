@@ -274,3 +274,22 @@ func RequireNonEmpty(jsonFieldName, value string) error {
 	}
 	return nil
 }
+
+// CredentialExp computes an "exp" claim for a credential issued at
+// now, rounded down to the start of now's own UTC day before adding
+// lifetime — never the raw issuance instant. Two credentials issued
+// moments apart (e.g. one per client in a multi-client flow) would
+// otherwise carry two exp values differing by exactly that real
+// inter-issuance gap, letting a party holding both correlate them —
+// confirmed live against the OIDF conformance suite's own
+// oid4vci-1_0-issuer-happy-flow-multiple-clients module, which flagged
+// exactly this ("Credential time information [exp] advanced by ~the
+// real inter-issuance gap... indicating the issuer embeds the precise
+// issuance time... iat/exp/nbf... MUST be randomized or rounded to
+// prevent linkability", RFC 9901 §10.1). Day-granularity rounding
+// means every credential issued on the same calendar day carries an
+// identical exp, closing that channel while still bounding validity.
+func CredentialExp(now time.Time, lifetime time.Duration) int64 {
+	dayStart := now.UTC().Truncate(24 * time.Hour)
+	return dayStart.Add(lifetime).Unix()
+}
