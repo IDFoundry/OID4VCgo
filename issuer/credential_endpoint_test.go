@@ -79,7 +79,12 @@ type credentialEndpointFixture struct {
 	now    time.Time
 }
 
-func newCredentialEndpointFixture(t *testing.T, mutateDeps ...func(*issuer.Dependencies)) credentialEndpointFixture {
+// newCredentialEndpointFixture builds a fully configured Issuer.
+// mutate, if given, can adjust Config and/or Dependencies before New is
+// called — e.g. to override the default BatchCredentialIssuance
+// (BatchSize 2, high enough for every existing multi-proof test in this
+// file) or to replace a Dependencies field.
+func newCredentialEndpointFixture(t *testing.T, mutate ...func(cfg *issuer.Config, deps *issuer.Dependencies)) credentialEndpointFixture {
 	t.Helper()
 	sdjwtSigner := testSDJWTSigner(t)
 	mdocSigner := testMdocSigner(t)
@@ -93,7 +98,8 @@ func newCredentialEndpointFixture(t *testing.T, mutateDeps ...func(*issuer.Depen
 			Credential: mustEndpointURL(t, testCredentialEndpoint),
 			Nonce:      mustEndpointURL(t, testNonceEndpoint),
 		},
-		Limits: issuer.Limits{NonceLifetime: time.Minute},
+		Limits:                  issuer.Limits{NonceLifetime: time.Minute},
+		BatchCredentialIssuance: &issuer.BatchCredentialIssuance{BatchSize: 2},
 		CredentialConfigurationsSupported: map[string]issuer.CredentialConfiguration{
 			testSDJWTConfigID: {
 				Format:                               sdjwtvc.CredentialFormat,
@@ -126,8 +132,8 @@ func newCredentialEndpointFixture(t *testing.T, mutateDeps ...func(*issuer.Depen
 			pub: &attestationSigner.PublicKey, alg: jose.ES256,
 		},
 	}
-	for _, mutate := range mutateDeps {
-		mutate(&deps)
+	for _, m := range mutate {
+		m(&cfg, &deps)
 	}
 
 	iss, err := issuer.New(cfg, deps)
@@ -263,6 +269,100 @@ func TestRequestCredential_SDJWT_Batch(t *testing.T) {
 	}
 	if resp.Credentials[0].Credential == resp.Credentials[1].Credential {
 		t.Errorf("both batch credentials are identical")
+	}
+}
+
+// TestRequestCredential_RejectsBatchWhenUnconfigured checks
+// checkBatchSize's own "nil caps at exactly 1" reading: two jwt proofs
+// are rejected when Config.BatchCredentialIssuance was never set, even
+// though the very same request shape succeeds in
+// TestRequestCredential_SDJWT_Batch's own fixture (BatchSize 2).
+func TestRequestCredential_RejectsBatchWhenUnconfigured(t *testing.T) {
+	f := newCredentialEndpointFixture(t, func(cfg *issuer.Config, _ *issuer.Dependencies) {
+		cfg.BatchCredentialIssuance = nil
+	})
+	nonce := f.issueNonce(t)
+	proof1 := buildJWTProof(t, testP256Key(t), testIssuer, nonce)
+	proof2 := buildJWTProof(t, testP256Key(t), testIssuer, nonce)
+
+	_, err := f.iss.RequestCredential(context.Background(), issuer.AuthorizedRequest{Scopes: []string{"identity_credential"}}, issuer.CredentialRequest{
+		CredentialConfigurationID: testSDJWTConfigID,
+		Proofs:                    map[string][]string{oid4vci.ProofTypeJWT: {proof1, proof2}},
+		SDJWTClaims:               testSDJWTClaims(),
+	})
+	assertIssuerError(t, err, issuer.ErrorInvalidProof)
+}
+
+// TestRequestCredential_AcceptsSingleProofWhenBatchUnconfigured checks
+// the other side of the same cap: exactly one proof is still accepted
+// with Config.BatchCredentialIssuance unset — the cap is 1, not 0.
+func TestRequestCredential_AcceptsSingleProofWhenBatchUnconfigured(t *testing.T) {
+	f := newCredentialEndpointFixture(t, func(cfg *issuer.Config, _ *issuer.Dependencies) {
+		cfg.BatchCredentialIssuance = nil
+	})
+	nonce := f.issueNonce(t)
+	proof := buildJWTProof(t, testP256Key(t), testIssuer, nonce)
+
+	resp, err := f.iss.RequestCredential(context.Background(), issuer.AuthorizedRequest{Scopes: []string{"identity_credential"}}, issuer.CredentialRequest{
+		CredentialConfigurationID: testSDJWTConfigID,
+		Proofs:                    map[string][]string{oid4vci.ProofTypeJWT: {proof}},
+		SDJWTClaims:               testSDJWTClaims(),
+	})
+	if err != nil {
+		t.Fatalf("RequestCredential: %v", err)
+	}
+	if len(resp.Credentials) != 1 {
+		t.Fatalf("got %d credentials, want 1", len(resp.Credentials))
+	}
+}
+
+// TestRequestCredential_RejectsBatchExceedingConfiguredSize checks the
+// configured-BatchSize side of the cap: three proofs are rejected
+// against this file's own default fixture (BatchSize 2), even though
+// two succeed (TestRequestCredential_SDJWT_Batch).
+func TestRequestCredential_RejectsBatchExceedingConfiguredSize(t *testing.T) {
+	f := newCredentialEndpointFixture(t)
+	nonce := f.issueNonce(t)
+	proofs := []string{
+		buildJWTProof(t, testP256Key(t), testIssuer, nonce),
+		buildJWTProof(t, testP256Key(t), testIssuer, nonce),
+		buildJWTProof(t, testP256Key(t), testIssuer, nonce),
+	}
+
+	_, err := f.iss.RequestCredential(context.Background(), issuer.AuthorizedRequest{Scopes: []string{"identity_credential"}}, issuer.CredentialRequest{
+		CredentialConfigurationID: testSDJWTConfigID,
+		Proofs:                    map[string][]string{oid4vci.ProofTypeJWT: proofs},
+		SDJWTClaims:               testSDJWTClaims(),
+	})
+	assertIssuerError(t, err, issuer.ErrorInvalidProof)
+}
+
+// TestRequestCredential_AttestationFanoutUnaffectedByBatchSize checks
+// checkBatchSize's own documented distinction: the cap applies to the
+// proofs array's own size (here, one attestation JWT — len(values) ==
+// 1), not to how many Credentials an attestation proof's own
+// attested_keys ultimately fans out to (here, two) — so this succeeds
+// even with Config.BatchCredentialIssuance unset, unlike the
+// equivalent two-jwt-proof request in
+// TestRequestCredential_RejectsBatchWhenUnconfigured.
+func TestRequestCredential_AttestationFanoutUnaffectedByBatchSize(t *testing.T) {
+	f := newCredentialEndpointFixture(t, func(cfg *issuer.Config, _ *issuer.Dependencies) {
+		cfg.BatchCredentialIssuance = nil
+	})
+	key1, key2 := testP256Key(t), testP256Key(t)
+	nonce := f.issueNonce(t)
+	att := buildAttestation(t, f.attestationSigner, nonce, &key1.PublicKey, &key2.PublicKey)
+
+	resp, err := f.iss.RequestCredential(context.Background(), issuer.AuthorizedRequest{Scopes: []string{"identity_credential"}}, issuer.CredentialRequest{
+		CredentialConfigurationID: testSDJWTConfigID,
+		Proofs:                    map[string][]string{oid4vci.ProofTypeAttestation: {att}},
+		SDJWTClaims:               testSDJWTClaims(),
+	})
+	if err != nil {
+		t.Fatalf("RequestCredential: %v", err)
+	}
+	if len(resp.Credentials) != 2 {
+		t.Fatalf("got %d credentials, want 2 (one per attested key)", len(resp.Credentials))
 	}
 }
 
@@ -488,7 +588,7 @@ func TestRequestCredential_RejectsKidHeader(t *testing.T) {
 
 func TestRequestCredential_JWTProof_KidResolved(t *testing.T) {
 	bindingKey := testP256Key(t)
-	f := newCredentialEndpointFixture(t, func(d *issuer.Dependencies) {
+	f := newCredentialEndpointFixture(t, func(_ *issuer.Config, d *issuer.Dependencies) {
 		d.ProofBindingKeys = fixedProofBindingKeyResolver{pub: &bindingKey.PublicKey}
 	})
 	nonce := f.issueNonce(t)
@@ -508,7 +608,7 @@ func TestRequestCredential_JWTProof_KidResolved(t *testing.T) {
 
 func TestRequestCredential_JWTProof_X5CResolved(t *testing.T) {
 	bindingKey := testP256Key(t)
-	f := newCredentialEndpointFixture(t, func(d *issuer.Dependencies) {
+	f := newCredentialEndpointFixture(t, func(_ *issuer.Config, d *issuer.Dependencies) {
 		d.ProofBindingKeys = fixedProofBindingKeyResolver{pub: &bindingKey.PublicKey}
 	})
 	nonce := f.issueNonce(t)
@@ -528,7 +628,7 @@ func TestRequestCredential_JWTProof_X5CResolved(t *testing.T) {
 
 func TestRequestCredential_RejectsKidAndX5CTogether(t *testing.T) {
 	bindingKey := testP256Key(t)
-	f := newCredentialEndpointFixture(t, func(d *issuer.Dependencies) {
+	f := newCredentialEndpointFixture(t, func(_ *issuer.Config, d *issuer.Dependencies) {
 		d.ProofBindingKeys = fixedProofBindingKeyResolver{pub: &bindingKey.PublicKey}
 	})
 	nonce := f.issueNonce(t)
@@ -543,7 +643,7 @@ func TestRequestCredential_RejectsKidAndX5CTogether(t *testing.T) {
 }
 
 func TestRequestCredential_RejectsKidWhenResolverErrors(t *testing.T) {
-	f := newCredentialEndpointFixture(t, func(d *issuer.Dependencies) {
+	f := newCredentialEndpointFixture(t, func(_ *issuer.Config, d *issuer.Dependencies) {
 		d.ProofBindingKeys = fixedProofBindingKeyResolver{err: errors.New("kid is not a recognized key identifier")}
 	})
 	nonce := f.issueNonce(t)
