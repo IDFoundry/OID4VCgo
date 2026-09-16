@@ -1,6 +1,9 @@
 package main
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"testing"
 
 	"github.com/idfoundry/oid4vcigo/internal/conformancecert"
@@ -16,6 +19,14 @@ func baseTestConfig(t *testing.T) Config {
 	if err != nil {
 		t.Fatalf("GenerateECKeyPEM: %v", err)
 	}
+	attesterKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate attester key: %v", err)
+	}
+	attesterJWKS, err := conformancecert.JWKSet(&attesterKey.PublicKey, "attester-1")
+	if err != nil {
+		t.Fatalf("JWKSet: %v", err)
+	}
 	return Config{
 		ListenAddr:        ":8443",
 		Issuer:            "https://issuer.example.com",
@@ -25,6 +36,7 @@ func baseTestConfig(t *testing.T) Config {
 			ID:                     "client1",
 			RedirectURIs:           []string{"https://client.example.com/callback"},
 			ExpectedAttesterIssuer: "https://attester.example.com",
+			AttesterJWKS:           attesterJWKS,
 		},
 		CredentialIssuerSigningKeyPEM: issuerKeyPEM,
 		VCT:                           "urn:eudi:pid:1",
@@ -64,6 +76,7 @@ func TestLoadConfig_RejectsMissingRequiredFields(t *testing.T) {
 		"client.id":                         func(c *Config) { c.Client.ID = "" },
 		"client.redirect_uris":              func(c *Config) { c.Client.RedirectURIs = nil },
 		"client.expected_attester_issuer":   func(c *Config) { c.Client.ExpectedAttesterIssuer = "" },
+		"client.attester_jwks":              func(c *Config) { c.Client.AttesterJWKS = nil },
 		"credential_issuer_signing_key_pem": func(c *Config) { c.CredentialIssuerSigningKeyPEM = "" },
 		"vct":                               func(c *Config) { c.VCT = "" },
 		"claims":                            func(c *Config) { c.Claims = nil },

@@ -19,13 +19,21 @@ func tokenHandler(srv *server.Server) http.HandlerFunc {
 		}
 		dpopProofs := r.Header.Values("DPoP")
 		peerCert := server.PeerCertificateFromHTTP(r)
+		attestations := r.Header.Values("OAuth-Client-Attestation")
+		pops := r.Header.Values("OAuth-Client-Attestation-PoP")
 
 		var result server.TokenResult
 		switch form.Get("grant_type") {
 		case "authorization_code":
-			result, err = srv.ExchangeAuthorizationCode(r.Context(), server.AuthorizationCodeExchangeRequest{HTTP: form, DPoPProofs: dpopProofs, PeerCertificate: peerCert})
+			result, err = srv.ExchangeAuthorizationCode(r.Context(), server.AuthorizationCodeExchangeRequest{
+				HTTP: form, DPoPProofs: dpopProofs, PeerCertificate: peerCert,
+				ClientAttestations: attestations, ClientAttestationPoPs: pops,
+			})
 		case "refresh_token":
-			result, err = srv.RefreshAccessToken(r.Context(), server.RefreshTokenRequest{HTTP: form, DPoPProofs: dpopProofs, PeerCertificate: peerCert})
+			result, err = srv.RefreshAccessToken(r.Context(), server.RefreshTokenRequest{
+				HTTP: form, DPoPProofs: dpopProofs, PeerCertificate: peerCert,
+				ClientAttestations: attestations, ClientAttestationPoPs: pops,
+			})
 		default:
 			writeRawOAuthError(w, http.StatusBadRequest, server.ErrorUnsupportedGrantType, "grant_type must be authorization_code or refresh_token")
 			return

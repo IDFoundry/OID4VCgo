@@ -55,27 +55,44 @@ comment).
 
 ## Status
 
-**Confirmed live**: the full wiring (`newServerMux`) boots, and a real
-running instance serves correctly-formed FAPI 2.0 Authorization Server
-metadata (`token_endpoint_auth_methods_supported` includes
-`attest_jwt_client_auth`, `pushed_authorization_request_endpoint`
-present, ...), correctly-formed OID4VCI Credential Issuer metadata
-(`credential_configurations_supported` with the right `vct`/proof
-types), and a real JWKS — all from the actual production wiring, not
-mocks. Captured as a permanent regression test
-(`TestNewServerMux_ServesRealMetadataAndJWKS`).
+**Confirmed live, end to end**: `flow_test.go`'s
+`TestFullFlow_ParAuthorizeTokenNonceCredential` drives the entire
+stack against a real `newServerMux` instance — PAR (with a real Client
+Attestation + PoP JWT pair and a DPoP proof), the consent-form
+`GET /authorize` → `POST /authorize/decision` round trip, `POST
+/token` (Client Attestation authentication, DPoP-bound access token
+issuance), `POST /nonce`, and finally `POST /credential` (a fresh
+jwt-type key proof, DPoP-bound resource access) — and receives back a
+real issued credential. Also confirmed: `TestNewServerMux_ServesRealMetadataAndJWKS`
+(both metadata documents + JWKS, as a lighter-weight check).
 
-**Not exercised**: the actual PAR → consent → token → nonce →
-credential flow end to end. Building a hand-rolled smoke-test client
-for this would mean constructing a real Client Attestation + PoP JWT
-pair (`draft-ietf-oauth-attestation-based-client-auth-07`), a DPoP
-proof, and driving the full Authorization Code Flow — comparable in
-scope to another whole binary, and out of reach in this pass. Unlike
-Phase 1 (where `cmd/conformance-wallet-vp` could validate
-`cmd/conformance-verifier` directly), there's no equivalent sibling
-binary here to cross-test against. This is the natural next
-verification step, whether via a dedicated smoke-test client or the
-live OIDF suite itself.
+Building the full-flow test surfaced three real bugs, all fixed
+alongside it:
+- `par.go`/`token.go` never forwarded the
+  `OAuth-Client-Attestation`/`OAuth-Client-Attestation-PoP` headers to
+  `fapigo/server` at all — `PushAuthorizationRequest`/
+  `AuthorizationCodeExchangeRequest`/`RefreshTokenRequest` all have
+  `ClientAttestations`/`ClientAttestationPoPs` fields distinct from
+  `DPoPProofs`, and the original wiring simply never set them. Every
+  attestation-authenticated request would have failed outright.
+- `Config.Client` only carried `ExpectedAttesterIssuer` (a string
+  identity for the attestation's own `iss` claim check) with no actual
+  key material — but `fapigo/server` resolves an attestation's
+  *verification* key via `Dependencies.ClientKeys`, keyed by client ID,
+  regardless of that issuer string (confirmed against
+  `server/client_auth_attestation.go`'s own `resolveClientKey` call).
+  Added `Config.Client.AttesterJWKS` and wired it into
+  `ephemeral.NewClientKeySource`.
+- `credentialHandler` passed the incoming request's own `r.URL`
+  straight into `resource.Verifier.Verify` for DPoP's own "htu" check
+  — but a `net/http` server request's `URL` has no Scheme/Host
+  populated (only what's on the request line), so the comparison
+  always failed. Fixed to pass a pre-built, fully-qualified URL
+  instead, matching FAPIgo's own `cmd/conformance-as/resource.go`
+  precedent (`userinfoURL`/`accountsURL`, never `r.URL`) — this repo's
+  own `par.go`/`token.go` never hit the equivalent bug only because
+  `fapigo/server` resolves its own endpoint URLs from `Config.Endpoints`
+  internally rather than trusting the incoming request's URL at all.
 
 **Deliberately out of scope for this first pass** (see the suite's own
 module list for what each would additionally cover): the Deferred
@@ -95,10 +112,13 @@ exercise.
   yet provide.
 - Whether the consent flow (a real rendered HTML form + POST
   submission) is compatible with how the suite drives this specific
-  plan — Phase 1's own wallet-role research found at least one case
+  plan — mechanically proven to work end to end against a hand-rolled
+  client (`flow_test.go`), but that's not proof the *suite's own*
+  browser driver interacts with it the same way. Phase 1's own
+  wallet-role research found at least one case
   (`CreateRandomBrowserApiSubmitUrl`) where an initially-plausible
   mechanism turned out to be the suite's own internal fixture; the
-  same kind of surprise is possible here and hasn't been ruled out.
+  same kind of surprise remains possible here.
 - The exact `client2` requirement, if any, for this specific plan
   variant (FAPIgo's own `client_credentials` conformance work found
   `client2` structurally required regardless of whether it's actually

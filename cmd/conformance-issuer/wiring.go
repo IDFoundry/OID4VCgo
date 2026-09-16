@@ -82,11 +82,15 @@ func newServerMux(cfg Config) (*http.ServeMux, error) {
 	if err != nil {
 		return nil, err
 	}
-	// No JWKS-based client keys: this binary's one test client
-	// authenticates via ClientAuthMethodAttestation, not
-	// ClientAuthMethodPrivateKeyJWT — see Config.Client's own doc
-	// comment. Still required unconditionally by server.Dependencies.
-	clientKeys, err := ephemeral.NewClientKeySource(fetcher, nil)
+	// Registers the attester's own public key(s) — even under
+	// ClientAuthMethodAttestation, fapigo/server resolves a Client
+	// Attestation JWT's own verification key via this same
+	// Dependencies.ClientKeys, keyed by client ID (confirmed against
+	// server/client_auth_attestation.go's own resolveClientKey call) —
+	// see Config.Client's own doc comment.
+	clientKeys, err := ephemeral.NewClientKeySource(fetcher, []ephemeral.ClientKeySpec{
+		{ClientID: fapi.ClientID(cfg.Client.ID), JWKS: cfg.Client.AttesterJWKS},
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -193,7 +197,8 @@ func newServerMux(cfg Config) (*http.ServeMux, error) {
 	}
 
 	consent := newConsentHandler(srv, clientRepo, server.SystemClock{}, cfg.DefaultSubject)
-	return newRouter(srv, iss, resourceVerifier, consent, cfg), nil
+	credentialURLValue := credentialURL.URL()
+	return newRouter(srv, iss, resourceVerifier, consent, &credentialURLValue, cfg), nil
 }
 
 // srvLimits are this binary's own FAPI 2.0 Limits — server.RecommendedLimits

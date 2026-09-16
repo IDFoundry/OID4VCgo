@@ -4,9 +4,14 @@
 // conformance/verifier(/wallet-vp)/scripts/generate-config.
 //
 // The one test client's own client_id/redirect_uris/
-// expected_attester_issuer are left as placeholders — fill them in
-// from whatever the OIDF suite's own test-configuration UI assigns
-// for this plan (see conformance/issuer/README.md).
+// expected_attester_issuer/attester_jwks are left as placeholders —
+// fill them in from whatever the OIDF suite's own test-configuration
+// UI assigns for this plan (see conformance/issuer/README.md).
+// attester_jwks is the suite's own attester identity's public key(s)
+// — fapigo/server resolves a Client Attestation JWT's own verification
+// key this way regardless of ExpectedAttesterIssuer (confirmed against
+// server/client_auth_attestation.go's own resolveClientKey call), so
+// both fields are required, not just the issuer string.
 //
 // Usage: go run ./conformance/issuer/scripts/generate-config \
 //
@@ -38,9 +43,10 @@ type generatedConfig struct {
 }
 
 type generatedClient struct {
-	ID                     string   `json:"id"`
-	RedirectURIs           []string `json:"redirect_uris"`
-	ExpectedAttesterIssuer string   `json:"expected_attester_issuer"`
+	ID                     string          `json:"id"`
+	RedirectURIs           []string        `json:"redirect_uris"`
+	ExpectedAttesterIssuer string          `json:"expected_attester_issuer"`
+	AttesterJWKS           json.RawMessage `json:"attester_jwks"`
 }
 
 func main() {
@@ -69,6 +75,7 @@ func main() {
 			ID:                     "PLACEHOLDER-fill-in-from-the-suite",
 			RedirectURIs:           []string{"https://PLACEHOLDER-fill-in-from-the-suite/callback"},
 			ExpectedAttesterIssuer: "https://PLACEHOLDER-fill-in-from-the-suite",
+			AttesterJWKS:           json.RawMessage(`{"keys":[]}`),
 		},
 		CredentialIssuerSigningKeyPEM: issuerKeyPEM,
 		VCT:                           "urn:eudi:pid:1",

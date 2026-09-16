@@ -35,11 +35,12 @@ negative-test expectations differ.
   Wallet Attestation client authentication) with a real
   `oid4vcigo/issuer.Issuer`; the suite plays Wallet. This is the first
   real exercise anywhere of `AttestationBasedClientAuthentication` and
-  of `issuer/resource_verifier.go`'s own recipe. Confirmed live: the
-  full wiring boots and serves correctly-formed AS + Credential Issuer
-  metadata and a real JWKS (a permanent regression test) — **the PAR →
-  consent → token → credential flow itself hasn't been exercised
-  end to end yet**, and neither has a run against the live suite. See
-  `issuer/README.md`.
+  of `issuer/resource_verifier.go`'s own recipe. Confirmed live end to
+  end: PAR → consent → token → nonce → credential, with a real Client
+  Attestation + PoP JWT pair and DPoP throughout — a permanent
+  regression test. That test surfaced and fixed three real bugs (two
+  missing header forwards, one DPoP "htu" URL bug) — see
+  `issuer/README.md`'s own "Status" for the details. **Not yet run
+  against the live OIDF suite.**
 - **Not yet started**: OID4VCI Wallet role (blocked on a FAPIgo-side
   change — see `AGENTS.md`).

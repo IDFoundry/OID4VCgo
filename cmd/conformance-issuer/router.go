@@ -2,6 +2,7 @@ package main
 
 import (
 	"net/http"
+	"net/url"
 
 	fapires "github.com/idfoundry/fapigo/resource"
 	"github.com/idfoundry/fapigo/server"
@@ -14,7 +15,7 @@ import (
 // (oid4vcigo/issuer) onto one plain net/http.ServeMux — mirrors
 // FAPIgo's own cmd/conformance-as/router.go's "no third-party router"
 // stance.
-func newRouter(srv *server.Server, iss *issuer.Issuer, resourceVerifier *fapires.Verifier, consent *consentHandler, cfg Config) *http.ServeMux {
+func newRouter(srv *server.Server, iss *issuer.Issuer, resourceVerifier *fapires.Verifier, consent *consentHandler, credentialURL *url.URL, cfg Config) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /.well-known/openid-configuration", authorizationServerMetadataHandler(srv))
 	mux.HandleFunc("GET /jwks", jwksHandler(srv))
@@ -25,6 +26,6 @@ func newRouter(srv *server.Server, iss *issuer.Issuer, resourceVerifier *fapires
 
 	mux.HandleFunc("GET /.well-known/openid-credential-issuer", credentialIssuerMetadataHandler(iss))
 	mux.HandleFunc("POST /nonce", nonceHandler(iss))
-	mux.HandleFunc("POST /credential", credentialHandler(iss, resourceVerifier, cfg))
+	mux.HandleFunc("POST /credential", credentialHandler(iss, resourceVerifier, credentialURL, cfg))
 	return mux
 }

@@ -66,9 +66,11 @@ live against each other end to end (a real cryptographic round trip,
 not a mock). `cmd/conformance-issuer` (OID4VCI Issuer role — a real
 `fapigo/server.Server` with `AttestationBasedClientAuthentication`
 enabled, paired with a real `issuer.Issuer`) also exists, compiles, and
-is confirmed live at the metadata/JWKS level, but its PAR → consent →
-token → credential flow hasn't been exercised end to end yet. None of
-the three has been run against the live OIDF suite itself. See
+is confirmed live end to end (PAR → consent → token → nonce →
+credential, with a real Client Attestation + PoP JWT pair and DPoP
+throughout) — that test surfaced and fixed three real bugs along the
+way, see `conformance/issuer/README.md`'s own "Status". None of the
+three binaries has been run against the live OIDF suite itself. See
 `conformance/verifier/README.md`'s, `conformance/wallet-vp/README.md`'s
 and `conformance/issuer/README.md`'s own "Status" sections before
 assuming any specific suite test module passes.
