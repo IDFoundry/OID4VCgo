@@ -272,97 +272,54 @@ func TestRequestCredential_SDJWT_Batch(t *testing.T) {
 	}
 }
 
-// TestRequestCredential_RejectsBatchWhenUnconfigured checks
-// checkBatchSize's own "nil caps at exactly 1" reading: two jwt proofs
-// are rejected when Config.BatchCredentialIssuance was never set, even
-// though the very same request shape succeeds in
-// TestRequestCredential_SDJWT_Batch's own fixture (BatchSize 2).
-func TestRequestCredential_RejectsBatchWhenUnconfigured(t *testing.T) {
-	f := newCredentialEndpointFixture(t, func(cfg *issuer.Config, _ *issuer.Dependencies) {
-		cfg.BatchCredentialIssuance = nil
-	})
-	nonce := f.issueNonce(t)
-	proof1 := buildJWTProof(t, testP256Key(t), testIssuer, nonce)
-	proof2 := buildJWTProof(t, testP256Key(t), testIssuer, nonce)
-
-	_, err := f.iss.RequestCredential(context.Background(), issuer.AuthorizedRequest{Scopes: []string{"identity_credential"}}, issuer.CredentialRequest{
-		CredentialConfigurationID: testSDJWTConfigID,
-		Proofs:                    map[string][]string{oid4vci.ProofTypeJWT: {proof1, proof2}},
-		SDJWTClaims:               testSDJWTClaims(),
-	})
-	assertIssuerError(t, err, issuer.ErrorInvalidProof)
-}
-
-// TestRequestCredential_AcceptsSingleProofWhenBatchUnconfigured checks
-// the other side of the same cap: exactly one proof is still accepted
-// with Config.BatchCredentialIssuance unset — the cap is 1, not 0.
-func TestRequestCredential_AcceptsSingleProofWhenBatchUnconfigured(t *testing.T) {
-	f := newCredentialEndpointFixture(t, func(cfg *issuer.Config, _ *issuer.Dependencies) {
-		cfg.BatchCredentialIssuance = nil
-	})
-	nonce := f.issueNonce(t)
-	proof := buildJWTProof(t, testP256Key(t), testIssuer, nonce)
-
-	resp, err := f.iss.RequestCredential(context.Background(), issuer.AuthorizedRequest{Scopes: []string{"identity_credential"}}, issuer.CredentialRequest{
-		CredentialConfigurationID: testSDJWTConfigID,
-		Proofs:                    map[string][]string{oid4vci.ProofTypeJWT: {proof}},
-		SDJWTClaims:               testSDJWTClaims(),
-	})
-	if err != nil {
-		t.Fatalf("RequestCredential: %v", err)
+// TestRequestCredential_BatchSize table-drives checkBatchSize's own
+// cap on the jwt proofs array's own size against every boundary that
+// matters: unconfigured caps at exactly 1 (not 0, and not unlimited —
+// §12.2.4's own "the presence of this parameter means the issuer
+// supports more than one key proof" read as implying absence means it
+// doesn't), and a configured BatchSize caps at exactly that.
+func TestRequestCredential_BatchSize(t *testing.T) {
+	cases := map[string]struct {
+		batchSize int // 0 means Config.BatchCredentialIssuance stays nil
+		numProofs int
+		wantErr   bool
+	}{
+		"single proof, unconfigured":       {batchSize: 0, numProofs: 1, wantErr: false},
+		"two proofs, unconfigured":         {batchSize: 0, numProofs: 2, wantErr: true},
+		"two proofs, configured for two":   {batchSize: 2, numProofs: 2, wantErr: false},
+		"three proofs, configured for two": {batchSize: 2, numProofs: 3, wantErr: true},
 	}
-	if len(resp.Credentials) != 1 {
-		t.Fatalf("got %d credentials, want 1", len(resp.Credentials))
-	}
-}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			f := newCredentialEndpointFixture(t, func(cfg *issuer.Config, _ *issuer.Dependencies) {
+				if tc.batchSize == 0 {
+					cfg.BatchCredentialIssuance = nil
+				} else {
+					cfg.BatchCredentialIssuance = &issuer.BatchCredentialIssuance{BatchSize: tc.batchSize}
+				}
+			})
+			nonce := f.issueNonce(t)
+			proofs := make([]string, tc.numProofs)
+			for i := range proofs {
+				proofs[i] = buildJWTProof(t, testP256Key(t), testIssuer, nonce)
+			}
 
-// TestRequestCredential_RejectsBatchExceedingConfiguredSize checks the
-// configured-BatchSize side of the cap: three proofs are rejected
-// against this file's own default fixture (BatchSize 2), even though
-// two succeed (TestRequestCredential_SDJWT_Batch).
-func TestRequestCredential_RejectsBatchExceedingConfiguredSize(t *testing.T) {
-	f := newCredentialEndpointFixture(t)
-	nonce := f.issueNonce(t)
-	proofs := []string{
-		buildJWTProof(t, testP256Key(t), testIssuer, nonce),
-		buildJWTProof(t, testP256Key(t), testIssuer, nonce),
-		buildJWTProof(t, testP256Key(t), testIssuer, nonce),
-	}
-
-	_, err := f.iss.RequestCredential(context.Background(), issuer.AuthorizedRequest{Scopes: []string{"identity_credential"}}, issuer.CredentialRequest{
-		CredentialConfigurationID: testSDJWTConfigID,
-		Proofs:                    map[string][]string{oid4vci.ProofTypeJWT: proofs},
-		SDJWTClaims:               testSDJWTClaims(),
-	})
-	assertIssuerError(t, err, issuer.ErrorInvalidProof)
-}
-
-// TestRequestCredential_AttestationFanoutUnaffectedByBatchSize checks
-// checkBatchSize's own documented distinction: the cap applies to the
-// proofs array's own size (here, one attestation JWT — len(values) ==
-// 1), not to how many Credentials an attestation proof's own
-// attested_keys ultimately fans out to (here, two) — so this succeeds
-// even with Config.BatchCredentialIssuance unset, unlike the
-// equivalent two-jwt-proof request in
-// TestRequestCredential_RejectsBatchWhenUnconfigured.
-func TestRequestCredential_AttestationFanoutUnaffectedByBatchSize(t *testing.T) {
-	f := newCredentialEndpointFixture(t, func(cfg *issuer.Config, _ *issuer.Dependencies) {
-		cfg.BatchCredentialIssuance = nil
-	})
-	key1, key2 := testP256Key(t), testP256Key(t)
-	nonce := f.issueNonce(t)
-	att := buildAttestation(t, f.attestationSigner, nonce, &key1.PublicKey, &key2.PublicKey)
-
-	resp, err := f.iss.RequestCredential(context.Background(), issuer.AuthorizedRequest{Scopes: []string{"identity_credential"}}, issuer.CredentialRequest{
-		CredentialConfigurationID: testSDJWTConfigID,
-		Proofs:                    map[string][]string{oid4vci.ProofTypeAttestation: {att}},
-		SDJWTClaims:               testSDJWTClaims(),
-	})
-	if err != nil {
-		t.Fatalf("RequestCredential: %v", err)
-	}
-	if len(resp.Credentials) != 2 {
-		t.Fatalf("got %d credentials, want 2 (one per attested key)", len(resp.Credentials))
+			resp, err := f.iss.RequestCredential(context.Background(), issuer.AuthorizedRequest{Scopes: []string{"identity_credential"}}, issuer.CredentialRequest{
+				CredentialConfigurationID: testSDJWTConfigID,
+				Proofs:                    map[string][]string{oid4vci.ProofTypeJWT: proofs},
+				SDJWTClaims:               testSDJWTClaims(),
+			})
+			if tc.wantErr {
+				assertIssuerError(t, err, issuer.ErrorInvalidProof)
+				return
+			}
+			if err != nil {
+				t.Fatalf("RequestCredential: %v", err)
+			}
+			if len(resp.Credentials) != tc.numProofs {
+				t.Fatalf("got %d credentials, want %d", len(resp.Credentials), tc.numProofs)
+			}
+		})
 	}
 }
 
@@ -404,8 +361,17 @@ func TestRequestCredential_Mdoc_JWTProof(t *testing.T) {
 	}
 }
 
+// TestRequestCredential_AttestationProof also locks in checkBatchSize's
+// own documented distinction: BatchCredentialIssuance is deliberately
+// left unset here (nil caps the proofs array's own size at exactly 1 —
+// see TestRequestCredential_BatchSize), yet this still succeeds, since
+// the cap applies to the array's own size (one attestation JWT here,
+// len(values) == 1), not to how many Credentials an attestation
+// proof's own attested_keys ultimately fans out to (two, below).
 func TestRequestCredential_AttestationProof(t *testing.T) {
-	f := newCredentialEndpointFixture(t)
+	f := newCredentialEndpointFixture(t, func(cfg *issuer.Config, _ *issuer.Dependencies) {
+		cfg.BatchCredentialIssuance = nil
+	})
 	key1, key2 := testP256Key(t), testP256Key(t)
 	nonce := f.issueNonce(t)
 	att := buildAttestation(t, f.attestationSigner, nonce, &key1.PublicKey, &key2.PublicKey)
