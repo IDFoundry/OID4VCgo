@@ -157,12 +157,14 @@ type VerifyResponseResult struct {
 // silently omitted from VerifyResponseResult. A Credential Query not
 // referenced by any Credential Set Query is never checked.
 //
-// Phase scope, explicitly: exactly one Presentation per Credential
-// Query ("multiple: true" isn't supported yet). "claim_sets" (§6.4.1)
-// is supported: dcql.CredentialQuery.SatisfiedBySDJWTVCClaims/
-// SatisfiedByMdocClaims already try each option in order and report
-// the Presentation as satisfying the query as soon as one option is
-// fully present.
+// Phase scope, explicitly: "claim_sets" (§6.4.1) is supported:
+// dcql.CredentialQuery.SatisfiedBySDJWTVCClaims/SatisfiedByMdocClaims
+// already try each option in order and report the Presentation as
+// satisfying the query as soon as one option is fully present. A
+// Credential Query's own Multiple (§6.1) is honored: when true,
+// req.Response.VPToken may carry more than one Presentation for that
+// id, and every one of them is verified and returned; when false (the
+// default), more than one is a hard error.
 func (v *Verifier) VerifyResponse(ctx context.Context, req VerifyResponseRequest) (VerifyResponseResult, error) {
 	if err := req.Query.Validate(); err != nil {
 		return VerifyResponseResult{}, fmt.Errorf("verifier: verify response: query: %w", err)
@@ -174,11 +176,11 @@ func (v *Verifier) VerifyResponse(ctx context.Context, req VerifyResponseRequest
 	if len(req.Query.CredentialSets) == 0 {
 		result := VerifyResponseResult{}
 		for _, cq := range req.Query.Credentials {
-			vc, err := v.verifyCredentialQuery(ctx, cq, req)
+			vcs, err := v.verifyCredentialQuery(ctx, cq, req)
 			if err != nil {
 				return VerifyResponseResult{}, fmt.Errorf("verifier: verify response: credential query %q: %w", cq.ID, err)
 			}
-			result.Credentials = append(result.Credentials, vc)
+			result.Credentials = append(result.Credentials, vcs...)
 		}
 		return result, nil
 	}
@@ -187,7 +189,7 @@ func (v *Verifier) VerifyResponse(ctx context.Context, req VerifyResponseRequest
 	for _, cq := range req.Query.Credentials {
 		byID[cq.ID] = cq
 	}
-	verified := make(map[string]VerifiedCredential, len(req.Query.Credentials))
+	verified := make(map[string][]VerifiedCredential, len(req.Query.Credentials))
 	for _, cs := range req.Query.CredentialSets {
 		option, err := v.satisfiableCredentialSetOption(ctx, cs, byID, req)
 		if err != nil {
@@ -196,14 +198,14 @@ func (v *Verifier) VerifyResponse(ctx context.Context, req VerifyResponseRequest
 			}
 			continue
 		}
-		for id, vc := range option {
-			verified[id] = vc
+		for id, vcs := range option {
+			verified[id] = vcs
 		}
 	}
 	result := VerifyResponseResult{}
 	for _, cq := range req.Query.Credentials {
-		if vc, ok := verified[cq.ID]; ok {
-			result.Credentials = append(result.Credentials, vc)
+		if vcs, ok := verified[cq.ID]; ok {
+			result.Credentials = append(result.Credentials, vcs...)
 		}
 	}
 	return result, nil
@@ -213,19 +215,19 @@ func (v *Verifier) VerifyResponse(ctx context.Context, req VerifyResponseRequest
 // the first entry in cs.Options (most-preferred first, §6.4.2) whose
 // every referenced Credential Query id actually verifies, or an error
 // naming the last option's own failure if none does.
-func (v *Verifier) satisfiableCredentialSetOption(ctx context.Context, cs dcql.CredentialSetQuery, byID map[string]dcql.CredentialQuery, req VerifyResponseRequest) (map[string]VerifiedCredential, error) {
+func (v *Verifier) satisfiableCredentialSetOption(ctx context.Context, cs dcql.CredentialSetQuery, byID map[string]dcql.CredentialQuery, req VerifyResponseRequest) (map[string][]VerifiedCredential, error) {
 	var lastErr error
 	for _, option := range cs.Options {
-		verified := make(map[string]VerifiedCredential, len(option))
+		verified := make(map[string][]VerifiedCredential, len(option))
 		satisfied := true
 		for _, id := range option {
-			vc, err := v.verifyCredentialQuery(ctx, byID[id], req)
+			vcs, err := v.verifyCredentialQuery(ctx, byID[id], req)
 			if err != nil {
 				satisfied = false
 				lastErr = fmt.Errorf("credential query %q: %w", id, err)
 				break
 			}
-			verified[id] = vc
+			verified[id] = vcs
 		}
 		if satisfied {
 			return verified, nil
@@ -234,34 +236,39 @@ func (v *Verifier) satisfiableCredentialSetOption(ctx context.Context, cs dcql.C
 	return nil, fmt.Errorf("no option is satisfied: %w", lastErr)
 }
 
-// verifyCredentialQuery locates cq's own Presentation in
-// req.Response.VPToken, checks it against this phase's own scope
-// limits (exactly one Presentation), and dispatches to the
-// format-specific verification VerifyResponse's own doc comment
-// describes.
-func (v *Verifier) verifyCredentialQuery(ctx context.Context, cq dcql.CredentialQuery, req VerifyResponseRequest) (VerifiedCredential, error) {
+// verifyCredentialQuery locates cq's own Presentation(s) in
+// req.Response.VPToken, checks their count against cq.Multiple (§6.1
+// and §8.1's own "when multiple is omitted, or set to false, the
+// array MUST contain only one Presentation"), and verifies every one
+// of them, dispatching to the format-specific verification
+// VerifyResponse's own doc comment describes.
+func (v *Verifier) verifyCredentialQuery(ctx context.Context, cq dcql.CredentialQuery, req VerifyResponseRequest) ([]VerifiedCredential, error) {
 	presentations := req.Response.VPToken[cq.ID]
 	if len(presentations) == 0 {
-		return VerifiedCredential{}, fmt.Errorf("no presentation returned")
+		return nil, fmt.Errorf("no presentation returned")
 	}
-	if len(presentations) > 1 || cq.Multiple {
-		return VerifiedCredential{}, fmt.Errorf("multiple presentations are not yet supported")
+	if len(presentations) > 1 && !cq.Multiple {
+		return nil, fmt.Errorf("multiple presentations were returned but multiple is not requested")
 	}
 
-	var claims map[string]any
-	var err error
-	switch cq.Format {
-	case sdjwtvc.CredentialFormat:
-		claims, err = v.verifySDJWTVCPresentation(ctx, cq, presentations[0], req)
-	case mdoc.CredentialFormat:
-		claims, err = v.verifyMdocPresentation(ctx, cq, presentations[0], req)
-	default:
-		return VerifiedCredential{}, fmt.Errorf("format %q is not yet supported", cq.Format)
+	vcs := make([]VerifiedCredential, 0, len(presentations))
+	for _, presented := range presentations {
+		var claims map[string]any
+		var err error
+		switch cq.Format {
+		case sdjwtvc.CredentialFormat:
+			claims, err = v.verifySDJWTVCPresentation(ctx, cq, presented, req)
+		case mdoc.CredentialFormat:
+			claims, err = v.verifyMdocPresentation(ctx, cq, presented, req)
+		default:
+			return nil, fmt.Errorf("format %q is not yet supported", cq.Format)
+		}
+		if err != nil {
+			return nil, err
+		}
+		vcs = append(vcs, VerifiedCredential{CredentialQueryID: cq.ID, Claims: claims})
 	}
-	if err != nil {
-		return VerifiedCredential{}, err
-	}
-	return VerifiedCredential{CredentialQueryID: cq.ID, Claims: claims}, nil
+	return vcs, nil
 }
 
 func (v *Verifier) verifySDJWTVCPresentation(ctx context.Context, cq dcql.CredentialQuery, compact string, req VerifyResponseRequest) (map[string]any, error) {

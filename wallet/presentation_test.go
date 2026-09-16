@@ -88,7 +88,7 @@ func matchesOneCredential(t *testing.T, query dcql.Query, fixture heldSDJWTVCFix
 	if err != nil {
 		t.Fatalf("MatchDCQLQuery: %v", err)
 	}
-	if len(matches) != 1 || matches["identity_credential"].Credential != fixture.held.Credential {
+	if len(matches) != 1 || len(matches["identity_credential"]) != 1 || matches["identity_credential"][0].Credential != fixture.held.Credential {
 		t.Errorf("matches = %+v", matches)
 	}
 }
@@ -166,7 +166,7 @@ func TestMatchDCQLQueryCredentialSetsPrefersFirstSatisfiableOption(t *testing.T)
 	if err != nil {
 		t.Fatalf("MatchDCQLQuery: %v", err)
 	}
-	if len(matches) != 1 || matches["secondary"].Credential != fixture.held.Credential {
+	if len(matches) != 1 || len(matches["secondary"]) != 1 || matches["secondary"][0].Credential != fixture.held.Credential {
 		t.Errorf("matches = %+v, want only %q", matches, "secondary")
 	}
 }
@@ -189,7 +189,7 @@ func TestMatchDCQLQueryCredentialSetsOmitsUnsatisfiedOptionalSet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MatchDCQLQuery: %v", err)
 	}
-	if len(matches) != 1 || matches["required_cq"].Credential != fixture.held.Credential {
+	if len(matches) != 1 || len(matches["required_cq"]) != 1 || matches["required_cq"][0].Credential != fixture.held.Credential {
 		t.Errorf("matches = %+v, want only %q", matches, "required_cq")
 	}
 }
@@ -210,6 +210,50 @@ func TestMatchDCQLQueryCredentialSetsFailsWhenRequiredSetUnsatisfied(t *testing.
 	}
 	if _, err := wallet.MatchDCQLQuery(query, []wallet.HeldCredential{fixture.held}); err == nil {
 		t.Fatalf("MatchDCQLQuery = nil error, want error")
+	}
+}
+
+// multipleIdentityCredentialQuery is testPresentationQuery's own
+// Multiple: true twin (no Claims — the multiple tests below only care
+// about how many HeldCredentials/Presentations come back, not which
+// claims) — shared by every test exercising §6.1's own "multiple"
+// field.
+func multipleIdentityCredentialQuery(t *testing.T) dcql.Query {
+	t.Helper()
+	return dcql.Query{Credentials: []dcql.CredentialQuery{{
+		ID: "identity_credential", Format: sdjwtvc.CredentialFormat, Meta: testverify.MustSDJWTVCMeta(t, testPresentationVCT),
+		Multiple: true,
+	}}}
+}
+
+// TestMatchDCQLQueryMultipleReturnsAllCandidates mirrors §6.1's own
+// "multiple" field: when true, every candidate satisfying the
+// Credential Query is returned, not just the first.
+func TestMatchDCQLQueryMultipleReturnsAllCandidates(t *testing.T) {
+	fixtureA := newHeldSDJWTVC(t)
+	fixtureB := newHeldSDJWTVC(t)
+	matches, err := wallet.MatchDCQLQuery(multipleIdentityCredentialQuery(t), []wallet.HeldCredential{fixtureA.held, fixtureB.held})
+	if err != nil {
+		t.Fatalf("MatchDCQLQuery: %v", err)
+	}
+	if len(matches["identity_credential"]) != 2 {
+		t.Errorf("matches[identity_credential] = %+v, want 2 entries", matches["identity_credential"])
+	}
+}
+
+// TestMatchDCQLQueryWithoutMultipleReturnsOnlyOneCandidate mirrors
+// §6.1's own default: even when two candidates could both satisfy a
+// Credential Query, Multiple defaulting to false means only one is
+// returned.
+func TestMatchDCQLQueryWithoutMultipleReturnsOnlyOneCandidate(t *testing.T) {
+	fixtureA := newHeldSDJWTVC(t)
+	fixtureB := newHeldSDJWTVC(t)
+	matches, err := wallet.MatchDCQLQuery(testPresentationQuery(t), []wallet.HeldCredential{fixtureA.held, fixtureB.held})
+	if err != nil {
+		t.Fatalf("MatchDCQLQuery: %v", err)
+	}
+	if len(matches["identity_credential"]) != 1 {
+		t.Errorf("matches[identity_credential] = %+v, want exactly 1 entry", matches["identity_credential"])
 	}
 }
 
@@ -273,6 +317,28 @@ func TestPresentCredentials(t *testing.T) {
 	}
 	if claims["given_name"] != "Alice" {
 		t.Errorf("given_name = %v, want Alice", claims["given_name"])
+	}
+}
+
+// TestPresentCredentialsMultiple mirrors §6.1's own "multiple" field
+// on the full PresentCredentials pipeline: a Multiple Credential
+// Query with two satisfying candidates yields two Presentations in
+// the vp_token's own array, §8.1's own "an array of one or more
+// Presentations".
+func TestPresentCredentialsMultiple(t *testing.T) {
+	fixtureA := newHeldSDJWTVC(t)
+	fixtureB := newHeldSDJWTVC(t)
+	vpToken, err := wallet.PresentCredentials(wallet.PresentationRequest{
+		Query:       multipleIdentityCredentialQuery(t),
+		Credentials: []wallet.HeldCredential{fixtureA.held, fixtureB.held},
+		Audience:    "x509_hash:verifier",
+		Nonce:       "nonce-1",
+	})
+	if err != nil {
+		t.Fatalf("PresentCredentials: %v", err)
+	}
+	if len(vpToken["identity_credential"]) != 2 {
+		t.Fatalf("vp_token = %v", vpToken)
 	}
 }
 

@@ -56,7 +56,16 @@ type sdjwtVCPresentationFixture struct {
 
 func newSDJWTVCPresentation(t *testing.T, aud, nonce string) sdjwtVCPresentationFixture {
 	t.Helper()
-	issuerKey := testP256Key(t)
+	return newSDJWTVCPresentationWithIssuer(t, testP256Key(t), aud, nonce)
+}
+
+// newSDJWTVCPresentationWithIssuer is newSDJWTVCPresentation with a
+// caller-supplied issuerKey instead of a fresh one — lets a test
+// build two independent Presentations that share one Issuer key, so a
+// single fixedSDJWTVCIssuerKeyResolver can verify both (needed for
+// §6.1's own "multiple" — see TestVerifyResponseMultipleVerifiesAllPresentations).
+func newSDJWTVCPresentationWithIssuer(t *testing.T, issuerKey *ecdsa.PrivateKey, aud, nonce string) sdjwtVCPresentationFixture {
+	t.Helper()
 	holderKey := testP256Key(t)
 
 	holderJWK, err := jwkFromECDSA(&holderKey.PublicKey)
@@ -151,6 +160,49 @@ func TestVerifyResponse(t *testing.T) {
 // just some option.
 func TestVerifyResponseAcceptsSatisfiableClaimSetOption(t *testing.T) {
 	verifySDJWTVCRoundTrip(t, testverify.ClaimSetOptionsQuery(t, testVCT))
+}
+
+// TestVerifyResponseMultipleVerifiesAllPresentations mirrors §6.1's
+// own "multiple" field: when a Credential Query has Multiple: true,
+// every Presentation in the VP Token's own array for that id is
+// verified and returned, not just one.
+func TestVerifyResponseMultipleVerifiesAllPresentations(t *testing.T) {
+	cfg, deps := validConfig(t)
+	v, err := verifier.New(cfg, deps)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	query := dcql.Query{Credentials: []dcql.CredentialQuery{{
+		ID: "identity_credential", Format: sdjwtvc.CredentialFormat, Meta: testverify.MustSDJWTVCMeta(t, testVCT),
+		Multiple: true,
+	}}}
+	built, err := v.BuildAuthorizationRequest(verifier.BuildAuthorizationRequestRequest{Query: query})
+	if err != nil {
+		t.Fatalf("BuildAuthorizationRequest: %v", err)
+	}
+	issuerKey := testP256Key(t)
+	fixtureA := newSDJWTVCPresentationWithIssuer(t, issuerKey, v.ClientID(), built.Nonce)
+	fixtureB := newSDJWTVCPresentationWithIssuer(t, issuerKey, v.ClientID(), built.Nonce)
+
+	result, err := v.VerifyResponse(context.Background(), verifier.VerifyResponseRequest{
+		Query: query,
+		Response: verifier.ParsedResponse{VPToken: map[string][]string{
+			"identity_credential": {fixtureA.compact, fixtureB.compact},
+		}},
+		ExpectedNonce: built.Nonce,
+		IssuerKeys:    fixedSDJWTVCIssuerKeyResolver{pub: &issuerKey.PublicKey, alg: jose.ES256},
+	})
+	if err != nil {
+		t.Fatalf("VerifyResponse: %v", err)
+	}
+	if len(result.Credentials) != 2 {
+		t.Fatalf("Credentials = %+v, want 2", result.Credentials)
+	}
+	for _, vc := range result.Credentials {
+		if vc.CredentialQueryID != "identity_credential" {
+			t.Errorf("CredentialQueryID = %q, want %q", vc.CredentialQueryID, "identity_credential")
+		}
+	}
 }
 
 // vctCredentialQuery builds a minimal "dc+sd-jwt" Credential Query (no

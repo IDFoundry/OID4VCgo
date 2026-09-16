@@ -34,7 +34,7 @@ func TestMatchDCQLQueryMdoc(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MatchDCQLQuery: %v", err)
 	}
-	if len(matches) != 1 || matches["mdl"].Credential != held.Credential {
+	if len(matches["mdl"]) != 1 || matches["mdl"][0].Credential != held.Credential {
 		t.Errorf("matches = %+v", matches)
 	}
 }
