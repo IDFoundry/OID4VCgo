@@ -40,17 +40,22 @@
 > Credential/Notification Endpoints' client sides given an
 > already-obtained access token, §10 Encrypted Request/Response
 > support, and — its own OID4VP Wallet role — DCQL query matching
-> against held credentials and `dc+sd-jwt` VP Token construction),
-> `dcql` (the Digital Credentials Query Language, OID4VP §6/§7 — query
-> types, structural validation, §7.1's own Claims Path Pointer
-> evaluation, and the shared Credential-Query-satisfaction check both
-> `wallet` and `verifier` use), and `verifier` (the OID4VP Verifier
-> role: HAIP-§5-profiled Authorization Request construction via
-> `BuildAuthorizationRequest`, `direct_post.jwt` response
+> against held credentials and `dc+sd-jwt`/`mso_mdoc` VP Token
+> construction), `dcql` (the Digital Credentials Query Language, OID4VP
+> §6/§7 — query types, structural validation, §7.1's own Claims Path
+> Pointer evaluation, and the shared Credential-Query-satisfaction
+> checks both `wallet` and `verifier` use), `oid4vpmdoc` (the
+> OID4VP-specific `mso_mdoc` wire structures on top of `credential/mdoc`
+> — `OpenID4VPHandover`/`SessionTranscript` construction and
+> `DeviceResponse`/`Document` CBOR, shared by `verifier` and `wallet`
+> since a Presentation's own `DeviceSigned` must be computed
+> byte-for-byte identically on both sides), and `verifier` (the OID4VP
+> Verifier role: HAIP-§5-profiled Authorization Request construction
+> via `BuildAuthorizationRequest`, `direct_post.jwt` response
 > parsing/decryption via `ParseDirectPostJWTResponse`, and §8.6 VP
-> Token Validation for the `dc+sd-jwt` format via `VerifyResponse` —
-> `mso_mdoc` support and the DC API flow are still to come) are
-> implemented and tested;
+> Token Validation for both `dc+sd-jwt` and `mso_mdoc` via
+> `VerifyResponse` — the DC API flow is still to come) are implemented
+> and tested;
 > everything else below is still just the
 > planned layout, not a finished system. Update each section as the
 > corresponding package
@@ -267,14 +272,20 @@ shape from the phase-by-phase plan, not a description of current code.
     and `ComputeDeviceMAC`/`VerifyDeviceMAC` (ECDH-agreed MAC
     authentication, §12.4.5, P-256 only — see `deriveEMacKey`'s own doc
     comment for why Ed25519 can't do this one) for `DeviceSigned`
-    (§10.3.3), plus `CheckKeyAuthorizations` (§12.8.2 step 1).
+    (§10.3.3), plus `CheckKeyAuthorizations` (§12.8.2 step 1) — now a
+    real consumer, `verifier.VerifyResponse`'s own mdoc path, via the
+    `VerifiedMSO.KeyAuthorizations` field `Verify` populates from the
+    verified MSO's own `DeviceKeyInfo.KeyAuthorizations` (added
+    alongside `oid4vpmdoc`, since `CheckKeyAuthorizations` existed
+    before but nothing exposed the field it needs to call it).
     `SessionTranscript` construction (`DeviceEngagement`, `EReaderKey`,
     `Handover`, §12.7.1) is explicitly out of scope — every function
     that needs it takes `SessionTranscriptBytes` as an opaque,
     caller-supplied value, since building it for an OID4VP presentation
     is that spec's own "Handover" concern, not ISO/IEC 18013-5's
-    proximity-flow one. `DeviceSigned.Marshal`/`UnmarshalDeviceSigned`
-    handle the actual §10.3.3 CBOR wire form.
+    proximity-flow one; see `oid4vpmdoc` for that caller.
+    `DeviceSigned.Marshal`/`UnmarshalDeviceSigned` handle the actual
+    §10.3.3 CBOR wire form.
   - Both `IssuerSigned` and `DeviceSigned` cache the exact bytes they
     authenticated (`rawItems`/`nameSpacesBytes`) rather than re-deriving
     them from the decoded Go value on every `Marshal`/`Verify` call —
@@ -696,7 +707,39 @@ shape from the phase-by-phase plan, not a description of current code.
   returned Presentation satisfy what was asked) and `wallet` (does a
   held credential satisfy a Credential Query at all) need identically,
   factored out after the two were caught duplicating it.
-- **`verifier`** (done, Phase 1+2a) — the OID4VP Verifier role.
+  `CredentialQuery.SatisfiedByMdocClaims` is its "mso_mdoc" twin:
+  `docType` must match `MdocMeta`'s own `DoctypeValue`, and every
+  `Claims` entry — each a `Path.MdocNamespaceAndElement`-shaped
+  two-component path — must be present in the given
+  namespace/element-value map.
+- **`oid4vpmdoc`** (done) — the OID4VP-specific wire structures the
+  "mso_mdoc" Credential Format's own Presentation needs on top of
+  `credential/mdoc`'s own ISO/IEC 18013-5 primitives:
+  `BuildSessionTranscriptBytes` implements Appendix B.2.6.1's own
+  `OpenID4VPHandover`/`SessionTranscript` construction (redirect flow
+  only — `DeviceEngagementBytes`/`EReaderKeyBytes` both CBOR null,
+  `Handover = ["OpenID4VPHandover", sha256(CBOR(OpenID4VPHandoverInfo))]`
+  where `OpenID4VPHandoverInfo = [client_id, nonce, jwkThumbprint,
+  response_uri]`) — checked byte-for-byte against Appendix B.2.6.1's
+  own published worked hex example, not just round-tripped.
+  `MarshalDeviceResponse`/`UnmarshalDeviceResponse` implement ISO/IEC
+  18013-5 §10.3.2/§10.3.3's own `DeviceResponse`/`Document` CBOR
+  structures (a thin wrapper around `credential/mdoc.IssuerSigned`/
+  `DeviceSigned`, which already handle their own inner CBOR forms),
+  always exactly one `Document` per `DeviceResponse` (HAIP §5.3.1's own
+  MUST for multiple returned mdocs: "each ISO mdoc MUST be returned in
+  a separate DeviceResponse") and `status` always `0` ("OK").
+  Deliberately a **shared** package (imported by both `verifier` and
+  `wallet`) rather than duplicated per role, for a stronger reason than
+  `dcql`'s own shared checks: `DeviceSigned` is a cryptographic
+  signature/MAC *over* `SessionTranscriptBytes`, so the Wallet building
+  a Presentation and the Verifier checking it MUST compute byte-for-byte
+  identical bytes or verification fails outright — a drift here isn't
+  just an inconsistency, it silently breaks interop. Not implemented:
+  the DC API's own `OpenID4VPDCAPIHandover` (Appendix B.2.6.2) — the
+  same redirect-flow-only cut `verifier`/`wallet`'s own OID4VP work
+  already makes.
+- **`verifier`** (done, `dc+sd-jwt`+`mso_mdoc`) — the OID4VP Verifier role.
   `BuildAuthorizationRequest` builds and signs a HAIP-§5-profiled
   redirect-flow Authorization Request: a JAR Request Object
   (`"typ":"oauth-authz-req+jwt"`, RFC9101) carrying `response_type:
@@ -757,54 +800,82 @@ shape from the phase-by-phase plan, not a description of current code.
   3). `TestVerifyResponse` is a real end-to-end round trip: build a
   real Authorization Request, issue and present a real SD-JWT VC bound
   to its exact `aud`/`nonce`, and verify it.
-  Phase 2a scope, explicitly: exactly one Presentation per Credential
-  Query (`multiple: true` isn't supported yet), `claim_sets` isn't
-  supported, `dc+sd-jwt` only (`mso_mdoc` returns an error), and every
-  Credential Query is treated as required (no `credential_sets`/§6.4.2
-  Credential-selection orchestration). Still to come:
-  `OpenID4VPHandover`/`DeviceResponse` CBOR construction and
-  verification for the `mso_mdoc` format (real but sizeable — the
-  `SessionTranscriptBytes` piece `credential/mdoc`'s own
-  `SignDeviceSignature`/`ComputeDeviceMAC` already leave as an opaque
-  caller-supplied value precisely so this package can build it), the
-  `multiple`/`claim_sets`/`credential_sets` selection rules (§6.4), and
-  the DC API flow entirely (message shapes, `dc_api`/`dc_api.jwt`,
-  `OpenID4VPDCAPIHandover`) — HAIP formally allows an Ecosystem to
-  choose redirect-only, DC-API-only, or both (HAIP §9.3), so a
-  redirect-flow-only slice is a legitimate, spec-sanctioned choice, not
-  a compliance gap; actually *invoking* the W3C Digital Credentials API
-  is a browser/OS platform concern outside a Go library's own transport
-  responsibilities regardless.
-- **`wallet`** (extended, done for `dc+sd-jwt`) — the naming question
-  above is now resolved: OID4VP's Wallet role lives in the existing
-  `wallet` package rather than a distinct one — "Wallet" is genuinely
-  one real-world actor across both OID4VCI and OID4VP (the same app
-  holds credentials and presents them), the same way `issuer` already
-  covers everything the Credential Issuer role does in one package
-  regardless of internal protocol-section boundaries. New exported
-  surface, all free functions (no `*Wallet` state is actually needed,
-  the same precedent `BuildAuthorizationRequest`/`DPoPAccessTokenHash`
-  already set): `HeldCredential` (a credential this Wallet holds —
-  Format/Credential/HolderKey/HolderKeyAlg — paired with the key its
-  own `cnf` is bound to; this package never verifies a held
-  credential's own Issuer signature itself, the same "resolving trust
-  is a caller's own job" split `RequestCredential`'s own
-  `CredentialResult` already establishes at receipt time), and
-  `MatchDCQLQuery` (evaluates a `dcql.Query` against `[]HeldCredential`
-  via `dcql.CredentialQuery.SatisfiedBySDJWTVCClaims` — the exact same
-  shared check `verifier.VerifyResponse` uses, so a credential that
-  would satisfy a Verifier is also what this package picks; this is
-  the `dcql.Path` *evaluation* half `dcql` itself deliberately doesn't
-  own), `PresentSDJWTVC` (builds one Presentation: a fresh Key Binding
-  JWT bound to the caller's own aud/nonce, reusing every one of the
-  held credential's own Disclosures — no minimal-disclosure trimming
-  yet), and `PresentCredentials` (combines both into a ready-to-encrypt
-  `vp_token` map, §8.1's own shape). Same scope cut as
-  `verifier.VerifyResponse`: exactly one `HeldCredential` per
-  Credential Query, no `claim_sets`, `dc+sd-jwt` only, every Credential
-  Query required. `TestWalletVerifierPresentationRoundTrip` drives the
-  full OID4VP flow between this repo's own two independently-built
-  halves — build a real Authorization Request, match and present a
+  For `mso_mdoc`, `VerifyResponse` base64url-decodes the Presentation
+  into an `oid4vpmdoc.Document`, resolves the Issuer key via a new
+  caller-supplied `MdocIssuerKeyResolver` (from the credential's own
+  unverified `IssuerAuth` x5chain — `internal/cose.DecodeUnverified`,
+  the COSE analog of `jose.DecodeUnverified`), cryptographically
+  verifies `IssuerSigned` (`credential/mdoc.Verify`), rebuilds
+  `SessionTranscriptBytes` *exactly* as the Wallet did
+  (`oid4vpmdoc.BuildSessionTranscriptBytes`, using a new
+  `VerifyResponseRequest.ResponseEncryptionKey` — the same ephemeral
+  key `BuildAuthorizationRequestResult.ResponseDecryptionKey` already
+  returned — to recompute its own public key's RFC 7638 thumbprint),
+  verifies `DeviceSigned` against the now-trusted
+  `DeviceKeyInfo.DeviceKey` (`credential/mdoc.VerifyDeviceSignature` —
+  `DeviceAuthMAC` isn't supported: it needs an `EReaderKey` for ECDH
+  agreement, but the redirect flow's own `SessionTranscript` always
+  sets `EReaderKeyBytes` to null, so there's no in-band reader
+  ephemeral key to agree a MAC key from), checks §12.8.2's own
+  key-authorization rule (`credential/mdoc.CheckKeyAuthorizations`),
+  and checks the result via
+  `dcql.CredentialQuery.SatisfiedByMdocClaims`. `TestVerifyMdocResponse`
+  is the same real end-to-end round trip, for this format.
+  Scope, explicitly: exactly one Presentation per Credential Query
+  (`multiple: true` isn't supported yet), `claim_sets` isn't supported,
+  and every Credential Query is treated as required (no
+  `credential_sets`/§6.4.2 Credential-selection orchestration). Still
+  to come: the `multiple`/`claim_sets`/`credential_sets` selection
+  rules (§6.4), and the DC API flow entirely (message shapes,
+  `dc_api`/`dc_api.jwt`, `OpenID4VPDCAPIHandover`) — HAIP formally
+  allows an Ecosystem to choose redirect-only, DC-API-only, or both
+  (HAIP §9.3), so a redirect-flow-only slice is a legitimate,
+  spec-sanctioned choice, not a compliance gap; actually *invoking* the
+  W3C Digital Credentials API is a browser/OS platform concern outside
+  a Go library's own transport responsibilities regardless.
+- **`wallet`** (extended, done for `dc+sd-jwt`+`mso_mdoc`) — the naming
+  question above is now resolved: OID4VP's Wallet role lives in the
+  existing `wallet` package rather than a distinct one — "Wallet" is
+  genuinely one real-world actor across both OID4VCI and OID4VP (the
+  same app holds credentials and presents them), the same way `issuer`
+  already covers everything the Credential Issuer role does in one
+  package regardless of internal protocol-section boundaries. New
+  exported surface, all free functions (no `*Wallet` state is actually
+  needed, the same precedent `BuildAuthorizationRequest`/
+  `DPoPAccessTokenHash` already set): `HeldCredential` (a credential
+  this Wallet holds — `Format`/`Credential`/`HolderKey`/
+  `HolderKeyAlg`/`MdocDocType`, the last two format-specific — paired
+  with the key its own proof-of-possession is bound to; this package
+  never verifies a held credential's own Issuer signature itself, the
+  same "resolving trust is a caller's own job" split
+  `RequestCredential`'s own `CredentialResult` already establishes at
+  receipt time), `MatchDCQLQuery` (evaluates a `dcql.Query` against
+  `[]HeldCredential` via `dcql.CredentialQuery.SatisfiedBySDJWTVCClaims`/
+  `SatisfiedByMdocClaims` — the exact same shared checks
+  `verifier.VerifyResponse` uses, so a credential that would satisfy a
+  Verifier is also what this package picks; this is the `dcql.Path`
+  *evaluation* half `dcql` itself deliberately doesn't own — for
+  `mso_mdoc`, matching reads `IssuerSigned.NameSpaces` directly, no
+  cryptographic verification needed for that, the same "trust by
+  possession" stance the `dc+sd-jwt` side already takes), `PresentSDJWTVC`
+  (builds one Presentation: a fresh Key Binding JWT bound to the
+  caller's own aud/nonce, reusing every one of the held credential's
+  own Disclosures — no minimal-disclosure trimming yet), `PresentMdoc`
+  (builds one Presentation: `oid4vpmdoc.MarshalDeviceResponse` wrapping
+  the held `IssuerSigned` plus a fresh `DeviceSigned` — ECDSA/EdDSA
+  device signature only, over `SessionTranscriptBytes` built via the
+  *same shared* `oid4vpmdoc.BuildSessionTranscriptBytes` the Verifier
+  reconstructs, with an empty self-asserted `NameSpaces` — this package
+  only ever proves device-key possession, not additional Holder-
+  asserted claims), and `PresentCredentials` (dispatches by format,
+  combining `MatchDCQLQuery` with `PresentSDJWTVC`/`PresentMdoc` into a
+  ready-to-encrypt `vp_token` map, §8.1's own shape). Same scope cut as
+  `verifier.VerifyResponse`: exactly one `HeldCredential` per Credential
+  Query, no `claim_sets`, every Credential Query required.
+  `TestWalletVerifierPresentationRoundTrip`/
+  `TestWalletVerifierMdocPresentationRoundTrip` drive the full OID4VP
+  flow between this repo's own two independently-built halves, one per
+  format — build a real Authorization Request, match and present a
   real held credential, encrypt the response exactly as a real Wallet
   would (`internal/jwe.Encrypt` against the Verifier's own advertised
   key), then parse/decrypt/verify it — the same "real round trip, not

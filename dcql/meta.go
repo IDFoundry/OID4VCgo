@@ -103,3 +103,38 @@ func (c CredentialQuery) SatisfiedBySDJWTVCClaims(claims map[string]any) error {
 	}
 	return nil
 }
+
+// SatisfiedByMdocClaims reports whether docType/nameSpaces — an
+// "mso_mdoc" credential's own document type and disclosed IssuerSigned
+// namespaces (e.g. credential/mdoc.VerifiedMSO's own DocType/
+// NameSpaces, from a prior credential/mdoc.Verify, or the equivalent
+// derived from an unverified IssuerSigned a Wallet already holds)
+// — satisfies c's own "mso_mdoc"-specific constraints (§8.6 point 3):
+// docType must equal MdocMeta's own DoctypeValue, when declared, and
+// every one of c's own Claims — each an exactly-two-component
+// mdoc-form Path (§7.2, see Path.MdocNamespaceAndElement) — must
+// actually be present. The same shared-check rationale as
+// SatisfiedBySDJWTVCClaims applies.
+func (c CredentialQuery) SatisfiedByMdocClaims(docType string, nameSpaces map[string]map[string]any) error {
+	meta, err := c.MdocMeta()
+	if err != nil {
+		return fmt.Errorf("meta: %w", err)
+	}
+	if meta.DoctypeValue != "" && docType != meta.DoctypeValue {
+		return fmt.Errorf("credential's own docType %q does not match the requested doctype_value %q", docType, meta.DoctypeValue)
+	}
+	for _, cl := range c.Claims {
+		namespace, element, ok := cl.Path.MdocNamespaceAndElement()
+		if !ok {
+			return fmt.Errorf("claims path %v is not a valid mdoc-format path (exactly two string components)", cl.Path)
+		}
+		elements, ok := nameSpaces[namespace]
+		if !ok {
+			return fmt.Errorf("namespace %q is not present", namespace)
+		}
+		if _, ok := elements[element]; !ok {
+			return fmt.Errorf("namespace %q element %q is not present", namespace, element)
+		}
+	}
+	return nil
+}

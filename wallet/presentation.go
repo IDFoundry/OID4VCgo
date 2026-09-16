@@ -2,12 +2,18 @@ package wallet
 
 import (
 	"crypto"
+	"crypto/ecdsa"
+	"crypto/ed25519"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 
+	"github.com/idfoundry/oid4vcigo/credential/mdoc"
 	"github.com/idfoundry/oid4vcigo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcigo/dcql"
+	"github.com/idfoundry/oid4vcigo/internal/cose"
 	"github.com/idfoundry/oid4vcigo/internal/jose"
+	"github.com/idfoundry/oid4vcigo/oid4vpmdoc"
 )
 
 // HeldCredential is a credential this Wallet holds and may present.
@@ -21,25 +27,45 @@ import (
 // beyond "this Wallet already holds it").
 type HeldCredential struct {
 	// Format is the Credential Format Identifier. This package
-	// supports "dc+sd-jwt" (credential/sdjwtvc.CredentialFormat) for
-	// presentation — see the package doc comment for what's not yet
-	// supported.
+	// supports "dc+sd-jwt" (credential/sdjwtvc.CredentialFormat) and
+	// "mso_mdoc" (credential/mdoc.CredentialFormat) for presentation.
 	Format string
 
-	// Credential is the credential's own wire encoding — for
-	// "dc+sd-jwt", the compact bare SD-JWT (no Key Binding JWT yet:
-	// "~"-terminated), matching oid4vci.IssuedCredential's own shape.
+	// Credential is the credential's own wire encoding, matching
+	// oid4vci.IssuedCredential's own shape: for "dc+sd-jwt", the
+	// compact bare SD-JWT (no Key Binding JWT yet: "~"-terminated);
+	// for "mso_mdoc", the base64url-encoded CBOR IssuerSigned
+	// structure.
 	Credential string
 
-	// HolderKey signs this credential's own Key Binding JWT when
-	// presented — must correspond to the public key this credential's
-	// own "cnf" claim declares (RFC 7800): a mismatch is caught by
-	// whichever Verifier receives the resulting Presentation, not by
-	// this package.
+	// HolderKey signs this credential's own proof of possession when
+	// presented: a Key Binding JWT for "dc+sd-jwt" (must correspond
+	// to the public key the credential's own "cnf" claim declares,
+	// RFC 7800), or a DeviceSignature for "mso_mdoc" (must correspond
+	// to DeviceKeyInfo.DeviceKey, ISO/IEC 18013-5 §12.3.4) — a
+	// mismatch is caught by whichever Verifier receives the resulting
+	// Presentation, not by this package.
 	HolderKey crypto.Signer
 
-	// HolderKeyAlg is the JOSE algorithm HolderKey signs with.
+	// HolderKeyAlg is the JOSE algorithm HolderKey signs with —
+	// "dc+sd-jwt" only. "mso_mdoc"'s own DeviceSignature algorithm is
+	// derived from HolderKey's own public key type instead (see
+	// PresentMdoc), since credential/mdoc's own functions take a
+	// cose.Alg, not a jose.Alg.
 	HolderKeyAlg jose.Alg
+
+	// MdocDocType is this credential's own ISO/IEC 18013-5 docType
+	// (e.g. "org.iso.18013.5.1.mDL") — "mso_mdoc" only, REQUIRED for
+	// that format. Unlike "dc+sd-jwt"'s own "vct" claim, an mdoc's
+	// docType isn't conveniently readable from Credential without
+	// cryptographically verifying IssuerSigned first (it lives in the
+	// MSO, not IssuerSigned's own NameSpaces) — but the Wallet already
+	// knows it from its own issuance-time bookkeeping (it requested
+	// one specific credential_configuration_id, which maps to exactly
+	// one docType), so this package asks for it directly rather than
+	// re-deriving it from an unverified peek at the credential's own
+	// bytes.
+	MdocDocType string
 }
 
 // resolveHeldSDJWTVC parses credential (a HeldCredential's own
@@ -73,17 +99,37 @@ func resolveHeldSDJWTVC(credential string) (sdjwtvc.Presentation, sdjwtvc.HashAl
 	return pres, hashAlg, claims, nil
 }
 
+// resolveHeldMdocNameSpaces flattens issuerSigned's own NameSpaces
+// (namespace => []IssuerSignedItem) into the namespace =>
+// (data element identifier => value) shape
+// dcql.CredentialQuery.SatisfiedByMdocClaims and VerifyResponseResult's
+// own Claims both use — the same flattening credential/mdoc.Verify
+// itself does internally for VerifiedMSO.NameSpaces, but available
+// here without needing to cryptographically verify IssuerAuth first
+// (see HeldCredential's own doc comment for why matching doesn't
+// require that).
+func resolveHeldMdocNameSpaces(issuerSigned mdoc.IssuerSigned) map[string]map[string]any {
+	out := make(map[string]map[string]any, len(issuerSigned.NameSpaces))
+	for namespace, items := range issuerSigned.NameSpaces {
+		elements := make(map[string]any, len(items))
+		for _, item := range items {
+			elements[item.ElementIdentifier] = item.ElementValue
+		}
+		out[namespace] = elements
+	}
+	return out
+}
+
 // MatchDCQLQuery evaluates query (§6) against candidates and returns,
 // for each Credential Query it could satisfy, the HeldCredential
 // chosen to satisfy it.
 //
 // Phase scope, explicitly matching verifier.VerifyResponse's own
 // scope: exactly one HeldCredential per Credential Query ("multiple:
-// true" isn't supported), "claim_sets" isn't supported, "dc+sd-jwt"
-// only, and every Credential Query is treated as required — one with
-// no matching candidate is a hard error, not silently omitted
-// (§6.4.2's own CredentialSets-driven "may be omitted" rule isn't
-// implemented yet).
+// true" isn't supported), "claim_sets" isn't supported, and every
+// Credential Query is treated as required — one with no matching
+// candidate is a hard error, not silently omitted (§6.4.2's own
+// CredentialSets-driven "may be omitted" rule isn't implemented yet).
 func MatchDCQLQuery(query dcql.Query, candidates []HeldCredential) (map[string]HeldCredential, error) {
 	if err := query.Validate(); err != nil {
 		return nil, fmt.Errorf("wallet: match dcql query: %w", err)
@@ -103,9 +149,22 @@ func MatchDCQLQuery(query dcql.Query, candidates []HeldCredential) (map[string]H
 }
 
 func matchCredentialQuery(cq dcql.CredentialQuery, candidates []HeldCredential) (HeldCredential, error) {
-	if cq.Format != sdjwtvc.CredentialFormat {
+	var match func(dcql.CredentialQuery, []HeldCredential) (HeldCredential, bool)
+	switch cq.Format {
+	case sdjwtvc.CredentialFormat:
+		match = matchSDJWTVCQuery
+	case mdoc.CredentialFormat:
+		match = matchMdocQuery
+	default:
 		return HeldCredential{}, fmt.Errorf("format %q is not yet supported", cq.Format)
 	}
+	if cand, ok := match(cq, candidates); ok {
+		return cand, nil
+	}
+	return HeldCredential{}, fmt.Errorf("no held credential satisfies this credential query")
+}
+
+func matchSDJWTVCQuery(cq dcql.CredentialQuery, candidates []HeldCredential) (HeldCredential, bool) {
 	for _, cand := range candidates {
 		if cand.Format != cq.Format {
 			continue
@@ -115,10 +174,30 @@ func matchCredentialQuery(cq dcql.CredentialQuery, candidates []HeldCredential) 
 			continue // a malformed held credential isn't this query's fault; skip it
 		}
 		if cq.SatisfiedBySDJWTVCClaims(claims) == nil {
-			return cand, nil
+			return cand, true
 		}
 	}
-	return HeldCredential{}, fmt.Errorf("no held credential satisfies this credential query")
+	return HeldCredential{}, false
+}
+
+func matchMdocQuery(cq dcql.CredentialQuery, candidates []HeldCredential) (HeldCredential, bool) {
+	for _, cand := range candidates {
+		if cand.Format != cq.Format {
+			continue
+		}
+		raw, err := base64.RawURLEncoding.DecodeString(cand.Credential)
+		if err != nil {
+			continue
+		}
+		issuerSigned, err := mdoc.UnmarshalIssuerSigned(raw)
+		if err != nil {
+			continue
+		}
+		if cq.SatisfiedByMdocClaims(cand.MdocDocType, resolveHeldMdocNameSpaces(issuerSigned)) == nil {
+			return cand, true
+		}
+	}
+	return HeldCredential{}, false
 }
 
 // PresentSDJWTVC builds a "dc+sd-jwt" Presentation (a VP Token array
@@ -151,6 +230,85 @@ func PresentSDJWTVC(held HeldCredential, aud, nonce string) (string, error) {
 	return compact, nil
 }
 
+// mdocDeviceAlgForKey derives the mdoc authentication COSE algorithm
+// from pub's own Go type — the same "derive alg from the key itself,
+// never trust a wire-declared one" discipline verifier's own
+// mdocDeviceAlgForKey applies on the verification side.
+func mdocDeviceAlgForKey(pub crypto.PublicKey) (cose.Alg, error) {
+	switch pub.(type) {
+	case *ecdsa.PublicKey:
+		return cose.ES256, nil
+	case ed25519.PublicKey:
+		return cose.EdDSA, nil
+	default:
+		return 0, fmt.Errorf("unsupported holder key type %T", pub)
+	}
+}
+
+// PresentMdocParams bundles the Authorization-Request-derived context
+// PresentMdoc needs to build SessionTranscriptBytes identically to
+// however the Verifier will reconstruct it (oid4vpmdoc.HandoverParams)
+// — unlike "dc+sd-jwt"'s Key Binding JWT, "mso_mdoc"'s own
+// DeviceSigned is authenticated over a structure that also commits to
+// the response_uri and the Verifier's own response-encryption key, not
+// just aud/nonce (Appendix B.2.6.1).
+type PresentMdocParams struct {
+	Audience                        string // client_id
+	Nonce                           string
+	ResponseURI                     string
+	ResponseEncryptionJWKThumbprint []byte
+}
+
+// PresentMdoc builds an "mso_mdoc" Presentation (a VP Token array
+// entry, Appendix B.2.5): the base64url-encoded DeviceResponse CBOR
+// structure (oid4vpmdoc.MarshalDeviceResponse) carrying held's own
+// IssuerSigned plus a fresh DeviceSigned — ECDSA/EdDSA device
+// signature (§12.4.6) over SessionTranscriptBytes
+// (oid4vpmdoc.BuildSessionTranscriptBytes) built from params, with no
+// additional self-asserted DeviceSigned namespaces (an empty
+// NameSpaces map — this package only ever proves possession of the
+// device key, it doesn't build Holder-asserted claims of its own).
+func PresentMdoc(held HeldCredential, params PresentMdocParams) (string, error) {
+	if held.Format != mdoc.CredentialFormat {
+		return "", fmt.Errorf("wallet: present mdoc: held credential format is %q, want %q", held.Format, mdoc.CredentialFormat)
+	}
+	if held.MdocDocType == "" {
+		return "", fmt.Errorf("wallet: present mdoc: held credential's own mdoc_doc_type is required")
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(held.Credential)
+	if err != nil {
+		return "", fmt.Errorf("wallet: present mdoc: decode credential: %w", err)
+	}
+	issuerSigned, err := mdoc.UnmarshalIssuerSigned(raw)
+	if err != nil {
+		return "", fmt.Errorf("wallet: present mdoc: unmarshal issuer signed: %w", err)
+	}
+
+	sessionTranscriptBytes, err := oid4vpmdoc.BuildSessionTranscriptBytes(oid4vpmdoc.HandoverParams{
+		ClientID: params.Audience, Nonce: params.Nonce, ResponseURI: params.ResponseURI,
+		ResponseEncryptionJWKThumbprint: params.ResponseEncryptionJWKThumbprint,
+	})
+	if err != nil {
+		return "", fmt.Errorf("wallet: present mdoc: %w", err)
+	}
+	alg, err := mdocDeviceAlgForKey(held.HolderKey.Public())
+	if err != nil {
+		return "", fmt.Errorf("wallet: present mdoc: %w", err)
+	}
+	deviceSigned, err := mdoc.SignDeviceSignature(held.HolderKey, alg, sessionTranscriptBytes, held.MdocDocType, map[string]map[string]interface{}{})
+	if err != nil {
+		return "", fmt.Errorf("wallet: present mdoc: %w", err)
+	}
+
+	deviceResponseBytes, err := oid4vpmdoc.MarshalDeviceResponse(oid4vpmdoc.Document{
+		DocType: held.MdocDocType, IssuerSigned: issuerSigned, DeviceSigned: deviceSigned,
+	})
+	if err != nil {
+		return "", fmt.Errorf("wallet: present mdoc: %w", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(deviceResponseBytes), nil
+}
+
 // PresentationRequest is the input to PresentCredentials.
 type PresentationRequest struct {
 	// Query is REQUIRED: the Verifier's own DCQL query, e.g. decoded
@@ -162,19 +320,24 @@ type PresentationRequest struct {
 	Credentials []HeldCredential
 
 	// Audience is REQUIRED: the Verifier's own Client Identifier
-	// (the Authorization Request's own "client_id", prefix included)
-	// — every Presentation's own Key Binding JWT is bound to it.
+	// (the Authorization Request's own "client_id", prefix included).
 	Audience string
 
 	// Nonce is REQUIRED: the Authorization Request's own "nonce".
 	Nonce string
+
+	// ResponseURI and ResponseEncryptionJWKThumbprint are REQUIRED
+	// whenever Query requests any "mso_mdoc" Credential — see
+	// PresentMdocParams's own doc comment for why "mso_mdoc" needs
+	// them where "dc+sd-jwt" doesn't.
+	ResponseURI                     string
+	ResponseEncryptionJWKThumbprint []byte
 }
 
 // PresentCredentials matches req.Query against req.Credentials
-// (MatchDCQLQuery) and builds a VP Token entry for each match —
-// "dc+sd-jwt" only, see MatchDCQLQuery's own doc comment for the rest
-// of this phase's scope. Returns the vp_token map ready for a
-// direct_post(.jwt) response body (§8.1):
+// (MatchDCQLQuery) and builds a VP Token entry for each match — see
+// MatchDCQLQuery's own doc comment for this phase's scope. Returns the
+// vp_token map ready for a direct_post(.jwt) response body (§8.1):
 // {<Credential Query id>: [<Presentation>]}.
 func PresentCredentials(req PresentationRequest) (map[string][]string, error) {
 	if req.Audience == "" {
@@ -190,7 +353,18 @@ func PresentCredentials(req PresentationRequest) (map[string][]string, error) {
 
 	vpToken := make(map[string][]string, len(matches))
 	for id, held := range matches {
-		presented, err := PresentSDJWTVC(held, req.Audience, req.Nonce)
+		var presented string
+		switch held.Format {
+		case sdjwtvc.CredentialFormat:
+			presented, err = PresentSDJWTVC(held, req.Audience, req.Nonce)
+		case mdoc.CredentialFormat:
+			presented, err = PresentMdoc(held, PresentMdocParams{
+				Audience: req.Audience, Nonce: req.Nonce,
+				ResponseURI: req.ResponseURI, ResponseEncryptionJWKThumbprint: req.ResponseEncryptionJWKThumbprint,
+			})
+		default:
+			err = fmt.Errorf("format %q is not yet supported", held.Format)
+		}
 		if err != nil {
 			return nil, fmt.Errorf("wallet: present credentials: credential query %q: %w", id, err)
 		}

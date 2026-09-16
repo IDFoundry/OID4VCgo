@@ -11,9 +11,12 @@ import (
 
 	fapi "github.com/idfoundry/fapigo"
 
+	"github.com/idfoundry/oid4vcigo/internal/cose"
 	"github.com/idfoundry/oid4vcigo/internal/jose"
 	"github.com/idfoundry/oid4vcigo/internal/jwe"
 	"github.com/idfoundry/oid4vcigo/internal/testcert"
+	"github.com/idfoundry/oid4vcigo/internal/testmdoc"
+	"github.com/idfoundry/oid4vcigo/internal/testverify"
 	"github.com/idfoundry/oid4vcigo/verifier"
 	"github.com/idfoundry/oid4vcigo/wallet"
 )
@@ -28,19 +31,21 @@ func (f issuerKeyResolverFunc) ResolveIssuerKey(ctx context.Context, header, pay
 	return f(ctx, header, payload)
 }
 
-// TestWalletVerifierPresentationRoundTrip drives OID4VP end to end
-// between this repo's own two independently-built halves: a real
-// verifier.Verifier builds and signs an Authorization Request, a real
-// wallet.HeldCredential (a freshly issued "dc+sd-jwt" credential) is
-// matched against its own dcql_query and presented via
-// wallet.PresentCredentials, the resulting vp_token is encrypted into
-// a direct_post.jwt response body exactly as a real Wallet would
-// (internal/jwe.Encrypt against the Verifier's own advertised
-// response-encryption key), and verifier.Verifier parses/decrypts and
-// verifies it — the same "real round trip, not a simulation"
-// discipline TestWalletIssuerRoundTrip already holds OID4VCI to,
-// extended to OID4VP.
-func TestWalletVerifierPresentationRoundTrip(t *testing.T) {
+// mdocIssuerKeyResolverFunc adapts a plain function to
+// verifier.MdocIssuerKeyResolver — the same func-type-adapter idiom as
+// issuerKeyResolverFunc, above.
+type mdocIssuerKeyResolverFunc func(ctx context.Context, x5chain [][]byte, docType string) (crypto.PublicKey, cose.Alg, error)
+
+func (f mdocIssuerKeyResolverFunc) ResolveMdocIssuerKey(ctx context.Context, x5chain [][]byte, docType string) (crypto.PublicKey, cose.Alg, error) {
+	return f(ctx, x5chain, docType)
+}
+
+// newRoundTripVerifier builds a real *verifier.Verifier with a fresh
+// self-signed certificate — the setup both round trip tests below
+// need, varying only in which dcql.Query/HeldCredential format they
+// exercise afterward.
+func newRoundTripVerifier(t *testing.T) (*verifier.Verifier, fapi.URL) {
+	t.Helper()
 	verifierKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatalf("generate verifier key: %v", err)
@@ -59,6 +64,23 @@ func TestWalletVerifierPresentationRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("verifier.New: %v", err)
 	}
+	return v, responseURI
+}
+
+// TestWalletVerifierPresentationRoundTrip drives OID4VP end to end
+// between this repo's own two independently-built halves: a real
+// verifier.Verifier builds and signs an Authorization Request, a real
+// wallet.HeldCredential (a freshly issued "dc+sd-jwt" credential) is
+// matched against its own dcql_query and presented via
+// wallet.PresentCredentials, the resulting vp_token is encrypted into
+// a direct_post.jwt response body exactly as a real Wallet would
+// (internal/jwe.Encrypt against the Verifier's own advertised
+// response-encryption key), and verifier.Verifier parses/decrypts and
+// verifies it — the same "real round trip, not a simulation"
+// discipline TestWalletIssuerRoundTrip already holds OID4VCI to,
+// extended to OID4VP.
+func TestWalletVerifierPresentationRoundTrip(t *testing.T) {
+	v, _ := newRoundTripVerifier(t)
 
 	query := testPresentationQuery(t)
 	built, err := v.BuildAuthorizationRequest(verifier.BuildAuthorizationRequestRequest{Query: query})
@@ -100,19 +122,71 @@ func TestWalletVerifierPresentationRoundTrip(t *testing.T) {
 		ExpectedNonce: built.Nonce,
 		IssuerKeys:    issuerKeys,
 	})
+	vc := testverify.RequireOneCredential(t, result, err, "identity_credential")
+	if vc.Claims["given_name"] != "Alice" {
+		t.Errorf("Claims[given_name] = %v, want Alice", vc.Claims["given_name"])
+	}
+	if vc.Claims["vct"] != testPresentationVCT {
+		t.Errorf("Claims[vct] = %v, want %q", vc.Claims["vct"], testPresentationVCT)
+	}
+}
+
+// TestWalletVerifierMdocPresentationRoundTrip is
+// TestWalletVerifierPresentationRoundTrip's own "mso_mdoc" counterpart:
+// the same real, independently-built halves, this time exercising
+// oid4vpmdoc's own shared Handover/DeviceResponse construction on both
+// sides.
+func TestWalletVerifierMdocPresentationRoundTrip(t *testing.T) {
+	v, responseURI := newRoundTripVerifier(t)
+
+	query := testmdoc.Query(t)
+	built, err := v.BuildAuthorizationRequest(verifier.BuildAuthorizationRequestRequest{Query: query})
 	if err != nil {
-		t.Fatalf("VerifyResponse: %v", err)
+		t.Fatalf("BuildAuthorizationRequest: %v", err)
 	}
-	if len(result.Credentials) != 1 {
-		t.Fatalf("got %d credentials, want 1", len(result.Credentials))
+	thumbprint := testmdoc.ResponseEncryptionThumbprint(t, built.ResponseDecryptionKey)
+
+	f := testmdoc.Issue(t)
+	held := heldMdoc(t, f)
+	vpToken, err := wallet.PresentCredentials(wallet.PresentationRequest{
+		Query:                           query,
+		Credentials:                     []wallet.HeldCredential{held},
+		Audience:                        built.ClientID,
+		Nonce:                           built.Nonce,
+		ResponseURI:                     responseURI.String(),
+		ResponseEncryptionJWKThumbprint: thumbprint,
+	})
+	if err != nil {
+		t.Fatalf("PresentCredentials: %v", err)
 	}
-	if result.Credentials[0].CredentialQueryID != "identity_credential" {
-		t.Errorf("CredentialQueryID = %q", result.Credentials[0].CredentialQueryID)
+
+	responseBody, err := json.Marshal(map[string]any{"vp_token": vpToken})
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
 	}
-	if result.Credentials[0].Claims["given_name"] != "Alice" {
-		t.Errorf("Claims[given_name] = %v, want Alice", result.Credentials[0].Claims["given_name"])
+	responseJWE, err := jwe.Encrypt(&built.ResponseDecryptionKey.PublicKey, jwe.A128GCM, responseBody, jwe.EncryptOptions{})
+	if err != nil {
+		t.Fatalf("jwe.Encrypt: %v", err)
 	}
-	if result.Credentials[0].Claims["vct"] != testPresentationVCT {
-		t.Errorf("Claims[vct] = %v, want %q", result.Credentials[0].Claims["vct"], testPresentationVCT)
+
+	parsed, err := v.ParseDirectPostJWTResponse(responseJWE, built.ResponseDecryptionKey)
+	if err != nil {
+		t.Fatalf("ParseDirectPostJWTResponse: %v", err)
+	}
+
+	mdocIssuerKeys := mdocIssuerKeyResolverFunc(func(context.Context, [][]byte, string) (crypto.PublicKey, cose.Alg, error) {
+		return &f.IssuerKey.PublicKey, cose.ES256, nil
+	})
+	result, err := v.VerifyResponse(context.Background(), verifier.VerifyResponseRequest{
+		Query:                 query,
+		Response:              parsed,
+		ExpectedNonce:         built.Nonce,
+		MdocIssuerKeys:        mdocIssuerKeys,
+		ResponseEncryptionKey: built.ResponseDecryptionKey,
+	})
+	vc := testverify.RequireOneCredential(t, result, err, "mdl")
+	namespace, ok := vc.Claims["org.iso.18013.5.1"].(map[string]interface{})
+	if !ok || namespace["given_name"] != "Alice" {
+		t.Errorf("Claims[org.iso.18013.5.1] = %v", vc.Claims["org.iso.18013.5.1"])
 	}
 }

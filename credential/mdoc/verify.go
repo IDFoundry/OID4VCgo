@@ -25,6 +25,12 @@ type VerifiedMSO struct {
 	DeviceKey    crypto.PublicKey
 	ValidityInfo ValidityInfo
 	X5Chain      [][]byte
+
+	// KeyAuthorizations is the verified DeviceKeyInfo's own
+	// KeyAuthorizations (§12.3.4), for CheckKeyAuthorizations — nil
+	// when the MSO carried none, which CheckKeyAuthorizations treats
+	// as "authorizes nothing".
+	KeyAuthorizations *KeyAuthorizations
 }
 
 // Verify checks IssuerAuth's signature under issuerPub, decodes the
@@ -78,11 +84,12 @@ func Verify(signed IssuerSigned, issuerPub crypto.PublicKey, alg cose.Alg, opts 
 	}
 
 	return VerifiedMSO{
-		DocType:      mso.DocType,
-		NameSpaces:   nameSpaces,
-		DeviceKey:    deviceKey,
-		ValidityInfo: mso.ValidityInfo,
-		X5Chain:      unprotected.X5Chain,
+		DocType:           mso.DocType,
+		NameSpaces:        nameSpaces,
+		DeviceKey:         deviceKey,
+		ValidityInfo:      mso.ValidityInfo,
+		X5Chain:           unprotected.X5Chain,
+		KeyAuthorizations: mso.DeviceKeyInfo.KeyAuthorizations,
 	}, nil
 }
 
