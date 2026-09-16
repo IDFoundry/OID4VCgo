@@ -6,6 +6,7 @@
 package conformancecert
 
 import (
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -18,6 +19,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/idfoundry/oid4vcigo/internal/jwk"
 )
 
 // SelfSignedPEM generates a fresh EC P-256 key and a self-signed
@@ -63,6 +66,29 @@ func ECKeyPEM(key *ecdsa.PrivateKey) (string, error) {
 		return "", err
 	}
 	return string(pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: der})), nil
+}
+
+// jwkWithKid embeds jwk.Marshal's own public-only shape plus the "kid"
+// member a JWK Set entry conventionally carries — the same "embed
+// jwk.JWK + extra fields locally" pattern
+// verifier/authorization_request.go's own responseEncryptionJWK
+// already establishes.
+type jwkWithKid struct {
+	jwk.JWK
+	Kid string `json:"kid"`
+}
+
+// JWKSet builds a single-key JWK Set ({"keys":[...]}) for pub, tagged
+// with kid — the shape a Client Attestation-verifying party's own
+// Dependencies.ClientKeys (fapigo/keys/ephemeral.ClientKeySpec.JWKS)
+// expects, and what a Credential Issuer's own conformance config
+// embeds for its one registered attester's public key.
+func JWKSet(pub crypto.PublicKey, kid string) (json.RawMessage, error) {
+	j, err := jwk.Marshal(pub)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(map[string]any{"keys": []jwkWithKid{{JWK: j, Kid: kid}}})
 }
 
 // WriteJSONConfig JSON-marshals cfg and writes it to a fresh file

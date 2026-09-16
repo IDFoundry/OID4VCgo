@@ -50,6 +50,11 @@ func (h *consentHandler) handleBegin(w http.ResponseWriter, r *http.Request) {
 	switch action := action.(type) {
 	case server.InteractionRequired:
 		h.pending.Put(action.Handle.String(), action.Handle, consentPendingTTL)
+		// Debug/test-support only, not security-relevant — mirrors
+		// FAPIgo's own cmd/conformance-as identically: lets a smoke
+		// test correlate a GET response with its interaction handle
+		// without scraping the rendered HTML.
+		w.Header().Set("X-Interaction-Handle", action.Handle.String())
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_ = consentTemplate.Execute(w, consentPage{
 			Handle: action.Handle.String(), ClientID: action.Interaction.ClientID.String(),

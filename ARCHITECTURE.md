@@ -1264,9 +1264,11 @@ shape from the phase-by-phase plan, not a description of current code.
   (`AttestationBasedClientAuthentication` enabled — the first real
   exercise of that mode anywhere) with a real `issuer.Issuer` via
   `issuer/resource_verifier.go`'s own recipe (also its first real
-  exercise); confirmed live at the metadata/JWKS level, not yet its
-  own PAR/token/credential flow. None of the three has run against the
-  live OIDF suite itself yet. See `conformance/README.md` for current
+  exercise); confirmed live end to end (PAR → consent → token → nonce →
+  credential, with a real Client Attestation + PoP JWT pair and DPoP
+  throughout), surfacing and fixing three real bugs along the way —
+  see `conformance/issuer/README.md`'s own "Status". None of the three
+  has run against the live OIDF suite itself yet. See `conformance/README.md` for current
   status per role, and the approved roadmap for the remaining phases
   (OID4VP Wallet's own dc_api.jwt module lists, and OID4VCI Wallet —
   blocked on a FAPIgo-side change, see AGENTS.md's "Relationship to

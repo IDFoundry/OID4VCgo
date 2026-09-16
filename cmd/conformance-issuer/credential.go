@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/url"
 
 	fapires "github.com/idfoundry/fapigo/resource"
 
@@ -58,15 +59,22 @@ type wireCredentialRequest struct {
 // own static test data stands in for one. No request/response
 // encryption support yet and no credential_identifier-based requests
 // — see README's own "Status".
-func credentialHandler(iss *issuer.Issuer, resourceVerifier *fapires.Verifier, cfg Config) http.HandlerFunc {
+func credentialHandler(iss *issuer.Issuer, resourceVerifier *fapires.Verifier, credentialURL *url.URL, cfg Config) http.HandlerFunc {
 	additional := make(map[string]any, len(cfg.Claims))
 	for name, value := range cfg.Claims {
 		additional[name] = sdjwtvc.SD(value)
 	}
 
 	return func(w http.ResponseWriter, r *http.Request) {
+		// URL is this binary's own configured Credential Endpoint URL,
+		// not r.URL — a net/http server request's own URL has no
+		// Scheme/Host populated (only Path/RawQuery come off the
+		// request line), which would make DPoP's own "htu" comparison
+		// fail; mirrors FAPIgo's own cmd/conformance-as/resource.go,
+		// which passes its pre-built userinfoURL/accountsURL the same
+		// way, never r.URL directly.
 		authCtx, err := resourceVerifier.Verify(r.Context(), fapires.VerifyRequest{
-			Method: r.Method, URL: r.URL, Authorization: r.Header.Get("Authorization"),
+			Method: r.Method, URL: credentialURL, Authorization: r.Header.Get("Authorization"),
 			DPoPProofs: r.Header.Values("DPoP"), PeerCertificate: fapires.PeerCertificateFromHTTP(r),
 		})
 		if err != nil {

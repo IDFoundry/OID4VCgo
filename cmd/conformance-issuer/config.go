@@ -59,10 +59,17 @@ type Config struct {
 // ConfigClient is Config.Client's own shape: everything needed to
 // register one storage.ClientAuthMethodAttestation-authenticated
 // client (HAIP §4.4.1's own Wallet Attestation requirement).
+// ExpectedAttesterIssuer names who signs a valid Client Attestation
+// JWT's own "iss" claim; AttesterJWKS is that same attester's own
+// public key(s) — fapigo/server resolves an attestation's verification
+// key via Dependencies.ClientKeys keyed by this client's own ID (not
+// by ExpectedAttesterIssuer directly, confirmed against
+// server/client_auth_attestation.go), so both are required.
 type ConfigClient struct {
-	ID                     string   `json:"id"`
-	RedirectURIs           []string `json:"redirect_uris"`
-	ExpectedAttesterIssuer string   `json:"expected_attester_issuer"`
+	ID                     string          `json:"id"`
+	RedirectURIs           []string        `json:"redirect_uris"`
+	ExpectedAttesterIssuer string          `json:"expected_attester_issuer"`
+	AttesterJWKS           json.RawMessage `json:"attester_jwks"`
 }
 
 func loadConfig(path string) (Config, error) {
@@ -80,8 +87,9 @@ func loadConfig(path string) (Config, error) {
 	if cfg.Issuer == "" {
 		return Config{}, fmt.Errorf("config: issuer is required")
 	}
-	if cfg.Client.ID == "" || len(cfg.Client.RedirectURIs) == 0 || cfg.Client.ExpectedAttesterIssuer == "" {
-		return Config{}, fmt.Errorf("config: client.id, client.redirect_uris and client.expected_attester_issuer are required")
+	attesterJWKSEmpty := len(cfg.Client.AttesterJWKS) == 0 || string(cfg.Client.AttesterJWKS) == "null"
+	if cfg.Client.ID == "" || len(cfg.Client.RedirectURIs) == 0 || cfg.Client.ExpectedAttesterIssuer == "" || attesterJWKSEmpty {
+		return Config{}, fmt.Errorf("config: client.id, client.redirect_uris, client.expected_attester_issuer and client.attester_jwks are all required")
 	}
 	if cfg.CredentialIssuerSigningKeyPEM == "" {
 		return Config{}, fmt.Errorf("config: credential_issuer_signing_key_pem is required")
