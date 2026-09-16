@@ -133,6 +133,86 @@ func TestMatchDCQLQueryRejectsWhenNoClaimSetOptionSatisfied(t *testing.T) {
 	}
 }
 
+// vctCredentialQuery builds a minimal "dc+sd-jwt" Credential Query
+// (no Claims/ClaimSets) constrained to vct — the shape
+// credential_sets tests need for each option's own member Credential
+// Queries.
+func vctCredentialQuery(t *testing.T, id, vct string) dcql.CredentialQuery {
+	t.Helper()
+	return dcql.CredentialQuery{ID: id, Format: sdjwtvc.CredentialFormat, Meta: testverify.MustSDJWTVCMeta(t, vct)}
+}
+
+// twoVCTCredentials builds the two-entry Credentials array every
+// credential_sets test below needs, one vctCredentialQuery per
+// id/vct pair.
+func twoVCTCredentials(t *testing.T, id1, vct1, id2, vct2 string) []dcql.CredentialQuery {
+	t.Helper()
+	return []dcql.CredentialQuery{vctCredentialQuery(t, id1, vct1), vctCredentialQuery(t, id2, vct2)}
+}
+
+const otherVCT = "https://credentials.example.com/other_credential"
+
+// TestMatchDCQLQueryCredentialSetsPrefersFirstSatisfiableOption
+// mirrors §6.4.2's own rule: given a Credential Set Query whose first
+// option's Credential Query no candidate satisfies, the second
+// (least-preferred) option still wins the match if it's satisfiable.
+func TestMatchDCQLQueryCredentialSetsPrefersFirstSatisfiableOption(t *testing.T) {
+	fixture := newHeldSDJWTVC(t)
+	query := dcql.Query{
+		Credentials:    twoVCTCredentials(t, "primary", otherVCT, "secondary", testPresentationVCT),
+		CredentialSets: []dcql.CredentialSetQuery{{Options: [][]string{{"primary"}, {"secondary"}}}},
+	}
+	matches, err := wallet.MatchDCQLQuery(query, []wallet.HeldCredential{fixture.held})
+	if err != nil {
+		t.Fatalf("MatchDCQLQuery: %v", err)
+	}
+	if len(matches) != 1 || matches["secondary"].Credential != fixture.held.Credential {
+		t.Errorf("matches = %+v, want only %q", matches, "secondary")
+	}
+}
+
+// TestMatchDCQLQueryCredentialSetsOmitsUnsatisfiedOptionalSet mirrors
+// §6.4.2's own rule: a Credential Set Query with required: false and
+// no satisfiable option is silently omitted from the result rather
+// than failing the whole match.
+func TestMatchDCQLQueryCredentialSetsOmitsUnsatisfiedOptionalSet(t *testing.T) {
+	fixture := newHeldSDJWTVC(t)
+	falseVal := false
+	query := dcql.Query{
+		Credentials: twoVCTCredentials(t, "required_cq", testPresentationVCT, "optional_cq", otherVCT),
+		CredentialSets: []dcql.CredentialSetQuery{
+			{Options: [][]string{{"required_cq"}}},
+			{Required: &falseVal, Options: [][]string{{"optional_cq"}}},
+		},
+	}
+	matches, err := wallet.MatchDCQLQuery(query, []wallet.HeldCredential{fixture.held})
+	if err != nil {
+		t.Fatalf("MatchDCQLQuery: %v", err)
+	}
+	if len(matches) != 1 || matches["required_cq"].Credential != fixture.held.Credential {
+		t.Errorf("matches = %+v, want only %q", matches, "required_cq")
+	}
+}
+
+// TestMatchDCQLQueryCredentialSetsFailsWhenRequiredSetUnsatisfied
+// mirrors §6.4.2's own "MUST NOT return any Credential(s)" rule: a
+// required Credential Set Query with no satisfiable option fails the
+// whole match, even though other Credential Set Queries would
+// otherwise be satisfiable.
+func TestMatchDCQLQueryCredentialSetsFailsWhenRequiredSetUnsatisfied(t *testing.T) {
+	fixture := newHeldSDJWTVC(t)
+	query := dcql.Query{
+		Credentials: twoVCTCredentials(t, "unsatisfiable_cq", otherVCT, "satisfiable_cq", testPresentationVCT),
+		CredentialSets: []dcql.CredentialSetQuery{
+			{Options: [][]string{{"unsatisfiable_cq"}}},
+			{Options: [][]string{{"satisfiable_cq"}}},
+		},
+	}
+	if _, err := wallet.MatchDCQLQuery(query, []wallet.HeldCredential{fixture.held}); err == nil {
+		t.Fatalf("MatchDCQLQuery = nil error, want error")
+	}
+}
+
 func TestMatchDCQLQueryRejectsInvalidQuery(t *testing.T) {
 	if _, err := wallet.MatchDCQLQuery(dcql.Query{}, nil); err == nil {
 		t.Fatalf("MatchDCQLQuery = nil error, want error")

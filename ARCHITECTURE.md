@@ -836,10 +836,22 @@ shape from the phase-by-phase plan, not a description of current code.
   Scope, explicitly: exactly one Presentation per Credential Query
   (`multiple: true` isn't supported yet — a satisfiable `claim_sets`
   option is still just checked, not used to pick *which* claims a
-  Presentation discloses), and every Credential Query is treated as
-  required (no `credential_sets`/§6.4.2 Credential-selection
-  orchestration). Still to come: the `multiple`/`credential_sets`
-  selection rules (§6.4.2), and the DC API flow entirely (message shapes,
+  Presentation discloses). `credential_sets` (§6.4.2) is supported: a
+  new private `satisfiableCredentialSetOption` tries each
+  `dcql.CredentialSetQuery.Options` entry in order (most-preferred
+  first), returning the first one whose every referenced Credential
+  Query id actually verifies; a required
+  (`dcql.CredentialSetQuery.IsRequired`) Credential Set with no
+  satisfiable option fails `VerifyResponse` entirely, per §6.4.2's own
+  "MUST NOT return any Credential(s)", while an optional one is
+  silently omitted from `VerifyResponseResult` — and a Credential Query
+  not referenced by any Credential Set Query is never checked at all,
+  matching §6.4.2's own "otherwise, the Verifier requests presentations
+  satisfying credential_sets" (i.e. *only* what `credential_sets`
+  references, once it's present). When `req.Query.CredentialSets` is
+  empty, behavior is unchanged: every Credential Query in
+  `req.Query.Credentials` is required. Still to come: `multiple`
+  (§6.1), and the DC API flow entirely (message shapes,
   `dc_api`/`dc_api.jwt`, `OpenID4VPDCAPIHandover`) — HAIP formally
   allows an Ecosystem to choose redirect-only, DC-API-only, or both
   (HAIP §9.3), so a redirect-flow-only slice is a legitimate,
@@ -884,8 +896,12 @@ shape from the phase-by-phase plan, not a description of current code.
   combining `MatchDCQLQuery` with `PresentSDJWTVC`/`PresentMdoc` into a
   ready-to-encrypt `vp_token` map, §8.1's own shape). Same scope cut as
   `verifier.VerifyResponse`: exactly one `HeldCredential` per Credential
-  Query, and every Credential Query required (no `multiple`/
-  `credential_sets` orchestration yet).
+  Query (no `multiple`), and the same `credential_sets` (§6.4.2)
+  orchestration — a private `satisfiableCredentialSetOption`, structured
+  identically to `verifier`'s own (matching `HeldCredential`s against
+  `candidates` rather than verifying Presentations against a response) —
+  so `PresentCredentials`' own `vp_token` naturally omits an unsatisfied
+  optional Credential Set without any change to its own dispatch logic.
   `TestWalletVerifierPresentationRoundTrip`/
   `TestWalletVerifierMdocPresentationRoundTrip` drive the full OID4VP
   flow between this repo's own two independently-built halves, one per

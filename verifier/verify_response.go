@@ -143,14 +143,26 @@ type VerifyResponseResult struct {
 // (credential/mdoc.CheckKeyAuthorizations), and checks the result via
 // dcql.CredentialQuery.SatisfiedByMdocClaims.
 //
+// req.Query.CredentialSets implements §6.4.2's own "Selecting
+// Credentials" rule: when absent, every Credential Query in
+// req.Query.Credentials is required (one with no verifying
+// Presentation is a hard error). When present, only the Credential
+// Queries referenced by req.Query.CredentialSets are checked at all —
+// for each dcql.CredentialSetQuery, the first Options entry
+// (most-preferred first) whose every referenced Credential Query id
+// actually verifies wins; a required
+// (dcql.CredentialSetQuery.IsRequired) Credential Set with no
+// satisfiable option fails VerifyResponse entirely (per §6.4.2's own
+// "MUST NOT return any Credential(s)"), while an optional one is
+// silently omitted from VerifyResponseResult. A Credential Query not
+// referenced by any Credential Set Query is never checked.
+//
 // Phase scope, explicitly: exactly one Presentation per Credential
-// Query ("multiple: true" isn't supported yet), and every Credential
-// Query in req.Query.Credentials is treated as required (no
-// CredentialSets/§6.4.2 Credential-selection orchestration).
-// "claim_sets" (§6.4.1) is supported:
-// dcql.CredentialQuery.SatisfiedBySDJWTVCClaims/SatisfiedByMdocClaims
-// already try each option in order and report the Presentation as
-// satisfying the query as soon as one option is fully present.
+// Query ("multiple: true" isn't supported yet). "claim_sets" (§6.4.1)
+// is supported: dcql.CredentialQuery.SatisfiedBySDJWTVCClaims/
+// SatisfiedByMdocClaims already try each option in order and report
+// the Presentation as satisfying the query as soon as one option is
+// fully present.
 func (v *Verifier) VerifyResponse(ctx context.Context, req VerifyResponseRequest) (VerifyResponseResult, error) {
 	if err := req.Query.Validate(); err != nil {
 		return VerifyResponseResult{}, fmt.Errorf("verifier: verify response: query: %w", err)
@@ -159,15 +171,67 @@ func (v *Verifier) VerifyResponse(ctx context.Context, req VerifyResponseRequest
 		return VerifyResponseResult{}, fmt.Errorf("verifier: verify response: expected_nonce is required")
 	}
 
+	if len(req.Query.CredentialSets) == 0 {
+		result := VerifyResponseResult{}
+		for _, cq := range req.Query.Credentials {
+			vc, err := v.verifyCredentialQuery(ctx, cq, req)
+			if err != nil {
+				return VerifyResponseResult{}, fmt.Errorf("verifier: verify response: credential query %q: %w", cq.ID, err)
+			}
+			result.Credentials = append(result.Credentials, vc)
+		}
+		return result, nil
+	}
+
+	byID := make(map[string]dcql.CredentialQuery, len(req.Query.Credentials))
+	for _, cq := range req.Query.Credentials {
+		byID[cq.ID] = cq
+	}
+	verified := make(map[string]VerifiedCredential, len(req.Query.Credentials))
+	for _, cs := range req.Query.CredentialSets {
+		option, err := v.satisfiableCredentialSetOption(ctx, cs, byID, req)
+		if err != nil {
+			if cs.IsRequired() {
+				return VerifyResponseResult{}, fmt.Errorf("verifier: verify response: credential set: %w", err)
+			}
+			continue
+		}
+		for id, vc := range option {
+			verified[id] = vc
+		}
+	}
 	result := VerifyResponseResult{}
 	for _, cq := range req.Query.Credentials {
-		vc, err := v.verifyCredentialQuery(ctx, cq, req)
-		if err != nil {
-			return VerifyResponseResult{}, fmt.Errorf("verifier: verify response: credential query %q: %w", cq.ID, err)
+		if vc, ok := verified[cq.ID]; ok {
+			result.Credentials = append(result.Credentials, vc)
 		}
-		result.Credentials = append(result.Credentials, vc)
 	}
 	return result, nil
+}
+
+// satisfiableCredentialSetOption returns the VerifiedCredentials for
+// the first entry in cs.Options (most-preferred first, §6.4.2) whose
+// every referenced Credential Query id actually verifies, or an error
+// naming the last option's own failure if none does.
+func (v *Verifier) satisfiableCredentialSetOption(ctx context.Context, cs dcql.CredentialSetQuery, byID map[string]dcql.CredentialQuery, req VerifyResponseRequest) (map[string]VerifiedCredential, error) {
+	var lastErr error
+	for _, option := range cs.Options {
+		verified := make(map[string]VerifiedCredential, len(option))
+		satisfied := true
+		for _, id := range option {
+			vc, err := v.verifyCredentialQuery(ctx, byID[id], req)
+			if err != nil {
+				satisfied = false
+				lastErr = fmt.Errorf("credential query %q: %w", id, err)
+				break
+			}
+			verified[id] = vc
+		}
+		if satisfied {
+			return verified, nil
+		}
+	}
+	return nil, fmt.Errorf("no option is satisfied: %w", lastErr)
 }
 
 // verifyCredentialQuery locates cq's own Presentation in
