@@ -2,12 +2,11 @@ package main
 
 import (
 	"context"
-	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/x509"
 	"encoding/json"
-	"encoding/pem"
 	"errors"
 	"io"
 	"net/http"
@@ -18,23 +17,12 @@ import (
 	fapi "github.com/idfoundry/fapigo"
 
 	"github.com/idfoundry/oid4vcigo/dcql"
+	"github.com/idfoundry/oid4vcigo/internal/conformancecert"
 	"github.com/idfoundry/oid4vcigo/internal/jose"
 	"github.com/idfoundry/oid4vcigo/internal/jwe"
-	"github.com/idfoundry/oid4vcigo/internal/jwk"
 	"github.com/idfoundry/oid4vcigo/internal/testcert"
 	"github.com/idfoundry/oid4vcigo/verifier"
 )
-
-// fixedIssuerKeyResolver always resolves to the one issuer key this
-// test signed the fixture credential with — standing in for whatever
-// real trust mechanism a deployment would use, the same fake shape
-// verifier's own tests use (see verifier/verify_response_test.go's
-// fixedSDJWTVCIssuerKeyResolver).
-type fixedIssuerKeyResolver struct{ pub crypto.PublicKey }
-
-func (r fixedIssuerKeyResolver) ResolveIssuerKey(context.Context, map[string]any, map[string]any) (crypto.PublicKey, jose.Alg, error) {
-	return r.pub, jose.ES256, nil
-}
 
 // verifyOutcome captures what the fake Verifier server's own
 // "POST /response" handler observed, for the test's own final
@@ -46,9 +34,15 @@ type verifyOutcome struct {
 
 // setupWalletUnderTest issues this binary's own fixture credential
 // (the same real code path main.go uses) and returns the resulting
-// *server plus the credential issuer's own private key, which the
-// fake Verifier server needs to trust.
-func setupWalletUnderTest(t *testing.T) (*server, *ecdsa.PrivateKey) {
+// *server plus the CA certificate the fake Verifier server needs to
+// trust — a genuine issuing CA, not a self-signed leaf, since the
+// fake Verifier below uses a real verifier.X5CIssuerKeyResolver (the
+// same one a real deployment would use), which correctly rejects a
+// self-signed leaf (see verifier/x5c_issuer_key_resolver.go's own doc
+// comment). This proves the whole chain for real: this binary's own
+// issuing side produces an x5c a real chain-validating resolver
+// actually accepts, not just a resolver stubbed to trust anything.
+func setupWalletUnderTest(t *testing.T) (*server, *x509.Certificate) {
 	t.Helper()
 	issuerKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -58,18 +52,24 @@ func setupWalletUnderTest(t *testing.T) (*server, *ecdsa.PrivateKey) {
 	if err != nil {
 		t.Fatalf("generate holder key: %v", err)
 	}
-	issuerCert := testcert.SelfSigned(t, "conformance-wallet-vp-test-issuer", &issuerKey.PublicKey, issuerKey)
-	issuerCertPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: issuerCert.Raw})
+	ca, caKey, _, _, err := conformancecert.GenerateCA("conformance-wallet-vp-test-ca")
+	if err != nil {
+		t.Fatalf("GenerateCA: %v", err)
+	}
+	issuerCertPEM, err := conformancecert.IssueLeafCertPEM("conformance-wallet-vp-test-issuer", issuerKey, ca, caKey)
+	if err != nil {
+		t.Fatalf("IssueLeafCertPEM: %v", err)
+	}
 	cfg := Config{
 		VCT:                            "urn:eudi:pid:1",
 		Claims:                         map[string]string{"given_name": "Jean", "family_name": "Dupont"},
-		CredentialIssuerCertificatePEM: string(issuerCertPEM),
+		CredentialIssuerCertificatePEM: issuerCertPEM,
 	}
 	cred, err := issueFixtureCredential(cfg, issuerKey, holderKey)
 	if err != nil {
 		t.Fatalf("issueFixtureCredential: %v", err)
 	}
-	return &server{cred: cred}, issuerKey
+	return &server{cred: cred}, ca
 }
 
 // newTestQuery builds the same DCQL query shape
@@ -94,8 +94,13 @@ func newTestQuery(t *testing.T, vct string) dcql.Query {
 // httptest.TLSServer serving its own request_uri/response_uri/
 // callback endpoints — everything this binary's handleAuthorize needs
 // on the other end of the wire, so the test exercises this binary's
-// real HTTP client code, not a mock.
-func newFakeVerifierServer(t *testing.T, query dcql.Query, issuerKey *ecdsa.PrivateKey) (*verifier.Verifier, *httptest.Server, verifier.BuildAuthorizationRequestResult, *verifyOutcome) {
+// real HTTP client code, not a mock. issuerCA is the CA
+// setupWalletUnderTest issued the fixture credential's own x5c leaf
+// under — the fake Verifier's own IssuerKeys resolver
+// (verifier.X5CIssuerKeyResolver) trusts it as the sole root, so
+// verifying the presented credential exercises real x5c chain
+// validation end to end.
+func newFakeVerifierServer(t *testing.T, query dcql.Query, issuerCA *x509.Certificate) (*verifier.Verifier, *httptest.Server, verifier.BuildAuthorizationRequestResult, *verifyOutcome) {
 	t.Helper()
 	clientKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -126,41 +131,26 @@ func newFakeVerifierServer(t *testing.T, query dcql.Query, issuerKey *ecdsa.Priv
 		t.Fatalf("BuildAuthorizationRequest: %v", err)
 	}
 
-	issuerPub := parseIssuerPublicKey(t, &issuerKey.PublicKey)
+	roots := x509.NewCertPool()
+	roots.AddCert(issuerCA)
+	issuerKeys := verifier.X5CIssuerKeyResolver{Roots: roots}
 	got := &verifyOutcome{}
 
 	mux.HandleFunc("GET /request/1", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/oauth-authz-req+jwt")
 		_, _ = w.Write([]byte(built.RequestObject))
 	})
-	mux.HandleFunc("POST /response", handleFakeVerifierResponse(v, query, built, issuerPub, ts.URL+"/callback", got))
+	mux.HandleFunc("POST /response", handleFakeVerifierResponse(v, query, built, issuerKeys, ts.URL+"/callback", got))
 	mux.HandleFunc("GET /callback", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
 
 	return v, ts, built, got
-}
-
-func parseIssuerPublicKey(t *testing.T, pub *ecdsa.PublicKey) crypto.PublicKey {
-	t.Helper()
-	j, err := jwk.Marshal(pub)
-	if err != nil {
-		t.Fatalf("marshal issuer jwk: %v", err)
-	}
-	raw, err := json.Marshal(j)
-	if err != nil {
-		t.Fatalf("marshal issuer jwk: %v", err)
-	}
-	parsed, err := jwk.ParsePublicKey(raw)
-	if err != nil {
-		t.Fatalf("parse issuer jwk: %v", err)
-	}
-	return parsed
 }
 
 // handleFakeVerifierResponse is the fake Verifier server's own
 // "response_uri" handler: decrypts and cryptographically verifies
 // whatever this binary's handleAuthorize POSTs, recording the outcome
 // into got for the test's own final assertions.
-func handleFakeVerifierResponse(v *verifier.Verifier, query dcql.Query, built verifier.BuildAuthorizationRequestResult, issuerPub crypto.PublicKey, callbackURL string, got *verifyOutcome) http.HandlerFunc {
+func handleFakeVerifierResponse(v *verifier.Verifier, query dcql.Query, built verifier.BuildAuthorizationRequestResult, issuerKeys verifier.SDJWTVCIssuerKeyResolver, callbackURL string, got *verifyOutcome) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseForm(); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -174,7 +164,7 @@ func handleFakeVerifierResponse(v *verifier.Verifier, query dcql.Query, built ve
 		}
 		result, err := v.VerifyResponse(context.Background(), verifier.VerifyResponseRequest{
 			Query: query, Response: parsed, ExpectedNonce: built.Nonce,
-			IssuerKeys: fixedIssuerKeyResolver{pub: issuerPub},
+			IssuerKeys: issuerKeys,
 		})
 		if err != nil {
 			got.err = err
@@ -209,9 +199,9 @@ func unwrapResponseError(err error) error {
 // resulting direct_post.jwt response end to end — not a mock on
 // either side.
 func TestHandleAuthorize_FullRoundTripAgainstARealVerifier(t *testing.T) {
-	wallet, issuerKey := setupWalletUnderTest(t)
+	wallet, issuerCA := setupWalletUnderTest(t)
 	query := newTestQuery(t, "urn:eudi:pid:1")
-	_, ts, built, got := newFakeVerifierServer(t, query, issuerKey)
+	_, ts, built, got := newFakeVerifierServer(t, query, issuerCA)
 
 	previousHTTPClient := httpClient
 	httpClient = ts.Client() // trust the httptest server's own cert for this binary's outbound calls

@@ -105,6 +105,25 @@ suite's own DCQL query was driven via `client.dcql` (a `dc+sd-jwt` /
 query, matching this binary's own fixture credential) rather than a
 built-in named query.
 
+**Both checks are also enforced on the verifying side, not just
+satisfied on this binary's own issuing side** — the suite catching
+these gaps only proves *the suite* rejects a bad x5c; it says nothing
+about whether *our own* Verifier would. `verifier.X5CIssuerKeyResolver`
+(new, `verifier/x5c_issuer_key_resolver.go`) implements
+`SDJWTVCIssuerKeyResolver` by actually validating a presented `x5c`
+chain against a configured trust anchor set: it requires `x5c` to be
+present, rejects a self-signed leaf outright (even one that happens to
+also be a configured root), and verifies the remaining chain via
+`x509.Certificate.Verify`. Seven unit tests
+(`verifier/x5c_issuer_key_resolver_test.go`) prove both the accept and
+every reject path, including "a self-signed leaf that IS itself a
+trusted root is still rejected" — the case that would be easiest to
+get wrong. `TestHandleAuthorize_FullRoundTripAgainstARealVerifier`
+(`integration_test.go`) now uses this real resolver instead of a
+fake that trusted any key unconditionally, so this binary's own
+regression test proves its issued credential passes *genuine* x5c
+chain validation, not just a stub.
+
 ## Scope
 
 Only the `direct_post.jwt` + `x509_hash` + `request_uri_signed` module

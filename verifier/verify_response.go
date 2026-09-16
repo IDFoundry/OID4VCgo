@@ -27,7 +27,9 @@ import (
 // package's — the same split credential/sdjwtvc's own doc comment
 // draws for Verify's own issuerPub parameter, and
 // issuer.AttestationVerifier/ProofBindingKeyResolver already draw on
-// the issuance side.
+// the issuance side. X5CIssuerKeyResolver implements the x5c-chain
+// half of that policy for a deployment that just needs a trust anchor
+// set, rather than DID resolution or VCT metadata lookup.
 type SDJWTVCIssuerKeyResolver interface {
 	// ResolveIssuerKey inspects header/payload — the Issuer-signed
 	// JWT's own JOSE header and (not yet cryptographically verified)
@@ -488,12 +490,24 @@ func holderPublicKeyFromCNF(cnf any) (crypto.PublicKey, jose.Alg, error) {
 	if err != nil {
 		return nil, "", fmt.Errorf("parse cnf.jwk: %w", err)
 	}
+	alg, err := sdjwtvcAlgForKey(pub)
+	if err != nil {
+		return nil, "", err
+	}
+	return pub, alg, nil
+}
+
+// sdjwtvcAlgForKey infers the JOSE algorithm a "dc+sd-jwt" JWS
+// verifies under from its own public key's type — internal/jose's own
+// ES256/EdDSA scope (see its doc comment), the same inference
+// holderPublicKeyFromCNF and X5CIssuerKeyResolver both need.
+func sdjwtvcAlgForKey(pub crypto.PublicKey) (jose.Alg, error) {
 	switch pub.(type) {
 	case *ecdsa.PublicKey:
-		return pub, jose.ES256, nil
+		return jose.ES256, nil
 	case ed25519.PublicKey:
-		return pub, jose.EdDSA, nil
+		return jose.EdDSA, nil
 	default:
-		return nil, "", fmt.Errorf("unsupported cnf.jwk key type %T", pub)
+		return "", fmt.Errorf("unsupported public key type %T", pub)
 	}
 }

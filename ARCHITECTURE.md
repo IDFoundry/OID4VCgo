@@ -985,7 +985,17 @@ shape from the phase-by-phase plan, not a description of current code.
   `trusted_authorities`, DID resolution, VCT metadata lookup — stays a
   deployment policy decision, the same split
   `issuer.AttestationVerifier`/`ProofBindingKeyResolver` already draw
-  on the issuance side), derives the Holder Binding key **only** from
+  on the issuance side; `X5CIssuerKeyResolver` implements the x5c-chain
+  half of that policy for a deployment that just needs a trust anchor
+  set — extracts and parses `x5c` (rejecting a missing/empty header,
+  HAIP 1.0 §5.3's own MUST), rejects a self-signed leaf outright even
+  if that exact certificate is itself a configured root, then verifies
+  the chain via `x509.Certificate.Verify`; confirmed against a real
+  `credential/sdjwtvc.IssueOptions.IssuerCertificate`-issued credential
+  in `cmd/conformance-wallet-vp`'s own
+  `TestHandleAuthorize_FullRoundTripAgainstARealVerifier`, and against
+  the OIDF conformance suite's own two live checks on this exact
+  requirement), derives the Holder Binding key **only** from
   the credential's own already-cryptographically-verified `cnf` claim
   (RFC 7800) — never from an externally supplied value, since accepting
   one without deriving it from the credential itself would make the
