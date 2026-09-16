@@ -1250,10 +1250,18 @@ shape from the phase-by-phase plan, not a description of current code.
   its own `expiresAt`), the simplest reading of RFC 9449 §11.1's literal
   "MUST reject any DPoP proof in which the jti has been seen before",
   and consistent with this package's own no-garbage-collection caveat.
-- **`conformance`** — OIDF HAIP conformance suite harness, once one of the
-  protocol packages above is far enough along to run against it. Mirrors
-  FAPIgo's `conformance/` structure and its own AGENTS.md documentation
-  convention.
+- **`conformance`** (started) — OIDF HAIP conformance suite harness,
+  mirroring FAPIgo's own `conformance/` structure (`cmd/conformance-*`
+  binaries wiring the real production package behind real HTTP, Docker
+  attaching to the suite's own network, a config generator producing
+  throwaway key material rather than committing any) and its own
+  AGENTS.md documentation convention. `cmd/conformance-verifier` (OID4VP
+  1.0 Final/HAIP Verifier role) exists, compiles, is unit-tested, and
+  was smoke-tested locally end to end — not yet run against the live
+  suite. See `conformance/README.md` for current status per role, and
+  the approved roadmap for the remaining phases (OID4VP Wallet, OID4VCI
+  Issuer, and OID4VCI Wallet — the last blocked on a FAPIgo-side
+  change, see AGENTS.md's "Relationship to FAPIgo").
 
 ## Design rules carried over from FAPIgo
 

@@ -57,8 +57,9 @@ package layout and design rationale as it's built out.
 
 ## Where conformance-suite knowledge lives
 
-Nowhere yet — this repo has no conformance harness or OIDF suite runs so
-far (see ARCHITECTURE.md's status section). Once one exists, it will be
-documented the way FAPIgo documents its own AS-side and RP-side findings
-(`conformance/*/README.md` in that repo) — add a pointer here when that
-happens rather than re-deriving suite behavior from scratch each time.
+[`conformance/README.md`](conformance/README.md) — mirrors FAPIgo's own
+`conformance/*/README.md` documentation convention. As of this note,
+`cmd/conformance-verifier` (OID4VP Verifier role) exists, compiles, is
+unit- and smoke-tested, but has not yet been run against the live OIDF
+suite — see `conformance/verifier/README.md`'s own "Status" section
+before assuming any specific test module passes.

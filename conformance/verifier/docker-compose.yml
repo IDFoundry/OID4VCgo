@@ -1,0 +1,42 @@
+# Runs conformance-verifier against the OpenID Foundation conformance
+# suite entirely locally — no tunnel required. Mirrors FAPIgo's own
+# conformance/server/docker-compose.yml exactly, including why no CA/
+# tunnel is needed (the suite's own outbound HTTP client trusts any
+# certificate and skips hostname verification for every call it makes
+# to the implementation under test).
+#
+# Usage:
+#   1. Start the OIDF conformance suite separately (its own
+#      docker-compose up) and find the network it created:
+#        docker network ls   # usually <suite-checkout-dir>_default
+#   2. export SUITE_NETWORK=<that network name>   (defaults below)
+#   3. go run ./conformance/verifier/scripts/generate-config \
+#        -out=conformance/verifier/oidf-config/haip.config.json \
+#        -base-url=https://conformance-verifier:8443
+#   4. Create a test plan in the suite's own UI for
+#      "OpenID for Verifiable Presentations 1.0 Final/HAIP: Test a
+#      verifier" (oid4vp-1final-verifier-haip-test-plan) pointed at
+#      https://conformance-verifier:8443/authorize, pasting the
+#      generated config's credential-issuer signing key where the
+#      suite's own config asks for it (generate-config's own stderr
+#      output shows exactly what to paste).
+#   5. docker compose up --build
+
+networks:
+  suite:
+    name: ${SUITE_NETWORK:-conformance-suite_default}
+    external: true
+
+services:
+  conformance-verifier:
+    build:
+      context: ../..
+      dockerfile: conformance/verifier/Dockerfile
+    hostname: conformance-verifier
+    networks: [suite]
+    ports:
+      - "18446:8443" # optional: only needed to poke it from the host
+    volumes:
+      - ./oidf-config/haip.config.json:/config.json:ro
+    command:
+      - -config=/config.json
