@@ -106,19 +106,21 @@ func testIdentityQuery(t *testing.T) dcql.Query {
 	}
 }
 
-// TestVerifyResponse drives a real end-to-end round trip: build a real
-// Authorization Request (for its own ClientID/Nonce), issue and
-// present a real SD-JWT VC bound to that exact aud/nonce, and verify
-// it via VerifyResponse — the same "real round trip, not a
-// simulation" discipline every other cross-package wire-format claim
-// in this repo is held to.
-func TestVerifyResponse(t *testing.T) {
+// verifySDJWTVCRoundTrip drives a real end-to-end round trip against
+// query: build a real Authorization Request (for its own
+// ClientID/Nonce), issue and present a real SD-JWT VC bound to that
+// exact aud/nonce, and verify it via VerifyResponse — the same "real
+// round trip, not a simulation" discipline every other cross-package
+// wire-format claim in this repo is held to. Shared by TestVerifyResponse
+// and TestVerifyResponseAcceptsSatisfiableClaimSetOption, which differ
+// only in which query is asked.
+func verifySDJWTVCRoundTrip(t *testing.T, query dcql.Query) verifier.VerifiedCredential {
+	t.Helper()
 	cfg, deps := validConfig(t)
 	v, err := verifier.New(cfg, deps)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	query := testIdentityQuery(t)
 	built, err := v.BuildAuthorizationRequest(verifier.BuildAuthorizationRequestRequest{Query: query})
 	if err != nil {
 		t.Fatalf("BuildAuthorizationRequest: %v", err)
@@ -132,7 +134,11 @@ func TestVerifyResponse(t *testing.T) {
 		ExpectedNonce: built.Nonce,
 		IssuerKeys:    fixedSDJWTVCIssuerKeyResolver{pub: &fixture.issuerKey.PublicKey, alg: jose.ES256},
 	})
-	vc := testverify.RequireOneCredential(t, result, err, "identity_credential")
+	return testverify.RequireOneCredential(t, result, err, "identity_credential")
+}
+
+func TestVerifyResponse(t *testing.T) {
+	vc := verifySDJWTVCRoundTrip(t, testIdentityQuery(t))
 	if vc.Claims["given_name"] != "Alice" {
 		t.Errorf("Claims[given_name] = %v, want Alice", vc.Claims["given_name"])
 	}
@@ -144,25 +150,7 @@ func TestVerifyResponse(t *testing.T) {
 // Verifier doesn't require the first option to be the one satisfied,
 // just some option.
 func TestVerifyResponseAcceptsSatisfiableClaimSetOption(t *testing.T) {
-	cfg, deps := validConfig(t)
-	v, err := verifier.New(cfg, deps)
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	query := testverify.ClaimSetOptionsQuery(t, testVCT)
-	built, err := v.BuildAuthorizationRequest(verifier.BuildAuthorizationRequestRequest{Query: query})
-	if err != nil {
-		t.Fatalf("BuildAuthorizationRequest: %v", err)
-	}
-	fixture := newSDJWTVCPresentation(t, v.ClientID(), built.Nonce)
-
-	result, err := v.VerifyResponse(context.Background(), verifier.VerifyResponseRequest{
-		Query:         query,
-		Response:      verifier.ParsedResponse{VPToken: map[string][]string{"identity_credential": {fixture.compact}}},
-		ExpectedNonce: built.Nonce,
-		IssuerKeys:    fixedSDJWTVCIssuerKeyResolver{pub: &fixture.issuerKey.PublicKey, alg: jose.ES256},
-	})
-	testverify.RequireOneCredential(t, result, err, "identity_credential")
+	verifySDJWTVCRoundTrip(t, testverify.ClaimSetOptionsQuery(t, testVCT))
 }
 
 // rejectCaseSDJWTVC builds a VerifyResponseRequest presenting one real

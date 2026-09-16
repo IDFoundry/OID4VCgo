@@ -130,9 +130,8 @@ func resolveHeldMdocNameSpaces(issuerSigned mdoc.IssuerSigned) map[string]map[st
 // required — one with no matching candidate is a hard error, not
 // silently omitted (§6.4.2's own CredentialSets-driven "may be
 // omitted" rule isn't implemented yet). "claim_sets" (§6.4.1) is
-// supported: dcql.CredentialQuery.SatisfiedBySDJWTVCClaims/
-// SatisfiedByMdocClaims already try each option in order and report a
-// candidate as matching as soon as one is fully present.
+// handled by dcql.CredentialQuery's own Satisfied* methods — see
+// their doc comments for exactly how an option is chosen.
 func MatchDCQLQuery(query dcql.Query, candidates []HeldCredential) (map[string]HeldCredential, error) {
 	if err := query.Validate(); err != nil {
 		return nil, fmt.Errorf("wallet: match dcql query: %w", err)

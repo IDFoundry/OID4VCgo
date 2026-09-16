@@ -77,15 +77,24 @@ func testPresentationQuery(t *testing.T) dcql.Query {
 	}}}
 }
 
-func TestMatchDCQLQuery(t *testing.T) {
-	fixture := newHeldSDJWTVC(t)
-	matches, err := wallet.MatchDCQLQuery(testPresentationQuery(t), []wallet.HeldCredential{fixture.held})
+// matchesOneCredential asserts a successful MatchDCQLQuery call
+// (against fixture.held) matched exactly the "identity_credential"
+// query with fixture's own credential — shared by TestMatchDCQLQuery
+// and TestMatchDCQLQueryAcceptsSatisfiableClaimSetOption, which differ
+// only in which query is asked.
+func matchesOneCredential(t *testing.T, query dcql.Query, fixture heldSDJWTVCFixture) {
+	t.Helper()
+	matches, err := wallet.MatchDCQLQuery(query, []wallet.HeldCredential{fixture.held})
 	if err != nil {
 		t.Fatalf("MatchDCQLQuery: %v", err)
 	}
 	if len(matches) != 1 || matches["identity_credential"].Credential != fixture.held.Credential {
 		t.Errorf("matches = %+v", matches)
 	}
+}
+
+func TestMatchDCQLQuery(t *testing.T) {
+	matchesOneCredential(t, testPresentationQuery(t), newHeldSDJWTVC(t))
 }
 
 func TestMatchDCQLQueryRejectsNoCandidate(t *testing.T) {
@@ -109,15 +118,7 @@ func TestMatchDCQLQueryRejectsWrongVCT(t *testing.T) {
 // still matches — the Wallet doesn't require the first option to be
 // satisfiable, just some option.
 func TestMatchDCQLQueryAcceptsSatisfiableClaimSetOption(t *testing.T) {
-	fixture := newHeldSDJWTVC(t)
-	query := testverify.ClaimSetOptionsQuery(t, testPresentationVCT)
-	matches, err := wallet.MatchDCQLQuery(query, []wallet.HeldCredential{fixture.held})
-	if err != nil {
-		t.Fatalf("MatchDCQLQuery: %v", err)
-	}
-	if len(matches) != 1 || matches["identity_credential"].Credential != fixture.held.Credential {
-		t.Errorf("matches = %+v", matches)
-	}
+	matchesOneCredential(t, testverify.ClaimSetOptionsQuery(t, testPresentationVCT), newHeldSDJWTVC(t))
 }
 
 func TestMatchDCQLQueryRejectsWhenNoClaimSetOptionSatisfied(t *testing.T) {
