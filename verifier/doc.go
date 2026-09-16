@@ -32,14 +32,13 @@
 // never touch. VerifyResponse implements §8.6's own VP Token Validation
 // for both the "dc+sd-jwt" and "mso_mdoc" formats, including all of
 // §6's own Credential/Claims selection rules: "multiple" (§6.1),
-// "claim_sets" (§6.4.1), and "credential_sets" (§6.4.2) — but only
-// against a redirect-flow response so far: it always checks a
-// Presentation's own Holder Binding proof against this Verifier's own
-// Client Identifier and rebuilds the mdoc SessionTranscript via
-// oid4vpmdoc.BuildSessionTranscriptBytes (the redirect flow's own
-// Handover); it doesn't yet accept a DC API response's own Origin-bound
-// audience ("origin:..." per Appendix A.4) or use
-// oid4vpmdoc.BuildDCAPISessionTranscriptBytes — that's the next slice.
+// "claim_sets" (§6.4.1), and "credential_sets" (§6.4.2) — and for both
+// the redirect and DC API flows (VerifyResponseRequest.Origin selects
+// which): it checks a Presentation's own Holder Binding proof against
+// either this Verifier's own Client Identifier or the DC API's own
+// Origin-bound audience ("origin:..." per Appendix A.4), and rebuilds
+// the mdoc SessionTranscript via oid4vpmdoc.BuildSessionTranscriptBytes
+// or BuildDCAPISessionTranscriptBytes to match.
 // request_uri hosting/dereferencing (and, for the DC API flow, actually
 // invoking the Digital Credentials API itself) are out of scope for
 // this package regardless — like issuer.CreateCredentialOffer's own
