@@ -9,6 +9,7 @@ import (
 
 	fapi "github.com/idfoundry/fapigo"
 
+	"github.com/idfoundry/oid4vcigo"
 	"github.com/idfoundry/oid4vcigo/internal/dpop"
 )
 
@@ -79,7 +80,7 @@ type ExchangePreAuthorizedCodeResult struct {
 	// (§8.2). Empty when PreAuthorizedCodeRecord.CredentialConfigurationIDs
 	// was empty — this exchange's own behavior is then unchanged from
 	// before this field existed.
-	AuthorizationDetails []AuthorizationDetail
+	AuthorizationDetails []oid4vci.AuthorizationDetail
 }
 
 // WriteJSON writes r as a complete Token Response (§6.2): the
@@ -95,10 +96,10 @@ func (r ExchangePreAuthorizedCodeResult) WriteJSON(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(struct { //nolint:gosec // the actual §6.2 Token Response body, meant to carry this
-		AccessToken          string                `json:"access_token"`
-		TokenType            string                `json:"token_type"`
-		ExpiresIn            int64                 `json:"expires_in"`
-		AuthorizationDetails []AuthorizationDetail `json:"authorization_details,omitempty"`
+		AccessToken          string                        `json:"access_token"`
+		TokenType            string                        `json:"token_type"`
+		ExpiresIn            int64                         `json:"expires_in"`
+		AuthorizationDetails []oid4vci.AuthorizationDetail `json:"authorization_details,omitempty"`
 	}{
 		AccessToken: r.AccessToken, TokenType: r.TokenType, ExpiresIn: int64(r.ExpiresIn.Seconds()),
 		AuthorizationDetails: r.AuthorizationDetails,
@@ -193,7 +194,7 @@ func (iss *Issuer) ExchangePreAuthorizedCode(ctx context.Context, req ExchangePr
 		Issuer: iss.cfg.Issuer.String(), Audience: iss.cfg.Issuer.String(),
 		Now: now, Lifetime: iss.cfg.Limits.AccessTokenLifetime, Random: iss.deps.Random,
 	}
-	var authDetails []AuthorizationDetail
+	var authDetails []oid4vci.AuthorizationDetail
 	if len(record.CredentialConfigurationIDs) > 0 {
 		authDetails, err = iss.mintAuthorizationDetails(record.CredentialConfigurationIDs)
 		if err != nil {
@@ -232,8 +233,8 @@ func (iss *Issuer) ExchangePreAuthorizedCode(ctx context.Context, req ExchangePr
 // actually support is this deployment's own bug, not anything the
 // Wallet did wrong, so this returns a plain error rather than a
 // wallet-facing *Error.
-func (iss *Issuer) mintAuthorizationDetails(configIDs []string) ([]AuthorizationDetail, error) {
-	details := make([]AuthorizationDetail, len(configIDs))
+func (iss *Issuer) mintAuthorizationDetails(configIDs []string) ([]oid4vci.AuthorizationDetail, error) {
+	details := make([]oid4vci.AuthorizationDetail, len(configIDs))
 	for i, configID := range configIDs {
 		if _, ok := iss.cfg.CredentialConfigurationsSupported[configID]; !ok {
 			return nil, fmt.Errorf("credential_configuration_id %q is not supported", configID)
@@ -242,8 +243,8 @@ func (iss *Issuer) mintAuthorizationDetails(configIDs []string) ([]Authorization
 		if err != nil {
 			return nil, fmt.Errorf("generate credential_identifier: %w", err)
 		}
-		details[i] = AuthorizationDetail{
-			Type: authorizationDetailsTypeOpenIDCredential, CredentialConfigurationID: configID,
+		details[i] = oid4vci.AuthorizationDetail{
+			Type: oid4vci.AuthorizationDetailsTypeOpenIDCredential, CredentialConfigurationID: configID,
 			CredentialIdentifiers: []string{identifier},
 		}
 	}

@@ -12,6 +12,8 @@ import (
 	"time"
 
 	fapi "github.com/idfoundry/fapigo"
+
+	"github.com/idfoundry/oid4vcigo"
 )
 
 // PreAuthorizedCodeGrantType is the Token Request's own "grant_type"
@@ -35,8 +37,6 @@ const maxTokenResponseBytes = 1 << 16
 // used"), and the one mechanism HAIP would otherwise want here —
 // Wallet Attestation — isn't buildable yet; see the package doc
 // comment's own note on storage.ClientAuthMethodAttestation.
-// authorization_details isn't supported either, matching this
-// package's own credential_configuration_id-only scope elsewhere.
 type PreAuthorizedCodeTokenRequest struct {
 	// PreAuthorizedCode is REQUIRED — a resolved Credential Offer's own
 	// Grants.PreAuthorizedCode.PreAuthorizedCode.
@@ -76,17 +76,28 @@ type PreAuthorizedCodeTokenResult struct {
 	// expires_in (RFC 6749 §5.1 marks it RECOMMENDED, not REQUIRED).
 	ExpiresIn    time.Duration
 	HasExpiresIn bool
+
+	// AuthorizationDetails is whatever the Token Response's own
+	// "authorization_details" parameter carried (RFC 9396 §6.2), empty
+	// if absent — an Authorization Server that supports this optional
+	// mechanism (§6.2's own "MAY do so") echoes back one entry per
+	// requested Credential Configuration, each with its own
+	// CredentialIdentifiers. Pass one of those values as
+	// CredentialRequest.CredentialIdentifier in a later
+	// RequestCredential call instead of CredentialConfigurationID
+	// (§8.2).
+	AuthorizationDetails []oid4vci.AuthorizationDetail
 }
 
 // tokenResponseBody is the Token Response's own wire shape this
-// package reads — RFC 6749 §5.1 plus RFC 9449 §5's token_type value;
-// authorization_details and every other optional member (§6.2) are
-// ignored, matching this package's own credential_configuration_id-only
-// scope.
+// package reads — RFC 6749 §5.1 plus RFC 9449 §5's token_type value
+// and RFC 9396 §6.2's own authorization_details; every other optional
+// member (§6.2) is still ignored.
 type tokenResponseBody struct {
-	AccessToken string `json:"access_token"`
-	TokenType   string `json:"token_type"`
-	ExpiresIn   *int64 `json:"expires_in"`
+	AccessToken          string                        `json:"access_token"`
+	TokenType            string                        `json:"token_type"`
+	ExpiresIn            *int64                        `json:"expires_in"`
+	AuthorizationDetails []oid4vci.AuthorizationDetail `json:"authorization_details,omitempty"`
 }
 
 // RequestPreAuthorizedCodeToken implements the Pre-Authorized Code
@@ -173,8 +184,9 @@ func decodeTokenResponse(body []byte) (PreAuthorizedCodeTokenResult, error) {
 		return PreAuthorizedCodeTokenResult{}, fmt.Errorf("wallet: request pre-authorized code token: decode response: %w", err)
 	}
 	result := PreAuthorizedCodeTokenResult{
-		AccessToken: fapi.NewSecret(wire.AccessToken),
-		TokenType:   wire.TokenType,
+		AccessToken:          fapi.NewSecret(wire.AccessToken),
+		TokenType:            wire.TokenType,
+		AuthorizationDetails: wire.AuthorizationDetails,
 	}
 	if wire.ExpiresIn != nil {
 		result.ExpiresIn = time.Duration(*wire.ExpiresIn) * time.Second

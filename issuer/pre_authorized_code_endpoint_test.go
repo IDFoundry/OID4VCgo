@@ -14,6 +14,7 @@ import (
 	fapi "github.com/idfoundry/fapigo"
 	"github.com/idfoundry/fapigo/fapihttp"
 
+	"github.com/idfoundry/oid4vcigo"
 	"github.com/idfoundry/oid4vcigo/internal/jose"
 	"github.com/idfoundry/oid4vcigo/issuer"
 	"github.com/idfoundry/oid4vcigo/wallet"
@@ -308,7 +309,7 @@ func TestExchangePreAuthorizedCode_MintsAuthorizationDetails(t *testing.T) {
 	if !ok {
 		t.Fatalf("AccessTokenParams.Claims is missing authorization_details: %v", f.tokens.lastParams.Claims)
 	}
-	var fromClaims []issuer.AuthorizationDetail
+	var fromClaims []oid4vci.AuthorizationDetail
 	if err := json.Unmarshal(raw, &fromClaims); err != nil {
 		t.Fatalf("unmarshal authorization_details claim: %v", err)
 	}
@@ -373,13 +374,13 @@ func TestExchangePreAuthorizedCodeResult_WriteJSON_IncludesAuthorizationDetails(
 	rec := httptest.NewRecorder()
 	issuer.ExchangePreAuthorizedCodeResult{
 		AccessToken: "tok", TokenType: "DPoP", ExpiresIn: time.Minute,
-		AuthorizationDetails: []issuer.AuthorizationDetail{
+		AuthorizationDetails: []oid4vci.AuthorizationDetail{
 			{Type: "openid_credential", CredentialConfigurationID: "IdentityCredential", CredentialIdentifiers: []string{"id-1"}},
 		},
 	}.WriteJSON(rec)
 
 	var body struct {
-		AuthorizationDetails []issuer.AuthorizationDetail `json:"authorization_details"`
+		AuthorizationDetails []oid4vci.AuthorizationDetail `json:"authorization_details"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("unmarshal response body: %v", err)

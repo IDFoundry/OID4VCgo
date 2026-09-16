@@ -283,6 +283,65 @@ func TestRequestCredential_RejectsMissingConfigID(t *testing.T) {
 	}
 }
 
+func TestRequestCredential_RejectsBothConfigIDAndIdentifier(t *testing.T) {
+	w, err := wallet.New(validConfig(), validDependencies())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	resource := &fakeProtectedResourceClient{do: func(context.Context, *http.Request) (*http.Response, error) {
+		t.Fatalf("unexpected HTTP call")
+		return nil, nil
+	}}
+	_, err = w.RequestCredential(context.Background(), resource, testCredentialEndpoint(t), wallet.CredentialRequest{
+		CredentialConfigurationID: "IdentityCredential",
+		CredentialIdentifier:      "some-identifier",
+		Keys:                      []crypto.Signer{testP256Key(t)},
+	})
+	if err == nil {
+		t.Fatalf("RequestCredential = nil error, want error")
+	}
+}
+
+// TestRequestCredential_CredentialIdentifier checks §8.2's own
+// alternative to credential_configuration_id is sent correctly on the
+// wire, and that credential_configuration_id is omitted entirely
+// (§8.2's own MUST) rather than sent alongside as an empty string.
+func TestRequestCredential_CredentialIdentifier(t *testing.T) {
+	w, err := wallet.New(validConfig(), validDependencies())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	resource := &fakeProtectedResourceClient{
+		do: func(context.Context, *http.Request) (*http.Response, error) {
+			return jsonResponse([]byte(`{"credentials":[{"credential":"signed-credential"}]}`)), nil
+		},
+	}
+
+	result, err := w.RequestCredential(context.Background(), resource, testCredentialEndpoint(t), wallet.CredentialRequest{
+		CredentialIdentifier: "CivilEngineeringDegree-2023",
+		Keys:                 []crypto.Signer{testP256Key(t)},
+		CredentialIssuer:     "https://issuer.example.com",
+		Nonce:                "test-nonce",
+	})
+	if err != nil {
+		t.Fatalf("RequestCredential: %v", err)
+	}
+	if len(result.Credentials) != 1 || result.Credentials[0].Credential != "signed-credential" {
+		t.Errorf("Credentials = %v", result.Credentials)
+	}
+
+	var sentBody map[string]any
+	if err := json.Unmarshal(resource.lastBody, &sentBody); err != nil {
+		t.Fatalf("unmarshal sent body: %v", err)
+	}
+	if sentBody["credential_identifier"] != "CivilEngineeringDegree-2023" {
+		t.Errorf("credential_identifier = %v", sentBody["credential_identifier"])
+	}
+	if _, hasConfigID := sentBody["credential_configuration_id"]; hasConfigID {
+		t.Errorf("sent body has credential_configuration_id, want omitted entirely: %v", sentBody)
+	}
+}
+
 func TestRequestCredential_RejectsNoKeys(t *testing.T) {
 	w, err := wallet.New(validConfig(), validDependencies())
 	if err != nil {

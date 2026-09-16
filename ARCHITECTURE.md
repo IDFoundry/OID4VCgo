@@ -477,22 +477,29 @@ shape from the phase-by-phase plan, not a description of current code.
   see the Deferred Credential Endpoint below for that half).
   `credential_identifier`-based requests (§8.2, RFC 9396's own
   `authorization_details` mechanism) are supported too: a new
-  `AuthorizedRequest.AuthorizationDetails []AuthorizationDetail` (parsed
-  by the caller from the verified access token's own
+  `AuthorizedRequest.AuthorizationDetails []oid4vci.AuthorizationDetail`
+  (parsed by the caller from the verified access token's own
   `authorization_details` claim — see `resource_verifier.go`'s own
   updated recipe) and `CredentialRequest.CredentialIdentifier`, resolved
   by a new private `resolveCredentialConfiguration`/
   `resolveCredentialIdentifier` pair — exactly one of
   `CredentialConfigurationID`/`CredentialIdentifier` may be set; the
   latter bypasses the `Scopes` check entirely, since the matched
-  `AuthorizationDetail` is itself the grant. *Minting* `credential_identifier`
-  values into a Token Response is the Authorization Server's own job:
-  for the Authorization Code Flow that's `fapigo/server`, already
-  RAR-capable; for the Pre-Authorized Code Flow,
-  `ExchangePreAuthorizedCode` does it itself now, via a new
-  `PreAuthorizedCodeRecord.CredentialConfigurationIDs` — when non-empty,
-  a new private `mintAuthorizationDetails` generates one fresh
-  `credential_identifier` per entry (the same `randomID` helper
+  `AuthorizationDetail` is itself the grant.
+  `oid4vci.AuthorizationDetail` (RFC 9396 §2/§5.1.1/§6.2's own
+  `openid_credential` type) lives in the root package, not here — once
+  `wallet` needed the exact same wire shape too (see its own bullet
+  below), this became the same "shared value types only where
+  semantics match" split `CredentialOffer` and friends already live
+  there for; it started out as `issuer`'s own type in the PR that added
+  this, moved here immediately after.
+  *Minting* `credential_identifier` values into a Token Response is the
+  Authorization Server's own job: for the Authorization Code Flow
+  that's `fapigo/server`, already RAR-capable; for the Pre-Authorized
+  Code Flow, `ExchangePreAuthorizedCode` does it itself, via a new
+  `PreAuthorizedCodeRecord.CredentialConfigurationIDs` — when
+  non-empty, a new private `mintAuthorizationDetails` generates one
+  fresh `credential_identifier` per entry (the same `randomID` helper
   `RequestNonce`/`issueDPoPNonce` already used, factored out of both
   once a third near-identical inline copy would otherwise have existed)
   and embeds the result both in the issued access token's own claims
@@ -502,11 +509,7 @@ shape from the phase-by-phase plan, not a description of current code.
   `ExchangePreAuthorizedCodeResult.AuthorizationDetails`, which
   `WriteJSON` echoes in the Token Response (§6.2) — this package never
   round-trips a self-contained token's own claims back out of itself,
-  so the result carries the same value independently. Client-side
-  `credential_identifier` support (building a Credential Request that
-  presents one, on the `wallet` side) remains a further, separate
-  follow-up: `wallet.CredentialRequest` still only supports
-  `CredentialConfigurationID`.
+  so the result carries the same value independently.
   Also implements the
   Credential Offer (§4): `CreateCredentialOffer` builds and validates a
   `CredentialOffer` (`credential_issuer`, `credential_configuration_ids`,
@@ -675,8 +678,24 @@ shape from the phase-by-phase plan, not a description of current code.
   Credentials (HTTP 200) or, if the Issuer instead defers issuance at
   this very first response (HTTP 202, transaction_id/interval — §8.3's
   own deferred-at-first-response case), a polling hint to pass to
-  `RequestDeferredCredential` — via a narrow `ProtectedResourceClient`
-  interface
+  `RequestDeferredCredential`. `CredentialRequest.CredentialIdentifier`
+  is §8.2's own alternative to `CredentialConfigurationID` — exactly
+  one of the two may be set — for presenting a
+  `credential_identifier` a prior Token Response's own
+  `authorization_details` (RFC 9396 §6.2) granted; for the
+  Pre-Authorized Code Flow, `RequestPreAuthorizedCodeToken`'s own
+  `PreAuthorizedCodeTokenResult.AuthorizationDetails` parses that
+  parameter out (`issuer.ExchangePreAuthorizedCode`'s own
+  counterpart, see the `issuer` bullet above); for the Authorization
+  Code Flow, parsing it out of whatever `fapigo/client` returns is the
+  caller's own job, the same split this package already draws for
+  acquiring that token in the first place. This closes the loop a
+  same-session `issuer`-side PR left open (client-side support was
+  its own explicitly flagged follow-up) — proven with a genuine
+  mint-then-consume round trip, not just each side's own unit tests,
+  in `TestWalletPreAuthorizedCodeRoundTrip_WithCredentialIdentifier`.
+  `RequestCredential` POSTs the request and parses the response via a
+  narrow `ProtectedResourceClient` interface
   (`Do(ctx, *http.Request) (*http.Response, error)`) rather than
   importing `fapigo/client`'s own `*client.ResourceClient` type by
   name — satisfied by it directly (identical method signature), but
