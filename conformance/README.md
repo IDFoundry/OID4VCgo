@@ -29,5 +29,17 @@ negative-test expectations differ.
   yet run against the live OIDF suite**. Its own three `dc_api.jwt`
   module lists are out of scope for this binary. See
   `wallet-vp/README.md`.
-- **Not yet started**: OID4VCI Issuer role, OID4VCI Wallet role (the
-  latter blocked on a FAPIgo-side change — see `AGENTS.md`).
+- **`issuer/`** — OID4VCI 1.0 Final/HAIP Issuer role
+  (`oid4vci-1_0-issuer-haip-test-plan`): `cmd/conformance-issuer` pairs
+  a real `fapigo/server.Server` (FAPI 2.0 Security Profile Final,
+  Wallet Attestation client authentication) with a real
+  `oid4vcigo/issuer.Issuer`; the suite plays Wallet. This is the first
+  real exercise anywhere of `AttestationBasedClientAuthentication` and
+  of `issuer/resource_verifier.go`'s own recipe. Confirmed live: the
+  full wiring boots and serves correctly-formed AS + Credential Issuer
+  metadata and a real JWKS (a permanent regression test) — **the PAR →
+  consent → token → credential flow itself hasn't been exercised
+  end to end yet**, and neither has a run against the live suite. See
+  `issuer/README.md`.
+- **Not yet started**: OID4VCI Wallet role (blocked on a FAPIgo-side
+  change — see `AGENTS.md`).

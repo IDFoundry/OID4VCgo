@@ -1,0 +1,112 @@
+package main
+
+import (
+	"crypto/ecdsa"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/json"
+	"encoding/pem"
+	"fmt"
+	"os"
+
+	fapi "github.com/idfoundry/fapigo"
+)
+
+// Config is this binary's own configuration — one JSON file, inline
+// key material, the same shape cmd/conformance-verifier/-wallet-vp's
+// own Config uses.
+type Config struct {
+	ListenAddr string `json:"listen_addr"`
+
+	// Issuer is this binary's own externally-reachable HTTPS base URL
+	// — both the FAPI 2.0 Authorization Server's own "issuer" identity
+	// and the OID4VCI Credential Issuer's own identity: one origin
+	// plays both roles, matching HAIP's typical combined deployment
+	// (issuer/authorization_server.go's own recipe pairs one *Issuer
+	// with one *server.Server this same way).
+	Issuer string `json:"issuer"`
+
+	TLSCertificatePEM string `json:"tls_certificate_pem"`
+	TLSPrivateKeyPEM  string `json:"tls_private_key_pem"`
+
+	// Client is the one test client this binary registers — the OIDF
+	// suite's own client1 for this test plan (client2, needed only for
+	// PS256/RSA-negative-test un-skipping in some other plans, isn't
+	// wired here — see README's own "Open questions").
+	Client ConfigClient `json:"client"`
+
+	// CredentialIssuerSigningKeyPEM signs every issued "dc+sd-jwt"
+	// credential.
+	CredentialIssuerSigningKeyPEM string `json:"credential_issuer_signing_key_pem"`
+
+	// VCT/Claims/Scope/CredentialConfigurationID describe the one
+	// CredentialConfiguration this issuer advertises and issues. Claims
+	// is this binary's own fixed, canned claim content — issuer.Issuer
+	// has no user database of its own (issuer.CredentialRequest.SDJWTClaims'
+	// own doc comment), so a caller must always supply real values;
+	// this binary's caller-supplied values are just static test data.
+	VCT                       string            `json:"vct"`
+	Claims                    map[string]string `json:"claims"`
+	Scope                     string            `json:"scope"`
+	CredentialConfigurationID string            `json:"credential_configuration_id"`
+
+	// DefaultSubject pre-fills the consent page's own subject field —
+	// this binary has no real end-user login of its own, matching
+	// cmd/conformance-as's identical stance.
+	DefaultSubject string `json:"default_subject"`
+}
+
+// ConfigClient is Config.Client's own shape: everything needed to
+// register one storage.ClientAuthMethodAttestation-authenticated
+// client (HAIP §4.4.1's own Wallet Attestation requirement).
+type ConfigClient struct {
+	ID                     string   `json:"id"`
+	RedirectURIs           []string `json:"redirect_uris"`
+	ExpectedAttesterIssuer string   `json:"expected_attester_issuer"`
+}
+
+func loadConfig(path string) (Config, error) {
+	raw, err := os.ReadFile(path) // #nosec G304 -- path is the operator's own -config flag value, not untrusted input
+	if err != nil {
+		return Config{}, fmt.Errorf("read config: %w", err)
+	}
+	var cfg Config
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		return Config{}, fmt.Errorf("parse config: %w", err)
+	}
+	if cfg.ListenAddr == "" {
+		return Config{}, fmt.Errorf("config: listen_addr is required")
+	}
+	if cfg.Issuer == "" {
+		return Config{}, fmt.Errorf("config: issuer is required")
+	}
+	if cfg.Client.ID == "" || len(cfg.Client.RedirectURIs) == 0 || cfg.Client.ExpectedAttesterIssuer == "" {
+		return Config{}, fmt.Errorf("config: client.id, client.redirect_uris and client.expected_attester_issuer are required")
+	}
+	if cfg.CredentialIssuerSigningKeyPEM == "" {
+		return Config{}, fmt.Errorf("config: credential_issuer_signing_key_pem is required")
+	}
+	if cfg.VCT == "" || len(cfg.Claims) == 0 || cfg.Scope == "" || cfg.CredentialConfigurationID == "" {
+		return Config{}, fmt.Errorf("config: vct, claims, scope and credential_configuration_id are all required")
+	}
+	if cfg.DefaultSubject == "" {
+		cfg.DefaultSubject = "conformance-test-subject"
+	}
+	return cfg, nil
+}
+
+func (c Config) tlsCertificate() (tls.Certificate, error) {
+	return tls.X509KeyPair([]byte(c.TLSCertificatePEM), []byte(c.TLSPrivateKeyPEM))
+}
+
+func (c Config) credentialIssuerSigningKey() (*ecdsa.PrivateKey, error) {
+	block, _ := pem.Decode([]byte(c.CredentialIssuerSigningKeyPEM))
+	if block == nil {
+		return nil, fmt.Errorf("credential_issuer_signing_key_pem: no PEM block found")
+	}
+	return x509.ParseECPrivateKey(block.Bytes)
+}
+
+func (c Config) issuerURL() (fapi.URL, error) {
+	return fapi.ParseIssuerURL(c.Issuer)
+}

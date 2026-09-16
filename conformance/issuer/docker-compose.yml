@@ -1,0 +1,39 @@
+# Runs conformance-issuer against the OpenID Foundation conformance
+# suite entirely locally — no tunnel required. Mirrors
+# conformance/verifier/docker-compose.yml exactly, including why no
+# CA/tunnel is needed.
+#
+# Usage:
+#   1. Start the OIDF conformance suite separately (its own
+#      docker-compose up) and find the network it created:
+#        docker network ls   # usually <suite-checkout-dir>_default
+#   2. export SUITE_NETWORK=<that network name>   (defaults below)
+#   3. Create a test plan in the suite's own UI for "OpenID for
+#      Verifiable Credential Issuance 1.0 Final/HAIP: Test an issuer"
+#      (oid4vci-1_0-issuer-haip-test-plan) — this assigns a client_id,
+#      redirect_uris, and an attester issuer identity for the suite's
+#      own emulated Wallet.
+#   4. go run ./conformance/issuer/scripts/generate-config \
+#        -issuer=https://conformance-issuer:8443 \
+#        -out=conformance/issuer/oidf-config/haip.config.json
+#      then fill in the generated config's "client" object from step 3.
+#   5. docker compose up --build
+
+networks:
+  suite:
+    name: ${SUITE_NETWORK:-conformance-suite_default}
+    external: true
+
+services:
+  conformance-issuer:
+    build:
+      context: ../..
+      dockerfile: conformance/issuer/Dockerfile
+    hostname: conformance-issuer
+    networks: [suite]
+    ports:
+      - "18448:8443" # optional: only needed to poke it from the host
+    volumes:
+      - ./oidf-config/haip.config.json:/config.json:ro
+    command:
+      - -config=/config.json

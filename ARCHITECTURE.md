@@ -1257,14 +1257,20 @@ shape from the phase-by-phase plan, not a description of current code.
   throwaway key material rather than committing any) and its own
   AGENTS.md documentation convention. `cmd/conformance-verifier` (OID4VP
   1.0 Final/HAIP Verifier role) and `cmd/conformance-wallet-vp` (OID4VP
-  Wallet role, direct_post.jwt module list only) both exist, compile,
-  are unit-tested, and were confirmed live against each other end to
-  end (a real cryptographic round trip) — neither has run against the
+  Wallet role, direct_post.jwt module list only) exist, compile, are
+  unit-tested, and were confirmed live against each other end to end
+  (a real cryptographic round trip). `cmd/conformance-issuer` (OID4VCI
+  1.0 Final/HAIP Issuer role) pairs a real `fapigo/server.Server`
+  (`AttestationBasedClientAuthentication` enabled — the first real
+  exercise of that mode anywhere) with a real `issuer.Issuer` via
+  `issuer/resource_verifier.go`'s own recipe (also its first real
+  exercise); confirmed live at the metadata/JWKS level, not yet its
+  own PAR/token/credential flow. None of the three has run against the
   live OIDF suite itself yet. See `conformance/README.md` for current
   status per role, and the approved roadmap for the remaining phases
-  (OID4VP Wallet's own dc_api.jwt module lists, OID4VCI Issuer, and
-  OID4VCI Wallet — the last blocked on a FAPIgo-side
-  change, see AGENTS.md's "Relationship to FAPIgo").
+  (OID4VP Wallet's own dc_api.jwt module lists, and OID4VCI Wallet —
+  blocked on a FAPIgo-side change, see AGENTS.md's "Relationship to
+  FAPIgo").
 
 ## Design rules carried over from FAPIgo
 
