@@ -18,10 +18,12 @@
 //
 // # Status
 //
-// RecommendedIssuerConfig exists so far, covering what HAIP 1.0 §7 and
-// §4.5.1 recommend for a Credential Configuration's own proof types,
-// alongside RecommendedWalletConfig — HAIP 1.0 §7's same ES256 minimum,
-// the one part of a wallet.Config it grounds a specific value for.
-// RecommendedVerifierConfig will join them once the verifier package
-// itself exists — see ARCHITECTURE.md.
+// RecommendedIssuerConfig covers what HAIP 1.0 §7 and §4.5.1 recommend
+// for a Credential Configuration's own proof types; RecommendedWalletConfig
+// covers HAIP 1.0 §7's same ES256 minimum, the one part of a
+// wallet.Config it grounds a specific value for; RecommendedVerifierConfig
+// covers HAIP 1.0 §7's ES256 minimum (the Request Object's own signing
+// algorithm) and §5's explicit "MUST be supported by Verifiers" pair of
+// JWE enc values, the two parts of a verifier.Config it grounds
+// specific values for.
 package haip

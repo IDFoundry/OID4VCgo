@@ -17,8 +17,10 @@ import (
 	"github.com/idfoundry/oid4vcigo/attestation"
 	"github.com/idfoundry/oid4vcigo/haip"
 	"github.com/idfoundry/oid4vcigo/internal/jose"
+	"github.com/idfoundry/oid4vcigo/internal/testcert"
 	"github.com/idfoundry/oid4vcigo/issuer"
 	"github.com/idfoundry/oid4vcigo/storage"
+	"github.com/idfoundry/oid4vcigo/verifier"
 	"github.com/idfoundry/oid4vcigo/wallet"
 )
 
@@ -115,5 +117,36 @@ func TestRecommendedWalletConfigWorksWithWalletNew(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("wallet.New: %v", err)
+	}
+}
+
+// TestRecommendedVerifierConfigWorksWithVerifierNew wires
+// RecommendedVerifierConfig's own SigningAlg/EncValuesSupported into a
+// real verifier.Config and confirms the result passes verifier.New —
+// the simplest way to keep this recommendation from silently drifting
+// out of sync with what verifier actually accepts.
+func TestRecommendedVerifierConfigWorksWithVerifierNew(t *testing.T) {
+	signer, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	cert := testcert.SelfSigned(t, "haip verifier test", &signer.PublicKey, signer)
+	responseURI, err := fapi.ParseEndpointURL("https://verifier.example.com/response")
+	if err != nil {
+		t.Fatalf("ParseEndpointURL: %v", err)
+	}
+
+	rec := haip.RecommendedVerifierConfig()
+	_, err = verifier.New(verifier.Config{
+		ClientCertificate:  cert,
+		ResponseURI:        responseURI,
+		SigningAlg:         rec.SigningAlg,
+		EncValuesSupported: rec.EncValuesSupported,
+	}, verifier.Dependencies{
+		Signer: signer,
+		Random: rand.Reader,
+	})
+	if err != nil {
+		t.Fatalf("verifier.New: %v", err)
 	}
 }
