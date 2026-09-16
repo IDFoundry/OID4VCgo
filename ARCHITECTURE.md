@@ -388,11 +388,20 @@ shape from the phase-by-phase plan, not a description of current code.
   example), and `credential_request_encryption`/`credential_response_encryption`
   (§10, §12.2.4 — `Config.RequestEncryption`/`Config.ResponseEncryption`,
   see below), `batch_credential_issuance` (§12.2.4 —
-  `Config.BatchCredentialIssuance`, advertising-only: setting it changes
-  what `Metadata` advertises, not what `RequestCredential` itself
-  accepts — enforcing `BatchSize` as an actual cap on a Credential
-  Request's own proof count is a deliberate, separate follow-up),
-  top-level `display` (§12.2.4 — `Config.Display`), and
+  `Config.BatchCredentialIssuance`): besides what `Metadata` advertises,
+  `RequestCredential`'s own `checkBatchSize` now enforces `BatchSize` as
+  an actual cap on a Credential Request's own `proofs` array size —
+  nil caps at exactly 1 (reading §12.2.4's own "the presence of this
+  parameter means the issuer supports more than one key proof" as
+  implying absence means it doesn't), a set value caps at `BatchSize`.
+  The cap is on the array's own size, not the number of Credentials
+  ultimately issued: an attestation proof's own `attested_keys` can
+  still fan out to more Credentials than that, since the fan-out
+  happens *within* one array entry, not across it (confirmed by a
+  dedicated test sending one attestation proof with two attested keys
+  against an issuer with no `BatchCredentialIssuance` configured at
+  all, which still succeeds). Top-level `display` (§12.2.4 —
+  `Config.Display`), and
   `credential_metadata` (Appendix A — `CredentialConfiguration.CredentialMetadata`,
   covering its own `display` and `claims` arrays, shared verbatim by
   both formats — mdoc's own claims use the same `credential_metadata`

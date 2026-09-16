@@ -79,7 +79,12 @@ type credentialEndpointFixture struct {
 	now    time.Time
 }
 
-func newCredentialEndpointFixture(t *testing.T, mutateDeps ...func(*issuer.Dependencies)) credentialEndpointFixture {
+// newCredentialEndpointFixture builds a fully configured Issuer.
+// mutate, if given, can adjust Config and/or Dependencies before New is
+// called — e.g. to override the default BatchCredentialIssuance
+// (BatchSize 2, high enough for every existing multi-proof test in this
+// file) or to replace a Dependencies field.
+func newCredentialEndpointFixture(t *testing.T, mutate ...func(cfg *issuer.Config, deps *issuer.Dependencies)) credentialEndpointFixture {
 	t.Helper()
 	sdjwtSigner := testSDJWTSigner(t)
 	mdocSigner := testMdocSigner(t)
@@ -93,7 +98,8 @@ func newCredentialEndpointFixture(t *testing.T, mutateDeps ...func(*issuer.Depen
 			Credential: mustEndpointURL(t, testCredentialEndpoint),
 			Nonce:      mustEndpointURL(t, testNonceEndpoint),
 		},
-		Limits: issuer.Limits{NonceLifetime: time.Minute},
+		Limits:                  issuer.Limits{NonceLifetime: time.Minute},
+		BatchCredentialIssuance: &issuer.BatchCredentialIssuance{BatchSize: 2},
 		CredentialConfigurationsSupported: map[string]issuer.CredentialConfiguration{
 			testSDJWTConfigID: {
 				Format:                               sdjwtvc.CredentialFormat,
@@ -126,8 +132,8 @@ func newCredentialEndpointFixture(t *testing.T, mutateDeps ...func(*issuer.Depen
 			pub: &attestationSigner.PublicKey, alg: jose.ES256,
 		},
 	}
-	for _, mutate := range mutateDeps {
-		mutate(&deps)
+	for _, m := range mutate {
+		m(&cfg, &deps)
 	}
 
 	iss, err := issuer.New(cfg, deps)
@@ -266,6 +272,57 @@ func TestRequestCredential_SDJWT_Batch(t *testing.T) {
 	}
 }
 
+// TestRequestCredential_BatchSize table-drives checkBatchSize's own
+// cap on the jwt proofs array's own size against every boundary that
+// matters: unconfigured caps at exactly 1 (not 0, and not unlimited —
+// §12.2.4's own "the presence of this parameter means the issuer
+// supports more than one key proof" read as implying absence means it
+// doesn't), and a configured BatchSize caps at exactly that.
+func TestRequestCredential_BatchSize(t *testing.T) {
+	cases := map[string]struct {
+		batchSize int // 0 means Config.BatchCredentialIssuance stays nil
+		numProofs int
+		wantErr   bool
+	}{
+		"single proof, unconfigured":       {batchSize: 0, numProofs: 1, wantErr: false},
+		"two proofs, unconfigured":         {batchSize: 0, numProofs: 2, wantErr: true},
+		"two proofs, configured for two":   {batchSize: 2, numProofs: 2, wantErr: false},
+		"three proofs, configured for two": {batchSize: 2, numProofs: 3, wantErr: true},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			f := newCredentialEndpointFixture(t, func(cfg *issuer.Config, _ *issuer.Dependencies) {
+				if tc.batchSize == 0 {
+					cfg.BatchCredentialIssuance = nil
+				} else {
+					cfg.BatchCredentialIssuance = &issuer.BatchCredentialIssuance{BatchSize: tc.batchSize}
+				}
+			})
+			nonce := f.issueNonce(t)
+			proofs := make([]string, tc.numProofs)
+			for i := range proofs {
+				proofs[i] = buildJWTProof(t, testP256Key(t), testIssuer, nonce)
+			}
+
+			resp, err := f.iss.RequestCredential(context.Background(), issuer.AuthorizedRequest{Scopes: []string{"identity_credential"}}, issuer.CredentialRequest{
+				CredentialConfigurationID: testSDJWTConfigID,
+				Proofs:                    map[string][]string{oid4vci.ProofTypeJWT: proofs},
+				SDJWTClaims:               testSDJWTClaims(),
+			})
+			if tc.wantErr {
+				assertIssuerError(t, err, issuer.ErrorInvalidProof)
+				return
+			}
+			if err != nil {
+				t.Fatalf("RequestCredential: %v", err)
+			}
+			if len(resp.Credentials) != tc.numProofs {
+				t.Fatalf("got %d credentials, want %d", len(resp.Credentials), tc.numProofs)
+			}
+		})
+	}
+}
+
 func TestRequestCredential_Mdoc_JWTProof(t *testing.T) {
 	f := newCredentialEndpointFixture(t)
 	walletKey := testP256Key(t)
@@ -304,8 +361,17 @@ func TestRequestCredential_Mdoc_JWTProof(t *testing.T) {
 	}
 }
 
+// TestRequestCredential_AttestationProof also locks in checkBatchSize's
+// own documented distinction: BatchCredentialIssuance is deliberately
+// left unset here (nil caps the proofs array's own size at exactly 1 —
+// see TestRequestCredential_BatchSize), yet this still succeeds, since
+// the cap applies to the array's own size (one attestation JWT here,
+// len(values) == 1), not to how many Credentials an attestation
+// proof's own attested_keys ultimately fans out to (two, below).
 func TestRequestCredential_AttestationProof(t *testing.T) {
-	f := newCredentialEndpointFixture(t)
+	f := newCredentialEndpointFixture(t, func(cfg *issuer.Config, _ *issuer.Dependencies) {
+		cfg.BatchCredentialIssuance = nil
+	})
 	key1, key2 := testP256Key(t), testP256Key(t)
 	nonce := f.issueNonce(t)
 	att := buildAttestation(t, f.attestationSigner, nonce, &key1.PublicKey, &key2.PublicKey)
@@ -488,7 +554,7 @@ func TestRequestCredential_RejectsKidHeader(t *testing.T) {
 
 func TestRequestCredential_JWTProof_KidResolved(t *testing.T) {
 	bindingKey := testP256Key(t)
-	f := newCredentialEndpointFixture(t, func(d *issuer.Dependencies) {
+	f := newCredentialEndpointFixture(t, func(_ *issuer.Config, d *issuer.Dependencies) {
 		d.ProofBindingKeys = fixedProofBindingKeyResolver{pub: &bindingKey.PublicKey}
 	})
 	nonce := f.issueNonce(t)
@@ -508,7 +574,7 @@ func TestRequestCredential_JWTProof_KidResolved(t *testing.T) {
 
 func TestRequestCredential_JWTProof_X5CResolved(t *testing.T) {
 	bindingKey := testP256Key(t)
-	f := newCredentialEndpointFixture(t, func(d *issuer.Dependencies) {
+	f := newCredentialEndpointFixture(t, func(_ *issuer.Config, d *issuer.Dependencies) {
 		d.ProofBindingKeys = fixedProofBindingKeyResolver{pub: &bindingKey.PublicKey}
 	})
 	nonce := f.issueNonce(t)
@@ -528,7 +594,7 @@ func TestRequestCredential_JWTProof_X5CResolved(t *testing.T) {
 
 func TestRequestCredential_RejectsKidAndX5CTogether(t *testing.T) {
 	bindingKey := testP256Key(t)
-	f := newCredentialEndpointFixture(t, func(d *issuer.Dependencies) {
+	f := newCredentialEndpointFixture(t, func(_ *issuer.Config, d *issuer.Dependencies) {
 		d.ProofBindingKeys = fixedProofBindingKeyResolver{pub: &bindingKey.PublicKey}
 	})
 	nonce := f.issueNonce(t)
@@ -543,7 +609,7 @@ func TestRequestCredential_RejectsKidAndX5CTogether(t *testing.T) {
 }
 
 func TestRequestCredential_RejectsKidWhenResolverErrors(t *testing.T) {
-	f := newCredentialEndpointFixture(t, func(d *issuer.Dependencies) {
+	f := newCredentialEndpointFixture(t, func(_ *issuer.Config, d *issuer.Dependencies) {
 		d.ProofBindingKeys = fixedProofBindingKeyResolver{err: errors.New("kid is not a recognized key identifier")}
 	})
 	nonce := f.issueNonce(t)

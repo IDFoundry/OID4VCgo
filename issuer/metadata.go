@@ -93,17 +93,20 @@ func (d Display) validate() error {
 // BatchCredentialIssuance is Config's own optional
 // "batch_credential_issuance" metadata (§12.2.4): advertises this
 // issuer's own support for more than one key proof per Credential
-// Request. RequestCredential already supports batch issuance
-// unconditionally via §8.2's own "proofs" parameter (one Credential
-// per resolved binding key — see its own doc comment) regardless of
-// whether this is set; setting it only changes what Metadata
-// advertises, not what RequestCredential itself accepts — enforcing
-// BatchSize as an actual cap on a Credential Request's own proof count
-// is a deliberate, separate follow-up, not implemented here.
+// Request, and — via RequestCredential's own checkBatchSize — is the
+// enforced cap on a Credential Request's own "proofs" array size: nil
+// caps at exactly 1 (§12.2.4's own "the presence of this parameter
+// means the issuer supports more than one key proof" read as implying
+// absence means it doesn't), non-nil caps at BatchSize. The cap applies
+// to the proofs array's own size, not the number of Credentials
+// ultimately issued — an attestation proof's own attested_keys can
+// still fan out to more Credentials than that (Appendix F.3's own "one
+// Credential per attested key"), since that fan-out happens within a
+// single array entry, not across it.
 type BatchCredentialIssuance struct {
 	// BatchSize is REQUIRED: the maximum array size for a Credential
-	// Request's own "proofs" parameter this issuer advertises. Must be
-	// 2 or greater.
+	// Request's own "proofs" parameter this issuer advertises and
+	// enforces. Must be 2 or greater.
 	BatchSize int
 }
 

@@ -129,12 +129,13 @@ type resolvedKey struct {
 
 // RequestCredential implements the Credential Endpoint (§8): it
 // resolves the requested CredentialConfiguration, checks it against
-// auth's granted scope, verifies every key proof in req.Proofs
-// (consuming this issuer's own c_nonce once per request, not once per
-// proof — see NonceStore's own doc comment), and issues one Credential
-// per resolved binding key by dispatching into credential/sdjwtvc.Issue
-// or credential/mdoc.Issue. See CredentialRequest's own doc comment for
-// what's out of scope.
+// auth's granted scope, checks the proofs parameter's own array size
+// against Config.BatchCredentialIssuance (see checkBatchSize), verifies
+// every key proof in req.Proofs (consuming this issuer's own c_nonce
+// once per request, not once per proof — see NonceStore's own doc
+// comment), and issues one Credential per resolved binding key by
+// dispatching into credential/sdjwtvc.Issue or credential/mdoc.Issue.
+// See CredentialRequest's own doc comment for what's out of scope.
 func (iss *Issuer) RequestCredential(ctx context.Context, auth AuthorizedRequest, req CredentialRequest) (oid4vci.CredentialResponse, error) {
 	if req.CredentialConfigurationID == "" {
 		return oid4vci.CredentialResponse{}, newError(ErrorInvalidCredentialRequest, 400,
@@ -155,6 +156,9 @@ func (iss *Issuer) RequestCredential(ctx context.Context, auth AuthorizedRequest
 
 	proofType, values, err := singleProofType(req.Proofs, cc)
 	if err != nil {
+		return oid4vci.CredentialResponse{}, err
+	}
+	if err := iss.checkBatchSize(values); err != nil {
 		return oid4vci.CredentialResponse{}, err
 	}
 	ptc, ok := cc.ProofTypesSupported[proofType]
@@ -185,6 +189,27 @@ func (iss *Issuer) RequestCredential(ctx context.Context, auth AuthorizedRequest
 		}
 	}
 	return oid4vci.CredentialResponse{Credentials: credentials, NotificationID: notificationID}, nil
+}
+
+// checkBatchSize enforces §12.2.4's own "batch_size" as an actual cap
+// on the proofs parameter's own array size (values, from
+// singleProofType) — not on the number of Credentials ultimately
+// issued, which for an attestation proof's own attested_keys can
+// exceed the array size itself (Appendix F.3's own "one Credential per
+// attested key" fan-out). Config.BatchCredentialIssuance's own doc
+// comment reads §12.2.4's "the presence of this parameter means the
+// issuer supports more than one key proof" as implying absence means
+// exactly one — so nil caps at 1, not unlimited.
+func (iss *Issuer) checkBatchSize(values []string) error {
+	maxBatchSize := 1
+	if b := iss.cfg.BatchCredentialIssuance; b != nil {
+		maxBatchSize = b.BatchSize
+	}
+	if len(values) > maxBatchSize {
+		return newError(ErrorInvalidProof, 400,
+			fmt.Sprintf("proofs array has %d entries, which exceeds this issuer's own batch_size (%d)", len(values), maxBatchSize), nil)
+	}
+	return nil
 }
 
 func singleProofType(proofs map[string][]string, cc CredentialConfiguration) (proofType string, values []string, err error) {
