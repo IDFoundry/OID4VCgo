@@ -951,13 +951,21 @@ shape from the phase-by-phase plan, not a description of current code.
   own Disclosures — no minimal-disclosure trimming yet), `PresentMdoc`
   (builds one Presentation: `oid4vpmdoc.MarshalDeviceResponse` wrapping
   the held `IssuerSigned` plus a fresh `DeviceSigned` — ECDSA/EdDSA
-  device signature only, over `SessionTranscriptBytes` built via the
-  *same shared* `oid4vpmdoc.BuildSessionTranscriptBytes` the Verifier
-  reconstructs, with an empty self-asserted `NameSpaces` — this package
-  only ever proves device-key possession, not additional Holder-
-  asserted claims), and `PresentCredentials` (dispatches by format,
-  combining `MatchDCQLQuery` with `PresentSDJWTVC`/`PresentMdoc` into a
-  ready-to-encrypt `vp_token` map, §8.1's own shape). Same scope as
+  device signature only, over `SessionTranscriptBytes` built via a new
+  private `buildMdocSessionTranscriptBytes`, this package's own
+  counterpart to `verifier`'s identically-named helper: dispatches to
+  the *same shared* `oid4vpmdoc.BuildSessionTranscriptBytes`/
+  `BuildDCAPISessionTranscriptBytes` the Verifier reconstructs, on
+  whether the new `PresentMdocParams.Origin` is set — with an empty
+  self-asserted `NameSpaces` either way — this package only ever proves
+  device-key possession, not additional Holder-asserted claims), and
+  `PresentCredentials` (dispatches by format, combining `MatchDCQLQuery`
+  with `PresentSDJWTVC`/`PresentMdoc` into a ready-to-encrypt
+  `vp_token` map, §8.1's own shape — a new `PresentationRequest.Origin`,
+  when set, presents for the DC API flow instead of the redirect flow:
+  each Presentation is bound to Appendix A.4's own `"origin:"`-prefixed
+  audience rather than `Audience`, and `PresentMdocParams.Origin` is
+  threaded through the same way). Same scope as
   `verifier.VerifyResponse`, now that both packages implement DCQL's
   selection rules fully: `MatchDCQLQuery` returns `map[string][]HeldCredential`
   (a breaking change from the single-`HeldCredential`-per-id shape
@@ -974,14 +982,19 @@ shape from the phase-by-phase plan, not a description of current code.
   an unsatisfied optional Credential Set without any change to its own
   dispatch logic.
   `TestWalletVerifierPresentationRoundTrip`/
+  `TestWalletVerifierDCAPIPresentationRoundTrip`/
   `TestWalletVerifierMdocPresentationRoundTrip` drive the full OID4VP
   flow between this repo's own two independently-built halves, one per
-  format — build a real Authorization Request, match and present a
-  real held credential, encrypt the response exactly as a real Wallet
-  would (`internal/jwe.Encrypt` against the Verifier's own advertised
-  key), then parse/decrypt/verify it — the same "real round trip, not
-  a simulation" discipline `TestWalletIssuerRoundTrip` already holds
-  OID4VCI to.
+  format/flow — build a real Authorization/DC API Request, match and
+  present a real held credential, encrypt the response exactly as a
+  real Wallet would (`internal/jwe.Encrypt` against the Verifier's own
+  advertised key), then parse/decrypt/verify it — the same "real round
+  trip, not a simulation" discipline `TestWalletIssuerRoundTrip`
+  already holds OID4VCI to. With this, the DC API flow (Appendix A/HAIP
+  §5.2) is done end to end across `oid4vpmdoc`/`verifier`/`wallet` — the
+  one remaining piece is actually invoking the W3C Digital Credentials
+  API itself, a browser/OS platform concern outside any Go library's
+  own transport responsibilities (see the `verifier` bullet above).
 - **`haip`** (done) — the profile layer: wires HAIP's own specific
   overrides on top of `issuer`/`wallet`/`verifier` — mirrors
   FAPIgo's `server.RecommendedLimits()`/`RecommendedAlgorithms()` pattern:

@@ -291,26 +291,20 @@ func TestPresentSDJWTVCRejectsWrongFormat(t *testing.T) {
 	}
 }
 
-func TestPresentCredentials(t *testing.T) {
-	fixture := newHeldSDJWTVC(t)
-	vpToken, err := wallet.PresentCredentials(wallet.PresentationRequest{
-		Query:       testPresentationQuery(t),
-		Credentials: []wallet.HeldCredential{fixture.held},
-		Audience:    "x509_hash:verifier",
-		Nonce:       "nonce-1",
-	})
-	if err != nil {
-		t.Fatalf("PresentCredentials: %v", err)
-	}
-	if len(vpToken["identity_credential"]) != 1 {
-		t.Fatalf("vp_token = %v", vpToken)
-	}
-	claims, _, err := sdjwtvc.Verify(vpToken["identity_credential"][0], &fixture.issuerKey.PublicKey, jose.ES256, sdjwtvc.VerifyOptions{
+// assertPresentedSDJWTVC verifies presented (a PresentCredentials/
+// PresentSDJWTVC result) against wantAudience/wantNonce and checks its
+// own given_name — shared by TestPresentCredentials/
+// TestPresentCredentialsDCAPI, which differ only in which audience
+// they expect (this Verifier's own Client Identifier vs. Appendix
+// A.4's own "origin:"-prefixed value).
+func assertPresentedSDJWTVC(t *testing.T, presented string, fixture heldSDJWTVCFixture, wantAudience, wantNonce string) {
+	t.Helper()
+	claims, _, err := sdjwtvc.Verify(presented, &fixture.issuerKey.PublicKey, jose.ES256, sdjwtvc.VerifyOptions{
 		RequireKeyBinding: true,
 		HolderPublicKey:   &fixture.holderKey.PublicKey,
 		KeyBindingAlg:     jose.ES256,
-		ExpectedAudience:  "x509_hash:verifier",
-		ExpectedNonce:     "nonce-1",
+		ExpectedAudience:  wantAudience,
+		ExpectedNonce:     wantNonce,
 	})
 	if err != nil {
 		t.Fatalf("sdjwtvc.Verify: %v", err)
@@ -318,6 +312,45 @@ func TestPresentCredentials(t *testing.T) {
 	if claims["given_name"] != "Alice" {
 		t.Errorf("given_name = %v, want Alice", claims["given_name"])
 	}
+}
+
+// presentIdentityCredential calls PresentCredentials for
+// testPresentationQuery/fixture with the given audience/origin
+// (exactly one non-empty), asserts exactly one Presentation came back,
+// and returns the resulting vp_token — shared by TestPresentCredentials
+// and TestPresentCredentialsDCAPI, which differ only in which of
+// audience/origin they pass.
+func presentIdentityCredential(t *testing.T, fixture heldSDJWTVCFixture, audience, origin string) map[string][]string {
+	t.Helper()
+	vpToken, err := wallet.PresentCredentials(wallet.PresentationRequest{
+		Query:       testPresentationQuery(t),
+		Credentials: []wallet.HeldCredential{fixture.held},
+		Audience:    audience, Origin: origin,
+		Nonce: "nonce-1",
+	})
+	if err != nil {
+		t.Fatalf("PresentCredentials: %v", err)
+	}
+	if len(vpToken["identity_credential"]) != 1 {
+		t.Fatalf("vp_token = %v", vpToken)
+	}
+	return vpToken
+}
+
+func TestPresentCredentials(t *testing.T) {
+	fixture := newHeldSDJWTVC(t)
+	vpToken := presentIdentityCredential(t, fixture, "x509_hash:verifier", "")
+	assertPresentedSDJWTVC(t, vpToken["identity_credential"][0], fixture, "x509_hash:verifier", "nonce-1")
+}
+
+// TestPresentCredentialsDCAPI mirrors TestPresentCredentials for the
+// DC API flow: PresentationRequest.Origin set binds the resulting Key
+// Binding JWT to Appendix A.4's own "origin:"-prefixed audience
+// instead of Audience.
+func TestPresentCredentialsDCAPI(t *testing.T) {
+	fixture := newHeldSDJWTVC(t)
+	vpToken := presentIdentityCredential(t, fixture, "", "https://verifier.example.com")
+	assertPresentedSDJWTVC(t, vpToken["identity_credential"][0], fixture, "origin:https://verifier.example.com", "nonce-1")
 }
 
 // TestPresentCredentialsMultiple mirrors §6.1's own "multiple" field

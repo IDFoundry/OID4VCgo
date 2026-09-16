@@ -52,17 +52,16 @@ func TestMatchDCQLQueryMdocRejectsWrongDoctype(t *testing.T) {
 	}
 }
 
-func TestPresentMdoc(t *testing.T) {
-	f := testmdoc.Issue(t)
-	held := heldMdoc(t, f)
-	presented, err := wallet.PresentMdoc(held, wallet.PresentMdocParams{
-		Audience: "x509_hash:verifier", Nonce: "nonce-1",
-		ResponseURI: "https://verifier.example.com/response", ResponseEncryptionJWKThumbprint: make([]byte, 32),
-	})
-	if err != nil {
-		t.Fatalf("PresentMdoc: %v", err)
-	}
-
+// assertPresentedMdoc decodes presented (a wallet.PresentMdoc result),
+// checks its own DocType, verifies DeviceSigned against
+// wantSessionTranscriptBytes (whichever flow's own Handover the
+// caller built it with) and f's own DeviceKey, and checks IssuerSigned
+// verifies with given_name "Alice" — the shared tail
+// TestPresentMdoc/TestPresentMdocDCAPI both need, differing only in
+// which flow's own SessionTranscriptBytes they expect DeviceSigned to
+// have been computed over.
+func assertPresentedMdoc(t *testing.T, presented string, f testmdoc.Fixture, wantSessionTranscriptBytes []byte) {
+	t.Helper()
 	raw, err := base64.RawURLEncoding.DecodeString(presented)
 	if err != nil {
 		t.Fatalf("decode: %v", err)
@@ -75,14 +74,7 @@ func TestPresentMdoc(t *testing.T) {
 		t.Errorf("DocType = %q, want %q", doc.DocType, testmdoc.DocType)
 	}
 
-	sessionTranscriptBytes, err := oid4vpmdoc.BuildSessionTranscriptBytes(oid4vpmdoc.HandoverParams{
-		ClientID: "x509_hash:verifier", Nonce: "nonce-1",
-		ResponseURI: "https://verifier.example.com/response", ResponseEncryptionJWKThumbprint: make([]byte, 32),
-	})
-	if err != nil {
-		t.Fatalf("BuildSessionTranscriptBytes: %v", err)
-	}
-	if err := mdoc.VerifyDeviceSignature(doc.DeviceSigned, &f.DeviceKey.PublicKey, cose.ES256, sessionTranscriptBytes, testmdoc.DocType); err != nil {
+	if err := mdoc.VerifyDeviceSignature(doc.DeviceSigned, &f.DeviceKey.PublicKey, cose.ES256, wantSessionTranscriptBytes, testmdoc.DocType); err != nil {
 		t.Fatalf("VerifyDeviceSignature: %v", err)
 	}
 
@@ -93,6 +85,49 @@ func TestPresentMdoc(t *testing.T) {
 	if got := verified.NameSpaces["org.iso.18013.5.1"]["given_name"]; got != "Alice" {
 		t.Errorf("given_name = %v, want Alice", got)
 	}
+}
+
+func TestPresentMdoc(t *testing.T) {
+	f := testmdoc.Issue(t)
+	held := heldMdoc(t, f)
+	presented, err := wallet.PresentMdoc(held, wallet.PresentMdocParams{
+		Audience: "x509_hash:verifier", Nonce: "nonce-1",
+		ResponseURI: "https://verifier.example.com/response", ResponseEncryptionJWKThumbprint: make([]byte, 32),
+	})
+	if err != nil {
+		t.Fatalf("PresentMdoc: %v", err)
+	}
+
+	sessionTranscriptBytes, err := oid4vpmdoc.BuildSessionTranscriptBytes(oid4vpmdoc.HandoverParams{
+		ClientID: "x509_hash:verifier", Nonce: "nonce-1",
+		ResponseURI: "https://verifier.example.com/response", ResponseEncryptionJWKThumbprint: make([]byte, 32),
+	})
+	if err != nil {
+		t.Fatalf("BuildSessionTranscriptBytes: %v", err)
+	}
+	assertPresentedMdoc(t, presented, f, sessionTranscriptBytes)
+}
+
+// TestPresentMdocDCAPI mirrors TestPresentMdoc for the DC API flow:
+// PresentMdocParams.Origin set builds DeviceSigned over the DC API
+// flow's own OpenID4VPDCAPIHandover (Appendix B.2.6.2) instead.
+func TestPresentMdocDCAPI(t *testing.T) {
+	f := testmdoc.Issue(t)
+	held := heldMdoc(t, f)
+	presented, err := wallet.PresentMdoc(held, wallet.PresentMdocParams{
+		Origin: "https://verifier.example.com", Nonce: "nonce-1", ResponseEncryptionJWKThumbprint: make([]byte, 32),
+	})
+	if err != nil {
+		t.Fatalf("PresentMdoc: %v", err)
+	}
+
+	sessionTranscriptBytes, err := oid4vpmdoc.BuildDCAPISessionTranscriptBytes(oid4vpmdoc.DCAPIHandoverParams{
+		Origin: "https://verifier.example.com", Nonce: "nonce-1", ResponseEncryptionJWKThumbprint: make([]byte, 32),
+	})
+	if err != nil {
+		t.Fatalf("BuildDCAPISessionTranscriptBytes: %v", err)
+	}
+	assertPresentedMdoc(t, presented, f, sessionTranscriptBytes)
 }
 
 func TestPresentMdocRejectsWrongFormat(t *testing.T) {

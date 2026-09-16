@@ -11,6 +11,7 @@ import (
 
 	fapi "github.com/idfoundry/fapigo"
 
+	"github.com/idfoundry/oid4vcigo/dcql"
 	"github.com/idfoundry/oid4vcigo/internal/cose"
 	"github.com/idfoundry/oid4vcigo/internal/jose"
 	"github.com/idfoundry/oid4vcigo/internal/jwe"
@@ -67,6 +68,63 @@ func newRoundTripVerifier(t *testing.T) (*verifier.Verifier, fapi.URL) {
 	return v, responseURI
 }
 
+// presentAndParse marshals vpToken into a direct_post.jwt/dc_api.jwt
+// response body, encrypts it against decryptionKey's own public key
+// exactly as a real Wallet would (internal/jwe.Encrypt), and
+// parses/decrypts it back via v — the shared middle section every
+// verifier round trip test in this file needs between building its
+// own vp_token and calling VerifyResponse on the result.
+func presentAndParse(t *testing.T, v *verifier.Verifier, vpToken map[string][]string, decryptionKey *ecdsa.PrivateKey) verifier.ParsedResponse {
+	t.Helper()
+	responseBody, err := json.Marshal(map[string]any{"vp_token": vpToken})
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	responseJWE, err := jwe.Encrypt(&decryptionKey.PublicKey, jwe.A128GCM, responseBody, jwe.EncryptOptions{})
+	if err != nil {
+		t.Fatalf("jwe.Encrypt: %v", err)
+	}
+	parsed, err := v.ParseDirectPostJWTResponse(responseJWE, decryptionKey)
+	if err != nil {
+		t.Fatalf("ParseDirectPostJWTResponse: %v", err)
+	}
+	return parsed
+}
+
+// presentAndVerifySDJWTVC presents fixture against query
+// (audience/origin — exactly one non-empty, mirroring
+// wallet.PresentationRequest's own split) via PresentCredentials,
+// encrypts/parses the result (presentAndParse), and verifies it via v
+// with the same audience/origin — the shared tail
+// TestWalletVerifierPresentationRoundTrip and
+// TestWalletVerifierDCAPIPresentationRoundTrip both need, differing
+// only in which flow they exercise.
+func presentAndVerifySDJWTVC(t *testing.T, v *verifier.Verifier, query dcql.Query, fixture heldSDJWTVCFixture, audience, origin, nonce string, decryptionKey *ecdsa.PrivateKey) verifier.VerifiedCredential {
+	t.Helper()
+	vpToken, err := wallet.PresentCredentials(wallet.PresentationRequest{
+		Query:       query,
+		Credentials: []wallet.HeldCredential{fixture.held},
+		Audience:    audience, Origin: origin,
+		Nonce: nonce,
+	})
+	if err != nil {
+		t.Fatalf("PresentCredentials: %v", err)
+	}
+	parsed := presentAndParse(t, v, vpToken, decryptionKey)
+
+	issuerKeys := issuerKeyResolverFunc(func(context.Context, map[string]any, map[string]any) (crypto.PublicKey, jose.Alg, error) {
+		return &fixture.issuerKey.PublicKey, jose.ES256, nil
+	})
+	result, err := v.VerifyResponse(context.Background(), verifier.VerifyResponseRequest{
+		Query:         query,
+		Response:      parsed,
+		ExpectedNonce: nonce,
+		IssuerKeys:    issuerKeys,
+		Origin:        origin,
+	})
+	return testverify.RequireOneCredential(t, result, err, "identity_credential")
+}
+
 // TestWalletVerifierPresentationRoundTrip drives OID4VP end to end
 // between this repo's own two independently-built halves: a real
 // verifier.Verifier builds and signs an Authorization Request, a real
@@ -89,45 +147,40 @@ func TestWalletVerifierPresentationRoundTrip(t *testing.T) {
 	}
 
 	fixture := newHeldSDJWTVC(t)
-	vpToken, err := wallet.PresentCredentials(wallet.PresentationRequest{
-		Query:       query,
-		Credentials: []wallet.HeldCredential{fixture.held},
-		Audience:    built.ClientID,
-		Nonce:       built.Nonce,
-	})
-	if err != nil {
-		t.Fatalf("PresentCredentials: %v", err)
-	}
-
-	responseBody, err := json.Marshal(map[string]any{"vp_token": vpToken})
-	if err != nil {
-		t.Fatalf("Marshal: %v", err)
-	}
-	responseJWE, err := jwe.Encrypt(&built.ResponseDecryptionKey.PublicKey, jwe.A128GCM, responseBody, jwe.EncryptOptions{})
-	if err != nil {
-		t.Fatalf("jwe.Encrypt: %v", err)
-	}
-
-	parsed, err := v.ParseDirectPostJWTResponse(responseJWE, built.ResponseDecryptionKey)
-	if err != nil {
-		t.Fatalf("ParseDirectPostJWTResponse: %v", err)
-	}
-
-	issuerKeys := issuerKeyResolverFunc(func(context.Context, map[string]any, map[string]any) (crypto.PublicKey, jose.Alg, error) {
-		return &fixture.issuerKey.PublicKey, jose.ES256, nil
-	})
-	result, err := v.VerifyResponse(context.Background(), verifier.VerifyResponseRequest{
-		Query:         query,
-		Response:      parsed,
-		ExpectedNonce: built.Nonce,
-		IssuerKeys:    issuerKeys,
-	})
-	vc := testverify.RequireOneCredential(t, result, err, "identity_credential")
+	vc := presentAndVerifySDJWTVC(t, v, query, fixture, built.ClientID, "", built.Nonce, built.ResponseDecryptionKey)
 	if vc.Claims["given_name"] != "Alice" {
 		t.Errorf("Claims[given_name] = %v, want Alice", vc.Claims["given_name"])
 	}
 	if vc.Claims["vct"] != testPresentationVCT {
 		t.Errorf("Claims[vct] = %v, want %q", vc.Claims["vct"], testPresentationVCT)
+	}
+}
+
+// TestWalletVerifierDCAPIPresentationRoundTrip is
+// TestWalletVerifierPresentationRoundTrip's own DC API counterpart:
+// the same real, independently-built halves, this time exercising the
+// DC API flow end to end — verifier.BuildDCAPIAuthorizationRequest,
+// wallet.PresentCredentials with Origin set (binding the Key Binding
+// JWT to Appendix A.4's own "origin:"-prefixed audience instead of a
+// Client Identifier), and verifier.VerifyResponse with Origin set to
+// match. ParseDirectPostJWTResponse needs no DC-API-specific
+// counterpart — see its own doc comment for why.
+func TestWalletVerifierDCAPIPresentationRoundTrip(t *testing.T) {
+	v, _ := newRoundTripVerifier(t)
+	origin := "https://verifier.example.com"
+
+	query := testPresentationQuery(t)
+	built, err := v.BuildDCAPIAuthorizationRequest(verifier.BuildDCAPIAuthorizationRequestRequest{
+		Query: query, ExpectedOrigins: []string{origin},
+	})
+	if err != nil {
+		t.Fatalf("BuildDCAPIAuthorizationRequest: %v", err)
+	}
+
+	fixture := newHeldSDJWTVC(t)
+	vc := presentAndVerifySDJWTVC(t, v, query, fixture, "", origin, built.Nonce, built.ResponseDecryptionKey)
+	if vc.Claims["given_name"] != "Alice" {
+		t.Errorf("Claims[given_name] = %v, want Alice", vc.Claims["given_name"])
 	}
 }
 
@@ -159,20 +212,7 @@ func TestWalletVerifierMdocPresentationRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PresentCredentials: %v", err)
 	}
-
-	responseBody, err := json.Marshal(map[string]any{"vp_token": vpToken})
-	if err != nil {
-		t.Fatalf("Marshal: %v", err)
-	}
-	responseJWE, err := jwe.Encrypt(&built.ResponseDecryptionKey.PublicKey, jwe.A128GCM, responseBody, jwe.EncryptOptions{})
-	if err != nil {
-		t.Fatalf("jwe.Encrypt: %v", err)
-	}
-
-	parsed, err := v.ParseDirectPostJWTResponse(responseJWE, built.ResponseDecryptionKey)
-	if err != nil {
-		t.Fatalf("ParseDirectPostJWTResponse: %v", err)
-	}
+	parsed := presentAndParse(t, v, vpToken, built.ResponseDecryptionKey)
 
 	mdocIssuerKeys := mdocIssuerKeyResolverFunc(func(context.Context, [][]byte, string) (crypto.PublicKey, cose.Alg, error) {
 		return &f.IssuerKey.PublicKey, cose.ES256, nil
