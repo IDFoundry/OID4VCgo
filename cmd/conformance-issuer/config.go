@@ -10,6 +10,8 @@ import (
 	"os"
 
 	fapi "github.com/idfoundry/fapigo"
+
+	"github.com/idfoundry/oid4vcigo/internal/conformancecert"
 )
 
 // Config is this binary's own configuration — one JSON file, inline
@@ -152,11 +154,11 @@ func (c Config) credentialIssuerSigningKey() (*ecdsa.PrivateKey, error) {
 }
 
 func (c Config) credentialIssuerCertificate() (*x509.Certificate, error) {
-	block, _ := pem.Decode([]byte(c.CredentialIssuerCertificatePEM))
-	if block == nil {
-		return nil, fmt.Errorf("credential_issuer_certificate_pem: no PEM block found")
+	cert, err := conformancecert.ParseCertificatePEM(c.CredentialIssuerCertificatePEM)
+	if err != nil {
+		return nil, fmt.Errorf("credential_issuer_certificate_pem: %w", err)
 	}
-	return x509.ParseCertificate(block.Bytes)
+	return cert, nil
 }
 
 func (c Config) issuerURL() (fapi.URL, error) {

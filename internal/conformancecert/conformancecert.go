@@ -2,7 +2,10 @@
 // for the conformance/*/scripts/generate-config generators — never
 // for production use, and deliberately not internal/testcert (that
 // one builds a *x509.Certificate for tests to hold in memory; these
-// generators need PEM text to write into a JSON config file).
+// generators need PEM text to write into a JSON config file). It also
+// holds ParseCertificatePEM, the runtime counterpart every
+// cmd/conformance-* binary's own Config parsing needs identically to
+// read that PEM text back.
 package conformancecert
 
 import (
@@ -14,6 +17,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
+	"fmt"
 	"math/big"
 	"os"
 	"path/filepath"
@@ -193,6 +197,19 @@ func JWKSet(pub crypto.PublicKey, kid string) (json.RawMessage, error) {
 		return nil, err
 	}
 	return json.Marshal(map[string]any{"keys": []jwkWithKid{{JWK: j, Kid: kid}}})
+}
+
+// ParseCertificatePEM decodes a single PEM CERTIFICATE block and
+// parses it as an *x509.Certificate — the runtime counterpart to this
+// package's own generation helpers, for a cmd/conformance-*'s own
+// Config parsing (e.g. CredentialIssuerCertificatePEM), used
+// identically by more than one binary.
+func ParseCertificatePEM(pemStr string) (*x509.Certificate, error) {
+	block, _ := pem.Decode([]byte(pemStr))
+	if block == nil {
+		return nil, fmt.Errorf("no PEM block found")
+	}
+	return x509.ParseCertificate(block.Bytes)
 }
 
 // WriteJSONConfig JSON-marshals cfg and writes it to a fresh file

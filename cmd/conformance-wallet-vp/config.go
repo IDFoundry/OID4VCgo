@@ -8,6 +8,8 @@ import (
 	"encoding/pem"
 	"fmt"
 	"os"
+
+	"github.com/idfoundry/oid4vcigo/internal/conformancecert"
 )
 
 // Config is this binary's own configuration — one JSON file, inline
@@ -102,11 +104,7 @@ func (c Config) credentialIssuerKey() (*ecdsa.PrivateKey, error) {
 }
 
 func (c Config) credentialIssuerCertificate() (*x509.Certificate, error) {
-	block, _ := pem.Decode([]byte(c.CredentialIssuerCertificatePEM))
-	if block == nil {
-		return nil, fmt.Errorf("credential_issuer_certificate_pem: no PEM block found")
-	}
-	cert, err := x509.ParseCertificate(block.Bytes)
+	cert, err := conformancecert.ParseCertificatePEM(c.CredentialIssuerCertificatePEM)
 	if err != nil {
 		return nil, fmt.Errorf("credential_issuer_certificate_pem: %w", err)
 	}
