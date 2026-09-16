@@ -54,11 +54,16 @@ negative-test expectations differ.
   correctly self-`SKIPPED`. `client2` support was added
   (`Config.Client2`, optional) and confirmed both by a real PAR-
   authentication unit test and live against the suite itself.
-  `happy-flow` now reaches real PAR traffic before hitting a new,
-  likely genuine `fapigo/server`-side gap: it rejects a PAR request
-  carrying one deliberately-unrecognized extra parameter outright,
-  where RFC 9126/6749 expect the parameter to be silently ignored —
-  not fixed here, flagged the same way the Wallet-role FAPIgo
-  dependency already is (see `AGENTS.md`). See `issuer/README.md`.
+  `happy-flow` hit a `fapigo/server` design decision (`Config.Extensions`
+  rejecting any parameter without a pre-registered `Definition`) that
+  conflicted with the suite's own PAR-2.1–PAR-2.4 check — raised with
+  FAPIgo's maintainers as a design question rather than filed as a
+  plain bug; they agreed and fixed it upstream (`fix!: ignore
+  unrecognized authorization request parameters at PAR/CIBA`, FAPIgo
+  PR #304). `go.mod` pinned to the fix; re-run live:
+  `happy-flow` now completes — `FINISHED`, result `WARNING`, zero
+  `FAILURE`s. That full run surfaced one more real gap (the same x5c
+  requirement `wallet-vp/README.md` already documents, this time in
+  `issuer.SDJWTSigner`), fixed the same way. See `issuer/README.md`.
 - **Not yet started**: OID4VCI Wallet role (blocked on a FAPIgo-side
   change — see `AGENTS.md`).

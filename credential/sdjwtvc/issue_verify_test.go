@@ -5,7 +5,6 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"encoding/base64"
-	"strings"
 	"testing"
 	"time"
 
@@ -366,16 +365,7 @@ func TestIssue_IssuerCertificate_SetsX5CHeader(t *testing.T) {
 		t.Fatalf("Issue: %v", err)
 	}
 
-	issuerJWT := strings.SplitN(sdjwt, "~", 2)[0]
-	header, _, err := jose.DecodeUnverified(issuerJWT)
-	if err != nil {
-		t.Fatalf("DecodeUnverified: %v", err)
-	}
-
-	x5c, ok := header["x5c"].([]any)
-	if !ok || len(x5c) != 1 {
-		t.Fatalf("header[\"x5c\"] = %#v, want a single-entry array", header["x5c"])
-	}
+	x5c := testcert.AssertSingleX5CHeader(t, sdjwt)
 	got, ok := x5c[0].(string)
 	if !ok {
 		t.Fatalf("x5c[0] = %#v, want a string", x5c[0])

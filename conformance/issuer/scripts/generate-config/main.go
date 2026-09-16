@@ -1,6 +1,12 @@
 // Command generate-config writes a throwaway conformance-issuer
 // config.json: a fresh self-signed TLS listener cert and a fresh
-// EC P-256 credential-issuer signing key. Mirrors
+// EC P-256 credential-issuer signing key plus a leaf certificate
+// wrapping it issued under a fresh throwaway CA (the CA's own PEM is
+// what to paste into the OIDF suite's own "credential.trust_anchor_pem"
+// test configuration — confirmed live: the suite's own SD-JWT VC x5c
+// check rejects a self-signed leaf outright, "Leaf certificate in x5c
+// chain must not be self-signed", the same finding
+// conformance/wallet-vp/README.md documents first). Mirrors
 // conformance/verifier(/wallet-vp)/scripts/generate-config.
 //
 // The test clients' own client_id/redirect_uris/
@@ -32,18 +38,19 @@ import (
 )
 
 type generatedConfig struct {
-	ListenAddr                    string            `json:"listen_addr"`
-	Issuer                        string            `json:"issuer"`
-	TLSCertificatePEM             string            `json:"tls_certificate_pem"`
-	TLSPrivateKeyPEM              string            `json:"tls_private_key_pem"`
-	Client                        generatedClient   `json:"client"`
-	Client2                       *generatedClient  `json:"client2,omitempty"`
-	CredentialIssuerSigningKeyPEM string            `json:"credential_issuer_signing_key_pem"`
-	VCT                           string            `json:"vct"`
-	Claims                        map[string]string `json:"claims"`
-	Scope                         string            `json:"scope"`
-	CredentialConfigurationID     string            `json:"credential_configuration_id"`
-	DefaultSubject                string            `json:"default_subject"`
+	ListenAddr                     string            `json:"listen_addr"`
+	Issuer                         string            `json:"issuer"`
+	TLSCertificatePEM              string            `json:"tls_certificate_pem"`
+	TLSPrivateKeyPEM               string            `json:"tls_private_key_pem"`
+	Client                         generatedClient   `json:"client"`
+	Client2                        *generatedClient  `json:"client2,omitempty"`
+	CredentialIssuerSigningKeyPEM  string            `json:"credential_issuer_signing_key_pem"`
+	CredentialIssuerCertificatePEM string            `json:"credential_issuer_certificate_pem"`
+	VCT                            string            `json:"vct"`
+	Claims                         map[string]string `json:"claims"`
+	Scope                          string            `json:"scope"`
+	CredentialConfigurationID      string            `json:"credential_configuration_id"`
+	DefaultSubject                 string            `json:"default_subject"`
 }
 
 type generatedClient struct {
@@ -65,9 +72,10 @@ func main() {
 		fmt.Fprintln(os.Stderr, "generate tls cert:", err)
 		os.Exit(1)
 	}
-	issuerKeyPEM, err := conformancecert.GenerateECKeyPEM()
+	_, issuerKeyPEM, issuerCertPEM, caCertPEM, err := conformancecert.GenerateSignerAndCert(
+		"conformance-issuer-credential-issuer", "conformance-issuer-credential-issuer-ca")
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "generate credential issuer signing key:", err)
+		fmt.Fprintln(os.Stderr, "generate credential issuer key/certificate:", err)
 		os.Exit(1)
 	}
 
@@ -82,12 +90,13 @@ func main() {
 			ExpectedAttesterIssuer: "https://PLACEHOLDER-fill-in-from-the-suite",
 			AttesterJWKS:           json.RawMessage(`{"keys":[]}`),
 		},
-		CredentialIssuerSigningKeyPEM: issuerKeyPEM,
-		VCT:                           "urn:eudi:pid:1",
-		Claims:                        map[string]string{"given_name": "Jean", "family_name": "Dupont"},
-		Scope:                         "IdentityCredential",
-		CredentialConfigurationID:     "IdentityCredential",
-		DefaultSubject:                "conformance-test-subject",
+		CredentialIssuerSigningKeyPEM:  issuerKeyPEM,
+		CredentialIssuerCertificatePEM: issuerCertPEM,
+		VCT:                            "urn:eudi:pid:1",
+		Claims:                         map[string]string{"given_name": "Jean", "family_name": "Dupont"},
+		Scope:                          "IdentityCredential",
+		CredentialConfigurationID:      "IdentityCredential",
+		DefaultSubject:                 "conformance-test-subject",
 	}
 	if *withClient2 {
 		cfg.Client2 = &generatedClient{
@@ -105,11 +114,17 @@ func main() {
 
 	if *out == "" {
 		fmt.Println(string(raw))
-		return
+	} else {
+		if err := os.WriteFile(*out, raw, 0o600); err != nil {
+			fmt.Fprintln(os.Stderr, "write config:", err)
+			os.Exit(1)
+		}
+		fmt.Fprintln(os.Stderr, "wrote", *out)
 	}
-	if err := os.WriteFile(*out, raw, 0o600); err != nil {
-		fmt.Fprintln(os.Stderr, "write config:", err)
-		os.Exit(1)
-	}
-	fmt.Fprintln(os.Stderr, "wrote", *out)
+
+	fmt.Fprintln(os.Stderr, "\nPaste this CA certificate into the OIDF suite's own")
+	fmt.Fprintln(os.Stderr, "\"credential.trust_anchor_pem\" test-configuration field — it signed")
+	fmt.Fprintln(os.Stderr, "the leaf certificate embedded in every issued credential's own \"x5c\"")
+	fmt.Fprintln(os.Stderr, "header (the leaf itself must not be self-signed):")
+	fmt.Fprint(os.Stderr, caCertPEM)
 }

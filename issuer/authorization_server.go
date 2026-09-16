@@ -14,14 +14,21 @@ package issuer
 //
 // # Registering issuer_state
 //
-// OID4VCI 1.0 §4.1.1's own issuer_state authorization parameter must
+// OID4VCI 1.0 §4.1.1's own issuer_state authorization parameter should
 // be registered in the Authorization Server's own
-// server.Config.Extensions (fapigo/extension.Registry), or fapigo/server's
-// own Pushed Authorization Request validation rejects it outright as
-// an unregistered parameter — the same rejection any other
-// unrecognized parameter gets. Use oid4vci.IssuerStateExtension,
-// exported specifically so both sides of this handshake share one
-// canonical extension.Definition[string] value rather than risking two
+// server.Config.Extensions (fapigo/extension.Registry) — an
+// unregistered authorization request parameter no longer fails the
+// whole Pushed Authorization Request (RFC 6749 §3.1/RFC 9126 §2.1
+// require tolerating one, fixed in FAPIgo's own
+// fix!: ignore unrecognized authorization request parameters at
+// PAR/CIBA), but fapigo/extension.Registry.Parse still deletes an
+// unregistered parameter's value as it goes rather than forwarding it
+// anywhere — so skipping registration no longer produces a loud
+// rejection at PAR time, it silently drops issuer_state instead,
+// which is a worse failure mode to discover later, not a better one to
+// skip. Use oid4vci.IssuerStateExtension, exported specifically so
+// both sides of this handshake share one canonical
+// extension.Definition[string] value rather than risking two
 // independently-declared copies drifting apart:
 //
 //	extensions, err := extension.NewRegistry(oid4vci.IssuerStateExtension /* , any others this deployment needs */)

@@ -66,15 +66,24 @@ not just against each other. `conformance-verifier`'s own
 `oid4vp-1final-verifier-haip-test-plan` is a full confirmed pass, all
 11 in-scope modules. `conformance-wallet-vp`'s own `happy-flow` module
 passes every cryptographic check. `conformance-issuer`'s own
-`oid4vci-1_0-issuer-haip-test-plan` metadata modules pass; its
-`happy-flow` module is blocked on what looks like a genuine
-`fapigo/server`-side gap in `PushAuthorizationRequest`/
-`FormRequestFromHTTP`: it rejects a PAR request carrying an
-unrecognized/extra parameter with `invalid_request`, where the OIDF
-suite's own test (citing PAR-2.1 through PAR-2.4) expects the
-Authorization Server to silently ignore it instead — the same
-"flag it, don't reach into `fapigo/server` internals" boundary this
-file already draws for the Wallet Attestation gap above. See
+`oid4vci-1_0-issuer-haip-test-plan` metadata modules pass, and its
+`happy-flow` module now runs to completion (`FINISHED`, result
+`WARNING`, zero `FAILURE`s). It was blocked on `fapigo/server`'s own
+`Config.Extensions` (an `*extension.Registry`) rejecting any
+authorization parameter without a pre-registered `extension.Definition`
+— the OIDF suite's own PAR-2.1–PAR-2.4 check sends one randomly-named
+extra parameter expecting it to be silently ignored (RFC 9126/6749),
+which this design couldn't accommodate. Raised with FAPIgo's
+maintainers as a design question rather than filed as a plain bug;
+they agreed and shipped `fix!: ignore unrecognized authorization
+request parameters at PAR/CIBA` (FAPIgo PR #304, commit `597f2a7`) — an
+unregistered parameter is now silently dropped instead of failing the
+request. `go.mod` is pinned to this exact commit (no tagged release
+yet). This is the pattern this file's own "flag it, don't reach into
+`fapigo/server` internals" boundary is meant to enable: OID4VCIgo
+surfaces a real cross-repo finding via a live conformance run, FAPIgo's
+own maintainers decide and fix it upstream, OID4VCIgo pins and
+re-verifies — not something to work around locally. See
 `conformance/verifier/README.md`'s, `conformance/wallet-vp/README.md`'s
 and `conformance/issuer/README.md`'s own "Status" sections for the
 full detail before assuming any specific suite test module passes.

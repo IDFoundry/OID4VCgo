@@ -2,7 +2,10 @@
 // for the conformance/*/scripts/generate-config generators — never
 // for production use, and deliberately not internal/testcert (that
 // one builds a *x509.Certificate for tests to hold in memory; these
-// generators need PEM text to write into a JSON config file).
+// generators need PEM text to write into a JSON config file). It also
+// holds ParseCertificatePEM, the runtime counterpart every
+// cmd/conformance-* binary's own Config parsing needs identically to
+// read that PEM text back.
 package conformancecert
 
 import (
@@ -14,6 +17,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
+	"fmt"
 	"math/big"
 	"os"
 	"path/filepath"
@@ -94,6 +98,35 @@ func GenerateCA(commonName string) (cert *x509.Certificate, key *ecdsa.PrivateKe
 	return cert, key, string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})), keyPEM, nil
 }
 
+// GenerateSignerAndCert generates a fresh EC P-256 key plus a leaf
+// certificate wrapping it, issued under a fresh throwaway CA — the
+// "generate a credential-issuer signing key, then wrap it in a
+// CA-issued (not self-signed) leaf" sequence every generate-config
+// script producing x5c-bearing test credentials needs identically
+// (see GenerateCA's own doc comment for why a bare self-signed leaf
+// doesn't work). leafCommonName/caCommonName name the leaf/CA
+// certificates respectively; caCertPEM is what to paste into a relying
+// party's own trust-anchor test configuration.
+func GenerateSignerAndCert(leafCommonName, caCommonName string) (key *ecdsa.PrivateKey, keyPEM, certPEM, caCertPEM string, err error) {
+	key, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, "", "", "", err
+	}
+	keyPEM, err = ECKeyPEM(key)
+	if err != nil {
+		return nil, "", "", "", err
+	}
+	ca, caKey, caCertPEM, _, err := GenerateCA(caCommonName)
+	if err != nil {
+		return nil, "", "", "", err
+	}
+	certPEM, err = IssueLeafCertPEM(leafCommonName, key, ca, caKey)
+	if err != nil {
+		return nil, "", "", "", err
+	}
+	return key, keyPEM, certPEM, caCertPEM, nil
+}
+
 // IssueLeafCertPEM issues a leaf certificate for leafKey's own public
 // key, signed by caCert/caKey (see GenerateCA), returning it
 // PEM-encoded — for a leaf whose own private key also signs something
@@ -166,6 +199,19 @@ func JWKSet(pub crypto.PublicKey, kid string) (json.RawMessage, error) {
 	return json.Marshal(map[string]any{"keys": []jwkWithKid{{JWK: j, Kid: kid}}})
 }
 
+// ParseCertificatePEM decodes a single PEM CERTIFICATE block and
+// parses it as an *x509.Certificate — the runtime counterpart to this
+// package's own generation helpers, for a cmd/conformance-*'s own
+// Config parsing (e.g. CredentialIssuerCertificatePEM), used
+// identically by more than one binary.
+func ParseCertificatePEM(pemStr string) (*x509.Certificate, error) {
+	block, _ := pem.Decode([]byte(pemStr))
+	if block == nil {
+		return nil, fmt.Errorf("no PEM block found")
+	}
+	return x509.ParseCertificate(block.Bytes)
+}
+
 // WriteJSONConfig JSON-marshals cfg and writes it to a fresh file
 // under t.TempDir(), returning the path — the "write this binary's
 // own Config out so loadConfig can read it back" step every
@@ -181,4 +227,50 @@ func WriteJSONConfig(t *testing.T, cfg any) string {
 		t.Fatalf("write config: %v", err)
 	}
 	return path
+}
+
+// AssertMatchingPublicKey fails t unless certKey (a certificate's own
+// PublicKey field) is the same key as signingKey's own public half —
+// the "did the generated certificate actually wrap this signing key"
+// check every cmd/conformance-*'s own config_test.go needs
+// identically.
+func AssertMatchingPublicKey(t *testing.T, signingKey *ecdsa.PrivateKey, certKey crypto.PublicKey) {
+	t.Helper()
+	if !signingKey.PublicKey.Equal(certKey) {
+		t.Error("certificate's public key does not match the signing key's")
+	}
+}
+
+// TestKeyAndSelfSignedCertPEM generates a fresh EC P-256 key plus a
+// self-signed certificate wrapping it (commonName), both PEM-encoded
+// — for a test's own CredentialIssuerCertificatePEM-shaped config
+// field where the suite's own self-signed-leaf rejection isn't being
+// exercised (that's GenerateSignerAndCert's own CA-issued leaf, used
+// by the real generate-config scripts, not this test-only shortcut).
+func TestKeyAndSelfSignedCertPEM(t *testing.T, commonName string) (keyPEM, certPEM string) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	keyPEM, err = ECKeyPEM(key)
+	if err != nil {
+		t.Fatalf("ECKeyPEM: %v", err)
+	}
+	certPEM, err = SelfSignedCertPEMForKey(commonName, key)
+	if err != nil {
+		t.Fatalf("SelfSignedCertPEMForKey: %v", err)
+	}
+	return keyPEM, certPEM
+}
+
+// RequireNonEmpty returns a "config: <jsonFieldName> is required"
+// error unless value is non-empty — the loadConfig required-field
+// check every cmd/conformance-*'s own Config needs identically for
+// each string field, jsonFieldName matching that field's own JSON tag.
+func RequireNonEmpty(jsonFieldName, value string) error {
+	if value == "" {
+		return fmt.Errorf("config: %s is required", jsonFieldName)
+	}
+	return nil
 }

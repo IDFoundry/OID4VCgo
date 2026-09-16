@@ -8,6 +8,8 @@ import (
 	"encoding/pem"
 	"fmt"
 	"os"
+
+	"github.com/idfoundry/oid4vcigo/internal/conformancecert"
 )
 
 // Config is this binary's own configuration — one JSON file, inline
@@ -66,8 +68,8 @@ func loadConfig(path string) (Config, error) {
 	if cfg.CredentialIssuerPrivateKeyPEM == "" {
 		return Config{}, fmt.Errorf("config: credential_issuer_private_key_pem is required")
 	}
-	if cfg.CredentialIssuerCertificatePEM == "" {
-		return Config{}, fmt.Errorf("config: credential_issuer_certificate_pem is required")
+	if err := conformancecert.RequireNonEmpty("credential_issuer_certificate_pem", cfg.CredentialIssuerCertificatePEM); err != nil {
+		return Config{}, err
 	}
 	if cfg.HolderPrivateKeyPEM == "" {
 		return Config{}, fmt.Errorf("config: holder_private_key_pem is required")
@@ -102,11 +104,7 @@ func (c Config) credentialIssuerKey() (*ecdsa.PrivateKey, error) {
 }
 
 func (c Config) credentialIssuerCertificate() (*x509.Certificate, error) {
-	block, _ := pem.Decode([]byte(c.CredentialIssuerCertificatePEM))
-	if block == nil {
-		return nil, fmt.Errorf("credential_issuer_certificate_pem: no PEM block found")
-	}
-	cert, err := x509.ParseCertificate(block.Bytes)
+	cert, err := conformancecert.ParseCertificatePEM(c.CredentialIssuerCertificatePEM)
 	if err != nil {
 		return nil, fmt.Errorf("credential_issuer_certificate_pem: %w", err)
 	}

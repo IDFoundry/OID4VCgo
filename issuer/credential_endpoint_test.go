@@ -19,6 +19,7 @@ import (
 	"github.com/idfoundry/oid4vcigo/internal/cose"
 	"github.com/idfoundry/oid4vcigo/internal/jose"
 	"github.com/idfoundry/oid4vcigo/internal/jwk"
+	"github.com/idfoundry/oid4vcigo/internal/testcert"
 	"github.com/idfoundry/oid4vcigo/issuer"
 )
 
@@ -223,8 +224,12 @@ func testMdocClaims(t *testing.T) *mdoc.Claims {
 	}
 }
 
-func TestRequestCredential_SDJWT_JWTProof(t *testing.T) {
-	f := newCredentialEndpointFixture(t)
+// requestOneSDJWTCredential drives one successful "dc+sd-jwt"
+// credential request through f — a fresh wallet key, nonce, and
+// jwt-type proof — asserting exactly one credential comes back, and
+// returns it.
+func requestOneSDJWTCredential(t *testing.T, f credentialEndpointFixture) string {
+	t.Helper()
 	walletKey := testP256Key(t)
 	nonce := f.issueNonce(t)
 	proof := buildJWTProof(t, walletKey, testIssuer, nonce)
@@ -240,13 +245,28 @@ func TestRequestCredential_SDJWT_JWTProof(t *testing.T) {
 	if len(resp.Credentials) != 1 {
 		t.Fatalf("got %d credentials, want 1", len(resp.Credentials))
 	}
+	return resp.Credentials[0].Credential
+}
 
-	_, _, err = sdjwtvc.Verify(resp.Credentials[0].Credential, &f.sdjwtSigner.Signer.(*ecdsa.PrivateKey).PublicKey, jose.ES256, sdjwtvc.VerifyOptions{
+func TestRequestCredential_SDJWT_JWTProof(t *testing.T) {
+	f := newCredentialEndpointFixture(t)
+	credential := requestOneSDJWTCredential(t, f)
+
+	_, _, err := sdjwtvc.Verify(credential, &f.sdjwtSigner.Signer.(*ecdsa.PrivateKey).PublicKey, jose.ES256, sdjwtvc.VerifyOptions{
 		RequireKeyBinding: false,
 	})
 	if err != nil {
 		t.Fatalf("sdjwtvc.Verify: %v", err)
 	}
+}
+
+func TestRequestCredential_SDJWT_IssuerCertificate(t *testing.T) {
+	f := newCredentialEndpointFixture(t, func(_ *issuer.Config, deps *issuer.Dependencies) {
+		key := deps.SDJWTSigner.Signer.(*ecdsa.PrivateKey)
+		deps.SDJWTSigner.IssuerCertificate = testcert.SelfSigned(t, "test-issuer", &key.PublicKey, key)
+	})
+	credential := requestOneSDJWTCredential(t, f)
+	testcert.AssertSingleX5CHeader(t, credential)
 }
 
 func TestRequestCredential_SDJWT_Batch(t *testing.T) {
