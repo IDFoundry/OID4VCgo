@@ -7,7 +7,6 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"encoding/json"
-	"errors"
 	"testing"
 	"time"
 
@@ -214,18 +213,32 @@ func TestAuthorizationServerAcceptsIssuerStateExtension(t *testing.T) {
 	}
 }
 
-func TestAuthorizationServerRejectsIssuerStateWithoutExtensionRegistered(t *testing.T) {
+// TestAuthorizationServerIgnoresIssuerStateWithoutExtensionRegistered
+// documents fapigo/server's own current behavior for a deployment that
+// skips issuer/authorization_server.go's own recipe: PAR now succeeds
+// regardless (RFC 6749 §3.1/RFC 9126 §2.1 require tolerating an
+// unrecognized authorization request parameter, not rejecting the
+// whole request over it — fapigo/server used to reject it, fixed
+// upstream), unlike this test's own prior name/assertion. What's not
+// observable from here — because it isn't observable from outside
+// fapigo/server's own extension.Registry.Parse at all, registered or
+// not (see issuer/authorization_server.go's own "does not resurface
+// through BeginAuthorization" section) — is that issuer_state's value
+// is silently dropped rather than carried through when unregistered;
+// that half is fapigo/server's own contract, already covered by its
+// own test suite, not something to re-verify by reaching past this
+// package's own dependency boundary.
+func TestAuthorizationServerIgnoresIssuerStateWithoutExtensionRegistered(t *testing.T) {
 	srv, clientKey, now := newTestAuthorizationServer(t, nil)
 	assertion := buildClientAssertion(t, clientKey, now)
 
-	_, err := srv.PushAuthorizationRequest(context.Background(), server.PushAuthorizationRequest{
+	result, err := srv.PushAuthorizationRequest(context.Background(), server.PushAuthorizationRequest{
 		HTTP: server.FormRequest{Parameters: pushedAuthorizationParameters(assertion, "opaque-issuer-state")},
 	})
-	var serr *server.Error
-	if !errors.As(err, &serr) {
-		t.Fatalf("error = %v, want *server.Error", err)
+	if err != nil {
+		t.Fatalf("PushAuthorizationRequest: %v", err)
 	}
-	if serr.Code() != server.ErrorInvalidRequest {
-		t.Errorf("Code = %q, want %q", serr.Code(), server.ErrorInvalidRequest)
+	if result.RequestURI.String() == "" {
+		t.Errorf("RequestURI is empty")
 	}
 }

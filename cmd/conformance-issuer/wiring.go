@@ -182,6 +182,10 @@ func newServerMux(cfg Config) (*http.ServeMux, error) {
 	if err != nil {
 		return nil, fmt.Errorf("credential issuer signing key: %w", err)
 	}
+	issuerCertificate, err := cfg.credentialIssuerCertificate()
+	if err != nil {
+		return nil, fmt.Errorf("credential issuer certificate: %w", err)
+	}
 	issProofAlgs := []string{"ES256"}
 	iss, err := issuer.New(issuer.Config{
 		Issuer:    issuerURL,
@@ -202,6 +206,7 @@ func newServerMux(cfg Config) (*http.ServeMux, error) {
 		Random: rand.Reader,
 		SDJWTSigner: &issuer.SDJWTSigner{
 			Signer: issuerSigningKey, Alg: jose.ES256,
+			IssuerCertificate: issuerCertificate,
 		},
 	})
 	if err != nil {

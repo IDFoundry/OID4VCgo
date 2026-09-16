@@ -15,9 +15,17 @@ func baseTestConfig(t *testing.T) Config {
 	if err != nil {
 		t.Fatalf("SelfSignedPEM: %v", err)
 	}
-	issuerKeyPEM, err := conformancecert.GenerateECKeyPEM()
+	issuerSigningKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
-		t.Fatalf("GenerateECKeyPEM: %v", err)
+		t.Fatalf("generate credential issuer signing key: %v", err)
+	}
+	issuerKeyPEM, err := conformancecert.ECKeyPEM(issuerSigningKey)
+	if err != nil {
+		t.Fatalf("ECKeyPEM: %v", err)
+	}
+	issuerCertPEM, err := conformancecert.SelfSignedCertPEMForKey("conformance-issuer-test-credential-issuer", issuerSigningKey)
+	if err != nil {
+		t.Fatalf("SelfSignedCertPEMForKey: %v", err)
 	}
 	attesterKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -38,11 +46,12 @@ func baseTestConfig(t *testing.T) Config {
 			ExpectedAttesterIssuer: "https://attester.example.com",
 			AttesterJWKS:           attesterJWKS,
 		},
-		CredentialIssuerSigningKeyPEM: issuerKeyPEM,
-		VCT:                           "urn:eudi:pid:1",
-		Claims:                        map[string]string{"given_name": "Jean"},
-		Scope:                         "IdentityCredential",
-		CredentialConfigurationID:     "IdentityCredential",
+		CredentialIssuerSigningKeyPEM:  issuerKeyPEM,
+		CredentialIssuerCertificatePEM: issuerCertPEM,
+		VCT:                            "urn:eudi:pid:1",
+		Claims:                         map[string]string{"given_name": "Jean"},
+		Scope:                          "IdentityCredential",
+		CredentialConfigurationID:      "IdentityCredential",
 	}
 }
 
@@ -78,6 +87,7 @@ func TestLoadConfig_RejectsMissingRequiredFields(t *testing.T) {
 		"client.expected_attester_issuer":   func(c *Config) { c.Client.ExpectedAttesterIssuer = "" },
 		"client.attester_jwks":              func(c *Config) { c.Client.AttesterJWKS = nil },
 		"credential_issuer_signing_key_pem": func(c *Config) { c.CredentialIssuerSigningKeyPEM = "" },
+		"credential_issuer_certificate_pem": func(c *Config) { c.CredentialIssuerCertificatePEM = "" },
 		"vct":                               func(c *Config) { c.VCT = "" },
 		"claims":                            func(c *Config) { c.Claims = nil },
 		"scope":                             func(c *Config) { c.Scope = "" },
@@ -172,8 +182,16 @@ func TestConfig_TLSCertificate(t *testing.T) {
 
 func TestConfig_CredentialIssuerSigningKey(t *testing.T) {
 	cfg := baseTestConfig(t)
-	if _, err := cfg.credentialIssuerSigningKey(); err != nil {
+	key, err := cfg.credentialIssuerSigningKey()
+	if err != nil {
 		t.Fatalf("credentialIssuerSigningKey: %v", err)
+	}
+	cert, err := cfg.credentialIssuerCertificate()
+	if err != nil {
+		t.Fatalf("credentialIssuerCertificate: %v", err)
+	}
+	if !key.PublicKey.Equal(cert.PublicKey) {
+		t.Error("credentialIssuerCertificate's public key does not match credentialIssuerSigningKey's")
 	}
 }
 

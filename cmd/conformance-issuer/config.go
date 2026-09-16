@@ -45,6 +45,18 @@ type Config struct {
 	// credential.
 	CredentialIssuerSigningKeyPEM string `json:"credential_issuer_signing_key_pem"`
 
+	// CredentialIssuerCertificatePEM is a CA-signed leaf certificate
+	// wrapping CredentialIssuerSigningKeyPEM's own public key — set as
+	// every issued credential's own "x5c" header (RFC 7515 §4.1.6),
+	// confirmed live as what HAIP's own SD-JWT VC trust model requires
+	// (the OIDF conformance suite's own "Credential MUST contain an x5c
+	// in the header" check, and its "Leaf certificate in x5c chain must
+	// not be self-signed" follow-up — see
+	// conformance/wallet-vp/README.md for where this was first found).
+	// Paste its issuing CA's own PEM into the suite's own
+	// "credential.trust_anchor_pem" test-configuration field.
+	CredentialIssuerCertificatePEM string `json:"credential_issuer_certificate_pem"`
+
 	// VCT/Claims/Scope/CredentialConfigurationID describe the one
 	// CredentialConfiguration this issuer advertises and issues. Claims
 	// is this binary's own fixed, canned claim content — issuer.Issuer
@@ -104,6 +116,9 @@ func loadConfig(path string) (Config, error) {
 	if cfg.CredentialIssuerSigningKeyPEM == "" {
 		return Config{}, fmt.Errorf("config: credential_issuer_signing_key_pem is required")
 	}
+	if cfg.CredentialIssuerCertificatePEM == "" {
+		return Config{}, fmt.Errorf("config: credential_issuer_certificate_pem is required")
+	}
 	if cfg.VCT == "" || len(cfg.Claims) == 0 || cfg.Scope == "" || cfg.CredentialConfigurationID == "" {
 		return Config{}, fmt.Errorf("config: vct, claims, scope and credential_configuration_id are all required")
 	}
@@ -134,6 +149,14 @@ func (c Config) credentialIssuerSigningKey() (*ecdsa.PrivateKey, error) {
 		return nil, fmt.Errorf("credential_issuer_signing_key_pem: no PEM block found")
 	}
 	return x509.ParseECPrivateKey(block.Bytes)
+}
+
+func (c Config) credentialIssuerCertificate() (*x509.Certificate, error) {
+	block, _ := pem.Decode([]byte(c.CredentialIssuerCertificatePEM))
+	if block == nil {
+		return nil, fmt.Errorf("credential_issuer_certificate_pem: no PEM block found")
+	}
+	return x509.ParseCertificate(block.Bytes)
 }
 
 func (c Config) issuerURL() (fapi.URL, error) {

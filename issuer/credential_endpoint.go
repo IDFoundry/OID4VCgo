@@ -361,7 +361,8 @@ func (iss *Issuer) issueSDJWT(claims sdjwtvc.Claims, key resolvedKey) (string, e
 	claims.CNF = map[string]any{"jwk": cnfJWK}
 
 	sdjwt, _, err := sdjwtvc.Issue(iss.deps.SDJWTSigner.Signer, iss.deps.SDJWTSigner.Alg, claims, sdjwtvc.IssueOptions{
-		KeyID: iss.deps.SDJWTSigner.KeyID,
+		KeyID:             iss.deps.SDJWTSigner.KeyID,
+		IssuerCertificate: iss.deps.SDJWTSigner.IssuerCertificate,
 	})
 	if err != nil {
 		return "", fmt.Errorf("issuer: issue sd-jwt vc: %w", err)

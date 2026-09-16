@@ -3,6 +3,7 @@ package issuer
 import (
 	"context"
 	"crypto"
+	"crypto/x509"
 	"fmt"
 	"io"
 	"time"
@@ -163,6 +164,19 @@ type SDJWTSigner struct {
 
 	// KeyID optionally sets the JOSE "kid" header on issued credentials.
 	KeyID string
+
+	// IssuerCertificate, if set, becomes the issued credential's own
+	// "x5c" header entry — see
+	// credential/sdjwtvc.IssueOptions.IssuerCertificate's own doc
+	// comment for why HAIP's SD-JWT VC trust model needs this (a CA-
+	// signed leaf, not a self-signed one — confirmed live against the
+	// OpenID Foundation conformance suite's own two checks on this
+	// exact requirement). Optional: MdocSigner's own X5Chain has always
+	// been required-in-practice for "mso_mdoc"; this field brings
+	// "dc+sd-jwt" issuance to the same standing, added once a real
+	// need (this conformance suite check) confirmed it, matching this
+	// package's own "extend only when a real need arises" discipline.
+	IssuerCertificate *x509.Certificate
 }
 
 func (s *SDJWTSigner) validate() error {

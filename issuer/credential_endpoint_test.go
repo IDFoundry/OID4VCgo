@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -19,6 +20,7 @@ import (
 	"github.com/idfoundry/oid4vcigo/internal/cose"
 	"github.com/idfoundry/oid4vcigo/internal/jose"
 	"github.com/idfoundry/oid4vcigo/internal/jwk"
+	"github.com/idfoundry/oid4vcigo/internal/testcert"
 	"github.com/idfoundry/oid4vcigo/issuer"
 )
 
@@ -246,6 +248,37 @@ func TestRequestCredential_SDJWT_JWTProof(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("sdjwtvc.Verify: %v", err)
+	}
+}
+
+func TestRequestCredential_SDJWT_IssuerCertificate(t *testing.T) {
+	f := newCredentialEndpointFixture(t, func(_ *issuer.Config, deps *issuer.Dependencies) {
+		key := deps.SDJWTSigner.Signer.(*ecdsa.PrivateKey)
+		deps.SDJWTSigner.IssuerCertificate = testcert.SelfSigned(t, "test-issuer", &key.PublicKey, key)
+	})
+	walletKey := testP256Key(t)
+	nonce := f.issueNonce(t)
+	proof := buildJWTProof(t, walletKey, testIssuer, nonce)
+
+	resp, err := f.iss.RequestCredential(context.Background(), issuer.AuthorizedRequest{Scopes: []string{"identity_credential"}}, issuer.CredentialRequest{
+		CredentialConfigurationID: testSDJWTConfigID,
+		Proofs:                    map[string][]string{oid4vci.ProofTypeJWT: {proof}},
+		SDJWTClaims:               testSDJWTClaims(),
+	})
+	if err != nil {
+		t.Fatalf("RequestCredential: %v", err)
+	}
+	if len(resp.Credentials) != 1 {
+		t.Fatalf("got %d credentials, want 1", len(resp.Credentials))
+	}
+
+	header, _, err := jose.DecodeUnverified(strings.SplitN(resp.Credentials[0].Credential, "~", 2)[0])
+	if err != nil {
+		t.Fatalf("DecodeUnverified: %v", err)
+	}
+	x5c, ok := header["x5c"].([]any)
+	if !ok || len(x5c) != 1 {
+		t.Fatalf("header[\"x5c\"] = %#v, want a single-entry array", header["x5c"])
 	}
 }
 

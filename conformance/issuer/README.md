@@ -164,56 +164,57 @@ confirmation: the suite's own `happy-flow` module attempt got past
 building and sending a PAR request as client1 (see below) — client2's
 own registration didn't block or interfere with anything.
 
-**`oid4vci-1_0-issuer-happy-flow`: reaches real protocol traffic, then
-blocked on a confirmed, deliberate `fapigo/server` design decision —
-not a bug, and not fixable from OID4VCIgo.** The suite built a real
-PAR request as client1 — `client_id`, `redirect_uri`, `scope`,
-`state`, `response_type`, `code_challenge`, `code_challenge_method`, a
-real Client Attestation + PoP JWT pair — plus one deliberately
-unrecognized, randomly-named extra parameter (citing requirements
-`PAR-2.1`–`PAR-2.4`: "the authorization server MUST ignore
-unrecognized request parameters", RFC 9126 carrying forward RFC 6749
-§3.1's general rule). `fapigo/server` rejected the *entire* request
-with `400 invalid_request: "request contains an unregistered or
-invalid parameter"` instead of ignoring the one extra parameter.
+**`oid4vci-1_0-issuer-happy-flow`: PAR blocker raised with FAPIgo,
+fixed upstream, pinned, and re-confirmed live — `FINISHED`, result
+`WARNING`, zero `FAILURE`s.** The suite's own PAR-2.1–PAR-2.4 check
+(RFC 9126/6749: "the authorization server MUST ignore unrecognized
+request parameters") was traced into `fapigo/server`'s own
+`Config.Extensions` — a strict allowlist that used to reject any
+unregistered parameter outright rather than ignore it. Raised with
+FAPIgo's maintainers as the design question this file previously
+flagged it as; they agreed and shipped
+`fix!: ignore unrecognized authorization request parameters at
+PAR/CIBA` (commit `597f2a7`, FAPIgo PR #304) — an unregistered
+authorization request parameter is now silently dropped (deleted from
+the request, per `extension.Registry.Parse`'s own updated doc comment)
+rather than failing the whole request. Pinned `go.mod` to this exact
+commit (no tagged release yet) and re-ran the suite: PAR now succeeds,
+and the module runs all the way through the consent redirect, token
+exchange, nonce, and credential issuance.
 
-Traced this into `fapigo/server`'s own source (the pinned checkout at
-`../go-fapi`, matching `go.mod`'s exact pseudo-version) rather than
-just the HTTP symptom: `cmd/conformance-issuer/par.go` is a thin
-passthrough (`server.FormRequestFromHTTP` → `srv.PushAuthorizationRequest`,
-no parameter filtering of its own) — the rejection happens inside
-`checkExtensions`, which runs every non-core parameter through
-`Config.Extensions.Parse` (an `*extension.Registry`), rejecting any
-name with no pre-registered `extension.Definition`. `extension`'s own
-`doc.go` states this plainly: *"Any parameter without a registered
-Definition is rejected by default; there is no production option to
-silently preserve unknown fields."* FAPIgo's own `ARCHITECTURE.md`
-design rules 10–11 confirm this is deliberate defense-in-depth against
-parameter-pollution/confusion attacks, not an oversight, and that a
-caller wanting permissive behavior "must opt in explicitly and
-separately" — outside `fapigo/server` entirely, since it offers no
-such option itself.
+That full run surfaced one more real, now-fixed gap along the way: the
+issued credential itself hit the exact same x5c requirement
+`conformance/wallet-vp/README.md` already documents for
+`cmd/conformance-wallet-vp` (`FAILURE | Credential MUST contain an x5c
+in the header`) — `issuer.SDJWTSigner` had no `IssuerCertificate` field
+at all, unlike `MdocSigner`'s own `X5Chain`, which already existed.
+Fixed by adding `issuer.SDJWTSigner.IssuerCertificate *x509.Certificate`
+(mirrors `credential/sdjwtvc.IssueOptions.IssuerCertificate` exactly,
+since `issueSDJWT` just forwards it) and wiring `cmd/conformance-issuer`
+to issue its own credential-signing key's certificate under a
+throwaway CA (`conformancecert.GenerateCA`/`IssueLeafCertPEM`), the
+same self-signed-leaf lesson already learned on the wallet-vp side.
+Re-run live after this second fix: `status: FINISHED, result: WARNING`
+— the only remaining log entry is a soft `RECOMMENDED` note ("issuers
+are RECOMMENDED to limit the validity of a credential using an exp
+claim, status claim or both"), not a `FAILURE`; this binary's own
+issued SD-JWT VC doesn't set `exp`.
 
-This closes off any real fix on either side: the suite generates a
-*fresh random* parameter name each run, so there is no `Definition` to
-pre-register even if we wanted one, and filtering unknown parameters
-ourselves in `par.go` before forwarding would mean duplicating
-`fapigo/server`'s own unexported core-parameter allowlist — fragile,
-liable to drift, and would silently defeat the exact security property
-`fapigo/server` was deliberately built to enforce. Not fixed here,
-matching `AGENTS.md`'s standing rule: don't patch around a FAPIgo
-design decision from inside OID4VCIgo. Unlike the Wallet Attestation
-client-side gap (a genuine missing feature FAPIgo will presumably add),
-this is closer to a values tradeoff FAPIgo's own maintainers made
-knowingly — worth raising with them as a real design question (does
-`fapigo/server` want an opt-in permissive mode for exactly this kind
-of conformance/interop scenario?), not a straightforward "please fix
-this bug" report.
+`issuer/authorization_server.go`'s own "Registering issuer_state"
+recipe section is updated to match the new behavior: skipping
+`oid4vci.IssuerStateExtension` registration no longer produces a loud
+PAR-time rejection, it silently drops `issuer_state`'s value instead —
+a worse failure mode to discover later, not a better one to skip.
+`TestAuthorizationServerRejectsIssuerStateWithoutExtensionRegistered`
+(now `...Ignores...`) is updated to match.
 
 ## Not yet run live
 
-Every module past `happy-flow`'s current blocker (59 of 61) — blocked
-transitively on the PAR unrecognized-parameter gap above for any
-module that reaches PAR at all. The consent-flow-compatibility and
-`Config.OAuthOnly`-compatibility open questions originally listed here
-remain unresolved, since no module has reached that far yet.
+Every module past `happy-flow` (59 of 61) — this was the first module
+in the plan actually attempted past the metadata/PAR stage; the
+consent-flow-compatibility open question originally listed here is now
+resolved (the consent-form round trip this binary's own `flow_test.go`
+already proved works end to end against a hand-rolled client also
+works driven by the real suite). `Config.OAuthOnly`-compatibility
+remains implicitly confirmed by this same live run (the suite's own
+`openid=plain_oauth` variant completed successfully throughout).
