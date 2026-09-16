@@ -89,6 +89,39 @@ func TestRequestPreAuthorizedCodeToken_Success(t *testing.T) {
 	}
 }
 
+// TestRequestPreAuthorizedCodeToken_ParsesAuthorizationDetails checks
+// that the Token Response's own "authorization_details" parameter
+// (RFC 9396 §6.2) — what issuer.ExchangePreAuthorizedCode's own
+// mintAuthorizationDetails produces when configured — comes back on
+// PreAuthorizedCodeTokenResult, ready to feed one of its own
+// CredentialIdentifiers into a later CredentialRequest.CredentialIdentifier.
+func TestRequestPreAuthorizedCodeToken_ParsesAuthorizationDetails(t *testing.T) {
+	w := newTestWalletWithHTTP(t, func(*http.Request) (*http.Response, error) {
+		return jsonResponse([]byte(`{
+			"access_token":"tok-1","token_type":"DPoP",
+			"authorization_details":[{"type":"openid_credential","credential_configuration_id":"IdentityCredential","credential_identifiers":["CivilEngineeringDegree-2023"]}]
+		}`)), nil
+	})
+
+	result, err := w.RequestPreAuthorizedCodeToken(context.Background(), testTokenEndpoint(t), wallet.PreAuthorizedCodeTokenRequest{
+		PreAuthorizedCode: "abc123",
+		DPoPKey:           testP256Key(t),
+	})
+	if err != nil {
+		t.Fatalf("RequestPreAuthorizedCodeToken: %v", err)
+	}
+	if len(result.AuthorizationDetails) != 1 {
+		t.Fatalf("AuthorizationDetails = %v, want 1 entry", result.AuthorizationDetails)
+	}
+	ad := result.AuthorizationDetails[0]
+	if ad.CredentialConfigurationID != "IdentityCredential" {
+		t.Errorf("CredentialConfigurationID = %q", ad.CredentialConfigurationID)
+	}
+	if len(ad.CredentialIdentifiers) != 1 || ad.CredentialIdentifiers[0] != "CivilEngineeringDegree-2023" {
+		t.Errorf("CredentialIdentifiers = %v", ad.CredentialIdentifiers)
+	}
+}
+
 func TestRequestPreAuthorizedCodeToken_OmitsTxCodeWhenEmpty(t *testing.T) {
 	var sentForm url.Values
 	w := newTestWalletWithHTTP(t, func(req *http.Request) (*http.Response, error) {

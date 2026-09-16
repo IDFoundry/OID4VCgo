@@ -33,13 +33,29 @@ type ProtectedResourceClient interface {
 // or Attestation (attestation proof type) — but not both groups,
 // matching issuer's own "proofs must contain exactly one proof type"
 // rule. di_vp isn't offered here yet (see the package doc comment).
-// credential_identifier-based requests aren't supported either,
-// matching issuer's own scope.
 type CredentialRequest struct {
 	// CredentialConfigurationID selects the Credential Configuration to
-	// request — a key in the Issuer's own credential_configurations_supported
-	// metadata. REQUIRED.
+	// request directly — a key in the Issuer's own
+	// credential_configurations_supported metadata. REQUIRED unless
+	// CredentialIdentifier is set instead — exactly one of the two must
+	// be present (§8.2's own MUST on both directions).
 	CredentialConfigurationID string
+
+	// CredentialIdentifier is §8.2's own alternative to
+	// CredentialConfigurationID: an opaque value from a prior Token
+	// Response's own "authorization_details" parameter (RFC 9396 §6.2)
+	// — one entry of the matching oid4vci.AuthorizationDetail's own
+	// CredentialIdentifiers, for whichever Credential Configuration
+	// that entry names. This package builds that Token Response
+	// parsing itself only for the Pre-Authorized Code Flow (see
+	// PreAuthorizedCodeTokenResult.AuthorizationDetails); for the
+	// Authorization Code Flow, acquiring the token — and so parsing its
+	// own authorization_details — is fapigo/client's own job, the same
+	// "this package never wraps fapigo/client's BeginAuthorization/
+	// ExchangeCode" split the package doc comment already draws, so the
+	// caller supplies whichever CredentialIdentifiers value it resolved
+	// from that response itself.
+	CredentialIdentifier string
 
 	// Keys is one crypto.Signer per Credential instance requested —
 	// len(Keys) > 1 requests a batch (§8.2's own multi-proof example).
@@ -96,7 +112,8 @@ type CredentialRequest struct {
 // go on the wire, so this stays a private type RequestCredential
 // builds internally.
 type credentialRequestBody struct {
-	CredentialConfigurationID string                         `json:"credential_configuration_id"`
+	CredentialConfigurationID string                         `json:"credential_configuration_id,omitempty"`
+	CredentialIdentifier      string                         `json:"credential_identifier,omitempty"`
 	Proofs                    map[string][]string            `json:"proofs"`
 	ResponseEncryption        *wireResponseEncryptionRequest `json:"credential_response_encryption,omitempty"`
 }
@@ -115,8 +132,10 @@ type credentialRequestBody struct {
 func (w *Wallet) RequestCredential(
 	ctx context.Context, resource ProtectedResourceClient, endpoint fapi.URL, req CredentialRequest,
 ) (CredentialResult, error) {
-	if req.CredentialConfigurationID == "" {
-		return CredentialResult{}, fmt.Errorf("wallet: request credential: credential_configuration_id is required")
+	hasConfigID := req.CredentialConfigurationID != ""
+	hasIdentifier := req.CredentialIdentifier != ""
+	if hasConfigID == hasIdentifier {
+		return CredentialResult{}, fmt.Errorf("wallet: request credential: exactly one of credential_configuration_id or credential_identifier is required")
 	}
 	hasJWT := len(req.Keys) > 0 || len(req.JWTProofs) > 0
 	hasAttestation := req.Attestation != ""
@@ -139,6 +158,7 @@ func (w *Wallet) RequestCredential(
 
 	body, err := json.Marshal(credentialRequestBody{
 		CredentialConfigurationID: req.CredentialConfigurationID,
+		CredentialIdentifier:      req.CredentialIdentifier,
 		Proofs:                    proofs,
 		ResponseEncryption:        respEncWire,
 	})

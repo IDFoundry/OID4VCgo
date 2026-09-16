@@ -423,7 +423,7 @@ func TestRequestCredential_CredentialIdentifier(t *testing.T) {
 		wantErr     issuer.ErrorCode // "" means success
 	}{
 		"resolves and succeeds, ignoring scope": {
-			auth: issuer.AuthorizedRequest{AuthorizationDetails: []issuer.AuthorizationDetail{
+			auth: issuer.AuthorizedRequest{AuthorizationDetails: []oid4vci.AuthorizationDetail{
 				{Type: "openid_credential", CredentialConfigurationID: testSDJWTConfigID, CredentialIdentifiers: []string{identifier}},
 			}},
 		},
@@ -432,25 +432,25 @@ func TestRequestCredential_CredentialIdentifier(t *testing.T) {
 			wantErr: issuer.ErrorUnknownCredentialIdentifier,
 		},
 		"non-matching identifier": {
-			auth: issuer.AuthorizedRequest{AuthorizationDetails: []issuer.AuthorizationDetail{
+			auth: issuer.AuthorizedRequest{AuthorizationDetails: []oid4vci.AuthorizationDetail{
 				{Type: "openid_credential", CredentialConfigurationID: testSDJWTConfigID, CredentialIdentifiers: []string{"SomeOtherIdentifier"}},
 			}},
 			wantErr: issuer.ErrorUnknownCredentialIdentifier,
 		},
 		"matching identifier under the wrong type": {
-			auth: issuer.AuthorizedRequest{AuthorizationDetails: []issuer.AuthorizationDetail{
+			auth: issuer.AuthorizedRequest{AuthorizationDetails: []oid4vci.AuthorizationDetail{
 				{Type: "not_openid_credential", CredentialConfigurationID: testSDJWTConfigID, CredentialIdentifiers: []string{identifier}},
 			}},
 			wantErr: issuer.ErrorUnknownCredentialIdentifier,
 		},
 		"authorized config isn't supported by this issuer": {
-			auth: issuer.AuthorizedRequest{AuthorizationDetails: []issuer.AuthorizationDetail{
+			auth: issuer.AuthorizedRequest{AuthorizationDetails: []oid4vci.AuthorizationDetail{
 				{Type: "openid_credential", CredentialConfigurationID: "NoSuchConfig", CredentialIdentifiers: []string{identifier}},
 			}},
 			wantErr: issuer.ErrorUnknownCredentialConfig,
 		},
 		"credential_configuration_id also present": {
-			auth: issuer.AuthorizedRequest{AuthorizationDetails: []issuer.AuthorizationDetail{
+			auth: issuer.AuthorizedRequest{AuthorizationDetails: []oid4vci.AuthorizationDetail{
 				{Type: "openid_credential", CredentialConfigurationID: testSDJWTConfigID, CredentialIdentifiers: []string{identifier}},
 			}},
 			setConfigID: true,

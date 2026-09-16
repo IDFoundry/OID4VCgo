@@ -17,11 +17,6 @@ import (
 // (Appendix F.1).
 const jwtProofTyp = "openid4vci-proof+jwt" //nolint:gosec // an OID4VCI typ value, not a credential
 
-// authorizationDetailsTypeOpenIDCredential is RFC 9396 §5.1.1's own
-// authorization details type — the only one resolveCredentialIdentifier
-// ever matches against.
-const authorizationDetailsTypeOpenIDCredential = "openid_credential" //nolint:gosec // an RFC 9396 authorization details type value, not a credential
-
 // AuthorizedRequest is what a Credential Request needs from an
 // already-verified access token — ordinarily
 // fapigo/resource.Verifier.Verify's own AuthorizationContext, adapted
@@ -60,39 +55,11 @@ type AuthorizedRequest struct {
 	// or verifies this claim itself, the same "resolving trust is the
 	// caller's job" split every other field here already takes; see
 	// resource_verifier.go for how it feeds in from a verified token's
-	// own claims.
-	AuthorizationDetails []AuthorizationDetail
-}
-
-// AuthorizationDetail is one entry of an already-verified access
-// token's own "authorization_details" claim, for the "openid_credential"
-// type RFC 9396 §5.1.1/§6.2 define — see AuthorizedRequest's own doc
-// comment for how this feeds in. JSON-tagged so a caller can
-// json.Unmarshal an already-decoded token claim's raw
-// "authorization_details" array directly into a []AuthorizationDetail,
-// rather than hand-rolling an equivalent wire type themselves.
-type AuthorizationDetail struct {
-	// Type is REQUIRED (§5.1.1). RequestCredential only ever matches
-	// entries whose Type is "openid_credential" — any other type entry
-	// is simply ignored, the same "additional authorization_details
-	// data fields... never considered invalid due to unknown fields"
-	// tolerance §5.1.1 itself documents for coexisting authorization
-	// details types.
-	Type string `json:"type"`
-
-	// CredentialConfigurationID is REQUIRED (§5.1.1): which
-	// Config.CredentialConfigurationsSupported entry this authorization
-	// detail authorizes.
-	CredentialConfigurationID string `json:"credential_configuration_id"`
-
-	// CredentialIdentifiers is REQUIRED once an authorization detail is
-	// echoed back in a Token Response (§6.2): every credential_identifier
-	// value a Credential Request may present against it. Absent on the
-	// Authorization Request's own outbound copy of this same type — a
-	// Wallet never sets it, only an Authorization Server does, once it
-	// decides to support this optional mechanism at all (§6.2's own
-	// "MAY do so").
-	CredentialIdentifiers []string `json:"credential_identifiers,omitempty"`
+	// own claims. oid4vci.AuthorizationDetail is JSON-tagged so a caller
+	// can json.Unmarshal an already-decoded token claim's raw
+	// "authorization_details" array directly into this field, rather
+	// than hand-rolling an equivalent wire type themselves.
+	AuthorizationDetails []oid4vci.AuthorizationDetail
 }
 
 // CredentialRequest is a Credential Request (§8.2).
@@ -324,9 +291,9 @@ func (iss *Issuer) resolveCredentialConfiguration(auth AuthorizedRequest, req Cr
 // credential_identifier presented against an access token that never
 // carried one) fails with ErrorUnknownCredentialIdentifier (§8.3.1.2's
 // own "Requested Credential identifier is unknown").
-func resolveCredentialIdentifier(details []AuthorizationDetail, identifier string) (string, error) {
+func resolveCredentialIdentifier(details []oid4vci.AuthorizationDetail, identifier string) (string, error) {
 	for _, d := range details {
-		if d.Type != authorizationDetailsTypeOpenIDCredential {
+		if d.Type != oid4vci.AuthorizationDetailsTypeOpenIDCredential {
 			continue
 		}
 		if slices.Contains(d.CredentialIdentifiers, identifier) {

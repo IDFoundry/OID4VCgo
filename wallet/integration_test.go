@@ -80,6 +80,7 @@ func (f issuerCredentialFake) Do(ctx context.Context, req *http.Request) (*http.
 
 	var wire struct {
 		CredentialConfigurationID string                               `json:"credential_configuration_id"`
+		CredentialIdentifier      string                               `json:"credential_identifier"`
 		Proofs                    map[string][]string                  `json:"proofs"`
 		ResponseEncryption        *issuerWireResponseEncryptionRequest `json:"credential_response_encryption"`
 	}
@@ -89,6 +90,7 @@ func (f issuerCredentialFake) Do(ctx context.Context, req *http.Request) (*http.
 
 	credReq := issuer.CredentialRequest{
 		CredentialConfigurationID: wire.CredentialConfigurationID,
+		CredentialIdentifier:      wire.CredentialIdentifier,
 		Proofs:                    wire.Proofs,
 		SDJWTClaims:               f.claims,
 		RequestWasEncrypted:       wasEncrypted,
@@ -409,6 +411,74 @@ func TestWalletPreAuthorizedCodeRoundTrip(t *testing.T) {
 		CredentialConfigurationID: "IdentityCredential",
 		Keys:                      []crypto.Signer{testP256Key(t)},
 		CredentialIssuer:          f.issuerURL.String(),
+	})
+	if err != nil {
+		t.Fatalf("RequestCredential: %v", err)
+	}
+	if len(result.Credentials) != 1 {
+		t.Fatalf("got %d credentials, want 1", len(result.Credentials))
+	}
+
+	payload, _, err := sdjwtvc.Verify(result.Credentials[0].Credential, &f.issuerSigner.PublicKey, jose.ES256, sdjwtvc.VerifyOptions{})
+	if err != nil {
+		t.Fatalf("sdjwtvc.Verify: %v", err)
+	}
+	if payload["vct"] != preAuthorizedRoundTripVCT {
+		t.Errorf("vct = %v, want %q", payload["vct"], preAuthorizedRoundTripVCT)
+	}
+}
+
+// TestWalletPreAuthorizedCodeRoundTrip_WithCredentialIdentifier extends
+// the same fixture with RFC 9396's own credential_identifier mechanism
+// end to end: the pre-authorized_code record's own
+// CredentialConfigurationIDs makes issuer.ExchangePreAuthorizedCode
+// mint a fresh credential_identifier, wallet.RequestPreAuthorizedCodeToken
+// parses it back out of the real Token Response, and a Credential
+// Request presenting it (instead of credential_configuration_id) still
+// succeeds against the real issuer.Issuer — proving the
+// mint-then-consume halves this and an earlier change each shipped
+// independently actually interoperate, not just each side's own unit
+// tests.
+func TestWalletPreAuthorizedCodeRoundTrip_WithCredentialIdentifier(t *testing.T) {
+	f := newPreAuthorizedRoundTripFixture(t, nil)
+	if err := f.preAuthorizedCodes.Issue(context.Background(), "code-with-identifier", issuer.PreAuthorizedCodeRecord{
+		Scopes: []string{"identity_credential"}, CredentialConfigurationIDs: []string{"IdentityCredential"},
+		ExpiresAt: time.Now().Add(time.Minute),
+	}); err != nil {
+		t.Fatalf("Issue pre-authorized_code: %v", err)
+	}
+
+	dpopKey := testP256Key(t)
+	tokenResult, err := f.w.RequestPreAuthorizedCodeToken(context.Background(), f.tokenEndpoint, wallet.PreAuthorizedCodeTokenRequest{
+		PreAuthorizedCode: "code-with-identifier",
+		DPoPKey:           dpopKey,
+	})
+	if err != nil {
+		t.Fatalf("RequestPreAuthorizedCodeToken: %v", err)
+	}
+	if len(tokenResult.AuthorizationDetails) != 1 || len(tokenResult.AuthorizationDetails[0].CredentialIdentifiers) != 1 {
+		t.Fatalf("AuthorizationDetails = %v, want 1 entry with 1 identifier", tokenResult.AuthorizationDetails)
+	}
+	identifier := tokenResult.AuthorizationDetails[0].CredentialIdentifiers[0]
+
+	resource := dpopProtectedResourceClient{
+		w: f.w, key: dpopKey, accessToken: tokenResult.AccessToken.Reveal(),
+		inner: issuerCredentialFake{
+			iss: f.iss,
+			// The same adaptation resource_verifier.go's own recipe
+			// describes — a real deployment parses this out of the
+			// verified access token's own claims instead of reusing the
+			// wallet-side parsed value directly, but the shape is
+			// identical either way.
+			auth:   issuer.AuthorizedRequest{AuthorizationDetails: tokenResult.AuthorizationDetails},
+			claims: &sdjwtvc.Claims{VCT: preAuthorizedRoundTripVCT},
+		},
+	}
+
+	result, err := f.w.RequestCredential(context.Background(), resource, f.credentialEndpoint, wallet.CredentialRequest{
+		CredentialIdentifier: identifier,
+		Keys:                 []crypto.Signer{testP256Key(t)},
+		CredentialIssuer:     f.issuerURL.String(),
 	})
 	if err != nil {
 		t.Fatalf("RequestCredential: %v", err)
