@@ -67,6 +67,49 @@ func TestSatisfiedByMdocClaims(t *testing.T) {
 	}
 }
 
+// TestSatisfiedBySDJWTVCClaimsWithClaimSets mirrors §6.4.1's own
+// worked example: a required claim plus an either/or pair, expressed
+// as two claim_sets options — the second (least-preferred) option
+// still satisfies the query when it's the only one a credential can
+// fulfill.
+func TestSatisfiedBySDJWTVCClaimsWithClaimSets(t *testing.T) {
+	cq := dcql.CredentialQuery{
+		ID: "identity_credential", Format: "dc+sd-jwt",
+		Meta: mustSDJWTVCMeta(t, "https://credentials.example.com/identity_credential"),
+		Claims: []dcql.ClaimsQuery{
+			{ID: "last_name", Path: dcql.Path{dcql.PathKey("last_name")}},
+			{ID: "postal_code", Path: dcql.Path{dcql.PathKey("postal_code")}},
+			{ID: "locality", Path: dcql.Path{dcql.PathKey("locality")}},
+			{ID: "region", Path: dcql.Path{dcql.PathKey("region")}},
+		},
+		ClaimSets: [][]string{
+			{"last_name", "postal_code"},
+			{"last_name", "locality", "region"},
+		},
+	}
+
+	// Satisfies only the first (most-preferred) option.
+	if err := cq.SatisfiedBySDJWTVCClaims(map[string]any{
+		"vct": "https://credentials.example.com/identity_credential", "last_name": "Doe", "postal_code": "12345",
+	}); err != nil {
+		t.Errorf("SatisfiedBySDJWTVCClaims (first option) = %v, want nil", err)
+	}
+
+	// Satisfies only the second (least-preferred) option.
+	if err := cq.SatisfiedBySDJWTVCClaims(map[string]any{
+		"vct": "https://credentials.example.com/identity_credential", "last_name": "Doe", "locality": "Anytown", "region": "CA",
+	}); err != nil {
+		t.Errorf("SatisfiedBySDJWTVCClaims (second option) = %v, want nil", err)
+	}
+
+	// Satisfies neither option (missing postal_code and locality/region).
+	if err := cq.SatisfiedBySDJWTVCClaims(map[string]any{
+		"vct": "https://credentials.example.com/identity_credential", "last_name": "Doe",
+	}); err == nil {
+		t.Errorf("SatisfiedBySDJWTVCClaims (neither option) = nil, want error")
+	}
+}
+
 func TestSatisfiedByMdocClaimsRejectsNonMdocPath(t *testing.T) {
 	cq := dcql.CredentialQuery{
 		ID: "mdl", Format: "mso_mdoc",

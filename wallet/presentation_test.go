@@ -109,7 +109,12 @@ func TestMatchDCQLQueryRejectsWrongVCT(t *testing.T) {
 	}
 }
 
-func TestMatchDCQLQueryRejectsClaimSets(t *testing.T) {
+// TestMatchDCQLQueryAcceptsSatisfiableClaimSetOption mirrors §6.4.1's
+// own rule: given two alternative claim_sets options, a held
+// credential that can only satisfy the second (least-preferred) one
+// still matches — the Wallet doesn't require the first option to be
+// satisfiable, just some option.
+func TestMatchDCQLQueryAcceptsSatisfiableClaimSetOption(t *testing.T) {
 	fixture := newHeldSDJWTVC(t)
 	meta, err := dcql.NewSDJWTVCMeta(dcql.SDJWTVCMeta{VCTValues: []string{testPresentationVCT}})
 	if err != nil {
@@ -117,8 +122,31 @@ func TestMatchDCQLQueryRejectsClaimSets(t *testing.T) {
 	}
 	query := dcql.Query{Credentials: []dcql.CredentialQuery{{
 		ID: "identity_credential", Format: sdjwtvc.CredentialFormat, Meta: meta,
-		Claims:    []dcql.ClaimsQuery{{ID: "given_name", Path: dcql.Path{dcql.PathKey("given_name")}}},
-		ClaimSets: [][]string{{"given_name"}},
+		Claims: []dcql.ClaimsQuery{
+			{ID: "no_such_claim", Path: dcql.Path{dcql.PathKey("no_such_claim")}},
+			{ID: "given_name", Path: dcql.Path{dcql.PathKey("given_name")}},
+		},
+		ClaimSets: [][]string{{"no_such_claim"}, {"given_name"}},
+	}}}
+	matches, err := wallet.MatchDCQLQuery(query, []wallet.HeldCredential{fixture.held})
+	if err != nil {
+		t.Fatalf("MatchDCQLQuery: %v", err)
+	}
+	if len(matches) != 1 || matches["identity_credential"].Credential != fixture.held.Credential {
+		t.Errorf("matches = %+v", matches)
+	}
+}
+
+func TestMatchDCQLQueryRejectsWhenNoClaimSetOptionSatisfied(t *testing.T) {
+	fixture := newHeldSDJWTVC(t)
+	meta, err := dcql.NewSDJWTVCMeta(dcql.SDJWTVCMeta{VCTValues: []string{testPresentationVCT}})
+	if err != nil {
+		t.Fatalf("NewSDJWTVCMeta: %v", err)
+	}
+	query := dcql.Query{Credentials: []dcql.CredentialQuery{{
+		ID: "identity_credential", Format: sdjwtvc.CredentialFormat, Meta: meta,
+		Claims:    []dcql.ClaimsQuery{{ID: "no_such_claim", Path: dcql.Path{dcql.PathKey("no_such_claim")}}},
+		ClaimSets: [][]string{{"no_such_claim"}},
 	}}}
 	if _, err := wallet.MatchDCQLQuery(query, []wallet.HeldCredential{fixture.held}); err == nil {
 		t.Fatalf("MatchDCQLQuery = nil error, want error")

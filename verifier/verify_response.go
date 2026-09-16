@@ -144,11 +144,13 @@ type VerifyResponseResult struct {
 // dcql.CredentialQuery.SatisfiedByMdocClaims.
 //
 // Phase scope, explicitly: exactly one Presentation per Credential
-// Query ("multiple: true" isn't supported yet), "claim_sets" isn't
-// supported (every entry in a Credential Query's own Claims is treated
-// as required), and every Credential Query in req.Query.Credentials is
-// treated as required (no CredentialSets/§6.4.2 Credential-selection
-// orchestration).
+// Query ("multiple: true" isn't supported yet), and every Credential
+// Query in req.Query.Credentials is treated as required (no
+// CredentialSets/§6.4.2 Credential-selection orchestration).
+// "claim_sets" (§6.4.1) is supported:
+// dcql.CredentialQuery.SatisfiedBySDJWTVCClaims/SatisfiedByMdocClaims
+// already try each option in order and report the Presentation as
+// satisfying the query as soon as one option is fully present.
 func (v *Verifier) VerifyResponse(ctx context.Context, req VerifyResponseRequest) (VerifyResponseResult, error) {
 	if err := req.Query.Validate(); err != nil {
 		return VerifyResponseResult{}, fmt.Errorf("verifier: verify response: query: %w", err)
@@ -170,8 +172,8 @@ func (v *Verifier) VerifyResponse(ctx context.Context, req VerifyResponseRequest
 
 // verifyCredentialQuery locates cq's own Presentation in
 // req.Response.VPToken, checks it against this phase's own scope
-// limits (exactly one Presentation, no claim_sets), and dispatches to
-// the format-specific verification VerifyResponse's own doc comment
+// limits (exactly one Presentation), and dispatches to the
+// format-specific verification VerifyResponse's own doc comment
 // describes.
 func (v *Verifier) verifyCredentialQuery(ctx context.Context, cq dcql.CredentialQuery, req VerifyResponseRequest) (VerifiedCredential, error) {
 	presentations := req.Response.VPToken[cq.ID]
@@ -180,9 +182,6 @@ func (v *Verifier) verifyCredentialQuery(ctx context.Context, cq dcql.Credential
 	}
 	if len(presentations) > 1 || cq.Multiple {
 		return VerifiedCredential{}, fmt.Errorf("multiple presentations are not yet supported")
-	}
-	if len(cq.ClaimSets) > 0 {
-		return VerifiedCredential{}, fmt.Errorf("claim_sets is not yet supported")
 	}
 
 	var claims map[string]any

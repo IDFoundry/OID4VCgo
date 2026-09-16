@@ -126,19 +126,19 @@ func resolveHeldMdocNameSpaces(issuerSigned mdoc.IssuerSigned) map[string]map[st
 //
 // Phase scope, explicitly matching verifier.VerifyResponse's own
 // scope: exactly one HeldCredential per Credential Query ("multiple:
-// true" isn't supported), "claim_sets" isn't supported, and every
-// Credential Query is treated as required — one with no matching
-// candidate is a hard error, not silently omitted (§6.4.2's own
-// CredentialSets-driven "may be omitted" rule isn't implemented yet).
+// true" isn't supported), and every Credential Query is treated as
+// required — one with no matching candidate is a hard error, not
+// silently omitted (§6.4.2's own CredentialSets-driven "may be
+// omitted" rule isn't implemented yet). "claim_sets" (§6.4.1) is
+// supported: dcql.CredentialQuery.SatisfiedBySDJWTVCClaims/
+// SatisfiedByMdocClaims already try each option in order and report a
+// candidate as matching as soon as one is fully present.
 func MatchDCQLQuery(query dcql.Query, candidates []HeldCredential) (map[string]HeldCredential, error) {
 	if err := query.Validate(); err != nil {
 		return nil, fmt.Errorf("wallet: match dcql query: %w", err)
 	}
 	matches := make(map[string]HeldCredential, len(query.Credentials))
 	for _, cq := range query.Credentials {
-		if len(cq.ClaimSets) > 0 {
-			return nil, fmt.Errorf("wallet: match dcql query: credential query %q: claim_sets is not yet supported", cq.ID)
-		}
 		match, err := matchCredentialQuery(cq, candidates)
 		if err != nil {
 			return nil, fmt.Errorf("wallet: match dcql query: credential query %q: %w", cq.ID, err)

@@ -138,6 +138,44 @@ func TestVerifyResponse(t *testing.T) {
 	}
 }
 
+// TestVerifyResponseAcceptsSatisfiableClaimSetOption mirrors §6.4.1's
+// own rule on the Verifier side: a Presentation satisfying only the
+// second (least-preferred) claim_sets option still verifies — the
+// Verifier doesn't require the first option to be the one satisfied,
+// just some option.
+func TestVerifyResponseAcceptsSatisfiableClaimSetOption(t *testing.T) {
+	cfg, deps := validConfig(t)
+	v, err := verifier.New(cfg, deps)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	meta, err := dcql.NewSDJWTVCMeta(dcql.SDJWTVCMeta{VCTValues: []string{testVCT}})
+	if err != nil {
+		t.Fatalf("NewSDJWTVCMeta: %v", err)
+	}
+	query := dcql.Query{Credentials: []dcql.CredentialQuery{{
+		ID: "identity_credential", Format: sdjwtvc.CredentialFormat, Meta: meta,
+		Claims: []dcql.ClaimsQuery{
+			{ID: "no_such_claim", Path: dcql.Path{dcql.PathKey("no_such_claim")}},
+			{ID: "given_name", Path: dcql.Path{dcql.PathKey("given_name")}},
+		},
+		ClaimSets: [][]string{{"no_such_claim"}, {"given_name"}},
+	}}}
+	built, err := v.BuildAuthorizationRequest(verifier.BuildAuthorizationRequestRequest{Query: query})
+	if err != nil {
+		t.Fatalf("BuildAuthorizationRequest: %v", err)
+	}
+	fixture := newSDJWTVCPresentation(t, v.ClientID(), built.Nonce)
+
+	result, err := v.VerifyResponse(context.Background(), verifier.VerifyResponseRequest{
+		Query:         query,
+		Response:      verifier.ParsedResponse{VPToken: map[string][]string{"identity_credential": {fixture.compact}}},
+		ExpectedNonce: built.Nonce,
+		IssuerKeys:    fixedSDJWTVCIssuerKeyResolver{pub: &fixture.issuerKey.PublicKey, alg: jose.ES256},
+	})
+	testverify.RequireOneCredential(t, result, err, "identity_credential")
+}
+
 // rejectCaseSDJWTVC builds a VerifyResponseRequest presenting one real
 // SD-JWT VC (bound to presAud/presNonce) against query, expecting
 // expectedNonce — the shared shape most of TestVerifyResponseRejects's

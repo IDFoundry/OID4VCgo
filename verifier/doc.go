@@ -22,14 +22,13 @@
 // direct_post.jwt response mode, per §5 and HAIP §5's own profile of
 // it). ParseDirectPostJWTResponse decrypts and parses the resulting
 // response (§8.1/§8.3.1). VerifyResponse implements §8.6's own VP
-// Token Validation for the "dc+sd-jwt" format only — see its own doc
-// comment for exactly what Phase 2 does and doesn't cover (no
-// "multiple", no claim_sets, no CredentialSets orchestration, no
-// "mso_mdoc"). Not yet implemented: OpenID4VPHandover/DeviceResponse
-// CBOR construction and verification for the "mso_mdoc" format, and
-// the DC API flow entirely (request_uri hosting/dereferencing is also
-// out of scope for this package — like issuer.CreateCredentialOffer's
-// own by-reference split, hosting the built Request Object at a
-// request_uri is the caller's own job). See ARCHITECTURE.md for the
-// full roadmap.
+// Token Validation for both the "dc+sd-jwt" and "mso_mdoc" formats,
+// including §6.4.1's own "claim_sets" alternative-claim-combination
+// rule — see its own doc comment for exactly what's still cut (no
+// "multiple", no CredentialSets/§6.4.2 orchestration). Not yet
+// implemented: the DC API flow entirely (request_uri hosting/
+// dereferencing is also out of scope for this package — like
+// issuer.CreateCredentialOffer's own by-reference split, hosting the
+// built Request Object at a request_uri is the caller's own job). See
+// ARCHITECTURE.md for the full roadmap.
 package verifier
