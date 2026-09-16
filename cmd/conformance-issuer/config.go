@@ -118,8 +118,8 @@ func loadConfig(path string) (Config, error) {
 	if cfg.CredentialIssuerSigningKeyPEM == "" {
 		return Config{}, fmt.Errorf("config: credential_issuer_signing_key_pem is required")
 	}
-	if cfg.CredentialIssuerCertificatePEM == "" {
-		return Config{}, fmt.Errorf("config: credential_issuer_certificate_pem is required")
+	if err := conformancecert.RequireNonEmpty("credential_issuer_certificate_pem", cfg.CredentialIssuerCertificatePEM); err != nil {
+		return Config{}, err
 	}
 	if cfg.VCT == "" || len(cfg.Claims) == 0 || cfg.Scope == "" || cfg.CredentialConfigurationID == "" {
 		return Config{}, fmt.Errorf("config: vct, claims, scope and credential_configuration_id are all required")

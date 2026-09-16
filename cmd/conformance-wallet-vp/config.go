@@ -68,8 +68,8 @@ func loadConfig(path string) (Config, error) {
 	if cfg.CredentialIssuerPrivateKeyPEM == "" {
 		return Config{}, fmt.Errorf("config: credential_issuer_private_key_pem is required")
 	}
-	if cfg.CredentialIssuerCertificatePEM == "" {
-		return Config{}, fmt.Errorf("config: credential_issuer_certificate_pem is required")
+	if err := conformancecert.RequireNonEmpty("credential_issuer_certificate_pem", cfg.CredentialIssuerCertificatePEM); err != nil {
+		return Config{}, err
 	}
 	if cfg.HolderPrivateKeyPEM == "" {
 		return Config{}, fmt.Errorf("config: holder_private_key_pem is required")

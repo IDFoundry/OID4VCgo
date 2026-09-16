@@ -263,3 +263,14 @@ func TestKeyAndSelfSignedCertPEM(t *testing.T, commonName string) (keyPEM, certP
 	}
 	return keyPEM, certPEM
 }
+
+// RequireNonEmpty returns a "config: <jsonFieldName> is required"
+// error unless value is non-empty — the loadConfig required-field
+// check every cmd/conformance-*'s own Config needs identically for
+// each string field, jsonFieldName matching that field's own JSON tag.
+func RequireNonEmpty(jsonFieldName, value string) error {
+	if value == "" {
+		return fmt.Errorf("config: %s is required", jsonFieldName)
+	}
+	return nil
+}
