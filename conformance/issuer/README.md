@@ -165,23 +165,50 @@ building and sending a PAR request as client1 (see below) — client2's
 own registration didn't block or interfere with anything.
 
 **`oid4vci-1_0-issuer-happy-flow`: reaches real protocol traffic, then
-blocked on what looks like a genuine `fapigo/server` gap, not an
-OID4VCIgo one.** The suite built a real PAR request as client1 —
-`client_id`, `redirect_uri`, `scope`, `state`, `response_type`,
-`code_challenge`, `code_challenge_method`, a real Client Attestation +
-PoP JWT pair — plus one deliberately unrecognized extra parameter
-(citing requirements `PAR-2.1`–`PAR-2.4`: "the authorization server
-MUST ignore unrecognized request parameters", RFC 9126 carrying
-forward RFC 6749 §3.1's general rule). `fapigo/server` rejected the
-*entire* request with `400 invalid_request: "request contains an
-unregistered or invalid parameter"` instead of ignoring the one extra
-parameter. `cmd/conformance-issuer/par.go` is a thin passthrough
-(`server.FormRequestFromHTTP` → `srv.PushAuthorizationRequest`, no
-parameter filtering of its own) — the rejection happens entirely
-inside `fapigo/server`. Not fixed here, matching this file's own
-standing rule (see `AGENTS.md`'s "Relationship to FAPIgo"): don't
-patch around a FAPIgo-internal decision from inside OID4VCIgo; flag it
-and wait for/contribute to a FAPIgo-side fix instead.
+blocked on a confirmed, deliberate `fapigo/server` design decision —
+not a bug, and not fixable from OID4VCIgo.** The suite built a real
+PAR request as client1 — `client_id`, `redirect_uri`, `scope`,
+`state`, `response_type`, `code_challenge`, `code_challenge_method`, a
+real Client Attestation + PoP JWT pair — plus one deliberately
+unrecognized, randomly-named extra parameter (citing requirements
+`PAR-2.1`–`PAR-2.4`: "the authorization server MUST ignore
+unrecognized request parameters", RFC 9126 carrying forward RFC 6749
+§3.1's general rule). `fapigo/server` rejected the *entire* request
+with `400 invalid_request: "request contains an unregistered or
+invalid parameter"` instead of ignoring the one extra parameter.
+
+Traced this into `fapigo/server`'s own source (the pinned checkout at
+`../go-fapi`, matching `go.mod`'s exact pseudo-version) rather than
+just the HTTP symptom: `cmd/conformance-issuer/par.go` is a thin
+passthrough (`server.FormRequestFromHTTP` → `srv.PushAuthorizationRequest`,
+no parameter filtering of its own) — the rejection happens inside
+`checkExtensions`, which runs every non-core parameter through
+`Config.Extensions.Parse` (an `*extension.Registry`), rejecting any
+name with no pre-registered `extension.Definition`. `extension`'s own
+`doc.go` states this plainly: *"Any parameter without a registered
+Definition is rejected by default; there is no production option to
+silently preserve unknown fields."* FAPIgo's own `ARCHITECTURE.md`
+design rules 10–11 confirm this is deliberate defense-in-depth against
+parameter-pollution/confusion attacks, not an oversight, and that a
+caller wanting permissive behavior "must opt in explicitly and
+separately" — outside `fapigo/server` entirely, since it offers no
+such option itself.
+
+This closes off any real fix on either side: the suite generates a
+*fresh random* parameter name each run, so there is no `Definition` to
+pre-register even if we wanted one, and filtering unknown parameters
+ourselves in `par.go` before forwarding would mean duplicating
+`fapigo/server`'s own unexported core-parameter allowlist — fragile,
+liable to drift, and would silently defeat the exact security property
+`fapigo/server` was deliberately built to enforce. Not fixed here,
+matching `AGENTS.md`'s standing rule: don't patch around a FAPIgo
+design decision from inside OID4VCIgo. Unlike the Wallet Attestation
+client-side gap (a genuine missing feature FAPIgo will presumably add),
+this is closer to a values tradeoff FAPIgo's own maintainers made
+knowingly — worth raising with them as a real design question (does
+`fapigo/server` want an opt-in permissive mode for exactly this kind
+of conformance/interop scenario?), not a straightforward "please fix
+this bug" report.
 
 ## Not yet run live
 

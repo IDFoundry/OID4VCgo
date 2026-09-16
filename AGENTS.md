@@ -67,14 +67,23 @@ not just against each other. `conformance-verifier`'s own
 11 in-scope modules. `conformance-wallet-vp`'s own `happy-flow` module
 passes every cryptographic check. `conformance-issuer`'s own
 `oid4vci-1_0-issuer-haip-test-plan` metadata modules pass; its
-`happy-flow` module is blocked on what looks like a genuine
-`fapigo/server`-side gap in `PushAuthorizationRequest`/
-`FormRequestFromHTTP`: it rejects a PAR request carrying an
-unrecognized/extra parameter with `invalid_request`, where the OIDF
-suite's own test (citing PAR-2.1 through PAR-2.4) expects the
-Authorization Server to silently ignore it instead — the same
-"flag it, don't reach into `fapigo/server` internals" boundary this
-file already draws for the Wallet Attestation gap above. See
+`happy-flow` module is blocked on a *confirmed* `fapigo/server` design
+decision, not a bug: `server.Config.Extensions` (an
+`*extension.Registry`) rejects any authorization parameter without a
+pre-registered `extension.Definition` — `extension`'s own doc comment
+states outright "there is no production option to silently preserve
+unknown fields," and FAPIgo's `ARCHITECTURE.md` design rules 10–11
+confirm this is deliberate parameter-pollution hardening, not an
+oversight. The OIDF suite's own PAR-2.1–PAR-2.4 check sends one
+randomly-named extra parameter expecting it to be silently ignored
+(RFC 9126/6749) — permanently incompatible with this design as it
+stands, since there's no `Definition` to pre-register for a name that
+changes every run. Same "flag it, don't reach into `fapigo/server`
+internals" boundary this file already draws for the Wallet Attestation
+gap above, but this one reads more like a values tradeoff FAPIgo's
+maintainers made knowingly than a missing feature — worth raising with
+them as a design question (an opt-in permissive mode for exactly this
+scenario?), not a plain bug report. See
 `conformance/verifier/README.md`'s, `conformance/wallet-vp/README.md`'s
 and `conformance/issuer/README.md`'s own "Status" sections for the
 full detail before assuming any specific suite test module passes.
