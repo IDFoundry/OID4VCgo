@@ -33,3 +33,9 @@ go.work.sum
 
 # OS
 .DS_Store
+
+# generate-config produces a throwaway config.json embedding private
+# key material (TLS listener key, OID4VP Client Identifier key,
+# credential-issuer signing key) — never commit a generated one; see
+# conformance/verifier/scripts/generate-config.
+/conformance/*/oidf-config/*.config.json
