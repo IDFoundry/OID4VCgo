@@ -527,10 +527,15 @@ shape from the phase-by-phase plan, not a description of current code.
   `Config.Extensions` (see that file's doc comment for the full recipe,
   including why `issuer_state` never resurfaces through
   `BeginAuthorization`'s own `InteractionRequest` and must be captured
-  by the caller directly off the incoming HTTP request instead). Still
-  to come: adapting a successful `ExchangeAuthorizationCode` result into
-  `RequestCredential`'s own `AuthorizedRequest` (today documented only
-  as a 2-line inline adaptation a caller does itself).
+  by the caller directly off the incoming HTTP request instead).
+  `issuer/resource_verifier.go` is the matching documentation-only
+  recipe for the other side of that same handshake: adapting
+  `fapigo/resource.Verifier.Verify`'s own `AuthorizationContext` — not
+  `ExchangeAuthorizationCode`'s result, which mints the token rather
+  than verifies one presented back to the Credential/Deferred
+  Credential/Notification Endpoint, where DPoP/mTLS proof-of-possession
+  actually gets checked — into `RequestCredential`'s own
+  `AuthorizedRequest`.
   `ExchangePreAuthorizedCode` (done) implements the Pre-Authorized Code
   Flow's own Token Request/Response (§6.1/§6.2) — the one grant type
   entirely outside `fapigo/server`'s scope, the same way it's outside

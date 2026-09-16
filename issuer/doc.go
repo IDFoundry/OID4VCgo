@@ -10,10 +10,11 @@
 // DPoP proof or mTLS certificate) that has nothing to do with
 // Credential Request/Response protocol logic — ordinarily
 // fapigo/resource.Verifier.Verify, called by the caller before
-// RequestCredential, its result adapted into AuthorizedRequest. This
-// package never reaches into fapigo's internal packages; see
-// ARCHITECTURE.md's "Relationship to FAPIgo" for why that's a hard
-// boundary, not a style choice.
+// RequestCredential, its result adapted into AuthorizedRequest; see
+// resource_verifier.go for the worked recipe. This package never
+// reaches into fapigo's internal packages; see ARCHITECTURE.md's
+// "Relationship to FAPIgo" for why that's a hard boundary, not a style
+// choice.
 //
 // # Status
 //
