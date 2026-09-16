@@ -94,6 +94,75 @@ func TestLoadConfig_RejectsMissingRequiredFields(t *testing.T) {
 	}
 }
 
+func TestLoadConfig_Client2IsOptional(t *testing.T) {
+	cfg := baseTestConfig(t)
+	if cfg.Client2 != nil {
+		t.Fatalf("baseTestConfig already sets Client2: %+v", cfg.Client2)
+	}
+	if _, err := loadConfig(conformancecert.WriteJSONConfig(t, cfg)); err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+}
+
+func TestLoadConfig_RejectsIncompleteClient2(t *testing.T) {
+	attesterKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate attester key: %v", err)
+	}
+	attesterJWKS, err := conformancecert.JWKSet(&attesterKey.PublicKey, "attester-2")
+	if err != nil {
+		t.Fatalf("JWKSet: %v", err)
+	}
+	complete := ConfigClient{
+		ID:                     "client2",
+		RedirectURIs:           []string{"https://client2.example.com/callback"},
+		ExpectedAttesterIssuer: "https://attester2.example.com",
+		AttesterJWKS:           attesterJWKS,
+	}
+	cases := map[string]func(*ConfigClient){
+		"client2.id":                       func(c *ConfigClient) { c.ID = "" },
+		"client2.redirect_uris":            func(c *ConfigClient) { c.RedirectURIs = nil },
+		"client2.expected_attester_issuer": func(c *ConfigClient) { c.ExpectedAttesterIssuer = "" },
+		"client2.attester_jwks":            func(c *ConfigClient) { c.AttesterJWKS = nil },
+	}
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			cfg := baseTestConfig(t)
+			c2 := complete
+			mutate(&c2)
+			cfg.Client2 = &c2
+			if _, err := loadConfig(conformancecert.WriteJSONConfig(t, cfg)); err == nil {
+				t.Fatalf("loadConfig = nil error, want error for incomplete %s", name)
+			}
+		})
+	}
+}
+
+func TestLoadConfig_AcceptsCompleteClient2(t *testing.T) {
+	attesterKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate attester key: %v", err)
+	}
+	attesterJWKS, err := conformancecert.JWKSet(&attesterKey.PublicKey, "attester-2")
+	if err != nil {
+		t.Fatalf("JWKSet: %v", err)
+	}
+	cfg := baseTestConfig(t)
+	cfg.Client2 = &ConfigClient{
+		ID:                     "client2",
+		RedirectURIs:           []string{"https://client2.example.com/callback"},
+		ExpectedAttesterIssuer: "https://attester2.example.com",
+		AttesterJWKS:           attesterJWKS,
+	}
+	got, err := loadConfig(conformancecert.WriteJSONConfig(t, cfg))
+	if err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+	if got.Client2 == nil || got.Client2.ID != "client2" {
+		t.Fatalf("loadConfig round-trip lost Client2: %+v", got.Client2)
+	}
+}
+
 func TestConfig_TLSCertificate(t *testing.T) {
 	cfg := baseTestConfig(t)
 	if _, err := cfg.tlsCertificate(); err != nil {

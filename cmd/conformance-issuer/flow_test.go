@@ -119,6 +119,89 @@ func randomHex(t *testing.T, n int) string {
 	return base64.RawURLEncoding.EncodeToString(buf)
 }
 
+// startTestIssuerServer sets cfg.Issuer from a fresh TLS listener
+// address, builds this binary's own real newServerMux from *cfg, and
+// starts serving — shared setup for every full-flow-style test in
+// this file.
+func startTestIssuerServer(t *testing.T, cfg *Config) *httptest.Server {
+	t.Helper()
+	ts := httptest.NewUnstartedServer(nil)
+	cfg.Issuer = "https://" + ts.Listener.Addr().String()
+	mux, err := newServerMux(*cfg)
+	if err != nil {
+		t.Fatalf("newServerMux: %v", err)
+	}
+	ts.Config.Handler = mux
+	tlsCert, err := cfg.tlsCertificate()
+	if err != nil {
+		t.Fatalf("tlsCertificate: %v", err)
+	}
+	ts.TLS = &tls.Config{Certificates: []tls.Certificate{tlsCert}}
+	ts.StartTLS()
+	t.Cleanup(ts.Close)
+	return ts
+}
+
+// clientAttestationHeaders builds the OAuth-Client-Attestation/-PoP
+// header pair (draft-07 §4) for one request as cc, signed by
+// attesterKey/attesterKid and proving possession of clientInstanceKey
+// — audience is always the Authorization Server's own issuer
+// identifier (issuerURL), never a specific endpoint URL (see
+// buildClientAttestationPoPJWT's own doc comment), so this same pair
+// works for both PAR and token requests.
+func clientAttestationHeaders(t *testing.T, attesterKey *ecdsa.PrivateKey, attesterKid string, cc ConfigClient, clientInstanceKey *ecdsa.PrivateKey, issuerURL string, now time.Time) http.Header {
+	t.Helper()
+	attJWT, err := buildClientAttestationJWT(attesterKey, attesterKid, cc.ExpectedAttesterIssuer, cc.ID, &clientInstanceKey.PublicKey, now)
+	if err != nil {
+		t.Fatalf("buildClientAttestationJWT: %v", err)
+	}
+	popJWT, err := buildClientAttestationPoPJWT(clientInstanceKey, cc.ID, issuerURL, randomHex(t, 16), now)
+	if err != nil {
+		t.Fatalf("buildClientAttestationPoPJWT: %v", err)
+	}
+	h := http.Header{}
+	h.Set("OAuth-Client-Attestation", attJWT)
+	h.Set("OAuth-Client-Attestation-PoP", popJWT)
+	return h
+}
+
+// performPAR drives one PAR request as cc — PKCE, a DPoP proof, and
+// a Client Attestation + PoP JWT pair, all real — and returns the
+// parsed JSON response (via doJSON, which already fails the test on a
+// non-2xx status).
+func performPAR(t *testing.T, client *http.Client, issuerURL, scope, codeChallenge string, cc ConfigClient, attesterKey *ecdsa.PrivateKey, attesterKid string, clientInstanceKey *ecdsa.PrivateKey, now time.Time) map[string]any {
+	t.Helper()
+	parURL := issuerURL + "/par"
+	parDPoP, err := buildDPoPProof(clientInstanceKey, http.MethodPost, parURL, randomHex(t, 16), "", now)
+	if err != nil {
+		t.Fatalf("buildDPoPProof (par): %v", err)
+	}
+	parForm := url.Values{
+		"response_type": {"code"}, "client_id": {cc.ID},
+		"redirect_uri": {cc.RedirectURIs[0]}, "scope": {scope},
+		"code_challenge": {codeChallenge}, "code_challenge_method": {"S256"},
+	}
+	parReq, err := http.NewRequest(http.MethodPost, parURL, strings.NewReader(parForm.Encode()))
+	if err != nil {
+		t.Fatalf("new par request: %v", err)
+	}
+	parReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	parReq.Header.Set("DPoP", parDPoP)
+	for k, v := range clientAttestationHeaders(t, attesterKey, attesterKid, cc, clientInstanceKey, issuerURL, now) {
+		parReq.Header[k] = v
+	}
+	return doJSON(t, client, parReq)
+}
+
+// pkceChallenge generates a fresh PKCE code_verifier/code_challenge
+// pair (S256).
+func pkceChallenge(t *testing.T) (verifier, challenge string) {
+	t.Helper()
+	verifier = randomHex(t, 32)
+	sum := sha256.Sum256([]byte(verifier))
+	return verifier, base64.RawURLEncoding.EncodeToString(sum[:])
+}
+
 // TestFullFlow_ParAuthorizeTokenNonceCredential drives
 // cmd/conformance-issuer's entire stack — PAR, the consent-form
 // authorize/decision round trip, the token endpoint (Client
@@ -158,62 +241,17 @@ func TestFullFlow_ParAuthorizeTokenNonceCredential(t *testing.T) {
 	cfg.Client.AttesterJWKS = attesterJWKS
 	cfg.DefaultSubject = "smoke-test-subject"
 
-	ts := httptest.NewUnstartedServer(nil)
-	cfg.Issuer = "https://" + ts.Listener.Addr().String()
-	mux, err := newServerMux(cfg)
-	if err != nil {
-		t.Fatalf("newServerMux: %v", err)
-	}
-	ts.Config.Handler = mux
-	tlsCert, err := cfg.tlsCertificate()
-	if err != nil {
-		t.Fatalf("tlsCertificate: %v", err)
-	}
-	ts.TLS = &tls.Config{Certificates: []tls.Certificate{tlsCert}}
-	ts.StartTLS()
-	defer ts.Close()
+	startTestIssuerServer(t, &cfg)
 
 	attestationHeaders := func(endpointURL string) http.Header {
-		attJWT, err := buildClientAttestationJWT(attesterKey, "attester-1", cfg.Client.ExpectedAttesterIssuer, cfg.Client.ID, &clientKey.PublicKey, now)
-		if err != nil {
-			t.Fatalf("buildClientAttestationJWT: %v", err)
-		}
-		popJWT, err := buildClientAttestationPoPJWT(clientKey, cfg.Client.ID, cfg.Issuer, randomHex(t, 16), now)
-		if err != nil {
-			t.Fatalf("buildClientAttestationPoPJWT: %v", err)
-		}
-		h := http.Header{}
-		h.Set("OAuth-Client-Attestation", attJWT)
-		h.Set("OAuth-Client-Attestation-PoP", popJWT)
-		return h
+		return clientAttestationHeaders(t, attesterKey, "attester-1", cfg.Client, clientKey, cfg.Issuer, now)
 	}
 
 	// PKCE
-	verifier := randomHex(t, 32)
-	challengeSum := sha256.Sum256([]byte(verifier))
-	challenge := base64.RawURLEncoding.EncodeToString(challengeSum[:])
+	verifier, challenge := pkceChallenge(t)
 
 	// --- PAR ---
-	parURL := cfg.Issuer + "/par"
-	parDPoP, err := buildDPoPProof(clientKey, http.MethodPost, parURL, randomHex(t, 16), "", now)
-	if err != nil {
-		t.Fatalf("buildDPoPProof (par): %v", err)
-	}
-	parForm := url.Values{
-		"response_type": {"code"}, "client_id": {cfg.Client.ID},
-		"redirect_uri": {cfg.Client.RedirectURIs[0]}, "scope": {cfg.Scope},
-		"code_challenge": {challenge}, "code_challenge_method": {"S256"},
-	}
-	parReq, err := http.NewRequest(http.MethodPost, parURL, strings.NewReader(parForm.Encode()))
-	if err != nil {
-		t.Fatalf("new par request: %v", err)
-	}
-	parReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	parReq.Header.Set("DPoP", parDPoP)
-	for k, v := range attestationHeaders(parURL) {
-		parReq.Header[k] = v
-	}
-	parResp := doJSON(t, client, parReq)
+	parResp := performPAR(t, client, cfg.Issuer, cfg.Scope, challenge, cfg.Client, attesterKey, "attester-1", clientKey, now)
 	requestURI, _ := parResp["request_uri"].(string)
 	if requestURI == "" {
 		t.Fatalf("par response has no request_uri: %+v", parResp)
@@ -335,6 +373,51 @@ func TestFullFlow_ParAuthorizeTokenNonceCredential(t *testing.T) {
 	credentials, _ := credentialResp["credentials"].([]any)
 	if len(credentials) != 1 {
 		t.Fatalf("credential response has %d credentials, want 1: %+v", len(credentials), credentialResp)
+	}
+}
+
+// TestFullFlow_Client2CanAuthenticatePAR proves Config.Client2 is a
+// real, independently-registered second client, not just a config
+// field that gets parsed and ignored — the OIDF conformance suite's
+// own oid4vci-1_0-issuer-haip-test-plan requires a second client even
+// for its happy-flow module (see README's own "Status"), which this
+// binary couldn't previously register at all. Drives PAR — the
+// earliest point ClientAuthMethodAttestation is actually checked —
+// as client2, with client1 also registered alongside it, confirming
+// client2's own attestation is accepted and client1's registration
+// doesn't interfere.
+func TestFullFlow_Client2CanAuthenticatePAR(t *testing.T) {
+	now := time.Now()
+	client := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}} //nolint:gosec // test-only, talks to this test's own throwaway TLS listener
+
+	attester2Key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate attester2 key: %v", err)
+	}
+	client2Key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate client2 instance key: %v", err)
+	}
+	attester2JWKS, err := conformancecert.JWKSet(&attester2Key.PublicKey, "attester-2")
+	if err != nil {
+		t.Fatalf("JWKSet: %v", err)
+	}
+
+	cfg := baseTestConfig(t)
+	client2 := ConfigClient{
+		ID:                     "smoke-test-client-2",
+		RedirectURIs:           []string{"https://client2.example.com/callback"},
+		ExpectedAttesterIssuer: "https://attester2.example.com",
+		AttesterJWKS:           attester2JWKS,
+	}
+	cfg.Client2 = &client2
+
+	startTestIssuerServer(t, &cfg)
+	_, challenge := pkceChallenge(t)
+
+	parResp := performPAR(t, client, cfg.Issuer, cfg.Scope, challenge, client2, attester2Key, "attester-2", client2Key, now)
+	if requestURI, _ := parResp["request_uri"].(string); requestURI == "" {
+		t.Fatalf("par response has no request_uri: %+v", parResp)
 	}
 }
 

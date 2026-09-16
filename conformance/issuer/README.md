@@ -103,55 +103,90 @@ Grant Management modules the base `FAPI2SPFinalTestPlan` module list
 carries but this specific HAIP variant selection may not actually
 exercise.
 
-## Status: first live run against the real OIDF suite
+## Status: live run against the real OIDF suite
 
-Plan creation itself succeeded (`oid4vci-1_0-issuer-haip-test-plan`,
-61 modules, `sd_jwt_vc` variant) once the plan config supplied: a
+Plan creation succeeds (`oid4vci-1_0-issuer-haip-test-plan`, 61
+modules, `sd_jwt_vc` variant) once the plan config supplies: a
 throwaway self-signed cert wrapping this binary's own credential-issuer
 key (`credential.trust_anchor_pem`/`status_list_trust_anchor_pem`), a
 *private* EC JWKS for `client_attestation.attester_jwks` (the suite
 signs its own emulated Client Attestation JWTs with it — this binary's
 own config registers the matching *public* half as
-`client.attester_jwks`, the same "we generate one keypair, give the
-suite the private half and ourselves the public half" pattern already
-confirmed for `conformance-verifier`'s `credential.signing_jwk`), and a
-second throwaway private JWKS for `client_attestation.key_attestation_jwks`.
+`client.attester_jwks`/`client2.attester_jwks`), and a second throwaway
+private JWKS for `client_attestation.key_attestation_jwks`. The
+attester JWK itself must also carry an `x5c` entry (RFC 7517's own JWK
+member, not the JWS header) — the suite's own `CreateClientAttestationJwt`
+step rejects one without it ("A x5c entry is required in the client's
+signing key but isn't present in the configuration"); a **CA-signed**
+leaf works (a self-signed one wasn't tried here, but see the
+`credential/sdjwtvc` x5c finding elsewhere in this session for why a
+CA-signed leaf was used from the start).
 
-Running the simplest module first (`oid4vci-1_0-issuer-metadata-test`,
-no client authentication at all) surfaced a real, confirmed gap: this
-binary's credential issuer metadata omits the OPTIONAL
-`authorization_servers` field, so the suite falls back to RFC 8414
-derivation from the credential issuer URL and requests
-`GET /.well-known/oauth-authorization-server` — which 404s, since
-`fapigo/server` only ever serves `/.well-known/openid-configuration`
-(OIDC-flavored discovery). This plan's own `openid=plain_oauth` variant
-(matching this binary's `Config.OAuthOnly = true`) is exactly the case
-where a plain-OAuth-flavored well-known path would be expected instead
-of (or in addition to) the OIDC one — this looks like a genuine
-`fapigo/server` gap (it has no logic to serve the RFC 8414 path even
-when `OAuthOnly` is set), the first time this exact combination
-(`OAuthOnly` + a conformance suite expecting RFC 8414 discovery) has
-been exercised in either repo. Not fixed here — this is a FAPIgo-side
-question, matching this session's standing rule to flag rather than
-work around FAPIgo-side gaps from inside OID4VCIgo.
+**`oid4vci-1_0-issuer-metadata-test`: confirmed live, full PASS**
+(`status: FINISHED, result: PASSED`). This module's first attempt
+surfaced a real, now-fixed gap: this binary's credential issuer
+metadata omits the OPTIONAL `authorization_servers` field, so the
+suite falls back to RFC 8414 derivation from the credential issuer URL
+and requests `GET /.well-known/oauth-authorization-server` — which
+404d, since only `router.go` decides which paths serve this binary's
+FAPI 2.0 AS metadata, and it only wired
+`/.well-known/openid-configuration` (OIDC Discovery's own path).
+**This turned out to be entirely fixable inside this binary, not a
+FAPIgo-side gap**: `authorizationServerMetadataHandler` just wraps
+`srv.Metadata()`, a plain data method with no opinion on which path
+serves it — `router.go` now registers the same handler at both paths,
+matching RFC 8414 §3.1's own stance that a plain-OAuth AS (this one:
+`Config.OAuthOnly = true`) should be identifiable at its own
+plain-OAuth well-known path, not only the OIDC one. Re-run live after
+the fix: full pass.
 
-This also settled the `client2` open question below: even the
-plan's own `happy-flow` module (not just multi-client variants) lists
-`client2.client_id`/`client2.scope`/`client2.jwks` in its own
-`configurationFields` — confirming `client2` is structurally required
-for this plan, matching FAPIgo's own `client_credentials` precedent.
-Since `Config.Client` here is a single struct (`cmd/conformance-issuer/config.go`'s
-own doc comment already flagged this as deliberately out of scope),
-running `happy-flow` itself needs `Config`/`wiring.go` extended to
-register a second attestation-authenticated client before it can be
-attempted — a real, concrete piece of follow-up work, not yet started.
+**`oid4vci-1_0-issuer-metadata-test-signed`: confirmed live, correctly
+`SKIPPED`** — this module tests OID4VCI's optional signed
+Credential Issuer Metadata feature, which `issuer.Issuer` doesn't
+implement (always returns plain JSON); the suite detects this via
+`Content-Type` and self-skips rather than failing. Not a gap: signed
+metadata is optional and out of scope.
+
+**`client2`: fixed, confirmed both as a unit test and live.** Even
+this plan's own `happy-flow` module (not just multi-client variants)
+lists `client2.client_id`/`client2.scope`/`client2.jwks` in its own
+`configurationFields` — `client2` is structurally required, matching
+FAPIgo's own `client_credentials` precedent. `Config.Client` was a
+single struct (deliberately out of scope, per its own prior doc
+comment); added `Config.Client2 *ConfigClient` (optional — nil
+registers only `Client`) and extended `wiring.go` to register both as
+independent `storage.ClientAuthMethodAttestation`-authenticated
+clients sharing one `Dependencies.ClientKeys` source.
+`TestFullFlow_Client2CanAuthenticatePAR` proves client2 can PAR-
+authenticate for real, with client1 also registered alongside it. Live
+confirmation: the suite's own `happy-flow` module attempt got past
+`SUCCESS | Generated JWKS for client2` and all the way to actually
+building and sending a PAR request as client1 (see below) — client2's
+own registration didn't block or interfere with anything.
+
+**`oid4vci-1_0-issuer-happy-flow`: reaches real protocol traffic, then
+blocked on what looks like a genuine `fapigo/server` gap, not an
+OID4VCIgo one.** The suite built a real PAR request as client1 —
+`client_id`, `redirect_uri`, `scope`, `state`, `response_type`,
+`code_challenge`, `code_challenge_method`, a real Client Attestation +
+PoP JWT pair — plus one deliberately unrecognized extra parameter
+(citing requirements `PAR-2.1`–`PAR-2.4`: "the authorization server
+MUST ignore unrecognized request parameters", RFC 9126 carrying
+forward RFC 6749 §3.1's general rule). `fapigo/server` rejected the
+*entire* request with `400 invalid_request: "request contains an
+unregistered or invalid parameter"` instead of ignoring the one extra
+parameter. `cmd/conformance-issuer/par.go` is a thin passthrough
+(`server.FormRequestFromHTTP` → `srv.PushAuthorizationRequest`, no
+parameter filtering of its own) — the rejection happens entirely
+inside `fapigo/server`. Not fixed here, matching this file's own
+standing rule (see `AGENTS.md`'s "Relationship to FAPIgo"): don't
+patch around a FAPIgo-internal decision from inside OID4VCIgo; flag it
+and wait for/contribute to a FAPIgo-side fix instead.
 
 ## Not yet run live
 
-Every module past `metadata-test` (60 of 61, including `happy-flow`
-and its own `metadata-test-signed` sibling) — blocked on the
-`/.well-known/oauth-authorization-server` gap above for any module that
-fetches AS metadata, and additionally on the `client2` wiring gap for
-`happy-flow` itself. The consent-flow-compatibility and
+Every module past `happy-flow`'s current blocker (59 of 61) — blocked
+transitively on the PAR unrecognized-parameter gap above for any
+module that reaches PAR at all. The consent-flow-compatibility and
 `Config.OAuthOnly`-compatibility open questions originally listed here
-remain unresolved, since no module reached that far yet.
+remain unresolved, since no module has reached that far yet.

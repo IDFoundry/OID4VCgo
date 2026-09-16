@@ -88,25 +88,37 @@ func newServerMux(cfg Config) (*http.ServeMux, error) {
 	// Dependencies.ClientKeys, keyed by client ID (confirmed against
 	// server/client_auth_attestation.go's own resolveClientKey call) —
 	// see Config.Client's own doc comment.
-	clientKeys, err := ephemeral.NewClientKeySource(fetcher, []ephemeral.ClientKeySpec{
+	clientKeySpecs := []ephemeral.ClientKeySpec{
 		{ClientID: fapi.ClientID(cfg.Client.ID), JWKS: cfg.Client.AttesterJWKS},
-	})
+	}
+	registeredClients := []storage.RegisteredClient{}
+	for _, cc := range []*ConfigClient{&cfg.Client, cfg.Client2} {
+		if cc == nil {
+			continue
+		}
+		c, err := storage.NewRegisteredClient(storage.RegisteredClientConfig{
+			ID:                         fapi.ClientID(cc.ID),
+			RedirectURIs:               registeredRedirectURIs(cc.RedirectURIs),
+			ClientAuthMethod:           storage.ClientAuthMethodAttestation,
+			ExpectedAttesterIssuer:     cc.ExpectedAttesterIssuer,
+			ClientAttestationAlgorithm: clientAttestationAlgorithm,
+			AllowedScopes:              []string{cfg.Scope},
+		})
+		if err != nil {
+			return nil, fmt.Errorf("register client %s: %w", cc.ID, err)
+		}
+		registeredClients = append(registeredClients, c)
+	}
+	if cfg.Client2 != nil {
+		clientKeySpecs = append(clientKeySpecs, ephemeral.ClientKeySpec{
+			ClientID: fapi.ClientID(cfg.Client2.ID), JWKS: cfg.Client2.AttesterJWKS,
+		})
+	}
+	clientKeys, err := ephemeral.NewClientKeySource(fetcher, clientKeySpecs)
 	if err != nil {
 		return nil, err
 	}
-
-	client, err := storage.NewRegisteredClient(storage.RegisteredClientConfig{
-		ID:                         fapi.ClientID(cfg.Client.ID),
-		RedirectURIs:               registeredRedirectURIs(cfg.Client.RedirectURIs),
-		ClientAuthMethod:           storage.ClientAuthMethodAttestation,
-		ExpectedAttesterIssuer:     cfg.Client.ExpectedAttesterIssuer,
-		ClientAttestationAlgorithm: clientAttestationAlgorithm,
-		AllowedScopes:              []string{cfg.Scope},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("register client: %w", err)
-	}
-	clientRepo := memstore.NewClientRepository([]storage.RegisteredClient{client})
+	clientRepo := memstore.NewClientRepository(registeredClients)
 	replayStore := memstore.NewReplayStore()
 
 	accessTokens, err := server.NewJWTAccessTokens(keyManager, fapi.ES256)

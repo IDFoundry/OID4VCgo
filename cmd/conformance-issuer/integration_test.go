@@ -56,6 +56,16 @@ func TestNewServerMux_ServesRealMetadataAndJWKS(t *testing.T) {
 		}
 	})
 
+	t.Run("oauth-authorization-server metadata mirrors openid-configuration", func(t *testing.T) {
+		body := getJSON(t, client, ts.URL+"/.well-known/oauth-authorization-server")
+		if body["issuer"] != cfg.Issuer {
+			t.Fatalf("issuer = %v, want %v", body["issuer"], cfg.Issuer)
+		}
+		if body["pushed_authorization_request_endpoint"] == nil {
+			t.Fatalf("missing pushed_authorization_request_endpoint: %+v", body)
+		}
+	})
+
 	t.Run("credential issuer metadata", func(t *testing.T) {
 		body := getJSON(t, client, ts.URL+"/.well-known/openid-credential-issuer")
 		if body["credential_issuer"] != cfg.Issuer {
