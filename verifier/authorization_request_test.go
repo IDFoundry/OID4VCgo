@@ -24,19 +24,22 @@ func testQuery(t *testing.T) dcql.Query {
 	}
 }
 
-// requestObjectPayload is the subset of Request Object claims this
-// test asserts on directly.
+// requestObjectPayload is the subset of Request Object claims both
+// TestBuildAuthorizationRequest and TestBuildDCAPIAuthorizationRequest
+// assert on directly — ResponseURI is only ever set by the redirect
+// flow, ExpectedOrigins only ever set by the DC API flow.
 type requestObjectPayload struct {
-	Iss            string     `json:"iss"`
-	Aud            string     `json:"aud"`
-	ResponseType   string     `json:"response_type"`
-	ResponseMode   string     `json:"response_mode"`
-	ClientID       string     `json:"client_id"`
-	ResponseURI    string     `json:"response_uri"`
-	Nonce          string     `json:"nonce"`
-	State          string     `json:"state"`
-	DCQLQuery      dcql.Query `json:"dcql_query"`
-	ClientMetadata struct {
+	Iss             string     `json:"iss"`
+	Aud             string     `json:"aud"`
+	ResponseType    string     `json:"response_type"`
+	ResponseMode    string     `json:"response_mode"`
+	ClientID        string     `json:"client_id"`
+	ResponseURI     string     `json:"response_uri"`
+	ExpectedOrigins []string   `json:"expected_origins"`
+	Nonce           string     `json:"nonce"`
+	State           string     `json:"state"`
+	DCQLQuery       dcql.Query `json:"dcql_query"`
+	ClientMetadata  struct {
 		JWKS struct {
 			Keys []struct {
 				Kty string `json:"kty"`
@@ -52,13 +55,42 @@ type requestObjectPayload struct {
 	} `json:"client_metadata"`
 }
 
-// TestBuildAuthorizationRequest drives a real round trip: build a
-// signed Request Object, then parse and verify it via internal/jose's
+// verifyAndParseRequestObject verifies requestObject via internal/jose's
 // own production Verify path (mirroring
 // issuer/authorization_server_test.go's "real round trip against
-// production code on both sides" discipline) — proving the JWS this
-// package produces is exactly what a Wallet's own JOSE verification
-// would accept.
+// production code on both sides" discipline) — proving the JWS
+// BuildAuthorizationRequest/BuildDCAPIAuthorizationRequest produce is
+// exactly what a Wallet's own JOSE verification would accept — checks
+// the header's own "typ"/"x5c" (identical for both flows, since both
+// sign via the shared signRequestObject), and unmarshals the payload
+// into requestObjectPayload.
+func verifyAndParseRequestObject(t *testing.T, cfg verifier.Config, deps verifier.Dependencies, requestObject string) requestObjectPayload {
+	t.Helper()
+	header, payload, err := jose.Verify(cfg.SigningAlg, deps.Signer.Public(), requestObject)
+	if err != nil {
+		t.Fatalf("jose.Verify: %v", err)
+	}
+	if header["typ"] != "oauth-authz-req+jwt" {
+		t.Errorf(`header["typ"] = %v, want "oauth-authz-req+jwt"`, header["typ"])
+	}
+	x5c, ok := header["x5c"].([]any)
+	if !ok || len(x5c) != 1 {
+		t.Fatalf(`header["x5c"] = %v, want a one-element array`, header["x5c"])
+	}
+	wantCert := base64.StdEncoding.EncodeToString(cfg.ClientCertificate.Raw)
+	if x5c[0] != wantCert {
+		t.Errorf("x5c[0] = %v, want the client certificate's own DER", x5c[0])
+	}
+
+	var claims requestObjectPayload
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		t.Fatalf("unmarshal payload: %v", err)
+	}
+	return claims
+}
+
+// TestBuildAuthorizationRequest drives a real round trip: build a
+// signed Request Object and verify its own claims.
 func TestBuildAuthorizationRequest(t *testing.T) {
 	cfg, deps := validConfig(t)
 	v, err := verifier.New(cfg, deps)
@@ -81,26 +113,7 @@ func TestBuildAuthorizationRequest(t *testing.T) {
 		t.Fatalf("ResponseDecryptionKey is nil")
 	}
 
-	header, payload, err := jose.Verify(cfg.SigningAlg, deps.Signer.Public(), result.RequestObject)
-	if err != nil {
-		t.Fatalf("jose.Verify: %v", err)
-	}
-	if header["typ"] != "oauth-authz-req+jwt" {
-		t.Errorf(`header["typ"] = %v, want "oauth-authz-req+jwt"`, header["typ"])
-	}
-	x5c, ok := header["x5c"].([]any)
-	if !ok || len(x5c) != 1 {
-		t.Fatalf(`header["x5c"] = %v, want a one-element array`, header["x5c"])
-	}
-	wantCert := base64.StdEncoding.EncodeToString(cfg.ClientCertificate.Raw)
-	if x5c[0] != wantCert {
-		t.Errorf("x5c[0] = %v, want the client certificate's own DER", x5c[0])
-	}
-
-	var claims requestObjectPayload
-	if err := json.Unmarshal(payload, &claims); err != nil {
-		t.Fatalf("unmarshal payload: %v", err)
-	}
+	claims := verifyAndParseRequestObject(t, cfg, deps, result.RequestObject)
 	if claims.ResponseType != "vp_token" {
 		t.Errorf("response_type = %q, want vp_token", claims.ResponseType)
 	}
@@ -207,5 +220,70 @@ func TestBuildAuthorizationRequestFreshPerCall(t *testing.T) {
 	}
 	if first.ResponseDecryptionKey.Equal(second.ResponseDecryptionKey) {
 		t.Errorf("response decryption key repeated across calls")
+	}
+}
+
+// TestBuildDCAPIAuthorizationRequest drives the same kind of real
+// round trip TestBuildAuthorizationRequest does, checking exactly what
+// differs for the DC API flow (Appendix A.3.2.1): "response_mode" is
+// "dc_api.jwt" rather than "direct_post.jwt", "expected_origins" is
+// present rather than "response_uri", and "response_uri" itself is
+// absent entirely. Coverage for the mechanics both flows share
+// (nonce/response-encryption-key freshness, state omission when
+// empty, header shape) lives on TestBuildAuthorizationRequest's own
+// side — signRequestObject/buildResponseEncryptionMetadata/randomToken
+// are the same code paths regardless of which Build*Request method
+// calls them, so there's nothing flow-specific left to re-prove here.
+func TestBuildDCAPIAuthorizationRequest(t *testing.T) {
+	cfg, deps, v := newTestVerifierWithConfig(t)
+
+	query := testQuery(t)
+	result, err := v.BuildDCAPIAuthorizationRequest(verifier.BuildDCAPIAuthorizationRequestRequest{
+		Query: query, ExpectedOrigins: []string{"https://verifier.example.com"}, State: "state-1",
+	})
+	if err != nil {
+		t.Fatalf("BuildDCAPIAuthorizationRequest: %v", err)
+	}
+	if result.ClientID != v.ClientID() {
+		t.Errorf("ClientID = %q, want %q", result.ClientID, v.ClientID())
+	}
+	if result.ResponseDecryptionKey == nil {
+		t.Fatalf("ResponseDecryptionKey is nil")
+	}
+
+	claims := verifyAndParseRequestObject(t, cfg, deps, result.RequestObject)
+	if claims.ResponseMode != "dc_api.jwt" {
+		t.Errorf("response_mode = %q, want dc_api.jwt", claims.ResponseMode)
+	}
+	if len(claims.ExpectedOrigins) != 1 || claims.ExpectedOrigins[0] != "https://verifier.example.com" {
+		t.Errorf("expected_origins = %v, want [https://verifier.example.com]", claims.ExpectedOrigins)
+	}
+	if claims.ResponseURI != "" {
+		t.Errorf("response_uri = %q, want empty (not a DC API parameter)", claims.ResponseURI)
+	}
+	if claims.ClientID != v.ClientID() {
+		t.Errorf("client_id = %q, want %q", claims.ClientID, v.ClientID())
+	}
+	if claims.Nonce != result.Nonce {
+		t.Errorf("nonce = %q, want %q", claims.Nonce, result.Nonce)
+	}
+	if len(claims.ClientMetadata.JWKS.Keys) != 1 {
+		t.Errorf("client_metadata.jwks.keys has %d entries, want 1", len(claims.ClientMetadata.JWKS.Keys))
+	}
+}
+
+func TestBuildDCAPIAuthorizationRequestRejectsInvalidQuery(t *testing.T) {
+	v := newTestVerifier(t)
+	req := verifier.BuildDCAPIAuthorizationRequestRequest{Query: dcql.Query{}, ExpectedOrigins: []string{"https://verifier.example.com"}}
+	if _, err := v.BuildDCAPIAuthorizationRequest(req); err == nil {
+		t.Fatalf("BuildDCAPIAuthorizationRequest = nil error, want error")
+	}
+}
+
+func TestBuildDCAPIAuthorizationRequestRejectsMissingExpectedOrigins(t *testing.T) {
+	v := newTestVerifier(t)
+	req := verifier.BuildDCAPIAuthorizationRequestRequest{Query: testQuery(t)}
+	if _, err := v.BuildDCAPIAuthorizationRequest(req); err == nil {
+		t.Fatalf("BuildDCAPIAuthorizationRequest = nil error, want error")
 	}
 }
