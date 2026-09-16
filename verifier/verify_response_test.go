@@ -116,38 +116,51 @@ func testIdentityQuery(t *testing.T) dcql.Query {
 }
 
 // verifySDJWTVCRoundTrip drives a real end-to-end round trip against
-// query: build a real Authorization Request (for its own
-// ClientID/Nonce), issue and present a real SD-JWT VC bound to that
-// exact aud/nonce, and verify it via VerifyResponse — the same "real
-// round trip, not a simulation" discipline every other cross-package
-// wire-format claim in this repo is held to. Shared by TestVerifyResponse
-// and TestVerifyResponseAcceptsSatisfiableClaimSetOption, which differ
-// only in which query is asked.
-func verifySDJWTVCRoundTrip(t *testing.T, query dcql.Query) verifier.VerifiedCredential {
+// query, via the redirect flow (origin empty) or the DC API flow
+// (origin set): build a real Authorization/DC API Request (for its
+// own Nonce, and — for the DC API flow — its own "origin:"-prefixed
+// audience), issue and present a real SD-JWT VC bound to that exact
+// aud/nonce, and verify it via VerifyResponse — the same "real round
+// trip, not a simulation" discipline every other cross-package
+// wire-format claim in this repo is held to. Shared by
+// TestVerifyResponse, TestVerifyResponseAcceptsSatisfiableClaimSetOption,
+// and TestVerifyResponseDCAPI, which differ only in which query is
+// asked and which flow is exercised.
+func verifySDJWTVCRoundTrip(t *testing.T, query dcql.Query, origin string) verifier.VerifiedCredential {
 	t.Helper()
-	cfg, deps := validConfig(t)
-	v, err := verifier.New(cfg, deps)
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	built, err := v.BuildAuthorizationRequest(verifier.BuildAuthorizationRequestRequest{Query: query})
-	if err != nil {
-		t.Fatalf("BuildAuthorizationRequest: %v", err)
+	_, _, v := newTestVerifierWithConfig(t)
+
+	var nonce, aud string
+	if origin != "" {
+		built, err := v.BuildDCAPIAuthorizationRequest(verifier.BuildDCAPIAuthorizationRequestRequest{
+			Query: query, ExpectedOrigins: []string{origin},
+		})
+		if err != nil {
+			t.Fatalf("BuildDCAPIAuthorizationRequest: %v", err)
+		}
+		nonce, aud = built.Nonce, "origin:"+origin
+	} else {
+		built, err := v.BuildAuthorizationRequest(verifier.BuildAuthorizationRequestRequest{Query: query})
+		if err != nil {
+			t.Fatalf("BuildAuthorizationRequest: %v", err)
+		}
+		nonce, aud = built.Nonce, v.ClientID()
 	}
 
-	fixture := newSDJWTVCPresentation(t, v.ClientID(), built.Nonce)
+	fixture := newSDJWTVCPresentation(t, aud, nonce)
 
 	result, err := v.VerifyResponse(context.Background(), verifier.VerifyResponseRequest{
 		Query:         query,
 		Response:      verifier.ParsedResponse{VPToken: map[string][]string{"identity_credential": {fixture.compact}}},
-		ExpectedNonce: built.Nonce,
+		ExpectedNonce: nonce,
 		IssuerKeys:    fixedSDJWTVCIssuerKeyResolver{pub: &fixture.issuerKey.PublicKey, alg: jose.ES256},
+		Origin:        origin,
 	})
 	return testverify.RequireOneCredential(t, result, err, "identity_credential")
 }
 
 func TestVerifyResponse(t *testing.T) {
-	vc := verifySDJWTVCRoundTrip(t, testIdentityQuery(t))
+	vc := verifySDJWTVCRoundTrip(t, testIdentityQuery(t), "")
 	if vc.Claims["given_name"] != "Alice" {
 		t.Errorf("Claims[given_name] = %v, want Alice", vc.Claims["given_name"])
 	}
@@ -159,7 +172,44 @@ func TestVerifyResponse(t *testing.T) {
 // Verifier doesn't require the first option to be the one satisfied,
 // just some option.
 func TestVerifyResponseAcceptsSatisfiableClaimSetOption(t *testing.T) {
-	verifySDJWTVCRoundTrip(t, testverify.ClaimSetOptionsQuery(t, testVCT))
+	verifySDJWTVCRoundTrip(t, testverify.ClaimSetOptionsQuery(t, testVCT), "")
+}
+
+// TestVerifyResponseDCAPI mirrors TestVerifyResponse for the DC API
+// flow: a real "dc+sd-jwt" credential presented with a Key Binding
+// JWT bound to the Origin-prefixed audience Appendix A.4 requires
+// verifies via the same VerifyResponse, given Origin.
+func TestVerifyResponseDCAPI(t *testing.T) {
+	vc := verifySDJWTVCRoundTrip(t, testIdentityQuery(t), "https://verifier.example.com")
+	if vc.Claims["given_name"] != "Alice" {
+		t.Errorf("Claims[given_name] = %v, want Alice", vc.Claims["given_name"])
+	}
+}
+
+// TestVerifyResponseDCAPIRejectsWrongOrigin mirrors Appendix A.4's own
+// rule: a Presentation bound to a different Origin than req.Origin
+// fails, the same way a wrong audience fails the redirect flow.
+func TestVerifyResponseDCAPIRejectsWrongOrigin(t *testing.T) {
+	query := testIdentityQuery(t)
+	_, _, v := newTestVerifierWithConfig(t)
+	built, err := v.BuildDCAPIAuthorizationRequest(verifier.BuildDCAPIAuthorizationRequestRequest{
+		Query: query, ExpectedOrigins: []string{"https://verifier.example.com"},
+	})
+	if err != nil {
+		t.Fatalf("BuildDCAPIAuthorizationRequest: %v", err)
+	}
+	fixture := newSDJWTVCPresentation(t, "origin:https://attacker.example.com", built.Nonce)
+
+	_, err = v.VerifyResponse(context.Background(), verifier.VerifyResponseRequest{
+		Query:         query,
+		Response:      verifier.ParsedResponse{VPToken: map[string][]string{"identity_credential": {fixture.compact}}},
+		ExpectedNonce: built.Nonce,
+		IssuerKeys:    fixedSDJWTVCIssuerKeyResolver{pub: &fixture.issuerKey.PublicKey, alg: jose.ES256},
+		Origin:        "https://verifier.example.com",
+	})
+	if err == nil {
+		t.Fatalf("VerifyResponse = nil error, want error")
+	}
 }
 
 // TestVerifyResponseMultipleVerifiesAllPresentations mirrors §6.1's
