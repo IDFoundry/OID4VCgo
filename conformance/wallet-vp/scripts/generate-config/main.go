@@ -1,10 +1,13 @@
 // Command generate-config writes a throwaway conformance-wallet-vp
 // config.json: a fresh self-signed TLS listener cert, a fresh EC
-// P-256 credential-issuer key (signs the fixture SD-JWT VC — see
-// conformance/wallet-vp/README.md for what to paste into the OIDF
-// suite's own credential-trust test configuration, not yet confirmed
-// against a live suite instance), and a fresh EC P-256 Holder Binding
-// key. Mirrors conformance/verifier/scripts/generate-config.
+// P-256 credential-issuer key plus a leaf certificate wrapping it
+// issued under a fresh throwaway CA (the CA's own PEM is what to paste
+// into the OIDF suite's own credential-trust test configuration,
+// "credential.trust_anchor_pem" — confirmed live: the suite's own SD-
+// JWT VC x5c check rejects a self-signed leaf outright, "Leaf
+// certificate in x5c chain must not be self-signed"), and a fresh EC
+// P-256 Holder Binding key. Mirrors
+// conformance/verifier/scripts/generate-config.
 //
 // Usage: go run ./conformance/wallet-vp/scripts/generate-config \
 //
@@ -12,6 +15,9 @@
 package main
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -21,13 +27,14 @@ import (
 )
 
 type generatedConfig struct {
-	ListenAddr                    string            `json:"listen_addr"`
-	TLSCertificatePEM             string            `json:"tls_certificate_pem"`
-	TLSPrivateKeyPEM              string            `json:"tls_private_key_pem"`
-	CredentialIssuerPrivateKeyPEM string            `json:"credential_issuer_private_key_pem"`
-	HolderPrivateKeyPEM           string            `json:"holder_private_key_pem"`
-	VCT                           string            `json:"vct"`
-	Claims                        map[string]string `json:"claims"`
+	ListenAddr                     string            `json:"listen_addr"`
+	TLSCertificatePEM              string            `json:"tls_certificate_pem"`
+	TLSPrivateKeyPEM               string            `json:"tls_private_key_pem"`
+	CredentialIssuerPrivateKeyPEM  string            `json:"credential_issuer_private_key_pem"`
+	CredentialIssuerCertificatePEM string            `json:"credential_issuer_certificate_pem"`
+	HolderPrivateKeyPEM            string            `json:"holder_private_key_pem"`
+	VCT                            string            `json:"vct"`
+	Claims                         map[string]string `json:"claims"`
 }
 
 func main() {
@@ -40,9 +47,24 @@ func main() {
 		fmt.Fprintln(os.Stderr, "generate tls cert:", err)
 		os.Exit(1)
 	}
-	issuerKeyPEM, err := conformancecert.GenerateECKeyPEM()
+	issuerKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "generate credential issuer key:", err)
+		os.Exit(1)
+	}
+	issuerKeyPEM, err := conformancecert.ECKeyPEM(issuerKey)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "encode credential issuer key:", err)
+		os.Exit(1)
+	}
+	caCert, caKey, caCertPEM, _, err := conformancecert.GenerateCA("conformance-wallet-vp-credential-issuer-ca")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "generate credential issuer ca:", err)
+		os.Exit(1)
+	}
+	issuerCertPEM, err := conformancecert.IssueLeafCertPEM("conformance-wallet-vp-credential-issuer", issuerKey, caCert, caKey)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "generate credential issuer certificate:", err)
 		os.Exit(1)
 	}
 	holderKeyPEM, err := conformancecert.GenerateECKeyPEM()
@@ -52,13 +74,14 @@ func main() {
 	}
 
 	cfg := generatedConfig{
-		ListenAddr:                    ":8443",
-		TLSCertificatePEM:             tlsCert,
-		TLSPrivateKeyPEM:              tlsKey,
-		CredentialIssuerPrivateKeyPEM: issuerKeyPEM,
-		HolderPrivateKeyPEM:           holderKeyPEM,
-		VCT:                           "urn:eudi:pid:1",
-		Claims:                        map[string]string{"given_name": "Jean", "family_name": "Dupont"},
+		ListenAddr:                     ":8443",
+		TLSCertificatePEM:              tlsCert,
+		TLSPrivateKeyPEM:               tlsKey,
+		CredentialIssuerPrivateKeyPEM:  issuerKeyPEM,
+		CredentialIssuerCertificatePEM: issuerCertPEM,
+		HolderPrivateKeyPEM:            holderKeyPEM,
+		VCT:                            "urn:eudi:pid:1",
+		Claims:                         map[string]string{"given_name": "Jean", "family_name": "Dupont"},
 	}
 	raw, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
@@ -68,11 +91,17 @@ func main() {
 
 	if *out == "" {
 		fmt.Println(string(raw))
-		return
+	} else {
+		if err := os.WriteFile(*out, raw, 0o600); err != nil {
+			fmt.Fprintln(os.Stderr, "write config:", err)
+			os.Exit(1)
+		}
+		fmt.Fprintln(os.Stderr, "wrote", *out)
 	}
-	if err := os.WriteFile(*out, raw, 0o600); err != nil {
-		fmt.Fprintln(os.Stderr, "write config:", err)
-		os.Exit(1)
-	}
-	fmt.Fprintln(os.Stderr, "wrote", *out)
+
+	fmt.Fprintln(os.Stderr, "\nPaste this CA certificate into the OIDF suite's own")
+	fmt.Fprintln(os.Stderr, "\"credential.trust_anchor_pem\" test-configuration field — it signed")
+	fmt.Fprintln(os.Stderr, "the leaf certificate embedded in this binary's own fixture SD-JWT")
+	fmt.Fprintln(os.Stderr, "VC's own \"x5c\" header (the leaf itself must not be self-signed):")
+	fmt.Fprint(os.Stderr, caCertPEM)
 }

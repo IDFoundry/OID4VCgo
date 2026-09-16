@@ -2,6 +2,8 @@ package sdjwtvc
 
 import (
 	"crypto"
+	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 
@@ -72,6 +74,18 @@ type IssueOptions struct {
 	// KeyID sets the JOSE "kid" header on the Issuer-signed JWT, if
 	// non-empty.
 	KeyID string
+
+	// IssuerCertificate, if set, becomes the Issuer-signed JWT's own
+	// "x5c" header entry (RFC 7515 §4.1.6, a single-entry chain: just
+	// the leaf) — the trust mechanism HAIP's own SD-JWT VC profile
+	// expects (confirmed live against the OpenID Foundation
+	// conformance suite's own "Credential MUST contain an x5c in the
+	// header" check), letting a Verifier chain the credential to a
+	// configured trust anchor without a separate out-of-band issuer-key
+	// resolution step. Its public key must match signer's own public
+	// key: Issue rejects a mismatch, the same check
+	// verifier.New(Config.ClientCertificate) already makes.
+	IssuerCertificate *x509.Certificate
 }
 
 var reservedTopLevelClaims = map[string]bool{
@@ -89,6 +103,11 @@ var reservedTopLevelClaims = map[string]bool{
 func Issue(signer crypto.Signer, alg jose.Alg, claims Claims, opts IssueOptions) (sdjwt string, disclosures []Disclosure, err error) {
 	if claims.VCT == "" {
 		return "", nil, fmt.Errorf("sdjwtvc: Claims.VCT is required")
+	}
+	if opts.IssuerCertificate != nil {
+		if !signer.Public().(interface{ Equal(crypto.PublicKey) bool }).Equal(opts.IssuerCertificate.PublicKey) {
+			return "", nil, fmt.Errorf("sdjwtvc: IssuerCertificate's public key does not match signer's public key")
+		}
 	}
 	hashAlg := opts.HashAlg
 	if hashAlg == "" {
@@ -145,6 +164,9 @@ func Issue(signer crypto.Signer, alg jose.Alg, claims Claims, opts IssueOptions)
 	header := map[string]any{"typ": TypHeader}
 	if opts.KeyID != "" {
 		header["kid"] = opts.KeyID
+	}
+	if opts.IssuerCertificate != nil {
+		header["x5c"] = []string{base64.StdEncoding.EncodeToString(opts.IssuerCertificate.Raw)}
 	}
 
 	issuerJWT, err := jose.Sign(alg, signer, header, payload)

@@ -52,25 +52,58 @@ shape than an early read suggested:
 ## Status
 
 **Confirmed live, end to end, against a real `cmd/conformance-verifier`
-instance** (not the OIDF suite itself, but this repo's own other
-binary from the same phase) — this is stronger evidence than a
-suite-only smoke test, since it proves the full cryptographic chain:
-`verifier.BuildAuthorizationRequest` → this binary's own JWS/x5c
-verification → `wallet.PresentCredentials` → JWE response encryption →
-`verifier.ParseDirectPostJWTResponse`/`VerifyResponse`'s own
-cryptographic checks (SD-JWT signature, Key Binding JWT, nonce/audience)
-all passed, and the disclosed claims came back correctly. This exact
-scenario is now a permanent regression test
-(`TestHandleAuthorize_FullRoundTripAgainstARealVerifier` in
-`integration_test.go`), not just a one-off manual run.
+instance** (this repo's own other binary from the same phase) — proves
+the full cryptographic chain: `verifier.BuildAuthorizationRequest` →
+this binary's own JWS/x5c verification → `wallet.PresentCredentials` →
+JWE response encryption → `verifier.ParseDirectPostJWTResponse`/
+`VerifyResponse`'s own cryptographic checks all passed. Permanent
+regression test: `TestHandleAuthorize_FullRoundTripAgainstARealVerifier`
+in `integration_test.go`.
 
-**Not yet run against the live OIDF suite itself.** The suite's own
-dozens of wallet-side condition classes (`ValidateSdJwtKeyBindingSignature`,
-`ValidateDisclosedClaimsMatchDcqlQuery`, `EnsureRequestUriHasNoFragment`,
-...) check details this pass didn't verify one by one against the
-suite's own actual expectations — expect the first live run to surface
-real gaps, the same way `conformance-verifier`'s own README already
-flags for its own first run.
+**Confirmed live against the real OIDF conformance suite itself**
+(locally-run, pre-built Docker images), `oid4vp-1final-wallet-haip-test-plan`'s
+`happy-flow` module, `direct_post.jwt` + `x509_hash` +
+`request_uri_signed`. The suite (playing Verifier) built and signed a
+real Request Object, this binary fetched and verified it, presented the
+fixture SD-JWT VC, and encrypted+POSTed a `direct_post.jwt` response —
+`GET /api/log` confirms every cryptographic check on the suite's own
+receiving side passed: issuer JWT signature, all SD-JWT disclosures,
+DCQL match, Key Binding JWT signature/`typ`/`iat`/`aud`/`nonce`/`sd_hash`.
+
+One real gap was found and fixed on this first live run: the suite's
+own log reported `FAILURE | Credential MUST contain an x5c in the
+header` — `credential/sdjwtvc.Issue` had no `x5c` support at all
+(`IssueOptions` only had `HashAlg`/`Decoys`/`KeyID`). Fixed by adding
+`IssueOptions.IssuerCertificate *x509.Certificate`: when set, its DER
+encoding becomes the issuer JWT's own single-entry `x5c` header (RFC
+7515 §4.1.6), and `Issue` rejects a certificate whose public key
+doesn't match the signer's. A second, related finding followed
+immediately: a *self-signed* leaf is also rejected (`FAILURE | Leaf
+certificate in x5c chain must not be self-signed`) — HAIP's trust
+model wants the leaf issued by a separate CA, with the CA as the trust
+anchor, not a leaf that is its own trust anchor. Fixed by generating a
+throwaway CA (`conformancecert.GenerateCA`/`IssueLeafCertPEM`) and
+issuing the credential-issuer key's certificate under it, rather than
+a bare self-signed cert.
+
+**Re-confirmed live after the fix**: same `happy-flow` module, same
+suite instance — `GET /api/log` shows zero x5c-related failures, and
+every other cryptographic check (issuer JWT signature, disclosures,
+DCQL match, Key Binding JWT) still passes. The module's own overall
+`FAILED` status is unrelated (see the pending-screenshot note above);
+the one remaining log `FAILURE` (`Found invalid entries in
+verifier_info input`) is an artifact of this run's own plan config
+passing `client.verifier_info: []` rather than omitting the field
+entirely — the suite falls back to a valid default immediately after,
+so this never blocked the flow.
+
+This first live run also resolved the "Open questions" below:
+`credential.trust_anchor_pem` is indeed a PEM X.509 certificate — a CA
+certificate, specifically, per the self-signed-leaf finding above. The
+suite's own DCQL query was driven via `client.dcql` (a `dc+sd-jwt` /
+`vct_values: ["urn:eudi:pid:1"]` / `given_name`+`family_name` claims
+query, matching this binary's own fixture credential) rather than a
+built-in named query.
 
 ## Scope
 
@@ -84,21 +117,10 @@ of scope for this binary; `wallet`'s own DC API support
 exists but testing it against the live suite needs its own separate
 harness design, not attempted here.
 
-## Open questions for the live run
+## Remaining work
 
-- What to paste into the OIDF suite's own credential-trust
-  test-configuration field (`credential.trust_anchor_pem`, per the
-  suite's own `AbstractVP1FinalWalletTest`'s
-  `@VariantConfigurationFields` for the `haip` profile) — that field
-  name suggests a PEM X.509 trust anchor validated via the credential's
-  own `x5c` chain, but `credential/sdjwtvc.Issue` has no x5c support at
-  all (`IssueOptions` only has `HashAlg`/`Decoys`/`KeyID`). If the live
-  suite's SD-JWT VC trust check genuinely requires `x5c`, that's a real
-  `credential/sdjwtvc` gap to fix as its own separate PR — not
-  something to bolt onto this conformance binary. `generate-config`'s
-  output is a starting point (a plain EC key, no cert), not a confirmed
-  answer.
-- The exact DCQL query the suite's own test configuration will send —
-  `Config.VCT`/`Config.Claims` must match either one of the suite's
-  built-in queries (e.g. `eudi_pid`) or a `client.dcql` custom query;
-  unconfirmed which the test plan defaults to.
+- Run the plan's other 8 `direct_post.jwt` modules (`alternate-happy-flow`,
+  `request-uri-method-post`, `ignores-unusable-encryption-key`,
+  `fewer-claims-than-available`, `optional-credential-set`,
+  `no-claims-in-dcql-query`, and the two `negative-test-*` modules) —
+  only `happy-flow` has been run live so far.

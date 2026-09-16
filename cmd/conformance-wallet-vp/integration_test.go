@@ -7,6 +7,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"io"
 	"net/http"
@@ -57,9 +58,12 @@ func setupWalletUnderTest(t *testing.T) (*server, *ecdsa.PrivateKey) {
 	if err != nil {
 		t.Fatalf("generate holder key: %v", err)
 	}
+	issuerCert := testcert.SelfSigned(t, "conformance-wallet-vp-test-issuer", &issuerKey.PublicKey, issuerKey)
+	issuerCertPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: issuerCert.Raw})
 	cfg := Config{
-		VCT:    "urn:eudi:pid:1",
-		Claims: map[string]string{"given_name": "Jean", "family_name": "Dupont"},
+		VCT:                            "urn:eudi:pid:1",
+		Claims:                         map[string]string{"given_name": "Jean", "family_name": "Dupont"},
+		CredentialIssuerCertificatePEM: string(issuerCertPEM),
 	}
 	cred, err := issueFixtureCredential(cfg, issuerKey, holderKey)
 	if err != nil {

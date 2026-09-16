@@ -23,6 +23,10 @@ func issueFixtureCredential(cfg Config, issuerKey, holderKey *ecdsa.PrivateKey) 
 	if err != nil {
 		return wallet.HeldCredential{}, fmt.Errorf("marshal holder public key: %w", err)
 	}
+	issuerCert, err := cfg.credentialIssuerCertificate()
+	if err != nil {
+		return wallet.HeldCredential{}, err
+	}
 
 	additional := make(map[string]any, len(cfg.Claims))
 	for name, value := range cfg.Claims {
@@ -33,7 +37,7 @@ func issueFixtureCredential(cfg Config, issuerKey, holderKey *ecdsa.PrivateKey) 
 		VCT:        cfg.VCT,
 		CNF:        map[string]any{"jwk": holderJWK},
 		Additional: additional,
-	}, sdjwtvc.IssueOptions{})
+	}, sdjwtvc.IssueOptions{IssuerCertificate: issuerCert})
 	if err != nil {
 		return wallet.HeldCredential{}, fmt.Errorf("issue fixture sd-jwt vc: %w", err)
 	}
