@@ -53,6 +53,12 @@ func main() {
 		ResponseURI:        responseURI,
 		SigningAlg:         jose.ES256,
 		EncValuesSupported: []jwe.Enc{jwe.A128GCM, jwe.A256GCM},
+		VPFormatsSupported: map[string]any{
+			"dc+sd-jwt": map[string]any{
+				"sd-jwt_alg_values": []string{"ES256"},
+				"kb-jwt_alg_values": []string{"ES256"},
+			},
+		},
 	}, verifier.Dependencies{
 		Signer: clientKey,
 		Random: rand.Reader,
@@ -67,6 +73,7 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /authorize", srv.handleAuthorize)
 	mux.HandleFunc("GET /request/{id}", srv.handleRequestObject)
+	mux.HandleFunc("POST /request/{id}", srv.handleRequestObject)
 	mux.HandleFunc("POST /response", srv.handleResponse)
 	mux.HandleFunc("GET /result/{id}", srv.handleResult)
 

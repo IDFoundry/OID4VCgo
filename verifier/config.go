@@ -46,6 +46,18 @@ type Config struct {
 	// response with. HAIP §5 requires both jwe.A128GCM and
 	// jwe.A256GCM be supported by Verifiers. REQUIRED, non-empty.
 	EncValuesSupported []jwe.Enc
+
+	// VPFormatsSupported is this Verifier's own "client_metadata"
+	// "vp_formats_supported" value (§10, §11.1) — a map from Credential
+	// Format Identifier (e.g. "dc+sd-jwt") to that format's own
+	// format-specific parameters (e.g. its own supported signature
+	// algorithms), describing what this Verifier can actually verify.
+	// §5.10 marks it "REQUIRED when not available to the Wallet via
+	// another mechanism" — this package has no such other mechanism
+	// (no separate Verifier metadata endpoint), so it's always included
+	// once set. REQUIRED, non-empty: a caller must state what it can
+	// actually verify, not leave the Wallet guessing.
+	VPFormatsSupported map[string]any
 }
 
 // Dependencies are this Verifier's external collaborators.
@@ -91,6 +103,9 @@ func New(cfg Config, deps Dependencies) (*Verifier, error) {
 	}
 	if len(cfg.EncValuesSupported) == 0 {
 		return nil, fmt.Errorf("verifier: config: enc_values_supported must be non-empty")
+	}
+	if len(cfg.VPFormatsSupported) == 0 {
+		return nil, fmt.Errorf("verifier: config: vp_formats_supported must be non-empty")
 	}
 	if deps.Signer == nil {
 		return nil, fmt.Errorf("verifier: dependencies: signer is required")

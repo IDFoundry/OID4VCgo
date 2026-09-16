@@ -28,14 +28,25 @@ func TestSessionStore_GetUnknownID(t *testing.T) {
 
 func TestSessionStore_PendingDecryptionKeysExcludesDoneSessions(t *testing.T) {
 	s := newSessionStore()
-	pending := &session{id: "pending", createdAt: time.Now()}
-	done := &session{id: "done", createdAt: time.Now(), done: true}
+	pending := &session{id: "pending", createdAt: time.Now(), built: true}
+	done := &session{id: "done", createdAt: time.Now(), built: true, done: true}
 	s.put(pending)
 	s.put(done)
 
 	got := s.pendingDecryptionKeys()
 	if len(got) != 1 || got[0].id != "pending" {
 		t.Fatalf("pendingDecryptionKeys = %+v, want only the pending session", got)
+	}
+}
+
+func TestSessionStore_PendingDecryptionKeysExcludesUnbuiltSessions(t *testing.T) {
+	s := newSessionStore()
+	unbuilt := &session{id: "unbuilt", createdAt: time.Now()}
+	s.put(unbuilt)
+
+	got := s.pendingDecryptionKeys()
+	if len(got) != 0 {
+		t.Fatalf("pendingDecryptionKeys = %+v, want none (session never fetched request_uri)", got)
 	}
 }
 

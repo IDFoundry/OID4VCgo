@@ -61,6 +61,7 @@ func newRoundTripVerifier(t *testing.T) (*verifier.Verifier, fapi.URL) {
 		ResponseURI:        responseURI,
 		SigningAlg:         jose.ES256,
 		EncValuesSupported: []jwe.Enc{jwe.A128GCM, jwe.A256GCM},
+		VPFormatsSupported: map[string]any{"dc+sd-jwt": map[string]any{"sd-jwt_alg_values": []string{"ES256"}}},
 	}, verifier.Dependencies{Signer: verifierKey, Random: rand.Reader})
 	if err != nil {
 		t.Fatalf("verifier.New: %v", err)

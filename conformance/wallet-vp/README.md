@@ -195,13 +195,31 @@ across this module list, beyond the plain query-string callback
 `ignores-unusable-encryption-key`, `fewer-claims-than-available`,
 `optional-credential-set`, `no-claims-in-dcql-query`: every one
 `FINISHED`/`WARNING` with zero `FAILURE`s (the same soft `exp`-claim
-`RECOMMENDED` note as `happy-flow`). `request-uri-method-post`
-correctly self-`SKIPPED` ("the specification permits this as a
-fallback when the wallet does not support POST" — this binary always
-fetches via GET). Confirmed against the HAIP 1.0 spec text directly:
-HAIP never mentions `request_uri_method` anywhere in §4 or §5 — it's
-an OPTIONAL mechanism under the base OID4VP/JAR specs (RFC 9101),
-never elevated to a requirement.
+`RECOMMENDED` note as `happy-flow`).
+
+**Update: `request-uri-method-post` — real support added, not just
+made to pass.** Previously self-`SKIPPED` ("the specification permits
+this as a fallback when the wallet does not support POST" — this
+binary always fetched via GET). Since HAIP itself never mentions
+`request_uri_method` (confirmed directly against the spec text — it's
+an OPTIONAL OID4VP/RFC 9101 mechanism, not something HAIP elevates),
+supporting POST was scoped as a deliberate coverage improvement, not a
+compliance fix. `fetchAndVerifyRequestObject` now sends a fresh,
+cryptographically random `wallet_nonce` (plus an accurate
+`wallet_metadata` declaring this binary's real `dc+sd-jwt`/ES256
+support) over POST when the Verifier's own authorization request
+carries `request_uri_method=post`, and — the genuine enforcement half,
+not just Content-Type/method handling — rejects the fetched Request
+Object outright if its own `wallet_nonce` claim doesn't echo back
+exactly what was sent (OID4VP §5.10.1: "the Wallet MUST validate
+whether the request object contains the respective nonce value... If
+it does not, the Wallet MUST terminate request processing"). Confirmed
+live: `FINISHED`/`PASSED`, zero log entries at `WARNING` or worse, with
+the suite's own independent checks confirming both directions —
+`EnsureIncomingRequestMethodIsPost` ("Client correctly used http POST
+method") and `AddReceivedWalletNonceToRequestObjectClaims` (the suite
+itself echoing the nonce back, which this binary's own validation then
+had to accept for the module to pass at all).
 
 **Negative-test modules found two real gaps, now fixed.** Five of
 seven correctly rejected from the start (confirmed via this binary's

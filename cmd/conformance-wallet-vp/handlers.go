@@ -49,6 +49,33 @@ func httpGetString(rawURL string) (string, error) {
 	return string(body), nil
 }
 
+// httpPostFormString POSTs form as application/x-www-form-urlencoded
+// to rawURL with an Accept header naming the Request URI response's
+// own content type (§5.10), matching §5.10's exact POST semantics
+// (as opposed to postDirectPostResponse's own POST, a different
+// endpoint/content type entirely).
+func httpPostFormString(rawURL string, form url.Values) (string, error) {
+	req, err := http.NewRequest(http.MethodPost, rawURL, strings.NewReader(form.Encode())) //nolint:gosec,noctx // rawURL is the Verifier's own request_uri from a request this binary just verified, not attacker-controlled
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/oauth-authz-req+jwt")
+	resp, err := httpClient.Do(req) //nolint:gosec // same rawURL as above, already validated/verified before this call is reached
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("POST %s: status %d: %s", rawURL, resp.StatusCode, body)
+	}
+	return string(body), nil
+}
+
 // server bundles this binary's own fixed dependencies.
 type server struct {
 	cred wallet.HeldCredential
@@ -71,8 +98,9 @@ func (s *server) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing request_uri or client_id query parameter", http.StatusBadRequest)
 		return
 	}
+	usePost := r.URL.Query().Get("request_uri_method") == "post"
 
-	authReq, err := fetchAndVerifyRequestObject(requestURI, clientID)
+	authReq, err := fetchAndVerifyRequestObject(requestURI, clientID, usePost)
 	if err != nil {
 		log.Printf("fetch/verify request object: %v", err)
 		http.Error(w, err.Error(), http.StatusBadRequest)

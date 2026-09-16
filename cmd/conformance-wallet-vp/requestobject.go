@@ -2,16 +2,44 @@ package main
 
 import (
 	"crypto/ecdsa"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net/url"
 
 	"github.com/idfoundry/oid4vcigo/dcql"
 	"github.com/idfoundry/oid4vcigo/internal/jose"
 	"github.com/idfoundry/oid4vcigo/internal/jwk"
 )
+
+// walletNonceEntropyBytes matches this repo's own nonce-generation
+// convention elsewhere (e.g. cmd/conformance-verifier's own session
+// IDs, verifier's own Authorization Request "nonce") — 256 bits,
+// base64url-encoded.
+const walletNonceEntropyBytes = 32
+
+// newWalletNonce generates a fresh, cryptographically random
+// "wallet_nonce" value (OID4VP §5.10: "a fresh, cryptographically
+// random number with sufficient entropy") for one POST fetch of
+// request_uri.
+func newWalletNonce() (string, error) {
+	buf := make([]byte, walletNonceEntropyBytes)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(buf), nil
+}
+
+// walletMetadataForPost is this binary's own "wallet_metadata" value
+// (OID4VP §10/§5.10) sent on a POST request_uri fetch — an accurate,
+// minimal declaration of the one presentation format/algorithm this
+// binary actually supports (dc+sd-jwt, ES256 for both the Issuer
+// signature and the Key Binding JWT — see wallet.HeldCredential's own
+// HolderKeyAlg in credential.go), not a placeholder.
+const walletMetadataForPost = `{"vp_formats_supported":{"dc+sd-jwt":{"sd-jwt_alg_values":["ES256"],"kb-jwt_alg_values":["ES256"]}}}`
 
 // authorizationRequest is a verified Authorization Request's own
 // relevant claims (§5.2) — this binary only ever receives the
@@ -64,6 +92,7 @@ type wireRequestObjectPayload struct {
 	DCQLQuery       dcql.Query        `json:"dcql_query"`
 	ClientMetadata  json.RawMessage   `json:"client_metadata"`
 	TransactionData []json.RawMessage `json:"transaction_data"`
+	WalletNonce     string            `json:"wallet_nonce"`
 }
 
 type wireClientMetadata struct {
@@ -77,17 +106,36 @@ type wireJWKKid struct {
 	Kid string `json:"kid"`
 }
 
-// fetchAndVerifyRequestObject fetches requestURI, verifies the
-// returned JWS against the leaf certificate its own "x5c" header
-// carries (RFC9101 §5, this repo's own signed-JAR convention — see
-// verifier.BuildAuthorizationRequest's own doc comment for the
-// building side), checks that certificate's SHA-256 hash matches
-// clientID's own "x509_hash:..." value, and decodes the verified
-// payload.
-func fetchAndVerifyRequestObject(requestURI, clientID string) (authorizationRequest, error) {
-	compact, err := httpGetString(requestURI)
-	if err != nil {
-		return authorizationRequest{}, fmt.Errorf("fetch request_uri: %w", err)
+// fetchAndVerifyRequestObject fetches requestURI — via POST (with a
+// fresh wallet_nonce, §5.10) when usePost is true, plain GET (§5)
+// otherwise — verifies the returned JWS against the leaf certificate
+// its own "x5c" header carries (RFC9101 §5, this repo's own
+// signed-JAR convention — see verifier.BuildAuthorizationRequest's own
+// doc comment for the building side), checks that certificate's
+// SHA-256 hash matches clientID's own "x509_hash:..." value, and
+// decodes the verified payload. When usePost sent a wallet_nonce, the
+// returned Request Object's own "wallet_nonce" claim MUST echo it back
+// (§5.10.1) — this is checked here, not left to the caller, since a
+// missing/mismatched echo means the object wasn't actually built fresh
+// for this fetch and processing MUST terminate.
+func fetchAndVerifyRequestObject(requestURI, clientID string, usePost bool) (authorizationRequest, error) {
+	var compact, walletNonce string
+	var err error
+	if usePost {
+		walletNonce, err = newWalletNonce()
+		if err != nil {
+			return authorizationRequest{}, fmt.Errorf("generate wallet_nonce: %w", err)
+		}
+		form := url.Values{"wallet_nonce": {walletNonce}, "wallet_metadata": {walletMetadataForPost}}
+		compact, err = httpPostFormString(requestURI, form)
+		if err != nil {
+			return authorizationRequest{}, fmt.Errorf("fetch request_uri via POST: %w", err)
+		}
+	} else {
+		compact, err = httpGetString(requestURI)
+		if err != nil {
+			return authorizationRequest{}, fmt.Errorf("fetch request_uri: %w", err)
+		}
 	}
 
 	header, _, err := jose.DecodeUnverified(compact)
@@ -134,6 +182,9 @@ func fetchAndVerifyRequestObject(requestURI, clientID string) (authorizationRequ
 	}
 	if len(wire.TransactionData) > 0 {
 		return authorizationRequest{}, fmt.Errorf("request object: transaction_data is present but this wallet recognizes no transaction_data type")
+	}
+	if walletNonce != "" && wire.WalletNonce != walletNonce {
+		return authorizationRequest{}, fmt.Errorf("request object: wallet_nonce claim %q does not match the value sent %q", wire.WalletNonce, walletNonce)
 	}
 
 	var meta wireClientMetadata

@@ -33,6 +33,9 @@ func TestNewRejectsMissingFields(t *testing.T) {
 		"missing enc_values_supported": func(cfg *verifier.Config, _ *verifier.Dependencies) {
 			cfg.EncValuesSupported = nil
 		},
+		"missing vp_formats_supported": func(cfg *verifier.Config, _ *verifier.Dependencies) {
+			cfg.VPFormatsSupported = nil
+		},
 		"missing signer": func(_ *verifier.Config, deps *verifier.Dependencies) {
 			deps.Signer = nil
 		},
