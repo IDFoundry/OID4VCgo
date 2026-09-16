@@ -556,10 +556,23 @@ shape from the phase-by-phase plan, not a description of current code.
   `server.JWTAccessTokens` for its paired Authorization Server writes a
   thin adapter (shown in `AccessTokenIssuer`'s own doc comment) rather
   than this package importing `fapigo/server`. DPoP nonce-challenge
-  support (RFC 9449 §8/§9) is a deliberate cut — an optional
-  hardening, not a correctness requirement — so
-  `wallet.RequestPreAuthorizedCodeToken`'s own one-retry logic never
-  actually triggers against this package yet.
+  support (RFC 9449 §8, an optional hardening — `ExchangePreAuthorizedCode`
+  is an Authorization Server's own Token Endpoint, so §8 applies here,
+  not §9's resource-server-only `WWW-Authenticate` variant) is done: a
+  new `Dependencies.DPoPNonces` (`DPoPNonceStore`, optional — nil
+  disables it entirely, mirroring `fapigo/server.Dependencies.Nonces`'s
+  own opt-in shape) plus `Config.Limits.DPoPNonceLifetime`. The check
+  happens *before* `PreAuthorizedCodes.Consume` — a Wallet's first
+  attempt necessarily carries no nonce, so consuming the single-use
+  code first would burn it before the Wallet could ever retry — the
+  same ordering `fapigo/server.ExchangeAuthorizationCode` itself takes
+  (confirmed by reading its own `TestExchangeAuthorizationCodeNonceCheckedBeforeCodeRedemption`).
+  A successful exchange also proactively issues the next nonce
+  (`ExchangePreAuthorizedCodeResult.NextDPoPNonce`), the same RFC 9449
+  §8 recommendation `fapigo/server.TokenResult.NextDPoPNonce` already
+  follows. Fixing this surfaced a real wire-format bug in
+  `wallet.RequestPreAuthorizedCodeToken`'s own retry logic — see the
+  `wallet` bullet below.
 - **`wallet`** — the Wallet's OID4VCI role (client side): credential-offer
   resolution, proof-of-possession generation, deferred/notification
   handling. Built on `fapigo/client`. `ResolveCredentialOffer` decodes a
@@ -686,10 +699,21 @@ shape from the phase-by-phase plan, not a description of current code.
   implement. It builds the RFC 9449 DPoP proof itself via the new
   `GenerateDPoPProof`, reusing the same `internal/jose`/`internal/jwk`
   primitives `GenerateProof` already relies on, and retries exactly once
-  on a DPoP nonce challenge (§9: HTTP 400 +
-  `WWW-Authenticate: ... use_dpop_nonce` + `DPoP-Nonce` response
-  header) — the same one-retry behavior `(*client.ResourceClient).Do`
-  applies for its own resource requests. Client authentication isn't
+  on a DPoP nonce challenge — the same one-retry behavior
+  `(*client.ResourceClient).Do` applies for its own resource requests.
+  `dpopNonceChallenge` originally checked for a `WWW-Authenticate:
+  ... use_dpop_nonce` header, RFC 9449 §9's own resource-server-only
+  challenge shape; §8's Authorization-Server-side challenge (what a
+  Token Request actually gets) is HTTP 400 plus a plain JSON
+  `{"error":"use_dpop_nonce",...}` body instead, no `WWW-Authenticate`
+  at all. This went undetected until `issuer.ExchangePreAuthorizedCode`
+  actually implemented nonce-challenge support (see the `issuer` bullet
+  above) and its real `Error.WriteJSON` output was fed through this
+  same retry logic in a genuine round-trip test — the two test fixtures
+  that had hand-crafted a `WWW-Authenticate` header to exercise this
+  path were themselves testing the bug, not real Authorization Server
+  behavior. Fixed to check the JSON body's own `"error"` member
+  (reusing `parseError`) instead. Client authentication isn't
   supported (§6.1 makes it OPTIONAL for this grant, and Wallet
   Attestation client auth isn't buildable yet, per the note above), and
   neither is `authorization_details`, matching this package's own

@@ -9,7 +9,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"strings"
 	"time"
 
 	fapi "github.com/idfoundry/fapigo"
@@ -96,9 +95,12 @@ type tokenResponseBody struct {
 // for why this package builds it directly here, rather than through
 // fapigo/client), POSTs a form-encoded Token Request to endpoint via
 // Dependencies.HTTP, and retries exactly once if the Authorization
-// Server challenges with a fresh DPoP nonce (RFC 9449 §9: HTTP 400,
-// a WWW-Authenticate header naming use_dpop_nonce, and a DPoP-Nonce
-// response header) — the same one-retry behavior
+// Server challenges with a fresh DPoP nonce (RFC 9449 §8's own
+// Authorization-Server-side nonce-challenge: HTTP 400, a JSON body
+// whose "error" member is use_dpop_nonce, and a DPoP-Nonce response
+// header — see dpopNonceChallenge's own doc comment for why this is
+// §8, not §9's WWW-Authenticate-header challenge, which only a
+// resource server sends) — the same one-retry behavior
 // (*client.ResourceClient).Do applies for its own resource requests.
 // A non-200 response (after that retry, if any) is returned as a
 // *Error.
@@ -156,7 +158,7 @@ func (w *Wallet) RequestPreAuthorizedCodeToken(
 		}
 
 		if attempt == 0 {
-			if challengeNonce := dpopNonceChallenge(res.StatusCode, res.Header); challengeNonce != "" {
+			if challengeNonce := dpopNonceChallenge(res.StatusCode, res.Header, respBody); challengeNonce != "" {
 				nonce = challengeNonce
 				continue
 			}
@@ -182,16 +184,22 @@ func decodeTokenResponse(body []byte) (PreAuthorizedCodeTokenResult, error) {
 }
 
 // dpopNonceChallenge reports the fresh nonce a DPoP nonce challenge
-// response carries (RFC 9449 §9), or "" if res isn't one: HTTP 400
-// with a WWW-Authenticate header naming use_dpop_nonce, plus a
-// DPoP-Nonce response header. The DPoP-Nonce header alone isn't
-// sufficient grounds to retry — a server may send it unprompted to
-// pre-seed a future request — so both conditions must hold.
-func dpopNonceChallenge(statusCode int, header http.Header) string {
+// response carries, or "" if res isn't one. RFC 9449 §8 — the
+// Authorization Server's own nonce-challenge, what a Token Request
+// gets — is HTTP 400 with a JSON body whose "error" member is
+// "use_dpop_nonce", plus a DPoP-Nonce response header; this is
+// deliberately not RFC 9449 §9's own WWW-Authenticate-header challenge,
+// which only a resource server (a 401 response to a presented access
+// token) ever sends, not a token endpoint. The DPoP-Nonce header alone
+// isn't sufficient grounds to retry — a server may send it unprompted
+// to pre-seed a future request — so both conditions must hold. body is
+// the already-read response body (parseError's own input, reused here
+// rather than re-reading res.Body a second time).
+func dpopNonceChallenge(statusCode int, header http.Header, body []byte) string {
 	if statusCode != http.StatusBadRequest {
 		return ""
 	}
-	if !strings.Contains(header.Get("WWW-Authenticate"), "use_dpop_nonce") {
+	if parseError(statusCode, body).Code != "use_dpop_nonce" {
 		return ""
 	}
 	return header.Get("DPoP-Nonce")

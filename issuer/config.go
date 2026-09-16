@@ -82,6 +82,11 @@ type Limits struct {
 	// matching internal/dpop.VerifyRequest's own zero-value meaning, no
 	// separate "required" check.
 	MaxDPoPClockSkew time.Duration
+
+	// DPoPNonceLifetime bounds how long a DPoP nonce
+	// ExchangePreAuthorizedCode issues (RFC 9449 §8) remains valid.
+	// Required only when Dependencies.DPoPNonces is set.
+	DPoPNonceLifetime time.Duration
 }
 
 // Config is this issuer's immutable configuration.
@@ -303,6 +308,13 @@ type Dependencies struct {
 	// AccessTokens mints the access token ExchangePreAuthorizedCode
 	// returns on success. Required when PreAuthorizedCodes is set.
 	AccessTokens AccessTokenIssuer
+
+	// DPoPNonces enables RFC 9449 §8's own DPoP nonce-challenge flow for
+	// ExchangePreAuthorizedCode — see DPoPNonceStore's own doc comment.
+	// Optional: nil (the default) disables it entirely, regardless of
+	// whether PreAuthorizedCodes is set. Config.Limits.DPoPNonceLifetime
+	// is required whenever this is non-nil.
+	DPoPNonces DPoPNonceStore
 }
 
 // Issuer is this Credential Issuer's own role implementation — the
@@ -386,6 +398,10 @@ func New(cfg Config, deps Dependencies) (*Issuer, error) {
 		if deps.AccessTokens == nil {
 			return nil, fmt.Errorf("issuer: dependencies: access_tokens is required when dependencies.pre_authorized_codes is set")
 		}
+	}
+
+	if deps.DPoPNonces != nil && cfg.Limits.DPoPNonceLifetime <= 0 {
+		return nil, fmt.Errorf("issuer: config: limits.dpop_nonce_lifetime must be positive when dependencies.dpop_nonces is set")
 	}
 
 	if deps.Clock == nil {

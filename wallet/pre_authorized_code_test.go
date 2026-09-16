@@ -127,7 +127,6 @@ func TestRequestPreAuthorizedCodeToken_RetriesOnDPoPNonceChallenge(t *testing.T)
 		if calls == 1 {
 			res := jsonResponse([]byte(`{"error":"use_dpop_nonce"}`))
 			res.StatusCode = http.StatusBadRequest
-			res.Header.Set("WWW-Authenticate", `DPoP error="use_dpop_nonce"`)
 			res.Header.Set("DPoP-Nonce", "fresh-nonce")
 			return res, nil
 		}
@@ -155,13 +154,40 @@ func TestRequestPreAuthorizedCodeToken_RetriesOnDPoPNonceChallenge(t *testing.T)
 	}
 }
 
+// TestRequestPreAuthorizedCodeToken_DoesNotRetryOnBareDPoPNonceHeader
+// checks dpopNonceChallenge's own documented "both conditions must
+// hold" requirement: a DPoP-Nonce header alone, on an otherwise
+// ordinary invalid_grant error, isn't a nonce challenge — a server may
+// send that header unprompted to pre-seed a future request.
+func TestRequestPreAuthorizedCodeToken_DoesNotRetryOnBareDPoPNonceHeader(t *testing.T) {
+	calls := 0
+	w := newTestWalletWithHTTP(t, func(*http.Request) (*http.Response, error) {
+		calls++
+		res := jsonResponse([]byte(`{"error":"invalid_grant"}`))
+		res.StatusCode = http.StatusBadRequest
+		res.Header.Set("DPoP-Nonce", "unsolicited-nonce")
+		return res, nil
+	})
+
+	_, err := w.RequestPreAuthorizedCodeToken(context.Background(), testTokenEndpoint(t), wallet.PreAuthorizedCodeTokenRequest{
+		PreAuthorizedCode: "abc123",
+		DPoPKey:           testP256Key(t),
+	})
+	var werr *wallet.Error
+	if !errors.As(err, &werr) || werr.Code != "invalid_grant" {
+		t.Fatalf("error = %v, want *wallet.Error with Code invalid_grant", err)
+	}
+	if calls != 1 {
+		t.Fatalf("calls = %d, want exactly 1 (no retry)", calls)
+	}
+}
+
 func TestRequestPreAuthorizedCodeToken_DoesNotRetryTwice(t *testing.T) {
 	calls := 0
 	w := newTestWalletWithHTTP(t, func(req *http.Request) (*http.Response, error) {
 		calls++
 		res := jsonResponse([]byte(`{"error":"use_dpop_nonce"}`))
 		res.StatusCode = http.StatusBadRequest
-		res.Header.Set("WWW-Authenticate", `DPoP error="use_dpop_nonce"`)
 		res.Header.Set("DPoP-Nonce", fmt.Sprintf("nonce-%d", calls))
 		return res, nil
 	})

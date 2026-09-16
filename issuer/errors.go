@@ -45,6 +45,19 @@ const (
 	// different string "invalid_credential_request".
 	ErrorInvalidTokenRequest ErrorCode = "invalid_request"
 	ErrorInvalidGrant        ErrorCode = "invalid_grant"
+
+	// ErrorUseDPoPNonce indicates a DPoP proof presented to
+	// ExchangePreAuthorizedCode was otherwise valid but carried no
+	// nonce, or one this issuer didn't just issue (unknown, already
+	// consumed, or expired) — RFC 9449 §8's own error value for an
+	// Authorization Server's nonce-challenge (a plain 400 JSON error
+	// body plus a DPoP-Nonce response header, not the 401
+	// WWW-Authenticate challenge RFC 9449 §9 defines for a resource
+	// server). Only ever returned when Dependencies.DPoPNonces is
+	// configured; see its own doc comment. Mirrors
+	// fapigo/server.ErrorUseDPoPNonce's own value and semantics for the
+	// Authorization Code Flow's Token Endpoint.
+	ErrorUseDPoPNonce ErrorCode = "use_dpop_nonce"
 )
 
 // Error is the error type RequestCredential returns for a Credential
@@ -60,6 +73,7 @@ type Error struct {
 	httpStatus  int
 	description string
 	cause       error
+	nonce       string
 }
 
 func newError(code ErrorCode, httpStatus int, description string, cause error) *Error {
@@ -75,6 +89,13 @@ func (e *Error) PublicDescription() string { return e.description }
 // HTTPStatus returns the HTTP status code an adapter should respond with.
 func (e *Error) HTTPStatus() int { return e.httpStatus }
 
+// Nonce returns the nonce a caller should present on retry, alongside
+// this error's own DPoP challenge — non-empty only when Code is
+// ErrorUseDPoPNonce, in which case WriteJSON already puts it in the
+// response's own DPoP-Nonce header; exposed separately only for a
+// caller building its own response by hand.
+func (e *Error) Nonce() string { return e.nonce }
+
 // Error implements the error interface. Its output includes the
 // internal cause and is meant for logs, not for a public response.
 func (e *Error) Error() string {
@@ -87,12 +108,19 @@ func (e *Error) Error() string {
 // Unwrap returns the underlying cause, if any.
 func (e *Error) Unwrap() error { return e.cause }
 
-// WriteJSON writes e as a complete Credential Error Response (§8.3.1.2)
-// to w: the "application/json" Content-Type, e's own HTTPStatus, and a
-// {"error": ..., "error_description": ...} body built from Code and
-// PublicDescription — never Unwrap's cause. Must be called before
-// anything else writes to w.
+// WriteJSON writes e as a complete error response — a Credential Error
+// Response (§8.3.1.2) for a Credential/Deferred Credential Endpoint
+// error, or a Token Error Response (RFC 6749 §5.2) for an
+// ExchangePreAuthorizedCode error — to w: the DPoP-Nonce header when
+// Nonce is non-empty (RFC 9449 §8 — see Nonce's own doc comment for
+// when that is), the "application/json" Content-Type, e's own
+// HTTPStatus, and a {"error": ..., "error_description": ...} body
+// built from Code and PublicDescription — never Unwrap's cause. Must
+// be called before anything else writes to w.
 func (e *Error) WriteJSON(w http.ResponseWriter) {
+	if e.nonce != "" {
+		w.Header().Set("DPoP-Nonce", e.nonce)
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(e.httpStatus)
 	_ = json.NewEncoder(w).Encode(struct {
