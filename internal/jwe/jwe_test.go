@@ -248,7 +248,7 @@ func TestDecodeHeaderDoesNotRequireAPrivateKey(t *testing.T) {
 func TestConcatKDFProducesRequestedLength(t *testing.T) {
 	z := []byte("shared-secret-material")
 	for _, keyLen := range []int{16, 24, 32} {
-		out, err := concatKDF(z, "A128GCM", keyLen)
+		out, err := concatKDF(z, "A128GCM", nil, nil, keyLen)
 		if err != nil {
 			t.Fatalf("concatKDF(%d): %v", keyLen, err)
 		}
@@ -260,11 +260,11 @@ func TestConcatKDFProducesRequestedLength(t *testing.T) {
 
 func TestConcatKDFIsDeterministic(t *testing.T) {
 	z := []byte("shared-secret-material")
-	a, err := concatKDF(z, "A128GCM", 16)
+	a, err := concatKDF(z, "A128GCM", nil, nil, 16)
 	if err != nil {
 		t.Fatalf("concatKDF: %v", err)
 	}
-	b, err := concatKDF(z, "A128GCM", 16)
+	b, err := concatKDF(z, "A128GCM", nil, nil, 16)
 	if err != nil {
 		t.Fatalf("concatKDF: %v", err)
 	}
@@ -275,11 +275,11 @@ func TestConcatKDFIsDeterministic(t *testing.T) {
 
 func TestConcatKDFDependsOnEnc(t *testing.T) {
 	z := []byte("shared-secret-material")
-	a, err := concatKDF(z, "A128GCM", 16)
+	a, err := concatKDF(z, "A128GCM", nil, nil, 16)
 	if err != nil {
 		t.Fatalf("concatKDF: %v", err)
 	}
-	b, err := concatKDF(z, "A256GCM", 16)
+	b, err := concatKDF(z, "A256GCM", nil, nil, 16)
 	if err != nil {
 		t.Fatalf("concatKDF: %v", err)
 	}
@@ -288,8 +288,77 @@ func TestConcatKDFDependsOnEnc(t *testing.T) {
 	}
 }
 
+// TestConcatKDFDependsOnPartyInfo is the regression test for the real
+// interop bug the OIDF conformance suite's own live direct_post.jwt
+// responses surfaced: Decrypt used to silently treat every sender's
+// apu/apv as absent, so a peer that actually sets them (as this suite
+// always does) got a derived key that never matched — an opaque AEAD
+// failure with no hint that apu/apv was the cause. Confirms apu/apv
+// are actually mixed into the derived key, not just accepted and
+// ignored.
+func TestConcatKDFDependsOnPartyInfo(t *testing.T) {
+	z := []byte("shared-secret-material")
+	withoutParty, err := concatKDF(z, "A128GCM", nil, nil, 16)
+	if err != nil {
+		t.Fatalf("concatKDF: %v", err)
+	}
+	withApu, err := concatKDF(z, "A128GCM", []byte("party-u"), nil, 16)
+	if err != nil {
+		t.Fatalf("concatKDF: %v", err)
+	}
+	withApv, err := concatKDF(z, "A128GCM", nil, []byte("party-v"), 16)
+	if err != nil {
+		t.Fatalf("concatKDF: %v", err)
+	}
+	withBoth, err := concatKDF(z, "A128GCM", []byte("party-u"), []byte("party-v"), 16)
+	if err != nil {
+		t.Fatalf("concatKDF: %v", err)
+	}
+	outputs := [][]byte{withoutParty, withApu, withApv, withBoth}
+	for i := range outputs {
+		for j := i + 1; j < len(outputs); j++ {
+			if string(outputs[i]) == string(outputs[j]) {
+				t.Errorf("concatKDF outputs %d and %d matched, want distinct apu/apv to change the derived key", i, j)
+			}
+		}
+	}
+}
+
 func TestConcatKDFRejectsOversizedKeyLen(t *testing.T) {
-	if _, err := concatKDF([]byte("z"), "A128GCM", 64); err == nil {
+	if _, err := concatKDF([]byte("z"), "A128GCM", nil, nil, 64); err == nil {
 		t.Fatalf("concatKDF(64) = nil error, want error (exceeds one SHA-256 round)")
+	}
+}
+
+func TestDecodePartyInfo_AbsentReturnsNil(t *testing.T) {
+	got, err := decodePartyInfo(map[string]any{}, "apu")
+	if err != nil {
+		t.Fatalf("decodePartyInfo: %v", err)
+	}
+	if got != nil {
+		t.Errorf("got %v, want nil for an absent member", got)
+	}
+}
+
+func TestDecodePartyInfo_DecodesPresentValue(t *testing.T) {
+	// base64url("hello") == "aGVsbG8"
+	got, err := decodePartyInfo(map[string]any{"apu": "aGVsbG8"}, "apu")
+	if err != nil {
+		t.Fatalf("decodePartyInfo: %v", err)
+	}
+	if string(got) != "hello" {
+		t.Errorf("got %q, want %q", got, "hello")
+	}
+}
+
+func TestDecodePartyInfo_RejectsNonString(t *testing.T) {
+	if _, err := decodePartyInfo(map[string]any{"apv": 42}, "apv"); err == nil {
+		t.Fatalf("decodePartyInfo = nil error, want error for a non-string member")
+	}
+}
+
+func TestDecodePartyInfo_RejectsInvalidBase64(t *testing.T) {
+	if _, err := decodePartyInfo(map[string]any{"apv": "not valid base64url!"}, "apv"); err == nil {
+		t.Fatalf("decodePartyInfo = nil error, want error for invalid base64url")
 	}
 }
