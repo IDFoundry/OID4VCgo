@@ -68,6 +68,22 @@ negative-test expectations differ.
   `happy-flow` now completes — `FINISHED`, result `WARNING`, zero
   `FAILURE`s. That full run surfaced one more real gap (the same x5c
   requirement `wallet-vp/README.md` already documents, this time in
-  `issuer.SDJWTSigner`), fixed the same way. See `issuer/README.md`.
+  `issuer.SDJWTSigner`), fixed the same way. **All 21 OID4VCI-specific
+  modules in the plan are now run live** (the other 40 are the generic
+  FAPI 2.0 Security Profile Final battery, not yet attempted). One more
+  real gap found: this binary's TLS listener had no `MinVersion`/
+  `CipherSuites` set, so Go's own TLS 1.3 default suite (always
+  including ChaCha20-Poly1305) tripped the suite's own FAPI-RW-8.5
+  cipher probe — fixed by wiring in `fapigo/server.FAPIRWTLSCipherSuites`,
+  the exact configuration FAPIgo's own OpenID-Certified
+  `cmd/conformance-as` already uses. Final tally: happy-flow and its
+  two siblings clean, 10 of 10 applicable negative tests `PASSED`, 3
+  modules correctly self-`SKIPPED` (signed metadata, batch issuance,
+  key-attestation/encryption-algorithm features this binary doesn't
+  implement), `happy-flow-multiple-clients` still `INTERRUPTED` (a
+  real AS-config detail resolved — client2's registered redirect_uri
+  must match the suite's exact string, including its fixed query
+  component — but driving two clients' consent rounds through this
+  harness isn't fully automated yet). See `issuer/README.md`.
 - **Not yet started**: OID4VCI Wallet role (blocked on a FAPIgo-side
   change — see `AGENTS.md`).

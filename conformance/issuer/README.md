@@ -208,13 +208,88 @@ a worse failure mode to discover later, not a better one to skip.
 `TestAuthorizationServerRejectsIssuerStateWithoutExtensionRegistered`
 (now `...Ignores...`) is updated to match.
 
+## Status: all 21 OID4VCI-specific modules run live
+
+Beyond `happy-flow`, every `oid4vci-1_0-issuer-*` module in the plan
+(21 of 61 total — the other 40 are the generic
+`fapi2-security-profile-final-*` FAPI 2.0 battery, not yet attempted;
+see below) has now been run against the real suite. This also settled
+the consent-flow-compatibility and `Config.OAuthOnly`-compatibility
+open questions originally listed here: both are confirmed working —
+the consent-form round trip this binary's own `flow_test.go` already
+proved end to end against a hand-rolled client also works driven by
+the real suite, and the suite's own `openid=plain_oauth` variant
+completed successfully throughout every module below.
+
+**One more real, high-value gap found and fixed: TLS cipher suite
+configuration.** `happy-flow-additional-requests` (and, transitively,
+anything requiring a second live TLS handshake mid-flow) failed with
+`FAILURE | Server accepted a cipher that is not on the list of
+permitted ciphers` — the suite's own FAPI-RW-8.5-1/-2 probe. Root
+cause: `cmd/conformance-issuer/main.go`'s own `tls.Config` set only
+`Certificates`, no `MinVersion`/`CipherSuites` — Go negotiates TLS 1.3
+by default, whose three built-in AEAD suites always include
+ChaCha20-Poly1305, which this specific FAPI-RW probe flags as "not
+permitted" (it hardcodes the narrower FAPI-RW §8.5 AES-GCM-only list,
+per `fapigo/server.FAPIRWTLSCipherSuites`'s own doc comment — even
+though the broader FAPI2-SP-FINAL-5.2.2/BCP195 profile does permit
+ChaCha20-Poly1305). FAPIgo's own OpenID-Certified `cmd/conformance-as`
+already solves this (`server/tls.go`'s exported
+`FAPIRWTLSCipherSuites`) but this binary never wired it in. Fixed by
+setting `MinVersion: tls.VersionTLS12, CipherSuites:
+server.FAPIRWTLSCipherSuites` on the listener — mirrors
+`cmd/conformance-as/main.go` exactly. Re-confirmed live: zero
+`FAILURE`s across everything this fix touched.
+
+**Final results, 21/21 modules run live:**
+
+- `metadata-test`: `PASSED`. `metadata-test-signed`: correctly
+  `SKIPPED` (signed metadata is an unimplemented optional feature).
+- `happy-flow`, `happy-flow-additional-requests`,
+  `happy-flow-skip-notification`: all `FINISHED`/`WARNING`, zero
+  `FAILURE`s (the same soft `exp`-claim `RECOMMENDED` note each time).
+- `happy-flow-multiple-clients`: reaches real PAR/authorize traffic for
+  *both* registered clients — resolved a real config detail along the
+  way (client2's own registered `redirect_uris` must be the suite's
+  *exact* string, including its fixed `?dummy1=lorem&dummy2=ipsum`
+  query component; `fapigo/server`'s own exact-match redirect_uri
+  check, per RFC 6749 §3.1.2.3, is correct here — an AS-side config
+  fix, not a code bug) — but interleaving two clients' own
+  consent/implicit-submission rounds through this manual curl-driven
+  harness isn't fully solved yet; still `INTERRUPTED`. Left as
+  remaining work rather than force it further.
+- `batch-issuance`: correctly `SKIPPED` (this binary doesn't configure
+  `BatchCredentialIssuance`, so the suite detects no batch support).
+- 10 of 10 `fail-*` negative tests that apply to this binary's own
+  configuration all `PASSED`: `fail-invalid-nonce`,
+  `fail-invalid-jwt-proof-signature`,
+  `fail-invalid-client-attestation-signature`,
+  `fail-invalid-client-attestation-pop-signature`,
+  `fail-client-attestation-exp-in-past`,
+  `fail-client-attestation-no-sub`,
+  `fail-client-attestation-pop-wrong-aud`,
+  `fail-mismatched-client-attestation-pop-key`, `fail-missing-proof`,
+  `fail-unknown-credential-configuration`,
+  `fail-unknown-credential-identifier`. `fail-on-access-token-in-query`
+  is `WARNING` (zero `FAILURE`s, same soft note).
+- Two more correctly self-`SKIPPED`, matching this binary's own
+  documented scope: `fail-invalid-key-attestation-signature` (this
+  binary never wires an `AttestationVerifier`; only the `jwt` proof
+  type is configured, not `attestation`) and
+  `fail-unsupported-encryption-algorithm` (`vci_credential_encryption`
+  is fixed to `plain`; this binary implements no Credential Request/
+  Response encryption at all — OID4VCI 1.0 §10 makes it optional).
+
 ## Not yet run live
 
-Every module past `happy-flow` (59 of 61) — this was the first module
-in the plan actually attempted past the metadata/PAR stage; the
-consent-flow-compatibility open question originally listed here is now
-resolved (the consent-form round trip this binary's own `flow_test.go`
-already proved works end to end against a hand-rolled client also
-works driven by the real suite). `Config.OAuthOnly`-compatibility
-remains implicitly confirmed by this same live run (the suite's own
-`openid=plain_oauth` variant completed successfully throughout).
+The 40 `fapi2-security-profile-final-*` modules — the generic FAPI 2.0
+Security Profile Final battery (PAR/DPoP/PKCE/token-endpoint edge
+cases, TLS/discovery checks, grant management). These test
+`fapigo/server`'s own FAPI2 compliance more than anything specific to
+this binary's own OID4VCI wiring — FAPIgo is already OpenID Certified
+against this same suite family in other client-authentication
+configurations, just not yet with `ClientAuthMethodAttestation`
+specifically. Lower expected marginal value than the OID4VCI-specific
+modules above (most findings here would be FAPIgo-side, following the
+same PAR-fix precedent, rather than OID4VCIgo-side), and a
+substantially larger module count — not attempted this pass.
