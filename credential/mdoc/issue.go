@@ -59,6 +59,14 @@ type Claims struct {
 	// this struct's existing ValidityInfo-flattening convention; Issue
 	// wraps it into the real wire shape.
 	Status *StatusListRef
+
+	// IdentifierList optionally populates the MSO's own
+	// "status.identifier_list" element (§12.3.6.2) — see
+	// IdentifierListRef's own doc comment. Flat, the same as Status; at
+	// most one of Status and IdentifierList may be set — see Status's
+	// own doc comment (in mso.go) for why this package enforces that as
+	// its own conservative default rather than a literal §12.3.6 MUST.
+	IdentifierList *IdentifierListRef
 }
 
 // IssueOptions configures Issue.
@@ -99,6 +107,9 @@ func Issue(signer crypto.Signer, alg cose.Alg, claims Claims, opts IssueOptions)
 	if len(opts.X5Chain) == 0 {
 		return IssuerSigned{}, fmt.Errorf("mdoc: IssueOptions.X5Chain must include at least one certificate")
 	}
+	if claims.Status != nil && claims.IdentifierList != nil {
+		return IssuerSigned{}, fmt.Errorf("mdoc: Claims.Status and Claims.IdentifierList must not both be set")
+	}
 	digestAlg := opts.DigestAlg
 	if digestAlg == "" {
 		digestAlg = SHA256
@@ -132,6 +143,9 @@ func Issue(signer crypto.Signer, alg cose.Alg, claims Claims, opts IssueOptions)
 	}
 	if claims.Status != nil {
 		mso.Status = &Status{StatusList: claims.Status}
+	}
+	if claims.IdentifierList != nil {
+		mso.Status = &Status{IdentifierList: claims.IdentifierList}
 	}
 	payload, err := wrapTag24(mso)
 	if err != nil {

@@ -31,14 +31,45 @@ type MobileSecurityObject struct {
 }
 
 // Status is the MSO's own optional "status" element (§12.3.6.2): a
-// pointer to an externally-hosted MSO revocation list. Only the
-// status_list mechanism is modeled here (draft-ietf-oauth-status-list,
-// via StatusListRef) — the same scope
-// credential/sdjwtvc.Claims.Status already takes. §12.3.6.4's own
-// ISO-specific identifier_list alternative isn't modeled; add it once
-// a concrete consumer needs it.
+// pointer to an externally-hosted MSO revocation list, via either of
+// §12.3.6's two mechanisms — status_list (draft-ietf-oauth-status-list,
+// via StatusListRef, the same scope credential/sdjwtvc.Claims.Status
+// already takes) or identifier_list (§12.3.6.4's ISO-specific
+// alternative, via IdentifierListRef). §12.3.6 itself presents these as
+// two alternative ways an issuer implements MSO revocation, not as a
+// pair whose simultaneous use it explicitly forbids — the CDDL marks
+// both members independently optional, with no stated exclusivity.
+// Issue nonetheless rejects a Claims value that sets both, as this
+// package's own conservative default (every worked example and every
+// deployment this package has reason to expect picks one mechanism per
+// MSO); relax this if a real, spec-compliant deployment ever needs
+// both set at once.
 type Status struct {
-	StatusList *StatusListRef `cbor:"status_list,omitempty"`
+	IdentifierList *IdentifierListRef `cbor:"identifier_list,omitempty"`
+	StatusList     *StatusListRef     `cbor:"status_list,omitempty"`
+}
+
+// IdentifierListRef is the MSO's own "identifier_list" element
+// (§12.3.6.2, §12.3.6.4): a pointer to an externally-hosted identifier
+// list, the ISO-specific alternative to StatusListRef — an mdoc reader
+// treats this MSO as revoked if ID appears in the referenced list's own
+// "identifiers" map, rather than by indexing into a bit-packed list.
+// §12.3.6.4 recommends ID be unique (and ideally random) per MSO, to
+// prevent it being used as a correlation handle across presentations.
+// Certificate mirrors StatusListRef's own field: present, it's the mdoc
+// reader's trust anchor for the identifier list's own x5chain; absent,
+// that x5chain must instead chain to whatever certificate signed the
+// MSO's own IssuerAuth x5chain certificate (the IACA certificate, for
+// an mDL).
+//
+// This package models only the MSO-level pointer — resolving it
+// (fetching the identifier list and checking ID's membership) is
+// entirely the caller's own job, the same split StatusListRef already
+// draws for the status_list mechanism.
+type IdentifierListRef struct {
+	ID          []byte `cbor:"id"`
+	URI         string `cbor:"uri"`
+	Certificate []byte `cbor:"certificate,omitempty"`
 }
 
 // StatusListRef is the MSO's own "status_list" element (§12.3.6.2,

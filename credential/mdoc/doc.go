@@ -27,13 +27,19 @@
 // caller-supplied value instead, the same "resolving trust is the
 // caller's job" split this package already draws for the Issuer's
 // public key. MSO revocation (the optional "status" member, §12.3.6)
-// is wired in for the status_list mechanism only (Claims.Status,
-// MobileSecurityObject.Status, VerifiedMSO.Status) — the same scope
-// credential/sdjwtvc.Claims.Status already takes; §12.3.6.4's own
-// ISO-specific identifier_list alternative isn't modeled, and this
-// package never fetches or checks the referenced list itself (that
-// needs statuslist.CWTStatusClaim/ParseCWTStatusClaim and an actual
-// list fetch, entirely the caller's own job).
+// is wired in for both of its mechanisms
+// (Claims.Status/Claims.IdentifierList, MobileSecurityObject.Status,
+// VerifiedMSO.Status): status_list, the same scope
+// credential/sdjwtvc.Claims.Status already takes, and §12.3.6.4's own
+// ISO-specific identifier_list alternative — Issue rejects a Claims
+// value that sets both, this package's own conservative default (see
+// Status's own doc comment for why that's a choice, not a literal
+// §12.3.6 MUST). Either way this package never fetches or checks the
+// referenced list itself — that's the caller's own job (for
+// status_list, statuslist.CWTStatusClaim/ParseCWTStatusClaim plus an
+// actual list fetch; identifier_list has no equivalent library support
+// here, since it's an ISO-specific extension to Token Status List
+// rather than part of the base spec).
 //
 // # Algorithm and curve support
 //
