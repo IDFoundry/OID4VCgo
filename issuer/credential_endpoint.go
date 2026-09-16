@@ -17,6 +17,11 @@ import (
 // (Appendix F.1).
 const jwtProofTyp = "openid4vci-proof+jwt" //nolint:gosec // an OID4VCI typ value, not a credential
 
+// authorizationDetailsTypeOpenIDCredential is RFC 9396 §5.1.1's own
+// authorization details type — the only one resolveCredentialIdentifier
+// ever matches against.
+const authorizationDetailsTypeOpenIDCredential = "openid_credential" //nolint:gosec // an RFC 9396 authorization details type value, not a credential
+
 // AuthorizedRequest is what a Credential Request needs from an
 // already-verified access token — ordinarily
 // fapigo/resource.Verifier.Verify's own AuthorizationContext, adapted
@@ -37,17 +42,62 @@ type AuthorizedRequest struct {
 	// here (§8.2: "The corresponding object in the
 	// credential_configurations_supported map MUST contain one of the
 	// value(s) used in the scope parameter in the Authorization
-	// Request").
+	// Request") — only consulted when the Credential Request uses
+	// CredentialRequest.CredentialConfigurationID; ignored entirely for
+	// a CredentialIdentifier-based request, which AuthorizationDetails
+	// governs instead.
 	Scopes []string
+
+	// AuthorizationDetails is every "openid_credential"-typed entry of
+	// the access token's own "authorization_details" claim (RFC 9396
+	// §2, OID4VCI 1.0 §5.1.1/§6.2) — REQUIRED exactly when a Credential
+	// Request presents CredentialIdentifier instead of
+	// CredentialConfigurationID (§8.2's own MUST), ignored otherwise.
+	// RequestCredential resolves CredentialRequest.CredentialIdentifier
+	// against this to find which CredentialConfiguration applies,
+	// entirely bypassing the CredentialConfigurationID/Scopes check —
+	// the matched entry is itself the grant. This package never mints
+	// or verifies this claim itself, the same "resolving trust is the
+	// caller's job" split every other field here already takes; see
+	// resource_verifier.go for how it feeds in from a verified token's
+	// own claims.
+	AuthorizationDetails []AuthorizationDetail
+}
+
+// AuthorizationDetail is one entry of an already-verified access
+// token's own "authorization_details" claim, for the "openid_credential"
+// type RFC 9396 §5.1.1/§6.2 define — see AuthorizedRequest's own doc
+// comment for how this feeds in. JSON-tagged so a caller can
+// json.Unmarshal an already-decoded token claim's raw
+// "authorization_details" array directly into a []AuthorizationDetail,
+// rather than hand-rolling an equivalent wire type themselves.
+type AuthorizationDetail struct {
+	// Type is REQUIRED (§5.1.1). RequestCredential only ever matches
+	// entries whose Type is "openid_credential" — any other type entry
+	// is simply ignored, the same "additional authorization_details
+	// data fields... never considered invalid due to unknown fields"
+	// tolerance §5.1.1 itself documents for coexisting authorization
+	// details types.
+	Type string `json:"type"`
+
+	// CredentialConfigurationID is REQUIRED (§5.1.1): which
+	// Config.CredentialConfigurationsSupported entry this authorization
+	// detail authorizes.
+	CredentialConfigurationID string `json:"credential_configuration_id"`
+
+	// CredentialIdentifiers is REQUIRED once an authorization detail is
+	// echoed back in a Token Response (§6.2): every credential_identifier
+	// value a Credential Request may present against it. Absent on the
+	// Authorization Request's own outbound copy of this same type — a
+	// Wallet never sets it, only an Authorization Server does, once it
+	// decides to support this optional mechanism at all (§6.2's own
+	// "MAY do so").
+	CredentialIdentifiers []string `json:"credential_identifiers,omitempty"`
 }
 
 // CredentialRequest is a Credential Request (§8.2).
 //
-// Only credential_configuration_id-based requests are supported —
-// credential_identifier (used when an authorization_details of type
-// openid_credential was returned from the Token Response) isn't yet,
-// since this repo has no Token Endpoint to produce one from. Only the
-// jwt and attestation proof types are supported (di_vp needs W3C VCDM,
+// Only the jwt and attestation proof types are supported (di_vp needs W3C VCDM,
 // which this repo doesn't implement). A jwt proof's own binding key may
 // be conveyed as jwk (always available), or as kid/x5c when
 // Dependencies.ProofBindingKeys is configured — this package takes no
@@ -72,8 +122,22 @@ type AuthorizedRequest struct {
 // for that format today.
 type CredentialRequest struct {
 	// CredentialConfigurationID selects a key in
-	// Config.CredentialConfigurationsSupported. REQUIRED.
+	// Config.CredentialConfigurationsSupported directly, checked against
+	// AuthorizedRequest.Scopes (§8.2). REQUIRED unless CredentialIdentifier
+	// is present instead — exactly one of the two must be set.
 	CredentialConfigurationID string
+
+	// CredentialIdentifier is §8.2's own alternative to
+	// CredentialConfigurationID: an opaque value naming one entry of
+	// AuthorizedRequest.AuthorizationDetails' own CredentialIdentifiers,
+	// which is what actually determines the CredentialConfiguration
+	// used — REQUIRED exactly when AuthorizedRequest.AuthorizationDetails
+	// carries a matching entry (an authorization_details-based grant,
+	// RFC 9396), and MUST NOT be present otherwise (§8.2's own MUST on
+	// both directions). Unrecognized (not present in any
+	// AuthorizationDetails entry's own CredentialIdentifiers) fails with
+	// ErrorUnknownCredentialIdentifier.
+	CredentialIdentifier string
 
 	// Proofs is §8.2's own "proofs" parameter: exactly one proof type
 	// (a key in this map, either oid4vci.ProofTypeJWT or
@@ -128,30 +192,25 @@ type resolvedKey struct {
 }
 
 // RequestCredential implements the Credential Endpoint (§8): it
-// resolves the requested CredentialConfiguration, checks it against
-// auth's granted scope, checks the proofs parameter's own array size
-// against Config.BatchCredentialIssuance (see checkBatchSize), verifies
-// every key proof in req.Proofs (consuming this issuer's own c_nonce
-// once per request, not once per proof — see NonceStore's own doc
-// comment), and issues one Credential per resolved binding key by
-// dispatching into credential/sdjwtvc.Issue or credential/mdoc.Issue.
-// See CredentialRequest's own doc comment for what's out of scope.
+// resolves the requested CredentialConfiguration — via
+// req.CredentialConfigurationID checked against auth's granted scope,
+// or via req.CredentialIdentifier resolved against auth's own
+// AuthorizationDetails, whichever req uses (see resolveCredentialConfiguration) —
+// checks the proofs parameter's own array size against
+// Config.BatchCredentialIssuance (see checkBatchSize), verifies every
+// key proof in req.Proofs (consuming this issuer's own c_nonce once
+// per request, not once per proof — see NonceStore's own doc comment),
+// and issues one Credential per resolved binding key by dispatching
+// into credential/sdjwtvc.Issue or credential/mdoc.Issue. See
+// CredentialRequest's own doc comment for what's out of scope.
 func (iss *Issuer) RequestCredential(ctx context.Context, auth AuthorizedRequest, req CredentialRequest) (oid4vci.CredentialResponse, error) {
-	if req.CredentialConfigurationID == "" {
-		return oid4vci.CredentialResponse{}, newError(ErrorInvalidCredentialRequest, 400,
-			"credential_configuration_id is required (credential_identifier is not supported)", nil)
-	}
 	if req.ResponseEncryption != nil && !req.RequestWasEncrypted {
 		return oid4vci.CredentialResponse{}, newError(ErrorInvalidCredentialRequest, 400,
 			"credential_response_encryption requires the request itself to be encrypted", nil)
 	}
-	cc, ok := iss.cfg.CredentialConfigurationsSupported[req.CredentialConfigurationID]
-	if !ok {
-		return oid4vci.CredentialResponse{}, newError(ErrorUnknownCredentialConfig, 400, "unknown credential_configuration_id", nil)
-	}
-	if cc.Scope != "" && !slices.Contains(auth.Scopes, cc.Scope) {
-		return oid4vci.CredentialResponse{}, newError(ErrorInvalidCredentialRequest, 400,
-			"access token does not grant the scope required for this credential_configuration_id", nil)
+	cc, err := iss.resolveCredentialConfiguration(auth, req)
+	if err != nil {
+		return oid4vci.CredentialResponse{}, err
 	}
 
 	proofType, values, err := singleProofType(req.Proofs, cc)
@@ -210,6 +269,71 @@ func (iss *Issuer) checkBatchSize(values []string) error {
 			fmt.Sprintf("proofs array has %d entries, which exceeds this issuer's own batch_size (%d)", len(values), maxBatchSize), nil)
 	}
 	return nil
+}
+
+// resolveCredentialConfiguration implements §8.2's own two mutually
+// exclusive ways a Credential Request identifies which
+// CredentialConfiguration it wants: exactly one of
+// req.CredentialConfigurationID/req.CredentialIdentifier must be set —
+// the former checked against auth.Scopes directly, the latter resolved
+// against auth.AuthorizationDetails first (resolveCredentialIdentifier),
+// which then names the CredentialConfiguration without any further
+// Scopes check, since the matched authorization detail is itself the
+// grant.
+func (iss *Issuer) resolveCredentialConfiguration(auth AuthorizedRequest, req CredentialRequest) (CredentialConfiguration, error) {
+	switch {
+	case req.CredentialIdentifier != "" && req.CredentialConfigurationID != "":
+		return CredentialConfiguration{}, newError(ErrorInvalidCredentialRequest, 400,
+			"credential_identifier and credential_configuration_id must not both be present", nil)
+
+	case req.CredentialIdentifier != "":
+		configID, err := resolveCredentialIdentifier(auth.AuthorizationDetails, req.CredentialIdentifier)
+		if err != nil {
+			return CredentialConfiguration{}, err
+		}
+		cc, ok := iss.cfg.CredentialConfigurationsSupported[configID]
+		if !ok {
+			return CredentialConfiguration{}, newError(ErrorUnknownCredentialConfig, 400,
+				"the credential_configuration_id authorized for this credential_identifier is not supported", nil)
+		}
+		return cc, nil
+
+	case req.CredentialConfigurationID != "":
+		cc, ok := iss.cfg.CredentialConfigurationsSupported[req.CredentialConfigurationID]
+		if !ok {
+			return CredentialConfiguration{}, newError(ErrorUnknownCredentialConfig, 400, "unknown credential_configuration_id", nil)
+		}
+		if cc.Scope != "" && !slices.Contains(auth.Scopes, cc.Scope) {
+			return CredentialConfiguration{}, newError(ErrorInvalidCredentialRequest, 400,
+				"access token does not grant the scope required for this credential_configuration_id", nil)
+		}
+		return cc, nil
+
+	default:
+		return CredentialConfiguration{}, newError(ErrorInvalidCredentialRequest, 400,
+			"exactly one of credential_configuration_id or credential_identifier is required", nil)
+	}
+}
+
+// resolveCredentialIdentifier finds identifier among every
+// "openid_credential"-typed entry's own CredentialIdentifiers in
+// details (RFC 9396 §5.1.1/§6.2), returning that entry's own
+// CredentialConfigurationID — entries of any other Type are ignored,
+// matching §5.1.1's own tolerance for coexisting authorization details
+// types. No match (including details being empty — a
+// credential_identifier presented against an access token that never
+// carried one) fails with ErrorUnknownCredentialIdentifier (§8.3.1.2's
+// own "Requested Credential identifier is unknown").
+func resolveCredentialIdentifier(details []AuthorizationDetail, identifier string) (string, error) {
+	for _, d := range details {
+		if d.Type != authorizationDetailsTypeOpenIDCredential {
+			continue
+		}
+		if slices.Contains(d.CredentialIdentifiers, identifier) {
+			return d.CredentialConfigurationID, nil
+		}
+	}
+	return "", newError(ErrorUnknownCredentialIdentifier, 400, "credential_identifier is not authorized for this access token", nil)
 }
 
 func singleProofType(proofs map[string][]string, cc CredentialConfiguration) (proofType string, values []string, err error) {

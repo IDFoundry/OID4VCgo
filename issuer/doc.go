@@ -25,9 +25,12 @@
 // by reference), the Deferred Credential Endpoint's own polling
 // protocol (§9), and the Notification Endpoint (§11) all exist now.
 // See CredentialRequest's own doc comment for exactly what the
-// Credential Endpoint doesn't implement yet (credential_identifier,
-// di_vp, unbound credentials — and note it never defers issuance
-// itself); a jwt-type proof's binding key may be conveyed as jwk, or as
+// Credential Endpoint doesn't implement yet (di_vp, unbound
+// credentials — and note it never defers issuance itself); both
+// credential_configuration_id- and credential_identifier-based
+// requests are supported (§8.2 — see AuthorizedRequest's own
+// AuthorizationDetails field for the latter's own authorization
+// source); a jwt-type proof's binding key may be conveyed as jwk, or as
 // kid/x5c when Dependencies.ProofBindingKeys is configured (see
 // ProofBindingKeyResolver's own doc comment). Encrypted Requests and
 // Responses (§10) are supported for both the Credential and Deferred

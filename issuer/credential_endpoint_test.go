@@ -407,6 +407,86 @@ func TestRequestCredential_RejectsMissingConfigID(t *testing.T) {
 	assertIssuerError(t, err, issuer.ErrorInvalidCredentialRequest)
 }
 
+// TestRequestCredential_CredentialIdentifier table-drives §8.2's own
+// alternative credential_identifier path: resolved against
+// AuthorizedRequest.AuthorizationDetails rather than
+// CredentialConfigurationID/Scopes. The success case's own Scopes is
+// deliberately left empty (would fail the credential_configuration_id
+// path, per TestRequestCredential_RejectsMissingScope) to prove this
+// path never consults it; setConfigID additionally covers §8.2's own
+// mutual-exclusivity MUST.
+func TestRequestCredential_CredentialIdentifier(t *testing.T) {
+	const identifier = "CivilEngineeringDegree-2023"
+	cases := map[string]struct {
+		auth        issuer.AuthorizedRequest
+		setConfigID bool
+		wantErr     issuer.ErrorCode // "" means success
+	}{
+		"resolves and succeeds, ignoring scope": {
+			auth: issuer.AuthorizedRequest{AuthorizationDetails: []issuer.AuthorizationDetail{
+				{Type: "openid_credential", CredentialConfigurationID: testSDJWTConfigID, CredentialIdentifiers: []string{identifier}},
+			}},
+		},
+		"no authorization_details at all": {
+			auth:    issuer.AuthorizedRequest{},
+			wantErr: issuer.ErrorUnknownCredentialIdentifier,
+		},
+		"non-matching identifier": {
+			auth: issuer.AuthorizedRequest{AuthorizationDetails: []issuer.AuthorizationDetail{
+				{Type: "openid_credential", CredentialConfigurationID: testSDJWTConfigID, CredentialIdentifiers: []string{"SomeOtherIdentifier"}},
+			}},
+			wantErr: issuer.ErrorUnknownCredentialIdentifier,
+		},
+		"matching identifier under the wrong type": {
+			auth: issuer.AuthorizedRequest{AuthorizationDetails: []issuer.AuthorizationDetail{
+				{Type: "not_openid_credential", CredentialConfigurationID: testSDJWTConfigID, CredentialIdentifiers: []string{identifier}},
+			}},
+			wantErr: issuer.ErrorUnknownCredentialIdentifier,
+		},
+		"authorized config isn't supported by this issuer": {
+			auth: issuer.AuthorizedRequest{AuthorizationDetails: []issuer.AuthorizationDetail{
+				{Type: "openid_credential", CredentialConfigurationID: "NoSuchConfig", CredentialIdentifiers: []string{identifier}},
+			}},
+			wantErr: issuer.ErrorUnknownCredentialConfig,
+		},
+		"credential_configuration_id also present": {
+			auth: issuer.AuthorizedRequest{AuthorizationDetails: []issuer.AuthorizationDetail{
+				{Type: "openid_credential", CredentialConfigurationID: testSDJWTConfigID, CredentialIdentifiers: []string{identifier}},
+			}},
+			setConfigID: true,
+			wantErr:     issuer.ErrorInvalidCredentialRequest,
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			f := newCredentialEndpointFixture(t)
+			nonce := f.issueNonce(t)
+			proof := buildJWTProof(t, testP256Key(t), testIssuer, nonce)
+
+			req := issuer.CredentialRequest{
+				CredentialIdentifier: identifier,
+				Proofs:               map[string][]string{oid4vci.ProofTypeJWT: {proof}},
+				SDJWTClaims:          testSDJWTClaims(),
+			}
+			if tc.setConfigID {
+				req.CredentialConfigurationID = testSDJWTConfigID
+			}
+
+			resp, err := f.iss.RequestCredential(context.Background(), tc.auth, req)
+			if tc.wantErr != "" {
+				assertIssuerError(t, err, tc.wantErr)
+				return
+			}
+			if err != nil {
+				t.Fatalf("RequestCredential: %v", err)
+			}
+			if len(resp.Credentials) != 1 {
+				t.Fatalf("got %d credentials, want 1", len(resp.Credentials))
+			}
+		})
+	}
+}
+
 func TestRequestCredential_RejectsMissingScope(t *testing.T) {
 	f := newCredentialEndpointFixture(t)
 	nonce := f.issueNonce(t)
