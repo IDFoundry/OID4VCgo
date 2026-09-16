@@ -61,9 +61,14 @@ package layout and design rationale as it's built out.
 `conformance/*/README.md` documentation convention. As of this note,
 `cmd/conformance-verifier` (OID4VP Verifier role) and
 `cmd/conformance-wallet-vp` (OID4VP Wallet role, direct_post.jwt module
-list only) both exist, compile, are unit-tested, and have been
-confirmed live against each other end to end (a real cryptographic
-round trip, not a mock) — but neither has yet been run against the
-live OIDF suite itself. See `conformance/verifier/README.md`'s and
-`conformance/wallet-vp/README.md`'s own "Status" sections before
+list only) exist, compile, are unit-tested, and have been confirmed
+live against each other end to end (a real cryptographic round trip,
+not a mock). `cmd/conformance-issuer` (OID4VCI Issuer role — a real
+`fapigo/server.Server` with `AttestationBasedClientAuthentication`
+enabled, paired with a real `issuer.Issuer`) also exists, compiles, and
+is confirmed live at the metadata/JWKS level, but its PAR → consent →
+token → credential flow hasn't been exercised end to end yet. None of
+the three has been run against the live OIDF suite itself. See
+`conformance/verifier/README.md`'s, `conformance/wallet-vp/README.md`'s
+and `conformance/issuer/README.md`'s own "Status" sections before
 assuming any specific suite test module passes.

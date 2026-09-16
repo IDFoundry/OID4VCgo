@@ -1,0 +1,237 @@
+package main
+
+import (
+	"context"
+	"crypto/rand"
+	"fmt"
+	"net/http"
+	"time"
+
+	fapi "github.com/idfoundry/fapigo"
+	"github.com/idfoundry/fapigo/fapihttp"
+	"github.com/idfoundry/fapigo/keys"
+	"github.com/idfoundry/fapigo/keys/ephemeral"
+	fapires "github.com/idfoundry/fapigo/resource"
+	"github.com/idfoundry/fapigo/server"
+	"github.com/idfoundry/fapigo/storage"
+	"github.com/idfoundry/fapigo/storage/memstore"
+
+	"github.com/idfoundry/oid4vcigo"
+	"github.com/idfoundry/oid4vcigo/internal/jose"
+	"github.com/idfoundry/oid4vcigo/issuer"
+	oid4vcigostorage "github.com/idfoundry/oid4vcigo/storage"
+)
+
+const httpFetchTimeout = 10 * time.Second
+
+// clientAttestationAlgorithm is the one algorithm this binary accepts
+// a Client Attestation/PoP JWT signed with — ES256, HAIP 1.0 §7's own
+// minimum, matching every other algorithm choice this binary and its
+// Phase 1 siblings make.
+const clientAttestationAlgorithm = fapi.ES256
+
+// newServerMux builds the full wiring — a real fapigo/server.Server
+// (FAPI 2.0 Security Profile Final, Wallet Attestation client
+// authentication, DPoP) paired with a real oid4vcigo/issuer.Issuer via
+// fapigo/resource.Verifier, per issuer/authorization_server.go's and
+// issuer/resource_verifier.go's own integration recipes — plus the
+// HTTP router tying both together. Factored out from main so a future
+// smoke test can stand this up directly, matching
+// cmd/conformance-verifier's own newServerMux-equivalent precedent
+// (here, main itself, kept small) — see README's own "Status" section
+// for how far this has actually been exercised.
+func newServerMux(cfg Config) (*http.ServeMux, error) {
+	issuerURL, err := cfg.issuerURL()
+	if err != nil {
+		return nil, fmt.Errorf("issuer url: %w", err)
+	}
+	parURL, err := fapi.ParseEndpointURL(cfg.Issuer + "/par")
+	if err != nil {
+		return nil, err
+	}
+	authorizationURL, err := fapi.ParseEndpointURL(cfg.Issuer + "/authorize")
+	if err != nil {
+		return nil, err
+	}
+	tokenURL, err := fapi.ParseEndpointURL(cfg.Issuer + "/token")
+	if err != nil {
+		return nil, err
+	}
+	jwksURL, err := fapi.ParseEndpointURL(cfg.Issuer + "/jwks")
+	if err != nil {
+		return nil, err
+	}
+	credentialURL, err := fapi.ParseEndpointURL(cfg.Issuer + "/credential")
+	if err != nil {
+		return nil, err
+	}
+	nonceURL, err := fapi.ParseEndpointURL(cfg.Issuer + "/nonce")
+	if err != nil {
+		return nil, err
+	}
+
+	keyManager, err := ephemeral.NewKeyManager(map[keys.SigningPurpose]fapi.SignatureAlgorithm{
+		keys.AccessTokenSigning: fapi.ES256,
+	})
+	if err != nil {
+		return nil, err
+	}
+	fetcher, err := fapihttp.New(&http.Client{Timeout: httpFetchTimeout}, fapihttp.Config{
+		MaxResponseBytes: 1 << 20, RequestTimeout: httpFetchTimeout, MaxRedirects: 2,
+	})
+	if err != nil {
+		return nil, err
+	}
+	// No JWKS-based client keys: this binary's one test client
+	// authenticates via ClientAuthMethodAttestation, not
+	// ClientAuthMethodPrivateKeyJWT — see Config.Client's own doc
+	// comment. Still required unconditionally by server.Dependencies.
+	clientKeys, err := ephemeral.NewClientKeySource(fetcher, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	client, err := storage.NewRegisteredClient(storage.RegisteredClientConfig{
+		ID:                         fapi.ClientID(cfg.Client.ID),
+		RedirectURIs:               registeredRedirectURIs(cfg.Client.RedirectURIs),
+		ClientAuthMethod:           storage.ClientAuthMethodAttestation,
+		ExpectedAttesterIssuer:     cfg.Client.ExpectedAttesterIssuer,
+		ClientAttestationAlgorithm: clientAttestationAlgorithm,
+		AllowedScopes:              []string{cfg.Scope},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("register client: %w", err)
+	}
+	clientRepo := memstore.NewClientRepository([]storage.RegisteredClient{client})
+	replayStore := memstore.NewReplayStore()
+
+	accessTokens, err := server.NewJWTAccessTokens(keyManager, fapi.ES256)
+	if err != nil {
+		return nil, err
+	}
+	resourceAccessTokens, err := fapires.NewJWTAccessTokens(
+		selfIssuerKeySource{keyManager: keyManager}, issuerURL, issuerURL.String(),
+		fapi.ES256, srvLimits().AccessTokenLifetime, 8,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	limits := srvLimits()
+	algorithms := server.RecommendedAlgorithms()
+	algorithms.ClientAttestation = server.AlgorithmSet{clientAttestationAlgorithm}
+	algorithms.ClientAttestationPoP = server.AlgorithmSet{clientAttestationAlgorithm}
+
+	srvCfg := server.Config{
+		Issuer: issuerURL,
+		Endpoints: server.Endpoints{
+			Authorization: authorizationURL, Token: tokenURL,
+			PushedAuthorizationRequest: parURL, JWKS: jwksURL,
+		},
+		Profile:                              server.ProfileFAPISecurity,
+		Algorithms:                           algorithms,
+		Limits:                               limits,
+		Assurance:                            server.AssuranceDevelopment,
+		OAuthOnly:                            true,
+		AttestationBasedClientAuthentication: true,
+	}
+	srvDeps := server.Dependencies{
+		Clients:      clientRepo,
+		Transactions: memstore.NewTransactionStore(),
+		Grants:       memstore.NewGrantStore(),
+		Replay:       replayStore,
+		ClientKeys:   clientKeys,
+		Keys:         keyManager,
+		AccessTokens: accessTokens,
+		Revocation:   memstore.NewRevocationStore(),
+		Clock:        server.SystemClock{},
+		Random:       rand.Reader,
+	}
+	srv, err := server.New(srvCfg, srvDeps)
+	if err != nil {
+		return nil, fmt.Errorf("server.New: %w", err)
+	}
+
+	resourceVerifier, err := fapires.NewVerifier(fapires.Config{
+		Limits: fapires.Limits{MaxDPoPProofAge: limits.MaxDPoPProofAge, MaxClockSkew: limits.MaxClockSkew},
+	}, fapires.Dependencies{
+		AccessTokens: resourceAccessTokens, Replay: replayStore,
+		Revocation: memstore.NewRevocationStore(), Clock: fapires.SystemClock{},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("resource.NewVerifier: %w", err)
+	}
+
+	issuerSigningKey, err := cfg.credentialIssuerSigningKey()
+	if err != nil {
+		return nil, fmt.Errorf("credential issuer signing key: %w", err)
+	}
+	issProofAlgs := []string{"ES256"}
+	iss, err := issuer.New(issuer.Config{
+		Issuer:    issuerURL,
+		Endpoints: issuer.Endpoints{Credential: credentialURL, Nonce: nonceURL},
+		Limits:    issuer.Limits{NonceLifetime: limits.MaxDPoPProofAge},
+		CredentialConfigurationsSupported: map[string]issuer.CredentialConfiguration{
+			cfg.CredentialConfigurationID: {
+				Format: "dc+sd-jwt", Scope: cfg.Scope, VCT: cfg.VCT,
+				CryptographicBindingMethodsSupported: []string{"jwk"},
+				ProofTypesSupported: map[string]issuer.ProofTypeConfiguration{
+					oid4vci.ProofTypeJWT: {ProofSigningAlgValuesSupported: issProofAlgs},
+				},
+			},
+		},
+	}, issuer.Dependencies{
+		Nonces: oid4vcigostorage.NewNonceStore(),
+		Clock:  issuer.ClockFunc(time.Now),
+		Random: rand.Reader,
+		SDJWTSigner: &issuer.SDJWTSigner{
+			Signer: issuerSigningKey, Alg: jose.ES256,
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("issuer.New: %w", err)
+	}
+
+	consent := newConsentHandler(srv, clientRepo, server.SystemClock{}, cfg.DefaultSubject)
+	return newRouter(srv, iss, resourceVerifier, consent, cfg), nil
+}
+
+// srvLimits are this binary's own FAPI 2.0 Limits — server.RecommendedLimits
+// plus the Client Attestation-specific bounds
+// AttestationBasedClientAuthentication needs, which that preset
+// deliberately doesn't set (see its own doc comment on why: most
+// callers never register an attestation-authenticated client).
+func srvLimits() server.Limits {
+	limits := server.RecommendedLimits()
+	limits.MaxClientAttestationLifetime = 24 * time.Hour
+	limits.MaxClientAttestationPoPAge = limits.MaxDPoPProofAge
+	return limits
+}
+
+func registeredRedirectURIs(raw []string) []fapi.RegisteredRedirectURI {
+	out := make([]fapi.RegisteredRedirectURI, len(raw))
+	for i, u := range raw {
+		out[i] = fapi.RegisteredRedirectURI(u)
+	}
+	return out
+}
+
+// selfIssuerKeySource resolves this same process's own access-token
+// signing key directly from its in-memory keyManager — matches
+// FAPIgo's own cmd/conformance-as/resource.go identically, including
+// why: a loopback to this binary's own /jwks endpoint would hit its
+// self-signed listener cert with a standard net/http.Client, which
+// (unlike the OIDF suite's own outbound client) does not trust it.
+type selfIssuerKeySource struct {
+	keyManager *ephemeral.KeyManager
+}
+
+func (s selfIssuerKeySource) ResolveIssuerKeys(ctx context.Context, req keys.IssuerKeyRequest) (keys.IssuerKeySet, error) {
+	pub, err := s.keyManager.PublicKey(ctx, keys.AccessTokenSigning, req.Algorithm)
+	if err != nil {
+		return keys.IssuerKeySet{}, err
+	}
+	return keys.IssuerKeySet{Keys: []keys.IssuerKey{
+		{KeyID: pub.KeyID, Algorithm: req.Algorithm, PublicKey: pub.PublicKey},
+	}}, nil
+}
