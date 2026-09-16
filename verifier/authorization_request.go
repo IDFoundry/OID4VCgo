@@ -42,6 +42,16 @@ type BuildAuthorizationRequestRequest struct {
 	// State is OPTIONAL (§5.3) — round-tripped back by the Wallet's
 	// own response.
 	State string
+
+	// WalletNonce is OPTIONAL: the "wallet_nonce" value a Wallet sent
+	// when fetching this Request Object over POST (§5.10, Request URI
+	// Method post). When set, it's embedded as this Request Object's
+	// own "wallet_nonce" claim — §5.10.1 requires the Verifier "MUST
+	// use it as the wallet_nonce value in the signed authorization
+	// request object", so the Wallet can confirm the object it
+	// received is fresh, not replayed. Leave empty for a plain GET
+	// fetch, or a POST that didn't include one.
+	WalletNonce string
 }
 
 // BuildAuthorizationRequestResult is returned by a successful
@@ -111,6 +121,9 @@ func (v *Verifier) BuildAuthorizationRequest(req BuildAuthorizationRequestReques
 	if req.State != "" {
 		payload["state"] = req.State
 	}
+	if req.WalletNonce != "" {
+		payload["wallet_nonce"] = req.WalletNonce
+	}
 
 	requestObject, err := v.signRequestObject(payload)
 	if err != nil {
@@ -160,6 +173,7 @@ func (v *Verifier) buildResponseEncryptionMetadata() (map[string]any, *ecdsa.Pri
 			"keys": []any{responseEncryptionJWK{JWK: encJWK, Kid: kid, Use: "enc", Alg: string(jwe.ECDHES)}},
 		},
 		"encrypted_response_enc_values_supported": v.cfg.EncValuesSupported,
+		"vp_formats_supported":                    v.cfg.VPFormatsSupported,
 	}
 	return clientMetadata, encKey, nil
 }

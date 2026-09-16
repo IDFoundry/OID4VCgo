@@ -15,14 +15,20 @@ negative-test expectations differ.
 - **`verifier/`** — OID4VP 1.0 Final/HAIP Verifier role
   (`oid4vp-1final-verifier-haip-test-plan`): `cmd/conformance-verifier`
   stands up `verifier.Verifier` behind real HTTP; the suite plays
-  Wallet. **Confirmed live against a real, locally-run OIDF suite,
-  all 11 in-scope modules correct** (5 positive-behavior modules
-  succeed, 5 negative-test modules correctly reject their malformed
-  presentation, 1 self-skips as designed). Found and fixed one real
-  interop bug along the way: `internal/jwe`'s Concat KDF never
-  incorporated the sender's `apu`/`apv` header members, silently
-  deriving the wrong CEK against the suite's own
-  `direct_post.jwt` responses (which always set both). See
+  Wallet. **Confirmed live against a real, locally-run OIDF suite, all
+  12 in-scope modules correct** (7 positive-behavior modules succeed —
+  including genuine `request_uri_method=post` support, not a
+  self-skip — 5 negative-test modules correctly reject their malformed
+  presentation). Found and fixed three real gaps along the way:
+  `internal/jwe`'s Concat KDF never incorporated the sender's
+  `apu`/`apv` header members, silently deriving the wrong CEK against
+  the suite's own `direct_post.jwt` responses (which always set both);
+  this binary's own Request Object signing certificate was self-signed
+  (the suite's `ValidateRequestObjectSignatureAgainstX5cHeader` check
+  rejects that outright, and it was silently failing on every module
+  without affecting the suite's own summary counts); and
+  `verifier.BuildAuthorizationRequest` never set `client_metadata`'s
+  own `vp_formats_supported`, a field OID4VP marks REQUIRED here. See
   `verifier/README.md`.
 - **`wallet-vp/`** — OID4VP 1.0 Final/HAIP Wallet role, direct_post.jwt
   module list only (`oid4vp-1final-wallet-haip-test-plan`):
@@ -31,18 +37,21 @@ negative-test expectations differ.
   to end against `cmd/conformance-verifier` itself, and **all 14
   modules this binary's own scope can reach are now run live** (the
   other 2 are DC API/JAR-JSON-Serialization-only, correctly 404 for
-  this variant). Four real gaps found and fixed along the way: the
+  this variant). Five real gaps found and fixed along the way: the
   same x5c-header/self-signed-leaf pair already found for
-  `credential/sdjwtvc.Issue`, plus two request-object validation gaps
-  this binary's own `requestobject.go` had — a request carrying
+  `credential/sdjwtvc.Issue`, two request-object validation gaps this
+  binary's own `requestobject.go` had — a request carrying
   `redirect_uri` alongside `response_uri`, or an unrecognized
   `transaction_data` type, was silently ignored and this binary POSTed
-  its response anyway instead of refusing the request. All four fixed
-  and re-confirmed live: five positive-behavior modules clean
-  (`FINISHED`/`WARNING`, zero `FAILURE`s), one correctly self-`SKIPPED`,
-  seven of seven reachable negative tests now correctly reject before
-  ever calling `response_uri`. Its own three `dc_api.jwt` module lists
-  are out of scope for this binary. See `wallet-vp/README.md`.
+  its response anyway instead of refusing the request — and, later,
+  genuine `request_uri_method=post` support (a fresh `wallet_nonce`
+  sent over POST, and the fetched Request Object rejected outright if
+  its own `wallet_nonce` claim doesn't echo it back). All fixed and
+  re-confirmed live: six positive-behavior modules clean
+  (`FINISHED`/`PASSED` or `WARNING`, zero `FAILURE`s), seven of seven
+  reachable negative tests correctly reject before ever calling
+  `response_uri`. Its own three `dc_api.jwt` module lists are out of
+  scope for this binary. See `wallet-vp/README.md`.
 - **`issuer/`** — OID4VCI 1.0 Final/HAIP Issuer role
   (`oid4vci-1_0-issuer-haip-test-plan`): `cmd/conformance-issuer` pairs
   a real `fapigo/server.Server` (FAPI 2.0 Security Profile Final,

@@ -1,7 +1,14 @@
 // Command generate-config writes a throwaway conformance-verifier
-// config.json: a fresh self-signed TLS listener cert, a fresh
-// self-signed OID4VP Client Identifier cert (its SHA-256 hash becomes
-// the x509_hash Client ID), and a fresh EC P-256 keypair for the
+// config.json: a fresh self-signed TLS listener cert, a fresh OID4VP
+// Client Identifier leaf certificate (its SHA-256 hash becomes the
+// x509_hash Client ID) issued under a fresh throwaway CA — not
+// self-signed; confirmed live: the suite's own
+// ValidateRequestObjectSignatureAgainstX5cHeader check rejects a
+// self-signed leaf outright ("Leaf certificate in x5c chain must not
+// be self-signed"), the exact same finding
+// conformance/wallet-vp/scripts/generate-config and
+// conformance/issuer/scripts/generate-config already worked around for
+// their own leaf certs — and a fresh EC P-256 keypair for the
 // "credential issuer" — paste that keypair's public JWK into the OIDF
 // suite's own test-configuration UI under "Credential Issuer" >
 // "Signing JWK" (matching AbstractCreateSdJwtCredential.createSdJwt's
@@ -66,9 +73,10 @@ func main() {
 		fmt.Fprintln(os.Stderr, "generate tls cert:", err)
 		os.Exit(1)
 	}
-	clientCert, clientKey, err := conformancecert.SelfSignedPEM("conformance-verifier-client", nil)
+	_, clientKeyPEM, clientCertPEM, clientCACertPEM, err := conformancecert.GenerateSignerAndCert(
+		"conformance-verifier-client", "conformance-verifier-client-ca")
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "generate client cert:", err)
+		fmt.Fprintln(os.Stderr, "generate client key/certificate:", err)
 		os.Exit(1)
 	}
 
@@ -104,8 +112,8 @@ func main() {
 		BaseURL:              *baseURL,
 		TLSCertificatePEM:    tlsCert,
 		TLSPrivateKeyPEM:     tlsKey,
-		ClientCertificatePEM: clientCert,
-		ClientPrivateKeyPEM:  clientKey,
+		ClientCertificatePEM: clientCertPEM,
+		ClientPrivateKeyPEM:  clientKeyPEM,
 		CredentialIssuerJWK:  issuerJWKRaw,
 		VCT:                  "urn:eudi:pid:1",
 		Claims:               []string{"given_name", "family_name"},
@@ -131,4 +139,10 @@ func main() {
 	fmt.Fprintln(os.Stderr, "emulated test credentials with it) — its public half is already")
 	fmt.Fprintln(os.Stderr, "embedded in the generated config.json as credential_issuer_jwk:")
 	fmt.Fprintln(os.Stderr, string(issuerPrivateJWKRaw))
+
+	fmt.Fprintln(os.Stderr, "\nPaste this CA certificate into the OIDF suite's own")
+	fmt.Fprintln(os.Stderr, "\"client.request_object_trust_anchor_pem\" test-configuration field —")
+	fmt.Fprintln(os.Stderr, "it signed the leaf certificate embedded in this binary's own Request")
+	fmt.Fprintln(os.Stderr, "Object's \"x5c\" header (the leaf itself must not be self-signed):")
+	fmt.Fprint(os.Stderr, clientCACertPEM)
 }

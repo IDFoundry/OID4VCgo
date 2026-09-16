@@ -55,20 +55,20 @@ func (s *server) buildQuery() (dcql.Query, error) {
 	}, nil
 }
 
-// handleAuthorize starts a new session: builds and signs an
-// Authorization Request, stores it, and redirects the caller (the
-// suite's own browser, playing Wallet) to an "openid4vp://" URL
-// carrying this Verifier's own client_id and the request_uri the
-// Wallet fetches next.
+// handleAuthorize starts a new session — the DCQL query it will ask
+// for is fixed now, but the Authorization Request itself isn't built
+// and signed yet (see session.ensureBuilt's own doc comment for why:
+// a POST fetch of request_uri can carry a wallet_nonce that must be
+// embedded in the signed object, and that's only knowable once the
+// fetch happens). It redirects the caller (the suite's own browser,
+// playing Wallet) to an "openid4vp://" URL carrying this Verifier's
+// own client_id, the request_uri the Wallet fetches next, and
+// request_uri_method=post (§5.10) advertising that this binary
+// supports fetching it via POST as well as the default GET.
 func (s *server) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 	query, err := s.buildQuery()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	result, err := s.v.BuildAuthorizationRequest(verifier.BuildAuthorizationRequestRequest{Query: query})
-	if err != nil {
-		http.Error(w, fmt.Sprintf("build authorization request: %v", err), http.StatusInternalServerError)
 		return
 	}
 	id, err := newSessionID()
@@ -76,23 +76,27 @@ func (s *server) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.sessions.put(&session{
-		id: id, requestObject: result.RequestObject, query: query,
-		nonce: result.Nonce, decryptionKey: result.ResponseDecryptionKey, createdAt: time.Now(),
-	})
+	s.sessions.put(&session{id: id, query: query, createdAt: time.Now()})
 
 	requestURI := s.cfg.BaseURL + "/request/" + id
 	deepLink := "openid4vp://?" + url.Values{
-		"client_id":   {result.ClientID},
-		"request_uri": {requestURI},
+		"client_id":          {s.v.ClientID()},
+		"request_uri":        {requestURI},
+		"request_uri_method": {"post"},
 	}.Encode()
-	log.Printf("session %s: built authorization request, request_uri=%s", id, requestURI)
+	log.Printf("session %s: created, request_uri=%s", id, requestURI)
 	http.Redirect(w, r, deepLink, http.StatusFound)
 }
 
-// handleRequestObject serves the signed Request Object JWS a prior
-// handleAuthorize call built, per §5.10's own request_uri content
-// type.
+// handleRequestObject builds (on first fetch) or replays (on any
+// later fetch) the signed Request Object JWS for one session, per
+// §5.10's own request_uri content type. A GET fetch (§5) carries no
+// body; a POST fetch (§5.10) may carry a form-encoded wallet_nonce,
+// which — only on the fetch that actually triggers the build — ends
+// up embedded in the signed object per §5.10.1. wallet_metadata is
+// accepted (so a POST with it doesn't fail) but unused: this binary's
+// own encryption/algorithm support is fixed by its own Config, not
+// negotiated per-request.
 func (s *server) handleRequestObject(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	sess, ok := s.sessions.get(id)
@@ -100,8 +104,24 @@ func (s *server) handleRequestObject(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+
+	var walletNonce string
+	if r.Method == http.MethodPost {
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		walletNonce = r.PostForm.Get("wallet_nonce")
+	}
+
+	requestObject, err := sess.ensureBuilt(s.v, walletNonce)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("build authorization request: %v", err), http.StatusInternalServerError)
+		return
+	}
+
 	w.Header().Set("Content-Type", "application/oauth-authz-req+jwt")
-	_, _ = w.Write([]byte(sess.requestObject))
+	_, _ = w.Write([]byte(requestObject)) //nolint:gosec // not XSS-exploitable: Content-Type is a compact JWS (dot-separated base64url segments), never text/html, regardless of walletNonce's own taint
 }
 
 // handleResponse receives the direct_post.jwt response (§8.3.1) at

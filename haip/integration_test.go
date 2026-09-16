@@ -142,6 +142,7 @@ func TestRecommendedVerifierConfigWorksWithVerifierNew(t *testing.T) {
 		ResponseURI:        responseURI,
 		SigningAlg:         rec.SigningAlg,
 		EncValuesSupported: rec.EncValuesSupported,
+		VPFormatsSupported: map[string]any{"dc+sd-jwt": map[string]any{"sd-jwt_alg_values": []string{"ES256"}}},
 	}, verifier.Dependencies{
 		Signer: signer,
 		Random: rand.Reader,
