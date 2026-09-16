@@ -230,9 +230,10 @@ func TestIssuerSignedMarshalUnmarshalRoundTrip_PreservesIdentifierList(t *testin
 	}
 }
 
-// TestIssueRejectsStatusAndIdentifierListTogether checks §12.3.6's own
-// mutual-exclusivity requirement between the status_list and
-// identifier_list mechanisms.
+// TestIssueRejectsStatusAndIdentifierListTogether checks this
+// package's own conservative default of rejecting both status_list and
+// identifier_list set at once — see Status's own doc comment (mso.go)
+// for why that's this package's choice, not a literal §12.3.6 MUST.
 func TestIssueRejectsStatusAndIdentifierListTogether(t *testing.T) {
 	f := newFixture(t)
 	claims := f.claims

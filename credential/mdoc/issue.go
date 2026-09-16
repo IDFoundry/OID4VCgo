@@ -63,9 +63,9 @@ type Claims struct {
 	// IdentifierList optionally populates the MSO's own
 	// "status.identifier_list" element (§12.3.6.2) — see
 	// IdentifierListRef's own doc comment. Flat, the same as Status; at
-	// most one of Status and IdentifierList may be set, since §12.3.6
-	// treats status_list and identifier_list as mutually exclusive
-	// mechanisms.
+	// most one of Status and IdentifierList may be set — see Status's
+	// own doc comment (in mso.go) for why this package enforces that as
+	// its own conservative default rather than a literal §12.3.6 MUST.
 	IdentifierList *IdentifierListRef
 }
 
@@ -108,7 +108,7 @@ func Issue(signer crypto.Signer, alg cose.Alg, claims Claims, opts IssueOptions)
 		return IssuerSigned{}, fmt.Errorf("mdoc: IssueOptions.X5Chain must include at least one certificate")
 	}
 	if claims.Status != nil && claims.IdentifierList != nil {
-		return IssuerSigned{}, fmt.Errorf("mdoc: Claims.Status and Claims.IdentifierList are mutually exclusive")
+		return IssuerSigned{}, fmt.Errorf("mdoc: Claims.Status and Claims.IdentifierList must not both be set")
 	}
 	digestAlg := opts.DigestAlg
 	if digestAlg == "" {

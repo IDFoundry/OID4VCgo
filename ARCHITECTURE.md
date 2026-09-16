@@ -313,7 +313,7 @@ shape from the phase-by-phase plan, not a description of current code.
     Marshal/Unmarshal → Verify cycles) that fails deterministically
     without the cache and passes reliably with it.
   - MSO revocation (the optional `status` member, §12.3.6) is wired in
-    for both of its mutually exclusive mechanisms: `Status` on
+    for both of its mechanisms: `Status` on
     `MobileSecurityObject` now carries either `StatusListRef`
     (status_list, matching draft-ietf-oauth-status-list's own
     `StatusListInfo` `{idx, uri}` shape plus §12.3.6.2's own additional
@@ -322,8 +322,13 @@ shape from the phase-by-phase plan, not a description of current code.
     ?certificate}`, revoking by ID membership in an externally-hosted
     list rather than a bit index), each flattened onto `Claims`
     (`Claims.Status`/`Claims.IdentifierList`) and surfaced on
-    `VerifiedMSO.Status *Status` the same way; `Issue` rejects a
-    `Claims` value that sets both. This package still never imports
+    `VerifiedMSO.Status *Status` the same way. §12.3.6 itself presents
+    these as two alternative ways to implement MSO revocation, not a
+    pair whose simultaneous use it explicitly forbids (the CDDL marks
+    both members independently optional, with no stated exclusivity);
+    `Issue` nonetheless rejects a `Claims` value that sets both, as
+    this package's own conservative default. This package still never
+    imports
     `statuslist` — resolving a `Status` pointer into an actual fetch
     and bit/identifier check against the referenced list is entirely
     the caller's own job, the same split `credential/sdjwtvc.Claims.Status`

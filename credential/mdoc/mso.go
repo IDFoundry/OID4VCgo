@@ -32,11 +32,18 @@ type MobileSecurityObject struct {
 
 // Status is the MSO's own optional "status" element (§12.3.6.2): a
 // pointer to an externally-hosted MSO revocation list, via either of
-// §12.3.6's two mutually exclusive mechanisms — status_list
-// (draft-ietf-oauth-status-list, via StatusListRef, the same scope
-// credential/sdjwtvc.Claims.Status already takes) or identifier_list
-// (§12.3.6.4's ISO-specific alternative, via IdentifierListRef). Issue
-// rejects a Claims value that sets both.
+// §12.3.6's two mechanisms — status_list (draft-ietf-oauth-status-list,
+// via StatusListRef, the same scope credential/sdjwtvc.Claims.Status
+// already takes) or identifier_list (§12.3.6.4's ISO-specific
+// alternative, via IdentifierListRef). §12.3.6 itself presents these as
+// two alternative ways an issuer implements MSO revocation, not as a
+// pair whose simultaneous use it explicitly forbids — the CDDL marks
+// both members independently optional, with no stated exclusivity.
+// Issue nonetheless rejects a Claims value that sets both, as this
+// package's own conservative default (every worked example and every
+// deployment this package has reason to expect picks one mechanism per
+// MSO); relax this if a real, spec-compliant deployment ever needs
+// both set at once.
 type Status struct {
 	IdentifierList *IdentifierListRef `cbor:"identifier_list,omitempty"`
 	StatusList     *StatusListRef     `cbor:"status_list,omitempty"`
