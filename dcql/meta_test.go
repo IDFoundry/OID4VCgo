@@ -1,6 +1,7 @@
 package dcql_test
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/idfoundry/oid4vcigo/dcql"
@@ -91,6 +92,66 @@ func TestSatisfiedBySDJWTVCClaimsWithClaimSets(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestSelectedSDJWTVCClaimPathsReturnsWinningOption mirrors §6.4.1's
+// own worked example again, this time checking
+// SelectedSDJWTVCClaimPaths's own richer return value: which specific
+// Paths the winning claim_sets option resolved, not just that some
+// option did.
+func TestSelectedSDJWTVCClaimPathsReturnsWinningOption(t *testing.T) {
+	cq := claimSetsCredentialQuery(t)
+	const vct = "https://credentials.example.com/identity_credential"
+
+	paths, err := cq.SelectedSDJWTVCClaimPaths(map[string]any{
+		"vct": vct, "last_name": "Doe", "locality": "Anytown", "region": "CA",
+	})
+	if err != nil {
+		t.Fatalf("SelectedSDJWTVCClaimPaths: %v", err)
+	}
+	want := []dcql.Path{
+		{dcql.PathKey("last_name")}, {dcql.PathKey("locality")}, {dcql.PathKey("region")},
+	}
+	if len(paths) != len(want) {
+		t.Fatalf("paths = %v, want %v", paths, want)
+	}
+	for i, p := range want {
+		if !pathsEqual(t, paths[i], p) {
+			t.Errorf("paths[%d] = %v, want %v", i, paths[i], p)
+		}
+	}
+}
+
+// TestSelectedSDJWTVCClaimPathsEmptyWhenNoClaimsRequested mirrors
+// §6.4.1's own "claims is absent" case: nothing is selected, matching
+// "the Wallet MUST return only the claims that are mandatory to
+// present."
+func TestSelectedSDJWTVCClaimPathsEmptyWhenNoClaimsRequested(t *testing.T) {
+	cq := dcql.CredentialQuery{ID: "any", Format: "dc+sd-jwt", Meta: mustSDJWTVCMeta(t)}
+	paths, err := cq.SelectedSDJWTVCClaimPaths(map[string]any{"vct": "https://anything.example.com"})
+	if err != nil {
+		t.Fatalf("SelectedSDJWTVCClaimPaths: %v", err)
+	}
+	if len(paths) != 0 {
+		t.Errorf("paths = %v, want empty", paths)
+	}
+}
+
+// pathsEqual compares two dcql.Path values by their own JSON wire
+// form — dcql.Path has no exported equality method and its own
+// PathElement fields are private, so this is the simplest correct way
+// to compare two Paths in a test outside the dcql package itself.
+func pathsEqual(t *testing.T, a, b dcql.Path) bool {
+	t.Helper()
+	aJSON, err := json.Marshal(a)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	bJSON, err := json.Marshal(b)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	return string(aJSON) == string(bJSON)
 }
 
 func TestSatisfiedByMdocClaimsRejectsNonMdocPath(t *testing.T) {

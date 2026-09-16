@@ -137,8 +137,20 @@ shape from the phase-by-phase plan, not a description of current code.
 - **`credential/sdjwtvc`** (done) — SD-JWT VC (`draft-ietf-oauth-sd-jwt-vc-11`)
   on top of base SD-JWT (RFC 9901): `Issue`/`Verify`, `SD`/`SDElement`
   markers with full recursive-disclosure support, `Parse`/`Presentation`,
-  and Key Binding JWT creation/verification. Its tests include RFC 9901's
-  own known-answer disclosure/digest vectors, not just round-trip checks.
+  Key Binding JWT creation/verification, and `SelectDisclosures` (RFC
+  9901 §7.2's own Holder-side trimming): given a Holder's own
+  not-yet-resolved Issuer JWT payload and full Disclosure set, plus a
+  set of paths (each a sequence of object-property names), it returns
+  exactly the Disclosures needed to reveal those paths — walking
+  mandatory (already-plaintext) properties directly and
+  selectively-disclosable ones via the current level's own `_sd`
+  array, then, once a path is fully walked, including every Disclosure
+  the target value itself transitively references (§4.2.6's own
+  "recursive Disclosures", array elements included) so the disclosed
+  value comes through intact. `wallet.PresentSDJWTVCSelective` is this
+  function's own real caller — see the `wallet` bullet below. Its
+  tests include RFC 9901's own known-answer disclosure/digest vectors,
+  not just round-trip checks.
   There's deliberately still no separate `credential` package defining a
   format-profile interface: now that `credential/mdoc` also exists, the
   two formats' `Issue`/`Verify` shapes are similar (signer/alg/claims/opts
@@ -707,26 +719,34 @@ shape from the phase-by-phase plan, not a description of current code.
   resolved claims, it checks the *whole* Credential Query is satisfied
   (`vct` among `SDJWTVCMeta`'s own `VCTValues`, plus `Claims`/
   `ClaimSets` per §6.4.1's own "Selecting Claims" rule — see
-  `claimsSatisfiedBy` below) — again one shared check both `verifier`
+  `selectedClaimPaths` below) — again one shared check both `verifier`
   (does a returned Presentation satisfy what was asked) and `wallet`
   (does a held credential satisfy a Credential Query at all) need
   identically, factored out after the two were caught duplicating it.
-  `CredentialQuery.SatisfiedByMdocClaims` is its "mso_mdoc" twin:
-  `docType` must match `MdocMeta`'s own `DoctypeValue`, and `Claims`/
-  `ClaimSets` the same way, each `Claims` entry a
-  `Path.MdocNamespaceAndElement`-shaped two-component path checked
-  against the given namespace/element-value map.
-  `claimsSatisfiedBy` (private, shared by both `Satisfied*` methods via
+  It's now a thin wrapper around `SelectedSDJWTVCClaimPaths`, its own
+  richer twin: on success, that one also returns exactly which
+  `Claims` entries' own `Path`s the winning combination resolved (the
+  no-`ClaimSets` case's own `Claims`, or the first satisfiable
+  `ClaimSets` option's own `Path`s) — `wallet.PresentSDJWTVC`'s own
+  minimal-disclosure trimming (see the `wallet` bullet below) needs
+  precisely this to know which Disclosures to keep, not just whether
+  the Credential Query is satisfiable at all.
+  `CredentialQuery.SatisfiedByMdocClaims`/`SelectedMdocClaimPaths` are
+  the "mso_mdoc" twins: `docType` must match `MdocMeta`'s own
+  `DoctypeValue`, and `Claims`/`ClaimSets` the same way, each `Claims`
+  entry a `Path.MdocNamespaceAndElement`-shaped two-component path
+  checked against the given namespace/element-value map — mdoc-side
+  disclosure trimming doesn't exist yet (see the `wallet` bullet's own
+  scope note), so `SelectedMdocClaimPaths` has no consumer today, but
+  exists for the same reason its sd-jwt-vc twin does.
+  `selectedClaimPaths` (private, shared by both `Selected*` methods via
   a format-specific `present(Path) error` closure) implements §6.4.1
   exactly: when `ClaimSets` is empty, every `Claims` entry must
-  resolve; when both are set, at least one `ClaimSets` option must
-  resolve *in full*, checked in the given order and returning
-  satisfied as soon as one does (§6.4.1's own "the Wallet SHOULD return
-  the first option that it can satisfy") — this package doesn't decide
-  *which* option a Presentation should be built from (that's
-  `wallet`'s own job once minimal-disclosure trimming exists — today
-  `wallet.PresentSDJWTVC` discloses every held Disclosure regardless of
-  which option matched), only whether *some* option is satisfiable.
+  resolve (and every one of their own `Path`s is returned); when both
+  are set, at least one `ClaimSets` option must resolve *in full*,
+  checked in the given order and returning satisfied as soon as one
+  does (§6.4.1's own "the Wallet SHOULD return the first option that
+  it can satisfy"), returning exactly that option's own `Path`s.
 - **`oid4vpmdoc`** (done) — the OID4VP-specific wire structures the
   "mso_mdoc" Credential Format's own Presentation needs on top of
   `credential/mdoc`'s own ISO/IEC 18013-5 primitives:
@@ -948,7 +968,25 @@ shape from the phase-by-phase plan, not a description of current code.
   possession" stance the `dc+sd-jwt` side already takes), `PresentSDJWTVC`
   (builds one Presentation: a fresh Key Binding JWT bound to the
   caller's own aud/nonce, reusing every one of the held credential's
-  own Disclosures — no minimal-disclosure trimming yet), `PresentMdoc`
+  own Disclosures — full disclosure, for a caller with no DCQL query
+  context to trim against) and its own minimal-disclosure twin
+  `PresentSDJWTVCSelective` (RFC 9901 §7.2, §6.4.1's own "the Wallet
+  MUST NOT send selectively disclosable claims that have not been
+  selected"): given the `[]dcql.Path` a Credential Query's own
+  `SelectedSDJWTVCClaimPaths` says are needed, it walks the credential's
+  own not-yet-resolved Issuer JWT payload
+  (`credential/sdjwtvc.SelectDisclosures`, new) and keeps only the
+  Disclosures actually reachable from those paths — including every
+  one transitively referenced *below* a selected path (RFC 9901 §4.2.6's
+  own "recursive Disclosures": disclosing `address` also discloses
+  whatever `address` itself further selectively discloses internally,
+  in full) but never a sibling claim that wasn't asked for. A `Path`
+  with a Wildcard/Index component (selecting into an array, not an
+  object property) isn't supported for trimming yet — falls back to
+  full disclosure for that whole credential rather than guessing which
+  array elements matter; no Claims Path Pointer either format's own
+  DCQL fixtures in this repo actually uses today has one, so this cut
+  costs nothing in practice yet. `PresentMdoc`
   (builds one Presentation: `oid4vpmdoc.MarshalDeviceResponse` wrapping
   the held `IssuerSigned` plus a fresh `DeviceSigned` — ECDSA/EdDSA
   device signature only, over `SessionTranscriptBytes` built via a new
@@ -960,7 +998,10 @@ shape from the phase-by-phase plan, not a description of current code.
   self-asserted `NameSpaces` either way — this package only ever proves
   device-key possession, not additional Holder-asserted claims), and
   `PresentCredentials` (dispatches by format, combining `MatchDCQLQuery`
-  with `PresentSDJWTVC`/`PresentMdoc` into a ready-to-encrypt
+  with a new private `presentSDJWTVCSelectively` (calling
+  `SelectedSDJWTVCClaimPaths` then `PresentSDJWTVCSelective`, so its
+  own `vp_token` is §6.4.1-compliant by construction rather than by a
+  caller remembering to trim)/`PresentMdoc` into a ready-to-encrypt
   `vp_token` map, §8.1's own shape — a new `PresentationRequest.Origin`,
   when set, presents for the DC API flow instead of the redirect flow:
   each Presentation is bound to Appendix A.4's own `"origin:"`-prefixed

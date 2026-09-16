@@ -80,9 +80,24 @@ func (c CredentialQuery) MdocMeta() (MdocMeta, error) {
 // holds the check once rather than each role package reimplementing
 // it.
 func (c CredentialQuery) SatisfiedBySDJWTVCClaims(claims map[string]any) error {
+	_, err := c.SelectedSDJWTVCClaimPaths(claims)
+	return err
+}
+
+// SelectedSDJWTVCClaimPaths is SatisfiedBySDJWTVCClaims's own richer
+// twin: on success, it also returns exactly which Claims entries'
+// own Paths the winning combination resolved — the no-claim_sets
+// case's own c.Claims (all of them), or the first satisfiable
+// c.ClaimSets option's own Paths — §6.4.1's own "the Wallet MUST NOT
+// send selectively disclosable claims that have not been selected"
+// needs to know precisely this to build a minimally-disclosing
+// Presentation (see wallet.PresentSDJWTVC's own doc comment for where
+// this feeds in); SatisfiedBySDJWTVCClaims itself only needs the
+// pass/fail outcome, so it discards the paths.
+func (c CredentialQuery) SelectedSDJWTVCClaimPaths(claims map[string]any) ([]Path, error) {
 	meta, err := c.SDJWTVCMeta()
 	if err != nil {
-		return fmt.Errorf("meta: %w", err)
+		return nil, fmt.Errorf("meta: %w", err)
 	}
 	if len(meta.VCTValues) > 0 {
 		vct, _ := claims["vct"].(string)
@@ -94,10 +109,10 @@ func (c CredentialQuery) SatisfiedBySDJWTVCClaims(claims map[string]any) error {
 			}
 		}
 		if !found {
-			return fmt.Errorf("credential's own vct %q is not among the requested vct_values %v", vct, meta.VCTValues)
+			return nil, fmt.Errorf("credential's own vct %q is not among the requested vct_values %v", vct, meta.VCTValues)
 		}
 	}
-	return c.claimsSatisfiedBy(func(p Path) error {
+	return c.selectedClaimPaths(func(p Path) error {
 		_, err := p.Select(claims)
 		return err
 	})
@@ -115,14 +130,22 @@ func (c CredentialQuery) SatisfiedBySDJWTVCClaims(claims map[string]any) error {
 // mdoc-form Path (§7.2, see Path.MdocNamespaceAndElement). The same
 // shared-check rationale as SatisfiedBySDJWTVCClaims applies.
 func (c CredentialQuery) SatisfiedByMdocClaims(docType string, nameSpaces map[string]map[string]any) error {
+	_, err := c.SelectedMdocClaimPaths(docType, nameSpaces)
+	return err
+}
+
+// SelectedMdocClaimPaths is SatisfiedByMdocClaims's own richer twin —
+// see SelectedSDJWTVCClaimPaths's own doc comment for exactly what it
+// returns and why.
+func (c CredentialQuery) SelectedMdocClaimPaths(docType string, nameSpaces map[string]map[string]any) ([]Path, error) {
 	meta, err := c.MdocMeta()
 	if err != nil {
-		return fmt.Errorf("meta: %w", err)
+		return nil, fmt.Errorf("meta: %w", err)
 	}
 	if meta.DoctypeValue != "" && docType != meta.DoctypeValue {
-		return fmt.Errorf("credential's own docType %q does not match the requested doctype_value %q", docType, meta.DoctypeValue)
+		return nil, fmt.Errorf("credential's own docType %q does not match the requested doctype_value %q", docType, meta.DoctypeValue)
 	}
-	return c.claimsSatisfiedBy(func(p Path) error {
+	return c.selectedClaimPaths(func(p Path) error {
 		namespace, element, ok := p.MdocNamespaceAndElement()
 		if !ok {
 			return fmt.Errorf("claims path %v is not a valid mdoc-format path (exactly two string components)", p)
@@ -138,31 +161,39 @@ func (c CredentialQuery) SatisfiedByMdocClaims(docType string, nameSpaces map[st
 	})
 }
 
-// claimsSatisfiedBy implements §6.4.1's own "Selecting Claims" rules,
+// selectedClaimPaths implements §6.4.1's own "Selecting Claims" rules,
 // format-agnostically: present checks whether one Claims Query's own
-// Path is actually present in the credential being matched.
+// Path is actually present in the credential being matched. On
+// success it returns exactly which Paths the winning combination
+// resolved (§6.4.1's own "selected" claims — see
+// SelectedSDJWTVCClaimPaths's own doc comment for why a caller needs
+// this, not just the pass/fail outcome).
 //
 //   - If c.Claims is empty, there's nothing more to check (§6.4.1's
 //     "claims is absent" case is a Presentation-construction concern —
 //     which claims to disclose — not a matching one: a credential
 //     already either has, or doesn't have, the format's own mandatory
-//     claims regardless of what a Claims Query asks for).
+//     claims regardless of what a Claims Query asks for) — an empty,
+//     non-nil slice is returned, since nothing was selected.
 //   - If c.Claims is set but c.ClaimSets is empty, every one of
 //     c.Claims must resolve ("the Verifier requests all claims listed
-//     in claims").
+//     in claims"), and every one of their own Paths is returned.
 //   - If both are set, at least one c.ClaimSets option must resolve in
 //     full — checked in the given order, since "the Wallet SHOULD
 //     return the first option that it can satisfy" (most-preferred
 //     first); this function reports satisfaction as soon as it finds
-//     one, without checking whether a later option might also match.
-func (c CredentialQuery) claimsSatisfiedBy(present func(Path) error) error {
+//     one, without checking whether a later option might also match,
+//     and returns exactly that option's own Paths.
+func (c CredentialQuery) selectedClaimPaths(present func(Path) error) ([]Path, error) {
 	if len(c.ClaimSets) == 0 {
+		paths := make([]Path, 0, len(c.Claims))
 		for _, cl := range c.Claims {
 			if err := presentAt(cl.Path, present); err != nil {
-				return err
+				return nil, err
 			}
+			paths = append(paths, cl.Path)
 		}
-		return nil
+		return paths, nil
 	}
 
 	byID := make(map[string]Path, len(c.Claims))
@@ -171,29 +202,32 @@ func (c CredentialQuery) claimsSatisfiedBy(present func(Path) error) error {
 	}
 	var lastErr error
 	for _, option := range c.ClaimSets {
-		if err := claimSetOptionSatisfiedBy(option, byID, present); err != nil {
+		paths, err := claimSetOptionPaths(option, byID, present)
+		if err != nil {
 			lastErr = err
 			continue
 		}
-		return nil
+		return paths, nil
 	}
-	return fmt.Errorf("no claim_sets option is satisfied: %w", lastErr)
+	return nil, fmt.Errorf("no claim_sets option is satisfied: %w", lastErr)
 }
 
-// claimSetOptionSatisfiedBy checks one claim_sets option (a list of
+// claimSetOptionPaths checks one claim_sets option (a list of
 // claims[].id values) against present, using byID to resolve each id
-// to its own Path.
-func claimSetOptionSatisfiedBy(option []string, byID map[string]Path, present func(Path) error) error {
+// to its own Path, returning those Paths on success.
+func claimSetOptionPaths(option []string, byID map[string]Path, present func(Path) error) ([]Path, error) {
+	paths := make([]Path, 0, len(option))
 	for _, id := range option {
 		path, ok := byID[id]
 		if !ok {
-			return fmt.Errorf("references unknown claim id %q", id)
+			return nil, fmt.Errorf("references unknown claim id %q", id)
 		}
 		if err := presentAt(path, present); err != nil {
-			return fmt.Errorf("claim %q: %w", id, err)
+			return nil, fmt.Errorf("claim %q: %w", id, err)
 		}
+		paths = append(paths, path)
 	}
-	return nil
+	return paths, nil
 }
 
 // presentAt wraps a single Path.present check (§6.4.1's own atom of
