@@ -105,6 +105,14 @@ exercise.
 
 ## Status: live run against the real OIDF suite
 
+**Update**: `credential.go` now sets an `exp` claim on every issued
+credential (`issuedCredentialLifetime`, a year out — HAIP/SD-JWT VC
+§11.2.3's own RECOMMENDED-not-required validity limit), fixing the one
+WARNING every module below used to carry. Re-run live: `happy-flow` is
+now a clean `FINISHED`/`PASSED` with zero log entries at `WARNING` or
+worse, not just zero `FAILURE`s — every "same soft `exp`-claim note"
+mention below predates this fix.
+
 Plan creation succeeds (`oid4vci-1_0-issuer-haip-test-plan`, 61
 modules, `sd_jwt_vc` variant) once the plan config supplies: a
 throwaway self-signed cert wrapping this binary's own credential-issuer

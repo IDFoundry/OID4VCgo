@@ -374,6 +374,20 @@ func TestFullFlow_ParAuthorizeTokenNonceCredential(t *testing.T) {
 	if len(credentials) != 1 {
 		t.Fatalf("credential response has %d credentials, want 1: %+v", len(credentials), credentialResp)
 	}
+	credentialEntry, _ := credentials[0].(map[string]any)
+	issuedSDJWT, _ := credentialEntry["credential"].(string)
+	issuerJWT, _, _ := strings.Cut(issuedSDJWT, "~")
+	_, rawPayload, err := jose.DecodeUnverified(issuerJWT)
+	if err != nil {
+		t.Fatalf("DecodeUnverified: %v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(rawPayload, &payload); err != nil {
+		t.Fatalf("unmarshal payload: %v", err)
+	}
+	if _, ok := payload["exp"]; !ok {
+		t.Error("issued credential has no exp claim")
+	}
 }
 
 // TestFullFlow_Client2CanAuthenticatePAR proves Config.Client2 is a
