@@ -106,10 +106,20 @@ negative-test expectations differ.
   suite's own `VCIDecodeSignedCredentialIssuerMetadata` check
   independently verifying the JWS signature via its `x5c` header, not
   just the `Content-Type` header.
+  **Update: `batch-issuance` — real support added, not just made to
+  pass.** Previously self-`SKIPPED` (HAIP only requires *advertising*
+  support, never a MUST to implement it); turned out
+  `issuer.RequestCredential` already fully implements OID4VCI §3.3.2
+  batch issuance — `cmd/conformance-issuer`'s own wiring just never
+  opted in. `wiring.go` now sets `BatchCredentialIssuance` with a
+  `batch_size` of 5. Confirmed live: `FINISHED`/`PASSED`, with the
+  suite sending a real 5-proof batch and independently verifying
+  distinct disclosure salts, distinct `cnf` binding keys each matching
+  one of the sent proofs, and non-linkable time claims across all 5
+  issued credentials — not just a metadata flag flip.
   **Final tally: all 21 modules `FINISHED`/`PASSED` or correctly
-  `SKIPPED`** — 10 of 10 applicable negative tests `PASSED`, 2 modules
-  correctly self-`SKIPPED` (batch issuance, key-attestation/
-  encryption-algorithm features this binary doesn't implement). See
-  `issuer/README.md`.
+  `SKIPPED`** — 10 of 10 applicable negative tests `PASSED`, 1 module
+  correctly self-`SKIPPED` (key-attestation/encryption-algorithm
+  features this binary doesn't implement). See `issuer/README.md`.
 - **Not yet started**: OID4VCI Wallet role (blocked on a FAPIgo-side
   change — see `AGENTS.md`).

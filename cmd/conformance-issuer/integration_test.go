@@ -82,6 +82,13 @@ func TestNewServerMux_ServesRealMetadataAndJWKS(t *testing.T) {
 		if cc["vct"] != cfg.VCT {
 			t.Fatalf("vct = %v, want %v", cc["vct"], cfg.VCT)
 		}
+		batch, ok := body["batch_credential_issuance"].(map[string]any)
+		if !ok {
+			t.Fatalf("missing batch_credential_issuance: %+v", body)
+		}
+		if batch["batch_size"] != float64(conformanceBatchSize) {
+			t.Fatalf("batch_size = %v, want %d", batch["batch_size"], conformanceBatchSize)
+		}
 	})
 
 	t.Run("signed credential issuer metadata", func(t *testing.T) {
