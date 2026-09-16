@@ -1017,7 +1017,12 @@ shape from the phase-by-phase plan, not a description of current code.
   into an `oid4vpmdoc.Document`, resolves the Issuer key via a new
   caller-supplied `MdocIssuerKeyResolver` (from the credential's own
   unverified `IssuerAuth` x5chain — `internal/cose.DecodeUnverified`,
-  the COSE analog of `jose.DecodeUnverified`), cryptographically
+  the COSE analog of `jose.DecodeUnverified`; `X5ChainIssuerKeyResolver`
+  implements it for real, mirroring `X5CIssuerKeyResolver`'s own
+  reject-self-signed-leaf/verify-against-Roots logic exactly, added
+  proactively alongside the SD-JWT VC one even though no live mdoc
+  conformance run has exercised this path yet — see its own tests),
+  cryptographically
   verifies `IssuerSigned` (`credential/mdoc.Verify`), rebuilds
   `SessionTranscriptBytes` *exactly* as the Wallet did — a new private
   `buildMdocSessionTranscriptBytes` dispatches to

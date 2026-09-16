@@ -42,7 +42,8 @@ type SDJWTVCIssuerKeyResolver interface {
 // presented "mso_mdoc" Presentation's own IssuerAuth (COSE_Sign1) —
 // the same trust-resolution split SDJWTVCIssuerKeyResolver draws for
 // "dc+sd-jwt", applied to the x5chain COSE header parameter (RFC 9360
-// §2) instead of a JOSE x5c.
+// §2) instead of a JOSE x5c. X5ChainIssuerKeyResolver implements the
+// x5chain-validating half of that policy, mirroring X5CIssuerKeyResolver.
 type MdocIssuerKeyResolver interface {
 	// ResolveMdocIssuerKey inspects x5chain — the credential's own
 	// (not yet cryptographically verified) IssuerAuth x5chain header
@@ -413,7 +414,7 @@ func (v *Verifier) verifyMdocPresentation(ctx context.Context, cq dcql.Credentia
 	if doc.DeviceSigned.AuthType != mdoc.DeviceAuthSignature {
 		return nil, fmt.Errorf("device authentication type %d is not supported (see verifyMdocPresentation's own doc comment)", doc.DeviceSigned.AuthType)
 	}
-	deviceAlg, err := mdocDeviceAlgForKey(verified.DeviceKey)
+	deviceAlg, err := mdocAlgForKey(verified.DeviceKey)
 	if err != nil {
 		return nil, fmt.Errorf("device key: %w", err)
 	}
@@ -452,18 +453,19 @@ func (v *Verifier) buildMdocSessionTranscriptBytes(req VerifyResponseRequest, th
 	})
 }
 
-// mdocDeviceAlgForKey derives the mdoc authentication COSE algorithm
-// from deviceKey's own Go type — the same "derive alg from the
-// already-trusted key, never from an unverified wire claim" discipline
-// holderPublicKeyFromCNF applies for "dc+sd-jwt".
-func mdocDeviceAlgForKey(deviceKey crypto.PublicKey) (cose.Alg, error) {
-	switch deviceKey.(type) {
+// mdocAlgForKey derives the mdoc COSE algorithm from a public key's
+// own Go type — the same "derive alg from the already-trusted key,
+// never from an unverified wire claim" discipline holderPublicKeyFromCNF
+// applies for "dc+sd-jwt", used both for the mdoc authentication
+// (device) key and X5ChainIssuerKeyResolver's own resolved issuer key.
+func mdocAlgForKey(pub crypto.PublicKey) (cose.Alg, error) {
+	switch pub.(type) {
 	case *ecdsa.PublicKey:
 		return cose.ES256, nil
 	case ed25519.PublicKey:
 		return cose.EdDSA, nil
 	default:
-		return 0, fmt.Errorf("unsupported device key type %T", deviceKey)
+		return 0, fmt.Errorf("unsupported public key type %T", pub)
 	}
 }
 
