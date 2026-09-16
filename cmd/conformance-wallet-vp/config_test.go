@@ -108,9 +108,7 @@ func TestConfig_CredentialIssuerKeyAndHolderPrivateKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("credentialIssuerCertificate: %v", err)
 	}
-	if !issuerKey.PublicKey.Equal(issuerCert.PublicKey) {
-		t.Error("credentialIssuerCertificate's public key does not match credentialIssuerKey's")
-	}
+	conformancecert.AssertMatchingPublicKey(t, issuerKey, issuerCert.PublicKey)
 }
 
 func TestConfig_TLSCertificate(t *testing.T) {

@@ -190,9 +190,7 @@ func TestConfig_CredentialIssuerSigningKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("credentialIssuerCertificate: %v", err)
 	}
-	if !key.PublicKey.Equal(cert.PublicKey) {
-		t.Error("credentialIssuerCertificate's public key does not match credentialIssuerSigningKey's")
-	}
+	conformancecert.AssertMatchingPublicKey(t, key, cert.PublicKey)
 }
 
 func TestConfig_IssuerURL(t *testing.T) {

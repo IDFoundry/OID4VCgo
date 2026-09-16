@@ -228,3 +228,15 @@ func WriteJSONConfig(t *testing.T, cfg any) string {
 	}
 	return path
 }
+
+// AssertMatchingPublicKey fails t unless certKey (a certificate's own
+// PublicKey field) is the same key as signingKey's own public half —
+// the "did the generated certificate actually wrap this signing key"
+// check every cmd/conformance-*'s own config_test.go needs
+// identically.
+func AssertMatchingPublicKey(t *testing.T, signingKey *ecdsa.PrivateKey, certKey crypto.PublicKey) {
+	t.Helper()
+	if !signingKey.PublicKey.Equal(certKey) {
+		t.Error("certificate's public key does not match the signing key's")
+	}
+}
