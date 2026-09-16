@@ -1,0 +1,41 @@
+# Runs conformance-wallet-vp against the OpenID Foundation conformance
+# suite entirely locally — no tunnel required. Mirrors
+# conformance/verifier/docker-compose.yml exactly, including why no
+# CA/tunnel is needed.
+#
+# Usage:
+#   1. Start the OIDF conformance suite separately (its own
+#      docker-compose up) and find the network it created:
+#        docker network ls   # usually <suite-checkout-dir>_default
+#   2. export SUITE_NETWORK=<that network name>   (defaults below)
+#   3. go run ./conformance/wallet-vp/scripts/generate-config \
+#        -out=conformance/wallet-vp/oidf-config/haip.config.json
+#   4. Create a test plan in the suite's own UI for
+#      "OpenID for Verifiable Presentations 1.0 Final/HAIP: Test a
+#      wallet" (oid4vp-1final-wallet-haip-test-plan), selecting the
+#      direct_post.jwt response mode variant, and set
+#      "server.authorization_endpoint" to
+#      https://conformance-wallet-vp:8443/authorize — see
+#      conformance/wallet-vp/README.md for the credential-trust
+#      configuration field this still needs confirming against a live
+#      suite instance.
+#   5. docker compose up --build
+
+networks:
+  suite:
+    name: ${SUITE_NETWORK:-conformance-suite_default}
+    external: true
+
+services:
+  conformance-wallet-vp:
+    build:
+      context: ../..
+      dockerfile: conformance/wallet-vp/Dockerfile
+    hostname: conformance-wallet-vp
+    networks: [suite]
+    ports:
+      - "18447:8443" # optional: only needed to poke it from the host
+    volumes:
+      - ./oidf-config/haip.config.json:/config.json:ro
+    command:
+      - -config=/config.json

@@ -19,17 +19,13 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
-	"crypto/x509"
-	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/json"
-	"encoding/pem"
 	"flag"
 	"fmt"
-	"math/big"
 	"os"
-	"time"
 
+	"github.com/idfoundry/oid4vcigo/internal/conformancecert"
 	"github.com/idfoundry/oid4vcigo/internal/jwk"
 )
 
@@ -59,43 +55,18 @@ type generatedConfig struct {
 	Claims               []string        `json:"claims"`
 }
 
-func selfSignedPEM(commonName string, dnsNames []string) (certPEM, keyPEM string, err error) {
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return "", "", err
-	}
-	tmpl := &x509.Certificate{
-		SerialNumber: big.NewInt(1),
-		Subject:      pkix.Name{CommonName: commonName},
-		NotBefore:    time.Now().Add(-time.Hour),
-		NotAfter:     time.Now().Add(10 * 365 * 24 * time.Hour),
-		DNSNames:     dnsNames,
-	}
-	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
-	if err != nil {
-		return "", "", err
-	}
-	keyDER, err := x509.MarshalECPrivateKey(key)
-	if err != nil {
-		return "", "", err
-	}
-	certPEM = string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
-	keyPEM = string(pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}))
-	return certPEM, keyPEM, nil
-}
-
 func main() {
 	baseURL := flag.String("base-url", "https://conformance-verifier:8443", "this binary's own externally-reachable base URL")
 	dnsNames := flag.String("dns-name", "conformance-verifier", "DNS name for the TLS listener cert's SAN (repeat -dns-name for more than one)")
 	out := flag.String("out", "", "path to write the generated config.json to (default: stdout)")
 	flag.Parse()
 
-	tlsCert, tlsKey, err := selfSignedPEM("conformance-verifier", []string{*dnsNames, "localhost"})
+	tlsCert, tlsKey, err := conformancecert.SelfSignedPEM("conformance-verifier", []string{*dnsNames, "localhost"})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "generate tls cert:", err)
 		os.Exit(1)
 	}
-	clientCert, clientKey, err := selfSignedPEM("conformance-verifier-client", nil)
+	clientCert, clientKey, err := conformancecert.SelfSignedPEM("conformance-verifier-client", nil)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "generate client cert:", err)
 		os.Exit(1)

@@ -20,6 +20,14 @@ negative-test expectations differ.
   end against a hand-rolled client); **not yet run against the live
   suite** — that's the next step once Docker is available. See
   `verifier/README.md`.
-- **Not yet started**: OID4VP Wallet role, OID4VCI Issuer role, OID4VCI
-  Wallet role (the last one blocked on a FAPIgo-side change — see
-  `AGENTS.md`).
+- **`wallet-vp/`** — OID4VP 1.0 Final/HAIP Wallet role, direct_post.jwt
+  module list only (`oid4vp-1final-wallet-haip-test-plan`):
+  `cmd/conformance-wallet-vp` stands up `wallet`'s own presentation
+  half behind real HTTP; the suite plays Verifier. Confirmed live end
+  to end against `cmd/conformance-verifier` itself (a real
+  cryptographic round trip, now a permanent regression test) — **not
+  yet run against the live OIDF suite**. Its own three `dc_api.jwt`
+  module lists are out of scope for this binary. See
+  `wallet-vp/README.md`.
+- **Not yet started**: OID4VCI Issuer role, OID4VCI Wallet role (the
+  latter blocked on a FAPIgo-side change — see `AGENTS.md`).

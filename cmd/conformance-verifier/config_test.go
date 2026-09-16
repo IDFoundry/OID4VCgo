@@ -1,33 +1,19 @@
 package main
 
 import (
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
-	"crypto/x509"
 	"encoding/json"
-	"encoding/pem"
-	"os"
-	"path/filepath"
 	"testing"
 
-	"github.com/idfoundry/oid4vcigo/internal/testcert"
+	"github.com/idfoundry/oid4vcigo/internal/conformancecert"
 )
 
 func testPEMCertAndKey(t *testing.T) (certPEM, keyPEM string) {
 	t.Helper()
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	certPEM, keyPEM, err := conformancecert.SelfSignedPEM("conformance-verifier-test", nil)
 	if err != nil {
-		t.Fatalf("generate key: %v", err)
+		t.Fatalf("SelfSignedPEM: %v", err)
 	}
-	cert := testcert.SelfSigned(t, "conformance-verifier-test", &key.PublicKey, key)
-
-	keyDER, err := x509.MarshalECPrivateKey(key)
-	if err != nil {
-		t.Fatalf("marshal key: %v", err)
-	}
-	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw})),
-		string(pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}))
+	return certPEM, keyPEM
 }
 
 func baseTestConfig(t *testing.T) Config {
@@ -49,17 +35,7 @@ func baseTestConfig(t *testing.T) Config {
 
 func TestLoadConfig_RoundTrips(t *testing.T) {
 	cfg := baseTestConfig(t)
-	raw, err := json.Marshal(cfg)
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.json")
-	if err := os.WriteFile(path, raw, 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-
-	got, err := loadConfig(path)
+	got, err := loadConfig(conformancecert.WriteJSONConfig(t, cfg))
 	if err != nil {
 		t.Fatalf("loadConfig: %v", err)
 	}
@@ -80,16 +56,7 @@ func TestLoadConfig_RejectsMissingRequiredFields(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			cfg := baseTestConfig(t)
 			mutate(&cfg)
-			raw, err := json.Marshal(cfg)
-			if err != nil {
-				t.Fatalf("marshal: %v", err)
-			}
-			dir := t.TempDir()
-			path := filepath.Join(dir, "config.json")
-			if err := os.WriteFile(path, raw, 0o600); err != nil {
-				t.Fatalf("write config: %v", err)
-			}
-			if _, err := loadConfig(path); err == nil {
+			if _, err := loadConfig(conformancecert.WriteJSONConfig(t, cfg)); err == nil {
 				t.Fatalf("loadConfig = nil error, want error for missing %s", name)
 			}
 		})
