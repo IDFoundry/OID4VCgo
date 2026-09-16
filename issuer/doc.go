@@ -55,7 +55,10 @@
 // own server-side Token Endpoint handling, built on
 // internal/dpop.Verify (RFC 9449 DPoP proof verification) and
 // internal/jwk.JWK.Thumbprint (RFC 7638, for the issued access
-// token's own cnf.jkt); see its own doc comment for what it does and
-// does not cover (no DPoP nonce challenge support yet). ARCHITECTURE.md
+// token's own cnf.jkt), with optional RFC 9449 §8 DPoP nonce-challenge
+// support via Dependencies.DPoPNonces — see its own doc comment, and
+// ExchangePreAuthorizedCode's own for the ordering guarantee that
+// makes it safe to combine with a single-use pre-authorized_code.
+// ARCHITECTURE.md
 // describes what's still missing elsewhere.
 package issuer
