@@ -356,6 +356,33 @@ func TestFullFlow_ParAuthorizeTokenNonceCredential(t *testing.T) {
 	accessToken, cNonce := performAuthFlowThroughNonce(t, client, cfg, attesterKey, clientKey, now)
 
 	// --- POST /credential ---
+	proofJWT, err := buildCredentialProofJWT(holderKey, cfg.Client.ID, cfg.Issuer, cNonce, now)
+	if err != nil {
+		t.Fatalf("buildCredentialProofJWT: %v", err)
+	}
+	credentialResp := postCredentialRequest(t, client, cfg, clientKey, accessToken, now, map[string]any{
+		"credential_configuration_id": cfg.CredentialConfigurationID,
+		"proofs":                      map[string][]string{"jwt": {proofJWT}},
+	})
+	credentials, _ := credentialResp["credentials"].([]any)
+	if len(credentials) != 1 {
+		t.Fatalf("credential response has %d credentials, want 1: %+v", len(credentials), credentialResp)
+	}
+	payload := decodeIssuedSDJWTPayload(t, credentials[0])
+	if _, ok := payload["exp"]; !ok {
+		t.Error("issued credential has no exp claim")
+	}
+}
+
+// postCredentialRequest POSTs body (already carrying
+// credential_configuration_id/credential_identifier and proofs) to
+// cfg's own Credential Endpoint, with a fresh DPoP proof
+// (RFC 9449 §4.2's own "ath" binding it to accessToken) and Authorization
+// header — the one request/response shape every full-flow test's own
+// final step needs, regardless of how many proofs body's own "proofs"
+// member carries.
+func postCredentialRequest(t *testing.T, client *http.Client, cfg Config, clientKey *ecdsa.PrivateKey, accessToken string, now time.Time, body map[string]any) map[string]any {
+	t.Helper()
 	credentialURL := cfg.Issuer + "/credential"
 	athSum := sha256.Sum256([]byte(accessToken))
 	ath := base64.RawURLEncoding.EncodeToString(athSum[:])
@@ -363,14 +390,7 @@ func TestFullFlow_ParAuthorizeTokenNonceCredential(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildDPoPProof (credential): %v", err)
 	}
-	proofJWT, err := buildCredentialProofJWT(holderKey, cfg.Client.ID, cfg.Issuer, cNonce, now)
-	if err != nil {
-		t.Fatalf("buildCredentialProofJWT: %v", err)
-	}
-	credentialBody, err := json.Marshal(map[string]any{
-		"credential_configuration_id": cfg.CredentialConfigurationID,
-		"proofs":                      map[string][]string{"jwt": {proofJWT}},
-	})
+	credentialBody, err := json.Marshal(body)
 	if err != nil {
 		t.Fatalf("marshal credential request: %v", err)
 	}
@@ -381,12 +401,17 @@ func TestFullFlow_ParAuthorizeTokenNonceCredential(t *testing.T) {
 	credentialReq.Header.Set("Content-Type", "application/json")
 	credentialReq.Header.Set("Authorization", "DPoP "+accessToken)
 	credentialReq.Header.Set("DPoP", credentialDPoP)
-	credentialResp := doJSON(t, client, credentialReq)
-	credentials, _ := credentialResp["credentials"].([]any)
-	if len(credentials) != 1 {
-		t.Fatalf("credential response has %d credentials, want 1: %+v", len(credentials), credentialResp)
-	}
-	credentialEntry, _ := credentials[0].(map[string]any)
+	return doJSON(t, client, credentialReq)
+}
+
+// decodeIssuedSDJWTPayload decodes one credentials[i] response entry
+// (an any wrapping {"credential": "<sd-jwt>~..."}) into its issuer
+// JWT's own claims — shared by every full-flow test that inspects an
+// issued credential's own payload, whether from a single-credential or
+// batch response.
+func decodeIssuedSDJWTPayload(t *testing.T, entry any) map[string]any {
+	t.Helper()
+	credentialEntry, _ := entry.(map[string]any)
 	issuedSDJWT, _ := credentialEntry["credential"].(string)
 	issuerJWT, _, _ := strings.Cut(issuedSDJWT, "~")
 	_, rawPayload, err := jose.DecodeUnverified(issuerJWT)
@@ -397,9 +422,7 @@ func TestFullFlow_ParAuthorizeTokenNonceCredential(t *testing.T) {
 	if err := json.Unmarshal(rawPayload, &payload); err != nil {
 		t.Fatalf("unmarshal payload: %v", err)
 	}
-	if _, ok := payload["exp"]; !ok {
-		t.Error("issued credential has no exp claim")
-	}
+	return payload
 }
 
 // TestFullFlow_BatchIssuanceReturnsOneCredentialPerProof proves this
@@ -450,13 +473,6 @@ func TestFullFlow_BatchIssuanceReturnsOneCredentialPerProof(t *testing.T) {
 	accessToken, cNonce := performAuthFlowThroughNonce(t, client, cfg, attesterKey, clientKey, now)
 
 	// --- POST /credential, 2 proofs in one request ---
-	credentialURL := cfg.Issuer + "/credential"
-	athSum := sha256.Sum256([]byte(accessToken))
-	ath := base64.RawURLEncoding.EncodeToString(athSum[:])
-	credentialDPoP, err := buildDPoPProof(clientKey, http.MethodPost, credentialURL, randomHex(t, 16), ath, now)
-	if err != nil {
-		t.Fatalf("buildDPoPProof (credential): %v", err)
-	}
 	proofJWT1, err := buildCredentialProofJWT(holderKey1, cfg.Client.ID, cfg.Issuer, cNonce, now)
 	if err != nil {
 		t.Fatalf("buildCredentialProofJWT (1): %v", err)
@@ -465,21 +481,10 @@ func TestFullFlow_BatchIssuanceReturnsOneCredentialPerProof(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildCredentialProofJWT (2): %v", err)
 	}
-	credentialBody, err := json.Marshal(map[string]any{
+	credentialResp := postCredentialRequest(t, client, cfg, clientKey, accessToken, now, map[string]any{
 		"credential_configuration_id": cfg.CredentialConfigurationID,
 		"proofs":                      map[string][]string{"jwt": {proofJWT1, proofJWT2}},
 	})
-	if err != nil {
-		t.Fatalf("marshal credential request: %v", err)
-	}
-	credentialReq, err := http.NewRequest(http.MethodPost, credentialURL, strings.NewReader(string(credentialBody)))
-	if err != nil {
-		t.Fatalf("new credential request: %v", err)
-	}
-	credentialReq.Header.Set("Content-Type", "application/json")
-	credentialReq.Header.Set("Authorization", "DPoP "+accessToken)
-	credentialReq.Header.Set("DPoP", credentialDPoP)
-	credentialResp := doJSON(t, client, credentialReq)
 	credentials, _ := credentialResp["credentials"].([]any)
 	if len(credentials) != 2 {
 		t.Fatalf("credential response has %d credentials, want 2: %+v", len(credentials), credentialResp)
@@ -494,30 +499,17 @@ func TestFullFlow_BatchIssuanceReturnsOneCredentialPerProof(t *testing.T) {
 		t.Fatalf("jwk.Marshal (2): %v", err)
 	}
 	wantCNFX := []string{holderJWK1.X, holderJWK2.X}
-	for i, entry := range credentials {
-		credentialEntry, _ := entry.(map[string]any)
-		issuedSDJWT, _ := credentialEntry["credential"].(string)
-		issuerJWT, _, _ := strings.Cut(issuedSDJWT, "~")
-		_, rawPayload, err := jose.DecodeUnverified(issuerJWT)
-		if err != nil {
-			t.Fatalf("credential %d: DecodeUnverified: %v", i, err)
-		}
-		var payload struct {
-			CNF struct {
-				JWK struct {
-					X string `json:"x"`
-				} `json:"jwk"`
-			} `json:"cnf"`
-		}
-		if err := json.Unmarshal(rawPayload, &payload); err != nil {
-			t.Fatalf("credential %d: unmarshal payload: %v", i, err)
-		}
-		if payload.CNF.JWK.X != wantCNFX[i] {
-			t.Errorf("credential %d: cnf.jwk.x = %q, want %q (proof %d's own holder key)", i, payload.CNF.JWK.X, wantCNFX[i], i)
-		}
-	}
 	if wantCNFX[0] == wantCNFX[1] {
 		t.Fatal("test bug: both holder keys have the same x — regenerate")
+	}
+	for i, entry := range credentials {
+		payload := decodeIssuedSDJWTPayload(t, entry)
+		cnf, _ := payload["cnf"].(map[string]any)
+		jwkVal, _ := cnf["jwk"].(map[string]any)
+		gotX, _ := jwkVal["x"].(string)
+		if gotX != wantCNFX[i] {
+			t.Errorf("credential %d: cnf.jwk.x = %q, want %q (proof %d's own holder key)", i, gotX, wantCNFX[i], i)
+		}
 	}
 }
 
