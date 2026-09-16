@@ -37,8 +37,8 @@ func (e *ResponseError) Error() string {
 type ParsedResponse struct {
 	// VPToken maps each dcql.CredentialQuery.ID to the Presentation(s)
 	// matched against it — a compact SD-JWT+KB string for "dc+sd-jwt",
-	// a base64url-encoded DeviceResponse for "mso_mdoc" (not yet
-	// supported by VerifyResponse — see the package doc comment). A
+	// a base64url-encoded DeviceResponse for "mso_mdoc" (both formats
+	// VerifyResponse verifies — see the package doc comment). A
 	// Credential Query with no match at all (legal only when it's
 	// non-required) has no entry here (§8.1's own "omit the key
 	// entirely" rule).

@@ -66,7 +66,7 @@ type BuildAuthorizationRequestResult struct {
 	// ResponseDecryptionKey is the ephemeral P-256 private key
 	// generated for this one request's own response encryption — the
 	// caller must retain it to decrypt the eventual direct_post.jwt
-	// response (not yet implemented by this package).
+	// response via ParseDirectPostJWTResponse.
 	ResponseDecryptionKey *ecdsa.PrivateKey
 }
 
