@@ -32,17 +32,27 @@ package issuer
 //		// respond per *resource.Error — Verify's own doc comment covers this.
 //	}
 //	auth := issuer.AuthorizedRequest{ClientID: authCtx.ClientID, Scopes: authCtx.Scopes}
+//	if raw, ok := authCtx.Claims["authorization_details"]; ok {
+//		if err := json.Unmarshal(raw, &auth.AuthorizationDetails); err != nil {
+//			// malformed claim — treat the same as a verification failure.
+//		}
+//	}
 //
-// Subject, Claims, ExpiresAt, and Key are all meaningless to a
-// Credential Request and dropped — AuthorizedRequest exists to check a
-// requested CredentialConfiguration's own Scope against what the token
-// grants (§8.2) and a jwt-type proof's "iss" claim against ClientID
-// (Appendix F.1), nothing else. Scopes needs no parsing either way:
-// AuthorizationContext.Scopes is already a []string (Verify's own
-// job), unlike fapigo/server.TokenResult's space-delimited Scope
-// string — a token-issuance concern, not a presentation-time one, and
-// not what AuthorizedRequest adapts from (see AuthorizedRequest's own
-// doc comment).
+// Subject, ExpiresAt, and Key are all meaningless to a Credential
+// Request and dropped — AuthorizedRequest exists to check a requested
+// CredentialConfiguration's own Scope (or, for a credential_identifier-based
+// request, AuthorizationDetails) against what the token grants (§8.2)
+// and a jwt-type proof's "iss" claim against ClientID (Appendix F.1),
+// nothing else. Of AuthorizationContext.Claims' own arbitrary token
+// claims, only "authorization_details" (RFC 9396 §2) is ever worth
+// pulling out — see AuthorizedRequest's own doc comment for why it's
+// unmarshaled directly into []AuthorizationDetail rather than kept as
+// raw JSON. Scopes needs no parsing either way: AuthorizationContext.Scopes
+// is already a []string (Verify's own job), unlike
+// fapigo/server.TokenResult's space-delimited Scope string — a
+// token-issuance concern, not a presentation-time one, and not what
+// AuthorizedRequest adapts from (see AuthorizedRequest's own doc
+// comment).
 //
 // AuthorizationContext's own NextDPoPNonce (RFC 9449 §8's proactive
 // refresh) has nothing to do with AuthorizedRequest either — it's an

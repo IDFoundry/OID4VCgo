@@ -472,10 +472,26 @@ shape from the phase-by-phase plan, not a description of current code.
   `WriteJSON` mirroring `fapigo/resource.Error`'s own shape (Code/
   PublicDescription safe to expose, Unwrap for logs only). See
   `CredentialRequest`'s own doc comment for what's deliberately out of
-  scope (`credential_identifier`, `di_vp`, unbound credentials — add
-  each when a concrete consumer needs it; `RequestCredential` itself
-  never defers issuance, see the Deferred Credential Endpoint below for
-  that half).
+  scope (`di_vp`, unbound credentials — add each when a concrete
+  consumer needs it; `RequestCredential` itself never defers issuance,
+  see the Deferred Credential Endpoint below for that half).
+  `credential_identifier`-based requests (§8.2, RFC 9396's own
+  `authorization_details` mechanism) are supported too: a new
+  `AuthorizedRequest.AuthorizationDetails []AuthorizationDetail` (parsed
+  by the caller from the verified access token's own
+  `authorization_details` claim — see `resource_verifier.go`'s own
+  updated recipe) and `CredentialRequest.CredentialIdentifier`, resolved
+  by a new private `resolveCredentialConfiguration`/
+  `resolveCredentialIdentifier` pair — exactly one of
+  `CredentialConfigurationID`/`CredentialIdentifier` may be set; the
+  latter bypasses the `Scopes` check entirely, since the matched
+  `AuthorizationDetail` is itself the grant. This package only
+  *consumes* `authorization_details`; *minting* `credential_identifier`
+  values into a Token Response is the Authorization Server's own job
+  (`fapigo/server`, already RAR-capable, for the Authorization Code
+  Flow) — `issuer.ExchangePreAuthorizedCode` producing them for the
+  Pre-Authorized Code Flow is a deliberate, separate follow-up, not
+  implemented here.
   Also implements the
   Credential Offer (§4): `CreateCredentialOffer` builds and validates a
   `CredentialOffer` (`credential_issuer`, `credential_configuration_ids`,
