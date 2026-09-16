@@ -51,6 +51,18 @@ change in FAPIgo, not this repo. Don't attempt to work around it by
 duplicating client-authentication logic against `fapigo/client`'s
 internals; wait for or contribute to the FAPIgo-side change instead.
 
+Separately (found while reviewing the Issuer role's own `SKIPPED`
+conformance modules against the actual HAIP text, see
+`conformance/issuer/README.md`'s `fail-invalid-key-attestation-signature`
+entry): HAIP §4.5.1 has an unconditional "Wallets MUST support key
+attestations" requirement, distinct from Wallet Attestation above
+(that's client authentication; this is the proof-of-possession key
+*format* a Wallet sends in a Credential Request, OID4VCI Appendix D).
+Nothing implements this yet since it only matters for the OID4VCI
+Wallet role, already blocked on the gap described above — but don't
+conflate the two "attestation" requirements when that role's work
+resumes; both will need addressing, not just Wallet Attestation.
+
 See [SPECIFICATIONS.md](SPECIFICATIONS.md) for the exact spec/draft
 versions this repo targets, and [ARCHITECTURE.md](ARCHITECTURE.md) for
 package layout and design rationale as it's built out.

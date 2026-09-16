@@ -66,7 +66,12 @@ profile), covering all 11 `direct_post.jwt` + `x509_hash` +
 - **`request-uri-method-post`** is correctly `SKIPPED` by the suite
   itself ("the verifier's authorization request does not include
   request_uri_method=post") — this binary always fetches `request_uri`
-  via plain GET, so the module self-excludes; not a gap.
+  via plain GET, so the module self-excludes; not a gap. Confirmed
+  against the HAIP 1.0 spec text directly (not just assumed): HAIP
+  never mentions `request_uri_method` anywhere in §4 or §5 — it stays
+  an OPTIONAL mechanism under the base OID4VP/JAR (RFC 9101) specs,
+  never elevated to a requirement, so GET-only `request_uri` fetching
+  is fully HAIP-compliant.
 
 This first live run found one real, confirmed interop bug — not in
 this binary, but in `internal/jwe`'s Concat KDF (RFC 7518 §4.6.2):

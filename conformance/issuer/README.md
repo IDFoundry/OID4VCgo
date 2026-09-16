@@ -153,7 +153,11 @@ the fix: full pass.
 Credential Issuer Metadata feature, which `issuer.Issuer` doesn't
 implement (always returns plain JSON); the suite detects this via
 `Content-Type` and self-skips rather than failing. Not a gap: signed
-metadata is optional and out of scope.
+metadata is optional and out of scope. Confirmed against the HAIP 1.0
+spec text directly: HAIP §4.1 conditions signed metadata on ecosystem
+policy — "When Ecosystem policies require Issuer Authentication to a
+higher level than possible with TLS alone, signed Credential Issuer
+Metadata... MUST be supported" — not a universal requirement.
 
 **`client2`: fixed, confirmed both as a unit test and live.** Even
 this plan's own `happy-flow` module (not just multi-client variants)
@@ -285,6 +289,11 @@ server.FAPIRWTLSCipherSuites` on the listener — mirrors
   the second client's own round, not `urls[0]` again.
 - `batch-issuance`: correctly `SKIPPED` (this binary doesn't configure
   `BatchCredentialIssuance`, so the suite detects no batch support).
+  Confirmed against the HAIP 1.0 spec text directly: HAIP only
+  requires an Issuer to *advertise* support or non-support via the
+  `batch_credential_issuance` metadata parameter — "If batch issuance
+  is supported, the Wallet SHOULD use it" — never a MUST to actually
+  implement batch mode itself.
 - 10 of 10 `fail-*` negative tests that apply to this binary's own
   configuration all `PASSED`: `fail-invalid-nonce`,
   `fail-invalid-jwt-proof-signature`,
@@ -304,6 +313,24 @@ server.FAPIRWTLSCipherSuites` on the listener — mirrors
   `fail-unsupported-encryption-algorithm` (`vci_credential_encryption`
   is fixed to `plain`; this binary implements no Credential Request/
   Response encryption at all — OID4VCI 1.0 §10 makes it optional).
+  Both confirmed against the HAIP 1.0 spec text directly, not just
+  assumed: HAIP never references OID4VCI §10 encryption anywhere, so
+  it stays fully optional. HAIP §4.5.1's key-attestation language is
+  more nuanced — it does contain one unconditional MUST ("Wallets MUST
+  support key attestations"), but that MUST falls on Wallets, not
+  Issuers; Issuer-side support for the `attestation` proof type is
+  conditioned on ecosystem choice ("Ecosystems that desire
+  wallet-issuer interoperability on the level of key attestations
+  SHOULD require Wallets to support... `jwt` proof type using
+  `key_attestation` [and] `attestation` proof type"). So this skip is
+  legitimate for the Issuer role specifically — but the Wallet-side
+  MUST is real and unconditional, and applies to the still-blocked
+  OID4VCI Wallet role (see "Not yet run live" below and `AGENTS.md`),
+  not to anything already implemented. Worth keeping separate from
+  that role's already-tracked Wallet Attestation (client
+  authentication) gap: key attestation (proof-of-possession key
+  format) and wallet attestation (client auth) are two distinct HAIP
+  requirements that role will need to satisfy once unblocked.
 
 ## Not yet run live
 
