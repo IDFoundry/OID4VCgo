@@ -59,7 +59,11 @@ package layout and design rationale as it's built out.
 
 [`conformance/README.md`](conformance/README.md) — mirrors FAPIgo's own
 `conformance/*/README.md` documentation convention. As of this note,
-`cmd/conformance-verifier` (OID4VP Verifier role) exists, compiles, is
-unit- and smoke-tested, but has not yet been run against the live OIDF
-suite — see `conformance/verifier/README.md`'s own "Status" section
-before assuming any specific test module passes.
+`cmd/conformance-verifier` (OID4VP Verifier role) and
+`cmd/conformance-wallet-vp` (OID4VP Wallet role, direct_post.jwt module
+list only) both exist, compile, are unit-tested, and have been
+confirmed live against each other end to end (a real cryptographic
+round trip, not a mock) — but neither has yet been run against the
+live OIDF suite itself. See `conformance/verifier/README.md`'s and
+`conformance/wallet-vp/README.md`'s own "Status" sections before
+assuming any specific suite test module passes.
