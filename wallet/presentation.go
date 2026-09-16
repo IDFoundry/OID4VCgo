@@ -311,16 +311,45 @@ func mdocDeviceAlgForKey(pub crypto.PublicKey) (cose.Alg, error) {
 
 // PresentMdocParams bundles the Authorization-Request-derived context
 // PresentMdoc needs to build SessionTranscriptBytes identically to
-// however the Verifier will reconstruct it (oid4vpmdoc.HandoverParams)
-// — unlike "dc+sd-jwt"'s Key Binding JWT, "mso_mdoc"'s own
-// DeviceSigned is authenticated over a structure that also commits to
-// the response_uri and the Verifier's own response-encryption key, not
-// just aud/nonce (Appendix B.2.6.1).
+// however the Verifier will reconstruct it — unlike "dc+sd-jwt"'s Key
+// Binding JWT, "mso_mdoc"'s own DeviceSigned is authenticated over a
+// structure that also commits to the Verifier's own response-encryption
+// key (and, for the redirect flow, its response_uri), not just
+// aud/nonce (Appendix B.2.6.1/B.2.6.2).
 type PresentMdocParams struct {
-	Audience                        string // client_id
+	// Audience and ResponseURI are the redirect flow's own fields —
+	// this Verifier's own "client_id" and "response_uri" — used to
+	// build the OpenID4VPHandover (Appendix B.2.6.1) when Origin is
+	// empty.
+	Audience    string // client_id
+	ResponseURI string
+
 	Nonce                           string
-	ResponseURI                     string
 	ResponseEncryptionJWKThumbprint []byte
+
+	// Origin, if set, builds the DC API flow's own OpenID4VPDCAPIHandover
+	// (Appendix B.2.6.2) instead — Audience/ResponseURI are then
+	// unused, since the DC API flow has neither (see
+	// verifier.VerifyResponseRequest.Origin's own doc comment for the
+	// same split on the verification side).
+	Origin string
+}
+
+// buildMdocSessionTranscriptBytes dispatches to
+// oid4vpmdoc.BuildSessionTranscriptBytes (redirect flow) or
+// BuildDCAPISessionTranscriptBytes (DC API flow) on whether
+// params.Origin is set — PresentMdoc's own counterpart to
+// verifier's identically-named private helper.
+func buildMdocSessionTranscriptBytes(params PresentMdocParams) ([]byte, error) {
+	if params.Origin != "" {
+		return oid4vpmdoc.BuildDCAPISessionTranscriptBytes(oid4vpmdoc.DCAPIHandoverParams{
+			Origin: params.Origin, Nonce: params.Nonce, ResponseEncryptionJWKThumbprint: params.ResponseEncryptionJWKThumbprint,
+		})
+	}
+	return oid4vpmdoc.BuildSessionTranscriptBytes(oid4vpmdoc.HandoverParams{
+		ClientID: params.Audience, Nonce: params.Nonce, ResponseURI: params.ResponseURI,
+		ResponseEncryptionJWKThumbprint: params.ResponseEncryptionJWKThumbprint,
+	})
 }
 
 // PresentMdoc builds an "mso_mdoc" Presentation (a VP Token array
@@ -328,7 +357,7 @@ type PresentMdocParams struct {
 // structure (oid4vpmdoc.MarshalDeviceResponse) carrying held's own
 // IssuerSigned plus a fresh DeviceSigned — ECDSA/EdDSA device
 // signature (§12.4.6) over SessionTranscriptBytes
-// (oid4vpmdoc.BuildSessionTranscriptBytes) built from params, with no
+// (buildMdocSessionTranscriptBytes) built from params, with no
 // additional self-asserted DeviceSigned namespaces (an empty
 // NameSpaces map — this package only ever proves possession of the
 // device key, it doesn't build Holder-asserted claims of its own).
@@ -348,10 +377,7 @@ func PresentMdoc(held HeldCredential, params PresentMdocParams) (string, error) 
 		return "", fmt.Errorf("wallet: present mdoc: unmarshal issuer signed: %w", err)
 	}
 
-	sessionTranscriptBytes, err := oid4vpmdoc.BuildSessionTranscriptBytes(oid4vpmdoc.HandoverParams{
-		ClientID: params.Audience, Nonce: params.Nonce, ResponseURI: params.ResponseURI,
-		ResponseEncryptionJWKThumbprint: params.ResponseEncryptionJWKThumbprint,
-	})
+	sessionTranscriptBytes, err := buildMdocSessionTranscriptBytes(params)
 	if err != nil {
 		return "", fmt.Errorf("wallet: present mdoc: %w", err)
 	}
@@ -383,28 +409,38 @@ type PresentationRequest struct {
 	// match Query against.
 	Credentials []HeldCredential
 
-	// Audience is REQUIRED: the Verifier's own Client Identifier
-	// (the Authorization Request's own "client_id", prefix included).
+	// Audience is REQUIRED for the redirect flow (Origin empty): the
+	// Verifier's own Client Identifier (the Authorization Request's
+	// own "client_id", prefix included).
 	Audience string
 
-	// Nonce is REQUIRED: the Authorization Request's own "nonce".
+	// Nonce is REQUIRED: the Authorization/DC API Request's own
+	// "nonce".
 	Nonce string
 
 	// ResponseURI and ResponseEncryptionJWKThumbprint are REQUIRED
 	// whenever Query requests any "mso_mdoc" Credential — see
 	// PresentMdocParams's own doc comment for why "mso_mdoc" needs
-	// them where "dc+sd-jwt" doesn't.
+	// them where "dc+sd-jwt" doesn't. ResponseURI is a redirect-flow-only
+	// field (unused when Origin is set).
 	ResponseURI                     string
 	ResponseEncryptionJWKThumbprint []byte
+
+	// Origin, if set, presents for the DC API flow instead of the
+	// redirect flow: Audience is ignored, and each Presentation is
+	// bound to Appendix A.4's own "origin:"-prefixed audience instead
+	// — see verifier.VerifyResponseRequest.Origin's own doc comment
+	// for the same split on the verification side.
+	Origin string
 }
 
 // PresentCredentials matches req.Query against req.Credentials
 // (MatchDCQLQuery) and builds a VP Token entry for each match — see
 // MatchDCQLQuery's own doc comment for this phase's scope. Returns the
-// vp_token map ready for a direct_post(.jwt) response body (§8.1):
-// {<Credential Query id>: [<Presentation>]}.
+// vp_token map ready for a direct_post(.jwt)/dc_api(.jwt) response
+// body (§8.1): {<Credential Query id>: [<Presentation>]}.
 func PresentCredentials(req PresentationRequest) (map[string][]string, error) {
-	if req.Audience == "" {
+	if req.Origin == "" && req.Audience == "" {
 		return nil, fmt.Errorf("wallet: present credentials: audience is required")
 	}
 	if req.Nonce == "" {
@@ -415,6 +451,11 @@ func PresentCredentials(req PresentationRequest) (map[string][]string, error) {
 		return nil, fmt.Errorf("wallet: present credentials: %w", err)
 	}
 
+	aud := req.Audience
+	if req.Origin != "" {
+		aud = "origin:" + req.Origin
+	}
+
 	vpToken := make(map[string][]string, len(matches))
 	for id, helds := range matches {
 		presented := make([]string, 0, len(helds))
@@ -422,10 +463,10 @@ func PresentCredentials(req PresentationRequest) (map[string][]string, error) {
 			var p string
 			switch held.Format {
 			case sdjwtvc.CredentialFormat:
-				p, err = PresentSDJWTVC(held, req.Audience, req.Nonce)
+				p, err = PresentSDJWTVC(held, aud, req.Nonce)
 			case mdoc.CredentialFormat:
 				p, err = PresentMdoc(held, PresentMdocParams{
-					Audience: req.Audience, Nonce: req.Nonce,
+					Audience: req.Audience, Nonce: req.Nonce, Origin: req.Origin,
 					ResponseURI: req.ResponseURI, ResponseEncryptionJWKThumbprint: req.ResponseEncryptionJWKThumbprint,
 				})
 			default:
