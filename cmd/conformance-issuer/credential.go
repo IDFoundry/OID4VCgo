@@ -186,102 +186,123 @@ func mdocClaimsForRequest(docType string, nameSpaces map[string]map[string]inter
 // credential_identifier-based requests yet — see README's own
 // "Status".
 func credentialHandler(iss *issuer.Issuer, resourceVerifier *fapires.Verifier, credentialURL *url.URL, cfg Config) http.HandlerFunc {
-	additional := make(map[string]any, len(cfg.Claims))
-	for name, value := range cfg.Claims {
-		additional[name] = sdjwtvc.SD(value)
-	}
-
-	// mdocNameSpaceElements is this binary's own fixed mso_mdoc dataset
-	// (cfg.Mdoc.Claims, precomputed once like additional above) — nil
-	// when cfg.Mdoc is unset, so mdocClaimsForRequest below always
-	// returns nil too and issueOne's own cc.Format dispatch never sees a
-	// non-nil MdocClaims for a request it can't use. mdocDocType is
-	// captured alongside it rather than read from cfg.Mdoc.DocType
-	// inline below, so mdocClaimsForRequest never needs to know whether
-	// cfg.Mdoc itself is set.
-	var mdocNameSpaceElements map[string]map[string]interface{}
-	var mdocDocType string
-	if cfg.Mdoc != nil {
-		elements := make(map[string]interface{}, len(cfg.Mdoc.Claims))
-		for name, value := range cfg.Mdoc.Claims {
-			elements[name] = value
-		}
-		mdocNameSpaceElements = map[string]map[string]interface{}{cfg.Mdoc.Namespace: elements}
-		mdocDocType = cfg.Mdoc.DocType
-	}
+	additional := sdjwtAdditionalClaims(cfg.Claims)
+	mdocNameSpaceElements, mdocDocType := mdocNameSpaceElementsFor(cfg.Mdoc)
 
 	return func(w http.ResponseWriter, r *http.Request) {
-		// URL is this binary's own configured Credential Endpoint URL,
-		// not r.URL — a net/http server request's own URL has no
-		// Scheme/Host populated (only Path/RawQuery come off the
-		// request line), which would make DPoP's own "htu" comparison
-		// fail; mirrors FAPIgo's own cmd/conformance-as/resource.go,
-		// which passes its pre-built userinfoURL/accountsURL the same
-		// way, never r.URL directly.
-		authCtx, err := resourceVerifier.Verify(r.Context(), fapires.VerifyRequest{
-			Method: r.Method, URL: credentialURL, Authorization: r.Header.Get("Authorization"),
-			DPoPProofs: r.Header.Values("DPoP"), PeerCertificate: fapires.PeerCertificateFromHTTP(r),
-		})
-		if err != nil {
-			fapires.WriteError(w, err)
-			return
-		}
-
-		body, err := io.ReadAll(r.Body)
-		if err != nil {
-			http.Error(w, "failed to read request body", http.StatusBadRequest)
-			return
-		}
-		plaintext, wasEncrypted, err := iss.DecryptRequestBody(body, r.Header.Get("Content-Type"))
-		if err != nil {
-			writeIssuerError(w, err)
-			return
-		}
-		var wire wireCredentialRequest
-		if err := json.Unmarshal(plaintext, &wire); err != nil {
-			http.Error(w, "malformed credential request", http.StatusBadRequest)
-			return
-		}
-		responseEncryption := responseEncryptionFromWire(wire.CredentialResponseEncryption)
-
-		exp := conformancecert.CredentialExp(time.Now(), issuedCredentialLifetime)
-		auth := issuer.AuthorizedRequest{ClientID: authCtx.ClientID, Scopes: authCtx.Scopes}
-
-		// Both SDJWTClaims and MdocClaims are always supplied (the
-		// latter nil when cfg.Mdoc is unset) — issueOne's own
-		// cc.Format dispatch picks whichever one actually matches the
-		// requested CredentialConfiguration and ignores the other, so
-		// this handler doesn't need to itself look up which format
-		// wire.CredentialConfigurationID/CredentialIdentifier resolves
-		// to.
-		mdocClaims := mdocClaimsForRequest(mdocDocType, mdocNameSpaceElements, issuedCredentialLifetime)
-
-		result, err := iss.RequestCredential(r.Context(), auth, issuer.CredentialRequest{
-			CredentialConfigurationID: wire.CredentialConfigurationID,
-			CredentialIdentifier:      wire.CredentialIdentifier,
-			Proofs:                    wire.Proofs,
-			SDJWTClaims:               &sdjwtvc.Claims{VCT: cfg.VCT, Exp: &exp, Additional: additional},
-			MdocClaims:                mdocClaims,
-			RequestWasEncrypted:       wasEncrypted,
-			ResponseEncryption:        responseEncryption,
-		})
-		if err != nil {
-			writeIssuerError(w, err)
-			return
-		}
-		resultJSON, err := json.Marshal(result)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		encoded, contentType, err := iss.EncryptResponseBody(resultJSON, responseEncryption)
-		if err != nil {
-			writeIssuerError(w, err)
-			return
-		}
-		w.Header().Set("Content-Type", contentType)
-		_, _ = w.Write(encoded)
+		serveCredentialRequest(w, r, iss, resourceVerifier, credentialURL, cfg, additional, mdocNameSpaceElements, mdocDocType)
 	}
+}
+
+// sdjwtAdditionalClaims builds credentialHandler's own precomputed
+// SD-JWT "Additional" claim map (every entry selectively disclosable)
+// from claims — extracted out of credentialHandler itself purely to
+// keep that function's own cognitive complexity low.
+func sdjwtAdditionalClaims(claims map[string]string) map[string]any {
+	additional := make(map[string]any, len(claims))
+	for name, value := range claims {
+		additional[name] = sdjwtvc.SD(value)
+	}
+	return additional
+}
+
+// mdocNameSpaceElementsFor builds credentialHandler's own precomputed
+// mso_mdoc namespace/data-element map from cfg (nil when cfg is unset,
+// in which case serveCredentialRequest's own mdocClaimsForRequest call
+// always returns a nil *mdoc.Claims too) — extracted out of
+// credentialHandler itself purely to keep that function's own
+// cognitive complexity low.
+func mdocNameSpaceElementsFor(cfg *MdocConfig) (nameSpaces map[string]map[string]interface{}, docType string) {
+	if cfg == nil {
+		return nil, ""
+	}
+	elements := make(map[string]interface{}, len(cfg.Claims))
+	for name, value := range cfg.Claims {
+		elements[name] = value
+	}
+	return map[string]map[string]interface{}{cfg.Namespace: elements}, cfg.DocType
+}
+
+// serveCredentialRequest is credentialHandler's own returned
+// http.HandlerFunc body, factored into a plain named function (rather
+// than staying inline as a closure) so its own cognitive complexity is
+// judged on its own terms — a closure literal costs extra nesting
+// credit for everything inside it, on top of what the same code would
+// cost as a standalone function.
+func serveCredentialRequest(
+	w http.ResponseWriter, r *http.Request,
+	iss *issuer.Issuer, resourceVerifier *fapires.Verifier, credentialURL *url.URL, cfg Config,
+	additional map[string]any, mdocNameSpaceElements map[string]map[string]interface{}, mdocDocType string,
+) {
+	// URL is this binary's own configured Credential Endpoint URL, not
+	// r.URL — a net/http server request's own URL has no Scheme/Host
+	// populated (only Path/RawQuery come off the request line), which
+	// would make DPoP's own "htu" comparison fail; mirrors FAPIgo's own
+	// cmd/conformance-as/resource.go, which passes its pre-built
+	// userinfoURL/accountsURL the same way, never r.URL directly.
+	authCtx, err := resourceVerifier.Verify(r.Context(), fapires.VerifyRequest{
+		Method: r.Method, URL: credentialURL, Authorization: r.Header.Get("Authorization"),
+		DPoPProofs: r.Header.Values("DPoP"), PeerCertificate: fapires.PeerCertificateFromHTTP(r),
+	})
+	if err != nil {
+		fapires.WriteError(w, err)
+		return
+	}
+
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "failed to read request body", http.StatusBadRequest)
+		return
+	}
+	plaintext, wasEncrypted, err := iss.DecryptRequestBody(body, r.Header.Get("Content-Type"))
+	if err != nil {
+		writeIssuerError(w, err)
+		return
+	}
+	var wire wireCredentialRequest
+	if err := json.Unmarshal(plaintext, &wire); err != nil {
+		http.Error(w, "malformed credential request", http.StatusBadRequest)
+		return
+	}
+	responseEncryption := responseEncryptionFromWire(wire.CredentialResponseEncryption)
+
+	exp := conformancecert.CredentialExp(time.Now(), issuedCredentialLifetime)
+	auth := issuer.AuthorizedRequest{ClientID: authCtx.ClientID, Scopes: authCtx.Scopes}
+
+	// Both SDJWTClaims and MdocClaims are always supplied (the
+	// latter nil when cfg.Mdoc is unset) — issueOne's own
+	// cc.Format dispatch picks whichever one actually matches the
+	// requested CredentialConfiguration and ignores the other, so
+	// this handler doesn't need to itself look up which format
+	// wire.CredentialConfigurationID/CredentialIdentifier resolves
+	// to.
+	mdocClaims := mdocClaimsForRequest(mdocDocType, mdocNameSpaceElements, issuedCredentialLifetime)
+
+	result, err := iss.RequestCredential(r.Context(), auth, issuer.CredentialRequest{
+		CredentialConfigurationID: wire.CredentialConfigurationID,
+		CredentialIdentifier:      wire.CredentialIdentifier,
+		Proofs:                    wire.Proofs,
+		SDJWTClaims:               &sdjwtvc.Claims{VCT: cfg.VCT, Exp: &exp, Additional: additional},
+		MdocClaims:                mdocClaims,
+		RequestWasEncrypted:       wasEncrypted,
+		ResponseEncryption:        responseEncryption,
+	})
+	if err != nil {
+		writeIssuerError(w, err)
+		return
+	}
+	resultJSON, err := json.Marshal(result)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	encoded, contentType, err := iss.EncryptResponseBody(resultJSON, responseEncryption)
+	if err != nil {
+		writeIssuerError(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", contentType)
+	_, _ = w.Write(encoded)
 }
 
 // writeIssuerError writes err as a Credential Endpoint error response

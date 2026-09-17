@@ -60,6 +60,22 @@ const credentialRequestDecryptionKeyID = "credential-request-encryption-key-1" /
 // vacuous one.
 var credentialEncValuesSupported = []jwe.Enc{jwe.A128GCM, jwe.A256GCM}
 
+// jwtProofCredentialConfiguration builds the jwk-binding/jwt-proof-type
+// shape every CredentialConfiguration this binary advertises shares —
+// Format and the format-specific metadata parameter (VCT or DocType)
+// are the caller's own job to set afterward, the one thing that
+// actually differs between the "dc+sd-jwt" and "mso_mdoc"
+// configurations below.
+func jwtProofCredentialConfiguration(scope string, proofSigningAlgs []string) issuer.CredentialConfiguration {
+	return issuer.CredentialConfiguration{
+		Scope:                                scope,
+		CryptographicBindingMethodsSupported: []string{"jwk"},
+		ProofTypesSupported: map[string]issuer.ProofTypeConfiguration{
+			oid4vci.ProofTypeJWT: {ProofSigningAlgValuesSupported: proofSigningAlgs},
+		},
+	}
+}
+
 // newServerMux builds the full wiring — a real fapigo/server.Server
 // (FAPI 2.0 Security Profile Final, Wallet Attestation client
 // authentication, DPoP) paired with a real oid4vcigo/issuer.Issuer via
@@ -225,14 +241,10 @@ func newServerMux(cfg Config) (*http.ServeMux, error) {
 		return nil, fmt.Errorf("credential request decryption key: %w", err)
 	}
 	issProofAlgs := []string{"ES256"}
+	sdjwtConfig := jwtProofCredentialConfiguration(cfg.Scope, issProofAlgs)
+	sdjwtConfig.Format, sdjwtConfig.VCT = sdjwtvc.CredentialFormat, cfg.VCT
 	credentialConfigs := map[string]issuer.CredentialConfiguration{
-		cfg.CredentialConfigurationID: {
-			Format: sdjwtvc.CredentialFormat, Scope: cfg.Scope, VCT: cfg.VCT,
-			CryptographicBindingMethodsSupported: []string{"jwk"},
-			ProofTypesSupported: map[string]issuer.ProofTypeConfiguration{
-				oid4vci.ProofTypeJWT: {ProofSigningAlgValuesSupported: issProofAlgs},
-			},
-		},
+		cfg.CredentialConfigurationID: sdjwtConfig,
 	}
 	issDeps := issuer.Dependencies{
 		Nonces: oid4vcigostorage.NewNonceStore(),
@@ -247,13 +259,9 @@ func newServerMux(cfg Config) (*http.ServeMux, error) {
 		// Same issuer identity as the "dc+sd-jwt" CredentialConfiguration
 		// above (issuerSigningKey/issuerCertificate) — one Credential
 		// Issuer publishing two formats, not a second throwaway key.
-		credentialConfigs[cfg.Mdoc.CredentialConfigurationID] = issuer.CredentialConfiguration{
-			Format: mdoc.CredentialFormat, Scope: cfg.Mdoc.Scope, DocType: cfg.Mdoc.DocType,
-			CryptographicBindingMethodsSupported: []string{"jwk"},
-			ProofTypesSupported: map[string]issuer.ProofTypeConfiguration{
-				oid4vci.ProofTypeJWT: {ProofSigningAlgValuesSupported: issProofAlgs},
-			},
-		}
+		mdocConfig := jwtProofCredentialConfiguration(cfg.Mdoc.Scope, issProofAlgs)
+		mdocConfig.Format, mdocConfig.DocType = mdoc.CredentialFormat, cfg.Mdoc.DocType
+		credentialConfigs[cfg.Mdoc.CredentialConfigurationID] = mdocConfig
 		issDeps.MdocSigner = &issuer.MdocSigner{
 			Signer: issuerSigningKey, Alg: cose.ES256,
 			X5Chain: [][]byte{issuerCertificate.Raw},
