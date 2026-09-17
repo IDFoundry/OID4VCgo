@@ -12,8 +12,8 @@ import (
 // RecommendedJOSEAlgorithm (HAIP 1.0 §7) and requiring no Key
 // Attestation. See RecommendedAttestationProofType for HAIP §4.5.1's
 // Key-Attestation posture instead.
-func RecommendedJWTProofType() issuer.ProofTypeConfiguration {
-	return issuer.ProofTypeConfiguration{
+func RecommendedJWTProofType() oid4vci.ProofTypeConfiguration {
+	return oid4vci.ProofTypeConfiguration{
 		ProofSigningAlgValuesSupported: []string{string(RecommendedJOSEAlgorithm)},
 	}
 }
@@ -34,10 +34,10 @@ func RecommendedJWTProofType() issuer.ProofTypeConfiguration {
 // supported yet — see its own doc comment), so recommending that
 // combination today would describe a configuration issuer can't
 // actually serve.
-func RecommendedAttestationProofType() issuer.ProofTypeConfiguration {
-	return issuer.ProofTypeConfiguration{
+func RecommendedAttestationProofType() oid4vci.ProofTypeConfiguration {
+	return oid4vci.ProofTypeConfiguration{
 		ProofSigningAlgValuesSupported: []string{string(RecommendedJOSEAlgorithm)},
-		KeyAttestationsRequired:        &issuer.KeyAttestationRequirement{},
+		KeyAttestationsRequired:        &oid4vci.KeyAttestationRequirement{},
 	}
 }
 
@@ -52,7 +52,7 @@ type IssuerRecommendations struct {
 	// (i.e. one that also sets CryptographicBindingMethodsSupported) —
 	// see RecommendedJWTProofType/RecommendedAttestationProofType's
 	// own doc comments for each entry's citation.
-	ProofTypesSupported map[string]issuer.ProofTypeConfiguration
+	ProofTypesSupported map[string]oid4vci.ProofTypeConfiguration
 }
 
 // RecommendedIssuerConfig returns HAIP 1.0's own recommendations for
@@ -62,7 +62,7 @@ type IssuerRecommendations struct {
 // call and override, not something issuer.New applies on its own.
 func RecommendedIssuerConfig() IssuerRecommendations {
 	return IssuerRecommendations{
-		ProofTypesSupported: map[string]issuer.ProofTypeConfiguration{
+		ProofTypesSupported: map[string]oid4vci.ProofTypeConfiguration{
 			oid4vci.ProofTypeJWT:         RecommendedJWTProofType(),
 			oid4vci.ProofTypeAttestation: RecommendedAttestationProofType(),
 		},

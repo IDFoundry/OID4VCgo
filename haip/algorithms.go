@@ -21,7 +21,7 @@ import (
 // §7 states this as a minimum, not an exhaustive allow-list —
 // "Ecosystem-specific profiles of this specification MAY mandate
 // additional cryptographic suites" — so these are a starting point for
-// issuer.ProofTypeConfiguration.ProofSigningAlgValuesSupported (or a
+// oid4vci.ProofTypeConfiguration.ProofSigningAlgValuesSupported (or a
 // CredentialConfiguration's own signing-algorithm fields), not a
 // ceiling.
 const (

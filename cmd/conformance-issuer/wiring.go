@@ -70,7 +70,7 @@ func jwtProofCredentialConfiguration(scope string, proofSigningAlgs []string) is
 	return issuer.CredentialConfiguration{
 		Scope:                                scope,
 		CryptographicBindingMethodsSupported: []string{"jwk"},
-		ProofTypesSupported: map[string]issuer.ProofTypeConfiguration{
+		ProofTypesSupported: map[string]oid4vci.ProofTypeConfiguration{
 			oid4vci.ProofTypeJWT: {ProofSigningAlgValuesSupported: proofSigningAlgs},
 		},
 	}
@@ -272,7 +272,7 @@ func newServerMux(cfg Config) (*http.ServeMux, error) {
 		Issuer:                  issuerURL,
 		Endpoints:               issuer.Endpoints{Credential: credentialURL, Nonce: nonceURL},
 		Limits:                  issuer.Limits{NonceLifetime: limits.MaxDPoPProofAge},
-		BatchCredentialIssuance: &issuer.BatchCredentialIssuance{BatchSize: conformanceBatchSize},
+		BatchCredentialIssuance: &oid4vci.BatchCredentialIssuance{BatchSize: conformanceBatchSize},
 		RequestEncryption: &issuer.RequestEncryptionSupport{
 			Keys:               []issuer.RequestDecryptionKey{{KeyID: credentialRequestDecryptionKeyID, PrivateKey: requestDecryptionKey}},
 			EncValuesSupported: credentialEncValuesSupported,

@@ -134,14 +134,14 @@ type Config struct {
 	// Display is this Credential Issuer's own OPTIONAL display metadata
 	// (§12.2.4's top-level "display"), one entry per locale. Empty means
 	// Metadata omits display entirely.
-	Display []Display
+	Display []oid4vci.Display
 
 	// BatchCredentialIssuance declares this issuer's own OPTIONAL
 	// support for batch issuance (§12.2.4's "batch_credential_issuance")
-	// — see BatchCredentialIssuance's own doc comment for what setting
-	// this does and doesn't change. Nil means Metadata omits
+	// — see oid4vci.BatchCredentialIssuance's own doc comment for what
+	// setting this does and doesn't change. Nil means Metadata omits
 	// batch_credential_issuance entirely.
-	BatchCredentialIssuance *BatchCredentialIssuance
+	BatchCredentialIssuance *oid4vci.BatchCredentialIssuance
 }
 
 // Clock supplies the current time — a plain function value satisfies
@@ -355,12 +355,12 @@ func New(cfg Config, deps Dependencies) (*Issuer, error) {
 		}
 	}
 	for i, d := range cfg.Display {
-		if err := d.validate(); err != nil {
+		if err := d.Validate(); err != nil {
 			return nil, fmt.Errorf("issuer: config: display[%d]: %w", i, err)
 		}
 	}
 	if cfg.BatchCredentialIssuance != nil {
-		if err := cfg.BatchCredentialIssuance.validate(); err != nil {
+		if err := cfg.BatchCredentialIssuance.Validate(); err != nil {
 			return nil, fmt.Errorf("issuer: config: batch_credential_issuance: %w", err)
 		}
 	}
