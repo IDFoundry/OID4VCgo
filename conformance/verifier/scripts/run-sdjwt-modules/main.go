@@ -6,10 +6,11 @@
 // repo's own already-passing run — not guessed) were originally run
 // live one at a time by hand (see conformance/verifier/README.md's own
 // "Interaction model, confirmed live" section), never as a committed,
-// repeatable tool. This binary reuses that same documented two-request
-// interaction model via internal/conformanceverifier (shared with
-// run-mdoc-module — see that package's own doc comment for why),
-// looped over all 11 instead of driven one at a time.
+// repeatable tool.
+//
+// Everything but this run's own module list and looping is shared with
+// run-mdoc-module via internal/conformanceverifier — see that
+// package's own doc comment for why.
 //
 // Usage: go run ./conformance/verifier/scripts/run-sdjwt-modules \
 //
@@ -18,14 +19,10 @@
 package main
 
 import (
-	"crypto/tls"
-	"encoding/json"
 	"flag"
 	"log"
-	"net/http"
 	"os"
 
-	"github.com/idfoundry/oid4vcgo/internal/conformancesuite"
 	"github.com/idfoundry/oid4vcgo/internal/conformanceverifier"
 )
 
@@ -50,8 +47,6 @@ var testNames = []string{
 	"oid4vp-1final-verifier-kb-jwt-iat-in-future",
 }
 
-const planName = "oid4vp-1final-verifier-haip-test-plan"
-
 type moduleResult struct {
 	testName string
 	status   string
@@ -60,64 +55,33 @@ type moduleResult struct {
 }
 
 func main() {
-	apiBase := flag.String("suite", "https://localhost:8443/", "OIDF conformance suite base URL")
-	verifierBase := flag.String("verifier-base", "https://localhost:19446", "cmd/conformance-verifier's own host-published base URL")
-	verifierInternalBase := flag.String("verifier-internal-base", "https://conformance-verifier:8443", "cmd/conformance-verifier's own suite-network-internal base URL")
-	alias := flag.String("alias", "oid4vcgo-verifier-sdjwt", "suite plan alias")
-	skipDockerRestart := flag.Bool("skip-docker-restart", false, "skip restarting the conformance-verifier container after writing the new config (only safe when the container is already running with matching key material from a prior run of this exact binary)")
+	flags := conformanceverifier.DefineFlags("oid4vcgo-verifier-sdjwt")
 	flag.Parse()
 
-	httpClient := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}} //nolint:gosec // local conformance suite, self-signed certs throughout
-
-	// Config.CredentialFormat left at its zero value: "" defaults to
-	// "dc+sd-jwt" in cmd/conformance-verifier's own loadConfig, this
-	// binary's own original format — no mdoc-specific fields needed.
-	km, err := conformanceverifier.GenerateKeyMaterial("conformance-verifier-sdjwt-client", "conformance-verifier-sdjwt-client-ca", *verifierInternalBase)
+	setup, err := conformanceverifier.Setup(conformanceverifier.SetupParams{
+		Flags:                flags,
+		ClientCN:             "conformance-verifier-sdjwt-client",
+		ClientCACN:           "conformance-verifier-sdjwt-client-ca",
+		PlanDescription:      "OID4VCgo cmd/conformance-verifier sd_jwt_vc live run",
+		PlanCredentialFormat: "sd_jwt_vc",
+		// Config.CredentialFormat left at its zero value: "" defaults
+		// to "dc+sd-jwt" in cmd/conformance-verifier's own loadConfig,
+		// this binary's own original format — no mdoc-specific fields
+		// needed, just VCT/Claims.
+		Configure: func(cfg *conformanceverifier.Config) {
+			cfg.VCT = "urn:eudi:pid:1"
+			cfg.Claims = []string{"given_name", "family_name"}
+		},
+	})
 	if err != nil {
-		log.Fatalf("generate key material: %v", err)
+		log.Fatal(err)
 	}
-	km.Config.VCT = "urn:eudi:pid:1"
-	km.Config.Claims = []string{"given_name", "family_name"}
-
-	if err := conformanceverifier.WriteConfig(km.Config); err != nil {
-		log.Fatalf("write config: %v", err)
-	}
-	log.Printf("wrote %s (credential_format=dc+sd-jwt)", conformanceverifier.ConfigOutPath)
-
-	if !*skipDockerRestart {
-		if err := conformanceverifier.RestartContainer(); err != nil {
-			log.Fatalf("restart conformance-verifier container: %v", err)
-		}
-		log.Print("restarted conformance-verifier container, waiting for it to come up")
-		if err := conformanceverifier.WaitReady(httpClient, *verifierBase); err != nil {
-			log.Fatalf("wait for conformance-verifier: %v", err)
-		}
-	}
-
-	pc := conformanceverifier.PlanConfig{
-		Alias:       *alias,
-		Description: "OID4VCgo cmd/conformance-verifier sd_jwt_vc live run",
-		Client:      conformanceverifier.PlanConfigClient{RequestObjectTrustAnchorPEM: km.ClientCACertPEM},
-		Credential:  conformanceverifier.PlanConfigCred{SigningJWK: km.CredentialIssuerPrivateJWK},
-	}
-	pcRaw, err := json.Marshal(pc)
-	if err != nil {
-		log.Fatalf("marshal plan config: %v", err)
-	}
-
-	planVariant := map[string]string{"credential_format": "sd_jwt_vc", "response_mode": "direct_post.jwt"} //nolint:gosec // false positive: a suite variant selector value, not a credential
-	planID, _, err := conformancesuite.CreatePlan(httpClient, *apiBase, planName, planVariant, pcRaw)
-	if err != nil {
-		log.Fatalf("create plan: %v", err)
-	}
-	log.Printf("created plan %s (alias %s)", planID, *alias)
-	log.Printf("plan detail: %splan-detail.html?plan=%s", *apiBase, planID)
 
 	moduleVariant := map[string]string{"client_id_prefix": "x509_hash", "request_method": "request_uri_signed", "vp_profile": "haip"}
 
 	results := make([]moduleResult, 0, len(testNames))
 	for _, testName := range testNames {
-		status, result, err := conformanceverifier.DriveModule(httpClient, *apiBase, *verifierBase, planID, testName, moduleVariant)
+		status, result, err := conformanceverifier.DriveModule(setup.HTTPClient, *flags.APIBase, *flags.VerifierBase, setup.PlanID, testName, moduleVariant)
 		res := moduleResult{testName: testName, status: status, result: result, err: err}
 		results = append(results, res)
 		if err != nil {
@@ -143,7 +107,7 @@ func main() {
 		log.Printf("%-55s %s=%s %v", res.testName, res.status, res.result, res.err)
 	}
 	if !allExpected {
-		log.Printf("plan detail: %splan-detail.html?plan=%s", *apiBase, planID)
+		log.Printf("plan detail: %splan-detail.html?plan=%s", *flags.APIBase, setup.PlanID)
 		os.Exit(1)
 	}
 }

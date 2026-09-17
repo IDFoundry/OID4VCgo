@@ -16,9 +16,12 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
+	"flag"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -39,6 +42,11 @@ const DockerComposeFile = "conformance/verifier/docker-compose.yml"
 // ConfigOutPath is where both scripts write cmd/conformance-verifier's
 // own config.json — the one path docker-compose.yml mounts in.
 const ConfigOutPath = "conformance/verifier/oidf-config/haip.config.json"
+
+// PlanName is the one suite test plan both scripts create — the same
+// oid4vp-1final-verifier-haip-test-plan, just under a different
+// credential_format plan variant.
+const PlanName = "oid4vp-1final-verifier-haip-test-plan"
 
 const (
 	restartTimeout = 30 * time.Second
@@ -298,4 +306,102 @@ func postPlaceholder(httpClient *http.Client, apiBase, moduleID, placeholder str
 	}
 	defer func() { _ = res.Body.Close() }()
 	return nil
+}
+
+// Flags is the flag set both verifier conformance scripts define
+// identically — only -alias's own default differs between them.
+type Flags struct {
+	APIBase              *string
+	VerifierBase         *string
+	VerifierInternalBase *string
+	Alias                *string
+	SkipDockerRestart    *bool
+}
+
+// DefineFlags registers Flags, defaulting -alias to defaultAlias. Call
+// once, before flag.Parse().
+func DefineFlags(defaultAlias string) Flags {
+	return Flags{
+		APIBase:              flag.String("suite", "https://localhost:8443/", "OIDF conformance suite base URL"),
+		VerifierBase:         flag.String("verifier-base", "https://localhost:19446", "cmd/conformance-verifier's own host-published base URL"),
+		VerifierInternalBase: flag.String("verifier-internal-base", "https://conformance-verifier:8443", "cmd/conformance-verifier's own suite-network-internal base URL"),
+		Alias:                flag.String("alias", defaultAlias, "suite plan alias"),
+		SkipDockerRestart:    flag.Bool("skip-docker-restart", false, "skip restarting the conformance-verifier container after writing the new config (only safe when the container is already running with matching key material from a prior run of this exact binary)"),
+	}
+}
+
+// SetupParams is Setup's own input — everything a caller needs to
+// supply beyond the shared Flags: the throwaway cert CNs (each script
+// uses its own, so a stray container restart never trusts a
+// mismatched cert), the plan's own description string, the plan-level
+// credential_format variant value ("sd_jwt_vc" or "iso_mdl" — distinct
+// from Config.CredentialFormat, which is empty for the sd_jwt_vc case
+// since that's cmd/conformance-verifier's own default), and Configure,
+// which sets whichever role-specific Config fields
+// (CredentialFormat/Doctype/... or VCT/Claims) the caller needs before
+// the config is written.
+type SetupParams struct {
+	Flags                Flags
+	ClientCN, ClientCACN string
+	PlanDescription      string
+	PlanCredentialFormat string
+	Configure            func(*Config)
+}
+
+// SetupResult is Setup's own output: the HTTP client and plan id every
+// caller needs to go on and call DriveModule with.
+type SetupResult struct {
+	HTTPClient *http.Client
+	PlanID     string
+}
+
+// Setup runs every step both scripts need before they can start
+// driving modules: generate key material, apply the caller's own
+// Configure callback, write/restart cmd/conformance-verifier's own
+// config, build the suite's own plan config, and create the plan.
+func Setup(params SetupParams) (SetupResult, error) {
+	httpClient := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}} //nolint:gosec // local conformance suite, self-signed certs throughout
+
+	km, err := GenerateKeyMaterial(params.ClientCN, params.ClientCACN, *params.Flags.VerifierInternalBase)
+	if err != nil {
+		return SetupResult{}, fmt.Errorf("generate key material: %w", err)
+	}
+	if params.Configure != nil {
+		params.Configure(&km.Config)
+	}
+	if err := WriteConfig(km.Config); err != nil {
+		return SetupResult{}, fmt.Errorf("write config: %w", err)
+	}
+	log.Printf("wrote %s (credential_format=%s)", ConfigOutPath, params.PlanCredentialFormat)
+
+	if !*params.Flags.SkipDockerRestart {
+		if err := RestartContainer(); err != nil {
+			return SetupResult{}, fmt.Errorf("restart conformance-verifier container: %w", err)
+		}
+		log.Print("restarted conformance-verifier container, waiting for it to come up")
+		if err := WaitReady(httpClient, *params.Flags.VerifierBase); err != nil {
+			return SetupResult{}, fmt.Errorf("wait for conformance-verifier: %w", err)
+		}
+	}
+
+	pc := PlanConfig{
+		Alias:       *params.Flags.Alias,
+		Description: params.PlanDescription,
+		Client:      PlanConfigClient{RequestObjectTrustAnchorPEM: km.ClientCACertPEM},
+		Credential:  PlanConfigCred{SigningJWK: km.CredentialIssuerPrivateJWK},
+	}
+	pcRaw, err := json.Marshal(pc)
+	if err != nil {
+		return SetupResult{}, fmt.Errorf("marshal plan config: %w", err)
+	}
+
+	planVariant := map[string]string{"credential_format": params.PlanCredentialFormat, "response_mode": "direct_post.jwt"} //nolint:gosec // false positive: a suite variant selector value, not a credential
+	planID, _, err := conformancesuite.CreatePlan(httpClient, *params.Flags.APIBase, PlanName, planVariant, pcRaw)
+	if err != nil {
+		return SetupResult{}, fmt.Errorf("create plan: %w", err)
+	}
+	log.Printf("created plan %s (alias %s)", planID, *params.Flags.Alias)
+	log.Printf("plan detail: %splan-detail.html?plan=%s", *params.Flags.APIBase, planID)
+
+	return SetupResult{HTTPClient: httpClient, PlanID: planID}, nil
 }
