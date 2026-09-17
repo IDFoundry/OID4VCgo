@@ -723,12 +723,15 @@ shape from the phase-by-phase plan, not a description of current code.
   Authorization Code Flow requirements with no override needed
   (`ProfileFAPISecurity` always uses PAR+PKCE; its `SenderConstrain`
   zero value is already DPoP; `client.RecommendedAlgorithms` already
-  picks ES256) — except HAIP §4.4.1's Wallet Attestation client
-  authentication: `storage.ClientAuthMethodAttestation` exists (added so
-  `fapigo/server` can verify one — see "Relationship to FAPIgo" above),
-  but `fapigo/client` has no logic of its own yet to construct or send
-  the Client Attestation + PoP JWT pair, so a HAIP-profile wallet must
-  use `ClientAuthMethodPrivateKeyJWT` until that lands upstream.
+  picks ES256), and HAIP §4.4.1's Wallet Attestation client
+  authentication is now supported too: `storage.ClientAuthMethodAttestation`
+  (added so `fapigo/server` can verify one — see "Relationship to
+  FAPIgo" above) is paired with `fapigo/client`'s own
+  `Dependencies.Attestation`/`Config.Algorithms.ClientAttestationPoP`,
+  which build and sign the Client Attestation + PoP JWT pair per
+  request. Proven end to end (a real `fapigo/client` wallet against a
+  real `fapigo/server` Authorization Server) by
+  `cmd/conformance-issuer`'s own `TestFullFlow_RealClientDrivesAttestationAuth`.
   `RequestDeferredCredential` polls the Deferred Credential Endpoint
   (§9.1/§9.2) via the same `ProtectedResourceClient` and access token
   as `RequestCredential`. Both share one result type, `CredentialResult`,

@@ -30,13 +30,18 @@ const maxTokenResponseBytes = 1 << 16
 
 // PreAuthorizedCodeTokenRequest is the input to
 // RequestPreAuthorizedCodeToken — the Pre-Authorized Code Flow's own
-// Token Request (§6.1). Client authentication isn't supported: §6.1
-// itself makes it OPTIONAL for this grant type ("authentication of the
+// Token Request (§6.1). Client authentication isn't implemented for
+// this flow: §6.1 itself makes it OPTIONAL ("authentication of the
 // Client is OPTIONAL ... the client_id parameter is only needed when a
 // form of Client Authentication that relies on this parameter is
-// used"), and the one mechanism HAIP would otherwise want here —
-// Wallet Attestation — isn't buildable yet; see the package doc
-// comment's own note on storage.ClientAuthMethodAttestation.
+// used"), and this grant type is entirely outside fapigo/client's own
+// scope to begin with (see the package doc comment's own note on
+// RequestPreAuthorizedCodeToken) — Wallet Attestation client auth is
+// supported for the Authorization Code Flow via fapigo/client, but
+// adding it here would mean this package reimplementing that
+// machinery itself for a grant fapigo/client has no primitive for,
+// which is exactly what this package's own architectural boundary
+// avoids.
 type PreAuthorizedCodeTokenRequest struct {
 	// PreAuthorizedCode is REQUIRED — a resolved Credential Offer's own
 	// Grants.PreAuthorizedCode.PreAuthorizedCode.
