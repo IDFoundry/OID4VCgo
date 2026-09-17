@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.2.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.1.0...v0.2.0) (2026-09-17)
+
+
+### Features
+
+* **conformance-verifier:** add mso_mdoc DCQL query support, close the iso_mdl certification gap ([8f4f432](https://github.com/IDFoundry/OID4VCgo/commit/8f4f432a6e64e5d77a0d419ab9a87f080924bb27))
+* **conformance-verifier:** add run-sdjwt-modules, closing the last "driven by hand" gap ([844c961](https://github.com/IDFoundry/OID4VCgo/commit/844c9614dd5b1779f1ccd1626ad84a2eb5bc955d))
+* **conformance-wallet-vp:** add run-modules, closing 13 of 14 driven-by-hand modules ([e33dffd](https://github.com/IDFoundry/OID4VCgo/commit/e33dffdd93dadac3eeb8fa519c52a31374726ddb))
+* **conformance:** add run-all.sh, one command for every conformance run ([d64906f](https://github.com/IDFoundry/OID4VCgo/commit/d64906fcb5d7df4e1748de7c6d1a615bc1c8bc34))
+* **conformance:** automate Notification Endpoint HAIP coverage, clarify Deferred Credential Endpoint ([5d75d14](https://github.com/IDFoundry/OID4VCgo/commit/5d75d1463062443c13d4312971a3ffa85efce3ce))
+* **issuer:** add SignMetadataJWS/MetadataHandler, promoted from conformance-issuer ([3a4f64e](https://github.com/IDFoundry/OID4VCgo/commit/3a4f64efe62be67d185122f9c6a0c607bfece71b))
+* **issuer:** add SignMetadataJWS/MetadataHandler, promoted from conformance-issuer ([35ddf4b](https://github.com/IDFoundry/OID4VCgo/commit/35ddf4beb3e386555013e5168e93ea60226e86e8))
+* **issuer:** add WriteError, promoted from conformance-issuer ([8de6ada](https://github.com/IDFoundry/OID4VCgo/commit/8de6adab6a5e220aacacc6f3dbb02a13aeed7fcc))
+* **issuer:** add WriteError, promoted from conformance-issuer ([27d8a77](https://github.com/IDFoundry/OID4VCgo/commit/27d8a77da336eda34f7c719577caa34d599bf133))
+* **oid4vci,wallet:** move Credential Issuer Metadata to oid4vci, add wallet fetch ([5a3ccca](https://github.com/IDFoundry/OID4VCgo/commit/5a3ccca0b44ab0111e0ab4e850920708f4a31215))
+* **oid4vci,wallet:** move Credential Issuer Metadata to oid4vci, add wallet fetch ([f926e3d](https://github.com/IDFoundry/OID4VCgo/commit/f926e3d441715ee7a7b3faae84b4c231499e3bc8))
+* **wallet:** add OID4VP request/response support, promoted from conformance-wallet-vp ([8ece88f](https://github.com/IDFoundry/OID4VCgo/commit/8ece88fb7e0cd26570ac04edbf7cf75a67e0d80e))
+* **wallet:** add OID4VP request/response support, promoted from conformance-wallet-vp ([b39bf37](https://github.com/IDFoundry/OID4VCgo/commit/b39bf37fa9df48d97b71a274516c6692efbb56d4))
+
+
+### Bug Fixes
+
+* extract Flags/Setup into conformanceverifier, closing remaining duplication ([4e84eb5](https://github.com/IDFoundry/OID4VCgo/commit/4e84eb518c7d640d5930b129cc7d9dfeee9d13b4))
+* extract internal/conformanceverifier, eliminating duplication between the two driver scripts ([3eb7084](https://github.com/IDFoundry/OID4VCgo/commit/3eb70847cfdea11d82717ca8ad33070ff11460f5))
+* suppress another gosec G101 false positive after the Setup refactor ([9dc4e49](https://github.com/IDFoundry/OID4VCgo/commit/9dc4e49d8a9216929c96cdbda7e025c765bd07f3))
+
 ## 0.1.0 (2026-09-17)
 
 
