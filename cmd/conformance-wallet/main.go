@@ -37,6 +37,9 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/idfoundry/oid4vcigo"
+	"github.com/idfoundry/oid4vcigo/wallet"
 )
 
 // inScopeModules is this run's own testName -> credential count map —
@@ -91,27 +94,61 @@ var inScopeCrossings = []issuanceCrossing{
 	{issuanceMode: "immediate", encryption: "encrypted"},
 }
 
+// runConfig bundles every flag main() parses — introduced once the
+// flag list grew past a handful of positional parameters (adding the
+// issuer_initiated flow variant's own listener settings).
+type runConfig struct {
+	apiBase                   string
+	credentialConfigurationID string
+	scope                     string
+	proofType                 proofStrategy
+
+	// issuerInitiated selects the HAIP plan's issuer_initiated flow
+	// variant (vci_authorization_code_flow_variant) instead of the
+	// default wallet_initiated one — see credentialoffer.go's own doc
+	// comment for what this actually changes about the driven flow (and
+	// why, despite the name, this binary never needs to actually
+	// receive an inbound request for it). issuer_initiated_dc_api isn't
+	// covered: it needs real Digital Credentials API browser-JS
+	// interaction, the same scope cut this repo's own
+	// cmd/conformance-wallet-vp already makes for its own dc_api.jwt
+	// module lists.
+	issuerInitiated bool
+
+	// credentialOfferEndpoint becomes this run's own
+	// vci.credential_offer_endpoint config value (plus
+	// credentialOfferPath) — an OID4VCI Credential Offer's own
+	// "how a real wallet would be reached" detail, but per
+	// credentialoffer.go's own doc comment this binary never needs it
+	// to be reachable at all, so the default is a plausible-looking but
+	// entirely inert placeholder. Only used when issuerInitiated is set.
+	credentialOfferEndpoint string
+}
+
 func main() {
-	apiBase := flag.String("suite", "https://localhost:8443/", "OIDF conformance suite base URL")
+	var cfg runConfig
+	flag.StringVar(&cfg.apiBase, "suite", "https://localhost:8443/", "OIDF conformance suite base URL")
 	// eu.europa.ec.eudi.pid.1/eudi.pid.1 are the suite's own fixed
 	// jwt-proof-type fixture credential configuration id/scope
 	// (confirmed live from a created module's own credential issuer
 	// metadata — not an arbitrary tester-chosen name).
-	credentialConfigurationID := flag.String("credential-configuration-id", "eu.europa.ec.eudi.pid.1", "credential_configuration_id to request — must match one the suite's own emulated Credential Issuer actually publishes")
-	scope := flag.String("scope", "eudi.pid.1", "scope to request — must match the credential configuration's own \"scope\" value in the suite's emulated Credential Issuer metadata")
+	flag.StringVar(&cfg.credentialConfigurationID, "credential-configuration-id", "eu.europa.ec.eudi.pid.1", "credential_configuration_id to request — must match one the suite's own emulated Credential Issuer actually publishes")
+	flag.StringVar(&cfg.scope, "scope", "eudi.pid.1", "scope to request — must match the credential configuration's own \"scope\" value in the suite's emulated Credential Issuer metadata")
 	proofTypeFlag := flag.String("proof-type", string(proofStrategyJWT), "Credential Request proof strategy: \"jwt\" (default, jwk-conveyed jwt-type proof), \"attestation\" (standalone Key Attestation JWT, Appendix F.3 / HAIP §4.5.1 — requires -credential-configuration-id eu.europa.ec.eudi.pid.1.attestation -scope eudi.pid.1.attestation), or \"jwt-key-attestation\" (jwt-type proof with a nested Key Attestation JWT header, Appendix D.1 — requires -credential-configuration-id eu.europa.ec.eudi.pid.1.jwt.keyattest -scope eudi.pid.1.jwt.keyattest)")
+	flag.BoolVar(&cfg.issuerInitiated, "issuer-initiated", false, "drive the HAIP plan's issuer_initiated flow variant instead of the default wallet_initiated one — the suite hands this binary a Credential Offer to resolve instead of this binary calling /authorize directly")
+	flag.StringVar(&cfg.credentialOfferEndpoint, "credential-offer-endpoint", "https://oid4vcigo-wallet.example.com", "base URL for this run's own vci.credential_offer_endpoint config value (only used with -issuer-initiated) — never actually dereferenced by this binary or, in practice, by the suite either (see credentialoffer.go), so the default is an inert placeholder")
 	dumpConfig := flag.Bool("dump-config", false, "print the generated suite-side plan configuration JSON and exit, instead of creating a plan — useful for probing the suite's own POST /api/plan validation by hand")
 	flag.Parse()
 
-	proofType := proofStrategy(*proofTypeFlag)
-	switch proofType {
+	cfg.proofType = proofStrategy(*proofTypeFlag)
+	switch cfg.proofType {
 	case proofStrategyJWT, proofStrategyAttestation, proofStrategyJWTKeyAttestation:
 	default:
 		log.Fatalf("invalid -proof-type %q: want jwt, attestation, or jwt-key-attestation", *proofTypeFlag)
 	}
 
 	if *dumpConfig {
-		walletRun, err := newWalletRun(*apiBase, *credentialConfigurationID, *scope, proofType)
+		walletRun, err := newWalletRun(cfg)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -122,7 +159,7 @@ func main() {
 		return
 	}
 
-	if err := run(*apiBase, *credentialConfigurationID, *scope, proofType); err != nil {
+	if err := run(cfg); err != nil {
 		log.Fatal(err)
 	}
 }
@@ -135,22 +172,33 @@ func insecureSuiteHTTPClient() *http.Client {
 	}
 }
 
-func run(apiBase, credentialConfigurationID, scope string, proofType proofStrategy) error {
+func run(cfg runConfig) error {
 	ctx := context.Background()
 	httpClient := insecureSuiteHTTPClient()
 
-	walletRun, err := newWalletRun(apiBase, credentialConfigurationID, scope, proofType)
+	walletRun, err := newWalletRun(cfg)
 	if err != nil {
 		return err
 	}
 
-	planID, modules, err := createPlan(httpClient, apiBase, "oid4vci-1_0-wallet-haip-test-plan",
-		map[string]string{"credential_format": "sd_jwt_vc"}, walletRun.planConfig) //nolint:gosec // false positive: a suite variant selector value, not a credential
+	var offerWallet *wallet.Wallet
+	if cfg.issuerInitiated {
+		offerWallet, err = newWallet(httpClient)
+		if err != nil {
+			return fmt.Errorf("build credential offer wallet: %w", err)
+		}
+	}
+
+	planVariant := map[string]string{"credential_format": "sd_jwt_vc"} //nolint:gosec // false positive: a suite variant selector value, not a credential
+	if cfg.issuerInitiated {
+		planVariant["vci_authorization_code_flow_variant"] = "issuer_initiated"
+	}
+	planID, modules, err := createPlan(httpClient, cfg.apiBase, "oid4vci-1_0-wallet-haip-test-plan", planVariant, walletRun.planConfig)
 	if err != nil {
 		return err
 	}
 	log.Printf("created plan %s (alias %s), %d module instances enumerated", planID, walletRun.alias, len(modules))
-	log.Printf("plan detail: %splan-detail.html?plan=%s", apiBase, planID)
+	log.Printf("plan detail: %splan-detail.html?plan=%s", cfg.apiBase, planID)
 
 	summary := make(map[string]string)
 	for _, m := range modules {
@@ -170,7 +218,7 @@ func run(apiBase, credentialConfigurationID, scope string, proofType proofStrate
 			continue
 		}
 		log.Printf("--- %s ---", key)
-		outcome := runModule(ctx, httpClient, apiBase, planID, m.TestModule, m.Variant, numCreds, crossing.encryption == "encrypted", walletRun)
+		outcome := runModule(ctx, httpClient, cfg.apiBase, planID, m.TestModule, m.Variant, numCreds, crossing.encryption == "encrypted", walletRun, offerWallet)
 		summary[key] = outcome
 		log.Printf("%s: %s", key, outcome)
 	}
@@ -221,17 +269,42 @@ func matchCrossing(testName string, variant map[string]string) (issuanceCrossing
 // runModule creates one module instance, drives it via driveModule,
 // and returns the suite's own graded verdict — the only thing that
 // actually determines PASS/FAIL, per driveModule's own doc comment.
-func runModule(ctx context.Context, httpClient *http.Client, apiBase, planID, testName string, variant map[string]string, numCreds int, encrypted bool, walletRun *walletRun) string {
+// offerWallet is non-nil only for the issuer_initiated flow variant —
+// see credentialoffer.go's own doc comment for why the offer has to
+// be captured here, before waitUntilWaiting, rather than inside
+// driveModule alongside everything else it drives.
+func runModule(ctx context.Context, httpClient *http.Client, apiBase, planID, testName string, variant map[string]string, numCreds int, encrypted bool, walletRun *walletRun, offerWallet *wallet.Wallet) string {
 	module, err := createModuleInstance(httpClient, apiBase, planID, testName, variant)
 	if err != nil {
 		return "ERROR: create module instance: " + err.Error()
 	}
+
+	var offer *oid4vci.CredentialOffer
+	// The FAPI2SP battery modules extend AbstractTestModule directly,
+	// not AbstractVCIWalletTest — they have no prepareCredentialOffer()
+	// step at all and never log a credential offer redirect url
+	// regardless of vci_authorization_code_flow_variant, so waiting for
+	// one here would just time out every time. They behave identically
+	// under both flow variants; only the 4 VCIWalletTest* modules
+	// actually branch on it.
+	if offerWallet != nil && !strings.HasPrefix(testName, batteryModulePrefix) {
+		offerURL, offerErr := waitForCredentialOfferRedirectURL(httpClient, apiBase, module.ID, 10*time.Second)
+		if offerErr != nil {
+			return "ERROR: wait for credential offer: " + offerErr.Error()
+		}
+		resolved, offerErr := offerWallet.ResolveCredentialOffer(ctx, offerURL)
+		if offerErr != nil {
+			return "ERROR: resolve credential offer: " + offerErr.Error()
+		}
+		offer = &resolved
+	}
+
 	if err := waitUntilWaiting(httpClient, apiBase, module.ID, 10*time.Second); err != nil {
 		return "ERROR: wait for module ready: " + err.Error()
 	}
 
 	driverErr := ""
-	if err := driveModule(ctx, walletRun, module, testName, httpClient, numCreds, encrypted); err != nil {
+	if err := driveModule(ctx, walletRun, module, testName, httpClient, numCreds, encrypted, offer); err != nil {
 		driverErr = err.Error()
 	}
 

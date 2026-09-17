@@ -16,6 +16,7 @@ import (
 
 	fapi "github.com/idfoundry/fapigo"
 	"github.com/idfoundry/fapigo/client"
+	"github.com/idfoundry/fapigo/extension"
 	"github.com/idfoundry/fapigo/fapihttp"
 	"github.com/idfoundry/fapigo/keys"
 	"github.com/idfoundry/fapigo/keys/ephemeral"
@@ -415,13 +416,47 @@ func pollDeferredCredential(ctx context.Context, w *wallet.Wallet, resource wall
 	return wallet.CredentialResult{}, fmt.Errorf("deferred credential still pending after %d attempts", maxDeferredPollAttempts)
 }
 
-func driveModule(ctx context.Context, run *walletRun, module suiteModule, testName string, httpClient *http.Client, numCreds int, encrypted bool) error {
+// issuerStateExtension is OID4VCI §5.1.3's own "issuer_state"
+// authorization/PAR parameter — a Wallet echoes back whatever the
+// Credential Offer's own grants.authorization_code.issuer_state
+// carried, when present. No server-side registration is needed to
+// send it (extension.Set is purely a client-side, self-describing
+// encode — see FAPIgo PR #304's own "ignore unrecognized authorization
+// request parameters" fix on the suite's own AS side), and since this
+// binary always runs FAPI2AuthRequestMethod=unsigned, a bare string
+// value here always goes out as a plain top-level PAR parameter
+// (BeginAuthorizationRequest.Extensions' own doc comment).
+var issuerStateExtension = extension.Definition[string]{
+	Name:           "issuer_state",
+	Cardinality:    extension.Single,
+	AllowedSources: extension.SourcePlainParameter,
+	MaxBytes:       2048,
+}
+
+// driveModule drives one module instance through the full flow this
+// binary's own scope covers. offer is non-nil only for the
+// issuer_initiated flow variant (already resolved by runModule, since
+// it has to be captured before this module even reaches WAITING — see
+// credentialoffer.go) — when set, its own issuer_state (if any) is
+// echoed back on the PAR request (OID4VCI §5.1.3) and its own
+// credential_configuration_ids[0] is used in place of
+// run.credentialConfigurationID, matching what a spec-faithful wallet
+// actually resolves the offer for.
+func driveModule(ctx context.Context, run *walletRun, module suiteModule, testName string, httpClient *http.Client, numCreds int, encrypted bool, offer *oid4vci.CredentialOffer) error {
 	c, err := buildClient(ctx, run, module, testName, httpClient)
 	if err != nil {
 		return fmt.Errorf("build client: %w", err)
 	}
 
-	session, err := c.BeginAuthorization(ctx, client.BeginAuthorizationRequest{Scope: []string{run.scope}})
+	beginReq := client.BeginAuthorizationRequest{Scope: []string{run.scope}}
+	if offer != nil && offer.Grants != nil && offer.Grants.AuthorizationCode != nil {
+		if issuerState := offer.Grants.AuthorizationCode.IssuerState; issuerState != "" {
+			if err := extension.Set(&beginReq.Extensions, issuerStateExtension, issuerState); err != nil {
+				return fmt.Errorf("set issuer_state extension: %w", err)
+			}
+		}
+	}
+	session, err := c.BeginAuthorization(ctx, beginReq)
 	if err != nil {
 		return fmt.Errorf("begin authorization: %w", err)
 	}
@@ -460,8 +495,12 @@ func driveModule(ctx context.Context, run *walletRun, module suiteModule, testNa
 	if err != nil {
 		return fmt.Errorf("parse credential endpoint: %w", err)
 	}
+	credentialConfigurationID := run.credentialConfigurationID
+	if offer != nil && len(offer.CredentialConfigurationIDs) > 0 {
+		credentialConfigurationID = offer.CredentialConfigurationIDs[0]
+	}
 	credRequest := wallet.CredentialRequest{
-		CredentialConfigurationID: run.credentialConfigurationID,
+		CredentialConfigurationID: credentialConfigurationID,
 		// The trailing slash matters: it must match the Credential
 		// Issuer Identifier exactly as the suite's own metadata
 		// publishes it (confirmed live: "credential_issuer":

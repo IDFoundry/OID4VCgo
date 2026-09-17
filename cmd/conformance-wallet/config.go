@@ -61,21 +61,21 @@ type walletRun struct {
 
 // newWalletRun generates a fresh alias/client ID/key material and
 // builds the suite-side plan configuration JSON for one run.
-// credentialConfigurationID and scope are the suite's own fixed values
-// for its fixture "eu.europa.ec.eudi.pid.1" jwt-proof-type credential
-// configuration (confirmed live via a created module's own
+// cfg.credentialConfigurationID/cfg.scope are the suite's own fixed
+// values for its fixture "eu.europa.ec.eudi.pid.1" jwt-proof-type
+// credential configuration (confirmed live via a created module's own
 // "Created credential issuer metadata" log entry — the suite's
 // emulated Credential Issuer defines a small fixed set of
 // credential_configuration_id/scope pairs, not an arbitrary
 // tester-chosen name).
-func newWalletRun(apiBase, credentialConfigurationID, scope string, proofType proofStrategy) (*walletRun, error) {
+func newWalletRun(cfg runConfig) (*walletRun, error) {
 	suffix, err := randomHex(4)
 	if err != nil {
 		return nil, fmt.Errorf("generate run suffix: %w", err)
 	}
 	alias := "oid4vcigo-wallet-" + suffix
 	clientID := "oid4vcigo-wallet-client-" + suffix
-	redirectURI := apiBase + "test/a/" + alias + "/callback"
+	redirectURI := cfg.apiBase + "test/a/" + alias + "/callback"
 
 	attesterKey, _, attesterLeafPEM, attesterCAPEM, err := conformancecert.GenerateSignerAndCert(
 		"oid4vcigo-wallet-attester-leaf", "oid4vcigo-wallet-attester-ca")
@@ -129,7 +129,7 @@ func newWalletRun(apiBase, credentialConfigurationID, scope string, proofType pr
 		},
 		"client": map[string]any{
 			"client_id":    clientID,
-			"scope":        scope,
+			"scope":        cfg.scope,
 			"redirect_uri": redirectURI,
 		},
 		"client_attestation": map[string]any{
@@ -150,9 +150,7 @@ func newWalletRun(apiBase, credentialConfigurationID, scope string, proofType pr
 		"credential": map[string]any{
 			"signing_jwk": credentialSigningJWK,
 		},
-		"vci": map[string]any{
-			"credential_configuration_id": credentialConfigurationID,
-		},
+		"vci": vciConfig(cfg),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("marshal plan config: %w", err)
@@ -160,12 +158,26 @@ func newWalletRun(apiBase, credentialConfigurationID, scope string, proofType pr
 
 	return &walletRun{
 		alias: alias, clientID: clientID, redirectURI: redirectURI,
-		scope: scope, credentialConfigurationID: credentialConfigurationID,
+		scope: cfg.scope, credentialConfigurationID: cfg.credentialConfigurationID,
 		attesterKey: attesterKey, attesterCAPEM: attesterCAPEM, attesterLeafPEM: attesterLeafPEM,
 		keyAttestationKey: keyAttestationKey, keyAttestationLeafPEM: keyAttestationLeafPEM,
-		proofType:  proofType,
+		proofType:  cfg.proofType,
 		planConfig: planConfig,
 	}, nil
+}
+
+// vciConfig builds the plan config's own "vci" object — just
+// credential_configuration_id for wallet_initiated, plus
+// credential_offer_endpoint for issuer_initiated
+// (@VariantHidesConfigurationFields in AbstractVCIWalletTest.java
+// hides that field entirely for wallet_initiated, so it's only
+// included when actually needed).
+func vciConfig(cfg runConfig) map[string]any {
+	vci := map[string]any{"credential_configuration_id": cfg.credentialConfigurationID}
+	if cfg.issuerInitiated {
+		vci["credential_offer_endpoint"] = cfg.credentialOfferEndpoint + credentialOfferPath
+	}
+	return vci
 }
 
 // privateJWKWithX5C builds the suite's own "credential.signing_jwk"
