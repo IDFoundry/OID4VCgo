@@ -4,14 +4,11 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
-	"crypto/tls"
 	"encoding/base64"
-	"net/http"
 	"testing"
 	"time"
 
 	"github.com/idfoundry/oid4vcigo/credential/mdoc"
-	"github.com/idfoundry/oid4vcigo/internal/conformancecert"
 	"github.com/idfoundry/oid4vcigo/internal/conformanceconfig"
 	"github.com/idfoundry/oid4vcigo/internal/cose"
 )
@@ -124,37 +121,4 @@ func TestFullFlow_MdocCredentialIssuance(t *testing.T) {
 	if !deviceKeyECDSA.Equal(&holderKey.PublicKey) {
 		t.Error("verified DeviceKey does not match the proof's own holder key")
 	}
-}
-
-// setupFullFlowTestWithConfig is setupFullFlowTest's own logic, taking
-// a caller-built base (e.g. mdocTestConfig's own Config.Mdoc-carrying
-// one) instead of always starting from baseTestConfig — every other
-// full-flow test in this package still goes through setupFullFlowTest
-// itself, unchanged.
-func setupFullFlowTestWithConfig(t *testing.T, cfg Config, clientID, defaultSubject string) (client *http.Client, cfgOut Config, attesterKey, clientKey *ecdsa.PrivateKey) {
-	t.Helper()
-	client = &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}} //nolint:gosec // test-only, talks to this test's own throwaway TLS listener
-
-	var err error
-	attesterKey, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatalf("generate attester key: %v", err)
-	}
-	clientKey, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatalf("generate client instance key: %v", err)
-	}
-	attesterJWKS, err := conformancecert.JWKSet(&attesterKey.PublicKey, "attester-1")
-	if err != nil {
-		t.Fatalf("JWKSet: %v", err)
-	}
-
-	cfg.Client.ID = clientID
-	cfg.Client.RedirectURIs = []string{"https://client.example.com/callback"}
-	cfg.Client.ExpectedAttesterIssuer = "https://attester.example.com"
-	cfg.Client.AttesterJWKS = attesterJWKS
-	cfg.DefaultSubject = defaultSubject
-
-	startTestIssuerServer(t, &cfg)
-	return client, cfg, attesterKey, clientKey
 }
