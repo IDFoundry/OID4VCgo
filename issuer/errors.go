@@ -2,6 +2,7 @@ package issuer
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 )
@@ -138,4 +139,22 @@ func (e *Error) WriteJSON(w http.ResponseWriter) {
 		Error            string `json:"error"`
 		ErrorDescription string `json:"error_description,omitempty"`
 	}{Error: string(e.code), ErrorDescription: e.description})
+}
+
+// WriteError writes err to w: err's own WriteJSON if err is a *Error
+// (as every error this package's own Request* methods return for a
+// failure they can attribute to the request itself is), or a generic
+// 500 otherwise — the one case this package can't itself produce a
+// *Error for, e.g. an unexpected error from a Dependencies
+// collaborator (see Error's own doc comment). Saves every HTTP adapter
+// from reimplementing this same errors.As-or-fallback dance itself —
+// mirrors fapigo/resource.WriteError's identical role on the resource-
+// server side.
+func WriteError(w http.ResponseWriter, err error) {
+	var issErr *Error
+	if errors.As(err, &issErr) {
+		issErr.WriteJSON(w)
+		return
+	}
+	http.Error(w, "server_error", http.StatusInternalServerError)
 }

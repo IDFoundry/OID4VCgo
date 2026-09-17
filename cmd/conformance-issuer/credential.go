@@ -5,7 +5,6 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -273,7 +272,7 @@ func serveCredentialRequest(w http.ResponseWriter, r *http.Request, deps credent
 	}
 	plaintext, wasEncrypted, err := deps.iss.DecryptRequestBody(body, r.Header.Get("Content-Type"))
 	if err != nil {
-		writeIssuerError(w, err)
+		issuer.WriteError(w, err)
 		return
 	}
 	var wire wireCredentialRequest
@@ -305,7 +304,7 @@ func serveCredentialRequest(w http.ResponseWriter, r *http.Request, deps credent
 		ResponseEncryption:        responseEncryption,
 	})
 	if err != nil {
-		writeIssuerError(w, err)
+		issuer.WriteError(w, err)
 		return
 	}
 	resultJSON, err := json.Marshal(result)
@@ -315,22 +314,9 @@ func serveCredentialRequest(w http.ResponseWriter, r *http.Request, deps credent
 	}
 	encoded, contentType, err := deps.iss.EncryptResponseBody(resultJSON, responseEncryption)
 	if err != nil {
-		writeIssuerError(w, err)
+		issuer.WriteError(w, err)
 		return
 	}
 	w.Header().Set("Content-Type", contentType)
 	_, _ = w.Write(encoded)
-}
-
-// writeIssuerError writes err as a Credential Endpoint error response
-// (*issuer.Error's own WriteJSON) when it is one, or a generic 500
-// otherwise — matches fapires.WriteError's own fallback shape, since
-// issuer has no equivalent top-level helper of its own.
-func writeIssuerError(w http.ResponseWriter, err error) {
-	var issErr *issuer.Error
-	if errors.As(err, &issErr) {
-		issErr.WriteJSON(w)
-		return
-	}
-	http.Error(w, "server_error", http.StatusInternalServerError)
 }
