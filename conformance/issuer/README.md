@@ -95,13 +95,29 @@ alongside it:
   internally rather than trusting the incoming request's URL at all.
 
 **Deliberately out of scope for this first pass** (see the suite's own
-module list for what each would additionally cover): the Deferred
-Credential Endpoint, the Notification Endpoint, request/response
+module list for what each would additionally cover): request/response
 encryption (§10), `mso_mdoc` format, `client2`
 (PS256/RSA-negative-test un-skipping), and CIBA/client_credentials/
 Grant Management modules the base `FAPI2SPFinalTestPlan` module list
 carries but this specific HAIP variant selection may not actually
-exercise.
+exercise. All of these were later closed — see the "Update:" notes
+below.
+
+**Notification Endpoint and Deferred Credential Endpoint, resolved
+differently**: the Notification Endpoint has real suite coverage —
+`oid4vci-1_0-issuer-happy-flow-skip-notification` — confirmed live
+under `fapi_profile=vci_haip` specifically (not just the base,
+non-HAIP profile it was first driven under) via
+`run-fapi2sp-battery`'s own `haipBattery` list. The Deferred Credential
+Endpoint has **no dedicated suite module for the Issuer role at all** —
+confirmed directly against the suite's own `/api/runner/available`
+(all 21 `oid4vci-1_0-issuer-*` module names, and every variant
+dimension on `happy-flow`, checked): this test plan only exercises
+deferred/notification behavior from the Wallet side (see
+`wallet/README.md`'s own `[deferred+plain]` crossing coverage), not by
+testing this binary's own Deferred Credential Endpoint independently.
+This isn't a gap to close — it's a limit of what this particular suite
+plan tests for this role.
 
 ## Status: live run against the real OIDF suite
 

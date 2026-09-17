@@ -63,6 +63,54 @@ func TestLoadConfig_RejectsMissingRequiredFields(t *testing.T) {
 	}
 }
 
+func mdocTestConfig(t *testing.T) Config {
+	t.Helper()
+	cfg := baseTestConfig(t)
+	cfg.CredentialFormat = "mso_mdoc"
+	cfg.VCT = ""
+	cfg.Claims = nil
+	cfg.Doctype = "org.iso.18013.5.1.mDL"
+	cfg.Namespace = "org.iso.18013.5.1"
+	cfg.MdocClaims = []string{"given_name", "family_name"}
+	return cfg
+}
+
+func TestLoadConfig_MdocRoundTrips(t *testing.T) {
+	cfg := mdocTestConfig(t)
+	got, err := loadConfig(conformancecert.WriteJSONConfig(t, cfg))
+	if err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+	if got.CredentialFormat != "mso_mdoc" || got.Doctype != cfg.Doctype || got.Namespace != cfg.Namespace {
+		t.Fatalf("loadConfig round-trip mismatch: got %+v", got)
+	}
+}
+
+func TestLoadConfig_RejectsMissingMdocFields(t *testing.T) {
+	cases := map[string]func(*Config){
+		"doctype":     func(c *Config) { c.Doctype = "" },
+		"namespace":   func(c *Config) { c.Namespace = "" },
+		"mdoc_claims": func(c *Config) { c.MdocClaims = nil },
+	}
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			cfg := mdocTestConfig(t)
+			mutate(&cfg)
+			if _, err := loadConfig(conformancecert.WriteJSONConfig(t, cfg)); err == nil {
+				t.Fatalf("loadConfig = nil error, want error for missing %s", name)
+			}
+		})
+	}
+}
+
+func TestLoadConfig_RejectsUnsupportedCredentialFormat(t *testing.T) {
+	cfg := baseTestConfig(t)
+	cfg.CredentialFormat = "jwt_vc_json"
+	if _, err := loadConfig(conformancecert.WriteJSONConfig(t, cfg)); err == nil {
+		t.Fatal("loadConfig = nil error, want error for unsupported credential_format")
+	}
+}
+
 func TestConfig_ClientCertificateAndKey(t *testing.T) {
 	cfg := baseTestConfig(t)
 	cert, key, err := cfg.clientCertificateAndKey()

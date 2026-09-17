@@ -52,13 +52,32 @@ type Config struct {
 	// resolution. REQUIRED.
 	CredentialIssuerJWK json.RawMessage `json:"credential_issuer_jwk"`
 
-	// VCT/Claims describe the DCQL query this binary asks for: the
-	// suite's own emulated Credential Issuer defaults to
+	// CredentialFormat selects which DCQL Credential Format buildQuery
+	// asks for — "dc+sd-jwt" (the default, when empty) or "mso_mdoc".
+	// Only one query is ever built; this binary's job is exercising
+	// VerifyResponse's own core verification path for each format, not
+	// every DCQL selection permutation in one run.
+	CredentialFormat string `json:"credential_format"`
+
+	// VCT/Claims describe the "dc+sd-jwt" DCQL query this binary asks
+	// for: the suite's own emulated Credential Issuer defaults to
 	// "urn:eudi:pid:1" with claims including given_name/family_name/
 	// birthdate/... (see AbstractCreateSdJwtCredential's own source)
-	// — Claims should name a subset of those.
+	// — Claims should name a subset of those. REQUIRED when
+	// CredentialFormat is "dc+sd-jwt" (or empty); ignored otherwise.
 	VCT    string   `json:"vct"`
 	Claims []string `json:"claims"`
+
+	// Doctype/Namespace/MdocClaims describe the "mso_mdoc" DCQL query
+	// this binary asks for instead, when CredentialFormat is
+	// "mso_mdoc" — the suite's own emulated mDL Credential Issuer for
+	// this test plan defaults to the standard ISO/IEC 18013-5 mDL
+	// doctype/namespace ("org.iso.18013.5.1.mDL"/"org.iso.18013.5.1"),
+	// with data elements including given_name/family_name/... .
+	// REQUIRED when CredentialFormat is "mso_mdoc"; ignored otherwise.
+	Doctype    string   `json:"doctype"`
+	Namespace  string   `json:"namespace"`
+	MdocClaims []string `json:"mdoc_claims"`
 }
 
 func loadConfig(path string) (Config, error) {
@@ -79,11 +98,26 @@ func loadConfig(path string) (Config, error) {
 	if len(cfg.CredentialIssuerJWK) == 0 || string(cfg.CredentialIssuerJWK) == "null" {
 		return Config{}, fmt.Errorf("config: credential_issuer_jwk is required")
 	}
-	if cfg.VCT == "" {
-		return Config{}, fmt.Errorf("config: vct is required")
-	}
-	if len(cfg.Claims) == 0 {
-		return Config{}, fmt.Errorf("config: claims must be non-empty")
+	switch cfg.CredentialFormat {
+	case "", "dc+sd-jwt":
+		if cfg.VCT == "" {
+			return Config{}, fmt.Errorf("config: vct is required")
+		}
+		if len(cfg.Claims) == 0 {
+			return Config{}, fmt.Errorf("config: claims must be non-empty")
+		}
+	case "mso_mdoc":
+		if cfg.Doctype == "" {
+			return Config{}, fmt.Errorf("config: doctype is required")
+		}
+		if cfg.Namespace == "" {
+			return Config{}, fmt.Errorf("config: namespace is required")
+		}
+		if len(cfg.MdocClaims) == 0 {
+			return Config{}, fmt.Errorf("config: mdoc_claims must be non-empty")
+		}
+	default:
+		return Config{}, fmt.Errorf("config: unsupported credential_format %q", cfg.CredentialFormat)
 	}
 	return cfg, nil
 }

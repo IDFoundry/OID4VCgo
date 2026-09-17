@@ -53,12 +53,7 @@ func main() {
 		ResponseURI:        responseURI,
 		SigningAlg:         jose.ES256,
 		EncValuesSupported: []jwe.Enc{jwe.A128GCM, jwe.A256GCM},
-		VPFormatsSupported: map[string]any{
-			"dc+sd-jwt": map[string]any{
-				"sd-jwt_alg_values": []string{"ES256"},
-				"kb-jwt_alg_values": []string{"ES256"},
-			},
-		},
+		VPFormatsSupported: vpFormatsSupported(cfg.CredentialFormat),
 	}, verifier.Dependencies{
 		Signer: clientKey,
 		Random: rand.Reader,
@@ -89,4 +84,28 @@ func main() {
 	}
 	log.Printf("listening on %s", cfg.ListenAddr)
 	log.Fatal(httpServer.ListenAndServeTLS("", ""))
+}
+
+// vpFormatsSupported builds this Verifier's own "client_metadata" >
+// "vp_formats_supported" (OID4VP §5.1) for whichever one format
+// credentialFormat selects — matching buildQuery's own one-format-
+// per-run scope, not advertising a format this session's DCQL query
+// never actually asks for.
+func vpFormatsSupported(credentialFormat string) map[string]any {
+	if credentialFormat == "mso_mdoc" {
+		// Unlike "dc+sd-jwt" (whose sd-jwt_alg_values/kb-jwt_alg_values
+		// this binary's own JOSE-signed query genuinely constrains),
+		// no established convention for "mso_mdoc"'s own inner
+		// vp_formats_supported shape is verified against this suite —
+		// left empty rather than guessing unverified field names; the
+		// suite's own compatibility check is expected to key on the
+		// "mso_mdoc" member's presence, not its contents.
+		return map[string]any{"mso_mdoc": map[string]any{}}
+	}
+	return map[string]any{
+		"dc+sd-jwt": map[string]any{
+			"sd-jwt_alg_values": []string{"ES256"},
+			"kb-jwt_alg_values": []string{"ES256"},
+		},
+	}
 }
