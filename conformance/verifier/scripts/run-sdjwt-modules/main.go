@@ -58,7 +58,7 @@ func main() {
 	flags := conformanceverifier.DefineFlags("oid4vcgo-verifier-sdjwt")
 	flag.Parse()
 
-	setup, err := conformanceverifier.Setup(conformanceverifier.SetupParams{
+	setup, err := conformanceverifier.Setup(conformanceverifier.SetupParams{ //nolint:gosec // false positive: PlanCredentialFormat is a suite variant selector value, not a credential
 		Flags:                flags,
 		ClientCN:             "conformance-verifier-sdjwt-client",
 		ClientCACN:           "conformance-verifier-sdjwt-client-ca",
