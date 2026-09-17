@@ -160,6 +160,56 @@ func TestResponseEncryptionRoundTrip(t *testing.T) {
 	}
 }
 
+// TestResponseEncryptionJWKDeclaresAlg confirms the ephemeral public
+// key prepareResponseEncryption sends as "credential_response_encryption.jwk"
+// declares its own "alg" — required by §8.2's own "jwk" member
+// ("MUST identify the encryption algorithm expected to be used") and
+// enforced live by the OIDF conformance suite's own
+// invalid_encryption_parameters check ("credential_response_encryption
+// must identify the encryption algorithm via 'jwk.alg'"), confirmed
+// against a real oid4vci-1_0-wallet-test-credential-issuance module.
+// This package only ever performs ECDH-ES Direct Key Agreement
+// (internal/jwe's sole supported Alg), so "ECDH-ES" is the only value
+// that could ever be correct here.
+func TestResponseEncryptionJWKDeclaresAlg(t *testing.T) {
+	for name, call := range credentialCallers() {
+		t.Run(name, func(t *testing.T) {
+			w, err := wallet.New(validConfig(), validDependencies())
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+			reqRecipientKey := testP256Key(t)
+			resource := &fakeProtectedResourceClient{}
+			resource.do = simulateIssuerEncryptedExchange(t, resource, reqRecipientKey, []byte(`{"credentials":[{"credential":"c1"}]}`))
+
+			if _, err := call(t, w, resource, &wallet.RequestEncryption{
+				RecipientJWK: testEncryptionRecipientJWK(t, "req-1", &reqRecipientKey.PublicKey),
+				Enc:          jwe.A128GCM,
+			}, &wallet.ResponseEncryption{Enc: jwe.A128GCM}); err != nil {
+				t.Fatalf("call: %v", err)
+			}
+
+			plaintext, err := jwe.Decrypt(reqRecipientKey, string(resource.lastBody))
+			if err != nil {
+				t.Fatalf("jwe.Decrypt request: %v", err)
+			}
+			var parsed struct {
+				ResponseEncryption struct {
+					JWK struct {
+						Alg string `json:"alg"`
+					} `json:"jwk"`
+				} `json:"credential_response_encryption"`
+			}
+			if err := json.Unmarshal(plaintext, &parsed); err != nil {
+				t.Fatalf("unmarshal decrypted request: %v", err)
+			}
+			if parsed.ResponseEncryption.JWK.Alg != string(jwe.ECDHES) {
+				t.Errorf("credential_response_encryption.jwk.alg = %q, want %q", parsed.ResponseEncryption.JWK.Alg, jwe.ECDHES)
+			}
+		})
+	}
+}
+
 // --- CredentialRequest ---
 
 func TestRequestCredential_EncryptsRequestWhenConfigured(t *testing.T) {

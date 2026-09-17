@@ -91,7 +91,17 @@ func prepareResponseEncryption(respEnc *ResponseEncryption) (*wireResponseEncryp
 	if err != nil {
 		return nil, nil, fmt.Errorf("marshal ephemeral public key: %w", err)
 	}
-	rawJWK, err := json.Marshal(pubJWK)
+	// The Issuer needs this JWK's own "alg" to know which JWE key
+	// management algorithm to wrap the response's content encryption
+	// key with (§8.2's own "credential_response_encryption" object,
+	// "jwk" member) — this package only ever performs ECDH-ES Direct
+	// Key Agreement (internal/jwe's own sole supported Alg), so that's
+	// always the value, not something ResponseEncryption needs its own
+	// field for.
+	rawJWK, err := json.Marshal(struct {
+		jwk.JWK
+		Alg string `json:"alg"`
+	}{JWK: pubJWK, Alg: string(jwe.ECDHES)})
 	if err != nil {
 		return nil, nil, fmt.Errorf("marshal ephemeral public key: %w", err)
 	}
