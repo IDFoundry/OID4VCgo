@@ -160,14 +160,28 @@ type ResponseEncryptionRequest struct {
 	Zip jwe.Zip         // OPTIONAL
 }
 
-// metadataJWK is a JWK plus the "kid" every entry in
-// credential_request_encryption.jwks is required to carry (§12.2.4) —
-// internal/jwk.JWK itself has no kid field, since a kid is contextual
-// to where a key is published, not part of the key material Marshal
-// encodes.
+// metadataJWK is a JWK plus the "kid"/"alg" every entry in
+// credential_request_encryption.jwks needs — internal/jwk.JWK itself
+// has neither field, since both are contextual to where a key is
+// published, not part of the key material Marshal encodes. §10's own
+// "The alg parameter MUST be present. The JWE alg algorithm used MUST
+// be equal to the alg value of the chosen JWK" makes Alg REQUIRED
+// here, not optional metadata — confirmed live: the OIDF suite's own
+// VCICheckCredentialRequestEncryptionSupported check rejects a
+// published key with no "alg" member outright ("expected at least one
+// key with... an asymmetric JWE alg").
 type metadataJWK struct {
 	jwk.JWK
-	Kid string `json:"kid"`
+	Kid string  `json:"kid"`
+	Alg jwe.Alg `json:"alg"`
+}
+
+// metadataJWKSet is a JSON Web Key Set (RFC 7517 §5) — §12.2.4's own
+// "jwks" member is REQUIRED to be one ("A JSON Web Key Set, as defined
+// in [RFC7591]"), a {"keys": [...]} object, not a bare JSON array of
+// keys.
+type metadataJWKSet struct {
+	Keys []metadataJWK `json:"keys"`
 }
 
 // DecryptRequestBody decrypts body if contentType is "application/jwt"
@@ -189,34 +203,34 @@ type metadataJWK struct {
 func (iss *Issuer) DecryptRequestBody(body []byte, contentType string) (plaintext []byte, wasEncrypted bool, err error) {
 	if contentType != jweContentType {
 		if iss.cfg.RequestEncryption != nil && iss.cfg.RequestEncryption.Required {
-			return nil, false, newError(ErrorInvalidCredentialRequest, 400, "this issuer requires an encrypted request", nil)
+			return nil, false, newError(ErrorInvalidEncryptionParameters, 400, "this issuer requires an encrypted request", nil)
 		}
 		return body, false, nil
 	}
 	if iss.cfg.RequestEncryption == nil {
-		return nil, false, newError(ErrorInvalidCredentialRequest, 400, "this issuer does not support encrypted requests", nil)
+		return nil, false, newError(ErrorInvalidEncryptionParameters, 400, "this issuer does not support encrypted requests", nil)
 	}
 
 	header, err := jwe.DecodeHeader(string(body))
 	if err != nil {
-		return nil, false, newError(ErrorInvalidCredentialRequest, 400, "malformed encrypted request", err)
+		return nil, false, newError(ErrorInvalidEncryptionParameters, 400, "malformed encrypted request", err)
 	}
 	kid, _ := header["kid"].(string)
 	key := findRequestDecryptionKey(iss.cfg.RequestEncryption.Keys, kid)
 	if key == nil {
-		return nil, false, newError(ErrorInvalidCredentialRequest, 400, "unknown encryption key id", nil)
+		return nil, false, newError(ErrorInvalidEncryptionParameters, 400, "unknown encryption key id", nil)
 	}
 	encStr, _ := header["enc"].(string)
 	if !slices.Contains(iss.cfg.RequestEncryption.EncValuesSupported, jwe.Enc(encStr)) {
-		return nil, false, newError(ErrorInvalidCredentialRequest, 400, fmt.Sprintf("unsupported enc %q", encStr), nil)
+		return nil, false, newError(ErrorInvalidEncryptionParameters, 400, fmt.Sprintf("unsupported enc %q", encStr), nil)
 	}
 	if zipStr, ok := header["zip"].(string); ok && !slices.Contains(iss.cfg.RequestEncryption.ZipValuesSupported, jwe.Zip(zipStr)) {
-		return nil, false, newError(ErrorInvalidCredentialRequest, 400, fmt.Sprintf("unsupported zip %q", zipStr), nil)
+		return nil, false, newError(ErrorInvalidEncryptionParameters, 400, fmt.Sprintf("unsupported zip %q", zipStr), nil)
 	}
 
 	plaintext, err = jwe.Decrypt(key.PrivateKey, string(body))
 	if err != nil {
-		return nil, false, newError(ErrorInvalidCredentialRequest, 400, "decryption failed", err)
+		return nil, false, newError(ErrorInvalidEncryptionParameters, 400, "decryption failed", err)
 	}
 	return plaintext, true, nil
 }
@@ -240,37 +254,50 @@ func (iss *Issuer) EncryptResponseBody(body []byte, req *ResponseEncryptionReque
 		return body, "application/json", nil
 	}
 	if iss.cfg.ResponseEncryption == nil {
-		return nil, "", newError(ErrorInvalidCredentialRequest, 400, "this issuer does not support encrypted responses", nil)
+		return nil, "", newError(ErrorInvalidEncryptionParameters, 400, "this issuer does not support encrypted responses", nil)
 	}
 	if req.Enc == "" {
-		return nil, "", newError(ErrorInvalidCredentialRequest, 400, "credential_response_encryption.enc is required", nil)
+		return nil, "", newError(ErrorInvalidEncryptionParameters, 400, "credential_response_encryption.enc is required", nil)
 	}
 	if !slices.Contains(iss.cfg.ResponseEncryption.EncValuesSupported, req.Enc) {
-		return nil, "", newError(ErrorInvalidCredentialRequest, 400, fmt.Sprintf("unsupported enc %q", req.Enc), nil)
+		return nil, "", newError(ErrorInvalidEncryptionParameters, 400, fmt.Sprintf("unsupported enc %q", req.Enc), nil)
 	}
 	if req.Zip != "" && !slices.Contains(iss.cfg.ResponseEncryption.ZipValuesSupported, req.Zip) {
-		return nil, "", newError(ErrorInvalidCredentialRequest, 400, fmt.Sprintf("unsupported zip %q", req.Zip), nil)
+		return nil, "", newError(ErrorInvalidEncryptionParameters, 400, fmt.Sprintf("unsupported zip %q", req.Zip), nil)
 	}
 
 	pub, err := jwk.ParsePublicKey(req.JWK)
 	if err != nil {
-		return nil, "", newError(ErrorInvalidCredentialRequest, 400, "malformed credential_response_encryption.jwk", err)
+		return nil, "", newError(ErrorInvalidEncryptionParameters, 400, "malformed credential_response_encryption.jwk", err)
 	}
 	ecPub, ok := pub.(*ecdsa.PublicKey)
 	if !ok {
-		return nil, "", newError(ErrorInvalidCredentialRequest, 400, "credential_response_encryption.jwk must be an EC P-256 key", nil)
+		return nil, "", newError(ErrorInvalidEncryptionParameters, 400, "credential_response_encryption.jwk must be an EC P-256 key", nil)
 	}
 	// The Wallet's own jwk may optionally carry its own "kid" — if so,
 	// §10-3's "If the selected public key contains a kid parameter, the
 	// JWE MUST include the same value in the kid JWE Header Parameter"
 	// applies to this direction too. Best-effort: jwk.ParsePublicKey
 	// above already validated req.JWK is well-formed JSON.
-	var withKid struct {
-		KeyID string `json:"kid"`
+	var jwkFields struct {
+		KeyID string  `json:"kid"`
+		Alg   jwe.Alg `json:"alg"`
 	}
-	_ = json.Unmarshal(req.JWK, &withKid)
+	_ = json.Unmarshal(req.JWK, &jwkFields)
+	// §10's own "The alg parameter MUST be present [and] MUST be equal
+	// to the alg value of the chosen JWK" — this issuer only ever
+	// encrypts with ECDH-ES (internal/jwe's own sole implementation),
+	// so a JWK declaring any other alg must be rejected outright rather
+	// than silently encrypted with ECDH-ES anyway. An absent alg is
+	// left alone: this repo's own jwk.Marshal never emits one, so
+	// requiring its presence unconditionally would reject every
+	// legitimate caller in this codebase, not just a genuine mismatch.
+	if jwkFields.Alg != "" && jwkFields.Alg != jwe.ECDHES {
+		return nil, "", newError(ErrorInvalidEncryptionParameters, 400,
+			fmt.Sprintf("credential_response_encryption.jwk declares alg %q, which this issuer cannot encrypt with", jwkFields.Alg), nil)
+	}
 
-	compact, err := jwe.Encrypt(ecPub, req.Enc, body, jwe.EncryptOptions{Zip: req.Zip, KeyID: withKid.KeyID})
+	compact, err := jwe.Encrypt(ecPub, req.Enc, body, jwe.EncryptOptions{Zip: req.Zip, KeyID: jwkFields.KeyID})
 	if err != nil {
 		return nil, "", fmt.Errorf("issuer: encrypt response body: %w", err)
 	}

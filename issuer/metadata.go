@@ -398,10 +398,10 @@ type metadataCredentialMetadata struct {
 // metadataRequestEncryption is Config.RequestEncryption's own wire
 // shape (§12.2.4's credential_request_encryption).
 type metadataRequestEncryption struct {
-	JWKS               []metadataJWK `json:"jwks"`
-	EncValuesSupported []jwe.Enc     `json:"enc_values_supported"`
-	ZipValuesSupported []jwe.Zip     `json:"zip_values_supported,omitempty"`
-	EncryptionRequired bool          `json:"encryption_required"`
+	JWKS               metadataJWKSet `json:"jwks"`
+	EncValuesSupported []jwe.Enc      `json:"enc_values_supported"`
+	ZipValuesSupported []jwe.Zip      `json:"zip_values_supported,omitempty"`
+	EncryptionRequired bool           `json:"encryption_required"`
 }
 
 // metadataResponseEncryption is Config.ResponseEncryption's own wire
@@ -470,10 +470,10 @@ func (iss *Issuer) Metadata() Metadata {
 			// New already validated every key is P-256, so this can't
 			// fail.
 			wireJWK, _ := jwk.Marshal(&k.PrivateKey.PublicKey)
-			jwks[i] = metadataJWK{JWK: wireJWK, Kid: k.KeyID}
+			jwks[i] = metadataJWK{JWK: wireJWK, Kid: k.KeyID, Alg: jwe.ECDHES}
 		}
 		md.CredentialRequestEncryption = &metadataRequestEncryption{
-			JWKS: jwks, EncValuesSupported: rs.EncValuesSupported,
+			JWKS: metadataJWKSet{Keys: jwks}, EncValuesSupported: rs.EncValuesSupported,
 			ZipValuesSupported: rs.ZipValuesSupported, EncryptionRequired: rs.Required,
 		}
 	}

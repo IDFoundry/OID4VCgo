@@ -354,24 +354,18 @@ what it said it was.)*
   `fail-unknown-credential-configuration`,
   `fail-unknown-credential-identifier`,
   `fail-on-access-token-in-query`.
-- Two more correctly self-`SKIPPED`, matching this binary's own
-  documented scope: `fail-invalid-key-attestation-signature` (this
-  binary never wires an `AttestationVerifier`; only the `jwt` proof
-  type is configured, not `attestation`) and
-  `fail-unsupported-encryption-algorithm` (`vci_credential_encryption`
-  is fixed to `plain`; this binary implements no Credential Request/
-  Response encryption at all — OID4VCI 1.0 §10 makes it optional).
-  Both confirmed against the HAIP 1.0 spec text directly, not just
-  assumed: HAIP never references OID4VCI §10 encryption anywhere, so
-  it stays fully optional. HAIP §4.5.1's key-attestation language is
-  more nuanced — it does contain one unconditional MUST ("Wallets MUST
-  support key attestations"), but that MUST falls on Wallets, not
-  Issuers; Issuer-side support for the `attestation` proof type is
-  conditioned on ecosystem choice ("Ecosystems that desire
-  wallet-issuer interoperability on the level of key attestations
-  SHOULD require Wallets to support... `jwt` proof type using
-  `key_attestation` [and] `attestation` proof type"). So this skip is
-  legitimate for the Issuer role specifically — but the Wallet-side
+- `fail-invalid-key-attestation-signature` correctly self-`SKIPPED`
+  (this binary never wires an `AttestationVerifier`; only the `jwt`
+  proof type is configured, not `attestation`). Confirmed against the
+  HAIP 1.0 spec text directly: HAIP §4.5.1's key-attestation language
+  does contain one unconditional MUST ("Wallets MUST support key
+  attestations"), but that MUST falls on Wallets, not Issuers;
+  Issuer-side support for the `attestation` proof type is conditioned
+  on ecosystem choice ("Ecosystems that desire wallet-issuer
+  interoperability on the level of key attestations SHOULD require
+  Wallets to support... `jwt` proof type using `key_attestation`
+  [and] `attestation` proof type"). So this skip is legitimate for the
+  Issuer role specifically — but the Wallet-side
   MUST is real and unconditional, and applies to the still-blocked
   OID4VCI Wallet role (see "Not yet run live" below and `AGENTS.md`),
   not to anything already implemented. Worth keeping separate from
@@ -379,6 +373,76 @@ what it said it was.)*
   authentication) gap: key attestation (proof-of-possession key
   format) and wallet attestation (client auth) are two distinct HAIP
   requirements that role will need to satisfy once unblocked.
+
+**Update: `fail-unsupported-encryption-algorithm` — real support
+added, not just made to pass.** Previously self-`SKIPPED`: HAIP never
+references OID4VCI §10 encryption anywhere, so it stayed fully
+optional — scoped as a deliberate coverage improvement, not a
+compliance fix. Turned out `issuer.RequestCredential`'s own
+`DecryptRequestBody`/`EncryptResponseBody` already fully implement §10
+JWE-based request decryption/response encryption, tested end to end —
+`cmd/conformance-issuer` just never opted in. `wiring.go` now sets
+`Config.RequestEncryption`/`ResponseEncryption`, advertising
+`A128GCM`/`A256GCM` (deliberately excluding `A192GCM`, which
+`internal/jwe` genuinely implements, so "unsupported" stays a real
+condition, not a vacuous one); `credential.go`'s own handler now calls
+`DecryptRequestBody` before parsing the wire request and
+`EncryptResponseBody` before writing the response.
+
+Driving this live surfaced three more real, pre-existing gaps in the
+already-implemented `issuer` package — none of them were exercised by
+any test before this binary's own wiring made this code path reachable
+for the first time:
+
+- **`credential_request_encryption.jwks` was a bare JSON array.**
+  §12.2.4 requires "A JSON Web Key Set" — RFC 7517 §5's own
+  `{"keys": [...]}` object — not a bare array. The suite's own
+  `VCICheckCredentialRequestEncryptionSupported` check rejected it
+  outright. Fixed by adding `metadataJWKSet` (`issuer/encryption.go`)
+  and wrapping every published key in one.
+- **Published request-encryption keys had no `"alg"` member.** §10's
+  own "The alg parameter MUST be present" — the suite rejected a key
+  with no alg ("expected at least one key with... an asymmetric JWE
+  alg"). Fixed by adding `Alg jwe.Alg` to `metadataJWK` and always
+  publishing `"ECDH-ES"` (the only alg `internal/jwe` implements).
+- **`EncryptResponseBody` never validated the Wallet's own
+  `credential_response_encryption.jwk`'s own declared `"alg"`.** A
+  Wallet can publish a response-encryption key whose `enc`/`kty`/`crv`
+  are all valid but whose own `alg` names something this issuer can't
+  actually use (the suite's own literal probe: `"UNSUPPORTED_ALG"`) —
+  before this fix, `EncryptResponseBody` ignored that field entirely
+  and encrypted the response anyway with its own ECDH-ES, silently
+  accepting a Wallet-declared mismatch rather than rejecting it per
+  §10's own "The JWE alg algorithm used MUST be equal to the alg value
+  of the chosen JWK." Fixed by validating the JWK's own `alg` (when
+  present) against `jwe.ECDHES`.
+- **Every §10 failure used the generic `invalid_credential_request`
+  error code, not §8.3.1.2's own dedicated
+  `invalid_encryption_parameters`.** The suite specifically checks for
+  the latter and fails the module on any other code, even a correctly-
+  4xx one. Added `ErrorInvalidEncryptionParameters` and switched every
+  encryption-related error site in `issuer/encryption.go`,
+  `credential_endpoint.go`, and `deferred_credential_endpoint.go` to
+  use it.
+
+Confirmed live after all four fixes: `FINISHED`/`PASSED`, zero log
+entries at `WARNING` or worse — the suite's own driving recipe sends a
+validly-encrypted outer request whose inner
+`credential_response_encryption.jwk` declares
+`"alg":"UNSUPPORTED_ALG"`, gets back `EnsureHttpStatusCodeIs400`
+(SUCCESS), `VCIEnsureCredentialResponseIsNotAnEncryptedJwe` (SUCCESS —
+confirms the error came back as plain JSON, not an encrypted body),
+and the expected `invalid_encryption_parameters` error code. Also
+added a genuine positive round trip
+(`TestFullFlow_EncryptedCredentialRequestAndResponse`) proving a real
+encrypt→issue→encrypt→decrypt cycle works through the actual HTTP
+binary, not just the library's own already-tested internals, plus two
+more negative tests mirroring the suite's own two distinct failure
+modes (unsupported outer/inner `enc`, and the JWK `alg` mismatch) —
+none of this was suite-satisfying theater; every fix closes a real gap
+a genuine encryption-aware client would have hit. Re-verified
+`happy-flow`, `batch-issuance`, `metadata-test`, and
+`metadata-test-signed` all still pass with no regression.
 
 ## Not yet run live
 

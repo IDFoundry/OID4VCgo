@@ -980,10 +980,10 @@ func TestWalletIssuerEncryptedRoundTrip(t *testing.T) {
 		})
 
 	md := f.iss.Metadata()
-	if md.CredentialRequestEncryption == nil || len(md.CredentialRequestEncryption.JWKS) != 1 {
+	if md.CredentialRequestEncryption == nil || len(md.CredentialRequestEncryption.JWKS.Keys) != 1 {
 		t.Fatalf("CredentialRequestEncryption metadata missing or malformed: %+v", md.CredentialRequestEncryption)
 	}
-	recipientJWK, err := json.Marshal(md.CredentialRequestEncryption.JWKS[0])
+	recipientJWK, err := json.Marshal(md.CredentialRequestEncryption.JWKS.Keys[0])
 	if err != nil {
 		t.Fatalf("json.Marshal recipient jwk: %v", err)
 	}

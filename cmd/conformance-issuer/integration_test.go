@@ -89,6 +89,42 @@ func TestNewServerMux_ServesRealMetadataAndJWKS(t *testing.T) {
 		if batch["batch_size"] != float64(conformanceBatchSize) {
 			t.Fatalf("batch_size = %v, want %d", batch["batch_size"], conformanceBatchSize)
 		}
+
+		reqEnc, ok := body["credential_request_encryption"].(map[string]any)
+		if !ok {
+			t.Fatalf("missing credential_request_encryption: %+v", body)
+		}
+		assertEncValuesSupported(t, "credential_request_encryption", reqEnc)
+		// jwks MUST be a JSON Web Key Set (RFC 7517 §5, "{keys: [...]}"),
+		// per §12.2.4's own "A JSON Web Key Set, as defined in
+		// [RFC7591]" — not a bare array. Confirmed live: an earlier
+		// version of issuer.Metadata() serialized this as a bare array,
+		// and the OIDF suite's own VCICheckCredentialRequestEncryptionSupported
+		// check correctly rejected it.
+		jwks, ok := reqEnc["jwks"].(map[string]any)
+		if !ok {
+			t.Fatalf("credential_request_encryption.jwks = %T, want a JSON object with a \"keys\" member: %+v", reqEnc["jwks"], reqEnc)
+		}
+		keys, _ := jwks["keys"].([]any)
+		if len(keys) != 1 {
+			t.Fatalf("credential_request_encryption.jwks.keys has %d entries, want 1: %+v", len(keys), jwks)
+		}
+		jwk, _ := keys[0].(map[string]any)
+		if jwk["kid"] != credentialRequestDecryptionKeyID {
+			t.Fatalf("credential_request_encryption.jwks.keys[0].kid = %v, want %q", jwk["kid"], credentialRequestDecryptionKeyID)
+		}
+		// §10's own "The alg parameter MUST be present" — confirmed
+		// live that the OIDF suite's own VCICheckCredentialRequestEncryptionSupported
+		// check rejects a published key with no "alg" member.
+		if jwk["alg"] != "ECDH-ES" {
+			t.Fatalf("credential_request_encryption.jwks.keys[0].alg = %v, want %q", jwk["alg"], "ECDH-ES")
+		}
+
+		respEnc, ok := body["credential_response_encryption"].(map[string]any)
+		if !ok {
+			t.Fatalf("missing credential_response_encryption: %+v", body)
+		}
+		assertEncValuesSupported(t, "credential_response_encryption", respEnc)
 	})
 
 	t.Run("signed credential issuer metadata", func(t *testing.T) {
@@ -183,4 +219,22 @@ func containsAny(list []any, want string) bool {
 		}
 	}
 	return false
+}
+
+// assertEncValuesSupported checks one §10 encryption metadata object
+// (credential_request_encryption or credential_response_encryption)
+// advertises exactly the enc values this binary's own wiring.go
+// configures (credentialEncValuesSupported) — A128GCM/A256GCM, not
+// A192GCM (internal/jwe implements it, but this binary deliberately
+// doesn't advertise or accept it, so "unsupported" is a real condition
+// to test against).
+func assertEncValuesSupported(t *testing.T, field string, obj map[string]any) {
+	t.Helper()
+	encValues, _ := obj["enc_values_supported"].([]any)
+	if !containsAny(encValues, "A128GCM") || !containsAny(encValues, "A256GCM") {
+		t.Fatalf("%s.enc_values_supported = %v, want A128GCM and A256GCM present", field, encValues)
+	}
+	if containsAny(encValues, "A192GCM") {
+		t.Fatalf("%s.enc_values_supported = %v, want A192GCM absent (this binary doesn't support it)", field, encValues)
+	}
 }

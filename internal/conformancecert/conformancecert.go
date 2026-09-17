@@ -212,6 +212,19 @@ func ParseCertificatePEM(pemStr string) (*x509.Certificate, error) {
 	return x509.ParseCertificate(block.Bytes)
 }
 
+// ParseECPrivateKeyPEM decodes a single PEM EC PRIVATE KEY block and
+// parses it as an *ecdsa.PrivateKey — ParseCertificatePEM's own
+// counterpart for a cmd/conformance-*'s own Config parsing (e.g.
+// CredentialIssuerSigningKeyPEM, CredentialRequestDecryptionKeyPEM),
+// used identically by more than one binary.
+func ParseECPrivateKeyPEM(pemStr string) (*ecdsa.PrivateKey, error) {
+	block, _ := pem.Decode([]byte(pemStr))
+	if block == nil {
+		return nil, fmt.Errorf("no PEM block found")
+	}
+	return x509.ParseECPrivateKey(block.Bytes)
+}
+
 // WriteJSONConfig JSON-marshals cfg and writes it to a fresh file
 // under t.TempDir(), returning the path — the "write this binary's
 // own Config out so loadConfig can read it back" step every

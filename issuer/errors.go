@@ -21,6 +21,17 @@ const (
 	ErrorInvalidNonce                ErrorCode = "invalid_nonce"
 	ErrorCredentialRequestDenied     ErrorCode = "credential_request_denied" //nolint:gosec // an OID4VCI error code, not a credential
 
+	// ErrorInvalidEncryptionParameters is §8.3.1.2's own dedicated code
+	// for §10 encryption failures — "the encryption parameters in the
+	// Credential Request are either invalid or missing," including the
+	// case where this issuer requires an encrypted Response but the
+	// Request didn't arrive encrypted. Confirmed live against the real
+	// OIDF conformance suite's own fail-unsupported-encryption-algorithm
+	// module: it specifically checks for this code, not the more
+	// generic ErrorInvalidCredentialRequest every encryption failure in
+	// this package used before this fix.
+	ErrorInvalidEncryptionParameters ErrorCode = "invalid_encryption_parameters"
+
 	// ErrorInvalidTransactionID is the Deferred Credential Endpoint's
 	// own additional error code (§9.3): the request's transaction_id
 	// was not issued by this Credential Issuer, or was already used to
