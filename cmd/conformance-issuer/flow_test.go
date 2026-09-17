@@ -236,53 +236,14 @@ func performAuthFlowThroughNonce(t *testing.T, client *http.Client, cfg Config, 
 		t.Fatalf("par response has no request_uri: %+v", parResp)
 	}
 
-	// --- GET /authorize ---
+	// --- GET /authorize, POST /authorize/decision ---
 	authorizeURL := cfg.Issuer + "/authorize?" + url.Values{
 		"client_id": {cfg.Client.ID}, "request_uri": {requestURI},
 	}.Encode()
-	authorizeReq, err := http.NewRequest(http.MethodGet, authorizeURL, nil)
-	if err != nil {
-		t.Fatalf("new authorize request: %v", err)
-	}
-	authorizeResp, err := client.Do(authorizeReq)
-	if err != nil {
-		t.Fatalf("GET /authorize: %v", err)
-	}
-	_, _ = io.Copy(io.Discard, authorizeResp.Body)
-	_ = authorizeResp.Body.Close()
-	handle := authorizeResp.Header.Get("X-Interaction-Handle")
-	if handle == "" {
-		t.Fatalf("GET /authorize: missing X-Interaction-Handle (status %d)", authorizeResp.StatusCode)
-	}
-
-	// --- POST /authorize/decision ---
-	decisionClient := &http.Client{
-		Transport:     client.Transport,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error { return http.ErrUseLastResponse },
-	}
-	decisionForm := url.Values{"handle": {handle}, "subject": {cfg.DefaultSubject}, "decision": {"approve"}, "scope": {cfg.Scope}}
-	decisionReq, err := http.NewRequest(http.MethodPost, cfg.Issuer+"/authorize/decision", strings.NewReader(decisionForm.Encode()))
-	if err != nil {
-		t.Fatalf("new decision request: %v", err)
-	}
-	decisionReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	decisionResp, err := decisionClient.Do(decisionReq)
-	if err != nil {
-		t.Fatalf("POST /authorize/decision: %v", err)
-	}
-	decisionBody, _ := io.ReadAll(decisionResp.Body)
-	_ = decisionResp.Body.Close()
-	location := decisionResp.Header.Get("Location")
-	if location == "" {
-		t.Fatalf("POST /authorize/decision: no redirect Location (status %d, body %s)", decisionResp.StatusCode, decisionBody)
-	}
-	redirectURL, err := url.Parse(location)
-	if err != nil {
-		t.Fatalf("parse redirect location %q: %v", location, err)
-	}
+	redirectURL := driveConsentToCallback(t, client, cfg.Issuer, authorizeURL, cfg.DefaultSubject, cfg.Scope)
 	code := redirectURL.Query().Get("code")
 	if code == "" {
-		t.Fatalf("redirect location has no code: %s (error=%s)", location, redirectURL.Query().Get("error"))
+		t.Fatalf("redirect location has no code: %s (error=%s)", redirectURL, redirectURL.Query().Get("error"))
 	}
 
 	// --- POST /token ---
@@ -322,6 +283,60 @@ func performAuthFlowThroughNonce(t *testing.T, client *http.Client, cfg Config, 
 		t.Fatalf("nonce response has no c_nonce: %+v", nonceResp)
 	}
 	return accessToken, cNonce
+}
+
+// driveConsentToCallback drives the headless consent step against
+// issuer's own consent UI — GET authorizeURL, then POST
+// /authorize/decision approving as subject for scope — and returns the
+// resulting redirect URL (the "code"/"state"/"iss" callback a real
+// browser session would land on). Shared by performAuthFlowThroughNonce
+// (this file's own raw-HTTP wallet simulation) and
+// TestFullFlow_RealClientDrivesAttestationAuth (a real fapigo/client
+// wallet): driving an actual browser has no fapigo/client equivalent
+// either way, so both reuse this one sequence rather than each
+// hand-rolling their own copy.
+func driveConsentToCallback(t *testing.T, httpClient *http.Client, issuer, authorizeURL, subject, scope string) *url.URL {
+	t.Helper()
+	authorizeReq, err := http.NewRequest(http.MethodGet, authorizeURL, nil)
+	if err != nil {
+		t.Fatalf("new authorize request: %v", err)
+	}
+	authorizeResp, err := httpClient.Do(authorizeReq)
+	if err != nil {
+		t.Fatalf("GET /authorize: %v", err)
+	}
+	_, _ = io.Copy(io.Discard, authorizeResp.Body)
+	_ = authorizeResp.Body.Close()
+	handle := authorizeResp.Header.Get("X-Interaction-Handle")
+	if handle == "" {
+		t.Fatalf("GET /authorize: missing X-Interaction-Handle (status %d)", authorizeResp.StatusCode)
+	}
+
+	decisionClient := &http.Client{
+		Transport:     httpClient.Transport,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	decisionForm := url.Values{"handle": {handle}, "subject": {subject}, "decision": {"approve"}, "scope": {scope}}
+	decisionReq, err := http.NewRequest(http.MethodPost, issuer+"/authorize/decision", strings.NewReader(decisionForm.Encode()))
+	if err != nil {
+		t.Fatalf("new decision request: %v", err)
+	}
+	decisionReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	decisionResp, err := decisionClient.Do(decisionReq)
+	if err != nil {
+		t.Fatalf("POST /authorize/decision: %v", err)
+	}
+	decisionBody, _ := io.ReadAll(decisionResp.Body)
+	_ = decisionResp.Body.Close()
+	location := decisionResp.Header.Get("Location")
+	if location == "" {
+		t.Fatalf("POST /authorize/decision: no redirect Location (status %d, body %s)", decisionResp.StatusCode, decisionBody)
+	}
+	redirectURL, err := url.Parse(location)
+	if err != nil {
+		t.Fatalf("parse redirect location %q: %v", location, err)
+	}
+	return redirectURL
 }
 
 // setupFullFlowTest builds the plumbing every full-flow test in this

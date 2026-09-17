@@ -25,16 +25,19 @@
 // ProfileFAPISecurity always uses PAR and PKCE with S256; its
 // SenderConstrain zero value is already SenderConstrainDPoP; and
 // client.RecommendedAlgorithms already picks ES256 for
-// ClientAuthentication/DPoP, matching HAIP §7's own minimum. The one
-// requirement fapigo/client cannot satisfy yet is HAIP §4.4.1's Wallet
-// Attestation client authentication: storage.ClientAuthMethodAttestation
-// itself exists (added so fapigo/server can verify a Wallet Attestation
-// — see ARCHITECTURE.md's "Relationship to FAPIgo"), but fapigo/client
-// has no logic of its own to construct or send the Client Attestation +
-// PoP JWT pair when Config.ClientAuthMethod names it — only the server
-// side knows how to verify one so far. A HAIP-profile wallet built on
-// today's fapigo/client must use ClientAuthMethodPrivateKeyJWT instead —
-// FAPI 2.0-compliant, but not yet what HAIP specifically asks for.
+// ClientAuthentication/DPoP, matching HAIP §7's own minimum. HAIP
+// §4.4.1's Wallet Attestation client authentication —
+// storage.ClientAuthMethodAttestation, added so fapigo/server can
+// verify one (see ARCHITECTURE.md's "Relationship to FAPIgo") — is now
+// fully supported client-side too: set Config.ClientAuthMethod to it,
+// Config.Algorithms.ClientAttestationPoP, and supply a
+// Dependencies.Attestation (an AttestationSource holding the wallet's
+// own, out-of-band-issued Client Attestation JWT). fapigo/client builds
+// and signs the per-request PoP JWT itself. See
+// cmd/conformance-issuer's own TestFullFlow_RealClientDrivesAttestationAuth
+// for a genuine end-to-end proof — a real fapigo/client wallet
+// authenticating this way against a real fapigo/server-based
+// Authorization Server and issuer-based Credential Issuer.
 //
 // RequestPreAuthorizedCodeToken implements the Pre-Authorized Code
 // Flow's own Token Request/Response (§6.1/§6.2) directly, rather than

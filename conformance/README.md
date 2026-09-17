@@ -142,5 +142,12 @@ negative-test expectations differ.
   `SKIPPED`** — 10 of 10 applicable negative tests `PASSED`, 1 module
   correctly self-`SKIPPED` (key-attestation, blocked on the still-
   unbuilt OID4VCI Wallet role). See `issuer/README.md`.
-- **Not yet started**: OID4VCI Wallet role (blocked on a FAPIgo-side
-  change — see `AGENTS.md`).
+- **Not yet started**: an OID4VCI Wallet role conformance binary (a
+  `cmd/conformance-wallet`, mirroring the shape of the other three
+  binaries here). The FAPIgo-side blocker that previously prevented this
+  entirely — Wallet Attestation client authentication had no client-side
+  implementation — is resolved and proven end to end at the library level
+  (`cmd/conformance-issuer`'s own `TestFullFlow_RealClientDrivesAttestationAuth`;
+  see `AGENTS.md`), but building and running an actual conformance binary
+  against the live OIDF suite's own OID4VCI Wallet test plan is separate,
+  not-yet-started work.

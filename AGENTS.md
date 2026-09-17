@@ -36,20 +36,22 @@ FAPIgo's `internal/` packages — that's a real Go module boundary, not a
 style choice — so anything OID4VCIgo needs from FAPIgo's protocol core must
 already be, or become, one of FAPIgo's public packages.
 
-One specific, partially-blocking dependency: HAIP requires Wallet
-Attestation (a client-attestation-JWT-based OAuth2 client authentication
-mechanism, [`draft-ietf-oauth-attestation-based-client-auth-07`](https://datatracker.ietf.org/doc/html/draft-ietf-oauth-attestation-based-client-auth-07))
+One specific dependency, now resolved: HAIP requires Wallet Attestation (a
+client-attestation-JWT-based OAuth2 client authentication mechanism,
+[`draft-ietf-oauth-attestation-based-client-auth-07`](https://datatracker.ietf.org/doc/html/draft-ietf-oauth-attestation-based-client-auth-07))
 in place of FAPI 2.0's normal `private_key_jwt`/mTLS client auth. FAPIgo's
-`server` side already supports this — `storage.ClientAuthMethodAttestation`
-plus `server.Config.AttestationBasedClientAuthentication` — so an
-Authorization Server pairing with `issuer` can verify an incoming Wallet
-Attestation today. What's still missing is the *client* side:
-`fapigo/client` has no logic of its own to construct or send the Client
-Attestation + PoP JWT pair when driving the Authorization Code Flow (see
-`wallet/doc.go`'s own note on this) — that half is tracked as its own
-change in FAPIgo, not this repo. Don't attempt to work around it by
-duplicating client-authentication logic against `fapigo/client`'s
-internals; wait for or contribute to the FAPIgo-side change instead.
+`server` side supports this — `storage.ClientAuthMethodAttestation` plus
+`server.Config.AttestationBasedClientAuthentication` — so an Authorization
+Server pairing with `issuer` can verify an incoming Wallet Attestation.
+The *client* side landed in [FAPIgo PR #317](https://github.com/IDFoundry/FAPIgo/pull/317)
+(commit `ca54d10`, `go.mod` is pinned past it): `fapigo/client.Dependencies.Attestation`
+(an `AttestationSource` holding the wallet's own out-of-band-issued Client
+Attestation JWT) plus `Config.Algorithms.ClientAttestationPoP` drive the
+Authorization Code Flow's Client Attestation + PoP JWT pair — see
+`wallet/doc.go`'s own note. Proven end to end (a real `fapigo/client`
+wallet against a real `fapigo/server`/`issuer` pairing, not just each
+side's own unit tests) by `cmd/conformance-issuer`'s own
+`TestFullFlow_RealClientDrivesAttestationAuth`.
 
 Separately (found while reviewing the Issuer role's own `SKIPPED`
 conformance modules against the actual HAIP text, see
