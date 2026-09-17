@@ -444,16 +444,110 @@ a genuine encryption-aware client would have hit. Re-verified
 `happy-flow`, `batch-issuance`, `metadata-test`, and
 `metadata-test-signed` all still pass with no regression.
 
-## Not yet run live
+## Status: the generic FAPI2SP battery (42 modules) run live
 
-The 40 `fapi2-security-profile-final-*` modules — the generic FAPI 2.0
-Security Profile Final battery (PAR/DPoP/PKCE/token-endpoint edge
-cases, TLS/discovery checks, grant management). These test
-`fapigo/server`'s own FAPI2 compliance more than anything specific to
-this binary's own OID4VCI wiring — FAPIgo is already OpenID Certified
-against this same suite family in other client-authentication
-configurations, just not yet with `ClientAuthMethodAttestation`
-specifically. Lower expected marginal value than the OID4VCI-specific
-modules above (most findings here would be FAPIgo-side, following the
-same PAR-fix precedent, rather than OID4VCIgo-side), and a
-substantially larger module count — not attempted this pass.
+`VCIIssuerTestPlanHaip.java`'s own 5th `ModuleListEntry` reuses
+`FAPI2MessageSigningFinalTestPlan.testModules` minus
+`FAPI2SPFinalTestPlan`'s own 16 signing-only removals minus this VCI
+plan's own further 33 removals (Discovery — separate entry — plus
+nonce/OIDC-only, private_key_jwt-only, and profile-specific modules
+not reachable under `ClientAuthType=client_attestation`) — a precise
+39-module set (derived directly from the Java source, cross-checked
+against each class's own `@PublishTestModule` annotation, not
+guessed), plus Discovery as its own entry: 40 total. Driven via a new
+tool, `conformance/issuer/scripts/run-fapi2sp-battery`, which also
+runs 2 already-known-working modules first as a sanity check that the
+freshly generated config is behavior-preserving — 42 modules driven in
+total.
+
+**Architecturally, this role needs no custom flow-driving Go code at
+all** — unlike `cmd/conformance-wallet`, where the suite plays server
+and this repo's own Go code drives the client side, here the suite
+itself plays client/wallet against this binary's own passive HTTP
+server. The suite's own internal headless browser (HtmlUnit) drives
+PAR → authorize → consent → callback → token entirely on its own,
+given a plan config supplying a `browser` automation-script array —
+the exact same mechanism FAPIgo's own OpenID-Certified
+`cmd/conformance-as` already relies on. `run-fapi2sp-battery` generates
+both sides — this binary's own server config (`config.go`'s
+`buildServerConfig`) and the suite's plan config (`buildPlanConfig`) —
+from the same freshly generated key material in one run, then restarts
+`cmd/conformance-issuer` with the new config before driving the suite.
+
+**Real findings, all confirmed live:**
+- **`client_attestation.attester_jwks` needs an embedded `x5c`.** The
+  suite's own `CreateClientAttestationJwt` step (it mints Client
+  Attestation JWTs on the client's behalf for every module in this
+  battery) rejects a signing key with no `x5c` member outright ("A x5c
+  entry is required in the client's signing key but isn't present in
+  the configuration") — this binary's own server-side attestation
+  verification (`server/client_auth_attestation.go`) never looks at
+  x5c at all (a flat per-client trusted-JWKS lookup), but HAIP still
+  requires it in what the suite itself signs. Fixed by generating a
+  CA-issued leaf for the attester key and embedding its DER (base64)
+  as the JWK's own `x5c` entry.
+- **`credential.status_list_trust_anchor_pem` is required even though
+  this binary implements no status list.** The suite's own HAIP
+  variant unconditionally requires this field ("`'Status List Trust
+  Anchor' field is missing from the 'Credential' section... required
+  for HAIP"), the same required-but-unused pattern as
+  `client_attestation.key_attestation_jwks`. Fixed by generating a
+  throwaway CA and supplying its cert PEM.
+- **The suite's own `implicitCallback.html` page has a universal,
+  suite-side JS bug affecting every module needing a real browser
+  round trip.** It loads Bootstrap 5.3.3 from a CDN, which the suite's
+  own bundled HtmlUnit JS engine cannot parse
+  (`org.htmlunit.ScriptException: syntax error`), which — depending on
+  script execution order — silently prevents the page's own critical
+  inline auto-submission script from ever running, leaving the module
+  `WAITING` forever (no timeout fires; `abortIfRedirectFragmentNotReceived`
+  defaults to `false` for this whole module family). Confirmed not a
+  network/CDN reachability issue (the file loads fine, 200, full size,
+  from inside the suite's own container) and confirmed universal, not
+  a config gap: FAPIgo's own OpenID-Certified `cmd/conformance-as`
+  needs the identical workaround
+  (`conformance/server/scripts/unblock-implicit-callback.py`) to drive
+  this same module family reliably, and no suite release exists with
+  both the FAPI2SP plan and a working Bootstrap bundle. Ported that
+  script's own two-part logic into Go
+  (`run-fapi2sp-battery/unblock.go`, run as a background goroutine
+  alongside the driving loop): (1) polls each active module's own log
+  for a "Created random implicit submission URL" entry and POSTs an
+  empty body to it itself, after a one-cycle deferral to let the
+  browser's own JS win the race first when it can (except the very
+  first such URL in a run, which gets extra deferral cycles for the
+  browser's own one-time cold-start cost), skipping if the browser
+  already submitted it (submitting twice corrupts the flow into two
+  racing token exchanges over the same code); (2) polls for
+  browser-interaction "upload" placeholders (negative tests that would
+  otherwise ask a human to upload a screenshot) and fills them itself
+  after a grace period, moving the module to `FINISHED`/`REVIEW`. One
+  non-obvious wire-format detail cost real debugging time: the
+  placeholder-fill endpoint expects the *literal text* of a
+  `data:image/png;base64,...` URI as its request body, not
+  base64-decoded binary image bytes — sending correctly-decoded PNG
+  bytes gets a flat `400 "Only jpeg/png files accepted"` every time;
+  only the data-URI string itself, sent as `text/plain`, is accepted.
+- **`docker compose up -d --force-recreate` does not rebuild the
+  image.** `cmd/conformance-issuer`'s own compiled binary (including
+  whatever `go.mod`-pinned FAPIgo version it was built against) is
+  baked into the image; only the bind-mounted config JSON refreshes
+  without `--build`. This produced one full false-negative
+  investigation of an apparently-real server bug (a PAR request
+  carrying a `request_uri` form parameter returned `201` instead of
+  the expected `400`) before being traced to a 10-hours-stale image
+  still running pre-fix code — `resolveAuthorizationParameters`'s own
+  check was correct and complete the whole time. `restartIssuerContainer`
+  now always passes `--build`.
+
+**Final result, 42/42 modules run live, twice for stability — identical
+outcomes both times:** every module `PASSED` except one expected
+`WARNING` (`attempt-reuse-authorization-code-after-one-second` — a
+soft timing note, not a `FAILURE`), one expected `SKIPPED`
+(`refresh-token` — this plan's own fixed
+`VCIGrantType=authorization_code` selection issues no refresh token to
+reuse), and one expected `REVIEW`
+(`par-attempt-to-use-request_uri-for-different-client` — a negative
+test the suite grades via human-review screenshot upload, which
+`unblock.go`'s own placeholder-fill path resolves to `REVIEW` rather
+than `PASSED` by design). No `FAILURE`s, no modules left `WAITING`.
