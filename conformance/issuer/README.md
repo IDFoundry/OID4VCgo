@@ -551,3 +551,41 @@ reuse), and one expected `REVIEW`
 test the suite grades via human-review screenshot upload, which
 `unblock.go`'s own placeholder-fill path resolves to `REVIEW` rather
 than `PASSED` by design). No `FAILURE`s, no modules left `WAITING`.
+
+## Status: the base (non-HAIP) `oid4vci-1_0-issuer-test-plan` (21 modules)
+
+`VCIIssuerTestPlan.java` — the suite's own "alpha version - may be
+incomplete or incorrect" plan — reuses the exact same 21 module classes
+(2 metadata + 19 happy-flow/negative tests; no FAPI2SP battery at all,
+unlike the HAIP plan) already run live above, just under
+`fapi_profile=vci` instead of `fapi_profile=vci_haip`. Driven via
+`run-fapi2sp-battery -base-plan`, reusing the exact same server config
+generation and `unblock.go` mechanism — no new Go logic needed beyond
+plan-name/variant selection, since this plan's own module list entries
+pin no variant at all (`testModulesWithVariants()`'s own selector lists
+are empty), so every axis `VCIIssuerTestPlanHaip.java` already pins for
+the equivalent modules (`ClientAuthType=client_attestation`,
+`FAPI2SenderConstrainMethod=dpop`, `FAPI2AuthRequestMethod=unsigned`,
+`VCIGrantType=authorization_code`, `AuthorizationRequestType=simple`,
+`VCICredentialEncryption=plain`, `FAPIOpenIDConnect=plain_oauth`,
+`FAPIResponseMode=plain_response`) had to be supplied explicitly
+instead, confirmed against each variant's own `@VariantParameter
+name=` in the suite's Java source rather than guessed.
+
+**Confirmed live, twice for stability, identical outcomes both times:
+all 21 modules `FINISHED`/`PASSED` or correctly `SKIPPED`, no
+`FAILURE`s.** Two expected skips: `fail-invalid-key-attestation-signature`
+(the same legitimate skip already documented above — this binary never
+wires an `AttestationVerifier`) and
+`fail-unsupported-encryption-algorithm` (self-skips with "This test
+requires vci_credential_encryption=encrypted variant" — the base plan's
+own module list entry offers only one crossing, and `-base-plan` drives
+it at `plain`; the HAIP plan's own dedicated `encrypted`-crossing entry
+already covers this module's real behavior above, so no second base-plan
+crossing was added purely to un-skip an already-proven code path).
+
+One real, if minor, config gap found live: `run-fapi2sp-battery`'s own
+`buildPlanConfig` already carries `client_attestation.key_attestation_jwks`
+as a required-but-unused placeholder (added during the HAIP battery
+work above) — reused unchanged here, confirming the same
+required-but-unused reasoning holds under the base profile too.

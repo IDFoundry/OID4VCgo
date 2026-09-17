@@ -77,6 +77,32 @@ var inScopeModules = map[string]int{
 	"fapi2-security-profile-final-client-test-rs-dpop-auth-scheme-case-insensitivity":                         1,
 }
 
+// baseInScopeModules is this run's own testName -> credential count map
+// when -base-plan selects the suite's own base (non-HAIP)
+// "oid4vci-1_0-wallet-test-plan" (VCIWalletTestPlan.java — the suite's
+// own "alpha tests, not currently part of certification program"
+// plan) instead of the HAIP one. Unlike inScopeModules above, this
+// plan's own single ModuleListEntry pins no issuance-mode/encryption
+// crossing at all (just one implicit immediate+plain run per module,
+// see basePlanMode/crossingsFor) and reuses no FAPI2SP battery — just the same
+// 4 VCIWallet* modules as the HAIP plan, plus one 5th module HAIP's own
+// VCIWalletTestPlanHaip.java explicitly excludes ("Not needed for
+// HAIP"): a variant of the happy-path module whose Token Response
+// carries no authorization_details at all, checking this binary's own
+// wallet package never actually required it to resolve which
+// credential to request (confirmed by reading wallet/credential.go:
+// RequestCredential already accepts a bare CredentialConfigurationID,
+// and this binary's own driveModule never reads a Token Response's
+// authorization_details in the first place — it already always
+// supplies CredentialConfigurationID directly).
+var baseInScopeModules = map[string]int{
+	"oid4vci-1_0-wallet-test-credential-issuance":                                               1,
+	"oid4vci-1_0-wallet-test-credential-issuance-notification":                                  1,
+	"oid4vci-1_0-wallet-test-client-attestation-challenge":                                      1,
+	"oid4vci-1_0-wallet-test-batch-credential-issuance":                                         2,
+	"oid4vci-1_0-wallet-happy-path-with-scopes-without-authorization-details-in-token-response": 1,
+}
+
 // issuanceCrossing is one (vci_credential_issuance_mode,
 // vci_credential_encryption) variant pair this run drives every
 // in-scope module through.
@@ -124,6 +150,11 @@ type runConfig struct {
 	// to be reachable at all, so the default is a plausible-looking but
 	// entirely inert placeholder. Only used when issuerInitiated is set.
 	credentialOfferEndpoint string
+
+	// basePlan drives the suite's own base (non-HAIP)
+	// "oid4vci-1_0-wallet-test-plan" instead of the default HAIP one —
+	// see baseInScopeModules' own doc comment for what that changes.
+	basePlan bool
 }
 
 func main() {
@@ -138,6 +169,7 @@ func main() {
 	proofTypeFlag := flag.String("proof-type", string(proofStrategyJWT), "Credential Request proof strategy: \"jwt\" (default, jwk-conveyed jwt-type proof), \"attestation\" (standalone Key Attestation JWT, Appendix F.3 / HAIP §4.5.1 — requires -credential-configuration-id eu.europa.ec.eudi.pid.1.attestation -scope eudi.pid.1.attestation), or \"jwt-key-attestation\" (jwt-type proof with a nested Key Attestation JWT header, Appendix D.1 — requires -credential-configuration-id eu.europa.ec.eudi.pid.1.jwt.keyattest -scope eudi.pid.1.jwt.keyattest)")
 	flag.BoolVar(&cfg.issuerInitiated, "issuer-initiated", false, "drive the HAIP plan's issuer_initiated flow variant instead of the default wallet_initiated one — the suite hands this binary a Credential Offer to resolve instead of this binary calling /authorize directly")
 	flag.StringVar(&cfg.credentialOfferEndpoint, "credential-offer-endpoint", "https://oid4vcigo-wallet.example.com", "base URL for this run's own vci.credential_offer_endpoint config value (only used with -issuer-initiated) — never actually dereferenced by this binary or, in practice, by the suite either (see credentialoffer.go), so the default is an inert placeholder")
+	flag.BoolVar(&cfg.basePlan, "base-plan", false, "drive the suite's own base (non-HAIP) \"oid4vci-1_0-wallet-test-plan\" instead of the default HAIP plan — see baseInScopeModules' own doc comment")
 	dumpConfig := flag.Bool("dump-config", false, "print the generated suite-side plan configuration JSON and exit, instead of creating a plan — useful for probing the suite's own POST /api/plan validation by hand")
 	flag.Parse()
 
@@ -190,11 +222,37 @@ func run(cfg runConfig) error {
 		}
 	}
 
+	planName := "oid4vci-1_0-wallet-haip-test-plan"
+	scopeModules := inScopeModules
 	planVariant := map[string]string{"credential_format": "sd_jwt_vc"} //nolint:gosec // false positive: a suite variant selector value, not a credential
+	if cfg.basePlan {
+		// The base plan's own single ModuleListEntry pins only
+		// FAPIClientType/FAPIResponseMode (@PublishTestPlan's own
+		// testModulesWithVariants()) — every other axis the HAIP plan's
+		// own module-list Variant entries already fix must be supplied
+		// here instead, or plan creation fails with "missing value for
+		// required variant parameter" (confirmed live).
+		basePlanMode = true
+		planName = "oid4vci-1_0-wallet-test-plan"
+		scopeModules = baseInScopeModules
+		planVariant["client_auth_type"] = "client_attestation"
+		planVariant["fapi_request_method"] = "unsigned"
+		planVariant["sender_constrain"] = "dpop"
+		planVariant["authorization_request_type"] = "simple"
+		planVariant["fapi_profile"] = "vci"
+		planVariant["vci_grant_type"] = "authorization_code"
+		planVariant["vci_credential_issuance_mode"] = "immediate"
+		planVariant["vci_credential_encryption"] = "plain"
+	}
 	if cfg.issuerInitiated {
 		planVariant["vci_authorization_code_flow_variant"] = "issuer_initiated"
+	} else if cfg.basePlan {
+		// Unlike the HAIP plan (whose module list entries already pin
+		// this), the base plan leaves it unpinned too — the suite
+		// requires an explicit value even for the default.
+		planVariant["vci_authorization_code_flow_variant"] = "wallet_initiated"
 	}
-	planID, modules, err := conformancesuite.CreatePlan(httpClient, cfg.apiBase, "oid4vci-1_0-wallet-haip-test-plan", planVariant, walletRun.planConfig)
+	planID, modules, err := conformancesuite.CreatePlan(httpClient, cfg.apiBase, planName, planVariant, walletRun.planConfig)
 	if err != nil {
 		return err
 	}
@@ -203,7 +261,7 @@ func run(cfg runConfig) error {
 
 	summary := make(map[string]string)
 	for _, m := range modules {
-		numCreds, ok := inScopeModules[m.TestModule]
+		numCreds, ok := scopeModules[m.TestModule]
 		if !ok {
 			continue
 		}
@@ -225,7 +283,7 @@ func run(cfg runConfig) error {
 	}
 
 	log.Printf("=== summary ===")
-	for name := range inScopeModules {
+	for name := range scopeModules {
 		for _, crossing := range crossingsFor(name) {
 			key := name + " [" + crossing.String() + "]"
 			outcome, ran := summary[key]
@@ -246,20 +304,41 @@ func run(cfg runConfig) error {
 // this entry specifically.
 const batteryModulePrefix = "fapi2-security-profile-final-client-test-"
 
+// basePlanMode is set once, at the top of run(), when -base-plan
+// selects the suite's own base (non-HAIP) plan — see
+// baseInScopeModules' own doc comment. This binary drives exactly one
+// plan per invocation, so a package-level flag (checked only by
+// crossingsFor below) is simpler than threading cfg.basePlan through
+// every call site between run() and there.
+var basePlanMode bool
+
 // crossingsFor reports which of inScopeCrossings apply to testName —
-// all 3 for the 4 VCIWallet* modules, just immediate+plain for the
-// battery (see batteryModulePrefix).
+// all 3 for the 4 VCIWallet* modules under the HAIP plan, just
+// immediate+plain for the battery (see batteryModulePrefix) and for
+// every module under the base plan, which offers no other crossing at
+// all (its own single ModuleListEntry pins no issuance-mode/encryption
+// variant, unlike the HAIP plan's 3 separate entries).
 func crossingsFor(testName string) []issuanceCrossing {
-	if strings.HasPrefix(testName, batteryModulePrefix) {
+	if basePlanMode || strings.HasPrefix(testName, batteryModulePrefix) {
 		return inScopeCrossings[:1]
 	}
 	return inScopeCrossings
 }
 
 // matchCrossing reports whether variant matches one of the crossings
-// applicable to testName, returning the matching crossing.
+// applicable to testName, returning the matching crossing. Under the
+// base plan, unlike the HAIP one, the issuance-mode/encryption axes are
+// plan-level context rather than a per-module variant (confirmed live:
+// GET /api/plan/{id}'s own modules[].variant carries only
+// fapi_client_type/fapi_response_mode there) — there's exactly one
+// crossing to match regardless of what's in m.Variant, so skip the
+// lookup entirely.
 func matchCrossing(testName string, variant map[string]string) (issuanceCrossing, bool) {
-	for _, c := range crossingsFor(testName) {
+	crossings := crossingsFor(testName)
+	if basePlanMode {
+		return crossings[0], true
+	}
+	for _, c := range crossings {
 		if variant["vci_credential_issuance_mode"] == c.issuanceMode && variant["vci_credential_encryption"] == c.encryption {
 			return c, true
 		}

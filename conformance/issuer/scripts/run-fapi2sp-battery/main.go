@@ -74,7 +74,7 @@ import (
 // passing sanity modules (metadata, happy-flow) first, to confirm this
 // binary's freshly-generated config is behavior-preserving before
 // spending time on the 40 modules nothing has ever driven.
-var battery = []string{
+var haipBattery = []string{
 	// Sanity check: already-passing modules, confirming the freshly
 	// generated config/keys are behavior-preserving.
 	"oid4vci-1_0-issuer-metadata-test",
@@ -125,13 +125,75 @@ var battery = []string{
 	"fapi2-security-profile-final-user-rejects-authentication",
 }
 
+// baseBattery is every testName this binary drives when -base-plan
+// selects the suite's own base (non-HAIP) "oid4vci-1_0-issuer-test-plan"
+// (VCIIssuerTestPlan.java — "alpha version - may be incomplete or
+// incorrect") instead of the default HAIP plan. Unlike VCIIssuerTestPlanHaip,
+// this plan's own module list doesn't reuse the FAPI2SP battery at all —
+// just its own 2 metadata modules plus 20 happy-flow/negative-test
+// modules, the exact same already-passing classes VCIIssuerTestPlanHaip
+// also lists (confirmed identical testName strings against both plans'
+// own Java source), just now under fapi_profile=vci instead of
+// fapi_profile=vci_haip. Every module here is already exercised above
+// under HAIP — this run is about confirming this binary's own server
+// behaves the same way when the suite treats it as a base-profile VCI
+// issuer rather than a HAIP one, not new functional coverage.
+var baseBattery = []string{
+	"oid4vci-1_0-issuer-metadata-test",
+	"oid4vci-1_0-issuer-metadata-test-signed",
+	"oid4vci-1_0-issuer-happy-flow",
+	"oid4vci-1_0-issuer-happy-flow-additional-requests",
+	"oid4vci-1_0-issuer-happy-flow-multiple-clients",
+	"oid4vci-1_0-issuer-happy-flow-skip-notification",
+	"oid4vci-1_0-issuer-batch-issuance",
+	"oid4vci-1_0-issuer-fail-invalid-nonce",
+	"oid4vci-1_0-issuer-fail-invalid-jwt-proof-signature",
+	"oid4vci-1_0-issuer-fail-invalid-key-attestation-signature",
+	"oid4vci-1_0-issuer-fail-invalid-client-attestation-signature",
+	"oid4vci-1_0-issuer-fail-invalid-client-attestation-pop-signature",
+	"oid4vci-1_0-issuer-fail-client-attestation-exp-in-past",
+	"oid4vci-1_0-issuer-fail-client-attestation-no-sub",
+	"oid4vci-1_0-issuer-fail-client-attestation-pop-wrong-aud",
+	"oid4vci-1_0-issuer-fail-mismatched-client-attestation-pop-key",
+	"oid4vci-1_0-issuer-fail-missing-proof",
+	"oid4vci-1_0-issuer-fail-unsupported-encryption-algorithm",
+	"oid4vci-1_0-issuer-fail-unknown-credential-configuration",
+	"oid4vci-1_0-issuer-fail-unknown-credential-identifier",
+	"oid4vci-1_0-issuer-fail-on-access-token-in-query",
+}
+
 func main() {
 	apiBase := flag.String("suite", "https://localhost:8443/", "OIDF conformance suite base URL")
 	alias := flag.String("alias", "oid4vcigo-issuer", "suite plan alias — also the callback path segment; must match cmd/conformance-issuer's own registered redirect_uris")
 	issuerBaseURL := flag.String("issuer", "https://conformance-issuer:8443", "cmd/conformance-issuer's own externally-reachable base URL (suite-network-internal hostname)")
 	configOut := flag.String("config-out", "conformance/issuer/oidf-config/haip.config.json", "path to write cmd/conformance-issuer's own generated server config to")
 	skipDockerRestart := flag.Bool("skip-docker-restart", false, "skip restarting the conformance-issuer container after writing the new config (for repeat runs against a container already restarted once)")
+	basePlan := flag.Bool("base-plan", false, "drive the suite's own base (non-HAIP) \"oid4vci-1_0-issuer-test-plan\" instead of the default HAIP plan — see baseBattery's own doc comment")
 	flag.Parse()
+
+	planName := "oid4vci-1_0-issuer-haip-test-plan"
+	battery := haipBattery
+	planVariant := map[string]string{"credential_format": "sd_jwt_vc"} //nolint:gosec // a suite variant selector value, not a credential
+	if *basePlan {
+		// The base plan's own module list entries pin no variant at all
+		// (VCIIssuerTestPlan.java's own testModulesWithVariants() passes
+		// an empty selector list to every ModuleListEntry) — every axis
+		// the HAIP plan's own module list entries already fix must be
+		// supplied here instead, matching what VCIIssuerTestPlanHaip.java
+		// itself pins for the equivalent modules, just fapi_profile=vci
+		// instead of vci_haip (confirmed live).
+		planName = "oid4vci-1_0-issuer-test-plan"
+		battery = baseBattery
+		planVariant["client_auth_type"] = "client_attestation"
+		planVariant["sender_constrain"] = "dpop"
+		planVariant["fapi_request_method"] = "unsigned"
+		planVariant["fapi_profile"] = "vci"
+		planVariant["vci_grant_type"] = "authorization_code"
+		planVariant["authorization_request_type"] = "simple"
+		planVariant["vci_credential_encryption"] = "plain"
+		planVariant["openid"] = "plain_oauth"
+		planVariant["fapi_response_mode"] = "plain_response"
+	}
 
 	httpClient := insecureSuiteHTTPClient()
 
@@ -164,8 +226,7 @@ func main() {
 		log.Fatalf("build plan config: %v", err)
 	}
 
-	planID, modules, err := conformancesuite.CreatePlan(httpClient, *apiBase, "oid4vci-1_0-issuer-haip-test-plan",
-		map[string]string{"credential_format": "sd_jwt_vc"}, planConfig) //nolint:gosec // a suite variant selector value, not a credential
+	planID, modules, err := conformancesuite.CreatePlan(httpClient, *apiBase, planName, planVariant, planConfig)
 	if err != nil {
 		log.Fatal(err)
 	}

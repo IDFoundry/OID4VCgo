@@ -161,8 +161,15 @@ negative-test expectations differ.
   `cmd/conformance-as` already needs, now ported to Go. **All 42
   modules `FINISHED` twice in a row for stability**: `PASSED` except
   one expected `WARNING`, one expected `SKIPPED`, and one expected
-  `REVIEW` (a human-review negative test) — no `FAILURE`s. See
-  `issuer/README.md`.
+  `REVIEW` (a human-review negative test) — no `FAILURE`s.
+  **Update: the suite's own base (non-HAIP) `oid4vci-1_0-issuer-test-plan`
+  is driven too**, via `run-fapi2sp-battery -base-plan` — the same 21
+  module classes already covered above (no FAPI2SP battery in this
+  plan), just under `fapi_profile=vci` instead of `vci_haip`, with
+  every axis the HAIP plan's own module list pins now supplied
+  explicitly at plan-creation time instead. All 21 modules
+  `FINISHED`/`PASSED` or correctly `SKIPPED`, twice for stability, no
+  `FAILURE`s. See `issuer/README.md`.
 - **`wallet/`** — OID4VCI 1.0 Final/HAIP Wallet role
   (`oid4vci-1_0-wallet-haip-test-plan`): `cmd/conformance-wallet`
   drives `oid4vcigo/wallet`/`fapigo/client` as an outbound HTTP client
@@ -228,5 +235,13 @@ negative-test expectations differ.
   ([FAPIgo PR #322](https://github.com/IDFoundry/FAPIgo/pull/322),
   merged, `go.mod` pinned past it). `issuer_initiated_dc_api` isn't
   covered — same Digital Credentials API browser-JS scope cut as
-  `cmd/conformance-wallet-vp`'s own `dc_api.jwt` module lists. See
+  `cmd/conformance-wallet-vp`'s own `dc_api.jwt` module lists.
+  **Update: the suite's own base (non-HAIP) `oid4vci-1_0-wallet-test-plan`
+  is driven too**, via `-base-plan` — the same 4 `VCIWallet*` modules
+  already covered above (one `immediate`+`plain` crossing, no FAPI2SP
+  battery reuse in this plan), plus a 5th module HAIP's own plan
+  explicitly excludes: a Token-Response-without-`authorization_details`
+  variant, which needed no wallet code changes since this binary never
+  read that field in the first place. All 5 modules `FINISHED`/`PASSED`,
+  twice for stability. See
   `wallet/README.md`.

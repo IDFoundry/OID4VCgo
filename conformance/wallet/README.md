@@ -347,6 +347,41 @@ JWT header, Appendix D.1) — the latter two both exercise HAIP §4.5.1's
 Key Attestation requirement, just via OID4VCI's two different
 conveyance mechanisms for it.
 
+**Update: the suite's own base (non-HAIP) `oid4vci-1_0-wallet-test-plan`
+(`VCIWalletTestPlan.java` — the suite's own "alpha tests, not currently
+part of certification program") is driven too, via `-base-plan`.**
+Confirmed live, twice for stability: all 5 module instances
+`FINISHED`/`PASSED`. This plan's own single `ModuleListEntry` pins no
+issuance-mode/encryption crossing at all (unlike the HAIP plan's 3
+separate entries) and reuses no FAPI2SP battery, so `-base-plan` always
+drives one `immediate`+`plain` crossing of the same 4 `VCIWallet*`
+modules as the HAIP plan, plus a 5th module HAIP's own
+`VCIWalletTestPlanHaip.java` explicitly excludes ("Not needed for
+HAIP"): `oid4vci-1_0-wallet-happy-path-with-scopes-without-authorization-details-in-token-response`,
+whose Token Response omits `authorization_details` entirely. That
+module needed no wallet code changes at all — confirmed by reading
+`wallet/credential.go` first: `RequestCredential` already accepts a
+bare `CredentialConfigurationID`, and this binary's own `driveModule`
+never reads a Token Response's `authorization_details` in the first
+place, so the absence changed nothing about how this binary builds its
+Credential Request. Every axis the HAIP plan's own module-list entries
+already pin (`ClientAuthType`, `FAPI2AuthRequestMethod`,
+`FAPI2SenderConstrainMethod`, `FAPI2FinalOPProfile`, `VCIGrantType`,
+`AuthorizationRequestType`, `VCIWalletAuthorizationCodeFlowVariant`)
+the base plan leaves unpinned instead — `-base-plan` supplies the exact
+same values HAIP already pins, just `fapi_profile=vci` instead of
+`vci_haip`, confirmed via each `@VariantParameter`'s own `name=` in the
+suite's Java source rather than guessed. One real config gap found
+live: `client_attestation.key_attestation_jwks` (a fallback-verifier
+JWKS, distinct from `key_attestation_trust_anchor_pem`) is hidden under
+`fapi_profile=vci_haip` but required under base `vci` — added as an
+empty-but-present placeholder (`config.go`), since this binary's own
+Key Attestation JWTs always carry an `x5c` header
+(`keyattestation.go`), which the suite's own fallback verifier
+(`VerifyKeyAttestationSignatureUsingConfigJwks`) skips whenever present
+— the same required-but-unused pattern already found on the Issuer
+role's own equivalent field.
+
 **Not yet covered** (separate, later, only if asked):
 
 - `issuer_initiated_dc_api` — needs real Digital Credentials API
@@ -354,4 +389,6 @@ conveyance mechanisms for it.
   `cmd/conformance-wallet-vp` already makes for its own `dc_api.jwt`
   module lists.
 - The base (non-HAIP) `VCIWalletTestPlan`'s `ClientAuthType`≠`client_attestation`
-  variants.
+  variants, and its own FAPI2SP-battery-equivalent coverage (the base
+  plan doesn't reuse the battery at all, so there's nothing to drive
+  there).

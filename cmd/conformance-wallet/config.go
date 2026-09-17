@@ -146,6 +146,17 @@ func newWalletRun(cfg runConfig) (*walletRun, error) {
 			// dedicated CA (above) only actually gets exercised when a
 			// Key Attestation JWT is presented (keyattestation.go).
 			"key_attestation_trust_anchor_pem": keyAttestationCAPEM,
+			// key_attestation_jwks is a required-but-unused placeholder
+			// under the base (non-HAIP) plan's own fapi_profile=vci
+			// variant — AbstractVCIWalletTest.java only hides it under
+			// fapi_profile=vci_haip, and its own fallback verifier
+			// (VerifyKeyAttestationSignatureUsingConfigJwks) only ever
+			// reads it when a presented Key Attestation JWT lacks an x5c
+			// header, which keyattestation.go never omits — matching the
+			// same required-but-unused pattern already found for the
+			// Issuer role's own client_attestation.key_attestation_jwks
+			// (run-fapi2sp-battery/config.go).
+			"key_attestation_jwks": map[string]any{"keys": []any{}},
 		},
 		"credential": map[string]any{
 			"signing_jwk": credentialSigningJWK,
