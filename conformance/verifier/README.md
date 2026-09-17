@@ -51,54 +51,55 @@ credentials of its own, only a DCQL query and a trusted issuer key
 
 **Confirmed live against a real, locally-run OIDF conformance suite**
 (pre-built Docker images, `docker-compose-prebuilt.yml`, `dev` Spring
-profile), covering all 13 modules of
-`oid4vp-1final-verifier-haip-test-plan`: 12 `direct_post.jwt` +
+profile), covering all 12 modules of
+`oid4vp-1final-verifier-haip-test-plan`: 11 `direct_post.jwt` +
 `x509_hash` + `request_uri_signed` modules under `credential_format=
-sd_jwt_vc`, plus the plan's own thirteenth module,
-`-invalid-session-transcript` — `iso_mdl`-only (confirmed directly
-against the suite's own `/api/runner/available`: its `credential_format`
-variant offers no `sd_jwt_vc` value at all) — under
-`credential_format=iso_mdl` via a second binary code path
-(`cmd/conformance-verifier`'s own `buildMdocQuery`) and a dedicated
-driver, `conformance/verifier/scripts/run-mdoc-module`:
+sd_jwt_vc` (confirmed against a real historical plan document, GET
+`/api/plan/{id}` — not the base `/api/runner/available` module list,
+which also lists `-invalid-session-transcript` and unrelated
+`oid4vp-id2`/`id3` draft-version modules this repo doesn't target),
+driven by a dedicated tool,
+`conformance/verifier/scripts/run-sdjwt-modules`, plus the plan's own
+twelfth module, `-invalid-session-transcript` — `iso_mdl`-only
+(confirmed directly against the suite's own `/api/runner/available`:
+its `credential_format` variant offers no `sd_jwt_vc` value at all) —
+under `credential_format=iso_mdl` via a second binary code path
+(`cmd/conformance-verifier`'s own `buildMdocQuery`) and its own
+dedicated driver, `conformance/verifier/scripts/run-mdoc-module`.
+Confirmed live, twice for stability, via each tool:
 
-- **7 positive-behavior modules** (`happy-flow`, `minimal-cnf-jwk`,
+- **6 positive-behavior modules** (`happy-flow`, `minimal-cnf-jwk`,
   `request-uri-fetched-twice`, `request-uri-method-post`,
-  `kb-jwt-iat-in-past`, `kb-jwt-iat-in-future`) all end with this
-  binary's own `/result` page reporting `Verification succeeded` and
-  the correct disclosed claims, and `GET /api/log` shows zero entries
-  at `WARNING` or worse. The suite's own `GET /api/info` reports
-  `result: None`/`FAILED` while `status: WAITING` for these — that's
-  expected, not a bug: each module's own summary text requires a
-  manually-uploaded screenshot before it can reach `REVIEW`, which this
-  scripted run never does.
+  `kb-jwt-iat-in-past`, `kb-jwt-iat-in-future`) all reach
+  `FINISHED`/`REVIEW`, this binary's own `/result` page reporting
+  `Verification succeeded` and the correct disclosed claims, and
+  `GET /api/log` shows zero entries at `WARNING` or worse.
 - **5 negative-test modules** (`invalid-kb-jwt-signature`,
   `invalid-credential-signature`, `invalid-sd-hash`,
-  `invalid-kb-jwt-nonce`, `invalid-kb-jwt-aud`) all correctly end with
-  `Verification failed` and the exact expected error (e.g. `jose: ES256
-  signature verification failed` for the KB-JWT signature case,
-  `key binding JWT sd_hash does not match` for the sd_hash case) —
-  `VerifyResponse`'s own checks reject each malformed presentation
-  precisely as designed.
-- **`invalid-session-transcript` (the `iso_mdl`-only 13th module):
-  `FINISHED`/`REVIEW`**, confirmed via `run-mdoc-module`. Unlike the
-  5 `sd_jwt_vc` negative-test modules above, this one's own outcome
-  isn't visible as the `/response` endpoint's own HTTP status —
-  `handleResponse` always replies `200` with `{"redirect_uri":...}`
-  regardless of verification outcome, deferring the pass/fail signal
-  to the later `/result` page (OID4VP 1.0 Final permits this: "defers
-  VP verification until after this step"). The suite's own module log
-  confirms this repo's own `verifier.VerifyResponse` correctly
-  detected and rejected the tampered `SessionTranscript` ("A screenshot
-  showing the verifier reporting the verification failure must be
-  uploaded"); `run-mdoc-module` fills that upload placeholder itself
-  (the same proven mechanism
-  `conformance/issuer/scripts/run-fapi2sp-battery/unblock.go` already
-  uses for a different role's own modules), so `REVIEW` — this plan's
-  own legitimate terminal grading state once a screenshot step is
-  involved, the same as the 7 `sd_jwt_vc` positive-behavior modules
-  above would reach if driven all the way — is reached without a real
-  browser.
+  `invalid-kb-jwt-nonce`, `invalid-kb-jwt-aud`) all reach
+  `FINISHED`/`REVIEW` too, each module's own log confirming the exact
+  corruption the suite deliberately introduced (e.g. "Invalidated
+  KB-JWT signature in SD-JWT credential", "Using invalid sd_hash in
+  key binding JWT") and this binary's own `/result` page correctly
+  reporting the presentation as rejected — `VerifyResponse`'s own
+  checks reject each malformed presentation precisely as designed.
+- **`invalid-session-transcript` (the `iso_mdl`-only 12th module):
+  `FINISHED`/`REVIEW`**, confirmed via `run-mdoc-module`. The suite's
+  own module log confirms this repo's own `verifier.VerifyResponse`
+  correctly detected and rejected the tampered `SessionTranscript`.
+
+Every module in this plan — positive and negative alike, `sd_jwt_vc`
+and `iso_mdl` alike — reaches `REVIEW` this same way, never a clean
+`PASSED`: `handleResponse` always replies `200` with
+`{"redirect_uri":...}` regardless of verification outcome, deferring
+the pass/fail signal to the later `/result` page (OID4VP 1.0 Final
+permits this: "defers VP verification until after this step"), so
+every module's own summary text requires a screenshot before it can
+reach a terminal grade. Both `run-sdjwt-modules` and `run-mdoc-module`
+fill that upload placeholder themselves (the same proven mechanism
+`conformance/issuer/scripts/run-fapi2sp-battery/unblock.go` already
+uses for a different role's own modules), so this is reached without a
+real browser.
 
 **`request-uri-method-post` and `request-uri-fetched-twice`: real
 support added, not just made to pass.** These two used to be grouped
