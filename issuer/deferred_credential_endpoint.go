@@ -108,7 +108,7 @@ func (iss *Issuer) RequestDeferredCredential(ctx context.Context, auth Authorize
 		return DeferredCredentialResult{}, newError(ErrorInvalidCredentialRequest, 400, "transaction_id is required", nil)
 	}
 	if req.ResponseEncryption != nil && !req.RequestWasEncrypted {
-		return DeferredCredentialResult{}, newError(ErrorInvalidCredentialRequest, 400,
+		return DeferredCredentialResult{}, newError(ErrorInvalidEncryptionParameters, 400,
 			"credential_response_encryption requires the request itself to be encrypted", nil)
 	}
 

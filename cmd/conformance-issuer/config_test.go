@@ -24,6 +24,10 @@ func baseTestConfig(t *testing.T) Config {
 	if err != nil {
 		t.Fatalf("JWKSet: %v", err)
 	}
+	requestDecryptionKeyPEM, err := conformancecert.GenerateECKeyPEM()
+	if err != nil {
+		t.Fatalf("GenerateECKeyPEM: %v", err)
+	}
 	return Config{
 		ListenAddr:        ":8443",
 		Issuer:            "https://issuer.example.com",
@@ -35,12 +39,13 @@ func baseTestConfig(t *testing.T) Config {
 			ExpectedAttesterIssuer: "https://attester.example.com",
 			AttesterJWKS:           attesterJWKS,
 		},
-		CredentialIssuerSigningKeyPEM:  issuerKeyPEM,
-		CredentialIssuerCertificatePEM: issuerCertPEM,
-		VCT:                            "urn:eudi:pid:1",
-		Claims:                         map[string]string{"given_name": "Jean"},
-		Scope:                          "IdentityCredential",
-		CredentialConfigurationID:      "IdentityCredential",
+		CredentialIssuerSigningKeyPEM:     issuerKeyPEM,
+		CredentialIssuerCertificatePEM:    issuerCertPEM,
+		CredentialRequestDecryptionKeyPEM: requestDecryptionKeyPEM,
+		VCT:                               "urn:eudi:pid:1",
+		Claims:                            map[string]string{"given_name": "Jean"},
+		Scope:                             "IdentityCredential",
+		CredentialConfigurationID:         "IdentityCredential",
 	}
 }
 
@@ -69,18 +74,19 @@ func TestLoadConfig_DefaultsSubject(t *testing.T) {
 
 func TestLoadConfig_RejectsMissingRequiredFields(t *testing.T) {
 	cases := map[string]func(*Config){
-		"listen_addr":                       func(c *Config) { c.ListenAddr = "" },
-		"issuer":                            func(c *Config) { c.Issuer = "" },
-		"client.id":                         func(c *Config) { c.Client.ID = "" },
-		"client.redirect_uris":              func(c *Config) { c.Client.RedirectURIs = nil },
-		"client.expected_attester_issuer":   func(c *Config) { c.Client.ExpectedAttesterIssuer = "" },
-		"client.attester_jwks":              func(c *Config) { c.Client.AttesterJWKS = nil },
-		"credential_issuer_signing_key_pem": func(c *Config) { c.CredentialIssuerSigningKeyPEM = "" },
-		"credential_issuer_certificate_pem": func(c *Config) { c.CredentialIssuerCertificatePEM = "" },
-		"vct":                               func(c *Config) { c.VCT = "" },
-		"claims":                            func(c *Config) { c.Claims = nil },
-		"scope":                             func(c *Config) { c.Scope = "" },
-		"credential_configuration_id":       func(c *Config) { c.CredentialConfigurationID = "" },
+		"listen_addr":                           func(c *Config) { c.ListenAddr = "" },
+		"issuer":                                func(c *Config) { c.Issuer = "" },
+		"client.id":                             func(c *Config) { c.Client.ID = "" },
+		"client.redirect_uris":                  func(c *Config) { c.Client.RedirectURIs = nil },
+		"client.expected_attester_issuer":       func(c *Config) { c.Client.ExpectedAttesterIssuer = "" },
+		"client.attester_jwks":                  func(c *Config) { c.Client.AttesterJWKS = nil },
+		"credential_issuer_signing_key_pem":     func(c *Config) { c.CredentialIssuerSigningKeyPEM = "" },
+		"credential_issuer_certificate_pem":     func(c *Config) { c.CredentialIssuerCertificatePEM = "" },
+		"credential_request_decryption_key_pem": func(c *Config) { c.CredentialRequestDecryptionKeyPEM = "" },
+		"vct":                                   func(c *Config) { c.VCT = "" },
+		"claims":                                func(c *Config) { c.Claims = nil },
+		"scope":                                 func(c *Config) { c.Scope = "" },
+		"credential_configuration_id":           func(c *Config) { c.CredentialConfigurationID = "" },
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -180,6 +186,13 @@ func TestConfig_CredentialIssuerSigningKey(t *testing.T) {
 		t.Fatalf("credentialIssuerCertificate: %v", err)
 	}
 	conformancecert.AssertMatchingPublicKey(t, key, cert.PublicKey)
+}
+
+func TestConfig_CredentialRequestDecryptionKey(t *testing.T) {
+	cfg := baseTestConfig(t)
+	if _, err := cfg.credentialRequestDecryptionKey(); err != nil {
+		t.Fatalf("credentialRequestDecryptionKey: %v", err)
+	}
 }
 
 func TestConfig_IssuerURL(t *testing.T) {

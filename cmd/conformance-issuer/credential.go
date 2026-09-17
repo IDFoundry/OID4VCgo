@@ -18,6 +18,7 @@ import (
 	"github.com/idfoundry/oid4vcigo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcigo/internal/conformancecert"
 	"github.com/idfoundry/oid4vcigo/internal/jose"
+	"github.com/idfoundry/oid4vcigo/internal/jwe"
 	"github.com/idfoundry/oid4vcigo/issuer"
 )
 
@@ -122,21 +123,39 @@ func nonceHandler(iss *issuer.Issuer) http.HandlerFunc {
 // established "issuer doesn't own the HTTP handler" boundary (see
 // issuer/credential_endpoint.go's own doc comment).
 type wireCredentialRequest struct {
-	CredentialConfigurationID string              `json:"credential_configuration_id"`
-	CredentialIdentifier      string              `json:"credential_identifier"`
-	Proofs                    map[string][]string `json:"proofs"`
+	CredentialConfigurationID    string                  `json:"credential_configuration_id"`
+	CredentialIdentifier         string                  `json:"credential_identifier"`
+	Proofs                       map[string][]string     `json:"proofs"`
+	CredentialResponseEncryption *wireResponseEncryption `json:"credential_response_encryption"`
+}
+
+// wireResponseEncryption is the Credential Request's own optional
+// "credential_response_encryption" object (§8.2) — this binary's own
+// job to parse into an *issuer.ResponseEncryptionRequest, since that
+// type carries no JSON tags of its own (issuer/encryption.go's own
+// doc comment: it's populated by the caller, not unmarshaled
+// directly).
+type wireResponseEncryption struct {
+	JWK json.RawMessage `json:"jwk"`
+	Enc string          `json:"enc"`
+	Zip string          `json:"zip"`
 }
 
 // credentialHandler serves the Credential Endpoint (§8): verifies the
 // presented access token via resourceVerifier (fapigo/resource,
 // per issuer/resource_verifier.go's own recipe), adapts the result
-// into issuer.AuthorizedRequest, parses the wire request body, and
-// calls RequestCredential with vct/claims fixed to whatever cfg
-// configures — issuer.Issuer has no user database of its own
-// (CredentialRequest.SDJWTClaims' own doc comment), so this binary's
-// own static test data stands in for one. No request/response
-// encryption support yet and no credential_identifier-based requests
-// — see README's own "Status".
+// into issuer.AuthorizedRequest, decrypts the request body if it
+// arrived as a JWE (§10, via iss.DecryptRequestBody), parses the wire
+// request body, and calls RequestCredential with vct/claims fixed to
+// whatever cfg configures — issuer.Issuer has no user database of its
+// own (CredentialRequest.SDJWTClaims' own doc comment), so this
+// binary's own static test data stands in for one. The response is
+// encrypted back (§10, via iss.EncryptResponseBody) whenever the
+// request's own "credential_response_encryption" asked for it — both
+// directions delegate entirely to issuer/encryption.go's own already-
+// tested logic, this handler only translates wire JSON to/from it. No
+// credential_identifier-based requests yet — see README's own
+// "Status".
 func credentialHandler(iss *issuer.Issuer, resourceVerifier *fapires.Verifier, credentialURL *url.URL, cfg Config) http.HandlerFunc {
 	additional := make(map[string]any, len(cfg.Claims))
 	for name, value := range cfg.Claims {
@@ -165,10 +184,23 @@ func credentialHandler(iss *issuer.Issuer, resourceVerifier *fapires.Verifier, c
 			http.Error(w, "failed to read request body", http.StatusBadRequest)
 			return
 		}
+		plaintext, wasEncrypted, err := iss.DecryptRequestBody(body, r.Header.Get("Content-Type"))
+		if err != nil {
+			writeIssuerError(w, err)
+			return
+		}
 		var wire wireCredentialRequest
-		if err := json.Unmarshal(body, &wire); err != nil {
+		if err := json.Unmarshal(plaintext, &wire); err != nil {
 			http.Error(w, "malformed credential request", http.StatusBadRequest)
 			return
+		}
+		var responseEncryption *issuer.ResponseEncryptionRequest
+		if wire.CredentialResponseEncryption != nil {
+			responseEncryption = &issuer.ResponseEncryptionRequest{
+				JWK: wire.CredentialResponseEncryption.JWK,
+				Enc: jwe.Enc(wire.CredentialResponseEncryption.Enc),
+				Zip: jwe.Zip(wire.CredentialResponseEncryption.Zip),
+			}
 		}
 
 		exp := conformancecert.CredentialExp(time.Now(), issuedCredentialLifetime)
@@ -178,13 +210,25 @@ func credentialHandler(iss *issuer.Issuer, resourceVerifier *fapires.Verifier, c
 			CredentialIdentifier:      wire.CredentialIdentifier,
 			Proofs:                    wire.Proofs,
 			SDJWTClaims:               &sdjwtvc.Claims{VCT: cfg.VCT, Exp: &exp, Additional: additional},
+			RequestWasEncrypted:       wasEncrypted,
+			ResponseEncryption:        responseEncryption,
 		})
 		if err != nil {
 			writeIssuerError(w, err)
 			return
 		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(result)
+		resultJSON, err := json.Marshal(result)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		encoded, contentType, err := iss.EncryptResponseBody(resultJSON, responseEncryption)
+		if err != nil {
+			writeIssuerError(w, err)
+			return
+		}
+		w.Header().Set("Content-Type", contentType)
+		_, _ = w.Write(encoded)
 	}
 }
 

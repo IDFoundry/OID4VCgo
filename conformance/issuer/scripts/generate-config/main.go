@@ -38,19 +38,20 @@ import (
 )
 
 type generatedConfig struct {
-	ListenAddr                     string            `json:"listen_addr"`
-	Issuer                         string            `json:"issuer"`
-	TLSCertificatePEM              string            `json:"tls_certificate_pem"`
-	TLSPrivateKeyPEM               string            `json:"tls_private_key_pem"`
-	Client                         generatedClient   `json:"client"`
-	Client2                        *generatedClient  `json:"client2,omitempty"`
-	CredentialIssuerSigningKeyPEM  string            `json:"credential_issuer_signing_key_pem"`
-	CredentialIssuerCertificatePEM string            `json:"credential_issuer_certificate_pem"`
-	VCT                            string            `json:"vct"`
-	Claims                         map[string]string `json:"claims"`
-	Scope                          string            `json:"scope"`
-	CredentialConfigurationID      string            `json:"credential_configuration_id"`
-	DefaultSubject                 string            `json:"default_subject"`
+	ListenAddr                        string            `json:"listen_addr"`
+	Issuer                            string            `json:"issuer"`
+	TLSCertificatePEM                 string            `json:"tls_certificate_pem"`
+	TLSPrivateKeyPEM                  string            `json:"tls_private_key_pem"`
+	Client                            generatedClient   `json:"client"`
+	Client2                           *generatedClient  `json:"client2,omitempty"`
+	CredentialIssuerSigningKeyPEM     string            `json:"credential_issuer_signing_key_pem"`
+	CredentialIssuerCertificatePEM    string            `json:"credential_issuer_certificate_pem"`
+	CredentialRequestDecryptionKeyPEM string            `json:"credential_request_decryption_key_pem"`
+	VCT                               string            `json:"vct"`
+	Claims                            map[string]string `json:"claims"`
+	Scope                             string            `json:"scope"`
+	CredentialConfigurationID         string            `json:"credential_configuration_id"`
+	DefaultSubject                    string            `json:"default_subject"`
 }
 
 type generatedClient struct {
@@ -78,6 +79,11 @@ func main() {
 		fmt.Fprintln(os.Stderr, "generate credential issuer key/certificate:", err)
 		os.Exit(1)
 	}
+	requestDecryptionKeyPEM, err := conformancecert.GenerateECKeyPEM()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "generate credential request decryption key:", err)
+		os.Exit(1)
+	}
 
 	cfg := generatedConfig{
 		ListenAddr:        ":8443",
@@ -90,13 +96,14 @@ func main() {
 			ExpectedAttesterIssuer: "https://PLACEHOLDER-fill-in-from-the-suite",
 			AttesterJWKS:           json.RawMessage(`{"keys":[]}`),
 		},
-		CredentialIssuerSigningKeyPEM:  issuerKeyPEM,
-		CredentialIssuerCertificatePEM: issuerCertPEM,
-		VCT:                            "urn:eudi:pid:1",
-		Claims:                         map[string]string{"given_name": "Jean", "family_name": "Dupont"},
-		Scope:                          "IdentityCredential",
-		CredentialConfigurationID:      "IdentityCredential",
-		DefaultSubject:                 "conformance-test-subject",
+		CredentialIssuerSigningKeyPEM:     issuerKeyPEM,
+		CredentialIssuerCertificatePEM:    issuerCertPEM,
+		CredentialRequestDecryptionKeyPEM: requestDecryptionKeyPEM,
+		VCT:                               "urn:eudi:pid:1",
+		Claims:                            map[string]string{"given_name": "Jean", "family_name": "Dupont"},
+		Scope:                             "IdentityCredential",
+		CredentialConfigurationID:         "IdentityCredential",
+		DefaultSubject:                    "conformance-test-subject",
 	}
 	if *withClient2 {
 		cfg.Client2 = &generatedClient{

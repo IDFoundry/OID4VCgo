@@ -18,6 +18,7 @@ import (
 
 	"github.com/idfoundry/oid4vcigo"
 	"github.com/idfoundry/oid4vcigo/internal/jose"
+	"github.com/idfoundry/oid4vcigo/internal/jwe"
 	"github.com/idfoundry/oid4vcigo/issuer"
 	oid4vcigostorage "github.com/idfoundry/oid4vcigo/storage"
 )
@@ -38,6 +39,23 @@ const clientAttestationAlgorithm = fapi.ES256
 // fixed constant rather than a Config field, matching issProofAlgs's
 // own "conformance-fixed choice, not configurable" shape just below.
 const conformanceBatchSize = 5
+
+// credentialRequestDecryptionKeyID is this binary's own fixed "kid"
+// for Config.CredentialRequestDecryptionKeyPEM's own public half,
+// published as Metadata's own "credential_request_encryption.jwks"
+// entry — not deployment-specific, so a hardcoded constant rather
+// than a Config field, matching conformanceBatchSize's own precedent.
+const credentialRequestDecryptionKeyID = "credential-request-encryption-key-1" //nolint:gosec // G101 false positive: this is a public "kid" identifier published in Metadata, not a credential or secret
+
+// credentialEncValuesSupported is this binary's own advertised §10
+// "enc_values_supported" for both Credential Request decryption and
+// Credential Response encryption — HAIP's own A128GCM/A256GCM
+// convention (already used for verifier.Config.EncValuesSupported
+// elsewhere in this repo), deliberately excluding jwe.A192GCM even
+// though internal/jwe implements it: this is what makes "unsupported
+// algorithm" a real, testable condition for this issuer rather than a
+// vacuous one.
+var credentialEncValuesSupported = []jwe.Enc{jwe.A128GCM, jwe.A256GCM}
 
 // newServerMux builds the full wiring — a real fapigo/server.Server
 // (FAPI 2.0 Security Profile Final, Wallet Attestation client
@@ -195,12 +213,23 @@ func newServerMux(cfg Config) (*http.ServeMux, error) {
 	if err != nil {
 		return nil, fmt.Errorf("credential issuer certificate: %w", err)
 	}
+	requestDecryptionKey, err := cfg.credentialRequestDecryptionKey()
+	if err != nil {
+		return nil, fmt.Errorf("credential request decryption key: %w", err)
+	}
 	issProofAlgs := []string{"ES256"}
 	iss, err := issuer.New(issuer.Config{
 		Issuer:                  issuerURL,
 		Endpoints:               issuer.Endpoints{Credential: credentialURL, Nonce: nonceURL},
 		Limits:                  issuer.Limits{NonceLifetime: limits.MaxDPoPProofAge},
 		BatchCredentialIssuance: &issuer.BatchCredentialIssuance{BatchSize: conformanceBatchSize},
+		RequestEncryption: &issuer.RequestEncryptionSupport{
+			Keys:               []issuer.RequestDecryptionKey{{KeyID: credentialRequestDecryptionKeyID, PrivateKey: requestDecryptionKey}},
+			EncValuesSupported: credentialEncValuesSupported,
+		},
+		ResponseEncryption: &issuer.ResponseEncryptionSupport{
+			EncValuesSupported: credentialEncValuesSupported,
+		},
 		CredentialConfigurationsSupported: map[string]issuer.CredentialConfiguration{
 			cfg.CredentialConfigurationID: {
 				Format: "dc+sd-jwt", Scope: cfg.Scope, VCT: cfg.VCT,

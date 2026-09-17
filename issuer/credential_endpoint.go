@@ -172,7 +172,7 @@ type resolvedKey struct {
 // CredentialRequest's own doc comment for what's out of scope.
 func (iss *Issuer) RequestCredential(ctx context.Context, auth AuthorizedRequest, req CredentialRequest) (oid4vci.CredentialResponse, error) {
 	if req.ResponseEncryption != nil && !req.RequestWasEncrypted {
-		return oid4vci.CredentialResponse{}, newError(ErrorInvalidCredentialRequest, 400,
+		return oid4vci.CredentialResponse{}, newError(ErrorInvalidEncryptionParameters, 400,
 			"credential_response_encryption requires the request itself to be encrypted", nil)
 	}
 	cc, err := iss.resolveCredentialConfiguration(auth, req)

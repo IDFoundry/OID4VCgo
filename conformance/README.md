@@ -117,9 +117,30 @@ negative-test expectations differ.
   distinct disclosure salts, distinct `cnf` binding keys each matching
   one of the sent proofs, and non-linkable time claims across all 5
   issued credentials — not just a metadata flag flip.
+  **Update: `fail-unsupported-encryption-algorithm` — real support
+  added, not just made to pass.** Previously self-`SKIPPED` (HAIP never
+  references OID4VCI §10 encryption, so it stayed fully optional);
+  turned out `issuer`'s own `DecryptRequestBody`/`EncryptResponseBody`
+  already fully implement §10 — `wiring.go` now opts in
+  (`A128GCM`/`A256GCM`, deliberately excluding `A192GCM` so
+  "unsupported" stays real). Driving this live surfaced three more
+  genuine, pre-existing gaps in the already-implemented `issuer`
+  package, never exercised before this wiring made the code path
+  reachable: `credential_request_encryption.jwks` was a bare array
+  instead of a required JSON Web Key Set object; published keys had no
+  `alg` member (§10 requires one); and `EncryptResponseBody` never
+  validated a Wallet-declared `alg` mismatch in
+  `credential_response_encryption.jwk`, silently encrypting anyway
+  instead of rejecting it. Also fixed: every §10 failure used the
+  generic `invalid_credential_request` code instead of §8.3.1.2's own
+  dedicated `invalid_encryption_parameters`, which the suite
+  specifically checks for. Confirmed live after all four fixes:
+  `FINISHED`/`PASSED`, zero log entries at `WARNING` or worse, plus a
+  genuine positive encrypt→issue→encrypt→decrypt round trip through
+  the real HTTP binary (not just the library's own internals).
   **Final tally: all 21 modules `FINISHED`/`PASSED` or correctly
   `SKIPPED`** — 10 of 10 applicable negative tests `PASSED`, 1 module
-  correctly self-`SKIPPED` (key-attestation/encryption-algorithm
-  features this binary doesn't implement). See `issuer/README.md`.
+  correctly self-`SKIPPED` (key-attestation, blocked on the still-
+  unbuilt OID4VCI Wallet role). See `issuer/README.md`.
 - **Not yet started**: OID4VCI Wallet role (blocked on a FAPIgo-side
   change — see `AGENTS.md`).

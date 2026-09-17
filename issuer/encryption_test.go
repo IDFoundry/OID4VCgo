@@ -131,14 +131,20 @@ func TestMetadata_RequestAndResponseEncryption(t *testing.T) {
 		t.Fatalf("CredentialRequestEncryption is nil")
 	}
 	re := md.CredentialRequestEncryption
-	if len(re.JWKS) != 2 {
-		t.Fatalf("JWKS has %d entries, want 2", len(re.JWKS))
+	if len(re.JWKS.Keys) != 2 {
+		t.Fatalf("JWKS.Keys has %d entries, want 2", len(re.JWKS.Keys))
 	}
 	kids := map[string]bool{}
-	for _, k := range re.JWKS {
+	for _, k := range re.JWKS.Keys {
 		kids[k.Kid] = true
 		if k.Kty != "EC" || k.Crv != "P-256" {
 			t.Errorf("JWK %+v has unexpected kty/crv", k)
+		}
+		// §10's own "The alg parameter MUST be present" — confirmed
+		// live that a real client (the OIDF suite) actually enforces
+		// this, not an unused metadata field.
+		if k.Alg != jwe.ECDHES {
+			t.Errorf("JWK %+v has alg = %q, want %q", k, k.Alg, jwe.ECDHES)
 		}
 	}
 	if !kids["req-1"] || !kids["req-2"] {
@@ -167,8 +173,30 @@ func TestMetadata_RequestAndResponseEncryption(t *testing.T) {
 	if err := json.Unmarshal(raw, &wire); err != nil {
 		t.Fatalf("json.Unmarshal: %v", err)
 	}
-	if _, ok := wire["credential_request_encryption"]; !ok {
-		t.Errorf("wire metadata is missing credential_request_encryption")
+	wireReqEnc, ok := wire["credential_request_encryption"].(map[string]any)
+	if !ok {
+		t.Fatalf("wire metadata is missing credential_request_encryption")
+	}
+	// The wire shape matters as much as the Go struct here: §12.2.4
+	// requires "jwks" to be a JSON Web Key Set — a {"keys": [...]}
+	// object, not a bare JSON array. Confirmed live against the real
+	// OIDF suite that this distinction is actually checked by a real
+	// client (VCICheckCredentialRequestEncryptionSupported rejected an
+	// earlier version of this code that serialized jwks as a bare
+	// array).
+	wireJWKS, ok := wireReqEnc["jwks"].(map[string]any)
+	if !ok {
+		t.Fatalf("credential_request_encryption.jwks = %T, want a JSON object with a \"keys\" member", wireReqEnc["jwks"])
+	}
+	wireKeys, ok := wireJWKS["keys"].([]any)
+	if !ok || len(wireKeys) != 2 {
+		t.Fatalf("credential_request_encryption.jwks.keys = %v, want an array of 2 entries", wireJWKS["keys"])
+	}
+	for _, k := range wireKeys {
+		key, _ := k.(map[string]any)
+		if key["alg"] != string(jwe.ECDHES) {
+			t.Errorf("jwks.keys entry %+v has alg = %v, want %q", key, key["alg"], jwe.ECDHES)
+		}
 	}
 	if _, ok := wire["credential_response_encryption"]; !ok {
 		t.Errorf("wire metadata is missing credential_response_encryption")
@@ -236,7 +264,7 @@ func TestDecryptRequestBody_RejectsUnencryptedWhenRequired(t *testing.T) {
 	if !errors.As(err, &ierr) {
 		t.Fatalf("error = %v, want *issuer.Error", err)
 	}
-	if ierr.Code() != issuer.ErrorInvalidCredentialRequest {
+	if ierr.Code() != issuer.ErrorInvalidEncryptionParameters {
 		t.Errorf("Code = %q", ierr.Code())
 	}
 }
@@ -436,7 +464,7 @@ func TestRequestCredential_RejectsResponseEncryptionWithoutEncryptedRequest(t *t
 		SDJWTClaims:               testSDJWTClaims(),
 		ResponseEncryption:        &issuer.ResponseEncryptionRequest{Enc: jwe.A128GCM, JWK: testWalletJWK(t)},
 	})
-	assertIssuerError(t, err, issuer.ErrorInvalidCredentialRequest)
+	assertIssuerError(t, err, issuer.ErrorInvalidEncryptionParameters)
 }
 
 func TestRequestCredential_AcceptsResponseEncryptionWithEncryptedRequest(t *testing.T) {
@@ -459,6 +487,49 @@ func TestRequestCredential_AcceptsResponseEncryptionWithEncryptedRequest(t *test
 	}
 }
 
+// TestEncryptResponseBody_RejectsMismatchedJWKAlg confirmed live
+// against the real OIDF conformance suite's own
+// fail-unsupported-encryption-algorithm module: the Wallet's own
+// credential_response_encryption.jwk can declare an "alg" this issuer
+// doesn't implement (here, a nonsense value; the suite's own probe
+// literally uses "UNSUPPORTED_ALG") while enc/kty/crv all stay valid —
+// EncryptResponseBody must reject this rather than silently encrypting
+// with its own ECDH-ES anyway, per §10's own "The JWE alg algorithm
+// used MUST be equal to the alg value of the chosen JWK." A live run
+// against the real suite caught this: RequestCredential itself doesn't
+// validate credential_response_encryption at all — only
+// EncryptResponseBody (called separately, by whatever HTTP handler
+// wires this package to a real endpoint) does, so this exercises that
+// method directly rather than through RequestCredential.
+func TestEncryptResponseBody_RejectsMismatchedJWKAlg(t *testing.T) {
+	cfg := validConfig(t)
+	cfg.ResponseEncryption = &issuer.ResponseEncryptionSupport{
+		EncValuesSupported: []jwe.Enc{jwe.A128GCM},
+	}
+	iss, err := issuer.New(cfg, validDependencies(t))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	walletKey := testP256Key(t)
+	walletJWK, err := jwk.Marshal(&walletKey.PublicKey)
+	if err != nil {
+		t.Fatalf("jwk.Marshal: %v", err)
+	}
+	rawJWK, err := json.Marshal(struct {
+		jwk.JWK
+		Alg string `json:"alg"`
+	}{JWK: walletJWK, Alg: "UNSUPPORTED_ALG"})
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+
+	_, _, err = iss.EncryptResponseBody([]byte(`{"credentials":[]}`), &issuer.ResponseEncryptionRequest{
+		Enc: jwe.A128GCM, JWK: rawJWK,
+	})
+	assertIssuerError(t, err, issuer.ErrorInvalidEncryptionParameters)
+}
+
 func TestRequestDeferredCredential_RejectsResponseEncryptionWithoutEncryptedRequest(t *testing.T) {
 	deferredTransactions := newFakeDeferredTransactionStore()
 	deferredTransactions.put("txn-1", issuer.DeferredTransactionRecord{Status: issuer.DeferredTransactionPending})
@@ -473,7 +544,7 @@ func TestRequestDeferredCredential_RejectsResponseEncryptionWithoutEncryptedRequ
 		TransactionID:      "txn-1",
 		ResponseEncryption: &issuer.ResponseEncryptionRequest{Enc: jwe.A128GCM, JWK: testWalletJWK(t)},
 	})
-	assertIssuerError(t, err, issuer.ErrorInvalidCredentialRequest)
+	assertIssuerError(t, err, issuer.ErrorInvalidEncryptionParameters)
 }
 
 // --- Full simulated-Wallet wire round trip ---
@@ -567,7 +638,7 @@ func TestEncryptedCredentialRequestResponseRoundTrip(t *testing.T) {
 	}
 
 	compactRequest, err := jwe.Encrypt(&reqKey.PrivateKey.PublicKey, jwe.A128GCM, plainBody, jwe.EncryptOptions{
-		KeyID: md.CredentialRequestEncryption.JWKS[0].Kid,
+		KeyID: md.CredentialRequestEncryption.JWKS.Keys[0].Kid,
 	})
 	if err != nil {
 		t.Fatalf("jwe.Encrypt request: %v", err)
