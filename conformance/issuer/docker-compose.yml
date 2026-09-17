@@ -32,7 +32,12 @@ services:
     hostname: conformance-issuer
     networks: [suite]
     ports:
-      - "18448:8443" # optional: only needed to poke it from the host
+      # FAPIgo's own conformance/server/docker-compose.yml claims the
+      # entire 18443-18457 host-port range for its conformance-as
+      # variants — this repo's own conformance binaries use a distinct
+      # 19446-19448 range so both checkouts' harnesses can run at once
+      # without a docker port-bind conflict.
+      - "19448:8443" # optional: only needed to poke it from the host
     volumes:
       - ./oidf-config/haip.config.json:/config.json:ro
     command:
