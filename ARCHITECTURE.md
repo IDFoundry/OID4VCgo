@@ -72,6 +72,11 @@ its issuance half (OID4VCI 1.0, HAIP §4) and its presentation half
 (OID4VP 1.0, HAIP §5). See [SPECIFICATIONS.md](SPECIFICATIONS.md) for the
 exact spec and Internet-Draft versions this targets.
 
+This is not a generic, profile-agnostic OID4VCI/OID4VP implementation
+with HAIP layered optionally on top — HAIP's overrides are unconditional
+in `issuer`/`wallet`/`verifier` themselves, not gated behind a separate
+opt-in. See "Relationship to FAPIgo" below for the specific list.
+
 ## Relationship to FAPIgo
 
 HAIP requires compliance with the applicable provisions of FAPI 2.0

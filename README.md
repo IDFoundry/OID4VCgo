@@ -17,6 +17,13 @@ compliance with the applicable provisions of FAPI 2.0 Security Profile
 Final, the same security profile FAPIgo implements and is OpenID
 Certified™ against.
 
+This isn't a generic, profile-agnostic OID4VCI/OID4VP implementation
+with HAIP as an optional layer on top: HAIP's overrides — DPoP
+mandatory, Wallet Attestation in place of `private_key_jwt`/mTLS, HAIP's
+own algorithm requirements — are unconditional in the `issuer`/`wallet`/
+`verifier` packages themselves. See ARCHITECTURE.md's "Relationship to
+FAPIgo" section for the specific list.
+
 > **⚠ Very early stage.** This repository currently has no protocol
 > packages — see [ARCHITECTURE.md](ARCHITECTURE.md) for the planned
 > package layout and its current status. Not usable yet.
