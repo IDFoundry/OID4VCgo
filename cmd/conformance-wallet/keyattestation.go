@@ -8,12 +8,39 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/idfoundry/oid4vcigo/attestation"
 	"github.com/idfoundry/oid4vcigo/internal/conformancecert"
 	"github.com/idfoundry/oid4vcigo/internal/jose"
 	"github.com/idfoundry/oid4vcigo/internal/jwk"
 	"github.com/idfoundry/oid4vcigo/wallet"
+)
+
+// proofStrategy selects which Credential Request proof mechanism a
+// run uses for every module it drives (driveModule's own switch).
+type proofStrategy string
+
+const (
+	// proofStrategyJWT is the default: a jwk-conveyed jwt-type proof
+	// per credential (Appendix F.1), no Key Attestation involved.
+	proofStrategyJWT proofStrategy = "jwt"
+
+	// proofStrategyAttestation submits a single standalone Key
+	// Attestation JWT as the "attestation" proof type (Appendix F.3,
+	// HAIP §4.5.1) — no per-credential jwt proof at all; see
+	// buildKeyAttestationProof's own doc comment.
+	proofStrategyAttestation proofStrategy = "attestation"
+
+	// proofStrategyJWTKeyAttestation submits ordinary jwt-type proofs
+	// (one per credential, as proofStrategyJWT does), but with a Key
+	// Attestation JWT nested in each proof's own JOSE header via its
+	// "key_attestation" member — Appendix D.1's "if used with the jwt
+	// proof type" case, distinct from proofStrategyAttestation's
+	// standalone proof type. All proofs in one request share the same
+	// attestation (attesting every key in the batch at once) rather
+	// than each minting its own — see driveModule's own comment on why.
+	proofStrategyJWTKeyAttestation proofStrategy = "jwt-key-attestation"
 )
 
 // keyAttestationIssuer is this run's own Key Attestation JWT "iss"
@@ -24,21 +51,27 @@ import (
 // attestation authority minted which JWT.
 const keyAttestationIssuer = "https://oid4vcigo-wallet-key-attester.example.com"
 
+// keyAttestationLifetime bounds the "exp" claim buildKeyAttestationProof
+// sets when includeExpiry is true — an arbitrary, generous window; the
+// suite only checks it's absent-or-plausible (ValidateKeyAttestationExp),
+// never a specific value.
+const keyAttestationLifetime = 5 * time.Minute
+
 // buildKeyAttestationProof mints one Key Attestation JWT (OID4VCI 1.0
-// Appendix D.1) attesting attestedKeys and submits it via the
-// standalone "attestation" proof type (Appendix F.3) — HAIP §4.5.1's
-// "Wallets MUST support key attestations" requirement. Unlike a
-// jwt-type proof, this alone requests a batch: the suite issues one
-// Credential per key in the attestation's own attested_keys claim, so
-// len(attestedKeys) == numCreds (see wallet.CredentialRequest's own
-// doc comment).
-//
-// Built via wallet.Wallet.GenerateAttestationProof — the production
-// attestation package's own issuance path
+// Appendix D.1) attesting attestedKeys — HAIP §4.5.1's "Wallets MUST
+// support key attestations" requirement. Built via
+// wallet.Wallet.GenerateAttestationProof — the production attestation
+// package's own issuance path
 // (github.com/idfoundry/oid4vcigo/attestation), not a hand-rolled JWT,
 // so this binary's live run proves that real code path works, not a
 // test double of it.
-func buildKeyAttestationProof(w *wallet.Wallet, run *walletRun, attestedKeys []crypto.Signer, nonce string) (string, error) {
+//
+// includeExpiry sets the "exp" claim, REQUIRED by Appendix D.1 "if the
+// attestation is used with the JWT proof type" (proofStrategyJWTKeyAttestation)
+// but not otherwise (proofStrategyAttestation's own standalone use
+// leaves it optional) — see EnsureKeyAttestationExpIsPresentForJwtProof
+// in the suite's own AbstractVCIWalletTest.java.
+func buildKeyAttestationProof(w *wallet.Wallet, run *walletRun, attestedKeys []crypto.Signer, nonce string, includeExpiry bool) (string, error) {
 	leafCert, err := conformancecert.ParseCertificatePEM(run.keyAttestationLeafPEM)
 	if err != nil {
 		return "", fmt.Errorf("parse key attestation leaf certificate: %w", err)
@@ -65,6 +98,10 @@ func buildKeyAttestationProof(w *wallet.Wallet, run *walletRun, attestedKeys []c
 	// (config.go) instead of client_attestation.trust_anchor.
 	header := attestation.Header{X5C: []string{base64.StdEncoding.EncodeToString(leafCert.Raw)}}
 	claims := attestation.Claims{Issuer: keyAttestationIssuer, AttestedKeys: rawKeys}
+	if includeExpiry {
+		exp := time.Now().Add(keyAttestationLifetime).Unix()
+		claims.ExpiresAt = &exp
+	}
 
 	proof, err := w.GenerateAttestationProof(run.keyAttestationKey, jose.ES256, header, claims, nonce)
 	if err != nil {

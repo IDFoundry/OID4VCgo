@@ -8,8 +8,10 @@ Issuance 1.0 Final/HAIP: Test a wallet") — specifically the
 all 3 of the plan's own issuance-mode/encryption variants
 (`immediate`+`plain`, `deferred`+`plain`, `immediate`+`encrypted`), plus
 the plan's 4th module-list entry: the generic FAPI2SP client
-conformance battery, always at the fixed `immediate`+`plain` crossing.
-See "Scope" below for what isn't covered yet.
+conformance battery, always at the fixed `immediate`+`plain` crossing
+— each drivable with any of three Credential Request proof strategies
+via `-proof-type` (`jwt`, `attestation`, or `jwt-key-attestation`; see
+"Status"). See "Scope" below for what isn't covered yet.
 
 ## Why this binary is a one-shot CLI tool, not a server
 
@@ -211,12 +213,12 @@ this binary drives are `FINISHED`/`PASSED`**.
 
 **Confirmed live, repeatedly (2 independent full runs, both
 zero-failure), HAIP §4.5.1's Key Attestation (Appendix D/F.3)
-requirement**, via `-attestation-proof -credential-configuration-id
+requirement**, via `-proof-type attestation -credential-configuration-id
 eu.europa.ec.eudi.pid.1.attestation -scope eudi.pid.1.attestation`: all
 22 module instances `FINISHED`/`PASSED` using the standalone
 `attestation` proof type instead of the default jwt-type proof — the
-same 22-module battery above, just with `driveModule`'s new
-`useAttestationProof` branch exercised throughout instead. Key
+same 22-module battery above, just with `driveModule`'s
+`proofStrategyAttestation` branch exercised throughout instead. Key
 finding: nothing needed building from scratch. Both
 `wallet.Wallet.GenerateAttestationProof` and the whole
 `github.com/idfoundry/oid4vcigo/attestation` package it delegates
@@ -233,7 +235,40 @@ implements this yet" was stale by the time this work started — it
 predated the `attestation` package landing; this PR corrects that note
 too. A second, separate run confirmed the existing 22 module instances
 (default jwt-type proof) still pass unchanged — this feature is
-opt-in via a new `-attestation-proof` flag, not a default-path change.
+opt-in via a new `-proof-type` flag, not a default-path change.
+
+**Confirmed live, repeatedly (2 independent full runs, both
+zero-failure), Key Attestation nested inside a jwt-type proof's own
+JOSE header** (OID4VCI Appendix D.1's "if used with the jwt proof
+type" case, distinct from the standalone `attestation` proof type
+above), via `-proof-type jwt-key-attestation
+-credential-configuration-id eu.europa.ec.eudi.pid.1.jwt.keyattest
+-scope eudi.pid.1.jwt.keyattest`: all 22 module instances
+`FINISHED`/`PASSED`, including every `batch-credential-issuance`
+crossing (`numCreds=2`) — the interesting case here. Two new pieces,
+both small: `wallet.Wallet.GenerateProofWithKeyAttestation`
+(`wallet/proof.go`) — a fourth jwt-type proof builder alongside
+`GenerateProof`/`GenerateProofWithKeyID`/`GenerateProofWithX5C`,
+embedding a Key Attestation JWT as the proof's own `key_attestation`
+header member, with regression tests
+(`TestGenerateProofWithKeyAttestation*`); and
+`driveModule`'s new `proofStrategyJWTKeyAttestation` branch
+(`flow.go`), reusing `buildKeyAttestationProof` (now with an
+`includeExpiry` parameter — Appendix D.1 makes `exp` REQUIRED for this
+nested case, unlike the standalone one) to mint **one** Key Attestation
+JWT covering every attested key in the batch, then embedding that same
+JWT in **every** per-credential jwt proof. That "one shared attestation,
+not one per proof" design isn't arbitrary: the suite's own
+`AbstractVCIWalletTest.java` only validates the *last* proof's own
+nested attestation (each proof's own `validateNestedKeyAttestationInJwtProofIfNecessary`
+call overwrites the same `vci.key_attestation_jwt` env value) against
+the *first* proof's own key (`VCIValidateAttestedKeysInKeyAttestationFromJwtProof`
+reads `proof_jwt.jwk`, set only once, at the first proof) — reading
+that source directly (rather than discovering it via a failed live
+run) is why a batch of independent, single-key attestations was never
+tried: one attestation naming every key in the batch passes regardless
+of which proof's copy of it the suite happens to actually check, and
+was correct on the first live attempt.
 
 ## Debugging
 
@@ -253,9 +288,12 @@ above (crossed with all 3 issuance-mode/encryption variants the HAIP
 plan itself enumerates for them), plus the plan's 4th module-list
 entry — the generic FAPI2SP client conformance battery, all 10
 modules, always at the fixed `immediate`+`plain` crossing — each
-drivable with either the default jwt-type proof or, via
-`-attestation-proof`, the standalone `attestation` proof type
-(HAIP §4.5.1 Key Attestation).
+drivable with any of the three `-proof-type` strategies: the default
+`jwt` (jwk-conveyed jwt-type proof), `attestation` (standalone Key
+Attestation JWT, Appendix F.3), or `jwt-key-attestation` (jwt-type
+proof with a nested Key Attestation JWT header, Appendix D.1) — the
+latter two both exercise HAIP §4.5.1's Key Attestation requirement,
+just via OID4VCI's two different conveyance mechanisms for it.
 
 **Not yet covered** (separate, later, only if asked):
 
@@ -263,10 +301,3 @@ drivable with either the default jwt-type proof or, via
   small inbound HTTP GET endpoint for the credential-offer handoff —
   `wallet_initiated` needs none at all) and the base (non-HAIP)
   `VCIWalletTestPlan`'s `ClientAuthType`≠`client_attestation` variants.
-- Key Attestation nested inside a jwt-type proof's own JOSE header
-  (the `eu.europa.ec.eudi.pid.1.jwt.keyattest` fixture, OID4VCI
-  Appendix D.1's "if used with the jwt proof type" case) — this binary
-  only drives the standalone `attestation` proof type so far (the
-  `eu.europa.ec.eudi.pid.1.attestation` fixture); `wallet`'s own
-  jwt-type proof builders (`wallet/proof.go`) have no way to add a
-  `key_attestation` header member yet.

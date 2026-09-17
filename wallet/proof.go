@@ -49,6 +49,29 @@ func (w *Wallet) GenerateProofWithKeyID(signer crypto.Signer, kid, credentialIss
 	return w.signJWTProof(signer, map[string]any{"kid": kid}, credentialIssuer, nonce)
 }
 
+// GenerateProofWithKeyAttestation signs a jwt-type key proof (Appendix
+// F.1), like GenerateProof, but also embeds keyAttestationJWT as the
+// proof's own "key_attestation" header member — OID4VCI Appendix
+// D.1's nested-attestation case for the jwt proof type ("If used with
+// the jwt proof type, ... included as key_attestation JOSE Header
+// Parameter"), distinct from the standalone "attestation" proof type
+// (Appendix F.3, see GenerateAttestationProof). Per Appendix D.1, an
+// attestation used this way MUST carry an exp claim — the caller's
+// own responsibility when building keyAttestationJWT (e.g. via
+// GenerateAttestationProof, setting Claims.ExpiresAt), since this
+// method doesn't parse or validate keyAttestationJWT itself.
+// credentialIssuer/nonce are as GenerateProof's own.
+func (w *Wallet) GenerateProofWithKeyAttestation(signer crypto.Signer, credentialIssuer, nonce, keyAttestationJWT string) (string, error) {
+	if keyAttestationJWT == "" {
+		return "", fmt.Errorf("wallet: generate proof: key attestation jwt is required")
+	}
+	pub, err := jwk.Marshal(signer.Public())
+	if err != nil {
+		return "", fmt.Errorf("wallet: generate proof: marshal jwk: %w", err)
+	}
+	return w.signJWTProof(signer, map[string]any{"jwk": pub, "key_attestation": keyAttestationJWT}, credentialIssuer, nonce)
+}
+
 // GenerateProofWithX5C signs a jwt-type key proof (Appendix F.1),
 // binding it via an "x5c" header: a certificate chain (RFC 7515
 // §4.1.6 — base64-encoded DER, leaf certificate first) whose leaf

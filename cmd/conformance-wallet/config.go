@@ -36,7 +36,7 @@ type walletRun struct {
 	attesterLeafPEM string
 
 	// keyAttestationKey signs this run's own Key Attestation JWT(s)
-	// (keyattestation.go) when useAttestationProof is set — a separate
+	// (keyattestation.go) when proofType requests one — a separate
 	// CA-issued identity from attesterKey, chaining to its own
 	// client_attestation.key_attestation_trust_anchor_pem config value
 	// (config.go's own newWalletRun), matching how a real deployment's
@@ -46,15 +46,15 @@ type walletRun struct {
 	keyAttestationKey     *ecdsa.PrivateKey
 	keyAttestationLeafPEM string
 
-	// useAttestationProof selects the standalone "attestation" proof
-	// type (Appendix F.3, HAIP §4.5.1 Key Attestation) for every
-	// Credential Request this run makes, instead of the default
-	// jwk-conveyed "jwt" proof type — see driveModule's own branch.
-	// Only meaningful when credentialConfigurationID names a fixture
-	// whose proof_types_supported actually offers "attestation" (e.g.
-	// eu.europa.ec.eudi.pid.1.attestation) — the suite rejects any other
+	// proofType selects which of the three Credential Request proof
+	// strategies (proof.go) this run uses for every module it drives —
+	// see proofStrategy's own doc comment. Only meaningful when
+	// credentialConfigurationID names a fixture whose
+	// proof_types_supported actually offers the selected strategy's own
+	// proof type (e.g. eu.europa.ec.eudi.pid.1.attestation for
+	// proofStrategyAttestation) — the suite rejects any other
 	// combination itself, so this binary doesn't cross-check it.
-	useAttestationProof bool
+	proofType proofStrategy
 
 	planConfig []byte
 }
@@ -68,7 +68,7 @@ type walletRun struct {
 // emulated Credential Issuer defines a small fixed set of
 // credential_configuration_id/scope pairs, not an arbitrary
 // tester-chosen name).
-func newWalletRun(apiBase, credentialConfigurationID, scope string, useAttestationProof bool) (*walletRun, error) {
+func newWalletRun(apiBase, credentialConfigurationID, scope string, proofType proofStrategy) (*walletRun, error) {
 	suffix, err := randomHex(4)
 	if err != nil {
 		return nil, fmt.Errorf("generate run suffix: %w", err)
@@ -140,7 +140,7 @@ func newWalletRun(apiBase, credentialConfigurationID, scope string, useAttestati
 			"issuer":       "https://oid4vcigo-wallet-attester.example.com",
 			"trust_anchor": attesterCAPEM,
 			// key_attestation_trust_anchor_pem is required config
-			// regardless of useAttestationProof — a distinct HAIP §4.5.1
+			// regardless of proofType — a distinct HAIP §4.5.1
 			// requirement from Wallet Attestation client auth (see
 			// AGENTS.md's own note on not conflating the two). Its own
 			// dedicated CA (above) only actually gets exercised when a
@@ -163,8 +163,8 @@ func newWalletRun(apiBase, credentialConfigurationID, scope string, useAttestati
 		scope: scope, credentialConfigurationID: credentialConfigurationID,
 		attesterKey: attesterKey, attesterCAPEM: attesterCAPEM, attesterLeafPEM: attesterLeafPEM,
 		keyAttestationKey: keyAttestationKey, keyAttestationLeafPEM: keyAttestationLeafPEM,
-		useAttestationProof: useAttestationProof,
-		planConfig:          planConfig,
+		proofType:  proofType,
+		planConfig: planConfig,
 	}, nil
 }
 
