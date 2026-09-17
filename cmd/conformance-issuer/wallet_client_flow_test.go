@@ -7,10 +7,6 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"fmt"
-	"io"
-	"net/http"
-	"net/url"
-	"strings"
 	"testing"
 	"time"
 
@@ -156,47 +152,10 @@ func TestFullFlow_RealClientDrivesAttestationAuth(t *testing.T) {
 	}
 
 	// --- headless consent: GET /authorize, POST /authorize/decision ---
-	// (mirrors performAuthFlowThroughNonce's own sequence — no
-	// fapigo/client equivalent exists for driving an actual browser)
-	authorizeReq, err := http.NewRequest(http.MethodGet, session.URL().String(), nil)
-	if err != nil {
-		t.Fatalf("new authorize request: %v", err)
-	}
-	authorizeResp, err := httpClient.Do(authorizeReq)
-	if err != nil {
-		t.Fatalf("GET /authorize: %v", err)
-	}
-	_, _ = io.Copy(io.Discard, authorizeResp.Body)
-	_ = authorizeResp.Body.Close()
-	handle := authorizeResp.Header.Get("X-Interaction-Handle")
-	if handle == "" {
-		t.Fatalf("GET /authorize: missing X-Interaction-Handle (status %d)", authorizeResp.StatusCode)
-	}
-
-	decisionClient := &http.Client{
-		Transport:     httpClient.Transport,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error { return http.ErrUseLastResponse },
-	}
-	decisionForm := url.Values{"handle": {handle}, "subject": {cfg.DefaultSubject}, "decision": {"approve"}, "scope": {cfg.Scope}}
-	decisionReq, err := http.NewRequest(http.MethodPost, cfg.Issuer+"/authorize/decision", strings.NewReader(decisionForm.Encode()))
-	if err != nil {
-		t.Fatalf("new decision request: %v", err)
-	}
-	decisionReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	decisionResp, err := decisionClient.Do(decisionReq)
-	if err != nil {
-		t.Fatalf("POST /authorize/decision: %v", err)
-	}
-	decisionBody, _ := io.ReadAll(decisionResp.Body)
-	_ = decisionResp.Body.Close()
-	location := decisionResp.Header.Get("Location")
-	if location == "" {
-		t.Fatalf("POST /authorize/decision: no redirect Location (status %d, body %s)", decisionResp.StatusCode, decisionBody)
-	}
-	redirectURL, err := url.Parse(location)
-	if err != nil {
-		t.Fatalf("parse redirect location %q: %v", location, err)
-	}
+	// (shared with performAuthFlowThroughNonce's own raw-HTTP wallet
+	// simulation — no fapigo/client equivalent exists for driving an
+	// actual browser)
+	redirectURL := driveConsentToCallback(t, httpClient, cfg.Issuer, session.URL().String(), cfg.DefaultSubject, cfg.Scope)
 
 	// --- token endpoint, via CompleteAuthorization: real Attestation + PoP + DPoP ---
 	result, err := c.CompleteAuthorization(ctx, client.AuthorizationCallback{RawQuery: redirectURL.RawQuery})
