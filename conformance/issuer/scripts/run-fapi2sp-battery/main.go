@@ -89,6 +89,16 @@ var haipBattery = []string{
 	metadataTestName,
 	happyFlowTestName,
 
+	// Notification Endpoint (§11) coverage under fapi_profile=vci_haip
+	// specifically — this module's own testName is shared with
+	// baseBattery (it supports both the "vci" and "vci_haip"
+	// fapi_profile variant values), but until now it had only ever been
+	// driven under the base, non-HAIP profile via -base-plan. Added
+	// here so this binary's own certification-relevant HAIP coverage of
+	// the Notification Endpoint is exercised by this repeatable battery
+	// script, not left to a one-off manual suite-UI run.
+	"oid4vci-1_0-issuer-happy-flow-skip-notification",
+
 	// Discovery — its own ModuleListEntry, no VCI variant parameters.
 	"fapi2-security-profile-final-discovery-end-point-verification",
 

@@ -150,9 +150,12 @@ negative-test expectations differ.
   Wallet-side MUST is unconditional and is covered separately — see
   `wallet/README.md`'s own Key Attestation coverage below).
   **Update: the plan's own 5th module-list entry, the generic FAPI2SP
-  battery, is driven too** — 42 module instances (the exact 39+1
+  battery, is driven too** — 43 module instances (the exact 39+1
   battery+Discovery set, derived directly from the Java source, plus 2
-  known-working sanity checks), via a new tool
+  known-working sanity checks, plus `happy-flow-skip-notification` —
+  added so the Notification Endpoint's own HAIP-profile coverage is
+  automated by this script rather than left to a one-off manual
+  suite-UI run), via a new tool
   (`conformance/issuer/scripts/run-fapi2sp-battery`). Unlike the Wallet
   role, this role needs no custom flow-driving code at all — the suite
   itself plays client and drives PAR→authorize→consent→callback→token
