@@ -456,29 +456,45 @@ func driveModule(ctx context.Context, run *walletRun, module suiteModule, testNa
 		return fmt.Errorf("request nonce: %w", err)
 	}
 
-	holderKeys := make([]crypto.Signer, numCreds)
-	for i := range holderKeys {
-		holderKey, genErr := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-		if genErr != nil {
-			return fmt.Errorf("generate holder key: %w", genErr)
-		}
-		holderKeys[i] = holderKey
-	}
-
 	credentialEndpoint, err := fapi.ParseEndpointURL(module.URL + "/credential")
 	if err != nil {
 		return fmt.Errorf("parse credential endpoint: %w", err)
 	}
 	credRequest := wallet.CredentialRequest{
 		CredentialConfigurationID: run.credentialConfigurationID,
-		Keys:                      holderKeys,
 		// The trailing slash matters: it must match the Credential
 		// Issuer Identifier exactly as the suite's own metadata
 		// publishes it (confirmed live: "credential_issuer":
 		// ".../<alias>/" — with a trailing slash), since this becomes
-		// the jwt-type proof's own "aud" claim.
+		// the jwt-type proof's own "aud" claim. Unused for the
+		// attestation proof type below, but harmless to leave set.
 		CredentialIssuer: module.URL + "/",
 		Nonce:            nonceResult.CNonce,
+	}
+	if run.useAttestationProof {
+		// HAIP §4.5.1 Key Attestation (Appendix D/F.3): one Key
+		// Attestation JWT attests numCreds fresh keys and is submitted
+		// as the standalone "attestation" proof — no per-credential jwt
+		// proof needed, see buildKeyAttestationProof's own doc comment.
+		attestedKeys, genErr := generateAttestedKeys(numCreds)
+		if genErr != nil {
+			return fmt.Errorf("generate attested keys: %w", genErr)
+		}
+		attestationJWT, err := buildKeyAttestationProof(w, run, attestedKeys, nonceResult.CNonce)
+		if err != nil {
+			return fmt.Errorf("build key attestation proof: %w", err)
+		}
+		credRequest.Attestation = attestationJWT
+	} else {
+		holderKeys := make([]crypto.Signer, numCreds)
+		for i := range holderKeys {
+			holderKey, genErr := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+			if genErr != nil {
+				return fmt.Errorf("generate holder key: %w", genErr)
+			}
+			holderKeys[i] = holderKey
+		}
+		credRequest.Keys = holderKeys
 	}
 	if encrypted {
 		recipientJWK, encErr := fetchCredentialRequestEncryptionJWK(ctx, httpClient, module.URL)

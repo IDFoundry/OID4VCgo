@@ -171,5 +171,18 @@ negative-test expectations differ.
   never wires up the Attestation Challenge Endpoint at all (unlike the
   4 VCIWallet* modules), so this binary now only opts into
   `client.ChallengeSource` for the modules that actually implement it.
-  `issuer_initiated` flow variants aren't covered yet. See
-  `wallet/README.md`.
+  **Update: HAIP §4.5.1's Key Attestation (Appendix D) requirement is
+  now driven too — confirmed live, all 22 module instances
+  `FINISHED`/`PASSED` via a new `-attestation-proof` flag, which
+  submits the standalone `attestation` proof type instead of the
+  default jwt-type proof.** Turned out nothing needed building: both
+  `wallet.Wallet.GenerateAttestationProof` and the whole
+  `oid4vcigo/attestation` package already fully implemented Key
+  Attestation JWT issuance (OID4VCI Appendix D.1) — this binary's own
+  `keyattestation.go` just had to mint one (a new dedicated CA/leaf,
+  `client_attestation.key_attestation_trust_anchor_pem`) and submit it.
+  `AGENTS.md`'s prior "nothing implements this yet" note predated that
+  package landing and has been corrected. Key Attestation nested inside
+  a jwt-type proof's own header (rather than the standalone attestation
+  proof type) and `issuer_initiated` flow variants aren't covered yet.
+  See `wallet/README.md`.

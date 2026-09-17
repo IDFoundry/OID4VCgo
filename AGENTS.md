@@ -59,11 +59,13 @@ conformance modules against the actual HAIP text, see
 entry): HAIP §4.5.1 has an unconditional "Wallets MUST support key
 attestations" requirement, distinct from Wallet Attestation above
 (that's client authentication; this is the proof-of-possession key
-*format* a Wallet sends in a Credential Request, OID4VCI Appendix D).
-Nothing implements this yet since it only matters for the OID4VCI
-Wallet role, already blocked on the gap described above — but don't
-conflate the two "attestation" requirements when that role's work
-resumes; both will need addressing, not just Wallet Attestation.
+*format* a Wallet sends in a Credential Request, OID4VCI Appendix D) —
+don't conflate the two "attestation" requirements. This is now built
+and proven live: `wallet.Wallet.GenerateAttestationProof` plus the
+`attestation` package (Key Attestation JWT issuance per Appendix D.1)
+implement it, and `cmd/conformance-wallet`'s `-attestation-proof` flag
+drives it against the suite's own independent validation — see
+`conformance/wallet/README.md`'s own "Status" section.
 
 See [SPECIFICATIONS.md](SPECIFICATIONS.md) for the exact spec/draft
 versions this repo targets, and [ARCHITECTURE.md](ARCHITECTURE.md) for
