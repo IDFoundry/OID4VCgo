@@ -148,17 +148,28 @@ negative-test expectations differ.
   — the suite itself plays the entire emulated Authorization Server
   and Credential Issuer for this role, the opposite shape from
   `issuer/`. **Confirmed live against a real, locally-run OIDF suite,
-  all 4 in-scope modules × all 3 issuance-mode/encryption crossings
-  (12 module instances) `FINISHED`/`PASSED`** on four independent runs
-  — `credential-issuance`, `credential-issuance-notification`,
-  `client-attestation-challenge` (proving FAPIgo PR #318's
-  `client.ChallengeSource` against the suite's own independent
-  Attestation Challenge Endpoint implementation, not just FAPIgo's own
-  unit tests), and `batch-credential-issuance`, each crossed with
-  `immediate`+`plain`, `deferred`+`plain` and `immediate`+`encrypted`.
-  Driving the encrypted crossing surfaced a genuine pre-existing bug in
-  `wallet` itself — its ephemeral response-decryption JWK never
-  declared its own `alg`, which §8.2 requires — now fixed with a
-  regression test. The plan's generic FAPI2SP battery module list and
+  all 22 module instances this binary drives `FINISHED`/`PASSED`**:
+  the 4 in-scope modules × all 3 issuance-mode/encryption crossings
+  (12 module instances) — `credential-issuance`,
+  `credential-issuance-notification`, `client-attestation-challenge`
+  (proving FAPIgo PR #318's `client.ChallengeSource` against the
+  suite's own independent Attestation Challenge Endpoint
+  implementation, not just FAPIgo's own unit tests), and
+  `batch-credential-issuance`, each crossed with `immediate`+`plain`,
+  `deferred`+`plain` and `immediate`+`encrypted` — plus the HAIP plan's
+  4th module-list entry, the generic FAPI2SP client conformance
+  battery (10 more module instances, always at the fixed
+  `immediate`+`plain` crossing). Driving the encrypted crossing
+  surfaced a genuine pre-existing bug in `wallet` itself — its
+  ephemeral response-decryption JWK never declared its own `alg`,
+  which §8.2 requires — now fixed with a regression test. Driving the
+  battery surfaced two more real findings, both in this binary: it
+  needed real RFC 8414 discovery (FAPIgo's own `client.Discover` can't
+  be used here — it speaks OIDC Discovery's own convention, and this
+  suite explicitly test-fails that), used to both build endpoints and
+  catch the suite's own issuer-mismatch negative test; and the battery
+  never wires up the Attestation Challenge Endpoint at all (unlike the
+  4 VCIWallet* modules), so this binary now only opts into
+  `client.ChallengeSource` for the modules that actually implement it.
   `issuer_initiated` flow variants aren't covered yet. See
   `wallet/README.md`.

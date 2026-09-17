@@ -6,8 +6,10 @@ headlessly through the OIDF conformance suite's own
 Issuance 1.0 Final/HAIP: Test a wallet") — specifically the
 `wallet_initiated` flow variant's 4 non-battery modules, crossed with
 all 3 of the plan's own issuance-mode/encryption variants
-(`immediate`+`plain`, `deferred`+`plain`, `immediate`+`encrypted`). See
-"Scope" below for what isn't covered yet.
+(`immediate`+`plain`, `deferred`+`plain`, `immediate`+`encrypted`), plus
+the plan's 4th module-list entry: the generic FAPI2SP client
+conformance battery, always at the fixed `immediate`+`plain` crossing.
+See "Scope" below for what isn't covered yet.
 
 ## Why this binary is a one-shot CLI tool, not a server
 
@@ -114,6 +116,44 @@ the already-running local suite instance one fix at a time:
     (`wallet/encryption_test.go`) — the existing round-trip test never
     caught this because its own fake issuer never checked for `alg` at
     all, exactly the gap a real conformance suite closes.
+- **The HAIP plan's 4th module-list entry (the generic FAPI2SP client
+  battery)** surfaced two more real findings, both in this binary
+  itself, not in `wallet`/`fapigo`:
+  - **FAPIgo's own `client.Discover` cannot be used against this
+    suite at all.** It only ever speaks OIDC Discovery's own
+    convention (`<issuer-path>/.well-known/openid-configuration`,
+    suffix appended *after* the path — confirmed directly in
+    `client/discover.go`'s own `wellKnownURL`), and
+    `AbstractVCIWalletTest.java` (lines 802-807) explicitly
+    **test-fails** a wallet using either that suffix or that
+    path-insertion direction instead of RFC 8414 §3.1's own
+    insert-*before*-the-path rule with the `oauth-authorization-server`
+    suffix — the same convention this binary already adopted for
+    Credential Issuer Metadata. `flow.go`'s new
+    `fetchAuthorizationServerMetadata` self-rolls the fetch+
+    issuer-match check instead (reusing the existing
+    `wellKnownMetadataURL` helper), which is also exactly the check
+    `fapi2-security-profile-final-client-test-discovery-issuer-mismatch`
+    needs: the suite corrupts its own metadata's `"issuer"` field and
+    expects the client to notice and stop before ever reaching PAR.
+    Confirmed behavior-preserving for every already-passing module: the
+    fetched `authorization_endpoint`/`token_endpoint`/
+    `pushed_authorization_request_endpoint` values are byte-identical
+    to what was previously hardcoded.
+  - **The generic FAPI2SP client battery never wires up the
+    Attestation Challenge Endpoint at all** — confirmed directly in
+    `AbstractFAPI2SPFinalClientTest.java`'s own source, which carries
+    no "challenge" handling whatsoever (only unrelated PKCE
+    `code_challenge` conditions). A client that still calls `/challenge`
+    there hits the suite's own catch-all dispatcher: `Got unexpected
+    HTTP call to challenge`, failing the module outright — confirmed
+    live. Since draft-ietf-oauth-attestation-based-client-auth-07 §5.2's
+    own `"challenge"` claim in the PoP JWT is optional (only present
+    when a fresh challenge actually exists), `buildClient` now only
+    opts into `client.ChallengeSource` for the 4 VCIWallet* modules
+    (which all *do* implement `/challenge`, unlike this battery); the
+    10 battery modules get a plain, unchallenged
+    `staticAttestationSource`.
 
 ## Status
 
@@ -145,6 +185,30 @@ wallet-side stack against the actual OIDF suite's own independent
 implementation of the AS/Issuer side and its own Attestation
 Challenge Endpoint.
 
+**Confirmed live, repeatedly (2 independent full runs after the fix
+below, both zero-failure), the HAIP plan's 4th module-list entry — the
+generic FAPI2SP client conformance battery — all 10 modules
+`FINISHED`/`PASSED`, all at the fixed `immediate`+`plain` crossing**:
+
+- `fapi2-security-profile-final-client-test-happy-path`
+- `fapi2-security-profile-final-client-test-happy-path-no-dpop-nonce`
+- `fapi2-security-profile-final-client-test-discovery-issuer-mismatch` —
+  proves real RFC 8414 discovery + issuer-match validation: the suite
+  corrupts its own metadata's `issuer` field and this binary correctly
+  stops before ever reaching PAR.
+- `fapi2-security-profile-final-client-test-remove-authorization-response-iss`
+  / `...invalid-authorization-response-iss` — both correctly stop
+  before token exchange on a missing/invalid `iss`, exercising
+  `Config.RequireAuthorizationResponseIss`.
+- `fapi2-security-profile-final-client-test-ensure-authorization-response-with-invalid-state-fails`
+  / `...invalid-missing-state-fails`
+- `fapi2-security-profile-final-client-test-token-endpoint-response-without-expires_in`
+- `fapi2-security-profile-final-client-test-token-type-case-insensitivity`
+- `fapi2-security-profile-final-client-test-rs-dpop-auth-scheme-case-insensitivity`
+
+Together with the 12 module instances above, **all 22 module instances
+this binary drives are `FINISHED`/`PASSED`**.
+
 ## Debugging
 
 `-dump-config` prints the generated suite-side plan configuration JSON
@@ -159,15 +223,13 @@ traced to the suite's own log without re-instrumenting anything.
 ## Scope
 
 **In scope**: `wallet_initiated` flow variant, all 4 modules listed
-above, crossed with all 3 issuance-mode/encryption variants the HAIP
-plan itself enumerates for them.
+above (crossed with all 3 issuance-mode/encryption variants the HAIP
+plan itself enumerates for them), plus the plan's 4th module-list
+entry — the generic FAPI2SP client conformance battery, all 10
+modules, always at the fixed `immediate`+`plain` crossing.
 
 **Not yet covered** (separate, later, only if asked):
 
-- The HAIP plan's 4th module-list entry (the generic FAPI2SP client
-  battery — PAR/DPoP/token edge cases wrapped in VCI variant
-  selectors). Already covered in spirit by FAPIgo's own
-  `cmd/conformance-client` baseline plan.
 - `issuer_initiated`/`issuer_initiated_dc_api` flow variants (need a
   small inbound HTTP GET endpoint for the credential-offer handoff —
   `wallet_initiated` needs none at all) and the base (non-HAIP)

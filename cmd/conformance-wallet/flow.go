@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	fapi "github.com/idfoundry/fapigo"
@@ -107,6 +108,54 @@ func fetchCredentialRequestEncryptionJWK(ctx context.Context, httpClient *http.C
 	return metadata.CredentialRequestEncryption.JWKS.Keys[0], nil
 }
 
+// authorizationServerMetadata is the RFC 8414 subset buildClient needs —
+// just enough to build the endpoints it already hardcoded before this
+// binary drove the HAIP plan's generic FAPI2SP battery, plus the
+// "issuer" field the battery's own discovery-issuer-mismatch module
+// exists to check.
+type authorizationServerMetadata struct {
+	Issuer                             string `json:"issuer"`
+	AuthorizationEndpoint              string `json:"authorization_endpoint"`
+	TokenEndpoint                      string `json:"token_endpoint"`
+	PushedAuthorizationRequestEndpoint string `json:"pushed_authorization_request_endpoint"`
+}
+
+// fetchAuthorizationServerMetadata fetches and decodes the suite's own
+// emulated Authorization Server metadata at issuerURL, using the same
+// RFC 8414 §3.1 insert-before-path convention
+// fetchCredentialRequestEncryptionJWK already established — confirmed
+// live (AbstractVCIWalletTest.java lines 802-807) that this suite
+// test-fails a wallet using OIDC Discovery's own
+// append-after-the-path convention or the "openid-configuration"
+// suffix instead of "oauth-authorization-server".
+func fetchAuthorizationServerMetadata(ctx context.Context, httpClient *http.Client, issuerURL string) (authorizationServerMetadata, error) {
+	wellKnownURL, err := wellKnownMetadataURL(issuerURL, "oauth-authorization-server")
+	if err != nil {
+		return authorizationServerMetadata{}, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, wellKnownURL, nil)
+	if err != nil {
+		return authorizationServerMetadata{}, err
+	}
+	res, err := httpClient.Do(req)
+	if err != nil {
+		return authorizationServerMetadata{}, err
+	}
+	defer func() { _ = res.Body.Close() }()
+	if res.StatusCode != http.StatusOK {
+		return authorizationServerMetadata{}, fmt.Errorf("authorization server metadata endpoint returned status %d", res.StatusCode)
+	}
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		return authorizationServerMetadata{}, err
+	}
+	var metadata authorizationServerMetadata
+	if err := json.Unmarshal(body, &metadata); err != nil {
+		return authorizationServerMetadata{}, fmt.Errorf("decode authorization server metadata: %w", err)
+	}
+	return metadata, nil
+}
+
 // newWallet builds a wallet.Wallet for the Nonce/Credential/Notification
 // Endpoint calls driveModule needs — httpClient is the same
 // suite-trusting client used for everything else in this binary, so
@@ -148,26 +197,43 @@ func (noopIssuerKeySource) ResolveIssuerKeys(context.Context, keys.IssuerKeyRequ
 // them the same way wallet_client_flow_test.go already does against a
 // real fapigo/server instance, rather than running full RFC 8414
 // discovery for a shape that never varies.
-func buildClient(run *walletRun, module suiteModule, httpClient *http.Client) (*client.Client, error) {
+func buildClient(ctx context.Context, run *walletRun, module suiteModule, testName string, httpClient *http.Client) (*client.Client, error) {
 	// The trailing slash matters here too, for the same reason it does
 	// for CredentialIssuer in driveModule: the suite's own issuer
 	// identifier (what it compares a Client Attestation PoP's own
 	// "aud" claim against) is published with one — confirmed live
 	// ("ValidateClientAttestationProofJwtAudience: aud claim... did
 	// not match the authorization server issuer" without it).
-	issuer, err := fapi.ParseIssuerURL(module.URL + "/")
+	expectedIssuer := module.URL + "/"
+	issuer, err := fapi.ParseIssuerURL(expectedIssuer)
 	if err != nil {
 		return nil, fmt.Errorf("parse issuer URL: %w", err)
 	}
-	authorizeURL, err := fapi.ParseEndpointURL(module.URL + "/authorize")
+
+	// Real RFC 8414 metadata discovery, not hardcoded endpoint paths:
+	// fapi2-security-profile-final-client-test-discovery-issuer-mismatch
+	// corrupts the suite's own "issuer" field and expects the client to
+	// notice and stop — this is the OIDC Discovery §4.3 anti-spoofing
+	// check that module exists to verify. For every other module this
+	// binary drives, the fetched endpoint values are identical to what
+	// was previously hardcoded here, so this adds a validation step
+	// without changing behavior elsewhere.
+	metadata, err := fetchAuthorizationServerMetadata(ctx, httpClient, module.URL)
+	if err != nil {
+		return nil, fmt.Errorf("fetch authorization server metadata: %w", err)
+	}
+	if metadata.Issuer != expectedIssuer {
+		return nil, fmt.Errorf("authorization server metadata issuer %q does not match expected issuer %q", metadata.Issuer, expectedIssuer)
+	}
+	authorizeURL, err := fapi.ParseEndpointURL(metadata.AuthorizationEndpoint)
 	if err != nil {
 		return nil, fmt.Errorf("parse authorize URL: %w", err)
 	}
-	tokenURL, err := fapi.ParseEndpointURL(module.URL + "/token")
+	tokenURL, err := fapi.ParseEndpointURL(metadata.TokenEndpoint)
 	if err != nil {
 		return nil, fmt.Errorf("parse token URL: %w", err)
 	}
-	parURL, err := fapi.ParseEndpointURL(module.URL + "/par")
+	parURL, err := fapi.ParseEndpointURL(metadata.PushedAuthorizationRequestEndpoint)
 	if err != nil {
 		return nil, fmt.Errorf("parse par URL: %w", err)
 	}
@@ -190,9 +256,23 @@ func buildClient(run *walletRun, module suiteModule, httpClient *http.Client) (*
 	if err != nil {
 		return nil, fmt.Errorf("mint client attestation: %w", err)
 	}
-	attestation := attestationAndChallengeSource{
-		staticAttestationSource: staticAttestationSource(attestationJWT),
-		challengeSource:         challengeSource{httpClient: httpClient, endpoint: module.URL + clientAttestationChallengePath},
+	// The HAIP plan's generic FAPI2SP client battery reuses
+	// AbstractFAPI2SPFinalClientTest as-is — a class hierarchy with no
+	// knowledge of draft-ietf-oauth-attestation-based-client-auth-07 §8
+	// at all, confirmed by its own source carrying no "challenge"
+	// handling (only unrelated PKCE "code_challenge" conditions). It
+	// never wires up the /challenge endpoint the 4 VCIWallet* modules
+	// all do, so a client that calls it there hits the suite's own
+	// catch-all TestDispatcher — "Got unexpected HTTP call to
+	// challenge" — confirmed live. §5.2's own "challenge" claim in the
+	// PoP JWT is optional (only sent when a fresh challenge exists), so
+	// the battery gets a plain, unchallenged attestation source.
+	var attestation client.AttestationSource = staticAttestationSource(attestationJWT)
+	if !strings.HasPrefix(testName, batteryModulePrefix) {
+		attestation = attestationAndChallengeSource{
+			staticAttestationSource: staticAttestationSource(attestationJWT),
+			challengeSource:         challengeSource{httpClient: httpClient, endpoint: module.URL + clientAttestationChallengePath},
+		}
 	}
 
 	cfg := client.Config{
@@ -207,6 +287,13 @@ func buildClient(run *walletRun, module suiteModule, httpClient *http.Client) (*
 		Profile:          client.ProfileFAPISecurity,
 		Assurance:        client.AssuranceDevelopment,
 		ClientAuthMethod: storage.ClientAuthMethodAttestation,
+		// HAIP always sends "iss" in the authorization response
+		// (RFC 9207) — required unconditionally, not just for the
+		// fapi2-security-profile-final-client-test-remove-authorization-response-iss
+		// module that specifically checks it: a client that tolerates
+		// an absent iss when the AS is known to always send one is
+		// itself a downgrade risk.
+		RequireAuthorizationResponseIss: true,
 		Algorithms: client.Algorithms{
 			DPoP:                 fapi.ES256,
 			IDToken:              fapi.ES256,
@@ -328,8 +415,8 @@ func pollDeferredCredential(ctx context.Context, w *wallet.Wallet, resource wall
 	return wallet.CredentialResult{}, fmt.Errorf("deferred credential still pending after %d attempts", maxDeferredPollAttempts)
 }
 
-func driveModule(ctx context.Context, run *walletRun, module suiteModule, httpClient *http.Client, numCreds int, encrypted bool) error {
-	c, err := buildClient(run, module, httpClient)
+func driveModule(ctx context.Context, run *walletRun, module suiteModule, testName string, httpClient *http.Client, numCreds int, encrypted bool) error {
+	c, err := buildClient(ctx, run, module, testName, httpClient)
 	if err != nil {
 		return fmt.Errorf("build client: %w", err)
 	}
