@@ -11,6 +11,7 @@ import (
 	fapi "github.com/idfoundry/fapigo"
 
 	"github.com/idfoundry/oid4vcigo/internal/conformancecert"
+	"github.com/idfoundry/oid4vcigo/internal/conformanceconfig"
 )
 
 // Config is this binary's own configuration — one JSON file, inline
@@ -97,29 +98,11 @@ type Config struct {
 	// than a second throwaway key, matching HAIP's own §6 stance that a
 	// Credential Issuer publishing multiple formats does so under one
 	// identity. Optional: nil advertises only "dc+sd-jwt", the original
-	// single-format behavior.
-	Mdoc *MdocConfig `json:"mdoc,omitempty"`
-}
-
-// MdocConfig is Config.Mdoc's own shape — the mso_mdoc analog of
-// Config's own VCT/Claims/Scope/CredentialConfigurationID fields.
-type MdocConfig struct {
-	CredentialConfigurationID string `json:"credential_configuration_id"`
-
-	// DocType is credential/mdoc.Claims.DocType — Appendix A.2.2's own
-	// format-specific metadata parameter.
-	DocType string `json:"doctype"`
-
-	// Namespace is the one ISO 18013-5 namespace this binary's own
-	// fixed claim content (Claims below) is issued under — real mdoc
-	// credentials can span several namespaces, but issuer.Issuer has no
-	// user database of its own to source more than one canned dataset
-	// from anyway (the same "static test data stands in for a user
-	// database" stance Config's own Claims field already takes).
-	Namespace string `json:"namespace"`
-
-	Claims map[string]string `json:"claims"`
-	Scope  string            `json:"scope"`
+	// single-format behavior. internal/conformanceconfig.MdocConfig,
+	// not a locally declared type, so run-fapi2sp-battery's own
+	// generator (a separate package main, unable to import this one)
+	// shares this exact JSON shape rather than hand-mirroring it.
+	Mdoc *conformanceconfig.MdocConfig `json:"mdoc,omitempty"`
 }
 
 // ConfigClient is Config.Client's own shape: everything needed to

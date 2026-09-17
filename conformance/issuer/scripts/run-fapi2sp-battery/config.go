@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/idfoundry/oid4vcigo/internal/conformancecert"
+	"github.com/idfoundry/oid4vcigo/internal/conformanceconfig"
 )
 
 // run holds everything generated once per invocation: the throwaway
@@ -176,21 +177,21 @@ func mustGenerateECKeyPEM() string {
 // ConfigClient JSON shape exactly — duplicated here rather than
 // imported, since that binary is package main like this one.
 type serverConfig struct {
-	ListenAddr                        string             `json:"listen_addr"`
-	Issuer                            string             `json:"issuer"`
-	TLSCertificatePEM                 string             `json:"tls_certificate_pem"`
-	TLSPrivateKeyPEM                  string             `json:"tls_private_key_pem"`
-	Client                            serverConfigClient `json:"client"`
-	Client2                           serverConfigClient `json:"client2"`
-	CredentialIssuerSigningKeyPEM     string             `json:"credential_issuer_signing_key_pem"`
-	CredentialIssuerCertificatePEM    string             `json:"credential_issuer_certificate_pem"`
-	CredentialRequestDecryptionKeyPEM string             `json:"credential_request_decryption_key_pem"`
-	VCT                               string             `json:"vct"`
-	Claims                            map[string]string  `json:"claims"`
-	Scope                             string             `json:"scope"`
-	CredentialConfigurationID         string             `json:"credential_configuration_id"`
-	DefaultSubject                    string             `json:"default_subject"`
-	Mdoc                              *serverConfigMdoc  `json:"mdoc,omitempty"`
+	ListenAddr                        string                        `json:"listen_addr"`
+	Issuer                            string                        `json:"issuer"`
+	TLSCertificatePEM                 string                        `json:"tls_certificate_pem"`
+	TLSPrivateKeyPEM                  string                        `json:"tls_private_key_pem"`
+	Client                            serverConfigClient            `json:"client"`
+	Client2                           serverConfigClient            `json:"client2"`
+	CredentialIssuerSigningKeyPEM     string                        `json:"credential_issuer_signing_key_pem"`
+	CredentialIssuerCertificatePEM    string                        `json:"credential_issuer_certificate_pem"`
+	CredentialRequestDecryptionKeyPEM string                        `json:"credential_request_decryption_key_pem"`
+	VCT                               string                        `json:"vct"`
+	Claims                            map[string]string             `json:"claims"`
+	Scope                             string                        `json:"scope"`
+	CredentialConfigurationID         string                        `json:"credential_configuration_id"`
+	DefaultSubject                    string                        `json:"default_subject"`
+	Mdoc                              *conformanceconfig.MdocConfig `json:"mdoc,omitempty"`
 }
 
 type serverConfigClient struct {
@@ -198,16 +199,6 @@ type serverConfigClient struct {
 	RedirectURIs           []string        `json:"redirect_uris"`
 	ExpectedAttesterIssuer string          `json:"expected_attester_issuer"`
 	AttesterJWKS           json.RawMessage `json:"attester_jwks"`
-}
-
-// serverConfigMdoc mirrors cmd/conformance-issuer/config.go's own
-// MdocConfig JSON shape exactly.
-type serverConfigMdoc struct {
-	CredentialConfigurationID string            `json:"credential_configuration_id"`
-	DocType                   string            `json:"doctype"`
-	Namespace                 string            `json:"namespace"`
-	Claims                    map[string]string `json:"claims"`
-	Scope                     string            `json:"scope"`
 }
 
 // buildServerConfig builds cmd/conformance-issuer's own config.json —
@@ -240,7 +231,7 @@ func buildServerConfig(r *run) ([]byte, error) {
 		Scope:                             r.scope,
 		CredentialConfigurationID:         r.credentialConfigurationID,
 		DefaultSubject:                    "conformance-test-subject",
-		Mdoc: &serverConfigMdoc{
+		Mdoc: &conformanceconfig.MdocConfig{
 			CredentialConfigurationID: r.mdocCredentialConfigurationID,
 			DocType:                   r.mdocDocType,
 			Namespace:                 r.mdocNamespace,

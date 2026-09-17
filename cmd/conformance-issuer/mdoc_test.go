@@ -12,6 +12,7 @@ import (
 
 	"github.com/idfoundry/oid4vcigo/credential/mdoc"
 	"github.com/idfoundry/oid4vcigo/internal/conformancecert"
+	"github.com/idfoundry/oid4vcigo/internal/conformanceconfig"
 	"github.com/idfoundry/oid4vcigo/internal/cose"
 )
 
@@ -23,7 +24,7 @@ import (
 func mdocTestConfig(t *testing.T) Config {
 	t.Helper()
 	cfg := baseTestConfig(t)
-	cfg.Mdoc = &MdocConfig{
+	cfg.Mdoc = &conformanceconfig.MdocConfig{
 		CredentialConfigurationID: "MobileDrivingLicense",
 		DocType:                   "org.iso.18013.5.1.mDL",
 		Namespace:                 "org.iso.18013.5.1",

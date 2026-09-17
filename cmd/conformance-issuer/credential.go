@@ -18,6 +18,7 @@ import (
 	"github.com/idfoundry/oid4vcigo/credential/mdoc"
 	"github.com/idfoundry/oid4vcigo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcigo/internal/conformancecert"
+	"github.com/idfoundry/oid4vcigo/internal/conformanceconfig"
 	"github.com/idfoundry/oid4vcigo/internal/jose"
 	"github.com/idfoundry/oid4vcigo/internal/jwe"
 	"github.com/idfoundry/oid4vcigo/issuer"
@@ -189,9 +190,29 @@ func credentialHandler(iss *issuer.Issuer, resourceVerifier *fapires.Verifier, c
 	additional := sdjwtAdditionalClaims(cfg.Claims)
 	mdocNameSpaceElements, mdocDocType := mdocNameSpaceElementsFor(cfg.Mdoc)
 
-	return func(w http.ResponseWriter, r *http.Request) {
-		serveCredentialRequest(w, r, iss, resourceVerifier, credentialURL, cfg, additional, mdocNameSpaceElements, mdocDocType)
+	deps := credentialHandlerDeps{
+		iss: iss, resourceVerifier: resourceVerifier, credentialURL: credentialURL, cfg: cfg,
+		additional: additional, mdocNameSpaceElements: mdocNameSpaceElements, mdocDocType: mdocDocType,
 	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		serveCredentialRequest(w, r, deps)
+	}
+}
+
+// credentialHandlerDeps bundles serveCredentialRequest's own fixed,
+// per-handler-construction inputs (everything credentialHandler
+// precomputes or receives as a parameter) into one value, both to keep
+// serveCredentialRequest's own parameter count reasonable and because
+// none of these vary per request — only w/r do.
+type credentialHandlerDeps struct {
+	iss              *issuer.Issuer
+	resourceVerifier *fapires.Verifier
+	credentialURL    *url.URL
+	cfg              Config
+
+	additional            map[string]any
+	mdocNameSpaceElements map[string]map[string]interface{}
+	mdocDocType           string
 }
 
 // sdjwtAdditionalClaims builds credentialHandler's own precomputed
@@ -212,7 +233,7 @@ func sdjwtAdditionalClaims(claims map[string]string) map[string]any {
 // always returns a nil *mdoc.Claims too) — extracted out of
 // credentialHandler itself purely to keep that function's own
 // cognitive complexity low.
-func mdocNameSpaceElementsFor(cfg *MdocConfig) (nameSpaces map[string]map[string]interface{}, docType string) {
+func mdocNameSpaceElementsFor(cfg *conformanceconfig.MdocConfig) (nameSpaces map[string]map[string]interface{}, docType string) {
 	if cfg == nil {
 		return nil, ""
 	}
@@ -229,19 +250,15 @@ func mdocNameSpaceElementsFor(cfg *MdocConfig) (nameSpaces map[string]map[string
 // judged on its own terms — a closure literal costs extra nesting
 // credit for everything inside it, on top of what the same code would
 // cost as a standalone function.
-func serveCredentialRequest(
-	w http.ResponseWriter, r *http.Request,
-	iss *issuer.Issuer, resourceVerifier *fapires.Verifier, credentialURL *url.URL, cfg Config,
-	additional map[string]any, mdocNameSpaceElements map[string]map[string]interface{}, mdocDocType string,
-) {
+func serveCredentialRequest(w http.ResponseWriter, r *http.Request, deps credentialHandlerDeps) {
 	// URL is this binary's own configured Credential Endpoint URL, not
 	// r.URL — a net/http server request's own URL has no Scheme/Host
 	// populated (only Path/RawQuery come off the request line), which
 	// would make DPoP's own "htu" comparison fail; mirrors FAPIgo's own
 	// cmd/conformance-as/resource.go, which passes its pre-built
 	// userinfoURL/accountsURL the same way, never r.URL directly.
-	authCtx, err := resourceVerifier.Verify(r.Context(), fapires.VerifyRequest{
-		Method: r.Method, URL: credentialURL, Authorization: r.Header.Get("Authorization"),
+	authCtx, err := deps.resourceVerifier.Verify(r.Context(), fapires.VerifyRequest{
+		Method: r.Method, URL: deps.credentialURL, Authorization: r.Header.Get("Authorization"),
 		DPoPProofs: r.Header.Values("DPoP"), PeerCertificate: fapires.PeerCertificateFromHTTP(r),
 	})
 	if err != nil {
@@ -254,7 +271,7 @@ func serveCredentialRequest(
 		http.Error(w, "failed to read request body", http.StatusBadRequest)
 		return
 	}
-	plaintext, wasEncrypted, err := iss.DecryptRequestBody(body, r.Header.Get("Content-Type"))
+	plaintext, wasEncrypted, err := deps.iss.DecryptRequestBody(body, r.Header.Get("Content-Type"))
 	if err != nil {
 		writeIssuerError(w, err)
 		return
@@ -276,13 +293,13 @@ func serveCredentialRequest(
 	// this handler doesn't need to itself look up which format
 	// wire.CredentialConfigurationID/CredentialIdentifier resolves
 	// to.
-	mdocClaims := mdocClaimsForRequest(mdocDocType, mdocNameSpaceElements, issuedCredentialLifetime)
+	mdocClaims := mdocClaimsForRequest(deps.mdocDocType, deps.mdocNameSpaceElements, issuedCredentialLifetime)
 
-	result, err := iss.RequestCredential(r.Context(), auth, issuer.CredentialRequest{
+	result, err := deps.iss.RequestCredential(r.Context(), auth, issuer.CredentialRequest{
 		CredentialConfigurationID: wire.CredentialConfigurationID,
 		CredentialIdentifier:      wire.CredentialIdentifier,
 		Proofs:                    wire.Proofs,
-		SDJWTClaims:               &sdjwtvc.Claims{VCT: cfg.VCT, Exp: &exp, Additional: additional},
+		SDJWTClaims:               &sdjwtvc.Claims{VCT: deps.cfg.VCT, Exp: &exp, Additional: deps.additional},
 		MdocClaims:                mdocClaims,
 		RequestWasEncrypted:       wasEncrypted,
 		ResponseEncryption:        responseEncryption,
@@ -296,7 +313,7 @@ func serveCredentialRequest(
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	encoded, contentType, err := iss.EncryptResponseBody(resultJSON, responseEncryption)
+	encoded, contentType, err := deps.iss.EncryptResponseBody(resultJSON, responseEncryption)
 	if err != nil {
 		writeIssuerError(w, err)
 		return
