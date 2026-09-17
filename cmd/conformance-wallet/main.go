@@ -6,10 +6,13 @@
 // (VCIWalletTestCredentialIssuance,
 // VCIWalletTestCredentialIssuanceWithNotification,
 // VCIWalletTestBatchCredentialIssuance,
-// VCIWalletTestClientAttestationChallenge), crossed with
-// immediate+plain and deferred+plain issuance modes. See
+// VCIWalletTestClientAttestationChallenge), crossed with all 3 of the
+// plan's own issuance-mode/encryption variants (immediate+plain,
+// deferred+plain, immediate+encrypted), plus the plan's 4th
+// module-list entry — the generic FAPI2SP client conformance battery,
+// always at the fixed immediate+plain crossing. See
 // conformance/wallet/README.md for what this covers and what's still
-// open (notably immediate+encrypted, not yet driven).
+// open.
 //
 // Unlike this repo's other three conformance binaries, this one is a
 // one-shot CLI tool, not a long-running HTTP server: for the OID4VCI
@@ -32,20 +35,42 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 )
 
 // inScopeModules is this run's own testName -> credential count map —
-// the wallet_initiated, immediate+plain crossing's 4 non-battery
-// modules (see the package doc comment). Every module in this map
-// requests exactly one credential except the batch one, which requests
-// two (§8.2's own multi-proof example — enough to exercise a genuine
-// batch without an arbitrary large count).
+// the wallet_initiated flow variant's 4 non-battery modules plus the
+// plan's 4th module-list entry, the generic FAPI2SP client battery
+// (see the package doc comment). Every module in this map requests
+// exactly one credential except the batch one, which requests two
+// (§8.2's own multi-proof example — enough to exercise a genuine batch
+// without an arbitrary large count).
 var inScopeModules = map[string]int{
 	"oid4vci-1_0-wallet-test-credential-issuance":              1,
 	"oid4vci-1_0-wallet-test-credential-issuance-notification": 1,
 	"oid4vci-1_0-wallet-test-client-attestation-challenge":     1,
 	"oid4vci-1_0-wallet-test-batch-credential-issuance":        2,
+
+	// The HAIP plan's 4th module-list entry: the generic FAPI2SP client
+	// conformance battery (FAPI2MessageSigningFinalClientTestPlan's own
+	// module list, minus every id_token/JARM/OpenBanking-only module —
+	// HAIP's wallet is plain_oauth+plain_response). Always run at the
+	// fixed immediate+plain crossing (VCIWalletTestPlanHaip.java
+	// hardcodes it for this entry specifically), so these share the
+	// existing {immediate, plain} entry in inScopeCrossings below — no
+	// new crossing needed. Exact testName strings confirmed against the
+	// running suite's own /api/runner/available.
+	"fapi2-security-profile-final-client-test-happy-path":                                                     1,
+	"fapi2-security-profile-final-client-test-happy-path-no-dpop-nonce":                                       1,
+	"fapi2-security-profile-final-client-test-discovery-issuer-mismatch":                                      1,
+	"fapi2-security-profile-final-client-test-remove-authorization-response-iss":                              1,
+	"fapi2-security-profile-final-client-test-invalid-authorization-response-iss":                             1,
+	"fapi2-security-profile-final-client-test-ensure-authorization-response-with-invalid-state-fails":         1,
+	"fapi2-security-profile-final-client-test-ensure-authorization-response-with-invalid-missing-state-fails": 1,
+	"fapi2-security-profile-final-client-test-token-endpoint-response-without-expires_in":                     1,
+	"fapi2-security-profile-final-client-test-token-type-case-insensitivity":                                  1,
+	"fapi2-security-profile-final-client-test-rs-dpop-auth-scheme-case-insensitivity":                         1,
 }
 
 // issuanceCrossing is one (vci_credential_issuance_mode,
@@ -125,7 +150,7 @@ func run(apiBase, credentialConfigurationID, scope string) error {
 		if !ok {
 			continue
 		}
-		crossing, ok := matchCrossing(m.Variant)
+		crossing, ok := matchCrossing(m.TestModule, m.Variant)
 		if !ok {
 			continue
 		}
@@ -144,7 +169,7 @@ func run(apiBase, credentialConfigurationID, scope string) error {
 
 	log.Printf("=== summary ===")
 	for name := range inScopeModules {
-		for _, crossing := range inScopeCrossings {
+		for _, crossing := range crossingsFor(name) {
 			key := name + " [" + crossing.String() + "]"
 			outcome, ran := summary[key]
 			if !ran {
@@ -156,10 +181,28 @@ func run(apiBase, credentialConfigurationID, scope string) error {
 	return nil
 }
 
-// matchCrossing reports whether variant matches one of inScopeCrossings,
-// returning the matching crossing.
-func matchCrossing(variant map[string]string) (issuanceCrossing, bool) {
-	for _, c := range inScopeCrossings {
+// batteryModulePrefix identifies the HAIP plan's 4th module-list entry
+// (the generic FAPI2SP client battery) — those testNames, unlike the 4
+// VCIWallet* modules, are never crossed with issuance-mode/encryption
+// variants: VCIWalletTestPlanHaip.java hardcodes
+// VCICredentialIssuanceMode=immediate/VCICredentialEncryption=plain for
+// this entry specifically.
+const batteryModulePrefix = "fapi2-security-profile-final-client-test-"
+
+// crossingsFor reports which of inScopeCrossings apply to testName —
+// all 3 for the 4 VCIWallet* modules, just immediate+plain for the
+// battery (see batteryModulePrefix).
+func crossingsFor(testName string) []issuanceCrossing {
+	if strings.HasPrefix(testName, batteryModulePrefix) {
+		return inScopeCrossings[:1]
+	}
+	return inScopeCrossings
+}
+
+// matchCrossing reports whether variant matches one of the crossings
+// applicable to testName, returning the matching crossing.
+func matchCrossing(testName string, variant map[string]string) (issuanceCrossing, bool) {
+	for _, c := range crossingsFor(testName) {
 		if variant["vci_credential_issuance_mode"] == c.issuanceMode && variant["vci_credential_encryption"] == c.encryption {
 			return c, true
 		}
@@ -180,7 +223,7 @@ func runModule(ctx context.Context, httpClient *http.Client, apiBase, planID, te
 	}
 
 	driverErr := ""
-	if err := driveModule(ctx, walletRun, module, httpClient, numCreds, encrypted); err != nil {
+	if err := driveModule(ctx, walletRun, module, testName, httpClient, numCreds, encrypted); err != nil {
 		driverErr = err.Error()
 	}
 
