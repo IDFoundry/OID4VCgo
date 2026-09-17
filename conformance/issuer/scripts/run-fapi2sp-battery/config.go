@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/idfoundry/oid4vcigo/internal/conformancecert"
+	"github.com/idfoundry/oid4vcigo/internal/conformanceconfig"
 )
 
 // run holds everything generated once per invocation: the throwaway
@@ -61,6 +62,19 @@ type run struct {
 	claims                    map[string]string
 	scope                     string
 	credentialConfigurationID string
+
+	// mdoc* mirror vct/claims/scope/credentialConfigurationID above for
+	// a second, mso_mdoc-format CredentialConfiguration — always
+	// generated and included in the server config (cheap, and keeps
+	// cmd/conformance-issuer's own behavior identical for every already-
+	// passing sd_jwt_vc-format module), selected via -credential-format
+	// mdoc at plan-creation time (buildPlanConfig's own credentialFormat
+	// parameter).
+	mdocCredentialConfigurationID string
+	mdocDocType                   string
+	mdocNamespace                 string
+	mdocClaims                    map[string]string
+	mdocScope                     string
 }
 
 func generateRun(alias, issuerBaseURL string) (*run, error) {
@@ -125,6 +139,25 @@ func generateRun(alias, issuerBaseURL string) (*run, error) {
 		claims:                    map[string]string{"given_name": "Jean", "family_name": "Dupont"},
 		scope:                     "IdentityCredential",
 		credentialConfigurationID: "IdentityCredential",
+
+		// eu.europa.ec.eudi.pid.1, not org.iso.18013.5.1.mDL: the suite's
+		// own EnsureMdocMdlMandatoryDataElementsPresent check applies
+		// only to the literal mDL doctype string (ISO/IEC 18013-5 §7.2.1
+		// Table 5's mandatory-element list — birth_date, portrait,
+		// driving_privileges, ...), confirmed live ("does not contain
+		// all the data elements... that ISO/IEC 18013-5 defines as
+		// mandatory") — a real domain compliance burden out of scope for
+		// this generic smoke check, which only needs to prove genuine
+		// mdoc structural issuance (CBOR/COSE/MSO, DeviceKey binding),
+		// not full mDL data-element coverage. A PID-shaped doctype
+		// mirrors this binary's own existing SD-JWT VCT fixture
+		// ("urn:eudi:pid:1") and isn't checked against any suite-side
+		// mandatory-element list at all.
+		mdocCredentialConfigurationID: "IdentityCredentialMdoc",
+		mdocDocType:                   "eu.europa.ec.eudi.pid.1",
+		mdocNamespace:                 "eu.europa.ec.eudi.pid.1",
+		mdocClaims:                    map[string]string{"given_name": "Jean", "family_name": "Dupont"},
+		mdocScope:                     "IdentityCredentialMdoc",
 	}, nil
 }
 
@@ -144,20 +177,21 @@ func mustGenerateECKeyPEM() string {
 // ConfigClient JSON shape exactly — duplicated here rather than
 // imported, since that binary is package main like this one.
 type serverConfig struct {
-	ListenAddr                        string             `json:"listen_addr"`
-	Issuer                            string             `json:"issuer"`
-	TLSCertificatePEM                 string             `json:"tls_certificate_pem"`
-	TLSPrivateKeyPEM                  string             `json:"tls_private_key_pem"`
-	Client                            serverConfigClient `json:"client"`
-	Client2                           serverConfigClient `json:"client2"`
-	CredentialIssuerSigningKeyPEM     string             `json:"credential_issuer_signing_key_pem"`
-	CredentialIssuerCertificatePEM    string             `json:"credential_issuer_certificate_pem"`
-	CredentialRequestDecryptionKeyPEM string             `json:"credential_request_decryption_key_pem"`
-	VCT                               string             `json:"vct"`
-	Claims                            map[string]string  `json:"claims"`
-	Scope                             string             `json:"scope"`
-	CredentialConfigurationID         string             `json:"credential_configuration_id"`
-	DefaultSubject                    string             `json:"default_subject"`
+	ListenAddr                        string                        `json:"listen_addr"`
+	Issuer                            string                        `json:"issuer"`
+	TLSCertificatePEM                 string                        `json:"tls_certificate_pem"`
+	TLSPrivateKeyPEM                  string                        `json:"tls_private_key_pem"`
+	Client                            serverConfigClient            `json:"client"`
+	Client2                           serverConfigClient            `json:"client2"`
+	CredentialIssuerSigningKeyPEM     string                        `json:"credential_issuer_signing_key_pem"`
+	CredentialIssuerCertificatePEM    string                        `json:"credential_issuer_certificate_pem"`
+	CredentialRequestDecryptionKeyPEM string                        `json:"credential_request_decryption_key_pem"`
+	VCT                               string                        `json:"vct"`
+	Claims                            map[string]string             `json:"claims"`
+	Scope                             string                        `json:"scope"`
+	CredentialConfigurationID         string                        `json:"credential_configuration_id"`
+	DefaultSubject                    string                        `json:"default_subject"`
+	Mdoc                              *conformanceconfig.MdocConfig `json:"mdoc,omitempty"`
 }
 
 type serverConfigClient struct {
@@ -197,6 +231,13 @@ func buildServerConfig(r *run) ([]byte, error) {
 		Scope:                             r.scope,
 		CredentialConfigurationID:         r.credentialConfigurationID,
 		DefaultSubject:                    "conformance-test-subject",
+		Mdoc: &conformanceconfig.MdocConfig{
+			CredentialConfigurationID: r.mdocCredentialConfigurationID,
+			DocType:                   r.mdocDocType,
+			Namespace:                 r.mdocNamespace,
+			Claims:                    r.mdocClaims,
+			Scope:                     r.mdocScope,
+		},
 	}
 	return json.MarshalIndent(cfg, "", "  ")
 }
@@ -238,7 +279,12 @@ type overrideEntry struct {
 // for exactly which fields each of client.client_instance_key/
 // client.client_instance_key_public/client_attestation.attester_jwks/
 // client_attestation.issuer feeds.
-func buildPlanConfig(r *run) ([]byte, error) {
+// buildPlanConfig builds the suite-side plan config for credentialFormat
+// ("sd_jwt_vc" or "mdoc") — the plan's own vci.credential_configuration_id
+// selects whichever CredentialConfiguration cmd/conformance-issuer's own
+// server config (buildServerConfig, always generated with both) actually
+// advertises for that format.
+func buildPlanConfig(r *run, credentialFormat string) ([]byte, error) {
 	client1InstanceKeyPriv, err := privateJWKRaw(r.client1InstanceKey)
 	if err != nil {
 		return nil, fmt.Errorf("build client1 instance key: %w", err)
@@ -265,6 +311,11 @@ func buildPlanConfig(r *run) ([]byte, error) {
 	// empty key set satisfies the suite's own presence check without
 	// claiming to support something this battery never exercises.
 	keyAttestationJWKS := json.RawMessage(`{"keys":[]}`)
+
+	credentialConfigurationID := r.credentialConfigurationID
+	if credentialFormat == "mdoc" {
+		credentialConfigurationID = r.mdocCredentialConfigurationID
+	}
 
 	authorizeURL := "https://conformance-issuer:8443/authorize*"
 	trueVal := true
@@ -294,7 +345,7 @@ func buildPlanConfig(r *run) ([]byte, error) {
 		},
 		"vci": map[string]any{
 			"credential_issuer_url":       r.issuerBaseURL,
-			"credential_configuration_id": r.credentialConfigurationID,
+			"credential_configuration_id": credentialConfigurationID,
 			"credential_proof_type_hint":  "jwt",
 		},
 		"credential": map[string]any{

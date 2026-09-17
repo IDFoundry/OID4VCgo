@@ -17,6 +17,9 @@ import (
 	"github.com/idfoundry/fapigo/storage/memstore"
 
 	"github.com/idfoundry/oid4vcigo"
+	"github.com/idfoundry/oid4vcigo/credential/mdoc"
+	"github.com/idfoundry/oid4vcigo/credential/sdjwtvc"
+	"github.com/idfoundry/oid4vcigo/internal/cose"
 	"github.com/idfoundry/oid4vcigo/internal/jose"
 	"github.com/idfoundry/oid4vcigo/internal/jwe"
 	"github.com/idfoundry/oid4vcigo/issuer"
@@ -56,6 +59,22 @@ const credentialRequestDecryptionKeyID = "credential-request-encryption-key-1" /
 // algorithm" a real, testable condition for this issuer rather than a
 // vacuous one.
 var credentialEncValuesSupported = []jwe.Enc{jwe.A128GCM, jwe.A256GCM}
+
+// jwtProofCredentialConfiguration builds the jwk-binding/jwt-proof-type
+// shape every CredentialConfiguration this binary advertises shares —
+// Format and the format-specific metadata parameter (VCT or DocType)
+// are the caller's own job to set afterward, the one thing that
+// actually differs between the "dc+sd-jwt" and "mso_mdoc"
+// configurations below.
+func jwtProofCredentialConfiguration(scope string, proofSigningAlgs []string) issuer.CredentialConfiguration {
+	return issuer.CredentialConfiguration{
+		Scope:                                scope,
+		CryptographicBindingMethodsSupported: []string{"jwk"},
+		ProofTypesSupported: map[string]issuer.ProofTypeConfiguration{
+			oid4vci.ProofTypeJWT: {ProofSigningAlgValuesSupported: proofSigningAlgs},
+		},
+	}
+}
 
 // newServerMux builds the full wiring — a real fapigo/server.Server
 // (FAPI 2.0 Security Profile Final, Wallet Attestation client
@@ -118,6 +137,10 @@ func newServerMux(cfg Config) (*http.ServeMux, error) {
 	clientKeySpecs := []ephemeral.ClientKeySpec{
 		{ClientID: fapi.ClientID(cfg.Client.ID), JWKS: cfg.Client.AttesterJWKS},
 	}
+	allowedScopes := []string{cfg.Scope}
+	if cfg.Mdoc != nil {
+		allowedScopes = append(allowedScopes, cfg.Mdoc.Scope)
+	}
 	registeredClients := []storage.RegisteredClient{}
 	for _, cc := range []*ConfigClient{&cfg.Client, cfg.Client2} {
 		if cc == nil {
@@ -129,7 +152,7 @@ func newServerMux(cfg Config) (*http.ServeMux, error) {
 			ClientAuthMethod:           storage.ClientAuthMethodAttestation,
 			ExpectedAttesterIssuer:     cc.ExpectedAttesterIssuer,
 			ClientAttestationAlgorithm: clientAttestationAlgorithm,
-			AllowedScopes:              []string{cfg.Scope},
+			AllowedScopes:              allowedScopes,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("register client %s: %w", cc.ID, err)
@@ -218,6 +241,33 @@ func newServerMux(cfg Config) (*http.ServeMux, error) {
 		return nil, fmt.Errorf("credential request decryption key: %w", err)
 	}
 	issProofAlgs := []string{"ES256"}
+	sdjwtConfig := jwtProofCredentialConfiguration(cfg.Scope, issProofAlgs)
+	sdjwtConfig.Format, sdjwtConfig.VCT = sdjwtvc.CredentialFormat, cfg.VCT
+	credentialConfigs := map[string]issuer.CredentialConfiguration{
+		cfg.CredentialConfigurationID: sdjwtConfig,
+	}
+	issDeps := issuer.Dependencies{
+		Nonces: oid4vcigostorage.NewNonceStore(),
+		Clock:  issuer.ClockFunc(time.Now),
+		Random: rand.Reader,
+		SDJWTSigner: &issuer.SDJWTSigner{
+			Signer: issuerSigningKey, Alg: jose.ES256,
+			IssuerCertificate: issuerCertificate,
+		},
+	}
+	if cfg.Mdoc != nil {
+		// Same issuer identity as the "dc+sd-jwt" CredentialConfiguration
+		// above (issuerSigningKey/issuerCertificate) — one Credential
+		// Issuer publishing two formats, not a second throwaway key.
+		mdocConfig := jwtProofCredentialConfiguration(cfg.Mdoc.Scope, issProofAlgs)
+		mdocConfig.Format, mdocConfig.DocType = mdoc.CredentialFormat, cfg.Mdoc.DocType
+		credentialConfigs[cfg.Mdoc.CredentialConfigurationID] = mdocConfig
+		issDeps.MdocSigner = &issuer.MdocSigner{
+			Signer: issuerSigningKey, Alg: cose.ES256,
+			X5Chain: [][]byte{issuerCertificate.Raw},
+		}
+	}
+
 	iss, err := issuer.New(issuer.Config{
 		Issuer:                  issuerURL,
 		Endpoints:               issuer.Endpoints{Credential: credentialURL, Nonce: nonceURL},
@@ -230,24 +280,8 @@ func newServerMux(cfg Config) (*http.ServeMux, error) {
 		ResponseEncryption: &issuer.ResponseEncryptionSupport{
 			EncValuesSupported: credentialEncValuesSupported,
 		},
-		CredentialConfigurationsSupported: map[string]issuer.CredentialConfiguration{
-			cfg.CredentialConfigurationID: {
-				Format: "dc+sd-jwt", Scope: cfg.Scope, VCT: cfg.VCT,
-				CryptographicBindingMethodsSupported: []string{"jwk"},
-				ProofTypesSupported: map[string]issuer.ProofTypeConfiguration{
-					oid4vci.ProofTypeJWT: {ProofSigningAlgValuesSupported: issProofAlgs},
-				},
-			},
-		},
-	}, issuer.Dependencies{
-		Nonces: oid4vcigostorage.NewNonceStore(),
-		Clock:  issuer.ClockFunc(time.Now),
-		Random: rand.Reader,
-		SDJWTSigner: &issuer.SDJWTSigner{
-			Signer: issuerSigningKey, Alg: jose.ES256,
-			IssuerCertificate: issuerCertificate,
-		},
-	})
+		CredentialConfigurationsSupported: credentialConfigs,
+	}, issDeps)
 	if err != nil {
 		return nil, fmt.Errorf("issuer.New: %w", err)
 	}

@@ -349,6 +349,15 @@ func driveConsentToCallback(t *testing.T, httpClient *http.Client, issuer, autho
 // varies between callers.
 func setupFullFlowTest(t *testing.T, clientID, defaultSubject string) (client *http.Client, cfg Config, attesterKey, clientKey *ecdsa.PrivateKey) {
 	t.Helper()
+	return setupFullFlowTestWithConfig(t, baseTestConfig(t), clientID, defaultSubject)
+}
+
+// setupFullFlowTestWithConfig is setupFullFlowTest's own logic, taking
+// a caller-built base config (e.g. mdoc_test.go's own Config.Mdoc-carrying
+// one) instead of always starting from baseTestConfig — setupFullFlowTest
+// itself is just this with baseTestConfig(t) as the starting point.
+func setupFullFlowTestWithConfig(t *testing.T, cfg Config, clientID, defaultSubject string) (client *http.Client, cfgOut Config, attesterKey, clientKey *ecdsa.PrivateKey) {
+	t.Helper()
 	client = &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}} //nolint:gosec // test-only, talks to this test's own throwaway TLS listener
 
 	var err error
@@ -365,7 +374,6 @@ func setupFullFlowTest(t *testing.T, clientID, defaultSubject string) (client *h
 		t.Fatalf("JWKSet: %v", err)
 	}
 
-	cfg = baseTestConfig(t)
 	cfg.Client.ID = clientID
 	cfg.Client.RedirectURIs = []string{"https://client.example.com/callback"}
 	cfg.Client.ExpectedAttesterIssuer = "https://attester.example.com"

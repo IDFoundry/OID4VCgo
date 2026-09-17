@@ -382,6 +382,24 @@ Key Attestation JWTs always carry an `x5c` header
 — the same required-but-unused pattern already found on the Issuer
 role's own equivalent field.
 
+**Update: the suite's own `mso_mdoc` credential format is driven too,
+via `-credential-format mdoc`.** Neither role in this repo had ever
+exercised mdoc before — every module always used
+`credential_format=sd_jwt_vc`. `wallet.Wallet.RequestCredential`'s own
+credential-response handling is entirely format-agnostic (it just
+returns whatever opaque `credential` string comes back), so this binary
+needed **zero wallet-package code changes** — just the new
+`-credential-format` flag (setting the plan's own `credential_format`
+variant) plus a matching `-credential-configuration-id`/`-scope`
+naming one of the suite's own mdoc-format fixtures
+(`VCICredentialConfigurations.java`): `eu.europa.ec.eudi.pid.mdoc.1`/
+`eudi.pid.mdoc.1` (`doctype: eu.europa.ec.eudi.pid.1` — the suite's own
+fixture, not something this binary configures). Confirmed live, twice
+for stability: all 22 module instances `FINISHED`/`PASSED`, identical
+outcomes both times — the same full crossing set (4 modules × 3
+issuance-mode/encryption variants, plus the 10-module FAPI2SP battery)
+already proven under `sd_jwt_vc` above.
+
 **Not yet covered** (separate, later, only if asked):
 
 - `issuer_initiated_dc_api` — needs real Digital Credentials API

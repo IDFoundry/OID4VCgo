@@ -11,6 +11,7 @@ import (
 	fapi "github.com/idfoundry/fapigo"
 
 	"github.com/idfoundry/oid4vcigo/internal/conformancecert"
+	"github.com/idfoundry/oid4vcigo/internal/conformanceconfig"
 )
 
 // Config is this binary's own configuration — one JSON file, inline
@@ -87,6 +88,21 @@ type Config struct {
 	// this binary has no real end-user login of its own, matching
 	// cmd/conformance-as's identical stance.
 	DefaultSubject string `json:"default_subject"`
+
+	// Mdoc, when non-nil, adds a second CredentialConfiguration for
+	// credential/mdoc.CredentialFormat ("mso_mdoc") alongside the
+	// "dc+sd-jwt" one VCT/Claims/Scope/CredentialConfigurationID above
+	// already describes — issued from the same
+	// CredentialIssuerSigningKeyPEM/CredentialIssuerCertificatePEM this
+	// binary already holds (one issuer identity, two formats) rather
+	// than a second throwaway key, matching HAIP's own §6 stance that a
+	// Credential Issuer publishing multiple formats does so under one
+	// identity. Optional: nil advertises only "dc+sd-jwt", the original
+	// single-format behavior. internal/conformanceconfig.MdocConfig,
+	// not a locally declared type, so run-fapi2sp-battery's own
+	// generator (a separate package main, unable to import this one)
+	// shares this exact JSON shape rather than hand-mirroring it.
+	Mdoc *conformanceconfig.MdocConfig `json:"mdoc,omitempty"`
 }
 
 // ConfigClient is Config.Client's own shape: everything needed to
@@ -139,6 +155,15 @@ func loadConfig(path string) (Config, error) {
 	}
 	if cfg.VCT == "" || len(cfg.Claims) == 0 || cfg.Scope == "" || cfg.CredentialConfigurationID == "" {
 		return Config{}, fmt.Errorf("config: vct, claims, scope and credential_configuration_id are all required")
+	}
+	if cfg.Mdoc != nil {
+		m := cfg.Mdoc
+		if m.CredentialConfigurationID == "" || m.DocType == "" || m.Namespace == "" || len(m.Claims) == 0 || m.Scope == "" {
+			return Config{}, fmt.Errorf("config: mdoc.credential_configuration_id, mdoc.doctype, mdoc.namespace, mdoc.claims and mdoc.scope are all required when mdoc is present")
+		}
+		if m.CredentialConfigurationID == cfg.CredentialConfigurationID {
+			return Config{}, fmt.Errorf("config: mdoc.credential_configuration_id must differ from the top-level credential_configuration_id")
+		}
 	}
 	if cfg.DefaultSubject == "" {
 		cfg.DefaultSubject = "conformance-test-subject"
