@@ -142,12 +142,18 @@ negative-test expectations differ.
   `SKIPPED`** — 10 of 10 applicable negative tests `PASSED`, 1 module
   correctly self-`SKIPPED` (key-attestation, blocked on the still-
   unbuilt OID4VCI Wallet role). See `issuer/README.md`.
-- **Not yet started**: an OID4VCI Wallet role conformance binary (a
-  `cmd/conformance-wallet`, mirroring the shape of the other three
-  binaries here). The FAPIgo-side blocker that previously prevented this
-  entirely — Wallet Attestation client authentication had no client-side
-  implementation — is resolved and proven end to end at the library level
-  (`cmd/conformance-issuer`'s own `TestFullFlow_RealClientDrivesAttestationAuth`;
-  see `AGENTS.md`), but building and running an actual conformance binary
-  against the live OIDF suite's own OID4VCI Wallet test plan is separate,
-  not-yet-started work.
+- **`wallet/`** — OID4VCI 1.0 Final/HAIP Wallet role
+  (`oid4vci-1_0-wallet-haip-test-plan`): `cmd/conformance-wallet`
+  drives `oid4vcigo/wallet`/`fapigo/client` as an outbound HTTP client
+  — the suite itself plays the entire emulated Authorization Server
+  and Credential Issuer for this role, the opposite shape from
+  `issuer/`. **Confirmed live against a real, locally-run OIDF suite,
+  all 4 in-scope modules `FINISHED`/`PASSED`** on two independent runs
+  — `credential-issuance`, `credential-issuance-notification`,
+  `client-attestation-challenge` (proving FAPIgo PR #318's
+  `client.ChallengeSource` against the suite's own independent
+  Attestation Challenge Endpoint implementation, not just FAPIgo's own
+  unit tests), and `batch-credential-issuance`. `deferred`/`encrypted`
+  issuance-mode crossings, the plan's generic FAPI2SP battery module
+  list, and `issuer_initiated` flow variants aren't covered yet. See
+  `wallet/README.md`.
