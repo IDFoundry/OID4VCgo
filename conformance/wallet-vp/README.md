@@ -165,6 +165,34 @@ variant — consistent with the "Scope" section below (DC API/JAR-JSON-
 Serialization-only checks, not something this binary's redirect-flow
 implementation is ever asked to handle).
 
+**Update: 13 of these 14 are now driven by a committed, repeatable
+tool**, `conformance/wallet-vp/scripts/run-modules`, closing this
+role's own "driven by hand" gap (the same gap
+`conformance/verifier/scripts/run-sdjwt-modules`/`run-mdoc-module`
+closed for the Verifier role). Confirmed live, twice for stability: all
+6 positive-behavior modules `FINISHED`/`PASSED`; all 7 negative-test
+modules correctly rejected at this binary's own `/authorize` call
+(a non-200 local response, before ever reaching `response_uri`) and
+`FINISHED`/`REVIEW` once the script fills the suite's own required
+screenshot placeholder — matching this section's own "the real
+pass/fail signal... is whether this binary's own `/authorize` call
+errored out" finding below exactly, now automated rather than
+eyeballed per run.
+
+**Not automated: `alternate-happy-flow`.** Its own fragment-carrying
+`redirect_uri` needs relaying real fragment content to the suite's own
+implicit-submission URL — confirmed live that an empty POST (this
+repo's own established mechanism for every other stuck-point) isn't
+enough here, and two different guesses at the POST body shape
+(`code_verifier=<fragment>` as form data, and the bare fragment value)
+both left the suite reporting "URL fragment passed to redirect_uri
+contains more than the one expected entry." This module was
+successfully driven manually at the time the "Driving negative-test
+and fragment-redirect modules" note below was written; reproducing
+that exact mechanism in `run-modules` is a genuine open follow-up, not
+something silently skipped — `run-modules` excludes it explicitly and
+says so in its own output.
+
 **Driving negative-test and fragment-redirect modules needs one extra
 step curl alone can't do.** Two distinct suite mechanisms show up
 across this module list, beyond the plain query-string callback
