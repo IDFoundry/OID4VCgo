@@ -9,6 +9,7 @@ import (
 	fapires "github.com/idfoundry/fapigo/resource"
 	"github.com/idfoundry/fapigo/server"
 
+	"github.com/idfoundry/oid4vcigo/internal/jose"
 	"github.com/idfoundry/oid4vcigo/issuer"
 )
 
@@ -42,7 +43,7 @@ func newRouter(srv *server.Server, iss *issuer.Issuer, resourceVerifier *fapires
 	mux.HandleFunc("POST /authorize/decision", consent.handleDecision)
 	mux.HandleFunc("POST /token", tokenHandler(srv))
 
-	mux.HandleFunc("GET /.well-known/openid-credential-issuer", credentialIssuerMetadataHandler(iss, metadataSigner, metadataCert))
+	mux.HandleFunc("GET /.well-known/openid-credential-issuer", issuer.MetadataHandler(iss, metadataSigner, jose.ES256, metadataCert))
 	mux.HandleFunc("POST /nonce", nonceHandler(iss))
 	mux.HandleFunc("POST /credential", credentialHandler(iss, resourceVerifier, credentialURL, cfg))
 	return mux

@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/idfoundry/oid4vcigo/internal/jose"
+	"github.com/idfoundry/oid4vcigo/issuer"
 )
 
 // TestNewServerMux_ServesRealMetadataAndJWKS is the same scenario this
@@ -159,8 +160,8 @@ func TestNewServerMux_ServesRealMetadataAndJWKS(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Verify: %v", err)
 		}
-		if header["typ"] != openidVCIIssuerMetadataTyp {
-			t.Fatalf("typ = %v, want %q", header["typ"], openidVCIIssuerMetadataTyp)
+		if header["typ"] != issuer.MetadataJWSTyp {
+			t.Fatalf("typ = %v, want %q", header["typ"], issuer.MetadataJWSTyp)
 		}
 		if _, ok := header["x5c"]; !ok {
 			t.Fatalf("missing x5c header")
