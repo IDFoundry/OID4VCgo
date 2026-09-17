@@ -13,6 +13,11 @@ import (
 // the caller's own chosen scope(s) into a client.BeginAuthorizationRequest
 // — ready to pass directly to (*client.Client).BeginAuthorization,
 // fapigo/client's own entry point into the Authorization Code Flow.
+// This is OID4VCI's own Authorization Code Flow (§4) — not to be
+// confused with ParseAuthorizationRequest (authorization_request.go),
+// this package's unrelated OID4VP Authorization Request parser; the
+// two share a noun because both specs do, not because they're the
+// same exchange.
 //
 // This package deliberately doesn't wrap BeginAuthorization,
 // HandleAuthorizationResponse or ExchangeCode themselves: driving that
