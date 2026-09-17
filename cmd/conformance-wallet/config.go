@@ -35,6 +35,27 @@ type walletRun struct {
 	attesterCAPEM   string // client_attestation.trust_anchor, configured on the suite side
 	attesterLeafPEM string
 
+	// keyAttestationKey signs this run's own Key Attestation JWT(s)
+	// (keyattestation.go) when useAttestationProof is set — a separate
+	// CA-issued identity from attesterKey, chaining to its own
+	// client_attestation.key_attestation_trust_anchor_pem config value
+	// (config.go's own newWalletRun), matching how a real deployment's
+	// Key Attestation authority (a secure element/OS attestation
+	// service) is a distinct authority from the Wallet Attestation
+	// issuer above.
+	keyAttestationKey     *ecdsa.PrivateKey
+	keyAttestationLeafPEM string
+
+	// useAttestationProof selects the standalone "attestation" proof
+	// type (Appendix F.3, HAIP §4.5.1 Key Attestation) for every
+	// Credential Request this run makes, instead of the default
+	// jwk-conveyed "jwt" proof type — see driveModule's own branch.
+	// Only meaningful when credentialConfigurationID names a fixture
+	// whose proof_types_supported actually offers "attestation" (e.g.
+	// eu.europa.ec.eudi.pid.1.attestation) — the suite rejects any other
+	// combination itself, so this binary doesn't cross-check it.
+	useAttestationProof bool
+
 	planConfig []byte
 }
 
@@ -47,7 +68,7 @@ type walletRun struct {
 // emulated Credential Issuer defines a small fixed set of
 // credential_configuration_id/scope pairs, not an arbitrary
 // tester-chosen name).
-func newWalletRun(apiBase, credentialConfigurationID, scope string) (*walletRun, error) {
+func newWalletRun(apiBase, credentialConfigurationID, scope string, useAttestationProof bool) (*walletRun, error) {
 	suffix, err := randomHex(4)
 	if err != nil {
 		return nil, fmt.Errorf("generate run suffix: %w", err)
@@ -60,6 +81,17 @@ func newWalletRun(apiBase, credentialConfigurationID, scope string) (*walletRun,
 		"oid4vcigo-wallet-attester-leaf", "oid4vcigo-wallet-attester-ca")
 	if err != nil {
 		return nil, fmt.Errorf("generate attester key/cert: %w", err)
+	}
+
+	// A dedicated CA/leaf for Key Attestation JWTs (keyattestation.go),
+	// distinct from the Client Attestation attester above — generated
+	// unconditionally (cheap) so client_attestation.key_attestation_trust_anchor_pem
+	// below is always a real, dedicated trust anchor rather than a
+	// placeholder, regardless of useAttestationProof.
+	keyAttestationKey, _, keyAttestationLeafPEM, keyAttestationCAPEM, err := conformancecert.GenerateSignerAndCert(
+		"oid4vcigo-wallet-key-attester-leaf", "oid4vcigo-wallet-key-attester-ca")
+	if err != nil {
+		return nil, fmt.Errorf("generate key attestation key/cert: %w", err)
 	}
 
 	// HAIP §6.1.1 requires the credential signing certificate not be
@@ -107,14 +139,13 @@ func newWalletRun(apiBase, credentialConfigurationID, scope string) (*walletRun,
 			// resolve to anything real.
 			"issuer":       "https://oid4vcigo-wallet-attester.example.com",
 			"trust_anchor": attesterCAPEM,
-			// key_attestation_trust_anchor_pem is required config even
-			// though this binary never sends a Key Attestation proof
-			// itself (a distinct HAIP §4.5.1 requirement from Wallet
-			// Attestation client auth — see AGENTS.md's own note on not
-			// conflating the two) — reusing the attester CA here is
-			// fine: nothing exercises this trust anchor unless an
-			// attestation-type proof is actually presented.
-			"key_attestation_trust_anchor_pem": attesterCAPEM,
+			// key_attestation_trust_anchor_pem is required config
+			// regardless of useAttestationProof — a distinct HAIP §4.5.1
+			// requirement from Wallet Attestation client auth (see
+			// AGENTS.md's own note on not conflating the two). Its own
+			// dedicated CA (above) only actually gets exercised when a
+			// Key Attestation JWT is presented (keyattestation.go).
+			"key_attestation_trust_anchor_pem": keyAttestationCAPEM,
 		},
 		"credential": map[string]any{
 			"signing_jwk": credentialSigningJWK,
@@ -131,7 +162,9 @@ func newWalletRun(apiBase, credentialConfigurationID, scope string) (*walletRun,
 		alias: alias, clientID: clientID, redirectURI: redirectURI,
 		scope: scope, credentialConfigurationID: credentialConfigurationID,
 		attesterKey: attesterKey, attesterCAPEM: attesterCAPEM, attesterLeafPEM: attesterLeafPEM,
-		planConfig: planConfig,
+		keyAttestationKey: keyAttestationKey, keyAttestationLeafPEM: keyAttestationLeafPEM,
+		useAttestationProof: useAttestationProof,
+		planConfig:          planConfig,
 	}, nil
 }
 
