@@ -169,7 +169,20 @@ negative-test expectations differ.
   every axis the HAIP plan's own module list pins now supplied
   explicitly at plan-creation time instead. All 21 modules
   `FINISHED`/`PASSED` or correctly `SKIPPED`, twice for stability, no
-  `FAILURE`s. See `issuer/README.md`.
+  `FAILURE`s.
+  **Update: `mso_mdoc` credential format is driven too** — the first
+  time either role in this repo has exercised mdoc against the real
+  suite. `credential/mdoc`/`issuer.RequestCredential`'s own
+  `MdocClaims`/`MdocSigner` dispatch were already fully implemented and
+  unit-tested; `wiring.go` just never opted in. Added a second
+  `CredentialConfiguration` from the same issuer identity (one issuer,
+  two formats), confirmed via a new full-stack unit test
+  (`TestFullFlow_MdocCredentialIssuance`, real CBOR/COSE/MSO
+  verification via `credential/mdoc.Verify`) and live, twice for
+  stability, via `run-fapi2sp-battery -credential-format mdoc` (the 2
+  sanity-check modules; the other 40 battery modules don't exercise
+  credential format at all). Full `sd_jwt_vc` battery re-confirmed
+  regression-free. See `issuer/README.md`.
 - **`wallet/`** — OID4VCI 1.0 Final/HAIP Wallet role
   (`oid4vci-1_0-wallet-haip-test-plan`): `cmd/conformance-wallet`
   drives `oid4vcigo/wallet`/`fapigo/client` as an outbound HTTP client
@@ -243,5 +256,12 @@ negative-test expectations differ.
   explicitly excludes: a Token-Response-without-`authorization_details`
   variant, which needed no wallet code changes since this binary never
   read that field in the first place. All 5 modules `FINISHED`/`PASSED`,
-  twice for stability. See
+  twice for stability.
+  **Update: `mso_mdoc` credential format is driven too**, via
+  `-credential-format mdoc` — needed zero `wallet` package changes
+  (`RequestCredential`'s own credential-response handling is entirely
+  format-agnostic), just the new flag plus a matching
+  `-credential-configuration-id`/`-scope` naming the suite's own
+  mdoc-format fixture (`eu.europa.ec.eudi.pid.mdoc.1`/`eudi.pid.mdoc.1`).
+  All 22 module instances `FINISHED`/`PASSED`, twice for stability. See
   `wallet/README.md`.

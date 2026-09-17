@@ -130,6 +130,17 @@ type runConfig struct {
 	scope                     string
 	proofType                 proofStrategy
 
+	// credentialFormat selects the plan's own "credential_format"
+	// variant — "sd_jwt_vc" (default) or "mdoc". wallet.Wallet's own
+	// RequestCredential/credential-response handling is entirely
+	// format-agnostic (it just returns whatever opaque "credential"
+	// string comes back), so driving mdoc needs no wallet-package code
+	// change at all — just this variant plus a matching
+	// -credential-configuration-id/-scope naming one of the suite's own
+	// mdoc-format fixtures (VCICredentialConfigurations.java, e.g.
+	// "eu.europa.ec.eudi.pid.mdoc.1"/"eudi.pid.mdoc.1").
+	credentialFormat string
+
 	// issuerInitiated selects the HAIP plan's issuer_initiated flow
 	// variant (vci_authorization_code_flow_variant) instead of the
 	// default wallet_initiated one — see credentialoffer.go's own doc
@@ -170,6 +181,7 @@ func main() {
 	flag.BoolVar(&cfg.issuerInitiated, "issuer-initiated", false, "drive the HAIP plan's issuer_initiated flow variant instead of the default wallet_initiated one — the suite hands this binary a Credential Offer to resolve instead of this binary calling /authorize directly")
 	flag.StringVar(&cfg.credentialOfferEndpoint, "credential-offer-endpoint", "https://oid4vcigo-wallet.example.com", "base URL for this run's own vci.credential_offer_endpoint config value (only used with -issuer-initiated) — never actually dereferenced by this binary or, in practice, by the suite either (see credentialoffer.go), so the default is an inert placeholder")
 	flag.BoolVar(&cfg.basePlan, "base-plan", false, "drive the suite's own base (non-HAIP) \"oid4vci-1_0-wallet-test-plan\" instead of the default HAIP plan — see baseInScopeModules' own doc comment")
+	flag.StringVar(&cfg.credentialFormat, "credential-format", "sd_jwt_vc", "credential_format variant to drive: \"sd_jwt_vc\" (default) or \"mdoc\" — mdoc needs a matching -credential-configuration-id/-scope, e.g. eu.europa.ec.eudi.pid.mdoc.1/eudi.pid.mdoc.1")
 	dumpConfig := flag.Bool("dump-config", false, "print the generated suite-side plan configuration JSON and exit, instead of creating a plan — useful for probing the suite's own POST /api/plan validation by hand")
 	flag.Parse()
 
@@ -224,7 +236,7 @@ func run(cfg runConfig) error {
 
 	planName := "oid4vci-1_0-wallet-haip-test-plan"
 	scopeModules := inScopeModules
-	planVariant := map[string]string{"credential_format": "sd_jwt_vc"} //nolint:gosec // false positive: a suite variant selector value, not a credential
+	planVariant := map[string]string{"credential_format": cfg.credentialFormat} //nolint:gosec // false positive: a suite variant selector value, not a credential
 	if cfg.basePlan {
 		// The base plan's own single ModuleListEntry pins only
 		// FAPIClientType/FAPIResponseMode (@PublishTestPlan's own

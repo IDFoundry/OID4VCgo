@@ -162,6 +162,26 @@ var baseBattery = []string{
 	"oid4vci-1_0-issuer-fail-on-access-token-in-query",
 }
 
+// mdocBattery is driven instead of haipBattery/baseBattery when
+// -credential-format=mdoc — just the 2 already-known-working sanity
+// modules, confirming cmd/conformance-issuer's own new MdocSigner
+// wiring and mso_mdoc CredentialConfiguration issue a genuinely valid
+// credential (DocType/NameSpaces/DeviceKey binding/IssuerAuth signature
+// — real structural validation, see
+// ParseMdocCredentialFromVCIIssuance.java) live against the suite, on
+// top of the unit-level proof cmd/conformance-issuer's own
+// TestFullFlow_MdocCredentialIssuance already gives. The other 40
+// FAPI2SP-generic battery modules (PAR/DPoP/token-endpoint edge cases)
+// don't exercise credential issuance format at all — vciCredentialFormat
+// is read into AbstractVCIIssuerTestModule but never branched on
+// anywhere else in the suite's own source — so re-running them under
+// mdoc would just re-prove what haipBattery already proved under
+// sd_jwt_vc, not new coverage.
+var mdocBattery = []string{
+	"oid4vci-1_0-issuer-metadata-test",
+	"oid4vci-1_0-issuer-happy-flow",
+}
+
 func main() {
 	apiBase := flag.String("suite", "https://localhost:8443/", "OIDF conformance suite base URL")
 	alias := flag.String("alias", "oid4vcigo-issuer", "suite plan alias — also the callback path segment; must match cmd/conformance-issuer's own registered redirect_uris")
@@ -169,11 +189,15 @@ func main() {
 	configOut := flag.String("config-out", "conformance/issuer/oidf-config/haip.config.json", "path to write cmd/conformance-issuer's own generated server config to")
 	skipDockerRestart := flag.Bool("skip-docker-restart", false, "skip restarting the conformance-issuer container after writing the new config (for repeat runs against a container already restarted once)")
 	basePlan := flag.Bool("base-plan", false, "drive the suite's own base (non-HAIP) \"oid4vci-1_0-issuer-test-plan\" instead of the default HAIP plan — see baseBattery's own doc comment")
+	credentialFormat := flag.String("credential-format", "sd_jwt_vc", "credential_format variant to drive: \"sd_jwt_vc\" (default) or \"mdoc\" — mdoc restricts the driven module set to the 2 sanity-check modules (mdocBattery), since the other 40 FAPI2SP-generic battery modules don't exercise credential issuance format at all and are already proven under sd_jwt_vc")
 	flag.Parse()
 
 	planName := "oid4vci-1_0-issuer-haip-test-plan"
 	battery := haipBattery
-	planVariant := map[string]string{"credential_format": "sd_jwt_vc"} //nolint:gosec // a suite variant selector value, not a credential
+	if *credentialFormat == "mdoc" {
+		battery = mdocBattery
+	}
+	planVariant := map[string]string{"credential_format": *credentialFormat} //nolint:gosec // a suite variant selector value, not a credential
 	if *basePlan {
 		// The base plan's own module list entries pin no variant at all
 		// (VCIIssuerTestPlan.java's own testModulesWithVariants() passes
@@ -221,7 +245,7 @@ func main() {
 		}
 	}
 
-	planConfig, err := buildPlanConfig(run)
+	planConfig, err := buildPlanConfig(run, *credentialFormat)
 	if err != nil {
 		log.Fatalf("build plan config: %v", err)
 	}

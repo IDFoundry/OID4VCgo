@@ -15,6 +15,7 @@ import (
 
 	fapires "github.com/idfoundry/fapigo/resource"
 
+	"github.com/idfoundry/oid4vcigo/credential/mdoc"
 	"github.com/idfoundry/oid4vcigo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcigo/internal/conformancecert"
 	"github.com/idfoundry/oid4vcigo/internal/jose"
@@ -162,6 +163,20 @@ func credentialHandler(iss *issuer.Issuer, resourceVerifier *fapires.Verifier, c
 		additional[name] = sdjwtvc.SD(value)
 	}
 
+	// mdocNameSpaceElements is this binary's own fixed mso_mdoc dataset
+	// (cfg.Mdoc.Claims, precomputed once like additional above) — nil
+	// when cfg.Mdoc is unset, so mdocClaimsFor below always returns nil
+	// too and issueOne's own cc.Format dispatch never sees a non-nil
+	// MdocClaims for a request it can't use.
+	var mdocNameSpaceElements map[string]map[string]interface{}
+	if cfg.Mdoc != nil {
+		elements := make(map[string]interface{}, len(cfg.Mdoc.Claims))
+		for name, value := range cfg.Mdoc.Claims {
+			elements[name] = value
+		}
+		mdocNameSpaceElements = map[string]map[string]interface{}{cfg.Mdoc.Namespace: elements}
+	}
+
 	return func(w http.ResponseWriter, r *http.Request) {
 		// URL is this binary's own configured Credential Endpoint URL,
 		// not r.URL — a net/http server request's own URL has no
@@ -205,11 +220,29 @@ func credentialHandler(iss *issuer.Issuer, resourceVerifier *fapires.Verifier, c
 
 		exp := conformancecert.CredentialExp(time.Now(), issuedCredentialLifetime)
 		auth := issuer.AuthorizedRequest{ClientID: authCtx.ClientID, Scopes: authCtx.Scopes}
+
+		// Both SDJWTClaims and MdocClaims are always supplied (the
+		// latter nil when cfg.Mdoc is unset) — issueOne's own
+		// cc.Format dispatch picks whichever one actually matches the
+		// requested CredentialConfiguration and ignores the other, so
+		// this handler doesn't need to itself look up which format
+		// wire.CredentialConfigurationID/CredentialIdentifier resolves
+		// to.
+		var mdocClaims *mdoc.Claims
+		if mdocNameSpaceElements != nil {
+			now := time.Now()
+			mdocClaims = &mdoc.Claims{
+				DocType: cfg.Mdoc.DocType, NameSpaces: mdocNameSpaceElements,
+				Signed: now, ValidFrom: now, ValidUntil: now.Add(issuedCredentialLifetime),
+			}
+		}
+
 		result, err := iss.RequestCredential(r.Context(), auth, issuer.CredentialRequest{
 			CredentialConfigurationID: wire.CredentialConfigurationID,
 			CredentialIdentifier:      wire.CredentialIdentifier,
 			Proofs:                    wire.Proofs,
 			SDJWTClaims:               &sdjwtvc.Claims{VCT: cfg.VCT, Exp: &exp, Additional: additional},
+			MdocClaims:                mdocClaims,
 			RequestWasEncrypted:       wasEncrypted,
 			ResponseEncryption:        responseEncryption,
 		})

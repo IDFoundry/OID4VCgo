@@ -87,6 +87,39 @@ type Config struct {
 	// this binary has no real end-user login of its own, matching
 	// cmd/conformance-as's identical stance.
 	DefaultSubject string `json:"default_subject"`
+
+	// Mdoc, when non-nil, adds a second CredentialConfiguration for
+	// credential/mdoc.CredentialFormat ("mso_mdoc") alongside the
+	// "dc+sd-jwt" one VCT/Claims/Scope/CredentialConfigurationID above
+	// already describes — issued from the same
+	// CredentialIssuerSigningKeyPEM/CredentialIssuerCertificatePEM this
+	// binary already holds (one issuer identity, two formats) rather
+	// than a second throwaway key, matching HAIP's own §6 stance that a
+	// Credential Issuer publishing multiple formats does so under one
+	// identity. Optional: nil advertises only "dc+sd-jwt", the original
+	// single-format behavior.
+	Mdoc *MdocConfig `json:"mdoc,omitempty"`
+}
+
+// MdocConfig is Config.Mdoc's own shape — the mso_mdoc analog of
+// Config's own VCT/Claims/Scope/CredentialConfigurationID fields.
+type MdocConfig struct {
+	CredentialConfigurationID string `json:"credential_configuration_id"`
+
+	// DocType is credential/mdoc.Claims.DocType — Appendix A.2.2's own
+	// format-specific metadata parameter.
+	DocType string `json:"doctype"`
+
+	// Namespace is the one ISO 18013-5 namespace this binary's own
+	// fixed claim content (Claims below) is issued under — real mdoc
+	// credentials can span several namespaces, but issuer.Issuer has no
+	// user database of its own to source more than one canned dataset
+	// from anyway (the same "static test data stands in for a user
+	// database" stance Config's own Claims field already takes).
+	Namespace string `json:"namespace"`
+
+	Claims map[string]string `json:"claims"`
+	Scope  string            `json:"scope"`
 }
 
 // ConfigClient is Config.Client's own shape: everything needed to
@@ -139,6 +172,15 @@ func loadConfig(path string) (Config, error) {
 	}
 	if cfg.VCT == "" || len(cfg.Claims) == 0 || cfg.Scope == "" || cfg.CredentialConfigurationID == "" {
 		return Config{}, fmt.Errorf("config: vct, claims, scope and credential_configuration_id are all required")
+	}
+	if cfg.Mdoc != nil {
+		m := cfg.Mdoc
+		if m.CredentialConfigurationID == "" || m.DocType == "" || m.Namespace == "" || len(m.Claims) == 0 || m.Scope == "" {
+			return Config{}, fmt.Errorf("config: mdoc.credential_configuration_id, mdoc.doctype, mdoc.namespace, mdoc.claims and mdoc.scope are all required when mdoc is present")
+		}
+		if m.CredentialConfigurationID == cfg.CredentialConfigurationID {
+			return Config{}, fmt.Errorf("config: mdoc.credential_configuration_id must differ from the top-level credential_configuration_id")
+		}
 	}
 	if cfg.DefaultSubject == "" {
 		cfg.DefaultSubject = "conformance-test-subject"

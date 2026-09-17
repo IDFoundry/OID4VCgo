@@ -589,3 +589,68 @@ One real, if minor, config gap found live: `run-fapi2sp-battery`'s own
 as a required-but-unused placeholder (added during the HAIP battery
 work above) — reused unchanged here, confirming the same
 required-but-unused reasoning holds under the base profile too.
+
+## Status: `mso_mdoc` credential format
+
+Neither role in this repo had ever exercised `credential_format=mdoc`
+against the real suite — every module above always used
+`credential_format=sd_jwt_vc`. Unlike the base-plan work above, this
+isn't a lower-priority "alpha" track: `mso_mdoc` is a first-class
+crossing of the exact same certifiable HAIP plan already driven — its
+own module list pins no `credential_format` at all, so it's always
+supplied externally, matching `sd_jwt_vc`'s own treatment.
+
+`credential/mdoc` (CBOR/COSE_Sign1/MSO) and `issuer.RequestCredential`'s
+own `MdocClaims`/`MdocSigner` dispatch were already fully implemented
+and unit-tested — this binary's own wiring had just never opted in
+(the same "already implemented, driver never wired it" pattern as
+batch-issuance and §10 encryption earlier). Added: a second
+`issuer.CredentialConfiguration` (`Config.Mdoc`, `wiring.go`) issued
+from the *same* `CredentialIssuerSigningKeyPEM`/`CredentialIssuerCertificatePEM`
+this binary already holds for `dc+sd-jwt` — one issuer identity, two
+formats, not a second throwaway key — and `credentialHandler` now
+always builds both `SDJWTClaims` and `MdocClaims` per request (whichever
+one the requested `CredentialConfiguration`'s own `Format` actually
+needs; `issueOne`'s own dispatch silently ignores the other).
+
+**Confirmed both ways, matching this repo's own two-tier verification
+discipline:**
+- **Unit-level**: `TestFullFlow_MdocCredentialIssuance` drives the
+  entire stack (PAR → consent → token → nonce → credential) against a
+  real `newServerMux` instance requesting the mdoc
+  `CredentialConfiguration`, then fully verifies the response via
+  `credential/mdoc.Verify` — IssuerAuth signature, digest-per-element,
+  DocType, disclosed claims, DeviceKey binding to the proof's own key,
+  validity window — not just "did we get a non-empty string back."
+  Surfaced one real gap along the way: `wiring.go`'s own client
+  registration hardcoded `AllowedScopes: []string{cfg.Scope}` (the
+  `dc+sd-jwt` configuration's own scope only) — a second
+  `CredentialConfiguration` under a different scope was rejected at PAR
+  ("scope is not valid for this client") before ever reaching the
+  Credential Endpoint. Fixed by appending `cfg.Mdoc.Scope` when present.
+- **Live, twice for stability**: `run-fapi2sp-battery -credential-format
+  mdoc` drives the 2 already-known-working sanity modules
+  (`mdocBattery` — `metadata-test`, `happy-flow`) under the mdoc
+  crossing; the other 40 FAPI2SP-generic battery modules don't
+  exercise credential issuance format at all (`vciCredentialFormat` is
+  read into `AbstractVCIIssuerTestModule` but never branched on
+  anywhere else in the suite's own source), so re-running them under
+  mdoc would just re-prove what the `sd_jwt_vc` battery already proved.
+  Both modules `FINISHED`/`PASSED`, zero log entries at `WARNING` or
+  worse, both runs. One real, doctype-specific finding along the way:
+  the suite's own `EnsureMdocMdlMandatoryDataElementsPresent` check
+  enforces ISO/IEC 18013-5 §7.2.1 Table 5's full mandatory mDL data
+  element set (`birth_date`, `portrait`, `driving_privileges`, ...) —
+  but *only* for the literal `org.iso.18013.5.1.mDL` doctype string
+  ("The check passes without doing anything for other docTypes").
+  Using a PID-shaped doctype (`eu.europa.ec.eudi.pid.1`, mirroring this
+  binary's own existing SD-JWT VCT fixture) instead of the real mDL
+  doctype sidesteps that domain-specific compliance burden entirely —
+  this battery's own goal is proving genuine mdoc structural issuance,
+  not full ISO 18013-5 mDL data-element coverage.
+
+**Confirmed regression-free**: the full 42-module `sd_jwt_vc` HAIP
+battery re-run clean after `buildServerConfig` started always
+including the mdoc `CredentialConfiguration` alongside the SD-JWT
+one — identical outcome to before this work (same one `WARNING`, one
+`SKIPPED`, one `REVIEW`, rest `PASSED`).

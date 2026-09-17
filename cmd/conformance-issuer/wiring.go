@@ -17,6 +17,9 @@ import (
 	"github.com/idfoundry/fapigo/storage/memstore"
 
 	"github.com/idfoundry/oid4vcigo"
+	"github.com/idfoundry/oid4vcigo/credential/mdoc"
+	"github.com/idfoundry/oid4vcigo/credential/sdjwtvc"
+	"github.com/idfoundry/oid4vcigo/internal/cose"
 	"github.com/idfoundry/oid4vcigo/internal/jose"
 	"github.com/idfoundry/oid4vcigo/internal/jwe"
 	"github.com/idfoundry/oid4vcigo/issuer"
@@ -118,6 +121,10 @@ func newServerMux(cfg Config) (*http.ServeMux, error) {
 	clientKeySpecs := []ephemeral.ClientKeySpec{
 		{ClientID: fapi.ClientID(cfg.Client.ID), JWKS: cfg.Client.AttesterJWKS},
 	}
+	allowedScopes := []string{cfg.Scope}
+	if cfg.Mdoc != nil {
+		allowedScopes = append(allowedScopes, cfg.Mdoc.Scope)
+	}
 	registeredClients := []storage.RegisteredClient{}
 	for _, cc := range []*ConfigClient{&cfg.Client, cfg.Client2} {
 		if cc == nil {
@@ -129,7 +136,7 @@ func newServerMux(cfg Config) (*http.ServeMux, error) {
 			ClientAuthMethod:           storage.ClientAuthMethodAttestation,
 			ExpectedAttesterIssuer:     cc.ExpectedAttesterIssuer,
 			ClientAttestationAlgorithm: clientAttestationAlgorithm,
-			AllowedScopes:              []string{cfg.Scope},
+			AllowedScopes:              allowedScopes,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("register client %s: %w", cc.ID, err)
@@ -218,6 +225,41 @@ func newServerMux(cfg Config) (*http.ServeMux, error) {
 		return nil, fmt.Errorf("credential request decryption key: %w", err)
 	}
 	issProofAlgs := []string{"ES256"}
+	credentialConfigs := map[string]issuer.CredentialConfiguration{
+		cfg.CredentialConfigurationID: {
+			Format: sdjwtvc.CredentialFormat, Scope: cfg.Scope, VCT: cfg.VCT,
+			CryptographicBindingMethodsSupported: []string{"jwk"},
+			ProofTypesSupported: map[string]issuer.ProofTypeConfiguration{
+				oid4vci.ProofTypeJWT: {ProofSigningAlgValuesSupported: issProofAlgs},
+			},
+		},
+	}
+	issDeps := issuer.Dependencies{
+		Nonces: oid4vcigostorage.NewNonceStore(),
+		Clock:  issuer.ClockFunc(time.Now),
+		Random: rand.Reader,
+		SDJWTSigner: &issuer.SDJWTSigner{
+			Signer: issuerSigningKey, Alg: jose.ES256,
+			IssuerCertificate: issuerCertificate,
+		},
+	}
+	if cfg.Mdoc != nil {
+		// Same issuer identity as the "dc+sd-jwt" CredentialConfiguration
+		// above (issuerSigningKey/issuerCertificate) — one Credential
+		// Issuer publishing two formats, not a second throwaway key.
+		credentialConfigs[cfg.Mdoc.CredentialConfigurationID] = issuer.CredentialConfiguration{
+			Format: mdoc.CredentialFormat, Scope: cfg.Mdoc.Scope, DocType: cfg.Mdoc.DocType,
+			CryptographicBindingMethodsSupported: []string{"jwk"},
+			ProofTypesSupported: map[string]issuer.ProofTypeConfiguration{
+				oid4vci.ProofTypeJWT: {ProofSigningAlgValuesSupported: issProofAlgs},
+			},
+		}
+		issDeps.MdocSigner = &issuer.MdocSigner{
+			Signer: issuerSigningKey, Alg: cose.ES256,
+			X5Chain: [][]byte{issuerCertificate.Raw},
+		}
+	}
+
 	iss, err := issuer.New(issuer.Config{
 		Issuer:                  issuerURL,
 		Endpoints:               issuer.Endpoints{Credential: credentialURL, Nonce: nonceURL},
@@ -230,24 +272,8 @@ func newServerMux(cfg Config) (*http.ServeMux, error) {
 		ResponseEncryption: &issuer.ResponseEncryptionSupport{
 			EncValuesSupported: credentialEncValuesSupported,
 		},
-		CredentialConfigurationsSupported: map[string]issuer.CredentialConfiguration{
-			cfg.CredentialConfigurationID: {
-				Format: "dc+sd-jwt", Scope: cfg.Scope, VCT: cfg.VCT,
-				CryptographicBindingMethodsSupported: []string{"jwk"},
-				ProofTypesSupported: map[string]issuer.ProofTypeConfiguration{
-					oid4vci.ProofTypeJWT: {ProofSigningAlgValuesSupported: issProofAlgs},
-				},
-			},
-		},
-	}, issuer.Dependencies{
-		Nonces: oid4vcigostorage.NewNonceStore(),
-		Clock:  issuer.ClockFunc(time.Now),
-		Random: rand.Reader,
-		SDJWTSigner: &issuer.SDJWTSigner{
-			Signer: issuerSigningKey, Alg: jose.ES256,
-			IssuerCertificate: issuerCertificate,
-		},
-	})
+		CredentialConfigurationsSupported: credentialConfigs,
+	}, issDeps)
 	if err != nil {
 		return nil, fmt.Errorf("issuer.New: %w", err)
 	}
