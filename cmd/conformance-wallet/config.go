@@ -8,8 +8,8 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/idfoundry/oid4vcigo/internal/conformancecert"
-	"github.com/idfoundry/oid4vcigo/internal/jwk"
+	"github.com/idfoundry/oid4vcgo/internal/conformancecert"
+	"github.com/idfoundry/oid4vcgo/internal/jwk"
 )
 
 // walletRun holds everything generated once per invocation of this
@@ -73,12 +73,12 @@ func newWalletRun(cfg runConfig) (*walletRun, error) {
 	if err != nil {
 		return nil, fmt.Errorf("generate run suffix: %w", err)
 	}
-	alias := "oid4vcigo-wallet-" + suffix
-	clientID := "oid4vcigo-wallet-client-" + suffix
+	alias := "oid4vcgo-wallet-" + suffix
+	clientID := "oid4vcgo-wallet-client-" + suffix
 	redirectURI := cfg.apiBase + "test/a/" + alias + "/callback"
 
 	attesterKey, _, attesterLeafPEM, attesterCAPEM, err := conformancecert.GenerateSignerAndCert(
-		"oid4vcigo-wallet-attester-leaf", "oid4vcigo-wallet-attester-ca")
+		"oid4vcgo-wallet-attester-leaf", "oid4vcgo-wallet-attester-ca")
 	if err != nil {
 		return nil, fmt.Errorf("generate attester key/cert: %w", err)
 	}
@@ -89,7 +89,7 @@ func newWalletRun(cfg runConfig) (*walletRun, error) {
 	// below is always a real, dedicated trust anchor rather than a
 	// placeholder, regardless of useAttestationProof.
 	keyAttestationKey, _, keyAttestationLeafPEM, keyAttestationCAPEM, err := conformancecert.GenerateSignerAndCert(
-		"oid4vcigo-wallet-key-attester-leaf", "oid4vcigo-wallet-key-attester-ca")
+		"oid4vcgo-wallet-key-attester-leaf", "oid4vcgo-wallet-key-attester-ca")
 	if err != nil {
 		return nil, fmt.Errorf("generate key attestation key/cert: %w", err)
 	}
@@ -100,7 +100,7 @@ func newWalletRun(cfg runConfig) (*walletRun, error) {
 	// attester's own leaf/CA shape, satisfies this the same way
 	// cmd/conformance-wallet-vp's own credential-issuer cert does.
 	credentialSigningKey, _, credentialSigningLeafPEM, _, err := conformancecert.GenerateSignerAndCert(
-		"oid4vcigo-wallet-credential-issuer-leaf", "oid4vcigo-wallet-credential-issuer-ca")
+		"oid4vcgo-wallet-credential-issuer-leaf", "oid4vcgo-wallet-credential-issuer-ca")
 	if err != nil {
 		return nil, fmt.Errorf("generate credential signing key/cert: %w", err)
 	}
@@ -117,7 +117,7 @@ func newWalletRun(cfg runConfig) (*walletRun, error) {
 	if err != nil {
 		return nil, fmt.Errorf("generate server signing key: %w", err)
 	}
-	serverJWK, err := privateJWK(serverKey, "oid4vcigo-wallet-server-key")
+	serverJWK, err := privateJWK(serverKey, "oid4vcgo-wallet-server-key")
 	if err != nil {
 		return nil, fmt.Errorf("build server jwk: %w", err)
 	}
@@ -137,7 +137,7 @@ func newWalletRun(cfg runConfig) (*walletRun, error) {
 			// Client Attestation JWT's own "iss" claim against
 			// (ValidateClientAttestationIssuer) — it never needs to
 			// resolve to anything real.
-			"issuer":       "https://oid4vcigo-wallet-attester.example.com",
+			"issuer":       "https://oid4vcgo-wallet-attester.example.com",
 			"trust_anchor": attesterCAPEM,
 			// key_attestation_trust_anchor_pem is required config
 			// regardless of proofType — a distinct HAIP §4.5.1

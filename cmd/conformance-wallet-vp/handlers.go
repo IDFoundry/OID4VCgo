@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/idfoundry/oid4vcigo/wallet"
+	"github.com/idfoundry/oid4vcgo/wallet"
 )
 
 // httpClient is shared across every outbound call this binary makes

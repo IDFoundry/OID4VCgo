@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/idfoundry/oid4vcigo"
-	"github.com/idfoundry/oid4vcigo/issuer"
-	"github.com/idfoundry/oid4vcigo/storage"
+	"github.com/idfoundry/oid4vcgo"
+	"github.com/idfoundry/oid4vcgo/issuer"
+	"github.com/idfoundry/oid4vcgo/storage"
 )
 
 func testCredentialOfferRecord() issuer.CredentialOfferRecord {

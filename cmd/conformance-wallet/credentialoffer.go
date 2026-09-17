@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/idfoundry/oid4vcigo/internal/conformancesuite"
+	"github.com/idfoundry/oid4vcgo/internal/conformancesuite"
 )
 
 // credentialOfferPath is appended to -credential-offer-endpoint to

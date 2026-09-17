@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/idfoundry/oid4vcigo/internal/conformancecert"
-	"github.com/idfoundry/oid4vcigo/internal/conformanceconfig"
+	"github.com/idfoundry/oid4vcgo/internal/conformancecert"
+	"github.com/idfoundry/oid4vcgo/internal/conformanceconfig"
 )
 
 // run holds everything generated once per invocation: the throwaway

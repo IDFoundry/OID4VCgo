@@ -3,7 +3,7 @@ package haip_test
 import (
 	"testing"
 
-	"github.com/idfoundry/oid4vcigo/haip"
+	"github.com/idfoundry/oid4vcgo/haip"
 )
 
 func TestRecommendedWalletConfig(t *testing.T) {

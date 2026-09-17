@@ -16,14 +16,14 @@ import (
 	"github.com/idfoundry/fapigo/storage"
 	"github.com/idfoundry/fapigo/storage/memstore"
 
-	"github.com/idfoundry/oid4vcigo"
-	"github.com/idfoundry/oid4vcigo/credential/mdoc"
-	"github.com/idfoundry/oid4vcigo/credential/sdjwtvc"
-	"github.com/idfoundry/oid4vcigo/internal/cose"
-	"github.com/idfoundry/oid4vcigo/internal/jose"
-	"github.com/idfoundry/oid4vcigo/internal/jwe"
-	"github.com/idfoundry/oid4vcigo/issuer"
-	oid4vcigostorage "github.com/idfoundry/oid4vcigo/storage"
+	"github.com/idfoundry/oid4vcgo"
+	"github.com/idfoundry/oid4vcgo/credential/mdoc"
+	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
+	"github.com/idfoundry/oid4vcgo/internal/cose"
+	"github.com/idfoundry/oid4vcgo/internal/jose"
+	"github.com/idfoundry/oid4vcgo/internal/jwe"
+	"github.com/idfoundry/oid4vcgo/issuer"
+	oid4vcgostorage "github.com/idfoundry/oid4vcgo/storage"
 )
 
 const httpFetchTimeout = 10 * time.Second
@@ -78,7 +78,7 @@ func jwtProofCredentialConfiguration(scope string, proofSigningAlgs []string) is
 
 // newServerMux builds the full wiring — a real fapigo/server.Server
 // (FAPI 2.0 Security Profile Final, Wallet Attestation client
-// authentication, DPoP) paired with a real oid4vcigo/issuer.Issuer via
+// authentication, DPoP) paired with a real oid4vcgo/issuer.Issuer via
 // fapigo/resource.Verifier, per issuer/authorization_server.go's and
 // issuer/resource_verifier.go's own integration recipes — plus the
 // HTTP router tying both together. Factored out from main so a future
@@ -247,7 +247,7 @@ func newServerMux(cfg Config) (*http.ServeMux, error) {
 		cfg.CredentialConfigurationID: sdjwtConfig,
 	}
 	issDeps := issuer.Dependencies{
-		Nonces: oid4vcigostorage.NewNonceStore(),
+		Nonces: oid4vcgostorage.NewNonceStore(),
 		Clock:  issuer.ClockFunc(time.Now),
 		Random: rand.Reader,
 		SDJWTSigner: &issuer.SDJWTSigner{

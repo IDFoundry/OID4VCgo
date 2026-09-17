@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/idfoundry/oid4vcigo/wallet"
+	"github.com/idfoundry/oid4vcgo/wallet"
 )
 
 func TestError_Error(t *testing.T) {

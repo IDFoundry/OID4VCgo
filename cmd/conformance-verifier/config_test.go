@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/idfoundry/oid4vcigo/internal/conformancecert"
+	"github.com/idfoundry/oid4vcgo/internal/conformancecert"
 )
 
 func testPEMCertAndKey(t *testing.T) (certPEM, keyPEM string) {

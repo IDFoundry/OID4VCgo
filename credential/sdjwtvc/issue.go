@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/idfoundry/oid4vcigo/internal/jose"
+	"github.com/idfoundry/oid4vcgo/internal/jose"
 )
 
 // TypHeader is the JOSE "typ" header value for the Issuer-signed JWT

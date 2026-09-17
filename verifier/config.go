@@ -10,8 +10,8 @@ import (
 
 	fapi "github.com/idfoundry/fapigo"
 
-	"github.com/idfoundry/oid4vcigo/internal/jose"
-	"github.com/idfoundry/oid4vcigo/internal/jwe"
+	"github.com/idfoundry/oid4vcgo/internal/jose"
+	"github.com/idfoundry/oid4vcgo/internal/jwe"
 )
 
 // Config is this Verifier's immutable configuration.
@@ -79,7 +79,7 @@ type Dependencies struct {
 }
 
 // Verifier is this Verifier's own role implementation — the
-// OID4VCIgo analog of issuer.Issuer/wallet.Wallet, built on this
+// OID4VCgo analog of issuer.Issuer/wallet.Wallet, built on this
 // repo's own JOSE primitives rather than FAPIgo (see the package doc
 // comment for why).
 type Verifier struct {

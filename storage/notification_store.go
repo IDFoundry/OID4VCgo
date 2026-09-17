@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/idfoundry/oid4vcigo/issuer"
+	"github.com/idfoundry/oid4vcgo/issuer"
 )
 
 // NotificationStore is an in-memory issuer.NotificationStore. See the

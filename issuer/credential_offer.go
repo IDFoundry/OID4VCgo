@@ -3,7 +3,7 @@ package issuer
 import (
 	"fmt"
 
-	"github.com/idfoundry/oid4vcigo"
+	"github.com/idfoundry/oid4vcgo"
 )
 
 // validateCredentialOffer checks o against oid4vci.CredentialOffer's

@@ -12,7 +12,7 @@
 //
 // This is intentionally not FAPIgo's keys.KeyManager: that package's
 // SigningPurpose is a closed enum defined entirely in FAPIgo, so
-// OID4VCIgo cannot add the purposes it would need (credential signing,
+// OID4VCgo cannot add the purposes it would need (credential signing,
 // Key Binding JWT signing, key/wallet attestation signing) without a
 // change in FAPIgo itself — see ARCHITECTURE.md. Sign here takes a
 // plain crypto.Signer instead, so a caller can adapt anything

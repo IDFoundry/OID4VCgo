@@ -5,8 +5,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/idfoundry/oid4vcigo/dcql"
-	"github.com/idfoundry/oid4vcigo/verifier"
+	"github.com/idfoundry/oid4vcgo/dcql"
+	"github.com/idfoundry/oid4vcgo/verifier"
 )
 
 // sessionTTL bounds how long a pending session (one BuildAuthorizationRequest

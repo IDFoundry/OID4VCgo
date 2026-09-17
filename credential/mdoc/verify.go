@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/idfoundry/oid4vcigo/internal/cose"
+	"github.com/idfoundry/oid4vcgo/internal/cose"
 )
 
 // VerifyOptions configures Verify.

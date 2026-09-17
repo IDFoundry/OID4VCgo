@@ -1,6 +1,6 @@
 # conformance-wallet
 
-`cmd/conformance-wallet` drives `oid4vcigo/wallet` and `fapigo/client`
+`cmd/conformance-wallet` drives `oid4vcgo/wallet` and `fapigo/client`
 headlessly through the OIDF conformance suite's own
 `oid4vci-1_0-wallet-haip-test-plan` ("OpenID for Verifiable Credential
 Issuance 1.0 Final/HAIP: Test a wallet") — both the `wallet_initiated`
@@ -222,7 +222,7 @@ same 22-module battery above, just with `driveModule`'s
 `proofStrategyAttestation` branch exercised throughout instead. Key
 finding: nothing needed building from scratch. Both
 `wallet.Wallet.GenerateAttestationProof` and the whole
-`github.com/idfoundry/oid4vcigo/attestation` package it delegates
+`github.com/idfoundry/oid4vcgo/attestation` package it delegates
 to — Key Attestation JWT issuance matching OID4VCI Appendix D.1
 exactly (`typ`, `iat`/`exp`/`nonce`/`attested_keys` claims, x5c/kid/
 trust_chain header conveyance) — already existed and were already

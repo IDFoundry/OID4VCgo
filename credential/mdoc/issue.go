@@ -9,7 +9,7 @@ import (
 
 	"github.com/fxamacker/cbor/v2"
 
-	"github.com/idfoundry/oid4vcigo/internal/cose"
+	"github.com/idfoundry/oid4vcgo/internal/cose"
 )
 
 // CredentialFormat is the OID4VCI 1.0 Credential Format Identifier for

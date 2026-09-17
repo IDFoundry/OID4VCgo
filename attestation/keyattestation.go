@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/idfoundry/oid4vcigo/internal/jose"
+	"github.com/idfoundry/oid4vcgo/internal/jose"
 )
 
 // TypHeader is the required JOSE "typ" header of a Key Attestation JWT

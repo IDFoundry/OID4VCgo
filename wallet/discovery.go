@@ -8,7 +8,7 @@ import (
 
 	"github.com/idfoundry/fapigo/fapihttp"
 
-	"github.com/idfoundry/oid4vcigo"
+	"github.com/idfoundry/oid4vcgo"
 )
 
 // FetchCredentialIssuerMetadata fetches and decodes issuerURL's own

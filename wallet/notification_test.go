@@ -10,8 +10,8 @@ import (
 
 	fapi "github.com/idfoundry/fapigo"
 
-	"github.com/idfoundry/oid4vcigo"
-	"github.com/idfoundry/oid4vcigo/wallet"
+	"github.com/idfoundry/oid4vcgo"
+	"github.com/idfoundry/oid4vcgo/wallet"
 )
 
 func testNotificationEndpointForWallet(t *testing.T) fapi.URL {

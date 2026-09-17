@@ -1,6 +1,6 @@
 # Specification baseline
 
-OID4VCIgo implements the **full OpenID4VC High Assurance Interoperability
+OID4VCgo implements the **full OpenID4VC High Assurance Interoperability
 Profile (HAIP) 1.0** — both the issuance half (OID4VCI, profiled by HAIP §4)
 and the presentation half (OID4VP, profiled by HAIP §5) — built on FAPIgo's
 FAPI 2.0 Security Profile Final core.
@@ -36,7 +36,7 @@ plain FAPI 2.0" below.
 | [RFC 9207 — Authorization Server Issuer Identification][iss] | Standards Track | — |
 | [RFC 8414 — OAuth Authorization Server Metadata][asmeta] | Standards Track | — |
 
-## Credential formats (HAIP requires at least one; OID4VCIgo supports both)
+## Credential formats (HAIP requires at least one; OID4VCgo supports both)
 
 | Spec | Pinned by | Draft |
 |---|---|---|
@@ -101,11 +101,11 @@ Confirmed directly against HAIP 1.0's text (not paraphrased from memory):
 
 ## Scope note
 
-HAIP as a whole spans both OID4VCI (issuance) and OID4VP (presentation).
-OID4VCIgo's name reflects its origin as the issuance-focused half of this
-work but its scope is the full HAIP profile: `issuer` + wallet's OID4VCI
-role, and `verifier` + wallet's OID4VP presentation role. See
-ARCHITECTURE.md for the package layout.
+HAIP as a whole spans both OID4VCI (issuance) and OID4VP (presentation);
+OID4VCgo's name covers both, not issuance alone — the repo's own scope
+is the full HAIP profile: `issuer` + wallet's OID4VCI role, and
+`verifier` + wallet's OID4VP presentation role. See ARCHITECTURE.md for
+the package layout.
 
 [oid4vci]: https://openid.net/specs/openid-4-verifiable-credential-issuance-1_0.html
 [oid4vp]: https://openid.net/specs/openid-4-verifiable-presentations-1_0.html

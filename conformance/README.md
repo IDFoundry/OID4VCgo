@@ -1,11 +1,14 @@
 # Conformance
 
-OIDF live-conformance-suite harnesses for OID4VCIgo's own roles,
+OIDF live-conformance-suite harnesses for OID4VCgo's own roles,
 mirroring FAPIgo's own `conformance/` structure (binaries wiring the
 real production package behind real HTTP, Docker attaching to the
 suite's own network, `oidf-config/` per test plan, a generator script
-producing throwaway key material rather than committing any). See the
-approved roadmap for the full phased plan.
+producing throwaway key material rather than committing any). All four
+roles below are now driven live; the one deliberately out-of-scope gap
+across every role is actually invoking the W3C Digital Credentials API
+for the `dc_api.jwt`/DC API module lists, a browser/OS platform concern
+outside any Go library's own transport responsibilities.
 
 Conformance testing is tracked separately per role — passing one role's
 plan says nothing about another's, even where both sides share this
@@ -56,14 +59,14 @@ negative-test expectations differ.
   (`oid4vci-1_0-issuer-haip-test-plan`): `cmd/conformance-issuer` pairs
   a real `fapigo/server.Server` (FAPI 2.0 Security Profile Final,
   Wallet Attestation client authentication) with a real
-  `oid4vcigo/issuer.Issuer`; the suite plays Wallet. Confirmed live
+  `oid4vcgo/issuer.Issuer`; the suite plays Wallet. Confirmed live
   end to end in-repo (PAR → consent → token → nonce → credential),
   a permanent regression test that surfaced and fixed three real bugs.
   **Confirmed live against the real OIDF suite**: `metadata-test`
   is a full `PASSED` (fixed by serving this binary's AS metadata at
   both `/.well-known/openid-configuration` and RFC 8414's own
   `/.well-known/oauth-authorization-server` — entirely an
-  OID4VCIgo-side router fix, not FAPIgo's). `client2` support was added
+  OID4VCgo-side router fix, not FAPIgo's). `client2` support was added
   (`Config.Client2`, optional) and confirmed both by a real PAR-
   authentication unit test and live against the suite itself.
   `happy-flow` hit a `fapigo/server` design decision (`Config.Extensions`
@@ -77,8 +80,8 @@ negative-test expectations differ.
   (the same x5c requirement `wallet-vp/README.md` already documents,
   this time in `issuer.SDJWTSigner`), fixed the same way. **All 21
   OID4VCI-specific modules in the plan are now run live** (the other
-  40 are the generic FAPI 2.0 Security Profile Final battery, not yet
-  attempted). Two more real gaps found and fixed: this binary's TLS
+  40 are the generic FAPI 2.0 Security Profile Final battery — see the
+  later update below, which covers those). Two more real gaps found and fixed: this binary's TLS
   listener had no `MinVersion`/`CipherSuites` set, so Go's own TLS 1.3
   default suite (always including ChaCha20-Poly1305) tripped the
   suite's own FAPI-RW-8.5 cipher probe — fixed by wiring in
@@ -140,8 +143,12 @@ negative-test expectations differ.
   the real HTTP binary (not just the library's own internals).
   **Final tally: all 21 OID4VCI-specific modules `FINISHED`/`PASSED`
   or correctly `SKIPPED`** — 10 of 10 applicable negative tests
-  `PASSED`, 1 module correctly self-`SKIPPED` (key-attestation, blocked
-  on the still-unbuilt OID4VCI Wallet role).
+  `PASSED`, 1 module correctly self-`SKIPPED` (key-attestation — this
+  binary only configures the `jwt` proof type, never wires an
+  `AttestationVerifier`, a deliberate Issuer-role scope choice per HAIP
+  §4.5.1's own conditional-on-ecosystem-policy language, not a gap; the
+  Wallet-side MUST is unconditional and is covered separately — see
+  `wallet/README.md`'s own Key Attestation coverage below).
   **Update: the plan's own 5th module-list entry, the generic FAPI2SP
   battery, is driven too** — 42 module instances (the exact 39+1
   battery+Discovery set, derived directly from the Java source, plus 2
@@ -185,7 +192,7 @@ negative-test expectations differ.
   regression-free. See `issuer/README.md`.
 - **`wallet/`** — OID4VCI 1.0 Final/HAIP Wallet role
   (`oid4vci-1_0-wallet-haip-test-plan`): `cmd/conformance-wallet`
-  drives `oid4vcigo/wallet`/`fapigo/client` as an outbound HTTP client
+  drives `oid4vcgo/wallet`/`fapigo/client` as an outbound HTTP client
   — the suite itself plays the entire emulated Authorization Server
   and Credential Issuer for this role, the opposite shape from
   `issuer/`. **Confirmed live against a real, locally-run OIDF suite,
@@ -220,7 +227,7 @@ negative-test expectations differ.
   nests one inside an ordinary jwt-type proof's own header (Appendix
   D.1).** Turned out nothing needed building for the standalone case:
   both `wallet.Wallet.GenerateAttestationProof` and the whole
-  `oid4vcigo/attestation` package already fully implemented Key
+  `oid4vcgo/attestation` package already fully implemented Key
   Attestation JWT issuance (OID4VCI Appendix D.1) — this binary's own
   `keyattestation.go` just had to mint one (a new dedicated CA/leaf,
   `client_attestation.key_attestation_trust_anchor_pem`) and submit it.

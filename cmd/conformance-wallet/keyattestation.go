@@ -10,11 +10,11 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/idfoundry/oid4vcigo/attestation"
-	"github.com/idfoundry/oid4vcigo/internal/conformancecert"
-	"github.com/idfoundry/oid4vcigo/internal/jose"
-	"github.com/idfoundry/oid4vcigo/internal/jwk"
-	"github.com/idfoundry/oid4vcigo/wallet"
+	"github.com/idfoundry/oid4vcgo/attestation"
+	"github.com/idfoundry/oid4vcgo/internal/conformancecert"
+	"github.com/idfoundry/oid4vcgo/internal/jose"
+	"github.com/idfoundry/oid4vcgo/internal/jwk"
+	"github.com/idfoundry/oid4vcgo/wallet"
 )
 
 // proofStrategy selects which Credential Request proof mechanism a
@@ -49,7 +49,7 @@ const (
 // resolves or validates; it's a distinct string from the Client
 // Attestation issuer to make live log output unambiguous about which
 // attestation authority minted which JWT.
-const keyAttestationIssuer = "https://oid4vcigo-wallet-key-attester.example.com"
+const keyAttestationIssuer = "https://oid4vcgo-wallet-key-attester.example.com"
 
 // keyAttestationLifetime bounds the "exp" claim buildKeyAttestationProof
 // sets when includeExpiry is true — an arbitrary, generous window; the
@@ -62,7 +62,7 @@ const keyAttestationLifetime = 5 * time.Minute
 // support key attestations" requirement. Built via
 // wallet.Wallet.GenerateAttestationProof — the production attestation
 // package's own issuance path
-// (github.com/idfoundry/oid4vcigo/attestation), not a hand-rolled JWT,
+// (github.com/idfoundry/oid4vcgo/attestation), not a hand-rolled JWT,
 // so this binary's live run proves that real code path works, not a
 // test double of it.
 //

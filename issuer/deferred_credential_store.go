@@ -3,7 +3,7 @@ package issuer
 import (
 	"context"
 
-	"github.com/idfoundry/oid4vcigo"
+	"github.com/idfoundry/oid4vcgo"
 )
 
 // DeferredTransactionStatus is a Deferred Issuance transaction's

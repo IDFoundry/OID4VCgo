@@ -1,6 +1,6 @@
 // This file works around a real, universal bug in the OIDF
 // conformance suite itself, not anything in either FAPIgo or
-// OID4VCIgo: the suite's own scripted browser (HtmlUnit) usually fails
+// OID4VCgo: the suite's own scripted browser (HtmlUnit) usually fails
 // to execute implicitCallback.html's own JavaScript, which is supposed
 // to auto-POST an empty body to a per-visit "implicit submission" URL
 // to let a stuck module continue (CreateRandomImplicitSubmitUrl.java /
@@ -38,7 +38,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/idfoundry/oid4vcigo/internal/conformancesuite"
+	"github.com/idfoundry/oid4vcgo/internal/conformancesuite"
 )
 
 // firstImplicitSubmitExtraCycles gives only the very first

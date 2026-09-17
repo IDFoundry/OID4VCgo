@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/idfoundry/oid4vcigo/verifier"
+	"github.com/idfoundry/oid4vcgo/verifier"
 )
 
 // testCA builds a fresh EC P-256 self-signed CA certificate/key —

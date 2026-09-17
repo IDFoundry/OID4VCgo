@@ -12,10 +12,10 @@ import (
 
 	"github.com/idfoundry/fapigo/fapihttp"
 
-	"github.com/idfoundry/oid4vcigo/internal/dpop"
-	"github.com/idfoundry/oid4vcigo/internal/jose"
-	"github.com/idfoundry/oid4vcigo/internal/jwk"
-	"github.com/idfoundry/oid4vcigo/wallet"
+	"github.com/idfoundry/oid4vcgo/internal/dpop"
+	"github.com/idfoundry/oid4vcgo/internal/jose"
+	"github.com/idfoundry/oid4vcgo/internal/jwk"
+	"github.com/idfoundry/oid4vcgo/wallet"
 )
 
 const testHTU = "https://issuer.example.com/token"

@@ -1,6 +1,6 @@
 package storage
 
-import "github.com/idfoundry/oid4vcigo"
+import "github.com/idfoundry/oid4vcgo"
 
 // cloneStrings returns a deep copy of s. A Go slice header copies by
 // value but shares its backing array, so simply assigning a

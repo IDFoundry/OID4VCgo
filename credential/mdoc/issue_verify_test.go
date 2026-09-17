@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/idfoundry/oid4vcigo/internal/cose"
+	"github.com/idfoundry/oid4vcgo/internal/cose"
 )
 
 func selfSignedCert(t *testing.T, pub, signer interface{}) []byte {

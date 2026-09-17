@@ -8,7 +8,7 @@ import (
 
 	"github.com/fxamacker/cbor/v2"
 
-	"github.com/idfoundry/oid4vcigo/internal/cose"
+	"github.com/idfoundry/oid4vcgo/internal/cose"
 )
 
 // CWTTokenMediaType is the media type a Status List Token in CWT format

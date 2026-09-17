@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/idfoundry/oid4vcigo/internal/conformancecert"
+	"github.com/idfoundry/oid4vcgo/internal/conformancecert"
 )
 
 func TestCredentialExp_SameDayIssuanceYieldsSameExp(t *testing.T) {

@@ -4,7 +4,7 @@ import (
 	"crypto/ecdsa"
 	"fmt"
 
-	"github.com/idfoundry/oid4vcigo/dcql"
+	"github.com/idfoundry/oid4vcgo/dcql"
 )
 
 // dcAPIResponseMode is the Response Mode every BuildDCAPIAuthorizationRequest

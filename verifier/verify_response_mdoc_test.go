@@ -6,12 +6,12 @@ import (
 	"crypto/ecdsa"
 	"testing"
 
-	"github.com/idfoundry/oid4vcigo/dcql"
-	"github.com/idfoundry/oid4vcigo/internal/cose"
-	"github.com/idfoundry/oid4vcigo/internal/testmdoc"
-	"github.com/idfoundry/oid4vcigo/internal/testverify"
-	"github.com/idfoundry/oid4vcigo/oid4vpmdoc"
-	"github.com/idfoundry/oid4vcigo/verifier"
+	"github.com/idfoundry/oid4vcgo/dcql"
+	"github.com/idfoundry/oid4vcgo/internal/cose"
+	"github.com/idfoundry/oid4vcgo/internal/testmdoc"
+	"github.com/idfoundry/oid4vcgo/internal/testverify"
+	"github.com/idfoundry/oid4vcgo/oid4vpmdoc"
+	"github.com/idfoundry/oid4vcgo/verifier"
 )
 
 // fixedMdocIssuerKeyResolver always resolves to the one issuer key a

@@ -3,7 +3,7 @@ package attestation
 import (
 	"testing"
 
-	"github.com/idfoundry/oid4vcigo/internal/jose"
+	"github.com/idfoundry/oid4vcgo/internal/jose"
 )
 
 // TestParseWalletAttestationClaims_OID4VCIAppendixEExample reproduces

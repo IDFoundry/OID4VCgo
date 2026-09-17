@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/idfoundry/oid4vcigo/internal/cose"
+	"github.com/idfoundry/oid4vcgo/internal/cose"
 )
 
 // twoNamespaceFixture is newFixture's own twin, adding a second

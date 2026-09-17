@@ -11,7 +11,7 @@ import (
 
 	fapi "github.com/idfoundry/fapigo"
 
-	"github.com/idfoundry/oid4vcigo/wallet"
+	"github.com/idfoundry/oid4vcgo/wallet"
 )
 
 func testDeferredCredentialEndpoint(t *testing.T) fapi.URL {

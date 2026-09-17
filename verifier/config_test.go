@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/idfoundry/oid4vcigo/verifier"
+	"github.com/idfoundry/oid4vcgo/verifier"
 )
 
 func TestNewAcceptsValidConfig(t *testing.T) {

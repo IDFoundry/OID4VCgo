@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/idfoundry/oid4vcigo"
-	"github.com/idfoundry/oid4vcigo/internal/jose"
+	"github.com/idfoundry/oid4vcgo"
+	"github.com/idfoundry/oid4vcgo/internal/jose"
 )
 
 // MetadataJWSTyp is the signed Credential Issuer Metadata JWT's own

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/idfoundry/oid4vcigo/issuer"
+	"github.com/idfoundry/oid4vcgo/issuer"
 )
 
 // DeferredTransactionStore is an in-memory issuer.DeferredTransactionStore.

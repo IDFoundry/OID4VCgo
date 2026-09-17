@@ -2,7 +2,7 @@
 
 `cmd/conformance-issuer` pairs a real `fapigo/server.Server` (FAPI 2.0
 Security Profile Final, Wallet Attestation client authentication,
-DPoP) with a real `oid4vcigo/issuer.Issuer` behind real HTTP, for the
+DPoP) with a real `oid4vcgo/issuer.Issuer` behind real HTTP, for the
 OIDF conformance suite's own `oid4vci-1_0-issuer-haip-test-plan`
 ("OpenID for Verifiable Credential Issuance 1.0 Final/HAIP: Test an
 issuer", confirmed against the suite's own source at
@@ -365,14 +365,16 @@ what it said it was.)*
   interoperability on the level of key attestations SHOULD require
   Wallets to support... `jwt` proof type using `key_attestation`
   [and] `attestation` proof type"). So this skip is legitimate for the
-  Issuer role specifically — but the Wallet-side
-  MUST is real and unconditional, and applies to the still-blocked
-  OID4VCI Wallet role (see "Not yet run live" below and `AGENTS.md`),
-  not to anything already implemented. Worth keeping separate from
-  that role's already-tracked Wallet Attestation (client
-  authentication) gap: key attestation (proof-of-possession key
+  Issuer role specifically — the Wallet-side MUST is real and
+  unconditional, but it's `cmd/conformance-wallet`'s job, not this
+  binary's: both conveyance methods (a standalone `attestation` proof
+  and a `jwt` proof nesting a Key Attestation via `key_attestation`)
+  are now built and confirmed live there, all 22 module instances per
+  method — see `wallet/README.md`'s own "Status" section. Worth keeping
+  separate from that role's own Wallet Attestation (client
+  authentication) coverage: key attestation (proof-of-possession key
   format) and wallet attestation (client auth) are two distinct HAIP
-  requirements that role will need to satisfy once unblocked.
+  requirements, both now satisfied there.
 
 **Update: `fail-unsupported-encryption-algorithm` — real support
 added, not just made to pass.** Previously self-`SKIPPED`: HAIP never

@@ -4,12 +4,12 @@ import (
 	"encoding/base64"
 	"testing"
 
-	"github.com/idfoundry/oid4vcigo/credential/mdoc"
-	"github.com/idfoundry/oid4vcigo/dcql"
-	"github.com/idfoundry/oid4vcigo/internal/cose"
-	"github.com/idfoundry/oid4vcigo/internal/testmdoc"
-	"github.com/idfoundry/oid4vcigo/oid4vpmdoc"
-	"github.com/idfoundry/oid4vcigo/wallet"
+	"github.com/idfoundry/oid4vcgo/credential/mdoc"
+	"github.com/idfoundry/oid4vcgo/dcql"
+	"github.com/idfoundry/oid4vcgo/internal/cose"
+	"github.com/idfoundry/oid4vcgo/internal/testmdoc"
+	"github.com/idfoundry/oid4vcgo/oid4vpmdoc"
+	"github.com/idfoundry/oid4vcgo/wallet"
 )
 
 // heldMdoc wraps a real, freshly issued testmdoc.Fixture as a

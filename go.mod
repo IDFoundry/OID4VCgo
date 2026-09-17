@@ -1,4 +1,4 @@
-module github.com/idfoundry/oid4vcigo
+module github.com/idfoundry/oid4vcgo
 
 go 1.26.5
 

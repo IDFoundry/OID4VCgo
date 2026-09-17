@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/idfoundry/oid4vcigo/credential/mdoc"
-	"github.com/idfoundry/oid4vcigo/internal/conformanceconfig"
-	"github.com/idfoundry/oid4vcigo/internal/cose"
+	"github.com/idfoundry/oid4vcgo/credential/mdoc"
+	"github.com/idfoundry/oid4vcgo/internal/conformanceconfig"
+	"github.com/idfoundry/oid4vcgo/internal/cose"
 )
 
 // mdocTestConfig returns baseTestConfig plus a second, mso_mdoc-format

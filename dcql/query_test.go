@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/idfoundry/oid4vcigo/dcql"
+	"github.com/idfoundry/oid4vcgo/dcql"
 )
 
 func mustSDJWTVCMeta(t *testing.T, vctValues ...string) json.RawMessage {

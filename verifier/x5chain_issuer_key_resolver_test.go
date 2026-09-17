@@ -6,8 +6,8 @@ import (
 	"crypto/x509"
 	"testing"
 
-	"github.com/idfoundry/oid4vcigo/internal/cose"
-	"github.com/idfoundry/oid4vcigo/verifier"
+	"github.com/idfoundry/oid4vcgo/internal/cose"
+	"github.com/idfoundry/oid4vcgo/verifier"
 )
 
 func x5chainOf(certs ...*x509.Certificate) [][]byte {

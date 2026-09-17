@@ -9,13 +9,13 @@ import (
 	fapires "github.com/idfoundry/fapigo/resource"
 	"github.com/idfoundry/fapigo/server"
 
-	"github.com/idfoundry/oid4vcigo/internal/jose"
-	"github.com/idfoundry/oid4vcigo/issuer"
+	"github.com/idfoundry/oid4vcgo/internal/jose"
+	"github.com/idfoundry/oid4vcgo/issuer"
 )
 
 // newRouter wires the FAPI 2.0 Authorization Server endpoints
 // (fapigo/server) and the OID4VCI Credential Issuer endpoints
-// (oid4vcigo/issuer) onto one plain net/http.ServeMux — mirrors
+// (oid4vcgo/issuer) onto one plain net/http.ServeMux — mirrors
 // FAPIgo's own cmd/conformance-as/router.go's "no third-party router"
 // stance. metadataSigner/metadataCert are the same credential-issuer
 // signing key/certificate pair issuer.Dependencies.SDJWTSigner already

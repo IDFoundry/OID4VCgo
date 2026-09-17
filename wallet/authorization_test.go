@@ -5,8 +5,8 @@ import (
 
 	"github.com/idfoundry/fapigo/extension"
 
-	"github.com/idfoundry/oid4vcigo"
-	"github.com/idfoundry/oid4vcigo/wallet"
+	"github.com/idfoundry/oid4vcgo"
+	"github.com/idfoundry/oid4vcgo/wallet"
 )
 
 func TestBuildAuthorizationRequest_SetsScope(t *testing.T) {

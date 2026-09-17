@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/idfoundry/oid4vcigo/internal/jwe"
+	"github.com/idfoundry/oid4vcgo/internal/jwe"
 )
 
 // ResponseError is a Wallet's own error response (§8.1) — sent instead

@@ -12,8 +12,8 @@ import (
 
 	fapi "github.com/idfoundry/fapigo"
 
-	"github.com/idfoundry/oid4vcigo/internal/jose"
-	"github.com/idfoundry/oid4vcigo/wallet"
+	"github.com/idfoundry/oid4vcgo/internal/jose"
+	"github.com/idfoundry/oid4vcgo/wallet"
 )
 
 func decodeDPoPProofForTest(t *testing.T, proof string) (map[string]any, []byte) {

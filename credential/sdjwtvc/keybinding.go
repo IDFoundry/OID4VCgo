@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/idfoundry/oid4vcigo/internal/jose"
+	"github.com/idfoundry/oid4vcgo/internal/jose"
 )
 
 // KeyBindingClaims is the input to NewKeyBindingJWT (RFC 9901 §4.3).

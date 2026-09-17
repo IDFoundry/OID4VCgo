@@ -14,7 +14,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/idfoundry/oid4vcigo/internal/jwk"
+	"github.com/idfoundry/oid4vcgo/internal/jwk"
 )
 
 // Alg identifies a JWE key management algorithm this package supports.

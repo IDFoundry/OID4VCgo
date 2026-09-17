@@ -1,6 +1,6 @@
 # Security Policy
 
-OID4VCIgo implements OpenID4VCI + OpenID4VP under the HAIP 1.0 profile —
+OID4VCgo implements OpenID4VCI + OpenID4VP under the HAIP 1.0 profile —
 protocol code intended to run in high-assurance, security-critical
 deployments (digital identity wallets, credential issuers and verifiers).
 If you believe you've found a vulnerability (a protocol violation, a
@@ -21,8 +21,9 @@ vulnerability details in a public issue.
 
 ## Supported versions
 
-OID4VCIgo is under early active development and does not yet have tagged
-releases. Reports against `main` are the ones we can act on.
+OID4VCgo is under early active development and pre-1.0 (`v0.1.0` is
+tagged, but APIs may still change). Reports against `main` or the
+latest tag are the ones we can act on.
 
 ## What to include
 

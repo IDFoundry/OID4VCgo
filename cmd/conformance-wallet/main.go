@@ -1,4 +1,4 @@
-// Command conformance-wallet drives oid4vcigo/wallet and
+// Command conformance-wallet drives oid4vcgo/wallet and
 // fapigo/client headlessly through the OIDF conformance suite's own
 // "oid4vci-1_0-wallet-haip-test-plan" ("OpenID for Verifiable
 // Credential Issuance 1.0 Final/HAIP: Test a wallet") — specifically
@@ -38,9 +38,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/idfoundry/oid4vcigo"
-	"github.com/idfoundry/oid4vcigo/internal/conformancesuite"
-	"github.com/idfoundry/oid4vcigo/wallet"
+	"github.com/idfoundry/oid4vcgo"
+	"github.com/idfoundry/oid4vcgo/internal/conformancesuite"
+	"github.com/idfoundry/oid4vcgo/wallet"
 )
 
 // inScopeModules is this run's own testName -> credential count map —
@@ -179,7 +179,7 @@ func main() {
 	flag.StringVar(&cfg.scope, "scope", "eudi.pid.1", "scope to request — must match the credential configuration's own \"scope\" value in the suite's emulated Credential Issuer metadata")
 	proofTypeFlag := flag.String("proof-type", string(proofStrategyJWT), "Credential Request proof strategy: \"jwt\" (default, jwk-conveyed jwt-type proof), \"attestation\" (standalone Key Attestation JWT, Appendix F.3 / HAIP §4.5.1 — requires -credential-configuration-id eu.europa.ec.eudi.pid.1.attestation -scope eudi.pid.1.attestation), or \"jwt-key-attestation\" (jwt-type proof with a nested Key Attestation JWT header, Appendix D.1 — requires -credential-configuration-id eu.europa.ec.eudi.pid.1.jwt.keyattest -scope eudi.pid.1.jwt.keyattest)")
 	flag.BoolVar(&cfg.issuerInitiated, "issuer-initiated", false, "drive the HAIP plan's issuer_initiated flow variant instead of the default wallet_initiated one — the suite hands this binary a Credential Offer to resolve instead of this binary calling /authorize directly")
-	flag.StringVar(&cfg.credentialOfferEndpoint, "credential-offer-endpoint", "https://oid4vcigo-wallet.example.com", "base URL for this run's own vci.credential_offer_endpoint config value (only used with -issuer-initiated) — never actually dereferenced by this binary or, in practice, by the suite either (see credentialoffer.go), so the default is an inert placeholder")
+	flag.StringVar(&cfg.credentialOfferEndpoint, "credential-offer-endpoint", "https://oid4vcgo-wallet.example.com", "base URL for this run's own vci.credential_offer_endpoint config value (only used with -issuer-initiated) — never actually dereferenced by this binary or, in practice, by the suite either (see credentialoffer.go), so the default is an inert placeholder")
 	flag.BoolVar(&cfg.basePlan, "base-plan", false, "drive the suite's own base (non-HAIP) \"oid4vci-1_0-wallet-test-plan\" instead of the default HAIP plan — see baseInScopeModules' own doc comment")
 	flag.StringVar(&cfg.credentialFormat, "credential-format", "sd_jwt_vc", "credential_format variant to drive: \"sd_jwt_vc\" (default) or \"mdoc\" — mdoc needs a matching -credential-configuration-id/-scope, e.g. eu.europa.ec.eudi.pid.mdoc.1/eudi.pid.mdoc.1")
 	dumpConfig := flag.Bool("dump-config", false, "print the generated suite-side plan configuration JSON and exit, instead of creating a plan — useful for probing the suite's own POST /api/plan validation by hand")

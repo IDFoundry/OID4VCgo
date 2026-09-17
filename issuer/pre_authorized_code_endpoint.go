@@ -9,8 +9,8 @@ import (
 
 	fapi "github.com/idfoundry/fapigo"
 
-	"github.com/idfoundry/oid4vcigo"
-	"github.com/idfoundry/oid4vcigo/internal/dpop"
+	"github.com/idfoundry/oid4vcgo"
+	"github.com/idfoundry/oid4vcgo/internal/dpop"
 )
 
 // DPoPReplayChecker detects DPoP proof replay by "jti" (RFC 9449

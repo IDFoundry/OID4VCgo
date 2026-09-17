@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/idfoundry/oid4vcigo"
+	"github.com/idfoundry/oid4vcgo"
 )
 
 // DeferredCredentialRequest is a Deferred Credential Request (§9.1).

@@ -18,8 +18,8 @@ import (
 	"github.com/idfoundry/fapigo/storage"
 	"github.com/idfoundry/fapigo/storage/memstore"
 
-	"github.com/idfoundry/oid4vcigo/internal/jose"
-	"github.com/idfoundry/oid4vcigo/wallet"
+	"github.com/idfoundry/oid4vcgo/internal/jose"
+	"github.com/idfoundry/oid4vcgo/wallet"
 )
 
 // noopIssuerKeySource is a keys.IssuerKeySource that's never actually
@@ -49,7 +49,7 @@ func (s staticAttestationSource) CurrentAttestation(context.Context) (string, er
 // counterpart: instead of this file's own hand-rolled
 // buildClientAttestationJWT/PoP simulation driving raw net/http
 // requests, a genuine fapigo/client.Client (storage.ClientAuthMethodAttestation)
-// and oid4vcigo/wallet.Wallet drive PAR, the Authorization Code Flow,
+// and oid4vcgo/wallet.Wallet drive PAR, the Authorization Code Flow,
 // the Nonce Endpoint and the Credential Endpoint against this exact
 // server wiring. This is the proof that FAPIgo's client-side
 // Attestation-Based Client Authentication (FAPIgo PR #317) actually
@@ -167,7 +167,7 @@ func TestFullFlow_RealClientDrivesAttestationAuth(t *testing.T) {
 		t.Fatalf("CompleteAuthorization result = %T, want client.CompletionSuccess", result)
 	}
 
-	// --- Nonce + Credential Endpoint, via a real oid4vcigo/wallet.Wallet ---
+	// --- Nonce + Credential Endpoint, via a real oid4vcgo/wallet.Wallet ---
 	w, err := wallet.New(wallet.Config{
 		ProofSigningAlg: jose.ES256,
 		Fetch: fapihttp.Config{

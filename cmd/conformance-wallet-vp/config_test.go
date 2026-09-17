@@ -6,7 +6,7 @@ import (
 	"crypto/rand"
 	"testing"
 
-	"github.com/idfoundry/oid4vcigo/internal/conformancecert"
+	"github.com/idfoundry/oid4vcgo/internal/conformancecert"
 )
 
 func testECKeyPEM(t *testing.T) string {

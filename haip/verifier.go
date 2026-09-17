@@ -1,8 +1,8 @@
 package haip
 
 import (
-	"github.com/idfoundry/oid4vcigo/internal/jose"
-	"github.com/idfoundry/oid4vcigo/internal/jwe"
+	"github.com/idfoundry/oid4vcgo/internal/jose"
+	"github.com/idfoundry/oid4vcgo/internal/jwe"
 )
 
 // VerifierRecommendations is what RecommendedVerifierConfig returns:
