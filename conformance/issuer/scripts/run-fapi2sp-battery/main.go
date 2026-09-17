@@ -56,6 +56,7 @@ import (
 	"time"
 
 	"github.com/idfoundry/oid4vcigo/internal/conformancecert"
+	"github.com/idfoundry/oid4vcigo/internal/conformancesuite"
 	"github.com/idfoundry/oid4vcigo/internal/jwk"
 )
 
@@ -163,7 +164,7 @@ func main() {
 		log.Fatalf("build plan config: %v", err)
 	}
 
-	planID, modules, err := createPlan(httpClient, *apiBase, "oid4vci-1_0-issuer-haip-test-plan",
+	planID, modules, err := conformancesuite.CreatePlan(httpClient, *apiBase, "oid4vci-1_0-issuer-haip-test-plan",
 		map[string]string{"credential_format": "sd_jwt_vc"}, planConfig) //nolint:gosec // a suite variant selector value, not a credential
 	if err != nil {
 		log.Fatal(err)
@@ -232,7 +233,18 @@ func insecureSuiteHTTPClient() *http.Client {
 // appeared not to work at all, until rebuilding revealed the running
 // container predated it by hours.
 func restartIssuerContainer() error {
-	cmd := exec.Command("docker", "compose", "-f", "conformance/issuer/docker-compose.yml", "up", "-d", "--build", "--force-recreate")
+	// NOSONAR: go:S4036 -- this is a local developer CLI tool, run
+	// directly from a shell (never a network-facing or multi-tenant
+	// service): resolving "docker" walks the invoking developer's own
+	// trusted PATH, the same one every other command they type already
+	// trusts. exec.LookPath is used explicitly (rather than letting
+	// exec.Command do the same lookup implicitly) so the resolved
+	// absolute path is fixed before Command is built.
+	dockerPath, err := exec.LookPath("docker")
+	if err != nil {
+		return fmt.Errorf("find docker: %w", err)
+	}
+	cmd := exec.Command(dockerPath, "compose", "-f", "conformance/issuer/docker-compose.yml", "up", "-d", "--build", "--force-recreate") //nolint:gosec // dockerPath comes from exec.LookPath, args are fixed literals — see the NOSONAR comment above for the full justification
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
@@ -268,7 +280,7 @@ func waitForIssuerReady(httpClient *http.Client, _ string) error {
 // runModule creates one module instance and polls it to completion —
 // no flow-driving at all, see the package doc comment for why.
 func runModule(httpClient *http.Client, apiBase, planID, testName string, variant map[string]string) string {
-	module, err := createModuleInstance(httpClient, apiBase, planID, testName, variant)
+	module, err := conformancesuite.CreateModuleInstance(httpClient, apiBase, planID, testName, variant)
 	if err != nil {
 		return "ERROR: create module instance: " + err.Error()
 	}
@@ -281,7 +293,7 @@ func runModule(httpClient *http.Client, apiBase, planID, testName string, varian
 	// module's own plan-alias reuse collided with the still-finishing
 	// previous one, cascading into a false "alias conflict"
 	// INTERRUPTED on top of the real problem).
-	status, result, err := waitUntilFinished(httpClient, apiBase, module.ID, 120*time.Second)
+	status, result, err := conformancesuite.WaitUntilFinished(httpClient, apiBase, module.ID, 120*time.Second)
 	if err != nil {
 		return "ERROR: " + err.Error() + " (module " + module.ID + ")"
 	}

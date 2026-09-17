@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 	"time"
+
+	"github.com/idfoundry/oid4vcigo/internal/conformancesuite"
 )
 
 // credentialOfferPath is appended to -credential-offer-endpoint to
@@ -42,7 +44,7 @@ func waitForCredentialOfferRedirectURL(httpClient *http.Client, apiBase, moduleI
 		if err != nil {
 			return "", err
 		}
-		body, status, err := do(httpClient, req)
+		body, status, err := conformancesuite.Do(httpClient, req)
 		if err != nil {
 			return "", err
 		}

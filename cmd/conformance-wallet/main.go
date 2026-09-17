@@ -39,6 +39,7 @@ import (
 	"time"
 
 	"github.com/idfoundry/oid4vcigo"
+	"github.com/idfoundry/oid4vcigo/internal/conformancesuite"
 	"github.com/idfoundry/oid4vcigo/wallet"
 )
 
@@ -193,7 +194,7 @@ func run(cfg runConfig) error {
 	if cfg.issuerInitiated {
 		planVariant["vci_authorization_code_flow_variant"] = "issuer_initiated"
 	}
-	planID, modules, err := createPlan(httpClient, cfg.apiBase, "oid4vci-1_0-wallet-haip-test-plan", planVariant, walletRun.planConfig)
+	planID, modules, err := conformancesuite.CreatePlan(httpClient, cfg.apiBase, "oid4vci-1_0-wallet-haip-test-plan", planVariant, walletRun.planConfig)
 	if err != nil {
 		return err
 	}
@@ -274,7 +275,7 @@ func matchCrossing(testName string, variant map[string]string) (issuanceCrossing
 // be captured here, before waitUntilWaiting, rather than inside
 // driveModule alongside everything else it drives.
 func runModule(ctx context.Context, httpClient *http.Client, apiBase, planID, testName string, variant map[string]string, numCreds int, encrypted bool, walletRun *walletRun, offerWallet *wallet.Wallet) string {
-	module, err := createModuleInstance(httpClient, apiBase, planID, testName, variant)
+	module, err := conformancesuite.CreateModuleInstance(httpClient, apiBase, planID, testName, variant)
 	if err != nil {
 		return "ERROR: create module instance: " + err.Error()
 	}
@@ -299,7 +300,7 @@ func runModule(ctx context.Context, httpClient *http.Client, apiBase, planID, te
 		offer = &resolved
 	}
 
-	if err := waitUntilWaiting(httpClient, apiBase, module.ID, 10*time.Second); err != nil {
+	if err := conformancesuite.WaitUntilWaiting(httpClient, apiBase, module.ID, 10*time.Second); err != nil {
 		return "ERROR: wait for module ready: " + err.Error()
 	}
 
@@ -308,7 +309,7 @@ func runModule(ctx context.Context, httpClient *http.Client, apiBase, planID, te
 		driverErr = err.Error()
 	}
 
-	status, result, err := waitUntilFinished(httpClient, apiBase, module.ID, 45*time.Second)
+	status, result, err := conformancesuite.WaitUntilFinished(httpClient, apiBase, module.ID, 45*time.Second)
 	if err != nil {
 		if driverErr != "" {
 			return "ERROR [driver: " + driverErr + "] (also: " + err.Error() + ")"

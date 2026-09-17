@@ -37,6 +37,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/idfoundry/oid4vcigo/internal/conformancesuite"
 )
 
 // firstImplicitSubmitExtraCycles gives only the very first
@@ -88,6 +90,30 @@ type implicitSubmitState struct {
 	cycles     int
 }
 
+// unblockPoller holds every module-instance-tracking map
+// unblockImplicitCallbacks needs across ticks. Splitting its single
+// polling loop into small methods on this struct (rather than one
+// large function with everything inlined) keeps each step's own
+// cognitive complexity low — the loop itself does four genuinely
+// separate things (discover new instances, poll each active one,
+// react to two distinct kinds of stuck-waiting log entry, fill
+// placeholders once their own grace period elapses) that don't need
+// to be read together to be understood individually.
+type unblockPoller struct {
+	ctx        context.Context
+	httpClient *http.Client
+	apiBase    string
+	planID     string
+
+	submitted           map[string]bool                 // implicit_submit fullUrl -> already POSTed once
+	pending             map[string]*implicitSubmitState // fullUrl -> pending state
+	uploaded            map[[2]string]bool              // (instanceID, placeholder) -> already filled once
+	pendingPlaceholders map[[2]string]time.Time         // (instanceID, placeholder) -> first seen
+	active              map[string]bool
+	seenEver            map[string]bool
+	firstImplicitURL    string
+}
+
 // unblockImplicitCallbacks polls every module instance planID has
 // created (via GET /api/plan/{planID}, whose own "modules[].instances"
 // list grows live as this binary creates each module) and resolves the
@@ -96,13 +122,18 @@ type implicitSubmitState struct {
 // Run this as a background goroutine alongside the module-driving loop
 // in main.go.
 func unblockImplicitCallbacks(ctx context.Context, httpClient *http.Client, apiBase, planID string) {
-	submitted := make(map[string]bool)                   // implicit_submit fullUrl -> already POSTed once
-	pending := make(map[string]*implicitSubmitState)     // fullUrl -> pending state
-	uploaded := make(map[[2]string]bool)                 // (instanceID, placeholder) -> already filled once
-	pendingPlaceholders := make(map[[2]string]time.Time) // (instanceID, placeholder) -> first seen
-	active := make(map[string]bool)
-	seenEver := make(map[string]bool)
-	var firstImplicitURL string
+	p := &unblockPoller{
+		ctx:                 ctx,
+		httpClient:          httpClient,
+		apiBase:             apiBase,
+		planID:              planID,
+		submitted:           make(map[string]bool),
+		pending:             make(map[string]*implicitSubmitState),
+		uploaded:            make(map[[2]string]bool),
+		pendingPlaceholders: make(map[[2]string]time.Time),
+		active:              make(map[string]bool),
+		seenEver:            make(map[string]bool),
+	}
 
 	ticker := time.NewTicker(200 * time.Millisecond)
 	defer ticker.Stop()
@@ -113,102 +144,141 @@ func unblockImplicitCallbacks(ctx context.Context, httpClient *http.Client, apiB
 			return
 		case <-ticker.C:
 		}
+		p.tick()
+	}
+}
 
-		instances, err := planInstances(httpClient, apiBase, planID)
-		if err == nil {
-			for _, id := range instances {
-				if !seenEver[id] {
-					seenEver[id] = true
-					active[id] = true
-				}
-			}
+// tick runs one polling pass: discover any module instances created
+// since the last tick, react to each active instance's own current log,
+// then fill any placeholder whose own grace period has now elapsed.
+func (p *unblockPoller) tick() {
+	p.discoverNewInstances()
+	for id := range p.active {
+		p.pollInstance(id)
+	}
+	p.fillDuePlaceholders()
+}
+
+func (p *unblockPoller) discoverNewInstances() {
+	instances, err := conformancesuite.PlanInstances(p.httpClient, p.apiBase, p.planID)
+	if err != nil {
+		return
+	}
+	for _, id := range instances {
+		if !p.seenEver[id] {
+			p.seenEver[id] = true
+			p.active[id] = true
 		}
+	}
+}
 
-		for id := range active {
-			info, err := fetchModuleInfo(httpClient, apiBase, id)
-			if err != nil {
-				continue
-			}
-			if info.Status == "FINISHED" || info.Status == "INTERRUPTED" {
-				delete(active, id)
-				continue
-			}
+// pollInstance fetches id's own current status and log, dropping it
+// from tracking once it reaches a terminal status, otherwise reacting
+// to every log entry it's produced so far.
+func (p *unblockPoller) pollInstance(id string) {
+	info, err := conformancesuite.FetchModuleInfo(p.httpClient, p.apiBase, id)
+	if err != nil {
+		return
+	}
+	if info.Status == "FINISHED" || info.Status == "INTERRUPTED" {
+		delete(p.active, id)
+		return
+	}
 
-			entries, err := fetchModuleLogRaw(httpClient, apiBase, id)
-			if err != nil {
-				continue
-			}
+	entries, err := conformancesuite.FetchModuleLog(p.httpClient, p.apiBase, id)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		p.reactToLogEntry(id, entries, e)
+	}
+}
 
-			for _, e := range entries {
-				if e.Msg == "Created random implicit submission URL" && e.ImplicitSubmit != nil && e.ImplicitSubmit.FullURL != "" {
-					fullURL := e.ImplicitSubmit.FullURL
-					if submitted[fullURL] {
-						continue
-					}
-					st, ok := pending[fullURL]
-					if !ok {
-						pending[fullURL] = &implicitSubmitState{instanceID: id, cycles: 0}
-						if firstImplicitURL == "" {
-							firstImplicitURL = fullURL
-						}
-						continue
-					}
-					st.cycles++
-					required := 1
-					if fullURL == firstImplicitURL {
-						required = 1 + firstImplicitSubmitExtraCycles
-					}
-					if st.cycles < required {
-						continue
-					}
-					delete(pending, fullURL)
-					submitted[fullURL] = true
+func (p *unblockPoller) reactToLogEntry(id string, entries []conformancesuite.LogEntry, e conformancesuite.LogEntry) {
+	if e.Msg == "Created random implicit submission URL" && e.ImplicitSubmit != nil && e.ImplicitSubmit.FullURL != "" {
+		p.handleImplicitSubmitURL(id, entries, e.ImplicitSubmit.FullURL)
+	}
+	if e.Upload != "" {
+		p.notePlaceholder(id, e.Upload)
+	}
+}
 
-					requestPath, ok := pathOf(fullURL)
-					if !ok {
-						continue
-					}
-					wantMsg := "Incoming HTTP request to " + requestPath
-					alreadySubmittedByBrowser := false
-					for _, e2 := range entries {
-						if e2.Msg == wantMsg {
-							alreadySubmittedByBrowser = true
-							break
-						}
-					}
-					if alreadySubmittedByBrowser {
-						continue
-					}
-					postEmptyBody(ctx, httpClient, apiBase+requestPath[1:])
-				}
-
-				if e.Upload != "" {
-					key := [2]string{id, e.Upload}
-					if uploaded[key] {
-						continue
-					}
-					if _, ok := pendingPlaceholders[key]; !ok {
-						pendingPlaceholders[key] = time.Now()
-					}
-				}
-			}
+// handleImplicitSubmitURL defers each newly seen implicit-submit URL
+// by one cycle (extra cycles for the very first one this run ever
+// sees) to give the browser's own JS a chance to win the race first,
+// then POSTs it itself unless the browser already has.
+func (p *unblockPoller) handleImplicitSubmitURL(id string, entries []conformancesuite.LogEntry, fullURL string) {
+	if p.submitted[fullURL] {
+		return
+	}
+	st, ok := p.pending[fullURL]
+	if !ok {
+		p.pending[fullURL] = &implicitSubmitState{instanceID: id, cycles: 0}
+		if p.firstImplicitURL == "" {
+			p.firstImplicitURL = fullURL
 		}
+		return
+	}
+	st.cycles++
+	required := 1
+	if fullURL == p.firstImplicitURL {
+		required = 1 + firstImplicitSubmitExtraCycles
+	}
+	if st.cycles < required {
+		return
+	}
+	delete(p.pending, fullURL)
+	p.submitted[fullURL] = true
 
-		now := time.Now()
-		for key, firstSeen := range pendingPlaceholders {
-			if now.Sub(firstSeen) < placeholderGracePeriod {
-				continue
-			}
-			delete(pendingPlaceholders, key)
-			instanceID, placeholder := key[0], key[1]
-			if !active[instanceID] {
-				// Finished on its own during the grace period — never
-				// actually needed.
-				continue
-			}
-			uploaded[key] = true
-			fillPlaceholder(ctx, httpClient, apiBase, instanceID, placeholder)
+	requestPath, ok := conformancesuite.PathOf(fullURL)
+	if !ok {
+		return
+	}
+	if browserAlreadySubmitted(entries, requestPath) {
+		return
+	}
+	postEmptyBody(p.ctx, p.httpClient, p.apiBase+requestPath[1:])
+}
+
+// browserAlreadySubmitted reports whether the module's own log already
+// shows an inbound request to requestPath — submitting again anyway
+// would corrupt the flow into two racing token exchanges over the same
+// authorization code (see this file's own package doc comment).
+func browserAlreadySubmitted(entries []conformancesuite.LogEntry, requestPath string) bool {
+	wantMsg := "Incoming HTTP request to " + requestPath
+	for _, e := range entries {
+		if e.Msg == wantMsg {
+			return true
 		}
+	}
+	return false
+}
+
+func (p *unblockPoller) notePlaceholder(id, placeholder string) {
+	key := [2]string{id, placeholder}
+	if p.uploaded[key] {
+		return
+	}
+	if _, ok := p.pendingPlaceholders[key]; !ok {
+		p.pendingPlaceholders[key] = time.Now()
+	}
+}
+
+func (p *unblockPoller) fillDuePlaceholders() {
+	now := time.Now()
+	for key, firstSeen := range p.pendingPlaceholders {
+		if now.Sub(firstSeen) < placeholderGracePeriod {
+			continue
+		}
+		delete(p.pendingPlaceholders, key)
+		instanceID, placeholder := key[0], key[1]
+		if !p.active[instanceID] {
+			// Finished on its own during the grace period — never
+			// actually needed.
+			continue
+		}
+		p.uploaded[key] = true
+		fillPlaceholder(p.ctx, p.httpClient, p.apiBase, instanceID, placeholder)
 	}
 }
 
