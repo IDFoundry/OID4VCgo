@@ -10,9 +10,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/idfoundry/oid4vcigo/internal/jwe"
-	"github.com/idfoundry/oid4vcigo/internal/jwk"
-	"github.com/idfoundry/oid4vcigo/wallet"
+	"github.com/idfoundry/oid4vcgo/internal/jwe"
+	"github.com/idfoundry/oid4vcgo/internal/jwk"
+	"github.com/idfoundry/oid4vcgo/wallet"
 )
 
 func testEncryptionRecipientJWK(t *testing.T, kid string, pub *ecdsa.PublicKey) json.RawMessage {

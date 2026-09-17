@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/idfoundry/oid4vcigo"
+	"github.com/idfoundry/oid4vcgo"
 )
 
 // CredentialOfferRecord is what CredentialOfferStore.Store persists for

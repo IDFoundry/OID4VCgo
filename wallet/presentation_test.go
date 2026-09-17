@@ -5,12 +5,12 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/idfoundry/oid4vcigo/credential/sdjwtvc"
-	"github.com/idfoundry/oid4vcigo/dcql"
-	"github.com/idfoundry/oid4vcigo/internal/jose"
-	"github.com/idfoundry/oid4vcigo/internal/jwk"
-	"github.com/idfoundry/oid4vcigo/internal/testverify"
-	"github.com/idfoundry/oid4vcigo/wallet"
+	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
+	"github.com/idfoundry/oid4vcgo/dcql"
+	"github.com/idfoundry/oid4vcgo/internal/jose"
+	"github.com/idfoundry/oid4vcgo/internal/jwk"
+	"github.com/idfoundry/oid4vcgo/internal/testverify"
+	"github.com/idfoundry/oid4vcgo/wallet"
 )
 
 const testPresentationVCT = "https://credentials.example.com/identity_credential"

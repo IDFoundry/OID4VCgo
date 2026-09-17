@@ -12,7 +12,7 @@ import (
 	"math"
 
 	"github.com/fxamacker/cbor/v2"
-	"github.com/idfoundry/oid4vcigo/internal/ecdsafixed"
+	"github.com/idfoundry/oid4vcgo/internal/ecdsafixed"
 )
 
 // Alg identifies a COSE algorithm this package supports, by its IANA

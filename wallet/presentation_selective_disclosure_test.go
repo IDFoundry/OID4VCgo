@@ -3,10 +3,10 @@ package wallet_test
 import (
 	"testing"
 
-	"github.com/idfoundry/oid4vcigo/credential/sdjwtvc"
-	"github.com/idfoundry/oid4vcigo/dcql"
-	"github.com/idfoundry/oid4vcigo/internal/jose"
-	"github.com/idfoundry/oid4vcigo/wallet"
+	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
+	"github.com/idfoundry/oid4vcgo/dcql"
+	"github.com/idfoundry/oid4vcgo/internal/jose"
+	"github.com/idfoundry/oid4vcgo/wallet"
 )
 
 // newHeldSDJWTVCWithSelectivelyDisclosableClaims is newHeldSDJWTVC's

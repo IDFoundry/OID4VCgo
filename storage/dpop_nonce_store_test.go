@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/idfoundry/oid4vcigo/issuer"
-	"github.com/idfoundry/oid4vcigo/storage"
+	"github.com/idfoundry/oid4vcgo/issuer"
+	"github.com/idfoundry/oid4vcgo/storage"
 )
 
 func TestDPoPNonceStore_IssueThenConsume(t *testing.T) {

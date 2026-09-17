@@ -5,7 +5,7 @@ import (
 
 	"github.com/fxamacker/cbor/v2"
 
-	"github.com/idfoundry/oid4vcigo/credential/mdoc"
+	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 )
 
 // deviceResponseVersion is the only value ISO/IEC 18013-5 §10.3.2

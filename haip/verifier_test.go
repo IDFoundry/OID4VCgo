@@ -3,8 +3,8 @@ package haip_test
 import (
 	"testing"
 
-	"github.com/idfoundry/oid4vcigo/haip"
-	"github.com/idfoundry/oid4vcigo/internal/jwe"
+	"github.com/idfoundry/oid4vcgo/haip"
+	"github.com/idfoundry/oid4vcgo/internal/jwe"
 )
 
 func TestRecommendedVerifierConfig(t *testing.T) {

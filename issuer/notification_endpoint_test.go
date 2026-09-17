@@ -8,8 +8,8 @@ import (
 
 	fapi "github.com/idfoundry/fapigo"
 
-	"github.com/idfoundry/oid4vcigo"
-	"github.com/idfoundry/oid4vcigo/issuer"
+	"github.com/idfoundry/oid4vcgo"
+	"github.com/idfoundry/oid4vcgo/issuer"
 )
 
 func TestIssueNotificationID(t *testing.T) {

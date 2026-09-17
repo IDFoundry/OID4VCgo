@@ -8,9 +8,9 @@ import (
 	"fmt"
 	"slices"
 
-	"github.com/idfoundry/oid4vcigo"
-	"github.com/idfoundry/oid4vcigo/credential/mdoc"
-	"github.com/idfoundry/oid4vcigo/credential/sdjwtvc"
+	"github.com/idfoundry/oid4vcgo"
+	"github.com/idfoundry/oid4vcgo/credential/mdoc"
+	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
 )
 
 // jwtProofTyp is the required JOSE "typ" header of a jwt-type key proof

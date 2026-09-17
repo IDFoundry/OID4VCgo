@@ -1,6 +1,6 @@
 package oid4vci
 
-// Proof type identifiers (Appendix F). Only the two OID4VCIgo's
+// Proof type identifiers (Appendix F). Only the two OID4VCgo's
 // credential formats actually use are defined here — di_vp (W3C VCDM)
 // is out of scope; see SPECIFICATIONS.md.
 const (

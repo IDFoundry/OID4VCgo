@@ -6,7 +6,7 @@ import (
 	"crypto/rand"
 	"testing"
 
-	"github.com/idfoundry/oid4vcigo/internal/conformancecert"
+	"github.com/idfoundry/oid4vcgo/internal/conformancecert"
 )
 
 func baseTestConfig(t *testing.T) Config {

@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/idfoundry/oid4vcigo/internal/jose"
+	"github.com/idfoundry/oid4vcgo/internal/jose"
 )
 
 func testKey(t *testing.T) *ecdsa.PrivateKey {

@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/idfoundry/oid4vcigo/internal/jwe"
+	"github.com/idfoundry/oid4vcgo/internal/jwe"
 )
 
 // BuildDirectPostResponseParams is the input to BuildDirectPostResponse.

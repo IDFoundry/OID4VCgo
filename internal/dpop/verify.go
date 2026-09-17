@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/idfoundry/oid4vcigo/internal/jose"
-	"github.com/idfoundry/oid4vcigo/internal/jwk"
+	"github.com/idfoundry/oid4vcgo/internal/jose"
+	"github.com/idfoundry/oid4vcgo/internal/jwk"
 )
 
 // proofTyp is DPoP's own required JOSE "typ" header (RFC 9449 §4.2) —

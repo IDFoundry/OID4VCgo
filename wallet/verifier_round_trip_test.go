@@ -11,15 +11,15 @@ import (
 
 	fapi "github.com/idfoundry/fapigo"
 
-	"github.com/idfoundry/oid4vcigo/dcql"
-	"github.com/idfoundry/oid4vcigo/internal/cose"
-	"github.com/idfoundry/oid4vcigo/internal/jose"
-	"github.com/idfoundry/oid4vcigo/internal/jwe"
-	"github.com/idfoundry/oid4vcigo/internal/testcert"
-	"github.com/idfoundry/oid4vcigo/internal/testmdoc"
-	"github.com/idfoundry/oid4vcigo/internal/testverify"
-	"github.com/idfoundry/oid4vcigo/verifier"
-	"github.com/idfoundry/oid4vcigo/wallet"
+	"github.com/idfoundry/oid4vcgo/dcql"
+	"github.com/idfoundry/oid4vcgo/internal/cose"
+	"github.com/idfoundry/oid4vcgo/internal/jose"
+	"github.com/idfoundry/oid4vcgo/internal/jwe"
+	"github.com/idfoundry/oid4vcgo/internal/testcert"
+	"github.com/idfoundry/oid4vcgo/internal/testmdoc"
+	"github.com/idfoundry/oid4vcgo/internal/testverify"
+	"github.com/idfoundry/oid4vcgo/verifier"
+	"github.com/idfoundry/oid4vcgo/wallet"
 )
 
 // issuerKeyResolverFunc adapts a plain function to

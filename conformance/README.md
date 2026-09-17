@@ -1,6 +1,6 @@
 # Conformance
 
-OIDF live-conformance-suite harnesses for OID4VCIgo's own roles,
+OIDF live-conformance-suite harnesses for OID4VCgo's own roles,
 mirroring FAPIgo's own `conformance/` structure (binaries wiring the
 real production package behind real HTTP, Docker attaching to the
 suite's own network, `oidf-config/` per test plan, a generator script
@@ -56,14 +56,14 @@ negative-test expectations differ.
   (`oid4vci-1_0-issuer-haip-test-plan`): `cmd/conformance-issuer` pairs
   a real `fapigo/server.Server` (FAPI 2.0 Security Profile Final,
   Wallet Attestation client authentication) with a real
-  `oid4vcigo/issuer.Issuer`; the suite plays Wallet. Confirmed live
+  `oid4vcgo/issuer.Issuer`; the suite plays Wallet. Confirmed live
   end to end in-repo (PAR → consent → token → nonce → credential),
   a permanent regression test that surfaced and fixed three real bugs.
   **Confirmed live against the real OIDF suite**: `metadata-test`
   is a full `PASSED` (fixed by serving this binary's AS metadata at
   both `/.well-known/openid-configuration` and RFC 8414's own
   `/.well-known/oauth-authorization-server` — entirely an
-  OID4VCIgo-side router fix, not FAPIgo's). `client2` support was added
+  OID4VCgo-side router fix, not FAPIgo's). `client2` support was added
   (`Config.Client2`, optional) and confirmed both by a real PAR-
   authentication unit test and live against the suite itself.
   `happy-flow` hit a `fapigo/server` design decision (`Config.Extensions`
@@ -185,7 +185,7 @@ negative-test expectations differ.
   regression-free. See `issuer/README.md`.
 - **`wallet/`** — OID4VCI 1.0 Final/HAIP Wallet role
   (`oid4vci-1_0-wallet-haip-test-plan`): `cmd/conformance-wallet`
-  drives `oid4vcigo/wallet`/`fapigo/client` as an outbound HTTP client
+  drives `oid4vcgo/wallet`/`fapigo/client` as an outbound HTTP client
   — the suite itself plays the entire emulated Authorization Server
   and Credential Issuer for this role, the opposite shape from
   `issuer/`. **Confirmed live against a real, locally-run OIDF suite,
@@ -220,7 +220,7 @@ negative-test expectations differ.
   nests one inside an ordinary jwt-type proof's own header (Appendix
   D.1).** Turned out nothing needed building for the standalone case:
   both `wallet.Wallet.GenerateAttestationProof` and the whole
-  `oid4vcigo/attestation` package already fully implemented Key
+  `oid4vcgo/attestation` package already fully implemented Key
   Attestation JWT issuance (OID4VCI Appendix D.1) — this binary's own
   `keyattestation.go` just had to mint one (a new dedicated CA/leaf,
   `client_attestation.key_attestation_trust_anchor_pem`) and submit it.

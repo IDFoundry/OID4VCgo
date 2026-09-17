@@ -14,12 +14,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/idfoundry/oid4vcigo/credential/mdoc"
-	"github.com/idfoundry/oid4vcigo/dcql"
-	"github.com/idfoundry/oid4vcigo/internal/cose"
-	"github.com/idfoundry/oid4vcigo/internal/jwk"
-	"github.com/idfoundry/oid4vcigo/internal/testcert"
-	"github.com/idfoundry/oid4vcigo/oid4vpmdoc"
+	"github.com/idfoundry/oid4vcgo/credential/mdoc"
+	"github.com/idfoundry/oid4vcgo/dcql"
+	"github.com/idfoundry/oid4vcgo/internal/cose"
+	"github.com/idfoundry/oid4vcgo/internal/jwk"
+	"github.com/idfoundry/oid4vcgo/internal/testcert"
+	"github.com/idfoundry/oid4vcgo/oid4vpmdoc"
 )
 
 // DocType is the ISO/IEC 18013-5 docType every Fixture this package

@@ -12,11 +12,11 @@ import (
 
 	fapi "github.com/idfoundry/fapigo"
 
-	"github.com/idfoundry/oid4vcigo/dcql"
-	"github.com/idfoundry/oid4vcigo/internal/jose"
-	"github.com/idfoundry/oid4vcigo/internal/jwe"
-	"github.com/idfoundry/oid4vcigo/verifier"
-	"github.com/idfoundry/oid4vcigo/wallet"
+	"github.com/idfoundry/oid4vcgo/dcql"
+	"github.com/idfoundry/oid4vcgo/internal/jose"
+	"github.com/idfoundry/oid4vcgo/internal/jwe"
+	"github.com/idfoundry/oid4vcgo/verifier"
+	"github.com/idfoundry/oid4vcgo/wallet"
 )
 
 // testVerifierSignerAndCert builds a fresh P-256 key and a self-signed

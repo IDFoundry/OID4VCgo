@@ -7,7 +7,7 @@ import (
 	"time"
 
 	fapi "github.com/idfoundry/fapigo"
-	"github.com/idfoundry/oid4vcigo/issuer"
+	"github.com/idfoundry/oid4vcgo/issuer"
 )
 
 func TestRequestNonce(t *testing.T) {

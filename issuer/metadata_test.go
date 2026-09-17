@@ -6,10 +6,10 @@ import (
 
 	fapi "github.com/idfoundry/fapigo"
 
-	"github.com/idfoundry/oid4vcigo"
-	"github.com/idfoundry/oid4vcigo/credential/mdoc"
-	"github.com/idfoundry/oid4vcigo/internal/cose"
-	"github.com/idfoundry/oid4vcigo/issuer"
+	"github.com/idfoundry/oid4vcgo"
+	"github.com/idfoundry/oid4vcgo/credential/mdoc"
+	"github.com/idfoundry/oid4vcgo/internal/cose"
+	"github.com/idfoundry/oid4vcgo/issuer"
 )
 
 // marshalWire JSON-round-trips v (typically a Metadata) into a generic

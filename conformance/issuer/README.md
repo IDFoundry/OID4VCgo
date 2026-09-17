@@ -2,7 +2,7 @@
 
 `cmd/conformance-issuer` pairs a real `fapigo/server.Server` (FAPI 2.0
 Security Profile Final, Wallet Attestation client authentication,
-DPoP) with a real `oid4vcigo/issuer.Issuer` behind real HTTP, for the
+DPoP) with a real `oid4vcgo/issuer.Issuer` behind real HTTP, for the
 OIDF conformance suite's own `oid4vci-1_0-issuer-haip-test-plan`
 ("OpenID for Verifiable Credential Issuance 1.0 Final/HAIP: Test an
 issuer", confirmed against the suite's own source at

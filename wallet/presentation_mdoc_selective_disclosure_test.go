@@ -4,10 +4,10 @@ import (
 	"encoding/base64"
 	"testing"
 
-	"github.com/idfoundry/oid4vcigo/dcql"
-	"github.com/idfoundry/oid4vcigo/internal/testmdoc"
-	"github.com/idfoundry/oid4vcigo/oid4vpmdoc"
-	"github.com/idfoundry/oid4vcigo/wallet"
+	"github.com/idfoundry/oid4vcgo/dcql"
+	"github.com/idfoundry/oid4vcgo/internal/testmdoc"
+	"github.com/idfoundry/oid4vcgo/oid4vpmdoc"
+	"github.com/idfoundry/oid4vcgo/wallet"
 )
 
 // mdocSelectiveParams is the PresentMdocParams every test in this file

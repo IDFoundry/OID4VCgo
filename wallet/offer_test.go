@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/idfoundry/oid4vcigo"
-	"github.com/idfoundry/oid4vcigo/wallet"
+	"github.com/idfoundry/oid4vcgo"
+	"github.com/idfoundry/oid4vcgo/wallet"
 )
 
 func testOffer() oid4vci.CredentialOffer {

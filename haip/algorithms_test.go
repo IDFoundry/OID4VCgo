@@ -3,9 +3,9 @@ package haip_test
 import (
 	"testing"
 
-	"github.com/idfoundry/oid4vcigo/haip"
-	"github.com/idfoundry/oid4vcigo/internal/cose"
-	"github.com/idfoundry/oid4vcigo/internal/jose"
+	"github.com/idfoundry/oid4vcgo/haip"
+	"github.com/idfoundry/oid4vcgo/internal/cose"
+	"github.com/idfoundry/oid4vcgo/internal/jose"
 )
 
 func TestRecommendedAlgorithms(t *testing.T) {

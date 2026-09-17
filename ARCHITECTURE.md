@@ -67,7 +67,7 @@
 
 ## Scope
 
-OID4VCIgo implements the full [HAIP 1.0](SPECIFICATIONS.md) profile: both
+OID4VCgo implements the full [HAIP 1.0](SPECIFICATIONS.md) profile: both
 its issuance half (OID4VCI 1.0, HAIP §4) and its presentation half
 (OID4VP 1.0, HAIP §5). See [SPECIFICATIONS.md](SPECIFICATIONS.md) for the
 exact spec and Internet-Draft versions this targets.
@@ -91,9 +91,9 @@ the root `fapi` package's `URL`/`ParseIssuerURL`/`ParseEndpointURL` for
 issuer/endpoint identifiers, the same "shared value type with identical
 semantics" reasoning that package documents itself.
 
-OID4VCIgo cannot import `go-fapi/internal/*` — Go's `internal/` visibility
+OID4VCgo cannot import `go-fapi/internal/*` — Go's `internal/` visibility
 rule is scoped to the importing path's own module tree, and this is a
-separate module (`github.com/idfoundry/oid4vcigo` vs.
+separate module (`github.com/idfoundry/oid4vcgo` vs.
 `github.com/idfoundry/fapigo`) even though both live under the same GitHub
 org. Anything this repo needs from FAPIgo's protocol core has to already
 be, or become, one of FAPIgo's *public* packages (`server`, `client`,
@@ -104,7 +104,7 @@ here instead.
 **`keys.KeyManager` turned out not to be reusable for credential-level
 signing.** Its `SigningPurpose` is a closed `iota` enum defined entirely
 inside FAPIgo (`keys/signing.go`) — `SigningRequest.Purpose` is typed to
-it directly, so OID4VCIgo cannot construct a request for a purpose FAPIgo
+it directly, so OID4VCgo cannot construct a request for a purpose FAPIgo
 hasn't defined (credential signing, Key Binding JWT signing, key/wallet
 attestation signing). Rather than block `credential/sdjwtvc` on a
 FAPIgo change, it signs and verifies through this repo's own
@@ -1296,7 +1296,7 @@ shape from the phase-by-phase plan, not a description of current code.
 
 These are the rules FAPIgo's own ARCHITECTURE.md establishes that this
 repo inherits by construction (building on FAPIgo's role split); restate
-them here as OID4VCIgo-specific packages land, don't assume they transfer
+them here as OID4VCgo-specific packages land, don't assume they transfer
 automatically to code they didn't originally govern:
 
 - Independent public packages per role (`issuer`/`wallet`/`verifier`), no

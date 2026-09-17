@@ -1,8 +1,8 @@
 package haip
 
 import (
-	"github.com/idfoundry/oid4vcigo/internal/cose"
-	"github.com/idfoundry/oid4vcigo/internal/jose"
+	"github.com/idfoundry/oid4vcgo/internal/cose"
+	"github.com/idfoundry/oid4vcgo/internal/jose"
 )
 
 // RecommendedJOSEAlgorithm and RecommendedCOSEAlgorithm are the

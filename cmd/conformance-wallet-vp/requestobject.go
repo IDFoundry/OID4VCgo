@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"net/url"
 
-	"github.com/idfoundry/oid4vcigo/wallet"
+	"github.com/idfoundry/oid4vcgo/wallet"
 )
 
 // walletNonceEntropyBytes matches this repo's own nonce-generation

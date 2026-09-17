@@ -1,6 +1,6 @@
 # Contributing
 
-OID4VCIgo implements OpenID4VCI 1.0 and OpenID4VP 1.0 under the HAIP 1.0
+OID4VCgo implements OpenID4VCI 1.0 and OpenID4VP 1.0 under the HAIP 1.0
 profile — a conformance-first library, not a best-effort implementation.
 Its design decisions trace back to specific requirements in OID4VCI,
 OID4VP, HAIP, or a spec HAIP pulls in (FAPI 2.0 Security Profile Final,
@@ -44,7 +44,7 @@ standard type (`docs:`, `chore:`, `test:`, `refactor:`, `ci:`) for anything
 that shouldn't bump the version at all. [release-please](https://github.com/googleapis/release-please)
 reads these to compute the next version and `CHANGELOG.md` entry
 automatically — see `release-please-config.json` and
-`.github/workflows/release-please.yml`. OID4VCIgo is pre-1.0
+`.github/workflows/release-please.yml`. OID4VCgo is pre-1.0
 (`bump-minor-pre-major`), so a breaking `feat!:`/`fix!:` bumps `0.x.0`,
 not straight to `1.0.0` — that jump is a deliberate, manual decision, not
 something a commit message alone should trigger.

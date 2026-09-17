@@ -22,11 +22,11 @@ import (
 	"github.com/idfoundry/fapigo/storage"
 	"github.com/idfoundry/fapigo/storage/memstore"
 
-	"github.com/idfoundry/oid4vcigo"
-	"github.com/idfoundry/oid4vcigo/internal/conformancesuite"
-	"github.com/idfoundry/oid4vcigo/internal/jose"
-	"github.com/idfoundry/oid4vcigo/internal/jwe"
-	"github.com/idfoundry/oid4vcigo/wallet"
+	"github.com/idfoundry/oid4vcgo"
+	"github.com/idfoundry/oid4vcgo/internal/conformancesuite"
+	"github.com/idfoundry/oid4vcgo/internal/jose"
+	"github.com/idfoundry/oid4vcgo/internal/jwe"
+	"github.com/idfoundry/oid4vcgo/wallet"
 )
 
 // encryptionEnc is the JWE content encryption algorithm this binary
@@ -162,7 +162,7 @@ func buildClient(ctx context.Context, run *walletRun, module conformancesuite.Su
 
 	now := time.Now()
 	attestationJWT, err := mintClientAttestationJWT(run.attesterKey, run.attesterLeafPEM,
-		"https://oid4vcigo-wallet-attester.example.com", run.clientID, instanceKeyInfo.PublicKey, now)
+		"https://oid4vcgo-wallet-attester.example.com", run.clientID, instanceKeyInfo.PublicKey, now)
 	if err != nil {
 		return nil, fmt.Errorf("mint client attestation: %w", err)
 	}

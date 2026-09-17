@@ -9,7 +9,7 @@ import (
 
 	fapi "github.com/idfoundry/fapigo"
 
-	"github.com/idfoundry/oid4vcigo"
+	"github.com/idfoundry/oid4vcgo"
 )
 
 // ProtectedResourceClient performs a sender-constrained request to a

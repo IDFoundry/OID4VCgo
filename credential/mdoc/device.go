@@ -9,8 +9,8 @@ import (
 
 	"github.com/fxamacker/cbor/v2"
 
-	"github.com/idfoundry/oid4vcigo/internal/cose"
-	"github.com/idfoundry/oid4vcigo/internal/hkdf"
+	"github.com/idfoundry/oid4vcgo/internal/cose"
+	"github.com/idfoundry/oid4vcgo/internal/hkdf"
 )
 
 // DeviceAuthType identifies which of §12.4's two mdoc authentication

@@ -6,7 +6,7 @@ import (
 	"crypto/x509"
 	"fmt"
 
-	"github.com/idfoundry/oid4vcigo/internal/cose"
+	"github.com/idfoundry/oid4vcgo/internal/cose"
 )
 
 // X5ChainIssuerKeyResolver implements MdocIssuerKeyResolver by

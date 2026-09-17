@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/idfoundry/oid4vcigo/internal/jwe"
-	"github.com/idfoundry/oid4vcigo/verifier"
+	"github.com/idfoundry/oid4vcgo/internal/jwe"
+	"github.com/idfoundry/oid4vcgo/verifier"
 )
 
 // TestParseDirectPostJWTResponse drives a real round trip: build a

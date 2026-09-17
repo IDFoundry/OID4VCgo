@@ -10,8 +10,8 @@ import (
 
 	fapi "github.com/idfoundry/fapigo"
 
-	"github.com/idfoundry/oid4vcigo/internal/conformancecert"
-	"github.com/idfoundry/oid4vcigo/internal/conformanceconfig"
+	"github.com/idfoundry/oid4vcgo/internal/conformancecert"
+	"github.com/idfoundry/oid4vcgo/internal/conformanceconfig"
 )
 
 // Config is this binary's own configuration — one JSON file, inline

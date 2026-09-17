@@ -7,7 +7,7 @@ import (
 
 	"github.com/idfoundry/fapigo/fapihttp"
 
-	"github.com/idfoundry/oid4vcigo/internal/jose"
+	"github.com/idfoundry/oid4vcgo/internal/jose"
 )
 
 // Config bounds this Wallet's own behavior. None of these have an
@@ -61,7 +61,7 @@ type Dependencies struct {
 	Random io.Reader
 }
 
-// Wallet is this Wallet's own role implementation — the OID4VCIgo
+// Wallet is this Wallet's own role implementation — the OID4VCgo
 // analog of issuer.Issuer, built on fapigo/client.
 type Wallet struct {
 	cfg     Config

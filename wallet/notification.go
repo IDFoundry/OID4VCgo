@@ -10,7 +10,7 @@ import (
 
 	fapi "github.com/idfoundry/fapigo"
 
-	"github.com/idfoundry/oid4vcigo"
+	"github.com/idfoundry/oid4vcgo"
 )
 
 // NotificationRequest is a Notification Request (§11.1) — its own wire

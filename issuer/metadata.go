@@ -3,10 +3,10 @@ package issuer
 import (
 	"fmt"
 
-	"github.com/idfoundry/oid4vcigo"
-	"github.com/idfoundry/oid4vcigo/internal/cose"
-	"github.com/idfoundry/oid4vcigo/internal/jwe"
-	"github.com/idfoundry/oid4vcigo/internal/jwk"
+	"github.com/idfoundry/oid4vcgo"
+	"github.com/idfoundry/oid4vcgo/internal/cose"
+	"github.com/idfoundry/oid4vcgo/internal/jwe"
+	"github.com/idfoundry/oid4vcgo/internal/jwk"
 )
 
 // CredentialConfiguration describes one Credential this issuer
@@ -30,7 +30,7 @@ type CredentialConfiguration struct {
 
 	// CryptographicBindingMethodsSupported is REQUIRED when
 	// Cryptographic Key Binding applies to this Credential ("jwk" for
-	// key material in JWK format — the only value OID4VCIgo currently
+	// key material in JWK format — the only value OID4VCgo currently
 	// has a use for, since credential/sdjwtvc's holder binding is
 	// JWK-based); omitted otherwise.
 	CryptographicBindingMethodsSupported []string

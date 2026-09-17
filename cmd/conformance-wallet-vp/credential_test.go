@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/idfoundry/oid4vcigo/internal/conformancecert"
-	"github.com/idfoundry/oid4vcigo/internal/jose"
+	"github.com/idfoundry/oid4vcgo/internal/conformancecert"
+	"github.com/idfoundry/oid4vcgo/internal/jose"
 )
 
 // TestIssueFixtureCredential_SetsExp reuses setupWalletUnderTest (the

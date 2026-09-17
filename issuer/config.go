@@ -10,12 +10,12 @@ import (
 
 	fapi "github.com/idfoundry/fapigo"
 
-	"github.com/idfoundry/oid4vcigo"
-	"github.com/idfoundry/oid4vcigo/attestation"
-	"github.com/idfoundry/oid4vcigo/credential/mdoc"
-	"github.com/idfoundry/oid4vcigo/credential/sdjwtvc"
-	"github.com/idfoundry/oid4vcigo/internal/cose"
-	"github.com/idfoundry/oid4vcigo/internal/jose"
+	"github.com/idfoundry/oid4vcgo"
+	"github.com/idfoundry/oid4vcgo/attestation"
+	"github.com/idfoundry/oid4vcgo/credential/mdoc"
+	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
+	"github.com/idfoundry/oid4vcgo/internal/cose"
+	"github.com/idfoundry/oid4vcgo/internal/jose"
 )
 
 // Endpoints are this Credential Issuer's own endpoint URLs — what
@@ -332,7 +332,7 @@ type Dependencies struct {
 }
 
 // Issuer is this Credential Issuer's own role implementation — the
-// OID4VCIgo analog of fapigo/server.Server, built on top of it.
+// OID4VCgo analog of fapigo/server.Server, built on top of it.
 type Issuer struct {
 	cfg  Config
 	deps Dependencies

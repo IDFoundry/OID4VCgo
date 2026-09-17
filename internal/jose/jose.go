@@ -13,7 +13,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/idfoundry/oid4vcigo/internal/ecdsafixed"
+	"github.com/idfoundry/oid4vcgo/internal/ecdsafixed"
 )
 
 // Alg identifies a JWS signature algorithm this package supports.

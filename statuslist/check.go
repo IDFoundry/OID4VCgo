@@ -4,8 +4,8 @@ import (
 	"crypto"
 	"fmt"
 
-	"github.com/idfoundry/oid4vcigo/internal/cose"
-	"github.com/idfoundry/oid4vcigo/internal/jose"
+	"github.com/idfoundry/oid4vcgo/internal/cose"
+	"github.com/idfoundry/oid4vcgo/internal/jose"
 )
 
 // Check validates a Status List Token against issuerPub/alg, checks

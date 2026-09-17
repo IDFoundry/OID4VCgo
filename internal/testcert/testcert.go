@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/idfoundry/oid4vcigo/internal/jose"
+	"github.com/idfoundry/oid4vcgo/internal/jose"
 )
 
 // SelfSigned builds a self-signed leaf certificate for pub, signed by

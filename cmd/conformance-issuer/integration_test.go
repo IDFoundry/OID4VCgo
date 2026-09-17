@@ -9,14 +9,14 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/idfoundry/oid4vcigo/internal/jose"
-	"github.com/idfoundry/oid4vcigo/issuer"
+	"github.com/idfoundry/oid4vcgo/internal/jose"
+	"github.com/idfoundry/oid4vcgo/issuer"
 )
 
 // TestNewServerMux_ServesRealMetadataAndJWKS is the same scenario this
 // binary was manually smoke-tested with (see README.md's own
 // "Status"): newServerMux wires a real fapigo/server.Server and a real
-// oid4vcigo/issuer.Issuer together, and both the FAPI 2.0 Authorization
+// oid4vcgo/issuer.Issuer together, and both the FAPI 2.0 Authorization
 // Server metadata and the OID4VCI Credential Issuer metadata come back
 // correctly formed from the exact same production wiring main.go uses
 // — not a mock of either role.

@@ -24,7 +24,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/idfoundry/oid4vcigo/internal/jwk"
+	"github.com/idfoundry/oid4vcgo/internal/jwk"
 )
 
 // SelfSignedPEM generates a fresh EC P-256 key and a self-signed

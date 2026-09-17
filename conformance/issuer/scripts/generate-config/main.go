@@ -34,7 +34,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/idfoundry/oid4vcigo/internal/conformancecert"
+	"github.com/idfoundry/oid4vcgo/internal/conformancecert"
 )
 
 type generatedConfig struct {

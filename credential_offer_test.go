@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/idfoundry/oid4vcigo"
+	"github.com/idfoundry/oid4vcgo"
 )
 
 func TestTxCode_Validate(t *testing.T) {

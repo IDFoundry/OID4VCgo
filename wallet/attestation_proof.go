@@ -4,8 +4,8 @@ import (
 	"crypto"
 	"fmt"
 
-	"github.com/idfoundry/oid4vcigo/attestation"
-	"github.com/idfoundry/oid4vcigo/internal/jose"
+	"github.com/idfoundry/oid4vcgo/attestation"
+	"github.com/idfoundry/oid4vcgo/internal/jose"
 )
 
 // GenerateAttestationProof builds and signs a Key Attestation JWT

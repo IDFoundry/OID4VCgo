@@ -6,7 +6,7 @@ import (
 	"github.com/idfoundry/fapigo/client"
 	"github.com/idfoundry/fapigo/extension"
 
-	"github.com/idfoundry/oid4vcigo"
+	"github.com/idfoundry/oid4vcgo"
 )
 
 // BuildAuthorizationRequest translates a resolved Credential Offer and

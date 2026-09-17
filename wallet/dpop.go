@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/idfoundry/oid4vcigo/internal/jose"
-	"github.com/idfoundry/oid4vcigo/internal/jwk"
+	"github.com/idfoundry/oid4vcgo/internal/jose"
+	"github.com/idfoundry/oid4vcgo/internal/jwk"
 )
 
 // dpopProofTyp is DPoP's own required JOSE "typ" header (RFC 9449

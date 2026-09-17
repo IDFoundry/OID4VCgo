@@ -27,13 +27,13 @@ This file adds agent-specific process notes.
 
 ## Relationship to FAPIgo
 
-OID4VCIgo is a sister library to [FAPIgo](https://github.com/IDFoundry/FAPIgo)
+OID4VCgo is a sister library to [FAPIgo](https://github.com/IDFoundry/FAPIgo)
 (`go-fapi` in this checkout's sibling directory), reusing FAPIgo's public
 `server`/`client`/`keys`/`storage`/`fapihttp` packages for the FAPI 2.0
 Security Profile Final machinery HAIP requires (PAR, DPoP, PKCE S256, `iss`
 in the authorization response, RFC 8414 metadata). It cannot import
 FAPIgo's `internal/` packages — that's a real Go module boundary, not a
-style choice — so anything OID4VCIgo needs from FAPIgo's protocol core must
+style choice — so anything OID4VCgo needs from FAPIgo's protocol core must
 already be, or become, one of FAPIgo's public packages.
 
 One specific dependency, now resolved: HAIP requires Wallet Attestation (a
@@ -83,7 +83,7 @@ is unit-test-free by design, an outbound-driving CLI tool rather than
 a server; its own verification is the live suite run itself, matching
 FAPIgo's own `cmd/conformance-client`).
 `cmd/conformance-wallet` — the OID4VCI Wallet role, the one FAPIgo
-used to block entirely — drives `oid4vcigo/wallet`/`fapigo/client`
+used to block entirely — drives `oid4vcgo/wallet`/`fapigo/client`
 against the suite's own emulated Authorization Server and Credential
 Issuer, since for this role the suite plays that side, not this repo's
 own binary. All 4 in-scope modules of `oid4vci-1_0-wallet-haip-test-plan`
@@ -109,9 +109,9 @@ request parameters at PAR/CIBA` (FAPIgo PR #304, commit `597f2a7`) — an
 unregistered parameter is now silently dropped instead of failing the
 request. `go.mod` is pinned to this exact commit (no tagged release
 yet). This is the pattern this file's own "flag it, don't reach into
-`fapigo/server` internals" boundary is meant to enable: OID4VCIgo
+`fapigo/server` internals" boundary is meant to enable: OID4VCgo
 surfaces a real cross-repo finding via a live conformance run, FAPIgo's
-own maintainers decide and fix it upstream, OID4VCIgo pins and
+own maintainers decide and fix it upstream, OID4VCgo pins and
 re-verifies — not something to work around locally. See
 `conformance/verifier/README.md`'s, `conformance/wallet-vp/README.md`'s
 and `conformance/issuer/README.md`'s own "Status" sections for the

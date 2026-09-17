@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/idfoundry/oid4vcigo/issuer"
-	"github.com/idfoundry/oid4vcigo/storage"
+	"github.com/idfoundry/oid4vcgo/issuer"
+	"github.com/idfoundry/oid4vcgo/storage"
 )
 
 func TestNotificationStore_IssueThenGet(t *testing.T) {

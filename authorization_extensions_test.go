@@ -5,7 +5,7 @@ import (
 
 	"github.com/idfoundry/fapigo/extension"
 
-	"github.com/idfoundry/oid4vcigo"
+	"github.com/idfoundry/oid4vcgo"
 )
 
 func TestIssuerStateExtension(t *testing.T) {

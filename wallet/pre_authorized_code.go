@@ -13,7 +13,7 @@ import (
 
 	fapi "github.com/idfoundry/fapigo"
 
-	"github.com/idfoundry/oid4vcigo"
+	"github.com/idfoundry/oid4vcgo"
 )
 
 // PreAuthorizedCodeGrantType is the Token Request's own "grant_type"

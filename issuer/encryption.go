@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"slices"
 
-	"github.com/idfoundry/oid4vcigo/internal/jwe"
-	"github.com/idfoundry/oid4vcigo/internal/jwk"
+	"github.com/idfoundry/oid4vcgo/internal/jwe"
+	"github.com/idfoundry/oid4vcgo/internal/jwk"
 )
 
 // jweContentType is the media type §10 requires for an encrypted

@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/idfoundry/oid4vcigo/storage"
+	"github.com/idfoundry/oid4vcgo/storage"
 )
 
 func TestDPoPReplayChecker_UseOnceAllowsFirstUse(t *testing.T) {

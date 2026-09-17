@@ -7,7 +7,7 @@ import (
 	"crypto/rand"
 	"testing"
 
-	"github.com/idfoundry/oid4vcigo/internal/cose"
+	"github.com/idfoundry/oid4vcgo/internal/cose"
 )
 
 const testDeviceDocType = "org.iso.18013.5.1.mDL"

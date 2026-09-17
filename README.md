@@ -1,11 +1,11 @@
-# OID4VCIgo
+# OID4VCgo
 
-[![CI](https://github.com/IDFoundry/OID4VCIgo/actions/workflows/ci.yml/badge.svg)](https://github.com/IDFoundry/OID4VCIgo/actions/workflows/ci.yml)
+[![CI](https://github.com/IDFoundry/OID4VCgo/actions/workflows/ci.yml/badge.svg)](https://github.com/IDFoundry/OID4VCgo/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 **OpenID4VCI 1.0 + OpenID4VP 1.0, under the HAIP 1.0 profile, for Go.**
 
-OID4VCIgo is a sister library to [FAPIgo](https://github.com/IDFoundry/FAPIgo),
+OID4VCgo is a sister library to [FAPIgo](https://github.com/IDFoundry/FAPIgo),
 targeting the full [OpenID4VC High Assurance Interoperability Profile
 (HAIP) 1.0][haip] — the OpenID Foundation's interoperability profile for
 digital credential issuance and presentation where a high level of
@@ -27,11 +27,11 @@ verified against the spec's own published/status text and, for drafts,
 the exact `draft-…-NN` a Final OIDF spec pins, rather than assumed.
 
 ```
-go get github.com/idfoundry/oid4vcigo
+go get github.com/idfoundry/oid4vcgo
 ```
 
 *(Go module paths are lowercased; the GitHub repository itself is
-[IDFoundry/OID4VCIgo](https://github.com/IDFoundry/OID4VCIgo).)*
+[IDFoundry/OID4VCgo](https://github.com/IDFoundry/OID4VCgo).)*
 
 ## Relevant specifications
 

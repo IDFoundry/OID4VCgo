@@ -1,6 +1,6 @@
 package haip
 
-import "github.com/idfoundry/oid4vcigo/internal/jose"
+import "github.com/idfoundry/oid4vcgo/internal/jose"
 
 // WalletRecommendations is what RecommendedWalletConfig returns: the
 // pieces of a wallet.Config HAIP 1.0 actually grounds a specific
