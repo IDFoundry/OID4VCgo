@@ -142,6 +142,34 @@ type wireResponseEncryption struct {
 	Zip string          `json:"zip"`
 }
 
+// responseEncryptionFromWire adapts wire (nil when the Credential
+// Request carried no "credential_response_encryption" object) into the
+// *issuer.ResponseEncryptionRequest RequestCredential expects.
+func responseEncryptionFromWire(wire *wireResponseEncryption) *issuer.ResponseEncryptionRequest {
+	if wire == nil {
+		return nil
+	}
+	return &issuer.ResponseEncryptionRequest{
+		JWK: wire.JWK, Enc: jwe.Enc(wire.Enc), Zip: jwe.Zip(wire.Zip),
+	}
+}
+
+// mdocClaimsForRequest builds this request's own *mdoc.Claims from
+// nameSpaces (cfg.Mdoc.Claims, precomputed once by credentialHandler —
+// nil when cfg.Mdoc is unset, in which case this returns nil too) and
+// docType, with a fresh Signed/ValidFrom/ValidUntil validity window
+// spanning lifetime from now.
+func mdocClaimsForRequest(docType string, nameSpaces map[string]map[string]interface{}, lifetime time.Duration) *mdoc.Claims {
+	if nameSpaces == nil {
+		return nil
+	}
+	now := time.Now()
+	return &mdoc.Claims{
+		DocType: docType, NameSpaces: nameSpaces,
+		Signed: now, ValidFrom: now, ValidUntil: now.Add(lifetime),
+	}
+}
+
 // credentialHandler serves the Credential Endpoint (§8): verifies the
 // presented access token via resourceVerifier (fapigo/resource,
 // per issuer/resource_verifier.go's own recipe), adapts the result
@@ -165,16 +193,21 @@ func credentialHandler(iss *issuer.Issuer, resourceVerifier *fapires.Verifier, c
 
 	// mdocNameSpaceElements is this binary's own fixed mso_mdoc dataset
 	// (cfg.Mdoc.Claims, precomputed once like additional above) — nil
-	// when cfg.Mdoc is unset, so mdocClaimsFor below always returns nil
-	// too and issueOne's own cc.Format dispatch never sees a non-nil
-	// MdocClaims for a request it can't use.
+	// when cfg.Mdoc is unset, so mdocClaimsForRequest below always
+	// returns nil too and issueOne's own cc.Format dispatch never sees a
+	// non-nil MdocClaims for a request it can't use. mdocDocType is
+	// captured alongside it rather than read from cfg.Mdoc.DocType
+	// inline below, so mdocClaimsForRequest never needs to know whether
+	// cfg.Mdoc itself is set.
 	var mdocNameSpaceElements map[string]map[string]interface{}
+	var mdocDocType string
 	if cfg.Mdoc != nil {
 		elements := make(map[string]interface{}, len(cfg.Mdoc.Claims))
 		for name, value := range cfg.Mdoc.Claims {
 			elements[name] = value
 		}
 		mdocNameSpaceElements = map[string]map[string]interface{}{cfg.Mdoc.Namespace: elements}
+		mdocDocType = cfg.Mdoc.DocType
 	}
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -209,14 +242,7 @@ func credentialHandler(iss *issuer.Issuer, resourceVerifier *fapires.Verifier, c
 			http.Error(w, "malformed credential request", http.StatusBadRequest)
 			return
 		}
-		var responseEncryption *issuer.ResponseEncryptionRequest
-		if wire.CredentialResponseEncryption != nil {
-			responseEncryption = &issuer.ResponseEncryptionRequest{
-				JWK: wire.CredentialResponseEncryption.JWK,
-				Enc: jwe.Enc(wire.CredentialResponseEncryption.Enc),
-				Zip: jwe.Zip(wire.CredentialResponseEncryption.Zip),
-			}
-		}
+		responseEncryption := responseEncryptionFromWire(wire.CredentialResponseEncryption)
 
 		exp := conformancecert.CredentialExp(time.Now(), issuedCredentialLifetime)
 		auth := issuer.AuthorizedRequest{ClientID: authCtx.ClientID, Scopes: authCtx.Scopes}
@@ -228,14 +254,7 @@ func credentialHandler(iss *issuer.Issuer, resourceVerifier *fapires.Verifier, c
 		// this handler doesn't need to itself look up which format
 		// wire.CredentialConfigurationID/CredentialIdentifier resolves
 		// to.
-		var mdocClaims *mdoc.Claims
-		if mdocNameSpaceElements != nil {
-			now := time.Now()
-			mdocClaims = &mdoc.Claims{
-				DocType: cfg.Mdoc.DocType, NameSpaces: mdocNameSpaceElements,
-				Signed: now, ValidFrom: now, ValidUntil: now.Add(issuedCredentialLifetime),
-			}
-		}
+		mdocClaims := mdocClaimsForRequest(mdocDocType, mdocNameSpaceElements, issuedCredentialLifetime)
 
 		result, err := iss.RequestCredential(r.Context(), auth, issuer.CredentialRequest{
 			CredentialConfigurationID: wire.CredentialConfigurationID,

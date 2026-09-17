@@ -60,6 +60,15 @@ import (
 	"github.com/idfoundry/oid4vcigo/internal/jwk"
 )
 
+// metadataTestName/happyFlowTestName are the two already-known-passing
+// sanity-check modules every battery variant (haipBattery, baseBattery,
+// mdocBattery) drives first or exclusively — named once here rather
+// than repeating the literal in all three.
+const (
+	metadataTestName  = "oid4vci-1_0-issuer-metadata-test"
+	happyFlowTestName = "oid4vci-1_0-issuer-happy-flow"
+)
+
 // battery is every testName this binary drives — the HAIP issuer
 // plan's own Discovery module (its own ModuleListEntry, no VCI variant
 // parameters) plus the 39-module generic FAPI2SP client battery
@@ -77,8 +86,8 @@ import (
 var haipBattery = []string{
 	// Sanity check: already-passing modules, confirming the freshly
 	// generated config/keys are behavior-preserving.
-	"oid4vci-1_0-issuer-metadata-test",
-	"oid4vci-1_0-issuer-happy-flow",
+	metadataTestName,
+	happyFlowTestName,
 
 	// Discovery — its own ModuleListEntry, no VCI variant parameters.
 	"fapi2-security-profile-final-discovery-end-point-verification",
@@ -139,9 +148,9 @@ var haipBattery = []string{
 // behaves the same way when the suite treats it as a base-profile VCI
 // issuer rather than a HAIP one, not new functional coverage.
 var baseBattery = []string{
-	"oid4vci-1_0-issuer-metadata-test",
+	metadataTestName,
 	"oid4vci-1_0-issuer-metadata-test-signed",
-	"oid4vci-1_0-issuer-happy-flow",
+	happyFlowTestName,
 	"oid4vci-1_0-issuer-happy-flow-additional-requests",
 	"oid4vci-1_0-issuer-happy-flow-multiple-clients",
 	"oid4vci-1_0-issuer-happy-flow-skip-notification",
@@ -178,8 +187,8 @@ var baseBattery = []string{
 // mdoc would just re-prove what haipBattery already proved under
 // sd_jwt_vc, not new coverage.
 var mdocBattery = []string{
-	"oid4vci-1_0-issuer-metadata-test",
-	"oid4vci-1_0-issuer-happy-flow",
+	metadataTestName,
+	happyFlowTestName,
 }
 
 func main() {
