@@ -130,4 +130,20 @@
 // (§13.5: unauthenticated, integrity-unprotected) — ResolveCredentialOffer
 // only checks structural well-formedness (oid4vci.CredentialOffer.Validate),
 // never who sent it.
+//
+// # OID4VP (presentation)
+//
+// This package also implements the Wallet side of OID4VP: HeldCredential,
+// MatchDCQLQuery and PresentCredentials (presentation.go) build a VP
+// Token from a DCQL query and this Wallet's own held credentials;
+// ParseAuthorizationRequest and BuildDirectPostResponse
+// (authorization_request.go, direct_post_response.go) verify an
+// incoming redirect-flow Authorization Request and build its encrypted
+// direct_post.jwt response — the exact mirror image of verifier's own
+// BuildAuthorizationRequest/ParseDirectPostJWTResponse. Both functions
+// are pure (no HTTP): fetching request_uri and POSTing the response
+// are the caller's own job, the same split verifier draws on its side.
+// Only the "x509_hash" Client Identifier Prefix is supported (HAIP's
+// own mandate, and the only one verifier itself produces) — no DC API
+// flow, no other client_id scheme, no di_vp presentations.
 package wallet

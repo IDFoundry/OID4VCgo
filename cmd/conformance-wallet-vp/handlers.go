@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/idfoundry/oid4vcigo/internal/jwe"
 	"github.com/idfoundry/oid4vcigo/wallet"
 )
 
@@ -117,19 +116,14 @@ func (s *server) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	body := map[string]any{"vp_token": vpToken}
-	if authReq.State != "" {
-		body["state"] = authReq.State
-	}
-	bodyJSON, err := json.Marshal(body)
+	responseJWE, err := wallet.BuildDirectPostResponse(wallet.BuildDirectPostResponseParams{
+		VPToken: vpToken, State: authReq.State,
+		EncryptionKey: authReq.ResponseEncryptionKey, EncryptionKeyID: authReq.ResponseEncryptionKeyID,
+		EncryptionEnc: authReq.ResponseEncryptionEnc,
+	})
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	responseJWE, err := jwe.Encrypt(authReq.ResponseEncryptionKey, jwe.Enc(authReq.ResponseEncryptionEnc), bodyJSON, jwe.EncryptOptions{KeyID: authReq.ResponseEncryptionKeyID})
-	if err != nil {
-		log.Printf("encrypt response: %v", err)
-		http.Error(w, fmt.Sprintf("encrypt response: %v", err), http.StatusInternalServerError)
+		log.Printf("build direct_post response: %v", err)
+		http.Error(w, fmt.Sprintf("build direct_post response: %v", err), http.StatusInternalServerError)
 		return
 	}
 
