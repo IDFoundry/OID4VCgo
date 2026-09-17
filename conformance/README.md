@@ -148,12 +148,17 @@ negative-test expectations differ.
   — the suite itself plays the entire emulated Authorization Server
   and Credential Issuer for this role, the opposite shape from
   `issuer/`. **Confirmed live against a real, locally-run OIDF suite,
-  all 4 in-scope modules `FINISHED`/`PASSED`** on two independent runs
+  all 4 in-scope modules × all 3 issuance-mode/encryption crossings
+  (12 module instances) `FINISHED`/`PASSED`** on four independent runs
   — `credential-issuance`, `credential-issuance-notification`,
   `client-attestation-challenge` (proving FAPIgo PR #318's
   `client.ChallengeSource` against the suite's own independent
   Attestation Challenge Endpoint implementation, not just FAPIgo's own
-  unit tests), and `batch-credential-issuance`. `deferred`/`encrypted`
-  issuance-mode crossings, the plan's generic FAPI2SP battery module
-  list, and `issuer_initiated` flow variants aren't covered yet. See
+  unit tests), and `batch-credential-issuance`, each crossed with
+  `immediate`+`plain`, `deferred`+`plain` and `immediate`+`encrypted`.
+  Driving the encrypted crossing surfaced a genuine pre-existing bug in
+  `wallet` itself — its ephemeral response-decryption JWK never
+  declared its own `alg`, which §8.2 requires — now fixed with a
+  regression test. The plan's generic FAPI2SP battery module list and
+  `issuer_initiated` flow variants aren't covered yet. See
   `wallet/README.md`.

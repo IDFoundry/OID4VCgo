@@ -4,8 +4,10 @@
 headlessly through the OIDF conformance suite's own
 `oid4vci-1_0-wallet-haip-test-plan` ("OpenID for Verifiable Credential
 Issuance 1.0 Final/HAIP: Test a wallet") — specifically the
-`wallet_initiated`, `immediate`+`plain` crossing of its 4 non-battery
-modules. See "Scope" below for what isn't covered yet.
+`wallet_initiated` flow variant's 4 non-battery modules, crossed with
+all 3 of the plan's own issuance-mode/encryption variants
+(`immediate`+`plain`, `deferred`+`plain`, `immediate`+`encrypted`). See
+"Scope" below for what isn't covered yet.
 
 ## Why this binary is a one-shot CLI tool, not a server
 
@@ -73,13 +75,53 @@ the already-running local suite instance one fix at a time:
   published **with a trailing slash** — `flow.go` appends one to
   `module.URL` in both places; without it,
   `ValidateClientAttestationProofJwtAudience` rejects every PoP with
-  "aud claim... did not match the authorization server issuer".
+  "aud claim... did not match the authorization server issuer". The
+  same trailing slash also matters for the Credential Issuer Metadata
+  request path itself (see the `immediate`+`encrypted` finding below).
+- `POST /api/plan` requires a `credential_format` variant selector too
+  (`sd_jwt_vc` here) even though the HAIP plan's own module-list
+  entries never set it — `createTestModule failed: Missing value for
+  required variant parameter: credential_format` otherwise.
+- **`deferred`+`plain`**: `RequestCredential`'s own `TransactionID`
+  (§8.3's "deferred at first response" case) needs polling
+  `RequestDeferredCredential` until it actually returns credentials —
+  `wallet` already had this primitive; `flow.go`'s own
+  `pollDeferredCredential` is the only new logic needed.
+- **`immediate`+`encrypted`** surfaced two real, distinct bugs:
+  - **RFC 8414 §3.1's own well-known-path-insertion rule applies to
+    Credential Issuer Metadata discovery too**, and specifically to
+    the URL this binary itself must build to fetch it:
+    `/.well-known/openid-credential-issuer` goes *before* the issuer's
+    own path component (`https://host/.well-known/openid-credential-issuer/test/a/<alias>/`),
+    not appended after it — confirmed live twice, first via a plain
+    404-shaped "does not match expected URL path" failure, and then
+    again once discovering the path itself also needs the same
+    trailing slash `CredentialIssuer`'s own `aud` claim does.
+  - **A genuine bug in `wallet` itself**, not this binary:
+    `RequestCredential`/`RequestDeferredCredential`'s own ephemeral
+    `credential_response_encryption.jwk` never declared an `"alg"`
+    member — `wallet.ResponseEncryption`'s doc comment never promised
+    one either, but §8.2 requires the Issuer be told which JWE key
+    management algorithm to encrypt the response back with, and the
+    suite's own `invalid_encryption_parameters` check enforces it
+    ("credential_response_encryption must identify the encryption
+    algorithm via 'jwk.alg'"). Fixed in `wallet/encryption.go`'s
+    `prepareResponseEncryption` — this package only ever performs
+    ECDH-ES Direct Key Agreement (`internal/jwe`'s sole supported
+    `Alg`), so `"ECDH-ES"` is always the right, unambiguous value, not
+    something `ResponseEncryption` needs its own field for. New
+    regression test: `TestResponseEncryptionJWKDeclaresAlg`
+    (`wallet/encryption_test.go`) — the existing round-trip test never
+    caught this because its own fake issuer never checked for `alg` at
+    all, exactly the gap a real conformance suite closes.
 
 ## Status
 
-**Confirmed live, repeatedly, against a real local OIDF conformance
-suite instance** (Docker, `docker-compose-prebuilt.yml`). All 4
-in-scope modules `FINISHED`/`PASSED` on two independent runs:
+**Confirmed live, repeatedly (4 independent full runs), against a
+real local OIDF conformance suite instance** (Docker,
+`docker-compose-prebuilt.yml`). All 4 in-scope modules × all 3
+issuance-mode/encryption crossings — 12 module instances —
+`FINISHED`/`PASSED`:
 
 - `oid4vci-1_0-wallet-test-credential-issuance`
 - `oid4vci-1_0-wallet-test-credential-issuance-notification`
@@ -91,6 +133,10 @@ in-scope modules `FINISHED`/`PASSED` on two independent runs:
   FAPIgo's own unit tests.
 - `oid4vci-1_0-wallet-test-batch-credential-issuance`
 
+...each crossed with `immediate`+`plain`, `deferred`+`plain`, and
+`immediate`+`encrypted` (`vci_credential_issuance_mode`/
+`vci_credential_encryption`).
+
 This is the live-suite counterpart to
 `cmd/conformance-issuer`'s own `TestFullFlow_RealClientDrivesAttestationAuth`:
 that test proved a real `fapigo/client` wallet interoperates with a
@@ -99,17 +145,25 @@ wallet-side stack against the actual OIDF suite's own independent
 implementation of the AS/Issuer side and its own Attestation
 Challenge Endpoint.
 
+## Debugging
+
+`-dump-config` prints the generated suite-side plan configuration JSON
+and exits instead of creating a plan — useful for probing
+`POST /api/plan`'s own validation by hand against a config this binary
+actually generates (rather than a hand-written one, which routinely
+fails on fields this binary already gets right). Every module outcome
+line also includes the module's own id and `/api/log/{id}` URL, so a
+suite-graded `FAILED` (as opposed to a driver error) can always be
+traced to the suite's own log without re-instrumenting anything.
+
 ## Scope
 
-**In scope**: `wallet_initiated` flow variant, `immediate`+`plain`
-issuance mode, the 4 modules listed above.
+**In scope**: `wallet_initiated` flow variant, all 4 modules listed
+above, crossed with all 3 issuance-mode/encryption variants the HAIP
+plan itself enumerates for them.
 
 **Not yet covered** (separate, later, only if asked):
 
-- `deferred`+`plain` and `immediate`+`encrypted` issuance-mode
-  crossings — `wallet` already has `RequestDeferredCredential`/
-  `RequestEncryption`/`ResponseEncryption`, so this would be a config/
-  flag toggle on the same binary, not new protocol logic.
 - The HAIP plan's 4th module-list entry (the generic FAPI2SP client
   battery — PAR/DPoP/token edge cases wrapped in VCI variant
   selectors). Already covered in spirit by FAPIgo's own
