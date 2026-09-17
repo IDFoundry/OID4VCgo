@@ -528,53 +528,101 @@ func TestFullFlow_BatchIssuanceReturnsOneCredentialPerProof(t *testing.T) {
 // credential_response_encryption, and decrypts the issuer's own
 // response with that same key — a full encrypt→issue→encrypt→decrypt
 // round trip through the real binary, not a mock of either side.
-func TestFullFlow_EncryptedCredentialRequestAndResponse(t *testing.T) {
-	now := time.Now()
-	client, cfg, attesterKey, clientKey := setupFullFlowTest(t, "encryption-test-client", "encryption-test-subject")
+// setupEncryptedCredentialRequestTest drives setupFullFlowTest +
+// performAuthFlowThroughNonce + a single jwt-type proof for every
+// full-flow test in this file that POSTs an *encrypted* Credential
+// Request — the shared plumbing every one of them needs before it can
+// build its own plaintext body (they differ only in exactly what that
+// body contains, and what outer "enc" it gets encrypted with).
+func setupEncryptedCredentialRequestTest(t *testing.T, clientID, defaultSubject string) (client *http.Client, cfg Config, clientKey, requestDecryptionKey *ecdsa.PrivateKey, accessToken, proofJWT string, now time.Time) {
+	t.Helper()
+	now = time.Now()
+	var attesterKey *ecdsa.PrivateKey
+	client, cfg, attesterKey, clientKey = setupFullFlowTest(t, clientID, defaultSubject)
 	holderKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatalf("generate holder key: %v", err)
 	}
-	requestDecryptionKey, err := cfg.credentialRequestDecryptionKey()
+	requestDecryptionKey, err = cfg.credentialRequestDecryptionKey()
 	if err != nil {
 		t.Fatalf("credentialRequestDecryptionKey: %v", err)
 	}
+	var cNonce string
+	accessToken, cNonce = performAuthFlowThroughNonce(t, client, cfg, attesterKey, clientKey, now)
+	proofJWT, err = buildCredentialProofJWT(holderKey, cfg.Client.ID, cfg.Issuer, cNonce, now)
+	if err != nil {
+		t.Fatalf("buildCredentialProofJWT: %v", err)
+	}
+	return client, cfg, clientKey, requestDecryptionKey, accessToken, proofJWT, now
+}
+
+// buildWalletResponseEncryptionKey generates a fresh ephemeral P-256
+// "Wallet" key for credential_response_encryption, returning both its
+// own private key (needed to decrypt a real response back) and its
+// wire JWK. bogusAlg, when non-empty, is embedded as the JWK's own
+// "alg" member — reproducing the OIDF suite's own literal
+// "UNSUPPORTED_ALG" probe for a Wallet-declared alg this issuer can't
+// honor.
+func buildWalletResponseEncryptionKey(t *testing.T, bogusAlg string) (walletKey *ecdsa.PrivateKey, walletJWK json.RawMessage) {
+	t.Helper()
 	walletKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatalf("generate wallet response-encryption key: %v", err)
 	}
-	walletJWK, err := jwk.Marshal(&walletKey.PublicKey)
+	pubJWK, err := jwk.Marshal(&walletKey.PublicKey)
 	if err != nil {
 		t.Fatalf("jwk.Marshal: %v", err)
 	}
-
-	accessToken, cNonce := performAuthFlowThroughNonce(t, client, cfg, attesterKey, clientKey, now)
-
-	proofJWT, err := buildCredentialProofJWT(holderKey, cfg.Client.ID, cfg.Issuer, cNonce, now)
-	if err != nil {
-		t.Fatalf("buildCredentialProofJWT: %v", err)
+	if bogusAlg == "" {
+		raw, err := json.Marshal(pubJWK)
+		if err != nil {
+			t.Fatalf("marshal wallet jwk: %v", err)
+		}
+		return walletKey, raw
 	}
-	plaintextBody, err := json.Marshal(map[string]any{
-		"credential_configuration_id": cfg.CredentialConfigurationID,
-		"proofs":                      map[string][]string{"jwt": {proofJWT}},
-		"credential_response_encryption": map[string]any{
-			"jwk": walletJWK,
-			"enc": "A128GCM",
-		},
-	})
+	raw, err := json.Marshal(struct {
+		jwk.JWK
+		Alg string `json:"alg"`
+	}{JWK: pubJWK, Alg: bogusAlg})
+	if err != nil {
+		t.Fatalf("marshal wallet jwk with alg: %v", err)
+	}
+	return walletKey, raw
+}
+
+// encryptAndPostCredentialRequest marshals plaintextBody, encrypts it
+// to requestDecryptionKey's own public half with outerEnc (the JWE
+// "enc" the *outer* Credential Request encryption itself uses), and
+// POSTs it — the one request-building sequence every encrypted-request
+// test in this file shares, regardless of what's actually under test
+// inside plaintextBody or outerEnc.
+func encryptAndPostCredentialRequest(t *testing.T, client *http.Client, cfg Config, clientKey, requestDecryptionKey *ecdsa.PrivateKey, accessToken string, outerEnc jwe.Enc, plaintextBody map[string]any, now time.Time) *http.Response {
+	t.Helper()
+	body, err := json.Marshal(plaintextBody)
 	if err != nil {
 		t.Fatalf("marshal plaintext credential request: %v", err)
 	}
-	encryptedBody, err := jwe.Encrypt(&requestDecryptionKey.PublicKey, jwe.A128GCM, plaintextBody, jwe.EncryptOptions{KeyID: credentialRequestDecryptionKeyID})
+	encryptedBody, err := jwe.Encrypt(&requestDecryptionKey.PublicKey, outerEnc, body, jwe.EncryptOptions{KeyID: credentialRequestDecryptionKeyID})
 	if err != nil {
 		t.Fatalf("jwe.Encrypt (request): %v", err)
 	}
-
 	req := buildCredentialRequest(t, cfg, clientKey, accessToken, "application/jwt", []byte(encryptedBody), now)
 	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatalf("POST /credential: %v", err)
 	}
+	return resp
+}
+
+func TestFullFlow_EncryptedCredentialRequestAndResponse(t *testing.T) {
+	client, cfg, clientKey, requestDecryptionKey, accessToken, proofJWT, now := setupEncryptedCredentialRequestTest(t, "encryption-test-client", "encryption-test-subject")
+	walletKey, walletJWK := buildWalletResponseEncryptionKey(t, "")
+
+	resp := encryptAndPostCredentialRequest(t, client, cfg, clientKey, requestDecryptionKey, accessToken, jwe.A128GCM, map[string]any{
+		"credential_configuration_id":    cfg.CredentialConfigurationID,
+		"proofs":                         map[string][]string{"jwt": {proofJWT}},
+		"credential_response_encryption": map[string]any{"jwk": walletJWK, "enc": "A128GCM"},
+	}, now)
 	defer func() { _ = resp.Body.Close() }()
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -614,40 +662,12 @@ func TestFullFlow_EncryptedCredentialRequestAndResponse(t *testing.T) {
 // binary rejects it outright rather than silently accepting an
 // algorithm it never offered.
 func TestFullFlow_CredentialRequestRejectsUnsupportedEncAlgorithm(t *testing.T) {
-	now := time.Now()
-	client, cfg, attesterKey, clientKey := setupFullFlowTest(t, "encryption-fail-test-client", "encryption-fail-test-subject")
-	holderKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatalf("generate holder key: %v", err)
-	}
-	requestDecryptionKey, err := cfg.credentialRequestDecryptionKey()
-	if err != nil {
-		t.Fatalf("credentialRequestDecryptionKey: %v", err)
-	}
+	client, cfg, clientKey, requestDecryptionKey, accessToken, proofJWT, now := setupEncryptedCredentialRequestTest(t, "encryption-fail-test-client", "encryption-fail-test-subject")
 
-	accessToken, cNonce := performAuthFlowThroughNonce(t, client, cfg, attesterKey, clientKey, now)
-
-	proofJWT, err := buildCredentialProofJWT(holderKey, cfg.Client.ID, cfg.Issuer, cNonce, now)
-	if err != nil {
-		t.Fatalf("buildCredentialProofJWT: %v", err)
-	}
-	plaintextBody, err := json.Marshal(map[string]any{
+	resp := encryptAndPostCredentialRequest(t, client, cfg, clientKey, requestDecryptionKey, accessToken, jwe.A192GCM, map[string]any{
 		"credential_configuration_id": cfg.CredentialConfigurationID,
 		"proofs":                      map[string][]string{"jwt": {proofJWT}},
-	})
-	if err != nil {
-		t.Fatalf("marshal plaintext credential request: %v", err)
-	}
-	encryptedBody, err := jwe.Encrypt(&requestDecryptionKey.PublicKey, jwe.A192GCM, plaintextBody, jwe.EncryptOptions{KeyID: credentialRequestDecryptionKeyID})
-	if err != nil {
-		t.Fatalf("jwe.Encrypt (request): %v", err)
-	}
-
-	req := buildCredentialRequest(t, cfg, clientKey, accessToken, "application/jwt", []byte(encryptedBody), now)
-	resp, err := client.Do(req)
-	if err != nil {
-		t.Fatalf("POST /credential: %v", err)
-	}
+	}, now)
 	defer func() { _ = resp.Body.Close() }()
 	assertCredentialErrorCode(t, resp, "invalid_encryption_parameters")
 }
@@ -693,52 +713,14 @@ func assertCredentialErrorCode(t *testing.T, resp *http.Response, wantCode strin
 // binary's own test suite exercised that specific path through the
 // real HTTP handler until now.
 func TestFullFlow_CredentialResponseEncryptionRejectsUnsupportedEncAlgorithm(t *testing.T) {
-	now := time.Now()
-	client, cfg, attesterKey, clientKey := setupFullFlowTest(t, "response-encryption-fail-test-client", "response-encryption-fail-test-subject")
-	holderKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatalf("generate holder key: %v", err)
-	}
-	requestDecryptionKey, err := cfg.credentialRequestDecryptionKey()
-	if err != nil {
-		t.Fatalf("credentialRequestDecryptionKey: %v", err)
-	}
-	walletKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatalf("generate wallet response-encryption key: %v", err)
-	}
-	walletJWK, err := jwk.Marshal(&walletKey.PublicKey)
-	if err != nil {
-		t.Fatalf("jwk.Marshal: %v", err)
-	}
+	client, cfg, clientKey, requestDecryptionKey, accessToken, proofJWT, now := setupEncryptedCredentialRequestTest(t, "response-encryption-fail-test-client", "response-encryption-fail-test-subject")
+	_, walletJWK := buildWalletResponseEncryptionKey(t, "")
 
-	accessToken, cNonce := performAuthFlowThroughNonce(t, client, cfg, attesterKey, clientKey, now)
-
-	proofJWT, err := buildCredentialProofJWT(holderKey, cfg.Client.ID, cfg.Issuer, cNonce, now)
-	if err != nil {
-		t.Fatalf("buildCredentialProofJWT: %v", err)
-	}
-	plaintextBody, err := json.Marshal(map[string]any{
-		"credential_configuration_id": cfg.CredentialConfigurationID,
-		"proofs":                      map[string][]string{"jwt": {proofJWT}},
-		"credential_response_encryption": map[string]any{
-			"jwk": walletJWK,
-			"enc": "A192GCM",
-		},
-	})
-	if err != nil {
-		t.Fatalf("marshal plaintext credential request: %v", err)
-	}
-	encryptedBody, err := jwe.Encrypt(&requestDecryptionKey.PublicKey, jwe.A128GCM, plaintextBody, jwe.EncryptOptions{KeyID: credentialRequestDecryptionKeyID})
-	if err != nil {
-		t.Fatalf("jwe.Encrypt (request): %v", err)
-	}
-
-	req := buildCredentialRequest(t, cfg, clientKey, accessToken, "application/jwt", []byte(encryptedBody), now)
-	resp, err := client.Do(req)
-	if err != nil {
-		t.Fatalf("POST /credential: %v", err)
-	}
+	resp := encryptAndPostCredentialRequest(t, client, cfg, clientKey, requestDecryptionKey, accessToken, jwe.A128GCM, map[string]any{
+		"credential_configuration_id":    cfg.CredentialConfigurationID,
+		"proofs":                         map[string][]string{"jwt": {proofJWT}},
+		"credential_response_encryption": map[string]any{"jwk": walletJWK, "enc": "A192GCM"},
+	}, now)
 	defer func() { _ = resp.Body.Close() }()
 	if ct := resp.Header.Get("Content-Type"); ct != "application/json" {
 		t.Errorf("Content-Type = %q, want application/json (a plain JSON error, not an encrypted body)", ct)
@@ -761,59 +743,14 @@ func TestFullFlow_CredentialResponseEncryptionRejectsUnsupportedEncAlgorithm(t *
 // (with its own ECDH-ES, silently ignoring the mismatch) — a real
 // finding, not a suite-satisfying formality.
 func TestFullFlow_CredentialResponseEncryptionRejectsMismatchedJWKAlg(t *testing.T) {
-	now := time.Now()
-	client, cfg, attesterKey, clientKey := setupFullFlowTest(t, "response-encryption-alg-fail-test-client", "response-encryption-alg-fail-test-subject")
-	holderKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatalf("generate holder key: %v", err)
-	}
-	requestDecryptionKey, err := cfg.credentialRequestDecryptionKey()
-	if err != nil {
-		t.Fatalf("credentialRequestDecryptionKey: %v", err)
-	}
-	walletKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatalf("generate wallet response-encryption key: %v", err)
-	}
-	walletJWK, err := jwk.Marshal(&walletKey.PublicKey)
-	if err != nil {
-		t.Fatalf("jwk.Marshal: %v", err)
-	}
-	walletJWKWithBogusAlg, err := json.Marshal(struct {
-		jwk.JWK
-		Alg string `json:"alg"`
-	}{JWK: walletJWK, Alg: "UNSUPPORTED_ALG"})
-	if err != nil {
-		t.Fatalf("marshal wallet jwk with alg: %v", err)
-	}
+	client, cfg, clientKey, requestDecryptionKey, accessToken, proofJWT, now := setupEncryptedCredentialRequestTest(t, "response-encryption-alg-fail-test-client", "response-encryption-alg-fail-test-subject")
+	_, walletJWKWithBogusAlg := buildWalletResponseEncryptionKey(t, "UNSUPPORTED_ALG")
 
-	accessToken, cNonce := performAuthFlowThroughNonce(t, client, cfg, attesterKey, clientKey, now)
-
-	proofJWT, err := buildCredentialProofJWT(holderKey, cfg.Client.ID, cfg.Issuer, cNonce, now)
-	if err != nil {
-		t.Fatalf("buildCredentialProofJWT: %v", err)
-	}
-	plaintextBody, err := json.Marshal(map[string]any{
-		"credential_configuration_id": cfg.CredentialConfigurationID,
-		"proofs":                      map[string][]string{"jwt": {proofJWT}},
-		"credential_response_encryption": map[string]any{
-			"jwk": json.RawMessage(walletJWKWithBogusAlg),
-			"enc": "A128GCM",
-		},
-	})
-	if err != nil {
-		t.Fatalf("marshal plaintext credential request: %v", err)
-	}
-	encryptedBody, err := jwe.Encrypt(&requestDecryptionKey.PublicKey, jwe.A128GCM, plaintextBody, jwe.EncryptOptions{KeyID: credentialRequestDecryptionKeyID})
-	if err != nil {
-		t.Fatalf("jwe.Encrypt (request): %v", err)
-	}
-
-	req := buildCredentialRequest(t, cfg, clientKey, accessToken, "application/jwt", []byte(encryptedBody), now)
-	resp, err := client.Do(req)
-	if err != nil {
-		t.Fatalf("POST /credential: %v", err)
-	}
+	resp := encryptAndPostCredentialRequest(t, client, cfg, clientKey, requestDecryptionKey, accessToken, jwe.A128GCM, map[string]any{
+		"credential_configuration_id":    cfg.CredentialConfigurationID,
+		"proofs":                         map[string][]string{"jwt": {proofJWT}},
+		"credential_response_encryption": map[string]any{"jwk": walletJWKWithBogusAlg, "enc": "A128GCM"},
+	}, now)
 	defer func() { _ = resp.Body.Close() }()
 	if ct := resp.Header.Get("Content-Type"); ct != "application/json" {
 		t.Errorf("Content-Type = %q, want application/json (a plain JSON error, not an encrypted body)", ct)
