@@ -135,9 +135,10 @@ claim it doesn't itself model, the OID4VCI-specific ones included.
 
 ## Planned package layout
 
-Only `credential/sdjwtvc`, `statuslist`, `attestation`, `internal/jose`
-and a first slice of `issuer` exist so far; the rest below is the target
-shape from the phase-by-phase plan, not a description of current code.
+Every package below is marked `(done)` in the status block at the top
+of this file once it's actually implemented and tested — check there
+before this section for the current picture. `conformance` is the one
+package still genuinely in progress; see its own bullet below.
 
 - **`credential/sdjwtvc`** (done) — SD-JWT VC (`draft-ietf-oauth-sd-jwt-vc-11`)
   on top of base SD-JWT (RFC 9901): `Issue`/`Verify`, `SD`/`SDElement`
@@ -1278,24 +1279,26 @@ shape from the phase-by-phase plan, not a description of current code.
   binaries wiring the real production package behind real HTTP, Docker
   attaching to the suite's own network, a config generator producing
   throwaway key material rather than committing any) and its own
-  AGENTS.md documentation convention. `cmd/conformance-verifier` (OID4VP
-  1.0 Final/HAIP Verifier role) and `cmd/conformance-wallet-vp` (OID4VP
-  Wallet role, direct_post.jwt module list only) exist, compile, are
-  unit-tested, and were confirmed live against each other end to end
-  (a real cryptographic round trip). `cmd/conformance-issuer` (OID4VCI
-  1.0 Final/HAIP Issuer role) pairs a real `fapigo/server.Server`
-  (`AttestationBasedClientAuthentication` enabled — the first real
-  exercise of that mode anywhere) with a real `issuer.Issuer` via
-  `issuer/resource_verifier.go`'s own recipe (also its first real
-  exercise); confirmed live end to end (PAR → consent → token → nonce →
-  credential, with a real Client Attestation + PoP JWT pair and DPoP
-  throughout), surfacing and fixing three real bugs along the way —
-  see `conformance/issuer/README.md`'s own "Status". None of the three
-  has run against the live OIDF suite itself yet. See `conformance/README.md` for current
-  status per role, and the approved roadmap for the remaining phases
-  (OID4VP Wallet's own dc_api.jwt module lists, and OID4VCI Wallet —
-  blocked on a FAPIgo-side change, see AGENTS.md's "Relationship to
-  FAPIgo").
+  AGENTS.md documentation convention. All four binaries exist, compile,
+  are unit-tested, and have each been confirmed live against a real,
+  locally-run OIDF conformance suite instance — not just against each
+  other: `cmd/conformance-verifier` (OID4VP 1.0 Final/HAIP Verifier
+  role), `cmd/conformance-wallet-vp` (OID4VP Wallet role,
+  `direct_post.jwt` module list), `cmd/conformance-issuer` (OID4VCI 1.0
+  Final/HAIP Issuer role — every OID4VCI-specific module, the generic
+  FAPI2SP battery, the base non-HAIP plan, and `mso_mdoc`), and
+  `cmd/conformance-wallet` (OID4VCI 1.0 Final/HAIP Wallet role — every
+  non-battery module across all issuance-mode/encryption crossings, the
+  FAPI2SP battery, both Key Attestation conveyance methods,
+  `issuer_initiated`, the base plan, and `mso_mdoc`). Each run has
+  surfaced and fixed real gaps, in this repo and (twice) upstream in
+  FAPIgo; module counts change as coverage grows, so see
+  `conformance/README.md` for current status per role rather than
+  trusting a specific number repeated here. The one gap every role's
+  own README calls out identically: actually invoking the W3C Digital
+  Credentials API for the `dc_api.jwt`/DC API module lists is a
+  browser/OS platform concern outside any Go library's own transport
+  responsibilities, not something left undone here.
 
 ## Design rules carried over from FAPIgo
 

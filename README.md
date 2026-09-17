@@ -24,9 +24,13 @@ own algorithm requirements — are unconditional in the `issuer`/`wallet`/
 `verifier` packages themselves. See ARCHITECTURE.md's "Relationship to
 FAPIgo" section for the specific list.
 
-> **⚠ Very early stage.** This repository currently has no protocol
-> packages — see [ARCHITECTURE.md](ARCHITECTURE.md) for the planned
-> package layout and its current status. Not usable yet.
+> **⚠ Pre-1.0, APIs may still change.** Every role package — `issuer`,
+> `wallet`, `verifier`, `credential/sdjwtvc`, `credential/mdoc`,
+> `statuslist`, `attestation`, `dcql`, `oid4vpmdoc`, `haip`, `storage` —
+> is implemented and tested, and all four `cmd/conformance-*` binaries
+> have been run live against a real OIDF conformance suite instance.
+> See [ARCHITECTURE.md](ARCHITECTURE.md) for the full package-by-package
+> status and what, if anything, remains.
 
 See [SPECIFICATIONS.md](SPECIFICATIONS.md) for the exact specification and
 Internet-Draft versions this project targets — every one of them was

@@ -4,8 +4,11 @@ OIDF live-conformance-suite harnesses for OID4VCgo's own roles,
 mirroring FAPIgo's own `conformance/` structure (binaries wiring the
 real production package behind real HTTP, Docker attaching to the
 suite's own network, `oidf-config/` per test plan, a generator script
-producing throwaway key material rather than committing any). See the
-approved roadmap for the full phased plan.
+producing throwaway key material rather than committing any). All four
+roles below are now driven live; the one deliberately out-of-scope gap
+across every role is actually invoking the W3C Digital Credentials API
+for the `dc_api.jwt`/DC API module lists, a browser/OS platform concern
+outside any Go library's own transport responsibilities.
 
 Conformance testing is tracked separately per role — passing one role's
 plan says nothing about another's, even where both sides share this
@@ -77,8 +80,8 @@ negative-test expectations differ.
   (the same x5c requirement `wallet-vp/README.md` already documents,
   this time in `issuer.SDJWTSigner`), fixed the same way. **All 21
   OID4VCI-specific modules in the plan are now run live** (the other
-  40 are the generic FAPI 2.0 Security Profile Final battery, not yet
-  attempted). Two more real gaps found and fixed: this binary's TLS
+  40 are the generic FAPI 2.0 Security Profile Final battery — see the
+  later update below, which covers those). Two more real gaps found and fixed: this binary's TLS
   listener had no `MinVersion`/`CipherSuites` set, so Go's own TLS 1.3
   default suite (always including ChaCha20-Poly1305) tripped the
   suite's own FAPI-RW-8.5 cipher probe — fixed by wiring in
@@ -140,8 +143,12 @@ negative-test expectations differ.
   the real HTTP binary (not just the library's own internals).
   **Final tally: all 21 OID4VCI-specific modules `FINISHED`/`PASSED`
   or correctly `SKIPPED`** — 10 of 10 applicable negative tests
-  `PASSED`, 1 module correctly self-`SKIPPED` (key-attestation, blocked
-  on the still-unbuilt OID4VCI Wallet role).
+  `PASSED`, 1 module correctly self-`SKIPPED` (key-attestation — this
+  binary only configures the `jwt` proof type, never wires an
+  `AttestationVerifier`, a deliberate Issuer-role scope choice per HAIP
+  §4.5.1's own conditional-on-ecosystem-policy language, not a gap; the
+  Wallet-side MUST is unconditional and is covered separately — see
+  `wallet/README.md`'s own Key Attestation coverage below).
   **Update: the plan's own 5th module-list entry, the generic FAPI2SP
   battery, is driven too** — 42 module instances (the exact 39+1
   battery+Discovery set, derived directly from the Java source, plus 2

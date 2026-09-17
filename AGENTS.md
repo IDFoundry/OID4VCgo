@@ -86,18 +86,18 @@ FAPIgo's own `cmd/conformance-client`).
 used to block entirely — drives `oid4vcgo/wallet`/`fapigo/client`
 against the suite's own emulated Authorization Server and Credential
 Issuer, since for this role the suite plays that side, not this repo's
-own binary. All 4 in-scope modules of `oid4vci-1_0-wallet-haip-test-plan`
-`FINISHED`/`PASSED`, including `client-attestation-challenge` — proof
-that FAPIgo's Wallet Attestation support (PRs #317/#318) interoperates
-with the suite's own independent implementation, not just this repo's
-in-process tests. See `conformance/wallet/README.md`.
-`conformance-verifier`'s own
-`oid4vp-1final-verifier-haip-test-plan` is a full confirmed pass, all
-11 in-scope modules. `conformance-wallet-vp`'s own `happy-flow` module
-passes every cryptographic check. `conformance-issuer`'s own
-`oid4vci-1_0-issuer-haip-test-plan` metadata modules pass, and its
-`happy-flow` module now runs to completion (`FINISHED`, result
-`WARNING`, zero `FAILURE`s). It was blocked on `fapigo/server`'s own
+own binary. Now covers every non-battery module across all three
+issuance-mode/encryption crossings, the generic FAPI2SP client
+battery, both Key Attestation conveyance methods, `issuer_initiated`,
+the base non-HAIP plan, and `mso_mdoc` — including
+`client-attestation-challenge`, proof that FAPIgo's Wallet Attestation
+support (PRs #317/#318) interoperates with the suite's own independent
+implementation, not just this repo's in-process tests. See
+`conformance/wallet/README.md`.
+
+One specific historical finding, worth keeping as an example of the
+process rather than as current status: `cmd/conformance-issuer`'s own
+`happy-flow` module was once blocked on `fapigo/server`'s own
 `Config.Extensions` (an `*extension.Registry`) rejecting any
 authorization parameter without a pre-registered `extension.Definition`
 — the OIDF suite's own PAR-2.1–PAR-2.4 check sends one randomly-named
@@ -107,12 +107,14 @@ maintainers as a design question rather than filed as a plain bug;
 they agreed and shipped `fix!: ignore unrecognized authorization
 request parameters at PAR/CIBA` (FAPIgo PR #304, commit `597f2a7`) — an
 unregistered parameter is now silently dropped instead of failing the
-request. `go.mod` is pinned to this exact commit (no tagged release
-yet). This is the pattern this file's own "flag it, don't reach into
+request. This is the pattern this file's own "flag it, don't reach into
 `fapigo/server` internals" boundary is meant to enable: OID4VCgo
 surfaces a real cross-repo finding via a live conformance run, FAPIgo's
 own maintainers decide and fix it upstream, OID4VCgo pins and
-re-verifies — not something to work around locally. See
-`conformance/verifier/README.md`'s, `conformance/wallet-vp/README.md`'s
-and `conformance/issuer/README.md`'s own "Status" sections for the
-full detail before assuming any specific suite test module passes.
+re-verifies — not something to work around locally. `cmd/conformance-issuer`
+has since gone on to cover every OID4VCI-specific module, the generic
+FAPI2SP battery, the base non-HAIP plan, and `mso_mdoc`; see
+`conformance/README.md` and each role's own `conformance/*/README.md`
+"Status" section for current per-role numbers rather than trusting a
+specific module count repeated here — they change as coverage grows,
+and this file isn't the place they're kept in sync.

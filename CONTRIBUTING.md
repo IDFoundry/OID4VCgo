@@ -26,9 +26,9 @@ fact.
 - A change to `issuer`, `wallet`, `verifier`, `credential`, `attestation`,
   or `statuslist` that touches actual protocol behavior should be checked
   against the relevant spec section (OID4VCI, OID4VP, or HAIP's override
-  of either) and, once a conformance harness exists here, against the real
-  OIDF HAIP conformance suite before it's proposed as done. "It passes the
-  Go test suite" isn't the same claim as "it's HAIP conformant."
+  of either) and against the real OIDF HAIP conformance suite (see
+  `conformance/`) before it's proposed as done. "It passes the Go test
+  suite" isn't the same claim as "it's HAIP conformant."
 - A change that depends on FAPIgo behavior belonging to `server`/`client`/
   `keys`/`storage` (not this repo) — most notably Wallet Attestation client
   authentication — belongs in FAPIgo itself; see ARCHITECTURE.md for the
