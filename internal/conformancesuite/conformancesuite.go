@@ -247,13 +247,20 @@ func PlanInstances(httpClient *http.Client, apiBase, planID string) ([]string, e
 // LogEntry is the subset of one GET /api/log/{id} entry a poller
 // watching for the suite's own browser-automation stuck-points needs —
 // see conformance/issuer/scripts/run-fapi2sp-battery/unblock.go's own
-// doc comment for what these two fields are used for.
+// doc comment for what ImplicitSubmit/Upload are used for. RedirectTo
+// is a different stuck-point, needed when the suite's own "browser"
+// redirects to a URL under the implementation-under-test's own
+// externally-reachable domain rather than driving the whole flow
+// suite-side — see
+// conformance/wallet-vp/scripts/run-modules's own doc comment for the
+// OID4VP Wallet role this is confirmed against.
 type LogEntry struct {
 	Msg            string `json:"msg"`
 	ImplicitSubmit *struct {
 		FullURL string `json:"fullUrl"`
 	} `json:"implicit_submit"`
-	Upload string `json:"upload"`
+	Upload     string `json:"upload"`
+	RedirectTo string `json:"redirect_to"`
 }
 
 // FetchModuleLog returns every log entry GET /api/log/{moduleID} has
