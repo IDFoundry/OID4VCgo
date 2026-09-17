@@ -24,6 +24,7 @@ import (
 	"github.com/idfoundry/fapigo/storage/memstore"
 
 	"github.com/idfoundry/oid4vcigo"
+	"github.com/idfoundry/oid4vcigo/internal/conformancesuite"
 	"github.com/idfoundry/oid4vcigo/internal/jose"
 	"github.com/idfoundry/oid4vcigo/internal/jwe"
 	"github.com/idfoundry/oid4vcigo/wallet"
@@ -198,7 +199,7 @@ func (noopIssuerKeySource) ResolveIssuerKeys(context.Context, keys.IssuerKeyRequ
 // them the same way wallet_client_flow_test.go already does against a
 // real fapigo/server instance, rather than running full RFC 8414
 // discovery for a shape that never varies.
-func buildClient(ctx context.Context, run *walletRun, module suiteModule, testName string, httpClient *http.Client) (*client.Client, error) {
+func buildClient(ctx context.Context, run *walletRun, module conformancesuite.SuiteModule, testName string, httpClient *http.Client) (*client.Client, error) {
 	// The trailing slash matters here too, for the same reason it does
 	// for CredentialIssuer in driveModule: the suite's own issuer
 	// identifier (what it compares a Client Attestation PoP's own
@@ -382,7 +383,7 @@ const (
 // (§9.1/§9.2) until first carries either issued credentials, or the
 // suite's own emulated Issuer accepts a fresh transaction_id and
 // interval): first is the still-pending CredentialRequest.
-func pollDeferredCredential(ctx context.Context, w *wallet.Wallet, resource wallet.ProtectedResourceClient, module suiteModule, first wallet.CredentialResult) (wallet.CredentialResult, error) {
+func pollDeferredCredential(ctx context.Context, w *wallet.Wallet, resource wallet.ProtectedResourceClient, module conformancesuite.SuiteModule, first wallet.CredentialResult) (wallet.CredentialResult, error) {
 	deferredEndpoint, err := fapi.ParseEndpointURL(module.URL + "/deferred_credential")
 	if err != nil {
 		return wallet.CredentialResult{}, fmt.Errorf("parse deferred credential endpoint: %w", err)
@@ -442,7 +443,7 @@ var issuerStateExtension = extension.Definition[string]{
 // credential_configuration_ids[0] is used in place of
 // run.credentialConfigurationID, matching what a spec-faithful wallet
 // actually resolves the offer for.
-func driveModule(ctx context.Context, run *walletRun, module suiteModule, testName string, httpClient *http.Client, numCreds int, encrypted bool, offer *oid4vci.CredentialOffer) error {
+func driveModule(ctx context.Context, run *walletRun, module conformancesuite.SuiteModule, testName string, httpClient *http.Client, numCreds int, encrypted bool, offer *oid4vci.CredentialOffer) error {
 	c, err := buildClient(ctx, run, module, testName, httpClient)
 	if err != nil {
 		return fmt.Errorf("build client: %w", err)

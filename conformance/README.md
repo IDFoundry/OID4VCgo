@@ -138,10 +138,31 @@ negative-test expectations differ.
   `FINISHED`/`PASSED`, zero log entries at `WARNING` or worse, plus a
   genuine positive encrypt→issue→encrypt→decrypt round trip through
   the real HTTP binary (not just the library's own internals).
-  **Final tally: all 21 modules `FINISHED`/`PASSED` or correctly
-  `SKIPPED`** — 10 of 10 applicable negative tests `PASSED`, 1 module
-  correctly self-`SKIPPED` (key-attestation, blocked on the still-
-  unbuilt OID4VCI Wallet role). See `issuer/README.md`.
+  **Final tally: all 21 OID4VCI-specific modules `FINISHED`/`PASSED`
+  or correctly `SKIPPED`** — 10 of 10 applicable negative tests
+  `PASSED`, 1 module correctly self-`SKIPPED` (key-attestation, blocked
+  on the still-unbuilt OID4VCI Wallet role).
+  **Update: the plan's own 5th module-list entry, the generic FAPI2SP
+  battery, is driven too** — 42 module instances (the exact 39+1
+  battery+Discovery set, derived directly from the Java source, plus 2
+  known-working sanity checks), via a new tool
+  (`conformance/issuer/scripts/run-fapi2sp-battery`). Unlike the Wallet
+  role, this role needs no custom flow-driving code at all — the suite
+  itself plays client and drives PAR→authorize→consent→callback→token
+  through its own internal headless browser, the same `browser`
+  automation-config mechanism FAPIgo's own OpenID-Certified
+  `cmd/conformance-as` already relies on. Surfaced and fixed real gaps:
+  a missing `x5c` on the suite's own emulated Client Attestation
+  signing key, a required-but-unused `status_list_trust_anchor_pem`
+  field, and — the highest-value find — a universal, suite-side
+  HtmlUnit/Bootstrap JS bug that leaves browser-driven modules
+  `WAITING` forever with no timeout, needing the same
+  `unblock-implicit-callback.py`-style workaround FAPIgo's own
+  `cmd/conformance-as` already needs, now ported to Go. **All 42
+  modules `FINISHED` twice in a row for stability**: `PASSED` except
+  one expected `WARNING`, one expected `SKIPPED`, and one expected
+  `REVIEW` (a human-review negative test) — no `FAILURE`s. See
+  `issuer/README.md`.
 - **`wallet/`** — OID4VCI 1.0 Final/HAIP Wallet role
   (`oid4vci-1_0-wallet-haip-test-plan`): `cmd/conformance-wallet`
   drives `oid4vcigo/wallet`/`fapigo/client` as an outbound HTTP client
