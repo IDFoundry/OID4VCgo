@@ -153,6 +153,57 @@ func TestGenerateProofWithX5C_RejectsEmptyChain(t *testing.T) {
 	}
 }
 
+func TestGenerateProofWithKeyAttestation(t *testing.T) {
+	w, err := wallet.New(validConfig(), validDependencies())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	key := testP256Key(t)
+
+	proof, err := w.GenerateProofWithKeyAttestation(key, "https://issuer.example.com", "test-nonce", "fake.key.attestation")
+	if err != nil {
+		t.Fatalf("GenerateProofWithKeyAttestation: %v", err)
+	}
+
+	header, payload, err := jose.Verify(jose.ES256, &key.PublicKey, proof)
+	if err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	if header["typ"] != "openid4vci-proof+jwt" {
+		t.Errorf("typ = %v, want openid4vci-proof+jwt", header["typ"])
+	}
+	if _, ok := header["jwk"]; !ok {
+		t.Errorf("jwk header is missing")
+	}
+	if header["key_attestation"] != "fake.key.attestation" {
+		t.Errorf("key_attestation = %v, want fake.key.attestation", header["key_attestation"])
+	}
+
+	var body struct {
+		Aud   string `json:"aud"`
+		Nonce string `json:"nonce"`
+	}
+	if err := json.Unmarshal(payload, &body); err != nil {
+		t.Fatalf("unmarshal payload: %v", err)
+	}
+	if body.Aud != "https://issuer.example.com" {
+		t.Errorf("aud = %q", body.Aud)
+	}
+	if body.Nonce != "test-nonce" {
+		t.Errorf("nonce = %q", body.Nonce)
+	}
+}
+
+func TestGenerateProofWithKeyAttestation_RejectsEmptyAttestation(t *testing.T) {
+	w, err := wallet.New(validConfig(), validDependencies())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err := w.GenerateProofWithKeyAttestation(testP256Key(t), "https://issuer.example.com", "", ""); err == nil {
+		t.Fatalf("GenerateProofWithKeyAttestation = nil error, want error")
+	}
+}
+
 func TestGenerateProof_OmitsNonceWhenEmpty(t *testing.T) {
 	w, err := wallet.New(validConfig(), validDependencies())
 	if err != nil {

@@ -85,6 +85,14 @@
 // ever builds jwk-conveyed proofs, a caller wanting kid/x5c passes the
 // result of either method through CredentialRequest.JWTProofs instead.
 //
+// GenerateProofWithKeyAttestation signs a jwt-type proof the same way
+// GenerateProof does, jwk-conveyed, but also embeds a Key Attestation
+// JWT as the proof's own "key_attestation" header member — Appendix
+// D.1's nested-attestation case for the jwt proof type, distinct from
+// GenerateAttestationProof's standalone attestation proof type above.
+// Like GenerateProofWithKeyID/GenerateProofWithX5C, the result goes
+// through CredentialRequest.JWTProofs, not Keys.
+//
 // RequestCredential/RequestDeferredCredential also implement §10's
 // Encrypted Requests/Responses, symmetric with issuer's own
 // DecryptRequestBody/EncryptResponseBody: setting
@@ -110,8 +118,9 @@
 //
 // ResolveCredentialOffer, RequestNonce, GenerateProof,
 // GenerateProofWithKeyID, GenerateProofWithX5C, GenerateAttestationProof,
-// RequestCredential, BuildAuthorizationRequest, RequestDeferredCredential,
-// RequestNotification, RequestPreAuthorizedCodeToken, GenerateDPoPProof
+// GenerateProofWithKeyAttestation, RequestCredential, BuildAuthorizationRequest,
+// RequestDeferredCredential, RequestNotification, RequestPreAuthorizedCodeToken,
+// GenerateDPoPProof
 // and DPoPAccessTokenHash exist so far. This package does not yet cover:
 //
 //   - di_vp proofs (needs W3C VCDM, which this repo doesn't implement,

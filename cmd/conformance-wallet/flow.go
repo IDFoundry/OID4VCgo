@@ -471,7 +471,8 @@ func driveModule(ctx context.Context, run *walletRun, module suiteModule, testNa
 		CredentialIssuer: module.URL + "/",
 		Nonce:            nonceResult.CNonce,
 	}
-	if run.useAttestationProof {
+	switch run.proofType {
+	case proofStrategyAttestation:
 		// HAIP §4.5.1 Key Attestation (Appendix D/F.3): one Key
 		// Attestation JWT attests numCreds fresh keys and is submitted
 		// as the standalone "attestation" proof — no per-credential jwt
@@ -480,12 +481,47 @@ func driveModule(ctx context.Context, run *walletRun, module suiteModule, testNa
 		if genErr != nil {
 			return fmt.Errorf("generate attested keys: %w", genErr)
 		}
-		attestationJWT, err := buildKeyAttestationProof(w, run, attestedKeys, nonceResult.CNonce)
+		attestationJWT, err := buildKeyAttestationProof(w, run, attestedKeys, nonceResult.CNonce, false)
 		if err != nil {
 			return fmt.Errorf("build key attestation proof: %w", err)
 		}
 		credRequest.Attestation = attestationJWT
-	} else {
+
+	case proofStrategyJWTKeyAttestation:
+		// Appendix D.1's nested case: an ordinary jwt-type proof per
+		// credential, each with the Key Attestation JWT embedded in its
+		// own header (wallet.GenerateProofWithKeyAttestation). All
+		// proofs share one attestation covering every attested key at
+		// once, rather than each minting its own single-key one:
+		// AbstractVCIWalletTest.java only ever validates the *last*
+		// proof's own nested attestation against the *first* proof's
+		// own key (VCIValidateCredentialRequestJwtProof overwrites
+		// vci.key_attestation_jwt per proof, then
+		// VCIValidateAttestedKeysInKeyAttestationFromJwtProof checks
+		// only the first proof's own key against whatever that ends up
+		// being) — confirmed live: a batch of per-key attestations
+		// fails that check for numCreds>1, while one shared attestation
+		// naming every key passes regardless of which proof's copy the
+		// suite happens to validate.
+		attestedKeys, genErr := generateAttestedKeys(numCreds)
+		if genErr != nil {
+			return fmt.Errorf("generate attested keys: %w", genErr)
+		}
+		attestationJWT, err := buildKeyAttestationProof(w, run, attestedKeys, nonceResult.CNonce, true)
+		if err != nil {
+			return fmt.Errorf("build key attestation proof: %w", err)
+		}
+		jwtProofs := make([]string, numCreds)
+		for i, signer := range attestedKeys {
+			proof, genErr := w.GenerateProofWithKeyAttestation(signer, module.URL+"/", nonceResult.CNonce, attestationJWT)
+			if genErr != nil {
+				return fmt.Errorf("generate jwt proof with key attestation %d: %w", i, genErr)
+			}
+			jwtProofs[i] = proof
+		}
+		credRequest.JWTProofs = jwtProofs
+
+	default:
 		holderKeys := make([]crypto.Signer, numCreds)
 		for i := range holderKeys {
 			holderKey, genErr := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)

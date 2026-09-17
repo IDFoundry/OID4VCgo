@@ -99,12 +99,19 @@ func main() {
 	// metadata — not an arbitrary tester-chosen name).
 	credentialConfigurationID := flag.String("credential-configuration-id", "eu.europa.ec.eudi.pid.1", "credential_configuration_id to request — must match one the suite's own emulated Credential Issuer actually publishes")
 	scope := flag.String("scope", "eudi.pid.1", "scope to request — must match the credential configuration's own \"scope\" value in the suite's emulated Credential Issuer metadata")
-	attestationProof := flag.Bool("attestation-proof", false, "use the standalone \"attestation\" proof type (Appendix F.3, HAIP §4.5.1 Key Attestation) for every Credential Request instead of the default jwt-type proof — requires -credential-configuration-id to name a fixture whose proof_types_supported offers \"attestation\", e.g. eu.europa.ec.eudi.pid.1.attestation with -scope eudi.pid.1.attestation")
+	proofTypeFlag := flag.String("proof-type", string(proofStrategyJWT), "Credential Request proof strategy: \"jwt\" (default, jwk-conveyed jwt-type proof), \"attestation\" (standalone Key Attestation JWT, Appendix F.3 / HAIP §4.5.1 — requires -credential-configuration-id eu.europa.ec.eudi.pid.1.attestation -scope eudi.pid.1.attestation), or \"jwt-key-attestation\" (jwt-type proof with a nested Key Attestation JWT header, Appendix D.1 — requires -credential-configuration-id eu.europa.ec.eudi.pid.1.jwt.keyattest -scope eudi.pid.1.jwt.keyattest)")
 	dumpConfig := flag.Bool("dump-config", false, "print the generated suite-side plan configuration JSON and exit, instead of creating a plan — useful for probing the suite's own POST /api/plan validation by hand")
 	flag.Parse()
 
+	proofType := proofStrategy(*proofTypeFlag)
+	switch proofType {
+	case proofStrategyJWT, proofStrategyAttestation, proofStrategyJWTKeyAttestation:
+	default:
+		log.Fatalf("invalid -proof-type %q: want jwt, attestation, or jwt-key-attestation", *proofTypeFlag)
+	}
+
 	if *dumpConfig {
-		walletRun, err := newWalletRun(*apiBase, *credentialConfigurationID, *scope, *attestationProof)
+		walletRun, err := newWalletRun(*apiBase, *credentialConfigurationID, *scope, proofType)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -115,7 +122,7 @@ func main() {
 		return
 	}
 
-	if err := run(*apiBase, *credentialConfigurationID, *scope, *attestationProof); err != nil {
+	if err := run(*apiBase, *credentialConfigurationID, *scope, proofType); err != nil {
 		log.Fatal(err)
 	}
 }
@@ -128,11 +135,11 @@ func insecureSuiteHTTPClient() *http.Client {
 	}
 }
 
-func run(apiBase, credentialConfigurationID, scope string, attestationProof bool) error {
+func run(apiBase, credentialConfigurationID, scope string, proofType proofStrategy) error {
 	ctx := context.Background()
 	httpClient := insecureSuiteHTTPClient()
 
-	walletRun, err := newWalletRun(apiBase, credentialConfigurationID, scope, attestationProof)
+	walletRun, err := newWalletRun(apiBase, credentialConfigurationID, scope, proofType)
 	if err != nil {
 		return err
 	}
