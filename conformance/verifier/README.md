@@ -51,10 +51,16 @@ credentials of its own, only a DCQL query and a trusted issuer key
 
 **Confirmed live against a real, locally-run OIDF conformance suite**
 (pre-built Docker images, `docker-compose-prebuilt.yml`, `dev` Spring
-profile), covering all 12 `direct_post.jwt` + `x509_hash` +
-`request_uri_signed` modules of `oid4vp-1final-verifier-haip-test-plan`
-(the plan's thirteenth module, `-invalid-session-transcript`, is
-`iso_mdl`-only and out of scope for the `sd_jwt_vc` variant run here):
+profile), covering all 13 modules of
+`oid4vp-1final-verifier-haip-test-plan`: 12 `direct_post.jwt` +
+`x509_hash` + `request_uri_signed` modules under `credential_format=
+sd_jwt_vc`, plus the plan's own thirteenth module,
+`-invalid-session-transcript` — `iso_mdl`-only (confirmed directly
+against the suite's own `/api/runner/available`: its `credential_format`
+variant offers no `sd_jwt_vc` value at all) — under
+`credential_format=iso_mdl` via a second binary code path
+(`cmd/conformance-verifier`'s own `buildMdocQuery`) and a dedicated
+driver, `conformance/verifier/scripts/run-mdoc-module`:
 
 - **7 positive-behavior modules** (`happy-flow`, `minimal-cnf-jwk`,
   `request-uri-fetched-twice`, `request-uri-method-post`,
@@ -74,6 +80,25 @@ profile), covering all 12 `direct_post.jwt` + `x509_hash` +
   `key binding JWT sd_hash does not match` for the sd_hash case) —
   `VerifyResponse`'s own checks reject each malformed presentation
   precisely as designed.
+- **`invalid-session-transcript` (the `iso_mdl`-only 13th module):
+  `FINISHED`/`REVIEW`**, confirmed via `run-mdoc-module`. Unlike the
+  5 `sd_jwt_vc` negative-test modules above, this one's own outcome
+  isn't visible as the `/response` endpoint's own HTTP status —
+  `handleResponse` always replies `200` with `{"redirect_uri":...}`
+  regardless of verification outcome, deferring the pass/fail signal
+  to the later `/result` page (OID4VP 1.0 Final permits this: "defers
+  VP verification until after this step"). The suite's own module log
+  confirms this repo's own `verifier.VerifyResponse` correctly
+  detected and rejected the tampered `SessionTranscript` ("A screenshot
+  showing the verifier reporting the verification failure must be
+  uploaded"); `run-mdoc-module` fills that upload placeholder itself
+  (the same proven mechanism
+  `conformance/issuer/scripts/run-fapi2sp-battery/unblock.go` already
+  uses for a different role's own modules), so `REVIEW` — this plan's
+  own legitimate terminal grading state once a screenshot step is
+  involved, the same as the 7 `sd_jwt_vc` positive-behavior modules
+  above would reach if driven all the way — is reached without a real
+  browser.
 
 **`request-uri-method-post` and `request-uri-fetched-twice`: real
 support added, not just made to pass.** These two used to be grouped

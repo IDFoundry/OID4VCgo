@@ -11,6 +11,7 @@ import (
 
 	fapi "github.com/idfoundry/fapigo"
 
+	"github.com/idfoundry/oid4vcgo/dcql"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/internal/jwe"
 	"github.com/idfoundry/oid4vcgo/verifier"
@@ -171,5 +172,52 @@ func TestHandleRequestObject_UnknownSession404s(t *testing.T) {
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/request/unknown-id", nil))
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("GET /request/unknown-id = %d, want 404", rec.Code)
+	}
+}
+
+func TestBuildQuery_SDJWTVCByDefault(t *testing.T) {
+	s := &server{cfg: baseTestConfig(t)}
+	query, err := s.buildQuery()
+	if err != nil {
+		t.Fatalf("buildQuery: %v", err)
+	}
+	if len(query.Credentials) != 1 || query.Credentials[0].Format != "dc+sd-jwt" {
+		t.Fatalf("buildQuery = %+v, want a single dc+sd-jwt credential query", query)
+	}
+}
+
+func TestBuildQuery_Mdoc(t *testing.T) {
+	s := &server{cfg: mdocTestConfig(t)}
+	query, err := s.buildQuery()
+	if err != nil {
+		t.Fatalf("buildQuery: %v", err)
+	}
+	if len(query.Credentials) != 1 || query.Credentials[0].Format != "mso_mdoc" {
+		t.Fatalf("buildQuery = %+v, want a single mso_mdoc credential query", query)
+	}
+	cred := query.Credentials[0]
+	meta, err := cred.MdocMeta()
+	if err != nil {
+		t.Fatalf("MdocMeta: %v", err)
+	}
+	if meta.DoctypeValue != "org.iso.18013.5.1.mDL" {
+		t.Fatalf("doctype_value = %q, want org.iso.18013.5.1.mDL", meta.DoctypeValue)
+	}
+	if len(cred.Claims) != 2 {
+		t.Fatalf("claims = %+v, want 2 entries", cred.Claims)
+	}
+	for _, c := range cred.Claims {
+		if len(c.Path) != 2 || c.Path[0] != dcql.PathKey("org.iso.18013.5.1") {
+			t.Fatalf("claim path = %+v, want [namespace, element]", c.Path)
+		}
+	}
+}
+
+func TestBuildQuery_RejectsUnsupportedCredentialFormat(t *testing.T) {
+	cfg := baseTestConfig(t)
+	cfg.CredentialFormat = "jwt_vc_json"
+	s := &server{cfg: cfg}
+	if _, err := s.buildQuery(); err == nil {
+		t.Fatal("buildQuery = nil error, want error for unsupported credential_format")
 	}
 }

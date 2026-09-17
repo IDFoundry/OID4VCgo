@@ -35,11 +35,22 @@ type server struct {
 }
 
 // buildQuery constructs the DCQL query every session asks — a single
-// "dc+sd-jwt" Credential Query for cfg.VCT, requesting exactly
-// cfg.Claims. One Credential Query, no credential_sets/claim_sets:
-// this binary's job is exercising VerifyResponse's own core
-// verification path, not every DCQL selection permutation.
+// Credential Query, no credential_sets/claim_sets: this binary's job
+// is exercising VerifyResponse's own core verification path for
+// whichever one format cfg.CredentialFormat selects, not every DCQL
+// selection permutation or both formats in one run.
 func (s *server) buildQuery() (dcql.Query, error) {
+	switch s.cfg.CredentialFormat {
+	case "", "dc+sd-jwt":
+		return s.buildSDJWTVCQuery()
+	case "mso_mdoc":
+		return s.buildMdocQuery()
+	default:
+		return dcql.Query{}, fmt.Errorf("build dcql query: unsupported credential_format %q", s.cfg.CredentialFormat)
+	}
+}
+
+func (s *server) buildSDJWTVCQuery() (dcql.Query, error) {
 	meta, err := dcql.NewSDJWTVCMeta(dcql.SDJWTVCMeta{VCTValues: []string{s.cfg.VCT}})
 	if err != nil {
 		return dcql.Query{}, fmt.Errorf("build dcql meta: %w", err)
@@ -51,6 +62,26 @@ func (s *server) buildQuery() (dcql.Query, error) {
 	return dcql.Query{
 		Credentials: []dcql.CredentialQuery{
 			{ID: "cred1", Format: "dc+sd-jwt", Meta: meta, Claims: claims},
+		},
+	}, nil
+}
+
+// buildMdocQuery is buildSDJWTVCQuery's own "mso_mdoc" counterpart —
+// each claim path is namespace-then-element (Appendix B.2.4), unlike
+// dc+sd-jwt's flat top-level claim names, so every cfg.MdocClaims
+// entry is paired with the one cfg.Namespace this binary asks about.
+func (s *server) buildMdocQuery() (dcql.Query, error) {
+	meta, err := dcql.NewMdocMeta(dcql.MdocMeta{DoctypeValue: s.cfg.Doctype})
+	if err != nil {
+		return dcql.Query{}, fmt.Errorf("build dcql meta: %w", err)
+	}
+	claims := make([]dcql.ClaimsQuery, len(s.cfg.MdocClaims))
+	for i, name := range s.cfg.MdocClaims {
+		claims[i] = dcql.ClaimsQuery{Path: dcql.Path{dcql.PathKey(s.cfg.Namespace), dcql.PathKey(name)}}
+	}
+	return dcql.Query{
+		Credentials: []dcql.CredentialQuery{
+			{ID: "cred1", Format: "mso_mdoc", Meta: meta, Claims: claims},
 		},
 	}, nil
 }
