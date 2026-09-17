@@ -3,15 +3,16 @@
 `cmd/conformance-wallet` drives `oid4vcigo/wallet` and `fapigo/client`
 headlessly through the OIDF conformance suite's own
 `oid4vci-1_0-wallet-haip-test-plan` ("OpenID for Verifiable Credential
-Issuance 1.0 Final/HAIP: Test a wallet") — specifically the
-`wallet_initiated` flow variant's 4 non-battery modules, crossed with
-all 3 of the plan's own issuance-mode/encryption variants
-(`immediate`+`plain`, `deferred`+`plain`, `immediate`+`encrypted`), plus
-the plan's 4th module-list entry: the generic FAPI2SP client
-conformance battery, always at the fixed `immediate`+`plain` crossing
-— each drivable with any of three Credential Request proof strategies
-via `-proof-type` (`jwt`, `attestation`, or `jwt-key-attestation`; see
-"Status"). See "Scope" below for what isn't covered yet.
+Issuance 1.0 Final/HAIP: Test a wallet") — both the `wallet_initiated`
+and `issuer_initiated` flow variants (`-issuer-initiated`) of the same
+4 non-battery modules, crossed with all 3 of the plan's own
+issuance-mode/encryption variants (`immediate`+`plain`,
+`deferred`+`plain`, `immediate`+`encrypted`), plus the plan's 4th
+module-list entry: the generic FAPI2SP client conformance battery,
+always at the fixed `immediate`+`plain` crossing — each drivable with
+any of three Credential Request proof strategies via `-proof-type`
+(`jwt`, `attestation`, or `jwt-key-attestation`; see "Status"). See
+"Scope" below for what isn't covered yet.
 
 ## Why this binary is a one-shot CLI tool, not a server
 
@@ -270,6 +271,55 @@ tried: one attestation naming every key in the batch passes regardless
 of which proof's copy of it the suite happens to actually check, and
 was correct on the first live attempt.
 
+**Confirmed live, repeatedly (3 independent full runs, all
+zero-failure), the `issuer_initiated` flow variant** (`-issuer-initiated`),
+crossed with every module/proof-type combination above: all 22 module
+instances `FINISHED`/`PASSED`. Two genuine findings, one in each repo:
+
+- **This binary never needs to receive an inbound request at all**,
+  despite `issuer_initiated`'s own name and this binary's own prior
+  assumption otherwise. The suite's `browser.goToUrl` (`BrowserControl.java`)
+  is a headless HtmlUnit `WebClient`, not a real browser — and it only
+  actually *dispatches* to a URL when the plan config's own `"browser"`
+  array declares a matching automation script; with none declared (this
+  binary doesn't), it just queues the URL and returns immediately, so
+  the module reaches `WAITING` right away regardless of whether
+  anything ever "visits" `vci.credential_offer_endpoint`. That queued
+  URL — the fully-resolved Credential Offer redirect, `issuer_state`
+  included — is already sitting in the module's own `/api/log`, under
+  a `"Created credential offer redirect url"` entry's own
+  `credential_offer_redirect_url` field. So `credential_offer_endpoint`
+  is configured to an inert placeholder (`-credential-offer-endpoint`,
+  never dereferenced by anyone), and `waitForCredentialOfferRedirectURL`
+  (`credentialoffer.go`) just polls `/api/log` for that field and hands
+  its string value straight to `wallet.Wallet.ResolveCredentialOffer` —
+  no listener, no Docker networking, no TLS cert, despite an earlier,
+  now-abandoned implementation attempt building exactly that (confirmed
+  live: reachable via `host.docker.internal` from inside the suite's
+  own container, and still never once hit — the suite's own HtmlUnit
+  client wasn't ever going to call it, matching the "no browser
+  automation script" finding above once actually traced through).
+- **A genuine, general bug in `fapigo/client`**, not this binary:
+  echoing the offer's own `issuer_state` back as a PAR extension
+  parameter (`extension.Set`, OID4VCI §5.1.3) failed every time PAR
+  needed to retry on a DPoP nonce challenge — `"extension parameter
+  \"issuer_state\" collides with a core parameter name"`, even though
+  nothing actually collides. Root cause: `buildPushedRequestForm`
+  merged a plain-parameter extension by writing it into the *caller's
+  own* `params` map instead of only the fresh per-call `form` map, and
+  the DPoP-nonce-retry path reuses that same `params` map for a second
+  call — so the retry saw its own first attempt's value already
+  present and misreported it as a collision. Fixed upstream
+  ([FAPIgo PR #322](https://github.com/IDFoundry/FAPIgo/pull/322),
+  merged, `go.mod` pinned past it) with a regression test that fails
+  without the fix reproducing this exact error message. The generic
+  FAPI2SP battery modules (`fapi2-security-profile-final-client-test-*`)
+  extend a different base class than the 4 VCIWalletTest* modules and
+  have no `prepareCredentialOffer()` step at all regardless of
+  `vci_authorization_code_flow_variant` — `main.go`'s own offer-wait is
+  skipped for them (`batteryModulePrefix`), not just for
+  `wallet_initiated`.
+
 ## Debugging
 
 `-dump-config` prints the generated suite-side plan configuration JSON
@@ -283,21 +333,25 @@ traced to the suite's own log without re-instrumenting anything.
 
 ## Scope
 
-**In scope**: `wallet_initiated` flow variant, all 4 modules listed
-above (crossed with all 3 issuance-mode/encryption variants the HAIP
-plan itself enumerates for them), plus the plan's 4th module-list
-entry — the generic FAPI2SP client conformance battery, all 10
-modules, always at the fixed `immediate`+`plain` crossing — each
-drivable with any of the three `-proof-type` strategies: the default
-`jwt` (jwk-conveyed jwt-type proof), `attestation` (standalone Key
-Attestation JWT, Appendix F.3), or `jwt-key-attestation` (jwt-type
-proof with a nested Key Attestation JWT header, Appendix D.1) — the
-latter two both exercise HAIP §4.5.1's Key Attestation requirement,
-just via OID4VCI's two different conveyance mechanisms for it.
+**In scope**: both `wallet_initiated` and `issuer_initiated` flow
+variants (`-issuer-initiated`), all 4 modules listed above (crossed
+with all 3 issuance-mode/encryption variants the HAIP plan itself
+enumerates for them), plus the plan's 4th module-list entry — the
+generic FAPI2SP client conformance battery, all 10 modules, always at
+the fixed `immediate`+`plain` crossing and unaffected by the flow
+variant (see "Status") — each drivable with any of the three
+`-proof-type` strategies: the default `jwt` (jwk-conveyed jwt-type
+proof), `attestation` (standalone Key Attestation JWT, Appendix F.3),
+or `jwt-key-attestation` (jwt-type proof with a nested Key Attestation
+JWT header, Appendix D.1) — the latter two both exercise HAIP §4.5.1's
+Key Attestation requirement, just via OID4VCI's two different
+conveyance mechanisms for it.
 
 **Not yet covered** (separate, later, only if asked):
 
-- `issuer_initiated`/`issuer_initiated_dc_api` flow variants (need a
-  small inbound HTTP GET endpoint for the credential-offer handoff —
-  `wallet_initiated` needs none at all) and the base (non-HAIP)
-  `VCIWalletTestPlan`'s `ClientAuthType`≠`client_attestation` variants.
+- `issuer_initiated_dc_api` — needs real Digital Credentials API
+  browser-JS interaction, the same scope cut this repo's own
+  `cmd/conformance-wallet-vp` already makes for its own `dc_api.jwt`
+  module lists.
+- The base (non-HAIP) `VCIWalletTestPlan`'s `ClientAuthType`≠`client_attestation`
+  variants.

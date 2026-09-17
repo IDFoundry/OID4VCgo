@@ -191,5 +191,21 @@ negative-test expectations differ.
   failed run: one Key Attestation JWT naming every key in the batch,
   embedded identically in every proof, rather than one attestation per
   proof — see `wallet/README.md`'s own "Status" section for why.
-  `issuer_initiated` flow variants aren't covered yet. See
+  **Update: the `issuer_initiated` flow variant is driven too**
+  (`-issuer-initiated`) — confirmed live, all 22 module instances
+  `FINISHED`/`PASSED`. Turned out this binary never needs to receive an
+  inbound request at all: the suite's own headless browser only
+  dispatches to a URL when the plan config declares a matching
+  automation script, which this binary doesn't, so it just queues the
+  Credential Offer redirect URL — already fully resolved, `issuer_state`
+  included — in the module's own `/api/log`, which this binary now
+  simply polls. Driving this also surfaced a real, general bug in
+  `fapigo/client`, not this binary: echoing back an offer's own
+  `issuer_state` as a PAR extension broke every time PAR needed to
+  retry on a DPoP nonce challenge, because `buildPushedRequestForm`
+  mutated its caller's own shared `params` map — fixed upstream
+  ([FAPIgo PR #322](https://github.com/IDFoundry/FAPIgo/pull/322),
+  merged, `go.mod` pinned past it). `issuer_initiated_dc_api` isn't
+  covered — same Digital Credentials API browser-JS scope cut as
+  `cmd/conformance-wallet-vp`'s own `dc_api.jwt` module lists. See
   `wallet/README.md`.
