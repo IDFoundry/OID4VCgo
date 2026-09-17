@@ -293,6 +293,17 @@ type CredentialConfigurationMetadata struct {
 // VCICheckCredentialRequestEncryptionSupported check rejects a
 // published key with no "alg" member outright ("expected at least one
 // key with... an asymmetric JWE alg").
+//
+// The embedded internal/jwk.JWK's own PublicKey() method promotes
+// onto this type (json.Unmarshal into a JWK, then call .PublicKey())
+// — a caller outside this module that only needs to decode a fetched
+// JWK back into a crypto.PublicKey (e.g. to build its own
+// verifier.SDJWTVCIssuerKeyResolver against a pinned Issuer key) can
+// use this exported type for that, without needing internal/jwk
+// itself. Alg here is specifically the JWE encryption algorithm
+// (§10's own contract above); a signing-algorithm use case needs its
+// own alg field alongside this type, the same way this repo's own
+// cmd/conformance-verifier does.
 type JWK struct {
 	jwk.JWK
 	Kid string  `json:"kid"`
