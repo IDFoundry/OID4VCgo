@@ -100,14 +100,14 @@ func newCredentialEndpointFixture(t *testing.T, mutate ...func(cfg *issuer.Confi
 			Nonce:      mustEndpointURL(t, testNonceEndpoint),
 		},
 		Limits:                  issuer.Limits{NonceLifetime: time.Minute},
-		BatchCredentialIssuance: &issuer.BatchCredentialIssuance{BatchSize: 2},
+		BatchCredentialIssuance: &oid4vci.BatchCredentialIssuance{BatchSize: 2},
 		CredentialConfigurationsSupported: map[string]issuer.CredentialConfiguration{
 			testSDJWTConfigID: {
 				Format:                               sdjwtvc.CredentialFormat,
 				Scope:                                "identity_credential",
 				VCT:                                  "https://credentials.example.com/identity_credential",
 				CryptographicBindingMethodsSupported: []string{"jwk"},
-				ProofTypesSupported: map[string]issuer.ProofTypeConfiguration{
+				ProofTypesSupported: map[string]oid4vci.ProofTypeConfiguration{
 					oid4vci.ProofTypeJWT:         {ProofSigningAlgValuesSupported: []string{"ES256"}},
 					oid4vci.ProofTypeAttestation: {ProofSigningAlgValuesSupported: []string{"ES256"}},
 				},
@@ -117,7 +117,7 @@ func newCredentialEndpointFixture(t *testing.T, mutate ...func(cfg *issuer.Confi
 				DocType:                                 "org.iso.18013.5.1.mDL",
 				CryptographicBindingMethodsSupported:    []string{"cose_key"},
 				CredentialSigningAlgValuesSupportedCOSE: []cose.Alg{cose.ES256},
-				ProofTypesSupported: map[string]issuer.ProofTypeConfiguration{
+				ProofTypesSupported: map[string]oid4vci.ProofTypeConfiguration{
 					oid4vci.ProofTypeJWT: {ProofSigningAlgValuesSupported: []string{"ES256"}},
 				},
 			},
@@ -315,7 +315,7 @@ func TestRequestCredential_BatchSize(t *testing.T) {
 				if tc.batchSize == 0 {
 					cfg.BatchCredentialIssuance = nil
 				} else {
-					cfg.BatchCredentialIssuance = &issuer.BatchCredentialIssuance{BatchSize: tc.batchSize}
+					cfg.BatchCredentialIssuance = &oid4vci.BatchCredentialIssuance{BatchSize: tc.batchSize}
 				}
 			})
 			nonce := f.issueNonce(t)
@@ -805,7 +805,7 @@ func TestRequestCredential_RejectsUnsupportedFormat(t *testing.T) {
 		CredentialConfigurationsSupported: map[string]issuer.CredentialConfiguration{
 			"UnsupportedFormat": {
 				Format: "some_unknown_format", CryptographicBindingMethodsSupported: []string{"jwk"},
-				ProofTypesSupported: map[string]issuer.ProofTypeConfiguration{
+				ProofTypesSupported: map[string]oid4vci.ProofTypeConfiguration{
 					oid4vci.ProofTypeJWT: {ProofSigningAlgValuesSupported: []string{"ES256"}},
 				},
 			},
@@ -898,7 +898,7 @@ func TestRequestCredential_RejectsProofTypeThisPackageDoesNotImplement(t *testin
 		CredentialConfigurationsSupported: map[string]issuer.CredentialConfiguration{
 			"DIVPCredential": {
 				Format: sdjwtvc.CredentialFormat, CryptographicBindingMethodsSupported: []string{"jwk"},
-				ProofTypesSupported: map[string]issuer.ProofTypeConfiguration{
+				ProofTypesSupported: map[string]oid4vci.ProofTypeConfiguration{
 					"di_vp": {ProofSigningAlgValuesSupported: []string{"eddsa-2022"}},
 				},
 			},

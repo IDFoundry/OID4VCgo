@@ -8,7 +8,6 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -37,125 +36,27 @@ import (
 // confirmed live, so a fixed choice is enough; no runtime negotiation.
 const encryptionEnc = jwe.A128GCM
 
-// credentialIssuerEncryptionMetadata is the subset of Credential Issuer
-// Metadata (openid-credential-issuer) this binary needs for the
-// immediate+encrypted crossing — everything else about the document
-// (credential_configurations_supported, endpoints, ...) this binary
-// already knows from its own config/module.URL, matching wallet/doc.go's
-// own "this package doesn't fetch or parse Issuer metadata itself"
-// boundary (so this binary does it inline, not wallet).
-type credentialIssuerEncryptionMetadata struct {
-	CredentialRequestEncryption struct {
-		JWKS struct {
-			Keys []json.RawMessage `json:"keys"`
-		} `json:"jwks"`
-	} `json:"credential_request_encryption"`
-}
-
-// wellKnownMetadataURL builds a RFC 8414 §3.1-style well-known URL for
-// issuerURL, a URL that may itself carry a path component (e.g. this
-// binary's own module.URL, "https://host/test/a/<alias>"):
-// "/.well-known/<suffix>" is inserted *before* that path, not appended
-// after it — "https://host/.well-known/<suffix>/test/a/<alias>", the
-// same insertion rule OID4VCI's own Credential Issuer Metadata
-// discovery follows (§11.2.1) for an Issuer whose identifier carries a
-// path.
-func wellKnownMetadataURL(issuerURL, suffix string) (string, error) {
-	u, err := url.Parse(issuerURL)
-	if err != nil {
-		return "", fmt.Errorf("parse issuer URL: %w", err)
-	}
-	u.Path = "/.well-known/" + suffix + u.Path
-	return u.String(), nil
-}
-
-// fetchCredentialRequestEncryptionJWK fetches module's own Credential
-// Issuer Metadata and returns the first key of its own
+// credentialRequestEncryptionJWK fetches moduleURL's own Credential
+// Issuer Metadata (via wallet.Wallet.FetchCredentialIssuerMetadata,
+// promoted from this function's own earlier hand-rolled fetch+decode —
+// see wallet/discovery.go) and returns the first key of its own
 // credential_request_encryption.jwks — the Issuer's own encryption
 // public key a Wallet encrypts a Credential Request to (§10,
 // RequestEncryption.RecipientJWK's own doc comment).
-func fetchCredentialRequestEncryptionJWK(ctx context.Context, httpClient *http.Client, moduleURL string) (json.RawMessage, error) {
+func credentialRequestEncryptionJWK(ctx context.Context, w *wallet.Wallet, moduleURL string) (json.RawMessage, error) {
 	// The trailing slash matters here too — the same "aud"/CredentialIssuer
 	// trailing-slash convention this binary already found applies to the
 	// metadata request path itself (confirmed live: without it, the
 	// suite's own metadata handler rejects the request as "does not
 	// match expected URL path").
-	wellKnownURL, err := wellKnownMetadataURL(moduleURL+"/", "openid-credential-issuer")
+	metadata, err := w.FetchCredentialIssuerMetadata(ctx, moduleURL+"/")
 	if err != nil {
 		return nil, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, wellKnownURL, nil)
-	if err != nil {
-		return nil, err
-	}
-	res, err := httpClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = res.Body.Close() }()
-	if res.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("credential issuer metadata endpoint returned status %d", res.StatusCode)
-	}
-	body, err := io.ReadAll(res.Body)
-	if err != nil {
-		return nil, err
-	}
-	var metadata credentialIssuerEncryptionMetadata
-	if err := json.Unmarshal(body, &metadata); err != nil {
-		return nil, fmt.Errorf("decode credential issuer metadata: %w", err)
-	}
-	if len(metadata.CredentialRequestEncryption.JWKS.Keys) == 0 {
+	if metadata.CredentialRequestEncryption == nil || len(metadata.CredentialRequestEncryption.JWKS.Keys) == 0 {
 		return nil, fmt.Errorf("credential issuer metadata publishes no credential_request_encryption.jwks.keys")
 	}
-	return metadata.CredentialRequestEncryption.JWKS.Keys[0], nil
-}
-
-// authorizationServerMetadata is the RFC 8414 subset buildClient needs —
-// just enough to build the endpoints it already hardcoded before this
-// binary drove the HAIP plan's generic FAPI2SP battery, plus the
-// "issuer" field the battery's own discovery-issuer-mismatch module
-// exists to check.
-type authorizationServerMetadata struct {
-	Issuer                             string `json:"issuer"`
-	AuthorizationEndpoint              string `json:"authorization_endpoint"`
-	TokenEndpoint                      string `json:"token_endpoint"`
-	PushedAuthorizationRequestEndpoint string `json:"pushed_authorization_request_endpoint"`
-}
-
-// fetchAuthorizationServerMetadata fetches and decodes the suite's own
-// emulated Authorization Server metadata at issuerURL, using the same
-// RFC 8414 §3.1 insert-before-path convention
-// fetchCredentialRequestEncryptionJWK already established — confirmed
-// live (AbstractVCIWalletTest.java lines 802-807) that this suite
-// test-fails a wallet using OIDC Discovery's own
-// append-after-the-path convention or the "openid-configuration"
-// suffix instead of "oauth-authorization-server".
-func fetchAuthorizationServerMetadata(ctx context.Context, httpClient *http.Client, issuerURL string) (authorizationServerMetadata, error) {
-	wellKnownURL, err := wellKnownMetadataURL(issuerURL, "oauth-authorization-server")
-	if err != nil {
-		return authorizationServerMetadata{}, err
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, wellKnownURL, nil)
-	if err != nil {
-		return authorizationServerMetadata{}, err
-	}
-	res, err := httpClient.Do(req)
-	if err != nil {
-		return authorizationServerMetadata{}, err
-	}
-	defer func() { _ = res.Body.Close() }()
-	if res.StatusCode != http.StatusOK {
-		return authorizationServerMetadata{}, fmt.Errorf("authorization server metadata endpoint returned status %d", res.StatusCode)
-	}
-	body, err := io.ReadAll(res.Body)
-	if err != nil {
-		return authorizationServerMetadata{}, err
-	}
-	var metadata authorizationServerMetadata
-	if err := json.Unmarshal(body, &metadata); err != nil {
-		return authorizationServerMetadata{}, fmt.Errorf("decode authorization server metadata: %w", err)
-	}
-	return metadata, nil
+	return json.Marshal(metadata.CredentialRequestEncryption.JWKS.Keys[0])
 }
 
 // newWallet builds a wallet.Wallet for the Nonce/Credential/Notification
@@ -219,8 +120,15 @@ func buildClient(ctx context.Context, run *walletRun, module conformancesuite.Su
 	// check that module exists to verify. For every other module this
 	// binary drives, the fetched endpoint values are identical to what
 	// was previously hardcoded here, so this adds a validation step
-	// without changing behavior elsewhere.
-	metadata, err := fetchAuthorizationServerMetadata(ctx, httpClient, module.URL)
+	// without changing behavior elsewhere. Promoted to
+	// wallet.Wallet.FetchAuthorizationServerMetadata — see
+	// wallet/discovery.go for why fapigo/client.Discover can't do this
+	// (OIDC-only well-known convention, no RFC 8414 support).
+	discoveryWallet, err := newWallet(httpClient)
+	if err != nil {
+		return nil, fmt.Errorf("build discovery wallet: %w", err)
+	}
+	metadata, err := discoveryWallet.FetchAuthorizationServerMetadata(ctx, module.URL)
 	if err != nil {
 		return nil, fmt.Errorf("fetch authorization server metadata: %w", err)
 	}
@@ -573,7 +481,7 @@ func driveModule(ctx context.Context, run *walletRun, module conformancesuite.Su
 		credRequest.Keys = holderKeys
 	}
 	if encrypted {
-		recipientJWK, encErr := fetchCredentialRequestEncryptionJWK(ctx, httpClient, module.URL)
+		recipientJWK, encErr := credentialRequestEncryptionJWK(ctx, w, module.URL)
 		if encErr != nil {
 			return fmt.Errorf("fetch credential request encryption key: %w", encErr)
 		}

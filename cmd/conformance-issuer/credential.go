@@ -14,6 +14,7 @@ import (
 
 	fapires "github.com/idfoundry/fapigo/resource"
 
+	"github.com/idfoundry/oid4vcigo"
 	"github.com/idfoundry/oid4vcigo/credential/mdoc"
 	"github.com/idfoundry/oid4vcigo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcigo/internal/conformancecert"
@@ -39,7 +40,7 @@ const openidVCIIssuerMetadataTyp = "openidvci-issuer-metadata+jwt"
 // signCredentialIssuerMetadata signs meta as a compact JWS per §12.2.3:
 // "All metadata parameters used by the Credential Issuer MUST be added
 // as top-level claims in the JWS payload" — json.Marshal already
-// produces exactly that shape (issuer.Metadata's own json tags are
+// produces exactly that shape (oid4vci.Metadata's own json tags are
 // what §12.2.4 defines), so this just adds the REQUIRED "sub" (the
 // Credential Issuer Identifier — read back out of the marshaled
 // metadata itself, since it's the same value as its own
@@ -51,7 +52,7 @@ const openidVCIIssuerMetadataTyp = "openidvci-issuer-metadata+jwt"
 // header parameters like x5c, kid or trust_chain") — this repo's own
 // established convention (see
 // verifier/authorization_request.go's signRequestObject).
-func signCredentialIssuerMetadata(meta issuer.Metadata, signer crypto.Signer, cert *x509.Certificate) (string, error) {
+func signCredentialIssuerMetadata(meta oid4vci.Metadata, signer crypto.Signer, cert *x509.Certificate) (string, error) {
 	metaJSON, err := json.Marshal(meta)
 	if err != nil {
 		return "", fmt.Errorf("marshal metadata: %w", err)

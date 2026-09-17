@@ -173,7 +173,7 @@ func mdlCredentialConfiguration() issuer.CredentialConfiguration {
 		DocType:                                 "org.iso.18013.5.1.mDL",
 		CryptographicBindingMethodsSupported:    []string{"cose_key"},
 		CredentialSigningAlgValuesSupportedCOSE: []cose.Alg{cose.ES256, -9},
-		ProofTypesSupported: map[string]issuer.ProofTypeConfiguration{
+		ProofTypesSupported: map[string]oid4vci.ProofTypeConfiguration{
 			oid4vci.ProofTypeJWT: {ProofSigningAlgValuesSupported: []string{"ES256"}},
 		},
 	}
@@ -222,37 +222,37 @@ func TestMetadata_MdocFormat(t *testing.T) {
 // own worked values, not just a round-trip.
 func TestMetadata_SpecWorkedExample(t *testing.T) {
 	cfg := validConfig(t)
-	cfg.Display = []issuer.Display{
+	cfg.Display = []oid4vci.Display{
 		{
 			Name: "Example University", Locale: "en-US",
-			Logo: &issuer.Logo{URI: "https://university.example.edu/public/logo.png", AltText: "a square logo of a university"},
+			Logo: &oid4vci.Logo{URI: "https://university.example.edu/public/logo.png", AltText: "a square logo of a university"},
 		},
 		{
 			Name: "Example Université", Locale: "fr-FR",
-			Logo: &issuer.Logo{URI: "https://university.example.edu/public/logo.png", AltText: "Un logo universitaire carré"},
+			Logo: &oid4vci.Logo{URI: "https://university.example.edu/public/logo.png", AltText: "Un logo universitaire carré"},
 		},
 	}
-	cfg.BatchCredentialIssuance = &issuer.BatchCredentialIssuance{BatchSize: 10}
+	cfg.BatchCredentialIssuance = &oid4vci.BatchCredentialIssuance{BatchSize: 10}
 	cfg.CredentialConfigurationsSupported["SD_JWT_VC_example_in_OpenID4VCI"] = issuer.CredentialConfiguration{
 		Format:                               "dc+sd-jwt",
 		Scope:                                "SD_JWT_VC_example_in_OpenID4VCI",
 		VCT:                                  "SD_JWT_VC_example_in_OpenID4VCI",
 		CryptographicBindingMethodsSupported: []string{"jwk"},
 		CredentialSigningAlgValuesSupported:  []string{"ES256"},
-		ProofTypesSupported: map[string]issuer.ProofTypeConfiguration{
+		ProofTypesSupported: map[string]oid4vci.ProofTypeConfiguration{
 			oid4vci.ProofTypeJWT: {
 				ProofSigningAlgValuesSupported: []string{"ES256"},
-				KeyAttestationsRequired: &issuer.KeyAttestationRequirement{
+				KeyAttestationsRequired: &oid4vci.KeyAttestationRequirement{
 					KeyStorage:         []string{"iso_18045_moderate"},
 					UserAuthentication: []string{"iso_18045_moderate"},
 				},
 			},
 		},
-		CredentialMetadata: &issuer.CredentialMetadata{
-			Display: []issuer.CredentialDisplay{
+		CredentialMetadata: &oid4vci.CredentialMetadata{
+			Display: []oid4vci.CredentialDisplay{
 				{
 					Name: "IdentityCredential", Locale: "en-US",
-					Logo: &issuer.Logo{
+					Logo: &oid4vci.Logo{
 						URI:     "https://university.example.edu/public/logo_credential.png",
 						AltText: "a square logo of a university credential",
 					},
@@ -261,16 +261,16 @@ func TestMetadata_SpecWorkedExample(t *testing.T) {
 					TextColor:       "#FFFFFF",
 				},
 			},
-			Claims: []issuer.ClaimsDescription{
-				{Path: []any{"given_name"}, Display: []issuer.ClaimDisplay{
+			Claims: []oid4vci.ClaimsDescription{
+				{Path: []any{"given_name"}, Display: []oid4vci.ClaimDisplay{
 					{Name: "Given Name", Locale: "en-US"}, {Name: "Vorname", Locale: "de-DE"},
 				}},
-				{Path: []any{"family_name"}, Display: []issuer.ClaimDisplay{
+				{Path: []any{"family_name"}, Display: []oid4vci.ClaimDisplay{
 					{Name: "Surname", Locale: "en-US"}, {Name: "Nachname", Locale: "de-DE"},
 				}},
 				{Path: []any{"email"}},
 				{Path: []any{"phone_number"}},
-				{Path: []any{"address"}, Display: []issuer.ClaimDisplay{
+				{Path: []any{"address"}, Display: []oid4vci.ClaimDisplay{
 					{Name: "Place of residence", Locale: "en-US"}, {Name: "Wohnsitz", Locale: "de-DE"},
 				}},
 				{Path: []any{"address", "street_address"}},
@@ -386,17 +386,17 @@ func TestMetadata_OmitsBatchCredentialIssuanceAndDisplayByDefault(t *testing.T) 
 // TestClaimsDescriptionIsMandatory checks IsMandatory's own "default
 // false" reader semantics (Appendix B.2).
 func TestClaimsDescriptionIsMandatory(t *testing.T) {
-	unset := issuer.ClaimsDescription{Path: []any{"x"}}
+	unset := oid4vci.ClaimsDescription{Path: []any{"x"}}
 	if unset.IsMandatory() {
 		t.Errorf("IsMandatory() = true for an unset Mandatory, want false")
 	}
 	falseVal := false
-	explicitFalse := issuer.ClaimsDescription{Path: []any{"x"}, Mandatory: &falseVal}
+	explicitFalse := oid4vci.ClaimsDescription{Path: []any{"x"}, Mandatory: &falseVal}
 	if explicitFalse.IsMandatory() {
 		t.Errorf("IsMandatory() = true for an explicit false, want false")
 	}
 	trueVal := true
-	explicitTrue := issuer.ClaimsDescription{Path: []any{"x"}, Mandatory: &trueVal}
+	explicitTrue := oid4vci.ClaimsDescription{Path: []any{"x"}, Mandatory: &trueVal}
 	if !explicitTrue.IsMandatory() {
 		t.Errorf("IsMandatory() = false for an explicit true, want true")
 	}
@@ -411,9 +411,9 @@ func TestMetadata_MdocCredentialMetadata(t *testing.T) {
 	trueVal := true
 	cfg := validConfig(t)
 	mdlConfig := mdlCredentialConfiguration()
-	mdlConfig.CredentialMetadata = &issuer.CredentialMetadata{
-		Claims: []issuer.ClaimsDescription{
-			{Path: []any{"org.iso.18013.5.1", "given_name"}, Display: []issuer.ClaimDisplay{
+	mdlConfig.CredentialMetadata = &oid4vci.CredentialMetadata{
+		Claims: []oid4vci.ClaimsDescription{
+			{Path: []any{"org.iso.18013.5.1", "given_name"}, Display: []oid4vci.ClaimDisplay{
 				{Name: "Given Name", Locale: "en-US"},
 			}},
 			{Path: []any{"org.iso.18013.5.1", "birth_date"}, Mandatory: &trueVal},
@@ -452,10 +452,10 @@ func TestMetadata_MdocCredentialMetadata(t *testing.T) {
 func TestMetadata_KeyAttestationRequirement(t *testing.T) {
 	cfg := validConfig(t)
 	cc := cfg.CredentialConfigurationsSupported["IdentityCredential"]
-	cc.ProofTypesSupported = map[string]issuer.ProofTypeConfiguration{
+	cc.ProofTypesSupported = map[string]oid4vci.ProofTypeConfiguration{
 		oid4vci.ProofTypeJWT: {
 			ProofSigningAlgValuesSupported: []string{"ES256"},
-			KeyAttestationsRequired: &issuer.KeyAttestationRequirement{
+			KeyAttestationsRequired: &oid4vci.KeyAttestationRequirement{
 				KeyStorage: []string{"iso_18045_moderate"},
 			},
 		},

@@ -160,30 +160,6 @@ type ResponseEncryptionRequest struct {
 	Zip jwe.Zip         // OPTIONAL
 }
 
-// metadataJWK is a JWK plus the "kid"/"alg" every entry in
-// credential_request_encryption.jwks needs — internal/jwk.JWK itself
-// has neither field, since both are contextual to where a key is
-// published, not part of the key material Marshal encodes. §10's own
-// "The alg parameter MUST be present. The JWE alg algorithm used MUST
-// be equal to the alg value of the chosen JWK" makes Alg REQUIRED
-// here, not optional metadata — confirmed live: the OIDF suite's own
-// VCICheckCredentialRequestEncryptionSupported check rejects a
-// published key with no "alg" member outright ("expected at least one
-// key with... an asymmetric JWE alg").
-type metadataJWK struct {
-	jwk.JWK
-	Kid string  `json:"kid"`
-	Alg jwe.Alg `json:"alg"`
-}
-
-// metadataJWKSet is a JSON Web Key Set (RFC 7517 §5) — §12.2.4's own
-// "jwks" member is REQUIRED to be one ("A JSON Web Key Set, as defined
-// in [RFC7591]"), a {"keys": [...]} object, not a bare JSON array of
-// keys.
-type metadataJWKSet struct {
-	Keys []metadataJWK `json:"keys"`
-}
-
 // DecryptRequestBody decrypts body if contentType is "application/jwt"
 // (a JWE Compact Serialization, §10), resolving which of
 // Config.RequestEncryption.Keys to decrypt with from the JWE header's

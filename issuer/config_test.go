@@ -50,7 +50,7 @@ func validCredentialConfigurations() map[string]issuer.CredentialConfiguration {
 			VCT:                                  "https://credentials.example.com/identity_credential",
 			CryptographicBindingMethodsSupported: []string{"jwk"},
 			CredentialSigningAlgValuesSupported:  []string{"ES256"},
-			ProofTypesSupported: map[string]issuer.ProofTypeConfiguration{
+			ProofTypesSupported: map[string]oid4vci.ProofTypeConfiguration{
 				oid4vci.ProofTypeJWT: {ProofSigningAlgValuesSupported: []string{"ES256"}},
 			},
 		},
@@ -175,10 +175,10 @@ func TestNewRejectsInvalidConfig(t *testing.T) {
 		"zero credential offer lifetime with endpoint":       func(c *issuer.Config) { c.Limits.CredentialOfferLifetime = 0 },
 		"zero deferred issuance poll interval with endpoint": func(c *issuer.Config) { c.Limits.DeferredIssuancePollInterval = 0 },
 		"invalid display": func(c *issuer.Config) {
-			c.Display = []issuer.Display{{Logo: &issuer.Logo{}}}
+			c.Display = []oid4vci.Display{{Logo: &oid4vci.Logo{}}}
 		},
 		"invalid batch credential issuance": func(c *issuer.Config) {
-			c.BatchCredentialIssuance = &issuer.BatchCredentialIssuance{BatchSize: 1}
+			c.BatchCredentialIssuance = &oid4vci.BatchCredentialIssuance{BatchSize: 1}
 		},
 	}
 	for name, mutate := range cases {
@@ -200,13 +200,13 @@ func TestNewRejectsInvalidCredentialConfiguration(t *testing.T) {
 		},
 		"proof types without binding methods": {
 			Format: "dc+sd-jwt",
-			ProofTypesSupported: map[string]issuer.ProofTypeConfiguration{
+			ProofTypesSupported: map[string]oid4vci.ProofTypeConfiguration{
 				oid4vci.ProofTypeJWT: {ProofSigningAlgValuesSupported: []string{"ES256"}},
 			},
 		},
 		"proof type with no algorithms": {
 			Format: "dc+sd-jwt", CryptographicBindingMethodsSupported: []string{"jwk"},
-			ProofTypesSupported: map[string]issuer.ProofTypeConfiguration{
+			ProofTypesSupported: map[string]oid4vci.ProofTypeConfiguration{
 				oid4vci.ProofTypeJWT: {},
 			},
 		},
@@ -217,8 +217,8 @@ func TestNewRejectsInvalidCredentialConfiguration(t *testing.T) {
 		},
 		"invalid credential_metadata": {
 			Format: "dc+sd-jwt",
-			CredentialMetadata: &issuer.CredentialMetadata{
-				Claims: []issuer.ClaimsDescription{{Path: nil}},
+			CredentialMetadata: &oid4vci.CredentialMetadata{
+				Claims: []oid4vci.ClaimsDescription{{Path: nil}},
 			},
 		},
 	}
@@ -236,19 +236,19 @@ func TestNewRejectsInvalidCredentialConfiguration(t *testing.T) {
 func TestNewRejectsMissingSignerDependencies(t *testing.T) {
 	sdjwtConfig := issuer.CredentialConfiguration{
 		Format: "dc+sd-jwt", CryptographicBindingMethodsSupported: []string{"jwk"},
-		ProofTypesSupported: map[string]issuer.ProofTypeConfiguration{
+		ProofTypesSupported: map[string]oid4vci.ProofTypeConfiguration{
 			oid4vci.ProofTypeJWT: {ProofSigningAlgValuesSupported: []string{"ES256"}},
 		},
 	}
 	mdocConfig := issuer.CredentialConfiguration{
 		Format: "mso_mdoc", CryptographicBindingMethodsSupported: []string{"cose_key"},
-		ProofTypesSupported: map[string]issuer.ProofTypeConfiguration{
+		ProofTypesSupported: map[string]oid4vci.ProofTypeConfiguration{
 			oid4vci.ProofTypeJWT: {ProofSigningAlgValuesSupported: []string{"ES256"}},
 		},
 	}
 	attestationConfig := issuer.CredentialConfiguration{
 		Format: "dc+sd-jwt", CryptographicBindingMethodsSupported: []string{"jwk"},
-		ProofTypesSupported: map[string]issuer.ProofTypeConfiguration{
+		ProofTypesSupported: map[string]oid4vci.ProofTypeConfiguration{
 			oid4vci.ProofTypeAttestation: {ProofSigningAlgValuesSupported: []string{"ES256"}},
 		},
 	}

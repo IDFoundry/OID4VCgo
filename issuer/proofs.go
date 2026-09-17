@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"slices"
 
+	"github.com/idfoundry/oid4vcigo"
 	"github.com/idfoundry/oid4vcigo/attestation"
 	"github.com/idfoundry/oid4vcigo/internal/jose"
 	"github.com/idfoundry/oid4vcigo/internal/jwk"
@@ -23,7 +24,7 @@ import (
 // matching NonceStore's own doc comment ("Consume is still called once
 // per request, not once per proof").
 func (iss *Issuer) resolveJWTProofKeys(
-	ctx context.Context, auth AuthorizedRequest, values []string, ptc ProofTypeConfiguration,
+	ctx context.Context, auth AuthorizedRequest, values []string, ptc oid4vci.ProofTypeConfiguration,
 ) ([]resolvedKey, error) {
 	if ptc.KeyAttestationsRequired != nil {
 		return nil, newError(ErrorInvalidCredentialRequest, 400,

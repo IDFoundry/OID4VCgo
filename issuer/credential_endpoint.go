@@ -321,7 +321,7 @@ func singleProofType(proofs map[string][]string, cc CredentialConfiguration) (pr
 }
 
 func (iss *Issuer) resolveProofKeys(
-	ctx context.Context, auth AuthorizedRequest, proofType string, values []string, ptc ProofTypeConfiguration,
+	ctx context.Context, auth AuthorizedRequest, proofType string, values []string, ptc oid4vci.ProofTypeConfiguration,
 ) ([]resolvedKey, error) {
 	switch proofType {
 	case oid4vci.ProofTypeJWT:

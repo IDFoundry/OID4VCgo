@@ -325,7 +325,7 @@ func newPreAuthorizedRoundTripFixture(t *testing.T, configure func(cfg *issuer.C
 				Scope:                                "identity_credential",
 				VCT:                                  preAuthorizedRoundTripVCT,
 				CryptographicBindingMethodsSupported: []string{"jwk"},
-				ProofTypesSupported: map[string]issuer.ProofTypeConfiguration{
+				ProofTypesSupported: map[string]oid4vci.ProofTypeConfiguration{
 					oid4vci.ProofTypeJWT: {ProofSigningAlgValuesSupported: []string{"ES256"}},
 				},
 			},
@@ -642,7 +642,7 @@ func TestWalletIssuerDeferredAndNotificationRoundTrip(t *testing.T) {
 				Scope:                                "identity_credential",
 				VCT:                                  "https://credentials.example.com/identity_credential",
 				CryptographicBindingMethodsSupported: []string{"jwk"},
-				ProofTypesSupported: map[string]issuer.ProofTypeConfiguration{
+				ProofTypesSupported: map[string]oid4vci.ProofTypeConfiguration{
 					oid4vci.ProofTypeJWT: {ProofSigningAlgValuesSupported: []string{"ES256"}},
 				},
 			},
@@ -731,7 +731,7 @@ type walletIssuerRoundTripFixture struct {
 }
 
 func newWalletIssuerRoundTripFixture(
-	t *testing.T, proofType string, ptc issuer.ProofTypeConfiguration, extraDeps issuer.Dependencies,
+	t *testing.T, proofType string, ptc oid4vci.ProofTypeConfiguration, extraDeps issuer.Dependencies,
 	mutateConfig ...func(*issuer.Config),
 ) walletIssuerRoundTripFixture {
 	t.Helper()
@@ -772,7 +772,7 @@ func newWalletIssuerRoundTripFixture(
 				Scope:                                "identity_credential",
 				VCT:                                  walletIssuerRoundTripVCT,
 				CryptographicBindingMethodsSupported: []string{"jwk"},
-				ProofTypesSupported:                  map[string]issuer.ProofTypeConfiguration{proofType: ptc},
+				ProofTypesSupported:                  map[string]oid4vci.ProofTypeConfiguration{proofType: ptc},
 			},
 		},
 	}
@@ -837,7 +837,7 @@ func (f walletIssuerRoundTripFixture) verifyIssuedSDJWT(t *testing.T, result wal
 // actually accepts, and vice versa.
 func TestWalletIssuerRoundTrip(t *testing.T) {
 	f := newWalletIssuerRoundTripFixture(t, oid4vci.ProofTypeJWT,
-		issuer.ProofTypeConfiguration{ProofSigningAlgValuesSupported: []string{"ES256"}}, issuer.Dependencies{})
+		oid4vci.ProofTypeConfiguration{ProofSigningAlgValuesSupported: []string{"ES256"}}, issuer.Dependencies{})
 
 	resource := issuerCredentialFake{
 		iss:    f.iss,
@@ -878,7 +878,7 @@ func (r fixedProofBindingKeyResolver) ResolveProofBindingKey(context.Context, ma
 func TestWalletIssuerKidProofRoundTrip(t *testing.T) {
 	bindingKey := testP256Key(t)
 	f := newWalletIssuerRoundTripFixture(t, oid4vci.ProofTypeJWT,
-		issuer.ProofTypeConfiguration{ProofSigningAlgValuesSupported: []string{"ES256"}}, issuer.Dependencies{
+		oid4vci.ProofTypeConfiguration{ProofSigningAlgValuesSupported: []string{"ES256"}}, issuer.Dependencies{
 			ProofBindingKeys: fixedProofBindingKeyResolver{pub: &bindingKey.PublicKey},
 		})
 
@@ -931,7 +931,7 @@ func TestWalletIssuerAttestationProofRoundTrip(t *testing.T) {
 		t.Fatalf("generate attestation authority key: %v", err)
 	}
 	f := newWalletIssuerRoundTripFixture(t, oid4vci.ProofTypeAttestation,
-		issuer.ProofTypeConfiguration{ProofSigningAlgValuesSupported: []string{"ES256"}}, issuer.Dependencies{
+		oid4vci.ProofTypeConfiguration{ProofSigningAlgValuesSupported: []string{"ES256"}}, issuer.Dependencies{
 			AttestationVerifier: fixedAttestationVerifier{pub: &attestationSigner.PublicKey, alg: jose.ES256},
 		})
 
@@ -968,7 +968,7 @@ func TestWalletIssuerAttestationProofRoundTrip(t *testing.T) {
 func TestWalletIssuerEncryptedRoundTrip(t *testing.T) {
 	requestDecryptionKey := testP256Key(t)
 	f := newWalletIssuerRoundTripFixture(t, oid4vci.ProofTypeJWT,
-		issuer.ProofTypeConfiguration{ProofSigningAlgValuesSupported: []string{"ES256"}}, issuer.Dependencies{},
+		oid4vci.ProofTypeConfiguration{ProofSigningAlgValuesSupported: []string{"ES256"}}, issuer.Dependencies{},
 		func(cfg *issuer.Config) {
 			cfg.RequestEncryption = &issuer.RequestEncryptionSupport{
 				Keys:               []issuer.RequestDecryptionKey{{KeyID: "req-1", PrivateKey: requestDecryptionKey}},
