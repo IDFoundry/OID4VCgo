@@ -72,11 +72,24 @@ package layout and design rationale as it's built out.
 ## Where conformance-suite knowledge lives
 
 [`conformance/README.md`](conformance/README.md) — mirrors FAPIgo's own
-`conformance/*/README.md` documentation convention. All three binaries
+`conformance/*/README.md` documentation convention. All four binaries
 (`cmd/conformance-verifier`, `cmd/conformance-wallet-vp`,
-`cmd/conformance-issuer`) exist, compile, are unit-tested, and have now
-been run against a real, locally-run OIDF conformance suite instance —
-not just against each other. `conformance-verifier`'s own
+`cmd/conformance-issuer`, `cmd/conformance-wallet`) exist, compile,
+and have now been run against a real, locally-run OIDF conformance
+suite instance — not just against each other (`cmd/conformance-wallet`
+is unit-test-free by design, an outbound-driving CLI tool rather than
+a server; its own verification is the live suite run itself, matching
+FAPIgo's own `cmd/conformance-client`).
+`cmd/conformance-wallet` — the OID4VCI Wallet role, the one FAPIgo
+used to block entirely — drives `oid4vcigo/wallet`/`fapigo/client`
+against the suite's own emulated Authorization Server and Credential
+Issuer, since for this role the suite plays that side, not this repo's
+own binary. All 4 in-scope modules of `oid4vci-1_0-wallet-haip-test-plan`
+`FINISHED`/`PASSED`, including `client-attestation-challenge` — proof
+that FAPIgo's Wallet Attestation support (PRs #317/#318) interoperates
+with the suite's own independent implementation, not just this repo's
+in-process tests. See `conformance/wallet/README.md`.
+`conformance-verifier`'s own
 `oid4vp-1final-verifier-haip-test-plan` is a full confirmed pass, all
 11 in-scope modules. `conformance-wallet-vp`'s own `happy-flow` module
 passes every cryptographic check. `conformance-issuer`'s own
