@@ -92,21 +92,23 @@ func TestPresentMdocSelectiveEmptyPathsDisclosesNothing(t *testing.T) {
 // valid two-component mdoc-form path (here, a three-component one)
 // isn't supported for trimming, so every namespace/element is included
 // instead of guessing.
-func TestPresentMdocSelectiveFallsBackForNonMdocPath(t *testing.T) {
+// TestPresentMdocSelectiveRejectsNonMdocPath is the regression test
+// for a real bug found in a repo-wide security review: an earlier
+// version of PresentMdocSelective silently fell back to disclosing
+// every namespace/element in the credential when given a Claims Path
+// it couldn't trim against — a real over-disclosure of undisclosed
+// claims, not a graceful degradation (§6.4.1's own "MUST NOT send
+// claims that have not been selected"). It must now fail loudly
+// instead.
+func TestPresentMdocSelectiveRejectsNonMdocPath(t *testing.T) {
 	f := testmdoc.Issue(t)
 	held := heldMdoc(t, f)
 
-	presented, err := wallet.PresentMdocSelective(held, mdocSelectiveParams(), []dcql.Path{
+	_, err := wallet.PresentMdocSelective(held, mdocSelectiveParams(), []dcql.Path{
 		{dcql.PathKey("org.iso.18013.5.1"), dcql.PathKey("given_name"), dcql.PathKey("extra")},
 	})
-	if err != nil {
-		t.Fatalf("PresentMdocSelective: %v", err)
-	}
-
-	nameSpaces := decodePresentedMdocNameSpaces(t, presented)
-	elements := nameSpaces["org.iso.18013.5.1"]
-	if len(elements) != 2 {
-		t.Errorf("org.iso.18013.5.1 elements = %v, want both given_name and family_name (fallback to full disclosure)", elements)
+	if err == nil {
+		t.Fatal("PresentMdocSelective = nil error, want an error (must not silently fall back to full disclosure)")
 	}
 }
 

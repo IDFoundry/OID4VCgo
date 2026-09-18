@@ -267,10 +267,18 @@ func matchAllMdocQuery(cq dcql.CredentialQuery, candidates []HeldCredential) []H
 // PresentSDJWTVC builds a "dc+sd-jwt" Presentation (a VP Token array
 // entry, Appendix B.3) from held: a fresh Key Binding JWT bound to
 // aud/nonce (§14.1.2, Appendix B.3.6), reusing every one of held's own
-// Disclosures. RFC 9901 §7.2 lets a Holder present a subset instead —
-// see PresentSDJWTVCSelective for that; this function's own "disclose
-// everything" behavior is unchanged, for a caller with no DCQL query
-// context to trim against.
+// Disclosures.
+//
+// WARNING: despite the generic-sounding name, this always discloses
+// EVERY claim held carries — there is no DCQL-query-aware trimming
+// here at all. Answering an actual Verifier's Authorization Request
+// (which always carries a dcql_query) with this function, instead of
+// PresentCredentials (the query-aware entry point) or
+// PresentSDJWTVCSelective, silently over-shares every selectively-
+// disclosable claim the credential has, not just the ones the
+// Verifier asked for — call this only when there genuinely is no DCQL
+// query to trim against. RFC 9901 §7.2 lets a Holder present a subset
+// instead — see PresentSDJWTVCSelective for that.
 func PresentSDJWTVC(held HeldCredential, aud, nonce string) (string, error) {
 	if held.Format != sdjwtvc.CredentialFormat {
 		return "", fmt.Errorf("wallet: present sd-jwt vc: held credential format is %q, want %q", held.Format, sdjwtvc.CredentialFormat)
@@ -294,21 +302,29 @@ func PresentSDJWTVC(held HeldCredential, aud, nonce string) (string, error) {
 // Each Path in requiredPaths is walked as a sequence of
 // object-property names — SelectDisclosures's own contract. A Path
 // with a Wildcard/Index component (selecting into an *array*, as
-// opposed to an object property) isn't supported for trimming yet:
-// this function falls back to PresentSDJWTVC's own full disclosure
-// for the whole credential in that case, rather than guessing which
-// array elements matter — the one narrow case where this package's
-// own output can still exceed what §6.4.1 strictly allows; every
-// Claims Path Pointer either format's own DCQL query fixtures in this
-// repo actually uses today is Wildcard/Index-free, so this cut costs
-// nothing in practice yet.
+// opposed to an object property) isn't supported for trimming yet —
+// this function returns an error rather than guessing which array
+// elements matter. It deliberately does NOT fall back to PresentSDJWTVC's
+// own full disclosure in that case: §6.4.1's own "the Wallet MUST NOT
+// send selectively disclosable claims that have not been selected" is
+// the whole security property this function exists to guarantee, so
+// silently exceeding what a query actually asked for is a privacy
+// violation, not a graceful degradation — a caller that hits this
+// error needs to know its query isn't satisfiable by this package
+// today, not receive an over-broad Presentation it never asked for.
+// (An earlier version of this function did fall back to full
+// disclosure here; found and fixed in a repo-wide security review —
+// every Claims Path Pointer either format's own DCQL query fixtures in
+// this repo actually uses today is Wildcard/Index-free, so this was
+// always unreachable in practice, but silently wrong the moment a real
+// Verifier sent one.)
 func PresentSDJWTVCSelective(held HeldCredential, aud, nonce string, requiredPaths []dcql.Path) (string, error) {
 	if held.Format != sdjwtvc.CredentialFormat {
 		return "", fmt.Errorf("wallet: present sd-jwt vc: held credential format is %q, want %q", held.Format, sdjwtvc.CredentialFormat)
 	}
 	disclosurePaths, ok := sdjwtvcDisclosurePaths(requiredPaths)
 	if !ok {
-		return PresentSDJWTVC(held, aud, nonce)
+		return "", fmt.Errorf("wallet: present sd-jwt vc: one or more requested claim paths use a wildcard/array-index component, which selective disclosure trimming doesn't support yet — refusing to fall back to disclosing the whole credential")
 	}
 
 	pres, hashAlg, _, err := resolveHeldSDJWTVC(held.Credential)
@@ -469,9 +485,17 @@ func buildMdocSessionTranscriptBytes(params PresentMdocParams) ([]byte, error) {
 // additional self-asserted DeviceSigned namespaces (an empty
 // NameSpaces map — this package only ever proves possession of the
 // device key, it doesn't build Holder-asserted claims of its own).
-// Discloses every namespace/element held's own IssuerSigned carries —
-// see PresentMdocSelective for a caller with DCQL query context to
-// trim against.
+//
+// WARNING: despite the generic-sounding name, this always discloses
+// EVERY namespace/element held's own IssuerSigned carries — there is
+// no DCQL-query-aware trimming here at all. Answering an actual
+// Verifier's Authorization Request (which always carries a
+// dcql_query) with this function, instead of PresentCredentials (the
+// query-aware entry point) or PresentMdocSelective, silently
+// over-shares every element the credential has, not just the ones the
+// Verifier asked for — call this only when there genuinely is no DCQL
+// query to trim against. See PresentMdocSelective for a caller with
+// DCQL query context to trim against.
 func PresentMdoc(held HeldCredential, params PresentMdocParams) (string, error) {
 	issuerSigned, err := decodeHeldMdoc(held)
 	if err != nil {
@@ -493,20 +517,27 @@ func PresentMdoc(held HeldCredential, params PresentMdocParams) (string, error) 
 // Each Path in requiredPaths must be a two-component mdoc-form path
 // (dcql.Path.MdocNamespaceAndElement) — a Claims Path Pointer that
 // isn't (a Wildcard/Index component, or any length other than two)
-// isn't supported for trimming yet: this function falls back to
-// PresentMdoc's own full disclosure for the whole credential in that
-// case, the same narrow cut PresentSDJWTVCSelective's own doc comment
-// takes for "dc+sd-jwt" — no mdoc Claims Path Pointer either format's
-// own DCQL fixtures in this repo actually uses today has one, so this
-// cut costs nothing in practice yet.
+// isn't supported for trimming yet, and this function returns an
+// error rather than guessing. It deliberately does NOT fall back to
+// PresentMdoc's own full disclosure in that case, the same
+// "silently exceeding what a query asked for is a privacy violation,
+// not a graceful degradation" reasoning PresentSDJWTVCSelective's own
+// doc comment explains — an earlier version of this function did fall
+// back to full disclosure here; found and fixed in a repo-wide
+// security review. No mdoc Claims Path Pointer either format's own
+// DCQL fixtures in this repo actually uses today needs this, so this
+// was always unreachable in practice, but silently wrong the moment a
+// real Verifier sent one.
 func PresentMdocSelective(held HeldCredential, params PresentMdocParams, requiredPaths []dcql.Path) (string, error) {
 	issuerSigned, err := decodeHeldMdoc(held)
 	if err != nil {
 		return "", err
 	}
-	if selectorPaths, ok := mdocDisclosurePaths(requiredPaths); ok {
-		issuerSigned = issuerSigned.SelectNameSpaces(selectorPaths)
+	selectorPaths, ok := mdocDisclosurePaths(requiredPaths)
+	if !ok {
+		return "", fmt.Errorf("wallet: present mdoc: one or more requested claim paths aren't a valid two-component [namespace, element] path, which selective disclosure trimming doesn't support — refusing to fall back to disclosing the whole credential")
 	}
+	issuerSigned = issuerSigned.SelectNameSpaces(selectorPaths)
 	return presentMdocWithIssuerSigned(held, params, issuerSigned)
 }
 
