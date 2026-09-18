@@ -558,17 +558,37 @@ from the same freshly generated key material in one run, then restarts
   check was correct and complete the whole time. `restartIssuerContainer`
   now always passes `--build`.
 
+**Update: `attempt-reuse-authorization-code-after-one-second` is now a
+clean `PASSED`, not a `WARNING`.** The module's own log named the real
+cause directly: after correctly rejecting the reused code (`400
+invalid_grant`), it checks "was the access token revoked too" (RFC
+6749 §4.1.2's own SHOULD-level guidance) — and it wasn't, because
+`wiring.go` wired up two *separate* `memstore.NewRevocationStore()`
+instances, one for `srvDeps` (which records a revocation when the AS
+detects reuse) and a different, unconnected one for `resourceVerifier`
+(which checks it on every Credential Endpoint call). Fixed by sharing
+one `revocationStore` instance between both, the same pattern
+`replayStore` already used two lines above it — and the same fix
+FAPIgo's own `cmd/conformance-as/wiring.go` already made for its own
+identical conformance finding. The library-level revocation machinery
+(`server.RevocationSink`/`resource.RevocationChecker`,
+`memstore.RevocationStore`) already existed and was already wired in
+on both sides; this was purely a "two stores instead of one" wiring
+bug, not a missing feature.
+
 **Final result, 42/42 modules run live, twice for stability — identical
 outcomes both times:** every module `PASSED` except one expected
-`WARNING` (`attempt-reuse-authorization-code-after-one-second` — a
-soft timing note, not a `FAILURE`), one expected `SKIPPED`
-(`refresh-token` — this plan's own fixed
+`SKIPPED` (`refresh-token` — this plan's own fixed
 `VCIGrantType=authorization_code` selection issues no refresh token to
 reuse), and one expected `REVIEW`
 (`par-attempt-to-use-request_uri-for-different-client` — a negative
 test the suite grades via human-review screenshot upload, which
 `unblock.go`'s own placeholder-fill path resolves to `REVIEW` rather
-than `PASSED` by design). No `FAILURE`s, no modules left `WAITING`.
+than `PASSED` by design — the module's own log shows this binary
+already returns the correct `400 invalid_request_uri` error locally,
+this is purely an unresolved suite-side grading limitation, the same
+class already documented for Wallet-VP/Verifier's own negative
+tests). No `FAILURE`s, no modules left `WAITING`.
 
 ## Status: the base (non-HAIP) `oid4vci-1_0-issuer-test-plan` (21 modules)
 

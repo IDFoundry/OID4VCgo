@@ -234,14 +234,15 @@ run_go_self_graded() {
 }
 
 run_issuer() {
-	# 1 WARNING (attempt-reuse-authorization-code-after-one-second — a
-	# suite-side timing WARNING this repo's own docs have consistently
-	# reproduced, not a defect), 1 SKIPPED (refresh-token — HAIP's
-	# pre-authorized_code grant doesn't issue refresh tokens), 1 REVIEW
+	# 1 SKIPPED (refresh-token — HAIP's pre-authorized_code grant
+	# doesn't issue refresh tokens), 1 REVIEW
 	# (par-attempt-to-use-request_uri-for-different-client — a
 	# screenshot-gated module, see conformance/issuer/README.md).
-	local haip_exceptions='fapi2-security-profile-final-attempt-reuse-authorization-code-after-one-second=WARNING
-fapi2-security-profile-final-refresh-token=SKIPPED
+	# attempt-reuse-authorization-code-after-one-second used to be a
+	# third exception (WARNING) until wiring.go's own shared
+	# revocationStore fix — see conformance/issuer/README.md's own
+	# "Update" note — so it's expected to PASS like everything else now.
+	local haip_exceptions='fapi2-security-profile-final-refresh-token=SKIPPED
 fapi2-security-profile-final-par-attempt-to-use-request_uri-for-different-client=REVIEW'
 	run_go_checked "Issuer haip-battery" "$WORKDIR/issuer-haip.log" "$haip_exceptions" \
 		go run ./conformance/issuer/scripts/run-fapi2sp-battery

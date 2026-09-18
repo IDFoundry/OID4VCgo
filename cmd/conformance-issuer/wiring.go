@@ -170,6 +170,19 @@ func newServerMux(cfg Config) (*http.ServeMux, error) {
 	}
 	clientRepo := memstore.NewClientRepository(registeredClients)
 	replayStore := memstore.NewReplayStore()
+	// revocationStore is shared between srvDeps (which records a
+	// revocation when the AS detects authorization-code reuse, RFC 6749
+	// §4.1.2) and resourceVerifier (which checks it on every Credential
+	// Endpoint call) — two independent stores would let the resource
+	// verifier keep accepting an access token the AS just revoked,
+	// exactly the gap the OIDF conformance suite's own
+	// attempt-reuse-authorization-code-after-one-second module flags
+	// (WARNING: "resource endpoint returned a different http status
+	// than expected" after "Testing if access token was revoked after
+	// authorization code reuse"). Mirrors FAPIgo's own
+	// cmd/conformance-as/wiring.go, which wires the identical shared
+	// store for the same reason.
+	revocationStore := memstore.NewRevocationStore()
 
 	accessTokens, err := server.NewJWTAccessTokens(keyManager, fapi.ES256)
 	if err != nil {
@@ -209,7 +222,7 @@ func newServerMux(cfg Config) (*http.ServeMux, error) {
 		ClientKeys:   clientKeys,
 		Keys:         keyManager,
 		AccessTokens: accessTokens,
-		Revocation:   memstore.NewRevocationStore(),
+		Revocation:   revocationStore,
 		Clock:        server.SystemClock{},
 		Random:       rand.Reader,
 	}
@@ -222,7 +235,7 @@ func newServerMux(cfg Config) (*http.ServeMux, error) {
 		Limits: fapires.Limits{MaxDPoPProofAge: limits.MaxDPoPProofAge, MaxClockSkew: limits.MaxClockSkew},
 	}, fapires.Dependencies{
 		AccessTokens: resourceAccessTokens, Replay: replayStore,
-		Revocation: memstore.NewRevocationStore(), Clock: fapires.SystemClock{},
+		Revocation: revocationStore, Clock: fapires.SystemClock{},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("resource.NewVerifier: %w", err)
