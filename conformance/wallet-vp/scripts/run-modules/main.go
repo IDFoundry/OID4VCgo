@@ -41,16 +41,22 @@
 // negative-test modules on that local signal, not the suite's own
 // REVIEW verdict.
 //
-// Deliberately excluded: `alternate-happy-flow`. Its own
-// fragment-carrying redirect_uri (HAIP's alternate response variant)
-// needs relaying real fragment content to the suite's own "implicit
-// submission" URL — confirmed live that an empty POST (the mechanism
-// every other stuck-point in this repo's own conformance tooling uses)
-// isn't enough here, and two different guesses at the POST body shape
-// both left the suite reporting "URL fragment passed to redirect_uri
-// contains more than the one expected entry." Flagged honestly as
-// unresolved rather than forced — a genuine follow-up, not something
-// this run silently skips without saying so.
+// `alternate-happy-flow`'s own fragment-carrying redirect_uri (HAIP's
+// alternate response variant) needs relaying real fragment content to
+// the suite's own "implicit submission" URL, exactly like a real
+// browser's window.location.hash + XHR POST would — this binary's own
+// GET drops the fragment on the floor (fragments never transmit over
+// HTTP by design), so driveOne relays it separately once it sees one.
+// The exact wire shape (raw fragment text, INCLUDING the leading '#',
+// POSTed as Content-Type: text/plain) was confirmed by decompiling the
+// suite's own fapi-test-suite.jar (implicitCallback.html's own
+// xhr.send(window.location.hash) and
+// CheckUrlFragmentContainsCodeVerifier.java's own literal comparison
+// against "#" + code_verifier) rather than guessed — two earlier
+// guesses (a bare fragment value with no leading '#', and a
+// form-encoded code_verifier=<fragment> body) both failed against the
+// live suite with "URL fragment passed to redirect_uri contains more
+// than the one expected entry" for exactly this reason.
 //
 // Usage: go run ./conformance/wallet-vp/scripts/run-modules \
 //
@@ -67,6 +73,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -80,13 +87,14 @@ import (
 )
 
 const (
-	planName         = "oid4vp-1final-wallet-haip-test-plan"
-	configOutPath    = "conformance/wallet-vp/oidf-config/haip.config.json"
-	dockerComposeYML = "conformance/wallet-vp/docker-compose.yml"
-	restartTimeout   = 30 * time.Second
-	redirectTimeout  = 15 * time.Second
-	uploadTimeout    = 10 * time.Second
-	moduleTimeout    = 30 * time.Second
+	planName              = "oid4vp-1final-wallet-haip-test-plan"
+	configOutPath         = "conformance/wallet-vp/oidf-config/haip.config.json"
+	dockerComposeYML      = "conformance/wallet-vp/docker-compose.yml"
+	restartTimeout        = 30 * time.Second
+	redirectTimeout       = 15 * time.Second
+	implicitSubmitTimeout = 15 * time.Second
+	uploadTimeout         = 10 * time.Second
+	moduleTimeout         = 30 * time.Second
 )
 
 // positiveTests are driven and expected to complete cleanly on the
@@ -94,6 +102,7 @@ const (
 // binary's own local response is a 200.
 var positiveTests = []string{
 	"oid4vp-1final-wallet-happy-flow",
+	"oid4vp-1final-wallet-alternate-happy-flow",
 	"oid4vp-1final-wallet-request-uri-method-post",
 	"oid4vp-1final-wallet-ignores-unusable-encryption-key",
 	"oid4vp-1final-wallet-fewer-claims-than-available",
@@ -316,7 +325,6 @@ func main() {
 		}
 		log.Printf("%-70s localOK=%-5v %s=%s %v", res.testName, res.localOK, res.status, res.result, res.err)
 	}
-	log.Print("(alternate-happy-flow deliberately not driven — see this binary's own package doc comment)")
 	if !allExpected {
 		log.Printf("plan detail: %splan-detail.html?plan=%s", *apiBase, planID)
 		os.Exit(1)
@@ -348,10 +356,24 @@ func driveOne(httpClient *http.Client, apiBase, walletVPBase, planID, testName s
 		res.err = fmt.Errorf("GET %s: %w", driveURL, err)
 		return res
 	}
+	driveBody, _ := io.ReadAll(driveResp.Body)
 	_ = driveResp.Body.Close()
 	res.localOK = driveResp.StatusCode == http.StatusOK
 	if negativeTest && res.localOK {
 		log.Printf("%s: WARNING — this binary returned 200 for a negative test (should have rejected)", testName)
+	}
+
+	// alternate-happy-flow's own fragment-carrying redirect_uri — see
+	// this file's own package doc comment. cmd/conformance-wallet-vp's
+	// own handleAuthorize already names the exact URL it followed
+	// (fragment included) in its own response text; extract it and
+	// relay it to the suite's own implicit-submission URL the same way
+	// a real browser's window.location.hash + XHR POST would.
+	if fragment, ok := extractFollowedFragment(string(driveBody)); ok {
+		if err := relayImplicitFragment(httpClient, apiBase, module.ID, fragment); err != nil {
+			res.err = fmt.Errorf("relay implicit fragment: %w", err)
+			return res
+		}
 	}
 
 	// Optional: only negative-test modules need this (see package doc
@@ -390,6 +412,85 @@ func pollRedirectTo(httpClient *http.Client, apiBase, moduleID string) (string, 
 		}
 		if time.Now().After(deadline) {
 			return "", fmt.Errorf("no redirect_to appeared within %s", redirectTimeout)
+		}
+		time.Sleep(300 * time.Millisecond)
+	}
+}
+
+// extractFollowedFragment finds cmd/conformance-wallet-vp's own
+// "Followed redirect_uri: <url>" response text and returns that URL's
+// own fragment, INCLUDING the leading '#' — Go's net/url strips it
+// from URL.Fragment, but the suite's own
+// CheckUrlFragmentContainsCodeVerifier.java compares the submitted
+// value literally against "#" + code_verifier, so this works from the
+// raw string instead of a parsed URL to match exactly. Returns
+// ok=false for a redirect_uri with no fragment (every module besides
+// alternate-happy-flow) — nothing to relay.
+func extractFollowedFragment(driveBody string) (fragment string, ok bool) {
+	const marker = "Followed redirect_uri: "
+	i := strings.Index(driveBody, marker)
+	if i < 0 {
+		return "", false
+	}
+	rest := driveBody[i+len(marker):]
+	if end := strings.Index(rest, "</p>"); end >= 0 {
+		rest = rest[:end]
+	}
+	fragIdx := strings.IndexByte(rest, '#')
+	if fragIdx < 0 {
+		return "", false
+	}
+	return rest[fragIdx:], true
+}
+
+// relayImplicitFragment polls moduleID's own log for the suite's
+// "Created random implicit submission URL" entry (the same
+// ImplicitSubmit.FullURL mechanism
+// conformance/issuer/scripts/run-fapi2sp-battery/unblock.go already
+// uses for a different stuck-point), then POSTs fragment there — raw
+// text, Content-Type: text/plain — completing the same round trip the
+// suite's own implicitCallback.html JS performs
+// (xhr.send(window.location.hash) with an identical Content-type
+// header) for a real browser.
+func relayImplicitFragment(httpClient *http.Client, apiBase, moduleID, fragment string) error {
+	fullURL, err := pollImplicitSubmitURL(httpClient, apiBase, moduleID)
+	if err != nil {
+		return err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, fullURL, strings.NewReader(fragment)) //nolint:noctx // fullURL comes from the suite's own log entry, a trusted local conformance-suite instance, not attacker-controlled
+	if err != nil {
+		return fmt.Errorf("build implicit submit request: %w", err)
+	}
+	req.Header.Set("Content-Type", "text/plain")
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("POST %s: %w", fullURL, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode/100 != 2 {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("POST %s: status %d: %s", fullURL, resp.StatusCode, body)
+	}
+	return nil
+}
+
+// pollImplicitSubmitURL polls moduleID's own log until a
+// "Created random implicit submission URL" entry appears, mirroring
+// pollRedirectTo's own polling shape.
+func pollImplicitSubmitURL(httpClient *http.Client, apiBase, moduleID string) (string, error) {
+	deadline := time.Now().Add(implicitSubmitTimeout)
+	for {
+		entries, err := conformancesuite.FetchModuleLog(httpClient, apiBase, moduleID)
+		if err == nil {
+			for _, e := range entries {
+				if e.ImplicitSubmit != nil && e.ImplicitSubmit.FullURL != "" {
+					return e.ImplicitSubmit.FullURL, nil
+				}
+			}
+		}
+		if time.Now().After(deadline) {
+			return "", fmt.Errorf("no implicit submission URL appeared within %s", implicitSubmitTimeout)
 		}
 		time.Sleep(300 * time.Millisecond)
 	}

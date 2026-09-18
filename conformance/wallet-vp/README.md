@@ -165,33 +165,40 @@ variant — consistent with the "Scope" section below (DC API/JAR-JSON-
 Serialization-only checks, not something this binary's redirect-flow
 implementation is ever asked to handle).
 
-**Update: 13 of these 14 are now driven by a committed, repeatable
+**Update: all 14 of these are now driven by a committed, repeatable
 tool**, `conformance/wallet-vp/scripts/run-modules`, closing this
 role's own "driven by hand" gap (the same gap
 `conformance/verifier/scripts/run-sdjwt-modules`/`run-mdoc-module`
 closed for the Verifier role). Confirmed live, twice for stability: all
-6 positive-behavior modules `FINISHED`/`PASSED`; all 7 negative-test
-modules correctly rejected at this binary's own `/authorize` call
-(a non-200 local response, before ever reaching `response_uri`) and
-`FINISHED`/`REVIEW` once the script fills the suite's own required
-screenshot placeholder — matching this section's own "the real
-pass/fail signal... is whether this binary's own `/authorize` call
-errored out" finding below exactly, now automated rather than
-eyeballed per run.
+7 positive-behavior modules `FINISHED`/`PASSED` (`alternate-happy-flow`
+included — see below); all 7 negative-test modules correctly rejected
+at this binary's own `/authorize` call (a non-200 local response,
+before ever reaching `response_uri`) and `FINISHED`/`REVIEW` once the
+script fills the suite's own required screenshot placeholder —
+matching this section's own "the real pass/fail signal... is whether
+this binary's own `/authorize` call errored out" finding below
+exactly, now automated rather than eyeballed per run.
 
-**Not automated: `alternate-happy-flow`.** Its own fragment-carrying
-`redirect_uri` needs relaying real fragment content to the suite's own
-implicit-submission URL — confirmed live that an empty POST (this
-repo's own established mechanism for every other stuck-point) isn't
-enough here, and two different guesses at the POST body shape
-(`code_verifier=<fragment>` as form data, and the bare fragment value)
-both left the suite reporting "URL fragment passed to redirect_uri
-contains more than the one expected entry." This module was
-successfully driven manually at the time the "Driving negative-test
-and fragment-redirect modules" note below was written; reproducing
-that exact mechanism in `run-modules` is a genuine open follow-up, not
-something silently skipped — `run-modules` excludes it explicitly and
-says so in its own output.
+**`alternate-happy-flow`'s fragment relay is now automated too.** Its
+own fragment-carrying `redirect_uri` needs relaying real fragment
+content to the suite's own implicit-submission URL — two earlier
+guesses at the POST body shape (`code_verifier=<fragment>` as form
+data, and the bare fragment value with no leading `#`) both left the
+suite reporting "URL fragment passed to redirect_uri contains more
+than the one expected entry." The exact wire shape was pinned down by
+decompiling the suite's own `fapi-test-suite.jar` rather than guessed
+again: `implicitCallback.html`'s own JS does
+`xhr.send(window.location.hash)` with `Content-type: text/plain` — and
+critically, `window.location.hash` includes the leading `#` — while
+`CheckUrlFragmentContainsCodeVerifier.java` compares the submitted
+value literally against `"#" + code_verifier`. `run-modules`'
+`driveOne` now extracts the fragment (leading `#` included) straight
+out of `cmd/conformance-wallet-vp`'s own "Followed redirect_uri: ..."
+response text, polls the module's log for the same
+`ImplicitSubmit.FullURL` field `unblock.go` already uses for a
+different stuck-point, and POSTs the fragment there as raw
+`text/plain` — completing the same round trip a real browser's JS
+performs, with no browser needed.
 
 **Driving negative-test and fragment-redirect modules needs one extra
 step curl alone can't do.** Two distinct suite mechanisms show up
@@ -205,10 +212,12 @@ across this module list, beyond the plain query-string callback
   it to a suite-provided "implicit submission" URL. This binary's own
   `handleAuthorize` correctly follows the redirect (its own response
   text names the exact fragment it tried to send), and the suite's own
-  log/api records the same fragment (`CreateRandomCodeVerifier`) and
-  the submission URL (`CreateRandomImplicitSubmitUrl`) it's waiting
-  on — relaying that from the log to the submission URL completes the
-  module without needing an actual browser.
+  log/api separately records the submission URL it's waiting on
+  (`CreateRandomImplicitSubmitUrl`) — relaying the fragment from that
+  response text to that submission URL (raw `text/plain`, leading `#`
+  included — see the update above for the exact wire shape) completes
+  the module without needing an actual browser. `run-modules` now does
+  this automatically.
 - **Every negative-test module** is `REVIEW`-gated: the suite's own
   condition text is explicit ("the wallet should display an error, a
   screenshot of which must be uploaded for the test to transition to
