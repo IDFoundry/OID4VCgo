@@ -99,6 +99,11 @@ func (iss *Issuer) RequestNotification(ctx context.Context, auth AuthorizedReque
 	if err != nil {
 		return newError(ErrorInvalidNotificationID, 400, "unknown notification_id", err)
 	}
+	// Both sides of this check are "" for every caller that never
+	// populates AuthorizedRequest.ClientID (record.ClientID is set
+	// from it at IssueNotificationID time) — see that field's own doc
+	// comment: an integrator who skips it silently gets no ownership
+	// binding at all, not a loud failure.
 	if record.ClientID != "" && auth.ClientID != "" && record.ClientID != auth.ClientID {
 		return newError(ErrorInvalidNotificationID, 400, "notification_id was not issued to this client", nil)
 	}
