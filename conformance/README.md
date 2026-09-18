@@ -50,9 +50,13 @@ negative-test expectations differ.
   genuine `request_uri_method=post` support (a fresh `wallet_nonce`
   sent over POST, and the fetched Request Object rejected outright if
   its own `wallet_nonce` claim doesn't echo it back). All fixed and
-  re-confirmed live: six positive-behavior modules clean
-  (`FINISHED`/`PASSED` or `WARNING`, zero `FAILURE`s), seven of seven
-  reachable negative tests correctly reject before ever calling
+  re-confirmed live: seven positive-behavior modules clean
+  (`FINISHED`/`PASSED` or `WARNING`, zero `FAILURE`s — including
+  `alternate-happy-flow`, whose own fragment-carrying `redirect_uri`
+  is now relayed to the suite's own implicit-submission URL
+  automatically, the exact wire shape pinned down by decompiling the
+  suite's own `fapi-test-suite.jar` rather than guessed), seven of
+  seven reachable negative tests correctly reject before ever calling
   `response_uri`. Its own three `dc_api.jwt` module lists are out of
   scope for this binary. See `wallet-vp/README.md`.
 - **`issuer/`** — OID4VCI 1.0 Final/HAIP Issuer role
