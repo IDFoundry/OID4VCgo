@@ -21,8 +21,12 @@ import (
 
 // SelfSigned builds a self-signed leaf certificate for pub, signed by
 // signer (ordinarily pub's own corresponding private key), valid from
-// an hour ago to 24 hours from now.
-func SelfSigned(t *testing.T, commonName string, pub crypto.PublicKey, signer crypto.Signer) *x509.Certificate {
+// an hour ago to 24 hours from now. t is testing.TB, not *testing.T,
+// so a FuzzXxx target's own *testing.F can build seed material with
+// it too — both implement testing.TB, and *testing.F.Fatalf works the
+// same way *testing.T.Fatalf does at fuzz-setup time (before f.Fuzz's
+// own callback runs).
+func SelfSigned(t testing.TB, commonName string, pub crypto.PublicKey, signer crypto.Signer) *x509.Certificate {
 	t.Helper()
 	tmpl := &x509.Certificate{
 		SerialNumber: big.NewInt(1),

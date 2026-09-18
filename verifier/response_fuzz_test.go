@@ -4,18 +4,11 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
-	"crypto/x509"
-	"crypto/x509/pkix"
 	"encoding/json"
-	"math/big"
 	"testing"
-	"time"
 
-	fapi "github.com/idfoundry/fapigo"
-
-	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/internal/jwe"
-	"github.com/idfoundry/oid4vcgo/verifier"
+	"github.com/idfoundry/oid4vcgo/internal/testverifier"
 )
 
 // FuzzParseDirectPostJWTResponse exercises ParseDirectPostJWTResponse
@@ -26,38 +19,7 @@ import (
 // basis to trust it. Fixes the decryption key so only the compact JWE
 // string itself varies. Only checks for panics/hangs.
 func FuzzParseDirectPostJWTResponse(f *testing.F) {
-	signerKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		f.Fatalf("generate signer key: %v", err)
-	}
-	tmpl := &x509.Certificate{
-		SerialNumber: big.NewInt(1),
-		Subject:      pkix.Name{CommonName: "fuzz verifier"},
-		NotBefore:    time.Now().Add(-time.Hour),
-		NotAfter:     time.Now().Add(24 * time.Hour),
-	}
-	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &signerKey.PublicKey, signerKey)
-	if err != nil {
-		f.Fatalf("CreateCertificate: %v", err)
-	}
-	cert, err := x509.ParseCertificate(der)
-	if err != nil {
-		f.Fatalf("ParseCertificate: %v", err)
-	}
-	responseURI, err := fapi.ParseEndpointURL("https://verifier.example.com/response")
-	if err != nil {
-		f.Fatalf("ParseEndpointURL: %v", err)
-	}
-	v, err := verifier.New(verifier.Config{
-		ClientCertificate:  cert,
-		ResponseURI:        responseURI,
-		SigningAlg:         jose.ES256,
-		EncValuesSupported: []jwe.Enc{jwe.A128GCM, jwe.A256GCM},
-		VPFormatsSupported: map[string]any{"dc+sd-jwt": map[string]any{}},
-	}, verifier.Dependencies{Signer: signerKey, Random: rand.Reader})
-	if err != nil {
-		f.Fatalf("verifier.New: %v", err)
-	}
+	v := testverifier.New(f)
 
 	decryptionKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {

@@ -1,20 +1,10 @@
 package wallet_test
 
 import (
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
-	"crypto/x509"
-	"crypto/x509/pkix"
-	"math/big"
 	"testing"
-	"time"
-
-	fapi "github.com/idfoundry/fapigo"
 
 	"github.com/idfoundry/oid4vcgo/dcql"
-	"github.com/idfoundry/oid4vcgo/internal/jose"
-	"github.com/idfoundry/oid4vcgo/internal/jwe"
+	"github.com/idfoundry/oid4vcgo/internal/testverifier"
 	"github.com/idfoundry/oid4vcgo/verifier"
 	"github.com/idfoundry/oid4vcgo/wallet"
 )
@@ -30,38 +20,7 @@ import (
 // verifier.BuildAuthorizationRequest-produced Request Object as seed
 // material so the fuzzer starts from something that actually parses.
 func FuzzParseAuthorizationRequest(f *testing.F) {
-	signerKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		f.Fatalf("generate signer key: %v", err)
-	}
-	tmpl := &x509.Certificate{
-		SerialNumber: big.NewInt(1),
-		Subject:      pkix.Name{CommonName: "fuzz wallet authorization_request"},
-		NotBefore:    time.Now().Add(-time.Hour),
-		NotAfter:     time.Now().Add(24 * time.Hour),
-	}
-	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &signerKey.PublicKey, signerKey)
-	if err != nil {
-		f.Fatalf("CreateCertificate: %v", err)
-	}
-	cert, err := x509.ParseCertificate(der)
-	if err != nil {
-		f.Fatalf("ParseCertificate: %v", err)
-	}
-	responseURI, err := fapi.ParseEndpointURL("https://verifier.example.com/response")
-	if err != nil {
-		f.Fatalf("ParseEndpointURL: %v", err)
-	}
-	v, err := verifier.New(verifier.Config{
-		ClientCertificate:  cert,
-		ResponseURI:        responseURI,
-		SigningAlg:         jose.ES256,
-		EncValuesSupported: []jwe.Enc{jwe.A128GCM, jwe.A256GCM},
-		VPFormatsSupported: map[string]any{"dc+sd-jwt": map[string]any{}},
-	}, verifier.Dependencies{Signer: signerKey, Random: rand.Reader})
-	if err != nil {
-		f.Fatalf("verifier.New: %v", err)
-	}
+	v := testverifier.New(f)
 	clientID := v.ClientID()
 
 	meta, err := dcql.NewSDJWTVCMeta(dcql.SDJWTVCMeta{VCTValues: []string{"urn:eudi:pid:1"}})
