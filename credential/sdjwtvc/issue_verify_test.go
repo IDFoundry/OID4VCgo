@@ -290,20 +290,13 @@ func TestVerify_KeyBindingMaxAge(t *testing.T) {
 	}
 }
 
-// TestVerify_RejectsExpiredCredential and TestVerify_RejectsNotYetValidCredential
-// are the regression tests for a real bug found in a repo-wide
-// security review: Verify used to never check exp/nbf at all — it
-// looks and behaves like a complete verification (returns a plain
-// payload, no separate "is it still valid" step), so a caller had no
-// obvious signal that time-validity was still their own job. This
-// repo's own sibling Verify functions (credential/mdoc.Verify,
-// statuslist.VerifyToken/VerifyTokenCWT) already checked their own
-// equivalent validity window unconditionally — sdjwtvc.Verify was the
-// odd one out.
-func TestVerify_RejectsExpiredCredential(t *testing.T) {
+// issueBareCompact builds a bare (no Key Binding) presentation of a
+// freshly issued credential carrying claims, returning it alongside
+// the issuer key it was signed with — the shared setup every exp/nbf
+// test below needs, since none of them exercise key binding.
+func issueBareCompact(t *testing.T, claims Claims) (*ecdsa.PrivateKey, string) {
+	t.Helper()
 	issuerKey := testKey(t)
-	past := time.Now().Add(-time.Hour).Unix()
-	claims := Claims{VCT: "vc-type", Exp: &past}
 	sdjwt, _, err := Issue(issuerKey, jose.ES256, claims, IssueOptions{})
 	if err != nil {
 		t.Fatalf("Issue: %v", err)
@@ -316,6 +309,23 @@ func TestVerify_RejectsExpiredCredential(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
+	return issuerKey, presentation
+}
+
+// TestVerify_RejectsExpiredCredential, TestVerify_RejectsNotYetValidCredential
+// and TestVerify_AcceptsCredentialWithinValidityWindow are the
+// regression tests for a real bug found in a repo-wide security
+// review: Verify used to never check exp/nbf at all — it looks and
+// behaves like a complete verification (returns a plain payload, no
+// separate "is it still valid" step), so a caller had no obvious
+// signal that time-validity was still their own job. This repo's own
+// sibling Verify functions (credential/mdoc.Verify,
+// statuslist.VerifyToken/VerifyTokenCWT) already checked their own
+// equivalent validity window unconditionally — sdjwtvc.Verify was the
+// odd one out.
+func TestVerify_RejectsExpiredCredential(t *testing.T) {
+	past := time.Now().Add(-time.Hour).Unix()
+	issuerKey, presentation := issueBareCompact(t, Claims{VCT: "vc-type", Exp: &past})
 
 	if _, _, err := Verify(presentation, &issuerKey.PublicKey, jose.ES256, VerifyOptions{}); err == nil {
 		t.Error("Verify accepted a credential whose own exp claim is in the past")
@@ -323,21 +333,8 @@ func TestVerify_RejectsExpiredCredential(t *testing.T) {
 }
 
 func TestVerify_RejectsNotYetValidCredential(t *testing.T) {
-	issuerKey := testKey(t)
 	future := time.Now().Add(time.Hour).Unix()
-	claims := Claims{VCT: "vc-type", Nbf: &future}
-	sdjwt, _, err := Issue(issuerKey, jose.ES256, claims, IssueOptions{})
-	if err != nil {
-		t.Fatalf("Issue: %v", err)
-	}
-	pres, err := Parse(sdjwt)
-	if err != nil {
-		t.Fatalf("Parse: %v", err)
-	}
-	presentation, err := pres.Compact()
-	if err != nil {
-		t.Fatalf("Compact: %v", err)
-	}
+	issuerKey, presentation := issueBareCompact(t, Claims{VCT: "vc-type", Nbf: &future})
 
 	if _, _, err := Verify(presentation, &issuerKey.PublicKey, jose.ES256, VerifyOptions{}); err == nil {
 		t.Error("Verify accepted a credential whose own nbf claim is in the future")
@@ -348,22 +345,9 @@ func TestVerify_RejectsNotYetValidCredential(t *testing.T) {
 // above doesn't reject a legitimately-current credential — exp in the
 // future, nbf in the past both pass.
 func TestVerify_AcceptsCredentialWithinValidityWindow(t *testing.T) {
-	issuerKey := testKey(t)
 	past := time.Now().Add(-time.Hour).Unix()
 	future := time.Now().Add(time.Hour).Unix()
-	claims := Claims{VCT: "vc-type", Nbf: &past, Exp: &future}
-	sdjwt, _, err := Issue(issuerKey, jose.ES256, claims, IssueOptions{})
-	if err != nil {
-		t.Fatalf("Issue: %v", err)
-	}
-	pres, err := Parse(sdjwt)
-	if err != nil {
-		t.Fatalf("Parse: %v", err)
-	}
-	presentation, err := pres.Compact()
-	if err != nil {
-		t.Fatalf("Compact: %v", err)
-	}
+	issuerKey, presentation := issueBareCompact(t, Claims{VCT: "vc-type", Nbf: &past, Exp: &future})
 
 	if _, _, err := Verify(presentation, &issuerKey.PublicKey, jose.ES256, VerifyOptions{}); err != nil {
 		t.Errorf("Verify rejected a credential within its own valid exp/nbf window: %v", err)
