@@ -86,17 +86,21 @@ func TestPresentSDJWTVCSelectiveEmptyPathsDisclosesNothingSelective(t *testing.T
 // PresentSDJWTVCSelective's own documented fallback: a Path containing
 // a Wildcard component isn't supported for trimming, so every
 // Disclosure is included instead of guessing.
-func TestPresentSDJWTVCSelectiveFallsBackForNonKeyPath(t *testing.T) {
+// TestPresentSDJWTVCSelectiveRejectsNonKeyPath is the regression test
+// for a real bug found in a repo-wide security review: an earlier
+// version of PresentSDJWTVCSelective silently fell back to disclosing
+// every Disclosure in the credential when given a Claims Path it
+// couldn't trim against (a Wildcard/Index component) — a real
+// over-disclosure of undisclosed claims, not a graceful degradation
+// (§6.4.1's own "MUST NOT send claims that have not been selected").
+// It must now fail loudly instead.
+func TestPresentSDJWTVCSelectiveRejectsNonKeyPath(t *testing.T) {
 	fixture := newHeldSDJWTVCWithSelectivelyDisclosableClaims(t)
-	compact, err := wallet.PresentSDJWTVCSelective(fixture.held, "aud", "nonce-1", []dcql.Path{
+	_, err := wallet.PresentSDJWTVCSelective(fixture.held, "aud", "nonce-1", []dcql.Path{
 		{dcql.PathKey("given_name"), dcql.Wildcard},
 	})
-	if err != nil {
-		t.Fatalf("PresentSDJWTVCSelective: %v", err)
-	}
-	claims := verifiedSDJWTVCClaims(t, compact, fixture, "aud")
-	if claims["given_name"] != "Alice" || claims["family_name"] != "Doe" {
-		t.Errorf("claims = %v, want both given_name and family_name (fallback to full disclosure)", claims)
+	if err == nil {
+		t.Fatal("PresentSDJWTVCSelective = nil error, want an error (must not silently fall back to full disclosure)")
 	}
 }
 
