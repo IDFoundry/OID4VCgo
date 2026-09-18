@@ -21,9 +21,10 @@ vulnerability details in a public issue.
 
 ## Supported versions
 
-OID4VCgo is under early active development and pre-1.0 (`v0.1.0` is
-tagged, but APIs may still change). Reports against `main` or the
-latest tag are the ones we can act on.
+OID4VCgo is under early active development and pre-1.0 (APIs may still
+change) — see the [latest release](https://github.com/IDFoundry/OID4VCgo/releases/latest)
+for the current tag. Reports against `main` or the latest tag are the
+ones we can act on.
 
 ## What to include
 
