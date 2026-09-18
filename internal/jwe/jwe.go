@@ -364,12 +364,34 @@ func deflate(data []byte) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+// maxInflatedSize bounds inflate's own output — without a limit, a
+// small "zip":"DEF" ciphertext can exploit DEFLATE's own compression
+// ratio to exhaust a caller's memory, a decompression-bomb DoS. This
+// is reachable pre-authentication: this package's ECDH-ES-with-
+// ephemeral-sender-key scheme proves only that *some* self-chosen
+// party encrypted to the recipient's own public key, never that the
+// sender is a legitimate protocol participant — and a recipient's
+// public key is exactly what OID4VCI/OID4VP metadata and Request
+// Objects publish openly. 128 MiB matches statuslist.decompress's own
+// identical fix (statuslist/bits.go) and comfortably exceeds any
+// legitimate JWE payload this repo's own issuer/verifier/wallet
+// packages ever produce.
+const maxInflatedSize = 128 << 20 // 128 MiB
+
+// inflate reverses deflate, rejecting output larger than
+// maxInflatedSize rather than exhausting memory on a decompression
+// bomb.
 func inflate(data []byte) ([]byte, error) {
 	r := flate.NewReader(bytes.NewReader(data))
 	defer func() { _ = r.Close() }()
-	out, err := io.ReadAll(r)
+	// Read one byte past the limit so exceeding it is distinguishable
+	// from landing exactly on it.
+	out, err := io.ReadAll(io.LimitReader(r, maxInflatedSize+1))
 	if err != nil {
 		return nil, fmt.Errorf("jwe: decompress: %w", err)
+	}
+	if len(out) > maxInflatedSize {
+		return nil, fmt.Errorf("jwe: decompress: decompressed size exceeds %d bytes", maxInflatedSize)
 	}
 	return out, nil
 }
