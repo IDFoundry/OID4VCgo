@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.4.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.3.0...v0.4.0) (2026-09-18)
+
+
+### Features
+
+* **conformance:** automate Wallet-VP's alternate-happy-flow fragment relay ([3b79e00](https://github.com/IDFoundry/OID4VCgo/commit/3b79e00d7448761e60dd03ae3ab018475821a83d))
+* **conformance:** close both Issuer base-plan negative-test skips ([aedd45f](https://github.com/IDFoundry/OID4VCgo/commit/aedd45f9b8faacf37ad3d36e6c5fc75af6ed6a43))
+
+
+### Bug Fixes
+
+* **conformance:** share one revocation store between the AS and resource verifier ([8f03150](https://github.com/IDFoundry/OID4VCgo/commit/8f0315063b3c71059ab894522aea6847c5c090c5))
+
 ## [0.3.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.2.0...v0.3.0) (2026-09-18)
 
 
