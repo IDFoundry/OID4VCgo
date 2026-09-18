@@ -57,7 +57,15 @@ type KeyBindingCheck struct {
 
 	// MaxAge, if non-zero, rejects a Key Binding JWT whose iat is
 	// further than MaxAge in the past (RFC 9901 §7.3 step 5.e). Now
-	// defaults to time.Now.
+	// defaults to time.Now. WARNING: the Go zero value (0) doesn't
+	// mean "reject anything not issued this instant" — it means NO
+	// freshness check happens at all, silently. A caller that never
+	// sets this (easy to do — nothing else about a Key Binding
+	// verification requires it) accepts an old-but-otherwise-valid Key
+	// Binding JWT for the same transaction indefinitely; aud/nonce/
+	// sd_hash still all have to match exactly, so this isn't a primary
+	// bypass, but it is a real defense-in-depth gap for anyone who
+	// expected "unset" to mean "sensible default" rather than "off."
 	MaxAge time.Duration
 	Now    func() time.Time
 }

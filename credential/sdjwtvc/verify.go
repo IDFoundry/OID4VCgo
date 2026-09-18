@@ -25,8 +25,17 @@ type VerifyOptions struct {
 	KeyBindingAlg     jose.Alg
 	ExpectedAudience  string
 	ExpectedNonce     string
-	MaxKeyBindingAge  time.Duration
-	Now               func() time.Time
+
+	// MaxKeyBindingAge becomes KeyBindingCheck.MaxAge — see that
+	// field's own doc comment for why leaving it at zero silently
+	// disables the Key Binding JWT freshness check entirely, not "use
+	// a sensible default."
+	MaxKeyBindingAge time.Duration
+
+	// Now is compared against the Issuer JWT's own exp/nbf claims
+	// (when present) and, if RequireKeyBinding, the Key Binding JWT's
+	// own iat via MaxKeyBindingAge. Defaults to time.Now.
+	Now func() time.Time
 }
 
 // Verify fully validates a presented SD-JWT or SD-JWT+KB against the
@@ -58,6 +67,39 @@ func Verify(s string, issuerPub crypto.PublicKey, issuerAlg jose.Alg, opts Verif
 	}
 	if _, ok := decoded["vct"].(string); !ok {
 		return nil, nil, fmt.Errorf("sdjwtvc: issuer JWT payload is missing the required vct claim")
+	}
+
+	now := time.Now
+	if opts.Now != nil {
+		now = opts.Now
+	}
+	// exp/nbf (RFC 7519 §4.1.4/§4.1.5, both OPTIONAL) — checked here,
+	// not left to the caller: Verify's own name and signature (return
+	// a plain payload, no separate "is it still valid" step) make it
+	// look like a complete verification, and treating an expired or
+	// not-yet-valid credential as fully verified is exactly the kind
+	// of silent gap a caller could easily miss (found in a repo-wide
+	// security review — credential/mdoc.Verify and
+	// statuslist.VerifyToken/VerifyTokenCWT, this repo's own sibling
+	// Verify functions, already check their own equivalent validity
+	// window unconditionally; this one didn't).
+	if expRaw, ok := decoded["exp"]; ok {
+		exp, ok := expRaw.(float64)
+		if !ok {
+			return nil, nil, fmt.Errorf("sdjwtvc: exp claim is not a number")
+		}
+		if !now().Before(time.Unix(int64(exp), 0)) {
+			return nil, nil, fmt.Errorf("sdjwtvc: credential has expired")
+		}
+	}
+	if nbfRaw, ok := decoded["nbf"]; ok {
+		nbf, ok := nbfRaw.(float64)
+		if !ok {
+			return nil, nil, fmt.Errorf("sdjwtvc: nbf claim is not a number")
+		}
+		if now().Before(time.Unix(int64(nbf), 0)) {
+			return nil, nil, fmt.Errorf("sdjwtvc: credential is not yet valid")
+		}
 	}
 
 	hashAlg := opts.HashAlg
