@@ -11,8 +11,6 @@ import (
 	"time"
 
 	"github.com/idfoundry/oid4vcgo/internal/conformancecert"
-	"github.com/idfoundry/oid4vcgo/internal/jose"
-	"github.com/idfoundry/oid4vcgo/internal/jwk"
 )
 
 // clientAttestationTypHeader/clientAttestationChallengeEndpointPath
@@ -42,26 +40,11 @@ func mintClientAttestationJWT(attesterKey *ecdsa.PrivateKey, attesterLeafPEM, at
 	if err != nil {
 		return "", fmt.Errorf("parse attester leaf certificate: %w", err)
 	}
-	instanceJWK, err := jwk.Marshal(instanceKey)
-	if err != nil {
-		return "", fmt.Errorf("marshal client instance key: %w", err)
-	}
-	claims := map[string]any{
-		"iss": attesterIssuer,
-		"sub": clientID,
-		"iat": now.Unix(),
-		"exp": now.Add(clientAttestationLifetime).Unix(),
-		"cnf": map[string]any{"jwk": instanceJWK},
-	}
-	payload, err := json.Marshal(claims)
-	if err != nil {
-		return "", fmt.Errorf("marshal client attestation claims: %w", err)
-	}
 	header := map[string]any{
 		"typ": clientAttestationTypHeader,
 		"x5c": []string{base64.StdEncoding.EncodeToString(leafCert.Raw)},
 	}
-	return jose.Sign(jose.ES256, attesterKey, header, payload)
+	return conformancecert.MintClientAttestationJWT(attesterKey, header, attesterIssuer, clientID, instanceKey, now, clientAttestationLifetime)
 }
 
 // staticAttestationSource is a fixed client.AttestationSource: this

@@ -41,19 +41,8 @@ const (
 // attester's) as its cnf.jwk confirmation key — confirmed against
 // FAPIgo's own (unexported) internal/clientattestation.attestationClaims.
 func buildClientAttestationJWT(attesterKey *ecdsa.PrivateKey, attesterKid, attesterIssuer, clientID string, clientInstanceKey *ecdsa.PublicKey, now time.Time) (string, error) {
-	instanceJWK, err := jwk.Marshal(clientInstanceKey)
-	if err != nil {
-		return "", err
-	}
-	payload, err := json.Marshal(map[string]any{
-		"iss": attesterIssuer, "sub": clientID,
-		"iat": now.Unix(), "exp": now.Add(time.Hour).Unix(),
-		"cnf": map[string]any{"jwk": instanceJWK},
-	})
-	if err != nil {
-		return "", err
-	}
-	return jose.Sign(jose.ES256, attesterKey, map[string]any{"typ": clientAttestationTypHeader, "kid": attesterKid}, payload)
+	header := map[string]any{"typ": clientAttestationTypHeader, "kid": attesterKid}
+	return conformancecert.MintClientAttestationJWT(attesterKey, header, attesterIssuer, clientID, clientInstanceKey, now, time.Hour)
 }
 
 // buildClientAttestationPoPJWT builds a Client Attestation PoP JWT

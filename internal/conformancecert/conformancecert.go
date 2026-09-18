@@ -24,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/internal/jwk"
 )
 
@@ -176,16 +177,6 @@ func ECKeyPEM(key *ecdsa.PrivateKey) (string, error) {
 	return string(pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: der})), nil
 }
 
-// jwkWithKid embeds jwk.Marshal's own public-only shape plus the "kid"
-// member a JWK Set entry conventionally carries — the same "embed
-// jwk.JWK + extra fields locally" pattern
-// verifier/authorization_request.go's own responseEncryptionJWK
-// already establishes.
-type jwkWithKid struct {
-	jwk.JWK
-	Kid string `json:"kid"`
-}
-
 // JWKSet builds a single-key JWK Set ({"keys":[...]}) for pub, tagged
 // with kid — the shape a Client Attestation-verifying party's own
 // Dependencies.ClientKeys (fapigo/keys/ephemeral.ClientKeySpec.JWKS)
@@ -196,7 +187,7 @@ func JWKSet(pub crypto.PublicKey, kid string) (json.RawMessage, error) {
 	if err != nil {
 		return nil, err
 	}
-	return json.Marshal(map[string]any{"keys": []jwkWithKid{{JWK: j, Kid: kid}}})
+	return json.Marshal(jwk.Set{Keys: []jwk.SetEntry{{JWK: j, Kid: kid}}})
 }
 
 // ParseCertificatePEM decodes a single PEM CERTIFICATE block and
@@ -223,6 +214,32 @@ func ParseECPrivateKeyPEM(pemStr string) (*ecdsa.PrivateKey, error) {
 		return nil, fmt.Errorf("no PEM block found")
 	}
 	return x509.ParseECPrivateKey(block.Bytes)
+}
+
+// MintClientAttestationJWT builds and signs a Client Attestation JWT
+// (draft-ietf-oauth-attestation-based-client-auth-07 §5.1): signed by
+// signer, naming subject (the client) as its "sub" and instanceKey
+// (the client's own key, not the attester's) as its "cnf.jwk"
+// confirmation key. header carries the caller's own "typ" plus
+// whichever of "kid"/"x5c" the suite's own verification path for that
+// caller expects (a leaf-cert-issuing attester needs "x5c"; a
+// kid-registered one needs "kid") — that part isn't shared, since it's
+// the one piece that genuinely differs between callers; the
+// claims/signing logic below is what was duplicated.
+func MintClientAttestationJWT(signer crypto.Signer, header map[string]any, issuer, subject string, instanceKey crypto.PublicKey, now time.Time, lifetime time.Duration) (string, error) {
+	instanceJWK, err := jwk.Marshal(instanceKey)
+	if err != nil {
+		return "", fmt.Errorf("marshal client instance key: %w", err)
+	}
+	payload, err := json.Marshal(map[string]any{
+		"iss": issuer, "sub": subject,
+		"iat": now.Unix(), "exp": now.Add(lifetime).Unix(),
+		"cnf": map[string]any{"jwk": instanceJWK},
+	})
+	if err != nil {
+		return "", fmt.Errorf("marshal client attestation claims: %w", err)
+	}
+	return jose.Sign(jose.ES256, signer, header, payload)
 }
 
 // WriteJSONConfig JSON-marshals cfg and writes it to a fresh file
