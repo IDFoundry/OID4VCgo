@@ -58,6 +58,29 @@ func TestEncryptDecryptRoundTrip_Zip(t *testing.T) {
 	}
 }
 
+// TestDecrypt_RejectsBomb proves inflate bounds its own output rather
+// than exhausting memory: a highly-repetitive ~200 MiB payload
+// deflates down to a tiny ciphertext, and Decrypt must reject it
+// rather than decompress it in full. This is reachable by anyone who
+// merely knows the recipient's own public key (Encrypt needs no
+// private key, unlike an authenticated sender) — exactly the
+// pre-authentication attacker model maxInflatedSize's own doc comment
+// describes.
+func TestDecrypt_RejectsBomb(t *testing.T) {
+	key := testP256Key(t)
+	payload := make([]byte, 200<<20) // 200 MiB of zeros, well over maxInflatedSize (128 MiB)
+
+	compact, err := Encrypt(&key.PublicKey, A128GCM, payload, EncryptOptions{Zip: DEF})
+	if err != nil {
+		t.Fatalf("Encrypt: %v", err)
+	}
+	t.Logf("compact JWE for 200 MiB of zeros is %d bytes", len(compact))
+
+	if _, err := Decrypt(key, compact); err == nil {
+		t.Fatal("Decrypt did not reject an oversized (decompression-bomb) payload")
+	}
+}
+
 func TestEncryptHeaderFields(t *testing.T) {
 	key := testP256Key(t)
 	compact, err := Encrypt(&key.PublicKey, A256GCM, []byte("hi"), EncryptOptions{KeyID: "kid-1", Zip: DEF})
