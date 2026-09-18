@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"crypto/subtle"
 	"fmt"
 	"sync"
 
@@ -30,18 +31,26 @@ func (s *PreAuthorizedCodeStore) Issue(_ context.Context, code string, record is
 	return nil
 }
 
-// Consume implements issuer.PreAuthorizedCodeStore. Deleting the map
-// entry on every call — whether or not it was present — is what makes
-// this single-use: a second Consume of the same code always finds
-// nothing, the same shape NonceStore.Consume already establishes.
-func (s *PreAuthorizedCodeStore) Consume(_ context.Context, code string) (issuer.PreAuthorizedCodeRecord, error) {
+// Consume implements issuer.PreAuthorizedCodeStore. A record is only
+// deleted once it's actually being handed back as a successful
+// redemption — a TxCode mismatch returns issuer.ErrWrongTxCode and
+// leaves the entry in place, so a mistyped PIN can be retried instead
+// of permanently destroying the code (see the interface's own doc
+// comment for why that distinction matters). A record with no TxCode
+// requirement is always consumed on a successful lookup, the same
+// unconditional-delete-on-success shape NonceStore.Consume already
+// establishes.
+func (s *PreAuthorizedCodeStore) Consume(_ context.Context, code, wantTxCode string) (issuer.PreAuthorizedCodeRecord, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	record, ok := s.issued[code]
-	delete(s.issued, code)
 	if !ok {
 		return issuer.PreAuthorizedCodeRecord{}, fmt.Errorf("storage: unknown or already-consumed pre-authorized_code")
 	}
+	if record.TxCode != "" && subtle.ConstantTimeCompare([]byte(wantTxCode), []byte(record.TxCode)) != 1 {
+		return issuer.PreAuthorizedCodeRecord{}, issuer.ErrWrongTxCode
+	}
+	delete(s.issued, code)
 	record.Scopes = cloneStrings(record.Scopes)
 	return record, nil
 }

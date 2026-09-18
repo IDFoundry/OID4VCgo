@@ -38,14 +38,17 @@ func (f *fakePreAuthorizedCodeStore) Issue(_ context.Context, code string, recor
 	return nil
 }
 
-func (f *fakePreAuthorizedCodeStore) Consume(_ context.Context, code string) (issuer.PreAuthorizedCodeRecord, error) {
+func (f *fakePreAuthorizedCodeStore) Consume(_ context.Context, code, wantTxCode string) (issuer.PreAuthorizedCodeRecord, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	record, ok := f.issued[code]
-	delete(f.issued, code)
 	if !ok {
 		return issuer.PreAuthorizedCodeRecord{}, errPreAuthorizedCodeNotFound
 	}
+	if record.TxCode != "" && wantTxCode != record.TxCode {
+		return issuer.PreAuthorizedCodeRecord{}, issuer.ErrWrongTxCode
+	}
+	delete(f.issued, code)
 	return record, nil
 }
 
@@ -400,6 +403,33 @@ func TestExchangePreAuthorizedCode_AcceptsMatchingTxCode(t *testing.T) {
 		PreAuthorizedCode: "code-1", TxCode: "493536", DPoPProof: f.validProof(t), TokenEndpoint: testTokenEndpointURL(t),
 	}); err != nil {
 		t.Fatalf("ExchangePreAuthorizedCode: %v", err)
+	}
+}
+
+// TestExchangePreAuthorizedCode_WrongTxCodeThenSucceedsOnRetryWithoutLosingTheCode
+// is the end-to-end regression test (mirroring
+// TestExchangePreAuthorizedCode_ChallengesMissingNonceThenSucceedsOnRetryWithoutLosingTheCode's
+// own "retry without losing the code" shape) for a real bug found in
+// a repo-wide security review: PreAuthorizedCodeStore.Consume used to
+// invalidate the code unconditionally, before checking TxCode — a
+// single mistyped PIN permanently destroyed the code with no retry
+// path. A wrong guess must now leave the code usable for a correct
+// retry.
+func TestExchangePreAuthorizedCode_WrongTxCodeThenSucceedsOnRetryWithoutLosingTheCode(t *testing.T) {
+	f := newPreAuthorizedCodeFixture(t)
+	f.issue(t, "code-1", issuer.PreAuthorizedCodeRecord{
+		Scopes: []string{"identity_credential"}, TxCode: "493536", ExpiresAt: f.now.Add(time.Minute),
+	})
+
+	_, err := f.iss.ExchangePreAuthorizedCode(context.Background(), issuer.ExchangePreAuthorizedCodeRequest{
+		PreAuthorizedCode: "code-1", TxCode: "wrong", DPoPProof: f.validProof(t), TokenEndpoint: testTokenEndpointURL(t),
+	})
+	requireIssuerErrorCode(t, err, issuer.ErrorInvalidGrant)
+
+	if _, err := f.iss.ExchangePreAuthorizedCode(context.Background(), issuer.ExchangePreAuthorizedCodeRequest{
+		PreAuthorizedCode: "code-1", TxCode: "493536", DPoPProof: f.validProof(t), TokenEndpoint: testTokenEndpointURL(t),
+	}); err != nil {
+		t.Fatalf("retry ExchangePreAuthorizedCode with the correct tx_code: %v", err)
 	}
 }
 

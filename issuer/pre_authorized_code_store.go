@@ -2,8 +2,19 @@ package issuer
 
 import (
 	"context"
+	"errors"
 	"time"
 )
+
+// ErrWrongTxCode is what Consume returns when code is known and
+// unexpired but wantTxCode doesn't match the record's own TxCode —
+// distinguishing this from "code is unknown or already consumed" lets
+// a caller (ExchangePreAuthorizedCode) report the right error, and
+// tells a PreAuthorizedCodeStore implementation which case must NOT
+// invalidate code (see Consume's own doc comment for why that
+// distinction is a security requirement, not just error-message
+// polish).
+var ErrWrongTxCode = errors.New("issuer: tx_code does not match")
 
 // PreAuthorizedCodeRecord is what a caller stores when it issues a
 // pre-authorized_code — as part of a Credential Offer's own
@@ -57,7 +68,21 @@ type PreAuthorizedCodeStore interface {
 	// entropy that a collision is negligible.
 	Issue(ctx context.Context, code string, record PreAuthorizedCodeRecord) error
 
-	// Consume retrieves and invalidates code in one atomic step,
-	// returning an error if code is unknown or already consumed.
-	Consume(ctx context.Context, code string) (PreAuthorizedCodeRecord, error)
+	// Consume retrieves code and checks it against wantTxCode
+	// (ExchangePreAuthorizedCodeRequest.TxCode) in one atomic step —
+	// but must invalidate code only when the check actually succeeds.
+	// A record whose own TxCode is empty requires no check at all
+	// (wantTxCode is ignored) and is always consumed on a successful
+	// lookup. A record whose own TxCode is non-empty and doesn't match
+	// wantTxCode MUST be left in place and return ErrWrongTxCode — not
+	// invalidated — so a mistyped PIN doesn't permanently destroy the
+	// code with no retry path (a real denial-of-service against the
+	// code's own legitimate holder; found in a repo-wide security
+	// review of an earlier implementation that consumed unconditionally
+	// before checking TxCode). Returns a different (non-ErrWrongTxCode)
+	// error if code is unknown or already consumed — expiry
+	// (PreAuthorizedCodeRecord.ExpiresAt) is checked by
+	// ExchangePreAuthorizedCode itself once Consume returns a record,
+	// not by Consume.
+	Consume(ctx context.Context, code, wantTxCode string) (PreAuthorizedCodeRecord, error)
 }

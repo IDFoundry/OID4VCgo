@@ -3,6 +3,7 @@ package issuer
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -178,15 +179,18 @@ func (iss *Issuer) ExchangePreAuthorizedCode(ctx context.Context, req ExchangePr
 		}
 	}
 
-	record, err := iss.deps.PreAuthorizedCodes.Consume(ctx, req.PreAuthorizedCode)
+	record, err := iss.deps.PreAuthorizedCodes.Consume(ctx, req.PreAuthorizedCode, req.TxCode)
 	if err != nil {
+		if errors.Is(err, ErrWrongTxCode) {
+			// Deliberately NOT consumed (Consume's own contract) — the
+			// Wallet holder gets to retry with the correct PIN instead of
+			// the code being permanently destroyed on one mistyped digit.
+			return ExchangePreAuthorizedCodeResult{}, newError(ErrorInvalidGrant, 400, "tx_code does not match", err)
+		}
 		return ExchangePreAuthorizedCodeResult{}, newError(ErrorInvalidGrant, 400, "pre-authorized_code is unknown or already used", err)
 	}
 	if now.After(record.ExpiresAt) {
 		return ExchangePreAuthorizedCodeResult{}, newError(ErrorInvalidGrant, 400, "pre-authorized_code has expired", nil)
-	}
-	if record.TxCode != "" && req.TxCode != record.TxCode {
-		return ExchangePreAuthorizedCodeResult{}, newError(ErrorInvalidGrant, 400, "tx_code does not match", nil)
 	}
 
 	params := AccessTokenParams{

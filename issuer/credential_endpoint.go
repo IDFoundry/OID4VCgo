@@ -29,7 +29,16 @@ const jwtProofTyp = "openid4vci-proof+jwt" //nolint:gosec // an OID4VCI typ valu
 // worked adaptation recipe.
 type AuthorizedRequest struct {
 	// ClientID, if non-empty, is checked against a jwt-type key proof's
-	// "iss" claim when that claim is present (Appendix F.1).
+	// "iss" claim when that claim is present (Appendix F.1), and — via
+	// IssueNotificationID — binds any notification_id this request
+	// causes to be issued to this same client, later re-checked by
+	// RequestNotification. WARNING: leaving this empty doesn't just
+	// skip a minor detail — it silently disables both checks entirely
+	// (an empty ClientID trivially "matches" everything), for every
+	// request that omits it, with no error or warning at runtime. Set
+	// this from your own access-token verification (the token's
+	// subject/client_id) unless you have a specific reason these
+	// bindings shouldn't apply to your deployment.
 	ClientID string
 
 	// Scopes is every scope the access token grants. A requested
