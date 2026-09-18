@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.6.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.5.0...v0.6.0) (2026-09-18)
+
+
+### Features
+
+* **jwk:** add private-key marshaling and JWK Set entry support ([6ed2d07](https://github.com/IDFoundry/OID4VCgo/commit/6ed2d07991bde708776230e462175cb091cb9c88))
+* **verifier:** add VPFormatsSupported typed builders ([3ba7e6a](https://github.com/IDFoundry/OID4VCgo/commit/3ba7e6a1cf6d8f587049b6fe98c42a842eed2c83))
+
+
+### Bug Fixes
+
+* **cmd:** dedup PEM parsing onto internal/conformancecert helpers ([f605b2e](https://github.com/IDFoundry/OID4VCgo/commit/f605b2ee479d569a7c68d0be2ac4653a14411924))
+* **conformancecert:** dedup Client Attestation JWT minting ([07cca8e](https://github.com/IDFoundry/OID4VCgo/commit/07cca8e55d476618b62535183c3b4f594ffd1b60))
+
 ## [0.5.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.4.1...v0.5.0) (2026-09-18)
 
 
