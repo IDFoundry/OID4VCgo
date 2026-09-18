@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.4.1](https://github.com/IDFoundry/OID4VCgo/compare/v0.4.0...v0.4.1) (2026-09-18)
+
+
+### Bug Fixes
+
+* **conformance-wallet:** thread issuer_state through the FAPI2SP battery too, not just VCIWalletTest* ([a5ea01a](https://github.com/IDFoundry/OID4VCgo/commit/a5ea01a9bf05a10a842f28554c1888bff3a3b2de))
+* **mdoc:** make Document Signer/IACA certificates ISO/IEC 18013-5 Annex B compliant ([1edbfdd](https://github.com/IDFoundry/OID4VCgo/commit/1edbfdd26fec225430aeb197d21adea930f2e36b))
+* **wallet:** skip unusable keys in client_metadata.jwks instead of only trying keys[0] ([b885240](https://github.com/IDFoundry/OID4VCgo/commit/b88524059f2e654518816a8ecd5612d5367bc4fa))
+
 ## [0.4.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.3.0...v0.4.0) (2026-09-18)
 
 
