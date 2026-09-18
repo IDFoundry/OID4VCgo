@@ -372,14 +372,20 @@ func runModule(ctx context.Context, httpClient *http.Client, apiBase, planID, te
 	}
 
 	var offer *oid4vci.CredentialOffer
-	// The FAPI2SP battery modules extend AbstractTestModule directly,
-	// not AbstractVCIWalletTest — they have no prepareCredentialOffer()
-	// step at all and never log a credential offer redirect url
-	// regardless of vci_authorization_code_flow_variant, so waiting for
-	// one here would just time out every time. They behave identically
-	// under both flow variants; only the 4 VCIWalletTest* modules
-	// actually branch on it.
-	if offerWallet != nil && !strings.HasPrefix(testName, batteryModulePrefix) {
+	// Used to be gated on !strings.HasPrefix(testName,
+	// batteryModulePrefix): the FAPI2SP battery modules extended
+	// AbstractTestModule directly, not AbstractVCIWalletTest, and had
+	// no prepareCredentialOffer() step at all under an older suite
+	// version — confirmed stale by a real suite upgrade (a newer
+	// conformance-suite release's own changelog: "VCI: Present
+	// credential offer in FAPI2SP client tests for issuer-initiated
+	// wallet flow"). The suite now presents a real Credential Offer to
+	// these modules too under issuer_initiated, requiring this
+	// binary's own issuer_state to actually be threaded through the
+	// same way the 4 VCIWalletTest* modules already do it — omitting
+	// this step now fails every battery module under -issuer-initiated
+	// with "Missing issuer_state in http_request_params" instead.
+	if offerWallet != nil {
 		offerURL, offerErr := waitForCredentialOfferRedirectURL(httpClient, apiBase, module.ID, 10*time.Second)
 		if offerErr != nil {
 			return "ERROR: wait for credential offer: " + offerErr.Error()
