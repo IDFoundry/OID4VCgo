@@ -58,11 +58,15 @@ type AuthorizationRequest struct {
 	Query       dcql.Query
 
 	// ResponseEncryptionKey/ResponseEncryptionKeyID are extracted from
-	// "client_metadata"'s own "jwks" (§5.1) — exactly one entry is
-	// expected and used, matching HAIP's own "one ephemeral
-	// response-encryption key per request" shape (see
+	// "client_metadata"'s own "jwks" (§5.1) — a real Verifier only
+	// ever sends one genuinely usable key (HAIP's own "one ephemeral
+	// response-encryption key per request" shape, see
 	// verifier.Config.EncValuesSupported's own doc comment on the
-	// building side). Pass both straight through to
+	// building side), but "jwks" is a JWK Set, and RFC 7517 §5 permits
+	// (and the OIDF conformance suite's own ignores-unusable-encryption-key
+	// module deliberately exercises) additional unrelated/unusable
+	// entries a conformant Wallet must skip past — see
+	// selectResponseEncryptionKey. Pass both straight through to
 	// BuildDirectPostResponseParams.
 	ResponseEncryptionKey   *ecdsa.PublicKey
 	ResponseEncryptionKeyID string
@@ -106,6 +110,7 @@ type wireClientMetadata struct {
 
 type wireJWKKid struct {
 	Kid string `json:"kid"`
+	Use string `json:"use"`
 }
 
 // ParseAuthorizationRequest verifies params.RequestObject's own JWS
@@ -187,17 +192,9 @@ func ParseAuthorizationRequest(params ParseAuthorizationRequestParams) (Authoriz
 	if len(meta.Jwks.Keys) == 0 {
 		return AuthorizationRequest{}, fmt.Errorf("wallet: parse authorization request: client_metadata.jwks.keys is empty")
 	}
-	var kid wireJWKKid
-	if err := json.Unmarshal(meta.Jwks.Keys[0], &kid); err != nil {
-		return AuthorizationRequest{}, fmt.Errorf("wallet: parse authorization request: parse client_metadata.jwks.keys[0]: %w", err)
-	}
-	rawPub, err := jwk.ParsePublicKey(meta.Jwks.Keys[0])
+	encPub, kid, err := selectResponseEncryptionKey(meta.Jwks.Keys)
 	if err != nil {
-		return AuthorizationRequest{}, fmt.Errorf("wallet: parse authorization request: parse client_metadata response-encryption key: %w", err)
-	}
-	encPub, ok := rawPub.(*ecdsa.PublicKey)
-	if !ok {
-		return AuthorizationRequest{}, fmt.Errorf("wallet: parse authorization request: client_metadata response-encryption key is %T, want *ecdsa.PublicKey", rawPub)
+		return AuthorizationRequest{}, fmt.Errorf("wallet: parse authorization request: %w", err)
 	}
 
 	enc := "A128GCM"
@@ -207,9 +204,42 @@ func ParseAuthorizationRequest(params ParseAuthorizationRequestParams) (Authoriz
 
 	return AuthorizationRequest{
 		ClientID: params.ClientID, ResponseURI: wire.ResponseURI, Nonce: wire.Nonce, State: wire.State,
-		Query: wire.DCQLQuery, ResponseEncryptionKey: encPub, ResponseEncryptionKeyID: kid.Kid,
+		Query: wire.DCQLQuery, ResponseEncryptionKey: encPub, ResponseEncryptionKeyID: kid,
 		ResponseEncryptionEnc: enc,
 	}, nil
+}
+
+// selectResponseEncryptionKey picks the one genuinely usable EC
+// response-encryption key out of keys (client_metadata.jwks.keys,
+// §5.1) — a real Verifier only ever sends one, but the OIDF
+// conformance suite's own ignores-unusable-encryption-key module
+// deliberately surrounds it with unparseable decoys (an unrecognized
+// key type, and an EC-shaped key with an unsupported/made-up curve)
+// specifically to check this: RFC 7517 §5 permits a JWK Set to carry
+// members a consumer doesn't understand, which it MUST ignore rather
+// than treat as fatal. Any entry that fails to parse as a P-256 EC
+// public key, or explicitly declares a "use" other than "enc", is
+// skipped; only genuinely running out of candidates is an error.
+func selectResponseEncryptionKey(keys []json.RawMessage) (*ecdsa.PublicKey, string, error) {
+	for _, raw := range keys {
+		var kid wireJWKKid
+		if err := json.Unmarshal(raw, &kid); err != nil {
+			continue
+		}
+		if kid.Use != "" && kid.Use != "enc" {
+			continue
+		}
+		rawPub, err := jwk.ParsePublicKey(raw)
+		if err != nil {
+			continue
+		}
+		encPub, ok := rawPub.(*ecdsa.PublicKey)
+		if !ok {
+			continue
+		}
+		return encPub, kid.Kid, nil
+	}
+	return nil, "", fmt.Errorf("no usable response-encryption key found in client_metadata.jwks.keys")
 }
 
 func containsString(list []string, want string) bool {
