@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto"
 	"crypto/rand"
 	"fmt"
 	"net/http"
@@ -17,11 +18,14 @@ import (
 	"github.com/idfoundry/fapigo/storage/memstore"
 
 	"github.com/idfoundry/oid4vcgo"
+	"github.com/idfoundry/oid4vcgo/attestation"
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
+	"github.com/idfoundry/oid4vcgo/haip"
 	"github.com/idfoundry/oid4vcgo/internal/cose"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/internal/jwe"
+	"github.com/idfoundry/oid4vcgo/internal/jwk"
 	"github.com/idfoundry/oid4vcgo/issuer"
 	oid4vcgostorage "github.com/idfoundry/oid4vcgo/storage"
 )
@@ -59,6 +63,17 @@ const credentialRequestDecryptionKeyID = "credential-request-encryption-key-1" /
 // algorithm" a real, testable condition for this issuer rather than a
 // vacuous one.
 var credentialEncValuesSupported = []jwe.Enc{jwe.A128GCM, jwe.A256GCM}
+
+// credentialZipValuesSupported is this binary's own advertised §10
+// "zip_values_supported" — internal/jwe/issuer/encryption.go already
+// fully implement RFC 7516's only registered "zip" value (raw
+// DEFLATE), this binary just never turned it on: confirmed live via
+// the OIDF conformance suite's own oid4vci-1_0-issuer-happy-flow
+// module under the vci_credential_encryption=encrypted variant, which
+// optionally adds "zip":"DEF" to its own credential_response_encryption
+// request and expects it honored, not rejected with
+// invalid_encryption_parameters.
+var credentialZipValuesSupported = []jwe.Zip{jwe.DEF}
 
 // jwtProofCredentialConfiguration builds the jwk-binding/jwt-proof-type
 // shape every CredentialConfiguration this binary advertises shares —
@@ -191,9 +206,6 @@ func newServerMux(cfg Config) (*http.ServeMux, error) {
 	issProofAlgs := []string{"ES256"}
 	sdjwtConfig := jwtProofCredentialConfiguration(cfg.Scope, issProofAlgs)
 	sdjwtConfig.Format, sdjwtConfig.VCT = sdjwtvc.CredentialFormat, cfg.VCT
-	credentialConfigs := map[string]issuer.CredentialConfiguration{
-		cfg.CredentialConfigurationID: sdjwtConfig,
-	}
 	issDeps := issuer.Dependencies{
 		Nonces: oid4vcgostorage.NewNonceStore(),
 		Clock:  issuer.ClockFunc(time.Now),
@@ -202,6 +214,14 @@ func newServerMux(cfg Config) (*http.ServeMux, error) {
 			Signer: issuerSigningKey, Alg: jose.ES256,
 			IssuerCertificate: issuerCertificate,
 		},
+	}
+	attestationVerifier, err := addKeyAttestationProofType(cfg, &sdjwtConfig)
+	if err != nil {
+		return nil, err
+	}
+	issDeps.AttestationVerifier = attestationVerifier
+	credentialConfigs := map[string]issuer.CredentialConfiguration{
+		cfg.CredentialConfigurationID: sdjwtConfig,
 	}
 	if cfg.Mdoc != nil {
 		// Same issuer identity as the "dc+sd-jwt" CredentialConfiguration
@@ -224,9 +244,11 @@ func newServerMux(cfg Config) (*http.ServeMux, error) {
 		RequestEncryption: &issuer.RequestEncryptionSupport{
 			Keys:               []issuer.RequestDecryptionKey{{KeyID: credentialRequestDecryptionKeyID, PrivateKey: requestDecryptionKey}},
 			EncValuesSupported: credentialEncValuesSupported,
+			ZipValuesSupported: credentialZipValuesSupported,
 		},
 		ResponseEncryption: &issuer.ResponseEncryptionSupport{
 			EncValuesSupported: credentialEncValuesSupported,
+			ZipValuesSupported: credentialZipValuesSupported,
 		},
 		CredentialConfigurationsSupported: credentialConfigs,
 	}, issDeps)
@@ -340,6 +362,28 @@ func buildClientRegistration(cfg Config) (clientRepo *memstore.ClientRepository,
 	return memstore.NewClientRepository(registeredClients), clientKeys, nil
 }
 
+// addKeyAttestationProofType mutates sdjwtConfig in place to
+// additionally advertise the "attestation" proof type (OID4VCI
+// Appendix F.3) when cfg.KeyAttestation is set — a Wallet may use
+// either "jwt" or "attestation" for the same credential_configuration_id,
+// and issuer.RequestCredential dispatches per-request on which proof
+// type key the request's own "proofs" object contains, so this leaves
+// every existing "jwt"-proof flow completely unaffected — and returns
+// the AttestationVerifier issDeps needs, or nil when key attestation
+// isn't configured. Extracted out of newServerMux purely to keep its
+// own cognitive complexity down.
+func addKeyAttestationProofType(cfg Config, sdjwtConfig *issuer.CredentialConfiguration) (issuer.AttestationVerifier, error) {
+	if cfg.KeyAttestation == nil {
+		return nil, nil
+	}
+	sdjwtConfig.ProofTypesSupported[oid4vci.ProofTypeAttestation] = haip.RecommendedAttestationProofType()
+	trustedKey, err := jwk.ParsePublicKey(cfg.KeyAttestation.TrustedJWK)
+	if err != nil {
+		return nil, fmt.Errorf("key attestation trusted jwk: %w", err)
+	}
+	return fixedKeyAttestationVerifier{pub: trustedKey, alg: jose.ES256}, nil
+}
+
 // srvLimits are this binary's own FAPI 2.0 Limits — server.RecommendedLimits
 // plus the Client Attestation-specific bounds
 // AttestationBasedClientAuthentication needs, which that preset
@@ -378,4 +422,18 @@ func (s selfIssuerKeySource) ResolveIssuerKeys(ctx context.Context, req keys.Iss
 	return keys.IssuerKeySet{Keys: []keys.IssuerKey{
 		{KeyID: pub.KeyID, Algorithm: req.Algorithm, PublicKey: pub.PublicKey},
 	}}, nil
+}
+
+// fixedKeyAttestationVerifier trusts exactly one public key for every
+// Key Attestation JWT, ignoring its own "iss"/"kid" — a conformance
+// fixture's own trust policy (see issuer.AttestationVerifier's own
+// doc comment: "entirely this issuer's own trust policy"), not
+// something a real deployment would do.
+type fixedKeyAttestationVerifier struct {
+	pub crypto.PublicKey
+	alg jose.Alg
+}
+
+func (v fixedKeyAttestationVerifier) ResolveAttestationKey(context.Context, attestation.KeyAttestation) (crypto.PublicKey, jose.Alg, error) {
+	return v.pub, v.alg, nil
 }

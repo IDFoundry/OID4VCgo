@@ -247,15 +247,40 @@ fapi2-security-profile-final-par-attempt-to-use-request_uri-for-different-client
 	run_go_checked "Issuer haip-battery" "$WORKDIR/issuer-haip.log" "$haip_exceptions" \
 		go run ./conformance/issuer/scripts/run-fapi2sp-battery
 
-	# 2 self-SKIPPED, both documented as deliberate Issuer-role scope
-	# choices, not gaps — see conformance/issuer/README.md.
-	local base_exceptions='oid4vci-1_0-issuer-fail-invalid-key-attestation-signature=SKIPPED
-oid4vci-1_0-issuer-fail-unsupported-encryption-algorithm=SKIPPED'
+	# 1 self-SKIPPED (fail-unsupported-encryption-algorithm — this
+	# invocation's own vci_credential_encryption=plain variant means it
+	# doesn't apply; see the -credential-encryption=encrypted invocation
+	# below, where it's expected to genuinely PASS instead).
+	# fail-invalid-key-attestation-signature used to be a second
+	# exception (SKIPPED) until buildServerConfig started always
+	# advertising the "attestation" proof type — the suite now
+	# auto-selects it for this one module whenever it's available in
+	# metadata, regardless of credential_proof_type_hint, so it's
+	# expected to PASS like everything else now too — see
+	# conformance/issuer/README.md's own "Update" note.
+	local base_exceptions='oid4vci-1_0-issuer-fail-unsupported-encryption-algorithm=SKIPPED'
 	run_go_checked "Issuer base-plan" "$WORKDIR/issuer-base-plan.log" "$base_exceptions" \
 		go run ./conformance/issuer/scripts/run-fapi2sp-battery -base-plan
 
+	# 0 exceptions: vci_credential_encryption=encrypted makes
+	# fail-unsupported-encryption-algorithm genuinely runnable (and
+	# PASS) instead of self-skipping — cmd/conformance-issuer already
+	# supported encrypted responses unconditionally, this was purely a
+	# missing ZipValuesSupported wiring gap (see README's own "Update"
+	# note) plus this invocation's own variant selection.
+	run_go_checked "Issuer base-plan (encrypted)" "$WORKDIR/issuer-base-plan-encrypted.log" "" \
+		go run ./conformance/issuer/scripts/run-fapi2sp-battery -base-plan -credential-encryption=encrypted
+
 	run_go_checked "Issuer mdoc" "$WORKDIR/issuer-mdoc.log" "" \
 		go run ./conformance/issuer/scripts/run-fapi2sp-battery -credential-format mdoc
+
+	# 0 exceptions: metadata-test + happy-flow (a positive sanity check
+	# that genuine attestation-based issuance works, not just that an
+	# invalid one is rejected) + fail-invalid-key-attestation-signature
+	# itself, all driven with attestation as the wallet's own preferred
+	# proof type — see keyAttestationBattery's own doc comment.
+	run_go_checked "Issuer key-attestation" "$WORKDIR/issuer-key-attestation.log" "" \
+		go run ./conformance/issuer/scripts/run-fapi2sp-battery -credential-proof-type-hint=attestation
 }
 
 run_wallet() {

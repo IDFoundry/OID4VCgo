@@ -8,6 +8,26 @@
 // independently hand-copied mirrors that could drift out of sync.
 package conformanceconfig
 
+import "encoding/json"
+
+// KeyAttestationConfig, when set, additionally advertises the
+// "attestation" proof type (OID4VCI Appendix F.3) alongside "jwt" on
+// cmd/conformance-issuer's own "dc+sd-jwt" CredentialConfiguration —
+// not a separate CredentialConfiguration, since
+// issuer.RequestCredential dispatches by which proof type key an
+// actual Credential Request's own "proofs" object contains, not a
+// static single-choice config; advertising both leaves every existing
+// "jwt"-proof flow completely unaffected.
+type KeyAttestationConfig struct {
+	// TrustedJWK is the one Key Attestation signer this issuer trusts —
+	// a JSON-encoded public JWK (RFC 7517). Conformance-fixture-only: a
+	// real deployment would resolve trust per Appendix D.1's own
+	// kid/x5c/trust_chain header mechanisms instead of one fixed key
+	// (see issuer.AttestationVerifier's own doc comment: "entirely this
+	// issuer's own trust policy").
+	TrustedJWK json.RawMessage `json:"trusted_jwk"`
+}
+
 // MdocConfig is the mso_mdoc-format analog of a Credential Issuer's own
 // VCT/Claims/Scope/CredentialConfigurationID fields (OID4VCI Appendix
 // A.2.2) — cmd/conformance-issuer's own Config.Mdoc field, and

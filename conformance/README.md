@@ -147,12 +147,17 @@ negative-test expectations differ.
   the real HTTP binary (not just the library's own internals).
   **Final tally: all 21 OID4VCI-specific modules `FINISHED`/`PASSED`
   or correctly `SKIPPED`** — 10 of 10 applicable negative tests
-  `PASSED`, 1 module correctly self-`SKIPPED` (key-attestation — this
-  binary only configures the `jwt` proof type, never wires an
-  `AttestationVerifier`, a deliberate Issuer-role scope choice per HAIP
-  §4.5.1's own conditional-on-ecosystem-policy language, not a gap; the
-  Wallet-side MUST is unconditional and is covered separately — see
-  `wallet/README.md`'s own Key Attestation coverage below).
+  `PASSED`. (Key attestation's own `fail-invalid-key-attestation-signature`
+  used to self-`SKIPPED` here too — a deliberate, spec-legitimate
+  Issuer-role scope choice per HAIP §4.5.1's own
+  conditional-on-ecosystem-policy language, not a gap, with the
+  Wallet-side MUST already covered separately in
+  `wallet/README.md`. **Update: now genuinely `PASSED`** — this
+  binary additively advertises the `attestation` proof type alongside
+  `jwt` and wires a real `AttestationVerifier`, closing the Issuer-side
+  gap too; see the base-plan update below for the fix and live
+  verification, since this module isn't in this battery's own default
+  driven list.)
   **Update: the plan's own 5th module-list entry, the generic FAPI2SP
   battery, is driven too** — 43 module instances (the exact 39+1
   battery+Discovery set, derived directly from the Java source, plus 2
@@ -187,9 +192,29 @@ negative-test expectations differ.
   module classes already covered above (no FAPI2SP battery in this
   plan), just under `fapi_profile=vci` instead of `vci_haip`, with
   every axis the HAIP plan's own module list pins now supplied
-  explicitly at plan-creation time instead. All 21 modules
-  `FINISHED`/`PASSED` or correctly `SKIPPED`, twice for stability, no
-  `FAILURE`s.
+  explicitly at plan-creation time instead. **Update: both of this
+  plan's own two expected skips are now closed.**
+  `fail-invalid-key-attestation-signature` is now genuinely `PASSED` —
+  `wiring.go` wires a real `AttestationVerifier` and additively
+  advertises the `attestation` proof type (OID4VCI Appendix F.3)
+  alongside `jwt`; `issuer.resolveAttestationProofKeys` already fully
+  implemented this, the binary just never opted in — same shape as the
+  revocation-store fix above. `fail-unsupported-encryption-algorithm`
+  is now genuinely `PASSED` too — a new
+  `-credential-encryption=encrypted` flag drives
+  `vci_credential_encryption=encrypted` so the module can actually run
+  instead of self-skipping; doing so surfaced one more real,
+  independent wiring gap: `internal/jwe`'s own `zip=DEF` (RFC 7516)
+  compression support was never turned on (`ZipValuesSupported` was
+  nil on both `RequestEncryption`/`ResponseEncryption`), so
+  `happy-flow` under this variant failed rejecting a JWE compression
+  parameter it fully supports — fixed the same way. All 21 base-plan
+  modules `FINISHED`/`PASSED` under both the default `plain` and new
+  `encrypted` variant, twice for stability each, no `FAILURE`s. A
+  dedicated `-credential-proof-type-hint=attestation` invocation
+  (`keyAttestationBattery`) also confirms a genuine, validly-signed Key
+  Attestation JWT successfully issues a credential (`happy-flow`), not
+  just that an invalid one is rejected.
   **Update: `mso_mdoc` credential format is driven too** — the first
   time either role in this repo has exercised mdoc against the real
   suite. `credential/mdoc`/`issuer.RequestCredential`'s own

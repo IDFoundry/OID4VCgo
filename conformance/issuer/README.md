@@ -370,27 +370,20 @@ what it said it was.)*
   `fail-unknown-credential-configuration`,
   `fail-unknown-credential-identifier`,
   `fail-on-access-token-in-query`.
-- `fail-invalid-key-attestation-signature` correctly self-`SKIPPED`
-  (this binary never wires an `AttestationVerifier`; only the `jwt`
-  proof type is configured, not `attestation`). Confirmed against the
-  HAIP 1.0 spec text directly: HAIP §4.5.1's key-attestation language
-  does contain one unconditional MUST ("Wallets MUST support key
-  attestations"), but that MUST falls on Wallets, not Issuers;
-  Issuer-side support for the `attestation` proof type is conditioned
-  on ecosystem choice ("Ecosystems that desire wallet-issuer
-  interoperability on the level of key attestations SHOULD require
-  Wallets to support... `jwt` proof type using `key_attestation`
-  [and] `attestation` proof type"). So this skip is legitimate for the
-  Issuer role specifically — the Wallet-side MUST is real and
-  unconditional, but it's `cmd/conformance-wallet`'s job, not this
-  binary's: both conveyance methods (a standalone `attestation` proof
-  and a `jwt` proof nesting a Key Attestation via `key_attestation`)
-  are now built and confirmed live there, all 22 module instances per
-  method — see `wallet/README.md`'s own "Status" section. Worth keeping
-  separate from that role's own Wallet Attestation (client
-  authentication) coverage: key attestation (proof-of-possession key
-  format) and wallet attestation (client auth) are two distinct HAIP
-  requirements, both now satisfied there.
+- `fail-invalid-key-attestation-signature` used to self-`SKIPPED` here
+  (this binary didn't wire an `AttestationVerifier`; only the `jwt`
+  proof type was configured, not `attestation`) — HAIP §4.5.1's own
+  key-attestation MUST falls on Wallets, not Issuers, so that skip was
+  legitimate for the Issuer role specifically, not a bug (the
+  Wallet-side MUST is real and unconditional, but it's
+  `cmd/conformance-wallet`'s job, not this binary's — see
+  `wallet/README.md`'s own "Status" section for both conveyance
+  methods confirmed live there, all 22 module instances per method).
+  **Update: this binary now supports the `attestation` proof type
+  too**, closing the skip for real — see the base-plan section below
+  for the fix and live verification (this module isn't in this
+  battery's own default driven list; it runs there and, dedicated, via
+  `-credential-proof-type-hint=attestation`).
 
 **Update: `fail-unsupported-encryption-algorithm` — real support
 added, not just made to pass.** Previously self-`SKIPPED`: HAIP never
@@ -610,17 +603,60 @@ the equivalent modules (`ClientAuthType=client_attestation`,
 instead, confirmed against each variant's own `@VariantParameter
 name=` in the suite's Java source rather than guessed.
 
-**Confirmed live, twice for stability, identical outcomes both times:
-all 21 modules `FINISHED`/`PASSED` or correctly `SKIPPED`, no
-`FAILURE`s.** Two expected skips: `fail-invalid-key-attestation-signature`
-(the same legitimate skip already documented above — this binary never
-wires an `AttestationVerifier`) and
-`fail-unsupported-encryption-algorithm` (self-skips with "This test
-requires vci_credential_encryption=encrypted variant" — the base plan's
-own module list entry offers only one crossing, and `-base-plan` drives
-it at `plain`; the HAIP plan's own dedicated `encrypted`-crossing entry
-already covers this module's real behavior above, so no second base-plan
-crossing was added purely to un-skip an already-proven code path).
+**Update: both of this section's own two expected skips are now closed
+for real.**
+
+`fail-invalid-key-attestation-signature` is now genuinely `PASSED`,
+not self-`SKIPPED` — `cmd/conformance-issuer` now wires a real
+`AttestationVerifier` (`fixedKeyAttestationVerifier`, trusting one
+fixed public key — a conformance fixture's own trust policy, not a
+real deployment's) and additively advertises the `attestation` proof
+type (OID4VCI Appendix F.3) alongside `jwt` on the same `dc+sd-jwt`
+`CredentialConfiguration` — a Wallet may use either, and
+`issuer.RequestCredential` already dispatches per-request on which
+proof type key an actual Credential Request's own `proofs` object
+contains, so this is purely additive: every existing `jwt`-proof
+module keeps working exactly as before. `issuer.resolveAttestationProofKeys`
+and `haip.RecommendedAttestationProofType()` already existed and
+already fully implemented this — `cmd/conformance-issuer` just never
+opted in, the same "library already had it, binary never turned it
+on" shape as `batch-issuance` above. The Issuer-side skip really was
+legitimate before (see the spec analysis a few paragraphs up — the
+HAIP §4.5.1 MUST falls on Wallets, not Issuers), so this is a genuine
+coverage improvement, not a bug fix: the Issuer role now proves both
+conveyance methods work, matching the Wallet role's own long-standing
+coverage. Confirmed live, twice for stability: the suite auto-selects
+`attestation` for this one module whenever it's available in
+metadata, regardless of `credential_proof_type_hint` — so it now
+passes even under the default `jwt`-hint battery run, no special
+invocation needed. A dedicated `run-fapi2sp-battery
+-credential-proof-type-hint=attestation` invocation
+(`keyAttestationBattery`: `metadata-test`, `happy-flow`,
+`fail-invalid-key-attestation-signature`) also exists and is driven by
+`run-all.sh` — `happy-flow` under it is a positive sanity check that
+genuine, validly-signed Key Attestation JWTs actually issue a
+credential, not just that an invalid one is correctly rejected.
+
+`fail-unsupported-encryption-algorithm` is now genuinely `PASSED`
+too, not self-`SKIPPED` — `run-fapi2sp-battery` gained a
+`-credential-encryption=encrypted` flag (default `plain`, unchanged)
+driving `vci_credential_encryption=encrypted` for `-base-plan`, so
+this module can actually run instead of self-skipping with "This test
+requires vci_credential_encryption=encrypted variant." Driving the
+whole base plan under this variant for the first time surfaced one
+real, separate wiring gap along the way: `oid4vci-1_0-issuer-happy-flow`
+itself started failing with `invalid_encryption_parameters: unsupported
+zip "DEF"` — `internal/jwe` and `issuer/encryption.go` already fully
+implement RFC 7516's only registered `zip` value (raw DEFLATE), gated
+behind a `ZipValuesSupported` field `wiring.go` never set (nil, so
+`slices.Contains` always failed) — the same "built but never turned
+on" shape as the key attestation fix above, and the shared-revocation-store
+bug before that. Fixed by setting `ZipValuesSupported:
+[]jwe.Zip{jwe.DEF}` on both `RequestEncryption`/`ResponseEncryption`.
+Confirmed live, twice for stability: all 21 base-plan modules
+`FINISHED`/`PASSED` under `-credential-encryption=encrypted`, zero
+regressions under the still-default `plain` variant, and the default
+HAIP battery/mdoc battery both unaffected.
 
 One real, if minor, config gap found live: `run-fapi2sp-battery`'s own
 `buildPlanConfig` already carries `client_attestation.key_attestation_jwks`
