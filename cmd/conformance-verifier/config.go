@@ -5,9 +5,10 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
-	"encoding/pem"
 	"fmt"
 	"os"
+
+	"github.com/idfoundry/oid4vcgo/internal/conformancecert"
 )
 
 // Config is this binary's own configuration — loaded from a single
@@ -132,20 +133,11 @@ func (c Config) tlsCertificate() (tls.Certificate, error) {
 // ClientPrivateKeyPEM into the *x509.Certificate/*ecdsa.PrivateKey
 // pair verifier.Config/Dependencies need.
 func (c Config) clientCertificateAndKey() (*x509.Certificate, *ecdsa.PrivateKey, error) {
-	certBlock, _ := pem.Decode([]byte(c.ClientCertificatePEM))
-	if certBlock == nil {
-		return nil, nil, fmt.Errorf("client_certificate_pem: no PEM block found")
-	}
-	cert, err := x509.ParseCertificate(certBlock.Bytes)
+	cert, err := conformancecert.ParseCertificatePEM(c.ClientCertificatePEM)
 	if err != nil {
 		return nil, nil, fmt.Errorf("client_certificate_pem: %w", err)
 	}
-
-	keyBlock, _ := pem.Decode([]byte(c.ClientPrivateKeyPEM))
-	if keyBlock == nil {
-		return nil, nil, fmt.Errorf("client_private_key_pem: no PEM block found")
-	}
-	key, err := x509.ParseECPrivateKey(keyBlock.Bytes)
+	key, err := conformancecert.ParseECPrivateKeyPEM(c.ClientPrivateKeyPEM)
 	if err != nil {
 		return nil, nil, fmt.Errorf("client_private_key_pem: %w", err)
 	}
