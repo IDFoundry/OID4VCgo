@@ -26,7 +26,6 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
-	"encoding/base64"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -35,20 +34,6 @@ import (
 	"github.com/idfoundry/oid4vcgo/internal/conformancecert"
 	"github.com/idfoundry/oid4vcgo/internal/jwk"
 )
-
-// privateJWK embeds jwk.Marshal's own public-only shape plus the "d"
-// (private key) member the OIDF suite's own "Credential Issuer" >
-// "Signing JWK" field needs — internal/jwk deliberately never
-// marshals a private key itself (nothing in the shipped packages needs
-// to), so this stays local to this one throwaway generator, the same
-// "embed jwk.JWK + extra fields locally" pattern
-// verifier/authorization_request.go's own responseEncryptionJWK
-// already establishes.
-type privateJWK struct {
-	jwk.JWK
-	D   string `json:"d"`
-	Alg string `json:"alg"`
-}
 
 type generatedConfig struct {
 	ListenAddr           string          `json:"listen_addr"`
@@ -95,12 +80,12 @@ func main() {
 		fmt.Fprintln(os.Stderr, "marshal credential issuer jwk:", err)
 		os.Exit(1)
 	}
-	issuerKeyBytes, err := issuerKey.Bytes()
+	issuerPrivateJWKMaterial, err := jwk.MarshalPrivate(issuerKey)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "encode credential issuer private key:", err)
 		os.Exit(1)
 	}
-	issuerPrivateJWK := privateJWK{JWK: issuerJWK, D: base64.RawURLEncoding.EncodeToString(issuerKeyBytes), Alg: "ES256"}
+	issuerPrivateJWK := jwk.SetEntry{JWK: issuerPrivateJWKMaterial, Alg: "ES256"}
 	issuerPrivateJWKRaw, err := json.MarshalIndent(issuerPrivateJWK, "", "  ")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "marshal credential issuer private jwk:", err)

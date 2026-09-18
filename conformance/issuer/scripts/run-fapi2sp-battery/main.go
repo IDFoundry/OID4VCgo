@@ -424,12 +424,6 @@ func runModule(httpClient *http.Client, apiBase, planID, testName string, varian
 	return status + "=" + result + " (module " + module.ID + ", " + apiBase + "api/log/" + module.ID + ")"
 }
 
-// b64 base64url-encodes b without padding — every JWK coordinate this
-// binary emits uses this encoding (RFC 7518 §6.2).
-func b64(b []byte) string {
-	return base64.RawURLEncoding.EncodeToString(b)
-}
-
 // privateJWKSet builds a single-key private JWK Set ({"keys":[...]})
 // for key, tagged with kid and an explicit "alg":"ES256" — the suite's
 // own JWT-signing code has been found, repeatedly across this binary's
@@ -445,26 +439,19 @@ func b64(b []byte) string {
 // of whether the verifying party (cmd/conformance-issuer) ever looks at
 // x5c at all.
 func privateJWKSet(key *ecdsa.PrivateKey, kid, leafCertPEM string) (json.RawMessage, error) {
-	pub, err := jwk.Marshal(&key.PublicKey)
+	priv, err := jwk.MarshalPrivate(key)
 	if err != nil {
 		return nil, err
 	}
-	d, err := key.Bytes()
-	if err != nil {
-		return nil, fmt.Errorf("encode private scalar: %w", err)
-	}
-	entry := map[string]any{
-		"kty": pub.Kty, "crv": pub.Crv, "x": pub.X, "y": pub.Y, "alg": "ES256", "kid": kid,
-		"d": b64(d),
-	}
+	entry := jwk.SetEntry{JWK: priv, Kid: kid, Alg: "ES256"}
 	if leafCertPEM != "" {
 		cert, err := conformancecert.ParseCertificatePEM(leafCertPEM)
 		if err != nil {
 			return nil, fmt.Errorf("parse leaf certificate: %w", err)
 		}
-		entry["x5c"] = []string{base64.StdEncoding.EncodeToString(cert.Raw)}
+		entry.X5C = []string{base64.StdEncoding.EncodeToString(cert.Raw)}
 	}
-	return json.Marshal(map[string]any{"keys": []map[string]any{entry}})
+	return json.Marshal(jwk.Set{Keys: []jwk.SetEntry{entry}})
 }
 
 // publicJWK builds a single bare public JWK (no "keys" wrapper, no
@@ -476,7 +463,7 @@ func publicJWK(pub *ecdsa.PublicKey) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	raw, err := json.Marshal(map[string]any{"kty": j.Kty, "crv": j.Crv, "x": j.X, "y": j.Y, "alg": "ES256"})
+	raw, err := json.Marshal(jwk.SetEntry{JWK: j, Alg: "ES256"})
 	if err != nil {
 		return "", err
 	}
@@ -490,18 +477,11 @@ func publicJWK(pub *ecdsa.PublicKey) (string, error) {
 // wraps a single bare JWK object into a JWK Set itself, so this must
 // NOT already be wrapped.
 func privateJWKRaw(key *ecdsa.PrivateKey) (string, error) {
-	pub, err := jwk.Marshal(&key.PublicKey)
+	priv, err := jwk.MarshalPrivate(key)
 	if err != nil {
 		return "", err
 	}
-	d, err := key.Bytes()
-	if err != nil {
-		return "", fmt.Errorf("encode private scalar: %w", err)
-	}
-	raw, err := json.Marshal(map[string]any{
-		"kty": pub.Kty, "crv": pub.Crv, "x": pub.X, "y": pub.Y, "alg": "ES256",
-		"d": b64(d),
-	})
+	raw, err := json.Marshal(jwk.SetEntry{JWK: priv, Alg: "ES256"})
 	if err != nil {
 		return "", err
 	}

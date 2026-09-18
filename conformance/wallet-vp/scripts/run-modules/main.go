@@ -154,30 +154,10 @@ type planCredential struct {
 }
 
 type planClient struct {
-	AuthorizationEncryptedResponseEnc string     `json:"authorization_encrypted_response_enc"`
-	AuthorizationEncryptedResponseAlg string     `json:"authorization_encrypted_response_alg"`
-	JWKs                              planJWKSet `json:"jwks"`
-	DCQL                              planDCQL   `json:"dcql"`
-}
-
-type planJWKSet struct {
-	Keys []planClientJWK `json:"keys"`
-}
-
-// planClientJWK is the suite's own emulated-Verifier signing key —
-// confirmed live: a single self-signed leaf in "x5c" works fine here
-// (unlike conformance/verifier's own client certificate, this one
-// isn't independently x5c-chain-validated by the module under test).
-type planClientJWK struct {
-	Kty string   `json:"kty"`
-	Crv string   `json:"crv"`
-	X   string   `json:"x"`
-	Y   string   `json:"y"`
-	D   string   `json:"d"`
-	Kid string   `json:"kid"`
-	Use string   `json:"use"`
-	Alg string   `json:"alg"`
-	X5C []string `json:"x5c"`
+	AuthorizationEncryptedResponseEnc string   `json:"authorization_encrypted_response_enc"`
+	AuthorizationEncryptedResponseAlg string   `json:"authorization_encrypted_response_alg"`
+	JWKs                              jwk.Set  `json:"jwks"`
+	DCQL                              planDCQL `json:"dcql"`
 }
 
 type planDCQL struct {
@@ -276,7 +256,7 @@ func main() {
 		Client: planClient{
 			AuthorizationEncryptedResponseEnc: "A128GCM",
 			AuthorizationEncryptedResponseAlg: "ECDH-ES",
-			JWKs:                              planJWKSet{Keys: []planClientJWK{clientJWK}},
+			JWKs:                              jwk.Set{Keys: []jwk.SetEntry{clientJWK}},
 			DCQL: planDCQL{Credentials: []planDCQLCredential{{
 				ID: "cred1", Format: "dc+sd-jwt",
 				Meta:   planDCQLMeta{VCTValues: []string{cfg.VCT}},
@@ -555,30 +535,25 @@ func toHostBase(redirectTo, hostBase string) string {
 // conformance/verifier's own client certificate) doesn't need a
 // separate issuing CA; the suite doesn't independently x5c-chain-
 // validate this specific key.
-func generateClientJWK() (planClientJWK, error) {
+func generateClientJWK() (jwk.SetEntry, error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
-		return planClientJWK{}, fmt.Errorf("generate key: %w", err)
+		return jwk.SetEntry{}, fmt.Errorf("generate key: %w", err)
 	}
 	certPEM, err := conformancecert.SelfSignedCertPEMForKey("oid4vcgo-wallet-vp-test-verifier-client", key)
 	if err != nil {
-		return planClientJWK{}, fmt.Errorf("self-signed cert: %w", err)
+		return jwk.SetEntry{}, fmt.Errorf("self-signed cert: %w", err)
 	}
 	cert, err := conformancecert.ParseCertificatePEM(certPEM)
 	if err != nil {
-		return planClientJWK{}, fmt.Errorf("parse cert: %w", err)
+		return jwk.SetEntry{}, fmt.Errorf("parse cert: %w", err)
 	}
-	pubJWK, err := jwk.Marshal(&key.PublicKey)
+	privJWK, err := jwk.MarshalPrivate(key)
 	if err != nil {
-		return planClientJWK{}, fmt.Errorf("marshal public jwk: %w", err)
+		return jwk.SetEntry{}, fmt.Errorf("marshal private jwk: %w", err)
 	}
-	keyBytes, err := key.Bytes()
-	if err != nil {
-		return planClientJWK{}, fmt.Errorf("encode private key: %w", err)
-	}
-	return planClientJWK{
-		Kty: pubJWK.Kty, Crv: pubJWK.Crv, X: pubJWK.X, Y: pubJWK.Y,
-		D:   base64.RawURLEncoding.EncodeToString(keyBytes),
+	return jwk.SetEntry{
+		JWK: privJWK,
 		Kid: "wallet-vp-test-client-sig", Use: "sig", Alg: "ES256",
 		X5C: []string{base64.StdEncoding.EncodeToString(cert.Raw)},
 	}, nil

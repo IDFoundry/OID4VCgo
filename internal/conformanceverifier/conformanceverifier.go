@@ -17,7 +17,6 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/tls"
-	"encoding/base64"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -78,23 +77,13 @@ type Config struct {
 	MdocClaims           []string        `json:"mdoc_claims,omitempty"`
 }
 
-// PrivateJWK is generate-config's own local type, promoted here since
-// both a caller's own config (public half, via Config.CredentialIssuerJWK)
-// and the suite's own plan config (private half, via
-// PlanConfigCred.SigningJWK) need it.
-type PrivateJWK struct {
-	jwk.JWK
-	D   string `json:"d"`
-	Alg string `json:"alg"`
-}
-
 // KeyMaterial is everything GenerateKeyMaterial produces: a caller
 // fills in Config's own remaining role-specific fields (CredentialFormat
 // etc.) before writing it out.
 type KeyMaterial struct {
 	Config                     Config
 	ClientCACertPEM            string
-	CredentialIssuerPrivateJWK PrivateJWK
+	CredentialIssuerPrivateJWK jwk.SetEntry
 }
 
 // GenerateKeyMaterial builds a fresh throwaway TLS listener cert, OID4VP
@@ -125,11 +114,11 @@ func GenerateKeyMaterial(clientCN, clientCACN, internalBaseURL string) (KeyMater
 	if err != nil {
 		return KeyMaterial{}, fmt.Errorf("marshal credential issuer jwk: %w", err)
 	}
-	issuerKeyBytes, err := issuerKey.Bytes()
+	issuerPrivateJWKMaterial, err := jwk.MarshalPrivate(issuerKey)
 	if err != nil {
 		return KeyMaterial{}, fmt.Errorf("encode credential issuer private key: %w", err)
 	}
-	issuerPrivateJWK := PrivateJWK{JWK: issuerJWK, D: base64.RawURLEncoding.EncodeToString(issuerKeyBytes), Alg: "ES256"}
+	issuerPrivateJWK := jwk.SetEntry{JWK: issuerPrivateJWKMaterial, Alg: "ES256"}
 
 	return KeyMaterial{
 		Config: Config{
@@ -204,7 +193,7 @@ type PlanConfigClient struct {
 }
 
 type PlanConfigCred struct {
-	SigningJWK PrivateJWK `json:"signing_jwk"`
+	SigningJWK jwk.SetEntry `json:"signing_jwk"`
 }
 
 // placeholderPNGDataURI is
