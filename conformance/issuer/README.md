@@ -655,17 +655,34 @@ discipline:**
   anywhere else in the suite's own source), so re-running them under
   mdoc would just re-prove what the `sd_jwt_vc` battery already proved.
   Both modules `FINISHED`/`PASSED`, zero log entries at `WARNING` or
-  worse, both runs. One real, doctype-specific finding along the way:
-  the suite's own `EnsureMdocMdlMandatoryDataElementsPresent` check
-  enforces ISO/IEC 18013-5 §7.2.1 Table 5's full mandatory mDL data
-  element set (`birth_date`, `portrait`, `driving_privileges`, ...) —
-  but *only* for the literal `org.iso.18013.5.1.mDL` doctype string
-  ("The check passes without doing anything for other docTypes").
-  Using a PID-shaped doctype (`eu.europa.ec.eudi.pid.1`, mirroring this
-  binary's own existing SD-JWT VCT fixture) instead of the real mDL
-  doctype sidesteps that domain-specific compliance burden entirely —
-  this battery's own goal is proving genuine mdoc structural issuance,
-  not full ISO 18013-5 mDL data-element coverage.
+  worse, both runs. This battery's mdoc fixture issues a real
+  `org.iso.18013.5.1.mDL` doctype under the `org.iso.18013.5.1`
+  namespace, with all 11 ISO/IEC 18013-5 §7.2.1 Table 5 mandatory data
+  elements populated (`family_name`, `given_name`, `birth_date`,
+  `issue_date`, `expiry_date`, `issuing_country`, `issuing_authority`,
+  `document_number`, `portrait`, `driving_privileges`,
+  `un_distinguishing_sign`) — so the suite's own
+  `EnsureMdocMdlMandatoryDataElementsPresent` check now runs its real
+  logic against this doctype (rather than trivially passing for a
+  doctype it doesn't apply to) and genuinely succeeds, confirmed
+  directly in the module log: "The issued mDL contains all the data
+  elements that ISO/IEC 18013-5 defines as mandatory." An earlier
+  version of this fixture used a PID-shaped doctype
+  (`eu.europa.ec.eudi.pid.1`) specifically to sidestep this check
+  rather than satisfy it — replaced once the ISO/IEC 18013-5 draft
+  spec's own Table 20 (this repo's local, untracked reference copy)
+  was consulted directly for the exact mandatory-element list and
+  types, the same "real spec-derived structures, not guessed"
+  discipline the rest of this repo already holds itself to.
+  `credential/mdoc.Claims.NameSpaces` already accepted any
+  CBOR-encodable value with no library change needed; only this
+  binary's own JSON fixture-config plumbing
+  (`conformanceconfig.MdocConfig.Claims`, widened from
+  `map[string]string` to `map[string]any`) and its own read-side
+  reinterpretation (`mdocNameSpaceElementsFor` in
+  `cmd/conformance-issuer/credential.go`, wrapping `birth_date`/
+  `issue_date`/`expiry_date` in a `cbor.Tag` full-date and
+  base64-decoding `portrait`) needed to change.
 
 **Confirmed regression-free**: the full 42-module `sd_jwt_vc` HAIP
 battery re-run clean after `buildServerConfig` started always

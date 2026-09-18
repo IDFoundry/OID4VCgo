@@ -1,11 +1,15 @@
 package main
 
 import (
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"time"
+
+	"github.com/fxamacker/cbor/v2"
 
 	fapires "github.com/idfoundry/fapigo/resource"
 
@@ -106,9 +110,12 @@ func mdocClaimsForRequest(docType string, nameSpaces map[string]map[string]inter
 // tested logic, this handler only translates wire JSON to/from it. No
 // credential_identifier-based requests yet — see README's own
 // "Status".
-func credentialHandler(iss *issuer.Issuer, resourceVerifier *fapires.Verifier, credentialURL *url.URL, cfg Config) http.HandlerFunc {
+func credentialHandler(iss *issuer.Issuer, resourceVerifier *fapires.Verifier, credentialURL *url.URL, cfg Config) (http.HandlerFunc, error) {
 	additional := sdjwtAdditionalClaims(cfg.Claims)
-	mdocNameSpaceElements, mdocDocType := mdocNameSpaceElementsFor(cfg.Mdoc)
+	mdocNameSpaceElements, mdocDocType, err := mdocNameSpaceElementsFor(cfg.Mdoc)
+	if err != nil {
+		return nil, fmt.Errorf("mdoc claims: %w", err)
+	}
 
 	deps := credentialHandlerDeps{
 		iss: iss, resourceVerifier: resourceVerifier, credentialURL: credentialURL, cfg: cfg,
@@ -116,7 +123,7 @@ func credentialHandler(iss *issuer.Issuer, resourceVerifier *fapires.Verifier, c
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		serveCredentialRequest(w, r, deps)
-	}
+	}, nil
 }
 
 // credentialHandlerDeps bundles serveCredentialRequest's own fixed,
@@ -147,21 +154,59 @@ func sdjwtAdditionalClaims(claims map[string]string) map[string]any {
 	return additional
 }
 
+// mdocFullDateTag is credential/mdoc's own documented convention for a
+// full-date element (its own doc comment: "cbor.Tag for one of mdoc's
+// date tags (0 for tdate, 1004 for full-date)") — this package has no
+// opinion on namespace-specific data models, so the ISO/IEC 18013-5
+// org.iso.18013.5.1 namespace's own encoding choice (Table 20: "full-
+// date" for birth_date, "tdate or full-date" for issue_date/
+// expiry_date — full-date used for all three here, for one consistent
+// encoding) is this binary's own call to make, not the library's.
+const mdocFullDateTag = 1004
+
+// mdocDateElements names the Table 20 org.iso.18013.5.1 data elements
+// whose JSON-config value needs wrapping in an mdocFullDateTag before
+// use — see conformanceconfig.MdocConfig.Claims's own doc comment for
+// why the raw JSON round-trip alone can't carry this. portrait needs
+// its own reinterpretation too (base64 decode into raw bytes), handled
+// inline below by name rather than via a second map — every other
+// element in cfg.Claims is a plain tstr, needing no transform.
+var mdocDateElements = map[string]bool{"birth_date": true, "issue_date": true, "expiry_date": true}
+
 // mdocNameSpaceElementsFor builds credentialHandler's own precomputed
 // mso_mdoc namespace/data-element map from cfg (nil when cfg is unset,
 // in which case serveCredentialRequest's own mdocClaimsForRequest call
 // always returns a nil *mdoc.Claims too) — extracted out of
 // credentialHandler itself purely to keep that function's own
 // cognitive complexity low.
-func mdocNameSpaceElementsFor(cfg *conformanceconfig.MdocConfig) (nameSpaces map[string]map[string]interface{}, docType string) {
+func mdocNameSpaceElementsFor(cfg *conformanceconfig.MdocConfig) (nameSpaces map[string]map[string]interface{}, docType string, err error) {
 	if cfg == nil {
-		return nil, ""
+		return nil, "", nil
 	}
 	elements := make(map[string]interface{}, len(cfg.Claims))
 	for name, value := range cfg.Claims {
-		elements[name] = value
+		switch {
+		case mdocDateElements[name]:
+			s, ok := value.(string)
+			if !ok {
+				return nil, "", fmt.Errorf("mdoc claim %q: want a date string, got %T", name, value)
+			}
+			elements[name] = cbor.Tag{Number: mdocFullDateTag, Content: s}
+		case name == "portrait":
+			s, ok := value.(string)
+			if !ok {
+				return nil, "", fmt.Errorf("mdoc claim %q: want a base64 string, got %T", name, value)
+			}
+			decoded, decErr := base64.StdEncoding.DecodeString(s)
+			if decErr != nil {
+				return nil, "", fmt.Errorf("mdoc claim %q: decode base64: %w", name, decErr)
+			}
+			elements[name] = decoded
+		default:
+			elements[name] = value
+		}
 	}
-	return map[string]map[string]interface{}{cfg.Namespace: elements}, cfg.DocType
+	return map[string]map[string]interface{}{cfg.Namespace: elements}, cfg.DocType, nil
 }
 
 // serveCredentialRequest is credentialHandler's own returned

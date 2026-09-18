@@ -25,7 +25,7 @@ func mdocTestConfig(t *testing.T) Config {
 		CredentialConfigurationID: "MobileDrivingLicense",
 		DocType:                   "org.iso.18013.5.1.mDL",
 		Namespace:                 "org.iso.18013.5.1",
-		Claims:                    map[string]string{"given_name": "Jean", "family_name": "Dupont"},
+		Claims:                    map[string]any{"given_name": "Jean", "family_name": "Dupont"},
 		Scope:                     "MobileDrivingLicense",
 	}
 	return cfg

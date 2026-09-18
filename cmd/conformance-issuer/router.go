@@ -21,7 +21,7 @@ import (
 // signing key/certificate pair issuer.Dependencies.SDJWTSigner already
 // uses (see wiring.go) — reused here for signed Credential Issuer
 // Metadata (§12.2.3) rather than parsed a second time per request.
-func newRouter(srv *server.Server, iss *issuer.Issuer, resourceVerifier *fapires.Verifier, consent *consentHandler, credentialURL *url.URL, cfg Config, metadataSigner crypto.Signer, metadataCert *x509.Certificate) *http.ServeMux {
+func newRouter(srv *server.Server, iss *issuer.Issuer, resourceVerifier *fapires.Verifier, consent *consentHandler, credentialURL *url.URL, cfg Config, metadataSigner crypto.Signer, metadataCert *x509.Certificate) (*http.ServeMux, error) {
 	mux := http.NewServeMux()
 	metadataHandler := authorizationServerMetadataHandler(srv)
 	mux.HandleFunc("GET /.well-known/openid-configuration", metadataHandler)
@@ -45,6 +45,10 @@ func newRouter(srv *server.Server, iss *issuer.Issuer, resourceVerifier *fapires
 
 	mux.HandleFunc("GET /.well-known/openid-credential-issuer", issuer.MetadataHandler(iss, metadataSigner, jose.ES256, metadataCert))
 	mux.HandleFunc("POST /nonce", nonceHandler(iss))
-	mux.HandleFunc("POST /credential", credentialHandler(iss, resourceVerifier, credentialURL, cfg))
-	return mux
+	credHandler, err := credentialHandler(iss, resourceVerifier, credentialURL, cfg)
+	if err != nil {
+		return nil, err
+	}
+	mux.HandleFunc("POST /credential", credHandler)
+	return mux, nil
 }
