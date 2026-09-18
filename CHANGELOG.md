@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.5.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.4.1...v0.5.0) (2026-09-18)
+
+
+### Features
+
+* add Go native fuzz testing, daily CI job (mirrors FAPIgo) ([45a3174](https://github.com/IDFoundry/OID4VCgo/commit/45a3174d60444468e0d89f29637c18753c712ca7))
+* extend fuzz coverage to remaining untrusted-input boundaries ([3853363](https://github.com/IDFoundry/OID4VCgo/commit/3853363ca42edbf30c207efee3673257bd06710c))
+
+
+### Bug Fixes
+
+* dedupe exp/nbf test setup, fixing SonarCloud's duplication gate ([09d9016](https://github.com/IDFoundry/OID4VCgo/commit/09d90168da21ae5ad82bcbe1ba47aa8aceaf0b88))
+* dedupe fuzz seed setup, fixing SonarCloud's duplication gate ([38f82bb](https://github.com/IDFoundry/OID4VCgo/commit/38f82bbdc70088119d10b8bd7ce5697da4202786))
+* **issuer:** don't burn a pre-authorized_code on a wrong tx_code ([29b77be](https://github.com/IDFoundry/OID4VCgo/commit/29b77be0043f06c09be2bb9b43b2b1b42cb9e09e))
+* **issuer:** don't burn a pre-authorized_code on a wrong tx_code ([49581ad](https://github.com/IDFoundry/OID4VCgo/commit/49581ad9ae96846b5a3a907fec9ed7218d3af80c))
+* **jwe:** bound inflate against a pre-authentication decompression bomb ([52a3094](https://github.com/IDFoundry/OID4VCgo/commit/52a3094acede85846869e7158524971fbfd7514b))
+* **sdjwtvc,oid4vpmdoc:** check exp/nbf, require thumbprint binding ([df87bc1](https://github.com/IDFoundry/OID4VCgo/commit/df87bc17aa5b88ab7a919a1d987e4146dc0e868e))
+* **sdjwtvc,oid4vpmdoc:** check exp/nbf, require thumbprint binding ([74b0688](https://github.com/IDFoundry/OID4VCgo/commit/74b0688b6ffd9166486d675adeddf78b6324e0f0))
+* **statuslist:** bound decompress against a decompression bomb ([cd727ab](https://github.com/IDFoundry/OID4VCgo/commit/cd727abf77ed7f7ab4de95b1f66a1d2569a5b553))
+* **verifier:** stop panicking on non-stdlib signers, document footguns ([f196dc0](https://github.com/IDFoundry/OID4VCgo/commit/f196dc032f6590524af6c043210ea91235bdea2a))
+* **verifier:** stop panicking on non-stdlib signers, document footguns ([f404ea5](https://github.com/IDFoundry/OID4VCgo/commit/f404ea5951cfd8b2b3459013e82f98f27078c2e0))
+* **wallet:** fail closed instead of over-disclosing on unsupported claim paths ([a4e8237](https://github.com/IDFoundry/OID4VCgo/commit/a4e82372cd53a93bcc27f5dbb121af5b34557eda))
+* **wallet:** fail closed instead of over-disclosing on unsupported claim paths ([61c1d6d](https://github.com/IDFoundry/OID4VCgo/commit/61c1d6de1a69351380b6aed756b7fd947cd124b7))
+
 ## [0.4.1](https://github.com/IDFoundry/OID4VCgo/compare/v0.4.0...v0.4.1) (2026-09-18)
 
 
