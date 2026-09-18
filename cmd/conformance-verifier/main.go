@@ -93,19 +93,7 @@ func main() {
 // never actually asks for.
 func vpFormatsSupported(credentialFormat string) map[string]any {
 	if credentialFormat == "mso_mdoc" {
-		// Unlike "dc+sd-jwt" (whose sd-jwt_alg_values/kb-jwt_alg_values
-		// this binary's own JOSE-signed query genuinely constrains),
-		// no established convention for "mso_mdoc"'s own inner
-		// vp_formats_supported shape is verified against this suite —
-		// left empty rather than guessing unverified field names; the
-		// suite's own compatibility check is expected to key on the
-		// "mso_mdoc" member's presence, not its contents.
-		return map[string]any{"mso_mdoc": map[string]any{}}
+		return verifier.MdocFormatSupport()
 	}
-	return map[string]any{
-		"dc+sd-jwt": map[string]any{
-			"sd-jwt_alg_values": []string{"ES256"},
-			"kb-jwt_alg_values": []string{"ES256"},
-		},
-	}
+	return verifier.SDJWTVCFormatSupport([]jose.Alg{jose.ES256}, []jose.Alg{jose.ES256})
 }

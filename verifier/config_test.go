@@ -4,9 +4,11 @@ import (
 	"crypto"
 	"crypto/rand"
 	"io"
+	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/verifier"
 )
 
@@ -112,5 +114,26 @@ func TestNewComputesStableClientID(t *testing.T) {
 	}
 	if v1.ClientID() != v2.ClientID() {
 		t.Errorf("ClientID() differs across two New calls with the same cert: %q vs %q", v1.ClientID(), v2.ClientID())
+	}
+}
+
+func TestSDJWTVCFormatSupport(t *testing.T) {
+	got := verifier.SDJWTVCFormatSupport([]jose.Alg{jose.ES256}, []jose.Alg{jose.ES256})
+	want := map[string]any{
+		"dc+sd-jwt": map[string]any{
+			"sd-jwt_alg_values": []jose.Alg{jose.ES256},
+			"kb-jwt_alg_values": []jose.Alg{jose.ES256},
+		},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("SDJWTVCFormatSupport() = %#v, want %#v", got, want)
+	}
+}
+
+func TestMdocFormatSupport(t *testing.T) {
+	got := verifier.MdocFormatSupport()
+	want := map[string]any{"mso_mdoc": map[string]any{}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("MdocFormatSupport() = %#v, want %#v", got, want)
 	}
 }
