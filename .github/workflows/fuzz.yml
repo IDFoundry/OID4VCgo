@@ -90,6 +90,33 @@ jobs:
           - id: dcql-query
             pkg: ./dcql
             name: FuzzQuery
+          - id: verifier-parse-direct-post-jwt-response
+            pkg: ./verifier
+            name: FuzzParseDirectPostJWTResponse
+          - id: verifier-resolve-issuer-key
+            pkg: ./verifier
+            name: FuzzResolveIssuerKey
+          - id: attestation-parse-key-attestation
+            pkg: ./attestation
+            name: FuzzParseKeyAttestation
+          - id: attestation-parse-wallet-attestation-claims
+            pkg: ./attestation
+            name: FuzzParseWalletAttestationClaims
+          - id: wallet-parse-authorization-request
+            pkg: ./wallet
+            name: FuzzParseAuthorizationRequest
+          - id: wallet-decode-credential-offer
+            pkg: ./wallet
+            name: FuzzDecodeCredentialOffer
+          - id: wallet-decode-token-response
+            pkg: ./wallet
+            name: FuzzDecodeTokenResponse
+          - id: wallet-parse-credential-result
+            pkg: ./wallet
+            name: FuzzParseCredentialResult
+          - id: wallet-parse-error
+            pkg: ./wallet
+            name: FuzzParseError
     steps:
       - uses: actions/checkout@v7
 
