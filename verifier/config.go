@@ -113,7 +113,18 @@ func New(cfg Config, deps Dependencies) (*Verifier, error) {
 	if deps.Random == nil {
 		return nil, fmt.Errorf("verifier: dependencies: random is required")
 	}
-	if !deps.Signer.Public().(interface{ Equal(crypto.PublicKey) bool }).Equal(cfg.ClientCertificate.PublicKey) {
+	// A two-value assertion, not a direct one: deps.Signer.Public() is
+	// every stdlib key type's own crypto.PublicKey, all of which
+	// implement Equal, but a custom Signer (an HSM/KMS-backed one, a
+	// common choice for exactly the security-conscious integrators
+	// this package targets) may not — a direct assertion would panic
+	// instead of returning this func's own documented config-mismatch
+	// error. Found in a repo-wide security review.
+	comparable, ok := deps.Signer.Public().(interface{ Equal(crypto.PublicKey) bool })
+	if !ok {
+		return nil, fmt.Errorf("verifier: dependencies: signer's own public key type %T does not implement Equal(crypto.PublicKey) bool", deps.Signer.Public())
+	}
+	if !comparable.Equal(cfg.ClientCertificate.PublicKey) {
 		return nil, fmt.Errorf("verifier: config: client_certificate's public key does not match dependencies.signer")
 	}
 

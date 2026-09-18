@@ -80,6 +80,13 @@ type CredentialQuery struct {
 	// left as a *bool so a caller can distinguish "not set" (defaults
 	// to true) from an explicit false. Use
 	// RequiresCryptographicHolderBinding to read the effective value.
+	// WARNING: an explicit false disables nonce/audience binding
+	// checking on the matched Presentation (verifier's own
+	// verifySDJWTVCPresentation skips RequireKeyBinding entirely) —
+	// spec-permitted for formats/use-cases that don't need holder
+	// binding, but it also means a captured bare presentation of that
+	// credential becomes replayable against any Verifier. Only opt out
+	// with that consequence in mind.
 	RequireCryptographicHolderBinding *bool `json:"require_cryptographic_holder_binding,omitempty"`
 
 	// Claims is OPTIONAL (§6.3).
