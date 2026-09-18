@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"crypto"
+	"crypto/ecdsa"
 	"crypto/rand"
+	"crypto/x509"
 	"fmt"
 	"net/http"
 	"time"
@@ -224,16 +226,14 @@ func newServerMux(cfg Config) (*http.ServeMux, error) {
 		cfg.CredentialConfigurationID: sdjwtConfig,
 	}
 	if cfg.Mdoc != nil {
-		// Same issuer identity as the "dc+sd-jwt" CredentialConfiguration
-		// above (issuerSigningKey/issuerCertificate) — one Credential
-		// Issuer publishing two formats, not a second throwaway key.
 		mdocConfig := jwtProofCredentialConfiguration(cfg.Mdoc.Scope, issProofAlgs)
 		mdocConfig.Format, mdocConfig.DocType = mdoc.CredentialFormat, cfg.Mdoc.DocType
 		credentialConfigs[cfg.Mdoc.CredentialConfigurationID] = mdocConfig
-		issDeps.MdocSigner = &issuer.MdocSigner{
-			Signer: issuerSigningKey, Alg: cose.ES256,
-			X5Chain: [][]byte{issuerCertificate.Raw},
+		mdocSigner, err := buildMdocSigner(cfg, issuerSigningKey, issuerCertificate)
+		if err != nil {
+			return nil, err
 		}
+		issDeps.MdocSigner = mdocSigner
 	}
 
 	iss, err := issuer.New(issuer.Config{
@@ -372,6 +372,28 @@ func buildClientRegistration(cfg Config) (clientRepo *memstore.ClientRepository,
 // the AttestationVerifier issDeps needs, or nil when key attestation
 // isn't configured. Extracted out of newServerMux purely to keep its
 // own cognitive complexity down.
+// buildMdocSigner picks the mdoc CredentialConfiguration's own signing
+// identity: cfg.Mdoc's own dedicated ISO/IEC 18013-5 Annex B-compliant
+// Document Signer identity (internal/conformancecert.GenerateMdocDocumentSigner)
+// when configured, falling back to the shared "dc+sd-jwt" issuer
+// identity otherwise — see conformanceconfig.MdocConfig's own doc
+// comment on why a dedicated identity exists and why the fallback
+// stays supported (cmd/conformance-issuer/mdoc_test.go's own minimal
+// MdocConfig never sets the three new fields).
+func buildMdocSigner(cfg Config, fallbackKey *ecdsa.PrivateKey, fallbackCert *x509.Certificate) (*issuer.MdocSigner, error) {
+	key, cert, ok, err := cfg.mdocSignerKeyAndCert()
+	if err != nil {
+		return nil, fmt.Errorf("mdoc signer: %w", err)
+	}
+	if !ok {
+		key, cert = fallbackKey, fallbackCert
+	}
+	return &issuer.MdocSigner{
+		Signer: key, Alg: cose.ES256,
+		X5Chain: [][]byte{cert.Raw},
+	}, nil
+}
+
 func addKeyAttestationProofType(cfg Config, sdjwtConfig *issuer.CredentialConfiguration) (issuer.AttestationVerifier, error) {
 	if cfg.KeyAttestation == nil {
 		return nil, nil

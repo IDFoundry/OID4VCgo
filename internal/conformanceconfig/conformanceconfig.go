@@ -63,4 +63,23 @@ type MdocConfig struct {
 	// never infers "this string is really bytes" on its own).
 	Claims map[string]any `json:"claims"`
 	Scope  string         `json:"scope"`
+
+	// SignerKeyPEM/CertificatePEM/TrustAnchorCertificatePEM, when all
+	// three are set, are a dedicated mdoc Document Signer identity —
+	// separate from the top-level Config's own
+	// CredentialIssuerSigningKeyPEM/CredentialIssuerCertificatePEM the
+	// "dc+sd-jwt" CredentialConfiguration uses. ISO/IEC 18013-5 Annex
+	// B's own certificate profile (a ≤457-day leaf validity, an
+	// mdlDS-only extended key usage, a digitalSignature-only key
+	// usage — see internal/conformancecert.GenerateMdocDocumentSigner)
+	// is specific to mdoc document signing and would be actively wrong
+	// to impose on a general-purpose, multi-format issuer identity, so
+	// mdoc gets its own. Optional: when empty, cmd/conformance-issuer
+	// falls back to reusing the top-level issuer identity, matching
+	// this config's own original (pre-Annex-B-compliance) behavior —
+	// existing tests that never set these three fields keep working
+	// unchanged.
+	SignerKeyPEM              string `json:"signer_key_pem,omitempty"`
+	CertificatePEM            string `json:"certificate_pem,omitempty"`
+	TrustAnchorCertificatePEM string `json:"trust_anchor_certificate_pem,omitempty"`
 }
