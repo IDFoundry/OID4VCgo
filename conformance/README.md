@@ -15,6 +15,24 @@ plan says nothing about another's, even where both sides share this
 repo's own JOSE/DCQL code, because the protocol behaviour and
 negative-test expectations differ.
 
+## Keeping the local suite current
+
+These binaries only genuinely mirror what `certification.openid.net`
+(the hosted instance) checks if the local, self-hosted suite checkout
+(a real clone of `gitlab.com/openid/conformance-suite`, run via Docker
+Compose — see each role's own `scripts/README.md`) stays reasonably
+current. It doesn't update itself: at one point it was found 569
+commits/two upstream releases stale, and that gap had silently masked
+three real bugs in this repo (a Wallet-VP response-encryption-key
+selection bug, a Wallet `issuer_state` threading gap, and non-compliant
+mdoc signing certificates) that a from-scratch conformance run on a
+current suite immediately surfaced. Before trusting a local "all
+green" result as still meaningful, `docker pull` the suite's own images
+and diff the current release tag's changelog
+(`https://gitlab.com/openid/conformance-suite/-/tags`) against what's
+running — an upgrade is worth doing periodically even without a
+specific reason to suspect drift, not just when something seems off.
+
 - **`verifier/`** — OID4VP 1.0 Final/HAIP Verifier role
   (`oid4vp-1final-verifier-haip-test-plan`): `cmd/conformance-verifier`
   stands up `verifier.Verifier` behind real HTTP; the suite plays

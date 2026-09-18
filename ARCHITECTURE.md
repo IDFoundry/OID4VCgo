@@ -1,69 +1,17 @@
 # Architecture
 
-> **Status: early scaffolding.** `credential/sdjwtvc` (SD-JWT VC issuance,
-> presentation and verification, including Key Binding), `credential/mdoc`
-> (ISO/IEC 18013-5 mdoc, both roles: IssuerSigned/MSO/IssuerAuth on the
-> issuer side, DeviceSigned/mdoc authentication on the Holder side),
-> `statuslist` (Token Status List issuance and checking, both the JWT and
-> CWT encodings), `attestation` (Key Attestation, and the OID4VCI-specific
-> extra claims on top of FAPIgo's Wallet Attestation), the `internal/jose`
-> JWS helper `credential/sdjwtvc`/`statuslist`/`attestation` build on,
-> `internal/cose` (COSE_Sign1 and COSE_Mac0 signers/verifiers, the same
-> role for `credential/mdoc` and `statuslist`'s CWT encoding),
-> `internal/hkdf` (RFC 5869, for `credential/mdoc`'s DeviceMac key
-> derivation), `internal/jwe` (RFC 7516 JWE Compact Serialization,
-> ECDH-ES + AES-GCM, for OID4VCI 1.0 §10 — wired into both `issuer` and
-> `wallet`), `internal/jwk` (JWK marshal/parse plus RFC 7638 thumbprint,
-> shared by `attestation` and `issuer`), `internal/dpop` (RFC 9449 DPoP
-> proof verification — the server-side counterpart to `wallet`'s own
-> DPoP proof generation, wired into `issuer`'s own `ExchangePreAuthorizedCode`), the root
-> `oid4vci` package (wire value
-> types shared by
-> `issuer` and `wallet`: `CredentialOffer` and its `Grants` family,
-> `IssuedCredential`/`CredentialResponse`, `ProofTypeJWT`/
-> `ProofTypeAttestation`, `NotificationEvent`, `IssuerStateExtension`),
-> `issuer` (Nonce Endpoint,
-> Metadata, the Credential Endpoint for immediate issuance of both
-> formats with §10 Encrypted Request/Response support, Credential Offer
-> construction/dereferencing, the Deferred Credential Endpoint's polling
-> protocol, the Notification Endpoint, and the Pre-Authorized Code
-> Flow's own DPoP-sender-constrained Token Endpoint)
-> — every OID4VCI 1.0 Credential Issuer endpoint — `storage` (in-memory
-> reference implementations of every store `issuer` defines, for local
-> dev/testing only), `haip` (the profile layer's own
-> `RecommendedIssuerConfig`/`ValidateIssuerConfig`/`RecommendedWalletConfig`/
-> `RecommendedVerifierConfig`),
-> and `wallet`
-> (Credential Offer resolution, jwt-type and attestation-type key proof
-> generation, the Authorization Code Flow's own OID4VCI-specific
-> request shape, the pre-authorized_code Flow's own
-> DPoP-sender-constrained Token Request, the Credential/Deferred
-> Credential/Notification Endpoints' client sides given an
-> already-obtained access token, §10 Encrypted Request/Response
-> support, and — its own OID4VP Wallet role — DCQL query matching
-> against held credentials and `dc+sd-jwt`/`mso_mdoc` VP Token
-> construction), `dcql` (the Digital Credentials Query Language, OID4VP
-> §6/§7 — query types, structural validation, §7.1's own Claims Path
-> Pointer evaluation, and the shared Credential-Query-satisfaction
-> checks both `wallet` and `verifier` use), `oid4vpmdoc` (the
-> OID4VP-specific `mso_mdoc` wire structures on top of `credential/mdoc`
-> — `OpenID4VPHandover`/`SessionTranscript` construction and
-> `DeviceResponse`/`Document` CBOR, shared by `verifier` and `wallet`
-> since a Presentation's own `DeviceSigned` must be computed
-> byte-for-byte identically on both sides), and `verifier` (the OID4VP
-> Verifier role, both the redirect and DC API flows: HAIP-§5-profiled
-> Authorization Request construction via `BuildAuthorizationRequest`,
-> the DC API flow's own signed request via
-> `BuildDCAPIAuthorizationRequest`, `direct_post.jwt`/`dc_api.jwt`
-> response parsing/decryption via `ParseDirectPostJWTResponse`, and
-> §8.6 VP Token Validation for both `dc+sd-jwt` and `mso_mdoc`, either
-> flow, via `VerifyResponse`)
-> are implemented and tested;
-> everything else below is still just the
-> planned layout, not a finished system. Update each section as the
-> corresponding package
-> actually lands; don't let this drift into aspirational documentation
-> for code that doesn't exist.
+> **Status: every planned package is `(done)`**, including `conformance`
+> (all four OIDF conformance-suite binaries built, unit-tested, and each
+> confirmed live against a real, locally-run OIDF conformance suite
+> instance — see its own bullet below for the one deliberate, permanent
+> gap). See "Planned package layout" below for the per-package detail;
+> don't re-list packages here — that list drifted stale once before
+> (it kept claiming packages were still unbuilt long after they
+> individually landed) precisely because it duplicated what the
+> per-package `(done)` tags below already say. Update a package's own
+> bullet when it changes; this banner should only ever need to flip
+> between "still some `(started)`/planned entries below" and "every
+> entry below is `(done)`."
 
 ## Scope
 
@@ -135,10 +83,12 @@ claim it doesn't itself model, the OID4VCI-specific ones included.
 
 ## Planned package layout
 
-Every package below is marked `(done)` in the status block at the top
-of this file once it's actually implemented and tested — check there
-before this section for the current picture. `conformance` is the one
-package still genuinely in progress; see its own bullet below.
+Every package below is marked `(done)` once it's actually implemented
+and tested, `(started)` once work has begun but isn't finished, or left
+unmarked if it's still just planned layout, not a finished system —
+update a bullet's own tag as its package's status actually changes,
+and update the status block at the top of this file only if that
+changes whether *every* bullet below is `(done)`.
 
 - **`credential/sdjwtvc`** (done) — SD-JWT VC (`draft-ietf-oauth-sd-jwt-vc-11`)
   on top of base SD-JWT (RFC 9901): `Issue`/`Verify`, `SD`/`SDElement`
@@ -1274,7 +1224,7 @@ package still genuinely in progress; see its own bullet below.
   its own `expiresAt`), the simplest reading of RFC 9449 §11.1's literal
   "MUST reject any DPoP proof in which the jti has been seen before",
   and consistent with this package's own no-garbage-collection caveat.
-- **`conformance`** (started) — OIDF HAIP conformance suite harness,
+- **`conformance`** (done) — OIDF HAIP conformance suite harness,
   mirroring FAPIgo's own `conformance/` structure (`cmd/conformance-*`
   binaries wiring the real production package behind real HTTP, Docker
   attaching to the suite's own network, a config generator producing
@@ -1298,7 +1248,13 @@ package still genuinely in progress; see its own bullet below.
   own README calls out identically: actually invoking the W3C Digital
   Credentials API for the `dc_api.jwt`/DC API module lists is a
   browser/OS platform concern outside any Go library's own transport
-  responsibilities, not something left undone here.
+  responsibilities, not something left undone here. The local suite
+  checkout itself needs periodic re-syncing against upstream — it was
+  found 569 commits/two releases stale at one point, which had masked
+  three real bugs (fixed once the suite was upgraded and the full
+  regression pass re-run); see `conformance/README.md`'s "Keeping the
+  local suite current" section rather than assuming last session's checkout
+  is still current.
 
 ## Design rules carried over from FAPIgo
 
