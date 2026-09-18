@@ -93,16 +93,40 @@ func compress(b []byte) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// decompress reverses compress (draft-12 §8.3 step 5).
+// maxDecompressedSize bounds decompress's own output — without a
+// limit, a small malicious (or compromised-issuer) "lst" value can
+// exploit zlib's own compression ratio (approaching 1000:1 for
+// degenerate input) to exhaust a caller's memory, a classic
+// decompression-bomb DoS. 128 MiB comfortably exceeds any known real
+// deployment (draft-12's own Appendix worked example, the largest
+// checked into this package's own tests, decompresses to only 128 KiB
+// for a 2^20-entry list — a thousand times smaller) while still
+// bounding the worst case to a fixed, sane amount regardless of how
+// small the compressed input is.
+const maxDecompressedSize = 128 << 20 // 128 MiB
+
+// decompress reverses compress (draft-12 §8.3 step 5), rejecting
+// output larger than maxDecompressedSize rather than exhausting
+// memory on a decompression bomb.
 func decompress(b []byte) ([]byte, error) {
 	r, err := zlib.NewReader(bytes.NewReader(b))
 	if err != nil {
 		return nil, fmt.Errorf("statuslist: create zlib reader: %w", err)
 	}
-	out, err := io.ReadAll(r)
+	// Read one byte past the limit so exceeding it is distinguishable
+	// from landing exactly on it. r.Close() is deliberately skipped
+	// once the limit is exceeded — the underlying reader is always an
+	// in-memory bytes.Reader (no OS resource to leak), and Close()
+	// would otherwise keep decompressing internally to reach and
+	// verify the trailing checksum, undoing the whole point of
+	// bailing out early on oversized input.
+	out, err := io.ReadAll(io.LimitReader(r, maxDecompressedSize+1))
 	if err != nil {
 		_ = r.Close()
 		return nil, fmt.Errorf("statuslist: decompress: %w", err)
+	}
+	if len(out) > maxDecompressedSize {
+		return nil, fmt.Errorf("statuslist: decompress: decompressed size exceeds %d bytes", maxDecompressedSize)
 	}
 	if err := r.Close(); err != nil {
 		return nil, fmt.Errorf("statuslist: decompress: checksum: %w", err)

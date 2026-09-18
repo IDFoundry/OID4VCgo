@@ -1,6 +1,8 @@
 package statuslist
 
 import (
+	"bytes"
+	"compress/zlib"
 	"encoding/base64"
 	"reflect"
 	"testing"
@@ -99,6 +101,33 @@ func TestDecompress_Draft12_KnownVector(t *testing.T) {
 	want := []byte{0xB9, 0xA3}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("decompress = %#v, want %#v", got, want)
+	}
+}
+
+// TestDecompress_RejectsBomb proves decompress bounds its own output
+// rather than exhausting memory: a tiny, highly-repetitive compressed
+// input (~200 MiB of zeros compresses to a few hundred bytes) must be
+// rejected, not decompressed in full.
+func TestDecompress_RejectsBomb(t *testing.T) {
+	var buf bytes.Buffer
+	w, err := zlib.NewWriterLevel(&buf, zlib.BestCompression)
+	if err != nil {
+		t.Fatalf("create zlib writer: %v", err)
+	}
+	chunk := make([]byte, 1<<20) // 1 MiB of zeros, reused each write
+	const chunks = 200           // 200 MiB total, comfortably over maxDecompressedSize (128 MiB)
+	for range chunks {
+		if _, err := w.Write(chunk); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	t.Logf("compressed %d MiB of zeros down to %d bytes", chunks, buf.Len())
+
+	if _, err := decompress(buf.Bytes()); err == nil {
+		t.Fatal("decompress did not reject an oversized (decompression-bomb) input")
 	}
 }
 
