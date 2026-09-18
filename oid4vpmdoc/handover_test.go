@@ -142,11 +142,31 @@ func TestBuildSessionTranscriptBytesRejectsMissingFields(t *testing.T) {
 func TestBuildSessionTranscriptBytesNilThumbprintWhenUnencrypted(t *testing.T) {
 	sessionTranscriptBytes, err := BuildSessionTranscriptBytes(HandoverParams{
 		ClientID: "x509_hash:abc", Nonce: "n-1", ResponseURI: "https://verifier.example.com/response",
+		ResponseIsUnencrypted: true,
 	})
 	if err != nil {
 		t.Fatalf("BuildSessionTranscriptBytes: %v", err)
 	}
 	assertHandoverHash32Bytes(t, sessionTranscriptBytes, "OpenID4VPHandover")
+}
+
+// TestBuildSessionTranscriptBytesRejectsMissingThumbprint is the
+// regression test for a real bug found in a repo-wide security
+// review: a caller that simply forgot to set
+// ResponseEncryptionJWKThumbprint (the easiest mistake to make, since
+// nothing else about this call signals it's missing) used to get a
+// silently-accepted SessionTranscript with a nil jwkThumbprint binding
+// instead of an error — weakening the anti-relay binding for exactly
+// the case (an encrypted response) the doc comment says it's
+// mandatory. Omitting both the thumbprint and the explicit
+// ResponseIsUnencrypted opt-out must now fail.
+func TestBuildSessionTranscriptBytesRejectsMissingThumbprint(t *testing.T) {
+	_, err := BuildSessionTranscriptBytes(HandoverParams{
+		ClientID: "x509_hash:abc", Nonce: "n-1", ResponseURI: "https://verifier.example.com/response",
+	})
+	if err == nil {
+		t.Fatal("BuildSessionTranscriptBytes = nil error, want error (thumbprint missing, ResponseIsUnencrypted not set)")
+	}
 }
 
 // TestBuildDCAPISessionTranscriptBytesMatchesWorkedExample checks
@@ -187,11 +207,25 @@ func TestBuildDCAPISessionTranscriptBytesRejectsMissingFields(t *testing.T) {
 func TestBuildDCAPISessionTranscriptBytesNilThumbprintWhenUnencrypted(t *testing.T) {
 	sessionTranscriptBytes, err := BuildDCAPISessionTranscriptBytes(DCAPIHandoverParams{
 		Origin: "https://verifier.example.com", Nonce: "n-1",
+		ResponseIsUnencrypted: true,
 	})
 	if err != nil {
 		t.Fatalf("BuildDCAPISessionTranscriptBytes: %v", err)
 	}
 	assertHandoverHash32Bytes(t, sessionTranscriptBytes, "OpenID4VPDCAPIHandover")
+}
+
+// TestBuildDCAPISessionTranscriptBytesRejectsMissingThumbprint mirrors
+// TestBuildSessionTranscriptBytesRejectsMissingThumbprint for the
+// DC API builder — see that test's own doc comment for the bug this
+// is the regression test for.
+func TestBuildDCAPISessionTranscriptBytesRejectsMissingThumbprint(t *testing.T) {
+	_, err := BuildDCAPISessionTranscriptBytes(DCAPIHandoverParams{
+		Origin: "https://verifier.example.com", Nonce: "n-1",
+	})
+	if err == nil {
+		t.Fatal("BuildDCAPISessionTranscriptBytes = nil error, want error (thumbprint missing, ResponseIsUnencrypted not set)")
+	}
 }
 
 func unwrapTag24(data []byte, v any) error {

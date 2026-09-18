@@ -91,9 +91,23 @@ type HandoverParams struct {
 	// REQUIRED whenever the response is encrypted — direct_post.jwt,
 	// this package's only supported response mode, always encrypts —
 	// so this is effectively always required in practice; nil is
-	// legal only for an unencrypted response, which this repo's own
-	// verifier/wallet packages never produce.
+	// legal only for an unencrypted response (see
+	// ResponseIsUnencrypted), which this repo's own verifier/wallet
+	// packages never produce. BuildSessionTranscriptBytes enforces
+	// this: a caller that leaves both this and ResponseIsUnencrypted
+	// at their zero values (the easiest mistake to make — forgetting
+	// to set this one field) gets an error, not a silently-accepted
+	// SessionTranscript with a missing thumbprint binding.
 	ResponseEncryptionJWKThumbprint []byte
+
+	// ResponseIsUnencrypted must be explicitly set true to build a
+	// SessionTranscript for a genuinely unencrypted response
+	// (ResponseEncryptionJWKThumbprint left nil is then correct, not
+	// an oversight) — the deliberate opt-out BuildSessionTranscriptBytes
+	// requires before it will accept a nil thumbprint; found and added
+	// in a repo-wide security review of an earlier version that
+	// silently accepted nil either way.
+	ResponseIsUnencrypted bool
 }
 
 // BuildSessionTranscriptBytes builds SessionTranscriptBytes (ISO/IEC
@@ -114,6 +128,9 @@ func BuildSessionTranscriptBytes(p HandoverParams) ([]byte, error) {
 	}
 	if p.ResponseURI == "" {
 		return nil, fmt.Errorf("oid4vpmdoc: build session transcript: response_uri is required")
+	}
+	if len(p.ResponseEncryptionJWKThumbprint) == 0 && !p.ResponseIsUnencrypted {
+		return nil, fmt.Errorf("oid4vpmdoc: build session transcript: response_encryption_jwk_thumbprint is required unless response_is_unencrypted is explicitly set")
 	}
 
 	info := []any{p.ClientID, p.Nonce, nilableThumbprint(p.ResponseEncryptionJWKThumbprint), p.ResponseURI}
@@ -144,8 +161,18 @@ type DCAPIHandoverParams struct {
 	// Mode (this repo's own verifier/wallet packages' only supported
 	// one, HAIP 1.0 §5.2's own mandate), nil only for the unencrypted
 	// dc_api Response Mode ("If the Response Mode is dc_api, the third
-	// element MUST be null").
+	// element MUST be null") — see ResponseIsUnencrypted, which
+	// BuildDCAPISessionTranscriptBytes requires before it accepts nil
+	// here, the same enforcement BuildSessionTranscriptBytes's own
+	// identically-named field has (found in a repo-wide security
+	// review: an earlier version silently accepted nil either way).
 	ResponseEncryptionJWKThumbprint []byte
+
+	// ResponseIsUnencrypted must be explicitly set true to build a
+	// SessionTranscript for the unencrypted dc_api Response Mode
+	// (ResponseEncryptionJWKThumbprint left nil is then correct, not
+	// an oversight).
+	ResponseIsUnencrypted bool
 }
 
 // BuildDCAPISessionTranscriptBytes builds SessionTranscriptBytes for
@@ -165,6 +192,9 @@ func BuildDCAPISessionTranscriptBytes(p DCAPIHandoverParams) ([]byte, error) {
 	}
 	if p.Nonce == "" {
 		return nil, fmt.Errorf("oid4vpmdoc: build dc api session transcript: nonce is required")
+	}
+	if len(p.ResponseEncryptionJWKThumbprint) == 0 && !p.ResponseIsUnencrypted {
+		return nil, fmt.Errorf("oid4vpmdoc: build dc api session transcript: response_encryption_jwk_thumbprint is required unless response_is_unencrypted is explicitly set")
 	}
 
 	info := []any{p.Origin, p.Nonce, nilableThumbprint(p.ResponseEncryptionJWKThumbprint)}

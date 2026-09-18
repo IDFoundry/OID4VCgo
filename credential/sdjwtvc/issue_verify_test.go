@@ -290,6 +290,86 @@ func TestVerify_KeyBindingMaxAge(t *testing.T) {
 	}
 }
 
+// TestVerify_RejectsExpiredCredential and TestVerify_RejectsNotYetValidCredential
+// are the regression tests for a real bug found in a repo-wide
+// security review: Verify used to never check exp/nbf at all — it
+// looks and behaves like a complete verification (returns a plain
+// payload, no separate "is it still valid" step), so a caller had no
+// obvious signal that time-validity was still their own job. This
+// repo's own sibling Verify functions (credential/mdoc.Verify,
+// statuslist.VerifyToken/VerifyTokenCWT) already checked their own
+// equivalent validity window unconditionally — sdjwtvc.Verify was the
+// odd one out.
+func TestVerify_RejectsExpiredCredential(t *testing.T) {
+	issuerKey := testKey(t)
+	past := time.Now().Add(-time.Hour).Unix()
+	claims := Claims{VCT: "vc-type", Exp: &past}
+	sdjwt, _, err := Issue(issuerKey, jose.ES256, claims, IssueOptions{})
+	if err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+	pres, err := Parse(sdjwt)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	presentation, err := pres.Compact()
+	if err != nil {
+		t.Fatalf("Compact: %v", err)
+	}
+
+	if _, _, err := Verify(presentation, &issuerKey.PublicKey, jose.ES256, VerifyOptions{}); err == nil {
+		t.Error("Verify accepted a credential whose own exp claim is in the past")
+	}
+}
+
+func TestVerify_RejectsNotYetValidCredential(t *testing.T) {
+	issuerKey := testKey(t)
+	future := time.Now().Add(time.Hour).Unix()
+	claims := Claims{VCT: "vc-type", Nbf: &future}
+	sdjwt, _, err := Issue(issuerKey, jose.ES256, claims, IssueOptions{})
+	if err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+	pres, err := Parse(sdjwt)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	presentation, err := pres.Compact()
+	if err != nil {
+		t.Fatalf("Compact: %v", err)
+	}
+
+	if _, _, err := Verify(presentation, &issuerKey.PublicKey, jose.ES256, VerifyOptions{}); err == nil {
+		t.Error("Verify accepted a credential whose own nbf claim is in the future")
+	}
+}
+
+// TestVerify_AcceptsCredentialWithinValidityWindow proves the fix
+// above doesn't reject a legitimately-current credential — exp in the
+// future, nbf in the past both pass.
+func TestVerify_AcceptsCredentialWithinValidityWindow(t *testing.T) {
+	issuerKey := testKey(t)
+	past := time.Now().Add(-time.Hour).Unix()
+	future := time.Now().Add(time.Hour).Unix()
+	claims := Claims{VCT: "vc-type", Nbf: &past, Exp: &future}
+	sdjwt, _, err := Issue(issuerKey, jose.ES256, claims, IssueOptions{})
+	if err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+	pres, err := Parse(sdjwt)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	presentation, err := pres.Compact()
+	if err != nil {
+		t.Fatalf("Compact: %v", err)
+	}
+
+	if _, _, err := Verify(presentation, &issuerKey.PublicKey, jose.ES256, VerifyOptions{}); err != nil {
+		t.Errorf("Verify rejected a credential within its own valid exp/nbf window: %v", err)
+	}
+}
+
 func TestIssue_NoSelectivelyDisclosableClaims(t *testing.T) {
 	// draft-11 §3.2.2.4: no _sd claim and no Disclosures when nothing
 	// is selectively disclosable.
