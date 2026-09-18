@@ -103,6 +103,13 @@ type Config struct {
 	// generator (a separate package main, unable to import this one)
 	// shares this exact JSON shape rather than hand-mirroring it.
 	Mdoc *conformanceconfig.MdocConfig `json:"mdoc,omitempty"`
+
+	// KeyAttestation, when non-nil, additionally advertises the
+	// "attestation" proof type on the "dc+sd-jwt" CredentialConfiguration
+	// above — see conformanceconfig.KeyAttestationConfig's own doc
+	// comment. Optional: nil leaves today's "jwt"-only behavior
+	// unchanged.
+	KeyAttestation *conformanceconfig.KeyAttestationConfig `json:"key_attestation,omitempty"`
 }
 
 // ConfigClient is Config.Client's own shape: everything needed to
@@ -164,6 +171,9 @@ func loadConfig(path string) (Config, error) {
 		if m.CredentialConfigurationID == cfg.CredentialConfigurationID {
 			return Config{}, fmt.Errorf("config: mdoc.credential_configuration_id must differ from the top-level credential_configuration_id")
 		}
+	}
+	if cfg.KeyAttestation != nil && len(cfg.KeyAttestation.TrustedJWK) == 0 {
+		return Config{}, fmt.Errorf("config: key_attestation.trusted_jwk is required when key_attestation is present")
 	}
 	if cfg.DefaultSubject == "" {
 		cfg.DefaultSubject = "conformance-test-subject"

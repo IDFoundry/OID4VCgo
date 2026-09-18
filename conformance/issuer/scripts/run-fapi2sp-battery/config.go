@@ -53,10 +53,32 @@ type run struct {
 	// statusListTrustAnchorPEM is required config (HAIP) even though
 	// nothing in this battery ever exercises a Status List — confirmed
 	// live: "'Status List Trust Anchor' field is missing... It is
-	// required for HAIP", the same "required to be present, not to be
-	// exercised" pattern as key_attestation_jwks below. Any
-	// syntactically valid CA certificate satisfies it.
+	// required for HAIP". Any syntactically valid CA certificate
+	// satisfies it.
 	statusListTrustAnchorPEM string
+
+	// keyAttestationKey signs the suite's own dynamically-minted Key
+	// Attestation JWTs (Appendix D.1) — its public half is what
+	// cmd/conformance-issuer's own KeyAttestationConfig.TrustedJWK
+	// trusts (buildServerConfig), and its private half is what the
+	// suite's own key_attestation_jwks plan-config field needs
+	// (buildPlanConfig) so it can actually sign one. Used by
+	// oid4vci-1_0-issuer-fail-invalid-key-attestation-signature (and,
+	// as a positive sanity check, happy-flow under
+	// -credential-proof-type-hint=attestation).
+	// keyAttestationLeafPEM's own x5c must be embedded in
+	// key_attestation_jwks the same way attesterLeafPEM's is for
+	// client_attestation.attester_jwks — confirmed live:
+	// AbstractSignJWT.java's own "errorIfX5cMissing" path rejects
+	// signing a Key Attestation JWT outright too ("A x5c entry is
+	// required in the client's signing key but isn't present in the
+	// configuration", requirements HAIPA-D.1/OID4VCI-1FINALA-D.1),
+	// even though cmd/conformance-issuer's own AttestationVerifier
+	// never looks at x5c — this repo's own KeyAttestationConfig.TrustedJWK
+	// is a bare public JWK, matching how server-side client-attestation
+	// verification already ignores x5c too.
+	keyAttestationKey     *ecdsa.PrivateKey
+	keyAttestationLeafPEM string
 
 	vct                       string
 	claims                    map[string]string
@@ -91,6 +113,12 @@ func generateRun(alias, issuerBaseURL string) (*run, error) {
 	_, _, statusListTrustAnchorPEM, _, err := conformancecert.GenerateCA("run-fapi2sp-battery-status-list-trust-anchor")
 	if err != nil {
 		return nil, fmt.Errorf("generate status list trust anchor: %w", err)
+	}
+
+	keyAttestationKey, _, keyAttestationLeafPEM, _, err := conformancecert.GenerateSignerAndCert(
+		"run-fapi2sp-battery-key-attestation-leaf", "run-fapi2sp-battery-key-attestation-ca")
+	if err != nil {
+		return nil, fmt.Errorf("generate key attestation key: %w", err)
 	}
 
 	client1InstanceKey, err := generateECKey()
@@ -134,6 +162,8 @@ func generateRun(alias, issuerBaseURL string) (*run, error) {
 		credentialRequestDecryptPEM: credentialRequestDecryptPEM,
 
 		statusListTrustAnchorPEM: statusListTrustAnchorPEM,
+		keyAttestationKey:        keyAttestationKey,
+		keyAttestationLeafPEM:    keyAttestationLeafPEM,
 
 		vct:                       "urn:eudi:pid:1",
 		claims:                    map[string]string{"given_name": "Jean", "family_name": "Dupont"},
@@ -194,21 +224,22 @@ func mustGenerateECKeyPEM() string {
 // ConfigClient JSON shape exactly — duplicated here rather than
 // imported, since that binary is package main like this one.
 type serverConfig struct {
-	ListenAddr                        string                        `json:"listen_addr"`
-	Issuer                            string                        `json:"issuer"`
-	TLSCertificatePEM                 string                        `json:"tls_certificate_pem"`
-	TLSPrivateKeyPEM                  string                        `json:"tls_private_key_pem"`
-	Client                            serverConfigClient            `json:"client"`
-	Client2                           serverConfigClient            `json:"client2"`
-	CredentialIssuerSigningKeyPEM     string                        `json:"credential_issuer_signing_key_pem"`
-	CredentialIssuerCertificatePEM    string                        `json:"credential_issuer_certificate_pem"`
-	CredentialRequestDecryptionKeyPEM string                        `json:"credential_request_decryption_key_pem"`
-	VCT                               string                        `json:"vct"`
-	Claims                            map[string]string             `json:"claims"`
-	Scope                             string                        `json:"scope"`
-	CredentialConfigurationID         string                        `json:"credential_configuration_id"`
-	DefaultSubject                    string                        `json:"default_subject"`
-	Mdoc                              *conformanceconfig.MdocConfig `json:"mdoc,omitempty"`
+	ListenAddr                        string                                  `json:"listen_addr"`
+	Issuer                            string                                  `json:"issuer"`
+	TLSCertificatePEM                 string                                  `json:"tls_certificate_pem"`
+	TLSPrivateKeyPEM                  string                                  `json:"tls_private_key_pem"`
+	Client                            serverConfigClient                      `json:"client"`
+	Client2                           serverConfigClient                      `json:"client2"`
+	CredentialIssuerSigningKeyPEM     string                                  `json:"credential_issuer_signing_key_pem"`
+	CredentialIssuerCertificatePEM    string                                  `json:"credential_issuer_certificate_pem"`
+	CredentialRequestDecryptionKeyPEM string                                  `json:"credential_request_decryption_key_pem"`
+	VCT                               string                                  `json:"vct"`
+	Claims                            map[string]string                       `json:"claims"`
+	Scope                             string                                  `json:"scope"`
+	CredentialConfigurationID         string                                  `json:"credential_configuration_id"`
+	DefaultSubject                    string                                  `json:"default_subject"`
+	Mdoc                              *conformanceconfig.MdocConfig           `json:"mdoc,omitempty"`
+	KeyAttestation                    *conformanceconfig.KeyAttestationConfig `json:"key_attestation,omitempty"`
 }
 
 type serverConfigClient struct {
@@ -225,6 +256,10 @@ func buildServerConfig(r *run) ([]byte, error) {
 	attesterPubJWKS, err := conformancecert.JWKSet(&r.attesterKey.PublicKey, "run-fapi2sp-battery-attester-key")
 	if err != nil {
 		return nil, fmt.Errorf("build attester public jwks: %w", err)
+	}
+	keyAttestationTrustedJWK, err := publicJWK(&r.keyAttestationKey.PublicKey)
+	if err != nil {
+		return nil, fmt.Errorf("build key attestation trusted jwk: %w", err)
 	}
 
 	cfg := serverConfig{
@@ -254,6 +289,9 @@ func buildServerConfig(r *run) ([]byte, error) {
 			Namespace:                 r.mdocNamespace,
 			Claims:                    r.mdocClaims,
 			Scope:                     r.mdocScope,
+		},
+		KeyAttestation: &conformanceconfig.KeyAttestationConfig{
+			TrustedJWK: json.RawMessage(keyAttestationTrustedJWK),
 		},
 	}
 	return json.MarshalIndent(cfg, "", "  ")
@@ -300,8 +338,10 @@ type overrideEntry struct {
 // ("sd_jwt_vc" or "mdoc") — the plan's own vci.credential_configuration_id
 // selects whichever CredentialConfiguration cmd/conformance-issuer's own
 // server config (buildServerConfig, always generated with both) actually
-// advertises for that format.
-func buildPlanConfig(r *run, credentialFormat string) ([]byte, error) {
+// advertises for that format. proofTypeHint sets vci.credential_proof_type_hint
+// ("jwt" for every module except the keyAttestationBattery, which needs
+// "attestation" — see main.go's own -credential-proof-type-hint flag).
+func buildPlanConfig(r *run, credentialFormat, proofTypeHint string) ([]byte, error) {
 	client1InstanceKeyPriv, err := privateJWKRaw(r.client1InstanceKey)
 	if err != nil {
 		return nil, fmt.Errorf("build client1 instance key: %w", err)
@@ -322,12 +362,16 @@ func buildPlanConfig(r *run, credentialFormat string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("build attester private jwks: %w", err)
 	}
-	// key_attestation_jwks is required config even though nothing in
-	// this battery ever presents a Key Attestation proof (HAIP §4.5.1,
-	// a distinct requirement from Wallet Attestation client auth) — an
-	// empty key set satisfies the suite's own presence check without
-	// claiming to support something this battery never exercises.
-	keyAttestationJWKS := json.RawMessage(`{"keys":[]}`)
+	// key_attestation_jwks is the suite's own signer for the Key
+	// Attestation JWTs it mints when driving under
+	// -credential-proof-type-hint=attestation (HAIP §4.5.1, a distinct
+	// requirement from Wallet Attestation client auth) —
+	// cmd/conformance-issuer's own KeyAttestationConfig.TrustedJWK
+	// trusts this same key's public half (buildServerConfig).
+	keyAttestationJWKS, err := privateJWKSet(r.keyAttestationKey, "run-fapi2sp-battery-key-attestation-key", r.keyAttestationLeafPEM)
+	if err != nil {
+		return nil, fmt.Errorf("build key attestation private jwks: %w", err)
+	}
 
 	credentialConfigurationID := r.credentialConfigurationID
 	if credentialFormat == "mdoc" {
@@ -363,7 +407,7 @@ func buildPlanConfig(r *run, credentialFormat string) ([]byte, error) {
 		"vci": map[string]any{
 			"credential_issuer_url":       r.issuerBaseURL,
 			"credential_configuration_id": credentialConfigurationID,
-			"credential_proof_type_hint":  "jwt",
+			"credential_proof_type_hint":  proofTypeHint,
 		},
 		"credential": map[string]any{
 			"trust_anchor_pem":             r.credentialIssuerCACertPEM,
