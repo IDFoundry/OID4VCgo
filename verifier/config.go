@@ -60,6 +60,30 @@ type Config struct {
 	VPFormatsSupported map[string]any
 }
 
+// SDJWTVCFormatSupport builds Config.VPFormatsSupported's own
+// "dc+sd-jwt" entry (§10, §11.1): sdJWTAlgs/kbJWTAlgs are the JOSE
+// algorithms this Verifier accepts for the Issuer-signed SD-JWT and
+// the Key Binding JWT respectively (that format's own
+// "sd-jwt_alg_values"/"kb-jwt_alg_values" members).
+func SDJWTVCFormatSupport(sdJWTAlgs, kbJWTAlgs []jose.Alg) map[string]any {
+	return map[string]any{
+		"dc+sd-jwt": map[string]any{
+			"sd-jwt_alg_values": sdJWTAlgs,
+			"kb-jwt_alg_values": kbJWTAlgs,
+		},
+	}
+}
+
+// MdocFormatSupport builds Config.VPFormatsSupported's own "mso_mdoc"
+// entry (§10, §11.1). No established convention for "mso_mdoc"'s own
+// inner vp_formats_supported shape is verified against the OIDF
+// conformance suite yet — left empty rather than guessing unverified
+// field names; the suite's own compatibility check is expected to key
+// on the "mso_mdoc" member's presence, not its contents.
+func MdocFormatSupport() map[string]any {
+	return map[string]any{"mso_mdoc": map[string]any{}}
+}
+
 // Dependencies are this Verifier's external collaborators.
 type Dependencies struct {
 	// Signer signs the Request Object; its public key must match
