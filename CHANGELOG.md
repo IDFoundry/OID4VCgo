@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.2.0...v0.3.0) (2026-09-18)
+
+
+### Features
+
+* **conformance:** issue a real mDL, not a PID-shaped doctype, in the Issuer's mdoc battery ([721965a](https://github.com/IDFoundry/OID4VCgo/commit/721965ae47c6849c2089402edf43a2999f1153cc))
+
 ## [0.2.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.1.0...v0.2.0) (2026-09-17)
 
 
