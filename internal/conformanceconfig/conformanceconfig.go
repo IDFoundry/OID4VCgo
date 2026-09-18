@@ -26,6 +26,21 @@ type MdocConfig struct {
 	// one.
 	Namespace string `json:"namespace"`
 
-	Claims map[string]string `json:"claims"`
-	Scope  string            `json:"scope"`
+	// Claims holds each data element's own value, JSON-typed (string,
+	// number, bool, array, object — whatever encoding/json produces
+	// unmarshaling into `any`). Most ISO/IEC 18013-5 Table 20 elements
+	// are plain tstr and need no special handling; a handful need
+	// namespace-specific reinterpretation only the consumer (this
+	// config's own reader) knows how to do, keyed by identifier name —
+	// see cmd/conformance-issuer/credential.go's own
+	// mdocNameSpaceElementsFor: birth_date/issue_date/expiry_date need
+	// wrapping in a cbor.Tag (full-date, tag 1004) instead of staying a
+	// bare tstr, and portrait needs base64-decoding into raw bytes
+	// (JSON has no native byte-string type, so it's written here as a
+	// base64 string — encoding/json already does this automatically
+	// for a []byte value on the writing side; only the read-back
+	// direction needs an explicit decode, since unmarshaling into `any`
+	// never infers "this string is really bytes" on its own).
+	Claims map[string]any `json:"claims"`
+	Scope  string         `json:"scope"`
 }

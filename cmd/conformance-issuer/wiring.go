@@ -288,7 +288,7 @@ func newServerMux(cfg Config) (*http.ServeMux, error) {
 
 	consent := newConsentHandler(srv, clientRepo, server.SystemClock{}, cfg.DefaultSubject)
 	credentialURLValue := credentialURL.URL()
-	return newRouter(srv, iss, resourceVerifier, consent, &credentialURLValue, cfg, issuerSigningKey, issuerCertificate), nil
+	return newRouter(srv, iss, resourceVerifier, consent, &credentialURLValue, cfg, issuerSigningKey, issuerCertificate)
 }
 
 // srvLimits are this binary's own FAPI 2.0 Limits — server.RecommendedLimits

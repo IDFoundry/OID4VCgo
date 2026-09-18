@@ -73,7 +73,7 @@ type run struct {
 	mdocCredentialConfigurationID string
 	mdocDocType                   string
 	mdocNamespace                 string
-	mdocClaims                    map[string]string
+	mdocClaims                    map[string]any
 	mdocScope                     string
 }
 
@@ -140,24 +140,41 @@ func generateRun(alias, issuerBaseURL string) (*run, error) {
 		scope:                     "IdentityCredential",
 		credentialConfigurationID: "IdentityCredential",
 
-		// eu.europa.ec.eudi.pid.1, not org.iso.18013.5.1.mDL: the suite's
-		// own EnsureMdocMdlMandatoryDataElementsPresent check applies
-		// only to the literal mDL doctype string (ISO/IEC 18013-5 §7.2.1
-		// Table 5's mandatory-element list — birth_date, portrait,
-		// driving_privileges, ...), confirmed live ("does not contain
-		// all the data elements... that ISO/IEC 18013-5 defines as
-		// mandatory") — a real domain compliance burden out of scope for
-		// this generic smoke check, which only needs to prove genuine
-		// mdoc structural issuance (CBOR/COSE/MSO, DeviceKey binding),
-		// not full mDL data-element coverage. A PID-shaped doctype
-		// mirrors this binary's own existing SD-JWT VCT fixture
-		// ("urn:eudi:pid:1") and isn't checked against any suite-side
-		// mandatory-element list at all.
-		mdocCredentialConfigurationID: "IdentityCredentialMdoc",
-		mdocDocType:                   "eu.europa.ec.eudi.pid.1",
-		mdocNamespace:                 "eu.europa.ec.eudi.pid.1",
-		mdocClaims:                    map[string]string{"given_name": "Jean", "family_name": "Dupont"},
-		mdocScope:                     "IdentityCredentialMdoc",
+		// org.iso.18013.5.1.mDL / org.iso.18013.5.1: a real mDL, not a
+		// PID-shaped stand-in — the suite's own
+		// EnsureMdocMdlMandatoryDataElementsPresent check applies only
+		// to this literal doctype string, and checks it against ISO/IEC
+		// 18013-5 §7.2.1 Table 5's own mandatory-element list (confirmed
+		// directly against the local draft spec's Table 20, cross-
+		// referenced to the same published-edition table number in the
+		// spec's own text). All 11 mandatory (Presence=M) elements are
+		// populated below so that check now genuinely passes, rather
+		// than being sidestepped by a doctype the check doesn't apply
+		// to. birth_date/issue_date/expiry_date and portrait need
+		// mdocNameSpaceElementsFor's own read-side reinterpretation
+		// (full-date CBOR tag, base64 decode) — see that function's own
+		// doc comment.
+		mdocCredentialConfigurationID: "MobileDrivingLicence",
+		mdocDocType:                   "org.iso.18013.5.1.mDL",
+		mdocNamespace:                 "org.iso.18013.5.1",
+		mdocClaims: map[string]any{
+			"family_name":       "Dupont",
+			"given_name":        "Jean",
+			"birth_date":        "1990-01-01",
+			"issue_date":        "2024-01-01",
+			"expiry_date":       "2034-01-01",
+			"issuing_country":   "FR",
+			"issuing_authority": "Prefecture de Police",
+			"document_number":   "123456789",
+			// Not a real decodable image — a placeholder bstr value,
+			// same spirit as the placeholder Jean/Dupont names above.
+			"portrait": []byte("run-fapi2sp-battery-placeholder-portrait"),
+			"driving_privileges": []map[string]any{
+				{"vehicle_category_code": "B"},
+			},
+			"un_distinguishing_sign": "F",
+		},
+		mdocScope: "MobileDrivingLicence",
 	}, nil
 }
 
