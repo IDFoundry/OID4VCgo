@@ -70,7 +70,14 @@ type BuildAuthorizationRequestResult struct {
 
 	// Nonce is the fresh nonce baked into the Request Object
 	// (§5.2/§14.1.2) — the caller must retain it to validate the
-	// eventual response's own Holder Binding proof.
+	// eventual response's own Holder Binding proof. This package has
+	// no nonce-replay protection of its own: retaining Nonce only for
+	// lookup (passing it as VerifyResponseRequest.ExpectedNonce) is
+	// NOT enough on its own — the caller must also mark it consumed
+	// once VerifyResponse succeeds (or once this request is abandoned)
+	// so it can never be presented again. Skipping that silently
+	// permits a captured, previously-successful direct_post.jwt
+	// response to be replayed.
 	Nonce string
 
 	// ResponseDecryptionKey is the ephemeral P-256 private key

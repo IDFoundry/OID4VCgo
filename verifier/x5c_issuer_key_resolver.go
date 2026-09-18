@@ -52,6 +52,19 @@ func (r X5CIssuerKeyResolver) ResolveIssuerKey(_ context.Context, header, _ map[
 	for _, c := range certs[1:] {
 		intermediates.AddCert(c)
 	}
+	// ExtKeyUsageAny is deliberate, not an oversight: there's no
+	// standard EKU value for "SD-JWT VC issuer identity" the way
+	// ExtKeyUsageServerAuth exists for TLS, so requiring a specific one
+	// here would risk rejecting real, spec-compliant issuer
+	// certificates that were never issued with OID4VCI/HAIP in mind
+	// (found and deliberately left as-is in a repo-wide security
+	// review — accepting a leaf issued for a different purpose, e.g.
+	// TLS server auth, as long as it still chains to a trusted Roots
+	// entry, is a tightenable defense-in-depth gap, not on its own
+	// exploitable: Roots is the caller's own trust anchor set, already
+	// the actual security boundary here). A caller wanting to restrict
+	// issuer certificates to a specific EKU should supply its own
+	// SDJWTVCIssuerKeyResolver instead.
 	if _, err := leaf.Verify(x509.VerifyOptions{
 		Roots:         r.Roots,
 		Intermediates: intermediates,

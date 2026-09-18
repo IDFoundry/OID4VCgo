@@ -45,6 +45,10 @@ func (r X5ChainIssuerKeyResolver) ResolveMdocIssuerKey(_ context.Context, x5chai
 	for _, c := range certs[1:] {
 		intermediates.AddCert(c)
 	}
+	// ExtKeyUsageAny is deliberate — see X5CIssuerKeyResolver's own
+	// identical choice and doc comment (verifier/x5c_issuer_key_resolver.go)
+	// for why: no standard EKU exists for this purpose, and Roots is
+	// the actual trust boundary here, not the EKU.
 	if _, err := leaf.Verify(x509.VerifyOptions{
 		Roots:         r.Roots,
 		Intermediates: intermediates,

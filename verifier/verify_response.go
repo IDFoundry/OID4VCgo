@@ -65,7 +65,12 @@ type VerifyResponseRequest struct {
 
 	// ExpectedNonce is REQUIRED: the Nonce a prior
 	// BuildAuthorizationRequest call returned — checked against every
-	// Presentation's own Holder Binding proof (§14.1.2).
+	// Presentation's own Holder Binding proof (§14.1.2). This only
+	// proves the response was bound to that nonce, not that this is
+	// the FIRST time it's been presented: VerifyResponse itself does
+	// not track or consume nonces. Mark the underlying nonce consumed
+	// once this call succeeds (see BuildAuthorizationRequestResult.Nonce's
+	// own doc comment) or a captured response can be replayed.
 	ExpectedNonce string
 
 	// IssuerKeys resolves the Issuer key for each "dc+sd-jwt"
@@ -107,6 +112,18 @@ type VerifyResponseRequest struct {
 	// instead of oid4vpmdoc.BuildSessionTranscriptBytes (Appendix
 	// B.2.6.1). Leave zero to verify a redirect-flow response, the
 	// same as before this field existed.
+	//
+	// WARNING: Origin becomes part of the audience check a "dc+sd-jwt"
+	// Presentation's own Key Binding JWT is verified against — it MUST
+	// come from the DC API platform's own authoritative report of the
+	// calling page's origin (the same value
+	// BuildDCAPIAuthorizationRequest's own ExpectedOrigins is compared
+	// against on the Wallet side, e.g. Android Credential Manager's
+	// own attested origin), never from anything the client/page itself
+	// could supply (a query parameter, a postMessage payload,
+	// document.location read inside a possibly-compromised or embedded
+	// context). Populating it from an untrustworthy source makes this
+	// audience check trivially spoofable.
 	Origin string
 }
 

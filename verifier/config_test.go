@@ -1,7 +1,9 @@
 package verifier_test
 
 import (
+	"crypto"
 	"crypto/rand"
+	"io"
 	"strings"
 	"testing"
 
@@ -60,6 +62,41 @@ func TestNewRejectsSignerCertificateMismatch(t *testing.T) {
 	deps.Signer = otherSigner
 	if _, err := verifier.New(cfg, deps); err == nil {
 		t.Fatalf("New = nil error, want error")
+	}
+}
+
+// nonComparablePublicKey is a crypto.PublicKey (any type at all
+// satisfies that interface) that deliberately has no Equal method —
+// standing in for a custom, non-stdlib crypto.Signer (an HSM/KMS-backed
+// one, say) whose own Public() result isn't one of Go's own key types.
+type nonComparablePublicKey struct{}
+
+// nonComparableSigner is a crypto.Signer returning
+// nonComparablePublicKey — Sign is never called in this test, so it's
+// left unimplemented (a nil-safe panic-on-call stand-in is unnecessary
+// here since New never signs anything itself).
+type nonComparableSigner struct{}
+
+func (nonComparableSigner) Public() crypto.PublicKey { return nonComparablePublicKey{} }
+func (nonComparableSigner) Sign(io.Reader, []byte, crypto.SignerOpts) ([]byte, error) {
+	panic("not called by this test")
+}
+
+// TestNewRejectsSignerWithoutEqualMethod is the regression test for a
+// real bug found in a repo-wide security review: New used to do a
+// direct (unchecked) type assertion to compare Dependencies.Signer's
+// own public key against Config.ClientCertificate's — every stdlib
+// key type implements the required Equal method, so this never panics
+// with an ordinary ecdsa/rsa/ed25519 signer, but a custom
+// crypto.Signer (again, an HSM/KMS-backed one is exactly the kind of
+// thing a security-conscious integrator reaches for) whose own public
+// key type doesn't implement it caused New to panic instead of
+// returning the documented config-mismatch error.
+func TestNewRejectsSignerWithoutEqualMethod(t *testing.T) {
+	cfg, deps := validConfig(t)
+	deps.Signer = nonComparableSigner{}
+	if _, err := verifier.New(cfg, deps); err == nil {
+		t.Fatalf("New = nil error, want error (not a panic)")
 	}
 }
 
