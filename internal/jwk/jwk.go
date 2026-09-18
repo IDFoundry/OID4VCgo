@@ -14,12 +14,21 @@ import (
 var b64 = base64.RawURLEncoding
 
 // JWK is the minimal JWK (RFC 7517) shape this package supports: P-256
-// EC keys ("kty":"EC") and Ed25519 OKP keys ("kty":"OKP").
+// EC keys ("kty":"EC") and Ed25519 OKP keys ("kty":"OKP"). D is only
+// ever populated by MarshalPrivate (Marshal never sets it) — kept on
+// this same type, not a separate one, so PublicKey/Thumbprint/Matches
+// all keep working unchanged on a JWK that happens to carry a private
+// half too, the same way a real JWK Set entry can.
 type JWK struct {
 	Kty string `json:"kty"`
 	Crv string `json:"crv,omitempty"`
 	X   string `json:"x,omitempty"`
 	Y   string `json:"y,omitempty"`
+
+	// D is the private key (RFC 7518 §6.2.2.1 "d" for EC, RFC 8037 §2
+	// "d" for OKP) — the 32-byte private scalar/seed, base64url
+	// (no padding) encoded. Empty for a public-only JWK.
+	D string `json:"d,omitempty"`
 }
 
 // Marshal encodes pub as a JWK.
@@ -42,6 +51,42 @@ func Marshal(pub crypto.PublicKey) (JWK, error) {
 		return JWK{Kty: "OKP", Crv: "Ed25519", X: b64.EncodeToString(k)}, nil
 	default:
 		return JWK{}, fmt.Errorf("jwk: unsupported public key type %T", pub)
+	}
+}
+
+// MarshalPrivate encodes priv (its public half via Marshal, plus its
+// own private scalar/seed as "d") as a JWK — the counterpart to
+// Marshal for a caller that genuinely needs to hand a private key to
+// something else as a JWK, e.g. embedding it in a JWK Set another
+// party will use to sign with (this repo's own conformance harness
+// does this to hand a throwaway private key to the OIDF suite, which
+// plays a simulated Wallet/Attester that needs to actually sign with
+// it). Ordinary key-holding code should keep using a crypto.Signer
+// directly and never call this at all — a JWK's own "d" member is
+// nothing more than a wire encoding of a value that should otherwise
+// never leave the process holding it.
+func MarshalPrivate(priv crypto.PrivateKey) (JWK, error) {
+	switch k := priv.(type) {
+	case *ecdsa.PrivateKey:
+		j, err := Marshal(&k.PublicKey)
+		if err != nil {
+			return JWK{}, err
+		}
+		d, err := k.Bytes()
+		if err != nil {
+			return JWK{}, fmt.Errorf("jwk: encode private key: %w", err)
+		}
+		j.D = b64.EncodeToString(d)
+		return j, nil
+	case ed25519.PrivateKey:
+		j, err := Marshal(k.Public())
+		if err != nil {
+			return JWK{}, err
+		}
+		j.D = b64.EncodeToString(k.Seed())
+		return j, nil
+	default:
+		return JWK{}, fmt.Errorf("jwk: unsupported private key type %T", priv)
 	}
 }
 
@@ -141,4 +186,26 @@ func (k JWK) Thumbprint() (string, error) {
 	}
 	sum := sha256.Sum256([]byte(canonical))
 	return b64.EncodeToString(sum[:]), nil
+}
+
+// SetEntry is a JWK plus the set-membership metadata RFC 7517 §5
+// permits on an individual JWK Set entry ("kid"/"use"/"alg"/"x5c") —
+// meaningful only in that context, not to JWK's own
+// Marshal/PublicKey/Thumbprint/Matches round trip, so it lives here as
+// a separate, composed type rather than on JWK itself. Embeds JWK, so
+// a SetEntry marshals as one flat JSON object with the key-material
+// fields alongside these — the exact shape a Credential
+// Issuer/Verifier's own "client_metadata.jwks"/"jwks_uri" document,
+// or a Wallet/Attester's own signing-key JWK Set, needs.
+type SetEntry struct {
+	JWK
+	Kid string   `json:"kid,omitempty"`
+	Use string   `json:"use,omitempty"`
+	Alg string   `json:"alg,omitempty"`
+	X5C []string `json:"x5c,omitempty"`
+}
+
+// Set is a JWK Set (RFC 7517 §5): {"keys": [...]}.
+type Set struct {
+	Keys []SetEntry `json:"keys"`
 }

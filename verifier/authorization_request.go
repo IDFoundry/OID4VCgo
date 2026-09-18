@@ -141,19 +141,6 @@ func (v *Verifier) BuildAuthorizationRequest(req BuildAuthorizationRequestReques
 	}, nil
 }
 
-// responseEncryptionJWK is client_metadata.jwks's own per-key wire
-// shape (§5.1): a JWK plus "kid" (REQUIRED — "each JWK MUST carry a
-// kid"), "use", and "alg". jwk.JWK doesn't carry these itself (they're
-// meaningful only in a JWK Set context, not to internal/jwk's own
-// Marshal/PublicKey/Thumbprint round trip), so this package adds them
-// via embedding rather than extending that shared internal type.
-type responseEncryptionJWK struct {
-	jwk.JWK
-	Kid string `json:"kid"`
-	Use string `json:"use"`
-	Alg string `json:"alg"`
-}
-
 // buildResponseEncryptionMetadata generates a fresh ephemeral P-256
 // key for this one request's own response encryption and returns its
 // own "client_metadata" value (§5.1's own jwks/
@@ -176,9 +163,7 @@ func (v *Verifier) buildResponseEncryptionMetadata() (map[string]any, *ecdsa.Pri
 		return nil, nil, fmt.Errorf("thumbprint response encryption key: %w", err)
 	}
 	clientMetadata := map[string]any{
-		"jwks": map[string]any{
-			"keys": []any{responseEncryptionJWK{JWK: encJWK, Kid: kid, Use: "enc", Alg: string(jwe.ECDHES)}},
-		},
+		"jwks": jwk.Set{Keys: []jwk.SetEntry{{JWK: encJWK, Kid: kid, Use: "enc", Alg: string(jwe.ECDHES)}}},
 		"encrypted_response_enc_values_supported": v.cfg.EncValuesSupported,
 		"vp_formats_supported":                    v.cfg.VPFormatsSupported,
 	}

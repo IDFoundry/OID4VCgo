@@ -257,3 +257,108 @@ func TestThumbprintRejectsUnsupportedCurve(t *testing.T) {
 		t.Errorf("Thumbprint accepted an unsupported OKP curve")
 	}
 }
+
+func TestMarshalPrivateEC(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	k, err := MarshalPrivate(key)
+	if err != nil {
+		t.Fatalf("MarshalPrivate: %v", err)
+	}
+	wantPub, err := Marshal(&key.PublicKey)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if k.Kty != wantPub.Kty || k.Crv != wantPub.Crv || k.X != wantPub.X || k.Y != wantPub.Y {
+		t.Errorf("public half = %+v, want %+v", k, wantPub)
+	}
+	d, err := b64.DecodeString(k.D)
+	if err != nil {
+		t.Fatalf("decode d: %v", err)
+	}
+	if len(d) != 32 {
+		t.Errorf("d is %d bytes, want 32", len(d))
+	}
+	wantD, err := key.Bytes()
+	if err != nil {
+		t.Fatalf("key.Bytes: %v", err)
+	}
+	if b64.EncodeToString(wantD) != k.D {
+		t.Errorf("d = %q, want %q", k.D, b64.EncodeToString(wantD))
+	}
+}
+
+func TestMarshalPrivateOKP(t *testing.T) {
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	k, err := MarshalPrivate(priv)
+	if err != nil {
+		t.Fatalf("MarshalPrivate: %v", err)
+	}
+	wantPub, err := Marshal(pub)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if k.Kty != wantPub.Kty || k.Crv != wantPub.Crv || k.X != wantPub.X {
+		t.Errorf("public half = %+v, want %+v", k, wantPub)
+	}
+	d, err := b64.DecodeString(k.D)
+	if err != nil {
+		t.Fatalf("decode d: %v", err)
+	}
+	if b64.EncodeToString(d) != b64.EncodeToString(priv.Seed()) {
+		t.Errorf("d does not match priv.Seed()")
+	}
+}
+
+func TestMarshalPrivateRejectsUnsupportedType(t *testing.T) {
+	if _, err := MarshalPrivate("not a key"); err == nil {
+		t.Error("MarshalPrivate accepted an unsupported private key type")
+	}
+}
+
+func TestSetEntryRoundTrip(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	pub, err := Marshal(&key.PublicKey)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	set := Set{Keys: []SetEntry{
+		{JWK: pub, Kid: "k1", Use: "enc", Alg: "ECDH-ES", X5C: []string{"cert-bytes"}},
+	}}
+	raw, err := json.Marshal(set)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	var got Set
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(got.Keys) != 1 {
+		t.Fatalf("got %d keys, want 1", len(got.Keys))
+	}
+	entry := got.Keys[0]
+	if entry.Kid != "k1" || entry.Use != "enc" || entry.Alg != "ECDH-ES" || len(entry.X5C) != 1 || entry.X5C[0] != "cert-bytes" {
+		t.Errorf("SetEntry metadata = %+v", entry)
+	}
+	if entry.Kty != pub.Kty || entry.Crv != pub.Crv || entry.X != pub.X || entry.Y != pub.Y {
+		t.Errorf("SetEntry key material = %+v, want %+v", entry.JWK, pub)
+	}
+
+	roundTripped, err := entry.PublicKey()
+	if err != nil {
+		t.Fatalf("PublicKey: %v", err)
+	}
+	ecPub, ok := roundTripped.(*ecdsa.PublicKey)
+	if !ok || !ecPub.Equal(&key.PublicKey) {
+		t.Errorf("PublicKey() = %v, want %v", roundTripped, &key.PublicKey)
+	}
+}
