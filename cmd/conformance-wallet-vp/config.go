@@ -5,7 +5,6 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
-	"encoding/pem"
 	"fmt"
 	"os"
 
@@ -87,16 +86,8 @@ func (c Config) tlsCertificate() (tls.Certificate, error) {
 	return tls.X509KeyPair([]byte(c.TLSCertificatePEM), []byte(c.TLSPrivateKeyPEM))
 }
 
-func parseECPrivateKeyPEM(raw string) (*ecdsa.PrivateKey, error) {
-	block, _ := pem.Decode([]byte(raw))
-	if block == nil {
-		return nil, fmt.Errorf("no PEM block found")
-	}
-	return x509.ParseECPrivateKey(block.Bytes)
-}
-
 func (c Config) credentialIssuerKey() (*ecdsa.PrivateKey, error) {
-	key, err := parseECPrivateKeyPEM(c.CredentialIssuerPrivateKeyPEM)
+	key, err := conformancecert.ParseECPrivateKeyPEM(c.CredentialIssuerPrivateKeyPEM)
 	if err != nil {
 		return nil, fmt.Errorf("credential_issuer_private_key_pem: %w", err)
 	}
@@ -112,7 +103,7 @@ func (c Config) credentialIssuerCertificate() (*x509.Certificate, error) {
 }
 
 func (c Config) holderPrivateKey() (*ecdsa.PrivateKey, error) {
-	key, err := parseECPrivateKeyPEM(c.HolderPrivateKeyPEM)
+	key, err := conformancecert.ParseECPrivateKeyPEM(c.HolderPrivateKeyPEM)
 	if err != nil {
 		return nil, fmt.Errorf("holder_private_key_pem: %w", err)
 	}
