@@ -87,34 +87,12 @@ func jwtProofCredentialConfiguration(scope string, proofSigningAlgs []string) is
 // (here, main itself, kept small) — see README's own "Status" section
 // for how far this has actually been exercised.
 func newServerMux(cfg Config) (*http.ServeMux, error) {
-	issuerURL, err := cfg.issuerURL()
-	if err != nil {
-		return nil, fmt.Errorf("issuer url: %w", err)
-	}
-	parURL, err := fapi.ParseEndpointURL(cfg.Issuer + "/par")
+	endpoints, err := resolveIssuerEndpoints(cfg)
 	if err != nil {
 		return nil, err
 	}
-	authorizationURL, err := fapi.ParseEndpointURL(cfg.Issuer + "/authorize")
-	if err != nil {
-		return nil, err
-	}
-	tokenURL, err := fapi.ParseEndpointURL(cfg.Issuer + "/token")
-	if err != nil {
-		return nil, err
-	}
-	jwksURL, err := fapi.ParseEndpointURL(cfg.Issuer + "/jwks")
-	if err != nil {
-		return nil, err
-	}
-	credentialURL, err := fapi.ParseEndpointURL(cfg.Issuer + "/credential")
-	if err != nil {
-		return nil, err
-	}
-	nonceURL, err := fapi.ParseEndpointURL(cfg.Issuer + "/nonce")
-	if err != nil {
-		return nil, err
-	}
+	issuerURL, parURL, authorizationURL, tokenURL, jwksURL, credentialURL, nonceURL :=
+		endpoints.issuer, endpoints.par, endpoints.authorization, endpoints.token, endpoints.jwks, endpoints.credential, endpoints.nonce
 
 	keyManager, err := ephemeral.NewKeyManager(map[keys.SigningPurpose]fapi.SignatureAlgorithm{
 		keys.AccessTokenSigning: fapi.ES256,
@@ -122,54 +100,24 @@ func newServerMux(cfg Config) (*http.ServeMux, error) {
 	if err != nil {
 		return nil, err
 	}
-	fetcher, err := fapihttp.New(&http.Client{Timeout: httpFetchTimeout}, fapihttp.Config{
-		MaxResponseBytes: 1 << 20, RequestTimeout: httpFetchTimeout, MaxRedirects: 2,
-	})
+	clientRepo, clientKeys, err := buildClientRegistration(cfg)
 	if err != nil {
 		return nil, err
 	}
-	// Registers the attester's own public key(s) — even under
-	// ClientAuthMethodAttestation, fapigo/server resolves a Client
-	// Attestation JWT's own verification key via this same
-	// Dependencies.ClientKeys, keyed by client ID (confirmed against
-	// server/client_auth_attestation.go's own resolveClientKey call) —
-	// see Config.Client's own doc comment.
-	clientKeySpecs := []ephemeral.ClientKeySpec{
-		{ClientID: fapi.ClientID(cfg.Client.ID), JWKS: cfg.Client.AttesterJWKS},
-	}
-	allowedScopes := []string{cfg.Scope}
-	if cfg.Mdoc != nil {
-		allowedScopes = append(allowedScopes, cfg.Mdoc.Scope)
-	}
-	registeredClients := []storage.RegisteredClient{}
-	for _, cc := range []*ConfigClient{&cfg.Client, cfg.Client2} {
-		if cc == nil {
-			continue
-		}
-		c, err := storage.NewRegisteredClient(storage.RegisteredClientConfig{
-			ID:                         fapi.ClientID(cc.ID),
-			RedirectURIs:               registeredRedirectURIs(cc.RedirectURIs),
-			ClientAuthMethod:           storage.ClientAuthMethodAttestation,
-			ExpectedAttesterIssuer:     cc.ExpectedAttesterIssuer,
-			ClientAttestationAlgorithm: clientAttestationAlgorithm,
-			AllowedScopes:              allowedScopes,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("register client %s: %w", cc.ID, err)
-		}
-		registeredClients = append(registeredClients, c)
-	}
-	if cfg.Client2 != nil {
-		clientKeySpecs = append(clientKeySpecs, ephemeral.ClientKeySpec{
-			ClientID: fapi.ClientID(cfg.Client2.ID), JWKS: cfg.Client2.AttesterJWKS,
-		})
-	}
-	clientKeys, err := ephemeral.NewClientKeySource(fetcher, clientKeySpecs)
-	if err != nil {
-		return nil, err
-	}
-	clientRepo := memstore.NewClientRepository(registeredClients)
 	replayStore := memstore.NewReplayStore()
+	// revocationStore is shared between srvDeps (which records a
+	// revocation when the AS detects authorization-code reuse, RFC 6749
+	// §4.1.2) and resourceVerifier (which checks it on every Credential
+	// Endpoint call) — two independent stores would let the resource
+	// verifier keep accepting an access token the AS just revoked,
+	// exactly the gap the OIDF conformance suite's own
+	// attempt-reuse-authorization-code-after-one-second module flags
+	// (WARNING: "resource endpoint returned a different http status
+	// than expected" after "Testing if access token was revoked after
+	// authorization code reuse"). Mirrors FAPIgo's own
+	// cmd/conformance-as/wiring.go, which wires the identical shared
+	// store for the same reason.
+	revocationStore := memstore.NewRevocationStore()
 
 	accessTokens, err := server.NewJWTAccessTokens(keyManager, fapi.ES256)
 	if err != nil {
@@ -209,7 +157,7 @@ func newServerMux(cfg Config) (*http.ServeMux, error) {
 		ClientKeys:   clientKeys,
 		Keys:         keyManager,
 		AccessTokens: accessTokens,
-		Revocation:   memstore.NewRevocationStore(),
+		Revocation:   revocationStore,
 		Clock:        server.SystemClock{},
 		Random:       rand.Reader,
 	}
@@ -222,7 +170,7 @@ func newServerMux(cfg Config) (*http.ServeMux, error) {
 		Limits: fapires.Limits{MaxDPoPProofAge: limits.MaxDPoPProofAge, MaxClockSkew: limits.MaxClockSkew},
 	}, fapires.Dependencies{
 		AccessTokens: resourceAccessTokens, Replay: replayStore,
-		Revocation: memstore.NewRevocationStore(), Clock: fapires.SystemClock{},
+		Revocation: revocationStore, Clock: fapires.SystemClock{},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("resource.NewVerifier: %w", err)
@@ -289,6 +237,107 @@ func newServerMux(cfg Config) (*http.ServeMux, error) {
 	consent := newConsentHandler(srv, clientRepo, server.SystemClock{}, cfg.DefaultSubject)
 	credentialURLValue := credentialURL.URL()
 	return newRouter(srv, iss, resourceVerifier, consent, &credentialURLValue, cfg, issuerSigningKey, issuerCertificate)
+}
+
+// issuerEndpoints bundles every fapi.URL newServerMux's own router and
+// server config need, parsed once up front by resolveIssuerEndpoints.
+type issuerEndpoints struct {
+	issuer, par, authorization, token, jwks, credential, nonce fapi.URL
+}
+
+// resolveIssuerEndpoints parses cfg.Issuer's own well-known sub-paths —
+// extracted out of newServerMux purely to keep its own cognitive
+// complexity down (this repeated parse-then-check-error shape was
+// newServerMux's single largest contributor).
+func resolveIssuerEndpoints(cfg Config) (issuerEndpoints, error) {
+	issuerURL, err := cfg.issuerURL()
+	if err != nil {
+		return issuerEndpoints{}, fmt.Errorf("issuer url: %w", err)
+	}
+	parURL, err := fapi.ParseEndpointURL(cfg.Issuer + "/par")
+	if err != nil {
+		return issuerEndpoints{}, err
+	}
+	authorizationURL, err := fapi.ParseEndpointURL(cfg.Issuer + "/authorize")
+	if err != nil {
+		return issuerEndpoints{}, err
+	}
+	tokenURL, err := fapi.ParseEndpointURL(cfg.Issuer + "/token")
+	if err != nil {
+		return issuerEndpoints{}, err
+	}
+	jwksURL, err := fapi.ParseEndpointURL(cfg.Issuer + "/jwks")
+	if err != nil {
+		return issuerEndpoints{}, err
+	}
+	credentialURL, err := fapi.ParseEndpointURL(cfg.Issuer + "/credential")
+	if err != nil {
+		return issuerEndpoints{}, err
+	}
+	nonceURL, err := fapi.ParseEndpointURL(cfg.Issuer + "/nonce")
+	if err != nil {
+		return issuerEndpoints{}, err
+	}
+	return issuerEndpoints{
+		issuer: issuerURL, par: parURL, authorization: authorizationURL,
+		token: tokenURL, jwks: jwksURL, credential: credentialURL, nonce: nonceURL,
+	}, nil
+}
+
+// buildClientRegistration registers cfg.Client/Client2 (whichever are
+// set) as HAIP-profiled, Client-Attestation-authenticated clients, and
+// resolves both their own attester JWKS into one shared key source —
+// extracted out of newServerMux purely to keep its own cognitive
+// complexity down (the loop below, plus its own nested branches, was
+// newServerMux's second-largest contributor).
+func buildClientRegistration(cfg Config) (clientRepo *memstore.ClientRepository, clientKeys *ephemeral.ClientKeySource, err error) {
+	fetcher, err := fapihttp.New(&http.Client{Timeout: httpFetchTimeout}, fapihttp.Config{
+		MaxResponseBytes: 1 << 20, RequestTimeout: httpFetchTimeout, MaxRedirects: 2,
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	// Registers the attester's own public key(s) — even under
+	// ClientAuthMethodAttestation, fapigo/server resolves a Client
+	// Attestation JWT's own verification key via this same
+	// Dependencies.ClientKeys, keyed by client ID (confirmed against
+	// server/client_auth_attestation.go's own resolveClientKey call) —
+	// see Config.Client's own doc comment.
+	clientKeySpecs := []ephemeral.ClientKeySpec{
+		{ClientID: fapi.ClientID(cfg.Client.ID), JWKS: cfg.Client.AttesterJWKS},
+	}
+	allowedScopes := []string{cfg.Scope}
+	if cfg.Mdoc != nil {
+		allowedScopes = append(allowedScopes, cfg.Mdoc.Scope)
+	}
+	registeredClients := []storage.RegisteredClient{}
+	for _, cc := range []*ConfigClient{&cfg.Client, cfg.Client2} {
+		if cc == nil {
+			continue
+		}
+		c, regErr := storage.NewRegisteredClient(storage.RegisteredClientConfig{
+			ID:                         fapi.ClientID(cc.ID),
+			RedirectURIs:               registeredRedirectURIs(cc.RedirectURIs),
+			ClientAuthMethod:           storage.ClientAuthMethodAttestation,
+			ExpectedAttesterIssuer:     cc.ExpectedAttesterIssuer,
+			ClientAttestationAlgorithm: clientAttestationAlgorithm,
+			AllowedScopes:              allowedScopes,
+		})
+		if regErr != nil {
+			return nil, nil, fmt.Errorf("register client %s: %w", cc.ID, regErr)
+		}
+		registeredClients = append(registeredClients, c)
+	}
+	if cfg.Client2 != nil {
+		clientKeySpecs = append(clientKeySpecs, ephemeral.ClientKeySpec{
+			ClientID: fapi.ClientID(cfg.Client2.ID), JWKS: cfg.Client2.AttesterJWKS,
+		})
+	}
+	clientKeys, err = ephemeral.NewClientKeySource(fetcher, clientKeySpecs)
+	if err != nil {
+		return nil, nil, err
+	}
+	return memstore.NewClientRepository(registeredClients), clientKeys, nil
 }
 
 // srvLimits are this binary's own FAPI 2.0 Limits — server.RecommendedLimits

@@ -172,10 +172,16 @@ negative-test expectations differ.
   HtmlUnit/Bootstrap JS bug that leaves browser-driven modules
   `WAITING` forever with no timeout, needing the same
   `unblock-implicit-callback.py`-style workaround FAPIgo's own
-  `cmd/conformance-as` already needs, now ported to Go. **All 42
-  modules `FINISHED` twice in a row for stability**: `PASSED` except
-  one expected `WARNING`, one expected `SKIPPED`, and one expected
-  `REVIEW` (a human-review negative test) — no `FAILURE`s.
+  `cmd/conformance-as` already needs, now ported to Go. **Update:
+  `attempt-reuse-authorization-code-after-one-second` is now a clean
+  `PASSED`**, not a `WARNING` — `wiring.go` was wiring two separate
+  in-memory revocation stores (one the AS writes to on detected code
+  reuse, a different one the Credential Endpoint reads from) instead
+  of sharing one, the same wiring bug FAPIgo's own `cmd/conformance-as`
+  already found and fixed for the identical finding. **All 42 modules
+  `FINISHED` twice in a row for stability**: `PASSED` except one
+  expected `SKIPPED`, and one expected `REVIEW` (a human-review
+  negative test) — no `FAILURE`s.
   **Update: the suite's own base (non-HAIP) `oid4vci-1_0-issuer-test-plan`
   is driven too**, via `run-fapi2sp-battery -base-plan` — the same 21
   module classes already covered above (no FAPI2SP battery in this
