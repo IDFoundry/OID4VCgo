@@ -312,13 +312,28 @@ instances `FINISHED`/`PASSED`. Two genuine findings, one in each repo:
   present and misreported it as a collision. Fixed upstream
   ([FAPIgo PR #322](https://github.com/IDFoundry/FAPIgo/pull/322),
   merged, `go.mod` pinned past it) with a regression test that fails
-  without the fix reproducing this exact error message. The generic
-  FAPI2SP battery modules (`fapi2-security-profile-final-client-test-*`)
-  extend a different base class than the 4 VCIWalletTest* modules and
-  have no `prepareCredentialOffer()` step at all regardless of
-  `vci_authorization_code_flow_variant` — `main.go`'s own offer-wait is
-  skipped for them (`batteryModulePrefix`), not just for
-  `wallet_initiated`.
+  without the fix reproducing this exact error message.
+
+**Update: the generic FAPI2SP battery modules now get a real Credential
+Offer under `-issuer-initiated` too, not just the 4 VCIWalletTest*
+modules.** Previously, `main.go`'s own offer-wait was unconditionally
+skipped for anything matching `batteryModulePrefix`
+(`fapi2-security-profile-final-client-test-*`): those modules extend a
+different base class than the 4 VCIWalletTest* modules, and had no
+`prepareCredentialOffer()` step at all under the suite version this
+was first confirmed against — waiting for one would have just timed
+out every time. A later suite upgrade changed that (its own changelog:
+"VCI: Present credential offer in FAPI2SP client tests for
+issuer-initiated wallet flow") — the battery modules now present a
+real offer too, and every one of them started failing with "Missing
+issuer_state in http_request_params" on the PAR request, since this
+binary's own offer-resolution/`issuer_state`-threading step was still
+being skipped for them. Fixed by removing the `batteryModulePrefix`
+skip — `runModule` now fetches/resolves the offer for every module
+under `-issuer-initiated`, not just the 4 VCIWalletTest* ones.
+Confirmed live, twice for stability: all 9 previously-failing battery
+modules `FINISHED`/`PASSED`, zero regressions on the 4 VCIWalletTest*
+modules that already worked.
 
 ## Debugging
 
