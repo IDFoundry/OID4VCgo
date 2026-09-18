@@ -97,6 +97,22 @@ type run struct {
 	mdocNamespace                 string
 	mdocClaims                    map[string]any
 	mdocScope                     string
+
+	// mdocSignerKeyPEM/mdocSignerCertPEM/mdocIACACertPEM are the mdoc
+	// CredentialConfiguration's own dedicated ISO/IEC 18013-5 Annex B
+	// Document Signer identity (internal/conformancecert.GenerateMdocIACA/
+	// GenerateMdocDocumentSigner) — separate from
+	// credentialIssuerSigningKey/credentialIssuerLeafPEM above, which
+	// stays exactly as it was (used only by the sd_jwt_vc-format
+	// CredentialConfiguration). mdocIACACertPEM is threaded into
+	// buildPlanConfig's own "credential.trust_anchor_pem" field
+	// specifically for the mdoc-format invocation (buildPlanConfig's
+	// own credentialFormat parameter) — the sd_jwt_vc-format invocation
+	// keeps trusting credentialIssuerCACertPEM instead, since it never
+	// requests an mdoc credential and so never validates this chain.
+	mdocSignerKeyPEM  string
+	mdocSignerCertPEM string
+	mdocIACACertPEM   string
 }
 
 func generateRun(alias, issuerBaseURL string) (*run, error) {
@@ -138,6 +154,18 @@ func generateRun(alias, issuerBaseURL string) (*run, error) {
 	credentialRequestDecryptPEM, err := conformancecert.GenerateECKeyPEM()
 	if err != nil {
 		return nil, fmt.Errorf("generate credential request decryption key: %w", err)
+	}
+
+	mdocIACACert, mdocIACAKey, mdocIACACertPEM, _, err := conformancecert.GenerateMdocIACA(
+		"run-fapi2sp-battery-mdoc-iaca", "FR", "https://example.com/run-fapi2sp-battery-mdoc-contact")
+	if err != nil {
+		return nil, fmt.Errorf("generate mdoc iaca: %w", err)
+	}
+	_, mdocSignerKeyPEM, mdocSignerCertPEM, err := conformancecert.GenerateMdocDocumentSigner(
+		"run-fapi2sp-battery-mdoc-ds", "FR", "https://example.com/run-fapi2sp-battery-mdoc-contact",
+		"https://example.com/run-fapi2sp-battery-mdoc.crl", mdocIACACert, mdocIACAKey)
+	if err != nil {
+		return nil, fmt.Errorf("generate mdoc document signer: %w", err)
 	}
 
 	callback := "https://localhost.emobix.co.uk:8443/test/a/" + alias + "/callback"
@@ -205,6 +233,10 @@ func generateRun(alias, issuerBaseURL string) (*run, error) {
 			"un_distinguishing_sign": "F",
 		},
 		mdocScope: "MobileDrivingLicence",
+
+		mdocSignerKeyPEM:  mdocSignerKeyPEM,
+		mdocSignerCertPEM: mdocSignerCertPEM,
+		mdocIACACertPEM:   mdocIACACertPEM,
 	}, nil
 }
 
@@ -289,6 +321,9 @@ func buildServerConfig(r *run) ([]byte, error) {
 			Namespace:                 r.mdocNamespace,
 			Claims:                    r.mdocClaims,
 			Scope:                     r.mdocScope,
+			SignerKeyPEM:              r.mdocSignerKeyPEM,
+			CertificatePEM:            r.mdocSignerCertPEM,
+			TrustAnchorCertificatePEM: r.mdocIACACertPEM,
 		},
 		KeyAttestation: &conformanceconfig.KeyAttestationConfig{
 			TrustedJWK: json.RawMessage(keyAttestationTrustedJWK),
@@ -374,8 +409,15 @@ func buildPlanConfig(r *run, credentialFormat, proofTypeHint string) ([]byte, er
 	}
 
 	credentialConfigurationID := r.credentialConfigurationID
+	trustAnchorPEM := r.credentialIssuerCACertPEM
 	if credentialFormat == "mdoc" {
 		credentialConfigurationID = r.mdocCredentialConfigurationID
+		// The mdoc CredentialConfiguration is signed by a dedicated
+		// ISO/IEC 18013-5 Annex B Document Signer identity (run's own
+		// mdocSignerKeyPEM/mdocSignerCertPEM doc comment) — the suite
+		// must trust that chain's own IACA root, not the shared
+		// sd_jwt_vc-format issuer CA, to validate it.
+		trustAnchorPEM = r.mdocIACACertPEM
 	}
 
 	authorizeURL := "https://conformance-issuer:8443/authorize*"
@@ -410,7 +452,7 @@ func buildPlanConfig(r *run, credentialFormat, proofTypeHint string) ([]byte, er
 			"credential_proof_type_hint":  proofTypeHint,
 		},
 		"credential": map[string]any{
-			"trust_anchor_pem":             r.credentialIssuerCACertPEM,
+			"trust_anchor_pem":             trustAnchorPEM,
 			"status_list_trust_anchor_pem": r.statusListTrustAnchorPEM,
 		},
 		"browser": []browserBlock{consentBlock},

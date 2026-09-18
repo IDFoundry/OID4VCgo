@@ -220,6 +220,26 @@ func (c Config) credentialRequestDecryptionKey() (*ecdsa.PrivateKey, error) {
 	return key, nil
 }
 
+// mdocSignerKeyAndCert parses Mdoc's own dedicated Document Signer
+// identity (conformanceconfig.MdocConfig.SignerKeyPEM/CertificatePEM)
+// — ok is false when Mdoc is nil or those fields are empty, in which
+// case the caller should fall back to the shared issuer identity (see
+// MdocConfig's own doc comment).
+func (c Config) mdocSignerKeyAndCert() (key *ecdsa.PrivateKey, cert *x509.Certificate, ok bool, err error) {
+	if c.Mdoc == nil || c.Mdoc.SignerKeyPEM == "" {
+		return nil, nil, false, nil
+	}
+	key, err = conformancecert.ParseECPrivateKeyPEM(c.Mdoc.SignerKeyPEM)
+	if err != nil {
+		return nil, nil, false, fmt.Errorf("mdoc.signer_key_pem: %w", err)
+	}
+	cert, err = conformancecert.ParseCertificatePEM(c.Mdoc.CertificatePEM)
+	if err != nil {
+		return nil, nil, false, fmt.Errorf("mdoc.certificate_pem: %w", err)
+	}
+	return key, cert, true, nil
+}
+
 func (c Config) issuerURL() (fapi.URL, error) {
 	return fapi.ParseIssuerURL(c.Issuer)
 }

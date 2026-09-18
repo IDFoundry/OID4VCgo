@@ -745,3 +745,77 @@ battery re-run clean after `buildServerConfig` started always
 including the mdoc `CredentialConfiguration` alongside the SD-JWT
 one — identical outcome to before this work (same one `WARNING`, one
 `SKIPPED`, one `REVIEW`, rest `PASSED`).
+
+## Status: mdoc signing certificates now ISO/IEC 18013-5 Annex B compliant
+
+A suite upgrade (see `conformance/README.md`'s own "Conformance suite
+version" section) added `ValidateMdocDsCertificateProfile`/
+`ValidateMdocDsCertificateKeyUsage`/`ValidateMdocTrustAnchorIacaCertificateProfile`
+checks against every mdoc's own `issuerAuth` certificate chain — this
+repo's mdoc `CredentialConfiguration` had always reused the same
+generic, non-ISO-compliant self-signed cert
+(`internal/conformancecert.GenerateSignerAndCert`) the `dc+sd-jwt`
+`CredentialConfiguration` also uses, which fails essentially every
+Annex B Table B.1/B.3 requirement — confirmed live as a `WARNING`
+("strict verifiers will reject credentials signed with it"), not yet
+a `FAILURE`.
+
+Fixed with a genuinely separate, dedicated mdoc-only identity rather
+than trying to make the shared multi-format issuer identity comply:
+Annex B's own requirements (a ≤457-day leaf validity, an mdlDS-only
+extended key usage, a digitalSignature-only key usage) are specific to
+mdoc document signing and would be actively wrong to impose on a
+general-purpose Credential Issuer identity also used for SD-JWT VC
+signing — mirroring the mdoc `CredentialConfiguration`'s own existing
+separateness (distinct namespace/doctype/claims/scope/
+`credential_configuration_id` from the SD-JWT one).
+
+- `internal/conformancecert.GenerateMdocIACA`/`GenerateMdocDocumentSigner`
+  build the exact certificate profile the suite's own decompiled
+  source requires (not guessed from the spec text alone) — self-signed
+  EC P-256 IACA root (`keyCertSign`+`cRLSign` only, `pathLenConstraint`
+  exactly 0, both critical) signing a Document Signer leaf
+  (`digitalSignature` only, the `1.0.18013.5.1.2` mdlDS extended key
+  usage, Authority Key Identifier/CRL Distribution Points/Issuer
+  Alternative Name all present) — re-implemented as regression coverage
+  in `internal/conformancecert/mdoc_test.go` rather than left to only a
+  live suite run to catch.
+- `conformanceconfig.MdocConfig` gained three new optional fields
+  (`SignerKeyPEM`/`CertificatePEM`/`TrustAnchorCertificatePEM`) —
+  empty falls back to the original shared-identity behavior, so
+  `cmd/conformance-issuer/mdoc_test.go`'s own minimal `MdocConfig`
+  (which never sets them) keeps working unchanged.
+- `run-fapi2sp-battery`'s own `generateRun` now mints this dedicated
+  identity every run and threads its IACA root into `buildPlanConfig`'s
+  own `credential.trust_anchor_pem` specifically for the mdoc-format
+  invocation — the `sd_jwt_vc`-format invocation keeps trusting the
+  original shared CA cert, since it never requests an mdoc credential.
+
+**Live-verified, twice for stability** (`run-fapi2sp-battery
+-credential-format mdoc`, full container rebuild each time): both
+sanity modules `FINISHED`/`PASSED` with the certificate-profile
+`WARNING` gone and every one of the suite's own ISO/IEC 18013-5
+certificate checks now genuinely succeeding, confirmed directly in the
+module log ("Document signer certificate complies with the ISO
+18013-5 document signer certificate profile", "The configured trust
+anchor complies with the ISO 18013-5 IACA root certificate profile",
+"Validated the mdoc x5chain document signer certificate chain").
+
+One further live-only gap the unit tests couldn't catch: a same-length
+validity window for the Document Signer certificate and every mdoc's
+own MSO (both 365 days) still triggered the suite's own
+"MSO validUntil is later than the certificate's notAfter" WARNING,
+because a credential is always minted some time strictly *after* the
+certificate that signs it — an equal-length window guarantees the
+MSO's later start time pushes its own end past the certificate's.
+Fixed by widening `mdocDocumentSignerValidity` to 400 days (comfortably
+under Annex B's own 457-day cap), giving enough margin over the
+365-day `issuedCredentialLifetime` for any realistic gap between
+config generation and credential issuance.
+
+**Confirmed regression-free**: the default `sd_jwt_vc` HAIP battery,
+the key-attestation battery (`-credential-proof-type-hint attestation`),
+and the base (non-HAIP) plan (`-base-plan`) all re-run clean — every
+one of those paths still uses the original shared issuer identity
+unchanged (the new dedicated identity is only ever selected for the
+mdoc `CredentialConfiguration`).

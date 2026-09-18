@@ -227,7 +227,17 @@ negative-test expectations differ.
   stability, via `run-fapi2sp-battery -credential-format mdoc` (the 2
   sanity-check modules; the other 40 battery modules don't exercise
   credential format at all). Full `sd_jwt_vc` battery re-confirmed
-  regression-free. See `issuer/README.md`.
+  regression-free. **Update: mdoc signing certificates are now
+  ISO/IEC 18013-5 Annex B compliant** — a suite upgrade added
+  certificate-profile checks the shared, generic issuer identity always
+  failed (confirmed live as a `WARNING`, not yet a `FAILURE`). Fixed
+  with a dedicated mdoc-only Document Signer/IACA root identity
+  (`internal/conformancecert.GenerateMdocIACA`/
+  `GenerateMdocDocumentSigner`, unit-tested against the suite's own
+  decompiled checks), wired in as an optional fallback so the shared
+  identity's existing behavior for `dc+sd-jwt` is untouched. Live-
+  verified twice: both sanity modules `FINISHED`/`PASSED` with the
+  certificate `WARNING` gone. See `issuer/README.md`.
 - **`wallet/`** — OID4VCI 1.0 Final/HAIP Wallet role
   (`oid4vci-1_0-wallet-haip-test-plan`): `cmd/conformance-wallet`
   drives `oid4vcgo/wallet`/`fapigo/client` as an outbound HTTP client
