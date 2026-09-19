@@ -2,6 +2,22 @@ package sdjwtvc
 
 import "fmt"
 
+// MaxResolveDepth bounds how deeply ResolveDisclosures will recurse
+// into payload's own object/array nesting, or into a disclosed
+// value's own further _sd/"..." digests (RFC 9901 §7.1's own
+// disclosure-chaining), before rejecting the input — to avoid
+// unbounded CPU/allocation work walking a maliciously deep structure
+// before anything is rejected. encoding/json.Unmarshal's own
+// ~10000-level built-in nesting cap is the only other backstop here,
+// which bounds a crash but not the cost of walking up to it; matches
+// this repo's own established "every untrusted-parsing path gets an
+// explicit, repo-chosen ceiling" discipline (internal/jose/internal/jwe/
+// internal/cose's own MaxCompactBytes/MaxBytes) — found missing here in
+// a repo-wide security review. A caller whose accepted input can
+// legitimately nest deeper should call ResolveDisclosuresMax with its
+// own configured ceiling instead.
+const MaxResolveDepth = 32
+
 // ResolveDisclosures implements RFC 9901 §7.1 steps 3-5: it matches
 // each Disclosure to a digest embedded — directly or recursively —
 // in payload, replaces each matched digest with the disclosed claim or
@@ -12,8 +28,16 @@ import "fmt"
 // is dropped) rather than treated as an error — §7.1 step 3.c.i: "If no
 // such Disclosure can be found, the digest MUST be ignored" — since
 // this is the normal shape of a decoy digest or a Disclosure a Holder
-// chose not to present.
+// chose not to present. It rejects payload/disclosure nesting deeper
+// than MaxResolveDepth; use ResolveDisclosuresMax for a caller that
+// needs a different ceiling.
 func ResolveDisclosures(payload map[string]any, alg HashAlg, disclosures []Disclosure) (map[string]any, error) {
+	return ResolveDisclosuresMax(payload, alg, disclosures, MaxResolveDepth)
+}
+
+// ResolveDisclosuresMax is ResolveDisclosures with an explicit nesting
+// depth ceiling instead of MaxResolveDepth.
+func ResolveDisclosuresMax(payload map[string]any, alg HashAlg, disclosures []Disclosure, maxDepth int) (map[string]any, error) {
 	byDigest := make(map[string]Disclosure, len(disclosures))
 	for _, d := range disclosures {
 		digest, err := d.Digest(alg)
@@ -29,7 +53,7 @@ func ResolveDisclosures(payload map[string]any, alg HashAlg, disclosures []Discl
 	usedDigests := make(map[string]bool, len(disclosures))
 	seenDigests := make(map[string]bool)
 
-	resolved, err := resolveValue(payload, byDigest, usedDigests, seenDigests)
+	resolved, err := resolveValue(payload, byDigest, usedDigests, seenDigests, 0, maxDepth)
 	if err != nil {
 		return nil, err
 	}
@@ -43,24 +67,27 @@ func ResolveDisclosures(payload map[string]any, alg HashAlg, disclosures []Discl
 	return resolvedMap, nil
 }
 
-func resolveValue(v any, byDigest map[string]Disclosure, usedDigests, seenDigests map[string]bool) (any, error) {
+func resolveValue(v any, byDigest map[string]Disclosure, usedDigests, seenDigests map[string]bool, depth, maxDepth int) (any, error) {
+	if depth > maxDepth {
+		return nil, fmt.Errorf("sdjwtvc: payload/disclosure nesting exceeds the %d level limit", maxDepth)
+	}
 	switch t := v.(type) {
 	case map[string]any:
-		return resolveMap(t, byDigest, usedDigests, seenDigests)
+		return resolveMap(t, byDigest, usedDigests, seenDigests, depth, maxDepth)
 	case []any:
-		return resolveArray(t, byDigest, usedDigests, seenDigests)
+		return resolveArray(t, byDigest, usedDigests, seenDigests, depth, maxDepth)
 	default:
 		return v, nil
 	}
 }
 
-func resolveMap(m map[string]any, byDigest map[string]Disclosure, usedDigests, seenDigests map[string]bool) (map[string]any, error) {
+func resolveMap(m map[string]any, byDigest map[string]Disclosure, usedDigests, seenDigests map[string]bool, depth, maxDepth int) (map[string]any, error) {
 	out := make(map[string]any, len(m))
 	for k, v := range m {
 		if k == "_sd" || k == "_sd_alg" {
 			continue
 		}
-		resolved, err := resolveValue(v, byDigest, usedDigests, seenDigests)
+		resolved, err := resolveValue(v, byDigest, usedDigests, seenDigests, depth+1, maxDepth)
 		if err != nil {
 			return nil, err
 		}
@@ -96,7 +123,7 @@ func resolveMap(m map[string]any, byDigest map[string]Disclosure, usedDigests, s
 			return nil, fmt.Errorf("sdjwtvc: claim %q already exists at this level", d.Name)
 		}
 		usedDigests[digest] = true
-		resolvedValue, err := resolveValue(d.Value, byDigest, usedDigests, seenDigests)
+		resolvedValue, err := resolveValue(d.Value, byDigest, usedDigests, seenDigests, depth+1, maxDepth)
 		if err != nil {
 			return nil, err
 		}
@@ -105,7 +132,7 @@ func resolveMap(m map[string]any, byDigest map[string]Disclosure, usedDigests, s
 	return out, nil
 }
 
-func resolveArray(arr []any, byDigest map[string]Disclosure, usedDigests, seenDigests map[string]bool) ([]any, error) {
+func resolveArray(arr []any, byDigest map[string]Disclosure, usedDigests, seenDigests map[string]bool, depth, maxDepth int) ([]any, error) {
 	out := make([]any, 0, len(arr))
 	for _, el := range arr {
 		if obj, ok := el.(map[string]any); ok && len(obj) == 1 {
@@ -127,7 +154,7 @@ func resolveArray(arr []any, byDigest map[string]Disclosure, usedDigests, seenDi
 					return nil, fmt.Errorf("sdjwtvc: disclosure for digest %s is an object-property disclosure but was embedded as an array element", digest)
 				}
 				usedDigests[digest] = true
-				resolvedValue, err := resolveValue(d.Value, byDigest, usedDigests, seenDigests)
+				resolvedValue, err := resolveValue(d.Value, byDigest, usedDigests, seenDigests, depth+1, maxDepth)
 				if err != nil {
 					return nil, err
 				}
@@ -135,7 +162,7 @@ func resolveArray(arr []any, byDigest map[string]Disclosure, usedDigests, seenDi
 				continue
 			}
 		}
-		resolved, err := resolveValue(el, byDigest, usedDigests, seenDigests)
+		resolved, err := resolveValue(el, byDigest, usedDigests, seenDigests, depth+1, maxDepth)
 		if err != nil {
 			return nil, err
 		}
