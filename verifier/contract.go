@@ -31,10 +31,13 @@ import (
 // leaf, or a chain that doesn't actually validate against the
 // configured roots (see X5CIssuerKeyResolver's own doc comment).
 
-// contractCA builds a fresh EC P-256 self-signed CA certificate/key,
+// ContractCA builds a fresh EC P-256 self-signed CA certificate/key,
 // usable as an intermediate/root in x509.Certificate.Verify's own
-// chain building.
-func contractCA(t *testing.T, commonName string) (*x509.Certificate, *ecdsa.PrivateKey) {
+// chain building. Exported (unusually, for a helper only this
+// package's own tests call) so this file's own contract tests and
+// every *_test.go file in this package share exactly one
+// implementation rather than each keeping its own near-identical copy.
+func ContractCA(t *testing.T, commonName string) (*x509.Certificate, *ecdsa.PrivateKey) {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -60,9 +63,10 @@ func contractCA(t *testing.T, commonName string) (*x509.Certificate, *ecdsa.Priv
 	return cert, key
 }
 
-// contractLeaf issues a leaf certificate under ca/caKey for a fresh EC
-// P-256 key.
-func contractLeaf(t *testing.T, commonName string, ca *x509.Certificate, caKey *ecdsa.PrivateKey) *x509.Certificate {
+// ContractLeaf issues a leaf certificate under ca/caKey for a fresh EC
+// P-256 key — see ContractCA's own doc comment for why this is
+// exported.
+func ContractLeaf(t *testing.T, commonName string, ca *x509.Certificate, caKey *ecdsa.PrivateKey) (*x509.Certificate, *ecdsa.PrivateKey) {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -82,12 +86,13 @@ func contractLeaf(t *testing.T, commonName string, ca *x509.Certificate, caKey *
 	if err != nil {
 		t.Fatalf("parse leaf certificate: %v", err)
 	}
-	return cert
+	return cert, key
 }
 
-// contractSelfSignedLeaf builds a fresh EC P-256 self-signed leaf
-// certificate (its own issuer, no CA extension).
-func contractSelfSignedLeaf(t *testing.T, commonName string) *x509.Certificate {
+// ContractSelfSignedLeaf builds a fresh EC P-256 self-signed leaf
+// certificate (its own issuer, no CA extension) — see ContractCA's
+// own doc comment for why this is exported.
+func ContractSelfSignedLeaf(t *testing.T, commonName string) (*x509.Certificate, *ecdsa.PrivateKey) {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -107,7 +112,7 @@ func contractSelfSignedLeaf(t *testing.T, commonName string) *x509.Certificate {
 	if err != nil {
 		t.Fatalf("parse self-signed certificate: %v", err)
 	}
-	return cert
+	return cert, key
 }
 
 // TestX5CTrustContract exercises factory(roots)'s behavior against the
@@ -151,8 +156,8 @@ func testCertChainTrustContract(t *testing.T, resolve func(roots *x509.CertPool,
 	t.Helper()
 
 	t.Run("AcceptsCASignedLeaf", func(t *testing.T) {
-		ca, caKey := contractCA(t, "test-ca")
-		leaf := contractLeaf(t, "test-leaf", ca, caKey)
+		ca, caKey := ContractCA(t, "test-ca")
+		leaf, _ := ContractLeaf(t, "test-leaf", ca, caKey)
 		roots := x509.NewCertPool()
 		roots.AddCert(ca)
 
@@ -162,7 +167,7 @@ func testCertChainTrustContract(t *testing.T, resolve func(roots *x509.CertPool,
 	})
 
 	t.Run("RejectsSelfSignedLeafEvenIfTrusted", func(t *testing.T) {
-		leaf := contractSelfSignedLeaf(t, "test-leaf")
+		leaf, _ := ContractSelfSignedLeaf(t, "test-leaf")
 		roots := x509.NewCertPool()
 		roots.AddCert(leaf) // the self-signed leaf is itself a configured root.
 
@@ -172,9 +177,9 @@ func testCertChainTrustContract(t *testing.T, resolve func(roots *x509.CertPool,
 	})
 
 	t.Run("RejectsUntrustedChain", func(t *testing.T) {
-		ca, caKey := contractCA(t, "test-ca")
-		leaf := contractLeaf(t, "test-leaf", ca, caKey)
-		untrustedCA, _ := contractCA(t, "untrusted-ca")
+		ca, caKey := ContractCA(t, "test-ca")
+		leaf, _ := ContractLeaf(t, "test-leaf", ca, caKey)
+		untrustedCA, _ := ContractCA(t, "untrusted-ca")
 		roots := x509.NewCertPool()
 		roots.AddCert(untrustedCA) // does not chain to the leaf's own issuer.
 
