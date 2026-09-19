@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.7.1](https://github.com/IDFoundry/OID4VCgo/compare/v0.7.0...v0.7.1) (2026-09-19)
+
+
+### Bug Fixes
+
+* **cose:** bound COSE_Sign1/COSE_Sign1_Tagged/COSE_Mac0 parse size ([7f5bdd8](https://github.com/IDFoundry/OID4VCgo/commit/7f5bdd8ad6410640a9e2ed1e5da9247b7dec8846))
+* **issuer:** bound consecutive wrong tx_code guesses per pre-authorized_code ([abef2d4](https://github.com/IDFoundry/OID4VCgo/commit/abef2d4929f4ccf1242580c4b8938d753972f87b))
+* **issuer:** cap attestation attested_keys fan-out at batch_size ([0d3f1e6](https://github.com/IDFoundry/OID4VCgo/commit/0d3f1e69069ecc293dac9f69f6ca1a20d7036b85))
+* **sdjwtvc:** bound ResolveDisclosures's own recursion depth ([ea9ce43](https://github.com/IDFoundry/OID4VCgo/commit/ea9ce43349e91ff776735d2ac8142f4136061d7b))
+* **verifier:** bound Presentation/DeviceResponse parse size regardless of flow ([da50891](https://github.com/IDFoundry/OID4VCgo/commit/da5089112afe6c4e6a9d7e029bc20c93381e04c2))
+* **verifier:** enforce a Credential Query's own trusted_authorities restriction ([e87f0cb](https://github.com/IDFoundry/OID4VCgo/commit/e87f0cb43fdad5daecf37176e042e471aa499f0a))
+* **wallet:** bound Issuer response body reads in credential/notification calls ([925d355](https://github.com/IDFoundry/OID4VCgo/commit/925d3550486e786e647cfd21e26fa691690ce51f))
+* **wallet:** enforce a Credential Query's own trusted_authorities restriction ([f7af874](https://github.com/IDFoundry/OID4VCgo/commit/f7af8748cc7cc7f0feb7af138487e1366893fdfa))
+
 ## [0.7.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.6.0...v0.7.0) (2026-09-19)
 
 
