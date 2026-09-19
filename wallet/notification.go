@@ -13,6 +13,20 @@ import (
 	"github.com/idfoundry/oid4vcgo"
 )
 
+// maxNotificationResponseBytes bounds how much of a Notification
+// Endpoint response body RequestNotification reads — the same
+// reasoning maxTokenResponseBytes documents for
+// RequestPreAuthorizedCodeToken (this call goes through the
+// caller-supplied ProtectedResourceClient, not a transport this
+// package can assume already bounds response size itself). A
+// successful response has no body worth keeping at all (§11.2
+// recommends 204 No Content) and an error response is a small JSON
+// object (parseError's own wire shape), so this stays as tight as
+// maxTokenResponseBytes rather than needing jwe.MaxCompactBytes'
+// headroom the way a Credential Response does — notifications are
+// never encrypted.
+const maxNotificationResponseBytes = 1 << 16
+
 // NotificationRequest is a Notification Request (§11.1) — its own wire
 // shape, marshaled directly.
 type NotificationRequest struct {
@@ -78,7 +92,7 @@ func (w *Wallet) RequestNotification(
 	}
 	defer func() { _ = res.Body.Close() }()
 
-	respBody, err := io.ReadAll(res.Body)
+	respBody, err := io.ReadAll(io.LimitReader(res.Body, maxNotificationResponseBytes))
 	if err != nil {
 		return fmt.Errorf("wallet: request notification: read response: %w", err)
 	}
