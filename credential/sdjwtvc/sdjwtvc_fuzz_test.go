@@ -5,6 +5,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"testing"
+	"time"
 
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 )
@@ -83,7 +84,7 @@ func FuzzParse(f *testing.F) {
 		_, _, _ = Verify(s, &issuerKey.PublicKey, jose.ES256, VerifyOptions{
 			RequireKeyBinding: true, HolderPublicKey: &holderKey.PublicKey,
 			KeyBindingAlg: jose.ES256, ExpectedAudience: "https://example.com/verifier",
-			ExpectedNonce: "fuzz-nonce",
+			ExpectedNonce: "fuzz-nonce", MaxKeyBindingAge: time.Hour,
 		})
 	})
 }

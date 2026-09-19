@@ -2,6 +2,7 @@ package wallet_test
 
 import (
 	"testing"
+	"time"
 
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcgo/dcql"
@@ -36,6 +37,7 @@ func verifiedSDJWTVCClaims(t *testing.T, compact string, fixture heldSDJWTVCFixt
 		KeyBindingAlg:     jose.ES256,
 		ExpectedAudience:  aud,
 		ExpectedNonce:     "nonce-1",
+		MaxKeyBindingAge:  time.Hour,
 	})
 	if err != nil {
 		t.Fatalf("sdjwtvc.Verify: %v", err)

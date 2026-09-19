@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"testing"
+	"time"
 
 	fapi "github.com/idfoundry/fapigo"
 
@@ -117,11 +118,12 @@ func presentAndVerifySDJWTVC(t *testing.T, v *verifier.Verifier, query dcql.Quer
 		return &fixture.issuerKey.PublicKey, jose.ES256, nil
 	})
 	result, err := v.VerifyResponse(context.Background(), verifier.VerifyResponseRequest{
-		Query:         query,
-		Response:      parsed,
-		ExpectedNonce: nonce,
-		IssuerKeys:    issuerKeys,
-		Origin:        origin,
+		Query:            query,
+		Response:         parsed,
+		ExpectedNonce:    nonce,
+		IssuerKeys:       issuerKeys,
+		Origin:           origin,
+		MaxKeyBindingAge: time.Hour,
 	})
 	return testverify.RequireOneCredential(t, result, err, "identity_credential")
 }

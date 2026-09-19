@@ -4,6 +4,7 @@ import (
 	"crypto/ecdsa"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcgo/dcql"
@@ -306,6 +307,7 @@ func assertPresentedSDJWTVC(t *testing.T, presented string, fixture heldSDJWTVCF
 		KeyBindingAlg:     jose.ES256,
 		ExpectedAudience:  wantAudience,
 		ExpectedNonce:     wantNonce,
+		MaxKeyBindingAge:  time.Hour,
 	})
 	if err != nil {
 		t.Fatalf("sdjwtvc.Verify: %v", err)
