@@ -216,9 +216,13 @@ func TestVerify_RejectsWrongIssuerKey(t *testing.T) {
 	}
 }
 
-func TestVerify_RejectsWrongKeyBindingNonce(t *testing.T) {
-	issuerKey := testKey(t)
-	holderKey := testKey(t)
+// newKeyBoundSDJWTVCPresentation issues a fresh SD-JWT VC bound to
+// holderKey and presents it with a Key Binding JWT naming aud/nonce —
+// the shared setup TestVerify_RejectsWrongKeyBindingNonce/
+// TestVerify_KeyBindingMaxAge/TestVerify_RequiresMaxKeyBindingAge all
+// need, varying only what they check about the resulting Verify call.
+func newKeyBoundSDJWTVCPresentation(t *testing.T, issuerKey, holderKey *ecdsa.PrivateKey, aud, nonce string) string {
+	t.Helper()
 	claims := Claims{VCT: "vc-type", CNF: map[string]any{"jwk": jwkFromECDSA(t, &holderKey.PublicKey)}}
 	sdjwt, _, err := Issue(issuerKey, jose.ES256, claims, IssueOptions{})
 	if err != nil {
@@ -229,7 +233,7 @@ func TestVerify_RejectsWrongKeyBindingNonce(t *testing.T) {
 		t.Fatalf("Parse: %v", err)
 	}
 	kbJWT, err := NewKeyBindingJWT(holderKey, jose.ES256, pres, SHA256, KeyBindingClaims{
-		Audience: "aud", Nonce: "correct-nonce",
+		Audience: aud, Nonce: nonce,
 	})
 	if err != nil {
 		t.Fatalf("NewKeyBindingJWT: %v", err)
@@ -239,8 +243,15 @@ func TestVerify_RejectsWrongKeyBindingNonce(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
+	return presentation
+}
 
-	_, _, err = Verify(presentation, &issuerKey.PublicKey, jose.ES256, VerifyOptions{
+func TestVerify_RejectsWrongKeyBindingNonce(t *testing.T) {
+	issuerKey := testKey(t)
+	holderKey := testKey(t)
+	presentation := newKeyBoundSDJWTVCPresentation(t, issuerKey, holderKey, "aud", "correct-nonce")
+
+	_, _, err := Verify(presentation, &issuerKey.PublicKey, jose.ES256, VerifyOptions{
 		RequireKeyBinding: true,
 		HolderPublicKey:   &holderKey.PublicKey,
 		KeyBindingAlg:     jose.ES256,
@@ -256,29 +267,10 @@ func TestVerify_RejectsWrongKeyBindingNonce(t *testing.T) {
 func TestVerify_KeyBindingMaxAge(t *testing.T) {
 	issuerKey := testKey(t)
 	holderKey := testKey(t)
-	claims := Claims{VCT: "vc-type", CNF: map[string]any{"jwk": jwkFromECDSA(t, &holderKey.PublicKey)}}
-	sdjwt, _, err := Issue(issuerKey, jose.ES256, claims, IssueOptions{})
-	if err != nil {
-		t.Fatalf("Issue: %v", err)
-	}
-	pres, err := Parse(sdjwt)
-	if err != nil {
-		t.Fatalf("Parse: %v", err)
-	}
-	kbJWT, err := NewKeyBindingJWT(holderKey, jose.ES256, pres, SHA256, KeyBindingClaims{
-		Audience: "aud", Nonce: "n",
-	})
-	if err != nil {
-		t.Fatalf("NewKeyBindingJWT: %v", err)
-	}
-	pres.KeyBindingJWT = kbJWT
-	presentation, err := pres.Compact()
-	if err != nil {
-		t.Fatalf("Compact: %v", err)
-	}
+	presentation := newKeyBoundSDJWTVCPresentation(t, issuerKey, holderKey, "aud", "n")
 
 	future := func() time.Time { return time.Now().Add(2 * time.Hour) }
-	_, _, err = Verify(presentation, &issuerKey.PublicKey, jose.ES256, VerifyOptions{
+	_, _, err := Verify(presentation, &issuerKey.PublicKey, jose.ES256, VerifyOptions{
 		RequireKeyBinding: true,
 		HolderPublicKey:   &holderKey.PublicKey,
 		KeyBindingAlg:     jose.ES256,
@@ -300,28 +292,9 @@ func TestVerify_KeyBindingMaxAge(t *testing.T) {
 func TestVerify_RequiresMaxKeyBindingAge(t *testing.T) {
 	issuerKey := testKey(t)
 	holderKey := testKey(t)
-	claims := Claims{VCT: "vc-type", CNF: map[string]any{"jwk": jwkFromECDSA(t, &holderKey.PublicKey)}}
-	sdjwt, _, err := Issue(issuerKey, jose.ES256, claims, IssueOptions{})
-	if err != nil {
-		t.Fatalf("Issue: %v", err)
-	}
-	pres, err := Parse(sdjwt)
-	if err != nil {
-		t.Fatalf("Parse: %v", err)
-	}
-	kbJWT, err := NewKeyBindingJWT(holderKey, jose.ES256, pres, SHA256, KeyBindingClaims{
-		Audience: "aud", Nonce: "n",
-	})
-	if err != nil {
-		t.Fatalf("NewKeyBindingJWT: %v", err)
-	}
-	pres.KeyBindingJWT = kbJWT
-	presentation, err := pres.Compact()
-	if err != nil {
-		t.Fatalf("Compact: %v", err)
-	}
+	presentation := newKeyBoundSDJWTVCPresentation(t, issuerKey, holderKey, "aud", "n")
 
-	_, _, err = Verify(presentation, &issuerKey.PublicKey, jose.ES256, VerifyOptions{
+	_, _, err := Verify(presentation, &issuerKey.PublicKey, jose.ES256, VerifyOptions{
 		RequireKeyBinding: true,
 		HolderPublicKey:   &holderKey.PublicKey,
 		KeyBindingAlg:     jose.ES256,
