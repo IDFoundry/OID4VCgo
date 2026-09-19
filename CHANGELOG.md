@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.7.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.6.0...v0.7.0) (2026-09-19)
+
+
+### Features
+
+* **issuer,verifier:** add exported contract test suites ([da5190b](https://github.com/IDFoundry/OID4VCgo/commit/da5190ba7acb000a04d5e53d50ff014930490ad2))
+* **issuer:** add a production-assurance gate for store dependencies ([e658eae](https://github.com/IDFoundry/OID4VCgo/commit/e658eae92da263cb0a2900315e4a7e4c5528e0bd))
+* **issuer:** add structured audit logging, required under AssuranceProduction ([571986a](https://github.com/IDFoundry/OID4VCgo/commit/571986abbaef4adf2fe987dffe677307f494e962))
+* **issuer:** add X5C reference implementations for the two attestation/proof-binding resolvers ([68d9a9f](https://github.com/IDFoundry/OID4VCgo/commit/68d9a9f75d7c3de4ab54ea44c8ac2884bc279642))
+* **sdjwtvc:** require an explicit KeyBindingRequirement, not a bare bool ([3f02a26](https://github.com/IDFoundry/OID4VCgo/commit/3f02a260d3a4ad3b1bf7fbb007bedcb65f04054c))
+
+
+### Bug Fixes
+
+* **issuer:** require an explicit decision on AuthorizedRequest.ClientID ([ac33b85](https://github.com/IDFoundry/OID4VCgo/commit/ac33b8506b9c8ca8f8310b823d42243ac91e3982))
+* **jose,jwe:** bound pre-verification input size and reject unrecognized crit ([388b713](https://github.com/IDFoundry/OID4VCgo/commit/388b71360cd1d199df2ac5ce67157b7037ddc0ea))
+* **sdjwtvc,verifier:** require MaxKeyBindingAge whenever key binding is required ([6df09dd](https://github.com/IDFoundry/OID4VCgo/commit/6df09dd137de533a4f28f5015108a8a631c8dda6))
+* **verifier:** dedup leaf-cert-chain verification onto a shared helper ([2a60204](https://github.com/IDFoundry/OID4VCgo/commit/2a6020419510f48196191e3f9fcb976261870f26))
+
 ## [0.6.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.5.0...v0.6.0) (2026-09-18)
 
 
