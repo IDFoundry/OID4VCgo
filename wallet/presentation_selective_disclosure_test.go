@@ -32,7 +32,7 @@ func newHeldSDJWTVCWithSelectivelyDisclosableClaims(t *testing.T) heldSDJWTVCFix
 func verifiedSDJWTVCClaims(t *testing.T, compact string, fixture heldSDJWTVCFixture, aud string) map[string]any {
 	t.Helper()
 	claims, _, err := sdjwtvc.Verify(compact, &fixture.issuerKey.PublicKey, jose.ES256, sdjwtvc.VerifyOptions{
-		RequireKeyBinding: true,
+		RequireKeyBinding: sdjwtvc.KeyBindingRequired,
 		HolderPublicKey:   &fixture.holderKey.PublicKey,
 		KeyBindingAlg:     jose.ES256,
 		ExpectedAudience:  aud,

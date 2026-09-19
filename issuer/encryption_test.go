@@ -694,7 +694,7 @@ func TestEncryptedCredentialRequestResponseRoundTrip(t *testing.T) {
 		t.Fatalf("got %d credentials, want 1", len(finalResp.Credentials))
 	}
 	if _, _, err := sdjwtvc.Verify(finalResp.Credentials[0].Credential, &issuerSigner.PublicKey, jose.ES256, sdjwtvc.VerifyOptions{
-		RequireKeyBinding: false,
+		RequireKeyBinding: sdjwtvc.KeyBindingNotRequired,
 	}); err != nil {
 		t.Fatalf("sdjwtvc.Verify: %v", err)
 	}

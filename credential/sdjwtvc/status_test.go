@@ -34,7 +34,7 @@ func TestSDJWTVC_StatusClaim_WiresIntoStatuslist(t *testing.T) {
 		t.Fatalf("Issue: %v", err)
 	}
 
-	payload, _, err := sdjwtvc.Verify(sdjwt, &issuerKey.PublicKey, jose.ES256, sdjwtvc.VerifyOptions{})
+	payload, _, err := sdjwtvc.Verify(sdjwt, &issuerKey.PublicKey, jose.ES256, sdjwtvc.VerifyOptions{RequireKeyBinding: sdjwtvc.KeyBindingNotRequired})
 	if err != nil {
 		t.Fatalf("Verify: %v", err)
 	}

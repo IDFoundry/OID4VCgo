@@ -432,7 +432,7 @@ func presentAndVerifyIdentityCredential(
 		t.Fatalf("got %d credentials, want 1", len(result.Credentials))
 	}
 
-	payload, _, err := sdjwtvc.Verify(result.Credentials[0].Credential, &f.issuerSigner.PublicKey, jose.ES256, sdjwtvc.VerifyOptions{})
+	payload, _, err := sdjwtvc.Verify(result.Credentials[0].Credential, &f.issuerSigner.PublicKey, jose.ES256, sdjwtvc.VerifyOptions{RequireKeyBinding: sdjwtvc.KeyBindingNotRequired})
 	if err != nil {
 		t.Fatalf("sdjwtvc.Verify: %v", err)
 	}
@@ -823,7 +823,7 @@ func (f walletIssuerRoundTripFixture) verifyIssuedSDJWT(t *testing.T, result wal
 	if len(result.Credentials) != 1 {
 		t.Fatalf("got %d credentials, want 1", len(result.Credentials))
 	}
-	payload, _, err := sdjwtvc.Verify(result.Credentials[0].Credential, &f.issuerSigner.PublicKey, jose.ES256, sdjwtvc.VerifyOptions{})
+	payload, _, err := sdjwtvc.Verify(result.Credentials[0].Credential, &f.issuerSigner.PublicKey, jose.ES256, sdjwtvc.VerifyOptions{RequireKeyBinding: sdjwtvc.KeyBindingNotRequired})
 	if err != nil {
 		t.Fatalf("sdjwtvc.Verify: %v", err)
 	}
