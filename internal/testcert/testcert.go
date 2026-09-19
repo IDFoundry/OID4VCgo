@@ -8,6 +8,8 @@ package testcert
 
 import (
 	"crypto"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -43,6 +45,91 @@ func SelfSigned(t testing.TB, commonName string, pub crypto.PublicKey, signer cr
 		t.Fatalf("testcert: ParseCertificate: %v", err)
 	}
 	return cert
+}
+
+// CA builds a fresh EC P-256 self-signed CA certificate/key — unlike
+// SelfSigned (no IsCA/BasicConstraints, meant for a single leaf a
+// caller trusts directly), this one is usable as an
+// intermediate/root in x509.Certificate.Verify's own chain building.
+func CA(t testing.TB, commonName string) (*x509.Certificate, *ecdsa.PrivateKey) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("testcert: generate CA key: %v", err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: commonName},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(24 * time.Hour),
+		IsCA:                  true,
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature,
+		BasicConstraintsValid: true,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("testcert: create CA certificate: %v", err)
+	}
+	cert, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatalf("testcert: parse CA certificate: %v", err)
+	}
+	return cert, key
+}
+
+// Leaf issues a leaf certificate under ca/caKey (ordinarily built with
+// CA) for a fresh EC P-256 key.
+func Leaf(t testing.TB, commonName string, ca *x509.Certificate, caKey *ecdsa.PrivateKey) (*x509.Certificate, *ecdsa.PrivateKey) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("testcert: generate leaf key: %v", err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(2),
+		Subject:      pkix.Name{CommonName: commonName},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(24 * time.Hour),
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, ca, &key.PublicKey, caKey)
+	if err != nil {
+		t.Fatalf("testcert: create leaf certificate: %v", err)
+	}
+	cert, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatalf("testcert: parse leaf certificate: %v", err)
+	}
+	return cert, key
+}
+
+// SelfSignedLeaf builds a fresh EC P-256 self-signed leaf certificate
+// (its own issuer, no CA extension) and its own private key — unlike
+// SelfSigned, which signs an already-generated pub with a possibly
+// different signer, this generates its own key pair and self-signs it,
+// for tests that specifically need "the leaf's own signature was
+// produced by the leaf's own key" (e.g. internal/certchain.IsSelfSigned
+// contract checks).
+func SelfSignedLeaf(t testing.TB, commonName string) (*x509.Certificate, *ecdsa.PrivateKey) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("testcert: generate key: %v", err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(3),
+		Subject:      pkix.Name{CommonName: commonName},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(24 * time.Hour),
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("testcert: create self-signed certificate: %v", err)
+	}
+	cert, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatalf("testcert: parse self-signed certificate: %v", err)
+	}
+	return cert, key
 }
 
 // AssertSingleX5CHeader asserts compact's own JWS header — or, for a
