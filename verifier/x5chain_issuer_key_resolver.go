@@ -5,6 +5,7 @@ import (
 	"crypto"
 	"crypto/x509"
 
+	"github.com/idfoundry/oid4vcgo/internal/certchain"
 	"github.com/idfoundry/oid4vcgo/internal/cose"
 )
 
@@ -23,7 +24,7 @@ type X5ChainIssuerKeyResolver struct {
 
 // ResolveMdocIssuerKey implements MdocIssuerKeyResolver.
 func (r X5ChainIssuerKeyResolver) ResolveMdocIssuerKey(_ context.Context, x5chain [][]byte, _ string) (crypto.PublicKey, cose.Alg, error) {
-	leaf, err := verifyLeafCertChain(x5chain, r.Roots)
+	leaf, err := certchain.VerifyLeaf(x5chain, r.Roots)
 	if err != nil {
 		return nil, 0, err
 	}

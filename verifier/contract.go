@@ -3,14 +3,11 @@ package verifier
 import (
 	"context"
 	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
 	"crypto/x509"
-	"crypto/x509/pkix"
 	"encoding/base64"
-	"math/big"
 	"testing"
-	"time"
+
+	"github.com/idfoundry/oid4vcgo/internal/testcert"
 )
 
 // This file is a reusable contract test for one specific, common
@@ -31,88 +28,24 @@ import (
 // leaf, or a chain that doesn't actually validate against the
 // configured roots (see X5CIssuerKeyResolver's own doc comment).
 
-// ContractCA builds a fresh EC P-256 self-signed CA certificate/key,
-// usable as an intermediate/root in x509.Certificate.Verify's own
-// chain building. Exported (unusually, for a helper only this
-// package's own tests call) so this file's own contract tests and
-// every *_test.go file in this package share exactly one
-// implementation rather than each keeping its own near-identical copy.
+// ContractCA, ContractLeaf and ContractSelfSignedLeaf are thin,
+// exported re-exports of internal/testcert's own CA/Leaf/SelfSignedLeaf
+// — exported (unusually, for a helper only this package's own tests
+// call) so an external caller running TestX5CTrustContract/
+// TestX5ChainTrustContract against their own factory doesn't need
+// internal/testcert access it can't have; every *_test.go file in this
+// package uses the exact same three functions internal/testcert
+// exports, rather than each keeping its own near-identical copy.
 func ContractCA(t *testing.T, commonName string) (*x509.Certificate, *ecdsa.PrivateKey) {
-	t.Helper()
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatalf("generate CA key: %v", err)
-	}
-	tmpl := &x509.Certificate{
-		SerialNumber:          big.NewInt(1),
-		Subject:               pkix.Name{CommonName: commonName},
-		NotBefore:             time.Now().Add(-time.Hour),
-		NotAfter:              time.Now().Add(24 * time.Hour),
-		IsCA:                  true,
-		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature,
-		BasicConstraintsValid: true,
-	}
-	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
-	if err != nil {
-		t.Fatalf("create CA certificate: %v", err)
-	}
-	cert, err := x509.ParseCertificate(der)
-	if err != nil {
-		t.Fatalf("parse CA certificate: %v", err)
-	}
-	return cert, key
+	return testcert.CA(t, commonName)
 }
 
-// ContractLeaf issues a leaf certificate under ca/caKey for a fresh EC
-// P-256 key — see ContractCA's own doc comment for why this is
-// exported.
 func ContractLeaf(t *testing.T, commonName string, ca *x509.Certificate, caKey *ecdsa.PrivateKey) (*x509.Certificate, *ecdsa.PrivateKey) {
-	t.Helper()
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatalf("generate leaf key: %v", err)
-	}
-	tmpl := &x509.Certificate{
-		SerialNumber: big.NewInt(2),
-		Subject:      pkix.Name{CommonName: commonName},
-		NotBefore:    time.Now().Add(-time.Hour),
-		NotAfter:     time.Now().Add(24 * time.Hour),
-	}
-	der, err := x509.CreateCertificate(rand.Reader, tmpl, ca, &key.PublicKey, caKey)
-	if err != nil {
-		t.Fatalf("create leaf certificate: %v", err)
-	}
-	cert, err := x509.ParseCertificate(der)
-	if err != nil {
-		t.Fatalf("parse leaf certificate: %v", err)
-	}
-	return cert, key
+	return testcert.Leaf(t, commonName, ca, caKey)
 }
 
-// ContractSelfSignedLeaf builds a fresh EC P-256 self-signed leaf
-// certificate (its own issuer, no CA extension) — see ContractCA's
-// own doc comment for why this is exported.
 func ContractSelfSignedLeaf(t *testing.T, commonName string) (*x509.Certificate, *ecdsa.PrivateKey) {
-	t.Helper()
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatalf("generate key: %v", err)
-	}
-	tmpl := &x509.Certificate{
-		SerialNumber: big.NewInt(3),
-		Subject:      pkix.Name{CommonName: commonName},
-		NotBefore:    time.Now().Add(-time.Hour),
-		NotAfter:     time.Now().Add(24 * time.Hour),
-	}
-	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
-	if err != nil {
-		t.Fatalf("create self-signed certificate: %v", err)
-	}
-	cert, err := x509.ParseCertificate(der)
-	if err != nil {
-		t.Fatalf("parse self-signed certificate: %v", err)
-	}
-	return cert, key
+	return testcert.SelfSignedLeaf(t, commonName)
 }
 
 // TestX5CTrustContract exercises factory(roots)'s behavior against the
