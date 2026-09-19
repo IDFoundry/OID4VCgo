@@ -60,7 +60,7 @@ func TestRequestDeferredCredential_ReturnsPendingWithInterval(t *testing.T) {
 	store.put("txn-2", issuer.DeferredTransactionRecord{Status: issuer.DeferredTransactionPending})
 
 	result, err := iss.RequestDeferredCredential(context.Background(),
-		issuer.AuthorizedRequest{},
+		issuer.AuthorizedRequest{ClientID: "test-client"},
 		issuer.DeferredCredentialRequest{TransactionID: "txn-2"},
 	)
 	if err != nil {
@@ -92,7 +92,7 @@ func TestRequestDeferredCredential_RejectsDeniedTransaction(t *testing.T) {
 	store.put("txn-3", issuer.DeferredTransactionRecord{Status: issuer.DeferredTransactionDenied})
 
 	_, err := iss.RequestDeferredCredential(context.Background(),
-		issuer.AuthorizedRequest{},
+		issuer.AuthorizedRequest{ClientID: "test-client"},
 		issuer.DeferredCredentialRequest{TransactionID: "txn-3"},
 	)
 	assertIssuerError(t, err, issuer.ErrorCredentialRequestDenied)
@@ -100,14 +100,14 @@ func TestRequestDeferredCredential_RejectsDeniedTransaction(t *testing.T) {
 
 func TestRequestDeferredCredential_RejectsMissingTransactionID(t *testing.T) {
 	iss := newTestIssuer(t, validConfig(t), validDependencies(t))
-	_, err := iss.RequestDeferredCredential(context.Background(), issuer.AuthorizedRequest{}, issuer.DeferredCredentialRequest{})
+	_, err := iss.RequestDeferredCredential(context.Background(), issuer.AuthorizedRequest{ClientID: "test-client"}, issuer.DeferredCredentialRequest{})
 	assertIssuerError(t, err, issuer.ErrorInvalidCredentialRequest)
 }
 
 func TestRequestDeferredCredential_RejectsUnknownTransactionID(t *testing.T) {
 	iss := newTestIssuer(t, validConfig(t), validDependencies(t))
 	_, err := iss.RequestDeferredCredential(context.Background(),
-		issuer.AuthorizedRequest{}, issuer.DeferredCredentialRequest{TransactionID: "no-such-transaction"},
+		issuer.AuthorizedRequest{ClientID: "test-client"}, issuer.DeferredCredentialRequest{TransactionID: "no-such-transaction"},
 	)
 	assertIssuerError(t, err, issuer.ErrorInvalidTransactionID)
 }
@@ -143,7 +143,7 @@ func TestRequestDeferredCredential_RejectsWhenNotConfigured(t *testing.T) {
 	iss := newTestIssuer(t, cfg, deps)
 
 	_, err := iss.RequestDeferredCredential(context.Background(),
-		issuer.AuthorizedRequest{}, issuer.DeferredCredentialRequest{TransactionID: "anything"},
+		issuer.AuthorizedRequest{ClientID: "test-client"}, issuer.DeferredCredentialRequest{TransactionID: "anything"},
 	)
 	if err == nil {
 		t.Fatalf("RequestDeferredCredential = nil error, want error")

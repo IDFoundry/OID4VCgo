@@ -28,18 +28,34 @@ const jwtProofTyp = "openid4vci-proof+jwt" //nolint:gosec // an OID4VCI typ valu
 // see the package doc comment. See resource_verifier.go for the
 // worked adaptation recipe.
 type AuthorizedRequest struct {
-	// ClientID, if non-empty, is checked against a jwt-type key proof's
-	// "iss" claim when that claim is present (Appendix F.1), and — via
-	// IssueNotificationID — binds any notification_id this request
-	// causes to be issued to this same client, later re-checked by
-	// RequestNotification. WARNING: leaving this empty doesn't just
-	// skip a minor detail — it silently disables both checks entirely
-	// (an empty ClientID trivially "matches" everything), for every
-	// request that omits it, with no error or warning at runtime. Set
+	// ClientID is checked against a jwt-type key proof's "iss" claim
+	// when that claim is present (Appendix F.1); via IssueNotificationID,
+	// binds any notification_id this request causes to be issued to
+	// this same client, later re-checked by RequestNotification; and
+	// (already stamped onto a DeferredTransactionRecord by the
+	// caller's own business process — see that type's own doc comment)
+	// is re-checked by RequestDeferredCredential the same way. REQUIRED
+	// — RequestCredential/RequestDeferredCredential/RequestNotification/
+	// IssueNotificationID all reject an AuthorizedRequest whose ClientID
+	// is empty unless ClientIDIntentionallyUnset is also set: an empty
+	// ClientID doesn't just skip a minor detail, it silently disables
+	// every one of those bindings entirely (an empty ClientID trivially
+	// "matches" everything), for every request that omits it, with no
+	// error or warning at runtime — found in a repo-vs-FAPIgo
+	// trust-boundary comparison; the same "Go zero value must not be
+	// the insecure default" fix already applied to
+	// sdjwtvc.VerifyOptions.RequireKeyBinding/MaxKeyBindingAge. Set
 	// this from your own access-token verification (the token's
-	// subject/client_id) unless you have a specific reason these
-	// bindings shouldn't apply to your deployment.
+	// subject/client_id).
 	ClientID string
+
+	// ClientIDIntentionallyUnset must be true when ClientID is
+	// deliberately left "" — a caller whose deployment genuinely never
+	// resolves client identity (e.g. access tokens carry no
+	// subject/client_id at all) sets this once, rather than every
+	// caller silently getting the same weaker behavior by omission.
+	// Ignored (fine to leave false) whenever ClientID is non-empty.
+	ClientIDIntentionallyUnset bool
 
 	// Scopes is every scope the access token grants. A requested
 	// CredentialConfiguration whose Scope is non-empty must be included
@@ -69,6 +85,23 @@ type AuthorizedRequest struct {
 	// "authorization_details" array directly into this field, rather
 	// than hand-rolling an equivalent wire type themselves.
 	AuthorizationDetails []oid4vci.AuthorizationDetail
+}
+
+// requireClientIDDecision rejects auth if ClientID is empty and the
+// caller never explicitly acknowledged that via
+// ClientIDIntentionallyUnset — see AuthorizedRequest.ClientID's own
+// doc comment for what an empty, unacknowledged ClientID would
+// otherwise silently disable. Called unconditionally by every public
+// method that consumes AuthorizedRequest.ClientID, regardless of
+// whether the specific request at hand would actually exercise one of
+// those checks (e.g. a jwt proof that happens not to set "iss") — a
+// deployment's decision to track client identity or not is made once,
+// not re-derived per request from content an attacker partly controls.
+func requireClientIDDecision(auth AuthorizedRequest) error {
+	if auth.ClientID == "" && !auth.ClientIDIntentionallyUnset {
+		return fmt.Errorf("issuer: authorized_request.client_id is empty; set it, or set client_id_intentionally_unset to acknowledge this deployment doesn't bind requests to a client")
+	}
+	return nil
 }
 
 // CredentialRequest is a Credential Request (§8.2).
@@ -186,6 +219,9 @@ func (iss *Issuer) RequestCredential(ctx context.Context, auth AuthorizedRequest
 }
 
 func (iss *Issuer) requestCredential(ctx context.Context, auth AuthorizedRequest, req CredentialRequest) (oid4vci.CredentialResponse, error) {
+	if err := requireClientIDDecision(auth); err != nil {
+		return oid4vci.CredentialResponse{}, err
+	}
 	if req.ResponseEncryption != nil && !req.RequestWasEncrypted {
 		return oid4vci.CredentialResponse{}, newError(ErrorInvalidEncryptionParameters, 400,
 			"credential_response_encryption requires the request itself to be encrypted", nil)

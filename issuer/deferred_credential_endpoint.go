@@ -110,6 +110,9 @@ func (iss *Issuer) requestDeferredCredential(ctx context.Context, auth Authorize
 	if iss.deps.DeferredTransactions == nil {
 		return DeferredCredentialResult{}, fmt.Errorf("issuer: request deferred credential: deferred issuance is not configured")
 	}
+	if err := requireClientIDDecision(auth); err != nil {
+		return DeferredCredentialResult{}, err
+	}
 	if req.TransactionID == "" {
 		return DeferredCredentialResult{}, newError(ErrorInvalidCredentialRequest, 400, "transaction_id is required", nil)
 	}
@@ -122,6 +125,11 @@ func (iss *Issuer) requestDeferredCredential(ctx context.Context, auth Authorize
 	if err != nil {
 		return DeferredCredentialResult{}, newError(ErrorInvalidTransactionID, 400, "unknown or already-used transaction_id", err)
 	}
+	// auth.ClientID == "" here only ever means an explicit
+	// ClientIDIntentionallyUnset (this method's own
+	// requireClientIDDecision already rejected any other empty case
+	// before this ever runs) — this check is deliberately skipped for
+	// that acknowledged deployment choice, not by silent default.
 	if record.ClientID != "" && auth.ClientID != "" && record.ClientID != auth.ClientID {
 		return DeferredCredentialResult{}, newError(ErrorInvalidTransactionID, 400, "transaction_id was not issued to this client", nil)
 	}
