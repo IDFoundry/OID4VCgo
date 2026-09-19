@@ -16,6 +16,22 @@ const deviceResponseVersion = "1.0"
 // "status" value 0 ("OK ... normal processing").
 const mdocResponseStatusOK = 0
 
+// MaxBytes bounds how large a DeviceResponse UnmarshalDeviceResponse
+// will attempt to CBOR-decode, to avoid unbounded parse work on
+// attacker-supplied bytes before any signature is checked — the same
+// reasoning internal/jose/internal/jwe/internal/cose already apply to
+// their own compact/binary inputs; found missing here in a repo-wide
+// security review specifically because a DC API caller builds a
+// verifier.ParsedResponse directly from this package's own encoding,
+// with no upstream size-bounding step the redirect flow gets for free
+// via a JWE decrypt. Matches internal/jwe.MaxCompactBytes's own value,
+// not the smaller 64 KiB internal/jose/internal/cose use — a
+// DeviceResponse can legitimately embed a sizeable data element (e.g.
+// a portrait), the same reason jwe's own ceiling is larger. A caller
+// whose accepted input can legitimately scale beyond it should call
+// UnmarshalDeviceResponseMax with its own configured ceiling instead.
+const MaxBytes = 1 << 20 // 1 MiB
+
 // Document is a DeviceResponse's own single "documents" array entry
 // (ISO/IEC 18013-5 §10.3.3) — this package models only the fields an
 // OID4VP Presentation actually needs; "errors" isn't modeled, matching
@@ -82,7 +98,18 @@ func MarshalDeviceResponse(doc Document) ([]byte, error) {
 // signature/MAC verification; use credential/mdoc.Verify/
 // VerifyDeviceSignature/VerifyDeviceMAC for that. Returns an error if
 // status isn't 0 ("OK") or documents doesn't have exactly one entry.
+// It rejects data larger than MaxBytes; use UnmarshalDeviceResponseMax
+// for a caller that needs a different ceiling.
 func UnmarshalDeviceResponse(data []byte) (Document, error) {
+	return UnmarshalDeviceResponseMax(data, MaxBytes)
+}
+
+// UnmarshalDeviceResponseMax is UnmarshalDeviceResponse with an
+// explicit size ceiling, in bytes, instead of MaxBytes.
+func UnmarshalDeviceResponseMax(data []byte, maxBytes int) (Document, error) {
+	if len(data) > maxBytes {
+		return Document{}, fmt.Errorf("oid4vpmdoc: device response is %d bytes, exceeds the %d byte limit", len(data), maxBytes)
+	}
 	var wire wireDeviceResponse
 	if err := cbor.Unmarshal(data, &wire); err != nil {
 		return Document{}, fmt.Errorf("oid4vpmdoc: unmarshal device response: %w", err)

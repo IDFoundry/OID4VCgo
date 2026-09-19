@@ -3,6 +3,8 @@ package sdjwtvc
 import (
 	"fmt"
 	"strings"
+
+	"github.com/idfoundry/oid4vcgo/internal/jose"
 )
 
 // Presentation is a parsed SD-JWT or SD-JWT+KB (RFC 9901 §4): the
@@ -26,8 +28,28 @@ func (p Presentation) HasKeyBinding() bool { return p.KeyBindingJWT != "" }
 // Parse splits a compact SD-JWT or SD-JWT+KB into its parts (RFC 9901
 // §4) without verifying anything — the issuer JWT's signature, the
 // disclosure/digest matching, and any Key Binding JWT are all checked
-// by Verify.
+// by Verify. It rejects a presentation larger than jose.MaxCompactBytes
+// — bounding the string-split/base64/JSON work this does on
+// attacker-supplied input before anything is verified (or, for a
+// caller like wallet's own held-credential matching, ever verified at
+// all — see HeldCredential's own doc comment), the same reasoning
+// internal/jose/internal/jwe/internal/cose already apply to their own
+// compact/binary inputs; found missing here in a repo-wide security
+// review specifically because a DC API caller builds a
+// verifier.ParsedResponse directly, with no upstream JWE decrypt step
+// (jwe.MaxCompactBytes) to bound it first the way the redirect flow
+// gets for free. Use ParseMax for a caller that needs a different
+// ceiling.
 func Parse(s string) (Presentation, error) {
+	return ParseMax(s, jose.MaxCompactBytes)
+}
+
+// ParseMax is Parse with an explicit size ceiling, in bytes, instead
+// of jose.MaxCompactBytes.
+func ParseMax(s string, maxBytes int) (Presentation, error) {
+	if len(s) > maxBytes {
+		return Presentation{}, fmt.Errorf("sdjwtvc: presentation is %d bytes, exceeds the %d byte limit", len(s), maxBytes)
+	}
 	parts := strings.Split(s, "~")
 	if len(parts) < 2 {
 		return Presentation{}, fmt.Errorf("sdjwtvc: not a valid SD-JWT (missing '~' separator)")
