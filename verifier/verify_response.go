@@ -97,6 +97,17 @@ type VerifyResponseRequest struct {
 	// Credential.
 	MdocIssuerKeys MdocIssuerKeyResolver
 
+	// TrustedAuthorities enforces a Credential Query's own
+	// TrustedAuthorities restriction (§6.1.1) against each verified
+	// Presentation's own issuer certificate chain. REQUIRED if Query
+	// includes any Credential Query with a non-empty
+	// TrustedAuthorities; VerifyResponse rejects that combination
+	// outright when this is nil rather than silently skipping the
+	// restriction — see TrustedAuthoritiesChecker's own doc comment.
+	// Ignored when no requested Credential Query declares
+	// TrustedAuthorities.
+	TrustedAuthorities TrustedAuthoritiesChecker
+
 	// ResponseEncryptionKey is the same ephemeral private key a prior
 	// BuildAuthorizationRequest/BuildDCAPIAuthorizationRequest call
 	// returned as ResponseDecryptionKey. REQUIRED if Query requests
@@ -197,6 +208,13 @@ type VerifyResponseResult struct {
 // silently omitted from VerifyResponseResult. A Credential Query not
 // referenced by any Credential Set Query is never checked.
 //
+// A Credential Query's own TrustedAuthorities (§6.1.1), when
+// non-empty, is checked against the verified Presentation's own issuer
+// certificate chain via req.TrustedAuthorities — see
+// TrustedAuthoritiesChecker's own doc comment for why this is a
+// separate, per-query dependency rather than something
+// IssuerKeys/MdocIssuerKeys decide once for every request.
+//
 // Phase scope, explicitly: "claim_sets" (§6.4.1) is supported:
 // dcql.CredentialQuery.SatisfiedBySDJWTVCClaims/SatisfiedByMdocClaims
 // already try each option in order and report the Presentation as
@@ -216,6 +234,13 @@ func (v *Verifier) VerifyResponse(ctx context.Context, req VerifyResponseRequest
 		for _, cq := range req.Query.Credentials {
 			if cq.Format == sdjwtvc.CredentialFormat && cq.RequiresCryptographicHolderBinding() {
 				return VerifyResponseResult{}, fmt.Errorf("verifier: verify response: max_key_binding_age is required (must be positive) when a %q credential query requires holder binding", sdjwtvc.CredentialFormat)
+			}
+		}
+	}
+	if req.TrustedAuthorities == nil {
+		for _, cq := range req.Query.Credentials {
+			if len(cq.TrustedAuthorities) > 0 {
+				return VerifyResponseResult{}, fmt.Errorf("verifier: verify response: trusted_authorities is required when a credential query %q declares trusted_authorities", cq.ID)
 			}
 		}
 	}
@@ -368,6 +393,16 @@ func (v *Verifier) verifySDJWTVCPresentation(ctx context.Context, cq dcql.Creden
 	if err := cq.SatisfiedBySDJWTVCClaims(claims); err != nil {
 		return nil, err
 	}
+
+	if len(cq.TrustedAuthorities) > 0 {
+		chain, err := x5cDERs(header)
+		if err != nil {
+			return nil, fmt.Errorf("trusted authorities: %w", err)
+		}
+		if err := req.TrustedAuthorities.CheckTrustedAuthorities(ctx, cq.TrustedAuthorities, chain); err != nil {
+			return nil, fmt.Errorf("trusted authorities: %w", err)
+		}
+	}
 	return claims, nil
 }
 
@@ -460,6 +495,12 @@ func (v *Verifier) verifyMdocPresentation(ctx context.Context, cq dcql.Credentia
 
 	if err := cq.SatisfiedByMdocClaims(verified.DocType, verified.NameSpaces); err != nil {
 		return nil, err
+	}
+
+	if len(cq.TrustedAuthorities) > 0 {
+		if err := req.TrustedAuthorities.CheckTrustedAuthorities(ctx, cq.TrustedAuthorities, unprotected.X5Chain); err != nil {
+			return nil, fmt.Errorf("trusted authorities: %w", err)
+		}
 	}
 
 	claims := make(map[string]any, len(verified.NameSpaces))

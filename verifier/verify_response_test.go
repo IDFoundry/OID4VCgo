@@ -67,6 +67,15 @@ func newSDJWTVCPresentation(t *testing.T, aud, nonce string) sdjwtVCPresentation
 // §6.1's own "multiple" — see TestVerifyResponseMultipleVerifiesAllPresentations).
 func newSDJWTVCPresentationWithIssuer(t *testing.T, issuerKey *ecdsa.PrivateKey, aud, nonce string) sdjwtVCPresentationFixture {
 	t.Helper()
+	return newSDJWTVCPresentationWithIssuerOpts(t, issuerKey, sdjwtvc.IssueOptions{}, aud, nonce)
+}
+
+// newSDJWTVCPresentationWithIssuerOpts is newSDJWTVCPresentationWithIssuer's
+// own twin taking a full sdjwtvc.IssueOptions — e.g. IssuerCertificate,
+// for a test whose Presentation needs a real "x5c" header (see
+// TestVerifyResponse_ChecksTrustedAuthorities_Accepts).
+func newSDJWTVCPresentationWithIssuerOpts(t *testing.T, issuerKey *ecdsa.PrivateKey, opts sdjwtvc.IssueOptions, aud, nonce string) sdjwtVCPresentationFixture {
+	t.Helper()
 	holderKey := testP256Key(t)
 
 	holderJWK, err := jwkFromECDSA(&holderKey.PublicKey)
@@ -79,7 +88,7 @@ func newSDJWTVCPresentationWithIssuer(t *testing.T, issuerKey *ecdsa.PrivateKey,
 		Additional: map[string]any{
 			"given_name": "Alice",
 		},
-	}, sdjwtvc.IssueOptions{})
+	}, opts)
 	if err != nil {
 		t.Fatalf("Issue: %v", err)
 	}
