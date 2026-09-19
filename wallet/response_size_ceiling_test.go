@@ -45,12 +45,12 @@ func requireReturnsWithin(t *testing.T, d time.Duration, fn func() error) error 
 	}
 }
 
-func TestRequestDeferredCredential_BoundsResponseSize(t *testing.T) {
-	w, err := wallet.New(validConfig(), validDependencies())
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	resource := &fakeProtectedResourceClient{
+// newInfiniteBodyResource is a fakeProtectedResourceClient whose every
+// response has status 200 and an infiniteBody — the shared fixture
+// both BoundsResponseSize tests below need to exercise their own
+// call's read ceiling.
+func newInfiniteBodyResource() *fakeProtectedResourceClient {
+	return &fakeProtectedResourceClient{
 		do: func(context.Context, *http.Request) (*http.Response, error) {
 			return &http.Response{
 				StatusCode: http.StatusOK,
@@ -59,6 +59,14 @@ func TestRequestDeferredCredential_BoundsResponseSize(t *testing.T) {
 			}, nil
 		},
 	}
+}
+
+func TestRequestDeferredCredential_BoundsResponseSize(t *testing.T) {
+	w, err := wallet.New(validConfig(), validDependencies())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	resource := newInfiniteBodyResource()
 
 	err = requireReturnsWithin(t, 5*time.Second, func() error {
 		_, err := w.RequestDeferredCredential(context.Background(), resource, testDeferredCredentialEndpoint(t), wallet.DeferredCredentialRequest{
@@ -76,15 +84,7 @@ func TestRequestNotification_BoundsResponseSize(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	resource := &fakeProtectedResourceClient{
-		do: func(context.Context, *http.Request) (*http.Response, error) {
-			return &http.Response{
-				StatusCode: http.StatusOK,
-				Header:     http.Header{"Content-Type": {"application/json"}},
-				Body:       infiniteBody{},
-			}, nil
-		},
-	}
+	resource := newInfiniteBodyResource()
 
 	err = requireReturnsWithin(t, 5*time.Second, func() error {
 		return w.RequestNotification(context.Background(), resource, testNotificationEndpointForWallet(t), wallet.NotificationRequest{
