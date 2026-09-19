@@ -253,6 +253,62 @@ func TestEncryptRejectsUnsupportedZip(t *testing.T) {
 	}
 }
 
+func TestDecryptRejectsOversizedCompact(t *testing.T) {
+	key := testP256Key(t)
+	compact, err := Encrypt(&key.PublicKey, A128GCM, make([]byte, MaxCompactBytes), EncryptOptions{})
+	if err != nil {
+		t.Fatalf("Encrypt: %v", err)
+	}
+	if len(compact) <= MaxCompactBytes {
+		t.Fatalf("compact is %d bytes, want > MaxCompactBytes (%d)", len(compact), MaxCompactBytes)
+	}
+
+	if _, err := Decrypt(key, compact); err == nil {
+		t.Error("Decrypt = nil error, want error (oversized compact JWE)")
+	}
+	if _, err := DecodeHeader(compact); err == nil {
+		t.Error("DecodeHeader = nil error, want error (oversized compact JWE)")
+	}
+
+	// DecryptMax/DecodeHeaderMax with a raised ceiling accept the same
+	// input Decrypt/DecodeHeader reject.
+	if _, err := DecryptMax(key, compact, len(compact)); err != nil {
+		t.Errorf("DecryptMax with a raised ceiling: %v", err)
+	}
+	if _, err := DecodeHeaderMax(compact, len(compact)); err != nil {
+		t.Errorf("DecodeHeaderMax with a raised ceiling: %v", err)
+	}
+}
+
+func TestDecryptRejectsCriticalExtension(t *testing.T) {
+	key := testP256Key(t)
+	compact, err := Encrypt(&key.PublicKey, A128GCM, []byte("hi"), EncryptOptions{})
+	if err != nil {
+		t.Fatalf("Encrypt: %v", err)
+	}
+	tampered := tamperHeader(t, compact, func(h map[string]any) { h["crit"] = []string{"exp"}; h["exp"] = 1 })
+
+	if _, err := Decrypt(key, tampered); err == nil {
+		t.Error("Decrypt = nil error, want error (unrecognized crit extension)")
+	}
+	if _, err := DecodeHeader(tampered); err == nil {
+		t.Error("DecodeHeader = nil error, want error (unrecognized crit extension)")
+	}
+}
+
+func TestDecryptAcceptsEmptyCrit(t *testing.T) {
+	key := testP256Key(t)
+	compact, err := Encrypt(&key.PublicKey, A128GCM, []byte("hi"), EncryptOptions{})
+	if err != nil {
+		t.Fatalf("Encrypt: %v", err)
+	}
+	tampered := tamperHeader(t, compact, func(h map[string]any) { h["crit"] = []string{} })
+
+	if _, err := DecodeHeader(tampered); err != nil {
+		t.Errorf("DecodeHeader: %v", err)
+	}
+}
+
 func TestDecodeHeaderDoesNotRequireAPrivateKey(t *testing.T) {
 	key := testP256Key(t)
 	compact, err := Encrypt(&key.PublicKey, A128GCM, []byte("hi"), EncryptOptions{KeyID: "k1"})

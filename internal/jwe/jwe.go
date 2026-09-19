@@ -44,6 +44,18 @@ const DEF Zip = "DEF"
 
 var b64 = base64.RawURLEncoding
 
+// MaxCompactBytes bounds how large a compact JWE Decrypt/DecodeHeader
+// will attempt to parse, to avoid doing unbounded base64url-decode and
+// JSON-unmarshal work on attacker-supplied input before decryption is
+// even attempted — the same "unbounded work on unauthenticated input"
+// concern maxInflatedSize guards on the decrypted *plaintext* side,
+// just one step earlier, on the ciphertext itself. Sized generously
+// for this repo's own real payloads (an encrypted VP token or
+// credential request/response); a caller whose accepted input can
+// legitimately scale beyond it should call DecryptMax/DecodeHeaderMax
+// with its own configured ceiling instead.
+const MaxCompactBytes = 1 << 20 // 1 MiB
+
 const (
 	gcmIVSize  = 12 // RFC 7518 §5.3: a 96-bit IV.
 	gcmTagSize = 16 // RFC 7518 §5.3: a full 128-bit authentication tag.
@@ -157,8 +169,19 @@ func Encrypt(recipientPub *ecdsa.PublicKey, enc Enc, payload []byte, opts Encryp
 // (ECDH-ES + AES-GCM only — see the package doc comment), using priv,
 // the recipient's own P-256 private key, to redo the ECDH-ES key
 // agreement against the sender's ephemeral public key conveyed in the
-// header's own "epk".
+// header's own "epk". It rejects a compact string larger than
+// MaxCompactBytes; use DecryptMax for a caller that needs a different
+// ceiling.
 func Decrypt(priv *ecdsa.PrivateKey, compact string) ([]byte, error) {
+	return DecryptMax(priv, compact, MaxCompactBytes)
+}
+
+// DecryptMax is Decrypt with an explicit size ceiling, in bytes,
+// instead of MaxCompactBytes.
+func DecryptMax(priv *ecdsa.PrivateKey, compact string, maxBytes int) ([]byte, error) {
+	if len(compact) > maxBytes {
+		return nil, fmt.Errorf("jwe: compact JWE is %d bytes, exceeds the %d byte limit", len(compact), maxBytes)
+	}
 	header, encHeader, ivB64, ctB64, tagB64, err := splitCompact(compact)
 	if err != nil {
 		return nil, err
@@ -244,7 +267,18 @@ func Decrypt(priv *ecdsa.PrivateKey, compact string) ([]byte, error) {
 // DecodeHeader decodes a JWE Compact Serialization's own header
 // without decrypting anything — for a caller that needs to read "kid"
 // to resolve which private key to decrypt with before calling Decrypt.
+// It rejects a compact string larger than MaxCompactBytes; use
+// DecodeHeaderMax for a caller that needs a different ceiling.
 func DecodeHeader(compact string) (map[string]any, error) {
+	return DecodeHeaderMax(compact, MaxCompactBytes)
+}
+
+// DecodeHeaderMax is DecodeHeader with an explicit size ceiling, in
+// bytes, instead of MaxCompactBytes.
+func DecodeHeaderMax(compact string, maxBytes int) (map[string]any, error) {
+	if len(compact) > maxBytes {
+		return nil, fmt.Errorf("jwe: compact JWE is %d bytes, exceeds the %d byte limit", len(compact), maxBytes)
+	}
 	header, _, _, _, _, err := splitCompact(compact)
 	return header, err
 }
@@ -263,6 +297,18 @@ func splitCompact(compact string) (header map[string]any, encHeader, iv, ciphert
 	}
 	if err := json.Unmarshal(raw, &header); err != nil {
 		return nil, "", "", "", "", fmt.Errorf("jwe: unmarshal header: %w", err)
+	}
+	// "crit" (RFC 7516 §4.1.13) names header parameters a recipient
+	// MUST understand and process, rejecting the JWE otherwise. This
+	// package recognizes no critical extension at all — HAIP's own
+	// mandatory ECDH-ES+GCM profile never requires one, and no sender
+	// in this repo ever sets "crit" — so any non-empty "crit" on an
+	// incoming JWE is, by construction, naming something this package
+	// doesn't understand.
+	if crit, ok := header["crit"]; ok {
+		if arr, ok := crit.([]any); !ok || len(arr) > 0 {
+			return nil, "", "", "", "", fmt.Errorf("jwe: JWE names a critical header extension this package does not understand: %v", crit)
+		}
 	}
 	return header, parts[0], parts[2], parts[3], parts[4], nil
 }
