@@ -300,6 +300,32 @@ func TestDPoPReplayCheckerContract(t *testing.T, factory func() DPoPReplayChecke
 	})
 }
 
+// testGetIsRepeatable runs the shared "seed a record, then Get it
+// twice" check TestCredentialOfferStoreContract and
+// TestNotificationStoreContract both need — unlike NonceStore's own
+// Consume, Get is explicitly NOT single-use for either interface.
+func testGetIsRepeatable(t *testing.T, seed func() error, get func() error, why string) {
+	t.Helper()
+	if err := seed(); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := get(); err != nil {
+		t.Fatalf("first Get: %v", err)
+	}
+	if err := get(); err != nil {
+		t.Errorf("second Get: %v, want a repeated Get to still succeed (%s)", err, why)
+	}
+}
+
+// testGetUnknownFails runs the shared "Get an unseeded key fails"
+// check several contract tests in this file need.
+func testGetUnknownFails(t *testing.T, get func() error, why string) {
+	t.Helper()
+	if err := get(); err == nil {
+		t.Errorf("Get = nil error, want error (%s)", why)
+	}
+}
+
 // TestCredentialOfferStoreContract exercises factory()'s behavior
 // against CredentialOfferStore's own documented guarantee — unlike
 // NonceStore, Get is explicitly NOT single-use (a Wallet's retried GET
@@ -334,22 +360,17 @@ func TestCredentialOfferStoreContract(t *testing.T, factory func() CredentialOff
 	t.Run("GetIsRepeatable", func(t *testing.T) {
 		store := factory()
 		ctx := context.Background()
-		if err := store.Store(ctx, CredentialOfferRecord{Reference: "ref1", ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
-			t.Fatalf("Store: %v", err)
-		}
-		if _, err := store.Get(ctx, "ref1"); err != nil {
-			t.Fatalf("first Get: %v", err)
-		}
-		if _, err := store.Get(ctx, "ref1"); err != nil {
-			t.Errorf("second Get: %v, want a repeated Get to still succeed (not single-use)", err)
-		}
+		testGetIsRepeatable(t,
+			func() error {
+				return store.Store(ctx, CredentialOfferRecord{Reference: "ref1", ExpiresAt: time.Now().Add(time.Minute)})
+			},
+			func() error { _, err := store.Get(ctx, "ref1"); return err },
+			"not single-use")
 	})
 
 	t.Run("GetUnknownFails", func(t *testing.T) {
 		store := factory()
-		if _, err := store.Get(context.Background(), "never-stored"); err == nil {
-			t.Error("Get = nil error, want error (unknown reference)")
-		}
+		testGetUnknownFails(t, func() error { _, err := store.Get(context.Background(), "never-stored"); return err }, "unknown reference")
 	})
 }
 
@@ -381,22 +402,15 @@ func TestNotificationStoreContract(t *testing.T, factory func() NotificationStor
 	t.Run("GetIsRepeatable", func(t *testing.T) {
 		store := factory()
 		ctx := context.Background()
-		if err := store.Issue(ctx, "notif1", NotificationRecord{ClientID: "client-1"}); err != nil {
-			t.Fatalf("Issue: %v", err)
-		}
-		if _, err := store.Get(ctx, "notif1"); err != nil {
-			t.Fatalf("first Get: %v", err)
-		}
-		if _, err := store.Get(ctx, "notif1"); err != nil {
-			t.Errorf("second Get: %v, want a repeated Get to still succeed (§11 idempotency)", err)
-		}
+		testGetIsRepeatable(t,
+			func() error { return store.Issue(ctx, "notif1", NotificationRecord{ClientID: "client-1"}) },
+			func() error { _, err := store.Get(ctx, "notif1"); return err },
+			"§11 idempotency")
 	})
 
 	t.Run("GetUnknownFails", func(t *testing.T) {
 		store := factory()
-		if _, err := store.Get(context.Background(), "never-issued"); err == nil {
-			t.Error("Get = nil error, want error (unknown notification_id)")
-		}
+		testGetUnknownFails(t, func() error { _, err := store.Get(context.Background(), "never-issued"); return err }, "unknown notification_id")
 	})
 }
 
@@ -430,9 +444,7 @@ func TestDeferredTransactionStoreContract(t *testing.T, seed func(t *testing.T, 
 
 	t.Run("GetUnknownFails", func(t *testing.T) {
 		store := seed(t, "txn1", DeferredTransactionRecord{})
-		if _, err := store.Get(context.Background(), "never-seeded"); err == nil {
-			t.Error("Get = nil error, want error (unknown transaction_id)")
-		}
+		testGetUnknownFails(t, func() error { _, err := store.Get(context.Background(), "never-seeded"); return err }, "unknown transaction_id")
 	})
 
 	t.Run("InvalidateThenGetFails", func(t *testing.T) {
