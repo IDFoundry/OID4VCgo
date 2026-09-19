@@ -1,6 +1,7 @@
 package wallet_test
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -113,7 +114,7 @@ func TestPresentSDJWTVCSelectiveRejectsNonKeyPath(t *testing.T) {
 // family_name in the resulting vp_token.
 func TestPresentCredentialsTrimsToMatchedCredentialQuery(t *testing.T) {
 	fixture := newHeldSDJWTVCWithSelectivelyDisclosableClaims(t)
-	vpToken, err := wallet.PresentCredentials(wallet.PresentationRequest{
+	vpToken, err := wallet.PresentCredentials(context.Background(), wallet.PresentationRequest{
 		Query:       testPresentationQuery(t),
 		Credentials: []wallet.HeldCredential{fixture.held},
 		Audience:    "x509_hash:verifier",

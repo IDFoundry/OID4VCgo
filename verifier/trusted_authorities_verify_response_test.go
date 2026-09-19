@@ -44,7 +44,7 @@ func TestVerifyResponse_ChecksTrustedAuthorities_Accepts(t *testing.T) {
 		ExpectedNonce:      built.Nonce,
 		IssuerKeys:         fixedSDJWTVCIssuerKeyResolver{pub: &leafKey.PublicKey, alg: jose.ES256},
 		MaxKeyBindingAge:   time.Hour,
-		TrustedAuthorities: verifier.AKITrustedAuthoritiesChecker{},
+		TrustedAuthorities: dcql.AKITrustedAuthoritiesChecker{},
 	})
 	testverify.RequireOneCredential(t, result, err, "identity_credential")
 }
@@ -67,7 +67,7 @@ func TestVerifyResponse_ChecksTrustedAuthorities_RejectsWrongAKI(t *testing.T) {
 		ExpectedNonce:      built.Nonce,
 		IssuerKeys:         fixedSDJWTVCIssuerKeyResolver{pub: &leafKey.PublicKey, alg: jose.ES256},
 		MaxKeyBindingAge:   time.Hour,
-		TrustedAuthorities: verifier.AKITrustedAuthoritiesChecker{},
+		TrustedAuthorities: dcql.AKITrustedAuthoritiesChecker{},
 	})
 	if err == nil {
 		t.Fatalf("VerifyResponse = nil error, want error (aki does not match)")

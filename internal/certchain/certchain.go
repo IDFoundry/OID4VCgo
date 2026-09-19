@@ -17,6 +17,28 @@ import (
 	"fmt"
 )
 
+// X5CDERsFromHeader extracts header's own "x5c" member (RFC 7515
+// §4.1.6: a JSON array of standard-base64-encoded DER certificates,
+// leaf first) as raw DER bytes, requiring at least one entry —
+// promoted here (from a private copy verifier once kept to itself)
+// once wallet needed the identical logic to check a held credential's
+// own issuer chain against a Credential Query's own TrustedAuthorities
+// — see ARCHITECTURE.md's own stance on not sharing code across a
+// boundary until a second real consumer exists, the same reason
+// VerifyLeaf/DERsFromBase64 already live here rather than in one role
+// package.
+func X5CDERsFromHeader(header map[string]any) ([][]byte, error) {
+	raw, ok := header["x5c"]
+	if !ok {
+		return nil, fmt.Errorf("certchain: header has no x5c member")
+	}
+	entries, ok := raw.([]any)
+	if !ok || len(entries) == 0 {
+		return nil, fmt.Errorf("certchain: x5c header is not a non-empty array")
+	}
+	return DERsFromBase64(entries)
+}
+
 // VerifyLeaf parses ders (leaf first, then any intermediates — RFC
 // 7515 §4.1.6's own "x5c" ordering, which RFC 9360 §2's own "x5chain"
 // mirrors) and verifies the leaf against roots, rejecting a

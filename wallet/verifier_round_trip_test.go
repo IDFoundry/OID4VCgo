@@ -103,7 +103,7 @@ func presentAndParse(t *testing.T, v *verifier.Verifier, vpToken map[string][]st
 // only in which flow they exercise.
 func presentAndVerifySDJWTVC(t *testing.T, v *verifier.Verifier, query dcql.Query, fixture heldSDJWTVCFixture, audience, origin, nonce string, decryptionKey *ecdsa.PrivateKey) verifier.VerifiedCredential {
 	t.Helper()
-	vpToken, err := wallet.PresentCredentials(wallet.PresentationRequest{
+	vpToken, err := wallet.PresentCredentials(context.Background(), wallet.PresentationRequest{
 		Query:       query,
 		Credentials: []wallet.HeldCredential{fixture.held},
 		Audience:    audience, Origin: origin,
@@ -204,7 +204,7 @@ func TestWalletVerifierMdocPresentationRoundTrip(t *testing.T) {
 
 	f := testmdoc.Issue(t)
 	held := heldMdoc(t, f)
-	vpToken, err := wallet.PresentCredentials(wallet.PresentationRequest{
+	vpToken, err := wallet.PresentCredentials(context.Background(), wallet.PresentationRequest{
 		Query:                           query,
 		Credentials:                     []wallet.HeldCredential{held},
 		Audience:                        built.ClientID,

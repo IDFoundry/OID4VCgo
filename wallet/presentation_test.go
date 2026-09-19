@@ -1,6 +1,7 @@
 package wallet_test
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"encoding/json"
 	"testing"
@@ -60,14 +61,22 @@ func newHeldSDJWTVC(t *testing.T) heldSDJWTVCFixture {
 // to trim from).
 func newHeldSDJWTVCWithAdditional(t *testing.T, additional map[string]any) heldSDJWTVCFixture {
 	t.Helper()
-	issuerKey := testP256Key(t)
+	return newHeldSDJWTVCWithOpts(t, testP256Key(t), sdjwtvc.IssueOptions{}, additional)
+}
+
+// newHeldSDJWTVCWithOpts is newHeldSDJWTVCWithAdditional's own twin
+// taking a caller-supplied issuerKey and a full sdjwtvc.IssueOptions —
+// e.g. IssuerCertificate, for a test whose held credential needs a
+// real "x5c" header (see TestMatchDCQLQuery_ChecksTrustedAuthorities_*).
+func newHeldSDJWTVCWithOpts(t *testing.T, issuerKey *ecdsa.PrivateKey, opts sdjwtvc.IssueOptions, additional map[string]any) heldSDJWTVCFixture {
+	t.Helper()
 	holderKey := testP256Key(t)
 	holderJWK := presentationJWKMap(t, &holderKey.PublicKey)
 	sdjwt, _, err := sdjwtvc.Issue(issuerKey, jose.ES256, sdjwtvc.Claims{
 		VCT:        testPresentationVCT,
 		CNF:        map[string]any{"jwk": holderJWK},
 		Additional: additional,
-	}, sdjwtvc.IssueOptions{})
+	}, opts)
 	if err != nil {
 		t.Fatalf("Issue: %v", err)
 	}
@@ -95,7 +104,7 @@ func testPresentationQuery(t *testing.T) dcql.Query {
 // only in which query is asked.
 func matchesOneCredential(t *testing.T, query dcql.Query, fixture heldSDJWTVCFixture) {
 	t.Helper()
-	matches, err := wallet.MatchDCQLQuery(query, []wallet.HeldCredential{fixture.held})
+	matches, err := wallet.MatchDCQLQuery(context.Background(), query, []wallet.HeldCredential{fixture.held}, nil)
 	if err != nil {
 		t.Fatalf("MatchDCQLQuery: %v", err)
 	}
@@ -109,7 +118,7 @@ func TestMatchDCQLQuery(t *testing.T) {
 }
 
 func TestMatchDCQLQueryRejectsNoCandidate(t *testing.T) {
-	if _, err := wallet.MatchDCQLQuery(testPresentationQuery(t), nil); err == nil {
+	if _, err := wallet.MatchDCQLQuery(context.Background(), testPresentationQuery(t), nil, nil); err == nil {
 		t.Fatalf("MatchDCQLQuery = nil error, want error")
 	}
 }
@@ -118,7 +127,7 @@ func TestMatchDCQLQueryRejectsWrongVCT(t *testing.T) {
 	fixture := newHeldSDJWTVC(t)
 	meta := testverify.MustSDJWTVCMeta(t, "https://credentials.example.com/some_other_credential")
 	query := dcql.Query{Credentials: []dcql.CredentialQuery{{ID: "x", Format: sdjwtvc.CredentialFormat, Meta: meta}}}
-	if _, err := wallet.MatchDCQLQuery(query, []wallet.HeldCredential{fixture.held}); err == nil {
+	if _, err := wallet.MatchDCQLQuery(context.Background(), query, []wallet.HeldCredential{fixture.held}, nil); err == nil {
 		t.Fatalf("MatchDCQLQuery = nil error, want error")
 	}
 }
@@ -139,7 +148,7 @@ func TestMatchDCQLQueryRejectsWhenNoClaimSetOptionSatisfied(t *testing.T) {
 		Claims:    []dcql.ClaimsQuery{{ID: "no_such_claim", Path: dcql.Path{dcql.PathKey("no_such_claim")}}},
 		ClaimSets: [][]string{{"no_such_claim"}},
 	}}}
-	if _, err := wallet.MatchDCQLQuery(query, []wallet.HeldCredential{fixture.held}); err == nil {
+	if _, err := wallet.MatchDCQLQuery(context.Background(), query, []wallet.HeldCredential{fixture.held}, nil); err == nil {
 		t.Fatalf("MatchDCQLQuery = nil error, want error")
 	}
 }
@@ -173,7 +182,7 @@ func TestMatchDCQLQueryCredentialSetsPrefersFirstSatisfiableOption(t *testing.T)
 		Credentials:    twoVCTCredentials(t, "primary", otherVCT, "secondary", testPresentationVCT),
 		CredentialSets: []dcql.CredentialSetQuery{{Options: [][]string{{"primary"}, {"secondary"}}}},
 	}
-	matches, err := wallet.MatchDCQLQuery(query, []wallet.HeldCredential{fixture.held})
+	matches, err := wallet.MatchDCQLQuery(context.Background(), query, []wallet.HeldCredential{fixture.held}, nil)
 	if err != nil {
 		t.Fatalf("MatchDCQLQuery: %v", err)
 	}
@@ -196,7 +205,7 @@ func TestMatchDCQLQueryCredentialSetsOmitsUnsatisfiedOptionalSet(t *testing.T) {
 			{Required: &falseVal, Options: [][]string{{"optional_cq"}}},
 		},
 	}
-	matches, err := wallet.MatchDCQLQuery(query, []wallet.HeldCredential{fixture.held})
+	matches, err := wallet.MatchDCQLQuery(context.Background(), query, []wallet.HeldCredential{fixture.held}, nil)
 	if err != nil {
 		t.Fatalf("MatchDCQLQuery: %v", err)
 	}
@@ -219,7 +228,7 @@ func TestMatchDCQLQueryCredentialSetsFailsWhenRequiredSetUnsatisfied(t *testing.
 			{Options: [][]string{{"satisfiable_cq"}}},
 		},
 	}
-	if _, err := wallet.MatchDCQLQuery(query, []wallet.HeldCredential{fixture.held}); err == nil {
+	if _, err := wallet.MatchDCQLQuery(context.Background(), query, []wallet.HeldCredential{fixture.held}, nil); err == nil {
 		t.Fatalf("MatchDCQLQuery = nil error, want error")
 	}
 }
@@ -243,7 +252,7 @@ func multipleIdentityCredentialQuery(t *testing.T) dcql.Query {
 func TestMatchDCQLQueryMultipleReturnsAllCandidates(t *testing.T) {
 	fixtureA := newHeldSDJWTVC(t)
 	fixtureB := newHeldSDJWTVC(t)
-	matches, err := wallet.MatchDCQLQuery(multipleIdentityCredentialQuery(t), []wallet.HeldCredential{fixtureA.held, fixtureB.held})
+	matches, err := wallet.MatchDCQLQuery(context.Background(), multipleIdentityCredentialQuery(t), []wallet.HeldCredential{fixtureA.held, fixtureB.held}, nil)
 	if err != nil {
 		t.Fatalf("MatchDCQLQuery: %v", err)
 	}
@@ -259,7 +268,7 @@ func TestMatchDCQLQueryMultipleReturnsAllCandidates(t *testing.T) {
 func TestMatchDCQLQueryWithoutMultipleReturnsOnlyOneCandidate(t *testing.T) {
 	fixtureA := newHeldSDJWTVC(t)
 	fixtureB := newHeldSDJWTVC(t)
-	matches, err := wallet.MatchDCQLQuery(testPresentationQuery(t), []wallet.HeldCredential{fixtureA.held, fixtureB.held})
+	matches, err := wallet.MatchDCQLQuery(context.Background(), testPresentationQuery(t), []wallet.HeldCredential{fixtureA.held, fixtureB.held}, nil)
 	if err != nil {
 		t.Fatalf("MatchDCQLQuery: %v", err)
 	}
@@ -269,7 +278,7 @@ func TestMatchDCQLQueryWithoutMultipleReturnsOnlyOneCandidate(t *testing.T) {
 }
 
 func TestMatchDCQLQueryRejectsInvalidQuery(t *testing.T) {
-	if _, err := wallet.MatchDCQLQuery(dcql.Query{}, nil); err == nil {
+	if _, err := wallet.MatchDCQLQuery(context.Background(), dcql.Query{}, nil, nil); err == nil {
 		t.Fatalf("MatchDCQLQuery = nil error, want error")
 	}
 }
@@ -325,7 +334,7 @@ func assertPresentedSDJWTVC(t *testing.T, presented string, fixture heldSDJWTVCF
 // audience/origin they pass.
 func presentIdentityCredential(t *testing.T, fixture heldSDJWTVCFixture, audience, origin string) map[string][]string {
 	t.Helper()
-	vpToken, err := wallet.PresentCredentials(wallet.PresentationRequest{
+	vpToken, err := wallet.PresentCredentials(context.Background(), wallet.PresentationRequest{
 		Query:       testPresentationQuery(t),
 		Credentials: []wallet.HeldCredential{fixture.held},
 		Audience:    audience, Origin: origin,
@@ -364,7 +373,7 @@ func TestPresentCredentialsDCAPI(t *testing.T) {
 func TestPresentCredentialsMultiple(t *testing.T) {
 	fixtureA := newHeldSDJWTVC(t)
 	fixtureB := newHeldSDJWTVC(t)
-	vpToken, err := wallet.PresentCredentials(wallet.PresentationRequest{
+	vpToken, err := wallet.PresentCredentials(context.Background(), wallet.PresentationRequest{
 		Query:       multipleIdentityCredentialQuery(t),
 		Credentials: []wallet.HeldCredential{fixtureA.held, fixtureB.held},
 		Audience:    "x509_hash:verifier",
@@ -386,7 +395,7 @@ func TestPresentCredentialsRejectsMissingAudienceOrNonce(t *testing.T) {
 	}
 	for name, req := range cases {
 		t.Run(name, func(t *testing.T) {
-			if _, err := wallet.PresentCredentials(req); err == nil {
+			if _, err := wallet.PresentCredentials(context.Background(), req); err == nil {
 				t.Fatalf("PresentCredentials(%s) = nil error, want error", name)
 			}
 		})

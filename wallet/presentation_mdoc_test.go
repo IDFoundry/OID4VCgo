@@ -1,6 +1,7 @@
 package wallet_test
 
 import (
+	"context"
 	"encoding/base64"
 	"testing"
 
@@ -30,7 +31,7 @@ func heldMdoc(t *testing.T, f testmdoc.Fixture) wallet.HeldCredential {
 func TestMatchDCQLQueryMdoc(t *testing.T) {
 	f := testmdoc.Issue(t)
 	held := heldMdoc(t, f)
-	matches, err := wallet.MatchDCQLQuery(testmdoc.Query(t), []wallet.HeldCredential{held})
+	matches, err := wallet.MatchDCQLQuery(context.Background(), testmdoc.Query(t), []wallet.HeldCredential{held}, nil)
 	if err != nil {
 		t.Fatalf("MatchDCQLQuery: %v", err)
 	}
@@ -47,7 +48,7 @@ func TestMatchDCQLQueryMdocRejectsWrongDoctype(t *testing.T) {
 		t.Fatalf("NewMdocMeta: %v", err)
 	}
 	query := dcql.Query{Credentials: []dcql.CredentialQuery{{ID: "x", Format: mdoc.CredentialFormat, Meta: meta}}}
-	if _, err := wallet.MatchDCQLQuery(query, []wallet.HeldCredential{held}); err == nil {
+	if _, err := wallet.MatchDCQLQuery(context.Background(), query, []wallet.HeldCredential{held}, nil); err == nil {
 		t.Fatalf("MatchDCQLQuery = nil error, want error")
 	}
 }
