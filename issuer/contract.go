@@ -59,112 +59,86 @@ func runConcurrently(attempts int, fn func() bool) int {
 // call — its subtests share nothing between them.
 func TestNonceStoreContract(t *testing.T, factory func() NonceStore) {
 	t.Helper()
-
-	t.Run("IssueAndConsume", func(t *testing.T) {
+	testAtomicNonceContract(t, func() (issue func(nonce string, expiresAt time.Time) error, consume func(nonce string) (time.Time, error)) {
 		store := factory()
 		ctx := context.Background()
-		exp := time.Now().Add(time.Minute).Truncate(time.Second)
-		if err := store.Issue(ctx, NonceIssuance{Nonce: "n1", ExpiresAt: exp}); err != nil {
-			t.Fatalf("Issue: %v", err)
-		}
-		got, err := store.Consume(ctx, NonceConsumption{Nonce: "n1"})
-		if err != nil {
-			t.Fatalf("Consume: %v", err)
-		}
-		if !got.ExpiresAt.Equal(exp) {
-			t.Errorf("ExpiresAt = %v, want %v", got.ExpiresAt, exp)
-		}
-	})
-
-	t.Run("ConsumeIsSingleUse", func(t *testing.T) {
-		store := factory()
-		ctx := context.Background()
-		if err := store.Issue(ctx, NonceIssuance{Nonce: "n1", ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
-			t.Fatalf("Issue: %v", err)
-		}
-		if _, err := store.Consume(ctx, NonceConsumption{Nonce: "n1"}); err != nil {
-			t.Fatalf("first Consume: %v", err)
-		}
-		if _, err := store.Consume(ctx, NonceConsumption{Nonce: "n1"}); err == nil {
-			t.Error("second Consume = nil error, want error (nonce already consumed)")
-		}
-	})
-
-	t.Run("ConsumeUnknownFails", func(t *testing.T) {
-		store := factory()
-		if _, err := store.Consume(context.Background(), NonceConsumption{Nonce: "never-issued"}); err == nil {
-			t.Error("Consume = nil error, want error (unknown nonce)")
-		}
-	})
-
-	t.Run("ConcurrentConsumeHasExactlyOneWinner", func(t *testing.T) {
-		store := factory()
-		ctx := context.Background()
-		if err := store.Issue(ctx, NonceIssuance{Nonce: "n1", ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
-			t.Fatalf("Issue: %v", err)
-		}
-		wins := runConcurrently(contractConcurrentAttempts, func() bool {
-			_, err := store.Consume(ctx, NonceConsumption{Nonce: "n1"})
-			return err == nil
-		})
-		if wins != 1 {
-			t.Errorf("concurrent Consume: %d winners, want exactly 1", wins)
-		}
+		return func(nonce string, exp time.Time) error {
+				return store.Issue(ctx, NonceIssuance{Nonce: nonce, ExpiresAt: exp})
+			}, func(nonce string) (time.Time, error) {
+				r, err := store.Consume(ctx, NonceConsumption{Nonce: nonce})
+				return r.ExpiresAt, err
+			}
 	})
 }
 
 // TestDPoPNonceStoreContract is TestNonceStoreContract's own twin for
 // DPoPNonceStore — see that function's doc comment; the two stores
 // share an identical contract shape (Issue once, Consume atomically
-// retires).
+// retires), differing only in the concrete Issuance/Consumption/Record
+// types wrapping an identical Nonce/ExpiresAt pair.
 func TestDPoPNonceStoreContract(t *testing.T, factory func() DPoPNonceStore) {
+	t.Helper()
+	testAtomicNonceContract(t, func() (issue func(nonce string, expiresAt time.Time) error, consume func(nonce string) (time.Time, error)) {
+		store := factory()
+		ctx := context.Background()
+		return func(nonce string, exp time.Time) error {
+				return store.Issue(ctx, DPoPNonceIssuance{Nonce: nonce, ExpiresAt: exp})
+			}, func(nonce string) (time.Time, error) {
+				r, err := store.Consume(ctx, DPoPNonceConsumption{Nonce: nonce})
+				return r.ExpiresAt, err
+			}
+	})
+}
+
+// testAtomicNonceContract runs the shared checks TestNonceStoreContract
+// and TestDPoPNonceStoreContract both need against newAdapter, which
+// must build a fresh issue/consume pair (backed by a fresh, empty
+// store) each time it's called.
+func testAtomicNonceContract(t *testing.T, newAdapter func() (issue func(nonce string, expiresAt time.Time) error, consume func(nonce string) (time.Time, error))) {
 	t.Helper()
 
 	t.Run("IssueAndConsume", func(t *testing.T) {
-		store := factory()
-		ctx := context.Background()
+		issue, consume := newAdapter()
 		exp := time.Now().Add(time.Minute).Truncate(time.Second)
-		if err := store.Issue(ctx, DPoPNonceIssuance{Nonce: "n1", ExpiresAt: exp}); err != nil {
+		if err := issue("n1", exp); err != nil {
 			t.Fatalf("Issue: %v", err)
 		}
-		got, err := store.Consume(ctx, DPoPNonceConsumption{Nonce: "n1"})
+		got, err := consume("n1")
 		if err != nil {
 			t.Fatalf("Consume: %v", err)
 		}
-		if !got.ExpiresAt.Equal(exp) {
-			t.Errorf("ExpiresAt = %v, want %v", got.ExpiresAt, exp)
+		if !got.Equal(exp) {
+			t.Errorf("ExpiresAt = %v, want %v", got, exp)
 		}
 	})
 
 	t.Run("ConsumeIsSingleUse", func(t *testing.T) {
-		store := factory()
-		ctx := context.Background()
-		if err := store.Issue(ctx, DPoPNonceIssuance{Nonce: "n1", ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
+		issue, consume := newAdapter()
+		if err := issue("n1", time.Now().Add(time.Minute)); err != nil {
 			t.Fatalf("Issue: %v", err)
 		}
-		if _, err := store.Consume(ctx, DPoPNonceConsumption{Nonce: "n1"}); err != nil {
+		if _, err := consume("n1"); err != nil {
 			t.Fatalf("first Consume: %v", err)
 		}
-		if _, err := store.Consume(ctx, DPoPNonceConsumption{Nonce: "n1"}); err == nil {
+		if _, err := consume("n1"); err == nil {
 			t.Error("second Consume = nil error, want error (nonce already consumed)")
 		}
 	})
 
 	t.Run("ConsumeUnknownFails", func(t *testing.T) {
-		store := factory()
-		if _, err := store.Consume(context.Background(), DPoPNonceConsumption{Nonce: "never-issued"}); err == nil {
+		_, consume := newAdapter()
+		if _, err := consume("never-issued"); err == nil {
 			t.Error("Consume = nil error, want error (unknown nonce)")
 		}
 	})
 
 	t.Run("ConcurrentConsumeHasExactlyOneWinner", func(t *testing.T) {
-		store := factory()
-		ctx := context.Background()
-		if err := store.Issue(ctx, DPoPNonceIssuance{Nonce: "n1", ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
+		issue, consume := newAdapter()
+		if err := issue("n1", time.Now().Add(time.Minute)); err != nil {
 			t.Fatalf("Issue: %v", err)
 		}
 		wins := runConcurrently(contractConcurrentAttempts, func() bool {
-			_, err := store.Consume(ctx, DPoPNonceConsumption{Nonce: "n1"})
+			_, err := consume("n1")
 			return err == nil
 		})
 		if wins != 1 {

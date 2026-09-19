@@ -116,25 +116,48 @@ func contractSelfSignedLeaf(t *testing.T, commonName string) *x509.Certificate {
 // and doesn't claim to cover.
 func TestX5CTrustContract(t *testing.T, factory func(roots *x509.CertPool) SDJWTVCIssuerKeyResolver) {
 	t.Helper()
-	ctx := context.Background()
-
-	header := func(certs ...*x509.Certificate) map[string]any {
+	testCertChainTrustContract(t, func(roots *x509.CertPool, certs ...*x509.Certificate) error {
 		entries := make([]any, len(certs))
 		for i, c := range certs {
 			entries[i] = base64.StdEncoding.EncodeToString(c.Raw)
 		}
-		return map[string]any{"x5c": entries}
-	}
+		_, _, err := factory(roots).ResolveIssuerKey(context.Background(), map[string]any{"x5c": entries}, nil)
+		return err
+	})
+}
+
+// TestX5ChainTrustContract is TestX5CTrustContract's own twin for a
+// x5chain-based MdocIssuerKeyResolver — see this file's own
+// package-level note.
+func TestX5ChainTrustContract(t *testing.T, factory func(roots *x509.CertPool) MdocIssuerKeyResolver) {
+	t.Helper()
+	testCertChainTrustContract(t, func(roots *x509.CertPool, certs ...*x509.Certificate) error {
+		chain := make([][]byte, len(certs))
+		for i, c := range certs {
+			chain[i] = c.Raw
+		}
+		_, _, err := factory(roots).ResolveMdocIssuerKey(context.Background(), chain, "org.iso.18013.5.1.mDL")
+		return err
+	})
+}
+
+// testCertChainTrustContract runs the shared checks
+// TestX5CTrustContract and TestX5ChainTrustContract both need against
+// resolve, which must present certs (leaf first) to a resolver built
+// with roots and report whatever error (if any) it returned —
+// hiding the one thing that differs between an x5c (JSON+base64
+// header member) and an x5chain (raw DER byte slices) resolver.
+func testCertChainTrustContract(t *testing.T, resolve func(roots *x509.CertPool, certs ...*x509.Certificate) error) {
+	t.Helper()
 
 	t.Run("AcceptsCASignedLeaf", func(t *testing.T) {
 		ca, caKey := contractCA(t, "test-ca")
 		leaf := contractLeaf(t, "test-leaf", ca, caKey)
 		roots := x509.NewCertPool()
 		roots.AddCert(ca)
-		resolver := factory(roots)
 
-		if _, _, err := resolver.ResolveIssuerKey(ctx, header(leaf), nil); err != nil {
-			t.Errorf("ResolveIssuerKey: %v, want a CA-signed leaf to be accepted", err)
+		if err := resolve(roots, leaf); err != nil {
+			t.Errorf("resolve: %v, want a CA-signed leaf to be accepted", err)
 		}
 	})
 
@@ -142,10 +165,9 @@ func TestX5CTrustContract(t *testing.T, factory func(roots *x509.CertPool) SDJWT
 		leaf := contractSelfSignedLeaf(t, "test-leaf")
 		roots := x509.NewCertPool()
 		roots.AddCert(leaf) // the self-signed leaf is itself a configured root.
-		resolver := factory(roots)
 
-		if _, _, err := resolver.ResolveIssuerKey(ctx, header(leaf), nil); err == nil {
-			t.Error("ResolveIssuerKey = nil error, want a self-signed leaf to be rejected even when it is itself a trust anchor")
+		if err := resolve(roots, leaf); err == nil {
+			t.Error("resolve = nil error, want a self-signed leaf to be rejected even when it is itself a trust anchor")
 		}
 	})
 
@@ -155,62 +177,9 @@ func TestX5CTrustContract(t *testing.T, factory func(roots *x509.CertPool) SDJWT
 		untrustedCA, _ := contractCA(t, "untrusted-ca")
 		roots := x509.NewCertPool()
 		roots.AddCert(untrustedCA) // does not chain to the leaf's own issuer.
-		resolver := factory(roots)
 
-		if _, _, err := resolver.ResolveIssuerKey(ctx, header(leaf), nil); err == nil {
-			t.Error("ResolveIssuerKey = nil error, want a chain that doesn't validate against roots to be rejected")
-		}
-	})
-}
-
-// TestX5ChainTrustContract is TestX5CTrustContract's own twin for a
-// x5chain-based MdocIssuerKeyResolver — see this file's own
-// package-level note.
-func TestX5ChainTrustContract(t *testing.T, factory func(roots *x509.CertPool) MdocIssuerKeyResolver) {
-	t.Helper()
-	ctx := context.Background()
-
-	x5chain := func(certs ...*x509.Certificate) [][]byte {
-		out := make([][]byte, len(certs))
-		for i, c := range certs {
-			out[i] = c.Raw
-		}
-		return out
-	}
-
-	t.Run("AcceptsCASignedLeaf", func(t *testing.T) {
-		ca, caKey := contractCA(t, "test-ca")
-		leaf := contractLeaf(t, "test-leaf", ca, caKey)
-		roots := x509.NewCertPool()
-		roots.AddCert(ca)
-		resolver := factory(roots)
-
-		if _, _, err := resolver.ResolveMdocIssuerKey(ctx, x5chain(leaf), "org.iso.18013.5.1.mDL"); err != nil {
-			t.Errorf("ResolveMdocIssuerKey: %v, want a CA-signed leaf to be accepted", err)
-		}
-	})
-
-	t.Run("RejectsSelfSignedLeafEvenIfTrusted", func(t *testing.T) {
-		leaf := contractSelfSignedLeaf(t, "test-leaf")
-		roots := x509.NewCertPool()
-		roots.AddCert(leaf)
-		resolver := factory(roots)
-
-		if _, _, err := resolver.ResolveMdocIssuerKey(ctx, x5chain(leaf), "org.iso.18013.5.1.mDL"); err == nil {
-			t.Error("ResolveMdocIssuerKey = nil error, want a self-signed leaf to be rejected even when it is itself a trust anchor")
-		}
-	})
-
-	t.Run("RejectsUntrustedChain", func(t *testing.T) {
-		ca, caKey := contractCA(t, "test-ca")
-		leaf := contractLeaf(t, "test-leaf", ca, caKey)
-		untrustedCA, _ := contractCA(t, "untrusted-ca")
-		roots := x509.NewCertPool()
-		roots.AddCert(untrustedCA)
-		resolver := factory(roots)
-
-		if _, _, err := resolver.ResolveMdocIssuerKey(ctx, x5chain(leaf), "org.iso.18013.5.1.mDL"); err == nil {
-			t.Error("ResolveMdocIssuerKey = nil error, want a chain that doesn't validate against roots to be rejected")
+		if err := resolve(roots, leaf); err == nil {
+			t.Error("resolve = nil error, want a chain that doesn't validate against roots to be rejected")
 		}
 	})
 }
