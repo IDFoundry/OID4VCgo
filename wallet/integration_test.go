@@ -316,6 +316,7 @@ func newPreAuthorizedRoundTripFixture(t *testing.T, configure func(cfg *issuer.C
 
 	preAuthorizedCodes := storage.NewPreAuthorizedCodeStore()
 	cfg := issuer.Config{
+		Assurance: issuer.AssuranceDevelopment,
 		Issuer:    issuerURL,
 		Endpoints: issuer.Endpoints{Credential: credentialEndpoint},
 		Limits:    issuer.Limits{AccessTokenLifetime: 5 * time.Minute, MaxDPoPProofAge: time.Minute},
@@ -629,7 +630,8 @@ func TestWalletIssuerDeferredAndNotificationRoundTrip(t *testing.T) {
 	notifications := storage.NewNotificationStore()
 
 	iss, err := issuer.New(issuer.Config{
-		Issuer: issuerURL,
+		Assurance: issuer.AssuranceDevelopment,
+		Issuer:    issuerURL,
 		Endpoints: issuer.Endpoints{
 			Credential:         credentialEndpoint,
 			DeferredCredential: deferredEndpoint,
@@ -760,7 +762,8 @@ func newWalletIssuerRoundTripFixture(
 	deps.SDJWTSigner = &issuer.SDJWTSigner{Signer: issuerSigner, Alg: jose.ES256}
 
 	cfg := issuer.Config{
-		Issuer: issuerURL,
+		Assurance: issuer.AssuranceDevelopment,
+		Issuer:    issuerURL,
 		Endpoints: issuer.Endpoints{
 			Credential: credentialEndpoint,
 			Nonce:      nonceEndpoint,

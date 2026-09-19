@@ -94,7 +94,8 @@ func newCredentialEndpointFixture(t *testing.T, mutate ...func(cfg *issuer.Confi
 	now := time.Now()
 
 	cfg := issuer.Config{
-		Issuer: mustIssuerURL(t, testIssuer),
+		Assurance: issuer.AssuranceDevelopment,
+		Issuer:    mustIssuerURL(t, testIssuer),
 		Endpoints: issuer.Endpoints{
 			Credential: mustEndpointURL(t, testCredentialEndpoint),
 			Nonce:      mustEndpointURL(t, testNonceEndpoint),
@@ -769,7 +770,8 @@ func TestRequestCredential_RejectsAttestationFromUntrustedSigner(t *testing.T) {
 func TestRequestCredential_RejectsUnboundConfig(t *testing.T) {
 	f := newCredentialEndpointFixture(t)
 	cfg := issuer.Config{
-		Issuer: mustIssuerURL(t, testIssuer),
+		Assurance: issuer.AssuranceDevelopment,
+		Issuer:    mustIssuerURL(t, testIssuer),
 		Endpoints: issuer.Endpoints{
 			Credential: mustEndpointURL(t, testCredentialEndpoint),
 			Nonce:      mustEndpointURL(t, testNonceEndpoint),
@@ -796,7 +798,8 @@ func TestRequestCredential_RejectsUnboundConfig(t *testing.T) {
 func TestRequestCredential_RejectsUnsupportedFormat(t *testing.T) {
 	f := newCredentialEndpointFixture(t)
 	cfg := issuer.Config{
-		Issuer: mustIssuerURL(t, testIssuer),
+		Assurance: issuer.AssuranceDevelopment,
+		Issuer:    mustIssuerURL(t, testIssuer),
 		Endpoints: issuer.Endpoints{
 			Credential: mustEndpointURL(t, testCredentialEndpoint),
 			Nonce:      mustEndpointURL(t, testNonceEndpoint),
@@ -889,7 +892,8 @@ func TestRequestCredential_RejectsAttestationProofTypeWhenUnconfigured(t *testin
 func TestRequestCredential_RejectsProofTypeThisPackageDoesNotImplement(t *testing.T) {
 	f := newCredentialEndpointFixture(t)
 	cfg := issuer.Config{
-		Issuer: mustIssuerURL(t, testIssuer),
+		Assurance: issuer.AssuranceDevelopment,
+		Issuer:    mustIssuerURL(t, testIssuer),
 		Endpoints: issuer.Endpoints{
 			Credential: mustEndpointURL(t, testCredentialEndpoint),
 			Nonce:      mustEndpointURL(t, testNonceEndpoint),

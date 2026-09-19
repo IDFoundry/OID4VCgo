@@ -237,6 +237,7 @@ func newServerMux(cfg Config) (*http.ServeMux, error) {
 	}
 
 	iss, err := issuer.New(issuer.Config{
+		Assurance:               issuer.AssuranceDevelopment,
 		Issuer:                  issuerURL,
 		Endpoints:               issuer.Endpoints{Credential: credentialURL, Nonce: nonceURL},
 		Limits:                  issuer.Limits{NonceLifetime: limits.MaxDPoPProofAge},

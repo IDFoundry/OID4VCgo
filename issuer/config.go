@@ -92,6 +92,13 @@ type Limits struct {
 
 // Config is this issuer's immutable configuration.
 type Config struct {
+	// Assurance gates how strict New's own validation is — see
+	// AssuranceLevel's own doc comment. REQUIRED: New rejects the Go
+	// zero value, forcing every caller to make an explicit choice
+	// rather than silently getting AssuranceDevelopment's weaker
+	// checks by omission.
+	Assurance AssuranceLevel
+
 	// Issuer is this Credential Issuer's identifier (§12.2.1) — the
 	// value Metadata's own credential_issuer member echoes.
 	Issuer fapi.URL
@@ -340,6 +347,9 @@ type Issuer struct {
 
 // New validates cfg and deps and returns a ready-to-use Issuer.
 func New(cfg Config, deps Dependencies) (*Issuer, error) {
+	if cfg.Assurance != AssuranceDevelopment && cfg.Assurance != AssuranceProduction {
+		return nil, fmt.Errorf("issuer: config: assurance level is invalid")
+	}
 	if cfg.Issuer.IsZero() {
 		return nil, fmt.Errorf("issuer: config: issuer is required")
 	}
@@ -434,6 +444,12 @@ func New(cfg Config, deps Dependencies) (*Issuer, error) {
 	}
 	if err := cfg.ResponseEncryption.validate(); err != nil {
 		return nil, fmt.Errorf("issuer: config: response_encryption: %w", err)
+	}
+
+	if cfg.Assurance == AssuranceProduction {
+		if err := checkProductionStoreAssurance(cfg, deps); err != nil {
+			return nil, fmt.Errorf("issuer: %w", err)
+		}
 	}
 
 	return &Issuer{cfg: cfg, deps: deps}, nil

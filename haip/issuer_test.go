@@ -65,6 +65,7 @@ func mustHAIPEndpointURL(t *testing.T, raw string) fapi.URL {
 
 func TestValidateIssuerConfig_Accepts(t *testing.T) {
 	cfg := issuer.Config{
+		Assurance: issuer.AssuranceDevelopment,
 		Endpoints: issuer.Endpoints{Nonce: mustHAIPEndpointURL(t, "https://issuer.example.com/nonce")},
 		CredentialConfigurationsSupported: map[string]issuer.CredentialConfiguration{
 			"IdentityCredential": {
@@ -83,6 +84,7 @@ func TestValidateIssuerConfig_Accepts(t *testing.T) {
 
 func TestValidateIssuerConfig_RejectsMissingScope(t *testing.T) {
 	cfg := issuer.Config{
+		Assurance: issuer.AssuranceDevelopment,
 		CredentialConfigurationsSupported: map[string]issuer.CredentialConfiguration{
 			"IdentityCredential": {},
 		},
@@ -94,6 +96,7 @@ func TestValidateIssuerConfig_RejectsMissingScope(t *testing.T) {
 
 func TestValidateIssuerConfig_RejectsKeyBindingWithoutNonceEndpoint(t *testing.T) {
 	cfg := issuer.Config{
+		Assurance: issuer.AssuranceDevelopment,
 		CredentialConfigurationsSupported: map[string]issuer.CredentialConfiguration{
 			"IdentityCredential": {
 				Scope:                                "identity_credential",

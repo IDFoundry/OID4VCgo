@@ -62,7 +62,8 @@ func TestRecommendedIssuerConfigWorksWithIssuerNew(t *testing.T) {
 
 	rec := haip.RecommendedIssuerConfig()
 	cfg := issuer.Config{
-		Issuer: issuerURL,
+		Assurance: issuer.AssuranceDevelopment,
+		Issuer:    issuerURL,
 		Endpoints: issuer.Endpoints{
 			Credential: credentialEndpoint,
 			Nonce:      nonceEndpoint,

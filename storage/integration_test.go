@@ -65,7 +65,8 @@ func TestStoresSatisfyIssuerDependencies(t *testing.T) {
 	}
 
 	_, err = issuer.New(issuer.Config{
-		Issuer: issuerURL,
+		Assurance: issuer.AssuranceDevelopment,
+		Issuer:    issuerURL,
 		Endpoints: issuer.Endpoints{
 			Credential:         credentialEndpoint,
 			Nonce:              nonceEndpoint,
