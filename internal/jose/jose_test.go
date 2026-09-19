@@ -146,3 +146,66 @@ func TestDecodeUnverified(t *testing.T) {
 		t.Errorf("payload = %s", payload)
 	}
 }
+
+func TestVerifyRejectsOversizedCompact(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	compact, err := Sign(ES256, key, nil, make([]byte, MaxCompactBytes))
+	if err != nil {
+		t.Fatalf("Sign: %v", err)
+	}
+	if len(compact) <= MaxCompactBytes {
+		t.Fatalf("compact is %d bytes, want > MaxCompactBytes (%d)", len(compact), MaxCompactBytes)
+	}
+
+	if _, _, err := Verify(ES256, &key.PublicKey, compact); err == nil {
+		t.Error("Verify = nil error, want error (oversized compact JWS)")
+	}
+	if _, _, err := DecodeUnverified(compact); err == nil {
+		t.Error("DecodeUnverified = nil error, want error (oversized compact JWS)")
+	}
+
+	// VerifyMax/DecodeUnverifiedMax with a raised ceiling accept the
+	// same input Verify/DecodeUnverified reject.
+	if _, _, err := VerifyMax(ES256, &key.PublicKey, compact, len(compact)); err != nil {
+		t.Errorf("VerifyMax with a raised ceiling: %v", err)
+	}
+	if _, _, err := DecodeUnverifiedMax(compact, len(compact)); err != nil {
+		t.Errorf("DecodeUnverifiedMax with a raised ceiling: %v", err)
+	}
+}
+
+func TestVerifyRejectsCriticalExtension(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	compact, err := Sign(ES256, key, map[string]any{"crit": []string{"exp"}, "exp": 1}, []byte(`{}`))
+	if err != nil {
+		t.Fatalf("Sign: %v", err)
+	}
+
+	if _, _, err := Verify(ES256, &key.PublicKey, compact); err == nil {
+		t.Error("Verify = nil error, want error (unrecognized crit extension)")
+	}
+	if _, _, err := DecodeUnverified(compact); err == nil {
+		t.Error("DecodeUnverified = nil error, want error (unrecognized crit extension)")
+	}
+}
+
+func TestVerifyAcceptsEmptyCrit(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	compact, err := Sign(ES256, key, map[string]any{"crit": []string{}}, []byte(`{}`))
+	if err != nil {
+		t.Fatalf("Sign: %v", err)
+	}
+
+	if _, _, err := Verify(ES256, &key.PublicKey, compact); err != nil {
+		t.Errorf("Verify: %v", err)
+	}
+}

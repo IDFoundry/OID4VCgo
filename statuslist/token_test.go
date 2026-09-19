@@ -58,6 +58,38 @@ func TestIssueVerifyToken(t *testing.T) {
 	}
 }
 
+// TestVerifyToken_AcceptsLargerThanJoseDefault proves VerifyToken
+// actually passes its own maxTokenBytes through to jose.VerifyMax
+// rather than falling back to jose.Verify's smaller
+// jose.MaxCompactBytes default — a token whose Additional claims push
+// it past that default (but still comfortably under maxTokenBytes)
+// must still verify.
+func TestVerifyToken_AcceptsLargerThanJoseDefault(t *testing.T) {
+	key := testKey(t)
+	sl, err := New(Bits1, []uint8{0}, "")
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	claims := TokenClaims{
+		Sub:        "https://example.com/statuslists/1",
+		Iat:        time.Now().Unix(),
+		StatusList: sl,
+		Additional: map[string]any{"padding": string(make([]byte, jose.MaxCompactBytes))},
+	}
+
+	token, err := IssueToken(key, jose.ES256, claims, "")
+	if err != nil {
+		t.Fatalf("IssueToken: %v", err)
+	}
+	if len(token) <= jose.MaxCompactBytes {
+		t.Fatalf("token is %d bytes, want > jose.MaxCompactBytes (%d)", len(token), jose.MaxCompactBytes)
+	}
+
+	if _, err := VerifyToken(token, &key.PublicKey, jose.ES256, VerifyOptions{}); err != nil {
+		t.Errorf("VerifyToken: %v", err)
+	}
+}
+
 func TestVerifyToken_RejectsExpired(t *testing.T) {
 	key := testKey(t)
 	sl, err := New(Bits1, []uint8{0}, "")

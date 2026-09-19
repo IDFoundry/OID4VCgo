@@ -31,6 +31,21 @@ const (
 
 var b64 = base64.RawURLEncoding
 
+// MaxCompactBytes bounds how large a compact JWS Verify/DecodeUnverified
+// will attempt to parse, to avoid doing unbounded base64url-decode and
+// JSON-unmarshal work on attacker-supplied input before any signature
+// has been checked (Verify) — or without one ever being checked at all
+// (DecodeUnverified, whose whole point is reading claims before the
+// verifying key is even known). Matches this repo's own existing
+// "bounded external response" convention
+// (wallet/pre_authorized_code.go's own maxTokenResponseBytes) rather
+// than inventing a new number. A caller whose accepted input can
+// legitimately scale beyond it (e.g. a Status List Token, whose
+// payload embeds a population-sized compressed bit array) should call
+// VerifyMax/DecodeUnverifiedMax with its own configured ceiling
+// instead.
+const MaxCompactBytes = 1 << 16 // 64 KiB
+
 // Sign builds a compact-serialized JWS —
 // base64url(header).base64url(payload).base64url(signature) — over
 // payload, using signer under alg. header must not set "alg"; Sign
@@ -89,8 +104,19 @@ func signBytes(alg Alg, signer crypto.Signer, signingInput []byte) ([]byte, erro
 
 // Verify parses and verifies a compact JWS, checking that its "alg"
 // header matches alg and that its signature validates under pub. It
-// returns the decoded header and payload.
+// returns the decoded header and payload. It rejects a compact string
+// larger than MaxCompactBytes; use VerifyMax for a caller that needs a
+// different ceiling.
 func Verify(alg Alg, pub crypto.PublicKey, compact string) (header map[string]any, payload []byte, err error) {
+	return VerifyMax(alg, pub, compact, MaxCompactBytes)
+}
+
+// VerifyMax is Verify with an explicit size ceiling, in bytes, instead
+// of MaxCompactBytes.
+func VerifyMax(alg Alg, pub crypto.PublicKey, compact string, maxBytes int) (header map[string]any, payload []byte, err error) {
+	if len(compact) > maxBytes {
+		return nil, nil, fmt.Errorf("jose: compact JWS is %d bytes, exceeds the %d byte limit", len(compact), maxBytes)
+	}
 	h, encPayload, encSig, err := split(compact)
 	if err != nil {
 		return nil, nil, err
@@ -121,8 +147,19 @@ func Verify(alg Alg, pub crypto.PublicKey, compact string) (header map[string]an
 // checking its signature — for a caller that needs to read claims (an
 // "iss", a "kid", an x5c chain) in order to resolve which key to verify
 // with in the first place. Verify (or a direct call to Verify once the
-// key is known) must still be used before the payload is trusted.
+// key is known) must still be used before the payload is trusted. It
+// rejects a compact string larger than MaxCompactBytes; use
+// DecodeUnverifiedMax for a caller that needs a different ceiling.
 func DecodeUnverified(compact string) (header map[string]any, payload []byte, err error) {
+	return DecodeUnverifiedMax(compact, MaxCompactBytes)
+}
+
+// DecodeUnverifiedMax is DecodeUnverified with an explicit size
+// ceiling, in bytes, instead of MaxCompactBytes.
+func DecodeUnverifiedMax(compact string, maxBytes int) (header map[string]any, payload []byte, err error) {
+	if len(compact) > maxBytes {
+		return nil, nil, fmt.Errorf("jose: compact JWS is %d bytes, exceeds the %d byte limit", len(compact), maxBytes)
+	}
 	h, encPayload, _, err := split(compact)
 	if err != nil {
 		return nil, nil, err
@@ -154,6 +191,19 @@ func decodeHeader(encHeader string) (map[string]any, error) {
 	var header map[string]any
 	if err := json.Unmarshal(raw, &header); err != nil {
 		return nil, fmt.Errorf("jose: unmarshal header: %w", err)
+	}
+	// "crit" (RFC 7515 §4.1.11) names header parameters a receiver
+	// MUST understand and process, rejecting the JWS otherwise. This
+	// package recognizes no critical extension at all — no HAIP/
+	// OID4VCI/OID4VP profile it implements ever requires one, and no
+	// signer in this repo ever sets "crit" — so any non-empty "crit"
+	// on an incoming JWS is, by construction, naming something this
+	// package doesn't understand, and rejection is unconditional
+	// rather than needing a caller-supplied "understood" set.
+	if crit, ok := header["crit"]; ok {
+		if arr, ok := crit.([]any); !ok || len(arr) > 0 {
+			return nil, fmt.Errorf("jose: JWS names a critical header extension this package does not understand: %v", crit)
+		}
 	}
 	return header, nil
 }

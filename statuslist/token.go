@@ -69,12 +69,23 @@ type VerifyOptions struct {
 	Now func() time.Time // defaults to time.Now
 }
 
+// maxTokenBytes is this package's own ceiling on the compact JWS
+// jose.VerifyMax will parse, in place of jose.MaxCompactBytes's own
+// smaller default — a Status List Token's payload embeds a
+// population-sized compressed bit array (see bits.go's own
+// maxDecompressedSize doc comment: even a 2^20-entry list decompresses
+// to only 128 KiB, so its compressed, base64url-encoded form fits
+// comfortably within this), and the token is fetched from a URI a
+// credential names, which may point at a compromised or malicious
+// issuer.
+const maxTokenBytes = 1 << 20 // 1 MiB
+
 // VerifyToken verifies a Status List Token's signature and typ header,
 // and rejects an expired token (draft-12 §5.1 rule 2-3, §8.3 step 4.3).
 // It does not check sub against a specific Referenced Token — that's
 // Check's job, since it needs the StatusListRef to compare against.
 func VerifyToken(token string, pub crypto.PublicKey, alg jose.Alg, opts VerifyOptions) (TokenClaims, error) {
-	header, raw, err := jose.Verify(alg, pub, token)
+	header, raw, err := jose.VerifyMax(alg, pub, token, maxTokenBytes)
 	if err != nil {
 		return TokenClaims{}, fmt.Errorf("statuslist: verify token signature: %w", err)
 	}
