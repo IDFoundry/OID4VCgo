@@ -180,6 +180,12 @@ type resolvedKey struct {
 // into credential/sdjwtvc.Issue or credential/mdoc.Issue. See
 // CredentialRequest's own doc comment for what's out of scope.
 func (iss *Issuer) RequestCredential(ctx context.Context, auth AuthorizedRequest, req CredentialRequest) (oid4vci.CredentialResponse, error) {
+	resp, err := iss.requestCredential(ctx, auth, req)
+	iss.audit(ctx, AuditEventRequestCredential, auth.ClientID, err)
+	return resp, err
+}
+
+func (iss *Issuer) requestCredential(ctx context.Context, auth AuthorizedRequest, req CredentialRequest) (oid4vci.CredentialResponse, error) {
 	if req.ResponseEncryption != nil && !req.RequestWasEncrypted {
 		return oid4vci.CredentialResponse{}, newError(ErrorInvalidEncryptionParameters, 400,
 			"credential_response_encryption requires the request itself to be encrypted", nil)

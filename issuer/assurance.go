@@ -32,7 +32,9 @@ const (
 	// declaring capabilities is not optional under this level. This
 	// does not verify any declaration; a store should still be tested
 	// against its own documented contract before being trusted with an
-	// honest one.
+	// honest one. Also requires Dependencies.Audit to be configured —
+	// the same requirement FAPIgo's own server.AssuranceProduction
+	// places on server.Dependencies.Audit.
 	AssuranceProduction
 )
 
@@ -116,6 +118,9 @@ func checkProductionStoreAssurance(cfg Config, deps Dependencies) error {
 		if err := checkStoreAssurance("dpop_nonces", deps.DPoPNonces, true); err != nil {
 			return err
 		}
+	}
+	if deps.Audit == nil {
+		return fmt.Errorf("dependencies.audit is required under AssuranceProduction")
 	}
 	return nil
 }

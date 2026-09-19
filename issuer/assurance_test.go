@@ -86,9 +86,29 @@ func TestNewAcceptsAdequateStoresUnderProduction(t *testing.T) {
 	deps.CredentialOffers = assuredCredentialOfferStore{newFakeCredentialOfferStore(), issuer.StoreCapabilities{Durable: true}}
 	deps.DeferredTransactions = assuredDeferredTransactionStore{newFakeDeferredTransactionStore(), issuer.StoreCapabilities{Durable: true}}
 	deps.Notifications = assuredNotificationStore{newFakeNotificationStore(), issuer.StoreCapabilities{Durable: true}}
+	deps.Audit = newFakeAuditSink()
 
 	if _, err := issuer.New(cfg, deps); err != nil {
 		t.Fatalf("New: %v", err)
+	}
+}
+
+// TestNewRejectsMissingAuditUnderProduction proves the Audit-specific
+// half of AssuranceProduction actually runs: a configuration whose
+// every store declares adequate capabilities is still rejected if
+// Dependencies.Audit is nil.
+func TestNewRejectsMissingAuditUnderProduction(t *testing.T) {
+	cfg := validConfig(t)
+	cfg.Assurance = issuer.AssuranceProduction
+	deps := validDependencies(t)
+	deps.Nonces = assuredNonceStore{newFakeNonceStore(), issuer.StoreCapabilities{Durable: true, AtomicConsume: true}}
+	deps.CredentialOffers = assuredCredentialOfferStore{newFakeCredentialOfferStore(), issuer.StoreCapabilities{Durable: true}}
+	deps.DeferredTransactions = assuredDeferredTransactionStore{newFakeDeferredTransactionStore(), issuer.StoreCapabilities{Durable: true}}
+	deps.Notifications = assuredNotificationStore{newFakeNotificationStore(), issuer.StoreCapabilities{Durable: true}}
+	// deps.Audit deliberately left nil.
+
+	if _, err := issuer.New(cfg, deps); err == nil {
+		t.Fatal("New = nil error, want error (dependencies.audit is nil under AssuranceProduction)")
 	}
 }
 
