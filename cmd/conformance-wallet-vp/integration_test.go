@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"testing"
+	"time"
 
 	fapi "github.com/idfoundry/fapigo"
 
@@ -165,7 +166,8 @@ func handleFakeVerifierResponse(v *verifier.Verifier, query dcql.Query, built ve
 		}
 		result, err := v.VerifyResponse(context.Background(), verifier.VerifyResponseRequest{
 			Query: query, Response: parsed, ExpectedNonce: built.Nonce,
-			IssuerKeys: issuerKeys,
+			IssuerKeys:       issuerKeys,
+			MaxKeyBindingAge: time.Hour,
 		})
 		if err != nil {
 			got.err = err

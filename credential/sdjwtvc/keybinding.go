@@ -55,17 +55,17 @@ type KeyBindingCheck struct {
 	ExpectedNonce    string
 	ExpectedSDHash   string
 
-	// MaxAge, if non-zero, rejects a Key Binding JWT whose iat is
-	// further than MaxAge in the past (RFC 9901 §7.3 step 5.e). Now
-	// defaults to time.Now. WARNING: the Go zero value (0) doesn't
-	// mean "reject anything not issued this instant" — it means NO
-	// freshness check happens at all, silently. A caller that never
-	// sets this (easy to do — nothing else about a Key Binding
-	// verification requires it) accepts an old-but-otherwise-valid Key
-	// Binding JWT for the same transaction indefinitely; aud/nonce/
-	// sd_hash still all have to match exactly, so this isn't a primary
-	// bypass, but it is a real defense-in-depth gap for anyone who
-	// expected "unset" to mean "sensible default" rather than "off."
+	// MaxAge rejects a Key Binding JWT whose iat is further than MaxAge
+	// in the past (RFC 9901 §7.3 step 5.e). Now defaults to time.Now.
+	// REQUIRED (must be positive): VerifyKeyBindingJWT rejects the Go
+	// zero value rather than silently treating "unset" as "no
+	// freshness check at all" — a caller that left this unset would
+	// otherwise accept an old-but-otherwise-valid Key Binding JWT for
+	// the same transaction indefinitely (aud/nonce/sd_hash still all
+	// have to match exactly, so this was never a primary bypass, but
+	// it was a real defense-in-depth gap for anyone who expected
+	// "unset" to mean "sensible default" rather than "off" — found
+	// comparing this package's own trust-boundary DX against FAPIgo's).
 	MaxAge time.Duration
 	Now    func() time.Time
 }
@@ -74,6 +74,9 @@ type KeyBindingCheck struct {
 // steps 5.b-5.h against the holder's public key and check's
 // expectations, returning its claims.
 func VerifyKeyBindingJWT(kbJWT string, holderPub crypto.PublicKey, alg jose.Alg, check KeyBindingCheck) (map[string]any, error) {
+	if check.MaxAge <= 0 {
+		return nil, fmt.Errorf("sdjwtvc: KeyBindingCheck.MaxAge is required (must be positive)")
+	}
 	header, raw, err := jose.Verify(alg, holderPub, kbJWT)
 	if err != nil {
 		return nil, fmt.Errorf("sdjwtvc: verify key binding JWT signature: %w", err)
@@ -97,19 +100,17 @@ func VerifyKeyBindingJWT(kbJWT string, holderPub crypto.PublicKey, alg jose.Alg,
 		return nil, fmt.Errorf("sdjwtvc: key binding JWT sd_hash does not match the presented SD-JWT")
 	}
 
-	if check.MaxAge > 0 {
-		iat, ok := claims["iat"].(float64)
-		if !ok {
-			return nil, fmt.Errorf("sdjwtvc: key binding JWT iat claim is missing or not a number")
-		}
-		now := time.Now
-		if check.Now != nil {
-			now = check.Now
-		}
-		issued := time.Unix(int64(iat), 0)
-		if age := now().Sub(issued); age > check.MaxAge {
-			return nil, fmt.Errorf("sdjwtvc: key binding JWT is too old (issued %s ago)", age)
-		}
+	iat, ok := claims["iat"].(float64)
+	if !ok {
+		return nil, fmt.Errorf("sdjwtvc: key binding JWT iat claim is missing or not a number")
+	}
+	now := time.Now
+	if check.Now != nil {
+		now = check.Now
+	}
+	issued := time.Unix(int64(iat), 0)
+	if age := now().Sub(issued); age > check.MaxAge {
+		return nil, fmt.Errorf("sdjwtvc: key binding JWT is too old (issued %s ago)", age)
 	}
 	return claims, nil
 }

@@ -6,6 +6,7 @@ import (
 	"crypto/ecdsa"
 	"encoding/base64"
 	"testing"
+	"time"
 
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcgo/dcql"
@@ -150,11 +151,12 @@ func verifySDJWTVCRoundTrip(t *testing.T, query dcql.Query, origin string) verif
 	fixture := newSDJWTVCPresentation(t, aud, nonce)
 
 	result, err := v.VerifyResponse(context.Background(), verifier.VerifyResponseRequest{
-		Query:         query,
-		Response:      verifier.ParsedResponse{VPToken: map[string][]string{"identity_credential": {fixture.compact}}},
-		ExpectedNonce: nonce,
-		IssuerKeys:    fixedSDJWTVCIssuerKeyResolver{pub: &fixture.issuerKey.PublicKey, alg: jose.ES256},
-		Origin:        origin,
+		Query:            query,
+		Response:         verifier.ParsedResponse{VPToken: map[string][]string{"identity_credential": {fixture.compact}}},
+		ExpectedNonce:    nonce,
+		IssuerKeys:       fixedSDJWTVCIssuerKeyResolver{pub: &fixture.issuerKey.PublicKey, alg: jose.ES256},
+		Origin:           origin,
+		MaxKeyBindingAge: time.Hour,
 	})
 	return testverify.RequireOneCredential(t, result, err, "identity_credential")
 }
@@ -201,11 +203,12 @@ func TestVerifyResponseDCAPIRejectsWrongOrigin(t *testing.T) {
 	fixture := newSDJWTVCPresentation(t, "origin:https://attacker.example.com", built.Nonce)
 
 	_, err = v.VerifyResponse(context.Background(), verifier.VerifyResponseRequest{
-		Query:         query,
-		Response:      verifier.ParsedResponse{VPToken: map[string][]string{"identity_credential": {fixture.compact}}},
-		ExpectedNonce: built.Nonce,
-		IssuerKeys:    fixedSDJWTVCIssuerKeyResolver{pub: &fixture.issuerKey.PublicKey, alg: jose.ES256},
-		Origin:        "https://verifier.example.com",
+		Query:            query,
+		Response:         verifier.ParsedResponse{VPToken: map[string][]string{"identity_credential": {fixture.compact}}},
+		ExpectedNonce:    built.Nonce,
+		IssuerKeys:       fixedSDJWTVCIssuerKeyResolver{pub: &fixture.issuerKey.PublicKey, alg: jose.ES256},
+		Origin:           "https://verifier.example.com",
+		MaxKeyBindingAge: time.Hour,
 	})
 	if err == nil {
 		t.Fatalf("VerifyResponse = nil error, want error")
@@ -239,8 +242,9 @@ func TestVerifyResponseMultipleVerifiesAllPresentations(t *testing.T) {
 		Response: verifier.ParsedResponse{VPToken: map[string][]string{
 			"identity_credential": {fixtureA.compact, fixtureB.compact},
 		}},
-		ExpectedNonce: built.Nonce,
-		IssuerKeys:    fixedSDJWTVCIssuerKeyResolver{pub: &issuerKey.PublicKey, alg: jose.ES256},
+		ExpectedNonce:    built.Nonce,
+		IssuerKeys:       fixedSDJWTVCIssuerKeyResolver{pub: &issuerKey.PublicKey, alg: jose.ES256},
+		MaxKeyBindingAge: time.Hour,
 	})
 	if err != nil {
 		t.Fatalf("VerifyResponse: %v", err)
@@ -288,10 +292,11 @@ func credentialSetsRoundTrip(t *testing.T, query dcql.Query, vpToken func(compac
 	}
 	fixture := newSDJWTVCPresentation(t, v.ClientID(), built.Nonce)
 	return v.VerifyResponse(context.Background(), verifier.VerifyResponseRequest{
-		Query:         query,
-		Response:      verifier.ParsedResponse{VPToken: vpToken(fixture.compact)},
-		ExpectedNonce: built.Nonce,
-		IssuerKeys:    fixedSDJWTVCIssuerKeyResolver{pub: &fixture.issuerKey.PublicKey, alg: jose.ES256},
+		Query:            query,
+		Response:         verifier.ParsedResponse{VPToken: vpToken(fixture.compact)},
+		ExpectedNonce:    built.Nonce,
+		IssuerKeys:       fixedSDJWTVCIssuerKeyResolver{pub: &fixture.issuerKey.PublicKey, alg: jose.ES256},
+		MaxKeyBindingAge: time.Hour,
 	})
 }
 
@@ -361,8 +366,9 @@ func rejectCaseSDJWTVC(t *testing.T, query dcql.Query, presAud, presNonce, expec
 	fixture := newSDJWTVCPresentation(t, presAud, presNonce)
 	return verifier.VerifyResponseRequest{
 		Query: query, ExpectedNonce: expectedNonce,
-		Response:   verifier.ParsedResponse{VPToken: map[string][]string{"identity_credential": {fixture.compact}}},
-		IssuerKeys: fixedSDJWTVCIssuerKeyResolver{pub: &fixture.issuerKey.PublicKey, alg: jose.ES256},
+		Response:         verifier.ParsedResponse{VPToken: map[string][]string{"identity_credential": {fixture.compact}}},
+		IssuerKeys:       fixedSDJWTVCIssuerKeyResolver{pub: &fixture.issuerKey.PublicKey, alg: jose.ES256},
+		MaxKeyBindingAge: time.Hour,
 	}
 }
 
@@ -403,7 +409,8 @@ func TestVerifyResponseRejects(t *testing.T) {
 		"missing presentation": func(t *testing.T, _ *verifier.Verifier, nonce string) verifier.VerifyResponseRequest {
 			return verifier.VerifyResponseRequest{
 				Query: testIdentityQuery(t), ExpectedNonce: nonce,
-				Response: verifier.ParsedResponse{VPToken: map[string][]string{}},
+				Response:         verifier.ParsedResponse{VPToken: map[string][]string{}},
+				MaxKeyBindingAge: time.Hour,
 			}
 		},
 		"unsupported format": func(t *testing.T, _ *verifier.Verifier, nonce string) verifier.VerifyResponseRequest {
@@ -427,8 +434,9 @@ func TestVerifyResponseRejects(t *testing.T) {
 			fixture := newSDJWTVCPresentation(t, v.ClientID(), nonce)
 			return verifier.VerifyResponseRequest{
 				Query: testIdentityQuery(t), ExpectedNonce: nonce,
-				Response:   verifier.ParsedResponse{VPToken: map[string][]string{"identity_credential": {fixture.compact, fixture.compact}}},
-				IssuerKeys: fixedSDJWTVCIssuerKeyResolver{pub: &fixture.issuerKey.PublicKey, alg: jose.ES256},
+				Response:         verifier.ParsedResponse{VPToken: map[string][]string{"identity_credential": {fixture.compact, fixture.compact}}},
+				IssuerKeys:       fixedSDJWTVCIssuerKeyResolver{pub: &fixture.issuerKey.PublicKey, alg: jose.ES256},
+				MaxKeyBindingAge: time.Hour,
 			}
 		},
 	}
@@ -448,5 +456,35 @@ func TestVerifyResponseRejects(t *testing.T) {
 				t.Fatalf("VerifyResponse(%s) = nil error, want error", name)
 			}
 		})
+	}
+}
+
+// TestVerifyResponseRequiresMaxKeyBindingAge proves
+// VerifyResponseRequest.MaxKeyBindingAge's zero value is rejected
+// outright — rather than silently disabling the Key Binding JWT
+// freshness check — whenever the request includes a "dc+sd-jwt"
+// Credential Query that requires holder binding (the default).
+func TestVerifyResponseRequiresMaxKeyBindingAge(t *testing.T) {
+	cfg, deps := validConfig(t)
+	v, err := verifier.New(cfg, deps)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	query := testIdentityQuery(t)
+	built, err := v.BuildAuthorizationRequest(verifier.BuildAuthorizationRequestRequest{Query: query})
+	if err != nil {
+		t.Fatalf("BuildAuthorizationRequest: %v", err)
+	}
+	fixture := newSDJWTVCPresentation(t, v.ClientID(), built.Nonce)
+
+	_, err = v.VerifyResponse(context.Background(), verifier.VerifyResponseRequest{
+		Query:         query,
+		Response:      verifier.ParsedResponse{VPToken: map[string][]string{"identity_credential": {fixture.compact}}},
+		ExpectedNonce: built.Nonce,
+		IssuerKeys:    fixedSDJWTVCIssuerKeyResolver{pub: &fixture.issuerKey.PublicKey, alg: jose.ES256},
+		// MaxKeyBindingAge deliberately left unset.
+	})
+	if err == nil {
+		t.Fatal("VerifyResponse = nil error, want error (max_key_binding_age unset while a query requires holder binding)")
 	}
 }

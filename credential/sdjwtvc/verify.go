@@ -26,10 +26,10 @@ type VerifyOptions struct {
 	ExpectedAudience  string
 	ExpectedNonce     string
 
-	// MaxKeyBindingAge becomes KeyBindingCheck.MaxAge — see that
-	// field's own doc comment for why leaving it at zero silently
-	// disables the Key Binding JWT freshness check entirely, not "use
-	// a sensible default."
+	// MaxKeyBindingAge becomes KeyBindingCheck.MaxAge. REQUIRED (must
+	// be positive) when RequireKeyBinding is true — see that field's
+	// own doc comment for why its zero value is rejected rather than
+	// silently meaning "no freshness check at all."
 	MaxKeyBindingAge time.Duration
 
 	// Now is compared against the Issuer JWT's own exp/nbf claims

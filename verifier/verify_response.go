@@ -82,8 +82,14 @@ type VerifyResponseRequest struct {
 	// freshness checks. Defaults to time.Now.
 	Now func() time.Time
 
-	// MaxKeyBindingAge, if non-zero, bounds how old a Key Binding
-	// JWT's own "iat" may be. Zero means no bound.
+	// MaxKeyBindingAge bounds how old a Key Binding JWT's own "iat"
+	// may be. REQUIRED (must be positive) when Query includes any
+	// "dc+sd-jwt" Credential Query that requires holder binding (the
+	// default — see dcql.CredentialQuery.RequiresCryptographicHolderBinding);
+	// VerifyResponse rejects the Go zero value in that case rather
+	// than silently disabling this freshness check (see
+	// credential/sdjwtvc.KeyBindingCheck.MaxAge's own doc comment for
+	// why). Ignored when no requested Credential Query needs it.
 	MaxKeyBindingAge time.Duration
 
 	// MdocIssuerKeys resolves the Issuer key for each "mso_mdoc"
@@ -205,6 +211,13 @@ func (v *Verifier) VerifyResponse(ctx context.Context, req VerifyResponseRequest
 	}
 	if req.ExpectedNonce == "" {
 		return VerifyResponseResult{}, fmt.Errorf("verifier: verify response: expected_nonce is required")
+	}
+	if req.MaxKeyBindingAge <= 0 {
+		for _, cq := range req.Query.Credentials {
+			if cq.Format == sdjwtvc.CredentialFormat && cq.RequiresCryptographicHolderBinding() {
+				return VerifyResponseResult{}, fmt.Errorf("verifier: verify response: max_key_binding_age is required (must be positive) when a %q credential query requires holder binding", sdjwtvc.CredentialFormat)
+			}
+		}
 	}
 
 	if len(req.Query.CredentialSets) == 0 {

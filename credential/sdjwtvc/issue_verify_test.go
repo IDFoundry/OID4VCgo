@@ -93,6 +93,7 @@ func TestIssueVerify_FullDisclosure(t *testing.T) {
 		KeyBindingAlg:     jose.ES256,
 		ExpectedAudience:  "https://example.com/verifier",
 		ExpectedNonce:     "n-0S6_WzA2Mj",
+		MaxKeyBindingAge:  time.Hour,
 	})
 	if err != nil {
 		t.Fatalf("Verify: %v", err)
@@ -245,6 +246,7 @@ func TestVerify_RejectsWrongKeyBindingNonce(t *testing.T) {
 		KeyBindingAlg:     jose.ES256,
 		ExpectedAudience:  "aud",
 		ExpectedNonce:     "wrong-nonce",
+		MaxKeyBindingAge:  time.Hour,
 	})
 	if err == nil {
 		t.Errorf("Verify accepted a key binding JWT with the wrong nonce")
@@ -287,6 +289,63 @@ func TestVerify_KeyBindingMaxAge(t *testing.T) {
 	})
 	if err == nil {
 		t.Errorf("Verify accepted an expired key binding JWT")
+	}
+}
+
+// TestVerify_RequiresMaxKeyBindingAge proves MaxKeyBindingAge's zero
+// value is rejected outright rather than silently disabling the Key
+// Binding JWT freshness check (see KeyBindingCheck.MaxAge's own doc
+// comment) — a caller can no longer leave this unset while requiring
+// key binding.
+func TestVerify_RequiresMaxKeyBindingAge(t *testing.T) {
+	issuerKey := testKey(t)
+	holderKey := testKey(t)
+	claims := Claims{VCT: "vc-type", CNF: map[string]any{"jwk": jwkFromECDSA(t, &holderKey.PublicKey)}}
+	sdjwt, _, err := Issue(issuerKey, jose.ES256, claims, IssueOptions{})
+	if err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+	pres, err := Parse(sdjwt)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	kbJWT, err := NewKeyBindingJWT(holderKey, jose.ES256, pres, SHA256, KeyBindingClaims{
+		Audience: "aud", Nonce: "n",
+	})
+	if err != nil {
+		t.Fatalf("NewKeyBindingJWT: %v", err)
+	}
+	pres.KeyBindingJWT = kbJWT
+	presentation, err := pres.Compact()
+	if err != nil {
+		t.Fatalf("Compact: %v", err)
+	}
+
+	_, _, err = Verify(presentation, &issuerKey.PublicKey, jose.ES256, VerifyOptions{
+		RequireKeyBinding: true,
+		HolderPublicKey:   &holderKey.PublicKey,
+		KeyBindingAlg:     jose.ES256,
+		ExpectedAudience:  "aud",
+		ExpectedNonce:     "n",
+		// MaxKeyBindingAge deliberately left unset.
+	})
+	if err == nil {
+		t.Fatal("Verify = nil error, want error (MaxKeyBindingAge unset while RequireKeyBinding is true)")
+	}
+}
+
+func TestVerifyKeyBindingJWT_RequiresMaxAge(t *testing.T) {
+	holderKey := testKey(t)
+	kbJWT, err := jose.Sign(jose.ES256, holderKey, map[string]any{"typ": KeyBindingTyp}, []byte(`{"aud":"aud","nonce":"n","sd_hash":"h"}`))
+	if err != nil {
+		t.Fatalf("Sign: %v", err)
+	}
+	_, err = VerifyKeyBindingJWT(kbJWT, &holderKey.PublicKey, jose.ES256, KeyBindingCheck{
+		ExpectedAudience: "aud", ExpectedNonce: "n", ExpectedSDHash: "h",
+		// MaxAge deliberately left unset.
+	})
+	if err == nil {
+		t.Fatal("VerifyKeyBindingJWT = nil error, want error (MaxAge unset)")
 	}
 }
 
