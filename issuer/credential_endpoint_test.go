@@ -382,17 +382,19 @@ func TestRequestCredential_Mdoc_JWTProof(t *testing.T) {
 	}
 }
 
-// TestRequestCredential_AttestationProof also locks in checkBatchSize's
-// own documented distinction: BatchCredentialIssuance is deliberately
-// left unset here (nil caps the proofs array's own size at exactly 1 —
-// see TestRequestCredential_BatchSize), yet this still succeeds, since
-// the cap applies to the array's own size (one attestation JWT here,
-// len(values) == 1), not to how many Credentials an attestation
-// proof's own attested_keys ultimately fans out to (two, below).
+// TestRequestCredential_AttestationProof uses the fixture's own
+// default BatchCredentialIssuance (BatchSize 2 — see
+// newCredentialEndpointFixture's own doc comment), which is exactly
+// large enough for this attestation's own two attested_keys: an
+// attestation proof's own fan-out is a real batch issuance request
+// (CredentialRequest.Proofs' own doc comment: "a multi-key attestation"
+// is what "makes ... a batch issuance request"), so it's bound by the
+// identical batch_size ceiling checkBatchSize enforces for a
+// multi-entry proofs array — see
+// TestRequestCredential_RejectsWhenAttestedKeysExceedBatchSize for the
+// case where it doesn't fit.
 func TestRequestCredential_AttestationProof(t *testing.T) {
-	f := newCredentialEndpointFixture(t, func(cfg *issuer.Config, _ *issuer.Dependencies) {
-		cfg.BatchCredentialIssuance = nil
-	})
+	f := newCredentialEndpointFixture(t)
 	key1, key2 := testP256Key(t), testP256Key(t)
 	nonce := f.issueNonce(t)
 	att := buildAttestation(t, f.attestationSigner, nonce, &key1.PublicKey, &key2.PublicKey)
@@ -408,6 +410,37 @@ func TestRequestCredential_AttestationProof(t *testing.T) {
 	if len(resp.Credentials) != 2 {
 		t.Fatalf("got %d credentials, want 2 (one per attested key)", len(resp.Credentials))
 	}
+}
+
+// TestRequestCredential_RejectsWhenAttestedKeysExceedBatchSize is the
+// regression test for a real signing-operation amplification a
+// repo-wide security review found: checkBatchSize's own cap on the
+// proofs array's own size (one attestation JWT here) never bounded how
+// many Credentials that one attestation's own attested_keys could fan
+// out to — a single (comfortably under jose.MaxCompactBytes)
+// attestation could pack in enough small JWKs to force far more real
+// signing operations than batch_size ever allowed through the
+// multi-proof path. resolveAttestationProofKeys now caps the running
+// resolved-key total at the identical batch_size ceiling.
+func TestRequestCredential_RejectsWhenAttestedKeysExceedBatchSize(t *testing.T) {
+	f := newCredentialEndpointFixture(t, func(cfg *issuer.Config, _ *issuer.Dependencies) {
+		// nil caps the effective batch_size at exactly 1 (see
+		// TestRequestCredential_BatchSize) — the fixture's own default
+		// BatchSize of 2 is exactly what TestRequestCredential_AttestationProof
+		// needs to succeed, so this test overrides it down to 1 to put
+		// this attestation's own two attested_keys over the limit.
+		cfg.BatchCredentialIssuance = nil
+	})
+	key1, key2 := testP256Key(t), testP256Key(t)
+	nonce := f.issueNonce(t)
+	att := buildAttestation(t, f.attestationSigner, nonce, &key1.PublicKey, &key2.PublicKey)
+
+	_, err := f.iss.RequestCredential(context.Background(), issuer.AuthorizedRequest{ClientID: "test-client", Scopes: []string{"identity_credential"}}, issuer.CredentialRequest{
+		CredentialConfigurationID: testSDJWTConfigID,
+		Proofs:                    map[string][]string{oid4vci.ProofTypeAttestation: {att}},
+		SDJWTClaims:               testSDJWTClaims(),
+	})
+	assertIssuerError(t, err, issuer.ErrorInvalidProof)
 }
 
 func TestRequestCredential_RejectsUnknownConfig(t *testing.T) {

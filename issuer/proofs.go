@@ -159,7 +159,14 @@ func (iss *Issuer) resolveProofBindingKey(ctx context.Context, header map[string
 // once-per-request rule resolveJWTProofKeys applies — its nonce claim.
 // Each verified attestation contributes one resolvedKey per entry in
 // its own attested_keys claim (Appendix F.3's "SHOULD issue a
-// Credential for each cryptographic public key").
+// Credential for each cryptographic public key") — a fan-out
+// checkBatchSize's own cap on len(values) doesn't bound, since a
+// single attestation JWT (up to jose.MaxCompactBytes) can still pack
+// in enough small JWKs to force many real signing operations from one
+// HTTP request with batch_size 1 (found in a repo-wide security
+// review — the exact amplification checkBatchSize exists to prevent,
+// through a side door). The running total across every attestation in
+// values is capped at maxBatchSize independently, for that reason.
 func (iss *Issuer) resolveAttestationProofKeys(ctx context.Context, values []string) ([]resolvedKey, error) {
 	if iss.deps.AttestationVerifier == nil {
 		return nil, newError(ErrorInvalidProof, 400, "attestation proof type is not supported", nil)
@@ -167,6 +174,7 @@ func (iss *Issuer) resolveAttestationProofKeys(ctx context.Context, values []str
 
 	now := iss.deps.Clock.Now()
 	nonceRequired := !iss.cfg.Endpoints.Nonce.IsZero()
+	maxKeys := iss.maxBatchSize()
 	var expectedNonce string
 	var keys []resolvedKey
 
@@ -199,6 +207,10 @@ func (iss *Issuer) resolveAttestationProofKeys(ctx context.Context, values []str
 		}
 
 		for j, attestedKeyRaw := range verified.AttestedKeys {
+			if len(keys) >= maxKeys {
+				return nil, newError(ErrorInvalidProof, 400,
+					fmt.Sprintf("attestation %d: attested_keys would yield more resolved keys than this issuer's own batch_size (%d) across the request", i, maxKeys), nil)
+			}
 			attestedPub, err := jwk.ParsePublicKey(attestedKeyRaw)
 			if err != nil {
 				return nil, newError(ErrorInvalidProof, 400, fmt.Sprintf("attestation %d: attested_keys[%d]: parse jwk", i, j), err)
