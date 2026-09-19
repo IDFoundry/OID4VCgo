@@ -79,6 +79,7 @@ func TestStoresSatisfyIssuerDependencies(t *testing.T) {
 			DeferredIssuancePollInterval: 10 * time.Second,
 			AccessTokenLifetime:          time.Hour,
 			MaxDPoPProofAge:              time.Minute,
+			MaxTxCodeAttempts:            3,
 			MaxDPoPClockSkew:             time.Minute,
 			DPoPNonceLifetime:            time.Minute,
 		},

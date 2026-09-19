@@ -125,6 +125,16 @@ func (r ExchangePreAuthorizedCodeResult) WriteJSON(w http.ResponseWriter) {
 // Dependencies.AccessTokens bound to the proof's own key by its RFC
 // 7638 thumbprint.
 //
+// A wrong TxCode doesn't invalidate the code (PreAuthorizedCodeStore.Consume's
+// own contract), so the Wallet holder can retry after a mistyped PIN —
+// but this method still bounds how many consecutive wrong guesses one
+// code tolerates: once PreAuthorizedCodeStore.Consume's own
+// wrongAttempts reaches Config.Limits.MaxTxCodeAttempts, it calls
+// PreAuthorizedCodeStore.Invalidate and fails the request, closing the
+// otherwise-unbounded guessing window a leaked pre-authorized_code
+// would give an attacker against a low-entropy tx_code (found in a
+// repo-wide security review).
+//
 // When Dependencies.DPoPNonces is configured, the presented proof's own
 // "nonce" claim is checked between those two steps too (RFC 9449 §8):
 // a missing, unknown, already-consumed, or expired nonce fails with
@@ -188,9 +198,18 @@ func (iss *Issuer) exchangePreAuthorizedCode(ctx context.Context, req ExchangePr
 		}
 	}
 
-	record, err := iss.deps.PreAuthorizedCodes.Consume(ctx, req.PreAuthorizedCode, req.TxCode)
+	record, wrongAttempts, err := iss.deps.PreAuthorizedCodes.Consume(ctx, req.PreAuthorizedCode, req.TxCode)
 	if err != nil {
 		if errors.Is(err, ErrWrongTxCode) {
+			if wrongAttempts >= iss.cfg.Limits.MaxTxCodeAttempts {
+				// Too many wrong guesses against this one code — close
+				// the guessing window rather than leaving it retryable
+				// forever (see this method's own doc comment).
+				if invalidateErr := iss.deps.PreAuthorizedCodes.Invalidate(ctx, req.PreAuthorizedCode); invalidateErr != nil {
+					return ExchangePreAuthorizedCodeResult{}, fmt.Errorf("issuer: exchange pre-authorized code: invalidate after too many tx_code attempts: %w", invalidateErr)
+				}
+				return ExchangePreAuthorizedCodeResult{}, newError(ErrorInvalidGrant, 400, "too many incorrect tx_code attempts; pre-authorized_code is no longer valid", err)
+			}
 			// Deliberately NOT consumed (Consume's own contract) — the
 			// Wallet holder gets to retry with the correct PIN instead of
 			// the code being permanently destroyed on one mistyped digit.

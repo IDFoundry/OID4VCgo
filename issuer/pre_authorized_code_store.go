@@ -84,5 +84,31 @@ type PreAuthorizedCodeStore interface {
 	// (PreAuthorizedCodeRecord.ExpiresAt) is checked by
 	// ExchangePreAuthorizedCode itself once Consume returns a record,
 	// not by Consume.
-	Consume(ctx context.Context, code, wantTxCode string) (PreAuthorizedCodeRecord, error)
+	//
+	// wrongAttempts is code's own running count of ErrWrongTxCode
+	// outcomes so far (including this one), atomically incremented as
+	// part of this same call whenever it returns ErrWrongTxCode —
+	// meaningless (implementations may return 0) on any other outcome.
+	// Left unbounded, the "never invalidate on a wrong guess" rule
+	// above gives an attacker holding a leaked pre-authorized_code an
+	// unlimited number of tx_code guesses (found in a repo-wide
+	// security review); ExchangePreAuthorizedCode compares this against
+	// its own configured Config.Limits.MaxTxCodeAttempts and calls
+	// Invalidate once it's exceeded, turning that into a bounded
+	// window instead. Concurrent wrong guesses against the same code
+	// must still each observe a distinct, correctly-incrementing count —
+	// the same atomicity this method's own single-winner guarantee on
+	// the success path already requires.
+	Consume(ctx context.Context, code, wantTxCode string) (record PreAuthorizedCodeRecord, wrongAttempts int, err error)
+
+	// Invalidate permanently invalidates code, the same way a
+	// successful Consume already does — called once
+	// ExchangePreAuthorizedCode's own Config.Limits.MaxTxCodeAttempts
+	// is exceeded (see Consume's own wrongAttempts), turning an
+	// otherwise-unbounded tx_code guessing window into a bounded one.
+	// A no-op if code is already invalidated (consumed or previously
+	// invalidated) or was never issued — Invalidate's own caller has
+	// already decided code should stop existing, so there is nothing
+	// further for it to report either way.
+	Invalidate(ctx context.Context, code string) error
 }

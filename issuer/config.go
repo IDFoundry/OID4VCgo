@@ -77,6 +77,20 @@ type Limits struct {
 	// is set.
 	MaxDPoPProofAge time.Duration
 
+	// MaxTxCodeAttempts bounds how many consecutive incorrect tx_code
+	// guesses ExchangePreAuthorizedCode tolerates against one
+	// pre-authorized_code before permanently invalidating it (via
+	// PreAuthorizedCodeStore.Invalidate) rather than leaving it
+	// retryable forever — see PreAuthorizedCodeStore.Consume's own
+	// wrongAttempts for why an unbounded retry window is a real
+	// tx_code-guessing risk for a low-entropy PIN. Required only when
+	// Dependencies.PreAuthorizedCodes is set — REQUIRED (must be
+	// positive) in that case, the same "no implicit weakening" pattern
+	// this package's own AuthorizedRequest.ClientID uses: a deployment
+	// that wants no cap at all must still choose an explicit, very
+	// large value rather than getting an unbounded one by omission.
+	MaxTxCodeAttempts int
+
 	// MaxDPoPClockSkew bounds how far in the future (relative to Now) a
 	// DPoP proof's own "iat" may be before ExchangePreAuthorizedCode
 	// rejects it. Zero means no tolerance for a future-dated proof —
@@ -423,6 +437,9 @@ func New(cfg Config, deps Dependencies) (*Issuer, error) {
 		}
 		if cfg.Limits.MaxDPoPProofAge <= 0 {
 			return nil, fmt.Errorf("issuer: config: limits.max_dpop_proof_age must be positive when dependencies.pre_authorized_codes is set")
+		}
+		if cfg.Limits.MaxTxCodeAttempts <= 0 {
+			return nil, fmt.Errorf("issuer: config: limits.max_tx_code_attempts must be positive when dependencies.pre_authorized_codes is set")
 		}
 		if deps.DPoPReplay == nil {
 			return nil, fmt.Errorf("issuer: dependencies: dpop_replay is required when dependencies.pre_authorized_codes is set")
