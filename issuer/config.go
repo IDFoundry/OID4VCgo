@@ -336,6 +336,14 @@ type Dependencies struct {
 	// whether PreAuthorizedCodes is set. Config.Limits.DPoPNonceLifetime
 	// is required whenever this is non-nil.
 	DPoPNonces DPoPNonceStore
+
+	// Audit records the outcome of every ExchangePreAuthorizedCode/
+	// RequestCredential/RequestDeferredCredential call — see
+	// AuditSink's own doc comment. Optional under AssuranceDevelopment
+	// (nil disables auditing entirely); REQUIRED under
+	// AssuranceProduction, the same requirement FAPIgo's own
+	// server.AssuranceProduction places on server.Dependencies.Audit.
+	Audit AuditSink
 }
 
 // Issuer is this Credential Issuer's own role implementation — the

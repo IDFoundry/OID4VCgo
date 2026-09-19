@@ -214,3 +214,27 @@ type errReader struct{}
 func (errReader) Read([]byte) (int, error) { return 0, errReadFailed }
 
 const errReadFailed = fakeErr("simulated read failure")
+
+// fakeAuditSink is an in-memory issuer.AuditSink for tests, recording
+// every event it was called with.
+type fakeAuditSink struct {
+	mu     sync.Mutex
+	events []issuer.AuditEvent
+}
+
+func newFakeAuditSink() *fakeAuditSink {
+	return &fakeAuditSink{}
+}
+
+func (f *fakeAuditSink) Record(_ context.Context, event issuer.AuditEvent) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.events = append(f.events, event)
+	return nil
+}
+
+func (f *fakeAuditSink) recorded() []issuer.AuditEvent {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]issuer.AuditEvent(nil), f.events...)
+}

@@ -101,6 +101,12 @@ func (r DeferredCredentialResult) WriteJSON(w http.ResponseWriter) {
 // and DeferredCredentialRequest's own ResponseEncryption/RequestWasEncrypted
 // fields.
 func (iss *Issuer) RequestDeferredCredential(ctx context.Context, auth AuthorizedRequest, req DeferredCredentialRequest) (DeferredCredentialResult, error) {
+	result, err := iss.requestDeferredCredential(ctx, auth, req)
+	iss.audit(ctx, AuditEventRequestDeferredCredential, auth.ClientID, err)
+	return result, err
+}
+
+func (iss *Issuer) requestDeferredCredential(ctx context.Context, auth AuthorizedRequest, req DeferredCredentialRequest) (DeferredCredentialResult, error) {
 	if iss.deps.DeferredTransactions == nil {
 		return DeferredCredentialResult{}, fmt.Errorf("issuer: request deferred credential: deferred issuance is not configured")
 	}

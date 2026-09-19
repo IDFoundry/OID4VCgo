@@ -149,6 +149,15 @@ func (r ExchangePreAuthorizedCodeResult) WriteJSON(w http.ResponseWriter) {
 // itself, so the result carries the same value independently rather
 // than relying on the caller to decode its own freshly issued token.
 func (iss *Issuer) ExchangePreAuthorizedCode(ctx context.Context, req ExchangePreAuthorizedCodeRequest) (ExchangePreAuthorizedCodeResult, error) {
+	result, err := iss.exchangePreAuthorizedCode(ctx, req)
+	// No ClientID: this flow never authenticates the client (§6.1's
+	// own pre-authorized_code grant is for a public client), matching
+	// AuditEvent.ClientID's own "" convention.
+	iss.audit(ctx, AuditEventExchangePreAuthorizedCode, "", err)
+	return result, err
+}
+
+func (iss *Issuer) exchangePreAuthorizedCode(ctx context.Context, req ExchangePreAuthorizedCodeRequest) (ExchangePreAuthorizedCodeResult, error) {
 	if iss.deps.PreAuthorizedCodes == nil {
 		return ExchangePreAuthorizedCodeResult{}, fmt.Errorf("issuer: exchange pre-authorized code: the pre-authorized_code grant is not configured")
 	}
