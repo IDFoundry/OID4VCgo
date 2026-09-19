@@ -72,9 +72,12 @@ func (iss *Issuer) resolveJWTProofKeys(
 		if body.Iat == 0 {
 			return nil, newError(ErrorInvalidProof, 400, fmt.Sprintf("proof %d: iat is required", i), nil)
 		}
-		// auth.ClientID == "" (an integrator who never populates it —
-		// see its own doc comment) silently disables this check for
-		// every request, not just this proof.
+		// auth.ClientID == "" here only ever means an explicit
+		// ClientIDIntentionallyUnset (RequestCredential's own
+		// requireClientIDDecision already rejected any other empty
+		// case before this ever runs) — this check is deliberately
+		// skipped for that acknowledged deployment choice, not by
+		// silent default.
 		if body.Iss != "" && auth.ClientID != "" && body.Iss != auth.ClientID {
 			return nil, newError(ErrorInvalidProof, 400, fmt.Sprintf("proof %d: iss does not match the authenticated client", i), nil)
 		}

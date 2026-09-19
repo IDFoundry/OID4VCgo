@@ -165,7 +165,7 @@ func TestAudit_DisabledWhenNil(t *testing.T) {
 	f := newCredentialEndpointFixture(t)
 	nonce := f.issueNonce(t)
 	proof := buildJWTProof(t, testP256Key(t), testIssuer, nonce)
-	if _, err := f.iss.RequestCredential(context.Background(), issuer.AuthorizedRequest{Scopes: []string{"identity_credential"}}, issuer.CredentialRequest{
+	if _, err := f.iss.RequestCredential(context.Background(), issuer.AuthorizedRequest{ClientID: "test-client", Scopes: []string{"identity_credential"}}, issuer.CredentialRequest{
 		CredentialConfigurationID: testSDJWTConfigID,
 		Proofs:                    map[string][]string{oid4vci.ProofTypeJWT: {proof}},
 		SDJWTClaims:               testSDJWTClaims(),

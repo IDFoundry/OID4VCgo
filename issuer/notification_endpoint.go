@@ -53,6 +53,9 @@ func (iss *Issuer) IssueNotificationID(ctx context.Context, auth AuthorizedReque
 	if iss.deps.Notifications == nil {
 		return "", fmt.Errorf("issuer: issue notification id: notifications are not configured")
 	}
+	if err := requireClientIDDecision(auth); err != nil {
+		return "", err
+	}
 	raw := make([]byte, notificationIDEntropyBytes)
 	if _, err := io.ReadFull(iss.deps.Random, raw); err != nil {
 		return "", fmt.Errorf("issuer: issue notification id: %w", err)
@@ -82,6 +85,9 @@ func (iss *Issuer) RequestNotification(ctx context.Context, auth AuthorizedReque
 	if iss.deps.Notifications == nil {
 		return fmt.Errorf("issuer: request notification: notifications are not configured")
 	}
+	if err := requireClientIDDecision(auth); err != nil {
+		return err
+	}
 	if req.NotificationID == "" {
 		return newError(ErrorInvalidNotificationRequest, 400, "notification_id is required", nil)
 	}
@@ -99,11 +105,11 @@ func (iss *Issuer) RequestNotification(ctx context.Context, auth AuthorizedReque
 	if err != nil {
 		return newError(ErrorInvalidNotificationID, 400, "unknown notification_id", err)
 	}
-	// Both sides of this check are "" for every caller that never
-	// populates AuthorizedRequest.ClientID (record.ClientID is set
-	// from it at IssueNotificationID time) — see that field's own doc
-	// comment: an integrator who skips it silently gets no ownership
-	// binding at all, not a loud failure.
+	// auth.ClientID == "" here only ever means an explicit
+	// ClientIDIntentionallyUnset (this method's own requireClientIDDecision
+	// already rejected any other empty case before this ever runs) —
+	// this check is deliberately skipped for that acknowledged
+	// deployment choice, not by silent default.
 	if record.ClientID != "" && auth.ClientID != "" && record.ClientID != auth.ClientID {
 		return newError(ErrorInvalidNotificationID, 400, "notification_id was not issued to this client", nil)
 	}
