@@ -1,6 +1,7 @@
 package wallet_test
 
 import (
+	"context"
 	"encoding/base64"
 	"testing"
 
@@ -121,7 +122,7 @@ func TestPresentCredentialsTrimsMdocToMatchedCredentialQuery(t *testing.T) {
 	f := testmdoc.Issue(t)
 	held := heldMdoc(t, f)
 
-	vpToken, err := wallet.PresentCredentials(wallet.PresentationRequest{
+	vpToken, err := wallet.PresentCredentials(context.Background(), wallet.PresentationRequest{
 		Query:                           testmdoc.Query(t),
 		Credentials:                     []wallet.HeldCredential{held},
 		Audience:                        "x509_hash:verifier",

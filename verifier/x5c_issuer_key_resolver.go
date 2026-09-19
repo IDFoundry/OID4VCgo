@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto"
 	"crypto/x509"
-	"fmt"
 
 	"github.com/idfoundry/oid4vcgo/internal/certchain"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
@@ -35,7 +34,7 @@ type X5CIssuerKeyResolver struct {
 
 // ResolveIssuerKey implements SDJWTVCIssuerKeyResolver.
 func (r X5CIssuerKeyResolver) ResolveIssuerKey(_ context.Context, header, _ map[string]any) (crypto.PublicKey, jose.Alg, error) {
-	ders, err := x5cDERs(header)
+	ders, err := certchain.X5CDERsFromHeader(header)
 	if err != nil {
 		return nil, "", err
 	}
@@ -48,25 +47,4 @@ func (r X5CIssuerKeyResolver) ResolveIssuerKey(_ context.Context, header, _ map[
 		return nil, "", err
 	}
 	return leaf.PublicKey, alg, nil
-}
-
-// x5cDERs extracts header's own "x5c" member (RFC 7515 §4.1.6: a JSON
-// array of standard-base64-encoded DER certificates, leaf first) as
-// raw DER bytes, requiring at least one entry — HAIP 1.0 §5.3's own
-// MUST, absent from any header a wallet built without
-// credential/sdjwtvc.IssueOptions.IssuerCertificate set.
-func x5cDERs(header map[string]any) ([][]byte, error) {
-	raw, ok := header["x5c"]
-	if !ok {
-		return nil, fmt.Errorf("verifier: issuer JWT header has no x5c (HAIP 1.0 §5.3 requires one for dc+sd-jwt)")
-	}
-	entries, ok := raw.([]any)
-	if !ok || len(entries) == 0 {
-		return nil, fmt.Errorf("verifier: issuer JWT x5c header is not a non-empty array")
-	}
-	ders, err := certchain.DERsFromBase64(entries)
-	if err != nil {
-		return nil, fmt.Errorf("verifier: %w", err)
-	}
-	return ders, nil
 }

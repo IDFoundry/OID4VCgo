@@ -13,6 +13,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcgo/dcql"
+	"github.com/idfoundry/oid4vcgo/internal/certchain"
 	"github.com/idfoundry/oid4vcgo/internal/cose"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/internal/jwk"
@@ -103,10 +104,10 @@ type VerifyResponseRequest struct {
 	// includes any Credential Query with a non-empty
 	// TrustedAuthorities; VerifyResponse rejects that combination
 	// outright when this is nil rather than silently skipping the
-	// restriction — see TrustedAuthoritiesChecker's own doc comment.
-	// Ignored when no requested Credential Query declares
+	// restriction — see dcql.TrustedAuthoritiesChecker's own doc
+	// comment. Ignored when no requested Credential Query declares
 	// TrustedAuthorities.
-	TrustedAuthorities TrustedAuthoritiesChecker
+	TrustedAuthorities dcql.TrustedAuthoritiesChecker
 
 	// ResponseEncryptionKey is the same ephemeral private key a prior
 	// BuildAuthorizationRequest/BuildDCAPIAuthorizationRequest call
@@ -211,7 +212,7 @@ type VerifyResponseResult struct {
 // A Credential Query's own TrustedAuthorities (§6.1.1), when
 // non-empty, is checked against the verified Presentation's own issuer
 // certificate chain via req.TrustedAuthorities — see
-// TrustedAuthoritiesChecker's own doc comment for why this is a
+// dcql.TrustedAuthoritiesChecker's own doc comment for why this is a
 // separate, per-query dependency rather than something
 // IssuerKeys/MdocIssuerKeys decide once for every request.
 //
@@ -395,7 +396,7 @@ func (v *Verifier) verifySDJWTVCPresentation(ctx context.Context, cq dcql.Creden
 	}
 
 	if len(cq.TrustedAuthorities) > 0 {
-		chain, err := x5cDERs(header)
+		chain, err := certchain.X5CDERsFromHeader(header)
 		if err != nil {
 			return nil, fmt.Errorf("trusted authorities: %w", err)
 		}

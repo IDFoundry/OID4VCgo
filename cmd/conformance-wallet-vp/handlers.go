@@ -106,7 +106,7 @@ func (s *server) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	vpToken, err := wallet.PresentCredentials(wallet.PresentationRequest{
+	vpToken, err := wallet.PresentCredentials(r.Context(), wallet.PresentationRequest{
 		Query: authReq.Query, Credentials: []wallet.HeldCredential{s.cred},
 		Audience: authReq.ClientID, Nonce: authReq.Nonce,
 	})

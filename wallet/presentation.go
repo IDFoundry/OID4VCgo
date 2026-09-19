@@ -1,6 +1,7 @@
 package wallet
 
 import (
+	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
@@ -11,6 +12,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcgo/dcql"
+	"github.com/idfoundry/oid4vcgo/internal/certchain"
 	"github.com/idfoundry/oid4vcgo/internal/cose"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/oid4vpmdoc"
@@ -141,14 +143,33 @@ func resolveHeldMdocNameSpaces(issuerSigned mdoc.IssuerSigned) map[string]map[st
 // "claim_sets" (§6.4.1) is handled by dcql.CredentialQuery's own
 // Satisfied* methods — see their doc comments for exactly how an
 // option is chosen.
-func MatchDCQLQuery(query dcql.Query, candidates []HeldCredential) (map[string][]HeldCredential, error) {
+//
+// A Credential Query's own TrustedAuthorities (§6.1.1), when
+// non-empty, restricts eligible candidates to only those trustedAuthorities
+// accepts (their issuer certificate chain checked via
+// trustedAuthorities.CheckTrustedAuthorities) — §6.1.1's own
+// restriction on which Credentials this Wallet may even select, not
+// just what a Verifier re-checks on the response side (see
+// verifier.VerifyResponseRequest.TrustedAuthorities for that side of
+// the same restriction). trustedAuthorities is REQUIRED whenever any
+// Credential Query in query declares TrustedAuthorities — see
+// dcql.TrustedAuthoritiesChecker's own doc comment for why this is a
+// separate, per-query dependency.
+func MatchDCQLQuery(ctx context.Context, query dcql.Query, candidates []HeldCredential, trustedAuthorities dcql.TrustedAuthoritiesChecker) (map[string][]HeldCredential, error) {
 	if err := query.Validate(); err != nil {
 		return nil, fmt.Errorf("wallet: match dcql query: %w", err)
+	}
+	if trustedAuthorities == nil {
+		for _, cq := range query.Credentials {
+			if len(cq.TrustedAuthorities) > 0 {
+				return nil, fmt.Errorf("wallet: match dcql query: trusted_authorities is required when credential query %q declares trusted_authorities", cq.ID)
+			}
+		}
 	}
 	if len(query.CredentialSets) == 0 {
 		matches := make(map[string][]HeldCredential, len(query.Credentials))
 		for _, cq := range query.Credentials {
-			match, err := matchCredentialQuery(cq, candidates)
+			match, err := matchCredentialQuery(ctx, cq, candidates, trustedAuthorities)
 			if err != nil {
 				return nil, fmt.Errorf("wallet: match dcql query: credential query %q: %w", cq.ID, err)
 			}
@@ -163,7 +184,7 @@ func MatchDCQLQuery(query dcql.Query, candidates []HeldCredential) (map[string][
 	}
 	matches := make(map[string][]HeldCredential, len(query.Credentials))
 	for _, cs := range query.CredentialSets {
-		option, err := satisfiableCredentialSetOption(cs, byID, candidates)
+		option, err := satisfiableCredentialSetOption(ctx, cs, byID, candidates, trustedAuthorities)
 		if err != nil {
 			if cs.IsRequired() {
 				return nil, fmt.Errorf("wallet: match dcql query: credential set: %w", err)
@@ -182,13 +203,13 @@ func MatchDCQLQuery(query dcql.Query, candidates []HeldCredential) (map[string][
 // whose every referenced Credential Query id actually matches some
 // candidate, or an error naming the last option's own failure if none
 // does.
-func satisfiableCredentialSetOption(cs dcql.CredentialSetQuery, byID map[string]dcql.CredentialQuery, candidates []HeldCredential) (map[string][]HeldCredential, error) {
+func satisfiableCredentialSetOption(ctx context.Context, cs dcql.CredentialSetQuery, byID map[string]dcql.CredentialQuery, candidates []HeldCredential, trustedAuthorities dcql.TrustedAuthoritiesChecker) (map[string][]HeldCredential, error) {
 	var lastErr error
 	for _, option := range cs.Options {
 		matched := make(map[string][]HeldCredential, len(option))
 		satisfied := true
 		for _, id := range option {
-			match, err := matchCredentialQuery(byID[id], candidates)
+			match, err := matchCredentialQuery(ctx, byID[id], candidates, trustedAuthorities)
 			if err != nil {
 				satisfied = false
 				lastErr = fmt.Errorf("credential query %q: %w", id, err)
@@ -206,8 +227,8 @@ func satisfiableCredentialSetOption(cs dcql.CredentialSetQuery, byID map[string]
 // matchCredentialQuery returns every candidate satisfying cq, trimmed
 // to just the first when cq.Multiple is false (§6.1's own default) —
 // or an error if none satisfy it at all.
-func matchCredentialQuery(cq dcql.CredentialQuery, candidates []HeldCredential) ([]HeldCredential, error) {
-	var matchAll func(dcql.CredentialQuery, []HeldCredential) []HeldCredential
+func matchCredentialQuery(ctx context.Context, cq dcql.CredentialQuery, candidates []HeldCredential, trustedAuthorities dcql.TrustedAuthoritiesChecker) ([]HeldCredential, error) {
+	var matchAll func(context.Context, dcql.CredentialQuery, []HeldCredential, dcql.TrustedAuthoritiesChecker) []HeldCredential
 	switch cq.Format {
 	case sdjwtvc.CredentialFormat:
 		matchAll = matchAllSDJWTVCQuery
@@ -216,7 +237,7 @@ func matchCredentialQuery(cq dcql.CredentialQuery, candidates []HeldCredential) 
 	default:
 		return nil, fmt.Errorf("format %q is not yet supported", cq.Format)
 	}
-	matches := matchAll(cq, candidates)
+	matches := matchAll(ctx, cq, candidates, trustedAuthorities)
 	if len(matches) == 0 {
 		return nil, fmt.Errorf("no held credential satisfies this credential query")
 	}
@@ -226,24 +247,52 @@ func matchCredentialQuery(cq dcql.CredentialQuery, candidates []HeldCredential) 
 	return matches, nil
 }
 
-func matchAllSDJWTVCQuery(cq dcql.CredentialQuery, candidates []HeldCredential) []HeldCredential {
+// candidateSatisfiesTrustedAuthorities reports whether cand's own
+// issuer certificate chain (extracted from header, a "dc+sd-jwt"
+// candidate's own JOSE header, or issuerChain, a "mso_mdoc"
+// candidate's own IssuerAuth x5chain — exactly one of the two is
+// non-nil per call site) satisfies cq's own TrustedAuthorities, when
+// it declares any — true (vacuously) when cq declares none.
+func candidateSatisfiesTrustedAuthorities(ctx context.Context, cq dcql.CredentialQuery, trustedAuthorities dcql.TrustedAuthoritiesChecker, header map[string]any, issuerChain [][]byte) bool {
+	if len(cq.TrustedAuthorities) == 0 {
+		return true
+	}
+	if header != nil {
+		var err error
+		issuerChain, err = certchain.X5CDERsFromHeader(header)
+		if err != nil {
+			return false
+		}
+	}
+	return trustedAuthorities.CheckTrustedAuthorities(ctx, cq.TrustedAuthorities, issuerChain) == nil
+}
+
+func matchAllSDJWTVCQuery(ctx context.Context, cq dcql.CredentialQuery, candidates []HeldCredential, trustedAuthorities dcql.TrustedAuthoritiesChecker) []HeldCredential {
 	var matches []HeldCredential
 	for _, cand := range candidates {
 		if cand.Format != cq.Format {
 			continue
 		}
-		_, _, claims, err := resolveHeldSDJWTVC(cand.Credential)
+		pres, _, claims, err := resolveHeldSDJWTVC(cand.Credential)
 		if err != nil {
 			continue // a malformed held credential isn't this query's fault; skip it
 		}
-		if cq.SatisfiedBySDJWTVCClaims(claims) == nil {
-			matches = append(matches, cand)
+		if cq.SatisfiedBySDJWTVCClaims(claims) != nil {
+			continue
 		}
+		header, _, err := jose.DecodeUnverified(pres.IssuerJWT)
+		if err != nil {
+			continue
+		}
+		if !candidateSatisfiesTrustedAuthorities(ctx, cq, trustedAuthorities, header, nil) {
+			continue
+		}
+		matches = append(matches, cand)
 	}
 	return matches
 }
 
-func matchAllMdocQuery(cq dcql.CredentialQuery, candidates []HeldCredential) []HeldCredential {
+func matchAllMdocQuery(ctx context.Context, cq dcql.CredentialQuery, candidates []HeldCredential, trustedAuthorities dcql.TrustedAuthoritiesChecker) []HeldCredential {
 	var matches []HeldCredential
 	for _, cand := range candidates {
 		if cand.Format != cq.Format {
@@ -257,9 +306,17 @@ func matchAllMdocQuery(cq dcql.CredentialQuery, candidates []HeldCredential) []H
 		if err != nil {
 			continue
 		}
-		if cq.SatisfiedByMdocClaims(cand.MdocDocType, resolveHeldMdocNameSpaces(issuerSigned)) == nil {
-			matches = append(matches, cand)
+		if cq.SatisfiedByMdocClaims(cand.MdocDocType, resolveHeldMdocNameSpaces(issuerSigned)) != nil {
+			continue
 		}
+		_, unprotected, _, err := cose.DecodeUnverified(issuerSigned.IssuerAuth)
+		if err != nil {
+			continue
+		}
+		if !candidateSatisfiesTrustedAuthorities(ctx, cq, trustedAuthorities, nil, unprotected.X5Chain) {
+			continue
+		}
+		matches = append(matches, cand)
 	}
 	return matches
 }
@@ -652,6 +709,12 @@ type PresentationRequest struct {
 	ResponseURI                     string
 	ResponseEncryptionJWKThumbprint []byte
 
+	// TrustedAuthorities is MatchDCQLQuery's own trustedAuthorities
+	// parameter — REQUIRED whenever any Credential Query in Query
+	// declares TrustedAuthorities. See MatchDCQLQuery's own doc
+	// comment.
+	TrustedAuthorities dcql.TrustedAuthoritiesChecker
+
 	// Origin, if set, presents for the DC API flow instead of the
 	// redirect flow: Audience is ignored, and each Presentation is
 	// bound to Appendix A.4's own "origin:"-prefixed audience instead
@@ -673,14 +736,14 @@ type PresentationRequest struct {
 // Claims Path) that still falls back to full disclosure. Returns the
 // vp_token map ready for a direct_post(.jwt)/dc_api(.jwt) response
 // body (§8.1): {<Credential Query id>: [<Presentation>]}.
-func PresentCredentials(req PresentationRequest) (map[string][]string, error) {
+func PresentCredentials(ctx context.Context, req PresentationRequest) (map[string][]string, error) {
 	if req.Origin == "" && req.Audience == "" {
 		return nil, fmt.Errorf("wallet: present credentials: audience is required")
 	}
 	if req.Nonce == "" {
 		return nil, fmt.Errorf("wallet: present credentials: nonce is required")
 	}
-	matches, err := MatchDCQLQuery(req.Query, req.Credentials)
+	matches, err := MatchDCQLQuery(ctx, req.Query, req.Credentials, req.TrustedAuthorities)
 	if err != nil {
 		return nil, fmt.Errorf("wallet: present credentials: %w", err)
 	}
