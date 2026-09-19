@@ -13,7 +13,20 @@ import (
 	fapi "github.com/idfoundry/fapigo"
 
 	"github.com/idfoundry/oid4vcgo"
+	"github.com/idfoundry/oid4vcgo/internal/jwe"
 )
+
+// maxCredentialResponseBytes bounds how much of a Credential/Deferred
+// Credential Response body postCredentialResult reads — this call
+// goes through the caller-supplied ProtectedResourceClient, not a
+// transport this package can assume already bounds response size
+// itself (the same reasoning maxTokenResponseBytes documents for
+// RequestPreAuthorizedCodeToken). Sized to comfortably exceed
+// jwe.MaxCompactBytes, since an encrypted response's own body is
+// exactly that compact JWE string (§10) — smaller than that would
+// reject a legitimate encrypted response before jwe.Decrypt's own
+// ceiling ever gets a chance to.
+const maxCredentialResponseBytes = jwe.MaxCompactBytes + (1 << 16)
 
 // CredentialResult is returned by a successful RequestCredential or
 // RequestDeferredCredential — both endpoints share one wire shape for
@@ -112,7 +125,7 @@ func (w *Wallet) postCredentialResult(
 	}
 	defer func() { _ = res.Body.Close() }()
 
-	respBody, err := io.ReadAll(res.Body)
+	respBody, err := io.ReadAll(io.LimitReader(res.Body, maxCredentialResponseBytes))
 	if err != nil {
 		return CredentialResult{}, fmt.Errorf("wallet: %s: read response: %w", errPrefix, err)
 	}
