@@ -341,9 +341,11 @@ func (v *Verifier) verifySDJWTVCPresentation(ctx context.Context, cq dcql.Creden
 	}
 
 	requireHolderBinding := cq.RequiresCryptographicHolderBinding()
+	keyBindingRequirement := sdjwtvc.KeyBindingNotRequired
 	var holderPub crypto.PublicKey
 	var holderAlg jose.Alg
 	if requireHolderBinding {
+		keyBindingRequirement = sdjwtvc.KeyBindingRequired
 		holderPub, holderAlg, err = holderPublicKeyFromCNF(payload["cnf"])
 		if err != nil {
 			return nil, fmt.Errorf("resolve holder binding key: %w", err)
@@ -351,7 +353,7 @@ func (v *Verifier) verifySDJWTVCPresentation(ctx context.Context, cq dcql.Creden
 	}
 
 	claims, _, err := sdjwtvc.Verify(compact, issuerPub, issuerAlg, sdjwtvc.VerifyOptions{
-		RequireKeyBinding: requireHolderBinding,
+		RequireKeyBinding: keyBindingRequirement,
 		HolderPublicKey:   holderPub,
 		KeyBindingAlg:     holderAlg,
 		ExpectedAudience:  v.expectedAudience(req.Origin),

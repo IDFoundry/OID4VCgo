@@ -82,7 +82,7 @@ func FuzzParse(f *testing.F) {
 			return
 		}
 		_, _, _ = Verify(s, &issuerKey.PublicKey, jose.ES256, VerifyOptions{
-			RequireKeyBinding: true, HolderPublicKey: &holderKey.PublicKey,
+			RequireKeyBinding: KeyBindingRequired, HolderPublicKey: &holderKey.PublicKey,
 			KeyBindingAlg: jose.ES256, ExpectedAudience: "https://example.com/verifier",
 			ExpectedNonce: "fuzz-nonce", MaxKeyBindingAge: time.Hour,
 		})

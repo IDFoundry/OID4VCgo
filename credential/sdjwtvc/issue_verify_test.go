@@ -88,7 +88,7 @@ func TestIssueVerify_FullDisclosure(t *testing.T) {
 	}
 
 	payload, header, err := Verify(presentation, &issuerKey.PublicKey, jose.ES256, VerifyOptions{
-		RequireKeyBinding: true,
+		RequireKeyBinding: KeyBindingRequired,
 		HolderPublicKey:   &holderKey.PublicKey,
 		KeyBindingAlg:     jose.ES256,
 		ExpectedAudience:  "https://example.com/verifier",
@@ -146,7 +146,7 @@ func TestIssueVerify_PartialDisclosure_NoKeyBinding(t *testing.T) {
 		t.Fatalf("Compact: %v", err)
 	}
 
-	payload, _, err := Verify(presentation, &issuerKey.PublicKey, jose.ES256, VerifyOptions{})
+	payload, _, err := Verify(presentation, &issuerKey.PublicKey, jose.ES256, VerifyOptions{RequireKeyBinding: KeyBindingNotRequired})
 	if err != nil {
 		t.Fatalf("Verify: %v", err)
 	}
@@ -167,7 +167,7 @@ func TestVerify_RejectsMissingRequiredKeyBinding(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Issue: %v", err)
 	}
-	_, _, err = Verify(sdjwt, &issuerKey.PublicKey, jose.ES256, VerifyOptions{RequireKeyBinding: true})
+	_, _, err = Verify(sdjwt, &issuerKey.PublicKey, jose.ES256, VerifyOptions{RequireKeyBinding: KeyBindingRequired})
 	if err == nil {
 		t.Errorf("Verify accepted a bare SD-JWT when RequireKeyBinding was set")
 	}
@@ -199,7 +199,7 @@ func TestVerify_RejectsTamperedDisclosureValue(t *testing.T) {
 	}
 	presentation := pres.IssuerJWT + "~" + encTampered + "~"
 
-	if _, _, err := Verify(presentation, &issuerKey.PublicKey, jose.ES256, VerifyOptions{}); err == nil {
+	if _, _, err := Verify(presentation, &issuerKey.PublicKey, jose.ES256, VerifyOptions{RequireKeyBinding: KeyBindingNotRequired}); err == nil {
 		t.Errorf("Verify accepted a tampered disclosure")
 	}
 }
@@ -211,7 +211,7 @@ func TestVerify_RejectsWrongIssuerKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Issue: %v", err)
 	}
-	if _, _, err := Verify(sdjwt, &otherKey.PublicKey, jose.ES256, VerifyOptions{}); err == nil {
+	if _, _, err := Verify(sdjwt, &otherKey.PublicKey, jose.ES256, VerifyOptions{RequireKeyBinding: KeyBindingNotRequired}); err == nil {
 		t.Errorf("Verify accepted a signature under the wrong issuer key")
 	}
 }
@@ -252,7 +252,7 @@ func TestVerify_RejectsWrongKeyBindingNonce(t *testing.T) {
 	presentation := newKeyBoundSDJWTVCPresentation(t, issuerKey, holderKey, "aud", "correct-nonce")
 
 	_, _, err := Verify(presentation, &issuerKey.PublicKey, jose.ES256, VerifyOptions{
-		RequireKeyBinding: true,
+		RequireKeyBinding: KeyBindingRequired,
 		HolderPublicKey:   &holderKey.PublicKey,
 		KeyBindingAlg:     jose.ES256,
 		ExpectedAudience:  "aud",
@@ -271,7 +271,7 @@ func TestVerify_KeyBindingMaxAge(t *testing.T) {
 
 	future := func() time.Time { return time.Now().Add(2 * time.Hour) }
 	_, _, err := Verify(presentation, &issuerKey.PublicKey, jose.ES256, VerifyOptions{
-		RequireKeyBinding: true,
+		RequireKeyBinding: KeyBindingRequired,
 		HolderPublicKey:   &holderKey.PublicKey,
 		KeyBindingAlg:     jose.ES256,
 		ExpectedAudience:  "aud",
@@ -295,7 +295,7 @@ func TestVerify_RequiresMaxKeyBindingAge(t *testing.T) {
 	presentation := newKeyBoundSDJWTVCPresentation(t, issuerKey, holderKey, "aud", "n")
 
 	_, _, err := Verify(presentation, &issuerKey.PublicKey, jose.ES256, VerifyOptions{
-		RequireKeyBinding: true,
+		RequireKeyBinding: KeyBindingRequired,
 		HolderPublicKey:   &holderKey.PublicKey,
 		KeyBindingAlg:     jose.ES256,
 		ExpectedAudience:  "aud",
@@ -304,6 +304,24 @@ func TestVerify_RequiresMaxKeyBindingAge(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("Verify = nil error, want error (MaxKeyBindingAge unset while RequireKeyBinding is true)")
+	}
+}
+
+// TestVerify_RequiresRequireKeyBinding proves RequireKeyBinding's Go
+// zero value is rejected outright rather than silently meaning
+// KeyBindingNotRequired (see KeyBindingRequirement's own doc comment)
+// — a caller must state the policy decision RFC 9901 §7.3 step 1
+// requires explicitly.
+func TestVerify_RequiresRequireKeyBinding(t *testing.T) {
+	issuerKey := testKey(t)
+	sdjwt, _, err := Issue(issuerKey, jose.ES256, Claims{VCT: "vc-type"}, IssueOptions{})
+	if err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+
+	_, _, err = Verify(sdjwt, &issuerKey.PublicKey, jose.ES256, VerifyOptions{})
+	if err == nil {
+		t.Fatal("Verify = nil error, want error (RequireKeyBinding unset)")
 	}
 }
 
@@ -359,7 +377,7 @@ func TestVerify_RejectsExpiredCredential(t *testing.T) {
 	past := time.Now().Add(-time.Hour).Unix()
 	issuerKey, presentation := issueBareCompact(t, Claims{VCT: "vc-type", Exp: &past})
 
-	if _, _, err := Verify(presentation, &issuerKey.PublicKey, jose.ES256, VerifyOptions{}); err == nil {
+	if _, _, err := Verify(presentation, &issuerKey.PublicKey, jose.ES256, VerifyOptions{RequireKeyBinding: KeyBindingNotRequired}); err == nil {
 		t.Error("Verify accepted a credential whose own exp claim is in the past")
 	}
 }
@@ -368,7 +386,7 @@ func TestVerify_RejectsNotYetValidCredential(t *testing.T) {
 	future := time.Now().Add(time.Hour).Unix()
 	issuerKey, presentation := issueBareCompact(t, Claims{VCT: "vc-type", Nbf: &future})
 
-	if _, _, err := Verify(presentation, &issuerKey.PublicKey, jose.ES256, VerifyOptions{}); err == nil {
+	if _, _, err := Verify(presentation, &issuerKey.PublicKey, jose.ES256, VerifyOptions{RequireKeyBinding: KeyBindingNotRequired}); err == nil {
 		t.Error("Verify accepted a credential whose own nbf claim is in the future")
 	}
 }
@@ -381,7 +399,7 @@ func TestVerify_AcceptsCredentialWithinValidityWindow(t *testing.T) {
 	future := time.Now().Add(time.Hour).Unix()
 	issuerKey, presentation := issueBareCompact(t, Claims{VCT: "vc-type", Nbf: &past, Exp: &future})
 
-	if _, _, err := Verify(presentation, &issuerKey.PublicKey, jose.ES256, VerifyOptions{}); err != nil {
+	if _, _, err := Verify(presentation, &issuerKey.PublicKey, jose.ES256, VerifyOptions{RequireKeyBinding: KeyBindingNotRequired}); err != nil {
 		t.Errorf("Verify rejected a credential within its own valid exp/nbf window: %v", err)
 	}
 }
@@ -400,7 +418,7 @@ func TestIssue_NoSelectivelyDisclosableClaims(t *testing.T) {
 	if len(disclosures) != 0 {
 		t.Fatalf("got %d disclosures, want 0", len(disclosures))
 	}
-	payload, _, err := Verify(sdjwt, &issuerKey.PublicKey, jose.ES256, VerifyOptions{})
+	payload, _, err := Verify(sdjwt, &issuerKey.PublicKey, jose.ES256, VerifyOptions{RequireKeyBinding: KeyBindingNotRequired})
 	if err != nil {
 		t.Fatalf("Verify: %v", err)
 	}
@@ -444,7 +462,7 @@ func TestIssue_Decoys(t *testing.T) {
 		t.Fatalf("got %d disclosures, want 1", len(disclosures))
 	}
 	// Verify still succeeds with decoys present alongside the real digest.
-	payload, _, err := Verify(sdjwt, &issuerKey.PublicKey, jose.ES256, VerifyOptions{})
+	payload, _, err := Verify(sdjwt, &issuerKey.PublicKey, jose.ES256, VerifyOptions{RequireKeyBinding: KeyBindingNotRequired})
 	if err != nil {
 		t.Fatalf("Verify: %v", err)
 	}

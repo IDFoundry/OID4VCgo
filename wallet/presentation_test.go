@@ -302,7 +302,7 @@ func TestPresentSDJWTVCRejectsWrongFormat(t *testing.T) {
 func assertPresentedSDJWTVC(t *testing.T, presented string, fixture heldSDJWTVCFixture, wantAudience, wantNonce string) {
 	t.Helper()
 	claims, _, err := sdjwtvc.Verify(presented, &fixture.issuerKey.PublicKey, jose.ES256, sdjwtvc.VerifyOptions{
-		RequireKeyBinding: true,
+		RequireKeyBinding: sdjwtvc.KeyBindingRequired,
 		HolderPublicKey:   &fixture.holderKey.PublicKey,
 		KeyBindingAlg:     jose.ES256,
 		ExpectedAudience:  wantAudience,

@@ -9,6 +9,30 @@ import (
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 )
 
+// KeyBindingRequirement decides whether Verify requires a Key Binding
+// JWT to be present and valid — per RFC 9901 §7.3 step 1, this MUST be
+// an explicit Verifier policy decision, never inferred from whether
+// the Holder happened to send one. A bare bool let that decision be
+// made by omission (its Go zero value silently meant "not required");
+// this type has no valid zero value instead, so Verify rejects a
+// VerifyOptions that never set it — found comparing this package's own
+// trust-boundary DX against FAPIgo's.
+type KeyBindingRequirement uint8
+
+const (
+	_ KeyBindingRequirement = iota
+
+	// KeyBindingRequired rejects a presentation with no Key Binding
+	// JWT, or with one that fails verification.
+	KeyBindingRequired
+
+	// KeyBindingNotRequired accepts a presentation with no Key Binding
+	// JWT. It does not verify one even if the Holder sent one anyway —
+	// a caller that cares about an opportunistically-presented Key
+	// Binding JWT should require it instead.
+	KeyBindingNotRequired
+)
+
 // VerifyOptions configures Verify.
 type VerifyOptions struct {
 	// HashAlg is used only if the payload omits _sd_alg; the payload's
@@ -16,25 +40,25 @@ type VerifyOptions struct {
 	// §4.1.1). Defaults to DefaultHashAlg.
 	HashAlg HashAlg
 
-	// RequireKeyBinding decides whether a Key Binding JWT must be
-	// present and valid — per RFC 9901 §7.3 step 1, this MUST be a
-	// Verifier policy decision, never inferred from whether the Holder
-	// happened to send one.
-	RequireKeyBinding bool
-	HolderPublicKey   crypto.PublicKey // required if RequireKeyBinding
+	// RequireKeyBinding is REQUIRED — see KeyBindingRequirement's own
+	// doc comment for why Verify rejects the Go zero value rather than
+	// defaulting to KeyBindingNotRequired.
+	RequireKeyBinding KeyBindingRequirement
+	HolderPublicKey   crypto.PublicKey // required if RequireKeyBinding is KeyBindingRequired
 	KeyBindingAlg     jose.Alg
 	ExpectedAudience  string
 	ExpectedNonce     string
 
 	// MaxKeyBindingAge becomes KeyBindingCheck.MaxAge. REQUIRED (must
-	// be positive) when RequireKeyBinding is true — see that field's
-	// own doc comment for why its zero value is rejected rather than
-	// silently meaning "no freshness check at all."
+	// be positive) when RequireKeyBinding is KeyBindingRequired — see
+	// that field's own doc comment for why its zero value is rejected
+	// rather than silently meaning "no freshness check at all."
 	MaxKeyBindingAge time.Duration
 
 	// Now is compared against the Issuer JWT's own exp/nbf claims
-	// (when present) and, if RequireKeyBinding, the Key Binding JWT's
-	// own iat via MaxKeyBindingAge. Defaults to time.Now.
+	// (when present) and, if RequireKeyBinding is KeyBindingRequired,
+	// the Key Binding JWT's own iat via MaxKeyBindingAge. Defaults to
+	// time.Now.
 	Now func() time.Time
 }
 
@@ -45,11 +69,14 @@ type VerifyOptions struct {
 // Issuer Metadata or X.509 Issuer Signature Mechanisms — is the
 // caller's job; see the package doc comment.
 func Verify(s string, issuerPub crypto.PublicKey, issuerAlg jose.Alg, opts VerifyOptions) (payload map[string]any, header map[string]any, err error) {
+	if opts.RequireKeyBinding != KeyBindingRequired && opts.RequireKeyBinding != KeyBindingNotRequired {
+		return nil, nil, fmt.Errorf("sdjwtvc: VerifyOptions.RequireKeyBinding is required")
+	}
 	pres, err := Parse(s)
 	if err != nil {
 		return nil, nil, err
 	}
-	if opts.RequireKeyBinding && !pres.HasKeyBinding() {
+	if opts.RequireKeyBinding == KeyBindingRequired && !pres.HasKeyBinding() {
 		return nil, nil, fmt.Errorf("sdjwtvc: key binding is required but no Key Binding JWT was presented")
 	}
 
@@ -115,9 +142,9 @@ func Verify(s string, issuerPub crypto.PublicKey, issuerAlg jose.Alg, opts Verif
 		return nil, nil, err
 	}
 
-	if opts.RequireKeyBinding {
+	if opts.RequireKeyBinding == KeyBindingRequired {
 		if opts.HolderPublicKey == nil {
-			return nil, nil, fmt.Errorf("sdjwtvc: VerifyOptions.RequireKeyBinding is set but HolderPublicKey is nil")
+			return nil, nil, fmt.Errorf("sdjwtvc: VerifyOptions.RequireKeyBinding is KeyBindingRequired but HolderPublicKey is nil")
 		}
 		sdHash, err := pres.SDHash(hashAlg)
 		if err != nil {

@@ -254,7 +254,7 @@ func TestRequestCredential_SDJWT_JWTProof(t *testing.T) {
 	credential := requestOneSDJWTCredential(t, f)
 
 	_, _, err := sdjwtvc.Verify(credential, &f.sdjwtSigner.Signer.(*ecdsa.PrivateKey).PublicKey, jose.ES256, sdjwtvc.VerifyOptions{
-		RequireKeyBinding: false,
+		RequireKeyBinding: sdjwtvc.KeyBindingNotRequired,
 	})
 	if err != nil {
 		t.Fatalf("sdjwtvc.Verify: %v", err)
