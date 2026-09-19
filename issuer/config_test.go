@@ -60,7 +60,8 @@ func validCredentialConfigurations() map[string]issuer.CredentialConfiguration {
 func validConfig(t *testing.T) issuer.Config {
 	t.Helper()
 	return issuer.Config{
-		Issuer: mustIssuerURL(t, testIssuer),
+		Assurance: issuer.AssuranceDevelopment,
+		Issuer:    mustIssuerURL(t, testIssuer),
 		Endpoints: issuer.Endpoints{
 			Credential:         mustEndpointURL(t, testCredentialEndpoint),
 			Nonce:              mustEndpointURL(t, testNonceEndpoint),
