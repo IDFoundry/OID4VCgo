@@ -179,6 +179,23 @@ type sigStructure struct {
 	Payload       []byte
 }
 
+// MaxBytes bounds how large a COSE_Sign1/COSE_Sign1_Tagged/COSE_Mac0
+// structure Verify/VerifyDetached/DecodeUnverified/VerifyTagged/
+// DecodeUnverifiedTagged/VerifyMAC will attempt to parse, to avoid
+// doing unbounded CBOR-unmarshal work on attacker-supplied bytes
+// before any signature/MAC has been checked (Verify/VerifyMAC) — or
+// without one ever being checked at all (DecodeUnverified/
+// DecodeUnverifiedTagged, whose whole point is reading headers, e.g.
+// an x5chain, before the verifying key is even known). Matches
+// internal/jose.MaxCompactBytes's own value and reasoning, ported here
+// once a real caller (verifier.verifyMdocPresentation/wallet's own
+// mdoc match path, both calling DecodeUnverified on wallet-controlled
+// bytes) needed the identical protection this package never had — a
+// gap found in a repo-wide security review. A caller whose accepted
+// input can legitimately scale beyond it should call one of this
+// package's own *Max variants with its own configured ceiling instead.
+const MaxBytes = 1 << 16 // 64 KiB
+
 var encMode = mustEncMode()
 
 func mustEncMode() cbor.EncMode {
@@ -256,9 +273,16 @@ func signSign1(alg Alg, signer crypto.Signer, protected, unprotected Headers, wi
 // Verify parses and verifies an untagged COSE_Sign1 structure, checking
 // that its protected "alg" header matches alg and that its signature
 // validates under pub. It returns the decoded protected and unprotected
-// headers and the payload.
+// headers and the payload. It rejects a sign1 larger than MaxBytes; use
+// VerifyMax for a caller that needs a different ceiling.
 func Verify(alg Alg, pub crypto.PublicKey, sign1, externalAAD []byte) (protected, unprotected Headers, payload []byte, err error) {
-	raw, err := decodeRaw(sign1)
+	return VerifyMax(alg, pub, sign1, externalAAD, MaxBytes)
+}
+
+// VerifyMax is Verify with an explicit size ceiling, in bytes, instead
+// of MaxBytes.
+func VerifyMax(alg Alg, pub crypto.PublicKey, sign1, externalAAD []byte, maxBytes int) (protected, unprotected Headers, payload []byte, err error) {
+	raw, err := decodeRaw(sign1, maxBytes)
 	if err != nil {
 		return Headers{}, Headers{}, nil, err
 	}
@@ -274,9 +298,17 @@ func Verify(alg Alg, pub crypto.PublicKey, sign1, externalAAD []byte) (protected
 
 // VerifyDetached is Verify, but expects sign1 to have a detached
 // (null) payload (see SignDetached) — the caller supplies the same
-// detachedPayload bytes used to produce it.
+// detachedPayload bytes used to produce it. It rejects a sign1 larger
+// than MaxBytes; use VerifyDetachedMax for a caller that needs a
+// different ceiling.
 func VerifyDetached(alg Alg, pub crypto.PublicKey, sign1, detachedPayload, externalAAD []byte) (protected, unprotected Headers, err error) {
-	raw, err := decodeRaw(sign1)
+	return VerifyDetachedMax(alg, pub, sign1, detachedPayload, externalAAD, MaxBytes)
+}
+
+// VerifyDetachedMax is VerifyDetached with an explicit size ceiling, in
+// bytes, instead of MaxBytes.
+func VerifyDetachedMax(alg Alg, pub crypto.PublicKey, sign1, detachedPayload, externalAAD []byte, maxBytes int) (protected, unprotected Headers, err error) {
+	raw, err := decodeRaw(sign1, maxBytes)
 	if err != nil {
 		return Headers{}, Headers{}, err
 	}
@@ -318,9 +350,16 @@ func verifySign1(alg Alg, pub crypto.PublicKey, raw rawSign1, externalAAD, sigPa
 // unprotected x5chain (or another header) to resolve which key to
 // verify with in the first place. Verify (or a direct call to Verify
 // once the key is known) must still be used before the payload is
-// trusted.
+// trusted. It rejects a sign1 larger than MaxBytes; use
+// DecodeUnverifiedMax for a caller that needs a different ceiling.
 func DecodeUnverified(sign1 []byte) (protected, unprotected Headers, payload []byte, err error) {
-	raw, err := decodeRaw(sign1)
+	return DecodeUnverifiedMax(sign1, MaxBytes)
+}
+
+// DecodeUnverifiedMax is DecodeUnverified with an explicit size
+// ceiling, in bytes, instead of MaxBytes.
+func DecodeUnverifiedMax(sign1 []byte, maxBytes int) (protected, unprotected Headers, payload []byte, err error) {
+	raw, err := decodeRaw(sign1, maxBytes)
 	if err != nil {
 		return Headers{}, Headers{}, nil, err
 	}
@@ -331,7 +370,10 @@ func DecodeUnverified(sign1 []byte) (protected, unprotected Headers, payload []b
 	return protected, unprotected, raw.Payload, nil
 }
 
-func decodeRaw(sign1 []byte) (rawSign1, error) {
+func decodeRaw(sign1 []byte, maxBytes int) (rawSign1, error) {
+	if len(sign1) > maxBytes {
+		return rawSign1{}, fmt.Errorf("cose: COSE_Sign1 is %d bytes, exceeds the %d byte limit", len(sign1), maxBytes)
+	}
 	var raw rawSign1
 	if err := cbor.Unmarshal(sign1, &raw); err != nil {
 		return rawSign1{}, fmt.Errorf("cose: unmarshal COSE_Sign1: %w", err)
@@ -359,26 +401,45 @@ func SignTagged(alg Alg, signer crypto.Signer, protected, unprotected Headers, p
 }
 
 // VerifyTagged is Verify, but expects sign1 to be COSE_Sign1_Tagged
-// (see SignTagged) rather than a bare untagged array.
+// (see SignTagged) rather than a bare untagged array. It rejects a
+// sign1 larger than MaxBytes; use VerifyTaggedMax for a caller that
+// needs a different ceiling.
 func VerifyTagged(alg Alg, pub crypto.PublicKey, sign1, externalAAD []byte) (protected, unprotected Headers, payload []byte, err error) {
-	untagged, err := stripSign1Tag(sign1)
+	return VerifyTaggedMax(alg, pub, sign1, externalAAD, MaxBytes)
+}
+
+// VerifyTaggedMax is VerifyTagged with an explicit size ceiling, in
+// bytes, instead of MaxBytes.
+func VerifyTaggedMax(alg Alg, pub crypto.PublicKey, sign1, externalAAD []byte, maxBytes int) (protected, unprotected Headers, payload []byte, err error) {
+	untagged, err := stripSign1Tag(sign1, maxBytes)
 	if err != nil {
 		return Headers{}, Headers{}, nil, err
 	}
-	return Verify(alg, pub, untagged, externalAAD)
+	return VerifyMax(alg, pub, untagged, externalAAD, maxBytes)
 }
 
 // DecodeUnverifiedTagged is DecodeUnverified, but for
-// COSE_Sign1_Tagged input (see SignTagged).
+// COSE_Sign1_Tagged input (see SignTagged). It rejects a sign1 larger
+// than MaxBytes; use DecodeUnverifiedTaggedMax for a caller that needs
+// a different ceiling.
 func DecodeUnverifiedTagged(sign1 []byte) (protected, unprotected Headers, payload []byte, err error) {
-	untagged, err := stripSign1Tag(sign1)
+	return DecodeUnverifiedTaggedMax(sign1, MaxBytes)
+}
+
+// DecodeUnverifiedTaggedMax is DecodeUnverifiedTagged with an explicit
+// size ceiling, in bytes, instead of MaxBytes.
+func DecodeUnverifiedTaggedMax(sign1 []byte, maxBytes int) (protected, unprotected Headers, payload []byte, err error) {
+	untagged, err := stripSign1Tag(sign1, maxBytes)
 	if err != nil {
 		return Headers{}, Headers{}, nil, err
 	}
-	return DecodeUnverified(untagged)
+	return DecodeUnverifiedMax(untagged, maxBytes)
 }
 
-func stripSign1Tag(sign1 []byte) ([]byte, error) {
+func stripSign1Tag(sign1 []byte, maxBytes int) ([]byte, error) {
+	if len(sign1) > maxBytes {
+		return nil, fmt.Errorf("cose: COSE_Sign1_Tagged is %d bytes, exceeds the %d byte limit", len(sign1), maxBytes)
+	}
 	var raw cbor.RawTag
 	if err := cbor.Unmarshal(sign1, &raw); err != nil {
 		return nil, fmt.Errorf("cose: unmarshal COSE_Sign1_Tagged: %w", err)

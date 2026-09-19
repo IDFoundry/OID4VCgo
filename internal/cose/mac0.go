@@ -78,8 +78,19 @@ func ComputeMAC(key []byte, protected, unprotected Headers, detachedPayload, ext
 
 // VerifyMAC recomputes mac0's COSE_Mac0 tag over detachedPayload under
 // key and checks it matches in constant time, checking that its
-// protected "alg" header is HMAC256 along the way.
+// protected "alg" header is HMAC256 along the way. It rejects a mac0
+// larger than MaxBytes; use VerifyMACMax for a caller that needs a
+// different ceiling.
 func VerifyMAC(key []byte, mac0, detachedPayload, externalAAD []byte) (protected, unprotected Headers, err error) {
+	return VerifyMACMax(key, mac0, detachedPayload, externalAAD, MaxBytes)
+}
+
+// VerifyMACMax is VerifyMAC with an explicit size ceiling, in bytes,
+// instead of MaxBytes.
+func VerifyMACMax(key []byte, mac0, detachedPayload, externalAAD []byte, maxBytes int) (protected, unprotected Headers, err error) {
+	if len(mac0) > maxBytes {
+		return Headers{}, Headers{}, fmt.Errorf("cose: COSE_Mac0 is %d bytes, exceeds the %d byte limit", len(mac0), maxBytes)
+	}
 	var raw rawMac0
 	if unmarshalErr := cbor.Unmarshal(mac0, &raw); unmarshalErr != nil {
 		return Headers{}, Headers{}, fmt.Errorf("cose: unmarshal COSE_Mac0: %w", unmarshalErr)
