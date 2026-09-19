@@ -142,6 +142,7 @@ func TestNewRejectsPreAuthorizedCodeStoresUnderProduction(t *testing.T) {
 	cfg.Assurance = issuer.AssuranceProduction
 	cfg.Limits.AccessTokenLifetime = time.Hour
 	cfg.Limits.MaxDPoPProofAge = time.Minute
+	cfg.Limits.MaxTxCodeAttempts = 3
 	deps := validDependencies(t)
 	deps.Nonces = assuredNonceStore{newFakeNonceStore(), issuer.StoreCapabilities{Durable: true, AtomicConsume: true}}
 	deps.CredentialOffers = assuredCredentialOfferStore{newFakeCredentialOfferStore(), issuer.StoreCapabilities{Durable: true}}

@@ -169,7 +169,7 @@ func TestPreAuthorizedCodeStoreContract(t *testing.T, factory func() PreAuthoriz
 		if err := store.Issue(ctx, "code1", want); err != nil {
 			t.Fatalf("Issue: %v", err)
 		}
-		got, err := store.Consume(ctx, "code1", "")
+		got, _, err := store.Consume(ctx, "code1", "")
 		if err != nil {
 			t.Fatalf("Consume: %v", err)
 		}
@@ -190,17 +190,17 @@ func TestPreAuthorizedCodeStoreContract(t *testing.T, factory func() PreAuthoriz
 		if err := store.Issue(ctx, "code1", PreAuthorizedCodeRecord{ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
 			t.Fatalf("Issue: %v", err)
 		}
-		if _, err := store.Consume(ctx, "code1", ""); err != nil {
+		if _, _, err := store.Consume(ctx, "code1", ""); err != nil {
 			t.Fatalf("first Consume: %v", err)
 		}
-		if _, err := store.Consume(ctx, "code1", ""); err == nil {
+		if _, _, err := store.Consume(ctx, "code1", ""); err == nil {
 			t.Error("second Consume = nil error, want error (code already consumed)")
 		}
 	})
 
 	t.Run("ConsumeUnknownFails", func(t *testing.T) {
 		store := factory()
-		if _, err := store.Consume(context.Background(), "never-issued", ""); err == nil {
+		if _, _, err := store.Consume(context.Background(), "never-issued", ""); err == nil {
 			t.Error("Consume = nil error, want error (unknown code)")
 		}
 	})
@@ -211,12 +211,12 @@ func TestPreAuthorizedCodeStoreContract(t *testing.T, factory func() PreAuthoriz
 		if err := store.Issue(ctx, "code1", PreAuthorizedCodeRecord{TxCode: "1234", ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
 			t.Fatalf("Issue: %v", err)
 		}
-		if _, err := store.Consume(ctx, "code1", "0000"); !errors.Is(err, ErrWrongTxCode) {
+		if _, _, err := store.Consume(ctx, "code1", "0000"); !errors.Is(err, ErrWrongTxCode) {
 			t.Fatalf("Consume with wrong tx_code: err = %v, want ErrWrongTxCode", err)
 		}
 		// The code must still be redeemable with the correct TxCode —
 		// a wrong guess must not have invalidated it.
-		if _, err := store.Consume(ctx, "code1", "1234"); err != nil {
+		if _, _, err := store.Consume(ctx, "code1", "1234"); err != nil {
 			t.Fatalf("Consume with correct tx_code after a wrong guess: %v", err)
 		}
 	})
@@ -227,8 +227,77 @@ func TestPreAuthorizedCodeStoreContract(t *testing.T, factory func() PreAuthoriz
 		if err := store.Issue(ctx, "code1", PreAuthorizedCodeRecord{TxCode: "1234", ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
 			t.Fatalf("Issue: %v", err)
 		}
-		if _, err := store.Consume(ctx, "code1", "1234"); err != nil {
+		if _, _, err := store.Consume(ctx, "code1", "1234"); err != nil {
 			t.Fatalf("Consume: %v", err)
+		}
+	})
+
+	t.Run("WrongTxCodeIncrementsAttempts", func(t *testing.T) {
+		store := factory()
+		ctx := context.Background()
+		if err := store.Issue(ctx, "code1", PreAuthorizedCodeRecord{TxCode: "1234", ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
+			t.Fatalf("Issue: %v", err)
+		}
+		for want := 1; want <= 3; want++ {
+			_, attempts, err := store.Consume(ctx, "code1", "0000")
+			if !errors.Is(err, ErrWrongTxCode) {
+				t.Fatalf("Consume with wrong tx_code (attempt %d): err = %v, want ErrWrongTxCode", want, err)
+			}
+			if attempts != want {
+				t.Errorf("wrongAttempts = %d, want %d", attempts, want)
+			}
+		}
+	})
+
+	t.Run("InvalidateThenConsumeFails", func(t *testing.T) {
+		store := factory()
+		ctx := context.Background()
+		if err := store.Issue(ctx, "code1", PreAuthorizedCodeRecord{ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
+			t.Fatalf("Issue: %v", err)
+		}
+		if err := store.Invalidate(ctx, "code1"); err != nil {
+			t.Fatalf("Invalidate: %v", err)
+		}
+		if _, _, err := store.Consume(ctx, "code1", ""); err == nil {
+			t.Error("Consume after Invalidate = nil error, want error")
+		}
+	})
+
+	t.Run("InvalidateUnknownCodeIsNoop", func(t *testing.T) {
+		store := factory()
+		if err := store.Invalidate(context.Background(), "never-issued"); err != nil {
+			t.Errorf("Invalidate on an unknown code: %v, want nil (no-op)", err)
+		}
+	})
+
+	t.Run("ConcurrentWrongAttemptsAreCountedExactly", func(t *testing.T) {
+		store := factory()
+		ctx := context.Background()
+		if err := store.Issue(ctx, "code1", PreAuthorizedCodeRecord{TxCode: "1234", ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
+			t.Fatalf("Issue: %v", err)
+		}
+		var mu sync.Mutex
+		seen := make(map[int]int, contractConcurrentAttempts)
+		runConcurrently(contractConcurrentAttempts, func() bool {
+			_, attempts, err := store.Consume(ctx, "code1", "0000")
+			if !errors.Is(err, ErrWrongTxCode) {
+				return false
+			}
+			mu.Lock()
+			seen[attempts]++
+			mu.Unlock()
+			return true
+		})
+		// Every concurrent wrong guess must have observed a distinct
+		// count — a lost update (two goroutines both incrementing from
+		// the same stale value) would show up as a duplicate.
+		for attempts, count := range seen {
+			if count != 1 {
+				t.Errorf("wrongAttempts=%d was observed %d times, want exactly 1 (lost update under concurrency)", attempts, count)
+			}
+		}
+		if len(seen) != contractConcurrentAttempts {
+			t.Errorf("observed %d distinct wrongAttempts values, want %d", len(seen), contractConcurrentAttempts)
 		}
 	})
 
@@ -239,7 +308,7 @@ func TestPreAuthorizedCodeStoreContract(t *testing.T, factory func() PreAuthoriz
 			t.Fatalf("Issue: %v", err)
 		}
 		wins := runConcurrently(contractConcurrentAttempts, func() bool {
-			_, err := store.Consume(ctx, "code1", "")
+			_, _, err := store.Consume(ctx, "code1", "")
 			return err == nil
 		})
 		if wins != 1 {

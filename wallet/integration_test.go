@@ -319,7 +319,7 @@ func newPreAuthorizedRoundTripFixture(t *testing.T, configure func(cfg *issuer.C
 		Assurance: issuer.AssuranceDevelopment,
 		Issuer:    issuerURL,
 		Endpoints: issuer.Endpoints{Credential: credentialEndpoint},
-		Limits:    issuer.Limits{AccessTokenLifetime: 5 * time.Minute, MaxDPoPProofAge: time.Minute},
+		Limits:    issuer.Limits{AccessTokenLifetime: 5 * time.Minute, MaxDPoPProofAge: time.Minute, MaxTxCodeAttempts: 3},
 		CredentialConfigurationsSupported: map[string]issuer.CredentialConfiguration{
 			"IdentityCredential": {
 				Format:                               sdjwtvc.CredentialFormat,

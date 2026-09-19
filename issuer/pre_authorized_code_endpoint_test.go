@@ -23,12 +23,16 @@ import (
 // fakePreAuthorizedCodeStore is an in-memory issuer.PreAuthorizedCodeStore
 // for tests.
 type fakePreAuthorizedCodeStore struct {
-	mu     sync.Mutex
-	issued map[string]issuer.PreAuthorizedCodeRecord
+	mu       sync.Mutex
+	issued   map[string]issuer.PreAuthorizedCodeRecord
+	attempts map[string]int
 }
 
 func newFakePreAuthorizedCodeStore() *fakePreAuthorizedCodeStore {
-	return &fakePreAuthorizedCodeStore{issued: map[string]issuer.PreAuthorizedCodeRecord{}}
+	return &fakePreAuthorizedCodeStore{
+		issued:   map[string]issuer.PreAuthorizedCodeRecord{},
+		attempts: map[string]int{},
+	}
 }
 
 func (f *fakePreAuthorizedCodeStore) Issue(_ context.Context, code string, record issuer.PreAuthorizedCodeRecord) error {
@@ -38,18 +42,28 @@ func (f *fakePreAuthorizedCodeStore) Issue(_ context.Context, code string, recor
 	return nil
 }
 
-func (f *fakePreAuthorizedCodeStore) Consume(_ context.Context, code, wantTxCode string) (issuer.PreAuthorizedCodeRecord, error) {
+func (f *fakePreAuthorizedCodeStore) Consume(_ context.Context, code, wantTxCode string) (issuer.PreAuthorizedCodeRecord, int, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	record, ok := f.issued[code]
 	if !ok {
-		return issuer.PreAuthorizedCodeRecord{}, errPreAuthorizedCodeNotFound
+		return issuer.PreAuthorizedCodeRecord{}, 0, errPreAuthorizedCodeNotFound
 	}
 	if record.TxCode != "" && wantTxCode != record.TxCode {
-		return issuer.PreAuthorizedCodeRecord{}, issuer.ErrWrongTxCode
+		f.attempts[code]++
+		return issuer.PreAuthorizedCodeRecord{}, f.attempts[code], issuer.ErrWrongTxCode
 	}
 	delete(f.issued, code)
-	return record, nil
+	delete(f.attempts, code)
+	return record, 0, nil
+}
+
+func (f *fakePreAuthorizedCodeStore) Invalidate(_ context.Context, code string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.issued, code)
+	delete(f.attempts, code)
+	return nil
 }
 
 const errPreAuthorizedCodeNotFound = fakeErr("unknown or already-consumed pre-authorized_code")
@@ -175,6 +189,7 @@ func newPreAuthorizedCodeFixtureWith(t *testing.T, configure func(cfg *issuer.Co
 	cfg := validConfig(t)
 	cfg.Limits.AccessTokenLifetime = 5 * time.Minute
 	cfg.Limits.MaxDPoPProofAge = time.Minute
+	cfg.Limits.MaxTxCodeAttempts = 3
 
 	deps := validDependencies(t)
 	deps.Clock = fixedClock{now: now}
@@ -433,6 +448,66 @@ func TestExchangePreAuthorizedCode_WrongTxCodeThenSucceedsOnRetryWithoutLosingTh
 	}
 }
 
+// submitWrongTxCodeAttempts calls ExchangePreAuthorizedCode against
+// code with a wrong tx_code n times, returning the last error — shared
+// by the two lockout tests below, which each need to submit exactly
+// one attempt under Config.Limits.MaxTxCodeAttempts (still retryable)
+// or exactly at it (invalidating) before checking what happens next.
+func submitWrongTxCodeAttempts(t *testing.T, f preAuthorizedCodeFixture, code string, n int) error {
+	t.Helper()
+	var err error
+	for i := 0; i < n; i++ {
+		_, err = f.iss.ExchangePreAuthorizedCode(context.Background(), issuer.ExchangePreAuthorizedCodeRequest{
+			PreAuthorizedCode: code, TxCode: "wrong", DPoPProof: f.validProof(t), TokenEndpoint: testTokenEndpointURL(t),
+		})
+	}
+	return err
+}
+
+// TestExchangePreAuthorizedCode_TooManyWrongTxCodeAttemptsInvalidatesCode
+// is the end-to-end regression test for the tx_code guessing risk a
+// repo-wide security review found: since a wrong tx_code deliberately
+// never invalidates the code on its own (see the "retry without
+// losing the code" test above), nothing else bounded how many guesses
+// an attacker holding a leaked pre-authorized_code got. Once
+// wrongAttempts reaches Config.Limits.MaxTxCodeAttempts (3 in this
+// fixture — see newPreAuthorizedCodeFixtureWith), the code must be
+// permanently invalidated — even a subsequent correct guess fails.
+func TestExchangePreAuthorizedCode_TooManyWrongTxCodeAttemptsInvalidatesCode(t *testing.T) {
+	f := newPreAuthorizedCodeFixture(t)
+	f.issue(t, "code-1", issuer.PreAuthorizedCodeRecord{
+		Scopes: []string{"identity_credential"}, TxCode: "493536", ExpiresAt: f.now.Add(time.Minute),
+	})
+	err := submitWrongTxCodeAttempts(t, f, "code-1", 3)
+	requireIssuerErrorCode(t, err, issuer.ErrorInvalidGrant)
+
+	if _, err := f.iss.ExchangePreAuthorizedCode(context.Background(), issuer.ExchangePreAuthorizedCodeRequest{
+		PreAuthorizedCode: "code-1", TxCode: "493536", DPoPProof: f.validProof(t), TokenEndpoint: testTokenEndpointURL(t),
+	}); err == nil {
+		t.Fatalf("ExchangePreAuthorizedCode with the correct tx_code after too many wrong attempts = nil error, want error (code should be invalidated)")
+	}
+}
+
+// TestExchangePreAuthorizedCode_StaysUnderTheAttemptLimitRemainsRetryable
+// exercises the boundary from the other side: with
+// Config.Limits.MaxTxCodeAttempts set to 3, exactly 2 wrong guesses
+// must NOT invalidate the code — only the 3rd does (see the test
+// above).
+func TestExchangePreAuthorizedCode_StaysUnderTheAttemptLimitRemainsRetryable(t *testing.T) {
+	f := newPreAuthorizedCodeFixture(t)
+	f.issue(t, "code-1", issuer.PreAuthorizedCodeRecord{
+		Scopes: []string{"identity_credential"}, TxCode: "493536", ExpiresAt: f.now.Add(time.Minute),
+	})
+	err := submitWrongTxCodeAttempts(t, f, "code-1", 2)
+	requireIssuerErrorCode(t, err, issuer.ErrorInvalidGrant)
+
+	if _, err := f.iss.ExchangePreAuthorizedCode(context.Background(), issuer.ExchangePreAuthorizedCodeRequest{
+		PreAuthorizedCode: "code-1", TxCode: "493536", DPoPProof: f.validProof(t), TokenEndpoint: testTokenEndpointURL(t),
+	}); err != nil {
+		t.Fatalf("ExchangePreAuthorizedCode with the correct tx_code after 2 wrong attempts (under the limit of 3): %v", err)
+	}
+}
+
 // TestExchangePreAuthorizedCode_Rejects table-drives every rejection
 // path that surfaces as an *issuer.Error with a specific ErrorCode —
 // wrong tx_code, an expired or unknown code, and an invalid DPoP
@@ -532,23 +607,27 @@ func TestExchangePreAuthorizedCode_RejectsMissingFields(t *testing.T) {
 func TestNewRejectsInvalidPreAuthorizedCodeDependencies(t *testing.T) {
 	cases := map[string]func(*issuer.Config, *issuer.Dependencies){
 		"missing access_token_lifetime": func(cfg *issuer.Config, d *issuer.Dependencies) {
-			cfg.Limits.MaxDPoPProofAge = time.Minute
+			cfg.Limits.MaxDPoPProofAge, cfg.Limits.MaxTxCodeAttempts = time.Minute, 3
 			d.PreAuthorizedCodes, d.DPoPReplay, d.AccessTokens = newFakePreAuthorizedCodeStore(), newFakeDPoPReplayChecker(), &fakeAccessTokenIssuer{}
 		},
 		"missing max_dpop_proof_age": func(cfg *issuer.Config, d *issuer.Dependencies) {
-			cfg.Limits.AccessTokenLifetime = 5 * time.Minute
+			cfg.Limits.AccessTokenLifetime, cfg.Limits.MaxTxCodeAttempts = 5*time.Minute, 3
+			d.PreAuthorizedCodes, d.DPoPReplay, d.AccessTokens = newFakePreAuthorizedCodeStore(), newFakeDPoPReplayChecker(), &fakeAccessTokenIssuer{}
+		},
+		"missing max_tx_code_attempts": func(cfg *issuer.Config, d *issuer.Dependencies) {
+			cfg.Limits.AccessTokenLifetime, cfg.Limits.MaxDPoPProofAge = 5*time.Minute, time.Minute
 			d.PreAuthorizedCodes, d.DPoPReplay, d.AccessTokens = newFakePreAuthorizedCodeStore(), newFakeDPoPReplayChecker(), &fakeAccessTokenIssuer{}
 		},
 		"missing dpop_replay": func(cfg *issuer.Config, d *issuer.Dependencies) {
-			cfg.Limits.AccessTokenLifetime, cfg.Limits.MaxDPoPProofAge = 5*time.Minute, time.Minute
+			cfg.Limits.AccessTokenLifetime, cfg.Limits.MaxDPoPProofAge, cfg.Limits.MaxTxCodeAttempts = 5*time.Minute, time.Minute, 3
 			d.PreAuthorizedCodes, d.AccessTokens = newFakePreAuthorizedCodeStore(), &fakeAccessTokenIssuer{}
 		},
 		"missing access_tokens": func(cfg *issuer.Config, d *issuer.Dependencies) {
-			cfg.Limits.AccessTokenLifetime, cfg.Limits.MaxDPoPProofAge = 5*time.Minute, time.Minute
+			cfg.Limits.AccessTokenLifetime, cfg.Limits.MaxDPoPProofAge, cfg.Limits.MaxTxCodeAttempts = 5*time.Minute, time.Minute, 3
 			d.PreAuthorizedCodes, d.DPoPReplay = newFakePreAuthorizedCodeStore(), newFakeDPoPReplayChecker()
 		},
 		"dpop nonces without lifetime": func(cfg *issuer.Config, d *issuer.Dependencies) {
-			cfg.Limits.AccessTokenLifetime, cfg.Limits.MaxDPoPProofAge = 5*time.Minute, time.Minute
+			cfg.Limits.AccessTokenLifetime, cfg.Limits.MaxDPoPProofAge, cfg.Limits.MaxTxCodeAttempts = 5*time.Minute, time.Minute, 3
 			d.PreAuthorizedCodes, d.DPoPReplay, d.AccessTokens = newFakePreAuthorizedCodeStore(), newFakeDPoPReplayChecker(), &fakeAccessTokenIssuer{}
 			d.DPoPNonces = newFakeDPoPNonceStore()
 		},
@@ -569,6 +648,7 @@ func TestNewAcceptsValidPreAuthorizedCodeDependencies(t *testing.T) {
 	cfg := validConfig(t)
 	cfg.Limits.AccessTokenLifetime = 5 * time.Minute
 	cfg.Limits.MaxDPoPProofAge = time.Minute
+	cfg.Limits.MaxTxCodeAttempts = 3
 	deps := validDependencies(t)
 	deps.PreAuthorizedCodes = newFakePreAuthorizedCodeStore()
 	deps.DPoPReplay = newFakeDPoPReplayChecker()
@@ -582,6 +662,7 @@ func TestNewAcceptsValidDPoPNonceDependencies(t *testing.T) {
 	cfg := validConfig(t)
 	cfg.Limits.AccessTokenLifetime = 5 * time.Minute
 	cfg.Limits.MaxDPoPProofAge = time.Minute
+	cfg.Limits.MaxTxCodeAttempts = 3
 	cfg.Limits.DPoPNonceLifetime = time.Minute
 	deps := validDependencies(t)
 	deps.PreAuthorizedCodes = newFakePreAuthorizedCodeStore()
