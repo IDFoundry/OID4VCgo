@@ -4,6 +4,16 @@
 [![OID4VC Conformance](https://github.com/IDFoundry/OID4VCgo/actions/workflows/conformance.yml/badge.svg)](https://github.com/IDFoundry/OID4VCgo/actions/workflows/conformance.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
+[![Quality Gate](https://sonarcloud.io/api/project_badges/quality_gate?project=IDFoundry_OID4VCgo)](https://sonarcloud.io/summary/new_code?id=IDFoundry_OID4VCgo)
+[![Coverage](https://sonarcloud.io/api/project_badges/measure?project=IDFoundry_OID4VCgo&metric=coverage)](https://sonarcloud.io/summary/new_code?id=IDFoundry_OID4VCgo)
+[![Lines of Code](https://sonarcloud.io/api/project_badges/measure?project=IDFoundry_OID4VCgo&metric=ncloc)](https://sonarcloud.io/summary/new_code?id=IDFoundry_OID4VCgo)
+[![Security Rating](https://sonarcloud.io/api/project_badges/measure?project=IDFoundry_OID4VCgo&metric=security_rating)](https://sonarcloud.io/summary/new_code?id=IDFoundry_OID4VCgo)
+[![Maintainability Rating](https://sonarcloud.io/api/project_badges/measure?project=IDFoundry_OID4VCgo&metric=sqale_rating)](https://sonarcloud.io/summary/new_code?id=IDFoundry_OID4VCgo)
+[![Reliability Rating](https://sonarcloud.io/api/project_badges/measure?project=IDFoundry_OID4VCgo&metric=reliability_rating)](https://sonarcloud.io/summary/new_code?id=IDFoundry_OID4VCgo)
+[![Vulnerabilities](https://sonarcloud.io/api/project_badges/measure?project=IDFoundry_OID4VCgo&metric=vulnerabilities)](https://sonarcloud.io/summary/new_code?id=IDFoundry_OID4VCgo)
+[![Code Smells](https://sonarcloud.io/api/project_badges/measure?project=IDFoundry_OID4VCgo&metric=code_smells)](https://sonarcloud.io/summary/new_code?id=IDFoundry_OID4VCgo)
+[![Technical Debt](https://sonarcloud.io/api/project_badges/measure?project=IDFoundry_OID4VCgo&metric=sqale_index)](https://sonarcloud.io/summary/new_code?id=IDFoundry_OID4VCgo)
+
 **OpenID4VCI 1.0 + OpenID4VP 1.0, under the HAIP 1.0 profile, for Go.**
 
 OID4VCgo is a sister library to [FAPIgo](https://github.com/IDFoundry/FAPIgo),
