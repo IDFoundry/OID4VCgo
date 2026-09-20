@@ -424,6 +424,7 @@ FORMAT_LABEL="FORMAT"
 RESULT_LABEL="RESULT"
 SD_JWT_VC="sd_jwt_vc"
 DIRECT_POST_JWT="direct_post.jwt"
+WALLET_INITIATED="wallet_initiated"
 ROW_FMT_18='  %-10s %-18s %s\n'
 ROW_FMT_30='  %-10s %-30s %s\n'
 
@@ -434,17 +435,17 @@ echo " 4 Issuer + 6 Wallet = 10 distinct oid4vci-1_0-*-haip-test-plan profiles)"
 echo
 echo "Issuer (oid4vci-1_0-issuer-haip-test-plan):"
 matrix_header "$ROW_FMT_18" "FLOW"
-matrix_row "$ROW_FMT_18" "$SD_JWT_VC" "wallet_initiated" "Issuer haip-battery"
+matrix_row "$ROW_FMT_18" "$SD_JWT_VC" "$WALLET_INITIATED" "Issuer haip-battery"
 matrix_row "$ROW_FMT_18" "$SD_JWT_VC" "issuer_initiated" "Issuer issuer-initiated"
-matrix_row "$ROW_FMT_18" "mdoc" "wallet_initiated" "Issuer mdoc"
+matrix_row "$ROW_FMT_18" "mdoc" "$WALLET_INITIATED" "Issuer mdoc"
 matrix_row "$ROW_FMT_18" "mdoc" "issuer_initiated" "Issuer mdoc issuer-initiated"
 echo
 echo "Wallet (oid4vci-1_0-wallet-haip-test-plan):"
 matrix_header "$ROW_FMT_30" "OFFER DELIVERY"
-matrix_row "$ROW_FMT_30" "$SD_JWT_VC" "wallet_initiated" "Wallet default (jwt, sd_jwt_vc)"
+matrix_row "$ROW_FMT_30" "$SD_JWT_VC" "$WALLET_INITIATED" "Wallet default (jwt, sd_jwt_vc)"
 matrix_row "$ROW_FMT_30" "$SD_JWT_VC" "issuer_initiated (by_value)" "Wallet issuer-initiated"
 matrix_row "$ROW_FMT_30" "$SD_JWT_VC" "issuer_initiated (by_reference)" "Wallet issuer-initiated (by_reference)"
-matrix_row "$ROW_FMT_30" "mdoc" "wallet_initiated" "Wallet mdoc"
+matrix_row "$ROW_FMT_30" "mdoc" "$WALLET_INITIATED" "Wallet mdoc"
 matrix_row "$ROW_FMT_30" "mdoc" "issuer_initiated (by_value)" "Wallet mdoc issuer-initiated"
 matrix_row "$ROW_FMT_30" "mdoc" "issuer_initiated (by_reference)" "Wallet mdoc issuer-initiated (by_reference)"
 
