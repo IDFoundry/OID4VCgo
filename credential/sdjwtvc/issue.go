@@ -94,6 +94,46 @@ var reservedTopLevelClaims = map[string]bool{
 	"_sd": true, "_sd_alg": true, "...": true,
 }
 
+// applyPlaintextClaims sets sealed's own always-plaintext registered
+// claims (draft-11 §3.2.2.2's own never-selectively-disclosed set)
+// from claims — split out of Issue purely to keep it under the
+// linter's own cognitive complexity ceiling.
+func applyPlaintextClaims(sealed map[string]any, claims Claims) {
+	sealed["vct"] = claims.VCT
+	if claims.Iss != "" {
+		sealed["iss"] = claims.Iss
+	}
+	if claims.Nbf != nil {
+		sealed["nbf"] = *claims.Nbf
+	}
+	if claims.Exp != nil {
+		sealed["exp"] = *claims.Exp
+	}
+	if claims.VCTIntegrity != "" {
+		sealed["vct#integrity"] = claims.VCTIntegrity
+	}
+	if claims.Status != nil {
+		sealed["status"] = claims.Status
+	}
+	if claims.CNF != nil {
+		sealed["cnf"] = claims.CNF
+	}
+}
+
+// issuerJWTHeader builds Issue's own Issuer-signed JWT header — split
+// out purely to keep it under the linter's own cognitive complexity
+// ceiling.
+func issuerJWTHeader(opts IssueOptions) map[string]any {
+	header := map[string]any{"typ": TypHeader}
+	if opts.KeyID != "" {
+		header["kid"] = opts.KeyID
+	}
+	if opts.IssuerCertificate != nil {
+		header["x5c"] = []string{base64.StdEncoding.EncodeToString(opts.IssuerCertificate.Raw)}
+	}
+	return header
+}
+
 // Issue builds and signs an SD-JWT VC. An Issuer never produces an
 // SD-JWT+KB (only a Holder presents one — RFC 9901 §7.2), so the result
 // is always a bare SD-JWT — its compact form ends in "~" per RFC 9901
@@ -127,25 +167,7 @@ func Issue(signer crypto.Signer, alg jose.Alg, claims Claims, opts IssueOptions)
 		return "", nil, fmt.Errorf("sdjwtvc: seal claims: %w", err)
 	}
 
-	sealed["vct"] = claims.VCT
-	if claims.Iss != "" {
-		sealed["iss"] = claims.Iss
-	}
-	if claims.Nbf != nil {
-		sealed["nbf"] = *claims.Nbf
-	}
-	if claims.Exp != nil {
-		sealed["exp"] = *claims.Exp
-	}
-	if claims.VCTIntegrity != "" {
-		sealed["vct#integrity"] = claims.VCTIntegrity
-	}
-	if claims.Status != nil {
-		sealed["status"] = claims.Status
-	}
-	if claims.CNF != nil {
-		sealed["cnf"] = claims.CNF
-	}
+	applyPlaintextClaims(sealed, claims)
 
 	if opts.Decoys > 0 {
 		if err := addDecoys(sealed, hashAlg, opts.Decoys); err != nil {
@@ -161,13 +183,7 @@ func Issue(signer crypto.Signer, alg jose.Alg, claims Claims, opts IssueOptions)
 		return "", nil, fmt.Errorf("sdjwtvc: marshal payload: %w", err)
 	}
 
-	header := map[string]any{"typ": TypHeader}
-	if opts.KeyID != "" {
-		header["kid"] = opts.KeyID
-	}
-	if opts.IssuerCertificate != nil {
-		header["x5c"] = []string{base64.StdEncoding.EncodeToString(opts.IssuerCertificate.Raw)}
-	}
+	header := issuerJWTHeader(opts)
 
 	issuerJWT, err := jose.Sign(alg, signer, header, payload)
 	if err != nil {
