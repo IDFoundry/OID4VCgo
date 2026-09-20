@@ -13,15 +13,23 @@ import (
 	"github.com/idfoundry/oid4vcgo/issuer"
 )
 
+// metadataSigningIdentity is the same credential-issuer signing
+// key/certificate pair issuer.Dependencies.SDJWTSigner already uses
+// (see wiring.go) — reused by newRouter for signed Credential Issuer
+// Metadata (§12.2.3) rather than parsed a second time per request. A
+// named pair purely to keep newRouter under the linter's own
+// parameter-count ceiling.
+type metadataSigningIdentity struct {
+	Signer crypto.Signer
+	Cert   *x509.Certificate
+}
+
 // newRouter wires the FAPI 2.0 Authorization Server endpoints
 // (fapigo/server) and the OID4VCI Credential Issuer endpoints
 // (oid4vcgo/issuer) onto one plain net/http.ServeMux — mirrors
 // FAPIgo's own cmd/conformance-as/router.go's "no third-party router"
-// stance. metadataSigner/metadataCert are the same credential-issuer
-// signing key/certificate pair issuer.Dependencies.SDJWTSigner already
-// uses (see wiring.go) — reused here for signed Credential Issuer
-// Metadata (§12.2.3) rather than parsed a second time per request.
-func newRouter(srv *server.Server, iss *issuer.Issuer, resourceVerifier *fapires.Verifier, consent *consentHandler, credentialURL *url.URL, cfg Config, metadataSigner crypto.Signer, metadataCert *x509.Certificate) (*http.ServeMux, error) {
+// stance.
+func newRouter(srv *server.Server, iss *issuer.Issuer, resourceVerifier *fapires.Verifier, consent *consentHandler, credentialURL *url.URL, cfg Config, metadataKey metadataSigningIdentity) (*http.ServeMux, error) {
 	mux := http.NewServeMux()
 	metadataHandler := authorizationServerMetadataHandler(srv)
 	mux.HandleFunc("GET /.well-known/openid-configuration", metadataHandler)
@@ -43,7 +51,7 @@ func newRouter(srv *server.Server, iss *issuer.Issuer, resourceVerifier *fapires
 	mux.HandleFunc("POST /authorize/decision", consent.handleDecision)
 	mux.HandleFunc("POST /token", tokenHandler(srv))
 
-	mux.HandleFunc("GET /.well-known/openid-credential-issuer", issuer.MetadataHandler(iss, metadataSigner, jose.ES256, metadataCert))
+	mux.HandleFunc("GET /.well-known/openid-credential-issuer", issuer.MetadataHandler(iss, metadataKey.Signer, jose.ES256, metadataKey.Cert))
 	mux.HandleFunc("POST /nonce", nonceHandler(iss))
 	credHandler, err := credentialHandler(iss, resourceVerifier, credentialURL, cfg)
 	if err != nil {

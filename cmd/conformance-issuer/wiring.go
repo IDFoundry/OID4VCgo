@@ -259,7 +259,7 @@ func newServerMux(cfg Config) (*http.ServeMux, error) {
 
 	consent := newConsentHandler(srv, clientRepo, server.SystemClock{}, cfg.DefaultSubject)
 	credentialURLValue := credentialURL.URL()
-	return newRouter(srv, iss, resourceVerifier, consent, &credentialURLValue, cfg, issuerSigningKey, issuerCertificate)
+	return newRouter(srv, iss, resourceVerifier, consent, &credentialURLValue, cfg, metadataSigningIdentity{Signer: issuerSigningKey, Cert: issuerCertificate})
 }
 
 // issuerEndpoints bundles every fapi.URL newServerMux's own router and

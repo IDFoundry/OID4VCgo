@@ -271,6 +271,7 @@ func run(cfg runConfig) error {
 	log.Printf("created plan %s (alias %s), %d module instances enumerated", planID, walletRun.alias, len(modules))
 	log.Printf("plan detail: %splan-detail.html?plan=%s", cfg.apiBase, planID)
 
+	runner := moduleRunner{HTTPClient: httpClient, APIBase: cfg.apiBase, WalletRun: walletRun, OfferWallet: offerWallet}
 	summary := make(map[string]string)
 	for _, m := range modules {
 		numCreds, ok := scopeModules[m.TestModule]
@@ -289,7 +290,7 @@ func run(cfg runConfig) error {
 			continue
 		}
 		log.Printf("--- %s ---", key)
-		outcome := runModule(ctx, httpClient, cfg.apiBase, planID, m.TestModule, m.Variant, numCreds, crossing.encryption == "encrypted", walletRun, offerWallet)
+		outcome := runner.runModule(ctx, planID, m.TestModule, m.Variant, numCreds, crossing.encryption == "encrypted")
 		summary[key] = outcome
 		log.Printf("%s: %s", key, outcome)
 	}
@@ -358,15 +359,26 @@ func matchCrossing(testName string, variant map[string]string) (issuanceCrossing
 	return issuanceCrossing{}, false
 }
 
+// moduleRunner bundles the dependencies that stay fixed across every
+// module instance one plan run drives — split out from a flat
+// parameter list purely to keep runModule/driveModule under the
+// linter's own parameter-count ceiling. OfferWallet is non-nil only
+// for the issuer_initiated flow variant — see credentialoffer.go's own
+// doc comment for why the offer has to be resolved in runModule,
+// before waitUntilWaiting, rather than inside driveModule alongside
+// everything else it drives.
+type moduleRunner struct {
+	HTTPClient  *http.Client
+	APIBase     string
+	WalletRun   *walletRun
+	OfferWallet *wallet.Wallet
+}
+
 // runModule creates one module instance, drives it via driveModule,
 // and returns the suite's own graded verdict — the only thing that
 // actually determines PASS/FAIL, per driveModule's own doc comment.
-// offerWallet is non-nil only for the issuer_initiated flow variant —
-// see credentialoffer.go's own doc comment for why the offer has to
-// be captured here, before waitUntilWaiting, rather than inside
-// driveModule alongside everything else it drives.
-func runModule(ctx context.Context, httpClient *http.Client, apiBase, planID, testName string, variant map[string]string, numCreds int, encrypted bool, walletRun *walletRun, offerWallet *wallet.Wallet) string {
-	module, err := conformancesuite.CreateModuleInstance(httpClient, apiBase, planID, testName, variant)
+func (r moduleRunner) runModule(ctx context.Context, planID, testName string, variant map[string]string, numCreds int, encrypted bool) string {
+	module, err := conformancesuite.CreateModuleInstance(r.HTTPClient, r.APIBase, planID, testName, variant)
 	if err != nil {
 		return "ERROR: create module instance: " + err.Error()
 	}
@@ -385,35 +397,35 @@ func runModule(ctx context.Context, httpClient *http.Client, apiBase, planID, te
 	// same way the 4 VCIWalletTest* modules already do it — omitting
 	// this step now fails every battery module under -issuer-initiated
 	// with "Missing issuer_state in http_request_params" instead.
-	if offerWallet != nil {
-		offerURL, offerErr := waitForCredentialOfferRedirectURL(httpClient, apiBase, module.ID, 10*time.Second)
+	if r.OfferWallet != nil {
+		offerURL, offerErr := waitForCredentialOfferRedirectURL(r.HTTPClient, r.APIBase, module.ID, 10*time.Second)
 		if offerErr != nil {
 			return "ERROR: wait for credential offer: " + offerErr.Error()
 		}
-		resolved, offerErr := offerWallet.ResolveCredentialOffer(ctx, offerURL)
+		resolved, offerErr := r.OfferWallet.ResolveCredentialOffer(ctx, offerURL)
 		if offerErr != nil {
 			return "ERROR: resolve credential offer: " + offerErr.Error()
 		}
 		offer = &resolved
 	}
 
-	if err := conformancesuite.WaitUntilWaiting(httpClient, apiBase, module.ID, 10*time.Second); err != nil {
+	if err := conformancesuite.WaitUntilWaiting(r.HTTPClient, r.APIBase, module.ID, 10*time.Second); err != nil {
 		return "ERROR: wait for module ready: " + err.Error()
 	}
 
 	driverErr := ""
-	if err := driveModule(ctx, walletRun, module, testName, httpClient, numCreds, encrypted, offer); err != nil {
+	if err := r.driveModule(ctx, module, testName, numCreds, encrypted, offer); err != nil {
 		driverErr = err.Error()
 	}
 
-	status, result, err := conformancesuite.WaitUntilFinished(httpClient, apiBase, module.ID, 45*time.Second)
+	status, result, err := conformancesuite.WaitUntilFinished(r.HTTPClient, r.APIBase, module.ID, 45*time.Second)
 	if err != nil {
 		if driverErr != "" {
 			return "ERROR [driver: " + driverErr + "] (also: " + err.Error() + ")"
 		}
 		return "ERROR: " + err.Error() + " (module " + module.ID + ")"
 	}
-	outcome := status + "=" + result + " (module " + module.ID + ", " + apiBase + "api/log/" + module.ID + ")"
+	outcome := status + "=" + result + " (module " + module.ID + ", " + r.APIBase + "api/log/" + module.ID + ")"
 	if driverErr != "" {
 		outcome += " [driver: " + driverErr + "]"
 	}

@@ -32,6 +32,8 @@ var httpClient = &http.Client{
 	Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}, //nolint:gosec // deliberate — see this var's own doc comment
 }
 
+const contentTypeHeader = "Content-Type"
+
 func httpGetString(rawURL string) (string, error) {
 	resp, err := httpClient.Get(rawURL) //nolint:gosec,noctx // rawURL is the Verifier's own request_uri from a request this binary just verified, not attacker-controlled input reaching this call untrusted
 	if err != nil {
@@ -58,7 +60,7 @@ func httpPostFormString(rawURL string, form url.Values) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set(contentTypeHeader, "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/oauth-authz-req+jwt")
 	resp, err := httpClient.Do(req) //nolint:gosec // same rawURL as above, already validated/verified before this call is reached
 	if err != nil {
@@ -134,7 +136,7 @@ func (s *server) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set(contentTypeHeader, "text/html; charset=utf-8")
 	if redirectURI == "" {
 		_, _ = fmt.Fprintln(w, "<html><body><h1>Presented</h1><p>No redirect_uri was returned.</p></body></html>")
 		return
@@ -168,7 +170,7 @@ func postDirectPostResponse(responseURI, responseJWE string) (string, error) {
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("POST %s: status %d: %s", responseURI, resp.StatusCode, body)
 	}
-	if !strings.Contains(resp.Header.Get("Content-Type"), "json") {
+	if !strings.Contains(resp.Header.Get(contentTypeHeader), "json") {
 		return "", nil
 	}
 	var wire struct {

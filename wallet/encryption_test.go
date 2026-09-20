@@ -171,6 +171,18 @@ func TestResponseEncryptionRoundTrip(t *testing.T) {
 // This package only ever performs ECDH-ES Direct Key Agreement
 // (internal/jwe's sole supported Alg), so "ECDH-ES" is the only value
 // that could ever be correct here.
+// decryptedCredentialRequest reads back the one field
+// TestResponseEncryptionJWKDeclaresAlg cares about from a decrypted §10
+// Credential Request body — split out from an inline anonymous struct
+// purely for readability.
+type decryptedCredentialRequest struct {
+	ResponseEncryption struct {
+		JWK struct {
+			Alg string `json:"alg"`
+		} `json:"jwk"`
+	} `json:"credential_response_encryption"`
+}
+
 func TestResponseEncryptionJWKDeclaresAlg(t *testing.T) {
 	for name, call := range credentialCallers() {
 		t.Run(name, func(t *testing.T) {
@@ -193,13 +205,7 @@ func TestResponseEncryptionJWKDeclaresAlg(t *testing.T) {
 			if err != nil {
 				t.Fatalf("jwe.Decrypt request: %v", err)
 			}
-			var parsed struct {
-				ResponseEncryption struct {
-					JWK struct {
-						Alg string `json:"alg"`
-					} `json:"jwk"`
-				} `json:"credential_response_encryption"`
-			}
+			var parsed decryptedCredentialRequest
 			if err := json.Unmarshal(plaintext, &parsed); err != nil {
 				t.Fatalf("unmarshal decrypted request: %v", err)
 			}

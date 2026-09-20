@@ -116,11 +116,11 @@ func servePostRequestObject(t *testing.T, echoNonce bool) (rawURL, clientID stri
 			http.Error(w, "want POST", http.StatusMethodNotAllowed)
 			return
 		}
-		if ct := r.Header.Get("Content-Type"); ct != "application/x-www-form-urlencoded" {
+		if r.Header.Get("Content-Type") != "application/x-www-form-urlencoded" {
 			http.Error(w, "want application/x-www-form-urlencoded Content-Type", http.StatusBadRequest)
 			return
 		}
-		if accept := r.Header.Get("Accept"); accept != "application/oauth-authz-req+jwt" {
+		if r.Header.Get("Accept") != "application/oauth-authz-req+jwt" {
 			http.Error(w, "want application/oauth-authz-req+jwt Accept", http.StatusBadRequest)
 			return
 		}

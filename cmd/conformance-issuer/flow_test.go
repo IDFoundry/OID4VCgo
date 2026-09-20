@@ -156,21 +156,35 @@ func clientAttestationHeaders(t *testing.T, attesterKey *ecdsa.PrivateKey, attes
 	return h
 }
 
-// performPAR drives one PAR request as cc — PKCE, a DPoP proof, and
-// a Client Attestation + PoP JWT pair, all real — and returns the
+// parRequestParams bundles performPAR's own per-call inputs — split out
+// from a flat parameter list purely to stay under the linter's own
+// parameter-count ceiling.
+type parRequestParams struct {
+	IssuerURL         string
+	Scope             string
+	CodeChallenge     string
+	Client            ConfigClient
+	AttesterKey       *ecdsa.PrivateKey
+	AttesterKid       string
+	ClientInstanceKey *ecdsa.PrivateKey
+	Now               time.Time
+}
+
+// performPAR drives one PAR request as p.Client — PKCE, a DPoP proof,
+// and a Client Attestation + PoP JWT pair, all real — and returns the
 // parsed JSON response (via doJSON, which already fails the test on a
 // non-2xx status).
-func performPAR(t *testing.T, client *http.Client, issuerURL, scope, codeChallenge string, cc ConfigClient, attesterKey *ecdsa.PrivateKey, attesterKid string, clientInstanceKey *ecdsa.PrivateKey, now time.Time) map[string]any {
+func performPAR(t *testing.T, client *http.Client, p parRequestParams) map[string]any {
 	t.Helper()
-	parURL := issuerURL + "/par"
-	parDPoP, err := buildDPoPProof(clientInstanceKey, http.MethodPost, parURL, randomHex(t, 16), "", now)
+	parURL := p.IssuerURL + "/par"
+	parDPoP, err := buildDPoPProof(p.ClientInstanceKey, http.MethodPost, parURL, randomHex(t, 16), "", p.Now)
 	if err != nil {
 		t.Fatalf("buildDPoPProof (par): %v", err)
 	}
 	parForm := url.Values{
-		"response_type": {"code"}, "client_id": {cc.ID},
-		"redirect_uri": {cc.RedirectURIs[0]}, "scope": {scope},
-		"code_challenge": {codeChallenge}, "code_challenge_method": {"S256"},
+		"response_type": {"code"}, "client_id": {p.Client.ID},
+		"redirect_uri": {p.Client.RedirectURIs[0]}, "scope": {p.Scope},
+		"code_challenge": {p.CodeChallenge}, "code_challenge_method": {"S256"},
 	}
 	parReq, err := http.NewRequest(http.MethodPost, parURL, strings.NewReader(parForm.Encode()))
 	if err != nil {
@@ -178,7 +192,7 @@ func performPAR(t *testing.T, client *http.Client, issuerURL, scope, codeChallen
 	}
 	parReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	parReq.Header.Set("DPoP", parDPoP)
-	for k, v := range clientAttestationHeaders(t, attesterKey, attesterKid, cc, clientInstanceKey, issuerURL, now) {
+	for k, v := range clientAttestationHeaders(t, p.AttesterKey, p.AttesterKid, p.Client, p.ClientInstanceKey, p.IssuerURL, p.Now) {
 		parReq.Header[k] = v
 	}
 	return doJSON(t, client, parReq)
@@ -219,7 +233,11 @@ func performAuthFlowThroughNonce(t *testing.T, client *http.Client, cfg Config, 
 	verifier, challenge := pkceChallenge(t)
 
 	// --- PAR ---
-	parResp := performPAR(t, client, cfg.Issuer, cfg.Scope, challenge, cfg.Client, attesterKey, "attester-1", clientKey, now)
+	parResp := performPAR(t, client, parRequestParams{
+		IssuerURL: cfg.Issuer, Scope: cfg.Scope, CodeChallenge: challenge,
+		Client: cfg.Client, AttesterKey: attesterKey, AttesterKid: "attester-1",
+		ClientInstanceKey: clientKey, Now: now,
+	})
 	requestURI, _ := parResp["request_uri"].(string)
 	if requestURI == "" {
 		t.Fatalf("par response has no request_uri: %+v", parResp)
@@ -602,23 +620,35 @@ func buildWalletResponseEncryptionKey(t *testing.T, bogusAlg string) (walletKey 
 	return walletKey, raw
 }
 
+// credentialRequestSession bundles encryptAndPostCredentialRequest's own
+// per-test-fixture inputs (everything setupEncryptedCredentialRequestTest
+// returns except the *http.Client) — split out from a flat parameter
+// list purely to stay under the linter's own parameter-count ceiling.
+type credentialRequestSession struct {
+	Cfg                  Config
+	ClientKey            *ecdsa.PrivateKey
+	RequestDecryptionKey *ecdsa.PrivateKey
+	AccessToken          string
+	Now                  time.Time
+}
+
 // encryptAndPostCredentialRequest marshals plaintextBody, encrypts it
-// to requestDecryptionKey's own public half with outerEnc (the JWE
+// to sess.RequestDecryptionKey's own public half with outerEnc (the JWE
 // "enc" the *outer* Credential Request encryption itself uses), and
 // POSTs it — the one request-building sequence every encrypted-request
 // test in this file shares, regardless of what's actually under test
 // inside plaintextBody or outerEnc.
-func encryptAndPostCredentialRequest(t *testing.T, client *http.Client, cfg Config, clientKey, requestDecryptionKey *ecdsa.PrivateKey, accessToken string, outerEnc jwe.Enc, plaintextBody map[string]any, now time.Time) *http.Response {
+func encryptAndPostCredentialRequest(t *testing.T, client *http.Client, sess credentialRequestSession, outerEnc jwe.Enc, plaintextBody map[string]any) *http.Response {
 	t.Helper()
 	body, err := json.Marshal(plaintextBody)
 	if err != nil {
 		t.Fatalf("marshal plaintext credential request: %v", err)
 	}
-	encryptedBody, err := jwe.Encrypt(&requestDecryptionKey.PublicKey, outerEnc, body, jwe.EncryptOptions{KeyID: credentialRequestDecryptionKeyID})
+	encryptedBody, err := jwe.Encrypt(&sess.RequestDecryptionKey.PublicKey, outerEnc, body, jwe.EncryptOptions{KeyID: credentialRequestDecryptionKeyID})
 	if err != nil {
 		t.Fatalf("jwe.Encrypt (request): %v", err)
 	}
-	req := buildCredentialRequest(t, cfg, clientKey, accessToken, "application/jwt", []byte(encryptedBody), now)
+	req := buildCredentialRequest(t, sess.Cfg, sess.ClientKey, sess.AccessToken, "application/jwt", []byte(encryptedBody), sess.Now)
 	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatalf("POST /credential: %v", err)
@@ -630,11 +660,12 @@ func TestFullFlow_EncryptedCredentialRequestAndResponse(t *testing.T) {
 	client, cfg, clientKey, requestDecryptionKey, accessToken, proofJWT, now := setupEncryptedCredentialRequestTest(t, "encryption-test-client", "encryption-test-subject")
 	walletKey, walletJWK := buildWalletResponseEncryptionKey(t, "")
 
-	resp := encryptAndPostCredentialRequest(t, client, cfg, clientKey, requestDecryptionKey, accessToken, jwe.A128GCM, map[string]any{
+	sess := credentialRequestSession{Cfg: cfg, ClientKey: clientKey, RequestDecryptionKey: requestDecryptionKey, AccessToken: accessToken, Now: now}
+	resp := encryptAndPostCredentialRequest(t, client, sess, jwe.A128GCM, map[string]any{
 		"credential_configuration_id":    cfg.CredentialConfigurationID,
 		"proofs":                         map[string][]string{"jwt": {proofJWT}},
 		"credential_response_encryption": map[string]any{"jwk": walletJWK, "enc": "A128GCM"},
-	}, now)
+	})
 	defer func() { _ = resp.Body.Close() }()
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -676,10 +707,11 @@ func TestFullFlow_EncryptedCredentialRequestAndResponse(t *testing.T) {
 func TestFullFlow_CredentialRequestRejectsUnsupportedEncAlgorithm(t *testing.T) {
 	client, cfg, clientKey, requestDecryptionKey, accessToken, proofJWT, now := setupEncryptedCredentialRequestTest(t, "encryption-fail-test-client", "encryption-fail-test-subject")
 
-	resp := encryptAndPostCredentialRequest(t, client, cfg, clientKey, requestDecryptionKey, accessToken, jwe.A192GCM, map[string]any{
+	sess := credentialRequestSession{Cfg: cfg, ClientKey: clientKey, RequestDecryptionKey: requestDecryptionKey, AccessToken: accessToken, Now: now}
+	resp := encryptAndPostCredentialRequest(t, client, sess, jwe.A192GCM, map[string]any{
 		"credential_configuration_id": cfg.CredentialConfigurationID,
 		"proofs":                      map[string][]string{"jwt": {proofJWT}},
-	}, now)
+	})
 	defer func() { _ = resp.Body.Close() }()
 	assertCredentialErrorCode(t, resp, "invalid_encryption_parameters")
 }
@@ -728,11 +760,12 @@ func TestFullFlow_CredentialResponseEncryptionRejectsUnsupportedEncAlgorithm(t *
 	client, cfg, clientKey, requestDecryptionKey, accessToken, proofJWT, now := setupEncryptedCredentialRequestTest(t, "response-encryption-fail-test-client", "response-encryption-fail-test-subject")
 	_, walletJWK := buildWalletResponseEncryptionKey(t, "")
 
-	resp := encryptAndPostCredentialRequest(t, client, cfg, clientKey, requestDecryptionKey, accessToken, jwe.A128GCM, map[string]any{
+	sess := credentialRequestSession{Cfg: cfg, ClientKey: clientKey, RequestDecryptionKey: requestDecryptionKey, AccessToken: accessToken, Now: now}
+	resp := encryptAndPostCredentialRequest(t, client, sess, jwe.A128GCM, map[string]any{
 		"credential_configuration_id":    cfg.CredentialConfigurationID,
 		"proofs":                         map[string][]string{"jwt": {proofJWT}},
 		"credential_response_encryption": map[string]any{"jwk": walletJWK, "enc": "A192GCM"},
-	}, now)
+	})
 	defer func() { _ = resp.Body.Close() }()
 	if ct := resp.Header.Get("Content-Type"); ct != "application/json" {
 		t.Errorf("Content-Type = %q, want application/json (a plain JSON error, not an encrypted body)", ct)
@@ -758,11 +791,12 @@ func TestFullFlow_CredentialResponseEncryptionRejectsMismatchedJWKAlg(t *testing
 	client, cfg, clientKey, requestDecryptionKey, accessToken, proofJWT, now := setupEncryptedCredentialRequestTest(t, "response-encryption-alg-fail-test-client", "response-encryption-alg-fail-test-subject")
 	_, walletJWKWithBogusAlg := buildWalletResponseEncryptionKey(t, "UNSUPPORTED_ALG")
 
-	resp := encryptAndPostCredentialRequest(t, client, cfg, clientKey, requestDecryptionKey, accessToken, jwe.A128GCM, map[string]any{
+	sess := credentialRequestSession{Cfg: cfg, ClientKey: clientKey, RequestDecryptionKey: requestDecryptionKey, AccessToken: accessToken, Now: now}
+	resp := encryptAndPostCredentialRequest(t, client, sess, jwe.A128GCM, map[string]any{
 		"credential_configuration_id":    cfg.CredentialConfigurationID,
 		"proofs":                         map[string][]string{"jwt": {proofJWT}},
 		"credential_response_encryption": map[string]any{"jwk": walletJWKWithBogusAlg, "enc": "A128GCM"},
-	}, now)
+	})
 	defer func() { _ = resp.Body.Close() }()
 	if ct := resp.Header.Get("Content-Type"); ct != "application/json" {
 		t.Errorf("Content-Type = %q, want application/json (a plain JSON error, not an encrypted body)", ct)
@@ -809,7 +843,11 @@ func TestFullFlow_Client2CanAuthenticatePAR(t *testing.T) {
 	startTestIssuerServer(t, &cfg)
 	_, challenge := pkceChallenge(t)
 
-	parResp := performPAR(t, client, cfg.Issuer, cfg.Scope, challenge, client2, attester2Key, "attester-2", client2Key, now)
+	parResp := performPAR(t, client, parRequestParams{
+		IssuerURL: cfg.Issuer, Scope: cfg.Scope, CodeChallenge: challenge,
+		Client: client2, AttesterKey: attester2Key, AttesterKid: "attester-2",
+		ClientInstanceKey: client2Key, Now: now,
+	})
 	if requestURI, _ := parResp["request_uri"].(string); requestURI == "" {
 		t.Fatalf("par response has no request_uri: %+v", parResp)
 	}

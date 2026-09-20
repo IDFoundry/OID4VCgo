@@ -18,6 +18,8 @@ import (
 
 const sessionIDEntropyBytes = 16
 
+const contentTypeHeader = "Content-Type"
+
 func newSessionID() (string, error) {
 	buf := make([]byte, sessionIDEntropyBytes)
 	if _, err := rand.Read(buf); err != nil {
@@ -151,7 +153,7 @@ func (s *server) handleRequestObject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/oauth-authz-req+jwt")
+	w.Header().Set(contentTypeHeader, "application/oauth-authz-req+jwt")
 	_, _ = w.Write([]byte(requestObject)) //nolint:gosec // not XSS-exploitable: Content-Type is a compact JWS (dot-separated base64url segments), never text/html, regardless of walletNonce's own taint
 }
 
@@ -209,7 +211,7 @@ func (s *server) handleResponse(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(contentTypeHeader, "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]string{
 		"redirect_uri": s.cfg.BaseURL + "/result/" + matched.id,
 	})
@@ -228,7 +230,7 @@ func (s *server) handleResult(w http.ResponseWriter, r *http.Request) {
 	sess.mu.Lock()
 	defer sess.mu.Unlock()
 
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set(contentTypeHeader, "text/html; charset=utf-8")
 	if !sess.done {
 		_, _ = fmt.Fprintf(w, "<html><body><h1>Pending</h1><p>Session %s has not received a response yet.</p></body></html>", html.EscapeString(id))
 		return

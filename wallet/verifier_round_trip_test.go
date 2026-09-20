@@ -93,21 +93,30 @@ func presentAndParse(t *testing.T, v *verifier.Verifier, vpToken map[string][]st
 	return parsed
 }
 
-// presentAndVerifySDJWTVC presents fixture against query
-// (audience/origin — exactly one non-empty, mirroring
-// wallet.PresentationRequest's own split) via PresentCredentials,
-// encrypts/parses the result (presentAndParse), and verifies it via v
-// with the same audience/origin — the shared tail
+// presentationContext bundles presentAndVerifySDJWTVC's own
+// audience/origin/nonce trio (audience/origin — exactly one non-empty,
+// mirroring wallet.PresentationRequest's own split) — split out from a
+// flat parameter list purely to stay under the linter's own
+// parameter-count ceiling.
+type presentationContext struct {
+	Audience string
+	Origin   string
+	Nonce    string
+}
+
+// presentAndVerifySDJWTVC presents fixture against query via
+// PresentCredentials, encrypts/parses the result (presentAndParse),
+// and verifies it via v with the same pc — the shared tail
 // TestWalletVerifierPresentationRoundTrip and
 // TestWalletVerifierDCAPIPresentationRoundTrip both need, differing
 // only in which flow they exercise.
-func presentAndVerifySDJWTVC(t *testing.T, v *verifier.Verifier, query dcql.Query, fixture heldSDJWTVCFixture, audience, origin, nonce string, decryptionKey *ecdsa.PrivateKey) verifier.VerifiedCredential {
+func presentAndVerifySDJWTVC(t *testing.T, v *verifier.Verifier, query dcql.Query, fixture heldSDJWTVCFixture, pc presentationContext, decryptionKey *ecdsa.PrivateKey) verifier.VerifiedCredential {
 	t.Helper()
 	vpToken, err := wallet.PresentCredentials(context.Background(), wallet.PresentationRequest{
 		Query:       query,
 		Credentials: []wallet.HeldCredential{fixture.held},
-		Audience:    audience, Origin: origin,
-		Nonce: nonce,
+		Audience:    pc.Audience, Origin: pc.Origin,
+		Nonce: pc.Nonce,
 	})
 	if err != nil {
 		t.Fatalf("PresentCredentials: %v", err)
@@ -120,9 +129,9 @@ func presentAndVerifySDJWTVC(t *testing.T, v *verifier.Verifier, query dcql.Quer
 	result, err := v.VerifyResponse(context.Background(), verifier.VerifyResponseRequest{
 		Query:            query,
 		Response:         parsed,
-		ExpectedNonce:    nonce,
+		ExpectedNonce:    pc.Nonce,
 		IssuerKeys:       issuerKeys,
-		Origin:           origin,
+		Origin:           pc.Origin,
 		MaxKeyBindingAge: time.Hour,
 	})
 	return testverify.RequireOneCredential(t, result, err, "identity_credential")
@@ -150,7 +159,7 @@ func TestWalletVerifierPresentationRoundTrip(t *testing.T) {
 	}
 
 	fixture := newHeldSDJWTVC(t)
-	vc := presentAndVerifySDJWTVC(t, v, query, fixture, built.ClientID, "", built.Nonce, built.ResponseDecryptionKey)
+	vc := presentAndVerifySDJWTVC(t, v, query, fixture, presentationContext{Audience: built.ClientID, Nonce: built.Nonce}, built.ResponseDecryptionKey)
 	if vc.Claims["given_name"] != "Alice" {
 		t.Errorf("Claims[given_name] = %v, want Alice", vc.Claims["given_name"])
 	}
@@ -181,7 +190,7 @@ func TestWalletVerifierDCAPIPresentationRoundTrip(t *testing.T) {
 	}
 
 	fixture := newHeldSDJWTVC(t)
-	vc := presentAndVerifySDJWTVC(t, v, query, fixture, "", origin, built.Nonce, built.ResponseDecryptionKey)
+	vc := presentAndVerifySDJWTVC(t, v, query, fixture, presentationContext{Origin: origin, Nonce: built.Nonce}, built.ResponseDecryptionKey)
 	if vc.Claims["given_name"] != "Alice" {
 		t.Errorf("Claims[given_name] = %v, want Alice", vc.Claims["given_name"])
 	}

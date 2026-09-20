@@ -144,11 +144,11 @@ func New(cfg Config, deps Dependencies) (*Verifier, error) {
 	// this package targets) may not — a direct assertion would panic
 	// instead of returning this func's own documented config-mismatch
 	// error. Found in a repo-wide security review.
-	comparable, ok := deps.Signer.Public().(interface{ Equal(crypto.PublicKey) bool })
+	comparableKey, ok := deps.Signer.Public().(interface{ Equal(crypto.PublicKey) bool })
 	if !ok {
 		return nil, fmt.Errorf("verifier: dependencies: signer's own public key type %T does not implement Equal(crypto.PublicKey) bool", deps.Signer.Public())
 	}
-	if !comparable.Equal(cfg.ClientCertificate.PublicKey) {
+	if !comparableKey.Equal(cfg.ClientCertificate.PublicKey) {
 		return nil, fmt.Errorf("verifier: config: client_certificate's public key does not match dependencies.signer")
 	}
 
