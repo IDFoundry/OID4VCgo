@@ -36,6 +36,16 @@ func TestMetadata(t *testing.T) {
 	}
 
 	md := iss.Metadata()
+	checkMetadataStructFields(t, md)
+	checkMetadataWireEndpoints(t, marshalWire(t, md))
+}
+
+// checkMetadataStructFields and checkMetadataWireEndpoints are
+// TestMetadata's own assertion chain, split into top-level helpers
+// purely to keep that function under the linter's own cognitive
+// complexity ceiling.
+func checkMetadataStructFields(t *testing.T, md oid4vci.Metadata) {
+	t.Helper()
 	if md.CredentialIssuer.String() != testIssuer {
 		t.Errorf("CredentialIssuer = %q, want %q", md.CredentialIssuer.String(), testIssuer)
 	}
@@ -54,8 +64,10 @@ func TestMetadata(t *testing.T) {
 	if len(md.CredentialConfigurationsSupported) != 1 {
 		t.Fatalf("got %d credential configurations, want 1", len(md.CredentialConfigurationsSupported))
 	}
+}
 
-	wire := marshalWire(t, md)
+func checkMetadataWireEndpoints(t *testing.T, wire map[string]any) {
+	t.Helper()
 	if wire["credential_issuer"] != testIssuer {
 		t.Errorf("wire credential_issuer = %v", wire["credential_issuer"])
 	}
