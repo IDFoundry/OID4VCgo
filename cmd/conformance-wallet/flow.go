@@ -376,7 +376,9 @@ func (r moduleRunner) driveModule(ctx context.Context, module conformancesuite.S
 	if err != nil {
 		return fmt.Errorf("parse credential endpoint: %w", err)
 	}
-	credRequest, err := buildWalletCredentialRequest(ctx, w, run, module, numCreds, encrypted, nonceResult.CNonce, offer)
+	credRequest, err := buildWalletCredentialRequest(ctx, w, credentialRequestParams{
+		Run: run, Module: module, NumCreds: numCreds, Encrypted: encrypted, CNonce: nonceResult.CNonce, Offer: offer,
+	})
 	if err != nil {
 		return err
 	}
@@ -457,11 +459,24 @@ func (r moduleRunner) authorizeAndGetProtectedResource(ctx context.Context, modu
 	return c.ProtectedResource(success.Tokens), nil
 }
 
+// credentialRequestParams bundles buildWalletCredentialRequest's own
+// per-call inputs — split out from a flat parameter list purely to
+// stay under the linter's own parameter-count ceiling.
+type credentialRequestParams struct {
+	Run       *walletRun
+	Module    conformancesuite.SuiteModule
+	NumCreds  int
+	Encrypted bool
+	CNonce    string
+	Offer     *oid4vci.CredentialOffer
+}
+
 // buildWalletCredentialRequest builds the CredentialRequest driveModule
-// sends, including its run.proofType-specific proof material and
+// sends, including its p.Run.proofType-specific proof material and
 // optional §10 request/response encryption — split out purely to keep
 // driveModule under the linter's own cognitive complexity ceiling.
-func buildWalletCredentialRequest(ctx context.Context, w *wallet.Wallet, run *walletRun, module conformancesuite.SuiteModule, numCreds int, encrypted bool, cNonce string, offer *oid4vci.CredentialOffer) (wallet.CredentialRequest, error) {
+func buildWalletCredentialRequest(ctx context.Context, w *wallet.Wallet, p credentialRequestParams) (wallet.CredentialRequest, error) {
+	run, module, numCreds, encrypted, cNonce, offer := p.Run, p.Module, p.NumCreds, p.Encrypted, p.CNonce, p.Offer
 	credentialConfigurationID := run.credentialConfigurationID
 	if offer != nil && len(offer.CredentialConfigurationIDs) > 0 {
 		credentialConfigurationID = offer.CredentialConfigurationIDs[0]
