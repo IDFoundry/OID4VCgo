@@ -353,39 +353,10 @@ var issuerStateExtension = extension.Definition[string]{
 // actually resolves the offer for.
 func (r moduleRunner) driveModule(ctx context.Context, module conformancesuite.SuiteModule, testName string, numCreds int, encrypted bool, offer *oid4vci.CredentialOffer) error {
 	run, httpClient := r.WalletRun, r.HTTPClient
-	c, err := buildClient(ctx, run, module, testName, httpClient)
+	resource, err := r.authorizeAndGetProtectedResource(ctx, module, testName, offer)
 	if err != nil {
-		return fmt.Errorf("build client: %w", err)
+		return err
 	}
-
-	beginReq := client.BeginAuthorizationRequest{Scope: []string{run.scope}}
-	if offer != nil && offer.Grants != nil && offer.Grants.AuthorizationCode != nil {
-		if issuerState := offer.Grants.AuthorizationCode.IssuerState; issuerState != "" {
-			if err := extension.Set(&beginReq.Extensions, issuerStateExtension, issuerState); err != nil {
-				return fmt.Errorf("set issuer_state extension: %w", err)
-			}
-		}
-	}
-	session, err := c.BeginAuthorization(ctx, beginReq)
-	if err != nil {
-		return fmt.Errorf("begin authorization: %w", err)
-	}
-
-	rawQuery, err := followAuthorizationRedirect(httpClient, session.URL().String())
-	if err != nil {
-		return fmt.Errorf("follow authorization redirect: %w", err)
-	}
-
-	result, err := c.CompleteAuthorization(ctx, client.AuthorizationCallback{RawQuery: rawQuery})
-	if err != nil {
-		return fmt.Errorf("complete authorization: %w", err)
-	}
-	success, ok := result.(client.CompletionSuccess)
-	if !ok {
-		return fmt.Errorf("authorization was not completed successfully: %#v", result)
-	}
-
-	resource := c.ProtectedResource(success.Tokens)
 
 	w, err := newWallet(httpClient)
 	if err != nil {
@@ -405,89 +376,9 @@ func (r moduleRunner) driveModule(ctx context.Context, module conformancesuite.S
 	if err != nil {
 		return fmt.Errorf("parse credential endpoint: %w", err)
 	}
-	credentialConfigurationID := run.credentialConfigurationID
-	if offer != nil && len(offer.CredentialConfigurationIDs) > 0 {
-		credentialConfigurationID = offer.CredentialConfigurationIDs[0]
-	}
-	credRequest := wallet.CredentialRequest{
-		CredentialConfigurationID: credentialConfigurationID,
-		// The trailing slash matters: it must match the Credential
-		// Issuer Identifier exactly as the suite's own metadata
-		// publishes it (confirmed live: "credential_issuer":
-		// ".../<alias>/" — with a trailing slash), since this becomes
-		// the jwt-type proof's own "aud" claim. Unused for the
-		// attestation proof type below, but harmless to leave set.
-		CredentialIssuer: module.URL + "/",
-		Nonce:            nonceResult.CNonce,
-	}
-	switch run.proofType {
-	case proofStrategyAttestation:
-		// HAIP §4.5.1 Key Attestation (Appendix D/F.3): one Key
-		// Attestation JWT attests numCreds fresh keys and is submitted
-		// as the standalone "attestation" proof — no per-credential jwt
-		// proof needed, see buildKeyAttestationProof's own doc comment.
-		attestedKeys, genErr := generateAttestedKeys(numCreds)
-		if genErr != nil {
-			return fmt.Errorf("generate attested keys: %w", genErr)
-		}
-		attestationJWT, err := buildKeyAttestationProof(w, run, attestedKeys, nonceResult.CNonce, false)
-		if err != nil {
-			return fmt.Errorf("build key attestation proof: %w", err)
-		}
-		credRequest.Attestation = attestationJWT
-
-	case proofStrategyJWTKeyAttestation:
-		// Appendix D.1's nested case: an ordinary jwt-type proof per
-		// credential, each with the Key Attestation JWT embedded in its
-		// own header (wallet.GenerateProofWithKeyAttestation). All
-		// proofs share one attestation covering every attested key at
-		// once, rather than each minting its own single-key one:
-		// AbstractVCIWalletTest.java only ever validates the *last*
-		// proof's own nested attestation against the *first* proof's
-		// own key (VCIValidateCredentialRequestJwtProof overwrites
-		// vci.key_attestation_jwt per proof, then
-		// VCIValidateAttestedKeysInKeyAttestationFromJwtProof checks
-		// only the first proof's own key against whatever that ends up
-		// being) — confirmed live: a batch of per-key attestations
-		// fails that check for numCreds>1, while one shared attestation
-		// naming every key passes regardless of which proof's copy the
-		// suite happens to validate.
-		attestedKeys, genErr := generateAttestedKeys(numCreds)
-		if genErr != nil {
-			return fmt.Errorf("generate attested keys: %w", genErr)
-		}
-		attestationJWT, err := buildKeyAttestationProof(w, run, attestedKeys, nonceResult.CNonce, true)
-		if err != nil {
-			return fmt.Errorf("build key attestation proof: %w", err)
-		}
-		jwtProofs := make([]string, numCreds)
-		for i, signer := range attestedKeys {
-			proof, genErr := w.GenerateProofWithKeyAttestation(signer, module.URL+"/", nonceResult.CNonce, attestationJWT)
-			if genErr != nil {
-				return fmt.Errorf("generate jwt proof with key attestation %d: %w", i, genErr)
-			}
-			jwtProofs[i] = proof
-		}
-		credRequest.JWTProofs = jwtProofs
-
-	default:
-		holderKeys := make([]crypto.Signer, numCreds)
-		for i := range holderKeys {
-			holderKey, genErr := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-			if genErr != nil {
-				return fmt.Errorf("generate holder key: %w", genErr)
-			}
-			holderKeys[i] = holderKey
-		}
-		credRequest.Keys = holderKeys
-	}
-	if encrypted {
-		recipientJWK, encErr := credentialRequestEncryptionJWK(ctx, w, module.URL)
-		if encErr != nil {
-			return fmt.Errorf("fetch credential request encryption key: %w", encErr)
-		}
-		credRequest.RequestEncryption = &wallet.RequestEncryption{RecipientJWK: recipientJWK, Enc: encryptionEnc}
-		credRequest.ResponseEncryption = &wallet.ResponseEncryption{Enc: encryptionEnc}
+	credRequest, err := buildWalletCredentialRequest(ctx, w, run, module, numCreds, encrypted, nonceResult.CNonce, offer)
+	if err != nil {
+		return err
 	}
 	credResult, err := w.RequestCredential(ctx, resource, credentialEndpoint, credRequest)
 	if err != nil {
@@ -522,4 +413,138 @@ func (r moduleRunner) driveModule(ctx context.Context, module conformancesuite.S
 	}
 
 	return nil
+}
+
+// authorizeAndGetProtectedResource is driveModule's own PAR ->
+// authorize -> token half — split out purely to keep driveModule under
+// the linter's own cognitive complexity ceiling. offer's own
+// issuer_state (if any) is echoed back on the PAR request (OID4VCI
+// §5.1.3), matching what a spec-faithful wallet does for the
+// issuer_initiated flow variant.
+func (r moduleRunner) authorizeAndGetProtectedResource(ctx context.Context, module conformancesuite.SuiteModule, testName string, offer *oid4vci.CredentialOffer) (wallet.ProtectedResourceClient, error) {
+	run, httpClient := r.WalletRun, r.HTTPClient
+	c, err := buildClient(ctx, run, module, testName, httpClient)
+	if err != nil {
+		return nil, fmt.Errorf("build client: %w", err)
+	}
+
+	beginReq := client.BeginAuthorizationRequest{Scope: []string{run.scope}}
+	if offer != nil && offer.Grants != nil && offer.Grants.AuthorizationCode != nil {
+		if issuerState := offer.Grants.AuthorizationCode.IssuerState; issuerState != "" {
+			if err := extension.Set(&beginReq.Extensions, issuerStateExtension, issuerState); err != nil {
+				return nil, fmt.Errorf("set issuer_state extension: %w", err)
+			}
+		}
+	}
+	session, err := c.BeginAuthorization(ctx, beginReq)
+	if err != nil {
+		return nil, fmt.Errorf("begin authorization: %w", err)
+	}
+
+	rawQuery, err := followAuthorizationRedirect(httpClient, session.URL().String())
+	if err != nil {
+		return nil, fmt.Errorf("follow authorization redirect: %w", err)
+	}
+
+	result, err := c.CompleteAuthorization(ctx, client.AuthorizationCallback{RawQuery: rawQuery})
+	if err != nil {
+		return nil, fmt.Errorf("complete authorization: %w", err)
+	}
+	success, ok := result.(client.CompletionSuccess)
+	if !ok {
+		return nil, fmt.Errorf("authorization was not completed successfully: %#v", result)
+	}
+	return c.ProtectedResource(success.Tokens), nil
+}
+
+// buildWalletCredentialRequest builds the CredentialRequest driveModule
+// sends, including its run.proofType-specific proof material and
+// optional §10 request/response encryption — split out purely to keep
+// driveModule under the linter's own cognitive complexity ceiling.
+func buildWalletCredentialRequest(ctx context.Context, w *wallet.Wallet, run *walletRun, module conformancesuite.SuiteModule, numCreds int, encrypted bool, cNonce string, offer *oid4vci.CredentialOffer) (wallet.CredentialRequest, error) {
+	credentialConfigurationID := run.credentialConfigurationID
+	if offer != nil && len(offer.CredentialConfigurationIDs) > 0 {
+		credentialConfigurationID = offer.CredentialConfigurationIDs[0]
+	}
+	credRequest := wallet.CredentialRequest{
+		CredentialConfigurationID: credentialConfigurationID,
+		// The trailing slash matters: it must match the Credential
+		// Issuer Identifier exactly as the suite's own metadata
+		// publishes it (confirmed live: "credential_issuer":
+		// ".../<alias>/" — with a trailing slash), since this becomes
+		// the jwt-type proof's own "aud" claim. Unused for the
+		// attestation proof type below, but harmless to leave set.
+		CredentialIssuer: module.URL + "/",
+		Nonce:            cNonce,
+	}
+	switch run.proofType {
+	case proofStrategyAttestation:
+		// HAIP §4.5.1 Key Attestation (Appendix D/F.3): one Key
+		// Attestation JWT attests numCreds fresh keys and is submitted
+		// as the standalone "attestation" proof — no per-credential jwt
+		// proof needed, see buildKeyAttestationProof's own doc comment.
+		attestedKeys, genErr := generateAttestedKeys(numCreds)
+		if genErr != nil {
+			return wallet.CredentialRequest{}, fmt.Errorf("generate attested keys: %w", genErr)
+		}
+		attestationJWT, err := buildKeyAttestationProof(w, run, attestedKeys, cNonce, false)
+		if err != nil {
+			return wallet.CredentialRequest{}, fmt.Errorf("build key attestation proof: %w", err)
+		}
+		credRequest.Attestation = attestationJWT
+
+	case proofStrategyJWTKeyAttestation:
+		// Appendix D.1's nested case: an ordinary jwt-type proof per
+		// credential, each with the Key Attestation JWT embedded in its
+		// own header (wallet.GenerateProofWithKeyAttestation). All
+		// proofs share one attestation covering every attested key at
+		// once, rather than each minting its own single-key one:
+		// AbstractVCIWalletTest.java only ever validates the *last*
+		// proof's own nested attestation against the *first* proof's
+		// own key (VCIValidateCredentialRequestJwtProof overwrites
+		// vci.key_attestation_jwt per proof, then
+		// VCIValidateAttestedKeysInKeyAttestationFromJwtProof checks
+		// only the first proof's own key against whatever that ends up
+		// being) — confirmed live: a batch of per-key attestations
+		// fails that check for numCreds>1, while one shared attestation
+		// naming every key passes regardless of which proof's copy the
+		// suite happens to validate.
+		attestedKeys, genErr := generateAttestedKeys(numCreds)
+		if genErr != nil {
+			return wallet.CredentialRequest{}, fmt.Errorf("generate attested keys: %w", genErr)
+		}
+		attestationJWT, err := buildKeyAttestationProof(w, run, attestedKeys, cNonce, true)
+		if err != nil {
+			return wallet.CredentialRequest{}, fmt.Errorf("build key attestation proof: %w", err)
+		}
+		jwtProofs := make([]string, numCreds)
+		for i, signer := range attestedKeys {
+			proof, genErr := w.GenerateProofWithKeyAttestation(signer, module.URL+"/", cNonce, attestationJWT)
+			if genErr != nil {
+				return wallet.CredentialRequest{}, fmt.Errorf("generate jwt proof with key attestation %d: %w", i, genErr)
+			}
+			jwtProofs[i] = proof
+		}
+		credRequest.JWTProofs = jwtProofs
+
+	default:
+		holderKeys := make([]crypto.Signer, numCreds)
+		for i := range holderKeys {
+			holderKey, genErr := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+			if genErr != nil {
+				return wallet.CredentialRequest{}, fmt.Errorf("generate holder key: %w", genErr)
+			}
+			holderKeys[i] = holderKey
+		}
+		credRequest.Keys = holderKeys
+	}
+	if encrypted {
+		recipientJWK, encErr := credentialRequestEncryptionJWK(ctx, w, module.URL)
+		if encErr != nil {
+			return wallet.CredentialRequest{}, fmt.Errorf("fetch credential request encryption key: %w", encErr)
+		}
+		credRequest.RequestEncryption = &wallet.RequestEncryption{RecipientJWK: recipientJWK, Enc: encryptionEnc}
+		credRequest.ResponseEncryption = &wallet.ResponseEncryption{Enc: encryptionEnc}
+	}
+	return credRequest, nil
 }
