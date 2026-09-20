@@ -112,38 +112,63 @@ func sdDigests(obj map[string]any) []string {
 func includeAllDisclosures(node any, byDigest map[string]Disclosure, selected map[string]Disclosure) error {
 	switch t := node.(type) {
 	case map[string]any:
-		for k, v := range t {
-			if k == "_sd" || k == "_sd_alg" {
-				continue
-			}
-			if err := includeAllDisclosures(v, byDigest, selected); err != nil {
-				return err
-			}
-		}
-		for _, digest := range sdDigests(t) {
-			if err := includeDisclosure(digest, byDigest, selected); err != nil {
-				return err
-			}
-		}
+		return includeAllDisclosuresInObject(t, byDigest, selected)
 	case []any:
-		for _, el := range t {
-			if obj, ok := el.(map[string]any); ok && len(obj) == 1 {
-				if digestRaw, has := obj["..."]; has {
-					digest, ok := digestRaw.(string)
-					if ok {
-						if err := includeDisclosure(digest, byDigest, selected); err != nil {
-							return err
-						}
-						continue
-					}
-				}
-			}
-			if err := includeAllDisclosures(el, byDigest, selected); err != nil {
-				return err
-			}
+		return includeAllDisclosuresInArray(t, byDigest, selected)
+	}
+	return nil
+}
+
+// includeAllDisclosuresInObject and includeAllDisclosuresInArray are
+// includeAllDisclosures's own two case bodies (map[string]any/[]any),
+// split into top-level helpers purely to keep it under the linter's
+// own cognitive complexity ceiling.
+func includeAllDisclosuresInObject(obj map[string]any, byDigest map[string]Disclosure, selected map[string]Disclosure) error {
+	for k, v := range obj {
+		if k == "_sd" || k == "_sd_alg" {
+			continue
+		}
+		if err := includeAllDisclosures(v, byDigest, selected); err != nil {
+			return err
+		}
+	}
+	for _, digest := range sdDigests(obj) {
+		if err := includeDisclosure(digest, byDigest, selected); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+func includeAllDisclosuresInArray(arr []any, byDigest map[string]Disclosure, selected map[string]Disclosure) error {
+	for _, el := range arr {
+		if digest, isRef := disclosureRefDigest(el); isRef {
+			if err := includeDisclosure(digest, byDigest, selected); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := includeAllDisclosures(el, byDigest, selected); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// disclosureRefDigest reports whether el is an RFC 9901 §4.2.6
+// recursive-disclosure array-element reference (a single-key object
+// {"...": "<digest>"}), returning its own digest if so.
+func disclosureRefDigest(el any) (digest string, isRef bool) {
+	obj, ok := el.(map[string]any)
+	if !ok || len(obj) != 1 {
+		return "", false
+	}
+	digestRaw, has := obj["..."]
+	if !has {
+		return "", false
+	}
+	digest, ok = digestRaw.(string)
+	return digest, ok
 }
 
 // includeDisclosure marks digest's own Disclosure as selected (a
