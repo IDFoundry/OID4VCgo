@@ -28,6 +28,11 @@ import (
 // leaf, or a chain that doesn't actually validate against the
 // configured roots (see X5CIssuerKeyResolver's own doc comment).
 
+// contractLeafCommonName is the fixed leaf certificate common name
+// every check in this file uses — its value is never asserted on, only
+// the trust-chain outcome.
+const contractLeafCommonName = "test-leaf"
+
 // ContractCA, ContractLeaf and ContractSelfSignedLeaf are thin,
 // exported re-exports of internal/testcert's own CA/Leaf/SelfSignedLeaf
 // — exported (unusually, for a helper only this package's own tests
@@ -90,7 +95,7 @@ func testCertChainTrustContract(t *testing.T, resolve func(roots *x509.CertPool,
 
 	t.Run("AcceptsCASignedLeaf", func(t *testing.T) {
 		ca, caKey := ContractCA(t, "test-ca")
-		leaf, _ := ContractLeaf(t, "test-leaf", ca, caKey)
+		leaf, _ := ContractLeaf(t, contractLeafCommonName, ca, caKey)
 		roots := x509.NewCertPool()
 		roots.AddCert(ca)
 
@@ -100,7 +105,7 @@ func testCertChainTrustContract(t *testing.T, resolve func(roots *x509.CertPool,
 	})
 
 	t.Run("RejectsSelfSignedLeafEvenIfTrusted", func(t *testing.T) {
-		leaf, _ := ContractSelfSignedLeaf(t, "test-leaf")
+		leaf, _ := ContractSelfSignedLeaf(t, contractLeafCommonName)
 		roots := x509.NewCertPool()
 		roots.AddCert(leaf) // the self-signed leaf is itself a configured root.
 
@@ -111,7 +116,7 @@ func testCertChainTrustContract(t *testing.T, resolve func(roots *x509.CertPool,
 
 	t.Run("RejectsUntrustedChain", func(t *testing.T) {
 		ca, caKey := ContractCA(t, "test-ca")
-		leaf, _ := ContractLeaf(t, "test-leaf", ca, caKey)
+		leaf, _ := ContractLeaf(t, contractLeafCommonName, ca, caKey)
 		untrustedCA, _ := ContractCA(t, "untrusted-ca")
 		roots := x509.NewCertPool()
 		roots.AddCert(untrustedCA) // does not chain to the leaf's own issuer.

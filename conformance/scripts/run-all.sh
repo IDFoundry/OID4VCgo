@@ -98,7 +98,10 @@ touch "$RESULTS_FILE"
 OVERALL_CLEAN=true
 ALL_RUNS=()
 
-log() { echo "[run-all] $*"; }
+log() {
+	echo "[run-all] $*"
+	return 0
+}
 
 # record_result NAME LINE — appends "NAME|LINE" to $RESULTS_FILE. Not
 # an associative array (declare -A needs bash 4+; the stock /bin/bash
@@ -107,11 +110,13 @@ log() { echo "[run-all] $*"; }
 record_result() {
 	local name="$1" line="$2"
 	printf '%s|%s\n' "$name" "$line" >>"$RESULTS_FILE"
+	return 0
 }
 
 lookup_result() {
 	local name="$1"
 	grep -F "$name|" "$RESULTS_FILE" 2>/dev/null | tail -1 | cut -d'|' -f2- || true
+	return 0
 }
 
 # check_suite_reachable — polls rather than checking once, the same
@@ -142,10 +147,10 @@ check_summary() {
 	local clean=0
 	local name result want
 	while IFS='|' read -r name result; do
-		[ -z "$name" ] && continue
+		[[ -z "$name" ]] && continue
 		want="$(printf '%s\n' "$exceptions" | grep "^${name}=" | tail -1 | cut -d'=' -f2)"
-		[ -z "$want" ] && want="PASSED"
-		if [ "$result" != "$want" ]; then
+		[[ -z "$want" ]] && want="PASSED"
+		if [[ "$result" != "$want" ]]; then
 			echo "  UNEXPECTED: $name = $result (want $want)"
 			clean=1
 		fi
@@ -203,7 +208,7 @@ run_go_checked() {
 	(cd "$REPO_ROOT" && "$@") >"$log_file" 2>&1
 	local mismatches
 	mismatches="$(check_summary "$log_file" "$exceptions")"
-	if [ -z "$mismatches" ]; then
+	if [[ -z "$mismatches" ]]; then
 		record_result "$name" "OK (see $log_file)"
 		log "$name: OK"
 	else
@@ -212,6 +217,7 @@ run_go_checked() {
 		log "$name: UNEXPECTED RESULTS"
 		echo "$mismatches"
 	fi
+	return 0
 }
 
 # run_go_self_graded NAME LOG_FILE CMD... — for the three scripts that
@@ -231,6 +237,7 @@ run_go_self_graded() {
 		record_result "$name" "UNEXPECTED RESULTS (see $log_file)"
 		log "$name: UNEXPECTED RESULTS"
 	fi
+	return 0
 }
 
 run_issuer() {
@@ -281,6 +288,7 @@ fapi2-security-profile-final-par-attempt-to-use-request_uri-for-different-client
 	# proof type — see keyAttestationBattery's own doc comment.
 	run_go_checked "Issuer key-attestation" "$WORKDIR/issuer-key-attestation.log" "" \
 		go run ./conformance/issuer/scripts/run-fapi2sp-battery -credential-proof-type-hint=attestation
+	return 0
 }
 
 run_wallet() {
@@ -306,6 +314,7 @@ run_wallet() {
 	run_go_checked "Wallet mdoc" "$WORKDIR/wallet-mdoc.log" "" \
 		go run ./cmd/conformance-wallet -credential-format mdoc \
 			-credential-configuration-id eu.europa.ec.eudi.pid.mdoc.1 -scope eudi.pid.mdoc.1
+	return 0
 }
 
 run_verifier() {
@@ -314,11 +323,13 @@ run_verifier() {
 
 	run_go_self_graded "Verifier mdoc" "$WORKDIR/verifier-mdoc.log" \
 		go run ./conformance/verifier/scripts/run-mdoc-module
+	return 0
 }
 
 run_wallet_vp() {
 	run_go_self_graded "Wallet-VP" "$WORKDIR/wallet-vp.log" \
 		go run ./conformance/wallet-vp/scripts/run-modules
+	return 0
 }
 
 check_suite_reachable
@@ -337,7 +348,7 @@ done
 echo
 echo "full logs: $WORKDIR"
 
-if [ "$OVERALL_CLEAN" = true ]; then
+if [[ "$OVERALL_CLEAN" = true ]]; then
 	echo
 	echo "All ${#ALL_RUNS[@]} conformance runs completed with no unexpected results."
 	exit 0

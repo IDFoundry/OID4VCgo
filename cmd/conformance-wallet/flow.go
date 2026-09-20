@@ -155,7 +155,7 @@ func buildClient(ctx context.Context, run *walletRun, module conformancesuite.Su
 	if err != nil {
 		return nil, fmt.Errorf("generate key manager: %w", err)
 	}
-	instanceKeyInfo, err := km.PublicKey(context.Background(), keys.ClientAttestationPoPSigning, fapi.ES256)
+	instanceKeyInfo, err := km.PublicKey(ctx, keys.ClientAttestationPoPSigning, fapi.ES256)
 	if err != nil {
 		return nil, fmt.Errorf("resolve client instance public key: %w", err)
 	}
@@ -351,7 +351,8 @@ var issuerStateExtension = extension.Definition[string]{
 // credential_configuration_ids[0] is used in place of
 // run.credentialConfigurationID, matching what a spec-faithful wallet
 // actually resolves the offer for.
-func driveModule(ctx context.Context, run *walletRun, module conformancesuite.SuiteModule, testName string, httpClient *http.Client, numCreds int, encrypted bool, offer *oid4vci.CredentialOffer) error {
+func (r moduleRunner) driveModule(ctx context.Context, module conformancesuite.SuiteModule, testName string, numCreds int, encrypted bool, offer *oid4vci.CredentialOffer) error {
+	run, httpClient := r.WalletRun, r.HTTPClient
 	c, err := buildClient(ctx, run, module, testName, httpClient)
 	if err != nil {
 		return fmt.Errorf("build client: %w", err)

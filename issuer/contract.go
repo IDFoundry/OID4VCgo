@@ -30,6 +30,17 @@ import (
 // suite slow.
 const contractConcurrentAttempts = 20
 
+// Repeated t.Fatalf/t.Errorf format strings and fixture values shared
+// across this file's own contract checks.
+const (
+	msgIssueFailed       = "Issue: %v"
+	msgConsumeFailed     = "Consume: %v"
+	msgGetFailed         = "Get: %v"
+	msgExpiresAtMismatch = "ExpiresAt = %v, want %v"
+	nonceNeverIssued     = "never-issued"
+	contractClientID     = "client-1"
+)
+
 // runConcurrently calls fn attempts times in parallel and returns how
 // many calls returned true.
 func runConcurrently(attempts int, fn func() bool) int {
@@ -101,21 +112,21 @@ func testAtomicNonceContract(t *testing.T, newAdapter func() (issue func(nonce s
 		issue, consume := newAdapter()
 		exp := time.Now().Add(time.Minute).Truncate(time.Second)
 		if err := issue("n1", exp); err != nil {
-			t.Fatalf("Issue: %v", err)
+			t.Fatalf(msgIssueFailed, err)
 		}
 		got, err := consume("n1")
 		if err != nil {
-			t.Fatalf("Consume: %v", err)
+			t.Fatalf(msgConsumeFailed, err)
 		}
 		if !got.Equal(exp) {
-			t.Errorf("ExpiresAt = %v, want %v", got, exp)
+			t.Errorf(msgExpiresAtMismatch, got, exp)
 		}
 	})
 
 	t.Run("ConsumeIsSingleUse", func(t *testing.T) {
 		issue, consume := newAdapter()
 		if err := issue("n1", time.Now().Add(time.Minute)); err != nil {
-			t.Fatalf("Issue: %v", err)
+			t.Fatalf(msgIssueFailed, err)
 		}
 		if _, err := consume("n1"); err != nil {
 			t.Fatalf("first Consume: %v", err)
@@ -127,7 +138,7 @@ func testAtomicNonceContract(t *testing.T, newAdapter func() (issue func(nonce s
 
 	t.Run("ConsumeUnknownFails", func(t *testing.T) {
 		_, consume := newAdapter()
-		if _, err := consume("never-issued"); err == nil {
+		if _, err := consume(nonceNeverIssued); err == nil {
 			t.Error("Consume = nil error, want error (unknown nonce)")
 		}
 	})
@@ -135,7 +146,7 @@ func testAtomicNonceContract(t *testing.T, newAdapter func() (issue func(nonce s
 	t.Run("ConcurrentConsumeHasExactlyOneWinner", func(t *testing.T) {
 		issue, consume := newAdapter()
 		if err := issue("n1", time.Now().Add(time.Minute)); err != nil {
-			t.Fatalf("Issue: %v", err)
+			t.Fatalf(msgIssueFailed, err)
 		}
 		wins := runConcurrently(contractConcurrentAttempts, func() bool {
 			_, err := consume("n1")
@@ -167,11 +178,11 @@ func TestPreAuthorizedCodeStoreContract(t *testing.T, factory func() PreAuthoriz
 			ExpiresAt: time.Now().Add(time.Minute).Truncate(time.Second),
 		}
 		if err := store.Issue(ctx, "code1", want); err != nil {
-			t.Fatalf("Issue: %v", err)
+			t.Fatalf(msgIssueFailed, err)
 		}
 		got, _, err := store.Consume(ctx, "code1", "")
 		if err != nil {
-			t.Fatalf("Consume: %v", err)
+			t.Fatalf(msgConsumeFailed, err)
 		}
 		if len(got.Scopes) != 1 || got.Scopes[0] != "identity_credential" {
 			t.Errorf("Scopes = %v", got.Scopes)
@@ -180,7 +191,7 @@ func TestPreAuthorizedCodeStoreContract(t *testing.T, factory func() PreAuthoriz
 			t.Errorf("CredentialConfigurationIDs = %v", got.CredentialConfigurationIDs)
 		}
 		if !got.ExpiresAt.Equal(want.ExpiresAt) {
-			t.Errorf("ExpiresAt = %v, want %v", got.ExpiresAt, want.ExpiresAt)
+			t.Errorf(msgExpiresAtMismatch, got.ExpiresAt, want.ExpiresAt)
 		}
 	})
 
@@ -188,7 +199,7 @@ func TestPreAuthorizedCodeStoreContract(t *testing.T, factory func() PreAuthoriz
 		store := factory()
 		ctx := context.Background()
 		if err := store.Issue(ctx, "code1", PreAuthorizedCodeRecord{ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
-			t.Fatalf("Issue: %v", err)
+			t.Fatalf(msgIssueFailed, err)
 		}
 		if _, _, err := store.Consume(ctx, "code1", ""); err != nil {
 			t.Fatalf("first Consume: %v", err)
@@ -200,7 +211,7 @@ func TestPreAuthorizedCodeStoreContract(t *testing.T, factory func() PreAuthoriz
 
 	t.Run("ConsumeUnknownFails", func(t *testing.T) {
 		store := factory()
-		if _, _, err := store.Consume(context.Background(), "never-issued", ""); err == nil {
+		if _, _, err := store.Consume(context.Background(), nonceNeverIssued, ""); err == nil {
 			t.Error("Consume = nil error, want error (unknown code)")
 		}
 	})
@@ -209,7 +220,7 @@ func TestPreAuthorizedCodeStoreContract(t *testing.T, factory func() PreAuthoriz
 		store := factory()
 		ctx := context.Background()
 		if err := store.Issue(ctx, "code1", PreAuthorizedCodeRecord{TxCode: "1234", ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
-			t.Fatalf("Issue: %v", err)
+			t.Fatalf(msgIssueFailed, err)
 		}
 		if _, _, err := store.Consume(ctx, "code1", "0000"); !errors.Is(err, ErrWrongTxCode) {
 			t.Fatalf("Consume with wrong tx_code: err = %v, want ErrWrongTxCode", err)
@@ -225,10 +236,10 @@ func TestPreAuthorizedCodeStoreContract(t *testing.T, factory func() PreAuthoriz
 		store := factory()
 		ctx := context.Background()
 		if err := store.Issue(ctx, "code1", PreAuthorizedCodeRecord{TxCode: "1234", ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
-			t.Fatalf("Issue: %v", err)
+			t.Fatalf(msgIssueFailed, err)
 		}
 		if _, _, err := store.Consume(ctx, "code1", "1234"); err != nil {
-			t.Fatalf("Consume: %v", err)
+			t.Fatalf(msgConsumeFailed, err)
 		}
 	})
 
@@ -236,7 +247,7 @@ func TestPreAuthorizedCodeStoreContract(t *testing.T, factory func() PreAuthoriz
 		store := factory()
 		ctx := context.Background()
 		if err := store.Issue(ctx, "code1", PreAuthorizedCodeRecord{TxCode: "1234", ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
-			t.Fatalf("Issue: %v", err)
+			t.Fatalf(msgIssueFailed, err)
 		}
 		for want := 1; want <= 3; want++ {
 			_, attempts, err := store.Consume(ctx, "code1", "0000")
@@ -253,7 +264,7 @@ func TestPreAuthorizedCodeStoreContract(t *testing.T, factory func() PreAuthoriz
 		store := factory()
 		ctx := context.Background()
 		if err := store.Issue(ctx, "code1", PreAuthorizedCodeRecord{ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
-			t.Fatalf("Issue: %v", err)
+			t.Fatalf(msgIssueFailed, err)
 		}
 		if err := store.Invalidate(ctx, "code1"); err != nil {
 			t.Fatalf("Invalidate: %v", err)
@@ -265,7 +276,7 @@ func TestPreAuthorizedCodeStoreContract(t *testing.T, factory func() PreAuthoriz
 
 	t.Run("InvalidateUnknownCodeIsNoop", func(t *testing.T) {
 		store := factory()
-		if err := store.Invalidate(context.Background(), "never-issued"); err != nil {
+		if err := store.Invalidate(context.Background(), nonceNeverIssued); err != nil {
 			t.Errorf("Invalidate on an unknown code: %v, want nil (no-op)", err)
 		}
 	})
@@ -274,7 +285,7 @@ func TestPreAuthorizedCodeStoreContract(t *testing.T, factory func() PreAuthoriz
 		store := factory()
 		ctx := context.Background()
 		if err := store.Issue(ctx, "code1", PreAuthorizedCodeRecord{TxCode: "1234", ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
-			t.Fatalf("Issue: %v", err)
+			t.Fatalf(msgIssueFailed, err)
 		}
 		var mu sync.Mutex
 		seen := make(map[int]int, contractConcurrentAttempts)
@@ -305,7 +316,7 @@ func TestPreAuthorizedCodeStoreContract(t *testing.T, factory func() PreAuthoriz
 		store := factory()
 		ctx := context.Background()
 		if err := store.Issue(ctx, "code1", PreAuthorizedCodeRecord{ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
-			t.Fatalf("Issue: %v", err)
+			t.Fatalf(msgIssueFailed, err)
 		}
 		wins := runConcurrently(contractConcurrentAttempts, func() bool {
 			_, _, err := store.Consume(ctx, "code1", "")
@@ -416,13 +427,13 @@ func TestCredentialOfferStoreContract(t *testing.T, factory func() CredentialOff
 		}
 		got, err := store.Get(ctx, "ref1")
 		if err != nil {
-			t.Fatalf("Get: %v", err)
+			t.Fatalf(msgGetFailed, err)
 		}
 		if got.Reference != "ref1" {
 			t.Errorf("Reference = %q, want ref1", got.Reference)
 		}
 		if !got.ExpiresAt.Equal(exp) {
-			t.Errorf("ExpiresAt = %v, want %v", got.ExpiresAt, exp)
+			t.Errorf(msgExpiresAtMismatch, got.ExpiresAt, exp)
 		}
 	})
 
@@ -456,14 +467,14 @@ func TestNotificationStoreContract(t *testing.T, factory func() NotificationStor
 	t.Run("IssueAndGet", func(t *testing.T) {
 		store := factory()
 		ctx := context.Background()
-		if err := store.Issue(ctx, "notif1", NotificationRecord{ClientID: "client-1"}); err != nil {
-			t.Fatalf("Issue: %v", err)
+		if err := store.Issue(ctx, "notif1", NotificationRecord{ClientID: contractClientID}); err != nil {
+			t.Fatalf(msgIssueFailed, err)
 		}
 		got, err := store.Get(ctx, "notif1")
 		if err != nil {
-			t.Fatalf("Get: %v", err)
+			t.Fatalf(msgGetFailed, err)
 		}
-		if got.ClientID != "client-1" {
+		if got.ClientID != contractClientID {
 			t.Errorf("ClientID = %q, want client-1", got.ClientID)
 		}
 	})
@@ -472,14 +483,14 @@ func TestNotificationStoreContract(t *testing.T, factory func() NotificationStor
 		store := factory()
 		ctx := context.Background()
 		testGetIsRepeatable(t,
-			func() error { return store.Issue(ctx, "notif1", NotificationRecord{ClientID: "client-1"}) },
+			func() error { return store.Issue(ctx, "notif1", NotificationRecord{ClientID: contractClientID}) },
 			func() error { _, err := store.Get(ctx, "notif1"); return err },
 			"§11 idempotency")
 	})
 
 	t.Run("GetUnknownFails", func(t *testing.T) {
 		store := factory()
-		testGetUnknownFails(t, func() error { _, err := store.Get(context.Background(), "never-issued"); return err }, "unknown notification_id")
+		testGetUnknownFails(t, func() error { _, err := store.Get(context.Background(), nonceNeverIssued); return err }, "unknown notification_id")
 	})
 }
 
@@ -497,11 +508,11 @@ func TestDeferredTransactionStoreContract(t *testing.T, seed func(t *testing.T, 
 	t.Helper()
 
 	t.Run("Get", func(t *testing.T) {
-		want := DeferredTransactionRecord{ClientID: "client-1", Status: DeferredTransactionPending}
+		want := DeferredTransactionRecord{ClientID: contractClientID, Status: DeferredTransactionPending}
 		store := seed(t, "txn1", want)
 		got, err := store.Get(context.Background(), "txn1")
 		if err != nil {
-			t.Fatalf("Get: %v", err)
+			t.Fatalf(msgGetFailed, err)
 		}
 		if got.ClientID != want.ClientID {
 			t.Errorf("ClientID = %q, want %q", got.ClientID, want.ClientID)

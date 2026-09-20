@@ -29,30 +29,39 @@ func testQuery(t *testing.T) dcql.Query {
 // assert on directly — ResponseURI is only ever set by the redirect
 // flow, ExpectedOrigins only ever set by the DC API flow.
 type requestObjectPayload struct {
-	Iss             string     `json:"iss"`
-	Aud             string     `json:"aud"`
-	ResponseType    string     `json:"response_type"`
-	ResponseMode    string     `json:"response_mode"`
-	ClientID        string     `json:"client_id"`
-	ResponseURI     string     `json:"response_uri"`
-	ExpectedOrigins []string   `json:"expected_origins"`
-	Nonce           string     `json:"nonce"`
-	State           string     `json:"state"`
-	DCQLQuery       dcql.Query `json:"dcql_query"`
-	ClientMetadata  struct {
-		JWKS struct {
-			Keys []struct {
-				Kty string `json:"kty"`
-				Crv string `json:"crv"`
-				X   string `json:"x"`
-				Y   string `json:"y"`
-				Kid string `json:"kid"`
-				Use string `json:"use"`
-				Alg string `json:"alg"`
-			} `json:"keys"`
-		} `json:"jwks"`
-		EncValuesSupported []string `json:"encrypted_response_enc_values_supported"`
-	} `json:"client_metadata"`
+	Iss             string                      `json:"iss"`
+	Aud             string                      `json:"aud"`
+	ResponseType    string                      `json:"response_type"`
+	ResponseMode    string                      `json:"response_mode"`
+	ClientID        string                      `json:"client_id"`
+	ResponseURI     string                      `json:"response_uri"`
+	ExpectedOrigins []string                    `json:"expected_origins"`
+	Nonce           string                      `json:"nonce"`
+	State           string                      `json:"state"`
+	DCQLQuery       dcql.Query                  `json:"dcql_query"`
+	ClientMetadata  requestObjectClientMetadata `json:"client_metadata"`
+}
+
+// requestObjectClientMetadata mirrors requestObjectPayload's own
+// "client_metadata" member — split out from an inline anonymous struct
+// purely for readability, the field/tag shape is unchanged.
+type requestObjectClientMetadata struct {
+	JWKS               requestObjectJWKS `json:"jwks"`
+	EncValuesSupported []string          `json:"encrypted_response_enc_values_supported"`
+}
+
+type requestObjectJWKS struct {
+	Keys []requestObjectJWK `json:"keys"`
+}
+
+type requestObjectJWK struct {
+	Kty string `json:"kty"`
+	Crv string `json:"crv"`
+	X   string `json:"x"`
+	Y   string `json:"y"`
+	Kid string `json:"kid"`
+	Use string `json:"use"`
+	Alg string `json:"alg"`
 }
 
 // verifyAndParseRequestObject verifies requestObject via internal/jose's

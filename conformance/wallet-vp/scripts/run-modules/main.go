@@ -95,6 +95,7 @@ const (
 	implicitSubmitTimeout = 15 * time.Second
 	uploadTimeout         = 10 * time.Second
 	moduleTimeout         = 30 * time.Second
+	authorizePath         = "/authorize"
 )
 
 // positiveTests are driven and expected to complete cleanly on the
@@ -263,7 +264,7 @@ func main() {
 				Claims: []planDCQLClaim{{Path: []string{"given_name"}}, {Path: []string{"family_name"}}},
 			}}},
 		},
-		Server: planServer{AuthorizationEndpoint: *walletVPInternalBase + "/authorize"},
+		Server: planServer{AuthorizationEndpoint: *walletVPInternalBase + authorizePath},
 	}
 	pcRaw, err := json.Marshal(pc)
 	if err != nil {
@@ -522,7 +523,7 @@ func postPlaceholder(httpClient *http.Client, apiBase, moduleID, placeholder str
 // "swap hostname:port" pattern conformance/verifier's own scripts
 // already use.
 func toHostBase(redirectTo, hostBase string) string {
-	idx := strings.Index(redirectTo, "/authorize")
+	idx := strings.Index(redirectTo, authorizePath)
 	if idx == -1 {
 		return redirectTo
 	}
@@ -573,7 +574,7 @@ func restartContainer() error {
 func waitReady(httpClient *http.Client, walletVPBase string) error {
 	deadline := time.Now().Add(restartTimeout)
 	for {
-		resp, err := httpClient.Get(walletVPBase + "/authorize")
+		resp, err := httpClient.Get(walletVPBase + authorizePath)
 		if err == nil {
 			_ = resp.Body.Close()
 			return nil
