@@ -264,6 +264,61 @@ func DriveModule(httpClient *http.Client, apiBase, verifierBase, planID, testNam
 	return conformancesuite.WaitUntilFinished(httpClient, apiBase, module.ID, restartTimeout)
 }
 
+// ModuleResult is one DriveModule call's own outcome, keyed by its own
+// testName — both run-sdjwt-modules and run-mdoc-module accumulate a
+// slice of these to print as a summary once every module has run.
+type ModuleResult struct {
+	TestName string
+	Status   string
+	Result   string
+	Err      error
+}
+
+// DriveModules calls DriveModule for every testNames entry in order
+// against the same planID/moduleVariant, logging each one's own
+// outcome as it completes — the driving loop run-sdjwt-modules and
+// run-mdoc-module both used to duplicate near-verbatim (confirmed live
+// by SonarCloud's own duplication gate on the PR that added
+// run-mdoc-module's own multi-module driving loop, mirroring this
+// package's own doc comment about why it exists at all).
+func DriveModules(httpClient *http.Client, apiBase, verifierBase, planID string, testNames []string, moduleVariant map[string]string) []ModuleResult {
+	results := make([]ModuleResult, 0, len(testNames))
+	for _, testName := range testNames {
+		status, result, err := DriveModule(httpClient, apiBase, verifierBase, planID, testName, moduleVariant)
+		res := ModuleResult{TestName: testName, Status: status, Result: result, Err: err}
+		results = append(results, res)
+		if err != nil {
+			log.Printf("%s: ERROR: %v", testName, err)
+		} else {
+			log.Printf("%s: %s=%s", testName, status, result)
+		}
+	}
+	return results
+}
+
+// PrintSummaryAndExit prints results as a "=== summary ===" block and
+// calls os.Exit(1) if any result is unexpected — REVIEW is this plan's
+// own legitimate terminal grade for every module here, not a failure:
+// each one only reaches FINISHED at all because DriveModule's own
+// upload-placeholder fill satisfied its own screenshot-evidence
+// requirement — see DriveModule's own doc comment for why
+// cmd/conformance-verifier's design means every module takes that
+// branch, not just the positive-behavior ones.
+func PrintSummaryAndExit(results []ModuleResult, apiBase, planID string) {
+	log.Print("=== summary ===")
+	allExpected := true
+	for _, res := range results {
+		if res.Err != nil || (res.Result != "PASSED" && res.Result != "REVIEW") {
+			allExpected = false
+		}
+		log.Printf("%-55s %s=%s %v", res.TestName, res.Status, res.Result, res.Err)
+	}
+	if !allExpected {
+		log.Printf("plan detail: %splan-detail.html?plan=%s", apiBase, planID)
+		os.Exit(1)
+	}
+}
+
 func fillUploadPlaceholder(httpClient *http.Client, apiBase, moduleID string) error {
 	deadline := time.Now().Add(uploadTimeout)
 	for {
