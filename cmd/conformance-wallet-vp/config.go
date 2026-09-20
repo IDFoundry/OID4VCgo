@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/internal/conformancecert"
 )
 
@@ -47,9 +48,43 @@ type Config struct {
 	// Must match whatever DCQL query the suite's own test
 	// configuration asks for (either one of its built-in queries, or
 	// a "client.dcql" custom query naming the same vct/claims) — see
-	// conformance/wallet-vp/README.md's own "Open questions".
+	// conformance/wallet-vp/README.md's own "Open questions". Only
+	// used when CredentialFormat is "" or "dc+sd-jwt".
 	VCT    string            `json:"vct"`
 	Claims map[string]string `json:"claims"`
+
+	// CredentialFormat selects which fixture credential this binary
+	// issues and presents: "" (default) or credential/sdjwtvc.CredentialFormat
+	// ("dc+sd-jwt") both mean the SD-JWT VC fixture (VCT/Claims below);
+	// credential/mdoc.CredentialFormat ("mso_mdoc") means the mdoc
+	// fixture (MdocDocType/MdocNamespace/MdocClaims/Mdoc* key material
+	// below instead) — see credential.go's own issueFixtureCredential/
+	// issueFixtureMdocCredential.
+	CredentialFormat string `json:"credential_format,omitempty"`
+
+	// MdocIssuerPrivateKeyPEM/MdocIssuerCertificatePEM are this
+	// binary's own mdoc Document Signer identity — the mdoc-format
+	// analog of CredentialIssuerPrivateKeyPEM/CredentialIssuerCertificatePEM
+	// above, a separate key/cert pair since ISO/IEC 18013-5's own IACA/
+	// Document Signer certificate profile (internal/conformancecert.
+	// GenerateMdocIACA/GenerateMdocDocumentSigner) differs from the
+	// plain leaf-under-CA shape credential_issuer_certificate_pem uses.
+	// Only required when CredentialFormat is "mso_mdoc".
+	MdocIssuerPrivateKeyPEM  string `json:"mdoc_issuer_private_key_pem,omitempty"`
+	MdocIssuerCertificatePEM string `json:"mdoc_issuer_certificate_pem,omitempty"`
+
+	// MdocDocType/MdocNamespace/MdocClaims describe the fixture mdoc
+	// this binary presents — the mdoc-format analog of VCT/Claims
+	// above. Only required when CredentialFormat is "mso_mdoc".
+	MdocDocType   string            `json:"mdoc_doc_type,omitempty"`
+	MdocNamespace string            `json:"mdoc_namespace,omitempty"`
+	MdocClaims    map[string]string `json:"mdoc_claims,omitempty"`
+}
+
+// isMdoc reports whether c is configured for the "mso_mdoc" fixture
+// credential rather than the default "dc+sd-jwt" one.
+func (c Config) isMdoc() bool {
+	return c.CredentialFormat == mdoc.CredentialFormat
 }
 
 func loadConfig(path string) (Config, error) {
@@ -64,14 +99,32 @@ func loadConfig(path string) (Config, error) {
 	if cfg.ListenAddr == "" {
 		return Config{}, fmt.Errorf("config: listen_addr is required")
 	}
+	if cfg.HolderPrivateKeyPEM == "" {
+		return Config{}, fmt.Errorf("config: holder_private_key_pem is required")
+	}
+	if cfg.isMdoc() {
+		if cfg.MdocIssuerPrivateKeyPEM == "" {
+			return Config{}, fmt.Errorf("config: mdoc_issuer_private_key_pem is required")
+		}
+		if err := conformancecert.RequireNonEmpty("mdoc_issuer_certificate_pem", cfg.MdocIssuerCertificatePEM); err != nil {
+			return Config{}, err
+		}
+		if cfg.MdocDocType == "" {
+			return Config{}, fmt.Errorf("config: mdoc_doc_type is required")
+		}
+		if cfg.MdocNamespace == "" {
+			return Config{}, fmt.Errorf("config: mdoc_namespace is required")
+		}
+		if len(cfg.MdocClaims) == 0 {
+			return Config{}, fmt.Errorf("config: mdoc_claims must be non-empty")
+		}
+		return cfg, nil
+	}
 	if cfg.CredentialIssuerPrivateKeyPEM == "" {
 		return Config{}, fmt.Errorf("config: credential_issuer_private_key_pem is required")
 	}
 	if err := conformancecert.RequireNonEmpty("credential_issuer_certificate_pem", cfg.CredentialIssuerCertificatePEM); err != nil {
 		return Config{}, err
-	}
-	if cfg.HolderPrivateKeyPEM == "" {
-		return Config{}, fmt.Errorf("config: holder_private_key_pem is required")
 	}
 	if cfg.VCT == "" {
 		return Config{}, fmt.Errorf("config: vct is required")
@@ -108,4 +161,20 @@ func (c Config) holderPrivateKey() (*ecdsa.PrivateKey, error) {
 		return nil, fmt.Errorf("holder_private_key_pem: %w", err)
 	}
 	return key, nil
+}
+
+func (c Config) mdocIssuerKey() (*ecdsa.PrivateKey, error) {
+	key, err := conformancecert.ParseECPrivateKeyPEM(c.MdocIssuerPrivateKeyPEM)
+	if err != nil {
+		return nil, fmt.Errorf("mdoc_issuer_private_key_pem: %w", err)
+	}
+	return key, nil
+}
+
+func (c Config) mdocIssuerCertificate() (*x509.Certificate, error) {
+	cert, err := conformancecert.ParseCertificatePEM(c.MdocIssuerCertificatePEM)
+	if err != nil {
+		return nil, fmt.Errorf("mdoc_issuer_certificate_pem: %w", err)
+	}
+	return cert, nil
 }

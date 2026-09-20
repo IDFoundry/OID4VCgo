@@ -66,12 +66,15 @@
 # PASSED — see conformance/verifier/README.md), so this script trusts
 # their own exit code rather than re-parsing their logs.
 #
-# Wallet-VP (conformance/wallet-vp/scripts/run-modules, 1 run): 13 of
-# 14 modules of oid4vp-1final-wallet-haip-test-plan (alternate-happy-flow
-# is a known, documented gap — see that script's own doc comment). Also
-# self-grading (positive modules PASSED, negative modules locally-
-# rejected+REVIEW) and already exits non-zero on a mismatch, so this
-# script trusts its own exit code too.
+# Wallet-VP (conformance/wallet-vp/scripts/run-modules, 2 runs): all 14
+# modules of oid4vp-1final-wallet-haip-test-plan's own direct_post.jwt +
+# x509_hash + request_uri_signed module list, once under the default
+# credential_format=sd_jwt_vc and again under -credential-format
+# iso_mdl — see conformance/wallet-vp/README.md's own "credential_format:
+# iso_mdl" section for why both crossings reach the exact same 14
+# modules. Also self-grading (positive modules PASSED, negative modules
+# locally-rejected+REVIEW) and already exits non-zero on a mismatch, so
+# this script trusts its own exit code too.
 #
 # Only Issuer's battery and Wallet's own 6 runs need this script's own
 # result-parsing: neither cmd/conformance-wallet nor run-fapi2sp-battery
@@ -359,8 +362,15 @@ run_verifier() {
 }
 
 run_wallet_vp() {
-	run_go_self_graded "Wallet-VP" "$WORKDIR/wallet-vp.log" \
+	# sd_jwt_vc + iso_mdl together are the OID4VP Wallet role's own 2 of
+	# 4 catalog profiles this repo covers (the other 2, both dc_api.jwt,
+	# are a deliberately separate, not-yet-attempted harness effort —
+	# see conformance/wallet-vp/README.md's own "Scope" section).
+	run_go_self_graded "Wallet-VP sd_jwt_vc" "$WORKDIR/wallet-vp-sdjwt.log" \
 		go run ./conformance/wallet-vp/scripts/run-modules
+
+	run_go_self_graded "Wallet-VP iso_mdl" "$WORKDIR/wallet-vp-mdoc.log" \
+		go run ./conformance/wallet-vp/scripts/run-modules -credential-format iso_mdl
 	return 0
 }
 
@@ -409,6 +419,23 @@ printf '  %-10s %-30s %s\n' "sd_jwt_vc" "issuer_initiated (by_reference)" "$(mat
 printf '  %-10s %-30s %s\n' "mdoc" "wallet_initiated" "$(matrix_status "Wallet mdoc")"
 printf '  %-10s %-30s %s\n' "mdoc" "issuer_initiated (by_value)" "$(matrix_status "Wallet mdoc issuer-initiated")"
 printf '  %-10s %-30s %s\n' "mdoc" "issuer_initiated (by_reference)" "$(matrix_status "Wallet mdoc issuer-initiated (by_reference)")"
+
+echo
+echo "=== OID4VP certification profile matrix ==="
+echo "(mirrors the OIDF certification catalog's own per-profile breakdown:"
+echo " 2 Verifier + 4 Wallet = 6 distinct oid4vp-1final-*-haip-test-plan profiles)"
+echo
+echo "Verifier (oid4vp-1final-verifier-haip-test-plan):"
+printf '  %-10s %-18s %s\n' "FORMAT" "RESPONSE MODE" "RESULT"
+printf '  %-10s %-18s %s\n' "sd_jwt_vc" "direct_post.jwt" "$(matrix_status "Verifier sd_jwt_vc")"
+printf '  %-10s %-18s %s\n' "iso_mdl" "direct_post.jwt" "$(matrix_status "Verifier mdoc")"
+echo
+echo "Wallet (oid4vp-1final-wallet-haip-test-plan):"
+printf '  %-10s %-18s %s\n' "FORMAT" "RESPONSE MODE" "RESULT"
+printf '  %-10s %-18s %s\n' "sd_jwt_vc" "direct_post.jwt" "$(matrix_status "Wallet-VP sd_jwt_vc")"
+printf '  %-10s %-18s %s\n' "iso_mdl" "direct_post.jwt" "$(matrix_status "Wallet-VP iso_mdl")"
+printf '  %-10s %-18s %s\n' "sd_jwt_vc" "dc_api.jwt" "NOT IMPLEMENTED"
+printf '  %-10s %-18s %s\n' "iso_mdl" "dc_api.jwt" "NOT IMPLEMENTED"
 
 echo
 echo "=== combined summary ==="
