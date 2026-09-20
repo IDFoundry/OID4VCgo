@@ -110,23 +110,8 @@ func Verify(s string, issuerPub crypto.PublicKey, issuerAlg jose.Alg, opts Verif
 	// statuslist.VerifyToken/VerifyTokenCWT, this repo's own sibling
 	// Verify functions, already check their own equivalent validity
 	// window unconditionally; this one didn't).
-	if expRaw, ok := decoded["exp"]; ok {
-		exp, ok := expRaw.(float64)
-		if !ok {
-			return nil, nil, fmt.Errorf("sdjwtvc: exp claim is not a number")
-		}
-		if !now().Before(time.Unix(int64(exp), 0)) {
-			return nil, nil, fmt.Errorf("sdjwtvc: credential has expired")
-		}
-	}
-	if nbfRaw, ok := decoded["nbf"]; ok {
-		nbf, ok := nbfRaw.(float64)
-		if !ok {
-			return nil, nil, fmt.Errorf("sdjwtvc: nbf claim is not a number")
-		}
-		if now().Before(time.Unix(int64(nbf), 0)) {
-			return nil, nil, fmt.Errorf("sdjwtvc: credential is not yet valid")
-		}
+	if err := checkIssuerJWTValidityWindow(decoded, now); err != nil {
+		return nil, nil, err
 	}
 
 	hashAlg := opts.HashAlg
@@ -142,24 +127,62 @@ func Verify(s string, issuerPub crypto.PublicKey, issuerAlg jose.Alg, opts Verif
 		return nil, nil, err
 	}
 
-	if opts.RequireKeyBinding == KeyBindingRequired {
-		if opts.HolderPublicKey == nil {
-			return nil, nil, fmt.Errorf("sdjwtvc: VerifyOptions.RequireKeyBinding is KeyBindingRequired but HolderPublicKey is nil")
-		}
-		sdHash, err := pres.SDHash(hashAlg)
-		if err != nil {
-			return nil, nil, err
-		}
-		if _, err := VerifyKeyBindingJWT(pres.KeyBindingJWT, opts.HolderPublicKey, opts.KeyBindingAlg, KeyBindingCheck{
-			ExpectedAudience: opts.ExpectedAudience,
-			ExpectedNonce:    opts.ExpectedNonce,
-			ExpectedSDHash:   sdHash,
-			MaxAge:           opts.MaxKeyBindingAge,
-			Now:              opts.Now,
-		}); err != nil {
-			return nil, nil, fmt.Errorf("sdjwtvc: %w", err)
-		}
+	if err := verifyKeyBindingIfRequired(pres, opts, hashAlg); err != nil {
+		return nil, nil, err
 	}
 
 	return resolved, header, nil
+}
+
+// checkIssuerJWTValidityWindow checks decoded's own optional exp/nbf
+// claims (RFC 7519 §4.1.4/§4.1.5) against now — split out of Verify
+// purely to keep it under the linter's own cognitive complexity
+// ceiling.
+func checkIssuerJWTValidityWindow(decoded map[string]any, now func() time.Time) error {
+	if expRaw, ok := decoded["exp"]; ok {
+		exp, ok := expRaw.(float64)
+		if !ok {
+			return fmt.Errorf("sdjwtvc: exp claim is not a number")
+		}
+		if !now().Before(time.Unix(int64(exp), 0)) {
+			return fmt.Errorf("sdjwtvc: credential has expired")
+		}
+	}
+	if nbfRaw, ok := decoded["nbf"]; ok {
+		nbf, ok := nbfRaw.(float64)
+		if !ok {
+			return fmt.Errorf("sdjwtvc: nbf claim is not a number")
+		}
+		if now().Before(time.Unix(int64(nbf), 0)) {
+			return fmt.Errorf("sdjwtvc: credential is not yet valid")
+		}
+	}
+	return nil
+}
+
+// verifyKeyBindingIfRequired is Verify's own final RFC 9901 §7.3 step
+// — a no-op unless opts.RequireKeyBinding is KeyBindingRequired — split
+// out purely to keep Verify under the linter's own cognitive
+// complexity ceiling.
+func verifyKeyBindingIfRequired(pres Presentation, opts VerifyOptions, hashAlg HashAlg) error {
+	if opts.RequireKeyBinding != KeyBindingRequired {
+		return nil
+	}
+	if opts.HolderPublicKey == nil {
+		return fmt.Errorf("sdjwtvc: VerifyOptions.RequireKeyBinding is KeyBindingRequired but HolderPublicKey is nil")
+	}
+	sdHash, err := pres.SDHash(hashAlg)
+	if err != nil {
+		return err
+	}
+	if _, err := VerifyKeyBindingJWT(pres.KeyBindingJWT, opts.HolderPublicKey, opts.KeyBindingAlg, KeyBindingCheck{
+		ExpectedAudience: opts.ExpectedAudience,
+		ExpectedNonce:    opts.ExpectedNonce,
+		ExpectedSDHash:   sdHash,
+		MaxAge:           opts.MaxKeyBindingAge,
+		Now:              opts.Now,
+	}); err != nil {
+		return fmt.Errorf("sdjwtvc: %w", err)
+	}
+	return nil
 }

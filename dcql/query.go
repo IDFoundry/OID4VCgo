@@ -113,6 +113,24 @@ func (c CredentialQuery) Validate() error {
 	if c.Format == "" {
 		return fmt.Errorf("dcql: credential query %q: format is required", c.ID)
 	}
+	if err := c.validateMeta(); err != nil {
+		return err
+	}
+	claimIDs, err := c.validateClaims()
+	if err != nil {
+		return err
+	}
+	if err := c.validateClaimSets(claimIDs); err != nil {
+		return err
+	}
+	return c.validateTrustedAuthorities()
+}
+
+// validateMeta, validateClaims, validateClaimSets, and
+// validateTrustedAuthorities are Validate's own per-field checks,
+// split into methods purely to keep Validate under the linter's own
+// cognitive complexity ceiling.
+func (c CredentialQuery) validateMeta() error {
 	if len(c.Meta) == 0 {
 		return fmt.Errorf("dcql: credential query %q: meta is required (may be {})", c.ID)
 	}
@@ -123,29 +141,38 @@ func (c CredentialQuery) Validate() error {
 	if _, ok := probe.(map[string]any); !ok {
 		return fmt.Errorf("dcql: credential query %q: meta must be a JSON object", c.ID)
 	}
+	return nil
+}
 
+// validateClaims returns the set of Claims[].ID values seen, for
+// validateClaimSets's own reference check.
+func (c CredentialQuery) validateClaims() (map[string]bool, error) {
 	claimIDs := make(map[string]bool, len(c.Claims))
 	seenPaths := make(map[string]bool, len(c.Claims))
 	requireClaimID := len(c.ClaimSets) > 0
 	for i, cl := range c.Claims {
 		if err := cl.Validate(requireClaimID); err != nil {
-			return fmt.Errorf("dcql: credential query %q: claims[%d]: %w", c.ID, i, err)
+			return nil, fmt.Errorf("dcql: credential query %q: claims[%d]: %w", c.ID, i, err)
 		}
 		if cl.ID != "" {
 			if claimIDs[cl.ID] {
-				return fmt.Errorf("dcql: credential query %q: claims[%d]: duplicate id %q", c.ID, i, cl.ID)
+				return nil, fmt.Errorf("dcql: credential query %q: claims[%d]: duplicate id %q", c.ID, i, cl.ID)
 			}
 			claimIDs[cl.ID] = true
 		}
 		pathKey, err := json.Marshal(cl.Path)
 		if err != nil {
-			return fmt.Errorf("dcql: credential query %q: claims[%d]: path: %w", c.ID, i, err)
+			return nil, fmt.Errorf("dcql: credential query %q: claims[%d]: path: %w", c.ID, i, err)
 		}
 		if seenPaths[string(pathKey)] {
-			return fmt.Errorf("dcql: credential query %q: claims[%d]: path references the same claim as an earlier entry", c.ID, i)
+			return nil, fmt.Errorf("dcql: credential query %q: claims[%d]: path references the same claim as an earlier entry", c.ID, i)
 		}
 		seenPaths[string(pathKey)] = true
 	}
+	return claimIDs, nil
+}
+
+func (c CredentialQuery) validateClaimSets(claimIDs map[string]bool) error {
 	for i, set := range c.ClaimSets {
 		if len(set) == 0 {
 			return fmt.Errorf("dcql: credential query %q: claim_sets[%d] must be non-empty", c.ID, i)
@@ -156,6 +183,10 @@ func (c CredentialQuery) Validate() error {
 			}
 		}
 	}
+	return nil
+}
+
+func (c CredentialQuery) validateTrustedAuthorities() error {
 	for i, ta := range c.TrustedAuthorities {
 		if err := ta.Validate(); err != nil {
 			return fmt.Errorf("dcql: credential query %q: trusted_authorities[%d]: %w", c.ID, i, err)
