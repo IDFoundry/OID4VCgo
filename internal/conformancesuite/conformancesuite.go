@@ -151,6 +151,37 @@ func FetchModuleInfo(httpClient *http.Client, apiBase, moduleID string) (ModuleI
 	return info, nil
 }
 
+// GetExposedValues does a single, un-polled GET /api/runner/{moduleID}
+// and returns its own "exposed" map — the live, in-memory key/value
+// pairs a WAITING module surfaces for an external driver to act on
+// (e.g. AbstractVCIIssuerTestModule.waitForCredentialOffer's own
+// "credential_offer_endpoint"). Deliberately a separate endpoint from
+// FetchModuleInfo/GET /api/info/{moduleID}: confirmed live that the
+// persisted document /api/info/{moduleID} serves never carries this
+// live-only map at all, only the module's own status/result/variant —
+// exposed values only ever appear in GET /api/runner/{moduleID}'s own
+// response.
+func GetExposedValues(httpClient *http.Client, apiBase, moduleID string) (map[string]string, error) {
+	req, err := http.NewRequest(http.MethodGet, apiBase+"api/runner/"+moduleID, nil)
+	if err != nil {
+		return nil, err
+	}
+	body, status, err := Do(httpClient, req)
+	if err != nil {
+		return nil, err
+	}
+	if status != http.StatusOK {
+		return nil, fmt.Errorf("get runner status: unexpected status %d", status)
+	}
+	var wire struct {
+		Exposed map[string]string `json:"exposed"`
+	}
+	if err := json.Unmarshal(body, &wire); err != nil {
+		return nil, err
+	}
+	return wire.Exposed, nil
+}
+
 // WaitUntilWaiting polls GET /api/info/{moduleID} until the module
 // reaches WAITING, the state in which it's actually ready to receive a
 // driving client's first request. A module instance is not immediately

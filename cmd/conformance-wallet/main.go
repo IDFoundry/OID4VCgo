@@ -153,6 +153,20 @@ type runConfig struct {
 	// module lists.
 	issuerInitiated bool
 
+	// credentialOfferVariant selects the HAIP plan's own
+	// vci_credential_offer_variant — "by_value" (default, the
+	// suite-emulated Issuer inlines the Credential Offer's own JSON
+	// directly in the redirect URL's "credential_offer" parameter) or
+	// "by_reference" ("credential_offer_uri" instead, which this
+	// binary's own wallet.Wallet.ResolveCredentialOffer already
+	// dereferences unconditionally — see wallet/offer.go's own
+	// fetchCredentialOffer). Only meaningful with issuerInitiated: a
+	// wallet_initiated flow has no Credential Offer at all to convey
+	// either way (see @VariantNotApplicableWhen on
+	// AbstractVCIWalletTest), matching credentialOfferEndpoint's own
+	// issuerInitiated-only scoping just below.
+	credentialOfferVariant string
+
 	// credentialOfferEndpoint becomes this run's own
 	// vci.credential_offer_endpoint config value (plus
 	// credentialOfferPath) — an OID4VCI Credential Offer's own
@@ -179,6 +193,7 @@ func main() {
 	flag.StringVar(&cfg.scope, "scope", "eudi.pid.1", "scope to request — must match the credential configuration's own \"scope\" value in the suite's emulated Credential Issuer metadata")
 	proofTypeFlag := flag.String("proof-type", string(proofStrategyJWT), "Credential Request proof strategy: \"jwt\" (default, jwk-conveyed jwt-type proof), \"attestation\" (standalone Key Attestation JWT, Appendix F.3 / HAIP §4.5.1 — requires -credential-configuration-id eu.europa.ec.eudi.pid.1.attestation -scope eudi.pid.1.attestation), or \"jwt-key-attestation\" (jwt-type proof with a nested Key Attestation JWT header, Appendix D.1 — requires -credential-configuration-id eu.europa.ec.eudi.pid.1.jwt.keyattest -scope eudi.pid.1.jwt.keyattest)")
 	flag.BoolVar(&cfg.issuerInitiated, "issuer-initiated", false, "drive the HAIP plan's issuer_initiated flow variant instead of the default wallet_initiated one — the suite hands this binary a Credential Offer to resolve instead of this binary calling /authorize directly")
+	flag.StringVar(&cfg.credentialOfferVariant, "credential-offer-variant", "by_value", "vci_credential_offer_variant to drive with -issuer-initiated: \"by_value\" (default, the offer's own JSON inlined in the redirect URL) or \"by_reference\" (a credential_offer_uri instead — wallet.Wallet.ResolveCredentialOffer already dereferences it unconditionally, this just asks the suite to send one)")
 	flag.StringVar(&cfg.credentialOfferEndpoint, "credential-offer-endpoint", "https://oid4vcgo-wallet.example.com", "base URL for this run's own vci.credential_offer_endpoint config value (only used with -issuer-initiated) — never actually dereferenced by this binary or, in practice, by the suite either (see credentialoffer.go), so the default is an inert placeholder")
 	flag.BoolVar(&cfg.basePlan, "base-plan", false, "drive the suite's own base (non-HAIP) \"oid4vci-1_0-wallet-test-plan\" instead of the default HAIP plan — see baseInScopeModules' own doc comment")
 	flag.StringVar(&cfg.credentialFormat, "credential-format", "sd_jwt_vc", "credential_format variant to drive: \"sd_jwt_vc\" (default) or \"mdoc\" — mdoc needs a matching -credential-configuration-id/-scope, e.g. eu.europa.ec.eudi.pid.mdoc.1/eudi.pid.mdoc.1")
@@ -278,6 +293,7 @@ func buildWalletPlanVariant(cfg runConfig) (planName string, scopeModules map[st
 	}
 	if cfg.issuerInitiated {
 		planVariant["vci_authorization_code_flow_variant"] = "issuer_initiated"
+		planVariant["vci_credential_offer_variant"] = cfg.credentialOfferVariant
 	} else if cfg.basePlan {
 		// Unlike the HAIP plan (whose module list entries already pin
 		// this), the base plan leaves it unpinned too — the suite

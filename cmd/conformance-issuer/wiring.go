@@ -11,6 +11,7 @@ import (
 	"time"
 
 	fapi "github.com/idfoundry/fapigo"
+	"github.com/idfoundry/fapigo/extension"
 	"github.com/idfoundry/fapigo/fapihttp"
 	"github.com/idfoundry/fapigo/keys"
 	"github.com/idfoundry/fapigo/keys/ephemeral"
@@ -153,6 +154,18 @@ func newServerMux(cfg Config) (*http.ServeMux, error) {
 	algorithms.ClientAttestation = server.AlgorithmSet{clientAttestationAlgorithm}
 	algorithms.ClientAttestationPoP = server.AlgorithmSet{clientAttestationAlgorithm}
 
+	// oid4vci.IssuerStateExtension registration is what OID4VCI 1.0
+	// §4.1.1's own issuer_state authorization parameter needs to
+	// survive PAR at all — without it, fapigo/server silently drops
+	// issuer_state instead of rejecting it outright (see
+	// issuer/authorization_server.go's own "Registering issuer_state"
+	// doc comment), which the issuer_initiated flow variant's own
+	// Credential Offer relies on the Wallet echoing back.
+	extensions, err := extension.NewRegistry(oid4vci.IssuerStateExtension)
+	if err != nil {
+		return nil, fmt.Errorf("extension.NewRegistry: %w", err)
+	}
+
 	srvCfg := server.Config{
 		Issuer: issuerURL,
 		Endpoints: server.Endpoints{
@@ -165,6 +178,7 @@ func newServerMux(cfg Config) (*http.ServeMux, error) {
 		Assurance:                            server.AssuranceDevelopment,
 		OAuthOnly:                            true,
 		AttestationBasedClientAuthentication: true,
+		Extensions:                           extensions,
 	}
 	srvDeps := server.Dependencies{
 		Clients:      clientRepo,
