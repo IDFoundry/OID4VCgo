@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.8.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.7.2...v0.8.0) (2026-09-20)
+
+
+### Features
+
+* add issuer-initiated Credential Offer support, close Issuer-HAIP module gap ([51b0c23](https://github.com/IDFoundry/OID4VCgo/commit/51b0c2324f4e77acf5139500cb20ef20c76bb976))
+
+
+### Bug Fixes
+
+* scope issuer-initiated Credential Offer to VCI-specific modules; add certification profile matrix to run-all.sh ([4e9f6cc](https://github.com/IDFoundry/OID4VCgo/commit/4e9f6cc7495c4361cabdc904f93826e5140965cb))
+
 ## [0.7.2](https://github.com/IDFoundry/OID4VCgo/compare/v0.7.1...v0.7.2) (2026-09-20)
 
 
