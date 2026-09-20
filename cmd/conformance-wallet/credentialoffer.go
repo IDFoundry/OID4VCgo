@@ -49,18 +49,8 @@ func waitForCredentialOfferRedirectURL(httpClient *http.Client, apiBase, moduleI
 			return "", err
 		}
 		if status == http.StatusOK {
-			var entries []map[string]json.RawMessage
-			if err := json.Unmarshal(body, &entries); err == nil {
-				for _, e := range entries {
-					raw, ok := e["credential_offer_redirect_url"]
-					if !ok {
-						continue
-					}
-					var url string
-					if err := json.Unmarshal(raw, &url); err == nil && url != "" {
-						return url, nil
-					}
-				}
+			if url, found := findCredentialOfferRedirectURL(body); found {
+				return url, nil
 			}
 		}
 		if time.Now().After(deadline) {
@@ -68,4 +58,26 @@ func waitForCredentialOfferRedirectURL(httpClient *http.Client, apiBase, moduleI
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
+}
+
+// findCredentialOfferRedirectURL scans one GET /api/log/{moduleID}
+// response body for a "credential_offer_redirect_url" log entry —
+// split out of waitForCredentialOfferRedirectURL purely to keep it
+// under the linter's own cognitive complexity ceiling.
+func findCredentialOfferRedirectURL(body []byte) (string, bool) {
+	var entries []map[string]json.RawMessage
+	if err := json.Unmarshal(body, &entries); err != nil {
+		return "", false
+	}
+	for _, e := range entries {
+		raw, ok := e["credential_offer_redirect_url"]
+		if !ok {
+			continue
+		}
+		var url string
+		if err := json.Unmarshal(raw, &url); err == nil && url != "" {
+			return url, true
+		}
+	}
+	return "", false
 }

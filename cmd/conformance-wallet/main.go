@@ -234,9 +234,29 @@ func run(cfg runConfig) error {
 		}
 	}
 
-	planName := "oid4vci-1_0-wallet-haip-test-plan"
-	scopeModules := inScopeModules
-	planVariant := map[string]string{"credential_format": cfg.credentialFormat} //nolint:gosec // false positive: a suite variant selector value, not a credential
+	planName, scopeModules, planVariant := buildWalletPlanVariant(cfg)
+	planID, modules, err := conformancesuite.CreatePlan(httpClient, cfg.apiBase, planName, planVariant, walletRun.planConfig)
+	if err != nil {
+		return err
+	}
+	log.Printf("created plan %s (alias %s), %d module instances enumerated", planID, walletRun.alias, len(modules))
+	log.Printf("plan detail: %splan-detail.html?plan=%s", cfg.apiBase, planID)
+
+	runner := moduleRunner{HTTPClient: httpClient, APIBase: cfg.apiBase, WalletRun: walletRun, OfferWallet: offerWallet}
+	summary := driveAllModules(ctx, runner, modules, scopeModules, planID)
+
+	log.Printf("=== summary ===")
+	printModuleSummary(scopeModules, summary)
+	return nil
+}
+
+// buildWalletPlanVariant builds the suite plan name/scope/variant
+// selection cfg's own flags choose — split out of run purely to keep
+// it under the linter's own cognitive complexity ceiling.
+func buildWalletPlanVariant(cfg runConfig) (planName string, scopeModules map[string]int, planVariant map[string]string) {
+	planName = "oid4vci-1_0-wallet-haip-test-plan"
+	scopeModules = inScopeModules
+	planVariant = map[string]string{"credential_format": cfg.credentialFormat} //nolint:gosec // false positive: a suite variant selector value, not a credential
 	if cfg.basePlan {
 		// The base plan's own single ModuleListEntry pins only
 		// FAPIClientType/FAPIResponseMode (@PublishTestPlan's own
@@ -264,14 +284,14 @@ func run(cfg runConfig) error {
 		// requires an explicit value even for the default.
 		planVariant["vci_authorization_code_flow_variant"] = "wallet_initiated"
 	}
-	planID, modules, err := conformancesuite.CreatePlan(httpClient, cfg.apiBase, planName, planVariant, walletRun.planConfig)
-	if err != nil {
-		return err
-	}
-	log.Printf("created plan %s (alias %s), %d module instances enumerated", planID, walletRun.alias, len(modules))
-	log.Printf("plan detail: %splan-detail.html?plan=%s", cfg.apiBase, planID)
+	return planName, scopeModules, planVariant
+}
 
-	runner := moduleRunner{HTTPClient: httpClient, APIBase: cfg.apiBase, WalletRun: walletRun, OfferWallet: offerWallet}
+// driveAllModules drives every module instance in modules that
+// scopeModules puts in scope, returning a "name [crossing]" -> outcome
+// summary — split out of run purely to keep it under the linter's own
+// cognitive complexity ceiling.
+func driveAllModules(ctx context.Context, runner moduleRunner, modules []conformancesuite.PlanModule, scopeModules map[string]int, planID string) map[string]string {
 	summary := make(map[string]string)
 	for _, m := range modules {
 		numCreds, ok := scopeModules[m.TestModule]
@@ -294,8 +314,14 @@ func run(cfg runConfig) error {
 		summary[key] = outcome
 		log.Printf("%s: %s", key, outcome)
 	}
+	return summary
+}
 
-	log.Printf("=== summary ===")
+// printModuleSummary logs one line per scopeModules/crossing
+// combination, including any never actually run — split out of run
+// purely to keep it under the linter's own cognitive complexity
+// ceiling.
+func printModuleSummary(scopeModules map[string]int, summary map[string]string) {
 	for name := range scopeModules {
 		for _, crossing := range crossingsFor(name) {
 			key := name + " [" + crossing.String() + "]"
@@ -306,7 +332,6 @@ func run(cfg runConfig) error {
 			log.Printf("%-70s %s", key, outcome)
 		}
 	}
-	return nil
 }
 
 // batteryModulePrefix identifies the HAIP plan's 4th module-list entry
