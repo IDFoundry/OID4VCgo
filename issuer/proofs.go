@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"time"
 
 	"github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/attestation"
@@ -36,62 +37,21 @@ func (iss *Issuer) resolveJWTProofKeys(
 	nonceRequired := !iss.cfg.Endpoints.Nonce.IsZero()
 
 	for i, raw := range values {
-		header, _, err := jose.DecodeUnverified(raw)
+		pub, jwkRaw, nonce, err := iss.verifyJWTProof(ctx, auth, raw, i, ptc)
 		if err != nil {
-			return nil, newError(ErrorInvalidProof, 400, fmt.Sprintf("proof %d is malformed", i), err)
-		}
-		if typ, _ := header["typ"].(string); typ != jwtProofTyp {
-			return nil, newError(ErrorInvalidProof, 400, fmt.Sprintf("proof %d has typ %q, want %q", i, typ, jwtProofTyp), nil)
-		}
-		algStr, _ := header["alg"].(string)
-		if !slices.Contains(ptc.ProofSigningAlgValuesSupported, algStr) {
-			return nil, newError(ErrorInvalidProof, 400, fmt.Sprintf("proof %d alg %q is not supported", i, algStr), nil)
-		}
-		pub, jwkRaw, err := iss.resolveProofBindingKey(ctx, header)
-		if err != nil {
-			return nil, newError(ErrorInvalidProof, 400, fmt.Sprintf("proof %d: %v", i, err), nil)
-		}
-
-		_, payload, err := jose.Verify(jose.Alg(algStr), pub, raw)
-		if err != nil {
-			return nil, newError(ErrorInvalidProof, 400, fmt.Sprintf("proof %d: signature verification failed", i), err)
-		}
-
-		var body struct {
-			Iss   string `json:"iss"`
-			Aud   string `json:"aud"`
-			Iat   int64  `json:"iat"`
-			Nonce string `json:"nonce"`
-		}
-		if err := json.Unmarshal(payload, &body); err != nil {
-			return nil, newError(ErrorInvalidProof, 400, fmt.Sprintf("proof %d: unmarshal body", i), err)
-		}
-		if body.Aud != iss.cfg.Issuer.String() {
-			return nil, newError(ErrorInvalidProof, 400, fmt.Sprintf("proof %d: aud does not match this issuer", i), nil)
-		}
-		if body.Iat == 0 {
-			return nil, newError(ErrorInvalidProof, 400, fmt.Sprintf("proof %d: iat is required", i), nil)
-		}
-		// auth.ClientID == "" here only ever means an explicit
-		// ClientIDIntentionallyUnset (RequestCredential's own
-		// requireClientIDDecision already rejected any other empty
-		// case before this ever runs) — this check is deliberately
-		// skipped for that acknowledged deployment choice, not by
-		// silent default.
-		if body.Iss != "" && auth.ClientID != "" && body.Iss != auth.ClientID {
-			return nil, newError(ErrorInvalidProof, 400, fmt.Sprintf("proof %d: iss does not match the authenticated client", i), nil)
+			return nil, err
 		}
 
 		if nonceRequired {
-			if body.Nonce == "" {
+			if nonce == "" {
 				return nil, newError(ErrorInvalidProof, 400, fmt.Sprintf("proof %d: nonce is required", i), nil)
 			}
 			if i == 0 {
-				if err := iss.consumeNonce(ctx, body.Nonce); err != nil {
+				if err := iss.consumeNonce(ctx, nonce); err != nil {
 					return nil, err
 				}
-				expectedNonce = body.Nonce
-			} else if body.Nonce != expectedNonce {
+				expectedNonce = nonce
+			} else if nonce != expectedNonce {
 				return nil, newError(ErrorInvalidNonce, 400, fmt.Sprintf("proof %d: nonce does not match the request's consumed nonce", i), nil)
 			}
 		}
@@ -99,6 +59,65 @@ func (iss *Issuer) resolveJWTProofKeys(
 		keys = append(keys, resolvedKey{Public: pub, JWKRaw: jwkRaw})
 	}
 	return keys, nil
+}
+
+// verifyJWTProof verifies one jwt-type key proof — typ, alg (against
+// ptc's own allow-list), the binding key conveyed via "jwk", "kid" or
+// "x5c" (see resolveProofBindingKey), the JWS signature
+// (self-consistency — a proof is signed by the very key it declares,
+// proving possession), and the body's aud/iat/iss claims — and returns
+// its own binding key plus its own "nonce" body claim (unvalidated:
+// resolveJWTProofKeys itself handles the required/consistency checks,
+// which span across every proof in the request, not just this one).
+// Split out purely to keep resolveJWTProofKeys under the linter's own
+// cognitive complexity ceiling.
+func (iss *Issuer) verifyJWTProof(ctx context.Context, auth AuthorizedRequest, raw string, i int, ptc oid4vci.ProofTypeConfiguration) (crypto.PublicKey, json.RawMessage, string, error) {
+	header, _, err := jose.DecodeUnverified(raw)
+	if err != nil {
+		return nil, nil, "", newError(ErrorInvalidProof, 400, fmt.Sprintf("proof %d is malformed", i), err)
+	}
+	if typ, _ := header["typ"].(string); typ != jwtProofTyp {
+		return nil, nil, "", newError(ErrorInvalidProof, 400, fmt.Sprintf("proof %d has typ %q, want %q", i, typ, jwtProofTyp), nil)
+	}
+	algStr, _ := header["alg"].(string)
+	if !slices.Contains(ptc.ProofSigningAlgValuesSupported, algStr) {
+		return nil, nil, "", newError(ErrorInvalidProof, 400, fmt.Sprintf("proof %d alg %q is not supported", i, algStr), nil)
+	}
+	pub, jwkRaw, err := iss.resolveProofBindingKey(ctx, header)
+	if err != nil {
+		return nil, nil, "", newError(ErrorInvalidProof, 400, fmt.Sprintf("proof %d: %v", i, err), nil)
+	}
+
+	_, payload, err := jose.Verify(jose.Alg(algStr), pub, raw)
+	if err != nil {
+		return nil, nil, "", newError(ErrorInvalidProof, 400, fmt.Sprintf("proof %d: signature verification failed", i), err)
+	}
+
+	var body struct {
+		Iss   string `json:"iss"`
+		Aud   string `json:"aud"`
+		Iat   int64  `json:"iat"`
+		Nonce string `json:"nonce"`
+	}
+	if err := json.Unmarshal(payload, &body); err != nil {
+		return nil, nil, "", newError(ErrorInvalidProof, 400, fmt.Sprintf("proof %d: unmarshal body", i), err)
+	}
+	if body.Aud != iss.cfg.Issuer.String() {
+		return nil, nil, "", newError(ErrorInvalidProof, 400, fmt.Sprintf("proof %d: aud does not match this issuer", i), nil)
+	}
+	if body.Iat == 0 {
+		return nil, nil, "", newError(ErrorInvalidProof, 400, fmt.Sprintf("proof %d: iat is required", i), nil)
+	}
+	// auth.ClientID == "" here only ever means an explicit
+	// ClientIDIntentionallyUnset (RequestCredential's own
+	// requireClientIDDecision already rejected any other empty
+	// case before this ever runs) — this check is deliberately
+	// skipped for that acknowledged deployment choice, not by
+	// silent default.
+	if body.Iss != "" && auth.ClientID != "" && body.Iss != auth.ClientID {
+		return nil, nil, "", newError(ErrorInvalidProof, 400, fmt.Sprintf("proof %d: iss does not match the authenticated client", i), nil)
+	}
+	return pub, jwkRaw, body.Nonce, nil
 }
 
 // resolveProofBindingKey resolves a jwt-type key proof's own binding
@@ -179,17 +198,9 @@ func (iss *Issuer) resolveAttestationProofKeys(ctx context.Context, values []str
 	var keys []resolvedKey
 
 	for i, raw := range values {
-		parsed, err := attestation.Parse(raw)
+		verified, err := iss.verifyOneAttestation(ctx, raw, i, now)
 		if err != nil {
-			return nil, newError(ErrorInvalidProof, 400, fmt.Sprintf("attestation %d is malformed", i), err)
-		}
-		pub, alg, err := iss.deps.AttestationVerifier.ResolveAttestationKey(ctx, parsed)
-		if err != nil {
-			return nil, newError(ErrorInvalidProof, 400, fmt.Sprintf("attestation %d: resolve trust key", i), err)
-		}
-		verified, err := parsed.Verify(pub, alg, attestation.VerifyOptions{Now: now})
-		if err != nil {
-			return nil, newError(ErrorInvalidProof, 400, fmt.Sprintf("attestation %d: verification failed", i), err)
+			return nil, err
 		}
 
 		if nonceRequired {
@@ -206,20 +217,53 @@ func (iss *Issuer) resolveAttestationProofKeys(ctx context.Context, values []str
 			}
 		}
 
-		for j, attestedKeyRaw := range verified.AttestedKeys {
-			if len(keys) >= maxKeys {
-				return nil, newError(ErrorInvalidProof, 400,
-					fmt.Sprintf("attestation %d: attested_keys would yield more resolved keys than this issuer's own batch_size (%d) across the request", i, maxKeys), nil)
-			}
-			attestedPub, err := jwk.ParsePublicKey(attestedKeyRaw)
-			if err != nil {
-				return nil, newError(ErrorInvalidProof, 400, fmt.Sprintf("attestation %d: attested_keys[%d]: parse jwk", i, j), err)
-			}
-			keys = append(keys, resolvedKey{Public: attestedPub, JWKRaw: json.RawMessage(attestedKeyRaw)})
+		keys, err = appendAttestedKeys(keys, verified, i, maxKeys)
+		if err != nil {
+			return nil, err
 		}
 	}
 	if len(keys) == 0 {
 		return nil, newError(ErrorInvalidProof, 400, "no attested keys were found", nil)
+	}
+	return keys, nil
+}
+
+// verifyOneAttestation parses and verifies one Key Attestation JWT
+// (its signature, against the trust key Dependencies.AttestationVerifier
+// resolves) — split out of resolveAttestationProofKeys purely to keep
+// it under the linter's own cognitive complexity ceiling.
+func (iss *Issuer) verifyOneAttestation(ctx context.Context, raw string, i int, now time.Time) (attestation.VerifiedClaims, error) {
+	parsed, err := attestation.Parse(raw)
+	if err != nil {
+		return attestation.VerifiedClaims{}, newError(ErrorInvalidProof, 400, fmt.Sprintf("attestation %d is malformed", i), err)
+	}
+	pub, alg, err := iss.deps.AttestationVerifier.ResolveAttestationKey(ctx, parsed)
+	if err != nil {
+		return attestation.VerifiedClaims{}, newError(ErrorInvalidProof, 400, fmt.Sprintf("attestation %d: resolve trust key", i), err)
+	}
+	verified, err := parsed.Verify(pub, alg, attestation.VerifyOptions{Now: now})
+	if err != nil {
+		return attestation.VerifiedClaims{}, newError(ErrorInvalidProof, 400, fmt.Sprintf("attestation %d: verification failed", i), err)
+	}
+	return verified, nil
+}
+
+// appendAttestedKeys appends one resolvedKey per entry in verified's
+// own attested_keys claim to keys, enforcing maxKeys as a running total
+// across every attestation in the request — split out of
+// resolveAttestationProofKeys purely to keep it under the linter's own
+// cognitive complexity ceiling.
+func appendAttestedKeys(keys []resolvedKey, verified attestation.VerifiedClaims, i, maxKeys int) ([]resolvedKey, error) {
+	for j, attestedKeyRaw := range verified.AttestedKeys {
+		if len(keys) >= maxKeys {
+			return nil, newError(ErrorInvalidProof, 400,
+				fmt.Sprintf("attestation %d: attested_keys would yield more resolved keys than this issuer's own batch_size (%d) across the request", i, maxKeys), nil)
+		}
+		attestedPub, err := jwk.ParsePublicKey(attestedKeyRaw)
+		if err != nil {
+			return nil, newError(ErrorInvalidProof, 400, fmt.Sprintf("attestation %d: attested_keys[%d]: parse jwk", i, j), err)
+		}
+		keys = append(keys, resolvedKey{Public: attestedPub, JWKRaw: json.RawMessage(attestedKeyRaw)})
 	}
 	return keys, nil
 }

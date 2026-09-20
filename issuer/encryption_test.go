@@ -127,6 +127,18 @@ func TestMetadata_RequestAndResponseEncryption(t *testing.T) {
 	}
 
 	md := iss.Metadata()
+	checkRequestEncryptionMetadata(t, md)
+	checkResponseEncryptionMetadata(t, md)
+	checkEncryptionMetadataWireShape(t, md)
+}
+
+// checkRequestEncryptionMetadata, checkResponseEncryptionMetadata, and
+// checkEncryptionMetadataWireShape are
+// TestMetadata_RequestAndResponseEncryption's own assertion chain,
+// split into top-level helpers purely to keep that function under the
+// linter's own cognitive complexity ceiling.
+func checkRequestEncryptionMetadata(t *testing.T, md oid4vci.Metadata) {
+	t.Helper()
 	if md.CredentialRequestEncryption == nil {
 		t.Fatalf("CredentialRequestEncryption is nil")
 	}
@@ -153,7 +165,10 @@ func TestMetadata_RequestAndResponseEncryption(t *testing.T) {
 	if len(re.EncValuesSupported) != 2 || !re.EncryptionRequired {
 		t.Errorf("re = %+v", re)
 	}
+}
 
+func checkResponseEncryptionMetadata(t *testing.T, md oid4vci.Metadata) {
+	t.Helper()
 	if md.CredentialResponseEncryption == nil {
 		t.Fatalf("CredentialResponseEncryption is nil")
 	}
@@ -164,7 +179,18 @@ func TestMetadata_RequestAndResponseEncryption(t *testing.T) {
 	if rs.EncryptionRequired {
 		t.Errorf("EncryptionRequired = true, want false")
 	}
+}
 
+// checkEncryptionMetadataWireShape re-checks md's own §10 fields after
+// a real JSON round trip: the wire shape matters as much as the Go
+// struct here — §12.2.4 requires "jwks" to be a JSON Web Key Set, a
+// {"keys": [...]} object, not a bare JSON array. Confirmed live
+// against the real OIDF suite that this distinction is actually
+// checked by a real client (VCICheckCredentialRequestEncryptionSupported
+// rejected an earlier version of this code that serialized jwks as a
+// bare array).
+func checkEncryptionMetadataWireShape(t *testing.T, md oid4vci.Metadata) {
+	t.Helper()
 	raw, err := json.Marshal(md)
 	if err != nil {
 		t.Fatalf("json.Marshal: %v", err)
@@ -177,13 +203,6 @@ func TestMetadata_RequestAndResponseEncryption(t *testing.T) {
 	if !ok {
 		t.Fatalf("wire metadata is missing credential_request_encryption")
 	}
-	// The wire shape matters as much as the Go struct here: §12.2.4
-	// requires "jwks" to be a JSON Web Key Set — a {"keys": [...]}
-	// object, not a bare JSON array. Confirmed live against the real
-	// OIDF suite that this distinction is actually checked by a real
-	// client (VCICheckCredentialRequestEncryptionSupported rejected an
-	// earlier version of this code that serialized jwks as a bare
-	// array).
 	wireJWKS, ok := wireReqEnc["jwks"].(map[string]any)
 	if !ok {
 		t.Fatalf("credential_request_encryption.jwks = %T, want a JSON object with a \"keys\" member", wireReqEnc["jwks"])

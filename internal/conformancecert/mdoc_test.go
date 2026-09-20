@@ -48,6 +48,24 @@ func findExtension(cert *x509.Certificate, oid string) (ext pkix.Extension, ok b
 func TestGenerateMdocIACA_MeetsAnnexBTableB1(t *testing.T) {
 	iaca, _ := generateTestCerts(t)
 
+	checkIACABasicFields(t, iaca)
+	checkIACAExtensions(t, iaca)
+
+	// Self-signed: subject == issuer, and the self-signature verifies.
+	if iaca.Subject.String() != iaca.Issuer.String() {
+		t.Errorf("subject %q != issuer %q, want a self-signed root", iaca.Subject, iaca.Issuer)
+	}
+	if err := iaca.CheckSignatureFrom(iaca); err != nil {
+		t.Errorf("self-signature does not verify: %v", err)
+	}
+}
+
+// checkIACABasicFields and checkIACAExtensions are
+// TestGenerateMdocIACA_MeetsAnnexBTableB1's own assertion chain, split
+// into top-level helpers purely to keep that function under the
+// linter's own cognitive complexity ceiling.
+func checkIACABasicFields(t *testing.T, iaca *x509.Certificate) {
+	t.Helper()
 	if iaca.Version != 3 {
 		t.Errorf("Version = %d, want 3", iaca.Version)
 	}
@@ -87,7 +105,10 @@ func TestGenerateMdocIACA_MeetsAnnexBTableB1(t *testing.T) {
 	if pub.Curve.Params().Name != "P-256" {
 		t.Errorf("curve = %s, want P-256 (one of ISO 18013-5 Annex B's allowed curves)", pub.Curve.Params().Name)
 	}
+}
 
+func checkIACAExtensions(t *testing.T, iaca *x509.Certificate) {
+	t.Helper()
 	// Critical extensions: only keyUsage(2.5.29.15) and
 	// basicConstraints(2.5.29.19) may be critical.
 	for _, ext := range iaca.Extensions {
@@ -105,14 +126,6 @@ func TestGenerateMdocIACA_MeetsAnnexBTableB1(t *testing.T) {
 			t.Errorf("forbidden extension %s is present", forbidden)
 		}
 	}
-
-	// Self-signed: subject == issuer, and the self-signature verifies.
-	if iaca.Subject.String() != iaca.Issuer.String() {
-		t.Errorf("subject %q != issuer %q, want a self-signed root", iaca.Subject, iaca.Issuer)
-	}
-	if err := iaca.CheckSignatureFrom(iaca); err != nil {
-		t.Errorf("self-signature does not verify: %v", err)
-	}
 }
 
 // TestGenerateMdocDocumentSigner_MeetsAnnexBTableB3 mirrors
@@ -121,6 +134,22 @@ func TestGenerateMdocIACA_MeetsAnnexBTableB1(t *testing.T) {
 func TestGenerateMdocDocumentSigner_MeetsAnnexBTableB3(t *testing.T) {
 	iaca, ds := generateTestCerts(t)
 
+	checkDSBasicFields(t, iaca, ds)
+	checkDSExtensions(t, ds)
+
+	// Chain verification: the DS cert's own signature must verify
+	// against the IACA.
+	if err := ds.CheckSignatureFrom(iaca); err != nil {
+		t.Errorf("document signer certificate signature does not verify against the IACA: %v", err)
+	}
+}
+
+// checkDSBasicFields and checkDSExtensions are
+// TestGenerateMdocDocumentSigner_MeetsAnnexBTableB3's own assertion
+// chain, split into top-level helpers purely to keep that function
+// under the linter's own cognitive complexity ceiling.
+func checkDSBasicFields(t *testing.T, iaca, ds *x509.Certificate) {
+	t.Helper()
 	if ds.Version != 3 {
 		t.Errorf("Version = %d, want 3", ds.Version)
 	}
@@ -151,7 +180,10 @@ func TestGenerateMdocDocumentSigner_MeetsAnnexBTableB3(t *testing.T) {
 	if len(ds.ExtKeyUsage) != 0 {
 		t.Errorf("ExtKeyUsage = %v, want none (only the custom mdlDS OID)", ds.ExtKeyUsage)
 	}
+}
 
+func checkDSExtensions(t *testing.T, ds *x509.Certificate) {
+	t.Helper()
 	// Critical extensions: only keyUsage(2.5.29.15) and
 	// extKeyUsage(2.5.29.37) may be critical.
 	for _, ext := range ds.Extensions {
@@ -174,11 +206,5 @@ func TestGenerateMdocDocumentSigner_MeetsAnnexBTableB3(t *testing.T) {
 		if _, ok := findExtension(ds, forbidden); ok {
 			t.Errorf("forbidden extension %s is present", forbidden)
 		}
-	}
-
-	// Chain verification: the DS cert's own signature must verify
-	// against the IACA.
-	if err := ds.CheckSignatureFrom(iaca); err != nil {
-		t.Errorf("document signer certificate signature does not verify against the IACA: %v", err)
 	}
 }

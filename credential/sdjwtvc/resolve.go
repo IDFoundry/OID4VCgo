@@ -93,22 +93,31 @@ func resolveMap(m map[string]any, byDigest map[string]Disclosure, usedDigests, s
 		}
 		out[k] = resolved
 	}
+	if err := resolveSDDigests(m, out, byDigest, usedDigests, seenDigests, depth, maxDepth); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
 
+// resolveSDDigests resolves m's own top-level "_sd" array (RFC 9901
+// §4.1.1) into out, in place — split out of resolveMap purely to keep
+// it under the linter's own cognitive complexity ceiling.
+func resolveSDDigests(m, out map[string]any, byDigest map[string]Disclosure, usedDigests, seenDigests map[string]bool, depth, maxDepth int) error {
 	sdRaw, hasSD := m["_sd"]
 	if !hasSD {
-		return out, nil
+		return nil
 	}
 	sdList, ok := sdRaw.([]any)
 	if !ok {
-		return nil, fmt.Errorf("sdjwtvc: _sd is not an array")
+		return fmt.Errorf("sdjwtvc: _sd is not an array")
 	}
 	for _, item := range sdList {
 		digest, ok := item.(string)
 		if !ok {
-			return nil, fmt.Errorf("sdjwtvc: _sd entry is not a string")
+			return fmt.Errorf("sdjwtvc: _sd entry is not a string")
 		}
 		if seenDigests[digest] {
-			return nil, fmt.Errorf("sdjwtvc: digest %s appears more than once in the SD-JWT", digest)
+			return fmt.Errorf("sdjwtvc: digest %s appears more than once in the SD-JWT", digest)
 		}
 		seenDigests[digest] = true
 
@@ -117,50 +126,31 @@ func resolveMap(m map[string]any, byDigest map[string]Disclosure, usedDigests, s
 			continue
 		}
 		if d.IsArrayElement() {
-			return nil, fmt.Errorf("sdjwtvc: disclosure for digest %s is an array-element disclosure but was embedded in an object's _sd", digest)
+			return fmt.Errorf("sdjwtvc: disclosure for digest %s is an array-element disclosure but was embedded in an object's _sd", digest)
 		}
 		if _, exists := out[d.Name]; exists {
-			return nil, fmt.Errorf("sdjwtvc: claim %q already exists at this level", d.Name)
+			return fmt.Errorf("sdjwtvc: claim %q already exists at this level", d.Name)
 		}
 		usedDigests[digest] = true
 		resolvedValue, err := resolveValue(d.Value, byDigest, usedDigests, seenDigests, depth+1, maxDepth)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		out[d.Name] = resolvedValue
 	}
-	return out, nil
+	return nil
 }
 
 func resolveArray(arr []any, byDigest map[string]Disclosure, usedDigests, seenDigests map[string]bool, depth, maxDepth int) ([]any, error) {
 	out := make([]any, 0, len(arr))
 	for _, el := range arr {
-		if obj, ok := el.(map[string]any); ok && len(obj) == 1 {
-			if digestRaw, has := obj["..."]; has {
-				digest, ok := digestRaw.(string)
-				if !ok {
-					return nil, fmt.Errorf(`sdjwtvc: array element "..." value is not a string`)
-				}
-				if seenDigests[digest] {
-					return nil, fmt.Errorf("sdjwtvc: digest %s appears more than once in the SD-JWT", digest)
-				}
-				seenDigests[digest] = true
-
-				d, found := byDigest[digest]
-				if !found {
-					continue
-				}
-				if !d.IsArrayElement() {
-					return nil, fmt.Errorf("sdjwtvc: disclosure for digest %s is an object-property disclosure but was embedded as an array element", digest)
-				}
-				usedDigests[digest] = true
-				resolvedValue, err := resolveValue(d.Value, byDigest, usedDigests, seenDigests, depth+1, maxDepth)
-				if err != nil {
-					return nil, err
-				}
-				out = append(out, resolvedValue)
-				continue
-			}
+		newOut, handled, err := appendResolvedDisclosureRef(out, el, byDigest, usedDigests, seenDigests, depth, maxDepth)
+		if err != nil {
+			return nil, err
+		}
+		if handled {
+			out = newOut
+			continue
 		}
 		resolved, err := resolveValue(el, byDigest, usedDigests, seenDigests, depth+1, maxDepth)
 		if err != nil {
@@ -169,4 +159,47 @@ func resolveArray(arr []any, byDigest map[string]Disclosure, usedDigests, seenDi
 		out = append(out, resolved)
 	}
 	return out, nil
+}
+
+// appendResolvedDisclosureRef is resolveArray's own handling of one
+// array element that might be an RFC 9901 §4.2.6 recursive-disclosure
+// reference ({"...": "<digest>"}) — split out purely to keep
+// resolveArray under the linter's own cognitive complexity ceiling.
+// handled=false means el isn't such a reference at all, and the caller
+// should fall back to resolving it as an ordinary value; handled=true
+// covers all three reference outcomes: appended (out gains the
+// disclosed value), silently dropped (no matching Disclosure, per §7.1
+// step 3.c.i — out is returned unchanged), or a malformed/duplicate
+// reference (err is set).
+func appendResolvedDisclosureRef(out []any, el any, byDigest map[string]Disclosure, usedDigests, seenDigests map[string]bool, depth, maxDepth int) (result []any, handled bool, err error) {
+	obj, ok := el.(map[string]any)
+	if !ok || len(obj) != 1 {
+		return out, false, nil
+	}
+	digestRaw, has := obj["..."]
+	if !has {
+		return out, false, nil
+	}
+	digest, ok := digestRaw.(string)
+	if !ok {
+		return nil, true, fmt.Errorf(`sdjwtvc: array element "..." value is not a string`)
+	}
+	if seenDigests[digest] {
+		return nil, true, fmt.Errorf("sdjwtvc: digest %s appears more than once in the SD-JWT", digest)
+	}
+	seenDigests[digest] = true
+
+	d, found := byDigest[digest]
+	if !found {
+		return out, true, nil
+	}
+	if !d.IsArrayElement() {
+		return nil, true, fmt.Errorf("sdjwtvc: disclosure for digest %s is an object-property disclosure but was embedded as an array element", digest)
+	}
+	usedDigests[digest] = true
+	resolvedValue, err := resolveValue(d.Value, byDigest, usedDigests, seenDigests, depth+1, maxDepth)
+	if err != nil {
+		return nil, true, err
+	}
+	return append(out, resolvedValue), true, nil
 }

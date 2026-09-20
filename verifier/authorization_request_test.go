@@ -112,6 +112,19 @@ func TestBuildAuthorizationRequest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildAuthorizationRequest: %v", err)
 	}
+	checkBuildAuthorizationRequestResult(t, v, result)
+
+	claims := verifyAndParseRequestObject(t, cfg, deps, result.RequestObject)
+	checkRequestObjectClaims(t, v, cfg, claims, result)
+	checkRequestObjectClientMetadataJWKS(t, claims)
+}
+
+// checkBuildAuthorizationRequestResult, checkRequestObjectClaims, and
+// checkRequestObjectClientMetadataJWKS are TestBuildAuthorizationRequest's
+// own assertion chain, split into top-level helpers purely to keep
+// that function under the linter's own cognitive complexity ceiling.
+func checkBuildAuthorizationRequestResult(t *testing.T, v *verifier.Verifier, result verifier.BuildAuthorizationRequestResult) {
+	t.Helper()
 	if result.ClientID != v.ClientID() {
 		t.Errorf("ClientID = %q, want %q", result.ClientID, v.ClientID())
 	}
@@ -121,8 +134,10 @@ func TestBuildAuthorizationRequest(t *testing.T) {
 	if result.ResponseDecryptionKey == nil {
 		t.Fatalf("ResponseDecryptionKey is nil")
 	}
+}
 
-	claims := verifyAndParseRequestObject(t, cfg, deps, result.RequestObject)
+func checkRequestObjectClaims(t *testing.T, v *verifier.Verifier, cfg verifier.Config, claims requestObjectPayload, result verifier.BuildAuthorizationRequestResult) {
+	t.Helper()
 	if claims.ResponseType != "vp_token" {
 		t.Errorf("response_type = %q, want vp_token", claims.ResponseType)
 	}
@@ -150,7 +165,10 @@ func TestBuildAuthorizationRequest(t *testing.T) {
 	if len(claims.DCQLQuery.Credentials) != 1 || claims.DCQLQuery.Credentials[0].ID != "identity_credential" {
 		t.Errorf("dcql_query round-tripped wrong: %+v", claims.DCQLQuery)
 	}
+}
 
+func checkRequestObjectClientMetadataJWKS(t *testing.T, claims requestObjectPayload) {
+	t.Helper()
 	if len(claims.ClientMetadata.JWKS.Keys) != 1 {
 		t.Fatalf("client_metadata.jwks.keys has %d entries, want 1", len(claims.ClientMetadata.JWKS.Keys))
 	}

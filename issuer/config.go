@@ -369,90 +369,18 @@ type Issuer struct {
 
 // New validates cfg and deps and returns a ready-to-use Issuer.
 func New(cfg Config, deps Dependencies) (*Issuer, error) {
-	if cfg.Assurance != AssuranceDevelopment && cfg.Assurance != AssuranceProduction {
-		return nil, fmt.Errorf("issuer: config: assurance level is invalid")
+	if err := validateConfig(cfg); err != nil {
+		return nil, err
 	}
-	if cfg.Issuer.IsZero() {
-		return nil, fmt.Errorf("issuer: config: issuer is required")
+	if err := validateOptionalEndpointDependencies(cfg, deps); err != nil {
+		return nil, err
 	}
-	if cfg.Endpoints.Credential.IsZero() {
-		return nil, fmt.Errorf("issuer: config: endpoints.credential is required")
+	if err := validatePreAuthorizedCodeDependencies(cfg, deps); err != nil {
+		return nil, err
 	}
-	if len(cfg.CredentialConfigurationsSupported) == 0 {
-		return nil, fmt.Errorf("issuer: config: credential_configurations_supported must not be empty")
-	}
-	for id, c := range cfg.CredentialConfigurationsSupported {
-		if err := c.validate(); err != nil {
-			return nil, fmt.Errorf("issuer: config: credential_configurations_supported[%q]: %w", id, err)
-		}
-	}
-	for i, d := range cfg.Display {
-		if err := d.Validate(); err != nil {
-			return nil, fmt.Errorf("issuer: config: display[%d]: %w", i, err)
-		}
-	}
-	if cfg.BatchCredentialIssuance != nil {
-		if err := cfg.BatchCredentialIssuance.Validate(); err != nil {
-			return nil, fmt.Errorf("issuer: config: batch_credential_issuance: %w", err)
-		}
-	}
-
-	nonceEnabled := !cfg.Endpoints.Nonce.IsZero()
-	if nonceEnabled {
-		if cfg.Limits.NonceLifetime <= 0 {
-			return nil, fmt.Errorf("issuer: config: limits.nonce_lifetime must be positive when endpoints.nonce is set")
-		}
-		if deps.Nonces == nil {
-			return nil, fmt.Errorf("issuer: dependencies: nonces is required when endpoints.nonce is set")
-		}
-	}
-
-	credentialOfferEndpointEnabled := !cfg.CredentialOfferEndpoint.IsZero()
-	if credentialOfferEndpointEnabled {
-		if cfg.Limits.CredentialOfferLifetime <= 0 {
-			return nil, fmt.Errorf("issuer: config: limits.credential_offer_lifetime must be positive when credential_offer_endpoint is set")
-		}
-		if deps.CredentialOffers == nil {
-			return nil, fmt.Errorf("issuer: dependencies: credential_offers is required when credential_offer_endpoint is set")
-		}
-	}
-
-	deferredCredentialEndpointEnabled := !cfg.Endpoints.DeferredCredential.IsZero()
-	if deferredCredentialEndpointEnabled {
-		if cfg.Limits.DeferredIssuancePollInterval <= 0 {
-			return nil, fmt.Errorf("issuer: config: limits.deferred_issuance_poll_interval must be positive when endpoints.deferred_credential is set")
-		}
-		if deps.DeferredTransactions == nil {
-			return nil, fmt.Errorf("issuer: dependencies: deferred_transactions is required when endpoints.deferred_credential is set")
-		}
-	}
-
-	if !cfg.Endpoints.Notification.IsZero() && deps.Notifications == nil {
-		return nil, fmt.Errorf("issuer: dependencies: notifications is required when endpoints.notification is set")
-	}
-
-	if deps.PreAuthorizedCodes != nil {
-		if cfg.Limits.AccessTokenLifetime <= 0 {
-			return nil, fmt.Errorf("issuer: config: limits.access_token_lifetime must be positive when dependencies.pre_authorized_codes is set")
-		}
-		if cfg.Limits.MaxDPoPProofAge <= 0 {
-			return nil, fmt.Errorf("issuer: config: limits.max_dpop_proof_age must be positive when dependencies.pre_authorized_codes is set")
-		}
-		if cfg.Limits.MaxTxCodeAttempts <= 0 {
-			return nil, fmt.Errorf("issuer: config: limits.max_tx_code_attempts must be positive when dependencies.pre_authorized_codes is set")
-		}
-		if deps.DPoPReplay == nil {
-			return nil, fmt.Errorf("issuer: dependencies: dpop_replay is required when dependencies.pre_authorized_codes is set")
-		}
-		if deps.AccessTokens == nil {
-			return nil, fmt.Errorf("issuer: dependencies: access_tokens is required when dependencies.pre_authorized_codes is set")
-		}
-	}
-
 	if deps.DPoPNonces != nil && cfg.Limits.DPoPNonceLifetime <= 0 {
 		return nil, fmt.Errorf("issuer: config: limits.dpop_nonce_lifetime must be positive when dependencies.dpop_nonces is set")
 	}
-
 	if deps.Clock == nil {
 		return nil, fmt.Errorf("issuer: dependencies: clock is required")
 	}
@@ -478,6 +406,129 @@ func New(cfg Config, deps Dependencies) (*Issuer, error) {
 	}
 
 	return &Issuer{cfg: cfg, deps: deps}, nil
+}
+
+// validateConfig checks cfg's own self-contained fields — no
+// Dependencies involved — split out of New purely to keep it under the
+// linter's own cognitive complexity ceiling.
+func validateConfig(cfg Config) error {
+	if cfg.Assurance != AssuranceDevelopment && cfg.Assurance != AssuranceProduction {
+		return fmt.Errorf("issuer: config: assurance level is invalid")
+	}
+	if cfg.Issuer.IsZero() {
+		return fmt.Errorf("issuer: config: issuer is required")
+	}
+	if cfg.Endpoints.Credential.IsZero() {
+		return fmt.Errorf("issuer: config: endpoints.credential is required")
+	}
+	if len(cfg.CredentialConfigurationsSupported) == 0 {
+		return fmt.Errorf("issuer: config: credential_configurations_supported must not be empty")
+	}
+	for id, c := range cfg.CredentialConfigurationsSupported {
+		if err := c.validate(); err != nil {
+			return fmt.Errorf("issuer: config: credential_configurations_supported[%q]: %w", id, err)
+		}
+	}
+	for i, d := range cfg.Display {
+		if err := d.Validate(); err != nil {
+			return fmt.Errorf("issuer: config: display[%d]: %w", i, err)
+		}
+	}
+	if cfg.BatchCredentialIssuance != nil {
+		if err := cfg.BatchCredentialIssuance.Validate(); err != nil {
+			return fmt.Errorf("issuer: config: batch_credential_issuance: %w", err)
+		}
+	}
+	return nil
+}
+
+// validateOptionalEndpointDependencies checks that Dependencies carries
+// whichever store each optional endpoint (Nonce/CredentialOffer/
+// DeferredCredential/Notification) needs once cfg actually enables it
+// — split out of New purely to keep it under the linter's own
+// cognitive complexity ceiling. Each endpoint's own pair of checks is
+// further split into its own helper for the same reason: three
+// same-shaped "if enabled { check limit; check dependency }" blocks
+// side by side were still enough nesting to trip the same ceiling.
+func validateOptionalEndpointDependencies(cfg Config, deps Dependencies) error {
+	if err := validateNonceEndpointDependencies(cfg, deps); err != nil {
+		return err
+	}
+	if err := validateCredentialOfferEndpointDependencies(cfg, deps); err != nil {
+		return err
+	}
+	if err := validateDeferredCredentialEndpointDependencies(cfg, deps); err != nil {
+		return err
+	}
+	if !cfg.Endpoints.Notification.IsZero() && deps.Notifications == nil {
+		return fmt.Errorf("issuer: dependencies: notifications is required when endpoints.notification is set")
+	}
+	return nil
+}
+
+func validateNonceEndpointDependencies(cfg Config, deps Dependencies) error {
+	if cfg.Endpoints.Nonce.IsZero() {
+		return nil
+	}
+	if cfg.Limits.NonceLifetime <= 0 {
+		return fmt.Errorf("issuer: config: limits.nonce_lifetime must be positive when endpoints.nonce is set")
+	}
+	if deps.Nonces == nil {
+		return fmt.Errorf("issuer: dependencies: nonces is required when endpoints.nonce is set")
+	}
+	return nil
+}
+
+func validateCredentialOfferEndpointDependencies(cfg Config, deps Dependencies) error {
+	if cfg.CredentialOfferEndpoint.IsZero() {
+		return nil
+	}
+	if cfg.Limits.CredentialOfferLifetime <= 0 {
+		return fmt.Errorf("issuer: config: limits.credential_offer_lifetime must be positive when credential_offer_endpoint is set")
+	}
+	if deps.CredentialOffers == nil {
+		return fmt.Errorf("issuer: dependencies: credential_offers is required when credential_offer_endpoint is set")
+	}
+	return nil
+}
+
+func validateDeferredCredentialEndpointDependencies(cfg Config, deps Dependencies) error {
+	if cfg.Endpoints.DeferredCredential.IsZero() {
+		return nil
+	}
+	if cfg.Limits.DeferredIssuancePollInterval <= 0 {
+		return fmt.Errorf("issuer: config: limits.deferred_issuance_poll_interval must be positive when endpoints.deferred_credential is set")
+	}
+	if deps.DeferredTransactions == nil {
+		return fmt.Errorf("issuer: dependencies: deferred_transactions is required when endpoints.deferred_credential is set")
+	}
+	return nil
+}
+
+// validatePreAuthorizedCodeDependencies checks the group of
+// Config/Dependencies fields the pre-authorized_code grant needs once
+// deps.PreAuthorizedCodes is set — split out of New purely to keep it
+// under the linter's own cognitive complexity ceiling.
+func validatePreAuthorizedCodeDependencies(cfg Config, deps Dependencies) error {
+	if deps.PreAuthorizedCodes == nil {
+		return nil
+	}
+	if cfg.Limits.AccessTokenLifetime <= 0 {
+		return fmt.Errorf("issuer: config: limits.access_token_lifetime must be positive when dependencies.pre_authorized_codes is set")
+	}
+	if cfg.Limits.MaxDPoPProofAge <= 0 {
+		return fmt.Errorf("issuer: config: limits.max_dpop_proof_age must be positive when dependencies.pre_authorized_codes is set")
+	}
+	if cfg.Limits.MaxTxCodeAttempts <= 0 {
+		return fmt.Errorf("issuer: config: limits.max_tx_code_attempts must be positive when dependencies.pre_authorized_codes is set")
+	}
+	if deps.DPoPReplay == nil {
+		return fmt.Errorf("issuer: dependencies: dpop_replay is required when dependencies.pre_authorized_codes is set")
+	}
+	if deps.AccessTokens == nil {
+		return fmt.Errorf("issuer: dependencies: access_tokens is required when dependencies.pre_authorized_codes is set")
+	}
+	return nil
 }
 
 // validateSignerDependencies checks that Dependencies carries whichever

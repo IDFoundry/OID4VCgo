@@ -231,33 +231,67 @@ func (v *Verifier) VerifyResponse(ctx context.Context, req VerifyResponseRequest
 	if req.ExpectedNonce == "" {
 		return VerifyResponseResult{}, fmt.Errorf("verifier: verify response: expected_nonce is required")
 	}
-	if req.MaxKeyBindingAge <= 0 {
-		for _, cq := range req.Query.Credentials {
-			if cq.Format == sdjwtvc.CredentialFormat && cq.RequiresCryptographicHolderBinding() {
-				return VerifyResponseResult{}, fmt.Errorf("verifier: verify response: max_key_binding_age is required (must be positive) when a %q credential query requires holder binding", sdjwtvc.CredentialFormat)
-			}
-		}
+	if err := checkMaxKeyBindingAgeRequired(req); err != nil {
+		return VerifyResponseResult{}, err
 	}
-	if req.TrustedAuthorities == nil {
-		for _, cq := range req.Query.Credentials {
-			if len(cq.TrustedAuthorities) > 0 {
-				return VerifyResponseResult{}, fmt.Errorf("verifier: verify response: trusted_authorities is required when a credential query %q declares trusted_authorities", cq.ID)
-			}
-		}
+	if err := checkTrustedAuthoritiesConfigured(req); err != nil {
+		return VerifyResponseResult{}, err
 	}
 
 	if len(req.Query.CredentialSets) == 0 {
-		result := VerifyResponseResult{}
-		for _, cq := range req.Query.Credentials {
-			vcs, err := v.verifyCredentialQuery(ctx, cq, req)
-			if err != nil {
-				return VerifyResponseResult{}, fmt.Errorf("verifier: verify response: credential query %q: %w", cq.ID, err)
-			}
-			result.Credentials = append(result.Credentials, vcs...)
-		}
-		return result, nil
+		return v.verifyResponseWithoutCredentialSets(ctx, req)
 	}
+	return v.verifyResponseWithCredentialSets(ctx, req)
+}
 
+// checkMaxKeyBindingAgeRequired and checkTrustedAuthoritiesConfigured
+// are VerifyResponse's own precondition checks, split into top-level
+// helpers purely to keep it under the linter's own cognitive
+// complexity ceiling.
+func checkMaxKeyBindingAgeRequired(req VerifyResponseRequest) error {
+	if req.MaxKeyBindingAge > 0 {
+		return nil
+	}
+	for _, cq := range req.Query.Credentials {
+		if cq.Format == sdjwtvc.CredentialFormat && cq.RequiresCryptographicHolderBinding() {
+			return fmt.Errorf("verifier: verify response: max_key_binding_age is required (must be positive) when a %q credential query requires holder binding", sdjwtvc.CredentialFormat)
+		}
+	}
+	return nil
+}
+
+func checkTrustedAuthoritiesConfigured(req VerifyResponseRequest) error {
+	if req.TrustedAuthorities != nil {
+		return nil
+	}
+	for _, cq := range req.Query.Credentials {
+		if len(cq.TrustedAuthorities) > 0 {
+			return fmt.Errorf("verifier: verify response: trusted_authorities is required when a credential query %q declares trusted_authorities", cq.ID)
+		}
+	}
+	return nil
+}
+
+// verifyResponseWithoutCredentialSets is VerifyResponse's own "no
+// credential_sets" path — every Credential Query is checked
+// unconditionally — split out purely to keep VerifyResponse under the
+// linter's own cognitive complexity ceiling.
+func (v *Verifier) verifyResponseWithoutCredentialSets(ctx context.Context, req VerifyResponseRequest) (VerifyResponseResult, error) {
+	result := VerifyResponseResult{}
+	for _, cq := range req.Query.Credentials {
+		vcs, err := v.verifyCredentialQuery(ctx, cq, req)
+		if err != nil {
+			return VerifyResponseResult{}, fmt.Errorf("verifier: verify response: credential query %q: %w", cq.ID, err)
+		}
+		result.Credentials = append(result.Credentials, vcs...)
+	}
+	return result, nil
+}
+
+// verifyResponseWithCredentialSets is VerifyResponse's own
+// "credential_sets present" path (§6.4.2) — split out purely to keep
+// VerifyResponse under the linter's own cognitive complexity ceiling.
+func (v *Verifier) verifyResponseWithCredentialSets(ctx context.Context, req VerifyResponseRequest) (VerifyResponseResult, error) {
 	byID := make(map[string]dcql.CredentialQuery, len(req.Query.Credentials))
 	for _, cq := range req.Query.Credentials {
 		byID[cq.ID] = cq

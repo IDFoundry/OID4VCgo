@@ -7,6 +7,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"fmt"
+	"net/http"
 	"testing"
 	"time"
 
@@ -66,7 +67,18 @@ func TestFullFlow_RealClientDrivesAttestationAuth(t *testing.T) {
 	httpClient, cfg, attesterKey, _ := setupFullFlowTest(t, "real-wallet-client", "real-wallet-subject")
 	ctx := context.Background()
 
-	// --- Client Instance Key + Client Attestation JWT ---
+	km, attestationJWT := buildRealClientAttestation(t, ctx, attesterKey, cfg, now)
+	c := buildRealClientForAttestationAuth(t, cfg, httpClient, km, attestationJWT)
+	success := driveRealClientAuthFlow(t, ctx, c, httpClient, cfg)
+	requestCredentialViaRealClient(t, ctx, httpClient, cfg, c, success)
+}
+
+// buildRealClientAttestation builds this test's own Client Instance Key
+// (via a fresh ephemeral.KeyManager) and Client Attestation JWT —
+// split out of TestFullFlow_RealClientDrivesAttestationAuth purely to
+// keep it under the linter's own cognitive complexity ceiling.
+func buildRealClientAttestation(t *testing.T, ctx context.Context, attesterKey *ecdsa.PrivateKey, cfg Config, now time.Time) (*ephemeral.KeyManager, string) {
+	t.Helper()
 	km, err := ephemeral.NewKeyManager(map[keys.SigningPurpose]fapi.SignatureAlgorithm{
 		keys.ClientAttestationPoPSigning: fapi.ES256,
 		keys.DPoPProofSigning:            fapi.ES256,
@@ -86,8 +98,15 @@ func TestFullFlow_RealClientDrivesAttestationAuth(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildClientAttestationJWT: %v", err)
 	}
+	return km, attestationJWT
+}
 
-	// --- fapigo/client.Client, configured for Attestation-Based Client Authentication ---
+// buildRealClientForAttestationAuth builds a real fapigo/client.Client
+// configured for Attestation-Based Client Authentication — split out
+// of TestFullFlow_RealClientDrivesAttestationAuth purely to keep it
+// under the linter's own cognitive complexity ceiling.
+func buildRealClientForAttestationAuth(t *testing.T, cfg Config, httpClient *http.Client, km *ephemeral.KeyManager, attestationJWT string) *client.Client {
+	t.Helper()
 	issuerURL, err := fapi.ParseIssuerURL(cfg.Issuer)
 	if err != nil {
 		t.Fatalf("ParseIssuerURL: %v", err)
@@ -144,20 +163,26 @@ func TestFullFlow_RealClientDrivesAttestationAuth(t *testing.T) {
 	if err != nil {
 		t.Fatalf("client.New: %v", err)
 	}
+	return c
+}
 
-	// --- PAR, via BeginAuthorization: real Attestation + PoP headers ---
+// driveRealClientAuthFlow drives PAR (BeginAuthorization: real
+// Attestation + PoP headers), the headless consent round trip (no
+// fapigo/client equivalent exists for driving an actual browser, so
+// this shares performAuthFlowThroughNonce's own raw-HTTP wallet
+// simulation), and the token endpoint (CompleteAuthorization: real
+// Attestation + PoP + DPoP) — split out of
+// TestFullFlow_RealClientDrivesAttestationAuth purely to keep it under
+// the linter's own cognitive complexity ceiling.
+func driveRealClientAuthFlow(t *testing.T, ctx context.Context, c *client.Client, httpClient *http.Client, cfg Config) client.CompletionSuccess {
+	t.Helper()
 	session, err := c.BeginAuthorization(ctx, client.BeginAuthorizationRequest{Scope: []string{cfg.Scope}})
 	if err != nil {
 		t.Fatalf("BeginAuthorization: %v", err)
 	}
 
-	// --- headless consent: GET /authorize, POST /authorize/decision ---
-	// (shared with performAuthFlowThroughNonce's own raw-HTTP wallet
-	// simulation — no fapigo/client equivalent exists for driving an
-	// actual browser)
 	redirectURL := driveConsentToCallback(t, httpClient, cfg.Issuer, session.URL().String(), cfg.DefaultSubject, cfg.Scope)
 
-	// --- token endpoint, via CompleteAuthorization: real Attestation + PoP + DPoP ---
 	result, err := c.CompleteAuthorization(ctx, client.AuthorizationCallback{RawQuery: redirectURL.RawQuery})
 	if err != nil {
 		t.Fatalf("CompleteAuthorization: %v", err)
@@ -166,8 +191,19 @@ func TestFullFlow_RealClientDrivesAttestationAuth(t *testing.T) {
 	if !ok {
 		t.Fatalf("CompleteAuthorization result = %T, want client.CompletionSuccess", result)
 	}
+	return success
+}
 
-	// --- Nonce + Credential Endpoint, via a real oid4vcgo/wallet.Wallet ---
+// requestCredentialViaRealClient drives the Nonce + Credential Endpoint
+// half of the flow via a real oid4vcgo/wallet.Wallet, reusing c's own
+// ProtectedResource (a *client.ResourceClient, which satisfies
+// wallet.ProtectedResourceClient directly — identical
+// Do(ctx, *http.Request) (*http.Response, error) shape, no adapter
+// needed, exactly per wallet/doc.go's own boundary) — split out of
+// TestFullFlow_RealClientDrivesAttestationAuth purely to keep it under
+// the linter's own cognitive complexity ceiling.
+func requestCredentialViaRealClient(t *testing.T, ctx context.Context, httpClient *http.Client, cfg Config, c *client.Client, success client.CompletionSuccess) {
+	t.Helper()
 	w, err := wallet.New(wallet.Config{
 		ProofSigningAlg: jose.ES256,
 		Fetch: fapihttp.Config{
@@ -205,10 +241,6 @@ func TestFullFlow_RealClientDrivesAttestationAuth(t *testing.T) {
 		t.Fatalf("ParseEndpointURL(credential): %v", err)
 	}
 
-	// (*client.Client).ProtectedResource returns a *client.ResourceClient,
-	// which satisfies wallet.ProtectedResourceClient directly (identical
-	// Do(ctx, *http.Request) (*http.Response, error) shape) — no adapter
-	// needed, exactly per wallet/doc.go's own boundary.
 	resource := c.ProtectedResource(success.Tokens)
 
 	credResult, err := w.RequestCredential(ctx, resource, credentialEndpoint, wallet.CredentialRequest{
