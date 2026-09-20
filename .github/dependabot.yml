@@ -1,0 +1,21 @@
+version: 2
+updates:
+  # This module has real third-party Go dependencies (fxamacker/cbor,
+  # idfoundry/fapigo — see go.mod), unlike FAPIgo's own dependabot.yml
+  # comment, which documents the opposite case for that zero-dependency
+  # module.
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+
+  # Keeps the pinned actions/checkout, actions/setup-go,
+  # actions/upload-artifact, golang/govulncheck-action,
+  # golangci/golangci-lint-action and googleapis/release-please-action
+  # versions across ci.yml, conformance.yml, fuzz.yml and
+  # release-please.yml current — the one other real dependency surface
+  # this repo has.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
