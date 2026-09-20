@@ -47,149 +47,184 @@ func TestNewServerMux_ServesRealMetadataAndJWKS(t *testing.T) {
 	client := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}} //nolint:gosec // test-only, see comment above
 
 	t.Run("authorization server metadata", func(t *testing.T) {
-		body := getJSON(t, client, ts.URL+"/.well-known/openid-configuration")
-		if body["issuer"] != cfg.Issuer {
-			t.Fatalf("issuer = %v, want %v", body["issuer"], cfg.Issuer)
-		}
-		if body["pushed_authorization_request_endpoint"] == nil {
-			t.Fatalf("missing pushed_authorization_request_endpoint: %+v", body)
-		}
-		methods, _ := body["token_endpoint_auth_methods_supported"].([]any)
-		if !containsAny(methods, "attest_jwt_client_auth") {
-			t.Fatalf("token_endpoint_auth_methods_supported = %v, want attest_jwt_client_auth present", methods)
-		}
+		checkAuthorizationServerMetadata(t, client, ts.URL, cfg)
 	})
-
 	t.Run("oauth-authorization-server metadata mirrors openid-configuration", func(t *testing.T) {
-		body := getJSON(t, client, ts.URL+"/.well-known/oauth-authorization-server")
-		if body["issuer"] != cfg.Issuer {
-			t.Fatalf("issuer = %v, want %v", body["issuer"], cfg.Issuer)
-		}
-		if body["pushed_authorization_request_endpoint"] == nil {
-			t.Fatalf("missing pushed_authorization_request_endpoint: %+v", body)
-		}
+		checkOAuthAuthorizationServerMetadataMirrorsOpenIDConfiguration(t, client, ts.URL, cfg)
 	})
-
 	t.Run("credential issuer metadata", func(t *testing.T) {
-		body := getJSON(t, client, ts.URL+"/.well-known/openid-credential-issuer")
-		if body["credential_issuer"] != cfg.Issuer {
-			t.Fatalf("credential_issuer = %v, want %v", body["credential_issuer"], cfg.Issuer)
-		}
-		configs, _ := body["credential_configurations_supported"].(map[string]any)
-		cc, ok := configs[cfg.CredentialConfigurationID].(map[string]any)
-		if !ok {
-			t.Fatalf("credential_configurations_supported missing %q: %+v", cfg.CredentialConfigurationID, body)
-		}
-		if cc["vct"] != cfg.VCT {
-			t.Fatalf("vct = %v, want %v", cc["vct"], cfg.VCT)
-		}
-		batch, ok := body["batch_credential_issuance"].(map[string]any)
-		if !ok {
-			t.Fatalf("missing batch_credential_issuance: %+v", body)
-		}
-		if batch["batch_size"] != float64(conformanceBatchSize) {
-			t.Fatalf("batch_size = %v, want %d", batch["batch_size"], conformanceBatchSize)
-		}
-
-		reqEnc, ok := body["credential_request_encryption"].(map[string]any)
-		if !ok {
-			t.Fatalf("missing credential_request_encryption: %+v", body)
-		}
-		assertEncValuesSupported(t, "credential_request_encryption", reqEnc)
-		// jwks MUST be a JSON Web Key Set (RFC 7517 §5, "{keys: [...]}"),
-		// per §12.2.4's own "A JSON Web Key Set, as defined in
-		// [RFC7591]" — not a bare array. Confirmed live: an earlier
-		// version of issuer.Metadata() serialized this as a bare array,
-		// and the OIDF suite's own VCICheckCredentialRequestEncryptionSupported
-		// check correctly rejected it.
-		jwks, ok := reqEnc["jwks"].(map[string]any)
-		if !ok {
-			t.Fatalf("credential_request_encryption.jwks = %T, want a JSON object with a \"keys\" member: %+v", reqEnc["jwks"], reqEnc)
-		}
-		keys, _ := jwks["keys"].([]any)
-		if len(keys) != 1 {
-			t.Fatalf("credential_request_encryption.jwks.keys has %d entries, want 1: %+v", len(keys), jwks)
-		}
-		jwk, _ := keys[0].(map[string]any)
-		if jwk["kid"] != credentialRequestDecryptionKeyID {
-			t.Fatalf("credential_request_encryption.jwks.keys[0].kid = %v, want %q", jwk["kid"], credentialRequestDecryptionKeyID)
-		}
-		// §10's own "The alg parameter MUST be present" — confirmed
-		// live that the OIDF suite's own VCICheckCredentialRequestEncryptionSupported
-		// check rejects a published key with no "alg" member.
-		if jwk["alg"] != "ECDH-ES" {
-			t.Fatalf("credential_request_encryption.jwks.keys[0].alg = %v, want %q", jwk["alg"], "ECDH-ES")
-		}
-
-		respEnc, ok := body["credential_response_encryption"].(map[string]any)
-		if !ok {
-			t.Fatalf("missing credential_response_encryption: %+v", body)
-		}
-		assertEncValuesSupported(t, "credential_response_encryption", respEnc)
+		checkCredentialIssuerMetadata(t, client, ts.URL, cfg)
 	})
-
 	t.Run("signed credential issuer metadata", func(t *testing.T) {
-		unsigned := getJSON(t, client, ts.URL+"/.well-known/openid-credential-issuer")
-
-		req, err := http.NewRequest(http.MethodGet, ts.URL+"/.well-known/openid-credential-issuer", nil) //nolint:noctx // test-only, fixed httptest.Server URL
-		if err != nil {
-			t.Fatalf("NewRequest: %v", err)
-		}
-		req.Header.Set("Accept", "application/jwt")
-		resp, err := client.Do(req)
-		if err != nil {
-			t.Fatalf("GET: %v", err)
-		}
-		defer func() { _ = resp.Body.Close() }()
-		raw, err := io.ReadAll(resp.Body)
-		if err != nil {
-			t.Fatalf("read body: %v", err)
-		}
-		if resp.StatusCode != http.StatusOK {
-			t.Fatalf("status %d: %s", resp.StatusCode, raw)
-		}
-		if ct := resp.Header.Get("Content-Type"); ct != "application/jwt" {
-			t.Fatalf("Content-Type = %q, want application/jwt", ct)
-		}
-
-		cert, err := cfg.credentialIssuerCertificate()
-		if err != nil {
-			t.Fatalf("credentialIssuerCertificate: %v", err)
-		}
-		header, payload, err := jose.Verify(jose.ES256, cert.PublicKey, string(raw))
-		if err != nil {
-			t.Fatalf("Verify: %v", err)
-		}
-		if header["typ"] != issuer.MetadataJWSTyp {
-			t.Fatalf("typ = %v, want %q", header["typ"], issuer.MetadataJWSTyp)
-		}
-		if _, ok := header["x5c"]; !ok {
-			t.Fatalf("missing x5c header")
-		}
-		var claims map[string]any
-		if err := json.Unmarshal(payload, &claims); err != nil {
-			t.Fatalf("unmarshal payload: %v", err)
-		}
-		if claims["sub"] != cfg.Issuer {
-			t.Fatalf("sub = %v, want %v", claims["sub"], cfg.Issuer)
-		}
-		if _, ok := claims["iat"]; !ok {
-			t.Fatalf("missing iat claim")
-		}
-		for k, v := range unsigned {
-			if !reflect.DeepEqual(claims[k], v) {
-				t.Fatalf("signed claim %q = %#v, want %#v (from the unsigned response)", k, claims[k], v)
-			}
-		}
+		checkSignedCredentialIssuerMetadata(t, client, ts.URL, cfg)
 	})
-
 	t.Run("jwks", func(t *testing.T) {
-		body := getJSON(t, client, ts.URL+"/jwks")
-		keysArr, _ := body["keys"].([]any)
-		if len(keysArr) == 0 {
-			t.Fatalf("jwks has no keys: %+v", body)
-		}
+		checkJWKS(t, client, ts.URL)
 	})
+}
+
+// checkAuthorizationServerMetadata is
+// TestNewServerMux_ServesRealMetadataAndJWKS's own "authorization
+// server metadata" subtest body — split into a top-level helper purely
+// to keep the parent test function under the linter's own cognitive
+// complexity ceiling (each subtest's checks nested inside the parent's
+// own t.Run closures otherwise all counted against that one function).
+func checkAuthorizationServerMetadata(t *testing.T, client *http.Client, baseURL string, cfg Config) {
+	t.Helper()
+	body := getJSON(t, client, baseURL+"/.well-known/openid-configuration")
+	if body["issuer"] != cfg.Issuer {
+		t.Fatalf("issuer = %v, want %v", body["issuer"], cfg.Issuer)
+	}
+	if body["pushed_authorization_request_endpoint"] == nil {
+		t.Fatalf("missing pushed_authorization_request_endpoint: %+v", body)
+	}
+	methods, _ := body["token_endpoint_auth_methods_supported"].([]any)
+	if !containsAny(methods, "attest_jwt_client_auth") {
+		t.Fatalf("token_endpoint_auth_methods_supported = %v, want attest_jwt_client_auth present", methods)
+	}
+}
+
+func checkOAuthAuthorizationServerMetadataMirrorsOpenIDConfiguration(t *testing.T, client *http.Client, baseURL string, cfg Config) {
+	t.Helper()
+	body := getJSON(t, client, baseURL+"/.well-known/oauth-authorization-server")
+	if body["issuer"] != cfg.Issuer {
+		t.Fatalf("issuer = %v, want %v", body["issuer"], cfg.Issuer)
+	}
+	if body["pushed_authorization_request_endpoint"] == nil {
+		t.Fatalf("missing pushed_authorization_request_endpoint: %+v", body)
+	}
+}
+
+func checkCredentialIssuerMetadata(t *testing.T, client *http.Client, baseURL string, cfg Config) {
+	t.Helper()
+	body := getJSON(t, client, baseURL+"/.well-known/openid-credential-issuer")
+	if body["credential_issuer"] != cfg.Issuer {
+		t.Fatalf("credential_issuer = %v, want %v", body["credential_issuer"], cfg.Issuer)
+	}
+	configs, _ := body["credential_configurations_supported"].(map[string]any)
+	cc, ok := configs[cfg.CredentialConfigurationID].(map[string]any)
+	if !ok {
+		t.Fatalf("credential_configurations_supported missing %q: %+v", cfg.CredentialConfigurationID, body)
+	}
+	if cc["vct"] != cfg.VCT {
+		t.Fatalf("vct = %v, want %v", cc["vct"], cfg.VCT)
+	}
+	batch, ok := body["batch_credential_issuance"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing batch_credential_issuance: %+v", body)
+	}
+	if batch["batch_size"] != float64(conformanceBatchSize) {
+		t.Fatalf("batch_size = %v, want %d", batch["batch_size"], conformanceBatchSize)
+	}
+
+	reqEnc, ok := body["credential_request_encryption"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing credential_request_encryption: %+v", body)
+	}
+	assertEncValuesSupported(t, "credential_request_encryption", reqEnc)
+	checkCredentialRequestEncryptionJWKS(t, reqEnc)
+
+	respEnc, ok := body["credential_response_encryption"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing credential_response_encryption: %+v", body)
+	}
+	assertEncValuesSupported(t, "credential_response_encryption", respEnc)
+}
+
+// checkCredentialRequestEncryptionJWKS checks reqEnc's own "jwks"
+// member — split out of checkCredentialIssuerMetadata purely to keep
+// that function under the linter's own cognitive complexity ceiling.
+// jwks MUST be a JSON Web Key Set (RFC 7517 §5, "{keys: [...]}"), per
+// §12.2.4's own "A JSON Web Key Set, as defined in [RFC7591]" — not a
+// bare array. Confirmed live: an earlier version of issuer.Metadata()
+// serialized this as a bare array, and the OIDF suite's own
+// VCICheckCredentialRequestEncryptionSupported check correctly
+// rejected it.
+func checkCredentialRequestEncryptionJWKS(t *testing.T, reqEnc map[string]any) {
+	t.Helper()
+	jwks, ok := reqEnc["jwks"].(map[string]any)
+	if !ok {
+		t.Fatalf("credential_request_encryption.jwks = %T, want a JSON object with a \"keys\" member: %+v", reqEnc["jwks"], reqEnc)
+	}
+	keys, _ := jwks["keys"].([]any)
+	if len(keys) != 1 {
+		t.Fatalf("credential_request_encryption.jwks.keys has %d entries, want 1: %+v", len(keys), jwks)
+	}
+	jwk, _ := keys[0].(map[string]any)
+	if jwk["kid"] != credentialRequestDecryptionKeyID {
+		t.Fatalf("credential_request_encryption.jwks.keys[0].kid = %v, want %q", jwk["kid"], credentialRequestDecryptionKeyID)
+	}
+	// §10's own "The alg parameter MUST be present" — confirmed
+	// live that the OIDF suite's own VCICheckCredentialRequestEncryptionSupported
+	// check rejects a published key with no "alg" member.
+	if jwk["alg"] != "ECDH-ES" {
+		t.Fatalf("credential_request_encryption.jwks.keys[0].alg = %v, want %q", jwk["alg"], "ECDH-ES")
+	}
+}
+
+func checkSignedCredentialIssuerMetadata(t *testing.T, client *http.Client, baseURL string, cfg Config) {
+	t.Helper()
+	unsigned := getJSON(t, client, baseURL+"/.well-known/openid-credential-issuer")
+
+	req, err := http.NewRequest(http.MethodGet, baseURL+"/.well-known/openid-credential-issuer", nil) //nolint:noctx // test-only, fixed httptest.Server URL
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	req.Header.Set("Accept", "application/jwt")
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status %d: %s", resp.StatusCode, raw)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "application/jwt" {
+		t.Fatalf("Content-Type = %q, want application/jwt", ct)
+	}
+
+	cert, err := cfg.credentialIssuerCertificate()
+	if err != nil {
+		t.Fatalf("credentialIssuerCertificate: %v", err)
+	}
+	header, payload, err := jose.Verify(jose.ES256, cert.PublicKey, string(raw))
+	if err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	if header["typ"] != issuer.MetadataJWSTyp {
+		t.Fatalf("typ = %v, want %q", header["typ"], issuer.MetadataJWSTyp)
+	}
+	if _, ok := header["x5c"]; !ok {
+		t.Fatalf("missing x5c header")
+	}
+	var claims map[string]any
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		t.Fatalf("unmarshal payload: %v", err)
+	}
+	if claims["sub"] != cfg.Issuer {
+		t.Fatalf("sub = %v, want %v", claims["sub"], cfg.Issuer)
+	}
+	if _, ok := claims["iat"]; !ok {
+		t.Fatalf("missing iat claim")
+	}
+	for k, v := range unsigned {
+		if !reflect.DeepEqual(claims[k], v) {
+			t.Fatalf("signed claim %q = %#v, want %#v (from the unsigned response)", k, claims[k], v)
+		}
+	}
+}
+
+func checkJWKS(t *testing.T, client *http.Client, baseURL string) {
+	t.Helper()
+	body := getJSON(t, client, baseURL+"/jwks")
+	keysArr, _ := body["keys"].([]any)
+	if len(keysArr) == 0 {
+		t.Fatalf("jwks has no keys: %+v", body)
+	}
 }
 
 func getJSON(t *testing.T, client *http.Client, url string) map[string]any {
