@@ -1,6 +1,7 @@
 # OID4VCgo
 
 [![CI](https://github.com/IDFoundry/OID4VCgo/actions/workflows/ci.yml/badge.svg)](https://github.com/IDFoundry/OID4VCgo/actions/workflows/ci.yml)
+[![OID4VC Conformance](https://github.com/IDFoundry/OID4VCgo/actions/workflows/conformance.yml/badge.svg)](https://github.com/IDFoundry/OID4VCgo/actions/workflows/conformance.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 **OpenID4VCI 1.0 + OpenID4VP 1.0, under the HAIP 1.0 profile, for Go.**

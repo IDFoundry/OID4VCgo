@@ -1,0 +1,112 @@
+name: OID4VC Conformance
+
+# Runs every conformance configuration this repo has driver support for
+# across all four roles (Issuer, Wallet, Verifier, Wallet-VP) — one
+# underlying OIDF conformance suite, driven entirely by this repo's own
+# Go tooling (no suite-side Python scripts involved, unlike FAPIgo's own
+# conformance.yml) — see conformance/scripts/run-all.sh for the full
+# breakdown of what each role runs and why. Deliberately not triggered
+# on push/pull_request — this is a heavy job (bringing up the suite's
+# own Docker stack plus, per role, a freshly-built container) that would
+# otherwise slow down every PR's feedback loop. Scheduled instead,
+# daily, plus available on demand.
+#
+# Informational only: nothing in branch protection depends on this
+# workflow, since it never runs against a PR in the first place. The
+# job's own exit code still reflects run-all.sh's real pass/fail, so the
+# Actions tab shows an accurate result — it just isn't wired into
+# anything that blocks a merge.
+#
+# Tracks the OIDF suite's latest master/prebuilt images on every run (no
+# version pin) — simplest, and consistent with how the suite is used
+# locally today. See conformance/README.md's own "Keeping the local
+# suite current" section for why that currency actually matters (a
+# from-scratch run on a current suite has previously surfaced three real
+# bugs a stale local suite had been silently masking).
+#
+# No Python setup and no throwaway-cert/config generation step, unlike
+# FAPIgo's own conformance.yml: every script under conformance/ talks to
+# the suite's own REST API directly (internal/conformancesuite) rather
+# than shelling out to the suite's own Python tooling, and each role's
+# own binary generates its own fresh TLS material and suite-side plan
+# config in-process on every run.
+
+on:
+  schedule:
+    - cron: '0 6 * * *' # daily, 6am UTC
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  conformance:
+    runs-on: ubuntu-latest
+    # First estimate, not yet measured against a real shared-runner run:
+    # 14 sequential legs (fewer than FAPIgo's 20+), but several involve
+    # a fresh `docker build --force-recreate` and suite-side
+    # browser-driven modules. FAPIgo's own conformance.yml needed
+    # raising from 30 to 60 to 120 once real runs came in — raise this
+    # the same way if a run times out rather than assuming this number
+    # is right.
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          check-latest: true
+          cache-dependency-path: go.mod
+
+      # Cloned into a directory literally named conformance-suite so
+      # Docker Compose's auto-derived project (and therefore network)
+      # name — conformance-suite_default — matches each role's own
+      # conformance/*/docker-compose.yml own existing default for
+      # SUITE_NETWORK, without needing to set it explicitly.
+      - name: Clone OIDF conformance suite
+        run: git clone --depth 1 https://gitlab.com/openid/conformance-suite.git /tmp/conformance-suite
+
+      # Prebuilt images — no Java/Maven build needed, mirrors
+      # conformance/*/README.md's own "Manual test run" steps.
+      - name: Bring up OIDF conformance suite
+        working-directory: /tmp/conformance-suite
+        run: docker compose -f docker-compose-prebuilt.yml up -d
+
+      # run-all.sh itself waits for the suite to become reachable, runs
+      # all four roles (each role's own script brings up/rebuilds its
+      # own container in place, generating fresh key material and plan
+      # config as it goes — see each role's own conformance/*/README.md),
+      # and writes results.txt/a combined summary — nothing CI-specific
+      # needed here beyond a predictable results directory.
+      - name: Run all conformance test configurations
+        env:
+          WORKDIR: ${{ runner.temp }}/conformance-results
+        run: ./conformance/scripts/run-all.sh | tee "${{ runner.temp }}/conformance-run.log"
+
+      - name: Add summary to job summary
+        if: always()
+        run: |
+          {
+            echo '```'
+            tail -100 "${{ runner.temp }}/conformance-run.log"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY" || true
+
+      - name: Upload conformance results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: conformance-results
+          path: |
+            ${{ runner.temp }}/conformance-results
+            ${{ runner.temp }}/conformance-run.log
+          retention-days: 14
+
+      - name: Tear down containers
+        if: always()
+        run: |
+          (docker compose -f conformance/issuer/docker-compose.yml down) || true
+          (docker compose -f conformance/verifier/docker-compose.yml down) || true
+          (docker compose -f conformance/wallet-vp/docker-compose.yml down) || true
+          (cd /tmp/conformance-suite && docker compose -f docker-compose-prebuilt.yml down -v) || true
