@@ -1,11 +1,13 @@
 // Command run-fapi2sp-battery drives the HAIP issuer test plan's own
-// generic FAPI2SP client conformance battery
-// (VCIIssuerTestPlanHaip.vciFapi2SPFinalTestModules(), 39 modules) plus
-// its own Discovery module (a separate ModuleListEntry) against a real,
-// locally-run OIDF conformance suite instance and a real
-// cmd/conformance-issuer — the suite plays the FAPI2 client/wallet, this
-// binary's job is entirely config generation and result polling, not
-// driving any flow itself (see the package doc comment below for why).
+// full module list — every VCI-specific happy-flow/negative-test/
+// metadata module, its own Discovery module (a separate ModuleListEntry),
+// and its generic FAPI2SP client conformance battery
+// (VCIIssuerTestPlanHaip.vciFapi2SPFinalTestModules(), 39 modules) —
+// against a real, locally-run OIDF conformance suite instance and a
+// real cmd/conformance-issuer — the suite plays the FAPI2 client/wallet,
+// this binary's job is entirely config generation and result polling,
+// not driving any flow itself (see the package doc comment below for
+// why). See haipBattery's own doc comment for the exact module count.
 //
 // Unlike cmd/conformance-wallet, this binary never calls the suite as a
 // client: for the Issuer role the suite plays that side, driving PAR →
@@ -44,6 +46,7 @@ package main
 import (
 	"context"
 	"crypto/ecdsa"
+	"crypto/rand"
 	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
@@ -51,10 +54,13 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 
+	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/internal/conformancecert"
 	"github.com/idfoundry/oid4vcgo/internal/conformancesuite"
 	"github.com/idfoundry/oid4vcgo/internal/jwk"
@@ -69,34 +75,68 @@ const (
 	happyFlowTestName = "oid4vci-1_0-issuer-happy-flow"
 )
 
-// battery is every testName this binary drives — the HAIP issuer
-// plan's own Discovery module (its own ModuleListEntry, no VCI variant
-// parameters) plus the 39-module generic FAPI2SP client battery
-// (VCIIssuerTestPlanHaip.vciFapi2SPFinalTestModules()), confirmed
-// against the suite's own Java source by set-subtracting
+// battery is every testName this binary drives under fapi_profile=
+// vci_haip — all 61 distinct test module classes VCIIssuerTestPlanHaip
+// declares across its own 5 ModuleListEntry groups, confirmed against
+// the suite's own Java source: the 21 VCI-specific happy-flow/negative-
+// test/metadata modules (2 metadata + 18 happy-flow/negative-test +
+// the 1 encrypted-only fail-unsupported-encryption-algorithm, its own
+// separate entry) below, plus its own Discovery module (its own
+// ModuleListEntry, no VCI variant parameters) plus the 39-module
+// generic FAPI2SP client battery
+// (VCIIssuerTestPlanHaip.vciFapi2SPFinalTestModules()) — set-subtracting
 // FAPI2MessageSigningFinalTestPlan.testModules minus the signing-only
 // removals in FAPI2SPFinalTestPlan.fapi2SPtestModules() minus the
 // nonce/OIDC-only, private_key_jwt-only, and profile-specific removals
 // VCIIssuerTestPlanHaip.vciFapi2SPFinalTestModules() itself applies —
 // not guessed, and cross-checked against every module's own
-// @PublishTestModule testName. Also includes the two already-known-
-// passing sanity modules (metadata, happy-flow) first, to confirm this
-// binary's freshly-generated config is behavior-preserving before
-// spending time on the 40 modules nothing has ever driven.
+// @PublishTestModule testName. The one HAIP-plan class not listed
+// here, fail-invalid-key-attestation-signature, self-skips under this
+// battery's own default jwt proof type — see keyAttestationBattery,
+// which drives it (and the whole plan) under the attestation proof
+// type instead, where it's genuinely applicable. 60 (this battery) + 1
+// (keyAttestationBattery) = the plan's own full 61.
 var haipBattery = []string{
 	// Sanity check: already-passing modules, confirming the freshly
 	// generated config/keys are behavior-preserving.
 	metadataTestName,
 	happyFlowTestName,
 
+	// The remaining 17 VCI-specific modules (of the plan's own 21 total:
+	// 2 metadata + 18 happy-flow/negative-test + the 1
+	// encrypted-context-only fail-unsupported-encryption-algorithm,
+	// minus the 2 sanity checks above and fail-invalid-key-attestation-
+	// signature — see this var's own doc comment for why that one lives
+	// in keyAttestationBattery instead). fail-unsupported-encryption-
+	// algorithm's own ModuleListEntry pins
+	// vci_credential_encryption=encrypted itself (VCIIssuerTestPlanHaip.java's
+	// own 3rd entry) — no extra flag or plan variant needed to reach it,
+	// unlike the base plan's own single, caller-chosen encryption
+	// variant (see baseBattery's own doc comment); cmd/conformance-issuer
+	// already advertises request/response encryption unconditionally
+	// (wiring.go), regardless of which battery drives it.
+	"oid4vci-1_0-issuer-metadata-test-signed",
+	"oid4vci-1_0-issuer-happy-flow-additional-requests",
+	"oid4vci-1_0-issuer-happy-flow-multiple-clients",
+	"oid4vci-1_0-issuer-batch-issuance",
+	"oid4vci-1_0-issuer-fail-invalid-nonce",
+	"oid4vci-1_0-issuer-fail-invalid-jwt-proof-signature",
+	"oid4vci-1_0-issuer-fail-invalid-client-attestation-signature",
+	"oid4vci-1_0-issuer-fail-invalid-client-attestation-pop-signature",
+	"oid4vci-1_0-issuer-fail-client-attestation-exp-in-past",
+	"oid4vci-1_0-issuer-fail-client-attestation-no-sub",
+	"oid4vci-1_0-issuer-fail-client-attestation-pop-wrong-aud",
+	"oid4vci-1_0-issuer-fail-mismatched-client-attestation-pop-key",
+	"oid4vci-1_0-issuer-fail-missing-proof",
+	"oid4vci-1_0-issuer-fail-unsupported-encryption-algorithm",
+	"oid4vci-1_0-issuer-fail-unknown-credential-configuration",
+	"oid4vci-1_0-issuer-fail-unknown-credential-identifier",
+	"oid4vci-1_0-issuer-fail-on-access-token-in-query",
+
 	// Notification Endpoint (§11) coverage under fapi_profile=vci_haip
 	// specifically — this module's own testName is shared with
 	// baseBattery (it supports both the "vci" and "vci_haip"
-	// fapi_profile variant values), but until now it had only ever been
-	// driven under the base, non-HAIP profile via -base-plan. Added
-	// here so this binary's own certification-relevant HAIP coverage of
-	// the Notification Endpoint is exercised by this repeatable battery
-	// script, not left to a one-off manual suite-UI run.
+	// fapi_profile variant values).
 	"oid4vci-1_0-issuer-happy-flow-skip-notification",
 
 	// Discovery — its own ModuleListEntry, no VCI variant parameters.
@@ -153,10 +193,13 @@ var haipBattery = []string{
 // modules, the exact same already-passing classes VCIIssuerTestPlanHaip
 // also lists (confirmed identical testName strings against both plans'
 // own Java source), just now under fapi_profile=vci instead of
-// fapi_profile=vci_haip. Every module here is already exercised above
-// under HAIP — this run is about confirming this binary's own server
+// fapi_profile=vci_haip. Every module here is now also directly
+// exercised above under HAIP via haipBattery itself (this list used to
+// be the only repeatable-script coverage these 21 VCI-specific modules
+// had — haipBattery only drove 3 of them until its own 17-module gap
+// was closed) — this run is about confirming this binary's own server
 // behaves the same way when the suite treats it as a base-profile VCI
-// issuer rather than a HAIP one, not new functional coverage.
+// issuer rather than a HAIP one, not primary functional coverage.
 var baseBattery = []string{
 	metadataTestName,
 	"oid4vci-1_0-issuer-metadata-test-signed",
@@ -226,6 +269,7 @@ func main() {
 	credentialFormat := flag.String("credential-format", "sd_jwt_vc", "credential_format variant to drive: \"sd_jwt_vc\" (default) or \"mdoc\" — mdoc restricts the driven module set to the 2 sanity-check modules (mdocBattery), since the other 40 FAPI2SP-generic battery modules don't exercise credential issuance format at all and are already proven under sd_jwt_vc")
 	credentialEncryption := flag.String("credential-encryption", "plain", "vci_credential_encryption variant to drive with -base-plan: \"plain\" (default) or \"encrypted\" — only meaningful with -base-plan, since the HAIP plan's own module list entries always pin \"plain\" themselves regardless of this flag; cmd/conformance-issuer already supports encrypted responses unconditionally, so this just lets oid4vci-1_0-issuer-fail-unsupported-encryption-algorithm (self-SKIPPED under \"plain\") actually run")
 	credentialProofTypeHint := flag.String("credential-proof-type-hint", "jwt", "vci.credential_proof_type_hint to drive with: \"jwt\" (default) or \"attestation\" — attestation restricts the driven module set to the 3 modules in keyAttestationBattery (metadata-test, happy-flow, fail-invalid-key-attestation-signature), the same restriction -credential-format mdoc applies, and for the same reason: none of the other 40 FAPI2SP-generic battery modules care which proof type is used")
+	issuerInitiated := flag.Bool("issuer-initiated", false, "drive the HAIP plan's issuer_initiated flow variant instead of the default wallet_initiated one — this binary must construct and submit a Credential Offer to the suite's own exposed credential_offer_endpoint before each module can proceed, see submitCredentialOffer's own doc comment")
 	flag.Parse()
 
 	planName := "oid4vci-1_0-issuer-haip-test-plan"
@@ -289,6 +333,19 @@ func main() {
 		log.Fatalf("build plan config: %v", err)
 	}
 
+	if *issuerInitiated {
+		planVariant["vci_authorization_code_flow_variant"] = "issuer_initiated"
+	}
+	// The same credentialConfigurationID selection buildPlanConfig
+	// itself makes internally (config.go) — duplicated here rather
+	// than returned from it, since only the issuer_initiated path
+	// needs it, to build the Credential Offer this binary submits on
+	// that plan's own behalf (see submitCredentialOffer).
+	credentialConfigurationID := "IdentityCredential"
+	if *credentialFormat == "mdoc" {
+		credentialConfigurationID = "MobileDrivingLicence"
+	}
+
 	planID, modules, err := conformancesuite.CreatePlan(httpClient, *apiBase, planName, planVariant, planConfig)
 	if err != nil {
 		log.Fatal(err)
@@ -322,7 +379,7 @@ func main() {
 			continue
 		}
 		log.Printf("--- %s ---", m.TestModule)
-		outcome := runModule(httpClient, *apiBase, planID, m.TestModule, m.Variant)
+		outcome := runModule(httpClient, *apiBase, planID, m.TestModule, m.Variant, *issuerInitiated, *issuerBaseURL, credentialConfigurationID)
 		summary[m.TestModule] = outcome
 		log.Printf("%s: %s", m.TestModule, outcome)
 	}
@@ -403,11 +460,47 @@ func waitForIssuerReady(httpClient *http.Client, _ string) error {
 
 // runModule creates one module instance and polls it to completion —
 // no flow-driving at all, see the package doc comment for why.
-func runModule(httpClient *http.Client, apiBase, planID, testName string, variant map[string]string) string {
+// metadataSignedTestName is metadata-test-signed's own testName — named
+// here (unlike other battery literals) because runModule needs to
+// check for it specifically, alongside metadataTestName: both classes
+// extend AbstractVciTest, not AbstractFAPI2SPFinalServerTestModule
+// (VCIIssuerTestPlan.java's own doc comment), so neither ever goes
+// through the authorization flow — or its own issuer_initiated
+// Credential Offer step — at all, regardless of
+// vci_authorization_code_flow_variant.
+const metadataSignedTestName = "oid4vci-1_0-issuer-metadata-test-signed"
+
+// vciIssuerTestNamePrefix is every OID4VCI-specific issuer module's own
+// testName prefix (VCIIssuerTestPlanHaip's own vciTestModules() entries)
+// — the only classes that ever wait for a Credential Offer under
+// vci_authorization_code_flow_variant=issuer_initiated at all. The
+// generic FAPI2SP battery modules (fapi2-security-profile-final-*,
+// including the plan's own Discovery module) are plain
+// AbstractFAPI2SPFinalServerTestModule subclasses that don't implement
+// waitForCredentialOffer and don't apply this variant — confirmed live:
+// driving the full battery under -issuer-initiated without this prefix
+// check made every one of them either time out waiting for WAITING (an
+// already-passing module that never needed a Credential Offer at all)
+// or reach WAITING with no credential_offer_endpoint exposed, both
+// unconditional errors, not a real regression in the modules
+// themselves.
+const vciIssuerTestNamePrefix = "oid4vci-1_0-issuer-"
+
+func runModule(httpClient *http.Client, apiBase, planID, testName string, variant map[string]string, issuerInitiated bool, issuerBaseURL, credentialConfigurationID string) string {
 	module, err := conformancesuite.CreateModuleInstance(httpClient, apiBase, planID, testName, variant)
 	if err != nil {
 		return "ERROR: create module instance: " + err.Error()
 	}
+
+	needsCredentialOffer := issuerInitiated &&
+		strings.HasPrefix(testName, vciIssuerTestNamePrefix) &&
+		testName != metadataTestName && testName != metadataSignedTestName
+	if needsCredentialOffer {
+		if err := submitCredentialOffer(httpClient, apiBase, module.ID, issuerBaseURL, credentialConfigurationID); err != nil {
+			return "ERROR: submit credential offer: " + err.Error() + " (module " + module.ID + ")"
+		}
+	}
+
 	// 120s, not 60s: unlike cmd/conformance-wallet's own outbound-HTTP-only
 	// flow, the suite's own internal headless browser renders and
 	// clicks through the authorize/consent page itself here — real,
@@ -422,6 +515,79 @@ func runModule(httpClient *http.Client, apiBase, planID, testName string, varian
 		return "ERROR: " + err.Error() + " (module " + module.ID + ")"
 	}
 	return status + "=" + result + " (module " + module.ID + ", " + apiBase + "api/log/" + module.ID + ")"
+}
+
+// submitCredentialOffer drives the issuer_initiated flow variant's own
+// starting step: wait for moduleID to reach WAITING (per the suite's
+// own AbstractVCIIssuerTestModule.waitForCredentialOffer), read its
+// exposed "credential_offer_endpoint" (GET /api/runner/{id} — the
+// live, in-memory value; GET /api/info/{id}, this file's own
+// WaitUntilWaiting/WaitUntilFinished's usual endpoint, never carries
+// it, confirmed live), build a by-value Credential Offer naming
+// issuerBaseURL/credentialConfigurationID with a fresh issuer_state,
+// and GET that offer's own query parameters to the exposed endpoint —
+// mirroring exactly what a real Wallet does scanning a QR code/deep
+// link (a plain GET, "credential_offer" or "credential_offer_uri" in
+// the query string, never both — see
+// VCIValidateCredentialOfferRequestParams.java). The suite then drives
+// the rest of the flow (PAR through Credential Endpoint) entirely on
+// its own once this succeeds — see
+// AbstractVCIIssuerTestModule.handleCredentialOffer — so this function
+// returns as soon as the GET itself succeeds; runModule's own
+// subsequent WaitUntilFinished call covers the rest.
+func submitCredentialOffer(httpClient *http.Client, apiBase, moduleID, issuerBaseURL, credentialConfigurationID string) error {
+	if err := conformancesuite.WaitUntilWaiting(httpClient, apiBase, moduleID, 30*time.Second); err != nil {
+		return fmt.Errorf("wait for credential offer endpoint: %w", err)
+	}
+	exposed, err := conformancesuite.GetExposedValues(httpClient, apiBase, moduleID)
+	if err != nil {
+		return fmt.Errorf("get exposed values: %w", err)
+	}
+	endpoint := exposed["credential_offer_endpoint"]
+	if endpoint == "" {
+		return fmt.Errorf("module has no exposed credential_offer_endpoint")
+	}
+
+	issuerState, err := randomIssuerState()
+	if err != nil {
+		return fmt.Errorf("generate issuer_state: %w", err)
+	}
+	offer := oid4vci.CredentialOffer{
+		CredentialIssuer:           issuerBaseURL,
+		CredentialConfigurationIDs: []string{credentialConfigurationID},
+		Grants: &oid4vci.Grants{
+			AuthorizationCode: &oid4vci.GrantAuthorizationCode{IssuerState: issuerState},
+		},
+	}
+	offerJSON, err := json.Marshal(offer)
+	if err != nil {
+		return fmt.Errorf("marshal credential offer: %w", err)
+	}
+
+	req, err := http.NewRequest(http.MethodGet, endpoint+"?credential_offer="+url.QueryEscape(string(offerJSON)), nil)
+	if err != nil {
+		return fmt.Errorf("build request: %w", err)
+	}
+	body, status, err := conformancesuite.Do(httpClient, req)
+	if err != nil {
+		return fmt.Errorf("submit credential offer: %w", err)
+	}
+	if status != http.StatusOK {
+		return fmt.Errorf("submit credential offer: status %d: %s", status, body)
+	}
+	return nil
+}
+
+// randomIssuerState generates a fresh issuer_state value (RFC 7519-style
+// opaque string, no structure the Wallet is expected to parse) for one
+// Credential Offer — matching issuer.generateCredentialOfferReference's
+// own entropy choice.
+func randomIssuerState() (string, error) {
+	raw := make([]byte, 16)
+	if _, err := rand.Read(raw); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(raw), nil
 }
 
 // privateJWKSet builds a single-key private JWK Set ({"keys":[...]})
