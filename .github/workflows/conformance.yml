@@ -42,14 +42,17 @@ permissions:
 jobs:
   conformance:
     runs-on: ubuntu-latest
-    # First estimate, not yet measured against a real shared-runner run:
-    # 14 sequential legs (fewer than FAPIgo's 20+), but several involve
-    # a fresh `docker build --force-recreate` and suite-side
-    # browser-driven modules. FAPIgo's own conformance.yml needed
+    # Still not yet measured against a real shared-runner run: several
+    # legs involve a fresh `docker build --force-recreate` and
+    # suite-side browser-driven modules, and conformance/scripts/run-all.sh
+    # has grown a few new crossings since 90 was first picked (the
+    # OID4VCI Issuer's own full 60-module battery under -issuer-initiated,
+    # and the OID4VP Wallet-VP's own -credential-format iso_mdl crossing).
+    # Raised to 120 to match FAPIgo's own conformance.yml, which needed
     # raising from 30 to 60 to 120 once real runs came in — raise this
-    # the same way if a run times out rather than assuming this number
-    # is right.
-    timeout-minutes: 90
+    # further the same way if a run times out rather than assuming this
+    # number is right.
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v7
 
