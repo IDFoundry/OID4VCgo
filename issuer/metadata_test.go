@@ -291,6 +291,17 @@ func TestMetadata_SpecWorkedExample(t *testing.T) {
 	}
 	wire := marshalWire(t, iss.Metadata())
 
+	assertSpecWorkedExampleBatchAndDisplay(t, wire)
+	assertSpecWorkedExampleCredentialMetadata(t, wire)
+}
+
+// assertSpecWorkedExampleBatchAndDisplay and
+// assertSpecWorkedExampleCredentialMetadata/assertSpecWorkedExampleClaims
+// are TestMetadata_SpecWorkedExample's own assertion chain, split into
+// top-level helpers purely to keep that function under the linter's
+// own cognitive complexity ceiling.
+func assertSpecWorkedExampleBatchAndDisplay(t *testing.T, wire map[string]any) {
+	t.Helper()
 	batch, ok := wire["batch_credential_issuance"].(map[string]any)
 	if !ok || batch["batch_size"] != float64(10) {
 		t.Errorf("batch_credential_issuance = %v, want batch_size 10", wire["batch_credential_issuance"])
@@ -312,7 +323,10 @@ func TestMetadata_SpecWorkedExample(t *testing.T) {
 	if second["name"] != "Example Université" || second["locale"] != "fr-FR" {
 		t.Errorf("display[1] = %v", second)
 	}
+}
 
+func assertSpecWorkedExampleCredentialMetadata(t *testing.T, wire map[string]any) {
+	t.Helper()
 	configs := wire["credential_configurations_supported"].(map[string]any)
 	sdjwt := configs["SD_JWT_VC_example_in_OpenID4VCI"].(map[string]any)
 	cm, ok := sdjwt["credential_metadata"].(map[string]any)
@@ -332,6 +346,11 @@ func TestMetadata_SpecWorkedExample(t *testing.T) {
 		t.Errorf("credential_metadata.display[0].description = %v", cd["description"])
 	}
 
+	assertSpecWorkedExampleClaims(t, cm)
+}
+
+func assertSpecWorkedExampleClaims(t *testing.T, cm map[string]any) {
+	t.Helper()
 	claims, ok := cm["claims"].([]any)
 	if !ok || len(claims) != 13 {
 		t.Fatalf("credential_metadata.claims = %v, want 13 entries", cm["claims"])

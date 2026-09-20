@@ -446,37 +446,61 @@ func validateConfig(cfg Config) error {
 // whichever store each optional endpoint (Nonce/CredentialOffer/
 // DeferredCredential/Notification) needs once cfg actually enables it
 // — split out of New purely to keep it under the linter's own
-// cognitive complexity ceiling.
+// cognitive complexity ceiling. Each endpoint's own pair of checks is
+// further split into its own helper for the same reason: three
+// same-shaped "if enabled { check limit; check dependency }" blocks
+// side by side were still enough nesting to trip the same ceiling.
 func validateOptionalEndpointDependencies(cfg Config, deps Dependencies) error {
-	if !cfg.Endpoints.Nonce.IsZero() {
-		if cfg.Limits.NonceLifetime <= 0 {
-			return fmt.Errorf("issuer: config: limits.nonce_lifetime must be positive when endpoints.nonce is set")
-		}
-		if deps.Nonces == nil {
-			return fmt.Errorf("issuer: dependencies: nonces is required when endpoints.nonce is set")
-		}
+	if err := validateNonceEndpointDependencies(cfg, deps); err != nil {
+		return err
 	}
-
-	if !cfg.CredentialOfferEndpoint.IsZero() {
-		if cfg.Limits.CredentialOfferLifetime <= 0 {
-			return fmt.Errorf("issuer: config: limits.credential_offer_lifetime must be positive when credential_offer_endpoint is set")
-		}
-		if deps.CredentialOffers == nil {
-			return fmt.Errorf("issuer: dependencies: credential_offers is required when credential_offer_endpoint is set")
-		}
+	if err := validateCredentialOfferEndpointDependencies(cfg, deps); err != nil {
+		return err
 	}
-
-	if !cfg.Endpoints.DeferredCredential.IsZero() {
-		if cfg.Limits.DeferredIssuancePollInterval <= 0 {
-			return fmt.Errorf("issuer: config: limits.deferred_issuance_poll_interval must be positive when endpoints.deferred_credential is set")
-		}
-		if deps.DeferredTransactions == nil {
-			return fmt.Errorf("issuer: dependencies: deferred_transactions is required when endpoints.deferred_credential is set")
-		}
+	if err := validateDeferredCredentialEndpointDependencies(cfg, deps); err != nil {
+		return err
 	}
-
 	if !cfg.Endpoints.Notification.IsZero() && deps.Notifications == nil {
 		return fmt.Errorf("issuer: dependencies: notifications is required when endpoints.notification is set")
+	}
+	return nil
+}
+
+func validateNonceEndpointDependencies(cfg Config, deps Dependencies) error {
+	if cfg.Endpoints.Nonce.IsZero() {
+		return nil
+	}
+	if cfg.Limits.NonceLifetime <= 0 {
+		return fmt.Errorf("issuer: config: limits.nonce_lifetime must be positive when endpoints.nonce is set")
+	}
+	if deps.Nonces == nil {
+		return fmt.Errorf("issuer: dependencies: nonces is required when endpoints.nonce is set")
+	}
+	return nil
+}
+
+func validateCredentialOfferEndpointDependencies(cfg Config, deps Dependencies) error {
+	if cfg.CredentialOfferEndpoint.IsZero() {
+		return nil
+	}
+	if cfg.Limits.CredentialOfferLifetime <= 0 {
+		return fmt.Errorf("issuer: config: limits.credential_offer_lifetime must be positive when credential_offer_endpoint is set")
+	}
+	if deps.CredentialOffers == nil {
+		return fmt.Errorf("issuer: dependencies: credential_offers is required when credential_offer_endpoint is set")
+	}
+	return nil
+}
+
+func validateDeferredCredentialEndpointDependencies(cfg Config, deps Dependencies) error {
+	if cfg.Endpoints.DeferredCredential.IsZero() {
+		return nil
+	}
+	if cfg.Limits.DeferredIssuancePollInterval <= 0 {
+		return fmt.Errorf("issuer: config: limits.deferred_issuance_poll_interval must be positive when endpoints.deferred_credential is set")
+	}
+	if deps.DeferredTransactions == nil {
+		return fmt.Errorf("issuer: dependencies: deferred_transactions is required when endpoints.deferred_credential is set")
 	}
 	return nil
 }
