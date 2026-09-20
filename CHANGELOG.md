@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.9.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.8.0...v0.9.0) (2026-09-20)
+
+
+### Features
+
+* close OID4VP Verifier and Wallet iso_mdl certification gaps ([095fd1b](https://github.com/IDFoundry/OID4VCgo/commit/095fd1b4147c40b49b7368b68715fa76c1f12041))
+
+
+### Bug Fixes
+
+* dedupe remaining wallet_initiated literal flagged by SonarCloud ([3d09af5](https://github.com/IDFoundry/OID4VCgo/commit/3d09af53c64a4ae3d504d06a4a400c8dd82d09e3))
+* extract shared driving-loop/summary logic to kill new duplication ([34d7fbf](https://github.com/IDFoundry/OID4VCgo/commit/34d7fbf8cd949e2931bf58319d79a28b1e774704))
+* reduce duplicated string literals in run-all.sh's matrix output ([5a074f8](https://github.com/IDFoundry/OID4VCgo/commit/5a074f8d980a48f3fa4a23883ee8c5af7376ba79))
+
 ## [0.8.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.7.2...v0.8.0) (2026-09-20)
 
 
