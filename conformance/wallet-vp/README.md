@@ -4,9 +4,12 @@
 presentation half behind real HTTP for the OIDF conformance suite's
 own `oid4vp-1final-wallet-haip-test-plan` ("OpenID for Verifiable
 Presentations 1.0 Final/HAIP: Test a wallet") — specifically its
-**direct_post.jwt + x509_hash + request_uri_signed** module list only;
-the plan's three `dc_api.jwt` module lists (W3C Digital Credentials
-API) aren't covered — see "Scope" below.
+**direct_post.jwt + x509_hash + request_uri_signed** module list, under
+either credential format the plan's own `credential_format` variant
+offers (`sd_jwt_vc`, the original/default, or `iso_mdl` — see
+"credential_format: iso_mdl" below); the plan's three `dc_api.jwt`
+module lists (W3C Digital Credentials API) aren't covered — see "Scope"
+below.
 
 ## How the interaction model was confirmed
 
@@ -285,3 +288,57 @@ live after the fix: both modules now correctly stop before calling
 `response_uri` (the suite's own log shows "Show redirect URI error
 page" / "REVIEW" instead of the direct-post-endpoint-was-called
 failure).
+
+## credential_format: iso_mdl
+
+Closes the OID4VP Wallet role's own "iso_mdl direct_post.jwt"
+certification profile (this repo's own remaining gap alongside
+`dc_api.jwt`'s two profiles — see "Scope" above). Confirmed live via
+`GET /api/plan/{id}` before writing any driving code that the plan's
+own module list under `credential_format=iso_mdl` is exactly the same
+14 modules `sd_jwt_vc` already reaches — no additional exclusions —
+learned the hard way from a real mistake made on the Verifier role's
+own equivalent gap (`conformance/verifier/README.md`), where one
+module (`minimal-cnf-jwk`) turned out to be `sd_jwt_vc`-only despite
+looking format-agnostic from its own `@PublishTestModule` alone; a live
+`POST /api/plan` + module-instance-creation probe is the only source
+this repo now trusts for "does module X apply under format Y", not a
+Java-source read alone.
+
+`cmd/conformance-wallet-vp`'s own `Config.CredentialFormat` (`""`/
+`"dc+sd-jwt"` or `mdoc.CredentialFormat`/`"mso_mdoc"`) selects between
+`issueFixtureCredential` (unchanged) and the new
+`issueFixtureMdocCredential` (`credential.go`) — a real, freshly issued
+mdl (`org.iso.18013.5.1.mDL`) signed by a Document Signer under a fresh
+IACA (`internal/conformancecert.GenerateMdocIACA`/
+`GenerateMdocDocumentSigner` — the same ISO/IEC 18013-5 certificate
+hierarchy `conformance/issuer/scripts/run-fapi2sp-battery` already uses
+for its own mdoc fixtures), never a self-signed leaf — the same
+non-self-signed-leaf lesson this file's own SD-JWT VC x5c findings
+above already established, confirmed to matter here too via the
+suite's own `AbstractVP1FinalWalletTest.java` doc comment: "the
+credential trust anchor also serves as the mdoc IACA trust anchor when
+no VICAL is configured" — the exact same `credential.trust_anchor_pem`
+plan-config field this binary's SD-JWT VC fixture already relies on,
+just pointed at the IACA certificate instead of the SD-JWT-VC-issuer CA
+for this format.
+
+`handleAuthorize`'s own `wallet.PresentCredentials` call now always
+computes and passes `ResponseURI`/`ResponseEncryptionJWKThumbprint`
+(`responseEncryptionJWKThumbprint`, `handlers.go`) — both parameters
+`wallet.PresentationRequest` documents as "REQUIRED whenever Query
+requests any mso_mdoc Credential", and both harmless to pass
+unconditionally for a `dc+sd-jwt`-only session (`presentSDJWTVCSelectively`
+never reads them) — so this one code path now serves both credential
+formats without a format-conditional branch of its own.
+
+**Confirmed live, twice for stability, via `conformance/wallet-vp/scripts/run-modules -credential-format iso_mdl`**:
+the exact same 14/14 result shape `sd_jwt_vc` already has — all 7
+positive-behavior modules `localOK=true FINISHED=PASSED`, all 7
+negative-test modules correctly rejected locally before ever calling
+`response_uri` (`localOK=false`, suite-side `FINISHED=REVIEW`) — proving
+the full mdoc cryptographic chain end to end: `mdoc.Issue` →
+`PresentMdocSelective`'s own `SessionTranscriptBytes`/`DeviceSigned`
+construction → the suite's own independent mdoc verification, including
+its own IACA-chain validation of this binary's freshly generated
+Document Signer certificate.

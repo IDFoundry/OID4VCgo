@@ -66,12 +66,15 @@
 # PASSED — see conformance/verifier/README.md), so this script trusts
 # their own exit code rather than re-parsing their logs.
 #
-# Wallet-VP (conformance/wallet-vp/scripts/run-modules, 1 run): 13 of
-# 14 modules of oid4vp-1final-wallet-haip-test-plan (alternate-happy-flow
-# is a known, documented gap — see that script's own doc comment). Also
-# self-grading (positive modules PASSED, negative modules locally-
-# rejected+REVIEW) and already exits non-zero on a mismatch, so this
-# script trusts its own exit code too.
+# Wallet-VP (conformance/wallet-vp/scripts/run-modules, 2 runs): all 14
+# modules of oid4vp-1final-wallet-haip-test-plan's own direct_post.jwt +
+# x509_hash + request_uri_signed module list, once under the default
+# credential_format=sd_jwt_vc and again under -credential-format
+# iso_mdl — see conformance/wallet-vp/README.md's own "credential_format:
+# iso_mdl" section for why both crossings reach the exact same 14
+# modules. Also self-grading (positive modules PASSED, negative modules
+# locally-rejected+REVIEW) and already exits non-zero on a mismatch, so
+# this script trusts its own exit code too.
 #
 # Only Issuer's battery and Wallet's own 6 runs need this script's own
 # result-parsing: neither cmd/conformance-wallet nor run-fapi2sp-battery
@@ -359,8 +362,15 @@ run_verifier() {
 }
 
 run_wallet_vp() {
-	run_go_self_graded "Wallet-VP" "$WORKDIR/wallet-vp.log" \
+	# sd_jwt_vc + iso_mdl together are the OID4VP Wallet role's own 2 of
+	# 4 catalog profiles this repo covers (the other 2, both dc_api.jwt,
+	# are a deliberately separate, not-yet-attempted harness effort —
+	# see conformance/wallet-vp/README.md's own "Scope" section).
+	run_go_self_graded "Wallet-VP sd_jwt_vc" "$WORKDIR/wallet-vp-sdjwt.log" \
 		go run ./conformance/wallet-vp/scripts/run-modules
+
+	run_go_self_graded "Wallet-VP iso_mdl" "$WORKDIR/wallet-vp-mdoc.log" \
+		go run ./conformance/wallet-vp/scripts/run-modules -credential-format iso_mdl
 	return 0
 }
 
@@ -389,26 +399,72 @@ matrix_status() {
 	return 0
 }
 
+# matrix_header/matrix_row FMT ... — print one certification profile
+# matrix's own header/data row, FMT being one of the two column-width
+# printf formats below. Split out (rather than inlining every printf,
+# repeating "FORMAT"/"RESULT"/the format strings themselves row after
+# row) purely to keep this section's own SonarCloud duplicated-literal
+# count sane across two whole matrices' worth of rows — the underlying
+# labels/values are still literal certification-relevant data, just
+# named as shell variables once each so they're referenced, not
+# repeated verbatim, in every row.
+matrix_header() {
+	local fmt="$1" col2label="$2"
+	printf "$fmt" "$FORMAT_LABEL" "$col2label" "$RESULT_LABEL"
+	return 0
+}
+
+matrix_row() {
+	local fmt="$1" col1="$2" col2="$3" name="$4"
+	printf "$fmt" "$col1" "$col2" "$(matrix_status "$name")"
+	return 0
+}
+
+FORMAT_LABEL="FORMAT"
+RESULT_LABEL="RESULT"
+SD_JWT_VC="sd_jwt_vc"
+DIRECT_POST_JWT="direct_post.jwt"
+WALLET_INITIATED="wallet_initiated"
+ROW_FMT_18='  %-10s %-18s %s\n'
+ROW_FMT_30='  %-10s %-30s %s\n'
+
 echo
 echo "=== OID4VCI certification profile matrix ==="
 echo "(mirrors the OIDF certification catalog's own per-profile breakdown:"
 echo " 4 Issuer + 6 Wallet = 10 distinct oid4vci-1_0-*-haip-test-plan profiles)"
 echo
 echo "Issuer (oid4vci-1_0-issuer-haip-test-plan):"
-printf '  %-10s %-18s %s\n' "FORMAT" "FLOW" "RESULT"
-printf '  %-10s %-18s %s\n' "sd_jwt_vc" "wallet_initiated" "$(matrix_status "Issuer haip-battery")"
-printf '  %-10s %-18s %s\n' "sd_jwt_vc" "issuer_initiated" "$(matrix_status "Issuer issuer-initiated")"
-printf '  %-10s %-18s %s\n' "mdoc" "wallet_initiated" "$(matrix_status "Issuer mdoc")"
-printf '  %-10s %-18s %s\n' "mdoc" "issuer_initiated" "$(matrix_status "Issuer mdoc issuer-initiated")"
+matrix_header "$ROW_FMT_18" "FLOW"
+matrix_row "$ROW_FMT_18" "$SD_JWT_VC" "$WALLET_INITIATED" "Issuer haip-battery"
+matrix_row "$ROW_FMT_18" "$SD_JWT_VC" "issuer_initiated" "Issuer issuer-initiated"
+matrix_row "$ROW_FMT_18" "mdoc" "$WALLET_INITIATED" "Issuer mdoc"
+matrix_row "$ROW_FMT_18" "mdoc" "issuer_initiated" "Issuer mdoc issuer-initiated"
 echo
 echo "Wallet (oid4vci-1_0-wallet-haip-test-plan):"
-printf '  %-10s %-30s %s\n' "FORMAT" "OFFER DELIVERY" "RESULT"
-printf '  %-10s %-30s %s\n' "sd_jwt_vc" "wallet_initiated" "$(matrix_status "Wallet default (jwt, sd_jwt_vc)")"
-printf '  %-10s %-30s %s\n' "sd_jwt_vc" "issuer_initiated (by_value)" "$(matrix_status "Wallet issuer-initiated")"
-printf '  %-10s %-30s %s\n' "sd_jwt_vc" "issuer_initiated (by_reference)" "$(matrix_status "Wallet issuer-initiated (by_reference)")"
-printf '  %-10s %-30s %s\n' "mdoc" "wallet_initiated" "$(matrix_status "Wallet mdoc")"
-printf '  %-10s %-30s %s\n' "mdoc" "issuer_initiated (by_value)" "$(matrix_status "Wallet mdoc issuer-initiated")"
-printf '  %-10s %-30s %s\n' "mdoc" "issuer_initiated (by_reference)" "$(matrix_status "Wallet mdoc issuer-initiated (by_reference)")"
+matrix_header "$ROW_FMT_30" "OFFER DELIVERY"
+matrix_row "$ROW_FMT_30" "$SD_JWT_VC" "$WALLET_INITIATED" "Wallet default (jwt, sd_jwt_vc)"
+matrix_row "$ROW_FMT_30" "$SD_JWT_VC" "issuer_initiated (by_value)" "Wallet issuer-initiated"
+matrix_row "$ROW_FMT_30" "$SD_JWT_VC" "issuer_initiated (by_reference)" "Wallet issuer-initiated (by_reference)"
+matrix_row "$ROW_FMT_30" "mdoc" "$WALLET_INITIATED" "Wallet mdoc"
+matrix_row "$ROW_FMT_30" "mdoc" "issuer_initiated (by_value)" "Wallet mdoc issuer-initiated"
+matrix_row "$ROW_FMT_30" "mdoc" "issuer_initiated (by_reference)" "Wallet mdoc issuer-initiated (by_reference)"
+
+echo
+echo "=== OID4VP certification profile matrix ==="
+echo "(mirrors the OIDF certification catalog's own per-profile breakdown:"
+echo " 2 Verifier + 4 Wallet = 6 distinct oid4vp-1final-*-haip-test-plan profiles)"
+echo
+echo "Verifier (oid4vp-1final-verifier-haip-test-plan):"
+matrix_header "$ROW_FMT_18" "RESPONSE MODE"
+matrix_row "$ROW_FMT_18" "$SD_JWT_VC" "$DIRECT_POST_JWT" "Verifier sd_jwt_vc"
+matrix_row "$ROW_FMT_18" "iso_mdl" "$DIRECT_POST_JWT" "Verifier mdoc"
+echo
+echo "Wallet (oid4vp-1final-wallet-haip-test-plan):"
+matrix_header "$ROW_FMT_18" "RESPONSE MODE"
+matrix_row "$ROW_FMT_18" "$SD_JWT_VC" "$DIRECT_POST_JWT" "Wallet-VP sd_jwt_vc"
+matrix_row "$ROW_FMT_18" "iso_mdl" "$DIRECT_POST_JWT" "Wallet-VP iso_mdl"
+printf "$ROW_FMT_18" "$SD_JWT_VC" "dc_api.jwt" "NOT IMPLEMENTED"
+printf "$ROW_FMT_18" "iso_mdl" "dc_api.jwt" "NOT IMPLEMENTED"
 
 echo
 echo "=== combined summary ==="

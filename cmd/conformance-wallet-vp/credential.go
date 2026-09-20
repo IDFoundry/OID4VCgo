@@ -2,11 +2,14 @@ package main
 
 import (
 	"crypto/ecdsa"
+	"encoding/base64"
 	"fmt"
 	"time"
 
+	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcgo/internal/conformancecert"
+	"github.com/idfoundry/oid4vcgo/internal/cose"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/internal/jwk"
 	"github.com/idfoundry/oid4vcgo/wallet"
@@ -67,5 +70,60 @@ func issueFixtureCredential(cfg Config, issuerKey, holderKey *ecdsa.PrivateKey) 
 		Credential:   sdjwt,
 		HolderKey:    holderKey,
 		HolderKeyAlg: jose.ES256,
+	}, nil
+}
+
+// issueFixtureMdocCredential is issueFixtureCredential's own "mso_mdoc"
+// counterpart: builds this binary's own held mdoc (an mDL, cfg.MdocDocType/
+// cfg.MdocNamespace/cfg.MdocClaims), issued by cfg's own Document Signer
+// identity (cfg.mdocIssuerKey/mdocIssuerCertificate — ISO/IEC 18013-5's
+// own IACA/Document Signer hierarchy, internal/conformancecert.
+// GenerateMdocIACA/GenerateMdocDocumentSigner; the suite's own
+// "credential.trust_anchor_pem" doubles as the mdoc IACA trust anchor
+// when no VICAL is configured, confirmed against the suite's own
+// AbstractVP1FinalWalletTest.java doc comment), bound to deviceKey's own
+// public key via DeviceKeyInfo.DeviceKey (mdoc's own "cnf" analog) —
+// mirrors internal/testmdoc's own test-only fixture, but production-safe
+// (no *testing.T) and X5Chain-backed by a real, non-self-signed
+// certificate rather than testmdoc's own bare self-signed one, matching
+// this file's own SD-JWT VC fixture's identical non-self-signed-leaf
+// requirement (see conformance/wallet-vp/README.md's own "x5c" findings).
+func issueFixtureMdocCredential(cfg Config, deviceKey *ecdsa.PrivateKey) (wallet.HeldCredential, error) {
+	issuerKey, err := cfg.mdocIssuerKey()
+	if err != nil {
+		return wallet.HeldCredential{}, err
+	}
+	issuerCert, err := cfg.mdocIssuerCertificate()
+	if err != nil {
+		return wallet.HeldCredential{}, err
+	}
+
+	nameSpaceClaims := make(map[string]interface{}, len(cfg.MdocClaims))
+	for name, value := range cfg.MdocClaims {
+		nameSpaceClaims[name] = value
+	}
+	now := time.Now()
+
+	issuerSigned, err := mdoc.Issue(issuerKey, cose.ES256, mdoc.Claims{
+		DocType:    cfg.MdocDocType,
+		NameSpaces: map[string]map[string]interface{}{cfg.MdocNamespace: nameSpaceClaims},
+		DeviceKey:  &deviceKey.PublicKey,
+		Signed:     now,
+		ValidFrom:  now,
+		ValidUntil: now.Add(fixtureCredentialLifetime),
+	}, mdoc.IssueOptions{X5Chain: [][]byte{issuerCert.Raw}})
+	if err != nil {
+		return wallet.HeldCredential{}, fmt.Errorf("issue fixture mdoc: %w", err)
+	}
+	wire, err := issuerSigned.Marshal()
+	if err != nil {
+		return wallet.HeldCredential{}, fmt.Errorf("marshal fixture mdoc: %w", err)
+	}
+
+	return wallet.HeldCredential{
+		Format:      mdoc.CredentialFormat,
+		Credential:  base64.RawURLEncoding.EncodeToString(wire),
+		HolderKey:   deviceKey,
+		MdocDocType: cfg.MdocDocType,
 	}, nil
 }

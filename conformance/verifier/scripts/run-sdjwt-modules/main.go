@@ -8,9 +8,9 @@
 // "Interaction model, confirmed live" section), never as a committed,
 // repeatable tool.
 //
-// Everything but this run's own module list and looping is shared with
-// run-mdoc-module via internal/conformanceverifier — see that
-// package's own doc comment for why.
+// Everything but this run's own module list is shared with
+// run-mdoc-module via internal/conformanceverifier (DriveModules/
+// PrintSummaryAndExit) — see that package's own doc comment for why.
 //
 // Usage: go run ./conformance/verifier/scripts/run-sdjwt-modules \
 //
@@ -21,7 +21,6 @@ package main
 import (
 	"flag"
 	"log"
-	"os"
 
 	"github.com/idfoundry/oid4vcgo/internal/conformanceverifier"
 )
@@ -45,13 +44,6 @@ var testNames = []string{
 	"oid4vp-1final-verifier-invalid-kb-jwt-aud",
 	"oid4vp-1final-verifier-kb-jwt-iat-in-past",
 	"oid4vp-1final-verifier-kb-jwt-iat-in-future",
-}
-
-type moduleResult struct {
-	testName string
-	status   string
-	result   string
-	err      error
 }
 
 func main() {
@@ -79,35 +71,6 @@ func main() {
 
 	moduleVariant := map[string]string{"client_id_prefix": "x509_hash", "request_method": "request_uri_signed", "vp_profile": "haip"}
 
-	results := make([]moduleResult, 0, len(testNames))
-	for _, testName := range testNames {
-		status, result, err := conformanceverifier.DriveModule(setup.HTTPClient, *flags.APIBase, *flags.VerifierBase, setup.PlanID, testName, moduleVariant)
-		res := moduleResult{testName: testName, status: status, result: result, err: err}
-		results = append(results, res)
-		if err != nil {
-			log.Printf("%s: ERROR: %v", testName, err)
-		} else {
-			log.Printf("%s: %s=%s", testName, status, result)
-		}
-	}
-
-	log.Print("=== summary ===")
-	allExpected := true
-	for _, res := range results {
-		// REVIEW is this plan's own legitimate terminal grade for every
-		// module here, not a failure: each one only reaches FINISHED at
-		// all because DriveModule's own upload-placeholder fill
-		// satisfied its own screenshot-evidence requirement — see
-		// internal/conformanceverifier.DriveModule's own doc comment
-		// for why cmd/conformance-verifier's design means every module
-		// takes that branch, not just the positive-behavior ones.
-		if res.err != nil || (res.result != "PASSED" && res.result != "REVIEW") {
-			allExpected = false
-		}
-		log.Printf("%-55s %s=%s %v", res.testName, res.status, res.result, res.err)
-	}
-	if !allExpected {
-		log.Printf("plan detail: %splan-detail.html?plan=%s", *flags.APIBase, setup.PlanID)
-		os.Exit(1)
-	}
+	results := conformanceverifier.DriveModules(setup.HTTPClient, *flags.APIBase, *flags.VerifierBase, setup.PlanID, testNames, moduleVariant)
+	conformanceverifier.PrintSummaryAndExit(results, *flags.APIBase, setup.PlanID)
 }

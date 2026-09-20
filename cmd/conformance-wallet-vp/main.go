@@ -5,8 +5,11 @@
 // direct_post.jwt + x509_hash + request_uri_signed module list (the
 // suite plays Verifier, driving this binary's real Authorization
 // Request resolution and credential presentation over the redirect
-// flow); the dc_api.jwt variants aren't covered — see
-// conformance/wallet-vp/README.md.
+// flow), under either credential format the plan's own
+// VP1FinalWalletCredentialFormat variant offers (sd_jwt_vc, the
+// default, or iso_mdl — see Config.CredentialFormat/credential.go's
+// own issueFixtureMdocCredential); the dc_api.jwt variants aren't
+// covered — see conformance/wallet-vp/README.md.
 package main
 
 import (
@@ -15,6 +18,8 @@ import (
 	"log"
 	"net/http"
 	"time"
+
+	"github.com/idfoundry/oid4vcgo/wallet"
 )
 
 func main() {
@@ -29,19 +34,28 @@ func main() {
 		log.Fatalf("load config: %v", err)
 	}
 
-	issuerKey, err := cfg.credentialIssuerKey()
-	if err != nil {
-		log.Fatalf("credential issuer key: %v", err)
-	}
 	holderKey, err := cfg.holderPrivateKey()
 	if err != nil {
 		log.Fatalf("holder private key: %v", err)
 	}
-	cred, err := issueFixtureCredential(cfg, issuerKey, holderKey)
-	if err != nil {
-		log.Fatalf("issue fixture credential: %v", err)
+	var cred wallet.HeldCredential
+	if cfg.isMdoc() {
+		cred, err = issueFixtureMdocCredential(cfg, holderKey)
+		if err != nil {
+			log.Fatalf("issue fixture mdoc credential: %v", err)
+		}
+		log.Printf("issued fixture %s credential (doctype=%s)", cred.Format, cfg.MdocDocType)
+	} else {
+		issuerKey, keyErr := cfg.credentialIssuerKey()
+		if keyErr != nil {
+			log.Fatalf("credential issuer key: %v", keyErr)
+		}
+		cred, err = issueFixtureCredential(cfg, issuerKey, holderKey)
+		if err != nil {
+			log.Fatalf("issue fixture credential: %v", err)
+		}
+		log.Printf("issued fixture %s credential (vct=%s)", cred.Format, cfg.VCT)
 	}
-	log.Printf("issued fixture %s credential (vct=%s)", cred.Format, cfg.VCT)
 
 	srv := &server{cred: cred}
 

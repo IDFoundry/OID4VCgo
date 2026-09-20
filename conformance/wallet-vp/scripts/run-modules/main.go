@@ -5,6 +5,17 @@
 // /api/plan/{id} — not guessed) were originally run live one at a
 // time by hand, never as a committed, repeatable tool.
 //
+// -credential-format drives the exact same 14 modules under either of
+// the plan's own VP1FinalWalletCredentialFormat values — "sd_jwt_vc"
+// (default) or "iso_mdl" — confirmed live via GET /api/plan/{id}
+// against both variant selections before writing this flag's own
+// support: the module list itself is completely credential-format-
+// agnostic, only the fixture credential/DCQL query/trust anchor this
+// binary and this script build differ (see generateWalletVPFixtures/
+// buildDCQLCredential and cmd/conformance-wallet-vp/credential.go's own
+// issueFixtureMdocCredential). Completes the OID4VP Wallet role's own
+// "iso_mdl direct_post.jwt" certification profile.
+//
 // How this binary gets driven, confirmed live (not assumed from
 // conformance/wallet-vp/README.md's own "How the interaction model
 // was confirmed" section alone): creating a module does NOT make the
@@ -132,8 +143,19 @@ type generatedConfig struct {
 	CredentialIssuerPrivateKeyPEM  string            `json:"credential_issuer_private_key_pem"`
 	CredentialIssuerCertificatePEM string            `json:"credential_issuer_certificate_pem"`
 	HolderPrivateKeyPEM            string            `json:"holder_private_key_pem"`
-	VCT                            string            `json:"vct"`
-	Claims                         map[string]string `json:"claims"`
+	VCT                            string            `json:"vct,omitempty"`
+	Claims                         map[string]string `json:"claims,omitempty"`
+
+	// CredentialFormat/MdocIssuerPrivateKeyPEM/MdocIssuerCertificatePEM/
+	// MdocDocType/MdocNamespace/MdocClaims mirror
+	// cmd/conformance-wallet-vp's own Config — see that file's own doc
+	// comment. Only set when driving -credential-format iso_mdl.
+	CredentialFormat         string            `json:"credential_format,omitempty"`
+	MdocIssuerPrivateKeyPEM  string            `json:"mdoc_issuer_private_key_pem,omitempty"`
+	MdocIssuerCertificatePEM string            `json:"mdoc_issuer_certificate_pem,omitempty"`
+	MdocDocType              string            `json:"mdoc_doc_type,omitempty"`
+	MdocNamespace            string            `json:"mdoc_namespace,omitempty"`
+	MdocClaims               map[string]string `json:"mdoc_claims,omitempty"`
 }
 
 // planConfig is the suite's own oid4vp-1final-wallet-haip-test-plan
@@ -168,14 +190,30 @@ type planDCQL struct {
 type planDCQLCredential struct {
 	ID     string          `json:"id"`
 	Format string          `json:"format"`
-	Meta   planDCQLMeta    `json:"meta"`
+	Meta   any             `json:"meta"`
 	Claims []planDCQLClaim `json:"claims"`
 }
 
+// planDCQLMeta is "dc+sd-jwt"'s own Meta shape.
 type planDCQLMeta struct {
 	VCTValues []string `json:"vct_values"`
 }
 
+// planDCQLMdocMeta is "mso_mdoc"'s own Meta shape (Appendix B.3.1.1) —
+// planDCQLCredential.Meta's other concrete type, selected by
+// credential_format rather than a shared struct, since the two formats'
+// own DCQL Credential Query Meta parameters don't overlap at all
+// (confirmed against dcql.NewSDJWTVCMeta/NewMdocMeta's own identical
+// split).
+type planDCQLMdocMeta struct {
+	DoctypeValue string `json:"doctype_value"`
+}
+
+// planDCQLClaim's own Path is a single top-level claim name for
+// "dc+sd-jwt" (e.g. ["given_name"]) but namespace-then-element for
+// "mso_mdoc" (e.g. ["org.iso.18013.5.1","given_name"], Appendix
+// B.2.4) — both fit the same []string shape, no format-specific type
+// needed here.
 type planDCQLClaim struct {
 	Path []string `json:"path"`
 }
@@ -192,38 +230,75 @@ type moduleResult struct {
 	err      error
 }
 
+const (
+	mdlDocType   = "org.iso.18013.5.1.mDL"
+	mdlNamespace = "org.iso.18013.5.1"
+)
+
+// fixtureClaims is the fixture credential's own claim set, shared
+// between both credential formats (only the encoding differs — a flat
+// map for "dc+sd-jwt", namespace-nested for "mso_mdoc") purely to keep
+// both formats' own live runs comparable.
+var fixtureClaims = map[string]string{"given_name": "Jean", "family_name": "Dupont"}
+
 // generateWalletVPFixtures generates every piece of throwaway key
-// material and certificate this run needs (TLS listener cert, a
-// dedicated Credential Issuer signer+cert+CA, and a holder key),
-// returning the resulting generatedConfig plus the issuer CA
-// certificate separately, since the suite-side plan config needs it
-// directly too — split out of main purely to keep it under the
-// linter's own cognitive complexity ceiling.
-func generateWalletVPFixtures() (cfg generatedConfig, issuerCACertPEM string, err error) {
+// material and certificate this run needs (TLS listener cert, a holder/
+// device key, and either a dedicated Credential Issuer signer+cert+CA
+// for "dc+sd-jwt" or an ISO/IEC 18013-5 IACA+Document Signer identity
+// for "mso_mdoc" — see credentialFormat), returning the resulting
+// generatedConfig plus the trust anchor certificate the suite's own
+// "credential.trust_anchor_pem" needs separately (its own mdoc IACA
+// trust anchor when no VICAL is configured is the very same
+// certificate — confirmed against the suite's own
+// AbstractVP1FinalWalletTest.java doc comment, see credential.go's own
+// issueFixtureMdocCredential) — split out of main purely to keep it
+// under the linter's own cognitive complexity ceiling.
+func generateWalletVPFixtures(credentialFormat string) (cfg generatedConfig, trustAnchorCertPEM string, err error) {
 	tlsCertPEM, tlsKeyPEM, err := conformancecert.SelfSignedPEM("conformance-wallet-vp", []string{"conformance-wallet-vp", "localhost"})
 	if err != nil {
 		return generatedConfig{}, "", fmt.Errorf("generate tls cert: %w", err)
-	}
-	_, issuerKeyPEM, issuerCertPEM, issuerCACertPEM, err := conformancecert.GenerateSignerAndCert(
-		"conformance-wallet-vp-credential-issuer", "conformance-wallet-vp-credential-issuer-ca")
-	if err != nil {
-		return generatedConfig{}, "", fmt.Errorf("generate credential issuer key/certificate: %w", err)
 	}
 	holderKeyPEM, err := conformancecert.GenerateECKeyPEM()
 	if err != nil {
 		return generatedConfig{}, "", fmt.Errorf("generate holder key: %w", err)
 	}
-
 	cfg = generatedConfig{
-		ListenAddr:                     ":8443",
-		TLSCertificatePEM:              tlsCertPEM,
-		TLSPrivateKeyPEM:               tlsKeyPEM,
-		CredentialIssuerPrivateKeyPEM:  issuerKeyPEM,
-		CredentialIssuerCertificatePEM: issuerCertPEM,
-		HolderPrivateKeyPEM:            holderKeyPEM,
-		VCT:                            "urn:eudi:pid:1",
-		Claims:                         map[string]string{"given_name": "Jean", "family_name": "Dupont"},
+		ListenAddr:          ":8443",
+		TLSCertificatePEM:   tlsCertPEM,
+		TLSPrivateKeyPEM:    tlsKeyPEM,
+		HolderPrivateKeyPEM: holderKeyPEM,
 	}
+
+	if credentialFormat == "iso_mdl" {
+		iacaCert, iacaKey, iacaCertPEM, _, iacaErr := conformancecert.GenerateMdocIACA(
+			"conformance-wallet-vp-mdoc-iaca", "FR", "https://example.com/conformance-wallet-vp-mdoc-contact")
+		if iacaErr != nil {
+			return generatedConfig{}, "", fmt.Errorf("generate mdoc iaca: %w", iacaErr)
+		}
+		_, dsKeyPEM, dsCertPEM, dsErr := conformancecert.GenerateMdocDocumentSigner(
+			"conformance-wallet-vp-mdoc-ds", "FR", "https://example.com/conformance-wallet-vp-mdoc-contact",
+			"https://example.com/conformance-wallet-vp-mdoc.crl", iacaCert, iacaKey)
+		if dsErr != nil {
+			return generatedConfig{}, "", fmt.Errorf("generate mdoc document signer: %w", dsErr)
+		}
+		cfg.CredentialFormat = "mso_mdoc"
+		cfg.MdocIssuerPrivateKeyPEM = dsKeyPEM
+		cfg.MdocIssuerCertificatePEM = dsCertPEM
+		cfg.MdocDocType = mdlDocType
+		cfg.MdocNamespace = mdlNamespace
+		cfg.MdocClaims = fixtureClaims
+		return cfg, iacaCertPEM, nil
+	}
+
+	_, issuerKeyPEM, issuerCertPEM, issuerCACertPEM, credErr := conformancecert.GenerateSignerAndCert(
+		"conformance-wallet-vp-credential-issuer", "conformance-wallet-vp-credential-issuer-ca")
+	if credErr != nil {
+		return generatedConfig{}, "", fmt.Errorf("generate credential issuer key/certificate: %w", credErr)
+	}
+	cfg.CredentialIssuerPrivateKeyPEM = issuerKeyPEM
+	cfg.CredentialIssuerCertificatePEM = issuerCertPEM
+	cfg.VCT = "urn:eudi:pid:1"
+	cfg.Claims = fixtureClaims
 	return cfg, issuerCACertPEM, nil
 }
 
@@ -271,17 +346,41 @@ func moduleResultExpected(res moduleResult) bool {
 	return true
 }
 
+// buildDCQLCredential builds this run's own DCQL "credentials" entry —
+// "dc+sd-jwt" (cfg.VCT/given_name/family_name, the plan's own default)
+// or "mso_mdoc" (cfg.MdocDocType/the same two claims, namespace-prefixed)
+// depending on cfg.CredentialFormat — see planDCQLCredential.Meta's own
+// doc comment for why Meta itself is untyped.
+func buildDCQLCredential(cfg generatedConfig) planDCQLCredential {
+	if cfg.CredentialFormat == "mso_mdoc" {
+		return planDCQLCredential{
+			ID: "cred1", Format: "mso_mdoc",
+			Meta: planDCQLMdocMeta{DoctypeValue: cfg.MdocDocType},
+			Claims: []planDCQLClaim{
+				{Path: []string{cfg.MdocNamespace, "given_name"}},
+				{Path: []string{cfg.MdocNamespace, "family_name"}},
+			},
+		}
+	}
+	return planDCQLCredential{
+		ID: "cred1", Format: "dc+sd-jwt",
+		Meta:   planDCQLMeta{VCTValues: []string{cfg.VCT}},
+		Claims: []planDCQLClaim{{Path: []string{"given_name"}}, {Path: []string{"family_name"}}},
+	}
+}
+
 func main() {
 	apiBase := flag.String("suite", "https://localhost:8443/", "OIDF conformance suite base URL")
 	walletVPBase := flag.String("walletvp-base", "https://localhost:19447", "cmd/conformance-wallet-vp's own host-published base URL")
 	walletVPInternalBase := flag.String("walletvp-internal-base", "https://conformance-wallet-vp:8443", "cmd/conformance-wallet-vp's own suite-network-internal base URL")
 	alias := flag.String("alias", "oid4vcgo-wallet-vp", "suite plan alias")
 	skipDockerRestart := flag.Bool("skip-docker-restart", false, "skip restarting the conformance-wallet-vp container after writing the new config (only safe when the container is already running with matching key material from a prior run of this exact binary)")
+	credentialFormat := flag.String("credential-format", "sd_jwt_vc", "credential_format variant to drive: \"sd_jwt_vc\" (default) or \"iso_mdl\" — confirmed live that both drive the exact same 14-module list (see this file's own package doc comment), only the fixture credential/DCQL query/trust anchor differ")
 	flag.Parse()
 
 	httpClient := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}} //nolint:gosec // local conformance suite, self-signed certs throughout
 
-	cfg, issuerCACertPEM, err := generateWalletVPFixtures()
+	cfg, trustAnchorCertPEM, err := generateWalletVPFixtures(*credentialFormat)
 	if err != nil {
 		log.Fatalf("%v", err)
 	}
@@ -297,16 +396,12 @@ func main() {
 	pc := planConfig{
 		Alias:       *alias,
 		Description: "OID4VCgo cmd/conformance-wallet-vp live run",
-		Credential:  planCredential{TrustAnchorPEM: issuerCACertPEM, StatusListTrustAnchorPEM: issuerCACertPEM},
+		Credential:  planCredential{TrustAnchorPEM: trustAnchorCertPEM, StatusListTrustAnchorPEM: trustAnchorCertPEM},
 		Client: planClient{
 			AuthorizationEncryptedResponseEnc: "A128GCM",
 			AuthorizationEncryptedResponseAlg: "ECDH-ES",
 			JWKs:                              jwk.Set{Keys: []jwk.SetEntry{clientJWK}},
-			DCQL: planDCQL{Credentials: []planDCQLCredential{{
-				ID: "cred1", Format: "dc+sd-jwt",
-				Meta:   planDCQLMeta{VCTValues: []string{cfg.VCT}},
-				Claims: []planDCQLClaim{{Path: []string{"given_name"}}, {Path: []string{"family_name"}}},
-			}}},
+			DCQL:                              planDCQL{Credentials: []planDCQLCredential{buildDCQLCredential(cfg)}},
 		},
 		Server: planServer{AuthorizationEndpoint: *walletVPInternalBase + authorizePath},
 	}
@@ -315,7 +410,7 @@ func main() {
 		log.Fatalf("marshal plan config: %v", err)
 	}
 
-	planVariant := map[string]string{"credential_format": "sd_jwt_vc", "response_mode": "direct_post.jwt"} //nolint:gosec // false positive: a suite variant selector value, not a credential
+	planVariant := map[string]string{"credential_format": *credentialFormat, "response_mode": "direct_post.jwt"} //nolint:gosec // false positive: a suite variant selector value, not a credential
 	planID, _, err := conformancesuite.CreatePlan(httpClient, *apiBase, planName, planVariant, pcRaw)
 	if err != nil {
 		log.Fatalf("create plan: %v", err)
