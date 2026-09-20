@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.7.2](https://github.com/IDFoundry/OID4VCgo/compare/v0.7.1...v0.7.2) (2026-09-20)
+
+
+### Bug Fixes
+
+* fully flatten decryptedCredentialRequest's nested anonymous structs ([9c3e3d3](https://github.com/IDFoundry/OID4VCgo/commit/9c3e3d33a24aba7b2fc7b2d071c3c5ca1498c57a))
+* resolve 36 safe SonarCloud findings (S1192/S107/S7682/S7688/S8193/S8205/S8239/S978) ([143e450](https://github.com/IDFoundry/OID4VCgo/commit/143e450ef22e775186bdfe143efbb9a336678cdd))
+
 ## [0.7.1](https://github.com/IDFoundry/OID4VCgo/compare/v0.7.0...v0.7.1) (2026-09-19)
 
 
