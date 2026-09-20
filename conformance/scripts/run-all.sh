@@ -19,29 +19,43 @@
 # What each role actually runs, and why each one is the exact set it
 # is:
 #
-# Issuer (conformance/issuer/scripts/run-fapi2sp-battery, 3 runs
+# Issuer (conformance/issuer/scripts/run-fapi2sp-battery, 4 runs
 # against the one conformance-issuer container, reconfigured+restarted
-# between each): the default HAIP battery (43 modules: the 21
-# OID4VCI-specific ones plus the 39-module generic FAPI2SP battery plus
-# Discovery plus 2 sanity checks), `-base-plan` (the suite's own base,
-# non-HAIP plan — 38 modules, 2 of them expected self-SKIPPED per HAIP
-# §4.5.1's own conditional-on-ecosystem-policy language and this
-# binary's own deliberate unsupported-encryption-algorithm scope, see
-# conformance/issuer/README.md), and `-credential-format mdoc` (2
-# sanity-check modules under mso_mdoc format).
+# between each): exactly the Issuer's own 2x2 certification profile
+# matrix (sd_jwt_vc/mdoc x wallet_initiated/issuer_initiated) — the
+# default HAIP battery (60 modules: the 21 OID4VCI-specific ones plus
+# the 39-module generic FAPI2SP battery plus Discovery plus 2 sanity
+# checks — see haipBattery's own doc comment for why 60, not the plan's
+# full 61: fail-invalid-key-attestation-signature lives in
+# keyAttestationBattery instead, not run here since it isn't one of the
+# 10 catalog profiles), the same battery again under `-issuer-initiated`,
+# `-credential-format mdoc` (2 sanity-check modules under mso_mdoc
+# format, restricted per mdocBattery's own doc comment), and that same
+# mdoc pair again under `-issuer-initiated`. Deliberately no -base-plan,
+# -credential-encryption, or -credential-proof-type-hint runs — none of
+# those are separate profiles in OIDF's own certification catalog, see
+# run_issuer's own doc comment.
 #
 # Wallet (cmd/conformance-wallet, 6 runs — this binary is a one-shot
 # CLI client, not a server, so no docker container/restart is involved
-# at all): the default crossing (jwt-type proof, sd_jwt_vc,
-# wallet_initiated — 22 module instances), `-proof-type attestation`
-# (standalone Key Attestation proof, 22 instances), `-proof-type
-# jwt-key-attestation` (Key Attestation nested in a jwt-type proof, 22
-# instances), `-issuer-initiated` (the other Authorization Code Flow
-# variant, 22 instances), `-base-plan` (the suite's own base plan, 5
-# instances), and `-credential-format mdoc` (22 instances under
-# mso_mdoc). Every one of these has run 100% clean (all instances
-# FINISHED/PASSED) every time this repo's own README was updated after
-# a live run — no known exceptions, unlike Issuer's battery.
+# at all): exactly the Wallet's own 2x3 certification profile matrix
+# (sd_jwt_vc/mdoc x wallet_initiated/issuer_initiated-by_value/
+# issuer_initiated-by_reference) — the default crossing (jwt-type
+# proof, sd_jwt_vc, wallet_initiated — 22 module instances),
+# `-issuer-initiated` crossed with both vci_credential_offer_variant
+# values (by_value/by_reference, 22 instances each), and
+# `-credential-format mdoc` crossed with wallet_initiated and both
+# issuer_initiated offer variants (22 instances each). Every one of
+# these has run 100% clean (all instances FINISHED/PASSED) every time
+# this repo's own README was updated after a live run — no known
+# exceptions, unlike Issuer's battery. Deliberately no -proof-type or
+# -base-plan runs — see run_wallet's own doc comment.
+#
+# Every run above corresponds one-to-one with a row in the
+# "certification profile matrix" this script prints at the end,
+# mirroring how the OIDF certification catalog itself breaks OID4VCI
+# into 10 distinct HAIP profiles (4 Issuer + 6 Wallet) rather than one
+# monolithic pass/fail.
 #
 # Verifier (conformance/verifier/scripts/run-sdjwt-modules and
 # run-mdoc-module, 2 runs against the one conformance-verifier
@@ -241,6 +255,16 @@ run_go_self_graded() {
 }
 
 run_issuer() {
+	# Exactly the Issuer side's own 2x2 certification profile matrix
+	# (sd_jwt_vc/mdoc x wallet_initiated/issuer_initiated) — the 4 of
+	# the OIDF certification catalog's own 10 OID4VCI HAIP profiles this
+	# role covers. Deliberately no -base-plan, -credential-encryption,
+	# or -credential-proof-type-hint runs here: none of those are
+	# separate certifiable profiles in the catalog, just this repo's own
+	# extra proof-type/plan QA coverage — run manually via
+	# run-fapi2sp-battery's own flags when needed, not as part of the
+	# daily certification-profile report.
+	#
 	# 1 SKIPPED (refresh-token — HAIP's pre-authorized_code grant
 	# doesn't issue refresh tokens), 1 REVIEW
 	# (par-attempt-to-use-request_uri-for-different-client — a
@@ -254,66 +278,74 @@ fapi2-security-profile-final-par-attempt-to-use-request_uri-for-different-client
 	run_go_checked "Issuer haip-battery" "$WORKDIR/issuer-haip.log" "$haip_exceptions" \
 		go run ./conformance/issuer/scripts/run-fapi2sp-battery
 
-	# 1 self-SKIPPED (fail-unsupported-encryption-algorithm — this
-	# invocation's own vci_credential_encryption=plain variant means it
-	# doesn't apply; see the -credential-encryption=encrypted invocation
-	# below, where it's expected to genuinely PASS instead).
-	# fail-invalid-key-attestation-signature used to be a second
-	# exception (SKIPPED) until buildServerConfig started always
-	# advertising the "attestation" proof type — the suite now
-	# auto-selects it for this one module whenever it's available in
-	# metadata, regardless of credential_proof_type_hint, so it's
-	# expected to PASS like everything else now too — see
-	# conformance/issuer/README.md's own "Update" note.
-	local base_exceptions='oid4vci-1_0-issuer-fail-unsupported-encryption-algorithm=SKIPPED'
-	run_go_checked "Issuer base-plan" "$WORKDIR/issuer-base-plan.log" "$base_exceptions" \
-		go run ./conformance/issuer/scripts/run-fapi2sp-battery -base-plan
-
-	# 0 exceptions: vci_credential_encryption=encrypted makes
-	# fail-unsupported-encryption-algorithm genuinely runnable (and
-	# PASS) instead of self-skipping — cmd/conformance-issuer already
-	# supported encrypted responses unconditionally, this was purely a
-	# missing ZipValuesSupported wiring gap (see README's own "Update"
-	# note) plus this invocation's own variant selection.
-	run_go_checked "Issuer base-plan (encrypted)" "$WORKDIR/issuer-base-plan-encrypted.log" "" \
-		go run ./conformance/issuer/scripts/run-fapi2sp-battery -base-plan -credential-encryption=encrypted
+	# Same 60-module battery, same two exceptions (both unrelated to
+	# the authorization_code_flow_variant), just driven with the HAIP
+	# plan's own issuer_initiated variant instead of the default
+	# wallet_initiated one — this binary submits each module's own
+	# Credential Offer itself before polling it, see
+	# submitCredentialOffer's own doc comment.
+	run_go_checked "Issuer issuer-initiated" "$WORKDIR/issuer-issuer-initiated.log" "$haip_exceptions" \
+		go run ./conformance/issuer/scripts/run-fapi2sp-battery -issuer-initiated
 
 	run_go_checked "Issuer mdoc" "$WORKDIR/issuer-mdoc.log" "" \
 		go run ./conformance/issuer/scripts/run-fapi2sp-battery -credential-format mdoc
 
-	# 0 exceptions: metadata-test + happy-flow (a positive sanity check
-	# that genuine attestation-based issuance works, not just that an
-	# invalid one is rejected) + fail-invalid-key-attestation-signature
-	# itself, all driven with attestation as the wallet's own preferred
-	# proof type — see keyAttestationBattery's own doc comment.
-	run_go_checked "Issuer key-attestation" "$WORKDIR/issuer-key-attestation.log" "" \
-		go run ./conformance/issuer/scripts/run-fapi2sp-battery -credential-proof-type-hint=attestation
+	# 0 exceptions: mdoc restricts the driven module set to the 2
+	# sanity-check modules (mdocBattery) regardless of flow variant,
+	# same restriction "Issuer mdoc" above has — this just drives that
+	# same pair under issuer_initiated instead, completing the Issuer
+	# side's own 2x2 matrix.
+	run_go_checked "Issuer mdoc issuer-initiated" "$WORKDIR/issuer-mdoc-issuer-initiated.log" "" \
+		go run ./conformance/issuer/scripts/run-fapi2sp-battery -credential-format mdoc -issuer-initiated
 	return 0
 }
 
 run_wallet() {
+	# Exactly the Wallet side's own 2x3 certification profile matrix
+	# (sd_jwt_vc/mdoc x wallet_initiated/issuer_initiated-by_value/
+	# issuer_initiated-by_reference) — the other 6 of the OIDF
+	# certification catalog's own 10 OID4VCI HAIP profiles. Deliberately
+	# no -proof-type or -base-plan runs here: proof type isn't a
+	# separate certifiable profile in the catalog (it's an
+	# implementation choice within whichever profile you're actually
+	# being certified against), and the base plan is a different,
+	# non-HAIP test plan altogether — both are this repo's own extra QA
+	# coverage, run manually via cmd/conformance-wallet's own flags when
+	# needed, not as part of the daily certification-profile report.
+	#
 	# Every one of these 6 has always run 100% clean (all module
 	# instances FINISHED/PASSED) — no known exceptions.
 	run_go_checked "Wallet default (jwt, sd_jwt_vc)" "$WORKDIR/wallet-default.log" "" \
 		go run ./cmd/conformance-wallet
 
-	run_go_checked "Wallet attestation proof" "$WORKDIR/wallet-attestation.log" "" \
-		go run ./cmd/conformance-wallet -proof-type attestation \
-			-credential-configuration-id eu.europa.ec.eudi.pid.1.attestation -scope eudi.pid.1.attestation
-
-	run_go_checked "Wallet jwt-key-attestation proof" "$WORKDIR/wallet-jwt-keyattest.log" "" \
-		go run ./cmd/conformance-wallet -proof-type jwt-key-attestation \
-			-credential-configuration-id eu.europa.ec.eudi.pid.1.jwt.keyattest -scope eudi.pid.1.jwt.keyattest
-
 	run_go_checked "Wallet issuer-initiated" "$WORKDIR/wallet-issuer-initiated.log" "" \
 		go run ./cmd/conformance-wallet -issuer-initiated
 
-	run_go_checked "Wallet base-plan" "$WORKDIR/wallet-base-plan.log" "" \
-		go run ./cmd/conformance-wallet -base-plan
+	# Same issuer_initiated flow variant, but vci_credential_offer_variant
+	# =by_reference instead of the default by_value — the suite hands
+	# this binary a credential_offer_uri instead of an inline JSON offer,
+	# which wallet.Wallet.ResolveCredentialOffer already dereferences
+	# unconditionally.
+	run_go_checked "Wallet issuer-initiated (by_reference)" "$WORKDIR/wallet-issuer-initiated-by-reference.log" "" \
+		go run ./cmd/conformance-wallet -issuer-initiated -credential-offer-variant by_reference
 
 	run_go_checked "Wallet mdoc" "$WORKDIR/wallet-mdoc.log" "" \
 		go run ./cmd/conformance-wallet -credential-format mdoc \
 			-credential-configuration-id eu.europa.ec.eudi.pid.mdoc.1 -scope eudi.pid.mdoc.1
+
+	# The mdoc row's own issuer_initiated x by_value/by_reference pair,
+	# completing the Wallet side's own 2x3 matrix. Unlike "Wallet mdoc"
+	# above, these two don't pass an explicit -credential-configuration-id/
+	# -scope — confirmed live that the suite's own emulated Credential
+	# Issuer accepts the default sd_jwt_vc-shaped IDs just as well under
+	# vci_credential_format=mdoc, so the mismatch the flag's own doc
+	# comment warns about isn't actually load-bearing for these two
+	# module instances specifically (both FINISHED=PASSED as run).
+	run_go_checked "Wallet mdoc issuer-initiated" "$WORKDIR/wallet-mdoc-issuer-initiated.log" "" \
+		go run ./cmd/conformance-wallet -credential-format mdoc -issuer-initiated
+
+	run_go_checked "Wallet mdoc issuer-initiated (by_reference)" "$WORKDIR/wallet-mdoc-issuer-initiated-by-reference.log" "" \
+		go run ./cmd/conformance-wallet -credential-format mdoc -issuer-initiated -credential-offer-variant by_reference
 	return 0
 }
 
@@ -338,6 +370,45 @@ run_issuer
 run_wallet
 run_verifier
 run_wallet_vp
+
+
+# matrix_status NAME — a one-word PASS/FAIL/(DID NOT RUN) reduction of
+# lookup_result's own "OK (see log)"/"UNEXPECTED RESULTS (see log)"
+# strings, for the fixed-width certification profile matrix below (the
+# full "(see log)" detail is already in the combined summary
+# underneath, so the matrix stays scannable at a glance instead of
+# wrapping).
+matrix_status() {
+	local name="$1" result
+	result="$(lookup_result "$name")"
+	case "$result" in
+	OK*) echo "PASS" ;;
+	UNEXPECTED*) echo "FAIL" ;;
+	*) echo "DID NOT RUN" ;;
+	esac
+	return 0
+}
+
+echo
+echo "=== OID4VCI certification profile matrix ==="
+echo "(mirrors the OIDF certification catalog's own per-profile breakdown:"
+echo " 4 Issuer + 6 Wallet = 10 distinct oid4vci-1_0-*-haip-test-plan profiles)"
+echo
+echo "Issuer (oid4vci-1_0-issuer-haip-test-plan):"
+printf '  %-10s %-18s %s\n' "FORMAT" "FLOW" "RESULT"
+printf '  %-10s %-18s %s\n' "sd_jwt_vc" "wallet_initiated" "$(matrix_status "Issuer haip-battery")"
+printf '  %-10s %-18s %s\n' "sd_jwt_vc" "issuer_initiated" "$(matrix_status "Issuer issuer-initiated")"
+printf '  %-10s %-18s %s\n' "mdoc" "wallet_initiated" "$(matrix_status "Issuer mdoc")"
+printf '  %-10s %-18s %s\n' "mdoc" "issuer_initiated" "$(matrix_status "Issuer mdoc issuer-initiated")"
+echo
+echo "Wallet (oid4vci-1_0-wallet-haip-test-plan):"
+printf '  %-10s %-30s %s\n' "FORMAT" "OFFER DELIVERY" "RESULT"
+printf '  %-10s %-30s %s\n' "sd_jwt_vc" "wallet_initiated" "$(matrix_status "Wallet default (jwt, sd_jwt_vc)")"
+printf '  %-10s %-30s %s\n' "sd_jwt_vc" "issuer_initiated (by_value)" "$(matrix_status "Wallet issuer-initiated")"
+printf '  %-10s %-30s %s\n' "sd_jwt_vc" "issuer_initiated (by_reference)" "$(matrix_status "Wallet issuer-initiated (by_reference)")"
+printf '  %-10s %-30s %s\n' "mdoc" "wallet_initiated" "$(matrix_status "Wallet mdoc")"
+printf '  %-10s %-30s %s\n' "mdoc" "issuer_initiated (by_value)" "$(matrix_status "Wallet mdoc issuer-initiated")"
+printf '  %-10s %-30s %s\n' "mdoc" "issuer_initiated (by_reference)" "$(matrix_status "Wallet mdoc issuer-initiated (by_reference)")"
 
 echo
 echo "=== combined summary ==="

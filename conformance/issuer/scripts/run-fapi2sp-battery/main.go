@@ -57,6 +57,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
@@ -469,13 +470,32 @@ func waitForIssuerReady(httpClient *http.Client, _ string) error {
 // vci_authorization_code_flow_variant.
 const metadataSignedTestName = "oid4vci-1_0-issuer-metadata-test-signed"
 
+// vciIssuerTestNamePrefix is every OID4VCI-specific issuer module's own
+// testName prefix (VCIIssuerTestPlanHaip's own vciTestModules() entries)
+// — the only classes that ever wait for a Credential Offer under
+// vci_authorization_code_flow_variant=issuer_initiated at all. The
+// generic FAPI2SP battery modules (fapi2-security-profile-final-*,
+// including the plan's own Discovery module) are plain
+// AbstractFAPI2SPFinalServerTestModule subclasses that don't implement
+// waitForCredentialOffer and don't apply this variant — confirmed live:
+// driving the full battery under -issuer-initiated without this prefix
+// check made every one of them either time out waiting for WAITING (an
+// already-passing module that never needed a Credential Offer at all)
+// or reach WAITING with no credential_offer_endpoint exposed, both
+// unconditional errors, not a real regression in the modules
+// themselves.
+const vciIssuerTestNamePrefix = "oid4vci-1_0-issuer-"
+
 func runModule(httpClient *http.Client, apiBase, planID, testName string, variant map[string]string, issuerInitiated bool, issuerBaseURL, credentialConfigurationID string) string {
 	module, err := conformancesuite.CreateModuleInstance(httpClient, apiBase, planID, testName, variant)
 	if err != nil {
 		return "ERROR: create module instance: " + err.Error()
 	}
 
-	if issuerInitiated && testName != metadataTestName && testName != metadataSignedTestName {
+	needsCredentialOffer := issuerInitiated &&
+		strings.HasPrefix(testName, vciIssuerTestNamePrefix) &&
+		testName != metadataTestName && testName != metadataSignedTestName
+	if needsCredentialOffer {
 		if err := submitCredentialOffer(httpClient, apiBase, module.ID, issuerBaseURL, credentialConfigurationID); err != nil {
 			return "ERROR: submit credential offer: " + err.Error() + " (module " + module.ID + ")"
 		}
