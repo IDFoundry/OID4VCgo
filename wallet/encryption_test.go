@@ -176,11 +176,15 @@ func TestResponseEncryptionRoundTrip(t *testing.T) {
 // Credential Request body — split out from an inline anonymous struct
 // purely for readability.
 type decryptedCredentialRequest struct {
-	ResponseEncryption struct {
-		JWK struct {
-			Alg string `json:"alg"`
-		} `json:"jwk"`
-	} `json:"credential_response_encryption"`
+	ResponseEncryption decryptedResponseEncryption `json:"credential_response_encryption"`
+}
+
+type decryptedResponseEncryption struct {
+	JWK decryptedResponseEncryptionJWK `json:"jwk"`
+}
+
+type decryptedResponseEncryptionJWK struct {
+	Alg string `json:"alg"`
 }
 
 func TestResponseEncryptionJWKDeclaresAlg(t *testing.T) {
