@@ -92,44 +92,17 @@ type dpopClaims struct {
 // freshly issued access token's own "cnf" to it; this package has no
 // opinion on token issuance).
 func Verify(ctx context.Context, req VerifyRequest) (VerifiedProof, error) {
-	if req.Method == "" {
-		return VerifiedProof{}, fmt.Errorf("dpop: method is required")
-	}
-	if req.URL == "" {
-		return VerifiedProof{}, fmt.Errorf("dpop: url is required")
-	}
-	if req.Now.IsZero() {
-		return VerifiedProof{}, fmt.Errorf("dpop: now is required")
-	}
-	if req.MaxProofAge <= 0 {
-		return VerifiedProof{}, fmt.Errorf("dpop: max_proof_age must be positive")
-	}
-	if req.Replay == nil {
-		return VerifiedProof{}, fmt.Errorf("dpop: replay is required")
+	if err := validateVerifyRequest(req); err != nil {
+		return VerifiedProof{}, err
 	}
 
 	header, _, err := jose.DecodeUnverified(req.Proof)
 	if err != nil {
 		return VerifiedProof{}, fmt.Errorf("dpop: %w", err)
 	}
-	if typ, _ := header["typ"].(string); typ != proofTyp {
-		return VerifiedProof{}, fmt.Errorf("dpop: typ is %q, want %q", header["typ"], proofTyp)
-	}
-	jwkVal, ok := header["jwk"]
-	if !ok {
-		return VerifiedProof{}, fmt.Errorf("dpop: header is missing jwk")
-	}
-	jwkRaw, err := json.Marshal(jwkVal)
+	pub, parsedJWK, err := resolveDPoPProofKey(header)
 	if err != nil {
-		return VerifiedProof{}, fmt.Errorf("dpop: marshal jwk header: %w", err)
-	}
-	var parsedJWK jwk.JWK
-	if err := json.Unmarshal(jwkRaw, &parsedJWK); err != nil {
-		return VerifiedProof{}, fmt.Errorf("dpop: unmarshal jwk header: %w", err)
-	}
-	pub, err := parsedJWK.PublicKey()
-	if err != nil {
-		return VerifiedProof{}, fmt.Errorf("dpop: jwk header: %w", err)
+		return VerifiedProof{}, err
 	}
 
 	algStr, _ := header["alg"].(string)
@@ -142,38 +115,9 @@ func Verify(ctx context.Context, req VerifyRequest) (VerifiedProof, error) {
 	if err := json.Unmarshal(payload, &claims); err != nil {
 		return VerifiedProof{}, fmt.Errorf("dpop: unmarshal claims: %w", err)
 	}
-	if claims.JTI == "" {
-		return VerifiedProof{}, fmt.Errorf("dpop: jti is required")
-	}
-	if !strings.EqualFold(claims.HTM, req.Method) {
-		return VerifiedProof{}, fmt.Errorf("dpop: htm does not match")
-	}
-	htu, err := url.Parse(claims.HTU)
+	iat, err := validateDPoPClaims(claims, req)
 	if err != nil {
-		return VerifiedProof{}, fmt.Errorf("dpop: malformed htu")
-	}
-	want, err := url.Parse(req.URL)
-	if err != nil {
-		return VerifiedProof{}, fmt.Errorf("dpop: malformed url")
-	}
-	if canonicalURI(htu) != canonicalURI(want) {
-		return VerifiedProof{}, fmt.Errorf("dpop: htu does not match")
-	}
-	if claims.IAT == 0 {
-		return VerifiedProof{}, fmt.Errorf("dpop: iat is required")
-	}
-	iat := time.Unix(claims.IAT, 0)
-	if iat.After(req.Now.Add(req.MaxClockSkew)) {
-		return VerifiedProof{}, fmt.Errorf("dpop: iat is in the future")
-	}
-	if req.Now.Sub(iat) > req.MaxProofAge {
-		return VerifiedProof{}, fmt.Errorf("dpop: proof has expired")
-	}
-
-	if req.RequiredNonce != "" {
-		if subtle.ConstantTimeCompare([]byte(claims.Nonce), []byte(req.RequiredNonce)) != 1 {
-			return VerifiedProof{}, fmt.Errorf("dpop: nonce does not match")
-		}
+		return VerifiedProof{}, err
 	}
 
 	if err := req.Replay.UseOnce(ctx, claims.JTI, iat.Add(req.MaxProofAge)); err != nil {
@@ -185,6 +129,93 @@ func Verify(ctx context.Context, req VerifyRequest) (VerifiedProof, error) {
 		return VerifiedProof{}, fmt.Errorf("dpop: %w", err)
 	}
 	return VerifiedProof{PublicKey: pub, Thumbprint: thumbprint, IssuedAt: iat, Nonce: claims.Nonce}, nil
+}
+
+// validateVerifyRequest checks req's own required fields — split out
+// of Verify purely to keep it under the linter's own cognitive
+// complexity ceiling.
+func validateVerifyRequest(req VerifyRequest) error {
+	if req.Method == "" {
+		return fmt.Errorf("dpop: method is required")
+	}
+	if req.URL == "" {
+		return fmt.Errorf("dpop: url is required")
+	}
+	if req.Now.IsZero() {
+		return fmt.Errorf("dpop: now is required")
+	}
+	if req.MaxProofAge <= 0 {
+		return fmt.Errorf("dpop: max_proof_age must be positive")
+	}
+	if req.Replay == nil {
+		return fmt.Errorf("dpop: replay is required")
+	}
+	return nil
+}
+
+// resolveDPoPProofKey checks header's own "typ" and resolves its own
+// "jwk" member into a usable public key — split out of Verify purely
+// to keep it under the linter's own cognitive complexity ceiling.
+func resolveDPoPProofKey(header map[string]any) (crypto.PublicKey, jwk.JWK, error) {
+	if typ, _ := header["typ"].(string); typ != proofTyp {
+		return nil, jwk.JWK{}, fmt.Errorf("dpop: typ is %q, want %q", header["typ"], proofTyp)
+	}
+	jwkVal, ok := header["jwk"]
+	if !ok {
+		return nil, jwk.JWK{}, fmt.Errorf("dpop: header is missing jwk")
+	}
+	jwkRaw, err := json.Marshal(jwkVal)
+	if err != nil {
+		return nil, jwk.JWK{}, fmt.Errorf("dpop: marshal jwk header: %w", err)
+	}
+	var parsedJWK jwk.JWK
+	if err := json.Unmarshal(jwkRaw, &parsedJWK); err != nil {
+		return nil, jwk.JWK{}, fmt.Errorf("dpop: unmarshal jwk header: %w", err)
+	}
+	pub, err := parsedJWK.PublicKey()
+	if err != nil {
+		return nil, jwk.JWK{}, fmt.Errorf("dpop: jwk header: %w", err)
+	}
+	return pub, parsedJWK, nil
+}
+
+// validateDPoPClaims checks claims against req (jti/htm/htu/iat/nonce)
+// and returns the parsed iat — split out of Verify purely to keep it
+// under the linter's own cognitive complexity ceiling.
+func validateDPoPClaims(claims dpopClaims, req VerifyRequest) (time.Time, error) {
+	if claims.JTI == "" {
+		return time.Time{}, fmt.Errorf("dpop: jti is required")
+	}
+	if !strings.EqualFold(claims.HTM, req.Method) {
+		return time.Time{}, fmt.Errorf("dpop: htm does not match")
+	}
+	htu, err := url.Parse(claims.HTU)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("dpop: malformed htu")
+	}
+	want, err := url.Parse(req.URL)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("dpop: malformed url")
+	}
+	if canonicalURI(htu) != canonicalURI(want) {
+		return time.Time{}, fmt.Errorf("dpop: htu does not match")
+	}
+	if claims.IAT == 0 {
+		return time.Time{}, fmt.Errorf("dpop: iat is required")
+	}
+	iat := time.Unix(claims.IAT, 0)
+	if iat.After(req.Now.Add(req.MaxClockSkew)) {
+		return time.Time{}, fmt.Errorf("dpop: iat is in the future")
+	}
+	if req.Now.Sub(iat) > req.MaxProofAge {
+		return time.Time{}, fmt.Errorf("dpop: proof has expired")
+	}
+	if req.RequiredNonce != "" {
+		if subtle.ConstantTimeCompare([]byte(claims.Nonce), []byte(req.RequiredNonce)) != 1 {
+			return time.Time{}, fmt.Errorf("dpop: nonce does not match")
+		}
+	}
+	return iat, nil
 }
 
 // canonicalURI strips u's own query and fragment (RFC 9449 §4.3: "the
