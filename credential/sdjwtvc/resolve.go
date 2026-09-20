@@ -93,22 +93,31 @@ func resolveMap(m map[string]any, byDigest map[string]Disclosure, usedDigests, s
 		}
 		out[k] = resolved
 	}
+	if err := resolveSDDigests(m, out, byDigest, usedDigests, seenDigests, depth, maxDepth); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
 
+// resolveSDDigests resolves m's own top-level "_sd" array (RFC 9901
+// §4.1.1) into out, in place — split out of resolveMap purely to keep
+// it under the linter's own cognitive complexity ceiling.
+func resolveSDDigests(m, out map[string]any, byDigest map[string]Disclosure, usedDigests, seenDigests map[string]bool, depth, maxDepth int) error {
 	sdRaw, hasSD := m["_sd"]
 	if !hasSD {
-		return out, nil
+		return nil
 	}
 	sdList, ok := sdRaw.([]any)
 	if !ok {
-		return nil, fmt.Errorf("sdjwtvc: _sd is not an array")
+		return fmt.Errorf("sdjwtvc: _sd is not an array")
 	}
 	for _, item := range sdList {
 		digest, ok := item.(string)
 		if !ok {
-			return nil, fmt.Errorf("sdjwtvc: _sd entry is not a string")
+			return fmt.Errorf("sdjwtvc: _sd entry is not a string")
 		}
 		if seenDigests[digest] {
-			return nil, fmt.Errorf("sdjwtvc: digest %s appears more than once in the SD-JWT", digest)
+			return fmt.Errorf("sdjwtvc: digest %s appears more than once in the SD-JWT", digest)
 		}
 		seenDigests[digest] = true
 
@@ -117,19 +126,19 @@ func resolveMap(m map[string]any, byDigest map[string]Disclosure, usedDigests, s
 			continue
 		}
 		if d.IsArrayElement() {
-			return nil, fmt.Errorf("sdjwtvc: disclosure for digest %s is an array-element disclosure but was embedded in an object's _sd", digest)
+			return fmt.Errorf("sdjwtvc: disclosure for digest %s is an array-element disclosure but was embedded in an object's _sd", digest)
 		}
 		if _, exists := out[d.Name]; exists {
-			return nil, fmt.Errorf("sdjwtvc: claim %q already exists at this level", d.Name)
+			return fmt.Errorf("sdjwtvc: claim %q already exists at this level", d.Name)
 		}
 		usedDigests[digest] = true
 		resolvedValue, err := resolveValue(d.Value, byDigest, usedDigests, seenDigests, depth+1, maxDepth)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		out[d.Name] = resolvedValue
 	}
-	return out, nil
+	return nil
 }
 
 func resolveArray(arr []any, byDigest map[string]Disclosure, usedDigests, seenDigests map[string]bool, depth, maxDepth int) ([]any, error) {

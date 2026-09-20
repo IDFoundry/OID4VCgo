@@ -28,14 +28,7 @@ import "github.com/fxamacker/cbor/v2"
 // index-aligned with the trimmed NameSpaces, something only this
 // package can do since rawItems is private.
 func (s IssuerSigned) SelectNameSpaces(paths [][2]string) IssuerSigned {
-	wanted := make(map[string]map[string]bool, len(paths))
-	for _, p := range paths {
-		namespace, element := p[0], p[1]
-		if wanted[namespace] == nil {
-			wanted[namespace] = make(map[string]bool)
-		}
-		wanted[namespace][element] = true
-	}
+	wanted := wantedElementsByNamespace(paths)
 
 	nameSpaces := make(map[string][]IssuerSignedItem, len(s.NameSpaces))
 	rawItems := make(map[string][]cbor.RawMessage, len(s.rawItems))
@@ -44,18 +37,7 @@ func (s IssuerSigned) SelectNameSpaces(paths [][2]string) IssuerSigned {
 		if len(elements) == 0 {
 			continue
 		}
-		cached := s.rawItems[namespace]
-		keptItems := make([]IssuerSignedItem, 0, len(items))
-		keptRaw := make([]cbor.RawMessage, 0, len(items))
-		for i, item := range items {
-			if !elements[item.ElementIdentifier] {
-				continue
-			}
-			keptItems = append(keptItems, item)
-			if i < len(cached) {
-				keptRaw = append(keptRaw, cached[i])
-			}
-		}
+		keptItems, keptRaw := selectNamespaceItems(items, s.rawItems[namespace], elements)
 		if len(keptItems) == 0 {
 			continue
 		}
@@ -69,4 +51,39 @@ func (s IssuerSigned) SelectNameSpaces(paths [][2]string) IssuerSigned {
 		}
 	}
 	return IssuerSigned{NameSpaces: nameSpaces, IssuerAuth: s.IssuerAuth, rawItems: rawItems}
+}
+
+// wantedElementsByNamespace groups paths (each a [namespace, element]
+// pair) into a namespace -> set-of-wanted-elements map — split out of
+// SelectNameSpaces purely to keep it under the linter's own cognitive
+// complexity ceiling.
+func wantedElementsByNamespace(paths [][2]string) map[string]map[string]bool {
+	wanted := make(map[string]map[string]bool, len(paths))
+	for _, p := range paths {
+		namespace, element := p[0], p[1]
+		if wanted[namespace] == nil {
+			wanted[namespace] = make(map[string]bool)
+		}
+		wanted[namespace][element] = true
+	}
+	return wanted
+}
+
+// selectNamespaceItems filters items to only the named elements,
+// keeping cached's own index-aligned raw bytes wherever available —
+// split out of SelectNameSpaces purely to keep it under the linter's
+// own cognitive complexity ceiling.
+func selectNamespaceItems(items []IssuerSignedItem, cached []cbor.RawMessage, elements map[string]bool) ([]IssuerSignedItem, []cbor.RawMessage) {
+	keptItems := make([]IssuerSignedItem, 0, len(items))
+	keptRaw := make([]cbor.RawMessage, 0, len(items))
+	for i, item := range items {
+		if !elements[item.ElementIdentifier] {
+			continue
+		}
+		keptItems = append(keptItems, item)
+		if i < len(cached) {
+			keptRaw = append(keptRaw, cached[i])
+		}
+	}
+	return keptItems, keptRaw
 }
