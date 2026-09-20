@@ -192,6 +192,85 @@ type moduleResult struct {
 	err      error
 }
 
+// generateWalletVPFixtures generates every piece of throwaway key
+// material and certificate this run needs (TLS listener cert, a
+// dedicated Credential Issuer signer+cert+CA, and a holder key),
+// returning the resulting generatedConfig plus the issuer CA
+// certificate separately, since the suite-side plan config needs it
+// directly too — split out of main purely to keep it under the
+// linter's own cognitive complexity ceiling.
+func generateWalletVPFixtures() (cfg generatedConfig, issuerCACertPEM string, err error) {
+	tlsCertPEM, tlsKeyPEM, err := conformancecert.SelfSignedPEM("conformance-wallet-vp", []string{"conformance-wallet-vp", "localhost"})
+	if err != nil {
+		return generatedConfig{}, "", fmt.Errorf("generate tls cert: %w", err)
+	}
+	_, issuerKeyPEM, issuerCertPEM, issuerCACertPEM, err := conformancecert.GenerateSignerAndCert(
+		"conformance-wallet-vp-credential-issuer", "conformance-wallet-vp-credential-issuer-ca")
+	if err != nil {
+		return generatedConfig{}, "", fmt.Errorf("generate credential issuer key/certificate: %w", err)
+	}
+	holderKeyPEM, err := conformancecert.GenerateECKeyPEM()
+	if err != nil {
+		return generatedConfig{}, "", fmt.Errorf("generate holder key: %w", err)
+	}
+
+	cfg = generatedConfig{
+		ListenAddr:                     ":8443",
+		TLSCertificatePEM:              tlsCertPEM,
+		TLSPrivateKeyPEM:               tlsKeyPEM,
+		CredentialIssuerPrivateKeyPEM:  issuerKeyPEM,
+		CredentialIssuerCertificatePEM: issuerCertPEM,
+		HolderPrivateKeyPEM:            holderKeyPEM,
+		VCT:                            "urn:eudi:pid:1",
+		Claims:                         map[string]string{"given_name": "Jean", "family_name": "Dupont"},
+	}
+	return cfg, issuerCACertPEM, nil
+}
+
+// writeConfigAndMaybeRestart writes cfg to configOutPath and, unless
+// skipDockerRestart, restarts the conformance-wallet-vp container and
+// waits for it to come back up — split out of main purely to keep it
+// under the linter's own cognitive complexity ceiling.
+func writeConfigAndMaybeRestart(cfg generatedConfig, httpClient *http.Client, walletVPBase string, skipDockerRestart bool) error {
+	cfgRaw, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal config: %w", err)
+	}
+	if err := os.WriteFile(configOutPath, cfgRaw, 0o600); err != nil {
+		return fmt.Errorf("write %s: %w", configOutPath, err)
+	}
+	log.Printf("wrote %s", configOutPath)
+
+	if skipDockerRestart {
+		return nil
+	}
+	if err := restartContainer(); err != nil {
+		return fmt.Errorf("restart conformance-wallet-vp container: %w", err)
+	}
+	log.Print("restarted conformance-wallet-vp container, waiting for it to come up")
+	if err := waitReady(httpClient, walletVPBase); err != nil {
+		return fmt.Errorf("wait for conformance-wallet-vp: %w", err)
+	}
+	return nil
+}
+
+// moduleResultExpected reports whether res's own outcome matches what
+// this script's own combined-summary grading expects — split out of
+// main purely to keep it under the linter's own cognitive complexity
+// ceiling.
+func moduleResultExpected(res moduleResult) bool {
+	if res.err != nil {
+		return false
+	}
+	if res.localOK && res.result != "PASSED" && res.result != "WARNING" && res.result != "REVIEW" {
+		return false
+	}
+	if !res.localOK && res.result != "REVIEW" && res.result != "PASSED" {
+		return false
+	}
+	return true
+}
+
 func main() {
 	apiBase := flag.String("suite", "https://localhost:8443/", "OIDF conformance suite base URL")
 	walletVPBase := flag.String("walletvp-base", "https://localhost:19447", "cmd/conformance-wallet-vp's own host-published base URL")
@@ -202,47 +281,12 @@ func main() {
 
 	httpClient := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}} //nolint:gosec // local conformance suite, self-signed certs throughout
 
-	tlsCertPEM, tlsKeyPEM, err := conformancecert.SelfSignedPEM("conformance-wallet-vp", []string{"conformance-wallet-vp", "localhost"})
+	cfg, issuerCACertPEM, err := generateWalletVPFixtures()
 	if err != nil {
-		log.Fatalf("generate tls cert: %v", err)
+		log.Fatalf("%v", err)
 	}
-	_, issuerKeyPEM, issuerCertPEM, issuerCACertPEM, err := conformancecert.GenerateSignerAndCert(
-		"conformance-wallet-vp-credential-issuer", "conformance-wallet-vp-credential-issuer-ca")
-	if err != nil {
-		log.Fatalf("generate credential issuer key/certificate: %v", err)
-	}
-	holderKeyPEM, err := conformancecert.GenerateECKeyPEM()
-	if err != nil {
-		log.Fatalf("generate holder key: %v", err)
-	}
-
-	cfg := generatedConfig{
-		ListenAddr:                     ":8443",
-		TLSCertificatePEM:              tlsCertPEM,
-		TLSPrivateKeyPEM:               tlsKeyPEM,
-		CredentialIssuerPrivateKeyPEM:  issuerKeyPEM,
-		CredentialIssuerCertificatePEM: issuerCertPEM,
-		HolderPrivateKeyPEM:            holderKeyPEM,
-		VCT:                            "urn:eudi:pid:1",
-		Claims:                         map[string]string{"given_name": "Jean", "family_name": "Dupont"},
-	}
-	cfgRaw, err := json.MarshalIndent(cfg, "", "  ")
-	if err != nil {
-		log.Fatalf("marshal config: %v", err)
-	}
-	if err := os.WriteFile(configOutPath, cfgRaw, 0o600); err != nil {
-		log.Fatalf("write %s: %v", configOutPath, err)
-	}
-	log.Printf("wrote %s", configOutPath)
-
-	if !*skipDockerRestart {
-		if err := restartContainer(); err != nil {
-			log.Fatalf("restart conformance-wallet-vp container: %v", err)
-		}
-		log.Print("restarted conformance-wallet-vp container, waiting for it to come up")
-		if err := waitReady(httpClient, *walletVPBase); err != nil {
-			log.Fatalf("wait for conformance-wallet-vp: %v", err)
-		}
+	if err := writeConfigAndMaybeRestart(cfg, httpClient, *walletVPBase, *skipDockerRestart); err != nil {
+		log.Fatalf("%v", err)
 	}
 
 	clientJWK, err := generateClientJWK()
@@ -292,16 +336,7 @@ func main() {
 	log.Print("=== summary ===")
 	allExpected := true
 	for _, res := range results {
-		expected := res.err == nil
-		if expected {
-			if res.localOK && (res.result != "PASSED" && res.result != "WARNING" && res.result != "REVIEW") {
-				expected = false
-			}
-			if !res.localOK && res.result != "REVIEW" && res.result != "PASSED" {
-				expected = false
-			}
-		}
-		if !expected {
+		if !moduleResultExpected(res) {
 			allExpected = false
 		}
 		log.Printf("%-70s localOK=%-5v %s=%s %v", res.testName, res.localOK, res.status, res.result, res.err)
