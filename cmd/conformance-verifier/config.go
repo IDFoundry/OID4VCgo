@@ -79,6 +79,17 @@ type Config struct {
 	Doctype    string   `json:"doctype"`
 	Namespace  string   `json:"namespace"`
 	MdocClaims []string `json:"mdoc_claims"`
+
+	// MdocTrustAnchorPEM is the mdoc IACA root certificate this binary
+	// trusts to verify a presented "mso_mdoc" credential's own
+	// IssuerAuth x5chain — the suite's own well-known, fixed
+	// "certification.openid.net" test root (confirmed live by decoding
+	// a real DeviceResponse's own x5chain; served at the suite's own
+	// GET /mdoc-iaca-root.pem, which
+	// internal/conformanceverifier.fetchMdocIACARootPEM fetches when
+	// generating this config), never a per-run/per-candidate value.
+	// REQUIRED when CredentialFormat is "mso_mdoc"; ignored otherwise.
+	MdocTrustAnchorPEM string `json:"mdoc_trust_anchor_pem"`
 }
 
 func loadConfig(path string) (Config, error) {
@@ -117,6 +128,9 @@ func loadConfig(path string) (Config, error) {
 		if len(cfg.MdocClaims) == 0 {
 			return Config{}, fmt.Errorf("config: mdoc_claims must be non-empty")
 		}
+		if err := conformancecert.RequireNonEmpty("mdoc_trust_anchor_pem", cfg.MdocTrustAnchorPEM); err != nil {
+			return Config{}, err
+		}
 	default:
 		return Config{}, fmt.Errorf("config: unsupported credential_format %q", cfg.CredentialFormat)
 	}
@@ -142,4 +156,14 @@ func (c Config) clientCertificateAndKey() (*x509.Certificate, *ecdsa.PrivateKey,
 		return nil, nil, fmt.Errorf("client_private_key_pem: %w", err)
 	}
 	return cert, key, nil
+}
+
+// mdocTrustAnchorPool parses MdocTrustAnchorPEM into the *x509.CertPool
+// verifier.X5ChainIssuerKeyResolver needs as its own Roots.
+func (c Config) mdocTrustAnchorPool() (*x509.CertPool, error) {
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM([]byte(c.MdocTrustAnchorPEM)) {
+		return nil, fmt.Errorf("mdoc_trust_anchor_pem: no certificate found")
+	}
+	return pool, nil
 }

@@ -284,6 +284,36 @@ func TestVerify_KeyBindingMaxAge(t *testing.T) {
 	}
 }
 
+// TestVerify_KeyBindingIatInFuture proves MaxKeyBindingAge's freshness
+// check rejects a Key Binding JWT whose iat is too far in the future,
+// not just too far in the past — found live against the OIDF
+// conformance suite's own kb-jwt-iat-in-future negative test, which a
+// purely past-looking "age > MaxAge" check silently accepted (a
+// negative age is never greater than a positive MaxAge). Mirrors
+// TestVerify_KeyBindingMaxAge's own technique in reverse: the KB-JWT
+// is genuinely signed at the real time.Now(), and Now is set back
+// instead, making that real signing instant look MaxKeyBindingAge in
+// the future relative to "verification time."
+func TestVerify_KeyBindingIatInFuture(t *testing.T) {
+	issuerKey := testKey(t)
+	holderKey := testKey(t)
+	presentation := newKeyBoundSDJWTVCPresentation(t, issuerKey, holderKey, "aud", "n")
+
+	past := func() time.Time { return time.Now().Add(-2 * time.Hour) }
+	_, _, err := Verify(presentation, &issuerKey.PublicKey, jose.ES256, VerifyOptions{
+		RequireKeyBinding: KeyBindingRequired,
+		HolderPublicKey:   &holderKey.PublicKey,
+		KeyBindingAlg:     jose.ES256,
+		ExpectedAudience:  "aud",
+		ExpectedNonce:     "n",
+		MaxKeyBindingAge:  time.Hour,
+		Now:               past,
+	})
+	if err == nil {
+		t.Errorf("Verify accepted a key binding JWT whose iat is in the future relative to verification time")
+	}
+}
+
 // TestVerify_RequiresMaxKeyBindingAge proves MaxKeyBindingAge's zero
 // value is rejected outright rather than silently disabling the Key
 // Binding JWT freshness check (see KeyBindingCheck.MaxAge's own doc

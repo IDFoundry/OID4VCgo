@@ -43,6 +43,14 @@ func main() {
 	if err != nil {
 		log.Fatalf("credential issuer jwk: %v", err)
 	}
+	var mdocIssuerKeys verifier.MdocIssuerKeyResolver
+	if cfg.CredentialFormat == "mso_mdoc" {
+		mdocTrustAnchorPool, poolErr := cfg.mdocTrustAnchorPool()
+		if poolErr != nil {
+			log.Fatalf("mdoc trust anchor: %v", poolErr)
+		}
+		mdocIssuerKeys = verifier.X5ChainIssuerKeyResolver{Roots: mdocTrustAnchorPool}
+	}
 	responseURI, err := fapi.ParseEndpointURL(cfg.BaseURL + "/response")
 	if err != nil {
 		log.Fatalf("response_uri: %v", err)
@@ -63,7 +71,7 @@ func main() {
 	}
 	log.Printf("verifier client_id: %s", v.ClientID())
 
-	srv := &server{cfg: cfg, v: v, sessions: newSessionStore(), issuerKeys: issuerKeys}
+	srv := &server{cfg: cfg, v: v, sessions: newSessionStore(), issuerKeys: issuerKeys, mdocIssuerKeys: mdocIssuerKeys}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /authorize", srv.handleAuthorize)

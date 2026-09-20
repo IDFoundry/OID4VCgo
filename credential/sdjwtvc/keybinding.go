@@ -56,7 +56,13 @@ type KeyBindingCheck struct {
 	ExpectedSDHash   string
 
 	// MaxAge rejects a Key Binding JWT whose iat is further than MaxAge
-	// in the past (RFC 9901 §7.3 step 5.e). Now defaults to time.Now.
+	// from now, in EITHER direction — too far in the past (RFC 9901
+	// §7.3 step 5.e) or claiming to be issued in the future (a
+	// forward-dated iat is just as clearly not "the current time" as a
+	// stale one; confirmed live against the OIDF conformance suite's
+	// own kb-jwt-iat-in-future negative test that a purely
+	// past-looking check silently accepts it — a negative "age" is
+	// never greater than a positive MaxAge). Now defaults to time.Now.
 	// REQUIRED (must be positive): VerifyKeyBindingJWT rejects the Go
 	// zero value rather than silently treating "unset" as "no
 	// freshness check at all" — a caller that left this unset would
@@ -109,7 +115,14 @@ func VerifyKeyBindingJWT(kbJWT string, holderPub crypto.PublicKey, alg jose.Alg,
 		now = check.Now
 	}
 	issued := time.Unix(int64(iat), 0)
-	if age := now().Sub(issued); age > check.MaxAge {
+	age := now().Sub(issued)
+	if age < 0 {
+		if -age > check.MaxAge {
+			return nil, fmt.Errorf("sdjwtvc: key binding JWT iat is too far in the future (issued %s from now)", -age)
+		}
+		return claims, nil
+	}
+	if age > check.MaxAge {
 		return nil, fmt.Errorf("sdjwtvc: key binding JWT is too old (issued %s ago)", age)
 	}
 	return claims, nil
