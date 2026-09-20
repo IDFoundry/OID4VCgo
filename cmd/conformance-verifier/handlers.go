@@ -20,6 +20,16 @@ const sessionIDEntropyBytes = 16
 
 const contentTypeHeader = "Content-Type"
 
+// maxKeyBindingAge is this binary's own Key Binding JWT freshness
+// policy (verifier.VerifyResponseRequest.MaxKeyBindingAge) — not a
+// spec-mandated value (OID4VP/HAIP leave the exact bound to each
+// Verifier's own policy, the same way a nonce/clock-skew window is a
+// relying party's own choice), just a generous bound relative to how
+// quickly this binary's own session lifecycle actually completes
+// (request_uri fetch through direct_post.jwt response, all within one
+// suite-driven module run, always well under a minute).
+const maxKeyBindingAge = 5 * time.Minute
+
 func newSessionID() (string, error) {
 	buf := make([]byte, sessionIDEntropyBytes)
 	if _, err := rand.Read(buf); err != nil {
@@ -30,10 +40,11 @@ func newSessionID() (string, error) {
 
 // server bundles the dependencies every handler needs.
 type server struct {
-	cfg        Config
-	v          *verifier.Verifier
-	sessions   *sessionStore
-	issuerKeys verifier.SDJWTVCIssuerKeyResolver
+	cfg            Config
+	v              *verifier.Verifier
+	sessions       *sessionStore
+	issuerKeys     verifier.SDJWTVCIssuerKeyResolver
+	mdocIssuerKeys verifier.MdocIssuerKeyResolver
 }
 
 // buildQuery constructs the DCQL query every session asks — a single
@@ -202,7 +213,9 @@ func (s *server) handleResponse(w http.ResponseWriter, r *http.Request) {
 	} else {
 		result, err := s.v.VerifyResponse(r.Context(), verifier.VerifyResponseRequest{
 			Query: matched.query, Response: parsed, ExpectedNonce: matched.nonce,
-			IssuerKeys: s.issuerKeys,
+			IssuerKeys: s.issuerKeys, MdocIssuerKeys: s.mdocIssuerKeys,
+			ResponseEncryptionKey: matched.decryptionKey,
+			MaxKeyBindingAge:      maxKeyBindingAge,
 		})
 		if err != nil {
 			matched.failErr = err

@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -75,6 +76,7 @@ type Config struct {
 	Doctype              string          `json:"doctype,omitempty"`
 	Namespace            string          `json:"namespace,omitempty"`
 	MdocClaims           []string        `json:"mdoc_claims,omitempty"`
+	MdocTrustAnchorPEM   string          `json:"mdoc_trust_anchor_pem,omitempty"`
 }
 
 // KeyMaterial is everything GenerateKeyMaterial produces: a caller
@@ -413,6 +415,13 @@ func Setup(params SetupParams) (SetupResult, error) {
 	if params.Configure != nil {
 		params.Configure(&km.Config)
 	}
+	if km.Config.CredentialFormat == "mso_mdoc" {
+		mdocTrustAnchorPEM, fetchErr := fetchMdocIACARootPEM(httpClient, *params.Flags.APIBase)
+		if fetchErr != nil {
+			return SetupResult{}, fmt.Errorf("fetch mdoc iaca root: %w", fetchErr)
+		}
+		km.Config.MdocTrustAnchorPEM = mdocTrustAnchorPEM
+	}
 	if err := WriteConfig(km.Config); err != nil {
 		return SetupResult{}, fmt.Errorf("write config: %w", err)
 	}
@@ -448,4 +457,31 @@ func Setup(params SetupParams) (SetupResult, error) {
 	log.Printf("plan detail: %splan-detail.html?plan=%s", *params.Flags.APIBase, planID)
 
 	return SetupResult{HTTPClient: httpClient, PlanID: planID}, nil
+}
+
+// fetchMdocIACARootPEM fetches the suite's own well-known mdoc IACA
+// root certificate — GET {apiBase}mdoc-iaca-root.pem, confirmed live
+// (decoding a real "mso_mdoc" DeviceResponse's own IssuerAuth x5chain)
+// to be a fixed, suite-wide constant ("certification.openid.net"),
+// never a per-run/per-candidate value — served specifically so
+// implementations under test can configure it as a trust anchor (see
+// the suite's own MdocIacaRootEndpoint.java doc comment: "Implementations
+// under test should configure this certificate as a trust anchor").
+// Every mso_mdoc credential the suite emulates, whether playing Wallet
+// (this role, Verifier tests) or Issuer (the Wallet role's own tests),
+// signs under a Document Signer chaining to this one root.
+func fetchMdocIACARootPEM(httpClient *http.Client, apiBase string) (string, error) {
+	resp, err := httpClient.Get(apiBase + "mdoc-iaca-root.pem") //nolint:gosec,noctx // apiBase is the operator's own -suite flag value, not attacker-controlled
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("GET %smdoc-iaca-root.pem: status %d: %s", apiBase, resp.StatusCode, body)
+	}
+	return string(body), nil
 }

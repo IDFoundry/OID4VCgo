@@ -65,6 +65,7 @@ func TestLoadConfig_RejectsMissingRequiredFields(t *testing.T) {
 
 func mdocTestConfig(t *testing.T) Config {
 	t.Helper()
+	trustAnchorPEM, _ := testPEMCertAndKey(t)
 	cfg := baseTestConfig(t)
 	cfg.CredentialFormat = "mso_mdoc"
 	cfg.VCT = ""
@@ -72,6 +73,7 @@ func mdocTestConfig(t *testing.T) Config {
 	cfg.Doctype = "org.iso.18013.5.1.mDL"
 	cfg.Namespace = "org.iso.18013.5.1"
 	cfg.MdocClaims = []string{"given_name", "family_name"}
+	cfg.MdocTrustAnchorPEM = trustAnchorPEM
 	return cfg
 }
 
@@ -88,9 +90,10 @@ func TestLoadConfig_MdocRoundTrips(t *testing.T) {
 
 func TestLoadConfig_RejectsMissingMdocFields(t *testing.T) {
 	cases := map[string]func(*Config){
-		"doctype":     func(c *Config) { c.Doctype = "" },
-		"namespace":   func(c *Config) { c.Namespace = "" },
-		"mdoc_claims": func(c *Config) { c.MdocClaims = nil },
+		"doctype":               func(c *Config) { c.Doctype = "" },
+		"namespace":             func(c *Config) { c.Namespace = "" },
+		"mdoc_claims":           func(c *Config) { c.MdocClaims = nil },
+		"mdoc_trust_anchor_pem": func(c *Config) { c.MdocTrustAnchorPEM = "" },
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
