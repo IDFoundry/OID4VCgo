@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"time"
 
 	"github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/attestation"
@@ -197,17 +198,9 @@ func (iss *Issuer) resolveAttestationProofKeys(ctx context.Context, values []str
 	var keys []resolvedKey
 
 	for i, raw := range values {
-		parsed, err := attestation.Parse(raw)
+		verified, err := iss.verifyOneAttestation(ctx, raw, i, now)
 		if err != nil {
-			return nil, newError(ErrorInvalidProof, 400, fmt.Sprintf("attestation %d is malformed", i), err)
-		}
-		pub, alg, err := iss.deps.AttestationVerifier.ResolveAttestationKey(ctx, parsed)
-		if err != nil {
-			return nil, newError(ErrorInvalidProof, 400, fmt.Sprintf("attestation %d: resolve trust key", i), err)
-		}
-		verified, err := parsed.Verify(pub, alg, attestation.VerifyOptions{Now: now})
-		if err != nil {
-			return nil, newError(ErrorInvalidProof, 400, fmt.Sprintf("attestation %d: verification failed", i), err)
+			return nil, err
 		}
 
 		if nonceRequired {
@@ -224,20 +217,53 @@ func (iss *Issuer) resolveAttestationProofKeys(ctx context.Context, values []str
 			}
 		}
 
-		for j, attestedKeyRaw := range verified.AttestedKeys {
-			if len(keys) >= maxKeys {
-				return nil, newError(ErrorInvalidProof, 400,
-					fmt.Sprintf("attestation %d: attested_keys would yield more resolved keys than this issuer's own batch_size (%d) across the request", i, maxKeys), nil)
-			}
-			attestedPub, err := jwk.ParsePublicKey(attestedKeyRaw)
-			if err != nil {
-				return nil, newError(ErrorInvalidProof, 400, fmt.Sprintf("attestation %d: attested_keys[%d]: parse jwk", i, j), err)
-			}
-			keys = append(keys, resolvedKey{Public: attestedPub, JWKRaw: json.RawMessage(attestedKeyRaw)})
+		keys, err = appendAttestedKeys(keys, verified, i, maxKeys)
+		if err != nil {
+			return nil, err
 		}
 	}
 	if len(keys) == 0 {
 		return nil, newError(ErrorInvalidProof, 400, "no attested keys were found", nil)
+	}
+	return keys, nil
+}
+
+// verifyOneAttestation parses and verifies one Key Attestation JWT
+// (its signature, against the trust key Dependencies.AttestationVerifier
+// resolves) — split out of resolveAttestationProofKeys purely to keep
+// it under the linter's own cognitive complexity ceiling.
+func (iss *Issuer) verifyOneAttestation(ctx context.Context, raw string, i int, now time.Time) (attestation.VerifiedClaims, error) {
+	parsed, err := attestation.Parse(raw)
+	if err != nil {
+		return attestation.VerifiedClaims{}, newError(ErrorInvalidProof, 400, fmt.Sprintf("attestation %d is malformed", i), err)
+	}
+	pub, alg, err := iss.deps.AttestationVerifier.ResolveAttestationKey(ctx, parsed)
+	if err != nil {
+		return attestation.VerifiedClaims{}, newError(ErrorInvalidProof, 400, fmt.Sprintf("attestation %d: resolve trust key", i), err)
+	}
+	verified, err := parsed.Verify(pub, alg, attestation.VerifyOptions{Now: now})
+	if err != nil {
+		return attestation.VerifiedClaims{}, newError(ErrorInvalidProof, 400, fmt.Sprintf("attestation %d: verification failed", i), err)
+	}
+	return verified, nil
+}
+
+// appendAttestedKeys appends one resolvedKey per entry in verified's
+// own attested_keys claim to keys, enforcing maxKeys as a running total
+// across every attestation in the request — split out of
+// resolveAttestationProofKeys purely to keep it under the linter's own
+// cognitive complexity ceiling.
+func appendAttestedKeys(keys []resolvedKey, verified attestation.VerifiedClaims, i, maxKeys int) ([]resolvedKey, error) {
+	for j, attestedKeyRaw := range verified.AttestedKeys {
+		if len(keys) >= maxKeys {
+			return nil, newError(ErrorInvalidProof, 400,
+				fmt.Sprintf("attestation %d: attested_keys would yield more resolved keys than this issuer's own batch_size (%d) across the request", i, maxKeys), nil)
+		}
+		attestedPub, err := jwk.ParsePublicKey(attestedKeyRaw)
+		if err != nil {
+			return nil, newError(ErrorInvalidProof, 400, fmt.Sprintf("attestation %d: attested_keys[%d]: parse jwk", i, j), err)
+		}
+		keys = append(keys, resolvedKey{Public: attestedPub, JWKRaw: json.RawMessage(attestedKeyRaw)})
 	}
 	return keys, nil
 }
