@@ -15,7 +15,11 @@ import (
 // defaults" stance issuer.Config takes.
 type Config struct {
 	// ProofSigningAlg is the JOSE algorithm this Wallet signs jwt-type
-	// key proofs with (Appendix F.1). REQUIRED.
+	// key proofs with (Appendix F.1). REQUIRED. Set it from the root
+	// oid4vci package's own ES256/EdDSA constants rather than a bare
+	// string literal — jose.Alg itself lives in an unexported internal
+	// package, so those are the only named, typo-checked values an
+	// external caller has to reference.
 	ProofSigningAlg jose.Alg
 
 	// Fetch bounds this Wallet's own unauthenticated HTTP calls — a

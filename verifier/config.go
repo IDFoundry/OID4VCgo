@@ -37,7 +37,11 @@ type Config struct {
 	// with — HAIP §7 requires ES256 support from every entity for
 	// "signed presentation requests", so ES256 is the natural
 	// default; internal/jose also supports EdDSA if a deployment
-	// needs it. REQUIRED.
+	// needs it. REQUIRED. Set it from the root oid4vci package's own
+	// ES256/EdDSA constants rather than a bare string literal —
+	// jose.Alg itself lives in an unexported internal package, so
+	// those are the only named, typo-checked values an external
+	// caller has to reference.
 	SigningAlg jose.Alg
 
 	// EncValuesSupported is this Verifier's own
