@@ -55,6 +55,32 @@ go get github.com/idfoundry/oid4vcgo
 *(Go module paths are lowercased; the GitHub repository itself is
 [IDFoundry/OID4VCgo](https://github.com/IDFoundry/OID4VCgo).)*
 
+## Usage
+
+Each role package's own doc comment (`go doc github.com/idfoundry/oid4vcgo/issuer`,
+`.../wallet`, `.../verifier`, or [pkg.go.dev][pkgdev]) is the primary
+API reference — it documents what's implemented, what's deliberately
+out of scope, and the boundary with `fapigo/server`/`fapigo/client` for
+everything OAuth 2.0/FAPI 2.0-level. Runnable `Example` functions (e.g.
+`wallet.ExampleWallet_FetchAuthorizationRequest`) cover specific gaps
+between packages — like fetching a Verifier's `request_uri` before
+handing it to `wallet.ParseAuthorizationRequest` — that aren't obvious
+from either package's own doc comment alone; `go test` runs and checks
+these automatically, so they can't silently drift from the real API.
+
+For a complete, real integration, see the four `cmd/conformance-*`
+binaries under `conformance/`: each pairs this library's own role
+package (`issuer`, `wallet`, `verifier`) with real HTTP and, where
+applicable, a real `fapigo/server`/`fapigo/client`, and each has been
+run live against a real OIDF conformance suite instance (see
+[ARCHITECTURE.md](ARCHITECTURE.md) and each binary's own
+`conformance/<role>/README.md` for what was verified). They're a
+better model for a real deployment's wiring than the package tests
+alone, which exercise each function in isolation rather than a full
+request/response cycle over the network.
+
+[pkgdev]: https://pkg.go.dev/github.com/idfoundry/oid4vcgo
+
 ## Relevant specifications
 
 - [OpenID for Verifiable Credential Issuance 1.0][oid4vci]

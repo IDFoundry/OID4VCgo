@@ -16,6 +16,7 @@ import (
 	fapi "github.com/idfoundry/fapigo"
 	"github.com/idfoundry/fapigo/fapihttp"
 
+	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/dcql"
 	"github.com/idfoundry/oid4vcgo/internal/jwe"
 	"github.com/idfoundry/oid4vcgo/verifier"
@@ -69,9 +70,9 @@ func ExampleWallet_FetchAuthorizationRequest() {
 	v, err := verifier.New(verifier.Config{
 		ClientCertificate:  clientCert,
 		ResponseURI:        responseURI,
-		SigningAlg:         "ES256",
+		SigningAlg:         oid4vci.ES256,
 		EncValuesSupported: []jwe.Enc{jwe.A128GCM},
-		VPFormatsSupported: verifier.SDJWTVCFormatSupport([]string{"ES256"}, []string{"ES256"}),
+		VPFormatsSupported: verifier.SDJWTVCFormatSupport([]string{oid4vci.ES256}, []string{oid4vci.ES256}),
 	}, verifier.Dependencies{Signer: clientKey, Random: rand.Reader})
 	if err != nil {
 		fmt.Println("verifier.New:", err)
@@ -100,7 +101,7 @@ func ExampleWallet_FetchAuthorizationRequest() {
 
 	// --- The Wallet side: everything a real integration needs.
 	w, err := wallet.New(wallet.Config{
-		ProofSigningAlg: "ES256",
+		ProofSigningAlg: oid4vci.ES256,
 		Fetch: fapihttp.Config{
 			MaxResponseBytes: 1 << 20, RequestTimeout: 5 * time.Second,
 			// httptest.Server listens on 127.0.0.1 — a real deployment

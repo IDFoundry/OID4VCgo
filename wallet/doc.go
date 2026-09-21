@@ -141,9 +141,17 @@
 // incoming redirect-flow Authorization Request and build its encrypted
 // direct_post.jwt response — the exact mirror image of verifier's own
 // BuildAuthorizationRequest/ParseDirectPostJWTResponse. Both functions
-// are pure (no HTTP): fetching request_uri and POSTing the response
-// are the caller's own job, the same split verifier draws on its side.
-// Only the "x509_hash" Client Identifier Prefix is supported (HAIP's
-// own mandate, and the only one verifier itself produces) — no DC API
-// flow, no other client_id scheme, no di_vp presentations.
+// are pure (no HTTP): POSTing the response is always the caller's own
+// job, the same split verifier draws on its side. Fetching request_uri
+// is the one HTTP step this package does offer a default for —
+// (*Wallet).FetchAuthorizationRequest performs §5.10's plain GET using
+// this Wallet's own hardened fapihttp.Client and hands the result
+// straight to ParseAuthorizationRequest; a caller wanting §5.10's
+// OPTIONAL POST+wallet_nonce variant instead calls
+// ParseAuthorizationRequest directly against its own fetch (see
+// FetchAuthorizationRequest's own doc comment for why that variant
+// isn't built in). Only the "x509_hash" Client Identifier Prefix is
+// supported (HAIP's own mandate, and the only one verifier itself
+// produces) — no DC API flow, no other client_id scheme, no di_vp
+// presentations.
 package wallet

@@ -181,7 +181,13 @@ func (f ClockFunc) Now() time.Time { return f() }
 // credential/sdjwtvc.CredentialFormat ("dc+sd-jwt") credentials.
 type SDJWTSigner struct {
 	Signer crypto.Signer
-	Alg    jose.Alg
+
+	// Alg is the JOSE algorithm Signer signs with. Set it from the
+	// root oid4vci package's own ES256/EdDSA constants rather than a
+	// bare string literal — jose.Alg itself lives in an unexported
+	// internal package, so those are the only named, typo-checked
+	// values an external caller has to reference.
+	Alg jose.Alg
 
 	// KeyID optionally sets the JOSE "kid" header on issued credentials.
 	KeyID string
