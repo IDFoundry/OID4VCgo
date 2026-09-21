@@ -614,6 +614,11 @@ func TestNewRejectsInvalidPreAuthorizedCodeDependencies(t *testing.T) {
 			cfg.Limits.AccessTokenLifetime, cfg.Limits.MaxTxCodeAttempts = 5*time.Minute, 3
 			d.PreAuthorizedCodes, d.DPoPReplay, d.AccessTokens = newFakePreAuthorizedCodeStore(), newFakeDPoPReplayChecker(), &fakeAccessTokenIssuer{}
 		},
+		"negative max_dpop_clock_skew": func(cfg *issuer.Config, d *issuer.Dependencies) {
+			cfg.Limits.AccessTokenLifetime, cfg.Limits.MaxDPoPProofAge, cfg.Limits.MaxTxCodeAttempts = 5*time.Minute, time.Minute, 3
+			cfg.Limits.MaxDPoPClockSkew = -time.Second
+			d.PreAuthorizedCodes, d.DPoPReplay, d.AccessTokens = newFakePreAuthorizedCodeStore(), newFakeDPoPReplayChecker(), &fakeAccessTokenIssuer{}
+		},
 		"missing max_tx_code_attempts": func(cfg *issuer.Config, d *issuer.Dependencies) {
 			cfg.Limits.AccessTokenLifetime, cfg.Limits.MaxDPoPProofAge = 5*time.Minute, time.Minute
 			d.PreAuthorizedCodes, d.DPoPReplay, d.AccessTokens = newFakePreAuthorizedCodeStore(), newFakeDPoPReplayChecker(), &fakeAccessTokenIssuer{}
