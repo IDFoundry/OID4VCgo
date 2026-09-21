@@ -164,7 +164,13 @@ func RestartContainer() error {
 
 // WaitReady polls verifierBase's own /result/<probe> route (any
 // response at all, not a connection error, proves the TLS listener is
-// up) through the host-published port.
+// up) through the host-published port. On a timeout it dumps the
+// container's own logs to stderr before returning — a connection
+// refused/timeout here means the container itself never bound its
+// port, and without its own stdout/stderr nothing in run-all.sh's own
+// output says why (confirmed missing: a real CI run's own captured
+// logs showed only the polling timeout, nothing from the container
+// itself, on a failure that turned out to be reproducible on every run).
 func WaitReady(httpClient *http.Client, verifierBase string) error {
 	deadline := time.Now().Add(restartTimeout)
 	for {
@@ -174,9 +180,26 @@ func WaitReady(httpClient *http.Client, verifierBase string) error {
 			return nil
 		}
 		if time.Now().After(deadline) {
+			dumpContainerLogs(DockerComposeFile)
 			return fmt.Errorf("did not become ready within %s: %w", restartTimeout, err)
 		}
 		time.Sleep(500 * time.Millisecond)
+	}
+}
+
+// dumpContainerLogs prints composeFile's own containers' logs to
+// stderr — best-effort, since a caller already has a real error to
+// report regardless of whether this succeeds.
+func dumpContainerLogs(composeFile string) {
+	dockerPath, err := exec.LookPath("docker")
+	if err != nil {
+		return
+	}
+	cmd := exec.Command(dockerPath, "compose", "-f", composeFile, "logs", "--no-color", "--tail=200") //nolint:gosec // dockerPath comes from exec.LookPath, args are fixed literals
+	out, runErr := cmd.CombinedOutput()
+	log.Printf("container logs (%s):\n%s", composeFile, out)
+	if runErr != nil {
+		log.Printf("docker compose logs: %v", runErr)
 	}
 }
 

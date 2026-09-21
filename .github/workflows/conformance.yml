@@ -85,7 +85,16 @@ jobs:
       - name: Run all conformance test configurations
         env:
           WORKDIR: ${{ runner.temp }}/conformance-results
-        run: ./conformance/scripts/run-all.sh | tee "${{ runner.temp }}/conformance-run.log"
+        # set -o pipefail: without it, this step's exit status is
+        # tee's (always 0), not run-all.sh's — silently masking a real
+        # conformance failure as a green job. Confirmed live: three
+        # consecutive runs had every OID4VP leg fail
+        # (run-all.sh printed "One or more conformance runs had
+        # unexpected results" and exited 1) while the job still showed
+        # success.
+        run: |
+          set -o pipefail
+          ./conformance/scripts/run-all.sh | tee "${{ runner.temp }}/conformance-run.log"
 
       - name: Add summary to job summary
         if: always()

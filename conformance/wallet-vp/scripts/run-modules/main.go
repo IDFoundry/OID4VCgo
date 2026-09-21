@@ -701,6 +701,14 @@ func restartContainer() error {
 	return cmd.Run()
 }
 
+// waitReady polls walletVPBase until it responds or restartTimeout
+// elapses. On a timeout it dumps the container's own logs to stderr —
+// a connection refused/timeout here means the container itself never
+// bound its port, and without its own stdout/stderr nothing in
+// run-all.sh's own output says why (confirmed missing: a real CI run's
+// own captured logs showed only the polling timeout, nothing from the
+// container itself, on a failure that turned out to be reproducible on
+// every run).
 func waitReady(httpClient *http.Client, walletVPBase string) error {
 	deadline := time.Now().Add(restartTimeout)
 	for {
@@ -710,8 +718,25 @@ func waitReady(httpClient *http.Client, walletVPBase string) error {
 			return nil
 		}
 		if time.Now().After(deadline) {
+			dumpContainerLogs()
 			return fmt.Errorf("did not become ready within %s: %w", restartTimeout, err)
 		}
 		time.Sleep(500 * time.Millisecond)
+	}
+}
+
+// dumpContainerLogs prints dockerComposeYML's own containers' logs to
+// stderr — best-effort, since a caller already has a real error to
+// report regardless of whether this succeeds.
+func dumpContainerLogs() {
+	dockerPath, err := exec.LookPath("docker")
+	if err != nil {
+		return
+	}
+	cmd := exec.Command(dockerPath, "compose", "-f", dockerComposeYML, "logs", "--no-color", "--tail=200") //nolint:gosec // dockerPath comes from exec.LookPath, args are fixed literals
+	out, runErr := cmd.CombinedOutput()
+	log.Printf("container logs (%s):\n%s", dockerComposeYML, out)
+	if runErr != nil {
+		log.Printf("docker compose logs: %v", runErr)
 	}
 }
