@@ -352,10 +352,10 @@ func (v *Verifier) satisfiableCredentialSetOption(ctx context.Context, cs dcql.C
 func (v *Verifier) verifyCredentialQuery(ctx context.Context, cq dcql.CredentialQuery, req VerifyResponseRequest) ([]VerifiedCredential, error) {
 	presentations := req.Response.VPToken[cq.ID]
 	if len(presentations) == 0 {
-		return nil, fmt.Errorf("no presentation returned")
+		return nil, newError("no presentation returned", nil)
 	}
 	if len(presentations) > 1 && !cq.Multiple {
-		return nil, fmt.Errorf("multiple presentations were returned but multiple is not requested")
+		return nil, newError("multiple presentations were returned but multiple is not requested", nil)
 	}
 
 	vcs := make([]VerifiedCredential, 0, len(presentations))
@@ -384,20 +384,20 @@ func (v *Verifier) verifySDJWTVCPresentation(ctx context.Context, cq dcql.Creden
 	}
 	pres, err := sdjwtvc.Parse(compact)
 	if err != nil {
-		return nil, fmt.Errorf("parse presentation: %w", err)
+		return nil, newError("parse presentation", err)
 	}
 	header, rawPayload, err := jose.DecodeUnverified(pres.IssuerJWT)
 	if err != nil {
-		return nil, fmt.Errorf("decode issuer jwt: %w", err)
+		return nil, newError("decode issuer jwt", err)
 	}
 	var payload map[string]any
 	if err := json.Unmarshal(rawPayload, &payload); err != nil {
-		return nil, fmt.Errorf("unmarshal issuer jwt payload: %w", err)
+		return nil, newError("unmarshal issuer jwt payload", err)
 	}
 
 	issuerPub, issuerAlg, err := req.IssuerKeys.ResolveIssuerKey(ctx, header, payload)
 	if err != nil {
-		return nil, fmt.Errorf("resolve issuer key: %w", err)
+		return nil, newError("resolve issuer key", err)
 	}
 
 	requireHolderBinding := cq.RequiresCryptographicHolderBinding()
@@ -408,7 +408,7 @@ func (v *Verifier) verifySDJWTVCPresentation(ctx context.Context, cq dcql.Creden
 		keyBindingRequirement = sdjwtvc.KeyBindingRequired
 		holderPub, holderAlg, err = holderPublicKeyFromCNF(payload["cnf"])
 		if err != nil {
-			return nil, fmt.Errorf("resolve holder binding key: %w", err)
+			return nil, newError("resolve holder binding key", err)
 		}
 	}
 
@@ -422,20 +422,20 @@ func (v *Verifier) verifySDJWTVCPresentation(ctx context.Context, cq dcql.Creden
 		Now:               req.Now,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("verify: %w", err)
+		return nil, newError("verify", err)
 	}
 
 	if err := cq.SatisfiedBySDJWTVCClaims(claims); err != nil {
-		return nil, err
+		return nil, newError("satisfied by sdjwtvc claims", err)
 	}
 
 	if len(cq.TrustedAuthorities) > 0 {
 		chain, err := certchain.X5CDERsFromHeader(header)
 		if err != nil {
-			return nil, fmt.Errorf("trusted authorities: %w", err)
+			return nil, newError("trusted authorities", err)
 		}
 		if err := req.TrustedAuthorities.CheckTrustedAuthorities(ctx, cq.TrustedAuthorities, chain); err != nil {
-			return nil, fmt.Errorf("trusted authorities: %w", err)
+			return nil, newError("trusted authorities", err)
 		}
 	}
 	return claims, nil
@@ -472,28 +472,28 @@ func (v *Verifier) verifyMdocPresentation(ctx context.Context, cq dcql.Credentia
 
 	raw, err := base64.RawURLEncoding.DecodeString(presented)
 	if err != nil {
-		return nil, fmt.Errorf("decode device response: %w", err)
+		return nil, newError("decode device response", err)
 	}
 	doc, err := oid4vpmdoc.UnmarshalDeviceResponse(raw)
 	if err != nil {
-		return nil, fmt.Errorf("unmarshal device response: %w", err)
+		return nil, newError("unmarshal device response", err)
 	}
 
 	_, unprotected, _, err := cose.DecodeUnverified(doc.IssuerSigned.IssuerAuth)
 	if err != nil {
-		return nil, fmt.Errorf("decode issuer auth: %w", err)
+		return nil, newError("decode issuer auth", err)
 	}
 	issuerPub, issuerAlg, err := req.MdocIssuerKeys.ResolveMdocIssuerKey(ctx, unprotected.X5Chain, doc.DocType)
 	if err != nil {
-		return nil, fmt.Errorf("resolve issuer key: %w", err)
+		return nil, newError("resolve issuer key", err)
 	}
 
 	verified, err := mdoc.Verify(doc.IssuerSigned, issuerPub, issuerAlg, mdoc.VerifyOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("verify issuer signed: %w", err)
+		return nil, newError("verify issuer signed", err)
 	}
 	if verified.DocType != doc.DocType {
-		return nil, fmt.Errorf("document docType %q does not match issuer-signed docType %q", doc.DocType, verified.DocType)
+		return nil, newError(fmt.Sprintf("document docType %q does not match issuer-signed docType %q", doc.DocType, verified.DocType), nil)
 	}
 
 	thumbprintBytes, err := jwk.Thumbprint(&req.ResponseEncryptionKey.PublicKey)
@@ -506,27 +506,27 @@ func (v *Verifier) verifyMdocPresentation(ctx context.Context, cq dcql.Credentia
 	}
 
 	if doc.DeviceSigned.AuthType != mdoc.DeviceAuthSignature {
-		return nil, fmt.Errorf("device authentication type %d is not supported (see verifyMdocPresentation's own doc comment)", doc.DeviceSigned.AuthType)
+		return nil, newError(fmt.Sprintf("device authentication type %d is not supported (see verifyMdocPresentation's own doc comment)", doc.DeviceSigned.AuthType), nil)
 	}
 	deviceAlg, err := mdocAlgForKey(verified.DeviceKey)
 	if err != nil {
-		return nil, fmt.Errorf("device key: %w", err)
+		return nil, newError("device key", err)
 	}
 	if err := mdoc.VerifyDeviceSignature(doc.DeviceSigned, verified.DeviceKey, deviceAlg, sessionTranscriptBytes, doc.DocType); err != nil {
-		return nil, fmt.Errorf("verify device signature: %w", err)
+		return nil, newError("verify device signature", err)
 	}
 
 	if err := mdoc.CheckKeyAuthorizations(doc.DeviceSigned.NameSpaces, verified.KeyAuthorizations); err != nil {
-		return nil, fmt.Errorf("check key authorizations: %w", err)
+		return nil, newError("check key authorizations", err)
 	}
 
 	if err := cq.SatisfiedByMdocClaims(verified.DocType, verified.NameSpaces); err != nil {
-		return nil, err
+		return nil, newError("satisfied by mdoc claims", err)
 	}
 
 	if len(cq.TrustedAuthorities) > 0 {
 		if err := req.TrustedAuthorities.CheckTrustedAuthorities(ctx, cq.TrustedAuthorities, unprotected.X5Chain); err != nil {
-			return nil, fmt.Errorf("trusted authorities: %w", err)
+			return nil, newError("trusted authorities", err)
 		}
 	}
 
