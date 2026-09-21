@@ -216,6 +216,9 @@ func (s *SDJWTSigner) validate() error {
 	if s.Alg == "" {
 		return fmt.Errorf("sdjwt_signer.alg is required")
 	}
+	if !jose.IsSupported(s.Alg) {
+		return fmt.Errorf("sdjwt_signer.alg %q is not supported", s.Alg)
+	}
 	return nil
 }
 
@@ -242,6 +245,9 @@ func (s *MdocSigner) validate() error {
 	}
 	if s.Alg == 0 {
 		return fmt.Errorf("mdoc_signer.alg is required")
+	}
+	if !cose.IsSupportedSigningAlg(s.Alg) {
+		return fmt.Errorf("mdoc_signer.alg %d is not supported", s.Alg)
 	}
 	if len(s.X5Chain) == 0 {
 		return fmt.Errorf("mdoc_signer.x5chain must include at least one certificate")

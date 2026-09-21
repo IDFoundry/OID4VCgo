@@ -136,6 +136,9 @@ func New(cfg Config, deps Dependencies) (*Verifier, error) {
 	if cfg.SigningAlg == "" {
 		return nil, fmt.Errorf("verifier: config: signing_alg is required")
 	}
+	if !jose.IsSupported(cfg.SigningAlg) {
+		return nil, fmt.Errorf("verifier: config: signing_alg %q is not supported", cfg.SigningAlg)
+	}
 	if len(cfg.EncValuesSupported) == 0 {
 		return nil, fmt.Errorf("verifier: config: enc_values_supported must be non-empty")
 	}

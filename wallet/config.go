@@ -78,6 +78,9 @@ func New(cfg Config, deps Dependencies) (*Wallet, error) {
 	if cfg.ProofSigningAlg == "" {
 		return nil, fmt.Errorf("wallet: config: proof_signing_alg is required")
 	}
+	if !jose.IsSupported(cfg.ProofSigningAlg) {
+		return nil, fmt.Errorf("wallet: config: proof_signing_alg %q is not supported", cfg.ProofSigningAlg)
+	}
 	if deps.HTTP == nil {
 		return nil, fmt.Errorf("wallet: dependencies: http is required")
 	}

@@ -52,10 +52,11 @@ func TestNewAcceptsValidConfig(t *testing.T) {
 
 func TestNewRejectsInvalidConfig(t *testing.T) {
 	cases := map[string]func(*wallet.Config, *wallet.Dependencies){
-		"missing proof_signing_alg": func(c *wallet.Config, _ *wallet.Dependencies) { c.ProofSigningAlg = "" },
-		"missing http":              func(_ *wallet.Config, d *wallet.Dependencies) { d.HTTP = nil },
-		"missing clock":             func(_ *wallet.Config, d *wallet.Dependencies) { d.Clock = nil },
-		"invalid fetch config":      func(c *wallet.Config, _ *wallet.Dependencies) { c.Fetch.MaxResponseBytes = 0 },
+		"missing proof_signing_alg":     func(c *wallet.Config, _ *wallet.Dependencies) { c.ProofSigningAlg = "" },
+		"unsupported proof_signing_alg": func(c *wallet.Config, _ *wallet.Dependencies) { c.ProofSigningAlg = jose.Alg("RS256") },
+		"missing http":                  func(_ *wallet.Config, d *wallet.Dependencies) { d.HTTP = nil },
+		"missing clock":                 func(_ *wallet.Config, d *wallet.Dependencies) { d.Clock = nil },
+		"invalid fetch config":          func(c *wallet.Config, _ *wallet.Dependencies) { c.Fetch.MaxResponseBytes = 0 },
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {

@@ -209,3 +209,12 @@ func TestVerifyAcceptsEmptyCrit(t *testing.T) {
 		t.Errorf("Verify: %v", err)
 	}
 }
+
+func TestIsSupported(t *testing.T) {
+	cases := map[Alg]bool{ES256: true, EdDSA: true, "": false, "RS256": false, "es256": false}
+	for alg, want := range cases {
+		if got := IsSupported(alg); got != want {
+			t.Errorf("IsSupported(%q) = %v, want %v", alg, got, want)
+		}
+	}
+}
