@@ -78,6 +78,58 @@ func TestSelectDisclosuresNested(t *testing.T) {
 	}
 }
 
+// TestSelectDisclosuresObjectValueIncludesNestedDisclosures selects a
+// path terminating at an object-valued claim itself (not one of its
+// own nested sub-properties) — per SelectDisclosures's own doc
+// comment, RFC 9901 §4.2.6's "recursive Disclosures": every Disclosure
+// the target value transitively references must come along too, or
+// the disclosed object would be missing its own internal selectively-
+// disclosed pieces. Found unexercised by any existing test in a
+// repo-wide coverage review: every other test here selects a path
+// ending at a leaf or an array, never at a nested object itself, so
+// includeAllDisclosuresInObject's own recursion had never run.
+func TestSelectDisclosuresObjectValueIncludesNestedDisclosures(t *testing.T) {
+	tree := map[string]any{
+		"address": SD(map[string]any{
+			"street_address": SD("123 Main St"),
+			"locality":       SD("Anytown"),
+		}),
+	}
+	sealed, disclosures, err := sealMap(tree, SHA256)
+	if err != nil {
+		t.Fatalf("sealMap: %v", err)
+	}
+	if len(disclosures) != 3 {
+		t.Fatalf("got %d disclosures, want 3 (address, street_address, locality)", len(disclosures))
+	}
+
+	// Selecting "address" alone (not "address"/"street_address") must
+	// still disclose every nested Disclosure "address" itself
+	// transitively references.
+	selected, err := SelectDisclosures(sealed, SHA256, disclosures, [][]string{{"address"}})
+	if err != nil {
+		t.Fatalf("SelectDisclosures: %v", err)
+	}
+	if len(selected) != 3 {
+		t.Fatalf("got %d disclosures, want all 3", len(selected))
+	}
+
+	resolved, err := ResolveDisclosures(sealed, SHA256, selected)
+	if err != nil {
+		t.Fatalf("ResolveDisclosures: %v", err)
+	}
+	address, ok := resolved["address"].(map[string]any)
+	if !ok {
+		t.Fatalf("resolved[address] = %v, want an object", resolved["address"])
+	}
+	if address["street_address"] != "123 Main St" {
+		t.Errorf("address.street_address = %v, want %q", address["street_address"], "123 Main St")
+	}
+	if address["locality"] != "Anytown" {
+		t.Errorf("address.locality = %v, want %q", address["locality"], "Anytown")
+	}
+}
+
 // TestSelectDisclosuresArrayValue checks that a path terminating at an
 // array-valued claim discloses every one of that array's own
 // SDElement-wrapped entries — the "disclose the target value in full"

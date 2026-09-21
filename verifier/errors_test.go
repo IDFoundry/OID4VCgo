@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/idfoundry/oid4vcgo/dcql"
+	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/verifier"
 )
 
@@ -63,5 +64,47 @@ func TestVerifyResponse_DoesNotAttributeDeploymentMistakeToWallet(t *testing.T) 
 	var verr *verifier.Error
 	if errors.As(err, &verr) {
 		t.Errorf("error = %v (a *verifier.Error), want a plain error — an unset expected_nonce is a caller/deployment mistake, not something attributable to the Wallet's response", err)
+	}
+}
+
+// TestVerifierError_ErrorAndUnwrap covers *verifier.Error's own
+// Error()/Unwrap() methods directly — found unexercised by any
+// existing test in a repo-wide coverage review. Uses a malformed
+// Presentation (rather than the missing-Presentation case the two
+// tests above already cover) specifically because that leaf site
+// wraps a real cause (sdjwtvc.Parse's own error), letting this prove
+// both Error()'s "with a cause" formatting and Unwrap() actually
+// returns it — the missing-Presentation case above has no cause to
+// unwrap.
+func TestVerifierError_ErrorAndUnwrap(t *testing.T) {
+	cfg, deps := validConfig(t)
+	v, err := verifier.New(cfg, deps)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	built, err := v.BuildAuthorizationRequest(verifier.BuildAuthorizationRequestRequest{Query: testIdentityQuery(t)})
+	if err != nil {
+		t.Fatalf("BuildAuthorizationRequest: %v", err)
+	}
+
+	issuerKey := testP256Key(t)
+	_, err = v.VerifyResponse(context.Background(), verifier.VerifyResponseRequest{
+		Query: testIdentityQuery(t), ExpectedNonce: built.Nonce,
+		Response:         verifier.ParsedResponse{VPToken: map[string][]string{"identity_credential": {"not-a-valid-compact-sdjwt"}}},
+		IssuerKeys:       fixedSDJWTVCIssuerKeyResolver{pub: &issuerKey.PublicKey, alg: jose.ES256},
+		MaxKeyBindingAge: time.Hour,
+	})
+	if err == nil {
+		t.Fatalf("VerifyResponse = nil error, want error")
+	}
+	var verr *verifier.Error
+	if !errors.As(err, &verr) {
+		t.Fatalf("error = %v, want a *verifier.Error", err)
+	}
+	if verr.Unwrap() == nil {
+		t.Error("Unwrap() = nil, want the underlying sdjwtvc.Parse error")
+	}
+	if got := verr.Error(); got == "" {
+		t.Error("Error() = \"\", want a non-empty message")
 	}
 }
