@@ -49,6 +49,13 @@ func (v X5CAttestationVerifier) ResolveAttestationKey(_ context.Context, a attes
 	return leaf.PublicKey, alg, nil
 }
 
+// Capabilities implements KeySourceAssurance: validating an
+// already-presented x5c chain against an in-memory Roots pool never
+// touches the network, so LiveFetchHardened is unconditionally true.
+func (v X5CAttestationVerifier) Capabilities() KeySourceCapabilities {
+	return KeySourceCapabilities{LiveFetchHardened: true}
+}
+
 // algForKey maps pub to the JOSE algorithm this package's own signers
 // use for it — the same ES256/EdDSA-only mapping
 // verifier.sdjwtvcAlgForKey establishes on the verifying side, kept as
