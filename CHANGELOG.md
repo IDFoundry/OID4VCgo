@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.11.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.10.0...v0.11.0) (2026-09-21)
+
+
+### ⚠ BREAKING CHANGES
+
+* enforce ISO/IEC 18013-5's docType, ValidityInfo, KeyAuthorizations, and X5Chain constraints in credential/mdoc
+* replace ClientIDIntentionallyUnset bool with a typed ClientIdentity opt-out ([#182](https://github.com/IDFoundry/OID4VCgo/issues/182))
+
+### Features
+
+* **issuer:** extend AssuranceProduction to cover key-source resolvers ([1f9fee1](https://github.com/IDFoundry/OID4VCgo/commit/1f9fee1e3be0fba055687825b405499db620a87b))
+
+
+### Bug Fixes
+
+* enforce ISO/IEC 18013-5's docType, ValidityInfo, KeyAuthorizations, and X5Chain constraints in credential/mdoc ([43759bc](https://github.com/IDFoundry/OID4VCgo/commit/43759bc7e7f6a6be3c4fb20bf30dbfffb1184934))
+* **issuer:** derive ProofBindingKeyResolver's algorithm from the resolved key, not the untrusted header ([c57c7c2](https://github.com/IDFoundry/OID4VCgo/commit/c57c7c24e6edb06b90ae3f3e465bcd960be4874f))
+* **issuer:** reject a CredentialConfiguration whose Format disagrees with VCT/DocType/alg-form ([5dcad51](https://github.com/IDFoundry/OID4VCgo/commit/5dcad5124cfe7737cc7005fab85343554b367eda))
+* **issuer:** reject a negative Config.Limits.MaxDPoPClockSkew ([#185](https://github.com/IDFoundry/OID4VCgo/issues/185)) ([7a025c0](https://github.com/IDFoundry/OID4VCgo/commit/7a025c0429d843c41880ed663e427c2cbf5401eb))
+* **lint:** remove unused assuredProofBindingKeyResolver test wrapper ([c68a657](https://github.com/IDFoundry/OID4VCgo/commit/c68a657002320b16943fcc793e98dbefdea5f7ac))
+* **mdoc:** bound UnmarshalIssuerSigned/UnmarshalDeviceSigned to MaxBytes ([#188](https://github.com/IDFoundry/OID4VCgo/issues/188)) ([3b957d8](https://github.com/IDFoundry/OID4VCgo/commit/3b957d8dc2defc3e93785394d09de6e25ef3c50f))
+* replace ClientIDIntentionallyUnset bool with a typed ClientIdentity opt-out ([#182](https://github.com/IDFoundry/OID4VCgo/issues/182)) ([1a0ec0e](https://github.com/IDFoundry/OID4VCgo/commit/1a0ec0e4cb61eca7d2be581d81c249dbd51ff784))
+* **sdjwtvc:** avoid a panic when Issue's signer/certificate check meets a non-comparable Signer ([3c9dfcf](https://github.com/IDFoundry/OID4VCgo/commit/3c9dfcf716d69ec4c756ba789895c1ba59f85a03))
+* validate every jose.Alg/cose.Alg signing config field against the supported set ([5e3b7a4](https://github.com/IDFoundry/OID4VCgo/commit/5e3b7a43dfc268893adce29a7a152f2607fb3535))
+* **verifier:** distinguish Wallet-caused failures from caller mistakes with a typed error ([62c6349](https://github.com/IDFoundry/OID4VCgo/commit/62c6349a2dc29e930f5fc8610bf3d26b4981884b))
+
 ## [0.10.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.9.0...v0.10.0) (2026-09-21)
 
 
