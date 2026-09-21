@@ -5,6 +5,8 @@ import (
 	"crypto"
 	"crypto/x509"
 	"fmt"
+
+	"github.com/idfoundry/oid4vcgo/internal/jose"
 )
 
 // X5CProofBindingKeyResolver implements ProofBindingKeyResolver by
@@ -30,18 +32,22 @@ type X5CProofBindingKeyResolver struct {
 }
 
 // ResolveProofBindingKey implements ProofBindingKeyResolver.
-func (r X5CProofBindingKeyResolver) ResolveProofBindingKey(_ context.Context, header map[string]any) (crypto.PublicKey, error) {
+func (r X5CProofBindingKeyResolver) ResolveProofBindingKey(_ context.Context, header map[string]any) (crypto.PublicKey, jose.Alg, error) {
 	raw, ok := header["x5c"]
 	if !ok {
-		return nil, fmt.Errorf("issuer: proof header has no x5c")
+		return nil, "", fmt.Errorf("issuer: proof header has no x5c")
 	}
 	entries, ok := raw.([]any)
 	if !ok {
-		return nil, fmt.Errorf("issuer: proof x5c header is not an array")
+		return nil, "", fmt.Errorf("issuer: proof x5c header is not an array")
 	}
 	leaf, err := resolveX5CLeaf(entries, r.Roots)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	return leaf.PublicKey, nil
+	alg, err := algForKey(leaf.PublicKey)
+	if err != nil {
+		return nil, "", err
+	}
+	return leaf.PublicKey, alg, nil
 }

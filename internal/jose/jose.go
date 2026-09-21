@@ -107,6 +107,15 @@ func signBytes(alg Alg, signer crypto.Signer, signingInput []byte) ([]byte, erro
 // returns the decoded header and payload. It rejects a compact string
 // larger than MaxCompactBytes; use VerifyMax for a caller that needs a
 // different ceiling.
+//
+// alg must come from the caller — resolved independently of this
+// token's own header, e.g. from a trust-anchored certificate's own key
+// type — never read back out of the very header being verified. That,
+// plus verifyBytes' own per-algorithm type check on pub, is what
+// prevents an algorithm-confusion attack: a caller that instead let
+// the token's own "alg" claim pick which verification path to run
+// would let an attacker choose a weaker algorithm for a key that was
+// only ever vetted under a stronger one.
 func Verify(alg Alg, pub crypto.PublicKey, compact string) (header map[string]any, payload []byte, err error) {
 	return VerifyMax(alg, pub, compact, MaxCompactBytes)
 }
