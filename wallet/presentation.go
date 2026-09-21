@@ -15,6 +15,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/internal/certchain"
 	"github.com/idfoundry/oid4vcgo/internal/cose"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
+	"github.com/idfoundry/oid4vcgo/internal/jwk"
 	"github.com/idfoundry/oid4vcgo/oid4vpmdoc"
 )
 
@@ -505,8 +506,16 @@ type PresentMdocParams struct {
 	Audience    string // client_id
 	ResponseURI string
 
-	Nonce                           string
-	ResponseEncryptionJWKThumbprint []byte
+	Nonce string
+
+	// ResponseEncryptionKey is the Verifier's own response-encryption
+	// public key — this package derives its own RFC 7638 JWK
+	// thumbprint internally (matching how verifier.VerifyResponseRequest.
+	// ResponseEncryptionKey takes the mirror-image private key and
+	// derives the same thumbprint on the verifying side), so a caller
+	// never has to pre-compute Appendix B.2.6.1/B.2.6.2's own
+	// "jwkThumbprint" input by hand.
+	ResponseEncryptionKey *ecdsa.PublicKey
 
 	// Origin, if set, builds the DC API flow's own OpenID4VPDCAPIHandover
 	// (Appendix B.2.6.2) instead — Audience/ResponseURI are then
@@ -522,14 +531,21 @@ type PresentMdocParams struct {
 // params.Origin is set — PresentMdoc's own counterpart to
 // verifier's identically-named private helper.
 func buildMdocSessionTranscriptBytes(params PresentMdocParams) ([]byte, error) {
+	if params.ResponseEncryptionKey == nil {
+		return nil, fmt.Errorf("response_encryption_key is required for a %q credential", mdoc.CredentialFormat)
+	}
+	thumbprint, err := jwk.Thumbprint(params.ResponseEncryptionKey)
+	if err != nil {
+		return nil, fmt.Errorf("response encryption key: %w", err)
+	}
 	if params.Origin != "" {
 		return oid4vpmdoc.BuildDCAPISessionTranscriptBytes(oid4vpmdoc.DCAPIHandoverParams{
-			Origin: params.Origin, Nonce: params.Nonce, ResponseEncryptionJWKThumbprint: params.ResponseEncryptionJWKThumbprint,
+			Origin: params.Origin, Nonce: params.Nonce, ResponseEncryptionJWKThumbprint: thumbprint,
 		})
 	}
 	return oid4vpmdoc.BuildSessionTranscriptBytes(oid4vpmdoc.HandoverParams{
 		ClientID: params.Audience, Nonce: params.Nonce, ResponseURI: params.ResponseURI,
-		ResponseEncryptionJWKThumbprint: params.ResponseEncryptionJWKThumbprint,
+		ResponseEncryptionJWKThumbprint: thumbprint,
 	})
 }
 
@@ -701,13 +717,13 @@ type PresentationRequest struct {
 	// "nonce".
 	Nonce string
 
-	// ResponseURI and ResponseEncryptionJWKThumbprint are REQUIRED
-	// whenever Query requests any "mso_mdoc" Credential — see
-	// PresentMdocParams's own doc comment for why "mso_mdoc" needs
-	// them where "dc+sd-jwt" doesn't. ResponseURI is a redirect-flow-only
-	// field (unused when Origin is set).
-	ResponseURI                     string
-	ResponseEncryptionJWKThumbprint []byte
+	// ResponseURI and ResponseEncryptionKey are REQUIRED whenever Query
+	// requests any "mso_mdoc" Credential — see PresentMdocParams's own
+	// doc comment for why "mso_mdoc" needs them where "dc+sd-jwt"
+	// doesn't. ResponseURI is a redirect-flow-only field (unused when
+	// Origin is set).
+	ResponseURI           string
+	ResponseEncryptionKey *ecdsa.PublicKey
 
 	// TrustedAuthorities is MatchDCQLQuery's own trustedAuthorities
 	// parameter — REQUIRED whenever any Credential Query in Query
@@ -768,7 +784,7 @@ func PresentCredentials(ctx context.Context, req PresentationRequest) (map[strin
 			case mdoc.CredentialFormat:
 				p, err = presentMdocSelectively(held, byID[id], PresentMdocParams{
 					Audience: req.Audience, Nonce: req.Nonce, Origin: req.Origin,
-					ResponseURI: req.ResponseURI, ResponseEncryptionJWKThumbprint: req.ResponseEncryptionJWKThumbprint,
+					ResponseURI: req.ResponseURI, ResponseEncryptionKey: req.ResponseEncryptionKey,
 				})
 			default:
 				err = fmt.Errorf("format %q is not yet supported", held.Format)

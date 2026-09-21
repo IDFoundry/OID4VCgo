@@ -2,6 +2,9 @@ package wallet_test
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"encoding/base64"
 	"testing"
 
@@ -91,9 +94,13 @@ func assertPresentedMdoc(t *testing.T, presented string, f testmdoc.Fixture, wan
 func TestPresentMdoc(t *testing.T) {
 	f := testmdoc.Issue(t)
 	held := heldMdoc(t, f)
+	encKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate response encryption key: %v", err)
+	}
 	presented, err := wallet.PresentMdoc(held, wallet.PresentMdocParams{
 		Audience: "x509_hash:verifier", Nonce: "nonce-1",
-		ResponseURI: "https://verifier.example.com/response", ResponseEncryptionJWKThumbprint: make([]byte, 32),
+		ResponseURI: "https://verifier.example.com/response", ResponseEncryptionKey: &encKey.PublicKey,
 	})
 	if err != nil {
 		t.Fatalf("PresentMdoc: %v", err)
@@ -101,7 +108,7 @@ func TestPresentMdoc(t *testing.T) {
 
 	sessionTranscriptBytes, err := oid4vpmdoc.BuildSessionTranscriptBytes(oid4vpmdoc.HandoverParams{
 		ClientID: "x509_hash:verifier", Nonce: "nonce-1",
-		ResponseURI: "https://verifier.example.com/response", ResponseEncryptionJWKThumbprint: make([]byte, 32),
+		ResponseURI: "https://verifier.example.com/response", ResponseEncryptionJWKThumbprint: testmdoc.ResponseEncryptionThumbprint(t, encKey),
 	})
 	if err != nil {
 		t.Fatalf("BuildSessionTranscriptBytes: %v", err)
@@ -115,15 +122,19 @@ func TestPresentMdoc(t *testing.T) {
 func TestPresentMdocDCAPI(t *testing.T) {
 	f := testmdoc.Issue(t)
 	held := heldMdoc(t, f)
+	encKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate response encryption key: %v", err)
+	}
 	presented, err := wallet.PresentMdoc(held, wallet.PresentMdocParams{
-		Origin: "https://verifier.example.com", Nonce: "nonce-1", ResponseEncryptionJWKThumbprint: make([]byte, 32),
+		Origin: "https://verifier.example.com", Nonce: "nonce-1", ResponseEncryptionKey: &encKey.PublicKey,
 	})
 	if err != nil {
 		t.Fatalf("PresentMdoc: %v", err)
 	}
 
 	sessionTranscriptBytes, err := oid4vpmdoc.BuildDCAPISessionTranscriptBytes(oid4vpmdoc.DCAPIHandoverParams{
-		Origin: "https://verifier.example.com", Nonce: "nonce-1", ResponseEncryptionJWKThumbprint: make([]byte, 32),
+		Origin: "https://verifier.example.com", Nonce: "nonce-1", ResponseEncryptionJWKThumbprint: testmdoc.ResponseEncryptionThumbprint(t, encKey),
 	})
 	if err != nil {
 		t.Fatalf("BuildDCAPISessionTranscriptBytes: %v", err)

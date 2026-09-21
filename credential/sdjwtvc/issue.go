@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 )
@@ -44,9 +45,23 @@ const KeyBindingTyp = "kb+jwt"
 // values inside Additional either, so any caller-supplied claim that
 // needs to be a NumericDate must already be an int64 when passed in.
 type Claims struct {
-	VCT          string // REQUIRED
-	Iss          string
-	Nbf          *int64
+	VCT string // REQUIRED
+	Iss string
+	Nbf *int64
+
+	// Exp is RFC 9901 §11.2.3's own RECOMMENDED (not required)
+	// validity bound. If set, use RoundedExp rather than a raw
+	// issuance-instant-plus-lifetime computation — §10.1 separately
+	// requires ("MUST") that "iat/exp/nbf... [be] randomized or
+	// rounded to prevent linkability": issuing many credentials close
+	// together (e.g. one per client in a multi-client flow) with
+	// exp/nbf/iat values differing by the real, precise
+	// inter-issuance gap lets a party holding more than one correlate
+	// them by that gap — confirmed live against the OIDF conformance
+	// suite's own oid4vci-1_0-issuer-happy-flow-multiple-clients
+	// module, which flags exactly this. RoundedExp closes that
+	// channel for Exp; the same rounding-to-a-coarser-granularity
+	// technique applies equally to Nbf/Iat if a caller sets either.
 	Exp          *int64
 	VCTIntegrity string
 	Status       map[string]any // see draft-ietf-oauth-status-list
@@ -58,6 +73,19 @@ type Claims struct {
 	// selectively disclosed. Wrap a value with SD to make its property
 	// selectively disclosable, or SDElement for an array element.
 	Additional map[string]any
+}
+
+// RoundedExp computes an "exp" value for a credential issued at now,
+// rounded down to the start of now's own UTC day before adding
+// lifetime — see Claims.Exp's own doc comment for why a raw
+// issuance-instant-plus-lifetime computation fails RFC 9901 §10.1's
+// own anti-linkability MUST. Day-granularity rounding means every
+// credential issued on the same calendar day carries an identical
+// exp, closing that channel while still bounding validity to
+// approximately lifetime.
+func RoundedExp(now time.Time, lifetime time.Duration) int64 {
+	dayStart := now.UTC().Truncate(24 * time.Hour)
+	return dayStart.Add(lifetime).Unix()
 }
 
 // IssueOptions configures Issue.

@@ -54,7 +54,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"strings"
@@ -559,12 +558,12 @@ func submitCredentialOffer(httpClient *http.Client, apiBase, moduleID, issuerBas
 			AuthorizationCode: &oid4vci.GrantAuthorizationCode{IssuerState: issuerState},
 		},
 	}
-	offerJSON, err := json.Marshal(offer)
+	offerURL, err := offer.AppendToURL(endpoint)
 	if err != nil {
-		return fmt.Errorf("marshal credential offer: %w", err)
+		return fmt.Errorf("build credential offer url: %w", err)
 	}
 
-	req, err := http.NewRequest(http.MethodGet, endpoint+"?credential_offer="+url.QueryEscape(string(offerJSON)), nil)
+	req, err := http.NewRequest(http.MethodGet, offerURL, nil)
 	if err != nil {
 		return fmt.Errorf("build request: %w", err)
 	}

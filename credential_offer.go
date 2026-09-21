@@ -1,6 +1,11 @@
 package oid4vci
 
-import "fmt"
+import (
+	"encoding/json"
+	"fmt"
+	"net/url"
+	"strings"
+)
 
 // maxTxCodeDescriptionLength is §4.1.1's own bound on tx_code.description.
 const maxTxCodeDescriptionLength = 300
@@ -177,4 +182,26 @@ func (o CredentialOffer) Validate() error {
 		}
 	}
 	return nil
+}
+
+// AppendToURL appends o, JSON-encoded, as a by-value "credential_offer"
+// query parameter (§4.1.2) to base — the transport-agnostic half of a
+// Credential Offer deep link. issuer.Issuer.CreateCredentialOffer
+// already builds one flavor of this (the "openid-credential-offer://"
+// custom scheme a real Wallet registers to handle), but a caller
+// without a live *Issuer to hand — delivering an offer to a fixed test
+// endpoint, or one round-tripped through storage rather than freshly
+// built — needs the same transform against a base of its own choosing,
+// which may already carry a query string. base is used as-is,
+// otherwise; this does no scheme/URL validation of its own.
+func (o CredentialOffer) AppendToURL(base string) (string, error) {
+	encoded, err := json.Marshal(o)
+	if err != nil {
+		return "", fmt.Errorf("oid4vci: credential offer: encode: %w", err)
+	}
+	sep := "?"
+	if strings.Contains(base, "?") {
+		sep = "&"
+	}
+	return base + sep + "credential_offer=" + url.QueryEscape(string(encoded)), nil
 }

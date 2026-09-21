@@ -15,7 +15,6 @@ import (
 
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
-	"github.com/idfoundry/oid4vcgo/internal/conformancecert"
 	"github.com/idfoundry/oid4vcgo/internal/conformanceconfig"
 	"github.com/idfoundry/oid4vcgo/internal/jwe"
 	"github.com/idfoundry/oid4vcgo/issuer"
@@ -25,9 +24,8 @@ import (
 // claim — HAIP/SD-JWT VC §11.2.3's own RECOMMENDED (not required) way
 // to limit a credential's validity, confirmed live as something the
 // OIDF conformance suite's own log flags as a WARNING when absent. See
-// conformancecert.CredentialExp's own doc comment for why the actual
-// exp value is day-rounded, not this value added to the raw issuance
-// instant.
+// sdjwtvc.RoundedExp's own doc comment for why the actual exp value is
+// day-rounded, not this value added to the raw issuance instant.
 const issuedCredentialLifetime = 365 * 24 * time.Hour
 
 // nonceHandler serves the OID4VCI Nonce Endpoint (§7) — not a
@@ -248,7 +246,7 @@ func serveCredentialRequest(w http.ResponseWriter, r *http.Request, deps credent
 	}
 	responseEncryption := responseEncryptionFromWire(wire.CredentialResponseEncryption)
 
-	exp := conformancecert.CredentialExp(time.Now(), issuedCredentialLifetime)
+	exp := sdjwtvc.RoundedExp(time.Now(), issuedCredentialLifetime)
 	auth := issuer.AuthorizedRequest{ClientID: authCtx.ClientID, Scopes: authCtx.Scopes}
 
 	// Both SDJWTClaims and MdocClaims are always supplied (the

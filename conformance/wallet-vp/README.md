@@ -324,13 +324,23 @@ just pointed at the IACA certificate instead of the SD-JWT-VC-issuer CA
 for this format.
 
 `handleAuthorize`'s own `wallet.PresentCredentials` call now always
-computes and passes `ResponseURI`/`ResponseEncryptionJWKThumbprint`
-(`responseEncryptionJWKThumbprint`, `handlers.go`) — both parameters
-`wallet.PresentationRequest` documents as "REQUIRED whenever Query
-requests any mso_mdoc Credential", and both harmless to pass
-unconditionally for a `dc+sd-jwt`-only session (`presentSDJWTVCSelectively`
-never reads them) — so this one code path now serves both credential
-formats without a format-conditional branch of its own.
+passes `ResponseURI`/`ResponseEncryptionKey` straight from the parsed
+Authorization Request — both parameters `wallet.PresentationRequest`
+documents as "REQUIRED whenever Query requests any mso_mdoc
+Credential", and both harmless to pass unconditionally for a
+`dc+sd-jwt`-only session (`presentSDJWTVCSelectively` never reads
+them) — so this one code path now serves both credential formats
+without a format-conditional branch of its own.
+`wallet.PresentMdocParams`/`PresentationRequest` originally took a
+pre-computed `ResponseEncryptionJWKThumbprint []byte`, pushing a
+marshal→thumbprint→decode dance onto every mdoc-presenting caller;
+this binary's own now-deleted `responseEncryptionJWKThumbprint`
+function was one of three near-identical copies of that exact logic
+across the codebase (`verifier`, `internal/testmdoc`) — a later code
+review consolidated all three into `internal/jwk.Thumbprint` and
+changed `wallet`'s own public fields to take the `*ecdsa.PublicKey`
+directly, matching how `verifier.VerifyResponseRequest.ResponseEncryptionKey`
+already worked on the verifying side.
 
 **Confirmed live, twice for stability, via `conformance/wallet-vp/scripts/run-modules -credential-format iso_mdl`**:
 the exact same 14/14 result shape `sd_jwt_vc` already has — all 7

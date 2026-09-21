@@ -8,7 +8,6 @@ import (
 
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
-	"github.com/idfoundry/oid4vcgo/internal/conformancecert"
 	"github.com/idfoundry/oid4vcgo/internal/cose"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/internal/jwk"
@@ -23,8 +22,8 @@ import (
 // startup, reuse for the process's whole lifetime" shape (see
 // issueFixtureCredential's own doc comment) — this binary is never
 // expected to run anywhere near that long. See
-// conformancecert.CredentialExp's own doc comment for why the actual
-// exp value is day-rounded, not this value added to the raw issuance
+// sdjwtvc.RoundedExp's own doc comment for why the actual exp value
+// is day-rounded, not this value added to the raw issuance
 // instant — this binary only ever issues one credential, so the
 // linkability risk that rounding closes doesn't apply here, but
 // rounding anyway costs nothing and keeps both conformance binaries'
@@ -53,7 +52,7 @@ func issueFixtureCredential(cfg Config, issuerKey, holderKey *ecdsa.PrivateKey) 
 	for name, value := range cfg.Claims {
 		additional[name] = sdjwtvc.SD(value)
 	}
-	exp := conformancecert.CredentialExp(time.Now(), fixtureCredentialLifetime)
+	exp := sdjwtvc.RoundedExp(time.Now(), fixtureCredentialLifetime)
 
 	sdjwt, _, err := sdjwtvc.Issue(issuerKey, jose.ES256, sdjwtvc.Claims{
 		VCT:        cfg.VCT,

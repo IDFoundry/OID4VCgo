@@ -1,9 +1,7 @@
 package main
 
 import (
-	"crypto/ecdsa"
 	"crypto/tls"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/idfoundry/oid4vcgo/internal/jwk"
 	"github.com/idfoundry/oid4vcgo/wallet"
 )
 
@@ -111,22 +108,17 @@ func (s *server) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// ResponseURI/ResponseEncryptionJWKThumbprint are only actually read
-	// when authReq.Query asks for an "mso_mdoc" credential (see
-	// wallet.PresentationRequest's own doc comment) — computing and
-	// passing them unconditionally is harmless for an "dc+sd-jwt"-only
-	// session (presentSDJWTVCSelectively never looks at them).
-	thumbprint, err := responseEncryptionJWKThumbprint(authReq.ResponseEncryptionKey)
-	if err != nil {
-		log.Printf("compute response encryption jwk thumbprint: %v", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
+	// ResponseURI/ResponseEncryptionKey are only actually read when
+	// authReq.Query asks for an "mso_mdoc" credential (see
+	// wallet.PresentationRequest's own doc comment) — passing them
+	// unconditionally is harmless for a "dc+sd-jwt"-only session
+	// (presentSDJWTVCSelectively never looks at them), and
+	// wallet.PresentCredentials now derives the JWK thumbprint itself,
+	// so authReq's own *ecdsa.PublicKey goes straight through.
 	vpToken, err := wallet.PresentCredentials(r.Context(), wallet.PresentationRequest{
 		Query: authReq.Query, Credentials: []wallet.HeldCredential{s.cred},
 		Audience: authReq.ClientID, Nonce: authReq.Nonce,
-		ResponseURI: authReq.ResponseURI, ResponseEncryptionJWKThumbprint: thumbprint,
+		ResponseURI: authReq.ResponseURI, ResponseEncryptionKey: authReq.ResponseEncryptionKey,
 	})
 	if err != nil {
 		log.Printf("present credentials: %v", err)
@@ -167,34 +159,6 @@ func (s *server) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 		log.Printf("follow redirect_uri %s: %v", redirectURI, err)
 	}
 	_, _ = fmt.Fprintf(w, "<html><body><h1>Presented</h1><p>Followed redirect_uri: %s</p></body></html>", redirectURI)
-}
-
-// responseEncryptionJWKThumbprint computes the RFC 7638 SHA-256 JWK
-// thumbprint of pub as raw bytes — wallet.PresentationRequest.
-// ResponseEncryptionJWKThumbprint's own shape (Appendix B.2.6.1's own
-// Handover input), what an "mso_mdoc" presentation binds
-// SessionTranscriptBytes to so the Verifier can independently
-// reconstruct the identical transcript from the same encryption key it
-// already published. Returns nil, nil for a nil pub (an "dc+sd-jwt"-only
-// session's authReq never resolves one) — mirrors
-// internal/testmdoc.ResponseEncryptionThumbprint's own computation.
-func responseEncryptionJWKThumbprint(pub *ecdsa.PublicKey) ([]byte, error) {
-	if pub == nil {
-		return nil, nil
-	}
-	j, err := jwk.Marshal(pub)
-	if err != nil {
-		return nil, fmt.Errorf("marshal response encryption public key: %w", err)
-	}
-	thumbprint, err := j.Thumbprint()
-	if err != nil {
-		return nil, fmt.Errorf("compute response encryption jwk thumbprint: %w", err)
-	}
-	raw, err := base64.RawURLEncoding.DecodeString(thumbprint)
-	if err != nil {
-		return nil, fmt.Errorf("decode response encryption jwk thumbprint: %w", err)
-	}
-	return raw, nil
 }
 
 // postDirectPostResponse POSTs responseJWE as the "response" form
