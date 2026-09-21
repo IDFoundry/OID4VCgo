@@ -12,7 +12,7 @@ import (
 
 func TestRequestCredential_ErrorFields(t *testing.T) {
 	f := newCredentialEndpointFixture(t)
-	_, err := f.iss.RequestCredential(context.Background(), issuer.AuthorizedRequest{ClientID: "test-client"}, issuer.CredentialRequest{
+	_, err := f.iss.RequestCredential(context.Background(), issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("test-client")}, issuer.CredentialRequest{
 		CredentialConfigurationID: "NoSuchConfig",
 	})
 	var ierr *issuer.Error
@@ -53,7 +53,7 @@ func TestRequestCredential_ErrorFields(t *testing.T) {
 // direct ierr.WriteJSON(rec) call would produce.
 func TestWriteError_IssuerError(t *testing.T) {
 	f := newCredentialEndpointFixture(t)
-	_, err := f.iss.RequestCredential(context.Background(), issuer.AuthorizedRequest{ClientID: "test-client"}, issuer.CredentialRequest{
+	_, err := f.iss.RequestCredential(context.Background(), issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("test-client")}, issuer.CredentialRequest{
 		CredentialConfigurationID: "NoSuchConfig",
 	})
 	if err == nil {

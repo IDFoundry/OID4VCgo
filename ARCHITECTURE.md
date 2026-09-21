@@ -501,7 +501,7 @@ changes whether *every* bullet below is `(done)`.
   `DeferredTransactionRecord` by its `transaction_id` from a new
   `Dependencies.DeferredTransactions` (`DeferredTransactionStore`),
   checks it's bound to the requesting client (when both the record and
-  the request carry a `ClientID`), and either returns the finished
+  the request resolve to a known `ClientID`), and either returns the finished
   `credentials` (invalidating the transaction per §9.1's own MUST), a
   `transaction_id`/`interval` pair (`Config.Limits.DeferredIssuancePollInterval`)
   when still pending, or `credential_request_denied` when this issuer

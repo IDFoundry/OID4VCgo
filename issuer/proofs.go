@@ -118,13 +118,13 @@ func (iss *Issuer) verifyJWTProof(ctx context.Context, auth AuthorizedRequest, r
 	if body.Iat == 0 {
 		return nil, nil, "", newError(ErrorInvalidProof, 400, fmt.Sprintf("proof %d: iat is required", i), nil)
 	}
-	// auth.ClientID == "" here only ever means an explicit
-	// ClientIDIntentionallyUnset (RequestCredential's own
-	// requireClientIDDecision already rejected any other empty
+	// auth.ClientID() == "" here only ever means an explicit
+	// NoClientIdentity (RequestCredential's own
+	// requireClientIdentityDecision already rejected any other empty
 	// case before this ever runs) — this check is deliberately
 	// skipped for that acknowledged deployment choice, not by
 	// silent default.
-	if body.Iss != "" && auth.ClientID != "" && body.Iss != auth.ClientID {
+	if clientID := auth.ClientID(); body.Iss != "" && clientID != "" && body.Iss != clientID {
 		return nil, nil, "", newError(ErrorInvalidProof, 400, fmt.Sprintf("proof %d: iss does not match the authenticated client", i), nil)
 	}
 	return pub, jwkRaw, body.Nonce, nil

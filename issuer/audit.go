@@ -49,7 +49,7 @@ const (
 type AuditEvent struct {
 	Type        AuditEventType
 	Time        time.Time
-	ClientID    string // "" if the client could not be identified — see AuthorizedRequest.ClientID's own doc comment
+	ClientID    string // "" if the client could not be identified — see AuthorizedRequest.ClientIdentity's own doc comment
 	Outcome     AuditOutcome
 	Description string
 }

@@ -477,7 +477,7 @@ func TestRequestCredential_RejectsResponseEncryptionWithoutEncryptedRequest(t *t
 	nonce := f.issueNonce(t)
 	proof := buildJWTProof(t, testP256Key(t), testIssuer, nonce)
 
-	_, err := f.iss.RequestCredential(context.Background(), issuer.AuthorizedRequest{ClientID: "test-client", Scopes: []string{"identity_credential"}}, issuer.CredentialRequest{
+	_, err := f.iss.RequestCredential(context.Background(), issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("test-client"), Scopes: []string{"identity_credential"}}, issuer.CredentialRequest{
 		CredentialConfigurationID: testSDJWTConfigID,
 		Proofs:                    map[string][]string{oid4vci.ProofTypeJWT: {proof}},
 		SDJWTClaims:               testSDJWTClaims(),
@@ -491,7 +491,7 @@ func TestRequestCredential_AcceptsResponseEncryptionWithEncryptedRequest(t *test
 	nonce := f.issueNonce(t)
 	proof := buildJWTProof(t, testP256Key(t), testIssuer, nonce)
 
-	resp, err := f.iss.RequestCredential(context.Background(), issuer.AuthorizedRequest{ClientID: "test-client", Scopes: []string{"identity_credential"}}, issuer.CredentialRequest{
+	resp, err := f.iss.RequestCredential(context.Background(), issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("test-client"), Scopes: []string{"identity_credential"}}, issuer.CredentialRequest{
 		CredentialConfigurationID: testSDJWTConfigID,
 		Proofs:                    map[string][]string{oid4vci.ProofTypeJWT: {proof}},
 		SDJWTClaims:               testSDJWTClaims(),
@@ -559,7 +559,7 @@ func TestRequestDeferredCredential_RejectsResponseEncryptionWithoutEncryptedRequ
 		t.Fatalf("New: %v", err)
 	}
 
-	_, err = iss.RequestDeferredCredential(context.Background(), issuer.AuthorizedRequest{ClientID: "test-client"}, issuer.DeferredCredentialRequest{
+	_, err = iss.RequestDeferredCredential(context.Background(), issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("test-client")}, issuer.DeferredCredentialRequest{
 		TransactionID:      "txn-1",
 		ResponseEncryption: &issuer.ResponseEncryptionRequest{Enc: jwe.A128GCM, JWK: testWalletJWK(t)},
 	})
@@ -676,7 +676,7 @@ func TestEncryptedCredentialRequestResponseRoundTrip(t *testing.T) {
 		t.Fatalf("json.Unmarshal decrypted body: %v", err)
 	}
 
-	resp, err := iss.RequestCredential(context.Background(), issuer.AuthorizedRequest{ClientID: "test-client", Scopes: []string{"identity_credential"}}, issuer.CredentialRequest{
+	resp, err := iss.RequestCredential(context.Background(), issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("test-client"), Scopes: []string{"identity_credential"}}, issuer.CredentialRequest{
 		CredentialConfigurationID: parsed.CredentialConfigurationID,
 		Proofs:                    parsed.Proofs,
 		SDJWTClaims:               testSDJWTClaims(),

@@ -35,7 +35,7 @@ const (
 type DeferredTransactionRecord struct {
 	// ClientID binds this transaction to the client that originally
 	// requested it. RequestDeferredCredential rejects a request whose
-	// AuthorizedRequest.ClientID doesn't match, when both are
+	// AuthorizedRequest.ClientIdentity doesn't match, when both are
 	// non-empty (§9: "The Wallet MUST present ... an Access Token that
 	// is valid for the issuance of the Credential(s) previously
 	// requested").

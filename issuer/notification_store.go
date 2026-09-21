@@ -9,7 +9,7 @@ type NotificationRecord struct {
 	// ClientID binds this notification_id to the client the
 	// Credential(s) it identifies were issued to.
 	// RequestNotification rejects a request whose
-	// AuthorizedRequest.ClientID doesn't match, when both are
+	// AuthorizedRequest.ClientIdentity doesn't match, when both are
 	// non-empty.
 	ClientID string
 }

@@ -28,34 +28,25 @@ const jwtProofTyp = "openid4vci-proof+jwt" //nolint:gosec // an OID4VCI typ valu
 // see the package doc comment. See resource_verifier.go for the
 // worked adaptation recipe.
 type AuthorizedRequest struct {
-	// ClientID is checked against a jwt-type key proof's "iss" claim
-	// when that claim is present (Appendix F.1); via IssueNotificationID,
-	// binds any notification_id this request causes to be issued to
-	// this same client, later re-checked by RequestNotification; and
-	// (already stamped onto a DeferredTransactionRecord by the
-	// caller's own business process — see that type's own doc comment)
-	// is re-checked by RequestDeferredCredential the same way. REQUIRED
-	// — RequestCredential/RequestDeferredCredential/RequestNotification/
-	// IssueNotificationID all reject an AuthorizedRequest whose ClientID
-	// is empty unless ClientIDIntentionallyUnset is also set: an empty
-	// ClientID doesn't just skip a minor detail, it silently disables
-	// every one of those bindings entirely (an empty ClientID trivially
-	// "matches" everything), for every request that omits it, with no
-	// error or warning at runtime — found in a repo-vs-FAPIgo
-	// trust-boundary comparison; the same "Go zero value must not be
-	// the insecure default" fix already applied to
-	// sdjwtvc.VerifyOptions.RequireKeyBinding/MaxKeyBindingAge. Set
-	// this from your own access-token verification (the token's
-	// subject/client_id).
-	ClientID string
-
-	// ClientIDIntentionallyUnset must be true when ClientID is
-	// deliberately left "" — a caller whose deployment genuinely never
-	// resolves client identity (e.g. access tokens carry no
-	// subject/client_id at all) sets this once, rather than every
-	// caller silently getting the same weaker behavior by omission.
-	// Ignored (fine to leave false) whenever ClientID is non-empty.
-	ClientIDIntentionallyUnset bool
+	// ClientIdentity is checked against a jwt-type key proof's "iss"
+	// claim when that claim is present (Appendix F.1); via
+	// IssueNotificationID, binds any notification_id this request
+	// causes to be issued to this same client, later re-checked by
+	// RequestNotification; and (already stamped onto a
+	// DeferredTransactionRecord by the caller's own business process —
+	// see that type's own doc comment) is re-checked by
+	// RequestDeferredCredential the same way. REQUIRED —
+	// RequestCredential/RequestDeferredCredential/RequestNotification/
+	// IssueNotificationID all reject an AuthorizedRequest whose
+	// ClientIdentity is nil: a caller must set it to KnownClientID(the
+	// token's subject/client_id), or explicitly to NoClientIdentity{}
+	// — found in a repo-vs-FAPIgo trust-boundary comparison, mirroring
+	// FAPIgo's own explicit-opt-out idiom (server.NoRevocation{},
+	// server.NoClientCertificateChainTrust{}): declining is a
+	// conscious, visible value, not a Go zero value silently falling
+	// back to weaker behavior — see NoClientIdentity's own doc comment
+	// for what that would otherwise silently disable.
+	ClientIdentity ClientIdentity
 
 	// Scopes is every scope the access token grants. A requested
 	// CredentialConfiguration whose Scope is non-empty must be included
@@ -87,21 +78,60 @@ type AuthorizedRequest struct {
 	AuthorizationDetails []oid4vci.AuthorizationDetail
 }
 
-// requireClientIDDecision rejects auth if ClientID is empty and the
-// caller never explicitly acknowledged that via
-// ClientIDIntentionallyUnset — see AuthorizedRequest.ClientID's own
-// doc comment for what an empty, unacknowledged ClientID would
-// otherwise silently disable. Called unconditionally by every public
-// method that consumes AuthorizedRequest.ClientID, regardless of
-// whether the specific request at hand would actually exercise one of
-// those checks (e.g. a jwt proof that happens not to set "iss") — a
-// deployment's decision to track client identity or not is made once,
-// not re-derived per request from content an attacker partly controls.
-func requireClientIDDecision(auth AuthorizedRequest) error {
-	if auth.ClientID == "" && !auth.ClientIDIntentionallyUnset {
-		return fmt.Errorf("issuer: authorized_request.client_id is empty; set it, or set client_id_intentionally_unset to acknowledge this deployment doesn't bind requests to a client")
+// ClientIdentity is who AuthorizedRequest's caller resolved the access
+// token's client identity to be: KnownClientID, or NoClientIdentity{}
+// to explicitly decline. See AuthorizedRequest.ClientIdentity's own
+// doc comment.
+type ClientIdentity interface {
+	isClientIdentity()
+}
+
+// KnownClientID is the access token's own subject/client_id. Set this
+// from your own access-token verification.
+type KnownClientID string
+
+func (KnownClientID) isClientIdentity() {}
+
+// NoClientIdentity explicitly declines to bind requests to a client
+// identity — for a deployment whose access tokens genuinely never
+// carry a subject/client_id. Every one of KnownClientID's bindings
+// (jwt proof "iss" check, notification_id binding, deferred
+// transaction client check — see AuthorizedRequest.ClientIdentity's
+// own doc comment) is silently skipped for every request using this
+// value, not just the one that happens not to exercise a given check.
+type NoClientIdentity struct{}
+
+func (NoClientIdentity) isClientIdentity() {}
+
+// ClientID resolves ClientIdentity to a comparison string: the
+// KnownClientID's own value, or "" for NoClientIdentity (also ""
+// if ClientIdentity is nil/invalid, but every public method that
+// consumes it calls requireClientIdentityDecision first to reject
+// that case — see that function's own doc comment).
+func (auth AuthorizedRequest) ClientID() string {
+	if v, ok := auth.ClientIdentity.(KnownClientID); ok {
+		return string(v)
 	}
-	return nil
+	return ""
+}
+
+// requireClientIdentityDecision rejects auth if ClientIdentity wasn't
+// explicitly set to KnownClientID or NoClientIdentity{} — see
+// AuthorizedRequest.ClientIdentity's own doc comment for what a nil
+// ClientIdentity would otherwise silently disable. Called
+// unconditionally by every public method that consumes
+// AuthorizedRequest.ClientIdentity, regardless of whether the specific
+// request at hand would actually exercise one of those checks (e.g. a
+// jwt proof that happens not to set "iss") — a deployment's decision
+// to track client identity or not is made once, not re-derived per
+// request from content an attacker partly controls.
+func requireClientIdentityDecision(auth AuthorizedRequest) error {
+	switch auth.ClientIdentity.(type) {
+	case KnownClientID, NoClientIdentity:
+		return nil
+	default:
+		return fmt.Errorf("issuer: authorized_request.client_identity is required; set it to issuer.KnownClientID(...) or issuer.NoClientIdentity{} to acknowledge this deployment doesn't bind requests to a client")
+	}
 }
 
 // CredentialRequest is a Credential Request (§8.2).
@@ -214,12 +244,12 @@ type resolvedKey struct {
 // CredentialRequest's own doc comment for what's out of scope.
 func (iss *Issuer) RequestCredential(ctx context.Context, auth AuthorizedRequest, req CredentialRequest) (oid4vci.CredentialResponse, error) {
 	resp, err := iss.requestCredential(ctx, auth, req)
-	iss.audit(ctx, AuditEventRequestCredential, auth.ClientID, err)
+	iss.audit(ctx, AuditEventRequestCredential, auth.ClientID(), err)
 	return resp, err
 }
 
 func (iss *Issuer) requestCredential(ctx context.Context, auth AuthorizedRequest, req CredentialRequest) (oid4vci.CredentialResponse, error) {
-	if err := requireClientIDDecision(auth); err != nil {
+	if err := requireClientIdentityDecision(auth); err != nil {
 		return oid4vci.CredentialResponse{}, err
 	}
 	if req.ResponseEncryption != nil && !req.RequestWasEncrypted {

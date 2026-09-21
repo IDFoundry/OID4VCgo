@@ -86,7 +86,7 @@ type Limits struct {
 	// tx_code-guessing risk for a low-entropy PIN. Required only when
 	// Dependencies.PreAuthorizedCodes is set — REQUIRED (must be
 	// positive) in that case, the same "no implicit weakening" pattern
-	// this package's own AuthorizedRequest.ClientID uses: a deployment
+	// this package's own AuthorizedRequest.ClientIdentity uses: a deployment
 	// that wants no cap at all must still choose an explicit, very
 	// large value rather than getting an unbounded one by omission.
 	MaxTxCodeAttempts int

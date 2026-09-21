@@ -23,7 +23,7 @@ func TestAudit_RequestDeferredCredential(t *testing.T) {
 		Credentials: []oid4vci.IssuedCredential{{Credential: "signed-credential"}},
 	})
 	if _, err := iss.RequestDeferredCredential(context.Background(),
-		issuer.AuthorizedRequest{ClientID: "client-a"},
+		issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("client-a")},
 		issuer.DeferredCredentialRequest{TransactionID: "txn-1"},
 	); err != nil {
 		t.Fatalf("RequestDeferredCredential: %v", err)
@@ -46,7 +46,7 @@ func TestAudit_RequestDeferredCredential(t *testing.T) {
 	// A second attempt against the now-invalidated transaction must
 	// still record exactly one more event, this time a failure.
 	if _, err := iss.RequestDeferredCredential(context.Background(),
-		issuer.AuthorizedRequest{ClientID: "client-a"},
+		issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("client-a")},
 		issuer.DeferredCredentialRequest{TransactionID: "txn-1"},
 	); err == nil {
 		t.Fatal("second RequestDeferredCredential = nil error, want error (transaction already invalidated)")
@@ -71,7 +71,7 @@ func TestAudit_RequestCredential(t *testing.T) {
 	nonce := f.issueNonce(t)
 	proof := buildJWTProof(t, testP256Key(t), testIssuer, nonce)
 
-	if _, err := f.iss.RequestCredential(context.Background(), issuer.AuthorizedRequest{ClientID: "client-b", Scopes: []string{"identity_credential"}}, issuer.CredentialRequest{
+	if _, err := f.iss.RequestCredential(context.Background(), issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("client-b"), Scopes: []string{"identity_credential"}}, issuer.CredentialRequest{
 		CredentialConfigurationID: testSDJWTConfigID,
 		Proofs:                    map[string][]string{oid4vci.ProofTypeJWT: {proof}},
 		SDJWTClaims:               testSDJWTClaims(),
@@ -95,7 +95,7 @@ func TestAudit_RequestCredential(t *testing.T) {
 
 	// A second, unrelated failure must still record exactly one more
 	// event.
-	if _, err := f.iss.RequestCredential(context.Background(), issuer.AuthorizedRequest{ClientID: "client-b", Scopes: []string{"identity_credential"}}, issuer.CredentialRequest{
+	if _, err := f.iss.RequestCredential(context.Background(), issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("client-b"), Scopes: []string{"identity_credential"}}, issuer.CredentialRequest{
 		CredentialConfigurationID: "NoSuchConfig",
 	}); err == nil {
 		t.Fatal("second RequestCredential = nil error, want error (unknown credential_configuration_id)")
@@ -165,7 +165,7 @@ func TestAudit_DisabledWhenNil(t *testing.T) {
 	f := newCredentialEndpointFixture(t)
 	nonce := f.issueNonce(t)
 	proof := buildJWTProof(t, testP256Key(t), testIssuer, nonce)
-	if _, err := f.iss.RequestCredential(context.Background(), issuer.AuthorizedRequest{ClientID: "test-client", Scopes: []string{"identity_credential"}}, issuer.CredentialRequest{
+	if _, err := f.iss.RequestCredential(context.Background(), issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("test-client"), Scopes: []string{"identity_credential"}}, issuer.CredentialRequest{
 		CredentialConfigurationID: testSDJWTConfigID,
 		Proofs:                    map[string][]string{oid4vci.ProofTypeJWT: {proof}},
 		SDJWTClaims:               testSDJWTClaims(),
