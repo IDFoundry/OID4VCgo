@@ -121,8 +121,19 @@ func (s IssuerSigned) issuerNameSpacesWire() (map[string][]cbor.RawMessage, erro
 
 // UnmarshalIssuerSigned decodes data as §10.3.3's IssuerSigned CBOR
 // map — Marshal's inverse. It performs no signature or digest
-// verification; use Verify for that.
+// verification; use Verify for that. It rejects data larger than
+// MaxBytes; use UnmarshalIssuerSignedMax for a caller that needs a
+// different ceiling.
 func UnmarshalIssuerSigned(data []byte) (IssuerSigned, error) {
+	return UnmarshalIssuerSignedMax(data, MaxBytes)
+}
+
+// UnmarshalIssuerSignedMax is UnmarshalIssuerSigned with an explicit
+// size ceiling, in bytes, instead of MaxBytes.
+func UnmarshalIssuerSignedMax(data []byte, maxBytes int) (IssuerSigned, error) {
+	if len(data) > maxBytes {
+		return IssuerSigned{}, fmt.Errorf("mdoc: IssuerSigned is %d bytes, exceeds the %d byte limit", len(data), maxBytes)
+	}
 	var wire wireIssuerSigned
 	if err := decMode.Unmarshal(data, &wire); err != nil {
 		return IssuerSigned{}, fmt.Errorf("mdoc: unmarshal IssuerSigned: %w", err)

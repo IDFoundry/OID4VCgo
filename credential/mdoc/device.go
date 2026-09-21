@@ -116,7 +116,18 @@ func (s DeviceSigned) Marshal() ([]byte, error) {
 // UnmarshalDeviceSigned decodes data as §10.3.3's DeviceSigned CBOR
 // map — Marshal's inverse. It performs no signature or MAC
 // verification; use VerifyDeviceSignature or VerifyDeviceMAC for that.
+// It rejects data larger than MaxBytes; use UnmarshalDeviceSignedMax
+// for a caller that needs a different ceiling.
 func UnmarshalDeviceSigned(data []byte) (DeviceSigned, error) {
+	return UnmarshalDeviceSignedMax(data, MaxBytes)
+}
+
+// UnmarshalDeviceSignedMax is UnmarshalDeviceSigned with an explicit
+// size ceiling, in bytes, instead of MaxBytes.
+func UnmarshalDeviceSignedMax(data []byte, maxBytes int) (DeviceSigned, error) {
+	if len(data) > maxBytes {
+		return DeviceSigned{}, fmt.Errorf("mdoc: DeviceSigned is %d bytes, exceeds the %d byte limit", len(data), maxBytes)
+	}
 	var wire wireDeviceSigned
 	if err := decMode.Unmarshal(data, &wire); err != nil {
 		return DeviceSigned{}, fmt.Errorf("mdoc: unmarshal DeviceSigned: %w", err)
