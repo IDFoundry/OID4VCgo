@@ -62,10 +62,17 @@ type Config struct {
 
 // SDJWTVCFormatSupport builds Config.VPFormatsSupported's own
 // "dc+sd-jwt" entry (§10, §11.1): sdJWTAlgs/kbJWTAlgs are the JOSE
-// algorithms this Verifier accepts for the Issuer-signed SD-JWT and
-// the Key Binding JWT respectively (that format's own
-// "sd-jwt_alg_values"/"kb-jwt_alg_values" members).
-func SDJWTVCFormatSupport(sdJWTAlgs, kbJWTAlgs []jose.Alg) map[string]any {
+// algorithm names (e.g. "ES256") this Verifier accepts for the
+// Issuer-signed SD-JWT and the Key Binding JWT respectively (that
+// format's own "sd-jwt_alg_values"/"kb-jwt_alg_values" members). Typed
+// []string, not []jose.Alg: internal/jose is unimportable from outside
+// this module, so a []jose.Alg parameter — unlike Config.SigningAlg's
+// own single jose.Alg field, settable from an untyped string constant
+// without ever naming the type — made this function uncallable by any
+// caller outside this repo (there is no composite-literal spelling of
+// "[]jose.Alg" without importing its package). Found writing this
+// package's own first external, real-HTTP example.
+func SDJWTVCFormatSupport(sdJWTAlgs, kbJWTAlgs []string) map[string]any {
 	return map[string]any{
 		"dc+sd-jwt": map[string]any{
 			"sd-jwt_alg_values": sdJWTAlgs,
