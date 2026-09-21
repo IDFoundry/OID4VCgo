@@ -45,12 +45,14 @@ type assuredNotificationStore struct {
 
 func (a assuredNotificationStore) Capabilities() issuer.StoreCapabilities { return a.caps }
 
-// assuredAttestationVerifier/assuredProofBindingKeyResolver mirror the
-// assured* store wrappers above, but for the two key-source resolvers
-// checkKeySourceAssurance covers — pairing fixedAttestationVerifier/
-// fixedProofBindingKeyResolver (already defined in
+// assuredAttestationVerifier mirrors the assured* store wrappers
+// above, but for AttestationVerifier — pairing
+// fixedAttestationVerifier (already defined in
 // credential_endpoint_test.go) with a declared
-// issuer.KeySourceCapabilities.
+// issuer.KeySourceCapabilities. ProofBindingKeys has no equivalent
+// wrapper: its own positive-path test uses
+// issuer.X5CProofBindingKeyResolver directly, which already declares
+// Capabilities itself.
 
 type assuredAttestationVerifier struct {
 	issuer.AttestationVerifier
@@ -58,13 +60,6 @@ type assuredAttestationVerifier struct {
 }
 
 func (a assuredAttestationVerifier) Capabilities() issuer.KeySourceCapabilities { return a.caps }
-
-type assuredProofBindingKeyResolver struct {
-	issuer.ProofBindingKeyResolver
-	caps issuer.KeySourceCapabilities
-}
-
-func (a assuredProofBindingKeyResolver) Capabilities() issuer.KeySourceCapabilities { return a.caps }
 
 // productionAssuredConfigAndDeps returns validConfig/validDependencies
 // with every store AssuranceProduction already requires
