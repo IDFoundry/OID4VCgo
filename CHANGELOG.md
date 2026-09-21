@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.10.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.9.0...v0.10.0) (2026-09-21)
+
+
+### Features
+
+* **wallet:** add FetchAuthorizationRequest for OID4VP §5.10 request_uri fetch ([1ab9359](https://github.com/IDFoundry/OID4VCgo/commit/1ab9359ebddb2062d3098431574d308f0cbb8ee9))
+
+
+### Bug Fixes
+
+* **ci:** stop masking Issuer container-startup failures too; fix likely root cause ([f6206de](https://github.com/IDFoundry/OID4VCgo/commit/f6206de1edc4a040955ba210190225f885d2c1db))
+* **ci:** stop the conformance workflow from reporting false success ([401788e](https://github.com/IDFoundry/OID4VCgo/commit/401788e59d44cda656726632c94cf54ffafc94ae))
+* cmd/conformance-verifier never actually verified anything; fix a real core-library bug found along the way ([#172](https://github.com/IDFoundry/OID4VCgo/issues/172)) ([1c51d0b](https://github.com/IDFoundry/OID4VCgo/commit/1c51d0bf10ae39060c279b1d3b35a8a310bed140))
+* **lint:** silence gosec G306 on the three intentional 0o644 writes ([97cd4c3](https://github.com/IDFoundry/OID4VCgo/commit/97cd4c3ea91cf35fdeb4b25b673dc7f0df5e5f73))
+
 ## [0.9.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.8.0...v0.9.0) (2026-09-20)
 
 
