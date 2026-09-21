@@ -197,16 +197,18 @@ func TestNewRejectsInvalidCredentialConfiguration(t *testing.T) {
 	cases := map[string]issuer.CredentialConfiguration{
 		"empty format": {Format: "", CryptographicBindingMethodsSupported: nil},
 		"binding methods without proof types": {
-			Format: "dc+sd-jwt", CryptographicBindingMethodsSupported: []string{"jwk"},
+			Format: "dc+sd-jwt", VCT: "https://credentials.example.com/identity_credential",
+			CryptographicBindingMethodsSupported: []string{"jwk"},
 		},
 		"proof types without binding methods": {
-			Format: "dc+sd-jwt",
+			Format: "dc+sd-jwt", VCT: "https://credentials.example.com/identity_credential",
 			ProofTypesSupported: map[string]oid4vci.ProofTypeConfiguration{
 				oid4vci.ProofTypeJWT: {ProofSigningAlgValuesSupported: []string{"ES256"}},
 			},
 		},
 		"proof type with no algorithms": {
-			Format: "dc+sd-jwt", CryptographicBindingMethodsSupported: []string{"jwk"},
+			Format: "dc+sd-jwt", VCT: "https://credentials.example.com/identity_credential",
+			CryptographicBindingMethodsSupported: []string{"jwk"},
 			ProofTypesSupported: map[string]oid4vci.ProofTypeConfiguration{
 				oid4vci.ProofTypeJWT: {},
 			},
@@ -217,10 +219,24 @@ func TestNewRejectsInvalidCredentialConfiguration(t *testing.T) {
 			CredentialSigningAlgValuesSupportedCOSE: []cose.Alg{cose.ES256},
 		},
 		"invalid credential_metadata": {
-			Format: "dc+sd-jwt",
+			Format: "dc+sd-jwt", VCT: "https://credentials.example.com/identity_credential",
 			CredentialMetadata: &oid4vci.CredentialMetadata{
 				Claims: []oid4vci.ClaimsDescription{{Path: nil}},
 			},
+		},
+		"sdjwtvc format missing vct": {
+			Format: "dc+sd-jwt",
+		},
+		"mdoc format missing doctype": {
+			Format: "mso_mdoc",
+		},
+		"sdjwtvc format with COSE signing algs": {
+			Format: "dc+sd-jwt", VCT: "https://credentials.example.com/identity_credential",
+			CredentialSigningAlgValuesSupportedCOSE: []cose.Alg{cose.ES256},
+		},
+		"mdoc format with JOSE signing algs": {
+			Format: "mso_mdoc", DocType: "org.iso.18013.5.1.mDL",
+			CredentialSigningAlgValuesSupported: []string{"ES256"},
 		},
 	}
 	for name, cc := range cases {
