@@ -867,8 +867,8 @@ func TestWalletIssuerRoundTrip(t *testing.T) {
 // trust anchor) a deployment would use.
 type fixedProofBindingKeyResolver struct{ pub crypto.PublicKey }
 
-func (r fixedProofBindingKeyResolver) ResolveProofBindingKey(context.Context, map[string]any) (crypto.PublicKey, error) {
-	return r.pub, nil
+func (r fixedProofBindingKeyResolver) ResolveProofBindingKey(context.Context, map[string]any) (crypto.PublicKey, jose.Alg, error) {
+	return r.pub, jose.ES256, nil
 }
 
 // TestWalletIssuerKidProofRoundTrip exercises a kid-conveyed jwt-type

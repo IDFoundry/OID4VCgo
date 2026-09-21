@@ -259,17 +259,31 @@ type AttestationVerifier interface {
 }
 
 // ProofBindingKeyResolver resolves a jwt-type key proof's own "kid" or
-// "x5c" JOSE header (Appendix F.1) to the public key it identifies —
-// entirely this issuer's own trust policy for what either one means
-// (a DID URL into a DID Document for kid; an x5c chain's own trust
-// anchor for x5c; a private key registry; ...), the same "resolving
-// trust is the caller's job" split AttestationVerifier already draws
-// for a Key Attestation's own kid/x5c/trust_chain. header is the proof
-// JWT's raw decoded JOSE header (jose.DecodeUnverified's own return
-// shape) — exactly one of its "kid"/"x5c" entries is present, whichever
-// this proof actually conveys.
+// "x5c" JOSE header (Appendix F.1) to the public key it identifies,
+// and the JOSE algorithm that key is trusted to sign with — entirely
+// this issuer's own trust policy for what either one means (a DID URL
+// into a DID Document for kid; an x5c chain's own trust anchor for
+// x5c; a private key registry; ...), the same "resolving trust is the
+// caller's job" split AttestationVerifier already draws for a Key
+// Attestation's own kid/x5c/trust_chain. header is the proof JWT's raw
+// decoded JOSE header (jose.DecodeUnverified's own return shape) —
+// exactly one of its "kid"/"x5c" entries is present, whichever this
+// proof actually conveys.
+//
+// The algorithm is returned by this resolver, not read back out of
+// header's own "alg" member by the caller, matching every sibling
+// resolver in this repo (AttestationVerifier, verifier's own
+// SDJWTVCIssuerKeyResolver/MdocIssuerKeyResolver): an algorithm must
+// travel with the key it was actually vetted for, never be picked
+// from the same untrusted header a resolver only just finished
+// inspecting. Before this returned an algorithm, callers had no
+// choice but to trust header's own "alg" outright (bounded only by the
+// configured ProofSigningAlgValuesSupported allow-list) — harmless
+// today only because internal/jose's own type-safe per-algorithm
+// dispatch happens to reject any key whose type doesn't match the
+// claimed algorithm, not because the resolver contract made it safe.
 type ProofBindingKeyResolver interface {
-	ResolveProofBindingKey(ctx context.Context, header map[string]any) (crypto.PublicKey, error)
+	ResolveProofBindingKey(ctx context.Context, header map[string]any) (crypto.PublicKey, jose.Alg, error)
 }
 
 // Dependencies are this issuer's external collaborators.

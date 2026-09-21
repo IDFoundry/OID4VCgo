@@ -59,11 +59,11 @@ type fixedProofBindingKeyResolver struct {
 	err error
 }
 
-func (r fixedProofBindingKeyResolver) ResolveProofBindingKey(context.Context, map[string]any) (crypto.PublicKey, error) {
+func (r fixedProofBindingKeyResolver) ResolveProofBindingKey(context.Context, map[string]any) (crypto.PublicKey, jose.Alg, error) {
 	if r.err != nil {
-		return nil, r.err
+		return nil, "", r.err
 	}
-	return r.pub, nil
+	return r.pub, jose.ES256, nil
 }
 
 // credentialEndpointFixture is a fully configured Issuer supporting

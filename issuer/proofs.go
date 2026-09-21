@@ -83,12 +83,22 @@ func (iss *Issuer) verifyJWTProof(ctx context.Context, auth AuthorizedRequest, r
 	if !slices.Contains(ptc.ProofSigningAlgValuesSupported, algStr) {
 		return nil, nil, "", newError(ErrorInvalidProof, 400, fmt.Sprintf("proof %d alg %q is not supported", i, algStr), nil)
 	}
-	pub, jwkRaw, err := iss.resolveProofBindingKey(ctx, header)
+	pub, alg, jwkRaw, err := iss.resolveProofBindingKey(ctx, header)
 	if err != nil {
 		return nil, nil, "", newError(ErrorInvalidProof, 400, fmt.Sprintf("proof %d: %v", i, err), nil)
 	}
 
-	_, payload, err := jose.Verify(jose.Alg(algStr), pub, raw)
+	// alg, not jose.Alg(algStr): for a kid/x5c-conveyed key, alg is
+	// whatever Dependencies.ProofBindingKeys actually vetted that key
+	// for, never the header's own unverified claim — see
+	// ProofBindingKeyResolver's own doc comment for why. Verify still
+	// rejects the request if algStr disagrees with the vetted alg (its
+	// own header-vs-expected check), so a Wallet claiming a different
+	// algorithm than the resolved key was actually trusted for is
+	// still cleanly refused. For a jwk-conveyed key (self-asserted, no
+	// external trust resolution — the same proof-of-possession model
+	// wallet's own DPoP proofs use), alg is exactly algStr.
+	_, payload, err := jose.Verify(alg, pub, raw)
 	if err != nil {
 		return nil, nil, "", newError(ErrorInvalidProof, 400, fmt.Sprintf("proof %d: signature verification failed", i), err)
 	}
@@ -128,7 +138,15 @@ func (iss *Issuer) verifyJWTProof(ctx context.Context, auth AuthorizedRequest, r
 // re-marshaled as a JWK for resolvedKey.JWKRaw — cnf.jwk (RFC 7800)
 // needs a JWK either way, regardless of how the Wallet originally
 // conveyed the key.
-func (iss *Issuer) resolveProofBindingKey(ctx context.Context, header map[string]any) (crypto.PublicKey, json.RawMessage, error) {
+//
+// The returned jose.Alg is header's own "alg" claim for a jwk-conveyed
+// key (self-asserted — a jwk proof establishes possession of a
+// freshly-presented key, not trust in a pre-vetted one, the same model
+// wallet's own DPoP proofs use) but ProofBindingKeys' own resolved
+// algorithm for a kid/x5c-conveyed key, never header's claim — see
+// ProofBindingKeyResolver's own doc comment for why trusting the
+// resolver's algorithm, not the header's, matters there.
+func (iss *Issuer) resolveProofBindingKey(ctx context.Context, header map[string]any) (crypto.PublicKey, jose.Alg, json.RawMessage, error) {
 	_, hasJWK := header["jwk"]
 	_, hasKID := header["kid"]
 	_, hasX5C := header["x5c"]
@@ -139,37 +157,38 @@ func (iss *Issuer) resolveProofBindingKey(ctx context.Context, header map[string
 		}
 	}
 	if present != 1 {
-		return nil, nil, fmt.Errorf("exactly one of jwk, kid or x5c is required")
+		return nil, "", nil, fmt.Errorf("exactly one of jwk, kid or x5c is required")
 	}
 
 	if hasJWK {
 		jwkRaw, err := jwkHeaderKey(header)
 		if err != nil {
-			return nil, nil, err
+			return nil, "", nil, err
 		}
 		pub, err := jwk.ParsePublicKey(jwkRaw)
 		if err != nil {
-			return nil, nil, fmt.Errorf("parse jwk: %w", err)
+			return nil, "", nil, fmt.Errorf("parse jwk: %w", err)
 		}
-		return pub, jwkRaw, nil
+		algStr, _ := header["alg"].(string)
+		return pub, jose.Alg(algStr), jwkRaw, nil
 	}
 
 	if iss.deps.ProofBindingKeys == nil {
-		return nil, nil, fmt.Errorf("kid/x5c-based key resolution is not supported; use jwk")
+		return nil, "", nil, fmt.Errorf("kid/x5c-based key resolution is not supported; use jwk")
 	}
-	pub, err := iss.deps.ProofBindingKeys.ResolveProofBindingKey(ctx, header)
+	pub, alg, err := iss.deps.ProofBindingKeys.ResolveProofBindingKey(ctx, header)
 	if err != nil {
-		return nil, nil, fmt.Errorf("resolve proof binding key: %w", err)
+		return nil, "", nil, fmt.Errorf("resolve proof binding key: %w", err)
 	}
 	marshaled, err := jwk.Marshal(pub)
 	if err != nil {
-		return nil, nil, fmt.Errorf("marshal resolved key as jwk: %w", err)
+		return nil, "", nil, fmt.Errorf("marshal resolved key as jwk: %w", err)
 	}
 	jwkRaw, err := json.Marshal(marshaled)
 	if err != nil {
-		return nil, nil, fmt.Errorf("marshal resolved key as jwk: %w", err)
+		return nil, "", nil, fmt.Errorf("marshal resolved key as jwk: %w", err)
 	}
-	return pub, jwkRaw, nil
+	return pub, alg, jwkRaw, nil
 }
 
 // resolveAttestationProofKeys verifies every Key Attestation JWT in
