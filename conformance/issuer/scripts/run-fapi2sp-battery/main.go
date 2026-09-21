@@ -324,7 +324,7 @@ func main() {
 	// key/cert here is throwaway, freshly generated per run — never a
 	// real production secret — so a host-world-readable file is an
 	// acceptable trade for a working readiness check.
-	if err := os.WriteFile(*configOut, serverConfig, 0o644); err != nil {
+	if err := os.WriteFile(*configOut, serverConfig, 0o644); err != nil { //nolint:gosec // G306: intentionally looser than 0600 — see the comment above; a throwaway CI config a differently-uid'd container must read
 		log.Fatalf("write %s: %v", *configOut, err)
 	}
 	log.Printf("wrote %s", *configOut)

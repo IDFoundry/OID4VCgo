@@ -322,7 +322,7 @@ func writeConfigAndMaybeRestart(cfg generatedConfig, httpClient *http.Client, wa
 	// throwaway, freshly generated per run — never a real production
 	// secret — so a host-world-readable file is an acceptable trade
 	// for a working readiness check.
-	if err := os.WriteFile(configOutPath, cfgRaw, 0o644); err != nil {
+	if err := os.WriteFile(configOutPath, cfgRaw, 0o644); err != nil { //nolint:gosec // G306: intentionally looser than 0600 — see the comment above; a throwaway CI config a differently-uid'd container must read
 		return fmt.Errorf("write %s: %w", configOutPath, err)
 	}
 	log.Printf("wrote %s", configOutPath)

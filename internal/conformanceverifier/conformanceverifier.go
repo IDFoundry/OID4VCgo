@@ -155,7 +155,7 @@ func WriteConfig(cfg Config) error {
 	// freshly generated per run (see GenerateKeyMaterial) — never real
 	// production secrets — so a host-world-readable file is an
 	// acceptable trade for a working readiness check.
-	if err := os.WriteFile(ConfigOutPath, raw, 0o644); err != nil {
+	if err := os.WriteFile(ConfigOutPath, raw, 0o644); err != nil { //nolint:gosec // G306: intentionally looser than 0600 — see the comment above; a throwaway CI config a differently-uid'd container must read
 		return fmt.Errorf("write %s: %w", ConfigOutPath, err)
 	}
 	return nil
