@@ -811,7 +811,7 @@ func TestRequestCredential_RejectsUnboundConfig(t *testing.T) {
 		},
 		Limits: issuer.Limits{NonceLifetime: time.Minute},
 		CredentialConfigurationsSupported: map[string]issuer.CredentialConfiguration{
-			"UnboundCredential": {Format: sdjwtvc.CredentialFormat},
+			"UnboundCredential": {Format: sdjwtvc.CredentialFormat, VCT: "https://credentials.example.com/identity_credential"},
 		},
 	}
 	deps := issuer.Dependencies{
@@ -934,7 +934,8 @@ func TestRequestCredential_RejectsProofTypeThisPackageDoesNotImplement(t *testin
 		Limits: issuer.Limits{NonceLifetime: time.Minute},
 		CredentialConfigurationsSupported: map[string]issuer.CredentialConfiguration{
 			"DIVPCredential": {
-				Format: sdjwtvc.CredentialFormat, CryptographicBindingMethodsSupported: []string{"jwk"},
+				Format: sdjwtvc.CredentialFormat, VCT: "https://credentials.example.com/identity_credential",
+				CryptographicBindingMethodsSupported: []string{"jwk"},
 				ProofTypesSupported: map[string]oid4vci.ProofTypeConfiguration{
 					"di_vp": {ProofSigningAlgValuesSupported: []string{"eddsa-2022"}},
 				},

@@ -87,6 +87,7 @@ func TestStoresSatisfyIssuerDependencies(t *testing.T) {
 		CredentialConfigurationsSupported: map[string]issuer.CredentialConfiguration{
 			"IdentityCredential": {
 				Format:                               "dc+sd-jwt",
+				VCT:                                  "https://credentials.example.com/identity_credential",
 				CryptographicBindingMethodsSupported: []string{"jwk"},
 				ProofTypesSupported: map[string]oid4vci.ProofTypeConfiguration{
 					oid4vci.ProofTypeJWT: {ProofSigningAlgValuesSupported: []string{"ES256"}},

@@ -4,6 +4,8 @@ import (
 	"fmt"
 
 	"github.com/idfoundry/oid4vcgo"
+	"github.com/idfoundry/oid4vcgo/credential/mdoc"
+	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcgo/internal/cose"
 	"github.com/idfoundry/oid4vcgo/internal/jwe"
 	"github.com/idfoundry/oid4vcgo/internal/jwk"
@@ -76,6 +78,33 @@ func (c CredentialConfiguration) validate() error {
 	}
 	if len(c.CredentialSigningAlgValuesSupported) > 0 && len(c.CredentialSigningAlgValuesSupportedCOSE) > 0 {
 		return fmt.Errorf("credential_signing_alg_values_supported must not be set in both its JOSE-alg-string and COSE-alg-number forms")
+	}
+	// VCT/DocType/the alg-form fields are each documented as
+	// REQUIRED/format-specific on their own doc comments (see VCT's
+	// own), but nothing previously checked Format actually agreed with
+	// what was set — found in a repo-wide integrator-misconfiguration
+	// scan. Metadata() serializes VCT/DocType and whichever alg-form
+	// field is set unconditionally, with json:",omitempty" on both —
+	// leaving VCT empty on an sdjwtvc-format config, or setting the
+	// JOSE-alg-string form for an mdoc-format one, silently produces a
+	// spec-non-conformant Credential Issuer Metadata document (missing
+	// vct, or credential_signing_alg_values_supported in the wrong
+	// wire shape) rather than failing at New().
+	switch c.Format {
+	case sdjwtvc.CredentialFormat:
+		if c.VCT == "" {
+			return fmt.Errorf("vct is required when format is %q", sdjwtvc.CredentialFormat)
+		}
+		if len(c.CredentialSigningAlgValuesSupportedCOSE) > 0 {
+			return fmt.Errorf("credential_signing_alg_values_supported_cose must not be set when format is %q; use credential_signing_alg_values_supported instead", sdjwtvc.CredentialFormat)
+		}
+	case mdoc.CredentialFormat:
+		if c.DocType == "" {
+			return fmt.Errorf("doctype is required when format is %q", mdoc.CredentialFormat)
+		}
+		if len(c.CredentialSigningAlgValuesSupported) > 0 {
+			return fmt.Errorf("credential_signing_alg_values_supported must not be set when format is %q; use credential_signing_alg_values_supported_cose instead", mdoc.CredentialFormat)
+		}
 	}
 	if len(c.CryptographicBindingMethodsSupported) > 0 && len(c.ProofTypesSupported) == 0 {
 		return fmt.Errorf("proof_types_supported is required when cryptographic_binding_methods_supported is present")
