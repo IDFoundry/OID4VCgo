@@ -3,6 +3,7 @@ package mdoc
 import (
 	"crypto"
 	"crypto/rand"
+	"crypto/x509"
 	"fmt"
 	"math/big"
 	"time"
@@ -104,11 +105,48 @@ func Issue(signer crypto.Signer, alg cose.Alg, claims Claims, opts IssueOptions)
 	if claims.Signed.IsZero() || claims.ValidFrom.IsZero() || claims.ValidUntil.IsZero() {
 		return IssuerSigned{}, fmt.Errorf("mdoc: Claims.Signed, ValidFrom and ValidUntil are required")
 	}
+	// §12.3.4: "The timestamp of validFrom shall be equal or later than
+	// the signed element" / "The value of the validUntil element shall
+	// be later than the validFrom element" — found in a repo-wide
+	// spec-comprehensiveness review; previously only each timestamp's
+	// own IsZero() was checked, not their relative ordering.
+	if claims.ValidFrom.Before(claims.Signed) {
+		return IssuerSigned{}, fmt.Errorf("mdoc: Claims.ValidFrom must not be before Claims.Signed")
+	}
+	if !claims.ValidUntil.After(claims.ValidFrom) {
+		return IssuerSigned{}, fmt.Errorf("mdoc: Claims.ValidUntil must be after Claims.ValidFrom")
+	}
 	if len(opts.X5Chain) == 0 {
 		return IssuerSigned{}, fmt.Errorf("mdoc: IssueOptions.X5Chain must include at least one certificate")
 	}
+	leaf, err := x509.ParseCertificate(opts.X5Chain[0])
+	if err != nil {
+		return IssuerSigned{}, fmt.Errorf("mdoc: parse IssueOptions.X5Chain[0]: %w", err)
+	}
+	// §12.3.4: "The value of the validUntil element shall be equal or
+	// earlier than the value of the notAfter element in the leaf
+	// certificate in the x5chain element of the IssuerAuth structure."
+	if claims.ValidUntil.After(leaf.NotAfter) {
+		return IssuerSigned{}, fmt.Errorf("mdoc: Claims.ValidUntil (%s) must not be after IssueOptions.X5Chain[0]'s own NotAfter (%s)", claims.ValidUntil, leaf.NotAfter)
+	}
+	// A two-value assertion, not a direct one: signer.Public() is every
+	// stdlib key type's own crypto.PublicKey, all of which implement
+	// Equal, but a custom Signer (an HSM/KMS-backed one) may not — a
+	// direct assertion would panic instead of returning this func's
+	// own documented config-mismatch error, the same "Signer may not
+	// be comparable" risk verifier.New's own equivalent check already
+	// guards against. Found in the same review as the ValidUntil
+	// checks above.
+	if comparableKey, ok := signer.Public().(interface{ Equal(crypto.PublicKey) bool }); ok && !comparableKey.Equal(leaf.PublicKey) {
+		return IssuerSigned{}, fmt.Errorf("mdoc: IssueOptions.X5Chain[0]'s public key does not match signer's public key")
+	}
 	if claims.Status != nil && claims.IdentifierList != nil {
 		return IssuerSigned{}, fmt.Errorf("mdoc: Claims.Status and Claims.IdentifierList must not both be set")
+	}
+	if claims.KeyAuthorizations != nil {
+		if err := claims.KeyAuthorizations.validate(); err != nil {
+			return IssuerSigned{}, err
+		}
 	}
 	digestAlg := opts.DigestAlg
 	if digestAlg == "" {
@@ -174,6 +212,12 @@ func issueNameSpaces(
 	rawItems = make(map[string][]cbor.RawMessage, len(claimed))
 	valueDigests = make(map[string]DigestIDs, len(claimed))
 	for namespace, elements := range claimed {
+		// §8.1: "Doctype, NameSpace and DataElementIdentifier shall
+		// not be empty strings" — found in a repo-wide
+		// spec-comprehensiveness review.
+		if namespace == "" {
+			return nil, nil, nil, fmt.Errorf("mdoc: namespace must not be an empty string")
+		}
 		if len(elements) == 0 {
 			return nil, nil, nil, fmt.Errorf("mdoc: namespace %q has no data elements", namespace)
 		}
@@ -182,6 +226,9 @@ func issueNameSpaces(
 		itemBytesList := make([]cbor.RawMessage, 0, len(elements))
 		digests := make(DigestIDs, len(elements))
 		for identifier, value := range elements {
+			if identifier == "" {
+				return nil, nil, nil, fmt.Errorf("mdoc: namespace %q: element identifier must not be an empty string", namespace)
+			}
 			item, itemBytes, d, err := issueItem(identifier, value, digestAlg, usedIDs)
 			if err != nil {
 				return nil, nil, nil, err

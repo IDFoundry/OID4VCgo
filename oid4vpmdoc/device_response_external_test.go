@@ -35,7 +35,7 @@ func TestMarshalUnmarshalDeviceResponseRoundTrip(t *testing.T) {
 		t.Errorf("DocType = %q, want %q", decoded.DocType, testmdoc.DocType)
 	}
 
-	verified, err := mdoc.Verify(decoded.IssuerSigned, &f.IssuerKey.PublicKey, cose.ES256, mdoc.VerifyOptions{})
+	verified, err := mdoc.Verify(decoded.IssuerSigned, testmdoc.DocType, &f.IssuerKey.PublicKey, cose.ES256, mdoc.VerifyOptions{})
 	if err != nil {
 		t.Fatalf("mdoc.Verify: %v", err)
 	}

@@ -9,6 +9,7 @@ import (
 
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/internal/cose"
+	"github.com/idfoundry/oid4vcgo/internal/testcert"
 )
 
 // FuzzUnmarshalDeviceResponse exercises UnmarshalDeviceResponse against
@@ -27,6 +28,7 @@ func FuzzUnmarshalDeviceResponse(f *testing.F) {
 	}
 	const docType = "org.iso.18013.5.1.mDL"
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	cert := testcert.SelfSigned(f, "oid4vpmdoc fuzz issuer", &issuerKey.PublicKey, issuerKey)
 
 	issuerSigned, err := mdoc.Issue(issuerKey, cose.ES256, mdoc.Claims{
 		DocType: docType,
@@ -35,7 +37,7 @@ func FuzzUnmarshalDeviceResponse(f *testing.F) {
 		},
 		DeviceKey: &deviceKey.PublicKey,
 		Signed:    now, ValidFrom: now, ValidUntil: now.Add(24 * time.Hour),
-	}, mdoc.IssueOptions{X5Chain: [][]byte{[]byte("fuzz-cert")}})
+	}, mdoc.IssueOptions{X5Chain: [][]byte{cert.Raw}})
 	if err != nil {
 		f.Fatalf("mdoc.Issue: %v", err)
 	}

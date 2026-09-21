@@ -82,7 +82,7 @@ func assertPresentedMdoc(t *testing.T, presented string, f testmdoc.Fixture, wan
 		t.Fatalf("VerifyDeviceSignature: %v", err)
 	}
 
-	verified, err := mdoc.Verify(doc.IssuerSigned, &f.IssuerKey.PublicKey, cose.ES256, mdoc.VerifyOptions{})
+	verified, err := mdoc.Verify(doc.IssuerSigned, testmdoc.DocType, &f.IssuerKey.PublicKey, cose.ES256, mdoc.VerifyOptions{})
 	if err != nil {
 		t.Fatalf("mdoc.Verify: %v", err)
 	}

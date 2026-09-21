@@ -15,13 +15,13 @@ import (
 	"github.com/idfoundry/oid4vcgo/internal/cose"
 )
 
-func selfSignedCert(t *testing.T, pub, signer interface{}) []byte {
+func selfSignedCert(t testing.TB, pub, signer interface{}) []byte {
 	t.Helper()
 	tmpl := &x509.Certificate{
 		SerialNumber: big.NewInt(1),
 		Subject:      pkix.Name{CommonName: "mdoc test issuer"},
 		NotBefore:    time.Now().Add(-time.Hour),
-		NotAfter:     time.Now().Add(24 * time.Hour),
+		NotAfter:     time.Now().Add(365 * 24 * time.Hour),
 	}
 	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, pub, signer)
 	if err != nil {
@@ -81,7 +81,7 @@ func newFixture(t *testing.T) fixture {
 func TestIssueVerifyRoundTripES256(t *testing.T) {
 	f := newFixture(t)
 
-	verified, err := Verify(f.signed, &f.issuerKey.PublicKey, cose.ES256, VerifyOptions{
+	verified, err := Verify(f.signed, f.claims.DocType, &f.issuerKey.PublicKey, cose.ES256, VerifyOptions{
 		Now: func() time.Time { return f.claims.Signed.Add(time.Hour) },
 	})
 	if err != nil {
@@ -135,7 +135,7 @@ func issueAndVerifyWithStatus(t *testing.T, f fixture, wireRoundTrip bool, mutat
 		}
 	}
 
-	verified, err := Verify(signed, &f.issuerKey.PublicKey, cose.ES256, VerifyOptions{
+	verified, err := Verify(signed, claims.DocType, &f.issuerKey.PublicKey, cose.ES256, VerifyOptions{
 		Now: func() time.Time { return claims.Signed.Add(time.Hour) },
 	})
 	if err != nil {
@@ -261,7 +261,7 @@ func TestIssueVerifyRoundTripEdDSA(t *testing.T) {
 		t.Fatalf("Issue: %v", err)
 	}
 
-	verified, err := Verify(signed, issuerPub, cose.EdDSA, VerifyOptions{
+	verified, err := Verify(signed, claims.DocType, issuerPub, cose.EdDSA, VerifyOptions{
 		Now: func() time.Time { return claims.Signed.Add(time.Hour) },
 	})
 	if err != nil {
@@ -301,7 +301,7 @@ func TestVerifyRejectsTamperedElementValue(t *testing.T) {
 		}
 	}
 
-	if _, err := Verify(f.signed, &f.issuerKey.PublicKey, cose.ES256, VerifyOptions{
+	if _, err := Verify(f.signed, f.claims.DocType, &f.issuerKey.PublicKey, cose.ES256, VerifyOptions{
 		Now: func() time.Time { return f.claims.Signed.Add(time.Hour) },
 	}); err == nil {
 		t.Errorf("Verify accepted a tampered element value")
@@ -342,7 +342,7 @@ func TestVerifyRejectsTamperedElementValueOverWire(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UnmarshalIssuerSigned: %v", err)
 	}
-	if _, err := Verify(decoded, &f.issuerKey.PublicKey, cose.ES256, VerifyOptions{
+	if _, err := Verify(decoded, f.claims.DocType, &f.issuerKey.PublicKey, cose.ES256, VerifyOptions{
 		Now: func() time.Time { return f.claims.Signed.Add(time.Hour) },
 	}); err == nil {
 		t.Errorf("Verify accepted a tampered element value received over the wire")
@@ -352,7 +352,7 @@ func TestVerifyRejectsTamperedElementValueOverWire(t *testing.T) {
 func TestVerifyRejectsExpired(t *testing.T) {
 	f := newFixture(t)
 
-	if _, err := Verify(f.signed, &f.issuerKey.PublicKey, cose.ES256, VerifyOptions{
+	if _, err := Verify(f.signed, f.claims.DocType, &f.issuerKey.PublicKey, cose.ES256, VerifyOptions{
 		Now: func() time.Time { return f.claims.ValidUntil.Add(time.Hour) },
 	}); err == nil {
 		t.Errorf("Verify accepted an expired MSO")
@@ -362,7 +362,7 @@ func TestVerifyRejectsExpired(t *testing.T) {
 func TestVerifyRejectsNotYetValid(t *testing.T) {
 	f := newFixture(t)
 
-	if _, err := Verify(f.signed, &f.issuerKey.PublicKey, cose.ES256, VerifyOptions{
+	if _, err := Verify(f.signed, f.claims.DocType, &f.issuerKey.PublicKey, cose.ES256, VerifyOptions{
 		Now: func() time.Time { return f.claims.ValidFrom.Add(-time.Hour) },
 	}); err == nil {
 		t.Errorf("Verify accepted a not-yet-valid MSO")
@@ -376,7 +376,7 @@ func TestVerifyRejectsWrongKey(t *testing.T) {
 		t.Fatalf("generate other key: %v", err)
 	}
 
-	if _, err := Verify(f.signed, &otherKey.PublicKey, cose.ES256, VerifyOptions{
+	if _, err := Verify(f.signed, f.claims.DocType, &otherKey.PublicKey, cose.ES256, VerifyOptions{
 		Now: func() time.Time { return f.claims.Signed.Add(time.Hour) },
 	}); err == nil {
 		t.Errorf("Verify accepted a signature under the wrong key")
@@ -435,7 +435,7 @@ func TestIssuerSignedMarshalUnmarshalRoundTrip(t *testing.T) {
 		t.Fatalf("UnmarshalIssuerSigned: %v", err)
 	}
 
-	verified, err := Verify(decoded, &f.issuerKey.PublicKey, cose.ES256, VerifyOptions{
+	verified, err := Verify(decoded, f.claims.DocType, &f.issuerKey.PublicKey, cose.ES256, VerifyOptions{
 		Now: func() time.Time { return f.claims.Signed.Add(time.Hour) },
 	})
 	if err != nil {
@@ -485,7 +485,7 @@ func TestMapValuedElementValueVerifiesReliably(t *testing.T) {
 		}
 
 		// In-memory path (no wire round trip).
-		if _, err := Verify(signed, &f.issuerKey.PublicKey, cose.ES256, VerifyOptions{
+		if _, err := Verify(signed, claims.DocType, &f.issuerKey.PublicKey, cose.ES256, VerifyOptions{
 			Now: func() time.Time { return claims.Signed.Add(time.Hour) },
 		}); err != nil {
 			t.Fatalf("iteration %d: Verify (in-memory): %v", i, err)
@@ -500,7 +500,7 @@ func TestMapValuedElementValueVerifiesReliably(t *testing.T) {
 		if err != nil {
 			t.Fatalf("iteration %d: UnmarshalIssuerSigned: %v", i, err)
 		}
-		if _, err := Verify(decoded, &f.issuerKey.PublicKey, cose.ES256, VerifyOptions{
+		if _, err := Verify(decoded, claims.DocType, &f.issuerKey.PublicKey, cose.ES256, VerifyOptions{
 			Now: func() time.Time { return claims.Signed.Add(time.Hour) },
 		}); err != nil {
 			t.Fatalf("iteration %d: Verify (wire round trip): %v", i, err)

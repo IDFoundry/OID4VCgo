@@ -54,10 +54,14 @@ func Issue(t *testing.T) Fixture {
 		NameSpaces: map[string]map[string]interface{}{
 			"org.iso.18013.5.1": {"given_name": "Alice", "family_name": "Doe"},
 		},
-		DeviceKey:  &deviceKey.PublicKey,
-		Signed:     signed,
-		ValidFrom:  signed,
-		ValidUntil: signed.Add(24 * time.Hour),
+		DeviceKey: &deviceKey.PublicKey,
+		Signed:    signed,
+		ValidFrom: signed,
+		// Comfortably inside testcert.SelfSigned's own NotAfter (now +
+		// 24h, computed a moment before signed above) — mdoc.Issue now
+		// rejects a ValidUntil past the leaf certificate's own
+		// NotAfter (§12.3.4), so this can't use the same 24h window.
+		ValidUntil: signed.Add(time.Hour),
 	}, mdoc.IssueOptions{X5Chain: [][]byte{cert.Raw}})
 	if err != nil {
 		t.Fatalf("testmdoc: mdoc.Issue: %v", err)

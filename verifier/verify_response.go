@@ -488,12 +488,9 @@ func (v *Verifier) verifyMdocPresentation(ctx context.Context, cq dcql.Credentia
 		return nil, newError("resolve issuer key", err)
 	}
 
-	verified, err := mdoc.Verify(doc.IssuerSigned, issuerPub, issuerAlg, mdoc.VerifyOptions{})
+	verified, err := mdoc.Verify(doc.IssuerSigned, doc.DocType, issuerPub, issuerAlg, mdoc.VerifyOptions{})
 	if err != nil {
 		return nil, newError("verify issuer signed", err)
-	}
-	if verified.DocType != doc.DocType {
-		return nil, newError(fmt.Sprintf("document docType %q does not match issuer-signed docType %q", doc.DocType, verified.DocType), nil)
 	}
 
 	thumbprintBytes, err := jwk.Thumbprint(&req.ResponseEncryptionKey.PublicKey)

@@ -95,7 +95,7 @@ func TestFullFlow_MdocCredentialIssuance(t *testing.T) {
 	if err != nil {
 		t.Fatalf("credentialIssuerCertificate: %v", err)
 	}
-	verified, err := mdoc.Verify(signed, issuerCert.PublicKey, cose.ES256, mdoc.VerifyOptions{})
+	verified, err := mdoc.Verify(signed, cfg.Mdoc.DocType, issuerCert.PublicKey, cose.ES256, mdoc.VerifyOptions{})
 	if err != nil {
 		t.Fatalf("Verify: %v", err)
 	}

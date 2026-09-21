@@ -35,7 +35,7 @@ func twoNamespaceFixture(t *testing.T) fixture {
 
 func verifyFixture(t *testing.T, f fixture, signed IssuerSigned) VerifiedMSO {
 	t.Helper()
-	verified, err := Verify(signed, &f.issuerKey.PublicKey, cose.ES256, VerifyOptions{
+	verified, err := Verify(signed, f.claims.DocType, &f.issuerKey.PublicKey, cose.ES256, VerifyOptions{
 		Now: func() time.Time { return f.claims.Signed.Add(time.Hour) },
 	})
 	if err != nil {
@@ -156,7 +156,7 @@ func TestSelectNameSpaces_PreservesDigestSafetyForMapValuedElement(t *testing.T)
 		}
 
 		trimmed := decoded.SelectNameSpaces([][2]string{{"org.iso.18013.5.1", "nested"}})
-		if _, err := Verify(trimmed, &f.issuerKey.PublicKey, cose.ES256, VerifyOptions{
+		if _, err := Verify(trimmed, claims.DocType, &f.issuerKey.PublicKey, cose.ES256, VerifyOptions{
 			Now: func() time.Time { return claims.Signed.Add(time.Hour) },
 		}); err != nil {
 			t.Fatalf("iteration %d: Verify(trimmed): %v", i, err)
