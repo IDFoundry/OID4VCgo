@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/verifier"
 )
 
@@ -118,11 +117,11 @@ func TestNewComputesStableClientID(t *testing.T) {
 }
 
 func TestSDJWTVCFormatSupport(t *testing.T) {
-	got := verifier.SDJWTVCFormatSupport([]jose.Alg{jose.ES256}, []jose.Alg{jose.ES256})
+	got := verifier.SDJWTVCFormatSupport([]string{"ES256"}, []string{"ES256"})
 	want := map[string]any{
 		"dc+sd-jwt": map[string]any{
-			"sd-jwt_alg_values": []jose.Alg{jose.ES256},
-			"kb-jwt_alg_values": []jose.Alg{jose.ES256},
+			"sd-jwt_alg_values": []string{"ES256"},
+			"kb-jwt_alg_values": []string{"ES256"},
 		},
 	}
 	if !reflect.DeepEqual(got, want) {

@@ -1,12 +1,16 @@
 package wallet_test
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"io"
 	"math/big"
+	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -167,6 +171,44 @@ func TestParseAuthorizationRequest_RejectsWrongClientID(t *testing.T) {
 		RequestObject: built.RequestObject, ClientID: "x509_hash:not-the-real-hash",
 	}); err == nil {
 		t.Error("ParseAuthorizationRequest with wrong client_id: want error, got nil")
+	}
+}
+
+// TestFetchAuthorizationRequest proves FetchAuthorizationRequest is a
+// genuine GET-fetch-plus-parse: given a request_uri that serves a real
+// signed Request Object (built the same way
+// TestParseAuthorizationRequest_RoundTripsWithVerifierBuild does), it
+// returns the same AuthorizationRequest ParseAuthorizationRequest would
+// from that same body.
+func TestFetchAuthorizationRequest(t *testing.T) {
+	v, clientID := newTestVerifier(t)
+	built, err := v.BuildAuthorizationRequest(verifier.BuildAuthorizationRequestRequest{
+		Query: testQuery(t), State: "s1",
+	})
+	if err != nil {
+		t.Fatalf("BuildAuthorizationRequest: %v", err)
+	}
+
+	w := newTestWallet(t, func(req *http.Request) (*http.Response, error) {
+		if req.URL.String() != "http://localhost/request/abc" {
+			t.Errorf("fetched URL = %q, want the requestURI passed in", req.URL.String())
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(built.RequestObject)),
+			Header:     http.Header{"Content-Type": []string{"application/oauth-authz-req+jwt"}},
+		}, nil
+	})
+
+	got, err := w.FetchAuthorizationRequest(context.Background(), "http://localhost/request/abc", clientID)
+	if err != nil {
+		t.Fatalf("FetchAuthorizationRequest: %v", err)
+	}
+	if got.ClientID != clientID {
+		t.Errorf("ClientID = %q, want %q", got.ClientID, clientID)
+	}
+	if got.State != "s1" {
+		t.Errorf("State = %q, want %q", got.State, "s1")
 	}
 }
 

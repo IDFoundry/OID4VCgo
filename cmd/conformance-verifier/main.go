@@ -103,5 +103,5 @@ func vpFormatsSupported(credentialFormat string) map[string]any {
 	if credentialFormat == "mso_mdoc" {
 		return verifier.MdocFormatSupport()
 	}
-	return verifier.SDJWTVCFormatSupport([]jose.Alg{jose.ES256}, []jose.Alg{jose.ES256})
+	return verifier.SDJWTVCFormatSupport([]string{string(jose.ES256)}, []string{string(jose.ES256)})
 }

@@ -1,12 +1,16 @@
 package wallet
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net/url"
+
+	"github.com/idfoundry/fapigo/fapihttp"
 
 	"github.com/idfoundry/oid4vcgo/dcql"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
@@ -207,6 +211,43 @@ func ParseAuthorizationRequest(params ParseAuthorizationRequestParams) (Authoriz
 		Query: wire.DCQLQuery, ResponseEncryptionKey: encPub, ResponseEncryptionKeyID: kid,
 		ResponseEncryptionEnc: enc,
 	}, nil
+}
+
+// FetchAuthorizationRequest is ParseAuthorizationRequest's own
+// batteries-included counterpart for §5.10's plain GET fetch of
+// request_uri — the OID4VP analog of ResolveCredentialOffer (offer.go)
+// dereferencing a by-reference Credential Offer, using this Wallet's
+// own hardened fetcher (SSRF/size/redirect protection, Config.Fetch)
+// the same way. Fetches requestURI, then calls
+// ParseAuthorizationRequest with the result and clientID.
+//
+// This does NOT cover §5.10's own OPTIONAL POST variant (a Wallet
+// sending a fresh "wallet_nonce" so the Verifier can embed it in the
+// signed Request Object, §5.10.1): fapihttp.Client — the hardened
+// fetcher every other network call in this package uses — only ever
+// performs a plain, bodyless GET, by design (see its own doc comment);
+// widening it to an arbitrary POST would weaken the SSRF hardening
+// every other caller of it relies on. A Wallet that wants the POST
+// variant has to perform that request itself (a plain http.Client is
+// reasonable here: by this point request_uri is a value this Wallet
+// already resolved from an openid4vp:// deep link/QR code, not
+// attacker-supplied input the way an initial fetch target can be) and
+// call ParseAuthorizationRequest directly with the response body and
+// its own WalletNonce — see the package example for the exact shape.
+func (w *Wallet) FetchAuthorizationRequest(ctx context.Context, requestURI, clientID string) (AuthorizationRequest, error) {
+	target, err := url.Parse(requestURI)
+	if err != nil {
+		return AuthorizationRequest{}, fmt.Errorf("wallet: fetch authorization request: parse request_uri: %w", err)
+	}
+	res, err := w.fetcher.Fetch(ctx, fapihttp.FetchRequest{
+		URL: target, ExpectedContentType: "application/" + requestObjectTyp,
+	})
+	if err != nil {
+		return AuthorizationRequest{}, fmt.Errorf("wallet: fetch authorization request: fetch request_uri: %w", err)
+	}
+	return ParseAuthorizationRequest(ParseAuthorizationRequestParams{
+		RequestObject: string(res.Body), ClientID: clientID,
+	})
 }
 
 // selectResponseEncryptionKey picks the one genuinely usable EC
