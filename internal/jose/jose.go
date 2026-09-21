@@ -29,6 +29,28 @@ const (
 	EdDSA Alg = "EdDSA"
 )
 
+// IsSupported reports whether alg is one Sign/Verify actually
+// implement — the same set signBytes/verifyBytes switch on. Every
+// jose.Alg-typed configuration field across this module
+// (verifier.Config.SigningAlg, wallet.Config.ProofSigningAlg,
+// issuer.SDJWTSigner.Alg) is otherwise only checked for non-empty at
+// construction time, not against this set: jose.Alg can't be
+// exported for a caller to get real compile-time enum closure (an
+// internal package), and oid4vci.ES256/EdDSA — the untyped string
+// constants that work around that — are assignable from any string,
+// so they give no protection against a typo or the wrong constant
+// either. IsSupported lets each of those construction-time checks
+// catch that case explicitly instead of only discovering it the first
+// time Sign/Verify actually runs.
+func IsSupported(alg Alg) bool {
+	switch alg {
+	case ES256, EdDSA:
+		return true
+	default:
+		return false
+	}
+}
+
 var b64 = base64.RawURLEncoding
 
 // MaxCompactBytes bounds how large a compact JWS Verify/DecodeUnverified

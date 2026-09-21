@@ -280,12 +280,18 @@ func TestNewRejectsMissingSignerDependencies(t *testing.T) {
 		{"sdjwt_signer with empty alg", sdjwtConfig, func(d *issuer.Dependencies) {
 			d.SDJWTSigner = &issuer.SDJWTSigner{Signer: testP256Key(t)}
 		}},
+		{"sdjwt_signer with unsupported alg", sdjwtConfig, func(d *issuer.Dependencies) {
+			d.SDJWTSigner = &issuer.SDJWTSigner{Signer: testP256Key(t), Alg: jose.Alg("RS256")}
+		}},
 		{"missing mdoc_signer", mdocConfig, func(d *issuer.Dependencies) { d.MdocSigner = nil }},
 		{"mdoc_signer with nil signer", mdocConfig, func(d *issuer.Dependencies) {
 			d.MdocSigner = &issuer.MdocSigner{Alg: cose.ES256, X5Chain: [][]byte{{1}}}
 		}},
 		{"mdoc_signer with zero alg", mdocConfig, func(d *issuer.Dependencies) {
 			d.MdocSigner = &issuer.MdocSigner{Signer: testP256Key(t), X5Chain: [][]byte{{1}}}
+		}},
+		{"mdoc_signer with unsupported alg", mdocConfig, func(d *issuer.Dependencies) {
+			d.MdocSigner = &issuer.MdocSigner{Signer: testP256Key(t), Alg: cose.Alg(-999), X5Chain: [][]byte{{1}}}
 		}},
 		{"mdoc_signer with empty x5chain", mdocConfig, func(d *issuer.Dependencies) {
 			d.MdocSigner = &issuer.MdocSigner{Signer: testP256Key(t), Alg: cose.ES256}

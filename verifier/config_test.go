@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/verifier"
 )
 
@@ -32,6 +33,9 @@ func TestNewRejectsMissingFields(t *testing.T) {
 		},
 		"missing signing_alg": func(cfg *verifier.Config, _ *verifier.Dependencies) {
 			cfg.SigningAlg = ""
+		},
+		"unsupported signing_alg": func(cfg *verifier.Config, _ *verifier.Dependencies) {
+			cfg.SigningAlg = jose.Alg("RS256")
 		},
 		"missing enc_values_supported": func(cfg *verifier.Config, _ *verifier.Dependencies) {
 			cfg.EncValuesSupported = nil

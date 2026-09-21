@@ -31,6 +31,25 @@ const (
 	EdDSA Alg = -8
 )
 
+// IsSupportedSigningAlg reports whether alg is one Sign1/Verify
+// actually implement for signing — the same set they switch on.
+// Named distinctly from a plain IsSupported since Alg's own doc
+// comment includes HMAC256 (mac0.go) too, a MAC algorithm this
+// function deliberately excludes: it answers "is this usable as a
+// Sign1 signing algorithm," not "is this any algorithm this package
+// knows about at all." Mirrors internal/jose.IsSupported's own role —
+// see that function's own doc comment for why a construction-time
+// check like MdocSigner.validate's needs this instead of relying on
+// Sign1/Verify's own switch to catch an unsupported value.
+func IsSupportedSigningAlg(alg Alg) bool {
+	switch alg {
+	case ES256, EdDSA:
+		return true
+	default:
+		return false
+	}
+}
+
 // RFC 9052 §3.1 common header parameter labels, plus RFC 9360 §2's
 // x5chain and RFC 9596's typ — the only ones this package models.
 const (
