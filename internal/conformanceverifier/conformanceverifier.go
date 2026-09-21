@@ -143,7 +143,19 @@ func WriteConfig(cfg Config) error {
 	if err != nil {
 		return fmt.Errorf("marshal verifier config: %w", err)
 	}
-	if err := os.WriteFile(ConfigOutPath, raw, 0o600); err != nil {
+	// 0o644, not 0o600: this file is bind-mounted read-only into
+	// conformance-verifier's own container, which (like every
+	// cmd/conformance-* image) runs as gcr.io/distroless/static-
+	// debian12:nonroot's own fixed uid (65532) — a different uid than
+	// whatever process writes this file on the host, so 0o600 leaves
+	// the container itself unable to read its own config. Confirmed
+	// live in CI: "load config: read config: open /config.json:
+	// permission denied", the container's own logs captured via the
+	// new dumpContainerLogs below. Every key/cert here is throwaway,
+	// freshly generated per run (see GenerateKeyMaterial) — never real
+	// production secrets — so a host-world-readable file is an
+	// acceptable trade for a working readiness check.
+	if err := os.WriteFile(ConfigOutPath, raw, 0o644); err != nil {
 		return fmt.Errorf("write %s: %w", ConfigOutPath, err)
 	}
 	return nil

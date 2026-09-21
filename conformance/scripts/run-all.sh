@@ -213,16 +213,32 @@ check_summary() {
 }
 
 # run_go_checked NAME LOG_FILE EXCEPTIONS CMD... — runs CMD (a `go run`
-# invocation), records OK/UNEXPECTED RESULTS based on check_summary
-# (not the process's own exit code — see this file's own header
-# comment for why neither Issuer's battery nor Wallet treats a bad
-# per-module result as a reason to exit non-zero).
+# invocation). Per-module results are graded via check_summary, not
+# the process's own exit code — see this file's own header comment for
+# why neither Issuer's battery nor Wallet treats a bad per-module
+# result as a reason to exit non-zero. But a *non-zero exit* is never
+# one of those per-module results — per that same header comment, both
+# binaries reserve it for a genuine infrastructure failure (a bad plan
+# config, a container that never comes up) — so it's always an
+# unconditional UNEXPECTED RESULTS, checked before check_summary even
+# runs. Confirmed live as a real gap, not a hypothetical: every one of
+# Issuer's four legs failed this way in the same run (the container
+# never became ready) and all four were still recorded "OK", since a
+# log with no module lines at all trivially has no *mismatches* against
+# what check_summary expected either.
 run_go_checked() {
 	local name="$1" log_file="$2" exceptions="$3"
 	shift 3
 	ALL_RUNS+=("$name")
 	log "$name: starting"
-	(cd "$REPO_ROOT" && "$@") >"$log_file" 2>&1
+	local cmd_status=0
+	(cd "$REPO_ROOT" && "$@") >"$log_file" 2>&1 || cmd_status=$?
+	if [[ $cmd_status -ne 0 ]]; then
+		OVERALL_CLEAN=false
+		record_result "$name" "UNEXPECTED RESULTS (see $log_file)"
+		log "$name: UNEXPECTED RESULTS (exit $cmd_status)"
+		return 0
+	fi
 	local mismatches
 	mismatches="$(check_summary "$log_file" "$exceptions")"
 	if [[ -z "$mismatches" ]]; then

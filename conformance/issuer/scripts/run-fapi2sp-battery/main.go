@@ -312,7 +312,19 @@ func main() {
 	if err != nil {
 		log.Fatalf("build server config: %v", err)
 	}
-	if err := os.WriteFile(*configOut, serverConfig, 0o600); err != nil {
+	// 0o644, not 0o600: this file is bind-mounted read-only into
+	// conformance-issuer's own container, which (like every
+	// cmd/conformance-* image) runs as gcr.io/distroless/static-
+	// debian12:nonroot's own fixed uid (65532) — a different uid than
+	// whatever process writes this file on the host, so 0o600 leaves
+	// the container itself unable to read its own config (confirmed
+	// live in CI for the same pattern in conformance-verifier: "open
+	// /config.json: permission denied"; every one of this binary's own
+	// four legs failed to become ready in that same run). Every
+	// key/cert here is throwaway, freshly generated per run — never a
+	// real production secret — so a host-world-readable file is an
+	// acceptable trade for a working readiness check.
+	if err := os.WriteFile(*configOut, serverConfig, 0o644); err != nil {
 		log.Fatalf("write %s: %v", *configOut, err)
 	}
 	log.Printf("wrote %s", *configOut)
@@ -451,9 +463,29 @@ func waitForIssuerReady(httpClient *http.Client, _ string) error {
 			}
 		}
 		if time.Now().After(deadline) {
+			dumpIssuerContainerLogs()
 			return fmt.Errorf("conformance-issuer did not become ready within 30s")
 		}
 		time.Sleep(1 * time.Second)
+	}
+}
+
+// dumpIssuerContainerLogs prints the conformance-issuer container's
+// own logs to stderr — best-effort, since a caller already has a real
+// error to report regardless of whether this succeeds. Added after a
+// real CI run silently masked this container never binding its port
+// at all (every one of Issuer's four legs, every run) since nothing
+// captured the container's own stdout/stderr before this.
+func dumpIssuerContainerLogs() {
+	dockerPath, err := exec.LookPath("docker")
+	if err != nil {
+		return
+	}
+	cmd := exec.Command(dockerPath, "compose", "-f", "conformance/issuer/docker-compose.yml", "logs", "--no-color", "--tail=200") //nolint:gosec // dockerPath comes from exec.LookPath, args are fixed literals
+	out, runErr := cmd.CombinedOutput()
+	log.Printf("container logs (conformance/issuer/docker-compose.yml):\n%s", out)
+	if runErr != nil {
+		log.Printf("docker compose logs: %v", runErr)
 	}
 }
 
