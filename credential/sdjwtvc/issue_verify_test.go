@@ -1,10 +1,12 @@
 package sdjwtvc
 
 import (
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
 	"encoding/base64"
+	"io"
 	"testing"
 	"time"
 
@@ -528,6 +530,42 @@ func TestIssue_IssuerCertificate_RejectsPublicKeyMismatch(t *testing.T) {
 
 	if _, _, err := Issue(issuerKey, jose.ES256, claims, IssueOptions{IssuerCertificate: cert}); err == nil {
 		t.Error("Issue accepted an IssuerCertificate whose public key doesn't match signer")
+	}
+}
+
+type nonComparablePublicKey struct{}
+
+// nonComparableSigner is a crypto.Signer returning
+// nonComparablePublicKey — Sign is never called in this test, so it's
+// left unimplemented (a nil-safe panic-on-call stand-in is unnecessary
+// here since Issue never signs anything before the check this exists
+// to exercise).
+type nonComparableSigner struct{}
+
+func (nonComparableSigner) Public() crypto.PublicKey { return nonComparablePublicKey{} }
+func (nonComparableSigner) Sign(io.Reader, []byte, crypto.SignerOpts) ([]byte, error) {
+	panic("not called by this test")
+}
+
+// TestIssue_IssuerCertificate_RejectsSignerWithoutEqualMethod is the
+// regression test for a real bug found in a repo-wide
+// spec-comprehensiveness review (as a side effect of adding the
+// analogous check to credential/mdoc.Issue): Issue used to do a direct
+// (unchecked) type assertion to compare signer's own public key
+// against opts.IssuerCertificate's — every stdlib key type implements
+// the required Equal method, so this never panicked with an ordinary
+// ecdsa/rsa/ed25519 signer, but a custom crypto.Signer (an HSM/KMS-backed
+// one) whose own public key type doesn't implement it caused Issue to
+// panic instead of returning the documented config-mismatch error —
+// the same bug class verifier.New's own equivalent check already
+// guards against.
+func TestIssue_IssuerCertificate_RejectsSignerWithoutEqualMethod(t *testing.T) {
+	issuerKey := testKey(t)
+	cert := testcert.SelfSigned(t, "test-issuer", &issuerKey.PublicKey, issuerKey)
+	claims := Claims{VCT: "vc-type"}
+
+	if _, _, err := Issue(nonComparableSigner{}, jose.ES256, claims, IssueOptions{IssuerCertificate: cert}); err == nil {
+		t.Error("Issue = nil error, want error (not a panic)")
 	}
 }
 
