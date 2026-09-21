@@ -496,17 +496,9 @@ func (v *Verifier) verifyMdocPresentation(ctx context.Context, cq dcql.Credentia
 		return nil, fmt.Errorf("document docType %q does not match issuer-signed docType %q", doc.DocType, verified.DocType)
 	}
 
-	thumbprintJWK, err := jwk.Marshal(&req.ResponseEncryptionKey.PublicKey)
+	thumbprintBytes, err := jwk.Thumbprint(&req.ResponseEncryptionKey.PublicKey)
 	if err != nil {
-		return nil, fmt.Errorf("marshal response encryption key: %w", err)
-	}
-	thumbprint, err := thumbprintJWK.Thumbprint()
-	if err != nil {
-		return nil, fmt.Errorf("thumbprint response encryption key: %w", err)
-	}
-	thumbprintBytes, err := base64.RawURLEncoding.DecodeString(thumbprint)
-	if err != nil {
-		return nil, fmt.Errorf("decode response encryption key thumbprint: %w", err)
+		return nil, fmt.Errorf("response encryption key: %w", err)
 	}
 	sessionTranscriptBytes, err := v.buildMdocSessionTranscriptBytes(req, thumbprintBytes)
 	if err != nil {

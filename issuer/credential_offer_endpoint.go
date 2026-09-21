@@ -116,11 +116,11 @@ func (iss *Issuer) createCredentialOfferByReference(ctx context.Context, offer o
 }
 
 func credentialOfferURIByValue(offer oid4vci.CredentialOffer) (string, error) {
-	encoded, err := json.Marshal(offer)
+	uri, err := offer.AppendToURL(credentialOfferScheme)
 	if err != nil {
 		return "", fmt.Errorf("encode credential offer: %w", err)
 	}
-	return credentialOfferScheme + "?credential_offer=" + url.QueryEscape(string(encoded)), nil
+	return uri, nil
 }
 
 func (iss *Issuer) generateCredentialOfferReference() (string, error) {

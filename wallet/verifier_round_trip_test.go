@@ -209,17 +209,15 @@ func TestWalletVerifierMdocPresentationRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildAuthorizationRequest: %v", err)
 	}
-	thumbprint := testmdoc.ResponseEncryptionThumbprint(t, built.ResponseDecryptionKey)
-
 	f := testmdoc.Issue(t)
 	held := heldMdoc(t, f)
 	vpToken, err := wallet.PresentCredentials(context.Background(), wallet.PresentationRequest{
-		Query:                           query,
-		Credentials:                     []wallet.HeldCredential{held},
-		Audience:                        built.ClientID,
-		Nonce:                           built.Nonce,
-		ResponseURI:                     responseURI.String(),
-		ResponseEncryptionJWKThumbprint: thumbprint,
+		Query:                 query,
+		Credentials:           []wallet.HeldCredential{held},
+		Audience:              built.ClientID,
+		Nonce:                 built.Nonce,
+		ResponseURI:           responseURI.String(),
+		ResponseEncryptionKey: &built.ResponseDecryptionKey.PublicKey,
 	})
 	if err != nil {
 		t.Fatalf("PresentCredentials: %v", err)

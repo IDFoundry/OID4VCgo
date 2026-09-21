@@ -106,3 +106,26 @@ func TestCredentialOffer_Validate(t *testing.T) {
 		})
 	}
 }
+
+func TestCredentialOffer_AppendToURL(t *testing.T) {
+	offer := oid4vci.CredentialOffer{
+		CredentialIssuer:           "https://issuer.example.com",
+		CredentialConfigurationIDs: []string{"IdentityCredential"},
+	}
+
+	uri, err := offer.AppendToURL("openid-credential-offer://")
+	if err != nil {
+		t.Fatalf("AppendToURL: %v", err)
+	}
+	if !strings.HasPrefix(uri, "openid-credential-offer://?credential_offer=") {
+		t.Errorf("AppendToURL = %q, want the openid-credential-offer:// scheme with a credential_offer query parameter", uri)
+	}
+
+	uriWithExistingQuery, err := offer.AppendToURL("https://wallet.example.com/offer?session=abc")
+	if err != nil {
+		t.Fatalf("AppendToURL: %v", err)
+	}
+	if !strings.Contains(uriWithExistingQuery, "?session=abc&credential_offer=") {
+		t.Errorf("AppendToURL = %q, want the existing query preserved and credential_offer appended with '&'", uriWithExistingQuery)
+	}
+}

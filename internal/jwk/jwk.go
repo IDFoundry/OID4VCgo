@@ -188,6 +188,30 @@ func (k JWK) Thumbprint() (string, error) {
 	return b64.EncodeToString(sum[:]), nil
 }
 
+// Thumbprint computes pub's own RFC 7638 SHA-256 JWK thumbprint as raw
+// bytes — Marshal + JWK.Thumbprint + base64url-decode in one step,
+// since every caller needing a public key's own thumbprint as bytes
+// (rather than the base64url string RFC 7638 itself specifies) needs
+// all three regardless of which package it's in; this repo's own
+// mdoc SessionTranscript construction (Appendix B.2.6.1/B.2.6.2's own
+// "jwkThumbprint" input) is one such caller, on both the presenting
+// (wallet) and verifying (verifier) side.
+func Thumbprint(pub crypto.PublicKey) ([]byte, error) {
+	j, err := Marshal(pub)
+	if err != nil {
+		return nil, fmt.Errorf("jwk: thumbprint: marshal public key: %w", err)
+	}
+	thumbprint, err := j.Thumbprint()
+	if err != nil {
+		return nil, fmt.Errorf("jwk: thumbprint: %w", err)
+	}
+	raw, err := b64.DecodeString(thumbprint)
+	if err != nil {
+		return nil, fmt.Errorf("jwk: thumbprint: decode: %w", err)
+	}
+	return raw, nil
+}
+
 // SetEntry is a JWK plus the set-membership metadata RFC 7517 §5
 // permits on an individual JWK Set entry ("kid"/"use"/"alg"/"x5c") —
 // meaningful only in that context, not to JWK's own

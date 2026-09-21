@@ -137,17 +137,9 @@ func presentWithSessionTranscript(t *testing.T, f Fixture, sessionTranscriptByte
 // SessionTranscriptBytes.
 func ResponseEncryptionThumbprint(t *testing.T, key *ecdsa.PrivateKey) []byte {
 	t.Helper()
-	j, err := jwk.Marshal(&key.PublicKey)
+	raw, err := jwk.Thumbprint(&key.PublicKey)
 	if err != nil {
-		t.Fatalf("testmdoc: jwk.Marshal: %v", err)
-	}
-	thumbprint, err := j.Thumbprint()
-	if err != nil {
-		t.Fatalf("testmdoc: Thumbprint: %v", err)
-	}
-	raw, err := base64.RawURLEncoding.DecodeString(thumbprint)
-	if err != nil {
-		t.Fatalf("testmdoc: decode thumbprint: %v", err)
+		t.Fatalf("testmdoc: jwk.Thumbprint: %v", err)
 	}
 	return raw
 }

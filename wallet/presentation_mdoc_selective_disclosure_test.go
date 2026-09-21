@@ -2,6 +2,9 @@ package wallet_test
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"encoding/base64"
 	"testing"
 
@@ -13,10 +16,19 @@ import (
 
 // mdocSelectiveParams is the PresentMdocParams every test in this file
 // shares — the redirect flow, matching TestPresentMdoc's own choice.
-func mdocSelectiveParams() wallet.PresentMdocParams {
+// ResponseEncryptionKey is a fresh throwaway key: no test in this file
+// checks the resulting SessionTranscriptBytes against an independently
+// built value, only the disclosed IssuerSigned namespaces (see
+// decodePresentedMdocNameSpaces), so any valid key works.
+func mdocSelectiveParams(t *testing.T) wallet.PresentMdocParams {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate response encryption key: %v", err)
+	}
 	return wallet.PresentMdocParams{
 		Audience: "x509_hash:verifier", Nonce: "nonce-1",
-		ResponseURI: "https://verifier.example.com/response", ResponseEncryptionJWKThumbprint: make([]byte, 32),
+		ResponseURI: "https://verifier.example.com/response", ResponseEncryptionKey: &key.PublicKey,
 	}
 }
 
@@ -55,7 +67,7 @@ func TestPresentMdocSelectiveTrimsToRequiredPaths(t *testing.T) {
 	f := testmdoc.Issue(t)
 	held := heldMdoc(t, f)
 
-	presented, err := wallet.PresentMdocSelective(held, mdocSelectiveParams(), []dcql.Path{
+	presented, err := wallet.PresentMdocSelective(held, mdocSelectiveParams(t), []dcql.Path{
 		{dcql.PathKey("org.iso.18013.5.1"), dcql.PathKey("given_name")},
 	})
 	if err != nil {
@@ -77,7 +89,7 @@ func TestPresentMdocSelectiveEmptyPathsDisclosesNothing(t *testing.T) {
 	f := testmdoc.Issue(t)
 	held := heldMdoc(t, f)
 
-	presented, err := wallet.PresentMdocSelective(held, mdocSelectiveParams(), nil)
+	presented, err := wallet.PresentMdocSelective(held, mdocSelectiveParams(t), nil)
 	if err != nil {
 		t.Fatalf("PresentMdocSelective: %v", err)
 	}
@@ -105,7 +117,7 @@ func TestPresentMdocSelectiveRejectsNonMdocPath(t *testing.T) {
 	f := testmdoc.Issue(t)
 	held := heldMdoc(t, f)
 
-	_, err := wallet.PresentMdocSelective(held, mdocSelectiveParams(), []dcql.Path{
+	_, err := wallet.PresentMdocSelective(held, mdocSelectiveParams(t), []dcql.Path{
 		{dcql.PathKey("org.iso.18013.5.1"), dcql.PathKey("given_name"), dcql.PathKey("extra")},
 	})
 	if err == nil {
@@ -121,14 +133,18 @@ func TestPresentMdocSelectiveRejectsNonMdocPath(t *testing.T) {
 func TestPresentCredentialsTrimsMdocToMatchedCredentialQuery(t *testing.T) {
 	f := testmdoc.Issue(t)
 	held := heldMdoc(t, f)
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate response encryption key: %v", err)
+	}
 
 	vpToken, err := wallet.PresentCredentials(context.Background(), wallet.PresentationRequest{
-		Query:                           testmdoc.Query(t),
-		Credentials:                     []wallet.HeldCredential{held},
-		Audience:                        "x509_hash:verifier",
-		Nonce:                           "nonce-1",
-		ResponseURI:                     "https://verifier.example.com/response",
-		ResponseEncryptionJWKThumbprint: make([]byte, 32),
+		Query:                 testmdoc.Query(t),
+		Credentials:           []wallet.HeldCredential{held},
+		Audience:              "x509_hash:verifier",
+		Nonce:                 "nonce-1",
+		ResponseURI:           "https://verifier.example.com/response",
+		ResponseEncryptionKey: &key.PublicKey,
 	})
 	if err != nil {
 		t.Fatalf("PresentCredentials: %v", err)
