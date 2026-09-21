@@ -221,7 +221,11 @@ func testMdocClaims(t *testing.T) *mdoc.Claims {
 	return &mdoc.Claims{
 		DocType:    "org.iso.18013.5.1.mDL",
 		NameSpaces: map[string]map[string]interface{}{"org.iso.18013.5.1": {"family_name": "Doe"}},
-		Signed:     signed, ValidFrom: signed, ValidUntil: signed.Add(24 * time.Hour),
+		// Comfortably inside testMdocSigner's own X5Chain leaf
+		// certificate NotAfter (now + 24h, from testcert.SelfSigned) —
+		// mdoc.Issue now rejects a ValidUntil past the leaf
+		// certificate's own NotAfter (§12.3.4).
+		Signed: signed, ValidFrom: signed, ValidUntil: signed.Add(time.Hour),
 	}
 }
 
@@ -349,11 +353,12 @@ func TestRequestCredential_Mdoc_JWTProof(t *testing.T) {
 	walletKey := testP256Key(t)
 	nonce := f.issueNonce(t)
 	proof := buildJWTProof(t, walletKey, testIssuer, nonce)
+	claims := testMdocClaims(t)
 
 	resp, err := f.iss.RequestCredential(context.Background(), issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("test-client")}, issuer.CredentialRequest{
 		CredentialConfigurationID: testMdocConfigID,
 		Proofs:                    map[string][]string{oid4vci.ProofTypeJWT: {proof}},
-		MdocClaims:                testMdocClaims(t),
+		MdocClaims:                claims,
 	})
 	if err != nil {
 		t.Fatalf("RequestCredential: %v", err)
@@ -370,8 +375,14 @@ func TestRequestCredential_Mdoc_JWTProof(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UnmarshalIssuerSigned: %v", err)
 	}
-	verified, err := mdoc.Verify(signed, &f.mdocSigner.Signer.(*ecdsa.PrivateKey).PublicKey, cose.ES256, mdoc.VerifyOptions{
-		Now: func() time.Time { return f.now.Add(time.Hour) },
+	// claims.ValidFrom, not f.now: both are real time.Now() captures a
+	// few statements apart, and claims.ValidUntil is only claims.ValidFrom
+	// + 1h (shrunk from 24h to fit inside testMdocSigner's own leaf
+	// certificate NotAfter, per mdoc.Issue's new validity-vs-cert
+	// check) — comparing against the independently-captured f.now left
+	// only microseconds of margin, an intermittent race.
+	verified, err := mdoc.Verify(signed, "org.iso.18013.5.1.mDL", &f.mdocSigner.Signer.(*ecdsa.PrivateKey).PublicKey, cose.ES256, mdoc.VerifyOptions{
+		Now: func() time.Time { return claims.ValidFrom.Add(30 * time.Minute) },
 	})
 	if err != nil {
 		t.Fatalf("mdoc.Verify: %v", err)

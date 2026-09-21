@@ -42,14 +42,20 @@ type VerifiedMSO struct {
 }
 
 // Verify checks IssuerAuth's signature under issuerPub, decodes the
-// MSO, checks every disclosed IssuerSignedItem's digest against the
-// MSO's valueDigests (§12.3.5) — an item whose digest doesn't match, or
-// isn't present in valueDigests at all, is rejected — and checks
-// ValidityInfo's ValidFrom/ValidUntil against opts.Now (or time.Now if
-// unset). Resolving which key issuerPub is (the IssuerAuth x5chain and
-// an Issuer trust policy) is the caller's job — see the package doc
+// MSO, checks that its own docType matches docType (§12.8.1 step 4 —
+// docType sits outside the signed IssuerAuth envelope, in the wire
+// Document structure a caller decodes separately, so without this
+// check an attacker who controls that outer structure could present
+// signed.NameSpaces/IssuerAuth under a different, unsigned docType;
+// found in a repo-wide spec-comprehensiveness review), checks every
+// disclosed IssuerSignedItem's digest against the MSO's valueDigests
+// (§12.3.5) — an item whose digest doesn't match, or isn't present in
+// valueDigests at all, is rejected — and checks ValidityInfo's
+// ValidFrom/ValidUntil against opts.Now (or time.Now if unset).
+// Resolving which key issuerPub is (the IssuerAuth x5chain and an
+// Issuer trust policy) is the caller's job — see the package doc
 // comment.
-func Verify(signed IssuerSigned, issuerPub crypto.PublicKey, alg cose.Alg, opts VerifyOptions) (VerifiedMSO, error) {
+func Verify(signed IssuerSigned, docType string, issuerPub crypto.PublicKey, alg cose.Alg, opts VerifyOptions) (VerifiedMSO, error) {
 	_, unprotected, payload, err := cose.Verify(alg, issuerPub, signed.IssuerAuth, []byte{})
 	if err != nil {
 		return VerifiedMSO{}, fmt.Errorf("mdoc: verify IssuerAuth: %w", err)
@@ -62,6 +68,9 @@ func Verify(signed IssuerSigned, issuerPub crypto.PublicKey, alg cose.Alg, opts 
 	if mso.Version != mobileSecurityObjectVersion {
 		return VerifiedMSO{}, fmt.Errorf("mdoc: MSO version %q, want %q", mso.Version, mobileSecurityObjectVersion)
 	}
+	if mso.DocType != docType {
+		return VerifiedMSO{}, fmt.Errorf("mdoc: docType %q does not match the MSO's own docType %q", docType, mso.DocType)
+	}
 
 	if err := checkDigests(signed, mso); err != nil {
 		return VerifiedMSO{}, err
@@ -71,9 +80,16 @@ func Verify(signed IssuerSigned, issuerPub crypto.PublicKey, alg cose.Alg, opts 
 	if opts.Now != nil {
 		now = opts.Now
 	}
+	// §12.8.1 step 5: valid from validFrom (inclusive) up to and
+	// including validUntil — the current timestamp "shall be equal or
+	// later than" validFrom and validUntil "shall be equal or later
+	// than" the current timestamp, so both ends are closed, not just
+	// the lower one (found in the same review as the docType check
+	// above: this previously rejected the exact ValidUntil instant as
+	// already expired).
 	if t := now(); t.Before(mso.ValidityInfo.ValidFrom) {
 		return VerifiedMSO{}, fmt.Errorf("mdoc: MSO is not yet valid (validFrom %s)", mso.ValidityInfo.ValidFrom)
-	} else if !t.Before(mso.ValidityInfo.ValidUntil) {
+	} else if t.After(mso.ValidityInfo.ValidUntil) {
 		return VerifiedMSO{}, fmt.Errorf("mdoc: MSO has expired (validUntil %s)", mso.ValidityInfo.ValidUntil)
 	}
 

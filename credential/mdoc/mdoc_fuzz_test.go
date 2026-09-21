@@ -28,6 +28,7 @@ func FuzzUnmarshalIssuerSigned(f *testing.F) {
 		f.Fatalf("generate device key: %v", err)
 	}
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	cert := selfSignedCert(f, &issuerKey.PublicKey, issuerKey)
 
 	issuerSigned, err := Issue(issuerKey, cose.ES256, Claims{
 		DocType: "org.iso.18013.5.1.mDL",
@@ -36,7 +37,7 @@ func FuzzUnmarshalIssuerSigned(f *testing.F) {
 		},
 		DeviceKey: &deviceKey.PublicKey,
 		Signed:    now, ValidFrom: now, ValidUntil: now.Add(24 * time.Hour),
-	}, IssueOptions{X5Chain: [][]byte{[]byte("fuzz-cert")}})
+	}, IssueOptions{X5Chain: [][]byte{cert}})
 	if err != nil {
 		f.Fatalf("Issue: %v", err)
 	}
@@ -56,7 +57,7 @@ func FuzzUnmarshalIssuerSigned(f *testing.F) {
 		if err != nil {
 			return
 		}
-		_, _ = Verify(signed, &issuerKey.PublicKey, cose.ES256, VerifyOptions{})
+		_, _ = Verify(signed, "org.iso.18013.5.1.mDL", &issuerKey.PublicKey, cose.ES256, VerifyOptions{})
 	})
 }
 

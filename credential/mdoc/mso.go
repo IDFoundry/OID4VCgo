@@ -1,6 +1,9 @@
 package mdoc
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 // DigestAlg identifies an MSO digest algorithm (Table 16).
 type DigestAlg string
@@ -113,6 +116,25 @@ type DeviceKeyInfo struct {
 type KeyAuthorizations struct {
 	NameSpaces   []string            `cbor:"nameSpaces,omitempty"`
 	DataElements map[string][]string `cbor:"dataElements,omitempty"`
+}
+
+// validate checks the two §12.3.4 constraints this type's own doc
+// comment already describes but nothing previously enforced: "If the
+// KeyAuthorizations map is present, it shall not be empty" (a nil
+// *KeyAuthorizations is fine — DeviceKeyInfo.KeyAuthorizations is
+// itself optional — but a present, empty one is not), and a namespace
+// listed in NameSpaces must not also appear as a key in DataElements
+// — found in a repo-wide spec-comprehensiveness review.
+func (k *KeyAuthorizations) validate() error {
+	if len(k.NameSpaces) == 0 && len(k.DataElements) == 0 {
+		return fmt.Errorf("mdoc: KeyAuthorizations must not be empty if present")
+	}
+	for _, namespace := range k.NameSpaces {
+		if _, ok := k.DataElements[namespace]; ok {
+			return fmt.Errorf("mdoc: namespace %q must not appear in both KeyAuthorizations.NameSpaces and KeyAuthorizations.DataElements", namespace)
+		}
+	}
+	return nil
 }
 
 // ValidityInfo describes the MSO's validity period (§12.3.4). All

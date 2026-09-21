@@ -12,6 +12,7 @@ import (
 	"github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/internal/cose"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
+	"github.com/idfoundry/oid4vcgo/internal/testcert"
 	"github.com/idfoundry/oid4vcgo/issuer"
 )
 
@@ -93,7 +94,8 @@ func testMdocSigner(t *testing.T) *issuer.MdocSigner {
 	if err != nil {
 		t.Fatalf("generate key: %v", err)
 	}
-	return &issuer.MdocSigner{Signer: key, Alg: cose.ES256, X5Chain: [][]byte{{0x01, 0x02, 0x03}}}
+	cert := testcert.SelfSigned(t, "mdoc test issuer", &key.PublicKey, key)
+	return &issuer.MdocSigner{Signer: key, Alg: cose.ES256, X5Chain: [][]byte{cert.Raw}}
 }
 
 func validDependencies(t *testing.T) issuer.Dependencies {
