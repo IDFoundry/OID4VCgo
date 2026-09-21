@@ -283,6 +283,25 @@ func TestCWTStatusClaimRejectsNegativeIdx(t *testing.T) {
 	}
 }
 
+// TestToInt64Claim covers toInt64Claim's own branches directly — found
+// only ever exercised via its int64 or in-range-uint64 branch through
+// other tests, leaving the uint64 overflow guard and the
+// wrong-CBOR-type error path unproven.
+func TestToInt64Claim(t *testing.T) {
+	if got, err := toInt64Claim(int64(42)); err != nil || got != 42 {
+		t.Errorf("toInt64Claim(int64(42)) = (%d, %v), want (42, nil)", got, err)
+	}
+	if got, err := toInt64Claim(uint64(42)); err != nil || got != 42 {
+		t.Errorf("toInt64Claim(uint64(42)) = (%d, %v), want (42, nil)", got, err)
+	}
+	if _, err := toInt64Claim(uint64(1) << 63); err == nil {
+		t.Errorf("toInt64Claim(1<<63) = nil error, want error (out of range)")
+	}
+	if _, err := toInt64Claim("not a number"); err == nil {
+		t.Errorf("toInt64Claim(string) = nil error, want error (wrong type)")
+	}
+}
+
 func TestParseCWTStatusClaimRejectsMissingFields(t *testing.T) {
 	if _, err := ParseCWTStatusClaim(map[string]interface{}{}); err == nil {
 		t.Errorf("ParseCWTStatusClaim accepted a status claim with no status_list member")

@@ -105,3 +105,18 @@ func TestParseDirectPostJWTResponseRejectsMissingVPToken(t *testing.T) {
 		t.Fatalf("ParseDirectPostJWTResponse = nil error, want error")
 	}
 }
+
+// TestResponseError_Error covers both of ResponseError.Error's own
+// branches (with/without a Description) — found unexercised by any
+// existing test in a repo-wide coverage review.
+func TestResponseError_Error(t *testing.T) {
+	withDescription := &verifier.ResponseError{Code: "access_denied", Description: "user declined"}
+	if got, want := withDescription.Error(), `verifier: wallet returned error "access_denied": user declined`; got != want {
+		t.Errorf("Error() = %q, want %q", got, want)
+	}
+
+	withoutDescription := &verifier.ResponseError{Code: "access_denied"}
+	if got, want := withoutDescription.Error(), `verifier: wallet returned error "access_denied"`; got != want {
+		t.Errorf("Error() = %q, want %q", got, want)
+	}
+}
