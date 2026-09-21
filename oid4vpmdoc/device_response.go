@@ -121,12 +121,17 @@ func UnmarshalDeviceResponseMax(data []byte, maxBytes int) (Document, error) {
 		return Document{}, fmt.Errorf("oid4vpmdoc: unmarshal device response: got %d documents, want exactly 1", len(wire.Documents))
 	}
 
+	// maxBytes, not mdoc.MaxBytes: this envelope's own ceiling already
+	// bounds the whole DeviceResponse above, so a caller that raised it
+	// (e.g. to fit a sizeable portrait) needs that same raised ceiling
+	// to reach these nested unmarshals too, not silently fall back to
+	// mdoc's own smaller default.
 	d := wire.Documents[0]
-	issuerSigned, err := mdoc.UnmarshalIssuerSigned(d.IssuerSigned)
+	issuerSigned, err := mdoc.UnmarshalIssuerSignedMax(d.IssuerSigned, maxBytes)
 	if err != nil {
 		return Document{}, fmt.Errorf("oid4vpmdoc: unmarshal device response: issuer_signed: %w", err)
 	}
-	deviceSigned, err := mdoc.UnmarshalDeviceSigned(d.DeviceSigned)
+	deviceSigned, err := mdoc.UnmarshalDeviceSignedMax(d.DeviceSigned, maxBytes)
 	if err != nil {
 		return Document{}, fmt.Errorf("oid4vpmdoc: unmarshal device response: device_signed: %w", err)
 	}

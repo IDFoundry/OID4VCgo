@@ -38,6 +38,25 @@ func mustDecMode() cbor.DecMode {
 	return mode
 }
 
+// MaxBytes bounds how large an IssuerSigned/DeviceSigned
+// UnmarshalIssuerSigned/UnmarshalDeviceSigned will attempt to
+// CBOR-decode, to avoid unbounded parse work on attacker-supplied
+// bytes before any signature/digest is checked — the same reasoning
+// internal/jose/internal/jwe/internal/cose already apply to their own
+// compact/binary inputs, and oid4vpmdoc.MaxBytes applies one layer up
+// (the DeviceResponse envelope these two structures are normally
+// decoded out of) — found missing at this layer in a repo-wide
+// spec-comprehensiveness review: a caller that invokes
+// UnmarshalIssuerSigned/UnmarshalDeviceSigned directly on untrusted
+// bytes, rather than through oid4vpmdoc's own bounded envelope
+// decode, had no ceiling of its own here. Matches oid4vpmdoc.MaxBytes'
+// own value, not the smaller 64 KiB internal/jose/internal/cose use —
+// an mdoc can legitimately embed a sizeable data element (e.g. a
+// portrait). A caller whose accepted input can legitimately scale
+// beyond it should call UnmarshalIssuerSignedMax/UnmarshalDeviceSignedMax
+// with its own configured ceiling instead.
+const MaxBytes = 1 << 20 // 1 MiB
+
 // tag24 is CBOR tag 24, "encoded CBOR data item" (RFC 8949 §3.4.5.1),
 // used throughout §10.3.3 (IssuerSignedItemBytes, MobileSecurityObjectBytes,
 // DeviceNameSpacesBytes) to embed one CBOR data item as a byte string
