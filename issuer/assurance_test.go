@@ -1,9 +1,11 @@
 package issuer_test
 
 import (
+	"crypto/x509"
 	"testing"
 	"time"
 
+	"github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/issuer"
 )
 
@@ -42,6 +44,99 @@ type assuredNotificationStore struct {
 }
 
 func (a assuredNotificationStore) Capabilities() issuer.StoreCapabilities { return a.caps }
+
+// assuredAttestationVerifier/assuredProofBindingKeyResolver mirror the
+// assured* store wrappers above, but for the two key-source resolvers
+// checkKeySourceAssurance covers — pairing fixedAttestationVerifier/
+// fixedProofBindingKeyResolver (already defined in
+// credential_endpoint_test.go) with a declared
+// issuer.KeySourceCapabilities.
+
+type assuredAttestationVerifier struct {
+	issuer.AttestationVerifier
+	caps issuer.KeySourceCapabilities
+}
+
+func (a assuredAttestationVerifier) Capabilities() issuer.KeySourceCapabilities { return a.caps }
+
+type assuredProofBindingKeyResolver struct {
+	issuer.ProofBindingKeyResolver
+	caps issuer.KeySourceCapabilities
+}
+
+func (a assuredProofBindingKeyResolver) Capabilities() issuer.KeySourceCapabilities { return a.caps }
+
+// productionAssuredConfigAndDeps returns validConfig/validDependencies
+// with every store AssuranceProduction already requires
+// (Nonces/CredentialOffers/DeferredTransactions/Notifications) and
+// Audit declared adequate, plus an "attestation" proof type entry
+// added to the SD-JWT VC credential configuration — the fixture the
+// key-source assurance tests below build on, so a failure in any of
+// them is attributable specifically to AttestationVerifier/
+// ProofBindingKeys, not an unrelated store/audit check.
+func productionAssuredConfigAndDeps(t *testing.T) (issuer.Config, issuer.Dependencies) {
+	t.Helper()
+	cfg := validConfig(t)
+	cfg.Assurance = issuer.AssuranceProduction
+	sdjwtConfig := cfg.CredentialConfigurationsSupported["IdentityCredential"]
+	sdjwtConfig.ProofTypesSupported = map[string]oid4vci.ProofTypeConfiguration{
+		oid4vci.ProofTypeJWT:         {ProofSigningAlgValuesSupported: []string{"ES256"}},
+		oid4vci.ProofTypeAttestation: {ProofSigningAlgValuesSupported: []string{"ES256"}},
+	}
+	cfg.CredentialConfigurationsSupported["IdentityCredential"] = sdjwtConfig
+
+	deps := validDependencies(t)
+	deps.Nonces = assuredNonceStore{newFakeNonceStore(), issuer.StoreCapabilities{Durable: true, AtomicConsume: true}}
+	deps.CredentialOffers = assuredCredentialOfferStore{newFakeCredentialOfferStore(), issuer.StoreCapabilities{Durable: true}}
+	deps.DeferredTransactions = assuredDeferredTransactionStore{newFakeDeferredTransactionStore(), issuer.StoreCapabilities{Durable: true}}
+	deps.Notifications = assuredNotificationStore{newFakeNotificationStore(), issuer.StoreCapabilities{Durable: true}}
+	deps.Audit = newFakeAuditSink()
+	return cfg, deps
+}
+
+// TestNewRejectsInadequateKeySourcesUnderProduction proves
+// AttestationVerifier/ProofBindingKeys are held to the same
+// "declaring capabilities is not optional" standard as every store —
+// a plain fake implementing neither is rejected under
+// AssuranceProduction even once every store/audit check already
+// passes.
+func TestNewRejectsInadequateKeySourcesUnderProduction(t *testing.T) {
+	t.Run("attestation_verifier", func(t *testing.T) {
+		cfg, deps := productionAssuredConfigAndDeps(t)
+		deps.AttestationVerifier = fixedAttestationVerifier{}
+		if _, err := issuer.New(cfg, deps); err == nil {
+			t.Fatal("New = nil error, want error (attestation_verifier declares no KeySourceAssurance)")
+		}
+	})
+	t.Run("proof_binding_keys", func(t *testing.T) {
+		cfg, deps := productionAssuredConfigAndDeps(t)
+		deps.AttestationVerifier = assuredAttestationVerifier{
+			fixedAttestationVerifier{}, issuer.KeySourceCapabilities{LiveFetchHardened: true},
+		}
+		deps.ProofBindingKeys = fixedProofBindingKeyResolver{}
+		if _, err := issuer.New(cfg, deps); err == nil {
+			t.Fatal("New = nil error, want error (proof_binding_keys declares no KeySourceAssurance)")
+		}
+	})
+}
+
+// TestNewAcceptsAdequateKeySourcesUnderProduction is
+// TestNewRejectsInadequateKeySourcesUnderProduction's positive
+// counterpart: once AttestationVerifier and ProofBindingKeys both
+// declare LiveFetchHardened, New accepts the same configuration under
+// AssuranceProduction. Also covers X5CAttestationVerifier/
+// X5CProofBindingKeyResolver's own Capabilities declarations directly,
+// proving this repo's own reference implementations — not just a test
+// fake — satisfy KeySourceAssurance.
+func TestNewAcceptsAdequateKeySourcesUnderProduction(t *testing.T) {
+	cfg, deps := productionAssuredConfigAndDeps(t)
+	deps.AttestationVerifier = issuer.X5CAttestationVerifier{Roots: x509.NewCertPool()}
+	deps.ProofBindingKeys = issuer.X5CProofBindingKeyResolver{Roots: x509.NewCertPool()}
+
+	if _, err := issuer.New(cfg, deps); err != nil {
+		t.Fatalf("New: %v", err)
+	}
+}
 
 func TestNewRejectsInvalidAssurance(t *testing.T) {
 	cases := map[string]issuer.AssuranceLevel{

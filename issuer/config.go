@@ -420,7 +420,7 @@ func New(cfg Config, deps Dependencies) (*Issuer, error) {
 	}
 
 	if cfg.Assurance == AssuranceProduction {
-		if err := checkProductionStoreAssurance(cfg, deps); err != nil {
+		if err := checkProductionAssurance(cfg, deps); err != nil {
 			return nil, fmt.Errorf("issuer: %w", err)
 		}
 	}

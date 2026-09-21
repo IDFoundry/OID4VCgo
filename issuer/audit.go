@@ -63,7 +63,7 @@ type AuditSink interface {
 
 // audit records event via deps.Audit if configured — nil disables
 // auditing entirely (rejected under AssuranceProduction, see
-// checkProductionStoreAssurance's own sibling check in assurance.go).
+// checkProductionAssurance's own sibling check in assurance.go).
 // Best-effort: a failure to record itself never fails the caller's own
 // request — the audit trail is defense-in-depth, not the primary
 // security boundary, the same stance FAPIgo's own server.audit takes.

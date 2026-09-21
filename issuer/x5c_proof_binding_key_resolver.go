@@ -51,3 +51,10 @@ func (r X5CProofBindingKeyResolver) ResolveProofBindingKey(_ context.Context, he
 	}
 	return leaf.PublicKey, alg, nil
 }
+
+// Capabilities implements KeySourceAssurance: validating an
+// already-presented x5c chain against an in-memory Roots pool never
+// touches the network, so LiveFetchHardened is unconditionally true.
+func (r X5CProofBindingKeyResolver) Capabilities() KeySourceCapabilities {
+	return KeySourceCapabilities{LiveFetchHardened: true}
+}
