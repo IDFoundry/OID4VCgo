@@ -102,7 +102,7 @@ func (r DeferredCredentialResult) WriteJSON(w http.ResponseWriter) {
 // fields.
 func (iss *Issuer) RequestDeferredCredential(ctx context.Context, auth AuthorizedRequest, req DeferredCredentialRequest) (DeferredCredentialResult, error) {
 	result, err := iss.requestDeferredCredential(ctx, auth, req)
-	iss.audit(ctx, AuditEventRequestDeferredCredential, auth.ClientID, err)
+	iss.audit(ctx, AuditEventRequestDeferredCredential, auth.ClientID(), err)
 	return result, err
 }
 
@@ -110,7 +110,7 @@ func (iss *Issuer) requestDeferredCredential(ctx context.Context, auth Authorize
 	if iss.deps.DeferredTransactions == nil {
 		return DeferredCredentialResult{}, fmt.Errorf("issuer: request deferred credential: deferred issuance is not configured")
 	}
-	if err := requireClientIDDecision(auth); err != nil {
+	if err := requireClientIdentityDecision(auth); err != nil {
 		return DeferredCredentialResult{}, err
 	}
 	if req.TransactionID == "" {
@@ -125,12 +125,12 @@ func (iss *Issuer) requestDeferredCredential(ctx context.Context, auth Authorize
 	if err != nil {
 		return DeferredCredentialResult{}, newError(ErrorInvalidTransactionID, 400, "unknown or already-used transaction_id", err)
 	}
-	// auth.ClientID == "" here only ever means an explicit
-	// ClientIDIntentionallyUnset (this method's own
-	// requireClientIDDecision already rejected any other empty case
-	// before this ever runs) — this check is deliberately skipped for
-	// that acknowledged deployment choice, not by silent default.
-	if record.ClientID != "" && auth.ClientID != "" && record.ClientID != auth.ClientID {
+	// auth.ClientID() == "" here only ever means an explicit
+	// NoClientIdentity (this method's own
+	// requireClientIdentityDecision already rejected any other empty
+	// case before this ever runs) — this check is deliberately skipped
+	// for that acknowledged deployment choice, not by silent default.
+	if clientID := auth.ClientID(); record.ClientID != "" && clientID != "" && record.ClientID != clientID {
 		return DeferredCredentialResult{}, newError(ErrorInvalidTransactionID, 400, "transaction_id was not issued to this client", nil)
 	}
 

@@ -53,7 +53,7 @@ func (iss *Issuer) IssueNotificationID(ctx context.Context, auth AuthorizedReque
 	if iss.deps.Notifications == nil {
 		return "", fmt.Errorf("issuer: issue notification id: notifications are not configured")
 	}
-	if err := requireClientIDDecision(auth); err != nil {
+	if err := requireClientIdentityDecision(auth); err != nil {
 		return "", err
 	}
 	raw := make([]byte, notificationIDEntropyBytes)
@@ -61,7 +61,7 @@ func (iss *Issuer) IssueNotificationID(ctx context.Context, auth AuthorizedReque
 		return "", fmt.Errorf("issuer: issue notification id: %w", err)
 	}
 	id := base64.RawURLEncoding.EncodeToString(raw)
-	if err := iss.deps.Notifications.Issue(ctx, id, NotificationRecord{ClientID: auth.ClientID}); err != nil {
+	if err := iss.deps.Notifications.Issue(ctx, id, NotificationRecord{ClientID: auth.ClientID()}); err != nil {
 		return "", fmt.Errorf("issuer: issue notification id: %w", err)
 	}
 	return id, nil
@@ -85,7 +85,7 @@ func (iss *Issuer) RequestNotification(ctx context.Context, auth AuthorizedReque
 	if iss.deps.Notifications == nil {
 		return fmt.Errorf("issuer: request notification: notifications are not configured")
 	}
-	if err := requireClientIDDecision(auth); err != nil {
+	if err := requireClientIdentityDecision(auth); err != nil {
 		return err
 	}
 	if req.NotificationID == "" {
@@ -105,12 +105,12 @@ func (iss *Issuer) RequestNotification(ctx context.Context, auth AuthorizedReque
 	if err != nil {
 		return newError(ErrorInvalidNotificationID, 400, "unknown notification_id", err)
 	}
-	// auth.ClientID == "" here only ever means an explicit
-	// ClientIDIntentionallyUnset (this method's own requireClientIDDecision
+	// auth.ClientID() == "" here only ever means an explicit
+	// NoClientIdentity (this method's own requireClientIdentityDecision
 	// already rejected any other empty case before this ever runs) —
 	// this check is deliberately skipped for that acknowledged
 	// deployment choice, not by silent default.
-	if record.ClientID != "" && auth.ClientID != "" && record.ClientID != auth.ClientID {
+	if clientID := auth.ClientID(); record.ClientID != "" && clientID != "" && record.ClientID != clientID {
 		return newError(ErrorInvalidNotificationID, 400, "notification_id was not issued to this client", nil)
 	}
 

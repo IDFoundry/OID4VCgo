@@ -19,7 +19,7 @@ func TestIssueNotificationID(t *testing.T) {
 	deps.Notifications = store
 	iss := newTestIssuer(t, cfg, deps)
 
-	id, err := iss.IssueNotificationID(context.Background(), issuer.AuthorizedRequest{ClientID: "client-a"})
+	id, err := iss.IssueNotificationID(context.Background(), issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("client-a")})
 	if err != nil {
 		t.Fatalf("IssueNotificationID: %v", err)
 	}
@@ -43,7 +43,7 @@ func TestIssueNotificationID_RejectsWhenNotConfigured(t *testing.T) {
 	deps.Notifications = nil
 	iss := newTestIssuer(t, cfg, deps)
 
-	if _, err := iss.IssueNotificationID(context.Background(), issuer.AuthorizedRequest{ClientID: "test-client"}); err == nil {
+	if _, err := iss.IssueNotificationID(context.Background(), issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("test-client")}); err == nil {
 		t.Fatalf("IssueNotificationID = nil error, want error")
 	}
 }
@@ -76,7 +76,7 @@ func TestRequestCredential_SetsNotificationIDWhenConfigured(t *testing.T) {
 	proof := buildJWTProof(t, testP256Key(t), testIssuer, nonceResult.CNonce)
 
 	result, err := iss.RequestCredential(context.Background(),
-		issuer.AuthorizedRequest{ClientID: "client-a", Scopes: []string{"identity_credential"}},
+		issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("client-a"), Scopes: []string{"identity_credential"}},
 		issuer.CredentialRequest{
 			CredentialConfigurationID: "IdentityCredential",
 			Proofs:                    map[string][]string{oid4vci.ProofTypeJWT: {proof}},
@@ -109,7 +109,7 @@ func TestRequestNotification_Succeeds(t *testing.T) {
 
 	store.put("notif-1", issuer.NotificationRecord{ClientID: "client-a"})
 
-	err := iss.RequestNotification(context.Background(), issuer.AuthorizedRequest{ClientID: "client-a"}, issuer.NotificationRequest{
+	err := iss.RequestNotification(context.Background(), issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("client-a")}, issuer.NotificationRequest{
 		NotificationID:   "notif-1",
 		Event:            oid4vci.NotificationEventCredentialAccepted,
 		EventDescription: "stored ok",
@@ -135,7 +135,7 @@ func TestRequestNotification_SucceedsWithoutHandler(t *testing.T) {
 
 	store.put("notif-1", issuer.NotificationRecord{})
 
-	err := iss.RequestNotification(context.Background(), issuer.AuthorizedRequest{ClientID: "test-client"}, issuer.NotificationRequest{
+	err := iss.RequestNotification(context.Background(), issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("test-client")}, issuer.NotificationRequest{
 		NotificationID: "notif-1",
 		Event:          oid4vci.NotificationEventCredentialAccepted,
 	})
@@ -155,7 +155,7 @@ func TestRequestNotification_IsIdempotent(t *testing.T) {
 
 	req := issuer.NotificationRequest{NotificationID: "notif-1", Event: oid4vci.NotificationEventCredentialAccepted}
 	for i := 0; i < 3; i++ {
-		if err := iss.RequestNotification(context.Background(), issuer.AuthorizedRequest{ClientID: "test-client"}, req); err != nil {
+		if err := iss.RequestNotification(context.Background(), issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("test-client")}, req); err != nil {
 			t.Fatalf("RequestNotification (call %d): %v", i, err)
 		}
 	}
@@ -185,7 +185,7 @@ func TestRequestNotification_RejectsInvalidRequest(t *testing.T) {
 	}
 	for name, req := range cases {
 		t.Run(name, func(t *testing.T) {
-			err := iss.RequestNotification(context.Background(), issuer.AuthorizedRequest{ClientID: "test-client"}, req)
+			err := iss.RequestNotification(context.Background(), issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("test-client")}, req)
 			assertIssuerError(t, err, issuer.ErrorInvalidNotificationRequest)
 		})
 	}
@@ -193,7 +193,7 @@ func TestRequestNotification_RejectsInvalidRequest(t *testing.T) {
 
 func TestRequestNotification_RejectsUnknownNotificationID(t *testing.T) {
 	iss := newTestIssuer(t, validConfig(t), validDependencies(t))
-	err := iss.RequestNotification(context.Background(), issuer.AuthorizedRequest{ClientID: "test-client"}, issuer.NotificationRequest{
+	err := iss.RequestNotification(context.Background(), issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("test-client")}, issuer.NotificationRequest{
 		NotificationID: "no-such-id",
 		Event:          oid4vci.NotificationEventCredentialAccepted,
 	})
@@ -208,7 +208,7 @@ func TestRequestNotification_RejectsMismatchedClient(t *testing.T) {
 	deps.Notifications = store
 	iss := newTestIssuer(t, cfg, deps)
 
-	err := iss.RequestNotification(context.Background(), issuer.AuthorizedRequest{ClientID: "client-b"}, issuer.NotificationRequest{
+	err := iss.RequestNotification(context.Background(), issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("client-b")}, issuer.NotificationRequest{
 		NotificationID: "notif-1",
 		Event:          oid4vci.NotificationEventCredentialAccepted,
 	})
@@ -222,7 +222,7 @@ func TestRequestNotification_RejectsWhenNotConfigured(t *testing.T) {
 	deps.Notifications = nil
 	iss := newTestIssuer(t, cfg, deps)
 
-	err := iss.RequestNotification(context.Background(), issuer.AuthorizedRequest{ClientID: "test-client"}, issuer.NotificationRequest{
+	err := iss.RequestNotification(context.Background(), issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("test-client")}, issuer.NotificationRequest{
 		NotificationID: "anything",
 		Event:          oid4vci.NotificationEventCredentialAccepted,
 	})
@@ -240,7 +240,7 @@ func TestRequestNotification_PropagatesHandlerError(t *testing.T) {
 	deps.NotificationHandler = &fakeNotificationHandler{err: errHandlerFailed}
 	iss := newTestIssuer(t, cfg, deps)
 
-	err := iss.RequestNotification(context.Background(), issuer.AuthorizedRequest{ClientID: "test-client"}, issuer.NotificationRequest{
+	err := iss.RequestNotification(context.Background(), issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("test-client")}, issuer.NotificationRequest{
 		NotificationID: "notif-1",
 		Event:          oid4vci.NotificationEventCredentialFailure,
 	})

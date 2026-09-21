@@ -400,7 +400,7 @@ func TestWalletPreAuthorizedCodeRoundTrip(t *testing.T) {
 	}
 
 	presentAndVerifyIdentityCredential(t, f, dpopKey, tokenResult.AccessToken.Reveal(),
-		issuer.AuthorizedRequest{ClientID: "test-client", Scopes: []string{"identity_credential"}},
+		issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("test-client"), Scopes: []string{"identity_credential"}},
 		wallet.CredentialRequest{CredentialConfigurationID: "IdentityCredential", Keys: []crypto.Signer{testP256Key(t)}},
 	)
 }
@@ -479,7 +479,7 @@ func TestWalletPreAuthorizedCodeRoundTrip_WithCredentialIdentifier(t *testing.T)
 	// own claims instead of reusing the wallet-side parsed value
 	// directly, but the shape is identical either way.
 	presentAndVerifyIdentityCredential(t, f, dpopKey, tokenResult.AccessToken.Reveal(),
-		issuer.AuthorizedRequest{ClientID: "test-client", AuthorizationDetails: tokenResult.AuthorizationDetails},
+		issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("test-client"), AuthorizationDetails: tokenResult.AuthorizationDetails},
 		wallet.CredentialRequest{CredentialIdentifier: identifier, Keys: []crypto.Signer{testP256Key(t)}},
 	)
 }
@@ -665,7 +665,7 @@ func TestWalletIssuerDeferredAndNotificationRoundTrip(t *testing.T) {
 		t.Fatalf("wallet.New: %v", err)
 	}
 
-	auth := issuer.AuthorizedRequest{ClientID: "client-a"}
+	auth := issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("client-a")}
 	if err := deferredTransactions.Put(context.Background(), "txn-1", issuer.DeferredTransactionRecord{
 		ClientID: "client-a", Status: issuer.DeferredTransactionPending,
 	}); err != nil {
@@ -844,7 +844,7 @@ func TestWalletIssuerRoundTrip(t *testing.T) {
 
 	resource := issuerCredentialFake{
 		iss:    f.iss,
-		auth:   issuer.AuthorizedRequest{ClientID: "test-client", Scopes: []string{"identity_credential"}},
+		auth:   issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("test-client"), Scopes: []string{"identity_credential"}},
 		claims: &sdjwtvc.Claims{VCT: walletIssuerRoundTripVCT},
 	}
 	result, err := f.w.RequestCredential(context.Background(), resource, f.credentialEndpoint, wallet.CredentialRequest{
@@ -892,7 +892,7 @@ func TestWalletIssuerKidProofRoundTrip(t *testing.T) {
 
 	resource := issuerCredentialFake{
 		iss:    f.iss,
-		auth:   issuer.AuthorizedRequest{ClientID: "test-client", Scopes: []string{"identity_credential"}},
+		auth:   issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("test-client"), Scopes: []string{"identity_credential"}},
 		claims: &sdjwtvc.Claims{VCT: walletIssuerRoundTripVCT},
 	}
 	result, err := f.w.RequestCredential(context.Background(), resource, f.credentialEndpoint, wallet.CredentialRequest{
@@ -947,7 +947,7 @@ func TestWalletIssuerAttestationProofRoundTrip(t *testing.T) {
 
 	resource := issuerCredentialFake{
 		iss:    f.iss,
-		auth:   issuer.AuthorizedRequest{ClientID: "test-client", Scopes: []string{"identity_credential"}},
+		auth:   issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("test-client"), Scopes: []string{"identity_credential"}},
 		claims: &sdjwtvc.Claims{VCT: walletIssuerRoundTripVCT},
 	}
 	result, err := f.w.RequestCredential(context.Background(), resource, f.credentialEndpoint, wallet.CredentialRequest{
@@ -993,7 +993,7 @@ func TestWalletIssuerEncryptedRoundTrip(t *testing.T) {
 
 	resource := issuerCredentialFake{
 		iss:    f.iss,
-		auth:   issuer.AuthorizedRequest{ClientID: "test-client", Scopes: []string{"identity_credential"}},
+		auth:   issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("test-client"), Scopes: []string{"identity_credential"}},
 		claims: &sdjwtvc.Claims{VCT: walletIssuerRoundTripVCT},
 	}
 	result, err := f.w.RequestCredential(context.Background(), resource, f.credentialEndpoint, wallet.CredentialRequest{

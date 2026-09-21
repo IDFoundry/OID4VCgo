@@ -39,8 +39,8 @@ import "context"
 // a non-empty TrustedAuthorities — both reject that combination
 // outright when this is nil, rather than silently skipping the
 // restriction (the same "no implicit weakening" pattern
-// issuer.AuthorizedRequest.ClientID's own requireClientIDDecision
-// already applies).
+// issuer.AuthorizedRequest.ClientIdentity's own
+// requireClientIdentityDecision already applies).
 //
 // Per §6.1.1, TrustedAuthorities is satisfied if ANY ONE entry (of any
 // TrustedAuthoritiesType) is satisfied — an implementation only needs

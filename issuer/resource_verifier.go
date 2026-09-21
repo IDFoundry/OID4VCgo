@@ -31,7 +31,7 @@ package issuer
 //	if err != nil {
 //		// respond per *resource.Error — Verify's own doc comment covers this.
 //	}
-//	auth := issuer.AuthorizedRequest{ClientID: authCtx.ClientID, Scopes: authCtx.Scopes}
+//	auth := issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID(authCtx.ClientID), Scopes: authCtx.Scopes}
 //	if raw, ok := authCtx.Claims["authorization_details"]; ok {
 //		if err := json.Unmarshal(raw, &auth.AuthorizationDetails); err != nil {
 //			// malformed claim — treat the same as a verification failure.
@@ -42,7 +42,7 @@ package issuer
 // Request and dropped — AuthorizedRequest exists to check a requested
 // CredentialConfiguration's own Scope (or, for a credential_identifier-based
 // request, AuthorizationDetails) against what the token grants (§8.2)
-// and a jwt-type proof's "iss" claim against ClientID (Appendix F.1),
+// and a jwt-type proof's "iss" claim against ClientIdentity (Appendix F.1),
 // nothing else. Of AuthorizationContext.Claims' own arbitrary token
 // claims, only "authorization_details" (RFC 9396 §2) is ever worth
 // pulling out — see AuthorizedRequest's own doc comment for why it's

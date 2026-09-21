@@ -247,7 +247,7 @@ func serveCredentialRequest(w http.ResponseWriter, r *http.Request, deps credent
 	responseEncryption := responseEncryptionFromWire(wire.CredentialResponseEncryption)
 
 	exp := sdjwtvc.RoundedExp(time.Now(), issuedCredentialLifetime)
-	auth := issuer.AuthorizedRequest{ClientID: authCtx.ClientID, Scopes: authCtx.Scopes}
+	auth := issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID(authCtx.ClientID), Scopes: authCtx.Scopes}
 
 	// Both SDJWTClaims and MdocClaims are always supplied (the
 	// latter nil when cfg.Mdoc is unset) — issueOne's own
