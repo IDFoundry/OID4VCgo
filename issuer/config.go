@@ -539,6 +539,21 @@ func validatePreAuthorizedCodeDependencies(cfg Config, deps Dependencies) error 
 	if cfg.Limits.MaxDPoPProofAge <= 0 {
 		return fmt.Errorf("issuer: config: limits.max_dpop_proof_age must be positive when dependencies.pre_authorized_codes is set")
 	}
+	// Unlike MaxDPoPProofAge, zero is MaxDPoPClockSkew's own legitimate
+	// strictest value (see its own doc comment) — but a negative one
+	// isn't just meaningless, it's actively destructive:
+	// internal/dpop.Verify checks iat.After(Now.Add(MaxClockSkew)), so
+	// a negative skew moves that threshold into the past and rejects
+	// every fresh proof (iat ≈ Now) as "in the future," a near-total
+	// denial of service on ExchangePreAuthorizedCode — found in a
+	// repo-wide integrator-misconfiguration scan, confirmed with a
+	// runnable check. Every sibling freshness-bound duration in this
+	// repo (MaxDPoPProofAge above, sdjwtvc.KeyBindingCheck.MaxAge)
+	// already rejects a non-positive value outright; this is the one
+	// exception, because unlike those, zero itself is meaningful here.
+	if cfg.Limits.MaxDPoPClockSkew < 0 {
+		return fmt.Errorf("issuer: config: limits.max_dpop_clock_skew must not be negative when dependencies.pre_authorized_codes is set")
+	}
 	if cfg.Limits.MaxTxCodeAttempts <= 0 {
 		return fmt.Errorf("issuer: config: limits.max_tx_code_attempts must be positive when dependencies.pre_authorized_codes is set")
 	}
