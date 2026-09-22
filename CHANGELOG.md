@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.1](https://github.com/IDFoundry/OID4VCgo/compare/v0.11.0...v0.11.1) (2026-09-22)
+
+
+### Bug Fixes
+
+* close two mdoc gaps found live against the public OIDF suite ([680bbc0](https://github.com/IDFoundry/OID4VCgo/commit/680bbc0d415abeded3f5956e8db8a7683af4d6ab))
+
 ## [0.11.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.10.0...v0.11.0) (2026-09-21)
 
 
