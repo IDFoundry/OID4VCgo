@@ -64,6 +64,32 @@ const mdocIACAValidity = 10 * 365 * 24 * time.Hour
 // later start time pushes its own end past the certificate's.
 const mdocDocumentSignerValidity = 400 * 24 * time.Hour
 
+// mdocCertificateBackdate backdates both the IACA root's and the
+// Document Signer's own NotBefore — a plain "-1h" (this package's own
+// convention everywhere else, e.g. GenerateSignerAndCert/IssueLeafCertPEM)
+// isn't enough here: cmd/conformance-issuer's own mdocClaimsForRequest
+// rounds an issued mdoc's own MSO "signed"/"validFrom" down to the
+// start of the current UTC day (RFC 9901 §10.1 anti-linkability, the
+// same reasoning sdjwtvc.RoundedExp applies to SD-JWT VC's own "exp" —
+// but unlike RoundedExp, which only rounds the far-future "exp", never
+// the present-instant "iat", mdocClaimsForRequest rounds the *signing*
+// timestamp itself). Confirmed live against a real OIDF conformance
+// suite instance: whenever "now" is more than an hour past UTC
+// midnight (i.e. nearly always), that rounding lands the MSO's own
+// "signed" before a "-1h"-backdated Document Signer certificate's own
+// NotBefore — ISO/IEC 18013-5 §9.3.1's own "signed... within the
+// validity period of the certificate" requirement, deterministically
+// violated, every run
+// ("ValidateMdocMsoSignedWithinDsCertificateValidity" FAILURE). 25
+// hours covers the full 24-hour truncation range with an hour to
+// spare; both certs are throwaway conformance-testing material (this
+// package's own doc comment), so there's no real-world constraint
+// against backdating them further to accommodate it. Both the IACA
+// root and the Document Signer it issues need it, not just the
+// Document Signer: a child certificate's own validity starting before
+// its issuing CA's would itself be a separate, avoidable red flag.
+const mdocCertificateBackdate = 25 * time.Hour
+
 // GenerateMdocIACA builds a fresh, self-signed EC P-256 IACA root
 // certificate meeting ISO/IEC 18013-5 Annex B Table B.1: a v3
 // certificate with a countryName+commonName subject, a critical
@@ -90,7 +116,7 @@ func GenerateMdocIACA(commonName, countryCode, contactURI string) (cert *x509.Ce
 	tmpl := &x509.Certificate{
 		SerialNumber:          serial,
 		Subject:               pkix.Name{Country: []string{countryCode}, CommonName: commonName},
-		NotBefore:             time.Now().Add(-time.Hour),
+		NotBefore:             time.Now().Add(-mdocCertificateBackdate),
 		NotAfter:              time.Now().Add(mdocIACAValidity),
 		IsCA:                  true,
 		BasicConstraintsValid: true,
@@ -142,7 +168,7 @@ func GenerateMdocDocumentSigner(commonName, countryCode, contactURI, crlURI stri
 	tmpl := &x509.Certificate{
 		SerialNumber:          serial,
 		Subject:               pkix.Name{Country: []string{countryCode}, CommonName: commonName},
-		NotBefore:             time.Now().Add(-time.Hour),
+		NotBefore:             time.Now().Add(-mdocCertificateBackdate),
 		NotAfter:              time.Now().Add(mdocDocumentSignerValidity),
 		KeyUsage:              x509.KeyUsageDigitalSignature,
 		SubjectKeyId:          subjectKeyIdentifier(&key.PublicKey),
