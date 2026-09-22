@@ -387,9 +387,26 @@ func main() {
 	alias := flag.String("alias", "oid4vcgo-wallet-vp", "suite plan alias")
 	skipDockerRestart := flag.Bool("skip-docker-restart", false, "skip restarting the conformance-wallet-vp container after writing the new config (only safe when the container is already running with matching key material from a prior run of this exact binary)")
 	credentialFormat := flag.String("credential-format", "sd_jwt_vc", "credential_format variant to drive: \"sd_jwt_vc\" (default) or \"iso_mdl\" — confirmed live that both drive the exact same 14-module list (see this file's own package doc comment), only the fixture credential/DCQL query/trust anchor differ")
+	dumpPlanConfig := flag.Bool("dump-plan-config", false, "print the generated suite-side plan configuration JSON and exit instead of calling POST /api/plan — for a suite instance (e.g. the hosted certification.openid.net) whose admin API needs a login this script has no way to establish; pair with -walletvp-internal-base pointing at a real publicly-reachable URL (e.g. a cloudflared tunnel) and create the plan/module yourself through the suite's own authenticated web UI")
+
+	var driveCfg driveOnlyConfig
+	driveOnly := flag.Bool("drive-only", false, "drive a single module instance you already created out-of-band (e.g. through the suite's own web UI) instead of creating a plan/module through the admin API — needs -redirect-url; see -help for the rest")
+	flag.StringVar(&driveCfg.testName, "drive-test-name", "", "the suite testName of the module instance -drive-only is driving, for labeling output only")
+	flag.StringVar(&driveCfg.redirectURL, "redirect-url", "", "the client_id+request_uri authorization redirect URL shown/logged by the module you created by hand, for -drive-only")
+	flag.StringVar(&driveCfg.implicitSubmitURL, "implicit-submit-url", "", "the suite's own implicit-submission URL (its log's implicit_submit.fullUrl field) for -drive-only — only needed for oid4vp-1final-wallet-alternate-happy-flow's fragment-carrying redirect_uri; runDriveOnly errors out asking for it if the drive response carries a fragment and this is empty")
+	flag.BoolVar(&driveCfg.negativeTest, "negative-test", false, "grade this -drive-only run as a negative test: a non-200 local response (rejected before ever calling response_uri) is the pass condition, not a 200")
+	flag.StringVar(&driveCfg.screenshotOut, "screenshot-out", "", "path to write a negative test's own evidence screenshot to (default: /tmp/<test-name>-evidence.png) — for uploading to the suite's own screenshot-REVIEW gate; only used when -negative-test is set")
+	flag.BoolVar(&driveCfg.noScreenshot, "no-screenshot", false, "skip generating an evidence screenshot for a -negative-test run")
 	flag.Parse()
 
 	httpClient := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}} //nolint:gosec // local conformance suite, self-signed certs throughout
+
+	if *driveOnly {
+		if err := runDriveOnly(httpClient, driveCfg); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 
 	cfg, trustAnchorCertPEM, err := generateWalletVPFixtures(*credentialFormat)
 	if err != nil {
@@ -416,9 +433,17 @@ func main() {
 		},
 		Server: planServer{AuthorizationEndpoint: *walletVPInternalBase + authorizePath},
 	}
-	pcRaw, err := json.Marshal(pc)
+	pcRaw, err := json.MarshalIndent(pc, "", "  ")
 	if err != nil {
 		log.Fatalf("marshal plan config: %v", err)
+	}
+
+	if *dumpPlanConfig {
+		if _, err := os.Stdout.Write(pcRaw); err != nil {
+			log.Fatal(err)
+		}
+		fmt.Println()
+		return
 	}
 
 	planVariant := map[string]string{"credential_format": *credentialFormat, "response_mode": "direct_post.jwt"} //nolint:gosec // false positive: a suite variant selector value, not a credential
