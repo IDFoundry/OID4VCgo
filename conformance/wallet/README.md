@@ -346,6 +346,94 @@ line also includes the module's own id and `/api/log/{id}` URL, so a
 suite-graded `FAILED` (as opposed to a driver error) can always be
 traced to the suite's own log without re-instrumenting anything.
 
+## Driving against the hosted certification.openid.net instance
+
+`run()`'s own end-to-end shape (generate keys, `POST /api/plan`, drive
+every module) assumes the suite's admin API is reachable
+unauthenticated — true for a local `docker-compose-prebuilt.yml`
+instance, but confirmed live to be false for the hosted
+`certification.openid.net` instance used for actual self-certification:
+`POST /api/plan` there returns `401 Unauthorized: Full authentication
+is required to access this resource`, and this binary has never sent
+any credential at all (no `Authorization` header, no cookie — checked
+directly, nothing in `internal/conformancesuite` sends one). With no
+API token available on the certification account, the fix isn't
+suite-side auth support — it's recognizing that only the *admin* API
+(`POST /api/plan`, `POST /api/runner`, and by extension `GET
+/api/info`/`GET /api/log` for polling) is behind that login. The
+module's own *protocol* endpoints (`/`.well-known` discovery,
+`par`/`authorize`/`token`/`nonce`/`credential`/`notification`/
+`deferred_credential`/`challenge` under `/test/a/<alias>/...`) are not
+— unsurprising, since those are the actual conformance-testing surface,
+reachable by whatever real implementation is under test.
+
+So plan/module creation moves to the suite's own authenticated web UI
+(a tester's browser session handles the login this binary can't), and
+this binary only ever drives the resulting module's protocol calls —
+two new pieces:
+
+- **`-save-run <path>`** (paired with `-dump-config`): persists this
+  run's own private key material (the Client Attestation and Key
+  Attestation leaf signing keys) to a `0600` file instead of letting it
+  vanish the instant the one-shot `-dump-config` process exits — the
+  actual root cause the first live attempt against the hosted instance
+  found: a plan/module created by hand from a bare `-dump-config`
+  dump's JSON can never be completed by anyone, because the private
+  key backing its own `client_attestation.trust_anchor` no longer
+  exists anywhere once that process returns.
+- **`-drive-only -run-state <path> -offer-url <url>`**: loads that
+  persisted key material and drives one already-`WAITING` module
+  instance's `driveModule` flow directly — no `CreatePlan`/
+  `CreateModuleInstance`/`WaitUntilWaiting`/`WaitUntilFinished` call
+  anywhere in this path, so no suite login is ever needed for it. The
+  module's own base URL is derived from the resolved Credential Offer's
+  `credential_issuer` field (a `by_value` offer decodes with no network
+  call at all, and a `by_reference` offer's own `credential_offer_uri`
+  is fetched from the module's own public endpoint, not the suite's
+  admin API — see `credentialoffer.go`'s own doc comment on the
+  identical finding for the fully-automated `issuer_initiated` path),
+  so a tester only ever has to hand this binary the offer URL the
+  suite's own module page already displays. `-module-url <url>` is the
+  `wallet_initiated` counterpart: that flow variant conveys no
+  Credential Offer at all (`vciConfig`'s own doc comment), so there's
+  nothing to resolve — this instead names the module's own base URL
+  directly, exactly as `run()`'s own `runModule` already does whenever
+  `cfg.issuerInitiated` is false, and drives with a `nil` offer.
+  `-offer-url`/`-module-url` are mutually exclusive; exactly one is
+  required.
+
+**Confirmed live against the real `certification.openid.net` instance**
+(not a local suite), all 22 module instances of the HAIP plan's SD-JWT
+VC crossing set, for all three flow/offer-conveyance configurations,
+driven one at a time via repeated `-drive-only` calls as each module
+was started by hand through the web UI:
+
+- `issuer_initiated`/`by_value`: 21 `driveModule` calls completed
+  without error (the 10 FAPI2SP battery modules that expect a
+  *rejection* — the discovery/`iss`/`state` negative modules —
+  correctly returned their own expected error instead of a clean
+  completion, which is the passing behavior for those specifically).
+  The 1 exception was operator error, not a binary bug: an early
+  attempt drove a since-`immediate+encrypted`-configured module
+  instance without `-drive-encrypted` first, which the suite's own
+  state machine can't recover from (a second attempt against the same
+  instance failed AS-metadata discovery outright, and the suite's own
+  module page subsequently showed `SKIPPED`) — recovered by starting a
+  fresh module instance for that crossing and driving it correctly from
+  the first attempt. Lesson for next time: get the
+  issuance-mode/encryption crossing right before the first
+  `driveModule` call against a given module instance, since there's no
+  second try against the same one.
+- `issuer_initiated`/`by_reference`: all 22 module instances driven
+  with zero incidents, applying that lesson — confirms
+  `wallet.Wallet.ResolveCredentialOffer`'s own `credential_offer_uri`
+  dereference works identically through `-drive-only` as it does
+  through `run()`'s own fully-automated path.
+- `wallet_initiated` (via `-module-url`, no offer at all): all 22
+  module instances driven with zero incidents — confirms `driveModule`
+  with a `nil` offer (a plain `BeginAuthorization` call, no
+  `issuer_state` extension) works identically through `-drive-only`.
+
 ## Scope
 
 **In scope**: both `wallet_initiated` and `issuer_initiated` flow

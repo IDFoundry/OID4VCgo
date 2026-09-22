@@ -198,6 +198,16 @@ func main() {
 	flag.BoolVar(&cfg.basePlan, "base-plan", false, "drive the suite's own base (non-HAIP) \"oid4vci-1_0-wallet-test-plan\" instead of the default HAIP plan — see baseInScopeModules' own doc comment")
 	flag.StringVar(&cfg.credentialFormat, "credential-format", "sd_jwt_vc", "credential_format variant to drive: \"sd_jwt_vc\" (default) or \"mdoc\" — mdoc needs a matching -credential-configuration-id/-scope, e.g. eu.europa.ec.eudi.pid.mdoc.1/eudi.pid.mdoc.1")
 	dumpConfig := flag.Bool("dump-config", false, "print the generated suite-side plan configuration JSON and exit, instead of creating a plan — useful for probing the suite's own POST /api/plan validation by hand")
+	saveRun := flag.String("save-run", "", "with -dump-config, also write this run's own private key material to this path (mode 0600) — load it back later with -drive-only/-run-state once you've created the plan/module yourself, e.g. through a suite instance's own authenticated web UI that this binary's own admin-API calls (POST /api/plan, POST /api/runner) can't reach")
+
+	var driveCfg driveOnlyConfig
+	driveOnly := flag.Bool("drive-only", false, "drive a single module instance you already created out-of-band (e.g. through the suite's own web UI) instead of creating a plan/module through the admin API — needs -run-state and -offer-url")
+	flag.StringVar(&driveCfg.runStatePath, "run-state", "", "path to the file -save-run wrote, for -drive-only to reconstruct this run's own private key material")
+	flag.StringVar(&driveCfg.offerURL, "offer-url", "", "the issuer_initiated Credential Offer redirect URL (haip-vci://... or https://...) shown/logged by the module you created by hand, for -drive-only")
+	flag.StringVar(&driveCfg.moduleURL, "module-url", "", "the wallet_initiated module instance's own base URL (e.g. https://www.certification.openid.net/test/a/<alias>), as shown on its own page in the suite's web UI, for -drive-only — mutually exclusive with -offer-url, since wallet_initiated conveys no Credential Offer at all")
+	flag.StringVar(&driveCfg.testName, "drive-test-name", "oid4vci-1_0-wallet-test-credential-issuance", "the suite testName of the module instance -drive-only is driving — only affects whether the Attestation Challenge Endpoint is wired up (see batteryModulePrefix)")
+	flag.IntVar(&driveCfg.numCreds, "drive-num-creds", 1, "number of credentials to request in -drive-only mode — 2 for oid4vci-1_0-wallet-test-batch-credential-issuance, 1 for everything else")
+	flag.BoolVar(&driveCfg.encrypted, "drive-encrypted", false, "whether -drive-only should request/expect §10 Credential Request/Response encryption — set this for an immediate+encrypted module instance")
 	flag.Parse()
 
 	cfg.proofType = proofStrategy(*proofTypeFlag)
@@ -212,10 +222,22 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
+		if *saveRun != "" {
+			if err := saveRunState(*saveRun, walletRun); err != nil {
+				log.Fatal(err)
+			}
+		}
 		if _, err := os.Stdout.Write(walletRun.planConfig); err != nil {
 			log.Fatal(err)
 		}
 		fmt.Println()
+		return
+	}
+
+	if *driveOnly {
+		if err := runDriveOnly(driveCfg); err != nil {
+			log.Fatal(err)
+		}
 		return
 	}
 

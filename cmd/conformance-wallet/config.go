@@ -32,6 +32,7 @@ type walletRun struct {
 	// Attester, the same way cmd/conformance-issuer/flow_test.go's own
 	// test helpers simulate an Attester, but as production code here.
 	attesterKey     *ecdsa.PrivateKey
+	attesterKeyPEM  string // persisted by -save-run so -drive-only can reconstruct attesterKey later, in a separate process/invocation
 	attesterCAPEM   string // client_attestation.trust_anchor, configured on the suite side
 	attesterLeafPEM string
 
@@ -44,6 +45,7 @@ type walletRun struct {
 	// service) is a distinct authority from the Wallet Attestation
 	// issuer above.
 	keyAttestationKey     *ecdsa.PrivateKey
+	keyAttestationKeyPEM  string // persisted by -save-run, see attesterKeyPEM's own doc comment
 	keyAttestationLeafPEM string
 
 	// proofType selects which of the three Credential Request proof
@@ -77,7 +79,7 @@ func newWalletRun(cfg runConfig) (*walletRun, error) {
 	clientID := "oid4vcgo-wallet-client-" + suffix
 	redirectURI := cfg.apiBase + "test/a/" + alias + "/callback"
 
-	attesterKey, _, attesterLeafPEM, attesterCAPEM, err := conformancecert.GenerateSignerAndCert(
+	attesterKey, attesterKeyPEM, attesterLeafPEM, attesterCAPEM, err := conformancecert.GenerateSignerAndCert(
 		"oid4vcgo-wallet-attester-leaf", "oid4vcgo-wallet-attester-ca")
 	if err != nil {
 		return nil, fmt.Errorf("generate attester key/cert: %w", err)
@@ -88,7 +90,7 @@ func newWalletRun(cfg runConfig) (*walletRun, error) {
 	// unconditionally (cheap) so client_attestation.key_attestation_trust_anchor_pem
 	// below is always a real, dedicated trust anchor rather than a
 	// placeholder, regardless of useAttestationProof.
-	keyAttestationKey, _, keyAttestationLeafPEM, keyAttestationCAPEM, err := conformancecert.GenerateSignerAndCert(
+	keyAttestationKey, keyAttestationKeyPEM, keyAttestationLeafPEM, keyAttestationCAPEM, err := conformancecert.GenerateSignerAndCert(
 		"oid4vcgo-wallet-key-attester-leaf", "oid4vcgo-wallet-key-attester-ca")
 	if err != nil {
 		return nil, fmt.Errorf("generate key attestation key/cert: %w", err)
@@ -170,8 +172,8 @@ func newWalletRun(cfg runConfig) (*walletRun, error) {
 	return &walletRun{
 		alias: alias, clientID: clientID, redirectURI: redirectURI,
 		scope: cfg.scope, credentialConfigurationID: cfg.credentialConfigurationID,
-		attesterKey: attesterKey, attesterCAPEM: attesterCAPEM, attesterLeafPEM: attesterLeafPEM,
-		keyAttestationKey: keyAttestationKey, keyAttestationLeafPEM: keyAttestationLeafPEM,
+		attesterKey: attesterKey, attesterKeyPEM: attesterKeyPEM, attesterCAPEM: attesterCAPEM, attesterLeafPEM: attesterLeafPEM,
+		keyAttestationKey: keyAttestationKey, keyAttestationKeyPEM: keyAttestationKeyPEM, keyAttestationLeafPEM: keyAttestationLeafPEM,
 		proofType:  cfg.proofType,
 		planConfig: planConfig,
 	}, nil
