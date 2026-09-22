@@ -80,16 +80,24 @@ func responseEncryptionFromWire(wire *wireResponseEncryption) *issuer.ResponseEn
 // mdocClaimsForRequest builds this request's own *mdoc.Claims from
 // nameSpaces (cfg.Mdoc.Claims, precomputed once by credentialHandler —
 // nil when cfg.Mdoc is unset, in which case this returns nil too) and
-// docType, with a fresh Signed/ValidFrom/ValidUntil validity window
-// spanning lifetime from now.
+// docType, with a Signed/ValidFrom/ValidUntil validity window spanning
+// lifetime from the start of today's own UTC day, not the raw issuance
+// instant — the same RFC 9901 §10.1 anti-linkability reasoning
+// sdjwtvc.RoundedExp's own doc comment explains for SD-JWT VC's "exp",
+// applying equally here (confirmed live: the OIDF suite's own
+// VCIEnsureCredentialTimeClaimsNotLinkable check flags mdoc's MSO
+// validityInfo signed/validFrom/validUntil the same way it flags
+// SD-JWT VC's iat/exp/nbf). Day-granularity rounding means every
+// credential issued on the same calendar day carries identical
+// Signed/ValidFrom values, closing that channel.
 func mdocClaimsForRequest(docType string, nameSpaces map[string]map[string]interface{}, lifetime time.Duration) *mdoc.Claims {
 	if nameSpaces == nil {
 		return nil
 	}
-	now := time.Now()
+	dayStart := time.Now().UTC().Truncate(24 * time.Hour)
 	return &mdoc.Claims{
 		DocType: docType, NameSpaces: nameSpaces,
-		Signed: now, ValidFrom: now, ValidUntil: now.Add(lifetime),
+		Signed: dayStart, ValidFrom: dayStart, ValidUntil: dayStart.Add(lifetime),
 	}
 }
 
