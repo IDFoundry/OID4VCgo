@@ -231,23 +231,39 @@ func newServerMux(cfg Config) (*http.ServeMux, error) {
 			IssuerCertificate: issuerCertificate,
 		},
 	}
-	attestationVerifier, err := addKeyAttestationProofType(cfg, &sdjwtConfig)
-	if err != nil {
-		return nil, err
-	}
-	issDeps.AttestationVerifier = attestationVerifier
-	credentialConfigs := map[string]issuer.CredentialConfiguration{
-		cfg.CredentialConfigurationID: sdjwtConfig,
-	}
+
+	// attestationTargets collects every CredentialConfiguration that
+	// should additionally advertise the "attestation" proof type when
+	// cfg.KeyAttestation is set -- both dc+sd-jwt and (when configured)
+	// mso_mdoc, since HAIP §4.5.1's key-attestation MUST is Wallet-side
+	// and format-agnostic (issuer.Dependencies.AttestationVerifier is
+	// one shared value resolveAttestationProofKeys consults regardless
+	// of which CredentialConfiguration a request targets, confirmed
+	// against issuer/proofs.go), not something to gate per format.
+	var mdocConfig issuer.CredentialConfiguration
+	attestationTargets := []*issuer.CredentialConfiguration{&sdjwtConfig}
 	if cfg.Mdoc != nil {
-		mdocConfig := jwtProofCredentialConfiguration(cfg.Mdoc.Scope, issProofAlgs)
+		mdocConfig = jwtProofCredentialConfiguration(cfg.Mdoc.Scope, issProofAlgs)
 		mdocConfig.Format, mdocConfig.DocType = mdoc.CredentialFormat, cfg.Mdoc.DocType
-		credentialConfigs[cfg.Mdoc.CredentialConfigurationID] = mdocConfig
+		attestationTargets = append(attestationTargets, &mdocConfig)
 		mdocSigner, err := buildMdocSigner(cfg, issuerSigningKey, issuerCertificate)
 		if err != nil {
 			return nil, err
 		}
 		issDeps.MdocSigner = mdocSigner
+	}
+
+	attestationVerifier, err := addKeyAttestationProofType(cfg, attestationTargets...)
+	if err != nil {
+		return nil, err
+	}
+	issDeps.AttestationVerifier = attestationVerifier
+
+	credentialConfigs := map[string]issuer.CredentialConfiguration{
+		cfg.CredentialConfigurationID: sdjwtConfig,
+	}
+	if cfg.Mdoc != nil {
+		credentialConfigs[cfg.Mdoc.CredentialConfigurationID] = mdocConfig
 	}
 
 	iss, err := issuer.New(issuer.Config{
@@ -377,16 +393,6 @@ func buildClientRegistration(cfg Config) (clientRepo *memstore.ClientRepository,
 	return memstore.NewClientRepository(registeredClients), clientKeys, nil
 }
 
-// addKeyAttestationProofType mutates sdjwtConfig in place to
-// additionally advertise the "attestation" proof type (OID4VCI
-// Appendix F.3) when cfg.KeyAttestation is set — a Wallet may use
-// either "jwt" or "attestation" for the same credential_configuration_id,
-// and issuer.RequestCredential dispatches per-request on which proof
-// type key the request's own "proofs" object contains, so this leaves
-// every existing "jwt"-proof flow completely unaffected — and returns
-// the AttestationVerifier issDeps needs, or nil when key attestation
-// isn't configured. Extracted out of newServerMux purely to keep its
-// own cognitive complexity down.
 // buildMdocSigner picks the mdoc CredentialConfiguration's own signing
 // identity: cfg.Mdoc's own dedicated ISO/IEC 18013-5 Annex B-compliant
 // Document Signer identity (internal/conformancecert.GenerateMdocDocumentSigner)
@@ -409,14 +415,35 @@ func buildMdocSigner(cfg Config, fallbackKey *ecdsa.PrivateKey, fallbackCert *x5
 	}, nil
 }
 
-func addKeyAttestationProofType(cfg Config, sdjwtConfig *issuer.CredentialConfiguration) (issuer.AttestationVerifier, error) {
+// addKeyAttestationProofType mutates every credConfigs entry in place
+// to additionally advertise the "attestation" proof type (OID4VCI
+// Appendix F.3) when cfg.KeyAttestation is set — a Wallet may use
+// either "jwt" or "attestation" for the same credential_configuration_id,
+// and issuer.RequestCredential dispatches per-request on which proof
+// type key the request's own "proofs" object contains, so this leaves
+// every existing "jwt"-proof flow completely unaffected. Applied to
+// every advertised CredentialConfiguration (dc+sd-jwt and, when
+// configured, mso_mdoc) rather than just one: HAIP §4.5.1's own
+// key-attestation MUST is a Wallet-side, format-agnostic requirement,
+// and Dependencies.AttestationVerifier is one shared value regardless
+// of which CredentialConfiguration a request targets — confirmed live
+// against the OIDF conformance suite's own
+// oid4vci-1_0-issuer-fail-invalid-key-attestation-signature module,
+// which self-SKIPPED for the mso_mdoc CredentialConfiguration
+// specifically until this function started covering it too. Returns
+// the AttestationVerifier issDeps needs, or nil when key attestation
+// isn't configured. Extracted out of newServerMux purely to keep its
+// own cognitive complexity down.
+func addKeyAttestationProofType(cfg Config, credConfigs ...*issuer.CredentialConfiguration) (issuer.AttestationVerifier, error) {
 	if cfg.KeyAttestation == nil {
 		return nil, nil
 	}
-	sdjwtConfig.ProofTypesSupported[oid4vci.ProofTypeAttestation] = haip.RecommendedAttestationProofType()
 	trustedKey, err := jwk.ParsePublicKey(cfg.KeyAttestation.TrustedJWK)
 	if err != nil {
 		return nil, fmt.Errorf("key attestation trusted jwk: %w", err)
+	}
+	for _, c := range credConfigs {
+		c.ProofTypesSupported[oid4vci.ProofTypeAttestation] = haip.RecommendedAttestationProofType()
 	}
 	return fixedKeyAttestationVerifier{pub: trustedKey, alg: jose.ES256}, nil
 }

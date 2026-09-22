@@ -4,14 +4,51 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/tls"
 	"encoding/base64"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/internal/conformanceconfig"
 	"github.com/idfoundry/oid4vcgo/internal/cose"
+	"github.com/idfoundry/oid4vcgo/internal/jwk"
 )
+
+// TestMdocClaimsForRequestDayRoundedValidity proves
+// mdocClaimsForRequest's own anti-linkability rounding: Signed and
+// ValidFrom must land exactly on today's own UTC day boundary (not the
+// precise call instant), and ValidUntil must be lifetime past that same
+// boundary -- see the function's own doc comment for the RFC 9901
+// §10.1 reasoning (VCIEnsureCredentialTimeClaimsNotLinkable).
+func TestMdocClaimsForRequestDayRoundedValidity(t *testing.T) {
+	nameSpaces := map[string]map[string]interface{}{"org.iso.18013.5.1": {"given_name": "Jean"}}
+	lifetime := 365 * 24 * time.Hour
+
+	claims := mdocClaimsForRequest("org.iso.18013.5.1.mDL", nameSpaces, lifetime)
+	if claims == nil {
+		t.Fatal("mdocClaimsForRequest returned nil for non-nil nameSpaces")
+	}
+
+	wantDayStart := time.Now().UTC().Truncate(24 * time.Hour)
+	if !claims.Signed.Equal(wantDayStart) {
+		t.Errorf("Signed = %v, want day-truncated %v", claims.Signed, wantDayStart)
+	}
+	if !claims.ValidFrom.Equal(wantDayStart) {
+		t.Errorf("ValidFrom = %v, want day-truncated %v", claims.ValidFrom, wantDayStart)
+	}
+	wantValidUntil := wantDayStart.Add(lifetime)
+	if !claims.ValidUntil.Equal(wantValidUntil) {
+		t.Errorf("ValidUntil = %v, want %v", claims.ValidUntil, wantValidUntil)
+	}
+
+	if got := mdocClaimsForRequest("org.iso.18013.5.1.mDL", nil, lifetime); got != nil {
+		t.Errorf("mdocClaimsForRequest(nil nameSpaces) = %+v, want nil", got)
+	}
+}
 
 // mdocTestConfig returns baseTestConfig plus a second, mso_mdoc-format
 // CredentialConfiguration (Config.Mdoc) alongside the base config's own
@@ -120,5 +157,65 @@ func TestFullFlow_MdocCredentialIssuance(t *testing.T) {
 	}
 	if !deviceKeyECDSA.Equal(&holderKey.PublicKey) {
 		t.Error("verified DeviceKey does not match the proof's own holder key")
+	}
+}
+
+// TestNewServerMux_KeyAttestationAdvertisedOnBothFormats proves
+// addKeyAttestationProofType's own multi-target fix: when both
+// cfg.KeyAttestation and cfg.Mdoc are set, the "attestation" proof
+// type must appear in credential_issuer metadata for *both*
+// CredentialConfigurations, not just the "dc+sd-jwt" one — confirmed
+// live as a real gap (the OIDF suite's own
+// oid4vci-1_0-issuer-fail-invalid-key-attestation-signature module
+// self-SKIPPED against the mso_mdoc CredentialConfiguration until this
+// fix, since addKeyAttestationProofType previously only ever mutated
+// the "dc+sd-jwt" CredentialConfiguration).
+func TestNewServerMux_KeyAttestationAdvertisedOnBothFormats(t *testing.T) {
+	cfg := mdocTestConfig(t)
+	attestationKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key attestation trust key: %v", err)
+	}
+	trustedJWK, err := jwk.Marshal(&attestationKey.PublicKey)
+	if err != nil {
+		t.Fatalf("jwk.Marshal: %v", err)
+	}
+	trustedJWKRaw, err := json.Marshal(trustedJWK)
+	if err != nil {
+		t.Fatalf("marshal trusted jwk: %v", err)
+	}
+	cfg.KeyAttestation = &conformanceconfig.KeyAttestationConfig{TrustedJWK: trustedJWKRaw}
+
+	ts := httptest.NewUnstartedServer(nil)
+	cfg.Issuer = "https://" + ts.Listener.Addr().String()
+	mux, err := newServerMux(cfg)
+	if err != nil {
+		t.Fatalf("newServerMux: %v", err)
+	}
+	ts.Config.Handler = mux
+	tlsCert, err := cfg.tlsCertificate()
+	if err != nil {
+		t.Fatalf("tlsCertificate: %v", err)
+	}
+	ts.TLS = &tls.Config{Certificates: []tls.Certificate{tlsCert}}
+	ts.StartTLS()
+	defer ts.Close()
+	client := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}} //nolint:gosec // test-only
+
+	body := getJSON(t, client, ts.URL+"/.well-known/openid-credential-issuer")
+	configs, _ := body["credential_configurations_supported"].(map[string]any)
+
+	for _, ccID := range []string{cfg.CredentialConfigurationID, cfg.Mdoc.CredentialConfigurationID} {
+		cc, ok := configs[ccID].(map[string]any)
+		if !ok {
+			t.Fatalf("credential_configurations_supported missing %q: %+v", ccID, configs)
+		}
+		proofTypes, _ := cc["proof_types_supported"].(map[string]any)
+		if _, ok := proofTypes["attestation"]; !ok {
+			t.Errorf("%q proof_types_supported missing %q: %+v", ccID, "attestation", proofTypes)
+		}
+		if _, ok := proofTypes["jwt"]; !ok {
+			t.Errorf("%q proof_types_supported missing %q (must stay additive): %+v", ccID, "jwt", proofTypes)
+		}
 	}
 }
