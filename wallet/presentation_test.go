@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ecdsa"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -117,9 +118,22 @@ func TestMatchDCQLQuery(t *testing.T) {
 	matchesOneCredential(t, testPresentationQuery(t), newHeldSDJWTVC(t))
 }
 
+// TestMatchDCQLQueryRejectsNoCandidate also proves
+// wallet.ErrNoMatchingCredential is errors.Is-detectable through
+// MatchDCQLQuery's own wrapping chain — the distinction
+// cmd/conformance-wallet-vp's own handleAuthorize relies on to choose
+// OID4VP §8.5's "access_denied" Authorization Response error code over
+// the generic "invalid_request" for exactly this failure mode
+// (confirmed live against a real OIDF conformance suite instance:
+// VP1FinalWalletRequiredNonMatchingCredential.java's own
+// EnsureAuthorizationEndpointErrorIsAccessDenied check).
 func TestMatchDCQLQueryRejectsNoCandidate(t *testing.T) {
-	if _, err := wallet.MatchDCQLQuery(context.Background(), testPresentationQuery(t), nil, nil); err == nil {
+	_, err := wallet.MatchDCQLQuery(context.Background(), testPresentationQuery(t), nil, nil)
+	if err == nil {
 		t.Fatalf("MatchDCQLQuery = nil error, want error")
+	}
+	if !errors.Is(err, wallet.ErrNoMatchingCredential) {
+		t.Errorf("errors.Is(err, wallet.ErrNoMatchingCredential) = false, want true (err = %v)", err)
 	}
 }
 
@@ -127,8 +141,12 @@ func TestMatchDCQLQueryRejectsWrongVCT(t *testing.T) {
 	fixture := newHeldSDJWTVC(t)
 	meta := testverify.MustSDJWTVCMeta(t, "https://credentials.example.com/some_other_credential")
 	query := dcql.Query{Credentials: []dcql.CredentialQuery{{ID: "x", Format: sdjwtvc.CredentialFormat, Meta: meta}}}
-	if _, err := wallet.MatchDCQLQuery(context.Background(), query, []wallet.HeldCredential{fixture.held}, nil); err == nil {
+	_, err := wallet.MatchDCQLQuery(context.Background(), query, []wallet.HeldCredential{fixture.held}, nil)
+	if err == nil {
 		t.Fatalf("MatchDCQLQuery = nil error, want error")
+	}
+	if !errors.Is(err, wallet.ErrNoMatchingCredential) {
+		t.Errorf("errors.Is(err, wallet.ErrNoMatchingCredential) = false, want true (err = %v)", err)
 	}
 }
 
@@ -395,8 +413,18 @@ func TestPresentCredentialsRejectsMissingAudienceOrNonce(t *testing.T) {
 	}
 	for name, req := range cases {
 		t.Run(name, func(t *testing.T) {
-			if _, err := wallet.PresentCredentials(context.Background(), req); err == nil {
+			_, err := wallet.PresentCredentials(context.Background(), req)
+			if err == nil {
 				t.Fatalf("PresentCredentials(%s) = nil error, want error", name)
+			}
+			// Distinct from the unsatisfiable-DCQL-query case (see
+			// TestMatchDCQLQueryRejectsNoCandidate) — a missing
+			// audience/nonce is a plain malformed-request error, so a
+			// caller like cmd/conformance-wallet-vp's own handleAuthorize
+			// should keep reporting it as the generic "invalid_request",
+			// not "access_denied".
+			if errors.Is(err, wallet.ErrNoMatchingCredential) {
+				t.Errorf("errors.Is(err, wallet.ErrNoMatchingCredential) = true, want false (err = %v)", err)
 			}
 		})
 	}
