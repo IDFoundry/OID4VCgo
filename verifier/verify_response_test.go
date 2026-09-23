@@ -5,9 +5,11 @@ import (
 	"crypto"
 	"crypto/ecdsa"
 	"encoding/base64"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcgo/dcql"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
@@ -174,6 +176,63 @@ func TestVerifyResponse(t *testing.T) {
 	vc := verifySDJWTVCRoundTrip(t, testIdentityQuery(t), "")
 	if vc.Claims["given_name"] != "Alice" {
 		t.Errorf("Claims[given_name] = %v, want Alice", vc.Claims["given_name"])
+	}
+}
+
+// TestVerifyResponse_RequiresIssuerKeysForSDJWTVC proves the guard
+// verifySDJWTVCPresentation's own doc comment describes — VerifyResponse
+// requires the caller supply IssuerKeys before it will even attempt to
+// parse a "dc+sd-jwt" Presentation — and that the error names
+// X5CIssuerKeyResolver (the ready-made implementation for the common
+// trust-anchor-pool case), not just a bare "is required".
+func TestVerifyResponse_RequiresIssuerKeysForSDJWTVC(t *testing.T) {
+	_, _, v := newTestVerifierWithConfig(t)
+	query := testIdentityQuery(t)
+	built, err := v.BuildAuthorizationRequest(verifier.BuildAuthorizationRequestRequest{Query: query})
+	if err != nil {
+		t.Fatalf("BuildAuthorizationRequest: %v", err)
+	}
+
+	_, err = v.VerifyResponse(context.Background(), verifier.VerifyResponseRequest{
+		Query:            query,
+		Response:         verifier.ParsedResponse{VPToken: map[string][]string{"identity_credential": {"unused"}}},
+		ExpectedNonce:    built.Nonce,
+		MaxKeyBindingAge: time.Hour,
+	})
+	if err == nil {
+		t.Fatal("VerifyResponse with nil IssuerKeys: want error, got nil")
+	}
+	if !strings.Contains(err.Error(), "X5CIssuerKeyResolver") {
+		t.Errorf("error = %q, want it to name X5CIssuerKeyResolver", err.Error())
+	}
+}
+
+// TestVerifyResponse_RequiresMdocIssuerKeysForMdoc is
+// TestVerifyResponse_RequiresIssuerKeysForSDJWTVC's own "mso_mdoc"
+// twin.
+func TestVerifyResponse_RequiresMdocIssuerKeysForMdoc(t *testing.T) {
+	_, _, v := newTestVerifierWithConfig(t)
+	meta, err := dcql.NewMdocMeta(dcql.MdocMeta{DoctypeValue: "org.iso.18013.5.1.mDL"})
+	if err != nil {
+		t.Fatalf("NewMdocMeta: %v", err)
+	}
+	query := dcql.Query{Credentials: []dcql.CredentialQuery{{ID: "mdl", Format: mdoc.CredentialFormat, Meta: meta}}}
+	built, err := v.BuildAuthorizationRequest(verifier.BuildAuthorizationRequestRequest{Query: query})
+	if err != nil {
+		t.Fatalf("BuildAuthorizationRequest: %v", err)
+	}
+
+	_, err = v.VerifyResponse(context.Background(), verifier.VerifyResponseRequest{
+		Query:            query,
+		Response:         verifier.ParsedResponse{VPToken: map[string][]string{"mdl": {"unused"}}},
+		ExpectedNonce:    built.Nonce,
+		MaxKeyBindingAge: time.Hour,
+	})
+	if err == nil {
+		t.Fatal("VerifyResponse with nil MdocIssuerKeys: want error, got nil")
+	}
+	if !strings.Contains(err.Error(), "X5ChainIssuerKeyResolver") {
+		t.Errorf("error = %q, want it to name X5ChainIssuerKeyResolver", err.Error())
 	}
 }
 

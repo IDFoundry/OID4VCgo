@@ -380,7 +380,7 @@ func (v *Verifier) verifyCredentialQuery(ctx context.Context, cq dcql.Credential
 
 func (v *Verifier) verifySDJWTVCPresentation(ctx context.Context, cq dcql.CredentialQuery, compact string, req VerifyResponseRequest) (map[string]any, error) {
 	if req.IssuerKeys == nil {
-		return nil, fmt.Errorf("dependencies.issuer_keys is required for a %q credential query", sdjwtvc.CredentialFormat)
+		return nil, fmt.Errorf("dependencies.issuer_keys is required for a %q credential query — see X5CIssuerKeyResolver for a ready-made implementation backed by a trust anchor pool", sdjwtvc.CredentialFormat)
 	}
 	pres, err := sdjwtvc.Parse(compact)
 	if err != nil {
@@ -464,7 +464,7 @@ func (v *Verifier) expectedAudience(origin string) string {
 // DeviceAuthSignature (§12.4.6, ECDSA/EdDSA) is meaningful here.
 func (v *Verifier) verifyMdocPresentation(ctx context.Context, cq dcql.CredentialQuery, presented string, req VerifyResponseRequest) (map[string]any, error) {
 	if req.MdocIssuerKeys == nil {
-		return nil, fmt.Errorf("dependencies.mdoc_issuer_keys is required for a %q credential query", mdoc.CredentialFormat)
+		return nil, fmt.Errorf("dependencies.mdoc_issuer_keys is required for a %q credential query — see X5ChainIssuerKeyResolver for a ready-made implementation backed by a trust anchor pool", mdoc.CredentialFormat)
 	}
 	if req.ResponseEncryptionKey == nil {
 		return nil, fmt.Errorf("response_encryption_key is required for a %q credential query", mdoc.CredentialFormat)
