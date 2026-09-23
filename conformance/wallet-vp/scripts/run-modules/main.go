@@ -604,22 +604,7 @@ func relayImplicitFragment(httpClient *http.Client, apiBase, moduleID, fragment 
 	if err != nil {
 		return err
 	}
-
-	req, err := http.NewRequest(http.MethodPost, fullURL, strings.NewReader(fragment)) //nolint:noctx // fullURL comes from the suite's own log entry, a trusted local conformance-suite instance, not attacker-controlled
-	if err != nil {
-		return fmt.Errorf("build implicit submit request: %w", err)
-	}
-	req.Header.Set("Content-Type", "text/plain")
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("POST %s: %w", fullURL, err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode/100 != 2 {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("POST %s: status %d: %s", fullURL, resp.StatusCode, body)
-	}
-	return nil
+	return postFragment(httpClient, fullURL, fragment)
 }
 
 // pollImplicitSubmitURL polls moduleID's own log until a

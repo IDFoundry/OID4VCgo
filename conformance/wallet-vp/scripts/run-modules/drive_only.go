@@ -105,10 +105,10 @@ func runDriveOnly(httpClient *http.Client, cfg driveOnlyConfig) error {
 
 // postFragment POSTs fragment (leading '#' included) to fullURL as raw
 // text/plain — the same wire shape a real browser's
-// window.location.hash + XHR POST produces, matching
-// relayImplicitFragment's own POST half exactly (this function skips
-// only that one's log-polling discovery step, since -drive-only takes
-// the URL directly from -implicit-submit-url instead).
+// window.location.hash + XHR POST produces. Shared with
+// relayImplicitFragment (main.go), which only adds the log-polling
+// discovery step -drive-only skips by taking fullURL directly from
+// -implicit-submit-url instead.
 func postFragment(httpClient *http.Client, fullURL, fragment string) error {
 	req, err := http.NewRequest(http.MethodPost, fullURL, strings.NewReader(fragment)) //nolint:noctx // fullURL is the operator's own -implicit-submit-url flag value, copied from the suite's own authenticated web UI, not attacker-controlled
 	if err != nil {
