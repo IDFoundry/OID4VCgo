@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.12.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.11.1...v0.12.0) (2026-09-23)
+
+
+### Features
+
+* add wallet.BuildDirectPostErrorResponse, use it once a request is verified legitimate ([f8460a5](https://github.com/IDFoundry/OID4VCgo/commit/f8460a535c6dbd2e7aa2290ac7d3e2dac367ea4d))
+* send an OID4VP error response for redirect_uri/transaction_data violations too ([f58fc28](https://github.com/IDFoundry/OID4VCgo/commit/f58fc284ce633df4d66629d9874f6988e6a0fa18))
+
+
+### Bug Fixes
+
+* **wallet-vp:** support every ISO 18013-5 mandatory mDL claim in the mdoc fixture ([3809710](https://github.com/IDFoundry/OID4VCgo/commit/38097103ca07a0f696d7c418665fda611fa70006))
+* **wallet:** send access_denied, not invalid_request, for an unsatisfiable DCQL query ([36c297f](https://github.com/IDFoundry/OID4VCgo/commit/36c297f99507878e9cacd271cd8df88715835ff9))
+
 ## [0.11.1](https://github.com/IDFoundry/OID4VCgo/compare/v0.11.0...v0.11.1) (2026-09-22)
 
 
