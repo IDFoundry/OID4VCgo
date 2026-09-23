@@ -50,7 +50,16 @@ const PlanName = "oid4vp-1final-verifier-haip-test-plan"
 
 const (
 	restartTimeout = 30 * time.Second
-	uploadTimeout  = 15 * time.Second
+	// uploadTimeout bounds fillUploadPlaceholder's own poll for the
+	// suite's own upload placeholder to appear — 15s proved too tight
+	// under GitHub Actions' variable CI load: two separate scheduled
+	// runs each timed out here on a different, otherwise-passing
+	// module (oid4vp-1final-verifier-happy-flow, -request-uri-fetched-
+	// twice, -request-uri-method-post, -invalid-session-transcript —
+	// no single module consistently, the signature of a too-tight
+	// timeout racing variable CI load rather than a real functional
+	// bug). 30s matches restartTimeout's own existing headroom.
+	uploadTimeout = 30 * time.Second
 )
 
 // Config mirrors cmd/conformance-verifier's own Config — duplicated

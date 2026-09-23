@@ -104,9 +104,16 @@ const (
 	restartTimeout        = 30 * time.Second
 	redirectTimeout       = 15 * time.Second
 	implicitSubmitTimeout = 15 * time.Second
-	uploadTimeout         = 10 * time.Second
-	moduleTimeout         = 30 * time.Second
-	authorizePath         = "/authorize"
+	// uploadTimeout bounds pollUpload's own poll for the suite's own
+	// upload placeholder to appear — 10s proved too tight under GitHub
+	// Actions' variable CI load (internal/conformanceverifier's own
+	// identical pollUpload/fillUploadPlaceholder pattern hit the same
+	// class of flake at its own, slightly more generous 15s — see that
+	// package's own uploadTimeout doc comment). 30s matches
+	// restartTimeout/moduleTimeout's own existing headroom.
+	uploadTimeout = 30 * time.Second
+	moduleTimeout = 30 * time.Second
+	authorizePath = "/authorize"
 )
 
 // positiveTests are driven and expected to complete cleanly on the
