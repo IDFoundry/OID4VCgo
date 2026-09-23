@@ -143,15 +143,89 @@ var negativeTests = []string{
 	"oid4vp-1final-wallet-negative-test-required-non-matching-credential",
 }
 
+// negativeTestExpectedErrorCode names the exact OID4VP §8.1 "error"
+// value handleAuthorize's own respondWithError call must send for the
+// four negativeTests entries that actually reach response_uri at all
+// (the other three — invalid-request-object-signature,
+// mismatched-client-id, invalid-client-id-prefix — reject locally
+// before response_uri is ever contacted, so there's no error code to
+// check). Without this, driveOne's own moduleResultExpected grading
+// only ever checked "did some rejection happen," never which code —
+// exactly the gap that let redirect-uri-with-direct-post/missing-
+// nonce ship as generic "invalid_request" and unknown-transaction-
+// data-type/required-non-matching-credential ship with the wrong code
+// (invalid_request instead of invalid_transaction_data/access_denied)
+// undetected by this script's own local-suite runs, only caught by
+// driving the real hosted suite live and reading its own condition
+// checks directly (EnsureInvalidTransactionDataError,
+// EnsureAuthorizationEndpointErrorIsAccessDenied).
+var negativeTestExpectedErrorCode = map[string]string{
+	"oid4vp-1final-wallet-negative-test-redirect-uri-with-direct-post":    "invalid_request",
+	"oid4vp-1final-wallet-negative-test-missing-nonce":                    "invalid_request",
+	"oid4vp-1final-wallet-negative-test-unknown-transaction-data-type":    "invalid_transaction_data",
+	"oid4vp-1final-wallet-negative-test-required-non-matching-credential": "access_denied",
+}
+
+// allMandatoryClaimsTest is oid4vp-1final-wallet-all-mandatory-claims
+// — deliberately not in positiveTests above: unlike every other module
+// in this plan, it's @VariantNotApplicable for credential_type=custom
+// (the suite's own default when a plan never sets that variant, which
+// this script's own main plan never did), so it isn't even reachable
+// under the same plan/variant crossing the other 14 modules use — it
+// needs its own plan with credential_type set to a real value
+// (allMandatoryClaimsCredentialType), which makes every module in
+// that plan use the suite's own built-in DCQL query for that
+// credential type instead of a client-supplied one. Confirmed by
+// reading the suite's own VP1FinalWalletAllMandatoryClaims.java and
+// VP1FinalWalletCredentialType.java directly, not guessed — this is
+// also why it was never caught by this script's own "14/14 confirmed
+// live" runs: it was never driven, automated or otherwise, until
+// found live against the real hosted suite.
+const allMandatoryClaimsTest = "oid4vp-1final-wallet-all-mandatory-claims"
+
+// allMandatoryClaimsCredentialType returns the
+// VP1FinalWalletCredentialType variant value matching
+// credentialFormat ("sd_jwt_vc" -> "eudi_pid", "iso_mdl" -> "mdl") —
+// the two credential types this repo's own fixtures support, out of
+// the suite's own three non-custom values (VP1FinalWalletCredentialType
+// also has "photoid", which this repo doesn't implement a fixture
+// for).
+func allMandatoryClaimsCredentialType(credentialFormat string) string {
+	if credentialFormat == "iso_mdl" {
+		return "mdl"
+	}
+	return "eudi_pid"
+}
+
+// extractSentErrorCode finds handleAuthorize's own "Sent error
+// response: <code>: <description>" response text (respondWithError's
+// own respondFollowingRedirect call) and returns <code> — ok=false
+// when driveBody carries no such line (every negative test that
+// rejects locally before response_uri, and every positive-behavior
+// module).
+func extractSentErrorCode(driveBody string) (code string, ok bool) {
+	const marker = "Sent error response: "
+	i := strings.Index(driveBody, marker)
+	if i < 0 {
+		return "", false
+	}
+	rest := driveBody[i+len(marker):]
+	colonIdx := strings.Index(rest, ": ")
+	if colonIdx < 0 {
+		return "", false
+	}
+	return rest[:colonIdx], true
+}
+
 type generatedConfig struct {
-	ListenAddr                     string            `json:"listen_addr"`
-	TLSCertificatePEM              string            `json:"tls_certificate_pem"`
-	TLSPrivateKeyPEM               string            `json:"tls_private_key_pem"`
-	CredentialIssuerPrivateKeyPEM  string            `json:"credential_issuer_private_key_pem"`
-	CredentialIssuerCertificatePEM string            `json:"credential_issuer_certificate_pem"`
-	HolderPrivateKeyPEM            string            `json:"holder_private_key_pem"`
-	VCT                            string            `json:"vct,omitempty"`
-	Claims                         map[string]string `json:"claims,omitempty"`
+	ListenAddr                     string         `json:"listen_addr"`
+	TLSCertificatePEM              string         `json:"tls_certificate_pem"`
+	TLSPrivateKeyPEM               string         `json:"tls_private_key_pem"`
+	CredentialIssuerPrivateKeyPEM  string         `json:"credential_issuer_private_key_pem"`
+	CredentialIssuerCertificatePEM string         `json:"credential_issuer_certificate_pem"`
+	HolderPrivateKeyPEM            string         `json:"holder_private_key_pem"`
+	VCT                            string         `json:"vct,omitempty"`
+	Claims                         map[string]any `json:"claims,omitempty"`
 
 	// CredentialFormat/MdocIssuerPrivateKeyPEM/MdocIssuerCertificatePEM/
 	// MdocDocType/MdocNamespace/MdocClaims mirror
@@ -242,15 +316,42 @@ const (
 	mdlNamespace = "org.iso.18013.5.1"
 )
 
-// fixtureClaims is the "dc+sd-jwt" fixture credential's own claim set.
-var fixtureClaims = map[string]string{"given_name": "Jean", "family_name": "Dupont"}
+// fixturePortraitJPEG is a minimal valid 1x1 JPEG, base64-encoded —
+// shared by both fixture credentials' own image-bearing mandatory
+// claim: ISO/IEC 18013-5 Table 20 requires the mdoc "portrait" data
+// element be JPEG or JPEG2000 binary data (§13.4.3, base64-encoded
+// since conformanceconfig.BuildMdocNameSpaceElements expects that —
+// JSON has no native byte-string type), and the EUDI PID Rulebook's
+// own "picture" claim is conventionally the same kind of value (plain
+// base64 in this case — SD-JWT VC claims are ordinary JSON, no
+// namespace-specific byte-string transform needed).
+const fixturePortraitJPEG = "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAABAAEDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDoqKKK8s9g/9k="
 
-// mdocFixturePortraitJPEG is a minimal valid 1x1 JPEG, base64-encoded —
-// ISO/IEC 18013-5 Table 20 requires the "portrait" data element be
-// JPEG or JPEG2000 binary data (§13.4.3), not an arbitrary byte
-// string; conformanceconfig.BuildMdocNameSpaceElements expects it
-// base64-encoded (JSON has no native byte-string type).
-const mdocFixturePortraitJPEG = "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAABAAEDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDoqKKK8s9g/9k="
+// fixtureClaims is the "dc+sd-jwt" fixture credential's own claim
+// set — covers every mandatory EUDI PID Rulebook data element
+// oid4vp-1final-wallet-all-mandatory-claims' own built-in DCQL
+// query asks for under credential_type=eudi_pid (this run's own
+// client-configured DCQL query, buildDCQLCredential, only ever asks
+// for given_name/family_name regardless — the extra claims are simply
+// held, undisclosed, for every other module), not just
+// given_name/family_name — the exact same "held credential is missing
+// a mandatory claim" gap this file's own mdocFixtureClaims already
+// found and fixed for mso_mdoc, confirmed to apply equally here by
+// reading the suite's own vp1final-wallet-eudi-pid-all-mandatory.json
+// DCQL resource directly. "picture" is the one PID-Rulebook claim the
+// suite itself treats as optional (a fallback claim_set omits it, and
+// EnsurePidPictureClaimDisclosed is only a WARNING) — included anyway
+// since holding it costs nothing.
+var fixtureClaims = map[string]any{
+	"given_name":        "Jean",
+	"family_name":       "Dupont",
+	"birthdate":         "1980-05-23",
+	"place_of_birth":    map[string]any{"country": "FR", "locality": "Paris"},
+	"nationalities":     []any{"FR"},
+	"issuing_authority": "Conformance Test Authority",
+	"issuing_country":   "FR",
+	"picture":           fixturePortraitJPEG,
+}
 
 // mdocFixtureClaims is the "mso_mdoc" fixture credential's own claim
 // set — unlike fixtureClaims above, this covers every ISO/IEC 18013-5
@@ -279,7 +380,7 @@ var mdocFixtureClaims = map[string]any{
 	"issuing_country":        "FR",
 	"issuing_authority":      "Conformance Test Authority",
 	"document_number":        "123456789",
-	"portrait":               mdocFixturePortraitJPEG,
+	"portrait":               fixturePortraitJPEG,
 	"un_distinguishing_sign": "F",
 	"driving_privileges": []any{
 		map[string]any{"vehicle_category_code": "B"},
@@ -466,25 +567,38 @@ func main() {
 		log.Fatalf("generate plan client signing key: %v", err)
 	}
 
-	pc := planConfig{
-		Alias:       *alias,
-		Description: "OID4VCgo cmd/conformance-wallet-vp live run",
-		Credential:  planCredential{TrustAnchorPEM: trustAnchorCertPEM, StatusListTrustAnchorPEM: trustAnchorCertPEM},
-		Client: planClient{
-			AuthorizationEncryptedResponseEnc: "A128GCM",
-			AuthorizationEncryptedResponseAlg: "ECDH-ES",
-			JWKs:                              jwk.Set{Keys: []jwk.SetEntry{clientJWK}},
-			DCQL:                              planDCQL{Credentials: []planDCQLCredential{buildDCQLCredential(cfg)}},
-		},
-		Server: planServer{AuthorizationEndpoint: *walletVPInternalBase + authorizePath},
-	}
+	pc := buildPlanConfig(*alias, "OID4VCgo cmd/conformance-wallet-vp live run", trustAnchorCertPEM, clientJWK, buildDCQLCredential(cfg), *walletVPInternalBase+authorizePath)
 	pcRaw, err := json.MarshalIndent(pc, "", "  ")
 	if err != nil {
 		log.Fatalf("marshal plan config: %v", err)
 	}
 
+	// allMandatoryClaimsTest needs its own plan under a real
+	// credential_type variant — see that const's own doc comment for
+	// why it can't share the main plan above (credential_type=custom,
+	// this plan's own implicit default). A fresh client JWK per plan
+	// mirrors every other plan this script already creates (client.dcql
+	// is included for schema completeness even though the suite
+	// ignores it under a non-custom credential_type — see
+	// VP1FinalWalletCredentialType.java's own doc comment).
+	amcClientJWK, err := generateClientJWK()
+	if err != nil {
+		log.Fatalf("generate all-mandatory-claims plan client signing key: %v", err)
+	}
+	amcAlias := *alias + "-all-mandatory-claims"
+	amcPC := buildPlanConfig(amcAlias, "OID4VCgo cmd/conformance-wallet-vp live run (all-mandatory-claims)", trustAnchorCertPEM, amcClientJWK, buildDCQLCredential(cfg), *walletVPInternalBase+authorizePath)
+	amcPCRaw, err := json.MarshalIndent(amcPC, "", "  ")
+	if err != nil {
+		log.Fatalf("marshal all-mandatory-claims plan config: %v", err)
+	}
+
 	if *dumpPlanConfig {
 		if _, err := os.Stdout.Write(pcRaw); err != nil {
+			log.Fatal(err)
+		}
+		fmt.Println()
+		fmt.Println("\n--- all-mandatory-claims plan (credential_type=" + allMandatoryClaimsCredentialType(*credentialFormat) + ") ---")
+		if _, err := os.Stdout.Write(amcPCRaw); err != nil {
 			log.Fatal(err)
 		}
 		fmt.Println()
@@ -499,6 +613,17 @@ func main() {
 	log.Printf("created plan %s (alias %s)", planID, *alias)
 	log.Printf("plan detail: %splan-detail.html?plan=%s", *apiBase, planID)
 
+	amcPlanVariant := map[string]string{ //nolint:gosec // false positive: a suite variant selector value, not a credential
+		"credential_format": *credentialFormat, "response_mode": "direct_post.jwt",
+		"credential_type": allMandatoryClaimsCredentialType(*credentialFormat),
+	}
+	amcPlanID, _, err := conformancesuite.CreatePlan(httpClient, *apiBase, planName, amcPlanVariant, amcPCRaw)
+	if err != nil {
+		log.Fatalf("create all-mandatory-claims plan: %v", err)
+	}
+	log.Printf("created plan %s (alias %s)", amcPlanID, amcAlias)
+	log.Printf("plan detail: %splan-detail.html?plan=%s", *apiBase, amcPlanID)
+
 	moduleVariant := map[string]string{"client_id_prefix": "x509_hash", "request_method": "request_uri_signed", "vp_profile": "haip"}
 
 	var results []moduleResult
@@ -508,6 +633,7 @@ func main() {
 	for _, testName := range negativeTests {
 		results = append(results, driveOne(httpClient, *apiBase, *walletVPBase, planID, testName, moduleVariant, true))
 	}
+	results = append(results, driveOne(httpClient, *apiBase, *walletVPBase, amcPlanID, allMandatoryClaimsTest, moduleVariant, false))
 
 	log.Print("=== summary ===")
 	allExpected := true
@@ -519,7 +645,27 @@ func main() {
 	}
 	if !allExpected {
 		log.Printf("plan detail: %splan-detail.html?plan=%s", *apiBase, planID)
+		log.Printf("all-mandatory-claims plan detail: %splan-detail.html?plan=%s", *apiBase, amcPlanID)
 		os.Exit(1)
+	}
+}
+
+// buildPlanConfig builds the suite's own oid4vp-1final-wallet-haip-
+// test-plan configuration body — shared by both plans main creates
+// (the primary 14-module one and allMandatoryClaimsTest's own), which
+// otherwise differed only in alias/description/client JWK.
+func buildPlanConfig(alias, description, trustAnchorCertPEM string, clientJWK jwk.SetEntry, dcqlCredential planDCQLCredential, authorizationEndpoint string) planConfig {
+	return planConfig{
+		Alias:       alias,
+		Description: description,
+		Credential:  planCredential{TrustAnchorPEM: trustAnchorCertPEM, StatusListTrustAnchorPEM: trustAnchorCertPEM},
+		Client: planClient{
+			AuthorizationEncryptedResponseEnc: "A128GCM",
+			AuthorizationEncryptedResponseAlg: "ECDH-ES",
+			JWKs:                              jwk.Set{Keys: []jwk.SetEntry{clientJWK}},
+			DCQL:                              planDCQL{Credentials: []planDCQLCredential{dcqlCredential}},
+		},
+		Server: planServer{AuthorizationEndpoint: authorizationEndpoint},
 	}
 }
 
@@ -553,6 +699,17 @@ func driveOne(httpClient *http.Client, apiBase, walletVPBase, planID, testName s
 	res.localOK = driveResp.StatusCode == http.StatusOK
 	if negativeTest && res.localOK {
 		log.Printf("%s: WARNING — this binary returned 200 for a negative test (should have rejected)", testName)
+	}
+	if wantCode, ok := negativeTestExpectedErrorCode[testName]; ok {
+		gotCode, sent := extractSentErrorCode(string(driveBody))
+		if !sent {
+			res.err = fmt.Errorf("expected an OID4VP error response with code %q, but none was sent (body: %s)", wantCode, driveBody)
+			return res
+		}
+		if gotCode != wantCode {
+			res.err = fmt.Errorf("sent error code %q, want %q", gotCode, wantCode)
+			return res
+		}
 	}
 
 	// alternate-happy-flow's own fragment-carrying redirect_uri — see
