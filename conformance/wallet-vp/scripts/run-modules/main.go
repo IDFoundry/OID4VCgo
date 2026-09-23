@@ -150,12 +150,12 @@ type generatedConfig struct {
 	// MdocDocType/MdocNamespace/MdocClaims mirror
 	// cmd/conformance-wallet-vp's own Config — see that file's own doc
 	// comment. Only set when driving -credential-format iso_mdl.
-	CredentialFormat         string            `json:"credential_format,omitempty"`
-	MdocIssuerPrivateKeyPEM  string            `json:"mdoc_issuer_private_key_pem,omitempty"`
-	MdocIssuerCertificatePEM string            `json:"mdoc_issuer_certificate_pem,omitempty"`
-	MdocDocType              string            `json:"mdoc_doc_type,omitempty"`
-	MdocNamespace            string            `json:"mdoc_namespace,omitempty"`
-	MdocClaims               map[string]string `json:"mdoc_claims,omitempty"`
+	CredentialFormat         string         `json:"credential_format,omitempty"`
+	MdocIssuerPrivateKeyPEM  string         `json:"mdoc_issuer_private_key_pem,omitempty"`
+	MdocIssuerCertificatePEM string         `json:"mdoc_issuer_certificate_pem,omitempty"`
+	MdocDocType              string         `json:"mdoc_doc_type,omitempty"`
+	MdocNamespace            string         `json:"mdoc_namespace,omitempty"`
+	MdocClaims               map[string]any `json:"mdoc_claims,omitempty"`
 }
 
 // planConfig is the suite's own oid4vp-1final-wallet-haip-test-plan
@@ -235,11 +235,49 @@ const (
 	mdlNamespace = "org.iso.18013.5.1"
 )
 
-// fixtureClaims is the fixture credential's own claim set, shared
-// between both credential formats (only the encoding differs — a flat
-// map for "dc+sd-jwt", namespace-nested for "mso_mdoc") purely to keep
-// both formats' own live runs comparable.
+// fixtureClaims is the "dc+sd-jwt" fixture credential's own claim set.
 var fixtureClaims = map[string]string{"given_name": "Jean", "family_name": "Dupont"}
+
+// mdocFixturePortraitJPEG is a minimal valid 1x1 JPEG, base64-encoded —
+// ISO/IEC 18013-5 Table 20 requires the "portrait" data element be
+// JPEG or JPEG2000 binary data (§13.4.3), not an arbitrary byte
+// string; conformanceconfig.BuildMdocNameSpaceElements expects it
+// base64-encoded (JSON has no native byte-string type).
+const mdocFixturePortraitJPEG = "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAABAAEDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDoqKKK8s9g/9k="
+
+// mdocFixtureClaims is the "mso_mdoc" fixture credential's own claim
+// set — unlike fixtureClaims above, this covers every ISO/IEC 18013-5
+// Table 20 data element marked "M" (mandatory) for org.iso.18013.5.1.mDL,
+// not just given_name/family_name: some suite modules (e.g.
+// oid4vp-1final-wallet-all-mandatory-claims) query the mdoc via their
+// own built-in DCQL query rather than this run's own client-configured
+// one (buildDCQLCredential), and that built-in query asks for every
+// mandatory element — confirmed live against the real hosted suite,
+// which rejected a fixture holding only given_name/family_name with
+// "no held credential satisfies this credential query". issuing_country/
+// un_distinguishing_sign match generateWalletVPFixtures' own IACA
+// country ("FR"; "F" is France's own UN distinguishing sign per
+// ISO/IEC 18013-1:2018 Annex F). birth_date/issue_date/expiry_date are
+// plain date strings here — BuildMdocNameSpaceElements wraps them in
+// the required full-date CBOR tag (Table 20's own "full-date" encoding
+// for all three, one consistent choice). driving_privileges follows
+// §7.2.4's own DrivingPrivileges CDDL (an array of DrivingPrivilege
+// maps, each needing at least "vehicle_category_code").
+var mdocFixtureClaims = map[string]any{
+	"given_name":             "Jean",
+	"family_name":            "Dupont",
+	"birth_date":             "1990-01-01",
+	"issue_date":             "2024-01-01",
+	"expiry_date":            "2034-01-01",
+	"issuing_country":        "FR",
+	"issuing_authority":      "Conformance Test Authority",
+	"document_number":        "123456789",
+	"portrait":               mdocFixturePortraitJPEG,
+	"un_distinguishing_sign": "F",
+	"driving_privileges": []any{
+		map[string]any{"vehicle_category_code": "B"},
+	},
+}
 
 // generateWalletVPFixtures generates every piece of throwaway key
 // material and certificate this run needs (TLS listener cert, a holder/
@@ -286,7 +324,7 @@ func generateWalletVPFixtures(credentialFormat string) (cfg generatedConfig, tru
 		cfg.MdocIssuerCertificatePEM = dsCertPEM
 		cfg.MdocDocType = mdlDocType
 		cfg.MdocNamespace = mdlNamespace
-		cfg.MdocClaims = fixtureClaims
+		cfg.MdocClaims = mdocFixtureClaims
 		return cfg, iacaCertPEM, nil
 	}
 

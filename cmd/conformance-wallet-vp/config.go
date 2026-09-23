@@ -76,9 +76,18 @@ type Config struct {
 	// MdocDocType/MdocNamespace/MdocClaims describe the fixture mdoc
 	// this binary presents — the mdoc-format analog of VCT/Claims
 	// above. Only required when CredentialFormat is "mso_mdoc".
-	MdocDocType   string            `json:"mdoc_doc_type,omitempty"`
-	MdocNamespace string            `json:"mdoc_namespace,omitempty"`
-	MdocClaims    map[string]string `json:"mdoc_claims,omitempty"`
+	// MdocClaims is JSON-typed (any), not a plain string, since a
+	// spec-complete org.iso.18013.5.1.mDL fixture needs more than tstr
+	// values — see conformanceconfig.MdocConfig.Claims's own doc
+	// comment (birth_date/issue_date/expiry_date as full-date-tagged
+	// strings, portrait as a base64 string, driving_privileges as a
+	// nested array/object) — cmd/conformance-wallet-vp/credential.go's
+	// own issueFixtureMdocCredential hands this straight to
+	// conformanceconfig.BuildMdocNameSpaceElements, the same transform
+	// cmd/conformance-issuer uses.
+	MdocDocType   string         `json:"mdoc_doc_type,omitempty"`
+	MdocNamespace string         `json:"mdoc_namespace,omitempty"`
+	MdocClaims    map[string]any `json:"mdoc_claims,omitempty"`
 }
 
 // isMdoc reports whether c is configured for the "mso_mdoc" fixture
