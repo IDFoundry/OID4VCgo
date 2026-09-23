@@ -49,9 +49,13 @@ type Config struct {
 	// configuration asks for (either one of its built-in queries, or
 	// a "client.dcql" custom query naming the same vct/claims) — see
 	// conformance/wallet-vp/README.md's own "Open questions". Only
-	// used when CredentialFormat is "" or "dc+sd-jwt".
-	VCT    string            `json:"vct"`
-	Claims map[string]string `json:"claims"`
+	// used when CredentialFormat is "" or "dc+sd-jwt". JSON-typed
+	// (any), not a plain string, since a spec-complete EUDI PID
+	// fixture needs more than plain strings — see MdocClaims's own
+	// doc comment for the identical reasoning: "nationalities" is an
+	// array, "picture" is a base64-encoded image.
+	VCT    string         `json:"vct"`
+	Claims map[string]any `json:"claims"`
 
 	// CredentialFormat selects which fixture credential this binary
 	// issues and presents: "" (default) or credential/sdjwtvc.CredentialFormat
