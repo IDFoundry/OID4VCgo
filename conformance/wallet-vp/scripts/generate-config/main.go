@@ -24,14 +24,14 @@ import (
 )
 
 type generatedConfig struct {
-	ListenAddr                     string            `json:"listen_addr"`
-	TLSCertificatePEM              string            `json:"tls_certificate_pem"`
-	TLSPrivateKeyPEM               string            `json:"tls_private_key_pem"`
-	CredentialIssuerPrivateKeyPEM  string            `json:"credential_issuer_private_key_pem"`
-	CredentialIssuerCertificatePEM string            `json:"credential_issuer_certificate_pem"`
-	HolderPrivateKeyPEM            string            `json:"holder_private_key_pem"`
-	VCT                            string            `json:"vct"`
-	Claims                         map[string]string `json:"claims"`
+	ListenAddr                     string         `json:"listen_addr"`
+	TLSCertificatePEM              string         `json:"tls_certificate_pem"`
+	TLSPrivateKeyPEM               string         `json:"tls_private_key_pem"`
+	CredentialIssuerPrivateKeyPEM  string         `json:"credential_issuer_private_key_pem"`
+	CredentialIssuerCertificatePEM string         `json:"credential_issuer_certificate_pem"`
+	HolderPrivateKeyPEM            string         `json:"holder_private_key_pem"`
+	VCT                            string         `json:"vct"`
+	Claims                         map[string]any `json:"claims"`
 }
 
 func main() {
@@ -64,7 +64,7 @@ func main() {
 		CredentialIssuerCertificatePEM: issuerCertPEM,
 		HolderPrivateKeyPEM:            holderKeyPEM,
 		VCT:                            "urn:eudi:pid:1",
-		Claims:                         map[string]string{"given_name": "Jean", "family_name": "Dupont"},
+		Claims:                         map[string]any{"given_name": "Jean", "family_name": "Dupont"},
 	}
 	raw, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {

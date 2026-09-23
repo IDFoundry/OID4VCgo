@@ -64,7 +64,7 @@ func setupWalletUnderTest(t *testing.T) (*server, *x509.Certificate) {
 	}
 	cfg := Config{
 		VCT:                            "urn:eudi:pid:1",
-		Claims:                         map[string]string{"given_name": "Jean", "family_name": "Dupont"},
+		Claims:                         map[string]any{"given_name": "Jean", "family_name": "Dupont"},
 		CredentialIssuerCertificatePEM: issuerCertPEM,
 	}
 	cred, err := issueFixtureCredential(cfg, issuerKey, holderKey)

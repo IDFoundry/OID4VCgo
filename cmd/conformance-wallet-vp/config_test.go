@@ -60,7 +60,7 @@ func baseTestConfig(t *testing.T) Config {
 		CredentialIssuerCertificatePEM: issuerCertPEM,
 		HolderPrivateKeyPEM:            testECKeyPEM(t),
 		VCT:                            "urn:eudi:pid:1",
-		Claims:                         map[string]string{"given_name": "Jean"},
+		Claims:                         map[string]any{"given_name": "Jean"},
 	}
 }
 
