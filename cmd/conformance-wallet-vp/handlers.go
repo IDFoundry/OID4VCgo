@@ -148,10 +148,17 @@ func (s *server) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 		// suite's own screenshot-REVIEW gate for a module this genuinely
 		// passes. "invalid_request" (RFC 6749 §5.2) is the generic code
 		// for a missing/invalid required parameter (e.g. no nonce); a
-		// more specific one could be threaded through per failure mode if
-		// this ever needs to distinguish them.
+		// required DCQL query with no satisfying held credential is its
+		// own case — OID4VP §8.5/§6.4.2 call for "access_denied" there
+		// instead, confirmed live against a real OIDF conformance suite
+		// instance: VP1FinalWalletRequiredNonMatchingCredential.java's own
+		// EnsureAuthorizationEndpointErrorIsAccessDenied check.
 		log.Printf("present credentials: %v", err)
-		s.respondWithError(w, authReq.ResponseURI, authReq.ResponseEncryptionKey, authReq.ResponseEncryptionKeyID, authReq.ResponseEncryptionEnc, authReq.State, "invalid_request", err.Error())
+		code := "invalid_request"
+		if errors.Is(err, wallet.ErrNoMatchingCredential) {
+			code = "access_denied"
+		}
+		s.respondWithError(w, authReq.ResponseURI, authReq.ResponseEncryptionKey, authReq.ResponseEncryptionKeyID, authReq.ResponseEncryptionEnc, authReq.State, code, err.Error())
 		return
 	}
 

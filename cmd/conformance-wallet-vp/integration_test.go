@@ -251,7 +251,13 @@ func TestHandleAuthorize_FullRoundTripAgainstARealVerifier(t *testing.T) {
 // rejecting locally. The fake Verifier's own response_uri handler
 // decrypts it exactly like a real Verifier would and surfaces it as a
 // *verifier.ResponseError, proving the two sides are still
-// interoperable for this path too.
+// interoperable for this path too. The expected code is
+// "access_denied", not the generic "invalid_request" — a required DCQL
+// query with no satisfying held credential is OID4VP §8.5/§6.4.2's own
+// unsatisfiable-query case (confirmed live against a real OIDF
+// conformance suite instance:
+// VP1FinalWalletRequiredNonMatchingCredential.java's own
+// EnsureAuthorizationEndpointErrorIsAccessDenied check).
 func TestHandleAuthorize_SendsErrorResponseWhenPresentationFails(t *testing.T) {
 	wallet, issuerCA := setupWalletUnderTest(t)
 	query := newTestQuery(t, "urn:eudi:pid:this-vct-does-not-match-the-fixture-credential")
@@ -281,8 +287,8 @@ func TestHandleAuthorize_SendsErrorResponseWhenPresentationFails(t *testing.T) {
 	if !errors.As(got.err, &respErr) {
 		t.Fatalf("verifier's own ParseDirectPostJWTResponse error = %v, want a *verifier.ResponseError", got.err)
 	}
-	if respErr.Code != "invalid_request" {
-		t.Errorf("Code = %q, want %q", respErr.Code, "invalid_request")
+	if respErr.Code != "access_denied" {
+		t.Errorf("Code = %q, want %q", respErr.Code, "access_denied")
 	}
 	if respErr.Description == "" {
 		t.Error("Description is empty, want the underlying PresentCredentials error text")

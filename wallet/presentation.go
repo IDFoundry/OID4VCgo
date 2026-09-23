@@ -7,6 +7,7 @@ import (
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
@@ -18,6 +19,19 @@ import (
 	"github.com/idfoundry/oid4vcgo/internal/jwk"
 	"github.com/idfoundry/oid4vcgo/oid4vpmdoc"
 )
+
+// ErrNoMatchingCredential indicates a Credential Query (or every
+// option of a required Credential Set Query, §6.4.2) has no held
+// credential satisfying it — MatchDCQLQuery/PresentCredentials wrap
+// this specific sentinel (errors.Is-detectable through the wrap
+// chain) so a caller can distinguish "the query itself cannot be
+// satisfied" from every other PresentCredentials failure, e.g. to
+// choose OID4VP §8.5's own "access_denied" Authorization Response
+// error code over the generic "invalid_request" when reporting it
+// back to a Verifier (confirmed live against a real OIDF conformance
+// suite instance: EnsureErrorResponseForUnsatisfiableDcqlQuery
+// specifically expects this distinction).
+var ErrNoMatchingCredential = errors.New("no held credential satisfies this credential query")
 
 // HeldCredential is a credential this Wallet holds and may present.
 // This package never verifies a held credential's own Issuer
@@ -240,7 +254,7 @@ func matchCredentialQuery(ctx context.Context, cq dcql.CredentialQuery, candidat
 	}
 	matches := matchAll(ctx, cq, candidates, trustedAuthorities)
 	if len(matches) == 0 {
-		return nil, fmt.Errorf("no held credential satisfies this credential query")
+		return nil, ErrNoMatchingCredential
 	}
 	if !cq.Multiple {
 		return matches[:1], nil
