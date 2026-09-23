@@ -1,8 +1,10 @@
 package main
 
 import (
+	"crypto/ecdsa"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -103,6 +105,22 @@ func (s *server) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 
 	authReq, err := fetchAndVerifyRequestObject(requestURI, clientID, usePost)
 	if err != nil {
+		// A *wallet.RequestRejectedError means the Request Object itself
+		// was authenticated (signature verified, client_id matches) —
+		// only some other MUST it violates (redirect_uri alongside
+		// direct_post, an unrecognized transaction_data type) stopped
+		// processing — so its own carried ResponseURI/encryption key are
+		// safe to send an OID4VP §8.1 error response to, the same as a
+		// wallet.PresentCredentials failure below. Anything else (an
+		// invalid signature, an untrusted client_id) means there is no
+		// trustworthy response_uri yet, so it stays a local-only
+		// rejection.
+		var rejected *wallet.RequestRejectedError
+		if errors.As(err, &rejected) {
+			log.Printf("fetch/verify request object: %v", err)
+			s.respondWithError(w, rejected.ResponseURI, rejected.ResponseEncryptionKey, rejected.ResponseEncryptionKeyID, rejected.ResponseEncryptionEnc, rejected.State, rejected.Code, rejected.Description)
+			return
+		}
 		log.Printf("fetch/verify request object: %v", err)
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -133,7 +151,7 @@ func (s *server) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 		// more specific one could be threaded through per failure mode if
 		// this ever needs to distinguish them.
 		log.Printf("present credentials: %v", err)
-		s.respondWithError(w, authReq, "invalid_request", err.Error())
+		s.respondWithError(w, authReq.ResponseURI, authReq.ResponseEncryptionKey, authReq.ResponseEncryptionKeyID, authReq.ResponseEncryptionEnc, authReq.State, "invalid_request", err.Error())
 		return
 	}
 
@@ -185,18 +203,19 @@ func respondFollowingRedirect(w http.ResponseWriter, title, leadParagraph, redir
 }
 
 // respondWithError builds an OID4VP §8.1 error response
-// (wallet.BuildDirectPostErrorResponse) for authReq — already verified
-// legitimate by the time handleAuthorize calls this, see its own call
-// site's doc comment — and POSTs it to authReq's own response_uri, the
-// same way handleAuthorize's own success path POSTs a vp_token one.
-// Falls back to a local http.Error only if building/POSTing the error
-// response itself fails, which authReq's own already-verified state
-// makes unlikely in practice.
-func (s *server) respondWithError(w http.ResponseWriter, authReq wallet.AuthorizationRequest, code, description string) {
+// (wallet.BuildDirectPostErrorResponse) and POSTs it to responseURI —
+// the same way handleAuthorize's own success path POSTs a vp_token
+// one. Callable from two call sites in handleAuthorize, each already
+// having established responseURI/the encryption key are trustworthy
+// before calling this (see each one's own doc comment for why). Falls
+// back to a local http.Error only if building/POSTing the error
+// response itself fails, which that already-verified state makes
+// unlikely in practice.
+func (s *server) respondWithError(w http.ResponseWriter, responseURI string, encryptionKey *ecdsa.PublicKey, encryptionKeyID, encryptionEnc, state, code, description string) {
 	responseJWE, err := wallet.BuildDirectPostErrorResponse(wallet.BuildDirectPostErrorResponseParams{
-		Error: code, ErrorDescription: description, State: authReq.State,
-		EncryptionKey: authReq.ResponseEncryptionKey, EncryptionKeyID: authReq.ResponseEncryptionKeyID,
-		EncryptionEnc: authReq.ResponseEncryptionEnc,
+		Error: code, ErrorDescription: description, State: state,
+		EncryptionKey: encryptionKey, EncryptionKeyID: encryptionKeyID,
+		EncryptionEnc: encryptionEnc,
 	})
 	if err != nil {
 		log.Printf("build direct_post error response: %v", err)
@@ -204,7 +223,7 @@ func (s *server) respondWithError(w http.ResponseWriter, authReq wallet.Authoriz
 		return
 	}
 
-	redirectURI, err := postDirectPostResponse(authReq.ResponseURI, responseJWE)
+	redirectURI, err := postDirectPostResponse(responseURI, responseJWE)
 	if err != nil {
 		log.Printf("post direct_post.jwt error response: %v", err)
 		http.Error(w, err.Error(), http.StatusBadGateway)

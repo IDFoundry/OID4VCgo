@@ -82,6 +82,46 @@ type AuthorizationRequest struct {
 	ResponseEncryptionEnc string
 }
 
+// RequestRejectedError is returned by ParseAuthorizationRequest when
+// the Request Object is authentic (signature verified, client_id
+// matches) but violates a MUST this Wallet won't proceed past —
+// currently redirect_uri present alongside response_mode=direct_post
+// (OID4VP §8.2: "the Wallet MUST return an invalid_request
+// Authorization Response error") and an unrecognized transaction_data
+// entry (RFC 9101 semantics: an extension parameter this Wallet
+// doesn't understand MUST cause it to refuse, not silently proceed as
+// if the parameter weren't there). Unlike a plain error (an invalid
+// signature, a client_id that doesn't match at all — see
+// ParseAuthorizationRequest's own doc comment), the Request Object's
+// authenticity here IS established, so ResponseURI/ResponseEncryptionKey
+// are safe to use: a caller can send an OID4VP §8.1 error response
+// with them (wallet.BuildDirectPostErrorResponse) instead of only
+// rejecting locally. Mirrors verifier.ResponseError's own shape and
+// errors.As usage on the Verifier side of this same package family.
+type RequestRejectedError struct {
+	// Code is the OID4VP/RFC 6749 §5.2 error code to report —
+	// currently always "invalid_request".
+	Code string
+
+	// Description is a human-readable detail for the error response's
+	// own "error_description".
+	Description string
+
+	// State/ResponseURI/ResponseEncryptionKey/ResponseEncryptionKeyID/
+	// ResponseEncryptionEnc are AuthorizationRequest's own
+	// identically-named fields, extracted from the same now-trusted
+	// Request Object.
+	State                   string
+	ResponseURI             string
+	ResponseEncryptionKey   *ecdsa.PublicKey
+	ResponseEncryptionKeyID string
+	ResponseEncryptionEnc   string
+}
+
+func (e *RequestRejectedError) Error() string {
+	return fmt.Sprintf("wallet: parse authorization request: %s", e.Description)
+}
+
 // wireRequestObjectPayload is the Request Object JWS's own payload
 // (§5.2) — every member a caller might need, plus two checked only to
 // reject: RedirectURI and TransactionData are never acted on (this
@@ -179,16 +219,18 @@ func ParseAuthorizationRequest(params ParseAuthorizationRequestParams) (Authoriz
 	if wire.ClientID != params.ClientID {
 		return AuthorizationRequest{}, fmt.Errorf("wallet: parse authorization request: payload client_id %q does not match %q", wire.ClientID, params.ClientID)
 	}
-	if wire.RedirectURI != "" {
-		return AuthorizationRequest{}, fmt.Errorf("wallet: parse authorization request: redirect_uri must not be present alongside response_uri/direct_post")
-	}
-	if len(wire.TransactionData) > 0 {
-		return AuthorizationRequest{}, fmt.Errorf("wallet: parse authorization request: transaction_data is present but this Wallet recognizes no transaction_data type")
-	}
 	if params.WalletNonce != "" && wire.WalletNonce != params.WalletNonce {
 		return AuthorizationRequest{}, fmt.Errorf("wallet: parse authorization request: wallet_nonce claim %q does not match the value sent %q", wire.WalletNonce, params.WalletNonce)
 	}
 
+	// client_metadata is parsed here — before the redirect_uri/
+	// transaction_data checks below, not after — specifically so
+	// ResponseURI/the encryption key are already in hand by the time
+	// RequestRejectedError needs to carry them: the Request Object's
+	// authenticity is already established above (signature verified,
+	// client_id matches), so they're safe to use for those two checks'
+	// own error response, unlike for a Request Object that was never
+	// authenticated at all.
 	var meta wireClientMetadata
 	if err := json.Unmarshal(wire.ClientMetadata, &meta); err != nil {
 		return AuthorizationRequest{}, fmt.Errorf("wallet: parse authorization request: parse client_metadata: %w", err)
@@ -204,6 +246,31 @@ func ParseAuthorizationRequest(params ParseAuthorizationRequestParams) (Authoriz
 	enc := "A128GCM"
 	if !containsString(meta.EncValuesSupported, enc) && len(meta.EncValuesSupported) > 0 {
 		enc = meta.EncValuesSupported[0]
+	}
+
+	if wire.RedirectURI != "" {
+		return AuthorizationRequest{}, &RequestRejectedError{
+			Code:        "invalid_request",
+			Description: "redirect_uri must not be present alongside response_uri/direct_post",
+			State:       wire.State, ResponseURI: wire.ResponseURI,
+			ResponseEncryptionKey: encPub, ResponseEncryptionKeyID: kid, ResponseEncryptionEnc: enc,
+		}
+	}
+	if len(wire.TransactionData) > 0 {
+		// "invalid_transaction_data", not the generic "invalid_request" —
+		// OID4VP §8.5 defines this specific error code for exactly this
+		// case (an unrecognized/unsupported transaction_data entry
+		// type), confirmed live against a real OIDF conformance suite
+		// instance: EnsureInvalidTransactionDataError.java flags
+		// "invalid_request" here as its own FAILURE ("'error' field has
+		// unexpected value", OID4VP-1FINAL-8.4/8.5), not just a
+		// looser-than-ideal but acceptable choice.
+		return AuthorizationRequest{}, &RequestRejectedError{
+			Code:        "invalid_transaction_data",
+			Description: "transaction_data is present but this Wallet recognizes no transaction_data type",
+			State:       wire.State, ResponseURI: wire.ResponseURI,
+			ResponseEncryptionKey: encPub, ResponseEncryptionKeyID: kid, ResponseEncryptionEnc: enc,
+		}
 	}
 
 	return AuthorizationRequest{
