@@ -8,6 +8,7 @@ import (
 
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
+	"github.com/idfoundry/oid4vcgo/internal/conformanceconfig"
 	"github.com/idfoundry/oid4vcgo/internal/cose"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/internal/jwk"
@@ -97,15 +98,15 @@ func issueFixtureMdocCredential(cfg Config, deviceKey *ecdsa.PrivateKey) (wallet
 		return wallet.HeldCredential{}, err
 	}
 
-	nameSpaceClaims := make(map[string]interface{}, len(cfg.MdocClaims))
-	for name, value := range cfg.MdocClaims {
-		nameSpaceClaims[name] = value
+	nameSpaces, err := conformanceconfig.BuildMdocNameSpaceElements(cfg.MdocNamespace, cfg.MdocClaims)
+	if err != nil {
+		return wallet.HeldCredential{}, fmt.Errorf("build mdoc namespace elements: %w", err)
 	}
 	now := time.Now()
 
 	issuerSigned, err := mdoc.Issue(issuerKey, cose.ES256, mdoc.Claims{
 		DocType:    cfg.MdocDocType,
-		NameSpaces: map[string]map[string]interface{}{cfg.MdocNamespace: nameSpaceClaims},
+		NameSpaces: nameSpaces,
 		DeviceKey:  &deviceKey.PublicKey,
 		Signed:     now,
 		ValidFrom:  now,
