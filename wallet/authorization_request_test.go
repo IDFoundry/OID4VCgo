@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"errors"
 	"io"
 	"math/big"
 	"net/http"
@@ -259,14 +260,74 @@ func TestParseAuthorizationRequestAndBuildDirectPostResponse_RoundTripsWithVerif
 
 // TestBuildDirectPostResponse_RequiresVPToken proves the guard against
 // an empty vp_token — a caller that found no matching credentials
-// should build an error response instead (BuildDirectPostErrorResponse
-// is a planned follow-on, not yet implemented), not an empty success.
+// should build an error response instead (BuildDirectPostErrorResponse),
+// not an empty success.
 func TestBuildDirectPostResponse_RequiresVPToken(t *testing.T) {
 	key := testP256PublicKey(t)
 	if _, err := wallet.BuildDirectPostResponse(wallet.BuildDirectPostResponseParams{
 		EncryptionKey: key, EncryptionEnc: "A128GCM",
 	}); err == nil {
 		t.Error("BuildDirectPostResponse with empty VPToken: want error, got nil")
+	}
+}
+
+// TestBuildDirectPostErrorResponse_RoundTripsWithVerifierParse mirrors
+// TestParseAuthorizationRequestAndBuildDirectPostResponse_RoundTripsWithVerifierParse
+// for the error path: build an error response with the Wallet, decrypt
+// it back with the Verifier, and confirm ParseDirectPostJWTResponse
+// surfaces it as a *verifier.ResponseError with the right code/
+// description/state rather than trying to read a vp_token.
+func TestBuildDirectPostErrorResponse_RoundTripsWithVerifierParse(t *testing.T) {
+	v, clientID := newTestVerifier(t)
+	built, err := v.BuildAuthorizationRequest(verifier.BuildAuthorizationRequestRequest{
+		Query: testQuery(t), State: "s3",
+	})
+	if err != nil {
+		t.Fatalf("BuildAuthorizationRequest: %v", err)
+	}
+
+	authReq, err := wallet.ParseAuthorizationRequest(wallet.ParseAuthorizationRequestParams{
+		RequestObject: built.RequestObject, ClientID: clientID,
+	})
+	if err != nil {
+		t.Fatalf("ParseAuthorizationRequest: %v", err)
+	}
+
+	responseJWE, err := wallet.BuildDirectPostErrorResponse(wallet.BuildDirectPostErrorResponseParams{
+		Error: "invalid_request", ErrorDescription: "nonce is required", State: authReq.State,
+		EncryptionKey: authReq.ResponseEncryptionKey, EncryptionKeyID: authReq.ResponseEncryptionKeyID,
+		EncryptionEnc: authReq.ResponseEncryptionEnc,
+	})
+	if err != nil {
+		t.Fatalf("BuildDirectPostErrorResponse: %v", err)
+	}
+
+	_, err = v.ParseDirectPostJWTResponse(responseJWE, built.ResponseDecryptionKey)
+	var respErr *verifier.ResponseError
+	if !errors.As(err, &respErr) {
+		t.Fatalf("ParseDirectPostJWTResponse error = %v, want a *verifier.ResponseError", err)
+	}
+	if respErr.Code != "invalid_request" {
+		t.Errorf("Code = %q, want %q", respErr.Code, "invalid_request")
+	}
+	if respErr.Description != "nonce is required" {
+		t.Errorf("Description = %q, want %q", respErr.Description, "nonce is required")
+	}
+	if respErr.State != "s3" {
+		t.Errorf("State = %q, want %q", respErr.State, "s3")
+	}
+}
+
+// TestBuildDirectPostErrorResponse_RequiresError proves the guard
+// against an empty "error" value — mirrors
+// TestBuildDirectPostResponse_RequiresVPToken for the error-response
+// side.
+func TestBuildDirectPostErrorResponse_RequiresError(t *testing.T) {
+	key := testP256PublicKey(t)
+	if _, err := wallet.BuildDirectPostErrorResponse(wallet.BuildDirectPostErrorResponseParams{
+		EncryptionKey: key, EncryptionEnc: "A128GCM",
+	}); err == nil {
+		t.Error("BuildDirectPostErrorResponse with empty Error: want error, got nil")
 	}
 }
 

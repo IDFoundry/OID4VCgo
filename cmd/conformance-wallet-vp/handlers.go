@@ -121,8 +121,19 @@ func (s *server) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 		ResponseURI: authReq.ResponseURI, ResponseEncryptionKey: authReq.ResponseEncryptionKey,
 	})
 	if err != nil {
+		// Unlike fetchAndVerifyRequestObject's own failures above (an
+		// invalid signature, an untrusted client_id — no trustworthy
+		// response_uri to contact yet), authReq is already verified
+		// legitimate by this point: OID4VP §8.1 lets a Wallet that can't
+		// or won't satisfy the request send an encrypted error response
+		// instead of just rejecting locally, and doing so here avoids the
+		// suite's own screenshot-REVIEW gate for a module this genuinely
+		// passes. "invalid_request" (RFC 6749 §5.2) is the generic code
+		// for a missing/invalid required parameter (e.g. no nonce); a
+		// more specific one could be threaded through per failure mode if
+		// this ever needs to distinguish them.
 		log.Printf("present credentials: %v", err)
-		http.Error(w, fmt.Sprintf("present credentials: %v", err), http.StatusInternalServerError)
+		s.respondWithError(w, authReq, "invalid_request", err.Error())
 		return
 	}
 
@@ -144,21 +155,63 @@ func (s *server) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	presentedLead := ""
+	if redirectURI == "" {
+		presentedLead = "<p>No redirect_uri was returned.</p>"
+	}
+	respondFollowingRedirect(w, "Presented", presentedLead, redirectURI)
+}
+
+// respondFollowingRedirect writes w's own HTML response, following
+// redirectURI first if non-empty — shared by handleAuthorize's own
+// success path and respondWithError's own error path, which differ
+// only in title/leadParagraph, not in the follow-redirect-or-not
+// branching itself. HAIP requires the Verifier's own direct_post.jwt
+// response to carry a redirect_uri (see cmd/conformance-verifier's own
+// handleResponse) — a real same-device wallet's in-app browser
+// navigates there next, closing the loop back to the Verifier's own
+// UI. This binary has no real browser; a plain GET completes the same
+// round trip for an automated flow.
+func respondFollowingRedirect(w http.ResponseWriter, title, leadParagraph, redirectURI string) {
 	w.Header().Set(contentTypeHeader, "text/html; charset=utf-8")
 	if redirectURI == "" {
-		_, _ = fmt.Fprintln(w, "<html><body><h1>Presented</h1><p>No redirect_uri was returned.</p></body></html>")
+		_, _ = fmt.Fprintf(w, "<html><body><h1>%s</h1>%s</body></html>", title, leadParagraph)
 		return
 	}
-	// HAIP requires the Verifier's own direct_post.jwt response to
-	// carry a redirect_uri (see cmd/conformance-verifier's own
-	// handleResponse) — a real same-device wallet's in-app browser
-	// navigates there next, closing the loop back to the Verifier's
-	// own UI. This binary has no real browser; a plain GET completes
-	// the same round trip for an automated flow.
 	if _, err := httpGetString(redirectURI); err != nil {
 		log.Printf("follow redirect_uri %s: %v", redirectURI, err)
 	}
-	_, _ = fmt.Fprintf(w, "<html><body><h1>Presented</h1><p>Followed redirect_uri: %s</p></body></html>", redirectURI)
+	_, _ = fmt.Fprintf(w, "<html><body><h1>%s</h1>%s<p>Followed redirect_uri: %s</p></body></html>", title, leadParagraph, redirectURI)
+}
+
+// respondWithError builds an OID4VP §8.1 error response
+// (wallet.BuildDirectPostErrorResponse) for authReq — already verified
+// legitimate by the time handleAuthorize calls this, see its own call
+// site's doc comment — and POSTs it to authReq's own response_uri, the
+// same way handleAuthorize's own success path POSTs a vp_token one.
+// Falls back to a local http.Error only if building/POSTing the error
+// response itself fails, which authReq's own already-verified state
+// makes unlikely in practice.
+func (s *server) respondWithError(w http.ResponseWriter, authReq wallet.AuthorizationRequest, code, description string) {
+	responseJWE, err := wallet.BuildDirectPostErrorResponse(wallet.BuildDirectPostErrorResponseParams{
+		Error: code, ErrorDescription: description, State: authReq.State,
+		EncryptionKey: authReq.ResponseEncryptionKey, EncryptionKeyID: authReq.ResponseEncryptionKeyID,
+		EncryptionEnc: authReq.ResponseEncryptionEnc,
+	})
+	if err != nil {
+		log.Printf("build direct_post error response: %v", err)
+		http.Error(w, fmt.Sprintf("build direct_post error response: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	redirectURI, err := postDirectPostResponse(authReq.ResponseURI, responseJWE)
+	if err != nil {
+		log.Printf("post direct_post.jwt error response: %v", err)
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+
+	respondFollowingRedirect(w, "Rejected", fmt.Sprintf("<p>Sent error response: %s: %s</p>", code, description), redirectURI)
 }
 
 // postDirectPostResponse POSTs responseJWE as the "response" form

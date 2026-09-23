@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -160,7 +161,22 @@ func handleFakeVerifierResponse(v *verifier.Verifier, query dcql.Query, built ve
 		}
 		parsed, err := v.ParseDirectPostJWTResponse(r.FormValue("response"), built.ResponseDecryptionKey)
 		if err != nil {
-			got.err = unwrapResponseError(err)
+			// Mirrors cmd/conformance-verifier's own handleResponse: a
+			// legitimate *verifier.ResponseError (the Wallet successfully
+			// reported it can't satisfy the request, OID4VP §8.1) still
+			// gets a 200 + redirect_uri — the Verifier understood the
+			// response, it just carries an error rather than a vp_token.
+			// Only a genuine decode/parse failure (malformed input, not a
+			// real error response) is the caller's own fault and gets a
+			// 400.
+			var respErr *verifier.ResponseError
+			if errors.As(err, &respErr) {
+				got.err = respErr
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]string{"redirect_uri": callbackURL})
+				return
+			}
+			got.err = err
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -183,14 +199,6 @@ func handleFakeVerifierResponse(v *verifier.Verifier, query dcql.Query, built ve
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]string{"redirect_uri": callbackURL})
 	}
-}
-
-func unwrapResponseError(err error) error {
-	var respErr *verifier.ResponseError
-	if errors.As(err, &respErr) {
-		return respErr
-	}
-	return err
 }
 
 // TestHandleAuthorize_FullRoundTripAgainstARealVerifier is the same
@@ -227,5 +235,56 @@ func TestHandleAuthorize_FullRoundTripAgainstARealVerifier(t *testing.T) {
 	}
 	if got.claims["given_name"] != "Jean" || got.claims["family_name"] != "Dupont" {
 		t.Fatalf("disclosed claims = %+v, want given_name=Jean family_name=Dupont", got.claims)
+	}
+}
+
+// TestHandleAuthorize_SendsErrorResponseWhenPresentationFails proves
+// handleAuthorize's own error path end to end, real network and real
+// crypto on both sides, mirroring
+// TestHandleAuthorize_FullRoundTripAgainstARealVerifier exactly except
+// for the query: asking for a vct this binary's fixture credential
+// doesn't carry makes wallet.PresentCredentials fail (MatchDCQLQuery
+// finds no match for a required credential query) — a failure after
+// fetchAndVerifyRequestObject has already verified the Request Object
+// legitimate, so respondWithError should send a real encrypted
+// wallet.BuildDirectPostErrorResponse to response_uri rather than
+// rejecting locally. The fake Verifier's own response_uri handler
+// decrypts it exactly like a real Verifier would and surfaces it as a
+// *verifier.ResponseError, proving the two sides are still
+// interoperable for this path too.
+func TestHandleAuthorize_SendsErrorResponseWhenPresentationFails(t *testing.T) {
+	wallet, issuerCA := setupWalletUnderTest(t)
+	query := newTestQuery(t, "urn:eudi:pid:this-vct-does-not-match-the-fixture-credential")
+	_, ts, built, got := newFakeVerifierServer(t, query, issuerCA)
+
+	previousHTTPClient := httpClient
+	httpClient = ts.Client()
+	t.Cleanup(func() { httpClient = previousHTTPClient })
+
+	requestURL := ts.URL + "/authorize?" + url.Values{
+		"client_id":   {built.ClientID},
+		"request_uri": {ts.URL + "/request/1"},
+	}.Encode()
+	req := httptest.NewRequest(http.MethodGet, requestURL, nil)
+	rec := httptest.NewRecorder()
+	wallet.handleAuthorize(rec, req)
+
+	if rec.Code != http.StatusOK {
+		body, _ := io.ReadAll(rec.Body)
+		t.Fatalf("handleAuthorize: status %d: %s", rec.Code, body)
+	}
+	if !strings.Contains(rec.Body.String(), "Rejected") {
+		t.Errorf("response body = %q, want it to mention Rejected", rec.Body.String())
+	}
+
+	var respErr *verifier.ResponseError
+	if !errors.As(got.err, &respErr) {
+		t.Fatalf("verifier's own ParseDirectPostJWTResponse error = %v, want a *verifier.ResponseError", got.err)
+	}
+	if respErr.Code != "invalid_request" {
+		t.Errorf("Code = %q, want %q", respErr.Code, "invalid_request")
+	}
+	if respErr.Description == "" {
+		t.Error("Description is empty, want the underlying PresentCredentials error text")
 	}
 }
