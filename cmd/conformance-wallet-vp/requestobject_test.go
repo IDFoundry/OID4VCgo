@@ -8,13 +8,19 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/idfoundry/oid4vcgo/internal/jose"
+	"github.com/idfoundry/oid4vcgo/internal/jwe"
 	"github.com/idfoundry/oid4vcgo/internal/jwk"
 	"github.com/idfoundry/oid4vcgo/internal/testcert"
+	"github.com/idfoundry/oid4vcgo/wallet"
 )
 
 // generateTestClientCert generates a fresh throwaway leaf certificate
@@ -38,8 +44,12 @@ func generateTestClientCert(t *testing.T) (leaf *x509.Certificate, key *ecdsa.Pr
 // under leaf/key carrying every member fetchAndVerifyRequestObject
 // needs for a well-formed request plus whatever extra sets — room to
 // add the one field under test (e.g. "redirect_uri", "wallet_nonce")
-// without duplicating the whole payload per test case.
-func signRequestObjectPayload(t *testing.T, leaf *x509.Certificate, key *ecdsa.PrivateKey, clientID string, extra map[string]any) string {
+// without duplicating the whole payload per test case. Also returns
+// the freshly generated response-encryption private key, so a caller
+// standing in as the fake Verifier's own response_uri handler (e.g.
+// TestHandleAuthorize_SendsErrorResponseForRedirectURIWithDirectPost)
+// can decrypt whatever gets POSTed there.
+func signRequestObjectPayload(t *testing.T, leaf *x509.Certificate, key *ecdsa.PrivateKey, clientID string, extra map[string]any) (compact string, encKey *ecdsa.PrivateKey) {
 	t.Helper()
 	encKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -73,21 +83,25 @@ func signRequestObjectPayload(t *testing.T, leaf *x509.Certificate, key *ecdsa.P
 		"typ": "oauth-authz-req+jwt",
 		"x5c": []string{base64.StdEncoding.EncodeToString(leaf.Raw)},
 	}
-	compact, err := jose.Sign(jose.ES256, key, header, raw)
+	compact, err = jose.Sign(jose.ES256, key, header, raw)
 	if err != nil {
 		t.Fatalf("jose.Sign: %v", err)
 	}
-	return compact
+	return compact, encKey
 }
 
 // buildSignedRequestObject generates a fresh client identity and
 // signs one Request Object under it — the single-request shape every
-// GET-fetch test below uses. Returns the signed compact JWS and the
-// client_id it was signed under.
-func buildSignedRequestObject(t *testing.T, extra map[string]any) (compact, clientID string) {
+// GET-fetch test below uses. Returns the signed compact JWS, the
+// client_id it was signed under, and the response-encryption private
+// key a fake Verifier's own response_uri handler would need to
+// decrypt a response (see signRequestObjectPayload's own doc
+// comment) — ignored by every existing caller that doesn't need it.
+func buildSignedRequestObject(t *testing.T, extra map[string]any) (compact, clientID string, encKey *ecdsa.PrivateKey) {
 	t.Helper()
 	leaf, key, clientID := generateTestClientCert(t)
-	return signRequestObjectPayload(t, leaf, key, clientID, extra), clientID
+	compact, encKey = signRequestObjectPayload(t, leaf, key, clientID, extra)
+	return compact, clientID, encKey
 }
 
 func serveRequestObject(t *testing.T, compact string) string {
@@ -134,7 +148,7 @@ func servePostRequestObject(t *testing.T, echoNonce bool) (rawURL, clientID stri
 				extra["wallet_nonce"] = nonce
 			}
 		}
-		compact := signRequestObjectPayload(t, leaf, key, clientID, extra)
+		compact, _ := signRequestObjectPayload(t, leaf, key, clientID, extra)
 		w.Header().Set("Content-Type", "application/oauth-authz-req+jwt")
 		_, _ = w.Write([]byte(compact))
 	}))
@@ -142,24 +156,53 @@ func servePostRequestObject(t *testing.T, echoNonce bool) (rawURL, clientID stri
 	return ts.URL, clientID
 }
 
+// TestFetchAndVerifyRequestObject_RejectsRedirectURI also proves the
+// rejection is a *wallet.RequestRejectedError carrying a real
+// ResponseURI/ResponseEncryptionKey — not just any error — since the
+// Request Object here is otherwise authentic (signature verified,
+// client_id matches): handleAuthorize's own caller relies on exactly
+// this to send an OID4VP §8.1 error response instead of only
+// rejecting locally (see TestHandleAuthorize_SendsErrorResponseForRedirectURIWithDirectPost).
 func TestFetchAndVerifyRequestObject_RejectsRedirectURI(t *testing.T) {
-	compact, clientID := buildSignedRequestObject(t, map[string]any{"redirect_uri": "https://wallet.example.com/callback"})
+	compact, clientID, _ := buildSignedRequestObject(t, map[string]any{"redirect_uri": "https://wallet.example.com/callback"})
 	url := serveRequestObject(t, compact)
-	if _, err := fetchAndVerifyRequestObject(url, clientID, false); err == nil {
-		t.Error("fetchAndVerifyRequestObject accepted a request object carrying redirect_uri alongside response_uri")
+	_, err := fetchAndVerifyRequestObject(url, clientID, false)
+	if err == nil {
+		t.Fatal("fetchAndVerifyRequestObject accepted a request object carrying redirect_uri alongside response_uri")
+	}
+	var rejected *wallet.RequestRejectedError
+	if !errors.As(err, &rejected) {
+		t.Fatalf("error = %v, want a *wallet.RequestRejectedError", err)
+	}
+	if rejected.ResponseURI != "https://verifier.example.com/response" {
+		t.Errorf("ResponseURI = %q, want the Request Object's own response_uri", rejected.ResponseURI)
+	}
+	if rejected.ResponseEncryptionKey == nil {
+		t.Error("ResponseEncryptionKey is nil, want the Request Object's own client_metadata key")
 	}
 }
 
+// TestFetchAndVerifyRequestObject_RejectsTransactionData is
+// TestFetchAndVerifyRequestObject_RejectsRedirectURI's own
+// transaction_data twin.
 func TestFetchAndVerifyRequestObject_RejectsTransactionData(t *testing.T) {
-	compact, clientID := buildSignedRequestObject(t, map[string]any{"transaction_data": []string{"eyJ0eXBlIjoidW5rbm93biJ9"}})
+	compact, clientID, _ := buildSignedRequestObject(t, map[string]any{"transaction_data": []string{"eyJ0eXBlIjoidW5rbm93biJ9"}})
 	url := serveRequestObject(t, compact)
-	if _, err := fetchAndVerifyRequestObject(url, clientID, false); err == nil {
-		t.Error("fetchAndVerifyRequestObject accepted a request object carrying transaction_data")
+	_, err := fetchAndVerifyRequestObject(url, clientID, false)
+	if err == nil {
+		t.Fatal("fetchAndVerifyRequestObject accepted a request object carrying transaction_data")
+	}
+	var rejected *wallet.RequestRejectedError
+	if !errors.As(err, &rejected) {
+		t.Fatalf("error = %v, want a *wallet.RequestRejectedError", err)
+	}
+	if rejected.ResponseURI != "https://verifier.example.com/response" {
+		t.Errorf("ResponseURI = %q, want the Request Object's own response_uri", rejected.ResponseURI)
 	}
 }
 
 func TestFetchAndVerifyRequestObject_AcceptsWellFormedRequest(t *testing.T) {
-	compact, clientID := buildSignedRequestObject(t, nil)
+	compact, clientID, _ := buildSignedRequestObject(t, nil)
 	url := serveRequestObject(t, compact)
 	req, err := fetchAndVerifyRequestObject(url, clientID, false)
 	if err != nil {
@@ -190,5 +233,69 @@ func TestFetchAndVerifyRequestObject_RejectsMissingWalletNonceEcho(t *testing.T)
 	url, clientID := servePostRequestObject(t, false)
 	if _, err := fetchAndVerifyRequestObject(url, clientID, true); err == nil {
 		t.Error("fetchAndVerifyRequestObject accepted a POST response whose payload never echoed back the wallet_nonce it sent")
+	}
+}
+
+// TestHandleAuthorize_SendsErrorResponseForRedirectURIWithDirectPost
+// is the full handleAuthorize-level counterpart to
+// TestFetchAndVerifyRequestObject_RejectsRedirectURI: not just that
+// fetchAndVerifyRequestObject returns a *wallet.RequestRejectedError,
+// but that handleAuthorize actually uses it to build and POST a real
+// encrypted OID4VP §8.1 error response to response_uri — a fake
+// Verifier server decrypts what arrives there with the same
+// encryption key the Request Object itself advertised, proving the
+// two ends are still genuinely interoperable, not just that
+// handleAuthorize's own local HTTP response looks right.
+func TestHandleAuthorize_SendsErrorResponseForRedirectURIWithDirectPost(t *testing.T) {
+	var captured map[string]any
+	responseTS := httptest.NewTLSServer(nil)
+	t.Cleanup(responseTS.Close)
+
+	compact, clientID, encKey := buildSignedRequestObject(t, map[string]any{
+		"redirect_uri": "https://wallet.example.com/callback",
+		"response_uri": responseTS.URL,
+	})
+
+	mux := http.NewServeMux()
+	responseTS.Config.Handler = mux
+	mux.HandleFunc("POST /", func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("parse response_uri POST form: %v", err)
+		}
+		plaintext, err := jwe.Decrypt(encKey, r.PostForm.Get("response"))
+		if err != nil {
+			t.Fatalf("decrypt response_uri POST body: %v", err)
+		}
+		if err := json.Unmarshal(plaintext, &captured); err != nil {
+			t.Fatalf("unmarshal decrypted response: %v", err)
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+
+	requestURL := serveRequestObject(t, compact)
+
+	s := &server{cred: wallet.HeldCredential{}}
+	target := "https://wallet-under-test.example/authorize?" + url.Values{
+		"client_id": {clientID}, "request_uri": {requestURL},
+	}.Encode()
+	req := httptest.NewRequest(http.MethodGet, target, nil)
+	rec := httptest.NewRecorder()
+	s.handleAuthorize(rec, req)
+
+	if rec.Code != http.StatusOK {
+		body, _ := io.ReadAll(rec.Body)
+		t.Fatalf("handleAuthorize: status %d: %s", rec.Code, body)
+	}
+	if !strings.Contains(rec.Body.String(), "Rejected") {
+		t.Errorf("response body = %q, want it to mention Rejected", rec.Body.String())
+	}
+	if captured == nil {
+		t.Fatal("response_uri was never called")
+	}
+	if captured["error"] != "invalid_request" {
+		t.Errorf("decrypted response error = %v, want \"invalid_request\"", captured["error"])
+	}
+	if captured["vp_token"] != nil {
+		t.Errorf("decrypted response carries a vp_token %v, want none for an error response", captured["vp_token"])
 	}
 }
