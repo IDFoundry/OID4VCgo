@@ -29,6 +29,26 @@ func TestExtractSentErrorCode_LocalRejection(t *testing.T) {
 	}
 }
 
+func TestUnexpectedLocalOK(t *testing.T) {
+	cases := []struct {
+		name                            string
+		negativeTest, localOK, sendsErr bool
+		want                            bool
+	}{
+		{"positive test with localOK is never suspicious", false, true, false, false},
+		{"negative test with non-200 is never suspicious", true, false, false, false},
+		{"negative test with localOK and no error response is suspicious", true, true, false, true},
+		{"negative test with localOK but sends an error response is expected", true, true, true, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := unexpectedLocalOK(c.negativeTest, c.localOK, c.sendsErr); got != c.want {
+				t.Errorf("unexpectedLocalOK(%v, %v, %v) = %v, want %v", c.negativeTest, c.localOK, c.sendsErr, got, c.want)
+			}
+		})
+	}
+}
+
 func TestAllMandatoryClaimsCredentialType(t *testing.T) {
 	cases := map[string]string{
 		"sd_jwt_vc": "eudi_pid",
