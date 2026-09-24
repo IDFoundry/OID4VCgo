@@ -86,24 +86,20 @@ type IssueOptions struct {
 	KeyID []byte
 }
 
-// Issue builds and signs IssuerSigned: it assigns each data element a
-// random ≥16-byte salt and a randomly chosen, namespace-unique DigestID
-// (§12.3.4's "no correlation" requirement rules out sequential IDs),
-// builds the MSO from the resulting digests, and signs it as IssuerAuth
-// via internal/cose. Resolving the caller's actual signer/certificate
-// is out of scope — see the package doc comment.
-func Issue(signer crypto.Signer, alg cose.Alg, claims Claims, opts IssueOptions) (IssuerSigned, error) {
+// validateIssueInputs checks every Issue precondition on claims/opts
+// that doesn't itself require building any output.
+func validateIssueInputs(signer crypto.Signer, claims Claims, opts IssueOptions) error {
 	if claims.DocType == "" {
-		return IssuerSigned{}, fmt.Errorf("mdoc: Claims.DocType is required")
+		return fmt.Errorf("mdoc: Claims.DocType is required")
 	}
 	if len(claims.NameSpaces) == 0 {
-		return IssuerSigned{}, fmt.Errorf("mdoc: Claims.NameSpaces must have at least one namespace")
+		return fmt.Errorf("mdoc: Claims.NameSpaces must have at least one namespace")
 	}
 	if claims.DeviceKey == nil {
-		return IssuerSigned{}, fmt.Errorf("mdoc: Claims.DeviceKey is required")
+		return fmt.Errorf("mdoc: Claims.DeviceKey is required")
 	}
 	if claims.Signed.IsZero() || claims.ValidFrom.IsZero() || claims.ValidUntil.IsZero() {
-		return IssuerSigned{}, fmt.Errorf("mdoc: Claims.Signed, ValidFrom and ValidUntil are required")
+		return fmt.Errorf("mdoc: Claims.Signed, ValidFrom and ValidUntil are required")
 	}
 	// §12.3.4: "The timestamp of validFrom shall be equal or later than
 	// the signed element" / "The value of the validUntil element shall
@@ -111,23 +107,23 @@ func Issue(signer crypto.Signer, alg cose.Alg, claims Claims, opts IssueOptions)
 	// spec-comprehensiveness review; previously only each timestamp's
 	// own IsZero() was checked, not their relative ordering.
 	if claims.ValidFrom.Before(claims.Signed) {
-		return IssuerSigned{}, fmt.Errorf("mdoc: Claims.ValidFrom must not be before Claims.Signed")
+		return fmt.Errorf("mdoc: Claims.ValidFrom must not be before Claims.Signed")
 	}
 	if !claims.ValidUntil.After(claims.ValidFrom) {
-		return IssuerSigned{}, fmt.Errorf("mdoc: Claims.ValidUntil must be after Claims.ValidFrom")
+		return fmt.Errorf("mdoc: Claims.ValidUntil must be after Claims.ValidFrom")
 	}
 	if len(opts.X5Chain) == 0 {
-		return IssuerSigned{}, fmt.Errorf("mdoc: IssueOptions.X5Chain must include at least one certificate")
+		return fmt.Errorf("mdoc: IssueOptions.X5Chain must include at least one certificate")
 	}
 	leaf, err := x509.ParseCertificate(opts.X5Chain[0])
 	if err != nil {
-		return IssuerSigned{}, fmt.Errorf("mdoc: parse IssueOptions.X5Chain[0]: %w", err)
+		return fmt.Errorf("mdoc: parse IssueOptions.X5Chain[0]: %w", err)
 	}
 	// §12.3.4: "The value of the validUntil element shall be equal or
 	// earlier than the value of the notAfter element in the leaf
 	// certificate in the x5chain element of the IssuerAuth structure."
 	if claims.ValidUntil.After(leaf.NotAfter) {
-		return IssuerSigned{}, fmt.Errorf("mdoc: Claims.ValidUntil (%s) must not be after IssueOptions.X5Chain[0]'s own NotAfter (%s)", claims.ValidUntil, leaf.NotAfter)
+		return fmt.Errorf("mdoc: Claims.ValidUntil (%s) must not be after IssueOptions.X5Chain[0]'s own NotAfter (%s)", claims.ValidUntil, leaf.NotAfter)
 	}
 	// A two-value assertion, not a direct one: signer.Public() is every
 	// stdlib key type's own crypto.PublicKey, all of which implement
@@ -138,15 +134,28 @@ func Issue(signer crypto.Signer, alg cose.Alg, claims Claims, opts IssueOptions)
 	// guards against. Found in the same review as the ValidUntil
 	// checks above.
 	if comparableKey, ok := signer.Public().(interface{ Equal(crypto.PublicKey) bool }); ok && !comparableKey.Equal(leaf.PublicKey) {
-		return IssuerSigned{}, fmt.Errorf("mdoc: IssueOptions.X5Chain[0]'s public key does not match signer's public key")
+		return fmt.Errorf("mdoc: IssueOptions.X5Chain[0]'s public key does not match signer's public key")
 	}
 	if claims.Status != nil && claims.IdentifierList != nil {
-		return IssuerSigned{}, fmt.Errorf("mdoc: Claims.Status and Claims.IdentifierList must not both be set")
+		return fmt.Errorf("mdoc: Claims.Status and Claims.IdentifierList must not both be set")
 	}
 	if claims.KeyAuthorizations != nil {
 		if err := claims.KeyAuthorizations.validate(); err != nil {
-			return IssuerSigned{}, err
+			return err
 		}
+	}
+	return nil
+}
+
+// Issue builds and signs IssuerSigned: it assigns each data element a
+// random ≥16-byte salt and a randomly chosen, namespace-unique DigestID
+// (§12.3.4's "no correlation" requirement rules out sequential IDs),
+// builds the MSO from the resulting digests, and signs it as IssuerAuth
+// via internal/cose. Resolving the caller's actual signer/certificate
+// is out of scope — see the package doc comment.
+func Issue(signer crypto.Signer, alg cose.Alg, claims Claims, opts IssueOptions) (IssuerSigned, error) {
+	if err := validateIssueInputs(signer, claims, opts); err != nil {
+		return IssuerSigned{}, err
 	}
 	digestAlg := opts.DigestAlg
 	if digestAlg == "" {

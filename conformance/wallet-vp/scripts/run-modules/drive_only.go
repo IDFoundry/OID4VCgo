@@ -57,50 +57,80 @@ func runDriveOnly(httpClient *http.Client, cfg driveOnlyConfig) error {
 	}
 	log.Printf("%s: local response %d: %s", label, resp.StatusCode, strings.TrimSpace(string(body)))
 
-	if fragment, ok := extractFollowedFragment(string(body)); ok {
-		if cfg.implicitSubmitURL == "" {
-			return fmt.Errorf("%s: response carries a fragment (%q) but -implicit-submit-url was not given — "+
-				"find the suite's own implicit_submit.fullUrl log entry for this module and pass it", label, fragment)
-		}
-		if err := postFragment(httpClient, cfg.implicitSubmitURL, fragment); err != nil {
-			return fmt.Errorf("%s: relay implicit fragment: %w", label, err)
-		}
-		log.Printf("%s: relayed fragment to %s", label, cfg.implicitSubmitURL)
+	if err := relayFollowedFragment(httpClient, cfg, label, string(body)); err != nil {
+		return err
 	}
 
+	verdict, explain := gradeDriveOnly(cfg.negativeTest, localOK)
+	log.Printf("%s: %s (%s)", label, verdict, explain)
+	if cfg.negativeTest {
+		logNegativeTestReviewNote(cfg, label, resp.StatusCode, string(body))
+	}
+	return nil
+}
+
+// relayFollowedFragment relays alternate-happy-flow's own
+// fragment-carrying redirect_uri to -implicit-submit-url, if body
+// carries one — a no-op for every other module, whose response body
+// never matches extractFollowedFragment.
+func relayFollowedFragment(httpClient *http.Client, cfg driveOnlyConfig, label, body string) error {
+	fragment, ok := extractFollowedFragment(body)
+	if !ok {
+		return nil
+	}
+	if cfg.implicitSubmitURL == "" {
+		return fmt.Errorf("%s: response carries a fragment (%q) but -implicit-submit-url was not given — "+
+			"find the suite's own implicit_submit.fullUrl log entry for this module and pass it", label, fragment)
+	}
+	if err := postFragment(httpClient, cfg.implicitSubmitURL, fragment); err != nil {
+		return fmt.Errorf("%s: relay implicit fragment: %w", label, err)
+	}
+	log.Printf("%s: relayed fragment to %s", label, cfg.implicitSubmitURL)
+	return nil
+}
+
+// gradeDriveOnly returns the PASSED/FAILED verdict and human-readable
+// explanation for a drive-only module run, per this file's own package
+// doc comment: a negative test's real pass signal is a local rejection
+// (localOK == false), a positive test's is a local 200.
+func gradeDriveOnly(negativeTest, localOK bool) (verdict, explain string) {
 	expected := localOK
-	if cfg.negativeTest {
-		expected = !localOK
-	}
-	verdict := "PASSED"
-	explain := "correctly returned 200 (credential presented)"
-	if cfg.negativeTest {
+	switch {
+	case negativeTest && localOK:
+		explain = "returned 200 — should have rejected the malformed request"
+		expected = false
+	case negativeTest:
 		explain = "correctly rejected before ever calling response_uri"
-		if localOK {
-			explain = "returned 200 — should have rejected the malformed request"
-		}
-	} else if !localOK {
+	case !localOK:
 		explain = "returned a non-200 — should have completed successfully"
+	default:
+		explain = "correctly returned 200 (credential presented)"
 	}
+	verdict = "PASSED"
 	if !expected {
 		verdict = "FAILED"
 	}
-	log.Printf("%s: %s (%s)", label, verdict, explain)
-	if cfg.negativeTest {
-		log.Printf("%s: note — the suite's own module page will likely sit at REVIEW pending a screenshot upload; that gate isn't the real signal here (see this file's own package doc comment)", label)
-		if !cfg.noScreenshot {
-			pngPath := cfg.screenshotOut
-			if pngPath == "" {
-				pngPath = fmt.Sprintf("/tmp/%s-evidence.png", strings.ReplaceAll(label, "/", "_"))
-			}
-			if err := evidenceScreenshot(label, cfg.redirectURL, resp.StatusCode, string(body), pngPath); err != nil {
-				log.Printf("%s: could not render evidence screenshot (non-fatal): %v", label, err)
-			} else {
-				log.Printf("%s: evidence screenshot written to %s — upload this to clear the suite's own REVIEW gate", label, pngPath)
-			}
-		}
+	return verdict, explain
+}
+
+// logNegativeTestReviewNote logs the standing note that a negative
+// test's own suite-side module page will likely sit at REVIEW, and
+// (unless suppressed) renders the evidence screenshot an operator
+// would upload to clear that gate.
+func logNegativeTestReviewNote(cfg driveOnlyConfig, label string, statusCode int, body string) {
+	log.Printf("%s: note — the suite's own module page will likely sit at REVIEW pending a screenshot upload; that gate isn't the real signal here (see this file's own package doc comment)", label)
+	if cfg.noScreenshot {
+		return
 	}
-	return nil
+	pngPath := cfg.screenshotOut
+	if pngPath == "" {
+		pngPath = fmt.Sprintf("/tmp/%s-evidence.png", strings.ReplaceAll(label, "/", "_"))
+	}
+	if err := evidenceScreenshot(label, cfg.redirectURL, statusCode, body, pngPath); err != nil {
+		log.Printf("%s: could not render evidence screenshot (non-fatal): %v", label, err)
+		return
+	}
+	log.Printf("%s: evidence screenshot written to %s — upload this to clear the suite's own REVIEW gate", label, pngPath)
 }
 
 // postFragment POSTs fragment (leading '#' included) to fullURL as raw
