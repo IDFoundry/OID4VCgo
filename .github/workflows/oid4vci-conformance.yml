@@ -24,12 +24,22 @@ name: OID4VCI Conformance
 # so the Actions tab shows an accurate result — it just isn't wired
 # into anything that blocks a merge.
 #
-# Tracks the OIDF suite's latest master/prebuilt images on every run (no
-# version pin) — simplest, and consistent with how the suite is used
-# locally today. See conformance/README.md's own "Keeping the local
-# suite current" section for why that currency actually matters (a
-# from-scratch run on a current suite has previously surfaced three real
-# bugs a stale local suite had been silently masking).
+# Normally tracks the OIDF suite's latest master/prebuilt images on
+# every run (no version pin) — simplest, and consistent with how the
+# suite is used locally today. See conformance/README.md's own
+# "Keeping the local suite current" section for why that currency
+# actually matters (a from-scratch run on a current suite has
+# previously surfaced three real bugs a stale local suite had been
+# silently masking). TEMPORARILY pinned instead (see the "Bring up
+# OIDF conformance suite" step's own -f flag, and
+# conformance/scripts/suite-image-pin.yml's own doc comment for the
+# full story): :latest regressed on 2026-09-24, immediately
+# interrupting every oid4vp-1final-verifier-* module — a bug in the
+# suite's own newly-added "Rical" condition sequencing, confirmed via
+# the suite's own container logs, not this repo's code. Un-pin (delete
+# suite-image-pin.yml, drop the -f flag here and in the sibling
+# oid4vp-conformance.yml) once a fresh :latest is verified working
+# again.
 #
 # No Python setup and no throwaway-cert/config generation step, unlike
 # FAPIgo's own conformance.yml: every script under conformance/ talks to
@@ -75,10 +85,13 @@ jobs:
         run: git clone --depth 1 https://gitlab.com/openid/conformance-suite.git /tmp/conformance-suite
 
       # Prebuilt images — no Java/Maven build needed, mirrors
-      # conformance/*/README.md's own "Manual test run" steps.
+      # conformance/*/README.md's own "Manual test run" steps. The
+      # second -f layers conformance/scripts/suite-image-pin.yml's own
+      # digest pin on top — see this workflow's own header comment for
+      # why, and that file's own doc comment for the removal criteria.
       - name: Bring up OIDF conformance suite
         working-directory: /tmp/conformance-suite
-        run: docker compose -f docker-compose-prebuilt.yml up -d
+        run: docker compose -f docker-compose-prebuilt.yml -f "$GITHUB_WORKSPACE/conformance/scripts/suite-image-pin.yml" up -d
 
       # run-oid4vci.sh itself waits for the suite to become reachable,
       # runs both OID4VCI roles (each role's own script brings up/

@@ -100,7 +100,6 @@ type implicitSubmitState struct {
 // placeholders once their own grace period elapses) that don't need
 // to be read together to be understood individually.
 type unblockPoller struct {
-	ctx        context.Context
 	httpClient *http.Client
 	apiBase    string
 	planID     string
@@ -123,7 +122,6 @@ type unblockPoller struct {
 // in main.go.
 func unblockImplicitCallbacks(ctx context.Context, httpClient *http.Client, apiBase, planID string) {
 	p := &unblockPoller{
-		ctx:                 ctx,
 		httpClient:          httpClient,
 		apiBase:             apiBase,
 		planID:              planID,
@@ -144,19 +142,19 @@ func unblockImplicitCallbacks(ctx context.Context, httpClient *http.Client, apiB
 			return
 		case <-ticker.C:
 		}
-		p.tick()
+		p.tick(ctx)
 	}
 }
 
 // tick runs one polling pass: discover any module instances created
 // since the last tick, react to each active instance's own current log,
 // then fill any placeholder whose own grace period has now elapsed.
-func (p *unblockPoller) tick() {
+func (p *unblockPoller) tick(ctx context.Context) {
 	p.discoverNewInstances()
 	for id := range p.active {
-		p.pollInstance(id)
+		p.pollInstance(ctx, id)
 	}
-	p.fillDuePlaceholders()
+	p.fillDuePlaceholders(ctx)
 }
 
 func (p *unblockPoller) discoverNewInstances() {
@@ -175,7 +173,7 @@ func (p *unblockPoller) discoverNewInstances() {
 // pollInstance fetches id's own current status and log, dropping it
 // from tracking once it reaches a terminal status, otherwise reacting
 // to every log entry it's produced so far.
-func (p *unblockPoller) pollInstance(id string) {
+func (p *unblockPoller) pollInstance(ctx context.Context, id string) {
 	info, err := conformancesuite.FetchModuleInfo(p.httpClient, p.apiBase, id)
 	if err != nil {
 		return
@@ -190,13 +188,13 @@ func (p *unblockPoller) pollInstance(id string) {
 		return
 	}
 	for _, e := range entries {
-		p.reactToLogEntry(id, entries, e)
+		p.reactToLogEntry(ctx, id, entries, e)
 	}
 }
 
-func (p *unblockPoller) reactToLogEntry(id string, entries []conformancesuite.LogEntry, e conformancesuite.LogEntry) {
+func (p *unblockPoller) reactToLogEntry(ctx context.Context, id string, entries []conformancesuite.LogEntry, e conformancesuite.LogEntry) {
 	if e.Msg == "Created random implicit submission URL" && e.ImplicitSubmit != nil && e.ImplicitSubmit.FullURL != "" {
-		p.handleImplicitSubmitURL(id, entries, e.ImplicitSubmit.FullURL)
+		p.handleImplicitSubmitURL(ctx, id, entries, e.ImplicitSubmit.FullURL)
 	}
 	if e.Upload != "" {
 		p.notePlaceholder(id, e.Upload)
@@ -207,7 +205,7 @@ func (p *unblockPoller) reactToLogEntry(id string, entries []conformancesuite.Lo
 // by one cycle (extra cycles for the very first one this run ever
 // sees) to give the browser's own JS a chance to win the race first,
 // then POSTs it itself unless the browser already has.
-func (p *unblockPoller) handleImplicitSubmitURL(id string, entries []conformancesuite.LogEntry, fullURL string) {
+func (p *unblockPoller) handleImplicitSubmitURL(ctx context.Context, id string, entries []conformancesuite.LogEntry, fullURL string) {
 	if p.submitted[fullURL] {
 		return
 	}
@@ -237,7 +235,7 @@ func (p *unblockPoller) handleImplicitSubmitURL(id string, entries []conformance
 	if browserAlreadySubmitted(entries, requestPath) {
 		return
 	}
-	postEmptyBody(p.ctx, p.httpClient, p.apiBase+requestPath[1:])
+	postEmptyBody(ctx, p.httpClient, p.apiBase+requestPath[1:])
 }
 
 // browserAlreadySubmitted reports whether the module's own log already
@@ -264,7 +262,7 @@ func (p *unblockPoller) notePlaceholder(id, placeholder string) {
 	}
 }
 
-func (p *unblockPoller) fillDuePlaceholders() {
+func (p *unblockPoller) fillDuePlaceholders(ctx context.Context) {
 	now := time.Now()
 	for key, firstSeen := range p.pendingPlaceholders {
 		if now.Sub(firstSeen) < placeholderGracePeriod {
@@ -278,7 +276,7 @@ func (p *unblockPoller) fillDuePlaceholders() {
 			continue
 		}
 		p.uploaded[key] = true
-		fillPlaceholder(p.ctx, p.httpClient, p.apiBase, instanceID, placeholder)
+		fillPlaceholder(ctx, p.httpClient, p.apiBase, instanceID, placeholder)
 	}
 }
 
