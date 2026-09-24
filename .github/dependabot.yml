@@ -12,9 +12,9 @@ updates:
   # Keeps the pinned actions/checkout, actions/setup-go,
   # actions/upload-artifact, golang/govulncheck-action,
   # golangci/golangci-lint-action and googleapis/release-please-action
-  # versions across ci.yml, conformance.yml, fuzz.yml and
-  # release-please.yml current — the one other real dependency surface
-  # this repo has.
+  # versions across ci.yml, oid4vci-conformance.yml,
+  # oid4vp-conformance.yml, fuzz.yml and release-please.yml current —
+  # the one other real dependency surface this repo has.
   - package-ecosystem: github-actions
     directory: /
     schedule:

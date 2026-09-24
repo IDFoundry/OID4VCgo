@@ -1,21 +1,28 @@
-name: OID4VC Conformance
+name: OID4VP Conformance
 
-# Runs every conformance configuration this repo has driver support for
-# across all four roles (Issuer, Wallet, Verifier, Wallet-VP) — one
-# underlying OIDF conformance suite, driven entirely by this repo's own
-# Go tooling (no suite-side Python scripts involved, unlike FAPIgo's own
-# conformance.yml) — see conformance/scripts/run-all.sh for the full
-# breakdown of what each role runs and why. Deliberately not triggered
-# on push/pull_request — this is a heavy job (bringing up the suite's
-# own Docker stack plus, per role, a freshly-built container) that would
+# Runs every OID4VP conformance configuration this repo has driver
+# support for — the Verifier and Wallet-VP roles — one underlying OIDF
+# conformance suite, driven entirely by this repo's own Go tooling (no
+# suite-side Python scripts involved, unlike FAPIgo's own
+# conformance.yml) — see conformance/scripts/run-oid4vp.sh for the
+# full breakdown of what each role runs and why. Split from a single
+# combined "OID4VC Conformance" workflow into this and the sibling
+# oid4vci-conformance.yml so each half gets its own pass/fail badge
+# (GitHub only gives that per-workflow, not per-job within one
+# combined workflow) and so an OID4VCI-only flake no longer marks the
+# OID4VP side red too, or vice versa — the two now also run in
+# parallel as independent workflow runs rather than one after the
+# other in a single job. Deliberately not triggered on push/
+# pull_request — this is a heavy job (bringing up the suite's own
+# Docker stack plus, per role, a freshly-built container) that would
 # otherwise slow down every PR's feedback loop. Scheduled instead,
 # daily, plus available on demand.
 #
 # Informational only: nothing in branch protection depends on this
 # workflow, since it never runs against a PR in the first place. The
-# job's own exit code still reflects run-all.sh's real pass/fail, so the
-# Actions tab shows an accurate result — it just isn't wired into
-# anything that blocks a merge.
+# job's own exit code still reflects run-oid4vp.sh's real pass/fail,
+# so the Actions tab shows an accurate result — it just isn't wired
+# into anything that blocks a merge.
 #
 # Tracks the OIDF suite's latest master/prebuilt images on every run (no
 # version pin) — simplest, and consistent with how the suite is used
@@ -42,17 +49,15 @@ permissions:
 jobs:
   conformance:
     runs-on: ubuntu-latest
-    # Still not yet measured against a real shared-runner run: several
-    # legs involve a fresh `docker build --force-recreate` and
-    # suite-side browser-driven modules, and conformance/scripts/run-all.sh
-    # has grown a few new crossings since 90 was first picked (the
-    # OID4VCI Issuer's own full 60-module battery under -issuer-initiated,
-    # and the OID4VP Wallet-VP's own -credential-format iso_mdl crossing).
-    # Raised to 120 to match FAPIgo's own conformance.yml, which needed
-    # raising from 30 to 60 to 120 once real runs came in — raise this
-    # further the same way if a run times out rather than assuming this
-    # number is right.
-    timeout-minutes: 120
+    # See the sibling oid4vci-conformance.yml's own identical comment —
+    # this half runs the Verifier's own two scripts plus Wallet-VP's
+    # own two format crossings, each rebuilding its own container.
+    # 60 minutes gives real headroom over this repo's own observed
+    # runtime (well under 10 minutes per role locally, more under CI's
+    # own slower shared runners — see PR #205's own finding) without
+    # inheriting the old combined job's own 120-minute budget, which
+    # also had to cover the OID4VCI half.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
 
@@ -65,8 +70,9 @@ jobs:
       # Cloned into a directory literally named conformance-suite so
       # Docker Compose's auto-derived project (and therefore network)
       # name — conformance-suite_default — matches each role's own
-      # conformance/*/docker-compose.yml own existing default for
-      # SUITE_NETWORK, without needing to set it explicitly.
+      # conformance/{verifier,wallet-vp}/docker-compose.yml own
+      # existing default for SUITE_NETWORK, without needing to set it
+      # explicitly.
       - name: Clone OIDF conformance suite
         run: git clone --depth 1 https://gitlab.com/openid/conformance-suite.git /tmp/conformance-suite
 
@@ -76,25 +82,25 @@ jobs:
         working-directory: /tmp/conformance-suite
         run: docker compose -f docker-compose-prebuilt.yml up -d
 
-      # run-all.sh itself waits for the suite to become reachable, runs
-      # all four roles (each role's own script brings up/rebuilds its
-      # own container in place, generating fresh key material and plan
-      # config as it goes — see each role's own conformance/*/README.md),
-      # and writes results.txt/a combined summary — nothing CI-specific
-      # needed here beyond a predictable results directory.
-      - name: Run all conformance test configurations
+      # run-oid4vp.sh itself waits for the suite to become reachable,
+      # runs both OID4VP roles (each role's own script brings up/
+      # rebuilds its own container in place, generating fresh key
+      # material and plan config as it goes — see each role's own
+      # conformance/*/README.md), and writes results.txt/a combined
+      # summary — nothing CI-specific needed here beyond a predictable
+      # results directory.
+      - name: Run OID4VP conformance test configurations
         env:
           WORKDIR: ${{ runner.temp }}/conformance-results
         # set -o pipefail: without it, this step's exit status is
-        # tee's (always 0), not run-all.sh's — silently masking a real
-        # conformance failure as a green job. Confirmed live: three
-        # consecutive runs had every OID4VP leg fail
-        # (run-all.sh printed "One or more conformance runs had
-        # unexpected results" and exited 1) while the job still showed
-        # success.
+        # tee's (always 0), not run-oid4vp.sh's — silently masking a
+        # real conformance failure as a green job. Confirmed live on
+        # the old combined run-all.sh: three consecutive runs had
+        # every OID4VP leg fail while the job still showed success,
+        # before this flag was added.
         run: |
           set -o pipefail
-          ./conformance/scripts/run-all.sh | tee "${{ runner.temp }}/conformance-run.log"
+          ./conformance/scripts/run-oid4vp.sh | tee "${{ runner.temp }}/conformance-run.log"
 
       - name: Add summary to job summary
         if: always()
@@ -109,7 +115,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: conformance-results
+          name: oid4vp-conformance-results
           path: |
             ${{ runner.temp }}/conformance-results
             ${{ runner.temp }}/conformance-run.log
@@ -118,7 +124,6 @@ jobs:
       - name: Tear down containers
         if: always()
         run: |
-          (docker compose -f conformance/issuer/docker-compose.yml down) || true
           (docker compose -f conformance/verifier/docker-compose.yml down) || true
           (docker compose -f conformance/wallet-vp/docker-compose.yml down) || true
           (cd /tmp/conformance-suite && docker compose -f docker-compose-prebuilt.yml down -v) || true
