@@ -43,6 +43,12 @@ import (
 	"github.com/idfoundry/oid4vcgo/wallet"
 )
 
+// testNameCredentialIssuance is VCIWalletTestCredentialIssuance's own
+// suite testName — shared by inScopeModules/baseInScopeModules (as the
+// map key every plan variant drives) and -drive-test-name's own
+// default (the module -drive-only most commonly targets).
+const testNameCredentialIssuance = "oid4vci-1_0-wallet-test-credential-issuance" //nolint:gosec // G101 false positive: a suite testName string, not a credential or secret
+
 // inScopeModules is this run's own testName -> credential count map —
 // the wallet_initiated flow variant's 4 non-battery modules plus the
 // plan's 4th module-list entry, the generic FAPI2SP client battery
@@ -51,7 +57,7 @@ import (
 // (§8.2's own multi-proof example — enough to exercise a genuine batch
 // without an arbitrary large count).
 var inScopeModules = map[string]int{
-	"oid4vci-1_0-wallet-test-credential-issuance":              1,
+	testNameCredentialIssuance:                                 1,
 	"oid4vci-1_0-wallet-test-credential-issuance-notification": 1,
 	"oid4vci-1_0-wallet-test-client-attestation-challenge":     1,
 	"oid4vci-1_0-wallet-test-batch-credential-issuance":        2,
@@ -96,7 +102,7 @@ var inScopeModules = map[string]int{
 // authorization_details in the first place — it already always
 // supplies CredentialConfigurationID directly).
 var baseInScopeModules = map[string]int{
-	"oid4vci-1_0-wallet-test-credential-issuance":                                               1,
+	testNameCredentialIssuance:                                                                  1,
 	"oid4vci-1_0-wallet-test-credential-issuance-notification":                                  1,
 	"oid4vci-1_0-wallet-test-client-attestation-challenge":                                      1,
 	"oid4vci-1_0-wallet-test-batch-credential-issuance":                                         2,
@@ -205,7 +211,7 @@ func main() {
 	flag.StringVar(&driveCfg.runStatePath, "run-state", "", "path to the file -save-run wrote, for -drive-only to reconstruct this run's own private key material")
 	flag.StringVar(&driveCfg.offerURL, "offer-url", "", "the issuer_initiated Credential Offer redirect URL (haip-vci://... or https://...) shown/logged by the module you created by hand, for -drive-only")
 	flag.StringVar(&driveCfg.moduleURL, "module-url", "", "the wallet_initiated module instance's own base URL (e.g. https://www.certification.openid.net/test/a/<alias>), as shown on its own page in the suite's web UI, for -drive-only — mutually exclusive with -offer-url, since wallet_initiated conveys no Credential Offer at all")
-	flag.StringVar(&driveCfg.testName, "drive-test-name", "oid4vci-1_0-wallet-test-credential-issuance", "the suite testName of the module instance -drive-only is driving — only affects whether the Attestation Challenge Endpoint is wired up (see batteryModulePrefix)")
+	flag.StringVar(&driveCfg.testName, "drive-test-name", testNameCredentialIssuance, "the suite testName of the module instance -drive-only is driving — only affects whether the Attestation Challenge Endpoint is wired up (see batteryModulePrefix)")
 	flag.IntVar(&driveCfg.numCreds, "drive-num-creds", 1, "number of credentials to request in -drive-only mode — 2 for oid4vci-1_0-wallet-test-batch-credential-issuance, 1 for everything else")
 	flag.BoolVar(&driveCfg.encrypted, "drive-encrypted", false, "whether -drive-only should request/expect §10 Credential Request/Response encryption — set this for an immediate+encrypted module instance")
 	flag.Parse()

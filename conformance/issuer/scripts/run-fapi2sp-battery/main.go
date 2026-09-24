@@ -114,7 +114,7 @@ var haipBattery = []string{
 	// variant (see baseBattery's own doc comment); cmd/conformance-issuer
 	// already advertises request/response encryption unconditionally
 	// (wiring.go), regardless of which battery drives it.
-	"oid4vci-1_0-issuer-metadata-test-signed",
+	metadataSignedTestName,
 	"oid4vci-1_0-issuer-happy-flow-additional-requests",
 	"oid4vci-1_0-issuer-happy-flow-multiple-clients",
 	"oid4vci-1_0-issuer-batch-issuance",
@@ -201,7 +201,7 @@ var haipBattery = []string{
 // issuer rather than a HAIP one, not primary functional coverage.
 var baseBattery = []string{
 	metadataTestName,
-	"oid4vci-1_0-issuer-metadata-test-signed",
+	metadataSignedTestName,
 	happyFlowTestName,
 	"oid4vci-1_0-issuer-happy-flow-additional-requests",
 	"oid4vci-1_0-issuer-happy-flow-multiple-clients",
@@ -381,6 +381,10 @@ func main() {
 		inScope[name] = true
 	}
 
+	runCfg := runModuleConfig{
+		apiBase: *apiBase, planID: planID, issuerInitiated: *issuerInitiated,
+		issuerBaseURL: *issuerBaseURL, credentialConfigurationID: credentialConfigurationID,
+	}
 	summary := make(map[string]string)
 	for _, m := range modules {
 		if !inScope[m.TestModule] {
@@ -390,7 +394,7 @@ func main() {
 			continue
 		}
 		log.Printf("--- %s ---", m.TestModule)
-		outcome := runModule(httpClient, *apiBase, planID, m.TestModule, m.Variant, *issuerInitiated, *issuerBaseURL, credentialConfigurationID)
+		outcome := runModule(httpClient, runCfg, m.TestModule, m.Variant)
 		summary[m.TestModule] = outcome
 		log.Printf("%s: %s", m.TestModule, outcome)
 	}
@@ -517,18 +521,37 @@ const metadataSignedTestName = "oid4vci-1_0-issuer-metadata-test-signed"
 // themselves.
 const vciIssuerTestNamePrefix = "oid4vci-1_0-issuer-"
 
-func runModule(httpClient *http.Client, apiBase, planID, testName string, variant map[string]string, issuerInitiated bool, issuerBaseURL, credentialConfigurationID string) string {
-	module, err := conformancesuite.CreateModuleInstance(httpClient, apiBase, planID, testName, variant)
+// runModuleConfig bundles runModule's own arguments that stay fixed
+// across every module in a battery run — only testName/variant vary
+// call to call (see main's own battery loop).
+type runModuleConfig struct {
+	apiBase                   string
+	planID                    string
+	issuerInitiated           bool
+	issuerBaseURL             string
+	credentialConfigurationID string
+}
+
+// moduleSuffix formats the "(module <id>...)" suffix runModule appends
+// to every outcome string it returns, so a reader can always find a
+// given module's own /api/log/ entry regardless of which of runModule's
+// own return paths produced the line.
+func moduleSuffix(apiBase, moduleID string) string {
+	return fmt.Sprintf(" (module %s, %sapi/log/%s)", moduleID, apiBase, moduleID)
+}
+
+func runModule(httpClient *http.Client, cfg runModuleConfig, testName string, variant map[string]string) string {
+	module, err := conformancesuite.CreateModuleInstance(httpClient, cfg.apiBase, cfg.planID, testName, variant)
 	if err != nil {
 		return "ERROR: create module instance: " + err.Error()
 	}
 
-	needsCredentialOffer := issuerInitiated &&
+	needsCredentialOffer := cfg.issuerInitiated &&
 		strings.HasPrefix(testName, vciIssuerTestNamePrefix) &&
 		testName != metadataTestName && testName != metadataSignedTestName
 	if needsCredentialOffer {
-		if err := submitCredentialOffer(httpClient, apiBase, module.ID, issuerBaseURL, credentialConfigurationID); err != nil {
-			return "ERROR: submit credential offer: " + err.Error() + " (module " + module.ID + ")"
+		if err := submitCredentialOffer(httpClient, cfg.apiBase, module.ID, cfg.issuerBaseURL, cfg.credentialConfigurationID); err != nil {
+			return "ERROR: submit credential offer: " + err.Error() + moduleSuffix(cfg.apiBase, module.ID)
 		}
 	}
 
@@ -541,11 +564,11 @@ func runModule(httpClient *http.Client, apiBase, planID, testName string, varian
 	// module's own plan-alias reuse collided with the still-finishing
 	// previous one, cascading into a false "alias conflict"
 	// INTERRUPTED on top of the real problem).
-	status, result, err := conformancesuite.WaitUntilFinished(httpClient, apiBase, module.ID, 120*time.Second)
+	status, result, err := conformancesuite.WaitUntilFinished(httpClient, cfg.apiBase, module.ID, 120*time.Second)
 	if err != nil {
-		return "ERROR: " + err.Error() + " (module " + module.ID + ")"
+		return "ERROR: " + err.Error() + moduleSuffix(cfg.apiBase, module.ID)
 	}
-	return status + "=" + result + " (module " + module.ID + ", " + apiBase + "api/log/" + module.ID + ")"
+	return status + "=" + result + moduleSuffix(cfg.apiBase, module.ID)
 }
 
 // submitCredentialOffer drives the issuer_initiated flow variant's own

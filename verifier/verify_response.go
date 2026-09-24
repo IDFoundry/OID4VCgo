@@ -20,6 +20,12 @@ import (
 	"github.com/idfoundry/oid4vcgo/oid4vpmdoc"
 )
 
+// errCategoryTrustedAuthorities labels every newError this file raises
+// while checking a Presentation's own credential against
+// dcql.CredentialQuery.TrustedAuthorities (both sd_jwt_vc's x5c chain
+// and mdoc's own unprotected X5Chain).
+const errCategoryTrustedAuthorities = "trusted authorities"
+
 // SDJWTVCIssuerKeyResolver resolves which public key/algorithm
 // verifies a presented "dc+sd-jwt" Presentation's own Issuer-signed
 // JWT — determining trust (validating the credential's own x5c chain,
@@ -432,10 +438,10 @@ func (v *Verifier) verifySDJWTVCPresentation(ctx context.Context, cq dcql.Creden
 	if len(cq.TrustedAuthorities) > 0 {
 		chain, err := certchain.X5CDERsFromHeader(header)
 		if err != nil {
-			return nil, newError("trusted authorities", err)
+			return nil, newError(errCategoryTrustedAuthorities, err)
 		}
 		if err := req.TrustedAuthorities.CheckTrustedAuthorities(ctx, cq.TrustedAuthorities, chain); err != nil {
-			return nil, newError("trusted authorities", err)
+			return nil, newError(errCategoryTrustedAuthorities, err)
 		}
 	}
 	return claims, nil
@@ -523,7 +529,7 @@ func (v *Verifier) verifyMdocPresentation(ctx context.Context, cq dcql.Credentia
 
 	if len(cq.TrustedAuthorities) > 0 {
 		if err := req.TrustedAuthorities.CheckTrustedAuthorities(ctx, cq.TrustedAuthorities, unprotected.X5Chain); err != nil {
-			return nil, newError("trusted authorities", err)
+			return nil, newError(errCategoryTrustedAuthorities, err)
 		}
 	}
 

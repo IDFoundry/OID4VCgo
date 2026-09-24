@@ -104,7 +104,7 @@ func TestVerifierError_ErrorAndUnwrap(t *testing.T) {
 	if verr.Unwrap() == nil {
 		t.Error("Unwrap() = nil, want the underlying sdjwtvc.Parse error")
 	}
-	if got := verr.Error(); got == "" {
+	if verr.Error() == "" {
 		t.Error("Error() = \"\", want a non-empty message")
 	}
 }
