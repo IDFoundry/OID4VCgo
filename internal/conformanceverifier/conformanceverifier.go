@@ -51,15 +51,19 @@ const PlanName = "oid4vp-1final-verifier-haip-test-plan"
 const (
 	restartTimeout = 30 * time.Second
 	// uploadTimeout bounds fillUploadPlaceholder's own poll for the
-	// suite's own upload placeholder to appear — 15s proved too tight
-	// under GitHub Actions' variable CI load: two separate scheduled
-	// runs each timed out here on a different, otherwise-passing
-	// module (oid4vp-1final-verifier-happy-flow, -request-uri-fetched-
-	// twice, -request-uri-method-post, -invalid-session-transcript —
-	// no single module consistently, the signature of a too-tight
-	// timeout racing variable CI load rather than a real functional
-	// bug). 30s matches restartTimeout's own existing headroom.
-	uploadTimeout = 30 * time.Second
+	// suite's own upload placeholder to appear. 15s, then 30s, both
+	// proved too tight under GitHub Actions' own CI runners — a full
+	// local run of conformance/scripts/run-all.sh (every Issuer/
+	// Wallet/Verifier/Wallet-VP phase, fresh suite, the exact same
+	// sequence and cumulative load CI runs) completed every module in
+	// this poll well under 5s every time, ruling out a real functional
+	// bug or a general "long sequential run degrades the suite"
+	// pattern — CI's own shared runners are simply slower/more
+	// resource-constrained than typical local hardware for this
+	// specific interaction. 60s keeps this a fast, meaningful failure
+	// signal if something genuinely breaks while giving CI's own
+	// slower environment real headroom.
+	uploadTimeout = 60 * time.Second
 )
 
 // Config mirrors cmd/conformance-verifier's own Config — duplicated
