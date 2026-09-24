@@ -79,17 +79,32 @@ func (c CredentialConfiguration) validate() error {
 	if len(c.CredentialSigningAlgValuesSupported) > 0 && len(c.CredentialSigningAlgValuesSupportedCOSE) > 0 {
 		return fmt.Errorf("credential_signing_alg_values_supported must not be set in both its JOSE-alg-string and COSE-alg-number forms")
 	}
-	// VCT/DocType/the alg-form fields are each documented as
-	// REQUIRED/format-specific on their own doc comments (see VCT's
-	// own), but nothing previously checked Format actually agreed with
-	// what was set — found in a repo-wide integrator-misconfiguration
-	// scan. Metadata() serializes VCT/DocType and whichever alg-form
-	// field is set unconditionally, with json:",omitempty" on both —
-	// leaving VCT empty on an sdjwtvc-format config, or setting the
-	// JOSE-alg-string form for an mdoc-format one, silently produces a
-	// spec-non-conformant Credential Issuer Metadata document (missing
-	// vct, or credential_signing_alg_values_supported in the wrong
-	// wire shape) rather than failing at New().
+	if err := c.validateFormatSpecific(); err != nil {
+		return err
+	}
+	if err := c.validateBindingAndProofTypes(); err != nil {
+		return err
+	}
+	if c.CredentialMetadata != nil {
+		if err := c.CredentialMetadata.Validate(); err != nil {
+			return fmt.Errorf("credential_metadata: %w", err)
+		}
+	}
+	return nil
+}
+
+// validateFormatSpecific checks that VCT/DocType/the alg-form fields —
+// each documented as REQUIRED/format-specific on their own doc comments
+// (see VCT's own) — actually agree with Format, which nothing
+// previously checked — found in a repo-wide integrator-misconfiguration
+// scan. Metadata() serializes VCT/DocType and whichever alg-form field
+// is set unconditionally, with json:",omitempty" on both — leaving VCT
+// empty on an sdjwtvc-format config, or setting the JOSE-alg-string
+// form for an mdoc-format one, silently produces a spec-non-conformant
+// Credential Issuer Metadata document (missing vct, or
+// credential_signing_alg_values_supported in the wrong wire shape)
+// rather than failing at New().
+func (c CredentialConfiguration) validateFormatSpecific() error {
 	switch c.Format {
 	case sdjwtvc.CredentialFormat:
 		if c.VCT == "" {
@@ -106,6 +121,13 @@ func (c CredentialConfiguration) validate() error {
 			return fmt.Errorf("credential_signing_alg_values_supported must not be set when format is %q; use credential_signing_alg_values_supported_cose instead", mdoc.CredentialFormat)
 		}
 	}
+	return nil
+}
+
+// validateBindingAndProofTypes checks CryptographicBindingMethodsSupported
+// and ProofTypesSupported are set together or not at all, and delegates
+// each proof type's own validation.
+func (c CredentialConfiguration) validateBindingAndProofTypes() error {
 	if len(c.CryptographicBindingMethodsSupported) > 0 && len(c.ProofTypesSupported) == 0 {
 		return fmt.Errorf("proof_types_supported is required when cryptographic_binding_methods_supported is present")
 	}
@@ -115,11 +137,6 @@ func (c CredentialConfiguration) validate() error {
 	for id, p := range c.ProofTypesSupported {
 		if err := p.Validate(); err != nil {
 			return fmt.Errorf("proof_types_supported[%q]: %w", id, err)
-		}
-	}
-	if c.CredentialMetadata != nil {
-		if err := c.CredentialMetadata.Validate(); err != nil {
-			return fmt.Errorf("credential_metadata: %w", err)
 		}
 	}
 	return nil

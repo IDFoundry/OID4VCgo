@@ -118,7 +118,11 @@ func (s *server) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 		var rejected *wallet.RequestRejectedError
 		if errors.As(err, &rejected) {
 			log.Printf("fetch/verify request object: %v", err)
-			s.respondWithError(w, rejected.ResponseURI, rejected.ResponseEncryptionKey, rejected.ResponseEncryptionKeyID, rejected.ResponseEncryptionEnc, rejected.State, rejected.Code, rejected.Description)
+			s.respondWithError(w, errorResponseParams{
+				responseURI: rejected.ResponseURI, encryptionKey: rejected.ResponseEncryptionKey,
+				encryptionKeyID: rejected.ResponseEncryptionKeyID, encryptionEnc: rejected.ResponseEncryptionEnc,
+				state: rejected.State, code: rejected.Code, description: rejected.Description,
+			})
 			return
 		}
 		log.Printf("fetch/verify request object: %v", err)
@@ -158,7 +162,11 @@ func (s *server) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, wallet.ErrNoMatchingCredential) {
 			code = "access_denied"
 		}
-		s.respondWithError(w, authReq.ResponseURI, authReq.ResponseEncryptionKey, authReq.ResponseEncryptionKeyID, authReq.ResponseEncryptionEnc, authReq.State, code, err.Error())
+		s.respondWithError(w, errorResponseParams{
+			responseURI: authReq.ResponseURI, encryptionKey: authReq.ResponseEncryptionKey,
+			encryptionKeyID: authReq.ResponseEncryptionKeyID, encryptionEnc: authReq.ResponseEncryptionEnc,
+			state: authReq.State, code: code, description: err.Error(),
+		})
 		return
 	}
 
@@ -209,8 +217,23 @@ func respondFollowingRedirect(w http.ResponseWriter, title, leadParagraph, redir
 	_, _ = fmt.Fprintf(w, "<html><body><h1>%s</h1>%s<p>Followed redirect_uri: %s</p></body></html>", title, leadParagraph, redirectURI)
 }
 
+// errorResponseParams bundles respondWithError's own trailing
+// arguments — both call sites already have these five response-target
+// fields sitting on a *wallet.RequestRejectedError or the verified
+// authReq, just under those types' own field names, plus the two
+// per-failure code/description strings.
+type errorResponseParams struct {
+	responseURI     string
+	encryptionKey   *ecdsa.PublicKey
+	encryptionKeyID string
+	encryptionEnc   string
+	state           string
+	code            string
+	description     string
+}
+
 // respondWithError builds an OID4VP §8.1 error response
-// (wallet.BuildDirectPostErrorResponse) and POSTs it to responseURI —
+// (wallet.BuildDirectPostErrorResponse) and POSTs it to p.responseURI —
 // the same way handleAuthorize's own success path POSTs a vp_token
 // one. Callable from two call sites in handleAuthorize, each already
 // having established responseURI/the encryption key are trustworthy
@@ -218,11 +241,11 @@ func respondFollowingRedirect(w http.ResponseWriter, title, leadParagraph, redir
 // back to a local http.Error only if building/POSTing the error
 // response itself fails, which that already-verified state makes
 // unlikely in practice.
-func (s *server) respondWithError(w http.ResponseWriter, responseURI string, encryptionKey *ecdsa.PublicKey, encryptionKeyID, encryptionEnc, state, code, description string) {
+func (s *server) respondWithError(w http.ResponseWriter, p errorResponseParams) {
 	responseJWE, err := wallet.BuildDirectPostErrorResponse(wallet.BuildDirectPostErrorResponseParams{
-		Error: code, ErrorDescription: description, State: state,
-		EncryptionKey: encryptionKey, EncryptionKeyID: encryptionKeyID,
-		EncryptionEnc: encryptionEnc,
+		Error: p.code, ErrorDescription: p.description, State: p.state,
+		EncryptionKey: p.encryptionKey, EncryptionKeyID: p.encryptionKeyID,
+		EncryptionEnc: p.encryptionEnc,
 	})
 	if err != nil {
 		log.Printf("build direct_post error response: %v", err)
@@ -230,14 +253,14 @@ func (s *server) respondWithError(w http.ResponseWriter, responseURI string, enc
 		return
 	}
 
-	redirectURI, err := postDirectPostResponse(responseURI, responseJWE)
+	redirectURI, err := postDirectPostResponse(p.responseURI, responseJWE)
 	if err != nil {
 		log.Printf("post direct_post.jwt error response: %v", err)
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
 
-	respondFollowingRedirect(w, "Rejected", fmt.Sprintf("<p>Sent error response: %s: %s</p>", code, description), redirectURI)
+	respondFollowingRedirect(w, "Rejected", fmt.Sprintf("<p>Sent error response: %s: %s</p>", p.code, p.description), redirectURI)
 }
 
 // postDirectPostResponse POSTs responseJWE as the "response" form
