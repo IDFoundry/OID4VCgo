@@ -1,0 +1,38 @@
+# Docker Compose override pinning the OIDF conformance suite's own
+# server/nginx images to a known-good digest, overriding the suite's
+# own docker-compose-prebuilt.yml default of ${IMAGE_TAG:-latest}.
+#
+# Why: :latest regressed. Confirmed live (2026-09-24) by force-pulling
+# a fresh :latest (digest sha256:59ae129254dfd056389d2ada3af766c6241879
+# 877048d13886a04c9e213dddb8) and bringing up a suite from it — every
+# oid4vp-1final-verifier-* module now gets INTERRUPTED milliseconds
+# after creation, before this repo's own driving code ever gets a
+# chance to respond to anything. The suite's own container log names
+# the cause directly, on its own side, not ours:
+#
+#   ERROR ... Caught an error in 'TestRunner.java background task'
+#   while running the test, stopping the test: Condition
+#   'DumpRicalCborDiagnostics'/'ValidateRicalSignature'/'ParseRical'
+#   called when test status is 'INTERRUPTED'. This is a bug in the
+#   test module and probably means that a call to
+#   setStatus(Status.RUNNING) is missing.
+#
+# That's the suite's own newly-added "Rical"-related condition calling
+# into a test module before it reaches RUNNING — a bug in the suite's
+# own TestRunner/TestDispatcher sequencing, not in anything this repo
+# controls. The pinned digest below (sha256:4d2c9047708be25113f54425c0
+# fd75a0a8805b6ec70506c563ce8fd9a81fba88) was pulled and verified
+# working — full local conformance/scripts/run-oid4vp.sh runs, cold
+# and warm — before the regression was found.
+#
+# Remove this file (and the `-f` flag referencing it in both
+# .github/workflows/oid4vci-conformance.yml and
+# oid4vp-conformance.yml's own "Bring up OIDF conformance suite" step)
+# once upstream fixes this and a fresh :latest has been verified
+# working again — see this repo's own memory record for the
+# fix-verification checklist.
+services:
+  server:
+    image: registry.gitlab.com/openid/conformance-suite@sha256:4d2c9047708be25113f54425c0fd75a0a8805b6ec70506c563ce8fd9a81fba88
+  nginx:
+    image: registry.gitlab.com/openid/conformance-suite/nginx@sha256:149b10a68c70e874ce0e7b407af41f5d2e1db8c414b4bb71eba57f6741695043
