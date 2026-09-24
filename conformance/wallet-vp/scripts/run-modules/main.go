@@ -671,6 +671,20 @@ func buildPlanConfig(alias, description, trustAnchorCertPEM string, clientJWK jw
 	}
 }
 
+// unexpectedLocalOK reports whether a negative test's own local 200
+// response is actually suspicious. A local 200 is only suspicious for
+// the three negativeTests not in negativeTestExpectedErrorCode — those
+// reject before ever reaching response_uri, so a genuine rejection is a
+// non-200. The other four (sendsErrorResponse) correctly return 200
+// here as part of respondFollowingRedirect's own "Rejected"
+// confirmation page, having already POSTed a legitimate OID4VP §8.1
+// encrypted error response to response_uri first — driveOne's own
+// exact-code check right after this is their real correctness gate,
+// not this local status code.
+func unexpectedLocalOK(negativeTest, localOK, sendsErrorResponse bool) bool {
+	return negativeTest && localOK && !sendsErrorResponse
+}
+
 // driveOne creates one module instance within planID for testName,
 // drives it, and grades it per this file's own package doc comment:
 // negativeTest modules are graded on the local drive response, not
@@ -699,10 +713,11 @@ func driveOne(httpClient *http.Client, apiBase, walletVPBase, planID, testName s
 	driveBody, _ := io.ReadAll(driveResp.Body)
 	_ = driveResp.Body.Close()
 	res.localOK = driveResp.StatusCode == http.StatusOK
-	if negativeTest && res.localOK {
+	wantCode, sendsErrorResponse := negativeTestExpectedErrorCode[testName]
+	if unexpectedLocalOK(negativeTest, res.localOK, sendsErrorResponse) {
 		log.Printf("%s: WARNING — this binary returned 200 for a negative test (should have rejected)", testName)
 	}
-	if wantCode, ok := negativeTestExpectedErrorCode[testName]; ok {
+	if sendsErrorResponse {
 		gotCode, sent := extractSentErrorCode(string(driveBody))
 		if !sent {
 			res.err = fmt.Errorf("expected an OID4VP error response with code %q, but none was sent (body: %s)", wantCode, driveBody)
