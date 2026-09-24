@@ -1,6 +1,14 @@
 # Docker Compose override pinning the OIDF conformance suite's own
-# server/nginx images to a known-good digest, overriding the suite's
-# own docker-compose-prebuilt.yml default of ${IMAGE_TAG:-latest}.
+# server image to a known-good digest, overriding the suite's own
+# docker-compose-prebuilt.yml default of ${IMAGE_TAG:-latest}. nginx
+# deliberately stays unpinned — it's a thin TLS-terminating reverse
+# proxy with essentially no compatibility surface with the server
+# app's own internal behavior, so tracking :latest for it is safe (and
+# simpler than sourcing a nginx digest that's actually still valid on
+# the registry — an earlier version of this file pinned nginx too, to
+# a digest that turned out to already be garbage-collected/invalid by
+# the time CI tried to pull it: "manifest unknown", confirmed via a
+# direct `docker manifest inspect` query, not a local-cache artifact).
 #
 # Why: :latest regressed. Confirmed live (2026-09-24) by force-pulling
 # a fresh :latest (digest sha256:59ae129254dfd056389d2ada3af766c6241879
@@ -34,5 +42,3 @@
 services:
   server:
     image: registry.gitlab.com/openid/conformance-suite@sha256:4d2c9047708be25113f54425c0fd75a0a8805b6ec70506c563ce8fd9a81fba88
-  nginx:
-    image: registry.gitlab.com/openid/conformance-suite/nginx@sha256:149b10a68c70e874ce0e7b407af41f5d2e1db8c414b4bb71eba57f6741695043
