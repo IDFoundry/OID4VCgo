@@ -129,16 +129,17 @@ func newTestAuthorizationServer(t *testing.T, extensions *extension.Registry) (s
 		Extensions: extensions,
 	}
 	deps := server.Dependencies{
-		Clients:      memstore.NewClientRepository([]storage.RegisteredClient{client}),
-		Transactions: memstore.NewTransactionStore(),
-		Grants:       memstore.NewGrantStore(),
-		Replay:       memstore.NewReplayStore(),
-		ClientKeys:   fakeASClientKeySource{pub: &clientKey.PublicKey},
-		Keys:         keyManager,
-		AccessTokens: server.JWTAccessTokens{Keys: keyManager, Algorithm: fapi.ES256},
-		Revocation:   server.NoRevocation{},
-		Clock:        fixedASClock{now: now},
-		Random:       rand.Reader,
+		Clients:                memstore.NewClientRepository([]storage.RegisteredClient{client}),
+		Transactions:           memstore.NewTransactionStore(),
+		Grants:                 memstore.NewGrantStore(),
+		Replay:                 memstore.NewReplayStore(),
+		ClientKeys:             fakeASClientKeySource{pub: &clientKey.PublicKey},
+		Keys:                   keyManager,
+		AccessTokens:           server.JWTAccessTokens{Keys: keyManager, Algorithm: fapi.ES256},
+		Revocation:             server.NoRevocation{},
+		Clock:                  fixedASClock{now: now},
+		Random:                 rand.Reader,
+		ClientCertificateTrust: server.NoClientCertificateChainTrust{},
 	}
 	srv, err = server.New(cfg, deps)
 	if err != nil {

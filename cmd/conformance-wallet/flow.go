@@ -203,7 +203,7 @@ func buildClient(ctx context.Context, run *walletRun, module conformancesuite.Su
 		// module that specifically checks it: a client that tolerates
 		// an absent iss when the AS is known to always send one is
 		// itself a downgrade risk.
-		RequireAuthorizationResponseIss: true,
+		AuthorizationResponseIssPolicy: client.RequireAuthorizationResponseIss,
 		Algorithms: client.Algorithms{
 			DPoP:                 fapi.ES256,
 			IDToken:              fapi.ES256,
