@@ -181,16 +181,17 @@ func newServerMux(cfg Config) (*http.ServeMux, error) {
 		Extensions:                           extensions,
 	}
 	srvDeps := server.Dependencies{
-		Clients:      clientRepo,
-		Transactions: memstore.NewTransactionStore(),
-		Grants:       memstore.NewGrantStore(),
-		Replay:       replayStore,
-		ClientKeys:   clientKeys,
-		Keys:         keyManager,
-		AccessTokens: accessTokens,
-		Revocation:   revocationStore,
-		Clock:        server.SystemClock{},
-		Random:       rand.Reader,
+		Clients:                clientRepo,
+		Transactions:           memstore.NewTransactionStore(),
+		Grants:                 memstore.NewGrantStore(),
+		Replay:                 replayStore,
+		ClientKeys:             clientKeys,
+		Keys:                   keyManager,
+		AccessTokens:           accessTokens,
+		Revocation:             revocationStore,
+		Clock:                  server.SystemClock{},
+		Random:                 rand.Reader,
+		ClientCertificateTrust: server.NoClientCertificateChainTrust{},
 	}
 	srv, err := server.New(srvCfg, srvDeps)
 	if err != nil {

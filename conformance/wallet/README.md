@@ -202,7 +202,8 @@ generic FAPI2SP client conformance battery — all 10 modules
 - `fapi2-security-profile-final-client-test-remove-authorization-response-iss`
   / `...invalid-authorization-response-iss` — both correctly stop
   before token exchange on a missing/invalid `iss`, exercising
-  `Config.RequireAuthorizationResponseIss`.
+  `Config.AuthorizationResponseIssPolicy` set to
+  `client.RequireAuthorizationResponseIss`.
 - `fapi2-security-profile-final-client-test-ensure-authorization-response-with-invalid-state-fails`
   / `...invalid-missing-state-fails`
 - `fapi2-security-profile-final-client-test-token-endpoint-response-without-expires_in`
