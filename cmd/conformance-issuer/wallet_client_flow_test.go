@@ -133,9 +133,10 @@ func buildRealClientForAttestationAuth(t *testing.T, cfg Config, httpClient *htt
 			Token:                      tokenURL,
 			PushedAuthorizationRequest: parURL,
 		},
-		Profile:          client.ProfileFAPISecurity,
-		Assurance:        client.AssuranceDevelopment,
-		ClientAuthMethod: storage.ClientAuthMethodAttestation,
+		Profile:                        client.ProfileFAPISecurity,
+		Assurance:                      client.AssuranceDevelopment,
+		ClientAuthMethod:               storage.ClientAuthMethodAttestation,
+		AuthorizationResponseIssPolicy: client.RequireAuthorizationResponseIss,
 		Algorithms: client.Algorithms{
 			DPoP:                 fapi.ES256,
 			IDToken:              fapi.ES256,

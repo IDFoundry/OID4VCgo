@@ -203,7 +203,7 @@ func buildClient(ctx context.Context, run *walletRun, module conformancesuite.Su
 		// module that specifically checks it: a client that tolerates
 		// an absent iss when the AS is known to always send one is
 		// itself a downgrade risk.
-		RequireAuthorizationResponseIss: true,
+		AuthorizationResponseIssPolicy: client.RequireAuthorizationResponseIss,
 		Algorithms: client.Algorithms{
 			DPoP:                 fapi.ES256,
 			IDToken:              fapi.ES256,
@@ -524,32 +524,16 @@ func buildWalletCredentialRequest(ctx context.Context, w *wallet.Wallet, p crede
 		// fails that check for numCreds>1, while one shared attestation
 		// naming every key passes regardless of which proof's copy the
 		// suite happens to validate.
-		attestedKeys, genErr := generateAttestedKeys(numCreds)
-		if genErr != nil {
-			return wallet.CredentialRequest{}, fmt.Errorf("generate attested keys: %w", genErr)
-		}
-		attestationJWT, err := buildKeyAttestationProof(w, run, attestedKeys, cNonce, true)
+		jwtProofs, err := buildJWTKeyAttestationProofs(w, run, module, numCreds, cNonce)
 		if err != nil {
-			return wallet.CredentialRequest{}, fmt.Errorf("build key attestation proof: %w", err)
-		}
-		jwtProofs := make([]string, numCreds)
-		for i, signer := range attestedKeys {
-			proof, genErr := w.GenerateProofWithKeyAttestation(signer, module.URL+"/", cNonce, attestationJWT)
-			if genErr != nil {
-				return wallet.CredentialRequest{}, fmt.Errorf("generate jwt proof with key attestation %d: %w", i, genErr)
-			}
-			jwtProofs[i] = proof
+			return wallet.CredentialRequest{}, err
 		}
 		credRequest.JWTProofs = jwtProofs
 
 	default:
-		holderKeys := make([]crypto.Signer, numCreds)
-		for i := range holderKeys {
-			holderKey, genErr := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-			if genErr != nil {
-				return wallet.CredentialRequest{}, fmt.Errorf("generate holder key: %w", genErr)
-			}
-			holderKeys[i] = holderKey
+		holderKeys, err := generateHolderKeys(numCreds)
+		if err != nil {
+			return wallet.CredentialRequest{}, err
 		}
 		credRequest.Keys = holderKeys
 	}
@@ -562,4 +546,42 @@ func buildWalletCredentialRequest(ctx context.Context, w *wallet.Wallet, p crede
 		credRequest.ResponseEncryption = &wallet.ResponseEncryption{Enc: encryptionEnc}
 	}
 	return credRequest, nil
+}
+
+// buildJWTKeyAttestationProofs builds one jwt-type proof per credential,
+// each embedding the same Key Attestation JWT covering every attested
+// key — see buildWalletCredentialRequest's proofStrategyJWTKeyAttestation
+// case for why the attestation is shared rather than per-key.
+func buildJWTKeyAttestationProofs(w *wallet.Wallet, run *walletRun, module conformancesuite.SuiteModule, numCreds int, cNonce string) ([]string, error) {
+	attestedKeys, err := generateAttestedKeys(numCreds)
+	if err != nil {
+		return nil, fmt.Errorf("generate attested keys: %w", err)
+	}
+	attestationJWT, err := buildKeyAttestationProof(w, run, attestedKeys, cNonce, true)
+	if err != nil {
+		return nil, fmt.Errorf("build key attestation proof: %w", err)
+	}
+	jwtProofs := make([]string, numCreds)
+	for i, signer := range attestedKeys {
+		proof, err := w.GenerateProofWithKeyAttestation(signer, module.URL+"/", cNonce, attestationJWT)
+		if err != nil {
+			return nil, fmt.Errorf("generate jwt proof with key attestation %d: %w", i, err)
+		}
+		jwtProofs[i] = proof
+	}
+	return jwtProofs, nil
+}
+
+// generateHolderKeys generates n fresh P-256 holder keys for the
+// default (plain jwt proof) strategy.
+func generateHolderKeys(n int) ([]crypto.Signer, error) {
+	holderKeys := make([]crypto.Signer, n)
+	for i := range holderKeys {
+		holderKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		if err != nil {
+			return nil, fmt.Errorf("generate holder key: %w", err)
+		}
+		holderKeys[i] = holderKey
+	}
+	return holderKeys, nil
 }

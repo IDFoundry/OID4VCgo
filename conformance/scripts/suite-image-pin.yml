@@ -10,13 +10,13 @@
 # the time CI tried to pull it: "manifest unknown", confirmed via a
 # direct `docker manifest inspect` query, not a local-cache artifact).
 #
-# Why: :latest regressed. Confirmed live (2026-09-24) by force-pulling
-# a fresh :latest (digest sha256:59ae129254dfd056389d2ada3af766c6241879
-# 877048d13886a04c9e213dddb8) and bringing up a suite from it — every
-# oid4vp-1final-verifier-* module now gets INTERRUPTED milliseconds
-# after creation, before this repo's own driving code ever gets a
-# chance to respond to anything. The suite's own container log names
-# the cause directly, on its own side, not ours:
+# Why (original finding, 2026-09-24): :latest regressed. Confirmed live
+# by force-pulling a fresh :latest (digest sha256:59ae129254dfd056389d2
+# ada3af766c6241879877048d13886a04c9e213dddb8) and bringing up a suite
+# from it — every oid4vp-1final-verifier-* module now gets INTERRUPTED
+# milliseconds after creation, before this repo's own driving code ever
+# gets a chance to respond to anything. The suite's own container log
+# names the cause directly, on its own side, not ours:
 #
 #   ERROR ... Caught an error in 'TestRunner.java background task'
 #   while running the test, stopping the test: Condition
@@ -28,10 +28,31 @@
 # That's the suite's own newly-added "Rical"-related condition calling
 # into a test module before it reaches RUNNING — a bug in the suite's
 # own TestRunner/TestDispatcher sequencing, not in anything this repo
-# controls. The pinned digest below (sha256:4d2c9047708be25113f54425c0
-# fd75a0a8805b6ec70506c563ce8fd9a81fba88) was pulled and verified
-# working — full local conformance/scripts/run-oid4vp.sh runs, cold
-# and warm — before the regression was found.
+# controls. That day's pinned digest (sha256:4d2c9047708be25113f54425c0
+# fd75a0a8805b6ec70506c563ce8fd9a81fba88, since superseded — see below)
+# was pulled and verified working — full local
+# conformance/scripts/run-oid4vp.sh runs, cold and warm — before the
+# regression was found.
+#
+# Update (2026-09-25): that pinned digest itself was garbage-collected
+# from the registry by this date ("manifest unknown", confirmed via a
+# direct `docker manifest inspect` query against the real registry, not
+# local cache) — CI failed immediately unable to even pull it. Before
+# re-pinning, checked whether upstream had fixed the Rical bug in the
+# meantime by force-pulling a fresh :latest again: it hadn't — the same
+# bug still reproduces, now surfacing under a wider set of Rical-named
+# conditions than the original finding
+# (ValidateRicalSignerCertificate/ValidateRicalSignature/
+# ValidateRicalStructure/DumpRicalCborDiagnostics/RegisterVical, all
+# "called when test status is 'INTERRUPTED'"). Re-pinned below to the
+# release-v5.3.1 tag's own digest instead of another :latest snapshot —
+# verified live (Verifier sd_jwt_vc + mdoc, both cold and warm) with no
+# Rical/INTERRUPTED errors in the suite's own container logs. A named
+# release tag is presumably less likely to be garbage-collected out
+# from under this pin than an anonymous point-in-time :latest digest,
+# but that's not guaranteed either — this file still needs the same
+# periodic re-verification regardless of which tag a pinned digest came
+# from.
 #
 # Remove this file (and the `-f` flag referencing it in both
 # .github/workflows/oid4vci-conformance.yml and
@@ -41,4 +62,4 @@
 # fix-verification checklist.
 services:
   server:
-    image: registry.gitlab.com/openid/conformance-suite@sha256:4d2c9047708be25113f54425c0fd75a0a8805b6ec70506c563ce8fd9a81fba88
+    image: registry.gitlab.com/openid/conformance-suite@sha256:69495f453a920c262f66e5e72abd12501c33e05ce88051cddf300c00621a4d70
