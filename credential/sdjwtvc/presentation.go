@@ -3,8 +3,6 @@ package sdjwtvc
 import (
 	"fmt"
 	"strings"
-
-	"github.com/idfoundry/oid4vcgo/internal/jose"
 )
 
 // Presentation is a parsed SD-JWT or SD-JWT+KB (RFC 9901 §4): the
@@ -25,11 +23,22 @@ type Presentation struct {
 // HasKeyBinding reports whether the parsed presentation is an SD-JWT+KB.
 func (p Presentation) HasKeyBinding() bool { return p.KeyBindingJWT != "" }
 
+// MaxBytes bounds a whole compact SD-JWT or SD-JWT+KB — issuer JWT,
+// every Disclosure and any Key Binding JWT together — in Parse. It
+// deliberately matches credential/mdoc.MaxBytes and oid4vpmdoc.MaxBytes
+// rather than the 64 KiB jose.MaxCompactBytes: a Disclosure can
+// legitimately carry a sizeable value (a portrait, or raw eMRTD data
+// groups), and one over 64 KiB is the SD-JWT counterpart of an mdoc
+// data element over it. The two JWTs inside stay bounded at
+// jose.MaxCompactBytes on their own — Verify and VerifyKeyBindingJWT
+// check them through jose.Verify — since they only ever hold digests
+// and claims. Use ParseMax for a caller that needs a different ceiling.
+const MaxBytes = 1 << 20 // 1 MiB
+
 // Parse splits a compact SD-JWT or SD-JWT+KB into its parts (RFC 9901
 // §4) without verifying anything — the issuer JWT's signature, the
 // disclosure/digest matching, and any Key Binding JWT are all checked
-// by Verify. It rejects a presentation larger than jose.MaxCompactBytes
-// — bounding the string-split/base64/JSON work this does on
+// by Verify. It rejects a presentation larger than MaxBytes — bounding the string-split/base64/JSON work this does on
 // attacker-supplied input before anything is verified (or, for a
 // caller like wallet's own held-credential matching, ever verified at
 // all — see HeldCredential's own doc comment), the same reasoning
@@ -41,11 +50,11 @@ func (p Presentation) HasKeyBinding() bool { return p.KeyBindingJWT != "" }
 // gets for free. Use ParseMax for a caller that needs a different
 // ceiling.
 func Parse(s string) (Presentation, error) {
-	return ParseMax(s, jose.MaxCompactBytes)
+	return ParseMax(s, MaxBytes)
 }
 
 // ParseMax is Parse with an explicit size ceiling, in bytes, instead
-// of jose.MaxCompactBytes.
+// of MaxBytes.
 func ParseMax(s string, maxBytes int) (Presentation, error) {
 	if len(s) > maxBytes {
 		return Presentation{}, fmt.Errorf("sdjwtvc: presentation is %d bytes, exceeds the %d byte limit", len(s), maxBytes)
