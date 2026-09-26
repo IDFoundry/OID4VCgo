@@ -16,9 +16,6 @@ package main
 
 import (
 	"context"
-	"crypto/tls"
-	"crypto/x509"
-	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -27,6 +24,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/demotls"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/walletapp"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/walletprovider"
 )
@@ -55,7 +53,7 @@ func main() {
 		if fs.NArg() != 1 {
 			usage()
 		}
-		httpClient, err := trustingClient(*trust)
+		httpClient, err := demotls.TrustingClient(*trust)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -89,7 +87,7 @@ func main() {
 		if fs.NArg() != 1 {
 			usage()
 		}
-		httpClient, err := trustingClient(*trust)
+		httpClient, err := demotls.TrustingClient(*trust)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -148,34 +146,4 @@ func list(dir string) error {
 		fmt.Printf("%s  %-16s %-10s %6d bytes  %s\n", s.ReceivedAt.Local().Format("2006-01-02 15:04"), s.ConfigurationID, s.Format, len(s.Credential), s.Path)
 	}
 	return nil
-}
-
-// trustingClient returns an HTTP client trusting the certificates in
-// the comma-separated PEM files (the demo servers' self-signed TLS
-// certificates) in addition to the system roots. Missing files are
-// skipped, so the defaults work before the verifier has been started.
-func trustingClient(files string) (*http.Client, error) {
-	roots, err := x509.SystemCertPool()
-	if err != nil {
-		roots = x509.NewCertPool()
-	}
-	for _, f := range strings.Split(files, ",") {
-		f = strings.TrimSpace(f)
-		if f == "" {
-			continue
-		}
-		pemBytes, err := os.ReadFile(f) // #nosec G304 -- operator-supplied path
-		switch {
-		case errors.Is(err, os.ErrNotExist):
-			continue
-		case err != nil:
-			return nil, fmt.Errorf("read %s: %w", f, err)
-		case !roots.AppendCertsFromPEM(pemBytes):
-			return nil, fmt.Errorf("%s holds no PEM certificates", f)
-		}
-	}
-	return &http.Client{
-		Timeout:   30 * time.Second,
-		Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}},
-	}, nil
 }

@@ -6,8 +6,9 @@ into a verifiable digital credential in **both** `mso_mdoc` and
 `dc+sd-jwt`, issued over OID4VCI (HAIP).
 
 > **Status:** complete end to end — passport verification, both
-> credential formats, the OID4VCI issuer, a command-line wallet and an
-> OpenID4VP verifier demonstrating both trust paths. An iOS wallet and
+> credential formats, the OID4VCI issuer, a browser wallet and a
+> command-line wallet, and an OpenID4VP verifier demonstrating both
+> trust paths. An iOS wallet and
 > live NFC capture are next (see [Roadmap](#roadmap)).
 
 This is a separate Go module: it's the only code in this repository
@@ -84,40 +85,44 @@ What the second path does and doesn't give you:
 
 ```sh
 go run ./cmd/wallet-provider     # once: wallet-provider.pem + wallet-provider.jwks.json
-go run ./cmd/issuer              # https://127.0.0.1:8443 — writes issuer-tls.pem, issuer-ca.pem
+go run ./cmd/issuer              # https://127.0.0.1:8543 — writes issuer-tls.pem, issuer-ca.pem
 go run ./cmd/verifier            # https://127.0.0.1:9443 — writes verifier-tls.pem
+go run ./cmd/webwallet           # https://127.0.0.1:7443 — writes webwallet-tls.pem
 ```
 
-1. **Issue.** Open https://127.0.0.1:8443 (self-signed — `issuer-tls.pem`)
-   and upload a gmrtd portable passport file. It's verified against
-   gmrtd's built-in ICAO CSCA master list, and the page shows a
-   credential offer. Then:
+All three use self-signed certificates: accept them in the browser, or
+trust the written `.pem` files. (The issuer uses 8543 rather than 8443
+so it doesn't collide with a locally running OIDF conformance suite.)
 
-   ```sh
-   go run ./cmd/wallet receive 'openid-credential-offer://?credential_offer=...'
-   go run ./cmd/wallet list
-   ```
+**In the browser (web wallet):**
 
-2. **Verify.** Open https://127.0.0.1:9443 (self-signed —
-   `verifier-tls.pem`), choose a trust path, and give the wallet the
-   request link:
+1. **Issue.** Open https://127.0.0.1:8543 and upload a gmrtd portable
+   passport file. It's verified against gmrtd's built-in ICAO CSCA
+   master list; click **Open in web wallet**, continue to the issuer,
+   approve, and you're back in the wallet with both credentials.
+2. **Verify.** Open https://127.0.0.1:9443, choose a trust path, and
+   click **Open in web wallet**. The wallet shows who's asking and
+   exactly which claims each format would disclose; choose a format
+   and **Share** (or **Decline**). The verifier page shows the result.
 
-   ```sh
-   go run ./cmd/wallet present 'openid4vp://?client_id=...&request_uri=...'
-   go run ./cmd/wallet present -format dc+sd-jwt 'openid4vp://...'   # force a format
-   ```
+**From the terminal (CLI wallet)** — same store, so both wallets see the
+same credentials; it presents without asking:
 
-   The verifier page updates with the result.
+```sh
+go run ./cmd/wallet receive 'openid-credential-offer://?credential_offer=...'
+go run ./cmd/wallet list
+go run ./cmd/wallet present [-format dc+sd-jwt] 'openid4vp://?client_id=...&request_uri=...'
+```
 
-`receive` prints the authorization URL: open it, approve, and the
-wallet picks up the redirect on `http://127.0.0.1:8765/callback` and
-stores both credentials (with their holder keys) in `wallet-store/`.
-Add `-headless` to approve automatically.
+The CLI's `receive` prints the authorization URL: open it, approve, and
+it picks up the redirect on `http://127.0.0.1:8765/callback`; add
+`-headless` to approve automatically. Both wallets keep credentials
+(with their holder keys) in `wallet-store/`.
 
 `cmd/wallet-provider` creates the demo's **stand-in Wallet Provider**
-key. The issuer registers one wallet client (`passport-vdc-wallet`) and
-accepts Wallet Attestations signed by that key; the wallet uses the
-private half to attest itself — which a real wallet would never hold. The
+key. The issuer registers one wallet client (`passport-vdc-wallet`,
+with both wallets' redirect URIs) and accepts Wallet Attestations signed
+by that key; the wallets use the private half to attest themselves — which a real wallet would never hold. The
 key, the TLS certificate and the wallet store are all git-ignored; the
 store keeps holder keys unencrypted.
 
@@ -208,8 +213,9 @@ generator, planned for gmrtd itself).
 | `walletprovider` | the stand-in Wallet Provider that signs Wallet Attestations |
 | `walletapp` | the wallet: receive (offer → discovery → HAIP Authorization Code flow → credentials) and present (OpenID4VP, selective disclosure); credential store |
 | `verifierapp` | the OpenID4VP verifier: either-format requests, both trust paths |
+| `webwallet` | the browser wallet: credential cards, receive via the issuer's approval page, consent before presenting |
 | `passport.VerifyDataGroups` | the verifier's ICAO check over a disclosed SOD + DG1 |
-| `cmd/issuer`, `cmd/verifier`, `cmd/wallet`, `cmd/wallet-provider` | runnable binaries |
+| `cmd/issuer`, `cmd/verifier`, `cmd/webwallet`, `cmd/wallet`, `cmd/wallet-provider` | runnable binaries |
 
 ## Roadmap
 

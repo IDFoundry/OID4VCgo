@@ -49,6 +49,10 @@ type Config struct {
 	// RequestLifetime bounds how long a presentation request stays
 	// answerable; zero means 10 minutes.
 	RequestLifetime time.Duration
+
+	// WebWalletURL, if set, adds an "Open in web wallet" button to the
+	// request page, linking to the demo web wallet's /present.
+	WebWalletURL string
 }
 
 // App is a running passport-vdc verifier.

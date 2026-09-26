@@ -8,4 +8,5 @@ wallet-provider.jwks.json
 issuer-tls.pem
 issuer-ca.pem
 verifier-tls.pem
+webwallet-tls.pem
 wallet-store/

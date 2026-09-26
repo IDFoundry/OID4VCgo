@@ -19,6 +19,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/verifierapp"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/walletapp"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/walletprovider"
+	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/webwallet"
 )
 
 // Demo wallet registration shared by the issuer and wallet in tests.
@@ -35,9 +36,13 @@ type Env struct {
 	IssuerURL   string
 	Verifier    *verifierapp.App
 	VerifierURL string
-	Provider    *walletprovider.Provider
-	HTTP        *http.Client
-	roots       *x509.CertPool
+	// WebWalletURL is reserved (and registered with the issuer as a
+	// redirect URI) up front; StartWebWallet starts it.
+	WebWalletURL string
+	Provider     *walletprovider.Provider
+	HTTP         *http.Client
+	roots        *x509.CertPool
+	webSrv       *httptest.Server
 }
 
 // New starts an issuer (trusting cscaPool for uploads; nil means an
@@ -56,13 +61,20 @@ func New(t *testing.T, cscaPool cms.CertPool) *Env {
 		t.Fatalf("PublicJWKS: %v", err)
 	}
 	e := &Env{Provider: provider, roots: x509.NewCertPool()}
+	e.webSrv = httptest.NewUnstartedServer(nil)
+	e.WebWalletURL = "https://" + e.webSrv.Listener.Addr().String()
+	t.Cleanup(func() {
+		if e.webSrv.URL == "" { // never started
+			_ = e.webSrv.Listener.Close()
+		}
+	})
 
 	srv := httptest.NewUnstartedServer(nil)
 	e.IssuerURL = "https://" + srv.Listener.Addr().String()
 	e.Issuer, err = issuerapp.New(issuerapp.Config{
 		IssuerURL: e.IssuerURL, CSCAPool: cscaPool,
 		Wallet: issuerapp.WalletClient{
-			ClientID: WalletClientID, RedirectURIs: []string{RedirectURI},
+			ClientID: WalletClientID, RedirectURIs: []string{RedirectURI, e.WebWalletURL + "/callback"},
 			ProviderIssuer: ProviderIssuer, ProviderJWKS: jwks,
 		},
 	})
@@ -92,6 +104,19 @@ func (e *Env) StartVerifier(t *testing.T, cscaPool cms.CertPool) {
 		t.Fatalf("verifierapp.New: %v", err)
 	}
 	e.start(t, srv, e.Verifier)
+}
+
+// StartWebWallet starts the web wallet at WebWalletURL, keeping
+// credentials in store.
+func (e *Env) StartWebWallet(t *testing.T, store walletapp.Store) {
+	t.Helper()
+	app, err := webwallet.New(webwallet.Config{WalletURL: e.WebWalletURL, Wallet: e.WalletConfig(), Store: store})
+	if err != nil {
+		t.Fatalf("webwallet.New: %v", err)
+	}
+	e.start(t, e.webSrv, app)
+	// The web wallet calls the issuer and verifier with e.HTTP, which
+	// now trusts every started server.
 }
 
 func (e *Env) start(t *testing.T, srv *httptest.Server, h http.Handler) {

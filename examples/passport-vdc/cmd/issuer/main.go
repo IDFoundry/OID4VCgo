@@ -2,7 +2,7 @@
 // HTTPS on loopback.
 //
 //	go run ./cmd/wallet-provider     # once: wallet-provider.pem + .jwks.json
-//	go run ./cmd/issuer              # https://127.0.0.1:8443, writes issuer-tls.pem
+//	go run ./cmd/issuer              # https://127.0.0.1:8543, writes issuer-tls.pem
 //
 // Without -tls-cert/-tls-key it generates a self-signed certificate for
 // 127.0.0.1 and localhost and writes it to -tls-cert-out, for the demo
@@ -17,6 +17,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/gmrtd/gmrtd/cms"
@@ -26,8 +27,8 @@ import (
 )
 
 func main() {
-	addr := flag.String("addr", "127.0.0.1:8443", "listen address")
-	issuerURL := flag.String("issuer", "https://127.0.0.1:8443", "issuer URL")
+	addr := flag.String("addr", "127.0.0.1:8543", "listen address")
+	issuerURL := flag.String("issuer", "https://127.0.0.1:8543", "issuer URL")
 	certFile := flag.String("tls-cert", "", "TLS certificate PEM (default: generate a self-signed one)")
 	keyFile := flag.String("tls-key", "", "TLS private key PEM (with -tls-cert)")
 	certOut := flag.String("tls-cert-out", "issuer-tls.pem", "where to write a generated TLS certificate for the wallet to trust")
@@ -35,7 +36,8 @@ func main() {
 	jwksPath := flag.String("wallet-provider-jwks", "wallet-provider.jwks.json", "the demo Wallet Provider's public JWK Set")
 	providerIssuer := flag.String("wallet-provider-issuer", "https://wallet-provider.passport-vdc.demo", "the demo Wallet Provider's identifier (Wallet Attestation iss)")
 	clientID := flag.String("wallet-client-id", "passport-vdc-wallet", "the demo wallet's client_id")
-	redirectURI := flag.String("wallet-redirect-uri", "http://127.0.0.1:8765/callback", "the demo wallet's redirect URI")
+	redirectURIs := flag.String("wallet-redirect-uris", "http://127.0.0.1:8765/callback,https://127.0.0.1:7443/callback", "the demo wallets' redirect URIs, comma-separated (CLI wallet, web wallet)")
+	webWallet := flag.String("web-wallet", "https://127.0.0.1:7443", "the demo web wallet's URL, for the offer page's \"Open in web wallet\" button (empty to hide it)")
 	flag.Parse()
 
 	jwks, err := os.ReadFile(*jwksPath) // #nosec G304 -- operator-supplied path
@@ -50,9 +52,10 @@ func main() {
 		IssuerURL: *issuerURL,
 		CSCAPool:  pool,
 		Wallet: issuerapp.WalletClient{
-			ClientID: *clientID, RedirectURIs: []string{*redirectURI},
+			ClientID: *clientID, RedirectURIs: splitList(*redirectURIs),
 			ProviderIssuer: *providerIssuer, ProviderJWKS: jwks,
 		},
+		WebWalletURL: *webWallet,
 	})
 	if err != nil {
 		log.Fatal(err)
@@ -76,4 +79,14 @@ func main() {
 	}
 	log.Printf("passport-vdc issuer on https://%s (issuer %s)", *addr, *issuerURL)
 	log.Fatal(srv.ListenAndServeTLS("", ""))
+}
+
+func splitList(s string) []string {
+	var out []string
+	for _, v := range strings.Split(s, ",") {
+		if v = strings.TrimSpace(v); v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
 }

@@ -30,34 +30,67 @@ type PresentOptions struct {
 	HTTP *http.Client
 }
 
-// Presented summarizes what Present sent.
+// Presented summarizes what was sent.
 type Presented struct {
 	VerifierClientID string
 	// Credentials are the DCQL credential query IDs presented.
 	Credentials []string
 }
 
-// Present answers an OpenID4VP Authorization Request (an openid4vp://
-// link carrying client_id and request_uri) with credentials from store:
-// it fetches and verifies the signed Request Object, matches its DCQL
-// query against the stored credentials, builds selectively disclosed
-// presentations bound to the Verifier's nonce, and POSTs them to the
-// response_uri as an encrypted direct_post.jwt response.
-//
-// Like the rest of this demo wallet, it asks no one before presenting:
-// a real wallet would show the holder what's requested, and by whom.
+// Prepared is a verified presentation request the holder hasn't
+// answered yet, with every way the wallet's stored credentials can
+// satisfy it.
+type Prepared struct {
+	// VerifierClientID identifies the verifier: its x509_hash client
+	// identifier, checked against the Request Object's signature. It
+	// establishes who the verifier is, not whether to trust them.
+	VerifierClientID string
+	// ResponseURI is where the answer would be sent.
+	ResponseURI string
+	// Options are the ways to answer, one per format the wallet can
+	// answer in.
+	Options []Option
+
+	authReq wallet.AuthorizationRequest
+	store   Store
+	http    *http.Client
+}
+
+// Option is one way to answer a request.
+type Option struct {
+	Format string
+	// QueryID is the DCQL credential query this answers.
+	QueryID string
+	// Claims are the claim paths that would be disclosed (e.g.
+	// ["family_name"], or [namespace, element] for an mdoc).
+	Claims [][]string
+}
+
+// Present answers an OpenID4VP Authorization Request without asking
+// the holder — Prepare then Send with opts.Format.
 func Present(ctx context.Context, requestLink string, store Store, opts PresentOptions) (Presented, error) {
-	httpClient := opts.HTTP
+	p, err := Prepare(ctx, requestLink, store, opts.HTTP)
+	if err != nil {
+		return Presented{}, err
+	}
+	return p.Send(ctx, opts.Format)
+}
+
+// Prepare fetches and verifies an OpenID4VP Authorization Request (an
+// openid4vp:// link carrying client_id and request_uri) and works out
+// how the stored credentials can answer it, without sending anything —
+// so a wallet can ask the holder first.
+func Prepare(ctx context.Context, requestLink string, store Store, httpClient *http.Client) (*Prepared, error) {
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: httpTimeout}
 	}
 	link, err := url.Parse(requestLink)
 	if err != nil {
-		return Presented{}, fmt.Errorf("walletapp: presentation request link: %w", err)
+		return nil, fmt.Errorf("walletapp: presentation request link: %w", err)
 	}
 	clientID, requestURI := link.Query().Get("client_id"), link.Query().Get("request_uri")
 	if clientID == "" || requestURI == "" {
-		return Presented{}, fmt.Errorf("walletapp: presentation request link needs client_id and request_uri")
+		return nil, fmt.Errorf("walletapp: presentation request link needs client_id and request_uri")
 	}
 
 	w, err := wallet.New(wallet.Config{
@@ -65,40 +98,74 @@ func Present(ctx context.Context, requestLink string, store Store, opts PresentO
 		Fetch: fapihttp.Config{MaxResponseBytes: 1 << 20, RequestTimeout: httpTimeout, MaxRedirects: 2, AllowLoopbackHTTP: true},
 	}, wallet.Dependencies{HTTP: httpClient, Clock: wallet.ClockFunc(time.Now), Random: rand.Reader})
 	if err != nil {
-		return Presented{}, fmt.Errorf("walletapp: %w", err)
+		return nil, fmt.Errorf("walletapp: %w", err)
 	}
 	// FetchAuthorizationRequest checks the Request Object's signature
-	// and that client_id is its signing certificate's x509_hash — it
-	// establishes who the Verifier is, not whether to trust them.
+	// and that client_id is its signing certificate's x509_hash.
 	authReq, err := w.FetchAuthorizationRequest(ctx, requestURI, clientID)
 	if err != nil {
-		return Presented{}, fmt.Errorf("walletapp: presentation request: %w", err)
+		return nil, fmt.Errorf("walletapp: presentation request: %w", err)
 	}
 
-	held, err := heldCredentials(store, opts.Format)
+	p := &Prepared{VerifierClientID: authReq.ClientID, ResponseURI: authReq.ResponseURI, authReq: authReq, store: store, http: httpClient}
+	byID := make(map[string][][]string, len(authReq.Query.Credentials))
+	for _, cq := range authReq.Query.Credentials {
+		for _, c := range cq.Claims {
+			path := make([]string, len(c.Path))
+			for i, el := range c.Path {
+				path[i] = el.Key()
+			}
+			byID[cq.ID] = append(byID[cq.ID], path)
+		}
+	}
+	for _, format := range []string{"mso_mdoc", "dc+sd-jwt"} {
+		held, err := heldCredentials(store, format)
+		if err != nil {
+			continue
+		}
+		matches, err := wallet.MatchDCQLQuery(ctx, authReq.Query, held, nil)
+		if err != nil {
+			continue
+		}
+		for id := range matches {
+			p.Options = append(p.Options, Option{Format: format, QueryID: id, Claims: byID[id]})
+		}
+	}
+	if len(p.Options) == 0 {
+		return nil, fmt.Errorf("walletapp: no stored credential satisfies the request")
+	}
+	return p, nil
+}
+
+// Send answers the request with the stored credential of format ("" for
+// whichever matches first): it builds selectively disclosed
+// presentations bound to the verifier's nonce and POSTs them to the
+// response_uri as an encrypted direct_post.jwt response.
+func (p *Prepared) Send(ctx context.Context, format string) (Presented, error) {
+	held, err := heldCredentials(p.store, format)
 	if err != nil {
 		return Presented{}, err
 	}
+	a := p.authReq
 	vpToken, err := wallet.PresentCredentials(ctx, wallet.PresentationRequest{
-		Query: authReq.Query, Credentials: held, Audience: authReq.ClientID, Nonce: authReq.Nonce,
-		ResponseURI: authReq.ResponseURI, ResponseEncryptionKey: authReq.ResponseEncryptionKey,
+		Query: a.Query, Credentials: held, Audience: a.ClientID, Nonce: a.Nonce,
+		ResponseURI: a.ResponseURI, ResponseEncryptionKey: a.ResponseEncryptionKey,
 	})
 	if err != nil {
 		return Presented{}, fmt.Errorf("walletapp: no stored credential satisfies the request: %w", err)
 	}
 	responseJWE, err := wallet.BuildDirectPostResponse(wallet.BuildDirectPostResponseParams{
-		VPToken: vpToken, State: authReq.State,
-		EncryptionKey: authReq.ResponseEncryptionKey, EncryptionKeyID: authReq.ResponseEncryptionKeyID,
-		EncryptionEnc: authReq.ResponseEncryptionEnc,
+		VPToken: vpToken, State: a.State,
+		EncryptionKey: a.ResponseEncryptionKey, EncryptionKeyID: a.ResponseEncryptionKeyID,
+		EncryptionEnc: a.ResponseEncryptionEnc,
 	})
 	if err != nil {
 		return Presented{}, fmt.Errorf("walletapp: presentation response: %w", err)
 	}
-	if err := postResponse(ctx, httpClient, authReq.ResponseURI, responseJWE); err != nil {
+	if err := postResponse(ctx, p.http, a.ResponseURI, responseJWE); err != nil {
 		return Presented{}, err
 	}
-
-	presented := Presented{VerifierClientID: authReq.ClientID}
+	presented := Presented{VerifierClientID: a.ClientID}
 	for id := range vpToken {
 		presented.Credentials = append(presented.Credentials, id)
 	}

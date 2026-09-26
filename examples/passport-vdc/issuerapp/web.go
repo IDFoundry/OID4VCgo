@@ -7,6 +7,7 @@ import (
 	"html/template"
 	"io"
 	"net/http"
+	"net/url"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/passport"
@@ -98,8 +99,9 @@ var uploadTemplate = template.Must(template.New("upload").Parse(pageHead + `
 ` + pageFoot))
 
 type offerPage struct {
-	Evidence passport.Evidence
-	Offer    Offer
+	Evidence      passport.Evidence
+	Offer         Offer
+	WebWalletLink string
 }
 
 var offerTemplate = template.Must(template.New("offer").Funcs(template.FuncMap{
@@ -123,8 +125,9 @@ var offerTemplate = template.Must(template.New("offer").Funcs(template.FuncMap{
 <tr><th>Expires</th><td>{{.Evidence.Identity.ExpiryDate.Format "2006-01-02"}}</td></tr>
 </table>
 <h2>Credential offer</h2>
-<p><a href="{{.Offer.URI}}">Open in wallet</a></p>
-<p class="note">Or pass this offer to the demo wallet:</p>
+{{if .WebWalletLink}}<p><a href="{{.WebWalletLink}}"><strong>Open in web wallet</strong></a></p>{{end}}
+<p><a href="{{.Offer.URI}}">Open in wallet app</a></p>
+<p class="note">Or pass this offer to the demo CLI wallet:</p>
 <p><code>{{.Offer.URI}}</code></p>
 <p class="warn">This proves the passport data is authentic, not that you hold the passport — see the demo README.</p>
 ` + pageFoot))
@@ -167,7 +170,11 @@ func (a *App) handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = offerTemplate.Execute(w, offerPage{Evidence: e, Offer: offer})
+	page := offerPage{Evidence: e, Offer: offer}
+	if a.cfg.WebWalletURL != "" {
+		page.WebWalletLink = a.cfg.WebWalletURL + "/receive?offer=" + url.QueryEscape(offer.URI)
+	}
+	_ = offerTemplate.Execute(w, page)
 }
 
 var errorTemplate = template.Must(template.New("error").Parse(pageHead + `
