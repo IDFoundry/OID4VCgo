@@ -65,8 +65,13 @@ func fetchAndVerifyRequestObject(requestURI, clientID string, usePost bool) (wal
 		}
 	}
 
+	// NoVerifierTrust: the suite signs its Request Objects with its own
+	// certificate, and this binary has no trust anchor configured for
+	// it — so OID4VP §5.9.3's trust chain check is explicitly skipped
+	// here; the signature and x509_hash checks still apply.
 	authReq, err := wallet.ParseAuthorizationRequest(wallet.ParseAuthorizationRequestParams{
 		RequestObject: compact, ClientID: clientID, WalletNonce: walletNonce,
+		VerifierTrust: wallet.NoVerifierTrust{},
 	})
 	if err != nil {
 		return wallet.AuthorizationRequest{}, err

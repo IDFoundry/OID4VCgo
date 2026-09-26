@@ -22,6 +22,9 @@ const (
 	// reasoning FAPIgo's own server.AssuranceProduction applies to an
 	// endpoint URL parsed with fapi.AllowLoopbackHTTP.
 	//
+	// It also rejects Config.VerifierTrust set to NoVerifierTrust{},
+	// which skips OID4VP §5.9.3's Verifier trust chain validation.
+	//
 	// Config.Fetch.AllowedPrivateHosts is deliberately not rejected: it
 	// is an explicit, named allow-list for a fixed deployment topology
 	// (e.g. a Wallet backend reaching an internal Credential Issuer),

@@ -153,5 +153,8 @@
 // isn't built in). Only the "x509_hash" Client Identifier Prefix is
 // supported (HAIP's own mandate, and the only one verifier itself
 // produces) — no DC API flow, no other client_id scheme, no di_vp
-// presentations.
+// presentations. Which Verifiers to trust is the caller's policy, a
+// VerifierTrust (OID4VP §5.9.3's trust chain validation):
+// X5CVerifierRoots for a fixed set of trust anchors, or the explicit
+// NoVerifierTrust opt-out, which AssuranceProduction rejects.
 package wallet

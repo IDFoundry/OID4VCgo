@@ -129,7 +129,7 @@ func TestWebWallet_ReceiveThenShareWithConsent(t *testing.T) {
 	// The consent screen shows what's asked for, in each format the
 	// wallet can answer with — and nothing is sent yet.
 	id, page, decision := reviewRequest(t, env, b, verifierapp.ModeICAO)
-	for _, want := range []string{"icao_sod", "icao_dg1", `value="mso_mdoc"`, `value="dc+sd-jwt"`} {
+	for _, want := range []string{"passport-vdc demo verifier", "icao_sod", "icao_dg1", `value="mso_mdoc"`, `value="dc+sd-jwt"`} {
 		if !strings.Contains(page, want) {
 			t.Errorf("consent page is missing %q", want)
 		}

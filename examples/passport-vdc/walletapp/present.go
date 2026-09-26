@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -28,6 +29,9 @@ type PresentOptions struct {
 	Format string
 	// HTTP makes every request; nil means a client with a 10 s timeout.
 	HTTP *http.Client
+	// VerifierTrust decides which verifiers to answer (OpenID4VP
+	// §5.9.3). REQUIRED — see LoadVerifierTrust.
+	VerifierTrust wallet.VerifierTrust
 }
 
 // Presented summarizes what was sent.
@@ -42,9 +46,11 @@ type Presented struct {
 // satisfy it.
 type Prepared struct {
 	// VerifierClientID identifies the verifier: its x509_hash client
-	// identifier, checked against the Request Object's signature. It
-	// establishes who the verifier is, not whether to trust them.
+	// identifier, checked against the Request Object's signature.
 	VerifierClientID string
+	// VerifierName is the subject common name of the verifier's
+	// request-signing certificate, which chains to a trusted CA.
+	VerifierName string
 	// ResponseURI is where the answer would be sent.
 	ResponseURI string
 	// Options are the ways to answer, one per format the wallet can
@@ -69,7 +75,7 @@ type Option struct {
 // Present answers an OpenID4VP Authorization Request without asking
 // the holder — Prepare then Send with opts.Format.
 func Present(ctx context.Context, requestLink string, store Store, opts PresentOptions) (Presented, error) {
-	p, err := Prepare(ctx, requestLink, store, opts.HTTP)
+	p, err := Prepare(ctx, requestLink, store, opts.HTTP, opts.VerifierTrust)
 	if err != nil {
 		return Presented{}, err
 	}
@@ -77,10 +83,13 @@ func Present(ctx context.Context, requestLink string, store Store, opts PresentO
 }
 
 // Prepare fetches and verifies an OpenID4VP Authorization Request (an
-// openid4vp:// link carrying client_id and request_uri) and works out
-// how the stored credentials can answer it, without sending anything —
-// so a wallet can ask the holder first.
-func Prepare(ctx context.Context, requestLink string, store Store, httpClient *http.Client) (*Prepared, error) {
+// openid4vp:// link carrying client_id and request_uri) from a verifier
+// trust accepts, and works out how the stored credentials can answer
+// it, without sending anything — so a wallet can ask the holder first.
+func Prepare(ctx context.Context, requestLink string, store Store, httpClient *http.Client, trust wallet.VerifierTrust) (*Prepared, error) {
+	if trust == nil {
+		return nil, fmt.Errorf("walletapp: a VerifierTrust is required")
+	}
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: httpTimeout}
 	}
@@ -95,19 +104,24 @@ func Prepare(ctx context.Context, requestLink string, store Store, httpClient *h
 
 	w, err := wallet.New(wallet.Config{
 		Assurance: wallet.AssuranceDevelopment, ProofSigningAlg: oid4vci.ES256,
-		Fetch: fapihttp.Config{MaxResponseBytes: 1 << 20, RequestTimeout: httpTimeout, MaxRedirects: 2, AllowLoopbackHTTP: true},
+		Fetch:         fapihttp.Config{MaxResponseBytes: 1 << 20, RequestTimeout: httpTimeout, MaxRedirects: 2, AllowLoopbackHTTP: true},
+		VerifierTrust: trust,
 	}, wallet.Dependencies{HTTP: httpClient, Clock: wallet.ClockFunc(time.Now), Random: rand.Reader})
 	if err != nil {
 		return nil, fmt.Errorf("walletapp: %w", err)
 	}
-	// FetchAuthorizationRequest checks the Request Object's signature
-	// and that client_id is its signing certificate's x509_hash.
+	// FetchAuthorizationRequest checks the signing certificate chains
+	// to a trusted CA, the Request Object's signature, and that
+	// client_id is that certificate's x509_hash.
 	authReq, err := w.FetchAuthorizationRequest(ctx, requestURI, clientID)
 	if err != nil {
 		return nil, fmt.Errorf("walletapp: presentation request: %w", err)
 	}
 
-	p := &Prepared{VerifierClientID: authReq.ClientID, ResponseURI: authReq.ResponseURI, authReq: authReq, store: store, http: httpClient}
+	p := &Prepared{
+		VerifierClientID: authReq.ClientID, VerifierName: authReq.VerifierCertificate.Subject.CommonName,
+		ResponseURI: authReq.ResponseURI, authReq: authReq, store: store, http: httpClient,
+	}
 	byID := make(map[string][][]string, len(authReq.Query.Credentials))
 	for _, cq := range authReq.Query.Credentials {
 		for _, c := range cq.Claims {
@@ -228,4 +242,24 @@ func postResponse(ctx context.Context, hc *http.Client, responseURI, responseJWE
 		return fmt.Errorf("walletapp: verifier rejected the presentation: status %d %s %s", resp.StatusCode, e.Error, e.Description)
 	}
 	return nil
+}
+
+// LoadVerifierTrust trusts verifiers whose request-signing certificate
+// chains to a CA in the comma-separated PEM files (the demo verifier
+// writes its CA to verifier-ca.pem).
+func LoadVerifierTrust(files string) (wallet.VerifierTrust, error) {
+	roots := x509.NewCertPool()
+	for _, f := range strings.Split(files, ",") {
+		if f = strings.TrimSpace(f); f == "" {
+			continue
+		}
+		pemBytes, err := os.ReadFile(f) // #nosec G304 -- operator-supplied path
+		if err != nil {
+			return nil, fmt.Errorf("walletapp: verifier CA: %w", err)
+		}
+		if !roots.AppendCertsFromPEM(pemBytes) {
+			return nil, fmt.Errorf("walletapp: verifier CA: %s holds no PEM certificates", f)
+		}
+	}
+	return wallet.X5CVerifierRoots{Roots: roots}, nil
 }

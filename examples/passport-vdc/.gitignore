@@ -9,5 +9,6 @@ wallet-provider-ca.pem
 issuer-tls.pem
 issuer-ca.pem
 verifier-tls.pem
+verifier-ca.pem
 webwallet-tls.pem
 wallet-store/

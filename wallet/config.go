@@ -34,6 +34,13 @@ type Config struct {
 	// Endpoint's POST (§7.1), neither of which carries an access token
 	// — passed directly to fapihttp.New. REQUIRED.
 	Fetch fapihttp.Config
+
+	// VerifierTrust decides which Verifiers' Request Objects this
+	// Wallet accepts (OID4VP §5.9.3) — see VerifierTrust's own doc
+	// comment. Required by FetchAuthorizationRequest, so optional for a
+	// Wallet that only receives credentials. NoVerifierTrust{} is
+	// rejected under AssuranceProduction.
+	VerifierTrust VerifierTrust
 }
 
 // Clock supplies the current time — a plain function value satisfies
@@ -87,6 +94,9 @@ func New(cfg Config, deps Dependencies) (*Wallet, error) {
 	}
 	if cfg.Assurance == AssuranceProduction && cfg.Fetch.AllowLoopbackHTTP {
 		return nil, fmt.Errorf("wallet: config: fetch.allow_loopback_http is not permitted under AssuranceProduction")
+	}
+	if cfg.Assurance == AssuranceProduction && isNoVerifierTrust(cfg.VerifierTrust) {
+		return nil, fmt.Errorf("wallet: config: verifier_trust NoVerifierTrust is not permitted under AssuranceProduction")
 	}
 	if cfg.ProofSigningAlg == "" {
 		return nil, fmt.Errorf("wallet: config: proof_signing_alg is required")

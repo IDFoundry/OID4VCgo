@@ -44,7 +44,10 @@ shape than an early read suggested:
 - `GET /authorize` — this binary's own `server.authorization_endpoint`.
   Runs the whole flow synchronously: fetches+verifies the Request
   Object (`requestobject.go`: JWS signature against the `x5c` leaf,
-  `x509_hash` client_id cross-check, `typ` header check), presents the
+  `x509_hash` client_id cross-check, `typ` header check; the verifier
+  certificate's trust chain is explicitly not checked,
+  `wallet.NoVerifierTrust`, since no trust anchor is configured for the
+  suite's own request-signing certificate), presents the
   fixture credential (`wallet.PresentCredentials`), encrypts and POSTs
   the `direct_post.jwt` response to the Verifier's own `response_uri`,
   and — since HAIP requires the response to carry a `redirect_uri` —

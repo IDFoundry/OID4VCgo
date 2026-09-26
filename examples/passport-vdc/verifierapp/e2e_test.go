@@ -57,7 +57,7 @@ func present(t *testing.T, env *demotest.Env, store walletapp.Store, mode verifi
 // format.
 func presentTo(t *testing.T, env *demotest.Env, store walletapp.Store, link, format string) {
 	t.Helper()
-	presented, err := walletapp.Present(context.Background(), link, store, walletapp.PresentOptions{Format: format, HTTP: env.HTTP})
+	presented, err := walletapp.Present(context.Background(), link, store, walletapp.PresentOptions{Format: format, HTTP: env.HTTP, VerifierTrust: env.VerifierTrust()})
 	if err != nil {
 		t.Fatalf("Present(%s): %v", format, err)
 	}

@@ -20,6 +20,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/walletapp"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/walletprovider"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/webwallet"
+	"github.com/idfoundry/oid4vcgo/wallet"
 )
 
 // Demo wallet registration shared by the issuer and wallet in tests.
@@ -42,6 +43,7 @@ type Env struct {
 	Provider     *walletprovider.Provider
 	HTTP         *http.Client
 	roots        *x509.CertPool
+	verifierCAs  *x509.CertPool // the wallets' trusted verifier CAs; StartVerifier adds its own
 	webSrv       *httptest.Server
 }
 
@@ -60,7 +62,7 @@ func New(t *testing.T, cscaPool cms.CertPool) *Env {
 	if err != nil {
 		t.Fatalf("PublicJWKS: %v", err)
 	}
-	e := &Env{Provider: provider, roots: x509.NewCertPool()}
+	e := &Env{Provider: provider, roots: x509.NewCertPool(), verifierCAs: x509.NewCertPool()}
 	e.webSrv = httptest.NewUnstartedServer(nil)
 	e.WebWalletURL = "https://" + e.webSrv.Listener.Addr().String()
 	t.Cleanup(func() {
@@ -103,14 +105,21 @@ func (e *Env) StartVerifier(t *testing.T, cscaPool cms.CertPool) {
 	if err != nil {
 		t.Fatalf("verifierapp.New: %v", err)
 	}
+	e.verifierCAs.AddCert(e.Verifier.VerifierCACertificate())
 	e.start(t, srv, e.Verifier)
+}
+
+// VerifierTrust is the wallets' verifier trust: the CA of the verifier
+// StartVerifier started, if any.
+func (e *Env) VerifierTrust() wallet.VerifierTrust {
+	return wallet.X5CVerifierRoots{Roots: e.verifierCAs}
 }
 
 // StartWebWallet starts the web wallet at WebWalletURL, keeping
 // credentials in store.
 func (e *Env) StartWebWallet(t *testing.T, store walletapp.Store) {
 	t.Helper()
-	app, err := webwallet.New(webwallet.Config{WalletURL: e.WebWalletURL, Wallet: e.WalletConfig(), Store: store})
+	app, err := webwallet.New(webwallet.Config{WalletURL: e.WebWalletURL, Wallet: e.WalletConfig(), Store: store, VerifierTrust: e.VerifierTrust()})
 	if err != nil {
 		t.Fatalf("webwallet.New: %v", err)
 	}
