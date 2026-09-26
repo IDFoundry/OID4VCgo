@@ -193,8 +193,9 @@ func (iss *Issuer) resolveProofBindingKey(ctx context.Context, header map[string
 
 // resolveAttestationProofKeys verifies every Key Attestation JWT in
 // values (Appendix F.3): its signature, against the trust key
-// Dependencies.AttestationVerifier resolves, and — the same
-// once-per-request rule resolveJWTProofKeys applies — its nonce claim.
+// Dependencies.AttestationVerifier resolves, with an algorithm ptc
+// advertises, and — the same once-per-request rule resolveJWTProofKeys
+// applies — its nonce claim.
 // Each verified attestation contributes one resolvedKey per entry in
 // its own attested_keys claim (Appendix F.3's "SHOULD issue a
 // Credential for each cryptographic public key") — a fan-out
@@ -205,7 +206,7 @@ func (iss *Issuer) resolveProofBindingKey(ctx context.Context, header map[string
 // review — the exact amplification checkBatchSize exists to prevent,
 // through a side door). The running total across every attestation in
 // values is capped at maxBatchSize independently, for that reason.
-func (iss *Issuer) resolveAttestationProofKeys(ctx context.Context, values []string) ([]resolvedKey, error) {
+func (iss *Issuer) resolveAttestationProofKeys(ctx context.Context, values []string, ptc oid4vci.ProofTypeConfiguration) ([]resolvedKey, error) {
 	if iss.deps.AttestationVerifier == nil {
 		return nil, newError(ErrorInvalidProof, 400, "attestation proof type is not supported", nil)
 	}
@@ -217,7 +218,7 @@ func (iss *Issuer) resolveAttestationProofKeys(ctx context.Context, values []str
 	var keys []resolvedKey
 
 	for i, raw := range values {
-		verified, err := iss.verifyOneAttestation(ctx, raw, i, now)
+		verified, err := iss.verifyOneAttestation(ctx, raw, i, now, ptc.ProofSigningAlgValuesSupported)
 		if err != nil {
 			return nil, err
 		}
@@ -251,7 +252,14 @@ func (iss *Issuer) resolveAttestationProofKeys(ctx context.Context, values []str
 // (its signature, against the trust key Dependencies.AttestationVerifier
 // resolves) — split out of resolveAttestationProofKeys purely to keep
 // it under the linter's own cognitive complexity ceiling.
-func (iss *Issuer) verifyOneAttestation(ctx context.Context, raw string, i int, now time.Time) (attestation.VerifiedClaims, error) {
+//
+// The resolved key's algorithm must be one of algs, the proof type's
+// proof_signing_alg_values_supported: Appendix F.3's "the value of the
+// alg JWT header of the key attestation MUST match one of the entries
+// in the proof_signing_alg_values_supported metadata parameter".
+// Checking the resolved algorithm covers the header too, since Verify
+// then requires the header's alg to equal it.
+func (iss *Issuer) verifyOneAttestation(ctx context.Context, raw string, i int, now time.Time, algs []string) (attestation.VerifiedClaims, error) {
 	parsed, err := attestation.Parse(raw)
 	if err != nil {
 		return attestation.VerifiedClaims{}, newError(ErrorInvalidProof, 400, fmt.Sprintf("attestation %d is malformed", i), err)
@@ -259,6 +267,9 @@ func (iss *Issuer) verifyOneAttestation(ctx context.Context, raw string, i int, 
 	pub, alg, err := iss.deps.AttestationVerifier.ResolveAttestationKey(ctx, parsed)
 	if err != nil {
 		return attestation.VerifiedClaims{}, newError(ErrorInvalidProof, 400, fmt.Sprintf("attestation %d: resolve trust key", i), err)
+	}
+	if !slices.Contains(algs, string(alg)) {
+		return attestation.VerifiedClaims{}, newError(ErrorInvalidProof, 400, fmt.Sprintf("attestation %d: alg %q is not in proof_signing_alg_values_supported", i, alg), nil)
 	}
 	verified, err := parsed.Verify(pub, alg, attestation.VerifyOptions{Now: now})
 	if err != nil {

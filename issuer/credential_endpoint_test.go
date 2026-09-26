@@ -4,11 +4,13 @@ import (
 	"context"
 	"crypto"
 	"crypto/ecdsa"
+	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -1000,4 +1002,52 @@ func assertIssuerError(t *testing.T, err error, code issuer.ErrorCode) {
 	if ierr.Code() != code {
 		t.Errorf("Code = %q, want %q", ierr.Code(), code)
 	}
+}
+
+// TestRequestCredential_AttestationAlgMustBeAdvertised checks a Key
+// Attestation's alg must be one of the attestation proof type's
+// proof_signing_alg_values_supported (OID4VCI 1.0 Appendix F.3), even
+// when its signing key is trusted: an EdDSA attestation is refused
+// while only ES256 is advertised, and accepted once EdDSA is too.
+func TestRequestCredential_AttestationAlgMustBeAdvertised(t *testing.T) {
+	edPub, edKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("ed25519.GenerateKey: %v", err)
+	}
+	trustEd25519 := func(algs ...string) func(*issuer.Config, *issuer.Dependencies) {
+		return func(cfg *issuer.Config, deps *issuer.Dependencies) {
+			deps.AttestationVerifier = fixedAttestationVerifier{pub: edPub, alg: jose.EdDSA}
+			cc := cfg.CredentialConfigurationsSupported[testSDJWTConfigID]
+			cc.ProofTypesSupported = map[string]oid4vci.ProofTypeConfiguration{
+				oid4vci.ProofTypeAttestation: {ProofSigningAlgValuesSupported: algs},
+			}
+			cfg.CredentialConfigurationsSupported[testSDJWTConfigID] = cc
+		}
+	}
+	edAttestation := func(t *testing.T, f credentialEndpointFixture) string {
+		t.Helper()
+		walletKey := testP256Key(t)
+		compact, err := attestation.Issue(edKey, jose.EdDSA, attestation.Header{}, attestation.Claims{
+			IssuedAt: time.Now().Unix(), AttestedKeys: []json.RawMessage{jwkJSON(t, &walletKey.PublicKey)}, Nonce: f.issueNonce(t),
+		})
+		if err != nil {
+			t.Fatalf("attestation.Issue: %v", err)
+		}
+		return compact
+	}
+
+	t.Run("not advertised", func(t *testing.T) {
+		f := newCredentialEndpointFixture(t, trustEd25519("ES256"))
+		_, err := requestSDJWTWithProof(f, oid4vci.ProofTypeAttestation, edAttestation(t, f))
+		assertIssuerError(t, err, issuer.ErrorInvalidProof)
+		if err == nil || !strings.Contains(err.Error(), "proof_signing_alg_values_supported") {
+			t.Errorf("error = %v, want it to name proof_signing_alg_values_supported", err)
+		}
+	})
+	t.Run("advertised", func(t *testing.T) {
+		f := newCredentialEndpointFixture(t, trustEd25519("ES256", "EdDSA"))
+		if _, err := requestSDJWTWithProof(f, oid4vci.ProofTypeAttestation, edAttestation(t, f)); err != nil {
+			t.Fatalf("RequestCredential: %v", err)
+		}
+	})
 }
