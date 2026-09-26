@@ -281,12 +281,35 @@ func TestExchangePreAuthorizedCode_Success(t *testing.T) {
 	if f.tokens.lastParams.Thumbprint == "" {
 		t.Errorf("AccessTokenParams.Thumbprint is empty")
 	}
+	if f.tokens.lastParams.Subject != "" {
+		t.Errorf("AccessTokenParams.Subject = %q, want empty for a record with no Subject", f.tokens.lastParams.Subject)
+	}
 
 	// Single-use: a second exchange with the same code fails.
 	if _, err := f.iss.ExchangePreAuthorizedCode(context.Background(), issuer.ExchangePreAuthorizedCodeRequest{
 		PreAuthorizedCode: "code-1", DPoPProof: proof, TokenEndpoint: testTokenEndpointURL(t),
 	}); err == nil {
 		t.Fatalf("second ExchangePreAuthorizedCode = nil error, want error")
+	}
+}
+
+// TestExchangePreAuthorizedCode_PassesSubjectThrough checks that a
+// record's Subject reaches AccessTokenParams unmodified — the only link
+// from a redeemed pre-authorized_code to whatever the caller verified
+// before making the offer.
+func TestExchangePreAuthorizedCode_PassesSubjectThrough(t *testing.T) {
+	f := newPreAuthorizedCodeFixture(t)
+	f.issue(t, "code-1", issuer.PreAuthorizedCodeRecord{
+		Scopes: []string{"identity_credential"}, ExpiresAt: f.now.Add(time.Minute),
+		Subject: "txn-8fd2",
+	})
+	if _, err := f.iss.ExchangePreAuthorizedCode(context.Background(), issuer.ExchangePreAuthorizedCodeRequest{
+		PreAuthorizedCode: "code-1", DPoPProof: f.validProof(t), TokenEndpoint: testTokenEndpointURL(t),
+	}); err != nil {
+		t.Fatalf("ExchangePreAuthorizedCode: %v", err)
+	}
+	if got := f.tokens.lastParams.Subject; got != "txn-8fd2" {
+		t.Errorf("AccessTokenParams.Subject = %q, want %q", got, "txn-8fd2")
 	}
 }
 

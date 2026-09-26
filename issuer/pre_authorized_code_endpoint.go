@@ -198,31 +198,16 @@ func (iss *Issuer) exchangePreAuthorizedCode(ctx context.Context, req ExchangePr
 		}
 	}
 
-	record, wrongAttempts, err := iss.deps.PreAuthorizedCodes.Consume(ctx, req.PreAuthorizedCode, req.TxCode)
+	record, err := iss.consumePreAuthorizedCode(ctx, req)
 	if err != nil {
-		if errors.Is(err, ErrWrongTxCode) {
-			if wrongAttempts >= iss.cfg.Limits.MaxTxCodeAttempts {
-				// Too many wrong guesses against this one code — close
-				// the guessing window rather than leaving it retryable
-				// forever (see this method's own doc comment).
-				if invalidateErr := iss.deps.PreAuthorizedCodes.Invalidate(ctx, req.PreAuthorizedCode); invalidateErr != nil {
-					return ExchangePreAuthorizedCodeResult{}, fmt.Errorf("issuer: exchange pre-authorized code: invalidate after too many tx_code attempts: %w", invalidateErr)
-				}
-				return ExchangePreAuthorizedCodeResult{}, newError(ErrorInvalidGrant, 400, "too many incorrect tx_code attempts; pre-authorized_code is no longer valid", err)
-			}
-			// Deliberately NOT consumed (Consume's own contract) — the
-			// Wallet holder gets to retry with the correct PIN instead of
-			// the code being permanently destroyed on one mistyped digit.
-			return ExchangePreAuthorizedCodeResult{}, newError(ErrorInvalidGrant, 400, "tx_code does not match", err)
-		}
-		return ExchangePreAuthorizedCodeResult{}, newError(ErrorInvalidGrant, 400, "pre-authorized_code is unknown or already used", err)
+		return ExchangePreAuthorizedCodeResult{}, err
 	}
 	if now.After(record.ExpiresAt) {
 		return ExchangePreAuthorizedCodeResult{}, newError(ErrorInvalidGrant, 400, "pre-authorized_code has expired", nil)
 	}
 
 	params := AccessTokenParams{
-		Scope: record.Scopes, Thumbprint: verified.Thumbprint,
+		Scope: record.Scopes, Thumbprint: verified.Thumbprint, Subject: record.Subject,
 		Issuer: iss.cfg.Issuer.String(), Audience: iss.cfg.Issuer.String(),
 		Now: now, Lifetime: iss.cfg.Limits.AccessTokenLifetime, Random: iss.deps.Random,
 	}
@@ -256,6 +241,34 @@ func (iss *Issuer) exchangePreAuthorizedCode(ctx context.Context, req ExchangePr
 		result.NextDPoPNonce = nextNonce
 	}
 	return result, nil
+}
+
+// consumePreAuthorizedCode redeems req's pre-authorized_code against
+// PreAuthorizedCodes, turning a wrong tx_code, too many wrong tx_code
+// attempts, or an unknown/used code into the right Token Error — split
+// out of exchangePreAuthorizedCode purely to keep its cognitive
+// complexity manageable.
+func (iss *Issuer) consumePreAuthorizedCode(ctx context.Context, req ExchangePreAuthorizedCodeRequest) (PreAuthorizedCodeRecord, error) {
+	record, wrongAttempts, err := iss.deps.PreAuthorizedCodes.Consume(ctx, req.PreAuthorizedCode, req.TxCode)
+	if err != nil {
+		if errors.Is(err, ErrWrongTxCode) {
+			if wrongAttempts >= iss.cfg.Limits.MaxTxCodeAttempts {
+				// Too many wrong guesses against this one code — close
+				// the guessing window rather than leaving it retryable
+				// forever (see ExchangePreAuthorizedCode's own doc comment).
+				if invalidateErr := iss.deps.PreAuthorizedCodes.Invalidate(ctx, req.PreAuthorizedCode); invalidateErr != nil {
+					return PreAuthorizedCodeRecord{}, fmt.Errorf("issuer: exchange pre-authorized code: invalidate after too many tx_code attempts: %w", invalidateErr)
+				}
+				return PreAuthorizedCodeRecord{}, newError(ErrorInvalidGrant, 400, "too many incorrect tx_code attempts; pre-authorized_code is no longer valid", err)
+			}
+			// Deliberately NOT consumed (Consume's own contract) — the
+			// Wallet holder gets to retry with the correct PIN instead of
+			// the code being permanently destroyed on one mistyped digit.
+			return PreAuthorizedCodeRecord{}, newError(ErrorInvalidGrant, 400, "tx_code does not match", err)
+		}
+		return PreAuthorizedCodeRecord{}, newError(ErrorInvalidGrant, 400, "pre-authorized_code is unknown or already used", err)
+	}
+	return record, nil
 }
 
 // mintAuthorizationDetails builds one AuthorizationDetail per configID,
