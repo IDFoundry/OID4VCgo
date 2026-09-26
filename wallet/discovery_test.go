@@ -146,3 +146,30 @@ func TestFetchAuthorizationServerMetadata_RoundTrips(t *testing.T) {
 		t.Errorf("FetchAuthorizationServerMetadata = %+v, want %+v", got, want)
 	}
 }
+
+// TestFetchCredentialIssuerMetadata_LoopbackHTTPIssuer checks a wallet
+// configured with Fetch.AllowLoopbackHTTP can discover a local
+// development issuer served over plain http, not just fetch its
+// metadata: the metadata's own http://127.0.0.1 URLs must decode too.
+func TestFetchCredentialIssuerMetadata_LoopbackHTTPIssuer(t *testing.T) {
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/.well-known/openid-credential-issuer" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"credential_issuer":"` + srv.URL + `","credential_endpoint":"` + srv.URL + `/credential",` +
+			`"nonce_endpoint":"` + srv.URL + `/nonce","credential_configurations_supported":{}}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	w := newDiscoveryTestWallet(t) // validConfig sets Fetch.AllowLoopbackHTTP
+	md, err := w.FetchCredentialIssuerMetadata(t.Context(), srv.URL)
+	if err != nil {
+		t.Fatalf("FetchCredentialIssuerMetadata(%s): %v", srv.URL, err)
+	}
+	if md.CredentialIssuer.String() != srv.URL || md.NonceEndpoint == nil || md.NonceEndpoint.String() != srv.URL+"/nonce" {
+		t.Errorf("metadata = %+v", md)
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/url"
 
+	fapi "github.com/idfoundry/fapigo"
 	"github.com/idfoundry/fapigo/fapihttp"
 
 	"github.com/idfoundry/oid4vcgo"
@@ -27,8 +28,16 @@ func (w *Wallet) FetchCredentialIssuerMetadata(ctx context.Context, issuerURL st
 	if err != nil {
 		return oid4vci.Metadata{}, fmt.Errorf("wallet: fetch credential issuer metadata: %w", err)
 	}
-	var meta oid4vci.Metadata
-	if err := json.Unmarshal(res.Body, &meta); err != nil {
+	// Honor Config.Fetch.AllowLoopbackHTTP when decoding too, not just
+	// when fetching: otherwise a local http://127.0.0.1 issuer's
+	// metadata downloads fine and then fails to decode, since its URLs
+	// aren't https.
+	var opts []fapi.URLOption
+	if w.cfg.Fetch.AllowLoopbackHTTP {
+		opts = append(opts, fapi.AllowLoopbackHTTP())
+	}
+	meta, err := oid4vci.DecodeMetadata(res.Body, opts...)
+	if err != nil {
 		return oid4vci.Metadata{}, fmt.Errorf("wallet: fetch credential issuer metadata: decode: %w", err)
 	}
 	return meta, nil
