@@ -195,7 +195,7 @@ func (s *server) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 	respondFollowingRedirect(w, "Presented", presentedLead, redirectURI)
 }
 
-// respondFollowingRedirect writes w's own HTML response, following
+// respondFollowingRedirect writes w's own response page, following
 // redirectURI first if non-empty — shared by handleAuthorize's own
 // success path and respondWithError's own error path, which differ
 // only in title/leadParagraph, not in the follow-redirect-or-not
@@ -205,8 +205,14 @@ func (s *server) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 // navigates there next, closing the loop back to the Verifier's own
 // UI. This binary has no real browser; a plain GET completes the same
 // round trip for an automated flow.
+//
+// Served as text/plain (with nosniff), not text/html: the body echoes
+// Verifier-supplied values (redirect_uri, error descriptions)
+// unescaped, and its only consumer is run-modules' own substring
+// matching, so it never needs to render as HTML.
 func respondFollowingRedirect(w http.ResponseWriter, title, leadParagraph, redirectURI string) {
-	w.Header().Set(contentTypeHeader, "text/html; charset=utf-8")
+	w.Header().Set(contentTypeHeader, "text/plain; charset=utf-8")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	if redirectURI == "" {
 		_, _ = fmt.Fprintf(w, "<html><body><h1>%s</h1>%s</body></html>", title, leadParagraph)
 		return
