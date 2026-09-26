@@ -151,10 +151,26 @@ Also served: `/.well-known/openid-credential-issuer` (signed metadata),
 `/.well-known/oauth-authorization-server`, `/jwks`, and the SD-JWT VC
 type metadata at the `vct` URL (`/vct/passport/1`).
 
-**Demo shortcuts:** the approval step doesn't authenticate the holder,
-so `issuer_state` is a bearer secret until the transaction expires; the
-signing key and certificate are generated per process (a restart
-invalidates issued credentials); everything is in memory.
+**Demo shortcuts:**
+
+- **`issuer_state` is a bearer secret.** The approval step doesn't
+  authenticate the holder, so whoever has the credential offer — a
+  photographed QR code, a forwarded link — can redeem it with any wallet
+  the Wallet Provider attests, and get the passport's data in a
+  credential bound to *their* key.
+- **An offer is reusable until it expires (10 minutes).** Issuing a
+  credential doesn't consume the transaction, so the same offer can be
+  redeemed more than once, by more than one wallet. Only each pushed
+  authorization request (`request_uri`) and each approval are single-use.
+  (Keeping the transaction is what lets one wallet receive both formats,
+  in batches.)
+- The signing key and certificate are generated per process (a restart
+  invalidates issued credentials); everything is in memory.
+
+A production issuer would authenticate the holder at the approval step
+(for example by re-reading the passport over NFC with an issuer-chosen
+Active Authentication challenge), and bind each transaction to the one
+wallet that first redeems it.
 
 ### The verification flow
 

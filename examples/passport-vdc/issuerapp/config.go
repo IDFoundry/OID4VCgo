@@ -16,9 +16,12 @@
 // token's sub is therefore T, which the Credential Endpoint reads back
 // to find the Evidence to encode.
 //
-// In this demo issuer_state is a bearer secret: whoever scans the offer
-// can redeem it until the transaction expires. A production issuer
-// would authenticate the holder at the approval step.
+// In this demo issuer_state is a bearer secret: whoever has the offer
+// can redeem it until the transaction expires — repeatedly, and with
+// any attested wallet, since issuing doesn't consume the transaction
+// (only each request_uri and each approval are single-use). A
+// production issuer would authenticate the holder at the approval step
+// and bind the transaction to the first wallet that redeems it.
 package issuerapp
 
 import (
