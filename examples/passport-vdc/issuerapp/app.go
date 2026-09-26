@@ -62,6 +62,7 @@ type App struct {
 	interactions     *ttlMap[pendingInteraction] // interaction handle → approval
 	metadataSigner   *ecdsa.PrivateKey
 	metadataCert     *x509.Certificate
+	documentCert     *x509.Certificate
 	caCert           *x509.Certificate
 	handler          http.Handler
 }
@@ -79,7 +80,7 @@ func New(cfg Config) (*App, error) {
 		return nil, err
 	}
 	a.vct = cfg.IssuerURL + VCTPath
-	a.transactions = newTransactions(a.now, cfg.transactionLifetime())
+	a.transactions = newTransactions(a.now, cfg.transactionLifetime(), cfg.maxTransactions())
 	a.requestURIs = newTTLMap[string](a.now)
 	a.interactions = newTTLMap[pendingInteraction](a.now)
 
@@ -238,11 +239,11 @@ func (a *App) buildIssuer() error {
 	}
 	a.credentialURL = credentialURL.URL()
 
-	signer, cert, caCert, err := newIssuerIdentity(a.now())
+	id, err := newIssuerIdentity(a.now())
 	if err != nil {
 		return err
 	}
-	a.caCert = caCert
+	a.caCert = id.caCert
 	attestationRoots, err := certPool(a.cfg.Wallet.ProviderCA)
 	if err != nil {
 		return err
@@ -272,50 +273,73 @@ func (a *App) buildIssuer() error {
 		Random:              rand.Reader,
 		AttestationVerifier: issuer.X5CAttestationVerifier{Roots: attestationRoots},
 		SDJWTSigner: &issuer.SDJWTSigner{
-			Signer: signer, Alg: oid4vci.ES256, IssuerCertificate: cert,
+			Signer: id.documentSigner, Alg: oid4vci.ES256, IssuerCertificate: id.documentSignerCert,
 		},
 		MdocSigner: &issuer.MdocSigner{
-			Signer: signer, Alg: haip.RecommendedCOSEAlgorithm, X5Chain: [][]byte{cert.Raw},
+			Signer: id.documentSigner, Alg: haip.RecommendedCOSEAlgorithm, X5Chain: [][]byte{id.documentSignerCert.Raw},
 		},
 	})
 	if err != nil {
 		return fmt.Errorf("issuerapp: issuer.New: %w", err)
 	}
-	a.metadataSigner, a.metadataCert = signer, cert
+	a.metadataSigner, a.metadataCert = id.metadataSigner, id.metadataSignerCert
+	a.documentCert = id.documentSignerCert
 	return nil
 }
 
-// newIssuerIdentity generates this process's demo CA and, under it, the
-// document signer key and certificate carried as the SD-JWT's x5c and
-// the mdoc's x5chain. A verifier trusts the CA (App.IssuerCACertificate).
-// The signer is valid for two years so it outlives any credential the
-// one-year validity cap allows.
-func newIssuerIdentity(now time.Time) (signer *ecdsa.PrivateKey, signerCert, caCert *x509.Certificate, err error) {
+// issuerIdentity is this process's demo CA and the two keys certified
+// under it: the document signer (the SD-JWT's x5c, the mdoc's x5chain)
+// and a separate key that signs the Credential Issuer Metadata. A
+// verifier trusts the CA (App.IssuerCACertificate).
+type issuerIdentity struct {
+	caCert             *x509.Certificate
+	documentSigner     *ecdsa.PrivateKey
+	documentSignerCert *x509.Certificate
+	metadataSigner     *ecdsa.PrivateKey
+	metadataSignerCert *x509.Certificate
+}
+
+// newIssuerIdentity generates an issuerIdentity. The certificates are
+// valid for two years so they outlive any credential the one-year
+// validity cap allows; the CA key is discarded.
+func newIssuerIdentity(now time.Time) (issuerIdentity, error) {
 	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("issuerapp: CA key: %w", err)
+		return issuerIdentity{}, fmt.Errorf("issuerapp: CA key: %w", err)
 	}
-	caCert, err = democert.Create(&x509.Certificate{
+	var id issuerIdentity
+	id.caCert, err = democert.Create(&x509.Certificate{
 		Subject:   pkix.Name{CommonName: "passport-vdc demo CA", Organization: []string{"IDFoundry demo"}},
 		NotBefore: now.Add(-time.Hour), NotAfter: now.AddDate(5, 0, 0),
 		KeyUsage: x509.KeyUsageCertSign, IsCA: true, BasicConstraintsValid: true, MaxPathLenZero: true,
 	}, nil, &caKey.PublicKey, caKey)
 	if err != nil {
-		return nil, nil, nil, err
+		return issuerIdentity{}, fmt.Errorf("issuerapp: %w", err)
 	}
-	signer, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if id.documentSigner, id.documentSignerCert, err = issueSigner(now, "passport-vdc demo document signer", id.caCert, caKey); err != nil {
+		return issuerIdentity{}, err
+	}
+	if id.metadataSigner, id.metadataSignerCert, err = issueSigner(now, "passport-vdc demo metadata signer", id.caCert, caKey); err != nil {
+		return issuerIdentity{}, err
+	}
+	return id, nil
+}
+
+// issueSigner generates a signing key and its certificate under ca.
+func issueSigner(now time.Time, name string, ca *x509.Certificate, caKey *ecdsa.PrivateKey) (*ecdsa.PrivateKey, *x509.Certificate, error) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("issuerapp: signer key: %w", err)
+		return nil, nil, fmt.Errorf("issuerapp: %s key: %w", name, err)
 	}
-	signerCert, err = democert.Create(&x509.Certificate{
-		Subject:   pkix.Name{CommonName: "passport-vdc demo document signer", Organization: []string{"IDFoundry demo"}},
+	cert, err := democert.Create(&x509.Certificate{
+		Subject:   pkix.Name{CommonName: name, Organization: []string{"IDFoundry demo"}},
 		NotBefore: now.Add(-time.Hour), NotAfter: now.AddDate(2, 0, 0),
 		KeyUsage: x509.KeyUsageDigitalSignature,
-	}, caCert, &signer.PublicKey, caKey)
+	}, ca, &key.PublicKey, caKey)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, fmt.Errorf("issuerapp: %w", err)
 	}
-	return signer, signerCert, caCert, nil
+	return key, cert, nil
 }
 
 // certPool parses the PEM certificates in data into a pool.
@@ -342,7 +366,7 @@ func (s selfIssuerKeys) ResolveIssuerKeys(ctx context.Context, req keys.IssuerKe
 
 // IssuerCertificate is this process's document signer certificate,
 // carried in each credential's x5c / x5chain.
-func (a *App) IssuerCertificate() *x509.Certificate { return a.metadataCert }
+func (a *App) IssuerCertificate() *x509.Certificate { return a.documentCert }
 
 // IssuerCACertificate is the demo CA that issued IssuerCertificate —
 // the trust anchor a verifier configures for this issuer.

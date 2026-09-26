@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/demotest"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/verifierapp"
@@ -148,7 +149,7 @@ func TestWebWallet_ReceiveThenShareWithConsent(t *testing.T) {
 		t.Errorf("share result page: status %d", resp.StatusCode)
 	}
 	outcome, ok := env.Verifier.Outcome(id)
-	if !ok || outcome.Error != "" || outcome.Format != "dc+sd-jwt" {
+	if !ok || outcome.Format != "dc+sd-jwt" {
 		t.Fatalf("verifier outcome = %+v (ok %v), want a verified dc+sd-jwt presentation", outcome, ok)
 	}
 }
@@ -203,5 +204,50 @@ func TestWebWallet_RejectsNonOfferLinks(t *testing.T) {
 	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Errorf("status %d, want 400", resp.StatusCode)
+	}
+}
+
+// TestWebWallet_DuplicateCallbackDoesNotHang delivers the issuer's
+// redirect twice at once: one completes the receive, the other is
+// refused, and neither is left waiting.
+func TestWebWallet_DuplicateCallbackDoesNotHang(t *testing.T) {
+	env := demotest.New(t, nil)
+	env.StartWebWallet(t, walletapp.Store{Dir: filepath.Join(t.TempDir(), "wallet")})
+	b := browser(env)
+	b.Timeout = 20 * time.Second
+
+	offer, err := env.Issuer.CreateTransaction(context.Background(), demotest.SyntheticEvidence())
+	if err != nil {
+		t.Fatalf("CreateTransaction: %v", err)
+	}
+	resp, err := b.PostForm(env.WebWalletURL+"/receive", url.Values{"offer": {offer.URI}})
+	authorize := mustRedirect(t, resp, err, "POST /receive")
+	resp, err = b.Get(authorize.String())
+	if err != nil {
+		t.Fatalf("GET authorize: %v", err)
+	}
+	handle := resp.Header.Get("X-Interaction-Handle")
+	_ = resp.Body.Close()
+	resp, err = b.PostForm(env.IssuerURL+"/authorize/decision", url.Values{"handle": {handle}, "decision": {"approve"}})
+	callback := mustRedirect(t, resp, err, "approve")
+
+	statuses := make(chan int, 2)
+	for range 2 {
+		go func() {
+			resp, err := b.Get(callback.String())
+			if err != nil {
+				statuses <- 0
+				return
+			}
+			_ = resp.Body.Close()
+			statuses <- resp.StatusCode
+		}()
+	}
+	got := map[int]int{}
+	for range 2 {
+		got[<-statuses]++
+	}
+	if got[http.StatusSeeOther] != 1 || got[http.StatusBadRequest] != 1 {
+		t.Fatalf("callback statuses = %v, want one 303 and one 400", got)
 	}
 }

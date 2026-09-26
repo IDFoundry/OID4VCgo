@@ -7,6 +7,7 @@ require (
 	github.com/gmrtd/gmrtd v1.2.0
 	github.com/idfoundry/fapigo v0.33.0
 	github.com/idfoundry/oid4vcgo v0.0.0-00010101000000-000000000000
+	rsc.io/qr v0.2.0
 )
 
 require (

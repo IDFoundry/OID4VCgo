@@ -110,6 +110,7 @@ func (a *App) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 		// scraping the page.
 		w.Header().Set("X-Interaction-Handle", handle)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store") // shows the passport's identity
 		_ = approvalTemplate.Execute(w, approvalPage{
 			Handle: handle, ClientID: action.Interaction.ClientID.String(),
 			Identity: e.Identity, Scopes: action.Interaction.Scope,
@@ -152,8 +153,9 @@ func (a *App) handleDecision(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// No holder authentication happens in this demo, so the
-		// authentication context is a fixed placeholder.
-		authCtx, err := server.NewAuthenticationContext(a.now(), "urn:idfoundry:passport-vdc:demo", []string{"otp"})
+		// authentication context names the demo and claims no
+		// authentication method (amr).
+		authCtx, err := server.NewAuthenticationContext(a.now(), "urn:idfoundry:passport-vdc:demo", nil)
 		if err != nil {
 			writeHTMLError(w, http.StatusInternalServerError, "invalid authentication context")
 			return
