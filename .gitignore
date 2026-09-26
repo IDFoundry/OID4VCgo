@@ -39,3 +39,8 @@ go.work.sum
 # OID4VP Client Identifier/credential-issuer/holder signing keys) —
 # never commit a generated one.
 /conformance/*/oidf-config/*.config.json
+
+# gmrtd portable passport files are real passports' personal data —
+# examples/passport-vdc reads one from a path outside the repo
+# (PASSPORT_VDC_SAMPLE); never commit one.
+*.gmrtd

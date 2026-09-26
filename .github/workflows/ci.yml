@@ -97,6 +97,37 @@ jobs:
         with:
           version: v2.12
 
+  # examples/passport-vdc is its own Go module (it depends on gmrtd,
+  # which the library must not), so the root jobs' ./... never reaches
+  # it — without this job the demo would silently stop building. Its
+  # real-passport verification path is skipped here: that needs a
+  # synthetic test passport gmrtd doesn't provide yet (see
+  # examples/passport-vdc/README.md).
+  examples:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: examples/passport-vdc
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: examples/passport-vdc/go.mod
+          check-latest: true
+          cache-dependency-path: examples/passport-vdc/go.sum
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test (race)
+        run: go test -race ./...
+
+      - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: v2.12
+          working-directory: examples/passport-vdc
+
   govulncheck:
     runs-on: ubuntu-latest
     steps:
