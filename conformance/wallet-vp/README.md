@@ -221,15 +221,34 @@ across this module list, beyond the plain query-string callback
   included — see the update above for the exact wire shape) completes
   the module without needing an actual browser. `run-modules` now does
   this automatically.
-- **Every negative-test module** is `REVIEW`-gated: the suite's own
-  condition text is explicit ("the wallet should display an error, a
-  screenshot of which must be uploaded for the test to transition to
-  'FINISHED'"). This binary has no UI to screenshot — the real
-  pass/fail signal for a negative test is whether this binary's own
+- **Negative-test modules this binary rejects locally** (before
+  `response_uri`: `invalid-request-object-signature`,
+  `mismatched-client-id`, `invalid-client-id-prefix`) are
+  `REVIEW`-gated: the suite's own condition text is explicit ("the
+  wallet should display an error, a screenshot of which must be
+  uploaded for the test to transition to 'FINISHED'"). This binary has
+  no UI to screenshot — the real pass/fail signal is whether its own
   `/authorize` call errored out *before* it ever POSTed to
-  `response_uri` (confirmed directly from its own HTTP response body/
-  status, and cross-checked against the suite's own log never showing
-  a `responseuri` POST) — not the suite's own overall module verdict.
+  `response_uri` (confirmed from its own HTTP response body/status,
+  and cross-checked against the suite's own log never showing a
+  `responseuri` POST) — not the suite's own overall module verdict.
+- **Negative-test modules this binary answers with an OID4VP error
+  response** (`missing-nonce`, `redirect-uri-with-direct-post`,
+  `unknown-transaction-data-type`, `required-non-matching-credential`
+  — see `wallet.BuildDirectPostErrorResponse`) need no screenshot at
+  all. The suite logs its `REVIEW` screenshot placeholder (e.g.
+  `ExpectRedirectUriErrorPage`) as soon as the Request Object is
+  fetched, before the Wallet has responded, then validates the error
+  response (`DecryptResponse`, `EnsureErrorFromAuthorizationEndpointResponse`,
+  the expected-code check) and, on finishing, marks that placeholder
+  `"image_no_longer_required": true` and grades the module `PASSED`
+  (`AbstractTestModule.fireTestFinishedInternal`). Confirmed live
+  against the local suite (`release-v5.3.1`), 2026-09-26: all four
+  `FINISHED`/`PASSED`, zero images uploaded. The placeholder briefly
+  visible in the suite's UI is not a real requirement — uploading into
+  it anyway downgrades the result to `REVIEW`, which is exactly what
+  `run-modules` used to do by racing the suite; it now skips the
+  upload for these modules.
 
 **Positive-behavior modules — all clean.** `alternate-happy-flow`,
 `ignores-unusable-encryption-key`, `fewer-claims-than-available`,
