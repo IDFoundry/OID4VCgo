@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.13.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.12.0...v0.13.0) (2026-09-26)
+
+
+### ⚠ BREAKING CHANGES
+
+* verifier.Config and wallet.Config gain a required Assurance field; New rejects the zero value. Existing callers must set verifier.AssuranceDevelopment/wallet.AssuranceDevelopment to keep their current behavior, or the Production level to opt into the new checks. A custom SDJWTVCIssuerKeyResolver/MdocIssuerKeyResolver used with a production verifier must implement verifier.KeySourceAssurance.
+
+### Features
+
+* add a required AssuranceLevel to verifier.New and wallet.New ([e4afefc](https://github.com/IDFoundry/OID4VCgo/commit/e4afefc7b11431dc5503b2a1d5fb635154d3e96d))
+
+
+### Bug Fixes
+
+* **conformance:** don't fill the screenshot placeholder for wallet-VP error-response modules ([9ee66bf](https://github.com/IDFoundry/OID4VCgo/commit/9ee66bf49690ac646d32de82fa7aa806e75d2909))
+* **conformance:** serve wallet-VP's authorize result page as text/plain ([66bff90](https://github.com/IDFoundry/OID4VCgo/commit/66bff90f7280dcdf707a69f49572dc6a80f6ecf7))
+* **conformance:** stop warning on the 4 negative tests that correctly return 200 ([e4f945a](https://github.com/IDFoundry/OID4VCgo/commit/e4f945a9e3a02a2fa5ee7d0c71a5feb47c49b983))
+* **sdjwtvc:** bound IssueOptions.Decoys ([99f626e](https://github.com/IDFoundry/OID4VCgo/commit/99f626eee17b9b6d2b03850bdd43855e7a907af0))
+
 ## [0.12.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.11.1...v0.12.0) (2026-09-23)
 
 
