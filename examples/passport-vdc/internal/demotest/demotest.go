@@ -75,7 +75,7 @@ func New(t *testing.T, cscaPool cms.CertPool) *Env {
 		IssuerURL: e.IssuerURL, CSCAPool: cscaPool,
 		Wallet: issuerapp.WalletClient{
 			ClientID: WalletClientID, RedirectURIs: []string{RedirectURI, e.WebWalletURL + "/callback"},
-			ProviderIssuer: ProviderIssuer, ProviderJWKS: jwks,
+			ProviderIssuer: ProviderIssuer, ProviderJWKS: jwks, ProviderCA: provider.CACertificatePEM(),
 		},
 	})
 	if err != nil {

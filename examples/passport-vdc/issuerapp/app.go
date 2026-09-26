@@ -8,7 +8,6 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"fmt"
-	"math/big"
 	"net/http"
 	"net/url"
 	"strings"
@@ -28,6 +27,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/credential"
+	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/democert"
 	"github.com/idfoundry/oid4vcgo/haip"
 	"github.com/idfoundry/oid4vcgo/issuer"
 	oid4vcgostorage "github.com/idfoundry/oid4vcgo/storage"
@@ -243,6 +243,12 @@ func (a *App) buildIssuer() error {
 		return err
 	}
 	a.caCert = caCert
+	attestationRoots, err := certPool(a.cfg.Wallet.ProviderCA)
+	if err != nil {
+		return err
+	}
+	// Key attestation is required: attestation is the only proof type.
+	proofTypes := map[string]oid4vci.ProofTypeConfiguration{oid4vci.ProofTypeAttestation: haip.RecommendedAttestationProofType()}
 	a.issuer, err = issuer.New(issuer.Config{
 		Assurance: issuer.AssuranceDevelopment,
 		Issuer:    a.issuerURL,
@@ -252,18 +258,19 @@ func (a *App) buildIssuer() error {
 			MdocConfigurationID: {
 				Format: mdoc.CredentialFormat, DocType: credential.DocType, Scope: MdocScope,
 				CryptographicBindingMethodsSupported: []string{"cose_key"},
-				ProofTypesSupported:                  map[string]oid4vci.ProofTypeConfiguration{oid4vci.ProofTypeJWT: haip.RecommendedJWTProofType()},
+				ProofTypesSupported:                  proofTypes,
 			},
 			SDJWTConfigurationID: {
 				Format: sdjwtvc.CredentialFormat, VCT: a.vct, Scope: SDJWTScope,
 				CryptographicBindingMethodsSupported: []string{"jwk"},
-				ProofTypesSupported:                  map[string]oid4vci.ProofTypeConfiguration{oid4vci.ProofTypeJWT: haip.RecommendedJWTProofType()},
+				ProofTypesSupported:                  proofTypes,
 			},
 		},
 	}, issuer.Dependencies{
-		Nonces: oid4vcgostorage.NewNonceStore(),
-		Clock:  issuer.ClockFunc(a.now),
-		Random: rand.Reader,
+		Nonces:              oid4vcgostorage.NewNonceStore(),
+		Clock:               issuer.ClockFunc(a.now),
+		Random:              rand.Reader,
+		AttestationVerifier: issuer.X5CAttestationVerifier{Roots: attestationRoots},
 		SDJWTSigner: &issuer.SDJWTSigner{
 			Signer: signer, Alg: oid4vci.ES256, IssuerCertificate: cert,
 		},
@@ -288,7 +295,7 @@ func newIssuerIdentity(now time.Time) (signer *ecdsa.PrivateKey, signerCert, caC
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("issuerapp: CA key: %w", err)
 	}
-	caCert, err = createCertificate(&x509.Certificate{
+	caCert, err = democert.Create(&x509.Certificate{
 		Subject:   pkix.Name{CommonName: "passport-vdc demo CA", Organization: []string{"IDFoundry demo"}},
 		NotBefore: now.Add(-time.Hour), NotAfter: now.AddDate(5, 0, 0),
 		KeyUsage: x509.KeyUsageCertSign, IsCA: true, BasicConstraintsValid: true, MaxPathLenZero: true,
@@ -300,7 +307,7 @@ func newIssuerIdentity(now time.Time) (signer *ecdsa.PrivateKey, signerCert, caC
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("issuerapp: signer key: %w", err)
 	}
-	signerCert, err = createCertificate(&x509.Certificate{
+	signerCert, err = democert.Create(&x509.Certificate{
 		Subject:   pkix.Name{CommonName: "passport-vdc demo document signer", Organization: []string{"IDFoundry demo"}},
 		NotBefore: now.Add(-time.Hour), NotAfter: now.AddDate(2, 0, 0),
 		KeyUsage: x509.KeyUsageDigitalSignature,
@@ -311,22 +318,13 @@ func newIssuerIdentity(now time.Time) (signer *ecdsa.PrivateKey, signerCert, caC
 	return signer, signerCert, caCert, nil
 }
 
-// createCertificate signs tmpl with parentKey (self-signed when parent
-// is nil), giving it a random serial.
-func createCertificate(tmpl, parent *x509.Certificate, pub *ecdsa.PublicKey, parentKey *ecdsa.PrivateKey) (*x509.Certificate, error) {
-	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 62))
-	if err != nil {
-		return nil, fmt.Errorf("issuerapp: certificate serial: %w", err)
+// certPool parses the PEM certificates in data into a pool.
+func certPool(data []byte) (*x509.CertPool, error) {
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(data) {
+		return nil, fmt.Errorf("issuerapp: Wallet.ProviderCA holds no PEM certificate")
 	}
-	tmpl.SerialNumber = serial
-	if parent == nil {
-		parent = tmpl
-	}
-	der, err := x509.CreateCertificate(rand.Reader, tmpl, parent, pub, parentKey)
-	if err != nil {
-		return nil, fmt.Errorf("issuerapp: create certificate: %w", err)
-	}
-	return x509.ParseCertificate(der)
+	return pool, nil
 }
 
 // selfIssuerKeys resolves this process's own access-token signing key
