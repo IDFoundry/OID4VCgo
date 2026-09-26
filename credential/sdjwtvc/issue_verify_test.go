@@ -601,3 +601,16 @@ func TestRoundedExp_CrossesDayBoundary(t *testing.T) {
 		t.Errorf("RoundedExp(before) = %d, want %d (start of before's own day + lifetime)", got1, wantBefore)
 	}
 }
+
+func TestIssue_RejectsOutOfRangeDecoys(t *testing.T) {
+	issuerKey := testKey(t)
+	claims := Claims{VCT: "vc-type"}
+	for _, n := range []int{-1, MaxDecoys + 1, int(^uint(0) >> 1)} {
+		if _, _, err := Issue(issuerKey, jose.ES256, claims, IssueOptions{Decoys: n}); err == nil {
+			t.Errorf("Issue(Decoys=%d) = nil error, want error", n)
+		}
+	}
+	if _, _, err := Issue(issuerKey, jose.ES256, claims, IssueOptions{Decoys: MaxDecoys}); err != nil {
+		t.Errorf("Issue(Decoys=MaxDecoys): %v", err)
+	}
+}
