@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.15.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.14.0...v0.15.0) (2026-09-26)
+
+
+### Features
+
+* support authorization_servers in Credential Issuer Metadata ([0497eea](https://github.com/IDFoundry/OID4VCgo/commit/0497eeae35f708a0871d576aad5ee2e51135d580))
+
+
+### Bug Fixes
+
+* **wallet:** discover a loopback http issuer when AllowLoopbackHTTP is set ([c9115f4](https://github.com/IDFoundry/OID4VCgo/commit/c9115f4dac26ad2b5e1426c07f18d3afe950a52e))
+
 ## [0.14.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.13.0...v0.14.0) (2026-09-26)
 
 
