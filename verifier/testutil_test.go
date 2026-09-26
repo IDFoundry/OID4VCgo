@@ -67,15 +67,15 @@ func validConfig(t *testing.T) (verifier.Config, verifier.Dependencies) {
 	t.Helper()
 	key, cert := testSignerAndCert(t)
 	return verifier.Config{
-			ClientCertificate:  cert,
-			ResponseURI:        testResponseURI(t),
-			SigningAlg:         jose.ES256,
-			EncValuesSupported: []jwe.Enc{jwe.A128GCM, jwe.A256GCM},
-			VPFormatsSupported: map[string]any{"dc+sd-jwt": map[string]any{"sd-jwt_alg_values": []string{"ES256"}}},
-		}, verifier.Dependencies{
-			Signer: key,
-			Random: rand.Reader,
-		}
+		ClientCertificate:  cert,
+		ResponseURI:        testResponseURI(t),
+		SigningAlg:         jose.ES256,
+		EncValuesSupported: []jwe.Enc{jwe.A128GCM, jwe.A256GCM},
+		VPFormatsSupported: map[string]any{"dc+sd-jwt": map[string]any{"sd-jwt_alg_values": []string{"ES256"}}},
+	}, verifier.Dependencies{
+		Signer: key,
+		Random: rand.Reader,
+	}
 }
 
 // newTestVerifierWithConfig builds a *verifier.Verifier from a fresh
