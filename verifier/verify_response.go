@@ -243,6 +243,11 @@ func (v *Verifier) VerifyResponse(ctx context.Context, req VerifyResponseRequest
 	if err := checkTrustedAuthoritiesConfigured(req); err != nil {
 		return VerifyResponseResult{}, err
 	}
+	if v.cfg.Assurance == AssuranceProduction {
+		if err := checkProductionKeySources(req); err != nil {
+			return VerifyResponseResult{}, fmt.Errorf("verifier: verify response: %w", err)
+		}
+	}
 
 	if len(req.Query.CredentialSets) == 0 {
 		return v.verifyResponseWithoutCredentialSets(ctx, req)

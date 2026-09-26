@@ -206,6 +206,7 @@ func driveRealClientAuthFlow(t *testing.T, ctx context.Context, c *client.Client
 func requestCredentialViaRealClient(t *testing.T, ctx context.Context, httpClient *http.Client, cfg Config, c *client.Client, success client.CompletionSuccess) {
 	t.Helper()
 	w, err := wallet.New(wallet.Config{
+		Assurance:       wallet.AssuranceDevelopment,
 		ProofSigningAlg: jose.ES256,
 		Fetch: fapihttp.Config{
 			MaxResponseBytes: 1 << 16,

@@ -37,6 +37,7 @@ func New(t testing.TB) *verifier.Verifier {
 		t.Fatalf("testverifier: ParseEndpointURL: %v", err)
 	}
 	v, err := verifier.New(verifier.Config{
+		Assurance:          verifier.AssuranceDevelopment,
 		ClientCertificate:  cert,
 		ResponseURI:        responseURI,
 		SigningAlg:         jose.ES256,

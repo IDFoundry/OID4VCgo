@@ -121,6 +121,7 @@ func ExampleVerifier_VerifyResponse() {
 	}}}
 
 	v, err := verifier.New(verifier.Config{
+		Assurance:          verifier.AssuranceDevelopment,
 		ClientCertificate:  verifierCert,
 		ResponseURI:        responseURI,
 		SigningAlg:         jose.ES256,

@@ -68,6 +68,7 @@ func ExampleWallet_FetchAuthorizationRequest() {
 	}
 	responseURI, _ := fapi.ParseEndpointURL("https://verifier.example.com/response")
 	v, err := verifier.New(verifier.Config{
+		Assurance:          verifier.AssuranceDevelopment,
 		ClientCertificate:  clientCert,
 		ResponseURI:        responseURI,
 		SigningAlg:         oid4vci.ES256,
@@ -101,6 +102,7 @@ func ExampleWallet_FetchAuthorizationRequest() {
 
 	// --- The Wallet side: everything a real integration needs.
 	w, err := wallet.New(wallet.Config{
+		Assurance:       wallet.AssuranceDevelopment,
 		ProofSigningAlg: oid4vci.ES256,
 		Fetch: fapihttp.Config{
 			MaxResponseBytes: 1 << 20, RequestTimeout: 5 * time.Second,

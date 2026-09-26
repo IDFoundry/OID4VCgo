@@ -16,6 +16,13 @@ import (
 
 // Config is this Verifier's immutable configuration.
 type Config struct {
+	// Assurance gates how strict this package's own validation is —
+	// see AssuranceLevel's own doc comment. REQUIRED: New rejects the
+	// Go zero value, forcing every caller to make an explicit choice
+	// rather than silently getting AssuranceDevelopment's weaker
+	// checks by omission.
+	Assurance AssuranceLevel
+
 	// ClientCertificate is the leaf X.509 certificate whose SHA-256
 	// hash forms this Verifier's own "x509_hash" Client Identifier
 	// (§5.9.3) — HAIP §5's own mandated Client Identifier Prefix for
@@ -127,11 +134,17 @@ type Verifier struct {
 // "x509_hash:..." Client Identifier from cfg.ClientCertificate, and
 // returns a ready-to-use Verifier.
 func New(cfg Config, deps Dependencies) (*Verifier, error) {
+	if cfg.Assurance != AssuranceDevelopment && cfg.Assurance != AssuranceProduction {
+		return nil, fmt.Errorf("verifier: config: assurance level is invalid")
+	}
 	if cfg.ClientCertificate == nil {
 		return nil, fmt.Errorf("verifier: config: client_certificate is required")
 	}
 	if cfg.ResponseURI.IsZero() {
 		return nil, fmt.Errorf("verifier: config: response_uri is required")
+	}
+	if cfg.Assurance == AssuranceProduction && cfg.ResponseURI.URL().Scheme == "http" {
+		return nil, fmt.Errorf("verifier: config: response_uri was parsed with fapi.AllowLoopbackHTTP, which is not permitted under AssuranceProduction")
 	}
 	if cfg.SigningAlg == "" {
 		return nil, fmt.Errorf("verifier: config: signing_alg is required")

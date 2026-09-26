@@ -146,6 +146,7 @@ func testTokenEndpointURL(t *testing.T) fapi.URL {
 func testWalletForDPoP(t *testing.T, now time.Time) *wallet.Wallet {
 	t.Helper()
 	w, err := wallet.New(wallet.Config{
+		Assurance:       wallet.AssuranceDevelopment,
 		ProofSigningAlg: jose.ES256,
 		Fetch:           fapihttp.Config{MaxResponseBytes: 1 << 20, RequestTimeout: 5 * time.Second},
 	}, wallet.Dependencies{

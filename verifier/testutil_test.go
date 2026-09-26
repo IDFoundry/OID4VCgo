@@ -67,6 +67,7 @@ func validConfig(t *testing.T) (verifier.Config, verifier.Dependencies) {
 	t.Helper()
 	key, cert := testSignerAndCert(t)
 	return verifier.Config{
+			Assurance:          verifier.AssuranceDevelopment,
 			ClientCertificate:  cert,
 			ResponseURI:        testResponseURI(t),
 			SigningAlg:         jose.ES256,

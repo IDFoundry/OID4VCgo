@@ -355,6 +355,7 @@ func newPreAuthorizedRoundTripFixture(t *testing.T, configure func(cfg *issuer.C
 	}
 
 	w, err := wallet.New(wallet.Config{
+		Assurance:       wallet.AssuranceDevelopment,
 		ProofSigningAlg: jose.ES256,
 		Fetch:           fapihttp.Config{MaxResponseBytes: 1 << 20, RequestTimeout: 5 * time.Second, AllowLoopbackHTTP: true},
 	}, wallet.Dependencies{
@@ -788,6 +789,7 @@ func newWalletIssuerRoundTripFixture(
 	}
 
 	w, err := wallet.New(wallet.Config{
+		Assurance:       wallet.AssuranceDevelopment,
 		ProofSigningAlg: jose.ES256,
 		Fetch: fapihttp.Config{
 			MaxResponseBytes: 1 << 20, RequestTimeout: 5 * time.Second, AllowLoopbackHTTP: true,

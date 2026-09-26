@@ -105,6 +105,7 @@ func TestRecommendedIssuerConfigWorksWithIssuerNew(t *testing.T) {
 func TestRecommendedWalletConfigWorksWithWalletNew(t *testing.T) {
 	rec := haip.RecommendedWalletConfig()
 	_, err := wallet.New(wallet.Config{
+		Assurance:       wallet.AssuranceDevelopment,
 		ProofSigningAlg: rec.ProofSigningAlg,
 		Fetch:           fapihttp.Config{MaxResponseBytes: 1 << 20, RequestTimeout: 5 * time.Second},
 	}, wallet.Dependencies{
@@ -139,6 +140,7 @@ func TestRecommendedVerifierConfigWorksWithVerifierNew(t *testing.T) {
 
 	rec := haip.RecommendedVerifierConfig()
 	_, err = verifier.New(verifier.Config{
+		Assurance:          verifier.AssuranceDevelopment,
 		ClientCertificate:  cert,
 		ResponseURI:        responseURI,
 		SigningAlg:         rec.SigningAlg,
