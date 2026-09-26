@@ -224,12 +224,18 @@ func issueAndVerifySDJWT(t *testing.T, claims *sdjwtvc.Claims) map[string]any {
 }
 
 func TestSDJWTClaims_Adult(t *testing.T) {
-	claims, err := SDJWTClaims(adult(), testVCT, Options{Now: now})
+	claims, err := SDJWTClaims(adult(), testVCT, Options{Now: now, Issuer: "https://issuer.example.com"})
 	if err != nil {
 		t.Fatalf("SDJWTClaims: %v", err)
 	}
 	payload := issueAndVerifySDJWT(t, claims)
 
+	if payload["iss"] != "https://issuer.example.com" {
+		t.Errorf("iss = %v", payload["iss"])
+	}
+	if iat, _ := payload["iat"].(float64); int64(iat) != now.Unix() {
+		t.Errorf("iat = %v, want %d", payload["iat"], now.Unix())
+	}
 	if payload["vct"] != testVCT || payload[FamilyName] != "DOE" || payload[SDJWTBirthDate] != "1980-01-01" {
 		t.Errorf("payload = %v", payload)
 	}
@@ -247,6 +253,25 @@ func TestSDJWTClaims_Adult(t *testing.T) {
 		if err != nil || !bytes.Equal(got, want) {
 			t.Errorf("%s did not round-trip byte-for-byte", name)
 		}
+	}
+}
+
+// TestSDJWTClaims_IssAndIatAlwaysDisclosed checks iss and iat are plain
+// claims, not disclosures a holder could withhold.
+func TestSDJWTClaims_IssAndIatAlwaysDisclosed(t *testing.T) {
+	claims, err := SDJWTClaims(adult(), testVCT, Options{Now: now, Issuer: "https://issuer.example.com"})
+	if err != nil {
+		t.Fatalf("SDJWTClaims: %v", err)
+	}
+	if claims.Iss != "https://issuer.example.com" {
+		t.Errorf("Claims.Iss = %q", claims.Iss)
+	}
+	if iat, ok := claims.Additional["iat"].(int64); !ok || iat != now.Unix() {
+		t.Errorf("Additional[iat] = %#v, want a plain %d", claims.Additional["iat"], now.Unix())
+	}
+	noIssuer, err := SDJWTClaims(adult(), testVCT, Options{Now: now})
+	if err != nil || noIssuer.Iss != "" {
+		t.Errorf("without Options.Issuer: Iss = %q, err %v; want no iss", noIssuer.Iss, err)
 	}
 }
 

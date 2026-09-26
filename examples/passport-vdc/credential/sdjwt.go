@@ -12,7 +12,8 @@ import (
 
 // SDJWTClaims encodes e as dc+sd-jwt content under vct (the URL this
 // demo serves its SD-JWT VC type metadata at). Every claim except the
-// registered ones (vct, iss, exp) is selectively disclosable; each age
+// registered ones (vct, iss, iat, exp — always disclosed) is
+// selectively disclosable; each age
 // threshold and each raw data group is its own disclosure. CNF is left
 // unset: issuer.RequestCredential binds each issued instance to the
 // Wallet's own key.
@@ -59,9 +60,11 @@ func SDJWTClaims(e passport.Evidence, vct string, o Options) (*sdjwtvc.Claims, e
 		claims[ICAODG11] = sdjwtvc.SD(b64(e.Raw.DG11))
 	}
 
+	claims["iat"] = o.Now.Unix()
 	exp := validUntil.Unix()
 	return &sdjwtvc.Claims{
 		VCT:        vct,
+		Iss:        o.Issuer,
 		Exp:        &exp,
 		Additional: claims,
 	}, nil

@@ -65,7 +65,7 @@ func (a *App) handleCredential(w http.ResponseWriter, r *http.Request) {
 	// Both formats are always built from the same Evidence;
 	// RequestCredential uses whichever the requested configuration
 	// needs.
-	opts := credential.Options{Now: a.now()}
+	opts := credential.Options{Now: a.now(), Issuer: a.cfg.IssuerURL}
 	mdocClaims, err := credential.MdocClaims(e, opts)
 	if err != nil {
 		writeCredentialError(w, "this passport can't be issued: "+err.Error())

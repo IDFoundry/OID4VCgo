@@ -9,8 +9,13 @@ import (
 
 // Options controls validity and age claims for both encoders.
 type Options struct {
-	// Now is the issuance time.
+	// Now is the issuance time — also the SD-JWT's iat.
 	Now time.Time
+
+	// Issuer is the Credential Issuer's identifier, set as the
+	// SD-JWT's iss claim when non-empty. (An mdoc carries its issuer
+	// only in its x5chain.)
+	Issuer string
 
 	// MaxValidity caps how long the credential is valid; zero means one
 	// year. The credential never outlives the passport or the next age

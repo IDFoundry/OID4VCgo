@@ -73,6 +73,9 @@ func TestEndToEnd_IssuesBothFormats(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sdjwtvc.Verify: %v", err)
 	}
+	if payload["iss"] != env.IssuerURL || payload["iat"] == nil {
+		t.Errorf("sd-jwt iss = %v, iat = %v; want the issuer URL and an issuance time", payload["iss"], payload["iat"])
+	}
 	if payload["vct"] != env.IssuerURL+issuerapp.VCTPath || payload[credential.FamilyName] != "DOE" || payload[credential.ICAOSOD] == nil {
 		t.Errorf("sd-jwt payload = %v", payload)
 	}
