@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.14.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.13.0...v0.14.0) (2026-09-26)
+
+
+### Features
+
+* **attestation:** add IssueWalletAttestation for Wallet Providers ([#228](https://github.com/IDFoundry/OID4VCgo/issues/228)) ([4c93453](https://github.com/IDFoundry/OID4VCgo/commit/4c93453051363c3e2b8de265cf7216c6c2e64868))
+* **issuer:** carry a pre-authorized_code's subject into the access token ([f56f49a](https://github.com/IDFoundry/OID4VCgo/commit/f56f49a8a9d4237e3cc65c56fb859e5efeb00539))
+
+
+### Bug Fixes
+
+* **sdjwtvc:** bound a whole SD-JWT presentation at 1 MiB, not 64 KiB ([1a59a75](https://github.com/IDFoundry/OID4VCgo/commit/1a59a7505e1ad527765d5339b8086c56940f6502))
+
 ## [0.13.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.12.0...v0.13.0) (2026-09-26)
 
 
