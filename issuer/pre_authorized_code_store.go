@@ -54,6 +54,20 @@ type PreAuthorizedCodeRecord struct {
 	// ExpiresAt bounds how long this pre-authorized_code remains
 	// redeemable.
 	ExpiresAt time.Time
+
+	// Subject identifies, to this caller only, whose Credential this
+	// pre-authorized_code redeems for — typically an opaque reference
+	// to whatever the caller verified before making the offer (an
+	// end-user account, a pending issuance transaction). The
+	// Pre-Authorized Code Flow's own Token Request carries no end-user
+	// identity of its own (§6.1), so without this nothing links the
+	// resulting access token, and therefore a later Credential
+	// Request, back to that data. ExchangePreAuthorizedCode passes it
+	// through as AccessTokenParams.Subject unmodified; this package
+	// never interprets it. Optional. Use an opaque, unguessable value,
+	// not personal data: a self-contained access token (e.g. a JWT's
+	// own "sub" claim) is readable by the Wallet.
+	Subject string
 }
 
 // PreAuthorizedCodeStore persists pre-authorized_code values a caller

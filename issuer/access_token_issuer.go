@@ -21,6 +21,14 @@ type AccessTokenParams struct {
 	// uses (a JWT access token's own cnf.jkt claim, RFC 7800).
 	Thumbprint string
 
+	// Subject is the redeemed PreAuthorizedCodeRecord's own Subject,
+	// passed through unmodified — record it as the token's subject (a
+	// JWT access token's own "sub" claim, or alongside an opaque token
+	// server-side) so the Credential Endpoint can recover it from the
+	// verified token and look up what to issue. Empty when the record
+	// set none.
+	Subject string
+
 	// Claims are additional claims to embed in a self-contained token
 	// format, if any. Set exactly when the redeemed
 	// PreAuthorizedCodeRecord's own CredentialConfigurationIDs is
@@ -63,12 +71,14 @@ type AccessTokenParams struct {
 //	func (a accessTokenAdapter) IssueAccessToken(ctx context.Context, p issuer.AccessTokenParams) (string, string, error) {
 //		return a.inner.IssueAccessToken(ctx, server.AccessTokenParams{
 //			Scope: p.Scope, Thumbprint: p.Thumbprint, Claims: p.Claims,
+//			Subject: p.Subject,
 //			Issuer: p.Issuer, Audience: p.Audience,
 //			Now: p.Now, Lifetime: p.Lifetime, Random: p.Random,
-//			// ClientID/Subject are left zero — the Pre-Authorized Code
-//			// Flow's own Token Request is typically unauthenticated
-//			// (§6.1: client authentication is OPTIONAL) and has no
-//			// authenticated end-user identity to set as Subject.
+//			// ClientID is left zero — the Pre-Authorized Code Flow's
+//			// own Token Request is typically unauthenticated (§6.1:
+//			// client authentication is OPTIONAL). Subject is whatever
+//			// the redeemed PreAuthorizedCodeRecord carried, not an
+//			// authenticated end-user identity.
 //			// SenderConstrain defaults to its own zero value,
 //			// storage.SenderConstrainDPoP — correct here, since HAIP
 //			// 1.0 §4 makes DPoP mandatory for this grant.

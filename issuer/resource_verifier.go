@@ -38,8 +38,15 @@ package issuer
 //		}
 //	}
 //
-// Subject, ExpiresAt, and Key are all meaningless to a Credential
-// Request and dropped — AuthorizedRequest exists to check a requested
+// authCtx.Subject is not part of AuthorizedRequest, but it is how the
+// caller finds out what to issue: for a token minted by
+// ExchangePreAuthorizedCode it is the redeemed
+// PreAuthorizedCodeRecord's own Subject (see AccessTokenParams.Subject),
+// so look up the credential content by it before building
+// CredentialRequest.SDJWTClaims/MdocClaims.
+//
+// Subject, ExpiresAt, and Key are all meaningless to AuthorizedRequest
+// itself and dropped — AuthorizedRequest exists to check a requested
 // CredentialConfiguration's own Scope (or, for a credential_identifier-based
 // request, AuthorizationDetails) against what the token grants (§8.2)
 // and a jwt-type proof's "iss" claim against ClientIdentity (Appendix F.1),
