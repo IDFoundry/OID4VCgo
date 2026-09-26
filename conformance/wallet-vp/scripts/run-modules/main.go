@@ -34,8 +34,12 @@
 // call.
 //
 // A positive-behavior module (happy-flow and 5 others) completes to a
-// clean FINISHED/PASSED from that alone. Every negative-test module is
-// REVIEW-gated instead (the suite's own condition text: "the wallet
+// clean FINISHED/PASSED from that alone. So does a negative-test
+// module this binary answers with an OID4VP error response
+// (negativeTestExpectedErrorCode's entries): the suite validates the
+// error response and withdraws its own screenshot placeholder, so no
+// upload is needed or made. Every other negative-test module (rejected
+// locally, before response_uri) is REVIEW-gated instead (the suite's own condition text: "the wallet
 // should display an error, a screenshot of which must be uploaded for
 // the test to transition to FINISHED") — filled the same proven way
 // conformance/verifier's own scripts and
@@ -742,14 +746,21 @@ func driveOne(httpClient *http.Client, apiBase, walletVPBase, planID, testName s
 		}
 	}
 
-	// Optional: only negative-test modules need this (see package doc
-	// comment) — a short, non-fatal grace period, since a
-	// positive-behavior module that already reached FINISHED/PASSED
-	// never gets one.
-	if entry, ok := pollUpload(httpClient, apiBase, module.ID, uploadTimeout); ok {
-		if err := postPlaceholder(httpClient, apiBase, module.ID, entry); err != nil {
-			res.err = fmt.Errorf("fill upload placeholder: %w", err)
-			return res
+	// Optional: only negative-test modules that reject locally need
+	// this (see package doc comment) — a short, non-fatal grace
+	// period, since a positive-behavior module that already reached
+	// FINISHED/PASSED never gets one. Skipped when this binary sent an
+	// error response: the suite creates its screenshot placeholder as
+	// soon as the Request Object is fetched, then withdraws it
+	// ("image_no_longer_required") once it validates that response and
+	// grades the module PASSED — filling it first would race the suite
+	// and downgrade the result to REVIEW.
+	if !sendsErrorResponse {
+		if entry, ok := pollUpload(httpClient, apiBase, module.ID, uploadTimeout); ok {
+			if err := postPlaceholder(httpClient, apiBase, module.ID, entry); err != nil {
+				res.err = fmt.Errorf("fill upload placeholder: %w", err)
+				return res
+			}
 		}
 	}
 
