@@ -12,10 +12,16 @@ import (
 
 // SDJWTClaims encodes e as dc+sd-jwt content under vct (the URL this
 // demo serves its SD-JWT VC type metadata at). Every claim except the
-// registered ones (vct, iss, exp) is selectively disclosable; each age
+// registered ones (vct, exp) is selectively disclosable; each age
 // threshold and each raw data group is its own disclosure. CNF is left
 // unset: issuer.RequestCredential binds each issued instance to the
 // Wallet's own key.
+//
+// iss and iat are deliberately omitted. The issuer is conveyed by the
+// x5c end-entity certificate (HAIP requires x5c; SD-JWT VC draft-11
+// §3.2.2.2 and §3.5), and an HTTPS iss would instead point verifiers at
+// JWT VC Issuer Metadata, which this demo doesn't serve. iat is
+// optional.
 func SDJWTClaims(e passport.Evidence, vct string, o Options) (*sdjwtvc.Claims, error) {
 	if vct == "" {
 		return nil, fmt.Errorf("credential: vct is required")
