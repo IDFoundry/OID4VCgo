@@ -26,7 +26,7 @@ func upload(t *testing.T, issuerURL string, data []byte) (*http.Response, string
 	if err := mw.Close(); err != nil {
 		t.Fatalf("close multipart: %v", err)
 	}
-	resp, err := http.Post(issuerURL+"/passport", mw.FormDataContentType(), &body)
+	resp, err := tlsClients[issuerURL].Post(issuerURL+"/passport", mw.FormDataContentType(), &body)
 	if err != nil {
 		t.Fatalf("POST /passport: %v", err)
 	}
@@ -56,7 +56,7 @@ func TestUploadPage(t *testing.T) {
 		t.Fatalf("walletprovider.New: %v", err)
 	}
 	_, issuerURL := startIssuer(t, provider)
-	resp, err := http.Get(issuerURL + "/")
+	resp, err := tlsClients[issuerURL].Get(issuerURL + "/")
 	if err != nil {
 		t.Fatalf("GET /: %v", err)
 	}
