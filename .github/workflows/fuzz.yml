@@ -179,7 +179,24 @@ jobs:
         # little or no restored corpus finds new inputs constantly
         # early on, and at the default the job spends much of its 5
         # minutes minimizing rather than fuzzing.
-        run: go test ${{ matrix.target.pkg }} -run='^$' -fuzz='^${{ matrix.target.name }}$' -fuzztime=5m -fuzzminimizetime=10s
+        #
+        # A "context deadline exceeded" failure with no failing input
+        # written is Go's fuzzing engine tripping over its own -fuzztime
+        # deadline (typically mid-minimization), not a finding: every
+        # real failure writes its input under testdata/fuzz and says so.
+        # That case is downgraded to a warning; anything else fails.
+        run: |
+          set +e
+          go test ${{ matrix.target.pkg }} -run='^$' -fuzz='^${{ matrix.target.name }}$' -fuzztime=5m -fuzzminimizetime=10s 2>&1 | tee "$RUNNER_TEMP/fuzz.log"
+          status=${PIPESTATUS[0]}
+          set -e
+          if [ "$status" -ne 0 ] \
+            && grep -q 'context deadline exceeded' "$RUNNER_TEMP/fuzz.log" \
+            && ! grep -q 'Failing input written to' "$RUNNER_TEMP/fuzz.log"; then
+            echo "::warning::${{ matrix.target.name }} hit the fuzz engine's own deadline error with no failing input; treating as a pass"
+            exit 0
+          fi
+          exit "$status"
 
       # always(): a run that finds a failure still grew the corpus up to
       # that point, and a failing input itself lands in testdata/fuzz,
