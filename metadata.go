@@ -346,11 +346,14 @@ type ResponseEncryptionMetadata struct {
 // document (§12.2.4) — issuer.Issuer.Metadata() builds one to serve at
 // GET /.well-known/openid-credential-issuer, and
 // wallet.FetchCredentialIssuerMetadata decodes one fetched from there.
-// Deliberately only the REQUIRED members plus what
-// CredentialConfigurationsSupported needs so far; see ARCHITECTURE.md
-// for what's still missing (authorization_servers).
 type Metadata struct {
-	CredentialIssuer                  fapi.URL                                   `json:"credential_issuer"`
+	CredentialIssuer fapi.URL `json:"credential_issuer"`
+	// AuthorizationServers are the OAuth 2.0 Authorization Servers
+	// (their issuer identifiers) this Credential Issuer relies on
+	// (§12.2.4). OPTIONAL: when absent, the Credential Issuer is its
+	// own Authorization Server. With more than one, a Credential Offer
+	// grant's authorization_server says which one to use.
+	AuthorizationServers              []fapi.URL                                 `json:"authorization_servers,omitempty"`
 	CredentialEndpoint                fapi.URL                                   `json:"credential_endpoint"`
 	NonceEndpoint                     *fapi.URL                                  `json:"nonce_endpoint,omitempty"`
 	DeferredCredentialEndpoint        *fapi.URL                                  `json:"deferred_credential_endpoint,omitempty"`
@@ -369,11 +372,14 @@ type Metadata struct {
 // generic decoder can't make on the caller's behalf") — so
 // UnmarshalJSON below decodes into this plain-string shape first, then
 // makes that choice itself: ParseIssuerURL for CredentialIssuer (an
-// Issuer identifier), ParseEndpointURL for every other URL field (a
+// Issuer identifier) and each AuthorizationServers entry (an
+// Authorization Server's issuer identifier), ParseEndpointURL for
+// every other URL field (a
 // plain reachable endpoint), matching issuer.Config's own identical
 // split between its Issuer and Endpoints fields.
 type wireMetadata struct {
 	CredentialIssuer                  string                                     `json:"credential_issuer"`
+	AuthorizationServers              []string                                   `json:"authorization_servers,omitempty"`
 	CredentialEndpoint                string                                     `json:"credential_endpoint"`
 	NonceEndpoint                     *string                                    `json:"nonce_endpoint,omitempty"`
 	DeferredCredentialEndpoint        *string                                    `json:"deferred_credential_endpoint,omitempty"`
@@ -397,6 +403,14 @@ func (m *Metadata) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return fmt.Errorf("credential_issuer: %w", err)
 	}
+	var authorizationServers []fapi.URL
+	for i, raw := range wire.AuthorizationServers {
+		u, err := fapi.ParseIssuerURL(raw)
+		if err != nil {
+			return fmt.Errorf("authorization_servers[%d]: %w", i, err)
+		}
+		authorizationServers = append(authorizationServers, u)
+	}
 	credentialURL, err := fapi.ParseEndpointURL(wire.CredentialEndpoint)
 	if err != nil {
 		return fmt.Errorf("credential_endpoint: %w", err)
@@ -415,7 +429,7 @@ func (m *Metadata) UnmarshalJSON(data []byte) error {
 	}
 
 	*m = Metadata{
-		CredentialIssuer: issuerURL, CredentialEndpoint: credentialURL,
+		CredentialIssuer: issuerURL, AuthorizationServers: authorizationServers, CredentialEndpoint: credentialURL,
 		NonceEndpoint: nonceURL, DeferredCredentialEndpoint: deferredURL, NotificationEndpoint: notificationURL,
 		CredentialConfigurationsSupported: wire.CredentialConfigurationsSupported,
 		CredentialRequestEncryption:       wire.CredentialRequestEncryption,

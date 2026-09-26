@@ -117,6 +117,17 @@ type Config struct {
 	// value Metadata's own credential_issuer member echoes.
 	Issuer fapi.URL
 
+	// AuthorizationServers are the OAuth 2.0 Authorization Servers
+	// (their issuer identifiers) this Credential Issuer relies on,
+	// advertised as Metadata's authorization_servers (§12.2.4).
+	// OPTIONAL: leave empty when this Credential Issuer is its own
+	// Authorization Server (for example, paired with a fapigo/server at
+	// the same identifier — see authorization_server.go). With more
+	// than one, a Credential Offer grant may name which to use via its
+	// authorization_server, which must then be one of these (§4.1.1);
+	// otherwise a grant must not set it.
+	AuthorizationServers []fapi.URL
+
 	Endpoints Endpoints
 	Limits    Limits
 
@@ -444,6 +455,9 @@ func validateConfig(cfg Config) error {
 	if cfg.Issuer.IsZero() {
 		return fmt.Errorf("issuer: config: issuer is required")
 	}
+	if err := validateAuthorizationServers(cfg.AuthorizationServers); err != nil {
+		return err
+	}
 	if cfg.Endpoints.Credential.IsZero() {
 		return fmt.Errorf("issuer: config: endpoints.credential is required")
 	}
@@ -591,6 +605,22 @@ func validateSignerDependencies(cfg Config, deps Dependencies) error {
 		if _, ok := c.ProofTypesSupported[oid4vci.ProofTypeAttestation]; ok && deps.AttestationVerifier == nil {
 			return fmt.Errorf("credential_configurations_supported[%q]: attestation_verifier is required when proof_types_supported includes %q", id, oid4vci.ProofTypeAttestation)
 		}
+	}
+	return nil
+}
+
+// validateAuthorizationServers rejects an unset or repeated
+// authorization_servers entry.
+func validateAuthorizationServers(servers []fapi.URL) error {
+	seen := make(map[string]bool, len(servers))
+	for i, u := range servers {
+		if u.IsZero() {
+			return fmt.Errorf("issuer: config: authorization_servers[%d] is unset", i)
+		}
+		if seen[u.String()] {
+			return fmt.Errorf("issuer: config: authorization_servers lists %s more than once", u)
+		}
+		seen[u.String()] = true
 	}
 	return nil
 }
