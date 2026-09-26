@@ -5,10 +5,9 @@ verifies it against the issuing country's own signatures, and turns it
 into a verifiable digital credential in **both** `mso_mdoc` and
 `dc+sd-jwt`, issued over OID4VCI (HAIP).
 
-> **Status:** the format-neutral core — passport verification, the
-> evidence model and both credential encoders — is in place and tested.
-> The OID4VCI issuer, a wallet CLI and a verifier come next (see
-> [Roadmap](#roadmap)).
+> **Status:** passport verification, both credential encoders and the
+> OID4VCI issuer are in place. A wallet CLI and a verifier come next
+> (see [Roadmap](#roadmap)).
 
 This is a separate Go module: it's the only code in this repository
 that depends on gmrtd. It builds against this checkout of the library
@@ -80,6 +79,49 @@ What the second path does and doesn't give you:
   names (in `credential/names.go`) should be aligned with ISO/IEC
   23220-4's DTC namespace before this is presented as interoperable.
 
+## Running the issuer
+
+```sh
+go run ./cmd/wallet-provider     # once: wallet-provider.pem + wallet-provider.jwks.json
+go run ./cmd/issuer              # http://127.0.0.1:8080
+```
+
+Open http://127.0.0.1:8080 and upload a gmrtd portable passport file.
+It's verified against gmrtd's built-in ICAO CSCA master list, and the
+result page shows a credential offer for both formats.
+
+`cmd/wallet-provider` creates the demo's **stand-in Wallet Provider**
+key. The issuer registers one wallet client (`passport-vdc-wallet`,
+redirect URI `http://127.0.0.1:8765/callback`) and accepts Wallet
+Attestations signed by that key; the demo wallet will use the private
+half to attest itself. Keep `wallet-provider.pem` private — both files
+are git-ignored.
+
+### The issuance flow
+
+| Step | Endpoint | What happens |
+|---|---|---|
+| Upload | `POST /passport` | gmrtd verification → a transaction T holding the `Evidence` (in memory, 10 minutes) → a credential offer with `issuer_state` = T |
+| PAR | `POST /par` | fapigo verifies Wallet Attestation + PoP and DPoP; this app records `request_uri` → T from the form's `issuer_state` |
+| Approve | `GET /authorize`, `POST /authorize/decision` | shows the passport holder's name; approval authorizes **subject = T**, granting the scopes the wallet requested |
+| Token | `POST /token` | DPoP-bound access token with `sub` = T |
+| Credential | `POST /nonce`, `POST /credential` | the token's `sub` finds T's `Evidence`; the requested configuration (`passport_mdoc` or `passport_sdjwt`) is encoded, bound to the wallet's proof key and signed |
+
+`issuer_state` has to be captured at PAR because fapigo doesn't surface
+extension values at the authorization step (see the library's
+`issuer/authorization_server.go`). Only plain form parameters are read,
+so a wallet sending `issuer_state` inside a signed request object isn't
+supported.
+
+Also served: `/.well-known/openid-credential-issuer` (signed metadata),
+`/.well-known/oauth-authorization-server`, `/jwks`, and the SD-JWT VC
+type metadata at the `vct` URL (`/vct/passport/1`).
+
+**Demo shortcuts:** the approval step doesn't authenticate the holder,
+so `issuer_state` is a bearer secret until the transaction expires; the
+signing key and certificate are generated per process (a restart
+invalidates issued credentials); everything is in memory.
+
 ## Running the tests
 
 ```sh
@@ -95,8 +137,11 @@ PASSPORT_VDC_SAMPLE=/path/to/passport.gmrtd go test ./...
 ```
 
 A real passport file is personal data. Never commit one — `*.gmrtd` is
-in `.gitignore` as a backstop. CI runs everything except those tests
-until gmrtd provides a synthetic test passport (a test CSCA → DSC → SOD
+in `.gitignore` as a backstop. CI runs everything else — including a full
+end-to-end issuance of both formats (`issuerapp`'s
+`TestEndToEnd_IssuesBothFormats`: a real fapigo client and oid4vcgo
+wallet, with synthetic passport evidence) — until gmrtd provides a
+synthetic test passport (a test CSCA → DSC → SOD
 generator, planned for gmrtd itself).
 
 ## Layout
@@ -105,13 +150,13 @@ generator, planned for gmrtd itself).
 |---|---|
 | `passport` | gmrtd → verified `Evidence`; the birth-date rule |
 | `credential` | `Evidence` → `mdoc.Claims` / `sdjwtvc.Claims`; validity and age claims |
+| `issuerapp` | the OID4VCI issuer: fapigo Authorization Server + oid4vcgo Issuer + upload page |
+| `walletprovider` | the stand-in Wallet Provider that signs Wallet Attestations |
+| `cmd/issuer`, `cmd/wallet-provider` | runnable binaries |
 
 ## Roadmap
 
-1. **Issuer** — upload page, credential offer with `issuer_state`, and
-   the HAIP Authorization Code flow. The demo's PAR handler links
-   `issuer_state` to the verified passport (see `issuer/authorization_server.go`'s
-   "issuer_state does not resurface through BeginAuthorization").
+1. ~~**Issuer**~~ — done.
 2. **Wallet CLI** — end-to-end issuance of both formats in CI.
 3. **Verifier** — one request accepting either format, and both trust
    paths side by side.
