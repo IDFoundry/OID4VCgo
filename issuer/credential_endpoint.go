@@ -419,7 +419,7 @@ func (iss *Issuer) resolveProofKeys(
 	case oid4vci.ProofTypeJWT:
 		return iss.resolveJWTProofKeys(ctx, auth, values, ptc)
 	case oid4vci.ProofTypeAttestation:
-		return iss.resolveAttestationProofKeys(ctx, values)
+		return iss.resolveAttestationProofKeys(ctx, values, ptc)
 	default:
 		return nil, newError(ErrorInvalidProof, 400, fmt.Sprintf("proof type %q is not supported", proofType), nil)
 	}
