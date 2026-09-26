@@ -88,6 +88,13 @@ func RoundedExp(now time.Time, lifetime time.Duration) int64 {
 	return dayStart.Add(lifetime).Unix()
 }
 
+// MaxDecoys bounds IssueOptions.Decoys. RFC 9901 §4.2.5 sets no limit,
+// but decoys only need to obscure how many claims are really
+// selectively disclosable — a handful per credential does that — and
+// an unbounded value turns a misconfiguration into a panic or memory
+// exhaustion instead of an error.
+const MaxDecoys = 1000
+
 // IssueOptions configures Issue.
 type IssueOptions struct {
 	// HashAlg selects the digest algorithm (RFC 9901 §4.1.1). Defaults
@@ -96,7 +103,8 @@ type IssueOptions struct {
 	HashAlg HashAlg
 
 	// Decoys adds this many decoy digests to the top-level _sd array
-	// (RFC 9901 §4.2.5). 0 by default.
+	// (RFC 9901 §4.2.5). 0 by default; Issue rejects a negative value
+	// or one above MaxDecoys.
 	Decoys int
 
 	// KeyID sets the JOSE "kid" header on the Issuer-signed JWT, if
@@ -171,6 +179,9 @@ func issuerJWTHeader(opts IssueOptions) map[string]any {
 func Issue(signer crypto.Signer, alg jose.Alg, claims Claims, opts IssueOptions) (sdjwt string, disclosures []Disclosure, err error) {
 	if claims.VCT == "" {
 		return "", nil, fmt.Errorf("sdjwtvc: Claims.VCT is required")
+	}
+	if opts.Decoys < 0 || opts.Decoys > MaxDecoys {
+		return "", nil, fmt.Errorf("sdjwtvc: IssueOptions.Decoys must be between 0 and %d, got %d", MaxDecoys, opts.Decoys)
 	}
 	if opts.IssuerCertificate != nil {
 		// A two-value assertion, not a direct one: signer.Public() is

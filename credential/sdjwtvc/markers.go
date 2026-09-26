@@ -130,6 +130,9 @@ func sealArray(arr []any, alg HashAlg) ([]any, []Disclosure, error) {
 // own _sd array once a real caller needs per-level decoys, rather than
 // speculatively now.
 func addDecoys(payload map[string]any, alg HashAlg, n int) error {
+	if n < 0 || n > MaxDecoys {
+		return fmt.Errorf("sdjwtvc: decoy count %d is outside 0..%d", n, MaxDecoys)
+	}
 	existing, _ := payload["_sd"].([]any)
 	digests := make([]string, 0, len(existing)+n)
 	for _, d := range existing {
