@@ -118,23 +118,19 @@ func buildClient(ctx context.Context, run *walletRun, module conformancesuite.Su
 	// fapi2-security-profile-final-client-test-discovery-issuer-mismatch
 	// corrupts the suite's own "issuer" field and expects the client to
 	// notice and stop — this is the OIDC Discovery §4.3 anti-spoofing
-	// check that module exists to verify. For every other module this
-	// binary drives, the fetched endpoint values are identical to what
-	// was previously hardcoded here, so this adds a validation step
-	// without changing behavior elsewhere. Promoted to
-	// wallet.Wallet.FetchAuthorizationServerMetadata — see
+	// check that module exists to verify, now done by
+	// wallet.Wallet.FetchAuthorizationServerMetadata itself (RFC 8414
+	// §3.3), given the full issuer identifier — trailing "/" included;
+	// it removes that "/" when forming the well-known URL (§3.1). See
 	// wallet/discovery.go for why fapigo/client.Discover can't do this
 	// (OIDC-only well-known convention, no RFC 8414 support).
 	discoveryWallet, err := newWallet(httpClient)
 	if err != nil {
 		return nil, fmt.Errorf("build discovery wallet: %w", err)
 	}
-	metadata, err := discoveryWallet.FetchAuthorizationServerMetadata(ctx, module.URL)
+	metadata, err := discoveryWallet.FetchAuthorizationServerMetadata(ctx, expectedIssuer)
 	if err != nil {
 		return nil, fmt.Errorf("fetch authorization server metadata: %w", err)
-	}
-	if metadata.Issuer != expectedIssuer {
-		return nil, fmt.Errorf("authorization server metadata issuer %q does not match expected issuer %q", metadata.Issuer, expectedIssuer)
 	}
 	authorizeURL, err := fapi.ParseEndpointURL(metadata.AuthorizationEndpoint)
 	if err != nil {
