@@ -393,37 +393,57 @@ type wireMetadata struct {
 
 // UnmarshalJSON decodes m per §12.2.4 — see wireMetadata's own doc
 // comment for why this is a custom implementation, not the default
-// struct decode.
+// struct decode. It is DecodeMetadata with no URL options: every URL
+// must be https.
 func (m *Metadata) UnmarshalJSON(data []byte) error {
+	decoded, err := DecodeMetadata(data)
+	if err != nil {
+		return err
+	}
+	*m = decoded
+	return nil
+}
+
+// DecodeMetadata decodes a Credential Issuer Metadata document,
+// parsing its URL members with opts — for example
+// fapi.AllowLoopbackHTTP() to accept a local development issuer at
+// http://127.0.0.1. With no opts it is exactly Metadata's UnmarshalJSON.
+func DecodeMetadata(data []byte, opts ...fapi.URLOption) (Metadata, error) {
+	var m Metadata
+	err := m.decode(data, opts)
+	return m, err
+}
+
+func (m *Metadata) decode(data []byte, opts []fapi.URLOption) error {
 	var wire wireMetadata
 	if err := json.Unmarshal(data, &wire); err != nil {
 		return err
 	}
-	issuerURL, err := fapi.ParseIssuerURL(wire.CredentialIssuer)
+	issuerURL, err := fapi.ParseIssuerURL(wire.CredentialIssuer, opts...)
 	if err != nil {
 		return fmt.Errorf("credential_issuer: %w", err)
 	}
 	var authorizationServers []fapi.URL
 	for i, raw := range wire.AuthorizationServers {
-		u, err := fapi.ParseIssuerURL(raw)
+		u, err := fapi.ParseIssuerURL(raw, opts...)
 		if err != nil {
 			return fmt.Errorf("authorization_servers[%d]: %w", i, err)
 		}
 		authorizationServers = append(authorizationServers, u)
 	}
-	credentialURL, err := fapi.ParseEndpointURL(wire.CredentialEndpoint)
+	credentialURL, err := fapi.ParseEndpointURL(wire.CredentialEndpoint, opts...)
 	if err != nil {
 		return fmt.Errorf("credential_endpoint: %w", err)
 	}
-	nonceURL, err := parseOptionalEndpointURL("nonce_endpoint", wire.NonceEndpoint)
+	nonceURL, err := parseOptionalEndpointURL("nonce_endpoint", wire.NonceEndpoint, opts)
 	if err != nil {
 		return err
 	}
-	deferredURL, err := parseOptionalEndpointURL("deferred_credential_endpoint", wire.DeferredCredentialEndpoint)
+	deferredURL, err := parseOptionalEndpointURL("deferred_credential_endpoint", wire.DeferredCredentialEndpoint, opts)
 	if err != nil {
 		return err
 	}
-	notificationURL, err := parseOptionalEndpointURL("notification_endpoint", wire.NotificationEndpoint)
+	notificationURL, err := parseOptionalEndpointURL("notification_endpoint", wire.NotificationEndpoint, opts)
 	if err != nil {
 		return err
 	}
@@ -443,11 +463,11 @@ func (m *Metadata) UnmarshalJSON(data []byte) error {
 // parseOptionalEndpointURL parses raw (nil means the field was absent)
 // as an endpoint URL, returning nil unchanged — shared by
 // UnmarshalJSON's three optional *fapi.URL fields.
-func parseOptionalEndpointURL(field string, raw *string) (*fapi.URL, error) {
+func parseOptionalEndpointURL(field string, raw *string, opts []fapi.URLOption) (*fapi.URL, error) {
 	if raw == nil {
 		return nil, nil
 	}
-	u, err := fapi.ParseEndpointURL(*raw)
+	u, err := fapi.ParseEndpointURL(*raw, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", field, err)
 	}
