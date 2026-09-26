@@ -24,7 +24,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/internal/jwk"
 )
 
@@ -214,32 +213,6 @@ func ParseECPrivateKeyPEM(pemStr string) (*ecdsa.PrivateKey, error) {
 		return nil, fmt.Errorf("no PEM block found")
 	}
 	return x509.ParseECPrivateKey(block.Bytes)
-}
-
-// MintClientAttestationJWT builds and signs a Client Attestation JWT
-// (draft-ietf-oauth-attestation-based-client-auth-07 §5.1): signed by
-// signer, naming subject (the client) as its "sub" and instanceKey
-// (the client's own key, not the attester's) as its "cnf.jwk"
-// confirmation key. header carries the caller's own "typ" plus
-// whichever of "kid"/"x5c" the suite's own verification path for that
-// caller expects (a leaf-cert-issuing attester needs "x5c"; a
-// kid-registered one needs "kid") — that part isn't shared, since it's
-// the one piece that genuinely differs between callers; the
-// claims/signing logic below is what was duplicated.
-func MintClientAttestationJWT(signer crypto.Signer, header map[string]any, issuer, subject string, instanceKey crypto.PublicKey, now time.Time, lifetime time.Duration) (string, error) {
-	instanceJWK, err := jwk.Marshal(instanceKey)
-	if err != nil {
-		return "", fmt.Errorf("marshal client instance key: %w", err)
-	}
-	payload, err := json.Marshal(map[string]any{
-		"iss": issuer, "sub": subject,
-		"iat": now.Unix(), "exp": now.Add(lifetime).Unix(),
-		"cnf": map[string]any{"jwk": instanceJWK},
-	})
-	if err != nil {
-		return "", fmt.Errorf("marshal client attestation claims: %w", err)
-	}
-	return jose.Sign(jose.ES256, signer, header, payload)
 }
 
 // WriteJSONConfig JSON-marshals cfg and writes it to a fresh file

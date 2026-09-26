@@ -27,5 +27,9 @@
 //     OAuth-Client-Attestation header value), without re-verifying the
 //     signature FAPIgo's server already checked authoritatively. It is
 //     not a substitute for that verification and must never be used to
-//     make an authentication decision on its own.
+//     make an authentication decision on its own. On the Wallet
+//     Provider's side, IssueWalletAttestation mints a Wallet
+//     Attestation JWT — base claims plus those three — since FAPIgo
+//     only consumes one (fapigo/client via its AttestationSource,
+//     fapigo/server by verifying it).
 package attestation

@@ -17,19 +17,21 @@ import (
 	"testing"
 	"time"
 
+	oid4vci "github.com/idfoundry/oid4vcgo"
+	"github.com/idfoundry/oid4vcgo/attestation"
 	"github.com/idfoundry/oid4vcgo/internal/conformancecert"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/internal/jwe"
 	"github.com/idfoundry/oid4vcgo/internal/jwk"
 )
 
-// clientAttestationTypHeader/clientAttestationPoPTypHeader are the
-// required JOSE "typ" header values draft-ietf-oauth-attestation-based-
-// client-auth-07 §5.1/§5.2 define — confirmed against FAPIgo's own
-// (unexported) internal/clientattestation.TypHeader/PoPTypHeader, so
-// hardcoded here rather than imported.
+// clientAttestationPoPTypHeader is the required JOSE "typ" header value
+// draft-ietf-oauth-attestation-based-client-auth-07 §5.2 defines —
+// confirmed against FAPIgo's own (unexported)
+// internal/clientattestation.PoPTypHeader, so hardcoded here rather
+// than imported. The attestation itself is minted by
+// attestation.IssueWalletAttestation, which sets its own typ.
 const (
-	clientAttestationTypHeader    = "oauth-client-attestation+jwt"
 	clientAttestationPoPTypHeader = "oauth-client-attestation-pop+jwt"
 	dpopProofTypHeader            = "dpop+jwt"
 	credentialProofTypHeader      = "openid4vci-proof+jwt"
@@ -41,8 +43,10 @@ const (
 // attester's) as its cnf.jwk confirmation key — confirmed against
 // FAPIgo's own (unexported) internal/clientattestation.attestationClaims.
 func buildClientAttestationJWT(attesterKey *ecdsa.PrivateKey, attesterKid, attesterIssuer, clientID string, clientInstanceKey *ecdsa.PublicKey, now time.Time) (string, error) {
-	header := map[string]any{"typ": clientAttestationTypHeader, "kid": attesterKid}
-	return conformancecert.MintClientAttestationJWT(attesterKey, header, attesterIssuer, clientID, clientInstanceKey, now, time.Hour)
+	return attestation.IssueWalletAttestation(attesterKey, oid4vci.ES256, attestation.Header{KeyID: attesterKid}, attestation.WalletAttestationClaims{
+		Issuer: attesterIssuer, Subject: clientID, InstanceKey: clientInstanceKey,
+		IssuedAt: now.Unix(), ExpiresAt: now.Add(time.Hour).Unix(),
+	})
 }
 
 // buildClientAttestationPoPJWT builds a Client Attestation PoP JWT

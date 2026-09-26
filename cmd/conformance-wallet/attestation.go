@@ -10,15 +10,15 @@ import (
 	"net/http"
 	"time"
 
+	oid4vci "github.com/idfoundry/oid4vcgo"
+	"github.com/idfoundry/oid4vcgo/attestation"
 	"github.com/idfoundry/oid4vcgo/internal/conformancecert"
 )
 
-// clientAttestationTypHeader/clientAttestationChallengeEndpointPath
-// match draft-ietf-oauth-attestation-based-client-auth-07 §5.1 and the
-// suite's own fixed "challenge" path
-// (AbstractVCIWalletTest.handleClientRequestForPath) exactly.
+// clientAttestationChallengePath matches the suite's own fixed
+// "challenge" path (AbstractVCIWalletTest.handleClientRequestForPath)
+// exactly.
 const (
-	clientAttestationTypHeader     = "oauth-client-attestation+jwt"
 	clientAttestationLifetime      = 5 * time.Minute
 	clientAttestationChallengePath = "/challenge"
 )
@@ -40,11 +40,11 @@ func mintClientAttestationJWT(attesterKey *ecdsa.PrivateKey, attesterLeafPEM, at
 	if err != nil {
 		return "", fmt.Errorf("parse attester leaf certificate: %w", err)
 	}
-	header := map[string]any{
-		"typ": clientAttestationTypHeader,
-		"x5c": []string{base64.StdEncoding.EncodeToString(leafCert.Raw)},
-	}
-	return conformancecert.MintClientAttestationJWT(attesterKey, header, attesterIssuer, clientID, instanceKey, now, clientAttestationLifetime)
+	header := attestation.Header{X5C: []string{base64.StdEncoding.EncodeToString(leafCert.Raw)}}
+	return attestation.IssueWalletAttestation(attesterKey, oid4vci.ES256, header, attestation.WalletAttestationClaims{
+		Issuer: attesterIssuer, Subject: clientID, InstanceKey: instanceKey,
+		IssuedAt: now.Unix(), ExpiresAt: now.Add(clientAttestationLifetime).Unix(),
+	})
 }
 
 // staticAttestationSource is a fixed client.AttestationSource: this

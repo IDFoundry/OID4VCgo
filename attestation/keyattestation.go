@@ -108,27 +108,32 @@ func Issue(signer crypto.Signer, alg jose.Alg, header Header, claims Claims) (st
 		return "", fmt.Errorf("attestation: Claims.AttestedKeys must not be empty")
 	}
 
-	joseHeader := map[string]any{"typ": TypHeader}
-	if header.KeyID != "" {
-		joseHeader["kid"] = header.KeyID
-	}
-	if len(header.X5C) > 0 {
-		joseHeader["x5c"] = header.X5C
-	}
-	if len(header.TrustChain) > 0 {
-		joseHeader["trust_chain"] = header.TrustChain
-	}
-
 	payload, err := json.Marshal(wireClaims(claims))
 	if err != nil {
 		return "", fmt.Errorf("attestation: marshal claims: %w", err)
 	}
 
-	compact, err := jose.Sign(alg, signer, joseHeader, payload)
+	compact, err := jose.Sign(alg, signer, joseHeader(TypHeader, header), payload)
 	if err != nil {
 		return "", fmt.Errorf("attestation: sign: %w", err)
 	}
 	return compact, nil
+}
+
+// joseHeader builds an attestation JWT's JOSE header: typ plus
+// whichever of header's key-conveyance parameters are set.
+func joseHeader(typ string, header Header) map[string]any {
+	h := map[string]any{"typ": typ}
+	if header.KeyID != "" {
+		h["kid"] = header.KeyID
+	}
+	if len(header.X5C) > 0 {
+		h["x5c"] = header.X5C
+	}
+	if len(header.TrustChain) > 0 {
+		h["trust_chain"] = header.TrustChain
+	}
+	return h
 }
 
 // KeyAttestation is a parsed, but not yet signature-verified, Key
