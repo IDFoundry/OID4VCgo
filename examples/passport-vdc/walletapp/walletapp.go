@@ -2,17 +2,17 @@
 // Offer, it discovers the issuer, authenticates with a Wallet
 // Attestation from the demo Wallet Provider, runs the HAIP
 // Authorization Code flow (PAR, PKCE, DPoP) and requests every offered
-// credential, each bound to a fresh holder key.
+// credential, each bound to a fresh holder key that the Wallet Provider
+// attests in a Key Attestation (the attestation proof type).
 //
 // It is a demo, not a secure wallet: holder keys are ordinary in-memory
 // keys (a real wallet keeps them in secure hardware), and it attests
-// itself with the Wallet Provider's own private key, which a real
-// wallet would never hold.
+// itself and its holder keys with the Wallet Provider's own private
+// key, which a real wallet would never hold.
 package walletapp
 
 import (
 	"context"
-	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -130,7 +130,7 @@ func Receive(ctx context.Context, cfg Config, offerURI string, approver Approver
 		return nil, fmt.Errorf("walletapp: authorization was not granted (%T)", result)
 	}
 
-	return requestAll(ctx, w, c.ProtectedResource(success.Tokens), offer, metadata)
+	return requestAll(ctx, w, cfg.Provider, c.ProtectedResource(success.Tokens), offer, metadata)
 }
 
 // offeredScopes returns the scope of every offered configuration.
@@ -146,7 +146,7 @@ func offeredScopes(offer oid4vci.CredentialOffer, metadata oid4vci.Metadata) ([]
 	return scopes, nil
 }
 
-func requestAll(ctx context.Context, w *wallet.Wallet, resource wallet.ProtectedResourceClient, offer oid4vci.CredentialOffer, metadata oid4vci.Metadata) ([]Received, error) {
+func requestAll(ctx context.Context, w *wallet.Wallet, provider *walletprovider.Provider, resource wallet.ProtectedResourceClient, offer oid4vci.CredentialOffer, metadata oid4vci.Metadata) ([]Received, error) {
 	if metadata.NonceEndpoint == nil {
 		return nil, fmt.Errorf("walletapp: issuer advertises no nonce endpoint")
 	}
@@ -156,13 +156,12 @@ func requestAll(ctx context.Context, w *wallet.Wallet, resource wallet.Protected
 		if err != nil {
 			return nil, fmt.Errorf("walletapp: nonce: %w", err)
 		}
-		holder, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		holder, keyAttestation, err := attestedHolderKey(w, provider, nonce.CNonce)
 		if err != nil {
-			return nil, fmt.Errorf("walletapp: holder key: %w", err)
+			return nil, err
 		}
 		result, err := w.RequestCredential(ctx, resource, metadata.CredentialEndpoint, wallet.CredentialRequest{
-			CredentialConfigurationID: id, Keys: []crypto.Signer{holder},
-			CredentialIssuer: offer.CredentialIssuer, Nonce: nonce.CNonce,
+			CredentialConfigurationID: id, Attestation: keyAttestation,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("walletapp: credential %q: %w", id, err)
@@ -177,6 +176,28 @@ func requestAll(ctx context.Context, w *wallet.Wallet, resource wallet.Protected
 		})
 	}
 	return received, nil
+}
+
+// keyAttestationLifetime bounds how long a Key Attestation is valid; it
+// is used once, right away.
+const keyAttestationLifetime = 5 * time.Minute
+
+// attestedHolderKey generates a holder key and has the Wallet Provider
+// attest it in a Key Attestation carrying the issuer's nonce.
+func attestedHolderKey(w *wallet.Wallet, provider *walletprovider.Provider, nonce string) (*ecdsa.PrivateKey, string, error) {
+	holder, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, "", fmt.Errorf("walletapp: holder key: %w", err)
+	}
+	claims, err := provider.KeyAttestationClaims([]*ecdsa.PublicKey{&holder.PublicKey}, time.Now(), keyAttestationLifetime)
+	if err != nil {
+		return nil, "", fmt.Errorf("walletapp: key attestation: %w", err)
+	}
+	keyAttestation, err := w.GenerateAttestationProof(provider.Key, oid4vci.ES256, provider.KeyAttestationHeader(), claims, nonce)
+	if err != nil {
+		return nil, "", fmt.Errorf("walletapp: key attestation: %w", err)
+	}
+	return holder, keyAttestation, nil
 }
 
 // newOAuthClient builds the wallet's fapigo/client from the

@@ -73,6 +73,12 @@ type WalletClient struct {
 	// ProviderJWKS is the Wallet Provider's public JWK Set, used to
 	// verify Wallet Attestations.
 	ProviderJWKS []byte
+
+	// ProviderCA is the Wallet Provider CA certificate (PEM), the trust
+	// anchor for Key Attestations. Every credential request must prove
+	// its holder key with a Key Attestation chaining to it (the
+	// attestation proof type, OID4VCI 1.0 Appendix F.3).
+	ProviderCA []byte
 }
 
 func (c Config) transactionLifetime() time.Duration {
@@ -96,6 +102,8 @@ func (c Config) validate() error {
 		return fmt.Errorf("issuerapp: Wallet.ProviderIssuer is required")
 	case len(c.Wallet.ProviderJWKS) == 0:
 		return fmt.Errorf("issuerapp: Wallet.ProviderJWKS is required")
+	case len(c.Wallet.ProviderCA) == 0:
+		return fmt.Errorf("issuerapp: Wallet.ProviderCA is required")
 	}
 	return nil
 }

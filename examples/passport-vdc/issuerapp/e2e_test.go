@@ -3,6 +3,7 @@ package issuerapp_test
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/demotest"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/issuerapp"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/walletapp"
+	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/walletprovider"
 	"github.com/idfoundry/oid4vcgo/haip"
 )
 
@@ -20,7 +22,8 @@ import (
 // against the demo issuer with the demo wallet (walletapp, built on a
 // real fapigo/client and oid4vcgo/wallet): credential offer → PAR
 // carrying issuer_state (Wallet Attestation + PoP, DPoP) → approval →
-// token → nonce → credential, once per format.
+// token → nonce → credential with a Key Attestation proof, once per
+// format.
 func TestEndToEnd_IssuesBothFormats(t *testing.T) {
 	ctx := context.Background()
 	env := demotest.New(t, nil)
@@ -93,5 +96,54 @@ func TestAuthorize_RejectsRequestWithoutOffer(t *testing.T) {
 	_, err = walletapp.Receive(context.Background(), env.WalletConfig(), uri, walletapp.HeadlessApprover{HTTP: env.HTTP})
 	if err == nil || !strings.Contains(err.Error(), "no interaction handle") {
 		t.Fatalf("Receive without issuer_state: error = %v, want the approval page to be refused", err)
+	}
+}
+
+// TestMetadata_RequiresKeyAttestation checks both configurations accept
+// only the attestation proof type, with key attestation required.
+func TestMetadata_RequiresKeyAttestation(t *testing.T) {
+	env := demotest.New(t, nil)
+	resp, err := env.HTTP.Get(env.IssuerURL + "/.well-known/openid-credential-issuer")
+	if err != nil {
+		t.Fatalf("GET metadata: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	var meta oid4vci.Metadata
+	if err := json.NewDecoder(resp.Body).Decode(&meta); err != nil {
+		t.Fatalf("decode metadata: %v", err)
+	}
+	for _, id := range []string{issuerapp.MdocConfigurationID, issuerapp.SDJWTConfigurationID} {
+		proofTypes := meta.CredentialConfigurationsSupported[id].ProofTypesSupported
+		att, ok := proofTypes[oid4vci.ProofTypeAttestation]
+		if len(proofTypes) != 1 || !ok || att.KeyAttestationsRequired == nil {
+			t.Errorf("%s proof_types_supported = %+v, want only attestation, with key_attestations_required", id, proofTypes)
+		}
+	}
+}
+
+// TestCredential_RejectsKeyAttestationFromUntrustedCA has the wallet
+// present a Key Attestation whose x5c certificate chains to another
+// Wallet Provider CA: authorization succeeds (the Wallet Attestation is
+// valid) but the credential request is refused.
+func TestCredential_RejectsKeyAttestationFromUntrustedCA(t *testing.T) {
+	ctx := context.Background()
+	env := demotest.New(t, nil)
+	other, err := walletprovider.New(demotest.ProviderIssuer)
+	if err != nil {
+		t.Fatalf("walletprovider.New: %v", err)
+	}
+	untrusted := *env.Provider
+	untrusted.Certificate, untrusted.CACertificate = other.Certificate, other.CACertificate
+	cfg := env.WalletConfig()
+	cfg.Provider = &untrusted
+
+	offer, err := env.Issuer.CreateTransaction(ctx, demotest.SyntheticEvidence())
+	if err != nil {
+		t.Fatalf("CreateTransaction: %v", err)
+	}
+	_, err = walletapp.Receive(ctx, cfg, offer.URI, walletapp.HeadlessApprover{HTTP: env.HTTP})
+	// "resolve trust key": the x5c chain doesn't reach the trusted CA.
+	if err == nil || !strings.Contains(err.Error(), "invalid_proof") || !strings.Contains(err.Error(), "resolve trust key") {
+		t.Fatalf("Receive: error = %v, want the credential request refused for an untrusted x5c chain", err)
 	}
 }

@@ -84,7 +84,7 @@ What the second path does and doesn't give you:
 ## Running the demo
 
 ```sh
-go run ./cmd/wallet-provider     # once: wallet-provider.pem + wallet-provider.jwks.json
+go run ./cmd/wallet-provider     # once: wallet-provider.pem, .jwks.json and -ca.pem
 go run ./cmd/issuer              # https://127.0.0.1:8543 — writes issuer-tls.pem, issuer-ca.pem
 go run ./cmd/verifier            # https://127.0.0.1:9443 — writes verifier-tls.pem
 go run ./cmd/webwallet           # https://127.0.0.1:7443 — writes webwallet-tls.pem
@@ -119,11 +119,22 @@ it picks up the redirect on `http://127.0.0.1:8765/callback`; add
 `-headless` to approve automatically. Both wallets keep credentials
 (with their holder keys) in `wallet-store/`.
 
-`cmd/wallet-provider` creates the demo's **stand-in Wallet Provider**
-key. The issuer registers one wallet client (`passport-vdc-wallet`,
-with both wallets' redirect URIs) and accepts Wallet Attestations signed
-by that key; the wallets use the private half to attest themselves — which a real wallet would never hold. The
-key, the TLS certificate and the wallet store are all git-ignored; the
+`cmd/wallet-provider` creates the demo's **stand-in Wallet Provider**:
+a key, and a certificate for it from a demo Wallet Provider CA. The
+issuer registers one wallet client (`passport-vdc-wallet`, with both
+wallets' redirect URIs), and trusts that key in two ways:
+
+- **Wallet Attestations**, by `kid`, through the provider's JWK Set.
+- **Key Attestations**, through the CA certificate. Each credential
+  request must prove its holder key with a Key Attestation: the
+  `attestation` proof type (OID4VCI 1.0 Appendix F.3), which is the
+  only proof type the issuer offers. The attestation carries the
+  provider's certificate as `x5c` and the issuer's `c_nonce`, as HAIP
+  1.0 §4.5.1 requires.
+
+The wallets use the provider's private key to attest themselves and
+their holder keys, which a real wallet would never hold. The provider
+files, the TLS certificate and the wallet store are all git-ignored; the
 store keeps holder keys unencrypted.
 
 The issuer runs over HTTPS even locally because the library's wallet
@@ -139,7 +150,7 @@ lets it fetch the metadata, but decoding `credential_issuer` as a
 | PAR | `POST /par` | fapigo verifies Wallet Attestation + PoP and DPoP; this app records `request_uri` → T from the form's `issuer_state` |
 | Approve | `GET /authorize`, `POST /authorize/decision` | shows the passport holder's name; approval authorizes **subject = T**, granting the scopes the wallet requested |
 | Token | `POST /token` | DPoP-bound access token with `sub` = T |
-| Credential | `POST /nonce`, `POST /credential` | the token's `sub` finds T's `Evidence`; the requested configuration (`passport_mdoc` or `passport_sdjwt`) is encoded, bound to the wallet's proof key and signed |
+| Credential | `POST /nonce`, `POST /credential` | the token's `sub` finds T's `Evidence`; the requested configuration (`passport_mdoc` or `passport_sdjwt`) is encoded, bound to the key the Key Attestation attests, and signed |
 
 `issuer_state` has to be captured at PAR because fapigo doesn't surface
 extension values at the authorization step (see the library's
@@ -166,6 +177,13 @@ type metadata at the `vct` URL (`/vct/passport/1`).
   in batches.)
 - The signing key and certificate are generated per process (a restart
   invalidates issued credentials); everything is in memory.
+- **Key Attestations assert nothing about key storage.** They leave out
+  `key_storage` and `user_authentication`, because the demo's holder keys
+  are ordinary software keys. The issuer checks who attested a key, not
+  how well it is protected.
+- **Wallet Attestations use `kid`, not `x5c`.** HAIP 1.0 requires `x5c`,
+  but fapigo's server resolves the attester's key only by `kid` from the
+  client's registered JWK Set.
 
 A production issuer would authenticate the holder at the approval step
 (for example by re-reading the passport over NFC with an issuer-chosen
@@ -226,7 +244,7 @@ generator, planned for gmrtd itself).
 | `passport` | gmrtd → verified `Evidence`; the birth-date rule |
 | `credential` | `Evidence` → `mdoc.Claims` / `sdjwtvc.Claims`; validity and age claims |
 | `issuerapp` | the OID4VCI issuer: fapigo Authorization Server + oid4vcgo Issuer + upload page |
-| `walletprovider` | the stand-in Wallet Provider that signs Wallet Attestations |
+| `walletprovider` | the stand-in Wallet Provider that signs Wallet Attestations and Key Attestations |
 | `walletapp` | the wallet: receive (offer → discovery → HAIP Authorization Code flow → credentials) and present (OpenID4VP, selective disclosure); credential store |
 | `verifierapp` | the OpenID4VP verifier: either-format requests, both trust paths |
 | `webwallet` | the browser wallet: credential cards, receive via the issuer's approval page, consent before presenting |
