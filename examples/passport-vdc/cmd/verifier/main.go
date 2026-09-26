@@ -26,11 +26,12 @@ import (
 func main() {
 	addr := flag.String("addr", "127.0.0.1:9443", "listen address")
 	verifierURL := flag.String("verifier", "https://127.0.0.1:9443", "verifier URL")
-	issuerURL := flag.String("issuer", "https://127.0.0.1:8443", "the demo issuer's URL (for its credentials' vct)")
+	issuerURL := flag.String("issuer", "https://127.0.0.1:8543", "the demo issuer's URL (for its credentials' vct)")
 	issuerCA := flag.String("issuer-ca", "issuer-ca.pem", "the demo issuer's CA certificate (from cmd/issuer)")
 	certFile := flag.String("tls-cert", "", "TLS certificate PEM (default: generate a self-signed one)")
 	keyFile := flag.String("tls-key", "", "TLS private key PEM (with -tls-cert)")
 	certOut := flag.String("tls-cert-out", "verifier-tls.pem", "where to write a generated TLS certificate for the wallet to trust")
+	webWallet := flag.String("web-wallet", "https://127.0.0.1:7443", "the demo web wallet's URL, for the request page's \"Open in web wallet\" button (empty to hide it)")
 	flag.Parse()
 
 	caPEM, err := os.ReadFile(*issuerCA) // #nosec G304 -- operator-supplied path
@@ -47,7 +48,7 @@ func main() {
 	}
 	app, err := verifierapp.New(verifierapp.Config{
 		VerifierURL: *verifierURL, IssuerVCT: *issuerURL + "/vct/passport/1",
-		IssuerRoots: roots, CSCAPool: cscaPool,
+		IssuerRoots: roots, CSCAPool: cscaPool, WebWalletURL: *webWallet,
 	})
 	if err != nil {
 		log.Fatal(err)

@@ -45,6 +45,10 @@ type Config struct {
 	// TransactionLifetime bounds how long a verified passport stays
 	// redeemable; zero means 10 minutes.
 	TransactionLifetime time.Duration
+
+	// WebWalletURL, if set, adds an "Open in web wallet" button to the
+	// offer page, linking to the demo web wallet's /receive.
+	WebWalletURL string
 }
 
 // WalletClient registers the demo Wallet: a client authenticated by

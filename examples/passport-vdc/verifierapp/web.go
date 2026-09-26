@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"html/template"
 	"net/http"
+	"net/url"
 	"sort"
 )
 
@@ -52,17 +53,19 @@ var homeTemplate = template.Must(template.New("home").Parse(pageHead + `</head><
 ` + pageFoot))
 
 type requestPage struct {
-	ID      string
-	Link    string
-	Outcome *Outcome
-	Rows    [][2]string
+	ID            string
+	Link          string
+	WebWalletLink string
+	Outcome       *Outcome
+	Rows          [][2]string
 }
 
 var requestTemplate = template.Must(template.New("request").Parse(pageHead + `{{if not .Outcome}}<meta http-equiv="refresh" content="2">{{end}}
 </head><body>
 {{if not .Outcome}}
 <h1>Waiting for the wallet</h1>
-<p>Give this request to the demo wallet:</p>
+{{if .WebWalletLink}}<p><a href="{{.WebWalletLink}}" target="_blank"><strong>Open in web wallet</strong></a></p>{{end}}
+<p>Or give this request to the demo CLI wallet:</p>
 <p><code>{{.Link}}</code></p>
 <p class="note">This page refreshes until the wallet answers.</p>
 {{else if .Outcome.Error}}
@@ -120,6 +123,9 @@ func (a *App) handleRequestPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	page := requestPage{ID: id, Link: s.link}
+	if a.cfg.WebWalletURL != "" {
+		page.WebWalletLink = a.cfg.WebWalletURL + "/present?request=" + url.QueryEscape(s.link)
+	}
 	if outcome, done := a.Outcome(id); done {
 		page.Outcome = outcome
 		page.Rows = displayRows(outcome.Claims)

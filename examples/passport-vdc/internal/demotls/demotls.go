@@ -11,11 +11,14 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"log"
 	"math/big"
 	"net"
+	"net/http"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -53,4 +56,34 @@ func Certificate(certFile, keyFile, certOut, commonName string) (tls.Certificate
 	}
 	log.Printf("generated a self-signed TLS certificate; wrote it to %s for clients to trust", certOut)
 	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}, nil
+}
+
+// TrustingClient returns an HTTP client trusting the certificates in
+// the comma-separated PEM files (the demo servers' self-signed TLS
+// certificates) in addition to the system roots. Missing files are
+// skipped, so the defaults work before the verifier has been started.
+func TrustingClient(files string) (*http.Client, error) {
+	roots, err := x509.SystemCertPool()
+	if err != nil {
+		roots = x509.NewCertPool()
+	}
+	for _, f := range strings.Split(files, ",") {
+		f = strings.TrimSpace(f)
+		if f == "" {
+			continue
+		}
+		pemBytes, err := os.ReadFile(f) // #nosec G304 -- operator-supplied path
+		switch {
+		case errors.Is(err, os.ErrNotExist):
+			continue
+		case err != nil:
+			return nil, fmt.Errorf("read %s: %w", f, err)
+		case !roots.AppendCertsFromPEM(pemBytes):
+			return nil, fmt.Errorf("%s holds no PEM certificates", f)
+		}
+	}
+	return &http.Client{
+		Timeout:   30 * time.Second,
+		Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}},
+	}, nil
 }
