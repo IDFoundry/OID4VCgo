@@ -14,6 +14,13 @@ import (
 // implicit default — New rejects a zero value, the same "no implicit
 // defaults" stance issuer.Config takes.
 type Config struct {
+	// Assurance gates how strict New's own validation is — see
+	// AssuranceLevel's own doc comment. REQUIRED: New rejects the Go
+	// zero value, forcing every caller to make an explicit choice
+	// rather than silently getting AssuranceDevelopment's weaker
+	// checks by omission.
+	Assurance AssuranceLevel
+
 	// ProofSigningAlg is the JOSE algorithm this Wallet signs jwt-type
 	// key proofs with (Appendix F.1). REQUIRED. Set it from the root
 	// oid4vci package's own ES256/EdDSA constants rather than a bare
@@ -75,6 +82,12 @@ type Wallet struct {
 
 // New validates cfg and deps and returns a ready-to-use Wallet.
 func New(cfg Config, deps Dependencies) (*Wallet, error) {
+	if cfg.Assurance != AssuranceDevelopment && cfg.Assurance != AssuranceProduction {
+		return nil, fmt.Errorf("wallet: config: assurance level is invalid")
+	}
+	if cfg.Assurance == AssuranceProduction && cfg.Fetch.AllowLoopbackHTTP {
+		return nil, fmt.Errorf("wallet: config: fetch.allow_loopback_http is not permitted under AssuranceProduction")
+	}
 	if cfg.ProofSigningAlg == "" {
 		return nil, fmt.Errorf("wallet: config: proof_signing_alg is required")
 	}

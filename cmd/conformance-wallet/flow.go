@@ -66,6 +66,7 @@ func credentialRequestEncryptionJWK(ctx context.Context, w *wallet.Wallet, modul
 // module instance the rest of the flow already established.
 func newWallet(httpClient *http.Client) (*wallet.Wallet, error) {
 	return wallet.New(wallet.Config{
+		Assurance:       wallet.AssuranceDevelopment,
 		ProofSigningAlg: jose.ES256,
 		Fetch: fapihttp.Config{
 			MaxResponseBytes: 1 << 20,

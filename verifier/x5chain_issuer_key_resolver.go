@@ -34,3 +34,10 @@ func (r X5ChainIssuerKeyResolver) ResolveMdocIssuerKey(_ context.Context, x5chai
 	}
 	return leaf.PublicKey, alg, nil
 }
+
+// Capabilities implements KeySourceAssurance: validating an
+// already-presented certificate chain against an in-memory CertPool
+// never touches the network.
+func (r X5ChainIssuerKeyResolver) Capabilities() KeySourceCapabilities {
+	return KeySourceCapabilities{LiveFetchHardened: true}
+}

@@ -24,6 +24,7 @@ func (c fixedClock) Now() time.Time { return c.now }
 
 func validConfig() wallet.Config {
 	return wallet.Config{
+		Assurance:       wallet.AssuranceDevelopment,
 		ProofSigningAlg: jose.ES256,
 		Fetch: fapihttp.Config{
 			MaxResponseBytes: 1 << 20,

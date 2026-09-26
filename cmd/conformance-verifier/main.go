@@ -57,6 +57,7 @@ func main() {
 	}
 
 	v, err := verifier.New(verifier.Config{
+		Assurance:          verifier.AssuranceDevelopment,
 		ClientCertificate:  clientCert,
 		ResponseURI:        responseURI,
 		SigningAlg:         jose.ES256,

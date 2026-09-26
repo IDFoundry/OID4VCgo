@@ -58,6 +58,7 @@ func newRoundTripVerifier(t *testing.T) (*verifier.Verifier, fapi.URL) {
 		t.Fatalf("ParseEndpointURL: %v", err)
 	}
 	v, err := verifier.New(verifier.Config{
+		Assurance:          verifier.AssuranceDevelopment,
 		ClientCertificate:  verifierCert,
 		ResponseURI:        responseURI,
 		SigningAlg:         jose.ES256,
