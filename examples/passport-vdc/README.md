@@ -5,9 +5,9 @@ verifies it against the issuing country's own signatures, and turns it
 into a verifiable digital credential in **both** `mso_mdoc` and
 `dc+sd-jwt`, issued over OID4VCI (HAIP).
 
-> **Status:** passport verification, both credential encoders and the
-> OID4VCI issuer are in place. A wallet CLI and a verifier come next
-> (see [Roadmap](#roadmap)).
+> **Status:** passport verification, both credential encoders, the
+> OID4VCI issuer and a command-line wallet are in place. A verifier
+> comes next (see [Roadmap](#roadmap)).
 
 This is a separate Go module: it's the only code in this repository
 that depends on gmrtd. It builds against this checkout of the library
@@ -79,23 +79,40 @@ What the second path does and doesn't give you:
   names (in `credential/names.go`) should be aligned with ISO/IEC
   23220-4's DTC namespace before this is presented as interoperable.
 
-## Running the issuer
+## Running the demo
 
 ```sh
 go run ./cmd/wallet-provider     # once: wallet-provider.pem + wallet-provider.jwks.json
-go run ./cmd/issuer              # http://127.0.0.1:8080
+go run ./cmd/issuer              # https://127.0.0.1:8443, writes issuer-tls.pem
 ```
 
-Open http://127.0.0.1:8080 and upload a gmrtd portable passport file.
-It's verified against gmrtd's built-in ICAO CSCA master list, and the
-result page shows a credential offer for both formats.
+Open https://127.0.0.1:8443 (the issuer's certificate is self-signed —
+`issuer-tls.pem`) and upload a gmrtd portable passport file. It's
+verified against gmrtd's built-in ICAO CSCA master list, and the result
+page shows a credential offer for both formats. Then, in another
+terminal:
+
+```sh
+go run ./cmd/wallet receive 'openid-credential-offer://?credential_offer=...'
+go run ./cmd/wallet list
+```
+
+`receive` prints the authorization URL: open it, approve, and the
+wallet picks up the redirect on `http://127.0.0.1:8765/callback` and
+stores both credentials (with their holder keys) in `wallet-store/`.
+Add `-headless` to approve automatically.
 
 `cmd/wallet-provider` creates the demo's **stand-in Wallet Provider**
-key. The issuer registers one wallet client (`passport-vdc-wallet`,
-redirect URI `http://127.0.0.1:8765/callback`) and accepts Wallet
-Attestations signed by that key; the demo wallet will use the private
-half to attest itself. Keep `wallet-provider.pem` private — both files
-are git-ignored.
+key. The issuer registers one wallet client (`passport-vdc-wallet`) and
+accepts Wallet Attestations signed by that key; the wallet uses the
+private half to attest itself — which a real wallet would never hold. The
+key, the TLS certificate and the wallet store are all git-ignored; the
+store keeps holder keys unencrypted.
+
+The issuer runs over HTTPS even locally because the library's wallet
+can't yet discover a loopback `http` issuer: `wallet.Config.Fetch.AllowLoopbackHTTP`
+lets it fetch the metadata, but decoding `credential_issuer` as a
+`fapi.URL` always requires `https`.
 
 ### The issuance flow
 
@@ -139,8 +156,9 @@ PASSPORT_VDC_SAMPLE=/path/to/passport.gmrtd go test ./...
 A real passport file is personal data. Never commit one — `*.gmrtd` is
 in `.gitignore` as a backstop. CI runs everything else — including a full
 end-to-end issuance of both formats (`issuerapp`'s
-`TestEndToEnd_IssuesBothFormats`: a real fapigo client and oid4vcgo
-wallet, with synthetic passport evidence) — until gmrtd provides a
+`TestEndToEnd_IssuesBothFormats`: the demo wallet, built on a real
+fapigo client and oid4vcgo wallet, against the demo issuer over TLS,
+with synthetic passport evidence) — until gmrtd provides a
 synthetic test passport (a test CSCA → DSC → SOD
 generator, planned for gmrtd itself).
 
@@ -152,12 +170,13 @@ generator, planned for gmrtd itself).
 | `credential` | `Evidence` → `mdoc.Claims` / `sdjwtvc.Claims`; validity and age claims |
 | `issuerapp` | the OID4VCI issuer: fapigo Authorization Server + oid4vcgo Issuer + upload page |
 | `walletprovider` | the stand-in Wallet Provider that signs Wallet Attestations |
-| `cmd/issuer`, `cmd/wallet-provider` | runnable binaries |
+| `walletapp` | the wallet: offer → discovery → HAIP Authorization Code flow → credentials; browser or headless approval; credential store |
+| `cmd/issuer`, `cmd/wallet`, `cmd/wallet-provider` | runnable binaries |
 
 ## Roadmap
 
 1. ~~**Issuer**~~ — done.
-2. **Wallet CLI** — end-to-end issuance of both formats in CI.
+2. ~~**Wallet CLI**~~ — done.
 3. **Verifier** — one request accepting either format, and both trust
    paths side by side.
 4. **iOS wallet**, then **live NFC capture** with an issuer-chosen Active

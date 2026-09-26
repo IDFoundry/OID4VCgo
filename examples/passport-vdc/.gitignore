@@ -2,3 +2,8 @@
 # the demo issuer accepts.
 wallet-provider.pem
 wallet-provider.jwks.json
+
+# cmd/issuer's generated TLS certificate and cmd/wallet's credential
+# store (credentials and their holder keys, unencrypted).
+issuer-tls.pem
+wallet-store/
