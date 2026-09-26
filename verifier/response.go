@@ -49,7 +49,7 @@ type ParsedResponse struct {
 	// decrypt gives the redirect flow for free — found missing in a
 	// repo-wide security review. VerifyResponse is safe either way:
 	// sdjwtvc.Parse/oid4vpmdoc.UnmarshalDeviceResponse each reject an
-	// oversized entry (jose.MaxCompactBytes/oid4vpmdoc.MaxBytes) before
+	// oversized entry (sdjwtvc.MaxBytes/oid4vpmdoc.MaxBytes) before
 	// doing any real parsing work on it, regardless of which flow
 	// populated this field.
 	VPToken map[string][]string
