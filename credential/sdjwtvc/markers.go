@@ -134,7 +134,10 @@ func addDecoys(payload map[string]any, alg HashAlg, n int) error {
 		return fmt.Errorf("sdjwtvc: decoy count %d is outside 0..%d", n, MaxDecoys)
 	}
 	existing, _ := payload["_sd"].([]any)
-	digests := make([]string, 0, len(existing)+n)
+	// Capacity for the existing digests only; append grows it for the
+	// (at most MaxDecoys) decoys, rather than pre-sizing with
+	// len(existing)+n.
+	digests := make([]string, 0, len(existing))
 	for _, d := range existing {
 		if s, ok := d.(string); ok {
 			digests = append(digests, s)
