@@ -5,9 +5,10 @@ verifies it against the issuing country's own signatures, and turns it
 into a verifiable digital credential in **both** `mso_mdoc` and
 `dc+sd-jwt`, issued over OID4VCI (HAIP).
 
-> **Status:** passport verification, both credential encoders, the
-> OID4VCI issuer and a command-line wallet are in place. A verifier
-> comes next (see [Roadmap](#roadmap)).
+> **Status:** complete end to end — passport verification, both
+> credential formats, the OID4VCI issuer, a command-line wallet and an
+> OpenID4VP verifier demonstrating both trust paths. An iOS wallet and
+> live NFC capture are next (see [Roadmap](#roadmap)).
 
 This is a separate Go module: it's the only code in this repository
 that depends on gmrtd. It builds against this checkout of the library
@@ -83,19 +84,30 @@ What the second path does and doesn't give you:
 
 ```sh
 go run ./cmd/wallet-provider     # once: wallet-provider.pem + wallet-provider.jwks.json
-go run ./cmd/issuer              # https://127.0.0.1:8443, writes issuer-tls.pem
+go run ./cmd/issuer              # https://127.0.0.1:8443 — writes issuer-tls.pem, issuer-ca.pem
+go run ./cmd/verifier            # https://127.0.0.1:9443 — writes verifier-tls.pem
 ```
 
-Open https://127.0.0.1:8443 (the issuer's certificate is self-signed —
-`issuer-tls.pem`) and upload a gmrtd portable passport file. It's
-verified against gmrtd's built-in ICAO CSCA master list, and the result
-page shows a credential offer for both formats. Then, in another
-terminal:
+1. **Issue.** Open https://127.0.0.1:8443 (self-signed — `issuer-tls.pem`)
+   and upload a gmrtd portable passport file. It's verified against
+   gmrtd's built-in ICAO CSCA master list, and the page shows a
+   credential offer. Then:
 
-```sh
-go run ./cmd/wallet receive 'openid-credential-offer://?credential_offer=...'
-go run ./cmd/wallet list
-```
+   ```sh
+   go run ./cmd/wallet receive 'openid-credential-offer://?credential_offer=...'
+   go run ./cmd/wallet list
+   ```
+
+2. **Verify.** Open https://127.0.0.1:9443 (self-signed —
+   `verifier-tls.pem`), choose a trust path, and give the wallet the
+   request link:
+
+   ```sh
+   go run ./cmd/wallet present 'openid4vp://?client_id=...&request_uri=...'
+   go run ./cmd/wallet present -format dc+sd-jwt 'openid4vp://...'   # force a format
+   ```
+
+   The verifier page updates with the result.
 
 `receive` prints the authorization URL: open it, approve, and the
 wallet picks up the redirect on `http://127.0.0.1:8765/callback` and
@@ -139,6 +151,30 @@ so `issuer_state` is a bearer secret until the transaction expires; the
 signing key and certificate are generated per process (a restart
 invalidates issued credentials); everything is in memory.
 
+### The verification flow
+
+The verifier sends **one** request accepting the credential in either
+format (a DCQL credential set with one option per format); the wallet
+answers with whichever it holds (`-format` picks when it holds both).
+It checks:
+
+| | Trust the issuer | Trust only the issuing country |
+|---|---|---|
+| Requested | `family_name`, `given_name`, nationality, `age_over_18` | `icao_sod`, `icao_dg1` — nothing else, not the photo |
+| Issuer signature | verified, chained to the demo issuer's CA (`issuer-ca.pem`) | verified, likewise |
+| Holder binding | key-binding / device signature over the verifier's nonce | likewise |
+| Data trusted because… | the demo issuer signed it | ICAO Passive Authentication over the SOD + DG1 passes against the CSCA master list: the country signed it |
+
+The request is a signed Request Object (`x509_hash` client identifier)
+fetched from its `request_uri`; the response is an encrypted
+`direct_post.jwt`, routed to its request by the JWE's key ID. Selective
+disclosure is real: in either mode the verifier receives only what it
+asked for.
+
+The demo wallet presents without asking and trusts any verifier whose
+Request Object signature matches its `x509_hash` client identifier — it
+learns who the verifier is, not whether to trust them.
+
 ## Running the tests
 
 ```sh
@@ -156,9 +192,9 @@ PASSPORT_VDC_SAMPLE=/path/to/passport.gmrtd go test ./...
 A real passport file is personal data. Never commit one — `*.gmrtd` is
 in `.gitignore` as a backstop. CI runs everything else — including a full
 end-to-end issuance of both formats (`issuerapp`'s
-`TestEndToEnd_IssuesBothFormats`: the demo wallet, built on a real
-fapigo client and oid4vcgo wallet, against the demo issuer over TLS,
-with synthetic passport evidence) — until gmrtd provides a
+`TestEndToEnd_IssuesBothFormats`, and `verifierapp`'s end-to-end tests
+presenting each format for each trust path — with synthetic passport
+evidence, whose fake SOD must fail the ICAO check) — until gmrtd provides a
 synthetic test passport (a test CSCA → DSC → SOD
 generator, planned for gmrtd itself).
 
@@ -170,14 +206,15 @@ generator, planned for gmrtd itself).
 | `credential` | `Evidence` → `mdoc.Claims` / `sdjwtvc.Claims`; validity and age claims |
 | `issuerapp` | the OID4VCI issuer: fapigo Authorization Server + oid4vcgo Issuer + upload page |
 | `walletprovider` | the stand-in Wallet Provider that signs Wallet Attestations |
-| `walletapp` | the wallet: offer → discovery → HAIP Authorization Code flow → credentials; browser or headless approval; credential store |
-| `cmd/issuer`, `cmd/wallet`, `cmd/wallet-provider` | runnable binaries |
+| `walletapp` | the wallet: receive (offer → discovery → HAIP Authorization Code flow → credentials) and present (OpenID4VP, selective disclosure); credential store |
+| `verifierapp` | the OpenID4VP verifier: either-format requests, both trust paths |
+| `passport.VerifyDataGroups` | the verifier's ICAO check over a disclosed SOD + DG1 |
+| `cmd/issuer`, `cmd/verifier`, `cmd/wallet`, `cmd/wallet-provider` | runnable binaries |
 
 ## Roadmap
 
 1. ~~**Issuer**~~ — done.
 2. ~~**Wallet CLI**~~ — done.
-3. **Verifier** — one request accepting either format, and both trust
-   paths side by side.
+3. ~~**Verifier**~~ — done.
 4. **iOS wallet**, then **live NFC capture** with an issuer-chosen Active
    Authentication challenge.

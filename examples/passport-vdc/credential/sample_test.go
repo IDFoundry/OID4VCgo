@@ -35,7 +35,7 @@ func TestSample_BothFormats(t *testing.T) {
 		t.Skip("sample passport has expired")
 	}
 	if err != nil {
-		t.Fatalf("Verify: %v", err)
+		t.Fatal("Verify failed on the sample (error not printed: it could embed the MRZ)")
 	}
 	o := Options{Now: issuedAt}
 

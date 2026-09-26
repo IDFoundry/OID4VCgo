@@ -1,0 +1,67 @@
+// Command verifier runs the passport-vdc demo Verifier over HTTPS on
+// loopback.
+//
+//	go run ./cmd/verifier      # https://127.0.0.1:9443, writes verifier-tls.pem
+//
+// It trusts the demo issuer's CA (issuer-ca.pem, written by cmd/issuer)
+// for credential signatures, and gmrtd's built-in ICAO CSCA master list
+// for the "trust only the issuing country" check.
+package main
+
+import (
+	"crypto/tls"
+	"crypto/x509"
+	"flag"
+	"log"
+	"net/http"
+	"os"
+	"time"
+
+	"github.com/gmrtd/gmrtd/cms"
+
+	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/demotls"
+	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/verifierapp"
+)
+
+func main() {
+	addr := flag.String("addr", "127.0.0.1:9443", "listen address")
+	verifierURL := flag.String("verifier", "https://127.0.0.1:9443", "verifier URL")
+	issuerURL := flag.String("issuer", "https://127.0.0.1:8443", "the demo issuer's URL (for its credentials' vct)")
+	issuerCA := flag.String("issuer-ca", "issuer-ca.pem", "the demo issuer's CA certificate (from cmd/issuer)")
+	certFile := flag.String("tls-cert", "", "TLS certificate PEM (default: generate a self-signed one)")
+	keyFile := flag.String("tls-key", "", "TLS private key PEM (with -tls-cert)")
+	certOut := flag.String("tls-cert-out", "verifier-tls.pem", "where to write a generated TLS certificate for the wallet to trust")
+	flag.Parse()
+
+	caPEM, err := os.ReadFile(*issuerCA) // #nosec G304 -- operator-supplied path
+	if err != nil {
+		log.Fatalf("read issuer CA (start cmd/issuer first): %v", err)
+	}
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM(caPEM) {
+		log.Fatalf("%s holds no PEM certificates", *issuerCA)
+	}
+	cscaPool, err := cms.DefaultMasterList()
+	if err != nil {
+		log.Fatalf("load CSCA master list: %v", err)
+	}
+	app, err := verifierapp.New(verifierapp.Config{
+		VerifierURL: *verifierURL, IssuerVCT: *issuerURL + "/vct/passport/1",
+		IssuerRoots: roots, CSCAPool: cscaPool,
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	cert, err := demotls.Certificate(*certFile, *keyFile, *certOut, "passport-vdc demo verifier (TLS)")
+	if err != nil {
+		log.Fatal(err)
+	}
+	srv := &http.Server{
+		Addr: *addr, Handler: app,
+		TLSConfig:         &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12},
+		ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second,
+		WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second,
+	}
+	log.Printf("passport-vdc verifier on https://%s", *addr)
+	log.Fatal(srv.ListenAndServeTLS("", ""))
+}

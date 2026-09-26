@@ -22,6 +22,7 @@ type Store struct{ Dir string }
 type Stored struct {
 	ConfigurationID string    `json:"configuration_id"`
 	Format          string    `json:"format"`
+	DocType         string    `json:"doc_type,omitempty"`
 	Credential      string    `json:"credential"`
 	HolderKeyPEM    string    `json:"holder_key_pem"`
 	ReceivedAt      time.Time `json:"received_at"`
@@ -40,7 +41,7 @@ func (s Store) Save(r Received, now time.Time) (string, error) {
 		return "", fmt.Errorf("walletapp: store: holder key: %w", err)
 	}
 	raw, err := json.MarshalIndent(Stored{
-		ConfigurationID: r.ConfigurationID, Format: r.Format, Credential: r.Credential,
+		ConfigurationID: r.ConfigurationID, Format: r.Format, DocType: r.DocType, Credential: r.Credential,
 		HolderKeyPEM: string(pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: der})),
 		ReceivedAt:   now.UTC(),
 	}, "", "  ")
