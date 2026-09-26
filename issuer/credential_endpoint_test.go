@@ -28,7 +28,7 @@ const (
 	testMdocConfigID  = "MobileDrivingLicence"
 )
 
-func testP256Key(t *testing.T) *ecdsa.PrivateKey {
+func testP256Key(t testing.TB) *ecdsa.PrivateKey {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -85,7 +85,7 @@ type credentialEndpointFixture struct {
 // called — e.g. to override the default BatchCredentialIssuance
 // (BatchSize 2, high enough for every existing multi-proof test in this
 // file) or to replace a Dependencies field.
-func newCredentialEndpointFixture(t *testing.T, mutate ...func(cfg *issuer.Config, deps *issuer.Dependencies)) credentialEndpointFixture {
+func newCredentialEndpointFixture(t testing.TB, mutate ...func(cfg *issuer.Config, deps *issuer.Dependencies)) credentialEndpointFixture {
 	t.Helper()
 	sdjwtSigner := testSDJWTSigner(t)
 	mdocSigner := testMdocSigner(t)
@@ -158,18 +158,24 @@ func (f credentialEndpointFixture) issueNonce(t *testing.T) string {
 	return "test-nonce"
 }
 
-func buildJWTProof(t *testing.T, key *ecdsa.PrivateKey, aud, nonce string) string {
+// jwkJSON returns pub's public JWK as JSON.
+func jwkJSON(t testing.TB, pub crypto.PublicKey) json.RawMessage {
 	t.Helper()
-	k, err := jwk.Marshal(&key.PublicKey)
+	k, err := jwk.Marshal(pub)
 	if err != nil {
 		t.Fatalf("jwk.Marshal: %v", err)
 	}
-	rawJWK, err := json.Marshal(k)
+	raw, err := json.Marshal(k)
 	if err != nil {
 		t.Fatalf("json.Marshal: %v", err)
 	}
+	return raw
+}
+
+func buildJWTProof(t *testing.T, key *ecdsa.PrivateKey, aud, nonce string) string {
+	t.Helper()
 	var jwkObj map[string]any
-	if err := json.Unmarshal(rawJWK, &jwkObj); err != nil {
+	if err := json.Unmarshal(jwkJSON(t, &key.PublicKey), &jwkObj); err != nil {
 		t.Fatalf("json.Unmarshal: %v", err)
 	}
 	header := map[string]any{"typ": "openid4vci-proof+jwt", "jwk": jwkObj}
@@ -192,15 +198,7 @@ func buildAttestation(t *testing.T, signer *ecdsa.PrivateKey, nonce string, atte
 	t.Helper()
 	raws := make([]json.RawMessage, len(attestedKeys))
 	for i, pub := range attestedKeys {
-		k, err := jwk.Marshal(pub)
-		if err != nil {
-			t.Fatalf("jwk.Marshal: %v", err)
-		}
-		raw, err := json.Marshal(k)
-		if err != nil {
-			t.Fatalf("json.Marshal: %v", err)
-		}
-		raws[i] = raw
+		raws[i] = jwkJSON(t, pub)
 	}
 	compact, err := attestation.Issue(signer, jose.ES256, attestation.Header{}, attestation.Claims{
 		IssuedAt: time.Now().Unix(), AttestedKeys: raws, Nonce: nonce,

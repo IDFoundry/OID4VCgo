@@ -19,28 +19,7 @@ import (
 // call without panicking, whether or not the signature/digests
 // actually check out.
 func FuzzUnmarshalIssuerSigned(f *testing.F) {
-	issuerKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		f.Fatalf("generate issuer key: %v", err)
-	}
-	deviceKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		f.Fatalf("generate device key: %v", err)
-	}
-	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	cert := selfSignedCert(f, &issuerKey.PublicKey, issuerKey)
-
-	issuerSigned, err := Issue(issuerKey, cose.ES256, Claims{
-		DocType: "org.iso.18013.5.1.mDL",
-		NameSpaces: map[string]map[string]interface{}{
-			"org.iso.18013.5.1": {"given_name": "Alice", "family_name": "Doe"},
-		},
-		DeviceKey: &deviceKey.PublicKey,
-		Signed:    now, ValidFrom: now, ValidUntil: now.Add(24 * time.Hour),
-	}, IssueOptions{X5Chain: [][]byte{cert}})
-	if err != nil {
-		f.Fatalf("Issue: %v", err)
-	}
+	issuerKey, issuerSigned, _ := issueFuzzSeed(f, nil)
 	valid, err := issuerSigned.Marshal()
 	if err != nil {
 		f.Fatalf("Marshal: %v", err)
@@ -97,4 +76,34 @@ func FuzzUnmarshalDeviceSigned(f *testing.F) {
 		}
 		_ = VerifyDeviceSignature(signed, &deviceKey.PublicKey, cose.ES256, sessionTranscriptBytes, docType)
 	})
+}
+
+// issueFuzzSeed issues one genuine mDL IssuerSigned for use as fuzz
+// seed material, returning it with the issuer key that signed it and
+// the time it's valid from (2026-01-01T00:00:00Z, valid for 24h).
+func issueFuzzSeed(f *testing.F, keyAuth *KeyAuthorizations) (*ecdsa.PrivateKey, IssuerSigned, time.Time) {
+	issuerKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		f.Fatalf("generate issuer key: %v", err)
+	}
+	deviceKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		f.Fatalf("generate device key: %v", err)
+	}
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	cert := selfSignedCert(f, &issuerKey.PublicKey, issuerKey)
+
+	issuerSigned, err := Issue(issuerKey, cose.ES256, Claims{
+		DocType: "org.iso.18013.5.1.mDL",
+		NameSpaces: map[string]map[string]interface{}{
+			"org.iso.18013.5.1": {"given_name": "Alice", "family_name": "Doe"},
+		},
+		DeviceKey:         &deviceKey.PublicKey,
+		KeyAuthorizations: keyAuth,
+		Signed:            now, ValidFrom: now, ValidUntil: now.Add(24 * time.Hour),
+	}, IssueOptions{X5Chain: [][]byte{cert}})
+	if err != nil {
+		f.Fatalf("Issue: %v", err)
+	}
+	return issuerKey, issuerSigned, now
 }

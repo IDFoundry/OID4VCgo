@@ -25,7 +25,7 @@ const (
 	testNotificationEndpoint       = "https://issuer.example.com/notification"
 )
 
-func mustIssuerURL(t *testing.T, raw string) fapi.URL {
+func mustIssuerURL(t testing.TB, raw string) fapi.URL {
 	t.Helper()
 	u, err := fapi.ParseIssuerURL(raw)
 	if err != nil {
@@ -34,7 +34,7 @@ func mustIssuerURL(t *testing.T, raw string) fapi.URL {
 	return u
 }
 
-func mustEndpointURL(t *testing.T, raw string) fapi.URL {
+func mustEndpointURL(t testing.TB, raw string) fapi.URL {
 	t.Helper()
 	u, err := fapi.ParseEndpointURL(raw)
 	if err != nil {
@@ -79,7 +79,7 @@ func validConfig(t *testing.T) issuer.Config {
 	}
 }
 
-func testSDJWTSigner(t *testing.T) *issuer.SDJWTSigner {
+func testSDJWTSigner(t testing.TB) *issuer.SDJWTSigner {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -88,7 +88,7 @@ func testSDJWTSigner(t *testing.T) *issuer.SDJWTSigner {
 	return &issuer.SDJWTSigner{Signer: key, Alg: jose.ES256}
 }
 
-func testMdocSigner(t *testing.T) *issuer.MdocSigner {
+func testMdocSigner(t testing.TB) *issuer.MdocSigner {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
