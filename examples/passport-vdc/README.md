@@ -146,7 +146,7 @@ lets it fetch the metadata, but decoding `credential_issuer` as a
 
 | Step | Endpoint | What happens |
 |---|---|---|
-| Upload | `POST /passport` | gmrtd verification → a transaction T holding the `Evidence` (in memory, 10 minutes) → a credential offer with `issuer_state` = T |
+| Upload | `POST /passport` | gmrtd verification → a transaction T holding the `Evidence` (in memory, 10 minutes, at most 100 at once) → a credential offer with `issuer_state` = T, as a link and a QR code |
 | PAR | `POST /par` | fapigo verifies Wallet Attestation + PoP and DPoP; this app records `request_uri` → T from the form's `issuer_state` |
 | Approve | `GET /authorize`, `POST /authorize/decision` | shows the passport holder's name; approval authorizes **subject = T**, granting the scopes the wallet requested |
 | Token | `POST /token` | DPoP-bound access token with `sub` = T |
@@ -175,8 +175,9 @@ type metadata at the `vct` URL (`/vct/passport/1`).
   authorization request (`request_uri`) and each approval are single-use.
   (Keeping the transaction is what lets one wallet receive both formats,
   in batches.)
-- The signing key and certificate are generated per process (a restart
-  invalidates issued credentials); everything is in memory.
+- The signing keys and certificates (one for credentials, one for the
+  issuer metadata, under one demo CA) are generated per process (a
+  restart invalidates issued credentials); everything is in memory.
 - **Key Attestations assert nothing about key storage.** They leave out
   `key_storage` and `user_authentication`, because the demo's holder keys
   are ordinary software keys. The issuer checks who attested a key, not
@@ -204,11 +205,18 @@ It checks:
 | Holder binding | key-binding / device signature over the verifier's nonce | likewise |
 | Data trusted because… | the demo issuer signed it | ICAO Passive Authentication over the SOD + DG1 passes against the CSCA master list: the country signed it |
 
-The request is a signed Request Object (`x509_hash` client identifier)
-fetched from its `request_uri`; the response is an encrypted
-`direct_post.jwt`, routed to its request by the JWE's key ID. Selective
-disclosure is real: in either mode the verifier receives only what it
-asked for.
+The request is a signed Request Object (`x509_hash` client identifier,
+certificate issued by a per-process demo verifier CA) fetched from its
+`request_uri`; the response is an encrypted `direct_post.jwt`, routed
+to its request by the JWE's key ID. Selective disclosure is real: in
+either mode the verifier receives only what it asked for.
+
+The result page's address uses a random ID that never leaves the
+verifier, separate from the `state` the wallet sees (OpenID4VP
+§14.3.3), so the request link (or its QR code) doesn't reveal the
+result. Anyone can encrypt a response to the request's public key, so
+a response that fails to verify leaves the request open; the first one
+that verifies is recorded and closes it.
 
 The demo wallet presents without asking and trusts any verifier whose
 Request Object signature matches its `x509_hash` client identifier — it

@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+
+	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/demoqr"
 )
 
 func (a *App) routes() http.Handler {
@@ -13,7 +15,7 @@ func (a *App) routes() http.Handler {
 	mux.HandleFunc("GET /{$}", a.handleHome)
 	mux.HandleFunc("POST /requests", a.handleCreateRequest)
 	mux.HandleFunc("GET /requests/{id}", a.handleRequestPage)
-	mux.HandleFunc("GET /request-objects/{id}", a.handleRequestObject)
+	mux.HandleFunc("GET /request-objects/{state}", a.handleRequestObject)
 	mux.HandleFunc("POST /response", a.handleResponse)
 	return mux
 }
@@ -53,10 +55,11 @@ var homeTemplate = template.Must(template.New("home").Parse(pageHead + `</head><
 ` + pageFoot))
 
 type requestPage struct {
-	ID            string
 	Link          string
+	QR            template.URL
 	WebWalletLink string
 	Outcome       *Outcome
+	LastError     string
 	Rows          [][2]string
 }
 
@@ -65,12 +68,11 @@ var requestTemplate = template.Must(template.New("request").Parse(pageHead + `{{
 {{if not .Outcome}}
 <h1>Waiting for the wallet</h1>
 {{if .WebWalletLink}}<p><a href="{{.WebWalletLink}}" target="_blank"><strong>Open in web wallet</strong></a></p>{{end}}
+{{if .QR}}<p><img src="{{.QR}}" alt="QR code of the presentation request" width="296"></p>{{end}}
 <p>Or give this request to the demo CLI wallet:</p>
 <p><code>{{.Link}}</code></p>
+{{if .LastError}}<p class="bad">✗ A response was rejected: {{.LastError}}. Still waiting for one that verifies.</p>{{end}}
 <p class="note">This page refreshes until the wallet answers.</p>
-{{else if .Outcome.Error}}
-<h1 class="bad">✗ Presentation rejected</h1>
-<p>{{.Outcome.Error}}</p>
 {{else}}
 <h1 class="ok">✓ Presentation verified</h1>
 <p>The wallet presented its <code>{{.Outcome.Format}}</code> credential. The issuer signature chains to the demo issuer's CA, and the holder proved possession of the credential's key.</p>
@@ -78,7 +80,7 @@ var requestTemplate = template.Must(template.New("request").Parse(pageHead + `{{
 <div class="card">
 <h2>ICAO Passive Authentication over SOD + DG1</h2>
 {{if .Outcome.ICAO.Verified}}
-<p class="ok">✓ The SOD is signed by a Document Signer chaining to the issuing country's CSCA, and DG1 matches its hash. This data comes from the passport, whatever the demo issuer did.</p>
+<p class="ok">✓ The SOD is signed by a Document Signer chaining to the issuing country's CSCA, and DG1 matches its hash. The demo issuer can't have altered this data.</p>
 <table>
 <tr><th>Name</th><td>{{.Outcome.ICAO.Identity.FamilyName}}, {{.Outcome.ICAO.Identity.GivenNames}}</td></tr>
 <tr><th>Nationality</th><td>{{.Outcome.ICAO.Identity.Nationality}}</td></tr>
@@ -88,7 +90,7 @@ var requestTemplate = template.Must(template.New("request").Parse(pageHead + `{{
 {{else}}
 <p class="bad">✗ {{.Outcome.ICAO.Error}}</p>
 {{end}}
-<p class="note">This proves the data is authentic, not that the presenter holds the passport: that binding comes from the credential's device key.</p>
+<p class="note">This proves the data is authentic, not that the presenter holds the passport. Tying the data to the presenter still relies on the issuer: it bound the credential's device key to this passport.</p>
 </div>
 {{end}}
 <h2>Disclosed claims</h2>
@@ -122,14 +124,18 @@ func (a *App) handleRequestPage(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	page := requestPage{ID: id, Link: s.link}
+	page := requestPage{Link: s.link, LastError: a.LastError(id)}
 	if a.cfg.WebWalletURL != "" {
 		page.WebWalletLink = a.cfg.WebWalletURL + "/present?request=" + url.QueryEscape(s.link)
 	}
 	if outcome, done := a.Outcome(id); done {
 		page.Outcome = outcome
 		page.Rows = displayRows(outcome.Claims)
+	} else if qr, err := demoqr.DataURI(s.link); err == nil {
+		page.QR = qr
 	}
+	// The page carries the verified claims; keep it out of caches.
+	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = requestTemplate.Execute(w, page)
 }

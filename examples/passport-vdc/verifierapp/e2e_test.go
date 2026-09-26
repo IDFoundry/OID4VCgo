@@ -45,21 +45,25 @@ func present(t *testing.T, env *demotest.Env, store walletapp.Store, mode verifi
 	if err != nil {
 		t.Fatalf("CreateRequest: %v", err)
 	}
+	presentTo(t, env, store, link, format)
+	outcome, ok := env.Verifier.Outcome(id)
+	if !ok {
+		t.Fatalf("verifier recorded no outcome (last rejection: %q)", env.Verifier.LastError(id))
+	}
+	return outcome
+}
+
+// presentTo answers the request at link with the stored credential of
+// format.
+func presentTo(t *testing.T, env *demotest.Env, store walletapp.Store, link, format string) {
+	t.Helper()
 	presented, err := walletapp.Present(context.Background(), link, store, walletapp.PresentOptions{Format: format, HTTP: env.HTTP})
 	if err != nil {
-		t.Fatalf("Present(%s, %s): %v", mode, format, err)
+		t.Fatalf("Present(%s): %v", format, err)
 	}
 	if len(presented.Credentials) != 1 {
 		t.Fatalf("presented %v, want exactly one credential", presented.Credentials)
 	}
-	outcome, ok := env.Verifier.Outcome(id)
-	if !ok {
-		t.Fatal("verifier recorded no outcome")
-	}
-	if outcome.Error != "" {
-		t.Fatalf("verifier rejected the presentation: %s", outcome.Error)
-	}
-	return outcome
 }
 
 // TestEndToEnd_TrustIssuer presents each format for the "trust the

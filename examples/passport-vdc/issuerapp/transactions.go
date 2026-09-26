@@ -3,6 +3,7 @@ package issuerapp
 import (
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -19,19 +20,25 @@ type transactions struct {
 	mu       sync.Mutex
 	now      func() time.Time
 	lifetime time.Duration
+	max      int
 	items    map[string]transaction
 }
+
+// errTooManyTransactions is returned by put when max passports are
+// already held.
+var errTooManyTransactions = errors.New("issuerapp: too many passports awaiting issuance")
 
 type transaction struct {
 	evidence  passport.Evidence
 	expiresAt time.Time
 }
 
-func newTransactions(now func() time.Time, lifetime time.Duration) *transactions {
-	return &transactions{now: now, lifetime: lifetime, items: make(map[string]transaction)}
+func newTransactions(now func() time.Time, lifetime time.Duration, max int) *transactions {
+	return &transactions{now: now, lifetime: lifetime, max: max, items: make(map[string]transaction)}
 }
 
-// put stores e under a fresh ID and returns it.
+// put stores e under a fresh ID and returns it, or errTooManyTransactions
+// when max unexpired passports are already held.
 func (t *transactions) put(e passport.Evidence) (string, error) {
 	var b [32]byte
 	if _, err := rand.Read(b[:]); err != nil {
@@ -46,6 +53,9 @@ func (t *transactions) put(e passport.Evidence) (string, error) {
 		if !now.Before(v.expiresAt) {
 			delete(t.items, k)
 		}
+	}
+	if len(t.items) >= t.max {
+		return "", errTooManyTransactions
 	}
 	t.items[id] = transaction{evidence: e, expiresAt: now.Add(t.lifetime)}
 	return id, nil

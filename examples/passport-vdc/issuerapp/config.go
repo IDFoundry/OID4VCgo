@@ -49,6 +49,10 @@ type Config struct {
 	// redeemable; zero means 10 minutes.
 	TransactionLifetime time.Duration
 
+	// MaxTransactions caps how many verified passports are held at once,
+	// since uploading is unauthenticated; zero means 100.
+	MaxTransactions int
+
 	// WebWalletURL, if set, adds an "Open in web wallet" button to the
 	// offer page, linking to the demo web wallet's /receive.
 	WebWalletURL string
@@ -86,6 +90,13 @@ func (c Config) transactionLifetime() time.Duration {
 		return 10 * time.Minute
 	}
 	return c.TransactionLifetime
+}
+
+func (c Config) maxTransactions() int {
+	if c.MaxTransactions == 0 {
+		return 100
+	}
+	return c.MaxTransactions
 }
 
 func (c Config) validate() error {

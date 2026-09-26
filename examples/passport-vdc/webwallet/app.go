@@ -149,10 +149,13 @@ func (a *App) handleReceive(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleCallback receives the issuer's redirect, completes the receive
-// and stores the credentials.
+// and stores the credentials. The in-progress receive is claimed by the
+// first callback, so a second one (a reload, a stray request) gets an
+// error instead of waiting for a result that never comes.
 func (a *App) handleCallback(w http.ResponseWriter, r *http.Request) {
 	a.mu.Lock()
 	op := a.receiving
+	a.receiving = nil
 	a.mu.Unlock()
 	if op == nil {
 		renderError(w, http.StatusBadRequest, "no credential is being received")

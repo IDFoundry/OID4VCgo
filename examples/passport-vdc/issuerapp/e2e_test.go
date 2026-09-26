@@ -2,8 +2,12 @@ package issuerapp_test
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"io"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -145,5 +149,50 @@ func TestCredential_RejectsKeyAttestationFromUntrustedCA(t *testing.T) {
 	// "resolve trust key": the x5c chain doesn't reach the trusted CA.
 	if err == nil || !strings.Contains(err.Error(), "invalid_proof") || !strings.Contains(err.Error(), "resolve trust key") {
 		t.Fatalf("Receive: error = %v, want the credential request refused for an untrusted x5c chain", err)
+	}
+}
+
+// TestMetadata_SignedWithItsOwnKey checks the signed Credential Issuer
+// Metadata isn't signed with the key that signs credentials, and that
+// its certificate chains to the same demo CA.
+func TestMetadata_SignedWithItsOwnKey(t *testing.T) {
+	env := demotest.New(t, nil)
+	req, err := http.NewRequest(http.MethodGet, env.IssuerURL+"/.well-known/openid-credential-issuer", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Accept", "application/jwt")
+	resp, err := env.HTTP.Do(req)
+	if err != nil {
+		t.Fatalf("GET signed metadata: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil || resp.Header.Get("Content-Type") != "application/jwt" {
+		t.Fatalf("signed metadata: Content-Type %q, %v", resp.Header.Get("Content-Type"), err)
+	}
+	rawHeader, err := base64.RawURLEncoding.DecodeString(strings.Split(string(body), ".")[0])
+	if err != nil {
+		t.Fatalf("decode header: %v", err)
+	}
+	var header struct {
+		X5C []string `json:"x5c"`
+	}
+	if err := json.Unmarshal(rawHeader, &header); err != nil || len(header.X5C) == 0 {
+		t.Fatalf("header x5c: %v", err)
+	}
+	der, err := base64.StdEncoding.DecodeString(header.X5C[0])
+	if err != nil {
+		t.Fatalf("decode x5c: %v", err)
+	}
+	cert, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatalf("parse x5c: %v", err)
+	}
+	if cert.PublicKey.(*ecdsa.PublicKey).Equal(env.Issuer.IssuerCertificate().PublicKey) {
+		t.Error("metadata is signed with the credential signing key")
+	}
+	if err := cert.CheckSignatureFrom(env.Issuer.IssuerCACertificate()); err != nil {
+		t.Errorf("metadata signing certificate isn't issued by the demo CA: %v", err)
 	}
 }

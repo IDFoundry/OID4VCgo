@@ -10,6 +10,7 @@ import (
 	"net/url"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
+	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/demoqr"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/passport"
 	"github.com/idfoundry/oid4vcgo/issuer"
 )
@@ -101,6 +102,7 @@ var uploadTemplate = template.Must(template.New("upload").Parse(pageHead + `
 type offerPage struct {
 	Evidence      passport.Evidence
 	Offer         Offer
+	QR            template.URL
 	WebWalletLink string
 }
 
@@ -115,7 +117,7 @@ var offerTemplate = template.Must(template.New("offer").Funcs(template.FuncMap{
 <h1>Passport verified</h1>
 <ul>
 <li class="ok">✓ Passive Authentication — issuing country's signature and data-group hashes</li>
-<li>Chip authentication: {{.Evidence.Checks.ChipAuthenticity}}</li>
+<li>Chip authentication evidence in the file: {{.Evidence.Checks.ChipAuthenticity}} <span class="note">— recorded when the chip was read, so it can be replayed: it doesn't show that you hold the passport</span></li>
 </ul>
 <table>
 <tr><th>Name</th><td>{{.Evidence.Identity.FamilyName}}, {{.Evidence.Identity.GivenNames}}{{if .Evidence.Identity.NamesFromMRZ}} <span class="note">(from MRZ)</span>{{end}}</td></tr>
@@ -126,7 +128,8 @@ var offerTemplate = template.Must(template.New("offer").Funcs(template.FuncMap{
 </table>
 <h2>Credential offer</h2>
 {{if .WebWalletLink}}<p><a href="{{.WebWalletLink}}"><strong>Open in web wallet</strong></a></p>{{end}}
-<p><a href="{{.Offer.URI}}">Open in wallet app</a></p>
+<p><a href="{{.Offer.URI}}">Open in wallet app</a> (on this device)</p>
+{{if .QR}}<p>Or scan with a wallet on another device:<br><img src="{{.QR}}" alt="QR code of the credential offer" width="296"></p>{{end}}
 <p class="note">Or pass this offer to the demo CLI wallet:</p>
 <p><code>{{.Offer.URI}}</code></p>
 <p class="warn">This proves the passport data is authentic, not that you hold the passport — see the demo README.</p>
@@ -165,12 +168,20 @@ func (a *App) handleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	offer, err := a.CreateTransaction(r.Context(), e)
-	if err != nil {
+	switch {
+	case errors.Is(err, errTooManyTransactions):
+		writeHTMLError(w, http.StatusServiceUnavailable, "too many passports are awaiting issuance — try again in a few minutes")
+		return
+	case err != nil:
 		writeHTMLError(w, http.StatusInternalServerError, "couldn't create a credential offer")
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store") // the offer is a bearer secret, next to the passport's identity
 	page := offerPage{Evidence: e, Offer: offer}
+	if qr, err := demoqr.DataURI(offer.URI); err == nil {
+		page.QR = qr
+	}
 	if a.cfg.WebWalletURL != "" {
 		page.WebWalletLink = a.cfg.WebWalletURL + "/receive?offer=" + url.QueryEscape(offer.URI)
 	}

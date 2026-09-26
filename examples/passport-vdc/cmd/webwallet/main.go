@@ -61,7 +61,7 @@ func main() {
 	}
 	srv := &http.Server{
 		Addr: *addr, Handler: app,
-		TLSConfig:         &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12},
+		TLSConfig:         &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS13}, // TLS 1.3 only: FAPI 2.0 allows TLS 1.2 with just a few AES-GCM suites
 		ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second,
 		// Long enough for the callback handler to finish the token and
 		// credential requests.

@@ -10,3 +10,5 @@ github.com/osanderson/brainpool v1.0.0 h1:APN9IiMKDVNgiERIMm4D5sTRLobVI/GK2nIofZ
 github.com/osanderson/brainpool v1.0.0/go.mod h1:LUYLv8+wgWKKP+MZcvXJ+BkQlpakINAEAMOwG9OL66Y=
 github.com/x448/float16 v0.8.4 h1:qLwI1I70+NjRFUR3zs1JPUCgaCXSh3SW62uAKT1mSBM=
 github.com/x448/float16 v0.8.4/go.mod h1:14CWIYCyZA/cWjXOioeEpHeN/83MdbZDRQHoFcYsOfg=
+rsc.io/qr v0.2.0 h1:6vBLea5/NRMVTz8V66gipeLycZMl/+UlFmk8DvqQ6WY=
+rsc.io/qr v0.2.0/go.mod h1:IF+uZjkb9fqyeF/4tlBoynqmQxUoPfWEKh921coOuXs=

@@ -11,7 +11,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math/big"
 	"net/http"
 	"net/url"
 	"strings"
@@ -23,6 +22,7 @@ import (
 
 	"github.com/idfoundry/oid4vcgo/dcql"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/credential"
+	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/democert"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/passport"
 	"github.com/idfoundry/oid4vcgo/haip"
 	"github.com/idfoundry/oid4vcgo/verifier"
@@ -63,19 +63,26 @@ type App struct {
 	handler  http.Handler
 
 	mu       sync.Mutex
-	sessions map[string]*session // by request ID (also the OpenID4VP state)
+	sessions map[string]*session // by request ID, known only to whoever created the request
+	byState  map[string]string   // OpenID4VP state (also the request_uri path) → request ID
 	byKeyID  map[string]string   // response encryption key ID → request ID
 }
 
+// A request has two unrelated random values (OpenID4VP §14.3.3): its
+// state, which the wallet sees (in the request_uri and the Request
+// Object), and its ID, which only the page that created it knows and
+// which alone reads the result.
 type session struct {
 	mode          Mode
+	state         string
 	query         dcql.Query
 	nonce         string
 	requestObject string
 	decryptionKey *ecdsa.PrivateKey
 	link          string
 	expiresAt     time.Time
-	outcome       *Outcome
+	outcome       *Outcome // set once, by the first response that verifies
+	lastError     string   // why the latest rejected response was rejected
 }
 
 // Outcome is what a verified presentation established.
@@ -88,8 +95,6 @@ type Outcome struct {
 	// ICAO is the Passive Authentication result over the disclosed SOD
 	// and DG1 (ModeICAO).
 	ICAO *ICAOResult
-	// Error is set when the presentation was rejected.
-	Error string
 }
 
 // ICAOResult is a ModeICAO check of the raw data groups.
@@ -109,7 +114,7 @@ func New(cfg Config) (*App, error) {
 	if err != nil {
 		return nil, fmt.Errorf("verifierapp: response URI: %w", err)
 	}
-	key, cert, err := newRequestSigningIdentity()
+	key, cert, err := newRequestSigningIdentity(time.Now())
 	if err != nil {
 		return nil, err
 	}
@@ -122,7 +127,7 @@ func New(cfg Config) (*App, error) {
 	if err != nil {
 		return nil, fmt.Errorf("verifierapp: verifier.New: %w", err)
 	}
-	a := &App{cfg: cfg, verifier: v, now: time.Now, sessions: map[string]*session{}, byKeyID: map[string]string{}}
+	a := &App{cfg: cfg, verifier: v, now: time.Now, sessions: map[string]*session{}, byState: map[string]string{}, byKeyID: map[string]string{}}
 	a.handler = a.routes()
 	return a, nil
 }
@@ -138,17 +143,21 @@ func (a *App) lifetime() time.Duration {
 }
 
 // CreateRequest starts a presentation request in mode and returns its
-// ID and the openid4vp:// link a wallet answers.
+// ID and the openid4vp:// link a wallet answers. The ID reads the
+// result (Outcome, the result page) and never appears in the link.
 func (a *App) CreateRequest(mode Mode) (id, link string, err error) {
 	query, err := buildQuery(mode, a.cfg.IssuerVCT)
 	if err != nil {
 		return "", "", err
 	}
-	id, err = randomID()
+	if id, err = randomID(); err != nil {
+		return "", "", err
+	}
+	state, err := randomID()
 	if err != nil {
 		return "", "", err
 	}
-	built, err := a.verifier.BuildAuthorizationRequest(verifier.BuildAuthorizationRequestRequest{Query: query, State: id})
+	built, err := a.verifier.BuildAuthorizationRequest(verifier.BuildAuthorizationRequestRequest{Query: query, State: state})
 	if err != nil {
 		return "", "", fmt.Errorf("verifierapp: build request: %w", err)
 	}
@@ -160,22 +169,36 @@ func (a *App) CreateRequest(mode Mode) (id, link string, err error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	now := a.now()
-	for k, s := range a.sessions {
-		if now.After(s.expiresAt) {
-			delete(a.sessions, k)
-		}
-	}
-	requestURI := a.cfg.VerifierURL + "/request-objects/" + id
+	a.dropExpired(now)
+	requestURI := a.cfg.VerifierURL + "/request-objects/" + state
 	link = "openid4vp://?" + url.Values{"client_id": {a.verifier.ClientID()}, "request_uri": {requestURI}}.Encode()
 	a.sessions[id] = &session{
-		mode: mode, query: query, nonce: built.Nonce, requestObject: built.RequestObject,
+		mode: mode, state: state, query: query, nonce: built.Nonce, requestObject: built.RequestObject,
 		decryptionKey: built.ResponseDecryptionKey, link: link, expiresAt: now.Add(a.lifetime()),
 	}
+	a.byState[state] = id
 	a.byKeyID[kid] = id
 	return id, link, nil
 }
 
-// Outcome returns request id's outcome, once a wallet has answered.
+// dropExpired forgets expired requests. Called with a.mu held.
+func (a *App) dropExpired(now time.Time) {
+	for id, s := range a.sessions {
+		if now.After(s.expiresAt) {
+			delete(a.sessions, id)
+		}
+	}
+	for _, index := range []map[string]string{a.byState, a.byKeyID} {
+		for k, id := range index {
+			if _, ok := a.sessions[id]; !ok {
+				delete(index, k)
+			}
+		}
+	}
+}
+
+// Outcome returns request id's outcome, once a wallet's presentation
+// has verified.
 func (a *App) Outcome(id string) (*Outcome, bool) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -196,10 +219,24 @@ func (a *App) session(id string) (*session, bool) {
 	return s, true
 }
 
+// LastError returns why the latest rejected response to request id was
+// rejected, if one was.
+func (a *App) LastError(id string) string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if s, ok := a.sessions[id]; ok {
+		return s.lastError
+	}
+	return ""
+}
+
 // handleRequestObject serves a request's signed Request Object at its
 // request_uri.
 func (a *App) handleRequestObject(w http.ResponseWriter, r *http.Request) {
-	s, ok := a.session(r.PathValue("id"))
+	a.mu.Lock()
+	id := a.byState[r.PathValue("state")]
+	a.mu.Unlock()
+	s, ok := a.session(id)
 	if !ok {
 		http.NotFound(w, r)
 		return
@@ -209,8 +246,12 @@ func (a *App) handleRequestObject(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleResponse is the response_uri: it routes the encrypted response
-// to its request by the JWE's key ID, verifies it and records the
-// outcome.
+// to its request by the JWE's key ID and verifies it.
+//
+// Anyone can encrypt to the request's public key and copy its state, so
+// a response that fails to verify changes nothing but lastError: the
+// request stays open for the real wallet. The first response that
+// verifies is recorded and closes the request.
 func (a *App) handleResponse(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 2<<20)
 	if err := r.ParseForm(); err != nil {
@@ -225,7 +266,6 @@ func (a *App) handleResponse(w http.ResponseWriter, r *http.Request) {
 	}
 	a.mu.Lock()
 	id := a.byKeyID[kid]
-	delete(a.byKeyID, kid)
 	a.mu.Unlock()
 	s, ok := a.session(id)
 	if !ok {
@@ -233,30 +273,34 @@ func (a *App) handleResponse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	outcome := a.verify(r.Context(), s, id, responseJWE)
+	outcome, err := a.verify(r.Context(), s, responseJWE)
 	a.mu.Lock()
-	s.outcome = outcome
-	a.mu.Unlock()
-	if outcome.Error != "" {
-		writeJSONError(w, "invalid_request", outcome.Error)
+	defer a.mu.Unlock()
+	switch {
+	case s.outcome != nil:
+		writeJSONError(w, "invalid_request", "this request has already been answered")
+		return
+	case err != nil:
+		s.lastError = err.Error()
+		writeJSONError(w, "invalid_request", err.Error())
 		return
 	}
+	s.outcome = outcome
+	delete(a.byKeyID, kid)
+	delete(a.byState, s.state)
 	w.Header().Set("Content-Type", "application/json")
 	_, _ = w.Write([]byte("{}"))
 }
 
-// verify checks a response against its request. Errors are reported in
-// the Outcome rather than returned.
-func (a *App) verify(ctx context.Context, s *session, id, responseJWE string) *Outcome {
+// verify checks a response against its request.
+func (a *App) verify(ctx context.Context, s *session, responseJWE string) (*Outcome, error) {
 	out := &Outcome{Mode: s.mode}
 	parsed, err := a.verifier.ParseDirectPostJWTResponse(responseJWE, s.decryptionKey)
 	if err != nil {
-		out.Error = "couldn't decrypt the response"
-		return out
+		return nil, errors.New("couldn't decrypt the response")
 	}
-	if parsed.State != id {
-		out.Error = "response state doesn't match the request"
-		return out
+	if parsed.State != s.state {
+		return nil, errors.New("response state doesn't match the request")
 	}
 	result, err := a.verifier.VerifyResponse(ctx, verifier.VerifyResponseRequest{
 		Query: s.query, Response: parsed, ExpectedNonce: s.nonce,
@@ -266,12 +310,10 @@ func (a *App) verify(ctx context.Context, s *session, id, responseJWE string) *O
 		ResponseEncryptionKey: s.decryptionKey,
 	})
 	if err != nil {
-		out.Error = "the presentation didn't verify: " + err.Error()
-		return out
+		return nil, fmt.Errorf("the presentation didn't verify: %w", err)
 	}
 	if len(result.Credentials) != 1 {
-		out.Error = fmt.Sprintf("expected one credential, got %d", len(result.Credentials))
-		return out
+		return nil, fmt.Errorf("expected one credential, got %d", len(result.Credentials))
 	}
 	vc := result.Credentials[0]
 	out.Format = formatOf(vc.CredentialQueryID)
@@ -280,7 +322,7 @@ func (a *App) verify(ctx context.Context, s *session, id, responseJWE string) *O
 	if s.mode == ModeICAO {
 		out.ICAO = a.checkICAO(out.Claims)
 	}
-	return out
+	return out, nil
 }
 
 // checkICAO re-runs Passive Authentication over the disclosed raw SOD
@@ -396,30 +438,35 @@ func randomID() (string, error) {
 }
 
 // newRequestSigningIdentity generates this verifier's request-signing
-// key and self-signed certificate. Its hash is the x509_hash client
-// identifier; a wallet learns who the verifier is, not whether to
-// trust it.
-func newRequestSigningIdentity() (*ecdsa.PrivateKey, *x509.Certificate, error) {
+// key and a certificate for it from a demo verifier CA, whose key is
+// then discarded (HAIP 1.0 §5: the certificate signing the request must
+// not be self-signed). The certificate's hash is the x509_hash client
+// identifier; a wallet learns who the verifier is, not whether to trust
+// it.
+func newRequestSigningIdentity(now time.Time) (*ecdsa.PrivateKey, *x509.Certificate, error) {
+	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, nil, fmt.Errorf("verifierapp: CA key: %w", err)
+	}
+	caCert, err := democert.Create(&x509.Certificate{
+		Subject:   pkix.Name{CommonName: "passport-vdc demo verifier CA", Organization: []string{"IDFoundry demo"}},
+		NotBefore: now.Add(-time.Hour), NotAfter: now.AddDate(1, 0, 0),
+		KeyUsage: x509.KeyUsageCertSign, IsCA: true, BasicConstraintsValid: true, MaxPathLenZero: true,
+	}, nil, &caKey.PublicKey, caKey)
+	if err != nil {
+		return nil, nil, fmt.Errorf("verifierapp: %w", err)
+	}
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return nil, nil, fmt.Errorf("verifierapp: key: %w", err)
 	}
-	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 62))
+	cert, err := democert.Create(&x509.Certificate{
+		Subject:   pkix.Name{CommonName: "passport-vdc demo verifier", Organization: []string{"IDFoundry demo"}},
+		NotBefore: now.Add(-time.Hour), NotAfter: now.AddDate(1, 0, 0),
+		KeyUsage: x509.KeyUsageDigitalSignature,
+	}, caCert, &key.PublicKey, caKey)
 	if err != nil {
-		return nil, nil, fmt.Errorf("verifierapp: serial: %w", err)
-	}
-	now := time.Now()
-	tmpl := &x509.Certificate{
-		SerialNumber: serial, Subject: pkix.Name{CommonName: "passport-vdc demo verifier"},
-		NotBefore: now.Add(-time.Hour), NotAfter: now.AddDate(1, 0, 0), KeyUsage: x509.KeyUsageDigitalSignature,
-	}
-	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
-	if err != nil {
-		return nil, nil, fmt.Errorf("verifierapp: certificate: %w", err)
-	}
-	cert, err := x509.ParseCertificate(der)
-	if err != nil {
-		return nil, nil, fmt.Errorf("verifierapp: certificate: %w", err)
+		return nil, nil, fmt.Errorf("verifierapp: %w", err)
 	}
 	return key, cert, nil
 }
