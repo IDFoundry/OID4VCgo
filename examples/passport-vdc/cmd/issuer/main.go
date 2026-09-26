@@ -11,24 +11,17 @@
 package main
 
 import (
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
 	"crypto/tls"
-	"crypto/x509"
-	"crypto/x509/pkix"
 	"encoding/pem"
 	"flag"
-	"fmt"
 	"log"
-	"math/big"
-	"net"
 	"net/http"
 	"os"
 	"time"
 
 	"github.com/gmrtd/gmrtd/cms"
 
+	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/demotls"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/issuerapp"
 )
 
@@ -38,6 +31,7 @@ func main() {
 	certFile := flag.String("tls-cert", "", "TLS certificate PEM (default: generate a self-signed one)")
 	keyFile := flag.String("tls-key", "", "TLS private key PEM (with -tls-cert)")
 	certOut := flag.String("tls-cert-out", "issuer-tls.pem", "where to write a generated TLS certificate for the wallet to trust")
+	caOut := flag.String("issuer-ca-out", "issuer-ca.pem", "where to write the demo CA certificate for verifiers to trust")
 	jwksPath := flag.String("wallet-provider-jwks", "wallet-provider.jwks.json", "the demo Wallet Provider's public JWK Set")
 	providerIssuer := flag.String("wallet-provider-issuer", "https://wallet-provider.passport-vdc.demo", "the demo Wallet Provider's identifier (Wallet Attestation iss)")
 	clientID := flag.String("wallet-client-id", "passport-vdc-wallet", "the demo wallet's client_id")
@@ -64,7 +58,13 @@ func main() {
 		log.Fatal(err)
 	}
 
-	cert, err := tlsCertificate(*certFile, *keyFile, *certOut)
+	caPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: app.IssuerCACertificate().Raw})
+	if err := os.WriteFile(*caOut, caPEM, 0o600); err != nil { // #nosec G703 -- operator-supplied path
+		log.Fatalf("write %s: %v", *caOut, err)
+	}
+	log.Printf("wrote the demo CA certificate to %s for verifiers to trust", *caOut)
+
+	cert, err := demotls.Certificate(*certFile, *keyFile, *certOut, "passport-vdc demo issuer (TLS)")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -76,39 +76,4 @@ func main() {
 	}
 	log.Printf("passport-vdc issuer on https://%s (issuer %s)", *addr, *issuerURL)
 	log.Fatal(srv.ListenAndServeTLS("", ""))
-}
-
-// tlsCertificate loads certFile/keyFile, or generates a self-signed
-// loopback certificate and writes it to certOut.
-func tlsCertificate(certFile, keyFile, certOut string) (tls.Certificate, error) {
-	if certFile != "" {
-		return tls.LoadX509KeyPair(certFile, keyFile)
-	}
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return tls.Certificate{}, err
-	}
-	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 62))
-	if err != nil {
-		return tls.Certificate{}, err
-	}
-	now := time.Now()
-	tmpl := &x509.Certificate{
-		SerialNumber: serial, Subject: pkix.Name{CommonName: "passport-vdc demo issuer (TLS)"},
-		NotBefore: now.Add(-time.Hour), NotAfter: now.AddDate(1, 0, 0),
-		KeyUsage:    x509.KeyUsageDigitalSignature,
-		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		IPAddresses: []net.IP{net.IPv4(127, 0, 0, 1), net.IPv6loopback},
-		DNSNames:    []string{"localhost"},
-	}
-	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
-	if err != nil {
-		return tls.Certificate{}, err
-	}
-	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
-	if err := os.WriteFile(certOut, pemBytes, 0o600); err != nil { // #nosec G703 -- operator-supplied path
-		return tls.Certificate{}, fmt.Errorf("write %s: %w", certOut, err)
-	}
-	log.Printf("generated a self-signed TLS certificate; wrote it to %s for the wallet to trust", certOut)
-	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}, nil
 }

@@ -62,6 +62,7 @@ type App struct {
 	interactions     *ttlMap[pendingInteraction] // interaction handle → approval
 	metadataSigner   *ecdsa.PrivateKey
 	metadataCert     *x509.Certificate
+	caCert           *x509.Certificate
 	handler          http.Handler
 }
 
@@ -237,10 +238,11 @@ func (a *App) buildIssuer() error {
 	}
 	a.credentialURL = credentialURL.URL()
 
-	signer, cert, err := newIssuerIdentity(a.now())
+	signer, cert, caCert, err := newIssuerIdentity(a.now())
 	if err != nil {
 		return err
 	}
+	a.caCert = caCert
 	a.issuer, err = issuer.New(issuer.Config{
 		Assurance: issuer.AssuranceDevelopment,
 		Issuer:    a.issuerURL,
@@ -276,35 +278,55 @@ func (a *App) buildIssuer() error {
 	return nil
 }
 
-// newIssuerIdentity generates this process's credential signing key and
-// a self-signed certificate for it, carried as the SD-JWT's x5c and the
-// mdoc's x5chain. Valid for two years so it outlives any credential the
+// newIssuerIdentity generates this process's demo CA and, under it, the
+// document signer key and certificate carried as the SD-JWT's x5c and
+// the mdoc's x5chain. A verifier trusts the CA (App.IssuerCACertificate).
+// The signer is valid for two years so it outlives any credential the
 // one-year validity cap allows.
-func newIssuerIdentity(now time.Time) (*ecdsa.PrivateKey, *x509.Certificate, error) {
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+func newIssuerIdentity(now time.Time) (signer *ecdsa.PrivateKey, signerCert, caCert *x509.Certificate, err error) {
+	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
-		return nil, nil, fmt.Errorf("issuerapp: issuer key: %w", err)
+		return nil, nil, nil, fmt.Errorf("issuerapp: CA key: %w", err)
 	}
+	caCert, err = createCertificate(&x509.Certificate{
+		Subject:   pkix.Name{CommonName: "passport-vdc demo CA", Organization: []string{"IDFoundry demo"}},
+		NotBefore: now.Add(-time.Hour), NotAfter: now.AddDate(5, 0, 0),
+		KeyUsage: x509.KeyUsageCertSign, IsCA: true, BasicConstraintsValid: true, MaxPathLenZero: true,
+	}, nil, &caKey.PublicKey, caKey)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	signer, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("issuerapp: signer key: %w", err)
+	}
+	signerCert, err = createCertificate(&x509.Certificate{
+		Subject:   pkix.Name{CommonName: "passport-vdc demo document signer", Organization: []string{"IDFoundry demo"}},
+		NotBefore: now.Add(-time.Hour), NotAfter: now.AddDate(2, 0, 0),
+		KeyUsage: x509.KeyUsageDigitalSignature,
+	}, caCert, &signer.PublicKey, caKey)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return signer, signerCert, caCert, nil
+}
+
+// createCertificate signs tmpl with parentKey (self-signed when parent
+// is nil), giving it a random serial.
+func createCertificate(tmpl, parent *x509.Certificate, pub *ecdsa.PublicKey, parentKey *ecdsa.PrivateKey) (*x509.Certificate, error) {
 	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 62))
 	if err != nil {
-		return nil, nil, fmt.Errorf("issuerapp: certificate serial: %w", err)
+		return nil, fmt.Errorf("issuerapp: certificate serial: %w", err)
 	}
-	tmpl := &x509.Certificate{
-		SerialNumber: serial,
-		Subject:      pkix.Name{CommonName: "passport-vdc demo issuer", Organization: []string{"IDFoundry demo"}},
-		NotBefore:    now.Add(-time.Hour),
-		NotAfter:     now.AddDate(2, 0, 0),
-		KeyUsage:     x509.KeyUsageDigitalSignature,
+	tmpl.SerialNumber = serial
+	if parent == nil {
+		parent = tmpl
 	}
-	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, parent, pub, parentKey)
 	if err != nil {
-		return nil, nil, fmt.Errorf("issuerapp: issuer certificate: %w", err)
+		return nil, fmt.Errorf("issuerapp: create certificate: %w", err)
 	}
-	cert, err := x509.ParseCertificate(der)
-	if err != nil {
-		return nil, nil, fmt.Errorf("issuerapp: issuer certificate: %w", err)
-	}
-	return key, cert, nil
+	return x509.ParseCertificate(der)
 }
 
 // selfIssuerKeys resolves this process's own access-token signing key
@@ -320,7 +342,10 @@ func (s selfIssuerKeys) ResolveIssuerKeys(ctx context.Context, req keys.IssuerKe
 	return keys.IssuerKeySet{Keys: []keys.IssuerKey{{KeyID: pub.KeyID, Algorithm: req.Algorithm, PublicKey: pub.PublicKey}}}, nil
 }
 
-// IssuerCertificate is this process's credential signing certificate —
-// the trust anchor a verifier needs for credentials this app issued
-// (it's also carried in each credential's x5c / x5chain).
+// IssuerCertificate is this process's document signer certificate,
+// carried in each credential's x5c / x5chain.
 func (a *App) IssuerCertificate() *x509.Certificate { return a.metadataCert }
+
+// IssuerCACertificate is the demo CA that issued IssuerCertificate —
+// the trust anchor a verifier configures for this issuer.
+func (a *App) IssuerCACertificate() *x509.Certificate { return a.caCert }

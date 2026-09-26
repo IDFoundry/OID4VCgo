@@ -70,6 +70,10 @@ type Checks struct {
 // a document consistency check failed).
 var ErrNotTrusted = errors.New("passport: data is not trusted")
 
+// ErrUnreadable is returned by Verify when the file isn't a readable
+// gmrtd portable passport file.
+var ErrUnreadable = errors.New("passport: not a readable gmrtd portable passport file")
+
 // ErrExpired is returned by Verify for a passport past its expiry date.
 var ErrExpired = errors.New("passport: document has expired")
 
@@ -78,14 +82,16 @@ var ErrExpired = errors.New("passport: document has expired")
 // and returns its Evidence. now is the reference time for the expiry
 // check and for resolving a two-digit MRZ birth year.
 func Verify(data []byte, cscaPool cms.CertPool, now time.Time) (Evidence, error) {
+	// gmrtd's errors can embed the raw MRZ, so none are wrapped here:
+	// nothing from the passport reaches a log line or page through an
+	// error Verify returns.
 	docEx, err := verifier.NewVerifier(cscaPool).Verify(data)
 	if err != nil {
-		return Evidence{}, fmt.Errorf("passport: decode/verify: %w", err)
+		return Evidence{}, ErrUnreadable
 	}
 	summary := docEx.Summary()
 	if !summary.DataTrusted {
-		return Evidence{}, fmt.Errorf("%w (passive authentication: %v, document: %v)",
-			ErrNotTrusted, docEx.Session.PassiveAuthErr, docEx.Session.DocumentVerifyErr)
+		return Evidence{}, ErrNotTrusted
 	}
 	return evidenceFrom(&docEx.Document, summary, now)
 }

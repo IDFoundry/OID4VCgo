@@ -9,10 +9,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/walletprovider"
+	"github.com/gmrtd/gmrtd/cms"
+
+	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/demotest"
 )
 
-func upload(t *testing.T, issuerURL string, data []byte) (*http.Response, string) {
+func upload(t *testing.T, env *demotest.Env, data []byte) (*http.Response, string) {
 	t.Helper()
 	var body bytes.Buffer
 	mw := multipart.NewWriter(&body)
@@ -26,7 +28,7 @@ func upload(t *testing.T, issuerURL string, data []byte) (*http.Response, string
 	if err := mw.Close(); err != nil {
 		t.Fatalf("close multipart: %v", err)
 	}
-	resp, err := tlsClients[issuerURL].Post(issuerURL+"/passport", mw.FormDataContentType(), &body)
+	resp, err := env.HTTP.Post(env.IssuerURL+"/passport", mw.FormDataContentType(), &body)
 	if err != nil {
 		t.Fatalf("POST /passport: %v", err)
 	}
@@ -39,24 +41,16 @@ func upload(t *testing.T, issuerURL string, data []byte) (*http.Response, string
 }
 
 func TestUpload_RejectsNonPassportFile(t *testing.T) {
-	provider, err := walletprovider.New(providerIssuer)
-	if err != nil {
-		t.Fatalf("walletprovider.New: %v", err)
-	}
-	_, issuerURL := startIssuer(t, provider)
-	resp, page := upload(t, issuerURL, []byte("not a passport"))
+	env := demotest.New(t, nil)
+	resp, page := upload(t, env, []byte("not a passport"))
 	if resp.StatusCode != http.StatusBadRequest || strings.Contains(page, "openid-credential-offer") {
 		t.Errorf("status %d, want 400 and no credential offer", resp.StatusCode)
 	}
 }
 
 func TestUploadPage(t *testing.T) {
-	provider, err := walletprovider.New(providerIssuer)
-	if err != nil {
-		t.Fatalf("walletprovider.New: %v", err)
-	}
-	_, issuerURL := startIssuer(t, provider)
-	resp, err := tlsClients[issuerURL].Get(issuerURL + "/")
+	env := demotest.New(t, nil)
+	resp, err := env.HTTP.Get(env.IssuerURL + "/")
 	if err != nil {
 		t.Fatalf("GET /: %v", err)
 	}
@@ -79,12 +73,12 @@ func TestUpload_Sample(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read sample: %v", err)
 	}
-	provider, err := walletprovider.New(providerIssuer)
+	pool, err := cms.DefaultMasterList()
 	if err != nil {
-		t.Fatalf("walletprovider.New: %v", err)
+		t.Fatalf("DefaultMasterList: %v", err)
 	}
-	_, issuerURL := startIssuerWithMasterList(t, provider)
-	resp, page := upload(t, issuerURL, data)
+	env := demotest.New(t, pool)
+	resp, page := upload(t, env, data)
 	if resp.StatusCode != http.StatusOK || !strings.Contains(page, "openid-credential-offer://") {
 		t.Errorf("status %d; credential offer present: %v", resp.StatusCode, strings.Contains(page, "openid-credential-offer://"))
 	}

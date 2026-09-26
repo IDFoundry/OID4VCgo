@@ -58,6 +58,8 @@ type Approver interface {
 type Received struct {
 	ConfigurationID string
 	Format          string
+	// DocType is the mdoc doctype, for mso_mdoc credentials.
+	DocType string
 	// Credential is the issued credential as the issuer returned it:
 	// a compact SD-JWT VC, or base64url-encoded mdoc IssuerSigned CBOR.
 	Credential string
@@ -168,8 +170,9 @@ func requestAll(ctx context.Context, w *wallet.Wallet, resource wallet.Protected
 		if len(result.Credentials) != 1 {
 			return nil, fmt.Errorf("walletapp: credential %q: got %d credentials, want 1", id, len(result.Credentials))
 		}
+		conf := metadata.CredentialConfigurationsSupported[id]
 		received = append(received, Received{
-			ConfigurationID: id, Format: metadata.CredentialConfigurationsSupported[id].Format,
+			ConfigurationID: id, Format: conf.Format, DocType: conf.DocType,
 			Credential: result.Credentials[0].Credential, HolderKey: holder,
 		})
 	}

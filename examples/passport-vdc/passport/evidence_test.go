@@ -80,7 +80,7 @@ func TestVerifySample(t *testing.T) {
 		t.Skip("sample passport has expired")
 	}
 	if err != nil {
-		t.Fatalf("Verify: %v", err)
+		t.Fatal("Verify failed on the sample (error not printed: gmrtd errors can embed the MRZ)")
 	}
 	if !e.Checks.PassiveAuthentication {
 		t.Error("PassiveAuthentication = false")
@@ -103,5 +103,57 @@ func TestVerifyRejectsGarbage(t *testing.T) {
 	}
 	if _, err := Verify([]byte("not a gmrtd file"), pool, time.Now()); err == nil {
 		t.Error("Verify(garbage) = nil error, want error")
+	}
+}
+
+// TestVerifyDataGroupsSample checks the verifier-side fallback: Passive
+// Authentication over just the sample's SOD and DG1 (no DG2), when
+// PASSPORT_VDC_SAMPLE is set. Logs nothing from the passport.
+func TestVerifyDataGroupsSample(t *testing.T) {
+	path := os.Getenv("PASSPORT_VDC_SAMPLE")
+	if path == "" {
+		t.Skip("PASSPORT_VDC_SAMPLE not set")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read sample: %v", err)
+	}
+	pool, err := cms.DefaultMasterList()
+	if err != nil {
+		t.Fatalf("DefaultMasterList: %v", err)
+	}
+	// Errors are never printed in this test: gmrtd errors can embed
+	// the passport's MRZ.
+	e, err := Verify(data, pool, time.Now())
+	if err != nil {
+		t.Skip("sample doesn't verify")
+	}
+	id, err := VerifyDataGroups(e.Raw.SOD, e.Raw.DG1, pool, time.Now())
+	if err != nil {
+		t.Fatal("VerifyDataGroups failed on the sample's own SOD and DG1")
+	}
+	if id.FamilyName != e.Identity.FamilyName || id.DocumentNumber != e.Identity.DocumentNumber {
+		t.Error("identity from SOD+DG1 differs from the full passport's")
+	}
+
+	// A tampered DG1 fails — whether at parsing (a broken MRZ check
+	// digit) or at the SOD hash comparison.
+	tampered := append([]byte(nil), e.Raw.DG1...)
+	tampered[len(tampered)-1] ^= 0x01
+	if _, err := VerifyDataGroups(e.Raw.SOD, tampered, pool, time.Now()); !errors.Is(err, ErrPassiveAuthentication) {
+		t.Error("tampered DG1 was not rejected with ErrPassiveAuthentication")
+	}
+}
+
+func TestVerifyDataGroupsRejectsGarbage(t *testing.T) {
+	pool, err := cms.DefaultMasterList()
+	if err != nil {
+		t.Fatalf("DefaultMasterList: %v", err)
+	}
+	if _, err := VerifyDataGroups([]byte("not a sod"), []byte("not dg1"), pool, time.Now()); err == nil {
+		t.Error("VerifyDataGroups(garbage) = nil error")
+	}
+	if _, err := VerifyDataGroups(nil, nil, pool, time.Now()); err == nil {
+		t.Error("VerifyDataGroups(nil) = nil error")
 	}
 }

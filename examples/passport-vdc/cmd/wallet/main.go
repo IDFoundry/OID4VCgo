@@ -2,12 +2,16 @@
 //
 //	go run ./cmd/wallet receive 'openid-credential-offer://?credential_offer=...'
 //	go run ./cmd/wallet list
+//	go run ./cmd/wallet present [-format mso_mdoc|dc+sd-jwt] 'openid4vp://?client_id=...&request_uri=...'
 //
 // receive redeems a Credential Offer from the demo issuer, attesting
 // itself with the demo Wallet Provider key (see cmd/wallet-provider),
 // and stores every offered credential with its holder key. By default
 // it prints the authorization URL for you to open and approve in a
-// browser; -headless approves automatically.
+// browser; -headless approves automatically. present answers a
+// verifier's request with the matching stored credential, disclosing
+// only what the request asks for — without asking you first, unlike a
+// real wallet.
 package main
 
 import (
@@ -20,6 +24,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/walletapp"
@@ -33,8 +38,9 @@ func main() {
 	providerIssuer := fs.String("wallet-provider-issuer", "https://wallet-provider.passport-vdc.demo", "the demo Wallet Provider's identifier")
 	clientID := fs.String("client-id", "passport-vdc-wallet", "this wallet's client_id")
 	redirectURI := fs.String("redirect-uri", "http://127.0.0.1:8765/callback", "this wallet's loopback redirect URI")
-	issuerCA := fs.String("issuer-ca", "issuer-tls.pem", "PEM certificate(s) to trust for the issuer's TLS (from cmd/issuer)")
-	headless := fs.Bool("headless", false, "approve automatically instead of in a browser")
+	trust := fs.String("trust", "issuer-tls.pem,verifier-tls.pem", "comma-separated PEM files of TLS certificates to trust (from cmd/issuer and cmd/verifier); missing files are skipped")
+	headless := fs.Bool("headless", false, "receive: approve automatically instead of in a browser")
+	format := fs.String("format", "", "present: only offer stored credentials of this format (mso_mdoc or dc+sd-jwt)")
 
 	if len(os.Args) < 2 {
 		usage()
@@ -49,7 +55,7 @@ func main() {
 		if fs.NArg() != 1 {
 			usage()
 		}
-		httpClient, err := trustingClient(*issuerCA)
+		httpClient, err := trustingClient(*trust)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -79,13 +85,24 @@ func main() {
 		if err := list(*store); err != nil {
 			log.Fatal(err)
 		}
+	case "present":
+		if fs.NArg() != 1 {
+			usage()
+		}
+		httpClient, err := trustingClient(*trust)
+		if err != nil {
+			log.Fatal(err)
+		}
+		if err := present(fs.Arg(0), *store, *format, httpClient); err != nil {
+			log.Fatal(err)
+		}
 	default:
 		usage()
 	}
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: wallet receive [flags] <credential-offer-uri> | wallet list [flags]")
+	fmt.Fprintln(os.Stderr, "usage: wallet receive [flags] <credential-offer-uri> | wallet list [flags] | wallet present [flags] <openid4vp-uri>")
 	os.Exit(2)
 }
 
@@ -107,6 +124,17 @@ func receive(offerURI, dir string, cfg walletapp.Config, approver walletapp.Appr
 	return nil
 }
 
+func present(link, dir, format string, httpClient *http.Client) error {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	presented, err := walletapp.Present(ctx, link, walletapp.Store{Dir: dir}, walletapp.PresentOptions{Format: format, HTTP: httpClient})
+	if err != nil {
+		return err
+	}
+	fmt.Printf("presented %s to %s\n", strings.Join(presented.Credentials, ", "), presented.VerifierClientID)
+	return nil
+}
+
 func list(dir string) error {
 	stored, err := walletapp.Store{Dir: dir}.List()
 	if err != nil {
@@ -123,20 +151,28 @@ func list(dir string) error {
 }
 
 // trustingClient returns an HTTP client trusting the certificates in
-// caFile (the demo issuer's self-signed TLS certificate) in addition to
-// the system roots. A missing file just means system roots.
-func trustingClient(caFile string) (*http.Client, error) {
+// the comma-separated PEM files (the demo servers' self-signed TLS
+// certificates) in addition to the system roots. Missing files are
+// skipped, so the defaults work before the verifier has been started.
+func trustingClient(files string) (*http.Client, error) {
 	roots, err := x509.SystemCertPool()
 	if err != nil {
 		roots = x509.NewCertPool()
 	}
-	pemBytes, err := os.ReadFile(caFile) // #nosec G304 -- operator-supplied path
-	switch {
-	case errors.Is(err, os.ErrNotExist):
-	case err != nil:
-		return nil, fmt.Errorf("read %s: %w", caFile, err)
-	case !roots.AppendCertsFromPEM(pemBytes):
-		return nil, fmt.Errorf("%s holds no PEM certificates", caFile)
+	for _, f := range strings.Split(files, ",") {
+		f = strings.TrimSpace(f)
+		if f == "" {
+			continue
+		}
+		pemBytes, err := os.ReadFile(f) // #nosec G304 -- operator-supplied path
+		switch {
+		case errors.Is(err, os.ErrNotExist):
+			continue
+		case err != nil:
+			return nil, fmt.Errorf("read %s: %w", f, err)
+		case !roots.AppendCertsFromPEM(pemBytes):
+			return nil, fmt.Errorf("%s holds no PEM certificates", f)
+		}
 	}
 	return &http.Client{
 		Timeout:   30 * time.Second,
