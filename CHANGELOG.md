@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.16.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.15.0...v0.16.0) (2026-09-26)
+
+
+### ⚠ BREAKING CHANGES
+
+* **wallet:** ParseAuthorizationRequestParams.VerifierTrust is required, and FetchAuthorizationRequest fails unless Config.VerifierTrust is set. Set wallet.X5CVerifierRoots{Roots: ...} with the trust anchors of the Verifiers to accept, or wallet.NoVerifierTrust{} to opt out explicitly (not permitted under AssuranceProduction).
+
+### Bug Fixes
+
+* **wallet:** check fetched metadata names the issuer it was fetched for ([c033727](https://github.com/IDFoundry/OID4VCgo/commit/c03372739d2b6640dd58b9441960a77faea84e3b))
+* **wallet:** validate the Verifier's certificate trust chain ([4641672](https://github.com/IDFoundry/OID4VCgo/commit/464167289e8112b014dc25f9564d0372246cfcfa))
+
 ## [0.15.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.14.0...v0.15.0) (2026-09-26)
 
 
