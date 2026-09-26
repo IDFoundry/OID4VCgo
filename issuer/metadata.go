@@ -2,6 +2,7 @@ package issuer
 
 import (
 	"fmt"
+	"slices"
 
 	"github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
@@ -146,6 +147,7 @@ func (c CredentialConfiguration) validateBindingAndProofTypes() error {
 func (iss *Issuer) Metadata() oid4vci.Metadata {
 	md := oid4vci.Metadata{
 		CredentialIssuer:                  iss.cfg.Issuer,
+		AuthorizationServers:              slices.Clone(iss.cfg.AuthorizationServers),
 		CredentialEndpoint:                iss.cfg.Endpoints.Credential,
 		CredentialConfigurationsSupported: make(map[string]oid4vci.CredentialConfigurationMetadata, len(iss.cfg.CredentialConfigurationsSupported)),
 	}

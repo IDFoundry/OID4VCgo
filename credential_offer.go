@@ -66,9 +66,10 @@ type GrantAuthorizationCode struct {
 
 	// AuthorizationServer is OPTIONAL, and only meaningful when the
 	// Credential Issuer's own Metadata advertises more than one entry
-	// in authorization_servers. Whether that's actually supported is a
-	// Credential Issuer's own runtime policy, not a structural fact
-	// this type can check on its own.
+	// in authorization_servers, in which case it must be one of them
+	// (§4.1.1). That depends on the issuer's metadata, not on anything
+	// this type can check on its own — issuer.CreateCredentialOffer
+	// enforces it against issuer.Config.AuthorizationServers.
 	AuthorizationServer string `json:"authorization_server,omitempty"`
 }
 
