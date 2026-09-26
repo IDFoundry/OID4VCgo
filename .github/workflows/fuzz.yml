@@ -72,6 +72,9 @@ jobs:
           - id: mdoc-unmarshal-device-signed
             pkg: ./credential/mdoc
             name: FuzzUnmarshalDeviceSigned
+          - id: mdoc-verify-signed-mso
+            pkg: ./credential/mdoc
+            name: FuzzVerifySignedMSO
           - id: oid4vpmdoc-unmarshal-device-response
             pkg: ./oid4vpmdoc
             name: FuzzUnmarshalDeviceResponse
@@ -81,12 +84,18 @@ jobs:
           - id: sdjwtvc-parse-disclosure
             pkg: ./credential/sdjwtvc
             name: FuzzParseDisclosure
+          - id: sdjwtvc-verify-signed
+            pkg: ./credential/sdjwtvc
+            name: FuzzVerifySigned
           - id: statuslist-verify-token
             pkg: ./statuslist
             name: FuzzVerifyToken
           - id: statuslist-verify-token-cwt
             pkg: ./statuslist
             name: FuzzVerifyTokenCWT
+          - id: statuslist-check-signed
+            pkg: ./statuslist
+            name: FuzzCheckSigned
           - id: dcql-query
             pkg: ./dcql
             name: FuzzQuery
@@ -96,6 +105,9 @@ jobs:
           - id: verifier-resolve-issuer-key
             pkg: ./verifier
             name: FuzzResolveIssuerKey
+          - id: verifier-resolve-mdoc-issuer-key
+            pkg: ./verifier
+            name: FuzzResolveMdocIssuerKey
           - id: attestation-parse-key-attestation
             pkg: ./attestation
             name: FuzzParseKeyAttestation
@@ -105,6 +117,9 @@ jobs:
           - id: wallet-parse-authorization-request
             pkg: ./wallet
             name: FuzzParseAuthorizationRequest
+          - id: wallet-parse-authorization-request-signed
+            pkg: ./wallet
+            name: FuzzParseAuthorizationRequestSigned
           - id: wallet-decode-credential-offer
             pkg: ./wallet
             name: FuzzDecodeCredentialOffer
@@ -117,6 +132,15 @@ jobs:
           - id: wallet-parse-error
             pkg: ./wallet
             name: FuzzParseError
+          - id: issuer-request-credential-signed-proof
+            pkg: ./issuer
+            name: FuzzRequestCredentialSignedProof
+          - id: issuer-request-credential-signed-attestation
+            pkg: ./issuer
+            name: FuzzRequestCredentialSignedAttestation
+          - id: issuer-resolve-proof-binding-key
+            pkg: ./issuer
+            name: FuzzResolveProofBindingKey
     steps:
       - uses: actions/checkout@v7
 
@@ -127,7 +151,12 @@ jobs:
           cache-dependency-path: go.mod
 
       - name: go test -fuzz=${{ matrix.target.name }}
-        run: go test ${{ matrix.target.pkg }} -run='^$' -fuzz='^${{ matrix.target.name }}$' -fuzztime=5m
+        # -fuzzminimizetime caps how long each newly interesting input
+        # is minimized before fuzzing resumes (default 60s). Every run
+        # starts from the seed corpus alone, so new inputs are found
+        # constantly early on, and at the default the job spends much
+        # of its 5 minutes minimizing rather than fuzzing.
+        run: go test ${{ matrix.target.pkg }} -run='^$' -fuzz='^${{ matrix.target.name }}$' -fuzztime=5m -fuzzminimizetime=10s
 
       - name: Upload failing input
         if: failure()
