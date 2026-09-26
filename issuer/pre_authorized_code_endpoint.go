@@ -222,7 +222,7 @@ func (iss *Issuer) exchangePreAuthorizedCode(ctx context.Context, req ExchangePr
 	}
 
 	params := AccessTokenParams{
-		Scope: record.Scopes, Thumbprint: verified.Thumbprint,
+		Scope: record.Scopes, Thumbprint: verified.Thumbprint, Subject: record.Subject,
 		Issuer: iss.cfg.Issuer.String(), Audience: iss.cfg.Issuer.String(),
 		Now: now, Lifetime: iss.cfg.Limits.AccessTokenLifetime, Random: iss.deps.Random,
 	}
