@@ -34,31 +34,43 @@ func (iss *Issuer) resolveJWTProofKeys(
 
 	keys := make([]resolvedKey, 0, len(values))
 	var expectedNonce string
-	nonceRequired := !iss.cfg.Endpoints.Nonce.IsZero()
-
 	for i, raw := range values {
 		pub, jwkRaw, nonce, err := iss.verifyJWTProof(ctx, auth, raw, i, ptc)
 		if err != nil {
 			return nil, err
 		}
-
-		if nonceRequired {
-			if nonce == "" {
-				return nil, newError(ErrorInvalidProof, 400, fmt.Sprintf("proof %d: nonce is required", i), nil)
-			}
-			if i == 0 {
-				if err := iss.consumeNonce(ctx, nonce); err != nil {
-					return nil, err
-				}
-				expectedNonce = nonce
-			} else if nonce != expectedNonce {
-				return nil, newError(ErrorInvalidNonce, 400, fmt.Sprintf("proof %d: nonce does not match the request's consumed nonce", i), nil)
-			}
+		if err := iss.checkProofNonce(ctx, "proof", i, nonce, &expectedNonce); err != nil {
+			return nil, err
 		}
-
 		keys = append(keys, resolvedKey{Public: pub, JWKRaw: jwkRaw})
 	}
 	return keys, nil
+}
+
+// checkProofNonce applies the c_nonce rule to proof (or attestation) i
+// of a request, when this issuer has a Nonce Endpoint: every proof must
+// carry a nonce; the first one's is consumed, and every later proof
+// must carry that same value (*expected, set from the first) — once per
+// request, not once per proof, as NonceStore's own doc comment
+// requires. what names the proof kind in errors.
+func (iss *Issuer) checkProofNonce(ctx context.Context, what string, i int, nonce string, expected *string) error {
+	if iss.cfg.Endpoints.Nonce.IsZero() {
+		return nil
+	}
+	if nonce == "" {
+		return newError(ErrorInvalidProof, 400, fmt.Sprintf("%s %d: nonce is required", what, i), nil)
+	}
+	if i == 0 {
+		if err := iss.consumeNonce(ctx, nonce); err != nil {
+			return err
+		}
+		*expected = nonce
+		return nil
+	}
+	if nonce != *expected {
+		return newError(ErrorInvalidNonce, 400, fmt.Sprintf("%s %d: nonce does not match the request's consumed nonce", what, i), nil)
+	}
+	return nil
 }
 
 // verifyJWTProof verifies one jwt-type key proof — typ, alg (against
@@ -212,7 +224,6 @@ func (iss *Issuer) resolveAttestationProofKeys(ctx context.Context, values []str
 	}
 
 	now := iss.deps.Clock.Now()
-	nonceRequired := !iss.cfg.Endpoints.Nonce.IsZero()
 	maxKeys := iss.maxBatchSize()
 	var expectedNonce string
 	var keys []resolvedKey
@@ -222,21 +233,9 @@ func (iss *Issuer) resolveAttestationProofKeys(ctx context.Context, values []str
 		if err != nil {
 			return nil, err
 		}
-
-		if nonceRequired {
-			if verified.Nonce == "" {
-				return nil, newError(ErrorInvalidProof, 400, fmt.Sprintf("attestation %d: nonce is required", i), nil)
-			}
-			if i == 0 {
-				if err := iss.consumeNonce(ctx, verified.Nonce); err != nil {
-					return nil, err
-				}
-				expectedNonce = verified.Nonce
-			} else if verified.Nonce != expectedNonce {
-				return nil, newError(ErrorInvalidNonce, 400, fmt.Sprintf("attestation %d: nonce does not match the request's consumed nonce", i), nil)
-			}
+		if err := iss.checkProofNonce(ctx, "attestation", i, verified.Nonce, &expectedNonce); err != nil {
+			return nil, err
 		}
-
 		keys, err = appendAttestedKeys(keys, verified, i, maxKeys)
 		if err != nil {
 			return nil, err
