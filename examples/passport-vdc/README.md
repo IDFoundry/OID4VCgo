@@ -86,9 +86,14 @@ What the second path does and doesn't give you:
 ```sh
 go run ./cmd/wallet-provider     # once: wallet-provider.pem, .jwks.json and -ca.pem
 go run ./cmd/issuer              # https://127.0.0.1:8543 — writes issuer-tls.pem, issuer-ca.pem
-go run ./cmd/verifier            # https://127.0.0.1:9443 — writes verifier-tls.pem
-go run ./cmd/webwallet           # https://127.0.0.1:7443 — writes webwallet-tls.pem
+go run ./cmd/verifier            # https://127.0.0.1:9443 — writes verifier-tls.pem, verifier-ca.pem
+go run ./cmd/webwallet           # https://127.0.0.1:7443 — writes webwallet-tls.pem; trusts verifier-ca.pem
 ```
+
+The wallets answer only verifiers whose request-signing certificate
+chains to a trusted verifier CA (`-trust-verifier-ca`, default
+`verifier-ca.pem`), so start the verifier before the web wallet. A
+restarted verifier has a new CA; restart the web wallet too.
 
 All three use self-signed certificates: accept them in the browser, or
 trust the written `.pem` files. (The issuer uses 8543 rather than 8443
@@ -106,12 +111,13 @@ so it doesn't collide with a locally running OIDF conformance suite.)
    and **Share** (or **Decline**). The verifier page shows the result.
 
 **From the terminal (CLI wallet)** — same store, so both wallets see the
-same credentials; it presents without asking:
+same credentials; like the web wallet, it shows who's asking and what
+they'd see, and asks before sharing:
 
 ```sh
 go run ./cmd/wallet receive 'openid-credential-offer://?credential_offer=...'
 go run ./cmd/wallet list
-go run ./cmd/wallet present [-format dc+sd-jwt] 'openid4vp://?client_id=...&request_uri=...'
+go run ./cmd/wallet present [-format dc+sd-jwt] [-yes] 'openid4vp://?client_id=...&request_uri=...'
 ```
 
 The CLI's `receive` prints the authorization URL: open it, approve, and
@@ -218,9 +224,10 @@ result. Anyone can encrypt a response to the request's public key, so
 a response that fails to verify leaves the request open; the first one
 that verifies is recorded and closes it.
 
-The demo wallet presents without asking and trusts any verifier whose
-Request Object signature matches its `x509_hash` client identifier — it
-learns who the verifier is, not whether to trust them.
+The wallets accept a request only if its signing certificate chains to
+a verifier CA they trust (`verifier-ca.pem`), as OpenID4VP §5.9.3
+requires, and show that certificate's name when asking the holder. The
+CLI wallet asks before sharing too (`-yes` skips it, for scripts).
 
 ## Running the tests
 

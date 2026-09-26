@@ -75,6 +75,7 @@ var confirmReceiveTemplate = template.Must(template.New("receive").Parse(pageHea
 
 type consentPage struct {
 	ID           string
+	VerifierName string
 	VerifierID   string
 	ResponseHost string
 	Options      []walletapp.Option
@@ -84,7 +85,7 @@ var consentTemplate = template.Must(template.New("consent").Funcs(template.FuncM
 	"path": func(p []string) string { return strings.Join(p, " › ") },
 }).Parse(pageHead + `
 <h1>A verifier is asking for your passport credential</h1>
-<p>Verifier: <code>{{.VerifierID}}</code><br><span class="note">Its request is signed by the certificate this identifier names; the answer goes to <code>{{.ResponseHost}}</code>. This tells you who it is, not whether to trust it.</span></p>
+<p>Verifier: <strong>{{.VerifierName}}</strong><br><span class="note">Its request is signed by a certificate from a verifier CA this wallet trusts (identifier <code>{{.VerifierID}}</code>); the answer goes to <code>{{.ResponseHost}}</code>.</span></p>
 <form method="post" action="/present/{{.ID}}">
 {{range $i, $o := .Options}}
 <div class="card">

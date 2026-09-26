@@ -1,6 +1,7 @@
 package verifierapp_test
 
 import (
+	"context"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
@@ -12,6 +13,8 @@ import (
 
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/demotest"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/verifierapp"
+	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/walletapp"
+	"github.com/idfoundry/oid4vcgo/wallet"
 )
 
 // fetchRequestObject GETs the Request Object a request link points at.
@@ -161,5 +164,27 @@ func TestResponse_ForgedResponseDoesNotCloseTheRequest(t *testing.T) {
 	presentTo(t, env, store, link, "dc+sd-jwt")
 	if _, answered := env.Verifier.Outcome(id); !answered {
 		t.Fatalf("the real presentation wasn't accepted after a forged one (last rejection: %q)", env.Verifier.LastError(id))
+	}
+}
+
+// TestRequest_UntrustedVerifierIsRefused checks a wallet that doesn't
+// trust this verifier's CA refuses its request before disclosing
+// anything (OpenID4VP §5.9.3).
+func TestRequest_UntrustedVerifierIsRefused(t *testing.T) {
+	env := demotest.New(t, nil)
+	env.StartVerifier(t, nil)
+	store := receiveInto(t, env, demotest.SyntheticEvidence())
+	id, link, err := env.Verifier.CreateRequest(verifierapp.ModeIssuer)
+	if err != nil {
+		t.Fatalf("CreateRequest: %v", err)
+	}
+	_, err = walletapp.Present(context.Background(), link, store, walletapp.PresentOptions{
+		HTTP: env.HTTP, VerifierTrust: wallet.X5CVerifierRoots{Roots: x509.NewCertPool()},
+	})
+	if err == nil || !strings.Contains(err.Error(), "untrusted verifier") {
+		t.Fatalf("Present to an untrusted verifier: error = %v, want it refused", err)
+	}
+	if _, answered := env.Verifier.Outcome(id); answered {
+		t.Fatal("the untrusted verifier got an answer")
 	}
 }

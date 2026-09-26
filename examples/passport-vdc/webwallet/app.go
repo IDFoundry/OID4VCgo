@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/walletapp"
+	"github.com/idfoundry/oid4vcgo/wallet"
 )
 
 // Config configures an App.
@@ -33,6 +34,9 @@ type Config struct {
 	Wallet walletapp.Config
 	// Store is where credentials are kept (shared with the CLI wallet).
 	Store walletapp.Store
+	// VerifierTrust decides which verifiers' requests are shown at all
+	// (OpenID4VP §5.9.3) — see walletapp.LoadVerifierTrust.
+	VerifierTrust wallet.VerifierTrust
 }
 
 // App is a running web wallet.
@@ -64,8 +68,8 @@ type pendingPresentation struct {
 
 // New builds an App.
 func New(cfg Config) (*App, error) {
-	if cfg.WalletURL == "" || cfg.Store.Dir == "" {
-		return nil, fmt.Errorf("webwallet: WalletURL and Store are required")
+	if cfg.WalletURL == "" || cfg.Store.Dir == "" || cfg.VerifierTrust == nil {
+		return nil, fmt.Errorf("webwallet: WalletURL, Store and VerifierTrust are required")
 	}
 	cfg.Wallet.RedirectURI = cfg.WalletURL + "/callback"
 	a := &App{cfg: cfg, pending: map[string]*pendingPresentation{}}
@@ -196,7 +200,7 @@ func (a *App) handlePresentConsent(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
-	prepared, err := walletapp.Prepare(ctx, link, a.cfg.Store, a.cfg.Wallet.HTTP)
+	prepared, err := walletapp.Prepare(ctx, link, a.cfg.Store, a.cfg.Wallet.HTTP, a.cfg.VerifierTrust)
 	if err != nil {
 		renderError(w, http.StatusBadRequest, err.Error())
 		return
@@ -220,7 +224,7 @@ func (a *App) handlePresentConsent(w http.ResponseWriter, r *http.Request) {
 		responseHost = u.Host
 	}
 	render(w, http.StatusOK, consentTemplate, consentPage{
-		ID: id, VerifierID: prepared.VerifierClientID, ResponseHost: responseHost, Options: prepared.Options,
+		ID: id, VerifierName: prepared.VerifierName, VerifierID: prepared.VerifierClientID, ResponseHost: responseHost, Options: prepared.Options,
 	})
 }
 

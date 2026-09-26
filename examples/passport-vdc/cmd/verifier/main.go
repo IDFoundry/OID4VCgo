@@ -1,16 +1,18 @@
 // Command verifier runs the passport-vdc demo Verifier over HTTPS on
 // loopback.
 //
-//	go run ./cmd/verifier      # https://127.0.0.1:9443, writes verifier-tls.pem
+//	go run ./cmd/verifier      # https://127.0.0.1:9443, writes verifier-tls.pem, verifier-ca.pem
 //
 // It trusts the demo issuer's CA (issuer-ca.pem, written by cmd/issuer)
 // for credential signatures, and gmrtd's built-in ICAO CSCA master list
-// for the "trust only the issuing country" check.
+// for the "trust only the issuing country" check. It writes its own
+// request-signing CA to verifier-ca.pem, for the demo wallets to trust.
 package main
 
 import (
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/pem"
 	"flag"
 	"log"
 	"net/http"
@@ -31,6 +33,7 @@ func main() {
 	certFile := flag.String("tls-cert", "", "TLS certificate PEM (default: generate a self-signed one)")
 	keyFile := flag.String("tls-key", "", "TLS private key PEM (with -tls-cert)")
 	certOut := flag.String("tls-cert-out", "verifier-tls.pem", "where to write a generated TLS certificate for the wallet to trust")
+	caOut := flag.String("verifier-ca-out", "verifier-ca.pem", "where to write the demo verifier CA certificate for wallets to trust")
 	webWallet := flag.String("web-wallet", "https://127.0.0.1:7443", "the demo web wallet's URL, for the request page's \"Open in web wallet\" button (empty to hide it)")
 	flag.Parse()
 
@@ -53,6 +56,11 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	verifierCAPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: app.VerifierCACertificate().Raw})
+	if err := os.WriteFile(*caOut, verifierCAPEM, 0o600); err != nil { // #nosec G703 -- operator-supplied path
+		log.Fatalf("write %s: %v", *caOut, err)
+	}
+	log.Printf("wrote the demo verifier CA certificate to %s for wallets to trust", *caOut)
 	cert, err := demotls.Certificate(*certFile, *keyFile, *certOut, "passport-vdc demo verifier (TLS)")
 	if err != nil {
 		log.Fatal(err)

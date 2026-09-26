@@ -13,6 +13,7 @@ import (
 	"github.com/idfoundry/fapigo/fapihttp"
 
 	"github.com/idfoundry/oid4vcgo/dcql"
+	"github.com/idfoundry/oid4vcgo/internal/certchain"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/internal/jwk"
 )
@@ -42,6 +43,11 @@ type ParseAuthorizationRequestParams struct {
 	// certificate's own "x509_hash:..." value (OID4VP §5.6.2).
 	ClientID string
 
+	// VerifierTrust decides whether to trust the certificate chain the
+	// Request Object is signed with (OID4VP §5.9.3). REQUIRED — pass
+	// NoVerifierTrust{} to opt out explicitly.
+	VerifierTrust VerifierTrust
+
 	// WalletNonce, when non-empty, is the "wallet_nonce" value this
 	// Wallet sent on a POST fetch of request_uri (§5.10) — the
 	// Request Object's own "wallet_nonce" claim MUST echo it back
@@ -60,6 +66,11 @@ type AuthorizationRequest struct {
 	Nonce       string
 	State       string
 	Query       dcql.Query
+
+	// VerifierCertificate is the Request Object's signing certificate,
+	// as ParseAuthorizationRequestParams.VerifierTrust accepted it —
+	// e.g. to show the holder who is asking.
+	VerifierCertificate *x509.Certificate
 
 	// ResponseEncryptionKey/ResponseEncryptionKeyID are extracted from
 	// "client_metadata"'s own "jwks" (§5.1) — a real Verifier only
@@ -157,12 +168,13 @@ type wireJWKKid struct {
 	Use string `json:"use"`
 }
 
-// ParseAuthorizationRequest verifies params.RequestObject's own JWS
-// signature against the leaf certificate its "x5c" header carries
-// (RFC9101 §5, matching verifier.BuildAuthorizationRequest's own
-// signed-JAR convention on the building side), checks that
-// certificate's SHA-256 hash matches params.ClientID's own
-// "x509_hash:..." value, and decodes the verified payload. When
+// ParseAuthorizationRequest validates the certificate chain in
+// params.RequestObject's "x5c" header with params.VerifierTrust (OID4VP
+// §5.9.3), verifies the JWS signature against its leaf (RFC9101 §5,
+// matching verifier.BuildAuthorizationRequest's own signed-JAR
+// convention on the building side), checks that leaf's SHA-256 hash
+// matches params.ClientID's own "x509_hash:..." value, and decodes the
+// verified payload. When
 // params.WalletNonce is non-empty, the returned Request Object's own
 // "wallet_nonce" claim MUST echo it back (§5.10.1) — this is checked
 // here, not left to the caller, since a missing/mismatched echo means
@@ -187,17 +199,16 @@ func ParseAuthorizationRequest(params ParseAuthorizationRequestParams) (Authoriz
 	if typ, _ := header["typ"].(string); typ != requestObjectTyp {
 		return AuthorizationRequest{}, fmt.Errorf("wallet: parse authorization request: typ = %q, want %q", typ, requestObjectTyp)
 	}
-	x5c := stringSlice(header["x5c"])
-	if len(x5c) == 0 {
-		return AuthorizationRequest{}, fmt.Errorf("wallet: parse authorization request: missing x5c header")
+	if params.VerifierTrust == nil {
+		return AuthorizationRequest{}, fmt.Errorf("wallet: parse authorization request: VerifierTrust is required (NoVerifierTrust{} opts out explicitly)")
 	}
-	der, err := base64.StdEncoding.DecodeString(x5c[0])
+	chain, err := certchain.X5CDERsFromHeader(header)
 	if err != nil {
-		return AuthorizationRequest{}, fmt.Errorf("wallet: parse authorization request: decode x5c[0]: %w", err)
+		return AuthorizationRequest{}, fmt.Errorf("wallet: parse authorization request: %w", err)
 	}
-	cert, err := x509.ParseCertificate(der)
+	cert, err := params.VerifierTrust.VerifyVerifierChain(chain)
 	if err != nil {
-		return AuthorizationRequest{}, fmt.Errorf("wallet: parse authorization request: parse x5c[0]: %w", err)
+		return AuthorizationRequest{}, fmt.Errorf("wallet: parse authorization request: untrusted verifier: %w", err)
 	}
 
 	hash := sha256.Sum256(cert.Raw)
@@ -275,7 +286,7 @@ func ParseAuthorizationRequest(params ParseAuthorizationRequestParams) (Authoriz
 
 	return AuthorizationRequest{
 		ClientID: params.ClientID, ResponseURI: wire.ResponseURI, Nonce: wire.Nonce, State: wire.State,
-		Query: wire.DCQLQuery, ResponseEncryptionKey: encPub, ResponseEncryptionKeyID: kid,
+		Query: wire.DCQLQuery, VerifierCertificate: cert, ResponseEncryptionKey: encPub, ResponseEncryptionKeyID: kid,
 		ResponseEncryptionEnc: enc,
 	}, nil
 }
@@ -286,7 +297,8 @@ func ParseAuthorizationRequest(params ParseAuthorizationRequestParams) (Authoriz
 // dereferencing a by-reference Credential Offer, using this Wallet's
 // own hardened fetcher (SSRF/size/redirect protection, Config.Fetch)
 // the same way. Fetches requestURI, then calls
-// ParseAuthorizationRequest with the result and clientID.
+// ParseAuthorizationRequest with the result, clientID and
+// Config.VerifierTrust — which this method therefore requires.
 //
 // This does NOT cover §5.10's own OPTIONAL POST variant (a Wallet
 // sending a fresh "wallet_nonce" so the Verifier can embed it in the
@@ -302,6 +314,9 @@ func ParseAuthorizationRequest(params ParseAuthorizationRequestParams) (Authoriz
 // call ParseAuthorizationRequest directly with the response body and
 // its own WalletNonce — see the package example for the exact shape.
 func (w *Wallet) FetchAuthorizationRequest(ctx context.Context, requestURI, clientID string) (AuthorizationRequest, error) {
+	if w.cfg.VerifierTrust == nil {
+		return AuthorizationRequest{}, fmt.Errorf("wallet: fetch authorization request: Config.VerifierTrust is required (NoVerifierTrust{} opts out explicitly)")
+	}
 	target, err := url.Parse(requestURI)
 	if err != nil {
 		return AuthorizationRequest{}, fmt.Errorf("wallet: fetch authorization request: parse request_uri: %w", err)
@@ -313,7 +328,7 @@ func (w *Wallet) FetchAuthorizationRequest(ctx context.Context, requestURI, clie
 		return AuthorizationRequest{}, fmt.Errorf("wallet: fetch authorization request: fetch request_uri: %w", err)
 	}
 	return ParseAuthorizationRequest(ParseAuthorizationRequestParams{
-		RequestObject: string(res.Body), ClientID: clientID,
+		RequestObject: string(res.Body), ClientID: clientID, VerifierTrust: w.cfg.VerifierTrust,
 	})
 }
 
@@ -357,22 +372,4 @@ func containsString(list []string, want string) bool {
 		}
 	}
 	return false
-}
-
-// stringSlice converts a JSON-decoded header value (a []any of
-// strings) to []string — matching attestation.stringSlice's own
-// unexported shape, kept as a local copy since that one isn't part of
-// this repo's public API.
-func stringSlice(v any) []string {
-	raw, ok := v.([]any)
-	if !ok {
-		return nil
-	}
-	out := make([]string, 0, len(raw))
-	for _, e := range raw {
-		if s, ok := e.(string); ok {
-			out = append(out, s)
-		}
-	}
-	return out
 }

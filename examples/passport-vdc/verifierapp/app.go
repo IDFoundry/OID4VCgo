@@ -59,6 +59,7 @@ type Config struct {
 type App struct {
 	cfg      Config
 	verifier *verifier.Verifier
+	caCert   *x509.Certificate
 	now      func() time.Time
 	handler  http.Handler
 
@@ -114,7 +115,7 @@ func New(cfg Config) (*App, error) {
 	if err != nil {
 		return nil, fmt.Errorf("verifierapp: response URI: %w", err)
 	}
-	key, cert, err := newRequestSigningIdentity(time.Now())
+	key, cert, caCert, err := newRequestSigningIdentity(time.Now())
 	if err != nil {
 		return nil, err
 	}
@@ -127,10 +128,15 @@ func New(cfg Config) (*App, error) {
 	if err != nil {
 		return nil, fmt.Errorf("verifierapp: verifier.New: %w", err)
 	}
-	a := &App{cfg: cfg, verifier: v, now: time.Now, sessions: map[string]*session{}, byState: map[string]string{}, byKeyID: map[string]string{}}
+	a := &App{cfg: cfg, verifier: v, caCert: caCert, now: time.Now, sessions: map[string]*session{}, byState: map[string]string{}, byKeyID: map[string]string{}}
 	a.handler = a.routes()
 	return a, nil
 }
+
+// VerifierCACertificate is the demo verifier CA that issued this
+// verifier's request-signing certificate — the trust anchor a wallet
+// configures to accept its requests (OpenID4VP §5.9.3).
+func (a *App) VerifierCACertificate() *x509.Certificate { return a.caCert }
 
 // ServeHTTP implements http.Handler.
 func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) { a.handler.ServeHTTP(w, r) }
@@ -441,34 +447,33 @@ func randomID() (string, error) {
 // key and a certificate for it from a demo verifier CA, whose key is
 // then discarded (HAIP 1.0 §5: the certificate signing the request must
 // not be self-signed). The certificate's hash is the x509_hash client
-// identifier; a wallet learns who the verifier is, not whether to trust
-// it.
-func newRequestSigningIdentity(now time.Time) (*ecdsa.PrivateKey, *x509.Certificate, error) {
+// identifier; a wallet trusts it by trusting the CA.
+func newRequestSigningIdentity(now time.Time) (key *ecdsa.PrivateKey, cert, caCert *x509.Certificate, err error) {
 	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
-		return nil, nil, fmt.Errorf("verifierapp: CA key: %w", err)
+		return nil, nil, nil, fmt.Errorf("verifierapp: CA key: %w", err)
 	}
-	caCert, err := democert.Create(&x509.Certificate{
+	caCert, err = democert.Create(&x509.Certificate{
 		Subject:   pkix.Name{CommonName: "passport-vdc demo verifier CA", Organization: []string{"IDFoundry demo"}},
 		NotBefore: now.Add(-time.Hour), NotAfter: now.AddDate(1, 0, 0),
 		KeyUsage: x509.KeyUsageCertSign, IsCA: true, BasicConstraintsValid: true, MaxPathLenZero: true,
 	}, nil, &caKey.PublicKey, caKey)
 	if err != nil {
-		return nil, nil, fmt.Errorf("verifierapp: %w", err)
+		return nil, nil, nil, fmt.Errorf("verifierapp: %w", err)
 	}
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	key, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
-		return nil, nil, fmt.Errorf("verifierapp: key: %w", err)
+		return nil, nil, nil, fmt.Errorf("verifierapp: key: %w", err)
 	}
-	cert, err := democert.Create(&x509.Certificate{
+	cert, err = democert.Create(&x509.Certificate{
 		Subject:   pkix.Name{CommonName: "passport-vdc demo verifier", Organization: []string{"IDFoundry demo"}},
 		NotBefore: now.Add(-time.Hour), NotAfter: now.AddDate(1, 0, 0),
 		KeyUsage: x509.KeyUsageDigitalSignature,
 	}, caCert, &key.PublicKey, caKey)
 	if err != nil {
-		return nil, nil, fmt.Errorf("verifierapp: %w", err)
+		return nil, nil, nil, fmt.Errorf("verifierapp: %w", err)
 	}
-	return key, cert, nil
+	return key, cert, caCert, nil
 }
 
 func writeJSONError(w http.ResponseWriter, code, description string) {

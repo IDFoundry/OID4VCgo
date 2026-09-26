@@ -39,8 +39,10 @@ func FuzzParseAuthorizationRequest(f *testing.F) {
 	f.Add("a.b.c")
 
 	f.Fuzz(func(t *testing.T, requestObject string) {
+		// NoVerifierTrust keeps inputs flowing past the trust check to
+		// the parsing it guards.
 		_, _ = wallet.ParseAuthorizationRequest(wallet.ParseAuthorizationRequestParams{
-			RequestObject: requestObject, ClientID: clientID,
+			RequestObject: requestObject, ClientID: clientID, VerifierTrust: wallet.NoVerifierTrust{},
 		})
 	})
 }
@@ -104,7 +106,7 @@ func FuzzParseAuthorizationRequestSigned(f *testing.F) {
 			t.Fatalf("sign request object: %v", err)
 		}
 		req, err := wallet.ParseAuthorizationRequest(wallet.ParseAuthorizationRequestParams{
-			RequestObject: requestObject, ClientID: clientID,
+			RequestObject: requestObject, ClientID: clientID, VerifierTrust: wallet.NoVerifierTrust{},
 		})
 		if err != nil {
 			return

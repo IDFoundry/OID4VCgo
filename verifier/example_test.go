@@ -139,8 +139,13 @@ func ExampleVerifier_VerifyResponse() {
 		panic(err)
 	}
 
+	// The Wallet trusts Verifiers whose request-signing certificate
+	// chains to the verifier CA (OID4VP §5.9.3).
+	verifierRoots := x509.NewCertPool()
+	verifierRoots.AddCert(verifierCA)
 	authReq, err := wallet.ParseAuthorizationRequest(wallet.ParseAuthorizationRequestParams{
 		RequestObject: built.RequestObject, ClientID: built.ClientID,
+		VerifierTrust: wallet.X5CVerifierRoots{Roots: verifierRoots},
 	})
 	if err != nil {
 		panic(err)

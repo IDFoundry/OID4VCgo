@@ -42,28 +42,18 @@ func ExampleWallet_FetchAuthorizationRequest() {
 	// --- Stand up a real Verifier, the same way any OID4VP Verifier
 	// using this library would (see verifier.New's own doc comment for
 	// every field here). A real deployment's ClientCertificate/Signer
-	// come from its own key management, not freshly generated per
-	// request; this example generates a throwaway self-signed one since
-	// there is no *testing.T here to hang a shared test helper off of.
-	clientKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	// come from its own key management and a real CA, not freshly
+	// generated per request; this example generates a throwaway CA and
+	// a leaf under it (HAIP 1.0 §5: the request-signing certificate
+	// must not be self-signed).
+	caKey, caCert, err := exampleCertificate(nil, nil, "ExampleWallet_FetchAuthorizationRequest CA")
 	if err != nil {
-		fmt.Println("generate key:", err)
+		fmt.Println("CA:", err)
 		return
 	}
-	certTmpl := &x509.Certificate{
-		SerialNumber: big.NewInt(1),
-		Subject:      pkix.Name{CommonName: "ExampleWallet_FetchAuthorizationRequest"},
-		NotBefore:    time.Now().Add(-time.Hour),
-		NotAfter:     time.Now().Add(24 * time.Hour),
-	}
-	certDER, err := x509.CreateCertificate(rand.Reader, certTmpl, certTmpl, &clientKey.PublicKey, clientKey)
+	clientKey, clientCert, err := exampleCertificate(caCert, caKey, "ExampleWallet_FetchAuthorizationRequest")
 	if err != nil {
-		fmt.Println("CreateCertificate:", err)
-		return
-	}
-	clientCert, err := x509.ParseCertificate(certDER)
-	if err != nil {
-		fmt.Println("ParseCertificate:", err)
+		fmt.Println("leaf:", err)
 		return
 	}
 	responseURI, _ := fapi.ParseEndpointURL("https://verifier.example.com/response")
@@ -100,7 +90,11 @@ func ExampleWallet_FetchAuthorizationRequest() {
 	}))
 	defer requestURIServer.Close()
 
-	// --- The Wallet side: everything a real integration needs.
+	// --- The Wallet side: everything a real integration needs,
+	// including which Verifiers to trust (OID4VP §5.9.3) — here, any
+	// whose request-signing certificate chains to the example CA.
+	verifierRoots := x509.NewCertPool()
+	verifierRoots.AddCert(caCert)
 	w, err := wallet.New(wallet.Config{
 		Assurance:       wallet.AssuranceDevelopment,
 		ProofSigningAlg: oid4vci.ES256,
@@ -111,6 +105,7 @@ func ExampleWallet_FetchAuthorizationRequest() {
 			// leaves this false (the default).
 			AllowLoopbackHTTP: true,
 		},
+		VerifierTrust: wallet.X5CVerifierRoots{Roots: verifierRoots},
 	}, wallet.Dependencies{HTTP: http.DefaultClient, Clock: wallet.ClockFunc(time.Now)})
 	if err != nil {
 		fmt.Println("wallet.New:", err)
@@ -123,6 +118,7 @@ func ExampleWallet_FetchAuthorizationRequest() {
 		return
 	}
 	fmt.Println("fetched and parsed a real Request Object over HTTP GET")
+	fmt.Println("signed by trusted verifier:", authReq.VerifierCertificate.Subject.CommonName)
 	fmt.Println("query asks for credential ID:", authReq.Query.Credentials[0].ID)
 
 	// The OPTIONAL POST variant (§5.10): a Wallet sends a fresh
@@ -145,9 +141,38 @@ func ExampleWallet_FetchAuthorizationRequest() {
 	//	// ... read resp.Body into requestObject ...
 	//	authReq, err := wallet.ParseAuthorizationRequest(wallet.ParseAuthorizationRequestParams{
 	//		RequestObject: requestObject, ClientID: clientID, WalletNonce: walletNonce,
+	//		VerifierTrust: wallet.X5CVerifierRoots{Roots: verifierRoots},
 	//	})
 
 	// Output:
 	// fetched and parsed a real Request Object over HTTP GET
+	// signed by trusted verifier: ExampleWallet_FetchAuthorizationRequest
 	// query asks for credential ID: cred1
+}
+
+// exampleCertificate generates a P-256 key and a certificate for it
+// named name: a self-signed CA when parent is nil, otherwise a leaf
+// issued by parent.
+func exampleCertificate(parent *x509.Certificate, parentKey *ecdsa.PrivateKey, name string) (*ecdsa.PrivateKey, *x509.Certificate, error) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, nil, err
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(time.Now().UnixNano()),
+		Subject:      pkix.Name{CommonName: name},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(24 * time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+	}
+	if parent == nil {
+		tmpl.KeyUsage, tmpl.IsCA, tmpl.BasicConstraintsValid = x509.KeyUsageCertSign, true, true
+		parent, parentKey = tmpl, key
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, parent, &key.PublicKey, parentKey)
+	if err != nil {
+		return nil, nil, err
+	}
+	cert, err := x509.ParseCertificate(der)
+	return key, cert, err
 }
