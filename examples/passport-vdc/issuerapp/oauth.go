@@ -249,17 +249,11 @@ func (a *App) handleToken(w http.ResponseWriter, r *http.Request) {
 	result.WriteJSON(w)
 }
 
-type authorizationServerMetadata struct {
-	server.Metadata
-	DPoPSigningAlgValuesSupported []string `json:"dpop_signing_alg_values_supported,omitempty"`
-}
-
+// handleASMetadata serves the Authorization Server's RFC 8414 metadata —
+// server.Metadata, dpop_signing_alg_values_supported included.
 func (a *App) handleASMetadata(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(authorizationServerMetadata{
-		Metadata:                      a.server.Metadata(r.Context()),
-		DPoPSigningAlgValuesSupported: server.RecommendedAlgorithmSet().Strings(),
-	})
+	_ = json.NewEncoder(w).Encode(a.server.Metadata(r.Context()))
 }
 
 func (a *App) handleJWKS(w http.ResponseWriter, r *http.Request) {
