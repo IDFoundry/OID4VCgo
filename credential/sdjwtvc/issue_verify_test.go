@@ -438,7 +438,7 @@ func TestVerify_AcceptsCredentialWithinValidityWindow(t *testing.T) {
 }
 
 func TestIssue_NoSelectivelyDisclosableClaims(t *testing.T) {
-	// draft-11 §3.2.2.4: no _sd claim and no Disclosures when nothing
+	// draft-13 §3.2.2.4: no _sd claim and no Disclosures when nothing
 	// is selectively disclosable.
 	issuerKey := testKey(t)
 	sdjwt, disclosures, err := Issue(issuerKey, jose.ES256, Claims{
@@ -636,7 +636,7 @@ func TestVerifyKeyBindingJWT_RequiresExpectedAudienceAndNonce(t *testing.T) {
 }
 
 // TestVerify_RejectsDisclosableRegisteredClaim checks an SD-JWT VC whose
-// Issuer (against draft-11 §3.2.2) made a registered claim such as exp or
+// Issuer (against draft-13 §3.2.2) made a registered claim such as exp or
 // status selectively disclosable is refused — a Holder could otherwise
 // withhold it — while an ordinary disclosed claim is accepted.
 func TestVerify_RejectsDisclosableRegisteredClaim(t *testing.T) {

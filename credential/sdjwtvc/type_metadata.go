@@ -7,13 +7,13 @@ import (
 	"regexp"
 )
 
-// TypeMetadata is an SD-JWT VC Type Metadata document (draft-11 §6.2):
+// TypeMetadata is an SD-JWT VC Type Metadata document (draft-13 §6.2):
 // what an Issuer publishes about a credential type, typically at the
 // URL its vct names (§6.3.1). Build one, check it with Validate, and
 // serve it as application/json.
 type TypeMetadata struct {
-	// VCT is the type this document describes.
-	VCT string `json:"vct,omitempty"`
+	// VCT is the type this document describes. REQUIRED.
+	VCT string `json:"vct"`
 
 	// Name and Description are for developers reading the document;
 	// Display carries what end users see. Both OPTIONAL.
@@ -25,23 +25,17 @@ type TypeMetadata struct {
 	Extends          string `json:"extends,omitempty"`
 	ExtendsIntegrity string `json:"extends#integrity,omitempty"`
 
-	// Display has an entry per supported language (§8).
+	// Display has an entry per supported locale (§8).
 	Display []TypeDisplay `json:"display,omitempty"`
 
 	// Claims describes individual claims (§9).
 	Claims []ClaimMetadata `json:"claims,omitempty"`
-
-	// Schema is an embedded JSON Schema, or SchemaURI points at one
-	// (with its optional integrity metadata) — not both (§6.5.1).
-	Schema             json.RawMessage `json:"schema,omitempty"`
-	SchemaURI          string          `json:"schema_uri,omitempty"`
-	SchemaURIIntegrity string          `json:"schema_uri#integrity,omitempty"`
 }
 
-// TypeDisplay is one language's display information for the type (§8).
+// TypeDisplay is one locale's display information for the type (§8).
 type TypeDisplay struct {
-	Lang        string `json:"lang"` // REQUIRED: RFC 5646 language tag
-	Name        string `json:"name"` // REQUIRED: for end users
+	Locale      string `json:"locale"` // REQUIRED: RFC 5646 language tag
+	Name        string `json:"name"`   // REQUIRED: for end users
 	Description string `json:"description,omitempty"`
 
 	// Rendering maps a rendering method ("simple", "svg_templates") to
@@ -56,20 +50,24 @@ type ClaimMetadata struct {
 	// — see ClaimPath for the common all-names case.
 	Path    []any          `json:"path"`
 	Display []ClaimDisplay `json:"display,omitempty"`
+	// Mandatory, when true, means the Issuer MUST include the claim in
+	// the credential (§9.3); it may still be selectively disclosable.
+	Mandatory bool `json:"mandatory,omitempty"`
 	// SD says whether the Issuer makes the claim selectively
-	// disclosable; empty means SDAllowed (§9.3).
+	// disclosable; empty means SDAllowed (§9.4), though always or never
+	// is RECOMMENDED.
 	SD    ClaimSD `json:"sd,omitempty"`
 	SvgID string  `json:"svg_id,omitempty"`
 }
 
-// ClaimDisplay is one language's display information for a claim (§9.2).
+// ClaimDisplay is one locale's display information for a claim (§9.2).
 type ClaimDisplay struct {
-	Lang        string `json:"lang"`  // REQUIRED
-	Label       string `json:"label"` // REQUIRED: for end users
+	Locale      string `json:"locale"` // REQUIRED
+	Label       string `json:"label"`  // REQUIRED: for end users
 	Description string `json:"description,omitempty"`
 }
 
-// ClaimSD is a claim's selective disclosure metadata (§9.3).
+// ClaimSD is a claim's selective disclosure metadata (§9.4).
 type ClaimSD string
 
 // ClaimSD values.
@@ -91,17 +89,17 @@ func ClaimPath(names ...string) []any {
 
 var svgIDPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
-// Validate checks m against draft-11's MUSTs: schema and schema_uri
-// aren't both set; every display entry has lang and name; every claim
-// has a valid path, display entries with lang and label, a known sd
-// value, and a well-formed svg_id unique within the document.
+// Validate checks m against draft-13's MUSTs: vct is present; every
+// display entry has locale and name; every claim has a valid path,
+// display entries with locale and label, a known sd value, and a
+// well-formed svg_id unique within the document.
 func (m TypeMetadata) Validate() error {
-	if len(m.Schema) > 0 && m.SchemaURI != "" {
-		return errors.New("sdjwtvc: type metadata: schema and schema_uri must not both be present")
+	if m.VCT == "" {
+		return errors.New("sdjwtvc: type metadata: vct is required")
 	}
 	for i, d := range m.Display {
-		if d.Lang == "" || d.Name == "" {
-			return fmt.Errorf("sdjwtvc: type metadata: display[%d]: lang and name are required", i)
+		if d.Locale == "" || d.Name == "" {
+			return fmt.Errorf("sdjwtvc: type metadata: display[%d]: locale and name are required", i)
 		}
 	}
 	svgIDs := map[string]bool{}
@@ -118,8 +116,8 @@ func (c ClaimMetadata) validate(svgIDs map[string]bool) error {
 		return err
 	}
 	for j, d := range c.Display {
-		if d.Lang == "" || d.Label == "" {
-			return fmt.Errorf("display[%d]: lang and label are required", j)
+		if d.Locale == "" || d.Label == "" {
+			return fmt.Errorf("display[%d]: locale and label are required", j)
 		}
 	}
 	switch c.SD {

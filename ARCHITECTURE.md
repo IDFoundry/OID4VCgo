@@ -90,7 +90,7 @@ update a bullet's own tag as its package's status actually changes,
 and update the status block at the top of this file only if that
 changes whether *every* bullet below is `(done)`.
 
-- **`credential/sdjwtvc`** (done) — SD-JWT VC (`draft-ietf-oauth-sd-jwt-vc-11`)
+- **`credential/sdjwtvc`** (done) — SD-JWT VC (`draft-ietf-oauth-sd-jwt-vc-13`, as HAIP 1.0 §9.4 pins)
   on top of base SD-JWT (RFC 9901): `Issue`/`Verify`, `SD`/`SDElement`
   markers with full recursive-disclosure support, `Parse`/`Presentation`,
   Key Binding JWT creation/verification, and `SelectDisclosures` (RFC
@@ -293,7 +293,7 @@ changes whether *every* bullet below is `(done)`.
     `ParseCWTStatusClaim`), while identifier_list has no equivalent
     library support here, since it's an ISO-specific extension to Token
     Status List rather than part of the base spec.
-- **`statuslist`** (done) — Token Status List (`draft-ietf-oauth-status-list-12`),
+- **`statuslist`** (done) — Token Status List (`draft-ietf-oauth-status-list-14`, as HAIP 1.0 §9.4 pins),
   both encodings: bit-packing and ZLIB compression (`Pack`/`Unpack`,
   `New`/`Decode`, shared by both), Status List Token issuance/verification
   in JWT/JOSE (§5.1, §6.2 — `IssueToken`/`VerifyToken`, built on
@@ -312,7 +312,7 @@ changes whether *every* bullet below is `(done)`.
   (requested assignment)" in the IANA CWT Claims Registry as of the
   draft version this targets — see `cwt.go`'s own comment, and update if
   IANA finalizes different values before this package is relied on in
-  production. Tests include draft-12 §4.1's own known-answer bit-packing
+  production. Tests include draft-14 §4.1's own known-answer bit-packing
   vectors, its Appendix's 2^20-entry compressed vector, and (for the CWT
   profile) both of §5.2/§6.3's own non-normative COSE_Sign1_Tagged
   examples decoded and checked field-by-field — not just round-trip

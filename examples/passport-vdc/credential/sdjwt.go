@@ -18,7 +18,7 @@ import (
 // Wallet's own key.
 //
 // iss and iat are deliberately omitted. The issuer is conveyed by the
-// x5c end-entity certificate (HAIP requires x5c; SD-JWT VC draft-11
+// x5c end-entity certificate (HAIP requires x5c; SD-JWT VC draft-13
 // §3.2.2.2 and §3.5), and an HTTPS iss would instead point verifiers at
 // JWT VC Issuer Metadata, which this demo doesn't serve. iat is
 // optional.

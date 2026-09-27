@@ -21,7 +21,7 @@
 // COSE_Sign1_Tagged); SignTagged/VerifyTagged/DecodeUnverifiedTagged
 // handle #6.18(COSE_Sign1) instead, for a context that doesn't
 // otherwise establish the bytes are a COSE_Sign1
-// (draft-ietf-oauth-status-list-12 §5.2's CWT-format Status List Token
+// (draft-ietf-oauth-status-list-14 §5.2's CWT-format Status List Token
 // uses the tagged form). SignDetached/VerifyDetached handle a detached
 // COSE_Sign1 payload (mdoc's DeviceSignature, §12.4.6); ComputeMAC/
 // VerifyMAC are COSE_Mac0's only form here, since mdoc's DeviceMac

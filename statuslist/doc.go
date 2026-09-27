@@ -1,5 +1,5 @@
 // Package statuslist implements Token Status List
-// (draft-ietf-oauth-status-list-12): a bit-packed, DEFLATE/ZLIB-
+// (draft-ietf-oauth-status-list-14): a bit-packed, DEFLATE/ZLIB-
 // compressed array of Referenced Token statuses, published as a signed
 // Status List Token, plus the "status" claim a Referenced Token (such
 // as an SD-JWT VC — see credential/sdjwtvc's Claims.Status, or an mdoc
@@ -20,12 +20,12 @@
 // IssueToken/IssueTokenCWT sign it into a Status List Token in the
 // corresponding format. StatusListRef.Claim/CWTStatusClaim build the
 // "status" claim a Referenced Token embeds to point back at one (idx +
-// uri, draft-12 §6.2/§6.3) — the same shape credential/sdjwtvc's
+// uri, draft-14 §6.2/§6.3) — the same shape credential/sdjwtvc's
 // Claims.Status expects for the JOSE form.
 //
 // # Checking
 //
-// Check implements draft-12 §8.3 steps 3-7: verifying the Status List
+// Check implements draft-14 §8.3 steps 3-7: verifying the Status List
 // Token's signature and claims, decompressing its Status List, and
 // reading the status at a given index. Steps 1-2 — locating the status
 // claim on an already-validated Referenced Token, and fetching the

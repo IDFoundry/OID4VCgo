@@ -11,7 +11,7 @@ import (
 
 // FuzzVerifyToken exercises VerifyToken against arbitrary strings — a
 // Status List Token is fetched from a URI a Referenced Token's own
-// "status" claim names (draft-12 §5.1), so it's attacker-influenced
+// "status" claim names (draft-14 §5.1), so it's attacker-influenced
 // wire data (a malicious/compromised status list endpoint) parsed and
 // signature-checked before the statuses inside it are trusted.
 func FuzzVerifyToken(f *testing.F) {

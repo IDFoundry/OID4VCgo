@@ -2,7 +2,7 @@ package statuslist
 
 import "fmt"
 
-// statusListInfo is draft-12 §6.3's StatusListInfo CBOR structure — the
+// statusListInfo is draft-14 §6.3's StatusListInfo CBOR structure — the
 // CWT counterpart to Claim's JSON idx/uri shape.
 type statusListInfo struct {
 	Idx uint64 `cbor:"idx"`
@@ -10,7 +10,7 @@ type statusListInfo struct {
 }
 
 // StatusListRef is the content of a Referenced Token's
-// status.status_list claim (draft-12 §6.2): a pointer to the index
+// status.status_list claim (draft-14 §6.2): a pointer to the index
 // within, and URI of, a Status List Token that carries this token's
 // status.
 type StatusListRef struct {
@@ -19,7 +19,7 @@ type StatusListRef struct {
 }
 
 // Claim builds the "status" claim a Referenced Token embeds to point
-// back at ref (draft-12 §6.2) — the same map[string]any shape
+// back at ref (draft-14 §6.2) — the same map[string]any shape
 // credential/sdjwtvc's Claims.Status expects.
 func (ref StatusListRef) Claim() map[string]any {
 	return map[string]any{
@@ -31,7 +31,7 @@ func (ref StatusListRef) Claim() map[string]any {
 }
 
 // ParseStatusClaim extracts a StatusListRef from an already-resolved
-// Referenced Token's "status" claim (draft-12 §6.2, §8.3 step 1) — for
+// Referenced Token's "status" claim (draft-14 §6.2, §8.3 step 1) — for
 // example, credential/sdjwtvc.Verify's returned payload["status"].
 func ParseStatusClaim(status map[string]any) (StatusListRef, error) {
 	raw, ok := status["status_list"]
@@ -61,7 +61,7 @@ func ParseStatusClaim(status map[string]any) (StatusListRef, error) {
 }
 
 // CWTStatusClaim builds the value of the CWT "status" claim (key
-// CWTClaimStatus, draft-12 §6.3) a Referenced Token in CWT/COSE format
+// CWTClaimStatus, draft-14 §6.3) a Referenced Token in CWT/COSE format
 // embeds to point back at ref — the CBOR counterpart to Claim. The
 // caller assigns the result under CWTClaimStatus in its own CWT claims
 // map alongside whatever other claims the token carries.
@@ -75,7 +75,7 @@ func (ref StatusListRef) CWTStatusClaim() (map[string]interface{}, error) {
 }
 
 // ParseCWTStatusClaim extracts a StatusListRef from an already-resolved
-// Referenced Token's CWT "status" claim (draft-12 §6.3, §8.3 step 1) —
+// Referenced Token's CWT "status" claim (draft-14 §6.3, §8.3 step 1) —
 // the CBOR counterpart to ParseStatusClaim, for a caller that has
 // already CBOR-decoded the claim into a generic
 // map[string]interface{}.

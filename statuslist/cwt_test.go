@@ -171,6 +171,61 @@ func TestVectorCWTStatusListToken(t *testing.T) {
 	}
 }
 
+// TestVectorCWTStatusListTokenUntagged decodes draft-14 §5.2's Status
+// List Token example, which (unlike draft-12's, above) is an untagged
+// COSE_Sign1 — draft-14 dropped the tag from its CWT examples, and the
+// normative text requires neither form — checking the same claims.
+func TestVectorCWTStatusListTokenUntagged(t *testing.T) {
+	token := mustHexCWT(t, "845820a2012610781a6170706c69636174696f6e2f7374617475736c6973742b637774"+
+		"a1044231325850a502782168747470733a2f2f6578616d706c652e636f6d2f7374617475736c697374732f"+
+		"31061a648c5bea041a8898dfea19fffe19a8c019fffda2646269747301636c73744a78dadbb918000217015d"+
+		"58405e1dfcf3b4499621dd2585c9cdd3f702543c040f1c6947e6d07b0092948ffb6d33ccff503c6938daecbc"+
+		"57d3de5c9067b16da45c530e905b33a4787fba5d0599")
+
+	protected, _, raw, err := cose.DecodeUnverified(token)
+	if err != nil {
+		t.Fatalf("DecodeUnverified: %v", err)
+	}
+	if protected.Typ != CWTTokenMediaType {
+		t.Errorf("Typ = %q, want %q", protected.Typ, CWTTokenMediaType)
+	}
+	var decoded map[int]interface{}
+	if err := cbor.Unmarshal(raw, &decoded); err != nil {
+		t.Fatalf("unmarshal claims: %v", err)
+	}
+	claims, err := parseCWTClaims(decoded)
+	if err != nil {
+		t.Fatalf("parseCWTClaims: %v", err)
+	}
+	if claims.Sub != "https://example.com/statuslists/1" || claims.Iat != 1686920170 || claims.StatusList.Bits != Bits1 {
+		t.Errorf("claims = %+v", claims)
+	}
+}
+
+// TestVerifyTokenCWTAcceptsUntagged checks VerifyTokenCWT verifies a
+// Status List Token CWT whether or not it carries the COSE_Sign1 tag:
+// this package issues it tagged (draft-12's example), draft-14's example
+// is untagged, and the normative text requires neither.
+func TestVerifyTokenCWTAcceptsUntagged(t *testing.T) {
+	key := testKey(t)
+	sl, err := New(Bits1, []uint8{0, 1, 0}, "")
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	tagged, err := IssueTokenCWT(key, cose.ES256, TokenClaims{Sub: "https://example.com/statuslists/1", Iat: time.Now().Unix(), StatusList: sl}, nil)
+	if err != nil {
+		t.Fatalf("IssueTokenCWT: %v", err)
+	}
+	if tagged[0] != 0xd2 {
+		t.Fatalf("issued token doesn't start with tag 18 (0xd2): %x", tagged[:1])
+	}
+	for name, token := range map[string][]byte{"tagged": tagged, "untagged": tagged[1:]} {
+		if _, err := VerifyTokenCWT(token, &key.PublicKey, cose.ES256, VerifyOptions{}); err != nil {
+			t.Errorf("VerifyTokenCWT(%s): %v", name, err)
+		}
+	}
+}
+
 // TestVectorCWTReferencedTokenStatusClaim decodes draft-12 §6.3's own
 // non-normative "Referenced Token in CWT format" example and checks
 // ParseCWTStatusClaim against the exact idx/uri it publishes.

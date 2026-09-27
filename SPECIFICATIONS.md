@@ -40,7 +40,7 @@ plain FAPI 2.0" below.
 
 | Spec | Pinned by | Draft |
 |---|---|---|
-| [SD-JWT-based Verifiable Credentials (SD-JWT VC)][sdjwtvc] | OID4VCI 1.0 §14.7 | `draft-ietf-oauth-sd-jwt-vc-11` (2025-09-15) |
+| [SD-JWT-based Verifiable Credentials (SD-JWT VC)][sdjwtvc] | HAIP 1.0 §9.4 (overriding OID4VCI 1.0 §14.7's draft-11) | `draft-ietf-oauth-sd-jwt-vc-13` (2025-11-06) |
 | [ISO/IEC 18013-5:2021 — mdoc][iso18013-5] | OID4VCI 1.0 Appendix A.2, HAIP §5.3.1 | — |
 | ISO/IEC 23220 series | HAIP §5.3.1 (mdoc presentation specifics) | — |
 
@@ -63,7 +63,16 @@ this repo — see ARCHITECTURE.md).
 
 | Spec | Pinned by | Draft |
 |---|---|---|
-| [Token Status List (TSL)][statuslist] | OID4VCI 1.0 §14.7, Appendix D/E `status` claim | `draft-ietf-oauth-status-list-12` (2025-07-07) |
+| [Token Status List (TSL)][statuslist] | HAIP 1.0 §9.4 (overriding OID4VCI 1.0 §14.7's draft-12), Appendix D/E `status` claim | `draft-ietf-oauth-status-list-14` (2025-12-10) |
+
+HAIP 1.0 §9.4 pins SD-JWT VC draft-13 and Token Status List draft-14,
+and states that its versions "overwrite the versions previously
+mentioned in" OID4VCI and OID4VP. This library targets HAIP, so it
+follows HAIP's. Relative to the drafts OID4VCI names, the changes that
+reach this code are SD-JWT VC Type Metadata's (no JSON Schema, `locale`
+instead of `lang`, `mandatory` claims, `vct` required) and a Status List
+Token CWT that may be untagged; the credential formats and verification
+rules are otherwise unchanged.
 
 ## Query language (OID4VP)
 
@@ -116,10 +125,10 @@ the package layout.
 [pkce]: https://www.rfc-editor.org/rfc/rfc7636.html
 [iss]: https://www.rfc-editor.org/rfc/rfc9207.html
 [asmeta]: https://www.rfc-editor.org/rfc/rfc8414.html
-[sdjwtvc]: https://datatracker.ietf.org/doc/html/draft-ietf-oauth-sd-jwt-vc-11
+[sdjwtvc]: https://datatracker.ietf.org/doc/html/draft-ietf-oauth-sd-jwt-vc-13
 [iso18013-5]: https://www.iso.org/standard/69084.html
 [attclientauth]: https://datatracker.ietf.org/doc/html/draft-ietf-oauth-attestation-based-client-auth-07
-[statuslist]: https://datatracker.ietf.org/doc/html/draft-ietf-oauth-status-list-12
+[statuslist]: https://datatracker.ietf.org/doc/html/draft-ietf-oauth-status-list-14
 [jws]: https://www.rfc-editor.org/rfc/rfc7515.html
 [jwe]: https://www.rfc-editor.org/rfc/rfc7516.html
 [jwk]: https://www.rfc-editor.org/rfc/rfc7517.html

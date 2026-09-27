@@ -13,10 +13,10 @@ import (
 
 // CWTTokenMediaType is the media type a Status List Token in CWT format
 // is served and requested as, and its COSE protected "typ" header
-// value (label 16, RFC 9596) — draft-12 §5.2.
+// value (label 16, RFC 9596) — draft-14 §5.2.
 const CWTTokenMediaType = "application/statuslist+cwt" //nolint:gosec // a content-type/typ value, not a credential
 
-// CWT claim keys (draft-12 §5.2, §6.3). sub/iat/exp are RFC 8392's
+// CWT claim keys (draft-14 §5.2, §6.3). sub/iat/exp are RFC 8392's
 // standard CWT claims; ttl/statusList/status are this draft's own —
 // "TBD (requested assignment ...)" in the IANA CWT Claims Registry as
 // of this draft (§14.3.1), not yet a finalized registration. Update
@@ -39,7 +39,7 @@ const (
 // themselves alongside whatever other claims their token carries.
 const CWTClaimStatus = 65535
 
-// cwtStatusList is draft-12 §4.3's StatusList CBOR structure — the same
+// cwtStatusList is draft-14 §4.3's StatusList CBOR structure — the same
 // logical fields as StatusList, but Lst is a raw byte string rather
 // than JSON's base64url-encoded text (§4.3 vs §4.1/§4.2).
 type cwtStatusList struct {
@@ -65,8 +65,9 @@ func fromCWTStatusList(c cwtStatusList) StatusList {
 }
 
 // IssueTokenCWT signs claims into a Status List Token in CWT format
-// (draft-12 §5.2), as COSE_Sign1_Tagged (RFC 8392's CWT example uses
-// the tagged form — see internal/cose.SignTagged). keyID sets the COSE
+// (draft-14 §5.2), as COSE_Sign1_Tagged (RFC 8392's CWT example uses
+// the tagged form — see internal/cose.SignTagged; draft-14 requires
+// neither form, and VerifyTokenCWT accepts both). keyID sets the COSE
 // "kid" header, if non-empty.
 func IssueTokenCWT(signer crypto.Signer, alg cose.Alg, claims TokenClaims, keyID []byte) ([]byte, error) {
 	if claims.Sub == "" {
@@ -108,12 +109,23 @@ func IssueTokenCWT(signer crypto.Signer, alg cose.Alg, claims TokenClaims, keyID
 	return sign1, nil
 }
 
+// coseSign1TagByte is the initial byte of a COSE_Sign1_Tagged (CBOR tag
+// 18, major type 6: 0xc0|18).
+const coseSign1TagByte = 0xd2
+
 // VerifyTokenCWT verifies a Status List Token in CWT format's signature
 // and typ header, and rejects an expired token — the CWT counterpart to
 // VerifyToken. It does not check sub against a specific Referenced
 // Token — that's Check's job.
 func VerifyTokenCWT(token []byte, pub crypto.PublicKey, alg cose.Alg, opts VerifyOptions) (TokenClaims, error) {
-	protected, _, raw, err := cose.VerifyTagged(alg, pub, token, nil)
+	// Tagged (#6.18, the single byte 0xd2) or untagged COSE_Sign1:
+	// draft-14's own example is untagged, draft-12's was tagged, and the
+	// normative text requires neither.
+	verify := cose.Verify
+	if len(token) > 0 && token[0] == coseSign1TagByte {
+		verify = cose.VerifyTagged
+	}
+	protected, _, raw, err := verify(alg, pub, token, nil)
 	if err != nil {
 		return TokenClaims{}, fmt.Errorf("statuslist: verify CWT signature: %w", err)
 	}
