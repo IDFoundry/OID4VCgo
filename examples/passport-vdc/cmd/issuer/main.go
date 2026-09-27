@@ -11,11 +11,9 @@
 package main
 
 import (
-	"crypto/tls"
 	"encoding/pem"
 	"flag"
 	"log"
-	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -71,12 +69,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	srv := &http.Server{
-		Addr: *addr, Handler: app, ErrorLog: demotls.ServerErrorLog(),
-		TLSConfig:         &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS13}, // TLS 1.3 only: FAPI 2.0 allows TLS 1.2 with just a few AES-GCM suites
-		ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second,
-		WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second,
-	}
+	srv := demotls.Server(*addr, app, cert, 30*time.Second)
 	log.Printf("passport-vdc issuer on https://%s (issuer %s)", *addr, *issuerURL)
 	log.Fatal(srv.ListenAndServeTLS("", ""))
 }

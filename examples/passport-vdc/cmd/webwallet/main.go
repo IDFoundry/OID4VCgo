@@ -9,10 +9,8 @@
 package main
 
 import (
-	"crypto/tls"
 	"flag"
 	"log"
-	"net/http"
 	"os"
 	"time"
 
@@ -70,14 +68,9 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	srv := &http.Server{
-		Addr: *addr, Handler: app, ErrorLog: demotls.ServerErrorLog(),
-		TLSConfig:         &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS13}, // TLS 1.3 only: FAPI 2.0 allows TLS 1.2 with just a few AES-GCM suites
-		ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second,
-		// Long enough for the callback handler to finish the token and
-		// credential requests.
-		WriteTimeout: 2 * time.Minute, IdleTimeout: 60 * time.Second,
-	}
+	// Long enough for the callback handler to finish the token and
+	// credential requests.
+	srv := demotls.Server(*addr, app, cert, 2*time.Minute)
 	log.Printf("passport-vdc web wallet on https://%s", *addr)
 	log.Fatal(srv.ListenAndServeTLS("", ""))
 }

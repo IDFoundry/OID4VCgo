@@ -110,3 +110,16 @@ func (f abandonedHandshakeFilter) Write(p []byte) (int, error) {
 	}
 	return f.w.Write(p)
 }
+
+// Server is the demo servers' shared http.Server: TLS 1.3 only (FAPI 2.0
+// allows TLS 1.2 with just a few AES-GCM suites), the usual timeouts,
+// and ServerErrorLog. writeTimeout bounds a response; a handler that
+// makes outbound calls of its own before replying needs a longer one.
+func Server(addr string, handler http.Handler, cert tls.Certificate, writeTimeout time.Duration) *http.Server {
+	return &http.Server{
+		Addr: addr, Handler: handler, ErrorLog: ServerErrorLog(),
+		TLSConfig:         &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS13},
+		ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second,
+		WriteTimeout: writeTimeout, IdleTimeout: 60 * time.Second,
+	}
+}
