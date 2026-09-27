@@ -77,14 +77,15 @@ type WalletClient struct {
 	// the Wallet Attestations this issuer accepts.
 	ProviderIssuer string
 
-	// ProviderJWKS is the Wallet Provider's public JWK Set, used to
-	// verify Wallet Attestations.
-	ProviderJWKS []byte
-
 	// ProviderCA is the Wallet Provider CA certificate (PEM), the trust
-	// anchor for Key Attestations. Every credential request must prove
-	// its holder key with a Key Attestation chaining to it (the
-	// attestation proof type, OID4VCI 1.0 Appendix F.3).
+	// anchor for both of the provider's attestations, each verified by
+	// its x5c certificate chain:
+	//   - Wallet Attestations, which authenticate the wallet at PAR and
+	//     the token endpoint (HAIP 1.0 §4.4.1; fapigo/server's
+	//     X5CAttesterChain);
+	//   - Key Attestations, which every credential request must prove
+	//     its holder key with (the attestation proof type, OID4VCI 1.0
+	//     Appendix F.3).
 	ProviderCA []byte
 }
 
@@ -114,8 +115,6 @@ func (c Config) validate() error {
 		return fmt.Errorf("issuerapp: Wallet.RedirectURIs is required")
 	case c.Wallet.ProviderIssuer == "":
 		return fmt.Errorf("issuerapp: Wallet.ProviderIssuer is required")
-	case len(c.Wallet.ProviderJWKS) == 0:
-		return fmt.Errorf("issuerapp: Wallet.ProviderJWKS is required")
 	case len(c.Wallet.ProviderCA) == 0:
 		return fmt.Errorf("issuerapp: Wallet.ProviderCA is required")
 	}

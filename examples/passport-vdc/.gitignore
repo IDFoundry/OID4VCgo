@@ -1,7 +1,6 @@
 # cmd/wallet-provider output: the private key lets anyone attest wallets
 # the demo issuer accepts.
 wallet-provider.pem
-wallet-provider.jwks.json
 wallet-provider-ca.pem
 
 # cmd/issuer's generated TLS certificate and cmd/wallet's credential

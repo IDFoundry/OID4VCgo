@@ -1,7 +1,7 @@
 // Command issuer runs the passport-vdc demo Credential Issuer over
 // HTTPS on loopback.
 //
-//	go run ./cmd/wallet-provider     # once: wallet-provider.pem, .jwks.json, -ca.pem
+//	go run ./cmd/wallet-provider     # once: wallet-provider.pem and wallet-provider-ca.pem
 //	go run ./cmd/issuer              # https://127.0.0.1:8543, writes issuer-tls.pem
 //
 // Without -tls-cert/-tls-key it generates a self-signed certificate for
@@ -33,18 +33,13 @@ func main() {
 	keyFile := flag.String("tls-key", "", "TLS private key PEM (with -tls-cert)")
 	certOut := flag.String("tls-cert-out", "issuer-tls.pem", "where to write a generated TLS certificate for the wallet to trust")
 	caOut := flag.String("issuer-ca-out", "issuer-ca.pem", "where to write the demo CA certificate for verifiers to trust")
-	jwksPath := flag.String("wallet-provider-jwks", "wallet-provider.jwks.json", "the demo Wallet Provider's public JWK Set")
-	providerCAPath := flag.String("wallet-provider-ca", "wallet-provider-ca.pem", "the demo Wallet Provider's CA certificate (Key Attestation trust anchor)")
+	providerCAPath := flag.String("wallet-provider-ca", "wallet-provider-ca.pem", "the demo Wallet Provider's CA certificate (trust anchor for Wallet and Key Attestations)")
 	providerIssuer := flag.String("wallet-provider-issuer", "https://wallet-provider.passport-vdc.demo", "the demo Wallet Provider's identifier (Wallet Attestation iss)")
 	clientID := flag.String("wallet-client-id", "passport-vdc-wallet", "the demo wallet's client_id")
 	redirectURIs := flag.String("wallet-redirect-uris", "http://127.0.0.1:8765/callback,https://127.0.0.1:7443/callback", "the demo wallets' redirect URIs, comma-separated (CLI wallet, web wallet)")
 	webWallet := flag.String("web-wallet", "https://127.0.0.1:7443", "the demo web wallet's URL, for the offer page's \"Open in web wallet\" button (empty to hide it)")
 	flag.Parse()
 
-	jwks, err := os.ReadFile(*jwksPath) // #nosec G304 -- operator-supplied path
-	if err != nil {
-		log.Fatalf("read wallet provider JWKS (run cmd/wallet-provider first): %v", err)
-	}
 	providerCA, err := os.ReadFile(*providerCAPath) // #nosec G304 -- operator-supplied path
 	if err != nil {
 		log.Fatalf("read wallet provider CA (run cmd/wallet-provider first): %v", err)
@@ -58,7 +53,7 @@ func main() {
 		CSCAPool:  pool,
 		Wallet: issuerapp.WalletClient{
 			ClientID: *clientID, RedirectURIs: splitList(*redirectURIs),
-			ProviderIssuer: *providerIssuer, ProviderJWKS: jwks, ProviderCA: providerCA,
+			ProviderIssuer: *providerIssuer, ProviderCA: providerCA,
 		},
 		WebWalletURL: *webWallet,
 	})

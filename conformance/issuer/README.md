@@ -135,8 +135,10 @@ throwaway self-signed cert wrapping this binary's own credential-issuer
 key (`credential.trust_anchor_pem`/`status_list_trust_anchor_pem`), a
 *private* EC JWKS for `client_attestation.attester_jwks` (the suite
 signs its own emulated Client Attestation JWTs with it — this binary's
-own config registers the matching *public* half as
-`client.attester_jwks`/`client2.attester_jwks`), and a second throwaway
+own config trusts them by the CA that issued the attester key's `x5c`
+leaf, `client.attester_trust_anchors_pem`/`client2.attester_trust_anchors_pem`,
+verified by fapigo's `X5CAttesterChain`; `attester_jwks` with the
+matching *public* half still works, verified by `kid`), and a second throwaway
 private JWKS for `client_attestation.key_attestation_jwks`. The
 attester JWK itself must also carry an `x5c` entry (RFC 7517's own JWK
 member, not the JWS header) — the suite's own `CreateClientAttestationJwt`
@@ -491,12 +493,13 @@ from the same freshly generated key material in one run, then restarts
   Attestation JWTs on the client's behalf for every module in this
   battery) rejects a signing key with no `x5c` member outright ("A x5c
   entry is required in the client's signing key but isn't present in
-  the configuration") — this binary's own server-side attestation
-  verification (`server/client_auth_attestation.go`) never looks at
-  x5c at all (a flat per-client trusted-JWKS lookup), but HAIP still
-  requires it in what the suite itself signs. Fixed by generating a
-  CA-issued leaf for the attester key and embedding its DER (base64)
-  as the JWK's own `x5c` entry.
+  the configuration") — HAIP 1.0 §4.4.1 requires it in what the suite
+  signs. Fixed by generating a CA-issued leaf for the attester key and
+  embedding its DER (base64) as the JWK's own `x5c` entry. At the time
+  this binary's server-side verification ignored `x5c` (a per-client
+  trusted-JWKS lookup by `kid`); since fapigo's `AttesterTrust` (FAPIgo
+  PR #384), `run-fapi2sp-battery` registers that CA as the attester
+  trust anchor and the `x5c` chain is what's verified.
 - **`credential.status_list_trust_anchor_pem` is required even though
   this binary implements no status list.** The suite's own HAIP
   variant unconditionally requires this field ("`'Status List Trust

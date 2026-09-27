@@ -62,6 +62,7 @@ type App struct {
 	interactions     *ttlMap[pendingInteraction] // interaction handle → approval
 	metadataSigner   *ecdsa.PrivateKey
 	metadataCert     *x509.Certificate
+	providerRoots    *x509.CertPool // the Wallet Provider CA: Wallet and Key Attestations
 	documentCert     *x509.Certificate
 	caCert           *x509.Certificate
 	handler          http.Handler
@@ -83,6 +84,9 @@ func New(cfg Config) (*App, error) {
 	a.transactions = newTransactions(a.now, cfg.transactionLifetime(), cfg.maxTransactions())
 	a.requestURIs = newTTLMap[string](a.now)
 	a.interactions = newTTLMap[pendingInteraction](a.now)
+	if a.providerRoots, err = certPool(cfg.Wallet.ProviderCA); err != nil {
+		return nil, err
+	}
 
 	if err := a.buildAuthorizationServer(); err != nil {
 		return nil, err
@@ -175,6 +179,9 @@ func (a *App) buildAuthorizationServer() error {
 		Replay: replay, ClientKeys: clientKeys, Keys: keyManager, AccessTokens: accessTokens,
 		Revocation: revocation, Clock: server.SystemClock{}, Random: rand.Reader,
 		ClientCertificateTrust: server.NoClientCertificateChainTrust{},
+		// Wallet Attestations are trusted by their x5c chain to the
+		// Wallet Provider CA (HAIP 1.0 §4.4.1), not by registered keys.
+		AttesterTrust: server.X5CAttesterChain{TrustAnchors: server.StaticAttesterTrustAnchors{Roots: a.providerRoots}},
 	})
 	if err != nil {
 		return fmt.Errorf("issuerapp: server.New: %w", err)
@@ -194,8 +201,8 @@ func (a *App) buildAuthorizationServer() error {
 }
 
 // registerWallet registers the demo Wallet as a Wallet-Attestation
-// client whose attestations are verified against the configured Wallet
-// Provider key.
+// client. Its attestations are verified by their x5c chain (see
+// AttesterTrust in buildAuthorizationServer), so it registers no keys.
 func (a *App) registerWallet() (*memstore.ClientRepository, *ephemeral.ClientKeySource, error) {
 	w := a.cfg.Wallet
 	redirects := make([]fapi.RegisteredRedirectURI, len(w.RedirectURIs))
@@ -213,7 +220,7 @@ func (a *App) registerWallet() (*memstore.ClientRepository, *ephemeral.ClientKey
 	if err != nil {
 		return nil, nil, fmt.Errorf("issuerapp: register wallet: %w", err)
 	}
-	// The provider key is inline, so nothing is ever fetched; the
+	// No client keys are registered, so nothing is ever fetched; the
 	// fetcher only satisfies ClientKeySource's constructor.
 	fetcher, err := fapihttp.New(&http.Client{Timeout: 10 * time.Second}, fapihttp.Config{
 		MaxResponseBytes: 1 << 16, RequestTimeout: 10 * time.Second, MaxRedirects: 2,
@@ -221,9 +228,9 @@ func (a *App) registerWallet() (*memstore.ClientRepository, *ephemeral.ClientKey
 	if err != nil {
 		return nil, nil, fmt.Errorf("issuerapp: fetcher: %w", err)
 	}
-	clientKeys, err := ephemeral.NewClientKeySource(fetcher, []ephemeral.ClientKeySpec{{ClientID: fapi.ClientID(w.ClientID), JWKS: w.ProviderJWKS}})
+	clientKeys, err := ephemeral.NewClientKeySource(fetcher, nil)
 	if err != nil {
-		return nil, nil, fmt.Errorf("issuerapp: wallet provider keys: %w", err)
+		return nil, nil, fmt.Errorf("issuerapp: client keys: %w", err)
 	}
 	return memstore.NewClientRepository([]storage.RegisteredClient{c}), clientKeys, nil
 }
@@ -244,10 +251,6 @@ func (a *App) buildIssuer() error {
 		return err
 	}
 	a.caCert = id.caCert
-	attestationRoots, err := certPool(a.cfg.Wallet.ProviderCA)
-	if err != nil {
-		return err
-	}
 	// Key attestation is required: attestation is the only proof type.
 	proofTypes := map[string]oid4vci.ProofTypeConfiguration{oid4vci.ProofTypeAttestation: haip.RecommendedAttestationProofType()}
 	a.issuer, err = issuer.New(issuer.Config{
@@ -271,7 +274,7 @@ func (a *App) buildIssuer() error {
 		Nonces:              oid4vcgostorage.NewNonceStore(),
 		Clock:               issuer.ClockFunc(a.now),
 		Random:              rand.Reader,
-		AttestationVerifier: issuer.X5CAttestationVerifier{Roots: attestationRoots},
+		AttestationVerifier: issuer.X5CAttestationVerifier{Roots: a.providerRoots},
 		SDJWTSigner: &issuer.SDJWTSigner{
 			Signer: id.documentSigner, Alg: oid4vci.ES256, IssuerCertificate: id.documentSignerCert,
 		},

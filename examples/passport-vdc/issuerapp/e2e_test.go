@@ -125,30 +125,32 @@ func TestMetadata_RequiresKeyAttestation(t *testing.T) {
 	}
 }
 
-// TestCredential_RejectsKeyAttestationFromUntrustedCA has the wallet
-// present a Key Attestation whose x5c certificate chains to another
-// Wallet Provider CA: authorization succeeds (the Wallet Attestation is
-// valid) but the credential request is refused.
-func TestCredential_RejectsKeyAttestationFromUntrustedCA(t *testing.T) {
+// TestPAR_RejectsWalletFromUntrustedProvider has a wallet attested by
+// another Wallet Provider — its key and certificate under another CA —
+// try to redeem an offer: its Wallet Attestation's x5c chain doesn't
+// reach the trusted Wallet Provider CA, so PAR refuses it (HAIP 1.0
+// §4.4.1, fapigo/server's X5CAttesterChain) and nothing is issued.
+func TestPAR_RejectsWalletFromUntrustedProvider(t *testing.T) {
 	ctx := context.Background()
 	env := demotest.New(t, nil)
 	other, err := walletprovider.New(demotest.ProviderIssuer)
 	if err != nil {
 		t.Fatalf("walletprovider.New: %v", err)
 	}
-	untrusted := *env.Provider
-	untrusted.Certificate, untrusted.CACertificate = other.Certificate, other.CACertificate
 	cfg := env.WalletConfig()
-	cfg.Provider = &untrusted
+	cfg.Provider = other
 
 	offer, err := env.Issuer.CreateTransaction(ctx, demotest.SyntheticEvidence())
 	if err != nil {
 		t.Fatalf("CreateTransaction: %v", err)
 	}
 	_, err = walletapp.Receive(ctx, cfg, offer.URI, walletapp.HeadlessApprover{HTTP: env.HTTP, Code: offer.ConfirmationCode})
-	// "resolve trust key": the x5c chain doesn't reach the trusted CA.
-	if err == nil || !strings.Contains(err.Error(), "invalid_proof") || !strings.Contains(err.Error(), "resolve trust key") {
-		t.Fatalf("Receive: error = %v, want the credential request refused for an untrusted x5c chain", err)
+	if err == nil || !strings.Contains(err.Error(), "pushed authorization request") || !strings.Contains(err.Error(), "invalid_client") {
+		t.Fatalf("Receive: error = %v, want PAR to refuse the Wallet Attestation", err)
+	}
+	// The offer wasn't claimed: the trusted wallet can still redeem it.
+	if _, err := walletapp.Receive(ctx, env.WalletConfig(), offer.URI, walletapp.HeadlessApprover{HTTP: env.HTTP, Code: offer.ConfirmationCode}); err != nil {
+		t.Fatalf("Receive by the trusted wallet afterwards: %v", err)
 	}
 }
 
