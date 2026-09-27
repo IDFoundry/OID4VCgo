@@ -6,6 +6,8 @@
 //
 //	go run ./cmd/wallet-provider -key wallet-provider.pem -ca wallet-provider-ca.pem
 //
+// The key's certificate names the provider's identifier
+// (-wallet-provider-issuer, which the issuer and wallets are given too).
 // An existing -key file is reused, so rerunning just rewrites the CA
 // certificate.
 package main
@@ -24,25 +26,24 @@ import (
 func main() {
 	keyPath := flag.String("key", "wallet-provider.pem", "private key file (created if missing)")
 	caPath := flag.String("ca", "wallet-provider-ca.pem", "CA certificate file to write")
+	providerIssuer := flag.String("wallet-provider-issuer", "https://wallet-provider.passport-vdc.demo", "the demo Wallet Provider's identifier, named in its certificate")
 	flag.Parse()
-	if err := run(*keyPath, *caPath); err != nil {
+	if err := run(*keyPath, *caPath, *providerIssuer); err != nil {
 		log.Fatal(err)
 	}
 }
 
-func run(keyPath, caPath string) error {
-	// The issuer identifier isn't stored with the key; the demo issuer
-	// and wallet are each told it separately (-wallet-provider-issuer).
+func run(keyPath, caPath, providerIssuer string) error {
 	var provider *walletprovider.Provider
 	keyPEM, err := os.ReadFile(keyPath) // #nosec G304 -- operator-supplied path
 	switch {
 	case err == nil:
-		if provider, err = walletprovider.Load("", keyPEM); err != nil {
+		if provider, err = walletprovider.Load(providerIssuer, keyPEM); err != nil {
 			return err
 		}
 		fmt.Println("reusing", keyPath)
 	case errors.Is(err, fs.ErrNotExist):
-		if provider, err = walletprovider.New(""); err != nil {
+		if provider, err = walletprovider.New(providerIssuer); err != nil {
 			return err
 		}
 		if keyPEM, err = provider.PEM(); err != nil {

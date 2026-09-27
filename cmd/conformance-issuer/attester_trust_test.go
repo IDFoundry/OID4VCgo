@@ -75,16 +75,43 @@ func x5cAttestation(t *testing.T, key *ecdsa.PrivateKey, certPEM string, cc Conf
 // TestPAR_AttesterTrustAnchors checks a client configured with
 // attester_trust_anchors_pem authenticates by the Client Attestation's
 // x5c chain (fapigo/server's X5CAttesterChain, HAIP 1.0 §4.4.1): a leaf
-// its CA issued is accepted, even with no kid and no registered keys;
-// a leaf from another CA, and an attestation without x5c, are refused.
+// its CA issued naming the client's attester as a URI SAN is accepted,
+// even with no kid and no registered keys. Refused: a leaf from another
+// CA; a leaf from the same CA naming another attester, or none — the
+// CA's say-so alone doesn't make an attester the client's
+// (AttesterIssuerInCertificate); and an attestation without x5c.
 func TestPAR_AttesterTrustAnchors(t *testing.T) {
 	now := time.Now()
 	httpClient := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}} //nolint:gosec // test-only, talks to this test's own throwaway TLS listener
-	attesterKey, _, attesterCertPEM, caPEM, err := conformancecert.GenerateSignerAndCert("attester-leaf", "attester-ca")
+	cfg := baseTestConfig(t)
+	cc := cfg.Client
+
+	ca, caKey, caPEM, _, err := conformancecert.GenerateCA("attester-ca")
 	if err != nil {
-		t.Fatalf("GenerateSignerAndCert: %v", err)
+		t.Fatalf("GenerateCA: %v", err)
 	}
-	otherKey, _, otherCertPEM, _, err := conformancecert.GenerateSignerAndCert("other-leaf", "other-ca")
+	leaf := func(name string, uris ...*url.URL) (*ecdsa.PrivateKey, string) {
+		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		certPEM, err := conformancecert.IssueLeafCertPEM(name, key, ca, caKey, uris...)
+		if err != nil {
+			t.Fatalf("IssueLeafCertPEM: %v", err)
+		}
+		return key, certPEM
+	}
+	uri := func(raw string) *url.URL {
+		u, err := url.Parse(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return u
+	}
+	attesterKey, attesterCertPEM := leaf("attester-leaf", uri(cc.ExpectedAttesterIssuer))
+	impostorKey, impostorCertPEM := leaf("impostor-leaf", uri("https://impostor.example.com"))
+	unnamedKey, unnamedCertPEM := leaf("unnamed-leaf")
+	otherKey, _, otherCertPEM, _, err := conformancecert.GenerateSignerAndCert("other-leaf", "other-ca", uri(cc.ExpectedAttesterIssuer))
 	if err != nil {
 		t.Fatalf("GenerateSignerAndCert: %v", err)
 	}
@@ -93,17 +120,25 @@ func TestPAR_AttesterTrustAnchors(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cfg := baseTestConfig(t)
 	cfg.Client.AttesterJWKS = nil
 	cfg.Client.AttesterTrustAnchorsPEM = caPEM
 	startTestIssuerServer(t, &cfg)
-	cc := cfg.Client
+	cc = cfg.Client
 
 	if got := postPARWithAttestation(t, httpClient, cfg, cc, clientKey, x5cAttestation(t, attesterKey, attesterCertPEM, cc, &clientKey.PublicKey, now), now); got != http.StatusCreated {
-		t.Fatalf("attestation chaining to the trusted CA: status %d, want 201", got)
+		t.Fatalf("attestation from the client's attester: status %d, want 201", got)
 	}
-	if got := postPARWithAttestation(t, httpClient, cfg, cc, clientKey, x5cAttestation(t, otherKey, otherCertPEM, cc, &clientKey.PublicKey, now), now); got != http.StatusUnauthorized {
-		t.Errorf("attestation from another CA: status %d, want 401", got)
+	for name, tc := range map[string]struct {
+		key     *ecdsa.PrivateKey
+		certPEM string
+	}{
+		"another CA":                 {otherKey, otherCertPEM},
+		"same CA, another attester":  {impostorKey, impostorCertPEM},
+		"same CA, no attester named": {unnamedKey, unnamedCertPEM},
+	} {
+		if got := postPARWithAttestation(t, httpClient, cfg, cc, clientKey, x5cAttestation(t, tc.key, tc.certPEM, cc, &clientKey.PublicKey, now), now); got != http.StatusUnauthorized {
+			t.Errorf("attestation, %s: status %d, want 401", name, got)
+		}
 	}
 	noX5C, err := buildClientAttestationJWT(attesterKey, "attester-1", cc.ExpectedAttesterIssuer, cc.ID, &clientKey.PublicKey, now)
 	if err != nil {

@@ -12,7 +12,8 @@ import (
 // is told to trust the suite's Client Attestations by the CA that issued
 // the attester's x5c leaf (fapigo/server's X5CAttesterChain), and that
 // the leaf the suite signs with verifies against it without being
-// self-signed — what X5CAttesterChain requires.
+// self-signed and names the attester as a URI SAN — what
+// X5CAttesterChain with AttesterIssuerInCertificate requires.
 func TestBuildServerConfig_TrustsAttesterByCA(t *testing.T) {
 	r, err := generateRun("test", "https://localhost.emobix.co.uk:8443/test/a/test")
 	if err != nil {
@@ -31,6 +32,9 @@ func TestBuildServerConfig_TrustsAttesterByCA(t *testing.T) {
 	leaf := parsePEMCert(t, r.attesterLeafPEM)
 	if bytes.Equal(leaf.RawIssuer, leaf.RawSubject) {
 		t.Fatal("the attester leaf is self-signed")
+	}
+	if len(leaf.URIs) != 1 || leaf.URIs[0].String() != r.attesterIssuer {
+		t.Errorf("attester leaf URI SANs = %v, want exactly %q", leaf.URIs, r.attesterIssuer)
 	}
 	for name, client := range map[string]map[string]json.RawMessage{"client": cfg.Client, "client2": cfg.Client2} {
 		if _, ok := client["attester_jwks"]; ok {

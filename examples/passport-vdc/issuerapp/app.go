@@ -177,8 +177,14 @@ func (a *App) buildAuthorizationServer() error {
 		Revocation: revocation, Clock: server.SystemClock{}, Random: rand.Reader,
 		ClientCertificateTrust: server.NoClientCertificateChainTrust{},
 		// Wallet Attestations are trusted by their x5c chain to the
-		// Wallet Provider CA (HAIP 1.0 §4.4.1), not by registered keys.
-		AttesterTrust: server.X5CAttesterChain{TrustAnchors: server.StaticAttesterTrustAnchors{Roots: a.providerRoots}},
+		// Wallet Provider CA (HAIP 1.0 §4.4.1), not by registered keys,
+		// from a certificate naming the wallet's registered Wallet
+		// Provider — so a CA certifying several providers doesn't let
+		// one attest for another's wallets.
+		AttesterTrust: server.X5CAttesterChain{
+			TrustAnchors:  server.StaticAttesterTrustAnchors{Roots: a.providerRoots},
+			IssuerBinding: server.AttesterIssuerInCertificate,
+		},
 	})
 	if err != nil {
 		return fmt.Errorf("issuerapp: server.New: %w", err)

@@ -129,11 +129,19 @@ it picks up the redirect on `http://127.0.0.1:8765/callback`; add
 (with their holder keys) in `wallet-store/`.
 
 `cmd/wallet-provider` creates the demo's **stand-in Wallet Provider**:
-a key, and a certificate for it from a demo Wallet Provider CA. The
+a key, and a certificate for it from a demo Wallet Provider CA, naming
+the provider's identifier (`-wallet-provider-issuer`) as a URI SAN. The
 issuer registers one wallet client (`passport-vdc-wallet`, with both
 wallets' redirect URIs), and trusts that key through the CA
 certificate: every attestation it signs carries the provider's
 certificate as `x5c`, which must chain to the CA.
+
+A Wallet Attestation is accepted only if that certificate names the
+Wallet Provider the client is registered with (fapigo's
+`AttesterIssuerInCertificate`), so a CA certifying several Wallet
+Providers can't let one attest for another's wallets. A
+`wallet-provider.pem` created before this has no such name; delete it
+and rerun `cmd/wallet-provider`.
 
 - **Wallet Attestations** authenticate the wallet at PAR and the token
   endpoint (HAIP 1.0 §4.4.1; fapigo's `X5CAttesterChain`).
