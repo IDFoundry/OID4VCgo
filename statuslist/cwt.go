@@ -70,6 +70,12 @@ func fromCWTStatusList(c cwtStatusList) StatusList {
 // neither form, and VerifyTokenCWT accepts both). keyID sets the COSE
 // "kid" header, if non-empty.
 func IssueTokenCWT(signer crypto.Signer, alg cose.Alg, claims TokenClaims, keyID []byte) ([]byte, error) {
+	return issueTokenCWT(signer, alg, claims, cose.Headers{Typ: CWTTokenMediaType, KID: keyID})
+}
+
+// issueTokenCWT signs claims into a Status List Token in CWT format with
+// the given protected header.
+func issueTokenCWT(signer crypto.Signer, alg cose.Alg, claims TokenClaims, protected cose.Headers) ([]byte, error) {
 	if claims.Sub == "" {
 		return nil, fmt.Errorf("statuslist: TokenClaims.Sub is required")
 	}
@@ -100,7 +106,7 @@ func IssueTokenCWT(signer crypto.Signer, alg cose.Alg, claims TokenClaims, keyID
 
 	sign1, err := cose.SignTagged(
 		alg, signer,
-		cose.Headers{Typ: CWTTokenMediaType, KID: keyID}, cose.Headers{},
+		protected, cose.Headers{},
 		raw, nil,
 	)
 	if err != nil {
