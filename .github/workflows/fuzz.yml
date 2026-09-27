@@ -185,11 +185,24 @@ jobs:
         # deadline (typically mid-minimization), not a finding: every
         # real failure writes its input under testdata/fuzz and says so.
         # That case is downgraded to a warning; anything else fails.
+        #
+        # go test sets no timeout of its own when fuzzing (-timeout is
+        # ignored with -fuzz), so a stalled run would sit until the job's
+        # timeout-minutes cancels it, and a cancelled job keeps no log.
+        # timeout(1) stops it after 8 minutes (5m fuzzing plus margin)
+        # with SIGQUIT, which makes the test binary print every
+        # goroutine's stack (or SIGKILL a minute later if it doesn't
+        # exit), and the step then fails with the log kept.
         run: |
           set +e
-          go test ${{ matrix.target.pkg }} -run='^$' -fuzz='^${{ matrix.target.name }}$' -fuzztime=5m -fuzzminimizetime=10s 2>&1 | tee "$RUNNER_TEMP/fuzz.log"
+          timeout --signal=QUIT --kill-after=1m 8m \
+            go test ${{ matrix.target.pkg }} -run='^$' -fuzz='^${{ matrix.target.name }}$' -fuzztime=5m -fuzzminimizetime=10s 2>&1 | tee "$RUNNER_TEMP/fuzz.log"
           status=${PIPESTATUS[0]}
           set -e
+          if [ "$status" -eq 124 ] || [ "$status" -eq 137 ]; then
+            echo "::error::${{ matrix.target.name }} was still running after 8 minutes (-fuzztime is 5m) and was stopped; the goroutine dump above shows where it was"
+            exit 1
+          fi
           if [ "$status" -ne 0 ] \
             && grep -q 'context deadline exceeded' "$RUNNER_TEMP/fuzz.log" \
             && ! grep -q 'Failing input written to' "$RUNNER_TEMP/fuzz.log"; then
