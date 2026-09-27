@@ -5,7 +5,7 @@
 
 ### ⚠ BREAKING CHANGES
 
-* OID4VCgo now requires fapigo past FAPIgo PR #384, so a fapigo/server built with Config.AttestationBasedClientAuthentication must set Dependencies.AttesterTrust — server.X5CAttesterChain for HAIP's certificate-based trust, or server.RegisteredAttesterKeys{} for the previous kid lookup.
+* OID4VCgo now requires fapigo v0.34.0, so a fapigo/server built with Config.AttestationBasedClientAuthentication must set Dependencies.AttesterTrust — server.X5CAttesterChain for HAIP's certificate-based trust, or server.RegisteredAttesterKeys{} for the previous kid lookup.
 
 ### Features
 
