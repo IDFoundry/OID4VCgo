@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/url"
 
+	fapi "github.com/idfoundry/fapigo"
 	"github.com/idfoundry/fapigo/fapihttp"
 
 	"github.com/idfoundry/oid4vcgo/dcql"
@@ -54,6 +55,11 @@ type ParseAuthorizationRequestParams struct {
 	// (§5.10.1), and ParseAuthorizationRequest enforces that. Leave
 	// empty for a plain GET fetch.
 	WalletNonce string
+
+	// AllowLoopbackHTTP additionally accepts an http response_uri on a
+	// loopback host, for local development and tests. Otherwise
+	// response_uri must be an absolute https URL.
+	AllowLoopbackHTTP bool
 }
 
 // AuthorizationRequest is a verified Request Object's own relevant
@@ -230,6 +236,9 @@ func ParseAuthorizationRequest(params ParseAuthorizationRequestParams) (Authoriz
 	if wire.ClientID != params.ClientID {
 		return AuthorizationRequest{}, fmt.Errorf("wallet: parse authorization request: payload client_id %q does not match %q", wire.ClientID, params.ClientID)
 	}
+	if err := checkResponseURI(wire.ResponseURI, params.AllowLoopbackHTTP); err != nil {
+		return AuthorizationRequest{}, fmt.Errorf("wallet: parse authorization request: %w", err)
+	}
 	if params.WalletNonce != "" && wire.WalletNonce != params.WalletNonce {
 		return AuthorizationRequest{}, fmt.Errorf("wallet: parse authorization request: wallet_nonce claim %q does not match the value sent %q", wire.WalletNonce, params.WalletNonce)
 	}
@@ -329,6 +338,7 @@ func (w *Wallet) FetchAuthorizationRequest(ctx context.Context, requestURI, clie
 	}
 	return ParseAuthorizationRequest(ParseAuthorizationRequestParams{
 		RequestObject: string(res.Body), ClientID: clientID, VerifierTrust: w.cfg.VerifierTrust,
+		AllowLoopbackHTTP: w.cfg.Fetch.AllowLoopbackHTTP,
 	})
 }
 
@@ -372,4 +382,20 @@ func containsString(list []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// checkResponseURI requires response_uri to be an absolute https URL
+// (http on a loopback host only when allowLoopbackHTTP) — the same
+// rule verifier.Config.ResponseURI is built with — since the Wallet
+// POSTs the Authorization Response there and, in the same-device flow,
+// sends the user agent wherever its reply says (OID4VP §8.2).
+func checkResponseURI(raw string, allowLoopbackHTTP bool) error {
+	var opts []fapi.URLOption
+	if allowLoopbackHTTP {
+		opts = append(opts, fapi.AllowLoopbackHTTP())
+	}
+	if _, err := fapi.ParseEndpointURL(raw, opts...); err != nil {
+		return fmt.Errorf("response_uri: %w", err)
+	}
+	return nil
 }
