@@ -13,6 +13,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"math/big"
 	"net"
@@ -86,4 +87,39 @@ func TrustingClient(files string) (*http.Client, error) {
 		Timeout:   30 * time.Second,
 		Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}},
 	}, nil
+}
+
+// ServerErrorLog is an http.Server ErrorLog that drops the "TLS
+// handshake error ...: EOF" lines browsers cause by opening speculative
+// connections and closing them before the handshake completes — noise
+// that otherwise buries the demo's logs, especially while a page
+// reloads itself. Every other line, including a real handshake failure
+// such as "remote error: tls: unknown certificate", is logged as usual.
+func ServerErrorLog() *log.Logger {
+	return log.New(abandonedHandshakeFilter{w: log.Writer()}, "", log.LstdFlags)
+}
+
+// abandonedHandshakeFilter writes every line to w except an abandoned
+// TLS handshake's.
+type abandonedHandshakeFilter struct{ w io.Writer }
+
+func (f abandonedHandshakeFilter) Write(p []byte) (int, error) {
+	line := strings.TrimRight(string(p), "\n")
+	if strings.Contains(line, "http: TLS handshake error from ") && strings.HasSuffix(line, ": EOF") {
+		return len(p), nil
+	}
+	return f.w.Write(p)
+}
+
+// Server is the demo servers' shared http.Server: TLS 1.3 only (FAPI 2.0
+// allows TLS 1.2 with just a few AES-GCM suites), the usual timeouts,
+// and ServerErrorLog. writeTimeout bounds a response; a handler that
+// makes outbound calls of its own before replying needs a longer one.
+func Server(addr string, handler http.Handler, cert tls.Certificate, writeTimeout time.Duration) *http.Server {
+	return &http.Server{
+		Addr: addr, Handler: handler, ErrorLog: ServerErrorLog(),
+		TLSConfig:         &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS13},
+		ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second,
+		WriteTimeout: writeTimeout, IdleTimeout: 60 * time.Second,
+	}
 }
