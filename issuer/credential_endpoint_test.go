@@ -11,6 +11,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -1376,5 +1377,139 @@ func TestRequestCredential_RejectsUnencodableBindingKeys(t *testing.T) {
 		}
 		_, err = requestSDJWTWithProof(f, oid4vci.ProofTypeAttestation, att)
 		assertIssuerError(t, err, issuer.ErrorInvalidProof)
+	})
+}
+
+// batchRequest is a two-credential dc+sd-jwt Credential Request (the
+// fixture's batch_size is 2), returning it and the two binding keys.
+func batchRequest(t *testing.T, f credentialEndpointFixture) (issuer.CredentialRequest, []*ecdsa.PublicKey) {
+	t.Helper()
+	nonce := f.issueNonce(t)
+	keys := []*ecdsa.PrivateKey{testP256Key(t), testP256Key(t)}
+	proofs := []string{buildJWTProof(t, keys[0], testIssuer, nonce), buildJWTProof(t, keys[1], testIssuer, nonce)}
+	return issuer.CredentialRequest{
+		CredentialConfigurationID: testSDJWTConfigID,
+		Proofs:                    map[string][]string{oid4vci.ProofTypeJWT: proofs},
+		SDJWTClaims:               testSDJWTClaims(),
+	}, []*ecdsa.PublicKey{&keys[0].PublicKey, &keys[1].PublicKey}
+}
+
+var batchAuth = issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("test-client"), Scopes: []string{"identity_credential"}}
+
+func statusRef(idx int) map[string]any {
+	return map[string]any{"status_list": map[string]any{"idx": idx, "uri": "https://issuer.example.com/statuslists/1"}}
+}
+
+// TestRequestCredential_PerCredentialStatus checks a batch's Credentials
+// can each carry their own status reference (HAIP 1.0 §6.1: a unique
+// index per Credential): PerCredential sees each Credential in turn, with
+// its binding key and its own copy of the claims.
+func TestRequestCredential_PerCredentialStatus(t *testing.T) {
+	f := newCredentialEndpointFixture(t)
+	req, keys := batchRequest(t, f)
+	var seen []int
+	req.PerCredential = func(_ context.Context, c *issuer.CredentialInstance) error {
+		if c.SDJWTClaims == nil || c.MdocClaims != nil {
+			t.Errorf("instance %d: want only SDJWTClaims", c.Index)
+		}
+		if !keys[c.Index].Equal(c.BindingKey) {
+			t.Errorf("instance %d: BindingKey isn't the %d-th proof's key", c.Index, c.Index)
+		}
+		seen = append(seen, c.Index)
+		c.SDJWTClaims.Status = statusRef(100 + c.Index)
+		return nil
+	}
+	resp, err := f.iss.RequestCredential(context.Background(), batchAuth, req)
+	if err != nil {
+		t.Fatalf("RequestCredential: %v", err)
+	}
+	if !slices.Equal(seen, []int{0, 1}) {
+		t.Errorf("PerCredential saw instances %v, want [0 1]", seen)
+	}
+	for i, c := range resp.Credentials {
+		pres, err := sdjwtvc.Parse(c.Credential)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, raw, err := jose.DecodeUnverified(pres.IssuerJWT)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var payload struct {
+			Status struct {
+				StatusList struct {
+					Idx int `json:"idx"`
+				} `json:"status_list"`
+			} `json:"status"`
+		}
+		if err := json.Unmarshal(raw, &payload); err != nil {
+			t.Fatal(err)
+		}
+		if payload.Status.StatusList.Idx != 100+i {
+			t.Errorf("credential %d: status idx %d, want %d", i, payload.Status.StatusList.Idx, 100+i)
+		}
+	}
+	if len(req.SDJWTClaims.Status) != 0 {
+		t.Error("PerCredential's changes leaked into the request's shared claims")
+	}
+}
+
+// TestRequestCredential_RefusesSharedStatusInBatch checks a batch whose
+// Credentials would carry the same status reference is refused — from
+// the shared claims, or a PerCredential that doesn't vary it — while one
+// Credential with a status reference, and a hook error, behave as
+// expected.
+func TestRequestCredential_RefusesSharedStatusInBatch(t *testing.T) {
+	t.Run("shared claims", func(t *testing.T) {
+		f := newCredentialEndpointFixture(t)
+		req, _ := batchRequest(t, f)
+		req.SDJWTClaims.Status = statusRef(7)
+		if _, err := f.iss.RequestCredential(context.Background(), batchAuth, req); err == nil || !strings.Contains(err.Error(), "same status reference") {
+			t.Fatalf("error = %v, want the shared status reference refused", err)
+		}
+	})
+	t.Run("hook that doesn't vary it", func(t *testing.T) {
+		f := newCredentialEndpointFixture(t)
+		req, _ := batchRequest(t, f)
+		req.PerCredential = func(_ context.Context, c *issuer.CredentialInstance) error {
+			c.SDJWTClaims.Status = statusRef(7)
+			return nil
+		}
+		if _, err := f.iss.RequestCredential(context.Background(), batchAuth, req); err == nil || !strings.Contains(err.Error(), "same status reference") {
+			t.Fatalf("error = %v, want the shared status reference refused", err)
+		}
+	})
+	t.Run("hook error", func(t *testing.T) {
+		f := newCredentialEndpointFixture(t)
+		req, _ := batchRequest(t, f)
+		req.PerCredential = func(context.Context, *issuer.CredentialInstance) error { return errors.New("status list full") }
+		if _, err := f.iss.RequestCredential(context.Background(), batchAuth, req); err == nil || !strings.Contains(err.Error(), "status list full") {
+			t.Fatalf("error = %v, want the hook's error", err)
+		}
+	})
+	t.Run("one credential with a status reference", func(t *testing.T) {
+		f := newCredentialEndpointFixture(t)
+		claims := testSDJWTClaims()
+		claims.Status = statusRef(7)
+		proof := buildJWTProof(t, testP256Key(t), testIssuer, f.issueNonce(t))
+		if _, err := f.iss.RequestCredential(context.Background(), batchAuth, issuer.CredentialRequest{
+			CredentialConfigurationID: testSDJWTConfigID, Proofs: map[string][]string{oid4vci.ProofTypeJWT: {proof}}, SDJWTClaims: claims,
+		}); err != nil {
+			t.Fatalf("RequestCredential: %v", err)
+		}
+	})
+	t.Run("mdoc shared status", func(t *testing.T) {
+		f := newCredentialEndpointFixture(t)
+		nonce := f.issueNonce(t)
+		claims := testMdocClaims(t)
+		claims.Status = &mdoc.StatusListRef{Idx: 7, URI: "https://issuer.example.com/statuslists/1"}
+		_, err := f.iss.RequestCredential(context.Background(), grantingConfiguration(testMdocConfigID), issuer.CredentialRequest{
+			CredentialConfigurationID: testMdocConfigID,
+			Proofs:                    map[string][]string{oid4vci.ProofTypeJWT: {buildJWTProof(t, testP256Key(t), testIssuer, nonce), buildJWTProof(t, testP256Key(t), testIssuer, nonce)}},
+			MdocClaims:                claims,
+		})
+		if err == nil || !strings.Contains(err.Error(), "same status reference") {
+			t.Fatalf("error = %v, want the shared status reference refused", err)
+		}
 	})
 }
