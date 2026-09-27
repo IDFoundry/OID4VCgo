@@ -8,9 +8,9 @@ import "context"
 type NotificationRecord struct {
 	// ClientID binds this notification_id to the client the
 	// Credential(s) it identifies were issued to.
-	// RequestNotification rejects a request whose
-	// AuthorizedRequest.ClientIdentity doesn't match, when both are
-	// non-empty.
+	// When set, RequestNotification rejects a request whose
+	// AuthorizedRequest.ClientIdentity isn't that client — including an
+	// anonymous one.
 	ClientID string
 }
 

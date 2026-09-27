@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	fapi "github.com/idfoundry/fapigo"
+
 	"github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/attestation"
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
@@ -349,6 +351,18 @@ func TestRequestCredential_BatchSize(t *testing.T) {
 	}
 }
 
+// grantingConfiguration is an AuthorizedRequest whose access token grants
+// configID through an "openid_credential" authorization detail — how a
+// configuration without a scope is authorized.
+func grantingConfiguration(configID string) issuer.AuthorizedRequest {
+	return issuer.AuthorizedRequest{
+		ClientIdentity: issuer.KnownClientID("test-client"),
+		AuthorizationDetails: []oid4vci.AuthorizationDetail{{
+			Type: oid4vci.AuthorizationDetailsTypeOpenIDCredential, CredentialConfigurationID: configID,
+		}},
+	}
+}
+
 func TestRequestCredential_Mdoc_JWTProof(t *testing.T) {
 	f := newCredentialEndpointFixture(t)
 	walletKey := testP256Key(t)
@@ -356,7 +370,7 @@ func TestRequestCredential_Mdoc_JWTProof(t *testing.T) {
 	proof := buildJWTProof(t, walletKey, testIssuer, nonce)
 	claims := testMdocClaims(t)
 
-	resp, err := f.iss.RequestCredential(context.Background(), issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("test-client")}, issuer.CredentialRequest{
+	resp, err := f.iss.RequestCredential(context.Background(), grantingConfiguration(testMdocConfigID), issuer.CredentialRequest{
 		CredentialConfigurationID: testMdocConfigID,
 		Proofs:                    map[string][]string{oid4vci.ProofTypeJWT: {proof}},
 		MdocClaims:                claims,
@@ -563,6 +577,57 @@ func TestRequestCredential_RejectsMissingScope(t *testing.T) {
 		SDJWTClaims:               testSDJWTClaims(),
 	})
 	assertIssuerError(t, err, issuer.ErrorInvalidCredentialRequest)
+}
+
+// TestRequestCredential_CredentialConfigurationIDAuthorization checks a
+// credential_configuration_id is issued only when the access token grants
+// it — by the configuration's scope or an authorization detail naming it
+// — and never by default for a configuration without a scope
+// (testMdocConfigID), which a token granted for another credential must
+// not reach. A token whose authorization detail carries
+// credential_identifiers must use one of those instead (§8.2).
+func TestRequestCredential_CredentialConfigurationIDAuthorization(t *testing.T) {
+	detail := func(configID string, identifiers ...string) oid4vci.AuthorizationDetail {
+		return oid4vci.AuthorizationDetail{Type: oid4vci.AuthorizationDetailsTypeOpenIDCredential, CredentialConfigurationID: configID, CredentialIdentifiers: identifiers}
+	}
+	for name, tc := range map[string]struct {
+		configID string
+		auth     issuer.AuthorizedRequest
+		wantErr  bool
+	}{
+		"scoped, scope granted":                      {testSDJWTConfigID, issuer.AuthorizedRequest{Scopes: []string{"identity_credential"}}, false},
+		"scoped, other scope":                        {testSDJWTConfigID, issuer.AuthorizedRequest{Scopes: []string{"other_scope"}}, true},
+		"scoped, granted by detail":                  {testSDJWTConfigID, issuer.AuthorizedRequest{AuthorizationDetails: []oid4vci.AuthorizationDetail{detail(testSDJWTConfigID)}}, false},
+		"scope-less, granted by detail":              {testMdocConfigID, issuer.AuthorizedRequest{AuthorizationDetails: []oid4vci.AuthorizationDetail{detail(testMdocConfigID)}}, false},
+		"scope-less, token for another scope":        {testMdocConfigID, issuer.AuthorizedRequest{Scopes: []string{"identity_credential"}}, true},
+		"scope-less, token for another detail":       {testMdocConfigID, issuer.AuthorizedRequest{AuthorizationDetails: []oid4vci.AuthorizationDetail{detail(testSDJWTConfigID)}}, true},
+		"scope-less, no grant at all":                {testMdocConfigID, issuer.AuthorizedRequest{}, true},
+		"granted through credential_identifiers":     {testMdocConfigID, issuer.AuthorizedRequest{AuthorizationDetails: []oid4vci.AuthorizationDetail{detail(testMdocConfigID, "mdl-1")}}, true},
+		"scope granted, but identifiers were issued": {testSDJWTConfigID, issuer.AuthorizedRequest{Scopes: []string{"identity_credential"}, AuthorizationDetails: []oid4vci.AuthorizationDetail{detail(testSDJWTConfigID, "pid-1")}}, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newCredentialEndpointFixture(t)
+			proof := buildJWTProof(t, testP256Key(t), testIssuer, f.issueNonce(t))
+			tc.auth.ClientIdentity = issuer.KnownClientID("test-client")
+			req := issuer.CredentialRequest{
+				CredentialConfigurationID: tc.configID,
+				Proofs:                    map[string][]string{oid4vci.ProofTypeJWT: {proof}},
+			}
+			if tc.configID == testMdocConfigID {
+				req.MdocClaims = testMdocClaims(t)
+			} else {
+				req.SDJWTClaims = testSDJWTClaims()
+			}
+			_, err := f.iss.RequestCredential(context.Background(), tc.auth, req)
+			if tc.wantErr {
+				assertIssuerError(t, err, issuer.ErrorInvalidCredentialRequest)
+				return
+			}
+			if err != nil {
+				t.Fatalf("RequestCredential: %v", err)
+			}
+		})
+	}
 }
 
 func TestRequestCredential_RejectsWrongNumberOfProofTypes(t *testing.T) {
@@ -926,7 +991,7 @@ func TestRequestCredential_RejectsAttestationProofTypeWhenUnconfigured(t *testin
 	f := newCredentialEndpointFixture(t)
 	nonce := f.issueNonce(t)
 	att := buildAttestation(t, f.attestationSigner, nonce, &testP256Key(t).PublicKey)
-	_, err := f.iss.RequestCredential(context.Background(), issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("test-client")}, issuer.CredentialRequest{
+	_, err := f.iss.RequestCredential(context.Background(), grantingConfiguration(testMdocConfigID), issuer.CredentialRequest{
 		CredentialConfigurationID: testMdocConfigID, // this config only supports the jwt proof type
 		Proofs:                    map[string][]string{oid4vci.ProofTypeAttestation: {att}},
 		MdocClaims:                testMdocClaims(t),
@@ -961,7 +1026,7 @@ func TestRequestCredential_RejectsProofTypeThisPackageDoesNotImplement(t *testin
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	_, err = iss.RequestCredential(context.Background(), issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("test-client")}, issuer.CredentialRequest{
+	_, err = iss.RequestCredential(context.Background(), grantingConfiguration("DIVPCredential"), issuer.CredentialRequest{
 		CredentialConfigurationID: "DIVPCredential",
 		Proofs:                    map[string][]string{"di_vp": {"whatever"}},
 		SDJWTClaims:               testSDJWTClaims(),
@@ -1079,5 +1144,112 @@ func TestRequestCredential_RequiredResponseEncryption(t *testing.T) {
 	assertIssuerError(t, request(nil), issuer.ErrorInvalidEncryptionParameters)
 	if err := request(&issuer.ResponseEncryptionRequest{JWK: jwkJSON(t, &testP256Key(t).PublicKey), Enc: jwe.A128GCM}); err != nil {
 		t.Fatalf("request with credential_response_encryption: %v", err)
+	}
+}
+
+// TestRequestCredential_EnforcesKeyAttestationLevels checks a key
+// attestation proof must assert one of the key_storage and
+// user_authentication levels the configuration's key_attestations_required
+// accepts (OID4VCI 1.0 §12.2.4, Appendix D.2) — a lower level, or none,
+// is refused.
+func TestRequestCredential_EnforcesKeyAttestationLevels(t *testing.T) {
+	high := attestation.ISO18045High
+	moderate := attestation.ISO18045Moderate
+	for name, tc := range map[string]struct {
+		keyStorage, userAuth []attestation.AttackPotentialResistance
+		wantErr              bool
+	}{
+		"both accepted":                  {[]attestation.AttackPotentialResistance{high}, []attestation.AttackPotentialResistance{high}, false},
+		"one of several asserted levels": {[]attestation.AttackPotentialResistance{moderate, high}, []attestation.AttackPotentialResistance{high}, false},
+		"key storage too low":            {[]attestation.AttackPotentialResistance{moderate}, []attestation.AttackPotentialResistance{high}, true},
+		"user authentication too low":    {[]attestation.AttackPotentialResistance{high}, []attestation.AttackPotentialResistance{moderate}, true},
+		"no key storage asserted":        {nil, []attestation.AttackPotentialResistance{high}, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newCredentialEndpointFixture(t, func(cfg *issuer.Config, _ *issuer.Dependencies) {
+				cc := cfg.CredentialConfigurationsSupported[testSDJWTConfigID]
+				cc.ProofTypesSupported = map[string]oid4vci.ProofTypeConfiguration{
+					oid4vci.ProofTypeAttestation: {
+						ProofSigningAlgValuesSupported: []string{"ES256"},
+						KeyAttestationsRequired: &oid4vci.KeyAttestationRequirement{
+							KeyStorage: []string{string(high)}, UserAuthentication: []string{string(high)},
+						},
+					},
+				}
+				cfg.CredentialConfigurationsSupported[testSDJWTConfigID] = cc
+			})
+			att, err := attestation.Issue(f.attestationSigner, jose.ES256, attestation.Header{}, attestation.Claims{
+				IssuedAt: time.Now().Unix(), AttestedKeys: []json.RawMessage{jwkJSON(t, &testP256Key(t).PublicKey)},
+				Nonce: f.issueNonce(t), KeyStorage: tc.keyStorage, UserAuthentication: tc.userAuth,
+			})
+			if err != nil {
+				t.Fatalf("attestation.Issue: %v", err)
+			}
+			_, err = requestSDJWTWithProof(f, oid4vci.ProofTypeAttestation, att)
+			if tc.wantErr {
+				assertIssuerError(t, err, issuer.ErrorInvalidProof)
+				return
+			}
+			if err != nil {
+				t.Fatalf("RequestCredential: %v", err)
+			}
+		})
+	}
+}
+
+// TestRequestCredential_ProofAgeWithoutNonceEndpoint checks that without
+// a Nonce Endpoint a jwt proof is dated by its iat instead: one outside
+// Limits.MaxProofAge of Now, in either direction, is refused (OID4VCI
+// 1.0 Appendix F.4), so a captured proof can't be replayed indefinitely.
+func TestRequestCredential_ProofAgeWithoutNonceEndpoint(t *testing.T) {
+	for name, tc := range map[string]struct {
+		offset  time.Duration
+		wantErr bool
+	}{
+		"fresh":             {0, false},
+		"within the age":    {-30 * time.Second, false},
+		"too old":           {-2 * time.Minute, true},
+		"too far in future": {2 * time.Minute, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newCredentialEndpointFixture(t, func(cfg *issuer.Config, deps *issuer.Dependencies) {
+				cfg.Endpoints.Nonce = fapi.URL{}
+				cfg.Limits.NonceLifetime = 0
+				cfg.Limits.MaxProofAge = time.Minute
+				deps.Nonces = nil
+			})
+			key := testP256Key(t)
+			var jwkObj map[string]any
+			if err := json.Unmarshal(jwkJSON(t, &key.PublicKey), &jwkObj); err != nil {
+				t.Fatal(err)
+			}
+			payload, err := json.Marshal(map[string]any{"aud": testIssuer, "iat": f.now.Add(tc.offset).Unix()})
+			if err != nil {
+				t.Fatal(err)
+			}
+			proof, err := jose.Sign(jose.ES256, key, map[string]any{"typ": "openid4vci-proof+jwt", "jwk": jwkObj}, payload)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = requestSDJWTWithProof(f, oid4vci.ProofTypeJWT, proof)
+			if tc.wantErr {
+				assertIssuerError(t, err, issuer.ErrorInvalidProof)
+				return
+			}
+			if err != nil {
+				t.Fatalf("RequestCredential: %v", err)
+			}
+		})
+	}
+}
+
+func TestNew_RequiresMaxProofAgeWithoutNonceEndpoint(t *testing.T) {
+	cfg := validConfig(t)
+	cfg.Endpoints.Nonce = fapi.URL{}
+	cfg.Limits.NonceLifetime = 0
+	deps := validDependencies(t)
+	deps.Nonces = nil
+	if _, err := issuer.New(cfg, deps); err == nil || !strings.Contains(err.Error(), "max_proof_age") {
+		t.Fatalf("New without a Nonce Endpoint or max_proof_age: error = %v, want max_proof_age required", err)
 	}
 }

@@ -3,6 +3,7 @@ package issuer_test
 import (
 	"encoding/json"
 	"testing"
+	"time"
 
 	fapi "github.com/idfoundry/fapigo"
 
@@ -115,6 +116,7 @@ func TestMetadata_OmitsNonceEndpointWhenDisabled(t *testing.T) {
 	cfg := validConfig(t)
 	cfg.Endpoints.Nonce = fapi.URL{}
 	cfg.Limits.NonceLifetime = 0
+	cfg.Limits.MaxProofAge = time.Minute
 	deps := validDependencies(t)
 	deps.Nonces = nil
 

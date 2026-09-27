@@ -130,6 +130,9 @@ func (iss *Issuer) verifyJWTProof(ctx context.Context, auth AuthorizedRequest, r
 	if body.Iat == 0 {
 		return nil, nil, "", newError(ErrorInvalidProof, 400, fmt.Sprintf("proof %d: iat is required", i), nil)
 	}
+	if err := iss.checkProofAge(body.Iat, i); err != nil {
+		return nil, nil, "", err
+	}
 	// auth.ClientID() == "" here only ever means an explicit
 	// NoClientIdentity (RequestCredential's own
 	// requireClientIdentityDecision already rejected any other empty
@@ -158,6 +161,21 @@ func (iss *Issuer) verifyJWTProof(ctx context.Context, auth AuthorizedRequest, r
 // algorithm for a kid/x5c-conveyed key, never header's claim — see
 // ProofBindingKeyResolver's own doc comment for why trusting the
 // resolver's algorithm, not the header's, matters there.
+// checkProofAge bounds a jwt proof's iat to Limits.MaxProofAge either
+// side of Now when there is no Nonce Endpoint — without one, nothing
+// else dates the proof, and it could be replayed indefinitely (Appendix
+// F.4). With one, checkProofNonce's consumed c_nonce does.
+func (iss *Issuer) checkProofAge(iat int64, i int) error {
+	if !iss.cfg.Endpoints.Nonce.IsZero() {
+		return nil
+	}
+	age := iss.deps.Clock.Now().Sub(time.Unix(iat, 0))
+	if age > iss.cfg.Limits.MaxProofAge || -age > iss.cfg.Limits.MaxProofAge {
+		return newError(ErrorInvalidProof, 400, fmt.Sprintf("proof %d: iat is outside the accepted window of %s", i, iss.cfg.Limits.MaxProofAge), nil)
+	}
+	return nil
+}
+
 func (iss *Issuer) resolveProofBindingKey(ctx context.Context, header map[string]any) (crypto.PublicKey, jose.Alg, json.RawMessage, error) {
 	_, hasJWK := header["jwk"]
 	_, hasKID := header["kid"]
@@ -233,6 +251,9 @@ func (iss *Issuer) resolveAttestationProofKeys(ctx context.Context, values []str
 		if err != nil {
 			return nil, err
 		}
+		if err := meetsKeyAttestationRequirement(verified, ptc.KeyAttestationsRequired, i); err != nil {
+			return nil, err
+		}
 		if err := iss.checkProofNonce(ctx, "attestation", i, verified.Nonce, &expectedNonce); err != nil {
 			return nil, err
 		}
@@ -282,6 +303,35 @@ func (iss *Issuer) verifyOneAttestation(ctx context.Context, raw string, i int, 
 // across every attestation in the request — split out of
 // resolveAttestationProofKeys purely to keep it under the linter's own
 // cognitive complexity ceiling.
+// meetsKeyAttestationRequirement checks a key attestation asserts at
+// least one of the key_storage and user_authentication levels this
+// issuer accepts (key_attestations_required, OID4VCI 1.0 §12.2.4 and
+// Appendix D.2), for each the issuer constrains. An attestation that
+// asserts no level for a constrained one doesn't meet it.
+func meetsKeyAttestationRequirement(verified attestation.VerifiedClaims, req *oid4vci.KeyAttestationRequirement, i int) error {
+	if req == nil {
+		return nil
+	}
+	for _, c := range []struct {
+		name     string
+		accepted []string
+		asserted []attestation.AttackPotentialResistance
+	}{
+		{"key_storage", req.KeyStorage, verified.KeyStorage},
+		{"user_authentication", req.UserAuthentication, verified.UserAuthentication},
+	} {
+		if len(c.accepted) == 0 {
+			continue
+		}
+		if !slices.ContainsFunc(c.asserted, func(level attestation.AttackPotentialResistance) bool {
+			return slices.Contains(c.accepted, string(level))
+		}) {
+			return newError(ErrorInvalidProof, 400, fmt.Sprintf("attestation %d: %s %v meets none of the accepted levels %v", i, c.name, c.asserted, c.accepted), nil)
+		}
+	}
+	return nil
+}
+
 func appendAttestedKeys(keys []resolvedKey, verified attestation.VerifiedClaims, i, maxKeys int) ([]resolvedKey, error) {
 	for j, attestedKeyRaw := range verified.AttestedKeys {
 		if len(keys) >= maxKeys {

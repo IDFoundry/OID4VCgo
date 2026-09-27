@@ -48,22 +48,26 @@ type AuthorizedRequest struct {
 	// for what that would otherwise silently disable.
 	ClientIdentity ClientIdentity
 
-	// Scopes is every scope the access token grants. A requested
-	// CredentialConfiguration whose Scope is non-empty must be included
-	// here (§8.2: "The corresponding object in the
-	// credential_configurations_supported map MUST contain one of the
-	// value(s) used in the scope parameter in the Authorization
-	// Request") — only consulted when the Credential Request uses
-	// CredentialRequest.CredentialConfigurationID; ignored entirely for
-	// a CredentialIdentifier-based request, which AuthorizationDetails
-	// governs instead.
+	// Scopes is every scope the access token grants. A Credential
+	// Request using CredentialRequest.CredentialConfigurationID is
+	// granted when the configuration's Scope is included here (§8.2:
+	// "The corresponding object in the credential_configurations_supported
+	// map MUST contain one of the value(s) used in the scope parameter in
+	// the Authorization Request"), or when AuthorizationDetails names the
+	// configuration; a configuration without a Scope only the latter way,
+	// never by default. Ignored for a CredentialIdentifier-based request,
+	// which AuthorizationDetails governs instead.
 	Scopes []string
 
 	// AuthorizationDetails is every "openid_credential"-typed entry of
 	// the access token's own "authorization_details" claim (RFC 9396
 	// §2, OID4VCI 1.0 §5.1.1/§6.2) — REQUIRED exactly when a Credential
 	// Request presents CredentialIdentifier instead of
-	// CredentialConfigurationID (§8.2's own MUST), ignored otherwise.
+	// CredentialConfigurationID (§8.2's own MUST). For a
+	// CredentialConfigurationID request, an entry naming that
+	// configuration grants it — unless the entry carries
+	// CredentialIdentifiers, in which case the Wallet MUST use one of
+	// those instead (§8.2) and the request is refused.
 	// RequestCredential resolves CredentialRequest.CredentialIdentifier
 	// against this to find which CredentialConfiguration applies,
 	// entirely bypassing the CredentialConfigurationID/Scopes check —
@@ -365,9 +369,8 @@ func (iss *Issuer) resolveCredentialConfiguration(auth AuthorizedRequest, req Cr
 		if !ok {
 			return CredentialConfiguration{}, newError(ErrorUnknownCredentialConfig, 400, "unknown credential_configuration_id", nil)
 		}
-		if cc.Scope != "" && !slices.Contains(auth.Scopes, cc.Scope) {
-			return CredentialConfiguration{}, newError(ErrorInvalidCredentialRequest, 400,
-				"access token does not grant the scope required for this credential_configuration_id", nil)
+		if err := authorizeCredentialConfigurationID(auth, req.CredentialConfigurationID, cc); err != nil {
+			return CredentialConfiguration{}, err
 		}
 		return cc, nil
 
@@ -375,6 +378,32 @@ func (iss *Issuer) resolveCredentialConfiguration(auth AuthorizedRequest, req Cr
 		return CredentialConfiguration{}, newError(ErrorInvalidCredentialRequest, 400,
 			"exactly one of credential_configuration_id or credential_identifier is required", nil)
 	}
+}
+
+// authorizeCredentialConfigurationID checks the access token grants
+// credential_configuration_id id: either an "openid_credential"
+// authorization detail names it, or the token carries cc's scope. A
+// configuration without a scope is therefore only ever granted through
+// authorization_details — never by default. When the token's
+// authorization detail for id carries credential_identifiers, the
+// Wallet MUST use one of those instead (§8.2: credential_configuration_id
+// "MUST NOT be used otherwise").
+func authorizeCredentialConfigurationID(auth AuthorizedRequest, id string, cc CredentialConfiguration) error {
+	for _, d := range auth.AuthorizationDetails {
+		if d.Type != oid4vci.AuthorizationDetailsTypeOpenIDCredential || d.CredentialConfigurationID != id {
+			continue
+		}
+		if len(d.CredentialIdentifiers) > 0 {
+			return newError(ErrorInvalidCredentialRequest, 400,
+				"the access token grants this credential_configuration_id through credential_identifiers: use credential_identifier", nil)
+		}
+		return nil
+	}
+	if cc.Scope != "" && slices.Contains(auth.Scopes, cc.Scope) {
+		return nil
+	}
+	return newError(ErrorInvalidCredentialRequest, 400,
+		"access token does not authorize this credential_configuration_id (by its scope or an authorization_details entry)", nil)
 }
 
 // resolveCredentialIdentifier finds identifier among every

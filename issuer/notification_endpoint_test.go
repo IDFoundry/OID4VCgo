@@ -200,19 +200,29 @@ func TestRequestNotification_RejectsUnknownNotificationID(t *testing.T) {
 	assertIssuerError(t, err, issuer.ErrorInvalidNotificationID)
 }
 
+// TestRequestNotification_RejectsMismatchedClient checks a notification_id
+// issued to a client can't be used by another client, nor by an
+// anonymous token (NoClientIdentity) that only knows the ID.
 func TestRequestNotification_RejectsMismatchedClient(t *testing.T) {
-	store := newFakeNotificationStore()
-	store.put("notif-1", issuer.NotificationRecord{ClientID: "client-a"})
-	cfg := validConfig(t)
-	deps := validDependencies(t)
-	deps.Notifications = store
-	iss := newTestIssuer(t, cfg, deps)
+	for name, identity := range map[string]issuer.ClientIdentity{
+		"another client":  issuer.KnownClientID("client-b"),
+		"anonymous token": issuer.NoClientIdentity{},
+	} {
+		t.Run(name, func(t *testing.T) {
+			store := newFakeNotificationStore()
+			store.put("notif-1", issuer.NotificationRecord{ClientID: "client-a"})
+			cfg := validConfig(t)
+			deps := validDependencies(t)
+			deps.Notifications = store
+			iss := newTestIssuer(t, cfg, deps)
 
-	err := iss.RequestNotification(context.Background(), issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("client-b")}, issuer.NotificationRequest{
-		NotificationID: "notif-1",
-		Event:          oid4vci.NotificationEventCredentialAccepted,
-	})
-	assertIssuerError(t, err, issuer.ErrorInvalidNotificationID)
+			err := iss.RequestNotification(context.Background(), issuer.AuthorizedRequest{ClientIdentity: identity}, issuer.NotificationRequest{
+				NotificationID: "notif-1",
+				Event:          oid4vci.NotificationEventCredentialAccepted,
+			})
+			assertIssuerError(t, err, issuer.ErrorInvalidNotificationID)
+		})
+	}
 }
 
 func TestRequestNotification_RejectsWhenNotConfigured(t *testing.T) {

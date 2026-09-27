@@ -319,7 +319,7 @@ func newPreAuthorizedRoundTripFixture(t *testing.T, configure func(cfg *issuer.C
 		Assurance: issuer.AssuranceDevelopment,
 		Issuer:    issuerURL,
 		Endpoints: issuer.Endpoints{Credential: credentialEndpoint},
-		Limits:    issuer.Limits{AccessTokenLifetime: 5 * time.Minute, MaxDPoPProofAge: time.Minute, MaxTxCodeAttempts: 3},
+		Limits:    issuer.Limits{AccessTokenLifetime: 5 * time.Minute, MaxDPoPProofAge: time.Minute, MaxTxCodeAttempts: 3, MaxProofAge: time.Minute},
 		CredentialConfigurationsSupported: map[string]issuer.CredentialConfiguration{
 			"IdentityCredential": {
 				Format:                               sdjwtvc.CredentialFormat,
@@ -638,7 +638,7 @@ func TestWalletIssuerDeferredAndNotificationRoundTrip(t *testing.T) {
 			DeferredCredential: deferredEndpoint,
 			Notification:       notificationEndpoint,
 		},
-		Limits: issuer.Limits{DeferredIssuancePollInterval: 30 * time.Second},
+		Limits: issuer.Limits{DeferredIssuancePollInterval: 30 * time.Second, MaxProofAge: time.Minute},
 		CredentialConfigurationsSupported: map[string]issuer.CredentialConfiguration{
 			"IdentityCredential": {
 				Format:                               sdjwtvc.CredentialFormat,

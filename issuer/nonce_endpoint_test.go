@@ -68,6 +68,7 @@ func TestRequestNonce_RejectsWhenNotConfigured(t *testing.T) {
 	cfg := validConfig(t)
 	cfg.Endpoints.Nonce = fapi.URL{}
 	cfg.Limits.NonceLifetime = 0
+	cfg.Limits.MaxProofAge = time.Minute
 	deps := validDependencies(t)
 	deps.Nonces = nil
 

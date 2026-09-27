@@ -133,7 +133,7 @@ func (iss *Issuer) requestDeferredCredential(ctx context.Context, auth Authorize
 	// requireClientIdentityDecision already rejected any other empty
 	// case before this ever runs) — this check is deliberately skipped
 	// for that acknowledged deployment choice, not by silent default.
-	if clientID := auth.ClientID(); record.ClientID != "" && clientID != "" && record.ClientID != clientID {
+	if record.ClientID != "" && auth.ClientID() != record.ClientID {
 		return DeferredCredentialResult{}, newError(ErrorInvalidTransactionID, 400, "transaction_id was not issued to this client", nil)
 	}
 
@@ -147,8 +147,10 @@ func (iss *Issuer) requestDeferredCredential(ctx context.Context, auth Authorize
 		return DeferredCredentialResult{}, newError(ErrorCredentialRequestDenied, 400,
 			"this issuer can no longer issue the requested credential(s)", nil)
 	case DeferredTransactionIssued:
+		// Invalidate is the single-use gate: only the request whose
+		// Invalidate succeeds gets the Credentials.
 		if err := iss.deps.DeferredTransactions.Invalidate(ctx, req.TransactionID); err != nil {
-			return DeferredCredentialResult{}, fmt.Errorf("issuer: request deferred credential: invalidate transaction: %w", err)
+			return DeferredCredentialResult{}, newError(ErrorInvalidTransactionID, 400, "unknown or already-used transaction_id", err)
 		}
 		return DeferredCredentialResult{Credentials: record.Credentials, NotificationID: record.NotificationID}, nil
 	default:

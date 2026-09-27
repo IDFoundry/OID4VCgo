@@ -110,7 +110,7 @@ func (iss *Issuer) RequestNotification(ctx context.Context, auth AuthorizedReque
 	// already rejected any other empty case before this ever runs) —
 	// this check is deliberately skipped for that acknowledged
 	// deployment choice, not by silent default.
-	if clientID := auth.ClientID(); record.ClientID != "" && clientID != "" && record.ClientID != clientID {
+	if record.ClientID != "" && auth.ClientID() != record.ClientID {
 		return newError(ErrorInvalidNotificationID, 400, "notification_id was not issued to this client", nil)
 	}
 

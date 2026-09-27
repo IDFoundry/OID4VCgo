@@ -203,3 +203,55 @@ func TestDeferredCredentialResult_WriteJSON_Pending(t *testing.T) {
 		t.Errorf("interval = %d, want 30", body.Interval)
 	}
 }
+
+// TestRequestDeferredCredential_RejectsAnonymousTokenForBoundTransaction
+// checks a transaction issued to a client can't be redeemed by an
+// anonymous token (NoClientIdentity) that only knows its transaction_id.
+func TestRequestDeferredCredential_RejectsAnonymousTokenForBoundTransaction(t *testing.T) {
+	store := newFakeDeferredTransactionStore()
+	deps := validDependencies(t)
+	deps.DeferredTransactions = store
+	iss := newTestIssuer(t, validConfig(t), deps)
+	store.put("txn-anon", issuer.DeferredTransactionRecord{
+		ClientID: "client-a", Status: issuer.DeferredTransactionIssued,
+		Credentials: []oid4vci.IssuedCredential{{Credential: "signed-credential"}},
+	})
+
+	_, err := iss.RequestDeferredCredential(context.Background(),
+		issuer.AuthorizedRequest{ClientIdentity: issuer.NoClientIdentity{}},
+		issuer.DeferredCredentialRequest{TransactionID: "txn-anon"},
+	)
+	assertIssuerError(t, err, issuer.ErrorInvalidTransactionID)
+}
+
+// staleGetDeferredStore is a DeferredTransactionStore whose Get still
+// returns a record after it's invalidated — what a concurrent request
+// sees between another's Get and Invalidate.
+type staleGetDeferredStore struct{ *fakeDeferredTransactionStore }
+
+func (s staleGetDeferredStore) Get(_ context.Context, transactionID string) (issuer.DeferredTransactionRecord, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.records[transactionID], nil
+}
+
+// TestRequestDeferredCredential_ServesCredentialsOnce checks Invalidate
+// is the single-use gate: when two requests both read the Issued record,
+// only the one whose Invalidate succeeds gets the Credentials.
+func TestRequestDeferredCredential_ServesCredentialsOnce(t *testing.T) {
+	store := staleGetDeferredStore{newFakeDeferredTransactionStore()}
+	deps := validDependencies(t)
+	deps.DeferredTransactions = store
+	iss := newTestIssuer(t, validConfig(t), deps)
+	store.put("txn-race", issuer.DeferredTransactionRecord{
+		ClientID: "client-a", Status: issuer.DeferredTransactionIssued,
+		Credentials: []oid4vci.IssuedCredential{{Credential: "signed-credential"}},
+	})
+	auth := issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("client-a")}
+
+	if _, err := iss.RequestDeferredCredential(context.Background(), auth, issuer.DeferredCredentialRequest{TransactionID: "txn-race"}); err != nil {
+		t.Fatalf("first request: %v", err)
+	}
+	_, err := iss.RequestDeferredCredential(context.Background(), auth, issuer.DeferredCredentialRequest{TransactionID: "txn-race"})
+	assertIssuerError(t, err, issuer.ErrorInvalidTransactionID)
+}
