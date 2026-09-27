@@ -141,18 +141,7 @@ func newServerMux(cfg Config) (*http.ServeMux, error) {
 	if err != nil {
 		return nil, err
 	}
-	// keys.LocalIssuerKeys reads the access-token signing keys straight
-	// from keyManager, rather than looping back to this binary's own
-	// /jwks, whose self-signed listener cert a standard net/http.Client
-	// (unlike the OIDF suite's own outbound client) doesn't trust.
-	localKeys, err := keys.NewLocalIssuerKeys(issuerURL, keyManager)
-	if err != nil {
-		return nil, err
-	}
-	resourceAccessTokens, err := fapires.NewJWTAccessTokens(
-		localKeys, issuerURL, issuerURL.String(),
-		fapi.ES256, srvLimits().AccessTokenLifetime, 8,
-	)
+	resourceAccessTokens, err := localResourceAccessTokens(issuerURL, keyManager)
 	if err != nil {
 		return nil, err
 	}
@@ -465,6 +454,22 @@ func addKeyAttestationProofType(cfg Config, credConfigs ...*issuer.CredentialCon
 // AttestationBasedClientAuthentication needs, which that preset
 // deliberately doesn't set (see its own doc comment on why: most
 // callers never register an attestation-authenticated client).
+// localResourceAccessTokens verifies the Credential Endpoint's access
+// tokens with keys.LocalIssuerKeys, reading the signing keys straight
+// from keyManager rather than looping back to this binary's own /jwks,
+// whose self-signed listener cert a standard net/http.Client (unlike
+// the OIDF suite's own outbound client) doesn't trust.
+func localResourceAccessTokens(issuerURL fapi.URL, keyManager keys.KeyManager) (fapires.JWTAccessTokens, error) {
+	localKeys, err := keys.NewLocalIssuerKeys(issuerURL, keyManager)
+	if err != nil {
+		return fapires.JWTAccessTokens{}, err
+	}
+	return fapires.NewJWTAccessTokens(
+		localKeys, issuerURL, issuerURL.String(),
+		fapi.ES256, srvLimits().AccessTokenLifetime, 8,
+	)
+}
+
 func srvLimits() server.Limits {
 	limits := server.RecommendedLimits()
 	limits.MaxClientAttestationLifetime = 24 * time.Hour
