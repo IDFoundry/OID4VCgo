@@ -26,7 +26,9 @@
 // protocol (§9), and the Notification Endpoint (§11) all exist now.
 // See CredentialRequest's own doc comment for exactly what the
 // Credential Endpoint doesn't implement yet (di_vp, unbound
-// credentials — and note it never defers issuance itself); both
+// credentials — and note it never defers issuance itself), and its
+// PerCredential hook for what must differ between a batch's
+// Credentials, such as a Token Status List reference; both
 // credential_configuration_id- and credential_identifier-based
 // requests are supported (§8.2 — see AuthorizedRequest's own
 // AuthorizationDetails field for the latter's own authorization

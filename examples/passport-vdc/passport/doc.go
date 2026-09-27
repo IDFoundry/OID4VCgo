@@ -17,6 +17,7 @@
 // Authentication), when the file carries it, is reported in
 // Evidence.Checks but only proves a genuine chip was read at some
 // point; binding that read to this issuance needs an issuer-chosen
-// Active Authentication challenge (gmrtd's verifier.WithAAChallenge),
+// Active Authentication challenge (gmrtd's reader.Reader.WithAAChallenge,
+// checked with verifier.Verifier.WithAAChallenge),
 // which this demo does not yet use.
 package passport

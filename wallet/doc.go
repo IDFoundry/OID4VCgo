@@ -59,11 +59,10 @@
 // exported: this package builds the Token Request's own proof, but not
 // a full sender-constrained resource client for the token it returns,
 // so a caller needs GenerateDPoPProof to build that client itself.
-// Client authentication isn't supported for this flow either (§6.1
-// makes it OPTIONAL, and Wallet Attestation client auth isn't buildable
-// yet — see this comment's own note on storage.ClientAuthMethodAttestation
-// above), and neither is authorization_details, matching this package's
-// own credential_configuration_id-only scope.
+// RequestPreAuthorizedCodeToken sends no client authentication (§6.1
+// makes it OPTIONAL for this grant; the Wallet Attestation client
+// authentication above is fapigo/client's, for the Authorization Code
+// Flow), and no authorization_details.
 //
 // GenerateAttestationProof builds the other key proof this package
 // supports: a Key Attestation JWT (Appendix D.1) for the attestation
@@ -176,8 +175,10 @@
 // FetchAuthorizationRequest's own doc comment for why that variant
 // isn't built in). Only the "x509_hash" Client Identifier Prefix is
 // supported (HAIP's own mandate, and the only one verifier itself
-// produces) — no DC API flow, no other client_id scheme, no di_vp
-// presentations. Which Verifiers to trust is the caller's policy, a
+// produces), and only for a redirect-flow request — a DC API request
+// arrives through the platform instead, and PresentCredentials builds
+// its response when given the Origin; no other client_id scheme, no
+// di_vp presentations. Which Verifiers to trust is the caller's policy, a
 // VerifierTrust (OID4VP §5.9.3's trust chain validation):
 // X5CVerifierRoots for a fixed set of trust anchors, or the explicit
 // NoVerifierTrust opt-out, which AssuranceProduction rejects.

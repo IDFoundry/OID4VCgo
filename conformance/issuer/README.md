@@ -260,8 +260,9 @@ a worse failure mode to discover later, not a better one to skip.
 
 Beyond `happy-flow`, every `oid4vci-1_0-issuer-*` module in the plan
 (21 of 61 total — the other 40 are the generic
-`fapi2-security-profile-final-*` FAPI 2.0 battery, not yet attempted;
-see below) has now been run against the real suite. This also settled
+`fapi2-security-profile-final-*` FAPI 2.0 battery, run separately: see
+"Status: the generic FAPI2SP battery" below) has now been run against
+the real suite. This also settled
 the consent-flow-compatibility and `Config.OAuthOnly`-compatibility
 open questions originally listed here: both are confirmed working —
 the consent-form round trip this binary's own `flow_test.go` already
@@ -313,7 +314,7 @@ server.FAPIRWTLSCipherSuites` on the listener — mirrors
   values differing by exactly that gap, a linkability side-channel a
   party holding both could exploit. Fixed by rounding `exp` down to
   the start of the issuance day before adding the lifetime
-  (`internal/conformancecert.CredentialExp`, shared with
+  (`sdjwtvc.RoundedExp`, shared with
   `cmd/conformance-wallet-vp`) — every credential issued on the same
   calendar day now carries an identical `exp`, closing the channel
   while still bounding validity. Driving both clients' own

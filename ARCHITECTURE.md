@@ -31,18 +31,17 @@ HAIP requires compliance with the applicable provisions of FAPI 2.0
 Security Profile Final, with specific overrides (DPoP mandatory, PAR only
 where the Authorization Endpoint is used, Wallet Attestation in place of
 `private_key_jwt`/mTLS client auth, HAIP §7's own algorithm requirements —
-see SPECIFICATIONS.md's "HAIP's deviations from plain FAPI 2.0"). `issuer`
-does not reimplement PAR, DPoP, PKCE, or JARM-style protocol plumbing —
-it will consume FAPIgo's public `server`/`client` role packages for that,
-once its own endpoints reach the ones OID4VCI actually relies on FAPI 2.0/
-OAuth 2.0 for (PAR, the Authorization/Token Endpoints, client
-authentication). `go.mod` depends on FAPIgo directly as of this package
-(pinned to a specific commit via a pseudo-version, not yet a tagged
-release — see the PR that added it for why); `issuer`'s first slice
-(Nonce Endpoint + Metadata) doesn't touch `fapigo/server` at all yet, only
-the root `fapi` package's `URL`/`ParseIssuerURL`/`ParseEndpointURL` for
-issuer/endpoint identifiers, the same "shared value type with identical
-semantics" reasoning that package documents itself.
+see SPECIFICATIONS.md's "HAIP's deviations from plain FAPI 2.0"). Neither
+`issuer` nor `wallet` reimplements PAR, DPoP, PKCE, or client
+authentication: a Credential Issuer pairs `issuer` with a
+`fapigo/server.Server` for PAR and the Authorization/Token Endpoints
+(`issuer/authorization_server.go`'s recipe) and verifies the Credential
+Endpoint's access tokens with `fapigo/resource` (`issuer/resource_verifier.go`);
+a Wallet drives the Authorization Code Flow with `fapigo/client`. The one
+grant FAPIgo doesn't cover, the Pre-Authorized Code Flow, is implemented
+here (`issuer.ExchangePreAuthorizedCode`, `wallet.RequestPreAuthorizedCodeToken`).
+`go.mod` requires a tagged FAPIgo release; a bump that passes on a
+breaking or security change of FAPIgo's is itself a `fix(deps)!:`.
 
 OID4VCgo cannot import `go-fapi/internal/*` — Go's `internal/` visibility
 rule is scoped to the importing path's own module tree, and this is a
@@ -778,11 +777,10 @@ changes whether *every* bullet below is `(done)`.
   that had hand-crafted a `WWW-Authenticate` header to exercise this
   path were themselves testing the bug, not real Authorization Server
   behavior. Fixed to check the JSON body's own `"error"` member
-  (reusing `parseError`) instead. Client authentication isn't
-  supported (§6.1 makes it OPTIONAL for this grant, and Wallet
-  Attestation client auth isn't buildable yet, per the note above), and
-  neither is `authorization_details`, matching this package's own
-  `credential_configuration_id`-only scope. `GenerateDPoPProof` and
+  (reusing `parseError`) instead. It sends no client authentication
+  (§6.1 makes it OPTIONAL for this grant; Wallet Attestation client
+  authentication is `fapigo/client`'s, for the Authorization Code Flow),
+  and no `authorization_details`. `GenerateDPoPProof` and
   `DPoPAccessTokenHash` are exported beyond this one call: this package
   builds the Token Request's own DPoP proof, but deliberately doesn't
   build a full sender-constrained resource client for the access token
@@ -1004,9 +1002,9 @@ changes whether *every* bullet below is `(done)`.
   unverified `IssuerAuth` x5chain — `internal/cose.DecodeUnverified`,
   the COSE analog of `jose.DecodeUnverified`; `X5ChainIssuerKeyResolver`
   implements it for real, mirroring `X5CIssuerKeyResolver`'s own
-  reject-self-signed-leaf/verify-against-Roots logic exactly, added
-  proactively alongside the SD-JWT VC one even though no live mdoc
-  conformance run has exercised this path yet — see its own tests),
+  reject-self-signed-leaf/verify-against-Roots logic exactly — the
+  resolver `cmd/conformance-verifier` uses for the certified `iso_mdl`
+  profile),
   cryptographically
   verifies `IssuerSigned` (`credential/mdoc.Verify`), rebuilds
   `SessionTranscriptBytes` *exactly* as the Wallet did — a new private
@@ -1190,7 +1188,7 @@ changes whether *every* bullet below is `(done)`.
   every value traceable to a specific HAIP section, nothing applied
   automatically. `RecommendedJOSEAlgorithm`/`RecommendedCOSEAlgorithm`
   (HAIP §7's minimum: ES256/COSE -7) back `RecommendedJWTProofType()`/
-  `RecommendedAttestationProofType()`, two `issuer.ProofTypeConfiguration`
+  `RecommendedAttestationProofType()`, two `oid4vci.ProofTypeConfiguration`
   builders — the latter requiring a Key Attestation with no further
   constraint, §4.5.1's own recommended posture for Ecosystems that want
   key-attestation-level interoperability. §4.5.1's other combination,

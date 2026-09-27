@@ -60,7 +60,7 @@ What the second path does and doesn't give you:
   holds the passport.** When the file carries chip authentication
   evidence it's reported, but that only shows a genuine chip was read at
   some point. Binding the read to this issuance needs an issuer-chosen
-  Active Authentication challenge (gmrtd's `verifier.WithAAChallenge`) —
+  Active Authentication challenge (gmrtd's `reader.Reader.WithAAChallenge`, checked with `verifier.Verifier.WithAAChallenge`) —
   planned for the live-NFC phase. Note that `WithAAChallenge` only
   rejects a *mismatched* challenge: a file without AA evidence passes,
   so the issuer must itself require that AA ran and succeeded.
@@ -129,6 +129,12 @@ The CLI's `receive` prints the authorization URL: open it, approve, and
 it picks up the redirect on `http://127.0.0.1:8765/callback`; add
 `-headless -code <confirmation code>` to approve automatically. Both wallets keep credentials
 (with their holder keys) in `wallet-store/`.
+
+The issuer's redirect back is bound to the wallet that asked (fapigo's
+protection against login CSRF, RFC 9700 §4.7): the web wallet sets a
+session cookie when it sends the browser to the issuer, so the approval
+must be completed in that same browser; the CLI's flow is bound to its
+own process.
 
 `cmd/wallet-provider` creates the demo's **stand-in Wallet Provider**:
 a key, and a certificate for it from a demo Wallet Provider CA, naming
@@ -309,7 +315,7 @@ generator, planned for gmrtd itself).
 | `issuerapp` | the OID4VCI issuer: fapigo Authorization Server + oid4vcgo Issuer + upload page |
 | `walletprovider` | the stand-in Wallet Provider that signs Wallet Attestations and Key Attestations |
 | `walletapp` | the wallet: receive (offer → discovery → HAIP Authorization Code flow → credentials) and present (OpenID4VP, selective disclosure); credential store |
-| `verifierapp` | the OpenID4VP verifier: either-format requests, both trust paths |
+| `verifierapp` | the OpenID4VP verifier: either-format requests, both trust paths, revocation checks |
 | `webwallet` | the browser wallet: credential cards, receive via the issuer's approval page, consent before presenting |
 | `passport.VerifyDataGroups` | the verifier's ICAO check over a disclosed SOD + DG1 |
 | `cmd/issuer`, `cmd/verifier`, `cmd/webwallet`, `cmd/wallet`, `cmd/wallet-provider` | runnable binaries |
