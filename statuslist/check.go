@@ -10,7 +10,7 @@ import (
 
 // Check validates a Status List Token against issuerPub/alg, checks
 // that its sub matches ref.URI, decompresses its Status List, and
-// returns the status at ref.Idx — draft-12 §8.3 steps 3-7. Steps 1-2
+// returns the status at ref.Idx — draft-14 §8.3 steps 3-7. Steps 1-2
 // (extracting ref from an already-validated Referenced Token via
 // ParseStatusClaim, and fetching token from ref.URI) are the caller's
 // job: this package has no HTTP client and doesn't validate the
@@ -34,7 +34,7 @@ func CheckCWT(token []byte, issuerPub crypto.PublicKey, alg cose.Alg, ref Status
 
 // checkClaims is Check/CheckCWT's shared tail once their respective
 // VerifyToken/VerifyTokenCWT call has produced already-signature-
-// checked claims: draft-12 §8.3 steps 4 (sub match) and 5-7 (decompress
+// checked claims: draft-14 §8.3 steps 4 (sub match) and 5-7 (decompress
 // and look up the status).
 func checkClaims(claims TokenClaims, ref StatusListRef) (StatusType, TokenClaims, error) {
 	if claims.Sub != ref.URI {

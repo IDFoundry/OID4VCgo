@@ -5,20 +5,20 @@ import (
 	"fmt"
 )
 
-// StatusList is the JSON-encoded Status List structure (draft-12
+// StatusList is the JSON-encoded Status List structure (draft-14
 // §4.2): a bit-packed, ZLIB-compressed array of Referenced Token
 // statuses.
 type StatusList struct {
 	Bits Bits `json:"bits"`
 
-	// Lst is the base64url-encoded compressed byte array (draft-12
+	// Lst is the base64url-encoded compressed byte array (draft-14
 	// §4.1). Build it with New rather than by hand.
 	Lst string `json:"lst"`
 
 	AggregationURI string `json:"aggregation_uri,omitempty"`
 }
 
-// New packs and compresses statuses into a StatusList (draft-12 §4.1).
+// New packs and compresses statuses into a StatusList (draft-14 §4.1).
 // statuses[i] is the status of the Referenced Token at index i.
 func New(bits Bits, statuses []uint8, aggregationURI string) (StatusList, error) {
 	packed, err := Pack(bits, statuses)
@@ -43,7 +43,7 @@ type Decoded struct {
 	Packed []byte
 }
 
-// Decode base64url-decodes and decompresses sl's Lst (draft-12 §8.3
+// Decode base64url-decodes and decompresses sl's Lst (draft-14 §8.3
 // step 5).
 func (sl StatusList) Decode() (Decoded, error) {
 	if !sl.Bits.valid() {
@@ -65,7 +65,7 @@ func (d Decoded) Status(idx int) (uint8, error) {
 	return Unpack(d.Bits, d.Packed, idx)
 }
 
-// Status decompresses sl and returns the status at idx (draft-12 §8.3
+// Status decompresses sl and returns the status at idx (draft-14 §8.3
 // steps 5-6). Prefer Decode when checking more than one index, to
 // avoid repeating the decompression.
 func (sl StatusList) Status(idx int) (uint8, error) {

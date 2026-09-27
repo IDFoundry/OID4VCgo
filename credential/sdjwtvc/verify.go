@@ -65,7 +65,7 @@ type VerifyOptions struct {
 // Verify fully validates a presented SD-JWT or SD-JWT+KB against the
 // Issuer's already-resolved public key and returns the Processed SD-JWT
 // Payload (RFC 9901 §7.1's term) plus the Issuer-signed JWT's raw JOSE
-// header. Resolving *which* key issuerPub is — draft-11 §3.5's JWT VC
+// header. Resolving *which* key issuerPub is — draft-13 §3.5's JWT VC
 // Issuer Metadata or X.509 Issuer Signature Mechanisms — is the
 // caller's job; see the package doc comment.
 func Verify(s string, issuerPub crypto.PublicKey, issuerAlg jose.Alg, opts VerifyOptions) (payload map[string]any, header map[string]any, err error) {
@@ -142,7 +142,7 @@ func Verify(s string, issuerPub crypto.PublicKey, issuerAlg jose.Alg, opts Verif
 // purely to keep it under the linter's own cognitive complexity
 // ceiling.
 // nonDisclosableClaims are the registered claims an SD-JWT VC's Issuer
-// MUST NOT make selectively disclosable (SD-JWT VC draft-11 §3.2.2,
+// MUST NOT make selectively disclosable (SD-JWT VC draft-13 §3.2.2,
 // unchanged in draft-13): each must be in the Issuer-signed JWT itself.
 var nonDisclosableClaims = map[string]bool{
 	"iss": true, "nbf": true, "exp": true, "cnf": true, "vct": true, "vct#integrity": true, "status": true,

@@ -14,7 +14,7 @@ import (
 // Wiring test: statuslist.StatusListRef.Claim's map[string]any shape
 // must be exactly what sdjwtvc.Claims.Status expects, and what a
 // Verifier reads back out of Verify's returned payload — this is the
-// integration draft-11 §3.2.2.2's status claim and draft-12 §6.2 both
+// integration draft-13 §3.2.2.2's status claim and draft-14 §6.2 both
 // describe, exercised across both packages rather than asserted in
 // either one's own tests alone.
 func TestSDJWTVC_StatusClaim_WiresIntoStatuslist(t *testing.T) {

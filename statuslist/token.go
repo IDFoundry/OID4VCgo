@@ -10,14 +10,14 @@ import (
 )
 
 // TokenTyp is the required JOSE "typ" header of a Status List Token in
-// JWT format (draft-12 §5.1).
+// JWT format (draft-14 §5.1).
 const TokenTyp = "statuslist+jwt" //nolint:gosec // a JOSE "typ" header value, not a credential
 
 // TokenMediaType is the media type a Status List Token in JWT format
-// is served and requested as (draft-12 §8.1, §8.2).
+// is served and requested as (draft-14 §8.1, §8.2).
 const TokenMediaType = "application/statuslist+jwt"
 
-// TokenClaims is a Status List Token's JWT Claims Set (draft-12 §5.1).
+// TokenClaims is a Status List Token's JWT Claims Set (draft-14 §5.1).
 type TokenClaims struct {
 	Sub        string // REQUIRED: the URI this Status List Token is served at
 	Iat        int64  // REQUIRED
@@ -29,7 +29,7 @@ type TokenClaims struct {
 }
 
 // IssueToken signs claims into a Status List Token in JWT format
-// (draft-12 §5.1). keyID sets the JOSE "kid" header, if non-empty.
+// (draft-14 §5.1). keyID sets the JOSE "kid" header, if non-empty.
 func IssueToken(signer crypto.Signer, alg jose.Alg, claims TokenClaims, keyID string) (string, error) {
 	if claims.Sub == "" {
 		return "", fmt.Errorf("statuslist: TokenClaims.Sub is required")
@@ -81,7 +81,7 @@ type VerifyOptions struct {
 const maxTokenBytes = 1 << 20 // 1 MiB
 
 // VerifyToken verifies a Status List Token's signature and typ header,
-// and rejects an expired token (draft-12 §5.1 rule 2-3, §8.3 step 4.3).
+// and rejects an expired token (draft-14 §5.1 rule 2-3, §8.3 step 4c).
 // It does not check sub against a specific Referenced Token — that's
 // Check's job, since it needs the StatusListRef to compare against.
 func VerifyToken(token string, pub crypto.PublicKey, alg jose.Alg, opts VerifyOptions) (TokenClaims, error) {

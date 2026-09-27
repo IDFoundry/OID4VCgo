@@ -125,14 +125,14 @@ func (a *App) issuerMetadataHandler() http.HandlerFunc {
 // this issuer's vct — display names for the credential and its claims.
 func (a *App) handleVCTMetadata(w http.ResponseWriter, _ *http.Request) {
 	claim := func(label string, path ...string) sdjwtvc.ClaimMetadata {
-		return sdjwtvc.ClaimMetadata{Path: sdjwtvc.ClaimPath(path...), Display: []sdjwtvc.ClaimDisplay{{Lang: "en", Label: label}}}
+		return sdjwtvc.ClaimMetadata{Path: sdjwtvc.ClaimPath(path...), Display: []sdjwtvc.ClaimDisplay{{Locale: "en", Label: label}}}
 	}
 	doc := sdjwtvc.TypeMetadata{
 		VCT:         a.vct,
 		Name:        "Passport-derived credential (demo)",
 		Description: "Identity attributes and raw ICAO data groups from a verified ePassport. Demo only.",
 		Display: []sdjwtvc.TypeDisplay{{
-			Lang: "en", Name: "Passport (demo)",
+			Locale: "en", Name: "Passport (demo)",
 			Description: "Issued by the IDFoundry passport-vdc demo from a verified ePassport",
 		}},
 		Claims: []sdjwtvc.ClaimMetadata{

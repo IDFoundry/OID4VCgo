@@ -8,10 +8,10 @@ import (
 	"testing"
 )
 
-// Known-answer tests reproducing draft-ietf-oauth-status-list-12 §4.1's
+// Known-answer tests reproducing draft-ietf-oauth-status-list-14 §4.1's
 // own worked examples.
 
-func TestPack_Draft12_Bits1Example(t *testing.T) {
+func TestPack_Draft14_Bits1Example(t *testing.T) {
 	statuses := []uint8{1, 0, 0, 1, 1, 1, 0, 1, 1, 1, 0, 0, 0, 1, 0, 1}
 	got, err := Pack(Bits1, statuses)
 	if err != nil {
@@ -33,7 +33,7 @@ func TestPack_Draft12_Bits1Example(t *testing.T) {
 	}
 }
 
-func TestPack_Draft12_Bits2Example(t *testing.T) {
+func TestPack_Draft14_Bits2Example(t *testing.T) {
 	statuses := []uint8{1, 2, 0, 3, 0, 1, 0, 1, 1, 2, 3, 3}
 	got, err := Pack(Bits2, statuses)
 	if err != nil {
@@ -86,8 +86,8 @@ func TestCompressDecompress_RoundTrip(t *testing.T) {
 	}
 }
 
-func TestDecompress_Draft12_KnownVector(t *testing.T) {
-	// draft-12 §4.2: the compressed+base64url "lst" value for the
+func TestDecompress_Draft14_KnownVector(t *testing.T) {
+	// draft-14 §4.2: the compressed+base64url "lst" value for the
 	// bits=1 example above ([0xb9, 0xa3]).
 	const lst = "eNrbuRgAAhcBXQ"
 	raw, err := base64.RawURLEncoding.DecodeString(lst)
@@ -131,8 +131,8 @@ func TestDecompress_RejectsBomb(t *testing.T) {
 	}
 }
 
-func TestDecompress_Draft12_LargeAppendixVector(t *testing.T) {
-	// draft-12 Appendix "Test vectors for Status List encoding", the
+func TestDecompress_Draft14_LargeAppendixVector(t *testing.T) {
+	// draft-14 Appendix "Test vectors for Status List encoding", the
 	// "1 bit Status List" example: a 2^20-entry list with a handful of
 	// set bits. Exercises decompression at real scale, not just the
 	// small inline examples above.

@@ -12,16 +12,16 @@ import (
 )
 
 // TypHeader is the JOSE "typ" header value for the Issuer-signed JWT
-// component of an SD-JWT VC (draft-11 §3.2.1). A Verifier/Holder
+// component of an SD-JWT VC (draft-13 §3.2.1). A Verifier/Holder
 // SHOULD also accept LegacyTypHeader during a transitional period.
 const TypHeader = "dc+sd-jwt"
 
 // LegacyTypHeader is the "typ" value this draft used from its inception
-// in July 2023 until November 2024 (draft-11 §3.2.1) — accepted here
+// in July 2023 until November 2024 (draft-13 §3.2.1) — accepted here
 // for interop with issuers/wallets that haven't migrated yet.
 const LegacyTypHeader = "vc+sd-jwt"
 
-// MediaType is the SD-JWT VC media type (draft-11 §3.1).
+// MediaType is the SD-JWT VC media type (draft-13 §3.1).
 const MediaType = "application/dc+sd-jwt"
 
 // CredentialFormat is the OID4VCI 1.0 Credential Format Identifier for
@@ -36,8 +36,8 @@ const CredentialFormat = "dc+sd-jwt" //nolint:gosec // an OID4VCI format identif
 const KeyBindingTyp = "kb+jwt"
 
 // Claims is the input to Issue. VCT is the only required field
-// (draft-11 §3.2.2.1). Iss, Nbf, Exp, VCTIntegrity, Status and CNF are
-// the registered claims draft-11 §3.2.2.2 forbids from ever being
+// (draft-13 §3.2.2.1). Iss, Nbf, Exp, VCTIntegrity, Status and CNF are
+// the registered claims draft-13 §3.2.2.2 forbids from ever being
 // selectively disclosed, so they're always plaintext — putting one of
 // their claim names in Additional is rejected. Nbf/Exp/Iat use a Unix
 // timestamp (int64), matching JWT's NumericDate (RFC 7519 §2), not
@@ -67,9 +67,9 @@ type Claims struct {
 	Status       map[string]any // see draft-ietf-oauth-status-list
 	CNF          map[string]any // REQUIRED if Key Binding is to be supported
 
-	// Additional holds any further public/private claims (draft-11
+	// Additional holds any further public/private claims (draft-13
 	// §3.2.2.3), including the registered "sub" and "iat" claims that
-	// draft-11 §3.2.2.2 permits (but does not require) to be
+	// draft-13 §3.2.2.2 permits (but does not require) to be
 	// selectively disclosed. Wrap a value with SD to make its property
 	// selectively disclosable, or SDElement for an array element.
 	Additional map[string]any
@@ -131,7 +131,7 @@ var reservedTopLevelClaims = map[string]bool{
 }
 
 // applyPlaintextClaims sets sealed's own always-plaintext registered
-// claims (draft-11 §3.2.2.2's own never-selectively-disclosed set)
+// claims (draft-13 §3.2.2.2's own never-selectively-disclosed set)
 // from claims — split out of Issue purely to keep it under the
 // linter's own cognitive complexity ceiling.
 func applyPlaintextClaims(sealed map[string]any, claims Claims) {

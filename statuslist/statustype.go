@@ -2,9 +2,9 @@ package statuslist
 
 import "fmt"
 
-// StatusType is a Referenced Token's status value (draft-12 §7):
+// StatusType is a Referenced Token's status value (draft-14 §7):
 // "the state, mode, condition or stage of an entity that is
-// represented by the Referenced Token." Values 0x03 and 0x0B-0x0F are
+// represented by the Referenced Token." Values 0x03 and 0x0C-0x0F are
 // permanently reserved as application-specific; every other value not
 // listed here is reserved for future IANA registration.
 type StatusType uint8
