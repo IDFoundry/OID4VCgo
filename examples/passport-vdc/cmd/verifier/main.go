@@ -79,7 +79,7 @@ func main() {
 		log.Fatal(err)
 	}
 	srv := &http.Server{
-		Addr: *addr, Handler: app,
+		Addr: *addr, Handler: app, ErrorLog: demotls.ServerErrorLog(),
 		TLSConfig:         &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS13}, // TLS 1.3 only: FAPI 2.0 allows TLS 1.2 with just a few AES-GCM suites
 		ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second,
 		WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second,
