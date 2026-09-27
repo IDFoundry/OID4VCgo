@@ -14,7 +14,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"strings"
 	"sync"
 	"time"
 
@@ -254,13 +253,9 @@ func (a *App) newChannel(query dcql.Query, sameDevice bool) (*channel, error) {
 	if err != nil {
 		return nil, fmt.Errorf("verifierapp: build request: %w", err)
 	}
-	kid, err := responseKeyID(built.RequestObject)
-	if err != nil {
-		return nil, err
-	}
 	requestURI := a.cfg.VerifierURL + "/request-objects/" + state
 	return &channel{
-		sameDevice: sameDevice, state: state, kid: kid, nonce: built.Nonce,
+		sameDevice: sameDevice, state: state, kid: built.ResponseEncryptionKeyID, nonce: built.Nonce,
 		requestObject: built.RequestObject, decryptionKey: built.ResponseDecryptionKey,
 		link: "openid4vp://?" + url.Values{"client_id": {a.verifier.ClientID()}, "request_uri": {requestURI}}.Encode(),
 	}, nil
@@ -364,7 +359,7 @@ func (a *App) handleResponse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	responseJWE := r.PostForm.Get("response")
-	kid, err := jweKeyID(responseJWE)
+	kid, err := verifier.ResponseKeyID(responseJWE)
 	if err != nil {
 		writeJSONError(w, "invalid_request", "response is not a JWE with a key ID")
 		return
@@ -528,48 +523,6 @@ func formatOf(queryID string) string {
 		return "mso_mdoc"
 	}
 	return "dc+sd-jwt"
-}
-
-// responseKeyID reads the response encryption key's kid from a Request
-// Object this app just built (its own output, so read without
-// re-verifying).
-func responseKeyID(requestObject string) (string, error) {
-	var claims struct {
-		ClientMetadata struct {
-			JWKS struct {
-				Keys []struct {
-					Kid string `json:"kid"`
-				} `json:"keys"`
-			} `json:"jwks"`
-		} `json:"client_metadata"`
-	}
-	if err := decodeJOSESegment(requestObject, 1, &claims); err != nil || len(claims.ClientMetadata.JWKS.Keys) != 1 {
-		return "", fmt.Errorf("verifierapp: request object carries no single response encryption key")
-	}
-	return claims.ClientMetadata.JWKS.Keys[0].Kid, nil
-}
-
-// jweKeyID reads the kid from a compact JWE's protected header.
-func jweKeyID(jwe string) (string, error) {
-	var header struct {
-		Kid string `json:"kid"`
-	}
-	if err := decodeJOSESegment(jwe, 0, &header); err != nil || header.Kid == "" {
-		return "", errors.New("no kid")
-	}
-	return header.Kid, nil
-}
-
-func decodeJOSESegment(compact string, i int, v any) error {
-	parts := strings.Split(compact, ".")
-	if len(parts) <= i {
-		return errors.New("malformed")
-	}
-	raw, err := base64.RawURLEncoding.DecodeString(parts[i])
-	if err != nil {
-		return err
-	}
-	return json.Unmarshal(raw, v)
 }
 
 func mergeFormats(maps ...map[string]any) map[string]any {

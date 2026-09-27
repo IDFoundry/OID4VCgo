@@ -99,7 +99,7 @@ func (v *Verifier) BuildDCAPIAuthorizationRequest(req BuildDCAPIAuthorizationReq
 	if err != nil {
 		return BuildDCAPIAuthorizationRequestResult{}, fmt.Errorf("verifier: build dc api authorization request: generate nonce: %w", err)
 	}
-	clientMetadata, encKey, err := v.buildResponseEncryptionMetadata()
+	clientMetadata, encKey, _, err := v.buildResponseEncryptionMetadata()
 	if err != nil {
 		return BuildDCAPIAuthorizationRequestResult{}, fmt.Errorf("verifier: build dc api authorization request: %w", err)
 	}

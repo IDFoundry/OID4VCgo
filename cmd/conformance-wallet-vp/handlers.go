@@ -1,9 +1,9 @@
 package main
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/tls"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -181,7 +181,7 @@ func (s *server) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	redirectURI, err := postDirectPostResponse(authReq.ResponseURI, responseJWE)
+	redirectURI, err := submitDirectPostResponse(r.Context(), authReq.ResponseURI, responseJWE)
 	if err != nil {
 		log.Printf("post direct_post.jwt response: %v", err)
 		http.Error(w, err.Error(), http.StatusBadGateway)
@@ -259,7 +259,7 @@ func (s *server) respondWithError(w http.ResponseWriter, p errorResponseParams) 
 		return
 	}
 
-	redirectURI, err := postDirectPostResponse(p.responseURI, responseJWE)
+	redirectURI, err := submitDirectPostResponse(context.Background(), p.responseURI, responseJWE)
 	if err != nil {
 		log.Printf("post direct_post.jwt error response: %v", err)
 		http.Error(w, err.Error(), http.StatusBadGateway)
@@ -269,31 +269,13 @@ func (s *server) respondWithError(w http.ResponseWriter, p errorResponseParams) 
 	respondFollowingRedirect(w, "Rejected", fmt.Sprintf("<p>Sent error response: %s: %s</p>", p.code, p.description), redirectURI)
 }
 
-// postDirectPostResponse POSTs responseJWE as the "response" form
-// parameter (§8.3.1) to responseURI, and returns the JSON body's own
-// "redirect_uri" if present.
-func postDirectPostResponse(responseURI, responseJWE string) (string, error) {
-	form := url.Values{"response": {responseJWE}}
-	resp, err := httpClient.PostForm(responseURI, form) //nolint:noctx // responseURI is the Verifier's own request_uri-derived response_uri, not attacker-controlled
-	if err != nil {
-		return "", fmt.Errorf("POST %s: %w", responseURI, err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	body, err := io.ReadAll(resp.Body)
+// submitDirectPostResponse POSTs responseJWE to responseURI
+// (wallet.SubmitDirectPostResponse, OID4VP §8.3.1) and returns the
+// Verifier's redirect_uri, if it sent one (§8.2).
+func submitDirectPostResponse(ctx context.Context, responseURI, responseJWE string) (string, error) {
+	reply, err := wallet.SubmitDirectPostResponse(ctx, httpClient, responseURI, responseJWE)
 	if err != nil {
 		return "", err
 	}
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("POST %s: status %d: %s", responseURI, resp.StatusCode, body)
-	}
-	if !strings.Contains(resp.Header.Get(contentTypeHeader), "json") {
-		return "", nil
-	}
-	var wire struct {
-		RedirectURI string `json:"redirect_uri"`
-	}
-	if err := json.Unmarshal(body, &wire); err != nil {
-		return "", fmt.Errorf("parse direct_post response: %w", err)
-	}
-	return wire.RedirectURI, nil
+	return reply.RedirectURI, nil
 }

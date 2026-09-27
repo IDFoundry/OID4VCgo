@@ -148,7 +148,7 @@ func TestResponse_ForgedResponseDoesNotCloseTheRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	forged := base64.RawURLEncoding.EncodeToString(header) + ".AAAA.AAAA.AAAA.AAAA"
+	forged := base64.RawURLEncoding.EncodeToString(header) + "..AAAA.AAAA.AAAA" // well-formed, but not decryptable
 	resp, err := env.HTTP.PostForm(env.VerifierURL+"/response", url.Values{"response": {forged}})
 	if err != nil {
 		t.Fatalf("POST forged response: %v", err)

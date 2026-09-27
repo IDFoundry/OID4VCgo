@@ -133,6 +133,13 @@
 //
 // # OID4VP (presentation)
 //
+// VerifyIssuedCredential (issued_credential.go) checks each credential a
+// Credential Response returns before the Wallet keeps it: the issuer
+// signature, with its x5c/x5chain certificate chaining to the caller's
+// issuer trust anchors (HAIP 1.0 §6.1.1), the requested vct or doctype
+// and validity, and the binding to the key the Wallet proved possession
+// of.
+//
 // This package also implements the Wallet side of OID4VP: HeldCredential,
 // MatchDCQLQuery and PresentCredentials (presentation.go) build a VP
 // Token from a DCQL query and this Wallet's own held credentials;
@@ -141,9 +148,10 @@
 // incoming redirect-flow Authorization Request and build its encrypted
 // direct_post.jwt response — the exact mirror image of verifier's own
 // BuildAuthorizationRequest/ParseDirectPostJWTResponse. Both functions
-// are pure (no HTTP): POSTing the response is always the caller's own
-// job, the same split verifier draws on its side. Fetching request_uri
-// is the one HTTP step this package does offer a default for —
+// are pure (no HTTP). The two HTTP steps around them have defaults:
+// SubmitDirectPostResponse POSTs the built response to response_uri and
+// returns the Verifier's redirect_uri, which the Wallet must then follow
+// (OID4VP §8.2), and fetching request_uri —
 // (*Wallet).FetchAuthorizationRequest performs §5.10's plain GET using
 // this Wallet's own hardened fapihttp.Client and hands the result
 // straight to ParseAuthorizationRequest; a caller wanting §5.10's
