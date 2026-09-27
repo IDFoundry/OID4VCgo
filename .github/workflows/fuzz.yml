@@ -132,6 +132,18 @@ jobs:
           - id: wallet-parse-error
             pkg: ./wallet
             name: FuzzParseError
+          - id: wallet-verify-issued-credential
+            pkg: ./wallet
+            name: FuzzVerifyIssuedCredential
+          - id: wallet-verify-issued-credential-signed
+            pkg: ./wallet
+            name: FuzzVerifyIssuedCredentialSigned
+          - id: wallet-parse-authorization-request-link
+            pkg: ./wallet
+            name: FuzzParseAuthorizationRequestLink
+          - id: wallet-submit-direct-post-response
+            pkg: ./wallet
+            name: FuzzSubmitDirectPostResponse
           - id: issuer-request-credential-signed-proof
             pkg: ./issuer
             name: FuzzRequestCredentialSignedProof
@@ -141,6 +153,9 @@ jobs:
           - id: issuer-resolve-proof-binding-key
             pkg: ./issuer
             name: FuzzResolveProofBindingKey
+          - id: issuer-parse-credential-request
+            pkg: ./issuer
+            name: FuzzParseCredentialRequest
     steps:
       - uses: actions/checkout@v7
 

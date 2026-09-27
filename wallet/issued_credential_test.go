@@ -37,7 +37,7 @@ type issuedFixture struct {
 	now          time.Time
 }
 
-func newIssuedFixture(t *testing.T, leaf *x509.Certificate, leafKey *ecdsa.PrivateKey, roots *x509.CertPool) issuedFixture {
+func newIssuedFixture(t testing.TB, leaf *x509.Certificate, leafKey *ecdsa.PrivateKey, roots *x509.CertPool) issuedFixture {
 	t.Helper()
 	holder, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -77,7 +77,7 @@ func newIssuedFixture(t *testing.T, leaf *x509.Certificate, leafKey *ecdsa.Priva
 	}
 }
 
-func caIssuedFixture(t *testing.T) issuedFixture {
+func caIssuedFixture(t testing.TB) issuedFixture {
 	t.Helper()
 	ca, caKey := testcert.CA(t, "issued credential test CA")
 	leaf, leafKey := testcert.Leaf(t, "issued credential test issuer", ca, caKey)

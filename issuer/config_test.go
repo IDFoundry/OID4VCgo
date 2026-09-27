@@ -58,7 +58,7 @@ func validCredentialConfigurations() map[string]issuer.CredentialConfiguration {
 	}
 }
 
-func validConfig(t *testing.T) issuer.Config {
+func validConfig(t testing.TB) issuer.Config {
 	t.Helper()
 	return issuer.Config{
 		Assurance: issuer.AssuranceDevelopment,
@@ -98,7 +98,7 @@ func testMdocSigner(t testing.TB) *issuer.MdocSigner {
 	return &issuer.MdocSigner{Signer: key, Alg: cose.ES256, X5Chain: [][]byte{cert.Raw}}
 }
 
-func validDependencies(t *testing.T) issuer.Dependencies {
+func validDependencies(t testing.TB) issuer.Dependencies {
 	t.Helper()
 	return issuer.Dependencies{
 		Nonces:               newFakeNonceStore(),

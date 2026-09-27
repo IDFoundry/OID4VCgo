@@ -21,7 +21,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/issuer"
 )
 
-func testRequestDecryptionKey(t *testing.T, kid string) issuer.RequestDecryptionKey {
+func testRequestDecryptionKey(t testing.TB, kid string) issuer.RequestDecryptionKey {
 	t.Helper()
 	return issuer.RequestDecryptionKey{KeyID: kid, PrivateKey: testP256Key(t)}
 }
@@ -238,7 +238,7 @@ func TestMetadata_OmitsEncryptionWhenUnconfigured(t *testing.T) {
 
 // --- DecryptRequestBody ---
 
-func newEncryptionIssuer(t *testing.T, mutate func(*issuer.Config)) (*issuer.Issuer, issuer.RequestDecryptionKey) {
+func newEncryptionIssuer(t testing.TB, mutate func(*issuer.Config)) (*issuer.Issuer, issuer.RequestDecryptionKey) {
 	t.Helper()
 	key := testRequestDecryptionKey(t, "req-1")
 	cfg := validConfig(t)
