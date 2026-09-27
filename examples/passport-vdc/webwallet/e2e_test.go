@@ -298,7 +298,7 @@ func shareSameDevice(t *testing.T, env *demotest.Env, b *http.Client) (resultPat
 }
 
 // TestSameDevice_RedirectBackReleasesTheResult runs the same-device
-// flow (HAIP 1.0 §5.2, OpenID4VP §8.2): the verifier holds the verified
+// flow (HAIP 1.0 §5.1, OpenID4VP §8.2): the verifier holds the verified
 // answer until the wallet brings the same browser back, then shows it.
 func TestSameDevice_RedirectBackReleasesTheResult(t *testing.T) {
 	env := demotest.New(t, nil)
@@ -337,7 +337,7 @@ func TestSameDevice_RedirectBackReleasesTheResult(t *testing.T) {
 
 // TestSameDevice_RedirectInAnotherBrowserIsRejected checks the answer is
 // rejected, never shown, when the redirect back arrives in a different
-// browser session than the one that asked (HAIP 1.0 §5.2).
+// browser session than the one that asked (HAIP 1.0 §5.1).
 func TestSameDevice_RedirectInAnotherBrowserIsRejected(t *testing.T) {
 	env := demotest.New(t, nil)
 	env.StartVerifier(t, nil)

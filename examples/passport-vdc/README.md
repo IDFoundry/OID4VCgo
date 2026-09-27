@@ -224,7 +224,7 @@ issued, and the verifier checks it again on the response.
 Each request made on the verifier's page can be answered two ways:
 
 - **On the same device** (**Open in web wallet**), the flow HAIP 1.0
-  §5.2 requires: when the answer verifies, the verifier holds it and
+  §5.1 requires: when the answer verifies, the verifier holds it and
   replies with a `redirect_uri` carrying a fresh `response_code`
   (OpenID4VP §8.2, §13.3). The wallet sends the browser there, and the
   verifier releases the result only if that browser presents the
