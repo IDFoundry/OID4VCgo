@@ -98,6 +98,15 @@ type Limits struct {
 	// separate "required" check.
 	MaxDPoPClockSkew time.Duration
 
+	// MaxProofAge bounds how far a jwt proof's "iat" may be from Now,
+	// in either direction, when there is no Nonce Endpoint to date the
+	// proof instead (OID4VCI 1.0 Appendix F.4: the key proof's creation
+	// time, "as determined by either the issuance time, or a server
+	// managed timestamp via the nonce claim, is within an acceptable
+	// window"). Required only when Endpoints.Nonce is not set; with one,
+	// the consumed c_nonce's own lifetime (NonceLifetime) is that window.
+	MaxProofAge time.Duration
+
 	// DPoPNonceLifetime bounds how long a DPoP nonce
 	// ExchangePreAuthorizedCode issues (RFC 9449 §8) remains valid.
 	// Required only when Dependencies.DPoPNonces is set.
@@ -508,6 +517,9 @@ func validateOptionalEndpointDependencies(cfg Config, deps Dependencies) error {
 
 func validateNonceEndpointDependencies(cfg Config, deps Dependencies) error {
 	if cfg.Endpoints.Nonce.IsZero() {
+		if cfg.Limits.MaxProofAge <= 0 {
+			return fmt.Errorf("issuer: config: limits.max_proof_age must be positive when endpoints.nonce is not set")
+		}
 		return nil
 	}
 	if cfg.Limits.NonceLifetime <= 0 {

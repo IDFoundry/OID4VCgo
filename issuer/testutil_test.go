@@ -127,6 +127,9 @@ func (f *fakeDeferredTransactionStore) Invalidate(_ context.Context, transaction
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if _, ok := f.records[transactionID]; !ok || f.invalidated[transactionID] {
+		return errDeferredTransactionNotFound
+	}
 	f.invalidated[transactionID] = true
 	return nil
 }

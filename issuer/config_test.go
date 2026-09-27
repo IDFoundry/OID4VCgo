@@ -121,6 +121,7 @@ func TestNewAcceptsNonceEndpointDisabled(t *testing.T) {
 	cfg := validConfig(t)
 	cfg.Endpoints.Nonce = fapi.URL{}
 	cfg.Limits.NonceLifetime = 0
+	cfg.Limits.MaxProofAge = time.Minute
 	deps := validDependencies(t)
 	deps.Nonces = nil
 	if _, err := issuer.New(cfg, deps); err != nil {

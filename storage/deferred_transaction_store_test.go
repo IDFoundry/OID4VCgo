@@ -69,6 +69,14 @@ func TestDeferredTransactionStore_InvalidateRetiresTransaction(t *testing.T) {
 	if _, err := s.Get(ctx, "txn-1"); err == nil {
 		t.Fatalf("Get after Invalidate = nil error, want error")
 	}
+	// Invalidate is the single-use gate: a second one, or one for an
+	// unknown transaction_id, fails.
+	if err := s.Invalidate(ctx, "txn-1"); err == nil {
+		t.Error("second Invalidate = nil error, want error")
+	}
+	if err := s.Invalidate(ctx, "unknown"); err == nil {
+		t.Error("Invalidate of an unknown transaction_id = nil error, want error")
+	}
 }
 
 func TestDeferredTransactionStore_PutAfterInvalidateRevives(t *testing.T) {

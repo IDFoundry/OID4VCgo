@@ -34,9 +34,9 @@ const (
 // only implements the polling protocol §9 defines on top of it.
 type DeferredTransactionRecord struct {
 	// ClientID binds this transaction to the client that originally
-	// requested it. RequestDeferredCredential rejects a request whose
-	// AuthorizedRequest.ClientIdentity doesn't match, when both are
-	// non-empty (§9: "The Wallet MUST present ... an Access Token that
+	// requested it. When set, RequestDeferredCredential rejects a
+	// request whose AuthorizedRequest.ClientIdentity isn't that client —
+	// including an anonymous one (§9: "The Wallet MUST present ... an Access Token that
 	// is valid for the issuance of the Credential(s) previously
 	// requested").
 	ClientID string
@@ -62,10 +62,13 @@ type DeferredTransactionStore interface {
 	// an error if transactionID is unknown.
 	Get(ctx context.Context, transactionID string) (DeferredTransactionRecord, error)
 
-	// Invalidate retires transactionID after its Credentials have been
-	// returned to the Wallet (§9.1: "The Credential Issuer MUST
-	// invalidate the transaction_id after the Credential for which it
-	// was meant has been obtained by the Wallet"). Called only right
-	// after a DeferredTransactionIssued record has actually been served.
+	// Invalidate retires transactionID as its Credentials are returned
+	// to the Wallet (§9.1: "The Credential Issuer MUST invalidate the
+	// transaction_id after the Credential for which it was meant has
+	// been obtained by the Wallet"). Called only for a
+	// DeferredTransactionIssued record, and the Credentials are served
+	// only if it succeeds — so it MUST be atomic and MUST fail if
+	// transactionID is unknown or already invalidated: of concurrent
+	// requests for one transaction_id, exactly one gets the Credentials.
 	Invalidate(ctx context.Context, transactionID string) error
 }

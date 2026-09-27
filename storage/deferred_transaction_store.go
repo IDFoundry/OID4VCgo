@@ -66,6 +66,9 @@ func (s *DeferredTransactionStore) Get(_ context.Context, transactionID string) 
 func (s *DeferredTransactionStore) Invalidate(_ context.Context, transactionID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if _, ok := s.records[transactionID]; !ok || s.invalidated[transactionID] {
+		return fmt.Errorf("storage: unknown or already-invalidated transaction_id")
+	}
 	s.invalidated[transactionID] = true
 	return nil
 }
