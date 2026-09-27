@@ -15,6 +15,36 @@ plan says nothing about another's, even where both sides share this
 repo's own JOSE/DCQL code, because the protocol behaviour and
 negative-test expectations differ.
 
+## OIDF Certification
+
+**OpenID Certified™** by Oscar Sanderson (Implementer) that OID4VCgo
+0.12.0 (Deployment) conforms to the profiles below. This is official
+[OpenID Foundation certification](https://openid.net/certification/),
+submitted to and published by OIDF, not merely a self-run pass against
+the live conformance suite. As with any conformance certification, it
+is a statement of tested conformance for the listed deployment
+version, not an OIDF endorsement of OID4VCgo generally, and it doesn't
+automatically extend to a later release without its own renewed
+submission (OpenID Certification Terms and Conditions §4(a)).
+
+| Certification | Role | Profiles certified | Listing |
+| --- | --- | --- | --- |
+| OID4VCI 1.0 + HAIP 1.0 | Issuer | sd_jwt_vc × {issuer_initiated, wallet_initiated}; mdoc × {issuer_initiated, wallet_initiated} | [openid.net](https://openid.net/certification/certified-oid4vci-haip-final/) |
+| OID4VCI 1.0 + HAIP 1.0 | Wallet | sd_jwt_vc × {wallet_initiated, issuer_initiated by_value, issuer_initiated by_reference}; mdoc × the same three | [openid.net](https://openid.net/certification/certified-oid4vci-haip-final/) |
+| OID4VP 1.0 + HAIP 1.0 | Verifier | sd_jwt_vc direct_post.jwt; iso_mdl direct_post.jwt | [openid.net](https://openid.net/certification/certified-oid4vp-haip-final/) |
+| OID4VP 1.0 + HAIP 1.0 | Wallet | sd_jwt_vc direct_post.jwt; iso_mdl direct_post.jwt | [openid.net](https://openid.net/certification/certified-oid4vp-haip-final/) |
+
+Each listing links the signed test results for every certified profile.
+The DC API (`dc_api.jwt`) variants are not certified; they're out of
+scope for this library, as described above.
+
+Later releases are checked against the same test plans by the
+[OID4VCI](../.github/workflows/oid4vci-conformance.yml) and
+[OID4VP](../.github/workflows/oid4vp-conformance.yml) conformance
+workflows, which run daily and on demand. Those runs, and the per-role
+write-ups below, are the self-run work that produced the evidence for
+these certifications, not a substitute for them.
+
 ## Keeping the local suite current
 
 These binaries only genuinely mirror what `certification.openid.net`
