@@ -239,7 +239,7 @@ func newOAuthClient(ctx context.Context, w *wallet.Wallet, cfg Config, httpClien
 		OAuthOnly:  true,
 		Algorithms: client.Algorithms{DPoP: fapi.ES256, ClientAttestationPoP: fapi.ES256},
 		Limits: client.Limits{
-			SessionLifetime: 10 * time.Minute, MaxIDTokenLifetime: 5 * time.Minute, MaxClockSkew: 5 * time.Second,
+			SessionLifetime: 10 * time.Minute, MaxClockSkew: 5 * time.Second,
 			HTTPTimeout: httpTimeout, MaxHTTPResponseBytes: 1 << 20, MaxJOSECompactBytes: 16 * 1024,
 		},
 	}, client.Dependencies{
