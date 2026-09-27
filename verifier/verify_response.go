@@ -85,8 +85,9 @@ type VerifyResponseRequest struct {
 	// Credential.
 	IssuerKeys SDJWTVCIssuerKeyResolver
 
-	// Now, if set, is used instead of time.Now for Key Binding JWT
-	// freshness checks. Defaults to time.Now.
+	// Now, if set, is used instead of time.Now for every time check:
+	// credential validity (SD-JWT exp/nbf, mdoc validFrom/validUntil)
+	// and Key Binding JWT freshness. Defaults to time.Now.
 	Now func() time.Time
 
 	// MaxKeyBindingAge bounds how old a Key Binding JWT's own "iat"
@@ -159,8 +160,17 @@ type VerifiedCredential struct {
 
 	// Claims is the Presentation's own disclosed claims — for
 	// "dc+sd-jwt", credential/sdjwtvc.Verify's own resolved payload
-	// (RFC 9901 §7.1's "Processed SD-JWT Payload").
+	// (RFC 9901 §7.1's "Processed SD-JWT Payload"), including its
+	// "status" claim when the credential has one.
 	Claims map[string]any
+
+	// MdocStatus is an "mso_mdoc" credential's revocation reference,
+	// from its issuer-signed MSO (ISO/IEC 18013-5 §12.3.6) — nil for
+	// "dc+sd-jwt", whose reference is Claims["status"], and for an mdoc
+	// without one. VerifyResponse doesn't check revocation itself: a
+	// caller that does resolves this (or Claims["status"]) against the
+	// referenced list, e.g. with statuslist.CheckCWT or statuslist.Check.
+	MdocStatus *mdoc.Status
 }
 
 // VerifyResponseResult is returned by a successful VerifyResponse.
@@ -214,6 +224,10 @@ type VerifyResponseResult struct {
 // "MUST NOT return any Credential(s)"), while an optional one is
 // silently omitted from VerifyResponseResult. A Credential Query not
 // referenced by any Credential Set Query is never checked.
+//
+// VerifyResponse doesn't check revocation: each VerifiedCredential
+// carries its status reference (Claims["status"], or MdocStatus) for the
+// caller to resolve against the referenced Token Status List.
 //
 // A Credential Query's own TrustedAuthorities (§6.1.1), when
 // non-empty, is checked against the verified Presentation's own issuer
@@ -372,19 +386,20 @@ func (v *Verifier) verifyCredentialQuery(ctx context.Context, cq dcql.Credential
 	vcs := make([]VerifiedCredential, 0, len(presentations))
 	for _, presented := range presentations {
 		var claims map[string]any
+		var status *mdoc.Status
 		var err error
 		switch cq.Format {
 		case sdjwtvc.CredentialFormat:
 			claims, err = v.verifySDJWTVCPresentation(ctx, cq, presented, req)
 		case mdoc.CredentialFormat:
-			claims, err = v.verifyMdocPresentation(ctx, cq, presented, req)
+			claims, status, err = v.verifyMdocPresentation(ctx, cq, presented, req)
 		default:
 			return nil, fmt.Errorf("format %q is not yet supported", cq.Format)
 		}
 		if err != nil {
 			return nil, err
 		}
-		vcs = append(vcs, VerifiedCredential{CredentialQueryID: cq.ID, Claims: claims})
+		vcs = append(vcs, VerifiedCredential{CredentialQueryID: cq.ID, Claims: claims, MdocStatus: status})
 	}
 	return vcs, nil
 }
@@ -473,68 +488,68 @@ func (v *Verifier) expectedAudience(origin string) string {
 // (Appendix B.2.6.1) always sets EReaderKeyBytes to null — there is no
 // in-band reader ephemeral key to agree a MAC key from, so only
 // DeviceAuthSignature (§12.4.6, ECDSA/EdDSA) is meaningful here.
-func (v *Verifier) verifyMdocPresentation(ctx context.Context, cq dcql.CredentialQuery, presented string, req VerifyResponseRequest) (map[string]any, error) {
+func (v *Verifier) verifyMdocPresentation(ctx context.Context, cq dcql.CredentialQuery, presented string, req VerifyResponseRequest) (map[string]any, *mdoc.Status, error) {
 	if req.MdocIssuerKeys == nil {
-		return nil, fmt.Errorf("dependencies.mdoc_issuer_keys is required for a %q credential query — see X5ChainIssuerKeyResolver for a ready-made implementation backed by a trust anchor pool", mdoc.CredentialFormat)
+		return nil, nil, fmt.Errorf("dependencies.mdoc_issuer_keys is required for a %q credential query — see X5ChainIssuerKeyResolver for a ready-made implementation backed by a trust anchor pool", mdoc.CredentialFormat)
 	}
 	if req.ResponseEncryptionKey == nil {
-		return nil, fmt.Errorf("response_encryption_key is required for a %q credential query", mdoc.CredentialFormat)
+		return nil, nil, fmt.Errorf("response_encryption_key is required for a %q credential query", mdoc.CredentialFormat)
 	}
 
 	raw, err := base64.RawURLEncoding.DecodeString(presented)
 	if err != nil {
-		return nil, newError("decode device response", err)
+		return nil, nil, newError("decode device response", err)
 	}
 	doc, err := oid4vpmdoc.UnmarshalDeviceResponse(raw)
 	if err != nil {
-		return nil, newError("unmarshal device response", err)
+		return nil, nil, newError("unmarshal device response", err)
 	}
 
 	_, unprotected, _, err := cose.DecodeUnverified(doc.IssuerSigned.IssuerAuth)
 	if err != nil {
-		return nil, newError("decode issuer auth", err)
+		return nil, nil, newError("decode issuer auth", err)
 	}
 	issuerPub, issuerAlg, err := req.MdocIssuerKeys.ResolveMdocIssuerKey(ctx, unprotected.X5Chain, doc.DocType)
 	if err != nil {
-		return nil, newError("resolve issuer key", err)
+		return nil, nil, newError("resolve issuer key", err)
 	}
 
-	verified, err := mdoc.Verify(doc.IssuerSigned, doc.DocType, issuerPub, issuerAlg, mdoc.VerifyOptions{})
+	verified, err := mdoc.Verify(doc.IssuerSigned, doc.DocType, issuerPub, issuerAlg, mdoc.VerifyOptions{Now: req.Now})
 	if err != nil {
-		return nil, newError("verify issuer signed", err)
+		return nil, nil, newError("verify issuer signed", err)
 	}
 
 	thumbprintBytes, err := jwk.Thumbprint(&req.ResponseEncryptionKey.PublicKey)
 	if err != nil {
-		return nil, fmt.Errorf("response encryption key: %w", err)
+		return nil, nil, fmt.Errorf("response encryption key: %w", err)
 	}
 	sessionTranscriptBytes, err := v.buildMdocSessionTranscriptBytes(req, thumbprintBytes)
 	if err != nil {
-		return nil, fmt.Errorf("build session transcript: %w", err)
+		return nil, nil, fmt.Errorf("build session transcript: %w", err)
 	}
 
 	if doc.DeviceSigned.AuthType != mdoc.DeviceAuthSignature {
-		return nil, newError(fmt.Sprintf("device authentication type %d is not supported (see verifyMdocPresentation's own doc comment)", doc.DeviceSigned.AuthType), nil)
+		return nil, nil, newError(fmt.Sprintf("device authentication type %d is not supported (see verifyMdocPresentation's own doc comment)", doc.DeviceSigned.AuthType), nil)
 	}
 	deviceAlg, err := mdocAlgForKey(verified.DeviceKey)
 	if err != nil {
-		return nil, newError("device key", err)
+		return nil, nil, newError("device key", err)
 	}
 	if err := mdoc.VerifyDeviceSignature(doc.DeviceSigned, verified.DeviceKey, deviceAlg, sessionTranscriptBytes, doc.DocType); err != nil {
-		return nil, newError("verify device signature", err)
+		return nil, nil, newError("verify device signature", err)
 	}
 
 	if err := mdoc.CheckKeyAuthorizations(doc.DeviceSigned.NameSpaces, verified.KeyAuthorizations); err != nil {
-		return nil, newError("check key authorizations", err)
+		return nil, nil, newError("check key authorizations", err)
 	}
 
 	if err := cq.SatisfiedByMdocClaims(verified.DocType, verified.NameSpaces); err != nil {
-		return nil, newError("satisfied by mdoc claims", err)
+		return nil, nil, newError("satisfied by mdoc claims", err)
 	}
 
 	if len(cq.TrustedAuthorities) > 0 {
 		if err := req.TrustedAuthorities.CheckTrustedAuthorities(ctx, cq.TrustedAuthorities, unprotected.X5Chain); err != nil {
-			return nil, newError(errCategoryTrustedAuthorities, err)
+			return nil, nil, newError(errCategoryTrustedAuthorities, err)
 		}
 	}
 
@@ -542,7 +557,7 @@ func (v *Verifier) verifyMdocPresentation(ctx context.Context, cq dcql.Credentia
 	for namespace, elements := range verified.NameSpaces {
 		claims[namespace] = elements
 	}
-	return claims, nil
+	return claims, verified.Status, nil
 }
 
 // buildMdocSessionTranscriptBytes rebuilds SessionTranscriptBytes

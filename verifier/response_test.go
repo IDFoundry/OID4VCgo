@@ -3,6 +3,7 @@ package verifier_test
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/idfoundry/oid4vcgo/internal/jwe"
@@ -118,5 +119,26 @@ func TestResponseError_Error(t *testing.T) {
 	withoutDescription := &verifier.ResponseError{Code: "access_denied"}
 	if got, want := withoutDescription.Error(), `verifier: wallet returned error "access_denied"`; got != want {
 		t.Errorf("Error() = %q, want %q", got, want)
+	}
+}
+
+// TestParseDirectPostJWTResponseRejectsCompressedResponse checks a
+// zip:DEF response is refused before decryption: this Verifier never
+// offers compression, and anyone who sees the Request Object can encrypt
+// to its response key, so inflating one would let an unauthenticated
+// sender make the Verifier allocate far more than it sent.
+func TestParseDirectPostJWTResponseRejectsCompressedResponse(t *testing.T) {
+	v := newTestVerifier(t)
+	built, err := v.BuildAuthorizationRequest(verifier.BuildAuthorizationRequestRequest{Query: testQuery(t)})
+	if err != nil {
+		t.Fatalf("BuildAuthorizationRequest: %v", err)
+	}
+	compact, err := jwe.Encrypt(&built.ResponseDecryptionKey.PublicKey, jwe.A128GCM,
+		[]byte(`{"vp_token":{"cred1":["`+strings.Repeat("a", 4096)+`"]}}`), jwe.EncryptOptions{Zip: jwe.DEF})
+	if err != nil {
+		t.Fatalf("jwe.Encrypt: %v", err)
+	}
+	if _, err := v.ParseDirectPostJWTResponse(compact, built.ResponseDecryptionKey); err == nil || !strings.Contains(err.Error(), "compressed") {
+		t.Fatalf("ParseDirectPostJWTResponse(zip:DEF) error = %v, want a refused compressed response", err)
 	}
 }
