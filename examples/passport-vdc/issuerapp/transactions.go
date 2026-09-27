@@ -2,9 +2,11 @@ package issuerapp
 
 import (
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"math/big"
 	"sync"
 	"time"
 
@@ -13,38 +15,68 @@ import (
 
 // transactions holds verified passports awaiting issuance, keyed by an
 // unguessable ID that doubles as the Credential Offer's issuer_state
-// and the access token's subject. Entries live in memory only and
-// expire after the configured lifetime — the raw passport data is
-// never persisted.
+// and the access token's subject. Entries live in memory only — the raw
+// passport data is never persisted — and are dropped when every offered
+// credential has been issued, when they expire, or after too many wrong
+// confirmation codes.
+//
+// A transaction is redeemed once: the first approval with the right
+// confirmation code claims it, after which no other authorization can
+// reach it, and that authorization's (DPoP-bound) access token can
+// fetch each offered credential once.
 type transactions struct {
 	mu       sync.Mutex
 	now      func() time.Time
 	lifetime time.Duration
 	max      int
-	items    map[string]transaction
+	items    map[string]*transaction
 }
-
-// errTooManyTransactions is returned by put when max passports are
-// already held.
-var errTooManyTransactions = errors.New("issuerapp: too many passports awaiting issuance")
 
 type transaction struct {
 	evidence  passport.Evidence
+	code      string
 	expiresAt time.Time
+	claimed   bool
+	failures  int
+	pending   map[string]bool // offered configuration ID → not yet issued
 }
+
+// maxCodeFailures is how many wrong confirmation codes void a
+// transaction — a million codes, a handful of guesses.
+const maxCodeFailures = 5
+
+var (
+	// errTooManyTransactions is returned by put when max passports are
+	// already held.
+	errTooManyTransactions = errors.New("issuerapp: too many passports awaiting issuance")
+	errNoTransaction       = errors.New("issuerapp: the passport transaction is unknown or has expired")
+	errAlreadyRedeemed     = errors.New("issuerapp: this credential offer has already been redeemed")
+	errWrongCode           = errors.New("issuerapp: the confirmation code is wrong")
+	errTooManyWrongCodes   = errors.New("issuerapp: too many wrong confirmation codes — the offer is void; upload the passport again")
+	errAlreadyIssued       = errors.New("issuerapp: this credential has already been issued for this passport")
+)
 
 func newTransactions(now func() time.Time, lifetime time.Duration, max int) *transactions {
-	return &transactions{now: now, lifetime: lifetime, max: max, items: make(map[string]transaction)}
+	return &transactions{now: now, lifetime: lifetime, max: max, items: make(map[string]*transaction)}
 }
 
-// put stores e under a fresh ID and returns it, or errTooManyTransactions
-// when max unexpired passports are already held.
-func (t *transactions) put(e passport.Evidence) (string, error) {
+// put stores e, redeemable once for each of configIDs, under a fresh ID
+// with a fresh confirmation code, and returns both — or
+// errTooManyTransactions when max unexpired passports are already held.
+func (t *transactions) put(e passport.Evidence, configIDs []string) (id, code string, err error) {
 	var b [32]byte
 	if _, err := rand.Read(b[:]); err != nil {
-		return "", fmt.Errorf("issuerapp: transaction id: %w", err)
+		return "", "", fmt.Errorf("issuerapp: transaction id: %w", err)
 	}
-	id := base64.RawURLEncoding.EncodeToString(b[:])
+	n, err := rand.Int(rand.Reader, big.NewInt(1_000_000))
+	if err != nil {
+		return "", "", fmt.Errorf("issuerapp: confirmation code: %w", err)
+	}
+	id, code = base64.RawURLEncoding.EncodeToString(b[:]), fmt.Sprintf("%06d", n.Int64())
+	pending := make(map[string]bool, len(configIDs))
+	for _, c := range configIDs {
+		pending[c] = true
+	}
 
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -55,23 +87,101 @@ func (t *transactions) put(e passport.Evidence) (string, error) {
 		}
 	}
 	if len(t.items) >= t.max {
-		return "", errTooManyTransactions
+		return "", "", errTooManyTransactions
 	}
-	t.items[id] = transaction{evidence: e, expiresAt: now.Add(t.lifetime)}
-	return id, nil
+	t.items[id] = &transaction{evidence: e, code: code, expiresAt: now.Add(t.lifetime), pending: pending}
+	return id, code, nil
 }
 
-// get returns the Evidence stored under id, if it exists and hasn't
-// expired. Entries aren't consumed on read: one passport may be issued
-// in both formats, and in batches, until it expires.
-func (t *transactions) get(id string) (passport.Evidence, bool) {
+// lookup returns the unexpired transaction under id. Called with t.mu
+// held.
+func (t *transactions) lookup(id string) (*transaction, bool) {
+	v, ok := t.items[id]
+	if !ok || !t.now().Before(v.expiresAt) {
+		return nil, false
+	}
+	return v, true
+}
+
+// unclaimed returns the Evidence of an unexpired transaction no approval
+// has claimed yet — what may still start an authorization.
+func (t *transactions) unclaimed(id string) (passport.Evidence, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	v, ok := t.lookup(id)
+	switch {
+	case !ok:
+		return passport.Evidence{}, errNoTransaction
+	case v.claimed:
+		return passport.Evidence{}, errAlreadyRedeemed
+	}
+	return v.evidence, nil
+}
+
+// claim redeems the transaction for one authorization, if code is its
+// confirmation code. A wrong code counts against it; maxCodeFailures of
+// them void it.
+func (t *transactions) claim(id, code string) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	v, ok := t.lookup(id)
+	switch {
+	case !ok:
+		return errNoTransaction
+	case v.claimed:
+		return errAlreadyRedeemed
+	case subtle.ConstantTimeCompare([]byte(code), []byte(v.code)) != 1:
+		if v.failures++; v.failures >= maxCodeFailures {
+			delete(t.items, id)
+			return errTooManyWrongCodes
+		}
+		return errWrongCode
+	}
+	v.claimed = true
+	return nil
+}
+
+// reserve returns the Evidence of a claimed transaction for issuing
+// configID, marking it issued so no other request can issue it again.
+// Call release if issuing then fails, or done if it succeeds.
+func (t *transactions) reserve(id, configID string) (passport.Evidence, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	v, ok := t.lookup(id)
+	switch {
+	case !ok || !v.claimed:
+		return passport.Evidence{}, errNoTransaction
+	case !v.pending[configID]:
+		return passport.Evidence{}, errAlreadyIssued
+	}
+	v.pending[configID] = false
+	return v.evidence, nil
+}
+
+// release undoes reserve after issuing configID failed.
+func (t *transactions) release(id, configID string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if v, ok := t.items[id]; ok {
+		v.pending[configID] = true
+	}
+}
+
+// done drops the transaction — and its passport data — once every
+// offered credential has been issued.
+func (t *transactions) done(id string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	v, ok := t.items[id]
-	if !ok || !t.now().Before(v.expiresAt) {
-		return passport.Evidence{}, false
+	if !ok {
+		return
 	}
-	return v.evidence, true
+	for _, pending := range v.pending {
+		if pending {
+			return
+		}
+	}
+	delete(t.items, id)
 }
 
 // ttlMap is a small thread-safe map with per-entry expiry and

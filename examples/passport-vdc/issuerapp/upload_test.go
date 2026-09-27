@@ -82,4 +82,12 @@ func TestUpload_Sample(t *testing.T) {
 	if resp.StatusCode != http.StatusOK || !strings.Contains(page, "openid-credential-offer://") {
 		t.Errorf("status %d; credential offer present: %v", resp.StatusCode, strings.Contains(page, "openid-credential-offer://"))
 	}
+	for _, want := range []string{"Confirmation code", `src="data:image/png;base64,`} {
+		if !strings.Contains(page, want) {
+			t.Errorf("offer page is missing %q", want)
+		}
+	}
+	if resp.Header.Get("Cache-Control") != "no-store" {
+		t.Errorf("offer page Cache-Control = %q, want no-store", resp.Header.Get("Cache-Control"))
+	}
 }

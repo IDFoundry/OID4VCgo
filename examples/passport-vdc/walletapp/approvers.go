@@ -13,11 +13,14 @@ import (
 )
 
 // HeadlessApprover approves without a browser, by reading the demo
-// issuer's X-Interaction-Handle header and posting "approve" to its
-// /authorize/decision endpoint — the demo issuer's own convention, not
-// a standard. For tests and scripted demos.
+// issuer's X-Interaction-Handle header and posting "approve" with the
+// offer's confirmation code to its /authorize/decision endpoint — the
+// demo issuer's own convention, not a standard. For tests and scripted
+// demos.
 type HeadlessApprover struct {
 	HTTP *http.Client // nil means a 10 s timeout client
+	// Code is the confirmation code shown with the offer.
+	Code string
 }
 
 // Approve implements Approver.
@@ -48,7 +51,7 @@ func (h HeadlessApprover) Approve(ctx context.Context, authorizationURL string) 
 		return "", err
 	}
 	decision := (&url.URL{Scheme: u.Scheme, Host: u.Host, Path: "/authorize/decision"}).String()
-	form := url.Values{"handle": {handle}, "decision": {"approve"}}
+	form := url.Values{"handle": {handle}, "decision": {"approve"}, "code": {h.Code}}
 	req, err = http.NewRequestWithContext(ctx, http.MethodPost, decision, strings.NewReader(form.Encode()))
 	if err != nil {
 		return "", err
