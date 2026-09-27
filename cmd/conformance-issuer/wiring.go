@@ -141,8 +141,16 @@ func newServerMux(cfg Config) (*http.ServeMux, error) {
 	if err != nil {
 		return nil, err
 	}
+	// keys.LocalIssuerKeys reads the access-token signing keys straight
+	// from keyManager, rather than looping back to this binary's own
+	// /jwks, whose self-signed listener cert a standard net/http.Client
+	// (unlike the OIDF suite's own outbound client) doesn't trust.
+	localKeys, err := keys.NewLocalIssuerKeys(issuerURL, keyManager)
+	if err != nil {
+		return nil, err
+	}
 	resourceAccessTokens, err := fapires.NewJWTAccessTokens(
-		selfIssuerKeySource{keyManager: keyManager}, issuerURL, issuerURL.String(),
+		localKeys, issuerURL, issuerURL.String(),
 		fapi.ES256, srvLimits().AccessTokenLifetime, 8,
 	)
 	if err != nil {
@@ -470,26 +478,6 @@ func registeredRedirectURIs(raw []string) []fapi.RegisteredRedirectURI {
 		out[i] = fapi.RegisteredRedirectURI(u)
 	}
 	return out
-}
-
-// selfIssuerKeySource resolves this same process's own access-token
-// signing key directly from its in-memory keyManager — matches
-// FAPIgo's own cmd/conformance-as/resource.go identically, including
-// why: a loopback to this binary's own /jwks endpoint would hit its
-// self-signed listener cert with a standard net/http.Client, which
-// (unlike the OIDF suite's own outbound client) does not trust it.
-type selfIssuerKeySource struct {
-	keyManager *ephemeral.KeyManager
-}
-
-func (s selfIssuerKeySource) ResolveIssuerKeys(ctx context.Context, req keys.IssuerKeyRequest) (keys.IssuerKeySet, error) {
-	pub, err := s.keyManager.PublicKey(ctx, keys.AccessTokenSigning, req.Algorithm)
-	if err != nil {
-		return keys.IssuerKeySet{}, err
-	}
-	return keys.IssuerKeySet{Keys: []keys.IssuerKey{
-		{KeyID: pub.KeyID, Algorithm: req.Algorithm, PublicKey: pub.PublicKey},
-	}}, nil
 }
 
 // fixedKeyAttestationVerifier trusts exactly one public key for every

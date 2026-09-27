@@ -159,16 +159,10 @@ The library's wallet can discover a loopback `http` issuer too, when
 | Step | Endpoint | What happens |
 |---|---|---|
 | Upload | `POST /passport` | gmrtd verification → a transaction T holding the `Evidence` (in memory, 10 minutes, at most 100 at once) → a credential offer with `issuer_state` = T, as a link and a QR code, and a six-digit confirmation code |
-| PAR | `POST /par` | fapigo verifies the Wallet Attestation (its `x5c` chain to the Wallet Provider CA) + PoP and DPoP; this app records `request_uri` → T from the form's `issuer_state` |
-| Approve | `GET /authorize`, `POST /authorize/decision` | shows the passport holder's name and asks for the confirmation code; approval with the right code **claims T** — no other authorization can reach it — and authorizes **subject = T**, granting the scopes the wallet requested |
+| PAR | `POST /par` | fapigo verifies the Wallet Attestation (its `x5c` chain to the Wallet Provider CA) + PoP and DPoP; the Wallet sends the offer's `issuer_state` (T) |
+| Approve | `GET /authorize`, `POST /authorize/decision` | reads T back from the interaction request's `issuer_state`, then shows the passport holder's name and asks for the confirmation code; approval with the right code **claims T** — no other authorization can reach it — and authorizes **subject = T**, granting the scopes the wallet requested |
 | Token | `POST /token` | DPoP-bound access token with `sub` = T |
 | Credential | `POST /nonce`, `POST /credential` | the request and response are both encrypted (OID4VCI 1.0 §10, required by the issuer's metadata: the credential carries passport data); the token's `sub` finds T's `Evidence`; the requested configuration (`passport_mdoc` or `passport_sdjwt`), if not already issued for T, is encoded, bound to the key the Key Attestation attests, and signed; once both are issued, T and its passport data are dropped. The wallet checks each credential before keeping it: issuer signature chaining to `issuer-ca.pem`, bound to its own holder key, and the offered vct or doctype |
-
-`issuer_state` has to be captured at PAR because fapigo doesn't surface
-extension values at the authorization step (see the library's
-`issuer/authorization_server.go`). Only plain form parameters are read,
-so a wallet sending `issuer_state` inside a signed request object isn't
-supported.
 
 Also served: `/.well-known/openid-credential-issuer` (signed metadata),
 `/.well-known/oauth-authorization-server`, `/jwks`, and the SD-JWT VC

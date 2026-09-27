@@ -1,7 +1,6 @@
 package issuerapp
 
 import (
-	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -58,7 +57,6 @@ type App struct {
 	issuer           *issuer.Issuer
 	resourceVerifier *fapires.Verifier
 	transactions     *transactions
-	requestURIs      *ttlMap[string]             // PAR request_uri → transaction ID
 	interactions     *ttlMap[pendingInteraction] // interaction handle → approval
 	metadataSigner   *ecdsa.PrivateKey
 	metadataCert     *x509.Certificate
@@ -82,7 +80,6 @@ func New(cfg Config) (*App, error) {
 	}
 	a.vct = cfg.IssuerURL + VCTPath
 	a.transactions = newTransactions(a.now, cfg.transactionLifetime(), cfg.maxTransactions())
-	a.requestURIs = newTTLMap[string](a.now)
 	a.interactions = newTTLMap[pendingInteraction](a.now)
 	if a.providerRoots, err = certPool(cfg.Wallet.ProviderCA); err != nil {
 		return nil, err
@@ -148,8 +145,8 @@ func (a *App) buildAuthorizationServer() error {
 	if err != nil {
 		return fmt.Errorf("issuerapp: access tokens: %w", err)
 	}
-	// issuer_state must be registered to survive PAR at all; the value
-	// is captured by this app's own PAR handler (see the package doc).
+	// issuer_state must be registered to survive PAR at all; the
+	// approval step reads it back from the interaction request.
 	extensions, err := extension.NewRegistry(oid4vci.IssuerStateExtension)
 	if err != nil {
 		return fmt.Errorf("issuerapp: extensions: %w", err)
@@ -187,7 +184,13 @@ func (a *App) buildAuthorizationServer() error {
 		return fmt.Errorf("issuerapp: server.New: %w", err)
 	}
 
-	resourceTokens, err := fapires.NewJWTAccessTokens(selfIssuerKeys{keyManager}, a.issuerURL, a.issuerURL.String(), fapi.ES256, limits.AccessTokenLifetime, 8)
+	// The resource verifier reads the access-token signing keys straight
+	// from the key manager, rather than fetching this issuer's own /jwks.
+	localKeys, err := keys.NewLocalIssuerKeys(a.issuerURL, keyManager)
+	if err != nil {
+		return fmt.Errorf("issuerapp: local issuer keys: %w", err)
+	}
+	resourceTokens, err := fapires.NewJWTAccessTokens(localKeys, a.issuerURL, a.issuerURL.String(), fapi.ES256, limits.AccessTokenLifetime, 8)
 	if err != nil {
 		return fmt.Errorf("issuerapp: resource access tokens: %w", err)
 	}
@@ -368,19 +371,6 @@ func certPool(data []byte) (*x509.CertPool, error) {
 		return nil, fmt.Errorf("issuerapp: Wallet.ProviderCA holds no PEM certificate")
 	}
 	return pool, nil
-}
-
-// selfIssuerKeys resolves this process's own access-token signing key
-// for the resource verifier directly from the key manager, rather than
-// fetching this issuer's own /jwks over HTTP.
-type selfIssuerKeys struct{ km *ephemeral.KeyManager }
-
-func (s selfIssuerKeys) ResolveIssuerKeys(ctx context.Context, req keys.IssuerKeyRequest) (keys.IssuerKeySet, error) {
-	pub, err := s.km.PublicKey(ctx, keys.AccessTokenSigning, req.Algorithm)
-	if err != nil {
-		return keys.IssuerKeySet{}, err
-	}
-	return keys.IssuerKeySet{Keys: []keys.IssuerKey{{KeyID: pub.KeyID, Algorithm: req.Algorithm, PublicKey: pub.PublicKey}}}, nil
 }
 
 // IssuerCertificate is this process's document signer certificate,
