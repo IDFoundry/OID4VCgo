@@ -193,6 +193,9 @@ func newServerMux(cfg Config) (*http.ServeMux, error) {
 		Random:                 rand.Reader,
 		ClientCertificateTrust: server.NoClientCertificateChainTrust{},
 	}
+	if srvDeps.AttesterTrust, err = attesterTrust(cfg); err != nil {
+		return nil, err
+	}
 	srv, err := server.New(srvCfg, srvDeps)
 	if err != nil {
 		return nil, fmt.Errorf("server.New: %w", err)
@@ -351,14 +354,14 @@ func buildClientRegistration(cfg Config) (clientRepo *memstore.ClientRepository,
 	if err != nil {
 		return nil, nil, err
 	}
-	// Registers the attester's own public key(s) — even under
-	// ClientAuthMethodAttestation, fapigo/server resolves a Client
-	// Attestation JWT's own verification key via this same
-	// Dependencies.ClientKeys, keyed by client ID (confirmed against
-	// server/client_auth_attestation.go's own resolveClientKey call) —
-	// see Config.Client's own doc comment.
-	clientKeySpecs := []ephemeral.ClientKeySpec{
-		{ClientID: fapi.ClientID(cfg.Client.ID), JWKS: cfg.Client.AttesterJWKS},
+	// Registers the attester's own public key(s), when the config uses
+	// them (RegisteredAttesterKeys resolves a Client Attestation JWT's
+	// verification key via this same Dependencies.ClientKeys, keyed by
+	// client ID); under attester_trust_anchors_pem there are none, and
+	// the "x5c" chain is verified instead — see attesterTrust.
+	var clientKeySpecs []ephemeral.ClientKeySpec
+	if !cfg.Client.usesAttesterTrustAnchors() {
+		clientKeySpecs = append(clientKeySpecs, ephemeral.ClientKeySpec{ClientID: fapi.ClientID(cfg.Client.ID), JWKS: cfg.Client.AttesterJWKS})
 	}
 	allowedScopes := []string{cfg.Scope}
 	if cfg.Mdoc != nil {
@@ -382,7 +385,7 @@ func buildClientRegistration(cfg Config) (clientRepo *memstore.ClientRepository,
 		}
 		registeredClients = append(registeredClients, c)
 	}
-	if cfg.Client2 != nil {
+	if cfg.Client2 != nil && !cfg.Client2.usesAttesterTrustAnchors() {
 		clientKeySpecs = append(clientKeySpecs, ephemeral.ClientKeySpec{
 			ClientID: fapi.ClientID(cfg.Client2.ID), JWKS: cfg.Client2.AttesterJWKS,
 		})

@@ -58,10 +58,6 @@ func New(t *testing.T, cscaPool cms.CertPool) *Env {
 	if err != nil {
 		t.Fatalf("walletprovider.New: %v", err)
 	}
-	jwks, err := provider.PublicJWKS()
-	if err != nil {
-		t.Fatalf("PublicJWKS: %v", err)
-	}
 	e := &Env{Provider: provider, roots: x509.NewCertPool(), verifierCAs: x509.NewCertPool()}
 	e.webSrv = httptest.NewUnstartedServer(nil)
 	e.WebWalletURL = "https://" + e.webSrv.Listener.Addr().String()
@@ -77,7 +73,7 @@ func New(t *testing.T, cscaPool cms.CertPool) *Env {
 		IssuerURL: e.IssuerURL, CSCAPool: cscaPool,
 		Wallet: issuerapp.WalletClient{
 			ClientID: WalletClientID, RedirectURIs: []string{RedirectURI, e.WebWalletURL + "/callback"},
-			ProviderIssuer: ProviderIssuer, ProviderJWKS: jwks, ProviderCA: provider.CACertificatePEM(),
+			ProviderIssuer: ProviderIssuer, ProviderCA: provider.CACertificatePEM(),
 		},
 	})
 	if err != nil {

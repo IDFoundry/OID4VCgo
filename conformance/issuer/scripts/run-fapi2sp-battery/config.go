@@ -25,20 +25,19 @@ type run struct {
 	// identity, shared — confirmed against the suite's own
 	// AbstractFAPI2SPFinalServerTestModule.java: client_attestation.attester_jwks/
 	// client_attestation.issuer are singular top-level config fields,
-	// not per-client). cmd/conformance-issuer's own server config
-	// trusts this key's public half for both registered clients.
-	// attesterLeafPEM's own x5c must be embedded directly in the JWK
-	// entry client_attestation.attester_jwks carries — confirmed live:
-	// AbstractSignJWT.java's own "errorIfX5cMissing" path rejects
-	// signing the Client Attestation JWT outright ("A x5c entry is
-	// required in the client's signing key but isn't present in the
-	// configuration") without one, even though cmd/conformance-issuer's
-	// own server-side verification (server/client_auth_attestation.go)
-	// never looks at x5c at all — this is purely the suite's own
-	// HAIP-mandated requirement on what it signs with, independent of
-	// what the verifier needs.
+	// not per-client). attesterLeafPEM's own x5c must be embedded
+	// directly in the JWK entry client_attestation.attester_jwks
+	// carries — confirmed live: AbstractSignJWT.java's own
+	// "errorIfX5cMissing" path rejects signing the Client Attestation
+	// JWT outright ("A x5c entry is required in the client's signing key
+	// but isn't present in the configuration") without one, per HAIP
+	// 1.0 §4.4.1. cmd/conformance-issuer trusts that x5c chain for both
+	// registered clients by attesterCAPEM, the CA that issued the leaf
+	// (fapigo/server's X5CAttesterChain) — not by the key itself, and
+	// never a self-signed leaf, which X5CAttesterChain rejects.
 	attesterKey     *ecdsa.PrivateKey
 	attesterLeafPEM string
+	attesterCAPEM   string
 	attesterIssuer  string
 
 	client1ID, client2ID                   string
@@ -121,7 +120,7 @@ func generateRun(alias, issuerBaseURL string) (*run, error) {
 		return nil, fmt.Errorf("generate tls cert: %w", err)
 	}
 
-	attesterKey, _, attesterLeafPEM, _, err := conformancecert.GenerateSignerAndCert("run-fapi2sp-battery-attester-leaf", "run-fapi2sp-battery-attester-ca")
+	attesterKey, _, attesterLeafPEM, attesterCAPEM, err := conformancecert.GenerateSignerAndCert("run-fapi2sp-battery-attester-leaf", "run-fapi2sp-battery-attester-ca")
 	if err != nil {
 		return nil, fmt.Errorf("generate attester key: %w", err)
 	}
@@ -178,6 +177,7 @@ func generateRun(alias, issuerBaseURL string) (*run, error) {
 
 		attesterKey:     attesterKey,
 		attesterLeafPEM: attesterLeafPEM,
+		attesterCAPEM:   attesterCAPEM,
 		attesterIssuer:  "https://run-fapi2sp-battery-attester.example.com",
 
 		client1ID: "run-fapi2sp-battery-client-1", client2ID: "run-fapi2sp-battery-client-2",
@@ -275,20 +275,16 @@ type serverConfig struct {
 }
 
 type serverConfigClient struct {
-	ID                     string          `json:"id"`
-	RedirectURIs           []string        `json:"redirect_uris"`
-	ExpectedAttesterIssuer string          `json:"expected_attester_issuer"`
-	AttesterJWKS           json.RawMessage `json:"attester_jwks"`
+	ID                      string   `json:"id"`
+	RedirectURIs            []string `json:"redirect_uris"`
+	ExpectedAttesterIssuer  string   `json:"expected_attester_issuer"`
+	AttesterTrustAnchorsPEM string   `json:"attester_trust_anchors_pem"`
 }
 
 // buildServerConfig builds cmd/conformance-issuer's own config.json —
-// both registered clients trust the same attester key (see run's own
+// both registered clients trust the same attester CA (see run's own
 // doc comment).
 func buildServerConfig(r *run) ([]byte, error) {
-	attesterPubJWKS, err := conformancecert.JWKSet(&r.attesterKey.PublicKey, "run-fapi2sp-battery-attester-key")
-	if err != nil {
-		return nil, fmt.Errorf("build attester public jwks: %w", err)
-	}
 	keyAttestationTrustedJWK, err := publicJWK(&r.keyAttestationKey.PublicKey)
 	if err != nil {
 		return nil, fmt.Errorf("build key attestation trusted jwk: %w", err)
@@ -301,11 +297,11 @@ func buildServerConfig(r *run) ([]byte, error) {
 		TLSPrivateKeyPEM:  r.tlsKeyPEM,
 		Client: serverConfigClient{
 			ID: r.client1ID, RedirectURIs: []string{r.client1RedirectURI},
-			ExpectedAttesterIssuer: r.attesterIssuer, AttesterJWKS: attesterPubJWKS,
+			ExpectedAttesterIssuer: r.attesterIssuer, AttesterTrustAnchorsPEM: r.attesterCAPEM,
 		},
 		Client2: serverConfigClient{
 			ID: r.client2ID, RedirectURIs: []string{r.client2RedirectURI},
-			ExpectedAttesterIssuer: r.attesterIssuer, AttesterJWKS: attesterPubJWKS,
+			ExpectedAttesterIssuer: r.attesterIssuer, AttesterTrustAnchorsPEM: r.attesterCAPEM,
 		},
 		CredentialIssuerSigningKeyPEM:     mustPEMKey(r.credentialIssuerSigningKey),
 		CredentialIssuerCertificatePEM:    r.credentialIssuerLeafPEM,

@@ -84,7 +84,7 @@ What the second path does and doesn't give you:
 ## Running the demo
 
 ```sh
-go run ./cmd/wallet-provider     # once: wallet-provider.pem, .jwks.json and -ca.pem
+go run ./cmd/wallet-provider     # once: wallet-provider.pem and wallet-provider-ca.pem
 go run ./cmd/issuer              # https://127.0.0.1:8543 — writes issuer-tls.pem, issuer-ca.pem
 go run ./cmd/verifier            # https://127.0.0.1:9443 — writes verifier-tls.pem, verifier-ca.pem
 go run ./cmd/webwallet           # https://127.0.0.1:7443 — writes webwallet-tls.pem; trusts issuer-ca.pem, verifier-ca.pem
@@ -131,10 +131,13 @@ it picks up the redirect on `http://127.0.0.1:8765/callback`; add
 `cmd/wallet-provider` creates the demo's **stand-in Wallet Provider**:
 a key, and a certificate for it from a demo Wallet Provider CA. The
 issuer registers one wallet client (`passport-vdc-wallet`, with both
-wallets' redirect URIs), and trusts that key in two ways:
+wallets' redirect URIs), and trusts that key through the CA
+certificate: every attestation it signs carries the provider's
+certificate as `x5c`, which must chain to the CA.
 
-- **Wallet Attestations**, by `kid`, through the provider's JWK Set.
-- **Key Attestations**, through the CA certificate. Each credential
+- **Wallet Attestations** authenticate the wallet at PAR and the token
+  endpoint (HAIP 1.0 §4.4.1; fapigo's `X5CAttesterChain`).
+- **Key Attestations** prove each holder key. Each credential
   request must prove its holder key with a Key Attestation: the
   `attestation` proof type (OID4VCI 1.0 Appendix F.3), which is the
   only proof type the issuer offers. The attestation carries the
@@ -156,7 +159,7 @@ The library's wallet can discover a loopback `http` issuer too, when
 | Step | Endpoint | What happens |
 |---|---|---|
 | Upload | `POST /passport` | gmrtd verification → a transaction T holding the `Evidence` (in memory, 10 minutes, at most 100 at once) → a credential offer with `issuer_state` = T, as a link and a QR code, and a six-digit confirmation code |
-| PAR | `POST /par` | fapigo verifies Wallet Attestation + PoP and DPoP; this app records `request_uri` → T from the form's `issuer_state` |
+| PAR | `POST /par` | fapigo verifies the Wallet Attestation (its `x5c` chain to the Wallet Provider CA) + PoP and DPoP; this app records `request_uri` → T from the form's `issuer_state` |
 | Approve | `GET /authorize`, `POST /authorize/decision` | shows the passport holder's name and asks for the confirmation code; approval with the right code **claims T** — no other authorization can reach it — and authorizes **subject = T**, granting the scopes the wallet requested |
 | Token | `POST /token` | DPoP-bound access token with `sub` = T |
 | Credential | `POST /nonce`, `POST /credential` | the token's `sub` finds T's `Evidence`; the requested configuration (`passport_mdoc` or `passport_sdjwt`), if not already issued for T, is encoded, bound to the key the Key Attestation attests, and signed; once both are issued, T and its passport data are dropped. The wallet checks each credential before keeping it: issuer signature chaining to `issuer-ca.pem`, bound to its own holder key, and the offered vct or doctype |
@@ -188,9 +191,6 @@ type metadata at the `vct` URL (`/vct/passport/1`).
   `key_storage` and `user_authentication`, because the demo's holder keys
   are ordinary software keys. The issuer checks who attested a key, not
   how well it is protected.
-- **Wallet Attestations use `kid`, not `x5c`.** HAIP 1.0 requires `x5c`,
-  but fapigo's server resolves the attester's key only by `kid` from the
-  client's registered JWK Set.
 
 A production issuer would authenticate the holder at the approval step
 instead, for example by re-reading the passport over NFC with an

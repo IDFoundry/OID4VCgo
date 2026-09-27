@@ -1,13 +1,13 @@
 // Command wallet-provider creates the passport-vdc demo's stand-in
 // Wallet Provider: a private key and its certificate (for the demo
-// wallet to attest itself and its holder keys with), the public JWK Set
-// (for the demo issuer to verify Wallet Attestations) and the CA
-// certificate (for the demo issuer to verify Key Attestations).
+// wallet to attest itself and its holder keys with), and the CA
+// certificate (for the demo issuer to verify both kinds of attestation
+// by their x5c chain).
 //
-//	go run ./cmd/wallet-provider -key wallet-provider.pem -jwks wallet-provider.jwks.json -ca wallet-provider-ca.pem
+//	go run ./cmd/wallet-provider -key wallet-provider.pem -ca wallet-provider-ca.pem
 //
-// An existing -key file is reused, so rerunning just rewrites the JWKS
-// and CA certificate.
+// An existing -key file is reused, so rerunning just rewrites the CA
+// certificate.
 package main
 
 import (
@@ -23,15 +23,14 @@ import (
 
 func main() {
 	keyPath := flag.String("key", "wallet-provider.pem", "private key file (created if missing)")
-	jwksPath := flag.String("jwks", "wallet-provider.jwks.json", "public JWK Set file to write")
 	caPath := flag.String("ca", "wallet-provider-ca.pem", "CA certificate file to write")
 	flag.Parse()
-	if err := run(*keyPath, *jwksPath, *caPath); err != nil {
+	if err := run(*keyPath, *caPath); err != nil {
 		log.Fatal(err)
 	}
 }
 
-func run(keyPath, jwksPath, caPath string) error {
+func run(keyPath, caPath string) error {
 	// The issuer identifier isn't stored with the key; the demo issuer
 	// and wallet are each told it separately (-wallet-provider-issuer).
 	var provider *walletprovider.Provider
@@ -57,14 +56,6 @@ func run(keyPath, jwksPath, caPath string) error {
 		return fmt.Errorf("read %s: %w", keyPath, err)
 	}
 
-	jwks, err := provider.PublicJWKS()
-	if err != nil {
-		return err
-	}
-	if err := os.WriteFile(jwksPath, jwks, 0o600); err != nil { // #nosec G703 -- operator-supplied path
-		return fmt.Errorf("write %s: %w", jwksPath, err)
-	}
-	fmt.Println("wrote", jwksPath)
 	if err := os.WriteFile(caPath, provider.CACertificatePEM(), 0o600); err != nil { // #nosec G703 -- operator-supplied path
 		return fmt.Errorf("write %s: %w", caPath, err)
 	}

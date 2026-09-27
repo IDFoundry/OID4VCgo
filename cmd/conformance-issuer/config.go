@@ -116,17 +116,28 @@ type Config struct {
 // register one storage.ClientAuthMethodAttestation-authenticated
 // client (HAIP §4.4.1's own Wallet Attestation requirement).
 // ExpectedAttesterIssuer names who signs a valid Client Attestation
-// JWT's own "iss" claim; AttesterJWKS is that same attester's own
-// public key(s) — fapigo/server resolves an attestation's verification
-// key via Dependencies.ClientKeys keyed by this client's own ID (not
-// by ExpectedAttesterIssuer directly, confirmed against
-// server/client_auth_attestation.go), so both are required.
+// JWT's own "iss" claim. How that attester's signing key is trusted is
+// exactly one of:
+//
+//   - AttesterTrustAnchorsPEM: CA certificate(s) the Client Attestation
+//     JWT's own "x5c" chain must verify against (HAIP 1.0 §4.4.1;
+//     fapigo/server's X5CAttesterChain) — "kid" plays no part;
+//   - AttesterJWKS: the attester's public key(s), looked up by "kid"
+//     (fapigo/server's RegisteredAttesterKeys) — "x5c" is ignored.
+//
+// fapigo/server's attester trust strategy is server-wide, so Client and
+// Client2 must use the same one.
 type ConfigClient struct {
-	ID                     string          `json:"id"`
-	RedirectURIs           []string        `json:"redirect_uris"`
-	ExpectedAttesterIssuer string          `json:"expected_attester_issuer"`
-	AttesterJWKS           json.RawMessage `json:"attester_jwks"`
+	ID                      string          `json:"id"`
+	RedirectURIs            []string        `json:"redirect_uris"`
+	ExpectedAttesterIssuer  string          `json:"expected_attester_issuer"`
+	AttesterTrustAnchorsPEM string          `json:"attester_trust_anchors_pem,omitempty"`
+	AttesterJWKS            json.RawMessage `json:"attester_jwks,omitempty"`
 }
+
+// usesAttesterTrustAnchors reports whether c trusts its attester by
+// certificate chain rather than registered keys.
+func (c ConfigClient) usesAttesterTrustAnchors() bool { return c.AttesterTrustAnchorsPEM != "" }
 
 func loadConfig(path string) (Config, error) {
 	raw, err := os.ReadFile(path) // #nosec G304 -- path is the operator's own -config flag value, not untrusted input
@@ -149,6 +160,9 @@ func loadConfig(path string) (Config, error) {
 	if cfg.Client2 != nil {
 		if err := validateConfigClient("client2", *cfg.Client2); err != nil {
 			return Config{}, err
+		}
+		if cfg.Client2.usesAttesterTrustAnchors() != cfg.Client.usesAttesterTrustAnchors() {
+			return Config{}, fmt.Errorf("config: client and client2 must both use attester_trust_anchors_pem, or both attester_jwks")
 		}
 	}
 	if cfg.CredentialIssuerSigningKeyPEM == "" {
@@ -185,9 +199,12 @@ func loadConfig(path string) (Config, error) {
 // used for both Config.Client (always required) and Config.Client2
 // (required to be complete only when present at all).
 func validateConfigClient(field string, c ConfigClient) error {
+	if c.ID == "" || len(c.RedirectURIs) == 0 || c.ExpectedAttesterIssuer == "" {
+		return fmt.Errorf("config: %s.id, %s.redirect_uris and %s.expected_attester_issuer are all required", field, field, field)
+	}
 	attesterJWKSEmpty := len(c.AttesterJWKS) == 0 || string(c.AttesterJWKS) == "null"
-	if c.ID == "" || len(c.RedirectURIs) == 0 || c.ExpectedAttesterIssuer == "" || attesterJWKSEmpty {
-		return fmt.Errorf("config: %s.id, %s.redirect_uris, %s.expected_attester_issuer and %s.attester_jwks are all required", field, field, field, field)
+	if c.usesAttesterTrustAnchors() == !attesterJWKSEmpty {
+		return fmt.Errorf("config: exactly one of %s.attester_trust_anchors_pem and %s.attester_jwks is required", field, field)
 	}
 	return nil
 }

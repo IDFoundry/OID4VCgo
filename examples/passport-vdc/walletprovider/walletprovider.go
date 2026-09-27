@@ -6,11 +6,10 @@
 // secure hardware; this demo attests any key it's given.
 //
 // The key has a certificate from a demo Wallet Provider CA, carried as
-// each Key Attestation's x5c (HAIP 1.0 §4.5.1: the signing certificate
-// must not be self-signed, and the trust anchor is left out of x5c).
-// The issuer trusts the CA certificate. Wallet Attestations still name
-// the key by kid, since fapigo/server resolves the attester key from
-// the client's registered JWK Set.
+// the x5c of every attestation it signs (HAIP 1.0 §4.4.1 for Wallet
+// Attestations, §4.5.1 for Key Attestations: the trust anchor is left
+// out of x5c, and the signing certificate isn't self-signed). The
+// issuer trusts the CA certificate.
 package walletprovider
 
 import (
@@ -31,9 +30,6 @@ import (
 	"github.com/idfoundry/oid4vcgo/attestation"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/democert"
 )
-
-// KeyID is the "kid" of the provider's one key.
-const KeyID = "demo-wallet-provider-1"
 
 // Provider signs Wallet Attestations and Key Attestations.
 type Provider struct {
@@ -138,21 +134,11 @@ func (p *Provider) CACertificatePEM() []byte {
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: p.CACertificate.Raw})
 }
 
-// PublicJWKS returns the provider's public key as a JWK Set — what the
-// issuer registers to verify this provider's Wallet Attestations.
-func (p *Provider) PublicJWKS() ([]byte, error) {
-	jwk, err := ecJWK(&p.Key.PublicKey)
-	if err != nil {
-		return nil, err
-	}
-	jwk["kid"], jwk["alg"], jwk["use"] = KeyID, "ES256", "sig"
-	return json.Marshal(map[string]any{"keys": []map[string]string{jwk}})
-}
-
 // Attest issues a Wallet Attestation binding instanceKey to clientID,
-// valid for lifetime from now.
+// valid for lifetime from now, carrying the provider's certificate as
+// x5c (HAIP 1.0 §4.4.1).
 func (p *Provider) Attest(clientID string, instanceKey crypto.PublicKey, now time.Time, lifetime time.Duration) (string, error) {
-	return attestation.IssueWalletAttestation(p.Key, oid4vci.ES256, attestation.Header{KeyID: KeyID}, attestation.WalletAttestationClaims{
+	return attestation.IssueWalletAttestation(p.Key, oid4vci.ES256, p.x5cHeader(), attestation.WalletAttestationClaims{
 		Issuer: p.Issuer, Subject: clientID, InstanceKey: instanceKey,
 		IssuedAt: now.Unix(), ExpiresAt: now.Add(lifetime).Unix(),
 		Extra: attestation.WalletAttestationExtraClaims{WalletName: "passport-vdc demo wallet"},
@@ -161,7 +147,11 @@ func (p *Provider) Attest(clientID string, instanceKey crypto.PublicKey, now tim
 
 // KeyAttestationHeader is the JOSE header conveyance for a Key
 // Attestation: x5c holding the provider's certificate, without the CA.
-func (p *Provider) KeyAttestationHeader() attestation.Header {
+func (p *Provider) KeyAttestationHeader() attestation.Header { return p.x5cHeader() }
+
+// x5cHeader conveys the provider's key by its certificate alone, the
+// trust anchor left out.
+func (p *Provider) x5cHeader() attestation.Header {
 	return attestation.Header{X5C: []string{base64.StdEncoding.EncodeToString(p.Certificate.Raw)}}
 }
 

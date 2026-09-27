@@ -5,6 +5,8 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
+	"encoding/base64"
+	"encoding/json"
 	"encoding/pem"
 	"strings"
 	"testing"
@@ -105,5 +107,38 @@ func TestKeyAttestation_VerifiesAgainstCertificate(t *testing.T) {
 	}
 	if verified.KeyStorage != nil || verified.UserAuthentication != nil {
 		t.Error("the demo asserts an attack-potential level for software keys")
+	}
+}
+
+// TestAttest_CarriesX5C checks a Wallet Attestation conveys the
+// provider's key by x5c — its certificate alone, not the CA (HAIP 1.0
+// §4.4.1) — and verifies with that certificate's key.
+func TestAttest_CarriesX5C(t *testing.T) {
+	p, err := New("https://provider.example")
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	instance, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compact, err := p.Attest("demo-wallet", &instance.PublicKey, time.Now(), time.Hour)
+	if err != nil {
+		t.Fatalf("Attest: %v", err)
+	}
+	encoded, _, _ := strings.Cut(compact, ".")
+	raw, err := base64.RawURLEncoding.DecodeString(encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var header struct {
+		X5C []string `json:"x5c"`
+		Kid string   `json:"kid"`
+	}
+	if err := json.Unmarshal(raw, &header); err != nil {
+		t.Fatal(err)
+	}
+	if len(header.X5C) != 1 || header.X5C[0] != base64.StdEncoding.EncodeToString(p.Certificate.Raw) {
+		t.Fatalf("x5c = %v, want just the provider's certificate", header.X5C)
 	}
 }

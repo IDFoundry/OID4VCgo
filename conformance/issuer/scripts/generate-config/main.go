@@ -13,11 +13,11 @@
 // expected_attester_issuer/attester_jwks are left as placeholders —
 // fill them in from whatever the OIDF suite's own plan config assigns
 // (see conformance/issuer/README.md). attester_jwks is the suite's own
-// attester identity's public key(s) — fapigo/server resolves a Client
-// Attestation JWT's own verification key this way regardless of
-// ExpectedAttesterIssuer (confirmed against
-// server/client_auth_attestation.go's own resolveClientKey call), so
-// both fields are required, not just the issuer string. client2 is
+// attester identity's public key(s), verified by "kid" (fapigo/server's
+// RegisteredAttesterKeys); set attester_trust_anchors_pem instead — the
+// CA that issued the attester key's x5c leaf — to verify the
+// attestation's x5c chain (X5CAttesterChain), as run-fapi2sp-battery
+// does. Either way the issuer string alone isn't enough. client2 is
 // commented out below by default (nil) — confirmed live that even the
 // haip-test-plan's own happy-flow module requires it; uncomment and
 // fill in when driving that plan (see README's own "Status").
