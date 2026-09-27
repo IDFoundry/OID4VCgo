@@ -54,6 +54,7 @@ func IsSupportedSigningAlg(alg Alg) bool {
 // x5chain and RFC 9596's typ — the only ones this package models.
 const (
 	labelAlg     = 1
+	labelCrit    = 2
 	labelKID     = 4
 	labelTyp     = 16
 	labelX5Chain = 33
@@ -107,6 +108,13 @@ func (h Headers) toMap() map[int]interface{} {
 }
 
 func headersFromMap(m map[int]interface{}) (Headers, error) {
+	// RFC 9052 §3.1: a recipient MUST reject a message whose "crit"
+	// names a header parameter it doesn't understand — this package
+	// understands none that would need marking critical, so any crit
+	// is refused, as internal/jose does for JWS.
+	if _, ok := m[labelCrit]; ok {
+		return Headers{}, errors.New("cose: message names critical header parameters this package does not understand")
+	}
 	var h Headers
 	if v, ok := m[labelAlg]; ok {
 		i, err := toInt64(v)

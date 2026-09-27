@@ -500,3 +500,20 @@ func TestIsSupportedSigningAlg(t *testing.T) {
 		}
 	}
 }
+
+// TestDecodeUnverifiedRejectsCrit checks a COSE_Sign1 whose protected
+// header names critical parameters ("crit", label 2) is refused (RFC 9052
+// §3.1).
+func TestDecodeUnverifiedRejectsCrit(t *testing.T) {
+	protected, err := cbor.Marshal(map[int]interface{}{labelAlg: int64(ES256), labelCrit: []int{99}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sign1, err := cbor.Marshal(rawSign1{Protected: protected, Unprotected: map[int]interface{}{}, Payload: []byte("p"), Signature: []byte("s")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := DecodeUnverified(sign1); err == nil {
+		t.Fatal("DecodeUnverified accepted a COSE_Sign1 naming critical header parameters")
+	}
+}

@@ -83,6 +83,12 @@ func VerifyKeyBindingJWT(kbJWT string, holderPub crypto.PublicKey, alg jose.Alg,
 	if check.MaxAge <= 0 {
 		return nil, fmt.Errorf("sdjwtvc: KeyBindingCheck.MaxAge is required (must be positive)")
 	}
+	// An empty expected value would match a Key Binding JWT missing that
+	// claim altogether, leaving it replayable across Verifiers (aud) or
+	// requests (nonce).
+	if check.ExpectedAudience == "" || check.ExpectedNonce == "" {
+		return nil, fmt.Errorf("sdjwtvc: KeyBindingCheck.ExpectedAudience and ExpectedNonce are required")
+	}
 	header, raw, err := jose.Verify(alg, holderPub, kbJWT)
 	if err != nil {
 		return nil, fmt.Errorf("sdjwtvc: verify key binding JWT signature: %w", err)
