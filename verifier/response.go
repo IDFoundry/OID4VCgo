@@ -65,6 +65,17 @@ type ParsedResponse struct {
 // per §8.1. Returns a *ResponseError when the Wallet reported an error
 // instead of a vp_token.
 func (v *Verifier) ParseDirectPostJWTResponse(responseJWE string, decryptionKey *ecdsa.PrivateKey) (ParsedResponse, error) {
+	// A compressed response is refused before decryption: this Verifier
+	// never offers compression, and anyone who sees the Request Object
+	// can encrypt to its response key, so inflating one would let an
+	// unauthenticated sender make it allocate far more than it sent.
+	header, err := jwe.DecodeHeader(responseJWE)
+	if err != nil {
+		return ParsedResponse{}, fmt.Errorf("verifier: parse direct_post.jwt response: decode header: %w", err)
+	}
+	if _, compressed := header["zip"]; compressed {
+		return ParsedResponse{}, fmt.Errorf("verifier: parse direct_post.jwt response: a compressed (zip) response is not accepted")
+	}
 	plaintext, err := jwe.Decrypt(decryptionKey, responseJWE)
 	if err != nil {
 		return ParsedResponse{}, fmt.Errorf("verifier: parse direct_post.jwt response: decrypt: %w", err)

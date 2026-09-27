@@ -38,6 +38,13 @@ type Fixture struct {
 // Issue builds a Fixture.
 func Issue(t *testing.T) Fixture {
 	t.Helper()
+	return IssueWith(t, func(*mdoc.Claims) {})
+}
+
+// IssueWith is Issue, with mutate applied to the claims before issuance
+// — e.g. to add a Status reference.
+func IssueWith(t *testing.T, mutate func(*mdoc.Claims)) Fixture {
+	t.Helper()
 	issuerKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatalf("testmdoc: generate issuer key: %v", err)
@@ -49,7 +56,7 @@ func Issue(t *testing.T) Fixture {
 	cert := testcert.SelfSigned(t, "testmdoc fixture issuer", &issuerKey.PublicKey, issuerKey)
 
 	signed := time.Now()
-	issuerSigned, err := mdoc.Issue(issuerKey, cose.ES256, mdoc.Claims{
+	claims := mdoc.Claims{
 		DocType: DocType,
 		NameSpaces: map[string]map[string]interface{}{
 			"org.iso.18013.5.1": {"given_name": "Alice", "family_name": "Doe"},
@@ -62,7 +69,9 @@ func Issue(t *testing.T) Fixture {
 		// rejects a ValidUntil past the leaf certificate's own
 		// NotAfter (§12.3.4), so this can't use the same 24h window.
 		ValidUntil: signed.Add(time.Hour),
-	}, mdoc.IssueOptions{X5Chain: [][]byte{cert.Raw}})
+	}
+	mutate(&claims)
+	issuerSigned, err := mdoc.Issue(issuerKey, cose.ES256, claims, mdoc.IssueOptions{X5Chain: [][]byte{cert.Raw}})
 	if err != nil {
 		t.Fatalf("testmdoc: mdoc.Issue: %v", err)
 	}

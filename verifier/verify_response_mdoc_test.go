@@ -5,7 +5,9 @@ import (
 	"crypto"
 	"crypto/ecdsa"
 	"testing"
+	"time"
 
+	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/dcql"
 	"github.com/idfoundry/oid4vcgo/internal/cose"
 	"github.com/idfoundry/oid4vcgo/internal/testmdoc"
@@ -92,6 +94,12 @@ func newMdocVerifyFixtureFromKey(t *testing.T, v *verifier.Verifier, cfg verifie
 // whichever flow mf.origin selects.
 func (mf mdocVerifyFixture) verify(t *testing.T, nonce string) (verifier.VerifyResponseResult, error) {
 	t.Helper()
+	return mf.verifyWith(t, nonce, func(*verifier.VerifyResponseRequest) {})
+}
+
+// verifyWith is verify, with mutate applied to the VerifyResponseRequest.
+func (mf mdocVerifyFixture) verifyWith(t *testing.T, nonce string, mutate func(*verifier.VerifyResponseRequest)) (verifier.VerifyResponseResult, error) {
+	t.Helper()
 	var presented string
 	if mf.origin != "" {
 		presented = testmdoc.PresentDCAPI(t, mf.f, oid4vpmdoc.DCAPIHandoverParams{
@@ -102,14 +110,16 @@ func (mf mdocVerifyFixture) verify(t *testing.T, nonce string) (verifier.VerifyR
 			ClientID: mf.v.ClientID(), Nonce: nonce, ResponseURI: mf.cfg.ResponseURI.String(), ResponseEncryptionJWKThumbprint: mf.thumbprint,
 		})
 	}
-	return mf.v.VerifyResponse(context.Background(), verifier.VerifyResponseRequest{
+	req := verifier.VerifyResponseRequest{
 		Query:                 mf.query,
 		Response:              verifier.ParsedResponse{VPToken: map[string][]string{"mdl": {presented}}},
 		ExpectedNonce:         mf.nonce,
 		MdocIssuerKeys:        fixedMdocIssuerKeyResolver{pub: &mf.f.IssuerKey.PublicKey, alg: cose.ES256},
 		ResponseEncryptionKey: mf.responseDecryptionKey,
 		Origin:                mf.origin,
-	})
+	}
+	mutate(&req)
+	return mf.v.VerifyResponse(context.Background(), req)
 }
 
 // assertMdocGivenNameAlice asserts a successful VerifyResponse call
@@ -178,4 +188,39 @@ func rejectCaseMdocMissingDependency(t *testing.T, v *verifier.Verifier, nonce s
 		req.ResponseEncryptionKey = testP256Key(t)
 	}
 	return req
+}
+
+// TestVerifyMdocResponse_SurfacesStatus checks an mdoc's issuer-signed
+// revocation reference (MSO status, ISO/IEC 18013-5 §12.3.6) reaches the
+// caller as VerifiedCredential.MdocStatus, since VerifyResponse doesn't
+// check revocation itself.
+func TestVerifyMdocResponse_SurfacesStatus(t *testing.T) {
+	mf := newMdocVerifyFixture(t)
+	mf.f = testmdoc.IssueWith(t, func(c *mdoc.Claims) {
+		c.Status = &mdoc.StatusListRef{Idx: 7, URI: "https://issuer.example.com/statuslists/1"}
+	})
+	result, err := mf.verify(t, mf.nonce)
+	vc := testverify.RequireOneCredential(t, result, err, "mdl")
+	if vc.MdocStatus == nil || vc.MdocStatus.StatusList == nil ||
+		vc.MdocStatus.StatusList.Idx != 7 || vc.MdocStatus.StatusList.URI != "https://issuer.example.com/statuslists/1" {
+		t.Errorf("MdocStatus = %+v, want status_list idx 7 at the issuer's list", vc.MdocStatus)
+	}
+
+	plain := newMdocVerifyFixture(t)
+	result, err = plain.verify(t, plain.nonce)
+	if vc := testverify.RequireOneCredential(t, result, err, "mdl"); vc.MdocStatus != nil {
+		t.Errorf("MdocStatus = %+v for an mdoc without a status, want nil", vc.MdocStatus)
+	}
+}
+
+// TestVerifyMdocResponse_UsesNow checks the MSO validity window is judged
+// at VerifyResponseRequest.Now, like every other time check.
+func TestVerifyMdocResponse_UsesNow(t *testing.T) {
+	mf := newMdocVerifyFixture(t)
+	_, err := mf.verifyWith(t, mf.nonce, func(r *verifier.VerifyResponseRequest) {
+		r.Now = func() time.Time { return time.Now().Add(2 * time.Hour) } // past the fixture's validUntil
+	})
+	if err == nil {
+		t.Fatal("VerifyResponse at a Now past the MSO's validUntil = nil error, want error")
+	}
 }
