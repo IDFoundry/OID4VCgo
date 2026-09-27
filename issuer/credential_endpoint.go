@@ -226,9 +226,10 @@ type CredentialRequest struct {
 
 // resolvedKey is one Wallet-supplied binding key extracted from a
 // Credential Request's proofs, ready to bind one issued Credential
-// instance to. JWKRaw is always populated (see CredentialRequest's own
-// doc comment on jwk-only key resolution): a jwt proof's own "jwk"
-// header, or one entry of an attestation's attested_keys.
+// instance to. JWKRaw is always populated: Public re-encoded as a JWK
+// with its public members only (publicJWK), never the Wallet's own
+// bytes, whether the key came from a jwt proof's "jwk" header, a
+// kid/x5c resolution, or an attestation's attested_keys.
 type resolvedKey struct {
 	Public crypto.PublicKey
 	JWKRaw json.RawMessage
@@ -475,8 +476,8 @@ func (iss *Issuer) issueOne(cc CredentialConfiguration, req CredentialRequest, k
 }
 
 // issueSDJWT binds claims to key's public key via cnf.jwk (RFC 7800),
-// using key's original JWK bytes verbatim rather than re-deriving them
-// from the parsed crypto.PublicKey.
+// using key.JWKRaw — the key's public members only, so nothing the
+// Wallet chose beyond its key ends up in the signed credential.
 func (iss *Issuer) issueSDJWT(claims sdjwtvc.Claims, key resolvedKey) (string, error) {
 	var cnfJWK map[string]any
 	if err := json.Unmarshal(key.JWKRaw, &cnfJWK); err != nil {

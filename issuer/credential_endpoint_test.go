@@ -1253,3 +1253,81 @@ func TestNew_RequiresMaxProofAgeWithoutNonceEndpoint(t *testing.T) {
 		t.Fatalf("New without a Nonce Endpoint or max_proof_age: error = %v, want max_proof_age required", err)
 	}
 }
+
+// TestRequestCredential_CnfJWKHasPublicMembersOnly checks the issued
+// credential's cnf.jwk is the proof key's public members only: anything
+// else the Wallet put in its jwk header stays out of the credential this
+// issuer signs, and a jwk header carrying the private key is refused
+// (OID4VCI 1.0 Appendix F.4).
+func TestRequestCredential_CnfJWKHasPublicMembersOnly(t *testing.T) {
+	key := testP256Key(t)
+	proofWithJWK := func(f credentialEndpointFixture, jwkObj map[string]any) string {
+		payload, err := json.Marshal(map[string]any{"aud": testIssuer, "iat": time.Now().Unix(), "nonce": f.issueNonce(t)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		proof, err := jose.Sign(jose.ES256, key, map[string]any{"typ": "openid4vci-proof+jwt", "jwk": jwkObj}, payload)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return proof
+	}
+	var public map[string]any
+	if err := json.Unmarshal(jwkJSON(t, &key.PublicKey), &public); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("extra members are dropped", func(t *testing.T) {
+		f := newCredentialEndpointFixture(t)
+		withExtras := map[string]any{"kid": "chosen-by-wallet", "x-note": "not the issuer's words"}
+		for k, v := range public {
+			withExtras[k] = v
+		}
+		resp, err := requestSDJWTWithProof(f, oid4vci.ProofTypeJWT, proofWithJWK(f, withExtras))
+		if err != nil {
+			t.Fatalf("RequestCredential: %v", err)
+		}
+		pres, err := sdjwtvc.Parse(resp.Credentials[0].Credential)
+		if err != nil {
+			t.Fatalf("sdjwtvc.Parse: %v", err)
+		}
+		_, rawPayload, err := jose.DecodeUnverified(pres.IssuerJWT)
+		if err != nil {
+			t.Fatalf("DecodeUnverified: %v", err)
+		}
+		var payload struct {
+			CNF struct {
+				JWK map[string]any `json:"jwk"`
+			} `json:"cnf"`
+		}
+		if err := json.Unmarshal(rawPayload, &payload); err != nil {
+			t.Fatal(err)
+		}
+		if len(payload.CNF.JWK) != len(public) {
+			t.Errorf("cnf.jwk = %v, want only the public members %v", payload.CNF.JWK, public)
+		}
+		for k, v := range public {
+			if payload.CNF.JWK[k] != v {
+				t.Errorf("cnf.jwk[%q] = %v, want %v", k, payload.CNF.JWK[k], v)
+			}
+		}
+	})
+
+	t.Run("private key is refused", func(t *testing.T) {
+		f := newCredentialEndpointFixture(t)
+		private, err := jwk.MarshalPrivate(key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw, err := json.Marshal(private)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var withD map[string]any
+		if err := json.Unmarshal(raw, &withD); err != nil {
+			t.Fatal(err)
+		}
+		_, err = requestSDJWTWithProof(f, oid4vci.ProofTypeJWT, proofWithJWK(f, withD))
+		assertIssuerError(t, err, issuer.ErrorInvalidProof)
+	})
+}

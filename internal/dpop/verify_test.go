@@ -81,6 +81,16 @@ func mustJWK(t *testing.T, key *ecdsa.PrivateKey) jwk.JWK {
 	return k
 }
 
+// mustPrivateJWK encodes key as a JWK including its private "d".
+func mustPrivateJWK(t *testing.T, key *ecdsa.PrivateKey) jwk.JWK {
+	t.Helper()
+	k, err := jwk.MarshalPrivate(key)
+	if err != nil {
+		t.Fatalf("jwk.MarshalPrivate: %v", err)
+	}
+	return k
+}
+
 // TestVerifyAcceptsWalletGeneratedProof is the real round trip: a
 // genuine DPoP proof from wallet.GenerateDPoPProof, verified by this
 // package's own Verify — proving the two independently-built halves
@@ -317,6 +327,11 @@ func TestVerifyRejectsMalformedProof(t *testing.T) {
 		"missing jti": {
 			header:  map[string]any{"typ": "dpop+jwt", "jwk": mustJWK(t, key)},
 			payload: []byte(`{"htm":"POST","htu":"` + testHTU + `","iat":1700000000}`),
+		},
+		// RFC 9449 §4.3: the jwk header must not contain a private key.
+		"jwk carries the private key": {
+			header:  map[string]any{"typ": "dpop+jwt", "jwk": mustPrivateJWK(t, key)},
+			payload: validPayload,
 		},
 	}
 	for name, tc := range cases {

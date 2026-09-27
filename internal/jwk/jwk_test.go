@@ -70,6 +70,26 @@ func TestParsePublicKey(t *testing.T) {
 	}
 }
 
+// TestParsePublicKey_RejectsPrivateKey checks a JWK carrying its private
+// "d" is refused where a public key is expected.
+func TestParsePublicKey_RejectsPrivateKey(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	k, err := MarshalPrivate(key)
+	if err != nil {
+		t.Fatalf("MarshalPrivate: %v", err)
+	}
+	raw, err := json.Marshal(k)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	if _, err := ParsePublicKey(raw); err == nil {
+		t.Fatal("ParsePublicKey accepted a JWK carrying a private key")
+	}
+}
+
 func TestMatches(t *testing.T) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {

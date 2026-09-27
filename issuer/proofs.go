@@ -149,10 +149,11 @@ func (iss *Issuer) verifyJWTProof(ctx context.Context, auth AuthorizedRequest, r
 // key from header: "jwk" directly (see jwkHeaderKey), or "kid"/"x5c"
 // via Dependencies.ProofBindingKeys when configured (Appendix F.1's
 // own "MUST NOT be present if [another] is present" means exactly one
-// of the three is ever expected). A resolved kid/x5c key is
-// re-marshaled as a JWK for resolvedKey.JWKRaw — cnf.jwk (RFC 7800)
-// needs a JWK either way, regardless of how the Wallet originally
-// conveyed the key.
+// of the three is ever expected). The key is re-marshaled as a JWK for
+// resolvedKey.JWKRaw however it was conveyed — cnf.jwk (RFC 7800) needs
+// a JWK either way, and re-encoding a jwk header too keeps anything
+// else in it out of the signed credential. A jwk header carrying a
+// private key is refused (Appendix F.4).
 //
 // The returned jose.Alg is header's own "alg" claim for a jwk-conveyed
 // key (self-asserted — a jwk proof establishes possession of a
@@ -199,8 +200,15 @@ func (iss *Issuer) resolveProofBindingKey(ctx context.Context, header map[string
 		if err != nil {
 			return nil, "", nil, fmt.Errorf("parse jwk: %w", err)
 		}
+		// cnf.jwk is re-encoded from the parsed key, not copied from the
+		// header, so nothing else the Wallet put in its jwk ends up
+		// inside the credential this issuer signs.
+		canonical, err := publicJWK(pub)
+		if err != nil {
+			return nil, "", nil, err
+		}
 		algStr, _ := header["alg"].(string)
-		return pub, jose.Alg(algStr), jwkRaw, nil
+		return pub, jose.Alg(algStr), canonical, nil
 	}
 
 	if iss.deps.ProofBindingKeys == nil {
@@ -210,15 +218,25 @@ func (iss *Issuer) resolveProofBindingKey(ctx context.Context, header map[string
 	if err != nil {
 		return nil, "", nil, fmt.Errorf("resolve proof binding key: %w", err)
 	}
-	marshaled, err := jwk.Marshal(pub)
+	jwkRaw, err := publicJWK(pub)
 	if err != nil {
-		return nil, "", nil, fmt.Errorf("marshal resolved key as jwk: %w", err)
-	}
-	jwkRaw, err := json.Marshal(marshaled)
-	if err != nil {
-		return nil, "", nil, fmt.Errorf("marshal resolved key as jwk: %w", err)
+		return nil, "", nil, err
 	}
 	return pub, alg, jwkRaw, nil
+}
+
+// publicJWK encodes pub as the JWK a credential's holder binding
+// carries (cnf.jwk, RFC 7800): its public members only.
+func publicJWK(pub crypto.PublicKey) (json.RawMessage, error) {
+	marshaled, err := jwk.Marshal(pub)
+	if err != nil {
+		return nil, fmt.Errorf("marshal binding key as jwk: %w", err)
+	}
+	raw, err := json.Marshal(marshaled)
+	if err != nil {
+		return nil, fmt.Errorf("marshal binding key as jwk: %w", err)
+	}
+	return raw, nil
 }
 
 // resolveAttestationProofKeys verifies every Key Attestation JWT in
@@ -342,7 +360,11 @@ func appendAttestedKeys(keys []resolvedKey, verified attestation.VerifiedClaims,
 		if err != nil {
 			return nil, newError(ErrorInvalidProof, 400, fmt.Sprintf("attestation %d: attested_keys[%d]: parse jwk", i, j), err)
 		}
-		keys = append(keys, resolvedKey{Public: attestedPub, JWKRaw: json.RawMessage(attestedKeyRaw)})
+		canonical, err := publicJWK(attestedPub)
+		if err != nil {
+			return nil, newError(ErrorInvalidProof, 400, fmt.Sprintf("attestation %d: attested_keys[%d]", i, j), err)
+		}
+		keys = append(keys, resolvedKey{Public: attestedPub, JWKRaw: canonical})
 	}
 	return keys, nil
 }
