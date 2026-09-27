@@ -167,10 +167,14 @@ changes whether *every* bullet below is `(done)`.
   as profiled by RFC 7518 §4.6.2 — single-round only, since every `Enc`
   this package supports needs at most 32 output bytes against SHA-256's
   32-byte output) and the JWE framing around AES-GCM, the same
-  narrow-primitive restraint `internal/hkdf` set for RFC 5869. No
-  apu/apv (Agreement PartyUInfo/PartyVInfo) support — both are always
-  empty in the Concat KDF's own OtherInfo, since OID4VCI's own examples
-  don't use them. Cross-checked bidirectionally against Python's
+  narrow-primitive restraint `internal/hkdf` set for RFC 5869.
+  Decryption feeds a sender's apu/apv (Agreement PartyUInfo/PartyVInfo)
+  header members into the Concat KDF's OtherInfo — the OIDF suite's
+  `direct_post.jwt` responses always set both; this package's own
+  encryption leaves them empty, as OID4VCI's examples do. Decompression
+  is capped (`maxInflatedSize`), and the Verifier refuses a compressed
+  response outright, since anyone who sees a Request Object can encrypt
+  to its response key. Cross-checked bidirectionally against Python's
   `jwcrypto` (Go-encrypted JWEs decrypt correctly there, and vice versa)
   for every `Enc` value and the `zip` path, not just Go-only round-trip
   tests, since ECDH-ES's Concat KDF is exactly the kind of
@@ -299,10 +303,15 @@ changes whether *every* bullet below is `(done)`.
   in JWT/JOSE (§5.1, §6.2 — `IssueToken`/`VerifyToken`, built on
   `internal/jose` for the same `keys.KeyManager`-isn't-reusable reason
   `credential/sdjwtvc` is) and CWT/COSE (§5.2, §6.3 —
-  `IssueTokenCWT`/`VerifyTokenCWT`, built on `internal/cose`'s new
-  `SignTagged`/`VerifyTagged` — the CWT profile's example is
-  COSE_Sign1_Tagged, not the untagged form `credential/mdoc`'s IssuerAuth
-  uses), the Referenced Token `status` claim for each
+  `IssueTokenCWT`/`VerifyTokenCWT`, built on `internal/cose`; issued as
+  COSE_Sign1_Tagged, the form draft-12's example used, while
+  `VerifyTokenCWT` accepts either form, since draft-14's example is
+  untagged and the normative text requires neither), HAIP 1.0 §6.1's
+  certificate-chain form of both (`IssueTokenX5C`/`IssueTokenCWTX5Chain`
+  put the signer's chain in `x5c`/protected `x5chain`, without the trust
+  anchor; `CheckX5C`/`CheckCWTX5Chain` verify that chain to a trust
+  anchor pool, refuse a self-signed signer, and check the token with the
+  leaf's key), the Referenced Token `status` claim for each
   (`StatusListRef`/`ParseStatusClaim` and
   `StatusListRef.CWTStatusClaim`/`ParseCWTStatusClaim` — the same shape
   `credential/sdjwtvc`'s `Claims.Status` expects for JOSE, and covered by
@@ -314,9 +323,10 @@ changes whether *every* bullet below is `(done)`.
   IANA finalizes different values before this package is relied on in
   production. Tests include draft-14 §4.1's own known-answer bit-packing
   vectors, its Appendix's 2^20-entry compressed vector, and (for the CWT
-  profile) both of §5.2/§6.3's own non-normative COSE_Sign1_Tagged
-  examples decoded and checked field-by-field — not just round-trip
-  checks.
+  profile) draft-12's two tagged §5.2/§6.3 examples and draft-14's
+  untagged §5.2 example, decoded and checked field-by-field — not just
+  round-trip checks. The passport-vdc demo issues and checks real
+  revocation with it (`examples/passport-vdc`'s README, "Revocation").
 - **`attestation`** (done) — OID4VCI Appendix D, Key Attestation: fully
   self-contained `Issue`/`Parse`/`Verify`, plus `VerifiedClaims.KeyAttested`
   implementing Appendix D.1's own MUST ("the Credential Issuer MUST
@@ -389,7 +399,23 @@ changes whether *every* bullet below is `(done)`.
   `CredentialRequest` carrying caller-supplied `sdjwtvc.Claims`/
   `mdoc.Claims` templates (this package has no user database; resolving
   what data belongs in a credential is the caller's job), with `CNF`/
-  `DeviceKey` overwritten once per resolved binding key. Signing keys
+  `DeviceKey` overwritten once per resolved binding key. Every
+  Credential of a batch is built from those templates, so anything that
+  must differ between them — a Token Status List reference above all,
+  which HAIP 1.0 §6.1 requires to be unique per Credential — is set in
+  `CredentialRequest.PerCredential`, called once per Credential with its
+  own copy of the claims (`CredentialInstance`); a batch in which two
+  Credentials would still carry the same status reference is refused.
+  Authorization is checked per request: a `credential_configuration_id`
+  is issued only when the access token grants it, by the configuration's
+  `scope` or an `openid_credential` authorization detail naming it, so a
+  configuration without a scope is never issued by default; when that
+  detail carries `credential_identifiers`, only `credential_identifier`
+  is accepted (§8.2). An `attestation` proof must assert one of the
+  `key_storage`/`user_authentication` levels the configuration's
+  `key_attestations_required` accepts; a `jwt` proof is dated by the
+  consumed `c_nonce` or, with no Nonce Endpoint, by its `iat` within
+  `Limits.MaxProofAge` (Appendix F.4). Signing keys
   (`SDJWTSigner`/`MdocSigner`) and the attestation trust policy
   (`AttestationVerifier`) are new `Dependencies` fields, each required
   only when a configured credential/proof type actually needs it — see
@@ -401,9 +427,10 @@ changes whether *every* bullet below is `(done)`.
   key (DID resolution, an x5c chain's own trust anchor, a private
   registry, ...), the same "resolving trust is the caller's job" split
   `AttestationVerifier` already draws for a Key Attestation's own
-  `kid`/`x5c`/`trust_chain`; a resolved key is re-marshaled as a JWK for
-  `cnf.jwk` regardless of how it was conveyed, since RFC 7800 binding
-  needs a JWK either way. `DecryptRequestBody`/`EncryptResponseBody`
+  `kid`/`x5c`/`trust_chain`; the binding key is re-encoded as a JWK of
+  its public members only for `cnf.jwk`, however it was conveyed — a
+  `jwk` header too, so nothing else a Wallet put there reaches the signed
+  credential, and one carrying a private key is refused (Appendix F.4). `DecryptRequestBody`/`EncryptResponseBody`
   implement §10's Encrypted Requests/Responses on top of `internal/jwe`,
   shared verbatim by both the Credential Endpoint and Deferred
   Credential Endpoint (§9.1's own "using the parameters from the
@@ -1034,7 +1061,12 @@ changes whether *every* bullet below is `(done)`.
   Ecosystem to choose redirect-only, DC-API-only, or both (HAIP §9.3);
   actually *invoking* the W3C Digital Credentials API is still a
   browser/OS platform concern outside a Go library's own transport
-  responsibilities regardless.
+  responsibilities regardless. `VerifyResponse` doesn't check
+  revocation: each `VerifiedCredential` carries its status reference —
+  `Claims["status"]` for an SD-JWT VC, `MdocStatus` (the MSO's
+  issuer-signed status) for an mdoc — for the caller to resolve, e.g.
+  with `statuslist.CheckX5C`/`CheckCWTX5Chain`; every time check,
+  mdoc validity included, uses `VerifyResponseRequest.Now`.
 - **`wallet`** (extended, done for `dc+sd-jwt`+`mso_mdoc`) — the naming
   question above is now resolved: OID4VP's Wallet role lives in the
   existing `wallet` package rather than a distinct one — "Wallet" is
@@ -1146,6 +1178,12 @@ changes whether *every* bullet below is `(done)`.
   one remaining piece is actually invoking the W3C Digital Credentials
   API itself, a browser/OS platform concern outside any Go library's
   own transport responsibilities (see the `verifier` bullet above).
+  `ParseAuthorizationRequest` requires the Request Object's
+  `response_uri` to be an absolute https URL (loopback http only with
+  `AllowLoopbackHTTP`), and `SubmitDirectPostResponse` never follows a
+  redirect from it — the Verifier's reply is a 200 carrying JSON
+  (§8.2), and following one would resend the response, and take the
+  `redirect_uri` the user agent is sent to, from wherever it pointed.
 - **`haip`** (done) — the profile layer: wires HAIP's own specific
   overrides on top of `issuer`/`wallet`/`verifier` — mirrors
   FAPIgo's `server.RecommendedLimits()`/`RecommendedAlgorithms()` pattern:
