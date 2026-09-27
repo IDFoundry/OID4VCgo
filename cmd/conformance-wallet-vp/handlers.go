@@ -95,15 +95,14 @@ type server struct {
 // everything before rendering a result" strategy a real same-device
 // in-app-browser wallet takes.
 func (s *server) handleAuthorize(w http.ResponseWriter, r *http.Request) {
-	requestURI := r.URL.Query().Get("request_uri")
-	clientID := r.URL.Query().Get("client_id")
-	if requestURI == "" || clientID == "" {
-		http.Error(w, "missing request_uri or client_id query parameter", http.StatusBadRequest)
+	link, err := wallet.ParseAuthorizationRequestLink(r.URL.String())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	usePost := r.URL.Query().Get("request_uri_method") == "post"
+	usePost := link.RequestURIMethod == wallet.RequestURIMethodPost
 
-	authReq, err := fetchAndVerifyRequestObject(requestURI, clientID, usePost)
+	authReq, err := fetchAndVerifyRequestObject(link.RequestURI, link.ClientID, usePost)
 	if err != nil {
 		// A *wallet.RequestRejectedError means the Request Object itself
 		// was authenticated (signature verified, client_id matches) —

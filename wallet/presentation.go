@@ -422,15 +422,34 @@ func PresentSDJWTVCSelective(held HeldCredential, aud, nonce string, requiredPat
 // PresentCredentials uses so its own vp_token is §6.4.1-compliant by
 // construction, unlike calling PresentSDJWTVC directly.
 func presentSDJWTVCSelectively(held HeldCredential, cq dcql.CredentialQuery, aud, nonce string) (string, error) {
-	_, _, claims, err := resolveHeldSDJWTVC(held.Credential)
-	if err != nil {
-		return "", fmt.Errorf("wallet: present sd-jwt vc: %w", err)
-	}
-	paths, err := cq.SelectedSDJWTVCClaimPaths(claims)
+	paths, err := selectedClaimPaths(held, cq)
 	if err != nil {
 		return "", fmt.Errorf("wallet: present sd-jwt vc: %w", err)
 	}
 	return PresentSDJWTVCSelective(held, aud, nonce, paths)
+}
+
+// selectedClaimPaths is which of held's claims cq selects (OID4VP
+// §6.4.1) — what PresentCredentials discloses, and what
+// PreviewPresentation reports it will, from this one function so the
+// two can't disagree.
+func selectedClaimPaths(held HeldCredential, cq dcql.CredentialQuery) ([]dcql.Path, error) {
+	switch held.Format {
+	case sdjwtvc.CredentialFormat:
+		_, _, claims, err := resolveHeldSDJWTVC(held.Credential)
+		if err != nil {
+			return nil, err
+		}
+		return cq.SelectedSDJWTVCClaimPaths(claims)
+	case mdoc.CredentialFormat:
+		issuerSigned, err := decodeHeldMdoc(held)
+		if err != nil {
+			return nil, err
+		}
+		return cq.SelectedMdocClaimPaths(held.MdocDocType, resolveHeldMdocNameSpaces(issuerSigned))
+	default:
+		return nil, fmt.Errorf("format %q is not yet supported", held.Format)
+	}
 }
 
 // rawSDJWTVCPayload decodes pres's own Issuer JWT payload without
@@ -634,11 +653,7 @@ func PresentMdocSelective(held HeldCredential, params PresentMdocParams, require
 // PresentCredentials uses so its own vp_token is §6.4.1-compliant by
 // construction, unlike calling PresentMdoc directly.
 func presentMdocSelectively(held HeldCredential, cq dcql.CredentialQuery, params PresentMdocParams) (string, error) {
-	issuerSigned, err := decodeHeldMdoc(held)
-	if err != nil {
-		return "", err
-	}
-	paths, err := cq.SelectedMdocClaimPaths(held.MdocDocType, resolveHeldMdocNameSpaces(issuerSigned))
+	paths, err := selectedClaimPaths(held, cq)
 	if err != nil {
 		return "", fmt.Errorf("wallet: present mdoc: %w", err)
 	}
