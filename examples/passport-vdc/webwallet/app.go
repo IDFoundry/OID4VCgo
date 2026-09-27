@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/idfoundry/fapigo/client"
 	"net/http"
 	"net/url"
 	"strings"
@@ -51,10 +52,22 @@ type App struct {
 
 type receiveOp struct {
 	cancel   context.CancelFunc
-	authURL  chan string
-	callback chan string
+	authURL  chan authStart
+	callback chan walletapp.Callback
 	done     chan receiveResult
 }
+
+// authStart is where to send the browser to approve, and the flow's
+// session handle to keep with it.
+type authStart struct {
+	url     string
+	session client.SessionHandle
+}
+
+// sessionCookie keeps a receive's session handle with the browser that
+// started it, for /callback to hand back: fapigo completes only a
+// callback bound to that browser (RFC 9700 §4.7).
+const sessionCookie = "passport_vdc_webwallet_session"
 
 type receiveResult struct {
 	received []walletapp.Received
@@ -91,21 +104,21 @@ func (a *App) routes() http.Handler {
 	return mux
 }
 
-// webApprover hands the authorization URL to the browser handler and
-// waits for the issuer's redirect back to /callback.
+// webApprover hands the authorization URL and session handle to the
+// browser handler and waits for the issuer's redirect back to /callback.
 type webApprover struct{ op *receiveOp }
 
-func (w webApprover) Approve(ctx context.Context, authorizationURL string) (string, error) {
+func (w webApprover) Approve(ctx context.Context, authorizationURL string, session client.SessionHandle) (walletapp.Callback, error) {
 	select {
-	case w.op.authURL <- authorizationURL:
+	case w.op.authURL <- authStart{url: authorizationURL, session: session}:
 	case <-ctx.Done():
-		return "", ctx.Err()
+		return walletapp.Callback{}, ctx.Err()
 	}
 	select {
-	case q := <-w.op.callback:
-		return q, nil
+	case cb := <-w.op.callback:
+		return cb, nil
 	case <-ctx.Done():
-		return "", errors.New("timed out waiting for approval at the issuer")
+		return walletapp.Callback{}, errors.New("timed out waiting for approval at the issuer")
 	}
 }
 
@@ -128,7 +141,7 @@ func (a *App) handleReceive(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	op := &receiveOp{cancel: cancel, authURL: make(chan string), callback: make(chan string, 1), done: make(chan receiveResult, 1)}
+	op := &receiveOp{cancel: cancel, authURL: make(chan authStart), callback: make(chan walletapp.Callback, 1), done: make(chan receiveResult, 1)}
 	a.mu.Lock()
 	if a.receiving != nil {
 		a.receiving.cancel() // a new receive replaces an abandoned one
@@ -141,8 +154,12 @@ func (a *App) handleReceive(w http.ResponseWriter, r *http.Request) {
 		op.done <- receiveResult{received, err}
 	}()
 	select {
-	case u := <-op.authURL:
-		http.Redirect(w, r, u, http.StatusSeeOther) // #nosec G710 -- the issuer's authorization URL, built by fapigo from discovered metadata
+	case start := <-op.authURL:
+		http.SetCookie(w, &http.Cookie{
+			Name: sessionCookie, Value: start.session.String(), Path: "/callback",
+			HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode,
+		})
+		http.Redirect(w, r, start.url, http.StatusSeeOther) // #nosec G710 -- the issuer's authorization URL, built by fapigo from discovered metadata
 	case res := <-op.done:
 		a.finishReceive(op)
 		renderError(w, http.StatusBadGateway, "couldn't start receiving: "+res.err.Error())
@@ -165,7 +182,15 @@ func (a *App) handleCallback(w http.ResponseWriter, r *http.Request) {
 		renderError(w, http.StatusBadRequest, "no credential is being received")
 		return
 	}
-	op.callback <- r.URL.RawQuery
+	// The session handle this browser was given when it started the
+	// receive; a browser that didn't start it has none, and fapigo
+	// refuses the callback.
+	cb := walletapp.Callback{Query: r.URL.RawQuery}
+	if c, err := r.Cookie(sessionCookie); err == nil {
+		cb.Session, _ = client.ParseSessionHandle(c.Value)
+	}
+	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Path: "/callback", MaxAge: -1, HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode})
+	op.callback <- cb
 	res := <-op.done
 	a.finishReceive(op)
 	if res.err != nil {
