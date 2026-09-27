@@ -251,6 +251,11 @@ func (a *App) buildIssuer() error {
 		return err
 	}
 	a.caCert = id.caCert
+	requestKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return fmt.Errorf("issuerapp: request decryption key: %w", err)
+	}
+	encValues := []oid4vci.JWEEnc{oid4vci.A256GCM, oid4vci.A128GCM}
 	// Key attestation is required: attestation is the only proof type.
 	proofTypes := map[string]oid4vci.ProofTypeConfiguration{oid4vci.ProofTypeAttestation: haip.RecommendedAttestationProofType()}
 	a.issuer, err = issuer.New(issuer.Config{
@@ -258,6 +263,17 @@ func (a *App) buildIssuer() error {
 		Issuer:    a.issuerURL,
 		Endpoints: issuer.Endpoints{Credential: credentialURL, Nonce: nonceURL},
 		Limits:    issuer.Limits{NonceLifetime: 5 * time.Minute},
+		// The credentials carry passport data, down to the face image,
+		// so they never travel in cleartext beyond TLS — which in a
+		// real deployment often ends at a proxy (OID4VCI 1.0 §10).
+		// Response encryption requires request encryption too (§8.2),
+		// so both are required.
+		RequestEncryption: &issuer.RequestEncryptionSupport{
+			Keys:               []issuer.RequestDecryptionKey{{KeyID: "passport-vdc-request-1", PrivateKey: requestKey}},
+			EncValuesSupported: encValues,
+			Required:           true,
+		},
+		ResponseEncryption: &issuer.ResponseEncryptionSupport{EncValuesSupported: encValues, Required: true},
 		CredentialConfigurationsSupported: map[string]issuer.CredentialConfiguration{
 			MdocConfigurationID: {
 				Format: mdoc.CredentialFormat, DocType: credential.DocType, Scope: MdocScope,

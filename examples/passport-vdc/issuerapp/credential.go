@@ -90,9 +90,20 @@ func (a *App) handleCredential(w http.ResponseWriter, r *http.Request) {
 		issuer.WriteError(w, err)
 		return
 	}
+	resultJSON, err := json.Marshal(result)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	// Encrypted to the wallet's per-request key (required: see buildIssuer).
+	encoded, contentType, err := a.issuer.EncryptResponseBody(resultJSON, req.ResponseEncryption)
+	if err != nil {
+		issuer.WriteError(w, err)
+		return
+	}
 	issued = true
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(result)
+	w.Header().Set("Content-Type", contentType)
+	_, _ = w.Write(encoded)
 }
 
 // writeCredentialError reports an issuance failure caused by the

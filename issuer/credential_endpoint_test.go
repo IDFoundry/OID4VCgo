@@ -20,6 +20,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcgo/internal/cose"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
+	"github.com/idfoundry/oid4vcgo/internal/jwe"
 	"github.com/idfoundry/oid4vcgo/internal/jwk"
 	"github.com/idfoundry/oid4vcgo/internal/testcert"
 	"github.com/idfoundry/oid4vcgo/issuer"
@@ -1050,4 +1051,33 @@ func TestRequestCredential_AttestationAlgMustBeAdvertised(t *testing.T) {
 			t.Fatalf("RequestCredential: %v", err)
 		}
 	})
+}
+
+// TestRequestCredential_RequiredResponseEncryption checks an issuer
+// whose response encryption is Required refuses a request that asks for
+// no encrypted response, with invalid_encryption_parameters (§8.3.1.2),
+// and issues to one that does.
+func TestRequestCredential_RequiredResponseEncryption(t *testing.T) {
+	f := newCredentialEndpointFixture(t, func(cfg *issuer.Config, _ *issuer.Dependencies) {
+		cfg.RequestEncryption = &issuer.RequestEncryptionSupport{
+			Keys:               []issuer.RequestDecryptionKey{{KeyID: "req-1", PrivateKey: testP256Key(t)}},
+			EncValuesSupported: []jwe.Enc{jwe.A128GCM},
+		}
+		cfg.ResponseEncryption = &issuer.ResponseEncryptionSupport{EncValuesSupported: []jwe.Enc{jwe.A128GCM}, Required: true}
+	})
+	walletKey := testP256Key(t)
+	request := func(encryption *issuer.ResponseEncryptionRequest) error {
+		_, err := f.iss.RequestCredential(context.Background(), issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("test-client"), Scopes: []string{"identity_credential"}}, issuer.CredentialRequest{
+			CredentialConfigurationID: testSDJWTConfigID,
+			Proofs:                    map[string][]string{oid4vci.ProofTypeJWT: {buildJWTProof(t, walletKey, testIssuer, f.issueNonce(t))}},
+			SDJWTClaims:               testSDJWTClaims(),
+			RequestWasEncrypted:       true,
+			ResponseEncryption:        encryption,
+		})
+		return err
+	}
+	assertIssuerError(t, request(nil), issuer.ErrorInvalidEncryptionParameters)
+	if err := request(&issuer.ResponseEncryptionRequest{JWK: jwkJSON(t, &testP256Key(t).PublicKey), Enc: jwe.A128GCM}); err != nil {
+		t.Fatalf("request with credential_response_encryption: %v", err)
+	}
 }

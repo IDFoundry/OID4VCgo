@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
@@ -253,5 +254,70 @@ func TestVCTMetadata_IsValidTypeMetadata(t *testing.T) {
 	}
 	if err := doc.Validate(); err != nil || doc.VCT != env.IssuerURL+issuerapp.VCTPath || len(doc.Claims) == 0 {
 		t.Fatalf("type metadata = %+v, %v", doc, err)
+	}
+}
+
+// recordingTransport records the Content-Type of every request to, and
+// response from, a URL path.
+type recordingTransport struct {
+	base     http.RoundTripper
+	path     string
+	mu       sync.Mutex
+	requests []string
+	replies  []string
+}
+
+func (rt *recordingTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	resp, err := rt.base.RoundTrip(r)
+	if r.URL.Path == rt.path && err == nil {
+		rt.mu.Lock()
+		rt.requests = append(rt.requests, r.Header.Get("Content-Type"))
+		rt.replies = append(rt.replies, resp.Header.Get("Content-Type"))
+		rt.mu.Unlock()
+	}
+	return resp, err
+}
+
+// TestCredential_EncryptedBothWays checks the issuer advertises request
+// and response encryption as required, and that the wallet's credential
+// requests and the issuer's responses really travel as JWEs.
+func TestCredential_EncryptedBothWays(t *testing.T) {
+	ctx := context.Background()
+	env := demotest.New(t, nil)
+
+	resp, err := env.HTTP.Get(env.IssuerURL + "/.well-known/openid-credential-issuer")
+	if err != nil {
+		t.Fatalf("GET metadata: %v", err)
+	}
+	var meta struct {
+		Request  map[string]any `json:"credential_request_encryption"`
+		Response map[string]any `json:"credential_response_encryption"`
+	}
+	err = json.NewDecoder(resp.Body).Decode(&meta)
+	_ = resp.Body.Close()
+	if err != nil || meta.Request["encryption_required"] != true || meta.Response["encryption_required"] != true {
+		t.Fatalf("metadata encryption = %+v / %+v (%v), want both required", meta.Request, meta.Response, err)
+	}
+
+	recorder := &recordingTransport{base: env.HTTP.Transport, path: "/credential"}
+	cfg := env.WalletConfig()
+	recording := *env.HTTP
+	recording.Transport = recorder
+	cfg.HTTP = &recording
+	offer, err := env.Issuer.CreateTransaction(ctx, demotest.SyntheticEvidence())
+	if err != nil {
+		t.Fatalf("CreateTransaction: %v", err)
+	}
+	received, err := walletapp.Receive(ctx, cfg, offer.URI, walletapp.HeadlessApprover{HTTP: env.HTTP, Code: offer.ConfirmationCode})
+	if err != nil || len(received) != 2 {
+		t.Fatalf("Receive: %d credentials, %v", len(received), err)
+	}
+	if len(recorder.requests) != 2 {
+		t.Fatalf("saw %d credential requests, want 2", len(recorder.requests))
+	}
+	for i := range recorder.requests {
+		if recorder.requests[i] != "application/jwt" || recorder.replies[i] != "application/jwt" {
+			t.Errorf("credential exchange %d: request %q, response %q; want both application/jwt", i, recorder.requests[i], recorder.replies[i])
+		}
 	}
 }

@@ -17,6 +17,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
@@ -140,6 +141,10 @@ func requestAll(ctx context.Context, w *wallet.Wallet, cfg Config, resource wall
 	if metadata.NonceEndpoint == nil {
 		return nil, fmt.Errorf("walletapp: issuer advertises no nonce endpoint")
 	}
+	requestEnc, responseEnc, err := credentialEncryption(metadata)
+	if err != nil {
+		return nil, err
+	}
 	received := make([]Received, 0, len(offer.CredentialConfigurationIDs))
 	for _, id := range offer.CredentialConfigurationIDs {
 		nonce, err := w.RequestNonce(ctx, *metadata.NonceEndpoint)
@@ -152,6 +157,7 @@ func requestAll(ctx context.Context, w *wallet.Wallet, cfg Config, resource wall
 		}
 		result, err := w.RequestCredential(ctx, resource, metadata.CredentialEndpoint, wallet.CredentialRequest{
 			CredentialConfigurationID: id, Attestation: keyAttestation,
+			RequestEncryption: requestEnc, ResponseEncryption: responseEnc,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("walletapp: credential %q: %w", id, err)
@@ -254,4 +260,43 @@ type noIssuerKeys struct{}
 
 func (noIssuerKeys) ResolveIssuerKeys(context.Context, keys.IssuerKeyRequest) (keys.IssuerKeySet, error) {
 	return keys.IssuerKeySet{}, fmt.Errorf("walletapp: unexpected issuer key lookup")
+}
+
+// credentialEncryption is how to encrypt credential requests and ask for
+// encrypted responses (OID4VCI 1.0 §10): whenever the issuer supports
+// both — the credentials carry passport data — and not at all when it
+// supports neither. Response encryption needs request encryption too
+// (§8.2), so an issuer offering only response encryption is refused, as
+// is one requiring request encryption without offering a usable key.
+func credentialEncryption(metadata oid4vci.Metadata) (*wallet.RequestEncryption, *wallet.ResponseEncryption, error) {
+	req, resp := metadata.CredentialRequestEncryption, metadata.CredentialResponseEncryption
+	if req == nil && resp == nil {
+		return nil, nil, nil
+	}
+	if req == nil || len(req.JWKS.Keys) == 0 {
+		return nil, nil, fmt.Errorf("walletapp: the issuer offers response encryption without request encryption")
+	}
+	recipient, err := json.Marshal(req.JWKS.Keys[0])
+	if err != nil {
+		return nil, nil, fmt.Errorf("walletapp: issuer request encryption key: %w", err)
+	}
+	requestEnc := &wallet.RequestEncryption{RecipientJWK: recipient, Enc: preferredEnc(req.EncValuesSupported)}
+	if resp == nil {
+		return requestEnc, nil, nil
+	}
+	return requestEnc, &wallet.ResponseEncryption{Enc: preferredEnc(resp.EncValuesSupported)}, nil
+}
+
+// preferredEnc picks A256GCM when offered, as HAIP 1.0 §5.1 has Wallets
+// prefer for presentation responses, and otherwise the first offered.
+func preferredEnc(offered []oid4vci.JWEEnc) oid4vci.JWEEnc {
+	for _, e := range offered {
+		if e == oid4vci.A256GCM {
+			return e
+		}
+	}
+	if len(offered) == 0 {
+		return oid4vci.A128GCM
+	}
+	return offered[0]
 }
