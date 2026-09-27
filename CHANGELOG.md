@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.17.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.16.0...v0.17.0) (2026-09-27)
+
+
+### ⚠ BREAKING CHANGES
+
+* OID4VCgo now requires fapigo past FAPIgo PR #384, so a fapigo/server built with Config.AttestationBasedClientAuthentication must set Dependencies.AttesterTrust — server.X5CAttesterChain for HAIP's certificate-based trust, or server.RegisteredAttesterKeys{} for the previous kid lookup.
+
+### Features
+
+* trust Wallet Attestations by their x5c certificate chain ([658ebc6](https://github.com/IDFoundry/OID4VCgo/commit/658ebc6ac1e5d2dc37e8bd7db1f414eac16641b4))
+
 ## [0.16.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.15.0...v0.16.0) (2026-09-27)
 
 
