@@ -7,7 +7,6 @@ import (
 	"encoding/pem"
 	"fmt"
 	"net/http"
-	"net/url"
 	"os"
 	"sort"
 	"strings"
@@ -96,13 +95,11 @@ func Prepare(ctx context.Context, requestLink string, store Store, httpClient *h
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: httpTimeout}
 	}
-	link, err := url.Parse(requestLink)
+	// request_uri_method=post is accepted and fetched with GET, which
+	// OID4VP §5 allows a Wallet without POST support to do.
+	link, err := wallet.ParseAuthorizationRequestLink(requestLink)
 	if err != nil {
-		return nil, fmt.Errorf("walletapp: presentation request link: %w", err)
-	}
-	clientID, requestURI := link.Query().Get("client_id"), link.Query().Get("request_uri")
-	if clientID == "" || requestURI == "" {
-		return nil, fmt.Errorf("walletapp: presentation request link needs client_id and request_uri")
+		return nil, fmt.Errorf("walletapp: %w", err)
 	}
 
 	w, err := wallet.New(wallet.Config{
@@ -116,7 +113,7 @@ func Prepare(ctx context.Context, requestLink string, store Store, httpClient *h
 	// FetchAuthorizationRequest checks the signing certificate chains
 	// to a trusted CA, the Request Object's signature, and that
 	// client_id is that certificate's x509_hash.
-	authReq, err := w.FetchAuthorizationRequest(ctx, requestURI, clientID)
+	authReq, err := w.FetchAuthorizationRequest(ctx, link.RequestURI, link.ClientID)
 	if err != nil {
 		return nil, fmt.Errorf("walletapp: presentation request: %w", err)
 	}
@@ -125,27 +122,20 @@ func Prepare(ctx context.Context, requestLink string, store Store, httpClient *h
 		VerifierClientID: authReq.ClientID, VerifierName: authReq.VerifierCertificate.Subject.CommonName,
 		ResponseURI: authReq.ResponseURI, authReq: authReq, store: store, http: httpClient,
 	}
-	byID := make(map[string][][]string, len(authReq.Query.Credentials))
-	for _, cq := range authReq.Query.Credentials {
-		for _, c := range cq.Claims {
-			path := make([]string, len(c.Path))
-			for i, el := range c.Path {
-				path[i] = el.Key()
-			}
-			byID[cq.ID] = append(byID[cq.ID], path)
-		}
-	}
+	// One option per format: exactly what Send would present in that
+	// format (wallet.PreviewPresentation makes the same choices, claim
+	// sets included), for the holder to see before choosing.
 	for _, format := range []string{"mso_mdoc", "dc+sd-jwt"} {
 		held, err := heldCredentials(store, format)
 		if err != nil {
 			continue
 		}
-		matches, err := wallet.MatchDCQLQuery(ctx, authReq.Query, held, dcql.AKITrustedAuthoritiesChecker{})
+		preview, err := wallet.PreviewPresentation(ctx, authReq.Query, held, dcql.AKITrustedAuthoritiesChecker{})
 		if err != nil {
 			continue
 		}
-		for id := range matches {
-			p.Options = append(p.Options, Option{Format: format, QueryID: id, Claims: byID[id]})
+		for _, c := range preview {
+			p.Options = append(p.Options, Option{Format: format, QueryID: c.QueryID, Claims: pathStrings(c.Claims)})
 		}
 	}
 	if len(p.Options) == 0 {
@@ -254,4 +244,16 @@ func LoadCertPool(files string) (*x509.CertPool, error) {
 		}
 	}
 	return roots, nil
+}
+
+// pathStrings renders claim paths as their components, for display.
+func pathStrings(paths []dcql.Path) [][]string {
+	out := make([][]string, len(paths))
+	for i, p := range paths {
+		out[i] = make([]string, len(p))
+		for j, el := range p {
+			out[i][j] = el.Key()
+		}
+	}
+	return out
 }

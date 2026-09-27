@@ -133,6 +133,12 @@
 //
 // # OID4VP (presentation)
 //
+// PlanAuthorization (authorization_plan.go) works out, from a
+// Credential Offer and its issuer's metadata, which Authorization Server
+// to use (OID4VCI 1.0 §12.2.4, §4.1.1), the scopes to request and the
+// offer's issuer_state; AuthorizationServerMetadata.ClientEndpoints
+// turns that server's metadata into fapigo/client's endpoint types.
+//
 // VerifyIssuedCredential (issued_credential.go) checks each credential a
 // Credential Response returns before the Wallet keeps it: the issuer
 // signature, with its x5c/x5chain certificate chaining to the caller's
@@ -140,9 +146,13 @@
 // and validity, and the binding to the key the Wallet proved possession
 // of.
 //
-// This package also implements the Wallet side of OID4VP: HeldCredential,
-// MatchDCQLQuery and PresentCredentials (presentation.go) build a VP
-// Token from a DCQL query and this Wallet's own held credentials;
+// This package also implements the Wallet side of OID4VP:
+// ParseAuthorizationRequestLink reads an openid4vp:// (or https)
+// invocation link; HeldCredential, MatchDCQLQuery and PresentCredentials
+// (presentation.go) build a VP Token from a DCQL query and this Wallet's
+// own held credentials, and PreviewPresentation reports beforehand
+// exactly which credentials and claims that would present, for the
+// holder's consent;
 // ParseAuthorizationRequest and BuildDirectPostResponse
 // (authorization_request.go, direct_post_response.go) verify an
 // incoming redirect-flow Authorization Request and build its encrypted

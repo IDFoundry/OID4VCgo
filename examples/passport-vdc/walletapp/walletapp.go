@@ -19,7 +19,6 @@ import (
 	"crypto/x509"
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	fapi "github.com/idfoundry/fapigo"
@@ -103,20 +102,17 @@ func Receive(ctx context.Context, cfg Config, offerURI string, approver Approver
 	if err != nil {
 		return nil, fmt.Errorf("walletapp: issuer metadata: %w", err)
 	}
-	scopes, err := offeredScopes(offer, metadata)
+	// Which Authorization Server, which scopes, and the offer's
+	// issuer_state.
+	plan, err := wallet.PlanAuthorization(offer, metadata)
+	if err != nil {
+		return nil, fmt.Errorf("walletapp: %w", err)
+	}
+	c, err := newOAuthClient(ctx, w, cfg, httpClient, plan.AuthorizationServer)
 	if err != nil {
 		return nil, err
 	}
-
-	asURL, err := authorizationServer(offer, metadata)
-	if err != nil {
-		return nil, err
-	}
-	c, err := newOAuthClient(ctx, w, cfg, httpClient, asURL)
-	if err != nil {
-		return nil, err
-	}
-	authReq, err := wallet.BuildAuthorizationRequest(offer, scopes)
+	authReq, err := wallet.BuildAuthorizationRequest(offer, plan.Scopes)
 	if err != nil {
 		return nil, fmt.Errorf("walletapp: %w", err)
 	}
@@ -138,44 +134,6 @@ func Receive(ctx context.Context, cfg Config, offerURI string, approver Approver
 	}
 
 	return requestAll(ctx, w, cfg, c.ProtectedResource(success.Tokens), offer, metadata)
-}
-
-// authorizationServer picks the Authorization Server to use: the
-// Credential Issuer itself when its metadata lists no
-// authorization_servers, the one it lists, or — when it lists several —
-// the one the offer's authorization_code grant names (OID4VCI 1.0
-// §4.1.1 and §12.2.4).
-func authorizationServer(offer oid4vci.CredentialOffer, metadata oid4vci.Metadata) (string, error) {
-	var named string
-	if offer.Grants != nil && offer.Grants.AuthorizationCode != nil {
-		named = offer.Grants.AuthorizationCode.AuthorizationServer
-	}
-	switch servers := metadata.AuthorizationServers; {
-	case len(servers) == 0:
-		return offer.CredentialIssuer, nil
-	case len(servers) == 1 && named == "":
-		return servers[0].String(), nil
-	default:
-		for _, as := range servers {
-			if named != "" && as.String() == named {
-				return named, nil
-			}
-		}
-		return "", fmt.Errorf("walletapp: the issuer lists %d authorization servers and the offer doesn't name one of them", len(servers))
-	}
-}
-
-// offeredScopes returns the scope of every offered configuration.
-func offeredScopes(offer oid4vci.CredentialOffer, metadata oid4vci.Metadata) ([]string, error) {
-	scopes := make([]string, 0, len(offer.CredentialConfigurationIDs))
-	for _, id := range offer.CredentialConfigurationIDs {
-		conf, ok := metadata.CredentialConfigurationsSupported[id]
-		if !ok || conf.Scope == "" {
-			return nil, fmt.Errorf("walletapp: offered configuration %q isn't in the issuer's metadata with a scope", id)
-		}
-		scopes = append(scopes, conf.Scope)
-	}
-	return scopes, nil
 }
 
 func requestAll(ctx context.Context, w *wallet.Wallet, cfg Config, resource wallet.ProtectedResourceClient, offer oid4vci.CredentialOffer, metadata oid4vci.Metadata) ([]Received, error) {
@@ -243,15 +201,11 @@ func newOAuthClient(ctx context.Context, w *wallet.Wallet, cfg Config, httpClien
 	if err != nil {
 		return nil, fmt.Errorf("walletapp: authorization server metadata: %w", err)
 	}
-	var issuer fapi.URL
-	var endpoints client.Endpoints
-	for raw, dst := range map[string]*fapi.URL{
-		asMeta.Issuer: &issuer, asMeta.AuthorizationEndpoint: &endpoints.Authorization,
-		asMeta.TokenEndpoint: &endpoints.Token, asMeta.PushedAuthorizationRequestEndpoint: &endpoints.PushedAuthorizationRequest,
-	} {
-		if *dst, err = parseURL(raw, dst == &issuer); err != nil {
-			return nil, fmt.Errorf("walletapp: authorization server metadata: %w", err)
-		}
+	// Loopback http is accepted for local development; everything else
+	// must be https.
+	issuer, endpoints, err := asMeta.ClientEndpoints(fapi.AllowLoopbackHTTP())
+	if err != nil {
+		return nil, fmt.Errorf("walletapp: authorization server metadata: %w", err)
 	}
 
 	km, err := ephemeral.NewKeyManager(map[keys.SigningPurpose]fapi.SignatureAlgorithm{
@@ -288,19 +242,6 @@ func newOAuthClient(ctx context.Context, w *wallet.Wallet, cfg Config, httpClien
 		return nil, fmt.Errorf("walletapp: oauth client: %w", err)
 	}
 	return c, nil
-}
-
-// parseURL parses an issuer (asIssuer) or endpoint URL, allowing
-// loopback http for local demos.
-func parseURL(raw string, asIssuer bool) (fapi.URL, error) {
-	var opts []fapi.URLOption
-	if strings.HasPrefix(raw, "http://") {
-		opts = append(opts, fapi.AllowLoopbackHTTP())
-	}
-	if asIssuer {
-		return fapi.ParseIssuerURL(raw, opts...)
-	}
-	return fapi.ParseEndpointURL(raw, opts...)
 }
 
 type staticAttestation string
