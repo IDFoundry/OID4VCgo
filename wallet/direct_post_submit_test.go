@@ -72,3 +72,19 @@ func TestSubmitDirectPostResponse_Rejected(t *testing.T) {
 		t.Fatalf("error = %#v, want a DirectPostRejectedError carrying the verifier's error", err)
 	}
 }
+
+func TestSubmitDirectPostResponse_RejectedTextSanitized(t *testing.T) {
+	srv := verifierReply(t, http.StatusBadRequest, "application/json",
+		`{"error":"invalid_request\nFAKE LOG LINE","error_description":"`+strings.Repeat("x", 1000)+`"}`)
+	_, err := wallet.SubmitDirectPostResponse(context.Background(), srv.Client(), srv.URL, "the-jwe")
+	var rejected *wallet.DirectPostRejectedError
+	if !errors.As(err, &rejected) {
+		t.Fatalf("error = %#v, want a DirectPostRejectedError", err)
+	}
+	if rejected.Code != "invalid_requestFAKE LOG LINE" {
+		t.Errorf("Code = %q, want the control character dropped", rejected.Code)
+	}
+	if n := len([]rune(rejected.Description)); n != 257 || !strings.HasSuffix(rejected.Description, "…") {
+		t.Errorf("Description is %d runes, want 256 plus an ellipsis", n)
+	}
+}

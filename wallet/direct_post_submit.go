@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"unicode"
 
 	"github.com/idfoundry/fapigo/fapihttp"
 )
@@ -16,6 +17,10 @@ import (
 // maxDirectPostReplyBytes bounds the Verifier's reply to a direct_post
 // submission: a small JSON object (OID4VP §8.2).
 const maxDirectPostReplyBytes = 64 << 10
+
+// maxReplyTextRunes bounds each Verifier-supplied error string kept in
+// a DirectPostRejectedError, which callers are likely to log.
+const maxReplyTextRunes = 256
 
 // DirectPostResult is the Verifier's reply to an Authorization Response
 // sent with SubmitDirectPostResponse (OID4VP §8.2).
@@ -32,7 +37,8 @@ type DirectPostResult struct {
 type DirectPostRejectedError struct {
 	StatusCode int
 	// Code and Description are the reply's "error"/"error_description",
-	// when it carried them.
+	// when it carried them — Verifier-supplied text, so control
+	// characters are dropped and each is cut to maxReplyTextRunes.
 	Code        string
 	Description string
 }
@@ -83,7 +89,7 @@ func SubmitDirectPostResponse(ctx context.Context, client fapihttp.HTTPClient, r
 				Description string `json:"error_description"`
 			}
 			if json.Unmarshal(body, &e) == nil {
-				rejected.Code, rejected.Description = e.Error, e.Description
+				rejected.Code, rejected.Description = sanitizeReplyText(e.Error), sanitizeReplyText(e.Description)
 			}
 		}
 		return DirectPostResult{}, rejected
@@ -106,4 +112,24 @@ func SubmitDirectPostResponse(ctx context.Context, client fapihttp.HTTPClient, r
 		return DirectPostResult{}, fmt.Errorf("wallet: submit direct_post response: redirect_uri %q isn't an absolute https URL", reply.RedirectURI)
 	}
 	return DirectPostResult{RedirectURI: reply.RedirectURI}, nil
+}
+
+// sanitizeReplyText drops control characters from Verifier-supplied
+// text and cuts it to maxReplyTextRunes, so it can't forge log lines or
+// flood them.
+func sanitizeReplyText(text string) string {
+	var b strings.Builder
+	n := 0
+	for _, r := range text {
+		if unicode.IsControl(r) {
+			continue
+		}
+		if n == maxReplyTextRunes {
+			b.WriteString("…")
+			break
+		}
+		b.WriteRune(r)
+		n++
+	}
+	return b.String()
 }

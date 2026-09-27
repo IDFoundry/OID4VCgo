@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/json"
 	"errors"
 	"io"
 	"math/big"
@@ -471,5 +472,62 @@ func TestNew_RejectsNoVerifierTrustInProduction(t *testing.T) {
 	cfg.VerifierTrust = wallet.X5CVerifierRoots{Roots: x509.NewCertPool()}
 	if _, err := wallet.New(cfg, validDependencies()); err != nil {
 		t.Errorf("New(X5CVerifierRoots) under AssuranceProduction: %v", err)
+	}
+}
+
+// TestParseAuthorizationRequest_RequiresHTTPSResponseURI re-signs a real
+// Request Object with each response_uri, since the Wallet POSTs its
+// Authorization Response there and follows the reply's redirect_uri.
+func TestParseAuthorizationRequest_RequiresHTTPSResponseURI(t *testing.T) {
+	key, cert, trust := testVerifierSignerAndCert(t)
+	v := newTestVerifierWith(t, key, cert)
+	built, err := v.BuildAuthorizationRequest(verifier.BuildAuthorizationRequestRequest{Query: testQuery(t)})
+	if err != nil {
+		t.Fatalf("BuildAuthorizationRequest: %v", err)
+	}
+	header, payload, err := jose.DecodeUnverified(built.RequestObject)
+	if err != nil {
+		t.Fatalf("DecodeUnverified: %v", err)
+	}
+	withResponseURI := func(responseURI string) string {
+		var claims map[string]any
+		if err := json.Unmarshal(payload, &claims); err != nil {
+			t.Fatalf("unmarshal payload: %v", err)
+		}
+		claims["response_uri"] = responseURI
+		raw, err := json.Marshal(claims)
+		if err != nil {
+			t.Fatalf("marshal payload: %v", err)
+		}
+		signed, err := jose.Sign(jose.ES256, key, map[string]any{"typ": header["typ"], "x5c": header["x5c"]}, raw)
+		if err != nil {
+			t.Fatalf("jose.Sign: %v", err)
+		}
+		return signed
+	}
+
+	for name, tc := range map[string]struct {
+		responseURI   string
+		allowLoopback bool
+		wantErr       bool
+	}{
+		"https":                      {"https://verifier.example.com/response", false, false},
+		"http":                       {"http://verifier.example.com/response", false, true},
+		"http loopback, not allowed": {"http://127.0.0.1:8080/response", false, true},
+		"http loopback, allowed":     {"http://127.0.0.1:8080/response", true, false},
+		"http non-loopback, allowed": {"http://verifier.example.com/response", true, true},
+		"relative":                   {"/response", false, true},
+		"missing":                    {"", false, true},
+		"another scheme":             {"ftp://verifier.example.com/response", false, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := wallet.ParseAuthorizationRequest(wallet.ParseAuthorizationRequestParams{
+				RequestObject: withResponseURI(tc.responseURI), ClientID: v.ClientID(), VerifierTrust: trust,
+				AllowLoopbackHTTP: tc.allowLoopback,
+			})
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("ParseAuthorizationRequest(response_uri %q) error = %v, want error %v", tc.responseURI, err, tc.wantErr)
+			}
+		})
 	}
 }

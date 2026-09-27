@@ -32,6 +32,7 @@ func TestPlanAuthorization(t *testing.T) {
 	}
 	metadata := func(servers ...fapi.URL) oid4vci.Metadata {
 		return oid4vci.Metadata{
+			CredentialIssuer:     as(issuer),
 			AuthorizationServers: servers,
 			CredentialConfigurationsSupported: map[string]oid4vci.CredentialConfigurationMetadata{
 				"pid_sdjwt": {Format: "dc+sd-jwt", Scope: "pid"},
@@ -76,6 +77,7 @@ func TestPlanAuthorization(t *testing.T) {
 			Grants: &oid4vci.Grants{PreAuthorizedCode: &oid4vci.GrantPreAuthorizedCode{PreAuthorizedCode: "code"}},
 		}, metadata(), ""},
 		"wallet-initiated (no grants)": {oid4vci.CredentialOffer{CredentialIssuer: issuer, CredentialConfigurationIDs: []string{"mdl"}}, metadata(), issuer},
+		"metadata for another issuer":  {oid4vci.CredentialOffer{CredentialIssuer: "https://other.example.com", CredentialConfigurationIDs: []string{"mdl"}}, metadata(), ""},
 	} {
 		t.Run(name, func(t *testing.T) {
 			plan, err := wallet.PlanAuthorization(tc.offer, tc.meta)

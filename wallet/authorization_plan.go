@@ -44,6 +44,13 @@ type AuthorizationPlan struct {
 // pre-authorized_code) is refused: see RequestPreAuthorizedCodeToken
 // for that flow.
 func PlanAuthorization(offer oid4vci.CredentialOffer, metadata oid4vci.Metadata) (AuthorizationPlan, error) {
+	// metadata must be the offering issuer's own, as
+	// FetchCredentialIssuerMetadata checks it names the issuer it was
+	// fetched for (§12.2.4): its authorization servers and scopes are
+	// what this plan trusts.
+	if metadata.CredentialIssuer.String() != offer.CredentialIssuer {
+		return AuthorizationPlan{}, fmt.Errorf("wallet: plan authorization: metadata is for issuer %q, but the offer is from %q", metadata.CredentialIssuer.String(), offer.CredentialIssuer)
+	}
 	var grant *oid4vci.GrantAuthorizationCode
 	if offer.Grants != nil {
 		if offer.Grants.AuthorizationCode == nil {
