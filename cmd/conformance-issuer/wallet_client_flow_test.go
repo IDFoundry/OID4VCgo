@@ -121,7 +121,6 @@ func buildRealClientForAttestationAuth(t *testing.T, cfg Config, httpClient *htt
 		},
 		Limits: client.Limits{
 			SessionLifetime:      5 * time.Minute,
-			MaxIDTokenLifetime:   5 * time.Minute,
 			MaxClockSkew:         5 * time.Second,
 			HTTPTimeout:          10 * time.Second,
 			MaxHTTPResponseBytes: 1 << 16,

@@ -198,7 +198,6 @@ func buildClient(ctx context.Context, run *walletRun, module conformancesuite.Su
 		},
 		Limits: client.Limits{
 			SessionLifetime:      5 * time.Minute,
-			MaxIDTokenLifetime:   5 * time.Minute,
 			MaxClockSkew:         15 * time.Second,
 			HTTPTimeout:          20 * time.Second,
 			MaxHTTPResponseBytes: 1 << 20,
