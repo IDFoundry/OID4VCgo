@@ -13,7 +13,6 @@ import (
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcgo/internal/conformanceconfig"
-	"github.com/idfoundry/oid4vcgo/internal/jwe"
 	"github.com/idfoundry/oid4vcgo/issuer"
 )
 
@@ -36,41 +35,6 @@ func nonceHandler(iss *issuer.Issuer) http.HandlerFunc {
 			return
 		}
 		result.WriteJSON(w)
-	}
-}
-
-// wireCredentialRequest is the Credential Request's own wire shape
-// (§8.2) — this binary's own job to parse, matching this repo's
-// established "issuer doesn't own the HTTP handler" boundary (see
-// issuer/credential_endpoint.go's own doc comment).
-type wireCredentialRequest struct {
-	CredentialConfigurationID    string                  `json:"credential_configuration_id"`
-	CredentialIdentifier         string                  `json:"credential_identifier"`
-	Proofs                       map[string][]string     `json:"proofs"`
-	CredentialResponseEncryption *wireResponseEncryption `json:"credential_response_encryption"`
-}
-
-// wireResponseEncryption is the Credential Request's own optional
-// "credential_response_encryption" object (§8.2) — this binary's own
-// job to parse into an *issuer.ResponseEncryptionRequest, since that
-// type carries no JSON tags of its own (issuer/encryption.go's own
-// doc comment: it's populated by the caller, not unmarshaled
-// directly).
-type wireResponseEncryption struct {
-	JWK json.RawMessage `json:"jwk"`
-	Enc string          `json:"enc"`
-	Zip string          `json:"zip"`
-}
-
-// responseEncryptionFromWire adapts wire (nil when the Credential
-// Request carried no "credential_response_encryption" object) into the
-// *issuer.ResponseEncryptionRequest RequestCredential expects.
-func responseEncryptionFromWire(wire *wireResponseEncryption) *issuer.ResponseEncryptionRequest {
-	if wire == nil {
-		return nil
-	}
-	return &issuer.ResponseEncryptionRequest{
-		JWK: wire.JWK, Enc: jwe.Enc(wire.Enc), Zip: jwe.Zip(wire.Zip),
 	}
 }
 
@@ -199,22 +163,16 @@ func serveCredentialRequest(w http.ResponseWriter, r *http.Request, deps credent
 		return
 	}
 
-	body, err := io.ReadAll(r.Body)
+	body, err := io.ReadAll(io.LimitReader(r.Body, issuer.MaxCredentialRequestBytes+1))
 	if err != nil {
 		http.Error(w, "failed to read request body", http.StatusBadRequest)
 		return
 	}
-	plaintext, wasEncrypted, err := deps.iss.DecryptRequestBody(body, r.Header.Get("Content-Type"))
+	req, err := deps.iss.ParseCredentialRequest(body, r.Header.Get("Content-Type"))
 	if err != nil {
 		issuer.WriteError(w, err)
 		return
 	}
-	var wire wireCredentialRequest
-	if err := json.Unmarshal(plaintext, &wire); err != nil {
-		http.Error(w, "malformed credential request", http.StatusBadRequest)
-		return
-	}
-	responseEncryption := responseEncryptionFromWire(wire.CredentialResponseEncryption)
 
 	exp := sdjwtvc.RoundedExp(time.Now(), issuedCredentialLifetime)
 	auth := issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID(authCtx.ClientID), Scopes: authCtx.Scopes}
@@ -224,19 +182,11 @@ func serveCredentialRequest(w http.ResponseWriter, r *http.Request, deps credent
 	// cc.Format dispatch picks whichever one actually matches the
 	// requested CredentialConfiguration and ignores the other, so
 	// this handler doesn't need to itself look up which format
-	// wire.CredentialConfigurationID/CredentialIdentifier resolves
-	// to.
-	mdocClaims := mdocClaimsForRequest(deps.mdocDocType, deps.mdocNameSpaceElements, issuedCredentialLifetime)
+	// req.CredentialConfigurationID/CredentialIdentifier resolves to.
+	req.SDJWTClaims = &sdjwtvc.Claims{VCT: deps.cfg.VCT, Exp: &exp, Additional: deps.additional}
+	req.MdocClaims = mdocClaimsForRequest(deps.mdocDocType, deps.mdocNameSpaceElements, issuedCredentialLifetime)
 
-	result, err := deps.iss.RequestCredential(r.Context(), auth, issuer.CredentialRequest{
-		CredentialConfigurationID: wire.CredentialConfigurationID,
-		CredentialIdentifier:      wire.CredentialIdentifier,
-		Proofs:                    wire.Proofs,
-		SDJWTClaims:               &sdjwtvc.Claims{VCT: deps.cfg.VCT, Exp: &exp, Additional: deps.additional},
-		MdocClaims:                mdocClaims,
-		RequestWasEncrypted:       wasEncrypted,
-		ResponseEncryption:        responseEncryption,
-	})
+	result, err := deps.iss.RequestCredential(r.Context(), auth, req)
 	if err != nil {
 		issuer.WriteError(w, err)
 		return
@@ -246,7 +196,7 @@ func serveCredentialRequest(w http.ResponseWriter, r *http.Request, deps credent
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	encoded, contentType, err := deps.iss.EncryptResponseBody(resultJSON, responseEncryption)
+	encoded, contentType, err := deps.iss.EncryptResponseBody(resultJSON, req.ResponseEncryption)
 	if err != nil {
 		issuer.WriteError(w, err)
 		return

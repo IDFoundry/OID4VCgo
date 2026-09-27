@@ -39,10 +39,10 @@ const (
 
 // buildQuery returns a DCQL query for mode that accepts the passport
 // credential in either format (a credential set with one option per
-// format), requesting only what mode needs, from an issuer whose
-// certificate one of issuerAKIs issued (DCQL trusted_authorities, the
-// "aki" type HAIP 1.0 §5 requires).
-func buildQuery(mode Mode, vct string, issuerAKIs []string) (dcql.Query, error) {
+// format), requesting only what mode needs, from an issuer the
+// trusted query names (DCQL trusted_authorities, the "aki" type HAIP
+// 1.0 §5 requires).
+func buildQuery(mode Mode, vct string, trusted dcql.TrustedAuthoritiesQuery) (dcql.Query, error) {
 	mdocMeta, err := dcql.NewMdocMeta(dcql.MdocMeta{DoctypeValue: credential.DocType})
 	if err != nil {
 		return dcql.Query{}, err
@@ -69,11 +69,11 @@ func buildQuery(mode Mode, vct string, issuerAKIs []string) (dcql.Query, error) 
 		return dcql.Query{}, fmt.Errorf("verifierapp: unknown mode %q", mode)
 	}
 
-	trusted := []dcql.TrustedAuthoritiesQuery{{Type: dcql.TrustedAuthorityAKI, Values: issuerAKIs}}
+	trustedAuthorities := []dcql.TrustedAuthoritiesQuery{trusted}
 	q := dcql.Query{
 		Credentials: []dcql.CredentialQuery{
-			{ID: mdocQueryID, Format: mdoc.CredentialFormat, Meta: mdocMeta, Claims: mdocClaims, TrustedAuthorities: trusted},
-			{ID: sdjwtQueryID, Format: sdjwtvc.CredentialFormat, Meta: sdjwtMeta, Claims: sdjwtClaims, TrustedAuthorities: trusted},
+			{ID: mdocQueryID, Format: mdoc.CredentialFormat, Meta: mdocMeta, Claims: mdocClaims, TrustedAuthorities: trustedAuthorities},
+			{ID: sdjwtQueryID, Format: sdjwtvc.CredentialFormat, Meta: sdjwtMeta, Claims: sdjwtClaims, TrustedAuthorities: trustedAuthorities},
 		},
 		CredentialSets: []dcql.CredentialSetQuery{{Options: [][]string{{mdocQueryID}, {sdjwtQueryID}}}},
 	}

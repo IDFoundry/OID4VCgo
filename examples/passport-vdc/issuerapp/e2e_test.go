@@ -237,3 +237,21 @@ func TestApproval_RequiresConfirmationCode(t *testing.T) {
 		t.Fatalf("Receive with the right code after a wrong one: %d credentials, %v", len(received), err)
 	}
 }
+
+// TestVCTMetadata_IsValidTypeMetadata checks the document served at the
+// credentials' vct is valid SD-JWT VC Type Metadata for that vct.
+func TestVCTMetadata_IsValidTypeMetadata(t *testing.T) {
+	env := demotest.New(t, nil)
+	resp, err := env.HTTP.Get(env.IssuerURL + issuerapp.VCTPath)
+	if err != nil {
+		t.Fatalf("GET vct: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	var doc sdjwtvc.TypeMetadata
+	if err := json.NewDecoder(resp.Body).Decode(&doc); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if err := doc.Validate(); err != nil || doc.VCT != env.IssuerURL+issuerapp.VCTPath || len(doc.Claims) == 0 {
+		t.Fatalf("type metadata = %+v, %v", doc, err)
+	}
+}
