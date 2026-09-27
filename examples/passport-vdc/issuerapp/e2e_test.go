@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -319,5 +320,26 @@ func TestCredential_EncryptedBothWays(t *testing.T) {
 		if recorder.requests[i] != "application/jwt" || recorder.replies[i] != "application/jwt" {
 			t.Errorf("credential exchange %d: request %q, response %q; want both application/jwt", i, recorder.requests[i], recorder.replies[i])
 		}
+	}
+}
+
+// TestASMetadata_AdvertisesDPoP checks the Authorization Server metadata
+// advertises DPoP's signing algorithms (RFC 9449 §5.1), now served by
+// fapigo's own server.Metadata.
+func TestASMetadata_AdvertisesDPoP(t *testing.T) {
+	env := demotest.New(t, nil)
+	resp, err := env.HTTP.Get(env.IssuerURL + "/.well-known/oauth-authorization-server")
+	if err != nil {
+		t.Fatalf("GET metadata: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	var meta struct {
+		DPoP []string `json:"dpop_signing_alg_values_supported"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&meta); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !slices.Contains(meta.DPoP, "ES256") {
+		t.Fatalf("dpop_signing_alg_values_supported = %v, want ES256", meta.DPoP)
 	}
 }
