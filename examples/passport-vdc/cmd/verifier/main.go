@@ -34,6 +34,7 @@ func main() {
 	keyFile := flag.String("tls-key", "", "TLS private key PEM (with -tls-cert)")
 	certOut := flag.String("tls-cert-out", "verifier-tls.pem", "where to write a generated TLS certificate for the wallet to trust")
 	caOut := flag.String("verifier-ca-out", "verifier-ca.pem", "where to write the demo verifier CA certificate for wallets to trust")
+	trust := flag.String("trust", "issuer-tls.pem", "comma-separated PEM files of TLS certificates to trust when fetching the issuer's status list (from cmd/issuer)")
 	webWallet := flag.String("web-wallet", "https://127.0.0.1:7443", "the demo web wallet's URL, for the request page's \"Open in web wallet\" button (empty to hide it)")
 	flag.Parse()
 
@@ -56,9 +57,14 @@ func main() {
 	if err != nil {
 		log.Fatalf("load CSCA master list: %v", err)
 	}
+	httpClient, err := demotls.TrustingClient(*trust)
+	if err != nil {
+		log.Fatal(err)
+	}
 	app, err := verifierapp.New(verifierapp.Config{
 		VerifierURL: *verifierURL, IssuerVCT: *issuerURL + "/vct/passport/1",
 		IssuerCAs: issuerCAs, CSCAPool: cscaPool, WebWalletURL: *webWallet,
+		HTTP: httpClient,
 	})
 	if err != nil {
 		log.Fatal(err)

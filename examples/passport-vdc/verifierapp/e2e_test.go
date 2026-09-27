@@ -2,8 +2,11 @@ package verifierapp_test
 
 import (
 	"context"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -159,5 +162,48 @@ func TestEndToEnd_TrustICAO_Sample(t *testing.T) {
 				t.Error("identity from the presented DG1 differs from the passport's")
 			}
 		})
+	}
+}
+
+// TestEndToEnd_Revocation checks each credential references the issuer's
+// Token Status List and is accepted while its entry is VALID; once the
+// issuer revokes the mdoc (through its revocation page), presenting it
+// is rejected, while the still-valid SD-JWT VC is accepted.
+func TestEndToEnd_Revocation(t *testing.T) {
+	env := demotest.New(t, nil)
+	env.StartVerifier(t, nil)
+	store := receiveInto(t, env, demotest.SyntheticEvidence())
+
+	for _, format := range []string{"mso_mdoc", "dc+sd-jwt"} {
+		if out := present(t, env, store, verifierapp.ModeIssuer, format); out.Status != "valid" {
+			t.Fatalf("%s: Status = %q before revocation, want valid", format, out.Status)
+		}
+	}
+
+	revoked := -1
+	for _, s := range env.Issuer.IssuedStatuses() {
+		if s.Format == "mso_mdoc" {
+			revoked = s.Idx
+		}
+	}
+	if revoked < 0 {
+		t.Fatal("the issuer recorded no mso_mdoc credential")
+	}
+	resp, err := env.HTTP.PostForm(env.IssuerURL+"/status/revoke", url.Values{"idx": {strconv.Itoa(revoked)}})
+	if err != nil {
+		t.Fatalf("revoke: %v", err)
+	}
+	_ = resp.Body.Close()
+
+	_, link, err := env.Verifier.CreateRequest(verifierapp.ModeIssuer)
+	if err != nil {
+		t.Fatalf("CreateRequest: %v", err)
+	}
+	_, err = walletapp.Present(context.Background(), link, store, walletapp.PresentOptions{Format: "mso_mdoc", HTTP: env.HTTP, VerifierTrust: env.VerifierTrust()})
+	if err == nil || !strings.Contains(err.Error(), "revoked") {
+		t.Fatalf("presenting the revoked mdoc: error = %v, want a rejection for revocation", err)
+	}
+	if out := present(t, env, store, verifierapp.ModeIssuer, "dc+sd-jwt"); out.Status != "valid" {
+		t.Errorf("the unrevoked SD-JWT VC: Status = %q, want valid", out.Status)
 	}
 }

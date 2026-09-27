@@ -86,7 +86,7 @@ What the second path does and doesn't give you:
 ```sh
 go run ./cmd/wallet-provider     # once: wallet-provider.pem and wallet-provider-ca.pem
 go run ./cmd/issuer              # https://127.0.0.1:8543 — writes issuer-tls.pem, issuer-ca.pem
-go run ./cmd/verifier            # https://127.0.0.1:9443 — writes verifier-tls.pem, verifier-ca.pem
+go run ./cmd/verifier            # https://127.0.0.1:9443 — writes verifier-tls.pem, verifier-ca.pem; trusts issuer-tls.pem
 go run ./cmd/webwallet           # https://127.0.0.1:7443 — writes webwallet-tls.pem; trusts issuer-ca.pem, verifier-ca.pem
 ```
 
@@ -96,6 +96,8 @@ answer only verifiers whose request-signing certificate chains to a
 trusted verifier CA (`-trust-verifier-ca`, default `verifier-ca.pem`),
 so start the issuer and the verifier before the web wallet. A
 restarted issuer or verifier has a new CA; restart the web wallet too.
+The verifier fetches the issuer's status list over TLS, trusting
+`-trust` (default `issuer-tls.pem`), so start the issuer first.
 
 All three use self-signed certificates: accept them in the browser, or
 trust the written `.pem` files. (The issuer uses 8543 rather than 8443
@@ -170,11 +172,31 @@ The library's wallet can discover a loopback `http` issuer too, when
 | PAR | `POST /par` | fapigo verifies the Wallet Attestation (its `x5c` chain to the Wallet Provider CA) + PoP and DPoP; the Wallet sends the offer's `issuer_state` (T) |
 | Approve | `GET /authorize`, `POST /authorize/decision` | reads T back from the interaction request's `issuer_state`, then shows the passport holder's name and asks for the confirmation code; approval with the right code **claims T** — no other authorization can reach it — and authorizes **subject = T**, granting the scopes the wallet requested |
 | Token | `POST /token` | DPoP-bound access token with `sub` = T |
-| Credential | `POST /nonce`, `POST /credential` | the request and response are both encrypted (OID4VCI 1.0 §10, required by the issuer's metadata: the credential carries passport data); the token's `sub` finds T's `Evidence`; the requested configuration (`passport_mdoc` or `passport_sdjwt`), if not already issued for T, is encoded, bound to the key the Key Attestation attests, and signed; once both are issued, T and its passport data are dropped. The wallet checks each credential before keeping it: issuer signature chaining to `issuer-ca.pem`, bound to its own holder key, and the offered vct or doctype |
+| Credential | `POST /nonce`, `POST /credential` | the request and response are both encrypted (OID4VCI 1.0 §10, required by the issuer's metadata: the credential carries passport data); the token's `sub` finds T's `Evidence`; the requested configuration (`passport_mdoc` or `passport_sdjwt`), if not already issued for T, is encoded, bound to the key the Key Attestation attests, given its own random index in the issuer's Token Status List, and signed; once both are issued, T and its passport data are dropped. The wallet checks each credential before keeping it: issuer signature chaining to `issuer-ca.pem`, bound to its own holder key, and the offered vct or doctype |
 
 Also served: `/.well-known/openid-credential-issuer` (signed metadata),
-`/.well-known/oauth-authorization-server`, `/jwks`, and the SD-JWT VC
-type metadata at the `vct` URL (`/vct/passport/1`).
+`/.well-known/oauth-authorization-server`, `/jwks`, the SD-JWT VC
+type metadata at the `vct` URL (`/vct/passport/1`), and the Token
+Status List every credential references (`/statuslists/1`).
+
+### Revocation
+
+Each credential carries a reference to the issuer's Token Status List
+(draft-14): an SD-JWT VC in its `status` claim, an mdoc in its MSO's
+`status`. Every credential gets its own random, unused index (HAIP 1.0
+§6.1). The issuer serves the list at `/statuslists/1` as a JWT, or as a
+CWT when the request's `Accept` asks for `application/statuslist+cwt`
+(what an mdoc's reference uses), signed by the document signer with its
+certificate in `x5c` / `x5chain` (HAIP 1.0 §6.1).
+
+The issuer's **Issued credentials** page (`/status`, linked from its
+home page) lists every issued credential by index, format and time,
+and revokes one with a button. The verifier checks every presented
+credential against the list: the token's certificate must chain to the
+issuer CA, and the credential's entry must be valid. A revoked,
+suspended or uncheckable credential is rejected, and a valid one shows
+"Revocation status: valid" on the result page. The list is cacheable
+for 60 seconds.
 
 **Demo shortcuts:**
 
@@ -189,6 +211,10 @@ type metadata at the `vct` URL (`/vct/passport/1`).
 - The signing keys and certificates (one for credentials, one for the
   issuer metadata, under one demo CA) are generated per process (a
   restart invalidates issued credentials); everything is in memory.
+- **Anyone who can reach the issuer can revoke.** The `/status` page has
+  no login; it refuses only cross-origin form posts. It records no
+  passport data, and forgets everything on restart (as do the
+  credentials' signing keys).
 - **Key Attestations assert nothing about key storage.** They leave out
   `key_storage` and `user_authentication`, because the demo's holder keys
   are ordinary software keys. The issuer checks who attested a key, not
@@ -209,6 +235,7 @@ It checks:
 |---|---|---|
 | Requested | `family_name`, `given_name`, nationality, `age_over_18` | `icao_sod`, `icao_dg1` — nothing else, not the photo |
 | Issuer signature | verified, chained to the demo issuer's CA (`issuer-ca.pem`) | verified, likewise |
+| Revocation | the issuer's Token Status List says the credential is valid | likewise |
 | Holder binding | key-binding / device signature over the verifier's nonce | likewise |
 | Data trusted because… | the demo issuer signed it | ICAO Passive Authentication over the SOD + DG1 passes against the CSCA master list: the country signed it |
 

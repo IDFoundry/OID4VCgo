@@ -97,6 +97,8 @@ func (e *Env) StartVerifier(t *testing.T, cscaPool cms.CertPool, opts ...func(*v
 		VerifierURL: e.VerifierURL, IssuerVCT: e.IssuerURL + issuerapp.VCTPath,
 		IssuerCAs: []*x509.Certificate{e.Issuer.IssuerCACertificate()}, CSCAPool: cscaPool,
 		WebWalletURL: e.WebWalletURL,
+		// Trusts the issuer's TLS certificate, to fetch its status list.
+		HTTP: e.HTTP,
 	}
 	for _, opt := range opts {
 		opt(&cfg)

@@ -60,9 +60,12 @@ type App struct {
 	interactions     *ttlMap[pendingInteraction] // interaction handle → approval
 	metadataSigner   *ecdsa.PrivateKey
 	metadataCert     *x509.Certificate
-	providerRoots    *x509.CertPool // the Wallet Provider CA: Wallet and Key Attestations
+	providerRoots    *x509.CertPool    // the Wallet Provider CA: Wallet and Key Attestations
+	documentSigner   *ecdsa.PrivateKey // signs credentials and the status list
 	documentCert     *x509.Certificate
 	caCert           *x509.Certificate
+	statusList       *statusList
+	statusListURI    string
 	handler          http.Handler
 }
 
@@ -80,6 +83,7 @@ func New(cfg Config) (*App, error) {
 	}
 	a.vct = cfg.IssuerURL + VCTPath
 	a.transactions = newTransactions(a.now, cfg.transactionLifetime(), cfg.maxTransactions())
+	a.statusList, a.statusListURI = newStatusList(), cfg.IssuerURL+StatusListPath
 	a.interactions = newTTLMap[pendingInteraction](a.now)
 	if a.providerRoots, err = certPool(cfg.Wallet.ProviderCA); err != nil {
 		return nil, err
@@ -311,9 +315,14 @@ func (a *App) buildIssuer() error {
 		return fmt.Errorf("issuerapp: issuer.New: %w", err)
 	}
 	a.metadataSigner, a.metadataCert = id.metadataSigner, id.metadataSignerCert
-	a.documentCert = id.documentSignerCert
+	a.documentSigner, a.documentCert = id.documentSigner, id.documentSignerCert
 	return nil
 }
+
+// documentChain is the document signer's certificate chain as signed
+// tokens carry it: the signer's certificate, without the CA (the trust
+// anchor a verifier already holds).
+func (a *App) documentChain() []*x509.Certificate { return []*x509.Certificate{a.documentCert} }
 
 // issuerIdentity is this process's demo CA and the two keys certified
 // under it: the document signer (the SD-JWT's x5c, the mdoc's x5chain)

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/url"
 	"slices"
 	"strings"
 	"sync"
@@ -341,5 +342,34 @@ func TestASMetadata_AdvertisesDPoP(t *testing.T) {
 	}
 	if !slices.Contains(meta.DPoP, "ES256") {
 		t.Fatalf("dpop_signing_alg_values_supported = %v, want ES256", meta.DPoP)
+	}
+}
+
+// TestRevoke_Refuses checks the revocation page refuses a cross-origin
+// form post (another site revoking through a visitor's browser) and an
+// index no credential has.
+func TestRevoke_Refuses(t *testing.T) {
+	env := demotest.New(t, nil)
+	post := func(origin, idx string) int {
+		req, err := http.NewRequest(http.MethodPost, env.IssuerURL+"/status/revoke", strings.NewReader(url.Values{"idx": {idx}}.Encode()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		if origin != "" {
+			req.Header.Set("Origin", origin)
+		}
+		resp, err := env.HTTP.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		return resp.StatusCode
+	}
+	if got := post("https://attacker.example", "0"); got != http.StatusForbidden {
+		t.Errorf("cross-origin revoke: status %d, want 403", got)
+	}
+	if got := post(env.IssuerURL, "12345"); got != http.StatusBadRequest {
+		t.Errorf("revoking an unused index: status %d, want 400", got)
 	}
 }

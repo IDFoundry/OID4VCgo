@@ -71,6 +71,10 @@ func (a *App) routes() http.Handler {
 	mux.HandleFunc("GET "+VCTPath, a.handleVCTMetadata)
 	mux.HandleFunc("POST /nonce", a.handleNonce)
 	mux.HandleFunc("POST /credential", a.handleCredential)
+
+	mux.HandleFunc("GET "+StatusListPath, a.handleStatusList)
+	mux.HandleFunc("GET /status", a.handleStatusPage)
+	mux.HandleFunc("POST /status/revoke", a.handleRevoke)
 	return mux
 }
 
@@ -102,6 +106,7 @@ var uploadTemplate = template.Must(template.New("upload").Parse(pageHead + `
 <button>Verify passport</button>
 </form>
 <p class="note">Demo only. The passport is held in memory until the offer expires and is never stored.</p>
+<p><a href="/status">Issued credentials and revocation</a></p>
 ` + pageFoot))
 
 type offerPage struct {
