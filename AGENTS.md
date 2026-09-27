@@ -73,6 +73,12 @@ package layout and design rationale as it's built out.
 
 ## Where conformance-suite knowledge lives
 
+All four roles are OpenID Certified (OID4VCI + HAIP Issuer and Wallet,
+OID4VP + HAIP Verifier and Wallet, as OID4VCgo 0.12.0) — see
+[`conformance/README.md#oidf-certification`](conformance/README.md#oidf-certification).
+Certification is done, not future work; what remains is keeping later
+releases conformant.
+
 [`conformance/README.md`](conformance/README.md) — mirrors FAPIgo's own
 `conformance/*/README.md` documentation convention. All four binaries
 (`cmd/conformance-verifier`, `cmd/conformance-wallet-vp`,
