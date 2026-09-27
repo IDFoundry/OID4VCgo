@@ -83,58 +83,99 @@ What the second path does and doesn't give you:
 
 ## Running the demo
 
+Run everything from this directory (`examples/passport-vdc`): each
+server reads the `.pem` files the others write here.
+
+**1. Create the Wallet Provider (once).**
+
 ```sh
-go run ./cmd/wallet-provider     # once: wallet-provider.pem and wallet-provider-ca.pem
-go run ./cmd/issuer              # https://127.0.0.1:8543 — writes issuer-tls.pem, issuer-ca.pem
-go run ./cmd/verifier            # https://127.0.0.1:9443 — writes verifier-tls.pem, verifier-ca.pem; trusts issuer-tls.pem
-go run ./cmd/webwallet           # https://127.0.0.1:7443 — writes webwallet-tls.pem; trusts issuer-ca.pem, verifier-ca.pem
+go run ./cmd/wallet-provider     # writes wallet-provider.pem and wallet-provider-ca.pem
+```
+
+**2. Start the three servers, each in its own terminal, in this order.**
+They keep running, and each reads what the previous one wrote:
+
+```sh
+go run ./cmd/issuer              # terminal 1: https://127.0.0.1:8543 — writes issuer-tls.pem, issuer-ca.pem
+go run ./cmd/verifier            # terminal 2: https://127.0.0.1:9443 — writes verifier-tls.pem, verifier-ca.pem; trusts issuer-ca.pem and issuer-tls.pem
+go run ./cmd/webwallet           # terminal 3: https://127.0.0.1:7443 — writes webwallet-tls.pem; trusts issuer-ca.pem, verifier-ca.pem and both TLS certificates
 ```
 
 The wallets keep only credentials whose issuer certificate chains to a
 trusted issuer CA (`-trust-issuer-ca`, default `issuer-ca.pem`), and
 answer only verifiers whose request-signing certificate chains to a
-trusted verifier CA (`-trust-verifier-ca`, default `verifier-ca.pem`),
-so start the issuer and the verifier before the web wallet. A
-restarted issuer or verifier has a new CA; restart the web wallet too.
-The verifier fetches the issuer's status list over TLS, trusting
-`-trust` (default `issuer-tls.pem`), so start the issuer first.
+trusted verifier CA (`-trust-verifier-ca`, default `verifier-ca.pem`).
+The verifier trusts the issuer's CA (`-issuer-ca`) for credentials and
+its TLS certificate (`-trust`, default `issuer-tls.pem`) for fetching
+its status list.
 
-All three use self-signed certificates: accept them in the browser, or
-trust the written `.pem` files. (The issuer uses 8543 rather than 8443
-so it doesn't collide with a locally running OIDF conformance suite.)
+**Restarting.** Every start generates a new CA and TLS certificate, and
+the others load them only when they start. After restarting the issuer,
+restart the verifier and then the web wallet; after restarting the
+verifier, restart the web wallet. Credentials issued by an earlier
+issuer run no longer verify (the CA they chain to is gone), so delete
+`wallet-store/` and issue again.
 
-**In the browser (web wallet):**
+**3. Accept the certificates.** All three servers use self-signed
+certificates: in the browser you'll use, open https://127.0.0.1:8543,
+https://127.0.0.1:9443 and https://127.0.0.1:7443 once each and accept
+the warning (or trust the written `.pem` files). The issuer uses 8543
+rather than 8443 so it doesn't collide with a locally running OIDF
+conformance suite.
 
-1. **Issue.** Open https://127.0.0.1:8543 and upload a gmrtd portable
-   passport file. It's verified against gmrtd's built-in ICAO CSCA
-   master list; click **Open in web wallet**, continue to the issuer,
-   approve, and you're back in the wallet with both credentials.
-2. **Verify.** Open https://127.0.0.1:9443, choose a trust path, and
-   click **Open in web wallet**. The wallet shows who's asking and
-   exactly which claims each format would disclose; choose a format
-   and **Share** (or **Decline**). The wallet then brings you back to
-   the verifier's page, which shows the result.
+**4. Issue, in the browser.** Use the same browser throughout: the
+issuer's redirect back is bound to the browser that started receiving
+(see below).
+
+1. Open https://127.0.0.1:8543 and upload a gmrtd portable passport
+   file. It's verified against gmrtd's built-in ICAO CSCA master list.
+2. The offer page shows a QR code, an **Open in web wallet** button and
+   a six-digit confirmation code. Click **Open in web wallet**, confirm,
+   and continue to the issuer.
+3. On the issuer's approval page, enter the confirmation code and
+   **Approve**. You're back in the wallet with both credentials.
+
+**5. Verify.**
+
+1. Open https://127.0.0.1:9443, choose a trust path, and click
+   **Open in web wallet**.
+2. The wallet shows who's asking and exactly which claims each format
+   would disclose; choose a format and **Share** (or **Decline**).
+3. The wallet brings you back to the verifier's page, which shows the
+   verified claims, "Revocation status: valid" and, for the country
+   trust path, the ICAO Passive Authentication result.
+
+**6. Revoke.** On the issuer, open **Issued credentials and revocation**
+(https://127.0.0.1:8543/status) and **Revoke** one credential. Verify
+again sharing that format: the verifier rejects it as revoked, while
+the other format is still accepted. The verifier fetches the status
+list on every check, so a revocation applies at once.
 
 **From the terminal (CLI wallet)** — same store, so both wallets see the
 same credentials; like the web wallet, it shows who's asking and what
 they'd see, and asks before sharing:
 
 ```sh
-go run ./cmd/wallet receive 'openid-credential-offer://?credential_offer=...'
+go run ./cmd/wallet receive 'openid-credential-offer://?credential_offer=...'   # the offer page's link
 go run ./cmd/wallet list
-go run ./cmd/wallet present [-format dc+sd-jwt] [-yes] 'openid4vp://?client_id=...&request_uri=...'
+go run ./cmd/wallet present [-format dc+sd-jwt] [-yes] 'openid4vp://?client_id=...&request_uri=...'   # the verifier page's link
 ```
 
-The CLI's `receive` prints the authorization URL: open it, approve, and
-it picks up the redirect on `http://127.0.0.1:8765/callback`; add
-`-headless -code <confirmation code>` to approve automatically. Both wallets keep credentials
-(with their holder keys) in `wallet-store/`.
+The CLI's `receive` prints the authorization URL: open it, approve with
+the confirmation code, and it picks up the redirect on
+`http://127.0.0.1:8765/callback`; add `-headless -code <confirmation code>`
+to approve automatically. Both wallets keep credentials (with their
+holder keys) in `wallet-store/` — made from your passport, so delete it
+when you're done.
 
 The issuer's redirect back is bound to the wallet that asked (fapigo's
 protection against login CSRF, RFC 9700 §4.7): the web wallet sets a
 session cookie when it sends the browser to the issuer, so the approval
 must be completed in that same browser; the CLI's flow is bound to its
 own process.
+
+Stop the servers with Ctrl-C. Everything is in memory, so a restart
+starts over (see **Restarting** above).
 
 `cmd/wallet-provider` creates the demo's **stand-in Wallet Provider**:
 a key, and a certificate for it from a demo Wallet Provider CA, naming
