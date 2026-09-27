@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.18.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.17.0...v0.18.0) (2026-09-27)
+
+
+### Features
+
+* export JWE encryption parameters and enforce required response encryption ([7ead104](https://github.com/IDFoundry/OID4VCgo/commit/7ead104f98c13a8093dc2b10547fc8edaae26e29))
+* parse credential requests, and helpers for attested keys, AKI trusted authorities and type metadata ([5e8f75b](https://github.com/IDFoundry/OID4VCgo/commit/5e8f75b7cbe0988376b17016741daac2143a60bd))
+* verify issued credentials, submit direct_post responses and route them by kid ([668e2a3](https://github.com/IDFoundry/OID4VCgo/commit/668e2a33e41db8de0aa2e35de6a4ce0dd8c5efcc))
+* **wallet:** plan authorizations, preview presentations and parse request links ([3ff14d1](https://github.com/IDFoundry/OID4VCgo/commit/3ff14d139bf1cdbbe3c918cb7afd73ddef173ab8))
+
 ## [0.17.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.16.0...v0.17.0) (2026-09-27)
 
 
