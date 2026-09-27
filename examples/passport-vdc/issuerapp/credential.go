@@ -1,6 +1,7 @@
 package issuerapp
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -82,19 +83,25 @@ func (a *App) handleCredential(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Each credential gets its own status list index, freed again if it
-	// isn't issued after all.
-	statusIdx, err := a.statusList.allocate(credentialFormat(req.CredentialConfigurationID), a.now())
-	if err != nil {
-		writeCredentialError(w, "this issuer can't track any more credentials")
-		return
-	}
+	// Each credential — every one of a batch — gets its own status list
+	// index (HAIP 1.0 §6.1), freed again if the request fails.
+	var statusIdxs []int
 	defer func() {
 		if !issued {
-			a.statusList.release(statusIdx)
+			for _, idx := range statusIdxs {
+				a.statusList.release(idx)
+			}
 		}
 	}()
-	a.withStatus(sdjwtClaims, mdocClaims, statusIdx)
+	req.PerCredential = func(_ context.Context, c *issuer.CredentialInstance) error {
+		idx, err := a.statusList.allocate(credentialFormat(req.CredentialConfigurationID), a.now())
+		if err != nil {
+			return err
+		}
+		statusIdxs = append(statusIdxs, idx)
+		a.withStatus(c, idx)
+		return nil
+	}
 
 	req.SDJWTClaims, req.MdocClaims = sdjwtClaims, mdocClaims
 	result, err := a.issuer.RequestCredential(r.Context(), issuer.AuthorizedRequest{
