@@ -3,9 +3,11 @@ package wallet_test
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/idfoundry/oid4vcgo/wallet"
@@ -86,5 +88,54 @@ func TestSubmitDirectPostResponse_RejectedTextSanitized(t *testing.T) {
 	}
 	if n := len([]rune(rejected.Description)); n != 257 || !strings.HasSuffix(rejected.Description, "…") {
 		t.Errorf("Description is %d runes, want 256 plus an ellipsis", n)
+	}
+}
+
+// TestSubmitDirectPostResponse_DoesNotFollowRedirects checks a redirect
+// from response_uri is refused without the response being resent to its
+// target — here plain http, whose reply could name any redirect_uri.
+func TestSubmitDirectPostResponse_DoesNotFollowRedirects(t *testing.T) {
+	var targetHit atomic.Bool
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		targetHit.Store(true)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"redirect_uri":"https://attacker.example/phish"}`))
+	}))
+	t.Cleanup(target.Close)
+	for _, status := range []int{http.StatusTemporaryRedirect, http.StatusPermanentRedirect, http.StatusFound} {
+		srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, target.URL+"/response", status)
+		}))
+		t.Cleanup(srv.Close)
+		_, err := wallet.SubmitDirectPostResponse(context.Background(), srv.Client(), srv.URL, "the-jwe")
+		if err == nil || !strings.Contains(err.Error(), "redirect") {
+			t.Errorf("status %d: error = %v, want a refused redirect", status, err)
+		}
+	}
+	if targetHit.Load() {
+		t.Error("the response was resent to the redirect target")
+	}
+}
+
+// redirectingClient stands in for an HTTPClient other than *http.Client
+// that followed a redirect: its reply comes from another URL.
+type redirectingClient struct{ from string }
+
+func (c redirectingClient) Do(req *http.Request) (*http.Response, error) {
+	final, err := http.NewRequest(http.MethodGet, c.from, nil)
+	if err != nil {
+		return nil, err
+	}
+	return &http.Response{
+		StatusCode: http.StatusOK, Request: final,
+		Header: http.Header{"Content-Type": {"application/json"}},
+		Body:   io.NopCloser(strings.NewReader(`{"redirect_uri":"https://attacker.example/phish"}`)),
+	}, nil
+}
+
+func TestSubmitDirectPostResponse_RefusesReplyFromElsewhere(t *testing.T) {
+	_, err := wallet.SubmitDirectPostResponse(context.Background(), redirectingClient{from: "http://elsewhere.example/r"}, "https://verifier.example/response", "the-jwe")
+	if err == nil || !strings.Contains(err.Error(), "not response_uri") {
+		t.Fatalf("error = %v, want the reply from elsewhere refused", err)
 	}
 }

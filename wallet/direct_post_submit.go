@@ -56,7 +56,11 @@ func (e *DirectPostRejectedError) Error() string {
 //
 // responseURI is AuthorizationRequest.ResponseURI, from a Request
 // Object ParseAuthorizationRequest has verified; client performs the
-// POST.
+// POST. Redirects are never followed: §8.2's reply is a 200 carrying
+// JSON, and following one would resend the response, and take the
+// redirect_uri, from wherever it pointed — plain http included. A
+// *http.Client is used with redirects turned off; for any other client,
+// a reply that didn't come from responseURI itself is refused.
 func SubmitDirectPostResponse(ctx context.Context, client fapihttp.HTTPClient, responseURI, responseJWE string) (DirectPostResult, error) {
 	form := url.Values{"response": {responseJWE}}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, responseURI, strings.NewReader(form.Encode()))
@@ -64,7 +68,7 @@ func SubmitDirectPostResponse(ctx context.Context, client fapihttp.HTTPClient, r
 		return DirectPostResult{}, fmt.Errorf("wallet: submit direct_post response: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	resp, err := client.Do(req)
+	resp, err := doWithoutRedirects(client, req)
 	if err != nil {
 		return DirectPostResult{}, fmt.Errorf("wallet: submit direct_post response: %w", err)
 	}
@@ -132,4 +136,29 @@ func sanitizeReplyText(text string) string {
 		n++
 	}
 	return b.String()
+}
+
+// doWithoutRedirects performs req with client, never following a
+// redirect: a *http.Client is copied with redirects turned off, and a
+// reply that is itself a redirect, or that another client took from
+// anywhere but req's URL, is an error.
+func doWithoutRedirects(client fapihttp.HTTPClient, req *http.Request) (*http.Response, error) {
+	if hc, ok := client.(*http.Client); ok {
+		noRedirects := *hc
+		noRedirects.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+		client = &noRedirects
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	switch {
+	case resp.StatusCode >= 300 && resp.StatusCode < 400:
+		_ = resp.Body.Close()
+		return nil, fmt.Errorf("response_uri answered with a redirect (status %d), which isn't followed", resp.StatusCode)
+	case resp.Request != nil && resp.Request.URL.String() != req.URL.String():
+		_ = resp.Body.Close()
+		return nil, fmt.Errorf("the reply came from %q, not response_uri", resp.Request.URL.Redacted())
+	}
+	return resp, nil
 }
