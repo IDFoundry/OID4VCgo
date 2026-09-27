@@ -102,10 +102,11 @@ func Receive(ctx context.Context, cfg Config, offerURI string, approver Approver
 		return nil, err
 	}
 
-	// oid4vci.Metadata carries no authorization_servers, so the
-	// Credential Issuer is taken to be its own Authorization Server —
-	// true of the demo issuer.
-	c, err := newOAuthClient(ctx, w, cfg, httpClient, offer.CredentialIssuer)
+	asURL, err := authorizationServer(offer, metadata)
+	if err != nil {
+		return nil, err
+	}
+	c, err := newOAuthClient(ctx, w, cfg, httpClient, asURL)
 	if err != nil {
 		return nil, err
 	}
@@ -131,6 +132,31 @@ func Receive(ctx context.Context, cfg Config, offerURI string, approver Approver
 	}
 
 	return requestAll(ctx, w, cfg.Provider, c.ProtectedResource(success.Tokens), offer, metadata)
+}
+
+// authorizationServer picks the Authorization Server to use: the
+// Credential Issuer itself when its metadata lists no
+// authorization_servers, the one it lists, or — when it lists several —
+// the one the offer's authorization_code grant names (OID4VCI 1.0
+// §4.1.1 and §12.2.4).
+func authorizationServer(offer oid4vci.CredentialOffer, metadata oid4vci.Metadata) (string, error) {
+	var named string
+	if offer.Grants != nil && offer.Grants.AuthorizationCode != nil {
+		named = offer.Grants.AuthorizationCode.AuthorizationServer
+	}
+	switch servers := metadata.AuthorizationServers; {
+	case len(servers) == 0:
+		return offer.CredentialIssuer, nil
+	case len(servers) == 1 && named == "":
+		return servers[0].String(), nil
+	default:
+		for _, as := range servers {
+			if named != "" && as.String() == named {
+				return named, nil
+			}
+		}
+		return "", fmt.Errorf("walletapp: the issuer lists %d authorization servers and the offer doesn't name one of them", len(servers))
+	}
 }
 
 // offeredScopes returns the scope of every offered configuration.

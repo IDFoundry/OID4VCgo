@@ -143,10 +143,10 @@ their holder keys, which a real wallet would never hold. The provider
 files, the TLS certificate and the wallet store are all git-ignored; the
 store keeps holder keys unencrypted.
 
-The issuer runs over HTTPS even locally because the library's wallet
-can't yet discover a loopback `http` issuer: `wallet.Config.Fetch.AllowLoopbackHTTP`
-lets it fetch the metadata, but decoding `credential_issuer` as a
-`fapi.URL` always requires `https`.
+The servers run over HTTPS even locally, as a real deployment would.
+The library's wallet can discover a loopback `http` issuer too, when
+`wallet.Config.Fetch.AllowLoopbackHTTP` is set; the demo verifier's
+`response_uri`, though, must be `https`.
 
 ### The issuance flow
 
