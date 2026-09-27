@@ -6,7 +6,9 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/pem"
+	"github.com/idfoundry/fapigo/client"
 	"net"
 	"net/http"
 	"os"
@@ -70,7 +72,25 @@ func freeLoopbackPort(t *testing.T) string {
 	return addr
 }
 
-func TestBrowserApprover_ReturnsCallbackQuery(t *testing.T) {
+// testSessionHandle is a well-formed session handle, as
+// client.BeginAuthorization would produce.
+func testSessionHandle(t *testing.T) client.SessionHandle {
+	t.Helper()
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		t.Fatal(err)
+	}
+	h, err := client.ParseSessionHandle(base64.RawURLEncoding.EncodeToString(raw))
+	if err != nil {
+		t.Fatalf("ParseSessionHandle: %v", err)
+	}
+	return h
+}
+
+// TestBrowserApprover_ReturnsCallback checks the redirect's query comes
+// back with the flow's own session handle.
+func TestBrowserApprover_ReturnsCallback(t *testing.T) {
+	const query = "code=abc&state=xyz&iss=https%3A%2F%2Fissuer"
 	redirect := "http://" + freeLoopbackPort(t) + "/callback"
 	b := BrowserApprover{
 		RedirectURI: redirect,
@@ -78,33 +98,33 @@ func TestBrowserApprover_ReturnsCallbackQuery(t *testing.T) {
 		// issuer redirects it to the wallet's callback.
 		Show: func(string) {
 			go func() {
-				resp, err := http.Get(redirect + "?code=abc&state=xyz&iss=https%3A%2F%2Fissuer")
-				if err == nil {
+				if resp, err := http.Get(redirect + "?" + query); err == nil {
 					_ = resp.Body.Close()
 				}
 			}()
 		},
 		Timeout: 5 * time.Second,
 	}
-	q, err := b.Approve(context.Background(), "https://issuer/authorize?request_uri=x")
+	session := testSessionHandle(t)
+	cb, err := b.Approve(context.Background(), "https://issuer/authorize?request_uri=x", session)
 	if err != nil {
 		t.Fatalf("Approve: %v", err)
 	}
-	if q != "code=abc&state=xyz&iss=https%3A%2F%2Fissuer" {
-		t.Errorf("callback query = %q", q)
+	if cb.Query != query || cb.Session.String() != session.String() {
+		t.Errorf("callback = %+v, want query %q and the flow's session handle", cb, query)
 	}
 }
 
 func TestBrowserApprover_TimesOut(t *testing.T) {
 	b := BrowserApprover{RedirectURI: "http://" + freeLoopbackPort(t) + "/callback", Timeout: 50 * time.Millisecond}
-	if _, err := b.Approve(context.Background(), "https://issuer/authorize"); err == nil {
+	if _, err := b.Approve(context.Background(), "https://issuer/authorize", testSessionHandle(t)); err == nil {
 		t.Error("Approve with no callback = nil error, want a timeout")
 	}
 }
 
 func TestBrowserApprover_RejectsNonLoopbackRedirect(t *testing.T) {
 	b := BrowserApprover{RedirectURI: "https://wallet.example/callback"}
-	if _, err := b.Approve(context.Background(), "https://issuer/authorize"); err == nil {
+	if _, err := b.Approve(context.Background(), "https://issuer/authorize", testSessionHandle(t)); err == nil {
 		t.Error("Approve with an https redirect = nil error, want error")
 	}
 }

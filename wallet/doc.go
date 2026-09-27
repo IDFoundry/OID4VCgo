@@ -18,7 +18,13 @@
 // into that call's own request shape is genuinely OID4VCI-specific
 // logic fapigo/client has no reason to know about; calling
 // BeginAuthorization itself with the result, and everything after it,
-// is on the caller.
+// is on the caller. That includes keeping the SessionHandle
+// BeginAuthorization returns with the user agent the Wallet sends to the
+// authorization URL, and passing it back as AuthorizationCallback.Session
+// when the callback arrives: fapigo/client completes only a callback
+// bound to the user agent that began the flow (RFC 9700 §4.7). The
+// passport-vdc example's walletapp and webwallet show it with a cookie,
+// for a browser and for a loopback redirect URI.
 //
 // fapigo/client's own defaults already satisfy HAIP 1.0 §4's
 // Authorization Code Flow requirements without any override: Profile

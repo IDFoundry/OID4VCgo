@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"github.com/idfoundry/fapigo/client"
 	"io"
 	"net/http"
 	"net/url"
@@ -371,5 +372,40 @@ func TestRevoke_Refuses(t *testing.T) {
 	}
 	if got := post(env.IssuerURL, "12345"); got != http.StatusBadRequest {
 		t.Errorf("revoking an unused index: status %d, want 400", got)
+	}
+}
+
+// foreignStateApprover approves like HeadlessApprover, then swaps the
+// callback's state for one from a flow this wallet never began — a
+// callback URL someone else delivered.
+type foreignStateApprover struct{ walletapp.HeadlessApprover }
+
+func (a foreignStateApprover) Approve(ctx context.Context, authorizationURL string, session client.SessionHandle) (walletapp.Callback, error) {
+	cb, err := a.HeadlessApprover.Approve(ctx, authorizationURL, session)
+	if err != nil {
+		return cb, err
+	}
+	q, err := url.ParseQuery(cb.Query)
+	if err != nil {
+		return cb, err
+	}
+	q.Set("state", "a-flow-this-wallet-never-began")
+	cb.Query = q.Encode()
+	return cb, nil
+}
+
+// TestReceive_RefusesCallbackForAnotherFlow checks a wallet process
+// refuses a callback for a flow it didn't begin even when it carries the
+// process's own session handle: its session store holds only its own
+// flow, which is what binds a loopback or headless flow to it.
+func TestReceive_RefusesCallbackForAnotherFlow(t *testing.T) {
+	env := demotest.New(t, nil)
+	offer, err := env.Issuer.CreateTransaction(context.Background(), demotest.SyntheticEvidence())
+	if err != nil {
+		t.Fatalf("CreateTransaction: %v", err)
+	}
+	approver := foreignStateApprover{walletapp.HeadlessApprover{HTTP: env.HTTP, Code: offer.ConfirmationCode}}
+	if received, err := walletapp.Receive(context.Background(), env.WalletConfig(), offer.URI, approver); err == nil {
+		t.Fatalf("Receive completed with another flow's callback (%d credentials)", len(received))
 	}
 }

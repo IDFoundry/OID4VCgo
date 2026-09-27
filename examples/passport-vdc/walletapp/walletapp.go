@@ -54,10 +54,23 @@ type Config struct {
 	HTTP *http.Client
 }
 
-// Approver completes the authorization step: given the authorization
-// URL, it returns the raw query of the redirect back to RedirectURI.
+// Approver completes the authorization step. Given the authorization URL
+// and the session handle of the flow, it keeps session with the user
+// agent it sends to authorizationURL, and returns the redirect back to
+// RedirectURI with the session handle the user agent delivering it
+// carried: fapigo only completes a callback bound to the user agent that
+// began the flow (RFC 9700 §4.7).
 type Approver interface {
-	Approve(ctx context.Context, authorizationURL string) (callbackQuery string, err error)
+	Approve(ctx context.Context, authorizationURL string, session client.SessionHandle) (Callback, error)
+}
+
+// Callback is the authorization redirect back to RedirectURI.
+type Callback struct {
+	// Query is the redirect's raw query.
+	Query string
+	// Session is the session handle the user agent that delivered it
+	// carried.
+	Session client.SessionHandle
 }
 
 // Received is one credential the wallet obtained.
@@ -121,11 +134,11 @@ func Receive(ctx context.Context, cfg Config, offerURI string, approver Approver
 	if err != nil {
 		return nil, fmt.Errorf("walletapp: pushed authorization request: %w", err)
 	}
-	callback, err := approver.Approve(ctx, session.URL().String())
+	callback, err := approver.Approve(ctx, session.URL().String(), session.Handle())
 	if err != nil {
 		return nil, fmt.Errorf("walletapp: authorization: %w", err)
 	}
-	result, err := c.CompleteAuthorization(ctx, client.AuthorizationCallback{RawQuery: callback})
+	result, err := c.CompleteAuthorization(ctx, client.AuthorizationCallback{RawQuery: callback.Query, Session: callback.Session})
 	if err != nil {
 		return nil, fmt.Errorf("walletapp: token: %w", err)
 	}

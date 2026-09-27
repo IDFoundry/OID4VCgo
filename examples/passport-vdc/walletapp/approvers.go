@@ -10,6 +10,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/idfoundry/fapigo/client"
 )
 
 // HeadlessApprover approves without a browser, by reading the demo
@@ -23,8 +25,9 @@ type HeadlessApprover struct {
 	Code string
 }
 
-// Approve implements Approver.
-func (h HeadlessApprover) Approve(ctx context.Context, authorizationURL string) (string, error) {
+// Approve implements Approver. There's no user agent but this process, so
+// session comes straight back with the callback.
+func (h HeadlessApprover) Approve(ctx context.Context, authorizationURL string, session client.SessionHandle) (Callback, error) {
 	hc := &http.Client{Timeout: httpTimeout}
 	if h.HTTP != nil {
 		copied := *h.HTTP
@@ -34,44 +37,52 @@ func (h HeadlessApprover) Approve(ctx context.Context, authorizationURL string) 
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, authorizationURL, nil)
 	if err != nil {
-		return "", err
+		return Callback{}, err
 	}
 	resp, err := hc.Do(req)
 	if err != nil {
-		return "", err
+		return Callback{}, err
 	}
 	_ = resp.Body.Close()
 	handle := resp.Header.Get("X-Interaction-Handle")
 	if resp.StatusCode != http.StatusOK || handle == "" {
-		return "", fmt.Errorf("authorization page: status %d, no interaction handle", resp.StatusCode)
+		return Callback{}, fmt.Errorf("authorization page: status %d, no interaction handle", resp.StatusCode)
 	}
 
 	u, err := url.Parse(authorizationURL)
 	if err != nil {
-		return "", err
+		return Callback{}, err
 	}
 	decision := (&url.URL{Scheme: u.Scheme, Host: u.Host, Path: "/authorize/decision"}).String()
 	form := url.Values{"handle": {handle}, "decision": {"approve"}, "code": {h.Code}}
 	req, err = http.NewRequestWithContext(ctx, http.MethodPost, decision, strings.NewReader(form.Encode()))
 	if err != nil {
-		return "", err
+		return Callback{}, err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	resp, err = hc.Do(req)
 	if err != nil {
-		return "", err
+		return Callback{}, err
 	}
 	_ = resp.Body.Close()
 	loc, err := resp.Location()
 	if err != nil {
-		return "", fmt.Errorf("approval: status %d, no redirect: %w", resp.StatusCode, err)
+		return Callback{}, fmt.Errorf("approval: status %d, no redirect: %w", resp.StatusCode, err)
 	}
-	return loc.RawQuery, nil
+	return Callback{Query: loc.RawQuery, Session: session}, nil
 }
 
 // BrowserApprover has the holder approve in a browser: it shows the
 // authorization URL (via Show) and waits for the redirect on the
 // wallet's loopback redirect URI.
+//
+// The flow's session handle comes straight back with the callback, as
+// with HeadlessApprover: this process is the user agent the flow is bound
+// to. Its session store holds only the flow it began, so a callback from
+// anyone else's flow — a URL delivered to the holder's browser — finds no
+// session and is refused. (A web wallet, whose one session store serves
+// every browser, binds the callback to the browser with a cookie instead:
+// see the webwallet package.)
 type BrowserApprover struct {
 	RedirectURI string // an http://127.0.0.1:<port>/<path> loopback URI
 	Show        func(authorizationURL string)
@@ -79,23 +90,23 @@ type BrowserApprover struct {
 }
 
 // Approve implements Approver.
-func (b BrowserApprover) Approve(ctx context.Context, authorizationURL string) (string, error) {
+func (b BrowserApprover) Approve(ctx context.Context, authorizationURL string, session client.SessionHandle) (Callback, error) {
 	redirect, err := url.Parse(b.RedirectURI)
 	if err != nil || redirect.Scheme != "http" {
-		return "", fmt.Errorf("browser approval needs an http loopback redirect URI, got %q", b.RedirectURI)
+		return Callback{}, fmt.Errorf("browser approval needs an http loopback redirect URI, got %q", b.RedirectURI)
 	}
 	ln, err := net.Listen("tcp", redirect.Host)
 	if err != nil {
-		return "", fmt.Errorf("listen on %s: %w", redirect.Host, err)
+		return Callback{}, fmt.Errorf("listen on %s: %w", redirect.Host, err)
 	}
 
-	got := make(chan string, 1)
+	got := make(chan Callback, 1)
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET "+redirect.EscapedPath(), func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		_, _ = io.WriteString(w, "Done — you can close this window and return to the wallet.\n")
 		select {
-		case got <- r.URL.RawQuery:
+		case got <- Callback{Query: r.URL.RawQuery, Session: session}:
 		default:
 		}
 	})
@@ -111,11 +122,11 @@ func (b BrowserApprover) Approve(ctx context.Context, authorizationURL string) (
 		timeout = 5 * time.Minute
 	}
 	select {
-	case q := <-got:
-		return q, nil
+	case cb := <-got:
+		return cb, nil
 	case <-time.After(timeout):
-		return "", errors.New("timed out waiting for approval in the browser")
+		return Callback{}, errors.New("timed out waiting for approval in the browser")
 	case <-ctx.Done():
-		return "", ctx.Err()
+		return Callback{}, ctx.Err()
 	}
 }

@@ -416,7 +416,8 @@ func (r moduleRunner) authorizeAndGetProtectedResource(ctx context.Context, modu
 		return nil, fmt.Errorf("follow authorization redirect: %w", err)
 	}
 
-	result, err := c.CompleteAuthorization(ctx, client.AuthorizationCallback{RawQuery: rawQuery})
+	// This process both began the flow and receives its callback.
+	result, err := c.CompleteAuthorization(ctx, client.AuthorizationCallback{RawQuery: rawQuery, Session: session.Handle()})
 	if err != nil {
 		return nil, fmt.Errorf("complete authorization: %w", err)
 	}

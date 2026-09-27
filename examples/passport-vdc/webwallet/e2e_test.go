@@ -20,9 +20,16 @@ import (
 
 // browser is an HTTP client that, like a person clicking through the
 // pages, sees each redirect rather than following it automatically.
+// browser is a browser for env: it keeps cookies, and stops at each
+// redirect so a test can follow the flow step by step.
 func browser(env *demotest.Env) *http.Client {
 	c := *env.HTTP
 	c.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		panic(err)
+	}
+	c.Jar = jar
 	return &c
 }
 
@@ -371,5 +378,45 @@ func TestSameDevice_RedirectInAnotherBrowserIsRejected(t *testing.T) {
 	_ = resp.Body.Close()
 	if resp.StatusCode == http.StatusSeeOther {
 		t.Error("a used response_code was accepted again")
+	}
+}
+
+// TestWebWallet_RefusesCallbackInAnotherBrowser starts a receive in one
+// browser and delivers the issuer's callback in another — what an
+// attacker does to have a victim's browser complete a flow it didn't
+// start (login CSRF, RFC 9700 §4.7). The other browser lacks the session
+// cookie the receive left in the first, so it's refused, and nothing is
+// stored.
+func TestWebWallet_RefusesCallbackInAnotherBrowser(t *testing.T) {
+	env := demotest.New(t, nil)
+	store := walletapp.Store{Dir: filepath.Join(t.TempDir(), "wallet")}
+	env.StartWebWallet(t, store)
+	started, other := browser(env), browser(env)
+
+	offer, err := env.Issuer.CreateTransaction(context.Background(), demotest.SyntheticEvidence())
+	if err != nil {
+		t.Fatalf("CreateTransaction: %v", err)
+	}
+	resp, err := started.PostForm(env.WebWalletURL+"/receive", url.Values{"offer": {offer.URI}})
+	authorize := mustRedirect(t, resp, err, "POST /receive")
+	resp, err = started.Get(authorize.String())
+	if err != nil {
+		t.Fatalf("GET authorize: %v", err)
+	}
+	handle := resp.Header.Get("X-Interaction-Handle")
+	_ = resp.Body.Close()
+	resp, err = started.PostForm(env.IssuerURL+"/authorize/decision", url.Values{"handle": {handle}, "decision": {"approve"}, "code": {offer.ConfirmationCode}})
+	callback := mustRedirect(t, resp, err, "approve")
+
+	resp, err = other.Get(callback.String())
+	if err != nil {
+		t.Fatalf("GET /callback in another browser: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode == http.StatusSeeOther {
+		t.Fatalf("a callback in another browser completed the receive")
+	}
+	if held, err := store.List(); err != nil || len(held) != 0 {
+		t.Errorf("store holds %d credentials (%v) after a refused callback, want none", len(held), err)
 	}
 }

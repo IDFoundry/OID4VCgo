@@ -159,7 +159,7 @@ func driveRealClientAuthFlow(t *testing.T, ctx context.Context, c *client.Client
 
 	redirectURL := driveConsentToCallback(t, httpClient, cfg.Issuer, session.URL().String(), cfg.DefaultSubject, cfg.Scope)
 
-	result, err := c.CompleteAuthorization(ctx, client.AuthorizationCallback{RawQuery: redirectURL.RawQuery})
+	result, err := c.CompleteAuthorization(ctx, client.AuthorizationCallback{RawQuery: redirectURL.RawQuery, Session: session.Handle()})
 	if err != nil {
 		t.Fatalf("CompleteAuthorization: %v", err)
 	}
