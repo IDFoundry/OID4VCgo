@@ -8,7 +8,7 @@
 // itself with the demo Wallet Provider key (see cmd/wallet-provider),
 // and stores every offered credential with its holder key. By default
 // it prints the authorization URL for you to open and approve in a
-// browser; -headless approves automatically. present answers a
+// browser; -headless -code <code> approves automatically. present answers a
 // request from a verifier whose certificate chains to a trusted
 // verifier CA (-trust-verifier-ca, verifier-ca.pem from cmd/verifier),
 // showing who is asking and what they'd see, and asking you first
@@ -40,7 +40,8 @@ func main() {
 	clientID := fs.String("client-id", "passport-vdc-wallet", "this wallet's client_id")
 	redirectURI := fs.String("redirect-uri", "http://127.0.0.1:8765/callback", "this wallet's loopback redirect URI")
 	trust := fs.String("trust", "issuer-tls.pem,verifier-tls.pem", "comma-separated PEM files of TLS certificates to trust (from cmd/issuer and cmd/verifier); missing files are skipped")
-	headless := fs.Bool("headless", false, "receive: approve automatically instead of in a browser")
+	headless := fs.Bool("headless", false, "receive: approve automatically instead of in a browser (needs -code)")
+	code := fs.String("code", "", "receive -headless: the confirmation code shown with the offer")
 	verifierCA := fs.String("trust-verifier-ca", "verifier-ca.pem", "present: comma-separated PEM files of verifier CAs whose requests to answer (from cmd/verifier)")
 	yes := fs.Bool("yes", false, "present: share without asking")
 	format := fs.String("format", "", "present: only offer stored credentials of this format (mso_mdoc or dc+sd-jwt)")
@@ -77,7 +78,7 @@ func main() {
 			},
 		}
 		if *headless {
-			approver = walletapp.HeadlessApprover{HTTP: httpClient}
+			approver = walletapp.HeadlessApprover{HTTP: httpClient, Code: *code}
 		}
 		if err := receive(fs.Arg(0), *store, walletapp.Config{
 			ClientID: *clientID, RedirectURI: *redirectURI, Provider: provider, HTTP: httpClient,

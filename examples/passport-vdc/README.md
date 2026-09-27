@@ -122,7 +122,7 @@ go run ./cmd/wallet present [-format dc+sd-jwt] [-yes] 'openid4vp://?client_id=.
 
 The CLI's `receive` prints the authorization URL: open it, approve, and
 it picks up the redirect on `http://127.0.0.1:8765/callback`; add
-`-headless` to approve automatically. Both wallets keep credentials
+`-headless -code <confirmation code>` to approve automatically. Both wallets keep credentials
 (with their holder keys) in `wallet-store/`.
 
 `cmd/wallet-provider` creates the demo's **stand-in Wallet Provider**:
@@ -152,11 +152,11 @@ The library's wallet can discover a loopback `http` issuer too, when
 
 | Step | Endpoint | What happens |
 |---|---|---|
-| Upload | `POST /passport` | gmrtd verification → a transaction T holding the `Evidence` (in memory, 10 minutes, at most 100 at once) → a credential offer with `issuer_state` = T, as a link and a QR code |
+| Upload | `POST /passport` | gmrtd verification → a transaction T holding the `Evidence` (in memory, 10 minutes, at most 100 at once) → a credential offer with `issuer_state` = T, as a link and a QR code, and a six-digit confirmation code |
 | PAR | `POST /par` | fapigo verifies Wallet Attestation + PoP and DPoP; this app records `request_uri` → T from the form's `issuer_state` |
-| Approve | `GET /authorize`, `POST /authorize/decision` | shows the passport holder's name; approval authorizes **subject = T**, granting the scopes the wallet requested |
+| Approve | `GET /authorize`, `POST /authorize/decision` | shows the passport holder's name and asks for the confirmation code; approval with the right code **claims T** — no other authorization can reach it — and authorizes **subject = T**, granting the scopes the wallet requested |
 | Token | `POST /token` | DPoP-bound access token with `sub` = T |
-| Credential | `POST /nonce`, `POST /credential` | the token's `sub` finds T's `Evidence`; the requested configuration (`passport_mdoc` or `passport_sdjwt`) is encoded, bound to the key the Key Attestation attests, and signed |
+| Credential | `POST /nonce`, `POST /credential` | the token's `sub` finds T's `Evidence`; the requested configuration (`passport_mdoc` or `passport_sdjwt`), if not already issued for T, is encoded, bound to the key the Key Attestation attests, and signed; once both are issued, T and its passport data are dropped |
 
 `issuer_state` has to be captured at PAR because fapigo doesn't surface
 extension values at the authorization step (see the library's
@@ -170,17 +170,14 @@ type metadata at the `vct` URL (`/vct/passport/1`).
 
 **Demo shortcuts:**
 
-- **`issuer_state` is a bearer secret.** The approval step doesn't
-  authenticate the holder, so whoever has the credential offer — a
-  photographed QR code, a forwarded link — can redeem it with any wallet
-  the Wallet Provider attests, and get the passport's data in a
-  credential bound to *their* key.
-- **An offer is reusable until it expires (10 minutes).** Issuing a
-  credential doesn't consume the transaction, so the same offer can be
-  redeemed more than once, by more than one wallet. Only each pushed
-  authorization request (`request_uri`) and each approval are single-use.
-  (Keeping the transaction is what lets one wallet receive both formats,
-  in batches.)
+- **The holder isn't authenticated.** An offer is redeemed once, by one
+  wallet: the first approval with the right confirmation code claims
+  it, its DPoP-bound access token can fetch each format once, and five
+  wrong codes void it. So a leaked offer link on its own is useless. But
+  the code is shown next to the QR code, so whoever sees the offer page
+  — over a shoulder, in a screenshot — can still redeem it first, with
+  any wallet the Wallet Provider attests, and get the passport's data
+  in a credential bound to *their* key.
 - The signing keys and certificates (one for credentials, one for the
   issuer metadata, under one demo CA) are generated per process (a
   restart invalidates issued credentials); everything is in memory.
@@ -193,9 +190,8 @@ type metadata at the `vct` URL (`/vct/passport/1`).
   client's registered JWK Set.
 
 A production issuer would authenticate the holder at the approval step
-(for example by re-reading the passport over NFC with an issuer-chosen
-Active Authentication challenge), and bind each transaction to the one
-wallet that first redeems it.
+instead, for example by re-reading the passport over NFC with an
+issuer-chosen Active Authentication challenge.
 
 ### The verification flow
 

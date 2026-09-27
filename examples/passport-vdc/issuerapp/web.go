@@ -26,6 +26,10 @@ type Offer struct {
 	URI string
 	// IssuerState is the offer's issuer_state — the transaction ID.
 	IssuerState string
+	// ConfirmationCode is shown with the offer and must be entered at
+	// the issuer's approval step, so the offer link alone can't be
+	// redeemed.
+	ConfirmationCode string
 }
 
 // CreateTransaction records an already-verified passport and returns
@@ -33,12 +37,13 @@ type Offer struct {
 // after passport.Verify; tests call it directly with synthetic
 // Evidence.
 func (a *App) CreateTransaction(ctx context.Context, e passport.Evidence) (Offer, error) {
-	txID, err := a.transactions.put(e)
+	configIDs := []string{MdocConfigurationID, SDJWTConfigurationID}
+	txID, code, err := a.transactions.put(e, configIDs)
 	if err != nil {
 		return Offer{}, err
 	}
 	result, err := a.issuer.CreateCredentialOffer(ctx, issuer.CreateCredentialOfferRequest{
-		CredentialConfigurationIDs: []string{MdocConfigurationID, SDJWTConfigurationID},
+		CredentialConfigurationIDs: configIDs,
 		Grants: &oid4vci.Grants{
 			AuthorizationCode: &oid4vci.GrantAuthorizationCode{IssuerState: txID},
 		},
@@ -46,7 +51,7 @@ func (a *App) CreateTransaction(ctx context.Context, e passport.Evidence) (Offer
 	if err != nil {
 		return Offer{}, fmt.Errorf("issuerapp: credential offer: %w", err)
 	}
-	return Offer{URI: result.URI, IssuerState: txID}, nil
+	return Offer{URI: result.URI, IssuerState: txID, ConfirmationCode: code}, nil
 }
 
 func (a *App) routes() http.Handler {
@@ -127,6 +132,7 @@ var offerTemplate = template.Must(template.New("offer").Funcs(template.FuncMap{
 <tr><th>Expires</th><td>{{.Evidence.Identity.ExpiryDate.Format "2006-01-02"}}</td></tr>
 </table>
 <h2>Credential offer</h2>
+<p>Confirmation code: <strong style="font-size:1.4em;letter-spacing:.15em">{{.Offer.ConfirmationCode}}</strong><br><span class="note">Enter it when the issuer asks you to approve. The offer can be redeemed once, by one wallet.</span></p>
 {{if .WebWalletLink}}<p><a href="{{.WebWalletLink}}"><strong>Open in web wallet</strong></a></p>{{end}}
 <p><a href="{{.Offer.URI}}">Open in wallet app</a> (on this device)</p>
 {{if .QR}}<p>Or scan with a wallet on another device:<br><img src="{{.QR}}" alt="QR code of the credential offer" width="296"></p>{{end}}

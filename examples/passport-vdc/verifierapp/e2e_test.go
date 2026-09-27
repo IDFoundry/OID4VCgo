@@ -24,7 +24,7 @@ func receiveInto(t *testing.T, env *demotest.Env, e passport.Evidence) walletapp
 	if err != nil {
 		t.Fatalf("CreateTransaction: %v", err)
 	}
-	received, err := walletapp.Receive(ctx, env.WalletConfig(), offer.URI, walletapp.HeadlessApprover{HTTP: env.HTTP})
+	received, err := walletapp.Receive(ctx, env.WalletConfig(), offer.URI, walletapp.HeadlessApprover{HTTP: env.HTTP, Code: offer.ConfirmationCode})
 	if err != nil {
 		t.Fatalf("Receive: %v", err)
 	}

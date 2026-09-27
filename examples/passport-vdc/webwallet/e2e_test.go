@@ -77,7 +77,7 @@ func receiveViaBrowser(t *testing.T, env *demotest.Env, b *http.Client) {
 	}
 	handle := resp.Header.Get("X-Interaction-Handle")
 	_ = resp.Body.Close()
-	resp, err = b.PostForm(env.IssuerURL+"/authorize/decision", url.Values{"handle": {handle}, "decision": {"approve"}})
+	resp, err = b.PostForm(env.IssuerURL+"/authorize/decision", url.Values{"handle": {handle}, "decision": {"approve"}, "code": {offer.ConfirmationCode}})
 	callback := mustRedirect(t, resp, err, "approve")
 	if !strings.HasPrefix(callback.String(), env.WebWalletURL+"/callback") {
 		t.Fatalf("issuer redirected to %s, want the web wallet's callback", callback)
@@ -228,7 +228,7 @@ func TestWebWallet_DuplicateCallbackDoesNotHang(t *testing.T) {
 	}
 	handle := resp.Header.Get("X-Interaction-Handle")
 	_ = resp.Body.Close()
-	resp, err = b.PostForm(env.IssuerURL+"/authorize/decision", url.Values{"handle": {handle}, "decision": {"approve"}})
+	resp, err = b.PostForm(env.IssuerURL+"/authorize/decision", url.Values{"handle": {handle}, "decision": {"approve"}, "code": {offer.ConfirmationCode}})
 	callback := mustRedirect(t, resp, err, "approve")
 
 	statuses := make(chan int, 2)

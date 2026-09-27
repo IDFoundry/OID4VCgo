@@ -2,6 +2,7 @@ package issuerapp
 
 import (
 	"encoding/json"
+	"errors"
 	"html/template"
 	"net/http"
 	"time"
@@ -50,7 +51,7 @@ func (a *App) handlePAR(w http.ResponseWriter, r *http.Request) {
 	// issuer_state inside a signed request object isn't supported by
 	// this demo (see the package doc).
 	if state := form.Get(oid4vci.IssuerStateExtension.Name); state != "" {
-		if _, ok := a.transactions.get(state); ok {
+		if _, err := a.transactions.unclaimed(state); err == nil {
 			a.requestURIs.put(result.RequestURI.String(), state, interactionLifetime)
 		}
 	}
@@ -62,6 +63,7 @@ type approvalPage struct {
 	ClientID string
 	Identity passport.Identity
 	Scopes   []string
+	Error    string
 }
 
 var approvalTemplate = template.Must(template.New("approval").Parse(pageHead + `
@@ -73,12 +75,14 @@ var approvalTemplate = template.Must(template.New("approval").Parse(pageHead + `
 <tr><th>Document</th><td>{{.Identity.DocumentNumber}}</td></tr>
 </table>
 <p>Formats requested: {{range .Scopes}}<code>{{.}}</code> {{end}}</p>
+{{if .Error}}<p class="warn">{{.Error}}</p>{{end}}
 <form method="post" action="/authorize/decision">
 <input type="hidden" name="handle" value="{{.Handle}}">
+<p><label>Confirmation code shown with the offer: <input name="code" inputmode="numeric" autocomplete="off" maxlength="6" size="8"></label></p>
 <button name="decision" value="approve">Approve</button>
 <button name="decision" value="deny">Deny</button>
 </form>
-<p class="note">Demo only: the holder is not authenticated here. Whoever holds the credential offer can redeem it.</p>
+<p class="note">Demo only: the holder is not authenticated here. The code only shows whoever approves saw the offer page.</p>
 ` + pageFoot))
 
 // handleAuthorize begins authorization for a pushed request and, if
@@ -99,22 +103,17 @@ func (a *App) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 			writeHTMLError(w, http.StatusBadRequest, "this authorization request isn't linked to a verified passport — start from a credential offer")
 			return
 		}
-		e, ok := a.transactions.get(txID)
-		if !ok {
-			writeHTMLError(w, http.StatusBadRequest, "the passport transaction has expired — upload the passport again")
+		e, err := a.transactions.unclaimed(txID)
+		if err != nil {
+			writeHTMLError(w, http.StatusBadRequest, transactionErrorMessage(err))
 			return
 		}
-		handle := action.Handle.String()
-		a.interactions.put(handle, pendingInteraction{handle: action.Handle, txID: txID, scopes: action.Interaction.Scope}, interactionLifetime)
+		pending := pendingInteraction{handle: action.Handle, txID: txID, scopes: action.Interaction.Scope}
+		a.interactions.put(action.Handle.String(), pending, interactionLifetime)
 		// Lets a headless wallet (the demo CLI, tests) approve without
 		// scraping the page.
-		w.Header().Set("X-Interaction-Handle", handle)
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Header().Set("Cache-Control", "no-store") // shows the passport's identity
-		_ = approvalTemplate.Execute(w, approvalPage{
-			Handle: handle, ClientID: action.Interaction.ClientID.String(),
-			Identity: e.Identity, Scopes: action.Interaction.Scope,
-		})
+		w.Header().Set("X-Interaction-Handle", action.Handle.String())
+		a.renderApproval(w, pending, action.Interaction.ClientID.String(), e, "")
 	case server.RedirectResponse:
 		http.Redirect(w, r, action.Destination.String(), http.StatusFound)
 	case server.LocalErrorResponse:
@@ -142,6 +141,9 @@ func (a *App) handleDecision(w http.ResponseWriter, r *http.Request) {
 	var result server.InteractionResult
 	switch r.FormValue("decision") {
 	case "approve":
+		if !a.claimTransaction(w, pending, r.FormValue("code")) {
+			return
+		}
 		subjectID, err := server.NewSubjectID(txID)
 		if err != nil {
 			writeHTMLError(w, http.StatusInternalServerError, "invalid subject")
@@ -180,6 +182,46 @@ func (a *App) handleDecision(w http.ResponseWriter, r *http.Request) {
 		writeHTMLError(w, v.Error.HTTPStatus(), v.Error.PublicDescription())
 	default:
 		writeHTMLError(w, http.StatusInternalServerError, "unrecognized authorization result")
+	}
+}
+
+// claimTransaction redeems pending's transaction with code. On a wrong
+// code it shows the approval page again, still pending, to retry; on
+// any other failure an error page. It reports whether to go on and
+// authorize.
+func (a *App) claimTransaction(w http.ResponseWriter, pending pendingInteraction, code string) bool {
+	err := a.transactions.claim(pending.txID, code)
+	if err == nil {
+		return true
+	}
+	if errors.Is(err, errWrongCode) {
+		if e, err := a.transactions.unclaimed(pending.txID); err == nil {
+			a.interactions.put(pending.handle.String(), pending, interactionLifetime)
+			a.renderApproval(w, pending, a.cfg.Wallet.ClientID, e, "That confirmation code is wrong — check the offer page and try again.")
+			return false
+		}
+	}
+	writeHTMLError(w, http.StatusBadRequest, transactionErrorMessage(err))
+	return false
+}
+
+func (a *App) renderApproval(w http.ResponseWriter, pending pendingInteraction, clientID string, e passport.Evidence, message string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store") // shows the passport's identity
+	_ = approvalTemplate.Execute(w, approvalPage{
+		Handle: pending.handle.String(), ClientID: clientID, Identity: e.Identity, Scopes: pending.scopes, Error: message,
+	})
+}
+
+// transactionErrorMessage words a transactions error for the holder.
+func transactionErrorMessage(err error) string {
+	switch {
+	case errors.Is(err, errAlreadyRedeemed):
+		return "this credential offer has already been redeemed — each offer works once, for one wallet"
+	case errors.Is(err, errTooManyWrongCodes):
+		return "too many wrong confirmation codes — this offer is void; upload the passport again"
+	default:
+		return "the passport transaction has expired — upload the passport again"
 	}
 }
 

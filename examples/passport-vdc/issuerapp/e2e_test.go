@@ -36,7 +36,7 @@ func TestEndToEnd_IssuesBothFormats(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateTransaction: %v", err)
 	}
-	received, err := walletapp.Receive(ctx, env.WalletConfig(), offer.URI, walletapp.HeadlessApprover{HTTP: env.HTTP})
+	received, err := walletapp.Receive(ctx, env.WalletConfig(), offer.URI, walletapp.HeadlessApprover{HTTP: env.HTTP, Code: offer.ConfirmationCode})
 	if err != nil {
 		t.Fatalf("Receive: %v", err)
 	}
@@ -145,7 +145,7 @@ func TestCredential_RejectsKeyAttestationFromUntrustedCA(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateTransaction: %v", err)
 	}
-	_, err = walletapp.Receive(ctx, cfg, offer.URI, walletapp.HeadlessApprover{HTTP: env.HTTP})
+	_, err = walletapp.Receive(ctx, cfg, offer.URI, walletapp.HeadlessApprover{HTTP: env.HTTP, Code: offer.ConfirmationCode})
 	// "resolve trust key": the x5c chain doesn't reach the trusted CA.
 	if err == nil || !strings.Contains(err.Error(), "invalid_proof") || !strings.Contains(err.Error(), "resolve trust key") {
 		t.Fatalf("Receive: error = %v, want the credential request refused for an untrusted x5c chain", err)
@@ -194,5 +194,44 @@ func TestMetadata_SignedWithItsOwnKey(t *testing.T) {
 	}
 	if err := cert.CheckSignatureFrom(env.Issuer.IssuerCACertificate()); err != nil {
 		t.Errorf("metadata signing certificate isn't issued by the demo CA: %v", err)
+	}
+}
+
+// TestOffer_RedeemedOnce checks an offer works once: after one wallet
+// has redeemed it, another attempt is refused at the approval step.
+func TestOffer_RedeemedOnce(t *testing.T) {
+	ctx := context.Background()
+	env := demotest.New(t, nil)
+	offer, err := env.Issuer.CreateTransaction(ctx, demotest.SyntheticEvidence())
+	if err != nil {
+		t.Fatalf("CreateTransaction: %v", err)
+	}
+	approver := walletapp.HeadlessApprover{HTTP: env.HTTP, Code: offer.ConfirmationCode}
+	if _, err := walletapp.Receive(ctx, env.WalletConfig(), offer.URI, approver); err != nil {
+		t.Fatalf("first Receive: %v", err)
+	}
+	if _, err := walletapp.Receive(ctx, env.WalletConfig(), offer.URI, approver); err == nil || !strings.Contains(err.Error(), "no interaction handle") {
+		t.Fatalf("second Receive: error = %v, want the approval page refused", err)
+	}
+}
+
+// TestApproval_RequiresConfirmationCode checks approving with a wrong
+// confirmation code issues nothing and doesn't use up the offer: the
+// right code still works afterwards.
+func TestApproval_RequiresConfirmationCode(t *testing.T) {
+	ctx := context.Background()
+	env := demotest.New(t, nil)
+	offer, err := env.Issuer.CreateTransaction(ctx, demotest.SyntheticEvidence())
+	if err != nil {
+		t.Fatalf("CreateTransaction: %v", err)
+	}
+	wrong := "x" + offer.ConfirmationCode[1:]
+	_, err = walletapp.Receive(ctx, env.WalletConfig(), offer.URI, walletapp.HeadlessApprover{HTTP: env.HTTP, Code: wrong})
+	if err == nil || !strings.Contains(err.Error(), "no redirect") {
+		t.Fatalf("Receive with a wrong code: error = %v, want approval refused", err)
+	}
+	received, err := walletapp.Receive(ctx, env.WalletConfig(), offer.URI, walletapp.HeadlessApprover{HTTP: env.HTTP, Code: offer.ConfirmationCode})
+	if err != nil || len(received) != 2 {
+		t.Fatalf("Receive with the right code after a wrong one: %d credentials, %v", len(received), err)
 	}
 }

@@ -16,12 +16,15 @@
 // token's sub is therefore T, which the Credential Endpoint reads back
 // to find the Evidence to encode.
 //
-// In this demo issuer_state is a bearer secret: whoever has the offer
-// can redeem it until the transaction expires — repeatedly, and with
-// any attested wallet, since issuing doesn't consume the transaction
-// (only each request_uri and each approval are single-use). A
-// production issuer would authenticate the holder at the approval step
-// and bind the transaction to the first wallet that redeems it.
+// An offer is redeemed once, by one wallet: the approval page asks for
+// the six-digit confirmation code shown with the offer, and the first
+// approval with the right code claims the transaction, so no other
+// authorization can reach it. That authorization's DPoP-bound access
+// token can fetch each offered credential once; the transaction, and
+// its passport data, is dropped once all are issued. Five wrong codes
+// void it. The holder still isn't authenticated — whoever sees the
+// offer page can redeem it first; a production issuer would
+// authenticate the holder at the approval step.
 package issuerapp
 
 import (

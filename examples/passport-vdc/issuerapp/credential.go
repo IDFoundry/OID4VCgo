@@ -2,6 +2,7 @@ package issuerapp
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 
@@ -45,12 +46,6 @@ func (a *App) handleCredential(w http.ResponseWriter, r *http.Request) {
 		fapires.WriteError(w, err)
 		return
 	}
-	e, ok := a.transactions.get(authCtx.Subject)
-	if !ok {
-		writeCredentialError(w, "the passport transaction for this access token has expired")
-		return
-	}
-
 	body, err := io.ReadAll(io.LimitReader(r.Body, maxCredentialRequestBytes+1))
 	if err != nil || len(body) > maxCredentialRequestBytes {
 		http.Error(w, "credential request is unreadable or too large", http.StatusBadRequest)
@@ -61,6 +56,25 @@ func (a *App) handleCredential(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "malformed credential request", http.StatusBadRequest)
 		return
 	}
+	// Each offered credential is issued once per passport: reserve it
+	// now, release it if issuing fails.
+	e, err := a.transactions.reserve(authCtx.Subject, wire.CredentialConfigurationID)
+	switch {
+	case errors.Is(err, errAlreadyIssued):
+		writeCredentialError(w, "this credential has already been issued for this passport")
+		return
+	case err != nil:
+		writeCredentialError(w, "the passport transaction for this access token has expired")
+		return
+	}
+	issued := false
+	defer func() {
+		if issued {
+			a.transactions.done(authCtx.Subject)
+		} else {
+			a.transactions.release(authCtx.Subject, wire.CredentialConfigurationID)
+		}
+	}()
 
 	// Both formats are always built from the same Evidence;
 	// RequestCredential uses whichever the requested configuration
@@ -90,6 +104,7 @@ func (a *App) handleCredential(w http.ResponseWriter, r *http.Request) {
 		issuer.WriteError(w, err)
 		return
 	}
+	issued = true
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(result)
 }
