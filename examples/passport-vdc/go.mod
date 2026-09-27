@@ -5,7 +5,7 @@ go 1.26.6
 require (
 	github.com/fxamacker/cbor/v2 v2.9.4
 	github.com/gmrtd/gmrtd v1.2.0
-	github.com/idfoundry/fapigo v0.34.1-0.20260927090637-130740e50b40
+	github.com/idfoundry/fapigo v0.35.0
 	github.com/idfoundry/oid4vcgo v0.0.0-00010101000000-000000000000
 	rsc.io/qr v0.2.0
 )
