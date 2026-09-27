@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"io"
+	"strconv"
 	"testing"
 	"time"
 
@@ -614,3 +615,61 @@ func TestIssue_RejectsOutOfRangeDecoys(t *testing.T) {
 		t.Errorf("Issue(Decoys=MaxDecoys): %v", err)
 	}
 }
+
+// TestVerifyKeyBindingJWT_RequiresExpectedAudienceAndNonce checks an
+// empty expected aud or nonce is refused rather than matching a Key
+// Binding JWT that lacks the claim — which would leave it replayable.
+func TestVerifyKeyBindingJWT_RequiresExpectedAudienceAndNonce(t *testing.T) {
+	holderKey := testKey(t)
+	kbJWT, err := jose.Sign(jose.ES256, holderKey, map[string]any{"typ": KeyBindingTyp}, []byte(`{"sd_hash":"h","iat":`+itoa(time.Now().Unix())+`}`))
+	if err != nil {
+		t.Fatalf("Sign: %v", err)
+	}
+	for name, check := range map[string]KeyBindingCheck{
+		"no expected audience": {ExpectedNonce: "n", ExpectedSDHash: "h", MaxAge: time.Minute},
+		"no expected nonce":    {ExpectedAudience: "aud", ExpectedSDHash: "h", MaxAge: time.Minute},
+	} {
+		if _, err := VerifyKeyBindingJWT(kbJWT, &holderKey.PublicKey, jose.ES256, check); err == nil {
+			t.Errorf("%s: VerifyKeyBindingJWT = nil error, want error", name)
+		}
+	}
+}
+
+// TestVerify_RejectsDisclosableRegisteredClaim checks an SD-JWT VC whose
+// Issuer (against draft-11 §3.2.2) made a registered claim such as exp or
+// status selectively disclosable is refused — a Holder could otherwise
+// withhold it — while an ordinary disclosed claim is accepted.
+func TestVerify_RejectsDisclosableRegisteredClaim(t *testing.T) {
+	issuerKey := testKey(t)
+	build := func(name string, value any) string {
+		d, err := NewObjectDisclosure(name, value)
+		if err != nil {
+			t.Fatalf("NewObjectDisclosure: %v", err)
+		}
+		digest, err := d.Digest(SHA256)
+		if err != nil {
+			t.Fatal(err)
+		}
+		encoded, err := d.Encode()
+		if err != nil {
+			t.Fatal(err)
+		}
+		payload := []byte(`{"vct":"https://credentials.example.com/identity_credential","_sd_alg":"sha-256","_sd":["` + digest + `"]}`)
+		issuerJWT, err := jose.Sign(jose.ES256, issuerKey, map[string]any{"typ": TypHeader}, payload)
+		if err != nil {
+			t.Fatalf("Sign: %v", err)
+		}
+		return issuerJWT + "~" + encoded + "~"
+	}
+	opts := VerifyOptions{RequireKeyBinding: KeyBindingNotRequired}
+	for _, name := range []string{"exp", "status", "cnf", "iss", "nbf", "vct#integrity"} {
+		if _, _, err := Verify(build(name, 1), &issuerKey.PublicKey, jose.ES256, opts); err == nil {
+			t.Errorf("Verify with %q selectively disclosed = nil error, want error", name)
+		}
+	}
+	if _, _, err := Verify(build("given_name", "Alice"), &issuerKey.PublicKey, jose.ES256, opts); err != nil {
+		t.Errorf("Verify with an ordinary disclosed claim: %v", err)
+	}
+}
+
+func itoa(n int64) string { return strconv.FormatInt(n, 10) }

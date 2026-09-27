@@ -122,6 +122,9 @@ func Verify(s string, issuerPub crypto.PublicKey, issuerAlg jose.Alg, opts Verif
 		hashAlg = HashAlg(declared)
 	}
 
+	if err := checkNoRegisteredClaimDisclosed(decoded, hashAlg, pres.Disclosures); err != nil {
+		return nil, nil, err
+	}
 	resolved, err := ResolveDisclosures(decoded, hashAlg, pres.Disclosures)
 	if err != nil {
 		return nil, nil, err
@@ -138,6 +141,44 @@ func Verify(s string, issuerPub crypto.PublicKey, issuerAlg jose.Alg, opts Verif
 // claims (RFC 7519 §4.1.4/§4.1.5) against now — split out of Verify
 // purely to keep it under the linter's own cognitive complexity
 // ceiling.
+// nonDisclosableClaims are the registered claims an SD-JWT VC's Issuer
+// MUST NOT make selectively disclosable (SD-JWT VC draft-11 §3.2.2,
+// unchanged in draft-13): each must be in the Issuer-signed JWT itself.
+var nonDisclosableClaims = map[string]bool{
+	"iss": true, "nbf": true, "exp": true, "cnf": true, "vct": true, "vct#integrity": true, "status": true,
+}
+
+// checkNoRegisteredClaimDisclosed refuses an SD-JWT VC whose top-level
+// _sd references a disclosure of one of nonDisclosableClaims. Were exp or
+// status selectively disclosable, the Holder could withhold them and have
+// an expired or revoked credential accepted — Verify checks validity only
+// from the Issuer-signed JWT's own claims.
+func checkNoRegisteredClaimDisclosed(decoded map[string]any, alg HashAlg, disclosures []Disclosure) error {
+	topLevel, _ := decoded["_sd"].([]any)
+	if len(topLevel) == 0 {
+		return nil
+	}
+	digests := make(map[string]bool, len(topLevel))
+	for _, d := range topLevel {
+		if s, ok := d.(string); ok {
+			digests[s] = true
+		}
+	}
+	for _, d := range disclosures {
+		if d.IsArrayElement() || !nonDisclosableClaims[d.Name] {
+			continue
+		}
+		digest, err := d.Digest(alg)
+		if err != nil {
+			return err
+		}
+		if digests[digest] {
+			return fmt.Errorf("sdjwtvc: registered claim %q must not be selectively disclosable", d.Name)
+		}
+	}
+	return nil
+}
+
 func checkIssuerJWTValidityWindow(decoded map[string]any, now func() time.Time) error {
 	if expRaw, ok := decoded["exp"]; ok {
 		exp, ok := expRaw.(float64)
