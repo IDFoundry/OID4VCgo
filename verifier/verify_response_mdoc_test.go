@@ -4,6 +4,9 @@ import (
 	"context"
 	"crypto"
 	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"errors"
 	"testing"
 	"time"
 
@@ -222,5 +225,55 @@ func TestVerifyMdocResponse_UsesNow(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("VerifyResponse at a Now past the MSO's validUntil = nil error, want error")
+	}
+}
+
+// failingMdocIssuerKeyResolver fails every issuer key resolution.
+type failingMdocIssuerKeyResolver struct{}
+
+func (failingMdocIssuerKeyResolver) ResolveMdocIssuerKey(context.Context, [][]byte, string) (crypto.PublicKey, cose.Alg, error) {
+	return nil, 0, errors.New("untrusted issuer")
+}
+
+// TestVerifyMdocResponseRejects table-drives the mso_mdoc rejection paths
+// VerifyResponse covers beyond a wrong nonce: a malformed Presentation,
+// an issuer key that can't be resolved, a response encryption key the
+// session transcript can't be built from, a credential that doesn't
+// satisfy the query, and an issuer the query's trusted_authorities
+// doesn't name.
+func TestVerifyMdocResponseRejects(t *testing.T) {
+	p384Key, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := map[string]func(r *verifier.VerifyResponseRequest){
+		"presentation isn't base64url": func(r *verifier.VerifyResponseRequest) {
+			r.Response.VPToken["mdl"] = []string{"not base64url!"}
+		},
+		"presentation isn't a DeviceResponse": func(r *verifier.VerifyResponseRequest) {
+			r.Response.VPToken["mdl"] = []string{"oA"} // CBOR {} — no documents
+		},
+		"issuer key can't be resolved": func(r *verifier.VerifyResponseRequest) {
+			r.MdocIssuerKeys = failingMdocIssuerKeyResolver{}
+		},
+		"response encryption key isn't P-256": func(r *verifier.VerifyResponseRequest) {
+			r.ResponseEncryptionKey = p384Key
+		},
+		"credential doesn't satisfy the query": func(r *verifier.VerifyResponseRequest) {
+			r.Query.Credentials[0].Claims = []dcql.ClaimsQuery{{Path: dcql.Path{dcql.PathKey("org.iso.18013.5.1"), dcql.PathKey("no_such_element")}}}
+		},
+		"issuer isn't a trusted authority": func(r *verifier.VerifyResponseRequest) {
+			r.Query.Credentials[0].TrustedAuthorities = []dcql.TrustedAuthoritiesQuery{{Type: dcql.TrustedAuthorityAKI, Values: []string{"bm90LXRoaXMtaXNzdWVy"}}}
+			r.TrustedAuthorities = dcql.AKITrustedAuthoritiesChecker{}
+		},
+	}
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			mf := newMdocVerifyFixture(t)
+			mf.query = testmdoc.Query(t)
+			if _, err := mf.verifyWith(t, mf.nonce, mutate); err == nil {
+				t.Fatalf("VerifyResponse(%s) = nil error, want error", name)
+			}
+		})
 	}
 }
