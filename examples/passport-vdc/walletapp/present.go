@@ -4,10 +4,8 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/x509"
-	"encoding/json"
 	"encoding/pem"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -184,11 +182,11 @@ func (p *Prepared) Send(ctx context.Context, format string) (Presented, error) {
 	if err != nil {
 		return Presented{}, fmt.Errorf("walletapp: presentation response: %w", err)
 	}
-	redirectURI, err := postResponse(ctx, p.http, a.ResponseURI, responseJWE)
+	reply, err := wallet.SubmitDirectPostResponse(ctx, p.http, a.ResponseURI, responseJWE)
 	if err != nil {
-		return Presented{}, err
+		return Presented{}, fmt.Errorf("walletapp: %w", err)
 	}
-	presented := Presented{VerifierClientID: a.ClientID, RedirectURI: redirectURI}
+	presented := Presented{VerifierClientID: a.ClientID, RedirectURI: reply.RedirectURI}
 	for id := range vpToken {
 		presented.Credentials = append(presented.Credentials, id)
 	}
@@ -225,45 +223,6 @@ func heldCredentials(store Store, format string) ([]wallet.HeldCredential, error
 		return nil, fmt.Errorf("walletapp: no stored credentials to present")
 	}
 	return held, nil
-}
-
-// postResponse POSTs a direct_post.jwt response (§8.3.1), checks the
-// Verifier accepted it, and returns the redirect_uri it answered with,
-// if any (§8.2) — an absolute https URL, or it's refused.
-func postResponse(ctx context.Context, hc *http.Client, responseURI, responseJWE string) (string, error) {
-	form := url.Values{"response": {responseJWE}}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, responseURI, strings.NewReader(form.Encode()))
-	if err != nil {
-		return "", fmt.Errorf("walletapp: response: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	resp, err := hc.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("walletapp: response: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 16<<10))
-	if resp.StatusCode != http.StatusOK {
-		var e struct {
-			Error       string `json:"error"`
-			Description string `json:"error_description"`
-		}
-		_ = json.Unmarshal(body, &e)
-		return "", fmt.Errorf("walletapp: verifier rejected the presentation: status %d %s %s", resp.StatusCode, e.Error, e.Description)
-	}
-	var ok struct {
-		RedirectURI string `json:"redirect_uri"`
-	}
-	if err := json.Unmarshal(body, &ok); err != nil {
-		return "", fmt.Errorf("walletapp: verifier's response: %w", err)
-	}
-	if ok.RedirectURI == "" {
-		return "", nil
-	}
-	if u, err := url.Parse(ok.RedirectURI); err != nil || u.Scheme != "https" || u.Host == "" {
-		return "", fmt.Errorf("walletapp: verifier's redirect_uri %q isn't an absolute https URL", ok.RedirectURI)
-	}
-	return ok.RedirectURI, nil
 }
 
 // LoadVerifierTrust trusts verifiers whose request-signing certificate

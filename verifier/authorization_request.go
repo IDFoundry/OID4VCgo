@@ -85,6 +85,14 @@ type BuildAuthorizationRequestResult struct {
 	// caller must retain it to decrypt the eventual direct_post.jwt
 	// response via ParseDirectPostJWTResponse.
 	ResponseDecryptionKey *ecdsa.PrivateKey
+
+	// ResponseEncryptionKeyID is the "kid" of ResponseDecryptionKey's
+	// public half in the Request Object's client_metadata.jwks. The
+	// Wallet's encrypted response names it in its JWE header, before
+	// anything inside can be read — so a Verifier with several requests
+	// open routes each response to its request (and decryption key) by
+	// ResponseKeyID(response) == ResponseEncryptionKeyID.
+	ResponseEncryptionKeyID string
 }
 
 // BuildAuthorizationRequest builds a signed, HAIP-§5-profiled
@@ -109,7 +117,7 @@ func (v *Verifier) BuildAuthorizationRequest(req BuildAuthorizationRequestReques
 	if err != nil {
 		return BuildAuthorizationRequestResult{}, fmt.Errorf("verifier: build authorization request: generate nonce: %w", err)
 	}
-	clientMetadata, encKey, err := v.buildResponseEncryptionMetadata()
+	clientMetadata, encKey, kid, err := v.buildResponseEncryptionMetadata()
 	if err != nil {
 		return BuildAuthorizationRequestResult{}, fmt.Errorf("verifier: build authorization request: %w", err)
 	}
@@ -137,37 +145,39 @@ func (v *Verifier) BuildAuthorizationRequest(req BuildAuthorizationRequestReques
 		return BuildAuthorizationRequestResult{}, fmt.Errorf("verifier: build authorization request: %w", err)
 	}
 	return BuildAuthorizationRequestResult{
-		RequestObject: requestObject, ClientID: v.clientID, Nonce: nonce, ResponseDecryptionKey: encKey,
+		RequestObject: requestObject, ClientID: v.clientID, Nonce: nonce,
+		ResponseDecryptionKey: encKey, ResponseEncryptionKeyID: kid,
 	}, nil
 }
 
 // buildResponseEncryptionMetadata generates a fresh ephemeral P-256
 // key for this one request's own response encryption and returns its
 // own "client_metadata" value (§5.1's own jwks/
-// encrypted_response_enc_values_supported shape) alongside the key —
+// encrypted_response_enc_values_supported shape) alongside the key and
+// its "kid" —
 // the one piece BuildAuthorizationRequest and
 // BuildDCAPIAuthorizationRequest need identically, since both flows
 // decrypt whichever of direct_post.jwt/dc_api.jwt the Wallet responds
 // with the same way.
-func (v *Verifier) buildResponseEncryptionMetadata() (map[string]any, *ecdsa.PrivateKey, error) {
+func (v *Verifier) buildResponseEncryptionMetadata() (map[string]any, *ecdsa.PrivateKey, string, error) {
 	encKey, err := ecdsa.GenerateKey(elliptic.P256(), v.deps.Random)
 	if err != nil {
-		return nil, nil, fmt.Errorf("generate response encryption key: %w", err)
+		return nil, nil, "", fmt.Errorf("generate response encryption key: %w", err)
 	}
 	encJWK, err := jwk.Marshal(&encKey.PublicKey)
 	if err != nil {
-		return nil, nil, fmt.Errorf("marshal response encryption key: %w", err)
+		return nil, nil, "", fmt.Errorf("marshal response encryption key: %w", err)
 	}
 	kid, err := encJWK.Thumbprint()
 	if err != nil {
-		return nil, nil, fmt.Errorf("thumbprint response encryption key: %w", err)
+		return nil, nil, "", fmt.Errorf("thumbprint response encryption key: %w", err)
 	}
 	clientMetadata := map[string]any{
 		"jwks": jwk.Set{Keys: []jwk.SetEntry{{JWK: encJWK, Kid: kid, Use: "enc", Alg: string(jwe.ECDHES)}}},
 		"encrypted_response_enc_values_supported": v.cfg.EncValuesSupported,
 		"vp_formats_supported":                    v.cfg.VPFormatsSupported,
 	}
-	return clientMetadata, encKey, nil
+	return clientMetadata, encKey, kid, nil
 }
 
 // signRequestObject marshals payload and signs it as a JAR Request
