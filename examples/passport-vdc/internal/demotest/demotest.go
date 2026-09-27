@@ -100,6 +100,7 @@ func (e *Env) StartVerifier(t *testing.T, cscaPool cms.CertPool, opts ...func(*v
 	cfg := verifierapp.Config{
 		VerifierURL: e.VerifierURL, IssuerVCT: e.IssuerURL + issuerapp.VCTPath,
 		IssuerCAs: []*x509.Certificate{e.Issuer.IssuerCACertificate()}, CSCAPool: cscaPool,
+		WebWalletURL: e.WebWalletURL,
 	}
 	for _, opt := range opts {
 		opt(&cfg)

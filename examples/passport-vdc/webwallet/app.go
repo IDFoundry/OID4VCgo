@@ -253,6 +253,11 @@ func (a *App) handlePresentDecision(w http.ResponseWriter, r *http.Request) {
 		renderError(w, http.StatusBadGateway, err.Error())
 		return
 	}
+	if presented.RedirectURI != "" {
+		// Same-device flow: back to the verifier's page (OpenID4VP §8.2).
+		http.Redirect(w, r, presented.RedirectURI, http.StatusSeeOther) // #nosec G710 -- the verifier's redirect_uri, from its authenticated response; https checked in walletapp
+		return
+	}
 	render(w, http.StatusOK, doneTemplate, map[string]string{
 		"Message": "Shared " + strings.Join(presented.Credentials, ", ") + " with the verifier.",
 	})

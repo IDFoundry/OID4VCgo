@@ -5,6 +5,7 @@ import (
 	"html"
 	"io"
 	"net/http"
+	"net/http/cookiejar"
 	"net/url"
 	"path/filepath"
 	"regexp"
@@ -249,5 +250,126 @@ func TestWebWallet_DuplicateCallbackDoesNotHang(t *testing.T) {
 	}
 	if got[http.StatusSeeOther] != 1 || got[http.StatusBadRequest] != 1 {
 		t.Fatalf("callback statuses = %v, want one 303 and one 400", got)
+	}
+}
+
+// cookieBrowser is browser with a cookie jar, as the verifier's
+// same-device flow binds the result to the browser's session cookie.
+func cookieBrowser(t *testing.T, env *demotest.Env) *http.Client {
+	t.Helper()
+	b := browser(env)
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.Jar = jar
+	return b
+}
+
+// shareSameDevice starts a request on the verifier's page in b, opens it
+// in the web wallet from that page's link, shares, and returns the
+// verifier's result page path and the redirect_uri the wallet sent b to.
+func shareSameDevice(t *testing.T, env *demotest.Env, b *http.Client) (resultPath string, redirect *url.URL) {
+	t.Helper()
+	resp, err := b.PostForm(env.VerifierURL+"/requests", url.Values{"mode": {"issuer"}})
+	resultPath = mustRedirect(t, resp, err, "POST /requests").Path
+	resp, err = b.Get(env.VerifierURL + resultPath)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET request page: %v %v", resp, err)
+	}
+	m := regexp.MustCompile(`href="(` + regexp.QuoteMeta(env.WebWalletURL) + `/present\?request=[^"]+)"`).FindStringSubmatch(read(t, resp))
+	if m == nil {
+		t.Fatal("the request page has no web wallet link")
+	}
+	resp, err = b.Get(m[1])
+	if err != nil || resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /present: %v %v", resp, err)
+	}
+	d := regexp.MustCompile(`action="(/present/[^"]+)"`).FindStringSubmatch(read(t, resp))
+	if d == nil {
+		t.Fatal("consent page has no decision form")
+	}
+	resp, err = b.PostForm(env.WebWalletURL+d[1], url.Values{"decision": {"share"}, "format": {"dc+sd-jwt"}})
+	redirect = mustRedirect(t, resp, err, "share")
+	if !strings.HasPrefix(redirect.String(), env.VerifierURL+"/continue?response_code=") {
+		t.Fatalf("the wallet sent the browser to %s, want the verifier's redirect_uri", redirect)
+	}
+	return resultPath, redirect
+}
+
+// TestSameDevice_RedirectBackReleasesTheResult runs the same-device
+// flow (HAIP 1.0 §5.2, OpenID4VP §8.2): the verifier holds the verified
+// answer until the wallet brings the same browser back, then shows it.
+func TestSameDevice_RedirectBackReleasesTheResult(t *testing.T) {
+	env := demotest.New(t, nil)
+	env.StartVerifier(t, nil)
+	env.StartWebWallet(t, walletapp.Store{Dir: filepath.Join(t.TempDir(), "wallet")})
+	b := cookieBrowser(t, env)
+	receiveViaBrowser(t, env, b)
+
+	resultPath, redirect := shareSameDevice(t, env, b)
+	id := strings.TrimPrefix(resultPath, "/requests/")
+	if _, answered := env.Verifier.Outcome(id); answered {
+		t.Fatal("the result was released before the redirect back")
+	}
+	resp, err := b.Get(redirect.String())
+	if back := mustRedirect(t, resp, err, "follow redirect_uri"); back.Path != resultPath {
+		t.Fatalf("redirect back led to %s, want %s", back.Path, resultPath)
+	}
+	resp, err = b.Get(env.VerifierURL + resultPath)
+	if err != nil {
+		t.Fatalf("GET result page: %v", err)
+	}
+	if page := read(t, resp); !strings.Contains(page, "Presentation verified") || !strings.Contains(page, "DOE") {
+		t.Fatal("the result page doesn't show the verified presentation")
+	}
+
+	// The result page is for the browser that asked, and nobody else.
+	resp, err = browser(env).Get(env.VerifierURL + resultPath)
+	if err != nil {
+		t.Fatalf("GET result page without the session cookie: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("result page without the session cookie: status %d, want 404", resp.StatusCode)
+	}
+}
+
+// TestSameDevice_RedirectInAnotherBrowserIsRejected checks the answer is
+// rejected, never shown, when the redirect back arrives in a different
+// browser session than the one that asked (HAIP 1.0 §5.2).
+func TestSameDevice_RedirectInAnotherBrowserIsRejected(t *testing.T) {
+	env := demotest.New(t, nil)
+	env.StartVerifier(t, nil)
+	env.StartWebWallet(t, walletapp.Store{Dir: filepath.Join(t.TempDir(), "wallet")})
+	b := cookieBrowser(t, env)
+	receiveViaBrowser(t, env, b)
+
+	resultPath, redirect := shareSameDevice(t, env, b)
+	resp, err := cookieBrowser(t, env).Get(redirect.String())
+	if err != nil {
+		t.Fatalf("follow redirect_uri elsewhere: %v", err)
+	}
+	if page := read(t, resp); resp.StatusCode != http.StatusForbidden || strings.Contains(page, "DOE") {
+		t.Fatalf("redirect back in another browser: status %d; want 403 without the claims", resp.StatusCode)
+	}
+	if _, answered := env.Verifier.Outcome(strings.TrimPrefix(resultPath, "/requests/")); answered {
+		t.Fatal("the verifier accepted an answer whose redirect came back elsewhere")
+	}
+	resp, err = b.Get(env.VerifierURL + resultPath)
+	if err != nil {
+		t.Fatalf("GET result page: %v", err)
+	}
+	if page := read(t, resp); !strings.Contains(page, "Presentation rejected") || strings.Contains(page, "DOE") {
+		t.Fatal("the asking browser's page doesn't show the rejection, or shows the claims")
+	}
+	// The response_code is single-use: the asking browser can't use it now.
+	resp, err = b.Get(redirect.String())
+	if err != nil {
+		t.Fatalf("reuse redirect_uri: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode == http.StatusSeeOther {
+		t.Error("a used response_code was accepted again")
 	}
 }
