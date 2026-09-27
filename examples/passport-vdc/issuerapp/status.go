@@ -116,7 +116,7 @@ func (s *statusList) snapshot() ([]uint8, []IssuedStatus) {
 // list; RequestCredential issues whichever format was requested.
 func (a *App) withStatus(sdjwtClaims *sdjwtvc.Claims, mdocClaims *mdoc.Claims, idx int) {
 	sdjwtClaims.Status = statuslist.StatusListRef{Idx: idx, URI: a.statusListURI}.Claim()
-	mdocClaims.Status = &mdoc.StatusListRef{Idx: uint64(idx), URI: a.statusListURI}
+	mdocClaims.Status = &mdoc.StatusListRef{Idx: uint64(idx), URI: a.statusListURI} // #nosec G115 -- idx is from allocate, in [0, statusListSize)
 }
 
 // handleStatusList serves the Status List Token, signed by the document
