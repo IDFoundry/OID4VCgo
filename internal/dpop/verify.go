@@ -172,6 +172,11 @@ func resolveDPoPProofKey(header map[string]any) (crypto.PublicKey, jwk.JWK, erro
 	if err := json.Unmarshal(jwkRaw, &parsedJWK); err != nil {
 		return nil, jwk.JWK{}, fmt.Errorf("dpop: unmarshal jwk header: %w", err)
 	}
+	// RFC 9449 §4.3: "the jwk JOSE Header Parameter does not contain a
+	// private key".
+	if parsedJWK.D != "" {
+		return nil, jwk.JWK{}, fmt.Errorf("dpop: jwk header carries a private key")
+	}
 	pub, err := parsedJWK.PublicKey()
 	if err != nil {
 		return nil, jwk.JWK{}, fmt.Errorf("dpop: jwk header: %w", err)

@@ -137,10 +137,18 @@ func (k JWK) PublicKey() (crypto.PublicKey, error) {
 }
 
 // ParsePublicKey decodes raw (a JSON-encoded JWK) into a crypto.PublicKey.
+// raw must be a public key: one carrying a private key ("d") is refused,
+// since wherever a public JWK is expected — a proof or DPoP header, a
+// cnf claim, an encryption key — a private member means the key has
+// been disclosed (OID4VCI 1.0 Appendix F.4, RFC 9449 §4.3, RFC 7800
+// §3.2).
 func ParsePublicKey(raw []byte) (crypto.PublicKey, error) {
 	var k JWK
 	if err := json.Unmarshal(raw, &k); err != nil {
 		return nil, fmt.Errorf("jwk: unmarshal: %w", err)
+	}
+	if k.D != "" {
+		return nil, fmt.Errorf("jwk: a public key was expected, but the JWK carries a private key")
 	}
 	return k.PublicKey()
 }
