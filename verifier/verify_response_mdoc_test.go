@@ -6,6 +6,8 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/x509"
+	"encoding/base64"
 	"errors"
 	"testing"
 	"time"
@@ -272,6 +274,103 @@ func TestVerifyMdocResponseRejects(t *testing.T) {
 			mf := newMdocVerifyFixture(t)
 			mf.query = testmdoc.Query(t)
 			if _, err := mf.verifyWith(t, mf.nonce, mutate); err == nil {
+				t.Fatalf("VerifyResponse(%s) = nil error, want error", name)
+			}
+		})
+	}
+}
+
+// x5chainLeafIssuerKey resolves an mdoc's issuer key from its x5chain
+// leaf without any trust check — for tests whose presentation comes from
+// a freshly issued testmdoc fixture, with its own issuer key.
+type x5chainLeafIssuerKey struct{}
+
+func (x5chainLeafIssuerKey) ResolveMdocIssuerKey(_ context.Context, chain [][]byte, _ string) (crypto.PublicKey, cose.Alg, error) {
+	if len(chain) == 0 {
+		return nil, 0, errors.New("no x5chain")
+	}
+	leaf, err := x509.ParseCertificate(chain[0])
+	if err != nil {
+		return nil, 0, err
+	}
+	return leaf.PublicKey, cose.ES256, nil
+}
+
+// presentDocument encodes doc as the base64url DeviceResponse a VP Token
+// carries.
+func presentDocument(t *testing.T, doc oid4vpmdoc.Document) string {
+	t.Helper()
+	raw, err := oid4vpmdoc.MarshalDeviceResponse(doc)
+	if err != nil {
+		t.Fatalf("MarshalDeviceResponse: %v", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(raw)
+}
+
+// transcript is the redirect-flow SessionTranscript mf's request binds a
+// presentation to.
+func (mf mdocVerifyFixture) transcript(t *testing.T) []byte {
+	t.Helper()
+	st, err := oid4vpmdoc.BuildSessionTranscriptBytes(oid4vpmdoc.HandoverParams{
+		ClientID: mf.v.ClientID(), Nonce: mf.nonce, ResponseURI: mf.cfg.ResponseURI.String(), ResponseEncryptionJWKThumbprint: mf.thumbprint,
+	})
+	if err != nil {
+		t.Fatalf("BuildSessionTranscriptBytes: %v", err)
+	}
+	return st
+}
+
+// deviceSigned signs mf's transcript with f's device key, carrying the
+// given self-asserted device-signed elements.
+func (mf mdocVerifyFixture) deviceSigned(t *testing.T, f testmdoc.Fixture, nameSpaces map[string]map[string]interface{}) mdoc.DeviceSigned {
+	t.Helper()
+	ds, err := mdoc.SignDeviceSignature(f.DeviceKey, cose.ES256, mf.transcript(t), testmdoc.DocType, nameSpaces)
+	if err != nil {
+		t.Fatalf("SignDeviceSignature: %v", err)
+	}
+	return ds
+}
+
+// TestVerifyMdocResponseRejectsCraftedPresentations covers the mso_mdoc
+// rejection paths that need a hand-built presentation: an IssuerAuth that
+// isn't a COSE_Sign1, MAC device authentication (which needs a reader
+// key this redirect flow doesn't have), and a device-signed element
+// outside the MSO's key authorizations (ISO/IEC 18013-5 §12.3.4).
+func TestVerifyMdocResponseRejectsCraftedPresentations(t *testing.T) {
+	readerKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := map[string]func(t *testing.T, mf mdocVerifyFixture) string{
+		"IssuerAuth isn't a COSE_Sign1": func(t *testing.T, mf mdocVerifyFixture) string {
+			issuerSigned := mf.f.IssuerSigned
+			issuerSigned.IssuerAuth = []byte{0x01} // a CBOR integer
+			return presentDocument(t, oid4vpmdoc.Document{DocType: testmdoc.DocType, IssuerSigned: issuerSigned, DeviceSigned: mf.deviceSigned(t, mf.f, nil)})
+		},
+		"device authentication by MAC": func(t *testing.T, mf mdocVerifyFixture) string {
+			ds, err := mdoc.ComputeDeviceMAC(mf.f.DeviceKey, &readerKey.PublicKey, mf.transcript(t), testmdoc.DocType, map[string]map[string]interface{}{})
+			if err != nil {
+				t.Fatalf("ComputeDeviceMAC: %v", err)
+			}
+			return presentDocument(t, oid4vpmdoc.Document{DocType: testmdoc.DocType, IssuerSigned: mf.f.IssuerSigned, DeviceSigned: ds})
+		},
+		"device-signed element outside the key authorizations": func(t *testing.T, mf mdocVerifyFixture) string {
+			f := testmdoc.IssueWith(t, func(c *mdoc.Claims) {
+				c.KeyAuthorizations = &mdoc.KeyAuthorizations{NameSpaces: []string{"org.iso.18013.5.1"}}
+			})
+			selfAsserted := map[string]map[string]interface{}{"org.example.self": {"note": "not authorized"}}
+			return presentDocument(t, oid4vpmdoc.Document{DocType: testmdoc.DocType, IssuerSigned: f.IssuerSigned, DeviceSigned: mf.deviceSigned(t, f, selfAsserted)})
+		},
+	}
+	for name, present := range cases {
+		t.Run(name, func(t *testing.T) {
+			mf := newMdocVerifyFixture(t)
+			presented := present(t, mf)
+			_, err := mf.verifyWith(t, mf.nonce, func(r *verifier.VerifyResponseRequest) {
+				r.Response.VPToken["mdl"] = []string{presented}
+				r.MdocIssuerKeys = x5chainLeafIssuerKey{}
+			})
+			if err == nil {
 				t.Fatalf("VerifyResponse(%s) = nil error, want error", name)
 			}
 		})
