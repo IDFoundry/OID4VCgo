@@ -87,13 +87,15 @@ What the second path does and doesn't give you:
 go run ./cmd/wallet-provider     # once: wallet-provider.pem, .jwks.json and -ca.pem
 go run ./cmd/issuer              # https://127.0.0.1:8543 — writes issuer-tls.pem, issuer-ca.pem
 go run ./cmd/verifier            # https://127.0.0.1:9443 — writes verifier-tls.pem, verifier-ca.pem
-go run ./cmd/webwallet           # https://127.0.0.1:7443 — writes webwallet-tls.pem; trusts verifier-ca.pem
+go run ./cmd/webwallet           # https://127.0.0.1:7443 — writes webwallet-tls.pem; trusts issuer-ca.pem, verifier-ca.pem
 ```
 
-The wallets answer only verifiers whose request-signing certificate
-chains to a trusted verifier CA (`-trust-verifier-ca`, default
-`verifier-ca.pem`), so start the verifier before the web wallet. A
-restarted verifier has a new CA; restart the web wallet too.
+The wallets keep only credentials whose issuer certificate chains to a
+trusted issuer CA (`-trust-issuer-ca`, default `issuer-ca.pem`), and
+answer only verifiers whose request-signing certificate chains to a
+trusted verifier CA (`-trust-verifier-ca`, default `verifier-ca.pem`),
+so start the issuer and the verifier before the web wallet. A
+restarted issuer or verifier has a new CA; restart the web wallet too.
 
 All three use self-signed certificates: accept them in the browser, or
 trust the written `.pem` files. (The issuer uses 8543 rather than 8443
@@ -156,7 +158,7 @@ The library's wallet can discover a loopback `http` issuer too, when
 | PAR | `POST /par` | fapigo verifies Wallet Attestation + PoP and DPoP; this app records `request_uri` → T from the form's `issuer_state` |
 | Approve | `GET /authorize`, `POST /authorize/decision` | shows the passport holder's name and asks for the confirmation code; approval with the right code **claims T** — no other authorization can reach it — and authorizes **subject = T**, granting the scopes the wallet requested |
 | Token | `POST /token` | DPoP-bound access token with `sub` = T |
-| Credential | `POST /nonce`, `POST /credential` | the token's `sub` finds T's `Evidence`; the requested configuration (`passport_mdoc` or `passport_sdjwt`), if not already issued for T, is encoded, bound to the key the Key Attestation attests, and signed; once both are issued, T and its passport data are dropped |
+| Credential | `POST /nonce`, `POST /credential` | the token's `sub` finds T's `Evidence`; the requested configuration (`passport_mdoc` or `passport_sdjwt`), if not already issued for T, is encoded, bound to the key the Key Attestation attests, and signed; once both are issued, T and its passport data are dropped. The wallet checks each credential before keeping it: issuer signature chaining to `issuer-ca.pem`, bound to its own holder key, and the offered vct or doctype |
 
 `issuer_state` has to be captured at PAR because fapigo doesn't surface
 extension values at the authorization step (see the library's
@@ -212,6 +214,11 @@ certificate issued by a per-process demo verifier CA) fetched from its
 `request_uri`; the response is an encrypted `direct_post.jwt`, routed
 to its request by the JWE's key ID. Selective disclosure is real: in
 either mode the verifier receives only what it asked for.
+
+Each request also names the issuer CA in DCQL `trusted_authorities`
+(its Authority Key Identifier, the `aki` type HAIP 1.0 §5 requires):
+the wallet offers only credentials whose issuer certificate that CA
+issued, and the verifier checks it again on the response.
 
 The result page's address uses a random ID that never leaves the
 verifier, separate from the `state` the wallet sees (OpenID4VP

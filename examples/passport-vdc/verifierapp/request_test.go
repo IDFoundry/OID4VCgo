@@ -188,3 +188,47 @@ func TestRequest_UntrustedVerifierIsRefused(t *testing.T) {
 		t.Fatal("the untrusted verifier got an answer")
 	}
 }
+
+// TestRequest_TrustedAuthorities checks each request names the issuer
+// CA in DCQL trusted_authorities (by Authority Key Identifier), and that
+// a verifier naming another CA is offered nothing: the wallet only
+// considers credentials whose issuer certificate that CA issued.
+func TestRequest_TrustedAuthorities(t *testing.T) {
+	env := demotest.New(t, nil)
+	otherIssuer := demotest.New(t, nil) // a second demo issuer: a different CA
+	env.StartVerifier(t, nil, func(cfg *verifierapp.Config) {
+		cfg.IssuerCAs = []*x509.Certificate{otherIssuer.Issuer.IssuerCACertificate()}
+	})
+	store := receiveInto(t, env, demotest.SyntheticEvidence())
+
+	id, link, err := env.Verifier.CreateRequest(verifierapp.ModeIssuer)
+	if err != nil {
+		t.Fatalf("CreateRequest: %v", err)
+	}
+	_, requestObject := fetchRequestObject(t, env, link)
+	var claims struct {
+		DCQLQuery struct {
+			Credentials []struct {
+				TrustedAuthorities []struct {
+					Type   string   `json:"type"`
+					Values []string `json:"values"`
+				} `json:"trusted_authorities"`
+			} `json:"credentials"`
+		} `json:"dcql_query"`
+	}
+	decodeSegment(t, requestObject, 1, &claims)
+	wantAKI := base64.RawURLEncoding.EncodeToString(otherIssuer.Issuer.IssuerCACertificate().SubjectKeyId)
+	for i, cq := range claims.DCQLQuery.Credentials {
+		if len(cq.TrustedAuthorities) != 1 || cq.TrustedAuthorities[0].Type != "aki" || len(cq.TrustedAuthorities[0].Values) != 1 || cq.TrustedAuthorities[0].Values[0] != wantAKI {
+			t.Errorf("credential query %d trusted_authorities = %+v, want aki %s", i, cq.TrustedAuthorities, wantAKI)
+		}
+	}
+
+	_, err = walletapp.Present(context.Background(), link, store, walletapp.PresentOptions{HTTP: env.HTTP, VerifierTrust: env.VerifierTrust()})
+	if err == nil || !strings.Contains(err.Error(), "no stored credential satisfies") {
+		t.Fatalf("Present: error = %v, want no credential offered to a verifier trusting another issuer", err)
+	}
+	if _, answered := env.Verifier.Outcome(id); answered {
+		t.Fatal("the verifier got an answer")
+	}
+}

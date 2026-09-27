@@ -38,9 +38,12 @@ type Config struct {
 	// (its issuer URL + "/vct/passport/1").
 	IssuerVCT string
 
-	// IssuerRoots holds the demo issuer's CA — the trust anchor for
-	// credential issuer signatures, in both trust modes.
-	IssuerRoots *x509.CertPool
+	// IssuerCAs are the demo issuer's CA certificates — the trust
+	// anchors for credential issuer signatures, in both trust modes.
+	// Each request also names them in DCQL trusted_authorities (by
+	// Authority Key Identifier), so a wallet offers only credentials
+	// they issued.
+	IssuerCAs []*x509.Certificate
 
 	// CSCAPool verifies the raw SOD/DG1 in ModeICAO —
 	// cms.DefaultMasterList for real passports.
@@ -60,8 +63,11 @@ type App struct {
 	cfg      Config
 	verifier *verifier.Verifier
 	caCert   *x509.Certificate
-	now      func() time.Time
-	handler  http.Handler
+
+	issuerRoots *x509.CertPool
+	issuerAKIs  []string // base64url Subject Key Identifiers of IssuerCAs
+	now         func() time.Time
+	handler     http.Handler
 
 	mu       sync.Mutex
 	sessions map[string]*session // by request ID, known only to whoever created the request
@@ -108,8 +114,17 @@ type ICAOResult struct {
 // New wires an App. Its request-signing key and certificate (the
 // x509_hash client identifier) are generated per process.
 func New(cfg Config) (*App, error) {
-	if cfg.VerifierURL == "" || cfg.IssuerVCT == "" || cfg.IssuerRoots == nil || cfg.CSCAPool == nil {
-		return nil, fmt.Errorf("verifierapp: VerifierURL, IssuerVCT, IssuerRoots and CSCAPool are required")
+	if cfg.VerifierURL == "" || cfg.IssuerVCT == "" || len(cfg.IssuerCAs) == 0 || cfg.CSCAPool == nil {
+		return nil, fmt.Errorf("verifierapp: VerifierURL, IssuerVCT, IssuerCAs and CSCAPool are required")
+	}
+	issuerRoots := x509.NewCertPool()
+	var issuerAKIs []string
+	for _, ca := range cfg.IssuerCAs {
+		if len(ca.SubjectKeyId) == 0 {
+			return nil, fmt.Errorf("verifierapp: issuer CA %q has no Subject Key Identifier to name in trusted_authorities", ca.Subject.CommonName)
+		}
+		issuerRoots.AddCert(ca)
+		issuerAKIs = append(issuerAKIs, base64.RawURLEncoding.EncodeToString(ca.SubjectKeyId))
 	}
 	responseURI, err := fapi.ParseEndpointURL(cfg.VerifierURL + "/response")
 	if err != nil {
@@ -128,7 +143,7 @@ func New(cfg Config) (*App, error) {
 	if err != nil {
 		return nil, fmt.Errorf("verifierapp: verifier.New: %w", err)
 	}
-	a := &App{cfg: cfg, verifier: v, caCert: caCert, now: time.Now, sessions: map[string]*session{}, byState: map[string]string{}, byKeyID: map[string]string{}}
+	a := &App{cfg: cfg, verifier: v, caCert: caCert, issuerRoots: issuerRoots, issuerAKIs: issuerAKIs, now: time.Now, sessions: map[string]*session{}, byState: map[string]string{}, byKeyID: map[string]string{}}
 	a.handler = a.routes()
 	return a, nil
 }
@@ -152,7 +167,7 @@ func (a *App) lifetime() time.Duration {
 // ID and the openid4vp:// link a wallet answers. The ID reads the
 // result (Outcome, the result page) and never appears in the link.
 func (a *App) CreateRequest(mode Mode) (id, link string, err error) {
-	query, err := buildQuery(mode, a.cfg.IssuerVCT)
+	query, err := buildQuery(mode, a.cfg.IssuerVCT, a.issuerAKIs)
 	if err != nil {
 		return "", "", err
 	}
@@ -310,8 +325,9 @@ func (a *App) verify(ctx context.Context, s *session, responseJWE string) (*Outc
 	}
 	result, err := a.verifier.VerifyResponse(ctx, verifier.VerifyResponseRequest{
 		Query: s.query, Response: parsed, ExpectedNonce: s.nonce,
-		IssuerKeys:            verifier.X5CIssuerKeyResolver{Roots: a.cfg.IssuerRoots},
-		MdocIssuerKeys:        verifier.X5ChainIssuerKeyResolver{Roots: a.cfg.IssuerRoots},
+		IssuerKeys:            verifier.X5CIssuerKeyResolver{Roots: a.issuerRoots},
+		MdocIssuerKeys:        verifier.X5ChainIssuerKeyResolver{Roots: a.issuerRoots},
+		TrustedAuthorities:    dcql.AKITrustedAuthoritiesChecker{},
 		MaxKeyBindingAge:      5 * time.Minute,
 		ResponseEncryptionKey: s.decryptionKey,
 	})

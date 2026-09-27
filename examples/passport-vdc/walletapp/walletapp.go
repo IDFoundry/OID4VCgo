@@ -16,6 +16,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/x509"
 	"fmt"
 	"net/http"
 	"strings"
@@ -43,6 +44,11 @@ type Config struct {
 
 	// Provider attests this wallet instance. See the package doc.
 	Provider *walletprovider.Provider
+
+	// IssuerRoots are the trust anchors for issuer certificates: every
+	// received credential must be signed by a certificate chaining to
+	// one of them, or it's refused (see validateReceived).
+	IssuerRoots *x509.CertPool
 
 	// HTTP makes every request; nil means a client with a 10 s timeout.
 	HTTP *http.Client
@@ -73,8 +79,8 @@ const httpTimeout = 10 * time.Second
 // Receive redeems the Credential Offer at offerURI and returns every
 // credential it offered.
 func Receive(ctx context.Context, cfg Config, offerURI string, approver Approver) ([]Received, error) {
-	if cfg.Provider == nil || cfg.ClientID == "" || cfg.RedirectURI == "" || approver == nil {
-		return nil, fmt.Errorf("walletapp: ClientID, RedirectURI, Provider and an Approver are required")
+	if cfg.Provider == nil || cfg.IssuerRoots == nil || cfg.ClientID == "" || cfg.RedirectURI == "" || approver == nil {
+		return nil, fmt.Errorf("walletapp: ClientID, RedirectURI, Provider, IssuerRoots and an Approver are required")
 	}
 	httpClient := cfg.HTTP
 	if httpClient == nil {
@@ -131,7 +137,7 @@ func Receive(ctx context.Context, cfg Config, offerURI string, approver Approver
 		return nil, fmt.Errorf("walletapp: authorization was not granted (%T)", result)
 	}
 
-	return requestAll(ctx, w, cfg.Provider, c.ProtectedResource(success.Tokens), offer, metadata)
+	return requestAll(ctx, w, cfg, c.ProtectedResource(success.Tokens), offer, metadata)
 }
 
 // authorizationServer picks the Authorization Server to use: the
@@ -172,7 +178,7 @@ func offeredScopes(offer oid4vci.CredentialOffer, metadata oid4vci.Metadata) ([]
 	return scopes, nil
 }
 
-func requestAll(ctx context.Context, w *wallet.Wallet, provider *walletprovider.Provider, resource wallet.ProtectedResourceClient, offer oid4vci.CredentialOffer, metadata oid4vci.Metadata) ([]Received, error) {
+func requestAll(ctx context.Context, w *wallet.Wallet, cfg Config, resource wallet.ProtectedResourceClient, offer oid4vci.CredentialOffer, metadata oid4vci.Metadata) ([]Received, error) {
 	if metadata.NonceEndpoint == nil {
 		return nil, fmt.Errorf("walletapp: issuer advertises no nonce endpoint")
 	}
@@ -182,7 +188,7 @@ func requestAll(ctx context.Context, w *wallet.Wallet, provider *walletprovider.
 		if err != nil {
 			return nil, fmt.Errorf("walletapp: nonce: %w", err)
 		}
-		holder, keyAttestation, err := attestedHolderKey(w, provider, nonce.CNonce)
+		holder, keyAttestation, err := attestedHolderKey(w, cfg.Provider, nonce.CNonce)
 		if err != nil {
 			return nil, err
 		}
@@ -196,6 +202,9 @@ func requestAll(ctx context.Context, w *wallet.Wallet, provider *walletprovider.
 			return nil, fmt.Errorf("walletapp: credential %q: got %d credentials, want 1", id, len(result.Credentials))
 		}
 		conf := metadata.CredentialConfigurationsSupported[id]
+		if err := validateReceived(ctx, conf, result.Credentials[0].Credential, holder, cfg.IssuerRoots, time.Now()); err != nil {
+			return nil, fmt.Errorf("walletapp: credential %q is invalid: %w", id, err)
+		}
 		received = append(received, Received{
 			ConfigurationID: id, Format: conf.Format, DocType: conf.DocType,
 			Credential: result.Credentials[0].Credential, HolderKey: holder,
