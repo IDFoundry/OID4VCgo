@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.19.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.18.0...v0.19.0) (2026-09-27)
+
+
+### ⚠ BREAKING CHANGES
+
+* **deps:** OID4VCgo now requires fapigo v0.38.0, which brings three breaking changes. (1) server.X5CAttesterChain needs IssuerBinding set: a deployment pairing issuer with a fapigo/server that uses X5CAttesterChain must choose AttesterIssuerInCertificate (its attester certificates name the attester as a URI SAN) or AttesterIssuerByTrustAnchors (only when each client's anchors belong to its attester alone). (2) A Wallet driving fapigo/client's Authorization Code Flow must keep the SessionHandle BeginAuthorization returns with the user agent it sends to the authorization URL (e.g. an HttpOnly, Secure, SameSite=Lax cookie) and pass it back as AuthorizationCallback.Session; a callback without it is rejected. (3) Under AssuranceProduction, fapigo requires declared key custody and crypto/rand.Reader as Dependencies.Random. For the passport-vdc demo: a wallet-provider.pem created before this must be regenerated, and walletapp.Approver now takes and returns the session handle.
+* sdjwtvc.TypeMetadata no longer has Schema, SchemaURI or SchemaURIIntegrity; TypeDisplay.Lang and ClaimDisplay.Lang are renamed Locale and serialize as "locale"; TypeMetadata.Validate requires VCT.
+* **issuer:** a CredentialConfiguration without a Scope is issued only through an authorization_details grant naming it. A credential_configuration_id request is refused when the token's authorization detail for it carries credential_identifiers. issuer.New requires Limits.MaxProofAge when Endpoints.Nonce is not set. A DeferredTransactionStore's Invalidate must fail when the transaction_id is unknown or already invalidated (storage.DeferredTransactionStore does).
+
+### Features
+
+* **issuer:** vary each credential of a batch, and refuse a shared status reference ([c59d9e9](https://github.com/IDFoundry/OID4VCgo/commit/c59d9e9d43ad6729484fd0f62c5364150a2ee8a5))
+* **statuslist:** issue and check Status List Tokens by their certificate chain ([15156a6](https://github.com/IDFoundry/OID4VCgo/commit/15156a6a3bd6ec578505f1899cef0a17a31d4fdc))
+* target the SD-JWT VC and Token Status List versions HAIP 1.0 pins ([3ccd963](https://github.com/IDFoundry/OID4VCgo/commit/3ccd9632a4ba5b933f3f95fa9abbeb22f15d779a))
+
+
+### Bug Fixes
+
+* **deps:** require fapigo v0.36.0, which binds attester certificates to the client's attester ([d32afcf](https://github.com/IDFoundry/OID4VCgo/commit/d32afcfbc6327b00a324be8dec0cc2125e6a3939))
+* **deps:** require fapigo v0.38.0, which binds authorization callbacks to their user agent ([dce26f7](https://github.com/IDFoundry/OID4VCgo/commit/dce26f7146b4d70ae3c7ab413b51b1ca9b2fa57a))
+* **issuer:** authorize every credential configuration, and enforce key attestation levels and proof freshness ([21b770d](https://github.com/IDFoundry/OID4VCgo/commit/21b770d2be6f28797aee00285ed4d530db4a6fbd))
+* **issuer:** bind credentials to the proof key's public members only, and refuse private JWKs ([f386714](https://github.com/IDFoundry/OID4VCgo/commit/f38671490fe22b79f448aae945ebef337a88adc2))
+* **sdjwtvc:** refuse disclosable registered claims and empty key binding expectations, and reject COSE crit ([9810adc](https://github.com/IDFoundry/OID4VCgo/commit/9810adc4e59810746199744e0f4ba9453705c291))
+* **verifier:** refuse compressed responses, surface mdoc status, and apply Now to mdoc validity ([978d45c](https://github.com/IDFoundry/OID4VCgo/commit/978d45cdd76d367486167f96b138d8553f6f362b))
+* **wallet:** never follow redirects when submitting a direct_post response ([#265](https://github.com/IDFoundry/OID4VCgo/issues/265)) ([23cdd7f](https://github.com/IDFoundry/OID4VCgo/commit/23cdd7f6bfc0aae1e0271d7daf3de3082c11ab5d))
+* **wallet:** require an https response_uri and harden verifier-supplied text ([658302d](https://github.com/IDFoundry/OID4VCgo/commit/658302dfff6e24fd421a3cba34d469f094f2bef2))
+
 ## [0.18.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.17.0...v0.18.0) (2026-09-27)
 
 
