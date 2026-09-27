@@ -178,6 +178,23 @@ func (iss *Issuer) checkProofAge(iat int64, i int) error {
 }
 
 func (iss *Issuer) resolveProofBindingKey(ctx context.Context, header map[string]any) (crypto.PublicKey, jose.Alg, json.RawMessage, error) {
+	pub, alg, err := iss.resolveProofKey(ctx, header)
+	if err != nil {
+		return nil, "", nil, err
+	}
+	// cnf.jwk is re-encoded from the resolved key, however the Wallet
+	// conveyed it, so nothing else it put in a jwk header ends up inside
+	// the credential this issuer signs.
+	jwkRaw, err := publicJWK(pub)
+	if err != nil {
+		return nil, "", nil, err
+	}
+	return pub, alg, jwkRaw, nil
+}
+
+// resolveProofKey finds the proof's key from exactly one of its jwk,
+// kid or x5c header parameters.
+func (iss *Issuer) resolveProofKey(ctx context.Context, header map[string]any) (crypto.PublicKey, jose.Alg, error) {
 	_, hasJWK := header["jwk"]
 	_, hasKID := header["kid"]
 	_, hasX5C := header["x5c"]
@@ -188,41 +205,30 @@ func (iss *Issuer) resolveProofBindingKey(ctx context.Context, header map[string
 		}
 	}
 	if present != 1 {
-		return nil, "", nil, fmt.Errorf("exactly one of jwk, kid or x5c is required")
+		return nil, "", fmt.Errorf("exactly one of jwk, kid or x5c is required")
 	}
 
 	if hasJWK {
 		jwkRaw, err := jwkHeaderKey(header)
 		if err != nil {
-			return nil, "", nil, err
+			return nil, "", err
 		}
 		pub, err := jwk.ParsePublicKey(jwkRaw)
 		if err != nil {
-			return nil, "", nil, fmt.Errorf("parse jwk: %w", err)
-		}
-		// cnf.jwk is re-encoded from the parsed key, not copied from the
-		// header, so nothing else the Wallet put in its jwk ends up
-		// inside the credential this issuer signs.
-		canonical, err := publicJWK(pub)
-		if err != nil {
-			return nil, "", nil, err
+			return nil, "", fmt.Errorf("parse jwk: %w", err)
 		}
 		algStr, _ := header["alg"].(string)
-		return pub, jose.Alg(algStr), canonical, nil
+		return pub, jose.Alg(algStr), nil
 	}
 
 	if iss.deps.ProofBindingKeys == nil {
-		return nil, "", nil, fmt.Errorf("kid/x5c-based key resolution is not supported; use jwk")
+		return nil, "", fmt.Errorf("kid/x5c-based key resolution is not supported; use jwk")
 	}
 	pub, alg, err := iss.deps.ProofBindingKeys.ResolveProofBindingKey(ctx, header)
 	if err != nil {
-		return nil, "", nil, fmt.Errorf("resolve proof binding key: %w", err)
+		return nil, "", fmt.Errorf("resolve proof binding key: %w", err)
 	}
-	jwkRaw, err := publicJWK(pub)
-	if err != nil {
-		return nil, "", nil, err
-	}
-	return pub, alg, jwkRaw, nil
+	return pub, alg, nil
 }
 
 // publicJWK encodes pub as the JWK a credential's holder binding
@@ -230,13 +236,20 @@ func (iss *Issuer) resolveProofBindingKey(ctx context.Context, header map[string
 func publicJWK(pub crypto.PublicKey) (json.RawMessage, error) {
 	marshaled, err := jwk.Marshal(pub)
 	if err != nil {
-		return nil, fmt.Errorf("marshal binding key as jwk: %w", err)
+		return nil, fmt.Errorf("binding key: %w", err)
 	}
-	raw, err := json.Marshal(marshaled)
+	return json.Marshal(marshaled)
+}
+
+// bindingKeyFromJWK parses raw, a public JWK, into a resolvedKey whose
+// JWKRaw is re-encoded from it (publicJWK).
+func bindingKeyFromJWK(raw []byte) (resolvedKey, error) {
+	pub, err := jwk.ParsePublicKey(raw)
 	if err != nil {
-		return nil, fmt.Errorf("marshal binding key as jwk: %w", err)
+		return resolvedKey{}, err
 	}
-	return raw, nil
+	canonical, err := publicJWK(pub)
+	return resolvedKey{Public: pub, JWKRaw: canonical}, err
 }
 
 // resolveAttestationProofKeys verifies every Key Attestation JWT in
@@ -356,15 +369,11 @@ func appendAttestedKeys(keys []resolvedKey, verified attestation.VerifiedClaims,
 			return nil, newError(ErrorInvalidProof, 400,
 				fmt.Sprintf("attestation %d: attested_keys would yield more resolved keys than this issuer's own batch_size (%d) across the request", i, maxKeys), nil)
 		}
-		attestedPub, err := jwk.ParsePublicKey(attestedKeyRaw)
+		key, err := bindingKeyFromJWK(attestedKeyRaw)
 		if err != nil {
 			return nil, newError(ErrorInvalidProof, 400, fmt.Sprintf("attestation %d: attested_keys[%d]: parse jwk", i, j), err)
 		}
-		canonical, err := publicJWK(attestedPub)
-		if err != nil {
-			return nil, newError(ErrorInvalidProof, 400, fmt.Sprintf("attestation %d: attested_keys[%d]", i, j), err)
-		}
-		keys = append(keys, resolvedKey{Public: attestedPub, JWKRaw: canonical})
+		keys = append(keys, key)
 	}
 	return keys, nil
 }

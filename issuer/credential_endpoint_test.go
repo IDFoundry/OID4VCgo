@@ -7,6 +7,7 @@ import (
 	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/rsa"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -1328,6 +1329,52 @@ func TestRequestCredential_CnfJWKHasPublicMembersOnly(t *testing.T) {
 			t.Fatal(err)
 		}
 		_, err = requestSDJWTWithProof(f, oid4vci.ProofTypeJWT, proofWithJWK(f, withD))
+		assertIssuerError(t, err, issuer.ErrorInvalidProof)
+	})
+}
+
+// TestRequestCredential_RejectsUnencodableBindingKeys checks a binding
+// key cnf.jwk can't carry is refused as invalid_proof: a key type a
+// ProofBindingKeys resolver returned that this package can't encode as a
+// JWK, and an attested key given as a private JWK.
+func TestRequestCredential_RejectsUnencodableBindingKeys(t *testing.T) {
+	t.Run("unsupported resolved key type", func(t *testing.T) {
+		rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
+		if err != nil {
+			t.Fatal(err)
+		}
+		f := newCredentialEndpointFixture(t, func(_ *issuer.Config, d *issuer.Dependencies) {
+			d.ProofBindingKeys = fixedProofBindingKeyResolver{pub: &rsaKey.PublicKey}
+		})
+		payload, err := json.Marshal(map[string]any{"aud": testIssuer, "iat": time.Now().Unix(), "nonce": f.issueNonce(t)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		proof, err := jose.Sign(jose.ES256, testP256Key(t), map[string]any{"typ": "openid4vci-proof+jwt", "kid": "did:example:wallet#1"}, payload)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = requestSDJWTWithProof(f, oid4vci.ProofTypeJWT, proof)
+		assertIssuerError(t, err, issuer.ErrorInvalidProof)
+	})
+
+	t.Run("attested key is a private JWK", func(t *testing.T) {
+		f := newCredentialEndpointFixture(t)
+		private, err := jwk.MarshalPrivate(testP256Key(t))
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw, err := json.Marshal(private)
+		if err != nil {
+			t.Fatal(err)
+		}
+		att, err := attestation.Issue(f.attestationSigner, jose.ES256, attestation.Header{}, attestation.Claims{
+			IssuedAt: time.Now().Unix(), AttestedKeys: []json.RawMessage{raw}, Nonce: f.issueNonce(t),
+		})
+		if err != nil {
+			t.Fatalf("attestation.Issue: %v", err)
+		}
+		_, err = requestSDJWTWithProof(f, oid4vci.ProofTypeAttestation, att)
 		assertIssuerError(t, err, issuer.ErrorInvalidProof)
 	})
 }
