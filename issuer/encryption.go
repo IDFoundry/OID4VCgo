@@ -117,11 +117,13 @@ type ResponseEncryptionSupport struct {
 	ZipValuesSupported []jwe.Zip
 
 	// Required, when true, means this issuer always encrypts every
-	// Response (§12.2.4's own encryption_required) — enforcing that a
-	// request actually supplied encryption keys is the caller's own
-	// job, since "the Wallet didn't ask for encryption" isn't itself an
-	// error the Credential Request/Response protocol defines a code
-	// for.
+	// Response (§12.2.4's own encryption_required):
+	// RequestCredential/RequestDeferredCredential refuse a request
+	// without credential_response_encryption with
+	// invalid_encryption_parameters, which §8.3.1.2 defines for exactly
+	// this ("the Credential Issuer requires the Credential Response to
+	// be sent encrypted, but the Credential Request does not contain the
+	// necessary encryption parameters").
 	Required bool
 }
 
@@ -278,4 +280,14 @@ func (iss *Issuer) EncryptResponseBody(body []byte, req *ResponseEncryptionReque
 		return nil, "", fmt.Errorf("issuer: encrypt response body: %w", err)
 	}
 	return []byte(compact), jweContentType, nil
+}
+
+// requireResponseEncryption refuses a request without
+// credential_response_encryption when ResponseEncryptionSupport.Required
+// (§12.2.4, §8.3.1.2).
+func (iss *Issuer) requireResponseEncryption(req *ResponseEncryptionRequest) error {
+	if req == nil && iss.cfg.ResponseEncryption != nil && iss.cfg.ResponseEncryption.Required {
+		return newError(ErrorInvalidEncryptionParameters, 400, "this Credential Issuer requires an encrypted Credential Response: credential_response_encryption is required", nil)
+	}
+	return nil
 }
