@@ -38,7 +38,11 @@
 // either this Verifier's own Client Identifier or the DC API's own
 // Origin-bound audience ("origin:..." per Appendix A.4), and rebuilds
 // the mdoc SessionTranscript via oid4vpmdoc.BuildSessionTranscriptBytes
-// or BuildDCAPISessionTranscriptBytes to match.
+// or BuildDCAPISessionTranscriptBytes to match. ResponseKeyID reads a
+// direct_post.jwt response's key ID, to find its request before
+// decrypting it. VerifyResponse doesn't check revocation: each
+// VerifiedCredential carries its status reference (Claims["status"], or
+// MdocStatus) for the caller to resolve with package statuslist.
 // request_uri hosting/dereferencing (and, for the DC API flow, actually
 // invoking the Digital Credentials API itself) are out of scope for
 // this package regardless — like issuer.CreateCredentialOffer's own

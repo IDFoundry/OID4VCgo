@@ -36,9 +36,9 @@ fact.
 
 ## Commit messages
 
-This repo merges PRs as regular merge commits, not squash — every commit
-lands in history exactly as written, so **every commit message, not just
-the PR title,** must follow [Conventional Commits](https://www.conventionalcommits.org/):
+PRs are usually merged as regular merge commits, so every commit lands
+in history exactly as written — **every commit message, not just the PR
+title,** must follow [Conventional Commits](https://www.conventionalcommits.org/):
 `fix: …`, `feat: …`, `feat!: …`/`fix!: …` for a breaking change, or another
 standard type (`docs:`, `chore:`, `test:`, `refactor:`, `ci:`) for anything
 that shouldn't bump the version at all. [release-please](https://github.com/googleapis/release-please)
@@ -54,7 +54,8 @@ something a commit message alone should trigger.
 - `gofmt -l .`, `go vet ./...`, `go build ./...`, `go test -race ./...`,
   `golangci-lint run ./...` (config in `.golangci.yml`), and
   `govulncheck ./...` all need to be clean — this is what `ci.yml` enforces
-  on every PR.
+  on every PR. `examples/passport-vdc` is its own Go module: run `go vet`,
+  `go test` and `golangci-lint` there too (CI's `examples` job).
 - Include tests for the behavior you're changing, not just the happy path.
 
 ## Reporting a security issue

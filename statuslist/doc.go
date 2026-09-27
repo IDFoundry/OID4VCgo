@@ -18,7 +18,9 @@
 //
 // New builds a StatusList from a slice of per-token status values, and
 // IssueToken/IssueTokenCWT sign it into a Status List Token in the
-// corresponding format. StatusListRef.Claim/CWTStatusClaim build the
+// corresponding format — or IssueTokenX5C/IssueTokenCWTX5Chain, with the
+// signer's certificate chain in the token's x5c/x5chain header, as HAIP
+// 1.0 §6.1 requires. StatusListRef.Claim/CWTStatusClaim build the
 // "status" claim a Referenced Token embeds to point back at one (idx +
 // uri, draft-14 §6.2/§6.3) — the same shape credential/sdjwtvc's
 // Claims.Status expects for the JOSE form.
@@ -32,5 +34,7 @@
 // Status List Token from its uri — are the caller's job, the same
 // division credential/sdjwtvc draws between disclosure processing and
 // key resolution: this package has no HTTP client and no opinion on
-// how a Referenced Token itself is validated.
+// how a Referenced Token itself is validated. CheckX5C/CheckCWTX5Chain
+// do the same for a token carrying its signer's certificate chain,
+// verifying that chain to a set of trust anchors first.
 package statuslist

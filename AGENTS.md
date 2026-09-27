@@ -24,6 +24,13 @@ This file adds agent-specific process notes.
   version is actually cut/tagged.
 - Write PR descriptions (and commit messages) as a focused summary of what
   changed and why — never narrate the conversation that produced it.
+- Pinning a FAPIgo release that makes breaking or security changes passes
+  them on to OID4VCgo's own users, so it's a `fix(deps)!:` with a
+  `BREAKING CHANGE:` migration note — not a `chore`.
+- Don't use a `BEGIN_COMMIT_OVERRIDE` block in a PR merged as a merge
+  commit: release-please then records the PR's entries more than once.
+  Fix a release PR's wording by editing its body and `CHANGELOG.md`
+  on the `release-please--branches--main` branch instead.
 
 ## Relationship to FAPIgo
 
@@ -40,9 +47,12 @@ One specific dependency, now resolved: HAIP requires Wallet Attestation (a
 client-attestation-JWT-based OAuth2 client authentication mechanism,
 [`draft-ietf-oauth-attestation-based-client-auth-07`](https://datatracker.ietf.org/doc/html/draft-ietf-oauth-attestation-based-client-auth-07))
 in place of FAPI 2.0's normal `private_key_jwt`/mTLS client auth. FAPIgo's
-`server` side supports this — `storage.ClientAuthMethodAttestation` plus
-`server.Config.AttestationBasedClientAuthentication` — so an Authorization
-Server pairing with `issuer` can verify an incoming Wallet Attestation.
+`server` side supports this — `storage.ClientAuthMethodAttestation`,
+`server.Config.AttestationBasedClientAuthentication`, and
+`server.Dependencies.AttesterTrust` (`X5CAttesterChain`, whose
+`IssuerBinding` ties the attester certificate to the client's attester, or
+`RegisteredAttesterKeys`) — so an Authorization Server pairing with
+`issuer` can verify an incoming Wallet Attestation.
 The *client* side landed in [FAPIgo PR #317](https://github.com/IDFoundry/FAPIgo/pull/317)
 (commit `ca54d10`, `go.mod` is pinned past it): `fapigo/client.Dependencies.Attestation`
 (an `AttestationSource` holding the wallet's own out-of-band-issued Client

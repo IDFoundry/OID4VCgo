@@ -143,7 +143,7 @@ specific reason to suspect drift, not just when something seems off.
   moments apart (`happy-flow-multiple-clients`, one per client) carried
   `exp` values differing by the real inter-issuance gap, a correlation
   side-channel — fixed by rounding `exp` to the start of the issuance
-  day (`internal/conformancecert.CredentialExp`). Both fixes apply
+  day (`sdjwtvc.RoundedExp`). Both fixes apply
   everywhere `exp`/TLS are exercised, not just the module that caught
   them — re-confirmed live: every module that previously carried the
   `exp`-claim `WARNING` (`happy-flow` and its three siblings including

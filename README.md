@@ -54,8 +54,9 @@ FAPIgo" section for the specific list.
 > **⚠ Pre-1.0, APIs may still change.** Every role package — `issuer`,
 > `wallet`, `verifier`, `credential/sdjwtvc`, `credential/mdoc`,
 > `statuslist`, `attestation`, `dcql`, `oid4vpmdoc`, `haip`, `storage` —
-> is implemented and tested, and all four roles are OpenID Certified
-> (see above).
+> is implemented and tested. All four roles were OpenID Certified as
+> 0.12.0 (see above), and every later release is checked against the
+> same OIDF test plans by the daily conformance workflows.
 > See [ARCHITECTURE.md](ARCHITECTURE.md) for the full package-by-package
 > status and what, if anything, remains.
 
@@ -93,7 +94,10 @@ binary that produced its role's OIDF certification results (see
 `conformance/<role>/README.md` for what was verified). They're a
 better model for a real deployment's wiring than the package tests
 alone, which exercise each function in isolation rather than a full
-request/response cycle over the network.
+request/response cycle over the network. For an end-to-end application
+— a gmrtd passport turned into both credential formats, a browser and a
+command-line wallet, and a verifier with revocation — see
+[`examples/passport-vdc`](examples/passport-vdc).
 
 [pkgdev]: https://pkg.go.dev/github.com/idfoundry/oid4vcgo
 
