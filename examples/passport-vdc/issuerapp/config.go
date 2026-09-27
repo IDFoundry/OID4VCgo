@@ -81,7 +81,8 @@ type WalletClient struct {
 	// its x5c certificate chain:
 	//   - Wallet Attestations, which authenticate the wallet at PAR and
 	//     the token endpoint (HAIP 1.0 §4.4.1; fapigo/server's
-	//     X5CAttesterChain);
+	//     X5CAttesterChain), from a certificate naming ProviderIssuer as
+	//     a URI SAN;
 	//   - Key Attestations, which every credential request must prove
 	//     its holder key with (the attestation proof type, OID4VCI 1.0
 	//     Appendix F.3).

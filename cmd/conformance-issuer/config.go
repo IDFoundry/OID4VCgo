@@ -121,7 +121,9 @@ type Config struct {
 //
 //   - AttesterTrustAnchorsPEM: CA certificate(s) the Client Attestation
 //     JWT's own "x5c" chain must verify against (HAIP 1.0 §4.4.1;
-//     fapigo/server's X5CAttesterChain) — "kid" plays no part;
+//     fapigo/server's X5CAttesterChain), from a leaf naming
+//     ExpectedAttesterIssuer as a URI SAN (AttesterIssuerInCertificate)
+//     — "kid" plays no part;
 //   - AttesterJWKS: the attester's public key(s), looked up by "kid"
 //     (fapigo/server's RegisteredAttesterKeys) — "x5c" is ignored.
 //

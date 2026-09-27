@@ -4,6 +4,7 @@ import (
 	"crypto/ecdsa"
 	"encoding/json"
 	"fmt"
+	"net/url"
 
 	"github.com/idfoundry/oid4vcgo/internal/conformancecert"
 	"github.com/idfoundry/oid4vcgo/internal/conformanceconfig"
@@ -114,13 +115,24 @@ type run struct {
 	mdocIACACertPEM   string
 }
 
+// attesterIssuer is the suite's Client Attestation "iss", and the URI
+// SAN its attester certificate carries.
+const attesterIssuer = "https://run-fapi2sp-battery-attester.example.com"
+
 func generateRun(alias, issuerBaseURL string) (*run, error) {
 	tlsCertPEM, tlsKeyPEM, err := conformancecert.SelfSignedPEM("conformance-issuer", []string{"conformance-issuer", "localhost"})
 	if err != nil {
 		return nil, fmt.Errorf("generate tls cert: %w", err)
 	}
 
-	attesterKey, _, attesterLeafPEM, attesterCAPEM, err := conformancecert.GenerateSignerAndCert("run-fapi2sp-battery-attester-leaf", "run-fapi2sp-battery-attester-ca")
+	// The attester's leaf names it as a URI SAN, which cmd/conformance-issuer
+	// matches against each client's expected_attester_issuer
+	// (fapigo/server's AttesterIssuerInCertificate).
+	attesterIssuerURL, err := url.Parse(attesterIssuer)
+	if err != nil {
+		return nil, fmt.Errorf("parse attester issuer: %w", err)
+	}
+	attesterKey, _, attesterLeafPEM, attesterCAPEM, err := conformancecert.GenerateSignerAndCert("run-fapi2sp-battery-attester-leaf", "run-fapi2sp-battery-attester-ca", attesterIssuerURL)
 	if err != nil {
 		return nil, fmt.Errorf("generate attester key: %w", err)
 	}
@@ -178,7 +190,7 @@ func generateRun(alias, issuerBaseURL string) (*run, error) {
 		attesterKey:     attesterKey,
 		attesterLeafPEM: attesterLeafPEM,
 		attesterCAPEM:   attesterCAPEM,
-		attesterIssuer:  "https://run-fapi2sp-battery-attester.example.com",
+		attesterIssuer:  attesterIssuer,
 
 		client1ID: "run-fapi2sp-battery-client-1", client2ID: "run-fapi2sp-battery-client-2",
 		client1InstanceKey: client1InstanceKey, client2InstanceKey: client2InstanceKey,

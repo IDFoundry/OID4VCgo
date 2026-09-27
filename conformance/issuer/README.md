@@ -137,7 +137,10 @@ key (`credential.trust_anchor_pem`/`status_list_trust_anchor_pem`), a
 signs its own emulated Client Attestation JWTs with it — this binary's
 own config trusts them by the CA that issued the attester key's `x5c`
 leaf, `client.attester_trust_anchors_pem`/`client2.attester_trust_anchors_pem`,
-verified by fapigo's `X5CAttesterChain`; `attester_jwks` with the
+verified by fapigo's `X5CAttesterChain` — the leaf must name
+`expected_attester_issuer` as a URI SAN (`AttesterIssuerInCertificate`),
+so another attester certified by the same CA can't attest for these
+clients; `attester_jwks` with the
 matching *public* half still works, verified by `kid`), and a second throwaway
 private JWKS for `client_attestation.key_attestation_jwks`. The
 attester JWK itself must also carry an `x5c` entry (RFC 7517's own JWK

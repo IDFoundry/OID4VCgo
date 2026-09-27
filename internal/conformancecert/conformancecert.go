@@ -19,6 +19,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"math/big"
+	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
@@ -106,8 +107,9 @@ func GenerateCA(commonName string) (cert *x509.Certificate, key *ecdsa.PrivateKe
 // (see GenerateCA's own doc comment for why a bare self-signed leaf
 // doesn't work). leafCommonName/caCommonName name the leaf/CA
 // certificates respectively; caCertPEM is what to paste into a relying
-// party's own trust-anchor test configuration.
-func GenerateSignerAndCert(leafCommonName, caCommonName string) (key *ecdsa.PrivateKey, keyPEM, certPEM, caCertPEM string, err error) {
+// party's own trust-anchor test configuration. leafURIs, if any, become
+// the leaf's URI subject alternative names (see IssueLeafCertPEM).
+func GenerateSignerAndCert(leafCommonName, caCommonName string, leafURIs ...*url.URL) (key *ecdsa.PrivateKey, keyPEM, certPEM, caCertPEM string, err error) {
 	key, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return nil, "", "", "", err
@@ -120,7 +122,7 @@ func GenerateSignerAndCert(leafCommonName, caCommonName string) (key *ecdsa.Priv
 	if err != nil {
 		return nil, "", "", "", err
 	}
-	certPEM, err = IssueLeafCertPEM(leafCommonName, key, ca, caKey)
+	certPEM, err = IssueLeafCertPEM(leafCommonName, key, ca, caKey, leafURIs...)
 	if err != nil {
 		return nil, "", "", "", err
 	}
@@ -131,13 +133,16 @@ func GenerateSignerAndCert(leafCommonName, caCommonName string) (key *ecdsa.Priv
 // key, signed by caCert/caKey (see GenerateCA), returning it
 // PEM-encoded — for a leaf whose own private key also signs something
 // else (a credential, a request object) where a self-signed leaf would
-// be rejected (see GenerateCA's own doc comment).
-func IssueLeafCertPEM(commonName string, leafKey *ecdsa.PrivateKey, caCert *x509.Certificate, caKey *ecdsa.PrivateKey) (string, error) {
+// be rejected (see GenerateCA's own doc comment). uris become the
+// leaf's URI subject alternative names — an attester certificate names
+// its attester this way (fapigo/server's AttesterIssuerInCertificate).
+func IssueLeafCertPEM(commonName string, leafKey *ecdsa.PrivateKey, caCert *x509.Certificate, caKey *ecdsa.PrivateKey, uris ...*url.URL) (string, error) {
 	tmpl := &x509.Certificate{
 		SerialNumber: big.NewInt(2),
 		Subject:      pkix.Name{CommonName: commonName},
 		NotBefore:    time.Now().Add(-time.Hour),
 		NotAfter:     time.Now().Add(10 * 365 * 24 * time.Hour),
+		URIs:         uris,
 	}
 	der, err := x509.CreateCertificate(rand.Reader, tmpl, caCert, &leafKey.PublicKey, caKey)
 	if err != nil {

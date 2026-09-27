@@ -9,7 +9,10 @@
 // the x5c of every attestation it signs (HAIP 1.0 §4.4.1 for Wallet
 // Attestations, §4.5.1 for Key Attestations: the trust anchor is left
 // out of x5c, and the signing certificate isn't self-signed). The
-// issuer trusts the CA certificate.
+// certificate names the provider's identifier, the attestations' "iss",
+// as a URI subject alternative name, so the issuer can tell which
+// Wallet Provider the CA certified it for (fapigo/server's
+// AttesterIssuerInCertificate). The issuer trusts the CA certificate.
 package walletprovider
 
 import (
@@ -24,6 +27,8 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"net/url"
+	"slices"
 	"time"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
@@ -43,10 +48,14 @@ type Provider struct {
 	CACertificate *x509.Certificate
 }
 
-// New generates a Provider: a fresh CA, a fresh key and the key's
-// certificate. The CA's private key is discarded; nothing else is ever
-// signed under it.
+// New generates a Provider for issuer, an absolute URI: a fresh CA, a
+// fresh key and the key's certificate, naming issuer. The CA's private
+// key is discarded; nothing else is ever signed under it.
 func New(issuer string) (*Provider, error) {
+	issuerURI, err := url.Parse(issuer)
+	if err != nil || !issuerURI.IsAbs() {
+		return nil, fmt.Errorf("walletprovider: issuer %q isn't an absolute URI", issuer)
+	}
 	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return nil, fmt.Errorf("walletprovider: generate CA key: %w", err)
@@ -68,6 +77,7 @@ func New(issuer string) (*Provider, error) {
 		Subject:   pkix.Name{CommonName: "passport-vdc demo Wallet Provider", Organization: []string{"IDFoundry demo"}},
 		NotBefore: now.Add(-time.Hour), NotAfter: now.AddDate(10, 0, 0),
 		KeyUsage: x509.KeyUsageDigitalSignature,
+		URIs:     []*url.URL{issuerURI},
 	}, caCert, &key.PublicKey, caKey)
 	if err != nil {
 		return nil, err
@@ -76,7 +86,8 @@ func New(issuer string) (*Provider, error) {
 }
 
 // Load restores a Provider from PEM as written by PEM: the private key,
-// its certificate and the CA certificate.
+// its certificate and the CA certificate. The certificate must name
+// issuer.
 func Load(issuer string, data []byte) (*Provider, error) {
 	var key *ecdsa.PrivateKey
 	var certs []*x509.Certificate
@@ -111,6 +122,9 @@ func Load(issuer string, data []byte) (*Provider, error) {
 	}
 	if err := p.Certificate.CheckSignatureFrom(p.CACertificate); err != nil {
 		return nil, fmt.Errorf("walletprovider: the certificate isn't issued by the CA: %w", err)
+	}
+	if !slices.ContainsFunc(p.Certificate.URIs, func(u *url.URL) bool { return u.String() == issuer }) {
+		return nil, fmt.Errorf("walletprovider: the certificate doesn't name Wallet Provider %q — a file from before issuer binding doesn't; delete it and rerun cmd/wallet-provider", issuer)
 	}
 	return p, nil
 }
