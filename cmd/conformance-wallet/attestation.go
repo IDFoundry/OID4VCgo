@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/idfoundry/fapigo/client"
 	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/attestation"
 	"github.com/idfoundry/oid4vcgo/internal/conformancecert"
@@ -45,19 +46,6 @@ func mintClientAttestationJWT(attesterKey *ecdsa.PrivateKey, attesterLeafPEM, at
 		Issuer: attesterIssuer, Subject: clientID, InstanceKey: instanceKey,
 		IssuedAt: now.Unix(), ExpiresAt: now.Add(clientAttestationLifetime).Unix(),
 	})
-}
-
-// staticAttestationSource is a fixed client.AttestationSource: this
-// binary mints one Client Attestation JWT per run and holds it for the
-// run's whole duration, exactly matching the real-world contract
-// (client.AttestationSource's own doc comment: "an opaque, out-of-band-
-// issued, reusable credential this package never constructs itself" —
-// here, "out of band" is this run's own startup, not a genuinely
-// separate process, since this binary simulates both roles).
-type staticAttestationSource string
-
-func (s staticAttestationSource) CurrentAttestation(context.Context) (string, error) {
-	return string(s), nil
 }
 
 // challengeSource implements client.ChallengeSource by POSTing to the
@@ -101,11 +89,11 @@ func (c challengeSource) CurrentChallenge(ctx context.Context) (string, error) {
 	return body.AttestationChallenge, nil
 }
 
-// attestationAndChallengeSource combines staticAttestationSource and
+// attestationAndChallengeSource combines client.StaticAttestation and
 // challengeSource into the single value client.Dependencies.Attestation
 // expects — FAPIgo's own attestationHeaders type-asserts this value for
 // client.ChallengeSource, so both methods must live on one type.
 type attestationAndChallengeSource struct {
-	staticAttestationSource
+	client.AttestationSource
 	challengeSource
 }

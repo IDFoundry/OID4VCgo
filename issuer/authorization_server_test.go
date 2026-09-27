@@ -196,14 +196,14 @@ func pushedAuthorizationParameters(assertion, issuerState string) []server.FormP
 	}
 }
 
-// pushAuthorizationRequestWithIssuerState builds a test Authorization
-// Server registering extensions (nil for none), pushes one
-// Authorization Request carrying issuer_state, and asserts it
-// succeeds with a non-empty RequestURI — the shared setup/assertion
-// TestAuthorizationServerAcceptsIssuerStateExtension and
-// TestAuthorizationServerIgnoresIssuerStateWithoutExtensionRegistered
+// issuerStateAtInteraction builds a test Authorization Server
+// registering extensions (nil for none), pushes one Authorization
+// Request carrying issuer_state, begins authorization for it, and
+// returns the issuer_state the resulting InteractionRequest carries —
+// the shared setup TestAuthorizationServerAcceptsIssuerStateExtension
+// and TestAuthorizationServerIgnoresIssuerStateWithoutExtensionRegistered
 // both need, differing only in what's registered.
-func pushAuthorizationRequestWithIssuerState(t *testing.T, extensions *extension.Registry) server.PushAuthorizationResult {
+func issuerStateAtInteraction(t *testing.T, extensions *extension.Registry) (string, bool) {
 	t.Helper()
 	srv, clientKey, now := newTestAuthorizationServer(t, extensions)
 	assertion := buildClientAssertion(t, clientKey, now)
@@ -214,35 +214,42 @@ func pushAuthorizationRequestWithIssuerState(t *testing.T, extensions *extension
 	if err != nil {
 		t.Fatalf("PushAuthorizationRequest: %v", err)
 	}
-	if result.RequestURI.String() == "" {
-		t.Errorf("RequestURI is empty")
+	action, err := srv.BeginAuthorization(context.Background(), server.BeginAuthorizationRequest{
+		RequestURI: result.RequestURI.String(), ClientID: testASClientID,
+	})
+	if err != nil {
+		t.Fatalf("BeginAuthorization: %v", err)
 	}
-	return result
+	interaction, ok := action.(server.InteractionRequired)
+	if !ok {
+		t.Fatalf("BeginAuthorization action = %T, want server.InteractionRequired", action)
+	}
+	return extension.Get(interaction.Interaction.Extensions, oid4vci.IssuerStateExtension)
 }
 
+// TestAuthorizationServerAcceptsIssuerStateExtension proves the
+// registered issuer_state survives PAR and is readable at the
+// interaction step, where a Credential Issuer correlates the
+// authorization back to its Credential Offer.
 func TestAuthorizationServerAcceptsIssuerStateExtension(t *testing.T) {
 	registry, err := extension.NewRegistry(oid4vci.IssuerStateExtension)
 	if err != nil {
 		t.Fatalf("NewRegistry: %v", err)
 	}
-	pushAuthorizationRequestWithIssuerState(t, registry)
+	got, ok := issuerStateAtInteraction(t, registry)
+	if !ok || got != "opaque-issuer-state" {
+		t.Errorf("interaction issuer_state = %q, %v; want %q, true", got, ok, "opaque-issuer-state")
+	}
 }
 
 // TestAuthorizationServerIgnoresIssuerStateWithoutExtensionRegistered
-// documents fapigo/server's own current behavior for a deployment that
-// skips issuer/authorization_server.go's own recipe: PAR now succeeds
-// regardless (RFC 6749 §3.1/RFC 9126 §2.1 require tolerating an
-// unrecognized authorization request parameter, not rejecting the
-// whole request over it — fapigo/server used to reject it, fixed
-// upstream), unlike this test's own prior name/assertion. What's not
-// observable from here — because it isn't observable from outside
-// fapigo/server's own extension.Registry.Parse at all, registered or
-// not (see issuer/authorization_server.go's own "does not resurface
-// through BeginAuthorization" section) — is that issuer_state's value
-// is silently dropped rather than carried through when unregistered;
-// that half is fapigo/server's own contract, already covered by its
-// own test suite, not something to re-verify by reaching past this
-// package's own dependency boundary.
+// documents what happens to a deployment that skips
+// issuer/authorization_server.go's own recipe: PAR still succeeds
+// (RFC 6749 §3.1/RFC 9126 §2.1 require tolerating an unrecognized
+// authorization request parameter), but issuer_state is silently
+// dropped, so the interaction step never sees it.
 func TestAuthorizationServerIgnoresIssuerStateWithoutExtensionRegistered(t *testing.T) {
-	pushAuthorizationRequestWithIssuerState(t, nil)
+	if got, ok := issuerStateAtInteraction(t, nil); ok {
+		t.Errorf("interaction issuer_state = %q, want none when unregistered", got)
+	}
 }

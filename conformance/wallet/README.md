@@ -156,7 +156,7 @@ the already-running local suite instance one fix at a time:
     opts into `client.ChallengeSource` for the 4 VCIWallet* modules
     (which all *do* implement `/challenge`, unlike this battery); the
     10 battery modules get a plain, unchallenged
-    `staticAttestationSource`.
+    `client.StaticAttestation`.
 
 ## Status
 

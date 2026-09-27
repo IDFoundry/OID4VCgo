@@ -9,10 +9,9 @@
 // Uploading a passport creates a transaction T holding the verified
 // passport.Evidence, and a Credential Offer carrying T as its
 // issuer_state. The Wallet echoes issuer_state in its Pushed
-// Authorization Request; this app records request_uri → T when PAR
-// succeeds (fapigo/server doesn't surface extension values later — see
-// the library's issuer/authorization_server.go), shows the approval
-// page for T's passport, and authorizes with subject T. The access
+// Authorization Request; fapigo/server hands it back at the
+// interaction step, where this app shows the approval page for T's
+// passport and authorizes with subject T. The access
 // token's sub is therefore T, which the Credential Endpoint reads back
 // to find the Evidence to encode.
 //
