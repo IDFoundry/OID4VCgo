@@ -1,6 +1,7 @@
 package verifierapp
 
 import (
+	"crypto/subtle"
 	"fmt"
 	"html/template"
 	"net/http"
@@ -17,6 +18,7 @@ func (a *App) routes() http.Handler {
 	mux.HandleFunc("GET /requests/{id}", a.handleRequestPage)
 	mux.HandleFunc("GET /request-objects/{state}", a.handleRequestObject)
 	mux.HandleFunc("POST /response", a.handleResponse)
+	mux.HandleFunc("GET /continue", a.handleContinue)
 	return mux
 }
 
@@ -55,20 +57,28 @@ var homeTemplate = template.Must(template.New("home").Parse(pageHead + `</head><
 ` + pageFoot))
 
 type requestPage struct {
-	Link          string
+	Link          string // the cross-device request, for the QR code and the CLI wallet
 	QR            template.URL
-	WebWalletLink string
+	WebWalletLink string // the same-device request, opened in the web wallet
 	Outcome       *Outcome
+	Awaiting      bool // the same-device answer verified; waiting for the redirect back
+	Closed        bool // answered and then rejected
 	LastError     string
 	Rows          [][2]string
 }
 
-var requestTemplate = template.Must(template.New("request").Parse(pageHead + `{{if not .Outcome}}<meta http-equiv="refresh" content="2">{{end}}
+var requestTemplate = template.Must(template.New("request").Parse(pageHead + `{{if not (or .Outcome .Closed)}}<meta http-equiv="refresh" content="2">{{end}}
 </head><body>
-{{if not .Outcome}}
+{{if .Closed}}
+<h1 class="bad">✗ Presentation rejected</h1>
+<p>{{.LastError}}.</p>
+{{else if .Awaiting}}
+<h1>The wallet has answered</h1>
+<p>Waiting for it to bring you back here, in this browser — the answer is only accepted then.</p>
+{{else if not .Outcome}}
 <h1>Waiting for the wallet</h1>
-{{if .WebWalletLink}}<p><a href="{{.WebWalletLink}}" target="_blank"><strong>Open in web wallet</strong></a></p>{{end}}
-{{if .QR}}<p><img src="{{.QR}}" alt="QR code of the presentation request" width="296"></p>{{end}}
+{{if .WebWalletLink}}<p><a href="{{.WebWalletLink}}" target="_blank"><strong>Open in web wallet</strong></a> <span class="note">(on this device: it brings you back here)</span></p>{{end}}
+{{if .QR}}<p>On another device, scan:<br><img src="{{.QR}}" alt="QR code of the presentation request" width="296"></p>{{end}}
 <p>Or give this request to the demo CLI wallet:</p>
 <p><code>{{.Link}}</code></p>
 {{if .LastError}}<p class="bad">✗ A response was rejected: {{.LastError}}. Still waiting for one that verifies.</p>{{end}}
@@ -104,36 +114,45 @@ func (a *App) handleHome(w http.ResponseWriter, _ *http.Request) {
 	_ = homeTemplate.Execute(w, nil)
 }
 
+// sessionCookie holds a browser's verifier session: the value the
+// same-device redirect back must present (see handleContinue).
+const sessionCookie = "passport_vdc_verifier_session"
+
+// handleCreateRequest starts a request from the browser, bound to its
+// session cookie (set here if it has none yet).
 func (a *App) handleCreateRequest(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "malformed form", http.StatusBadRequest)
 		return
 	}
-	id, _, err := a.CreateRequest(Mode(r.PostForm.Get("mode")))
+	token := ""
+	if c, err := r.Cookie(sessionCookie); err == nil && len(c.Value) >= 32 {
+		token = c.Value
+	} else if token, err = randomID(); err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	id, err := a.createSession(Mode(r.PostForm.Get("mode")), token)
 	if err != nil {
 		http.Error(w, "couldn't create a request", http.StatusBadRequest)
 		return
 	}
+	// SameSite=Lax: the redirect back is a top-level navigation from the
+	// wallet's page, on which Lax cookies are sent.
+	http.SetCookie(w, &http.Cookie{
+		Name: sessionCookie, Value: token, Path: "/", HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode,
+	})
 	http.Redirect(w, r, "/requests/"+id, http.StatusSeeOther) // #nosec G710 -- local path + a server-generated random ID, not user input
 }
 
 func (a *App) handleRequestPage(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	s, ok := a.session(id)
-	if !ok {
+	if !ok || !sameBrowser(r, s) {
 		http.NotFound(w, r)
 		return
 	}
-	page := requestPage{Link: s.link, LastError: a.LastError(id)}
-	if a.cfg.WebWalletURL != "" {
-		page.WebWalletLink = a.cfg.WebWalletURL + "/present?request=" + url.QueryEscape(s.link)
-	}
-	if outcome, done := a.Outcome(id); done {
-		page.Outcome = outcome
-		page.Rows = displayRows(outcome.Claims)
-	} else if qr, err := demoqr.DataURI(s.link); err == nil {
-		page.QR = qr
-	}
+	page := a.requestPageFor(s)
 	// The page carries the verified claims; keep it out of caches.
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -165,4 +184,48 @@ func displayRows(claims map[string]any) [][2]string {
 		}
 	}
 	return rows
+}
+
+// sameBrowser reports whether r comes from the browser that created s,
+// when a browser did: the result is shown only there.
+func sameBrowser(r *http.Request, s *session) bool {
+	if s.browserToken == "" {
+		return true
+	}
+	c, err := r.Cookie(sessionCookie)
+	return err == nil && subtle.ConstantTimeCompare([]byte(c.Value), []byte(s.browserToken)) == 1
+}
+
+// requestPageFor snapshots s for the request page.
+func (a *App) requestPageFor(s *session) requestPage {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	page := requestPage{
+		Link: s.crossDevice.link, Outcome: s.outcome, Awaiting: s.awaiting != nil,
+		Closed: s.closed, LastError: s.lastError,
+	}
+	if a.cfg.WebWalletURL != "" {
+		sameDevice := s.crossDevice
+		if s.sameDevice != nil {
+			sameDevice = s.sameDevice
+		}
+		page.WebWalletLink = a.cfg.WebWalletURL + "/present?request=" + url.QueryEscape(sameDevice.link)
+	}
+	if page.Outcome != nil {
+		page.Rows = displayRows(page.Outcome.Claims)
+	} else if qr, err := demoqr.DataURI(s.crossDevice.link); err == nil {
+		page.QR = qr
+	}
+	return page
+}
+
+var errorTemplate = template.Must(template.New("error").Parse(pageHead + `</head><body>
+<h1 class="bad">{{.}}</h1>
+<p><a href="/">New request</a></p>
+` + pageFoot))
+
+func writeHTMLError(w http.ResponseWriter, status int, message string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(status)
+	_ = errorTemplate.Execute(w, message)
 }

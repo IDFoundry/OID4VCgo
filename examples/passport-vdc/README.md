@@ -110,7 +110,8 @@ so it doesn't collide with a locally running OIDF conformance suite.)
 2. **Verify.** Open https://127.0.0.1:9443, choose a trust path, and
    click **Open in web wallet**. The wallet shows who's asking and
    exactly which claims each format would disclose; choose a format
-   and **Share** (or **Decline**). The verifier page shows the result.
+   and **Share** (or **Decline**). The wallet then brings you back to
+   the verifier's page, which shows the result.
 
 **From the terminal (CLI wallet)** — same store, so both wallets see the
 same credentials; like the web wallet, it shows who's asking and what
@@ -220,12 +221,27 @@ Each request also names the issuer CA in DCQL `trusted_authorities`
 the wallet offers only credentials whose issuer certificate that CA
 issued, and the verifier checks it again on the response.
 
+Each request made on the verifier's page can be answered two ways:
+
+- **On the same device** (**Open in web wallet**), the flow HAIP 1.0
+  §5.2 requires: when the answer verifies, the verifier holds it and
+  replies with a `redirect_uri` carrying a fresh `response_code`
+  (OpenID4VP §8.2, §13.3). The wallet sends the browser there, and the
+  verifier releases the result only if that browser presents the
+  session cookie set when the request was made. A redirect back in any
+  other browser session is rejected, and an answer whose redirect never
+  comes back is never accepted.
+- **From another device** (the QR code, or the CLI wallet), a separate
+  request: there is no redirect back, and the verifier's page shows the
+  result once the answer verifies.
+
 The result page's address uses a random ID that never leaves the
 verifier, separate from the `state` the wallet sees (OpenID4VP
-§14.3.3), so the request link (or its QR code) doesn't reveal the
-result. Anyone can encrypt a response to the request's public key, so
-a response that fails to verify leaves the request open; the first one
-that verifies is recorded and closes it.
+§14.3.3), and for a request made in a browser it opens only in that
+browser (the session cookie), so the request link (or its QR code)
+doesn't reveal the result. Anyone can encrypt a response to the
+request's public key, so a response that fails to verify leaves the
+request open; the first one that verifies closes it.
 
 The wallets accept a request only if its signing certificate chains to
 a verifier CA they trust (`verifier-ca.pem`), as OpenID4VP §5.9.3

@@ -155,6 +155,9 @@ func present(link, dir, format string, yes bool, httpClient *http.Client, trust 
 		return err
 	}
 	fmt.Printf("presented %s to %s\n", strings.Join(presented.Credentials, ", "), presented.VerifierClientID)
+	if presented.RedirectURI != "" {
+		fmt.Printf("the verifier asks you to continue in your browser at:\n  %s\n", presented.RedirectURI)
+	}
 	return nil
 }
 
