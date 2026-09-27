@@ -6,7 +6,6 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
-	"fmt"
 	"net/http"
 	"testing"
 	"time"
@@ -22,28 +21,6 @@ import (
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/wallet"
 )
-
-// noopIssuerKeySource is a keys.IssuerKeySource that's never actually
-// called — fapigo/client.New requires one whenever the browser flow is
-// configured (it might need to verify a JARM response or an ID token),
-// but this test's own scope ("IdentityCredential") never triggers
-// either, so a stub satisfying the dependency check is enough.
-type noopIssuerKeySource struct{}
-
-func (noopIssuerKeySource) ResolveIssuerKeys(context.Context, keys.IssuerKeyRequest) (keys.IssuerKeySet, error) {
-	return keys.IssuerKeySet{}, fmt.Errorf("noopIssuerKeySource: unexpectedly called")
-}
-
-// staticAttestationSource is a fixed client.AttestationSource — this
-// test's simulated wallet holds one pre-issued Client Attestation JWT
-// for its whole run, exactly like a real wallet would between
-// attestation refreshes (see client.AttestationSource's own doc
-// comment: it's never minted per request, only the PoP is).
-type staticAttestationSource string
-
-func (s staticAttestationSource) CurrentAttestation(context.Context) (string, error) {
-	return string(s), nil
-}
 
 // TestFullFlow_RealClientDrivesAttestationAuth is
 // TestFullFlow_ParAuthorizeTokenNonceCredential's real-client
@@ -137,14 +114,13 @@ func buildRealClientForAttestationAuth(t *testing.T, cfg Config, httpClient *htt
 		Assurance:                      client.AssuranceDevelopment,
 		ClientAuthMethod:               storage.ClientAuthMethodAttestation,
 		AuthorizationResponseIssPolicy: client.RequireAuthorizationResponseIss,
+		OAuthOnly:                      true,
 		Algorithms: client.Algorithms{
 			DPoP:                 fapi.ES256,
-			IDToken:              fapi.ES256,
 			ClientAttestationPoP: fapi.ES256,
 		},
 		Limits: client.Limits{
 			SessionLifetime:      5 * time.Minute,
-			MaxIDTokenLifetime:   5 * time.Minute,
 			MaxClockSkew:         5 * time.Second,
 			HTTPTimeout:          10 * time.Second,
 			MaxHTTPResponseBytes: 1 << 16,
@@ -154,11 +130,10 @@ func buildRealClientForAttestationAuth(t *testing.T, cfg Config, httpClient *htt
 	clientDeps := client.Dependencies{
 		Sessions:    memstore.NewSessionStore(),
 		Keys:        km,
-		IssuerKeys:  noopIssuerKeySource{},
 		HTTP:        httpClient,
 		Clock:       client.SystemClock{},
 		Random:      rand.Reader,
-		Attestation: staticAttestationSource(attestationJWT),
+		Attestation: client.StaticAttestation(attestationJWT),
 	}
 	c, err := client.New(clientCfg, clientDeps)
 	if err != nil {

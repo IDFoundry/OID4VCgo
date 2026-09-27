@@ -39,30 +39,20 @@ package issuer
 // Definition (via fapigo/extension.Set) whenever a resolved Credential
 // Offer's authorization_code grant carries one (§4.1.1's own MUST).
 //
-// # issuer_state does not resurface through BeginAuthorization
+// # Reading issuer_state at the consent step
 //
-// This is the one genuinely non-obvious part of the recipe: once
-// fapigo/server accepts issuer_state at the Pushed Authorization
-// Request step, it is NOT surfaced back out through
-// (*server.Server).BeginAuthorization's own InteractionRequired.Interaction
-// (a server.InteractionRequest) — that type exposes only ClientID,
-// Scope, Hints and AuthorizationDetails (Rich Authorization Requests
-// have their own separate, dedicated path); a generic
-// extension.Definition-backed parameter resurfaces later only as a
-// token claim, and only when its own ReturnInTokenClaims is true — not
-// what issuer_state needs here, since correlating the authorization
-// flow back to the originating Credential Offer is a consent-time
-// concern, not a token-claims one.
+// Once registered, issuer_state is readable at the interaction step:
+// (*server.Server).BeginAuthorization's InteractionRequired.Interaction
+// (a server.InteractionRequest) carries the request's registered
+// extension values in Extensions, whether the Wallet sent them as
+// plain PAR parameters or inside a signed request object:
 //
-// So a deployment that needs issuer_state for consent-time correlation
-// (e.g. to show the resource owner which Credential Offer initiated
-// this flow, or to pre-select what's being requested) must capture it
-// itself, directly off the incoming Authorization Request/PAR HTTP
-// call, before or independently of handing off to
-// (*server.Server).PushAuthorizationRequest/BeginAuthorization — the
-// same "this package doesn't own the HTTP handler or consent UI"
-// boundary RequestCredential's own AuthorizedRequest parameter already
-// draws for token verification.
+//	state, ok := extension.Get(action.Interaction.Extensions, oid4vci.IssuerStateExtension)
+//
+// That's where a Credential Issuer correlates the authorization back to
+// the Credential Offer that started it — to show the resource owner
+// what's being issued, or to look up the pending issuance — with no
+// need to capture the value off the PAR request itself.
 //
 // # Credential Endpoint access tokens
 //

@@ -545,9 +545,8 @@ changes whether *every* bullet below is `(done)`.
   directly, using `oid4vci.IssuerStateExtension` to register OID4VCI
   1.0 §4.1.1's own `issuer_state` parameter in that Server's own
   `Config.Extensions` (see that file's doc comment for the full recipe,
-  including why `issuer_state` never resurfaces through
-  `BeginAuthorization`'s own `InteractionRequest` and must be captured
-  by the caller directly off the incoming HTTP request instead).
+  including reading `issuer_state` back at the consent step from
+  `BeginAuthorization`'s `InteractionRequest.Extensions`).
   `issuer/resource_verifier.go` is the matching documentation-only
   recipe for the other side of that same handshake: adapting
   `fapigo/resource.Verifier.Verify`'s own `AuthorizationContext` — not
@@ -1292,11 +1291,11 @@ automatically to code they didn't originally govern:
   sides of the Authorization Code Flow: `wallet.BuildAuthorizationRequest`
   attaches it client-side, and a `fapigo/server.Server` paired with
   `issuer` must register it in its own `Config.Extensions` server-side,
-  or Pushed Authorization Request validation rejects it outright as
+  or Pushed Authorization Request validation silently drops it as
   unregistered — see `issuer/authorization_server.go`'s own doc comment
-  for the full integration recipe, including the non-obvious finding
-  that it doesn't resurface through `BeginAuthorization`'s own
-  `InteractionRequest`. Each type's own `Validate` method
+  for the full integration recipe, including reading it back at the
+  consent step from `BeginAuthorization`'s
+  `InteractionRequest.Extensions`. Each type's own `Validate` method
   (where it has one) checks
   only §4/§8's own structural requirements; a role package's additional,
   role-specific constraints (e.g. `issuer`'s own check that

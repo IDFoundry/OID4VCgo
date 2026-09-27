@@ -186,7 +186,7 @@ func (t *transactions) done(id string) {
 
 // ttlMap is a small thread-safe map with per-entry expiry and
 // single-use reads, for the short-lived links the authorization flow
-// needs (request_uri → transaction, interaction handle → approval).
+// needs (interaction handle → approval).
 type ttlMap[V any] struct {
 	mu    sync.Mutex
 	now   func() time.Time

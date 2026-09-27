@@ -235,31 +235,21 @@ func newOAuthClient(ctx context.Context, w *wallet.Wallet, cfg Config, httpClien
 		Profile:   client.ProfileFAPISecurity, Assurance: client.AssuranceDevelopment,
 		ClientAuthMethod:               storage.ClientAuthMethodAttestation,
 		AuthorizationResponseIssPolicy: client.RequireAuthorizationResponseIss,
-		Algorithms:                     client.Algorithms{DPoP: fapi.ES256, IDToken: fapi.ES256, ClientAttestationPoP: fapi.ES256},
+		// A pure OAuth client: no ID tokens or JARM, so no issuer keys.
+		OAuthOnly:  true,
+		Algorithms: client.Algorithms{DPoP: fapi.ES256, ClientAttestationPoP: fapi.ES256},
 		Limits: client.Limits{
-			SessionLifetime: 10 * time.Minute, MaxIDTokenLifetime: 5 * time.Minute, MaxClockSkew: 5 * time.Second,
+			SessionLifetime: 10 * time.Minute, MaxClockSkew: 5 * time.Second,
 			HTTPTimeout: httpTimeout, MaxHTTPResponseBytes: 1 << 20, MaxJOSECompactBytes: 16 * 1024,
 		},
 	}, client.Dependencies{
-		Sessions: memstore.NewSessionStore(), Keys: km, IssuerKeys: noIssuerKeys{}, HTTP: httpClient,
-		Clock: client.SystemClock{}, Random: rand.Reader, Attestation: staticAttestation(walletAttestation),
+		Sessions: memstore.NewSessionStore(), Keys: km, HTTP: httpClient,
+		Clock: client.SystemClock{}, Random: rand.Reader, Attestation: client.StaticAttestation(walletAttestation),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("walletapp: oauth client: %w", err)
 	}
 	return c, nil
-}
-
-type staticAttestation string
-
-func (s staticAttestation) CurrentAttestation(context.Context) (string, error) { return string(s), nil }
-
-// noIssuerKeys satisfies fapigo/client's IssuerKeys dependency: this
-// OAuth-only flow never verifies an ID token or JARM response.
-type noIssuerKeys struct{}
-
-func (noIssuerKeys) ResolveIssuerKeys(context.Context, keys.IssuerKeyRequest) (keys.IssuerKeySet, error) {
-	return keys.IssuerKeySet{}, fmt.Errorf("walletapp: unexpected issuer key lookup")
 }
 
 // credentialEncryption is how to encrypt credential requests and ask for

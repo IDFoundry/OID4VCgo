@@ -81,18 +81,6 @@ func newWallet(httpClient *http.Client) (*wallet.Wallet, error) {
 	})
 }
 
-// noopIssuerKeySource is a keys.IssuerKeySource that's never actually
-// called — fapigo/client.New requires one whenever the browser flow is
-// configured, but this run's own scope (plain_oauth, no "openid"
-// scope) never returns an ID token, matching the identical stub
-// cmd/conformance-issuer's own wallet_client_flow_test.go already
-// established for the same reason.
-type noopIssuerKeySource struct{}
-
-func (noopIssuerKeySource) ResolveIssuerKeys(context.Context, keys.IssuerKeyRequest) (keys.IssuerKeySet, error) {
-	return keys.IssuerKeySet{}, fmt.Errorf("noopIssuerKeySource: unexpectedly called")
-}
-
 // buildClient constructs a fapigo/client.Client for module — every
 // endpoint this run needs lives at a fixed path under module.URL
 // (par/authorize/token/nonce/challenge/credential/deferred_credential/
@@ -174,11 +162,11 @@ func buildClient(ctx context.Context, run *walletRun, module conformancesuite.Su
 	// challenge" — confirmed live. §5.2's own "challenge" claim in the
 	// PoP JWT is optional (only sent when a fresh challenge exists), so
 	// the battery gets a plain, unchallenged attestation source.
-	var attestation client.AttestationSource = staticAttestationSource(attestationJWT)
+	attestation := client.StaticAttestation(attestationJWT)
 	if !strings.HasPrefix(testName, batteryModulePrefix) {
 		attestation = attestationAndChallengeSource{
-			staticAttestationSource: staticAttestationSource(attestationJWT),
-			challengeSource:         challengeSource{httpClient: httpClient, endpoint: module.URL + clientAttestationChallengePath},
+			AttestationSource: attestation,
+			challengeSource:   challengeSource{httpClient: httpClient, endpoint: module.URL + clientAttestationChallengePath},
 		}
 	}
 
@@ -201,14 +189,15 @@ func buildClient(ctx context.Context, run *walletRun, module conformancesuite.Su
 		// an absent iss when the AS is known to always send one is
 		// itself a downgrade risk.
 		AuthorizationResponseIssPolicy: client.RequireAuthorizationResponseIss,
+		// This run's scope is plain_oauth, never "openid": no ID token
+		// to verify, so no Algorithms.IDToken and no IssuerKeys.
+		OAuthOnly: true,
 		Algorithms: client.Algorithms{
 			DPoP:                 fapi.ES256,
-			IDToken:              fapi.ES256,
 			ClientAttestationPoP: fapi.ES256,
 		},
 		Limits: client.Limits{
 			SessionLifetime:      5 * time.Minute,
-			MaxIDTokenLifetime:   5 * time.Minute,
 			MaxClockSkew:         15 * time.Second,
 			HTTPTimeout:          20 * time.Second,
 			MaxHTTPResponseBytes: 1 << 20,
@@ -218,7 +207,6 @@ func buildClient(ctx context.Context, run *walletRun, module conformancesuite.Su
 	deps := client.Dependencies{
 		Sessions:    memstore.NewSessionStore(),
 		Keys:        km,
-		IssuerKeys:  noopIssuerKeySource{},
 		HTTP:        httpClient,
 		Clock:       client.SystemClock{},
 		Random:      rand.Reader,
@@ -322,23 +310,6 @@ func pollDeferredCredential(ctx context.Context, w *wallet.Wallet, resource wall
 	return wallet.CredentialResult{}, fmt.Errorf("deferred credential still pending after %d attempts", maxDeferredPollAttempts)
 }
 
-// issuerStateExtension is OID4VCI §5.1.3's own "issuer_state"
-// authorization/PAR parameter — a Wallet echoes back whatever the
-// Credential Offer's own grants.authorization_code.issuer_state
-// carried, when present. No server-side registration is needed to
-// send it (extension.Set is purely a client-side, self-describing
-// encode — see FAPIgo PR #304's own "ignore unrecognized authorization
-// request parameters" fix on the suite's own AS side), and since this
-// binary always runs FAPI2AuthRequestMethod=unsigned, a bare string
-// value here always goes out as a plain top-level PAR parameter
-// (BeginAuthorizationRequest.Extensions' own doc comment).
-var issuerStateExtension = extension.Definition[string]{
-	Name:           "issuer_state",
-	Cardinality:    extension.Single,
-	AllowedSources: extension.SourcePlainParameter,
-	MaxBytes:       2048,
-}
-
 // driveModule drives one module instance through the full flow this
 // binary's own scope covers. offer is non-nil only for the
 // issuer_initiated flow variant (already resolved by runModule, since
@@ -430,7 +401,7 @@ func (r moduleRunner) authorizeAndGetProtectedResource(ctx context.Context, modu
 	beginReq := client.BeginAuthorizationRequest{Scope: []string{run.scope}}
 	if offer != nil && offer.Grants != nil && offer.Grants.AuthorizationCode != nil {
 		if issuerState := offer.Grants.AuthorizationCode.IssuerState; issuerState != "" {
-			if err := extension.Set(&beginReq.Extensions, issuerStateExtension, issuerState); err != nil {
+			if err := extension.Set(&beginReq.Extensions, oid4vci.IssuerStateExtension, issuerState); err != nil {
 				return nil, fmt.Errorf("set issuer_state extension: %w", err)
 			}
 		}

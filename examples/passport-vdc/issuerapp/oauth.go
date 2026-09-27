@@ -8,6 +8,7 @@ import (
 	"time"
 
 	fapi "github.com/idfoundry/fapigo"
+	"github.com/idfoundry/fapigo/extension"
 	"github.com/idfoundry/fapigo/server"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
@@ -28,10 +29,7 @@ type pendingInteraction struct {
 	scopes []string
 }
 
-// handlePAR is the Pushed Authorization Request endpoint. On success it
-// also records request_uri → transaction, from the request's
-// issuer_state, since fapigo/server doesn't surface extension values
-// at the authorization step.
+// handlePAR is the Pushed Authorization Request endpoint.
 func (a *App) handlePAR(w http.ResponseWriter, r *http.Request) {
 	form, err := server.FormRequestFromHTTP(r)
 	if err != nil {
@@ -46,14 +44,6 @@ func (a *App) handlePAR(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		server.WriteError(w, err)
 		return
-	}
-	// Only plain form parameters are read here: a wallet sending
-	// issuer_state inside a signed request object isn't supported by
-	// this demo (see the package doc).
-	if state := form.Get(oid4vci.IssuerStateExtension.Name); state != "" {
-		if _, err := a.transactions.unclaimed(state); err == nil {
-			a.requestURIs.put(result.RequestURI.String(), state, interactionLifetime)
-		}
 	}
 	result.WriteJSON(w)
 }
@@ -98,7 +88,9 @@ func (a *App) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 	}
 	switch action := action.(type) {
 	case server.InteractionRequired:
-		txID, ok := a.requestURIs.take(q.Get("request_uri"))
+		// The Wallet echoed the offer's issuer_state — the transaction
+		// ID — in its pushed request.
+		txID, ok := extension.Get(action.Interaction.Extensions, oid4vci.IssuerStateExtension)
 		if !ok {
 			writeHTMLError(w, http.StatusBadRequest, "this authorization request isn't linked to a verified passport — start from a credential offer")
 			return
@@ -249,17 +241,11 @@ func (a *App) handleToken(w http.ResponseWriter, r *http.Request) {
 	result.WriteJSON(w)
 }
 
-type authorizationServerMetadata struct {
-	server.Metadata
-	DPoPSigningAlgValuesSupported []string `json:"dpop_signing_alg_values_supported,omitempty"`
-}
-
+// handleASMetadata serves the Authorization Server's RFC 8414 metadata —
+// server.Metadata, dpop_signing_alg_values_supported included.
 func (a *App) handleASMetadata(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(authorizationServerMetadata{
-		Metadata:                      a.server.Metadata(r.Context()),
-		DPoPSigningAlgValuesSupported: server.RecommendedAlgorithmSet().Strings(),
-	})
+	_ = json.NewEncoder(w).Encode(a.server.Metadata(r.Context()))
 }
 
 func (a *App) handleJWKS(w http.ResponseWriter, r *http.Request) {

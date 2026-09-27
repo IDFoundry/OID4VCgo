@@ -82,6 +82,10 @@ func checkAuthorizationServerMetadata(t *testing.T, client *http.Client, baseURL
 	if !containsAny(methods, "attest_jwt_client_auth") {
 		t.Fatalf("token_endpoint_auth_methods_supported = %v, want attest_jwt_client_auth present", methods)
 	}
+	// From server.Metadata itself (RFC 9449 §5.1); HAIP needs DPoP.
+	if dpopAlgs, _ := body["dpop_signing_alg_values_supported"].([]any); !containsAny(dpopAlgs, "ES256") {
+		t.Fatalf("dpop_signing_alg_values_supported = %v, want ES256 present", dpopAlgs)
+	}
 }
 
 func checkOAuthAuthorizationServerMetadataMirrorsOpenIDConfiguration(t *testing.T, client *http.Client, baseURL string, cfg Config) {
