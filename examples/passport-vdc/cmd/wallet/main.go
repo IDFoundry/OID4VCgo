@@ -42,6 +42,7 @@ func main() {
 	trust := fs.String("trust", "issuer-tls.pem,verifier-tls.pem", "comma-separated PEM files of TLS certificates to trust (from cmd/issuer and cmd/verifier); missing files are skipped")
 	headless := fs.Bool("headless", false, "receive: approve automatically instead of in a browser (needs -code)")
 	code := fs.String("code", "", "receive -headless: the confirmation code shown with the offer")
+	issuerCA := fs.String("trust-issuer-ca", "issuer-ca.pem", "receive: comma-separated PEM files of issuer CAs whose credentials to accept (from cmd/issuer)")
 	verifierCA := fs.String("trust-verifier-ca", "verifier-ca.pem", "present: comma-separated PEM files of verifier CAs whose requests to answer (from cmd/verifier)")
 	yes := fs.Bool("yes", false, "present: share without asking")
 	format := fs.String("format", "", "present: only offer stored credentials of this format (mso_mdoc or dc+sd-jwt)")
@@ -71,6 +72,10 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
+		issuerRoots, err := walletapp.LoadCertPool(*issuerCA)
+		if err != nil {
+			log.Fatalf("issuer CA: %v (start cmd/issuer first)", err)
+		}
 		var approver walletapp.Approver = walletapp.BrowserApprover{
 			RedirectURI: *redirectURI,
 			Show: func(u string) {
@@ -81,7 +86,7 @@ func main() {
 			approver = walletapp.HeadlessApprover{HTTP: httpClient, Code: *code}
 		}
 		if err := receive(fs.Arg(0), *store, walletapp.Config{
-			ClientID: *clientID, RedirectURI: *redirectURI, Provider: provider, HTTP: httpClient,
+			ClientID: *clientID, RedirectURI: *redirectURI, Provider: provider, IssuerRoots: issuerRoots, HTTP: httpClient,
 		}, approver); err != nil {
 			log.Fatal(err)
 		}

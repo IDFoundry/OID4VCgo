@@ -18,6 +18,7 @@ import (
 	"github.com/idfoundry/fapigo/fapihttp"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
+	"github.com/idfoundry/oid4vcgo/dcql"
 	"github.com/idfoundry/oid4vcgo/wallet"
 )
 
@@ -137,7 +138,7 @@ func Prepare(ctx context.Context, requestLink string, store Store, httpClient *h
 		if err != nil {
 			continue
 		}
-		matches, err := wallet.MatchDCQLQuery(ctx, authReq.Query, held, nil)
+		matches, err := wallet.MatchDCQLQuery(ctx, authReq.Query, held, dcql.AKITrustedAuthoritiesChecker{})
 		if err != nil {
 			continue
 		}
@@ -164,6 +165,9 @@ func (p *Prepared) Send(ctx context.Context, format string) (Presented, error) {
 	vpToken, err := wallet.PresentCredentials(ctx, wallet.PresentationRequest{
 		Query: a.Query, Credentials: held, Audience: a.ClientID, Nonce: a.Nonce,
 		ResponseURI: a.ResponseURI, ResponseEncryptionKey: a.ResponseEncryptionKey,
+		// Offer only credentials from an issuer the query's
+		// trusted_authorities names.
+		TrustedAuthorities: dcql.AKITrustedAuthoritiesChecker{},
 	})
 	if err != nil {
 		return Presented{}, fmt.Errorf("walletapp: no stored credential satisfies the request: %w", err)
@@ -248,6 +252,17 @@ func postResponse(ctx context.Context, hc *http.Client, responseURI, responseJWE
 // chains to a CA in the comma-separated PEM files (the demo verifier
 // writes its CA to verifier-ca.pem).
 func LoadVerifierTrust(files string) (wallet.VerifierTrust, error) {
+	roots, err := LoadCertPool(files)
+	if err != nil {
+		return nil, fmt.Errorf("walletapp: verifier CA: %w", err)
+	}
+	return wallet.X5CVerifierRoots{Roots: roots}, nil
+}
+
+// LoadCertPool reads the certificates in the comma-separated PEM files
+// into a pool — e.g. Config.IssuerRoots from the demo issuer's
+// issuer-ca.pem.
+func LoadCertPool(files string) (*x509.CertPool, error) {
 	roots := x509.NewCertPool()
 	for _, f := range strings.Split(files, ",") {
 		if f = strings.TrimSpace(f); f == "" {
@@ -255,11 +270,11 @@ func LoadVerifierTrust(files string) (wallet.VerifierTrust, error) {
 		}
 		pemBytes, err := os.ReadFile(f) // #nosec G304 -- operator-supplied path
 		if err != nil {
-			return nil, fmt.Errorf("walletapp: verifier CA: %w", err)
+			return nil, err
 		}
 		if !roots.AppendCertsFromPEM(pemBytes) {
-			return nil, fmt.Errorf("walletapp: verifier CA: %s holds no PEM certificates", f)
+			return nil, fmt.Errorf("%s holds no PEM certificates", f)
 		}
 	}
-	return wallet.X5CVerifierRoots{Roots: roots}, nil
+	return roots, nil
 }

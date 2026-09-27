@@ -87,21 +87,24 @@ func New(t *testing.T, cscaPool cms.CertPool) *Env {
 	return e
 }
 
-// StartVerifier adds a verifier trusting the issuer's CA and cscaPool.
-func (e *Env) StartVerifier(t *testing.T, cscaPool cms.CertPool) {
+// StartVerifier adds a verifier trusting the issuer's CA and cscaPool;
+// opts can adjust its Config before it starts.
+func (e *Env) StartVerifier(t *testing.T, cscaPool cms.CertPool, opts ...func(*verifierapp.Config)) {
 	t.Helper()
 	if cscaPool == nil {
 		cscaPool = &cms.GenericCertPool{}
 	}
-	roots := x509.NewCertPool()
-	roots.AddCert(e.Issuer.IssuerCACertificate())
 	srv := httptest.NewUnstartedServer(nil)
 	e.VerifierURL = "https://" + srv.Listener.Addr().String()
 	var err error
-	e.Verifier, err = verifierapp.New(verifierapp.Config{
+	cfg := verifierapp.Config{
 		VerifierURL: e.VerifierURL, IssuerVCT: e.IssuerURL + issuerapp.VCTPath,
-		IssuerRoots: roots, CSCAPool: cscaPool,
-	})
+		IssuerCAs: []*x509.Certificate{e.Issuer.IssuerCACertificate()}, CSCAPool: cscaPool,
+	}
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+	e.Verifier, err = verifierapp.New(cfg)
 	if err != nil {
 		t.Fatalf("verifierapp.New: %v", err)
 	}
@@ -142,7 +145,9 @@ func (e *Env) start(t *testing.T, srv *httptest.Server, h http.Handler) {
 
 // WalletConfig is the demo wallet's configuration for this Env.
 func (e *Env) WalletConfig() walletapp.Config {
-	return walletapp.Config{ClientID: WalletClientID, RedirectURI: RedirectURI, Provider: e.Provider, HTTP: e.HTTP}
+	issuerRoots := x509.NewCertPool()
+	issuerRoots.AddCert(e.Issuer.IssuerCACertificate())
+	return walletapp.Config{ClientID: WalletClientID, RedirectURI: RedirectURI, Provider: e.Provider, IssuerRoots: issuerRoots, HTTP: e.HTTP}
 }
 
 // Date parses a YYYY-MM-DD date, panicking on malformed input.

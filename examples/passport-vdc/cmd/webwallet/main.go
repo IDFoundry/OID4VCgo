@@ -29,6 +29,7 @@ func main() {
 	providerKey := flag.String("wallet-provider-key", "wallet-provider.pem", "the demo Wallet Provider's private key")
 	providerIssuer := flag.String("wallet-provider-issuer", "https://wallet-provider.passport-vdc.demo", "the demo Wallet Provider's identifier")
 	clientID := flag.String("client-id", "passport-vdc-wallet", "this wallet's client_id")
+	issuerCA := flag.String("trust-issuer-ca", "issuer-ca.pem", "comma-separated PEM files of issuer CAs whose credentials to accept (from cmd/issuer)")
 	verifierCA := flag.String("trust-verifier-ca", "verifier-ca.pem", "comma-separated PEM files of verifier CAs whose requests to answer (from cmd/verifier)")
 	trust := flag.String("trust", "issuer-tls.pem,verifier-tls.pem", "comma-separated PEM files of TLS certificates to trust (from cmd/issuer and cmd/verifier)")
 	certFile := flag.String("tls-cert", "", "TLS certificate PEM (default: generate a self-signed one)")
@@ -48,13 +49,17 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	issuerRoots, err := walletapp.LoadCertPool(*issuerCA)
+	if err != nil {
+		log.Fatalf("issuer CA: %v (start cmd/issuer first)", err)
+	}
 	verifierTrust, err := walletapp.LoadVerifierTrust(*verifierCA)
 	if err != nil {
 		log.Fatalf("%v (start cmd/verifier first)", err)
 	}
 	app, err := webwallet.New(webwallet.Config{
 		WalletURL:     *walletURL,
-		Wallet:        walletapp.Config{ClientID: *clientID, Provider: provider, HTTP: httpClient},
+		Wallet:        walletapp.Config{ClientID: *clientID, Provider: provider, IssuerRoots: issuerRoots, HTTP: httpClient},
 		Store:         walletapp.Store{Dir: *store},
 		VerifierTrust: verifierTrust,
 	})

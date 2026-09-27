@@ -41,8 +41,15 @@ func main() {
 	if err != nil {
 		log.Fatalf("read issuer CA (start cmd/issuer first): %v", err)
 	}
-	roots := x509.NewCertPool()
-	if !roots.AppendCertsFromPEM(caPEM) {
+	var issuerCAs []*x509.Certificate
+	for block, rest := pem.Decode(caPEM); block != nil; block, rest = pem.Decode(rest) {
+		cert, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			log.Fatalf("%s: %v", *issuerCA, err)
+		}
+		issuerCAs = append(issuerCAs, cert)
+	}
+	if len(issuerCAs) == 0 {
 		log.Fatalf("%s holds no PEM certificates", *issuerCA)
 	}
 	cscaPool, err := cms.DefaultMasterList()
@@ -51,7 +58,7 @@ func main() {
 	}
 	app, err := verifierapp.New(verifierapp.Config{
 		VerifierURL: *verifierURL, IssuerVCT: *issuerURL + "/vct/passport/1",
-		IssuerRoots: roots, CSCAPool: cscaPool, WebWalletURL: *webWallet,
+		IssuerCAs: issuerCAs, CSCAPool: cscaPool, WebWalletURL: *webWallet,
 	})
 	if err != nil {
 		log.Fatal(err)
