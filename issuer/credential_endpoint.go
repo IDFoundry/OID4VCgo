@@ -201,12 +201,27 @@ type CredentialRequest struct {
 	// credential is the caller's job, the same division
 	// credential/sdjwtvc.Verify itself draws for key resolution. Leave
 	// CNF unset — RequestCredential overwrites it per issued instance,
-	// once per resolved binding key.
+	// once per resolved binding key. Every Credential of a batch is
+	// built from these; set anything that must differ between them —
+	// a Status reference, in particular — in PerCredential.
 	SDJWTClaims *sdjwtvc.Claims
 
 	// MdocClaims is SDJWTClaims' mso_mdoc counterpart. Leave DeviceKey
 	// unset — RequestCredential overwrites it per issued instance.
 	MdocClaims *mdoc.Claims
+
+	// PerCredential, if set, is called once for each Credential
+	// RequestCredential issues, before it's signed, to vary what each
+	// one carries. A batch's Credentials (one per binding key) are
+	// otherwise all built from the same SDJWTClaims or MdocClaims, so a
+	// value there repeats across the batch. For a status reference that
+	// breaks HAIP 1.0 §6.1 ("Each Credential MUST have its own unique,
+	// unpredictable status list index") and links the batch's
+	// Credentials, defeating why a Wallet asks for a batch: set Status
+	// (or an mdoc's IdentifierList) here instead. RequestCredential
+	// refuses a batch in which two Credentials would carry the same
+	// status reference. An error fails the request.
+	PerCredential func(ctx context.Context, instance *CredentialInstance) error
 
 	// ResponseEncryption is this request's own optional
 	// "credential_response_encryption" object (§8.2) — set this from
@@ -222,6 +237,25 @@ type CredentialRequest struct {
 	// RequestCredential rejects ResponseEncryption being set unless
 	// this is also true (§8.2-18).
 	RequestWasEncrypted bool
+}
+
+// CredentialInstance is one Credential of a batch — possibly of one — as
+// CredentialRequest.PerCredential sees it, before it's issued.
+type CredentialInstance struct {
+	// Index is its position in the batch, from 0.
+	Index int
+
+	// BindingKey is the Wallet key it will be bound to.
+	BindingKey crypto.PublicKey
+
+	// SDJWTClaims or MdocClaims — whichever the requested format uses;
+	// the other is nil — is this Credential's own copy of the
+	// CredentialRequest's claims. Assign its fields (Status, Exp, …) to
+	// change this Credential alone. Its maps (Additional, NameSpaces)
+	// are still shared with the rest of the batch: replace one rather
+	// than modify it in place.
+	SDJWTClaims *sdjwtvc.Claims
+	MdocClaims  *mdoc.Claims
 }
 
 // resolvedKey is one Wallet-supplied binding key extracted from a
@@ -287,13 +321,9 @@ func (iss *Issuer) requestCredential(ctx context.Context, auth AuthorizedRequest
 		return oid4vci.CredentialResponse{}, err
 	}
 
-	credentials := make([]oid4vci.IssuedCredential, 0, len(keys))
-	for _, key := range keys {
-		credential, err := iss.issueOne(cc, req, key)
-		if err != nil {
-			return oid4vci.CredentialResponse{}, newError(ErrorCredentialRequestDenied, 400, "credential issuance failed", err)
-		}
-		credentials = append(credentials, oid4vci.IssuedCredential{Credential: credential})
+	credentials, err := iss.issueBatch(ctx, cc, req, keys)
+	if err != nil {
+		return oid4vci.CredentialResponse{}, err
 	}
 
 	var notificationID string
@@ -458,21 +488,89 @@ func (iss *Issuer) resolveProofKeys(
 	}
 }
 
-func (iss *Issuer) issueOne(cc CredentialConfiguration, req CredentialRequest, key resolvedKey) (string, error) {
+// issueBatch issues one Credential per key, each from its own copy of
+// req's claims as req.PerCredential left it, refusing a batch in which
+// two would carry the same status reference.
+func (iss *Issuer) issueBatch(ctx context.Context, cc CredentialConfiguration, req CredentialRequest, keys []resolvedKey) ([]oid4vci.IssuedCredential, error) {
+	credentials := make([]oid4vci.IssuedCredential, 0, len(keys))
+	statusRefs := make(map[string]int, len(keys))
+	for i, key := range keys {
+		instance, err := newCredentialInstance(cc, req, i, key)
+		if err != nil {
+			return nil, newError(ErrorCredentialRequestDenied, 400, "credential issuance failed", err)
+		}
+		if req.PerCredential != nil {
+			if err := req.PerCredential(ctx, &instance); err != nil {
+				return nil, fmt.Errorf("issuer: request credential: per-credential claims: %w", err)
+			}
+		}
+		if ref, ok := instance.statusRef(); ok {
+			if first, dup := statusRefs[ref]; dup {
+				return nil, fmt.Errorf("issuer: request credential: credentials %d and %d of the batch carry the same status reference; HAIP 1.0 §6.1 requires each its own — set it in CredentialRequest.PerCredential", first, i)
+			}
+			statusRefs[ref] = i
+		}
+		credential, err := iss.issueInstance(instance, key)
+		if err != nil {
+			return nil, newError(ErrorCredentialRequestDenied, 400, "credential issuance failed", err)
+		}
+		credentials = append(credentials, oid4vci.IssuedCredential{Credential: credential})
+	}
+	return credentials, nil
+}
+
+// newCredentialInstance copies the claims cc's format uses for the i-th
+// Credential of a batch.
+func newCredentialInstance(cc CredentialConfiguration, req CredentialRequest, i int, key resolvedKey) (CredentialInstance, error) {
+	instance := CredentialInstance{Index: i, BindingKey: key.Public}
 	switch cc.Format {
 	case sdjwtvc.CredentialFormat:
 		if req.SDJWTClaims == nil {
-			return "", fmt.Errorf("issuer: CredentialRequest.SDJWTClaims is required for format %q", cc.Format)
+			return CredentialInstance{}, fmt.Errorf("issuer: CredentialRequest.SDJWTClaims is required for format %q", cc.Format)
 		}
-		return iss.issueSDJWT(*req.SDJWTClaims, key)
+		claims := *req.SDJWTClaims
+		instance.SDJWTClaims = &claims
 	case mdoc.CredentialFormat:
 		if req.MdocClaims == nil {
-			return "", fmt.Errorf("issuer: CredentialRequest.MdocClaims is required for format %q", cc.Format)
+			return CredentialInstance{}, fmt.Errorf("issuer: CredentialRequest.MdocClaims is required for format %q", cc.Format)
 		}
-		return iss.issueMdoc(*req.MdocClaims, key)
+		claims := *req.MdocClaims
+		instance.MdocClaims = &claims
 	default:
-		return "", fmt.Errorf("issuer: format %q is not supported", cc.Format)
+		return CredentialInstance{}, fmt.Errorf("issuer: format %q is not supported", cc.Format)
 	}
+	return instance, nil
+}
+
+// statusRef is a comparable encoding of the instance's status reference
+// — an SD-JWT VC's status claim, or an mdoc's status_list or
+// identifier_list — and false if it has none.
+func (c CredentialInstance) statusRef() (string, bool) {
+	var ref any
+	switch {
+	case c.SDJWTClaims != nil && len(c.SDJWTClaims.Status) > 0:
+		ref = c.SDJWTClaims.Status
+	case c.MdocClaims != nil && c.MdocClaims.Status != nil:
+		ref = c.MdocClaims.Status
+	case c.MdocClaims != nil && c.MdocClaims.IdentifierList != nil:
+		ref = c.MdocClaims.IdentifierList
+	default:
+		return "", false
+	}
+	// json.Marshal orders map keys, so equal references encode equally.
+	encoded, err := json.Marshal(ref)
+	if err != nil {
+		return fmt.Sprintf("%v", ref), true
+	}
+	return string(encoded), true
+}
+
+// issueInstance issues instance's claims bound to key.
+func (iss *Issuer) issueInstance(instance CredentialInstance, key resolvedKey) (string, error) {
+	if instance.SDJWTClaims != nil {
+		return iss.issueSDJWT(*instance.SDJWTClaims, key)
+	}
+	return iss.issueMdoc(*instance.MdocClaims, key)
 }
 
 // issueSDJWT binds claims to key's public key via cnf.jwk (RFC 7800),

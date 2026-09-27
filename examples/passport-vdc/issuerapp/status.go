@@ -16,6 +16,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcgo/internal/cose"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
+	"github.com/idfoundry/oid4vcgo/issuer"
 	"github.com/idfoundry/oid4vcgo/statuslist"
 )
 
@@ -112,11 +113,15 @@ func (s *statusList) snapshot() ([]uint8, []IssuedStatus) {
 	return slices.Clone(s.revoked), entries
 }
 
-// withStatus points both formats' claims at idx in this issuer's status
-// list; RequestCredential issues whichever format was requested.
-func (a *App) withStatus(sdjwtClaims *sdjwtvc.Claims, mdocClaims *mdoc.Claims, idx int) {
-	sdjwtClaims.Status = statuslist.StatusListRef{Idx: idx, URI: a.statusListURI}.Claim()
-	mdocClaims.Status = &mdoc.StatusListRef{Idx: uint64(idx), URI: a.statusListURI} // #nosec G115 -- idx is from allocate, in [0, statusListSize)
+// withStatus points one credential's claims at idx in this issuer's
+// status list.
+func (a *App) withStatus(c *issuer.CredentialInstance, idx int) {
+	if c.SDJWTClaims != nil {
+		c.SDJWTClaims.Status = statuslist.StatusListRef{Idx: idx, URI: a.statusListURI}.Claim()
+	}
+	if c.MdocClaims != nil {
+		c.MdocClaims.Status = &mdoc.StatusListRef{Idx: uint64(idx), URI: a.statusListURI} // #nosec G115 -- idx is from allocate, in [0, statusListSize)
+	}
 }
 
 // handleStatusList serves the Status List Token, signed by the document
