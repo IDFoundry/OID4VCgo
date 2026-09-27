@@ -163,30 +163,12 @@ func (p *Provider) x5cHeader() attestation.Header {
 func (p *Provider) KeyAttestationClaims(keys []*ecdsa.PublicKey, now time.Time, lifetime time.Duration) (attestation.Claims, error) {
 	attested := make([]json.RawMessage, 0, len(keys))
 	for _, k := range keys {
-		jwk, err := ecJWK(k)
+		raw, err := attestation.AttestedKey(k)
 		if err != nil {
-			return attestation.Claims{}, err
-		}
-		raw, err := json.Marshal(jwk)
-		if err != nil {
-			return attestation.Claims{}, fmt.Errorf("walletprovider: marshal key: %w", err)
+			return attestation.Claims{}, fmt.Errorf("walletprovider: %w", err)
 		}
 		attested = append(attested, raw)
 	}
 	exp := now.Add(lifetime).Unix()
 	return attestation.Claims{Issuer: p.Issuer, ExpiresAt: &exp, AttestedKeys: attested}, nil
-}
-
-// ecJWK encodes a P-256 public key as JWK members.
-func ecJWK(pub *ecdsa.PublicKey) (map[string]string, error) {
-	raw, err := pub.Bytes() // uncompressed: 0x04 || X || Y
-	if err != nil {
-		return nil, fmt.Errorf("walletprovider: encode public key: %w", err)
-	}
-	size := (len(raw) - 1) / 2
-	b64 := base64.RawURLEncoding
-	return map[string]string{
-		"kty": "EC", "crv": "P-256",
-		"x": b64.EncodeToString(raw[1 : 1+size]), "y": b64.EncodeToString(raw[1+size:]),
-	}, nil
 }

@@ -9,19 +9,10 @@ import (
 	fapires "github.com/idfoundry/fapigo/resource"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
+	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/credential"
 	"github.com/idfoundry/oid4vcgo/issuer"
 )
-
-// maxCredentialRequestBytes bounds a Credential Request body; a
-// request only carries proofs, so this is generous.
-const maxCredentialRequestBytes = 1 << 18
-
-type wireCredentialRequest struct {
-	CredentialConfigurationID string              `json:"credential_configuration_id"`
-	CredentialIdentifier      string              `json:"credential_identifier"`
-	Proofs                    map[string][]string `json:"proofs"`
-}
 
 func (a *App) handleNonce(w http.ResponseWriter, r *http.Request) {
 	result, err := a.issuer.RequestNonce(r.Context())
@@ -46,19 +37,19 @@ func (a *App) handleCredential(w http.ResponseWriter, r *http.Request) {
 		fapires.WriteError(w, err)
 		return
 	}
-	body, err := io.ReadAll(io.LimitReader(r.Body, maxCredentialRequestBytes+1))
-	if err != nil || len(body) > maxCredentialRequestBytes {
-		http.Error(w, "credential request is unreadable or too large", http.StatusBadRequest)
+	body, err := io.ReadAll(io.LimitReader(r.Body, issuer.MaxCredentialRequestBytes+1))
+	if err != nil {
+		http.Error(w, "credential request is unreadable", http.StatusBadRequest)
 		return
 	}
-	var wire wireCredentialRequest
-	if err := json.Unmarshal(body, &wire); err != nil {
-		http.Error(w, "malformed credential request", http.StatusBadRequest)
+	req, err := a.issuer.ParseCredentialRequest(body, r.Header.Get("Content-Type"))
+	if err != nil {
+		issuer.WriteError(w, err)
 		return
 	}
 	// Each offered credential is issued once per passport: reserve it
 	// now, release it if issuing fails.
-	e, err := a.transactions.reserve(authCtx.Subject, wire.CredentialConfigurationID)
+	e, err := a.transactions.reserve(authCtx.Subject, req.CredentialConfigurationID)
 	switch {
 	case errors.Is(err, errAlreadyIssued):
 		writeCredentialError(w, "this credential has already been issued for this passport")
@@ -72,7 +63,7 @@ func (a *App) handleCredential(w http.ResponseWriter, r *http.Request) {
 		if issued {
 			a.transactions.done(authCtx.Subject)
 		} else {
-			a.transactions.release(authCtx.Subject, wire.CredentialConfigurationID)
+			a.transactions.release(authCtx.Subject, req.CredentialConfigurationID)
 		}
 	}()
 
@@ -91,15 +82,10 @@ func (a *App) handleCredential(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	req.SDJWTClaims, req.MdocClaims = sdjwtClaims, mdocClaims
 	result, err := a.issuer.RequestCredential(r.Context(), issuer.AuthorizedRequest{
 		ClientIdentity: issuer.KnownClientID(authCtx.ClientID), Scopes: authCtx.Scopes,
-	}, issuer.CredentialRequest{
-		CredentialConfigurationID: wire.CredentialConfigurationID,
-		CredentialIdentifier:      wire.CredentialIdentifier,
-		Proofs:                    wire.Proofs,
-		SDJWTClaims:               sdjwtClaims,
-		MdocClaims:                mdocClaims,
-	})
+	}, req)
 	if err != nil {
 		issuer.WriteError(w, err)
 		return
@@ -127,33 +113,29 @@ func (a *App) issuerMetadataHandler() http.HandlerFunc {
 // handleVCTMetadata serves the SD-JWT VC type metadata document for
 // this issuer's vct — display names for the credential and its claims.
 func (a *App) handleVCTMetadata(w http.ResponseWriter, _ *http.Request) {
-	claim := func(path []string, label string) map[string]any {
-		pathAny := make([]any, len(path))
-		for i, p := range path {
-			pathAny[i] = p
-		}
-		return map[string]any{"path": pathAny, "display": []map[string]string{{"lang": "en", "label": label}}}
+	claim := func(label string, path ...string) sdjwtvc.ClaimMetadata {
+		return sdjwtvc.ClaimMetadata{Path: sdjwtvc.ClaimPath(path...), Display: []sdjwtvc.ClaimDisplay{{Lang: "en", Label: label}}}
 	}
-	doc := map[string]any{
-		"vct":         a.vct,
-		"name":        "Passport-derived credential (demo)",
-		"description": "Identity attributes and raw ICAO data groups from a verified ePassport. Demo only.",
-		"display": []map[string]any{{
-			"lang": "en", "name": "Passport (demo)",
-			"description": "Issued by the IDFoundry passport-vdc demo from a verified ePassport",
+	doc := sdjwtvc.TypeMetadata{
+		VCT:         a.vct,
+		Name:        "Passport-derived credential (demo)",
+		Description: "Identity attributes and raw ICAO data groups from a verified ePassport. Demo only.",
+		Display: []sdjwtvc.TypeDisplay{{
+			Lang: "en", Name: "Passport (demo)",
+			Description: "Issued by the IDFoundry passport-vdc demo from a verified ePassport",
 		}},
-		"claims": []map[string]any{
-			claim([]string{credential.FamilyName}, "Family name"),
-			claim([]string{credential.GivenName}, "Given names"),
-			claim([]string{credential.SDJWTBirthDate}, "Date of birth"),
-			claim([]string{credential.SDJWTNationalities}, "Nationality"),
-			claim([]string{credential.IssuingCountry}, "Issuing country"),
-			claim([]string{credential.DocumentNumber}, "Document number"),
-			claim([]string{credential.ExpiryDate}, "Passport expiry"),
-			claim([]string{credential.Sex}, "Sex"),
-			claim([]string{credential.ICAOSOD}, "ICAO Document Security Object (raw)"),
-			claim([]string{credential.ICAODG1}, "ICAO DG1 — MRZ (raw)"),
-			claim([]string{credential.ICAODG2}, "ICAO DG2 — facial image (raw)"),
+		Claims: []sdjwtvc.ClaimMetadata{
+			claim("Family name", credential.FamilyName),
+			claim("Given names", credential.GivenName),
+			claim("Date of birth", credential.SDJWTBirthDate),
+			claim("Nationality", credential.SDJWTNationalities),
+			claim("Issuing country", credential.IssuingCountry),
+			claim("Document number", credential.DocumentNumber),
+			claim("Passport expiry", credential.ExpiryDate),
+			claim("Sex", credential.Sex),
+			claim("ICAO Document Security Object (raw)", credential.ICAOSOD),
+			claim("ICAO DG1 — MRZ (raw)", credential.ICAODG1),
+			claim("ICAO DG2 — facial image (raw)", credential.ICAODG2),
 		},
 	}
 	w.Header().Set("Content-Type", "application/json")

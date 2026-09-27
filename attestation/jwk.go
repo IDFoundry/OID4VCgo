@@ -13,6 +13,13 @@ import (
 // key-coordinate fixtures.
 var b64 = base64.RawURLEncoding
 
+// AttestedKey encodes pub — an ECDSA P-256 or Ed25519 public key — as
+// the JWK Claims.AttestedKeys holds (Appendix D.1's attested_keys), so a
+// Key Attestation's signer never has to build one by hand.
+func AttestedKey(pub crypto.PublicKey) (json.RawMessage, error) {
+	return marshalJWK(pub)
+}
+
 // marshalJWK encodes pub as a JWK (RFC 7517) — P-256 EC and Ed25519
 // OKP, the two key types internal/jose supports. The actual encoding
 // lives in internal/jwk, shared with issuer's own need to parse a

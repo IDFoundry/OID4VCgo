@@ -64,10 +64,10 @@ type App struct {
 	verifier *verifier.Verifier
 	caCert   *x509.Certificate
 
-	issuerRoots *x509.CertPool
-	issuerAKIs  []string // base64url Subject Key Identifiers of IssuerCAs
-	now         func() time.Time
-	handler     http.Handler
+	issuerRoots   *x509.CertPool
+	issuerTrusted dcql.TrustedAuthoritiesQuery // IssuerCAs, by Authority Key Identifier
+	now           func() time.Time
+	handler       http.Handler
 
 	mu       sync.Mutex
 	sessions map[string]*session   // by request ID, known only to whoever created the request
@@ -147,13 +147,12 @@ func New(cfg Config) (*App, error) {
 		return nil, fmt.Errorf("verifierapp: VerifierURL, IssuerVCT, IssuerCAs and CSCAPool are required")
 	}
 	issuerRoots := x509.NewCertPool()
-	var issuerAKIs []string
 	for _, ca := range cfg.IssuerCAs {
-		if len(ca.SubjectKeyId) == 0 {
-			return nil, fmt.Errorf("verifierapp: issuer CA %q has no Subject Key Identifier to name in trusted_authorities", ca.Subject.CommonName)
-		}
 		issuerRoots.AddCert(ca)
-		issuerAKIs = append(issuerAKIs, base64.RawURLEncoding.EncodeToString(ca.SubjectKeyId))
+	}
+	issuerTrusted, err := dcql.AKITrustedAuthorities(cfg.IssuerCAs...)
+	if err != nil {
+		return nil, fmt.Errorf("verifierapp: %w", err)
 	}
 	responseURI, err := fapi.ParseEndpointURL(cfg.VerifierURL + "/response")
 	if err != nil {
@@ -172,7 +171,7 @@ func New(cfg Config) (*App, error) {
 	if err != nil {
 		return nil, fmt.Errorf("verifierapp: verifier.New: %w", err)
 	}
-	a := &App{cfg: cfg, verifier: v, caCert: caCert, issuerRoots: issuerRoots, issuerAKIs: issuerAKIs, now: time.Now, sessions: map[string]*session{}, byState: map[string]channelRef{}, byKeyID: map[string]channelRef{}, byCode: map[string]string{}}
+	a := &App{cfg: cfg, verifier: v, caCert: caCert, issuerRoots: issuerRoots, issuerTrusted: issuerTrusted, now: time.Now, sessions: map[string]*session{}, byState: map[string]channelRef{}, byKeyID: map[string]channelRef{}, byCode: map[string]string{}}
 	a.handler = a.routes()
 	return a, nil
 }
@@ -210,7 +209,7 @@ func (a *App) CreateRequest(mode Mode) (id, link string, err error) {
 // same-device channel whose answer is released only when the redirect
 // back arrives in that browser.
 func (a *App) createSession(mode Mode, browserToken string) (string, error) {
-	query, err := buildQuery(mode, a.cfg.IssuerVCT, a.issuerAKIs)
+	query, err := buildQuery(mode, a.cfg.IssuerVCT, a.issuerTrusted)
 	if err != nil {
 		return "", err
 	}
