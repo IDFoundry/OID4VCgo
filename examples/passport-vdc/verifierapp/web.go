@@ -86,6 +86,7 @@ var requestTemplate = template.Must(template.New("request").Parse(pageHead + `{{
 {{else}}
 <h1 class="ok">✓ Presentation verified</h1>
 <p>The wallet presented its <code>{{.Outcome.Format}}</code> credential. The issuer signature chains to the demo issuer's CA, and the holder proved possession of the credential's key.</p>
+<p>Revocation status: {{if eq .Outcome.Status "valid"}}<span class="ok">✓ valid</span> — checked against the issuer's status list{{else}}{{.Outcome.Status}}{{end}}</p>
 {{if eq .Outcome.Mode "icao"}}
 <div class="card">
 <h2>ICAO Passive Authentication over SOD + DG1</h2>

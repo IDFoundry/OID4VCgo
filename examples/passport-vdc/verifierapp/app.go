@@ -56,6 +56,11 @@ type Config struct {
 	// WebWalletURL, if set, adds an "Open in web wallet" button to the
 	// request page, linking to the demo web wallet's /present.
 	WebWalletURL string
+
+	// HTTP fetches the Token Status Lists credentials reference, to
+	// check they haven't been revoked; it must trust the issuer's TLS
+	// certificate. Nil uses http.DefaultClient.
+	HTTP *http.Client
 }
 
 // App is a running passport-vdc verifier.
@@ -128,6 +133,12 @@ type Outcome struct {
 	Format string
 	// Claims are the credential's verified, disclosed claims (ModeIssuer).
 	Claims map[string]any
+
+	// Status is the credential's revocation status, from the Token Status
+	// List it references: "valid", or "no status reference" for a
+	// credential without one. A revoked, suspended or uncheckable
+	// credential isn't accepted at all.
+	Status string
 	// ICAO is the Passive Authentication result over the disclosed SOD
 	// and DG1 (ModeICAO).
 	ICAO *ICAOResult
@@ -464,6 +475,9 @@ func (a *App) verify(ctx context.Context, s *session, ch *channel, responseJWE s
 	}
 	vc := result.Credentials[0]
 	out.Format = formatOf(vc.CredentialQueryID)
+	if out.Status, err = a.checkStatus(ctx, vc); err != nil {
+		return nil, err
+	}
 	out.Claims = flatten(vc.CredentialQueryID, vc.Claims)
 
 	if s.mode == ModeICAO {

@@ -31,6 +31,16 @@ type TokenClaims struct {
 // IssueToken signs claims into a Status List Token in JWT format
 // (draft-14 §5.1). keyID sets the JOSE "kid" header, if non-empty.
 func IssueToken(signer crypto.Signer, alg jose.Alg, claims TokenClaims, keyID string) (string, error) {
+	header := map[string]any{"typ": TokenTyp}
+	if keyID != "" {
+		header["kid"] = keyID
+	}
+	return issueToken(signer, alg, claims, header)
+}
+
+// issueToken signs claims into a Status List Token in JWT format with
+// the given JOSE header.
+func issueToken(signer crypto.Signer, alg jose.Alg, claims TokenClaims, header map[string]any) (string, error) {
 	if claims.Sub == "" {
 		return "", fmt.Errorf("statuslist: TokenClaims.Sub is required")
 	}
@@ -57,10 +67,6 @@ func IssueToken(signer crypto.Signer, alg jose.Alg, claims TokenClaims, keyID st
 		return "", fmt.Errorf("statuslist: marshal token claims: %w", err)
 	}
 
-	header := map[string]any{"typ": TokenTyp}
-	if keyID != "" {
-		header["kid"] = keyID
-	}
 	return jose.Sign(alg, signer, header, raw)
 }
 
