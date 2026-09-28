@@ -108,3 +108,15 @@ func TestValidateIssuerConfig_RejectsKeyBindingWithoutNonceEndpoint(t *testing.T
 		t.Fatalf("ValidateIssuerConfig = nil error, want error (key binding requires endpoints.nonce)")
 	}
 }
+
+func TestValidateIssuerConfig_RejectsAnonymousPreAuthorizedCode(t *testing.T) {
+	for name, choice := range map[string]issuer.PreAuthorizedCodeClientAuthentication{
+		"value":   issuer.AnonymousPreAuthorizedCode{},
+		"pointer": &issuer.AnonymousPreAuthorizedCode{},
+	} {
+		cfg := issuer.Config{Assurance: issuer.AssuranceDevelopment, PreAuthorizedCodeClientAuthentication: choice}
+		if err := haip.ValidateIssuerConfig(cfg); err == nil {
+			t.Errorf("%s: ValidateIssuerConfig = nil error, want anonymous pre-authorized code redemption refused", name)
+		}
+	}
+}

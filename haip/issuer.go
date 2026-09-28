@@ -81,6 +81,13 @@ func RecommendedIssuerConfig() IssuerRecommendations {
 //     indicated by the presence of cryptographic_binding_methods_supported,
 //     the nonce_endpoint MUST be present in the Credential Issuer
 //     Metadata").
+//   - PreAuthorizedCodeClientAuthentication must not be
+//     issuer.AnonymousPreAuthorizedCode{}: HAIP 1.0 §4.4.1 requires
+//     client authentication at the Token Endpoint ("Wallets MUST use,
+//     and Issuers MUST require, an OAuth2 Client authentication
+//     mechanism at OAuth2 Endpoints that support client
+//     authentication"), and that choice redeems pre-authorized codes
+//     without it.
 //
 // issuer.New never runs these checks itself: they are HAIP-specific
 // profiling on top of plain OID4VCI (base OID4VCI leaves both scope and
@@ -88,6 +95,10 @@ func RecommendedIssuerConfig() IssuerRecommendations {
 // issuer package can assume every deployment wants. Call this after
 // issuer.New succeeds, on the same Config passed to it.
 func ValidateIssuerConfig(cfg issuer.Config) error {
+	switch cfg.PreAuthorizedCodeClientAuthentication.(type) {
+	case issuer.AnonymousPreAuthorizedCode, *issuer.AnonymousPreAuthorizedCode:
+		return fmt.Errorf("haip: pre_authorized_code_client_authentication: anonymous pre-authorized code redemption has no client authentication at the Token Endpoint, which HAIP 1.0 §4.4.1 requires")
+	}
 	for id, c := range cfg.CredentialConfigurationsSupported {
 		if c.Scope == "" {
 			return fmt.Errorf("haip: credential_configurations_supported[%q]: scope is required", id)

@@ -12,6 +12,17 @@ import (
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 )
 
+// AttestationStatusChecker checks a verified key attestation's
+// revocation status (see Dependencies.AttestationStatus). claims.Status
+// is its "status" claim, nil when it has none; a Token Status List
+// reference in it parses with statuslist.ParseStatusClaim, and the list
+// fetched from its uri checks with statuslist.CheckX5C. Whether an
+// attestation without a status claim is acceptable is the
+// implementation's decision.
+type AttestationStatusChecker interface {
+	CheckAttestationStatus(ctx context.Context, claims attestation.VerifiedClaims) error
+}
+
 // X5CAttestationVerifier implements AttestationVerifier by validating
 // a presented Key Attestation JWT's own "x5c" header (RFC 7515
 // §4.1.6) against Roots — a reference implementation of the one

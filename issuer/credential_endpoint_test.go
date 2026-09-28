@@ -1513,3 +1513,47 @@ func TestRequestCredential_RefusesSharedStatusInBatch(t *testing.T) {
 		}
 	})
 }
+
+// attestationStatusFunc adapts a func to issuer.AttestationStatusChecker.
+type attestationStatusFunc func(context.Context, attestation.VerifiedClaims) error
+
+func (f attestationStatusFunc) CheckAttestationStatus(ctx context.Context, c attestation.VerifiedClaims) error {
+	return f(ctx, c)
+}
+
+// TestRequestCredential_AttestationStatus: Dependencies.AttestationStatus
+// sees each verified key attestation, and a revoked one fails the proof.
+func TestRequestCredential_AttestationStatus(t *testing.T) {
+	for name, revoked := range map[string]bool{"valid": false, "revoked": true} {
+		t.Run(name, func(t *testing.T) {
+			var checked []attestation.VerifiedClaims
+			f := newCredentialEndpointFixture(t, func(_ *issuer.Config, deps *issuer.Dependencies) {
+				deps.AttestationStatus = attestationStatusFunc(func(_ context.Context, c attestation.VerifiedClaims) error {
+					checked = append(checked, c)
+					if revoked {
+						return errors.New("revoked")
+					}
+					return nil
+				})
+			})
+			key1, key2 := testP256Key(t), testP256Key(t)
+			att := buildAttestation(t, f.attestationSigner, f.issueNonce(t), &key1.PublicKey, &key2.PublicKey)
+
+			_, err := f.iss.RequestCredential(context.Background(), issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("test-client"), Scopes: []string{"identity_credential"}}, issuer.CredentialRequest{
+				CredentialConfigurationID: testSDJWTConfigID,
+				Proofs:                    map[string][]string{oid4vci.ProofTypeAttestation: {att}},
+				SDJWTClaims:               testSDJWTClaims(),
+			})
+			if len(checked) != 1 || len(checked[0].AttestedKeys) != 2 {
+				t.Fatalf("status checker saw %d attestations, want the one verified attestation", len(checked))
+			}
+			var ierr *issuer.Error
+			switch {
+			case revoked && (!errors.As(err, &ierr) || ierr.Code() != issuer.ErrorInvalidProof):
+				t.Errorf("revoked attestation: err = %v, want invalid_proof", err)
+			case !revoked && err != nil:
+				t.Errorf("valid attestation: %v", err)
+			}
+		})
+	}
+}
