@@ -266,7 +266,7 @@ func TestVerifyMdocResponseRejects(t *testing.T) {
 		},
 		"issuer isn't a trusted authority": func(r *verifier.VerifyResponseRequest) {
 			r.Query.Credentials[0].TrustedAuthorities = []dcql.TrustedAuthoritiesQuery{{Type: dcql.TrustedAuthorityAKI, Values: []string{"bm90LXRoaXMtaXNzdWVy"}}}
-			r.TrustedAuthorities = dcql.AKITrustedAuthoritiesChecker{}
+			r.TrustedAuthorities = dcql.AKITrustedAuthoritiesChecker{Roots: x509.NewCertPool()}
 		},
 	}
 	for name, mutate := range cases {

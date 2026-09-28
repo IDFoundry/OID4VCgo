@@ -48,46 +48,46 @@ func X5CDERsFromHeader(header map[string]any) ([][]byte, error) {
 // anchor to every relying party), not a leaf that doubles as its own
 // anchor.
 func VerifyLeaf(ders [][]byte, roots *x509.CertPool) (*x509.Certificate, error) {
+	leaf, _, err := VerifyChains(ders, roots)
+	return leaf, err
+}
+
+// VerifyChains is VerifyLeaf, also returning every verified path from
+// the leaf to a certificate in roots (leaf first, root last), as
+// crypto/x509's own Verify builds them. What a verified path says
+// about who issued what can be relied on; what a certificate merely
+// states about its own issuer (its Authority Key Identifier extension)
+// can't — chain building doesn't require it to match.
+func VerifyChains(ders [][]byte, roots *x509.CertPool) (*x509.Certificate, [][]*x509.Certificate, error) {
 	if len(ders) == 0 {
-		return nil, fmt.Errorf("certchain: certificate chain is empty")
+		return nil, nil, fmt.Errorf("certchain: certificate chain is empty")
 	}
 	certs := make([]*x509.Certificate, 0, len(ders))
 	for i, der := range ders {
 		cert, err := x509.ParseCertificate(der)
 		if err != nil {
-			return nil, fmt.Errorf("certchain: parse certificate chain entry %d: %w", i, err)
+			return nil, nil, fmt.Errorf("certchain: parse certificate chain entry %d: %w", i, err)
 		}
 		certs = append(certs, cert)
 	}
 	leaf := certs[0]
 	if IsSelfSigned(leaf) {
-		return nil, fmt.Errorf("certchain: leaf certificate must not be self-signed")
+		return nil, nil, fmt.Errorf("certchain: leaf certificate must not be self-signed")
 	}
 
 	intermediates := x509.NewCertPool()
 	for _, c := range certs[1:] {
 		intermediates.AddCert(c)
 	}
-	// ExtKeyUsageAny is deliberate, not an oversight: there's no
-	// standard EKU value for "OID4VCI/OID4VP issuer/verifier identity"
-	// the way ExtKeyUsageServerAuth exists for TLS, so requiring a
-	// specific one here would risk rejecting real, spec-compliant
-	// certificates that were never issued with OID4VCI/HAIP in mind
-	// (found and deliberately left as-is in a repo-wide security
-	// review — accepting a leaf issued for a different purpose, e.g.
-	// TLS server auth, as long as it still chains to a trusted roots
-	// entry, is a tightenable defense-in-depth gap, not on its own
-	// exploitable: roots is the caller's own trust anchor set, already
-	// the actual security boundary here). A caller wanting to restrict
-	// certificates to a specific EKU should build its own check on top.
-	if _, err := leaf.Verify(x509.VerifyOptions{
+	chains, err := leaf.Verify(x509.VerifyOptions{
 		Roots:         roots,
 		Intermediates: intermediates,
 		KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageAny},
-	}); err != nil {
-		return nil, fmt.Errorf("certchain: certificate chain does not verify against a trusted root: %w", err)
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("certchain: certificate chain does not verify against a trusted root: %w", err)
 	}
-	return leaf, nil
+	return leaf, chains, nil
 }
 
 // IsSelfSigned reports whether cert's own signature was produced by
