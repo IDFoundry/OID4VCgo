@@ -72,8 +72,8 @@ func TestEndToEnd_IssuesBothFormats(t *testing.T) {
 	if verified.NameSpaces[credential.IdentityNamespace][credential.FamilyName] != "DOE" {
 		t.Errorf("mdoc family_name = %v", verified.NameSpaces[credential.IdentityNamespace][credential.FamilyName])
 	}
-	if got, _ := verified.NameSpaces[credential.ICAONamespace][credential.ICAODG2].([]byte); len(got) != 20<<10 {
-		t.Errorf("mdoc icao_dg2 is %d bytes, want %d", len(got), 20<<10)
+	if got, _ := verified.NameSpaces[credential.FileNamespace][credential.PassportFile].([]byte); len(got) != 20<<10 {
+		t.Errorf("mdoc passport file is %d bytes, want %d", len(got), 20<<10)
 	}
 	if !mdocCred.HolderKey.PublicKey.Equal(verified.DeviceKey) {
 		t.Error("mdoc DeviceKey isn't the holder key the wallet proved")
@@ -84,7 +84,7 @@ func TestEndToEnd_IssuesBothFormats(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sdjwtvc.Verify: %v", err)
 	}
-	if payload["vct"] != env.IssuerURL+issuerapp.VCTPath || payload[credential.FamilyName] != "DOE" || payload[credential.ICAOSOD] == nil {
+	if payload["vct"] != env.IssuerURL+issuerapp.VCTPath || payload[credential.FamilyName] != "DOE" || payload[credential.PassportFile] == nil {
 		t.Errorf("sd-jwt payload = %v", payload)
 	}
 }

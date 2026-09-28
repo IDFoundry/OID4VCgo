@@ -151,7 +151,7 @@ func (a *App) handleVCTMetadata(w http.ResponseWriter, _ *http.Request) {
 	doc := sdjwtvc.TypeMetadata{
 		VCT:         a.vct,
 		Name:        "Passport-derived credential (demo)",
-		Description: "Identity attributes and raw ICAO data groups from a verified ePassport. Demo only.",
+		Description: "Identity attributes, portrait and the gmrtd passport file from a verified ePassport. Demo only.",
 		Display: []sdjwtvc.TypeDisplay{{
 			Locale: "en", Name: "Passport (demo)",
 			Description: "Issued by the IDFoundry passport-vdc demo from a verified ePassport",
@@ -166,9 +166,7 @@ func (a *App) handleVCTMetadata(w http.ResponseWriter, _ *http.Request) {
 			claim("Passport expiry", credential.ExpiryDate),
 			claim("Sex", credential.Sex),
 			claim("Portrait", credential.SDJWTPicture),
-			claim("ICAO Document Security Object (raw)", credential.ICAOSOD),
-			claim("ICAO DG1 — MRZ (raw)", credential.ICAODG1),
-			claim("ICAO DG2 — facial image (raw)", credential.ICAODG2),
+			claim("Passport file (gmrtd, all data groups)", credential.PassportFile),
 		},
 	}
 	w.Header().Set("Content-Type", "application/json")

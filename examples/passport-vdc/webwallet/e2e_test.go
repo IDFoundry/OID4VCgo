@@ -141,13 +141,13 @@ func TestWebWallet_ReceiveThenShareWithConsent(t *testing.T) {
 	// The consent screen shows what's asked for, in each format the
 	// wallet can answer with — and nothing is sent yet.
 	id, page, decision := reviewRequest(t, env, b, verifierapp.ModeICAO)
-	for _, want := range []string{"passport-vdc demo verifier", "icao_sod", "icao_dg1", `value="mso_mdoc"`, `value="dc+sd-jwt"`} {
+	for _, want := range []string{"passport-vdc demo verifier", "gmrtd_verifiable_doc", `value="mso_mdoc"`, `value="dc+sd-jwt"`} {
 		if !strings.Contains(page, want) {
 			t.Errorf("consent page is missing %q", want)
 		}
 	}
-	if strings.Contains(page, "icao_dg2") {
-		t.Error("consent page offers to disclose icao_dg2, which wasn't requested")
+	if strings.Contains(page, "family_name") {
+		t.Error("consent page offers to disclose family_name, which wasn't requested")
 	}
 	if _, answered := env.Verifier.Outcome(id); answered {
 		t.Fatal("the verifier got an answer before the holder consented")

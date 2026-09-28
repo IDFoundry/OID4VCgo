@@ -49,25 +49,15 @@ func MdocClaims(e passport.Evidence, o Options) (*mdoc.Claims, error) {
 		identity[mdocAgeOverPrefix+strconv.Itoa(threshold)] = over
 	}
 
-	if len(e.Raw.SOD) == 0 || len(e.Raw.DG1) == 0 {
-		return nil, fmt.Errorf("credential: evidence is missing SOD or DG1")
-	}
-	icao := map[string]interface{}{
-		ICAOSOD: e.Raw.SOD,
-		ICAODG1: e.Raw.DG1,
-	}
-	if len(e.Raw.DG2) > 0 {
-		icao[ICAODG2] = e.Raw.DG2
-	}
-	if len(e.Raw.DG11) > 0 {
-		icao[ICAODG11] = e.Raw.DG11
+	if len(e.File) == 0 {
+		return nil, fmt.Errorf("credential: evidence is missing the passport file")
 	}
 
 	return &mdoc.Claims{
 		DocType: DocType,
 		NameSpaces: map[string]map[string]interface{}{
 			IdentityNamespace: identity,
-			ICAONamespace:     icao,
+			FileNamespace:     {PassportFile: e.File},
 		},
 		Signed:     o.Now,
 		ValidFrom:  o.Now,

@@ -5,9 +5,10 @@
 //   - Trust the issuer: request identity attributes and accept them on
 //     the strength of the credential's issuer signature, chained to the
 //     demo issuer's CA.
-//   - Trust ICAO: request only the raw SOD and DG1, and re-run ICAO
-//     Passive Authentication over them against the CSCA master list —
-//     trusting the issuing country, not the demo issuer, for the data.
+//   - Trust ICAO: request the gmrtd portable passport file and
+//     re-verify it with gmrtd against the CSCA master list — trusting
+//     the issuing country, not the demo issuer, for the data. The file
+//     is one claim, so this discloses everything the chip held.
 //     The issuer signature is still checked, and the credential's
 //     device key still binds it to the presenter.
 package verifierapp
@@ -27,7 +28,7 @@ type Mode string
 const (
 	// ModeIssuer trusts the credential issuer for identity attributes.
 	ModeIssuer Mode = "issuer"
-	// ModeICAO trusts only the issuing country, via the raw SOD and DG1.
+	// ModeICAO trusts only the issuing country, via the passport file.
 	ModeICAO Mode = "icao"
 )
 
@@ -71,8 +72,8 @@ func buildQuery(mode Mode, vct string, trusted dcql.TrustedAuthoritiesQuery) (dc
 		identified(sdjwtClaims)
 		claimSets = [][]string{{"c0", "c1", "c2", "c3", "c4"}, {"c0", "c1", "c2", "c3"}}
 	case ModeICAO:
-		mdocClaims = []dcql.ClaimsQuery{claim(credential.ICAONamespace, credential.ICAOSOD), claim(credential.ICAONamespace, credential.ICAODG1)}
-		sdjwtClaims = []dcql.ClaimsQuery{claim(credential.ICAOSOD), claim(credential.ICAODG1)}
+		mdocClaims = []dcql.ClaimsQuery{claim(credential.FileNamespace, credential.PassportFile)}
+		sdjwtClaims = []dcql.ClaimsQuery{claim(credential.PassportFile)}
 	default:
 		return dcql.Query{}, fmt.Errorf("verifierapp: unknown mode %q", mode)
 	}

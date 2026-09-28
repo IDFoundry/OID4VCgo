@@ -22,7 +22,7 @@ type card struct {
 	Format string
 	Title  string
 	Claims [][2]string // label, value
-	Raw    [][2]string // raw ICAO data groups: name, size
+	Raw    [][2]string // the passport file: name, size
 	// Portrait is the holder's photo as a data: URL, shown as an image
 	// rather than a claim row.
 	Portrait template.URL
@@ -64,7 +64,7 @@ func cardFor(s walletapp.Stored) card {
 			continue
 		}
 		v := claims[k]
-		if strings.HasPrefix(k, "icao_") {
+		if k == credential.PassportFile {
 			c.Raw = append(c.Raw, [2]string{k, rawSize(v)})
 			continue
 		}
@@ -147,8 +147,8 @@ func display(v any) string {
 	}
 }
 
-// rawSize describes a raw data group: bytes in an mdoc, base64url text
-// in an SD-JWT.
+// rawSize describes the passport file: bytes in an mdoc, base64url
+// text in an SD-JWT.
 func rawSize(v any) string {
 	switch x := v.(type) {
 	case []byte:

@@ -45,9 +45,7 @@ func adult() passport.Evidence {
 			Sex: "F", Nationality: "SGP", IssuingCountry: "SGP", DocumentNumber: "K0000000A",
 			ExpiryDate: date("2031-01-01"),
 		},
-		Raw: passport.RawDataGroups{
-			SOD: []byte("sod-bytes"), DG1: []byte("dg1-bytes"), DG2: bytes.Repeat([]byte{0xFF}, 16<<10),
-		},
+		File:     bytes.Repeat([]byte{0xA5}, 20<<10),
 		Portrait: testPortrait,
 	}
 }
@@ -178,14 +176,8 @@ func TestMdocClaims_Adult(t *testing.T) {
 		t.Errorf("age_over_18/65 = %v/%v", identity["age_over_18"], identity["age_over_65"])
 	}
 
-	icao := ns[ICAONamespace]
-	for name, want := range map[string][]byte{ICAOSOD: adult().Raw.SOD, ICAODG1: adult().Raw.DG1, ICAODG2: adult().Raw.DG2} {
-		if got, _ := icao[name].([]byte); !bytes.Equal(got, want) {
-			t.Errorf("%s did not round-trip byte-for-byte", name)
-		}
-	}
-	if _, ok := icao[ICAODG11]; ok {
-		t.Error("icao_dg11 present without DG11 in the evidence")
+	if got, _ := ns[FileNamespace][PassportFile].([]byte); !bytes.Equal(got, adult().File) {
+		t.Error("the passport file did not round-trip byte-for-byte")
 	}
 }
 
@@ -242,12 +234,9 @@ func TestSDJWTClaims_Adult(t *testing.T) {
 	if ages["18"] != true || ages["65"] != false {
 		t.Errorf("age_equal_or_over = %v", ages)
 	}
-	for name, want := range map[string][]byte{ICAOSOD: adult().Raw.SOD, ICAODG1: adult().Raw.DG1, ICAODG2: adult().Raw.DG2} {
-		s, _ := payload[name].(string)
-		got, err := base64.RawURLEncoding.DecodeString(s)
-		if err != nil || !bytes.Equal(got, want) {
-			t.Errorf("%s did not round-trip byte-for-byte", name)
-		}
+	s, _ := payload[PassportFile].(string)
+	if got, err := base64.RawURLEncoding.DecodeString(s); err != nil || !bytes.Equal(got, adult().File) {
+		t.Error("the passport file did not round-trip byte-for-byte")
 	}
 }
 
@@ -269,14 +258,14 @@ func TestSDJWTClaims_ChildOmitsBirthDate(t *testing.T) {
 	}
 }
 
-func TestEncodersRequireSODAndDG1(t *testing.T) {
+func TestEncodersRequireThePassportFile(t *testing.T) {
 	e := adult()
-	e.Raw.SOD = nil
+	e.File = nil
 	if _, err := MdocClaims(e, Options{Now: now}); err == nil {
-		t.Error("MdocClaims without SOD = nil error")
+		t.Error("MdocClaims without the passport file = nil error")
 	}
 	if _, err := SDJWTClaims(e, testVCT, Options{Now: now}); err == nil {
-		t.Error("SDJWTClaims without SOD = nil error")
+		t.Error("SDJWTClaims without the passport file = nil error")
 	}
 	if _, err := SDJWTClaims(adult(), "", Options{Now: now}); err == nil {
 		t.Error("SDJWTClaims without vct = nil error")

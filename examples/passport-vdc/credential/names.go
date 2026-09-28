@@ -1,16 +1,14 @@
 // Package credential encodes passport.Evidence as the credential
 // content the issuer package signs: mdoc.Claims for mso_mdoc and
 // sdjwtvc.Claims for dc+sd-jwt. Both carry the same identity
-// attributes and the same raw ICAO data groups, one selectively
-// disclosable element/claim per data group, so a verifier can check a
-// passport-derived credential either by trusting this demo's issuer or
-// by re-running Passive Authentication over the raw bytes.
+// attributes and the same gmrtd portable passport file, so a verifier
+// can check a passport-derived credential either by trusting this
+// demo's issuer or by re-verifying the file itself with
+// passport.Verify.
 package credential
 
-// PROVISIONAL identifiers. ISO/IEC 23220-4 (PhotoID) is understood to
-// define a DTC namespace for exactly this kind of raw eMRTD data; these
-// names should be aligned with its text before this demo is presented
-// as interoperable. Kept in one place so that change is a single edit.
+// PROVISIONAL identifiers, specific to this demo. Kept in one place so
+// a change is a single edit.
 const (
 	// DocType is the mso_mdoc doctype.
 	DocType = "org.idfoundry.passport.1"
@@ -18,8 +16,8 @@ const (
 	// IdentityNamespace holds the holder's identity attributes.
 	IdentityNamespace = "org.idfoundry.passport.1"
 
-	// ICAONamespace holds the raw, ICAO-signed data groups.
-	ICAONamespace = "org.idfoundry.passport.icao.1"
+	// FileNamespace holds the gmrtd portable passport file.
+	FileNamespace = "org.idfoundry.passport.gmrtd.1"
 )
 
 // Element and claim names shared by both formats, except where a
@@ -41,10 +39,12 @@ const (
 	// "picture".
 	Portrait = "portrait"
 
-	ICAOSOD  = "icao_sod"
-	ICAODG1  = "icao_dg1"
-	ICAODG2  = "icao_dg2"
-	ICAODG11 = "icao_dg11"
+	// PassportFile is the gmrtd portable passport file (gmrtd's
+	// "gmrtd-verifiable-doc" format) the issuer verified, byte-for-byte:
+	// every data group read from the chip — the photo and DG11
+	// included — plus any chip authentication evidence. It's one
+	// element/claim, so disclosing it discloses all of that.
+	PassportFile = "gmrtd_verifiable_doc" // #nosec G101 -- a claim name, not a credential
 )
 
 // SD-JWT VC claim names that follow the EUDI PID / OpenID Connect

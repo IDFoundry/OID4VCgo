@@ -161,9 +161,8 @@ func Date(s string) time.Time {
 	return d
 }
 
-// SyntheticEvidence stands in for a verified passport. Its SOD is not a
-// real signed SOD, so it passes nothing that re-runs Passive
-// Authentication.
+// SyntheticEvidence stands in for a verified passport. Its File is not
+// a real gmrtd passport file, so it passes nothing that re-verifies it.
 func SyntheticEvidence() passport.Evidence {
 	return passport.Evidence{
 		Identity: passport.Identity{
@@ -174,9 +173,7 @@ func SyntheticEvidence() passport.Evidence {
 			Sex: "F", Nationality: "SGP", IssuingCountry: "SGP", DocumentNumber: "K0000000A",
 			ExpiryDate: time.Now().AddDate(5, 0, 0),
 		},
-		Raw: passport.RawDataGroups{
-			SOD: []byte("synthetic-sod"), DG1: []byte("synthetic-dg1"), DG2: bytes.Repeat([]byte{0xAB}, 20<<10),
-		},
+		File:     bytes.Repeat([]byte{0xAB}, 20<<10),
 		Portrait: SyntheticPortrait(),
 		Checks:   passport.Checks{PassiveAuthentication: true, ChipAuthenticity: "n/a"},
 	}
