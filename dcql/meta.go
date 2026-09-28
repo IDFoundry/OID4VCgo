@@ -112,9 +112,8 @@ func (c CredentialQuery) SelectedSDJWTVCClaimPaths(claims map[string]any) ([]Pat
 			return nil, fmt.Errorf("credential's own vct %q is not among the requested vct_values %v", vct, meta.VCTValues)
 		}
 	}
-	return c.selectedClaimPaths(func(p Path) error {
-		_, err := p.Select(claims)
-		return err
+	return c.selectedClaimPaths(func(p Path) ([]any, error) {
+		return p.Select(claims)
 	})
 }
 
@@ -145,19 +144,20 @@ func (c CredentialQuery) SelectedMdocClaimPaths(docType string, nameSpaces map[s
 	if meta.DoctypeValue != "" && docType != meta.DoctypeValue {
 		return nil, fmt.Errorf("credential's own docType %q does not match the requested doctype_value %q", docType, meta.DoctypeValue)
 	}
-	return c.selectedClaimPaths(func(p Path) error {
+	return c.selectedClaimPaths(func(p Path) ([]any, error) {
 		namespace, element, ok := p.MdocNamespaceAndElement()
 		if !ok {
-			return fmt.Errorf("claims path %v is not a valid mdoc-format path (exactly two string components)", p)
+			return nil, fmt.Errorf("claims path %v is not a valid mdoc-format path (exactly two string components)", p)
 		}
 		elements, ok := nameSpaces[namespace]
 		if !ok {
-			return fmt.Errorf("namespace %q is not present", namespace)
+			return nil, fmt.Errorf("namespace %q is not present", namespace)
 		}
-		if _, ok := elements[element]; !ok {
-			return fmt.Errorf("namespace %q element %q is not present", namespace, element)
+		value, ok := elements[element]
+		if !ok {
+			return nil, fmt.Errorf("namespace %q element %q is not present", namespace, element)
 		}
-		return nil
+		return []any{value}, nil
 	})
 }
 
@@ -184,11 +184,11 @@ func (c CredentialQuery) SelectedMdocClaimPaths(docType string, nameSpaces map[s
 //     first); this function reports satisfaction as soon as it finds
 //     one, without checking whether a later option might also match,
 //     and returns exactly that option's own Paths.
-func (c CredentialQuery) selectedClaimPaths(present func(Path) error) ([]Path, error) {
+func (c CredentialQuery) selectedClaimPaths(present func(Path) ([]any, error)) ([]Path, error) {
 	if len(c.ClaimSets) == 0 {
 		paths := make([]Path, 0, len(c.Claims))
 		for _, cl := range c.Claims {
-			if err := presentAt(cl.Path, present); err != nil {
+			if err := presentAt(cl, present); err != nil {
 				return nil, err
 			}
 			paths = append(paths, cl.Path)
@@ -196,9 +196,9 @@ func (c CredentialQuery) selectedClaimPaths(present func(Path) error) ([]Path, e
 		return paths, nil
 	}
 
-	byID := make(map[string]Path, len(c.Claims))
+	byID := make(map[string]ClaimsQuery, len(c.Claims))
 	for _, cl := range c.Claims {
-		byID[cl.ID] = cl.Path
+		byID[cl.ID] = cl
 	}
 	var lastErr error
 	for _, option := range c.ClaimSets {
@@ -215,28 +215,34 @@ func (c CredentialQuery) selectedClaimPaths(present func(Path) error) ([]Path, e
 // claimSetOptionPaths checks one claim_sets option (a list of
 // claims[].id values) against present, using byID to resolve each id
 // to its own Path, returning those Paths on success.
-func claimSetOptionPaths(option []string, byID map[string]Path, present func(Path) error) ([]Path, error) {
+func claimSetOptionPaths(option []string, byID map[string]ClaimsQuery, present func(Path) ([]any, error)) ([]Path, error) {
 	paths := make([]Path, 0, len(option))
 	for _, id := range option {
-		path, ok := byID[id]
+		cl, ok := byID[id]
 		if !ok {
 			return nil, fmt.Errorf("references unknown claim id %q", id)
 		}
-		if err := presentAt(path, present); err != nil {
+		if err := presentAt(cl, present); err != nil {
 			return nil, fmt.Errorf("claim %q: %w", id, err)
 		}
-		paths = append(paths, path)
+		paths = append(paths, cl.Path)
 	}
 	return paths, nil
 }
 
-// presentAt wraps a single Path.present check (§6.4.1's own atom of
-// "is this claim actually there") with a uniform error, shared by
-// both claimsSatisfiedBy branches — the no-claim_sets case and each
-// claimSetOptionSatisfiedBy option resolve to exactly the same check.
-func presentAt(p Path, present func(Path) error) error {
-	if err := present(p); err != nil {
-		return fmt.Errorf("claim at path %v is not present: %w", p, err)
+// presentAt is §6.4.1's atom of "is this claim actually there", shared
+// by both selectedClaimPaths branches: cl's Path must select something,
+// and when cl has Values, one of the selected values must equal one of
+// them (§6.3). The Wallet applies Values as a filter; the Verifier
+// applies the same check to what it received, so a Presentation whose
+// claim has another value doesn't satisfy the query.
+func presentAt(cl ClaimsQuery, present func(Path) ([]any, error)) error {
+	selected, err := present(cl.Path)
+	if err != nil {
+		return fmt.Errorf("claim at path %v is not present: %w", cl.Path, err)
+	}
+	if len(cl.Values) > 0 && !anyValueMatches(selected, cl.Values) {
+		return fmt.Errorf("claim at path %v has none of the requested values", cl.Path)
 	}
 	return nil
 }

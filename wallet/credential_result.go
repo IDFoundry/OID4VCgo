@@ -105,7 +105,7 @@ func parseCredentialResult(statusCode int, body []byte) (CredentialResult, error
 // attempted for a 200/202 status.
 func (w *Wallet) postCredentialResult(
 	ctx context.Context, resource ProtectedResourceClient, endpoint fapi.URL, body []byte,
-	reqEnc *RequestEncryption, respDecryptKey *ecdsa.PrivateKey, errPrefix string,
+	reqEnc *RequestEncryption, respDecryptKey *ecdsa.PrivateKey, respZip jwe.Zip, errPrefix string,
 ) (CredentialResult, error) {
 	outBody, contentType, err := encryptRequestBody(body, reqEnc)
 	if err != nil {
@@ -131,7 +131,7 @@ func (w *Wallet) postCredentialResult(
 	}
 
 	if res.StatusCode == http.StatusOK || res.StatusCode == http.StatusAccepted {
-		respBody, err = decryptResponseBody(respBody, res.Header.Get("Content-Type"), respDecryptKey)
+		respBody, err = decryptResponseBody(respBody, res.Header.Get("Content-Type"), respDecryptKey, respZip)
 		if err != nil {
 			return CredentialResult{}, fmt.Errorf("wallet: %s: %w", errPrefix, err)
 		}
