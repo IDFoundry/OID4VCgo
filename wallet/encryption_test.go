@@ -5,6 +5,7 @@ import (
 	"crypto"
 	"crypto/ecdsa"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -51,6 +52,13 @@ func jweResponse(body string) *http.Response {
 // req.Body a second time (which would already be empty).
 func simulateIssuerEncryptedExchange(t *testing.T, resource *fakeProtectedResourceClient, reqPriv *ecdsa.PrivateKey, responseBody []byte) func(context.Context, *http.Request) (*http.Response, error) {
 	t.Helper()
+	return simulateIssuerEncryptedExchangeZip(t, resource, reqPriv, responseBody, "")
+}
+
+// simulateIssuerEncryptedExchangeZip is simulateIssuerEncryptedExchange
+// with the response compressed with zip, whatever the Wallet asked for.
+func simulateIssuerEncryptedExchangeZip(t *testing.T, resource *fakeProtectedResourceClient, reqPriv *ecdsa.PrivateKey, responseBody []byte, zip jwe.Zip) func(context.Context, *http.Request) (*http.Response, error) {
+	t.Helper()
 	return func(_ context.Context, req *http.Request) (*http.Response, error) {
 		if req.Header.Get("Content-Type") != "application/jwt" {
 			t.Fatalf("Content-Type = %q, want application/jwt", req.Header.Get("Content-Type"))
@@ -79,7 +87,7 @@ func simulateIssuerEncryptedExchange(t *testing.T, resource *fakeProtectedResour
 		if !ok {
 			t.Fatalf("response encryption jwk is not EC")
 		}
-		compact, err := jwe.Encrypt(ecRespPub, jwe.Enc(parsed.ResponseEncryption.Enc), responseBody, jwe.EncryptOptions{})
+		compact, err := jwe.Encrypt(ecRespPub, jwe.Enc(parsed.ResponseEncryption.Enc), responseBody, jwe.EncryptOptions{Zip: zip})
 		if err != nil {
 			t.Fatalf("jwe.Encrypt response: %v", err)
 		}
@@ -157,6 +165,35 @@ func TestResponseEncryptionRoundTrip(t *testing.T) {
 				t.Errorf("Credentials = %v", result.Credentials)
 			}
 		})
+	}
+}
+
+// TestResponseEncryption_RefusesUnrequestedZip: a compressed response
+// is decrypted only when the Wallet asked for that compression.
+func TestResponseEncryption_RefusesUnrequestedZip(t *testing.T) {
+	for name, call := range credentialCallers() {
+		for _, requested := range []jwe.Zip{"", jwe.DEF} {
+			t.Run(fmt.Sprintf("%s/requested=%q", name, requested), func(t *testing.T) {
+				w, err := wallet.New(validConfig(), validDependencies())
+				if err != nil {
+					t.Fatalf("New: %v", err)
+				}
+				reqRecipientKey := testP256Key(t)
+				resource := &fakeProtectedResourceClient{}
+				resource.do = simulateIssuerEncryptedExchangeZip(t, resource, reqRecipientKey, []byte(`{"credentials":[{"credential":"c1"}]}`), jwe.DEF)
+
+				_, err = call(t, w, resource, &wallet.RequestEncryption{
+					RecipientJWK: testEncryptionRecipientJWK(t, "req-1", &reqRecipientKey.PublicKey),
+					Enc:          jwe.A128GCM,
+				}, &wallet.ResponseEncryption{Enc: jwe.A128GCM, Zip: requested})
+				if requested == "" && err == nil {
+					t.Error("an unrequested compressed response was accepted")
+				}
+				if requested == jwe.DEF && err != nil {
+					t.Errorf("a requested compressed response was refused: %v", err)
+				}
+			})
+		}
 	}
 }
 
