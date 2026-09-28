@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.20.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.19.0...v0.20.0) (2026-09-28)
+
+
+### ⚠ BREAKING CHANGES
+
+* **deps:** deployments that use fapigo directly alongside this library move to fapigo v0.39.0; its release notes list the migrations (server.GrantedAuthorization.ApprovedIdentityClaims for OIDC claims-parameter identity claims, renamed ReturnInTokenClaims extensions, backchannelhttp.New Config.Transport, federation VerifyTrustMark accreditation and Limits.MaxAuthorityHints).
+* **issuer:** a production issuer (AssuranceProduction) that supports the "attestation" proof type must configure Config.Endpoints.Nonce.
+* **issuer:** a production issuer (AssuranceProduction) using the pre-authorized code flow must set Config.PreAuthorizedCodeClientAuthentication: issuer.AnonymousPreAuthorizedCode{}.
+* **dcql:** verifier.VerifyResponse refuses a dcql.AKITrustedAuthoritiesChecker without Roots when a credential query declares trusted_authorities. Set Roots to the issuer key resolver's trust anchors, e.g. `dcql.AKITrustedAuthoritiesChecker{Roots: issuerRoots}`.
+
+### Bug Fixes
+
+* **dcql:** match aki trusted_authorities against the verified chain ([4127dce](https://github.com/IDFoundry/OID4VCgo/commit/4127dce95c925df9d086ab7cce6c1095312798b1))
+* **deps:** pin fapigo v0.39.0 ([27e1639](https://github.com/IDFoundry/OID4VCgo/commit/27e1639785b9248251b88af8849edefe6e11477d))
+* enforce dcql claim values, refuse unrequested zip, document error responses ([dc3bb91](https://github.com/IDFoundry/OID4VCgo/commit/dc3bb91facfa59c588b5ce85329ccb8cec492987))
+* **issuer:** add x5c leaf policies and require a nonce for attestation proofs ([5150f6c](https://github.com/IDFoundry/OID4VCgo/commit/5150f6cdc15fe60b8e66a2de0d2ac8a5b8c0e7d4))
+* **issuer:** check key attestation status; refuse anonymous pre-auth in haip validation ([d1ba241](https://github.com/IDFoundry/OID4VCgo/commit/d1ba2416658d44981d12cda57dc6ffccc45dadf7))
+* **issuer:** require an explicit choice to redeem pre-authorized codes anonymously ([4716dfa](https://github.com/IDFoundry/OID4VCgo/commit/4716dfa0b1cea5aba7fb3a3d1f9f91db12d202a0))
+
 ## [0.19.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.18.0...v0.19.0) (2026-09-27)
 
 
