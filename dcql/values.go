@@ -38,46 +38,23 @@ func valueEquals(got, want any) bool {
 	return ok && gn.Cmp(wn) == 0
 }
 
-// number converts a Go numeric value to an exact rational, or reports
-// false for anything else.
+// number converts the numeric types a claim or a Values entry holds —
+// float64 or json.Number from JSON, int64 or uint64 from CBOR, int from
+// a query built in Go — to an exact rational, or reports false for
+// anything else.
 func number(v any) (*big.Rat, bool) {
-	r := new(big.Rat)
 	switch n := v.(type) {
 	case int:
-		return r.SetInt64(int64(n)), true
-	case int8:
-		return r.SetInt64(int64(n)), true
-	case int16:
-		return r.SetInt64(int64(n)), true
-	case int32:
-		return r.SetInt64(int64(n)), true
+		return new(big.Rat).SetInt64(int64(n)), true
 	case int64:
-		return r.SetInt64(n), true
-	case uint:
-		return r.SetUint64(uint64(n)), true
-	case uint8:
-		return r.SetUint64(uint64(n)), true
-	case uint16:
-		return r.SetUint64(uint64(n)), true
-	case uint32:
-		return r.SetUint64(uint64(n)), true
+		return new(big.Rat).SetInt64(n), true
 	case uint64:
-		return r.SetUint64(n), true
+		return new(big.Rat).SetUint64(n), true
 	case float64:
-		if r.SetFloat64(n) == nil {
-			return nil, false
-		}
-		return r, true
-	case float32:
-		if r.SetFloat64(float64(n)) == nil {
-			return nil, false
-		}
-		return r, true
+		r := new(big.Rat)
+		return r, r.SetFloat64(n) != nil
 	case json.Number:
-		if _, ok := r.SetString(n.String()); !ok {
-			return nil, false
-		}
-		return r, true
+		return new(big.Rat).SetString(n.String())
 	default:
 		return nil, false
 	}

@@ -197,6 +197,36 @@ func TestResponseEncryption_RefusesUnrequestedZip(t *testing.T) {
 	}
 }
 
+// TestResponseEncryption_RefusesUndecryptableResponse: a response that
+// isn't a JWE, or is encrypted to another key, is refused.
+func TestResponseEncryption_RefusesUndecryptableResponse(t *testing.T) {
+	otherKey := testP256Key(t)
+	wrongKey, err := jwe.Encrypt(&otherKey.PublicKey, jwe.A128GCM, []byte(`{"credentials":[{"credential":"c1"}]}`), jwe.EncryptOptions{})
+	if err != nil {
+		t.Fatalf("jwe.Encrypt: %v", err)
+	}
+	for name, body := range map[string]string{"not a JWE": "not-a-jwe", "encrypted to another key": wrongKey} {
+		for callerName, call := range credentialCallers() {
+			t.Run(name+"/"+callerName, func(t *testing.T) {
+				w, err := wallet.New(validConfig(), validDependencies())
+				if err != nil {
+					t.Fatalf("New: %v", err)
+				}
+				resource := &fakeProtectedResourceClient{}
+				resource.do = func(context.Context, *http.Request) (*http.Response, error) { return jweResponse(body), nil }
+				reqRecipientKey := testP256Key(t)
+				_, err = call(t, w, resource, &wallet.RequestEncryption{
+					RecipientJWK: testEncryptionRecipientJWK(t, "req-1", &reqRecipientKey.PublicKey),
+					Enc:          jwe.A128GCM,
+				}, &wallet.ResponseEncryption{Enc: jwe.A128GCM})
+				if err == nil {
+					t.Error("an undecryptable response was accepted")
+				}
+			})
+		}
+	}
+}
+
 // TestResponseEncryptionJWKDeclaresAlg confirms the ephemeral public
 // key prepareResponseEncryption sends as "credential_response_encryption.jwk"
 // declares its own "alg" — required by §8.2's own "jwk" member
