@@ -339,6 +339,14 @@ type Dependencies struct {
 	// JWT's signature. Required when any
 	// Config.CredentialConfigurationsSupported entry supports the
 	// "attestation" proof type.
+	//
+	// An attestation-type proof is signed by the attester, not by the
+	// keys it attests, and carries no audience: its only freshness and
+	// binding to this issuer is the c_nonce it contains. Without a Nonce
+	// Endpoint there's none, so a key attestation a Wallet sent to one
+	// issuer can be replayed to another until it expires. Under
+	// AssuranceProduction, New therefore requires Config.Endpoints.Nonce
+	// whenever the attestation proof type is supported.
 	AttestationVerifier AttestationVerifier
 
 	// ProofBindingKeys resolves a jwt-type key proof's own "kid" or

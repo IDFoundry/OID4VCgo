@@ -2,8 +2,11 @@ package issuer_test
 
 import (
 	"crypto/x509"
+	"strings"
 	"testing"
 	"time"
+
+	fapi "github.com/idfoundry/fapigo"
 
 	"github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/issuer"
@@ -244,5 +247,30 @@ func TestNewRejectsPreAuthorizedCodeStoresUnderProduction(t *testing.T) {
 
 	if _, err := issuer.New(cfg, deps); err == nil {
 		t.Fatal("New = nil error, want error (pre_authorized_codes/dpop_replay declare no StoreAssurance)")
+	}
+}
+
+// TestNewRequiresNonceEndpointForAttestationProofsUnderProduction: an
+// attestation-type proof's only freshness and binding to this issuer is
+// its c_nonce, so a production issuer supporting it must run a Nonce
+// Endpoint.
+func TestNewRequiresNonceEndpointForAttestationProofsUnderProduction(t *testing.T) {
+	cfg, deps := productionAssuredConfigAndDeps(t)
+	deps.AttestationVerifier = assuredAttestationVerifier{
+		fixedAttestationVerifier{}, issuer.KeySourceCapabilities{LiveFetchHardened: true},
+	}
+	if _, err := issuer.New(cfg, deps); err != nil {
+		t.Fatalf("New with a Nonce Endpoint: %v", err)
+	}
+
+	cfg.Endpoints.Nonce = fapi.URL{}
+	cfg.Limits.MaxProofAge = time.Minute // what a Nonce-Endpoint-less issuer needs for jwt proofs
+	if _, err := issuer.New(cfg, deps); err == nil || !strings.Contains(err.Error(), "proof type requires endpoints.nonce") {
+		t.Fatalf("New without a Nonce Endpoint = %v, want the attestation proof type refused", err)
+	}
+
+	cfg.Assurance = issuer.AssuranceDevelopment
+	if _, err := issuer.New(cfg, deps); err != nil {
+		t.Fatalf("New under AssuranceDevelopment without a Nonce Endpoint: %v", err)
 	}
 }

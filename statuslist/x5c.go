@@ -71,7 +71,7 @@ func CheckX5C(token string, roots *x509.CertPool, ref StatusListRef, opts Verify
 	if err != nil {
 		return 0, TokenClaims{}, fmt.Errorf("statuslist: token signer: %w", err)
 	}
-	leaf, err := certchain.VerifyLeaf(chain, roots)
+	leaf, err := certchain.VerifyLeafWithPolicy(chain, roots, opts.LeafPolicy)
 	if err != nil {
 		return 0, TokenClaims{}, fmt.Errorf("statuslist: token signer: %w", err)
 	}
@@ -104,7 +104,7 @@ func CheckCWTX5Chain(token []byte, roots *x509.CertPool, ref StatusListRef, opts
 	if len(chain) == 0 {
 		chain = unprotected.X5Chain
 	}
-	leaf, err := certchain.VerifyLeaf(chain, roots)
+	leaf, err := certchain.VerifyLeafWithPolicy(chain, roots, opts.LeafPolicy)
 	if err != nil {
 		return 0, TokenClaims{}, fmt.Errorf("statuslist: token signer: %w", err)
 	}

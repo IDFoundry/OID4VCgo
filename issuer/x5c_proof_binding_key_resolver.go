@@ -29,6 +29,15 @@ type X5CProofBindingKeyResolver struct {
 	// Roots is the trust anchor set a presented x5c chain must
 	// validate against. REQUIRED.
 	Roots *x509.CertPool
+	// LeafPolicy, if set, is run on the chain-verified leaf and its
+	// verified paths, and can refuse it. Chain validation accepts a
+	// leaf with any key usage, so a certificate issued for another role
+	// under the same Roots (a relying party's, a wallet provider's)
+	// would otherwise be accepted too: prefer Roots that anchor only
+	// this role's certificates, and use LeafPolicy to require what
+	// distinguishes them (an extended key usage, a certificate policy)
+	// where the anchors are shared.
+	LeafPolicy func(leaf *x509.Certificate, chains [][]*x509.Certificate) error
 }
 
 // ResolveProofBindingKey implements ProofBindingKeyResolver.
@@ -41,7 +50,7 @@ func (r X5CProofBindingKeyResolver) ResolveProofBindingKey(_ context.Context, he
 	if !ok {
 		return nil, "", fmt.Errorf("issuer: proof x5c header is not an array")
 	}
-	leaf, err := resolveX5CLeaf(entries, r.Roots)
+	leaf, err := resolveX5CLeaf(entries, r.Roots, r.LeafPolicy)
 	if err != nil {
 		return nil, "", err
 	}
