@@ -162,6 +162,9 @@ func checkProductionAssurance(cfg Config, deps Dependencies) error {
 		}
 	}
 	if deps.PreAuthorizedCodes != nil {
+		if cfg.PreAuthorizedCodeClientAuthentication == nil {
+			return fmt.Errorf("config.pre_authorized_code_client_authentication is required under AssuranceProduction when dependencies.pre_authorized_codes is set (issuer.AnonymousPreAuthorizedCode{} accepts the redemption without client authentication, which HAIP 1.0 §4.4.1 doesn't allow)")
+		}
 		if err := checkStoreAssurance("pre_authorized_codes", deps.PreAuthorizedCodes, true); err != nil {
 			return err
 		}
