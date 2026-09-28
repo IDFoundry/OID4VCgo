@@ -2,6 +2,7 @@ package verifier_test
 
 import (
 	"context"
+	"crypto/x509"
 	"encoding/base64"
 	"testing"
 	"time"
@@ -25,10 +26,19 @@ func trustedAuthoritiesQuery(t *testing.T, aki string) dcql.Query {
 	return query
 }
 
+// rootsOf is a pool of just cas.
+func rootsOf(cas ...*x509.Certificate) *x509.CertPool {
+	pool := x509.NewCertPool()
+	for _, ca := range cas {
+		pool.AddCert(ca)
+	}
+	return pool
+}
+
 func TestVerifyResponse_ChecksTrustedAuthorities_Accepts(t *testing.T) {
 	ca, caKey := verifier.ContractCA(t, "test-ca")
 	leaf, leafKey := verifier.ContractLeaf(t, "test-leaf", ca, caKey)
-	aki := base64.RawURLEncoding.EncodeToString(leaf.AuthorityKeyId)
+	aki := base64.RawURLEncoding.EncodeToString(ca.SubjectKeyId)
 
 	query := trustedAuthoritiesQuery(t, aki)
 	_, _, v := newTestVerifierWithConfig(t)
@@ -44,7 +54,7 @@ func TestVerifyResponse_ChecksTrustedAuthorities_Accepts(t *testing.T) {
 		ExpectedNonce:      built.Nonce,
 		IssuerKeys:         fixedSDJWTVCIssuerKeyResolver{pub: &leafKey.PublicKey, alg: jose.ES256},
 		MaxKeyBindingAge:   time.Hour,
-		TrustedAuthorities: dcql.AKITrustedAuthoritiesChecker{},
+		TrustedAuthorities: dcql.AKITrustedAuthoritiesChecker{Roots: rootsOf(ca)},
 	})
 	testverify.RequireOneCredential(t, result, err, "identity_credential")
 }
@@ -67,10 +77,43 @@ func TestVerifyResponse_ChecksTrustedAuthorities_RejectsWrongAKI(t *testing.T) {
 		ExpectedNonce:      built.Nonce,
 		IssuerKeys:         fixedSDJWTVCIssuerKeyResolver{pub: &leafKey.PublicKey, alg: jose.ES256},
 		MaxKeyBindingAge:   time.Hour,
-		TrustedAuthorities: dcql.AKITrustedAuthoritiesChecker{},
+		TrustedAuthorities: dcql.AKITrustedAuthoritiesChecker{Roots: rootsOf(ca)},
 	})
 	if err == nil {
 		t.Fatalf("VerifyResponse = nil error, want error (aki does not match)")
+	}
+}
+
+// TestVerifyResponse_RefusesAKICheckerWithoutRoots: without Roots the
+// checker only reads what the leaf certificate states about its issuer,
+// which any CA can set, so VerifyResponse won't use it.
+func TestVerifyResponse_RefusesAKICheckerWithoutRoots(t *testing.T) {
+	ca, caKey := verifier.ContractCA(t, "test-ca")
+	leaf, leafKey := verifier.ContractLeaf(t, "test-leaf", ca, caKey)
+
+	query := trustedAuthoritiesQuery(t, base64.RawURLEncoding.EncodeToString(ca.SubjectKeyId))
+	_, _, v := newTestVerifierWithConfig(t)
+	built, err := v.BuildAuthorizationRequest(verifier.BuildAuthorizationRequestRequest{Query: query})
+	if err != nil {
+		t.Fatalf("BuildAuthorizationRequest: %v", err)
+	}
+	fixture := newSDJWTVCPresentationWithIssuerOpts(t, leafKey, sdjwtvc.IssueOptions{IssuerCertificate: leaf}, v.ClientID(), built.Nonce)
+
+	for name, checker := range map[string]dcql.TrustedAuthoritiesChecker{
+		"value":   dcql.AKITrustedAuthoritiesChecker{},
+		"pointer": &dcql.AKITrustedAuthoritiesChecker{},
+	} {
+		_, err = v.VerifyResponse(context.Background(), verifier.VerifyResponseRequest{
+			Query:              query,
+			Response:           verifier.ParsedResponse{VPToken: map[string][]string{"identity_credential": {fixture.compact}}},
+			ExpectedNonce:      built.Nonce,
+			IssuerKeys:         fixedSDJWTVCIssuerKeyResolver{pub: &leafKey.PublicKey, alg: jose.ES256},
+			MaxKeyBindingAge:   time.Hour,
+			TrustedAuthorities: checker,
+		})
+		if err == nil {
+			t.Errorf("%s: VerifyResponse = nil error, want a refusal of the Roots-less checker", name)
+		}
 	}
 }
 

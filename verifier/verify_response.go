@@ -112,8 +112,11 @@ type VerifyResponseRequest struct {
 	// TrustedAuthorities; VerifyResponse rejects that combination
 	// outright when this is nil rather than silently skipping the
 	// restriction — see dcql.TrustedAuthoritiesChecker's own doc
-	// comment. Ignored when no requested Credential Query declares
-	// TrustedAuthorities.
+	// comment. A dcql.AKITrustedAuthoritiesChecker must have Roots set
+	// (normally the issuer key resolver's own trust anchors): without
+	// them it only reads what the leaf certificate states about its
+	// issuer, which any CA can set. Ignored when no requested
+	// Credential Query declares TrustedAuthorities.
 	TrustedAuthorities dcql.TrustedAuthoritiesChecker
 
 	// ResponseEncryptionKey is the same ephemeral private key a prior
@@ -286,15 +289,32 @@ func checkMaxKeyBindingAgeRequired(req VerifyResponseRequest) error {
 }
 
 func checkTrustedAuthoritiesConfigured(req VerifyResponseRequest) error {
-	if req.TrustedAuthorities != nil {
-		return nil
-	}
 	for _, cq := range req.Query.Credentials {
-		if len(cq.TrustedAuthorities) > 0 {
+		if len(cq.TrustedAuthorities) == 0 {
+			continue
+		}
+		if req.TrustedAuthorities == nil {
 			return fmt.Errorf("verifier: verify response: trusted_authorities is required when a credential query %q declares trusted_authorities", cq.ID)
+		}
+		if isUnverifiedAKIChecker(req.TrustedAuthorities) {
+			return fmt.Errorf("verifier: verify response: trusted_authorities: dcql.AKITrustedAuthoritiesChecker needs Roots to verify a presented credential (without them it only reads what the certificate claims about its issuer)")
 		}
 	}
 	return nil
+}
+
+// isUnverifiedAKIChecker reports whether checker is a
+// dcql.AKITrustedAuthoritiesChecker with no Roots — fit for a Wallet
+// filtering its own credentials, not for verifying a presented one
+// (see its doc comment).
+func isUnverifiedAKIChecker(checker dcql.TrustedAuthoritiesChecker) bool {
+	switch c := checker.(type) {
+	case dcql.AKITrustedAuthoritiesChecker:
+		return c.Roots == nil
+	case *dcql.AKITrustedAuthoritiesChecker:
+		return c == nil || c.Roots == nil
+	}
+	return false
 }
 
 // verifyResponseWithoutCredentialSets is VerifyResponse's own "no

@@ -469,7 +469,7 @@ func (a *App) verify(ctx context.Context, s *session, ch *channel, responseJWE s
 		Query: s.query, Response: parsed, ExpectedNonce: ch.nonce,
 		IssuerKeys:            verifier.X5CIssuerKeyResolver{Roots: a.issuerRoots},
 		MdocIssuerKeys:        verifier.X5ChainIssuerKeyResolver{Roots: a.issuerRoots},
-		TrustedAuthorities:    dcql.AKITrustedAuthoritiesChecker{},
+		TrustedAuthorities:    dcql.AKITrustedAuthoritiesChecker{Roots: a.issuerRoots},
 		MaxKeyBindingAge:      5 * time.Minute,
 		ResponseEncryptionKey: ch.decryptionKey,
 	})
