@@ -288,9 +288,12 @@ type ClaimsQuery struct {
 	// Path is REQUIRED: a Claims Path Pointer (§7).
 	Path Path `json:"path"`
 
-	// Values is OPTIONAL: a best-effort exact-match filter over the
-	// claim Path selects — "MUST NOT rely on it for security checks"
-	// (§6.3, §6.4.1). Each element is a string, integer, or boolean.
+	// Values is OPTIONAL: an exact-match filter over the claim Path
+	// selects (§6.3). Each element is a string, integer, or boolean.
+	// SatisfiedBySDJWTVCClaims/SatisfiedByMdocClaims (and their
+	// Selected* twins) require one selected value to equal one of
+	// these: the Wallet's filter, and verifier.VerifyResponse's check
+	// that what it received matches the query.
 	Values []any `json:"values,omitempty"`
 }
 

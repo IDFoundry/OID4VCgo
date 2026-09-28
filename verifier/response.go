@@ -11,6 +11,13 @@ import (
 // ResponseError is a Wallet's own error response (§8.1) — sent instead
 // of a vp_token, e.g. when it can't satisfy the Authorization
 // Request's own dcql_query.
+//
+// An error response is unauthenticated: it carries no Holder Binding,
+// and anyone who has the request's public encryption key (published in
+// its client_metadata) and state can send one. Treat it as information,
+// not as the end of the request — a Verifier that closes a request on
+// the first error response lets anyone cancel any request it has
+// published.
 type ResponseError struct {
 	// Code is the response's own "error" value (RFC 6749 §5.2 error
 	// codes, extended by this specification's own — e.g.
@@ -63,7 +70,8 @@ type ParsedResponse struct {
 // ResponseDecryptionKey a prior BuildAuthorizationRequest call
 // returned for this same request) and parses the resulting plaintext
 // per §8.1. Returns a *ResponseError when the Wallet reported an error
-// instead of a vp_token.
+// instead of a vp_token (see ResponseError for why that alone must not
+// end the request).
 func (v *Verifier) ParseDirectPostJWTResponse(responseJWE string, decryptionKey *ecdsa.PrivateKey) (ParsedResponse, error) {
 	// A compressed response is refused before decryption: this Verifier
 	// never offers compression, and anyone who sees the Request Object
