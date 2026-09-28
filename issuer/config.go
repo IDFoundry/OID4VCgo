@@ -122,6 +122,17 @@ type Config struct {
 	// checks by omission.
 	Assurance AssuranceLevel
 
+	// PreAuthorizedCodeClientAuthentication is how ExchangePreAuthorizedCode
+	// authenticates the client redeeming a pre-authorized_code. The
+	// only choice today is AnonymousPreAuthorizedCode{}: no client
+	// authentication, which OID4VCI §6.1 allows but HAIP 1.0 §4.4.1
+	// doesn't ("Issuers MUST require an OAuth2 Client authentication
+	// mechanism at ... Token Endpoints"). REQUIRED under
+	// AssuranceProduction when Dependencies.PreAuthorizedCodes is set,
+	// so a production issuer opts into that departure explicitly; nil
+	// means anonymous under AssuranceDevelopment.
+	PreAuthorizedCodeClientAuthentication PreAuthorizedCodeClientAuthentication
+
 	// Issuer is this Credential Issuer's identifier (§12.2.1) — the
 	// value Metadata's own credential_issuer member echoes.
 	Issuer fapi.URL

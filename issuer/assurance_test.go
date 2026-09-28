@@ -45,6 +45,20 @@ type assuredNotificationStore struct {
 
 func (a assuredNotificationStore) Capabilities() issuer.StoreCapabilities { return a.caps }
 
+type assuredPreAuthorizedCodeStore struct {
+	issuer.PreAuthorizedCodeStore
+	caps issuer.StoreCapabilities
+}
+
+func (a assuredPreAuthorizedCodeStore) Capabilities() issuer.StoreCapabilities { return a.caps }
+
+type assuredDPoPReplayChecker struct {
+	issuer.DPoPReplayChecker
+	caps issuer.StoreCapabilities
+}
+
+func (a assuredDPoPReplayChecker) Capabilities() issuer.StoreCapabilities { return a.caps }
+
 // assuredAttestationVerifier mirrors the assured* store wrappers
 // above, but for AttestationVerifier — pairing
 // fixedAttestationVerifier (already defined in
@@ -228,21 +242,57 @@ func TestNewRejectsMissingAtomicConsumeUnderProduction(t *testing.T) {
 // being set at all) — a configuration validConfig/validDependencies
 // never wires in by default, so this builds its own minimal one.
 func TestNewRejectsPreAuthorizedCodeStoresUnderProduction(t *testing.T) {
+	cfg, deps := preAuthorizedCodeProductionConfig(t)
+	deps.PreAuthorizedCodes = newFakePreAuthorizedCodeStore()
+	deps.DPoPReplay = newFakeDPoPReplayChecker()
+
+	if _, err := issuer.New(cfg, deps); err == nil {
+		t.Fatal("New = nil error, want error (pre_authorized_codes/dpop_replay declare no StoreAssurance)")
+	}
+}
+
+// TestNewRequiresPreAuthorizedCodeClientAuthenticationUnderProduction:
+// with every pre-authorized_code store assured, a production issuer
+// still has to opt into anonymous redemption explicitly — it departs
+// from HAIP 1.0 §4.4.1.
+func TestNewRequiresPreAuthorizedCodeClientAuthenticationUnderProduction(t *testing.T) {
+	cfg, deps := preAuthorizedCodeProductionConfig(t)
+	cfg.PreAuthorizedCodeClientAuthentication = nil
+	if _, err := issuer.New(cfg, deps); err == nil {
+		t.Fatal("New = nil error, want error (no explicit pre-authorized_code client authentication choice)")
+	}
+
+	cfg.PreAuthorizedCodeClientAuthentication = issuer.AnonymousPreAuthorizedCode{}
+	if _, err := issuer.New(cfg, deps); err != nil {
+		t.Fatalf("New with AnonymousPreAuthorizedCode{}: %v", err)
+	}
+
+	cfg.Assurance = issuer.AssuranceDevelopment
+	cfg.PreAuthorizedCodeClientAuthentication = nil
+	if _, err := issuer.New(cfg, deps); err != nil {
+		t.Fatalf("New under AssuranceDevelopment without a choice: %v", err)
+	}
+}
+
+// preAuthorizedCodeProductionConfig is a production configuration with
+// every store assured and the pre-authorized_code flow wired in, its
+// client authentication choice made.
+func preAuthorizedCodeProductionConfig(t *testing.T) (issuer.Config, issuer.Dependencies) {
+	t.Helper()
 	cfg := validConfig(t)
 	cfg.Assurance = issuer.AssuranceProduction
 	cfg.Limits.AccessTokenLifetime = time.Hour
 	cfg.Limits.MaxDPoPProofAge = time.Minute
 	cfg.Limits.MaxTxCodeAttempts = 3
+	cfg.PreAuthorizedCodeClientAuthentication = issuer.AnonymousPreAuthorizedCode{}
 	deps := validDependencies(t)
 	deps.Nonces = assuredNonceStore{newFakeNonceStore(), issuer.StoreCapabilities{Durable: true, AtomicConsume: true}}
 	deps.CredentialOffers = assuredCredentialOfferStore{newFakeCredentialOfferStore(), issuer.StoreCapabilities{Durable: true}}
 	deps.DeferredTransactions = assuredDeferredTransactionStore{newFakeDeferredTransactionStore(), issuer.StoreCapabilities{Durable: true}}
 	deps.Notifications = assuredNotificationStore{newFakeNotificationStore(), issuer.StoreCapabilities{Durable: true}}
-	deps.PreAuthorizedCodes = newFakePreAuthorizedCodeStore()
-	deps.DPoPReplay = newFakeDPoPReplayChecker()
+	deps.PreAuthorizedCodes = assuredPreAuthorizedCodeStore{newFakePreAuthorizedCodeStore(), issuer.StoreCapabilities{Durable: true, AtomicConsume: true}}
+	deps.DPoPReplay = assuredDPoPReplayChecker{newFakeDPoPReplayChecker(), issuer.StoreCapabilities{Durable: true, AtomicConsume: true}}
 	deps.AccessTokens = &fakeAccessTokenIssuer{}
-
-	if _, err := issuer.New(cfg, deps); err == nil {
-		t.Fatal("New = nil error, want error (pre_authorized_codes/dpop_replay declare no StoreAssurance)")
-	}
+	deps.Audit = newFakeAuditSink()
+	return cfg, deps
 }

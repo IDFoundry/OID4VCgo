@@ -107,6 +107,24 @@ func (r ExchangePreAuthorizedCodeResult) WriteJSON(w http.ResponseWriter) {
 	})
 }
 
+// PreAuthorizedCodeClientAuthentication is how ExchangePreAuthorizedCode
+// authenticates the client redeeming a pre-authorized_code (see
+// Config.PreAuthorizedCodeClientAuthentication).
+type PreAuthorizedCodeClientAuthentication interface {
+	isPreAuthorizedCodeClientAuthentication()
+}
+
+// AnonymousPreAuthorizedCode redeems a pre-authorized_code for any
+// client that presents it (and its tx_code, if any) with a valid DPoP
+// proof — no client authentication, so no Wallet Attestation: whoever
+// holds the code gets the access token, not only a Wallet this issuer
+// trusts. OID4VCI §6.1 allows this; HAIP 1.0 §4.4.1 requires client
+// authentication at the Token Endpoint, so an issuer using it isn't
+// following HAIP for this grant.
+type AnonymousPreAuthorizedCode struct{}
+
+func (AnonymousPreAuthorizedCode) isPreAuthorizedCodeClientAuthentication() {}
+
 // ExchangePreAuthorizedCode implements the Pre-Authorized Code Flow's
 // own Token Request/Response (§6.1/§6.2) — the one OAuth 2.0 grant
 // type entirely outside fapigo/server's own scope (it's OID4VCI-specific,
@@ -124,6 +142,10 @@ func (r ExchangePreAuthorizedCodeResult) WriteJSON(w http.ResponseWriter) {
 // matches req.TxCode exactly, and mints an access token via
 // Dependencies.AccessTokens bound to the proof's own key by its RFC
 // 7638 thumbprint.
+//
+// The client isn't authenticated: see AnonymousPreAuthorizedCode, and
+// Config.PreAuthorizedCodeClientAuthentication for the explicit opt-in
+// AssuranceProduction requires.
 //
 // A wrong TxCode doesn't invalidate the code (PreAuthorizedCodeStore.Consume's
 // own contract), so the Wallet holder can retry after a mistyped PIN —
