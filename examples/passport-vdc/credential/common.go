@@ -13,8 +13,8 @@ type Options struct {
 	Now time.Time
 
 	// MaxValidity caps how long the credential is valid; zero means one
-	// year. The credential never outlives the passport or the next age
-	// threshold the holder crosses (see ValidUntil).
+	// year. The credential never outlives the next age threshold the
+	// holder crosses (see ValidUntil).
 	MaxValidity time.Duration
 
 	// AgeThresholds are the ages to issue age claims for; nil means
@@ -34,21 +34,19 @@ func (o Options) thresholds() []int {
 var ErrNoValidity = errors.New("credential: passport evidence yields no validity period")
 
 // ValidUntil is when a credential issued from e under o stops being
-// valid: the earliest of the passport's expiry (end of that day),
-// Now+MaxValidity, and — when age claims are issued — the day the holder
-// crosses the next age threshold, since an age_over_NN = false claim
-// becomes wrong on that birthday.
+// valid: the earlier of Now+MaxValidity and — when age claims are
+// issued — the day the holder crosses the next age threshold, since an
+// age_over_NN = false claim becomes wrong on that birthday.
+//
+// The passport's own expiry doesn't limit it. Expiry ends the document's
+// use for travel, not the authenticity of its data; the credential
+// carries expiry_date, and a verifier that cares checks that.
 func ValidUntil(e passport.Evidence, o Options) (time.Time, error) {
 	maxValidity := o.MaxValidity
 	if maxValidity == 0 {
 		maxValidity = defaultValidityYears * 365 * 24 * time.Hour
 	}
 	until := o.Now.Add(maxValidity)
-
-	endOfExpiryDay := e.Identity.ExpiryDate.Add(24*time.Hour - time.Second)
-	if endOfExpiryDay.Before(until) {
-		until = endOfExpiryDay
-	}
 
 	if youngest := e.Identity.BirthDate.Youngest; !youngest.IsZero() {
 		age := passport.AgeOn(youngest, o.Now)

@@ -2,7 +2,6 @@ package credential
 
 import (
 	"bytes"
-	"errors"
 	"os"
 	"testing"
 	"time"
@@ -32,9 +31,6 @@ func TestSample_BothFormats(t *testing.T) {
 	}
 	issuedAt := time.Now().Truncate(time.Second).UTC()
 	e, err := passport.Verify(data, pool, issuedAt)
-	if errors.Is(err, passport.ErrExpired) {
-		t.Skip("sample passport has expired")
-	}
 	if err != nil {
 		t.Fatal("Verify failed on the sample (error not printed: it could embed the MRZ)")
 	}

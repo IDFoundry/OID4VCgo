@@ -78,9 +78,6 @@ func TestVerifySample(t *testing.T) {
 	}
 
 	e, err := Verify(data, pool, time.Now())
-	if errors.Is(err, ErrExpired) {
-		t.Skip("sample passport has expired")
-	}
 	if err != nil {
 		t.Fatal("Verify failed on the sample (error not printed: gmrtd errors can embed the MRZ)")
 	}
@@ -150,5 +147,19 @@ func TestVerifySample_TamperedDataGroupFails(t *testing.T) {
 	tampered := reserialize()
 	if _, err := Verify(tampered, pool, time.Now()); !errors.Is(err, ErrNotTrusted) {
 		t.Error("a file with a tampered DG2 was not rejected as untrusted")
+	}
+}
+
+func TestIdentityExpiredAt(t *testing.T) {
+	id := Identity{ExpiryDate: date("2026-09-29")}
+	for when, want := range map[string]bool{
+		"2026-09-28T12:00:00Z": false,
+		"2026-09-29T23:59:59Z": false, // valid through its expiry day
+		"2026-09-30T00:00:00Z": true,
+	} {
+		at, _ := time.Parse(time.RFC3339, when)
+		if got := id.ExpiredAt(at); got != want {
+			t.Errorf("ExpiredAt(%s) = %v, want %v", when, got, want)
+		}
 	}
 }

@@ -111,6 +111,7 @@ var uploadTemplate = template.Must(template.New("upload").Parse(pageHead + `
 
 type offerPage struct {
 	Evidence      passport.Evidence
+	Expired       bool // the passport is past its expiry date
 	Offer         Offer
 	QR            template.URL
 	WebWalletLink string
@@ -134,7 +135,7 @@ var offerTemplate = template.Must(template.New("offer").Funcs(template.FuncMap{
 <tr><th>Date of birth</th><td>{{date .Evidence}}</td></tr>
 <tr><th>Nationality</th><td>{{.Evidence.Identity.Nationality}}</td></tr>
 <tr><th>Issuing country</th><td>{{.Evidence.Identity.IssuingCountry}}</td></tr>
-<tr><th>Expires</th><td>{{.Evidence.Identity.ExpiryDate.Format "2006-01-02"}}</td></tr>
+<tr><th>Expires</th><td>{{.Evidence.Identity.ExpiryDate.Format "2006-01-02"}}{{if .Expired}} <span class="note">— expired: the data is still country-signed, and the credential says when it expired</span>{{end}}</td></tr>
 </table>
 <h2>Credential offer</h2>
 <p>Confirmation code: <strong style="font-size:1.4em;letter-spacing:.15em">{{.Offer.ConfirmationCode}}</strong><br><span class="note">Enter it when the issuer asks you to approve. The offer can be redeemed once, by one wallet.</span></p>
@@ -167,9 +168,6 @@ func (a *App) handleUpload(w http.ResponseWriter, r *http.Request) {
 
 	e, err := passport.Verify(data, a.cfg.CSCAPool, a.now())
 	switch {
-	case errors.Is(err, passport.ErrExpired):
-		writeHTMLError(w, http.StatusUnprocessableEntity, "this passport has expired")
-		return
 	case errors.Is(err, passport.ErrNotTrusted):
 		writeHTMLError(w, http.StatusUnprocessableEntity, "the passport's signatures didn't verify against the trusted CSCA certificates")
 		return
@@ -189,7 +187,7 @@ func (a *App) handleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store") // the offer is a bearer secret, next to the passport's identity
-	page := offerPage{Evidence: e, Offer: offer}
+	page := offerPage{Evidence: e, Offer: offer, Expired: e.Identity.ExpiredAt(a.now())}
 	if qr, err := demoqr.DataURI(offer.URI); err == nil {
 		page.QR = qr
 	}

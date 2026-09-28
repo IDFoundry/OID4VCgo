@@ -8,7 +8,6 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/base64"
-	"errors"
 	"math/big"
 	"testing"
 	"time"
@@ -83,8 +82,8 @@ func TestValidUntil(t *testing.T) {
 	}{
 		{name: "default one-year cap", e: adult(), o: Options{Now: now}, want: now.Add(365 * 24 * time.Hour)},
 		{
-			name: "passport expiry wins", e: adult(), o: Options{Now: now, MaxValidity: 10 * 365 * 24 * time.Hour},
-			want: date("2031-01-01").Add(24*time.Hour - time.Second),
+			name: "passport expiry doesn't limit it", e: adult(), o: Options{Now: now, MaxValidity: 10 * 365 * 24 * time.Hour},
+			want: now.Add(10 * 365 * 24 * time.Hour),
 		},
 		// The child turns 13 on 2027-06-15, when age_over_13 = false
 		// would become wrong.
@@ -103,11 +102,22 @@ func TestValidUntil(t *testing.T) {
 	}
 }
 
-func TestValidUntilRejectsExpiredPassport(t *testing.T) {
+// TestExpiredPassportStillIssues: an expired passport's data is still
+// authentic, so its credential gets the ordinary validity and carries
+// the expiry date for a verifier to judge.
+func TestExpiredPassportStillIssues(t *testing.T) {
 	e := adult()
 	e.Identity.ExpiryDate = date("2020-01-01")
-	if _, err := ValidUntil(e, Options{Now: now}); !errors.Is(err, ErrNoValidity) {
-		t.Errorf("ValidUntil error = %v, want ErrNoValidity", err)
+	got, err := ValidUntil(e, Options{Now: now})
+	if err != nil || !got.Equal(now.Add(365*24*time.Hour)) {
+		t.Fatalf("ValidUntil = %v, %v; want the default one-year validity", got, err)
+	}
+	claims, err := MdocClaims(e, Options{Now: now})
+	if err != nil {
+		t.Fatalf("MdocClaims: %v", err)
+	}
+	if exp, _ := claims.NameSpaces[IdentityNamespace][ExpiryDate].(cbor.Tag); exp.Content != "2020-01-01" {
+		t.Errorf("expiry_date = %v, want 2020-01-01", claims.NameSpaces[IdentityNamespace][ExpiryDate])
 	}
 }
 

@@ -69,9 +69,6 @@ var ErrNotTrusted = errors.New("passport: data is not trusted")
 // gmrtd portable passport file.
 var ErrUnreadable = errors.New("passport: not a readable gmrtd portable passport file")
 
-// ErrExpired is returned by Verify for a passport past its expiry date.
-var ErrExpired = errors.New("passport: document has expired")
-
 // Verify decodes a gmrtd portable passport file, verifies it against
 // cscaPool (cms.DefaultMasterList for real passports, or a test CSCA),
 // and returns its Evidence. now is the reference time for the expiry
@@ -112,10 +109,6 @@ func evidenceFrom(doc *document.Document, summary *document.DocumentSummary, now
 	if err != nil {
 		return Evidence{}, err
 	}
-	if identity.ExpiryDate.Before(dayOf(now)) {
-		return Evidence{}, ErrExpired
-	}
-
 	return Evidence{
 		Identity: identity,
 		Portrait: portraitJPEG(attrs.FaceImages),
@@ -153,6 +146,15 @@ func identityFrom(attrs *document.IdentityAttributes, hasDG11 bool, now time.Tim
 		return Identity{}, err
 	}
 	return id, nil
+}
+
+// ExpiredAt reports whether the passport had expired by t. A passport
+// expiring today is still valid today. Expiry doesn't affect whether its
+// data can be trusted — Passive Authentication verifies an expired
+// passport's data just the same — so Verify accepts one, and this is for
+// showing it.
+func (id Identity) ExpiredAt(t time.Time) bool {
+	return id.ExpiryDate.Before(dayOf(t))
 }
 
 // dayOf truncates t to midnight UTC, so a passport expiring today is

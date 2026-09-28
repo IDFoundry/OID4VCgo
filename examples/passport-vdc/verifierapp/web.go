@@ -101,7 +101,7 @@ var requestTemplate = template.Must(template.New("request").Parse(pageHead + `{{
 <tr><th>Name</th><td>{{.Outcome.ICAO.Identity.FamilyName}}, {{.Outcome.ICAO.Identity.GivenNames}}</td></tr>
 <tr><th>Nationality</th><td>{{.Outcome.ICAO.Identity.Nationality}}</td></tr>
 <tr><th>Issuing country</th><td>{{.Outcome.ICAO.Identity.IssuingCountry}}</td></tr>
-<tr><th>Passport expiry</th><td>{{.Outcome.ICAO.Identity.ExpiryDate.Format "2006-01-02"}}</td></tr>
+<tr><th>Passport expiry</th><td>{{.Outcome.ICAO.Identity.ExpiryDate.Format "2006-01-02"}}{{if .Outcome.ICAO.Expired}} <span class="bad">— expired</span>{{end}}</td></tr>
 <tr><th>Chip authenticity</th><td>{{.Outcome.ICAO.ChipAuthenticity}}</td></tr>
 </table>
 {{else}}
