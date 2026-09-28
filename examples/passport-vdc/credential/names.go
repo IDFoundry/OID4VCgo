@@ -36,6 +36,11 @@ const (
 	ExpiryDate     = "expiry_date"
 	NamesFromMRZ   = "names_from_mrz"
 
+	// Portrait is the holder's photo as JPEG bytes (mso_mdoc), named
+	// after ISO/IEC 18013-5's mDL portrait element. SD-JWT uses
+	// "picture".
+	Portrait = "portrait"
+
 	ICAOSOD  = "icao_sod"
 	ICAODG1  = "icao_dg1"
 	ICAODG2  = "icao_dg2"
@@ -48,6 +53,7 @@ const (
 	SDJWTBirthDate       = "birthdate"
 	SDJWTNationalities   = "nationalities"
 	SDJWTAgeEqualOrOver  = "age_equal_or_over"
+	SDJWTPicture         = "picture" // OpenID Connect's picture, here a data: URL
 	mdocAgeOverPrefix    = "age_over_"
 	defaultValidityYears = 1
 )

@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"sort"
 
+	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/credential"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/demoqr"
 )
 
@@ -33,6 +34,7 @@ body{font-family:system-ui,sans-serif;max-width:42rem;margin:2rem auto;padding:0
 table{border-collapse:collapse}th,td{text-align:left;padding:.25rem .75rem .25rem 0;vertical-align:top}
 code{word-break:break-all}.ok{color:#1a7f37}.bad{color:#cf222e}.note{color:#57606a;font-size:.9em}
 .card{border:1px solid #d0d7de;border-radius:6px;padding:1rem;margin:1rem 0}
+.portrait{max-width:10rem;border-radius:4px}
 </style>
 `
 
@@ -65,6 +67,7 @@ type requestPage struct {
 	Closed        bool // answered and then rejected
 	LastError     string
 	Rows          [][2]string
+	Portrait      template.URL // the disclosed portrait as a data: URL, if any
 }
 
 var requestTemplate = template.Must(template.New("request").Parse(pageHead + `{{if not (or .Outcome .Closed)}}<meta http-equiv="refresh" content="2">{{end}}
@@ -105,6 +108,7 @@ var requestTemplate = template.Must(template.New("request").Parse(pageHead + `{{
 </div>
 {{end}}
 <h2>Disclosed claims</h2>
+{{if .Portrait}}<p><img src="{{.Portrait}}" alt="Portrait of the credential holder" class="portrait"></p>{{end}}
 <table>{{range .Rows}}<tr><th>{{index . 0}}</th><td>{{index . 1}}</td></tr>{{end}}</table>
 {{end}}
 <p><a href="/">New request</a></p>
@@ -161,10 +165,14 @@ func (a *App) handleRequestPage(w http.ResponseWriter, r *http.Request) {
 }
 
 // displayRows renders claims for the result page: raw byte values (the
-// ICAO data groups) as their size, everything else as-is.
+// ICAO data groups) as their size, everything else as-is. The portrait
+// is shown as an image instead (see requestPageFor).
 func displayRows(claims map[string]any) [][2]string {
 	keys := make([]string, 0, len(claims))
 	for k := range claims {
+		if k == credential.Portrait || k == credential.SDJWTPicture {
+			continue
+		}
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
@@ -214,6 +222,9 @@ func (a *App) requestPageFor(s *session) requestPage {
 	}
 	if page.Outcome != nil {
 		page.Rows = displayRows(page.Outcome.Claims)
+		if uri, ok := credential.PortraitDataURI(page.Outcome.Claims); ok {
+			page.Portrait = template.URL(uri) // #nosec G203 -- built by PortraitDataURI from decoded JPEG bytes
+		}
 	} else if qr, err := demoqr.DataURI(s.crossDevice.link); err == nil {
 		page.QR = qr
 	}

@@ -21,6 +21,11 @@ type Evidence struct {
 	// Authentication over them against its own CSCA trust anchors.
 	Raw RawDataGroups
 
+	// Portrait is the holder's photo from DG2 as JPEG (converted when
+	// the passport stores JPEG 2000), or nil when the passport has no
+	// usable face image.
+	Portrait []byte
+
 	Checks Checks
 }
 
@@ -125,6 +130,7 @@ func evidenceFrom(doc *document.Document, summary *document.DocumentSummary, now
 	return Evidence{
 		Identity: identity,
 		Raw:      raw,
+		Portrait: portraitJPEG(attrs.FaceImages),
 		Checks: Checks{
 			PassiveAuthentication: true,
 			ChipAuthenticity:      fmt.Sprint(summary.ChipAuthenticity),

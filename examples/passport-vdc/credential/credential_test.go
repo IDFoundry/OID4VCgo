@@ -48,6 +48,7 @@ func adult() passport.Evidence {
 		Raw: passport.RawDataGroups{
 			SOD: []byte("sod-bytes"), DG1: []byte("dg1-bytes"), DG2: bytes.Repeat([]byte{0xFF}, 16<<10),
 		},
+		Portrait: testPortrait,
 	}
 }
 

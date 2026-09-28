@@ -22,6 +22,7 @@ table{border-collapse:collapse}th,td{text-align:left;padding:.15rem .75rem .15re
 input[type=text]{width:100%;box-sizing:border-box;padding:.4rem}code{word-break:break-all}
 .ok{color:#1a7f37}.bad{color:#cf222e}.note{color:#57606a;font-size:.9em}
 button{padding:.4rem .9rem;margin-right:.5rem}
+.portrait{float:right;max-width:7rem;border-radius:4px;margin:0 0 .5rem 1rem}
 </style>
 </head>
 <body>
@@ -53,6 +54,7 @@ var homeTemplate = template.Must(template.New("home").Parse(pageHead + `
 <div class="card">
 <h2>{{.Title}} <span class="fmt">{{.Format}}</span></h2>
 {{if .Error}}<p class="bad">{{.Error}}</p>{{else}}
+{{if .Portrait}}<img src="{{.Portrait}}" alt="Portrait" class="portrait">{{end}}
 <table>{{range .Claims}}<tr><th>{{index . 0}}</th><td>{{index . 1}}</td></tr>{{end}}</table>
 {{if .Raw}}<p class="note">Raw passport data: {{range $i, $r := .Raw}}{{if $i}}, {{end}}{{index $r 0}} ({{index $r 1}}){{end}}</p>{{end}}
 {{end}}

@@ -130,8 +130,12 @@ func TestWebWallet_ReceiveThenShareWithConsent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET /: %v", err)
 	}
-	if home := read(t, resp); strings.Count(home, "DOE") < 2 || !strings.Contains(home, "mso_mdoc") || !strings.Contains(home, "dc+sd-jwt") {
+	home := read(t, resp)
+	if strings.Count(home, "DOE") < 2 || !strings.Contains(home, "mso_mdoc") || !strings.Contains(home, "dc+sd-jwt") {
 		t.Error("home page doesn't show both received credentials")
+	}
+	if strings.Count(home, `<img src="data:image/jpeg;base64,`) != 2 {
+		t.Error("home page doesn't show the portrait on both credentials")
 	}
 
 	// The consent screen shows what's asked for, in each format the
