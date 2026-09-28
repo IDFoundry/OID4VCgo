@@ -285,6 +285,11 @@ func (iss *Issuer) resolveAttestationProofKeys(ctx context.Context, values []str
 		if err := meetsKeyAttestationRequirement(verified, ptc.KeyAttestationsRequired, i); err != nil {
 			return nil, err
 		}
+		if iss.deps.AttestationStatus != nil {
+			if err := iss.deps.AttestationStatus.CheckAttestationStatus(ctx, verified); err != nil {
+				return nil, newError(ErrorInvalidProof, 400, fmt.Sprintf("attestation %d: status", i), err)
+			}
+		}
 		if err := iss.checkProofNonce(ctx, "attestation", i, verified.Nonce, &expectedNonce); err != nil {
 			return nil, err
 		}

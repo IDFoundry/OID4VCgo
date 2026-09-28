@@ -360,6 +360,14 @@ type Dependencies struct {
 	// whenever the attestation proof type is supported.
 	AttestationVerifier AttestationVerifier
 
+	// AttestationStatus, if set, checks each attestation-type proof's
+	// key attestation for revocation (its "status" claim, OID4VCI
+	// Appendix D.1) after its signature verifies, and refuses the proof
+	// when it returns an error. Optional: nil skips the check, so a key
+	// attestation its Wallet Provider has since revoked is accepted
+	// until it expires.
+	AttestationStatus AttestationStatusChecker
+
 	// ProofBindingKeys resolves a jwt-type key proof's own "kid" or
 	// "x5c" header to a public key (Appendix F.1). Optional: a jwt-type
 	// proof conveying "jwk" (the common case) never needs it; required
