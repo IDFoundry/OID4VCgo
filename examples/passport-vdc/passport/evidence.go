@@ -16,10 +16,12 @@ import (
 type Evidence struct {
 	Identity Identity
 
-	// Raw holds the passport's original, ICAO-signed bytes. A verifier
-	// that doesn't trust this demo's issuer can re-run Passive
-	// Authentication over them against its own CSCA trust anchors.
-	Raw RawDataGroups
+	// File is the gmrtd portable passport file Verify accepted,
+	// byte-for-byte: every data group read from the chip plus any chip
+	// authentication evidence. A verifier that doesn't trust this
+	// demo's issuer passes it to Verify itself, re-running Passive
+	// Authentication against its own CSCA trust anchors.
+	File []byte
 
 	// Portrait is the holder's photo from DG2 as JPEG (converted when
 	// the passport stores JPEG 2000), or nil when the passport has no
@@ -45,18 +47,6 @@ type Identity struct {
 	IssuingCountry string // ISO 3166-1 alpha-3 (or ICAO code)
 	DocumentNumber string
 	ExpiryDate     time.Time
-}
-
-// RawDataGroups are the original LDS elementary files, exactly as read
-// from the chip. SOD and DG1 are always present; DG2 (facial image)
-// and DG11 (additional personal details) only when the passport has
-// them. DG14/DG15 are deliberately not carried: they only matter to a
-// live chip session, which a verifier holding a copy can't run.
-type RawDataGroups struct {
-	SOD  []byte
-	DG1  []byte
-	DG2  []byte
-	DG11 []byte
 }
 
 // Checks summarizes what gmrtd verified.
@@ -85,7 +75,9 @@ var ErrExpired = errors.New("passport: document has expired")
 // Verify decodes a gmrtd portable passport file, verifies it against
 // cscaPool (cms.DefaultMasterList for real passports, or a test CSCA),
 // and returns its Evidence. now is the reference time for the expiry
-// check and for resolving a two-digit MRZ birth year.
+// check and for resolving a two-digit MRZ birth year. The issuer calls
+// it on an uploaded file; a verifier calls it on the file a credential
+// discloses.
 func Verify(data []byte, cscaPool cms.CertPool, now time.Time) (Evidence, error) {
 	// gmrtd's errors can embed the raw MRZ, so none are wrapped here:
 	// nothing from the passport reaches a log line or page through an
@@ -98,7 +90,12 @@ func Verify(data []byte, cscaPool cms.CertPool, now time.Time) (Evidence, error)
 	if !summary.DataTrusted {
 		return Evidence{}, ErrNotTrusted
 	}
-	return evidenceFrom(&docEx.Document, summary, now)
+	e, err := evidenceFrom(&docEx.Document, summary, now)
+	if err != nil {
+		return Evidence{}, err
+	}
+	e.File = slices.Clone(data)
+	return e, nil
 }
 
 func evidenceFrom(doc *document.Document, summary *document.DocumentSummary, now time.Time) (Evidence, error) {
@@ -119,17 +116,8 @@ func evidenceFrom(doc *document.Document, summary *document.DocumentSummary, now
 		return Evidence{}, ErrExpired
 	}
 
-	raw := RawDataGroups{SOD: slices.Clone(lds.Sod.RawData), DG1: slices.Clone(lds.Dg1.RawData)}
-	if lds.Dg2 != nil {
-		raw.DG2 = slices.Clone(lds.Dg2.RawData)
-	}
-	if lds.Dg11 != nil {
-		raw.DG11 = slices.Clone(lds.Dg11.RawData)
-	}
-
 	return Evidence{
 		Identity: identity,
-		Raw:      raw,
 		Portrait: portraitJPEG(attrs.FaceImages),
 		Checks: Checks{
 			PassiveAuthentication: true,

@@ -91,7 +91,7 @@ func TestEndToEnd_TrustIssuer(t *testing.T) {
 				t.Error("the portrait wasn't disclosed intact")
 			}
 			// Only what was asked for is disclosed.
-			for _, withheld := range []string{credential.DocumentNumber, credential.ICAOSOD, credential.ICAODG2} {
+			for _, withheld := range []string{credential.DocumentNumber, credential.PassportFile} {
 				if _, ok := out.Claims[withheld]; ok {
 					t.Errorf("%s was disclosed without being requested", withheld)
 				}
@@ -123,12 +123,12 @@ func TestEndToEnd_TrustIssuer_NoPortrait(t *testing.T) {
 	}
 }
 
-// TestEndToEnd_TrustICAO_SyntheticSODFails presents each format for the
-// "trust only the country" request with synthetic evidence: the
-// presentation itself verifies, but Passive Authentication over its
-// (fake) SOD must fail — the demo issuer can't vouch for passport data
-// on its own.
-func TestEndToEnd_TrustICAO_SyntheticSODFails(t *testing.T) {
+// TestEndToEnd_TrustICAO_SyntheticFileFails presents each format for
+// the "trust only the country" request with synthetic evidence: the
+// presentation itself verifies, but re-verifying its (fake) passport
+// file must fail — the demo issuer can't vouch for passport data on its
+// own.
+func TestEndToEnd_TrustICAO_SyntheticFileFails(t *testing.T) {
 	pool, err := cms.DefaultMasterList()
 	if err != nil {
 		t.Fatalf("DefaultMasterList: %v", err)
@@ -143,8 +143,11 @@ func TestEndToEnd_TrustICAO_SyntheticSODFails(t *testing.T) {
 			if out.ICAO == nil || out.ICAO.Verified {
 				t.Fatalf("ICAO result = %+v, want a failed check", out.ICAO)
 			}
-			if _, ok := out.Claims[credential.ICAODG2]; ok {
-				t.Error("icao_dg2 (the photo) was disclosed without being requested")
+			if out.ICAO.Error != passport.ErrUnreadable.Error() {
+				t.Errorf("ICAO error = %q, want the fixed unreadable-file error", out.ICAO.Error)
+			}
+			if _, ok := out.Claims[credential.PassportFile]; !ok {
+				t.Error("the passport file wasn't disclosed")
 			}
 			if _, ok := credential.PortraitJPEG(out.Claims); ok {
 				t.Error("the portrait was disclosed to an ICAO-only request")
@@ -158,7 +161,7 @@ func TestEndToEnd_TrustICAO_SyntheticSODFails(t *testing.T) {
 
 // TestEndToEnd_TrustICAO_Sample runs the ICAO path with a real passport
 // when PASSPORT_VDC_SAMPLE points at one (outside this repository):
-// issued from the verified upload, presented as SOD + DG1 only, and
+// issued from the verified upload, presented as the passport file, and
 // re-verified by the verifier against the ICAO master list. Logs
 // nothing from the passport.
 func TestEndToEnd_TrustICAO_Sample(t *testing.T) {
@@ -186,10 +189,13 @@ func TestEndToEnd_TrustICAO_Sample(t *testing.T) {
 		t.Run(format, func(t *testing.T) {
 			out := present(t, env, store, verifierapp.ModeICAO, format)
 			if out.ICAO == nil || !out.ICAO.Verified {
-				t.Fatal("ICAO Passive Authentication over the presented SOD + DG1 failed")
+				t.Fatal("re-verifying the presented passport file failed")
 			}
 			if out.ICAO.Identity.DocumentNumber != e.Identity.DocumentNumber {
-				t.Error("identity from the presented DG1 differs from the passport's")
+				t.Error("identity from the presented file differs from the passport's")
+			}
+			if !bytes.Equal(out.ICAO.Portrait, e.Portrait) || out.ICAO.ChipAuthenticity != e.Checks.ChipAuthenticity {
+				t.Error("portrait or chip authenticity from the presented file differs from the issuer's")
 			}
 		})
 	}

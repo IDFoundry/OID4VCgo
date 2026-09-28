@@ -1,6 +1,7 @@
 // Package passport turns a gmrtd portable passport file into verified,
-// format-neutral Evidence: the holder's identity attributes plus the
-// passport's original, ICAO-signed SOD and data-group bytes.
+// format-neutral Evidence: the holder's identity attributes, portrait,
+// and the file itself — which a verifier re-verifies with the same
+// Verify call.
 //
 // It is the only part of the passport-vdc demo that depends on gmrtd.
 // Everything downstream — the mso_mdoc and dc+sd-jwt encoders, the

@@ -45,7 +45,7 @@ type Config struct {
 	// they issued.
 	IssuerCAs []*x509.Certificate
 
-	// CSCAPool verifies the raw SOD/DG1 in ModeICAO —
+	// CSCAPool verifies the passport file in ModeICAO —
 	// cms.DefaultMasterList for real passports.
 	CSCAPool cms.CertPool
 
@@ -139,16 +139,22 @@ type Outcome struct {
 	// credential without one. A revoked, suspended or uncheckable
 	// credential isn't accepted at all.
 	Status string
-	// ICAO is the Passive Authentication result over the disclosed SOD
-	// and DG1 (ModeICAO).
+	// ICAO is the result of re-verifying the disclosed passport file
+	// (ModeICAO).
 	ICAO *ICAOResult
 }
 
-// ICAOResult is a ModeICAO check of the raw data groups.
+// ICAOResult is a ModeICAO check of the passport file.
 type ICAOResult struct {
 	Verified bool
 	Identity passport.Identity
-	Error    string
+	// Portrait is the photo from the file's own, country-signed DG2, as
+	// JPEG (nil when there's no usable one).
+	Portrait []byte
+	// ChipAuthenticity is gmrtd's verdict on the file's chip
+	// authentication evidence, replayed here.
+	ChipAuthenticity string
+	Error            string
 }
 
 // New wires an App. Its request-signing key and certificate (the
@@ -486,19 +492,25 @@ func (a *App) verify(ctx context.Context, s *session, ch *channel, responseJWE s
 	return out, nil
 }
 
-// checkICAO re-runs Passive Authentication over the disclosed raw SOD
-// and DG1.
+// checkICAO re-verifies the disclosed passport file exactly as the
+// issuer did: gmrtd Passive Authentication against the CSCA pool, and
+// its document checks. gmrtd's own errors can embed the MRZ, so only
+// passport's fixed errors reach the page.
 func (a *App) checkICAO(claims map[string]any) *ICAOResult {
-	sod, errSOD := rawBytes(claims[credential.ICAOSOD])
-	dg1, errDG1 := rawBytes(claims[credential.ICAODG1])
-	if errSOD != nil || errDG1 != nil {
-		return &ICAOResult{Error: "the credential didn't disclose a usable SOD and DG1"}
-	}
-	id, err := passport.VerifyDataGroups(sod, dg1, a.cfg.CSCAPool, a.now())
+	file, err := rawBytes(claims[credential.PassportFile])
 	if err != nil {
-		return &ICAOResult{Error: err.Error()}
+		return &ICAOResult{Error: "the credential didn't disclose a usable passport file"}
 	}
-	return &ICAOResult{Verified: true, Identity: id}
+	e, err := passport.Verify(file, a.cfg.CSCAPool, a.now())
+	switch {
+	case errors.Is(err, passport.ErrNotTrusted), errors.Is(err, passport.ErrUnreadable), errors.Is(err, passport.ErrExpired):
+		return &ICAOResult{Error: err.Error()}
+	case err != nil:
+		return &ICAOResult{Error: "the passport file's data couldn't be used"}
+	}
+	return &ICAOResult{
+		Verified: true, Identity: e.Identity, Portrait: e.Portrait, ChipAuthenticity: e.Checks.ChipAuthenticity,
+	}
 }
 
 // flatten turns a verified credential's claims into one flat map: an

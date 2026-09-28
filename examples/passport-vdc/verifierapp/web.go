@@ -48,12 +48,12 @@ var homeTemplate = template.Must(template.New("home").Parse(pageHead + `</head><
 <p>Ask a wallet for its passport-derived credential — as an <code>mso_mdoc</code> or a <code>dc+sd-jwt</code>, whichever it holds — and choose what to trust:</p>
 <form method="post" action="/requests" class="card">
 <h2>Trust the issuer</h2>
-<p>Request name, nationality and an over-18 check. Accept them because the credential's issuer signature chains to the demo issuer's CA.</p>
+<p>Request name, nationality, an over-18 check and the photo. Accept them because the credential's issuer signature chains to the demo issuer's CA.</p>
 <button name="mode" value="issuer">Request</button>
 </form>
 <form method="post" action="/requests" class="card">
 <h2>Trust only the issuing country</h2>
-<p>Request just the raw ICAO SOD and DG1 — not the photo — and re-run Passive Authentication against the ICAO CSCA master list. The demo issuer can't have altered this data.</p>
+<p>Request the passport file read from the chip and re-verify it with gmrtd against the ICAO CSCA master list. The demo issuer can't have altered this data. The file is all-or-nothing: it includes the photo and every other data group.</p>
 <button name="mode" value="icao">Request</button>
 </form>
 ` + pageFoot))
@@ -68,6 +68,7 @@ type requestPage struct {
 	LastError     string
 	Rows          [][2]string
 	Portrait      template.URL // the disclosed portrait as a data: URL, if any
+	ICAOPortrait  template.URL // the photo from the re-verified passport file, if any
 }
 
 var requestTemplate = template.Must(template.New("request").Parse(pageHead + `{{if not (or .Outcome .Closed)}}<meta http-equiv="refresh" content="2">{{end}}
@@ -92,19 +93,21 @@ var requestTemplate = template.Must(template.New("request").Parse(pageHead + `{{
 <p>Revocation status: {{if eq .Outcome.Status "valid"}}<span class="ok">✓ valid</span> — checked against the issuer's status list{{else}}{{.Outcome.Status}}{{end}}</p>
 {{if eq .Outcome.Mode "icao"}}
 <div class="card">
-<h2>ICAO Passive Authentication over SOD + DG1</h2>
+<h2>Passport file re-verified</h2>
 {{if .Outcome.ICAO.Verified}}
-<p class="ok">✓ The SOD is signed by a Document Signer chaining to the issuing country's CSCA, and DG1 matches its hash. The demo issuer can't have altered this data.</p>
+<p class="ok">✓ gmrtd trusts the data: the SOD is signed by a Document Signer chaining to the issuing country's CSCA, and every data group matches its hash. The demo issuer can't have altered it.</p>
+{{if .ICAOPortrait}}<p><img src="{{.ICAOPortrait}}" alt="Portrait from the passport's DG2" class="portrait"></p>{{end}}
 <table>
 <tr><th>Name</th><td>{{.Outcome.ICAO.Identity.FamilyName}}, {{.Outcome.ICAO.Identity.GivenNames}}</td></tr>
 <tr><th>Nationality</th><td>{{.Outcome.ICAO.Identity.Nationality}}</td></tr>
 <tr><th>Issuing country</th><td>{{.Outcome.ICAO.Identity.IssuingCountry}}</td></tr>
 <tr><th>Passport expiry</th><td>{{.Outcome.ICAO.Identity.ExpiryDate.Format "2006-01-02"}}</td></tr>
+<tr><th>Chip authenticity</th><td>{{.Outcome.ICAO.ChipAuthenticity}}</td></tr>
 </table>
 {{else}}
 <p class="bad">✗ {{.Outcome.ICAO.Error}}</p>
 {{end}}
-<p class="note">This proves the data is authentic, not that the presenter holds the passport. Tying the data to the presenter still relies on the issuer: it bound the credential's device key to this passport.</p>
+<p class="note">This proves the data is authentic, not that the presenter holds the passport. Chip authenticity replays evidence recorded when the chip was read: a genuine chip answered then, not necessarily now. Tying the data to the presenter still relies on the issuer: it bound the credential's device key to this passport.</p>
 </div>
 {{end}}
 <h2>Disclosed claims</h2>
@@ -222,6 +225,11 @@ func (a *App) requestPageFor(s *session) requestPage {
 	}
 	if page.Outcome != nil {
 		page.Rows = displayRows(page.Outcome.Claims)
+		if icao := page.Outcome.ICAO; icao != nil && icao.Verified {
+			if uri, ok := credential.PortraitDataURI(map[string]any{credential.Portrait: icao.Portrait}); ok {
+				page.ICAOPortrait = template.URL(uri) // #nosec G203 -- built by PortraitDataURI from decoded JPEG bytes
+			}
+		}
 		if uri, ok := credential.PortraitDataURI(page.Outcome.Claims); ok {
 			page.Portrait = template.URL(uri) // #nosec G203 -- built by PortraitDataURI from decoded JPEG bytes
 		}

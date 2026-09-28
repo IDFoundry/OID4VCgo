@@ -1,6 +1,7 @@
 package credential
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"testing"
@@ -46,15 +47,15 @@ func TestSample_BothFormats(t *testing.T) {
 	restore := now
 	now = issuedAt // issueAndVerify* verify against the package-level now
 	defer func() { now = restore }()
-	if ns := issueAndVerifyMdoc(t, mdocClaims); len(ns[ICAONamespace][ICAOSOD].([]byte)) == 0 {
-		t.Error("icao_sod missing from the verified mdoc")
+	if ns := issueAndVerifyMdoc(t, mdocClaims); !bytes.Equal(ns[FileNamespace][PassportFile].([]byte), data) {
+		t.Error("the passport file isn't in the verified mdoc byte-for-byte")
 	}
 
 	sdClaims, err := SDJWTClaims(e, testVCT, o)
 	if err != nil {
 		t.Fatalf("SDJWTClaims: %v", err)
 	}
-	if payload := issueAndVerifySDJWT(t, sdClaims); payload[ICAOSOD] == nil {
-		t.Error("icao_sod missing from the verified SD-JWT")
+	if payload := issueAndVerifySDJWT(t, sdClaims); payload[PassportFile] == nil {
+		t.Error("the passport file is missing from the verified SD-JWT")
 	}
 }

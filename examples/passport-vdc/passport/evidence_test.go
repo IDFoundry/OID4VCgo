@@ -87,8 +87,8 @@ func TestVerifySample(t *testing.T) {
 	if !e.Checks.PassiveAuthentication {
 		t.Error("PassiveAuthentication = false")
 	}
-	if len(e.Raw.SOD) == 0 || len(e.Raw.DG1) == 0 {
-		t.Error("SOD or DG1 missing from Evidence.Raw")
+	if !bytes.Equal(e.File, data) {
+		t.Error("Evidence.File isn't the verified file byte-for-byte")
 	}
 	if e.Identity.FamilyName == "" || e.Identity.DocumentNumber == "" || e.Identity.ExpiryDate.IsZero() {
 		t.Error("identity attributes incomplete")
@@ -96,10 +96,8 @@ func TestVerifySample(t *testing.T) {
 	if e.Identity.BirthDate.Youngest.IsZero() {
 		t.Error("no usable birth date")
 	}
-	if len(e.Raw.DG2) > 0 {
-		if _, err := jpeg.DecodeConfig(bytes.NewReader(e.Portrait)); err != nil {
-			t.Error("DG2 present but no displayable JPEG portrait")
-		}
+	if _, err := jpeg.DecodeConfig(bytes.NewReader(e.Portrait)); err != nil {
+		t.Error("no displayable JPEG portrait")
 	}
 }
 
@@ -113,10 +111,11 @@ func TestVerifyRejectsGarbage(t *testing.T) {
 	}
 }
 
-// TestVerifyDataGroupsSample checks the verifier-side fallback: Passive
-// Authentication over just the sample's SOD and DG1 (no DG2), when
-// PASSPORT_VDC_SAMPLE is set. Logs nothing from the passport.
-func TestVerifyDataGroupsSample(t *testing.T) {
+// TestVerifySample_TamperedDataGroupFails re-serializes the sample
+// with one byte of its facial image (DG2) changed: the file is still
+// well-formed, but the DG2 hash no longer matches the SOD, so it must
+// not be trusted. Logs nothing from the passport.
+func TestVerifySample_TamperedDataGroupFails(t *testing.T) {
 	path := os.Getenv("PASSPORT_VDC_SAMPLE")
 	if path == "" {
 		t.Skip("PASSPORT_VDC_SAMPLE not set")
@@ -129,38 +128,27 @@ func TestVerifyDataGroupsSample(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DefaultMasterList: %v", err)
 	}
-	// Errors are never printed in this test: gmrtd errors can embed
-	// the passport's MRZ.
-	e, err := Verify(data, pool, time.Now())
-	if err != nil {
-		t.Skip("sample doesn't verify")
+	doc, _, err := document.UnmarshalVerifiableDoc(data)
+	if err != nil || doc.Mf.Lds1.Dg2 == nil {
+		t.Skip("sample has no readable DG2")
 	}
-	id, err := VerifyDataGroups(e.Raw.SOD, e.Raw.DG1, pool, time.Now())
-	if err != nil {
-		t.Fatal("VerifyDataGroups failed on the sample's own SOD and DG1")
+	reserialize := func() []byte {
+		t.Helper()
+		out, err := (&document.DocumentEx{Document: *doc}).ToCbor()
+		if err != nil {
+			t.Fatal("re-serializing the sample failed")
+		}
+		return out
 	}
-	if id.FamilyName != e.Identity.FamilyName || id.DocumentNumber != e.Identity.DocumentNumber {
-		t.Error("identity from SOD+DG1 differs from the full passport's")
+	// Control: re-serializing alone keeps the file trusted.
+	if _, err := Verify(reserialize(), pool, time.Now()); err != nil {
+		t.Fatal("the re-serialized, untampered sample didn't verify")
 	}
 
-	// A tampered DG1 fails — whether at parsing (a broken MRZ check
-	// digit) or at the SOD hash comparison.
-	tampered := append([]byte(nil), e.Raw.DG1...)
-	tampered[len(tampered)-1] ^= 0x01
-	if _, err := VerifyDataGroups(e.Raw.SOD, tampered, pool, time.Now()); !errors.Is(err, ErrPassiveAuthentication) {
-		t.Error("tampered DG1 was not rejected with ErrPassiveAuthentication")
-	}
-}
-
-func TestVerifyDataGroupsRejectsGarbage(t *testing.T) {
-	pool, err := cms.DefaultMasterList()
-	if err != nil {
-		t.Fatalf("DefaultMasterList: %v", err)
-	}
-	if _, err := VerifyDataGroups([]byte("not a sod"), []byte("not dg1"), pool, time.Now()); err == nil {
-		t.Error("VerifyDataGroups(garbage) = nil error")
-	}
-	if _, err := VerifyDataGroups(nil, nil, pool, time.Now()); err == nil {
-		t.Error("VerifyDataGroups(nil) = nil error")
+	dg2 := doc.Mf.Lds1.Dg2.RawData
+	dg2[len(dg2)-1] ^= 0x01
+	tampered := reserialize()
+	if _, err := Verify(tampered, pool, time.Now()); !errors.Is(err, ErrNotTrusted) {
+		t.Error("a file with a tampered DG2 was not rejected as untrusted")
 	}
 }

@@ -19,8 +19,8 @@ that depends on gmrtd. It builds against this checkout of the library
 
 ```
 gmrtd portable file ─► passport.Verify ─► passport.Evidence ─┬─► credential.MdocClaims  ─► issuer.RequestCredential ─► mso_mdoc
-   (all raw LDS files)   (gmrtd Passive       (identity +     └─► credential.SDJWTClaims ─► issuer.RequestCredential ─► dc+sd-jwt
-                          Authentication)      raw SOD/DGs)
+   (all raw LDS files)   (gmrtd Passive       (identity,      └─► credential.SDJWTClaims ─► issuer.RequestCredential ─► dc+sd-jwt
+                          Authentication)      portrait, file)
 ```
 
 Both credentials carry the same content:
@@ -32,12 +32,14 @@ Both credentials carry the same content:
   Passports usually store it as JPEG 2000, which browsers can't show, so
   the issuer converts it (pure Go, [go-jpeg2000](https://github.com/mrjoshuak/go-jpeg2000)).
   It's the demo issuer's copy, not country-signed: a verifier that
-  needs the country's signature requests `icao_dg2` with the SOD
-  instead. Omitted when the passport has no usable face image.
-- **The raw ICAO data groups** — `icao_sod`, `icao_dg1`, and `icao_dg2`
-  / `icao_dg11` when the passport has them — **one selectively
-  disclosable element (mdoc) or claim (SD-JWT) each**, byte-for-byte as
-  read from the chip.
+  needs the country's signature requests the passport file instead.
+  Omitted when the passport has no usable face image.
+- **The passport file** — `gmrtd_verifiable_doc`: the uploaded gmrtd
+  portable file, byte-for-byte. It holds every data group read from the
+  chip (DG1 MRZ, DG2 photo, DG11 and the rest, plus the SOD) and any
+  chip authentication evidence. It's **one** selectively disclosable
+  element (mdoc) or claim (SD-JWT): withheld unless asked for, but
+  disclosing it discloses all of that.
 
 ## Two ways to trust the credential
 
@@ -47,15 +49,22 @@ A verifier can choose:
    and use the identity attributes. The issuer verified the passport
    before issuing, but the country did not sign this credential — the
    issuer is making a new assertion.
-2. **Trust only the issuing country.** Request `icao_sod` + `icao_dg1`
-   and re-run ICAO Passive Authentication against its own CSCA trust
-   anchors (e.g. with gmrtd). The SOD holds a separate hash per data
-   group, so this works without disclosing the photo (DG2) or DG11.
+2. **Trust only the issuing country.** Request `gmrtd_verifiable_doc`
+   and re-verify it with one call — `passport.Verify`, i.e. gmrtd's
+   `verifier.Verify` — against its own CSCA trust anchors. The verifier
+   needs no knowledge of the individual data groups: gmrtd runs Passive
+   Authentication and its document checks, replays any chip
+   authentication evidence, and returns the parsed identity and photo.
+   The price is disclosure: the verifier receives the whole passport
+   content, not a chosen subset.
 
 What the second path does and doesn't give you:
 
 - It removes trust in this issuer **for the data**: the issuer can't
   invent attributes the country didn't sign.
+- Chip authenticity is replayed from evidence recorded when the chip
+  was read: it shows a genuine chip answered then, not that it's
+  present now.
 - It does **not** remove trust in the issuer **for holder binding**.
   Passport data can be copied; what ties it to the person presenting it
   is the credential's device key (mdoc `DeviceKey` / SD-JWT `cnf`) plus
@@ -82,8 +91,13 @@ What the second path does and doesn't give you:
   threshold the holder crosses (and never after the passport expires).
 - **MRZ names may be truncated or transliterated.** `names_from_mrz`
   says when names came from the MRZ rather than DG11.
-- **The SOD is unique to the passport.** Disclosing `icao_sod` links
-  presentations across verifiers, whatever the credential format.
+- **The passport file is all-or-nothing.** Disclosing it hands the
+  verifier every data group — photo, DG11 personal details, the lot.
+  Its SOD is also unique to the passport, so it links presentations
+  across verifiers, whatever the credential format.
+- **The file format is gmrtd's own** (`gmrtd-verifiable-doc`, versioned),
+  not an ICAO standard encoding: a verifier needs gmrtd — a compatible
+  version — to read it.
 - **Identifiers are provisional.** The doctype, namespaces and claim
   names (in `credential/names.go`) should be aligned with ISO/IEC
   23220-4's DTC namespace before this is presented as interoperable.
@@ -288,17 +302,18 @@ It checks:
 
 | | Trust the issuer | Trust only the issuing country |
 |---|---|---|
-| Requested | `family_name`, `given_name`, nationality, `age_over_18`, and the portrait when there is one (DCQL `claim_sets`) — shown on the result page | `icao_sod`, `icao_dg1` — nothing else, not the photo |
+| Requested | `family_name`, `given_name`, nationality, `age_over_18`, and the portrait when there is one (DCQL `claim_sets`) — shown on the result page | `gmrtd_verifiable_doc` — the whole passport file, photo included |
 | Issuer signature | verified, chained to the demo issuer's CA (`issuer-ca.pem`) | verified, likewise |
 | Revocation | the issuer's Token Status List says the credential is valid | likewise |
 | Holder binding | key-binding / device signature over the verifier's nonce | likewise |
-| Data trusted because… | the demo issuer signed it | ICAO Passive Authentication over the SOD + DG1 passes against the CSCA master list: the country signed it |
+| Data trusted because… | the demo issuer signed it | gmrtd re-verifies the file (Passive Authentication against the CSCA master list, document checks): the country signed it. The result page shows the file's photo and chip authenticity |
 
 The request is a signed Request Object (`x509_hash` client identifier,
 certificate issued by a per-process demo verifier CA) fetched from its
 `request_uri`; the response is an encrypted `direct_post.jwt`, routed
 to its request by the JWE's key ID. Selective disclosure is real: in
-either mode the verifier receives only what it asked for.
+either mode the verifier receives only what it asked for — though in
+the ICAO mode that's the whole passport file.
 
 Each request also names the issuer CA in DCQL `trusted_authorities`
 (its Authority Key Identifier, the `aki` type HAIP 1.0 §5 requires):
@@ -351,7 +366,7 @@ in `.gitignore` as a backstop. CI runs everything else — including a full
 end-to-end issuance of both formats (`issuerapp`'s
 `TestEndToEnd_IssuesBothFormats`, and `verifierapp`'s end-to-end tests
 presenting each format for each trust path — with synthetic passport
-evidence, whose fake SOD must fail the ICAO check) — until gmrtd provides a
+evidence, whose fake passport file must fail the ICAO check) — until gmrtd provides a
 synthetic test passport (a test CSCA → DSC → SOD
 generator, planned for gmrtd itself).
 
@@ -359,14 +374,13 @@ generator, planned for gmrtd itself).
 
 | Package | Role |
 |---|---|
-| `passport` | gmrtd → verified `Evidence`; the birth-date rule |
+| `passport` | gmrtd → verified `Evidence` (the issuer's upload check, and the verifier's ICAO check of a disclosed file); the birth-date rule; the portrait |
 | `credential` | `Evidence` → `mdoc.Claims` / `sdjwtvc.Claims`; validity and age claims |
 | `issuerapp` | the OID4VCI issuer: fapigo Authorization Server + oid4vcgo Issuer + upload page |
 | `walletprovider` | the stand-in Wallet Provider that signs Wallet Attestations and Key Attestations |
 | `walletapp` | the wallet: receive (offer → discovery → HAIP Authorization Code flow → credentials) and present (OpenID4VP, selective disclosure); credential store |
 | `verifierapp` | the OpenID4VP verifier: either-format requests, both trust paths, revocation checks |
 | `webwallet` | the browser wallet: credential cards, receive via the issuer's approval page, consent before presenting |
-| `passport.VerifyDataGroups` | the verifier's ICAO check over a disclosed SOD + DG1 |
 | `cmd/issuer`, `cmd/verifier`, `cmd/webwallet`, `cmd/wallet`, `cmd/wallet-provider` | runnable binaries |
 
 ## Roadmap
