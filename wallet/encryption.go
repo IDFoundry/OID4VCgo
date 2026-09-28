@@ -76,6 +76,15 @@ type wireResponseEncryptionRequest struct {
 // for respEnc and builds the outbound wire object for it — or returns
 // all zero values when respEnc is nil. The private key is returned
 // alongside so the caller can decrypt the eventual Response with it.
+// responseZip is the compression respEnc asks the Issuer to apply, if
+// any.
+func responseZip(respEnc *ResponseEncryption) jwe.Zip {
+	if respEnc == nil {
+		return ""
+	}
+	return respEnc.Zip
+}
+
 func prepareResponseEncryption(respEnc *ResponseEncryption) (*wireResponseEncryptionRequest, *ecdsa.PrivateKey, error) {
 	if respEnc == nil {
 		return nil, nil, nil
@@ -151,7 +160,12 @@ func encryptRequestBody(body []byte, reqEnc *RequestEncryption) (encoded []byte,
 // must always honor a requested Response encryption — so priv set but
 // an unencrypted response received is treated as an error, the same as
 // the reverse (an encrypted response with no key to decrypt it).
-func decryptResponseBody(body []byte, contentType string, priv *ecdsa.PrivateKey) ([]byte, error) {
+//
+// A compressed ("zip") response is refused unless requestedZip asked
+// for exactly that compression: inflating is the one step where a small
+// response can cost the Wallet far more memory than it sent, so it
+// happens only when the Wallet opted in.
+func decryptResponseBody(body []byte, contentType string, priv *ecdsa.PrivateKey, requestedZip jwe.Zip) ([]byte, error) {
 	encrypted := contentType == "application/jwt"
 	switch {
 	case priv != nil && !encrypted:
@@ -160,6 +174,13 @@ func decryptResponseBody(body []byte, contentType string, priv *ecdsa.PrivateKey
 		return nil, fmt.Errorf("received an encrypted response but no response_encryption was requested")
 	case !encrypted:
 		return body, nil
+	}
+	header, err := jwe.DecodeHeader(string(body))
+	if err != nil {
+		return nil, fmt.Errorf("decrypt response: %w", err)
+	}
+	if zip, present := header["zip"]; present && (requestedZip == "" || zip != string(requestedZip)) {
+		return nil, fmt.Errorf("received a compressed (zip %v) response, which wasn't requested", zip)
 	}
 	plaintext, err := jwe.Decrypt(priv, string(body))
 	if err != nil {
