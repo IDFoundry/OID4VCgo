@@ -8,7 +8,7 @@
 * **deps:** deployments that use fapigo directly alongside this library move to fapigo v0.39.0; its release notes list the migrations (server.GrantedAuthorization.ApprovedIdentityClaims for OIDC claims-parameter identity claims, renamed ReturnInTokenClaims extensions, backchannelhttp.New Config.Transport, federation VerifyTrustMark accreditation and Limits.MaxAuthorityHints).
 * **issuer:** a production issuer (AssuranceProduction) that supports the "attestation" proof type must configure Config.Endpoints.Nonce.
 * **issuer:** a production issuer (AssuranceProduction) using the pre-authorized code flow must set Config.PreAuthorizedCodeClientAuthentication: issuer.AnonymousPreAuthorizedCode{}.
-* **dcql:** verifier.VerifyResponse refuses a dcql.AKITrustedAuthoritiesChecker without Roots when a credential query declares trusted_authorities. Set Roots to the issuer key resolver's trust anchors, e.g.
+* **dcql:** verifier.VerifyResponse refuses a dcql.AKITrustedAuthoritiesChecker without Roots when a credential query declares trusted_authorities. Set Roots to the issuer key resolver's trust anchors, e.g. `dcql.AKITrustedAuthoritiesChecker{Roots: issuerRoots}`.
 
 ### Bug Fixes
 
