@@ -52,6 +52,23 @@ func VerifyLeaf(ders [][]byte, roots *x509.CertPool) (*x509.Certificate, error) 
 	return leaf, err
 }
 
+// VerifyLeafWithPolicy is VerifyLeaf, then policy (if non-nil) on the
+// verified leaf and its verified paths — the role-specific check
+// (extended key usage, certificate policy, issuer) chain validation
+// alone doesn't make, since it accepts any key usage.
+func VerifyLeafWithPolicy(ders [][]byte, roots *x509.CertPool, policy func(leaf *x509.Certificate, chains [][]*x509.Certificate) error) (*x509.Certificate, error) {
+	leaf, chains, err := VerifyChains(ders, roots)
+	if err != nil {
+		return nil, err
+	}
+	if policy != nil {
+		if err := policy(leaf, chains); err != nil {
+			return nil, fmt.Errorf("certchain: leaf certificate policy: %w", err)
+		}
+	}
+	return leaf, nil
+}
+
 // VerifyChains is VerifyLeaf, also returning every verified path from
 // the leaf to a certificate in roots (leaf first, root last), as
 // crypto/x509's own Verify builds them. What a verified path says

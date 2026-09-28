@@ -2,6 +2,7 @@ package statuslist
 
 import (
 	"crypto"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -73,6 +74,15 @@ func issueToken(signer crypto.Signer, alg jose.Alg, claims TokenClaims, header m
 // VerifyOptions configures VerifyToken.
 type VerifyOptions struct {
 	Now func() time.Time // defaults to time.Now
+
+	// LeafPolicy, used by CheckX5C/CheckCWTX5Chain only, is run on the
+	// token signer's chain-verified certificate and its verified paths,
+	// and can refuse it. Chain validation accepts any certificate under
+	// the roots, whatever its role, and nothing ties the status list's
+	// signer to the Referenced Token's issuer: use it to require that
+	// tie, or the signer's role (an extended key usage, a certificate
+	// policy), where the roots are shared.
+	LeafPolicy func(leaf *x509.Certificate, chains [][]*x509.Certificate) error
 }
 
 // maxTokenBytes is this package's own ceiling on the compact JWS

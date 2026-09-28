@@ -1,6 +1,10 @@
 package issuer
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/idfoundry/oid4vcgo"
+)
 
 // AssuranceLevel gates how strict New's validation of Config and
 // Dependencies is — the same mechanism FAPIgo's own server.New/client.New
@@ -141,6 +145,13 @@ func checkKeySourceAssurance(name string, source any) error {
 // AssuranceProduction. Split out of New purely to keep its own
 // cognitive complexity manageable.
 func checkProductionAssurance(cfg Config, deps Dependencies) error {
+	if cfg.Endpoints.Nonce.IsZero() {
+		for id, cc := range cfg.CredentialConfigurationsSupported {
+			if _, ok := cc.ProofTypesSupported[oid4vci.ProofTypeAttestation]; ok {
+				return fmt.Errorf("credential_configurations_supported[%q]: the %q proof type requires endpoints.nonce under AssuranceProduction (without a c_nonce an attestation-type proof has no freshness or binding to this issuer)", id, oid4vci.ProofTypeAttestation)
+			}
+		}
+	}
 	if !cfg.Endpoints.Nonce.IsZero() {
 		if err := checkStoreAssurance("nonces", deps.Nonces, true); err != nil {
 			return err

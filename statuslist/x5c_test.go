@@ -2,6 +2,7 @@ package statuslist
 
 import (
 	"crypto/x509"
+	"errors"
 	"testing"
 	"time"
 
@@ -99,6 +100,15 @@ func TestX5C_Rejects(t *testing.T) {
 	}
 	if _, err := IssueTokenCWTX5Chain(leafKey, cose.ES256, claims, nil); err == nil {
 		t.Error("IssueTokenCWTX5Chain accepted an empty chain")
+	}
+	refuse := VerifyOptions{LeafPolicy: func(*x509.Certificate, [][]*x509.Certificate) error {
+		return errors.New("not this credential's issuer")
+	}}
+	if _, _, err := CheckX5C(jwt, roots, ref, refuse); err == nil {
+		t.Error("CheckX5C accepted a signer its LeafPolicy refused")
+	}
+	if _, _, err := CheckCWTX5Chain(cwt, roots, ref, refuse); err == nil {
+		t.Error("CheckCWTX5Chain accepted a signer its LeafPolicy refused")
 	}
 	if _, _, err := CheckX5C("not.a.token", roots, ref, VerifyOptions{}); err == nil {
 		t.Error("CheckX5C accepted a malformed token")

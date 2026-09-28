@@ -30,6 +30,15 @@ type X5CIssuerKeyResolver struct {
 	// Roots is the trust anchor set a presented x5c chain must
 	// validate against. REQUIRED.
 	Roots *x509.CertPool
+	// LeafPolicy, if set, is run on the chain-verified leaf and its
+	// verified paths, and can refuse it. Chain validation accepts a
+	// leaf with any key usage, so a certificate issued for another role
+	// under the same Roots (a relying party's, a wallet provider's)
+	// would otherwise be accepted too: prefer Roots that anchor only
+	// this role's certificates, and use LeafPolicy to require what
+	// distinguishes them (an extended key usage, a certificate policy)
+	// where the anchors are shared.
+	LeafPolicy func(leaf *x509.Certificate, chains [][]*x509.Certificate) error
 }
 
 // ResolveIssuerKey implements SDJWTVCIssuerKeyResolver.
@@ -38,7 +47,7 @@ func (r X5CIssuerKeyResolver) ResolveIssuerKey(_ context.Context, header, _ map[
 	if err != nil {
 		return nil, "", err
 	}
-	leaf, err := certchain.VerifyLeaf(ders, r.Roots)
+	leaf, err := certchain.VerifyLeafWithPolicy(ders, r.Roots, r.LeafPolicy)
 	if err != nil {
 		return nil, "", err
 	}
