@@ -1,7 +1,9 @@
 package passport
 
 import (
+	"bytes"
 	"errors"
+	"image/jpeg"
 	"os"
 	"testing"
 	"time"
@@ -93,6 +95,11 @@ func TestVerifySample(t *testing.T) {
 	}
 	if e.Identity.BirthDate.Youngest.IsZero() {
 		t.Error("no usable birth date")
+	}
+	if len(e.Raw.DG2) > 0 {
+		if _, err := jpeg.DecodeConfig(bytes.NewReader(e.Portrait)); err != nil {
+			t.Error("DG2 present but no displayable JPEG portrait")
+		}
 	}
 }
 

@@ -7,6 +7,9 @@ import (
 	"bytes"
 	"crypto/tls"
 	"crypto/x509"
+	"image"
+	"image/color"
+	"image/jpeg"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -174,6 +177,22 @@ func SyntheticEvidence() passport.Evidence {
 		Raw: passport.RawDataGroups{
 			SOD: []byte("synthetic-sod"), DG1: []byte("synthetic-dg1"), DG2: bytes.Repeat([]byte{0xAB}, 20<<10),
 		},
-		Checks: passport.Checks{PassiveAuthentication: true, ChipAuthenticity: "n/a"},
+		Portrait: SyntheticPortrait(),
+		Checks:   passport.Checks{PassiveAuthentication: true, ChipAuthenticity: "n/a"},
 	}
+}
+
+// SyntheticPortrait is a small JPEG standing in for a passport photo.
+func SyntheticPortrait() []byte {
+	img := image.NewGray(image.Rect(0, 0, 90, 120))
+	for y := range 120 {
+		for x := range 90 {
+			img.SetGray(x, y, color.Gray{Y: uint8(x + y)})
+		}
+	}
+	var b bytes.Buffer
+	if err := jpeg.Encode(&b, img, nil); err != nil {
+		panic(err)
+	}
+	return b.Bytes()
 }

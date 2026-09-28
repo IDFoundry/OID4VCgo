@@ -53,15 +53,23 @@ func buildQuery(mode Mode, vct string, trusted dcql.TrustedAuthoritiesQuery) (dc
 	}
 
 	var mdocClaims, sdjwtClaims []dcql.ClaimsQuery
+	var claimSets [][]string
 	switch mode {
 	case ModeIssuer:
-		for _, el := range []string{credential.FamilyName, credential.GivenName, credential.Nationality, "age_over_18"} {
+		for _, el := range []string{credential.FamilyName, credential.GivenName, credential.Nationality, "age_over_18", credential.Portrait} {
 			mdocClaims = append(mdocClaims, claim(credential.IdentityNamespace, el))
 		}
 		sdjwtClaims = []dcql.ClaimsQuery{
 			claim(credential.FamilyName), claim(credential.GivenName),
 			claim(credential.SDJWTNationalities), claim(credential.SDJWTAgeEqualOrOver, "18"),
+			claim(credential.SDJWTPicture),
 		}
+		// The portrait is asked for, not required: a passport without a
+		// usable face image has none, and still answers with the rest
+		// (DCQL claim_sets, most preferred first).
+		identified(mdocClaims)
+		identified(sdjwtClaims)
+		claimSets = [][]string{{"c0", "c1", "c2", "c3", "c4"}, {"c0", "c1", "c2", "c3"}}
 	case ModeICAO:
 		mdocClaims = []dcql.ClaimsQuery{claim(credential.ICAONamespace, credential.ICAOSOD), claim(credential.ICAONamespace, credential.ICAODG1)}
 		sdjwtClaims = []dcql.ClaimsQuery{claim(credential.ICAOSOD), claim(credential.ICAODG1)}
@@ -72,8 +80,8 @@ func buildQuery(mode Mode, vct string, trusted dcql.TrustedAuthoritiesQuery) (dc
 	trustedAuthorities := []dcql.TrustedAuthoritiesQuery{trusted}
 	q := dcql.Query{
 		Credentials: []dcql.CredentialQuery{
-			{ID: mdocQueryID, Format: mdoc.CredentialFormat, Meta: mdocMeta, Claims: mdocClaims, TrustedAuthorities: trustedAuthorities},
-			{ID: sdjwtQueryID, Format: sdjwtvc.CredentialFormat, Meta: sdjwtMeta, Claims: sdjwtClaims, TrustedAuthorities: trustedAuthorities},
+			{ID: mdocQueryID, Format: mdoc.CredentialFormat, Meta: mdocMeta, Claims: mdocClaims, ClaimSets: claimSets, TrustedAuthorities: trustedAuthorities},
+			{ID: sdjwtQueryID, Format: sdjwtvc.CredentialFormat, Meta: sdjwtMeta, Claims: sdjwtClaims, ClaimSets: claimSets, TrustedAuthorities: trustedAuthorities},
 		},
 		CredentialSets: []dcql.CredentialSetQuery{{Options: [][]string{{mdocQueryID}, {sdjwtQueryID}}}},
 	}
@@ -89,4 +97,12 @@ func claim(path ...string) dcql.ClaimsQuery {
 		p[i] = dcql.PathKey(k)
 	}
 	return dcql.ClaimsQuery{Path: p}
+}
+
+// identified gives each claim query the id "c<index>", for claim_sets
+// to refer to.
+func identified(claims []dcql.ClaimsQuery) {
+	for i := range claims {
+		claims[i].ID = fmt.Sprintf("c%d", i)
+	}
 }

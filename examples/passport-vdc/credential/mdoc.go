@@ -42,6 +42,9 @@ func MdocClaims(e passport.Evidence, o Options) (*mdoc.Claims, error) {
 	if id.BirthDate.Known() {
 		identity[BirthDate] = fullDate(id.BirthDate.Date)
 	}
+	if len(e.Portrait) > 0 {
+		identity[Portrait] = e.Portrait
+	}
 	for threshold, over := range ageClaims(e, o) {
 		identity[mdocAgeOverPrefix+strconv.Itoa(threshold)] = over
 	}

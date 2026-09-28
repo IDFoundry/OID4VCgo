@@ -51,6 +51,9 @@ func SDJWTClaims(e passport.Evidence, vct string, o Options) (*sdjwtvc.Claims, e
 	if id.BirthDate.Known() {
 		claims[SDJWTBirthDate] = sdjwtvc.SD(id.BirthDate.Date.Format(time.DateOnly))
 	}
+	if len(e.Portrait) > 0 {
+		claims[SDJWTPicture] = sdjwtvc.SD(portraitDataURI(e.Portrait))
+	}
 	if ages := ageClaims(e, o); len(ages) > 0 {
 		over := make(map[string]any, len(ages))
 		for threshold, v := range ages {

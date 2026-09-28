@@ -1,6 +1,7 @@
 package verifierapp_test
 
 import (
+	"bytes"
 	"context"
 	"net/url"
 	"os"
@@ -86,11 +87,37 @@ func TestEndToEnd_TrustIssuer(t *testing.T) {
 			if out.ICAO != nil {
 				t.Error("an issuer-mode request ran the ICAO check")
 			}
+			if got, ok := credential.PortraitJPEG(out.Claims); !ok || !bytes.Equal(got, demotest.SyntheticPortrait()) {
+				t.Error("the portrait wasn't disclosed intact")
+			}
 			// Only what was asked for is disclosed.
 			for _, withheld := range []string{credential.DocumentNumber, credential.ICAOSOD, credential.ICAODG2} {
 				if _, ok := out.Claims[withheld]; ok {
 					t.Errorf("%s was disclosed without being requested", withheld)
 				}
+			}
+		})
+	}
+}
+
+// TestEndToEnd_TrustIssuer_NoPortrait checks the portrait is asked for,
+// not required: a credential from a passport without a usable face
+// image still answers the issuer-mode request.
+func TestEndToEnd_TrustIssuer_NoPortrait(t *testing.T) {
+	env := demotest.New(t, nil)
+	env.StartVerifier(t, nil)
+	e := demotest.SyntheticEvidence()
+	e.Portrait = nil
+	store := receiveInto(t, env, e)
+
+	for _, format := range []string{"mso_mdoc", "dc+sd-jwt"} {
+		t.Run(format, func(t *testing.T) {
+			out := present(t, env, store, verifierapp.ModeIssuer, format)
+			if out.Claims[credential.FamilyName] != "DOE" {
+				t.Errorf("outcome = %+v", out)
+			}
+			if _, ok := credential.PortraitJPEG(out.Claims); ok {
+				t.Error("a portrait was disclosed from a credential without one")
 			}
 		})
 	}
@@ -118,6 +145,9 @@ func TestEndToEnd_TrustICAO_SyntheticSODFails(t *testing.T) {
 			}
 			if _, ok := out.Claims[credential.ICAODG2]; ok {
 				t.Error("icao_dg2 (the photo) was disclosed without being requested")
+			}
+			if _, ok := credential.PortraitJPEG(out.Claims); ok {
+				t.Error("the portrait was disclosed to an ICAO-only request")
 			}
 			if _, ok := out.Claims[credential.FamilyName]; ok {
 				t.Error("family_name was disclosed to an ICAO-only request")

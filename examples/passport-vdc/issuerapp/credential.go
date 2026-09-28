@@ -165,6 +165,7 @@ func (a *App) handleVCTMetadata(w http.ResponseWriter, _ *http.Request) {
 			claim("Document number", credential.DocumentNumber),
 			claim("Passport expiry", credential.ExpiryDate),
 			claim("Sex", credential.Sex),
+			claim("Portrait", credential.SDJWTPicture),
 			claim("ICAO Document Security Object (raw)", credential.ICAOSOD),
 			claim("ICAO DG1 — MRZ (raw)", credential.ICAODG1),
 			claim("ICAO DG2 — facial image (raw)", credential.ICAODG2),

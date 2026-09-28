@@ -27,6 +27,13 @@ Both credentials carry the same content:
 
 - **Identity attributes** — names, date of birth, age claims, sex,
   nationality, issuing country, document number, expiry.
+- **The portrait** — DG2's face image as a displayable JPEG (mdoc
+  `portrait` bytes, SD-JWT `picture` as a `data:image/jpeg` URL).
+  Passports usually store it as JPEG 2000, which browsers can't show, so
+  the issuer converts it (pure Go, [go-jpeg2000](https://github.com/mrjoshuak/go-jpeg2000)).
+  It's the demo issuer's copy, not country-signed: a verifier that
+  needs the country's signature requests `icao_dg2` with the SOD
+  instead. Omitted when the passport has no usable face image.
 - **The raw ICAO data groups** — `icao_sod`, `icao_dg1`, and `icao_dg2`
   / `icao_dg11` when the passport has them — **one selectively
   disclosable element (mdoc) or claim (SD-JWT) each**, byte-for-byte as
@@ -133,7 +140,8 @@ issuer's redirect back is bound to the browser that started receiving
    a six-digit confirmation code. Click **Open in web wallet**, confirm,
    and continue to the issuer.
 3. On the issuer's approval page, enter the confirmation code and
-   **Approve**. You're back in the wallet with both credentials.
+   **Approve**. You're back in the wallet with both credentials, each
+   showing the passport photo.
 
 **5. Verify.**
 
@@ -280,7 +288,7 @@ It checks:
 
 | | Trust the issuer | Trust only the issuing country |
 |---|---|---|
-| Requested | `family_name`, `given_name`, nationality, `age_over_18` | `icao_sod`, `icao_dg1` — nothing else, not the photo |
+| Requested | `family_name`, `given_name`, nationality, `age_over_18`, and the portrait when there is one (DCQL `claim_sets`) — shown on the result page | `icao_sod`, `icao_dg1` — nothing else, not the photo |
 | Issuer signature | verified, chained to the demo issuer's CA (`issuer-ca.pem`) | verified, likewise |
 | Revocation | the issuer's Token Status List says the credential is valid | likewise |
 | Holder binding | key-binding / device signature over the verifier's nonce | likewise |

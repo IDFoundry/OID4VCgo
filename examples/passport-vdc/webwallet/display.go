@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"html/template"
 	"sort"
 	"strings"
 
@@ -11,6 +12,7 @@ import (
 
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
+	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/credential"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/walletapp"
 )
 
@@ -21,7 +23,10 @@ type card struct {
 	Title  string
 	Claims [][2]string // label, value
 	Raw    [][2]string // raw ICAO data groups: name, size
-	Error  string
+	// Portrait is the holder's photo as a data: URL, shown as an image
+	// rather than a claim row.
+	Portrait template.URL
+	Error    string
 }
 
 // hiddenClaims are SD-JWT/registered claims not worth showing a holder.
@@ -46,13 +51,16 @@ func cardFor(s walletapp.Stored) card {
 		return c
 	}
 
+	if uri, ok := credential.PortraitDataURI(claims); ok {
+		c.Portrait = template.URL(uri) // #nosec G203 -- built by PortraitDataURI from decoded JPEG bytes
+	}
 	keys := make([]string, 0, len(claims))
 	for k := range claims {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
 	for _, k := range keys {
-		if hiddenClaims[k] {
+		if hiddenClaims[k] || k == credential.Portrait || k == credential.SDJWTPicture {
 			continue
 		}
 		v := claims[k]
