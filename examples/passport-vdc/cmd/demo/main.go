@@ -11,6 +11,10 @@
 // wallet's credential store. The verifier's request-signing CA is
 // regenerated each run and handed to the wallet directly.
 //
+// With -open it also starts Chrome on the three URLs, in a separate
+// profile (state/chrome-profile) that accepts the demo's certificate —
+// and only that one — without a warning.
+//
 // The state directory holds credentials made from a real passport, if
 // you upload one: delete it (or pass -reset) when you're done.
 package main
@@ -23,6 +27,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -53,6 +58,8 @@ const (
 func main() {
 	state := flag.String("state", ".demo-state", "directory the demo keeps its keys, certificates, status list and wallet store in")
 	reset := flag.Bool("reset", false, "delete the state directory first, starting over")
+	open := flag.Bool("open", false, "open the demo in Chrome, in a separate profile that trusts the demo's certificate (no warnings)")
+	chrome := flag.String("chrome", "", "with -open: the Chrome or Chromium executable (default: look in the usual places)")
 	flag.Parse()
 
 	if *reset {
@@ -62,12 +69,20 @@ func main() {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if err := run(ctx, *state); err != nil {
+	if err := run(ctx, options{state: *state, open: *open, chrome: *chrome}); err != nil {
 		log.Fatal(err)
 	}
 }
 
-func run(ctx context.Context, state string) error {
+// options are the command-line choices run acts on.
+type options struct {
+	state  string
+	open   bool   // open Chrome on the demo once it's listening
+	chrome string // Chrome's path, when not in the usual places
+}
+
+func run(ctx context.Context, opts options) error {
+	state := opts.state
 	issuerState := filepath.Join(state, "issuer")
 	if err := os.MkdirAll(issuerState, 0o700); err != nil {
 		return fmt.Errorf("create %s: %w", issuerState, err)
@@ -131,20 +146,38 @@ func run(ctx context.Context, state string) error {
 		// credential requests.
 		demotls.Server(walletAddr, webWallet, cert, 2*time.Minute),
 	}
-	return serve(ctx, servers, state)
+	return serve(ctx, servers, opts, leaf)
 }
 
-// serve runs servers until ctx is done or one of them fails.
-func serve(ctx context.Context, servers []*http.Server, state string) error {
-	failed := make(chan error, len(servers))
+// serve runs servers until ctx is done or one of them fails. Each
+// listens before anything else happens, so a port in use fails at once
+// and a browser opened with -open never races the servers.
+func serve(ctx context.Context, servers []*http.Server, opts options, cert *x509.Certificate) error {
+	listeners := make([]net.Listener, 0, len(servers))
 	for _, srv := range servers {
+		ln, err := net.Listen("tcp", srv.Addr)
+		if err != nil {
+			for _, l := range listeners {
+				_ = l.Close()
+			}
+			return fmt.Errorf("listen on %s: %w", srv.Addr, err)
+		}
+		listeners = append(listeners, ln)
+	}
+	failed := make(chan error, len(servers))
+	for i, srv := range servers {
 		go func() {
-			if err := srv.ListenAndServeTLS("", ""); !errors.Is(err, http.ErrServerClosed) {
+			if err := srv.ServeTLS(listeners[i], "", ""); !errors.Is(err, http.ErrServerClosed) {
 				failed <- fmt.Errorf("%s: %w", srv.Addr, err)
 			}
 		}()
 	}
-	printBanner(state)
+	printBanner(opts.state, opts.open)
+	if opts.open {
+		if err := openChrome(opts.chrome, opts.state, cert, issuerURL, verifierURL, walletURL); err != nil {
+			log.Printf("couldn't open Chrome (%v); open the URLs above yourself", err)
+		}
+	}
 
 	var err error
 	select {
@@ -159,7 +192,14 @@ func serve(ctx context.Context, servers []*http.Server, state string) error {
 	return err
 }
 
-func printBanner(state string) {
+func printBanner(state string, open bool) {
+	browser := fmt.Sprintf(`First time in this browser: open each URL once and accept the
+self-signed certificate warning (or run with -open). The certificate is
+kept in %s, so you won't be asked again.`, state)
+	if open {
+		browser = `Opening them in Chrome, in a separate demo profile that trusts the
+demo's certificate — use that window for the whole demo.`
+	}
 	fmt.Printf(`
 passport-vdc demo is running (Ctrl-C to stop)
 
@@ -167,9 +207,7 @@ passport-vdc demo is running (Ctrl-C to stop)
   verifier  %s   ask for the credential
   wallet    %s   holds it
 
-First time in this browser: open each URL once and accept the
-self-signed certificate warning. The certificate is kept in %s, so
-you won't be asked again.
+%s
 
 CLI wallet, sharing the web wallet's credentials:
   go run ./cmd/wallet receive -state %s '<offer link>'
@@ -177,7 +215,7 @@ CLI wallet, sharing the web wallet's credentials:
 %s holds credentials made from any passport you upload: delete it,
 or run with -reset, when you're done.
 
-`, issuerURL, verifierURL, walletURL, state, state, state)
+`, issuerURL, verifierURL, walletURL, browser, state, state)
 }
 
 func writeCertificates(dir string, certs map[string]*x509.Certificate) error {
