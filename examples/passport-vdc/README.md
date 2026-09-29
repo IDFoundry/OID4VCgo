@@ -126,12 +126,24 @@ doesn't warn again. `go run ./cmd/demo -reset` deletes it and starts
 over. It holds credentials made from your passport, and their holder
 keys, unencrypted: delete it (or `-reset`) when you're done.
 
-**1. Accept the certificate (once).** The servers use a self-signed
-certificate: in the browser you'll use, open https://127.0.0.1:8543,
-https://127.0.0.1:9443 and https://127.0.0.1:7443 and accept the
-warning, or trust `.demo-state/tls-cert.pem`. It's reused on every run.
-The issuer uses 8543 rather than 8443 so it doesn't collide with a
-locally running OIDF conformance suite.
+**1. Open the demo in a browser.** The servers use a self-signed
+certificate. The easiest way past it:
+
+```sh
+go run ./cmd/demo -open
+```
+
+This starts Chrome (or Chromium; `-chrome` gives its path) on the three
+URLs, in a separate profile under `.demo-state/chrome-profile` that
+accepts the demo's certificate — only that one, identified by its key —
+without a warning. Chrome shows a banner about an unsupported
+command-line flag; that's expected. Use that window for the whole demo.
+
+Otherwise, in the browser you'll use, open https://127.0.0.1:8543,
+https://127.0.0.1:9443 and https://127.0.0.1:7443 and accept the warning,
+or trust `.demo-state/tls-cert.pem`. The certificate is reused on every
+run, so this is once. The issuer uses 8543 rather than 8443 so it doesn't
+collide with a locally running OIDF conformance suite.
 
 **2. Issue, in the browser.** Use the same browser throughout: the
 issuer's redirect back is bound to the browser that started receiving
