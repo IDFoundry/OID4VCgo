@@ -158,6 +158,11 @@ func loadStatusList(dir string) (*statusList, error) {
 			return nil, fmt.Errorf("issuerapp: %s: index %d is out of range", s.path, e.Idx)
 		}
 		e := e
+		if e.Handle == "" { // saved before handles existed
+			if e.Handle, err = newHandle(); err != nil {
+				return nil, err
+			}
+		}
 		s.entries[e.Idx] = &e
 		if e.Revoked {
 			s.revoked[e.Idx] = 1

@@ -6,10 +6,12 @@ import (
 	"io"
 	"net/http"
 	"net/http/cookiejar"
+	"net/http/httptest"
 	"net/url"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -84,7 +86,11 @@ func receiveViaBrowser(t *testing.T, env *demotest.Env, b *http.Client) {
 		t.Fatalf("GET authorize: %v", err)
 	}
 	handle := resp.Header.Get("X-Interaction-Handle")
-	_ = resp.Body.Close()
+	// The approval page is shown before the confirmation code is checked,
+	// so it must not show the passport's data.
+	if page := read(t, resp); strings.Contains(page, "DOE") || strings.Contains(page, "K0000000A") {
+		t.Error("the issuer's approval page shows passport data before the confirmation code")
+	}
 	resp, err = b.PostForm(env.IssuerURL+"/authorize/decision", url.Values{"handle": {handle}, "decision": {"approve"}, "code": {offer.ConfirmationCode}})
 	callback := mustRedirect(t, resp, err, "approve")
 	if !strings.HasPrefix(callback.String(), env.WebWalletURL+"/callback") {
@@ -97,6 +103,26 @@ func receiveViaBrowser(t *testing.T, env *demotest.Env, b *http.Client) {
 	}
 }
 
+// openConsent follows a web wallet /present link: the GET shows a
+// confirmation page (fetching nothing), whose form POSTs the request
+// for review. It returns the consent page.
+func openConsent(t *testing.T, env *demotest.Env, b *http.Client, presentURL string) string {
+	t.Helper()
+	resp, err := b.Get(presentURL)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /present: %v %v", resp, err)
+	}
+	m := regexp.MustCompile(`name="request" value="([^"]+)"`).FindStringSubmatch(read(t, resp))
+	if m == nil {
+		t.Fatal("the /present confirmation page has no review form")
+	}
+	resp, err = b.PostForm(env.WebWalletURL+"/present", url.Values{"request": {html.UnescapeString(m[1])}})
+	if err != nil || resp.StatusCode != http.StatusOK {
+		t.Fatalf("POST /present: %v %v", resp, err)
+	}
+	return read(t, resp)
+}
+
 // reviewRequest opens a verifier request in the web wallet and returns
 // the consent page and its decision URL.
 func reviewRequest(t *testing.T, env *demotest.Env, b *http.Client, mode verifierapp.Mode) (id, page, decisionURL string) {
@@ -105,11 +131,7 @@ func reviewRequest(t *testing.T, env *demotest.Env, b *http.Client, mode verifie
 	if err != nil {
 		t.Fatalf("CreateRequest: %v", err)
 	}
-	resp, err := b.Get(env.WebWalletURL + "/present?request=" + url.QueryEscape(link))
-	if err != nil || resp.StatusCode != http.StatusOK {
-		t.Fatalf("GET /present: %v %v", resp, err)
-	}
-	page = read(t, resp)
+	page = openConsent(t, env, b, env.WebWalletURL+"/present?request="+url.QueryEscape(link))
 	m := regexp.MustCompile(`action="(/present/[^"]+)"`).FindStringSubmatch(page)
 	if m == nil {
 		t.Fatal("consent page has no decision form")
@@ -292,11 +314,7 @@ func shareSameDevice(t *testing.T, env *demotest.Env, b *http.Client) (resultPat
 	if m == nil {
 		t.Fatal("the request page has no web wallet link")
 	}
-	resp, err = b.Get(m[1])
-	if err != nil || resp.StatusCode != http.StatusOK {
-		t.Fatalf("GET /present: %v %v", resp, err)
-	}
-	d := regexp.MustCompile(`action="(/present/[^"]+)"`).FindStringSubmatch(read(t, resp))
+	d := regexp.MustCompile(`action="(/present/[^"]+)"`).FindStringSubmatch(openConsent(t, env, b, html.UnescapeString(m[1])))
 	if d == nil {
 		t.Fatal("consent page has no decision form")
 	}
@@ -422,5 +440,54 @@ func TestWebWallet_RefusesCallbackInAnotherBrowser(t *testing.T) {
 	}
 	if held, err := store.List(); err != nil || len(held) != 0 {
 		t.Errorf("store holds %d credentials (%v) after a refused callback, want none", len(held), err)
+	}
+}
+
+// TestWebWallet_GETFetchesNothing: opening a /present link — which any
+// site can make a browser do — doesn't make the wallet contact the
+// request_uri; only the holder's same-origin POST does.
+func TestWebWallet_GETFetchesNothing(t *testing.T) {
+	env := demotest.New(t, nil)
+	env.StartWebWallet(t, walletapp.Store{Dir: filepath.Join(t.TempDir(), "wallet")})
+	var hits atomic.Int32
+	// Plain http on loopback: the demo wallet's fetcher allows it, so an
+	// unwanted fetch would reach the handler.
+	target := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { hits.Add(1) }))
+	defer target.Close()
+	link := "openid4vp://?" + url.Values{"client_id": {"x509_hash:abc"}, "request_uri": {target.URL + "/request"}}.Encode()
+
+	resp, err := browser(env).Get(env.WebWalletURL + "/present?request=" + url.QueryEscape(link))
+	if err != nil {
+		t.Fatalf("GET /present: %v", err)
+	}
+	page := read(t, resp)
+	if n := hits.Load(); n != 0 {
+		t.Errorf("GET /present contacted the request_uri %d time(s)", n)
+	}
+	if resp.StatusCode != http.StatusOK || !strings.Contains(page, "Review the request") {
+		t.Errorf("GET /present: status %d, want the confirmation page", resp.StatusCode)
+	}
+}
+
+// TestWebWallet_RefusesCrossOriginPosts: a form another site posts into
+// this wallet — to receive, review or share — is refused.
+func TestWebWallet_RefusesCrossOriginPosts(t *testing.T) {
+	env := demotest.New(t, nil)
+	env.StartWebWallet(t, walletapp.Store{Dir: filepath.Join(t.TempDir(), "wallet")})
+	for _, path := range []string{"/receive", "/present", "/present/some-id"} {
+		req, err := http.NewRequest(http.MethodPost, env.WebWalletURL+path, strings.NewReader("offer=x&request=x&decision=share"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("Origin", "https://attacker.example")
+		resp, err := browser(env).Do(req)
+		if err != nil {
+			t.Fatalf("POST %s: %v", path, err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusForbidden {
+			t.Errorf("cross-origin POST %s: status %d, want 403", path, resp.StatusCode)
+		}
 	}
 }

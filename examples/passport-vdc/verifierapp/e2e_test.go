@@ -6,7 +6,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -216,16 +215,16 @@ func TestEndToEnd_Revocation(t *testing.T) {
 		}
 	}
 
-	revoked := -1
+	revoked := ""
 	for _, s := range env.Issuer.IssuedStatuses() {
 		if s.Format == "mso_mdoc" {
-			revoked = s.Idx
+			revoked = s.Handle
 		}
 	}
-	if revoked < 0 {
+	if revoked == "" {
 		t.Fatal("the issuer recorded no mso_mdoc credential")
 	}
-	resp, err := env.HTTP.PostForm(env.IssuerURL+"/status/revoke", url.Values{"idx": {strconv.Itoa(revoked)}})
+	resp, err := env.HTTP.PostForm(env.IssuerURL+"/status/revoke", url.Values{"handle": {revoked}})
 	if err != nil {
 		t.Fatalf("revoke: %v", err)
 	}

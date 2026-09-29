@@ -63,8 +63,8 @@ func main() {
 	flag.Parse()
 
 	if *reset {
-		if err := os.RemoveAll(*state); err != nil {
-			log.Fatalf("reset %s: %v", *state, err)
+		if err := resetState(*state); err != nil {
+			log.Fatal(err)
 		}
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -72,6 +72,41 @@ func main() {
 	if err := run(ctx, options{state: *state, open: *open, chrome: *chrome}); err != nil {
 		log.Fatal(err)
 	}
+}
+
+// stateMarker is written into every state directory, so -reset deletes
+// only a directory this demo made.
+const stateMarker = ".passport-vdc-demo-state"
+
+// resetState deletes the state directory dir — but only one this demo
+// made, so a mistyped -state can't delete anything else. A directory
+// that doesn't exist yet is fine.
+func resetState(dir string) error {
+	entries, err := os.ReadDir(dir)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		return nil
+	case err != nil:
+		return fmt.Errorf("reset %s: %w", dir, err)
+	}
+	if len(entries) > 0 && !isDemoState(dir) {
+		return fmt.Errorf("reset %s: refusing — it isn't a passport-vdc demo state directory (no %s); delete it yourself if you mean to", dir, stateMarker)
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		return fmt.Errorf("reset %s: %w", dir, err)
+	}
+	return nil
+}
+
+// isDemoState reports whether dir was made by this demo: it has the
+// marker, or — made before the marker existed — the demo's TLS
+// certificate and issuer state.
+func isDemoState(dir string) bool {
+	exists := func(name string) bool {
+		_, err := os.Stat(filepath.Join(dir, name))
+		return err == nil
+	}
+	return exists(stateMarker) || (exists("tls-cert.pem") && exists("issuer"))
 }
 
 // options are the command-line choices run acts on.
@@ -86,6 +121,9 @@ func run(ctx context.Context, opts options) error {
 	issuerState := filepath.Join(state, "issuer")
 	if err := os.MkdirAll(issuerState, 0o700); err != nil {
 		return fmt.Errorf("create %s: %w", issuerState, err)
+	}
+	if err := os.WriteFile(filepath.Join(state, stateMarker), []byte("passport-vdc demo state: delete with `go run ./cmd/demo -reset`\n"), 0o600); err != nil { // #nosec G703 -- operator-supplied state directory
+		return fmt.Errorf("mark %s: %w", state, err)
 	}
 	cert, leaf, err := demotls.PersistentCertificate(state, "passport-vdc demo (TLS)")
 	if err != nil {

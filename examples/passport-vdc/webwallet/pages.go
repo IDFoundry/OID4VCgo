@@ -45,7 +45,7 @@ var homeTemplate = template.Must(template.New("home").Parse(pageHead + `
 <label>Receive a credential — paste an offer link:<br><input type="text" name="offer" placeholder="openid-credential-offer://…" required></label>
 <button>Receive</button>
 </form>
-<form method="get" action="/present">
+<form method="post" action="/present">
 <label>Answer a verifier — paste a request link:<br><input type="text" name="request" placeholder="openid4vp://…" required></label>
 <button>Review request</button>
 </form>
@@ -72,6 +72,16 @@ var confirmReceiveTemplate = template.Must(template.New("receive").Parse(pageHea
 <form method="post" action="/receive">
 <input type="hidden" name="offer" value="{{.Offer}}">
 <button>Continue to the issuer</button> <a href="/">Cancel</a>
+</form>
+` + pageFoot))
+
+var confirmPresentTemplate = template.Must(template.New("present").Parse(pageHead + `
+<h1>Answer a verifier?</h1>
+{{if .Host}}<p>The request is at <code>{{.Host}}</code>.</p>{{end}}
+<p>The wallet will fetch it, check who signed it, and show you what it asks for. Nothing is shared until you choose.</p>
+<form method="post" action="/present">
+<input type="hidden" name="request" value="{{.Request}}">
+<button>Review the request</button> <a href="/">Cancel</a>
 </form>
 ` + pageFoot))
 
