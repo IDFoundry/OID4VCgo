@@ -29,12 +29,14 @@
 //
 // Check implements draft-14 §8.3 steps 3-7: verifying the Status List
 // Token's signature and claims, decompressing its Status List, and
-// reading the status at a given index. Steps 1-2 — locating the status
-// claim on an already-validated Referenced Token, and fetching the
-// Status List Token from its uri — are the caller's job, the same
-// division credential/sdjwtvc draws between disclosure processing and
-// key resolution: this package has no HTTP client and no opinion on
-// how a Referenced Token itself is validated. CheckX5C/CheckCWTX5Chain
-// do the same for a token carrying its signer's certificate chain,
-// verifying that chain to a set of trust anchors first.
+// reading the status at a given index. CheckX5C/CheckCWTX5Chain do the
+// same for a token carrying its signer's certificate chain, verifying
+// that chain to a set of trust anchors first.
+//
+// Checker adds fetching the token (Fetcher: https only, no redirects,
+// the requested media type, a size limit), so a verifier checks a
+// credential's status in one call. Locating the reference on an
+// already-validated Referenced Token stays with its format:
+// verifier.VerifiedCredential.StatusListRef does it for a presented
+// credential.
 package statuslist
