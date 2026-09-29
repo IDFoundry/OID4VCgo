@@ -379,7 +379,7 @@ func TestNewTransactions_Validates(t *testing.T) {
 
 func TestTransactions_HandlerEdges(t *testing.T) {
 	f := newTxFixture(t, func(c *verifier.TransactionsConfig) { c.Verify.Now = nil }) // the real clock
-	reqObj := httptest.NewServer(f.txs.RequestObjectHandler())                       // no {id} pattern: last path segment
+	reqObj := httptest.NewServer(f.txs.RequestObjectHandler())                        // no {id} pattern: last path segment
 	defer reqObj.Close()
 	resp := httptest.NewServer(f.txs.ResponseHandler())
 	defer resp.Close()
