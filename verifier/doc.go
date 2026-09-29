@@ -15,6 +15,16 @@
 // Presentation verification. This package has no FAPIgo dependency at
 // all, unlike issuer/wallet's OID4VCI roles.
 //
+// # Where to start
+//
+// For the redirect flows, use Transactions: Begin a request, mount its
+// RequestObjectHandler and ResponseHandler, and read the result with
+// Lookup (cross-device) or Redeem (same-device). It keeps each request's
+// secrets, routes each answer to its request, verifies it, and binds
+// the result to the browser that asked — the state handling OpenID4VP
+// §8.2 and §13.3 require, which the lower-level functions below leave
+// to the caller.
+//
 // # Status
 //
 // BuildAuthorizationRequest constructs a signed redirect-flow

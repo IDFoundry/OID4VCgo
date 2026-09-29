@@ -5,15 +5,12 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
-	"crypto/subtle"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
-	"net/url"
 	"sync"
 	"time"
 
@@ -25,6 +22,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/democert"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/passport"
 	"github.com/idfoundry/oid4vcgo/haip"
+	"github.com/idfoundry/oid4vcgo/storage"
 	"github.com/idfoundry/oid4vcgo/verifier"
 )
 
@@ -67,6 +65,7 @@ type Config struct {
 type App struct {
 	cfg      Config
 	verifier *verifier.Verifier
+	txs      *verifier.Transactions
 	caCert   *x509.Certificate
 
 	issuerRoots   *x509.CertPool
@@ -75,56 +74,26 @@ type App struct {
 	handler       http.Handler
 
 	mu       sync.Mutex
-	sessions map[string]*session   // by request ID, known only to whoever created the request
-	byState  map[string]channelRef // OpenID4VP state (also the request_uri path) → channel
-	byKeyID  map[string]channelRef // response encryption key ID → channel
-	byCode   map[string]string     // same-device response_code → request ID
+	sessions map[string]*session // by page ID, known only to whoever created the request
+	byTx     map[string]string   // verifier transaction ID → page ID
+	outcomes map[string]*Outcome // verifier transaction ID → what its accepted answer established
 }
 
-// A request has unrelated random values (OpenID4VP §14.3.3, §13.3): the
-// state of each channel, which a wallet sees (in the request_uri and the
-// Request Object); its ID, which only the page that created it knows and
-// which alone reads the result; and, for a request created in a browser,
-// that browser's session cookie, which the same-device redirect back
-// must present.
+// A session is one "verify a passport credential" page: a presentation
+// request offered two ways — cross-device (a QR code) and, for a request
+// created in a browser, same-device (a link to the web wallet) — each a
+// verifier.Transactions request. The first to complete answers the page;
+// the other is then closed. The page's own ID is unrelated to either
+// request's (OpenID4VP §14.3.3): only the page that created it knows it.
 type session struct {
 	mode         Mode
-	query        dcql.Query
-	expiresAt    time.Time
 	browserToken string // the creating browser's session cookie; "" for CreateRequest
-
-	crossDevice *channel // answered from another device: no redirect back
-	sameDevice  *channel // answered on this device: redirect back, bound to browserToken; nil without one
-
-	awaiting  *Outcome // same-device: verified, released when the redirect back arrives in this browser
-	outcome   *Outcome // set once, by the first response that verifies (and, same-device, comes back)
-	lastError string   // why the latest rejected response was rejected
-	closed    bool     // answered and then rejected: no further answer is accepted
+	expiresAt    time.Time
+	cross, same  channel // same.id is "" without a browser
 }
 
-// channel is one Authorization Request of a session, with its own state,
-// nonce and response encryption key.
-type channel struct {
-	sameDevice    bool
-	state         string
-	kid           string
-	nonce         string
-	requestObject string
-	decryptionKey *ecdsa.PrivateKey
-	link          string
-}
-
-type channelRef struct {
-	id         string
-	sameDevice bool
-}
-
-func (s *session) channel(sameDevice bool) *channel {
-	if sameDevice {
-		return s.sameDevice
-	}
-	return s.crossDevice
-}
+// channel is one of a session's two requests.
+type channel struct{ id, link string }
 
 // Outcome is what a verified presentation established.
 type Outcome struct {
@@ -191,7 +160,26 @@ func New(cfg Config) (*App, error) {
 	if err != nil {
 		return nil, fmt.Errorf("verifierapp: verifier.New: %w", err)
 	}
-	a := &App{cfg: cfg, verifier: v, caCert: caCert, issuerRoots: issuerRoots, issuerTrusted: issuerTrusted, now: time.Now, sessions: map[string]*session{}, byState: map[string]channelRef{}, byKeyID: map[string]channelRef{}, byCode: map[string]string{}}
+	a := &App{
+		cfg: cfg, verifier: v, caCert: caCert, issuerRoots: issuerRoots, issuerTrusted: issuerTrusted, now: time.Now,
+		sessions: map[string]*session{}, byTx: map[string]string{}, outcomes: map[string]*Outcome{},
+	}
+	a.txs, err = verifier.NewTransactions(v, storage.NewVerifierTransactionStore(), verifier.TransactionsConfig{
+		RequestURIBase: cfg.VerifierURL + "/request-objects",
+		RedirectURI:    cfg.VerifierURL + "/continue",
+		Lifetime:       cfg.RequestLifetime,
+		Verify: verifier.VerifyResponseRequest{
+			IssuerKeys:         verifier.X5CIssuerKeyResolver{Roots: issuerRoots},
+			MdocIssuerKeys:     verifier.X5ChainIssuerKeyResolver{Roots: issuerRoots},
+			TrustedAuthorities: dcql.AKITrustedAuthoritiesChecker{Roots: issuerRoots},
+			MaxKeyBindingAge:   5 * time.Minute,
+			Now:                func() time.Time { return a.now() },
+		},
+		Accept: a.accept,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("verifierapp: %w", err)
+	}
 	a.handler = a.routes()
 	return a, nil
 }
@@ -212,23 +200,23 @@ func (a *App) lifetime() time.Duration {
 }
 
 // CreateRequest starts a cross-device presentation request in mode
-// and returns its ID and the openid4vp:// link a wallet answers. The ID
-// reads the result (Outcome, the result page) and never appears in the
-// link.
+// and returns its page ID and the openid4vp:// link a wallet answers.
+// The ID reads the result (Outcome, the result page) and never appears
+// in the link.
 func (a *App) CreateRequest(mode Mode) (id, link string, err error) {
-	id, err = a.createSession(mode, "")
+	id, err = a.createSession(context.Background(), mode, "")
 	if err != nil {
 		return "", "", err
 	}
 	s, _ := a.session(id)
-	return id, s.crossDevice.link, nil
+	return id, s.cross.link, nil
 }
 
-// createSession starts a request in mode: a cross-device channel, and —
+// createSession starts a page in mode: a cross-device request, and —
 // when browserToken, the creating browser's session cookie, is set — a
-// same-device channel whose answer is released only when the redirect
-// back arrives in that browser.
-func (a *App) createSession(mode Mode, browserToken string) (string, error) {
+// same-device request whose answer Transactions releases only when the
+// redirect back arrives in that browser.
+func (a *App) createSession(ctx context.Context, mode Mode, browserToken string) (string, error) {
 	query, err := buildQuery(mode, a.cfg.IssuerVCT, a.issuerTrusted)
 	if err != nil {
 		return "", err
@@ -237,14 +225,18 @@ func (a *App) createSession(mode Mode, browserToken string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	s := &session{mode: mode, query: query, browserToken: browserToken}
-	if s.crossDevice, err = a.newChannel(query, false); err != nil {
+	s := &session{mode: mode, browserToken: browserToken}
+	cross, err := a.txs.Begin(ctx, query, browserToken, false)
+	if err != nil {
 		return "", err
 	}
+	s.cross = channel{id: cross.ID, link: cross.Link}
 	if browserToken != "" {
-		if s.sameDevice, err = a.newChannel(query, true); err != nil {
+		same, err := a.txs.Begin(ctx, query, browserToken, true)
+		if err != nil {
 			return "", err
 		}
+		s.same = channel{id: same.ID, link: same.Link}
 	}
 
 	a.mu.Lock()
@@ -253,75 +245,27 @@ func (a *App) createSession(mode Mode, browserToken string) (string, error) {
 	a.dropExpired(now)
 	s.expiresAt = now.Add(a.lifetime())
 	a.sessions[id] = s
-	for _, ch := range []*channel{s.crossDevice, s.sameDevice} {
-		if ch != nil {
-			a.byState[ch.state] = channelRef{id: id, sameDevice: ch.sameDevice}
-			a.byKeyID[ch.kid] = channelRef{id: id, sameDevice: ch.sameDevice}
+	for _, ch := range []channel{s.cross, s.same} {
+		if ch.id != "" {
+			a.byTx[ch.id] = id
 		}
 	}
 	return id, nil
 }
 
-// newChannel builds one signed Authorization Request for query.
-func (a *App) newChannel(query dcql.Query, sameDevice bool) (*channel, error) {
-	state, err := randomID()
-	if err != nil {
-		return nil, err
-	}
-	built, err := a.verifier.BuildAuthorizationRequest(verifier.BuildAuthorizationRequestRequest{Query: query, State: state})
-	if err != nil {
-		return nil, fmt.Errorf("verifierapp: build request: %w", err)
-	}
-	requestURI := a.cfg.VerifierURL + "/request-objects/" + state
-	return &channel{
-		sameDevice: sameDevice, state: state, kid: built.ResponseEncryptionKeyID, nonce: built.Nonce,
-		requestObject: built.RequestObject, decryptionKey: built.ResponseDecryptionKey,
-		link: "openid4vp://?" + url.Values{"client_id": {a.verifier.ClientID()}, "request_uri": {requestURI}}.Encode(),
-	}, nil
-}
-
-// dropExpired forgets expired requests. Called with a.mu held.
+// dropExpired forgets expired pages. Called with a.mu held.
 func (a *App) dropExpired(now time.Time) {
 	for id, s := range a.sessions {
 		if now.After(s.expiresAt) {
 			delete(a.sessions, id)
 		}
 	}
-	for _, index := range []map[string]channelRef{a.byState, a.byKeyID} {
-		for k, ref := range index {
-			if _, ok := a.sessions[ref.id]; !ok {
-				delete(index, k)
-			}
-		}
-	}
-	for code, id := range a.byCode {
+	for tx, id := range a.byTx {
 		if _, ok := a.sessions[id]; !ok {
-			delete(a.byCode, code)
+			delete(a.byTx, tx)
+			delete(a.outcomes, tx)
 		}
 	}
-}
-
-// closeChannels stops s's channels accepting answers. Called with a.mu
-// held.
-func (a *App) closeChannels(s *session) {
-	for _, ch := range []*channel{s.crossDevice, s.sameDevice} {
-		if ch != nil {
-			delete(a.byState, ch.state)
-			delete(a.byKeyID, ch.kid)
-		}
-	}
-}
-
-// Outcome returns request id's outcome, once a wallet's presentation
-// has verified.
-func (a *App) Outcome(id string) (*Outcome, bool) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	s, ok := a.sessions[id]
-	if !ok || s.outcome == nil {
-		return nil, false
-	}
-	return s.outcome, true
 }
 
 func (a *App) session(id string) (*session, bool) {
@@ -334,165 +278,133 @@ func (a *App) session(id string) (*session, bool) {
 	return s, true
 }
 
-// LastError returns why the latest rejected response to request id was
-// rejected, if one was.
-func (a *App) LastError(id string) string {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if s, ok := a.sessions[id]; ok {
-		return s.lastError
-	}
-	return ""
+// pageState is a session's progress, as its page shows it.
+type pageState struct {
+	outcome   *Outcome // set once one request completed
+	awaiting  bool     // same-device: verified, waiting for the redirect back
+	closed    bool     // the same-device redirect back arrived in another browser
+	lastError string   // why the latest refused answer was refused
 }
 
-// handleRequestObject serves a request's signed Request Object at its
-// request_uri.
-func (a *App) handleRequestObject(w http.ResponseWriter, r *http.Request) {
-	a.mu.Lock()
-	ref := a.byState[r.PathValue("state")]
-	a.mu.Unlock()
-	s, ok := a.session(ref.id)
-	if !ok {
-		http.NotFound(w, r)
-		return
-	}
-	w.Header().Set("Content-Type", "application/oauth-authz-req+jwt")
-	_, _ = w.Write([]byte(s.channel(ref.sameDevice).requestObject))
-}
-
-// handleResponse is the response_uri: it routes the encrypted response
-// to its request's channel by the JWE's key ID and verifies it.
-//
-// Anyone can encrypt to the request's public key and copy its state, so
-// a response that fails to verify changes nothing but lastError: the
-// request stays open for the real wallet. The first response that
-// verifies closes the request. From the cross-device channel it is the
-// outcome at once; from the same-device channel it is held, and the
-// wallet is sent a redirect_uri with a fresh response_code (OpenID4VP
-// §8.2, §13.3) — the outcome is released only when that redirect comes
-// back in the browser that created the request (handleContinue).
-func (a *App) handleResponse(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, 2<<20)
-	if err := r.ParseForm(); err != nil {
-		writeJSONError(w, "invalid_request", "malformed response")
-		return
-	}
-	responseJWE := r.PostForm.Get("response")
-	kid, err := verifier.ResponseKeyID(responseJWE)
-	if err != nil {
-		writeJSONError(w, "invalid_request", "response is not a JWE with a key ID")
-		return
-	}
-	a.mu.Lock()
-	ref := a.byKeyID[kid]
-	a.mu.Unlock()
-	s, ok := a.session(ref.id)
-	if !ok {
-		writeJSONError(w, "invalid_request", "no pending request for this response")
-		return
-	}
-	ch := s.channel(ref.sameDevice)
-
-	outcome, err := a.verify(r.Context(), s, ch, responseJWE)
-	var code string
-	if err == nil && ch.sameDevice {
-		if code, err = randomID(); err != nil {
-			writeJSONError(w, "server_error", "internal error")
-			return
+// state reads s's two requests from Transactions. Once one has
+// completed, the other is closed.
+func (a *App) state(ctx context.Context, s *session) pageState {
+	var st pageState
+	for _, ch := range []channel{s.cross, s.same} {
+		if ch.id == "" {
+			continue
+		}
+		view, err := a.txs.Lookup(ctx, ch.id, s.browserToken)
+		if err != nil {
+			continue
+		}
+		if view.LastError != "" {
+			st.lastError = view.LastError
+		}
+		switch view.Status {
+		case verifier.TransactionDone:
+			a.mu.Lock()
+			st.outcome = a.outcomes[ch.id]
+			a.mu.Unlock()
+		case verifier.TransactionAwaitingRedirect:
+			st.awaiting = true
+		case verifier.TransactionClosed:
+			st.closed = view.LastError != ""
 		}
 	}
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	switch {
-	case s.outcome != nil || s.awaiting != nil || s.closed:
-		writeJSONError(w, "invalid_request", "this request has already been answered")
-		return
-	case err != nil:
-		s.lastError = err.Error()
-		writeJSONError(w, "invalid_request", err.Error())
-		return
+	if st.outcome != nil {
+		st.awaiting, st.closed = false, false
+		for _, ch := range []channel{s.cross, s.same} {
+			if ch.id != "" {
+				_ = a.txs.Close(ctx, ch.id) // the other one; a completed request is left as is
+			}
+		}
 	}
-	a.closeChannels(s)
-	body := map[string]string{}
-	if ch.sameDevice {
-		s.awaiting = outcome
-		a.byCode[code] = ref.id
-		body["redirect_uri"] = a.cfg.VerifierURL + "/continue?" + url.Values{"response_code": {code}}.Encode()
-	} else {
-		s.outcome = outcome
-	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(body)
+	return st
 }
 
-// handleContinue is the same-device redirect_uri: the wallet sends the
-// browser here with the response_code it was given. The held outcome is
-// released only if this browser presents the session cookie of the one
-// that created the request; otherwise the presentation is rejected
-// (HAIP 1.0 §5: the redirect back arriving in a different user session).
-func (a *App) handleContinue(w http.ResponseWriter, r *http.Request) {
-	code := r.URL.Query().Get("response_code")
+// Outcome returns page id's outcome, once a wallet's presentation has
+// verified (and, same-device, come back).
+func (a *App) Outcome(id string) (*Outcome, bool) {
+	s, ok := a.session(id)
+	if !ok {
+		return nil, false
+	}
+	st := a.state(context.Background(), s)
+	return st.outcome, st.outcome != nil
+}
+
+// LastError returns why the latest refused answer to page id was
+// refused, if one was.
+func (a *App) LastError(id string) string {
+	s, ok := a.session(id)
+	if !ok {
+		return ""
+	}
+	return a.state(context.Background(), s).lastError
+}
+
+// accept is Transactions' Accept: it runs on each answer that verified,
+// before its request completes. It refuses an answer to a page whose
+// other request already completed, and one whose credential is revoked
+// or suspended; otherwise it records what the answer established.
+func (a *App) accept(ctx context.Context, txID string, result verifier.VerifyResponseResult) error {
 	a.mu.Lock()
-	id, ok := a.byCode[code]
-	delete(a.byCode, code)
+	s := a.sessions[a.byTx[txID]]
 	a.mu.Unlock()
-	s, found := a.session(id)
-	if !ok || !found {
-		writeHTMLError(w, http.StatusBadRequest, "this link is unknown, expired or already used")
-		return
+	if s == nil {
+		return errors.New("this request is no longer open")
 	}
-	cookie, err := r.Cookie(sessionCookie)
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if s.awaiting == nil {
-		writeHTMLError(w, http.StatusBadRequest, "this link is unknown, expired or already used")
-		return
-	}
-	if err != nil || subtle.ConstantTimeCompare([]byte(cookie.Value), []byte(s.browserToken)) != 1 {
-		s.awaiting, s.closed = nil, true
-		s.lastError = "the wallet's redirect back arrived in a different browser session than the one that asked"
-		writeHTMLError(w, http.StatusForbidden, "Presentation rejected: "+s.lastError+".")
-		return
-	}
-	s.outcome, s.awaiting = s.awaiting, nil
-	http.Redirect(w, r, "/requests/"+id, http.StatusSeeOther) // #nosec G710 -- local path + a server-generated random ID
-}
-
-// verify checks a response against its request's channel ch.
-func (a *App) verify(ctx context.Context, s *session, ch *channel, responseJWE string) (*Outcome, error) {
-	out := &Outcome{Mode: s.mode}
-	parsed, err := a.verifier.ParseDirectPostJWTResponse(responseJWE, ch.decryptionKey)
-	if err != nil {
-		return nil, errors.New("couldn't decrypt the response")
-	}
-	if parsed.State != ch.state {
-		return nil, errors.New("response state doesn't match the request")
-	}
-	result, err := a.verifier.VerifyResponse(ctx, verifier.VerifyResponseRequest{
-		Query: s.query, Response: parsed, ExpectedNonce: ch.nonce,
-		IssuerKeys:            verifier.X5CIssuerKeyResolver{Roots: a.issuerRoots},
-		MdocIssuerKeys:        verifier.X5ChainIssuerKeyResolver{Roots: a.issuerRoots},
-		TrustedAuthorities:    dcql.AKITrustedAuthoritiesChecker{Roots: a.issuerRoots},
-		MaxKeyBindingAge:      5 * time.Minute,
-		ResponseEncryptionKey: ch.decryptionKey,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("the presentation didn't verify: %w", err)
+	for _, ch := range []channel{s.cross, s.same} {
+		if ch.id != "" && ch.id != txID {
+			if view, err := a.txs.Lookup(ctx, ch.id, s.browserToken); err == nil &&
+				(view.Status == verifier.TransactionDone || view.Status == verifier.TransactionAwaitingRedirect) {
+				return errors.New("this request has already been answered")
+			}
+		}
 	}
 	if len(result.Credentials) != 1 {
-		return nil, fmt.Errorf("expected one credential, got %d", len(result.Credentials))
+		return fmt.Errorf("expected one credential, got %d", len(result.Credentials))
 	}
 	vc := result.Credentials[0]
-	out.Format = formatOf(vc.CredentialQueryID)
+	out := &Outcome{Mode: s.mode, Format: formatOf(vc.CredentialQueryID)}
+	var err error
 	if out.Status, err = a.checkStatus(ctx, vc); err != nil {
-		return nil, err
+		return err
 	}
 	out.Claims = flatten(vc.CredentialQueryID, vc.Claims)
-
 	if s.mode == ModeICAO {
 		out.ICAO = a.checkICAO(out.Claims)
 	}
-	return out, nil
+	a.mu.Lock()
+	a.outcomes[txID] = out
+	a.mu.Unlock()
+	return nil
+}
+
+// handleContinue is the same-device redirect_uri: the wallet sends the
+// browser here with the response_code it was given. Transactions
+// releases the result only if this browser presents the session cookie
+// of the one that created the request; otherwise it closes the request
+// (HAIP 1.0 §5: the redirect back arriving in a different user session).
+func (a *App) handleContinue(w http.ResponseWriter, r *http.Request) {
+	var token string
+	if c, err := r.Cookie(sessionCookie); err == nil {
+		token = c.Value
+	}
+	view, err := a.txs.Redeem(r.Context(), r.URL.Query().Get("response_code"), token)
+	switch {
+	case errors.Is(err, verifier.ErrWrongBrowser):
+		writeHTMLError(w, http.StatusForbidden, "Presentation rejected: the wallet's redirect back arrived in a different browser session than the one that asked.")
+		return
+	case err != nil:
+		writeHTMLError(w, http.StatusBadRequest, "this link is unknown, expired or already used")
+		return
+	}
+	a.mu.Lock()
+	id := a.byTx[view.ID]
+	a.mu.Unlock()
+	http.Redirect(w, r, "/requests/"+id, http.StatusSeeOther) // #nosec G710 -- local path + a server-generated random ID
 }
 
 // checkICAO re-verifies the disclosed passport file exactly as the
@@ -603,10 +515,4 @@ func newRequestSigningIdentity(now time.Time) (key *ecdsa.PrivateKey, cert, caCe
 		return nil, nil, nil, fmt.Errorf("verifierapp: %w", err)
 	}
 	return key, cert, caCert, nil
-}
-
-func writeJSONError(w http.ResponseWriter, code, description string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusBadRequest)
-	_ = json.NewEncoder(w).Encode(map[string]string{"error": code, "error_description": description})
 }
