@@ -53,10 +53,10 @@ func (a *App) handleCredential(w http.ResponseWriter, r *http.Request) {
 	e, err := a.transactions.reserve(authCtx.Subject, req.CredentialConfigurationID)
 	switch {
 	case errors.Is(err, errAlreadyIssued):
-		writeCredentialError(w, "this credential has already been issued for this passport")
+		issuer.NewError(issuer.ErrorCredentialRequestDenied, "this credential has already been issued for this passport").WriteJSON(w)
 		return
 	case err != nil:
-		writeCredentialError(w, "the passport transaction for this access token has expired")
+		issuer.NewError(issuer.ErrorCredentialRequestDenied, "the passport transaction for this access token has expired").WriteJSON(w)
 		return
 	}
 	issued := false
@@ -74,12 +74,12 @@ func (a *App) handleCredential(w http.ResponseWriter, r *http.Request) {
 	opts := credential.Options{Now: a.now()}
 	mdocClaims, err := credential.MdocClaims(e, opts)
 	if err != nil {
-		writeCredentialError(w, "this passport can't be issued: "+err.Error())
+		issuer.NewError(issuer.ErrorCredentialRequestDenied, "this passport can't be issued: "+err.Error()).WriteJSON(w)
 		return
 	}
 	sdjwtClaims, err := credential.SDJWTClaims(e, a.vct, opts)
 	if err != nil {
-		writeCredentialError(w, "this passport can't be issued: "+err.Error())
+		issuer.NewError(issuer.ErrorCredentialRequestDenied, "this passport can't be issued: "+err.Error()).WriteJSON(w)
 		return
 	}
 
@@ -125,17 +125,6 @@ func (a *App) handleCredential(w http.ResponseWriter, r *http.Request) {
 	issued = true
 	w.Header().Set("Content-Type", contentType)
 	_, _ = w.Write(encoded)
-}
-
-// writeCredentialError reports an issuance failure caused by the
-// passport transaction rather than the request (§8.3.1.2's
-// credential_request_denied).
-func writeCredentialError(w http.ResponseWriter, description string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusBadRequest)
-	_ = json.NewEncoder(w).Encode(map[string]string{
-		"error": "credential_request_denied", "error_description": description,
-	})
 }
 
 func (a *App) issuerMetadataHandler() http.HandlerFunc {
