@@ -154,7 +154,10 @@ type ICAOResult struct {
 	// ChipAuthenticity is gmrtd's verdict on the file's chip
 	// authentication evidence, replayed here.
 	ChipAuthenticity string
-	Error            string
+	// Expired is whether the passport is past its expiry date — shown,
+	// not refused: expiry doesn't make the data less authentic.
+	Expired bool
+	Error   string
 }
 
 // New wires an App. Its request-signing key and certificate (the
@@ -503,13 +506,14 @@ func (a *App) checkICAO(claims map[string]any) *ICAOResult {
 	}
 	e, err := passport.Verify(file, a.cfg.CSCAPool, a.now())
 	switch {
-	case errors.Is(err, passport.ErrNotTrusted), errors.Is(err, passport.ErrUnreadable), errors.Is(err, passport.ErrExpired):
+	case errors.Is(err, passport.ErrNotTrusted), errors.Is(err, passport.ErrUnreadable):
 		return &ICAOResult{Error: err.Error()}
 	case err != nil:
 		return &ICAOResult{Error: "the passport file's data couldn't be used"}
 	}
 	return &ICAOResult{
 		Verified: true, Identity: e.Identity, Portrait: e.Portrait, ChipAuthenticity: e.Checks.ChipAuthenticity,
+		Expired: e.Identity.ExpiredAt(a.now()),
 	}
 }
 

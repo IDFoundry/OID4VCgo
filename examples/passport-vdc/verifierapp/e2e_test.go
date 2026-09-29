@@ -243,3 +243,19 @@ func TestEndToEnd_Revocation(t *testing.T) {
 		t.Errorf("the unrevoked SD-JWT VC: Status = %q, want valid", out.Status)
 	}
 }
+
+// TestEndToEnd_ExpiredPassport: an expired passport's data is still
+// authentic, so it's issued and presented like any other.
+func TestEndToEnd_ExpiredPassport(t *testing.T) {
+	env := demotest.New(t, nil)
+	env.StartVerifier(t, nil)
+	e := demotest.SyntheticEvidence()
+	e.Identity.ExpiryDate = time.Now().AddDate(-1, 0, 0)
+	store := receiveInto(t, env, e)
+
+	for _, format := range []string{"mso_mdoc", "dc+sd-jwt"} {
+		if out := present(t, env, store, verifierapp.ModeIssuer, format); out.Claims[credential.FamilyName] != "DOE" {
+			t.Errorf("%s: outcome = %+v", format, out)
+		}
+	}
+}

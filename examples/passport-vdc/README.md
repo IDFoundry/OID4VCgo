@@ -88,7 +88,13 @@ What the second path does and doesn't give you:
     only understate age, never overstate it.
 - **Age claims go stale.** A child's `age_over_18: false` becomes wrong
   on their 18th birthday, so the credential expires at the next age
-  threshold the holder crosses (and never after the passport expires).
+  threshold the holder crosses.
+- **Expired passports are accepted.** Expiry ends a passport's use for
+  travel; it doesn't make the chip data any less authentic, and Passive
+  Authentication verifies it just the same. The credential's validity
+  isn't tied to the passport's: it carries `expiry_date`, and the issuer
+  and verifier pages flag an expired passport, so a verifier that needs
+  a current document checks that claim.
 - **MRZ names may be truncated or transliterated.** `names_from_mrz`
   says when names came from the MRZ rather than DG11.
 - **The passport file is all-or-nothing.** Disclosing it hands the
