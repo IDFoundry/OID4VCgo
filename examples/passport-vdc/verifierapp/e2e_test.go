@@ -230,13 +230,18 @@ func TestEndToEnd_Revocation(t *testing.T) {
 	}
 	_ = resp.Body.Close()
 
-	_, link, err := env.Verifier.CreateRequest(verifierapp.ModeIssuer)
+	id, link, err := env.Verifier.CreateRequest(verifierapp.ModeIssuer)
 	if err != nil {
 		t.Fatalf("CreateRequest: %v", err)
 	}
+	// The wallet is told only that its answer wasn't accepted; the
+	// verifier records why.
 	_, err = walletapp.Present(context.Background(), link, store, walletapp.PresentOptions{Format: "mso_mdoc", HTTP: env.HTTP, VerifierTrust: env.VerifierTrust()})
-	if err == nil || !strings.Contains(err.Error(), "revoked") {
-		t.Fatalf("presenting the revoked mdoc: error = %v, want a rejection for revocation", err)
+	if err == nil || strings.Contains(err.Error(), "revoked") {
+		t.Fatalf("presenting the revoked mdoc: error = %v, want a generic rejection", err)
+	}
+	if reason := env.Verifier.LastError(id); !strings.Contains(reason, "revoked") {
+		t.Fatalf("the verifier recorded %q, want the revocation", reason)
 	}
 	if out := present(t, env, store, verifierapp.ModeIssuer, "dc+sd-jwt"); out.Status != "valid" {
 		t.Errorf("the unrevoked SD-JWT VC: Status = %q, want valid", out.Status)

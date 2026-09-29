@@ -72,6 +72,9 @@ type ParsedResponse struct {
 // per §8.1. Returns a *ResponseError when the Wallet reported an error
 // instead of a vp_token (see ResponseError for why that alone must not
 // end the request).
+//
+// Transactions.HandleResponse calls this for each answer; call it
+// directly only for flows Transactions doesn't cover.
 func (v *Verifier) ParseDirectPostJWTResponse(responseJWE string, decryptionKey *ecdsa.PrivateKey) (ParsedResponse, error) {
 	// A compressed response is refused before decryption: this Verifier
 	// never offers compression, and anyone who sees the Request Object

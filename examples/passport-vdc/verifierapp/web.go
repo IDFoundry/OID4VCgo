@@ -1,6 +1,7 @@
 package verifierapp
 
 import (
+	"context"
 	"crypto/subtle"
 	"fmt"
 	"html/template"
@@ -17,8 +18,8 @@ func (a *App) routes() http.Handler {
 	mux.HandleFunc("GET /{$}", a.handleHome)
 	mux.HandleFunc("POST /requests", a.handleCreateRequest)
 	mux.HandleFunc("GET /requests/{id}", a.handleRequestPage)
-	mux.HandleFunc("GET /request-objects/{state}", a.handleRequestObject)
-	mux.HandleFunc("POST /response", a.handleResponse)
+	mux.Handle("GET /request-objects/{id}", a.txs.RequestObjectHandler())
+	mux.Handle("POST /response", a.txs.ResponseHandler())
 	mux.HandleFunc("GET /continue", a.handleContinue)
 	return mux
 }
@@ -140,7 +141,7 @@ func (a *App) handleCreateRequest(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	id, err := a.createSession(Mode(r.PostForm.Get("mode")), token)
+	id, err := a.createSession(r.Context(), Mode(r.PostForm.Get("mode")), token)
 	if err != nil {
 		http.Error(w, "couldn't create a request", http.StatusBadRequest)
 		return
@@ -160,7 +161,7 @@ func (a *App) handleRequestPage(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	page := a.requestPageFor(s)
+	page := a.requestPageFor(r.Context(), s)
 	// The page carries the verified claims; keep it out of caches.
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -209,19 +210,17 @@ func sameBrowser(r *http.Request, s *session) bool {
 }
 
 // requestPageFor snapshots s for the request page.
-func (a *App) requestPageFor(s *session) requestPage {
-	a.mu.Lock()
-	defer a.mu.Unlock()
+func (a *App) requestPageFor(ctx context.Context, s *session) requestPage {
+	st := a.state(ctx, s)
 	page := requestPage{
-		Link: s.crossDevice.link, Outcome: s.outcome, Awaiting: s.awaiting != nil,
-		Closed: s.closed, LastError: s.lastError,
+		Link: s.cross.link, Outcome: st.outcome, Awaiting: st.awaiting, Closed: st.closed, LastError: st.lastError,
 	}
 	if a.cfg.WebWalletURL != "" {
-		sameDevice := s.crossDevice
-		if s.sameDevice != nil {
-			sameDevice = s.sameDevice
+		sameDevice := s.cross.link
+		if s.same.id != "" {
+			sameDevice = s.same.link
 		}
-		page.WebWalletLink = a.cfg.WebWalletURL + "/present?request=" + url.QueryEscape(sameDevice.link)
+		page.WebWalletLink = a.cfg.WebWalletURL + "/present?request=" + url.QueryEscape(sameDevice)
 	}
 	if page.Outcome != nil {
 		page.Rows = displayRows(page.Outcome.Claims)
@@ -233,7 +232,7 @@ func (a *App) requestPageFor(s *session) requestPage {
 		if uri, ok := credential.PortraitDataURI(page.Outcome.Claims); ok {
 			page.Portrait = template.URL(uri) // #nosec G203 -- built by PortraitDataURI from decoded JPEG bytes
 		}
-	} else if qr, err := demoqr.DataURI(s.crossDevice.link); err == nil {
+	} else if qr, err := demoqr.DataURI(s.cross.link); err == nil {
 		page.QR = qr
 	}
 	return page
