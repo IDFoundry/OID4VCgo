@@ -351,8 +351,8 @@ func TestASMetadata_AdvertisesDPoP(t *testing.T) {
 // index no credential has.
 func TestRevoke_Refuses(t *testing.T) {
 	env := demotest.New(t, nil)
-	post := func(origin, idx string) int {
-		req, err := http.NewRequest(http.MethodPost, env.IssuerURL+"/status/revoke", strings.NewReader(url.Values{"idx": {idx}}.Encode()))
+	post := func(origin, handle string) int {
+		req, err := http.NewRequest(http.MethodPost, env.IssuerURL+"/status/revoke", strings.NewReader(url.Values{"handle": {handle}}.Encode()))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -370,8 +370,11 @@ func TestRevoke_Refuses(t *testing.T) {
 	if got := post("https://attacker.example", "0"); got != http.StatusForbidden {
 		t.Errorf("cross-origin revoke: status %d, want 403", got)
 	}
-	if got := post(env.IssuerURL, "12345"); got != http.StatusBadRequest {
-		t.Errorf("revoking an unused index: status %d, want 400", got)
+	if got := post(env.IssuerURL, "no-such-handle"); got != http.StatusBadRequest {
+		t.Errorf("revoking an unknown credential: status %d, want 400", got)
+	}
+	if got := post(env.IssuerURL, ""); got != http.StatusBadRequest {
+		t.Errorf("revoking with no handle: status %d, want 400", got)
 	}
 }
 

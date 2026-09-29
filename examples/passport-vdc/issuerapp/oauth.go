@@ -12,7 +12,6 @@ import (
 	"github.com/idfoundry/fapigo/server"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
-	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/passport"
 )
 
 // interactionLifetime bounds how long the approval page stays valid.
@@ -48,22 +47,19 @@ func (a *App) handlePAR(w http.ResponseWriter, r *http.Request) {
 	result.WriteJSON(w)
 }
 
+// approvalPage shows no passport data: it's reached by anyone holding
+// the offer link and an attested wallet, before the confirmation code
+// is checked. Whoever approves saw the passport on the offer page.
 type approvalPage struct {
 	Handle   string
 	ClientID string
-	Identity passport.Identity
 	Scopes   []string
 	Error    string
 }
 
 var approvalTemplate = template.Must(template.New("approval").Parse(pageHead + `
 <h1>Issue passport credential?</h1>
-<p>Wallet <code>{{.ClientID}}</code> is requesting a credential for:</p>
-<table>
-<tr><th>Name</th><td>{{.Identity.FamilyName}}, {{.Identity.GivenNames}}</td></tr>
-<tr><th>Issuing country</th><td>{{.Identity.IssuingCountry}}</td></tr>
-<tr><th>Document</th><td>{{.Identity.DocumentNumber}}</td></tr>
-</table>
+<p>Wallet <code>{{.ClientID}}</code> is requesting credentials for the passport uploaded on the offer page.</p>
 <p>Formats requested: {{range .Scopes}}<code>{{.}}</code> {{end}}</p>
 {{if .Error}}<p class="warn">{{.Error}}</p>{{end}}
 <form method="post" action="/authorize/decision">
@@ -95,8 +91,7 @@ func (a *App) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 			writeHTMLError(w, http.StatusBadRequest, "this authorization request isn't linked to a verified passport — start from a credential offer")
 			return
 		}
-		e, err := a.transactions.unclaimed(txID)
-		if err != nil {
+		if _, err := a.transactions.unclaimed(txID); err != nil {
 			writeHTMLError(w, http.StatusBadRequest, transactionErrorMessage(err))
 			return
 		}
@@ -105,7 +100,7 @@ func (a *App) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 		// Lets a headless wallet (the demo CLI, tests) approve without
 		// scraping the page.
 		w.Header().Set("X-Interaction-Handle", action.Handle.String())
-		a.renderApproval(w, pending, action.Interaction.ClientID.String(), e, "")
+		a.renderApproval(w, pending, action.Interaction.ClientID.String(), "")
 	case server.RedirectResponse:
 		http.Redirect(w, r, action.Destination.String(), http.StatusFound)
 	case server.LocalErrorResponse:
@@ -187,9 +182,9 @@ func (a *App) claimTransaction(w http.ResponseWriter, pending pendingInteraction
 		return true
 	}
 	if errors.Is(err, errWrongCode) {
-		if e, err := a.transactions.unclaimed(pending.txID); err == nil {
+		if _, err := a.transactions.unclaimed(pending.txID); err == nil {
 			a.interactions.put(pending.handle.String(), pending, interactionLifetime)
-			a.renderApproval(w, pending, a.cfg.Wallet.ClientID, e, "That confirmation code is wrong — check the offer page and try again.")
+			a.renderApproval(w, pending, a.cfg.Wallet.ClientID, "That confirmation code is wrong — check the offer page and try again.")
 			return false
 		}
 	}
@@ -197,11 +192,11 @@ func (a *App) claimTransaction(w http.ResponseWriter, pending pendingInteraction
 	return false
 }
 
-func (a *App) renderApproval(w http.ResponseWriter, pending pendingInteraction, clientID string, e passport.Evidence, message string) {
+func (a *App) renderApproval(w http.ResponseWriter, pending pendingInteraction, clientID string, message string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-store") // shows the passport's identity
+	w.Header().Set("Cache-Control", "no-store")
 	_ = approvalTemplate.Execute(w, approvalPage{
-		Handle: pending.handle.String(), ClientID: clientID, Identity: e.Identity, Scopes: pending.scopes, Error: message,
+		Handle: pending.handle.String(), ClientID: clientID, Scopes: pending.scopes, Error: message,
 	})
 }
 

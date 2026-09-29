@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"time"
 
 	"github.com/idfoundry/oid4vcgo/statuslist"
 	"github.com/idfoundry/oid4vcgo/verifier"
@@ -92,10 +93,13 @@ func (a *App) fetchStatusList(ctx context.Context, uri string, cwt bool) ([]byte
 		accept = statuslist.CWTTokenMediaType
 	}
 	req.Header.Set("Accept", accept)
-	client := a.cfg.HTTP
-	if client == nil {
-		client = http.DefaultClient
+	client := http.Client{Timeout: 30 * time.Second}
+	if a.cfg.HTTP != nil {
+		client = *a.cfg.HTTP
 	}
+	// The status list is fetched from exactly the https URI the
+	// credential names: a redirect (possibly to plain http) is refused.
+	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err

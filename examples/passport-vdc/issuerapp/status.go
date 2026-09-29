@@ -2,6 +2,7 @@ package issuerapp
 
 import (
 	"crypto/rand"
+	"encoding/base64"
 	"errors"
 	"html/template"
 	"log"
@@ -45,7 +46,13 @@ var errStatusListFull = errors.New("issuerapp: the status list has no unused ind
 // IssuedStatus is one issued credential's entry in this issuer's status
 // list. It records no passport data.
 type IssuedStatus struct {
-	Idx      int
+	Idx int
+	// Handle is a random name for this entry, used by the revocation
+	// page instead of Idx: listing indices next to issuance times would
+	// let anyone match a presented credential's index to when it was
+	// issued, which unpredictable indices are meant to prevent (HAIP
+	// 1.0 §6.1).
+	Handle   string
 	Format   string
 	IssuedAt time.Time
 	Revoked  bool
@@ -78,7 +85,11 @@ func (s *statusList) allocate(format string, now time.Time) (int, error) {
 		}
 		idx := int(n.Int64())
 		if _, used := s.entries[idx]; !used {
-			s.entries[idx] = &IssuedStatus{Idx: idx, Format: format, IssuedAt: now}
+			handle, err := newHandle()
+			if err != nil {
+				return 0, err
+			}
+			s.entries[idx] = &IssuedStatus{Idx: idx, Handle: handle, Format: format, IssuedAt: now}
 			if err := s.save(); err != nil {
 				delete(s.entries, idx)
 				return 0, err
@@ -111,6 +122,29 @@ func (s *statusList) revoke(idx int) bool {
 		log.Printf("issuerapp: %v (the revocation holds until restart)", err)
 	}
 	return true
+}
+
+// revokeHandle revokes the credential whose entry has handle; false if
+// none does.
+func (s *statusList) revokeHandle(handle string) bool {
+	s.mu.Lock()
+	idx := -1
+	for i, e := range s.entries {
+		if handle != "" && e.Handle == handle {
+			idx = i
+		}
+	}
+	s.mu.Unlock()
+	return idx >= 0 && s.revoke(idx)
+}
+
+// newHandle is a random IssuedStatus.Handle.
+func newHandle() (string, error) {
+	var b [12]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(b[:]), nil
 }
 
 // snapshot copies the list's statuses and its entries, newest first.
@@ -175,17 +209,17 @@ var statusTemplate = template.Must(template.New("status").Parse(pageHead + `
 <p>Every credential this issuer has issued references its status list at <code>{{.URI}}</code>. Revoking one flips its bit; a verifier checking the list then rejects it.</p>
 {{if .Entries}}
 <table>
-<tr><th>Index</th><th>Format</th><th>Issued</th><th>Status</th><th></th></tr>
+<tr><th>Format</th><th>Issued</th><th>Status</th><th></th></tr>
 {{range .Entries}}
-<tr><td><code>{{.Idx}}</code></td><td><code>{{.Format}}</code></td><td>{{.IssuedAt.Format "15:04:05"}}</td>
+<tr><td><code>{{.Format}}</code></td><td>{{.IssuedAt.Format "15:04:05"}}</td>
 <td>{{if .Revoked}}<span class="warn">revoked</span>{{else}}<span class="ok">valid</span>{{end}}</td>
-<td>{{if not .Revoked}}<form method="post" action="/status/revoke"><input type="hidden" name="idx" value="{{.Idx}}"><button>Revoke</button></form>{{end}}</td></tr>
+<td>{{if not .Revoked}}<form method="post" action="/status/revoke"><input type="hidden" name="handle" value="{{.Handle}}"><button>Revoke</button></form>{{end}}</td></tr>
 {{end}}
 </table>
 {{else}}
 <p>None yet.</p>
 {{end}}
-<p class="note">Demo only: anyone who can reach this page can revoke. Entries record no passport data, and are lost when the issuer restarts.</p>
+<p class="note">Demo only: anyone who can reach this page can revoke. Entries record no passport data, and don't show the credentials' status list indices. They're kept across restarts only under <code>cmd/demo</code>.</p>
 <p><a href="/">Issue another</a></p>
 ` + pageFoot))
 
@@ -211,9 +245,8 @@ func (a *App) handleRevoke(w http.ResponseWriter, r *http.Request) {
 		writeHTMLError(w, http.StatusForbidden, "cross-origin revocation refused")
 		return
 	}
-	idx, err := strconv.Atoi(r.FormValue("idx"))
-	if err != nil || !a.statusList.revoke(idx) {
-		writeHTMLError(w, http.StatusBadRequest, "unknown status list index")
+	if !a.statusList.revokeHandle(r.FormValue("handle")) {
+		writeHTMLError(w, http.StatusBadRequest, "unknown credential")
 		return
 	}
 	http.Redirect(w, r, "/status", http.StatusSeeOther)

@@ -3,6 +3,8 @@ package issuerapp
 import (
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -127,5 +129,38 @@ func TestStatusList_InMemoryWithoutStateDir(t *testing.T) {
 	}
 	if s.path != "" {
 		t.Error("an in-memory status list has a file")
+	}
+}
+
+// TestStatusPage_HidesIndices: the public revocation page names entries
+// by handle, never by status list index, and a handle revokes its entry.
+func TestStatusPage_HidesIndices(t *testing.T) {
+	s := newStatusList()
+	idx, err := s.allocate("mso_mdoc", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, entries := s.snapshot()
+	var page strings.Builder
+	if err := statusTemplate.Execute(&page, struct {
+		URI     string
+		Entries []IssuedStatus
+	}{"https://issuer.example/statuslists/1", entries}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(page.String(), ">"+strconv.Itoa(idx)+"<") || strings.Contains(page.String(), `name="idx"`) {
+		t.Error("the revocation page shows a status list index")
+	}
+	if !strings.Contains(page.String(), `value="`+entries[0].Handle+`"`) {
+		t.Error("the revocation page doesn't name the entry by its handle")
+	}
+	if s.revokeHandle("") || s.revokeHandle("unknown") {
+		t.Error("an empty or unknown handle revoked something")
+	}
+	if !s.revokeHandle(entries[0].Handle) {
+		t.Fatal("revoking by handle failed")
+	}
+	if bits, _ := s.snapshot(); bits[idx] != 1 {
+		t.Error("the handle didn't revoke its entry")
 	}
 }

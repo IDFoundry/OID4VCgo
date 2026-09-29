@@ -160,8 +160,10 @@ issuer's redirect back is bound to the browser that started receiving
 
 **3. Verify.**
 
-1. Open https://127.0.0.1:9443, choose a trust path, and click
-   **Open in web wallet**.
+1. Open https://127.0.0.1:9443, choose a trust path, click
+   **Open in web wallet**, then **Review the request**. (The wallet
+   fetches a request only when you ask it to, so another site linking
+   to it can't make it contact anything.)
 2. The wallet shows who's asking and exactly which claims each format
    would disclose; choose a format and **Share** (or **Decline**).
 3. The wallet brings you back to the verifier's page, which shows the
@@ -330,8 +332,14 @@ for 60 seconds.
   sessions and tokens are in memory either way.
 - **Anyone who can reach the issuer can revoke.** The `/status` page has
   no login; it refuses only cross-origin form posts. It records no
-  passport data, and forgets everything on restart (as do the
-  credentials' signing keys).
+  passport data, and names credentials by a random handle rather than
+  their status list index, so it can't be used to match a presented
+  credential to when it was issued. Under `cmd/demo` it's kept across
+  restarts; under `cmd/issuer` it's forgotten (as are the signing keys).
+- **The approval page doesn't show the passport.** It's reached with the
+  offer link, before the confirmation code is checked, so it only names
+  the wallet and the formats; the uploader saw the passport on the offer
+  page.
 - **Key Attestations assert nothing about key storage.** They leave out
   `key_storage` and `user_authentication`, because the demo's holder keys
   are ordinary software keys. The issuer checks who attested a key, not

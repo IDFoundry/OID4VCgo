@@ -3,8 +3,10 @@
 // from a credential offer, and — unlike the CLI — asks the holder before
 // presenting, showing what the verifier asks for.
 //
-// It is a single-user demo on loopback: no login, no CSRF protection,
-// and holder keys stored unencrypted, like the rest of walletapp.
+// It is a single-user demo on loopback: no login, and holder keys stored
+// unencrypted, like the rest of walletapp. Every POST refuses a
+// cross-origin request, and nothing is fetched on a GET, so another site
+// can't make this wallet contact a server by linking to it.
 package webwallet
 
 import (
@@ -97,10 +99,11 @@ func (a *App) routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", a.handleHome)
 	mux.HandleFunc("GET /receive", a.handleReceiveConfirm)
-	mux.HandleFunc("POST /receive", a.handleReceive)
+	mux.HandleFunc("POST /receive", a.sameOrigin(a.handleReceive))
 	mux.HandleFunc("GET /callback", a.handleCallback)
-	mux.HandleFunc("GET /present", a.handlePresentConsent)
-	mux.HandleFunc("POST /present/{id}", a.handlePresentDecision)
+	mux.HandleFunc("GET /present", a.handlePresentConfirm)
+	mux.HandleFunc("POST /present", a.sameOrigin(a.handlePresentConsent))
+	mux.HandleFunc("POST /present/{id}", a.sameOrigin(a.handlePresentDecision))
 	return mux
 }
 
@@ -215,10 +218,39 @@ func (a *App) finishReceive(op *receiveOp) {
 	a.mu.Unlock()
 }
 
+// sameOrigin refuses a request another site's page sent: one whose
+// Origin isn't this wallet's. A request without Origin — from a
+// non-browser client — is allowed.
+func (a *App) sameOrigin(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if origin := r.Header.Get("Origin"); origin != "" && origin != a.cfg.WalletURL {
+			renderError(w, http.StatusForbidden, "cross-origin request refused")
+			return
+		}
+		next(w, r)
+	}
+}
+
+// handlePresentConfirm shows a presentation request link and asks
+// whether to review it. It fetches nothing: fetching the request
+// happens on the POST that follows.
+func (a *App) handlePresentConfirm(w http.ResponseWriter, r *http.Request) {
+	link := strings.TrimSpace(r.URL.Query().Get("request"))
+	if !strings.HasPrefix(link, "openid4vp://") {
+		renderError(w, http.StatusBadRequest, "that isn't a presentation request link (openid4vp://…)")
+		return
+	}
+	render(w, http.StatusOK, confirmPresentTemplate, map[string]string{"Request": link, "Host": requestHost(link)})
+}
+
 // handlePresentConsent verifies a presentation request and shows what
 // it asks for. Nothing is sent until the holder chooses.
 func (a *App) handlePresentConsent(w http.ResponseWriter, r *http.Request) {
-	link := strings.TrimSpace(r.URL.Query().Get("request"))
+	if err := r.ParseForm(); err != nil {
+		renderError(w, http.StatusBadRequest, "malformed form")
+		return
+	}
+	link := strings.TrimSpace(r.PostForm.Get("request"))
 	if !strings.HasPrefix(link, "openid4vp://") {
 		renderError(w, http.StatusBadRequest, "that isn't a presentation request link (openid4vp://…)")
 		return
@@ -299,6 +331,20 @@ func (a *App) handleHome(w http.ResponseWriter, r *http.Request) {
 		cards = append(cards, cardFor(stored[i]))
 	}
 	render(w, http.StatusOK, homeTemplate, homePage{Cards: cards, Received: r.URL.Query().Get("received")})
+}
+
+// requestHost is the host a presentation request link's request_uri
+// names, for the confirmation page ("" if it can't be read).
+func requestHost(link string) string {
+	u, err := url.Parse(link)
+	if err != nil {
+		return ""
+	}
+	ru, err := url.Parse(u.Query().Get("request_uri"))
+	if err != nil {
+		return ""
+	}
+	return ru.Host
 }
 
 // offerIssuer reads the credential_issuer from a by-value offer link,
