@@ -58,6 +58,12 @@ type Config struct {
 	// WebWalletURL, if set, adds an "Open in web wallet" button to the
 	// offer page, linking to the demo web wallet's /receive.
 	WebWalletURL string
+
+	// StateDir, if set, is an existing directory this issuer keeps its
+	// CA and signing keys and its status list in, so credentials it
+	// issued keep verifying, and revocations hold, across restarts.
+	// Empty keeps everything in memory: a restart starts over.
+	StateDir string
 }
 
 // WalletClient registers the demo Wallet: a client authenticated by

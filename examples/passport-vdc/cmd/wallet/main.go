@@ -23,6 +23,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -46,6 +47,7 @@ func main() {
 	verifierCA := fs.String("trust-verifier-ca", "verifier-ca.pem", "present: comma-separated PEM files of verifier CAs whose requests to answer (from cmd/verifier)")
 	yes := fs.Bool("yes", false, "present: share without asking")
 	format := fs.String("format", "", "present: only offer stored credentials of this format (mso_mdoc or dc+sd-jwt)")
+	state := fs.String("state", "", "a cmd/demo state directory: take the store, Wallet Provider key and trust files from it (flags set explicitly still win)")
 
 	if len(os.Args) < 2 {
 		usage()
@@ -53,6 +55,12 @@ func main() {
 	cmd := os.Args[1]
 	if err := fs.Parse(os.Args[2:]); err != nil {
 		log.Fatal(err)
+	}
+	if *state != "" {
+		useState(fs, *state, map[string]*string{
+			"store": store, "wallet-provider-key": providerKey, "trust": trust,
+			"trust-issuer-ca": issuerCA, "trust-verifier-ca": verifierCA,
+		})
 	}
 
 	switch cmd {
@@ -192,4 +200,20 @@ func list(dir string) error {
 		fmt.Printf("%s  %-16s %-10s %6d bytes  %s\n", s.ReceivedAt.Local().Format("2006-01-02 15:04"), s.ConfigurationID, s.Format, len(s.Credential), s.Path)
 	}
 	return nil
+}
+
+// useState points the flags a cmd/demo state directory provides at its
+// files, unless they were set explicitly.
+func useState(fs *flag.FlagSet, dir string, flags map[string]*string) {
+	set := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
+	files := map[string]string{
+		"store": "wallet-store", "wallet-provider-key": "wallet-provider.pem", "trust": "tls-cert.pem",
+		"trust-issuer-ca": "issuer-ca.pem", "trust-verifier-ca": "verifier-ca.pem",
+	}
+	for name, v := range flags {
+		if !set[name] {
+			*v = filepath.Join(dir, files[name])
+		}
+	}
 }

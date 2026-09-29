@@ -110,17 +110,94 @@ What the second path does and doesn't give you:
 
 ## Running the demo
 
-Run everything from this directory (`examples/passport-vdc`): each
-server reads the `.pem` files the others write here.
+From this directory (`examples/passport-vdc`), one command starts the
+issuer, verifier and web wallet together:
 
-**1. Create the Wallet Provider (once).**
+```sh
+go run ./cmd/demo
+```
+
+It prints the three URLs and runs until Ctrl-C. What should survive a
+restart is kept in `.demo-state/`: the TLS certificate all three servers
+share, the stand-in Wallet Provider's key, the issuer's CA, signing keys
+and status list, and the wallet's credentials. So a restart keeps your
+credentials verifying and your revocations in force, and the browser
+doesn't warn again. `go run ./cmd/demo -reset` deletes it and starts
+over. It holds credentials made from your passport, and their holder
+keys, unencrypted: delete it (or `-reset`) when you're done.
+
+**1. Accept the certificate (once).** The servers use a self-signed
+certificate: in the browser you'll use, open https://127.0.0.1:8543,
+https://127.0.0.1:9443 and https://127.0.0.1:7443 and accept the
+warning, or trust `.demo-state/tls-cert.pem`. It's reused on every run.
+The issuer uses 8543 rather than 8443 so it doesn't collide with a
+locally running OIDF conformance suite.
+
+**2. Issue, in the browser.** Use the same browser throughout: the
+issuer's redirect back is bound to the browser that started receiving
+(see below).
+
+1. Open https://127.0.0.1:8543 and upload a gmrtd portable passport
+   file. It's verified against gmrtd's built-in ICAO CSCA master list.
+2. The offer page shows a QR code, an **Open in web wallet** button and
+   a six-digit confirmation code. Click **Open in web wallet**, confirm,
+   and continue to the issuer.
+3. On the issuer's approval page, enter the confirmation code and
+   **Approve**. You're back in the wallet with both credentials, each
+   showing the passport photo.
+
+**3. Verify.**
+
+1. Open https://127.0.0.1:9443, choose a trust path, and click
+   **Open in web wallet**.
+2. The wallet shows who's asking and exactly which claims each format
+   would disclose; choose a format and **Share** (or **Decline**).
+3. The wallet brings you back to the verifier's page, which shows the
+   verified claims, "Revocation status: valid" and, for the country
+   trust path, the ICAO Passive Authentication result.
+
+**4. Revoke.** On the issuer, open **Issued credentials and revocation**
+(https://127.0.0.1:8543/status) and **Revoke** one credential. Verify
+again sharing that format: the verifier rejects it as revoked, while
+the other format is still accepted. The verifier fetches the status
+list on every check, so a revocation applies at once.
+
+**From the terminal (CLI wallet)** — `-state` points it at the demo's
+store and trust files, so both wallets see the same credentials; like
+the web wallet, it shows who's asking and what they'd see, and asks
+before sharing:
+
+```sh
+go run ./cmd/wallet receive -state .demo-state 'openid-credential-offer://?credential_offer=...'   # the offer page's link
+go run ./cmd/wallet list -state .demo-state
+go run ./cmd/wallet present -state .demo-state [-format dc+sd-jwt] [-yes] 'openid4vp://?client_id=...&request_uri=...'   # the verifier page's link
+```
+
+The CLI's `receive` prints the authorization URL: open it, approve with
+the confirmation code, and it picks up the redirect on
+`http://127.0.0.1:8765/callback`; add `-headless -code <confirmation code>`
+to approve automatically.
+
+The issuer's redirect back is bound to the wallet that asked (fapigo's
+protection against login CSRF, RFC 9700 §4.7): the web wallet sets a
+session cookie when it sends the browser to the issuer, so the approval
+must be completed in that same browser; the CLI's flow is bound to its
+own process.
+
+### Running the servers separately
+
+To run each server on its own (for example to restart or debug one),
+start them in this order from this directory, each in its own
+terminal. Each reads the `.pem` files the previous one wrote here, and
+keeps everything in memory:
+
+**Create the Wallet Provider (once).**
 
 ```sh
 go run ./cmd/wallet-provider     # writes wallet-provider.pem and wallet-provider-ca.pem
 ```
 
-**2. Start the three servers, each in its own terminal, in this order.**
-They keep running, and each reads what the previous one wrote:
+**Start the three servers:**
 
 ```sh
 go run ./cmd/issuer              # terminal 1: https://127.0.0.1:8543 — writes issuer-tls.pem, issuer-ca.pem
@@ -143,69 +220,20 @@ verifier, restart the web wallet. Credentials issued by an earlier
 issuer run no longer verify (the CA they chain to is gone), so delete
 `wallet-store/` and issue again.
 
-**3. Accept the certificates.** All three servers use self-signed
+**Accept the certificates.** All three servers use self-signed
 certificates: in the browser you'll use, open https://127.0.0.1:8543,
 https://127.0.0.1:9443 and https://127.0.0.1:7443 once each and accept
 the warning (or trust the written `.pem` files). The issuer uses 8543
 rather than 8443 so it doesn't collide with a locally running OIDF
 conformance suite.
 
-**4. Issue, in the browser.** Use the same browser throughout: the
-issuer's redirect back is bound to the browser that started receiving
-(see below).
+The wallets keep credentials (with their holder keys) in `wallet-store/`
+here; the CLI wallet reads it by default. Stop the servers with Ctrl-C.
 
-1. Open https://127.0.0.1:8543 and upload a gmrtd portable passport
-   file. It's verified against gmrtd's built-in ICAO CSCA master list.
-2. The offer page shows a QR code, an **Open in web wallet** button and
-   a six-digit confirmation code. Click **Open in web wallet**, confirm,
-   and continue to the issuer.
-3. On the issuer's approval page, enter the confirmation code and
-   **Approve**. You're back in the wallet with both credentials, each
-   showing the passport photo.
+### The stand-in Wallet Provider
 
-**5. Verify.**
-
-1. Open https://127.0.0.1:9443, choose a trust path, and click
-   **Open in web wallet**.
-2. The wallet shows who's asking and exactly which claims each format
-   would disclose; choose a format and **Share** (or **Decline**).
-3. The wallet brings you back to the verifier's page, which shows the
-   verified claims, "Revocation status: valid" and, for the country
-   trust path, the ICAO Passive Authentication result.
-
-**6. Revoke.** On the issuer, open **Issued credentials and revocation**
-(https://127.0.0.1:8543/status) and **Revoke** one credential. Verify
-again sharing that format: the verifier rejects it as revoked, while
-the other format is still accepted. The verifier fetches the status
-list on every check, so a revocation applies at once.
-
-**From the terminal (CLI wallet)** — same store, so both wallets see the
-same credentials; like the web wallet, it shows who's asking and what
-they'd see, and asks before sharing:
-
-```sh
-go run ./cmd/wallet receive 'openid-credential-offer://?credential_offer=...'   # the offer page's link
-go run ./cmd/wallet list
-go run ./cmd/wallet present [-format dc+sd-jwt] [-yes] 'openid4vp://?client_id=...&request_uri=...'   # the verifier page's link
-```
-
-The CLI's `receive` prints the authorization URL: open it, approve with
-the confirmation code, and it picks up the redirect on
-`http://127.0.0.1:8765/callback`; add `-headless -code <confirmation code>`
-to approve automatically. Both wallets keep credentials (with their
-holder keys) in `wallet-store/` — made from your passport, so delete it
-when you're done.
-
-The issuer's redirect back is bound to the wallet that asked (fapigo's
-protection against login CSRF, RFC 9700 §4.7): the web wallet sets a
-session cookie when it sends the browser to the issuer, so the approval
-must be completed in that same browser; the CLI's flow is bound to its
-own process.
-
-Stop the servers with Ctrl-C. Everything is in memory, so a restart
-starts over (see **Restarting** above).
-
-`cmd/wallet-provider` creates the demo's **stand-in Wallet Provider**:
+`cmd/demo` (into `.demo-state/wallet-provider.pem`) and
+`cmd/wallet-provider` create the demo's **stand-in Wallet Provider**:
 a key, and a certificate for it from a demo Wallet Provider CA, naming
 the provider's identifier (`-wallet-provider-issuer`) as a URI SAN. The
 issuer registers one wallet client (`passport-vdc-wallet`, with both
@@ -284,8 +312,10 @@ for 60 seconds.
   any wallet the Wallet Provider attests, and get the passport's data
   in a credential bound to *their* key.
 - The signing keys and certificates (one for credentials, one for the
-  issuer metadata, under one demo CA) are generated per process (a
-  restart invalidates issued credentials); everything is in memory.
+  issuer metadata, under one demo CA) are unencrypted files in
+  `.demo-state/` under `cmd/demo`, and generated per process under
+  `cmd/issuer` (where a restart invalidates issued credentials). Offers,
+  sessions and tokens are in memory either way.
 - **Anyone who can reach the issuer can revoke.** The `/status` page has
   no login; it refuses only cross-origin form posts. It records no
   passport data, and forgets everything on restart (as do the
@@ -387,6 +417,7 @@ generator, planned for gmrtd itself).
 | `walletapp` | the wallet: receive (offer → discovery → HAIP Authorization Code flow → credentials) and present (OpenID4VP, selective disclosure); credential store |
 | `verifierapp` | the OpenID4VP verifier: either-format requests, both trust paths, revocation checks |
 | `webwallet` | the browser wallet: credential cards, receive via the issuer's approval page, consent before presenting |
+| `cmd/demo` | runs the issuer, verifier and web wallet together, with persistent state |
 | `cmd/issuer`, `cmd/verifier`, `cmd/webwallet`, `cmd/wallet`, `cmd/wallet-provider` | runnable binaries |
 
 ## Roadmap

@@ -83,7 +83,10 @@ func New(cfg Config) (*App, error) {
 	}
 	a.vct = cfg.IssuerURL + VCTPath
 	a.transactions = newTransactions(a.now, cfg.transactionLifetime(), cfg.maxTransactions())
-	a.statusList, a.statusListURI = newStatusList(), cfg.IssuerURL+StatusListPath
+	a.statusListURI = cfg.IssuerURL + StatusListPath
+	if a.statusList, err = a.loadStatusList(); err != nil {
+		return nil, err
+	}
 	a.interactions = newTTLMap[pendingInteraction](a.now)
 	if a.providerRoots, err = certPool(cfg.Wallet.ProviderCA); err != nil {
 		return nil, err
@@ -259,7 +262,7 @@ func (a *App) buildIssuer() error {
 	}
 	a.credentialURL = credentialURL.URL()
 
-	id, err := newIssuerIdentity(a.now())
+	id, err := a.identity()
 	if err != nil {
 		return err
 	}
@@ -395,3 +398,22 @@ func (a *App) IssuerCertificate() *x509.Certificate { return a.documentCert }
 // IssuerCACertificate is the demo CA that issued IssuerCertificate —
 // the trust anchor a verifier configures for this issuer.
 func (a *App) IssuerCACertificate() *x509.Certificate { return a.caCert }
+
+// identity is this issuer's CA and signers: kept in Config.StateDir
+// when set, so credentials it issued still verify after a restart, and
+// generated afresh otherwise.
+func (a *App) identity() (issuerIdentity, error) {
+	if a.cfg.StateDir == "" {
+		return newIssuerIdentity(a.now())
+	}
+	return loadOrCreateIdentity(a.cfg.StateDir, a.now())
+}
+
+// loadStatusList is this issuer's status list: kept in Config.StateDir
+// when set, so revocations and allocated indices survive a restart.
+func (a *App) loadStatusList() (*statusList, error) {
+	if a.cfg.StateDir == "" {
+		return newStatusList(), nil
+	}
+	return loadStatusList(a.cfg.StateDir)
+}
