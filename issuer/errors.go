@@ -88,6 +88,19 @@ type Error struct {
 	nonce       string
 }
 
+// NewError builds an error response for a failure the caller decides —
+// most often ErrorCredentialRequestDenied, when the issuer's own
+// business rules refuse a request that is otherwise valid (§8.3.1.2:
+// "the Credential Request has not been accepted by the Credential
+// Issuer"). Every Credential, Deferred Credential and Notification
+// Endpoint error uses HTTP 400. description goes into the response's
+// error_description as it is, so it must be safe to show the Wallet:
+// never put passport data, internal errors or secrets in it. Write it
+// with WriteJSON, or return it through WriteError.
+func NewError(code ErrorCode, description string) *Error {
+	return newError(code, http.StatusBadRequest, description, nil)
+}
+
 func newError(code ErrorCode, httpStatus int, description string, cause error) *Error {
 	return &Error{code: code, httpStatus: httpStatus, description: description, cause: cause}
 }

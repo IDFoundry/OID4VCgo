@@ -2,7 +2,9 @@ package issuer_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 
@@ -100,5 +102,24 @@ func TestRequestCredential_ErrorWithCause(t *testing.T) {
 	}
 	if ierr.Error() == "" {
 		t.Errorf("Error() is empty")
+	}
+}
+
+func TestNewError_WritesCredentialErrorResponse(t *testing.T) {
+	err := issuer.NewError(issuer.ErrorCredentialRequestDenied, "this passport was already issued")
+	if err.Code() != issuer.ErrorCredentialRequestDenied || err.HTTPStatus() != http.StatusBadRequest || err.Unwrap() != nil {
+		t.Fatalf("NewError = %+v", err)
+	}
+	rec := httptest.NewRecorder()
+	issuer.WriteError(rec, err)
+	if rec.Code != http.StatusBadRequest || rec.Header().Get("Content-Type") != "application/json" {
+		t.Fatalf("response: %d %q", rec.Code, rec.Header().Get("Content-Type"))
+	}
+	var body map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body["error"] != "credential_request_denied" || body["error_description"] != "this passport was already issued" {
+		t.Errorf("body = %v", body)
 	}
 }
