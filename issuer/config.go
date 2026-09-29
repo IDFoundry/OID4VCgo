@@ -292,7 +292,7 @@ func (s *MdocSigner) validate() error {
 // providers it accepts, the same "resolving trust is the caller's job"
 // split attestation.Verify itself draws.
 type AttestationVerifier interface {
-	ResolveAttestationKey(ctx context.Context, a attestation.KeyAttestation) (crypto.PublicKey, jose.Alg, error)
+	ResolveAttestationKey(ctx context.Context, a attestation.KeyAttestation) (crypto.PublicKey, oid4vci.JOSEAlg, error)
 }
 
 // ProofBindingKeyResolver resolves a jwt-type key proof's own "kid" or
@@ -320,7 +320,7 @@ type AttestationVerifier interface {
 // dispatch happens to reject any key whose type doesn't match the
 // claimed algorithm, not because the resolver contract made it safe.
 type ProofBindingKeyResolver interface {
-	ResolveProofBindingKey(ctx context.Context, header map[string]any) (crypto.PublicKey, jose.Alg, error)
+	ResolveProofBindingKey(ctx context.Context, header map[string]any) (crypto.PublicKey, oid4vci.JOSEAlg, error)
 }
 
 // Dependencies are this issuer's external collaborators.

@@ -13,10 +13,9 @@ import (
 	"sync"
 	"time"
 
+	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
-	"github.com/idfoundry/oid4vcgo/internal/cose"
-	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/issuer"
 	"github.com/idfoundry/oid4vcgo/statuslist"
 )
@@ -152,7 +151,7 @@ func (a *App) handleStatusList(w http.ResponseWriter, r *http.Request) {
 	claims := statuslist.TokenClaims{Sub: a.statusListURI, Iat: now.Unix(), Exp: &exp, TTL: &ttl, StatusList: sl}
 	w.Header().Set("Cache-Control", "max-age="+strconv.Itoa(statusTokenTTL))
 	if strings.Contains(r.Header.Get("Accept"), statuslist.CWTTokenMediaType) {
-		token, err := statuslist.IssueTokenCWTX5Chain(a.documentSigner, cose.ES256, claims, a.documentChain())
+		token, err := statuslist.IssueTokenCWTX5Chain(a.documentSigner, oid4vci.COSEES256, claims, a.documentChain())
 		if err != nil {
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
@@ -161,7 +160,7 @@ func (a *App) handleStatusList(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(token)
 		return
 	}
-	token, err := statuslist.IssueTokenX5C(a.documentSigner, jose.ES256, claims, a.documentChain())
+	token, err := statuslist.IssueTokenX5C(a.documentSigner, oid4vci.ES256, claims, a.documentChain())
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return

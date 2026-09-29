@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"time"
 
+	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcgo/dcql"
@@ -42,7 +43,7 @@ type SDJWTVCIssuerKeyResolver interface {
 	// JWT's own JOSE header and (not yet cryptographically verified)
 	// claims, e.g. its "x5c"/"vct" — and returns the key/algorithm to
 	// verify its signature with.
-	ResolveIssuerKey(ctx context.Context, header, payload map[string]any) (crypto.PublicKey, jose.Alg, error)
+	ResolveIssuerKey(ctx context.Context, header, payload map[string]any) (crypto.PublicKey, oid4vci.JOSEAlg, error)
 }
 
 // MdocIssuerKeyResolver resolves which public key/algorithm verifies a
@@ -56,7 +57,7 @@ type MdocIssuerKeyResolver interface {
 	// (not yet cryptographically verified) IssuerAuth x5chain header
 	// — and docType, returning the key/algorithm to verify IssuerAuth
 	// with.
-	ResolveMdocIssuerKey(ctx context.Context, x5chain [][]byte, docType string) (crypto.PublicKey, cose.Alg, error)
+	ResolveMdocIssuerKey(ctx context.Context, x5chain [][]byte, docType string) (crypto.PublicKey, oid4vci.COSEAlg, error)
 }
 
 // VerifyResponseRequest is the input to VerifyResponse.
