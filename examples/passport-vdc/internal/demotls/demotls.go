@@ -19,6 +19,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -30,13 +31,28 @@ func Certificate(certFile, keyFile, certOut, commonName string) (tls.Certificate
 	if certFile != "" {
 		return tls.LoadX509KeyPair(certFile, keyFile)
 	}
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	pair, leaf, err := selfSigned(commonName)
 	if err != nil {
 		return tls.Certificate{}, err
 	}
+	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: leaf.Raw})
+	if err := os.WriteFile(certOut, pemBytes, 0o600); err != nil { // #nosec G703 -- operator-supplied path
+		return tls.Certificate{}, fmt.Errorf("write %s: %w", certOut, err)
+	}
+	log.Printf("generated a self-signed TLS certificate; wrote it to %s for clients to trust", certOut)
+	return pair, nil
+}
+
+// selfSigned generates a self-signed TLS certificate for 127.0.0.1,
+// ::1 and localhost, valid for a year.
+func selfSigned(commonName string) (tls.Certificate, *x509.Certificate, error) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return tls.Certificate{}, nil, err
+	}
 	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 62))
 	if err != nil {
-		return tls.Certificate{}, err
+		return tls.Certificate{}, nil, err
 	}
 	now := time.Now()
 	tmpl := &x509.Certificate{
@@ -49,20 +65,64 @@ func Certificate(certFile, keyFile, certOut, commonName string) (tls.Certificate
 	}
 	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
 	if err != nil {
-		return tls.Certificate{}, err
+		return tls.Certificate{}, nil, err
 	}
-	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
-	if err := os.WriteFile(certOut, pemBytes, 0o600); err != nil { // #nosec G703 -- operator-supplied path
-		return tls.Certificate{}, fmt.Errorf("write %s: %w", certOut, err)
+	leaf, err := x509.ParseCertificate(der)
+	if err != nil {
+		return tls.Certificate{}, nil, err
 	}
-	log.Printf("generated a self-signed TLS certificate; wrote it to %s for clients to trust", certOut)
-	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}, nil
+	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key, Leaf: leaf}, leaf, nil
 }
 
 // TrustingClient returns an HTTP client trusting the certificates in
 // the comma-separated PEM files (the demo servers' self-signed TLS
 // certificates) in addition to the system roots. Missing files are
 // skipped, so the defaults work before the verifier has been started.
+// PersistentCertificate is a self-signed TLS certificate for 127.0.0.1
+// and localhost kept in dir (tls-cert.pem, tls-key.pem): loaded when
+// it's there and not about to expire, generated and saved otherwise.
+// Reusing it across runs means a browser's warning is accepted once.
+func PersistentCertificate(dir, commonName string) (tls.Certificate, *x509.Certificate, error) {
+	certPath, keyPath := filepath.Join(dir, "tls-cert.pem"), filepath.Join(dir, "tls-key.pem")
+	if pair, err := tls.LoadX509KeyPair(certPath, keyPath); err == nil {
+		leaf, err := x509.ParseCertificate(pair.Certificate[0])
+		if err == nil && leaf.NotAfter.After(time.Now().AddDate(0, 1, 0)) {
+			return pair, leaf, nil
+		}
+	}
+	pair, leaf, err := selfSigned(commonName)
+	if err != nil {
+		return tls.Certificate{}, nil, err
+	}
+	keyDER, err := x509.MarshalECPrivateKey(pair.PrivateKey.(*ecdsa.PrivateKey))
+	if err != nil {
+		return tls.Certificate{}, nil, err
+	}
+	if err := os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}), 0o600); err != nil { // #nosec G703 -- operator-supplied state directory
+		return tls.Certificate{}, nil, fmt.Errorf("write %s: %w", keyPath, err)
+	}
+	if err := os.WriteFile(certPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: leaf.Raw}), 0o600); err != nil { // #nosec G703 -- operator-supplied state directory
+		return tls.Certificate{}, nil, fmt.Errorf("write %s: %w", certPath, err)
+	}
+	return pair, leaf, nil
+}
+
+// ClientTrusting is an HTTP client that trusts the system roots plus
+// certs.
+func ClientTrusting(certs ...*x509.Certificate) *http.Client {
+	roots, err := x509.SystemCertPool()
+	if err != nil {
+		roots = x509.NewCertPool()
+	}
+	for _, c := range certs {
+		roots.AddCert(c)
+	}
+	return &http.Client{
+		Timeout:   30 * time.Second,
+		Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}},
+	}
+}
+
 func TrustingClient(files string) (*http.Client, error) {
 	roots, err := x509.SystemCertPool()
 	if err != nil {

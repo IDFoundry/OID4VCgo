@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"html/template"
+	"log"
 	"math/big"
 	"net/http"
 	"slices"
@@ -56,6 +57,7 @@ type statusList struct {
 	mu      sync.Mutex
 	revoked []uint8
 	entries map[int]*IssuedStatus
+	path    string // where it's saved on every change; "" keeps it in memory
 }
 
 func newStatusList() *statusList {
@@ -77,6 +79,10 @@ func (s *statusList) allocate(format string, now time.Time) (int, error) {
 		idx := int(n.Int64())
 		if _, used := s.entries[idx]; !used {
 			s.entries[idx] = &IssuedStatus{Idx: idx, Format: format, IssuedAt: now}
+			if err := s.save(); err != nil {
+				delete(s.entries, idx)
+				return 0, err
+			}
 			return idx, nil
 		}
 	}
@@ -87,6 +93,9 @@ func (s *statusList) release(idx int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.entries, idx)
+	if err := s.save(); err != nil {
+		log.Printf("issuerapp: %v", err)
+	}
 }
 
 // revoke marks idx's credential revoked; false if no credential has it.
@@ -98,6 +107,9 @@ func (s *statusList) revoke(idx int) bool {
 		return false
 	}
 	e.Revoked, s.revoked[idx] = true, 1
+	if err := s.save(); err != nil {
+		log.Printf("issuerapp: %v (the revocation holds until restart)", err)
+	}
 	return true
 }
 

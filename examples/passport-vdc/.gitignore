@@ -11,3 +11,7 @@ verifier-tls.pem
 verifier-ca.pem
 webwallet-tls.pem
 wallet-store/
+
+# cmd/demo's state: keys, certificates, the issuer's status list and the
+# wallet's credential store (passport-derived, unencrypted).
+.demo-state/

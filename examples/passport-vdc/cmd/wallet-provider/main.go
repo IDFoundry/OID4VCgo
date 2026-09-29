@@ -13,10 +13,8 @@
 package main
 
 import (
-	"errors"
 	"flag"
 	"fmt"
-	"io/fs"
 	"log"
 	"os"
 
@@ -34,29 +32,15 @@ func main() {
 }
 
 func run(keyPath, caPath, providerIssuer string) error {
-	var provider *walletprovider.Provider
-	keyPEM, err := os.ReadFile(keyPath) // #nosec G304 -- operator-supplied path
-	switch {
-	case err == nil:
-		if provider, err = walletprovider.Load(providerIssuer, keyPEM); err != nil {
-			return err
-		}
-		fmt.Println("reusing", keyPath)
-	case errors.Is(err, fs.ErrNotExist):
-		if provider, err = walletprovider.New(providerIssuer); err != nil {
-			return err
-		}
-		if keyPEM, err = provider.PEM(); err != nil {
-			return err
-		}
-		if err := os.WriteFile(keyPath, keyPEM, 0o600); err != nil { // #nosec G703 -- operator-supplied path
-			return fmt.Errorf("write %s: %w", keyPath, err)
-		}
-		fmt.Println("created", keyPath)
-	default:
-		return fmt.Errorf("read %s: %w", keyPath, err)
+	provider, created, err := walletprovider.LoadOrCreate(providerIssuer, keyPath)
+	if err != nil {
+		return err
 	}
-
+	if created {
+		fmt.Println("created", keyPath)
+	} else {
+		fmt.Println("reusing", keyPath)
+	}
 	if err := os.WriteFile(caPath, provider.CACertificatePEM(), 0o600); err != nil { // #nosec G703 -- operator-supplied path
 		return fmt.Errorf("write %s: %w", caPath, err)
 	}

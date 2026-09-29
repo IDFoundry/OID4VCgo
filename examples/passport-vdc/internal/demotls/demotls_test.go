@@ -2,6 +2,7 @@ package demotls
 
 import (
 	"bytes"
+	"net/http"
 	"testing"
 )
 
@@ -29,5 +30,25 @@ func TestAbandonedHandshakeFilter(t *testing.T) {
 				t.Errorf("kept = %v, want %v", kept, tc.kept)
 			}
 		})
+	}
+}
+
+// TestPersistentCertificate: a second call returns the saved
+// certificate, so a browser's exception for it keeps applying.
+func TestPersistentCertificate(t *testing.T) {
+	dir := t.TempDir()
+	_, first, err := PersistentCertificate(dir, "test")
+	if err != nil {
+		t.Fatalf("first: %v", err)
+	}
+	pair, second, err := PersistentCertificate(dir, "test")
+	if err != nil {
+		t.Fatalf("second: %v", err)
+	}
+	if !second.Equal(first) || pair.PrivateKey == nil {
+		t.Error("the certificate wasn't reused")
+	}
+	if !ClientTrusting(first).Transport.(*http.Transport).TLSClientConfig.RootCAs.Equal(ClientTrusting(second).Transport.(*http.Transport).TLSClientConfig.RootCAs) {
+		t.Error("ClientTrusting doesn't trust the same certificate")
 	}
 }
