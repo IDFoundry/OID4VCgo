@@ -31,11 +31,13 @@ func New(v *resource.Verifier) (*Verifier, error) {
 }
 
 // Verify implements issuer.AccessTokenVerifier. The Grant's
-// ClientIdentity is the token's client_id — empty for a token that
-// names no client, such as one ExchangePreAuthorizedCode minted, so
-// nothing is bound to a client — and its AuthorizationDetails are the
-// token's authorization_details claim. A malformed
-// authorization_details claim fails verification.
+// ClientIdentity is the token's client_id, or issuer.NoClientIdentity{}
+// for a token that names no client — such as one
+// ExchangePreAuthorizedCode minted for an anonymous redemption — so
+// nothing is bound to a client for that request, and a deferred
+// transaction bound to a client refuses it. Its AuthorizationDetails
+// are the token's authorization_details claim; a malformed one fails
+// verification.
 func (v *Verifier) Verify(r *http.Request, endpoint *url.URL) (issuer.Grant, error) {
 	authCtx, err := v.resource.Verify(r.Context(), resource.VerifyRequest{
 		Method: r.Method, URL: endpoint, Authorization: r.Header.Get("Authorization"),
@@ -44,12 +46,14 @@ func (v *Verifier) Verify(r *http.Request, endpoint *url.URL) (issuer.Grant, err
 	if err != nil {
 		return issuer.Grant{}, err
 	}
+	var client issuer.ClientIdentity = issuer.NoClientIdentity{}
+	if authCtx.ClientID != "" {
+		client = issuer.KnownClientID(authCtx.ClientID)
+	}
 	grant := issuer.Grant{
-		Subject:   authCtx.Subject,
-		DPoPNonce: authCtx.NextDPoPNonce,
-		Authorized: issuer.AuthorizedRequest{
-			ClientIdentity: issuer.KnownClientID(authCtx.ClientID), Scopes: authCtx.Scopes,
-		},
+		Subject:    authCtx.Subject,
+		DPoPNonce:  authCtx.NextDPoPNonce,
+		Authorized: issuer.AuthorizedRequest{ClientIdentity: client, Scopes: authCtx.Scopes},
 	}
 	if raw, ok := authCtx.Claims["authorization_details"]; ok {
 		if err := json.Unmarshal(raw, &grant.Authorized.AuthorizationDetails); err != nil {

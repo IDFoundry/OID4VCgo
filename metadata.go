@@ -308,6 +308,10 @@ type JWK struct {
 	jwk.JWK
 	Kid string  `json:"kid"`
 	Alg jwe.Alg `json:"alg"`
+
+	// Use is the key's intended use (RFC 7517 §4.2): "enc" for an
+	// encryption key, "sig" for a signing one. OPTIONAL.
+	Use string `json:"use,omitempty"`
 }
 
 // JWKSet is a JSON Web Key Set (RFC 7517 §5) — §12.2.4's own "jwks"
