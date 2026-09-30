@@ -68,7 +68,7 @@ func EncryptionFromMetadata(meta oid4vci.Metadata) (*RequestEncryption, *Respons
 // encrypt to, as JSON.
 func requestEncryptionKey(jwks oid4vci.JWKSet) (json.RawMessage, error) {
 	for _, k := range jwks.Keys {
-		if k.Kty != "EC" || k.Crv != "P-256" || (k.Alg != "" && k.Alg != jwe.ECDHES) || (k.Use != "" && k.Use != "enc") {
+		if k.Kty != "EC" || k.Crv != "P-256" || (k.Alg != "" && k.Alg != jwe.ECDHES) || !usableForEncryption(k.Use, k.KeyOps) {
 			continue
 		}
 		if _, err := k.PublicKey(); err != nil {
@@ -81,6 +81,25 @@ func requestEncryptionKey(jwks oid4vci.JWKSet) (json.RawMessage, error) {
 		return raw, nil
 	}
 	return nil, errors.New("wallet: credential_request_encryption.jwks has no EC P-256 ECDH-ES key")
+}
+
+// usableForEncryption reports whether a JWK's "use" and "key_ops"
+// (RFC 7517 §4.2, §4.3), when present, allow encrypting to it: use
+// "enc", and key_ops naming an operation ECDH-ES encryption performs.
+func usableForEncryption(use string, keyOps []string) bool {
+	if use != "" && use != "enc" {
+		return false
+	}
+	if len(keyOps) == 0 {
+		return true
+	}
+	for _, op := range keyOps {
+		switch op {
+		case "encrypt", "wrapKey", "deriveKey", "deriveBits":
+			return true
+		}
+	}
+	return false
 }
 
 func preferredEnc(field string, offered []jwe.Enc) (jwe.Enc, error) {

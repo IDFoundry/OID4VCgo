@@ -19,6 +19,7 @@ func TestEncryptionFromMetadata(t *testing.T) {
 	rsa := oid4vci.JWK{JWK: jwk.JWK{Kty: "RSA"}, Kid: "rsa"}
 	wrongAlg := oid4vci.JWK{JWK: ecKey, Kid: "wrong-alg", Alg: "ECDH-ES+A128KW"}
 	signing := oid4vci.JWK{JWK: ecKey, Kid: "signing", Use: "sig"}
+	verifyOnly := oid4vci.JWK{JWK: ecKey, Kid: "verify-only", KeyOps: []string{"verify"}}
 	req := func(keys ...oid4vci.JWK) *oid4vci.RequestEncryptionMetadata {
 		return &oid4vci.RequestEncryptionMetadata{JWKS: oid4vci.JWKSet{Keys: keys}, EncValuesSupported: []jwe.Enc{jwe.A128GCM, jwe.A256GCM}}
 	}
@@ -32,7 +33,7 @@ func TestEncryptionFromMetadata(t *testing.T) {
 	})
 	t.Run("both, picking a usable key and the strongest enc", func(t *testing.T) {
 		r, s, err := wallet.EncryptionFromMetadata(oid4vci.Metadata{
-			CredentialRequestEncryption: req(rsa, wrongAlg, signing, ec), CredentialResponseEncryption: resp,
+			CredentialRequestEncryption: req(rsa, wrongAlg, signing, verifyOnly, ec), CredentialResponseEncryption: resp,
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -53,7 +54,7 @@ func TestEncryptionFromMetadata(t *testing.T) {
 	})
 	for name, meta := range map[string]oid4vci.Metadata{
 		"response without request": {CredentialResponseEncryption: resp},
-		"no usable key":            {CredentialRequestEncryption: req(rsa, wrongAlg)},
+		"no usable key":            {CredentialRequestEncryption: req(rsa, wrongAlg, verifyOnly)},
 		"no common request enc": {CredentialRequestEncryption: &oid4vci.RequestEncryptionMetadata{
 			JWKS: oid4vci.JWKSet{Keys: []oid4vci.JWK{ec}}, EncValuesSupported: []jwe.Enc{"A128CBC-HS256"},
 		}},
