@@ -1,6 +1,9 @@
 package statuslist
 
-import "fmt"
+import (
+	"fmt"
+	"math"
+)
 
 // statusListInfo is draft-14 §6.3's StatusListInfo CBOR structure — the
 // CWT counterpart to Claim's JSON idx/uri shape.
@@ -12,9 +15,11 @@ type statusListInfo struct {
 // StatusListRef is the content of a Referenced Token's
 // status.status_list claim (draft-14 §6.2): a pointer to the index
 // within, and URI of, a Status List Token that carries this token's
-// status.
+// status. Idx is a non-negative integer (§6.2), the same uint64
+// credential/mdoc.StatusListRef — the MSO's status_list element —
+// uses, so either converts to the other field by field.
 type StatusListRef struct {
-	Idx int    // REQUIRED
+	Idx uint64 // REQUIRED
 	URI string // REQUIRED
 }
 
@@ -48,7 +53,8 @@ func ParseStatusClaim(status map[string]any) (StatusListRef, error) {
 		return StatusListRef{}, fmt.Errorf("statuslist: status_list is missing the required idx claim")
 	}
 	idxFloat, ok := idxRaw.(float64)
-	if !ok || idxFloat < 0 || idxFloat != float64(int(idxFloat)) {
+	// 2^53 bounds the integers a float64 holds exactly.
+	if !ok || idxFloat < 0 || idxFloat > 1<<53 || idxFloat != math.Trunc(idxFloat) {
 		return StatusListRef{}, fmt.Errorf("statuslist: status_list.idx is not a non-negative integer")
 	}
 
@@ -57,7 +63,7 @@ func ParseStatusClaim(status map[string]any) (StatusListRef, error) {
 		return StatusListRef{}, fmt.Errorf("statuslist: status_list is missing the required uri claim")
 	}
 
-	return StatusListRef{Idx: int(idxFloat), URI: uri}, nil
+	return StatusListRef{Idx: uint64(idxFloat), URI: uri}, nil
 }
 
 // CWTStatusClaim builds the value of the CWT "status" claim (key
@@ -66,11 +72,11 @@ func ParseStatusClaim(status map[string]any) (StatusListRef, error) {
 // caller assigns the result under CWTClaimStatus in its own CWT claims
 // map alongside whatever other claims the token carries.
 func (ref StatusListRef) CWTStatusClaim() (map[string]interface{}, error) {
-	if ref.Idx < 0 {
-		return nil, fmt.Errorf("statuslist: StatusListRef.Idx must not be negative, got %d", ref.Idx)
+	if ref.URI == "" {
+		return nil, fmt.Errorf("statuslist: StatusListRef.URI is required")
 	}
 	return map[string]interface{}{
-		"status_list": statusListInfo{Idx: uint64(ref.Idx), URI: ref.URI},
+		"status_list": statusListInfo(ref),
 	}, nil
 }
 
@@ -103,5 +109,5 @@ func ParseCWTStatusClaim(status map[string]interface{}) (StatusListRef, error) {
 		return StatusListRef{}, fmt.Errorf("statuslist: status_list is missing the required uri claim")
 	}
 
-	return StatusListRef{Idx: int(idx), URI: uri}, nil
+	return StatusListRef{Idx: uint64(idx), URI: uri}, nil
 }

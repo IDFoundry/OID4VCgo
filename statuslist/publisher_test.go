@@ -65,7 +65,7 @@ func TestPublisher_CheckerRoundTrip(t *testing.T) {
 			uri = srv.URL + "/statuslists/1"
 			c := Checker{Fetcher: Fetcher{HTTP: srv.Client()}, Roots: roots}
 			for _, cwt := range []bool{false, true} {
-				for idx, want := range map[int]StatusType{0: StatusValid, 1: StatusInvalid, 2: StatusValid} {
+				for idx, want := range map[uint64]StatusType{0: StatusValid, 1: StatusInvalid, 2: StatusValid} {
 					got, claims, err := c.Check(context.Background(), StatusListRef{Idx: idx, URI: uri}, cwt)
 					if err != nil || got != want {
 						t.Errorf("cwt=%v idx %d: %v, %v; want %v", cwt, idx, got, err, want)

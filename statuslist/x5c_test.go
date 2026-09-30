@@ -35,7 +35,7 @@ func TestX5C_RoundTrips(t *testing.T) {
 	if err != nil {
 		t.Fatalf("IssueTokenCWTX5Chain: %v", err)
 	}
-	for idx, want := range map[int]StatusType{0: StatusValid, 1: StatusInvalid} {
+	for idx, want := range map[uint64]StatusType{0: StatusValid, 1: StatusInvalid} {
 		ref := StatusListRef{Idx: idx, URI: x5cTestURI}
 		if got, _, err := CheckX5C(jwt, roots, ref, VerifyOptions{}); err != nil || got != want {
 			t.Errorf("CheckX5C(idx %d) = %v, %v; want %v", idx, got, err, want)

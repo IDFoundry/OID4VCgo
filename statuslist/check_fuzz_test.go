@@ -35,13 +35,13 @@ func FuzzCheckSigned(f *testing.F) {
 		if err != nil {
 			f.Fatalf("decode lst: %v", err)
 		}
-		f.Add(uint8(bits), lst, 1, false)
-		f.Add(uint8(bits), lst, 4, true)
+		f.Add(uint8(bits), lst, uint64(1), false)
+		f.Add(uint8(bits), lst, uint64(4), true)
 	}
-	f.Add(uint8(Bits1), []byte{}, 0, false)
-	f.Add(uint8(3), []byte{0x78, 0x9c}, -1, true)
+	f.Add(uint8(Bits1), []byte{}, uint64(0), false)
+	f.Add(uint8(3), []byte{0x78, 0x9c}, uint64(1)<<63, true)
 
-	f.Fuzz(func(t *testing.T, bits uint8, lst []byte, idx int, cwt bool) {
+	f.Fuzz(func(t *testing.T, bits uint8, lst []byte, idx uint64, cwt bool) {
 		claims := TokenClaims{
 			Sub: sub, Iat: 1767225600,
 			StatusList: StatusList{Bits: Bits(bits), Lst: base64.RawURLEncoding.EncodeToString(lst)},

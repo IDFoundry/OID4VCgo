@@ -159,11 +159,12 @@ func (s *statusList) snapshot() ([]uint8, []IssuedStatus) {
 // withStatus points one credential's claims at idx in this issuer's
 // status list.
 func (a *App) withStatus(c *issuer.CredentialInstance, idx int) {
+	ref := statuslist.StatusListRef{Idx: uint64(idx), URI: a.statusListURI} // #nosec G115 -- idx is from allocate, in [0, statusListSize)
 	if c.SDJWTClaims != nil {
-		c.SDJWTClaims.Status = statuslist.StatusListRef{Idx: idx, URI: a.statusListURI}.Claim()
+		c.SDJWTClaims.Status = ref.Claim()
 	}
 	if c.MdocClaims != nil {
-		c.MdocClaims.Status = &mdoc.StatusListRef{Idx: uint64(idx), URI: a.statusListURI} // #nosec G115 -- idx is from allocate, in [0, statusListSize)
+		c.MdocClaims.Status = &mdoc.StatusListRef{Idx: ref.Idx, URI: ref.URI}
 	}
 }
 
