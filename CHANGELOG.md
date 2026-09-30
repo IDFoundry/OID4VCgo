@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.22.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.21.0...v0.22.0) (2026-09-30)
+
+
+### ⚠ BREAKING CHANGES
+
+* **deps:** Wallets calling the Credential, Deferred Credential or Notification Endpoints now get 401 with no error code for a request without credentials (was 400 invalid_request), and invalid_dpop_proof for an invalid DPoP proof at any endpoint (was invalid_request or invalid_token); FAPIgo v0.41.0's own federation changes are breaking too, for code using fapigo/federation directly — see FAPIgo's UPGRADING.md.
+* **issuer:** issuer.DeferredTransactionStore adds Create and Update (atomic per transaction), and under AssuranceProduction must declare AtomicConsume as well as Durable; issuer.Limits.DeferredTransactionLifetime is required when Endpoints.DeferredCredential is set; DeferredCredentialHandler takes a DeferredCredentialHandlerConfig (embed your ProtectedEndpointConfig).
+* **deps:** requires FAPIgo 2931f31 or later, whose fapigo/federation changes are breaking (case-sensitive metadata member names, kid required and unique in Entity Statements, crit rejected, metadata policy operator combination rules enforced); code using fapigo/federation directly must follow FAPIgo's UPGRADING.md.
+* **statuslist:** fetch only public addresses, and cache served tokens ([#309](https://github.com/IDFoundry/OID4VCgo/issues/309))
+* **verifier:** verifier.Transactions.Begin refuses an empty browserBinding for cross-device requests too; pass a secret you keep (a cookie, or a server-side value) and give the same one to Lookup.
+* **statuslist:** statuslist.StatusListRef.Idx is a uint64 (was int); convert an int index with uint64(idx), and copy it to or from credential/mdoc.StatusListRef.Idx directly.
+
+### Features
+
+* **haip:** recommend a HAIP Authorization Server config and Wallet client ([9cbb57d](https://github.com/IDFoundry/OID4VCgo/commit/9cbb57d25ac24c250b99c86714212cdc2c609c84))
+* **issuer:** defer issuance from a Credential Request ([9e11bbd](https://github.com/IDFoundry/OID4VCgo/commit/9e11bbd8897909956baed99ee64baf6a37d99e86))
+* **issuer:** serve the Deferred Credential and Notification Endpoints ([10ea446](https://github.com/IDFoundry/OID4VCgo/commit/10ea446bf44c56be2f2b625631cf25cd567867d2))
+
+
+### Bug Fixes
+
+* bind client-less tokens explicitly, and skip signing keys for encryption ([7818d33](https://github.com/IDFoundry/OID4VCgo/commit/7818d33866cea40bdef41780dd809964bf728cd1))
+* **conformance:** check the Verifier's certificate chain in conformance-wallet-vp ([92766de](https://github.com/IDFoundry/OID4VCgo/commit/92766de7e1f56ba4e8c2a6f691bf68cd66f0467c))
+* **deps:** pin FAPIgo main and build resource verifiers with serverresource ([dfeb4df](https://github.com/IDFoundry/OID4VCgo/commit/dfeb4df909037188a810d3e3857aa2563c9a5976))
+* **deps:** pin FAPIgo v0.41.0 ([9efcf84](https://github.com/IDFoundry/OID4VCgo/commit/9efcf84bf02c78efcdf8a30bb5e1f0d73921baf8))
+* **statuslist:** fetch only public addresses, and cache served tokens ([#309](https://github.com/IDFoundry/OID4VCgo/issues/309)) ([7657dc9](https://github.com/IDFoundry/OID4VCgo/commit/7657dc9fb637c9dd84f5530b466f93e8558629b2))
+* **statuslist:** make StatusListRef.Idx a uint64 ([91bfe83](https://github.com/IDFoundry/OID4VCgo/commit/91bfe8390f8de922d2d56cd547055872027a5dd8))
+* **verifier:** require a binding for every presentation request ([69a59e9](https://github.com/IDFoundry/OID4VCgo/commit/69a59e946ec7de2e1b66ecb3a3e037907e027607))
+
 ## [0.21.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.20.0...v0.21.0) (2026-09-30)
 
 
