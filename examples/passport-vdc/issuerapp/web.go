@@ -72,7 +72,7 @@ func (a *App) routes() http.Handler {
 	mux.HandleFunc("POST /nonce", a.handleNonce)
 	mux.HandleFunc("POST /credential", a.handleCredential)
 
-	mux.HandleFunc("GET "+StatusListPath, a.handleStatusList)
+	mux.Handle("GET "+StatusListPath, a.statusPublisher())
 	mux.HandleFunc("GET /status", a.handleStatusPage)
 	mux.HandleFunc("POST /status/revoke", a.handleRevoke)
 	return mux
