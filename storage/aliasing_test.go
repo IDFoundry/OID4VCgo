@@ -2,11 +2,14 @@ package storage_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/idfoundry/oid4vcgo"
+	"github.com/idfoundry/oid4vcgo/dcql"
 	"github.com/idfoundry/oid4vcgo/issuer"
 	"github.com/idfoundry/oid4vcgo/storage"
+	"github.com/idfoundry/oid4vcgo/verifier"
 )
 
 // TestCredentialOfferStoreDoesNotAliasCallerOrInternalState covers both
@@ -130,4 +133,64 @@ func TestNoStoreRacesUnderConcurrentAccess(t *testing.T) {
 	for i := 0; i < 50; i++ {
 		<-done
 	}
+}
+
+// TestVerifierTransactionStoreDoesNotAliasCallerOrInternalState covers
+// Create's input, Get's output, and an Update whose fn changes the
+// transaction in place and then fails.
+func TestVerifierTransactionStoreDoesNotAliasCallerOrInternalState(t *testing.T) {
+	s := storage.NewVerifierTransactionStore()
+	ctx := context.Background()
+	holderBinding := true
+	tx := verifier.Transaction{
+		ID: "t1", KeyID: "k1", BrowserBindingHash: []byte{1, 2, 3},
+		Query: dcql.Query{Credentials: []dcql.CredentialQuery{{
+			ID: "pid", Format: "dc+sd-jwt", Meta: []byte(`{"vct_values":["pid"]}`),
+			TrustedAuthorities:                []dcql.TrustedAuthoritiesQuery{{Type: dcql.TrustedAuthorityAKI, Values: []string{"aki"}}},
+			RequireCryptographicHolderBinding: &holderBinding,
+			Claims:                            []dcql.ClaimsQuery{{ID: "c", Path: dcql.Path{dcql.PathKey("age_over_18")}, Values: []any{true}}},
+			ClaimSets:                         [][]string{{"c"}},
+		}}},
+	}
+	if err := s.Create(ctx, tx); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	tamper := func(tx *verifier.Transaction) {
+		c := &tx.Query.Credentials[0]
+		c.ID, c.Meta[0] = "tampered", 'x'
+		c.TrustedAuthorities[0].Values[0] = "tampered"
+		*c.RequireCryptographicHolderBinding = false
+		c.Claims[0].Path[0], c.Claims[0].Values[0] = dcql.PathKey("tampered"), false
+		c.ClaimSets[0][0] = "tampered"
+		tx.BrowserBindingHash[0] = 9
+	}
+	check := func(when string) {
+		t.Helper()
+		got, err := s.Get(ctx, "t1")
+		if err != nil {
+			t.Fatalf("Get %s: %v", when, err)
+		}
+		c := got.Query.Credentials[0]
+		if c.ID != "pid" || c.Meta[0] != '{' || c.TrustedAuthorities[0].Values[0] != "aki" ||
+			!*c.RequireCryptographicHolderBinding || c.Claims[0].Path[0] != dcql.PathKey("age_over_18") ||
+			c.Claims[0].Values[0] != true || c.ClaimSets[0][0] != "c" || got.BrowserBindingHash[0] != 1 {
+			t.Fatalf("stored transaction changed %s: %+v", when, got)
+		}
+	}
+
+	tamper(&tx)
+	check("after the caller changed what it created")
+
+	got, err := s.Get(ctx, "t1")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	tamper(&got)
+	check("after the caller changed what Get returned")
+
+	failed := errors.New("fn failed")
+	if err := s.Update(ctx, "t1", func(tx *verifier.Transaction) error { tamper(tx); return failed }); !errors.Is(err, failed) {
+		t.Fatalf("Update = %v, want %v", err, failed)
+	}
+	check("after a failed Update")
 }
