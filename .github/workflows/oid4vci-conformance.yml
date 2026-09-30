@@ -61,8 +61,9 @@ jobs:
     runs-on: ubuntu-latest
     # See the sibling oid4vp-conformance.yml's own identical comment —
     # this half runs the Issuer's own full 60-module battery four times
-    # (default/issuer-initiated x sd_jwt_vc/mdoc) plus the Wallet's own
-    # six runs, all against a freshly-built conformance-issuer
+    # (default/issuer-initiated x sd_jwt_vc/mdoc), a deferred-issuance
+    # run, and the Wallet's own six runs, all against a freshly-built
+    # conformance-issuer
     # container. 90 minutes gives real headroom over this repo's own
     # observed runtime without inheriting the old combined job's own
     # 120-minute budget, which also had to cover the OID4VP half.

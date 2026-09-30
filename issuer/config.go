@@ -66,6 +66,11 @@ type Limits struct {
 	// Endpoints.DeferredCredential is set.
 	DeferredIssuancePollInterval time.Duration
 
+	// DeferredTransactionLifetime bounds how long a transaction
+	// RequestCredential defers stays answerable (§9). Required only
+	// when Endpoints.DeferredCredential is set.
+	DeferredTransactionLifetime time.Duration
+
 	// AccessTokenLifetime bounds how long an access token
 	// ExchangePreAuthorizedCode issues remains valid. Required only
 	// when Dependencies.PreAuthorizedCodes is set.
@@ -577,6 +582,9 @@ func validateDeferredCredentialEndpointDependencies(cfg Config, deps Dependencie
 	}
 	if cfg.Limits.DeferredIssuancePollInterval <= 0 {
 		return fmt.Errorf("issuer: config: limits.deferred_issuance_poll_interval must be positive when endpoints.deferred_credential is set")
+	}
+	if cfg.Limits.DeferredTransactionLifetime <= 0 {
+		return fmt.Errorf("issuer: config: limits.deferred_transaction_lifetime must be positive when endpoints.deferred_credential is set")
 	}
 	if deps.DeferredTransactions == nil {
 		return fmt.Errorf("issuer: dependencies: deferred_transactions is required when endpoints.deferred_credential is set")

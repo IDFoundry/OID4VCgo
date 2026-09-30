@@ -901,3 +901,73 @@ func doJSON(t *testing.T, client *http.Client, req *http.Request) map[string]any
 	}
 	return body
 }
+
+// TestFullFlow_DeferredIssuance drives Config.Deferred end to end, the
+// way the OIDF suite does: the Credential Request is answered 202 with
+// a transaction_id and interval, and one poll of the Deferred
+// Credential Endpoint returns the credential, bound to the proof's key.
+func TestFullFlow_DeferredIssuance(t *testing.T) {
+	now := time.Now()
+	base := baseTestConfig(t)
+	base.Deferred = true
+	client, cfg, attesterKey, clientKey := setupFullFlowTestWithConfig(t, base, "deferred-client", "deferred-subject")
+	holderKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	accessToken, cNonce := performAuthFlowThroughNonce(t, client, cfg, attesterKey, clientKey, now)
+	proofJWT, err := buildCredentialProofJWT(holderKey, cfg.Client.ID, cfg.Issuer, cNonce, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(map[string]any{
+		"credential_configuration_id": cfg.CredentialConfigurationID,
+		"proofs":                      map[string][]string{"jwt": {proofJWT}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deferred := postProtected(t, client, cfg.Issuer+"/credential", clientKey, accessToken, body, now, http.StatusAccepted)
+	txID, _ := deferred["transaction_id"].(string)
+	if txID == "" || deferred["interval"] == nil || deferred["credentials"] != nil {
+		t.Fatalf("credential response = %+v, want a transaction_id and interval", deferred)
+	}
+
+	pollBody, err := json.Marshal(map[string]string{"transaction_id": txID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	issued := postProtected(t, client, cfg.Issuer+deferredPath, clientKey, accessToken, pollBody, now, http.StatusOK)
+	credentials, _ := issued["credentials"].([]any)
+	if len(credentials) != 1 {
+		t.Fatalf("deferred credential response = %+v, want one credential", issued)
+	}
+	payload := decodeIssuedSDJWTPayload(t, credentials[0])
+	cnf, _ := payload["cnf"].(map[string]any)
+	if jwk, _ := cnf["jwk"].(map[string]any); jwk["x"] == nil {
+		t.Errorf("issued credential isn't key-bound: %+v", payload)
+	}
+}
+
+// postProtected POSTs body as JSON to endpoint with a DPoP-bound access
+// token, requiring status, and decodes the JSON response.
+func postProtected(t *testing.T, client *http.Client, endpoint string, clientKey *ecdsa.PrivateKey, accessToken string, body []byte, now time.Time, status int) map[string]any {
+	t.Helper()
+	resp, err := client.Do(buildProtectedRequest(t, endpoint, clientKey, accessToken, "application/json", body, now))
+	if err != nil {
+		t.Fatalf("POST %s: %v", endpoint, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != status {
+		t.Fatalf("POST %s: status %d, want %d: %s", endpoint, resp.StatusCode, status, raw)
+	}
+	var out map[string]any
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatalf("POST %s: %v (%s)", endpoint, err, raw)
+	}
+	return out
+}

@@ -29,9 +29,10 @@ const (
 	// pattern) must implement StoreAssurance and assert at least
 	// Durable, plus AtomicConsume for whichever of those expose a
 	// Consume/UseOnce-style operation (Nonces, PreAuthorizedCodes,
-	// DPoPReplay, DPoPNonces — CredentialOffers/DeferredTransactions/
-	// Notifications are plain store/get/mark operations with nothing
-	// to assert atomicity for). A store that doesn't implement
+	// DPoPReplay, DPoPNonces), or an Update and Invalidate that must
+	// each happen at most once (DeferredTransactions) —
+	// CredentialOffers/Notifications are plain store/get operations
+	// with nothing to assert atomicity for). A store that doesn't implement
 	// StoreAssurance at all is rejected rather than assumed adequate —
 	// declaring capabilities is not optional under this level. This
 	// does not verify any declaration; a store should still be tested
@@ -163,7 +164,7 @@ func checkProductionAssurance(cfg Config, deps Dependencies) error {
 		}
 	}
 	if !cfg.Endpoints.DeferredCredential.IsZero() {
-		if err := checkStoreAssurance("deferred_transactions", deps.DeferredTransactions, false); err != nil {
+		if err := checkStoreAssurance("deferred_transactions", deps.DeferredTransactions, true); err != nil {
 			return err
 		}
 	}

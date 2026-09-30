@@ -66,6 +66,15 @@ jwt-type key proof, DPoP-bound resource access) — and receives back a
 real issued credential. Also confirmed: `TestNewServerMux_ServesRealMetadataAndJWKS`
 (both metadata documents + JWKS, as a lighter-weight check).
 
+Deferred issuance (OID4VCI §9): with `"deferred": true` in its config,
+this binary answers every Credential Request 202 with a
+`transaction_id` and `interval`, and its Deferred Credential Endpoint
+issues on the Wallet's first poll. `TestFullFlow_DeferredIssuance`
+drives that end to end, and the daily OID4VCI conformance workflow's
+"Issuer deferred" run (`run-fapi2sp-battery -deferred`: metadata-test
+and happy-flow) drives it against the suite, which follows a 202 to
+the Deferred Credential Endpoint once.
+
 Building the full-flow test surfaced three real bugs, all fixed
 alongside it:
 - `par.go`/`token.go` never forwarded the

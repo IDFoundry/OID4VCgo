@@ -5,11 +5,13 @@ package issuertest
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/issuer"
 )
 
@@ -568,6 +570,75 @@ func TestDeferredTransactionStoreContract(t *testing.T, seed func(t *testing.T, 
 		}
 		if _, err := store.Get(ctx, "txn1"); err == nil {
 			t.Error("Get after Invalidate = nil error, want error (transaction_id no longer valid)")
+		}
+		if err := store.Update(ctx, "txn1", func(*issuer.DeferredTransactionRecord) error { return nil }); err == nil {
+			t.Error("Update after Invalidate = nil error, want error")
+		}
+	})
+
+	t.Run("CreateThenGet", func(t *testing.T) {
+		store := seed(t, "txn1", issuer.DeferredTransactionRecord{})
+		ctx := context.Background()
+		want := issuer.DeferredTransactionRecord{
+			ClientID: contractClientID, Status: issuer.DeferredTransactionPending, CredentialConfigurationID: "pid",
+			BindingKeys: []json.RawMessage{json.RawMessage(`{"kty":"EC"}`)}, Reference: "ref-1",
+		}
+		if err := store.Create(ctx, "txn2", want); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		got, err := store.Get(ctx, "txn2")
+		if err != nil {
+			t.Fatalf(msgGetFailed, err)
+		}
+		if got.CredentialConfigurationID != "pid" || got.Reference != "ref-1" || len(got.BindingKeys) != 1 || string(got.BindingKeys[0]) != `{"kty":"EC"}` {
+			t.Errorf("Get after Create = %+v, want %+v", got, want)
+		}
+		if err := store.Create(ctx, "txn2", want); err == nil {
+			t.Error("Create reused a transaction_id")
+		}
+	})
+
+	t.Run("Update", func(t *testing.T) {
+		store := seed(t, "txn1", issuer.DeferredTransactionRecord{Status: issuer.DeferredTransactionPending})
+		ctx := context.Background()
+		if err := store.Update(ctx, "txn1", func(r *issuer.DeferredTransactionRecord) error {
+			r.Status = issuer.DeferredTransactionDenied
+			return nil
+		}); err != nil {
+			t.Fatalf("Update: %v", err)
+		}
+		refused := errors.New("refused")
+		if err := store.Update(ctx, "txn1", func(r *issuer.DeferredTransactionRecord) error {
+			r.Status = issuer.DeferredTransactionIssued
+			return refused
+		}); !errors.Is(err, refused) {
+			t.Errorf("Update whose fn fails = %v, want fn's error", err)
+		}
+		if got, err := store.Get(ctx, "txn1"); err != nil || got.Status != issuer.DeferredTransactionDenied {
+			t.Errorf("after Updates: %+v, %v; want Denied (the failed Update saved nothing)", got, err)
+		}
+		if err := store.Update(ctx, "never-seeded", func(*issuer.DeferredTransactionRecord) error { return nil }); err == nil {
+			t.Error("Update of an unknown transaction = nil error")
+		}
+	})
+
+	t.Run("UpdateIsAtomic", func(t *testing.T) {
+		store := seed(t, "txn1", issuer.DeferredTransactionRecord{Status: issuer.DeferredTransactionPending})
+		const n = 20
+		var wg sync.WaitGroup
+		for range n {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				_ = store.Update(context.Background(), "txn1", func(r *issuer.DeferredTransactionRecord) error {
+					r.Credentials = append(r.Credentials, oid4vci.IssuedCredential{Credential: "c"})
+					return nil
+				})
+			}()
+		}
+		wg.Wait()
+		if got, err := store.Get(context.Background(), "txn1"); err != nil || len(got.Credentials) != n {
+			t.Errorf("after %d concurrent Updates: %d credentials, %v; want %d (an Update was lost)", n, len(got.Credentials), err, n)
 		}
 	})
 }

@@ -252,6 +252,17 @@ var mdocBattery = []string{
 // exists for. Restricted the same way mdocBattery is, for the same
 // reason: the other 40 FAPI2SP-generic modules don't exercise proof
 // type at all.
+// deferredBattery, driven under -deferred: the same 2 sanity modules
+// mdocBattery drives, against a cmd/conformance-issuer that defers
+// every Credential Request (Config.Deferred). The suite follows a 202
+// with transaction_id to the Deferred Credential Endpoint once and
+// validates what it returns, so happy-flow proves the whole deferred
+// flow — 202 with interval, the deferred 200, the notification.
+var deferredBattery = []string{
+	metadataTestName,
+	happyFlowTestName,
+}
+
 var keyAttestationBattery = []string{
 	metadataTestName,
 	happyFlowTestName,
@@ -268,6 +279,7 @@ func main() {
 	credentialFormat := flag.String("credential-format", "sd_jwt_vc", "credential_format variant to drive: \"sd_jwt_vc\" (default) or \"mdoc\" — mdoc restricts the driven module set to the 2 sanity-check modules (mdocBattery), since the other 40 FAPI2SP-generic battery modules don't exercise credential issuance format at all and are already proven under sd_jwt_vc")
 	credentialEncryption := flag.String("credential-encryption", "plain", "vci_credential_encryption variant to drive with -base-plan: \"plain\" (default) or \"encrypted\" — only meaningful with -base-plan, since the HAIP plan's own module list entries always pin \"plain\" themselves regardless of this flag; cmd/conformance-issuer already supports encrypted responses unconditionally, so this just lets oid4vci-1_0-issuer-fail-unsupported-encryption-algorithm (self-SKIPPED under \"plain\") actually run")
 	credentialProofTypeHint := flag.String("credential-proof-type-hint", "jwt", "vci.credential_proof_type_hint to drive with: \"jwt\" (default) or \"attestation\" — attestation restricts the driven module set to the 3 modules in keyAttestationBattery (metadata-test, happy-flow, fail-invalid-key-attestation-signature), the same restriction -credential-format mdoc applies, and for the same reason: none of the other 40 FAPI2SP-generic battery modules care which proof type is used")
+	deferred := flag.Bool("deferred", false, "configure cmd/conformance-issuer to defer every Credential Request (OID4VCI §9) and drive the 2 modules in deferredBattery, which follow the 202 to the Deferred Credential Endpoint")
 	issuerInitiated := flag.Bool("issuer-initiated", false, "drive the HAIP plan's issuer_initiated flow variant instead of the default wallet_initiated one — this binary must construct and submit a Credential Offer to the suite's own exposed credential_offer_endpoint before each module can proceed, see submitCredentialOffer's own doc comment")
 	flag.Parse()
 
@@ -278,6 +290,8 @@ func main() {
 		battery = mdocBattery
 	case *credentialProofTypeHint == "attestation":
 		battery = keyAttestationBattery
+	case *deferred:
+		battery = deferredBattery
 	}
 	planVariant := map[string]string{"credential_format": *credentialFormat} //nolint:gosec // a suite variant selector value, not a credential
 	if *basePlan {
@@ -307,6 +321,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("generate run: %v", err)
 	}
+	run.deferred = *deferred
 
 	serverConfig, err := buildServerConfig(run)
 	if err != nil {

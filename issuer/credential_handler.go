@@ -54,14 +54,16 @@ type CredentialHandlerConfig struct {
 	// Prepare decides what to issue for grant: it sets req's
 	// SDJWTClaims and MdocClaims, and PerCredential when each
 	// credential needs its own value (a status list index, for
-	// instance). Returning a *Error — typically
+	// instance) — or sets req.Defer to defer issuance, which the
+	// handler answers with 202 and a transaction_id (§8.3). Returning a *Error — typically
 	// NewError(ErrorCredentialRequestDenied, ...) — refuses the request
 	// with that error; any other error is a 500 whose detail the Wallet
 	// never sees. REQUIRED.
 	//
 	// done, if not nil, is called exactly once after Prepare succeeds,
-	// with whether the Credential Response was issued, so Prepare can
-	// release anything it reserved when issuing fails later.
+	// with whether the Credential Response was sent — the Credentials,
+	// or a deferral's transaction_id — so Prepare can release anything
+	// it reserved when that fails.
 	Prepare func(ctx context.Context, grant Grant, req *CredentialRequest) (done func(issued bool), err error)
 }
 
@@ -106,13 +108,13 @@ func (iss *Issuer) serveCredential(w http.ResponseWriter, r *http.Request, cfg C
 	if done != nil {
 		defer func() { done(issued) }()
 	}
-	encoded, contentType, err := iss.credentialResponse(r.Context(), grant, req)
+	status, encoded, contentType, err := iss.credentialResponse(r.Context(), grant, req)
 	if err != nil {
 		WriteError(w, err)
 		return
 	}
 	issued = true
-	writeCredentialResponse(w, http.StatusOK, encoded, contentType)
+	writeCredentialResponse(w, status, encoded, contentType)
 }
 
 // writeCredentialResponse sends a Credential or Deferred Credential
@@ -154,8 +156,8 @@ func authorizePost(w http.ResponseWriter, r *http.Request, endpoint *url.URL, to
 	return grant, body, true
 }
 
-// ProtectedEndpointConfig configures DeferredCredentialHandler and
-// NotificationEndpointHandler.
+// ProtectedEndpointConfig configures NotificationEndpointHandler, and
+// DeferredCredentialHandler through DeferredCredentialHandlerConfig.
 type ProtectedEndpointConfig struct {
 	// URL is the endpoint's absolute URL, as published in the Issuer's
 	// metadata. REQUIRED.
@@ -175,19 +177,30 @@ func (cfg ProtectedEndpointConfig) validate(handler string) error {
 	return nil
 }
 
+// DeferredCredentialHandlerConfig configures DeferredCredentialHandler.
+type DeferredCredentialHandlerConfig struct {
+	ProtectedEndpointConfig
+
+	// Resolve, if set, is called when a poll finds its transaction
+	// still pending, before it's answered — for a deployment that
+	// decides when the Wallet asks rather than in a background process.
+	// It may call IssueDeferredCredential or DenyDeferredCredential for
+	// tx, or do nothing to leave it pending. It's called only for a
+	// transaction of the polling client, and its error is a 500 whose
+	// detail the Wallet never sees.
+	Resolve func(ctx context.Context, grant Grant, transactionID string, tx DeferredTransactionRecord) error
+}
+
 // DeferredCredentialHandler serves the Deferred Credential Endpoint
 // (§9). For each POST it checks the access token with cfg.Tokens,
 // reads and parses the request (ParseDeferredCredentialRequest,
-// decrypting it if it arrived encrypted), and answers with
+// decrypting it if it arrived encrypted), lets cfg.Resolve decide a
+// still-pending transaction, and answers with
 // RequestDeferredCredential's result: 200 with the Credentials, or 202
 // with transaction_id and interval while the transaction is pending —
 // encrypted when the Wallet asked for that, and with Cache-Control:
 // no-store. Errors are Credential Error Responses (WriteError).
-//
-// It serves transactions the deployment creates and resolves itself
-// through Dependencies.DeferredTransactions; see
-// DeferredTransactionRecord.
-func (iss *Issuer) DeferredCredentialHandler(cfg ProtectedEndpointConfig) (http.Handler, error) {
+func (iss *Issuer) DeferredCredentialHandler(cfg DeferredCredentialHandlerConfig) (http.Handler, error) {
 	if err := cfg.validate("deferred credential handler"); err != nil {
 		return nil, err
 	}
@@ -200,6 +213,12 @@ func (iss *Issuer) DeferredCredentialHandler(cfg ProtectedEndpointConfig) (http.
 		if err != nil {
 			WriteError(w, err)
 			return
+		}
+		if cfg.Resolve != nil {
+			if err := iss.resolvePending(r.Context(), grant, req.TransactionID, cfg.Resolve); err != nil {
+				writePrepareError(w, err)
+				return
+			}
 		}
 		result, err := iss.RequestDeferredCredential(r.Context(), grant.Authorized, req)
 		if err != nil {
@@ -249,18 +268,19 @@ func (iss *Issuer) NotificationEndpointHandler(cfg ProtectedEndpointConfig) (htt
 	}), nil
 }
 
-// credentialResponse issues req and encodes the Credential Response,
-// encrypted when req asks for that.
-func (iss *Issuer) credentialResponse(ctx context.Context, grant Grant, req CredentialRequest) ([]byte, string, error) {
+// credentialResponse issues (or defers) req and encodes the Credential
+// Response, encrypted when req asks for that, with its HTTP status.
+func (iss *Issuer) credentialResponse(ctx context.Context, grant Grant, req CredentialRequest) (int, []byte, string, error) {
 	result, err := iss.RequestCredential(ctx, grant.Authorized, req)
 	if err != nil {
-		return nil, "", err
+		return 0, nil, "", err
 	}
 	resultJSON, err := json.Marshal(result)
 	if err != nil {
-		return nil, "", fmt.Errorf("issuer: credential handler: %w", err)
+		return 0, nil, "", fmt.Errorf("issuer: credential handler: %w", err)
 	}
-	return iss.EncryptResponseBody(resultJSON, req.ResponseEncryption)
+	encoded, contentType, err := iss.EncryptResponseBody(resultJSON, req.ResponseEncryption)
+	return credentialResponseStatus(result), encoded, contentType, err
 }
 
 // writePrepareError writes a Prepare error: a *Error as it is, anything
@@ -272,4 +292,20 @@ func writePrepareError(w http.ResponseWriter, err error) {
 		return
 	}
 	http.Error(w, "server_error", http.StatusInternalServerError)
+}
+
+// resolvePending calls resolve for transactionID when it's pending and
+// belongs to grant's client. Anything else — unknown, resolved,
+// expired, another client's — is left for RequestDeferredCredential to
+// answer.
+func (iss *Issuer) resolvePending(ctx context.Context, grant Grant, transactionID string,
+	resolve func(context.Context, Grant, string, DeferredTransactionRecord) error) error {
+	if transactionID == "" || iss.deps.DeferredTransactions == nil {
+		return nil
+	}
+	record, err := iss.pendingDeferredTransaction(ctx, transactionID)
+	if err != nil || record.ClientID != grant.Authorized.ClientID() {
+		return nil
+	}
+	return resolve(ctx, grant, transactionID, record)
 }

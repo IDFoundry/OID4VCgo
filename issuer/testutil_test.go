@@ -2,6 +2,7 @@ package issuer_test
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 
@@ -131,6 +132,30 @@ func (f *fakeDeferredTransactionStore) Invalidate(_ context.Context, transaction
 		return errDeferredTransactionNotFound
 	}
 	f.invalidated[transactionID] = true
+	return nil
+}
+
+func (f *fakeDeferredTransactionStore) Create(_ context.Context, transactionID string, record issuer.DeferredTransactionRecord) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, used := f.records[transactionID]; used {
+		return errors.New("fake: transaction_id in use")
+	}
+	f.records[transactionID] = record
+	return nil
+}
+
+func (f *fakeDeferredTransactionStore) Update(_ context.Context, transactionID string, fn func(*issuer.DeferredTransactionRecord) error) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	record, ok := f.records[transactionID]
+	if !ok || f.invalidated[transactionID] {
+		return errDeferredTransactionNotFound
+	}
+	if err := fn(&record); err != nil {
+		return err
+	}
+	f.records[transactionID] = record
 	return nil
 }
 

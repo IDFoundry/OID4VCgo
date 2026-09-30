@@ -223,6 +223,16 @@ type CredentialRequest struct {
 	// status reference. An error fails the request.
 	PerCredential func(ctx context.Context, instance *CredentialInstance) error
 
+	// Defer, if set, defers issuance (§9): RequestCredential checks the
+	// request and its proofs as usual, consuming the nonce, but instead
+	// of issuing it saves a DeferredTransactionRecord holding the
+	// configuration and the proofs' binding keys, and returns a
+	// CredentialResponse with its TransactionID and Interval — sent as
+	// HTTP 202. SDJWTClaims/MdocClaims/PerCredential are then unused:
+	// IssueDeferredCredential takes them when the deployment is ready.
+	// Requires Endpoints.DeferredCredential.
+	Defer *Deferral
+
 	// ResponseEncryption is this request's own optional
 	// "credential_response_encryption" object (§8.2) — set this from
 	// the decrypted request body's own JSON, the same as every other
@@ -298,9 +308,14 @@ func (iss *Issuer) requestCredential(ctx context.Context, auth AuthorizedRequest
 	if err := iss.requireResponseEncryption(req.ResponseEncryption); err != nil {
 		return oid4vci.CredentialResponse{}, err
 	}
-	cc, err := iss.resolveCredentialConfiguration(auth, req)
+	configID, cc, err := iss.resolveCredentialConfiguration(auth, req)
 	if err != nil {
 		return oid4vci.CredentialResponse{}, err
+	}
+	if req.Defer != nil {
+		if err := iss.requireDeferral(); err != nil {
+			return oid4vci.CredentialResponse{}, err
+		}
 	}
 
 	proofType, values, err := singleProofType(req.Proofs, cc)
@@ -319,6 +334,9 @@ func (iss *Issuer) requestCredential(ctx context.Context, auth AuthorizedRequest
 	keys, err := iss.resolveProofKeys(ctx, auth, proofType, values, ptc)
 	if err != nil {
 		return oid4vci.CredentialResponse{}, err
+	}
+	if req.Defer != nil {
+		return iss.startDeferral(ctx, auth, configID, keys, *req.Defer)
 	}
 
 	credentials, err := iss.issueBatch(ctx, cc, req, keys)
@@ -377,36 +395,36 @@ func (iss *Issuer) checkBatchSize(values []string) error {
 // which then names the CredentialConfiguration without any further
 // Scopes check, since the matched authorization detail is itself the
 // grant.
-func (iss *Issuer) resolveCredentialConfiguration(auth AuthorizedRequest, req CredentialRequest) (CredentialConfiguration, error) {
+func (iss *Issuer) resolveCredentialConfiguration(auth AuthorizedRequest, req CredentialRequest) (string, CredentialConfiguration, error) {
 	switch {
 	case req.CredentialIdentifier != "" && req.CredentialConfigurationID != "":
-		return CredentialConfiguration{}, newError(ErrorInvalidCredentialRequest, 400,
+		return "", CredentialConfiguration{}, newError(ErrorInvalidCredentialRequest, 400,
 			"credential_identifier and credential_configuration_id must not both be present", nil)
 
 	case req.CredentialIdentifier != "":
 		configID, err := resolveCredentialIdentifier(auth.AuthorizationDetails, req.CredentialIdentifier)
 		if err != nil {
-			return CredentialConfiguration{}, err
+			return "", CredentialConfiguration{}, err
 		}
 		cc, ok := iss.cfg.CredentialConfigurationsSupported[configID]
 		if !ok {
-			return CredentialConfiguration{}, newError(ErrorUnknownCredentialConfig, 400,
+			return "", CredentialConfiguration{}, newError(ErrorUnknownCredentialConfig, 400,
 				"the credential_configuration_id authorized for this credential_identifier is not supported", nil)
 		}
-		return cc, nil
+		return configID, cc, nil
 
 	case req.CredentialConfigurationID != "":
 		cc, ok := iss.cfg.CredentialConfigurationsSupported[req.CredentialConfigurationID]
 		if !ok {
-			return CredentialConfiguration{}, newError(ErrorUnknownCredentialConfig, 400, "unknown credential_configuration_id", nil)
+			return "", CredentialConfiguration{}, newError(ErrorUnknownCredentialConfig, 400, "unknown credential_configuration_id", nil)
 		}
 		if err := authorizeCredentialConfigurationID(auth, req.CredentialConfigurationID, cc); err != nil {
-			return CredentialConfiguration{}, err
+			return "", CredentialConfiguration{}, err
 		}
-		return cc, nil
+		return req.CredentialConfigurationID, cc, nil
 
 	default:
-		return CredentialConfiguration{}, newError(ErrorInvalidCredentialRequest, 400,
+		return "", CredentialConfiguration{}, newError(ErrorInvalidCredentialRequest, 400,
 			"exactly one of credential_configuration_id or credential_identifier is required", nil)
 	}
 }

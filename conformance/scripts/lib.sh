@@ -224,6 +224,13 @@ fapi2-security-profile-final-par-attempt-to-use-request_uri-for-different-client
 	# side's own 2x2 matrix.
 	run_go_checked "Issuer mdoc issuer-initiated" "$WORKDIR/issuer-mdoc-issuer-initiated.log" "" \
 		go run ./conformance/issuer/scripts/run-fapi2sp-battery -credential-format mdoc -issuer-initiated
+
+	# Not a separate certification profile: this repo's own coverage of
+	# deferred issuance (OID4VCI §9). cmd/conformance-issuer defers every
+	# Credential Request, and the suite's happy-flow follows the 202 to
+	# the Deferred Credential Endpoint. 0 exceptions.
+	run_go_checked "Issuer deferred" "$WORKDIR/issuer-deferred.log" "" \
+		go run ./conformance/issuer/scripts/run-fapi2sp-battery -deferred
 	return 0
 }
 

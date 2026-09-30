@@ -70,10 +70,9 @@ func mdocClaimsForRequest(docType string, nameSpaces map[string]map[string]inter
 // own static test data stands in for one. No credential_identifier-based
 // requests yet — see README's own "Status".
 func credentialHandler(iss *issuer.Issuer, resourceVerifier *fapires.Verifier, credentialURL *url.URL, cfg Config) (http.Handler, error) {
-	additional := sdjwtAdditionalClaims(cfg.Claims)
-	mdocNameSpaceElements, mdocDocType, err := mdocNameSpaceElementsFor(cfg.Mdoc)
+	content, err := credentialContentFor(cfg)
 	if err != nil {
-		return nil, fmt.Errorf("mdoc claims: %w", err)
+		return nil, err
 	}
 	tokens, err := fapiresource.New(resourceVerifier)
 	if err != nil {
@@ -82,13 +81,59 @@ func credentialHandler(iss *issuer.Issuer, resourceVerifier *fapires.Verifier, c
 	return iss.CredentialHandler(issuer.CredentialHandlerConfig{
 		URL: credentialURL, Tokens: tokens,
 		Prepare: func(_ context.Context, _ issuer.Grant, req *issuer.CredentialRequest) (func(bool), error) {
-			// Both SDJWTClaims and MdocClaims are always supplied (the
-			// latter nil when cfg.Mdoc is unset) — RequestCredential
-			// uses whichever the requested configuration's format needs.
-			exp := sdjwtvc.RoundedExp(time.Now(), issuedCredentialLifetime)
-			req.SDJWTClaims = &sdjwtvc.Claims{VCT: cfg.VCT, Exp: &exp, Additional: additional}
-			req.MdocClaims = mdocClaimsForRequest(mdocDocType, mdocNameSpaceElements, issuedCredentialLifetime)
+			if cfg.Deferred {
+				req.Defer = &issuer.Deferral{}
+				return nil, nil
+			}
+			req.SDJWTClaims, req.MdocClaims = content()
 			return nil, nil
+		},
+	})
+}
+
+// credentialContentFor returns what this binary issues, fixed by cfg:
+// both SDJWTClaims and MdocClaims (the latter nil when cfg.Mdoc is
+// unset) — the issuer uses whichever the requested configuration's
+// format needs.
+func credentialContentFor(cfg Config) (func() (*sdjwtvc.Claims, *mdoc.Claims), error) {
+	additional := sdjwtAdditionalClaims(cfg.Claims)
+	mdocNameSpaceElements, mdocDocType, err := mdocNameSpaceElementsFor(cfg.Mdoc)
+	if err != nil {
+		return nil, fmt.Errorf("mdoc claims: %w", err)
+	}
+	return func() (*sdjwtvc.Claims, *mdoc.Claims) {
+		exp := sdjwtvc.RoundedExp(time.Now(), issuedCredentialLifetime)
+		return &sdjwtvc.Claims{VCT: cfg.VCT, Exp: &exp, Additional: additional},
+			mdocClaimsForRequest(mdocDocType, mdocNameSpaceElements, issuedCredentialLifetime)
+	}, nil
+}
+
+// deferredPath is the Deferred Credential Endpoint's path
+// under the Credential Issuer's identifier.
+const deferredPath = "/deferred_credential"
+
+// deferredCredentialHandler serves the Deferred Credential Endpoint
+// (§9) with issuer.DeferredCredentialHandler, issuing a pending
+// transaction on the Wallet's first poll: this binary has no business
+// process to wait for, and the OIDF suite polls only once.
+func deferredCredentialHandler(iss *issuer.Issuer, resourceVerifier *fapires.Verifier, cfg Config) (http.Handler, error) {
+	endpoint, err := url.Parse(cfg.Issuer + deferredPath)
+	if err != nil {
+		return nil, fmt.Errorf("deferred credential endpoint URL: %w", err)
+	}
+	content, err := credentialContentFor(cfg)
+	if err != nil {
+		return nil, err
+	}
+	tokens, err := fapiresource.New(resourceVerifier)
+	if err != nil {
+		return nil, err
+	}
+	return iss.DeferredCredentialHandler(issuer.DeferredCredentialHandlerConfig{
+		ProtectedEndpointConfig: issuer.ProtectedEndpointConfig{URL: endpoint, Tokens: tokens},
+		Resolve: func(ctx context.Context, _ issuer.Grant, transactionID string, _ issuer.DeferredTransactionRecord) error {
+			sdjwtClaims, mdocClaims := content()
+			return iss.IssueDeferredCredential(ctx, transactionID, issuer.DeferredIssuance{SDJWTClaims: sdjwtClaims, MdocClaims: mdocClaims})
 		},
 	})
 }

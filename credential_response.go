@@ -11,12 +11,18 @@ type IssuedCredential struct {
 	Credential string `json:"credential"`
 }
 
-// CredentialResponse is a Credential Response (§8.3) for the immediate
-// issuance case. The deferred-at-first-response case (transaction_id/
-// interval, in place of credentials) is not modeled here — see each
-// role package's own doc comment for whether/how that's handled.
+// CredentialResponse is a Credential Response (§8.3): either the
+// issued Credentials, or — when the Credential Issuer defers issuance —
+// a TransactionID and Interval for the Wallet to poll the Deferred
+// Credential Endpoint with (§9), sent as HTTP 202.
 type CredentialResponse struct {
-	Credentials []IssuedCredential `json:"credentials"`
+	Credentials []IssuedCredential `json:"credentials,omitempty"`
+
+	// TransactionID identifies a deferred issuance, in place of
+	// Credentials; Interval is the minimum number of seconds the
+	// Wallet waits before polling for it (REQUIRED with TransactionID).
+	TransactionID string `json:"transaction_id,omitempty"`
+	Interval      int64  `json:"interval,omitempty"`
 
 	// NotificationID is OPTIONAL: identifies this issuance flow for a
 	// later Notification Request (§11.1). Absent unless the Credential
