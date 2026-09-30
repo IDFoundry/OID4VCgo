@@ -1,6 +1,7 @@
 package statuslist
 
 import (
+	"math"
 	"testing"
 	"time"
 
@@ -73,9 +74,11 @@ func TestCheck_RejectsOutOfBoundsIndex(t *testing.T) {
 		t.Fatalf("IssueToken: %v", err)
 	}
 
-	ref := StatusListRef{Idx: 1000, URI: uri}
-	if _, _, err := Check(token, &key.PublicKey, jose.ES256, ref, VerifyOptions{}); err == nil {
-		t.Errorf("Check accepted an out-of-bounds index")
+	for _, idx := range []uint64{1000, math.MaxUint64} {
+		ref := StatusListRef{Idx: idx, URI: uri}
+		if _, _, err := Check(token, &key.PublicKey, jose.ES256, ref, VerifyOptions{}); err == nil {
+			t.Errorf("Check accepted out-of-bounds index %d", idx)
+		}
 	}
 }
 
@@ -113,5 +116,15 @@ func TestParseStatusClaim_RejectsMissingFields(t *testing.T) {
 		"status_list": map[string]any{"idx": float64(0)},
 	}); err == nil {
 		t.Errorf("ParseStatusClaim accepted a status_list with no uri")
+	}
+}
+
+func TestParseStatusClaim_RejectsInvalidIdx(t *testing.T) {
+	for _, idx := range []any{float64(-1), float64(1.5), float64(1 << 60), "3"} {
+		if _, err := ParseStatusClaim(map[string]any{
+			"status_list": map[string]any{"idx": idx, "uri": "https://example.com/x"},
+		}); err == nil {
+			t.Errorf("ParseStatusClaim accepted idx %v", idx)
+		}
 	}
 }

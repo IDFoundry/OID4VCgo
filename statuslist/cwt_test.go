@@ -331,10 +331,9 @@ func TestCWTStatusClaimRoundTrip(t *testing.T) {
 	}
 }
 
-func TestCWTStatusClaimRejectsNegativeIdx(t *testing.T) {
-	ref := StatusListRef{Idx: -1, URI: "https://example.com/statuslists/1"}
-	if _, err := ref.CWTStatusClaim(); err == nil {
-		t.Errorf("CWTStatusClaim accepted a negative Idx")
+func TestCWTStatusClaimRequiresURI(t *testing.T) {
+	if _, err := (StatusListRef{Idx: 1}).CWTStatusClaim(); err == nil {
+		t.Errorf("CWTStatusClaim accepted an empty URI")
 	}
 }
 

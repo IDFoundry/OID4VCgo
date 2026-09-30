@@ -1,11 +1,6 @@
 package verifier
 
-import (
-	"errors"
-	"math"
-
-	"github.com/idfoundry/oid4vcgo/statuslist"
-)
+import "github.com/idfoundry/oid4vcgo/statuslist"
 
 // StatusListRef returns the Token Status List reference vc carries, in
 // one form whichever format it is: an SD-JWT VC's "status" claim or an
@@ -24,10 +19,7 @@ func (vc VerifiedCredential) StatusListRef() (ref statuslist.StatusListRef, cwt,
 		if sl == nil {
 			return statuslist.StatusListRef{}, false, false, nil
 		}
-		if sl.Idx > math.MaxInt32 {
-			return statuslist.StatusListRef{}, false, false, errors.New("verifier: mdoc status list index is out of range")
-		}
-		return statuslist.StatusListRef{Idx: int(sl.Idx), URI: sl.URI}, true, true, nil
+		return statuslist.StatusListRef{Idx: sl.Idx, URI: sl.URI}, true, true, nil
 	}
 	status, present := vc.Claims["status"].(map[string]any)
 	if !present {

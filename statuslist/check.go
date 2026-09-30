@@ -3,6 +3,7 @@ package statuslist
 import (
 	"crypto"
 	"fmt"
+	"math"
 
 	"github.com/idfoundry/oid4vcgo/internal/cose"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
@@ -40,7 +41,10 @@ func checkClaims(claims TokenClaims, ref StatusListRef) (StatusType, TokenClaims
 	if claims.Sub != ref.URI {
 		return 0, TokenClaims{}, fmt.Errorf("statuslist: token sub %q does not match the Referenced Token's status_list.uri %q", claims.Sub, ref.URI)
 	}
-	status, err := claims.StatusList.Status(ref.Idx)
+	if ref.Idx > math.MaxInt {
+		return 0, TokenClaims{}, fmt.Errorf("statuslist: index %d is out of bounds", ref.Idx)
+	}
+	status, err := claims.StatusList.Status(int(ref.Idx))
 	if err != nil {
 		return 0, TokenClaims{}, err
 	}
