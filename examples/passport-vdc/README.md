@@ -276,10 +276,11 @@ their holder keys, which a real wallet would never hold. The provider
 files, the TLS certificate and the wallet store are all git-ignored; the
 store keeps holder keys unencrypted.
 
-The servers run over HTTPS even locally, as a real deployment would.
-The library's wallet can discover a loopback `http` issuer too, when
-`wallet.Config.Fetch.AllowLoopbackHTTP` is set; the demo verifier's
-`response_uri`, though, must be `https`.
+The servers run over HTTPS even locally, as a real deployment would, so
+the demo wallets reach them with `wallet.Config.Fetch.AllowLoopbackHosts`
+(https to literal loopback hosts only). The library's wallet can
+discover a loopback `http` issuer too, with `AllowLoopbackHTTP`; the
+demo verifier's `response_uri`, though, must be `https`.
 
 ### The issuance flow
 
@@ -287,7 +288,7 @@ The library's wallet can discover a loopback `http` issuer too, when
 |---|---|---|
 | Upload | `POST /passport` | gmrtd verification → a transaction T holding the `Evidence` (in memory, 10 minutes, at most 100 at once) → a credential offer with `issuer_state` = T, as a link and a QR code, and a six-digit confirmation code |
 | PAR | `POST /par` | fapigo verifies the Wallet Attestation (its `x5c` chain to the Wallet Provider CA) + PoP and DPoP; the Wallet sends the offer's `issuer_state` (T) |
-| Approve | `GET /authorize`, `POST /authorize/decision` | reads T back from the interaction request's `issuer_state`, then shows the passport holder's name and asks for the confirmation code; approval with the right code **claims T** — no other authorization can reach it — and authorizes **subject = T**, granting the scopes the wallet requested |
+| Approve | `GET /authorize`, `POST /authorize/decision` | reads T back from the interaction request's `issuer_state`, then asks for the confirmation code (the page shows no passport data); approval with the right code **claims T** — no other authorization can reach it — and authorizes **subject = T**, granting the scopes the wallet requested |
 | Token | `POST /token` | DPoP-bound access token with `sub` = T |
 | Credential | `POST /nonce`, `POST /credential` | the request and response are both encrypted (OID4VCI 1.0 §10, required by the issuer's metadata: the credential carries passport data); the token's `sub` finds T's `Evidence`; the requested configuration (`passport_mdoc` or `passport_sdjwt`), if not already issued for T, is encoded, bound to the key the Key Attestation attests, given its own random index in the issuer's Token Status List, and signed; once both are issued, T and its passport data are dropped. The wallet checks each credential before keeping it: issuer signature chaining to `issuer-ca.pem`, bound to its own holder key, and the offered vct or doctype |
 

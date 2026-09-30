@@ -101,7 +101,7 @@ func Receive(ctx context.Context, cfg Config, offerURI string, approver Approver
 
 	w, err := wallet.New(wallet.Config{
 		Assurance: wallet.AssuranceDevelopment, ProofSigningAlg: oid4vci.ES256,
-		Fetch: fapihttp.Config{MaxResponseBytes: 1 << 20, RequestTimeout: httpTimeout, MaxRedirects: 2, AllowLoopbackHTTP: true},
+		Fetch: fapihttp.Config{MaxResponseBytes: 1 << 20, RequestTimeout: httpTimeout, MaxRedirects: 2, AllowLoopbackHosts: true},
 	}, wallet.Dependencies{HTTP: httpClient, Clock: wallet.ClockFunc(time.Now), Random: rand.Reader})
 	if err != nil {
 		return nil, fmt.Errorf("walletapp: %w", err)
@@ -219,9 +219,7 @@ func newOAuthClient(ctx context.Context, w *wallet.Wallet, cfg Config, httpClien
 	if err != nil {
 		return nil, fmt.Errorf("walletapp: authorization server metadata: %w", err)
 	}
-	// Loopback http is accepted for local development; everything else
-	// must be https.
-	issuer, endpoints, err := asMeta.ClientEndpoints(fapi.AllowLoopbackHTTP())
+	issuer, endpoints, err := asMeta.ClientEndpoints()
 	if err != nil {
 		return nil, fmt.Errorf("walletapp: authorization server metadata: %w", err)
 	}

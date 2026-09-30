@@ -30,16 +30,12 @@ type pendingInteraction struct {
 
 // handlePAR is the Pushed Authorization Request endpoint.
 func (a *App) handlePAR(w http.ResponseWriter, r *http.Request) {
-	form, err := server.FormRequestFromHTTP(r)
+	req, err := server.PushAuthorizationRequestFromHTTP(r)
 	if err != nil {
 		server.NewError(server.ErrorInvalidRequest, http.StatusBadRequest, err.Error()).WriteJSON(w)
 		return
 	}
-	result, err := a.server.PushAuthorizationRequest(r.Context(), server.PushAuthorizationRequest{
-		HTTP: form, DPoPProofs: r.Header.Values("DPoP"), PeerCertificate: server.PeerCertificateFromHTTP(r),
-		ClientAttestations:    r.Header.Values("OAuth-Client-Attestation"),
-		ClientAttestationPoPs: r.Header.Values("OAuth-Client-Attestation-PoP"),
-	})
+	result, err := a.server.PushAuthorizationRequest(r.Context(), req)
 	if err != nil {
 		server.WriteError(w, err)
 		return
@@ -215,20 +211,16 @@ func transactionErrorMessage(err error) string {
 // handleToken is the Token Endpoint (authorization_code only; this demo
 // issues no refresh tokens it would need to honor).
 func (a *App) handleToken(w http.ResponseWriter, r *http.Request) {
-	form, err := server.FormRequestFromHTTP(r)
+	req, err := server.TokenEndpointRequestFromHTTP(r)
 	if err != nil {
 		server.NewError(server.ErrorInvalidRequest, http.StatusBadRequest, err.Error()).WriteJSON(w)
 		return
 	}
-	if form.Get("grant_type") != "authorization_code" {
+	if req.GrantType() != "authorization_code" {
 		server.NewError(server.ErrorUnsupportedGrantType, http.StatusBadRequest, "grant_type must be authorization_code").WriteJSON(w)
 		return
 	}
-	result, err := a.server.ExchangeAuthorizationCode(r.Context(), server.AuthorizationCodeExchangeRequest{
-		HTTP: form, DPoPProofs: r.Header.Values("DPoP"), PeerCertificate: server.PeerCertificateFromHTTP(r),
-		ClientAttestations:    r.Header.Values("OAuth-Client-Attestation"),
-		ClientAttestationPoPs: r.Header.Values("OAuth-Client-Attestation-PoP"),
-	})
+	result, err := a.server.ExchangeAuthorizationCode(r.Context(), req.AuthorizationCodeExchange())
 	if err != nil {
 		server.WriteError(w, err)
 		return

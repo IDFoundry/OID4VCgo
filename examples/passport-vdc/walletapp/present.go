@@ -104,7 +104,7 @@ func Prepare(ctx context.Context, requestLink string, store Store, httpClient *h
 
 	w, err := wallet.New(wallet.Config{
 		Assurance: wallet.AssuranceDevelopment, ProofSigningAlg: oid4vci.ES256,
-		Fetch:         fapihttp.Config{MaxResponseBytes: 1 << 20, RequestTimeout: httpTimeout, MaxRedirects: 2, AllowLoopbackHTTP: true},
+		Fetch:         fapihttp.Config{MaxResponseBytes: 1 << 20, RequestTimeout: httpTimeout, MaxRedirects: 2, AllowLoopbackHosts: true},
 		VerifierTrust: trust,
 	}, wallet.Dependencies{HTTP: httpClient, Clock: wallet.ClockFunc(time.Now), Random: rand.Reader})
 	if err != nil {

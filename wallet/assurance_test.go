@@ -26,6 +26,16 @@ func TestNewProductionRejectsAllowLoopbackHTTP(t *testing.T) {
 	}
 }
 
+func TestNewProductionRejectsAllowLoopbackHosts(t *testing.T) {
+	cfg := validConfig()
+	cfg.Assurance = wallet.AssuranceProduction
+	cfg.Fetch.AllowLoopbackHTTP, cfg.Fetch.AllowLoopbackHosts = false, true
+	_, err := wallet.New(cfg, validDependencies())
+	if err == nil || !strings.Contains(err.Error(), "allow_loopback_hosts") {
+		t.Fatalf("New(AssuranceProduction, AllowLoopbackHosts) error = %v, want an allow_loopback_hosts rejection", err)
+	}
+}
+
 func TestNewProductionAcceptsHardenedFetch(t *testing.T) {
 	cfg := validConfig()
 	cfg.Assurance = wallet.AssuranceProduction
@@ -33,6 +43,7 @@ func TestNewProductionAcceptsHardenedFetch(t *testing.T) {
 	// An explicit private-host allow-list is a deployment choice, not a
 	// development switch, so it stays permitted.
 	cfg.Fetch.AllowedPrivateHosts = []string{"issuer.internal"}
+	cfg.Fetch.AllowedLoopbackHosts = []string{"issuer-sidecar.internal"}
 	if _, err := wallet.New(cfg, validDependencies()); err != nil {
 		t.Fatalf("New(AssuranceProduction): %v", err)
 	}
