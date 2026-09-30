@@ -34,6 +34,10 @@ package issuer
 //	extensions, err := extension.NewRegistry(oid4vci.IssuerStateExtension /* , any others this deployment needs */)
 //	cfg := server.Config{ /* ... */ Extensions: extensions}
 //
+// haip.RecommendedAuthorizationServerConfig returns a server.Config
+// with this registry and the rest of HAIP's Authorization Server
+// settings already set.
+//
 // wallet.BuildAuthorizationRequest already attaches issuer_state to the
 // Wallet's own outbound Authorization Request using this exact
 // Definition (via fapigo/extension.Set) whenever a resolved Credential

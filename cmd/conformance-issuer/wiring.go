@@ -11,7 +11,6 @@ import (
 	"time"
 
 	fapi "github.com/idfoundry/fapigo"
-	"github.com/idfoundry/fapigo/extension"
 	"github.com/idfoundry/fapigo/fapihttp"
 	"github.com/idfoundry/fapigo/keys"
 	"github.com/idfoundry/fapigo/keys/ephemeral"
@@ -35,11 +34,10 @@ import (
 
 const httpFetchTimeout = 10 * time.Second
 
-// clientAttestationAlgorithm is the one algorithm this binary accepts
-// a Client Attestation/PoP JWT signed with — ES256, HAIP 1.0 §7's own
-// minimum, matching every other algorithm choice this binary and its
-// Phase 1 siblings make.
-const clientAttestationAlgorithm = fapi.ES256
+// clientAttestationLifetime bounds how long a Wallet Attestation stays
+// usable — the one attestation limit haip.RecommendedAuthorizationServerConfig
+// leaves to the caller.
+const clientAttestationLifetime = 24 * time.Hour
 
 // conformanceBatchSize is this binary's own advertised
 // "batch_credential_issuance.batch_size" (§12.2.4) — issuer.Issuer
@@ -137,45 +135,30 @@ func newServerMux(cfg Config) (*http.ServeMux, error) {
 	// store for the same reason.
 	revocationStore := memstore.NewRevocationStore()
 
+	// HAIP's Authorization Server settings: FAPI 2.0, OAuth only, Wallet
+	// Attestation client authentication under ES256, and the
+	// issuer_state extension, which the issuer_initiated flow variant's
+	// Credential Offer relies on the Wallet echoing back through PAR.
+	srvCfg, err := haip.RecommendedAuthorizationServerConfig()
+	if err != nil {
+		return nil, err
+	}
+	srvCfg.Issuer = issuerURL
+	srvCfg.Endpoints = server.Endpoints{
+		Authorization: authorizationURL, Token: tokenURL,
+		PushedAuthorizationRequest: parURL, JWKS: jwksURL,
+	}
+	srvCfg.Assurance = server.AssuranceDevelopment
+	srvCfg.Limits.MaxClientAttestationLifetime = clientAttestationLifetime
+	limits := srvCfg.Limits
+
 	accessTokens, err := server.NewJWTAccessTokens(keyManager, fapi.ES256)
 	if err != nil {
 		return nil, err
 	}
-	resourceAccessTokens, err := localResourceAccessTokens(issuerURL, keyManager)
+	resourceAccessTokens, err := localResourceAccessTokens(issuerURL, keyManager, limits.AccessTokenLifetime)
 	if err != nil {
 		return nil, err
-	}
-
-	limits := srvLimits()
-	algorithms := server.RecommendedAlgorithms()
-	algorithms.ClientAttestation = server.AlgorithmSet{clientAttestationAlgorithm}
-	algorithms.ClientAttestationPoP = server.AlgorithmSet{clientAttestationAlgorithm}
-
-	// oid4vci.IssuerStateExtension registration is what OID4VCI 1.0
-	// §4.1.1's own issuer_state authorization parameter needs to
-	// survive PAR at all — without it, fapigo/server silently drops
-	// issuer_state instead of rejecting it outright (see
-	// issuer/authorization_server.go's own "Registering issuer_state"
-	// doc comment), which the issuer_initiated flow variant's own
-	// Credential Offer relies on the Wallet echoing back.
-	extensions, err := extension.NewRegistry(oid4vci.IssuerStateExtension)
-	if err != nil {
-		return nil, fmt.Errorf("extension.NewRegistry: %w", err)
-	}
-
-	srvCfg := server.Config{
-		Issuer: issuerURL,
-		Endpoints: server.Endpoints{
-			Authorization: authorizationURL, Token: tokenURL,
-			PushedAuthorizationRequest: parURL, JWKS: jwksURL,
-		},
-		Profile:                              server.ProfileFAPISecurity,
-		Algorithms:                           algorithms,
-		Limits:                               limits,
-		Assurance:                            server.AssuranceDevelopment,
-		OAuthOnly:                            true,
-		AttestationBasedClientAuthentication: true,
-		Extensions:                           extensions,
 	}
 	srvDeps := server.Dependencies{
 		Clients:                clientRepo,
@@ -369,14 +352,9 @@ func buildClientRegistration(cfg Config) (clientRepo *memstore.ClientRepository,
 		if cc == nil {
 			continue
 		}
-		c, regErr := storage.NewRegisteredClient(storage.RegisteredClientConfig{
-			ID:                         fapi.ClientID(cc.ID),
-			RedirectURIs:               registeredRedirectURIs(cc.RedirectURIs),
-			ClientAuthMethod:           storage.ClientAuthMethodAttestation,
-			ExpectedAttesterIssuer:     cc.ExpectedAttesterIssuer,
-			ClientAttestationAlgorithm: clientAttestationAlgorithm,
-			AllowedScopes:              allowedScopes,
-		})
+		clientCfg := haip.RecommendedWalletClient(fapi.ClientID(cc.ID), cc.ExpectedAttesterIssuer)
+		clientCfg.RedirectURIs, clientCfg.AllowedScopes = registeredRedirectURIs(cc.RedirectURIs), allowedScopes
+		c, regErr := storage.NewRegisteredClient(clientCfg)
 		if regErr != nil {
 			return nil, nil, fmt.Errorf("register client %s: %w", cc.ID, regErr)
 		}
@@ -459,22 +437,15 @@ func addKeyAttestationProofType(cfg Config, credConfigs ...*issuer.CredentialCon
 // from keyManager rather than looping back to this binary's own /jwks,
 // whose self-signed listener cert a standard net/http.Client (unlike
 // the OIDF suite's own outbound client) doesn't trust.
-func localResourceAccessTokens(issuerURL fapi.URL, keyManager keys.KeyManager) (fapires.JWTAccessTokens, error) {
+func localResourceAccessTokens(issuerURL fapi.URL, keyManager keys.KeyManager, lifetime time.Duration) (fapires.JWTAccessTokens, error) {
 	localKeys, err := keys.NewLocalIssuerKeys(issuerURL, keyManager)
 	if err != nil {
 		return fapires.JWTAccessTokens{}, err
 	}
 	return fapires.NewJWTAccessTokens(
 		localKeys, issuerURL, issuerURL.String(),
-		fapi.ES256, srvLimits().AccessTokenLifetime, 8,
+		fapi.ES256, lifetime, 8,
 	)
-}
-
-func srvLimits() server.Limits {
-	limits := server.RecommendedLimits()
-	limits.MaxClientAttestationLifetime = 24 * time.Hour
-	limits.MaxClientAttestationPoPAge = limits.MaxDPoPProofAge
-	return limits
 }
 
 func registeredRedirectURIs(raw []string) []fapi.RegisteredRedirectURI {

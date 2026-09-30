@@ -98,7 +98,9 @@ Where to start, by role:
   request/response encryption from the Issuer's metadata;
   `wallet.Respond` answers a verified Authorization Request in one call
   (after showing the holder `wallet.PreviewPresentation`).
-- **Issuer** — `issuer.CredentialHandler` serves the Credential
+- **Issuer** — `haip.RecommendedAuthorizationServerConfig` and
+  `haip.RecommendedWalletClient` set up FAPIgo's Authorization Server
+  for HAIP; `issuer.CredentialHandler` serves the Credential
   Endpoint (with `issuer/fapiresource` checking access tokens), asking
   you only what to issue; `issuer.NewError` builds an OID4VCI error
   response (e.g. `credential_request_denied`); `statuslist.Publisher`

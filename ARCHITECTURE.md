@@ -1267,6 +1267,15 @@ changes whether *every* bullet below is `(done)`.
   beyond what `New` itself already enforces (JAR signing,
   `direct_post.jwt`, both are load-bearing in `verifier`'s own
   implementation, not optional profiling on top of it).
+  `RecommendedAuthorizationServerConfig()` returns the HAIP parts of a
+  Credential Issuer's `fapigo/server.Config`: `ProfileFAPISecurity`,
+  `OAuthOnly`, `AttestationBasedClientAuthentication` with ES256 for the
+  Wallet Attestation and its PoP (§4.4.1, §7), the `issuer_state`
+  extension registered, and the PoP's maximum age set to the DPoP
+  proof's. The Wallet Attestation lifetime is left zero for the caller
+  to set, since HAIP doesn't number it, and `server.New` refuses the
+  Config until it is. `RecommendedWalletClient(id, attesterIssuer)`
+  returns the matching `storage.RegisteredClientConfig`.
 - **`storage`** (done) — in-memory implementations of every store `issuer`
   defines (`NonceStore`, `CredentialOfferStore`, `DeferredTransactionStore`,
   `NotificationStore`, `PreAuthorizedCodeStore`, `DPoPNonceStore`,

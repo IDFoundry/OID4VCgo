@@ -25,5 +25,10 @@
 // covers HAIP 1.0 §7's ES256 minimum (the Request Object's own signing
 // algorithm) and §5's explicit "MUST be supported by Verifiers" pair of
 // JWE enc values, the two parts of a verifier.Config it grounds
-// specific values for.
+// specific values for. RecommendedAuthorizationServerConfig covers the
+// fapigo/server.Config of a Credential Issuer's Authorization Server:
+// FAPI 2.0, OAuth only, Wallet Attestation client authentication
+// (§4.4.1) under ES256, and the issuer_state extension;
+// RecommendedWalletClient registers a Wallet that authenticates that
+// way.
 package haip
