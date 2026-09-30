@@ -638,7 +638,7 @@ func TestWalletIssuerDeferredAndNotificationRoundTrip(t *testing.T) {
 			DeferredCredential: deferredEndpoint,
 			Notification:       notificationEndpoint,
 		},
-		Limits: issuer.Limits{DeferredIssuancePollInterval: 30 * time.Second, MaxProofAge: time.Minute},
+		Limits: issuer.Limits{DeferredIssuancePollInterval: 30 * time.Second, DeferredTransactionLifetime: time.Hour, MaxProofAge: time.Minute},
 		CredentialConfigurationsSupported: map[string]issuer.CredentialConfiguration{
 			"IdentityCredential": {
 				Format:                               sdjwtvc.CredentialFormat,

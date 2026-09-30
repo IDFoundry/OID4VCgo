@@ -19,6 +19,9 @@ type run struct {
 	alias         string
 	issuerBaseURL string
 
+	// deferred sets cmd/conformance-issuer's Config.Deferred.
+	deferred bool
+
 	tlsCertPEM, tlsKeyPEM string
 
 	// attesterKey signs the suite's own dynamically-minted Client
@@ -284,6 +287,7 @@ type serverConfig struct {
 	DefaultSubject                    string                                  `json:"default_subject"`
 	Mdoc                              *conformanceconfig.MdocConfig           `json:"mdoc,omitempty"`
 	KeyAttestation                    *conformanceconfig.KeyAttestationConfig `json:"key_attestation,omitempty"`
+	Deferred                          bool                                    `json:"deferred,omitempty"`
 }
 
 type serverConfigClient struct {
@@ -303,6 +307,7 @@ func buildServerConfig(r *run) ([]byte, error) {
 	}
 
 	cfg := serverConfig{
+		Deferred:          r.deferred,
 		ListenAddr:        ":8443",
 		Issuer:            r.issuerBaseURL,
 		TLSCertificatePEM: r.tlsCertPEM,

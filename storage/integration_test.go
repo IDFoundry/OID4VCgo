@@ -77,6 +77,7 @@ func TestStoresSatisfyIssuerDependencies(t *testing.T) {
 			NonceLifetime:                time.Minute,
 			CredentialOfferLifetime:      time.Hour,
 			DeferredIssuancePollInterval: 10 * time.Second,
+			DeferredTransactionLifetime:  time.Hour,
 			AccessTokenLifetime:          time.Hour,
 			MaxDPoPProofAge:              time.Minute,
 			MaxTxCodeAttempts:            3,

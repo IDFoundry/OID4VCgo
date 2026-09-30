@@ -43,6 +43,12 @@ type Config struct {
 	// doesn't need a second client at all.
 	Client2 *ConfigClient `json:"client2,omitempty"`
 
+	// Deferred defers every Credential Request (OID4VCI §9): the
+	// Credential Endpoint answers 202 with a transaction_id, and the
+	// Deferred Credential Endpoint issues on the Wallet's first poll —
+	// what the OIDF suite, which polls once, needs to see the credential.
+	Deferred bool `json:"deferred,omitempty"`
+
 	// CredentialIssuerSigningKeyPEM signs every issued "dc+sd-jwt"
 	// credential.
 	CredentialIssuerSigningKeyPEM string `json:"credential_issuer_signing_key_pem"`

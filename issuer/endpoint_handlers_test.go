@@ -35,7 +35,7 @@ func deferredHandler(t *testing.T, mutate func(*issuer.Config)) (http.Handler, *
 	}
 	deps := validDependencies(t)
 	deps.DeferredTransactions = store
-	h, err := newTestIssuer(t, cfg, deps).DeferredCredentialHandler(protectedEndpoint(t, clientGrant("client-a")))
+	h, err := newTestIssuer(t, cfg, deps).DeferredCredentialHandler(issuer.DeferredCredentialHandlerConfig{ProtectedEndpointConfig: protectedEndpoint(t, clientGrant("client-a"))})
 	if err != nil {
 		t.Fatalf("DeferredCredentialHandler: %v", err)
 	}
@@ -175,14 +175,14 @@ func TestProtectedEndpointHandlers_RequireConfig(t *testing.T) {
 		"relative URL": {URL: &url.URL{Path: "/x"}, Tokens: &fakeTokens{}},
 		"no Tokens":    {URL: mustURL(t, "https://issuer.example.com/x")},
 	} {
-		if _, err := iss.DeferredCredentialHandler(cfg); err == nil {
+		if _, err := iss.DeferredCredentialHandler(issuer.DeferredCredentialHandlerConfig{ProtectedEndpointConfig: cfg}); err == nil {
 			t.Errorf("DeferredCredentialHandler(%s) succeeded", name)
 		}
 		if _, err := iss.NotificationEndpointHandler(cfg); err == nil {
 			t.Errorf("NotificationEndpointHandler(%s) succeeded", name)
 		}
 	}
-	if _, err := iss.DeferredCredentialHandler(protectedEndpoint(t, &fakeTokens{})); err != nil {
+	if _, err := iss.DeferredCredentialHandler(issuer.DeferredCredentialHandlerConfig{ProtectedEndpointConfig: protectedEndpoint(t, &fakeTokens{})}); err != nil {
 		t.Errorf("DeferredCredentialHandler: %v", err)
 	}
 }

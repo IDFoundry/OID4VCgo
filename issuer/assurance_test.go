@@ -100,7 +100,7 @@ func productionAssuredConfigAndDeps(t *testing.T) (issuer.Config, issuer.Depende
 	deps := validDependencies(t)
 	deps.Nonces = assuredNonceStore{newFakeNonceStore(), issuer.StoreCapabilities{Durable: true, AtomicConsume: true}}
 	deps.CredentialOffers = assuredCredentialOfferStore{newFakeCredentialOfferStore(), issuer.StoreCapabilities{Durable: true}}
-	deps.DeferredTransactions = assuredDeferredTransactionStore{newFakeDeferredTransactionStore(), issuer.StoreCapabilities{Durable: true}}
+	deps.DeferredTransactions = assuredDeferredTransactionStore{newFakeDeferredTransactionStore(), issuer.StoreCapabilities{Durable: true, AtomicConsume: true}}
 	deps.Notifications = assuredNotificationStore{newFakeNotificationStore(), issuer.StoreCapabilities{Durable: true}}
 	deps.Audit = newFakeAuditSink()
 	return cfg, deps
@@ -191,7 +191,7 @@ func TestNewAcceptsAdequateStoresUnderProduction(t *testing.T) {
 	deps := validDependencies(t)
 	deps.Nonces = assuredNonceStore{newFakeNonceStore(), issuer.StoreCapabilities{Durable: true, AtomicConsume: true}}
 	deps.CredentialOffers = assuredCredentialOfferStore{newFakeCredentialOfferStore(), issuer.StoreCapabilities{Durable: true}}
-	deps.DeferredTransactions = assuredDeferredTransactionStore{newFakeDeferredTransactionStore(), issuer.StoreCapabilities{Durable: true}}
+	deps.DeferredTransactions = assuredDeferredTransactionStore{newFakeDeferredTransactionStore(), issuer.StoreCapabilities{Durable: true, AtomicConsume: true}}
 	deps.Notifications = assuredNotificationStore{newFakeNotificationStore(), issuer.StoreCapabilities{Durable: true}}
 	deps.Audit = newFakeAuditSink()
 
@@ -210,7 +210,7 @@ func TestNewRejectsMissingAuditUnderProduction(t *testing.T) {
 	deps := validDependencies(t)
 	deps.Nonces = assuredNonceStore{newFakeNonceStore(), issuer.StoreCapabilities{Durable: true, AtomicConsume: true}}
 	deps.CredentialOffers = assuredCredentialOfferStore{newFakeCredentialOfferStore(), issuer.StoreCapabilities{Durable: true}}
-	deps.DeferredTransactions = assuredDeferredTransactionStore{newFakeDeferredTransactionStore(), issuer.StoreCapabilities{Durable: true}}
+	deps.DeferredTransactions = assuredDeferredTransactionStore{newFakeDeferredTransactionStore(), issuer.StoreCapabilities{Durable: true, AtomicConsume: true}}
 	deps.Notifications = assuredNotificationStore{newFakeNotificationStore(), issuer.StoreCapabilities{Durable: true}}
 	// deps.Audit deliberately left nil.
 
@@ -231,7 +231,7 @@ func TestNewRejectsMissingAtomicConsumeUnderProduction(t *testing.T) {
 	deps := validDependencies(t)
 	deps.Nonces = assuredNonceStore{newFakeNonceStore(), issuer.StoreCapabilities{Durable: true}} // AtomicConsume missing
 	deps.CredentialOffers = assuredCredentialOfferStore{newFakeCredentialOfferStore(), issuer.StoreCapabilities{Durable: true}}
-	deps.DeferredTransactions = assuredDeferredTransactionStore{newFakeDeferredTransactionStore(), issuer.StoreCapabilities{Durable: true}}
+	deps.DeferredTransactions = assuredDeferredTransactionStore{newFakeDeferredTransactionStore(), issuer.StoreCapabilities{Durable: true, AtomicConsume: true}}
 	deps.Notifications = assuredNotificationStore{newFakeNotificationStore(), issuer.StoreCapabilities{Durable: true}}
 
 	if _, err := issuer.New(cfg, deps); err == nil {
@@ -316,7 +316,7 @@ func preAuthorizedCodeProductionConfig(t *testing.T) (issuer.Config, issuer.Depe
 	deps := validDependencies(t)
 	deps.Nonces = assuredNonceStore{newFakeNonceStore(), issuer.StoreCapabilities{Durable: true, AtomicConsume: true}}
 	deps.CredentialOffers = assuredCredentialOfferStore{newFakeCredentialOfferStore(), issuer.StoreCapabilities{Durable: true}}
-	deps.DeferredTransactions = assuredDeferredTransactionStore{newFakeDeferredTransactionStore(), issuer.StoreCapabilities{Durable: true}}
+	deps.DeferredTransactions = assuredDeferredTransactionStore{newFakeDeferredTransactionStore(), issuer.StoreCapabilities{Durable: true, AtomicConsume: true}}
 	deps.Notifications = assuredNotificationStore{newFakeNotificationStore(), issuer.StoreCapabilities{Durable: true}}
 	deps.PreAuthorizedCodes = assuredPreAuthorizedCodeStore{newFakePreAuthorizedCodeStore(), issuer.StoreCapabilities{Durable: true, AtomicConsume: true}}
 	deps.DPoPReplay = assuredDPoPReplayChecker{newFakeDPoPReplayChecker(), issuer.StoreCapabilities{Durable: true, AtomicConsume: true}}

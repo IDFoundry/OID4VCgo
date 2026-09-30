@@ -605,6 +605,23 @@ changes whether *every* bullet below is `(done)`.
   Endpoints, over `ProtectedEndpointConfig{URL, Tokens}`: the first
   answers 200 with the Credentials or 202 with `transaction_id` and
   `interval`, encrypted when asked; the second answers 204.
+  Deferral starts in the Credential Request itself: setting
+  `CredentialRequest.Defer` (from `Prepare`, or a direct
+  `RequestCredential` caller) makes `RequestCredential` check the
+  request and its proofs, consuming the nonce, then save a pending
+  `DeferredTransactionRecord` — the configuration, the proofs' binding
+  keys as public JWKs, the client, a deployment `Reference` and an
+  `ExpiresAt` (`Limits.DeferredTransactionLifetime`) — and answer 202
+  with a random 256-bit `transaction_id` and `interval`.
+  `IssueDeferredCredential` later issues one Credential per stored key
+  from the content it's given, exactly as an immediate issuance would,
+  with a `notification_id` bound to the stored client;
+  `DenyDeferredCredential` refuses it. `DeferredCredentialHandlerConfig.Resolve`
+  lets a deployment decide at poll time instead, only for the polling
+  client's own transaction. `DeferredTransactionStore` gained `Create`
+  and an atomic `Update` for this (with `issuertest` contract cases),
+  and `cmd/conformance-issuer`'s `deferred` config runs the whole flow
+  against the OIDF suite, which follows the 202 with one poll.
   `ParseDeferredCredentialRequest`/`ParseNotificationRequest` are their
   parsers, for a handler of your own. A request's
   `credential_response_encryption` is checked before its nonce is

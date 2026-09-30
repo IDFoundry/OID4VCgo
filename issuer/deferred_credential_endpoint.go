@@ -132,6 +132,9 @@ func (iss *Issuer) requestDeferredCredential(ctx context.Context, auth Authorize
 	if err != nil {
 		return DeferredCredentialResult{}, newError(ErrorInvalidTransactionID, 400, "unknown or already-used transaction_id", err)
 	}
+	if iss.deferredExpired(record) {
+		return DeferredCredentialResult{}, newError(ErrorInvalidTransactionID, 400, "unknown or already-used transaction_id", nil)
+	}
 	// auth.ClientID() == "" here only ever means an explicit
 	// NoClientIdentity (this method's own
 	// requireClientIdentityDecision already rejected any other empty

@@ -2,6 +2,8 @@ package issuer
 
 import (
 	"context"
+	"encoding/json"
+	"time"
 
 	"github.com/idfoundry/oid4vcgo"
 )
@@ -25,13 +27,14 @@ const (
 	DeferredTransactionDenied
 )
 
-// DeferredTransactionRecord is what DeferredTransactionStore.Get
-// returns for one Deferred Issuance transaction. Creating a
-// transaction (when the Credential Endpoint decides it cannot issue
-// immediately) and resolving it (deciding issuance is ready, or that
-// it can no longer proceed) is entirely the caller's own business
-// process, running independently of a Wallet's polling — this package
-// only implements the polling protocol §9 defines on top of it.
+// DeferredTransactionRecord is one Deferred Issuance transaction
+// (§9). RequestCredential creates one when a request is deferred
+// (CredentialRequest.Defer), holding what the request's proofs
+// established; the deployment's own business process later resolves
+// it with IssueDeferredCredential or DenyDeferredCredential, and
+// RequestDeferredCredential answers the Wallet's polls from it. A
+// deployment may also create and resolve records itself through the
+// store.
 type DeferredTransactionRecord struct {
 	// ClientID binds this transaction to the client that originally
 	// requested it. When set, RequestDeferredCredential rejects a
@@ -51,12 +54,26 @@ type DeferredTransactionRecord struct {
 	// persisted to Dependencies.Notifications.
 	Credentials    []oid4vci.IssuedCredential
 	NotificationID string
+
+	// CredentialConfigurationID, BindingKeys and ExpiresAt are set when
+	// RequestCredential defers (CredentialRequest.Defer): the
+	// configuration to issue, the Wallet keys its proofs established —
+	// one public JWK per Credential — and when the transaction lapses.
+	// IssueDeferredCredential issues from them. A transaction past
+	// ExpiresAt is answered as unknown; zero means it never lapses.
+	CredentialConfigurationID string
+	BindingKeys               []json.RawMessage
+	ExpiresAt                 time.Time
+
+	// Reference is the deployment's own handle for the business
+	// process behind the transaction (Deferral.Reference).
+	Reference string
 }
 
 // DeferredTransactionStore persists Deferred Issuance transactions,
-// keyed by their own opaque transaction_id — see
-// DeferredTransactionRecord's own doc comment for why this package
-// never creates or resolves one itself.
+// keyed by their own opaque transaction_id. Under AssuranceProduction
+// it must declare itself Durable, with AtomicConsume covering both
+// Invalidate and Update.
 type DeferredTransactionStore interface {
 	// Get retrieves the record identified by transactionID. It returns
 	// an error if transactionID is unknown.
@@ -71,4 +88,14 @@ type DeferredTransactionStore interface {
 	// transactionID is unknown or already invalidated: of concurrent
 	// requests for one transaction_id, exactly one gets the Credentials.
 	Invalidate(ctx context.Context, transactionID string) error
+
+	// Create saves a new transaction; transactionID must be unused.
+	Create(ctx context.Context, transactionID string, record DeferredTransactionRecord) error
+
+	// Update loads transactionID's record, calls fn on it, and saves
+	// the result, atomically: concurrent Updates of one transaction run
+	// one after another. fn's error aborts the update, saving nothing,
+	// and is returned. It fails for an unknown or invalidated
+	// transaction.
+	Update(ctx context.Context, transactionID string, fn func(*DeferredTransactionRecord) error) error
 }

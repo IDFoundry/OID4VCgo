@@ -31,6 +31,12 @@ const (
 	// AuditEventRequestDeferredCredential records the outcome of a
 	// RequestDeferredCredential call.
 	AuditEventRequestDeferredCredential
+
+	// AuditEventIssueDeferredCredential and
+	// AuditEventDenyDeferredCredential record the outcome of resolving
+	// a deferred transaction.
+	AuditEventIssueDeferredCredential
+	AuditEventDenyDeferredCredential
 )
 
 // AuditOutcome is a closed set of outcomes for an AuditEvent.
