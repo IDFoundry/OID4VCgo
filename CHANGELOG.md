@@ -7,7 +7,6 @@
 
 * **deps:** Wallets calling the Credential, Deferred Credential or Notification Endpoints now get 401 with no error code for a request without credentials (was 400 invalid_request), and invalid_dpop_proof for an invalid DPoP proof at any endpoint (was invalid_request or invalid_token); FAPIgo v0.41.0's own federation changes are breaking too, for code using fapigo/federation directly — see FAPIgo's UPGRADING.md.
 * **issuer:** issuer.DeferredTransactionStore adds Create and Update (atomic per transaction), and under AssuranceProduction must declare AtomicConsume as well as Durable; issuer.Limits.DeferredTransactionLifetime is required when Endpoints.DeferredCredential is set; DeferredCredentialHandler takes a DeferredCredentialHandlerConfig (embed your ProtectedEndpointConfig).
-* **deps:** requires FAPIgo 2931f31 or later, whose fapigo/federation changes are breaking (case-sensitive metadata member names, kid required and unique in Entity Statements, crit rejected, metadata policy operator combination rules enforced); code using fapigo/federation directly must follow FAPIgo's UPGRADING.md.
 * **statuslist:** statuslist.Fetcher refuses non-public addresses — set AllowLoopback or AllowPrivate for a status list served on loopback or a private network; statuslist.Publisher's methods now have pointer receivers, so serve &statuslist.Publisher{...}, and call Invalidate after a status changes to serve it at once.
 * **verifier:** verifier.Transactions.Begin refuses an empty browserBinding for cross-device requests too; pass a secret you keep (a cookie, or a server-side value) and give the same one to Lookup.
 * **statuslist:** statuslist.StatusListRef.Idx is a uint64 (was int); convert an int index with uint64(idx), and copy it to or from credential/mdoc.StatusListRef.Idx directly.
@@ -23,7 +22,7 @@
 
 * bind client-less tokens explicitly, and skip signing keys for encryption ([7818d33](https://github.com/IDFoundry/OID4VCgo/commit/7818d33866cea40bdef41780dd809964bf728cd1))
 * **conformance:** check the Verifier's certificate chain in conformance-wallet-vp ([92766de](https://github.com/IDFoundry/OID4VCgo/commit/92766de7e1f56ba4e8c2a6f691bf68cd66f0467c))
-* **deps:** pin FAPIgo main and build resource verifiers with serverresource ([dfeb4df](https://github.com/IDFoundry/OID4VCgo/commit/dfeb4df909037188a810d3e3857aa2563c9a5976))
+* **deps:** build resource verifiers with fapigo/serverresource ([dfeb4df](https://github.com/IDFoundry/OID4VCgo/commit/dfeb4df909037188a810d3e3857aa2563c9a5976))
 * **deps:** pin FAPIgo v0.41.0 ([9efcf84](https://github.com/IDFoundry/OID4VCgo/commit/9efcf84bf02c78efcdf8a30bb5e1f0d73921baf8))
 * **statuslist:** fetch only public addresses, and cache served tokens ([#309](https://github.com/IDFoundry/OID4VCgo/issues/309)) ([7657dc9](https://github.com/IDFoundry/OID4VCgo/commit/7657dc9fb637c9dd84f5530b466f93e8558629b2))
 * **statuslist:** make StatusListRef.Idx a uint64 ([91bfe83](https://github.com/IDFoundry/OID4VCgo/commit/91bfe8390f8de922d2d56cd547055872027a5dd8))
