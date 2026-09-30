@@ -42,26 +42,31 @@ package issuer
 //	if err != nil {
 //		// respond per *resource.Error — Verify's own doc comment covers this.
 //	}
-//	auth := issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID(authCtx.ClientID), Scopes: authCtx.Scopes}
+//	var client issuer.ClientIdentity = issuer.NoClientIdentity{}
+//	if authCtx.ClientID != "" {
+//		client = issuer.KnownClientID(authCtx.ClientID)
+//	}
+//	auth := issuer.AuthorizedRequest{ClientIdentity: client, Subject: authCtx.Subject, Scopes: authCtx.Scopes}
 //	if raw, ok := authCtx.Claims["authorization_details"]; ok {
 //		if err := json.Unmarshal(raw, &auth.AuthorizationDetails); err != nil {
 //			// malformed claim — treat the same as a verification failure.
 //		}
 //	}
 //
-// authCtx.Subject is not part of AuthorizedRequest, but it is how the
-// caller finds out what to issue: for a token minted by
+// authCtx.Subject binds a deferred transaction to the token's subject
+// (AuthorizedRequest.Subject), and it is how the caller finds out what
+// to issue: for a token minted by
 // ExchangePreAuthorizedCode it is the redeemed
 // PreAuthorizedCodeRecord's own Subject (see AccessTokenParams.Subject),
 // so look up the credential content by it before building
 // CredentialRequest.SDJWTClaims/MdocClaims.
 //
-// Subject, ExpiresAt, and Key are all meaningless to AuthorizedRequest
-// itself and dropped — AuthorizedRequest exists to check a requested
-// CredentialConfiguration's own Scope (or, for a credential_identifier-based
-// request, AuthorizationDetails) against what the token grants (§8.2)
-// and a jwt-type proof's "iss" claim against ClientIdentity (Appendix F.1),
-// nothing else. Of AuthorizationContext.Claims' own arbitrary token
+// ExpiresAt and Key are meaningless to AuthorizedRequest and dropped —
+// AuthorizedRequest exists to check a requested CredentialConfiguration's
+// own Scope (or, for a credential_identifier-based request,
+// AuthorizationDetails) against what the token grants (§8.2), a
+// jwt-type proof's "iss" claim against ClientIdentity (Appendix F.1),
+// and who may poll a deferred transaction, nothing else. Of AuthorizationContext.Claims' own arbitrary token
 // claims, only "authorization_details" (RFC 9396 §2) is ever worth
 // pulling out — see AuthorizedRequest's own doc comment for why it's
 // unmarshaled directly into []AuthorizationDetail rather than kept as

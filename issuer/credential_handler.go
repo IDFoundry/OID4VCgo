@@ -185,9 +185,12 @@ type DeferredCredentialHandlerConfig struct {
 	// still pending, before it's answered — for a deployment that
 	// decides when the Wallet asks rather than in a background process.
 	// It may call IssueDeferredCredential or DenyDeferredCredential for
-	// tx, or do nothing to leave it pending. It's called only for a
-	// transaction of the polling client, and its error is a 500 whose
-	// detail the Wallet never sees.
+	// tx, or do nothing to leave it pending. It's called only when the
+	// polling grant's client and Subject are the ones the transaction
+	// was created for, so grant.Subject is the transaction's own. Its
+	// error is a 500 whose detail the Wallet never sees, except
+	// ErrDeferredTransactionResolved: a concurrent poll resolved tx
+	// first, and this poll is answered from the store.
 	Resolve func(ctx context.Context, grant Grant, transactionID string, tx DeferredTransactionRecord) error
 }
 
@@ -295,17 +298,21 @@ func writePrepareError(w http.ResponseWriter, err error) {
 }
 
 // resolvePending calls resolve for transactionID when it's pending and
-// belongs to grant's client. Anything else — unknown, resolved,
-// expired, another client's — is left for RequestDeferredCredential to
-// answer.
+// belongs to grant's client and subject. Anything else — unknown,
+// resolved, expired, someone else's — is left for
+// RequestDeferredCredential to answer, as is a transaction a concurrent
+// poll resolved first.
 func (iss *Issuer) resolvePending(ctx context.Context, grant Grant, transactionID string,
 	resolve func(context.Context, Grant, string, DeferredTransactionRecord) error) error {
-	if transactionID == "" || iss.deps.DeferredTransactions == nil {
+	if transactionID == "" || iss.deps.DeferredTransactions == nil || requireClientIdentityDecision(grant.Authorized) != nil {
 		return nil
 	}
 	record, err := iss.pendingDeferredTransaction(ctx, transactionID)
-	if err != nil || record.ClientID != grant.Authorized.ClientID() {
+	if err != nil || !deferredOwner(record, grant.Authorized) {
 		return nil
 	}
-	return resolve(ctx, grant, transactionID, record)
+	if err := resolve(ctx, grant, transactionID, record); err != nil && !errors.Is(err, ErrDeferredTransactionResolved) {
+		return err
+	}
+	return nil
 }

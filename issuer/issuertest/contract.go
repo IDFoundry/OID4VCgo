@@ -543,7 +543,7 @@ func TestDeferredTransactionStoreContract(t *testing.T, seed func(t *testing.T, 
 	t.Helper()
 
 	t.Run("Get", func(t *testing.T) {
-		want := issuer.DeferredTransactionRecord{ClientID: contractClientID, Status: issuer.DeferredTransactionPending}
+		want := issuer.DeferredTransactionRecord{ClientID: contractClientID, Subject: "holder-1", Status: issuer.DeferredTransactionPending}
 		store := seed(t, "txn1", want)
 		got, err := store.Get(context.Background(), "txn1")
 		if err != nil {
@@ -551,6 +551,9 @@ func TestDeferredTransactionStoreContract(t *testing.T, seed func(t *testing.T, 
 		}
 		if got.ClientID != want.ClientID {
 			t.Errorf("ClientID = %q, want %q", got.ClientID, want.ClientID)
+		}
+		if got.Subject != want.Subject {
+			t.Errorf("Subject = %q, want %q", got.Subject, want.Subject)
 		}
 		if got.Status != want.Status {
 			t.Errorf("Status = %v, want %v", got.Status, want.Status)

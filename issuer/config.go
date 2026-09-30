@@ -62,7 +62,8 @@ type Limits struct {
 
 	// DeferredIssuancePollInterval is the minimum time this issuer asks
 	// a Wallet to wait before polling the Deferred Credential Endpoint
-	// again (§9.2's own "interval" member). Required only when
+	// again (§9.2's own "interval" member, in whole seconds: a fraction
+	// is rounded up). At least one second, and required only when
 	// Endpoints.DeferredCredential is set.
 	DeferredIssuancePollInterval time.Duration
 
@@ -580,8 +581,8 @@ func validateDeferredCredentialEndpointDependencies(cfg Config, deps Dependencie
 	if cfg.Endpoints.DeferredCredential.IsZero() {
 		return nil
 	}
-	if cfg.Limits.DeferredIssuancePollInterval <= 0 {
-		return fmt.Errorf("issuer: config: limits.deferred_issuance_poll_interval must be positive when endpoints.deferred_credential is set")
+	if cfg.Limits.DeferredIssuancePollInterval < time.Second {
+		return fmt.Errorf("issuer: config: limits.deferred_issuance_poll_interval must be at least one second when endpoints.deferred_credential is set")
 	}
 	if cfg.Limits.DeferredTransactionLifetime <= 0 {
 		return fmt.Errorf("issuer: config: limits.deferred_transaction_lifetime must be positive when endpoints.deferred_credential is set")

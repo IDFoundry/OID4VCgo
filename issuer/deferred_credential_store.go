@@ -44,6 +44,14 @@ type DeferredTransactionRecord struct {
 	// requested").
 	ClientID string
 
+	// Subject binds this transaction to the access token subject that
+	// requested it (AuthorizedRequest.Subject). When set,
+	// RequestDeferredCredential rejects a request with a different
+	// Subject. RequestCredential always sets it when it defers; a record
+	// a deployment creates itself with neither ClientID nor Subject is
+	// answerable by any access token.
+	Subject string
+
 	Status DeferredTransactionStatus
 
 	// Credentials/NotificationID are meaningful, and should be set,
@@ -59,8 +67,12 @@ type DeferredTransactionRecord struct {
 	// RequestCredential defers (CredentialRequest.Defer): the
 	// configuration to issue, the Wallet keys its proofs established —
 	// one public JWK per Credential — and when the transaction lapses.
-	// IssueDeferredCredential issues from them. A transaction past
-	// ExpiresAt is answered as unknown; zero means it never lapses.
+	// IssueDeferredCredential issues from them, and restarts ExpiresAt
+	// so the Wallet has a full Limits.DeferredTransactionLifetime to
+	// collect them. A transaction past ExpiresAt is answered as unknown;
+	// zero means it never lapses. Nothing here deletes an expired
+	// record: a production store should drop records some time after
+	// their ExpiresAt.
 	CredentialConfigurationID string
 	BindingKeys               []json.RawMessage
 	ExpiresAt                 time.Time

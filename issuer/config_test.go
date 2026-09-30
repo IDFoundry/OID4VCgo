@@ -179,6 +179,7 @@ func TestNewRejectsInvalidConfig(t *testing.T) {
 		"zero nonce lifetime with endpoint":                  func(c *issuer.Config) { c.Limits.NonceLifetime = 0 },
 		"zero credential offer lifetime with endpoint":       func(c *issuer.Config) { c.Limits.CredentialOfferLifetime = 0 },
 		"zero deferred issuance poll interval with endpoint": func(c *issuer.Config) { c.Limits.DeferredIssuancePollInterval = 0 },
+		"sub-second deferred issuance poll interval":         func(c *issuer.Config) { c.Limits.DeferredIssuancePollInterval = 500 * time.Millisecond },
 		"invalid display": func(c *issuer.Config) {
 			c.Display = []oid4vci.Display{{Logo: &oid4vci.Logo{}}}
 		},

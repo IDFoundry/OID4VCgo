@@ -14,9 +14,7 @@ import (
 type DeferredCredentialRequest struct {
 	// TransactionID is REQUIRED: identifies a Deferred Issuance
 	// transaction previously returned by a Credential Response (§8.3)
-	// or an earlier Deferred Credential Response (§9.2). This package
-	// never issues one itself — see DeferredTransactionRecord's own
-	// doc comment.
+	// or an earlier Deferred Credential Response (§9.2).
 	TransactionID string
 
 	// ResponseEncryption is this request's own optional
@@ -85,7 +83,7 @@ func (r DeferredCredentialResult) wire() (int, any) {
 	return http.StatusAccepted, struct {
 		TransactionID string `json:"transaction_id"`
 		Interval      int64  `json:"interval"`
-	}{TransactionID: r.TransactionID, Interval: int64(r.Interval.Seconds())}
+	}{TransactionID: r.TransactionID, Interval: pollIntervalSeconds(r.Interval)}
 }
 
 // RequestDeferredCredential implements the Deferred Credential
@@ -96,11 +94,11 @@ func (r DeferredCredentialResult) wire() (int, any) {
 // hint, or reports this issuer can no longer issue it
 // (credential_request_denied, §9.3).
 //
-// This package never creates a Deferred Issuance transaction itself —
-// RequestCredential always issues immediately or fails outright, since
-// deciding a Credential isn't ready yet is entirely a deployment's own
-// business process; see DeferredTransactionRecord's own doc comment.
-// Request/response encryption (§10) is supported the same way
+// It answers only the client and access token Subject the transaction
+// was created for (DeferredTransactionRecord's ClientID and Subject);
+// anyone else gets invalid_transaction_id, as for an unknown one.
+// RequestCredential creates the transaction when a request defers
+// (CredentialRequest.Defer). Request/response encryption (§10) is supported the same way
 // RequestCredential's own is — see DecryptRequestBody/EncryptResponseBody
 // and DeferredCredentialRequest's own ResponseEncryption/RequestWasEncrypted
 // fields.
@@ -135,13 +133,8 @@ func (iss *Issuer) requestDeferredCredential(ctx context.Context, auth Authorize
 	if iss.deferredExpired(record) {
 		return DeferredCredentialResult{}, newError(ErrorInvalidTransactionID, 400, "unknown or already-used transaction_id", nil)
 	}
-	// auth.ClientID() == "" here only ever means an explicit
-	// NoClientIdentity (this method's own
-	// requireClientIdentityDecision already rejected any other empty
-	// case before this ever runs) — this check is deliberately skipped
-	// for that acknowledged deployment choice, not by silent default.
-	if record.ClientID != "" && auth.ClientID() != record.ClientID {
-		return DeferredCredentialResult{}, newError(ErrorInvalidTransactionID, 400, "transaction_id was not issued to this client", nil)
+	if !deferredOwner(record, auth) {
+		return DeferredCredentialResult{}, newError(ErrorInvalidTransactionID, 400, "transaction_id was not issued to this access token's client and subject", nil)
 	}
 
 	switch record.Status {

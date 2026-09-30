@@ -60,7 +60,7 @@ func (v *Verifier) Verify(r *http.Request, endpoint *url.URL) (issuer.Grant, err
 	grant := issuer.Grant{
 		Subject:    authCtx.Subject,
 		DPoPNonce:  authCtx.NextDPoPNonce,
-		Authorized: issuer.AuthorizedRequest{ClientIdentity: client, Scopes: authCtx.Scopes},
+		Authorized: issuer.AuthorizedRequest{ClientIdentity: client, Subject: authCtx.Subject, Scopes: authCtx.Scopes},
 	}
 	if raw, ok := authCtx.Claims["authorization_details"]; ok {
 		if err := json.Unmarshal(raw, &grant.Authorized.AuthorizationDetails); err != nil {

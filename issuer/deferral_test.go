@@ -42,7 +42,7 @@ func newDeferralFixture(t *testing.T) deferralFixture {
 	return deferralFixture{credentialEndpointFixture: f, store: store, clock: clock}
 }
 
-var deferralAuth = issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("test-client"), Scopes: []string{"identity_credential"}}
+var deferralAuth = issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("test-client"), Subject: "holder-1", Scopes: []string{"identity_credential"}}
 
 // deferOne defers a one-credential SD-JWT VC request, returning its
 // transaction_id and the Wallet key its proof is bound to.
@@ -72,7 +72,7 @@ func TestDeferral_IssueLater(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if record.Status != issuer.DeferredTransactionPending || record.ClientID != "test-client" || record.Reference != "kyc-42" ||
+	if record.Status != issuer.DeferredTransactionPending || record.ClientID != "test-client" || record.Subject != "holder-1" || record.Reference != "kyc-42" ||
 		record.CredentialConfigurationID != testSDJWTConfigID || len(record.BindingKeys) != 1 || !record.ExpiresAt.Equal(f.clock.now.Add(time.Hour)) {
 		t.Fatalf("record = %+v", record)
 	}
@@ -192,10 +192,11 @@ func TestDeferral_Handlers(t *testing.T) {
 	}
 
 	resolved := 0
-	deferredHandler := func(clientID string) http.Handler {
+	deferredHandler := func(clientID, subject string) http.Handler {
 		t.Helper()
 		dh, err := f.iss.DeferredCredentialHandler(issuer.DeferredCredentialHandlerConfig{
-			ProtectedEndpointConfig: protectedEndpoint(t, &fakeTokens{grant: issuer.Grant{Authorized: issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID(clientID)}}}),
+			ProtectedEndpointConfig: protectedEndpoint(t, &fakeTokens{grant: issuer.Grant{Subject: subject,
+				Authorized: issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID(clientID), Subject: subject}}}),
 			Resolve: func(ctx context.Context, _ issuer.Grant, txID string, _ issuer.DeferredTransactionRecord) error {
 				resolved++
 				return f.iss.IssueDeferredCredential(ctx, txID, issuer.DeferredIssuance{SDJWTClaims: testSDJWTClaims()})
@@ -207,12 +208,138 @@ func TestDeferral_Handlers(t *testing.T) {
 		return dh
 	}
 	body := `{"transaction_id":"` + deferred.TransactionID + `"}`
-	if w := postCredentialRequest(t, deferredHandler("another-client"), body); w.Code != http.StatusBadRequest || resolved != 0 {
+	if w := postCredentialRequest(t, deferredHandler("another-client", "holder-1"), body); w.Code != http.StatusBadRequest || resolved != 0 {
 		t.Errorf("another client's poll = %d, Resolve called %d times; want 400 and no Resolve", w.Code, resolved)
 	}
-	w = postCredentialRequest(t, deferredHandler("test-client"), body)
+	if w := postCredentialRequest(t, deferredHandler("test-client", "holder-2"), body); w.Code != http.StatusBadRequest || resolved != 0 {
+		t.Errorf("another subject's poll = %d, Resolve called %d times; want 400 and no Resolve", w.Code, resolved)
+	}
+	w = postCredentialRequest(t, deferredHandler("test-client", "holder-1"), body)
 	var issued oid4vci.CredentialResponse
 	if err := json.Unmarshal(w.Body.Bytes(), &issued); err != nil || w.Code != http.StatusOK || len(issued.Credentials) != 1 || resolved != 1 {
 		t.Errorf("first poll = %d %s (Resolve %d); want 200 with the credential", w.Code, w.Body, resolved)
+	}
+}
+
+// TestDeferral_BindsSubject: a transaction answers only the access
+// token subject that created it — a client_id alone is shared by every
+// install of a Wallet — and a request can't defer without a subject.
+func TestDeferral_BindsSubject(t *testing.T) {
+	ctx := context.Background()
+	for name, tc := range map[string]struct {
+		client        issuer.ClientIdentity
+		otherClientOK bool
+	}{
+		"known client": {client: issuer.KnownClientID("test-client")},
+		// With no client to compare, the subject alone decides.
+		"no client": {client: issuer.NoClientIdentity{}, otherClientOK: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newDeferralFixture(t)
+			owner := issuer.AuthorizedRequest{ClientIdentity: tc.client, Subject: "holder-1", Scopes: deferralAuth.Scopes}
+			resp, err := f.iss.RequestCredential(ctx, owner, issuer.CredentialRequest{
+				CredentialConfigurationID: testSDJWTConfigID,
+				Proofs:                    map[string][]string{oid4vci.ProofTypeJWT: {buildJWTProof(t, testP256Key(t), testIssuer, f.issueNonce(t))}},
+				Defer:                     &issuer.Deferral{},
+			})
+			if err != nil {
+				t.Fatalf("RequestCredential (deferred): %v", err)
+			}
+			if err := f.iss.IssueDeferredCredential(ctx, resp.TransactionID, issuer.DeferredIssuance{SDJWTClaims: testSDJWTClaims()}); err != nil {
+				t.Fatal(err)
+			}
+			poll := func(auth issuer.AuthorizedRequest) error {
+				_, err := f.iss.RequestDeferredCredential(ctx, auth, issuer.DeferredCredentialRequest{TransactionID: resp.TransactionID})
+				return err
+			}
+			assertIssuerError(t, poll(issuer.AuthorizedRequest{ClientIdentity: tc.client, Subject: "holder-2"}), issuer.ErrorInvalidTransactionID)
+			assertIssuerError(t, poll(issuer.AuthorizedRequest{ClientIdentity: tc.client}), issuer.ErrorInvalidTransactionID)
+			err = poll(issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("another-client"), Subject: "holder-1"})
+			if tc.otherClientOK {
+				if err != nil {
+					t.Fatalf("the owning subject's poll from another client = %v", err)
+				}
+				return
+			}
+			assertIssuerError(t, err, issuer.ErrorInvalidTransactionID)
+			if err := poll(owner); err != nil {
+				t.Fatalf("the owner's poll = %v", err)
+			}
+		})
+	}
+
+	f := newDeferralFixture(t)
+	noSubject := issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("test-client"), Scopes: deferralAuth.Scopes}
+	if _, err := f.iss.RequestCredential(ctx, noSubject, issuer.CredentialRequest{
+		CredentialConfigurationID: testSDJWTConfigID,
+		Proofs:                    map[string][]string{oid4vci.ProofTypeJWT: {buildJWTProof(t, testP256Key(t), testIssuer, f.issueNonce(t))}},
+		Defer:                     &issuer.Deferral{},
+	}); err == nil {
+		t.Fatal("a request without a Subject was deferred")
+	}
+	if _, err := f.nonces.Consume(ctx, issuer.NonceConsumption{Nonce: "test-nonce"}); err != nil {
+		t.Errorf("the nonce was consumed by a request that couldn't be deferred: %v", err)
+	}
+}
+
+// TestDeferral_IssuedStaysCollectable: issuing restarts the
+// transaction's lifetime, so a credential issued just before the
+// original expiry can still be collected.
+func TestDeferral_IssuedStaysCollectable(t *testing.T) {
+	f := newDeferralFixture(t)
+	ctx := context.Background()
+	txID, _ := f.deferOne(t)
+	f.clock.now = f.clock.now.Add(59 * time.Minute)
+	if err := f.iss.IssueDeferredCredential(ctx, txID, issuer.DeferredIssuance{SDJWTClaims: testSDJWTClaims()}); err != nil {
+		t.Fatal(err)
+	}
+	f.clock.now = f.clock.now.Add(30 * time.Minute)
+	if res, err := f.iss.RequestDeferredCredential(ctx, deferralAuth, issuer.DeferredCredentialRequest{TransactionID: txID}); err != nil || len(res.Credentials) != 1 {
+		t.Fatalf("poll after a late issuance = %+v, %v", res, err)
+	}
+}
+
+// TestDeferral_ResolveLosesRace: when a concurrent poll resolves the
+// transaction first, Resolve's ErrDeferredTransactionResolved isn't a
+// 500 — the poll is answered from the store.
+func TestDeferral_ResolveLosesRace(t *testing.T) {
+	f := newDeferralFixture(t)
+	txID, _ := f.deferOne(t)
+	dh, err := f.iss.DeferredCredentialHandler(issuer.DeferredCredentialHandlerConfig{
+		ProtectedEndpointConfig: protectedEndpoint(t, &fakeTokens{grant: issuer.Grant{Subject: deferralAuth.Subject, Authorized: deferralAuth}}),
+		Resolve: func(ctx context.Context, _ issuer.Grant, txID string, _ issuer.DeferredTransactionRecord) error {
+			// The concurrent poll that wins.
+			if err := f.iss.IssueDeferredCredential(ctx, txID, issuer.DeferredIssuance{SDJWTClaims: testSDJWTClaims()}); err != nil {
+				return err
+			}
+			return f.iss.IssueDeferredCredential(ctx, txID, issuer.DeferredIssuance{SDJWTClaims: testSDJWTClaims()})
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := postCredentialRequest(t, dh, `{"transaction_id":"`+txID+`"}`)
+	var issued oid4vci.CredentialResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &issued); err != nil || w.Code != http.StatusOK || len(issued.Credentials) != 1 {
+		t.Errorf("poll that lost the race = %d %s; want 200 with the credential", w.Code, w.Body)
+	}
+}
+
+// TestDeferral_IntervalRoundsUp: a poll interval with a fraction of a
+// second is sent as the next whole second, never truncated.
+func TestDeferral_IntervalRoundsUp(t *testing.T) {
+	f := newCredentialEndpointFixture(t, func(cfg *issuer.Config, deps *issuer.Dependencies) {
+		cfg.Endpoints.DeferredCredential = mustEndpointURL(t, testDeferredCredentialEndpoint)
+		cfg.Limits.DeferredIssuancePollInterval = 1500 * time.Millisecond
+		cfg.Limits.DeferredTransactionLifetime = time.Hour
+		deps.DeferredTransactions = newFakeDeferredTransactionStore()
+	})
+	resp, err := f.iss.RequestCredential(context.Background(), deferralAuth, issuer.CredentialRequest{
+		CredentialConfigurationID: testSDJWTConfigID,
+		Proofs:                    map[string][]string{oid4vci.ProofTypeJWT: {buildJWTProof(t, testP256Key(t), testIssuer, f.issueNonce(t))}},
+		Defer:                     &issuer.Deferral{},
+	})
+	if err != nil || resp.Interval != 2 {
+		t.Fatalf("response = %+v, %v; want interval 2", resp, err)
 	}
 }
