@@ -57,6 +57,6 @@ func newRouter(srv *server.Server, iss *issuer.Issuer, resourceVerifier *fapires
 	if err != nil {
 		return nil, err
 	}
-	mux.HandleFunc("POST /credential", credHandler)
+	mux.Handle("POST /credential", credHandler)
 	return mux, nil
 }

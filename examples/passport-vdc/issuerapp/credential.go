@@ -4,15 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
+	"fmt"
 	"net/http"
-
-	fapires "github.com/idfoundry/fapigo/resource"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/credential"
 	"github.com/idfoundry/oid4vcgo/issuer"
+	"github.com/idfoundry/oid4vcgo/issuer/fapiresource"
 )
 
 func (a *App) handleNonce(w http.ResponseWriter, r *http.Request) {
@@ -24,75 +23,65 @@ func (a *App) handleNonce(w http.ResponseWriter, r *http.Request) {
 	result.WriteJSON(w)
 }
 
-// handleCredential verifies the DPoP-bound access token, finds the
-// passport transaction its subject names, and issues the requested
-// format from that passport's Evidence.
-func (a *App) handleCredential(w http.ResponseWriter, r *http.Request) {
-	// credentialURL, not r.URL: a server-side request URL has no scheme
-	// or host, which DPoP's htu comparison needs.
-	authCtx, err := a.resourceVerifier.Verify(r.Context(), fapires.VerifyRequest{
-		Method: r.Method, URL: &a.credentialURL, Authorization: r.Header.Get("Authorization"),
-		DPoPProofs: r.Header.Values("DPoP"), PeerCertificate: fapires.PeerCertificateFromHTTP(r),
+// credentialHandler serves the Credential Endpoint: issuer.CredentialHandler
+// checks the DPoP-bound access token, and prepareCredential decides
+// what to issue.
+func (a *App) credentialHandler() (http.Handler, error) {
+	tokens, err := fapiresource.New(a.resourceVerifier)
+	if err != nil {
+		return nil, fmt.Errorf("issuerapp: access token verifier: %w", err)
+	}
+	h, err := a.issuer.CredentialHandler(issuer.CredentialHandlerConfig{
+		URL: &a.credentialURL, Tokens: tokens, Prepare: a.prepareCredential,
 	})
 	if err != nil {
-		fapires.WriteError(w, err)
-		return
+		return nil, fmt.Errorf("issuerapp: credential handler: %w", err)
 	}
-	body, err := io.ReadAll(io.LimitReader(r.Body, issuer.MaxCredentialRequestBytes+1))
-	if err != nil {
-		http.Error(w, "credential request is unreadable", http.StatusBadRequest)
-		return
-	}
-	req, err := a.issuer.ParseCredentialRequest(body, r.Header.Get("Content-Type"))
-	if err != nil {
-		issuer.WriteError(w, err)
-		return
-	}
+	return h, nil
+}
+
+// prepareCredential finds the passport transaction the access token's
+// subject names and fills in the requested format from that passport's
+// Evidence. Each credential gets its own status list index; done
+// releases the reservation and the indexes if issuing fails.
+func (a *App) prepareCredential(_ context.Context, grant issuer.Grant, req *issuer.CredentialRequest) (func(bool), error) {
 	// Each offered credential is issued once per passport: reserve it
 	// now, release it if issuing fails.
-	e, err := a.transactions.reserve(authCtx.Subject, req.CredentialConfigurationID)
+	e, err := a.transactions.reserve(grant.Subject, req.CredentialConfigurationID)
 	switch {
 	case errors.Is(err, errAlreadyIssued):
-		issuer.NewError(issuer.ErrorCredentialRequestDenied, "this credential has already been issued for this passport").WriteJSON(w)
-		return
+		return nil, issuer.NewError(issuer.ErrorCredentialRequestDenied, "this credential has already been issued for this passport")
 	case err != nil:
-		issuer.NewError(issuer.ErrorCredentialRequestDenied, "the passport transaction for this access token has expired").WriteJSON(w)
-		return
+		return nil, issuer.NewError(issuer.ErrorCredentialRequestDenied, "the passport transaction for this access token has expired")
 	}
-	issued := false
-	defer func() {
+	var statusIdxs []int
+	done := func(issued bool) {
 		if issued {
-			a.transactions.done(authCtx.Subject)
-		} else {
-			a.transactions.release(authCtx.Subject, req.CredentialConfigurationID)
+			a.transactions.done(grant.Subject)
+			return
 		}
-	}()
+		a.transactions.release(grant.Subject, req.CredentialConfigurationID)
+		for _, idx := range statusIdxs {
+			a.statusList.release(idx)
+		}
+	}
 
 	// Both formats are always built from the same Evidence;
 	// RequestCredential uses whichever the requested configuration
 	// needs.
 	opts := credential.Options{Now: a.now()}
 	mdocClaims, err := credential.MdocClaims(e, opts)
-	if err != nil {
-		issuer.NewError(issuer.ErrorCredentialRequestDenied, "this passport can't be issued: "+err.Error()).WriteJSON(w)
-		return
+	if err == nil {
+		req.SDJWTClaims, err = credential.SDJWTClaims(e, a.vct, opts)
 	}
-	sdjwtClaims, err := credential.SDJWTClaims(e, a.vct, opts)
 	if err != nil {
-		issuer.NewError(issuer.ErrorCredentialRequestDenied, "this passport can't be issued: "+err.Error()).WriteJSON(w)
-		return
+		done(false)
+		return nil, issuer.NewError(issuer.ErrorCredentialRequestDenied, "this passport can't be issued: "+err.Error())
 	}
+	req.MdocClaims = mdocClaims
 
 	// Each credential — every one of a batch — gets its own status list
-	// index (HAIP 1.0 §6.1), freed again if the request fails.
-	var statusIdxs []int
-	defer func() {
-		if !issued {
-			for _, idx := range statusIdxs {
-				a.statusList.release(idx)
-			}
-		}
-	}()
+	// index (HAIP 1.0 §6.1).
 	req.PerCredential = func(_ context.Context, c *issuer.CredentialInstance) error {
 		idx, err := a.statusList.allocate(credentialFormat(req.CredentialConfigurationID), a.now())
 		if err != nil {
@@ -102,29 +91,7 @@ func (a *App) handleCredential(w http.ResponseWriter, r *http.Request) {
 		a.withStatus(c, idx)
 		return nil
 	}
-
-	req.SDJWTClaims, req.MdocClaims = sdjwtClaims, mdocClaims
-	result, err := a.issuer.RequestCredential(r.Context(), issuer.AuthorizedRequest{
-		ClientIdentity: issuer.KnownClientID(authCtx.ClientID), Scopes: authCtx.Scopes,
-	}, req)
-	if err != nil {
-		issuer.WriteError(w, err)
-		return
-	}
-	resultJSON, err := json.Marshal(result)
-	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-	// Encrypted to the wallet's per-request key (required: see buildIssuer).
-	encoded, contentType, err := a.issuer.EncryptResponseBody(resultJSON, req.ResponseEncryption)
-	if err != nil {
-		issuer.WriteError(w, err)
-		return
-	}
-	issued = true
-	w.Header().Set("Content-Type", contentType)
-	_, _ = w.Write(encoded)
+	return done, nil
 }
 
 func (a *App) issuerMetadataHandler() http.HandlerFunc {

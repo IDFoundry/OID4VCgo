@@ -17,6 +17,10 @@ package issuer
 //
 // # Adapting Verify's result into AuthorizedRequest
 //
+// issuer/fapiresource does all of this as an AccessTokenVerifier, for
+// CredentialHandler; what follows is what it does, for a handler of
+// your own.
+//
 // A caller already constructing a *resource.Verifier for this
 // deployment's own access tokens (fapigo/resource.NewVerifier — its own
 // public API, out of scope here) calls (*resource.Verifier).Verify once
@@ -25,9 +29,12 @@ package issuer
 // translation:
 //
 //	authCtx, err := verifier.Verify(ctx, resource.VerifyRequest{
-//		Method: r.Method, URL: r.URL, Authorization: r.Header.Get("Authorization"),
-//		DPoPProofs: r.Header.Values("DPoP"), PeerCertificate: peerCertificate(r),
+//		Method: r.Method, URL: credentialEndpointURL, Authorization: r.Header.Get("Authorization"),
+//		DPoPProofs: resource.DPoPProofsFromHTTP(r), PeerCertificate: resource.PeerCertificateFromHTTP(r),
 //	})
+//
+// URL is the endpoint's absolute URL, not r.URL: a server-side request's
+// URL has no scheme or host, so a DPoP proof's htu would never match it.
 //	if err != nil {
 //		// respond per *resource.Error — Verify's own doc comment covers this.
 //	}

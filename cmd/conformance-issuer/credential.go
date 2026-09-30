@@ -1,9 +1,8 @@
 package main
 
 import (
-	"encoding/json"
+	"context"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"time"
@@ -14,6 +13,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcgo/internal/conformanceconfig"
 	"github.com/idfoundry/oid4vcgo/issuer"
+	"github.com/idfoundry/oid4vcgo/issuer/fapiresource"
 )
 
 // issuedCredentialLifetime bounds an issued credential's own "exp"
@@ -62,51 +62,35 @@ func mdocClaimsForRequest(docType string, nameSpaces map[string]map[string]inter
 	}
 }
 
-// credentialHandler serves the Credential Endpoint (§8): verifies the
-// presented access token via resourceVerifier (fapigo/resource,
-// per issuer/resource_verifier.go's own recipe), adapts the result
-// into issuer.AuthorizedRequest, decrypts the request body if it
-// arrived as a JWE (§10, via iss.DecryptRequestBody), parses the wire
-// request body, and calls RequestCredential with vct/claims fixed to
-// whatever cfg configures — issuer.Issuer has no user database of its
-// own (CredentialRequest.SDJWTClaims' own doc comment), so this
-// binary's own static test data stands in for one. The response is
-// encrypted back (§10, via iss.EncryptResponseBody) whenever the
-// request's own "credential_response_encryption" asked for it — both
-// directions delegate entirely to issuer/encryption.go's own already-
-// tested logic, this handler only translates wire JSON to/from it. No
-// credential_identifier-based requests yet — see README's own
-// "Status".
-func credentialHandler(iss *issuer.Issuer, resourceVerifier *fapires.Verifier, credentialURL *url.URL, cfg Config) (http.HandlerFunc, error) {
+// credentialHandler serves the Credential Endpoint (§8) with
+// issuer.CredentialHandler, checking access tokens with
+// resourceVerifier through issuer/fapiresource. What it issues is fixed
+// by cfg — issuer.Issuer has no user database of its own
+// (CredentialRequest.SDJWTClaims' own doc comment), so this binary's
+// own static test data stands in for one. No credential_identifier-based
+// requests yet — see README's own "Status".
+func credentialHandler(iss *issuer.Issuer, resourceVerifier *fapires.Verifier, credentialURL *url.URL, cfg Config) (http.Handler, error) {
 	additional := sdjwtAdditionalClaims(cfg.Claims)
 	mdocNameSpaceElements, mdocDocType, err := mdocNameSpaceElementsFor(cfg.Mdoc)
 	if err != nil {
 		return nil, fmt.Errorf("mdoc claims: %w", err)
 	}
-
-	deps := credentialHandlerDeps{
-		iss: iss, resourceVerifier: resourceVerifier, credentialURL: credentialURL, cfg: cfg,
-		additional: additional, mdocNameSpaceElements: mdocNameSpaceElements, mdocDocType: mdocDocType,
+	tokens, err := fapiresource.New(resourceVerifier)
+	if err != nil {
+		return nil, err
 	}
-	return func(w http.ResponseWriter, r *http.Request) {
-		serveCredentialRequest(w, r, deps)
-	}, nil
-}
-
-// credentialHandlerDeps bundles serveCredentialRequest's own fixed,
-// per-handler-construction inputs (everything credentialHandler
-// precomputes or receives as a parameter) into one value, both to keep
-// serveCredentialRequest's own parameter count reasonable and because
-// none of these vary per request — only w/r do.
-type credentialHandlerDeps struct {
-	iss              *issuer.Issuer
-	resourceVerifier *fapires.Verifier
-	credentialURL    *url.URL
-	cfg              Config
-
-	additional            map[string]any
-	mdocNameSpaceElements map[string]map[string]interface{}
-	mdocDocType           string
+	return iss.CredentialHandler(issuer.CredentialHandlerConfig{
+		URL: credentialURL, Tokens: tokens,
+		Prepare: func(_ context.Context, _ issuer.Grant, req *issuer.CredentialRequest) (func(bool), error) {
+			// Both SDJWTClaims and MdocClaims are always supplied (the
+			// latter nil when cfg.Mdoc is unset) — RequestCredential
+			// uses whichever the requested configuration's format needs.
+			exp := sdjwtvc.RoundedExp(time.Now(), issuedCredentialLifetime)
+			req.SDJWTClaims = &sdjwtvc.Claims{VCT: cfg.VCT, Exp: &exp, Additional: additional}
+			req.MdocClaims = mdocClaimsForRequest(mdocDocType, mdocNameSpaceElements, issuedCredentialLifetime)
+			return nil, nil
+		},
+	})
 }
 
 // sdjwtAdditionalClaims builds credentialHandler's own precomputed
@@ -139,68 +123,4 @@ func mdocNameSpaceElementsFor(cfg *conformanceconfig.MdocConfig) (nameSpaces map
 		return nil, "", err
 	}
 	return nameSpaces, cfg.DocType, nil
-}
-
-// serveCredentialRequest is credentialHandler's own returned
-// http.HandlerFunc body, factored into a plain named function (rather
-// than staying inline as a closure) so its own cognitive complexity is
-// judged on its own terms — a closure literal costs extra nesting
-// credit for everything inside it, on top of what the same code would
-// cost as a standalone function.
-func serveCredentialRequest(w http.ResponseWriter, r *http.Request, deps credentialHandlerDeps) {
-	// URL is this binary's own configured Credential Endpoint URL, not
-	// r.URL — a net/http server request's own URL has no Scheme/Host
-	// populated (only Path/RawQuery come off the request line), which
-	// would make DPoP's own "htu" comparison fail; mirrors FAPIgo's own
-	// cmd/conformance-as/resource.go, which passes its pre-built
-	// userinfoURL/accountsURL the same way, never r.URL directly.
-	authCtx, err := deps.resourceVerifier.Verify(r.Context(), fapires.VerifyRequest{
-		Method: r.Method, URL: deps.credentialURL, Authorization: r.Header.Get("Authorization"),
-		DPoPProofs: r.Header.Values("DPoP"), PeerCertificate: fapires.PeerCertificateFromHTTP(r),
-	})
-	if err != nil {
-		fapires.WriteError(w, err)
-		return
-	}
-
-	body, err := io.ReadAll(io.LimitReader(r.Body, issuer.MaxCredentialRequestBytes+1))
-	if err != nil {
-		http.Error(w, "failed to read request body", http.StatusBadRequest)
-		return
-	}
-	req, err := deps.iss.ParseCredentialRequest(body, r.Header.Get("Content-Type"))
-	if err != nil {
-		issuer.WriteError(w, err)
-		return
-	}
-
-	exp := sdjwtvc.RoundedExp(time.Now(), issuedCredentialLifetime)
-	auth := issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID(authCtx.ClientID), Scopes: authCtx.Scopes}
-
-	// Both SDJWTClaims and MdocClaims are always supplied (the
-	// latter nil when cfg.Mdoc is unset) — issueOne's own
-	// cc.Format dispatch picks whichever one actually matches the
-	// requested CredentialConfiguration and ignores the other, so
-	// this handler doesn't need to itself look up which format
-	// req.CredentialConfigurationID/CredentialIdentifier resolves to.
-	req.SDJWTClaims = &sdjwtvc.Claims{VCT: deps.cfg.VCT, Exp: &exp, Additional: deps.additional}
-	req.MdocClaims = mdocClaimsForRequest(deps.mdocDocType, deps.mdocNameSpaceElements, issuedCredentialLifetime)
-
-	result, err := deps.iss.RequestCredential(r.Context(), auth, req)
-	if err != nil {
-		issuer.WriteError(w, err)
-		return
-	}
-	resultJSON, err := json.Marshal(result)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	encoded, contentType, err := deps.iss.EncryptResponseBody(resultJSON, req.ResponseEncryption)
-	if err != nil {
-		issuer.WriteError(w, err)
-		return
-	}
-	w.Header().Set("Content-Type", contentType)
-	_, _ = w.Write(encoded)
 }
