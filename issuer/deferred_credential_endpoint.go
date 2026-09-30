@@ -68,20 +68,24 @@ type DeferredCredentialResult struct {
 // and "interval" (whole seconds) otherwise. Must be called before
 // anything else writes to w.
 func (r DeferredCredentialResult) WriteJSON(w http.ResponseWriter) {
+	status, body := r.wire()
 	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(body)
+}
+
+// wire returns r's HTTP status and JSON body (§9.2).
+func (r DeferredCredentialResult) wire() (int, any) {
 	if len(r.Credentials) > 0 {
-		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(struct {
+		return http.StatusOK, struct {
 			Credentials    []oid4vci.IssuedCredential `json:"credentials"`
 			NotificationID string                     `json:"notification_id,omitempty"`
-		}{Credentials: r.Credentials, NotificationID: r.NotificationID})
-		return
+		}{Credentials: r.Credentials, NotificationID: r.NotificationID}
 	}
-	w.WriteHeader(http.StatusAccepted)
-	_ = json.NewEncoder(w).Encode(struct {
+	return http.StatusAccepted, struct {
 		TransactionID string `json:"transaction_id"`
 		Interval      int64  `json:"interval"`
-	}{TransactionID: r.TransactionID, Interval: int64(r.Interval.Seconds())})
+	}{TransactionID: r.TransactionID, Interval: int64(r.Interval.Seconds())}
 }
 
 // RequestDeferredCredential implements the Deferred Credential

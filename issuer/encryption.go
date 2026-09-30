@@ -231,6 +231,39 @@ func (iss *Issuer) EncryptResponseBody(body []byte, req *ResponseEncryptionReque
 	if req == nil {
 		return body, "application/json", nil
 	}
+	ecPub, kid, err := iss.responseEncryptionKey(req)
+	if err != nil {
+		return nil, "", err
+	}
+	compact, err := jwe.Encrypt(ecPub, req.Enc, body, jwe.EncryptOptions{Zip: req.Zip, KeyID: kid})
+	if err != nil {
+		return nil, "", fmt.Errorf("issuer: encrypt response body: %w", err)
+	}
+	return []byte(compact), jweContentType, nil
+}
+
+// requireResponseEncryption refuses a request without
+// credential_response_encryption when ResponseEncryptionSupport.Required
+// (§12.2.4, §8.3.1.2), and one whose credential_response_encryption
+// this issuer can't encrypt to — checked before a nonce is consumed or
+// a deferred transaction invalidated, so a response that could never
+// be encrypted doesn't use either up.
+func (iss *Issuer) requireResponseEncryption(req *ResponseEncryptionRequest) error {
+	if req == nil {
+		if iss.cfg.ResponseEncryption != nil && iss.cfg.ResponseEncryption.Required {
+			return newError(ErrorInvalidEncryptionParameters, 400, "this Credential Issuer requires an encrypted Credential Response: credential_response_encryption is required", nil)
+		}
+		return nil
+	}
+	_, _, err := iss.responseEncryptionKey(req)
+	return err
+}
+
+// responseEncryptionKey checks req — the Wallet's
+// credential_response_encryption — against this issuer's
+// ResponseEncryptionSupport and returns the key to encrypt to and the
+// kid to name it by. req must not be nil.
+func (iss *Issuer) responseEncryptionKey(req *ResponseEncryptionRequest) (*ecdsa.PublicKey, string, error) {
 	if iss.cfg.ResponseEncryption == nil {
 		return nil, "", newError(ErrorInvalidEncryptionParameters, 400, "this issuer does not support encrypted responses", nil)
 	}
@@ -275,19 +308,5 @@ func (iss *Issuer) EncryptResponseBody(body []byte, req *ResponseEncryptionReque
 			fmt.Sprintf("credential_response_encryption.jwk declares alg %q, which this issuer cannot encrypt with", jwkFields.Alg), nil)
 	}
 
-	compact, err := jwe.Encrypt(ecPub, req.Enc, body, jwe.EncryptOptions{Zip: req.Zip, KeyID: jwkFields.KeyID})
-	if err != nil {
-		return nil, "", fmt.Errorf("issuer: encrypt response body: %w", err)
-	}
-	return []byte(compact), jweContentType, nil
-}
-
-// requireResponseEncryption refuses a request without
-// credential_response_encryption when ResponseEncryptionSupport.Required
-// (§12.2.4, §8.3.1.2).
-func (iss *Issuer) requireResponseEncryption(req *ResponseEncryptionRequest) error {
-	if req == nil && iss.cfg.ResponseEncryption != nil && iss.cfg.ResponseEncryption.Required {
-		return newError(ErrorInvalidEncryptionParameters, 400, "this Credential Issuer requires an encrypted Credential Response: credential_response_encryption is required", nil)
-	}
-	return nil
+	return ecPub, jwkFields.KeyID, nil
 }

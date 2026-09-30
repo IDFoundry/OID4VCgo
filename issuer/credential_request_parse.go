@@ -1,7 +1,6 @@
 package issuer
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -52,7 +51,7 @@ func (iss *Issuer) ParseCredentialRequest(body []byte, contentType string) (Cred
 		return CredentialRequest{}, err
 	}
 	var wire wireCredentialRequest
-	if err := json.Unmarshal(plaintext, &wire); err != nil || !bytes.HasPrefix(bytes.TrimSpace(plaintext), []byte("{")) {
+	if err := decodeJSONObject(plaintext, &wire); err != nil {
 		return CredentialRequest{}, newError(ErrorInvalidCredentialRequest, http.StatusBadRequest, "credential request is not a JSON object", err)
 	}
 	req := CredentialRequest{

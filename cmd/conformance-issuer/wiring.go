@@ -207,9 +207,12 @@ func newServerMux(cfg Config) (*http.ServeMux, error) {
 	sdjwtConfig := jwtProofCredentialConfiguration(cfg.Scope, issProofAlgs)
 	sdjwtConfig.Format, sdjwtConfig.VCT = sdjwtvc.CredentialFormat, cfg.VCT
 	issDeps := issuer.Dependencies{
-		Nonces: oid4vcgostorage.NewNonceStore(),
-		Clock:  issuer.ClockFunc(time.Now),
-		Random: rand.Reader,
+		// The Notification Endpoint (§11) accepts events and records
+		// nothing beyond the notification_id binding.
+		Notifications: oid4vcgostorage.NewNotificationStore(),
+		Nonces:        oid4vcgostorage.NewNonceStore(),
+		Clock:         issuer.ClockFunc(time.Now),
+		Random:        rand.Reader,
 		SDJWTSigner: &issuer.SDJWTSigner{
 			Signer: issuerSigningKey, Alg: jose.ES256,
 			IssuerCertificate: issuerCertificate,
@@ -253,7 +256,7 @@ func newServerMux(cfg Config) (*http.ServeMux, error) {
 	iss, err := issuer.New(issuer.Config{
 		Assurance:               issuer.AssuranceDevelopment,
 		Issuer:                  issuerURL,
-		Endpoints:               issuer.Endpoints{Credential: credentialURL, Nonce: nonceURL},
+		Endpoints:               issuer.Endpoints{Credential: credentialURL, Nonce: nonceURL, Notification: endpoints.notification},
 		Limits:                  issuer.Limits{NonceLifetime: limits.MaxDPoPProofAge},
 		BatchCredentialIssuance: &oid4vci.BatchCredentialIssuance{BatchSize: conformanceBatchSize},
 		RequestEncryption: &issuer.RequestEncryptionSupport{
@@ -279,7 +282,7 @@ func newServerMux(cfg Config) (*http.ServeMux, error) {
 // issuerEndpoints bundles every fapi.URL newServerMux's own router and
 // server config need, parsed once up front by resolveIssuerEndpoints.
 type issuerEndpoints struct {
-	issuer, par, authorization, token, jwks, credential, nonce fapi.URL
+	issuer, par, authorization, token, jwks, credential, nonce, notification fapi.URL
 }
 
 // resolveIssuerEndpoints parses cfg.Issuer's own well-known sub-paths —
@@ -315,9 +318,13 @@ func resolveIssuerEndpoints(cfg Config) (issuerEndpoints, error) {
 	if err != nil {
 		return issuerEndpoints{}, err
 	}
+	notificationURL, err := fapi.ParseEndpointURL(cfg.Issuer + notificationPath)
+	if err != nil {
+		return issuerEndpoints{}, err
+	}
 	return issuerEndpoints{
 		issuer: issuerURL, par: parURL, authorization: authorizationURL,
-		token: tokenURL, jwks: jwksURL, credential: credentialURL, nonce: nonceURL,
+		token: tokenURL, jwks: jwksURL, credential: credentialURL, nonce: nonceURL, notification: notificationURL,
 	}, nil
 }
 

@@ -88,22 +88,8 @@ func (iss *Issuer) CredentialHandler(cfg CredentialHandlerConfig) (http.Handler,
 }
 
 func (iss *Issuer) serveCredential(w http.ResponseWriter, r *http.Request, cfg CredentialHandlerConfig) {
-	if r.Method != http.MethodPost {
-		w.Header().Set("Allow", http.MethodPost)
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	grant, err := cfg.Tokens.Verify(r, cfg.URL)
-	if err != nil {
-		cfg.Tokens.WriteError(w, err)
-		return
-	}
-	if grant.DPoPNonce != "" {
-		w.Header().Set("DPoP-Nonce", grant.DPoPNonce)
-	}
-	body, err := io.ReadAll(io.LimitReader(r.Body, MaxCredentialRequestBytes+1))
-	if err != nil {
-		WriteError(w, NewError(ErrorInvalidCredentialRequest, "credential request is unreadable"))
+	grant, body, ok := authorizePost(w, r, cfg.URL, cfg.Tokens, MaxCredentialRequestBytes, ErrorInvalidCredentialRequest)
+	if !ok {
 		return
 	}
 	req, err := iss.ParseCredentialRequest(body, r.Header.Get("Content-Type"))
@@ -126,12 +112,141 @@ func (iss *Issuer) serveCredential(w http.ResponseWriter, r *http.Request, cfg C
 		return
 	}
 	issued = true
+	writeCredentialResponse(w, http.StatusOK, encoded, contentType)
+}
+
+// writeCredentialResponse sends a Credential or Deferred Credential
+// Response body, uncached.
+func writeCredentialResponse(w http.ResponseWriter, status int, encoded []byte, contentType string) {
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	// #nosec G705 -- encoded is the Credential Response RequestCredential
-	// built (JSON, or a JWE of it), sent as its own Content-Type, not HTML.
+	w.WriteHeader(status)
+	// #nosec G705 -- encoded is a Credential Response this package built
+	// (JSON, or a JWE of it), sent as its own Content-Type, not HTML.
 	_, _ = w.Write(encoded)
+}
+
+// authorizePost checks a request to a protected endpoint: POST only,
+// then its access token (passing the grant's next DPoP nonce on), then
+// reads its body, at most maxBytes (a longer one is left for the
+// parser to refuse). It reports whether to go on; if not, the response
+// has been written.
+func authorizePost(w http.ResponseWriter, r *http.Request, endpoint *url.URL, tokens AccessTokenVerifier, maxBytes int, unreadable ErrorCode) (Grant, []byte, bool) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return Grant{}, nil, false
+	}
+	grant, err := tokens.Verify(r, endpoint)
+	if err != nil {
+		tokens.WriteError(w, err)
+		return Grant{}, nil, false
+	}
+	if grant.DPoPNonce != "" {
+		w.Header().Set("DPoP-Nonce", grant.DPoPNonce)
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, int64(maxBytes)+1))
+	if err != nil {
+		WriteError(w, NewError(unreadable, "request body is unreadable"))
+		return Grant{}, nil, false
+	}
+	return grant, body, true
+}
+
+// ProtectedEndpointConfig configures DeferredCredentialHandler and
+// NotificationEndpointHandler.
+type ProtectedEndpointConfig struct {
+	// URL is the endpoint's absolute URL, as published in the Issuer's
+	// metadata. REQUIRED.
+	URL *url.URL
+
+	// Tokens checks each request's access token. REQUIRED.
+	Tokens AccessTokenVerifier
+}
+
+func (cfg ProtectedEndpointConfig) validate(handler string) error {
+	switch {
+	case cfg.URL == nil || !cfg.URL.IsAbs():
+		return fmt.Errorf("issuer: %s: URL must be the endpoint's absolute URL", handler)
+	case cfg.Tokens == nil:
+		return fmt.Errorf("issuer: %s: Tokens is required", handler)
+	}
+	return nil
+}
+
+// DeferredCredentialHandler serves the Deferred Credential Endpoint
+// (§9). For each POST it checks the access token with cfg.Tokens,
+// reads and parses the request (ParseDeferredCredentialRequest,
+// decrypting it if it arrived encrypted), and answers with
+// RequestDeferredCredential's result: 200 with the Credentials, or 202
+// with transaction_id and interval while the transaction is pending —
+// encrypted when the Wallet asked for that, and with Cache-Control:
+// no-store. Errors are Credential Error Responses (WriteError).
+//
+// It serves transactions the deployment creates and resolves itself
+// through Dependencies.DeferredTransactions; see
+// DeferredTransactionRecord.
+func (iss *Issuer) DeferredCredentialHandler(cfg ProtectedEndpointConfig) (http.Handler, error) {
+	if err := cfg.validate("deferred credential handler"); err != nil {
+		return nil, err
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		grant, body, ok := authorizePost(w, r, cfg.URL, cfg.Tokens, MaxCredentialRequestBytes, ErrorInvalidCredentialRequest)
+		if !ok {
+			return
+		}
+		req, err := iss.ParseDeferredCredentialRequest(body, r.Header.Get("Content-Type"))
+		if err != nil {
+			WriteError(w, err)
+			return
+		}
+		result, err := iss.RequestDeferredCredential(r.Context(), grant.Authorized, req)
+		if err != nil {
+			WriteError(w, err)
+			return
+		}
+		status, plain := result.wire()
+		resultJSON, err := json.Marshal(plain)
+		if err != nil {
+			WriteError(w, fmt.Errorf("issuer: deferred credential handler: %w", err))
+			return
+		}
+		encoded, contentType, err := iss.EncryptResponseBody(resultJSON, req.ResponseEncryption)
+		if err != nil {
+			WriteError(w, err)
+			return
+		}
+		writeCredentialResponse(w, status, encoded, contentType)
+	}), nil
+}
+
+// NotificationEndpointHandler serves the Notification Endpoint (§11).
+// For each POST it checks the access token with cfg.Tokens, parses the
+// request (ParseNotificationRequest), and passes it to
+// RequestNotification, which hands the event to
+// Dependencies.NotificationHandler. It answers 204 No Content (§11.2);
+// errors are Notification Error Responses (WriteError).
+func (iss *Issuer) NotificationEndpointHandler(cfg ProtectedEndpointConfig) (http.Handler, error) {
+	if err := cfg.validate("notification endpoint handler"); err != nil {
+		return nil, err
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		grant, body, ok := authorizePost(w, r, cfg.URL, cfg.Tokens, MaxNotificationRequestBytes, ErrorInvalidNotificationRequest)
+		if !ok {
+			return
+		}
+		req, err := ParseNotificationRequest(body)
+		if err != nil {
+			WriteError(w, err)
+			return
+		}
+		if err := iss.RequestNotification(r.Context(), grant.Authorized, req); err != nil {
+			WriteError(w, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}), nil
 }
 
 // credentialResponse issues req and encodes the Credential Response,

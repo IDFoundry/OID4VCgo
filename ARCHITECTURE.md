@@ -592,6 +592,16 @@ changes whether *every* bullet below is `(done)`.
   tokens through the `AccessTokenVerifier` interface, which
   `issuer/fapiresource` implements with a `fapigo/resource.Verifier`,
   so `issuer` itself still doesn't import `fapigo/resource`.
+  `DeferredCredentialHandler` and `NotificationEndpointHandler` do the
+  same for the Deferred Credential (§9) and Notification (§11)
+  Endpoints, over `ProtectedEndpointConfig{URL, Tokens}`: the first
+  answers 200 with the Credentials or 202 with `transaction_id` and
+  `interval`, encrypted when asked; the second answers 204.
+  `ParseDeferredCredentialRequest`/`ParseNotificationRequest` are their
+  parsers, for a handler of your own. A request's
+  `credential_response_encryption` is checked before its nonce is
+  consumed or its deferred transaction invalidated, so one the issuer
+  can't encrypt to doesn't use either up.
   `ExchangePreAuthorizedCode` (done) implements the Pre-Authorized Code
   Flow's own Token Request/Response (§6.1/§6.2) — the one grant type
   entirely outside `fapigo/server`'s scope, the same way it's outside

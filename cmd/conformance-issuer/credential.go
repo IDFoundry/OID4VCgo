@@ -93,6 +93,25 @@ func credentialHandler(iss *issuer.Issuer, resourceVerifier *fapires.Verifier, c
 	})
 }
 
+// notificationPath is the Notification Endpoint's path under the
+// Credential Issuer's identifier.
+const notificationPath = "/notification"
+
+// notificationHandler serves the Notification Endpoint (§11) with
+// issuer.NotificationEndpointHandler, checking access tokens with
+// resourceVerifier the same way credentialHandler does.
+func notificationHandler(iss *issuer.Issuer, resourceVerifier *fapires.Verifier, cfg Config) (http.Handler, error) {
+	endpoint, err := url.Parse(cfg.Issuer + notificationPath)
+	if err != nil {
+		return nil, fmt.Errorf("notification endpoint URL: %w", err)
+	}
+	tokens, err := fapiresource.New(resourceVerifier)
+	if err != nil {
+		return nil, err
+	}
+	return iss.NotificationEndpointHandler(issuer.ProtectedEndpointConfig{URL: endpoint, Tokens: tokens})
+}
+
 // sdjwtAdditionalClaims builds credentialHandler's own precomputed
 // SD-JWT "Additional" claim map (every entry selectively disclosable)
 // from claims — extracted out of credentialHandler itself purely to
