@@ -13,6 +13,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/internal/testmdoc"
 	"github.com/idfoundry/oid4vcgo/internal/testverify"
 	"github.com/idfoundry/oid4vcgo/verifier"
+	"github.com/idfoundry/oid4vcgo/verifier/verifiertest"
 )
 
 // trustedAuthoritiesQuery is testIdentityQuery with a TrustedAuthorities
@@ -36,8 +37,8 @@ func rootsOf(cas ...*x509.Certificate) *x509.CertPool {
 }
 
 func TestVerifyResponse_ChecksTrustedAuthorities_Accepts(t *testing.T) {
-	ca, caKey := verifier.ContractCA(t, "test-ca")
-	leaf, leafKey := verifier.ContractLeaf(t, "test-leaf", ca, caKey)
+	ca, caKey := verifiertest.ContractCA(t, "test-ca")
+	leaf, leafKey := verifiertest.ContractLeaf(t, "test-leaf", ca, caKey)
 	aki := base64.RawURLEncoding.EncodeToString(ca.SubjectKeyId)
 
 	query := trustedAuthoritiesQuery(t, aki)
@@ -60,8 +61,8 @@ func TestVerifyResponse_ChecksTrustedAuthorities_Accepts(t *testing.T) {
 }
 
 func TestVerifyResponse_ChecksTrustedAuthorities_RejectsWrongAKI(t *testing.T) {
-	ca, caKey := verifier.ContractCA(t, "test-ca")
-	leaf, leafKey := verifier.ContractLeaf(t, "test-leaf", ca, caKey)
+	ca, caKey := verifiertest.ContractCA(t, "test-ca")
+	leaf, leafKey := verifiertest.ContractLeaf(t, "test-leaf", ca, caKey)
 
 	query := trustedAuthoritiesQuery(t, "not-the-right-aki")
 	_, _, v := newTestVerifierWithConfig(t)
@@ -88,8 +89,8 @@ func TestVerifyResponse_ChecksTrustedAuthorities_RejectsWrongAKI(t *testing.T) {
 // checker only reads what the leaf certificate states about its issuer,
 // which any CA can set, so VerifyResponse won't use it.
 func TestVerifyResponse_RefusesAKICheckerWithoutRoots(t *testing.T) {
-	ca, caKey := verifier.ContractCA(t, "test-ca")
-	leaf, leafKey := verifier.ContractLeaf(t, "test-leaf", ca, caKey)
+	ca, caKey := verifiertest.ContractCA(t, "test-ca")
+	leaf, leafKey := verifiertest.ContractLeaf(t, "test-leaf", ca, caKey)
 
 	query := trustedAuthoritiesQuery(t, base64.RawURLEncoding.EncodeToString(ca.SubjectKeyId))
 	_, _, v := newTestVerifierWithConfig(t)

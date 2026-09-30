@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/idfoundry/oid4vcgo/verifier"
+	"github.com/idfoundry/oid4vcgo/verifier/verifiertest"
 )
 
 // TestContractSuitesAgainstX5CResolvers proves this package's own
@@ -13,10 +14,10 @@ import (
 // dogfooding the same exported functions a caller building a
 // similarly-shaped resolver would run against their own factory.
 func TestContractSuitesAgainstX5CResolvers(t *testing.T) {
-	verifier.TestX5CTrustContract(t, func(roots *x509.CertPool) verifier.SDJWTVCIssuerKeyResolver {
+	verifiertest.TestX5CTrustContract(t, func(roots *x509.CertPool) verifier.SDJWTVCIssuerKeyResolver {
 		return verifier.X5CIssuerKeyResolver{Roots: roots}
 	})
-	verifier.TestX5ChainTrustContract(t, func(roots *x509.CertPool) verifier.MdocIssuerKeyResolver {
+	verifiertest.TestX5ChainTrustContract(t, func(roots *x509.CertPool) verifier.MdocIssuerKeyResolver {
 		return verifier.X5ChainIssuerKeyResolver{Roots: roots}
 	})
 }

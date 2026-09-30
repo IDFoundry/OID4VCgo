@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/idfoundry/oid4vcgo/verifier"
+	"github.com/idfoundry/oid4vcgo/verifier/verifiertest"
 )
 
 func x5cHeader(certs ...*x509.Certificate) map[string]any {
@@ -20,8 +21,8 @@ func x5cHeader(certs ...*x509.Certificate) map[string]any {
 }
 
 func TestX5CIssuerKeyResolver_AcceptsCASignedLeaf(t *testing.T) {
-	ca, caKey := verifier.ContractCA(t, "test-ca")
-	leaf, leafKey := verifier.ContractLeaf(t, "test-leaf", ca, caKey)
+	ca, caKey := verifiertest.ContractCA(t, "test-ca")
+	leaf, leafKey := verifiertest.ContractLeaf(t, "test-leaf", ca, caKey)
 
 	roots := x509.NewCertPool()
 	roots.AddCert(ca)
@@ -56,7 +57,7 @@ func TestX5CIssuerKeyResolver_RejectsEmptyX5C(t *testing.T) {
 }
 
 func TestX5CIssuerKeyResolver_RejectsSelfSignedLeafEvenIfTrusted(t *testing.T) {
-	leaf, _ := verifier.ContractSelfSignedLeaf(t, "self-signed-leaf")
+	leaf, _ := verifiertest.ContractSelfSignedLeaf(t, "self-signed-leaf")
 
 	// The self-signed leaf is itself in Roots — chain-building alone
 	// would succeed, but HAIP's own trust model rejects a self-signed
@@ -71,8 +72,8 @@ func TestX5CIssuerKeyResolver_RejectsSelfSignedLeafEvenIfTrusted(t *testing.T) {
 }
 
 func TestX5CIssuerKeyResolver_RejectsUntrustedChain(t *testing.T) {
-	ca, caKey := verifier.ContractCA(t, "test-ca")
-	leaf, _ := verifier.ContractLeaf(t, "test-leaf", ca, caKey)
+	ca, caKey := verifiertest.ContractCA(t, "test-ca")
+	leaf, _ := verifiertest.ContractLeaf(t, "test-leaf", ca, caKey)
 
 	// Roots doesn't contain the issuing CA at all.
 	resolver := verifier.X5CIssuerKeyResolver{Roots: x509.NewCertPool()}
@@ -83,10 +84,10 @@ func TestX5CIssuerKeyResolver_RejectsUntrustedChain(t *testing.T) {
 }
 
 func TestX5CIssuerKeyResolver_RejectsWrongTrustAnchor(t *testing.T) {
-	ca, caKey := verifier.ContractCA(t, "test-ca")
-	leaf, _ := verifier.ContractLeaf(t, "test-leaf", ca, caKey)
+	ca, caKey := verifiertest.ContractCA(t, "test-ca")
+	leaf, _ := verifiertest.ContractLeaf(t, "test-leaf", ca, caKey)
 
-	otherCA, _ := verifier.ContractCA(t, "other-ca")
+	otherCA, _ := verifiertest.ContractCA(t, "other-ca")
 	roots := x509.NewCertPool()
 	roots.AddCert(otherCA)
 	resolver := verifier.X5CIssuerKeyResolver{Roots: roots}
@@ -108,8 +109,8 @@ func TestX5CIssuerKeyResolver_RejectsMalformedX5CEntry(t *testing.T) {
 // on the verified leaf, with its verified paths, and refuses what it
 // refuses.
 func TestX5CResolvers_LeafPolicy(t *testing.T) {
-	ca, caKey := verifier.ContractCA(t, "test-ca")
-	leaf, _ := verifier.ContractLeaf(t, "test-leaf", ca, caKey)
+	ca, caKey := verifiertest.ContractCA(t, "test-ca")
+	leaf, _ := verifiertest.ContractLeaf(t, "test-leaf", ca, caKey)
 	roots := x509.NewCertPool()
 	roots.AddCert(ca)
 
