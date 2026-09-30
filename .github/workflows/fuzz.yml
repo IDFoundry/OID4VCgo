@@ -156,6 +156,21 @@ jobs:
           - id: issuer-parse-credential-request
             pkg: ./issuer
             name: FuzzParseCredentialRequest
+          - id: issuer-parse-deferred-credential-request
+            pkg: ./issuer
+            name: FuzzParseDeferredCredentialRequest
+          - id: issuer-parse-notification-request
+            pkg: ./issuer
+            name: FuzzParseNotificationRequest
+          - id: statuslist-parse-status-claim
+            pkg: ./statuslist
+            name: FuzzParseStatusClaim
+          - id: statuslist-parse-cwt-status-claim
+            pkg: ./statuslist
+            name: FuzzParseCWTStatusClaim
+          - id: wallet-decode-metadata
+            pkg: ./wallet
+            name: FuzzDecodeMetadata
     steps:
       - uses: actions/checkout@v7
 
