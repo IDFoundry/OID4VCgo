@@ -1,6 +1,7 @@
 package issuerapp
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
@@ -9,12 +10,9 @@ import (
 	"math/big"
 	"net/http"
 	"slices"
-	"strconv"
-	"strings"
 	"sync"
 	"time"
 
-	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcgo/issuer"
@@ -169,38 +167,19 @@ func (a *App) withStatus(c *issuer.CredentialInstance, idx int) {
 	}
 }
 
-// handleStatusList serves the Status List Token, signed by the document
-// signer with its certificate in the token's x5c (HAIP 1.0), in the
-// format the Accept header asks for: CWT for an mdoc's reference, JWT
+// statusPublisher serves the Status List Token, signed by the document
+// signer with its certificate in the token's x5c/x5chain (HAIP 1.0), in
+// the form the Accept header asks for: CWT for an mdoc's reference, JWT
 // otherwise (SD-JWT VC requires a JWT Status List Token).
-func (a *App) handleStatusList(w http.ResponseWriter, r *http.Request) {
-	revoked, _ := a.statusList.snapshot()
-	sl, err := statuslist.New(statuslist.Bits1, revoked, "")
-	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
+func (a *App) statusPublisher() statuslist.Publisher {
+	return statuslist.Publisher{
+		URI: a.statusListURI, Signer: a.documentSigner, Chain: a.documentChain(),
+		Statuses: func(context.Context) ([]uint8, error) {
+			revoked, _ := a.statusList.snapshot()
+			return revoked, nil
+		},
+		Lifetime: statusTokenLifetime, TTL: statusTokenTTL * time.Second, Now: a.now,
 	}
-	now := a.now()
-	exp, ttl := now.Add(statusTokenLifetime).Unix(), int64(statusTokenTTL)
-	claims := statuslist.TokenClaims{Sub: a.statusListURI, Iat: now.Unix(), Exp: &exp, TTL: &ttl, StatusList: sl}
-	w.Header().Set("Cache-Control", "max-age="+strconv.Itoa(statusTokenTTL))
-	if strings.Contains(r.Header.Get("Accept"), statuslist.CWTTokenMediaType) {
-		token, err := statuslist.IssueTokenCWTX5Chain(a.documentSigner, oid4vci.COSEES256, claims, a.documentChain())
-		if err != nil {
-			http.Error(w, "internal error", http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", statuslist.CWTTokenMediaType)
-		_, _ = w.Write(token)
-		return
-	}
-	token, err := statuslist.IssueTokenX5C(a.documentSigner, oid4vci.ES256, claims, a.documentChain())
-	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", statuslist.TokenMediaType)
-	_, _ = w.Write([]byte(token))
 }
 
 var statusTemplate = template.Must(template.New("status").Parse(pageHead + `

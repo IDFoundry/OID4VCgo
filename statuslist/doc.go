@@ -25,6 +25,10 @@
 // uri, draft-14 §6.2/§6.3) — the same shape credential/sdjwtvc's
 // Claims.Status expects for the JOSE form.
 //
+// Publisher serves a Status List Token over HTTP: an http.Handler that
+// signs a fresh token for each request, JWT or CWT by the Accept header,
+// with the signer's certificate chain.
+//
 // # Checking
 //
 // Check implements draft-14 §8.3 steps 3-7: verifying the Status List
