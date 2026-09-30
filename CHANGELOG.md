@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.21.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.20.0...v0.21.0) (2026-09-30)
+
+
+### ⚠ BREAKING CHANGES
+
+* **deps:** wallet.Config.Fetch.AllowLoopbackHTTP no longer admits a hostname that merely resolves to a loopback address — list it in Fetch.AllowedLoopbackHosts; for https-only local setups use Fetch.AllowLoopbackHosts, which AssuranceProduction refuses.
+* import github.com/idfoundry/oid4vcgo/issuer/issuertest for issuer.Test…StoreContract / issuer.Test…CheckerContract, and github.com/idfoundry/oid4vcgo/verifier/verifiertest for verifier.TestX5CTrustContract, TestX5ChainTrustContract, ContractCA, ContractLeaf and ContractSelfSignedLeaf; the names are unchanged.
+
+### Features
+
+* **issuer:** let callers build error responses with NewError ([59d0c3f](https://github.com/IDFoundry/OID4VCgo/commit/59d0c3fa345ea6ba9a95f0f638ca60d5fba2e217))
+* **issuer:** serve the Credential Endpoint with CredentialHandler ([a4b5a81](https://github.com/IDFoundry/OID4VCgo/commit/a4b5a810bee5f5309febeb0337d683c3e87de393))
+* **statuslist:** fetch and check a credential's status in one call ([e80efa4](https://github.com/IDFoundry/OID4VCgo/commit/e80efa40f0704bb59ec840c99e03be1eda25cf47))
+* **statuslist:** serve a Status List Token with Publisher ([c03b101](https://github.com/IDFoundry/OID4VCgo/commit/c03b101a53f2ad1686708f0bef71ee60ba2135f1))
+* **verifier:** track presentation requests end to end with Transactions ([82cbf0d](https://github.com/IDFoundry/OID4VCgo/commit/82cbf0dc50c2d46ead86fa77f9f3f631f9c35264))
+* **wallet:** choose credential encryption from metadata, and answer a request in one call ([27f9cbb](https://github.com/IDFoundry/OID4VCgo/commit/27f9cbb8dbfdf1e4e997905bddc4ea018418aa43))
+
+
+### Bug Fixes
+
+* **deps:** pin FAPIgo v0.40.0 ([69bed71](https://github.com/IDFoundry/OID4VCgo/commit/69bed71cd9d60cbbeb207c80a4b23ddec5287418))
+* give the JOSE and COSE algorithm types public names ([1328ca0](https://github.com/IDFoundry/OID4VCgo/commit/1328ca09b4824cb34f2daec731110dac4384385b))
+* move the reusable contract tests out of issuer and verifier ([dafcdf9](https://github.com/IDFoundry/OID4VCgo/commit/dafcdf9a34432be25d1e73d98b7032fac469bcd9))
+* **storage:** copy transactions in and out of VerifierTransactionStore ([bcc40ba](https://github.com/IDFoundry/OID4VCgo/commit/bcc40bac000762465240cffe2df6f2d780b7e1fa))
+
 ## [0.20.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.19.0...v0.20.0) (2026-09-28)
 
 
