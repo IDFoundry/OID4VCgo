@@ -1,4 +1,7 @@
-package issuer
+// Package issuertest holds reusable contract tests for issuer's store
+// interfaces, for a caller testing its own store implementation. It
+// imports "testing": import it only from _test.go files.
+package issuertest
 
 import (
 	"context"
@@ -6,6 +9,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/idfoundry/oid4vcgo/issuer"
 )
 
 // This file is a reusable contract test suite, not a _test.go file,
@@ -68,15 +73,15 @@ func runConcurrently(attempts int, fn func() bool) int {
 // rejected, and exactly one winner exists under concurrent Consume of
 // the same nonce. factory must return a fresh, empty NonceStore each
 // call — its subtests share nothing between them.
-func TestNonceStoreContract(t *testing.T, factory func() NonceStore) {
+func TestNonceStoreContract(t *testing.T, factory func() issuer.NonceStore) {
 	t.Helper()
 	testAtomicNonceContract(t, func() (issue func(nonce string, expiresAt time.Time) error, consume func(nonce string) (time.Time, error)) {
 		store := factory()
 		ctx := context.Background()
 		return func(nonce string, exp time.Time) error {
-				return store.Issue(ctx, NonceIssuance{Nonce: nonce, ExpiresAt: exp})
+				return store.Issue(ctx, issuer.NonceIssuance{Nonce: nonce, ExpiresAt: exp})
 			}, func(nonce string) (time.Time, error) {
-				r, err := store.Consume(ctx, NonceConsumption{Nonce: nonce})
+				r, err := store.Consume(ctx, issuer.NonceConsumption{Nonce: nonce})
 				return r.ExpiresAt, err
 			}
 	})
@@ -87,15 +92,15 @@ func TestNonceStoreContract(t *testing.T, factory func() NonceStore) {
 // share an identical contract shape (Issue once, Consume atomically
 // retires), differing only in the concrete Issuance/Consumption/Record
 // types wrapping an identical Nonce/ExpiresAt pair.
-func TestDPoPNonceStoreContract(t *testing.T, factory func() DPoPNonceStore) {
+func TestDPoPNonceStoreContract(t *testing.T, factory func() issuer.DPoPNonceStore) {
 	t.Helper()
 	testAtomicNonceContract(t, func() (issue func(nonce string, expiresAt time.Time) error, consume func(nonce string) (time.Time, error)) {
 		store := factory()
 		ctx := context.Background()
 		return func(nonce string, exp time.Time) error {
-				return store.Issue(ctx, DPoPNonceIssuance{Nonce: nonce, ExpiresAt: exp})
+				return store.Issue(ctx, issuer.DPoPNonceIssuance{Nonce: nonce, ExpiresAt: exp})
 			}, func(nonce string) (time.Time, error) {
-				r, err := store.Consume(ctx, DPoPNonceConsumption{Nonce: nonce})
+				r, err := store.Consume(ctx, issuer.DPoPNonceConsumption{Nonce: nonce})
 				return r.ExpiresAt, err
 			}
 	})
@@ -167,7 +172,7 @@ func testAtomicNonceContract(t *testing.T, newAdapter func() (issue func(nonce s
 // comment; this was a real finding in a past security review of an
 // earlier implementation that got this backwards). factory must
 // return a fresh, empty PreAuthorizedCodeStore each call.
-func TestPreAuthorizedCodeStoreContract(t *testing.T, factory func() PreAuthorizedCodeStore) {
+func TestPreAuthorizedCodeStoreContract(t *testing.T, factory func() issuer.PreAuthorizedCodeStore) {
 	t.Helper()
 
 	t.Run("IssueAndConsumeNoTxCode", func(t *testing.T) { testPACIssueAndConsumeNoTxCode(t, factory) })
@@ -189,11 +194,11 @@ func TestPreAuthorizedCodeStoreContract(t *testing.T, factory func() PreAuthoriz
 // closure to its enclosing named function, so ten subtests' worth of
 // checks were all counting against the one parent function.
 
-func testPACIssueAndConsumeNoTxCode(t *testing.T, factory func() PreAuthorizedCodeStore) {
+func testPACIssueAndConsumeNoTxCode(t *testing.T, factory func() issuer.PreAuthorizedCodeStore) {
 	t.Helper()
 	store := factory()
 	ctx := context.Background()
-	want := PreAuthorizedCodeRecord{
+	want := issuer.PreAuthorizedCodeRecord{
 		Scopes: []string{"identity_credential"}, CredentialConfigurationIDs: []string{"cfg1"},
 		ExpiresAt: time.Now().Add(time.Minute).Truncate(time.Second),
 	}
@@ -215,11 +220,11 @@ func testPACIssueAndConsumeNoTxCode(t *testing.T, factory func() PreAuthorizedCo
 	}
 }
 
-func testPACConsumeIsSingleUse(t *testing.T, factory func() PreAuthorizedCodeStore) {
+func testPACConsumeIsSingleUse(t *testing.T, factory func() issuer.PreAuthorizedCodeStore) {
 	t.Helper()
 	store := factory()
 	ctx := context.Background()
-	if err := store.Issue(ctx, "code1", PreAuthorizedCodeRecord{ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
+	if err := store.Issue(ctx, "code1", issuer.PreAuthorizedCodeRecord{ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
 		t.Fatalf(msgIssueFailed, err)
 	}
 	if _, _, err := store.Consume(ctx, "code1", ""); err != nil {
@@ -230,7 +235,7 @@ func testPACConsumeIsSingleUse(t *testing.T, factory func() PreAuthorizedCodeSto
 	}
 }
 
-func testPACConsumeUnknownFails(t *testing.T, factory func() PreAuthorizedCodeStore) {
+func testPACConsumeUnknownFails(t *testing.T, factory func() issuer.PreAuthorizedCodeStore) {
 	t.Helper()
 	store := factory()
 	if _, _, err := store.Consume(context.Background(), nonceNeverIssued, ""); err == nil {
@@ -238,14 +243,14 @@ func testPACConsumeUnknownFails(t *testing.T, factory func() PreAuthorizedCodeSt
 	}
 }
 
-func testPACWrongTxCodeLeavesCodeConsumable(t *testing.T, factory func() PreAuthorizedCodeStore) {
+func testPACWrongTxCodeLeavesCodeConsumable(t *testing.T, factory func() issuer.PreAuthorizedCodeStore) {
 	t.Helper()
 	store := factory()
 	ctx := context.Background()
-	if err := store.Issue(ctx, "code1", PreAuthorizedCodeRecord{TxCode: "1234", ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
+	if err := store.Issue(ctx, "code1", issuer.PreAuthorizedCodeRecord{TxCode: "1234", ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
 		t.Fatalf(msgIssueFailed, err)
 	}
-	if _, _, err := store.Consume(ctx, "code1", "0000"); !errors.Is(err, ErrWrongTxCode) {
+	if _, _, err := store.Consume(ctx, "code1", "0000"); !errors.Is(err, issuer.ErrWrongTxCode) {
 		t.Fatalf("Consume with wrong tx_code: err = %v, want ErrWrongTxCode", err)
 	}
 	// The code must still be redeemable with the correct TxCode — a
@@ -255,11 +260,11 @@ func testPACWrongTxCodeLeavesCodeConsumable(t *testing.T, factory func() PreAuth
 	}
 }
 
-func testPACCorrectTxCodeConsumes(t *testing.T, factory func() PreAuthorizedCodeStore) {
+func testPACCorrectTxCodeConsumes(t *testing.T, factory func() issuer.PreAuthorizedCodeStore) {
 	t.Helper()
 	store := factory()
 	ctx := context.Background()
-	if err := store.Issue(ctx, "code1", PreAuthorizedCodeRecord{TxCode: "1234", ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
+	if err := store.Issue(ctx, "code1", issuer.PreAuthorizedCodeRecord{TxCode: "1234", ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
 		t.Fatalf(msgIssueFailed, err)
 	}
 	if _, _, err := store.Consume(ctx, "code1", "1234"); err != nil {
@@ -267,16 +272,16 @@ func testPACCorrectTxCodeConsumes(t *testing.T, factory func() PreAuthorizedCode
 	}
 }
 
-func testPACWrongTxCodeIncrementsAttempts(t *testing.T, factory func() PreAuthorizedCodeStore) {
+func testPACWrongTxCodeIncrementsAttempts(t *testing.T, factory func() issuer.PreAuthorizedCodeStore) {
 	t.Helper()
 	store := factory()
 	ctx := context.Background()
-	if err := store.Issue(ctx, "code1", PreAuthorizedCodeRecord{TxCode: "1234", ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
+	if err := store.Issue(ctx, "code1", issuer.PreAuthorizedCodeRecord{TxCode: "1234", ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
 		t.Fatalf(msgIssueFailed, err)
 	}
 	for want := 1; want <= 3; want++ {
 		_, attempts, err := store.Consume(ctx, "code1", "0000")
-		if !errors.Is(err, ErrWrongTxCode) {
+		if !errors.Is(err, issuer.ErrWrongTxCode) {
 			t.Fatalf("Consume with wrong tx_code (attempt %d): err = %v, want ErrWrongTxCode", want, err)
 		}
 		if attempts != want {
@@ -285,11 +290,11 @@ func testPACWrongTxCodeIncrementsAttempts(t *testing.T, factory func() PreAuthor
 	}
 }
 
-func testPACInvalidateThenConsumeFails(t *testing.T, factory func() PreAuthorizedCodeStore) {
+func testPACInvalidateThenConsumeFails(t *testing.T, factory func() issuer.PreAuthorizedCodeStore) {
 	t.Helper()
 	store := factory()
 	ctx := context.Background()
-	if err := store.Issue(ctx, "code1", PreAuthorizedCodeRecord{ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
+	if err := store.Issue(ctx, "code1", issuer.PreAuthorizedCodeRecord{ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
 		t.Fatalf(msgIssueFailed, err)
 	}
 	if err := store.Invalidate(ctx, "code1"); err != nil {
@@ -300,7 +305,7 @@ func testPACInvalidateThenConsumeFails(t *testing.T, factory func() PreAuthorize
 	}
 }
 
-func testPACInvalidateUnknownCodeIsNoop(t *testing.T, factory func() PreAuthorizedCodeStore) {
+func testPACInvalidateUnknownCodeIsNoop(t *testing.T, factory func() issuer.PreAuthorizedCodeStore) {
 	t.Helper()
 	store := factory()
 	if err := store.Invalidate(context.Background(), nonceNeverIssued); err != nil {
@@ -308,18 +313,18 @@ func testPACInvalidateUnknownCodeIsNoop(t *testing.T, factory func() PreAuthoriz
 	}
 }
 
-func testPACConcurrentWrongAttemptsAreCountedExactly(t *testing.T, factory func() PreAuthorizedCodeStore) {
+func testPACConcurrentWrongAttemptsAreCountedExactly(t *testing.T, factory func() issuer.PreAuthorizedCodeStore) {
 	t.Helper()
 	store := factory()
 	ctx := context.Background()
-	if err := store.Issue(ctx, "code1", PreAuthorizedCodeRecord{TxCode: "1234", ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
+	if err := store.Issue(ctx, "code1", issuer.PreAuthorizedCodeRecord{TxCode: "1234", ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
 		t.Fatalf(msgIssueFailed, err)
 	}
 	var mu sync.Mutex
 	seen := make(map[int]int, contractConcurrentAttempts)
 	runConcurrently(contractConcurrentAttempts, func() bool {
 		_, attempts, err := store.Consume(ctx, "code1", "0000")
-		if !errors.Is(err, ErrWrongTxCode) {
+		if !errors.Is(err, issuer.ErrWrongTxCode) {
 			return false
 		}
 		mu.Lock()
@@ -340,11 +345,11 @@ func testPACConcurrentWrongAttemptsAreCountedExactly(t *testing.T, factory func(
 	}
 }
 
-func testPACConcurrentConsumeHasExactlyOneWinner(t *testing.T, factory func() PreAuthorizedCodeStore) {
+func testPACConcurrentConsumeHasExactlyOneWinner(t *testing.T, factory func() issuer.PreAuthorizedCodeStore) {
 	t.Helper()
 	store := factory()
 	ctx := context.Background()
-	if err := store.Issue(ctx, "code1", PreAuthorizedCodeRecord{ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
+	if err := store.Issue(ctx, "code1", issuer.PreAuthorizedCodeRecord{ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
 		t.Fatalf(msgIssueFailed, err)
 	}
 	wins := runConcurrently(contractConcurrentAttempts, func() bool {
@@ -361,7 +366,7 @@ func testPACConcurrentConsumeHasExactlyOneWinner(t *testing.T, factory func() Pr
 // "jti" is accepted the first time UseOnce sees it and rejected every
 // time after, with exactly one winner under concurrent use of the same
 // jti. factory must return a fresh, empty DPoPReplayChecker each call.
-func TestDPoPReplayCheckerContract(t *testing.T, factory func() DPoPReplayChecker) {
+func TestDPoPReplayCheckerContract(t *testing.T, factory func() issuer.DPoPReplayChecker) {
 	t.Helper()
 
 	t.Run("FirstUseSucceeds", func(t *testing.T) {
@@ -442,14 +447,14 @@ func testGetUnknownFails(t *testing.T, get func() error, why string) {
 // worth a caller verifying, since it's easy to accidentally copy a
 // consume-once implementation from a sibling store. factory must
 // return a fresh, empty CredentialOfferStore each call.
-func TestCredentialOfferStoreContract(t *testing.T, factory func() CredentialOfferStore) {
+func TestCredentialOfferStoreContract(t *testing.T, factory func() issuer.CredentialOfferStore) {
 	t.Helper()
 
 	t.Run("StoreAndGet", func(t *testing.T) {
 		store := factory()
 		ctx := context.Background()
 		exp := time.Now().Add(time.Minute).Truncate(time.Second)
-		want := CredentialOfferRecord{Reference: "ref1", ExpiresAt: exp}
+		want := issuer.CredentialOfferRecord{Reference: "ref1", ExpiresAt: exp}
 		if err := store.Store(ctx, want); err != nil {
 			t.Fatalf("Store: %v", err)
 		}
@@ -470,7 +475,7 @@ func TestCredentialOfferStoreContract(t *testing.T, factory func() CredentialOff
 		ctx := context.Background()
 		testGetIsRepeatable(t,
 			func() error {
-				return store.Store(ctx, CredentialOfferRecord{Reference: "ref1", ExpiresAt: time.Now().Add(time.Minute)})
+				return store.Store(ctx, issuer.CredentialOfferRecord{Reference: "ref1", ExpiresAt: time.Now().Add(time.Minute)})
 			},
 			func() error { _, err := store.Get(ctx, "ref1"); return err },
 			"not single-use")
@@ -489,13 +494,13 @@ func TestCredentialOfferStoreContract(t *testing.T, factory func() CredentialOff
 // notification_id must keep validating after the first Notification
 // Request that presents it. factory must return a fresh, empty
 // NotificationStore each call.
-func TestNotificationStoreContract(t *testing.T, factory func() NotificationStore) {
+func TestNotificationStoreContract(t *testing.T, factory func() issuer.NotificationStore) {
 	t.Helper()
 
 	t.Run("IssueAndGet", func(t *testing.T) {
 		store := factory()
 		ctx := context.Background()
-		if err := store.Issue(ctx, "notif1", NotificationRecord{ClientID: contractClientID}); err != nil {
+		if err := store.Issue(ctx, "notif1", issuer.NotificationRecord{ClientID: contractClientID}); err != nil {
 			t.Fatalf(msgIssueFailed, err)
 		}
 		got, err := store.Get(ctx, "notif1")
@@ -511,7 +516,7 @@ func TestNotificationStoreContract(t *testing.T, factory func() NotificationStor
 		store := factory()
 		ctx := context.Background()
 		testGetIsRepeatable(t,
-			func() error { return store.Issue(ctx, "notif1", NotificationRecord{ClientID: contractClientID}) },
+			func() error { return store.Issue(ctx, "notif1", issuer.NotificationRecord{ClientID: contractClientID}) },
 			func() error { _, err := store.Get(ctx, "notif1"); return err },
 			"§11 idempotency")
 	})
@@ -532,11 +537,11 @@ func TestNotificationStoreContract(t *testing.T, factory func() NotificationStor
 // interface method this test could use to populate one itself. seed
 // must return a store containing exactly one record, keyed by
 // transactionID, equal to record.
-func TestDeferredTransactionStoreContract(t *testing.T, seed func(t *testing.T, transactionID string, record DeferredTransactionRecord) DeferredTransactionStore) {
+func TestDeferredTransactionStoreContract(t *testing.T, seed func(t *testing.T, transactionID string, record issuer.DeferredTransactionRecord) issuer.DeferredTransactionStore) {
 	t.Helper()
 
 	t.Run("Get", func(t *testing.T) {
-		want := DeferredTransactionRecord{ClientID: contractClientID, Status: DeferredTransactionPending}
+		want := issuer.DeferredTransactionRecord{ClientID: contractClientID, Status: issuer.DeferredTransactionPending}
 		store := seed(t, "txn1", want)
 		got, err := store.Get(context.Background(), "txn1")
 		if err != nil {
@@ -551,12 +556,12 @@ func TestDeferredTransactionStoreContract(t *testing.T, seed func(t *testing.T, 
 	})
 
 	t.Run("GetUnknownFails", func(t *testing.T) {
-		store := seed(t, "txn1", DeferredTransactionRecord{})
+		store := seed(t, "txn1", issuer.DeferredTransactionRecord{})
 		testGetUnknownFails(t, func() error { _, err := store.Get(context.Background(), "never-seeded"); return err }, "unknown transaction_id")
 	})
 
 	t.Run("InvalidateThenGetFails", func(t *testing.T) {
-		store := seed(t, "txn1", DeferredTransactionRecord{Status: DeferredTransactionIssued})
+		store := seed(t, "txn1", issuer.DeferredTransactionRecord{Status: issuer.DeferredTransactionIssued})
 		ctx := context.Background()
 		if err := store.Invalidate(ctx, "txn1"); err != nil {
 			t.Fatalf("Invalidate: %v", err)

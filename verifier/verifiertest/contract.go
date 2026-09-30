@@ -1,4 +1,8 @@
-package verifier
+// Package verifiertest holds reusable contract tests for verifier's
+// issuer key resolvers, and the certificate helpers they need, for a
+// caller testing its own resolver. It imports "testing": import it
+// only from _test.go files.
+package verifiertest
 
 import (
 	"context"
@@ -8,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/idfoundry/oid4vcgo/internal/testcert"
+	"github.com/idfoundry/oid4vcgo/verifier"
 )
 
 // This file is a reusable contract test for one specific, common
@@ -18,7 +23,7 @@ import (
 // set, as X5CIssuerKeyResolver/X5ChainIssuerKeyResolver implement; DID
 // resolution; VCT metadata lookup; ...) — there is no single property
 // every implementation must have the way a NonceStore's atomicity
-// (issuer/contract.go) is universal regardless of backend. What the
+// (issuer/issuertest) is universal regardless of backend. What the
 // two functions below check is specific to the "certificate chain
 // verified against a *x509.CertPool" strategy: a caller building their
 // own resolver this way (the only strategy this package ships an
@@ -57,7 +62,7 @@ func ContractSelfSignedLeaf(t *testing.T, commonName string) (*x509.Certificate,
 // properties any x5c-chain-based SDJWTVCIssuerKeyResolver should
 // have — see this file's own package-level note for what this does
 // and doesn't claim to cover.
-func TestX5CTrustContract(t *testing.T, factory func(roots *x509.CertPool) SDJWTVCIssuerKeyResolver) {
+func TestX5CTrustContract(t *testing.T, factory func(roots *x509.CertPool) verifier.SDJWTVCIssuerKeyResolver) {
 	t.Helper()
 	testCertChainTrustContract(t, func(roots *x509.CertPool, certs ...*x509.Certificate) error {
 		entries := make([]any, len(certs))
@@ -72,7 +77,7 @@ func TestX5CTrustContract(t *testing.T, factory func(roots *x509.CertPool) SDJWT
 // TestX5ChainTrustContract is TestX5CTrustContract's own twin for a
 // x5chain-based MdocIssuerKeyResolver — see this file's own
 // package-level note.
-func TestX5ChainTrustContract(t *testing.T, factory func(roots *x509.CertPool) MdocIssuerKeyResolver) {
+func TestX5ChainTrustContract(t *testing.T, factory func(roots *x509.CertPool) verifier.MdocIssuerKeyResolver) {
 	t.Helper()
 	testCertChainTrustContract(t, func(roots *x509.CertPool, certs ...*x509.Certificate) error {
 		chain := make([][]byte, len(certs))

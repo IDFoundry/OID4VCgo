@@ -8,6 +8,7 @@ import (
 
 	"github.com/idfoundry/oid4vcgo/internal/cose"
 	"github.com/idfoundry/oid4vcgo/verifier"
+	"github.com/idfoundry/oid4vcgo/verifier/verifiertest"
 )
 
 func x5chainOf(certs ...*x509.Certificate) [][]byte {
@@ -19,8 +20,8 @@ func x5chainOf(certs ...*x509.Certificate) [][]byte {
 }
 
 func TestX5ChainIssuerKeyResolver_AcceptsCASignedLeaf(t *testing.T) {
-	ca, caKey := verifier.ContractCA(t, "test-ca")
-	leaf, leafKey := verifier.ContractLeaf(t, "test-leaf", ca, caKey)
+	ca, caKey := verifiertest.ContractCA(t, "test-ca")
+	leaf, leafKey := verifiertest.ContractLeaf(t, "test-leaf", ca, caKey)
 
 	roots := x509.NewCertPool()
 	roots.AddCert(ca)
@@ -47,7 +48,7 @@ func TestX5ChainIssuerKeyResolver_RejectsEmptyChain(t *testing.T) {
 }
 
 func TestX5ChainIssuerKeyResolver_RejectsSelfSignedLeafEvenIfTrusted(t *testing.T) {
-	leaf, _ := verifier.ContractSelfSignedLeaf(t, "self-signed-leaf")
+	leaf, _ := verifiertest.ContractSelfSignedLeaf(t, "self-signed-leaf")
 
 	roots := x509.NewCertPool()
 	roots.AddCert(leaf)
@@ -59,8 +60,8 @@ func TestX5ChainIssuerKeyResolver_RejectsSelfSignedLeafEvenIfTrusted(t *testing.
 }
 
 func TestX5ChainIssuerKeyResolver_RejectsUntrustedChain(t *testing.T) {
-	ca, caKey := verifier.ContractCA(t, "test-ca")
-	leaf, _ := verifier.ContractLeaf(t, "test-leaf", ca, caKey)
+	ca, caKey := verifiertest.ContractCA(t, "test-ca")
+	leaf, _ := verifiertest.ContractLeaf(t, "test-leaf", ca, caKey)
 
 	resolver := verifier.X5ChainIssuerKeyResolver{Roots: x509.NewCertPool()}
 	if _, _, err := resolver.ResolveMdocIssuerKey(context.Background(), x5chainOf(leaf), "org.iso.18013.5.1.mDL"); err == nil {

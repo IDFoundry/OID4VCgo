@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/idfoundry/oid4vcgo/issuer"
+	"github.com/idfoundry/oid4vcgo/issuer/issuertest"
 	"github.com/idfoundry/oid4vcgo/storage"
 )
 
@@ -15,13 +16,13 @@ import (
 // correctness coverage a real backend's own implementation should run
 // via these same exported functions.
 func TestContractSuitesAgainstStorage(t *testing.T) {
-	issuer.TestNonceStoreContract(t, func() issuer.NonceStore { return storage.NewNonceStore() })
-	issuer.TestDPoPNonceStoreContract(t, func() issuer.DPoPNonceStore { return storage.NewDPoPNonceStore() })
-	issuer.TestPreAuthorizedCodeStoreContract(t, func() issuer.PreAuthorizedCodeStore { return storage.NewPreAuthorizedCodeStore() })
-	issuer.TestDPoPReplayCheckerContract(t, func() issuer.DPoPReplayChecker { return storage.NewDPoPReplayChecker() })
-	issuer.TestCredentialOfferStoreContract(t, func() issuer.CredentialOfferStore { return storage.NewCredentialOfferStore() })
-	issuer.TestNotificationStoreContract(t, func() issuer.NotificationStore { return storage.NewNotificationStore() })
-	issuer.TestDeferredTransactionStoreContract(t, func(t *testing.T, transactionID string, record issuer.DeferredTransactionRecord) issuer.DeferredTransactionStore {
+	issuertest.TestNonceStoreContract(t, func() issuer.NonceStore { return storage.NewNonceStore() })
+	issuertest.TestDPoPNonceStoreContract(t, func() issuer.DPoPNonceStore { return storage.NewDPoPNonceStore() })
+	issuertest.TestPreAuthorizedCodeStoreContract(t, func() issuer.PreAuthorizedCodeStore { return storage.NewPreAuthorizedCodeStore() })
+	issuertest.TestDPoPReplayCheckerContract(t, func() issuer.DPoPReplayChecker { return storage.NewDPoPReplayChecker() })
+	issuertest.TestCredentialOfferStoreContract(t, func() issuer.CredentialOfferStore { return storage.NewCredentialOfferStore() })
+	issuertest.TestNotificationStoreContract(t, func() issuer.NotificationStore { return storage.NewNotificationStore() })
+	issuertest.TestDeferredTransactionStoreContract(t, func(t *testing.T, transactionID string, record issuer.DeferredTransactionRecord) issuer.DeferredTransactionStore {
 		t.Helper()
 		s := storage.NewDeferredTransactionStore()
 		if err := s.Put(t.Context(), transactionID, record); err != nil {
@@ -37,13 +38,13 @@ func TestContractSuitesAgainstStorage(t *testing.T) {
 // issuer role's own logic against, now also proven to satisfy each
 // store interface's documented contract in their own right.
 func TestContractSuitesAgainstFakes(t *testing.T) {
-	issuer.TestNonceStoreContract(t, func() issuer.NonceStore { return newFakeNonceStore() })
-	issuer.TestDPoPNonceStoreContract(t, func() issuer.DPoPNonceStore { return newFakeDPoPNonceStore() })
-	issuer.TestPreAuthorizedCodeStoreContract(t, func() issuer.PreAuthorizedCodeStore { return newFakePreAuthorizedCodeStore() })
-	issuer.TestDPoPReplayCheckerContract(t, func() issuer.DPoPReplayChecker { return newFakeDPoPReplayChecker() })
-	issuer.TestCredentialOfferStoreContract(t, func() issuer.CredentialOfferStore { return newFakeCredentialOfferStore() })
-	issuer.TestNotificationStoreContract(t, func() issuer.NotificationStore { return newFakeNotificationStore() })
-	issuer.TestDeferredTransactionStoreContract(t, func(t *testing.T, transactionID string, record issuer.DeferredTransactionRecord) issuer.DeferredTransactionStore {
+	issuertest.TestNonceStoreContract(t, func() issuer.NonceStore { return newFakeNonceStore() })
+	issuertest.TestDPoPNonceStoreContract(t, func() issuer.DPoPNonceStore { return newFakeDPoPNonceStore() })
+	issuertest.TestPreAuthorizedCodeStoreContract(t, func() issuer.PreAuthorizedCodeStore { return newFakePreAuthorizedCodeStore() })
+	issuertest.TestDPoPReplayCheckerContract(t, func() issuer.DPoPReplayChecker { return newFakeDPoPReplayChecker() })
+	issuertest.TestCredentialOfferStoreContract(t, func() issuer.CredentialOfferStore { return newFakeCredentialOfferStore() })
+	issuertest.TestNotificationStoreContract(t, func() issuer.NotificationStore { return newFakeNotificationStore() })
+	issuertest.TestDeferredTransactionStoreContract(t, func(t *testing.T, transactionID string, record issuer.DeferredTransactionRecord) issuer.DeferredTransactionStore {
 		t.Helper()
 		f := newFakeDeferredTransactionStore()
 		f.put(transactionID, record)
