@@ -11,7 +11,9 @@ import (
 	"io"
 	"net"
 	"net/url"
+	"strings"
 	"time"
+	"unicode"
 
 	"github.com/idfoundry/oid4vcgo/dcql"
 )
@@ -72,7 +74,11 @@ type Transaction struct {
 	Result *VerifyResponseResult
 
 	// LastError is why the latest answer was refused, for the
-	// Verifier's own display. Never sent to the Wallet.
+	// Verifier's own display. Never sent to the Wallet. Anyone holding
+	// the request's public key can send an answer, so this may carry
+	// text derived from one: it's kept short and printable, and a
+	// Wallet's own error response is reduced to its error code, but it
+	// must still be escaped when displayed.
 	LastError string
 }
 
@@ -250,16 +256,21 @@ type Begun struct {
 
 // Begin creates a presentation request for query.
 //
-// browserBinding ties the request's result to the browser that asked:
-// an unguessable value the caller also sets as a cookie on that
-// browser, and passes back to Lookup and Redeem. Only its hash is
-// stored. It is required for a same-device request (sameDevice), whose
-// answer sends the browser back to TransactionsConfig.RedirectURI with
-// a response_code. Empty leaves a cross-device request unbound: anyone
-// holding its ID can Lookup its result.
+// browserBinding ties the request's result to whoever asked: an
+// unguessable secret the caller keeps — a cookie on the browser that
+// asked, or a value held server-side when no browser is involved — and
+// passes back to Lookup and Redeem. Only its hash is stored. It is
+// required: the request's ID is public, as the last segment of the
+// request_uri in its link or QR code, so the binding is what keeps the
+// result from anyone who saw that. A same-device request (sameDevice)
+// also needs TransactionsConfig.RedirectURI, where its answer sends the
+// browser back with a response_code.
 func (t *Transactions) Begin(ctx context.Context, query dcql.Query, browserBinding string, sameDevice bool) (Begun, error) {
-	if sameDevice && (browserBinding == "" || t.cfg.RedirectURI == "") {
-		return Begun{}, errors.New("verifier: transactions: a same-device request needs a browser binding and TransactionsConfig.RedirectURI")
+	if browserBinding == "" {
+		return Begun{}, errors.New("verifier: transactions: a browser binding is required")
+	}
+	if sameDevice && t.cfg.RedirectURI == "" {
+		return Begun{}, errors.New("verifier: transactions: a same-device request needs TransactionsConfig.RedirectURI")
 	}
 	id, err := t.randomToken()
 	if err != nil {
@@ -278,10 +289,8 @@ func (t *Transactions) Begin(ctx context.Context, query dcql.Query, browserBindi
 		ResponseDecryptionKey: built.ResponseDecryptionKey, RequestObject: built.RequestObject,
 		SameDevice: sameDevice, ExpiresAt: t.now().Add(t.cfg.Lifetime), Status: TransactionPending,
 	}
-	if browserBinding != "" {
-		sum := sha256.Sum256([]byte(browserBinding))
-		tx.BrowserBindingHash = sum[:]
-	}
+	sum := sha256.Sum256([]byte(browserBinding))
+	tx.BrowserBindingHash = sum[:]
 	if err := t.store.Create(ctx, tx); err != nil {
 		return Begun{}, fmt.Errorf("verifier: transactions: store: %w", err)
 	}
@@ -408,9 +417,53 @@ func (t *Transactions) recordFailure(ctx context.Context, id string, cause error
 		if cur.Status != TransactionPending {
 			return ErrTransactionAnswered
 		}
-		cur.LastError = cause.Error()
+		cur.LastError = failureText(cause)
 		return nil
 	})
+}
+
+// maxFailureText bounds LastError.
+const maxFailureText = 256
+
+// failureText is what LastError records for cause. A Wallet's error
+// response — which anyone holding the request's public key can send —
+// is reduced to its error code when that's a plain token; otherwise
+// the text is cut to maxFailureText and anything unprintable replaced.
+func failureText(cause error) string {
+	var walletErr *ResponseError
+	if errors.As(cause, &walletErr) {
+		if isErrorCode(walletErr.Code) {
+			return "the wallet returned an error: " + walletErr.Code
+		}
+		return "the wallet returned an error"
+	}
+	var b strings.Builder
+	for _, r := range cause.Error() {
+		if b.Len() >= maxFailureText {
+			b.WriteString("…")
+			break
+		}
+		if !unicode.IsPrint(r) {
+			r = '?'
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
+// isErrorCode reports whether code is a plausible OAuth error code:
+// 1–64 lowercase letters, digits and underscores (RFC 6749 §5.2 codes
+// and the extensions OpenID4VP adds all fit).
+func isErrorCode(code string) bool {
+	if code == "" || len(code) > 64 {
+		return false
+	}
+	for _, r := range code {
+		if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '_' {
+			return false
+		}
+	}
+	return true
 }
 
 // Redeem releases a same-device request's result to the browser the
@@ -467,15 +520,14 @@ type TransactionView struct {
 	LastError string
 }
 
-// Lookup reports the request id's progress to the browser that asked.
-// browserBinding must be the one the request began with; for an
-// unbound request it's ignored.
+// Lookup reports the request id's progress to whoever asked:
+// browserBinding must be the one the request began with.
 func (t *Transactions) Lookup(ctx context.Context, id, browserBinding string) (TransactionView, error) {
 	tx, err := t.store.Get(ctx, id)
 	if err != nil {
 		return TransactionView{}, err
 	}
-	if tx.BrowserBindingHash != nil && !bindingMatches(tx.BrowserBindingHash, browserBinding) {
+	if !bindingMatches(tx.BrowserBindingHash, browserBinding) {
 		return TransactionView{}, ErrWrongBrowser
 	}
 	status := tx.Status
