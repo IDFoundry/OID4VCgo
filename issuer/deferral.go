@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
@@ -33,11 +34,15 @@ type Deferral struct {
 // more: already issued, denied or expired.
 var ErrDeferredTransactionResolved = errors.New("issuer: the deferred transaction is no longer pending")
 
-// requireDeferral checks this Issuer can defer: it has a Deferred
-// Credential Endpoint to poll, and a store for the transactions.
-func (iss *Issuer) requireDeferral() error {
+// requireDeferral checks this Issuer can defer auth's request: it has a
+// Deferred Credential Endpoint to poll and a store for the
+// transactions, and auth has a Subject to bind the transaction to.
+func (iss *Issuer) requireDeferral(auth AuthorizedRequest) error {
 	if iss.cfg.Endpoints.DeferredCredential.IsZero() || iss.deps.DeferredTransactions == nil {
 		return fmt.Errorf("issuer: request credential: deferral needs Endpoints.DeferredCredential and Dependencies.DeferredTransactions")
+	}
+	if auth.Subject == "" {
+		return fmt.Errorf("issuer: request credential: deferral needs AuthorizedRequest.Subject to bind the transaction to")
 	}
 	return nil
 }
@@ -55,7 +60,7 @@ func (iss *Issuer) startDeferral(ctx context.Context, auth AuthorizedRequest, co
 		bindingKeys[i] = k.JWKRaw
 	}
 	record := DeferredTransactionRecord{
-		ClientID: auth.ClientID(), Status: DeferredTransactionPending,
+		ClientID: auth.ClientID(), Subject: auth.Subject, Status: DeferredTransactionPending,
 		CredentialConfigurationID: configID, BindingKeys: bindingKeys, Reference: d.Reference,
 		ExpiresAt: iss.deps.Clock.Now().Add(iss.cfg.Limits.DeferredTransactionLifetime),
 	}
@@ -64,7 +69,7 @@ func (iss *Issuer) startDeferral(ctx context.Context, auth AuthorizedRequest, co
 	}
 	return oid4vci.CredentialResponse{
 		TransactionID: transactionID,
-		Interval:      int64(iss.cfg.Limits.DeferredIssuancePollInterval.Seconds()),
+		Interval:      pollIntervalSeconds(iss.cfg.Limits.DeferredIssuancePollInterval),
 	}, nil
 }
 
@@ -85,6 +90,11 @@ type DeferredIssuance struct {
 // The Wallet's next poll of the Deferred Credential Endpoint receives
 // them. It returns ErrDeferredTransactionResolved for a transaction
 // that isn't pending, and an error for an unknown one.
+//
+// Concurrent calls for one transaction may each build Credentials, and
+// run content.PerCredential for them, but only the first to finish
+// saves them; the others return ErrDeferredTransactionResolved, and
+// anything their PerCredential reserved is unused.
 func (iss *Issuer) IssueDeferredCredential(ctx context.Context, transactionID string, content DeferredIssuance) error {
 	clientID, err := iss.issueDeferredCredential(ctx, transactionID, content)
 	iss.audit(ctx, AuditEventIssueDeferredCredential, clientID, err)
@@ -125,6 +135,9 @@ func (iss *Issuer) issueDeferredCredential(ctx context.Context, transactionID st
 			return err
 		}
 		cur.Status, cur.Credentials, cur.NotificationID = DeferredTransactionIssued, credentials, notificationID
+		if !cur.ExpiresAt.IsZero() {
+			cur.ExpiresAt = iss.deps.Clock.Now().Add(iss.cfg.Limits.DeferredTransactionLifetime)
+		}
 		return nil
 	})
 	return record.ClientID, err
@@ -186,6 +199,21 @@ func (iss *Issuer) checkPending(record DeferredTransactionRecord) error {
 // passed.
 func (iss *Issuer) deferredExpired(record DeferredTransactionRecord) bool {
 	return !record.ExpiresAt.IsZero() && !iss.deps.Clock.Now().Before(record.ExpiresAt)
+}
+
+// deferredOwner reports whether auth may poll record: it's the client,
+// and the subject, the transaction was created for.
+func deferredOwner(record DeferredTransactionRecord, auth AuthorizedRequest) bool {
+	if record.ClientID != "" && auth.ClientID() != record.ClientID {
+		return false
+	}
+	return record.Subject == "" || auth.Subject == record.Subject
+}
+
+// pollIntervalSeconds is d as §9.2's "interval": whole seconds, rounded
+// up.
+func pollIntervalSeconds(d time.Duration) int64 {
+	return int64((d + time.Second - 1) / time.Second)
 }
 
 // deferredClient is the AuthorizedRequest a notification_id for record

@@ -117,7 +117,7 @@ func TestVerifyMapsTheToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Verify: %v", err)
 	}
-	if grant.Subject != "holder-1" || grant.Authorized.ClientIdentity != issuer.KnownClientID("wallet-1") ||
+	if grant.Subject != "holder-1" || grant.Authorized.Subject != "holder-1" || grant.Authorized.ClientIdentity != issuer.KnownClientID("wallet-1") ||
 		len(grant.Authorized.Scopes) != 1 || len(grant.Authorized.AuthorizationDetails) != 1 ||
 		grant.Authorized.AuthorizationDetails[0].CredentialConfigurationID != "pid" {
 		t.Errorf("grant = %+v", grant)

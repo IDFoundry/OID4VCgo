@@ -32,10 +32,8 @@ type AuthorizedRequest struct {
 	// claim when that claim is present (Appendix F.1); via
 	// IssueNotificationID, binds any notification_id this request
 	// causes to be issued to this same client, later re-checked by
-	// RequestNotification; and (already stamped onto a
-	// DeferredTransactionRecord by the caller's own business process —
-	// see that type's own doc comment) is re-checked by
-	// RequestDeferredCredential the same way. REQUIRED —
+	// RequestNotification; and binds a deferred transaction to this
+	// client, re-checked by RequestDeferredCredential. REQUIRED —
 	// RequestCredential/RequestDeferredCredential/RequestNotification/
 	// IssueNotificationID all reject an AuthorizedRequest whose
 	// ClientIdentity is nil: a caller must set it to KnownClientID(the
@@ -47,6 +45,16 @@ type AuthorizedRequest struct {
 	// back to weaker behavior — see NoClientIdentity's own doc comment
 	// for what that would otherwise silently disable.
 	ClientIdentity ClientIdentity
+
+	// Subject is who the access token was issued for: its "sub". A
+	// Credential Request that defers (CredentialRequest.Defer) requires
+	// it, because the transaction is bound to it and
+	// RequestDeferredCredential answers only a request with the same
+	// Subject (§9: "an Access Token that is valid for the issuance of
+	// the Credential(s) previously requested"). A client_id can't do
+	// that alone: under HAIP it names a Wallet solution, shared by every
+	// install.
+	Subject string
 
 	// Scopes is every scope the access token grants. A Credential
 	// Request using CredentialRequest.CredentialConfigurationID is
@@ -230,7 +238,8 @@ type CredentialRequest struct {
 	// CredentialResponse with its TransactionID and Interval — sent as
 	// HTTP 202. SDJWTClaims/MdocClaims/PerCredential are then unused:
 	// IssueDeferredCredential takes them when the deployment is ready.
-	// Requires Endpoints.DeferredCredential.
+	// Requires Endpoints.DeferredCredential, and AuthorizedRequest.Subject
+	// to bind the transaction to.
 	Defer *Deferral
 
 	// ResponseEncryption is this request's own optional
@@ -313,7 +322,7 @@ func (iss *Issuer) requestCredential(ctx context.Context, auth AuthorizedRequest
 		return oid4vci.CredentialResponse{}, err
 	}
 	if req.Defer != nil {
-		if err := iss.requireDeferral(); err != nil {
+		if err := iss.requireDeferral(auth); err != nil {
 			return oid4vci.CredentialResponse{}, err
 		}
 	}
