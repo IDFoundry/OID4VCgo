@@ -2,11 +2,14 @@ package statuslist
 
 import (
 	"context"
+	"crypto/tls"
 	"crypto/x509"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -149,9 +152,31 @@ func TestFetcher_AddressPolicy(t *testing.T) {
 		"fe80::1":          {false, false, true},
 		"0.0.0.0":          {false, false, false},
 		"224.0.0.1":        {false, false, false},
+		// IPv6 addresses embedding an IPv4 one are judged by it.
+		"64:ff9b::5db8:d70e": {true, true, true},
+		"64:ff9b::a9fe:a9fe": {false, false, true},
+		"64:ff9b::7f00:1":    {false, true, false},
+		"2002:a00:5::1":      {false, false, true},
+		"2002:5db8:d70e::1":  {true, true, true},
+		"::7f00:1":           {false, true, false},
+		"::a00:5":            {false, false, true},
+		"64:ff9b:1::a00:5":   {false, false, true},
+		"fec0::1":            {false, false, true},
+		// Special-purpose ranges are never public.
+		"0.1.2.3":         {false, false, false},
+		"255.255.255.255": {false, false, false},
+		"240.0.0.1":       {false, false, false},
+		"198.18.0.1":      {false, false, false},
+		"192.0.0.8":       {false, false, false},
+		"192.0.2.1":       {false, false, false},
+		"2001:db8::1":     {false, false, false},
+		"2001:0:4136::1":  {false, false, false},
+		"100::1":          {false, false, false},
+		"::":              {false, false, false},
+		"ff02::1":         {false, false, false},
 	}
 	for addr, want := range cases {
-		ip := netip.MustParseAddr(addr).Unmap()
+		ip := netip.MustParseAddr(addr)
 		got := [3]bool{
 			Fetcher{}.addressAllowed(ip),
 			Fetcher{AllowLoopback: true}.addressAllowed(ip),
@@ -169,16 +194,57 @@ func TestFetcher_AddressPolicy(t *testing.T) {
 	}
 }
 
-// TestFetcher_OtherRoundTripperIsUsedAsIs: a RoundTripper that isn't an
-// *http.Transport keeps its own address policy.
-func TestFetcher_OtherRoundTripperIsUsedAsIs(t *testing.T) {
+// TestFetcher_OtherRoundTripper: a RoundTripper that isn't an
+// *http.Transport is refused, since the address policy can't be applied
+// to it, unless UncheckedTransport says it keeps its own.
+func TestFetcher_OtherRoundTripper(t *testing.T) {
 	rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {TokenMediaType}},
 			Body: io.NopCloser(strings.NewReader("token")), Request: r}, nil
 	})
-	body, err := Fetcher{HTTP: &http.Client{Transport: rt}}.Fetch(context.Background(), "https://127.0.0.1/statuslists/1", TokenMediaType)
+	client := &http.Client{Transport: rt}
+	if _, err := (Fetcher{HTTP: client}).Fetch(context.Background(), "https://127.0.0.1/statuslists/1", TokenMediaType); err == nil {
+		t.Error("an unchecked RoundTripper was used without UncheckedTransport")
+	}
+	body, err := Fetcher{HTTP: client, UncheckedTransport: true}.Fetch(context.Background(), "https://127.0.0.1/statuslists/1", TokenMediaType)
 	if err != nil || string(body) != "token" {
-		t.Errorf("Fetch = %q, %v", body, err)
+		t.Errorf("Fetch with UncheckedTransport = %q, %v", body, err)
+	}
+}
+
+// TestFetcher_TransportHooksCantBypass: a caller's Transport can't route
+// around the address check — its deprecated DialTLS hook is removed, and
+// its proxy too unless AllowProxy is set.
+func TestFetcher_TransportHooksCantBypass(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", TokenMediaType)
+		_, _ = w.Write([]byte("token"))
+	}))
+	defer srv.Close()
+	tr := srv.Client().Transport.(*http.Transport).Clone()
+	tr.DialTLS = func(network, addr string) (net.Conn, error) { //nolint:staticcheck // the hook under test
+		return tls.Dial(network, addr, tr.TLSClientConfig)
+	}
+	if _, err := (Fetcher{HTTP: &http.Client{Transport: tr}}).Fetch(context.Background(), srv.URL+"/statuslists/1", TokenMediaType); err == nil || !strings.Contains(err.Error(), "not a public address") {
+		t.Errorf("fetch through a DialTLS hook = %v, want refused", err)
+	}
+
+	proxied := false
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		proxied = true
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer proxy.Close()
+	proxyURL, _ := url.Parse(proxy.URL)
+	withProxy := srv.Client().Transport.(*http.Transport).Clone()
+	withProxy.Proxy = http.ProxyURL(proxyURL)
+	f := Fetcher{HTTP: &http.Client{Transport: withProxy}, AllowLoopback: true}
+	if _, err := f.Fetch(context.Background(), srv.URL+"/statuslists/1", TokenMediaType); err != nil || proxied {
+		t.Errorf("fetch = %v, proxied %v; want a direct fetch", err, proxied)
+	}
+	f.AllowProxy = true
+	if _, err := f.Fetch(context.Background(), srv.URL+"/statuslists/1", TokenMediaType); err == nil || !proxied {
+		t.Errorf("AllowProxy fetch = %v, proxied %v; want it sent to the proxy", err, proxied)
 	}
 }
 
