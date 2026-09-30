@@ -14,6 +14,14 @@ any of three Credential Request proof strategies via `-proof-type`
 (`jwt`, `attestation`, or `jwt-key-attestation`; see "Status"). See
 "Scope" below for what isn't covered yet.
 
+## TLS
+
+This binary skips TLS verification for every call it makes: it talks
+only to a locally run OIDF conformance suite, whose Credential Issuer
+and Authorization Server serve throwaway self-signed certificates. A
+passing run says nothing about an Issuer's TLS setup. A Wallet built on
+the `wallet` package verifies TLS through its own `fapihttp` client.
+
 ## Why this binary is a one-shot CLI tool, not a server
 
 Unlike this repo's other three conformance binaries, this one makes

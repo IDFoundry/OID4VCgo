@@ -84,6 +84,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"flag"
@@ -226,6 +227,7 @@ func extractSentErrorCode(driveBody string) (code string, ok bool) {
 type generatedConfig struct {
 	ListenAddr                     string         `json:"listen_addr"`
 	TLSCertificatePEM              string         `json:"tls_certificate_pem"`
+	VerifierTrustAnchorsPEM        string         `json:"verifier_trust_anchors_pem,omitempty"`
 	TLSPrivateKeyPEM               string         `json:"tls_private_key_pem"`
 	CredentialIssuerPrivateKeyPEM  string         `json:"credential_issuer_private_key_pem"`
 	CredentialIssuerCertificatePEM string         `json:"credential_issuer_certificate_pem"`
@@ -564,11 +566,21 @@ func main() {
 	if err != nil {
 		log.Fatalf("%v", err)
 	}
+	// The suite's emulated Verifier signs its Request Objects with a
+	// certificate issued by this CA, and the wallet under test trusts
+	// only it (verifier_trust_anchors_pem), so every run checks the
+	// Request Object's chain (OID4VP §5.9.3, HAIP 1.0 §5), not just its
+	// signature and x509_hash client_id.
+	verifierCA, verifierCAKey, verifierCAPEM, _, err := conformancecert.GenerateCA("oid4vcgo-wallet-vp-test-verifier-ca")
+	if err != nil {
+		log.Fatalf("generate verifier CA: %v", err)
+	}
+	cfg.VerifierTrustAnchorsPEM = verifierCAPEM
 	if err := writeConfigAndMaybeRestart(cfg, httpClient, *walletVPBase, *skipDockerRestart); err != nil {
 		log.Fatalf("%v", err)
 	}
 
-	clientJWK, err := generateClientJWK()
+	clientJWK, err := generateClientJWK(verifierCA, verifierCAKey)
 	if err != nil {
 		log.Fatalf("generate plan client signing key: %v", err)
 	}
@@ -587,7 +599,7 @@ func main() {
 	// is included for schema completeness even though the suite
 	// ignores it under a non-custom credential_type — see
 	// VP1FinalWalletCredentialType.java's own doc comment).
-	amcClientJWK, err := generateClientJWK()
+	amcClientJWK, err := generateClientJWK(verifierCA, verifierCAKey)
 	if err != nil {
 		log.Fatalf("generate all-mandatory-claims plan client signing key: %v", err)
 	}
@@ -912,19 +924,17 @@ func toHostBase(redirectTo, hostBase string) string {
 }
 
 // generateClientJWK builds the suite's own emulated-Verifier signing
-// key: a fresh EC P-256 key plus a single self-signed leaf cert as its
-// own "x5c" entry — confirmed live that this (unlike
-// conformance/verifier's own client certificate) doesn't need a
-// separate issuing CA; the suite doesn't independently x5c-chain-
-// validate this specific key.
-func generateClientJWK() (jwk.SetEntry, error) {
+// key: a fresh EC P-256 key plus a leaf certificate ca issues for it
+// as its only "x5c" entry — HAIP 1.0 §5: not self-signed, and without
+// the trust anchor — which the wallet under test checks against ca.
+func generateClientJWK(ca *x509.Certificate, caKey *ecdsa.PrivateKey) (jwk.SetEntry, error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return jwk.SetEntry{}, fmt.Errorf("generate key: %w", err)
 	}
-	certPEM, err := conformancecert.SelfSignedCertPEMForKey("oid4vcgo-wallet-vp-test-verifier-client", key)
+	certPEM, err := conformancecert.IssueLeafCertPEM("oid4vcgo-wallet-vp-test-verifier-client", key, ca, caKey)
 	if err != nil {
-		return jwk.SetEntry{}, fmt.Errorf("self-signed cert: %w", err)
+		return jwk.SetEntry{}, fmt.Errorf("issue verifier cert: %w", err)
 	}
 	cert, err := conformancecert.ParseCertificatePEM(certPEM)
 	if err != nil {

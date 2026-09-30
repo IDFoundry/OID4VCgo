@@ -24,6 +24,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/internal/jwe"
 	"github.com/idfoundry/oid4vcgo/internal/testcert"
 	"github.com/idfoundry/oid4vcgo/verifier"
+	"github.com/idfoundry/oid4vcgo/wallet"
 )
 
 // verifyOutcome captures what the fake Verifier server's own
@@ -102,13 +103,18 @@ func newTestQuery(t *testing.T, vct string) dcql.Query {
 // (verifier.X5CIssuerKeyResolver) trusts it as the sole root, so
 // verifying the presented credential exercises real x5c chain
 // validation end to end.
-func newFakeVerifierServer(t *testing.T, query dcql.Query, issuerCA *x509.Certificate) (*verifier.Verifier, *httptest.Server, verifier.BuildAuthorizationRequestResult, *verifyOutcome) {
+//
+// The Verifier's own Request Object signing certificate is issued by a
+// CA w — the wallet under test — trusts as its only verifier trust
+// anchor, so the round trip exercises the Request Object chain check
+// (wallet.X5CVerifierRoots) the way run-modules configures it.
+func newFakeVerifierServer(t *testing.T, w *server, query dcql.Query, issuerCA *x509.Certificate) (*verifier.Verifier, *httptest.Server, verifier.BuildAuthorizationRequestResult, *verifyOutcome) {
 	t.Helper()
-	clientKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatalf("generate verifier client key: %v", err)
-	}
-	clientCert := testcert.SelfSigned(t, "conformance-verifier-test", &clientKey.PublicKey, clientKey)
+	verifierCA, verifierCAKey := testcert.CA(t, "conformance-verifier-test-ca")
+	clientCert, clientKey := testcert.Leaf(t, "conformance-verifier-test", verifierCA, verifierCAKey)
+	verifierRoots := x509.NewCertPool()
+	verifierRoots.AddCert(verifierCA)
+	w.trust = wallet.X5CVerifierRoots{Roots: verifierRoots}
 
 	mux := http.NewServeMux()
 	ts := httptest.NewTLSServer(mux)
@@ -213,7 +219,7 @@ func handleFakeVerifierResponse(v *verifier.Verifier, query dcql.Query, built ve
 func TestHandleAuthorize_FullRoundTripAgainstARealVerifier(t *testing.T) {
 	wallet, issuerCA := setupWalletUnderTest(t)
 	query := newTestQuery(t, "urn:eudi:pid:1")
-	_, ts, built, got := newFakeVerifierServer(t, query, issuerCA)
+	_, ts, built, got := newFakeVerifierServer(t, wallet, query, issuerCA)
 
 	previousHTTPClient := httpClient
 	httpClient = ts.Client() // trust the httptest server's own cert for this binary's outbound calls
@@ -262,7 +268,7 @@ func TestHandleAuthorize_FullRoundTripAgainstARealVerifier(t *testing.T) {
 func TestHandleAuthorize_SendsErrorResponseWhenPresentationFails(t *testing.T) {
 	wallet, issuerCA := setupWalletUnderTest(t)
 	query := newTestQuery(t, "urn:eudi:pid:this-vct-does-not-match-the-fixture-credential")
-	_, ts, built, got := newFakeVerifierServer(t, query, issuerCA)
+	_, ts, built, got := newFakeVerifierServer(t, wallet, query, issuerCA)
 
 	previousHTTPClient := httpClient
 	httpClient = ts.Client()

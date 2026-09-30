@@ -44,16 +44,47 @@ shape than an early read suggested:
 - `GET /authorize` — this binary's own `server.authorization_endpoint`.
   Runs the whole flow synchronously: fetches+verifies the Request
   Object (`requestobject.go`: JWS signature against the `x5c` leaf,
-  `x509_hash` client_id cross-check, `typ` header check; the verifier
-  certificate's trust chain is explicitly not checked,
-  `wallet.NoVerifierTrust`, since no trust anchor is configured for the
-  suite's own request-signing certificate), presents the
+  `x509_hash` client_id cross-check, `typ` header check, and the
+  verifier certificate's chain against `verifier_trust_anchors_pem`
+  when that's configured — see "What a passing run shows"), presents the
   fixture credential (`wallet.PresentCredentials`), encrypts and POSTs
   the `direct_post.jwt` response to the Verifier's own `response_uri`,
   and — since HAIP requires the response to carry a `redirect_uri` —
   follows it with a plain GET, the same round trip a real same-device
   in-app-browser wallet completes before rendering its own "done"
   page.
+
+## What a passing run shows
+
+This binary is a conformance harness, not a Wallet to judge a
+Verifier's security by. For every Verifier it talks to:
+
+- **Checked:** the Request Object's JWS signature against its `x5c`
+  leaf; that `client_id` is that leaf's `x509_hash`; the `typ` header;
+  and, when the config sets `verifier_trust_anchors_pem`, that the leaf
+  is issued (not self-signed) by one of those anchors — OID4VP §5.9.3,
+  HAIP 1.0 §5. The response is encrypted to the Request Object's own
+  key, and every presentation is bound to its nonce and client_id.
+- **Not checked:** the Verifier's **TLS certificate**. Every outbound
+  call (fetching `request_uri`, posting the response, following
+  `redirect_uri`) skips TLS verification, because the OIDF suite and
+  `cmd/conformance-verifier` serve throwaway self-signed certificates.
+  A completed presentation says nothing about a Verifier's TLS setup;
+  test that with ordinary TLS tooling (`openssl s_client
+  -verify_return_error -CAfile ...`, `curl --cacert ...`).
+- **Not checked without anchors:** with `verifier_trust_anchors_pem`
+  unset (e.g. a config from `scripts/generate-config`), the Request
+  Object's certificate chain isn't checked at all. The binary logs a
+  warning at startup in that case, and always for TLS.
+
+`scripts/run-modules` issues the suite's Request Object signing
+certificate from a CA it generates per run and sets that CA as
+`verifier_trust_anchors_pem`, so every conformance run exercises the
+chain check. To point this binary at your own Verifier, set
+`verifier_trust_anchors_pem` to your Verifier's CA. A Wallet built on
+the `wallet` package verifies TLS through its own `fapihttp` client
+and trusts Verifiers through `wallet.X5CVerifierRoots` — the same
+check.
 
 ## Status
 

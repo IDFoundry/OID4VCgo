@@ -8,6 +8,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"io"
 	"net/http"
@@ -166,7 +167,7 @@ func servePostRequestObject(t *testing.T, echoNonce bool) (rawURL, clientID stri
 func TestFetchAndVerifyRequestObject_RejectsRedirectURI(t *testing.T) {
 	compact, clientID, _ := buildSignedRequestObject(t, map[string]any{"redirect_uri": "https://wallet.example.com/callback"})
 	url := serveRequestObject(t, compact)
-	_, err := fetchAndVerifyRequestObject(url, clientID, false)
+	_, err := fetchAndVerifyRequestObject(url, clientID, false, wallet.NoVerifierTrust{})
 	if err == nil {
 		t.Fatal("fetchAndVerifyRequestObject accepted a request object carrying redirect_uri alongside response_uri")
 	}
@@ -188,7 +189,7 @@ func TestFetchAndVerifyRequestObject_RejectsRedirectURI(t *testing.T) {
 func TestFetchAndVerifyRequestObject_RejectsTransactionData(t *testing.T) {
 	compact, clientID, _ := buildSignedRequestObject(t, map[string]any{"transaction_data": []string{"eyJ0eXBlIjoidW5rbm93biJ9"}})
 	url := serveRequestObject(t, compact)
-	_, err := fetchAndVerifyRequestObject(url, clientID, false)
+	_, err := fetchAndVerifyRequestObject(url, clientID, false, wallet.NoVerifierTrust{})
 	if err == nil {
 		t.Fatal("fetchAndVerifyRequestObject accepted a request object carrying transaction_data")
 	}
@@ -204,7 +205,7 @@ func TestFetchAndVerifyRequestObject_RejectsTransactionData(t *testing.T) {
 func TestFetchAndVerifyRequestObject_AcceptsWellFormedRequest(t *testing.T) {
 	compact, clientID, _ := buildSignedRequestObject(t, nil)
 	url := serveRequestObject(t, compact)
-	req, err := fetchAndVerifyRequestObject(url, clientID, false)
+	req, err := fetchAndVerifyRequestObject(url, clientID, false, wallet.NoVerifierTrust{})
 	if err != nil {
 		t.Fatalf("fetchAndVerifyRequestObject: %v", err)
 	}
@@ -219,7 +220,7 @@ func TestFetchAndVerifyRequestObject_AcceptsWellFormedRequest(t *testing.T) {
 // "wallet_nonce" claim, and fetchAndVerifyRequestObject accepts it.
 func TestFetchAndVerifyRequestObject_POSTEchoesWalletNonce(t *testing.T) {
 	url, clientID := servePostRequestObject(t, true)
-	if _, err := fetchAndVerifyRequestObject(url, clientID, true); err != nil {
+	if _, err := fetchAndVerifyRequestObject(url, clientID, true, wallet.NoVerifierTrust{}); err != nil {
 		t.Fatalf("fetchAndVerifyRequestObject: %v", err)
 	}
 }
@@ -231,7 +232,7 @@ func TestFetchAndVerifyRequestObject_POSTEchoesWalletNonce(t *testing.T) {
 // replay-mitigation the nonce exists for is theater, not enforcement.
 func TestFetchAndVerifyRequestObject_RejectsMissingWalletNonceEcho(t *testing.T) {
 	url, clientID := servePostRequestObject(t, false)
-	if _, err := fetchAndVerifyRequestObject(url, clientID, true); err == nil {
+	if _, err := fetchAndVerifyRequestObject(url, clientID, true, wallet.NoVerifierTrust{}); err == nil {
 		t.Error("fetchAndVerifyRequestObject accepted a POST response whose payload never echoed back the wallet_nonce it sent")
 	}
 }
@@ -274,7 +275,7 @@ func TestHandleAuthorize_SendsErrorResponseForRedirectURIWithDirectPost(t *testi
 
 	requestURL := serveRequestObject(t, compact)
 
-	s := &server{cred: wallet.HeldCredential{}}
+	s := &server{cred: wallet.HeldCredential{}, trust: wallet.NoVerifierTrust{}}
 	target := "https://wallet-under-test.example/authorize?" + url.Values{
 		"client_id": {clientID}, "request_uri": {requestURL},
 	}.Encode()
@@ -297,5 +298,38 @@ func TestHandleAuthorize_SendsErrorResponseForRedirectURIWithDirectPost(t *testi
 	}
 	if captured["vp_token"] != nil {
 		t.Errorf("decrypted response carries a vp_token %v, want none for an error response", captured["vp_token"])
+	}
+}
+
+// TestFetchAndVerifyRequestObject_ChecksTheChainAgainstAnchors: with
+// verifier trust anchors configured, a Request Object whose x5c leaf
+// doesn't chain to them is refused, even though its signature and
+// x509_hash client_id are valid.
+func TestFetchAndVerifyRequestObject_ChecksTheChainAgainstAnchors(t *testing.T) {
+	compact, clientID, _ := buildSignedRequestObject(t, nil)
+	url := serveRequestObject(t, compact)
+	unrelated, _ := testcert.CA(t, "unrelated-ca")
+	roots := x509.NewCertPool()
+	roots.AddCert(unrelated)
+	if _, err := fetchAndVerifyRequestObject(url, clientID, false, wallet.X5CVerifierRoots{Roots: roots}); err == nil {
+		t.Fatal("a Request Object whose chain doesn't reach the configured anchors was accepted")
+	}
+}
+
+func TestConfigVerifierTrust(t *testing.T) {
+	if trust, err := (Config{}).verifierTrust(); err != nil {
+		t.Fatal(err)
+	} else if _, ok := trust.(wallet.NoVerifierTrust); !ok {
+		t.Errorf("no anchors = %T, want NoVerifierTrust", trust)
+	}
+	ca, _ := testcert.CA(t, "anchor")
+	anchorPEM := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: ca.Raw}))
+	if trust, err := (Config{VerifierTrustAnchorsPEM: anchorPEM}).verifierTrust(); err != nil {
+		t.Fatal(err)
+	} else if _, ok := trust.(wallet.X5CVerifierRoots); !ok {
+		t.Errorf("with anchors = %T, want X5CVerifierRoots", trust)
+	}
+	if _, err := (Config{VerifierTrustAnchorsPEM: "not a certificate"}).verifierTrust(); err == nil {
+		t.Error("verifierTrust accepted anchors with no certificate")
 	}
 }

@@ -81,7 +81,8 @@ func httpPostFormString(rawURL string, form url.Values) (string, error) {
 
 // server bundles this binary's own fixed dependencies.
 type server struct {
-	cred wallet.HeldCredential
+	cred  wallet.HeldCredential
+	trust wallet.VerifierTrust
 }
 
 // handleAuthorize is this binary's own "server.authorization_endpoint"
@@ -102,7 +103,7 @@ func (s *server) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 	}
 	usePost := link.RequestURIMethod == wallet.RequestURIMethodPost
 
-	authReq, err := fetchAndVerifyRequestObject(link.RequestURI, link.ClientID, usePost)
+	authReq, err := fetchAndVerifyRequestObject(link.RequestURI, link.ClientID, usePost, s.trust)
 	if err != nil {
 		// A *wallet.RequestRejectedError means the Request Object itself
 		// was authenticated (signature verified, client_id matches) —
