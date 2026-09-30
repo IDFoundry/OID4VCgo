@@ -595,7 +595,11 @@ changes whether *every* bullet below is `(done)`.
   with the caller deciding only what to issue, in `Prepare`; it checks
   tokens through the `AccessTokenVerifier` interface, which
   `issuer/fapiresource` implements with a `fapigo/resource.Verifier`,
-  so `issuer` itself still doesn't import `fapigo/resource`.
+  so `issuer` itself still doesn't import `fapigo/resource`. With the
+  Authorization Server in the same process, that verifier comes from
+  `fapigo/serverresource.NewVerifier`, built from the server's own
+  config and stores, as `cmd/conformance-issuer` and the passport-vdc
+  issuer do.
   `DeferredCredentialHandler` and `NotificationEndpointHandler` do the
   same for the Deferred Credential (§9) and Notification (§11)
   Endpoints, over `ProtectedEndpointConfig{URL, Tokens}`: the first
