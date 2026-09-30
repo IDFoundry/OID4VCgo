@@ -158,6 +158,11 @@ type TransactionsConfig struct {
 	// (statuslist.Checker). An error refuses the answer like a failed
 	// verification: recorded as LastError, with the request left open
 	// for another answer.
+	//
+	// Accept runs before the request completes atomically, so when two
+	// answers to one request arrive together, both can be accepted and
+	// only one completes it. Keep it free of side effects, or tie what
+	// it records to the result that completed (TransactionView.Result).
 	Accept func(ctx context.Context, id string, result VerifyResponseResult) error
 
 	// RedirectURI is where a same-device answer sends the browser back
@@ -540,6 +545,9 @@ func (t *Transactions) Lookup(ctx context.Context, id, browserBinding string) (T
 // Close ends the request id without a result — for example the other
 // half of a pair offered both cross-device and same-device, once one of
 // them completes. A completed or already closed request is left as is.
+// It takes no browser binding, and id is public (the last segment of
+// the request_uri), so call it only from the Verifier's own logic,
+// never for an id a caller supplies.
 func (t *Transactions) Close(ctx context.Context, id string) error {
 	return t.store.Update(ctx, id, func(cur *Transaction) error {
 		if cur.Status == TransactionPending || cur.Status == TransactionAwaitingRedirect {

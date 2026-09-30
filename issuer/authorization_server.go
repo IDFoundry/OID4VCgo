@@ -64,10 +64,11 @@ package issuer
 // shared session store, or a cookie you sign — and restore it there
 // with server.ParseInteractionRequest and server.ParseInteractionHandle;
 // issuer_state comes back with it, read with extension.Get as above.
-// CompleteAuthorization checks the grant against the request the server
-// itself stored, so a tampered copy can't widen it, but keep it where
-// only your application can write it so the consent page shows what
-// was actually asked.
+// The encoding carries no integrity protection, so keep it where only
+// your application can write it: CompleteAuthorization checks the
+// grant's scopes against the request the server itself stored, but
+// issuer_state decides whose Credential is issued, and a tampered copy
+// could name another holder's pending offer.
 //
 // # Credential Endpoint access tokens
 //

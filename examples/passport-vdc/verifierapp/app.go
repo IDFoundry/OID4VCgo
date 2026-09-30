@@ -5,9 +5,11 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -76,7 +78,11 @@ type App struct {
 	mu       sync.Mutex
 	sessions map[string]*session // by page ID, known only to whoever created the request
 	byTx     map[string]string   // verifier transaction ID → page ID
-	outcomes map[string]*Outcome // verifier transaction ID → what its accepted answer established
+	// outcomes is what each accepted answer established, by verifier
+	// transaction ID and then resultKey: Accept runs before its answer
+	// commits, so concurrent answers to one request can each be
+	// accepted, and only the committed Result says which one counts.
+	outcomes map[string]map[string]*Outcome
 }
 
 // A session is one "verify a passport credential" page: a presentation
@@ -163,7 +169,7 @@ func New(cfg Config) (*App, error) {
 	}
 	a := &App{
 		cfg: cfg, verifier: v, caCert: caCert, issuerRoots: issuerRoots, issuerTrusted: issuerTrusted, now: time.Now,
-		sessions: map[string]*session{}, byTx: map[string]string{}, outcomes: map[string]*Outcome{},
+		sessions: map[string]*session{}, byTx: map[string]string{}, outcomes: map[string]map[string]*Outcome{},
 	}
 	a.txs, err = verifier.NewTransactions(v, storage.NewVerifierTransactionStore(), verifier.TransactionsConfig{
 		RequestURIBase: cfg.VerifierURL + "/request-objects",
@@ -313,9 +319,11 @@ func (a *App) state(ctx context.Context, s *session) pageState {
 		}
 		switch view.Status {
 		case verifier.TransactionDone:
-			a.mu.Lock()
-			st.outcome = a.outcomes[ch.id]
-			a.mu.Unlock()
+			if view.Result != nil {
+				a.mu.Lock()
+				st.outcome = a.outcomes[ch.id][resultKey(*view.Result)]
+				a.mu.Unlock()
+			}
 		case verifier.TransactionAwaitingRedirect:
 			st.awaiting = true
 		case verifier.TransactionClosed:
@@ -355,7 +363,9 @@ func (a *App) LastError(id string) string {
 }
 
 // accept is Transactions' Accept: it runs on each answer that verified,
-// before its request completes. It refuses an answer to a page whose
+// before its request completes, and may run for an answer that then
+// loses to a concurrent one, so what it records is looked up by the
+// committed Result (resultKey). It refuses an answer to a page whose
 // other request already completed, and one whose credential is revoked
 // or suspended; otherwise it records what the answer established.
 func (a *App) accept(ctx context.Context, txID string, result verifier.VerifyResponseResult) error {
@@ -387,9 +397,23 @@ func (a *App) accept(ctx context.Context, txID string, result verifier.VerifyRes
 		out.ICAO = a.checkICAO(out.Claims)
 	}
 	a.mu.Lock()
-	a.outcomes[txID] = out
+	if a.outcomes[txID] == nil {
+		a.outcomes[txID] = map[string]*Outcome{}
+	}
+	a.outcomes[txID][resultKey(result)] = out
 	a.mu.Unlock()
 	return nil
+}
+
+// resultKey identifies a verified answer's result, so the outcome shown
+// is the one for the answer that committed.
+func resultKey(result verifier.VerifyResponseResult) string {
+	raw, err := json.Marshal(result.Credentials)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(raw)
+	return string(sum[:])
 }
 
 // handleContinue is the same-device redirect_uri: the wallet sends the
