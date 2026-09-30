@@ -95,6 +95,9 @@ func New(cfg Config, deps Dependencies) (*Wallet, error) {
 	if cfg.Assurance == AssuranceProduction && cfg.Fetch.AllowLoopbackHTTP {
 		return nil, fmt.Errorf("wallet: config: fetch.allow_loopback_http is not permitted under AssuranceProduction")
 	}
+	if cfg.Assurance == AssuranceProduction && cfg.Fetch.AllowLoopbackHosts {
+		return nil, fmt.Errorf("wallet: config: fetch.allow_loopback_hosts is not permitted under AssuranceProduction")
+	}
 	if cfg.Assurance == AssuranceProduction && isNoVerifierTrust(cfg.VerifierTrust) {
 		return nil, fmt.Errorf("wallet: config: verifier_trust NoVerifierTrust is not permitted under AssuranceProduction")
 	}

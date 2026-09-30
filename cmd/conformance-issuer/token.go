@@ -12,28 +12,18 @@ import (
 // this HAIP test plan's own module list).
 func tokenHandler(srv *server.Server) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		form, err := server.FormRequestFromHTTP(r)
+		req, err := server.TokenEndpointRequestFromHTTP(r)
 		if err != nil {
 			writeRawOAuthError(w, http.StatusBadRequest, server.ErrorInvalidRequest, err.Error())
 			return
 		}
-		dpopProofs := r.Header.Values("DPoP")
-		peerCert := server.PeerCertificateFromHTTP(r)
-		attestations := r.Header.Values("OAuth-Client-Attestation")
-		pops := r.Header.Values("OAuth-Client-Attestation-PoP")
 
 		var result server.TokenResult
-		switch form.Get("grant_type") {
+		switch req.GrantType() {
 		case "authorization_code":
-			result, err = srv.ExchangeAuthorizationCode(r.Context(), server.AuthorizationCodeExchangeRequest{
-				HTTP: form, DPoPProofs: dpopProofs, PeerCertificate: peerCert,
-				ClientAttestations: attestations, ClientAttestationPoPs: pops,
-			})
+			result, err = srv.ExchangeAuthorizationCode(r.Context(), req.AuthorizationCodeExchange())
 		case "refresh_token":
-			result, err = srv.RefreshAccessToken(r.Context(), server.RefreshTokenRequest{
-				HTTP: form, DPoPProofs: dpopProofs, PeerCertificate: peerCert,
-				ClientAttestations: attestations, ClientAttestationPoPs: pops,
-			})
+			result, err = srv.RefreshAccessToken(r.Context(), req.RefreshToken())
 		default:
 			writeRawOAuthError(w, http.StatusBadRequest, server.ErrorUnsupportedGrantType, "grant_type must be authorization_code or refresh_token")
 			return

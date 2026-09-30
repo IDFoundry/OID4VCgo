@@ -72,9 +72,12 @@ func newWallet(httpClient *http.Client) (*wallet.Wallet, error) {
 			MaxResponseBytes: 1 << 20,
 			RequestTimeout:   20 * time.Second,
 			MaxRedirects:     2,
-			// The suite's module base URL resolves to a loopback
-			// address by default (see main.go's own -suite flag).
-			AllowLoopbackHTTP: true,
+			// The suite runs locally: https://localhost:8443 by
+			// default (main.go's -suite flag), and in CI its module
+			// URLs use localhost.emobix.co.uk, a public name that
+			// resolves to 127.0.0.1.
+			AllowLoopbackHosts:   true,
+			AllowedLoopbackHosts: []string{"localhost.emobix.co.uk"},
 		},
 	}, wallet.Dependencies{
 		HTTP: httpClient, Clock: wallet.ClockFunc(time.Now), Random: rand.Reader,

@@ -20,15 +20,18 @@ const (
 	// fetches (a by-reference Credential Offer, the Nonce Endpoint, a
 	// request_uri Request Object) go over plain http:// — the same
 	// reasoning FAPIgo's own server.AssuranceProduction applies to an
-	// endpoint URL parsed with fapi.AllowLoopbackHTTP.
+	// endpoint URL parsed with fapi.AllowLoopbackHTTP. It rejects
+	// AllowLoopbackHosts too, the https-only form of the same
+	// development switch, which lets a fetch reach this machine's own
+	// services.
 	//
 	// It also rejects Config.VerifierTrust set to NoVerifierTrust{},
 	// which skips OID4VP §5.9.3's Verifier trust chain validation.
 	//
-	// Config.Fetch.AllowedPrivateHosts is deliberately not rejected: it
-	// is an explicit, named allow-list for a fixed deployment topology
-	// (e.g. a Wallet backend reaching an internal Credential Issuer),
-	// not a development switch, and every other SSRF check still
-	// applies to an allowed host.
+	// Config.Fetch.AllowedPrivateHosts and AllowedLoopbackHosts are
+	// deliberately not rejected: each is an explicit, named allow-list
+	// for a fixed deployment topology (e.g. a Wallet backend reaching an
+	// internal Credential Issuer), not a development switch, and every
+	// other SSRF check still applies to an allowed host.
 	AssuranceProduction
 )

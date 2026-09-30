@@ -14,7 +14,6 @@ import (
 
 	fapi "github.com/idfoundry/fapigo"
 	"github.com/idfoundry/fapigo/extension"
-	"github.com/idfoundry/fapigo/fapihttp"
 	"github.com/idfoundry/fapigo/keys"
 	"github.com/idfoundry/fapigo/keys/ephemeral"
 	fapires "github.com/idfoundry/fapigo/resource"
@@ -240,15 +239,8 @@ func (a *App) registerWallet() (*memstore.ClientRepository, *ephemeral.ClientKey
 	if err != nil {
 		return nil, nil, fmt.Errorf("issuerapp: register wallet: %w", err)
 	}
-	// No client keys are registered, so nothing is ever fetched; the
-	// fetcher only satisfies ClientKeySource's constructor.
-	fetcher, err := fapihttp.New(&http.Client{Timeout: 10 * time.Second}, fapihttp.Config{
-		MaxResponseBytes: 1 << 16, RequestTimeout: 10 * time.Second, MaxRedirects: 2,
-	})
-	if err != nil {
-		return nil, nil, fmt.Errorf("issuerapp: fetcher: %w", err)
-	}
-	clientKeys, err := ephemeral.NewClientKeySource(fetcher, nil)
+	// No client keys are registered, so nothing is ever fetched.
+	clientKeys, err := ephemeral.NewClientKeySource(nil, nil)
 	if err != nil {
 		return nil, nil, fmt.Errorf("issuerapp: client keys: %w", err)
 	}
