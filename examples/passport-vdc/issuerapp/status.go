@@ -172,8 +172,8 @@ func (a *App) withStatus(c *issuer.CredentialInstance, idx int) {
 // signer with its certificate in the token's x5c/x5chain (HAIP 1.0), in
 // the form the Accept header asks for: CWT for an mdoc's reference, JWT
 // otherwise (SD-JWT VC requires a JWT Status List Token).
-func (a *App) statusPublisher() statuslist.Publisher {
-	return statuslist.Publisher{
+func (a *App) statusPublisher() *statuslist.Publisher {
+	a.publisher = &statuslist.Publisher{
 		URI: a.statusListURI, Signer: a.documentSigner, Chain: a.documentChain(),
 		Statuses: func(context.Context) ([]uint8, error) {
 			revoked, _ := a.statusList.snapshot()
@@ -181,6 +181,7 @@ func (a *App) statusPublisher() statuslist.Publisher {
 		},
 		Lifetime: statusTokenLifetime, TTL: statusTokenTTL * time.Second, Now: a.now,
 	}
+	return a.publisher
 }
 
 var statusTemplate = template.Must(template.New("status").Parse(pageHead + `
@@ -227,6 +228,9 @@ func (a *App) handleRevoke(w http.ResponseWriter, r *http.Request) {
 	if !a.statusList.revokeHandle(r.FormValue("handle")) {
 		writeHTMLError(w, http.StatusBadRequest, "unknown credential")
 		return
+	}
+	if a.publisher != nil {
+		a.publisher.Invalidate() // serve the revocation at once
 	}
 	http.Redirect(w, r, "/status", http.StatusSeeOther)
 }

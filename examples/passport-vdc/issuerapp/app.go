@@ -27,6 +27,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/democert"
 	"github.com/idfoundry/oid4vcgo/haip"
 	"github.com/idfoundry/oid4vcgo/issuer"
+	"github.com/idfoundry/oid4vcgo/statuslist"
 	oid4vcgostorage "github.com/idfoundry/oid4vcgo/storage"
 )
 
@@ -62,6 +63,7 @@ type App struct {
 	caCert           *x509.Certificate
 	statusList       *statusList
 	statusListURI    string
+	publisher        *statuslist.Publisher // serves the status list; set by statusPublisher
 	handler          http.Handler
 }
 

@@ -318,10 +318,14 @@ changes whether *every* bullet below is `(done)`.
   a test that wires the two packages together), and `Check`/`CheckCWT`,
   the §8.3 steps 3-7 orchestration for each. Around those, `Fetcher`
   fetches a Status List Token over https (no redirects, content type
-  checked, size capped), `Checker` fetches and checks a Referenced
-  Token's status against a trust anchor pool in one call, and
-  `Publisher` is an `http.Handler` serving a freshly signed token in
-  either encoding by `Accept`. The CWT profile's ttl/
+  checked, size capped, and only from public addresses unless
+  `AllowLoopback`/`AllowPrivate` is set, checked when the connection
+  is dialled), `Checker` fetches and checks a Referenced Token's status
+  against a trust anchor pool in one call, and `Publisher` is an
+  `http.Handler` serving a signed token in either encoding by
+  `Accept`, cached for `CacheFor` so unauthenticated requests don't
+  each cost a signature (`Invalidate` drops the cache when a status
+  changes). The CWT profile's ttl/
   status_list/status claim keys (65534/65533/65535) are still "TBD
   (requested assignment)" in the IANA CWT Claims Registry as of the
   draft version this targets — see `cwt.go`'s own comment, and update if
