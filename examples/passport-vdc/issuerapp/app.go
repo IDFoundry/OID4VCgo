@@ -13,7 +13,6 @@ import (
 	"time"
 
 	fapi "github.com/idfoundry/fapigo"
-	"github.com/idfoundry/fapigo/extension"
 	"github.com/idfoundry/fapigo/keys"
 	"github.com/idfoundry/fapigo/keys/ephemeral"
 	fapires "github.com/idfoundry/fapigo/resource"
@@ -42,8 +41,6 @@ const (
 // VCTPath is where this issuer serves its SD-JWT VC type metadata,
 // relative to IssuerURL; the full URL is the credential's vct.
 const VCTPath = "/vct/passport/1"
-
-const attestationAlgorithm = fapi.ES256
 
 // App is a running passport-vdc issuer.
 type App struct {
@@ -155,33 +152,25 @@ func (a *App) buildAuthorizationServer() error {
 	if err != nil {
 		return fmt.Errorf("issuerapp: access tokens: %w", err)
 	}
-	// issuer_state must be registered to survive PAR at all; the
-	// approval step reads it back from the interaction request.
-	extensions, err := extension.NewRegistry(oid4vci.IssuerStateExtension)
+
+	// HAIP's Authorization Server settings, including the issuer_state
+	// extension the approval step reads the passport transaction from.
+	cfg, err := haip.RecommendedAuthorizationServerConfig()
 	if err != nil {
-		return fmt.Errorf("issuerapp: extensions: %w", err)
+		return fmt.Errorf("issuerapp: %w", err)
 	}
+	cfg.Issuer = a.issuerURL
+	cfg.Endpoints = server.Endpoints{Authorization: authorize, Token: token, PushedAuthorizationRequest: par, JWKS: jwks}
+	cfg.Assurance = server.AssuranceDevelopment
+	cfg.Limits.MaxClientAttestationLifetime = 24 * time.Hour
+	limits := cfg.Limits
 
-	limits := server.RecommendedLimits()
-	limits.MaxClientAttestationLifetime = 24 * time.Hour
-	limits.MaxClientAttestationPoPAge = limits.MaxDPoPProofAge
-	algorithms := server.RecommendedAlgorithms()
-	algorithms.ClientAttestation = server.AlgorithmSet{attestationAlgorithm}
-	algorithms.ClientAttestationPoP = server.AlgorithmSet{attestationAlgorithm}
-
+	// The resource verifier below shares the replay and revocation
+	// stores, so a token the server revokes stops working at the
+	// Credential Endpoint too.
 	replay := memstore.NewReplayStore()
 	revocation := memstore.NewRevocationStore()
-	a.server, err = server.New(server.Config{
-		Issuer:                               a.issuerURL,
-		Endpoints:                            server.Endpoints{Authorization: authorize, Token: token, PushedAuthorizationRequest: par, JWKS: jwks},
-		Profile:                              server.ProfileFAPISecurity,
-		Algorithms:                           algorithms,
-		Limits:                               limits,
-		Assurance:                            server.AssuranceDevelopment,
-		OAuthOnly:                            true,
-		AttestationBasedClientAuthentication: true,
-		Extensions:                           extensions,
-	}, server.Dependencies{
+	a.server, err = server.New(cfg, server.Dependencies{
 		Clients: clients, Transactions: memstore.NewTransactionStore(), Grants: memstore.NewGrantStore(),
 		Replay: replay, ClientKeys: clientKeys, Keys: keyManager, AccessTokens: accessTokens,
 		Revocation: revocation, Clock: server.SystemClock{}, Random: rand.Reader,
@@ -228,14 +217,9 @@ func (a *App) registerWallet() (*memstore.ClientRepository, *ephemeral.ClientKey
 	for i, u := range w.RedirectURIs {
 		redirects[i] = fapi.RegisteredRedirectURI(u)
 	}
-	c, err := storage.NewRegisteredClient(storage.RegisteredClientConfig{
-		ID:                         fapi.ClientID(w.ClientID),
-		RedirectURIs:               redirects,
-		ClientAuthMethod:           storage.ClientAuthMethodAttestation,
-		ExpectedAttesterIssuer:     w.ProviderIssuer,
-		ClientAttestationAlgorithm: attestationAlgorithm,
-		AllowedScopes:              []string{MdocScope, SDJWTScope},
-	})
+	clientCfg := haip.RecommendedWalletClient(fapi.ClientID(w.ClientID), w.ProviderIssuer)
+	clientCfg.RedirectURIs, clientCfg.AllowedScopes = redirects, []string{MdocScope, SDJWTScope}
+	c, err := storage.NewRegisteredClient(clientCfg)
 	if err != nil {
 		return nil, nil, fmt.Errorf("issuerapp: register wallet: %w", err)
 	}
