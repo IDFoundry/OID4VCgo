@@ -88,6 +88,7 @@ type App struct {
 type session struct {
 	mode         Mode
 	browserToken string // the creating browser's session cookie; "" for CreateRequest
+	binding      string // what its requests are bound to: browserToken, or a secret kept here for CreateRequest
 	expiresAt    time.Time
 	cross, same  channel // same.id is "" without a browser
 }
@@ -215,8 +216,17 @@ func (a *App) CreateRequest(mode Mode) (id, link string, err error) {
 // createSession starts a page in mode: a cross-device request, and —
 // when browserToken, the creating browser's session cookie, is set — a
 // same-device request whose answer Transactions releases only when the
-// redirect back arrives in that browser.
+// redirect back arrives in that browser. Without a browser, the page's
+// requests are bound to a secret kept here, so a result is released
+// only through the page's own ID, never through the request_uri's.
 func (a *App) createSession(ctx context.Context, mode Mode, browserToken string) (string, error) {
+	binding := browserToken
+	if binding == "" {
+		var err error
+		if binding, err = randomID(); err != nil {
+			return "", err
+		}
+	}
 	query, err := buildQuery(mode, a.cfg.IssuerVCT, a.issuerTrusted)
 	if err != nil {
 		return "", err
@@ -225,14 +235,14 @@ func (a *App) createSession(ctx context.Context, mode Mode, browserToken string)
 	if err != nil {
 		return "", err
 	}
-	s := &session{mode: mode, browserToken: browserToken}
-	cross, err := a.txs.Begin(ctx, query, browserToken, false)
+	s := &session{mode: mode, browserToken: browserToken, binding: binding}
+	cross, err := a.txs.Begin(ctx, query, binding, false)
 	if err != nil {
 		return "", err
 	}
 	s.cross = channel{id: cross.ID, link: cross.Link}
 	if browserToken != "" {
-		same, err := a.txs.Begin(ctx, query, browserToken, true)
+		same, err := a.txs.Begin(ctx, query, binding, true)
 		if err != nil {
 			return "", err
 		}
@@ -294,7 +304,7 @@ func (a *App) state(ctx context.Context, s *session) pageState {
 		if ch.id == "" {
 			continue
 		}
-		view, err := a.txs.Lookup(ctx, ch.id, s.browserToken)
+		view, err := a.txs.Lookup(ctx, ch.id, s.binding)
 		if err != nil {
 			continue
 		}
@@ -357,7 +367,7 @@ func (a *App) accept(ctx context.Context, txID string, result verifier.VerifyRes
 	}
 	for _, ch := range []channel{s.cross, s.same} {
 		if ch.id != "" && ch.id != txID {
-			if view, err := a.txs.Lookup(ctx, ch.id, s.browserToken); err == nil &&
+			if view, err := a.txs.Lookup(ctx, ch.id, s.binding); err == nil &&
 				(view.Status == verifier.TransactionDone || view.Status == verifier.TransactionAwaitingRedirect) {
 				return errors.New("this request has already been answered")
 			}

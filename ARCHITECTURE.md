@@ -1096,7 +1096,11 @@ changes whether *every* bullet below is `(done)`.
   `direct_post.jwt` response by its `kid` and verifies it once,
   `Redeem` exchanges a same-device `response_code` only in the browser
   that began the session, and `RequestObjectHandler`/`ResponseHandler`
-  expose the two Wallet-facing endpoints. The store's capabilities
+  expose the two Wallet-facing endpoints. Every request needs a
+  browser binding — a secret the caller keeps, as a cookie or
+  server-side — since its ID is public in the `request_uri`, and a
+  refused answer's `LastError` is kept short and printable, with a
+  Wallet's own error response reduced to its error code. The store's capabilities
   (`Durable`, `AtomicUpdate`) are checked against the assurance level,
   as for `issuer`'s stores. `verifiertest` holds contract tests for a
   caller's own certificate-chain issuer key resolver.

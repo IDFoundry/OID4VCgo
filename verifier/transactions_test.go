@@ -16,6 +16,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcgo/dcql"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
+	"github.com/idfoundry/oid4vcgo/internal/jwe"
 	"github.com/idfoundry/oid4vcgo/internal/jwk"
 	"github.com/idfoundry/oid4vcgo/internal/testcert"
 	"github.com/idfoundry/oid4vcgo/storage"
@@ -123,6 +124,32 @@ func (f *txFixture) answer(begun verifier.Begun, alter func(*wallet.Authorizatio
 	return jwe
 }
 
+// errorAnswer is a Wallet error response to begun (OpenID4VP §8.5) —
+// which anyone holding the request's public key can send.
+func (f *txFixture) errorAnswer(begun verifier.Begun, code, description string) string {
+	f.t.Helper()
+	object, err := f.txs.RequestObject(context.Background(), begun.ID)
+	if err != nil {
+		f.t.Fatalf("RequestObject: %v", err)
+	}
+	link, _ := url.Parse(begun.Link)
+	req, err := wallet.ParseAuthorizationRequest(wallet.ParseAuthorizationRequestParams{
+		RequestObject: object, ClientID: link.Query().Get("client_id"), VerifierTrust: wallet.NoVerifierTrust{},
+	})
+	if err != nil {
+		f.t.Fatalf("ParseAuthorizationRequest: %v", err)
+	}
+	payload, err := json.Marshal(map[string]string{"error": code, "error_description": description, "state": req.State})
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	compact, err := jwe.Encrypt(req.ResponseEncryptionKey, jwe.Enc(req.ResponseEncryptionEnc), payload, jwe.EncryptOptions{KeyID: req.ResponseEncryptionKeyID})
+	if err != nil {
+		f.t.Fatalf("Encrypt: %v", err)
+	}
+	return compact
+}
+
 func (f *txFixture) begin(binding string, sameDevice bool) verifier.Begun {
 	f.t.Helper()
 	begun, err := f.txs.Begin(context.Background(), f.query, binding, sameDevice)
@@ -207,8 +234,10 @@ func TestTransactions_SameDevice(t *testing.T) {
 	})
 	t.Run("needs a binding and a redirect URI", func(t *testing.T) {
 		f := newTxFixture(t, nil)
-		if _, err := f.txs.Begin(ctx, f.query, "", true); err == nil {
-			t.Error("a same-device request began without a browser binding")
+		for _, sameDevice := range []bool{false, true} {
+			if _, err := f.txs.Begin(ctx, f.query, "", sameDevice); err == nil {
+				t.Errorf("a request (same-device %v) began without a browser binding", sameDevice)
+			}
 		}
 		g := newTxFixture(t, func(c *verifier.TransactionsConfig) { c.RedirectURI = "" })
 		if _, err := g.txs.Begin(ctx, g.query, "b", true); err == nil {
@@ -231,7 +260,7 @@ func TestTransactions_RefusedAnswersLeaveItOpen(t *testing.T) {
 			return nil
 		}
 	})
-	begun := f.begin("", false)
+	begun := f.begin("browser-A", false)
 
 	refusals := map[string]string{
 		"wrong nonce": f.answer(begun, func(r *wallet.AuthorizationRequest) { r.Nonce = "not-the-nonce" }),
@@ -246,7 +275,7 @@ func TestTransactions_RefusedAnswersLeaveItOpen(t *testing.T) {
 	if _, err := f.txs.HandleResponse(ctx, f.answer(begun, nil)); err == nil || !strings.Contains(err.Error(), "revoked") {
 		t.Errorf("Accept refusal: %v", err)
 	}
-	view, err := f.txs.Lookup(ctx, begun.ID, "")
+	view, err := f.txs.Lookup(ctx, begun.ID, "browser-A")
 	if err != nil || view.Status != verifier.TransactionPending || !strings.Contains(view.LastError, "revoked") {
 		t.Fatalf("after refusals: %+v, %v; want still pending, with the last reason", view, err)
 	}
@@ -259,18 +288,18 @@ func TestTransactions_RefusedAnswersLeaveItOpen(t *testing.T) {
 func TestTransactions_ExpiryAndClose(t *testing.T) {
 	ctx := context.Background()
 	f := newTxFixture(t, func(c *verifier.TransactionsConfig) { c.Lifetime = time.Minute })
-	expired := f.begin("", false)
+	expired := f.begin("browser-A", false)
 	jwe := f.answer(expired, nil)
 	f.now = f.now.Add(2 * time.Minute)
 	if _, err := f.txs.HandleResponse(ctx, jwe); !errors.Is(err, verifier.ErrTransactionExpired) {
 		t.Errorf("answer after expiry: %v, want ErrTransactionExpired", err)
 	}
-	if view, _ := f.txs.Lookup(ctx, expired.ID, ""); view.Status != verifier.TransactionExpired {
+	if view, _ := f.txs.Lookup(ctx, expired.ID, "browser-A"); view.Status != verifier.TransactionExpired {
 		t.Errorf("Lookup after expiry: %v, want expired", view.Status)
 	}
 
 	f.now = time.Now()
-	closed := f.begin("", false)
+	closed := f.begin("browser-A", false)
 	jwe = f.answer(closed, nil)
 	if err := f.txs.Close(ctx, closed.ID); err != nil {
 		t.Fatal(err)
@@ -284,7 +313,7 @@ func TestTransactions_ExpiryAndClose(t *testing.T) {
 // request, exactly one completes it.
 func TestTransactions_CompletesOnce(t *testing.T) {
 	f := newTxFixture(t, nil)
-	begun := f.begin("", false)
+	begun := f.begin("browser-A", false)
 	answers := make([]string, 8)
 	for i := range answers {
 		answers[i] = f.answer(begun, nil)
@@ -384,7 +413,7 @@ func TestTransactions_HandlerEdges(t *testing.T) {
 	resp := httptest.NewServer(f.txs.ResponseHandler())
 	defer resp.Close()
 
-	begun := f.begin("", false)
+	begun := f.begin("browser-A", false)
 	if r, err := http.Get(reqObj.URL + "/any/prefix/" + begun.ID); err != nil || r.StatusCode != http.StatusOK {
 		t.Errorf("request object by last path segment: %v %v", r, err)
 	}
@@ -422,5 +451,68 @@ func TestTransactions_HandlerEdges(t *testing.T) {
 	}
 	if _, err := f.txs.HandleResponse(context.Background(), "not-a-jwe"); err == nil {
 		t.Error("a non-JWE answer was accepted")
+	}
+}
+
+// TestTransactions_LookupNeedsTheBinding: the request's ID is public —
+// it's in the request_uri — so a result is released only with the
+// binding the request began with.
+func TestTransactions_LookupNeedsTheBinding(t *testing.T) {
+	ctx := context.Background()
+	f := newTxFixture(t, nil)
+	begun := f.begin("browser-A", false)
+	if _, err := f.txs.HandleResponse(ctx, f.answer(begun, nil)); err != nil {
+		t.Fatalf("HandleResponse: %v", err)
+	}
+	for _, binding := range []string{"", "browser-B"} {
+		if view, err := f.txs.Lookup(ctx, begun.ID, binding); !errors.Is(err, verifier.ErrWrongBrowser) || view.Result != nil {
+			t.Errorf("Lookup(binding %q) = %+v, %v; want ErrWrongBrowser and no result", binding, view, err)
+		}
+	}
+	if view, err := f.txs.Lookup(ctx, begun.ID, "browser-A"); err != nil || view.Result == nil {
+		t.Errorf("Lookup with the binding = %+v, %v; want the result", view, err)
+	}
+}
+
+// TestTransactions_LastErrorFromAWalletErrorIsItsCodeOnly: an error
+// response's description is the sender's text, so LastError keeps only
+// a plain error code.
+func TestTransactions_LastErrorFromAWalletErrorIsItsCodeOnly(t *testing.T) {
+	ctx := context.Background()
+	f := newTxFixture(t, nil)
+	begun := f.begin("browser-A", false)
+	for _, c := range []struct{ code, want string }{
+		{"access_denied", "the wallet returned an error: access_denied"},
+		{"Call +1 555 0100 <b>now</b>", "the wallet returned an error"},
+	} {
+		if _, err := f.txs.HandleResponse(ctx, f.errorAnswer(begun, c.code, "Your account is locked, call +1 555 0100")); err == nil {
+			t.Fatal("an error response was accepted")
+		}
+		view, err := f.txs.Lookup(ctx, begun.ID, "browser-A")
+		if err != nil || view.Status != verifier.TransactionPending || view.LastError != c.want {
+			t.Errorf("code %q: LastError = %q (%+v, %v); want %q and still pending", c.code, view.LastError, view, err, c.want)
+		}
+	}
+}
+
+// TestTransactions_LastErrorIsShortAndPrintable: a refusal's text is
+// cut to a bounded length and unprintable characters are replaced.
+func TestTransactions_LastErrorIsShortAndPrintable(t *testing.T) {
+	ctx := context.Background()
+	f := newTxFixture(t, func(c *verifier.TransactionsConfig) {
+		c.Accept = func(context.Context, string, verifier.VerifyResponseResult) error {
+			return errors.New("line one\nline two\x00" + strings.Repeat("x", 1000))
+		}
+	})
+	begun := f.begin("browser-A", false)
+	if _, err := f.txs.HandleResponse(ctx, f.answer(begun, nil)); err == nil {
+		t.Fatal("refused answer was accepted")
+	}
+	view, err := f.txs.Lookup(ctx, begun.ID, "browser-A")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(view.LastError) > 300 || strings.ContainsAny(view.LastError, "\n\x00") || !strings.HasPrefix(view.LastError, "line one?line two?") {
+		t.Errorf("LastError = %q (%d bytes), want at most ~256 printable bytes", view.LastError, len(view.LastError))
 	}
 }
