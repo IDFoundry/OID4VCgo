@@ -153,31 +153,14 @@ func (p *Prepared) Send(ctx context.Context, format string) (Presented, error) {
 	if err != nil {
 		return Presented{}, err
 	}
-	a := p.authReq
-	vpToken, err := wallet.PresentCredentials(ctx, wallet.PresentationRequest{
-		Query: a.Query, Credentials: held, Audience: a.ClientID, Nonce: a.Nonce,
-		ResponseURI: a.ResponseURI, ResponseEncryptionKey: a.ResponseEncryptionKey,
-		// Offer only credentials from an issuer the query's
-		// trusted_authorities names.
-		TrustedAuthorities: dcql.AKITrustedAuthoritiesChecker{},
-	})
-	if err != nil {
-		return Presented{}, fmt.Errorf("walletapp: no stored credential satisfies the request: %w", err)
-	}
-	responseJWE, err := wallet.BuildDirectPostResponse(wallet.BuildDirectPostResponseParams{
-		VPToken: vpToken, State: a.State,
-		EncryptionKey: a.ResponseEncryptionKey, EncryptionKeyID: a.ResponseEncryptionKeyID,
-		EncryptionEnc: a.ResponseEncryptionEnc,
-	})
-	if err != nil {
-		return Presented{}, fmt.Errorf("walletapp: presentation response: %w", err)
-	}
-	reply, err := wallet.SubmitDirectPostResponse(ctx, p.http, a.ResponseURI, responseJWE)
+	// Offer only credentials from an issuer the query's
+	// trusted_authorities names.
+	responded, err := wallet.Respond(ctx, p.http, p.authReq, held, dcql.AKITrustedAuthoritiesChecker{})
 	if err != nil {
 		return Presented{}, fmt.Errorf("walletapp: %w", err)
 	}
-	presented := Presented{VerifierClientID: a.ClientID, RedirectURI: reply.RedirectURI}
-	for id := range vpToken {
+	presented := Presented{VerifierClientID: p.authReq.ClientID, RedirectURI: responded.Reply.RedirectURI}
+	for id := range responded.VPToken {
 		presented.Credentials = append(presented.Credentials, id)
 	}
 	sort.Strings(presented.Credentials)
