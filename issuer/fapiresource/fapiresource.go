@@ -6,10 +6,10 @@
 //
 // When the Authorization Server runs in the same process, build the
 // resource.Verifier with fapigo/serverresource.NewVerifier from the
-// server's own Config and Dependencies: it shares the server's
-// revocation and replay stores and matches its access-token format,
-// so a token the server revokes stops working at the Credential
-// Endpoint too.
+// server's own Config and Dependencies: it checks revocation against
+// the store the server revokes into, so a token the server revokes
+// stops working at the Credential Endpoint too, and matches its
+// access-token format.
 package fapiresource
 
 import (

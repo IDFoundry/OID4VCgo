@@ -58,6 +58,17 @@ package issuer
 // what's being issued, or to look up the pending issuance — with no
 // need to capture the value off the PAR request itself.
 //
+// BeginAuthorization returns the InteractionRequest once. When the
+// consent step may run on another instance, store its encoding
+// (InteractionRequest.MarshalText) under the handle's String() — in a
+// shared session store, or a cookie you sign — and restore it there
+// with server.ParseInteractionRequest and server.ParseInteractionHandle;
+// issuer_state comes back with it, read with extension.Get as above.
+// CompleteAuthorization checks the grant against the request the server
+// itself stored, so a tampered copy can't widen it, but keep it where
+// only your application can write it so the consent page shows what
+// was actually asked.
+//
 // # Credential Endpoint access tokens
 //
 // A Wallet presents whatever access token the paired Authorization
