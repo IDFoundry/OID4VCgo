@@ -14,12 +14,11 @@ import (
 // RequestEncryption configures how RequestCredential/RequestDeferredCredential
 // encrypt the outbound request body (§10) — set this when the
 // Credential Issuer's own Metadata names credential_request_encryption.
-// This package doesn't fetch or parse Issuer metadata itself (see the
-// package doc comment); RecipientJWK is one entry of the Issuer's own
-// published credential_request_encryption.jwks (§12.2.4), the caller's
-// own choice among however many the Issuer offers — §10-3's own "any
-// may be selected based on the information about each key, such as
-// kty, use, alg."
+// RecipientJWK is one entry of the Issuer's own published
+// credential_request_encryption.jwks (§12.2.4), the caller's own choice
+// among however many the Issuer offers — §10-3's own "any may be
+// selected based on the information about each key, such as kty, use,
+// alg." EncryptionFromMetadata makes that choice from the metadata.
 type RequestEncryption struct {
 	// RecipientJWK is REQUIRED: the Issuer's own encryption public key,
 	// as published in its Metadata.

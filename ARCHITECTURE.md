@@ -315,7 +315,12 @@ changes whether *every* bullet below is `(done)`.
   `StatusListRef.CWTStatusClaim`/`ParseCWTStatusClaim` — the same shape
   `credential/sdjwtvc`'s `Claims.Status` expects for JOSE, and covered by
   a test that wires the two packages together), and `Check`/`CheckCWT`,
-  the §8.3 steps 3-7 orchestration for each. The CWT profile's ttl/
+  the §8.3 steps 3-7 orchestration for each. Around those, `Fetcher`
+  fetches a Status List Token over https (no redirects, content type
+  checked, size capped), `Checker` fetches and checks a Referenced
+  Token's status against a trust anchor pool in one call, and
+  `Publisher` is an `http.Handler` serving a freshly signed token in
+  either encoding by `Accept`. The CWT profile's ttl/
   status_list/status claim keys (65534/65533/65535) are still "TBD
   (requested assignment)" in the IANA CWT Claims Registry as of the
   draft version this targets — see `cwt.go`'s own comment, and update if
@@ -618,6 +623,9 @@ changes whether *every* bullet below is `(done)`.
   follows. Fixing this surfaced a real wire-format bug in
   `wallet.RequestPreAuthorizedCodeToken`'s own retry logic — see the
   `wallet` bullet below.
+  `NewError` builds an `*Error` for a caller's own handler to return
+  (e.g. `credential_request_denied`), and `issuertest` holds contract
+  tests for a caller's own implementation of each store interface.
 - **`wallet`** (done) — the Wallet's OID4VCI role (client side): credential-offer
   resolution, proof-of-possession generation, deferred/notification
   handling. Built on `fapigo/client`. `ResolveCredentialOffer` decodes a
@@ -730,9 +738,9 @@ changes whether *every* bullet below is `(done)`.
   setting the new `CredentialRequest.RequestEncryption` (or
   `DeferredCredentialRequest`'s own field) encrypts the outbound
   request body to the Issuer's own published
-  `credential_request_encryption` key — this package doesn't fetch or
-  parse Issuer metadata itself, so the caller supplies one JWK from it
-  via `RequestEncryption.RecipientJWK` — and setting
+  `credential_request_encryption` key — the caller supplies one JWK
+  from it via `RequestEncryption.RecipientJWK`, or has
+  `EncryptionFromMetadata` choose one — and setting
   `.ResponseEncryption` additionally requests an encrypted Response:
   `prepareResponseEncryption` generates a fresh ephemeral P-256 key
   pair per call, and `postCredentialResult` (the shared POST/parse
@@ -1062,9 +1070,20 @@ changes whether *every* bullet below is `(done)`.
   responsibilities regardless. `VerifyResponse` doesn't check
   revocation: each `VerifiedCredential` carries its status reference —
   `Claims["status"]` for an SD-JWT VC, `MdocStatus` (the MSO's
-  issuer-signed status) for an mdoc — for the caller to resolve, e.g.
-  with `statuslist.CheckX5C`/`CheckCWTX5Chain`; every time check,
+  issuer-signed status) for an mdoc — and `StatusListRef` extracts it
+  from either, for the caller to resolve with `statuslist.Checker`;
+  every time check,
   mdoc validity included, uses `VerifyResponseRequest.Now`.
+  `Transactions` runs a whole presentation session over a
+  `TransactionStore`: `Begin` creates the signed Request Object and the
+  link or QR payload for it, `HandleResponse` routes an encrypted
+  `direct_post.jwt` response by its `kid` and verifies it once,
+  `Redeem` exchanges a same-device `response_code` only in the browser
+  that began the session, and `RequestObjectHandler`/`ResponseHandler`
+  expose the two Wallet-facing endpoints. The store's capabilities
+  (`Durable`, `AtomicUpdate`) are checked against the assurance level,
+  as for `issuer`'s stores. `verifiertest` holds contract tests for a
+  caller's own certificate-chain issuer key resolver.
 - **`wallet`** (extended, done for `dc+sd-jwt`+`mso_mdoc`) — the naming
   question above is now resolved: OID4VP's Wallet role lives in the
   existing `wallet` package rather than a distinct one — "Wallet" is
@@ -1182,6 +1201,10 @@ changes whether *every* bullet below is `(done)`.
   redirect from it — the Verifier's reply is a 200 carrying JSON
   (§8.2), and following one would resend the response, and take the
   `redirect_uri` the user agent is sent to, from wherever it pointed.
+  `Respond` does the whole answer in one call (`PresentCredentials`,
+  `BuildDirectPostResponse`, `SubmitDirectPostResponse`), and
+  `EncryptionFromMetadata` picks credential request/response encryption
+  from the Issuer's metadata.
 - **`haip`** (done) — the profile layer: wires HAIP's own specific
   overrides on top of `issuer`/`wallet`/`verifier` — mirrors
   FAPIgo's `server.RecommendedLimits()`/`RecommendedAlgorithms()` pattern:
@@ -1241,7 +1264,8 @@ changes whether *every* bullet below is `(done)`.
 - **`storage`** (done) — in-memory implementations of every store `issuer`
   defines (`NonceStore`, `CredentialOfferStore`, `DeferredTransactionStore`,
   `NotificationStore`, `PreAuthorizedCodeStore`, `DPoPNonceStore`,
-  `DPoPReplayChecker`), for local dev/testing only — never production;
+  `DPoPReplayChecker`) and `verifier` defines (`TransactionStore`, via
+  `NewVerifierTransactionStore`), for local dev/testing only — never production;
   mirrors FAPIgo's `storage/memstore` down to the same non-durable,
   no-garbage-collection caveats and the same M-5 no-aliasing discipline
   (deep-copying every slice/pointer that crosses a Store/Get boundary,

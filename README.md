@@ -85,6 +85,25 @@ handing it to `wallet.ParseAuthorizationRequest` — that aren't obvious
 from either package's own doc comment alone; `go test` runs and checks
 these automatically, so they can't silently drift from the real API.
 
+Where to start, by role:
+
+- **Verifier** — `verifier.Transactions` runs a presentation session
+  end to end (request object, `direct_post.jwt` response, same-device
+  `response_code` bound to the browser), with its `RequestObjectHandler`
+  and `ResponseHandler` as ready `http.Handler`s over a
+  `verifier.TransactionStore` (`storage.NewVerifierTransactionStore`
+  for development). `VerifiedCredential.StatusListRef` plus
+  `statuslist.Checker` check revocation.
+- **Wallet** — `wallet.EncryptionFromMetadata` picks credential
+  request/response encryption from the Issuer's metadata;
+  `wallet.Respond` answers a verified Authorization Request in one call
+  (after showing the holder `wallet.PreviewPresentation`).
+- **Issuer** — `issuer.NewError` builds an OID4VCI error response (e.g.
+  `credential_request_denied`); `statuslist.Publisher` serves a signed
+  Status List Token.
+- **Your own stores and resolvers** — `issuer/issuertest` and
+  `verifier/verifiertest` hold contract tests to run against them.
+
 For a complete, real integration, see the four `cmd/conformance-*`
 binaries under `conformance/`: each pairs this library's own role
 package (`issuer`, `wallet`, `verifier`) with real HTTP and, where
