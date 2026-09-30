@@ -17,6 +17,7 @@ import (
 	"github.com/idfoundry/fapigo/keys/ephemeral"
 	fapires "github.com/idfoundry/fapigo/resource"
 	"github.com/idfoundry/fapigo/server"
+	"github.com/idfoundry/fapigo/serverresource"
 	"github.com/idfoundry/fapigo/storage"
 	"github.com/idfoundry/fapigo/storage/memstore"
 
@@ -165,17 +166,11 @@ func (a *App) buildAuthorizationServer() error {
 	cfg.Endpoints = server.Endpoints{Authorization: authorize, Token: token, PushedAuthorizationRequest: par, JWKS: jwks}
 	cfg.Assurance = server.AssuranceDevelopment
 	cfg.Limits.MaxClientAttestationLifetime = 24 * time.Hour
-	limits := cfg.Limits
 
-	// The resource verifier below shares the replay and revocation
-	// stores, so a token the server revokes stops working at the
-	// Credential Endpoint too.
-	replay := memstore.NewReplayStore()
-	revocation := memstore.NewRevocationStore()
-	a.server, err = server.New(cfg, server.Dependencies{
+	deps := server.Dependencies{
 		Clients: clients, Transactions: memstore.NewTransactionStore(), Grants: memstore.NewGrantStore(),
-		Replay: replay, ClientKeys: clientKeys, Keys: keyManager, AccessTokens: accessTokens,
-		Revocation: revocation, Clock: server.SystemClock{}, Random: rand.Reader,
+		Replay: memstore.NewReplayStore(), ClientKeys: clientKeys, Keys: keyManager, AccessTokens: accessTokens,
+		Revocation: memstore.NewRevocationStore(), Clock: server.SystemClock{}, Random: rand.Reader,
 		ClientCertificateTrust: server.NoClientCertificateChainTrust{},
 		// Wallet Attestations are trusted by their x5c chain to the
 		// Wallet Provider CA (HAIP 1.0 §4.4.1), not by registered keys,
@@ -186,25 +181,16 @@ func (a *App) buildAuthorizationServer() error {
 			TrustAnchors:  server.StaticAttesterTrustAnchors{Roots: a.providerRoots},
 			IssuerBinding: server.AttesterIssuerInCertificate,
 		},
-	})
-	if err != nil {
+	}
+	if a.server, err = server.New(cfg, deps); err != nil {
 		return fmt.Errorf("issuerapp: server.New: %w", err)
 	}
 
-	// The resource verifier reads the access-token signing keys straight
-	// from the key manager, rather than fetching this issuer's own /jwks.
-	localKeys, err := keys.NewLocalIssuerKeys(a.issuerURL, keyManager)
-	if err != nil {
-		return fmt.Errorf("issuerapp: local issuer keys: %w", err)
-	}
-	resourceTokens, err := fapires.NewJWTAccessTokens(localKeys, a.issuerURL, a.issuerURL.String(), fapi.ES256, limits.AccessTokenLifetime, 8)
-	if err != nil {
-		return fmt.Errorf("issuerapp: resource access tokens: %w", err)
-	}
-	a.resourceVerifier, err = fapires.NewVerifier(fapires.Config{
-		Limits: fapires.Limits{MaxDPoPProofAge: limits.MaxDPoPProofAge, MaxClockSkew: limits.MaxClockSkew},
-	}, fapires.Dependencies{AccessTokens: resourceTokens, Replay: replay, Revocation: revocation, Clock: fapires.SystemClock{}})
-	if err != nil {
+	// The Credential Endpoint's access-token verifier, built from the
+	// server's own config and stores: its signing keys (read locally,
+	// not from this issuer's /jwks), and the revocation and replay
+	// stores, so a token the server revokes stops working there too.
+	if a.resourceVerifier, err = serverresource.NewVerifier(cfg, deps, serverresource.Options{}); err != nil {
 		return fmt.Errorf("issuerapp: resource verifier: %w", err)
 	}
 	return nil

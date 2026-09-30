@@ -14,8 +14,8 @@ import (
 	"github.com/idfoundry/fapigo/fapihttp"
 	"github.com/idfoundry/fapigo/keys"
 	"github.com/idfoundry/fapigo/keys/ephemeral"
-	fapires "github.com/idfoundry/fapigo/resource"
 	"github.com/idfoundry/fapigo/server"
+	"github.com/idfoundry/fapigo/serverresource"
 	"github.com/idfoundry/fapigo/storage"
 	"github.com/idfoundry/fapigo/storage/memstore"
 
@@ -121,18 +121,11 @@ func newServerMux(cfg Config) (*http.ServeMux, error) {
 		return nil, err
 	}
 	replayStore := memstore.NewReplayStore()
-	// revocationStore is shared between srvDeps (which records a
-	// revocation when the AS detects authorization-code reuse, RFC 6749
-	// §4.1.2) and resourceVerifier (which checks it on every Credential
-	// Endpoint call) — two independent stores would let the resource
-	// verifier keep accepting an access token the AS just revoked,
-	// exactly the gap the OIDF conformance suite's own
-	// attempt-reuse-authorization-code-after-one-second module flags
-	// (WARNING: "resource endpoint returned a different http status
-	// than expected" after "Testing if access token was revoked after
-	// authorization code reuse"). Mirrors FAPIgo's own
-	// cmd/conformance-as/wiring.go, which wires the identical shared
-	// store for the same reason.
+	// revocationStore is both the AS's revocation sink (it revokes on
+	// authorization-code reuse, RFC 6749 §4.1.2) and, through
+	// serverresource.NewVerifier below, the Credential Endpoint's
+	// revocation check — the sharing the OIDF suite's
+	// attempt-reuse-authorization-code-after-one-second module checks.
 	revocationStore := memstore.NewRevocationStore()
 
 	// HAIP's Authorization Server settings: FAPI 2.0, OAuth only, Wallet
@@ -153,10 +146,6 @@ func newServerMux(cfg Config) (*http.ServeMux, error) {
 	limits := srvCfg.Limits
 
 	accessTokens, err := server.NewJWTAccessTokens(keyManager, fapi.ES256)
-	if err != nil {
-		return nil, err
-	}
-	resourceAccessTokens, err := localResourceAccessTokens(issuerURL, keyManager, limits.AccessTokenLifetime)
 	if err != nil {
 		return nil, err
 	}
@@ -181,14 +170,13 @@ func newServerMux(cfg Config) (*http.ServeMux, error) {
 		return nil, fmt.Errorf("server.New: %w", err)
 	}
 
-	resourceVerifier, err := fapires.NewVerifier(fapires.Config{
-		Limits: fapires.Limits{MaxDPoPProofAge: limits.MaxDPoPProofAge, MaxClockSkew: limits.MaxClockSkew},
-	}, fapires.Dependencies{
-		AccessTokens: resourceAccessTokens, Replay: replayStore,
-		Revocation: revocationStore, Clock: fapires.SystemClock{},
-	})
+	// The Credential Endpoint's access-token verifier, built from the
+	// AS's own config and stores: its signing keys (read locally, not
+	// from this binary's /jwks), revocation and replay stores, and DPoP
+	// limits.
+	resourceVerifier, err := serverresource.NewVerifier(srvCfg, srvDeps, serverresource.Options{})
 	if err != nil {
-		return nil, fmt.Errorf("resource.NewVerifier: %w", err)
+		return nil, fmt.Errorf("serverresource.NewVerifier: %w", err)
 	}
 
 	issuerSigningKey, err := cfg.credentialIssuerSigningKey()
@@ -432,27 +420,6 @@ func addKeyAttestationProofType(cfg Config, credConfigs ...*issuer.CredentialCon
 		c.ProofTypesSupported[oid4vci.ProofTypeAttestation] = haip.RecommendedAttestationProofType()
 	}
 	return fixedKeyAttestationVerifier{pub: trustedKey, alg: jose.ES256}, nil
-}
-
-// srvLimits are this binary's own FAPI 2.0 Limits — server.RecommendedLimits
-// plus the Client Attestation-specific bounds
-// AttestationBasedClientAuthentication needs, which that preset
-// deliberately doesn't set (see its own doc comment on why: most
-// callers never register an attestation-authenticated client).
-// localResourceAccessTokens verifies the Credential Endpoint's access
-// tokens with keys.LocalIssuerKeys, reading the signing keys straight
-// from keyManager rather than looping back to this binary's own /jwks,
-// whose self-signed listener cert a standard net/http.Client (unlike
-// the OIDF suite's own outbound client) doesn't trust.
-func localResourceAccessTokens(issuerURL fapi.URL, keyManager keys.KeyManager, lifetime time.Duration) (fapires.JWTAccessTokens, error) {
-	localKeys, err := keys.NewLocalIssuerKeys(issuerURL, keyManager)
-	if err != nil {
-		return fapires.JWTAccessTokens{}, err
-	}
-	return fapires.NewJWTAccessTokens(
-		localKeys, issuerURL, issuerURL.String(),
-		fapi.ES256, lifetime, 8,
-	)
 }
 
 func registeredRedirectURIs(raw []string) []fapi.RegisteredRedirectURI {
