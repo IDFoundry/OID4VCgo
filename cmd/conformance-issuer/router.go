@@ -58,5 +58,10 @@ func newRouter(srv *server.Server, iss *issuer.Issuer, resourceVerifier *fapires
 		return nil, err
 	}
 	mux.Handle("POST /credential", credHandler)
+	notifyHandler, err := notificationHandler(iss, resourceVerifier, cfg)
+	if err != nil {
+		return nil, err
+	}
+	mux.Handle("POST "+notificationPath, notifyHandler)
 	return mux, nil
 }

@@ -473,7 +473,9 @@ func TestEncryptResponseBody_RoundTrip(t *testing.T) {
 // --- RequestCredential/RequestDeferredCredential enforcement ---
 
 func TestRequestCredential_RejectsResponseEncryptionWithoutEncryptedRequest(t *testing.T) {
-	f := newCredentialEndpointFixture(t)
+	f := newCredentialEndpointFixture(t, func(cfg *issuer.Config, _ *issuer.Dependencies) {
+		cfg.ResponseEncryption = &issuer.ResponseEncryptionSupport{EncValuesSupported: []jwe.Enc{jwe.A128GCM}}
+	})
 	nonce := f.issueNonce(t)
 	proof := buildJWTProof(t, testP256Key(t), testIssuer, nonce)
 
@@ -487,7 +489,9 @@ func TestRequestCredential_RejectsResponseEncryptionWithoutEncryptedRequest(t *t
 }
 
 func TestRequestCredential_AcceptsResponseEncryptionWithEncryptedRequest(t *testing.T) {
-	f := newCredentialEndpointFixture(t)
+	f := newCredentialEndpointFixture(t, func(cfg *issuer.Config, _ *issuer.Dependencies) {
+		cfg.ResponseEncryption = &issuer.ResponseEncryptionSupport{EncValuesSupported: []jwe.Enc{jwe.A128GCM}}
+	})
 	nonce := f.issueNonce(t)
 	proof := buildJWTProof(t, testP256Key(t), testIssuer, nonce)
 
@@ -716,5 +720,32 @@ func TestEncryptedCredentialRequestResponseRoundTrip(t *testing.T) {
 		RequireKeyBinding: sdjwtvc.KeyBindingNotRequired,
 	}); err != nil {
 		t.Fatalf("sdjwtvc.Verify: %v", err)
+	}
+}
+
+// TestRequestCredential_RejectsUnusableResponseEncryptionBeforeConsumingNonce
+// checks credential_response_encryption this issuer can't encrypt to
+// is refused before the proof's nonce is used up, so the Wallet can
+// retry with the same nonce.
+func TestRequestCredential_RejectsUnusableResponseEncryptionBeforeConsumingNonce(t *testing.T) {
+	f := newCredentialEndpointFixture(t, func(cfg *issuer.Config, _ *issuer.Dependencies) {
+		cfg.ResponseEncryption = &issuer.ResponseEncryptionSupport{EncValuesSupported: []jwe.Enc{jwe.A128GCM}}
+	})
+	nonce := f.issueNonce(t)
+	proof := buildJWTProof(t, testP256Key(t), testIssuer, nonce)
+	req := issuer.CredentialRequest{
+		CredentialConfigurationID: testSDJWTConfigID,
+		Proofs:                    map[string][]string{oid4vci.ProofTypeJWT: {proof}},
+		SDJWTClaims:               testSDJWTClaims(),
+		ResponseEncryption:        &issuer.ResponseEncryptionRequest{Enc: jwe.A256GCM, JWK: testWalletJWK(t)},
+		RequestWasEncrypted:       true,
+	}
+	auth := issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("test-client"), Scopes: []string{"identity_credential"}}
+	_, err := f.iss.RequestCredential(context.Background(), auth, req)
+	assertIssuerError(t, err, issuer.ErrorInvalidEncryptionParameters)
+
+	req.ResponseEncryption.Enc = jwe.A128GCM
+	if _, err := f.iss.RequestCredential(context.Background(), auth, req); err != nil {
+		t.Fatalf("retry with a usable enc and the same nonce: %v", err)
 	}
 }

@@ -422,6 +422,24 @@ func TestFullFlow_ParAuthorizeTokenNonceCredential(t *testing.T) {
 	if _, ok := payload["exp"]; !ok {
 		t.Error("issued credential has no exp claim")
 	}
+
+	// --- POST /notification ---
+	notificationID, _ := credentialResp["notification_id"].(string)
+	if notificationID == "" {
+		t.Fatalf("credential response has no notification_id: %+v", credentialResp)
+	}
+	notification, err := json.Marshal(map[string]string{"notification_id": notificationID, "event": "credential_accepted"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := client.Do(buildProtectedRequest(t, cfg.Issuer+notificationPath, clientKey, accessToken, "application/json", notification, now))
+	if err != nil {
+		t.Fatalf("POST notification: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Errorf("notification status = %d, want 204", resp.StatusCode)
+	}
 }
 
 // buildCredentialRequest builds a POST /credential *http.Request
@@ -433,20 +451,26 @@ func TestFullFlow_ParAuthorizeTokenNonceCredential(t *testing.T) {
 // serialization for §10's own encrypted requests).
 func buildCredentialRequest(t *testing.T, cfg Config, clientKey *ecdsa.PrivateKey, accessToken, contentType string, body []byte, now time.Time) *http.Request {
 	t.Helper()
-	credentialURL := cfg.Issuer + "/credential"
+	return buildProtectedRequest(t, cfg.Issuer+"/credential", clientKey, accessToken, contentType, body, now)
+}
+
+// buildProtectedRequest builds a DPoP-bound POST to endpoint, a
+// protected Credential Issuer endpoint.
+func buildProtectedRequest(t *testing.T, endpoint string, clientKey *ecdsa.PrivateKey, accessToken, contentType string, body []byte, now time.Time) *http.Request {
+	t.Helper()
 	athSum := sha256.Sum256([]byte(accessToken))
 	ath := base64.RawURLEncoding.EncodeToString(athSum[:])
-	credentialDPoP, err := buildDPoPProof(clientKey, http.MethodPost, credentialURL, randomHex(t, 16), ath, now)
+	dpop, err := buildDPoPProof(clientKey, http.MethodPost, endpoint, randomHex(t, 16), ath, now)
 	if err != nil {
-		t.Fatalf("buildDPoPProof (credential): %v", err)
+		t.Fatalf("buildDPoPProof (%s): %v", endpoint, err)
 	}
-	req, err := http.NewRequest(http.MethodPost, credentialURL, bytes.NewReader(body))
+	req, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
-		t.Fatalf("new credential request: %v", err)
+		t.Fatalf("new request to %s: %v", endpoint, err)
 	}
 	req.Header.Set("Content-Type", contentType)
 	req.Header.Set("Authorization", "DPoP "+accessToken)
-	req.Header.Set("DPoP", credentialDPoP)
+	req.Header.Set("DPoP", dpop)
 	return req
 }
 

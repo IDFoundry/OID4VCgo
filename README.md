@@ -102,7 +102,9 @@ Where to start, by role:
   `haip.RecommendedWalletClient` set up FAPIgo's Authorization Server
   for HAIP; `issuer.CredentialHandler` serves the Credential
   Endpoint (with `issuer/fapiresource` checking access tokens), asking
-  you only what to issue; `issuer.NewError` builds an OID4VCI error
+  you only what to issue, and `DeferredCredentialHandler`/
+  `NotificationEndpointHandler` serve the other two protected
+  endpoints; `issuer.NewError` builds an OID4VCI error
   response (e.g. `credential_request_denied`); `statuslist.Publisher`
   serves a signed Status List Token.
 - **Your own stores and resolvers** — `issuer/issuertest` and
