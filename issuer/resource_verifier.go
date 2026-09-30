@@ -21,8 +21,9 @@ package issuer
 // CredentialHandler; what follows is what it does, for a handler of
 // your own. For an Authorization Server in the same process, build the
 // *resource.Verifier with fapigo/serverresource.NewVerifier(serverCfg,
-// serverDeps, serverresource.Options{}), which shares the server's
-// revocation and replay stores and matches its token format.
+// serverDeps, serverresource.Options{}), which checks revocation
+// against the store the server revokes into and matches its token
+// format.
 //
 // A caller already constructing a *resource.Verifier for this
 // deployment's own access tokens (fapigo/resource.NewVerifier — its own

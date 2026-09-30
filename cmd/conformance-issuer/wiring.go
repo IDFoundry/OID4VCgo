@@ -172,8 +172,8 @@ func newServerMux(cfg Config) (*http.ServeMux, error) {
 
 	// The Credential Endpoint's access-token verifier, built from the
 	// AS's own config and stores: its signing keys (read locally, not
-	// from this binary's /jwks), revocation and replay stores, and DPoP
-	// limits.
+	// from this binary's /jwks), the revocation store it revokes into,
+	// and its DPoP limits.
 	resourceVerifier, err := serverresource.NewVerifier(srvCfg, srvDeps, serverresource.Options{})
 	if err != nil {
 		return nil, fmt.Errorf("serverresource.NewVerifier: %w", err)

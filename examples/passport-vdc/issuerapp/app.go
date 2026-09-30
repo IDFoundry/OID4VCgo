@@ -188,8 +188,9 @@ func (a *App) buildAuthorizationServer() error {
 
 	// The Credential Endpoint's access-token verifier, built from the
 	// server's own config and stores: its signing keys (read locally,
-	// not from this issuer's /jwks), and the revocation and replay
-	// stores, so a token the server revokes stops working there too.
+	// not from this issuer's /jwks), and the revocation store it
+	// revokes into, so a token the server revokes stops working there
+	// too.
 	if a.resourceVerifier, err = serverresource.NewVerifier(cfg, deps, serverresource.Options{}); err != nil {
 		return fmt.Errorf("issuerapp: resource verifier: %w", err)
 	}
