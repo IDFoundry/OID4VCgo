@@ -98,7 +98,11 @@ func New(cfg Config) (*App, error) {
 	if err := a.buildIssuer(); err != nil {
 		return nil, err
 	}
-	a.handler = a.routes()
+	credentialHandler, err := a.credentialHandler()
+	if err != nil {
+		return nil, err
+	}
+	a.handler = a.routes(credentialHandler)
 	return a, nil
 }
 

@@ -36,7 +36,8 @@ see SPECIFICATIONS.md's "HAIP's deviations from plain FAPI 2.0"). Neither
 authentication: a Credential Issuer pairs `issuer` with a
 `fapigo/server.Server` for PAR and the Authorization/Token Endpoints
 (`issuer/authorization_server.go`'s recipe) and verifies the Credential
-Endpoint's access tokens with `fapigo/resource` (`issuer/resource_verifier.go`);
+Endpoint's access tokens with `fapigo/resource` (`issuer/fapiresource`,
+or `issuer/resource_verifier.go`'s recipe for a handler of your own);
 a Wallet drives the Authorization Code Flow with `fapigo/client`. The one
 grant FAPIgo doesn't cover, the Pre-Authorized Code Flow, is implemented
 here (`issuer.ExchangePreAuthorizedCode`, `wallet.RequestPreAuthorizedCodeToken`).
@@ -585,7 +586,12 @@ changes whether *every* bullet below is `(done)`.
   than verifies one presented back to the Credential/Deferred
   Credential/Notification Endpoint, where DPoP/mTLS proof-of-possession
   actually gets checked — into `RequestCredential`'s own
-  `AuthorizedRequest`.
+  `AuthorizedRequest`. `CredentialHandler` serves the whole Credential
+  Endpoint (token check, parse and decrypt, issue, encrypt, errors)
+  with the caller deciding only what to issue, in `Prepare`; it checks
+  tokens through the `AccessTokenVerifier` interface, which
+  `issuer/fapiresource` implements with a `fapigo/resource.Verifier`,
+  so `issuer` itself still doesn't import `fapigo/resource`.
   `ExchangePreAuthorizedCode` (done) implements the Pre-Authorized Code
   Flow's own Token Request/Response (§6.1/§6.2) — the one grant type
   entirely outside `fapigo/server`'s scope, the same way it's outside

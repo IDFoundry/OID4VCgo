@@ -54,7 +54,7 @@ func (a *App) CreateTransaction(ctx context.Context, e passport.Evidence) (Offer
 	return Offer{URI: result.URI, IssuerState: txID, ConfirmationCode: code}, nil
 }
 
-func (a *App) routes() http.Handler {
+func (a *App) routes(credentialHandler http.Handler) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", a.handleUploadPage)
 	mux.HandleFunc("POST /passport", a.handleUpload)
@@ -70,7 +70,7 @@ func (a *App) routes() http.Handler {
 	mux.HandleFunc("GET /.well-known/openid-credential-issuer", a.issuerMetadataHandler())
 	mux.HandleFunc("GET "+VCTPath, a.handleVCTMetadata)
 	mux.HandleFunc("POST /nonce", a.handleNonce)
-	mux.HandleFunc("POST /credential", a.handleCredential)
+	mux.Handle("POST /credential", credentialHandler)
 
 	mux.Handle("GET "+StatusListPath, a.statusPublisher())
 	mux.HandleFunc("GET /status", a.handleStatusPage)
