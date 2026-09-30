@@ -103,9 +103,9 @@
 // DecryptRequestBody/EncryptResponseBody: setting
 // CredentialRequest.RequestEncryption (or DeferredCredentialRequest's
 // own field) encrypts the outbound request body to the Issuer's own
-// published credential_request_encryption key (this package doesn't
-// fetch or parse Issuer metadata itself — the caller supplies one JWK
-// from it via RequestEncryption.RecipientJWK); setting
+// published credential_request_encryption key (the caller supplies one
+// JWK from it via RequestEncryption.RecipientJWK, or lets
+// EncryptionFromMetadata choose one from the Issuer's metadata); setting
 // .ResponseEncryption additionally requests an encrypted Response —
 // RequestCredential generates a fresh ephemeral P-256 key pair per
 // call and decrypts the Response transparently, so the CredentialResult
