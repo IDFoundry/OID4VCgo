@@ -25,7 +25,8 @@ var encPreference = []jwe.Enc{jwe.A256GCM, jwe.A192GCM, jwe.A128GCM}
 // a Credential carries personal data. Both are nil when the Issuer
 // offers neither. The request is encrypted to the first key in the
 // Issuer's credential_request_encryption.jwks this package can use: an
-// EC P-256 key for ECDH-ES (its alg absent or "ECDH-ES"). The
+// EC P-256 key for ECDH-ES (its alg absent or "ECDH-ES", its use absent
+// or "enc"). The
 // strongest content encryption both sides support is chosen (A256GCM,
 // then A192GCM, then A128GCM), and no compression is asked for.
 //
@@ -67,7 +68,7 @@ func EncryptionFromMetadata(meta oid4vci.Metadata) (*RequestEncryption, *Respons
 // encrypt to, as JSON.
 func requestEncryptionKey(jwks oid4vci.JWKSet) (json.RawMessage, error) {
 	for _, k := range jwks.Keys {
-		if k.Kty != "EC" || k.Crv != "P-256" || (k.Alg != "" && k.Alg != jwe.ECDHES) {
+		if k.Kty != "EC" || k.Crv != "P-256" || (k.Alg != "" && k.Alg != jwe.ECDHES) || (k.Use != "" && k.Use != "enc") {
 			continue
 		}
 		if _, err := k.PublicKey(); err != nil {
