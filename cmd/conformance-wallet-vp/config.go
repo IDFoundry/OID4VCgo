@@ -10,6 +10,7 @@ import (
 
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/internal/conformancecert"
+	"github.com/idfoundry/oid4vcgo/wallet"
 )
 
 // Config is this binary's own configuration — one JSON file, inline
@@ -24,6 +25,15 @@ type Config struct {
 
 	TLSCertificatePEM string `json:"tls_certificate_pem"`
 	TLSPrivateKeyPEM  string `json:"tls_private_key_pem"`
+
+	// VerifierTrustAnchorsPEM, if set, are the trust anchors a
+	// Verifier's Request Object certificate chain must verify against
+	// (OID4VP §5.9.3, HAIP 1.0 §5): its x5c leaf must be issued, not
+	// self-signed, by one of them. Unset, the chain isn't checked —
+	// only the Request Object's signature and its x509_hash client_id.
+	// conformance/wallet-vp/scripts/run-modules sets it to the CA it
+	// issues the suite's Request Object signing certificate from.
+	VerifierTrustAnchorsPEM string `json:"verifier_trust_anchors_pem,omitempty"`
 
 	// CredentialIssuerPrivateKeyPEM signs this binary's own fixture
 	// SD-JWT VC (see credential.go).
@@ -190,4 +200,17 @@ func (c Config) mdocIssuerCertificate() (*x509.Certificate, error) {
 		return nil, fmt.Errorf("mdoc_issuer_certificate_pem: %w", err)
 	}
 	return cert, nil
+}
+
+// verifierTrust is how Request Object certificate chains are trusted:
+// against VerifierTrustAnchorsPEM, or not at all when it's unset.
+func (c Config) verifierTrust() (wallet.VerifierTrust, error) {
+	if c.VerifierTrustAnchorsPEM == "" {
+		return wallet.NoVerifierTrust{}, nil
+	}
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM([]byte(c.VerifierTrustAnchorsPEM)) {
+		return nil, fmt.Errorf("verifier_trust_anchors_pem holds no certificate")
+	}
+	return wallet.X5CVerifierRoots{Roots: roots}, nil
 }

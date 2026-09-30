@@ -45,7 +45,7 @@ const walletMetadataForPost = `{"vp_formats_supported":{"dc+sd-jwt":{"sd-jwt_alg
 // for the DC API/other-client_id-prefix variants that function doesn't
 // cover, and conformance/wallet-vp/README.md for this binary's own
 // scope notes.
-func fetchAndVerifyRequestObject(requestURI, clientID string, usePost bool) (wallet.AuthorizationRequest, error) {
+func fetchAndVerifyRequestObject(requestURI, clientID string, usePost bool, trust wallet.VerifierTrust) (wallet.AuthorizationRequest, error) {
 	var compact, walletNonce string
 	var err error
 	if usePost {
@@ -65,13 +65,12 @@ func fetchAndVerifyRequestObject(requestURI, clientID string, usePost bool) (wal
 		}
 	}
 
-	// NoVerifierTrust: the suite signs its Request Objects with its own
-	// certificate, and this binary has no trust anchor configured for
-	// it — so OID4VP §5.9.3's trust chain check is explicitly skipped
-	// here; the signature and x509_hash checks still apply.
+	// trust is Config.verifierTrust: the chain is checked against the
+	// configured anchors, or — with none — not at all; the signature
+	// and x509_hash checks apply either way.
 	authReq, err := wallet.ParseAuthorizationRequest(wallet.ParseAuthorizationRequestParams{
 		RequestObject: compact, ClientID: clientID, WalletNonce: walletNonce,
-		VerifierTrust: wallet.NoVerifierTrust{},
+		VerifierTrust: trust,
 	})
 	if err != nil {
 		return wallet.AuthorizationRequest{}, err

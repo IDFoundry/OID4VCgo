@@ -10,6 +10,11 @@
 // default, or iso_mdl — see Config.CredentialFormat/credential.go's
 // own issueFixtureMdocCredential); the dc_api.jwt variants aren't
 // covered — see conformance/wallet-vp/README.md.
+//
+// It's a conformance harness: it doesn't verify the Verifier's TLS
+// certificate, and checks the Verifier's Request Object certificate
+// chain only against the config's verifier_trust_anchors_pem — see
+// the README's "What a passing run shows".
 package main
 
 import (
@@ -57,7 +62,17 @@ func main() {
 		log.Printf("issued fixture %s credential (vct=%s)", cred.Format, cfg.VCT)
 	}
 
-	srv := &server{cred: cred}
+	trust, err := cfg.verifierTrust()
+	if err != nil {
+		log.Fatalf("verifier trust: %v", err)
+	}
+	// A conformance harness, not a Wallet to judge a Verifier's
+	// security by: say what a completed presentation doesn't show.
+	log.Printf("WARNING: this harness does not verify the Verifier's TLS certificate")
+	if _, none := trust.(wallet.NoVerifierTrust); none {
+		log.Printf("WARNING: verifier_trust_anchors_pem is unset: the Verifier's Request Object certificate chain is not checked, only its signature and x509_hash client_id")
+	}
+	srv := &server{cred: cred, trust: trust}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /authorize", srv.handleAuthorize)
