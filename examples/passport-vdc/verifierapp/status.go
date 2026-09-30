@@ -24,7 +24,10 @@ func (a *App) checkStatus(ctx context.Context, vc verifier.VerifiedCredential) (
 		return "no status reference", nil
 	}
 	checker := statuslist.Checker{
-		Fetcher: statuslist.Fetcher{HTTP: a.cfg.HTTP},
+		// The demo serves its status list on 127.0.0.1; a real Verifier
+		// leaves AllowLoopback off, so a credential can't point it at
+		// its own machine.
+		Fetcher: statuslist.Fetcher{HTTP: a.cfg.HTTP, AllowLoopback: true},
 		Roots:   a.issuerRoots,
 		Options: statuslist.VerifyOptions{Now: a.now},
 	}
