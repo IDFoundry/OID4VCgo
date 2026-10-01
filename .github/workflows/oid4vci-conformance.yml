@@ -92,7 +92,7 @@ jobs:
       # why, and that file's own doc comment for the removal criteria.
       - name: Bring up OIDF conformance suite
         working-directory: /tmp/conformance-suite
-        run: docker compose -f docker-compose-prebuilt.yml -f "$GITHUB_WORKSPACE/conformance/scripts/suite-image-pin.yml" up -d
+        run: docker compose -f docker-compose-prebuilt.yml up -d
 
       # run-oid4vci.sh itself waits for the suite to become reachable,
       # runs both OID4VCI roles (each role's own script brings up/
