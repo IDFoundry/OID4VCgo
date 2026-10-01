@@ -164,6 +164,19 @@ func (iss *Issuer) DenyDeferredCredential(ctx context.Context, transactionID str
 	return err
 }
 
+// abandonDeferral denies a pending transaction whose Credential
+// Response never reached the Wallet, so the deployment's business
+// process gets ErrDeferredTransactionResolved instead of issuing for
+// it. It's best effort: a store error leaves the transaction to expire.
+func (iss *Issuer) abandonDeferral(ctx context.Context, transactionID string) {
+	_ = iss.deps.DeferredTransactions.Update(ctx, transactionID, func(cur *DeferredTransactionRecord) error {
+		if cur.Status == DeferredTransactionPending {
+			cur.Status = DeferredTransactionDenied
+		}
+		return nil
+	})
+}
+
 // pendingDeferredTransaction returns transactionID's record if it's
 // still pending.
 func (iss *Issuer) pendingDeferredTransaction(ctx context.Context, transactionID string) (DeferredTransactionRecord, error) {

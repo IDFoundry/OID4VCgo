@@ -21,9 +21,15 @@ package issuer
 // CredentialHandler; what follows is what it does, for a handler of
 // your own. For an Authorization Server in the same process, build the
 // *resource.Verifier with fapigo/serverresource.NewVerifier(serverCfg,
-// serverDeps, serverresource.Options{}), which checks revocation
+// serverDeps, serverresource.Options{...}), which checks revocation
 // against the store the server revokes into and matches its token
-// format.
+// format. Its Options.Nonces turns on DPoP nonce challenges at these
+// endpoints (RFC 9449 §9), so a DPoP proof must carry a nonce the
+// issuer handed out rather than relying on its iat window and jti
+// replay check alone; give it its own nonce store, not the server's.
+// CredentialHandler and the other handlers pass the next nonce on in
+// the DPoP-Nonce header, and fapigo/client's ResourceClient answers
+// the challenge.
 //
 // A caller already constructing a *resource.Verifier for this
 // deployment's own access tokens (fapigo/resource.NewVerifier — its own

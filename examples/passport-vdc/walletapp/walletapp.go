@@ -255,6 +255,9 @@ func newOAuthClient(ctx context.Context, w *wallet.Wallet, cfg Config, httpClien
 	}, client.Dependencies{
 		Sessions: memstore.NewSessionStore(), Keys: km, HTTP: httpClient,
 		Clock: client.SystemClock{}, Random: rand.Reader, Attestation: client.StaticAttestation(walletAttestation),
+		// Reuses the DPoP nonce each response hands out, so only the
+		// first request to an endpoint is challenged for one.
+		DPoPNonceCache: client.NewInMemoryDPoPNonceCache(),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("walletapp: oauth client: %w", err)

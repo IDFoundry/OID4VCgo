@@ -343,3 +343,33 @@ func TestDeferral_IntervalRoundsUp(t *testing.T) {
 		t.Fatalf("response = %+v, %v; want interval 2", resp, err)
 	}
 }
+
+// TestDeferral_ResolveAfterValidation: a poll the Deferred Credential
+// Endpoint refuses never reaches Resolve, so a malformed request can't
+// make the deployment issue.
+func TestDeferral_ResolveAfterValidation(t *testing.T) {
+	f := newDeferralFixture(t)
+	txID, _ := f.deferOne(t)
+	resolved := 0
+	dh, err := f.iss.DeferredCredentialHandler(issuer.DeferredCredentialHandlerConfig{
+		ProtectedEndpointConfig: protectedEndpoint(t, &fakeTokens{grant: issuer.Grant{Subject: deferralAuth.Subject, Authorized: deferralAuth}}),
+		Resolve: func(context.Context, issuer.Grant, string, issuer.DeferredTransactionRecord) error {
+			resolved++
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(map[string]any{
+		"transaction_id":                 txID,
+		"credential_response_encryption": map[string]any{"jwk": testWalletJWK(t), "enc": "A128GCM"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Asking for an encrypted response in an unencrypted request (§9.1).
+	if w := postCredentialRequest(t, dh, string(body)); w.Code != http.StatusBadRequest || resolved != 0 {
+		t.Errorf("malformed poll = %d %s, Resolve called %d times; want 400 and no Resolve", w.Code, w.Body, resolved)
+	}
+}
