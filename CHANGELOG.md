@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.23.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.22.0...v0.23.0) (2026-10-01)
+
+
+### ⚠ BREAKING CHANGES
+
+* **wallet:** X5CVerifierRoots refuses a Request Object whose x5c includes the trust anchor its chain verifies to; a Verifier must send its leaf, and any intermediates, only.
+* **wallet:** X5CVerifierRoots refuses a Verifier leaf that is a CA certificate or whose key usage doesn't include digitalSignature.
+* **statuslist:** Fetcher ignores HTTP.Transport's Proxy (and so HTTPS_PROXY) unless AllowProxy is set, and refuses an HTTP.Transport that isn't an *http.Transport unless UncheckedTransport is set. A status list host that only resolves to a special-purpose address is refused.
+* **issuer:** a Credential Request with CredentialRequest.Defer set needs AuthorizedRequest.Subject; set it from the verified access token's subject (issuer/fapiresource does). DeferredTransactionRecord gains Subject, which a persistent DeferredTransactionStore must save. Limits.DeferredIssuancePollInterval below one second is refused.
+
+### Features
+
+* **wallet:** verify a DC API request against the platform's origin ([19d43df](https://github.com/IDFoundry/OID4VCgo/commit/19d43df41173e74d39571f7433ed2e77a796e18a))
+
+
+### Bug Fixes
+
+* **examples:** require DPoP nonces at the passport-vdc Credential Issuer's endpoints ([3891efa](https://github.com/IDFoundry/OID4VCgo/commit/3891efac3e23c00035cf66f77c6835dd39f886e5))
+* **issuer:** bind a deferred transaction to the token's subject ([4d2da01](https://github.com/IDFoundry/OID4VCgo/commit/4d2da01f0a528548ada4a1786330b5f95604ee2b))
+* **issuer:** check a deferred poll before Resolve, and deny an unsent deferral ([c6151c0](https://github.com/IDFoundry/OID4VCgo/commit/c6151c00936e0910b5318e02807d3692807c79c7))
+* **statuslist:** close the gaps in Fetcher's address policy ([be802ec](https://github.com/IDFoundry/OID4VCgo/commit/be802ec7fdb9741bcf824f68988a239926cd87e4))
+* tie the demo's outcome to the committed answer, and correct misleading docs ([cbbcb74](https://github.com/IDFoundry/OID4VCgo/commit/cbbcb7415e28aec3fd50d643403be395c51ccd5b))
+* **wallet:** refuse a Verifier x5c chain that includes its trust anchor ([73cd8f7](https://github.com/IDFoundry/OID4VCgo/commit/73cd8f78a938f450cca3142486e52ca23e211b7d))
+* **wallet:** refuse Verifier certificates that can't sign requests ([0d54682](https://github.com/IDFoundry/OID4VCgo/commit/0d546822ca6be0791d6fba836613c7f1383444cd))
+
 ## [0.22.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.21.0...v0.22.0) (2026-09-30)
 
 
