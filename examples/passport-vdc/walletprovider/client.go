@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto"
 	"crypto/ecdsa"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -19,7 +20,10 @@ import (
 const maxResponseBytes = 64 * 1024
 
 // Client asks a Wallet Provider service (Provider.Handler) for
-// attestations, so the wallet never holds the provider's key.
+// attestations, so the wallet never holds the provider's key. It
+// doesn't follow redirects, and checks each attestation it gets back is
+// over the keys it asked about (and the nonce, client_id) before
+// returning it; the issuer verifies its signature and x5c chain.
 type Client struct {
 	// URL is the service's base URL, e.g. https://127.0.0.1:6443.
 	URL string
@@ -34,7 +38,20 @@ func (c Client) WalletAttestation(ctx context.Context, clientID string, instance
 	if err != nil {
 		return "", fmt.Errorf("walletprovider: instance key: %w", err)
 	}
-	return c.post(ctx, WalletAttestationPath, WalletAttestationRequest{ClientID: clientID, InstanceKey: jwk})
+	jwt, err := c.post(ctx, WalletAttestationPath, WalletAttestationRequest{ClientID: clientID, InstanceKey: jwk})
+	if err != nil {
+		return "", err
+	}
+	var claims struct {
+		Subject string `json:"sub"`
+		Cnf     struct {
+			JWK json.RawMessage `json:"jwk"`
+		} `json:"cnf"`
+	}
+	if err := decodePayload(jwt, &claims); err != nil || claims.Subject != clientID || !sameKey(claims.Cnf.JWK, jwk) {
+		return "", fmt.Errorf("walletprovider: the Wallet Attestation isn't for client %q and the instance key sent", clientID)
+	}
+	return jwt, nil
 }
 
 // KeyAttestation asks for a Key Attestation over keys carrying nonce,
@@ -48,7 +65,47 @@ func (c Client) KeyAttestation(ctx context.Context, keys []*ecdsa.PublicKey, non
 		}
 		jwks[i] = jwk
 	}
-	return c.post(ctx, KeyAttestationPath, KeyAttestationRequest{Keys: jwks, Nonce: nonce})
+	jwt, err := c.post(ctx, KeyAttestationPath, KeyAttestationRequest{Keys: jwks, Nonce: nonce})
+	if err != nil {
+		return "", err
+	}
+	var claims struct {
+		Nonce        string            `json:"nonce"`
+		AttestedKeys []json.RawMessage `json:"attested_keys"`
+	}
+	if err := decodePayload(jwt, &claims); err != nil || claims.Nonce != nonce || len(claims.AttestedKeys) != len(jwks) {
+		return "", fmt.Errorf("walletprovider: the Key Attestation isn't over the keys and nonce sent")
+	}
+	for i := range jwks {
+		if !sameKey(claims.AttestedKeys[i], jwks[i]) {
+			return "", fmt.Errorf("walletprovider: the Key Attestation isn't over the keys and nonce sent")
+		}
+	}
+	return jwt, nil
+}
+
+// decodePayload decodes a compact JWT's payload into v, without
+// verifying its signature.
+func decodePayload(jwt string, v any) error {
+	parts := strings.Split(jwt, ".")
+	if len(parts) != 3 {
+		return fmt.Errorf("not a compact JWT")
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(raw, v)
+}
+
+// sameKey reports whether two public EC JWKs have the same curve and
+// point.
+func sameKey(a, b json.RawMessage) bool {
+	var ka, kb struct{ Kty, Crv, X, Y string }
+	if json.Unmarshal(a, &ka) != nil || json.Unmarshal(b, &kb) != nil {
+		return false
+	}
+	return ka.X != "" && ka == kb
 }
 
 func (c Client) post(ctx context.Context, path string, body any) (string, error) {
@@ -61,10 +118,14 @@ func (c Client) post(ctx context.Context, path string, body any) (string, error)
 		return "", fmt.Errorf("walletprovider: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	hc := c.HTTP
-	if hc == nil {
-		hc = &http.Client{Timeout: 10 * time.Second}
+	hc := &http.Client{Timeout: 10 * time.Second}
+	if c.HTTP != nil {
+		copied := *c.HTTP
+		hc = &copied
 	}
+	// A redirect would re-send the request somewhere the wallet wasn't
+	// configured to trust as its Wallet Provider.
+	hc.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	resp, err := hc.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("walletprovider: %w", err)
