@@ -102,7 +102,7 @@ func TestAuthorize_RejectsRequestWithoutOffer(t *testing.T) {
 		t.Fatalf("AppendToURL: %v", err)
 	}
 	_, err = walletapp.Receive(context.Background(), env.WalletConfig(), uri, walletapp.HeadlessApprover{HTTP: env.HTTP})
-	if err == nil || !strings.Contains(err.Error(), "no interaction handle") {
+	if err == nil || !strings.Contains(err.Error(), "authorization page: status 400") {
 		t.Fatalf("Receive without issuer_state: error = %v, want the approval page to be refused", err)
 	}
 }
@@ -216,7 +216,7 @@ func TestOffer_RedeemedOnce(t *testing.T) {
 	if _, err := walletapp.Receive(ctx, env.WalletConfig(), offer.URI, approver); err != nil {
 		t.Fatalf("first Receive: %v", err)
 	}
-	if _, err := walletapp.Receive(ctx, env.WalletConfig(), offer.URI, approver); err == nil || !strings.Contains(err.Error(), "no interaction handle") {
+	if _, err := walletapp.Receive(ctx, env.WalletConfig(), offer.URI, approver); err == nil || !strings.Contains(err.Error(), "authorization page: status 400") {
 		t.Fatalf("second Receive: error = %v, want the approval page refused", err)
 	}
 }

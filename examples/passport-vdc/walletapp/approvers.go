@@ -4,20 +4,22 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"net"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/idfoundry/fapigo/client"
 )
 
-// HeadlessApprover approves without a browser, by reading the demo
-// issuer's X-Interaction-Handle header and posting "approve" with the
-// offer's confirmation code to its /authorize/decision endpoint — the
-// demo issuer's own convention, not a standard. For tests and scripted
+// HeadlessApprover approves without a browser, as a holder would: it
+// reads the interaction handle from the demo issuer's approval form
+// (ApprovalHandle) and posts "approve" with the offer's confirmation
+// code to its /authorize/decision endpoint. For tests and scripted
 // demos.
 type HeadlessApprover struct {
 	HTTP *http.Client // nil means a 10 s timeout client
@@ -43,10 +45,17 @@ func (h HeadlessApprover) Approve(ctx context.Context, authorizationURL string, 
 	if err != nil {
 		return Callback{}, err
 	}
+	page, err := io.ReadAll(io.LimitReader(resp.Body, maxApprovalPageBytes))
 	_ = resp.Body.Close()
-	handle := resp.Header.Get("X-Interaction-Handle")
-	if resp.StatusCode != http.StatusOK || handle == "" {
-		return Callback{}, fmt.Errorf("authorization page: status %d, no interaction handle", resp.StatusCode)
+	if err != nil {
+		return Callback{}, fmt.Errorf("authorization page: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return Callback{}, fmt.Errorf("authorization page: status %d", resp.StatusCode)
+	}
+	handle, err := ApprovalHandle(page)
+	if err != nil {
+		return Callback{}, err
 	}
 
 	u, err := url.Parse(authorizationURL)
@@ -70,6 +79,24 @@ func (h HeadlessApprover) Approve(ctx context.Context, authorizationURL string, 
 		return Callback{}, fmt.Errorf("approval: status %d, no redirect: %w", resp.StatusCode, err)
 	}
 	return Callback{Query: loc.RawQuery, Session: session}, nil
+}
+
+// maxApprovalPageBytes bounds the approval page HeadlessApprover reads.
+const maxApprovalPageBytes = 1 << 20
+
+// approvalHandleField matches the demo issuer's approval form's hidden
+// interaction handle field.
+var approvalHandleField = regexp.MustCompile(`<input type="hidden" name="handle" value="([^"]*)">`)
+
+// ApprovalHandle returns the interaction handle in the demo issuer's
+// approval page: the hidden "handle" field its form posts to
+// /authorize/decision.
+func ApprovalHandle(page []byte) (string, error) {
+	m := approvalHandleField.FindSubmatch(page)
+	if m == nil || len(m[1]) == 0 {
+		return "", errors.New("authorization page: no interaction handle in its approval form")
+	}
+	return html.UnescapeString(string(m[1])), nil
 }
 
 // BrowserApprover has the holder approve in a browser: it shows the

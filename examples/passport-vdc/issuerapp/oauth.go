@@ -93,9 +93,6 @@ func (a *App) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 		}
 		pending := pendingInteraction{handle: action.Handle, txID: txID, scopes: action.Interaction.Scope}
 		a.interactions.put(action.Handle.String(), pending, interactionLifetime)
-		// Lets a headless wallet (the demo CLI, tests) approve without
-		// scraping the page.
-		w.Header().Set("X-Interaction-Handle", action.Handle.String())
 		a.renderApproval(w, pending, action.Interaction.ClientID.String(), "")
 	case server.RedirectResponse:
 		http.Redirect(w, r, action.Destination.String(), http.StatusFound)

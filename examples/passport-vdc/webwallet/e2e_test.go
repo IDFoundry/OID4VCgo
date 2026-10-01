@@ -35,6 +35,17 @@ func browser(env *demotest.Env) *http.Client {
 	return &c
 }
 
+// approvalHandle is the interaction handle in the issuer's approval
+// page, as a holder's browser would post it.
+func approvalHandle(t *testing.T, page string) string {
+	t.Helper()
+	handle, err := walletapp.ApprovalHandle([]byte(page))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return handle
+}
+
 func read(t *testing.T, resp *http.Response) string {
 	t.Helper()
 	defer func() { _ = resp.Body.Close() }()
@@ -85,10 +96,11 @@ func receiveViaBrowser(t *testing.T, env *demotest.Env, b *http.Client) {
 	if err != nil {
 		t.Fatalf("GET authorize: %v", err)
 	}
-	handle := resp.Header.Get("X-Interaction-Handle")
+	page := read(t, resp)
+	handle := approvalHandle(t, page)
 	// The approval page is shown before the confirmation code is checked,
 	// so it must not show the passport's data.
-	if page := read(t, resp); strings.Contains(page, "DOE") || strings.Contains(page, "K0000000A") {
+	if strings.Contains(page, "DOE") || strings.Contains(page, "K0000000A") {
 		t.Error("the issuer's approval page shows passport data before the confirmation code")
 	}
 	resp, err = b.PostForm(env.IssuerURL+"/authorize/decision", url.Values{"handle": {handle}, "decision": {"approve"}, "code": {offer.ConfirmationCode}})
@@ -260,8 +272,7 @@ func TestWebWallet_DuplicateCallbackDoesNotHang(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET authorize: %v", err)
 	}
-	handle := resp.Header.Get("X-Interaction-Handle")
-	_ = resp.Body.Close()
+	handle := approvalHandle(t, read(t, resp))
 	resp, err = b.PostForm(env.IssuerURL+"/authorize/decision", url.Values{"handle": {handle}, "decision": {"approve"}, "code": {offer.ConfirmationCode}})
 	callback := mustRedirect(t, resp, err, "approve")
 
@@ -425,8 +436,7 @@ func TestWebWallet_RefusesCallbackInAnotherBrowser(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET authorize: %v", err)
 	}
-	handle := resp.Header.Get("X-Interaction-Handle")
-	_ = resp.Body.Close()
+	handle := approvalHandle(t, read(t, resp))
 	resp, err = started.PostForm(env.IssuerURL+"/authorize/decision", url.Values{"handle": {handle}, "decision": {"approve"}, "code": {offer.ConfirmationCode}})
 	callback := mustRedirect(t, resp, err, "approve")
 

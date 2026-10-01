@@ -134,3 +134,17 @@ func TestReceive_RequiresConfig(t *testing.T) {
 		t.Error("Receive with empty config = nil error")
 	}
 }
+
+func TestApprovalHandle(t *testing.T) {
+	page := []byte(`<form method="post" action="/authorize/decision">
+<input type="hidden" name="handle" value="h-1&#43;2">
+</form>`)
+	if got, err := ApprovalHandle(page); err != nil || got != "h-1+2" {
+		t.Errorf("ApprovalHandle = %q, %v; want h-1+2", got, err)
+	}
+	for _, page := range []string{`<p>no form</p>`, `<input type="hidden" name="handle" value="">`} {
+		if _, err := ApprovalHandle([]byte(page)); err == nil {
+			t.Errorf("ApprovalHandle(%q) found a handle", page)
+		}
+	}
+}
