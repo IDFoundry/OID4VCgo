@@ -39,6 +39,7 @@ type transaction struct {
 	claimed   bool
 	failures  int
 	pending   map[string]bool // offered configuration ID → not yet issued
+	review    bool            // defer issuance until an operator decides
 }
 
 // maxCodeFailures is how many wrong confirmation codes void a
@@ -63,7 +64,7 @@ func newTransactions(now func() time.Time, lifetime time.Duration, max int) *tra
 // put stores e, redeemable once for each of configIDs, under a fresh ID
 // with a fresh confirmation code, and returns both — or
 // errTooManyTransactions when max unexpired passports are already held.
-func (t *transactions) put(e passport.Evidence, configIDs []string) (id, code string, err error) {
+func (t *transactions) put(e passport.Evidence, configIDs []string, review bool) (id, code string, err error) {
 	var b [32]byte
 	if _, err := rand.Read(b[:]); err != nil {
 		return "", "", fmt.Errorf("issuerapp: transaction id: %w", err)
@@ -89,7 +90,7 @@ func (t *transactions) put(e passport.Evidence, configIDs []string) (id, code st
 	if len(t.items) >= t.max {
 		return "", "", errTooManyTransactions
 	}
-	t.items[id] = &transaction{evidence: e, code: code, expiresAt: now.Add(t.lifetime), pending: pending}
+	t.items[id] = &transaction{evidence: e, code: code, expiresAt: now.Add(t.lifetime), pending: pending, review: review}
 	return id, code, nil
 }
 
@@ -142,20 +143,21 @@ func (t *transactions) claim(id, code string) error {
 }
 
 // reserve returns the Evidence of a claimed transaction for issuing
-// configID, marking it issued so no other request can issue it again.
-// Call release if issuing then fails, or done if it succeeds.
-func (t *transactions) reserve(id, configID string) (passport.Evidence, error) {
+// configID, and whether it was uploaded for review, marking it issued so
+// no other request can issue it again. Call release if issuing then
+// fails, or done if it succeeds.
+func (t *transactions) reserve(id, configID string) (passport.Evidence, bool, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	v, ok := t.lookup(id)
 	switch {
 	case !ok || !v.claimed:
-		return passport.Evidence{}, errNoTransaction
+		return passport.Evidence{}, false, errNoTransaction
 	case !v.pending[configID]:
-		return passport.Evidence{}, errAlreadyIssued
+		return passport.Evidence{}, false, errAlreadyIssued
 	}
 	v.pending[configID] = false
-	return v.evidence, nil
+	return v.evidence, v.review, nil
 }
 
 // release undoes reserve after issuing configID failed.

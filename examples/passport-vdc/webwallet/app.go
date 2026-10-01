@@ -19,6 +19,7 @@ import (
 	"github.com/idfoundry/fapigo/client"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -50,7 +51,24 @@ type App struct {
 	mu        sync.Mutex
 	receiving *receiveOp                      // the one in-progress receive, if any
 	pending   map[string]*pendingPresentation // consent screens awaiting a decision
+	deferred  map[string]*deferredCredential  // credentials the issuer deferred, to poll
 }
+
+// deferredCredential is a credential the issuer deferred (OID4VCI 1.0
+// §9), polled when the holder asks; it holds the access token in
+// memory, so it doesn't survive a restart.
+type deferredCredential struct {
+	pending   *walletapp.Pending
+	expiresAt time.Time
+}
+
+const (
+	// deferredLifetime bounds how long a deferred credential is kept for
+	// polling — the issuer's access token doesn't outlive it anyway.
+	deferredLifetime = time.Hour
+	// maxDeferred bounds how many are kept.
+	maxDeferred = 20
+)
 
 type receiveOp struct {
 	cancel   context.CancelFunc
@@ -73,6 +91,7 @@ const sessionCookie = "passport_vdc_webwallet_session"
 
 type receiveResult struct {
 	received []walletapp.Received
+	pending  []*walletapp.Pending
 	err      error
 }
 
@@ -87,7 +106,7 @@ func New(cfg Config) (*App, error) {
 		return nil, fmt.Errorf("webwallet: WalletURL, Store and VerifierTrust are required")
 	}
 	cfg.Wallet.RedirectURI = cfg.WalletURL + "/callback"
-	a := &App{cfg: cfg, pending: map[string]*pendingPresentation{}}
+	a := &App{cfg: cfg, pending: map[string]*pendingPresentation{}, deferred: map[string]*deferredCredential{}}
 	a.handler = a.routes()
 	return a, nil
 }
@@ -104,6 +123,7 @@ func (a *App) routes() http.Handler {
 	mux.HandleFunc("GET /present", a.handlePresentConfirm)
 	mux.HandleFunc("POST /present", a.sameOrigin(a.handlePresentConsent))
 	mux.HandleFunc("POST /present/{id}", a.sameOrigin(a.handlePresentDecision))
+	mux.HandleFunc("POST /deferred/{id}", a.sameOrigin(a.handleCheckDeferred))
 	return mux
 }
 
@@ -153,8 +173,8 @@ func (a *App) handleReceive(w http.ResponseWriter, r *http.Request) {
 	a.mu.Unlock()
 
 	go func() {
-		received, err := walletapp.Receive(ctx, a.cfg.Wallet, offer, webApprover{op})
-		op.done <- receiveResult{received, err}
+		received, pending, err := walletapp.ReceiveDeferrable(ctx, a.cfg.Wallet, offer, webApprover{op})
+		op.done <- receiveResult{received, pending, err}
 	}()
 	select {
 	case start := <-op.authURL:
@@ -206,7 +226,91 @@ func (a *App) handleCallback(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	http.Redirect(w, r, fmt.Sprintf("/?received=%d", len(res.received)), http.StatusSeeOther)
+	for _, p := range res.pending {
+		if err := a.addDeferred(p); err != nil {
+			renderError(w, http.StatusServiceUnavailable, err.Error())
+			return
+		}
+	}
+	http.Redirect(w, r, fmt.Sprintf("/?received=%d&deferred=%d", len(res.received), len(res.pending)), http.StatusSeeOther)
+}
+
+// addDeferred keeps p for the holder to poll from the home page.
+func (a *App) addDeferred(p *walletapp.Pending) error {
+	id, err := randomID()
+	if err != nil {
+		return err
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	now := time.Now()
+	for k, d := range a.deferred {
+		if now.After(d.expiresAt) {
+			delete(a.deferred, k)
+		}
+	}
+	if len(a.deferred) >= maxDeferred {
+		return errors.New("too many credentials are waiting for their issuers")
+	}
+	a.deferred[id] = &deferredCredential{pending: p, expiresAt: now.Add(deferredLifetime)}
+	return nil
+}
+
+// handleCheckDeferred polls one deferred credential: it's stored once
+// issued, dropped if denied, and otherwise left waiting.
+func (a *App) handleCheckDeferred(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	a.mu.Lock()
+	d, ok := a.deferred[id]
+	if ok && time.Now().After(d.expiresAt) {
+		delete(a.deferred, id)
+		ok = false
+	}
+	a.mu.Unlock()
+	if !ok {
+		renderError(w, http.StatusNotFound, "that credential is no longer waiting — receive it again")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	rc, err := d.pending.Poll(ctx)
+	switch {
+	case errors.Is(err, walletapp.ErrDenied):
+		a.dropDeferred(id)
+		http.Redirect(w, r, "/?denied=1", http.StatusSeeOther)
+	case err != nil:
+		renderError(w, http.StatusBadGateway, "checking failed: "+err.Error())
+	case rc == nil:
+		http.Redirect(w, r, "/?waiting=1", http.StatusSeeOther)
+	default:
+		if _, err := a.cfg.Store.Save(*rc, time.Now()); err != nil {
+			renderError(w, http.StatusInternalServerError, "couldn't store the credential")
+			return
+		}
+		a.dropDeferred(id)
+		http.Redirect(w, r, "/?received=1", http.StatusSeeOther)
+	}
+}
+
+func (a *App) dropDeferred(id string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	delete(a.deferred, id)
+}
+
+// deferredCards lists the credentials waiting for their issuers.
+func (a *App) deferredCards() []deferredCard {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	now := time.Now()
+	out := make([]deferredCard, 0, len(a.deferred))
+	for id, d := range a.deferred {
+		if now.Before(d.expiresAt) {
+			out = append(out, deferredCard{ID: id, Format: d.pending.Format})
+		}
+	}
+	slices.SortFunc(out, func(x, y deferredCard) int { return strings.Compare(x.Format, y.Format) })
+	return out
 }
 
 func (a *App) finishReceive(op *receiveOp) {
@@ -330,7 +434,11 @@ func (a *App) handleHome(w http.ResponseWriter, r *http.Request) {
 	for i := len(stored) - 1; i >= 0; i-- { // newest first
 		cards = append(cards, cardFor(stored[i]))
 	}
-	render(w, http.StatusOK, homeTemplate, homePage{Cards: cards, Received: r.URL.Query().Get("received")})
+	q := r.URL.Query()
+	render(w, http.StatusOK, homeTemplate, homePage{
+		Cards: cards, Received: q.Get("received"), Deferred: a.deferredCards(),
+		Waiting: q.Get("waiting") != "", Denied: q.Get("denied") != "",
+	})
 }
 
 // requestHost is the host a presentation request link's request_uri

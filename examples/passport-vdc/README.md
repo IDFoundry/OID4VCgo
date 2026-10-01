@@ -171,6 +171,14 @@ issuer's redirect back is bound to the browser that started receiving
    verified claims, "Revocation status: valid" and, for the country
    trust path, the ICAO Passive Authentication result.
 
+**Optional: issue after a review.** Tick **Hold for an operator's
+review** when uploading. The wallet then gets no credentials at once:
+the issuer defers them (OID4VCI 1.0 §9), and the web wallet lists them
+under **Waiting for the issuer**. Approve or deny each on the issuer's
+review page (https://127.0.0.1:8543/review), then click **Check now**
+in the wallet: an approved credential is stored, a denied one is
+dropped. The CLI wallet waits, polling, until you decide.
+
 **4. Revoke.** On the issuer, open **Issued credentials and revocation**
 (https://127.0.0.1:8543/status) and **Revoke** one credential. Verify
 again sharing that format: the verifier rejects it as revoked, while
@@ -307,11 +315,31 @@ demo verifier's `response_uri`, though, must be `https`.
 | Approve | `GET /authorize`, `POST /authorize/decision` | reads T back from the interaction request's `issuer_state`, then asks for the confirmation code (the page shows no passport data); approval with the right code **claims T** — no other authorization can reach it — and authorizes **subject = T**, granting the scopes the wallet requested |
 | Token | `POST /token` | DPoP-bound access token with `sub` = T |
 | Credential | `POST /nonce`, `POST /credential` | the request and response are both encrypted (OID4VCI 1.0 §10, required by the issuer's metadata: the credential carries passport data); the token's `sub` finds T's `Evidence`; the requested configuration (`passport_mdoc` or `passport_sdjwt`), if not already issued for T, is encoded, bound to the key the Key Attestation attests, given its own random index in the issuer's Token Status List, and signed; once both are issued, T and its passport data are dropped. The wallet checks each credential before keeping it: issuer signature chaining to `issuer-ca.pem`, bound to its own holder key, and the offered vct or doctype |
+| Notify | `POST /notification` | the wallet reports each credential it kept as `credential_accepted`, or one that failed its checks as `credential_failure` (OID4VCI 1.0 §11); the status page lists what the wallets reported |
 
 Also served: `/.well-known/openid-credential-issuer` (signed metadata),
 `/.well-known/oauth-authorization-server`, `/jwks`, the SD-JWT VC
 type metadata at the `vct` URL (`/vct/passport/1`), and the Token
 Status List every credential references (`/statuslists/1`).
+
+### Deferred issuance
+
+A passport uploaded for review isn't issued at once. Each Credential
+Request still has its proof and nonce checked, but the issuer answers
+202 with a `transaction_id` and a polling `interval` instead of the
+credential (OID4VCI 1.0 §9), keeping a copy of the passport's
+`Evidence` for that request until an operator decides, for at most an
+hour.
+
+| Step | Endpoint | What happens |
+|---|---|---|
+| Defer | `POST /credential` | `issuer.CredentialRequest.Defer`: the transaction is bound to the access token's client and subject, so only that wallet's token can poll it |
+| Decide | `GET /review`, `POST /review/decision` | the operator approves or denies; the page shows the issuing country, passport expiry and chip-authentication evidence, not names or the document number |
+| Poll | `POST /deferred_credential` | the Deferred Credential Endpoint's `Resolve` hook carries out the decision on the wallet's next poll: an approved credential is issued (with its own status list index) and returned; a denied one is answered `credential_request_denied`; an undecided one is answered 202 again |
+
+The wallet keeps its access token in memory while it polls, so a
+deferred credential the web wallet is waiting for doesn't survive a
+wallet restart.
 
 ### Revocation
 

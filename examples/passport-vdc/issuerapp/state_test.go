@@ -143,9 +143,10 @@ func TestStatusPage_HidesIndices(t *testing.T) {
 	_, entries := s.snapshot()
 	var page strings.Builder
 	if err := statusTemplate.Execute(&page, struct {
-		URI     string
-		Entries []IssuedStatus
-	}{"https://issuer.example/statuslists/1", entries}); err != nil {
+		URI           string
+		Entries       []IssuedStatus
+		Notifications []NotificationEvent
+	}{"https://issuer.example/statuslists/1", entries, nil}); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(page.String(), ">"+strconv.Itoa(idx)+"<") || strings.Contains(page.String(), `name="idx"`) {

@@ -120,8 +120,12 @@ func usage() {
 }
 
 func receive(offerURI, dir string, cfg walletapp.Config, approver walletapp.Approver) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	// Long enough for an operator to review a deferred issuance.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
+	cfg.OnPending = func(p *walletapp.Pending) {
+		fmt.Printf("the issuer deferred %s (%s) for review; polling every %s until it decides…\n", p.ConfigurationID, p.Format, p.Interval)
+	}
 	received, err := walletapp.Receive(ctx, cfg, offerURI, approver)
 	if err != nil {
 		return err

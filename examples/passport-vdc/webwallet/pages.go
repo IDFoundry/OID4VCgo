@@ -36,11 +36,32 @@ const pageFoot = `
 type homePage struct {
 	Cards    []card
 	Received string
+	// Deferred are the credentials waiting for their issuers; Waiting
+	// and Denied report the last check.
+	Deferred []deferredCard
+	Waiting  bool
+	Denied   bool
+}
+
+// deferredCard is a credential the issuer deferred, as the home page
+// lists it.
+type deferredCard struct {
+	ID     string
+	Format string
 }
 
 var homeTemplate = template.Must(template.New("home").Parse(pageHead + `
 <h1>Demo wallet</h1>
-{{if .Received}}<p class="ok">✓ Received {{.Received}} credential(s).</p>{{end}}
+{{if and .Received (ne .Received "0")}}<p class="ok">✓ Received {{.Received}} credential(s).</p>{{end}}
+{{if .Denied}}<p class="bad">The issuer refused a credential it had deferred.</p>{{end}}
+{{if .Waiting}}<p class="note">Still waiting for the issuer.</p>{{end}}
+{{if .Deferred}}
+<h2>Waiting for the issuer</h2>
+<p>The issuer deferred these credentials: it's reviewing the request. Check back once it has decided.</p>
+{{range .Deferred}}
+<form method="post" action="/deferred/{{.ID}}"><code>{{.Format}}</code> <button>Check now</button></form>
+{{end}}
+{{end}}
 <form method="get" action="/receive">
 <label>Receive a credential — paste an offer link:<br><input type="text" name="offer" placeholder="openid-credential-offer://…" required></label>
 <button>Receive</button>

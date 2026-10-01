@@ -501,3 +501,62 @@ func TestWebWallet_RefusesCrossOriginPosts(t *testing.T) {
 		}
 	}
 }
+
+// TestWebWallet_DeferredCredential: a credential the issuer defers is
+// listed as waiting; "Check now" reports it's still waiting until the
+// operator decides, then stores it.
+func TestWebWallet_DeferredCredential(t *testing.T) {
+	env := demotest.New(t, nil)
+	store := walletapp.Store{Dir: filepath.Join(t.TempDir(), "wallet")}
+	env.StartWebWallet(t, store)
+	b := browser(env)
+
+	offer, err := env.Issuer.CreateTransactionForReview(context.Background(), demotest.SyntheticEvidence())
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := b.PostForm(env.WebWalletURL+"/receive", url.Values{"offer": {offer.URI}})
+	authorize := mustRedirect(t, resp, err, "POST /receive")
+	resp, err = b.Get(authorize.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	handle := approvalHandle(t, read(t, resp))
+	resp, err = b.PostForm(env.IssuerURL+"/authorize/decision", url.Values{"handle": {handle}, "decision": {"approve"}, "code": {offer.ConfirmationCode}})
+	callback := mustRedirect(t, resp, err, "approve")
+	resp, err = b.Get(callback.String())
+	home := mustRedirect(t, resp, err, "GET /callback")
+	if home.Query().Get("received") != "0" || home.Query().Get("deferred") != "2" {
+		t.Fatalf("callback redirect = %s, want 0 received and 2 deferred", home)
+	}
+
+	resp, err = b.Get(env.WebWalletURL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := read(t, resp)
+	checks := regexp.MustCompile(`action="(/deferred/[^"]+)"`).FindAllStringSubmatch(page, -1)
+	if !strings.Contains(page, "Waiting for the issuer") || len(checks) != 2 {
+		t.Fatalf("home page doesn't list two credentials waiting:\n%s", page)
+	}
+	resp, err = b.PostForm(env.WebWalletURL+checks[0][1], nil)
+	if waiting := mustRedirect(t, resp, err, "check before a decision"); waiting.Query().Get("waiting") == "" {
+		t.Fatalf("check before a decision = %s, want still waiting", waiting)
+	}
+
+	for _, rv := range env.Issuer.Reviews() {
+		if err := env.Issuer.Review(rv.Ref, true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, c := range checks {
+		resp, err = b.PostForm(env.WebWalletURL+c[1], nil)
+		if got := mustRedirect(t, resp, err, "check after approval"); got.Query().Get("received") != "1" {
+			t.Fatalf("check after approval = %s, want the credential received", got)
+		}
+	}
+	stored, err := store.List()
+	if err != nil || len(stored) != 2 {
+		t.Fatalf("store holds %d credentials, %v; want both", len(stored), err)
+	}
+}

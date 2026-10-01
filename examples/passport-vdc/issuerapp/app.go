@@ -50,6 +50,10 @@ type App struct {
 	issuerURL        fapi.URL
 	vct              string
 	credentialURL    url.URL
+	deferredURL      url.URL
+	notificationURL  url.URL
+	reviews          *reviews       // deferred issuances awaiting a decision
+	notifications    *notifications // what the wallets have reported
 	now              func() time.Time
 	server           *server.Server
 	issuer           *issuer.Issuer
@@ -87,6 +91,8 @@ func New(cfg Config) (*App, error) {
 		return nil, err
 	}
 	a.interactions = newTTLMap[pendingInteraction](a.now)
+	a.reviews = newReviews(a.now)
+	a.notifications = &notifications{now: a.now}
 	if a.providerRoots, err = certPool(cfg.Wallet.ProviderCA); err != nil {
 		return nil, err
 	}
@@ -101,7 +107,11 @@ func New(cfg Config) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	a.handler = a.routes(credentialHandler)
+	deferredHandler, notificationHandler, err := a.protectedHandlers()
+	if err != nil {
+		return nil, err
+	}
+	a.handler = a.routes(credentialHandler, deferredHandler, notificationHandler)
 	return a, nil
 }
 
@@ -232,7 +242,15 @@ func (a *App) buildIssuer() error {
 	if err != nil {
 		return err
 	}
-	a.credentialURL = credentialURL.URL()
+	deferredURL, err := a.endpoint("/deferred_credential")
+	if err != nil {
+		return err
+	}
+	notificationURL, err := a.endpoint("/notification")
+	if err != nil {
+		return err
+	}
+	a.credentialURL, a.deferredURL, a.notificationURL = credentialURL.URL(), deferredURL.URL(), notificationURL.URL()
 
 	id, err := a.identity()
 	if err != nil {
@@ -249,8 +267,13 @@ func (a *App) buildIssuer() error {
 	a.issuer, err = issuer.New(issuer.Config{
 		Assurance: issuer.AssuranceDevelopment,
 		Issuer:    a.issuerURL,
-		Endpoints: issuer.Endpoints{Credential: credentialURL, Nonce: nonceURL},
-		Limits:    issuer.Limits{NonceLifetime: 5 * time.Minute},
+		Endpoints: issuer.Endpoints{
+			Credential: credentialURL, Nonce: nonceURL, DeferredCredential: deferredURL, Notification: notificationURL,
+		},
+		Limits: issuer.Limits{
+			NonceLifetime:                5 * time.Minute,
+			DeferredIssuancePollInterval: deferredPollInterval, DeferredTransactionLifetime: reviewLifetime,
+		},
 		// The credentials carry passport data, down to the face image,
 		// so they never travel in cleartext beyond TLS — which in a
 		// real deployment often ends at a proxy (OID4VCI 1.0 §10).
@@ -275,10 +298,13 @@ func (a *App) buildIssuer() error {
 			},
 		},
 	}, issuer.Dependencies{
-		Nonces:              oid4vcgostorage.NewNonceStore(),
-		Clock:               issuer.ClockFunc(a.now),
-		Random:              rand.Reader,
-		AttestationVerifier: issuer.X5CAttestationVerifier{Roots: a.providerRoots},
+		Nonces:               oid4vcgostorage.NewNonceStore(),
+		DeferredTransactions: oid4vcgostorage.NewDeferredTransactionStore(),
+		Notifications:        oid4vcgostorage.NewNotificationStore(),
+		NotificationHandler:  a.notifications,
+		Clock:                issuer.ClockFunc(a.now),
+		Random:               rand.Reader,
+		AttestationVerifier:  issuer.X5CAttestationVerifier{Roots: a.providerRoots},
 		SDJWTSigner: &issuer.SDJWTSigner{
 			Signer: id.documentSigner, Alg: oid4vci.ES256, IssuerCertificate: id.documentSignerCert,
 		},

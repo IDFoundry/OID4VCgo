@@ -16,7 +16,7 @@ func newTestTransactions(now *time.Time, max int) *transactions {
 
 func mustPut(t *testing.T, tx *transactions) (id, code string) {
 	t.Helper()
-	id, code, err := tx.put(passport.Evidence{}, testConfigIDs)
+	id, code, err := tx.put(passport.Evidence{}, testConfigIDs, false)
 	if err != nil {
 		t.Fatalf("put: %v", err)
 	}
@@ -31,7 +31,7 @@ func TestTransactions_CapsLivePassports(t *testing.T) {
 	tx := newTestTransactions(&now, 2)
 	mustPut(t, tx)
 	mustPut(t, tx)
-	if _, _, err := tx.put(passport.Evidence{}, testConfigIDs); !errors.Is(err, errTooManyTransactions) {
+	if _, _, err := tx.put(passport.Evidence{}, testConfigIDs, false); !errors.Is(err, errTooManyTransactions) {
 		t.Fatalf("third put: error = %v, want errTooManyTransactions", err)
 	}
 	now = now.Add(time.Minute) // both expire, freeing room
@@ -90,29 +90,29 @@ func TestTransactions_IssuesEachCredentialOnce(t *testing.T) {
 	tx := newTestTransactions(&now, 10)
 	id, code := mustPut(t, tx)
 
-	if _, err := tx.reserve(id, MdocConfigurationID); !errors.Is(err, errNoTransaction) {
+	if _, _, err := tx.reserve(id, MdocConfigurationID); !errors.Is(err, errNoTransaction) {
 		t.Fatalf("reserve before claim: error = %v, want errNoTransaction", err)
 	}
 	if err := tx.claim(id, code); err != nil {
 		t.Fatalf("claim: %v", err)
 	}
 
-	if _, err := tx.reserve(id, MdocConfigurationID); err != nil {
+	if _, _, err := tx.reserve(id, MdocConfigurationID); err != nil {
 		t.Fatalf("reserve mdoc: %v", err)
 	}
 	tx.release(id, MdocConfigurationID) // issuing failed: retryable
-	if _, err := tx.reserve(id, MdocConfigurationID); err != nil {
+	if _, _, err := tx.reserve(id, MdocConfigurationID); err != nil {
 		t.Fatalf("reserve mdoc after release: %v", err)
 	}
 	tx.done(id)
-	if _, err := tx.reserve(id, MdocConfigurationID); !errors.Is(err, errAlreadyIssued) {
+	if _, _, err := tx.reserve(id, MdocConfigurationID); !errors.Is(err, errAlreadyIssued) {
 		t.Fatalf("reserve mdoc again: error = %v, want errAlreadyIssued", err)
 	}
-	if _, err := tx.reserve(id, "unoffered"); !errors.Is(err, errAlreadyIssued) {
+	if _, _, err := tx.reserve(id, "unoffered"); !errors.Is(err, errAlreadyIssued) {
 		t.Errorf("reserve an unoffered configuration: error = %v, want it refused", err)
 	}
 
-	if _, err := tx.reserve(id, SDJWTConfigurationID); err != nil {
+	if _, _, err := tx.reserve(id, SDJWTConfigurationID); err != nil {
 		t.Fatalf("reserve sd-jwt: %v", err)
 	}
 	tx.done(id)
