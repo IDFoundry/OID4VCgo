@@ -40,6 +40,29 @@ func (a *App) credentialHandler() (http.Handler, error) {
 	return h, nil
 }
 
+// protectedHandlers serves the Deferred Credential Endpoint, whose
+// polls resolveDeferred answers, and the Notification Endpoint, whose
+// events the /status page shows. Both check the access token as the
+// Credential Endpoint does.
+func (a *App) protectedHandlers() (deferred, notification http.Handler, err error) {
+	tokens, err := fapiresource.New(a.resourceVerifier)
+	if err != nil {
+		return nil, nil, fmt.Errorf("issuerapp: access token verifier: %w", err)
+	}
+	deferred, err = a.issuer.DeferredCredentialHandler(issuer.DeferredCredentialHandlerConfig{
+		ProtectedEndpointConfig: issuer.ProtectedEndpointConfig{URL: &a.deferredURL, Tokens: tokens},
+		Resolve:                 a.resolveDeferred,
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("issuerapp: deferred credential handler: %w", err)
+	}
+	notification, err = a.issuer.NotificationEndpointHandler(issuer.ProtectedEndpointConfig{URL: &a.notificationURL, Tokens: tokens})
+	if err != nil {
+		return nil, nil, fmt.Errorf("issuerapp: notification handler: %w", err)
+	}
+	return deferred, notification, nil
+}
+
 // prepareCredential finds the passport transaction the access token's
 // subject names and fills in the requested format from that passport's
 // Evidence. Each credential gets its own status list index; done
@@ -47,7 +70,7 @@ func (a *App) credentialHandler() (http.Handler, error) {
 func (a *App) prepareCredential(_ context.Context, grant issuer.Grant, req *issuer.CredentialRequest) (func(bool), error) {
 	// Each offered credential is issued once per passport: reserve it
 	// now, release it if issuing fails.
-	e, err := a.transactions.reserve(grant.Subject, req.CredentialConfigurationID)
+	e, review, err := a.transactions.reserve(grant.Subject, req.CredentialConfigurationID)
 	switch {
 	case errors.Is(err, errAlreadyIssued):
 		return nil, issuer.NewError(issuer.ErrorCredentialRequestDenied, "this credential has already been issued for this passport")
@@ -55,6 +78,7 @@ func (a *App) prepareCredential(_ context.Context, grant issuer.Grant, req *issu
 		return nil, issuer.NewError(issuer.ErrorCredentialRequestDenied, "the passport transaction for this access token has expired")
 	}
 	var statusIdxs []int
+	var reviewRef string
 	done := func(issued bool) {
 		if issued {
 			a.transactions.done(grant.Subject)
@@ -64,6 +88,21 @@ func (a *App) prepareCredential(_ context.Context, grant issuer.Grant, req *issu
 		for _, idx := range statusIdxs {
 			a.statusList.release(idx)
 		}
+		if reviewRef != "" {
+			a.reviews.remove(reviewRef)
+		}
+	}
+
+	// A passport uploaded for review is deferred: the wallet gets a
+	// transaction_id to poll, and the review keeps its own copy of the
+	// Evidence until an operator decides (resolveDeferred).
+	if review {
+		if reviewRef, err = a.reviews.add(e, req.CredentialConfigurationID); err != nil {
+			a.transactions.release(grant.Subject, req.CredentialConfigurationID)
+			return nil, issuer.NewError(issuer.ErrorCredentialRequestDenied, "too many issuances are awaiting review — try again later")
+		}
+		req.Defer = &issuer.Deferral{Reference: reviewRef}
+		return done, nil
 	}
 
 	// Both formats are always built from the same Evidence;

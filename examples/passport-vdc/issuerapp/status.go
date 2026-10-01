@@ -199,8 +199,20 @@ var statusTemplate = template.Must(template.New("status").Parse(pageHead + `
 {{else}}
 <p>None yet.</p>
 {{end}}
+<h2>What the wallets reported</h2>
+<p>After receiving a credential, the wallet tells this issuer whether it kept it (OID4VCI 1.0 §11, the Notification Endpoint).</p>
+{{if .Notifications}}
+<table>
+<tr><th>Received</th><th>Event</th><th>Description</th></tr>
+{{range .Notifications}}
+<tr><td>{{.At.Format "15:04:05"}}</td><td><code>{{.Event}}</code></td><td>{{.Description}}</td></tr>
+{{end}}
+</table>
+{{else}}
+<p>None yet.</p>
+{{end}}
 <p class="note">Demo only: anyone who can reach this page can revoke. Entries record no passport data, and don't show the credentials' status list indices. They're kept across restarts only under <code>cmd/demo</code>.</p>
-<p><a href="/">Issue another</a></p>
+<p><a href="/">Issue another</a> · <a href="/review">Issuances awaiting review</a></p>
 ` + pageFoot))
 
 // IssuedStatuses lists every credential this issuer has issued, newest
@@ -213,9 +225,10 @@ func (a *App) IssuedStatuses() []IssuedStatus {
 func (a *App) handleStatusPage(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = statusTemplate.Execute(w, struct {
-		URI     string
-		Entries []IssuedStatus
-	}{a.statusListURI, a.IssuedStatuses()})
+		URI           string
+		Entries       []IssuedStatus
+		Notifications []NotificationEvent
+	}{a.statusListURI, a.IssuedStatuses(), a.Notifications()})
 }
 
 // handleRevoke revokes one credential. A cross-origin form post is

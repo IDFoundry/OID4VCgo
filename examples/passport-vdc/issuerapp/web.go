@@ -37,8 +37,19 @@ type Offer struct {
 // after passport.Verify; tests call it directly with synthetic
 // Evidence.
 func (a *App) CreateTransaction(ctx context.Context, e passport.Evidence) (Offer, error) {
+	return a.createTransaction(ctx, e, false)
+}
+
+// CreateTransactionForReview is CreateTransaction for a passport an
+// operator must review first: its credentials are deferred (OID4VCI 1.0
+// §9) until a decision on the /review page (Review).
+func (a *App) CreateTransactionForReview(ctx context.Context, e passport.Evidence) (Offer, error) {
+	return a.createTransaction(ctx, e, true)
+}
+
+func (a *App) createTransaction(ctx context.Context, e passport.Evidence, review bool) (Offer, error) {
 	configIDs := []string{MdocConfigurationID, SDJWTConfigurationID}
-	txID, code, err := a.transactions.put(e, configIDs)
+	txID, code, err := a.transactions.put(e, configIDs, review)
 	if err != nil {
 		return Offer{}, err
 	}
@@ -54,7 +65,7 @@ func (a *App) CreateTransaction(ctx context.Context, e passport.Evidence) (Offer
 	return Offer{URI: result.URI, IssuerState: txID, ConfirmationCode: code}, nil
 }
 
-func (a *App) routes(credentialHandler http.Handler) http.Handler {
+func (a *App) routes(credentialHandler, deferredHandler, notificationHandler http.Handler) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", a.handleUploadPage)
 	mux.HandleFunc("POST /passport", a.handleUpload)
@@ -71,6 +82,10 @@ func (a *App) routes(credentialHandler http.Handler) http.Handler {
 	mux.HandleFunc("GET "+VCTPath, a.handleVCTMetadata)
 	mux.HandleFunc("POST /nonce", a.handleNonce)
 	mux.Handle("POST /credential", credentialHandler)
+	mux.Handle("POST /deferred_credential", deferredHandler)
+	mux.Handle("POST /notification", notificationHandler)
+	mux.HandleFunc("GET /review", a.handleReviewPage)
+	mux.HandleFunc("POST /review/decision", a.handleReviewDecision)
 
 	mux.Handle("GET "+StatusListPath, a.statusPublisher())
 	mux.HandleFunc("GET /status", a.handleStatusPage)
@@ -103,6 +118,7 @@ var uploadTemplate = template.Must(template.New("upload").Parse(pageHead + `
 <p>Upload a gmrtd portable passport file. It's verified against the issuing country's signatures, then offered to your wallet as both an <code>mso_mdoc</code> and a <code>dc+sd-jwt</code> credential.</p>
 <form method="post" action="/passport" enctype="multipart/form-data">
 <input type="file" name="passport" accept=".gmrtd" required>
+<p><label><input type="checkbox" name="review" value="1"> Hold for an operator's review — the wallet waits, and polls, until you decide on the <a href="/review">review page</a></label></p>
 <button>Verify passport</button>
 </form>
 <p class="note">Demo only. The passport is held in memory until the offer expires and is never stored.</p>
@@ -176,7 +192,7 @@ func (a *App) handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	offer, err := a.CreateTransaction(r.Context(), e)
+	offer, err := a.createTransaction(r.Context(), e, r.FormValue("review") != "")
 	switch {
 	case errors.Is(err, errTooManyTransactions):
 		writeHTMLError(w, http.StatusServiceUnavailable, "too many passports are awaiting issuance — try again in a few minutes")
