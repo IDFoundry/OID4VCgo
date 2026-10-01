@@ -53,6 +53,10 @@ func TestX5CVerifierRoots_LeafProfile(t *testing.T) {
 		}
 	}
 
+	if _, err := trust.VerifyVerifierChain([][]byte{signing, ca.Raw}); err == nil {
+		t.Error("a chain including its trust anchor was trusted")
+	}
+
 	errNotAVerifier := errors.New("not a verifier certificate")
 	trust.LeafPolicy = func(*x509.Certificate, [][]*x509.Certificate) error { return errNotAVerifier }
 	if _, err := trust.VerifyVerifierChain([][]byte{signing}); !errors.Is(err, errNotAVerifier) {
