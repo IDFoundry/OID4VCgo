@@ -261,17 +261,26 @@ func TestVCTMetadata_IsValidTypeMetadata(t *testing.T) {
 }
 
 // recordingTransport records the Content-Type of every request to, and
-// response from, a URL path.
+// response from, a URL path, apart from DPoP nonce challenges, which it
+// counts.
 type recordingTransport struct {
 	base     http.RoundTripper
 	path     string
 	mu       sync.Mutex
 	requests []string
 	replies  []string
+	// challenges counts DPoP nonce challenges (401) to requests at path.
+	challenges int
 }
 
 func (rt *recordingTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	resp, err := rt.base.RoundTrip(r)
+	if r.URL.Path == rt.path && err == nil && resp.StatusCode == http.StatusUnauthorized {
+		rt.mu.Lock()
+		rt.challenges++
+		rt.mu.Unlock()
+		return resp, err
+	}
 	if r.URL.Path == rt.path && err == nil {
 		rt.mu.Lock()
 		rt.requests = append(rt.requests, r.Header.Get("Content-Type"))
@@ -317,6 +326,11 @@ func TestCredential_EncryptedBothWays(t *testing.T) {
 	}
 	if len(recorder.requests) != 2 {
 		t.Fatalf("saw %d credential requests, want 2", len(recorder.requests))
+	}
+	// The Credential Endpoint requires a DPoP nonce: the first request
+	// is challenged for one, and the next reuses the nonce it was given.
+	if recorder.challenges != 1 {
+		t.Errorf("saw %d DPoP nonce challenges, want 1", recorder.challenges)
 	}
 	for i := range recorder.requests {
 		if recorder.requests[i] != "application/jwt" || recorder.replies[i] != "application/jwt" {
