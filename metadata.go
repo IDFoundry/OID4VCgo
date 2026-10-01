@@ -312,6 +312,10 @@ type JWK struct {
 	// Use is the key's intended use (RFC 7517 §4.2): "enc" for an
 	// encryption key, "sig" for a signing one. OPTIONAL.
 	Use string `json:"use,omitempty"`
+
+	// KeyOps is the operations the key is for (RFC 7517 §4.3), e.g.
+	// "deriveKey" for an ECDH-ES encryption key. OPTIONAL.
+	KeyOps []string `json:"key_ops,omitempty"`
 }
 
 // JWKSet is a JSON Web Key Set (RFC 7517 §5) — §12.2.4's own "jwks"

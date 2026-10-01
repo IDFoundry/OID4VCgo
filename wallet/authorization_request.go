@@ -170,8 +170,9 @@ type wireClientMetadata struct {
 }
 
 type wireJWKKid struct {
-	Kid string `json:"kid"`
-	Use string `json:"use"`
+	Kid    string   `json:"kid"`
+	Use    string   `json:"use"`
+	KeyOps []string `json:"key_ops"`
 }
 
 // ParseAuthorizationRequest validates the certificate chain in
@@ -351,7 +352,7 @@ func (w *Wallet) FetchAuthorizationRequest(ctx context.Context, requestURI, clie
 // specifically to check this: RFC 7517 §5 permits a JWK Set to carry
 // members a consumer doesn't understand, which it MUST ignore rather
 // than treat as fatal. Any entry that fails to parse as a P-256 EC
-// public key, or explicitly declares a "use" other than "enc", is
+// public key, or whose "use" or "key_ops" rules out encryption, is
 // skipped; only genuinely running out of candidates is an error.
 func selectResponseEncryptionKey(keys []json.RawMessage) (*ecdsa.PublicKey, string, error) {
 	for _, raw := range keys {
@@ -359,7 +360,7 @@ func selectResponseEncryptionKey(keys []json.RawMessage) (*ecdsa.PublicKey, stri
 		if err := json.Unmarshal(raw, &kid); err != nil {
 			continue
 		}
-		if kid.Use != "" && kid.Use != "enc" {
+		if !usableForEncryption(kid.Use, kid.KeyOps) {
 			continue
 		}
 		rawPub, err := jwk.ParsePublicKey(raw)

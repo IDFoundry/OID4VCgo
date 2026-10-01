@@ -29,11 +29,26 @@ type VerifierTrust interface {
 // Roots with a leaf that isn't self-signed — HAIP 1.0 §5: "The X.509
 // certificate of the trust anchor MUST NOT be included in the x5c JOSE
 // header of the signed request. The X.509 certificate signing the
-// request MUST NOT be self-signed."
+// request MUST NOT be self-signed." The leaf must also be an
+// end-entity certificate (not a CA), and when it has a key usage
+// extension, one that allows digitalSignature.
+//
+// With x509_hash, nothing ties a Request Object's response_uri to a
+// name in the certificate: every certificate that chains to Roots, for
+// any purpose, is a Verifier this Wallet trusts. Roots must therefore
+// anchor only Verifier certificates — never x509.SystemCertPool(), or
+// an ecosystem CA that also issues issuer or wallet provider
+// certificates, unless LeafPolicy tells them apart.
 type X5CVerifierRoots struct {
 	// Roots is the trust anchor set a Verifier's chain must verify
 	// against. REQUIRED.
 	Roots *x509.CertPool
+
+	// LeafPolicy, if set, is run on the chain-verified leaf and its
+	// verified paths, and can refuse it: require what distinguishes a
+	// Verifier's certificate (an extended key usage, a certificate
+	// policy) where Roots also anchor other roles.
+	LeafPolicy func(leaf *x509.Certificate, chains [][]*x509.Certificate) error
 }
 
 // VerifyVerifierChain implements VerifierTrust.
@@ -41,11 +56,32 @@ func (v X5CVerifierRoots) VerifyVerifierChain(chain [][]byte) (*x509.Certificate
 	if v.Roots == nil {
 		return nil, fmt.Errorf("wallet: X5CVerifierRoots.Roots is required")
 	}
-	leaf, err := certchain.VerifyLeaf(chain, v.Roots)
+	leaf, err := certchain.VerifyLeafWithPolicy(chain, v.Roots, func(leaf *x509.Certificate, chains [][]*x509.Certificate) error {
+		if err := verifierLeafProfile(leaf); err != nil {
+			return err
+		}
+		if v.LeafPolicy != nil {
+			return v.LeafPolicy(leaf, chains)
+		}
+		return nil
+	})
 	if err != nil {
 		return nil, fmt.Errorf("wallet: verifier certificate: %w", err)
 	}
 	return leaf, nil
+}
+
+// verifierLeafProfile refuses a leaf that can't be a Verifier's
+// request-signing certificate: a CA certificate, or one whose key usage
+// doesn't allow signing.
+func verifierLeafProfile(leaf *x509.Certificate) error {
+	if leaf.BasicConstraintsValid && leaf.IsCA {
+		return fmt.Errorf("the leaf is a CA certificate")
+	}
+	if leaf.KeyUsage != 0 && leaf.KeyUsage&x509.KeyUsageDigitalSignature == 0 {
+		return fmt.Errorf("the leaf's key usage doesn't allow digitalSignature")
+	}
+	return nil
 }
 
 // NoVerifierTrust accepts any Verifier certificate, skipping OID4VP
