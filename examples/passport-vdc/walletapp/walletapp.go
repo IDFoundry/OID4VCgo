@@ -6,13 +6,14 @@
 // attests in a Key Attestation (the attestation proof type).
 //
 // It is a demo, not a secure wallet: holder keys are ordinary in-memory
-// keys (a real wallet keeps them in secure hardware), and it attests
-// itself and its holder keys with the Wallet Provider's own private
-// key, which a real wallet would never hold.
+// keys (a real wallet keeps them in secure hardware). It never holds
+// the Wallet Provider's key: it asks the provider's service for each
+// attestation (walletprovider.Client).
 package walletapp
 
 import (
 	"context"
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -30,7 +31,6 @@ import (
 	"github.com/idfoundry/fapigo/storage/memstore"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
-	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/walletprovider"
 	"github.com/idfoundry/oid4vcgo/wallet"
 )
 
@@ -41,8 +41,9 @@ type Config struct {
 	ClientID    string
 	RedirectURI string
 
-	// Provider attests this wallet instance. See the package doc.
-	Provider *walletprovider.Provider
+	// Provider attests this wallet instance and its holder keys: a
+	// walletprovider.Client calling the demo Wallet Provider's service.
+	Provider Attester
 
 	// IssuerRoots are the trust anchors for issuer certificates: every
 	// received credential must be signed by a certificate chaining to
@@ -51,6 +52,17 @@ type Config struct {
 
 	// HTTP makes every request; nil means a client with a 10 s timeout.
 	HTTP *http.Client
+}
+
+// Attester is the Wallet Provider, as the wallet asks it for
+// attestations. walletprovider.Client implements it.
+type Attester interface {
+	// WalletAttestation returns a Wallet Attestation binding
+	// instanceKey to clientID (HAIP 1.0 §4.4.1).
+	WalletAttestation(ctx context.Context, clientID string, instanceKey crypto.PublicKey) (string, error)
+	// KeyAttestation returns a Key Attestation over keys carrying the
+	// Credential Issuer's nonce (HAIP 1.0 §4.5.1).
+	KeyAttestation(ctx context.Context, keys []*ecdsa.PublicKey, nonce string) (string, error)
 }
 
 // Approver completes the authorization step. Given the authorization URL
@@ -163,7 +175,7 @@ func requestAll(ctx context.Context, w *wallet.Wallet, cfg Config, resource wall
 		if err != nil {
 			return nil, fmt.Errorf("walletapp: nonce: %w", err)
 		}
-		holder, keyAttestation, err := attestedHolderKey(w, cfg.Provider, nonce.CNonce)
+		holder, keyAttestation, err := attestedHolderKey(ctx, cfg.Provider, nonce.CNonce)
 		if err != nil {
 			return nil, err
 		}
@@ -189,22 +201,14 @@ func requestAll(ctx context.Context, w *wallet.Wallet, cfg Config, resource wall
 	return received, nil
 }
 
-// keyAttestationLifetime bounds how long a Key Attestation is valid; it
-// is used once, right away.
-const keyAttestationLifetime = 5 * time.Minute
-
 // attestedHolderKey generates a holder key and has the Wallet Provider
 // attest it in a Key Attestation carrying the issuer's nonce.
-func attestedHolderKey(w *wallet.Wallet, provider *walletprovider.Provider, nonce string) (*ecdsa.PrivateKey, string, error) {
+func attestedHolderKey(ctx context.Context, provider Attester, nonce string) (*ecdsa.PrivateKey, string, error) {
 	holder, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return nil, "", fmt.Errorf("walletapp: holder key: %w", err)
 	}
-	claims, err := provider.KeyAttestationClaims([]*ecdsa.PublicKey{&holder.PublicKey}, time.Now(), keyAttestationLifetime)
-	if err != nil {
-		return nil, "", fmt.Errorf("walletapp: key attestation: %w", err)
-	}
-	keyAttestation, err := w.GenerateAttestationProof(provider.Key, oid4vci.ES256, provider.KeyAttestationHeader(), claims, nonce)
+	keyAttestation, err := provider.KeyAttestation(ctx, []*ecdsa.PublicKey{&holder.PublicKey}, nonce)
 	if err != nil {
 		return nil, "", fmt.Errorf("walletapp: key attestation: %w", err)
 	}
@@ -234,7 +238,7 @@ func newOAuthClient(ctx context.Context, w *wallet.Wallet, cfg Config, httpClien
 	if err != nil {
 		return nil, fmt.Errorf("walletapp: instance key: %w", err)
 	}
-	walletAttestation, err := cfg.Provider.Attest(cfg.ClientID, instance.PublicKey, time.Now(), time.Hour)
+	walletAttestation, err := cfg.Provider.WalletAttestation(ctx, cfg.ClientID, instance.PublicKey)
 	if err != nil {
 		return nil, fmt.Errorf("walletapp: wallet attestation: %w", err)
 	}

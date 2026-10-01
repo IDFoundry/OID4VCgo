@@ -5,8 +5,8 @@
 //	go run ./cmd/wallet present [-format mso_mdoc|dc+sd-jwt] [-yes] 'openid4vp://?client_id=...&request_uri=...'
 //
 // receive redeems a Credential Offer from the demo issuer, attesting
-// itself with the demo Wallet Provider key (see cmd/wallet-provider),
-// and stores every offered credential with its holder key. By default
+// itself and its holder keys through the demo Wallet Provider's service
+// (cmd/wallet-provider, -wallet-provider-url), and stores every offered credential with its holder key. By default
 // it prints the authorization URL for you to open and approve in a
 // browser; -headless -code <code> approves automatically. present answers a
 // request from a verifier whose certificate chains to a trusted
@@ -36,18 +36,17 @@ import (
 func main() {
 	fs := flag.NewFlagSet("wallet", flag.ExitOnError)
 	store := fs.String("store", "wallet-store", "directory the wallet keeps credentials in")
-	providerKey := fs.String("wallet-provider-key", "wallet-provider.pem", "the demo Wallet Provider's private key")
-	providerIssuer := fs.String("wallet-provider-issuer", "https://wallet-provider.passport-vdc.demo", "the demo Wallet Provider's identifier")
+	providerURL := fs.String("wallet-provider-url", "https://127.0.0.1:6443", "receive: the demo Wallet Provider's service (cmd/wallet-provider)")
 	clientID := fs.String("client-id", "passport-vdc-wallet", "this wallet's client_id")
 	redirectURI := fs.String("redirect-uri", "http://127.0.0.1:8765/callback", "this wallet's loopback redirect URI")
-	trust := fs.String("trust", "issuer-tls.pem,verifier-tls.pem", "comma-separated PEM files of TLS certificates to trust (from cmd/issuer and cmd/verifier); missing files are skipped")
+	trust := fs.String("trust", "issuer-tls.pem,verifier-tls.pem,wallet-provider-tls.pem", "comma-separated PEM files of TLS certificates to trust (from cmd/issuer, cmd/verifier and cmd/wallet-provider); missing files are skipped")
 	headless := fs.Bool("headless", false, "receive: approve automatically instead of in a browser (needs -code)")
 	code := fs.String("code", "", "receive -headless: the confirmation code shown with the offer")
 	issuerCA := fs.String("trust-issuer-ca", "issuer-ca.pem", "receive: comma-separated PEM files of issuer CAs whose credentials to accept (from cmd/issuer)")
 	verifierCA := fs.String("trust-verifier-ca", "verifier-ca.pem", "present: comma-separated PEM files of verifier CAs whose requests to answer (from cmd/verifier)")
 	yes := fs.Bool("yes", false, "present: share without asking")
 	format := fs.String("format", "", "present: only offer stored credentials of this format (mso_mdoc or dc+sd-jwt)")
-	state := fs.String("state", "", "a cmd/demo state directory: take the store, Wallet Provider key and trust files from it (flags set explicitly still win)")
+	state := fs.String("state", "", "a cmd/demo state directory: take the store and trust files from it (flags set explicitly still win)")
 
 	if len(os.Args) < 2 {
 		usage()
@@ -58,7 +57,7 @@ func main() {
 	}
 	if *state != "" {
 		useState(fs, *state, map[string]*string{
-			"store": store, "wallet-provider-key": providerKey, "trust": trust,
+			"store": store, "trust": trust,
 			"trust-issuer-ca": issuerCA, "trust-verifier-ca": verifierCA,
 		})
 	}
@@ -72,14 +71,7 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
-		keyPEM, err := os.ReadFile(*providerKey) // #nosec G304 -- operator-supplied path
-		if err != nil {
-			log.Fatalf("read wallet provider key (run cmd/wallet-provider first): %v", err)
-		}
-		provider, err := walletprovider.Load(*providerIssuer, keyPEM)
-		if err != nil {
-			log.Fatal(err)
-		}
+		provider := walletprovider.Client{URL: *providerURL, HTTP: httpClient}
 		issuerRoots, err := walletapp.LoadCertPool(*issuerCA)
 		if err != nil {
 			log.Fatalf("issuer CA: %v (start cmd/issuer first)", err)
@@ -208,7 +200,7 @@ func useState(fs *flag.FlagSet, dir string, flags map[string]*string) {
 	set := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
 	files := map[string]string{
-		"store": "wallet-store", "wallet-provider-key": "wallet-provider.pem", "trust": "tls-cert.pem",
+		"store": "wallet-store", "trust": "tls-cert.pem",
 		"trust-issuer-ca": "issuer-ca.pem", "trust-verifier-ca": "verifier-ca.pem",
 	}
 	for name, v := range flags {

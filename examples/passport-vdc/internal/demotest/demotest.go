@@ -33,8 +33,9 @@ const (
 	ProviderIssuer = "https://wallet-provider.demo.example"
 )
 
-// Env is a running demo: issuer, optional verifier, the wallet provider,
-// and an HTTP client trusting every server's TLS certificate.
+// Env is a running demo: the Wallet Provider's service, the issuer, an
+// optional verifier, and an HTTP client trusting every server's TLS
+// certificate.
 type Env struct {
 	Issuer      *issuerapp.App
 	IssuerURL   string
@@ -43,11 +44,13 @@ type Env struct {
 	// WebWalletURL is reserved (and registered with the issuer as a
 	// redirect URI) up front; StartWebWallet starts it.
 	WebWalletURL string
-	Provider     *walletprovider.Provider
-	HTTP         *http.Client
-	roots        *x509.CertPool
-	verifierCAs  *x509.CertPool // the wallets' trusted verifier CAs; StartVerifier adds its own
-	webSrv       *httptest.Server
+	// Provider is the Wallet Provider; its service runs at ProviderURL.
+	Provider    *walletprovider.Provider
+	ProviderURL string
+	HTTP        *http.Client
+	roots       *x509.CertPool
+	verifierCAs *x509.CertPool // the wallets' trusted verifier CAs; StartVerifier adds its own
+	webSrv      *httptest.Server
 }
 
 // New starts an issuer (trusting cscaPool for uploads; nil means an
@@ -62,6 +65,9 @@ func New(t *testing.T, cscaPool cms.CertPool) *Env {
 		t.Fatalf("walletprovider.New: %v", err)
 	}
 	e := &Env{Provider: provider, roots: x509.NewCertPool(), verifierCAs: x509.NewCertPool()}
+	providerSrv := httptest.NewUnstartedServer(nil)
+	e.ProviderURL = "https://" + providerSrv.Listener.Addr().String()
+	e.start(t, providerSrv, provider.Handler(WalletClientID))
 	e.webSrv = httptest.NewUnstartedServer(nil)
 	e.WebWalletURL = "https://" + e.webSrv.Listener.Addr().String()
 	t.Cleanup(func() {
@@ -149,7 +155,10 @@ func (e *Env) start(t *testing.T, srv *httptest.Server, h http.Handler) {
 func (e *Env) WalletConfig() walletapp.Config {
 	issuerRoots := x509.NewCertPool()
 	issuerRoots.AddCert(e.Issuer.IssuerCACertificate())
-	return walletapp.Config{ClientID: WalletClientID, RedirectURI: RedirectURI, Provider: e.Provider, IssuerRoots: issuerRoots, HTTP: e.HTTP}
+	return walletapp.Config{
+		ClientID: WalletClientID, RedirectURI: RedirectURI, IssuerRoots: issuerRoots, HTTP: e.HTTP,
+		Provider: walletprovider.Client{URL: e.ProviderURL, HTTP: e.HTTP},
+	}
 }
 
 // Date parses a YYYY-MM-DD date, panicking on malformed input.
