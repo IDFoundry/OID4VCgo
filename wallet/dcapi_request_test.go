@@ -3,6 +3,7 @@ package wallet_test
 import (
 	"context"
 	"crypto"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -108,5 +109,106 @@ func TestParseDCAPIRequest_Refusals(t *testing.T) {
 		if errors.As(err, &rejected) {
 			t.Errorf("%s: refused with a RequestRejectedError, before the request was trusted", name)
 		}
+	}
+}
+
+// resign re-signs requestObject's payload, changed by mutate, with key,
+// keeping its typ and x5c.
+func resign(t *testing.T, key crypto.Signer, requestObject string, mutate func(claims map[string]any)) string {
+	t.Helper()
+	header, payload, err := jose.DecodeUnverified(requestObject)
+	if err != nil {
+		t.Fatalf("DecodeUnverified: %v", err)
+	}
+	var claims map[string]any
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		t.Fatalf("unmarshal payload: %v", err)
+	}
+	mutate(claims)
+	raw, err := json.Marshal(claims)
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+	signed, err := jose.Sign(jose.ES256, key, map[string]any{"typ": header["typ"], "x5c": header["x5c"]}, raw)
+	if err != nil {
+		t.Fatalf("jose.Sign: %v", err)
+	}
+	return signed
+}
+
+// TestParseRequests_RequireTheirResponseTypeAndMode: each parser answers
+// only a vp_token request in its own Response Mode. The redirect flow
+// refuses others with a RequestRejectedError it can send back; the DC
+// API flow refuses them outright.
+func TestParseRequests_RequireTheirResponseTypeAndMode(t *testing.T) {
+	key, cert, trust := testVerifierSignerAndCert(t)
+	v := newTestVerifierWith(t, key, cert)
+	redirect, err := v.BuildAuthorizationRequest(verifier.BuildAuthorizationRequestRequest{Query: testQuery(t)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, tc := range map[string]struct {
+		mutate   func(map[string]any)
+		wantCode string
+	}{
+		"response_type code":   {func(c map[string]any) { c["response_type"] = "code" }, "unsupported_response_type"},
+		"no response_type":     {func(c map[string]any) { delete(c, "response_type") }, "unsupported_response_type"},
+		"response_mode plain":  {func(c map[string]any) { c["response_mode"] = "direct_post" }, "invalid_request"},
+		"response_mode dc_api": {func(c map[string]any) { c["response_mode"] = "dc_api.jwt" }, "invalid_request"},
+		"no response_mode":     {func(c map[string]any) { delete(c, "response_mode") }, "invalid_request"},
+	} {
+		_, err := wallet.ParseAuthorizationRequest(wallet.ParseAuthorizationRequestParams{
+			RequestObject: resign(t, key, redirect.RequestObject, tc.mutate), ClientID: v.ClientID(), VerifierTrust: trust,
+		})
+		var rejected *wallet.RequestRejectedError
+		if !errors.As(err, &rejected) || rejected.Code != tc.wantCode || rejected.ResponseURI == "" {
+			t.Errorf("redirect flow, %s: err = %v, want a RequestRejectedError %q to send back", name, err, tc.wantCode)
+		}
+	}
+
+	dcapi, err := v.BuildDCAPIAuthorizationRequest(verifier.BuildDCAPIAuthorizationRequestRequest{
+		Query: testQuery(t), ExpectedOrigins: []string{testDCAPIOrigin},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, mutate := range map[string]func(map[string]any){
+		"response_type code": func(c map[string]any) { c["response_type"] = "code" },
+		"no response_type":   func(c map[string]any) { delete(c, "response_type") },
+	} {
+		_, err := wallet.ParseDCAPIRequest(wallet.ParseDCAPIRequestParams{
+			Request: resign(t, key, dcapi.RequestObject, mutate), Origin: testDCAPIOrigin, VerifierTrust: trust,
+		})
+		if err == nil || !strings.Contains(err.Error(), "response_type") {
+			t.Errorf("DC API, %s: err = %v, want response_type refused", name, err)
+		}
+	}
+	_, err = wallet.ParseDCAPIRequest(wallet.ParseDCAPIRequestParams{
+		Request: resign(t, key, dcapi.RequestObject, func(c map[string]any) { c["transaction_data"] = []string{"e30"} }),
+		Origin:  testDCAPIOrigin, VerifierTrust: trust,
+	})
+	if err == nil || !strings.HasPrefix(err.Error(), "wallet: parse dc api request:") {
+		t.Errorf("DC API transaction_data: err = %v, want it named as ParseDCAPIRequest's", err)
+	}
+}
+
+// TestWallet_ParseDCAPIRequest uses the Wallet's own VerifierTrust.
+func TestWallet_ParseDCAPIRequest(t *testing.T) {
+	v, _, trust := newTestVerifier(t)
+	built, err := v.BuildDCAPIAuthorizationRequest(verifier.BuildDCAPIAuthorizationRequestRequest{
+		Query: testQuery(t), ExpectedOrigins: []string{testDCAPIOrigin},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req, err := newTestWalletTrusting(t, trust, nil).ParseDCAPIRequest(built.RequestObject, testDCAPIOrigin); err != nil || req.Origin != testDCAPIOrigin {
+		t.Errorf("trusting wallet: %+v, %v", req, err)
+	}
+	_, _, otherTrust := newTestVerifier(t)
+	if _, err := newTestWalletTrusting(t, otherTrust, nil).ParseDCAPIRequest(built.RequestObject, testDCAPIOrigin); err == nil || !strings.Contains(err.Error(), "untrusted verifier") {
+		t.Errorf("wallet trusting another CA: err = %v, want the Verifier untrusted", err)
+	}
+	if _, err := newTestWalletTrusting(t, nil, nil).ParseDCAPIRequest(built.RequestObject, testDCAPIOrigin); err == nil {
+		t.Error("a wallet without VerifierTrust parsed a DC API request")
 	}
 }
