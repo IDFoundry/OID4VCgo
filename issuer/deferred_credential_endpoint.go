@@ -86,6 +86,25 @@ func (r DeferredCredentialResult) wire() (int, any) {
 	}{TransactionID: r.TransactionID, Interval: pollIntervalSeconds(r.Interval)}
 }
 
+// checkDeferredCredentialRequest checks what a Deferred Credential
+// Request must satisfy before its transaction is looked up.
+func (iss *Issuer) checkDeferredCredentialRequest(auth AuthorizedRequest, req DeferredCredentialRequest) error {
+	if iss.deps.DeferredTransactions == nil {
+		return fmt.Errorf("issuer: request deferred credential: deferred issuance is not configured")
+	}
+	if err := requireClientIdentityDecision(auth); err != nil {
+		return err
+	}
+	if req.TransactionID == "" {
+		return newError(ErrorInvalidCredentialRequest, 400, "transaction_id is required", nil)
+	}
+	if req.ResponseEncryption != nil && !req.RequestWasEncrypted {
+		return newError(ErrorInvalidEncryptionParameters, 400,
+			"credential_response_encryption requires the request itself to be encrypted", nil)
+	}
+	return iss.requireResponseEncryption(req.ResponseEncryption)
+}
+
 // RequestDeferredCredential implements the Deferred Credential
 // Endpoint (§9): it retrieves the Deferred Issuance transaction
 // req.TransactionID identifies, checks it's bound to auth's client,
@@ -109,20 +128,7 @@ func (iss *Issuer) RequestDeferredCredential(ctx context.Context, auth Authorize
 }
 
 func (iss *Issuer) requestDeferredCredential(ctx context.Context, auth AuthorizedRequest, req DeferredCredentialRequest) (DeferredCredentialResult, error) {
-	if iss.deps.DeferredTransactions == nil {
-		return DeferredCredentialResult{}, fmt.Errorf("issuer: request deferred credential: deferred issuance is not configured")
-	}
-	if err := requireClientIdentityDecision(auth); err != nil {
-		return DeferredCredentialResult{}, err
-	}
-	if req.TransactionID == "" {
-		return DeferredCredentialResult{}, newError(ErrorInvalidCredentialRequest, 400, "transaction_id is required", nil)
-	}
-	if req.ResponseEncryption != nil && !req.RequestWasEncrypted {
-		return DeferredCredentialResult{}, newError(ErrorInvalidEncryptionParameters, 400,
-			"credential_response_encryption requires the request itself to be encrypted", nil)
-	}
-	if err := iss.requireResponseEncryption(req.ResponseEncryption); err != nil {
+	if err := iss.checkDeferredCredentialRequest(auth, req); err != nil {
 		return DeferredCredentialResult{}, err
 	}
 

@@ -239,7 +239,9 @@ type CredentialRequest struct {
 	// HTTP 202. SDJWTClaims/MdocClaims/PerCredential are then unused:
 	// IssueDeferredCredential takes them when the deployment is ready.
 	// Requires Endpoints.DeferredCredential, and AuthorizedRequest.Subject
-	// to bind the transaction to.
+	// to bind the transaction to. If the Credential Response then can't
+	// be sent, deny the transaction (DenyDeferredCredential) so nothing
+	// is issued that no Wallet can collect; CredentialHandler does.
 	Defer *Deferral
 
 	// ResponseEncryption is this request's own optional

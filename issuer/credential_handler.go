@@ -8,6 +8,8 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+
+	"github.com/idfoundry/oid4vcgo"
 )
 
 // AccessTokenVerifier checks the access token presented to a protected
@@ -213,6 +215,11 @@ func (iss *Issuer) DeferredCredentialHandler(cfg DeferredCredentialHandlerConfig
 			return
 		}
 		req, err := iss.ParseDeferredCredentialRequest(body, r.Header.Get("Content-Type"))
+		if err == nil {
+			// Checked before Resolve, so a malformed poll can't make
+			// the deployment issue.
+			err = iss.checkDeferredCredentialRequest(grant.Authorized, req)
+		}
 		if err != nil {
 			WriteError(w, err)
 			return
@@ -278,12 +285,21 @@ func (iss *Issuer) credentialResponse(ctx context.Context, grant Grant, req Cred
 	if err != nil {
 		return 0, nil, "", err
 	}
+	encoded, contentType, err := iss.encodeCredentialResponse(result, req.ResponseEncryption)
+	if err != nil && result.TransactionID != "" {
+		// The Wallet never learns this transaction_id, so nothing can
+		// collect what the deployment would issue for it.
+		iss.abandonDeferral(ctx, result.TransactionID)
+	}
+	return credentialResponseStatus(result), encoded, contentType, err
+}
+
+func (iss *Issuer) encodeCredentialResponse(result oid4vci.CredentialResponse, enc *ResponseEncryptionRequest) ([]byte, string, error) {
 	resultJSON, err := json.Marshal(result)
 	if err != nil {
-		return 0, nil, "", fmt.Errorf("issuer: credential handler: %w", err)
+		return nil, "", fmt.Errorf("issuer: credential handler: %w", err)
 	}
-	encoded, contentType, err := iss.EncryptResponseBody(resultJSON, req.ResponseEncryption)
-	return credentialResponseStatus(result), encoded, contentType, err
+	return iss.EncryptResponseBody(resultJSON, enc)
 }
 
 // writePrepareError writes a Prepare error: a *Error as it is, anything
@@ -304,7 +320,7 @@ func writePrepareError(w http.ResponseWriter, err error) {
 // poll resolved first.
 func (iss *Issuer) resolvePending(ctx context.Context, grant Grant, transactionID string,
 	resolve func(context.Context, Grant, string, DeferredTransactionRecord) error) error {
-	if transactionID == "" || iss.deps.DeferredTransactions == nil || requireClientIdentityDecision(grant.Authorized) != nil {
+	if transactionID == "" || iss.deps.DeferredTransactions == nil {
 		return nil
 	}
 	record, err := iss.pendingDeferredTransaction(ctx, transactionID)
