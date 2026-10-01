@@ -1235,9 +1235,14 @@ changes whether *every* bullet below is `(done)`.
   real Wallet would (`internal/jwe.Encrypt` against the Verifier's own
   advertised key), then parse/decrypt/verify it — the same "real round
   trip, not a simulation" discipline `TestWalletIssuerRoundTrip`
-  already holds OID4VCI to. With this, the DC API flow (Appendix A/HAIP
-  §5.2) is done end to end across `oid4vpmdoc`/`verifier`/`wallet` — the
-  one remaining piece is actually invoking the W3C Digital Credentials
+  already holds OID4VCI to. `ParseDCAPIRequest` is the Wallet's side of
+  receiving a DC API request: it verifies the signed Request Object as
+  `ParseAuthorizationRequest` does, requires `response_mode`
+  `dc_api.jwt`, and refuses unless the origin the platform reports is
+  one of the request's `expected_origins` (Appendix A.2) — without that
+  check, any site could replay a request another Verifier built. With
+  this, the DC API flow (Appendix A/HAIP §5.2) is done end to end across
+  `oid4vpmdoc`/`verifier`/`wallet` — the one remaining piece is actually invoking the W3C Digital Credentials
   API itself, a browser/OS platform concern outside any Go library's
   own transport responsibilities (see the `verifier` bullet above).
   `ParseAuthorizationRequest` requires the Request Object's
