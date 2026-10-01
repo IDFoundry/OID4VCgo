@@ -56,6 +56,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"time"
 
@@ -568,6 +569,11 @@ func runModule(httpClient *http.Client, cfg runModuleConfig, testName string, va
 		if err := submitCredentialOffer(httpClient, cfg.apiBase, module.ID, cfg.issuerBaseURL, cfg.credentialConfigurationID); err != nil {
 			return "ERROR: submit credential offer: " + err.Error() + moduleSuffix(cfg.apiBase, module.ID)
 		}
+		if testName == multipleClientsTestName {
+			if err := submitSecondClientOffer(httpClient, cfg, module.ID); err != nil {
+				return "ERROR: submit second client's credential offer: " + err.Error() + moduleSuffix(cfg.apiBase, module.ID)
+			}
+		}
 	}
 
 	// 120s, not 60s: unlike cmd/conformance-wallet's own outbound-HTTP-only
@@ -584,6 +590,42 @@ func runModule(httpClient *http.Client, cfg runModuleConfig, testName string, va
 		return "ERROR: " + err.Error() + moduleSuffix(cfg.apiBase, module.ID)
 	}
 	return status + "=" + result + moduleSuffix(cfg.apiBase, module.ID)
+}
+
+// multipleClientsTestName is the module that, under issuer_initiated,
+// asks for a second Credential Offer once its first client has its
+// credential: the suite doesn't reuse the first offer's issuer_state
+// for the second client (conformance-suite commit 2f97fd5c, issue
+// #1988), but pauses in WAITING for an offer of the second client's
+// own.
+const multipleClientsTestName = "oid4vci-1_0-issuer-happy-flow-multiple-clients"
+
+// secondOfferLogText is what the suite logs when the multiple-clients
+// module pauses for its second client's Credential Offer.
+const secondOfferLogText = "a new Credential Offer for the second client is needed"
+
+// submitSecondClientOffer delivers the multiple-clients module's second
+// Credential Offer once the suite asks for it — waiting for its log
+// message rather than only for WAITING, which the module also enters
+// while its first client is mid-flow. A suite that never asks (one
+// predating the second offer) finishes the module instead, and nothing
+// is sent.
+func submitSecondClientOffer(httpClient *http.Client, cfg runModuleConfig, moduleID string) error {
+	deadline := time.Now().Add(120 * time.Second)
+	for time.Now().Before(deadline) {
+		entries, err := conformancesuite.FetchModuleLog(httpClient, cfg.apiBase, moduleID)
+		if err == nil && slices.ContainsFunc(entries, func(e conformancesuite.LogEntry) bool {
+			return strings.Contains(e.Msg, secondOfferLogText)
+		}) {
+			return submitCredentialOffer(httpClient, cfg.apiBase, moduleID, cfg.issuerBaseURL, cfg.credentialConfigurationID)
+		}
+		if info, err := conformancesuite.FetchModuleInfo(httpClient, cfg.apiBase, moduleID); err == nil &&
+			(info.Status == "FINISHED" || info.Status == "INTERRUPTED") {
+			return nil
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	return fmt.Errorf("module %s neither asked for a second credential offer nor finished within 2m", moduleID)
 }
 
 // submitCredentialOffer drives the issuer_initiated flow variant's own

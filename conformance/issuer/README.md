@@ -335,6 +335,13 @@ server.FAPIRWTLSCipherSuites` on the listener — mirrors
   `/api/runner/browser/{id}` endpoint accumulates a `urls` array across
   both clients rather than replacing it, so drive the *last* entry for
   the second client's own round, not `urls[0]` again.
+  Under `issuer_initiated`, the suite (since commit `2f97fd5c`, its
+  issue #1988) no longer reuses the first offer's `issuer_state` for
+  the second client: once client1 has its credential it logs that "a
+  new Credential Offer for the second client is needed" and returns to
+  `WAITING`. `run-fapi2sp-battery` watches for that message and
+  delivers a second offer, with a fresh `issuer_state`; a suite that
+  doesn't ask finishes the module without one.
 **Update: `batch-issuance` — real support added, not just made to
 pass.** Previously self-`SKIPPED`: HAIP only requires an Issuer to
 *advertise* support or non-support via the `batch_credential_issuance`
