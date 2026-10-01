@@ -1,7 +1,7 @@
 // Command issuer runs the passport-vdc demo Credential Issuer over
 // HTTPS on loopback.
 //
-//	go run ./cmd/wallet-provider     # once: wallet-provider.pem and wallet-provider-ca.pem
+//	go run ./cmd/wallet-provider     # first: the Wallet Provider service; writes wallet-provider-ca.pem
 //	go run ./cmd/issuer              # https://127.0.0.1:8543, writes issuer-tls.pem
 //
 // Without -tls-cert/-tls-key it generates a self-signed certificate for

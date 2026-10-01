@@ -5,13 +5,14 @@
 //
 // It shares its credential store with the CLI wallet (cmd/wallet), and
 // its /callback must be registered with the issuer (cmd/issuer does by
-// default). Unlike the CLI, it asks before presenting.
+// default). It gets its attestations from the demo Wallet Provider's
+// service (cmd/wallet-provider, -wallet-provider-url). Unlike the CLI,
+// it asks before presenting.
 package main
 
 import (
 	"flag"
 	"log"
-	"os"
 	"time"
 
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/demotls"
@@ -24,29 +25,21 @@ func main() {
 	addr := flag.String("addr", "127.0.0.1:7443", "listen address")
 	walletURL := flag.String("url", "https://127.0.0.1:7443", "this wallet's URL (its /callback is the redirect URI)")
 	store := flag.String("store", "wallet-store", "directory the wallet keeps credentials in (shared with cmd/wallet)")
-	providerKey := flag.String("wallet-provider-key", "wallet-provider.pem", "the demo Wallet Provider's private key")
-	providerIssuer := flag.String("wallet-provider-issuer", "https://wallet-provider.passport-vdc.demo", "the demo Wallet Provider's identifier")
+	providerURL := flag.String("wallet-provider-url", "https://127.0.0.1:6443", "the demo Wallet Provider's service (cmd/wallet-provider)")
 	clientID := flag.String("client-id", "passport-vdc-wallet", "this wallet's client_id")
 	issuerCA := flag.String("trust-issuer-ca", "issuer-ca.pem", "comma-separated PEM files of issuer CAs whose credentials to accept (from cmd/issuer)")
 	verifierCA := flag.String("trust-verifier-ca", "verifier-ca.pem", "comma-separated PEM files of verifier CAs whose requests to answer (from cmd/verifier)")
-	trust := flag.String("trust", "issuer-tls.pem,verifier-tls.pem", "comma-separated PEM files of TLS certificates to trust (from cmd/issuer and cmd/verifier)")
+	trust := flag.String("trust", "issuer-tls.pem,verifier-tls.pem,wallet-provider-tls.pem", "comma-separated PEM files of TLS certificates to trust (from cmd/issuer, cmd/verifier and cmd/wallet-provider)")
 	certFile := flag.String("tls-cert", "", "TLS certificate PEM (default: generate a self-signed one)")
 	keyFile := flag.String("tls-key", "", "TLS private key PEM (with -tls-cert)")
 	certOut := flag.String("tls-cert-out", "webwallet-tls.pem", "where to write a generated TLS certificate")
 	flag.Parse()
 
-	keyPEM, err := os.ReadFile(*providerKey) // #nosec G304 -- operator-supplied path
-	if err != nil {
-		log.Fatalf("read wallet provider key (run cmd/wallet-provider first): %v", err)
-	}
-	provider, err := walletprovider.Load(*providerIssuer, keyPEM)
-	if err != nil {
-		log.Fatal(err)
-	}
 	httpClient, err := demotls.TrustingClient(*trust)
 	if err != nil {
 		log.Fatal(err)
 	}
+	provider := walletprovider.Client{URL: *providerURL, HTTP: httpClient}
 	issuerRoots, err := walletapp.LoadCertPool(*issuerCA)
 	if err != nil {
 		log.Fatalf("issuer CA: %v (start cmd/issuer first)", err)

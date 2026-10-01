@@ -1,12 +1,13 @@
-// Command demo runs the whole passport-vdc demo — issuer, verifier and
-// web wallet — in one process, on loopback:
+// Command demo runs the whole passport-vdc demo — issuer, verifier, web
+// wallet and the Wallet Provider's service — in one process, on
+// loopback:
 //
 //	go run ./cmd/demo
 //
 // It keeps what should survive a restart in a state directory
-// (-state, default .demo-state): the TLS certificate all three servers
-// share, so a browser's warning is accepted once; the stand-in Wallet
-// Provider's key; the issuer's CA, signing keys and status list, so
+// (-state, default .demo-state): the TLS certificate the servers share,
+// so a browser's warning is accepted once; the stand-in Wallet
+// Provider's key, which only its service uses; the issuer's CA, signing keys and status list, so
 // issued credentials keep verifying and revocations hold; and the
 // wallet's credential store. The verifier's request-signing CA is
 // regenerated each run and handed to the wallet directly.
@@ -50,6 +51,7 @@ const (
 	issuerAddr, issuerURL     = "127.0.0.1:8543", "https://127.0.0.1:8543"
 	verifierAddr, verifierURL = "127.0.0.1:9443", "https://127.0.0.1:9443"
 	walletAddr, walletURL     = "127.0.0.1:7443", "https://127.0.0.1:7443"
+	providerAddr, providerURL = "127.0.0.1:6443", "https://127.0.0.1:6443"
 	cliRedirectURI            = "http://127.0.0.1:8765/callback"
 	providerIssuer            = "https://wallet-provider.passport-vdc.demo"
 	walletClientID            = "passport-vdc-wallet"
@@ -160,7 +162,8 @@ func run(ctx context.Context, opts options) error {
 	webWallet, err := webwallet.New(webwallet.Config{
 		WalletURL: walletURL,
 		Wallet: walletapp.Config{
-			ClientID: walletClientID, Provider: provider, HTTP: httpClient,
+			ClientID: walletClientID, HTTP: httpClient,
+			Provider:    walletprovider.Client{URL: providerURL, HTTP: httpClient},
 			IssuerRoots: pool(issuer.IssuerCACertificate()),
 		},
 		Store:         walletapp.Store{Dir: filepath.Join(state, "wallet-store")},
@@ -178,6 +181,8 @@ func run(ctx context.Context, opts options) error {
 	}
 
 	servers := []*http.Server{
+		// The wallets ask it for attestations; they never hold its key.
+		demotls.Server(providerAddr, provider.Handler(walletClientID), cert, 30*time.Second),
 		demotls.Server(issuerAddr, issuer, cert, 30*time.Second),
 		demotls.Server(verifierAddr, verifier, cert, 30*time.Second),
 		// Long enough for the callback to finish the token and
@@ -244,6 +249,7 @@ passport-vdc demo is running (Ctrl-C to stop)
   issuer    %s   upload a gmrtd passport file here
   verifier  %s   ask for the credential
   wallet    %s   holds it
+  provider  %s   attests the wallets (no page; they call it)
 
 %s
 
@@ -253,7 +259,7 @@ CLI wallet, sharing the web wallet's credentials:
 %s holds credentials made from any passport you upload: delete it,
 or run with -reset, when you're done.
 
-`, issuerURL, verifierURL, walletURL, browser, state, state)
+`, issuerURL, verifierURL, walletURL, providerURL, browser, state, state)
 }
 
 func writeCertificates(dir string, certs map[string]*x509.Certificate) error {

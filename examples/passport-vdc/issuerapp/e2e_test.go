@@ -9,6 +9,7 @@ import (
 	"github.com/idfoundry/fapigo/client"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"slices"
 	"strings"
@@ -141,8 +142,10 @@ func TestPAR_RejectsWalletFromUntrustedProvider(t *testing.T) {
 	if err != nil {
 		t.Fatalf("walletprovider.New: %v", err)
 	}
+	otherSrv := httptest.NewTLSServer(other.Handler(demotest.WalletClientID))
+	defer otherSrv.Close()
 	cfg := env.WalletConfig()
-	cfg.Provider = other
+	cfg.Provider = walletprovider.Client{URL: otherSrv.URL, HTTP: otherSrv.Client()}
 
 	offer, err := env.Issuer.CreateTransaction(ctx, demotest.SyntheticEvidence())
 	if err != nil {

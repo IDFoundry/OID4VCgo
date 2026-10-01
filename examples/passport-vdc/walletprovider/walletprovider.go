@@ -3,7 +3,9 @@
 // Attestations for the demo wallet. A real Wallet Provider would attest
 // a wallet instance only after checking platform evidence (key
 // attestation, app integrity), and would attest only keys held in
-// secure hardware; this demo attests any key it's given.
+// secure hardware; this demo attests any key it's given. It runs as a
+// service (Handler, cmd/wallet-provider) the wallets call through a
+// Client, so they never hold its key.
 //
 // The key has a certificate from a demo Wallet Provider CA, carried as
 // the x5c of every attestation it signs (HAIP 1.0 §4.4.1 for Wallet

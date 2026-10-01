@@ -111,15 +111,16 @@ What the second path does and doesn't give you:
 ## Running the demo
 
 From this directory (`examples/passport-vdc`), one command starts the
-issuer, verifier and web wallet together:
+issuer, verifier and web wallet together, with the Wallet Provider's
+service the wallets get their attestations from:
 
 ```sh
 go run ./cmd/demo
 ```
 
-It prints the three URLs and runs until Ctrl-C. What should survive a
-restart is kept in `.demo-state/`: the TLS certificate all three servers
-share, the stand-in Wallet Provider's key, the issuer's CA, signing keys
+It prints the URLs and runs until Ctrl-C. What should survive a
+restart is kept in `.demo-state/`: the TLS certificate the servers
+share, the stand-in Wallet Provider's key (only its service reads it), the issuer's CA, signing keys
 and status list, and the wallet's credentials. So a restart keeps your
 credentials verifying and your revocations in force, and the browser
 doesn't warn again. `go run ./cmd/demo -reset` deletes it and starts
@@ -205,18 +206,13 @@ start them in this order from this directory, each in its own
 terminal. Each reads the `.pem` files the previous one wrote here, and
 keeps everything in memory:
 
-**Create the Wallet Provider (once).**
+**Start the four servers:**
 
 ```sh
-go run ./cmd/wallet-provider     # writes wallet-provider.pem and wallet-provider-ca.pem
-```
-
-**Start the three servers:**
-
-```sh
-go run ./cmd/issuer              # terminal 1: https://127.0.0.1:8543 — writes issuer-tls.pem, issuer-ca.pem
-go run ./cmd/verifier            # terminal 2: https://127.0.0.1:9443 — writes verifier-tls.pem, verifier-ca.pem; trusts issuer-ca.pem and issuer-tls.pem
-go run ./cmd/webwallet           # terminal 3: https://127.0.0.1:7443 — writes webwallet-tls.pem; trusts issuer-ca.pem, verifier-ca.pem and both TLS certificates
+go run ./cmd/wallet-provider     # terminal 1: https://127.0.0.1:6443 — writes wallet-provider.pem (once), wallet-provider-ca.pem, wallet-provider-tls.pem
+go run ./cmd/issuer              # terminal 2: https://127.0.0.1:8543 — writes issuer-tls.pem, issuer-ca.pem; trusts wallet-provider-ca.pem
+go run ./cmd/verifier            # terminal 3: https://127.0.0.1:9443 — writes verifier-tls.pem, verifier-ca.pem; trusts issuer-ca.pem and issuer-tls.pem
+go run ./cmd/webwallet           # terminal 4: https://127.0.0.1:7443 — writes webwallet-tls.pem; trusts issuer-ca.pem, verifier-ca.pem and the other TLS certificates
 ```
 
 The wallets keep only credentials whose issuer certificate chains to a
@@ -228,13 +224,15 @@ its TLS certificate (`-trust`, default `issuer-tls.pem`) for fetching
 its status list.
 
 **Restarting.** Every start generates a new CA and TLS certificate, and
-the others load them only when they start. After restarting the issuer,
+the others load them only when they start. The Wallet Provider keeps
+its key and CA in `wallet-provider.pem`, but not its TLS certificate:
+after restarting it, restart the web wallet. After restarting the issuer,
 restart the verifier and then the web wallet; after restarting the
 verifier, restart the web wallet. Credentials issued by an earlier
 issuer run no longer verify (the CA they chain to is gone), so delete
 `wallet-store/` and issue again.
 
-**Accept the certificates.** All three servers use self-signed
+**Accept the certificates.** The servers use self-signed
 certificates: in the browser you'll use, open https://127.0.0.1:8543,
 https://127.0.0.1:9443 and https://127.0.0.1:7443 once each and accept
 the warning (or trust the written `.pem` files). The issuer uses 8543
@@ -247,8 +245,9 @@ here; the CLI wallet reads it by default. Stop the servers with Ctrl-C.
 ### The stand-in Wallet Provider
 
 `cmd/demo` (into `.demo-state/wallet-provider.pem`) and
-`cmd/wallet-provider` create the demo's **stand-in Wallet Provider**:
-a key, and a certificate for it from a demo Wallet Provider CA, naming
+`cmd/wallet-provider` run the demo's **stand-in Wallet Provider**: an
+HTTPS service holding a key, and a certificate for it from a demo
+Wallet Provider CA, naming
 the provider's identifier (`-wallet-provider-issuer`) as a URI SAN. The
 issuer registers one wallet client (`passport-vdc-wallet`, with both
 wallets' redirect URIs), and trusts that key through the CA
@@ -271,10 +270,21 @@ and rerun `cmd/wallet-provider`.
   provider's certificate as `x5c` and the issuer's `c_nonce`, as HAIP
   1.0 §4.5.1 requires.
 
-The wallets use the provider's private key to attest themselves and
-their holder keys, which a real wallet would never hold. The provider
-files, the TLS certificate and the wallet store are all git-ignored; the
-store keeps holder keys unencrypted.
+The wallets never hold the provider's key. They ask its service
+(`walletprovider.Client`, `-wallet-provider-url`):
+
+- `POST /wallet-attestation` with the wallet's `client_id` and the
+  instance key it proves possession of at PAR and the token endpoint,
+  for a Wallet Attestation.
+- `POST /key-attestation` with fresh holder keys and the issuer's
+  `c_nonce`, for a Key Attestation over them.
+
+It attests only the demo wallet's `client_id`, and, unlike a real
+Wallet Provider, any key it's sent without checking who's asking: a
+real one would first check platform evidence (app integrity, keys in
+secure hardware) that the request comes from a genuine instance of its
+wallet. The provider files, the TLS certificates and the wallet store
+are all git-ignored; the store keeps holder keys unencrypted.
 
 The servers run over HTTPS even locally, as a real deployment would, so
 the demo wallets reach them with `wallet.Config.Fetch.AllowLoopbackHosts`
@@ -434,7 +444,7 @@ generator, planned for gmrtd itself).
 | `passport` | gmrtd → verified `Evidence` (the issuer's upload check, and the verifier's ICAO check of a disclosed file); the birth-date rule; the portrait |
 | `credential` | `Evidence` → `mdoc.Claims` / `sdjwtvc.Claims`; validity and age claims |
 | `issuerapp` | the OID4VCI issuer: fapigo Authorization Server + oid4vcgo Issuer + upload page |
-| `walletprovider` | the stand-in Wallet Provider that signs Wallet Attestations and Key Attestations |
+| `walletprovider` | the stand-in Wallet Provider: signs Wallet Attestations and Key Attestations, as an HTTPS service (`Handler`) the wallets call (`Client`) |
 | `walletapp` | the wallet: receive (offer → discovery → HAIP Authorization Code flow → credentials) and present (OpenID4VP, selective disclosure); credential store |
 | `verifierapp` | the OpenID4VP verifier: either-format requests, both trust paths, revocation checks |
 | `webwallet` | the browser wallet: credential cards, receive via the issuer's approval page, consent before presenting |
