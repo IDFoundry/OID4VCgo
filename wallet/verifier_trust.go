@@ -1,6 +1,7 @@
 package wallet
 
 import (
+	"bytes"
 	"crypto/x509"
 	"fmt"
 
@@ -29,9 +30,10 @@ type VerifierTrust interface {
 // Roots with a leaf that isn't self-signed — HAIP 1.0 §5: "The X.509
 // certificate of the trust anchor MUST NOT be included in the x5c JOSE
 // header of the signed request. The X.509 certificate signing the
-// request MUST NOT be self-signed." The leaf must also be an
-// end-entity certificate (not a CA), and when it has a key usage
-// extension, one that allows digitalSignature.
+// request MUST NOT be self-signed." A chain that includes the trust
+// anchor it verifies to is refused. The leaf must also be an end-entity
+// certificate (not a CA), and when it has a key usage extension, one
+// that allows digitalSignature.
 //
 // With x509_hash, nothing ties a Request Object's response_uri to a
 // name in the certificate: every certificate that chains to Roots, for
@@ -60,6 +62,9 @@ func (v X5CVerifierRoots) VerifyVerifierChain(chain [][]byte) (*x509.Certificate
 		if err := verifierLeafProfile(leaf); err != nil {
 			return err
 		}
+		if err := anchorNotIncluded(chain, chains); err != nil {
+			return err
+		}
 		if v.LeafPolicy != nil {
 			return v.LeafPolicy(leaf, chains)
 		}
@@ -80,6 +85,20 @@ func verifierLeafProfile(leaf *x509.Certificate) error {
 	}
 	if leaf.KeyUsage != 0 && leaf.KeyUsage&x509.KeyUsageDigitalSignature == 0 {
 		return fmt.Errorf("the leaf's key usage doesn't allow digitalSignature")
+	}
+	return nil
+}
+
+// anchorNotIncluded refuses a presented chain that includes the trust
+// anchor any of its verified paths ends at (HAIP 1.0 §5).
+func anchorNotIncluded(presented [][]byte, chains [][]*x509.Certificate) error {
+	for _, path := range chains {
+		anchor := path[len(path)-1]
+		for _, der := range presented {
+			if bytes.Equal(der, anchor.Raw) {
+				return fmt.Errorf("the x5c chain includes its trust anchor")
+			}
+		}
 	}
 	return nil
 }
