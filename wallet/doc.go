@@ -176,8 +176,9 @@
 // isn't built in). Only the "x509_hash" Client Identifier Prefix is
 // supported (HAIP's own mandate, and the only one verifier itself
 // produces). A DC API request arrives through the platform instead:
-// ParseDCAPIRequest verifies it the same way and checks the origin the
-// platform reports against its expected_origins, and PresentCredentials
+// (*Wallet).ParseDCAPIRequest verifies it the same way, with the
+// Wallet's VerifierTrust, and checks the origin the platform reports
+// against its expected_origins, and PresentCredentials
 // builds its response when given that Origin. No other client_id
 // scheme, no di_vp presentations. Which Verifiers to trust is the caller's policy, a
 // VerifierTrust (OID4VP §5.9.3's trust chain validation):

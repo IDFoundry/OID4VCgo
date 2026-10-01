@@ -139,10 +139,17 @@ type RequestRejectedError struct {
 	ResponseEncryptionKey   *ecdsa.PublicKey
 	ResponseEncryptionKeyID string
 	ResponseEncryptionEnc   string
+
+	// op names the function that refused the request, in Error.
+	op string
 }
 
 func (e *RequestRejectedError) Error() string {
-	return fmt.Sprintf("wallet: parse authorization request: %s", e.Description)
+	op := e.op
+	if op == "" {
+		op = "parse authorization request"
+	}
+	return fmt.Sprintf("wallet: %s: %s", op, e.Description)
 }
 
 // wireRequestObjectPayload is the Request Object JWS's own payload
@@ -166,9 +173,19 @@ type wireRequestObjectPayload struct {
 	ClientMetadata  json.RawMessage   `json:"client_metadata"`
 	TransactionData []json.RawMessage `json:"transaction_data"`
 	WalletNonce     string            `json:"wallet_nonce"`
+	ResponseType    string            `json:"response_type"`
 	ResponseMode    string            `json:"response_mode"`
 	ExpectedOrigins []string          `json:"expected_origins"`
 }
+
+// vpTokenResponseType is the only response_type either parser accepts:
+// a Request Object asking for anything else (an authorization code, an
+// ID Token too) isn't one this Wallet can answer (OID4VP §5.4).
+const vpTokenResponseType = "vp_token"
+
+// directPostJWTResponseMode is the only Response Mode the redirect flow
+// accepts: HAIP 1.0 §5.1 requires the encrypted response.
+const directPostJWTResponseMode = "direct_post.jwt"
 
 type wireClientMetadata struct {
 	Jwks struct {
@@ -202,6 +219,11 @@ type wireJWKKid struct {
 // verifier.BuildAuthorizationRequest already draws (it doesn't host
 // the Request Object it builds either — see that function's own doc
 // comment).
+//
+// The request must ask for response_type vp_token in response_mode
+// direct_post.jwt (HAIP 1.0 §5.1): one asking for anything else is
+// refused with a *RequestRejectedError, since it's authentic and can be
+// answered with an error response.
 //
 // Only the "x509_hash" Client Identifier Prefix is supported — the one
 // HAIP mandates, and the only one verifier.BuildAuthorizationRequest
@@ -262,6 +284,22 @@ func ParseAuthorizationRequest(params ParseAuthorizationRequestParams) (Authoriz
 		return AuthorizationRequest{}, &RequestRejectedError{
 			Code:        "invalid_transaction_data",
 			Description: "transaction_data is present but this Wallet recognizes no transaction_data type",
+			State:       wire.State, ResponseURI: wire.ResponseURI,
+			ResponseEncryptionKey: encPub, ResponseEncryptionKeyID: kid, ResponseEncryptionEnc: enc,
+		}
+	}
+	if wire.ResponseType != vpTokenResponseType {
+		return AuthorizationRequest{}, &RequestRejectedError{
+			Code:        "unsupported_response_type",
+			Description: fmt.Sprintf("response_type %q, want %q", wire.ResponseType, vpTokenResponseType),
+			State:       wire.State, ResponseURI: wire.ResponseURI,
+			ResponseEncryptionKey: encPub, ResponseEncryptionKeyID: kid, ResponseEncryptionEnc: enc,
+		}
+	}
+	if wire.ResponseMode != directPostJWTResponseMode {
+		return AuthorizationRequest{}, &RequestRejectedError{
+			Code:        "invalid_request",
+			Description: fmt.Sprintf("response_mode %q, want %q", wire.ResponseMode, directPostJWTResponseMode),
 			State:       wire.State, ResponseURI: wire.ResponseURI,
 			ResponseEncryptionKey: encPub, ResponseEncryptionKeyID: kid, ResponseEncryptionEnc: enc,
 		}

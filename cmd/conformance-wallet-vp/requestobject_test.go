@@ -62,11 +62,13 @@ func signRequestObjectPayload(t *testing.T, leaf *x509.Certificate, key *ecdsa.P
 	}
 
 	payload := map[string]any{
-		"client_id":    clientID,
-		"response_uri": "https://verifier.example.com/response",
-		"nonce":        "test-nonce",
-		"state":        "test-state",
-		"dcql_query":   map[string]any{"credentials": []any{}},
+		"client_id":     clientID,
+		"response_type": "vp_token",
+		"response_mode": "direct_post.jwt",
+		"response_uri":  "https://verifier.example.com/response",
+		"nonce":         "test-nonce",
+		"state":         "test-state",
+		"dcql_query":    map[string]any{"credentials": []any{}},
 		"client_metadata": map[string]any{
 			"jwks": map[string]any{"keys": []any{encJWK}},
 			"encrypted_response_enc_values_supported": []string{"A128GCM"},

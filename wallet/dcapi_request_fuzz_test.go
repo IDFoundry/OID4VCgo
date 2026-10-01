@@ -24,8 +24,10 @@ import (
 // FuzzParseDCAPIRequest exercises ParseDCAPIRequest past the signature
 // check, as FuzzParseAuthorizationRequestSigned does for the redirect
 // flow: the harness signs each fuzzed payload with its own self-signed
-// certificate, whose x509_hash it sets as client_id in the seeds. A
-// request it accepts must expect the origin it was given.
+// certificate, whose x509_hash it sets as client_id in the seeds, and
+// fuzzes the platform's origin alongside. A request it accepts must
+// expect exactly the origin it was given, ask for vp_token in dc_api.jwt,
+// and carry a nonce.
 func FuzzParseDCAPIRequest(f *testing.F) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -44,7 +46,7 @@ func FuzzParseDCAPIRequest(f *testing.F) {
 	hash := sha256.Sum256(der)
 	clientID := "x509_hash:" + base64.RawURLEncoding.EncodeToString(hash[:])
 	header := map[string]any{"typ": "oauth-authz-req+jwt", "x5c": []string{base64.StdEncoding.EncodeToString(der)}}
-	const origin = "https://verifier.example.com"
+	const seedOrigin = "https://verifier.example.com"
 
 	meta, err := dcql.NewSDJWTVCMeta(dcql.SDJWTVCMeta{VCTValues: []string{"urn:eudi:pid:1"}})
 	if err != nil {
@@ -52,7 +54,7 @@ func FuzzParseDCAPIRequest(f *testing.F) {
 	}
 	built, err := testverifier.New(f).BuildDCAPIAuthorizationRequest(verifier.BuildDCAPIAuthorizationRequestRequest{
 		Query:           dcql.Query{Credentials: []dcql.CredentialQuery{{ID: "cred1", Format: "dc+sd-jwt", Meta: meta}}},
-		ExpectedOrigins: []string{origin},
+		ExpectedOrigins: []string{seedOrigin},
 	})
 	if err != nil {
 		f.Fatalf("BuildDCAPIAuthorizationRequest: %v", err)
@@ -76,11 +78,13 @@ func FuzzParseDCAPIRequest(f *testing.F) {
 		if err != nil {
 			f.Fatalf("marshal payload: %v", err)
 		}
-		f.Add(seed)
+		f.Add(seed, seedOrigin)
+		f.Add(seed, seedOrigin+"/")
 	}
-	f.Add([]byte(`{}`))
+	f.Add([]byte(`{}`), seedOrigin)
+	f.Add([]byte(`{"expected_origins":["null"]}`), "null")
 
-	f.Fuzz(func(t *testing.T, payload []byte) {
+	f.Fuzz(func(t *testing.T, payload []byte, origin string) {
 		requestObject, err := jose.Sign(jose.ES256, key, header, payload)
 		if err != nil {
 			t.Fatalf("sign request object: %v", err)
@@ -93,11 +97,17 @@ func FuzzParseDCAPIRequest(f *testing.F) {
 		}
 		var got struct {
 			ExpectedOrigins []string `json:"expected_origins"`
+			ResponseType    string   `json:"response_type"`
+			ResponseMode    string   `json:"response_mode"`
+			Nonce           string   `json:"nonce"`
 		}
 		if err := json.Unmarshal(payload, &got); err != nil || !slices.Contains(got.ExpectedOrigins, origin) {
-			t.Fatalf("accepted a request whose expected_origins %v don't include %q", got.ExpectedOrigins, origin)
+			t.Fatalf("accepted origin %q for a request whose expected_origins are %v", origin, got.ExpectedOrigins)
 		}
-		if req.Origin != origin || req.ResponseEncryptionKey == nil || req.ResponseURI != "" {
+		if got.ResponseType != "vp_token" || got.ResponseMode != "dc_api.jwt" || got.Nonce == "" {
+			t.Fatalf("accepted response_type %q, response_mode %q, nonce %q", got.ResponseType, got.ResponseMode, got.Nonce)
+		}
+		if req.Origin != origin || req.Nonce != got.Nonce || req.ResponseEncryptionKey == nil {
 			t.Fatalf("accepted request = %+v", req)
 		}
 	})

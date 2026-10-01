@@ -37,7 +37,8 @@ type ParseDCAPIRequestParams struct {
 // It checks the Request Object as ParseAuthorizationRequest does — its
 // x5c chain with params.VerifierTrust, its signature, and that its
 // client_id is the x509_hash of the signing certificate — and then
-// what the DC API adds: response_mode must be dc_api.jwt, and
+// what the DC API adds: response_type must be vp_token, response_mode
+// dc_api.jwt, and
 // params.Origin must be one of the request's expected_origins
 // (Appendix A.2: "If the Origin does not match any of the entries in
 // expected_origins, the Wallet MUST return an error"). A request
@@ -50,6 +51,9 @@ type ParseDCAPIRequestParams struct {
 // {"response": <that JWE>} to the platform as the DC API response.
 // Only signed requests are accepted: an unsigned one (Appendix A.3.1)
 // can't be tied to a Verifier.
+//
+// Prefer (*Wallet).ParseDCAPIRequest, which uses Config.VerifierTrust,
+// so AssuranceProduction's refusal of NoVerifierTrust applies.
 func ParseDCAPIRequest(params ParseDCAPIRequestParams) (AuthorizationRequest, error) {
 	if params.Origin == "" {
 		return AuthorizationRequest{}, fmt.Errorf("wallet: parse dc api request: Origin is required")
@@ -65,6 +69,8 @@ func ParseDCAPIRequest(params ParseDCAPIRequestParams) (AuthorizationRequest, er
 	switch {
 	case wire.ClientID != clientID:
 		return AuthorizationRequest{}, fmt.Errorf("wallet: parse dc api request: client_id %q does not match x5c leaf's own x509_hash %q", wire.ClientID, clientID)
+	case wire.ResponseType != vpTokenResponseType:
+		return AuthorizationRequest{}, fmt.Errorf("wallet: parse dc api request: response_type %q, want %q", wire.ResponseType, vpTokenResponseType)
 	case wire.ResponseMode != dcAPIResponseMode:
 		return AuthorizationRequest{}, fmt.Errorf("wallet: parse dc api request: response_mode %q, want %q", wire.ResponseMode, dcAPIResponseMode)
 	case len(wire.ExpectedOrigins) == 0:
@@ -83,6 +89,7 @@ func ParseDCAPIRequest(params ParseDCAPIRequestParams) (AuthorizationRequest, er
 			Code:                  "invalid_transaction_data",
 			Description:           "transaction_data is present but this Wallet recognizes no transaction_data type",
 			ResponseEncryptionKey: encPub, ResponseEncryptionKeyID: kid, ResponseEncryptionEnc: enc,
+			op: "parse dc api request",
 		}
 	}
 	return AuthorizationRequest{
@@ -90,4 +97,15 @@ func ParseDCAPIRequest(params ParseDCAPIRequestParams) (AuthorizationRequest, er
 		ResponseEncryptionKey: encPub, ResponseEncryptionKeyID: kid, ResponseEncryptionEnc: enc,
 		Origin: params.Origin,
 	}, nil
+}
+
+// ParseDCAPIRequest is the package-level ParseDCAPIRequest with this
+// Wallet's Config.VerifierTrust, which New refuses to be NoVerifierTrust
+// under AssuranceProduction. request is the "request" member of the DC
+// API request's data; origin is the calling origin the platform reports.
+func (w *Wallet) ParseDCAPIRequest(request, origin string) (AuthorizationRequest, error) {
+	if w.cfg.VerifierTrust == nil {
+		return AuthorizationRequest{}, fmt.Errorf("wallet: parse dc api request: Config.VerifierTrust is required (NoVerifierTrust{} opts out explicitly)")
+	}
+	return ParseDCAPIRequest(ParseDCAPIRequestParams{Request: request, Origin: origin, VerifierTrust: w.cfg.VerifierTrust})
 }
