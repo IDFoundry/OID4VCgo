@@ -97,6 +97,12 @@ type AuthorizationRequest struct {
 	// A128GCM if offered (HAIP's own minimum every Verifier supports),
 	// otherwise whichever the list offers first.
 	ResponseEncryptionEnc string
+
+	// Origin is set for a DC API request (ParseDCAPIRequest): the
+	// calling page's or app's origin, as the platform reported it and
+	// the request's expected_origins listed it. ResponseURI and State
+	// are then empty.
+	Origin string
 }
 
 // RequestRejectedError is returned by ParseAuthorizationRequest when
@@ -160,6 +166,8 @@ type wireRequestObjectPayload struct {
 	ClientMetadata  json.RawMessage   `json:"client_metadata"`
 	TransactionData []json.RawMessage `json:"transaction_data"`
 	WalletNonce     string            `json:"wallet_nonce"`
+	ResponseMode    string            `json:"response_mode"`
+	ExpectedOrigins []string          `json:"expected_origins"`
 }
 
 type wireClientMetadata struct {
@@ -199,35 +207,12 @@ type wireJWKKid struct {
 // HAIP mandates, and the only one verifier.BuildAuthorizationRequest
 // itself produces.
 func ParseAuthorizationRequest(params ParseAuthorizationRequestParams) (AuthorizationRequest, error) {
-	header, _, err := jose.DecodeUnverified(params.RequestObject)
-	if err != nil {
-		return AuthorizationRequest{}, fmt.Errorf("wallet: parse authorization request: decode: %w", err)
-	}
-	if typ, _ := header["typ"].(string); typ != requestObjectTyp {
-		return AuthorizationRequest{}, fmt.Errorf("wallet: parse authorization request: typ = %q, want %q", typ, requestObjectTyp)
-	}
-	if params.VerifierTrust == nil {
-		return AuthorizationRequest{}, fmt.Errorf("wallet: parse authorization request: VerifierTrust is required (NoVerifierTrust{} opts out explicitly)")
-	}
-	chain, err := certchain.X5CDERsFromHeader(header)
+	cert, clientID, payload, err := verifyRequestObject(params.RequestObject, params.VerifierTrust)
 	if err != nil {
 		return AuthorizationRequest{}, fmt.Errorf("wallet: parse authorization request: %w", err)
 	}
-	cert, err := params.VerifierTrust.VerifyVerifierChain(chain)
-	if err != nil {
-		return AuthorizationRequest{}, fmt.Errorf("wallet: parse authorization request: untrusted verifier: %w", err)
-	}
-
-	hash := sha256.Sum256(cert.Raw)
-	wantClientID := "x509_hash:" + base64.RawURLEncoding.EncodeToString(hash[:])
-	if params.ClientID != wantClientID {
-		return AuthorizationRequest{}, fmt.Errorf("wallet: parse authorization request: client_id %q does not match x5c leaf's own x509_hash %q", params.ClientID, wantClientID)
-	}
-
-	algStr, _ := header["alg"].(string)
-	_, payload, err := jose.Verify(jose.Alg(algStr), cert.PublicKey, params.RequestObject)
-	if err != nil {
-		return AuthorizationRequest{}, fmt.Errorf("wallet: parse authorization request: signature verification failed: %w", err)
+	if params.ClientID != clientID {
+		return AuthorizationRequest{}, fmt.Errorf("wallet: parse authorization request: client_id %q does not match x5c leaf's own x509_hash %q", params.ClientID, clientID)
 	}
 
 	var wire wireRequestObjectPayload
@@ -252,21 +237,9 @@ func ParseAuthorizationRequest(params ParseAuthorizationRequestParams) (Authoriz
 	// client_id matches), so they're safe to use for those two checks'
 	// own error response, unlike for a Request Object that was never
 	// authenticated at all.
-	var meta wireClientMetadata
-	if err := json.Unmarshal(wire.ClientMetadata, &meta); err != nil {
-		return AuthorizationRequest{}, fmt.Errorf("wallet: parse authorization request: parse client_metadata: %w", err)
-	}
-	if len(meta.Jwks.Keys) == 0 {
-		return AuthorizationRequest{}, fmt.Errorf("wallet: parse authorization request: client_metadata.jwks.keys is empty")
-	}
-	encPub, kid, err := selectResponseEncryptionKey(meta.Jwks.Keys)
+	encPub, kid, enc, err := responseEncryption(wire.ClientMetadata)
 	if err != nil {
 		return AuthorizationRequest{}, fmt.Errorf("wallet: parse authorization request: %w", err)
-	}
-
-	enc := "A128GCM"
-	if !containsString(meta.EncValuesSupported, enc) && len(meta.EncValuesSupported) > 0 {
-		enc = meta.EncValuesSupported[0]
 	}
 
 	if wire.RedirectURI != "" {
@@ -299,6 +272,59 @@ func ParseAuthorizationRequest(params ParseAuthorizationRequestParams) (Authoriz
 		Query: wire.DCQLQuery, VerifierCertificate: cert, ResponseEncryptionKey: encPub, ResponseEncryptionKeyID: kid,
 		ResponseEncryptionEnc: enc,
 	}, nil
+}
+
+// verifyRequestObject checks a signed Request Object: its typ, its x5c
+// chain with trust (OID4VP §5.9.3), and its signature by the chain's
+// leaf. It returns the leaf, the x509_hash Client Identifier the leaf
+// stands for (§5.9.3), and the verified payload.
+func verifyRequestObject(requestObject string, trust VerifierTrust) (*x509.Certificate, string, []byte, error) {
+	header, _, err := jose.DecodeUnverified(requestObject)
+	if err != nil {
+		return nil, "", nil, fmt.Errorf("decode: %w", err)
+	}
+	if typ, _ := header["typ"].(string); typ != requestObjectTyp {
+		return nil, "", nil, fmt.Errorf("typ = %q, want %q", typ, requestObjectTyp)
+	}
+	if trust == nil {
+		return nil, "", nil, fmt.Errorf("VerifierTrust is required (NoVerifierTrust{} opts out explicitly)")
+	}
+	chain, err := certchain.X5CDERsFromHeader(header)
+	if err != nil {
+		return nil, "", nil, err
+	}
+	cert, err := trust.VerifyVerifierChain(chain)
+	if err != nil {
+		return nil, "", nil, fmt.Errorf("untrusted verifier: %w", err)
+	}
+	algStr, _ := header["alg"].(string)
+	_, payload, err := jose.Verify(jose.Alg(algStr), cert.PublicKey, requestObject)
+	if err != nil {
+		return nil, "", nil, fmt.Errorf("signature verification failed: %w", err)
+	}
+	hash := sha256.Sum256(cert.Raw)
+	return cert, "x509_hash:" + base64.RawURLEncoding.EncodeToString(hash[:]), payload, nil
+}
+
+// responseEncryption picks the response encryption key and enc from a
+// Request Object's client_metadata (§5.1).
+func responseEncryption(clientMetadata json.RawMessage) (*ecdsa.PublicKey, string, string, error) {
+	var meta wireClientMetadata
+	if err := json.Unmarshal(clientMetadata, &meta); err != nil {
+		return nil, "", "", fmt.Errorf("parse client_metadata: %w", err)
+	}
+	if len(meta.Jwks.Keys) == 0 {
+		return nil, "", "", fmt.Errorf("client_metadata.jwks.keys is empty")
+	}
+	encPub, kid, err := selectResponseEncryptionKey(meta.Jwks.Keys)
+	if err != nil {
+		return nil, "", "", err
+	}
+	enc := "A128GCM"
+	if !containsString(meta.EncValuesSupported, enc) && len(meta.EncValuesSupported) > 0 {
+		enc = meta.EncValuesSupported[0]
+	}
+	return encPub, kid, enc, nil
 }
 
 // FetchAuthorizationRequest is ParseAuthorizationRequest's own
