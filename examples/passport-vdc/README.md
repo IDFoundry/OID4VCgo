@@ -286,6 +286,12 @@ secure hardware) that the request comes from a genuine instance of its
 wallet. The provider files, the TLS certificates and the wallet store
 are all git-ignored; the store keeps holder keys unencrypted.
 
+Run separately, the servers each generate a self-signed certificate
+for `127.0.0.1` and `localhost`, and the wallets trust all of them, so
+any one server's TLS key could impersonate the others to the wallets.
+That's a local-demo shortcut; a deployment's servers have certificates
+for their own names.
+
 The servers run over HTTPS even locally, as a real deployment would, so
 the demo wallets reach them with `wallet.Config.Fetch.AllowLoopbackHosts`
 (https to literal loopback hosts only). The library's wallet can

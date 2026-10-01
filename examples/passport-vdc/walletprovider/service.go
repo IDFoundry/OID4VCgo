@@ -1,12 +1,15 @@
 package walletprovider
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
@@ -29,6 +32,7 @@ const (
 
 	maxRequestBytes = 16 * 1024
 	maxAttestedKeys = 10
+	maxNonceLength  = 256
 )
 
 // WalletAttestationRequest asks the service for a Wallet Attestation
@@ -105,8 +109,8 @@ func (p *Provider) Handler(clientID string) http.Handler {
 			writeError(w, http.StatusBadRequest, fmt.Sprintf("keys must hold 1 to %d keys", maxAttestedKeys))
 			return
 		}
-		if req.Nonce == "" {
-			writeError(w, http.StatusBadRequest, "nonce is required")
+		if !validNonce(req.Nonce) {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("nonce must be 1 to %d printable ASCII characters", maxNonceLength))
 			return
 		}
 		keys := make([]*ecdsa.PublicKey, len(req.Keys))
@@ -133,7 +137,49 @@ func decodeRequest(w http.ResponseWriter, r *http.Request, v any) bool {
 		writeError(w, http.StatusBadRequest, "malformed request: "+err.Error())
 		return false
 	}
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
+		writeError(w, http.StatusBadRequest, "malformed request: data after the JSON object")
+		return false
+	}
 	return true
+}
+
+// validNonce reports whether nonce, signed into a Key Attestation, is a
+// plausible c_nonce: 1 to maxNonceLength printable ASCII characters.
+func validNonce(nonce string) bool {
+	if nonce == "" || len(nonce) > maxNonceLength {
+		return false
+	}
+	for i := 0; i < len(nonce); i++ {
+		if nonce[i] < 0x21 || nonce[i] > 0x7e {
+			return false
+		}
+	}
+	return true
+}
+
+// hasPrivateMember reports whether the JSON object raw has a "d" member
+// — EC's private key — under any spelling encoding/json would match, and
+// however many times it's repeated (decoding keeps only the last).
+func hasPrivateMember(raw json.RawMessage) bool {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	if tok, err := dec.Token(); err != nil || tok != json.Delim('{') {
+		return false
+	}
+	for dec.More() {
+		key, err := dec.Token()
+		if err != nil {
+			return false
+		}
+		if name, ok := key.(string); ok && strings.EqualFold(name, "d") {
+			return true
+		}
+		var skip json.RawMessage
+		if err := dec.Decode(&skip); err != nil {
+			return false
+		}
+	}
+	return false
 }
 
 // parseP256Key parses raw as a public EC P-256 JWK.
@@ -142,7 +188,7 @@ func parseP256Key(raw json.RawMessage) (*ecdsa.PublicKey, error) {
 	if err := json.Unmarshal(raw, &jwk); err != nil {
 		return nil, errors.New("not a JWK")
 	}
-	if jwk.D != "" {
+	if hasPrivateMember(raw) {
 		return nil, errors.New("a private key was sent")
 	}
 	pub, err := jwk.PublicKey()
