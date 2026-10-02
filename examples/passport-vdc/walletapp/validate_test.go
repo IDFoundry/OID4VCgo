@@ -15,6 +15,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/demotest"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/issuerapp"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/walletapp"
+	"github.com/idfoundry/oid4vcgo/wallet"
 )
 
 // received issues both formats from a fresh demo issuer and returns
@@ -40,7 +41,9 @@ func received(t *testing.T) (map[string]walletapp.Received, *x509.CertPool, *dem
 	return byFormat, roots, env
 }
 
-// TestValidateReceived_Rejects covers what the wallet refuses to keep:
+// TestValidateReceived_Rejects covers what the wallet refuses to keep
+// (wallet.VerifyIssuedCredential, which walletflow runs on every
+// credential it receives):
 // a credential from an issuer it doesn't trust, one bound to a key it
 // didn't prove possession of, one of another type, and a tampered one.
 func TestValidateReceived_Rejects(t *testing.T) {
@@ -58,7 +61,10 @@ func TestValidateReceived_Rejects(t *testing.T) {
 	for format, r := range byFormat {
 		conf := confs[format]
 		validate := func(conf oid4vci.CredentialConfigurationMetadata, cred string, holder *ecdsa.PrivateKey, roots *x509.CertPool) error {
-			return walletapp.ValidateReceived(context.Background(), conf, cred, holder, roots, now)
+			_, err := wallet.VerifyIssuedCredential(context.Background(), wallet.VerifyIssuedCredentialParams{
+				Configuration: conf, Credential: cred, HolderKey: &holder.PublicKey, IssuerRoots: roots, Now: now,
+			})
+			return err
 		}
 		t.Run(format, func(t *testing.T) {
 			if err := validate(conf, r.Credential, r.HolderKey, roots); err != nil {

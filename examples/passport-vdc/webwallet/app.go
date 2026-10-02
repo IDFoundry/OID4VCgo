@@ -12,11 +12,11 @@ package webwallet
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/idfoundry/fapigo/client"
 	"net/http"
 	"net/url"
 	"slices"
@@ -72,23 +72,19 @@ const (
 )
 
 type receiveOp struct {
-	cancel   context.CancelFunc
-	authURL  chan authStart
+	cancel context.CancelFunc
+	// binding is the random value the browser that started the receive
+	// holds in bindingCookie.
+	binding  string
+	authURL  chan string
 	callback chan walletapp.Callback
 	done     chan receiveResult
 }
 
-// authStart is where to send the browser to approve, and the flow's
-// session handle to keep with it.
-type authStart struct {
-	url     string
-	session client.SessionHandle
-}
-
-// sessionCookie keeps a receive's session handle with the browser that
-// started it, for /callback to hand back: fapigo completes only a
-// callback bound to that browser (RFC 9700 §4.7).
-const sessionCookie = "passport_vdc_webwallet_session"
+// bindingCookie binds a receive to the browser that started it: /callback
+// completes the receive only from a browser holding its binding (RFC 9700
+// §4.7), so another browser can't be made to complete it.
+const bindingCookie = "passport_vdc_webwallet_receive"
 
 type receiveResult struct {
 	received []walletapp.Received
@@ -128,8 +124,8 @@ func (a *App) routes() http.Handler {
 	return mux
 }
 
-// webApprover hands the authorization URL and session handle to the
-// browser handler and waits for the issuer's redirect back to /callback.
+// webApprover hands the authorization URL to the browser handler and
+// waits for the issuer's redirect back to /callback.
 type webApprover struct {
 	op  *receiveOp
 	pin string // the PIN the holder typed with the offer, for a pre-authorized one
@@ -144,9 +140,9 @@ func (w webApprover) PIN(context.Context, oid4vci.TxCode) (string, error) {
 	return w.pin, nil
 }
 
-func (w webApprover) Approve(ctx context.Context, authorizationURL string, session client.SessionHandle) (walletapp.Callback, error) {
+func (w webApprover) Approve(ctx context.Context, authorizationURL string) (walletapp.Callback, error) {
 	select {
-	case w.op.authURL <- authStart{url: authorizationURL, session: session}:
+	case w.op.authURL <- authorizationURL:
 	case <-ctx.Done():
 		return walletapp.Callback{}, ctx.Err()
 	}
@@ -177,8 +173,13 @@ func (a *App) handleReceive(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	binding, err := randomBinding()
+	if err != nil {
+		renderError(w, http.StatusInternalServerError, "couldn't start receiving")
+		return
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	op := &receiveOp{cancel: cancel, authURL: make(chan authStart), callback: make(chan walletapp.Callback, 1), done: make(chan receiveResult, 1)}
+	op := &receiveOp{cancel: cancel, binding: binding, authURL: make(chan string), callback: make(chan walletapp.Callback, 1), done: make(chan receiveResult, 1)}
 	a.mu.Lock()
 	if a.receiving != nil {
 		a.receiving.cancel() // a new receive replaces an abandoned one
@@ -191,12 +192,12 @@ func (a *App) handleReceive(w http.ResponseWriter, r *http.Request) {
 		op.done <- receiveResult{received, pending, err}
 	}()
 	select {
-	case start := <-op.authURL:
+	case authURL := <-op.authURL:
 		http.SetCookie(w, &http.Cookie{
-			Name: sessionCookie, Value: start.session.String(), Path: "/callback",
+			Name: bindingCookie, Value: op.binding, Path: "/callback",
 			HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode,
 		})
-		http.Redirect(w, r, start.url, http.StatusSeeOther) // #nosec G710 -- the issuer's authorization URL, built by fapigo from discovered metadata
+		http.Redirect(w, r, authURL, http.StatusSeeOther) // #nosec G710 -- the issuer's authorization URL, built by fapigo from discovered metadata
 	case res := <-op.done:
 		// A pre-authorized offer finishes here, with no trip to the
 		// issuer's approval page.
@@ -213,27 +214,23 @@ func (a *App) handleReceive(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleCallback receives the issuer's redirect, completes the receive
-// and stores the credentials. The in-progress receive is claimed by the
-// first callback, so a second one (a reload, a stray request) gets an
-// error instead of waiting for a result that never comes.
+// and stores the credentials. Only the browser that started the receive
+// can complete it; the receive is claimed by its first callback, so a
+// second one (a reload, a stray request) gets an error instead of
+// waiting for a result that never comes.
 func (a *App) handleCallback(w http.ResponseWriter, r *http.Request) {
+	c, err := r.Cookie(bindingCookie)
 	a.mu.Lock()
 	op := a.receiving
-	a.receiving = nil
-	a.mu.Unlock()
-	if op == nil {
-		renderError(w, http.StatusBadRequest, "no credential is being received")
+	if op == nil || err != nil || subtle.ConstantTimeCompare([]byte(c.Value), []byte(op.binding)) != 1 {
+		a.mu.Unlock()
+		renderError(w, http.StatusBadRequest, "no credential is being received in this browser")
 		return
 	}
-	// The session handle this browser was given when it started the
-	// receive; a browser that didn't start it has none, and fapigo
-	// refuses the callback.
-	cb := walletapp.Callback{Query: r.URL.RawQuery}
-	if c, err := r.Cookie(sessionCookie); err == nil {
-		cb.Session, _ = client.ParseSessionHandle(c.Value)
-	}
-	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Path: "/callback", MaxAge: -1, HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode})
-	op.callback <- cb
+	a.receiving = nil
+	a.mu.Unlock()
+	http.SetCookie(w, &http.Cookie{Name: bindingCookie, Path: "/callback", MaxAge: -1, HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode})
+	op.callback <- walletapp.Callback{Query: r.URL.RawQuery}
 	res := <-op.done
 	a.finishReceive(op)
 	if res.err != nil {
@@ -500,6 +497,15 @@ func offerIssuer(link string) (issuer string, preAuthorized bool) {
 
 func randomID() (string, error) {
 	var b [18]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(b[:]), nil
+}
+
+// randomBinding returns a random value binding a receive to a browser.
+func randomBinding() (string, error) {
+	var b [32]byte
 	if _, err := rand.Read(b[:]); err != nil {
 		return "", err
 	}

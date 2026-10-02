@@ -1,6 +1,7 @@
 package walletapp
 
 import (
+	"context"
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
@@ -10,6 +11,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/idfoundry/oid4vcgo/walletflow"
 )
 
 // Store keeps received credentials, one JSON file each, in a directory.
@@ -95,4 +98,33 @@ func safeName(s string) string {
 		}
 		return '_'
 	}, s)
+}
+
+// view loads the store for walletflow: its credentials, each identified
+// by its file path and bound to a holder key of the same ID, and those
+// keys. walletflow only reads a view, to present from it.
+func (s Store) view() (*walletflow.MemoryCredentialStore, *softwareKeys, error) {
+	stored, err := s.List()
+	if err != nil {
+		return nil, nil, err
+	}
+	creds, keys := walletflow.NewMemoryCredentialStore(), newSoftwareKeys()
+	for _, st := range stored {
+		block, _ := pem.Decode([]byte(st.HolderKeyPEM))
+		if block == nil {
+			return nil, nil, fmt.Errorf("walletapp: %s: no holder key", st.Path)
+		}
+		key, err := x509.ParseECPrivateKey(block.Bytes)
+		if err != nil {
+			return nil, nil, fmt.Errorf("walletapp: %s: holder key: %w", st.Path, err)
+		}
+		keys.add(st.Path, key)
+		if err := creds.Put(context.Background(), walletflow.StoredCredential{
+			ID: st.Path, ConfigurationID: st.ConfigurationID, Format: st.Format, DocType: st.DocType,
+			Credential: st.Credential, HolderKeyID: st.Path, ReceivedAt: st.ReceivedAt,
+		}); err != nil {
+			return nil, nil, err
+		}
+	}
+	return creds, keys, nil
 }

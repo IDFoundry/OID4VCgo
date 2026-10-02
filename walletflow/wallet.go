@@ -22,12 +22,13 @@ type Config struct {
 	// ClientID and RedirectURI are the wallet's registration with
 	// Authorization Servers: the client_id its Wallet Attestations
 	// name, and where the authorization code grant redirects back to.
+	// REQUIRED for StartIssuance.
 	ClientID    string
 	RedirectURI string
 
 	// IssuerRoots are the trust anchors for issuers: every received
 	// credential must be signed by a certificate chaining to one of
-	// them, or it's refused. REQUIRED.
+	// them, or it's refused. REQUIRED for StartIssuance.
 	IssuerRoots *x509.CertPool
 
 	// VerifierTrust decides which Verifiers the wallet answers
@@ -44,7 +45,7 @@ type Config struct {
 type Dependencies struct {
 	Keys        KeyStore        // REQUIRED
 	Credentials CredentialStore // REQUIRED
-	Provider    WalletProvider  // REQUIRED
+	Provider    WalletProvider  // REQUIRED for StartIssuance
 
 	// HTTP makes every request. nil means a client with a 10 s timeout.
 	HTTP *http.Client
@@ -70,13 +71,8 @@ const (
 
 // New returns a Wallet.
 func New(cfg Config, deps Dependencies) (*Wallet, error) {
-	switch {
-	case cfg.ClientID == "" || cfg.RedirectURI == "":
-		return nil, errors.New("walletflow: Config.ClientID and Config.RedirectURI are required")
-	case cfg.IssuerRoots == nil:
-		return nil, errors.New("walletflow: Config.IssuerRoots is required")
-	case deps.Keys == nil || deps.Credentials == nil || deps.Provider == nil:
-		return nil, errors.New("walletflow: Dependencies.Keys, Credentials and Provider are required")
+	if deps.Keys == nil || deps.Credentials == nil {
+		return nil, errors.New("walletflow: Dependencies.Keys and Credentials are required")
 	}
 	if deps.HTTP == nil {
 		deps.HTTP = &http.Client{Timeout: httpTimeout}
@@ -134,6 +130,19 @@ func (w *Wallet) DeleteCredential(ctx context.Context, id string) error {
 	}
 	if err := w.deps.Keys.DeleteKey(ctx, c.HolderKeyID); err != nil {
 		return fmt.Errorf("walletflow: delete credential's holder key: %w", err)
+	}
+	return nil
+}
+
+// checkIssuance reports what StartIssuance needs that w lacks.
+func (w *Wallet) checkIssuance() error {
+	switch {
+	case w.cfg.ClientID == "" || w.cfg.RedirectURI == "":
+		return errors.New("walletflow: Config.ClientID and Config.RedirectURI are required to receive credentials")
+	case w.cfg.IssuerRoots == nil:
+		return errors.New("walletflow: Config.IssuerRoots is required to receive credentials")
+	case w.deps.Provider == nil:
+		return errors.New("walletflow: Dependencies.Provider is required to receive credentials")
 	}
 	return nil
 }

@@ -6,7 +6,6 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
-	"github.com/idfoundry/fapigo/client"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -400,8 +399,8 @@ func TestRevoke_Refuses(t *testing.T) {
 // callback URL someone else delivered.
 type foreignStateApprover struct{ walletapp.HeadlessApprover }
 
-func (a foreignStateApprover) Approve(ctx context.Context, authorizationURL string, session client.SessionHandle) (walletapp.Callback, error) {
-	cb, err := a.HeadlessApprover.Approve(ctx, authorizationURL, session)
+func (a foreignStateApprover) Approve(ctx context.Context, authorizationURL string) (walletapp.Callback, error) {
+	cb, err := a.HeadlessApprover.Approve(ctx, authorizationURL)
 	if err != nil {
 		return cb, err
 	}

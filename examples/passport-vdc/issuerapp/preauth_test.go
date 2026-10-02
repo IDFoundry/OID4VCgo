@@ -11,8 +11,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/idfoundry/fapigo/client"
-
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/demotest"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/walletapp"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/walletprovider"
@@ -105,7 +103,7 @@ type otherBrowserApprover struct {
 	status *int
 }
 
-func (o otherBrowserApprover) Approve(ctx context.Context, authorizationURL string, _ client.SessionHandle) (walletapp.Callback, error) {
+func (o otherBrowserApprover) Approve(ctx context.Context, authorizationURL string) (walletapp.Callback, error) {
 	jar, _ := cookiejar.New(nil)
 	opener := *o.http
 	opener.Jar = jar
@@ -233,6 +231,6 @@ func TestApproval_ReplacedInteraction(t *testing.T) {
 // approverFunc opens an authorization URL and stops the flow.
 type approverFunc func(authorizationURL string) error
 
-func (f approverFunc) Approve(_ context.Context, authorizationURL string, _ client.SessionHandle) (walletapp.Callback, error) {
+func (f approverFunc) Approve(_ context.Context, authorizationURL string) (walletapp.Callback, error) {
 	return walletapp.Callback{}, f(authorizationURL)
 }

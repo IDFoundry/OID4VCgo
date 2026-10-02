@@ -9,6 +9,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -310,26 +311,37 @@ func TestIssuance_StepsOutOfTurn(t *testing.T) {
 }
 
 func TestNew_RequiresConfiguration(t *testing.T) {
-	roots := x509.NewCertPool()
 	deps := walletflow.Dependencies{
 		Keys: walletflow.NewMemoryKeyStore(), Credentials: walletflow.NewMemoryCredentialStore(), Provider: &testhaip.Provider{},
 	}
-	good := walletflow.Config{ClientID: "c", RedirectURI: "https://wallet.example/cb", IssuerRoots: roots}
+	good := walletflow.Config{ClientID: "c", RedirectURI: "https://wallet.example/cb", IssuerRoots: x509.NewCertPool()}
 	if _, err := walletflow.New(good, deps); err != nil {
 		t.Fatalf("New(production config) = %v", err)
 	}
+	for name, d := range map[string]walletflow.Dependencies{
+		"no key store": {Credentials: deps.Credentials},
+		"no store":     {Keys: deps.Keys},
+	} {
+		if _, err := walletflow.New(good, d); err == nil {
+			t.Errorf("%s: New succeeded", name)
+		}
+	}
+	// A wallet that only presents needs none of issuance's settings,
+	// which StartIssuance asks for.
 	for name, mutate := range map[string]func(*walletflow.Config, *walletflow.Dependencies){
 		"no client_id":    func(c *walletflow.Config, _ *walletflow.Dependencies) { c.ClientID = "" },
 		"no redirect URI": func(c *walletflow.Config, _ *walletflow.Dependencies) { c.RedirectURI = "" },
 		"no issuer roots": func(c *walletflow.Config, _ *walletflow.Dependencies) { c.IssuerRoots = nil },
-		"no key store":    func(_ *walletflow.Config, d *walletflow.Dependencies) { d.Keys = nil },
-		"no store":        func(_ *walletflow.Config, d *walletflow.Dependencies) { d.Credentials = nil },
 		"no provider":     func(_ *walletflow.Config, d *walletflow.Dependencies) { d.Provider = nil },
 	} {
 		c, d := good, deps
 		mutate(&c, &d)
-		if _, err := walletflow.New(c, d); err == nil {
-			t.Errorf("%s: New succeeded", name)
+		w, err := walletflow.New(c, d)
+		if err != nil {
+			t.Fatalf("%s: New = %v", name, err)
+		}
+		if _, err := w.StartIssuance(context.Background(), "openid-credential-offer://?credential_offer_uri=https%3A%2F%2Fissuer.example%2Fo"); err == nil || !strings.Contains(err.Error(), "required to receive") {
+			t.Errorf("%s: StartIssuance = %v", name, err)
 		}
 	}
 }
