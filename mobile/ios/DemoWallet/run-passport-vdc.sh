@@ -3,15 +3,14 @@
 # (examples/passport-vdc: `go run ./cmd/demo` there first). Makes the
 # Simulator trust the demo's TLS certificate, and launches the app with
 # the demo's trust anchors and Wallet Provider. Then upload a passport on
-# the issuer page with "pre-authorized code" chosen, and open the offer
-# link in the Simulator:
+# the issuer page, and open its offer link in the Simulator:
 #
 #   xcrun simctl openurl booted '<openid-credential-offer://… link>'
 #
 #   ./run-passport-vdc.sh [simulator-id-or-name]   (default: iPhone 16)
 #
-# The app enters the PIN the issuer page shows. (The authorization code
-# offer needs FAPIgo to accept the app's redirect URI: see MOBILE.md.)
+# Approve on the issuer's page with the confirmation code, or for a
+# pre-authorized code offer enter its PIN in the app.
 set -eu
 cd "$(dirname "$0")"
 DEVICE="${1:-iPhone 16}"

@@ -3,7 +3,7 @@ module github.com/idfoundry/oid4vcgo/mobile
 go 1.26.6
 
 require (
-	github.com/idfoundry/fapigo v0.43.0
+	github.com/idfoundry/fapigo v0.43.1-0.20261002165909-d0fae2c377e4
 	github.com/idfoundry/oid4vcgo v0.0.0
 )
 

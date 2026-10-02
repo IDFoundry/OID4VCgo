@@ -81,7 +81,9 @@ type Options struct {
 	// wallet polls until Env.Decide approves or denies them.
 	Defer bool
 	// RedirectURIs are registered for the wallet as well as
-	// RedirectURI: an app's private-use URI scheme redirect, say.
+	// RedirectURI: an app's private-use URI scheme redirect, say. The
+	// wallet is registered as a native app, so each must be a form RFC
+	// 8252 allows one.
 	RedirectURIs []string
 }
 
@@ -136,6 +138,9 @@ func New(opts Options) (env *Env, err error) {
 	asCfg.Limits.MaxClientAttestationLifetime = time.Hour
 	asCfg.AdditionalGrantTypes = []string{preAuthorizedCodeGrantType}
 	clientCfg := haip.RecommendedWalletClient(fapi.ClientID(ClientID), ProviderIssuer)
+	// A wallet is a native app: its redirect URIs may be private-use
+	// schemes and loopback http too (RFC 8252), in production as well.
+	clientCfg.ApplicationType = storage.ApplicationTypeNative
 	clientCfg.RedirectURIs = []fapi.RegisteredRedirectURI{RedirectURI}
 	for _, u := range opts.RedirectURIs {
 		clientCfg.RedirectURIs = append(clientCfg.RedirectURIs, fapi.RegisteredRedirectURI(u))

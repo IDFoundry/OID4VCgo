@@ -50,7 +50,20 @@ final class WalletModel {
         } catch {
             phase = .failed("\(error)")
         }
-        Task { await refresh() }
+        let reset = ProcessInfo.processInfo.environment["OID4VC_DEMO_RESET"] == "1"
+        Task {
+            if reset { await deleteAll() }
+            await refresh()
+        }
+    }
+
+    /// Deletes every credential and its holder key: for UI tests, which
+    /// launch with OID4VC_DEMO_RESET=1 to start from an empty wallet.
+    private func deleteAll() async {
+        guard let wallet, let held = try? await wallet.credentials() else { return }
+        for c in held {
+            try? await wallet.deleteCredential(id: c.id)
+        }
     }
 
     /// The redirect URI's scheme, for the authorization session.
@@ -109,7 +122,12 @@ final class WalletModel {
     }
 
     func refresh() async {
-        credentials = (try? await wallet?.credentials()) ?? []
+        guard let wallet else { return }
+        do {
+            credentials = try await wallet.credentials()
+        } catch {
+            phase = .failed("Couldn't list credentials: \(error)")
+        }
     }
 
     private func closeIssuance() async {
