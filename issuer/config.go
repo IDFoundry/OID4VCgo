@@ -129,14 +129,16 @@ type Config struct {
 	Assurance AssuranceLevel
 
 	// PreAuthorizedCodeClientAuthentication is how ExchangePreAuthorizedCode
-	// authenticates the client redeeming a pre-authorized_code. The
-	// only choice today is AnonymousPreAuthorizedCode{}: no client
-	// authentication, which OID4VCI §6.1 allows but HAIP 1.0 §4.4.1
-	// doesn't ("Issuers MUST require an OAuth2 Client authentication
-	// mechanism at ... Token Endpoints"). REQUIRED under
+	// authenticates the client redeeming a pre-authorized_code:
+	// VerifiedPreAuthorizedCode, by its Wallet Attestation, verified with
+	// the DPoP proof by the Authorization Server sharing the Token
+	// Endpoint, as HAIP 1.0 §4.4.1 requires ("Issuers MUST require an
+	// OAuth2 Client authentication mechanism at ... Token Endpoints"), or
+	// AnonymousPreAuthorizedCode{}, no client authentication, which
+	// OID4VCI §6.1 allows but HAIP doesn't. REQUIRED under
 	// AssuranceProduction when Dependencies.PreAuthorizedCodes is set,
-	// so a production issuer opts into that departure explicitly; nil
-	// means anonymous under AssuranceDevelopment.
+	// so a production issuer chooses explicitly; nil means anonymous
+	// under AssuranceDevelopment.
 	PreAuthorizedCodeClientAuthentication PreAuthorizedCodeClientAuthentication
 
 	// Issuer is this Credential Issuer's identifier (§12.2.1) — the
@@ -604,6 +606,17 @@ func validatePreAuthorizedCodeDependencies(cfg Config, deps Dependencies) error 
 	if cfg.Limits.AccessTokenLifetime <= 0 {
 		return fmt.Errorf("issuer: config: limits.access_token_lifetime must be positive when dependencies.pre_authorized_codes is set")
 	}
+	if cfg.Limits.MaxTxCodeAttempts <= 0 {
+		return fmt.Errorf("issuer: config: limits.max_tx_code_attempts must be positive when dependencies.pre_authorized_codes is set")
+	}
+	if deps.AccessTokens == nil {
+		return fmt.Errorf("issuer: dependencies: access_tokens is required when dependencies.pre_authorized_codes is set")
+	}
+	// The DPoP proof is the Authorization Server's to verify under
+	// VerifiedPreAuthorizedCode, and this issuer's otherwise.
+	if _, ok := cfg.PreAuthorizedCodeClientAuthentication.(VerifiedPreAuthorizedCode); ok {
+		return nil
+	}
 	if cfg.Limits.MaxDPoPProofAge <= 0 {
 		return fmt.Errorf("issuer: config: limits.max_dpop_proof_age must be positive when dependencies.pre_authorized_codes is set")
 	}
@@ -622,14 +635,8 @@ func validatePreAuthorizedCodeDependencies(cfg Config, deps Dependencies) error 
 	if cfg.Limits.MaxDPoPClockSkew < 0 {
 		return fmt.Errorf("issuer: config: limits.max_dpop_clock_skew must not be negative when dependencies.pre_authorized_codes is set")
 	}
-	if cfg.Limits.MaxTxCodeAttempts <= 0 {
-		return fmt.Errorf("issuer: config: limits.max_tx_code_attempts must be positive when dependencies.pre_authorized_codes is set")
-	}
 	if deps.DPoPReplay == nil {
 		return fmt.Errorf("issuer: dependencies: dpop_replay is required when dependencies.pre_authorized_codes is set")
-	}
-	if deps.AccessTokens == nil {
-		return fmt.Errorf("issuer: dependencies: access_tokens is required when dependencies.pre_authorized_codes is set")
 	}
 	return nil
 }

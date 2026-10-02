@@ -28,8 +28,12 @@ type Offer struct {
 	IssuerState string
 	// ConfirmationCode is shown with the offer and must be entered at
 	// the issuer's approval step, so the offer link alone can't be
-	// redeemed.
+	// redeemed. For a pre-authorized offer it's the PIN (tx_code) the
+	// wallet sends with the pre-authorized code instead.
 	ConfirmationCode string
+	// PreAuthorized reports a pre-authorized code offer: no browser
+	// approval, the wallet redeems it with the PIN.
+	PreAuthorized bool
 }
 
 // CreateTransaction records an already-verified passport and returns
@@ -37,21 +41,48 @@ type Offer struct {
 // after passport.Verify; tests call it directly with synthetic
 // Evidence.
 func (a *App) CreateTransaction(ctx context.Context, e passport.Evidence) (Offer, error) {
-	return a.createTransaction(ctx, e, false)
+	return a.createTransaction(ctx, e, offerOptions{})
 }
 
 // CreateTransactionForReview is CreateTransaction for a passport an
 // operator must review first: its credentials are deferred (OID4VCI 1.0
 // §9) until a decision on the /review page (Review).
 func (a *App) CreateTransactionForReview(ctx context.Context, e passport.Evidence) (Offer, error) {
-	return a.createTransaction(ctx, e, true)
+	return a.createTransaction(ctx, e, offerOptions{review: true})
 }
 
-func (a *App) createTransaction(ctx context.Context, e passport.Evidence, review bool) (Offer, error) {
+// CreatePreAuthorizedTransaction is CreateTransaction "at the counter":
+// the offer carries a pre-authorized code (OID4VCI 1.0 §3.5), which the
+// wallet redeems at the token endpoint with the PIN (Offer.ConfirmationCode)
+// and its Wallet Attestation, with no approval step in a browser.
+func (a *App) CreatePreAuthorizedTransaction(ctx context.Context, e passport.Evidence) (Offer, error) {
+	return a.createTransaction(ctx, e, offerOptions{preAuthorized: true})
+}
+
+// offerOptions are how an upload is offered.
+type offerOptions struct {
+	review        bool // defer issuance until an operator decides
+	preAuthorized bool // a pre-authorized code with a PIN, not an authorization
+}
+
+func (a *App) createTransaction(ctx context.Context, e passport.Evidence, opts offerOptions) (Offer, error) {
 	configIDs := []string{MdocConfigurationID, SDJWTConfigurationID}
-	txID, code, err := a.transactions.put(e, configIDs, review)
+	txID, code, err := a.transactions.put(e, configIDs, opts.review)
 	if err != nil {
 		return Offer{}, err
+	}
+	if opts.preAuthorized {
+		// The PIN stands in for the approval step: the transaction is
+		// claimed now, and only the pre-authorized code, with the PIN,
+		// reaches it.
+		if err := a.transactions.claim(txID, code); err != nil {
+			return Offer{}, err
+		}
+		uri, err := a.preAuthorizedOffer(ctx, txID, code, configIDs)
+		if err != nil {
+			return Offer{}, err
+		}
+		return Offer{URI: uri, IssuerState: txID, ConfirmationCode: code, PreAuthorized: true}, nil
 	}
 	result, err := a.issuer.CreateCredentialOffer(ctx, issuer.CreateCredentialOfferRequest{
 		CredentialConfigurationIDs: configIDs,
@@ -118,6 +149,7 @@ var uploadTemplate = template.Must(template.New("upload").Parse(pageHead + `
 <p>Upload a gmrtd portable passport file. It's verified against the issuing country's signatures, then offered to your wallet as both an <code>mso_mdoc</code> and a <code>dc+sd-jwt</code> credential.</p>
 <form method="post" action="/passport" enctype="multipart/form-data">
 <input type="file" name="passport" accept=".gmrtd" required>
+<p><label><input type="checkbox" name="counter" value="1"> Issue at the counter — a pre-authorized code with a PIN, no approval in the browser (OID4VCI's other grant)</label></p>
 <p><label><input type="checkbox" name="review" value="1"> Hold for an operator's review — the wallet waits, and polls, until you decide on the <a href="/review">review page</a></label></p>
 <button>Verify passport</button>
 </form>
@@ -154,7 +186,8 @@ var offerTemplate = template.Must(template.New("offer").Funcs(template.FuncMap{
 <tr><th>Expires</th><td>{{.Evidence.Identity.ExpiryDate.Format "2006-01-02"}}{{if .Expired}} <span class="note">— expired: the data is still country-signed, and the credential says when it expired</span>{{end}}</td></tr>
 </table>
 <h2>Credential offer</h2>
-<p>Confirmation code: <strong style="font-size:1.4em;letter-spacing:.15em">{{.Offer.ConfirmationCode}}</strong><br><span class="note">Enter it when the issuer asks you to approve. The offer can be redeemed once, by one wallet.</span></p>
+{{if .Offer.PreAuthorized}}<p>PIN: <strong style="font-size:1.4em;letter-spacing:.15em">{{.Offer.ConfirmationCode}}</strong><br><span class="note">Give it to the holder separately from the offer: their wallet sends it with the offer's pre-authorized code. There's no approval step; the offer can be redeemed once, by one wallet.</span></p>
+{{else}}<p>Confirmation code: <strong style="font-size:1.4em;letter-spacing:.15em">{{.Offer.ConfirmationCode}}</strong><br><span class="note">Enter it when the issuer asks you to approve. The offer can be redeemed once, by one wallet.</span></p>{{end}}
 {{if .WebWalletLink}}<p><a href="{{.WebWalletLink}}"><strong>Open in web wallet</strong></a></p>{{end}}
 <p><a href="{{.Offer.URI}}">Open in wallet app</a> (on this device)</p>
 {{if .QR}}<p>Or scan with a wallet on another device:<br><img src="{{.QR}}" alt="QR code of the credential offer" width="296"></p>{{end}}
@@ -192,7 +225,9 @@ func (a *App) handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	offer, err := a.createTransaction(r.Context(), e, r.FormValue("review") != "")
+	offer, err := a.createTransaction(r.Context(), e, offerOptions{
+		review: r.FormValue("review") != "", preAuthorized: r.FormValue("counter") != "",
+	})
 	switch {
 	case errors.Is(err, errTooManyTransactions):
 		writeHTMLError(w, http.StatusServiceUnavailable, "too many passports are awaiting issuance — try again in a few minutes")

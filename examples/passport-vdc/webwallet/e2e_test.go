@@ -560,3 +560,46 @@ func TestWebWallet_DeferredCredential(t *testing.T) {
 		t.Fatalf("store holds %d credentials, %v; want both", len(stored), err)
 	}
 }
+
+// TestWebWallet_PreAuthorizedOffer: a pre-authorized offer asks for the
+// PIN instead of sending the browser to the issuer, and is received in
+// one step with it; a wrong PIN receives nothing.
+func TestWebWallet_PreAuthorizedOffer(t *testing.T) {
+	env := demotest.New(t, nil)
+	store := walletapp.Store{Dir: filepath.Join(t.TempDir(), "wallet")}
+	env.StartWebWallet(t, store)
+	b := browser(env)
+
+	offer, err := env.Issuer.CreatePreAuthorizedTransaction(context.Background(), demotest.SyntheticEvidence())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if offer.ConfirmationCode == "999999" {
+		t.Skip("the PIN happens to be the wrong PIN this test tries")
+	}
+	resp, err := b.Get(env.WebWalletURL + "/receive?offer=" + url.QueryEscape(offer.URI))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page := read(t, resp); !strings.Contains(page, `name="pin"`) || strings.Contains(page, "Continue to the issuer") {
+		t.Fatalf("confirmation page doesn't ask for the PIN:\n%s", page)
+	}
+
+	resp, err = b.PostForm(env.WebWalletURL+"/receive", url.Values{"offer": {offer.URI}, "pin": {"999999"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusBadGateway {
+		t.Errorf("wrong PIN: status %d, want an error", resp.StatusCode)
+	}
+	_ = resp.Body.Close()
+
+	resp, err = b.PostForm(env.WebWalletURL+"/receive", url.Values{"offer": {offer.URI}, "pin": {offer.ConfirmationCode}})
+	home := mustRedirect(t, resp, err, "POST /receive with the PIN")
+	if home.Query().Get("received") != "2" {
+		t.Fatalf("redirect = %s, want 2 received", home)
+	}
+	if stored, err := store.List(); err != nil || len(stored) != 2 {
+		t.Fatalf("store holds %d credentials, %v; want both", len(stored), err)
+	}
+}

@@ -171,6 +171,13 @@ issuer's redirect back is bound to the browser that started receiving
    verified claims, "Revocation status: valid" and, for the country
    trust path, the ICAO Passive Authentication result.
 
+**Optional: issue at the counter.** Tick **Issue at the counter** when
+uploading. The offer then carries a pre-authorized code (OID4VCI's other
+grant, §3.5), and the page shows a PIN instead of a confirmation code.
+In the web wallet, open the offer and enter the PIN: it's received at
+once, with no trip to the issuer's approval page. The CLI wallet asks
+for the PIN on the terminal (or takes `-headless -code <PIN>`).
+
 **Optional: issue after a review.** Tick **Hold for an operator's
 review** when uploading. The wallet then gets no credentials at once:
 the issuer defers them (OID4VCI 1.0 §9), and the web wallet lists them
@@ -321,6 +328,24 @@ Also served: `/.well-known/openid-credential-issuer` (signed metadata),
 `/.well-known/oauth-authorization-server`, `/jwks`, the SD-JWT VC
 type metadata at the `vct` URL (`/vct/passport/1`), and the Token
 Status List every credential references (`/statuslists/1`).
+
+### The pre-authorized code flow
+
+An offer issued at the counter skips the browser: the issuer has already
+checked who it's for (here, whoever uploaded the passport), so the offer
+carries a pre-authorized code bound to the transaction, and the holder
+needs only the PIN, given separately.
+
+| Step | Endpoint | What happens |
+|---|---|---|
+| Offer | `POST /passport` | the transaction T is claimed at once; a pre-authorized code is stored with T as its subject and the six-digit PIN as its `tx_code` |
+| Token | `POST /token` | fapigo/server reads the request once (`TokenEndpointRequestFromHTTP`), and `grant_type` routes it. fapigo/server authenticates the wallet by its Wallet Attestation and PoP (`AuthenticateAttestedClient`, HAIP 1.0 §4.4.1), refuses a `client_id` naming another client, and verifies the DPoP proof with the same replay record and nonce policy as its own grants (`VerifyTokenRequestBinding`). Only then does `issuer.ExchangePreAuthorizedCode` (`issuer.VerifiedPreAuthorizedCode`) redeem the code and PIN (five wrong PINs void it). The token is signed with the Authorization Server's keys, names T as its subject and the wallet as its client, and is DPoP-bound |
+| Credential | `POST /nonce`, `POST /credential` | as for the authorization code flow, the wallet presenting the token with `wallet.DPoPResourceClient` |
+
+The Authorization Server's metadata lists the grant in
+`grant_types_supported` (fapigo/server's `Config.AdditionalGrantTypes`).
+The wallet's Wallet Attestation and PoP come from the same fapigo/client
+it uses for the authorization code flow (`ClientAttestationHeaders`).
 
 ### Deferred issuance
 

@@ -55,14 +55,15 @@
 // itself implement. GenerateDPoPProof and DPoPAccessTokenHash build the
 // RFC 9449 DPoP proof this needs, reusing the same internal/jose and
 // internal/jwk primitives GenerateProof already relies on for key
-// proofs — see GenerateDPoPProof's own doc comment for why it's
-// exported: this package builds the Token Request's own proof, but not
-// a full sender-constrained resource client for the token it returns,
-// so a caller needs GenerateDPoPProof to build that client itself.
-// RequestPreAuthorizedCodeToken sends no client authentication (§6.1
-// makes it OPTIONAL for this grant; the Wallet Attestation client
-// authentication above is fapigo/client's, for the Authorization Code
-// Flow), and no authorization_details.
+// proofs. DPoPResourceClient then presents the token it returns, with
+// proofs from the same key, to the Credential, Deferred Credential and
+// Notification Endpoints. With PreAuthorizedCodeTokenRequest.ClientAttestation
+// set — fapigo/client's *client.Client — the Token Request also
+// authenticates the Wallet with its Wallet Attestation and a fresh PoP,
+// built by fapigo/client, as HAIP 1.0 §4.4.1 requires (§6.1 makes client
+// authentication OPTIONAL); the issuer side is
+// issuer.VerifiedPreAuthorizedCode. It sends no
+// authorization_details.
 //
 // GenerateAttestationProof builds the other key proof this package
 // supports: a Key Attestation JWT (Appendix D.1) for the attestation
@@ -125,7 +126,7 @@
 // GenerateProofWithKeyID, GenerateProofWithX5C, GenerateAttestationProof,
 // GenerateProofWithKeyAttestation, RequestCredential, BuildAuthorizationRequest,
 // RequestDeferredCredential, RequestNotification, RequestPreAuthorizedCodeToken,
-// GenerateDPoPProof
+// DPoPResourceClient, GenerateDPoPProof
 // and DPoPAccessTokenHash exist so far. This package does not yet cover:
 //
 //   - di_vp proofs (needs W3C VCDM, which this repo doesn't implement,

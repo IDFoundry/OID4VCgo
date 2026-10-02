@@ -29,17 +29,10 @@ const dpopJTIEntropyBytes = 16
 // RequestPreAuthorizedCodeToken calls this for its own Token Request,
 // where ath is always "" (§4.3: ath is only meaningful "in conjunction
 // with the presentation of an access token", which doesn't exist yet
-// at the token endpoint). It's exported so a caller building its own
-// sender-constrained requests for a pre-authorized_code-obtained
-// access token — RequestCredential/RequestDeferredCredential/
-// RequestNotification all just need *some* ProtectedResourceClient —
-// can reuse this instead of reimplementing DPoP proof construction a
-// second time; for that case, set ath to the base64url(SHA-256(access
-// token)) digest RFC 9449 §4.3 defines. This package itself doesn't
-// build that ProtectedResourceClient — see the package doc comment for
-// why (the Authorization Code Flow's own resource requests go through
-// fapigo/client's already-hardened (*client.Client).ProtectedResource
-// instead, which this same reasoning doesn't apply to).
+// at the token endpoint), and DPoPResourceClient for each request
+// presenting the token, with ath set to DPoPAccessTokenHash(token).
+// It's exported for a caller building sender-constrained requests of
+// its own.
 func (w *Wallet) GenerateDPoPProof(signer crypto.Signer, htm, htu, nonce, ath string) (string, error) {
 	pub, err := jwk.Marshal(signer.Public())
 	if err != nil {

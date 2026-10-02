@@ -154,6 +154,9 @@ func ReceiveDeferrable(ctx context.Context, cfg Config, offerURI string, approve
 	if err != nil {
 		return nil, nil, fmt.Errorf("walletapp: issuer metadata: %w", err)
 	}
+	if offer.Grants != nil && offer.Grants.PreAuthorizedCode != nil && offer.Grants.AuthorizationCode == nil {
+		return receivePreAuthorized(ctx, w, cfg, httpClient, offer, metadata, approver)
+	}
 	// Which Authorization Server, which scopes, and the offer's
 	// issuer_state.
 	plan, err := wallet.PlanAuthorization(offer, metadata)

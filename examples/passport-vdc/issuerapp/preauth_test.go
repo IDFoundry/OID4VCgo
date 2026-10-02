@@ -1,0 +1,72 @@
+package issuerapp_test
+
+import (
+	"context"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/demotest"
+	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/walletapp"
+	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/walletprovider"
+)
+
+// TestPreAuthorized_IssuesWithPINAndWalletAttestation: an offer "at the
+// counter" is redeemed with its PIN and the wallet's Wallet Attestation
+// — authenticated by fapigo/server's own check — with no browser
+// approval, and issues both formats.
+func TestPreAuthorized_IssuesWithPINAndWalletAttestation(t *testing.T) {
+	ctx := context.Background()
+	env := demotest.New(t, nil)
+	offer, err := env.Issuer.CreatePreAuthorizedTransaction(ctx, demotest.SyntheticEvidence())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !offer.PreAuthorized || !strings.Contains(offer.URI, "pre-authorized_code") {
+		t.Fatalf("offer = %+v, want a pre-authorized code offer", offer)
+	}
+	if md := get(t, env, "/.well-known/oauth-authorization-server"); !strings.Contains(md, "urn:ietf:params:oauth:grant-type:pre-authorized_code") {
+		t.Error("the Authorization Server's metadata doesn't list the pre-authorized code grant")
+	}
+	received, err := walletapp.Receive(ctx, env.WalletConfig(), offer.URI, walletapp.HeadlessApprover{HTTP: env.HTTP, Code: offer.ConfirmationCode})
+	if err != nil || len(received) != 2 {
+		t.Fatalf("Receive = %d credentials, %v; want both", len(received), err)
+	}
+	if _, err := walletapp.Receive(ctx, env.WalletConfig(), offer.URI, walletapp.HeadlessApprover{HTTP: env.HTTP, Code: offer.ConfirmationCode}); err == nil {
+		t.Error("a pre-authorized code was redeemed twice")
+	}
+}
+
+// TestPreAuthorized_Refuses: a wrong PIN, or a wallet another Wallet
+// Provider attests, gets no token — and neither spends the code.
+func TestPreAuthorized_Refuses(t *testing.T) {
+	ctx := context.Background()
+	env := demotest.New(t, nil)
+	offer, err := env.Issuer.CreatePreAuthorizedTransaction(ctx, demotest.SyntheticEvidence())
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrong := "000000"
+	if offer.ConfirmationCode == wrong {
+		wrong = "111111"
+	}
+	if _, err := walletapp.Receive(ctx, env.WalletConfig(), offer.URI, walletapp.HeadlessApprover{HTTP: env.HTTP, Code: wrong}); err == nil || !strings.Contains(err.Error(), "invalid_grant") {
+		t.Errorf("wrong PIN: %v, want invalid_grant", err)
+	}
+
+	other, err := walletprovider.New(demotest.ProviderIssuer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherSrv := httptest.NewTLSServer(other.Handler(demotest.WalletClientID))
+	defer otherSrv.Close()
+	cfg := env.WalletConfig()
+	cfg.Provider = walletprovider.Client{URL: otherSrv.URL, HTTP: otherSrv.Client()}
+	if _, err := walletapp.Receive(ctx, cfg, offer.URI, walletapp.HeadlessApprover{HTTP: env.HTTP, Code: offer.ConfirmationCode}); err == nil || !strings.Contains(err.Error(), "invalid_client") {
+		t.Errorf("untrusted Wallet Provider: %v, want invalid_client", err)
+	}
+
+	if received, err := walletapp.Receive(ctx, env.WalletConfig(), offer.URI, walletapp.HeadlessApprover{HTTP: env.HTTP, Code: offer.ConfirmationCode}); err != nil || len(received) != 2 {
+		t.Fatalf("the trusted wallet afterwards: %d credentials, %v; want the code still redeemable", len(received), err)
+	}
+}
