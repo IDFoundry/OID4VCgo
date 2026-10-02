@@ -1,6 +1,6 @@
 # OID4VCgo Mobile — design
 
-Status: **in progress** — Phases 0 to 2 are done (see Phases). This is
+Status: **in progress** — Phases 0 to 3 are done (see Phases). This is
 the design for a mobile wallet SDK built on OID4VCgo, delivered in the
 phases below. It records the decisions taken so far, what each phase
 found, and the questions still open; update it as phases land.
@@ -210,7 +210,7 @@ networking.
 | 0 ✓ | `walletflow` | Issuance and presentation sessions behind key, store, Wallet Provider and HTTP interfaces; the passport-vdc wallets run on it; their end-to-end tests pass |
 | 1 ✓ | gomobile spike | An XCFramework; Swift calls Go and Go calls back into Swift; a JSON envelope; errors and cancellation across the boundary |
 | 2 ✓ | Secure Enclave spike | A Swift-generated key signs an ES256 JWS through Go's `crypto.Signer`, verified by OID4VCgo; a platform `KeyManager` for FAPIgo |
-| 3 | ABI foundation | Versioned JSON envelope, error codes and session lifecycle, documented |
+| 3 ✓ | ABI foundation | Versioned JSON envelope, error codes and session lifecycle, documented |
 | 4 | OID4VCI slice | HAIP issuance from the iOS demo app against the passport-vdc issuer, with Key Attestations from the Wallet Provider |
 | 5 | Storage | The native credential store, with key references |
 | 6 | OID4VP slice | Request parsing, candidates, consent and presentation from the iOS demo app |
@@ -287,6 +287,37 @@ each signature checked, then lookup and deletion.
 - **Naming:** a Go method named `New…` becomes an Objective-C `new…`
   selector, which ARC treats as returning an owned object; the key
   store's method is `CreateKey`.
+
+### Phase 3 findings
+
+The ABI is documented in [mobile/ABI.md](mobile/ABI.md) (version 1):
+`NewWallet` with a JSON configuration and the app's `KeyStore`,
+`CredentialStore` and `WalletProvider`; the issuance and presentation
+sessions, each network step taking an `Operation`; eleven error codes.
+The Swift package wraps it as `Wallet`, `Issuance` and `Presentation`
+with Codable results, async calls and `WalletError`.
+
+- **End to end through the boundary:** `walletflow/walletflowtest` (the
+  in-process HAIP issuer, Wallet Provider and Verifier, now public) is
+  in a framework built with `-tags mobiletest` as `TestEnv`, so the Swift
+  tests run issuance (both grants, deferred approval and denial) and
+  presentation (candidates, preview, respond, decline) against a real
+  issuer and Verifier, with Go calling back into the Swift key store,
+  credential store and Wallet Provider. On the iOS Simulator those runs
+  use Secure Enclave keys. A shipped framework is built without the tag.
+- **Which gomobile methods throw in Swift:** a method returning an
+  object (`StartIssuance`), `[]byte` or nothing is a throwing Swift
+  method; one returning a string takes an `NSError` out-parameter, and
+  the wrapper turns that into a throw. The generated `MobileWallet`
+  initializer drops the error, so the wrapper calls `MobileNewWallet`.
+- **Swift 6 concurrency:** the generated session objects are declared
+  `@unchecked Sendable`, which they are: gomobile references are
+  thread-safe, and walletflow sessions serialize their own steps.
+  Four concurrent issuances, each calling back into Swift, work.
+- **Still open:** the app's `WalletProvider` callback runs on Go's
+  thread, so it may block on its backend; an async provider would need
+  the call split in two. Credential claims for display, and session
+  persistence across app suspension, belong to Phases 5 and 7.
 
 ## Decisions
 
