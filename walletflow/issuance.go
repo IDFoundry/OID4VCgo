@@ -408,10 +408,11 @@ func (s *Issuance) accept(ctx context.Context, configID string, holder Key, resu
 	conf := s.metadata.CredentialConfigurationsSupported[configID]
 	credential := result.Credentials[0].Credential
 	now := s.w.deps.Clock()
-	if _, err := wallet.VerifyIssuedCredential(ctx, wallet.VerifyIssuedCredentialParams{
+	verified, err := wallet.VerifyIssuedCredential(ctx, wallet.VerifyIssuedCredentialParams{
 		Configuration: conf, Credential: credential, HolderKey: holder.Public(),
 		IssuerRoots: s.w.cfg.IssuerRoots, Now: now,
-	}); err != nil {
+	})
+	if err != nil {
 		s.notify(ctx, result.NotificationID, oid4vci.NotificationEventCredentialFailure, "the credential failed the wallet's checks")
 		return StoredCredential{}, fmt.Errorf("walletflow: credential %q is invalid: %w", configID, err)
 	}
@@ -422,7 +423,7 @@ func (s *Issuance) accept(ctx context.Context, configID string, holder Key, resu
 	stored := StoredCredential{
 		ID: id, CredentialIssuer: s.offer.CredentialIssuer, ConfigurationID: configID,
 		Format: conf.Format, VCT: conf.VCT, DocType: conf.DocType,
-		Credential: credential, HolderKeyID: holder.ID(), ReceivedAt: now.UTC(),
+		Credential: credential, HolderKeyID: holder.ID(), ReceivedAt: now.UTC(), Claims: verified.Claims,
 	}
 	if err := s.w.deps.Credentials.Put(ctx, stored); err != nil {
 		s.notify(ctx, result.NotificationID, oid4vci.NotificationEventCredentialFailure, "the wallet couldn't store the credential")

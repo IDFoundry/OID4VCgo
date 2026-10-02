@@ -102,6 +102,16 @@ func TestIssuance_AuthorizationCode(t *testing.T) {
 		if c.CredentialIssuer != f.env.IssuerURL || c.Credential == "" || c.HolderKeyID == "" {
 			t.Errorf("stored credential = %+v", c)
 		}
+		switch c.Format {
+		case "dc+sd-jwt":
+			if c.Claims["family_name"] != walletflowtest.FamilyName {
+				t.Errorf("SD-JWT VC claims = %v", c.Claims)
+			}
+		case "mso_mdoc":
+			if ns, _ := c.Claims[walletflowtest.NameSpace].(map[string]any); ns["given_name"] != walletflowtest.GivenName {
+				t.Errorf("mdoc claims = %v", c.Claims)
+			}
+		}
 		if _, err := f.keys.Key(ctx, c.HolderKeyID); err != nil {
 			t.Errorf("holder key: %v", err)
 		}

@@ -28,6 +28,12 @@ type StoredCredential struct {
 	// HolderKeyID names the key the credential is bound to, in the
 	// wallet's KeyStore.
 	HolderKeyID string
+	// Claims are the credential's claims, as the wallet checked them
+	// on receipt (wallet.VerifyIssuedCredential), for display: an SD-JWT
+	// VC's processed payload with every disclosure resolved, or an
+	// mdoc's namespace → element identifier → value. They're personal
+	// data, like the credential itself.
+	Claims map[string]any
 	// ReceivedAt is when the wallet received it.
 	ReceivedAt time.Time
 }
