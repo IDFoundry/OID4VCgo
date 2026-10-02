@@ -17,6 +17,7 @@ import (
 	"github.com/idfoundry/fapigo/keys/ephemeral"
 	fapires "github.com/idfoundry/fapigo/resource"
 	"github.com/idfoundry/fapigo/server"
+	"github.com/idfoundry/fapigo/server/interactioncookie"
 	"github.com/idfoundry/fapigo/serverresource"
 	"github.com/idfoundry/fapigo/storage"
 	"github.com/idfoundry/fapigo/storage/memstore"
@@ -62,7 +63,7 @@ type App struct {
 	issuer           *issuer.Issuer
 	resourceVerifier *fapires.Verifier
 	transactions     *transactions
-	interactions     *ttlMap[pendingInteraction] // interaction handle → approval
+	consent          *interactioncookie.Cookie // the approval step's state, sealed in the browser
 	metadataSigner   *ecdsa.PrivateKey
 	metadataCert     *x509.Certificate
 	providerRoots    *x509.CertPool    // the Wallet Provider CA: Wallet and Key Attestations
@@ -93,7 +94,6 @@ func New(cfg Config) (*App, error) {
 	if a.statusList, err = a.loadStatusList(); err != nil {
 		return nil, err
 	}
-	a.interactions = newTTLMap[pendingInteraction](a.now)
 	a.reviews = newReviews(a.now)
 	a.preAuthCodes = oid4vcgostorage.NewPreAuthorizedCodeStore()
 	a.notifications = &notifications{now: a.now}
@@ -182,6 +182,17 @@ func (a *App) buildAuthorizationServer() error {
 	cfg.Assurance = server.AssuranceDevelopment
 	cfg.Limits.MaxClientAttestationLifetime = 24 * time.Hour
 	a.tokenLifetime = cfg.Limits.AccessTokenLifetime
+	// The approval step's state — the interaction handle and request —
+	// travels sealed in the browser's cookie, under a key per process:
+	// the server's own interactions don't outlive it either. Instances
+	// sharing interactions would share a persistent key.
+	consentKey := make([]byte, 32)
+	if _, err := rand.Read(consentKey); err != nil {
+		return fmt.Errorf("issuerapp: interaction cookie key: %w", err)
+	}
+	if a.consent, err = interactioncookie.New([][]byte{consentKey}, interactioncookie.Options{Lifetime: cfg.Limits.InteractionLifetime}); err != nil {
+		return fmt.Errorf("issuerapp: interaction cookie: %w", err)
+	}
 	// The token endpoint also serves the pre-authorized code grant
 	// (handleToken), so its metadata lists it.
 	cfg.AdditionalGrantTypes = []string{preAuthorizedCodeGrantType}

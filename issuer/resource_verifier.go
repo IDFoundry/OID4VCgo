@@ -38,10 +38,7 @@ package issuer
 // then adapts its result into AuthorizedRequest with a one-line
 // translation:
 //
-//	authCtx, err := verifier.Verify(ctx, resource.VerifyRequest{
-//		Method: r.Method, URL: credentialEndpointURL, Authorization: r.Header.Get("Authorization"),
-//		DPoPProofs: resource.DPoPProofsFromHTTP(r), PeerCertificate: resource.PeerCertificateFromHTTP(r),
-//	})
+//	authCtx, err := verifier.Verify(ctx, resource.VerifyRequestFromHTTP(r, credentialEndpointURL))
 //
 // URL is the endpoint's absolute URL, not r.URL: a server-side request's
 // URL has no scheme or host, so a DPoP proof's htu would never match it.

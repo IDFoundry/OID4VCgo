@@ -2,9 +2,15 @@ package issuerapp_test
 
 import (
 	"context"
+	"errors"
+	"net/http"
+	"net/http/cookiejar"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
+
+	"github.com/idfoundry/fapigo/client"
 
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/demotest"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/walletapp"
@@ -68,5 +74,93 @@ func TestPreAuthorized_Refuses(t *testing.T) {
 
 	if received, err := walletapp.Receive(ctx, env.WalletConfig(), offer.URI, walletapp.HeadlessApprover{HTTP: env.HTTP, Code: offer.ConfirmationCode}); err != nil || len(received) != 2 {
 		t.Fatalf("the trusted wallet afterwards: %d credentials, %v; want the code still redeemable", len(received), err)
+	}
+}
+
+// TestAuthorize_RefusesRepeatedParameters: the authorization endpoint
+// refuses a repeated client_id or request_uri (RFC 6749 §3.1) with a
+// local error, rather than taking the first.
+func TestAuthorize_RefusesRepeatedParameters(t *testing.T) {
+	env := demotest.New(t, nil)
+	for _, query := range []string{"client_id=a&client_id=b&request_uri=x", "client_id=a&request_uri=x&request_uri=y"} {
+		resp, err := env.HTTP.Get(env.IssuerURL + "/authorize?" + query)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != 400 {
+			t.Errorf("%s: status %d, want 400", query, resp.StatusCode)
+		}
+	}
+}
+
+// otherBrowserApprover opens the approval page in one browser and posts
+// the decision from another — or cross-origin from the same one — as an
+// attacker who saw the page might, and reports the decision's status.
+type otherBrowserApprover struct {
+	http   *http.Client
+	code   string
+	origin string // set: post from the same browser with this Origin
+	status *int
+}
+
+func (o otherBrowserApprover) Approve(ctx context.Context, authorizationURL string, _ client.SessionHandle) (walletapp.Callback, error) {
+	jar, _ := cookiejar.New(nil)
+	opener := *o.http
+	opener.Jar = jar
+	opener.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	resp, err := opener.Get(authorizationURL)
+	if err != nil {
+		return walletapp.Callback{}, err
+	}
+	_ = resp.Body.Close()
+
+	poster := *o.http
+	poster.CheckRedirect = opener.CheckRedirect
+	if o.origin != "" {
+		poster.Jar = jar
+	}
+	u, _ := url.Parse(authorizationURL)
+	decision := (&url.URL{Scheme: u.Scheme, Host: u.Host, Path: "/authorize/decision"}).String()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, decision, strings.NewReader(url.Values{"decision": {"approve"}, "code": {o.code}}.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if o.origin != "" {
+		req.Header.Set("Origin", o.origin)
+	}
+	resp, err = poster.Do(req)
+	if err != nil {
+		return walletapp.Callback{}, err
+	}
+	_ = resp.Body.Close()
+	*o.status = resp.StatusCode
+	return walletapp.Callback{}, errors.New("not approved")
+}
+
+// TestApproval_BoundToTheBrowser: the approval step's state lives in the
+// sealed cookie of the browser that opened the page, so a decision
+// posted from another browser, or cross-origin, is refused — and the
+// offer can still be redeemed.
+func TestApproval_BoundToTheBrowser(t *testing.T) {
+	ctx := context.Background()
+	env := demotest.New(t, nil)
+	offer, err := env.Issuer.CreateTransaction(ctx, demotest.SyntheticEvidence())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, tc := range map[string]struct {
+		origin string
+		want   int
+	}{
+		"another browser": {"", http.StatusBadRequest},
+		"cross-origin":    {"https://attacker.example", http.StatusForbidden},
+	} {
+		var status int
+		_, _ = walletapp.Receive(ctx, env.WalletConfig(), offer.URI, otherBrowserApprover{http: env.HTTP, code: offer.ConfirmationCode, origin: tc.origin, status: &status})
+		if status != tc.want {
+			t.Errorf("%s: decision status %d, want %d", name, status, tc.want)
+		}
+	}
+	if received, err := walletapp.Receive(ctx, env.WalletConfig(), offer.URI, walletapp.HeadlessApprover{HTTP: env.HTTP, Code: offer.ConfirmationCode}); err != nil || len(received) != 2 {
+		t.Fatalf("Receive in the approving browser: %d credentials, %v; want both", len(received), err)
 	}
 }

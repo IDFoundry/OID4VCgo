@@ -46,10 +46,7 @@ func New(v *resource.Verifier) (*Verifier, error) {
 // are the token's authorization_details claim; a malformed one fails
 // verification.
 func (v *Verifier) Verify(r *http.Request, endpoint *url.URL) (issuer.Grant, error) {
-	authCtx, err := v.resource.Verify(r.Context(), resource.VerifyRequest{
-		Method: r.Method, URL: endpoint, Authorization: r.Header.Get("Authorization"),
-		DPoPProofs: resource.DPoPProofsFromHTTP(r), PeerCertificate: resource.PeerCertificateFromHTTP(r),
-	})
+	authCtx, err := v.resource.Verify(r.Context(), resource.VerifyRequestFromHTTP(r, endpoint))
 	if err != nil {
 		return issuer.Grant{}, err
 	}

@@ -35,17 +35,6 @@ func browser(env *demotest.Env) *http.Client {
 	return &c
 }
 
-// approvalHandle is the interaction handle in the issuer's approval
-// page, as a holder's browser would post it.
-func approvalHandle(t *testing.T, page string) string {
-	t.Helper()
-	handle, err := walletapp.ApprovalHandle([]byte(page))
-	if err != nil {
-		t.Fatal(err)
-	}
-	return handle
-}
-
 func read(t *testing.T, resp *http.Response) string {
 	t.Helper()
 	defer func() { _ = resp.Body.Close() }()
@@ -97,13 +86,12 @@ func receiveViaBrowser(t *testing.T, env *demotest.Env, b *http.Client) {
 		t.Fatalf("GET authorize: %v", err)
 	}
 	page := read(t, resp)
-	handle := approvalHandle(t, page)
 	// The approval page is shown before the confirmation code is checked,
 	// so it must not show the passport's data.
 	if strings.Contains(page, "DOE") || strings.Contains(page, "K0000000A") {
 		t.Error("the issuer's approval page shows passport data before the confirmation code")
 	}
-	resp, err = b.PostForm(env.IssuerURL+"/authorize/decision", url.Values{"handle": {handle}, "decision": {"approve"}, "code": {offer.ConfirmationCode}})
+	resp, err = b.PostForm(env.IssuerURL+"/authorize/decision", url.Values{"decision": {"approve"}, "code": {offer.ConfirmationCode}})
 	callback := mustRedirect(t, resp, err, "approve")
 	if !strings.HasPrefix(callback.String(), env.WebWalletURL+"/callback") {
 		t.Fatalf("issuer redirected to %s, want the web wallet's callback", callback)
@@ -272,8 +260,8 @@ func TestWebWallet_DuplicateCallbackDoesNotHang(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET authorize: %v", err)
 	}
-	handle := approvalHandle(t, read(t, resp))
-	resp, err = b.PostForm(env.IssuerURL+"/authorize/decision", url.Values{"handle": {handle}, "decision": {"approve"}, "code": {offer.ConfirmationCode}})
+	_ = read(t, resp)
+	resp, err = b.PostForm(env.IssuerURL+"/authorize/decision", url.Values{"decision": {"approve"}, "code": {offer.ConfirmationCode}})
 	callback := mustRedirect(t, resp, err, "approve")
 
 	statuses := make(chan int, 2)
@@ -436,8 +424,8 @@ func TestWebWallet_RefusesCallbackInAnotherBrowser(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET authorize: %v", err)
 	}
-	handle := approvalHandle(t, read(t, resp))
-	resp, err = started.PostForm(env.IssuerURL+"/authorize/decision", url.Values{"handle": {handle}, "decision": {"approve"}, "code": {offer.ConfirmationCode}})
+	_ = read(t, resp)
+	resp, err = started.PostForm(env.IssuerURL+"/authorize/decision", url.Values{"decision": {"approve"}, "code": {offer.ConfirmationCode}})
 	callback := mustRedirect(t, resp, err, "approve")
 
 	resp, err = other.Get(callback.String())
@@ -521,8 +509,8 @@ func TestWebWallet_DeferredCredential(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	handle := approvalHandle(t, read(t, resp))
-	resp, err = b.PostForm(env.IssuerURL+"/authorize/decision", url.Values{"handle": {handle}, "decision": {"approve"}, "code": {offer.ConfirmationCode}})
+	_ = read(t, resp)
+	resp, err = b.PostForm(env.IssuerURL+"/authorize/decision", url.Values{"decision": {"approve"}, "code": {offer.ConfirmationCode}})
 	callback := mustRedirect(t, resp, err, "approve")
 	resp, err = b.Get(callback.String())
 	home := mustRedirect(t, resp, err, "GET /callback")
