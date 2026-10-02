@@ -128,6 +128,13 @@ func (f *txFixture) answer(begun verifier.Begun, alter func(*wallet.Authorizatio
 // which anyone holding the request's public key can send.
 func (f *txFixture) errorAnswer(begun verifier.Begun, code, description string) string {
 	f.t.Helper()
+	return f.errorAnswerWithState(begun, code, description, nil)
+}
+
+// errorAnswerWithState is errorAnswer, with state replaced by
+// setState's result when it's set.
+func (f *txFixture) errorAnswerWithState(begun verifier.Begun, code, description string, setState func(string) string) string {
+	f.t.Helper()
 	object, err := f.txs.RequestObject(context.Background(), begun.ID)
 	if err != nil {
 		f.t.Fatalf("RequestObject: %v", err)
@@ -139,7 +146,11 @@ func (f *txFixture) errorAnswer(begun verifier.Begun, code, description string) 
 	if err != nil {
 		f.t.Fatalf("ParseAuthorizationRequest: %v", err)
 	}
-	payload, err := json.Marshal(map[string]string{"error": code, "error_description": description, "state": req.State})
+	state := req.State
+	if setState != nil {
+		state = setState(state)
+	}
+	payload, err := json.Marshal(map[string]string{"error": code, "error_description": description, "state": state})
 	if err != nil {
 		f.t.Fatal(err)
 	}
@@ -514,5 +525,48 @@ func TestTransactions_LastErrorIsShortAndPrintable(t *testing.T) {
 	}
 	if len(view.LastError) > 300 || strings.ContainsAny(view.LastError, "\n\x00") || !strings.HasPrefix(view.LastError, "line one?line two?") {
 		t.Errorf("LastError = %q (%d bytes), want at most ~256 printable bytes", view.LastError, len(view.LastError))
+	}
+}
+
+// TestTransactions_ResponseHandlerAcceptsAWalletErrorResponse: a
+// Wallet's error response for a pending request is processed and
+// answered with 200 and a JSON object (OpenID4VP §8.2), recorded as
+// LastError with the request left open; one whose state isn't the
+// request's is refused with 400.
+func TestTransactions_ResponseHandlerAcceptsAWalletErrorResponse(t *testing.T) {
+	f := newTxFixture(t, nil)
+	resp := httptest.NewServer(f.txs.ResponseHandler())
+	defer resp.Close()
+	post := func(jwe string) (int, map[string]string) {
+		t.Helper()
+		r, err := http.PostForm(resp.URL, url.Values{"response": {jwe}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = r.Body.Close() }()
+		var body map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("body: %v", err)
+		}
+		return r.StatusCode, body
+	}
+
+	begun := f.begin("browser-A", false)
+	if status, body := post(f.errorAnswer(begun, "access_denied", "")); status != http.StatusOK || len(body) != 0 {
+		t.Errorf("error response: status %d, body %v; want 200 and {}", status, body)
+	}
+	view, err := f.txs.Lookup(context.Background(), begun.ID, "browser-A")
+	if err != nil || view.Status != verifier.TransactionPending || view.LastError != "the wallet returned an error: access_denied" {
+		t.Errorf("after the error response: %+v, %v; want it recorded and still pending", view, err)
+	}
+
+	other := f.begin("browser-A", false)
+	wrongState := f.errorAnswerWithState(other, "access_denied", "", func(s string) string { return s + "x" })
+	if status, _ := post(wrongState); status != http.StatusBadRequest {
+		t.Errorf("error response with another state: status %d, want 400", status)
+	}
+	view, err = f.txs.Lookup(context.Background(), other.ID, "browser-A")
+	if err != nil || !strings.Contains(view.LastError, "state") {
+		t.Errorf("after the mismatched error response: %+v, %v", view, err)
 	}
 }

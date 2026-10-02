@@ -52,7 +52,12 @@ const maxResponseBodyBytes = 2*jwe.MaxCompactBytes + 4096
 // with JSON — {"redirect_uri": …} for a same-device answer, {} for a
 // cross-device one, or a 400 error whose description says only that
 // the answer was refused: why is recorded as the request's LastError,
-// for the Verifier's own display, not told to whoever sent it.
+// for the Verifier's own display, not told to whoever sent it. A
+// Wallet's error response for a pending request is processed, recorded
+// as LastError, and answered with 200 and {} (OpenID4VP §8.2: "If the
+// Response URI has successfully processed the Authorization Response or
+// Authorization Error Response, it MUST respond with an HTTP status code
+// of 200").
 func (t *Transactions) ResponseHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -66,7 +71,10 @@ func (t *Transactions) ResponseHandler() http.Handler {
 			return
 		}
 		answered, err := t.HandleResponse(r.Context(), r.PostForm.Get("response"))
+		var walletErr *ResponseError
 		switch {
+		case errors.As(err, &walletErr):
+			answered = Answered{}
 		case errors.Is(err, ErrTransactionAnswered):
 			writeResponseError(w, "this request has already been answered")
 			return
