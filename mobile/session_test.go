@@ -196,7 +196,21 @@ func TestSessions_IssueThenPresent(t *testing.T) {
 		t.Errorf("Respond twice: %v", err)
 	}
 
-	// Each credential's claims, for display.
+	checkClaims(t, h, received)
+
+	if err := h.w.DeleteCredential(sdjwt); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.w.DeleteCredential(sdjwt); code(err) != CodeNotFound {
+		t.Errorf("deleting it again: %v", err)
+	}
+
+	checkOrphan(t, h, received)
+}
+
+// checkClaims checks each received credential's claims, for display.
+func checkClaims(t *testing.T, h harness, received []summary) {
+	t.Helper()
 	for _, c := range received {
 		detail := decode[struct {
 			ID               string
@@ -218,15 +232,12 @@ func TestSessions_IssueThenPresent(t *testing.T) {
 	if _, err := h.w.Credential("no-such"); code(err) != CodeNotFound {
 		t.Errorf("Credential of an unknown ID: %v", err)
 	}
+}
 
-	if err := h.w.DeleteCredential(sdjwt); err != nil {
-		t.Fatal(err)
-	}
-	if err := h.w.DeleteCredential(sdjwt); code(err) != CodeNotFound {
-		t.Errorf("deleting it again: %v", err)
-	}
-
-	// A credential whose holder key is gone is listed as such.
+// checkOrphan checks that a credential whose holder key is gone is
+// listed as such.
+func checkOrphan(t *testing.T, h harness, received []summary) {
+	t.Helper()
 	var mdocCred summary
 	for _, c := range received {
 		if c.Format == "mso_mdoc" {

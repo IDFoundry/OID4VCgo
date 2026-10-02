@@ -140,12 +140,11 @@ struct ClaimRows: View {
     let path: [String]
 
     var body: some View {
-        switch value {
-        case .object(let o):
+        if case .object(let o) = value {
             ForEach(o.keys.sorted().filter { !Self.hidden.contains($0) || !path.isEmpty }, id: \.self) { key in
                 ClaimRows(value: o[key]!, path: path + [key])
             }
-        default:
+        } else {
             LabeledContent(path.joined(separator: " · "), value: Self.text(value))
                 .accessibilityIdentifier("claim")
         }
