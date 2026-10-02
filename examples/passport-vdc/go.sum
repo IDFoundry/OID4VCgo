@@ -4,8 +4,8 @@ github.com/fxamacker/cbor/v2 v2.9.4 h1:xwjVlxEMR3S605oUlgBjKLTTeGFciYPGYCtF/35LK
 github.com/fxamacker/cbor/v2 v2.9.4/go.mod h1:vM4b+DJCtHn+zz7h3FFp/hDAI9WNWCsZj23V5ytsSxQ=
 github.com/gmrtd/gmrtd v1.2.0 h1:Opazds50Ieej17TBZFMNmlEYjkNJuN0XPx9A5qKsHnQ=
 github.com/gmrtd/gmrtd v1.2.0/go.mod h1:Qml3ttavHGX/07tWgR5NFBYr8AcOP0DIK2N/mDFL7Hk=
-github.com/idfoundry/fapigo v0.42.1-0.20261002051349-e290410a8a94 h1:5TFjGdhxyIcoSHeMjHxJvehIbHlHBplN1Bi+fiq0Na8=
-github.com/idfoundry/fapigo v0.42.1-0.20261002051349-e290410a8a94/go.mod h1:MxjYEvx5fS3qa0ZAyemzox2RQhh9bTy0GFXehGyYw8o=
+github.com/idfoundry/fapigo v0.42.1-0.20261002074726-ebc4b5fde7cd h1:WR/K2zkDKybuRoBzKsv5tZSK1KSfIqWbJF1r99eMVOg=
+github.com/idfoundry/fapigo v0.42.1-0.20261002074726-ebc4b5fde7cd/go.mod h1:MxjYEvx5fS3qa0ZAyemzox2RQhh9bTy0GFXehGyYw8o=
 github.com/mrjoshuak/go-jpeg2000 v1.5.12 h1:i4LMEJo3sdQbwwpax52vA7Gwpo5WYzv4w1YVdfY0cU4=
 github.com/mrjoshuak/go-jpeg2000 v1.5.12/go.mod h1:Zvb2bdmP52/rpmJOuzMo1HQR75zex//CvqEvopdTweo=
 github.com/osanderson/brainpool v1.0.0 h1:APN9IiMKDVNgiERIMm4D5sTRLobVI/GK2nIofZr8N3g=
