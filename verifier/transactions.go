@@ -341,6 +341,12 @@ type Answered struct {
 // request stays open. The returned error's text is for the Verifier's
 // logs, not for the Wallet: ResponseHandler replies with a generic
 // description.
+//
+// A Wallet's Authorization Error Response (§8.5) whose state matches
+// the request is recorded the same way, and returned as a
+// *ResponseError: the request stays open, since the state is in the
+// request's public Request Object and anyone could send one. One whose
+// state doesn't match is refused like any other answer.
 func (t *Transactions) HandleResponse(ctx context.Context, responseJWE string) (Answered, error) {
 	kid, err := ResponseKeyID(responseJWE)
 	if err != nil {
@@ -394,7 +400,16 @@ func (t *Transactions) HandleResponse(ctx context.Context, responseJWE string) (
 // verify decrypts, checks state, verifies and accepts one answer.
 func (t *Transactions) verify(ctx context.Context, tx Transaction, responseJWE string) (VerifyResponseResult, error) {
 	parsed, err := t.v.ParseDirectPostJWTResponse(responseJWE, tx.ResponseDecryptionKey)
-	if err != nil {
+	var walletErr *ResponseError
+	switch {
+	case errors.As(err, &walletErr):
+		// An error response is this request's only if it echoes the
+		// request's state.
+		if subtle.ConstantTimeCompare([]byte(walletErr.State), []byte(tx.State)) != 1 {
+			return VerifyResponseResult{}, newError("the error response's state doesn't match the request", nil)
+		}
+		return VerifyResponseResult{}, err
+	case err != nil:
 		return VerifyResponseResult{}, err
 	}
 	if subtle.ConstantTimeCompare([]byte(parsed.State), []byte(tx.State)) != 1 {
