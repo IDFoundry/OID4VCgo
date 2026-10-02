@@ -5,8 +5,7 @@
 
 ### ⚠ BREAKING CHANGES
 
-* **deps:** FAPIgo's breaking changes since v0.42.0 reach deployments using fapigo directly alongside OID4VCgo: a client sending authorization_details must list every type in storage.RegisteredClientConfig.AuthorizationDetailsTypes (an empty list allows none), or the request is refused with invalid_authorization_details; a custom storage.SessionStore must persist NewSession.Record and return it as ConsumedSession.Record; a fapigo/client requesting max_age refuses an ID token without auth_time or older than max_age. See FAPIgo's UPGRADING.md for v0.43.0.
-* **deps:** FAPIgo's breaking changes since v0.41.0 reach deployments pairing issuer with a fapigo/server.Server: the server rejects a malformed max_age at PAR and answers login_required for an authentication older than the requested max_age; resource.Verifier answers a Bearer request without a client certificate with 401 invalid_token (was 400 invalid_request); server.TrustedClientCAs requires Roots and Revocation. See FAPIgo's UPGRADING.md for v0.42.0.
+* **deps:** FAPIgo v0.43.0's breaking changes since v0.41.0 reach deployments using fapigo directly alongside OID4VCgo, including those pairing issuer with a fapigo/server.Server. Server: a malformed max_age is rejected at PAR, and an authentication older than the requested max_age gets login_required; a client sending authorization_details must list every type in storage.RegisteredClientConfig.AuthorizationDetailsTypes (an empty list allows none), or the request is refused with invalid_authorization_details; server.TrustedClientCAs requires Roots and Revocation. Resource: resource.Verifier answers a Bearer request without a client certificate with 401 invalid_token (was 400 invalid_request). Client: a custom storage.SessionStore must persist NewSession.Record and return it as ConsumedSession.Record; a fapigo/client requesting max_age refuses an ID token without auth_time or older than max_age. See FAPIgo's UPGRADING.md for v0.42.0 and v0.43.0.
 * **wallet:** ParseAuthorizationRequest and FetchAuthorizationRequest refuse a Request Object whose response_type isn't vp_token or whose response_mode isn't direct_post.jwt, and ParseDCAPIRequest one whose response_type isn't vp_token.
 
 ### Features
@@ -17,11 +16,6 @@
 ### Bug Fixes
 
 * **conformance:** deliver the multiple-clients module's second Credential Offer ([73e56cc](https://github.com/IDFoundry/OID4VCgo/commit/73e56ccd1c3c1f39f494de9870a7d76f8af064c3))
-* **deps:** pin FAPIgo main a941962 ([932545d](https://github.com/IDFoundry/OID4VCgo/commit/932545d7acc32597b580fe73812ed552d898cbb0))
-* **deps:** pin FAPIgo main e290410 ([f4e0a29](https://github.com/IDFoundry/OID4VCgo/commit/f4e0a29890f27814ee00df84cf7f7a12bc38608b))
-* **deps:** pin FAPIgo main ebc4b5f ([21ce20c](https://github.com/IDFoundry/OID4VCgo/commit/21ce20cdf6672ef285b3ef0ba3042270dc74a728))
-* **deps:** pin FAPIgo main for AuthenticateAttestedClient ([fa35254](https://github.com/IDFoundry/OID4VCgo/commit/fa35254a0142d5b3cd468deb29dc62d1030d010c))
-* **deps:** pin FAPIgo v0.42.0 ([5fa48ce](https://github.com/IDFoundry/OID4VCgo/commit/5fa48ceddc178222b636282114679a42d5b1751b))
 * **deps:** pin FAPIgo v0.43.0 ([1a670f4](https://github.com/IDFoundry/OID4VCgo/commit/1a670f4754266dea11fdafdffa156332d619672d))
 * read resource and authorization requests with FAPIgo's HTTP helpers ([6e9f798](https://github.com/IDFoundry/OID4VCgo/commit/6e9f79827cdd03782c260e7c39e752b5ec5e265a))
 * **wallet:** require vp_token and the flow's Response Mode, and parse DC API requests with the Wallet's trust ([08dabe5](https://github.com/IDFoundry/OID4VCgo/commit/08dabe56c3f35ebccb065c63fede146e3201437e))
