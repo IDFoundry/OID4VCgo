@@ -49,3 +49,5 @@ go.work.sum
 /mobile/build/
 /mobile/ios/*/.build/
 /mobile/ios/*/.swiftpm/
+/mobile/ios/*/*.xcodeproj/xcuserdata/
+/mobile/ios/*/*.xcodeproj/project.xcworkspace/xcuserdata/
