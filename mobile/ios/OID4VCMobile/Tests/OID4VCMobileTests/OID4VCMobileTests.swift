@@ -71,14 +71,14 @@ final class OID4VCMobileTests: XCTestCase {
         }
     }
 
-    func testCheckKeyStore_SoftwareInMemory() async throws {
+    func testCheckKeyStoreSoftwareInMemory() async throws {
         let checked = try await OID4VC.checkKeyStore(KeychainKeyStore(options: .init(secureEnclave: false, persistent: false)))
         XCTAssertEqual(checked, [KeyPurpose.instance, KeyPurpose.dpop, KeyPurpose.holder])
     }
 
     /// Keys kept in the Keychain: found again by a new store, and gone
     /// once deleted. (Hostless iOS Simulator tests have no Keychain.)
-    func testCheckKeyStore_Keychain() async throws {
+    func testCheckKeyStoreKeychain() async throws {
         #if targetEnvironment(simulator)
         throw XCTSkip("the iOS Simulator's Keychain needs a signed host app")
         #else
@@ -99,7 +99,7 @@ final class OID4VCMobileTests: XCTestCase {
 
     /// Keys in the Secure Enclave — simulated by the iOS Simulator; a
     /// real device needs the demo app (MOBILE.md Phase 4).
-    func testCheckKeyStore_SecureEnclave() async throws {
+    func testCheckKeyStoreSecureEnclave() async throws {
         #if targetEnvironment(simulator)
         let store = KeychainKeyStore(options: .init(secureEnclave: true, persistent: false, holderUserPresence: false))
         let checked = try await OID4VC.checkKeyStore(store)

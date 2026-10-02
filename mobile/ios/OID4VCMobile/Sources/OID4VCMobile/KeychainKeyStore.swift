@@ -70,6 +70,12 @@ public final class KeychainKeyStore: NSObject, MobileKeyStoreProtocol, @unchecke
         if options.secureEnclave {
             attrs[kSecAttrTokenID as String] = kSecAttrTokenIDSecureEnclave
         }
+        // Only holder keys can require user presence: instance and DPoP
+        // keys sign protocol messages silently (a Client Attestation PoP
+        // at PAR and the token endpoint, a DPoP proof on every protocol
+        // request), so prompting for them would interrupt each issuance
+        // several times. They're per issuance, this-device-only, and in
+        // the Secure Enclave by default.
         var error: Unmanaged<CFError>?
         guard let key = SecKeyCreateRandomKey(attrs as CFDictionary, &error) else {
             throw error!.takeRetainedValue() as Error
