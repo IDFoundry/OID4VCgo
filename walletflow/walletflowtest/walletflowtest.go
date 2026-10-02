@@ -80,14 +80,19 @@ type Options struct {
 	// Defer has the Credential Endpoint defer every credential: the
 	// wallet polls until Env.Decide approves or denies them.
 	Defer bool
+	// RedirectURIs are registered for the wallet as well as
+	// RedirectURI: an app's private-use URI scheme redirect, say.
+	RedirectURIs []string
 }
 
 // Env is a running issuer and Wallet Provider.
 type Env struct {
 	// IssuerURL is the Credential Issuer and Authorization Server.
 	IssuerURL string
-	// HTTP trusts the issuer's TLS certificate.
-	HTTP *http.Client
+	// HTTP trusts the issuer's TLS certificate, TLSCertificate: the
+	// same self-signed certificate serves the Verifier too.
+	HTTP           *http.Client
+	TLSCertificate *x509.Certificate
 	// IssuerRoots holds IssuerCA, the trust anchor of the credentials'
 	// signer.
 	IssuerRoots *x509.CertPool
@@ -132,6 +137,9 @@ func New(opts Options) (env *Env, err error) {
 	asCfg.AdditionalGrantTypes = []string{preAuthorizedCodeGrantType}
 	clientCfg := haip.RecommendedWalletClient(fapi.ClientID(ClientID), ProviderIssuer)
 	clientCfg.RedirectURIs = []fapi.RegisteredRedirectURI{RedirectURI}
+	for _, u := range opts.RedirectURIs {
+		clientCfg.RedirectURIs = append(clientCfg.RedirectURIs, fapi.RegisteredRedirectURI(u))
+	}
 	clientCfg.AllowedScopes = []string{SDJWTConfigurationID, MdocConfigurationID}
 	client, err := storage.NewRegisteredClient(clientCfg)
 	must(err)
@@ -238,7 +246,7 @@ func New(opts Options) (env *Env, err error) {
 	ts.Config.Handler = mux
 	ts.StartTLS()
 	e.closers = append(e.closers, ts.Close)
-	e.HTTP = ts.Client()
+	e.HTTP, e.TLSCertificate = ts.Client(), ts.Certificate()
 	return e, nil
 }
 
