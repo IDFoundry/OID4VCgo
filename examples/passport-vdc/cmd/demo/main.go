@@ -53,6 +53,7 @@ const (
 	walletAddr, walletURL     = "127.0.0.1:7443", "https://127.0.0.1:7443"
 	providerAddr, providerURL = "127.0.0.1:6443", "https://127.0.0.1:6443"
 	cliRedirectURI            = "http://127.0.0.1:8765/callback"
+	iosRedirectURI            = "org.idfoundry.oid4vcgo.demowallet:/callback"
 	providerIssuer            = "https://wallet-provider.passport-vdc.demo"
 	walletClientID            = "passport-vdc-wallet"
 )
@@ -144,7 +145,7 @@ func run(ctx context.Context, opts options) error {
 	issuer, err := issuerapp.New(issuerapp.Config{
 		IssuerURL: issuerURL, CSCAPool: csca, StateDir: issuerState, WebWalletURL: walletURL,
 		Wallet: issuerapp.WalletClient{
-			ClientID: walletClientID, RedirectURIs: []string{cliRedirectURI, walletURL + "/callback"},
+			ClientID: walletClientID, RedirectURIs: []string{cliRedirectURI, iosRedirectURI, walletURL + "/callback"},
 			ProviderIssuer: providerIssuer, ProviderCA: provider.CACertificatePEM(),
 		},
 	})

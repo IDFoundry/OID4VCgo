@@ -241,6 +241,10 @@ func (a *App) registerWallet() (*memstore.ClientRepository, *ephemeral.ClientKey
 	}
 	clientCfg := haip.RecommendedWalletClient(fapi.ClientID(w.ClientID), w.ProviderIssuer)
 	clientCfg.RedirectURIs, clientCfg.AllowedScopes = redirects, []string{MdocScope, SDJWTScope}
+	// The demo's wallets are native apps — the CLI wallet (a loopback
+	// redirect), the iOS demo app (a private-use scheme) — and the web
+	// wallet (https), which a native registration allows too (RFC 8252).
+	clientCfg.ApplicationType = storage.ApplicationTypeNative
 	c, err := storage.NewRegisteredClient(clientCfg)
 	if err != nil {
 		return nil, nil, fmt.Errorf("issuerapp: register wallet: %w", err)
