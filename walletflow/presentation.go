@@ -99,40 +99,30 @@ func (w *Wallet) newPresentation(ctx context.Context, req wallet.AuthorizationRe
 	}
 	p := &Presentation{w: w, req: req, byID: make(map[string]StoredCredential, len(stored))}
 	held := make([]wallet.HeldCredential, 0, len(stored))
-	for _, c := range stored {
-		p.byID[c.ID] = c
-		held = append(held, heldCredential(c, nil))
-	}
-	// Every credential that can answer each query, not only the first:
-	// the holder chooses. No match isn't an error here: the holder is
-	// told, and may decline.
-	matches, err := wallet.MatchDCQLQuery(ctx, everyMatch(req.Query), held, trustedAuthorities)
-	if err != nil {
-		return p, nil
-	}
 	byCredential := make(map[string]StoredCredential, len(stored))
 	for _, c := range stored {
+		p.byID[c.ID] = c
 		byCredential[c.Credential] = c
+		held = append(held, heldCredential(c, nil))
 	}
-	for queryID, creds := range matches {
-		cs := Candidates{QueryID: queryID}
-		for _, h := range creds {
+	// Each Credential Query on its own, for every credential that can
+	// answer it: the holder chooses among them, and among the request's
+	// credential_sets options. A query nothing answers is left out; none
+	// at all isn't an error here: the holder is told, and may decline.
+	for _, cq := range req.Query.Credentials {
+		cq.Multiple = true
+		matches, err := wallet.MatchDCQLQuery(ctx, dcql.Query{Credentials: []dcql.CredentialQuery{cq}}, held, trustedAuthorities)
+		if err != nil || len(matches[cq.ID]) == 0 {
+			continue
+		}
+		cs := Candidates{QueryID: cq.ID}
+		for _, h := range matches[cq.ID] {
 			cs.Credentials = append(cs.Credentials, byCredential[h.Credential])
 		}
 		p.candidates = append(p.candidates, cs)
 	}
 	sort.Slice(p.candidates, func(i, j int) bool { return p.candidates[i].QueryID < p.candidates[j].QueryID })
 	return p, nil
-}
-
-// everyMatch is q with every Credential Query asking for all matching
-// credentials, to list the candidates for each.
-func everyMatch(q dcql.Query) dcql.Query {
-	q.Credentials = slices.Clone(q.Credentials)
-	for i := range q.Credentials {
-		q.Credentials[i].Multiple = true
-	}
-	return q
 }
 
 // trustedAuthorities answers a query's trusted_authorities with the

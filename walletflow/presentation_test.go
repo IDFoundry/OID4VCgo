@@ -173,3 +173,40 @@ func TestPresentation_MissingHolderKey(t *testing.T) {
 		t.Fatalf("Respond without the holder key = %v, want ErrNotFound", err)
 	}
 }
+
+// TestPresentation_CredentialSetOptions: a request that takes either
+// format lists the candidates for both, and the holder's choice decides
+// which option is answered.
+func TestPresentation_CredentialSetOptions(t *testing.T) {
+	f, v, w := presentationFixture(t)
+	held := receive(t, f, w, testhaip.MdocConfigurationID, testhaip.SDJWTConfigurationID)
+	ctx := context.Background()
+	query := dcql.Query{
+		Credentials:    []dcql.CredentialQuery{testhaip.MdocQuery(t, "mdl", "family_name"), f.env.SDJWTQuery(t, "pid", "family_name")},
+		CredentialSets: []dcql.CredentialSetQuery{{Options: [][]string{{"mdl"}, {"pid"}}}},
+	}
+	id, link := v.Begin(t, query)
+	p, err := w.StartPresentation(ctx, link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c := p.Candidates(); len(c) != 2 || c[0].QueryID != "mdl" || c[1].QueryID != "pid" {
+		t.Fatalf("Candidates = %+v, want both options' queries", c)
+	}
+	var sdjwt string
+	for _, c := range held {
+		if c.Format == "dc+sd-jwt" {
+			sdjwt = c.ID
+		}
+	}
+	presented, err := p.Respond(ctx, []string{sdjwt})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(presented.QueryIDs) != 1 || presented.QueryIDs[0] != "pid" {
+		t.Fatalf("Presented = %+v, want the SD-JWT VC option", presented)
+	}
+	if view := v.Lookup(t, id); view.Status != verifier.TransactionDone {
+		t.Fatalf("verifier = %+v", view)
+	}
+}
