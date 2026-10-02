@@ -8,7 +8,6 @@ import (
 	"github.com/idfoundry/oid4vcgo/dcql"
 	"github.com/idfoundry/oid4vcgo/internal/testhaip"
 	"github.com/idfoundry/oid4vcgo/verifier"
-	"github.com/idfoundry/oid4vcgo/wallet"
 	"github.com/idfoundry/oid4vcgo/walletflow"
 )
 
@@ -129,12 +128,11 @@ func TestPresentation_NoMatchThenDecline(t *testing.T) {
 	if _, err := p.Respond(ctx, nil); !errors.Is(err, walletflow.ErrNoMatchingCredential) {
 		t.Errorf("Respond = %v, want ErrNoMatchingCredential", err)
 	}
-	// verifier.Transactions records a wallet's error response, leaving
-	// the request pending (anyone holding its public key could send
-	// one), and answers it with 400.
-	var rejected *wallet.DirectPostRejectedError
-	if _, err := p.Decline(ctx); err != nil && !errors.As(err, &rejected) {
-		t.Fatal(err)
+	// verifier.Transactions answers the error response with 200, and
+	// records it, leaving the request pending: anyone holding its public
+	// key could send one.
+	if _, err := p.Decline(ctx); err != nil {
+		t.Fatalf("Decline = %v", err)
 	}
 	if view := v.Lookup(t, id); view.LastError != "the wallet returned an error: access_denied" {
 		t.Errorf("verifier after Decline = %+v", view)
