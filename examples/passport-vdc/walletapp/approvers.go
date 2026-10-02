@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/idfoundry/fapigo/client"
+
+	oid4vci "github.com/idfoundry/oid4vcgo"
 )
 
 // HeadlessApprover approves without a browser, as a holder would: it
@@ -114,6 +116,17 @@ type BrowserApprover struct {
 	RedirectURI string // an http://127.0.0.1:<port>/<path> loopback URI
 	Show        func(authorizationURL string)
 	Timeout     time.Duration // zero means 5 minutes
+	// PromptPIN asks the holder for a pre-authorized offer's PIN; nil
+	// means such an offer can't be received.
+	PromptPIN func(txCode oid4vci.TxCode) (string, error)
+}
+
+// PIN implements PINApprover with PromptPIN.
+func (b BrowserApprover) PIN(_ context.Context, txCode oid4vci.TxCode) (string, error) {
+	if b.PromptPIN == nil {
+		return "", errors.New("walletapp: the offer needs a PIN")
+	}
+	return b.PromptPIN(txCode)
 }
 
 // Approve implements Approver.

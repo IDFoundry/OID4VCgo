@@ -207,24 +207,6 @@ func transactionErrorMessage(err error) string {
 
 // handleToken is the Token Endpoint (authorization_code only; this demo
 // issues no refresh tokens it would need to honor).
-func (a *App) handleToken(w http.ResponseWriter, r *http.Request) {
-	req, err := server.TokenEndpointRequestFromHTTP(r)
-	if err != nil {
-		server.NewError(server.ErrorInvalidRequest, http.StatusBadRequest, err.Error()).WriteJSON(w)
-		return
-	}
-	if req.GrantType() != "authorization_code" {
-		server.NewError(server.ErrorUnsupportedGrantType, http.StatusBadRequest, "grant_type must be authorization_code").WriteJSON(w)
-		return
-	}
-	result, err := a.server.ExchangeAuthorizationCode(r.Context(), req.AuthorizationCodeExchange())
-	if err != nil {
-		server.WriteError(w, err)
-		return
-	}
-	result.WriteJSON(w)
-}
-
 // handleASMetadata serves the Authorization Server's RFC 8414 metadata —
 // server.Metadata, dpop_signing_alg_values_supported included.
 func (a *App) handleASMetadata(w http.ResponseWriter, r *http.Request) {

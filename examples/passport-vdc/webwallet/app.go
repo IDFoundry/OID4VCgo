@@ -24,6 +24,7 @@ import (
 	"sync"
 	"time"
 
+	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/walletapp"
 	"github.com/idfoundry/oid4vcgo/wallet"
 )
@@ -129,7 +130,19 @@ func (a *App) routes() http.Handler {
 
 // webApprover hands the authorization URL and session handle to the
 // browser handler and waits for the issuer's redirect back to /callback.
-type webApprover struct{ op *receiveOp }
+type webApprover struct {
+	op  *receiveOp
+	pin string // the PIN the holder typed with the offer, for a pre-authorized one
+}
+
+// PIN implements walletapp.PINApprover with the PIN the holder entered
+// on the confirmation page.
+func (w webApprover) PIN(context.Context, oid4vci.TxCode) (string, error) {
+	if w.pin == "" {
+		return "", errors.New("this offer needs the PIN the issuer gave you")
+	}
+	return w.pin, nil
+}
 
 func (w webApprover) Approve(ctx context.Context, authorizationURL string, session client.SessionHandle) (walletapp.Callback, error) {
 	select {
@@ -147,7 +160,8 @@ func (w webApprover) Approve(ctx context.Context, authorizationURL string, sessi
 
 func (a *App) handleReceiveConfirm(w http.ResponseWriter, r *http.Request) {
 	offer := r.URL.Query().Get("offer")
-	render(w, http.StatusOK, confirmReceiveTemplate, map[string]string{"Offer": offer, "Issuer": offerIssuer(offer)})
+	issuer, preAuthorized := offerIssuer(offer)
+	render(w, http.StatusOK, confirmReceiveTemplate, map[string]any{"Offer": offer, "Issuer": issuer, "PreAuthorized": preAuthorized})
 }
 
 // handleReceive starts receiving from an offer and sends the browser to
@@ -173,7 +187,7 @@ func (a *App) handleReceive(w http.ResponseWriter, r *http.Request) {
 	a.mu.Unlock()
 
 	go func() {
-		received, pending, err := walletapp.ReceiveDeferrable(ctx, a.cfg.Wallet, offer, webApprover{op})
+		received, pending, err := walletapp.ReceiveDeferrable(ctx, a.cfg.Wallet, offer, webApprover{op: op, pin: strings.TrimSpace(r.PostForm.Get("pin"))})
 		op.done <- receiveResult{received, pending, err}
 	}()
 	select {
@@ -184,8 +198,14 @@ func (a *App) handleReceive(w http.ResponseWriter, r *http.Request) {
 		})
 		http.Redirect(w, r, start.url, http.StatusSeeOther) // #nosec G710 -- the issuer's authorization URL, built by fapigo from discovered metadata
 	case res := <-op.done:
+		// A pre-authorized offer finishes here, with no trip to the
+		// issuer's approval page.
 		a.finishReceive(op)
-		renderError(w, http.StatusBadGateway, "couldn't start receiving: "+res.err.Error())
+		if res.err != nil {
+			renderError(w, http.StatusBadGateway, "couldn't receive: "+res.err.Error())
+			return
+		}
+		a.storeReceived(w, r, res)
 	case <-time.After(30 * time.Second):
 		a.finishReceive(op)
 		renderError(w, http.StatusGatewayTimeout, "the issuer didn't respond")
@@ -220,6 +240,12 @@ func (a *App) handleCallback(w http.ResponseWriter, r *http.Request) {
 		renderError(w, http.StatusBadGateway, "receiving failed: "+res.err.Error())
 		return
 	}
+	a.storeReceived(w, r, res)
+}
+
+// storeReceived stores what a receive got, keeps what the issuer
+// deferred, and sends the browser home.
+func (a *App) storeReceived(w http.ResponseWriter, r *http.Request, res receiveResult) {
 	for _, rc := range res.received {
 		if _, err := a.cfg.Store.Save(rc, time.Now()); err != nil {
 			renderError(w, http.StatusInternalServerError, "couldn't store a credential")
@@ -457,18 +483,19 @@ func requestHost(link string) string {
 
 // offerIssuer reads the credential_issuer from a by-value offer link,
 // for the confirmation page ("" if it can't).
-func offerIssuer(link string) string {
+// offerIssuer reads a by-value offer link's issuer, and whether it's a
+// pre-authorized code offer — "" and false for anything else, including
+// a by-reference offer this page doesn't fetch.
+func offerIssuer(link string) (issuer string, preAuthorized bool) {
 	u, err := url.Parse(link)
 	if err != nil {
-		return ""
+		return "", false
 	}
-	var offer struct {
-		CredentialIssuer string `json:"credential_issuer"`
-	}
+	var offer oid4vci.CredentialOffer
 	if json.Unmarshal([]byte(u.Query().Get("credential_offer")), &offer) != nil {
-		return ""
+		return "", false
 	}
-	return offer.CredentialIssuer
+	return offer.CredentialIssuer, offer.Grants != nil && offer.Grants.PreAuthorizedCode != nil
 }
 
 func randomID() (string, error) {

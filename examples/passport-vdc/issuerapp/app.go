@@ -52,6 +52,9 @@ type App struct {
 	credentialURL    url.URL
 	deferredURL      url.URL
 	notificationURL  url.URL
+	accessTokens     server.AccessTokenIssuer // the Authorization Server's
+	preAuthCodes     issuer.PreAuthorizedCodeStore
+	tokenLifetime    time.Duration  // the Authorization Server's access token lifetime
 	reviews          *reviews       // deferred issuances awaiting a decision
 	notifications    *notifications // what the wallets have reported
 	now              func() time.Time
@@ -92,6 +95,7 @@ func New(cfg Config) (*App, error) {
 	}
 	a.interactions = newTTLMap[pendingInteraction](a.now)
 	a.reviews = newReviews(a.now)
+	a.preAuthCodes = oid4vcgostorage.NewPreAuthorizedCodeStore()
 	a.notifications = &notifications{now: a.now}
 	if a.providerRoots, err = certPool(cfg.Wallet.ProviderCA); err != nil {
 		return nil, err
@@ -165,6 +169,7 @@ func (a *App) buildAuthorizationServer() error {
 	if err != nil {
 		return fmt.Errorf("issuerapp: access tokens: %w", err)
 	}
+	a.accessTokens = accessTokens
 
 	// HAIP's Authorization Server settings, including the issuer_state
 	// extension the approval step reads the passport transaction from.
@@ -176,6 +181,10 @@ func (a *App) buildAuthorizationServer() error {
 	cfg.Endpoints = server.Endpoints{Authorization: authorize, Token: token, PushedAuthorizationRequest: par, JWKS: jwks}
 	cfg.Assurance = server.AssuranceDevelopment
 	cfg.Limits.MaxClientAttestationLifetime = 24 * time.Hour
+	a.tokenLifetime = cfg.Limits.AccessTokenLifetime
+	// The token endpoint also serves the pre-authorized code grant
+	// (handleToken), so its metadata lists it.
+	cfg.AdditionalGrantTypes = []string{preAuthorizedCodeGrantType}
 
 	deps := server.Dependencies{
 		Clients: clients, Transactions: memstore.NewTransactionStore(), Grants: memstore.NewGrantStore(),
@@ -273,7 +282,14 @@ func (a *App) buildIssuer() error {
 		Limits: issuer.Limits{
 			NonceLifetime:                5 * time.Minute,
 			DeferredIssuancePollInterval: deferredPollInterval, DeferredTransactionLifetime: reviewLifetime,
+			AccessTokenLifetime: a.tokenLifetime, MaxTxCodeAttempts: maxCodeFailures,
 		},
+		// HAIP 1.0 §4.4.1: the pre-authorized code grant authenticates
+		// the wallet by its Wallet Attestation, as PAR and the
+		// authorization code grant do. The Authorization Server checks
+		// it, and the DPoP proof, before the issuer redeems the code
+		// (handlePreAuthorizedToken).
+		PreAuthorizedCodeClientAuthentication: issuer.VerifiedPreAuthorizedCode{},
 		// The credentials carry passport data, down to the face image,
 		// so they never travel in cleartext beyond TLS — which in a
 		// real deployment often ends at a proxy (OID4VCI 1.0 §10).
@@ -300,11 +316,16 @@ func (a *App) buildIssuer() error {
 	}, issuer.Dependencies{
 		Nonces:               oid4vcgostorage.NewNonceStore(),
 		DeferredTransactions: oid4vcgostorage.NewDeferredTransactionStore(),
-		Notifications:        oid4vcgostorage.NewNotificationStore(),
-		NotificationHandler:  a.notifications,
-		Clock:                issuer.ClockFunc(a.now),
-		Random:               rand.Reader,
-		AttestationVerifier:  issuer.X5CAttestationVerifier{Roots: a.providerRoots},
+		// The pre-authorized code grant (preauth.go): tokens signed with
+		// the Authorization Server's keys, for a Wallet Attestation the
+		// Authorization Server authenticates.
+		PreAuthorizedCodes:  a.preAuthCodes,
+		AccessTokens:        accessTokenAdapter{inner: a.accessTokens},
+		Notifications:       oid4vcgostorage.NewNotificationStore(),
+		NotificationHandler: a.notifications,
+		Clock:               issuer.ClockFunc(a.now),
+		Random:              rand.Reader,
+		AttestationVerifier: issuer.X5CAttestationVerifier{Roots: a.providerRoots},
 		SDJWTSigner: &issuer.SDJWTSigner{
 			Signer: id.documentSigner, Alg: oid4vci.ES256, IssuerCertificate: id.documentSignerCert,
 		},

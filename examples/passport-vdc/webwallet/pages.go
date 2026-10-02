@@ -89,10 +89,13 @@ var homeTemplate = template.Must(template.New("home").Parse(pageHead + `
 var confirmReceiveTemplate = template.Must(template.New("receive").Parse(pageHead + `
 <h1>Receive a credential?</h1>
 {{if .Issuer}}<p>From <code>{{.Issuer}}</code>.</p>{{end}}
-<p>You'll be sent to the issuer to approve, then brought back here.</p>
 <form method="post" action="/receive">
 <input type="hidden" name="offer" value="{{.Offer}}">
-<button>Continue to the issuer</button> <a href="/">Cancel</a>
+{{if .PreAuthorized}}<p>This offer is pre-authorized: there's no approval at the issuer. Enter the PIN the issuer gave you.</p>
+<p><label>PIN: <input name="pin" inputmode="numeric" autocomplete="off" maxlength="6" size="8" required></label></p>
+<button>Receive</button> <a href="/">Cancel</a>
+{{else}}<p>You'll be sent to the issuer to approve, then brought back here.</p>
+<button>Continue to the issuer</button> <a href="/">Cancel</a>{{end}}
 </form>
 ` + pageFoot))
 

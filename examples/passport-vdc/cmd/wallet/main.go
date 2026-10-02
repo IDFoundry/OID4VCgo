@@ -27,6 +27,7 @@ import (
 	"strings"
 	"time"
 
+	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/demotls"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/walletapp"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/walletprovider"
@@ -81,6 +82,7 @@ func main() {
 			Show: func(u string) {
 				fmt.Printf("Open this URL in a browser to approve:\n\n  %s\n\nWaiting for approval...\n", u)
 			},
+			PromptPIN: promptPIN,
 		}
 		if *headless {
 			approver = walletapp.HeadlessApprover{HTTP: httpClient, Code: *code}
@@ -212,4 +214,18 @@ func useState(fs *flag.FlagSet, dir string, flags map[string]*string) {
 			*v = filepath.Join(dir, files[name])
 		}
 	}
+}
+
+// promptPIN asks for a pre-authorized offer's PIN on the terminal.
+func promptPIN(txCode oid4vci.TxCode) (string, error) {
+	prompt := "PIN"
+	if txCode.Description != "" {
+		prompt = txCode.Description
+	}
+	fmt.Printf("%s: ", prompt)
+	line, err := bufio.NewReader(os.Stdin).ReadString('\n')
+	if err != nil {
+		return "", fmt.Errorf("read PIN: %w", err)
+	}
+	return strings.TrimSpace(line), nil
 }
