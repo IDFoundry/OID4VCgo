@@ -44,3 +44,8 @@ go.work.sum
 # examples/passport-vdc reads one from a path outside the repo
 # (PASSPORT_VDC_SAMPLE); never commit one.
 *.gmrtd
+
+# mobile/build-xcframework.sh's output, and SwiftPM's build state.
+/mobile/build/
+/mobile/ios/*/.build/
+/mobile/ios/*/.swiftpm/
