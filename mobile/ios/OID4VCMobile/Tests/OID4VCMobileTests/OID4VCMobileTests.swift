@@ -6,7 +6,7 @@ import XCTest
 
 final class OID4VCMobileTests: XCTestCase {
     func testABIVersion() {
-        XCTAssertEqual(OID4VC.abiVersion, 0)
+        XCTAssertEqual(OID4VC.abiVersion, 1)
     }
 
     func testParseRequestLink() async throws {
@@ -24,30 +24,6 @@ final class OID4VCMobileTests: XCTestCase {
             XCTAssertFalse(error.message.isEmpty)
         } catch {
             XCTFail("unexpected error \(error)")
-        }
-    }
-
-    /// Go builds the proof and asks the Swift key store to sign it; the
-    /// signature is checked here with CryptoKit too.
-    func testDPoPProofSignedBySwiftKey() async throws {
-        let store = KeychainKeyStore(options: .init(secureEnclave: false, persistent: false))
-        var error: NSError?
-        let id = store.createKey(KeyPurpose.dpop, error: &error)
-        XCTAssertNil(error)
-        let proof = try await OID4VC.dpopProof(keyStore: store, keyID: id, method: "POST", url: "https://issuer.example/token")
-        let parts = proof.split(separator: ".").map(String.init)
-        XCTAssertEqual(parts.count, 3)
-        let pub = try P256.Signing.PublicKey(x963Representation: store.publicKey(id))
-        let sig = try P256.Signing.ECDSASignature(rawRepresentation: base64url(parts[2]))
-        XCTAssertTrue(pub.isValidSignature(sig, for: Data((parts[0] + "." + parts[1]).utf8)))
-        let header = try JSONSerialization.jsonObject(with: base64url(parts[0])) as? [String: Any]
-        XCTAssertEqual(header?["typ"] as? String, "dpop+jwt")
-
-        do {
-            _ = try await OID4VC.dpopProof(keyStore: store, keyID: "no-such-key", method: "POST", url: "https://issuer.example/token")
-            XCTFail("a proof with a missing key")
-        } catch let error as WalletError {
-            XCTAssertEqual(error.code, .notFound)
         }
     }
 
@@ -91,7 +67,7 @@ final class OID4VCMobileTests: XCTestCase {
         XCTAssertNil(error)
         let again = KeychainKeyStore(options: options)
         XCTAssertFalse(try again.publicKey(id).isEmpty)
-        _ = try await OID4VC.dpopProof(keyStore: again, keyID: id, method: "GET", url: "https://issuer.example/")
+        XCTAssertFalse(try again.sign(id, digest: Data(repeating: 1, count: 32)).isEmpty)
         try again.deleteKey(id)
         XCTAssertTrue(try again.publicKey(id).isEmpty)
         #endif
@@ -109,52 +85,10 @@ final class OID4VCMobileTests: XCTestCase {
         #endif
     }
 
-    /// Cancelling the Swift Task cancels the Go call blocked on the network.
-    func testCancellation() async throws {
-        let server = try SilentServer()
-        defer { server.stop() }
-        let task = Task { try await OID4VC.fetch("http://127.0.0.1:\(server.port)/") }
-        try await Task.sleep(for: .milliseconds(200))
-        task.cancel()
-        do {
-            _ = try await task.value
-            XCTFail("a cancelled fetch returned")
-        } catch let error as WalletError {
-            XCTAssertEqual(error.code, .cancelled)
-        }
-    }
-
-    func testTimeout() async throws {
-        let server = try SilentServer()
-        defer { server.stop() }
-        do {
-            _ = try await OID4VC.fetch("http://127.0.0.1:\(server.port)/", timeout: .milliseconds(100))
-            XCTFail("a timed-out fetch returned")
-        } catch let error as WalletError {
-            XCTAssertEqual(error.code, .cancelled)
-        }
-    }
-
-    /// Many Swift tasks calling Go, and back into Swift, at once.
-    func testConcurrentCalls() async throws {
-        let store = KeychainKeyStore(options: .init(secureEnclave: false, persistent: false))
-        var error: NSError?
-        let id = store.createKey(KeyPurpose.dpop, error: &error)
-        XCTAssertNil(error)
-        try await withThrowingTaskGroup(of: String.self) { group in
-            for i in 0..<64 {
-                group.addTask { try await OID4VC.dpopProof(keyStore: store, keyID: id, method: "GET", url: "https://issuer.example/\(i)") }
-            }
-            var proofs = Set<String>()
-            for try await proof in group { proofs.insert(proof) }
-            XCTAssertEqual(proofs.count, 64)
-        }
-    }
-
     func testWalletErrorParsing() {
         XCTAssertEqual(WalletError(NSError(domain: "go", code: 1, userInfo: [NSLocalizedDescriptionKey: "[network] status 404"])).code, .network)
         let plain = WalletError(NSError(domain: "go", code: 1, userInfo: [NSLocalizedDescriptionKey: "no code"]))
-        XCTAssertEqual(plain.code, .internal)
+        XCTAssertEqual(plain.code, .internalError)
         XCTAssertEqual(plain.message, "no code")
     }
 }

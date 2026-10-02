@@ -1,12 +1,18 @@
-// Package testhaip runs a complete HAIP 1.0 Credential Issuer in
-// process, for tests that drive a wallet end to end: a fapigo/server
+// Package walletflowtest runs a complete HAIP 1.0 Credential Issuer in
+// process, for tests that drive a wallet built on walletflow end to end
+// (walletflow's own, and the mobile module's): a fapigo/server
 // Authorization Server authenticating wallets by Wallet Attestation, an
 // issuer.Issuer taking Key Attestations (the attestation proof type),
 // with the authorization code grant (consent approved automatically),
 // the pre-authorized code grant with a PIN, deferred issuance and
 // notifications, plus the Wallet Provider that attests the wallet and
-// its keys. Each Env serves over TLS on a loopback address.
-package testhaip
+// its keys, and an OpenID4VP Verifier (StartVerifier). Each Env serves
+// over TLS on a loopback address until Close.
+//
+// It is test infrastructure: every key and certificate is generated at
+// New, the Wallet Provider attests anything, and the issuer approves
+// every authorization request at once.
+package walletflowtest
 
 import (
 	"context"
@@ -19,12 +25,12 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"sync"
-	"testing"
 	"time"
 
 	fapi "github.com/idfoundry/fapigo"
@@ -40,7 +46,6 @@ import (
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcgo/haip"
-	"github.com/idfoundry/oid4vcgo/internal/testcert"
 	"github.com/idfoundry/oid4vcgo/issuer"
 	"github.com/idfoundry/oid4vcgo/issuer/fapiresource"
 	oid4vcgostorage "github.com/idfoundry/oid4vcgo/storage"
@@ -83,8 +88,10 @@ type Env struct {
 	IssuerURL string
 	// HTTP trusts the issuer's TLS certificate.
 	HTTP *http.Client
-	// IssuerRoots is the trust anchor of the credentials' signer.
+	// IssuerRoots holds IssuerCA, the trust anchor of the credentials'
+	// signer.
 	IssuerRoots *x509.CertPool
+	IssuerCA    *x509.Certificate
 	// Provider attests the wallet and its keys.
 	Provider *Provider
 
@@ -95,30 +102,30 @@ type Env struct {
 	vct          string
 
 	mu            sync.Mutex
+	closers       []func()
 	decision      *bool
 	notifications []oid4vci.NotificationEvent
 }
 
-// New starts an Env, stopped when t ends.
-func New(t testing.TB, opts Options) *Env {
-	t.Helper()
+// New starts an Env. Close stops it.
+func New(opts Options) (env *Env, err error) {
+	defer recoverInto(&err)
 	ts := httptest.NewUnstartedServer(nil)
 	e := &Env{IssuerURL: "https://" + ts.Listener.Addr().String(), preAuthCodes: oid4vcgostorage.NewPreAuthorizedCodeStore()}
 	e.vct = e.IssuerURL + "/vct/test"
-	e.Provider = newProvider(t)
+	e.Provider = newProvider()
 
-	tokenEndpoint := e.endpoint(t, "/token")
+	tokenEndpoint := e.endpoint("/token")
 	accessKeys, err := ephemeral.NewKeyManager(map[keys.SigningPurpose]fapi.SignatureAlgorithm{keys.AccessTokenSigning: fapi.ES256})
-	must(t, err)
-	if e.accessTokens, err = server.NewJWTAccessTokens(accessKeys, fapi.ES256); err != nil {
-		t.Fatal(err)
-	}
+	must(err)
+	e.accessTokens, err = server.NewJWTAccessTokens(accessKeys, fapi.ES256)
+	must(err)
 	asCfg, err := haip.RecommendedAuthorizationServerConfig()
-	must(t, err)
-	asCfg.Issuer = e.issuerURL(t)
+	must(err)
+	asCfg.Issuer = e.issuerURL()
 	asCfg.Endpoints = server.Endpoints{
-		Authorization: e.endpoint(t, "/authorize"), Token: tokenEndpoint,
-		PushedAuthorizationRequest: e.endpoint(t, "/par"), JWKS: e.endpoint(t, "/jwks"),
+		Authorization: e.endpoint("/authorize"), Token: tokenEndpoint,
+		PushedAuthorizationRequest: e.endpoint("/par"), JWKS: e.endpoint("/jwks"),
 	}
 	asCfg.Assurance = server.AssuranceDevelopment
 	asCfg.Limits.MaxClientAttestationLifetime = time.Hour
@@ -127,9 +134,9 @@ func New(t testing.TB, opts Options) *Env {
 	clientCfg.RedirectURIs = []fapi.RegisteredRedirectURI{RedirectURI}
 	clientCfg.AllowedScopes = []string{SDJWTConfigurationID, MdocConfigurationID}
 	client, err := storage.NewRegisteredClient(clientCfg)
-	must(t, err)
+	must(err)
 	clientKeys, err := ephemeral.NewClientKeySource(nil, nil)
-	must(t, err)
+	must(err)
 	deps := server.Dependencies{
 		Clients: memstore.NewClientRepository([]storage.RegisteredClient{client}), Transactions: memstore.NewTransactionStore(),
 		Grants: memstore.NewGrantStore(), Replay: memstore.NewReplayStore(), ClientKeys: clientKeys, Keys: accessKeys,
@@ -140,27 +147,26 @@ func New(t testing.TB, opts Options) *Env {
 			IssuerBinding: server.AttesterIssuerInCertificate,
 		},
 	}
-	if e.srv, err = server.New(asCfg, deps); err != nil {
-		t.Fatal(err)
-	}
+	e.srv, err = server.New(asCfg, deps)
+	must(err)
 	resourceVerifier, err := serverresource.NewVerifier(asCfg, deps, serverresource.Options{
 		Nonces: memstore.NewNonceStore(), NonceLifetime: 5 * time.Minute,
 	})
-	must(t, err)
+	must(err)
 	tokens, err := fapiresource.New(resourceVerifier)
-	must(t, err)
+	must(err)
 
-	caCert, caKey := testcert.CA(t, "testhaip issuer CA")
-	signerCert, signerKey := testcert.Leaf(t, "testhaip document signer", caCert, caKey)
-	e.IssuerRoots = x509.NewCertPool()
+	caCert, caKey := newCA("walletflowtest issuer CA")
+	signerCert, signerKey := newLeaf("walletflowtest document signer", caCert, caKey)
+	e.IssuerCA, e.IssuerRoots = caCert, x509.NewCertPool()
 	e.IssuerRoots.AddCert(caCert)
 	proofTypes := map[string]oid4vci.ProofTypeConfiguration{oid4vci.ProofTypeAttestation: haip.RecommendedAttestationProofType()}
 	e.iss, err = issuer.New(issuer.Config{
 		Assurance: issuer.AssuranceDevelopment,
-		Issuer:    e.issuerURL(t),
+		Issuer:    e.issuerURL(),
 		Endpoints: issuer.Endpoints{
-			Credential: e.endpoint(t, "/credential"), Nonce: e.endpoint(t, "/nonce"),
-			DeferredCredential: e.endpoint(t, "/deferred_credential"), Notification: e.endpoint(t, "/notification"),
+			Credential: e.endpoint("/credential"), Nonce: e.endpoint("/nonce"),
+			DeferredCredential: e.endpoint("/deferred_credential"), Notification: e.endpoint("/notification"),
 		},
 		Limits: issuer.Limits{
 			NonceLifetime: 5 * time.Minute, DeferredIssuancePollInterval: time.Second, DeferredTransactionLifetime: time.Hour,
@@ -186,9 +192,9 @@ func New(t testing.TB, opts Options) *Env {
 		SDJWTSigner:         &issuer.SDJWTSigner{Signer: signerKey, Alg: oid4vci.ES256, IssuerCertificate: signerCert},
 		MdocSigner:          &issuer.MdocSigner{Signer: signerKey, Alg: haip.RecommendedCOSEAlgorithm, X5Chain: [][]byte{signerCert.Raw}},
 	})
-	must(t, err)
+	must(err)
 
-	credentialURL, deferredURL, notificationURL := e.endpoint(t, "/credential").URL(), e.endpoint(t, "/deferred_credential").URL(), e.endpoint(t, "/notification").URL()
+	credentialURL, deferredURL, notificationURL := e.endpoint("/credential").URL(), e.endpoint("/deferred_credential").URL(), e.endpoint("/notification").URL()
 	credentialHandler, err := e.iss.CredentialHandler(issuer.CredentialHandlerConfig{
 		URL: &credentialURL, Tokens: tokens,
 		Prepare: func(_ context.Context, _ issuer.Grant, req *issuer.CredentialRequest) (func(bool), error) {
@@ -200,14 +206,14 @@ func New(t testing.TB, opts Options) *Env {
 			return nil, nil
 		},
 	})
-	must(t, err)
+	must(err)
 	deferredHandler, err := e.iss.DeferredCredentialHandler(issuer.DeferredCredentialHandlerConfig{
 		ProtectedEndpointConfig: issuer.ProtectedEndpointConfig{URL: &deferredURL, Tokens: tokens},
 		Resolve:                 e.resolveDeferred,
 	})
-	must(t, err)
+	must(err)
 	notificationHandler, err := e.iss.NotificationEndpointHandler(issuer.ProtectedEndpointConfig{URL: &notificationURL, Tokens: tokens})
-	must(t, err)
+	must(err)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /.well-known/oauth-authorization-server", func(w http.ResponseWriter, r *http.Request) {
@@ -231,39 +237,49 @@ func New(t testing.TB, opts Options) *Env {
 	mux.Handle("POST /notification", notificationHandler)
 	ts.Config.Handler = mux
 	ts.StartTLS()
-	t.Cleanup(ts.Close)
+	e.closers = append(e.closers, ts.Close)
 	e.HTTP = ts.Client()
-	return e
+	return e, nil
+}
+
+// Close stops the issuer and every Verifier StartVerifier started.
+func (e *Env) Close() {
+	e.mu.Lock()
+	closers := e.closers
+	e.closers = nil
+	e.mu.Unlock()
+	for _, c := range closers {
+		c()
+	}
 }
 
 // AuthorizationCodeOffer returns a Credential Offer URI for configIDs
 // redeemed with the authorization code grant.
-func (e *Env) AuthorizationCodeOffer(t testing.TB, configIDs ...string) string {
-	t.Helper()
-	return e.offer(t, configIDs, &oid4vci.Grants{AuthorizationCode: &oid4vci.GrantAuthorizationCode{}})
+func (e *Env) AuthorizationCodeOffer(configIDs ...string) (uri string, err error) {
+	defer recoverInto(&err)
+	return e.offer(configIDs, &oid4vci.Grants{AuthorizationCode: &oid4vci.GrantAuthorizationCode{}}), nil
 }
 
 // PreAuthorizedOffer returns a Credential Offer URI for configIDs
 // redeemed with the pre-authorized code grant and pin.
-func (e *Env) PreAuthorizedOffer(t testing.TB, pin string, configIDs ...string) string {
-	t.Helper()
+func (e *Env) PreAuthorizedOffer(pin string, configIDs ...string) (uri string, err error) {
+	defer recoverInto(&err)
 	var b [32]byte
 	_, _ = rand.Read(b[:])
 	code := base64.RawURLEncoding.EncodeToString(b[:])
-	must(t, e.preAuthCodes.Issue(context.Background(), code, issuer.PreAuthorizedCodeRecord{
+	must(e.preAuthCodes.Issue(context.Background(), code, issuer.PreAuthorizedCodeRecord{
 		TxCode: pin, Scopes: configIDs, ExpiresAt: time.Now().Add(time.Hour), Subject: "holder",
 	}))
-	return e.offer(t, configIDs, &oid4vci.Grants{PreAuthorizedCode: &oid4vci.GrantPreAuthorizedCode{
+	return e.offer(configIDs, &oid4vci.Grants{PreAuthorizedCode: &oid4vci.GrantPreAuthorizedCode{
 		PreAuthorizedCode: code, TxCode: &oid4vci.TxCode{InputMode: "numeric", Length: len(pin)},
-	}})
+	}}), nil
 }
 
-func (e *Env) offer(t testing.TB, configIDs []string, grants *oid4vci.Grants) string {
-	t.Helper()
+func (e *Env) offer(configIDs []string, grants *oid4vci.Grants) string {
 	result, err := e.iss.CreateCredentialOffer(context.Background(), issuer.CreateCredentialOfferRequest{
 		CredentialConfigurationIDs: configIDs, Grants: grants,
 	})
-	must(t, err)
+	must(err)
 	return result.URI
 }
 
@@ -309,8 +325,8 @@ func (e *Env) claims() (*sdjwtvc.Claims, *mdoc.Claims) {
 	sdjwtClaims := &sdjwtvc.Claims{VCT: e.vct, Exp: &exp, Additional: map[string]any{
 		"family_name": sdjwtvc.SD(FamilyName), "given_name": sdjwtvc.SD(GivenName),
 	}}
-	// Within the document signer certificate's validity (testcert.Leaf:
-	// an hour back, a day ahead).
+	// Within the document signer certificate's validity (newLeaf: an
+	// hour back, a day ahead).
 	signed := time.Now().UTC().Truncate(time.Second)
 	mdocClaims := &mdoc.Claims{
 		DocType: DocType, Signed: signed, ValidFrom: signed, ValidUntil: signed.Add(12 * time.Hour),
@@ -383,7 +399,7 @@ func (e *Env) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid subject", http.StatusInternalServerError)
 		return
 	}
-	authCtx, err := server.NewAuthenticationContext(time.Now(), "urn:example:testhaip", nil)
+	authCtx, err := server.NewAuthenticationContext(time.Now(), "urn:example:walletflowtest", nil)
 	if err != nil {
 		http.Error(w, "invalid authentication context", http.StatusInternalServerError)
 		return
@@ -454,17 +470,15 @@ func (e *Env) handleToken(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (e *Env) issuerURL(t testing.TB) fapi.URL {
-	t.Helper()
+func (e *Env) issuerURL() fapi.URL {
 	u, err := fapi.ParseIssuerURL(e.IssuerURL)
-	must(t, err)
+	must(err)
 	return u
 }
 
-func (e *Env) endpoint(t testing.TB, path string) fapi.URL {
-	t.Helper()
+func (e *Env) endpoint(path string) fapi.URL {
 	u, err := fapi.ParseEndpointURL(e.IssuerURL + path)
-	must(t, err)
+	must(err)
 	return u
 }
 
@@ -494,22 +508,21 @@ type Provider struct {
 	keyAttestations int
 }
 
-func newProvider(t testing.TB) *Provider {
-	t.Helper()
-	caCert, caKey := testcert.CA(t, "testhaip Wallet Provider CA")
+func newProvider() *Provider {
+	caCert, caKey := newCA("walletflowtest Wallet Provider CA")
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	must(t, err)
+	must(err)
 	issuerURI, err := url.Parse(ProviderIssuer)
-	must(t, err)
+	must(err)
 	now := time.Now()
 	der, err := x509.CreateCertificate(rand.Reader, &x509.Certificate{
-		SerialNumber: big.NewInt(2), Subject: pkix.Name{CommonName: "testhaip Wallet Provider"},
+		SerialNumber: big.NewInt(2), Subject: pkix.Name{CommonName: "walletflowtest Wallet Provider"},
 		NotBefore: now.Add(-time.Hour), NotAfter: now.Add(24 * time.Hour),
 		KeyUsage: x509.KeyUsageDigitalSignature, URIs: []*url.URL{issuerURI},
 	}, caCert, &key.PublicKey, caKey)
-	must(t, err)
+	must(err)
 	cert, err := x509.ParseCertificate(der)
-	must(t, err)
+	must(err)
 	roots := x509.NewCertPool()
 	roots.AddCert(caCert)
 	return &Provider{Roots: roots, key: key, cert: cert}
@@ -555,9 +568,59 @@ func (p *Provider) KeyAttestations() int {
 	return p.keyAttestations
 }
 
-func must(t testing.TB, err error) {
-	t.Helper()
+// failure carries an error out of setup code to recoverInto.
+type failure struct{ err error }
+
+// must stops setup at err, for the exported function's recoverInto.
+func must(err error) {
 	if err != nil {
-		t.Fatal(err)
+		panic(failure{err})
 	}
+}
+
+// recoverInto returns a must failure as the function's error.
+func recoverInto(err *error) {
+	switch r := recover().(type) {
+	case nil:
+	case failure:
+		*err = fmt.Errorf("walletflowtest: %w", r.err)
+	default:
+		panic(r)
+	}
+}
+
+// newCA returns a self-signed P-256 CA certificate and key.
+func newCA(commonName string) (*x509.Certificate, *ecdsa.PrivateKey) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	must(err)
+	now := time.Now()
+	return newCertificate(&x509.Certificate{
+		SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: commonName},
+		NotBefore: now.Add(-time.Hour), NotAfter: now.Add(24 * time.Hour),
+		KeyUsage: x509.KeyUsageCertSign, IsCA: true, BasicConstraintsValid: true,
+	}, nil, &key.PublicKey, key), key
+}
+
+// newLeaf returns a P-256 certificate and key issued by ca, valid from
+// an hour ago for a day.
+func newLeaf(commonName string, ca *x509.Certificate, caKey *ecdsa.PrivateKey) (*x509.Certificate, *ecdsa.PrivateKey) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	must(err)
+	now := time.Now()
+	return newCertificate(&x509.Certificate{
+		SerialNumber: big.NewInt(2), Subject: pkix.Name{CommonName: commonName},
+		NotBefore: now.Add(-time.Hour), NotAfter: now.Add(24 * time.Hour),
+		KeyUsage: x509.KeyUsageDigitalSignature,
+	}, ca, &key.PublicKey, caKey), key
+}
+
+func newCertificate(tmpl, parent *x509.Certificate, pub *ecdsa.PublicKey, signer *ecdsa.PrivateKey) *x509.Certificate {
+	if parent == nil {
+		parent = tmpl
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, parent, pub, signer)
+	must(err)
+	cert, err := x509.ParseCertificate(der)
+	must(err)
+	return cert
 }

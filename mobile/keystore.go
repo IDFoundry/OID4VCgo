@@ -149,27 +149,6 @@ func (p *platformKey) Sign(_ io.Reader, digest []byte, opts crypto.SignerOpts) (
 	return sig, nil
 }
 
-// DPoPProof returns a DPoP proof (RFC 9449) for a request with method
-// htm to htu, signed with store's key keyID.
-func DPoPProof(store KeyStore, keyID, htm, htu string) (string, error) {
-	if store == nil {
-		return "", newError(CodeInvalidInput, errors.New("no key store"))
-	}
-	key, err := keyStore{store}.load(keyID)
-	if err != nil {
-		return "", err
-	}
-	w, err := newCoreWallet()
-	if err != nil {
-		return "", err
-	}
-	proof, err := w.GenerateDPoPProof(key, htm, htu, "", "")
-	if err != nil {
-		return "", asError(CodeInvalidInput, err)
-	}
-	return proof, nil
-}
-
 // CheckKeyStore exercises store as the wallet will: for each purpose it
 // creates a key, signs a DPoP proof with it (wallet.GenerateDPoPProof)
 // and a FAPIgo signing request (keys.NewKeyManagerFromSigners, as
@@ -259,7 +238,7 @@ func checkPurpose(ctx context.Context, ks keyStore, w *wallet.Wallet, purpose wa
 func newCoreWallet() (*wallet.Wallet, error) {
 	w, err := wallet.New(wallet.Config{
 		Assurance: wallet.AssuranceDevelopment, ProofSigningAlg: "ES256",
-		Fetch: fapihttp.Config{MaxResponseBytes: maxFetchBytes, RequestTimeout: 30 * time.Second, MaxRedirects: 2},
+		Fetch: fapihttp.Config{MaxResponseBytes: 1 << 20, RequestTimeout: 30 * time.Second, MaxRedirects: 2},
 	}, wallet.Dependencies{HTTP: http.DefaultClient, Clock: wallet.ClockFunc(time.Now), Random: randReader{}})
 	if err != nil {
 		return nil, newError(CodeInternal, err)

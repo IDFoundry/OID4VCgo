@@ -147,17 +147,22 @@ jobs:
       - name: go vet
         run: go vet ./...
 
+      # With the mobiletest tag too: the end-to-end session tests drive
+      # the in-process test issuer (TestEnv) only that build has.
       - name: go test (race)
-        run: go test -race ./...
+        run: go test -race ./... && go test -race -tags mobiletest ./...
 
       - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
           version: v2.12
           working-directory: mobile
+          args: --build-tags mobiletest
 
   # Builds the XCFramework with gomobile and runs the Swift package's
-  # tests against its macOS slice: Swift calling Go, Go calling back
-  # into a Swift key, errors and cancellation across the boundary.
+  # tests against its macOS slice: issuance and presentation end to end
+  # against an in-process test issuer and Verifier, Go calling back into
+  # the Swift key store, credential store and Wallet Provider, errors and
+  # cancellation across the boundary.
   mobile-ios:
     runs-on: macos-latest
     steps:
@@ -169,8 +174,8 @@ jobs:
           check-latest: true
           cache-dependency-path: mobile/go.sum
 
-      - name: build the XCFramework
-        run: mobile/build-xcframework.sh
+      - name: build the XCFramework (test build)
+        run: mobile/build-xcframework.sh -tags mobiletest
 
       - name: swift test
         working-directory: mobile/ios/OID4VCMobile

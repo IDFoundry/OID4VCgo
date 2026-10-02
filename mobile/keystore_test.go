@@ -141,31 +141,6 @@ func TestCheckKeyStore_FindsMisbehaviour(t *testing.T) {
 	}
 }
 
-func TestDPoPProof(t *testing.T) {
-	s := newGoKeyStore()
-	id, err := s.CreateKey(PurposeDPoP)
-	if err != nil {
-		t.Fatal(err)
-	}
-	proof, err := DPoPProof(s, id, "POST", "https://issuer.example/token")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := verifyES256(proof, &s.keys[id].PublicKey); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := DPoPProof(s, "missing", "POST", "https://issuer.example/token"); code(err) != CodeNotFound {
-		t.Errorf("an unknown key: %v", err)
-	}
-	if _, err := DPoPProof(nil, id, "POST", "https://issuer.example/token"); code(err) != CodeInvalidInput {
-		t.Errorf("no store: %v", err)
-	}
-	s.signErr = errors.New("the user cancelled Face ID")
-	if _, err := DPoPProof(s, id, "POST", "https://issuer.example/token"); code(err) != CodePlatform || !strings.Contains(err.Error(), "Face ID") {
-		t.Errorf("a refused signature: %v", err)
-	}
-}
-
 // TestKeyStoreIsAWalletflowKeyStore: walletflow sees the app's keys,
 // and a missing one as walletflow.ErrNotFound.
 func TestKeyStoreIsAWalletflowKeyStore(t *testing.T) {

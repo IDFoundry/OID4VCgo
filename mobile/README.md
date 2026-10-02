@@ -8,15 +8,20 @@ separate Go module (it needs `golang.org/x/mobile`).
 - `ios/OID4VCMobile`: the Swift package wrapping the XCFramework, with
   its tests.
 
+The API is described in [ABI.md](ABI.md).
+
 Build the XCFramework (Xcode and Go needed; gomobile and gobind are the
-versions `go.mod` pins), then run the Swift tests on macOS or the iOS
-Simulator:
+versions `go.mod` pins). The Swift tests need the test build, which adds
+an in-process test issuer and Verifier (`TestEnv`) a shipped framework
+must not have:
 
 ```sh
-./build-xcframework.sh                # → build/Mobile.xcframework
+./build-xcframework.sh -tags mobiletest   # → build/Mobile.xcframework (test build)
+./build-xcframework.sh                    # the build an app ships
 cd ios/OID4VCMobile
 swift test                            # macOS slice
 xcodebuild test -scheme OID4VCMobile -destination 'platform=iOS Simulator,name=iPhone 16'
 ```
 
-The Go package's own tests run anywhere: `go test ./...`.
+The Go package's own tests run anywhere: `go test -tags mobiletest ./...`
+for the end-to-end session tests too.

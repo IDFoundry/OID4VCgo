@@ -13,12 +13,15 @@
 //     "[invalid_input] …" — which the app's wrapper parses (see Error).
 //   - Calls block. The app calls from a background thread, never the
 //     main thread; a callback into the app runs on that same thread.
-//   - A long call takes an Operation the app can Cancel from another
-//     thread, since no context.Context crosses the boundary.
+//   - A call that waits on the network takes an Operation the app can
+//     Cancel from another thread, since no context.Context crosses the
+//     boundary.
+//   - A callback that can fail returns []byte or nothing besides its
+//     error: one returning a string isn't a throwing Swift method.
 //
-// This version is the boundary's feasibility spike (MOBILE.md Phases 1
-// and 2): request-link parsing (JSON out), a cancellable fetch, and the
-// KeyStore the app implements — the Secure Enclave on iOS — which
-// walletflow's keys are drawn from, checked end to end by
-// CheckKeyStore.
+// The API (ABIVersion 1, MOBILE.md Phase 3): NewWallet takes a JSON
+// configuration and the app's KeyStore, CredentialStore and
+// WalletProvider; StartIssuance and StartPresentation return the
+// walletflow sessions, step by step, each step taking an Operation.
+// CheckKeyStore exercises a KeyStore as the wallet will.
 package mobile

@@ -14,21 +14,21 @@ import (
 	"time"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
-	"github.com/idfoundry/oid4vcgo/internal/testhaip"
 	"github.com/idfoundry/oid4vcgo/wallet"
 	"github.com/idfoundry/oid4vcgo/walletflow"
+	"github.com/idfoundry/oid4vcgo/walletflow/walletflowtest"
 )
 
 type fixture struct {
-	env   *testhaip.Env
+	env   testEnv
 	w     *walletflow.Wallet
 	keys  *walletflow.MemoryKeyStore
 	store *walletflow.MemoryCredentialStore
 }
 
-func newFixture(t *testing.T, opts testhaip.Options) fixture {
+func newFixture(t *testing.T, opts walletflowtest.Options) fixture {
 	t.Helper()
-	env := testhaip.New(t, opts)
+	env := newEnv(t, opts)
 	f := fixture{env: env, keys: walletflow.NewMemoryKeyStore(), store: walletflow.NewMemoryCredentialStore()}
 	f.w = f.newWallet(t, env.IssuerRoots)
 	return f
@@ -42,7 +42,7 @@ func (f fixture) newWallet(t *testing.T, roots *x509.CertPool) *walletflow.Walle
 func (f fixture) newWalletTrusting(t *testing.T, roots *x509.CertPool, verifiers wallet.VerifierTrust) *walletflow.Wallet {
 	t.Helper()
 	w, err := walletflow.New(walletflow.Config{
-		ClientID: testhaip.ClientID, RedirectURI: testhaip.RedirectURI, IssuerRoots: roots,
+		ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, IssuerRoots: roots,
 		VerifierTrust: verifiers, Development: true,
 	}, walletflow.Dependencies{Keys: f.keys, Credentials: f.store, Provider: f.env.Provider, HTTP: f.env.HTTP})
 	if err != nil {
@@ -69,9 +69,9 @@ func authorize(t *testing.T, f fixture, s *walletflow.Issuance) {
 }
 
 func TestIssuance_AuthorizationCode(t *testing.T) {
-	f := newFixture(t, testhaip.Options{})
+	f := newFixture(t, walletflowtest.Options{})
 	ctx := context.Background()
-	s, err := f.w.StartIssuance(ctx, f.env.AuthorizationCodeOffer(t, testhaip.SDJWTConfigurationID, testhaip.MdocConfigurationID))
+	s, err := f.w.StartIssuance(ctx, f.env.AuthorizationCodeOffer(t, walletflowtest.SDJWTConfigurationID, walletflowtest.MdocConfigurationID))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +79,7 @@ func TestIssuance_AuthorizationCode(t *testing.T) {
 	if offer.Grant != walletflow.GrantAuthorizationCode || offer.CredentialIssuer != f.env.IssuerURL || len(offer.Credentials) != 2 {
 		t.Fatalf("Offer = %+v", offer)
 	}
-	if offer.Credentials[0].Format != "dc+sd-jwt" || offer.Credentials[1].DocType != testhaip.DocType {
+	if offer.Credentials[0].Format != "dc+sd-jwt" || offer.Credentials[1].DocType != walletflowtest.DocType {
 		t.Fatalf("offered credentials = %+v", offer.Credentials)
 	}
 	authorize(t, f, s)
@@ -129,9 +129,9 @@ func TestIssuance_AuthorizationCode(t *testing.T) {
 }
 
 func TestIssuance_PreAuthorizedCodeWithPIN(t *testing.T) {
-	f := newFixture(t, testhaip.Options{})
+	f := newFixture(t, walletflowtest.Options{})
 	ctx := context.Background()
-	s, err := f.w.StartIssuance(ctx, f.env.PreAuthorizedOffer(t, "493536", testhaip.SDJWTConfigurationID))
+	s, err := f.w.StartIssuance(ctx, f.env.PreAuthorizedOffer(t, "493536", walletflowtest.SDJWTConfigurationID))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,9 +156,9 @@ func TestIssuance_PreAuthorizedCodeWithPIN(t *testing.T) {
 
 func TestIssuance_Deferred(t *testing.T) {
 	for _, approve := range []bool{true, false} {
-		f := newFixture(t, testhaip.Options{Defer: true})
+		f := newFixture(t, walletflowtest.Options{Defer: true})
 		ctx := context.Background()
-		s, err := f.w.StartIssuance(ctx, f.env.AuthorizationCodeOffer(t, testhaip.MdocConfigurationID))
+		s, err := f.w.StartIssuance(ctx, f.env.AuthorizationCodeOffer(t, walletflowtest.MdocConfigurationID))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -168,7 +168,7 @@ func TestIssuance_Deferred(t *testing.T) {
 			t.Fatalf("RequestCredentials = %+v, %v", result, err)
 		}
 		d := result.Deferred[0]
-		if d.ConfigurationID() != testhaip.MdocConfigurationID || d.Interval() <= 0 {
+		if d.ConfigurationID() != walletflowtest.MdocConfigurationID || d.Interval() <= 0 {
 			t.Fatalf("deferred = %s, interval %v", d.ConfigurationID(), d.Interval())
 		}
 		if stored, err := d.Poll(ctx); stored != nil || err != nil {
@@ -179,7 +179,7 @@ func TestIssuance_Deferred(t *testing.T) {
 		stored, err := d.Wait(waitCtx)
 		cancel()
 		if approve {
-			if err != nil || stored.DocType != testhaip.DocType {
+			if err != nil || stored.DocType != walletflowtest.DocType {
 				t.Fatalf("Wait after approval = %+v, %v", stored, err)
 			}
 		} else if !errors.Is(err, walletflow.ErrCredentialDenied) {
@@ -198,9 +198,9 @@ func TestIssuance_Deferred(t *testing.T) {
 }
 
 func TestIssuance_CloseAbandonsDeferred(t *testing.T) {
-	f := newFixture(t, testhaip.Options{Defer: true})
+	f := newFixture(t, walletflowtest.Options{Defer: true})
 	ctx := context.Background()
-	s, err := f.w.StartIssuance(ctx, f.env.AuthorizationCodeOffer(t, testhaip.SDJWTConfigurationID))
+	s, err := f.w.StartIssuance(ctx, f.env.AuthorizationCodeOffer(t, walletflowtest.SDJWTConfigurationID))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -224,11 +224,11 @@ func TestIssuance_CloseAbandonsDeferred(t *testing.T) {
 }
 
 func TestIssuance_RefusesACredentialFromAnUntrustedIssuer(t *testing.T) {
-	f := newFixture(t, testhaip.Options{})
-	other := testhaip.New(t, testhaip.Options{})
+	f := newFixture(t, walletflowtest.Options{})
+	other := newEnv(t, walletflowtest.Options{})
 	w := f.newWallet(t, other.IssuerRoots)
 	ctx := context.Background()
-	s, err := w.StartIssuance(ctx, f.env.AuthorizationCodeOffer(t, testhaip.SDJWTConfigurationID))
+	s, err := w.StartIssuance(ctx, f.env.AuthorizationCodeOffer(t, walletflowtest.SDJWTConfigurationID))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -249,9 +249,9 @@ func TestIssuance_RefusesACredentialFromAnUntrustedIssuer(t *testing.T) {
 }
 
 func TestIssuance_AuthorizationDenied(t *testing.T) {
-	f := newFixture(t, testhaip.Options{})
+	f := newFixture(t, walletflowtest.Options{})
 	ctx := context.Background()
-	s, err := f.w.StartIssuance(ctx, f.env.AuthorizationCodeOffer(t, testhaip.SDJWTConfigurationID))
+	s, err := f.w.StartIssuance(ctx, f.env.AuthorizationCodeOffer(t, walletflowtest.SDJWTConfigurationID))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -283,9 +283,9 @@ func TestIssuance_AuthorizationDenied(t *testing.T) {
 }
 
 func TestIssuance_StepsOutOfTurn(t *testing.T) {
-	f := newFixture(t, testhaip.Options{})
+	f := newFixture(t, walletflowtest.Options{})
 	ctx := context.Background()
-	s, err := f.w.StartIssuance(ctx, f.env.AuthorizationCodeOffer(t, testhaip.SDJWTConfigurationID))
+	s, err := f.w.StartIssuance(ctx, f.env.AuthorizationCodeOffer(t, walletflowtest.SDJWTConfigurationID))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -312,7 +312,7 @@ func TestIssuance_StepsOutOfTurn(t *testing.T) {
 
 func TestNew_RequiresConfiguration(t *testing.T) {
 	deps := walletflow.Dependencies{
-		Keys: walletflow.NewMemoryKeyStore(), Credentials: walletflow.NewMemoryCredentialStore(), Provider: &testhaip.Provider{},
+		Keys: walletflow.NewMemoryKeyStore(), Credentials: walletflow.NewMemoryCredentialStore(), Provider: &walletflowtest.Provider{},
 	}
 	good := walletflow.Config{ClientID: "c", RedirectURI: "https://wallet.example/cb", IssuerRoots: x509.NewCertPool()}
 	if _, err := walletflow.New(good, deps); err != nil {
@@ -370,19 +370,19 @@ func (p384Keys) NewKey(context.Context, walletflow.KeyPurpose) (walletflow.Key, 
 }
 
 func TestIssuance_PlatformFailures(t *testing.T) {
-	f := newFixture(t, testhaip.Options{})
+	f := newFixture(t, walletflowtest.Options{})
 	ctx := context.Background()
 	for name, deps := range map[string]walletflow.Dependencies{
 		"provider refuses": {Keys: f.keys, Credentials: f.store, Provider: failingProvider{}, HTTP: f.env.HTTP},
 		"not a P-256 key":  {Keys: p384Keys{walletflow.NewMemoryKeyStore()}, Credentials: f.store, Provider: f.env.Provider, HTTP: f.env.HTTP},
 	} {
 		w, err := walletflow.New(walletflow.Config{
-			ClientID: testhaip.ClientID, RedirectURI: testhaip.RedirectURI, IssuerRoots: f.env.IssuerRoots, Development: true,
+			ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, IssuerRoots: f.env.IssuerRoots, Development: true,
 		}, deps)
 		if err != nil {
 			t.Fatal(err)
 		}
-		s, err := w.StartIssuance(ctx, f.env.AuthorizationCodeOffer(t, testhaip.SDJWTConfigurationID))
+		s, err := w.StartIssuance(ctx, f.env.AuthorizationCodeOffer(t, walletflowtest.SDJWTConfigurationID))
 		if err != nil {
 			t.Fatal(err)
 		}
