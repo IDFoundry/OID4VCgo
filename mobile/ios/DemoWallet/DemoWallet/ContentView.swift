@@ -23,11 +23,11 @@ struct ContentView: View {
                             Text(c.vct ?? c.doctype ?? c.configurationID).font(.headline)
                             Text("\(c.format) · \(c.credentialIssuer)").font(.caption).foregroundStyle(.secondary)
                         }
+                        .accessibilityElement(children: .combine)
                         .accessibilityIdentifier("credential")
                         .swipeActions { Button("Delete", role: .destructive) { Task { await model.delete(c) } } }
                     }
                 }
-                .accessibilityIdentifier("credentials")
             }
             .navigationTitle("OID4VC Demo")
             .toolbar {

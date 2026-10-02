@@ -20,6 +20,7 @@ final class DemoWalletUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchEnvironment["OID4VC_DEMO_CONFIG"] = String(decoding: try JSONSerialization.data(withJSONObject: config), as: UTF8.self)
         app.launchEnvironment["OID4VC_DEMO_OFFER"] = offer
+        app.launchEnvironment["OID4VC_DEMO_RESET"] = "1"
         app.launch()
         return app
     }
@@ -28,11 +29,6 @@ final class DemoWalletUITests: XCTestCase {
     /// ephemeral web session, approves, and redirects back to the app.
     @MainActor
     func testReceiveWithAuthorizationCode() async throws {
-        // fapigo/server refuses the app's private-use scheme redirect URI
-        // at the Pushed Authorization Request (it accepts https only),
-        // though FAPI 2.0 doesn't forbid one; asked of FAPIgo — see
-        // MOBILE.md's Phase 4 findings.
-        throw XCTSkip("waiting on FAPIgo accepting native-app redirect URIs (RFC 8252 §7.1)")
         let offer = try await Self.fetch("offer", method: "POST")["offer"] as! String
         let app = try await launch(offer: offer)
         let receive = app.buttons["receive"]
@@ -41,7 +37,9 @@ final class DemoWalletUITests: XCTestCase {
         let status = app.staticTexts["status"]
         XCTAssertTrue(status.waitForExistence(timeout: 60))
         XCTAssertTrue(status.label.hasPrefix("Received 2"), status.label)
-        XCTAssertGreaterThanOrEqual(app.descendants(matching: .any).matching(identifier: "credential").count, 2)
+        let credentials = app.descendants(matching: .any).matching(identifier: "credential")
+        XCTAssertTrue(credentials.element(boundBy: 1).waitForExistence(timeout: 10), "the two credentials aren't listed")
+        XCTAssertEqual(credentials.count, 2)
     }
 
     /// The pre-authorized code grant, with the PIN typed in the app.

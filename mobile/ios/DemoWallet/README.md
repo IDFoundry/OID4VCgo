@@ -35,10 +35,15 @@ through), and remembers it:
 
 This starts `mobile/cmd/testservices`, an in-process HAIP issuer,
 Verifier and Wallet Provider. It makes the Simulator trust their
-certificate, and drives the app: a pre-authorized offer with the PIN
-typed in the app, received end to end. The authorization code test is
-skipped until FAPIgo accepts the app's private-use scheme redirect URI
-(see MOBILE.md).
+certificate, and drives the app from an empty wallet through both
+grants:
+
+- the authorization code grant: the issuer's page in an ephemeral web
+  session, redirecting back to the app's private-use scheme redirect URI
+- the pre-authorized code grant: the PIN typed in the app
+
+Each test launches with `OID4VC_DEMO_RESET=1`, which deletes every
+credential at launch.
 
 ## Against the passport-vdc demo
 
@@ -47,9 +52,11 @@ skipped until FAPIgo accepts the app's private-use scheme redirect URI
 ./run-passport-vdc.sh
 ```
 
-Then upload a passport on the issuer page with the pre-authorized code
-chosen, open its offer link in the Simulator (`xcrun simctl openurl
-booted '<link>'`), and enter the PIN the page shows.
+Then upload a passport on the issuer page, and open its offer link in
+the Simulator (`xcrun simctl openurl booted '<link>'`). For the
+authorization code offer, enter the confirmation code the page shows on
+the issuer's approval page. For the pre-authorized code offer, enter
+its PIN in the app.
 
 ## On a device
 
