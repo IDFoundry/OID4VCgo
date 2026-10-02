@@ -1,6 +1,6 @@
 # OID4VCgo Mobile — design
 
-Status: **in progress** — Phases 0 and 1 are done (see Phases). This is
+Status: **in progress** — Phases 0 to 2 are done (see Phases). This is
 the design for a mobile wallet SDK built on OID4VCgo, delivered in the
 phases below. It records the decisions taken so far, what each phase
 found, and the questions still open; update it as phases land.
@@ -209,7 +209,7 @@ networking.
 |---|---|---|
 | 0 ✓ | `walletflow` | Issuance and presentation sessions behind key, store, Wallet Provider and HTTP interfaces; the passport-vdc wallets run on it; their end-to-end tests pass |
 | 1 ✓ | gomobile spike | An XCFramework; Swift calls Go and Go calls back into Swift; a JSON envelope; errors and cancellation across the boundary |
-| 2 | Secure Enclave spike | A Swift-generated key signs an ES256 JWS through Go's `crypto.Signer`, verified by OID4VCgo; a platform `KeyManager` for FAPIgo |
+| 2 ✓ | Secure Enclave spike | A Swift-generated key signs an ES256 JWS through Go's `crypto.Signer`, verified by OID4VCgo; a platform `KeyManager` for FAPIgo |
 | 3 | ABI foundation | Versioned JSON envelope, error codes and session lifecycle, documented |
 | 4 | OID4VCI slice | HAIP issuance from the iOS demo app against the passport-vdc issuer, with Key Attestations from the Wallet Provider |
 | 5 | Storage | The native credential store, with key references |
@@ -254,6 +254,39 @@ pass on the iOS Simulator.
   Swift Task cancellation calls its `cancel()` through
   `withTaskCancellationHandler`, and the blocked Go call returns a
   `cancelled` error. A timeout works the same way.
+
+### Phase 2 findings
+
+The app implements `KeyStore` (create a key for a purpose, return its
+public key, sign a digest, delete it), which the `mobile` package turns
+into a `walletflow.KeyStore`; the private keys stay in the app.
+`KeychainKeyStore` is the Swift implementation, and `CheckKeyStore`
+exercises any implementation as the wallet will: for each purpose, a
+DPoP proof (`wallet.GenerateDPoPProof`) and a FAPIgo signing request
+(`keys.NewKeyManagerFromSigners`, as walletflow's OAuth client signs),
+each signature checked, then lookup and deletion.
+
+- **Where it's proven:** Secure Enclave keys on the iOS Simulator (which
+  simulates the enclave); Keychain-persisted keys, found again by a new
+  store and deleted, on macOS. Neither environment does both: hostless
+  Simulator tests have no Keychain (`-34018`, a missing entitlement),
+  and a command-line macOS session can't create enclave keys. Persisted
+  enclave keys, and the user-presence prompt for holder keys, need a
+  signed app on a device: the Phase 4 demo app.
+- **Access control:** enclave keys carry `.privateKeyUsage`, holder keys
+  `.userPresence` too (`Options.holderUserPresence`), all
+  `WhenUnlockedThisDeviceOnly`. On macOS an access control moves a key
+  into the data protection keychain, so a key that needs none carries
+  none.
+- **gomobile and errors in callbacks:** a callback returning `[]byte`
+  or only an `error` is a throwing Swift method; one returning a
+  `string` is not — its Objective-C form returns a non-null `NSString`,
+  which Swift won't import as `throws` — so the app reports failure
+  through the `NSError` pointer (`KeychainKeyStore.createKey`). Prefer
+  `[]byte` or no result for callbacks that can fail.
+- **Naming:** a Go method named `New…` becomes an Objective-C `new…`
+  selector, which ARC treats as returning an owned object; the key
+  store's method is `CreateKey`.
 
 ## Decisions
 

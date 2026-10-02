@@ -27,38 +27,86 @@ final class OID4VCMobileTests: XCTestCase {
         }
     }
 
-    /// Go builds the proof and asks the Swift key to sign it; the
+    /// Go builds the proof and asks the Swift key store to sign it; the
     /// signature is checked here with CryptoKit too.
     func testDPoPProofSignedBySwiftKey() async throws {
-        let signer = try SecKeySigner.software()
-        let proof = try await OID4VC.dpopProof(signer: signer, method: "POST", url: "https://issuer.example/token")
+        let store = KeychainKeyStore(options: .init(secureEnclave: false, persistent: false))
+        var error: NSError?
+        let id = store.createKey(KeyPurpose.dpop, error: &error)
+        XCTAssertNil(error)
+        let proof = try await OID4VC.dpopProof(keyStore: store, keyID: id, method: "POST", url: "https://issuer.example/token")
         let parts = proof.split(separator: ".").map(String.init)
         XCTAssertEqual(parts.count, 3)
-        let pub = try P256.Signing.PublicKey(x963Representation: signer.publicKey())
+        let pub = try P256.Signing.PublicKey(x963Representation: store.publicKey(id))
         let sig = try P256.Signing.ECDSASignature(rawRepresentation: base64url(parts[2]))
         XCTAssertTrue(pub.isValidSignature(sig, for: Data((parts[0] + "." + parts[1]).utf8)))
         let header = try JSONSerialization.jsonObject(with: base64url(parts[0])) as? [String: Any]
         XCTAssertEqual(header?["typ"] as? String, "dpop+jwt")
+
+        do {
+            _ = try await OID4VC.dpopProof(keyStore: store, keyID: "no-such-key", method: "POST", url: "https://issuer.example/token")
+            XCTFail("a proof with a missing key")
+        } catch let error as WalletError {
+            XCTAssertEqual(error.code, .notFound)
+        }
     }
 
     /// A Swift error thrown in a callback reaches Go, which reports it as
     /// a platform error carrying the Swift error's message.
     func testSwiftCallbackErrorsReachGo() async throws {
-        final class Refusing: NSObject, PlatformSigner {
-            let inner: SecKeySigner
-            init(_ inner: SecKeySigner) { self.inner = inner }
-            func publicKey() throws -> Data { try inner.publicKey() }
-            func sign(_ digest: Data?) throws -> Data {
-                throw NSError(domain: "test", code: 7, userInfo: [NSLocalizedDescriptionKey: "the user cancelled Face ID"])
-            }
-        }
+        let refusing = Misbehaving(signError: "the user cancelled Face ID")
         do {
-            _ = try await OID4VC.dpopProof(signer: Refusing(try SecKeySigner.software()), method: "POST", url: "https://issuer.example/token")
-            XCTFail("a refusing signer produced a proof")
+            _ = try await OID4VC.checkKeyStore(refusing)
+            XCTFail("a refusing store passed")
         } catch let error as WalletError {
             XCTAssertEqual(error.code, .platform)
             XCTAssertTrue(error.message.contains("the user cancelled Face ID"), error.message)
         }
+        do {
+            _ = try await OID4VC.checkKeyStore(Misbehaving(createError: "no enclave"))
+            XCTFail("a store that can't create keys passed")
+        } catch let error as WalletError {
+            XCTAssertEqual(error.code, .platform)
+            XCTAssertTrue(error.message.contains("no enclave"), error.message)
+        }
+    }
+
+    func testCheckKeyStoreSoftwareInMemory() async throws {
+        let checked = try await OID4VC.checkKeyStore(KeychainKeyStore(options: .init(secureEnclave: false, persistent: false)))
+        XCTAssertEqual(checked, [KeyPurpose.instance, KeyPurpose.dpop, KeyPurpose.holder])
+    }
+
+    /// Keys kept in the Keychain: found again by a new store, and gone
+    /// once deleted. (Hostless iOS Simulator tests have no Keychain.)
+    func testCheckKeyStoreKeychain() async throws {
+        #if targetEnvironment(simulator)
+        throw XCTSkip("the iOS Simulator's Keychain needs a signed host app")
+        #else
+        let options = KeychainKeyStore.Options(secureEnclave: false, persistent: true, holderUserPresence: false, tagPrefix: "org.idfoundry.oid4vcgo.test.\(UUID()).")
+        let checked = try await OID4VC.checkKeyStore(KeychainKeyStore(options: options))
+        XCTAssertEqual(checked.count, 3)
+
+        var error: NSError?
+        let id = KeychainKeyStore(options: options).createKey(KeyPurpose.holder, error: &error)
+        XCTAssertNil(error)
+        let again = KeychainKeyStore(options: options)
+        XCTAssertFalse(try again.publicKey(id).isEmpty)
+        _ = try await OID4VC.dpopProof(keyStore: again, keyID: id, method: "GET", url: "https://issuer.example/")
+        try again.deleteKey(id)
+        XCTAssertTrue(try again.publicKey(id).isEmpty)
+        #endif
+    }
+
+    /// Keys in the Secure Enclave — simulated by the iOS Simulator; a
+    /// real device needs the demo app (MOBILE.md Phase 4).
+    func testCheckKeyStoreSecureEnclave() async throws {
+        #if targetEnvironment(simulator)
+        let store = KeychainKeyStore(options: .init(secureEnclave: true, persistent: false, holderUserPresence: false))
+        let checked = try await OID4VC.checkKeyStore(store)
+        XCTAssertEqual(checked.count, 3)
+        #else
+        throw XCTSkip("Secure Enclave keys need the iOS Simulator or a signed app")
+        #endif
     }
 
     /// Cancelling the Swift Task cancels the Go call blocked on the network.
@@ -89,10 +137,13 @@ final class OID4VCMobileTests: XCTestCase {
 
     /// Many Swift tasks calling Go, and back into Swift, at once.
     func testConcurrentCalls() async throws {
-        let signer = try SecKeySigner.software()
+        let store = KeychainKeyStore(options: .init(secureEnclave: false, persistent: false))
+        var error: NSError?
+        let id = store.createKey(KeyPurpose.dpop, error: &error)
+        XCTAssertNil(error)
         try await withThrowingTaskGroup(of: String.self) { group in
             for i in 0..<64 {
-                group.addTask { try await OID4VC.dpopProof(signer: signer, method: "GET", url: "https://issuer.example/\(i)") }
+                group.addTask { try await OID4VC.dpopProof(keyStore: store, keyID: id, method: "GET", url: "https://issuer.example/\(i)") }
             }
             var proofs = Set<String>()
             for try await proof in group { proofs.insert(proof) }
@@ -106,6 +157,37 @@ final class OID4VCMobileTests: XCTestCase {
         XCTAssertEqual(plain.code, .internal)
         XCTAssertEqual(plain.message, "no code")
     }
+}
+
+/// A key store that fails as it's told to.
+final class Misbehaving: NSObject, PlatformKeyStore {
+    let inner = KeychainKeyStore(options: .init(secureEnclave: false, persistent: false))
+    let createError: String?
+    let signError: String?
+
+    init(createError: String? = nil, signError: String? = nil) {
+        self.createError = createError
+        self.signError = signError
+    }
+
+    func createKey(_ purpose: String?, error: NSErrorPointer) -> String {
+        if let createError {
+            error?.pointee = NSError(domain: "test", code: 1, userInfo: [NSLocalizedDescriptionKey: createError])
+            return ""
+        }
+        return inner.createKey(purpose, error: error)
+    }
+
+    func publicKey(_ id: String?) throws -> Data { try inner.publicKey(id) }
+
+    func sign(_ id: String?, digest: Data?) throws -> Data {
+        if let signError {
+            throw NSError(domain: "test", code: 7, userInfo: [NSLocalizedDescriptionKey: signError])
+        }
+        return try inner.sign(id, digest: digest)
+    }
+
+    func deleteKey(_ id: String?) throws { try inner.deleteKey(id) }
 }
 
 func base64url(_ s: String) throws -> Data {
