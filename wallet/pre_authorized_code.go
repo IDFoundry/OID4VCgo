@@ -30,18 +30,10 @@ const maxTokenResponseBytes = 1 << 16
 
 // PreAuthorizedCodeTokenRequest is the input to
 // RequestPreAuthorizedCodeToken — the Pre-Authorized Code Flow's own
-// Token Request (§6.1). Client authentication isn't implemented for
-// this flow: §6.1 itself makes it OPTIONAL ("authentication of the
-// Client is OPTIONAL ... the client_id parameter is only needed when a
-// form of Client Authentication that relies on this parameter is
-// used"), and this grant type is entirely outside fapigo/client's own
-// scope to begin with (see the package doc comment's own note on
-// RequestPreAuthorizedCodeToken) — Wallet Attestation client auth is
-// supported for the Authorization Code Flow via fapigo/client, but
-// adding it here would mean this package reimplementing that
-// machinery itself for a grant fapigo/client has no primitive for,
-// which is exactly what this package's own architectural boundary
-// avoids.
+// Token Request (§6.1). Client authentication is OPTIONAL in OID4VCI
+// (§6.1), but HAIP 1.0 §4.4.1 requires it: set ClientAttestation to
+// authenticate with the Wallet Attestation, as fapigo/client does for
+// the Authorization Code Flow.
 type PreAuthorizedCodeTokenRequest struct {
 	// PreAuthorizedCode is REQUIRED — a resolved Credential Offer's own
 	// Grants.PreAuthorizedCode.PreAuthorizedCode.
@@ -64,6 +56,23 @@ type PreAuthorizedCodeTokenRequest struct {
 	// doesn't build that ProtectedResourceClient itself; see the
 	// package doc comment for why.
 	DPoPKey crypto.Signer
+
+	// ClientAttestation, if set, authenticates this Wallet with its
+	// Wallet Attestation and a fresh Client Attestation PoP (OAuth 2.0
+	// Attestation-Based Client Authentication), as HAIP 1.0 §4.4.1
+	// requires at the Token Endpoint. fapigo/client's *client.Client
+	// is one, configured for storage.ClientAuthMethodAttestation, so the
+	// PoP is built exactly as for its own PAR and token requests.
+	ClientAttestation ClientAttestationSource
+}
+
+// ClientAttestationSource supplies the OAuth-Client-Attestation and a
+// fresh OAuth-Client-Attestation-PoP header value for one request to the
+// Authorization Server; RequestPreAuthorizedCodeToken calls it for each
+// attempt. fapigo/client's (*client.Client).ClientAttestationHeaders
+// implements it.
+type ClientAttestationSource interface {
+	ClientAttestationHeaders(ctx context.Context) (attestation, pop string, err error)
 }
 
 // PreAuthorizedCodeTokenResult is returned by a successful
@@ -158,6 +167,15 @@ func (w *Wallet) RequestPreAuthorizedCodeToken(
 		}
 		httpReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		httpReq.Header.Set("DPoP", proof)
+		if req.ClientAttestation != nil {
+			// A fresh PoP for each attempt: its jti is single-use.
+			attestation, pop, err := req.ClientAttestation.ClientAttestationHeaders(ctx)
+			if err != nil {
+				return PreAuthorizedCodeTokenResult{}, fmt.Errorf("wallet: request pre-authorized code token: client attestation: %w", err)
+			}
+			httpReq.Header.Set("OAuth-Client-Attestation", attestation)
+			httpReq.Header.Set("OAuth-Client-Attestation-PoP", pop)
+		}
 
 		res, err := w.deps.HTTP.Do(httpReq)
 		if err != nil {

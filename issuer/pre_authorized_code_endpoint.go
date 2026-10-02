@@ -49,6 +49,11 @@ type ExchangePreAuthorizedCodeRequest struct {
 	// caller — who already knows what URL the request arrived at —
 	// supplies it directly.
 	TokenEndpoint fapi.URL
+
+	// Verified is the request's client and DPoP proof, already verified
+	// by the Authorization Server. Required under VerifiedPreAuthorizedCode,
+	// which then needs no DPoPProof or TokenEndpoint; refused otherwise.
+	Verified *VerifiedTokenRequest
 }
 
 // ExchangePreAuthorizedCodeResult is returned by a successful
@@ -125,6 +130,51 @@ type AnonymousPreAuthorizedCode struct{}
 
 func (AnonymousPreAuthorizedCode) isPreAuthorizedCodeClientAuthentication() {}
 
+// VerifiedPreAuthorizedCode redeems a pre-authorized_code for a Token
+// Request whose client and DPoP proof the Authorization Server serving
+// the same Token Endpoint has already verified, and passed in
+// ExchangePreAuthorizedCodeRequest.Verified: as HAIP 1.0 §4.4.1
+// requires, the client authenticated with its Wallet Attestation, and
+// the proof was checked under the Authorization Server's own DPoP replay
+// record and nonce policy, so the endpoint has one of each whichever
+// grant a request uses. ExchangePreAuthorizedCode then verifies neither
+// itself. With fapigo/server, the Token Endpoint handler reads the
+// request once and does both checks first:
+//
+//	tr, _ := server.TokenEndpointRequestFromHTTP(r)
+//	params, _ := tr.Parameters()
+//	c, err := srv.AuthenticateAttestedClient(ctx, tr.AttestedClientAuthentication())
+//	// refuse a client_id parameter naming another client
+//	b, err := srv.VerifyTokenRequestBinding(ctx, c.Client, tr)
+//	// require b.SenderConstrain to be storage.SenderConstrainDPoP
+//	res, err := iss.ExchangePreAuthorizedCode(ctx, issuer.ExchangePreAuthorizedCodeRequest{
+//		PreAuthorizedCode: params["pre-authorized_code"], TxCode: params["tx_code"],
+//		Verified: &issuer.VerifiedTokenRequest{
+//			ClientID: c.Client.ID().String(), DPoPThumbprint: b.Thumbprint, NextDPoPNonce: b.NextDPoPNonce,
+//		},
+//	})
+//
+// and lists the grant in fapigo/server's Config.AdditionalGrantTypes.
+type VerifiedPreAuthorizedCode struct{}
+
+func (VerifiedPreAuthorizedCode) isPreAuthorizedCodeClientAuthentication() {}
+
+// VerifiedTokenRequest is what the Authorization Server verified about a
+// Token Request, for VerifiedPreAuthorizedCode.
+type VerifiedTokenRequest struct {
+	// ClientID is the authenticated client. REQUIRED.
+	ClientID string
+
+	// DPoPThumbprint is the RFC 7638 thumbprint of the key the request's
+	// verified DPoP proof was signed with, to bind the access token to.
+	// REQUIRED.
+	DPoPThumbprint string
+
+	// NextDPoPNonce, when not "", is sent with the Token Response's
+	// DPoP-Nonce header (ExchangePreAuthorizedCodeResult.NextDPoPNonce).
+	NextDPoPNonce string
+}
+
 // ExchangePreAuthorizedCode implements the Pre-Authorized Code Flow's
 // own Token Request/Response (§6.1/§6.2) — the one OAuth 2.0 grant
 // type entirely outside fapigo/server's own scope (it's OID4VCI-specific,
@@ -143,9 +193,13 @@ func (AnonymousPreAuthorizedCode) isPreAuthorizedCodeClientAuthentication() {}
 // Dependencies.AccessTokens bound to the proof's own key by its RFC
 // 7638 thumbprint.
 //
-// The client isn't authenticated: see AnonymousPreAuthorizedCode, and
-// Config.PreAuthorizedCodeClientAuthentication for the explicit opt-in
-// AssuranceProduction requires.
+// Under VerifiedPreAuthorizedCode the Authorization Server has already
+// authenticated the client by its Wallet Attestation (HAIP 1.0 §4.4.1)
+// and verified the DPoP proof, and the token is bound to that client and
+// key; this method verifies neither. Under AnonymousPreAuthorizedCode
+// the client isn't authenticated, and this method verifies the DPoP
+// proof itself. Either way that happens before the code is consumed. Config.PreAuthorizedCodeClientAuthentication
+// chooses; AssuranceProduction requires the choice to be explicit.
 //
 // A wrong TxCode doesn't invalidate the code (PreAuthorizedCodeStore.Consume's
 // own contract), so the Wallet holder can retry after a mistyped PIN —
@@ -181,44 +235,32 @@ func (AnonymousPreAuthorizedCode) isPreAuthorizedCodeClientAuthentication() {}
 // itself, so the result carries the same value independently rather
 // than relying on the caller to decode its own freshly issued token.
 func (iss *Issuer) ExchangePreAuthorizedCode(ctx context.Context, req ExchangePreAuthorizedCodeRequest) (ExchangePreAuthorizedCodeResult, error) {
-	result, err := iss.exchangePreAuthorizedCode(ctx, req)
-	// No ClientID: this flow never authenticates the client (§6.1's
-	// own pre-authorized_code grant is for a public client), matching
-	// AuditEvent.ClientID's own "" convention.
-	iss.audit(ctx, AuditEventExchangePreAuthorizedCode, "", err)
+	// clientID stays "" unless VerifiedPreAuthorizedCode authenticated
+	// the client (AuditEvent.ClientID's own "" convention).
+	var clientID string
+	result, err := iss.exchangePreAuthorizedCode(ctx, req, &clientID)
+	iss.audit(ctx, AuditEventExchangePreAuthorizedCode, clientID, err)
 	return result, err
 }
 
-func (iss *Issuer) exchangePreAuthorizedCode(ctx context.Context, req ExchangePreAuthorizedCodeRequest) (ExchangePreAuthorizedCodeResult, error) {
+func (iss *Issuer) exchangePreAuthorizedCode(ctx context.Context, req ExchangePreAuthorizedCodeRequest, clientID *string) (ExchangePreAuthorizedCodeResult, error) {
 	if iss.deps.PreAuthorizedCodes == nil {
 		return ExchangePreAuthorizedCodeResult{}, fmt.Errorf("issuer: exchange pre-authorized code: the pre-authorized_code grant is not configured")
 	}
 	if req.PreAuthorizedCode == "" {
 		return ExchangePreAuthorizedCodeResult{}, newError(ErrorInvalidTokenRequest, 400, "pre-authorized_code is required", nil)
 	}
-	if req.DPoPProof == "" {
-		return ExchangePreAuthorizedCodeResult{}, newError(ErrorInvalidTokenRequest, 400, "a DPoP proof is required", nil)
-	}
-	if req.TokenEndpoint.IsZero() {
-		return ExchangePreAuthorizedCodeResult{}, fmt.Errorf("issuer: exchange pre-authorized code: token_endpoint is required")
-	}
-
 	now := iss.deps.Clock.Now()
-	target := req.TokenEndpoint.URL()
-	verified, err := dpop.Verify(ctx, dpop.VerifyRequest{
-		Proof: req.DPoPProof, Method: http.MethodPost, URL: target.String(),
-		Now: now, MaxProofAge: iss.cfg.Limits.MaxDPoPProofAge, MaxClockSkew: iss.cfg.Limits.MaxDPoPClockSkew,
-		Replay: iss.deps.DPoPReplay,
-	})
-	if err != nil {
-		return ExchangePreAuthorizedCodeResult{}, newError(ErrorInvalidTokenRequest, 400, "invalid DPoP proof", err)
-	}
 
-	if iss.deps.DPoPNonces != nil {
-		if challenge := iss.checkDPoPNonce(ctx, verified.Nonce, now); challenge != nil {
-			return ExchangePreAuthorizedCodeResult{}, challenge
-		}
+	// The client and DPoP proof: verified by the Authorization Server
+	// (VerifiedPreAuthorizedCode), or the DPoP proof here. Either way
+	// before the code is consumed, so neither a nonce challenge nor an
+	// unauthenticated client spends it.
+	binding, err := iss.preAuthorizedBinding(ctx, req, now)
+	if err != nil {
+		return ExchangePreAuthorizedCodeResult{}, err
 	}
+	*clientID = binding.ClientID
 
 	record, err := iss.consumePreAuthorizedCode(ctx, req)
 	if err != nil {
@@ -229,7 +271,7 @@ func (iss *Issuer) exchangePreAuthorizedCode(ctx context.Context, req ExchangePr
 	}
 
 	params := AccessTokenParams{
-		Scope: record.Scopes, Thumbprint: verified.Thumbprint, Subject: record.Subject,
+		Scope: record.Scopes, Thumbprint: binding.DPoPThumbprint, Subject: record.Subject, ClientID: binding.ClientID,
 		Issuer: iss.cfg.Issuer.String(), Audience: iss.cfg.Issuer.String(),
 		Now: now, Lifetime: iss.cfg.Limits.AccessTokenLifetime, Random: iss.deps.Random,
 	}
@@ -255,7 +297,10 @@ func (iss *Issuer) exchangePreAuthorizedCode(ctx context.Context, req ExchangePr
 		AccessToken: accessToken, TokenType: "DPoP", ExpiresIn: iss.cfg.Limits.AccessTokenLifetime,
 		AuthorizationDetails: authDetails,
 	}
-	if iss.deps.DPoPNonces != nil {
+	switch {
+	case req.Verified != nil:
+		result.NextDPoPNonce = binding.NextDPoPNonce
+	case iss.deps.DPoPNonces != nil:
 		nextNonce, err := iss.issueDPoPNonce(ctx, now)
 		if err != nil {
 			return ExchangePreAuthorizedCodeResult{}, fmt.Errorf("issuer: exchange pre-authorized code: issue next dpop nonce: %w", err)
@@ -263,6 +308,44 @@ func (iss *Issuer) exchangePreAuthorizedCode(ctx context.Context, req ExchangePr
 		result.NextDPoPNonce = nextNonce
 	}
 	return result, nil
+}
+
+// preAuthorizedBinding is a Token Request's client and DPoP key, for
+// the access token: req.Verified under VerifiedPreAuthorizedCode, or,
+// otherwise, no client and the key of the DPoP proof verified here
+// (with this issuer's own DPoP replay record and nonce policy).
+func (iss *Issuer) preAuthorizedBinding(ctx context.Context, req ExchangePreAuthorizedCodeRequest, now time.Time) (VerifiedTokenRequest, error) {
+	if _, ok := iss.cfg.PreAuthorizedCodeClientAuthentication.(VerifiedPreAuthorizedCode); ok {
+		v := req.Verified
+		if v == nil || v.ClientID == "" || v.DPoPThumbprint == "" {
+			return VerifiedTokenRequest{}, fmt.Errorf("issuer: exchange pre-authorized code: VerifiedPreAuthorizedCode needs Verified, with ClientID and DPoPThumbprint")
+		}
+		return *v, nil
+	}
+	if req.Verified != nil {
+		return VerifiedTokenRequest{}, fmt.Errorf("issuer: exchange pre-authorized code: Verified is set, but pre_authorized_code_client_authentication isn't VerifiedPreAuthorizedCode")
+	}
+	if req.DPoPProof == "" {
+		return VerifiedTokenRequest{}, newError(ErrorInvalidTokenRequest, 400, "a DPoP proof is required", nil)
+	}
+	if req.TokenEndpoint.IsZero() {
+		return VerifiedTokenRequest{}, fmt.Errorf("issuer: exchange pre-authorized code: token_endpoint is required")
+	}
+	target := req.TokenEndpoint.URL()
+	verified, err := dpop.Verify(ctx, dpop.VerifyRequest{
+		Proof: req.DPoPProof, Method: http.MethodPost, URL: target.String(),
+		Now: now, MaxProofAge: iss.cfg.Limits.MaxDPoPProofAge, MaxClockSkew: iss.cfg.Limits.MaxDPoPClockSkew,
+		Replay: iss.deps.DPoPReplay,
+	})
+	if err != nil {
+		return VerifiedTokenRequest{}, newError(ErrorInvalidTokenRequest, 400, "invalid DPoP proof", err)
+	}
+	if iss.deps.DPoPNonces != nil {
+		if challenge := iss.checkDPoPNonce(ctx, verified.Nonce, now); challenge != nil {
+			return VerifiedTokenRequest{}, challenge
+		}
+	}
+	return VerifiedTokenRequest{DPoPThumbprint: verified.Thumbprint}, nil
 }
 
 // consumePreAuthorizedCode redeems req's pre-authorized_code against
