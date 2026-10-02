@@ -151,6 +151,25 @@ func TestSessions_IssueThenPresent(t *testing.T) {
 		t.Errorf("keys held = %d, want 2", len(h.keys.keys))
 	}
 
+	sdjwt := checkPresentation(t, h, received)
+
+	checkClaims(t, h, received)
+
+	if err := h.w.DeleteCredential(sdjwt); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.w.DeleteCredential(sdjwt); code(err) != CodeNotFound {
+		t.Errorf("deleting it again: %v", err)
+	}
+
+	checkOrphan(t, h, received)
+}
+
+// checkPresentation presents the SD-JWT VC from received, chosen among
+// the candidates for a request that takes either format, and returns
+// its ID.
+func checkPresentation(t *testing.T, h harness, received []summary) string {
+	t.Helper()
 	req := decode[struct{ ID, Link string }](t, mustText(t)(h.env.Request("")))
 	p, err := h.w.StartPresentation(NewOperation(0), req.Link)
 	if err != nil {
@@ -195,17 +214,7 @@ func TestSessions_IssueThenPresent(t *testing.T) {
 	if _, err := p.Respond(NewOperation(0), chosen); code(err) != CodeWrongStep {
 		t.Errorf("Respond twice: %v", err)
 	}
-
-	checkClaims(t, h, received)
-
-	if err := h.w.DeleteCredential(sdjwt); err != nil {
-		t.Fatal(err)
-	}
-	if err := h.w.DeleteCredential(sdjwt); code(err) != CodeNotFound {
-		t.Errorf("deleting it again: %v", err)
-	}
-
-	checkOrphan(t, h, received)
+	return sdjwt
 }
 
 // checkClaims checks each received credential's claims, for display.
