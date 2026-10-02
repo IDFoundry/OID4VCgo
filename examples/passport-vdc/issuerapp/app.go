@@ -190,7 +190,7 @@ func (a *App) buildAuthorizationServer() error {
 	if _, err := rand.Read(consentKey); err != nil {
 		return fmt.Errorf("issuerapp: interaction cookie key: %w", err)
 	}
-	if a.consent, err = interactioncookie.New([][]byte{consentKey}, interactioncookie.Options{Lifetime: cfg.Limits.InteractionLifetime}); err != nil {
+	if a.consent, err = interactioncookie.New([][]byte{consentKey}, interactioncookie.Options{}); err != nil {
 		return fmt.Errorf("issuerapp: interaction cookie: %w", err)
 	}
 	// The token endpoint also serves the pre-authorized code grant

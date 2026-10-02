@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"net"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -19,7 +21,8 @@ import (
 
 // HeadlessApprover approves without a browser, as a holder would: it
 // opens the demo issuer's approval page, keeping the interaction cookie
-// it sets, and posts "approve" with the offer's confirmation code to its
+// it sets, and submits its form — the interaction's tag
+// (ApprovalTag), "approve" and the offer's confirmation code — to its
 // /authorize/decision endpoint. For tests and scripted demos.
 type HeadlessApprover struct {
 	HTTP *http.Client // nil means a 10 s timeout client
@@ -52,10 +55,17 @@ func (h HeadlessApprover) Approve(ctx context.Context, authorizationURL string, 
 	if err != nil {
 		return Callback{}, err
 	}
-	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxApprovalPageBytes))
+	page, err := io.ReadAll(io.LimitReader(resp.Body, maxApprovalPageBytes))
 	_ = resp.Body.Close()
+	if err != nil {
+		return Callback{}, fmt.Errorf("authorization page: %w", err)
+	}
 	if resp.StatusCode != http.StatusOK {
 		return Callback{}, fmt.Errorf("authorization page: status %d", resp.StatusCode)
+	}
+	tag, err := ApprovalTag(page)
+	if err != nil {
+		return Callback{}, err
 	}
 
 	u, err := url.Parse(authorizationURL)
@@ -63,7 +73,7 @@ func (h HeadlessApprover) Approve(ctx context.Context, authorizationURL string, 
 		return Callback{}, err
 	}
 	decision := (&url.URL{Scheme: u.Scheme, Host: u.Host, Path: "/authorize/decision"}).String()
-	form := url.Values{"decision": {"approve"}, "code": {h.Code}}
+	form := url.Values{approvalTagField: {tag}, "decision": {"approve"}, "code": {h.Code}}
 	req, err = http.NewRequestWithContext(ctx, http.MethodPost, decision, strings.NewReader(form.Encode()))
 	if err != nil {
 		return Callback{}, err
@@ -83,6 +93,24 @@ func (h HeadlessApprover) Approve(ctx context.Context, authorizationURL string, 
 
 // maxApprovalPageBytes bounds the approval page HeadlessApprover reads.
 const maxApprovalPageBytes = 1 << 20
+
+// approvalTagField is the demo issuer's approval form field carrying the
+// interaction's tag (fapigo's interactioncookie.FormField).
+const approvalTagField = "interaction"
+
+// approvalTagInput matches the approval form's hidden tag field.
+var approvalTagInput = regexp.MustCompile(`<input type="hidden" name="` + approvalTagField + `" value="([^"]*)">`)
+
+// ApprovalTag returns the interaction tag in the demo issuer's approval
+// page: the hidden field its form posts back with the interaction
+// cookie, so the issuer knows which interaction the form was for.
+func ApprovalTag(page []byte) (string, error) {
+	m := approvalTagInput.FindSubmatch(page)
+	if m == nil || len(m[1]) == 0 {
+		return "", errors.New("authorization page: no interaction tag in its approval form")
+	}
+	return html.UnescapeString(string(m[1])), nil
+}
 
 // BrowserApprover has the holder approve in a browser: it shows the
 // authorization URL (via Show) and waits for the redirect on the
