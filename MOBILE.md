@@ -1,6 +1,6 @@
 # OID4VCgo Mobile — design
 
-Status: **in progress** — Phases 0 to 4 are done (see Phases). This is
+Status: **in progress** — Phases 0 to 5 are done (see Phases). This is
 the design for a mobile wallet SDK built on OID4VCgo, delivered in the
 phases below. It records the decisions taken so far, what each phase
 found, and the questions still open; update it as phases land.
@@ -212,7 +212,7 @@ networking.
 | 2 ✓ | Secure Enclave spike | A Swift-generated key signs an ES256 JWS through Go's `crypto.Signer`, verified by OID4VCgo; a platform `KeyManager` for FAPIgo |
 | 3 ✓ | ABI foundation | Versioned JSON envelope, error codes and session lifecycle, documented |
 | 4 ✓ | OID4VCI slice | HAIP issuance from the iOS demo app against the passport-vdc issuer, with Key Attestations from the Wallet Provider |
-| 5 | Storage | The native credential store, with key references |
+| 5 ✓ | Storage | The native credential store, with key references |
 | 6 | OID4VP slice | Request parsing, candidates, consent and presentation from the iOS demo app |
 | 7 | Hardening | Suspension and resumption, cancellation, network failures, issuer and verifier errors, logging without personal data |
 | 8 | Android | The same bridge over Android Keystore, packaged as an AAR |
@@ -355,6 +355,27 @@ keeps credentials in a data-protected file store.
   presents over it. A `Section`'s accessibility identifier overrides its
   rows'.
 
+### Phase 5 findings
+
+- **The native store:** `FileCredentialStore` in the Swift package keeps
+  one file per credential record, written with complete data protection
+  (readable only while the device is unlocked). The store's directory is
+  excluded from backups: a credential is useless without its holder key,
+  which stays in this device's Secure Enclave. Both settings are
+  options. Records are opaque JSON the app needn't read. IDs are checked
+  before they name a file.
+- **Key references:** each record names its holder key. A credential
+  summary says whether the key store still holds it
+  (`holder_key_present`), so an app can flag credentials it can no
+  longer present, such as ones restored without their keys.
+- **Claims for display:** walletflow keeps the claims it checked on
+  receipt (`StoredCredential.Claims`), and `Wallet.Credential(id)`
+  returns them. An mdoc's decoded CBOR is made JSON-safe: byte strings
+  in base64, dates as their text. The demo app shows them.
+- **Encryption at rest beyond data protection** isn't needed on iOS: the
+  file protection class does it, keyed to the passcode. An Android store
+  (Phase 8) needs its own answer.
+
 ## Decisions
 
 Taken 2026-10-02:
@@ -372,8 +393,6 @@ Taken 2026-10-02:
 ## Open questions
 
 - Session persistence format and where it's kept, for suspension.
-- Whether the app or Go owns the credential store's encryption at rest
-  beyond iOS Data Protection.
 - The Wallet Provider's production design (App Attest verification, key
   attestation formats), and whether it belongs in this repository.
 - iOS's integration point for the Digital Credentials API, when Phase 9
