@@ -74,7 +74,10 @@ Opaque records kept by ID, under the platform's data protection.
 
 A record is JSON the app needn't read: `id`, `credential_issuer`,
 `configuration_id`, `format`, `vct`, `doctype`, `credential`,
-`holder_key_id`, `received_at`.
+`holder_key_id`, `received_at`, and `claims` (absent from a record
+written before claims were kept). The Swift package's
+`FileCredentialStore` keeps records as files with complete data
+protection, excluded from backups.
 
 ### WalletProvider
 
@@ -103,12 +106,17 @@ allows services on loopback addresses.
 | Method | Result |
 |---|---|
 | `Credentials()` | `{"credentials": [summary]}` |
+| `Credential(id)` | summary with `"claims"`: an SD-JWT VC's claims, or an mdoc's namespace → element → value, byte strings in base64 |
 | `DeleteCredential(id)` | deletes it and its holder key |
 | `StartIssuance(op, offerURI)` | an `Issuance` |
 | `StartPresentation(op, requestLink)` | a `Presentation` |
 
 A credential **summary** is `{"id", "credential_issuer",
-"configuration_id", "format", "vct", "doctype", "received_at"}`.
+"configuration_id", "format", "vct", "doctype", "received_at",
+"holder_key_present"}`. `holder_key_present` is false when the key store
+no longer holds the credential's key, for example after a restore to
+another device, so it can't be presented. It's set by `Credentials` and
+`Credential`.
 
 ## Issuance
 

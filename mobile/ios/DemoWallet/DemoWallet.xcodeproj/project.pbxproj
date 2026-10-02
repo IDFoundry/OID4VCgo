@@ -11,7 +11,6 @@
 		22BEE44EFF06CBD3FDC082B6 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D97405F0E07310B8A204CF1 /* ContentView.swift */; };
 		6BDA4B0484E846748B5C2344 /* HTTPWalletProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F0E54791828D5171B822733 /* HTTPWalletProvider.swift */; };
 		7C33F773F766F688BFD56D9A /* OID4VCMobile in Frameworks */ = {isa = PBXBuildFile; productRef = E2E0ED95F892402D9954B8E2 /* OID4VCMobile */; };
-		B407DA9C04EE2E032C518E2C /* FileCredentialStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8617909141BD4AE334EF03C8 /* FileCredentialStore.swift */; };
 		C02517FB98677D16EA5E9C4F /* DemoWalletApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5F16C5C0BD25AEB7DAFC75E /* DemoWalletApp.swift */; };
 		DD51A0DDC2F2873B44E1AB43 /* WalletModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 727FF1B0EB18E15552480967 /* WalletModel.swift */; };
 		FA6A934F772D47C8BCBBFF6E /* DemoConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D0E5AE041BC6DF85863096C /* DemoConfiguration.swift */; };
@@ -34,7 +33,6 @@
 		7D0E5AE041BC6DF85863096C /* DemoConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DemoConfiguration.swift; sourceTree = "<group>"; };
 		7D97405F0E07310B8A204CF1 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		819D7D3167D5646D27BE809E /* DemoWalletUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DemoWalletUITests.swift; sourceTree = "<group>"; };
-		8617909141BD4AE334EF03C8 /* FileCredentialStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileCredentialStore.swift; sourceTree = "<group>"; };
 		B7C5CBBB353EA82B6E1F07C6 /* OID4VCMobile */ = {isa = PBXFileReference; lastKnownFileType = folder; name = OID4VCMobile; path = ../OID4VCMobile; sourceTree = SOURCE_ROOT; };
 		C5F16C5C0BD25AEB7DAFC75E /* DemoWalletApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DemoWalletApp.swift; sourceTree = "<group>"; };
 		DE034FF24178F629F3A024CC /* DemoWallet.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = DemoWallet.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -94,7 +92,6 @@
 				7D97405F0E07310B8A204CF1 /* ContentView.swift */,
 				7D0E5AE041BC6DF85863096C /* DemoConfiguration.swift */,
 				C5F16C5C0BD25AEB7DAFC75E /* DemoWalletApp.swift */,
-				8617909141BD4AE334EF03C8 /* FileCredentialStore.swift */,
 				2F0E54791828D5171B822733 /* HTTPWalletProvider.swift */,
 				71C07640C370F23881BE60F2 /* Info.plist */,
 				727FF1B0EB18E15552480967 /* WalletModel.swift */,
@@ -193,7 +190,6 @@
 				22BEE44EFF06CBD3FDC082B6 /* ContentView.swift in Sources */,
 				FA6A934F772D47C8BCBBFF6E /* DemoConfiguration.swift in Sources */,
 				C02517FB98677D16EA5E9C4F /* DemoWalletApp.swift in Sources */,
-				B407DA9C04EE2E032C518E2C /* FileCredentialStore.swift in Sources */,
 				6BDA4B0484E846748B5C2344 /* HTTPWalletProvider.swift in Sources */,
 				DD51A0DDC2F2873B44E1AB43 /* WalletModel.swift in Sources */,
 			);

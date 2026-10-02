@@ -4,10 +4,13 @@ import (
 	"context"
 	"crypto"
 	"crypto/ecdsa"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/fxamacker/cbor/v2"
 
 	"github.com/idfoundry/oid4vcgo/attestation"
 	"github.com/idfoundry/oid4vcgo/walletflow"
@@ -52,24 +55,41 @@ type credentialRecord struct {
 	Credential       string    `json:"credential"`
 	HolderKeyID      string    `json:"holder_key_id"`
 	ReceivedAt       time.Time `json:"received_at"`
+	// Claims are the credential's claims for display, as JSON (see
+	// jsonClaims); absent from a record written before they were kept.
+	Claims json.RawMessage `json:"claims,omitempty"`
 }
 
-func recordOf(c walletflow.StoredCredential) credentialRecord {
-	return credentialRecord{
+func recordOf(c walletflow.StoredCredential) (credentialRecord, error) {
+	r := credentialRecord{
 		ID: c.ID, CredentialIssuer: c.CredentialIssuer, ConfigurationID: c.ConfigurationID, Format: c.Format,
 		VCT: c.VCT, DocType: c.DocType, Credential: c.Credential, HolderKeyID: c.HolderKeyID, ReceivedAt: c.ReceivedAt,
 	}
+	if c.Claims != nil {
+		raw, err := json.Marshal(jsonClaims(c.Claims))
+		if err != nil {
+			return credentialRecord{}, err
+		}
+		r.Claims = raw
+	}
+	return r, nil
 }
 
-func (r credentialRecord) stored() walletflow.StoredCredential {
-	return walletflow.StoredCredential{
+func (r credentialRecord) stored() (walletflow.StoredCredential, error) {
+	c := walletflow.StoredCredential{
 		ID: r.ID, CredentialIssuer: r.CredentialIssuer, ConfigurationID: r.ConfigurationID, Format: r.Format,
 		VCT: r.VCT, DocType: r.DocType, Credential: r.Credential, HolderKeyID: r.HolderKeyID, ReceivedAt: r.ReceivedAt,
 	}
+	if len(r.Claims) > 0 {
+		if err := json.Unmarshal(r.Claims, &c.Claims); err != nil {
+			return walletflow.StoredCredential{}, err
+		}
+	}
+	return c, nil
 }
 
-// credentialSummary is a credential as the app shows it: everything but
-// the credential itself and its key.
+// credentialSummary is a credential as the app lists it: everything but
+// the credential itself, its key and its claims.
 type credentialSummary struct {
 	ID               string    `json:"id"`
 	CredentialIssuer string    `json:"credential_issuer"`
@@ -78,6 +98,11 @@ type credentialSummary struct {
 	VCT              string    `json:"vct,omitempty"`
 	DocType          string    `json:"doctype,omitempty"`
 	ReceivedAt       time.Time `json:"received_at"`
+	// HolderKeyPresent is whether the key store still holds the
+	// credential's key; without it the credential can't be presented
+	// (restored from a backup to another device, say). Set only by
+	// Wallet.Credentials and Wallet.Credential.
+	HolderKeyPresent *bool `json:"holder_key_present,omitempty"`
 }
 
 func summaryOf(c walletflow.StoredCredential) credentialSummary {
@@ -101,7 +126,11 @@ type credentialStore struct{ cs CredentialStore }
 var _ walletflow.CredentialStore = credentialStore{}
 
 func (s credentialStore) Put(_ context.Context, c walletflow.StoredCredential) error {
-	raw, err := json.Marshal(recordOf(c))
+	r, err := recordOf(c)
+	if err != nil {
+		return newError(CodeInternal, err)
+	}
+	raw, err := json.Marshal(r)
 	if err != nil {
 		return newError(CodeInternal, err)
 	}
@@ -123,7 +152,11 @@ func (s credentialStore) Get(_ context.Context, id string) (walletflow.StoredCre
 	if err := json.Unmarshal(raw, &r); err != nil {
 		return walletflow.StoredCredential{}, newError(CodePlatform, fmt.Errorf("credential %q's record: %w", id, err))
 	}
-	return r.stored(), nil
+	c, err := r.stored()
+	if err != nil {
+		return walletflow.StoredCredential{}, newError(CodePlatform, fmt.Errorf("credential %q's record: %w", id, err))
+	}
+	return c, nil
 }
 
 func (s credentialStore) List(context.Context) ([]walletflow.StoredCredential, error) {
@@ -140,7 +173,11 @@ func (s credentialStore) List(context.Context) ([]walletflow.StoredCredential, e
 	}
 	out := make([]walletflow.StoredCredential, 0, len(records))
 	for _, r := range records {
-		out = append(out, r.stored())
+		c, err := r.stored()
+		if err != nil {
+			return nil, newError(CodePlatform, fmt.Errorf("credential %q's record: %w", r.ID, err))
+		}
+		out = append(out, c)
 	}
 	return out, nil
 }
@@ -193,4 +230,39 @@ func (w walletProvider) KeyAttestation(_ context.Context, keys []*ecdsa.PublicKe
 		return "", newError(CodePlatform, errors.New("key attestation: none returned"))
 	}
 	return string(jwt), nil
+}
+
+// jsonClaims makes claims JSON-safe: an mdoc's element values are
+// decoded CBOR, so byte strings become standard base64, a tagged value
+// (an mdoc's tdate or full-date) its content, and a map with
+// non-string keys one with their text.
+func jsonClaims(v any) any {
+	switch v := v.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(v))
+		for k, e := range v {
+			out[k] = jsonClaims(e)
+		}
+		return out
+	case map[any]any:
+		out := make(map[string]any, len(v))
+		for k, e := range v {
+			out[fmt.Sprint(k)] = jsonClaims(e)
+		}
+		return out
+	case []any:
+		out := make([]any, len(v))
+		for i, e := range v {
+			out[i] = jsonClaims(e)
+		}
+		return out
+	case []byte:
+		return base64.StdEncoding.EncodeToString(v)
+	case cbor.Tag:
+		return jsonClaims(v.Content)
+	case time.Time:
+		return v.UTC().Format(time.RFC3339)
+	default:
+		return v
+	}
 }

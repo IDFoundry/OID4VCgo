@@ -19,9 +19,14 @@ struct ContentView: View {
                         Text("No credentials yet").foregroundStyle(.secondary)
                     }
                     ForEach(model.credentials, id: \.id) { c in
-                        VStack(alignment: .leading) {
-                            Text(c.vct ?? c.doctype ?? c.configurationID).font(.headline)
-                            Text("\(c.format) · \(c.credentialIssuer)").font(.caption).foregroundStyle(.secondary)
+                        NavigationLink(value: c.id) {
+                            VStack(alignment: .leading) {
+                                Text(c.vct ?? c.doctype ?? c.configurationID).font(.headline)
+                                Text("\(c.format) · \(c.credentialIssuer)").font(.caption).foregroundStyle(.secondary)
+                                if c.holderKeyPresent == false {
+                                    Text("Its key isn't on this device: it can't be presented").font(.caption).foregroundStyle(.red)
+                                }
+                            }
                         }
                         .accessibilityElement(children: .combine)
                         .accessibilityIdentifier("credential")
@@ -30,6 +35,9 @@ struct ContentView: View {
                 }
             }
             .navigationTitle("OID4VC Demo")
+            .navigationDestination(for: String.self) { id in
+                if let c = model.credentials.first(where: { $0.id == id }) { CredentialView(summary: c) }
+            }
             .toolbar {
                 Button("Paste offer") {
                     if let text = UIPasteboard.general.string { Task { await model.start(offer: text) } }
@@ -101,5 +109,59 @@ struct OfferView: View {
     private func authorize(_ url: URL) async throws -> URL {
         try await webAuthenticationSession.authenticate(using: url, callbackURLScheme: model.callbackScheme,
                                                         preferredBrowserSession: .ephemeral)
+    }
+}
+
+/// One credential's claims.
+struct CredentialView: View {
+    @Environment(WalletModel.self) private var model
+    let summary: CredentialSummary
+    @State private var detail: CredentialDetail?
+
+    var body: some View {
+        List {
+            Section("Credential") {
+                LabeledContent("Format", value: summary.format)
+                LabeledContent("Issuer", value: summary.credentialIssuer)
+                LabeledContent("Received", value: summary.receivedAt.formatted(date: .abbreviated, time: .shortened))
+            }
+            if let detail {
+                Section("Claims") { ClaimRows(value: detail.claims, path: []) }
+            }
+        }
+        .navigationTitle(summary.vct ?? summary.doctype ?? summary.configurationID)
+        .task { detail = await model.detail(summary) }
+    }
+}
+
+/// A claim tree as rows: nested objects flattened to dotted paths.
+struct ClaimRows: View {
+    let value: JSONValue
+    let path: [String]
+
+    var body: some View {
+        switch value {
+        case .object(let o):
+            ForEach(o.keys.sorted().filter { !Self.hidden.contains($0) || !path.isEmpty }, id: \.self) { key in
+                ClaimRows(value: o[key]!, path: path + [key])
+            }
+        default:
+            LabeledContent(path.joined(separator: " · "), value: Self.text(value))
+                .accessibilityIdentifier("claim")
+        }
+    }
+
+    /// The SD-JWT VC's own top-level claims, not about the holder.
+    static let hidden: Set<String> = ["cnf", "iss", "iat", "exp", "nbf", "vct", "status", "_sd_alg"]
+
+    static func text(_ v: JSONValue) -> String {
+        switch v {
+        case .null: "—"
+        case .bool(let b): b ? "yes" : "no"
+        case .number(let n): n.rounded() == n ? String(Int(n)) : String(n)
+        case .string(let s): s.count > 80 ? String(s.prefix(77)) + "…" : s
+        case .array(let a): a.map(text).joined(separator: ", ")
+        case .object: "{…}"
+        }
     }
 }
