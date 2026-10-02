@@ -4,12 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"html"
 	"io"
 	"net"
 	"net/http"
+	"net/http/cookiejar"
 	"net/url"
-	"regexp"
 	"strings"
 	"time"
 
@@ -19,10 +18,9 @@ import (
 )
 
 // HeadlessApprover approves without a browser, as a holder would: it
-// reads the interaction handle from the demo issuer's approval form
-// (ApprovalHandle) and posts "approve" with the offer's confirmation
-// code to its /authorize/decision endpoint. For tests and scripted
-// demos.
+// opens the demo issuer's approval page, keeping the interaction cookie
+// it sets, and posts "approve" with the offer's confirmation code to its
+// /authorize/decision endpoint. For tests and scripted demos.
 type HeadlessApprover struct {
 	HTTP *http.Client // nil means a 10 s timeout client
 	// Code is the confirmation code shown with the offer.
@@ -38,6 +36,13 @@ func (h HeadlessApprover) Approve(ctx context.Context, authorizationURL string, 
 		hc = &copied
 	}
 	hc.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	// The issuer keeps the approval's state in a cookie on the browser
+	// that opened the page; this process is that browser.
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		return Callback{}, err
+	}
+	hc.Jar = jar
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, authorizationURL, nil)
 	if err != nil {
@@ -47,17 +52,10 @@ func (h HeadlessApprover) Approve(ctx context.Context, authorizationURL string, 
 	if err != nil {
 		return Callback{}, err
 	}
-	page, err := io.ReadAll(io.LimitReader(resp.Body, maxApprovalPageBytes))
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxApprovalPageBytes))
 	_ = resp.Body.Close()
-	if err != nil {
-		return Callback{}, fmt.Errorf("authorization page: %w", err)
-	}
 	if resp.StatusCode != http.StatusOK {
 		return Callback{}, fmt.Errorf("authorization page: status %d", resp.StatusCode)
-	}
-	handle, err := ApprovalHandle(page)
-	if err != nil {
-		return Callback{}, err
 	}
 
 	u, err := url.Parse(authorizationURL)
@@ -65,7 +63,7 @@ func (h HeadlessApprover) Approve(ctx context.Context, authorizationURL string, 
 		return Callback{}, err
 	}
 	decision := (&url.URL{Scheme: u.Scheme, Host: u.Host, Path: "/authorize/decision"}).String()
-	form := url.Values{"handle": {handle}, "decision": {"approve"}, "code": {h.Code}}
+	form := url.Values{"decision": {"approve"}, "code": {h.Code}}
 	req, err = http.NewRequestWithContext(ctx, http.MethodPost, decision, strings.NewReader(form.Encode()))
 	if err != nil {
 		return Callback{}, err
@@ -85,21 +83,6 @@ func (h HeadlessApprover) Approve(ctx context.Context, authorizationURL string, 
 
 // maxApprovalPageBytes bounds the approval page HeadlessApprover reads.
 const maxApprovalPageBytes = 1 << 20
-
-// approvalHandleField matches the demo issuer's approval form's hidden
-// interaction handle field.
-var approvalHandleField = regexp.MustCompile(`<input type="hidden" name="handle" value="([^"]*)">`)
-
-// ApprovalHandle returns the interaction handle in the demo issuer's
-// approval page: the hidden "handle" field its form posts to
-// /authorize/decision.
-func ApprovalHandle(page []byte) (string, error) {
-	m := approvalHandleField.FindSubmatch(page)
-	if m == nil || len(m[1]) == 0 {
-		return "", errors.New("authorization page: no interaction handle in its approval form")
-	}
-	return html.UnescapeString(string(m[1])), nil
-}
 
 // BrowserApprover has the holder approve in a browser: it shows the
 // authorization URL (via Show) and waits for the redirect on the

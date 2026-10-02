@@ -5,26 +5,38 @@ import (
 	"errors"
 	"html/template"
 	"net/http"
-	"time"
 
 	"github.com/idfoundry/fapigo/extension"
 	"github.com/idfoundry/fapigo/server"
+	"github.com/idfoundry/fapigo/server/interactioncookie"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
 )
 
-// interactionLifetime bounds how long the approval page stays valid.
-const interactionLifetime = 5 * time.Minute
-
 // pendingInteraction links an approval page back to its fapigo
-// interaction and the passport transaction it's for.
+// interaction and the passport transaction it's for. It's read back from
+// the browser's sealed interaction cookie (interactioncookie), never
+// from the submitted form.
 type pendingInteraction struct {
 	handle server.InteractionHandle
 	txID   string
-	// scopes are the scopes the Wallet requested, recorded when the
-	// approval page was shown and granted from here — never from the
-	// submitted form.
+	// scopes are the scopes the Wallet requested, granted from here.
 	scopes []string
+}
+
+// interactionFromCookie restores the interaction this browser began:
+// the handle, and the transaction from the request's issuer_state. The
+// cookie is sealed, so neither can be swapped for another holder's.
+func (a *App) interactionFromCookie(r *http.Request) (pendingInteraction, error) {
+	handle, in, err := a.consent.Read(r, a.now())
+	if err != nil {
+		return pendingInteraction{}, err
+	}
+	txID, ok := extension.Get(in.Extensions, oid4vci.IssuerStateExtension)
+	if !ok {
+		return pendingInteraction{}, interactioncookie.ErrNoInteraction
+	}
+	return pendingInteraction{handle: handle, txID: txID, scopes: in.Scope}, nil
 }
 
 // handlePAR is the Pushed Authorization Request endpoint.
@@ -46,7 +58,6 @@ func (a *App) handlePAR(w http.ResponseWriter, r *http.Request) {
 // the offer link and an attested wallet, before the confirmation code
 // is checked. Whoever approves saw the passport on the offer page.
 type approvalPage struct {
-	Handle   string
 	ClientID string
 	Scopes   []string
 	Error    string
@@ -58,7 +69,6 @@ var approvalTemplate = template.Must(template.New("approval").Parse(pageHead + `
 <p>Formats requested: {{range .Scopes}}<code>{{.}}</code> {{end}}</p>
 {{if .Error}}<p class="warn">{{.Error}}</p>{{end}}
 <form method="post" action="/authorize/decision">
-<input type="hidden" name="handle" value="{{.Handle}}">
 <p><label>Confirmation code shown with the offer: <input name="code" inputmode="numeric" autocomplete="off" maxlength="6" size="8"></label></p>
 <button name="decision" value="approve">Approve</button>
 <button name="decision" value="deny">Deny</button>
@@ -94,8 +104,13 @@ func (a *App) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 			writeHTMLError(w, http.StatusBadRequest, transactionErrorMessage(err))
 			return
 		}
+		// The interaction travels with this browser, sealed: the approval
+		// can only be submitted from it, and nothing is kept here.
+		if err := a.consent.Set(w, action.Handle, action.Interaction, a.now()); err != nil {
+			writeHTMLError(w, http.StatusInternalServerError, "failed to begin authorization")
+			return
+		}
 		pending := pendingInteraction{handle: action.Handle, txID: txID, scopes: action.Interaction.Scope}
-		a.interactions.put(action.Handle.String(), pending, interactionLifetime)
 		a.renderApproval(w, pending, action.Interaction.ClientID.String(), "")
 	case server.RedirectResponse:
 		http.Redirect(w, r, action.Destination.String(), http.StatusFound)
@@ -110,13 +125,20 @@ func (a *App) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 // transaction ID as subject so the access token's sub identifies the
 // passport to issue.
 func (a *App) handleDecision(w http.ResponseWriter, r *http.Request) {
+	// The interaction cookie is the approval's only state, so refuse a
+	// form another site posts (SameSite=Lax keeps the cookie off
+	// cross-site POSTs too).
+	if origin := r.Header.Get("Origin"); origin != "" && origin != a.cfg.IssuerURL {
+		writeHTMLError(w, http.StatusForbidden, "cross-origin approval refused")
+		return
+	}
 	if err := r.ParseForm(); err != nil {
 		writeHTMLError(w, http.StatusBadRequest, "malformed form")
 		return
 	}
-	pending, ok := a.interactions.take(r.FormValue("handle"))
-	if !ok {
-		writeHTMLError(w, http.StatusBadRequest, "approval is unknown, expired or already used")
+	pending, err := a.interactionFromCookie(r)
+	if err != nil {
+		writeHTMLError(w, http.StatusBadRequest, "no approval is in progress in this browser — it expired, was already used, or began in another browser")
 		return
 	}
 	txID := pending.txID
@@ -153,6 +175,8 @@ func (a *App) handleDecision(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Whatever the outcome, this interaction is over.
+	a.consent.Clear(w)
 	done, err := a.server.CompleteAuthorization(r.Context(), server.CompleteAuthorizationRequest{Handle: pending.handle, Result: result})
 	if err != nil {
 		writeHTMLError(w, http.StatusInternalServerError, "failed to complete authorization")
@@ -179,7 +203,7 @@ func (a *App) claimTransaction(w http.ResponseWriter, pending pendingInteraction
 	}
 	if errors.Is(err, errWrongCode) {
 		if _, err := a.transactions.unclaimed(pending.txID); err == nil {
-			a.interactions.put(pending.handle.String(), pending, interactionLifetime)
+			// The interaction cookie stays, for another try.
 			a.renderApproval(w, pending, a.cfg.Wallet.ClientID, "That confirmation code is wrong — check the offer page and try again.")
 			return false
 		}
@@ -192,7 +216,7 @@ func (a *App) renderApproval(w http.ResponseWriter, pending pendingInteraction, 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	_ = approvalTemplate.Execute(w, approvalPage{
-		Handle: pending.handle.String(), ClientID: clientID, Scopes: pending.scopes, Error: message,
+		ClientID: clientID, Scopes: pending.scopes, Error: message,
 	})
 }
 
