@@ -181,6 +181,14 @@ jobs:
         working-directory: mobile/ios/OID4VCMobile
         run: swift test
 
+      # The demo wallet app links the shipping build, without TestEnv.
+      - name: build the XCFramework (release build)
+        run: mobile/build-xcframework.sh
+
+      - name: build the demo wallet app
+        working-directory: mobile/ios/DemoWallet
+        run: xcodebuild build -project DemoWallet.xcodeproj -scheme DemoWallet -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO -quiet
+
   govulncheck:
     runs-on: ubuntu-latest
     steps:

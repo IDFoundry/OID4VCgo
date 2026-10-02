@@ -1,0 +1,61 @@
+# XcodeGen spec for the demo wallet app: `xcodegen` regenerates
+# DemoWallet.xcodeproj from it (brew install xcodegen). The app links the
+# OID4VCMobile Swift package, which needs ../../build/Mobile.xcframework
+# (../../build-xcframework.sh).
+name: DemoWallet
+options:
+  bundleIdPrefix: org.idfoundry.oid4vcgo
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+packages:
+  OID4VCMobile:
+    path: ../OID4VCMobile
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    CODE_SIGN_STYLE: Automatic
+    # Set your team to run on a device; the Simulator needs none.
+    DEVELOPMENT_TEAM: ""
+targets:
+  DemoWallet:
+    type: application
+    platform: iOS
+    sources: [DemoWallet]
+    dependencies:
+      - package: OID4VCMobile
+    info:
+      path: DemoWallet/Info.plist
+      properties:
+        CFBundleDisplayName: OID4VC Demo
+        CFBundleShortVersionString: "0.1"
+        CFBundleVersion: "1"
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        CFBundleURLTypes:
+          # The authorization redirect (RFC 8252 private-use scheme), and
+          # Credential Offer links.
+          - CFBundleURLName: org.idfoundry.oid4vcgo.demowallet
+            CFBundleURLSchemes: [org.idfoundry.oid4vcgo.demowallet, openid-credential-offer]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: org.idfoundry.oid4vcgo.demowallet
+        TARGETED_DEVICE_FAMILY: "1"
+  DemoWalletUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources: [DemoWalletUITests]
+    dependencies:
+      - target: DemoWallet
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: org.idfoundry.oid4vcgo.demowallet.uitests
+        GENERATE_INFOPLIST_FILE: YES
+schemes:
+  DemoWallet:
+    build:
+      targets:
+        DemoWallet: all
+        DemoWalletUITests: [test]
+    test:
+      targets: [DemoWalletUITests]
