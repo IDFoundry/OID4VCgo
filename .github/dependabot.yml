@@ -9,6 +9,12 @@ updates:
     schedule:
       interval: weekly
 
+  # mobile/ is its own module (golang.org/x/mobile, for gomobile).
+  - package-ecosystem: gomod
+    directory: /mobile
+    schedule:
+      interval: weekly
+
   # Keeps the pinned actions/checkout, actions/setup-go,
   # actions/upload-artifact, golang/govulncheck-action,
   # golangci/golangci-lint-action and googleapis/release-please-action
