@@ -134,3 +134,17 @@ func TestReceive_RequiresConfig(t *testing.T) {
 		t.Error("Receive with empty config = nil error")
 	}
 }
+
+func TestApprovalTag(t *testing.T) {
+	page := []byte(`<form method="post" action="/authorize/decision">
+<input type="hidden" name="interaction" value="t-1&#43;2">
+</form>`)
+	if got, err := ApprovalTag(page); err != nil || got != "t-1+2" {
+		t.Errorf("ApprovalTag = %q, %v; want t-1+2", got, err)
+	}
+	for _, page := range []string{`<p>no form</p>`, `<input type="hidden" name="interaction" value="">`} {
+		if _, err := ApprovalTag([]byte(page)); err == nil {
+			t.Errorf("ApprovalTag(%q) found a tag", page)
+		}
+	}
+}

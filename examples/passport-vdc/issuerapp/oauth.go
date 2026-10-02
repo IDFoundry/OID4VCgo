@@ -19,7 +19,11 @@ import (
 // from the submitted form.
 type pendingInteraction struct {
 	handle server.InteractionHandle
-	txID   string
+	// tag names the interaction in the approval form, so a form from a
+	// page whose interaction another tab replaced isn't taken for the
+	// replacement (interactioncookie.FormField).
+	tag  string
+	txID string
 	// scopes are the scopes the Wallet requested, granted from here.
 	scopes []string
 }
@@ -28,7 +32,8 @@ type pendingInteraction struct {
 // the handle, and the transaction from the request's issuer_state. The
 // cookie is sealed, so neither can be swapped for another holder's.
 func (a *App) interactionFromCookie(r *http.Request) (pendingInteraction, error) {
-	handle, in, err := a.consent.Read(r, a.now())
+	tag := r.PostFormValue(interactioncookie.FormField)
+	handle, in, err := a.consent.Read(r, a.now(), tag)
 	if err != nil {
 		return pendingInteraction{}, err
 	}
@@ -36,7 +41,7 @@ func (a *App) interactionFromCookie(r *http.Request) (pendingInteraction, error)
 	if !ok {
 		return pendingInteraction{}, interactioncookie.ErrNoInteraction
 	}
-	return pendingInteraction{handle: handle, txID: txID, scopes: in.Scope}, nil
+	return pendingInteraction{handle: handle, tag: tag, txID: txID, scopes: in.Scope}, nil
 }
 
 // handlePAR is the Pushed Authorization Request endpoint.
@@ -58,6 +63,7 @@ func (a *App) handlePAR(w http.ResponseWriter, r *http.Request) {
 // the offer link and an attested wallet, before the confirmation code
 // is checked. Whoever approves saw the passport on the offer page.
 type approvalPage struct {
+	Tag      string // the interaction's tag (interactioncookie.FormField)
 	ClientID string
 	Scopes   []string
 	Error    string
@@ -69,6 +75,7 @@ var approvalTemplate = template.Must(template.New("approval").Parse(pageHead + `
 <p>Formats requested: {{range .Scopes}}<code>{{.}}</code> {{end}}</p>
 {{if .Error}}<p class="warn">{{.Error}}</p>{{end}}
 <form method="post" action="/authorize/decision">
+<input type="hidden" name="interaction" value="{{.Tag}}">
 <p><label>Confirmation code shown with the offer: <input name="code" inputmode="numeric" autocomplete="off" maxlength="6" size="8"></label></p>
 <button name="decision" value="approve">Approve</button>
 <button name="decision" value="deny">Deny</button>
@@ -106,11 +113,12 @@ func (a *App) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 		}
 		// The interaction travels with this browser, sealed: the approval
 		// can only be submitted from it, and nothing is kept here.
-		if err := a.consent.Set(w, action.Handle, action.Interaction, a.now()); err != nil {
+		tag, err := a.consent.Set(w, action, a.now())
+		if err != nil {
 			writeHTMLError(w, http.StatusInternalServerError, "failed to begin authorization")
 			return
 		}
-		pending := pendingInteraction{handle: action.Handle, txID: txID, scopes: action.Interaction.Scope}
+		pending := pendingInteraction{handle: action.Handle, tag: tag, txID: txID, scopes: action.Interaction.Scope}
 		a.renderApproval(w, pending, action.Interaction.ClientID.String(), "")
 	case server.RedirectResponse:
 		http.Redirect(w, r, action.Destination.String(), http.StatusFound)
@@ -138,7 +146,7 @@ func (a *App) handleDecision(w http.ResponseWriter, r *http.Request) {
 	}
 	pending, err := a.interactionFromCookie(r)
 	if err != nil {
-		writeHTMLError(w, http.StatusBadRequest, "no approval is in progress in this browser — it expired, was already used, or began in another browser")
+		writeHTMLError(w, http.StatusBadRequest, "no approval is in progress in this browser for this page — it expired, was already used, began in another browser, or another tab started a new one")
 		return
 	}
 	txID := pending.txID
@@ -216,7 +224,7 @@ func (a *App) renderApproval(w http.ResponseWriter, pending pendingInteraction, 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	_ = approvalTemplate.Execute(w, approvalPage{
-		ClientID: clientID, Scopes: pending.scopes, Error: message,
+		Tag: pending.tag, ClientID: clientID, Scopes: pending.scopes, Error: message,
 	})
 }
 

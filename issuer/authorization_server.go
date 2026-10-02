@@ -61,10 +61,13 @@ package issuer
 // BeginAuthorization returns the InteractionRequest once, and the
 // consent step needs it back, with the handle, when the holder submits.
 // fapigo/server/interactioncookie carries both in one AES-256-GCM-sealed
-// cookie on the browser that began the authorization: Set it before
-// rendering the consent page, Read it when the form comes back (issuer_state
-// is in the restored request's Extensions, as above), and Clear it once
-// CompleteAuthorization has run. Sealed, the request can't be altered —
+// cookie on the browser that began the authorization: Set it with
+// BeginAuthorization's InteractionRequired before rendering the consent
+// page, put the tag Set returns in the form (interactioncookie.FormField),
+// Read it with that tag when the form comes back (issuer_state is in the
+// restored request's Extensions, as above), and Clear it once
+// CompleteAuthorization has run. The tag stops a form from a page whose
+// interaction another tab replaced from completing the replacement. Sealed, the request can't be altered —
 // which matters, because issuer_state decides whose Credential is
 // issued, and CompleteAuthorization checks only the grant's scopes
 // against the request the server stored — and the approval can only be
