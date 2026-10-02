@@ -59,32 +59,32 @@ public struct CredentialSummary: Decodable, Equatable, Sendable {
 /// A holder's wallet: OID4VCgo's walletflow over the app's key store,
 /// credential store and Wallet Provider.
 public final class Wallet: @unchecked Sendable {
-    let wallet: MobileWallet
+    let handle: MobileWallet
 
     public init(configuration: WalletConfiguration, keyStore: some PlatformKeyStore, credentialStore: some PlatformCredentialStore,
                 provider: (any MobileWalletProviderProtocol)?) throws {
         let json = String(decoding: try JSONEncoder().encode(configuration), as: UTF8.self)
-        wallet = try OID4VC.call { MobileNewWallet(json, keyStore, credentialStore, provider, $0) }!
+        handle = try OID4VC.call { MobileNewWallet(json, keyStore, credentialStore, provider, $0) }!
     }
 
     /// Every credential the wallet holds.
     public func credentials() async throws -> [CredentialSummary] {
         struct Result: Decodable { let credentials: [CredentialSummary] }
-        let wallet = self.wallet
+        let wallet = handle
         let json = try await OID4VC.offMain { try OID4VC.call { wallet.credentials($0) } }
         return try decode(Result.self, json).credentials
     }
 
     /// Deletes a credential and its holder key.
     public func deleteCredential(id: String) async throws {
-        let wallet = self.wallet
+        let wallet = handle
         try await OID4VC.offMain { try OID4VC.wrap { try wallet.deleteCredential(id) } }
     }
 
     /// Resolves a Credential Offer (openid-credential-offer://…) and the
     /// issuer's metadata.
     public func startIssuance(offer: String) async throws -> Issuance {
-        let wallet = self.wallet
+        let wallet = handle
         let s = try await OID4VC.cancellable { op in try OID4VC.wrap { try wallet.startIssuance(op, offerURI: offer) } }
         return try Issuance(s)
     }
@@ -92,7 +92,7 @@ public final class Wallet: @unchecked Sendable {
     /// Fetches and verifies an OpenID4VP request (openid4vp://…), and
     /// finds the credentials that can answer it.
     public func startPresentation(request: String) async throws -> Presentation {
-        let wallet = self.wallet
+        let wallet = handle
         let p = try await OID4VC.cancellable { op in try OID4VC.wrap { try wallet.startPresentation(op, requestLink: request) } }
         return try Presentation(p)
     }
@@ -149,7 +149,7 @@ public final class Issuance: @unchecked Sendable {
     public func beginAuthorization() async throws -> URL {
         let session = self.session
         let text = try await OID4VC.cancellable { op in try OID4VC.call { session.beginAuthorization(op, error: $0) } }
-        guard let url = URL(string: text) else { throw WalletError(code: .internal, message: "malformed authorization URL") }
+        guard let url = URL(string: text) else { throw WalletError(code: .internalError, message: "malformed authorization URL") }
         return url
     }
 
@@ -193,13 +193,14 @@ public final class Issuance: @unchecked Sendable {
         struct Status: Decodable {
             let status: String
             let credential: CredentialSummary?
-            let interval_seconds: Double
+            let intervalSeconds: Double
+            enum CodingKeys: String, CodingKey { case status, credential, intervalSeconds = "interval_seconds" }
         }
         let session = self.session
         let json = try await OID4VC.cancellable { op in try OID4VC.call { session.pollDeferred(op, deferredID: id, error: $0) } }
         let s = try decode(Status.self, json)
         if s.status == MobileDeferredIssued, let c = s.credential { return .issued(c) }
-        return .pending(intervalSeconds: s.interval_seconds)
+        return .pending(intervalSeconds: s.intervalSeconds)
     }
 
     /// Ends the issuance, deleting its keys.
@@ -250,12 +251,12 @@ public final class Presentation: @unchecked Sendable {
         enum CodingKeys: String, CodingKey { case queryIDs = "query_ids", redirectURI = "redirect_uri" }
     }
 
-    let presentation: MobilePresentation
+    let handle: MobilePresentation
     public let verifier: Verifier
     public let candidates: [Candidates]
 
     init(_ p: MobilePresentation) throws {
-        presentation = p
+        handle = p
         verifier = try decode(Verifier.self, p.verifier())
         struct All: Decodable { let queries: [Candidates] }
         candidates = try decode(All.self, p.candidates()).queries
@@ -265,7 +266,8 @@ public final class Presentation: @unchecked Sendable {
     /// choice) would disclose.
     public func preview(credentialIDs: [String]? = nil) async throws -> [Disclosure] {
         struct All: Decodable { let disclosures: [Disclosure] }
-        let p = presentation, ids = try idsJSON(credentialIDs)
+        let p = handle
+        let ids = try idsJSON(credentialIDs)
         let json = try await OID4VC.offMain { try OID4VC.call { p.preview(ids, error: $0) } }
         return try decode(All.self, json).disclosures
     }
@@ -273,14 +275,15 @@ public final class Presentation: @unchecked Sendable {
     /// Presents `credentialIDs`: holder keys sign now, so a key store
     /// requiring user presence prompts.
     public func respond(credentialIDs: [String]? = nil) async throws -> Presented {
-        let p = presentation, ids = try idsJSON(credentialIDs)
+        let p = handle
+        let ids = try idsJSON(credentialIDs)
         let json = try await OID4VC.cancellable { op in try OID4VC.call { p.respond(op, credentialIDsJSON: ids, error: $0) } }
         return try decode(Presented.self, json)
     }
 
     /// Tells the Verifier the holder declined.
     public func decline() async throws -> Presented {
-        let p = presentation
+        let p = handle
         let json = try await OID4VC.cancellable { op in try OID4VC.call { p.decline(op, error: $0) } }
         return try decode(Presented.self, json)
     }

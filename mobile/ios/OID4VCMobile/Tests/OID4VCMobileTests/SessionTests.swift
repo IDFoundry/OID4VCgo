@@ -123,7 +123,7 @@ final class SessionTests: XCTestCase {
             try await s.redeemPreAuthorizedCode(pin: "000000")
             XCTFail("a wrong PIN was accepted")
         } catch let e as WalletError {
-            XCTAssertEqual(e.code, .protocol)
+            XCTAssertEqual(e.code, .protocolError)
         }
         try await s.redeemPreAuthorizedCode(pin: "493536")
         let result = try await s.requestCredentials()

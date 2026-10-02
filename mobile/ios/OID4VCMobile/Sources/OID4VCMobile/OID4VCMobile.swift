@@ -17,8 +17,8 @@ public struct WalletError: Error, Equatable, CustomStringConvertible {
         public static let authorizationDenied = Code(rawValue: MobileCodeAuthorizationDenied)
         public static let credentialDenied = Code(rawValue: MobileCodeCredentialDenied)
         public static let noMatchingCredential = Code(rawValue: MobileCodeNoMatchingCredential)
-        public static let `protocol` = Code(rawValue: MobileCodeProtocol)
-        public static let `internal` = Code(rawValue: MobileCodeInternal)
+        public static let protocolError = Code(rawValue: MobileCodeProtocol)
+        public static let internalError = Code(rawValue: MobileCodeInternal)
     }
 
     public let code: Code
@@ -38,7 +38,7 @@ public struct WalletError: Error, Equatable, CustomStringConvertible {
             code = Code(rawValue: String(text[text.index(after: text.startIndex)..<close]))
             message = String(text[text.index(after: close)...]).trimmingCharacters(in: .whitespaces)
         } else {
-            code = .internal
+            code = .internalError
             message = text
         }
     }

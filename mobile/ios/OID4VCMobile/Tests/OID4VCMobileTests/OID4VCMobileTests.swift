@@ -88,7 +88,7 @@ final class OID4VCMobileTests: XCTestCase {
     func testWalletErrorParsing() {
         XCTAssertEqual(WalletError(NSError(domain: "go", code: 1, userInfo: [NSLocalizedDescriptionKey: "[network] status 404"])).code, .network)
         let plain = WalletError(NSError(domain: "go", code: 1, userInfo: [NSLocalizedDescriptionKey: "no code"]))
-        XCTAssertEqual(plain.code, .internal)
+        XCTAssertEqual(plain.code, .internalError)
         XCTAssertEqual(plain.message, "no code")
     }
 }
