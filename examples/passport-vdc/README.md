@@ -504,7 +504,7 @@ generator, planned for gmrtd itself).
 | `credential` | `Evidence` → `mdoc.Claims` / `sdjwtvc.Claims`; validity and age claims |
 | `issuerapp` | the OID4VCI issuer: fapigo Authorization Server + oid4vcgo Issuer + upload page |
 | `walletprovider` | the stand-in Wallet Provider: signs Wallet Attestations and Key Attestations, as an HTTPS service (`Handler`) the wallets call (`Client`) |
-| `walletapp` | the wallet: receive (offer → discovery → HAIP Authorization Code flow → credentials) and present (OpenID4VP, selective disclosure); credential store |
+| `walletapp` | the wallet, on oid4vcgo's `walletflow` sessions: receive (offer → discovery → HAIP Authorization Code flow or pre-authorized code → credentials) and present (OpenID4VP, selective disclosure); credential store |
 | `verifierapp` | the OpenID4VP verifier: either-format requests, both trust paths, revocation checks |
 | `webwallet` | the browser wallet: credential cards, receive via the issuer's approval page, consent before presenting |
 | `cmd/demo` | runs the issuer, verifier and web wallet together, with persistent state |

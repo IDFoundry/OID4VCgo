@@ -2,21 +2,16 @@ package walletapp
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/x509"
-	"encoding/pem"
 	"fmt"
 	"net/http"
 	"os"
-	"sort"
+	"slices"
 	"strings"
-	"time"
 
-	"github.com/idfoundry/fapigo/fapihttp"
-
-	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/dcql"
 	"github.com/idfoundry/oid4vcgo/wallet"
+	"github.com/idfoundry/oid4vcgo/walletflow"
 )
 
 // PresentOptions controls Present.
@@ -59,9 +54,8 @@ type Prepared struct {
 	// answer in.
 	Options []Option
 
-	authReq wallet.AuthorizationRequest
-	store   Store
-	http    *http.Client
+	p        *walletflow.Presentation
+	byFormat map[string][]string // candidate credential IDs, by format
 }
 
 // Option is one way to answer a request.
@@ -88,114 +82,79 @@ func Present(ctx context.Context, requestLink string, store Store, opts PresentO
 // openid4vp:// link carrying client_id and request_uri) from a verifier
 // trust accepts, and works out how the stored credentials can answer
 // it, without sending anything — so a wallet can ask the holder first.
-func Prepare(ctx context.Context, requestLink string, store Store, httpClient *http.Client, trust wallet.VerifierTrust) (*Prepared, error) {
+// request_uri_method=post is accepted and fetched with GET, which
+// OID4VP §5 allows a Wallet without POST support to do.
+func Prepare(ctx context.Context, requestLink string, store Store, hc *http.Client, trust wallet.VerifierTrust) (*Prepared, error) {
 	if trust == nil {
 		return nil, fmt.Errorf("walletapp: a VerifierTrust is required")
 	}
-	if httpClient == nil {
-		httpClient = &http.Client{Timeout: httpTimeout}
-	}
-	// request_uri_method=post is accepted and fetched with GET, which
-	// OID4VP §5 allows a Wallet without POST support to do.
-	link, err := wallet.ParseAuthorizationRequestLink(requestLink)
-	if err != nil {
-		return nil, fmt.Errorf("walletapp: %w", err)
-	}
-
-	w, err := wallet.New(wallet.Config{
-		Assurance: wallet.AssuranceDevelopment, ProofSigningAlg: oid4vci.ES256,
-		Fetch:         fapihttp.Config{MaxResponseBytes: 1 << 20, RequestTimeout: httpTimeout, MaxRedirects: 2, AllowLoopbackHosts: true},
-		VerifierTrust: trust,
-	}, wallet.Dependencies{HTTP: httpClient, Clock: wallet.ClockFunc(time.Now), Random: rand.Reader})
-	if err != nil {
-		return nil, fmt.Errorf("walletapp: %w", err)
-	}
-	// FetchAuthorizationRequest checks the signing certificate chains
-	// to a trusted CA, the Request Object's signature, and that
-	// client_id is that certificate's x509_hash.
-	authReq, err := w.FetchAuthorizationRequest(ctx, link.RequestURI, link.ClientID)
-	if err != nil {
-		return nil, fmt.Errorf("walletapp: presentation request: %w", err)
-	}
-
-	p := &Prepared{
-		VerifierClientID: authReq.ClientID, VerifierName: authReq.VerifierCertificate.Subject.CommonName,
-		ResponseURI: authReq.ResponseURI, authReq: authReq, store: store, http: httpClient,
-	}
-	// One option per format: exactly what Send would present in that
-	// format (wallet.PreviewPresentation makes the same choices, claim
-	// sets included), for the holder to see before choosing.
-	for _, format := range []string{"mso_mdoc", "dc+sd-jwt"} {
-		held, err := heldCredentials(store, format)
-		if err != nil {
-			continue
-		}
-		preview, err := wallet.PreviewPresentation(ctx, authReq.Query, held, dcql.AKITrustedAuthoritiesChecker{})
-		if err != nil {
-			continue
-		}
-		for _, c := range preview {
-			p.Options = append(p.Options, Option{Format: format, QueryID: c.QueryID, Claims: pathStrings(c.Claims)})
-		}
-	}
-	if len(p.Options) == 0 {
-		return nil, fmt.Errorf("walletapp: no stored credential satisfies the request")
-	}
-	return p, nil
-}
-
-// Send answers the request with the stored credential of format ("" for
-// whichever matches first): it builds selectively disclosed
-// presentations bound to the verifier's nonce and POSTs them to the
-// response_uri as an encrypted direct_post.jwt response.
-func (p *Prepared) Send(ctx context.Context, format string) (Presented, error) {
-	held, err := heldCredentials(p.store, format)
-	if err != nil {
-		return Presented{}, err
-	}
-	// Offer only credentials from an issuer the query's
-	// trusted_authorities names.
-	responded, err := wallet.Respond(ctx, p.http, p.authReq, held, dcql.AKITrustedAuthoritiesChecker{})
-	if err != nil {
-		return Presented{}, fmt.Errorf("walletapp: %w", err)
-	}
-	presented := Presented{VerifierClientID: p.authReq.ClientID, RedirectURI: responded.Reply.RedirectURI}
-	for id := range responded.VPToken {
-		presented.Credentials = append(presented.Credentials, id)
-	}
-	sort.Strings(presented.Credentials)
-	return presented, nil
-}
-
-// heldCredentials loads the store as wallet.HeldCredentials, optionally
-// only those of one format.
-func heldCredentials(store Store, format string) ([]wallet.HeldCredential, error) {
-	stored, err := store.List()
+	view, keys, err := store.view()
 	if err != nil {
 		return nil, err
 	}
-	var held []wallet.HeldCredential
-	for _, s := range stored {
-		if format != "" && s.Format != format {
+	w, err := walletflow.New(walletflow.Config{VerifierTrust: trust, Development: true}, walletflow.Dependencies{
+		Keys: keys, Credentials: view, HTTP: httpClient(hc),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("walletapp: %w", err)
+	}
+	// StartPresentation checks the signing certificate chains to a
+	// trusted CA, the Request Object's signature, and that client_id is
+	// that certificate's x509_hash.
+	p, err := w.StartPresentation(ctx, requestLink)
+	if err != nil {
+		return nil, fmt.Errorf("walletapp: %w", err)
+	}
+	v := p.Verifier()
+	prepared := &Prepared{
+		VerifierClientID: v.ClientID, VerifierName: v.Name, ResponseURI: v.ResponseURI,
+		p: p, byFormat: map[string][]string{},
+	}
+	for _, cs := range p.Candidates() {
+		for _, c := range cs.Credentials {
+			if !slices.Contains(prepared.byFormat[c.Format], c.ID) {
+				prepared.byFormat[c.Format] = append(prepared.byFormat[c.Format], c.ID)
+			}
+		}
+	}
+	// One option per format: exactly what Send would present in that
+	// format, claim sets included, for the holder to see before
+	// choosing.
+	for _, format := range []string{"mso_mdoc", "dc+sd-jwt"} {
+		ids := prepared.byFormat[format]
+		if len(ids) == 0 {
 			continue
 		}
-		block, _ := pem.Decode([]byte(s.HolderKeyPEM))
-		if block == nil {
-			return nil, fmt.Errorf("walletapp: %s: no holder key", s.Path)
-		}
-		key, err := x509.ParseECPrivateKey(block.Bytes)
+		disclosed, err := p.Preview(ctx, ids)
 		if err != nil {
-			return nil, fmt.Errorf("walletapp: %s: holder key: %w", s.Path, err)
+			continue
 		}
-		held = append(held, wallet.HeldCredential{
-			Format: s.Format, Credential: s.Credential,
-			HolderKey: key, HolderKeyAlg: oid4vci.ES256, MdocDocType: s.DocType,
-		})
+		for _, d := range disclosed {
+			prepared.Options = append(prepared.Options, Option{Format: format, QueryID: d.QueryID, Claims: pathStrings(d.Claims)})
+		}
 	}
-	if len(held) == 0 {
-		return nil, fmt.Errorf("walletapp: no stored credentials to present")
+	if len(prepared.Options) == 0 {
+		return nil, fmt.Errorf("walletapp: no stored credential satisfies the request")
 	}
-	return held, nil
+	return prepared, nil
+}
+
+// Send answers the request with the stored credentials of format (""
+// for whichever the query chooses): selectively disclosed presentations
+// bound to the verifier's nonce, POSTed to the response_uri as an
+// encrypted direct_post.jwt response.
+func (p *Prepared) Send(ctx context.Context, format string) (Presented, error) {
+	var ids []string
+	if format != "" {
+		if ids = p.byFormat[format]; len(ids) == 0 {
+			return Presented{}, fmt.Errorf("walletapp: no stored %s credential answers the request", format)
+		}
+	}
+	presented, err := p.p.Respond(ctx, ids)
+	if err != nil {
+		return Presented{}, fmt.Errorf("walletapp: %w", err)
+	}
+	return Presented{VerifierClientID: p.VerifierClientID, Credentials: presented.QueryIDs, RedirectURI: presented.RedirectURI}, nil
 }
 
 // LoadVerifierTrust trusts verifiers whose request-signing certificate
