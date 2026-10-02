@@ -2,22 +2,13 @@ package mobile
 
 import (
 	"context"
-	"crypto"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"math/big"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
-
-	"github.com/idfoundry/fapigo/fapihttp"
 
 	"github.com/idfoundry/oid4vcgo/wallet"
 )
@@ -37,6 +28,8 @@ const (
 	CodeNetwork = "network"
 	// CodeCancelled: the Operation was cancelled.
 	CodeCancelled = "cancelled"
+	// CodeNotFound: the KeyStore holds no key with that ID.
+	CodeNotFound = "not_found"
 	// CodeInternal: anything else.
 	CodeInternal = "internal"
 )
@@ -76,101 +69,6 @@ func ParseRequestLink(link string) (string, error) {
 		return "", newError(CodeInternal, err)
 	}
 	return string(out), nil
-}
-
-// Signer is a P-256 key the app holds — in the Secure Enclave, say —
-// that never leaves it.
-type Signer interface {
-	// PublicKey returns the key's public key as an uncompressed X9.63
-	// point (0x04 || X || Y), as CryptoKit's x963Representation.
-	PublicKey() ([]byte, error)
-	// Sign signs a SHA-256 digest, returning an ASN.1 DER ECDSA
-	// signature, as CryptoKit's derRepresentation.
-	Sign(digest []byte) ([]byte, error)
-}
-
-// platformSigner is a Signer as a crypto.Signer.
-type platformSigner struct {
-	s   Signer
-	pub *ecdsa.PublicKey
-}
-
-func newPlatformSigner(s Signer) (*platformSigner, error) {
-	if s == nil {
-		return nil, newError(CodeInvalidInput, errors.New("no signer"))
-	}
-	raw, err := s.PublicKey()
-	if err != nil {
-		return nil, newError(CodePlatform, err)
-	}
-	pub, err := ecdsa.ParseUncompressedPublicKey(elliptic.P256(), raw)
-	if err != nil {
-		return nil, newError(CodePlatform, fmt.Errorf("public key: %w", err))
-	}
-	return &platformSigner{s: s, pub: pub}, nil
-}
-
-func (p *platformSigner) Public() crypto.PublicKey { return p.pub }
-
-func (p *platformSigner) Sign(_ io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
-	if opts.HashFunc() != crypto.SHA256 {
-		return nil, fmt.Errorf("mobile: platform keys sign SHA-256 digests only, not %v", opts.HashFunc())
-	}
-	sig, err := p.s.Sign(digest)
-	if err != nil {
-		return nil, newError(CodePlatform, err)
-	}
-	if !ecdsa.VerifyASN1(p.pub, digest, sig) {
-		return nil, newError(CodePlatform, errors.New("the signature doesn't verify under the key's public key"))
-	}
-	return sig, nil
-}
-
-// DPoPProof returns a DPoP proof (RFC 9449) for a request with method
-// htm to htu, signed by signer through the app, and checked here.
-func DPoPProof(signer Signer, htm, htu string) (string, error) {
-	ps, err := newPlatformSigner(signer)
-	if err != nil {
-		return "", err
-	}
-	w, err := wallet.New(wallet.Config{
-		Assurance: wallet.AssuranceDevelopment, ProofSigningAlg: "ES256",
-		Fetch: fapihttp.Config{MaxResponseBytes: maxFetchBytes, RequestTimeout: 30 * time.Second, MaxRedirects: 2},
-	}, wallet.Dependencies{
-		HTTP: http.DefaultClient, Clock: wallet.ClockFunc(time.Now), Random: randReader{},
-	})
-	if err != nil {
-		return "", newError(CodeInternal, err)
-	}
-	proof, err := w.GenerateDPoPProof(ps, htm, htu, "", "")
-	if err != nil {
-		var e *Error
-		if errors.As(err, &e) {
-			return "", e
-		}
-		return "", newError(CodeInvalidInput, err)
-	}
-	if err := verifyES256(proof, ps.pub); err != nil {
-		return "", newError(CodeInternal, err)
-	}
-	return proof, nil
-}
-
-// verifyES256 checks a compact JWS's ES256 signature under pub.
-func verifyES256(compact string, pub *ecdsa.PublicKey) error {
-	parts := strings.Split(compact, ".")
-	if len(parts) != 3 {
-		return errors.New("not a compact JWS")
-	}
-	sig, err := base64.RawURLEncoding.DecodeString(parts[2])
-	if err != nil || len(sig) != 64 {
-		return errors.New("malformed ES256 signature")
-	}
-	digest := sha256.Sum256([]byte(parts[0] + "." + parts[1]))
-	if !ecdsa.Verify(pub, digest[:], new(big.Int).SetBytes(sig[:32]), new(big.Int).SetBytes(sig[32:])) {
-		return errors.New("the proof's signature doesn't verify")
-	}
-	return nil
 }
 
 // Operation is a long call the app can cancel from another thread.

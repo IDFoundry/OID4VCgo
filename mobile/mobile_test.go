@@ -1,10 +1,6 @@
 package mobile
 
 import (
-	"crypto"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -13,34 +9,6 @@ import (
 	"testing"
 	"time"
 )
-
-// goSigner is a Signer over an in-memory key, as the app's would be.
-type goSigner struct {
-	key     *ecdsa.PrivateKey
-	signErr error
-	badSig  bool
-}
-
-func (s goSigner) PublicKey() ([]byte, error) { return s.key.PublicKey.Bytes() }
-
-func (s goSigner) Sign(digest []byte) ([]byte, error) {
-	if s.signErr != nil {
-		return nil, s.signErr
-	}
-	if s.badSig {
-		digest = make([]byte, len(digest))
-	}
-	return s.key.Sign(rand.Reader, digest, crypto.SHA256)
-}
-
-func newGoSigner(t *testing.T) goSigner {
-	t.Helper()
-	k, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return goSigner{key: k}
-}
 
 func code(err error) string {
 	var e *Error
@@ -64,35 +32,6 @@ func TestParseRequestLink(t *testing.T) {
 	}
 	if _, err := ParseRequestLink("openid4vp://?client_id=x"); code(err) != CodeInvalidInput || !strings.HasPrefix(err.Error(), "[invalid_input] ") {
 		t.Errorf("a link without request_uri: %v", err)
-	}
-}
-
-func TestDPoPProof(t *testing.T) {
-	s := newGoSigner(t)
-	proof, err := DPoPProof(s, "POST", "https://issuer.example/token")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := verifyES256(proof, &s.key.PublicKey); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := DPoPProof(goSigner{key: s.key, signErr: errors.New("user cancelled")}, "POST", "https://issuer.example/token"); code(err) != CodePlatform || !strings.Contains(err.Error(), "user cancelled") {
-		t.Errorf("a failing signer: %v", err)
-	}
-	if _, err := DPoPProof(goSigner{key: s.key, badSig: true}, "POST", "https://issuer.example/token"); code(err) != CodePlatform {
-		t.Errorf("a signer signing something else: %v", err)
-	}
-	if _, err := DPoPProof(nil, "POST", "https://issuer.example/token"); code(err) != CodeInvalidInput {
-		t.Errorf("no signer: %v", err)
-	}
-}
-
-func TestVerifyES256Refuses(t *testing.T) {
-	s := newGoSigner(t)
-	for _, compact := range []string{"a.b", "a.b.!!", "a.b." + strings.Repeat("A", 86)} {
-		if err := verifyES256(compact, &s.key.PublicKey); err == nil {
-			t.Errorf("verifyES256(%q) succeeded", compact)
-		}
 	}
 }
 

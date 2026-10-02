@@ -12,6 +12,7 @@ public struct WalletError: Error, Equatable, CustomStringConvertible {
         public static let platform = Code(rawValue: MobileCodePlatform)
         public static let network = Code(rawValue: MobileCodeNetwork)
         public static let cancelled = Code(rawValue: MobileCodeCancelled)
+        public static let notFound = Code(rawValue: MobileCodeNotFound)
         public static let `internal` = Code(rawValue: MobileCodeInternal)
     }
 
@@ -44,51 +45,23 @@ public struct RequestLink: Decodable, Equatable, Sendable {
     }
 }
 
-/// A P-256 key the app holds — implemented by the app, called by Go to
-/// sign. `publicKey()` returns the X9.63 point (0x04 || X || Y);
-/// `sign(_:)` signs a SHA-256 digest, returning ASN.1 DER. A thrown
-/// error reaches Go, and comes back as a `.platform` WalletError.
-public typealias PlatformSigner = MobileSignerProtocol & Sendable
+/// The wallet's key store, implemented by the app and called by Go:
+/// `createKey(_:)` makes a P-256 key for a purpose (`KeyPurpose`) and
+/// returns its ID; `publicKey(_:)` returns a key's X9.63 point (0x04 ||
+/// X || Y), or empty data when there's no such key; `sign(_:digest:)`
+/// signs a SHA-256 digest, returning ASN.1 DER; `deleteKey(_:)` deletes
+/// one. A thrown error reaches Go, and comes back as a `.platform`
+/// WalletError. `KeychainKeyStore` is the standard implementation.
+public typealias PlatformKeyStore = MobileKeyStoreProtocol & Sendable
 
-/// A P-256 key the app holds, signing SHA-256 digests. Backed by the
-/// Security framework, so the same type serves a software key and a
-/// Secure Enclave key.
-public final class SecKeySigner: NSObject, MobileSignerProtocol, @unchecked Sendable {
-    let privateKey: SecKey
-
-    public init(privateKey: SecKey) { self.privateKey = privateKey }
-
-    /// A new software key, for tests and development.
-    public static func software() throws -> SecKeySigner {
-        var error: Unmanaged<CFError>?
-        let attributes: [String: Any] = [
-            kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
-            kSecAttrKeySizeInBits as String: 256,
-        ]
-        guard let key = SecKeyCreateRandomKey(attributes as CFDictionary, &error) else {
-            throw error!.takeRetainedValue() as Error
-        }
-        return SecKeySigner(privateKey: key)
-    }
-
-    public func publicKey() throws -> Data {
-        guard let pub = SecKeyCopyPublicKey(privateKey) else {
-            throw NSError(domain: "OID4VCMobile", code: 1, userInfo: [NSLocalizedDescriptionKey: "no public key"])
-        }
-        var error: Unmanaged<CFError>?
-        guard let raw = SecKeyCopyExternalRepresentation(pub, &error) else {
-            throw error!.takeRetainedValue() as Error
-        }
-        return raw as Data // X9.63: 0x04 || X || Y
-    }
-
-    public func sign(_ digest: Data?) throws -> Data {
-        var error: Unmanaged<CFError>?
-        guard let sig = SecKeyCreateSignature(privateKey, .ecdsaSignatureDigestX962SHA256, (digest ?? Data()) as CFData, &error) else {
-            throw error!.takeRetainedValue() as Error
-        }
-        return sig as Data // ASN.1 DER
-    }
+/// What a key is for, as `PlatformKeyStore.createKey(_:)` receives it.
+public enum KeyPurpose {
+    /// The wallet instance key a Wallet Attestation binds.
+    public static let instance = MobilePurposeInstance
+    /// The key access tokens are bound to.
+    public static let dpop = MobilePurposeDPoP
+    /// The key a credential is bound to, used only when presenting it.
+    public static let holder = MobilePurposeHolder
 }
 
 /// OID4VCgo's mobile API. Every call runs off the caller's thread: Go
@@ -102,9 +75,19 @@ public enum OID4VC {
         return try JSONDecoder().decode(RequestLink.self, from: Data(json.utf8))
     }
 
-    /// A DPoP proof for `method` `url`, signed by `signer`.
-    public static func dpopProof(signer: some PlatformSigner, method: String, url: String) async throws -> String {
-        try await offMain { try call { MobileDPoPProof(signer, method, url, $0) } }
+    /// A DPoP proof for `method` `url`, signed with `keyStore`'s key
+    /// `keyID`.
+    public static func dpopProof(keyStore: some PlatformKeyStore, keyID: String, method: String, url: String) async throws -> String {
+        try await offMain { try call { MobileDPoPProof(keyStore, keyID, method, url, $0) } }
+    }
+
+    /// Exercises `keyStore` as the wallet will — for each purpose: create
+    /// a key, sign with it, look it up, delete it — and returns the
+    /// purposes checked. A store asking for user presence on holder keys
+    /// prompts once.
+    public static func checkKeyStore(_ keyStore: some PlatformKeyStore) async throws -> [String] {
+        let json = try await offMain { try call { MobileCheckKeyStore(keyStore, $0) } }
+        return try JSONDecoder().decode(KeyStoreReport.self, from: Data(json.utf8)).checked
     }
 
     /// GETs `url`. Cancelling the calling Task cancels the request.
@@ -136,6 +119,9 @@ public enum OID4VC {
         return value
     }
 }
+
+/// CheckKeyStore's result.
+struct KeyStoreReport: Decodable { let checked: [String] }
 
 /// MobileOperation, which Go makes safe to cancel from any thread.
 final class Operation: @unchecked Sendable {

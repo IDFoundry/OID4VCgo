@@ -16,7 +16,9 @@
 //   - A long call takes an Operation the app can Cancel from another
 //     thread, since no context.Context crosses the boundary.
 //
-// This first version is the boundary's feasibility spike (MOBILE.md
-// Phase 1): request-link parsing (JSON out), a DPoP proof signed by a
-// key the app holds (a callback into the app), and a cancellable fetch.
+// This version is the boundary's feasibility spike (MOBILE.md Phases 1
+// and 2): request-link parsing (JSON out), a cancellable fetch, and the
+// KeyStore the app implements — the Secure Enclave on iOS — which
+// walletflow's keys are drawn from, checked end to end by
+// CheckKeyStore.
 package mobile
