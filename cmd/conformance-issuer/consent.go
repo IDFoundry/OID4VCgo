@@ -37,11 +37,15 @@ func newConsentHandler(srv *server.Server, clients storage.ClientRepository, clo
 }
 
 func (h *consentHandler) handleBegin(w http.ResponseWriter, r *http.Request) {
+	// Refuses a repeated client_id or request_uri (RFC 6749 §3.1),
+	// rendered here: no redirect for a request not yet tied to a client.
+	req, err := server.BeginAuthorizationRequestFromHTTP(r)
+	if err != nil {
+		writeLocalHTMLErrorRaw(w, http.StatusBadRequest, "invalid_request", "malformed authorization request")
+		return
+	}
 	q := r.URL.Query()
-	action, err := h.srv.BeginAuthorization(r.Context(), server.BeginAuthorizationRequest{
-		RequestURI: q.Get("request_uri"),
-		ClientID:   fapi.ClientID(q.Get("client_id")),
-	})
+	action, err := h.srv.BeginAuthorization(r.Context(), req)
 	if err != nil {
 		writeLocalHTMLErrorRaw(w, http.StatusInternalServerError, "server_error", "failed to begin authorization")
 		return

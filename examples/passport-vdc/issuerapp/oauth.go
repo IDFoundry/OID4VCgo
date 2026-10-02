@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"time"
 
-	fapi "github.com/idfoundry/fapigo"
 	"github.com/idfoundry/fapigo/extension"
 	"github.com/idfoundry/fapigo/server"
 
@@ -70,10 +69,14 @@ var approvalTemplate = template.Must(template.New("approval").Parse(pageHead + `
 // handleAuthorize begins authorization for a pushed request and, if
 // it maps to a live transaction, shows the approval page.
 func (a *App) handleAuthorize(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-	action, err := a.server.BeginAuthorization(r.Context(), server.BeginAuthorizationRequest{
-		RequestURI: q.Get("request_uri"), ClientID: fapi.ClientID(q.Get("client_id")),
-	})
+	// Refuses a repeated client_id or request_uri (RFC 6749 §3.1),
+	// rendered here: no redirect for a request not yet tied to a client.
+	req, err := server.BeginAuthorizationRequestFromHTTP(r)
+	if err != nil {
+		writeHTMLError(w, http.StatusBadRequest, "malformed authorization request")
+		return
+	}
+	action, err := a.server.BeginAuthorization(r.Context(), req)
 	if err != nil {
 		writeHTMLError(w, http.StatusInternalServerError, "failed to begin authorization")
 		return
