@@ -6,9 +6,9 @@ import (
 	"testing"
 
 	"github.com/idfoundry/oid4vcgo/dcql"
-	"github.com/idfoundry/oid4vcgo/internal/testhaip"
 	"github.com/idfoundry/oid4vcgo/verifier"
 	"github.com/idfoundry/oid4vcgo/walletflow"
+	"github.com/idfoundry/oid4vcgo/walletflow/walletflowtest"
 )
 
 // receive has w receive configIDs through the authorization code grant.
@@ -28,16 +28,16 @@ func receive(t *testing.T, f fixture, w *walletflow.Wallet, configIDs ...string)
 	return result.Credentials
 }
 
-func presentationFixture(t *testing.T) (fixture, *testhaip.Verifier, *walletflow.Wallet) {
+func presentationFixture(t *testing.T) (fixture, testVerifier, *walletflow.Wallet) {
 	t.Helper()
-	f := newFixture(t, testhaip.Options{})
+	f := newFixture(t, walletflowtest.Options{})
 	v := f.env.StartVerifier(t)
 	return f, v, f.newWalletTrusting(t, f.env.IssuerRoots, v.Trust)
 }
 
 func TestPresentation_SDJWT(t *testing.T) {
 	f, v, w := presentationFixture(t)
-	held := receive(t, f, w, testhaip.SDJWTConfigurationID, testhaip.MdocConfigurationID)
+	held := receive(t, f, w, walletflowtest.SDJWTConfigurationID, walletflowtest.MdocConfigurationID)
 	ctx := context.Background()
 	id, link := v.Begin(t, dcql.Query{Credentials: []dcql.CredentialQuery{f.env.SDJWTQuery(t, "pid", "given_name")}})
 
@@ -67,7 +67,7 @@ func TestPresentation_SDJWT(t *testing.T) {
 		t.Errorf("Presented = %+v", presented)
 	}
 	view := v.Lookup(t, id)
-	if view.Status != verifier.TransactionDone || view.Result.Credentials[0].Claims["given_name"] != testhaip.GivenName {
+	if view.Status != verifier.TransactionDone || view.Result.Credentials[0].Claims["given_name"] != walletflowtest.GivenName {
 		t.Fatalf("verifier = %+v", view)
 	}
 	if _, ok := view.Result.Credentials[0].Claims["family_name"]; ok {
@@ -83,10 +83,10 @@ func TestPresentation_SDJWT(t *testing.T) {
 
 func TestPresentation_ChoosesAmongCandidates(t *testing.T) {
 	f, v, w := presentationFixture(t)
-	first := receive(t, f, w, testhaip.MdocConfigurationID)
-	second := receive(t, f, w, testhaip.MdocConfigurationID)
+	first := receive(t, f, w, walletflowtest.MdocConfigurationID)
+	second := receive(t, f, w, walletflowtest.MdocConfigurationID)
 	ctx := context.Background()
-	id, link := v.Begin(t, dcql.Query{Credentials: []dcql.CredentialQuery{testhaip.MdocQuery(t, "mdl", "family_name")}})
+	id, link := v.Begin(t, dcql.Query{Credentials: []dcql.CredentialQuery{mdocQuery(t, "mdl", "family_name")}})
 	p, err := w.StartPresentation(ctx, link)
 	if err != nil {
 		t.Fatal(err)
@@ -112,9 +112,9 @@ func TestPresentation_ChoosesAmongCandidates(t *testing.T) {
 
 func TestPresentation_NoMatchThenDecline(t *testing.T) {
 	f, v, w := presentationFixture(t)
-	receive(t, f, w, testhaip.SDJWTConfigurationID)
+	receive(t, f, w, walletflowtest.SDJWTConfigurationID)
 	ctx := context.Background()
-	id, link := v.Begin(t, dcql.Query{Credentials: []dcql.CredentialQuery{testhaip.MdocQuery(t, "mdl", "family_name")}})
+	id, link := v.Begin(t, dcql.Query{Credentials: []dcql.CredentialQuery{mdocQuery(t, "mdl", "family_name")}})
 	p, err := w.StartPresentation(ctx, link)
 	if err != nil {
 		t.Fatal(err)
@@ -157,7 +157,7 @@ func TestPresentation_RefusesAnUntrustedVerifier(t *testing.T) {
 
 func TestPresentation_MissingHolderKey(t *testing.T) {
 	f, v, w := presentationFixture(t)
-	held := receive(t, f, w, testhaip.SDJWTConfigurationID)
+	held := receive(t, f, w, walletflowtest.SDJWTConfigurationID)
 	ctx := context.Background()
 	if err := f.keys.DeleteKey(ctx, held[0].HolderKeyID); err != nil {
 		t.Fatal(err)
@@ -177,10 +177,10 @@ func TestPresentation_MissingHolderKey(t *testing.T) {
 // which option is answered.
 func TestPresentation_CredentialSetOptions(t *testing.T) {
 	f, v, w := presentationFixture(t)
-	held := receive(t, f, w, testhaip.MdocConfigurationID, testhaip.SDJWTConfigurationID)
+	held := receive(t, f, w, walletflowtest.MdocConfigurationID, walletflowtest.SDJWTConfigurationID)
 	ctx := context.Background()
 	query := dcql.Query{
-		Credentials:    []dcql.CredentialQuery{testhaip.MdocQuery(t, "mdl", "family_name"), f.env.SDJWTQuery(t, "pid", "family_name")},
+		Credentials:    []dcql.CredentialQuery{mdocQuery(t, "mdl", "family_name"), f.env.SDJWTQuery(t, "pid", "family_name")},
 		CredentialSets: []dcql.CredentialSetQuery{{Options: [][]string{{"mdl"}, {"pid"}}}},
 	}
 	id, link := v.Begin(t, query)
