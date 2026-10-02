@@ -99,6 +99,9 @@ type Issuance struct {
 // credential_offer_uri) and fetches the issuer's metadata. Show the
 // holder Offer before going on; call Close when done.
 func (w *Wallet) StartIssuance(ctx context.Context, offerURI string) (*Issuance, error) {
+	if err := w.checkIssuance(); err != nil {
+		return nil, err
+	}
 	offer, err := w.core.ResolveCredentialOffer(ctx, offerURI)
 	if err != nil {
 		return nil, fmt.Errorf("walletflow: credential offer: %w", err)
