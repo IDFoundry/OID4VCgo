@@ -13,6 +13,11 @@ public struct WalletError: Error, Equatable, CustomStringConvertible {
         public static let network = Code(rawValue: MobileCodeNetwork)
         public static let cancelled = Code(rawValue: MobileCodeCancelled)
         public static let notFound = Code(rawValue: MobileCodeNotFound)
+        public static let wrongStep = Code(rawValue: MobileCodeWrongStep)
+        public static let authorizationDenied = Code(rawValue: MobileCodeAuthorizationDenied)
+        public static let credentialDenied = Code(rawValue: MobileCodeCredentialDenied)
+        public static let noMatchingCredential = Code(rawValue: MobileCodeNoMatchingCredential)
+        public static let `protocol` = Code(rawValue: MobileCodeProtocol)
         public static let `internal` = Code(rawValue: MobileCodeInternal)
     }
 
@@ -20,6 +25,11 @@ public struct WalletError: Error, Equatable, CustomStringConvertible {
     public let message: String
 
     public var description: String { "[\(code.rawValue)] \(message)" }
+
+    init(code: Code, message: String) {
+        self.code = code
+        self.message = message
+    }
 
     /// Parses an error crossing the boundary: its text is "[code] message".
     init(_ error: Error) {
@@ -75,12 +85,6 @@ public enum OID4VC {
         return try JSONDecoder().decode(RequestLink.self, from: Data(json.utf8))
     }
 
-    /// A DPoP proof for `method` `url`, signed with `keyStore`'s key
-    /// `keyID`.
-    public static func dpopProof(keyStore: some PlatformKeyStore, keyID: String, method: String, url: String) async throws -> String {
-        try await offMain { try call { MobileDPoPProof(keyStore, keyID, method, url, $0) } }
-    }
-
     /// Exercises `keyStore` as the wallet will — for each purpose: create
     /// a key, sign with it, look it up, delete it — and returns the
     /// purposes checked. A store asking for user presence on holder keys
@@ -90,12 +94,13 @@ public enum OID4VC {
         return try JSONDecoder().decode(KeyStoreReport.self, from: Data(json.utf8)).checked
     }
 
-    /// GETs `url`. Cancelling the calling Task cancels the request.
-    public static func fetch(_ url: String, timeout: Duration = .seconds(30)) async throws -> String {
-        let ms = timeout.components.seconds * 1000 + timeout.components.attoseconds / 1_000_000_000_000_000
-        let op = Operation(MobileNewOperation(ms)!)
+    /// Runs `body` with an Operation, off the caller's thread; cancelling
+    /// the calling Task cancels the Operation, and the Go call returns a
+    /// `.cancelled` WalletError.
+    static func cancellable<T: Sendable>(_ body: @escaping @Sendable (MobileOperation) throws -> T) async throws -> T {
+        let op = Operation(MobileNewOperation(0)!)
         return try await withTaskCancellationHandler {
-            try await offMain { try call { MobileFetch(op.op, url, $0) } }
+            try await offMain { try body(op.op) }
         } onCancel: {
             op.op.cancel()
         }
@@ -107,6 +112,18 @@ public enum OID4VC {
             DispatchQueue.global(qos: .userInitiated).async {
                 cont.resume(with: Result { try body() })
             }
+        }
+    }
+
+    /// Runs a throwing gomobile method, turning its error into a
+    /// WalletError.
+    static func wrap<T>(_ fn: () throws -> T) throws -> T {
+        do {
+            return try fn()
+        } catch let error as WalletError {
+            throw error
+        } catch {
+            throw WalletError(error)
         }
     }
 

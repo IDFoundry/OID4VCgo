@@ -3,7 +3,9 @@
 # iOS Simulator and macOS (whose slice runs the Swift package's tests
 # with `swift test`) — with gomobile bind. gomobile and gobind are the
 # versions go.mod pins (tool directives), built into build/bin. Needs
-# Xcode.
+# Xcode. Extra arguments go to gomobile bind: `-tags mobiletest` builds
+# the framework the Swift package's tests need, with an in-process test
+# issuer and Verifier (TestEnv) that a shipped framework must not have.
 set -eu
 cd "$(dirname "$0")"
 GOBIN="$PWD/build/bin" go install golang.org/x/mobile/cmd/gomobile golang.org/x/mobile/cmd/gobind
@@ -11,5 +13,5 @@ GOBIN="$PWD/build/bin" go install golang.org/x/mobile/cmd/gomobile golang.org/x/
 # comes from the deployment target. Both match Package.swift.
 PATH="$PWD/build/bin:$PATH" MACOSX_DEPLOYMENT_TARGET=13.0 gomobile bind \
 	-target=ios,iossimulator,macos -iosversion=16 \
-	-trimpath -ldflags="-s -w" \
+	-trimpath -ldflags="-s -w" "$@" \
 	-o build/Mobile.xcframework .
