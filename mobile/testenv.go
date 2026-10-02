@@ -4,15 +4,10 @@ package mobile
 
 import (
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"encoding/base64"
-	"encoding/json"
 	"encoding/pem"
-	"errors"
-	"fmt"
 
 	"github.com/idfoundry/oid4vcgo/dcql"
+	"github.com/idfoundry/oid4vcgo/mobile/internal/devjwk"
 	"github.com/idfoundry/oid4vcgo/walletflow/walletflowtest"
 )
 
@@ -140,7 +135,7 @@ func wrapTest(err error) error {
 type testProvider struct{ p *walletflowtest.Provider }
 
 func (t testProvider) WalletAttestation(clientID string, instanceKeyJWK []byte) ([]byte, error) {
-	key, err := parseJWK(instanceKeyJWK)
+	key, err := devjwk.ParseP256(instanceKeyJWK)
 	if err != nil {
 		return nil, err
 	}
@@ -149,41 +144,10 @@ func (t testProvider) WalletAttestation(clientID string, instanceKeyJWK []byte) 
 }
 
 func (t testProvider) KeyAttestation(keysJWK []byte, nonce string) ([]byte, error) {
-	var raw []json.RawMessage
-	if err := json.Unmarshal(keysJWK, &raw); err != nil {
+	keys, err := devjwk.ParseP256Set(keysJWK)
+	if err != nil {
 		return nil, err
-	}
-	keys := make([]*ecdsa.PublicKey, 0, len(raw))
-	for _, r := range raw {
-		k, err := parseJWK(r)
-		if err != nil {
-			return nil, err
-		}
-		keys = append(keys, k)
 	}
 	jwt, err := t.p.KeyAttestation(context.Background(), keys, nonce)
 	return []byte(jwt), err
-}
-
-// parseJWK parses a P-256 public JWK.
-func parseJWK(raw []byte) (*ecdsa.PublicKey, error) {
-	var jwk struct{ Kty, Crv, X, Y string }
-	if err := json.Unmarshal(raw, &jwk); err != nil {
-		return nil, err
-	}
-	if jwk.Kty != "EC" || jwk.Crv != "P-256" {
-		return nil, fmt.Errorf("not a P-256 JWK: %s", raw)
-	}
-	x, err := base64.RawURLEncoding.DecodeString(jwk.X)
-	if err != nil {
-		return nil, err
-	}
-	y, err := base64.RawURLEncoding.DecodeString(jwk.Y)
-	if err != nil {
-		return nil, err
-	}
-	if len(x) != 32 || len(y) != 32 {
-		return nil, errors.New("malformed P-256 coordinates")
-	}
-	return ecdsa.ParseUncompressedPublicKey(elliptic.P256(), append(append([]byte{4}, x...), y...))
 }
