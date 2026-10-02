@@ -1,8 +1,9 @@
 # OID4VCgo Mobile — design
 
-Status: **planned**. This is the design for a mobile wallet SDK built on
-OID4VCgo, to be delivered in the phases below. It records the decisions
-taken so far and the questions still open; update it as phases land.
+Status: **in progress** — Phases 0 and 1 are done (see Phases). This is
+the design for a mobile wallet SDK built on OID4VCgo, delivered in the
+phases below. It records the decisions taken so far, what each phase
+found, and the questions still open; update it as phases land.
 
 ## Goal
 
@@ -195,17 +196,19 @@ Secure Enclave.
 Go makes the HTTPS calls (PAR, token, nonce, Credential and Deferred
 Credential Endpoints, request URIs, responses), so protocol state stays
 together. It sits behind `walletflow`'s HTTP interface, so a native
-transport can replace it if iOS needs one. To confirm in the gomobile
-spike: that Go on iOS verifies TLS against the system trust store, and
-how it behaves with proxies and VPNs. App Transport Security doesn't
-apply to Go's networking.
+transport can replace it if iOS needs one. Go on iOS verifies TLS with
+the platform's verifier, against the system trust store (confirmed in
+the Phase 1 spike: expired, self-signed and untrusted-root certificates
+are refused with Security framework errors). Still to check: behaviour
+with proxies and VPNs. App Transport Security doesn't apply to Go's
+networking.
 
 ## Phases
 
 | # | Phase | Exit criteria |
 |---|---|---|
-| 0 | `walletflow` | Issuance and presentation sessions behind key, store, Wallet Provider and HTTP interfaces; the passport-vdc wallets run on it; their end-to-end tests pass |
-| 1 | gomobile spike | An XCFramework; Swift calls Go and Go calls back into Swift; a JSON envelope; errors and cancellation across the boundary |
+| 0 ✓ | `walletflow` | Issuance and presentation sessions behind key, store, Wallet Provider and HTTP interfaces; the passport-vdc wallets run on it; their end-to-end tests pass |
+| 1 ✓ | gomobile spike | An XCFramework; Swift calls Go and Go calls back into Swift; a JSON envelope; errors and cancellation across the boundary |
 | 2 | Secure Enclave spike | A Swift-generated key signs an ES256 JWS through Go's `crypto.Signer`, verified by OID4VCgo; a platform `KeyManager` for FAPIgo |
 | 3 | ABI foundation | Versioned JSON envelope, error codes and session lifecycle, documented |
 | 4 | OID4VCI slice | HAIP issuance from the iOS demo app against the passport-vdc issuer, with Key Attestations from the Wallet Provider |
@@ -214,6 +217,43 @@ apply to Go's networking.
 | 7 | Hardening | Suspension and resumption, cancellation, network failures, issuer and verifier errors, logging without personal data |
 | 8 | Android | The same bridge over Android Keystore, packaged as an AAR |
 | 9 | DC API | A DC API adapter over the presentation engine |
+
+### Phase 1 findings
+
+The spike is `mobile/` (the Go package) and `mobile/ios/OID4VCMobile`
+(a Swift package wrapping the XCFramework, Swift 6 language mode), built
+by `mobile/build-xcframework.sh` and tested by CI on Linux (Go) and
+macOS (Swift, against the framework's macOS slice); the same Swift tests
+pass on the iOS Simulator.
+
+- **Build:** `gomobile bind -target=ios,iossimulator,macos` makes the
+  XCFramework in under a minute; gomobile and gobind are pinned as
+  `go.mod` tool directives. Stripped (`-ldflags=-s -w`), the iOS device
+  slice is 8.4 MB. The macOS slice's minimum OS comes from
+  `MACOSX_DEPLOYMENT_TARGET`, the iOS one from `-iosversion`.
+- **Names:** package `mobile` becomes `Mobile…` in Swift. A Go interface
+  becomes an Objective-C protocol and class of the same name, so Swift
+  sees the protocol as `MobileSignerProtocol`; the Swift package wraps
+  everything behind its own names (`OID4VC`, `WalletError`,
+  `PlatformSigner`).
+- **Calls into Go** return their error through an `NSError`
+  out-parameter, which Swift sees as `throws`. Only the error's text
+  crosses, so codes travel in it ("[code] message") and the wrapper
+  parses them into `WalletError.Code`.
+- **Callbacks into Swift:** a Swift class implementing a Go interface is
+  called from the Go goroutine's thread; a Swift error it throws reaches
+  Go as an `error` carrying the Swift message. A Security framework key
+  signing with `.ecdsaSignatureDigestX962SHA256` returns the DER that
+  Go's `crypto.Signer` contract expects, so `wallet.GenerateDPoPProof`
+  signs with a Swift-held key unchanged; the same call works for a
+  Secure Enclave key.
+- **Threads:** the wrapper runs each Go call on a global dispatch queue,
+  never the caller's; 64 concurrent calls, each calling back into Swift,
+  work.
+- **Cancellation:** an `Operation` made before the call and passed in;
+  Swift Task cancellation calls its `cancel()` through
+  `withTaskCancellationHandler`, and the blocked Go call returns a
+  `cancelled` error. A timeout works the same way.
 
 ## Decisions
 
