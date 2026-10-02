@@ -146,16 +146,19 @@ PlatformKeys (implemented in Swift)
 
 | Key | Lifetime | Owner | User authentication |
 |---|---|---|---|
-| Wallet instance key: the Wallet Attestation's `cnf`, signs PoPs at PAR and the token endpoint | per installation | Secure Enclave | none |
-| DPoP key | per token | Secure Enclave | none |
+| Wallet instance key: the Wallet Attestation's `cnf`, signs PoPs at PAR and the token endpoint | per issuance | Secure Enclave | none |
+| DPoP key | per issuance | Secure Enclave | none |
 | Holder binding keys: a credential's `cnf` / mdoc `DeviceKey`, signing the Key Binding JWT or DeviceAuth when presenting | per credential copy | Secure Enclave | when presenting |
 | Credential response decryption key | per request | Go, ephemeral | — |
 | OID4VP response encryption (ECDH-ES to the verifier) | per response | Go, ephemeral | — |
 | Verification, hashing, JOSE/COSE, DCQL, mdoc transcripts | — | Go | — |
 
-Holder keys need biometrics only when presenting, never at issuance: a
-batch of credentials means a batch of keys, and prompting for each would
-be unusable.
+The instance key, with its Wallet Attestation, and the DPoP key are new
+for each issuance and deleted when it ends, so issuers can't link one
+holder's issuances by them; deferred credentials are polled within the
+issuance. Holder keys need biometrics only when presenting, never at
+issuance: a batch of credentials means a batch of keys, and prompting
+for each would be unusable.
 
 ### Attestations
 
@@ -218,7 +221,8 @@ Taken 2026-10-02:
 
 1. **Layout:** `walletflow` in this module; `mobile/` a separate Go
    module; `mobile/ios` for the Swift package and demo app.
-2. **DPoP key:** held in the Secure Enclave, like the instance key.
+2. **DPoP key:** held in the Secure Enclave, like the instance key;
+   both are per issuance.
 3. **Storage:** the app's native credential store from the first
    release.
 4. **Wallet Provider:** the passport-vdc demo service during
