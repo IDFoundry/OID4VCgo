@@ -58,17 +58,23 @@ package issuer
 // what's being issued, or to look up the pending issuance — with no
 // need to capture the value off the PAR request itself.
 //
-// BeginAuthorization returns the InteractionRequest once. When the
-// consent step may run on another instance, store its encoding
-// (InteractionRequest.MarshalText) under the handle's String() — in a
-// shared session store, or a cookie you sign — and restore it there
-// with server.ParseInteractionRequest and server.ParseInteractionHandle;
-// issuer_state comes back with it, read with extension.Get as above.
-// The encoding carries no integrity protection, so keep it where only
-// your application can write it: CompleteAuthorization checks the
-// grant's scopes against the request the server itself stored, but
-// issuer_state decides whose Credential is issued, and a tampered copy
-// could name another holder's pending offer.
+// BeginAuthorization returns the InteractionRequest once, and the
+// consent step needs it back, with the handle, when the holder submits.
+// fapigo/server/interactioncookie carries both in one AES-256-GCM-sealed
+// cookie on the browser that began the authorization: Set it before
+// rendering the consent page, Read it when the form comes back (issuer_state
+// is in the restored request's Extensions, as above), and Clear it once
+// CompleteAuthorization has run. Sealed, the request can't be altered —
+// which matters, because issuer_state decides whose Credential is
+// issued, and CompleteAuthorization checks only the grant's scopes
+// against the request the server stored — and the approval can only be
+// submitted from that browser. Any instance holding the cookie's key can
+// finish the interaction. The cookie isn't a CSRF defence: refuse a
+// consent form posted from another origin too. If you keep the state
+// elsewhere instead (InteractionRequest.MarshalText, restored with
+// server.ParseInteractionRequest and server.ParseInteractionHandle),
+// keep it where only your application can write it, for the same
+// reason. examples/passport-vdc's issuer uses the cookie.
 //
 // # Credential Endpoint access tokens
 //
