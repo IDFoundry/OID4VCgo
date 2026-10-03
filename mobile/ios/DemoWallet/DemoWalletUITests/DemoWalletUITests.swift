@@ -149,20 +149,14 @@ final class DemoWalletUITests: XCTestCase {
         return app
     }
 
-    /// Taps Check again, if automatic polling hasn't settled it already.
-    @MainActor
-    func checkAgain(_ app: XCUIApplication) {
-        let button = app.buttons["check-again"]
-        if button.exists && button.isHittable { button.tap() }
-    }
-
     @MainActor
     func testDeferredApproved() async throws {
         let app = try await receiveDeferred()
         // Still pending: polling finds nothing yet.
         XCTAssertEqual(app.descendants(matching: .any).matching(identifier: "credential").count, 0)
         _ = try await Self.fetch("decide", query: [URLQueryItem(name: "approve", value: "1")], method: "POST")
-        checkAgain(app)
+        // The test issuer's poll interval is a second: automatic polling
+        // settles it, and a Check again tap would race it.
         let credential = app.descendants(matching: .any).matching(identifier: "credential").firstMatch
         XCTAssertTrue(credential.waitForExistence(timeout: 30), "the approved credential isn't listed")
         XCTAssertFalse(app.buttons["check-again"].exists, "it's still listed as pending")
@@ -172,7 +166,8 @@ final class DemoWalletUITests: XCTestCase {
     func testDeferredDenied() async throws {
         let app = try await receiveDeferred()
         _ = try await Self.fetch("decide", query: [URLQueryItem(name: "approve", value: "0")], method: "POST")
-        checkAgain(app)
+        // The test issuer's poll interval is a second: automatic polling
+        // settles it, and a Check again tap would race it.
         let dismiss = app.buttons["dismiss"]
         XCTAssertTrue(dismiss.waitForExistence(timeout: 30), "the denial isn't shown")
         let state = app.staticTexts["pending-state"]
