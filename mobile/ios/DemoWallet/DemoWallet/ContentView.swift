@@ -44,6 +44,7 @@ struct ContentView: View {
                 }
             }
             .sheet(isPresented: offerShown) { OfferView() }
+            .sheet(isPresented: requestShown) { RequestView() }
         }
     }
 
@@ -56,6 +57,11 @@ struct ContentView: View {
         default:
             EmptyView()
         }
+    }
+
+    private var requestShown: Binding<Bool> {
+        Binding(get: { model.requestPhase != .idle },
+                set: { if !$0 && model.requestPhase == .shown { Task { await model.decline() } } })
     }
 
     private var offerShown: Binding<Bool> {
@@ -162,5 +168,70 @@ struct ClaimRows: View {
         case .array(let a): a.map(text).joined(separator: ", ")
         case .object: "{…}"
         }
+    }
+}
+
+/// A presentation request: who's asking, which credentials can answer,
+/// and exactly what sharing them discloses.
+struct RequestView: View {
+    @Environment(WalletModel.self) private var model
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                if let p = model.presentation {
+                    Section("Requested by") {
+                        Text(p.verifier.name).font(.headline)
+                        Text(p.verifier.clientID).font(.caption).foregroundStyle(.secondary)
+                    }
+                    if p.candidates.isEmpty {
+                        Section { Text("You have no credential this verifier accepts.") }
+                    }
+                    ForEach(p.candidates, id: \.queryID) { query in
+                        Section("Answers “\(query.queryID)”") {
+                            ForEach(query.credentials, id: \.id) { c in
+                                Button {
+                                    Task { await model.toggle(c.id) }
+                                } label: {
+                                    HStack {
+                                        Image(systemName: model.selected.contains(c.id) ? "checkmark.circle.fill" : "circle")
+                                        Text(c.vct ?? c.doctype ?? c.configurationID)
+                                    }
+                                }
+                                .accessibilityIdentifier("candidate")
+                            }
+                        }
+                    }
+                    if !model.disclosures.isEmpty {
+                        Section("Will share") {
+                            ForEach(model.disclosures, id: \.credentialID) { d in
+                                ForEach(d.claims.indices, id: \.self) { i in
+                                    Text(Self.path(d.claims[i]))
+                                }
+                            }
+                        }
+                    }
+                    Section {
+                        Button(model.requestPhase == .sharing ? "Sharing…" : "Share") { Task { await model.share() } }
+                            .disabled(model.selected.isEmpty || model.requestPhase == .sharing)
+                            .accessibilityIdentifier("share")
+                        Button("Decline", role: .destructive) { Task { await model.decline() } }
+                            .disabled(model.requestPhase == .sharing)
+                            .accessibilityIdentifier("decline")
+                    }
+                }
+            }
+            .navigationTitle("Presentation request")
+        }
+    }
+
+    static func path(_ elements: [Presentation.PathElement]) -> String {
+        elements.map {
+            switch $0 {
+            case .key(let k): k
+            case .index(let i): String(i)
+            case .all: "*"
+            }
+        }.joined(separator: " · ")
     }
 }

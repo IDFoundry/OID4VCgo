@@ -6,6 +6,10 @@
 //
 //	GET  /config                 → {"wallet": NewWallet config, "provider_url"}
 //	POST /offer?pin=<digits>     → {"offer"}  (no pin: the authorization code grant)
+//	POST /request?format=<fmt>   → {"id", "link"}: the Verifier asks for family_name
+//	                               from an SD-JWT VC ("dc+sd-jwt"), an mdoc
+//	                               ("mso_mdoc") or either (no format)
+//	GET  /request/{id}           → {"status": "pending" | "done", "claims", "last_error"}
 //
 // Every service is HTTPS with one self-signed certificate, written to
 // -cert for the Simulator to trust (xcrun simctl keychain booted
@@ -27,6 +31,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/idfoundry/oid4vcgo/dcql"
 	"github.com/idfoundry/oid4vcgo/mobile/internal/devjwk"
 	"github.com/idfoundry/oid4vcgo/walletflow/walletflowtest"
 )
@@ -84,6 +89,31 @@ func run(addr, redirect, certOut string) error {
 			return
 		}
 		writeJSON(w, map[string]string{"offer": offer})
+	})
+	mux.HandleFunc("POST /request", func(w http.ResponseWriter, r *http.Request) {
+		q, err := query(env, r.URL.Query().Get("format"))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		id, link, err := v.Begin(q)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, map[string]string{"id": id, "link": link})
+	})
+	mux.HandleFunc("GET /request/{id}", func(w http.ResponseWriter, r *http.Request) {
+		view, err := v.Lookup(r.PathValue("id"))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		out := map[string]any{"status": "pending", "last_error": view.LastError}
+		if view.Result != nil && len(view.Result.Credentials) > 0 {
+			out["status"], out["claims"] = "done", view.Result.Credentials[0].Claims
+		}
+		writeJSON(w, out)
 	})
 	control := httptest.NewUnstartedServer(mux)
 	if err := control.Listener.Close(); err != nil {
@@ -164,3 +194,26 @@ func writeJSON(w http.ResponseWriter, v any) {
 }
 
 func netListen(addr string) (net.Listener, error) { return net.Listen("tcp", addr) }
+
+// query asks for family_name from an SD-JWT VC, an mdoc, or either.
+func query(env *walletflowtest.Env, format string) (dcql.Query, error) {
+	sdjwt, err := env.SDJWTQuery("pid", "family_name")
+	if err != nil {
+		return dcql.Query{}, err
+	}
+	mdoc, err := walletflowtest.MdocQuery("mdl", "family_name")
+	if err != nil {
+		return dcql.Query{}, err
+	}
+	switch format {
+	case "dc+sd-jwt":
+		return dcql.Query{Credentials: []dcql.CredentialQuery{sdjwt}}, nil
+	case "mso_mdoc":
+		return dcql.Query{Credentials: []dcql.CredentialQuery{mdoc}}, nil
+	default:
+		return dcql.Query{
+			Credentials:    []dcql.CredentialQuery{mdoc, sdjwt},
+			CredentialSets: []dcql.CredentialSetQuery{{Options: [][]string{{"mdl"}, {"pid"}}}},
+		}, nil
+	}
+}
