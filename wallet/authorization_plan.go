@@ -62,8 +62,12 @@ func PlanAuthorization(offer oid4vci.CredentialOffer, metadata oid4vci.Metadata)
 	if grant != nil {
 		plan.IssuerState = grant.IssuerState
 	}
+	named := ""
+	if grant != nil {
+		named = grant.AuthorizationServer
+	}
 	var err error
-	if plan.AuthorizationServer, err = selectAuthorizationServer(offer.CredentialIssuer, grant, metadata.AuthorizationServers); err != nil {
+	if plan.AuthorizationServer, err = selectAuthorizationServer(offer.CredentialIssuer, named, metadata.AuthorizationServers); err != nil {
 		return AuthorizationPlan{}, fmt.Errorf("wallet: plan authorization: %w", err)
 	}
 	seen := map[string]bool{}
@@ -86,11 +90,10 @@ func PlanAuthorization(offer oid4vci.CredentialOffer, metadata oid4vci.Metadata)
 	return plan, nil
 }
 
-func selectAuthorizationServer(credentialIssuer string, grant *oid4vci.GrantAuthorizationCode, servers []fapi.URL) (string, error) {
-	named := ""
-	if grant != nil {
-		named = grant.AuthorizationServer
-	}
+// selectAuthorizationServer is the Authorization Server for a grant
+// that names named ("" for none), of an issuer whose metadata lists
+// servers (OID4VCI 1.0 §12.2.4, §4.1.1).
+func selectAuthorizationServer(credentialIssuer, named string, servers []fapi.URL) (string, error) {
 	if len(servers) == 0 {
 		if named != "" && named != credentialIssuer {
 			return "", fmt.Errorf("the offer names authorization server %q, but the issuer lists none", named)
@@ -109,6 +112,55 @@ func selectAuthorizationServer(credentialIssuer string, grant *oid4vci.GrantAuth
 		return "", fmt.Errorf("the issuer lists %d authorization servers and the offer doesn't name one", len(servers))
 	}
 	return "", fmt.Errorf("the offer names authorization server %q, which the issuer doesn't list", named)
+}
+
+// PreAuthorizedCodePlan is how a Wallet redeems a Credential Offer's
+// pre-authorized code: which Authorization Server to send it to, and
+// what to send.
+type PreAuthorizedCodePlan struct {
+	// AuthorizationServer is the Authorization Server's issuer
+	// identifier — pass it to FetchAuthorizationServerMetadata, whose
+	// token_endpoint RequestPreAuthorizedCodeToken is sent to.
+	AuthorizationServer string
+
+	// PreAuthorizedCode is the offer's pre-authorized code.
+	PreAuthorizedCode string
+
+	// TxCode, if set, describes the PIN (tx_code) the holder must enter,
+	// which the issuer sent separately (§4.1.1).
+	TxCode *oid4vci.TxCode
+}
+
+// PlanPreAuthorizedCode works out the PreAuthorizedCodePlan for offer,
+// whose Credential Issuer's metadata is metadata
+// (FetchCredentialIssuerMetadata), choosing the Authorization Server as
+// PlanAuthorization does: the Credential Issuer itself when its metadata
+// lists no authorization_servers; the one it lists; or, when it lists
+// several, the one the offer's pre-authorized_code grant names — which
+// must be one of them.
+//
+// The choice matters more here than anywhere: the pre-authorized code,
+// with the PIN the holder enters, goes to that server's token endpoint,
+// and whoever holds both can redeem them. An offer naming a server the
+// issuer's metadata doesn't list — which anyone holding the code could
+// build, naming their own — is refused, as is one naming none when
+// several are listed.
+func PlanPreAuthorizedCode(offer oid4vci.CredentialOffer, metadata oid4vci.Metadata) (PreAuthorizedCodePlan, error) {
+	if metadata.CredentialIssuer.String() != offer.CredentialIssuer {
+		return PreAuthorizedCodePlan{}, fmt.Errorf("wallet: plan pre-authorized code: metadata is for issuer %q, but the offer is from %q", metadata.CredentialIssuer.String(), offer.CredentialIssuer)
+	}
+	if offer.Grants == nil || offer.Grants.PreAuthorizedCode == nil {
+		return PreAuthorizedCodePlan{}, errors.New("wallet: plan pre-authorized code: the offer has no pre-authorized_code grant")
+	}
+	grant := offer.Grants.PreAuthorizedCode
+	if grant.PreAuthorizedCode == "" {
+		return PreAuthorizedCodePlan{}, errors.New("wallet: plan pre-authorized code: the offer's pre-authorized_code grant has no code")
+	}
+	as, err := selectAuthorizationServer(offer.CredentialIssuer, grant.AuthorizationServer, metadata.AuthorizationServers)
+	if err != nil {
+		return PreAuthorizedCodePlan{}, fmt.Errorf("wallet: plan pre-authorized code: %w", err)
+	}
+	return PreAuthorizedCodePlan{AuthorizationServer: as, PreAuthorizedCode: grant.PreAuthorizedCode, TxCode: grant.TxCode}, nil
 }
 
 // ClientEndpoints converts m to what fapigo/client.Config needs: the

@@ -214,3 +214,64 @@ func TestPreviewPresentation_MatchesWhatIsPresented(t *testing.T) {
 		t.Errorf("PresentCredentials disclosed %v, the preview said [given_name]", disclosed)
 	}
 }
+
+func TestPlanPreAuthorizedCode(t *testing.T) {
+	const issuer = "https://issuer.example.com"
+	url := func(raw string) fapi.URL {
+		u, err := fapi.ParseIssuerURL(raw)
+		if err != nil {
+			t.Fatalf("ParseIssuerURL(%q): %v", raw, err)
+		}
+		return u
+	}
+	asA, asB := url("https://as-a.example.com"), url("https://as-b.example.com")
+	offer := func(named string) oid4vci.CredentialOffer {
+		return oid4vci.CredentialOffer{
+			CredentialIssuer: issuer, CredentialConfigurationIDs: []string{"pid"},
+			Grants: &oid4vci.Grants{PreAuthorizedCode: &oid4vci.GrantPreAuthorizedCode{
+				PreAuthorizedCode: "code", AuthorizationServer: named, TxCode: &oid4vci.TxCode{Length: 6},
+			}},
+		}
+	}
+	metadata := func(servers ...fapi.URL) oid4vci.Metadata {
+		return oid4vci.Metadata{CredentialIssuer: url(issuer), AuthorizationServers: servers}
+	}
+	for _, tc := range []struct {
+		name     string
+		offer    oid4vci.CredentialOffer
+		metadata oid4vci.Metadata
+		want     string // "" means refused
+	}{
+		{"none listed, none named: the issuer", offer(""), metadata(), issuer},
+		{"none listed, the issuer named", offer(issuer), metadata(), issuer},
+		{"one listed, none named", offer(""), metadata(asA), asA.String()},
+		{"several listed, a listed one named", offer(asB.String()), metadata(asA, asB), asB.String()},
+		{"none listed, another named", offer("https://evil.example.com"), metadata(), ""},
+		{"one listed, another named", offer("https://evil.example.com"), metadata(asA), ""},
+		{"several listed, none named", offer(""), metadata(asA, asB), ""},
+	} {
+		plan, err := wallet.PlanPreAuthorizedCode(tc.offer, tc.metadata)
+		switch {
+		case tc.want == "" && err == nil:
+			t.Errorf("%s: planned %q, want refused", tc.name, plan.AuthorizationServer)
+		case tc.want != "" && (err != nil || plan.AuthorizationServer != tc.want):
+			t.Errorf("%s: %q, %v; want %q", tc.name, plan.AuthorizationServer, err, tc.want)
+		case tc.want != "" && (plan.PreAuthorizedCode != "code" || plan.TxCode == nil || plan.TxCode.Length != 6):
+			t.Errorf("%s: plan = %+v", tc.name, plan)
+		}
+	}
+
+	other := offer("")
+	other.CredentialIssuer = "https://other.example.com"
+	noGrant := offer("")
+	noGrant.Grants = &oid4vci.Grants{AuthorizationCode: &oid4vci.GrantAuthorizationCode{}}
+	noCode := offer("")
+	noCode.Grants.PreAuthorizedCode.PreAuthorizedCode = ""
+	for name, o := range map[string]oid4vci.CredentialOffer{
+		"another issuer's metadata": other, "no pre-authorized_code grant": noGrant, "no code": noCode,
+	} {
+		if _, err := wallet.PlanPreAuthorizedCode(o, metadata()); err == nil {
+			t.Errorf("%s: planned", name)
+		}
+	}
+}

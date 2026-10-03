@@ -144,6 +144,10 @@
 // to use (OID4VCI 1.0 §12.2.4, §4.1.1), the scopes to request and the
 // offer's issuer_state; AuthorizationServerMetadata.ClientEndpoints
 // turns that server's metadata into fapigo/client's endpoint types.
+// PlanPreAuthorizedCode does the same for the pre-authorized code grant:
+// its server's token endpoint is where RequestPreAuthorizedCodeToken
+// sends the code and the holder's PIN, so an offer naming a server the
+// issuer doesn't list is refused.
 //
 // VerifyIssuedCredential (issued_credential.go) checks each credential a
 // Credential Response returns before the Wallet keeps it: the issuer

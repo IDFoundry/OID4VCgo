@@ -115,7 +115,10 @@ type tokenResponseBody struct {
 }
 
 // RequestPreAuthorizedCodeToken implements the Pre-Authorized Code
-// Flow's own Token Request/Response (§6.1/§6.2): it builds a DPoP
+// Flow's own Token Request/Response (§6.1/§6.2). Send it only to the
+// token endpoint of the Authorization Server PlanPreAuthorizedCode
+// chose: the code and PIN go to endpoint, and a server the issuer's
+// metadata doesn't list could redeem them itself. It builds a DPoP
 // proof for this one request (see GenerateDPoPProof's own doc comment
 // for why this package builds it directly here, rather than through
 // fapigo/client), POSTs a form-encoded Token Request to endpoint via
