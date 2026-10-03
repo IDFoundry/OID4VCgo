@@ -395,6 +395,12 @@ declines. When the Verifier returns a redirect, the app opens it.
   public URL: its services listen on loopback only, its certificate names
   loopback only, and the wallet's fetcher refuses private-network
   addresses.
+- **Deferred credentials:** the app keeps a deferred credential's
+  issuance open (its access token and DPoP key poll), polls at the
+  issuer's interval with a Check again button, and closes the issuance
+  once every credential it deferred is issued or denied. They're held in
+  memory: persisting the access token to survive the app quitting is
+  Phase 7's.
 - **XCUITest:** opening a custom-scheme link from a test asks for
   confirmation, so the tests launch the app with the link instead.
 - **QR codes and portraits:** the app scans QR codes live with
