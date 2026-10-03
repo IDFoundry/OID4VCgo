@@ -452,7 +452,11 @@ func (a *App) checkICAO(claims map[string]any) *ICAOResult {
 	}
 	e, err := passport.Verify(file, a.cfg.CSCAPool, a.now())
 	switch {
-	case errors.Is(err, passport.ErrNotTrusted), errors.Is(err, passport.ErrUnreadable):
+	case errors.Is(err, passport.ErrNotTrusted):
+		// gmrtd doesn't say which check failed without its error text,
+		// which can hold the MRZ: this covers each.
+		return &ICAOResult{Error: "the passport file failed Passive Authentication: its data isn't signed by a recognised issuing country, or doesn't match what was signed"}
+	case errors.Is(err, passport.ErrUnreadable):
 		return &ICAOResult{Error: err.Error()}
 	case err != nil:
 		return &ICAOResult{Error: "the passport file's data couldn't be used"}

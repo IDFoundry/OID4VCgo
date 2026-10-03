@@ -79,7 +79,7 @@ func New(t *testing.T, cscaPool cms.CertPool) *Env {
 	srv := httptest.NewUnstartedServer(nil)
 	e.IssuerURL = "https://" + srv.Listener.Addr().String()
 	e.Issuer, err = issuerapp.New(issuerapp.Config{
-		IssuerURL: e.IssuerURL, CSCAPool: cscaPool,
+		IssuerURL: e.IssuerURL, CSCAPool: cscaPool, AllowSampleDocument: true,
 		Wallet: issuerapp.WalletClient{
 			ClientID: WalletClientID, RedirectURIs: []string{RedirectURI, e.WebWalletURL + "/callback"},
 			ProviderIssuer: ProviderIssuer, ProviderCA: provider.CACertificatePEM(),
