@@ -27,9 +27,18 @@ type Pending struct {
 	// polls.
 	Interval time.Duration
 
-	d     *walletflow.Deferred
-	keys  *softwareKeys
-	group *pendingGroup
+	d       *walletflow.Deferred
+	keys    *softwareKeys
+	group   *pendingGroup
+	settled bool // told group, once
+}
+
+// settle tells the group p is settled, once.
+func (p *Pending) settle(ctx context.Context) {
+	if !p.settled {
+		p.settled = true
+		p.group.settled(ctx)
+	}
 }
 
 // pendingGroup closes an issuance once every credential it deferred is
@@ -71,16 +80,21 @@ func (p *Pending) Poll(ctx context.Context) (*Received, error) {
 	stored, err := p.d.Poll(ctx)
 	switch {
 	case errors.Is(err, walletflow.ErrCredentialDenied):
-		p.group.settled(ctx)
+		p.settle(ctx)
 		return nil, ErrDenied
 	case err != nil:
+		if p.d.Done() {
+			// Settled without a credential (it failed the wallet's
+			// checks): nothing more to poll.
+			p.settle(ctx)
+		}
 		return nil, fmt.Errorf("walletapp: %w", err)
 	case stored == nil:
 		p.Interval = p.d.Interval()
 		return nil, nil
 	}
 	r := p.keys.received(*stored)
-	p.group.settled(ctx)
+	p.settle(ctx)
 	return &r, nil
 }
 
