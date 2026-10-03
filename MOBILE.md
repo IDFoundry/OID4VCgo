@@ -220,7 +220,7 @@ networking.
 
 ### Phase 1 findings
 
-The spike is `mobile/` (the Go package) and `mobile/ios/OID4VCMobile`
+The spike is `mobile/` (the Go package) and `mobile/ios/OID4VCWallet`
 (a Swift package wrapping the XCFramework, Swift 6 language mode), built
 by `mobile/build-xcframework.sh` and tested by CI on Linux (Go) and
 macOS (Swift, against the framework's macOS slice); the same Swift tests
@@ -436,12 +436,19 @@ declines. When the Verifier returns a redirect, the app opens it.
   `Wallet.sweepOrphanedKeys(in:)`, at launch, keeps the keys the
   credentials are bound to (`HolderKeyIDs`) and deletes the rest. An
   `Issuance` dropped without `close()` closes itself.
-- **Still open: distribution.** SwiftPM fetches a package only from a
-  `Package.swift` at the root of a git repository, with the framework as
-  a release asset (`binaryTarget(url:checksum:)`). That means either a
-  root-level `Package.swift` here, with a workflow publishing the
-  XCFramework on mobile releases, or a separate repository for the Swift
-  package.
+- **Distribution:** the Swift module is `OID4VCWallet`, since it's
+  the wallet side only; a mobile Verifier would be a package of its
+  own. SwiftPM fetches a package only from a `Package.swift` at the
+  root of a git repository, so integrators get it from
+  [OID4VCgo-wallet-swift](https://github.com/IDFoundry/OID4VCgo-wallet-swift).
+  That repository is publish-only. Development, the tests (which need
+  the test build of the same commit's Go code) and the demo app stay
+  here. `wallet-swift-release.yml` publishes a version: it builds the
+  release framework, attaches it to the release as
+  `Mobile.xcframework.zip`, and commits the sources and a
+  `Package.swift` naming that asset by URL and checksum
+  (`binaryTarget(url:checksum:)`). The Swift package's versions are
+  its own, apart from the Go module's.
 
 ## Decisions
 
