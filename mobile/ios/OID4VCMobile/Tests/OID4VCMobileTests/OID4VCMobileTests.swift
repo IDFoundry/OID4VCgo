@@ -116,7 +116,8 @@ final class OID4VCMobileTests: XCTestCase {
 
     func testMemoryKeySweep() throws {
         let store = KeychainKeyStore(options: .init(secureEnclave: false, persistent: false))
-        let a = try store.createKey(purpose: .instance), b = try store.createKey(purpose: .holder)
+        let a = try store.createKey(purpose: .instance)
+        let b = try store.createKey(purpose: .holder)
         XCTAssertEqual(try store.deleteKeys(except: [b]), 1)
         XCTAssertNil(try store.publicKey(id: a))
         XCTAssertNotNil(try store.publicKey(id: b))
