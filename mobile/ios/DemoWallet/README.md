@@ -9,6 +9,11 @@ Links can be opened from anywhere, pasted, or scanned in the app. On a
 device the camera scans QR codes live (VisionKit); anywhere, including
 the Simulator, the app reads a QR code from a photo or screenshot.
 A credential's claims show the holder's portrait as an image.
+A credential the issuer defers (passport-vdc's operator review, say)
+waits under "Waiting for the issuer". It's polled at the issuer's
+interval, and Check again asks at once. It joins the credentials once
+issued, or says it was denied. Pending credentials are kept in memory,
+so one still waiting when the app quits is lost.
 For a request, it shows who's asking, which credentials can answer and
 exactly what sharing them discloses. Then it shares them, with holder
 keys signing (Face ID or the passcode on a device), or declines. Its keys are
@@ -50,7 +55,7 @@ grants:
   session, redirecting back to the app's private-use scheme redirect URI
 - the pre-authorized code grant: the PIN typed in the app
 
-It also presents: a received credential shared in answer to the
+It also covers deferred issuance, approved and denied. And it presents: a received credential shared in answer to the
 Verifier's request (the Verifier gets `family_name`), and a request the
 wallet can't answer, declined. Each test launches with
 `OID4VC_DEMO_RESET=1`, which deletes every credential at launch.

@@ -125,4 +125,60 @@ final class DemoWalletUITests: XCTestCase {
         app.buttons["Cancel"].tap()
         XCTAssertTrue(app.buttons["scan"].waitForExistence(timeout: 10))
     }
+
+    /// Receives a credential the issuer defers, as passport-vdc's review
+    /// mode does: it waits, polled at the issuer's interval, until the
+    /// issuer decides.
+    @MainActor
+    func receiveDeferred() async throws -> XCUIApplication {
+        _ = try await Self.fetch("defer", query: [URLQueryItem(name: "on", value: "1")], method: "POST")
+        addTeardownBlock {
+            _ = try? await Self.fetch("defer", query: [URLQueryItem(name: "on", value: "0")], method: "POST")
+        }
+        let offer = try await Self.fetch("offer", query: [URLQueryItem(name: "pin", value: "493536")], method: "POST")["offer"] as! String
+        let app = try await launch(offer: offer)
+        let pin = app.textFields["pin"]
+        XCTAssertTrue(pin.waitForExistence(timeout: 20))
+        pin.tap()
+        pin.typeText("493536")
+        app.buttons["receive"].tap()
+        let status = app.staticTexts["status"]
+        XCTAssertTrue(status.waitForExistence(timeout: 60))
+        XCTAssertTrue(status.label.hasSuffix("1 deferred"), status.label)
+        XCTAssertTrue(app.buttons["check-again"].waitForExistence(timeout: 10))
+        return app
+    }
+
+    /// Taps Check again, if automatic polling hasn't settled it already.
+    @MainActor
+    func checkAgain(_ app: XCUIApplication) {
+        let button = app.buttons["check-again"]
+        if button.exists && button.isHittable { button.tap() }
+    }
+
+    @MainActor
+    func testDeferredApproved() async throws {
+        let app = try await receiveDeferred()
+        // Still pending: polling finds nothing yet.
+        XCTAssertEqual(app.descendants(matching: .any).matching(identifier: "credential").count, 0)
+        _ = try await Self.fetch("decide", query: [URLQueryItem(name: "approve", value: "1")], method: "POST")
+        checkAgain(app)
+        let credential = app.descendants(matching: .any).matching(identifier: "credential").firstMatch
+        XCTAssertTrue(credential.waitForExistence(timeout: 30), "the approved credential isn't listed")
+        XCTAssertFalse(app.buttons["check-again"].exists, "it's still listed as pending")
+    }
+
+    @MainActor
+    func testDeferredDenied() async throws {
+        let app = try await receiveDeferred()
+        _ = try await Self.fetch("decide", query: [URLQueryItem(name: "approve", value: "0")], method: "POST")
+        checkAgain(app)
+        let dismiss = app.buttons["dismiss"]
+        XCTAssertTrue(dismiss.waitForExistence(timeout: 30), "the denial isn't shown")
+        let state = app.staticTexts["pending-state"]
+        XCTAssertTrue(state.label.contains("Denied"), state.label)
+        dismiss.tap()
+        XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "pending").firstMatch.waitForExistence(timeout: 3))
+        XCTAssertEqual(app.descendants(matching: .any).matching(identifier: "credential").count, 0)
+    }
 }

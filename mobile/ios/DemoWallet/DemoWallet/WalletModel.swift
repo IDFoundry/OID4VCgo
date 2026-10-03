@@ -184,11 +184,110 @@ final class WalletModel {
             var summary = "Received \(result.credentials.count) credential(s)"
             if !result.deferred.isEmpty { summary += ", \(result.deferred.count) deferred" }
             phase = .done(summary)
-            await closeIssuance()
+            if result.deferred.isEmpty {
+                await closeIssuance()
+            } else {
+                // The issuance stays open — its access token polls the
+                // deferred credentials — until they're all settled.
+                self.issuance = nil
+                self.offer = nil
+                for d in result.deferred { track(d, of: issuance) }
+            }
         } catch {
             phase = .failed("\(error)")
         }
         await refresh()
+    }
+
+    // MARK: Deferred credentials
+
+    /// A credential the issuer will issue later (OpenID4VCI 1.0 §9),
+    /// polled at the issuer's interval until it's issued or denied. It
+    /// lives in memory: one still pending when the app quits is lost.
+    struct PendingCredential: Identifiable, Equatable {
+        enum State: Equatable { case waiting, checking, denied, failed(String) }
+
+        let id: String
+        let configurationID: String
+        var intervalSeconds: Double
+        var state: State
+
+        static func == (a: Self, b: Self) -> Bool {
+            a.id == b.id && a.state == b.state && a.intervalSeconds == b.intervalSeconds
+        }
+    }
+
+    private(set) var pending: [PendingCredential] = []
+    private var pendingIssuances: [String: Issuance] = [:]
+    private var pollTasks: [String: Task<Void, Never>] = [:]
+
+    private func track(_ d: Issuance.Deferred, of issuance: Issuance) {
+        pending.append(PendingCredential(id: d.id, configurationID: d.configurationID, intervalSeconds: d.intervalSeconds, state: .waiting))
+        pendingIssuances[d.id] = issuance
+        schedule(d.id)
+    }
+
+    /// Polls `id` once its interval has passed (at least a second).
+    private func schedule(_ id: String) {
+        guard let p = pending.first(where: { $0.id == id }) else { return }
+        pollTasks[id]?.cancel()
+        let wait = max(p.intervalSeconds, 1)
+        pollTasks[id] = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(wait))
+            guard !Task.isCancelled else { return }
+            await self?.poll(id)
+        }
+    }
+
+    /// Asks the issuer about `id` now.
+    func checkAgain(_ id: String) async {
+        pollTasks[id]?.cancel()
+        await poll(id)
+    }
+
+    private func poll(_ id: String) async {
+        guard let i = pending.firstIndex(where: { $0.id == id }), let issuance = pendingIssuances[id] else { return }
+        pending[i].state = .checking
+        do {
+            switch try await issuance.pollDeferred(id: id) {
+            case .pending(let interval):
+                update(id) { $0.state = .waiting; $0.intervalSeconds = interval }
+                schedule(id)
+            case .issued:
+                await settle(id)
+                phase = .done("Received a deferred credential")
+                await refresh()
+            }
+        } catch let e as WalletError where e.code == .credentialDenied {
+            update(id) { $0.state = .denied }
+            await release(id)
+        } catch {
+            update(id) { $0.state = .failed("\(error)") }
+        }
+    }
+
+    /// Forgets a denied credential.
+    func dismiss(_ id: String) async {
+        await settle(id)
+    }
+
+    private func update(_ id: String, _ change: (inout PendingCredential) -> Void) {
+        if let i = pending.firstIndex(where: { $0.id == id }) { change(&pending[i]) }
+    }
+
+    /// Removes `id`, and closes its issuance when nothing else waits on it.
+    private func settle(_ id: String) async {
+        pending.removeAll { $0.id == id }
+        await release(id)
+    }
+
+    private func release(_ id: String) async {
+        pollTasks[id]?.cancel()
+        pollTasks[id] = nil
+        guard let issuance = pendingIssuances.removeValue(forKey: id) else { return }
+        if !pendingIssuances.values.contains(where: { $0 === issuance }) {
+            try? await issuance.close()
+        }
     }
 
     func cancelOffer() async {

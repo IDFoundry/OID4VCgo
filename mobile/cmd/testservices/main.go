@@ -10,6 +10,10 @@
 //	                               from an SD-JWT VC ("dc+sd-jwt"), an mdoc
 //	                               ("mso_mdoc") or either (no format)
 //	GET  /request/{id}           → {"status": "pending" | "done", "claims", "last_error"}
+//	POST /defer?on=1             → the issuer defers every credential from now on
+//	                               (on=0: issues at once), each awaiting /decide
+//	POST /decide?approve=1       → approves (approve=0: denies) every deferred
+//	                               credential, on its next poll
 //
 // Every service is HTTPS with one self-signed certificate, written to
 // -cert for the Simulator to trust (xcrun simctl keychain booted
@@ -114,6 +118,14 @@ func run(addr, redirect, certOut string) error {
 			out["status"], out["claims"] = "done", view.Result.Credentials[0].Claims
 		}
 		writeJSON(w, out)
+	})
+	mux.HandleFunc("POST /defer", func(w http.ResponseWriter, r *http.Request) {
+		env.SetDefer(r.URL.Query().Get("on") == "1")
+		writeJSON(w, map[string]bool{"ok": true})
+	})
+	mux.HandleFunc("POST /decide", func(w http.ResponseWriter, r *http.Request) {
+		env.Decide(r.URL.Query().Get("approve") == "1")
+		writeJSON(w, map[string]bool{"ok": true})
 	})
 	control := httptest.NewUnstartedServer(mux)
 	if err := control.Listener.Close(); err != nil {
