@@ -215,9 +215,10 @@ func TestPresentation_CredentialSetOptions(t *testing.T) {
 			mdl = c.ID
 		}
 	}
-	// Answering both options isn't one option: a stray query.
-	if _, err := p.Preview(ctx, walletflow.Selection{"mdl": {mdl}, "pid": {sdjwt}}); err != nil {
-		t.Errorf("both options answered: %v (each is a complete option, so it's allowed)", err)
+	// A credential set takes one of its options (OpenID4VP 1.0 §6.4.2):
+	// answering both alternatives would disclose more than it needs.
+	if _, err := p.Preview(ctx, walletflow.Selection{"mdl": {mdl}, "pid": {sdjwt}}); !errors.Is(err, walletflow.ErrInvalidSelection) {
+		t.Errorf("both options answered = %v, want ErrInvalidSelection", err)
 	}
 	presented, err := p.Respond(ctx, walletflow.Selection{"pid": {sdjwt}})
 	if err != nil {

@@ -45,7 +45,8 @@ const (
 	// CodeInvalidSelection: a presentation's selection doesn't answer
 	// the request as it asks: an unknown query or credential, a
 	// credential that doesn't answer its query, more than one for a
-	// query that takes one, or a required set left unanswered.
+	// query that takes one, a required set left unanswered, or two
+	// alternatives of one set answered.
 	CodeInvalidSelection = "invalid_selection"
 	// CodeDeliveryUnknown: sending a presentation failed in a way that
 	// leaves it unknown whether the Verifier received it. It isn't sent

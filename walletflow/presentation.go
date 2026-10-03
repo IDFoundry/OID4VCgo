@@ -57,8 +57,9 @@ type Selection map[string][]string
 // ErrInvalidSelection is wrapped by Preview and Respond for a Selection
 // that doesn't answer the request as it asks: an unknown query or
 // credential, a credential that doesn't answer its query, more than one
-// for a query that takes one, or a required credential set left
-// unanswered.
+// for a query that takes one, a required credential set left
+// unanswered, or two alternatives of one set answered (a set takes one
+// of its options, OpenID4VP 1.0 §6.4.2).
 var ErrInvalidSelection = wallet.ErrInvalidSelection
 
 // Disclosure is what presenting one credential would disclose.
