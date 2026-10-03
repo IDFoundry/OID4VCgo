@@ -350,11 +350,15 @@ struct RequestView: View {
                         Section("Answers “\(query.queryID)”") {
                             ForEach(query.credentials, id: \.id) { c in
                                 Button {
-                                    Task { await model.toggle(c.id) }
+                                    Task { await model.toggle(c.id, for: query.queryID) }
                                 } label: {
                                     HStack {
-                                        Image(systemName: model.selected.contains(c.id) ? "checkmark.circle.fill" : "circle")
-                                        Text(c.vct ?? c.doctype ?? c.configurationID)
+                                        Image(systemName: model.selected.contains(c.id) ? "largecircle.fill.circle" : "circle")
+                                        VStack(alignment: .leading) {
+                                            Text(CredentialRow.title(c))
+                                            Text("Received \(c.receivedAt.formatted(date: .abbreviated, time: .shortened))")
+                                                .font(.caption).foregroundStyle(.secondary)
+                                        }
                                     }
                                 }
                                 .accessibilityIdentifier("candidate")
