@@ -100,7 +100,10 @@ type Issuance struct {
 	dpopKey     Key
 	client      *client.Client
 	session     client.SessionHandle
-	resource    wallet.ProtectedResourceClient
+	// sessions is the client's SessionStore: it knows the state of the
+	// authorization in progress, to forget it.
+	sessions *sessionStore
+	resource wallet.ProtectedResourceClient
 	// accessToken and its expiry, if the Token Response gave one, are
 	// kept with each deferred credential.
 	accessToken     fapi.Secret
@@ -238,7 +241,7 @@ func (s *Issuance) CompleteAuthorization(ctx context.Context, redirect string) e
 		// matches, whatever fails after (the token request, say): it
 		// can't be completed again. Start over from BeginAuthorization,
 		// with the same keys.
-		_ = s.w.deps.Authorizations.DeleteAuthorization(context.WithoutCancel(ctx), s.session.String())
+		_ = s.forgetAuthorization(context.WithoutCancel(ctx))
 		s.step = stepStarted
 		return fmt.Errorf("walletflow: authorization: %w", err)
 	}
@@ -347,9 +350,24 @@ func (s *Issuance) newClient(ctx context.Context, asURL string) error {
 	return nil
 }
 
+// forgetAuthorization deletes the authorization in progress, if there
+// is one.
+func (s *Issuance) forgetAuthorization(ctx context.Context) error {
+	if s.sessions == nil || s.sessions.state == "" {
+		return nil
+	}
+	return s.w.deps.Authorizations.DeleteAuthorization(ctx, s.sessions.state)
+}
+
 // oauthClient builds the fapigo/client for the authorization server
 // issuer, authenticating with walletAttestation and the issuance's keys.
 func (s *Issuance) oauthClient(issuer fapi.URL, endpoints client.Endpoints, asURL, walletAttestation string) (*client.Client, error) {
+	if s.sessions == nil {
+		s.sessions = &sessionStore{
+			w: s.w, offer: s.offer, authorizationServer: asURL,
+			instanceKeyID: s.instanceKey.ID(), dpopKeyID: s.dpopKey.ID(),
+		}
+	}
 	var custody []keys.CustodyOption
 	if c, ok := s.w.deps.Keys.(keys.KeyCustodyAssurance); ok {
 		custody = append(custody, keys.DeclareCustody(c.KeyCustody()))
@@ -378,11 +396,8 @@ func (s *Issuance) oauthClient(issuer fapi.URL, endpoints client.Endpoints, asUR
 	}, client.Dependencies{
 		// The authorization's state, kept so the redirect can complete it
 		// after the app is suspended (ResumeIssuance).
-		Sessions: &sessionStore{
-			w: s.w, offer: s.offer, authorizationServer: asURL,
-			instanceKeyID: s.instanceKey.ID(), dpopKeyID: s.dpopKey.ID(),
-		},
-		Keys: km, HTTP: s.w.deps.HTTP,
+		Sessions: s.sessions,
+		Keys:     km, HTTP: s.w.deps.HTTP,
 		Clock: clientClock(s.w.deps.Clock), Random: s.w.deps.Random,
 		Attestation: client.StaticAttestation(walletAttestation),
 		// Reuses the DPoP nonce each response hands out, so only the
@@ -598,7 +613,7 @@ func (s *Issuance) Close(ctx context.Context) error {
 	var errs []error
 	if s.step == stepAuthorizing {
 		// An authorization begun and not completed can't be any more.
-		errs = append(errs, s.w.deps.Authorizations.DeleteAuthorization(ctx, s.session.String()))
+		errs = append(errs, s.forgetAuthorization(ctx))
 	}
 	s.step = stepClosed
 	if s.instanceKey != nil {

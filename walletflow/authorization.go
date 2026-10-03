@@ -10,7 +10,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/idfoundry/fapigo/client"
 	"github.com/idfoundry/fapigo/storage"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
@@ -50,6 +49,12 @@ type PendingAuthorization struct {
 // platform's data protection. A production wallet needs a Durable one:
 // the authorization's state must survive the app being suspended while
 // the holder is at the issuer's pages. MemoryAuthorizationStore isn't.
+//
+// It holds only this wallet's own authorizations — a native app's
+// on-device storage — never one shared between users or browsers: the
+// redirect's state alone then finds the authorization it completes
+// (fapigo's storage.Capabilities.SingleUserAgent). A wallet serving
+// several browsers must not call ResumeIssuance.
 type AuthorizationStore interface {
 	// PutAuthorization stores a, replacing any with its State.
 	PutAuthorization(ctx context.Context, a PendingAuthorization) error
@@ -128,6 +133,9 @@ type sessionStore struct {
 	authorizationServer string
 	instanceKeyID       string
 	dpopKeyID           string
+	// state is the authorization in progress's, once Create has recorded
+	// it (or the one ResumeIssuance resumes).
+	state string
 }
 
 var (
@@ -136,6 +144,7 @@ var (
 )
 
 func (s *sessionStore) Create(ctx context.Context, n storage.NewSession) error {
+	s.state = n.State
 	return s.w.deps.Authorizations.PutAuthorization(ctx, PendingAuthorization{
 		State: n.State, Session: n.Record, ExpiresAt: n.ExpiresAt,
 		Offer: s.offer, AuthorizationServer: s.authorizationServer,
@@ -159,9 +168,12 @@ func (s *sessionStore) Consume(ctx context.Context, c storage.SessionConsumption
 }
 
 // Capabilities implements storage.StoreAssurance: Durable as the
-// AuthorizationStore is, and Consume is atomic within the wallet.
+// AuthorizationStore is, and Consume is atomic within the wallet's one
+// process. It's SingleUserAgent: a wallet's AuthorizationStore holds
+// only the authorizations the wallet itself began, so the callback's
+// state alone finds the one the redirect completes (ResumeIssuance).
 func (s *sessionStore) Capabilities() storage.Capabilities {
-	return storage.Capabilities{Durable: s.w.deps.Authorizations.Durable(), AtomicConsume: true}
+	return storage.Capabilities{Durable: s.w.deps.Authorizations.Durable(), AtomicConsume: true, SingleUserAgent: true}
 }
 
 // ResumeIssuance completes an authorization begun before the app was
@@ -196,15 +208,12 @@ func (w *Wallet) ResumeIssuance(ctx context.Context, redirect string) (*Issuance
 		_ = w.forgetAuthorization(ctx, a)
 		return nil, ErrNoAuthorization
 	}
-	handle, err := client.ParseSessionHandle(a.State)
-	if err != nil {
-		return nil, ErrNoAuthorization
-	}
 	s, err := w.rebuild(ctx, a)
 	if err != nil {
 		return nil, err
 	}
-	s.session = handle
+	// No session handle: the store is single-user-agent, so fapigo takes
+	// the session from the callback itself.
 	if err := s.CompleteAuthorization(ctx, redirect); err != nil {
 		var denied *AuthorizationDeniedError
 		if !errors.As(err, &denied) {
@@ -241,6 +250,10 @@ func (w *Wallet) rebuild(ctx context.Context, a PendingAuthorization) (*Issuance
 	w.mu.Lock()
 	w.liveDPoP[a.DPoPKeyID] = true
 	w.mu.Unlock()
+	s.sessions = &sessionStore{
+		w: w, offer: a.Offer, authorizationServer: a.AuthorizationServer,
+		instanceKeyID: a.InstanceKeyID, dpopKeyID: a.DPoPKeyID, state: a.State,
+	}
 	if err := s.newClient(ctx, a.AuthorizationServer); err != nil {
 		_ = s.Close(ctx)
 		return nil, err

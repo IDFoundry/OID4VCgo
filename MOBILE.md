@@ -523,6 +523,13 @@ authentication session, through an eID or banking app, say.
   with the session (10 minutes). A redirect that matches nothing, is
   replayed or has expired is `not_found`. The launch key sweep keeps an
   unexpired authorization's keys and forgets expired ones.
+- **No session handle needed:** the store declares FAPIgo's
+  `SingleUserAgent`, since it holds only this wallet's own
+  authorizations. FAPIgo then takes the session from the callback
+  itself, so resuming doesn't depend on the handle being the `state`.
+  RFC 9700 §4.7's binding of the session to the user agent holds by
+  construction: nothing else writes the app's store, so an attacker's
+  session is never in it.
 - **Production assurance:** FAPIgo's production checks need this store
   to be durable. walletflow at production assurance also needs a
   KeyStore that declares durable custody, and `crypto/rand.Reader`
