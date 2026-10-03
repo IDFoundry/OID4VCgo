@@ -73,7 +73,23 @@ final class WalletModel {
     /// The redirect URI's scheme, for the authorization session.
     var callbackScheme: String { config.flatMap { URL(string: $0.wallet.redirectURI)?.scheme } ?? "" }
 
+    /// Something to tell the holder that isn't a receive's or
+    /// presentation's outcome.
+    var notice: String?
+
+    /// Whether a receive or a presentation is in progress: a link that
+    /// arrives then is refused rather than replacing it.
+    private var busy: Bool {
+        phase == .offered || phase == .receiving || requestPhase != .idle
+    }
+
     func open(_ url: URL) {
+        guard url.scheme == "openid-credential-offer" || url.scheme == "openid4vp" else { return }
+        if busy {
+            notice = "Finish or cancel the current request before opening another."
+            return
+        }
+        notice = nil
         switch url.scheme {
         case "openid-credential-offer": Task { await start(offer: url.absoluteString) }
         case "openid4vp": Task { await startPresentation(request: url.absoluteString) }
@@ -89,6 +105,16 @@ final class WalletModel {
     private(set) var disclosures: [Presentation.Disclosure] = []
     var requestPhase: RequestPhase = .idle
     var selected: Set<String> = []
+    /// The selection `disclosures` was computed for: Share sends only a
+    /// selection the holder has seen previewed.
+    private(set) var previewed: Set<String>?
+    /// Why the selection couldn't be previewed, if it couldn't.
+    private(set) var previewError: String?
+
+    /// Whether Share would send exactly what "Will share" shows.
+    var canShare: Bool {
+        !selected.isEmpty && previewed == selected && previewError == nil && requestPhase == .shown
+    }
 
     /// Fetches and verifies a presentation request, and preselects the
     /// first credential that can answer it.
@@ -111,23 +137,36 @@ final class WalletModel {
     }
 
     private func updatePreview() async {
-        guard let presentation, !selected.isEmpty else {
+        let selection = selected
+        previewed = nil
+        previewError = nil
+        guard let presentation, !selection.isEmpty else {
             disclosures = []
             return
         }
-        disclosures = (try? await presentation.preview(credentialIDs: Array(selected))) ?? []
+        do {
+            let result = try await presentation.preview(credentialIDs: Array(selection))
+            // A newer selection's preview supersedes this one.
+            guard selection == selected else { return }
+            disclosures = result
+            previewed = selection
+        } catch {
+            guard selection == selected else { return }
+            disclosures = []
+            previewError = "\(error)"
+        }
     }
 
     /// Shares the selected credentials: holder keys sign now, so Face ID
     /// or the passcode is asked for on a device.
     func share() async {
-        guard let presentation else { return }
+        guard let presentation, canShare, let selection = previewed else { return }
         requestPhase = .sharing
         do {
-            let presented = try await presentation.respond(credentialIDs: Array(selected))
+            let presented = try await presentation.respond(credentialIDs: Array(selection))
             phase = .done("Shared with \(presentation.verifier.name)")
             endPresentation()
-            if let url = presented.redirectURI { await UIApplication.shared.open(url) }
+            if let url = presented.redirectURI, url.scheme == "https" { await UIApplication.shared.open(url) }
         } catch {
             phase = .failed("\(error)")
             endPresentation()
@@ -140,7 +179,7 @@ final class WalletModel {
             let presented = try await presentation.decline()
             phase = .done("Declined \(presentation.verifier.name)")
             endPresentation()
-            if let url = presented.redirectURI { await UIApplication.shared.open(url) }
+            if let url = presented.redirectURI, url.scheme == "https" { await UIApplication.shared.open(url) }
         } catch {
             phase = .failed("\(error)")
             endPresentation()
@@ -151,6 +190,8 @@ final class WalletModel {
         presentation = nil
         disclosures = []
         selected = []
+        previewed = nil
+        previewError = nil
         requestPhase = .idle
     }
 
@@ -195,6 +236,9 @@ final class WalletModel {
             }
         } catch {
             phase = .failed("\(error)")
+            // Don't leave the issuance's keys in the Keychain: the holder
+            // starts again from the offer.
+            await closeIssuance()
         }
         await refresh()
     }
