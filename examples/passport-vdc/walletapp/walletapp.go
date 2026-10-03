@@ -60,6 +60,24 @@ type Approver interface {
 	Approve(ctx context.Context, authorizationURL string) (Callback, error)
 }
 
+// LoopbackApprover is an Approver that receives the redirect on a
+// loopback port it listens on before the authorization begins, so that
+// the wallet can send that port in the request (RFC 8252 §7.3).
+type LoopbackApprover interface {
+	Approver
+	Listen(ctx context.Context) (LoopbackListener, error)
+}
+
+// LoopbackListener is a LoopbackApprover's listener for one
+// authorization.
+type LoopbackListener interface {
+	// RedirectPort is the port to send in the authorization request, or 0
+	// to send RedirectURI as configured.
+	RedirectPort() uint16
+	Approve(ctx context.Context, authorizationURL string) (Callback, error)
+	Close() error
+}
+
 // Callback is the authorization redirect back to RedirectURI.
 type Callback struct {
 	// Query is the redirect's raw query.
@@ -172,11 +190,22 @@ func authorize(ctx context.Context, s *walletflow.Issuance, approver Approver) e
 		}
 		return nil
 	}
-	authURL, err := s.BeginAuthorization(ctx)
+	approve := approver.Approve
+	var opts walletflow.AuthorizationOptions
+	if la, ok := approver.(LoopbackApprover); ok {
+		l, err := la.Listen(ctx)
+		if err != nil {
+			return fmt.Errorf("walletapp: authorization: %w", err)
+		}
+		defer func() { _ = l.Close() }()
+		opts.RedirectPort = l.RedirectPort()
+		approve = l.Approve
+	}
+	authURL, err := s.BeginAuthorizationWith(ctx, opts)
 	if err != nil {
 		return fmt.Errorf("walletapp: %w", err)
 	}
-	cb, err := approver.Approve(ctx, authURL)
+	cb, err := approve(ctx, authURL)
 	if err != nil {
 		return fmt.Errorf("walletapp: authorization: %w", err)
 	}
