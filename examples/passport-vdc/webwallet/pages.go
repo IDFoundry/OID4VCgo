@@ -125,7 +125,7 @@ var consentTemplate = template.Must(template.New("consent").Funcs(template.FuncM
 <form method="post" action="/present/{{.ID}}">
 {{range $i, $o := .Options}}
 <div class="card">
-<label><input type="radio" name="format" value="{{$o.Format}}" {{if eq $i 0}}checked{{end}}> Share as <span class="fmt">{{$o.Format}}</span></label>
+<label><input type="radio" name="credential" value="{{$o.CredentialID}}" {{if eq $i 0}}checked{{end}}> Share {{if $o.Holder}}<strong>{{$o.Holder}}</strong>'s passport{{else}}a passport credential{{end}} as <span class="fmt">{{$o.Format}}</span></label>
 <p>It will see only:</p>
 <ul>{{range $o.Claims}}<li><code>{{path .}}</code></li>{{end}}</ul>
 </div>

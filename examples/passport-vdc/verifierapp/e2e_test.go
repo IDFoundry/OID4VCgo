@@ -299,3 +299,56 @@ func TestEndToEnd_SampleDocumentIssuedUnchecked(t *testing.T) {
 		}
 	}
 }
+
+// A wallet holding several people's passports offers each, named, and
+// presents the one the holder chooses — not just the first stored.
+func TestEndToEnd_ChoosesAmongSeveralPeople(t *testing.T) {
+	env := demotest.New(t, nil)
+	env.StartVerifier(t, nil)
+	ctx := context.Background()
+	store := walletapp.Store{Dir: filepath.Join(t.TempDir(), "wallet")}
+	for _, name := range [][2]string{{"JANE", "DOE"}, {"JOHN", "ROE"}} {
+		e := demotest.SyntheticEvidence()
+		e.Identity.GivenNames, e.Identity.FamilyName = name[0], name[1]
+		offer, err := env.Issuer.CreateTransaction(ctx, e)
+		if err != nil {
+			t.Fatal(err)
+		}
+		received, err := walletapp.Receive(ctx, env.WalletConfig(), offer.URI, walletapp.HeadlessApprover{HTTP: env.HTTP, Code: offer.ConfirmationCode})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, r := range received {
+			if _, err := store.Save(r, time.Now()); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+
+	id, link, err := env.Verifier.CreateRequest(verifierapp.ModeIssuer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := walletapp.Prepare(ctx, link, store, env.HTTP, env.VerifierTrust())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var john string
+	holders := map[string]int{}
+	for _, o := range prepared.Options {
+		holders[o.Holder]++
+		if o.Holder == "JOHN ROE" && o.Format == "dc+sd-jwt" {
+			john = o.CredentialID
+		}
+	}
+	if holders["JANE DOE"] != 2 || holders["JOHN ROE"] != 2 || john == "" {
+		t.Fatalf("options by holder = %v; want each person's mdoc and SD-JWT VC", holders)
+	}
+	if _, err := prepared.Send(ctx, john); err != nil {
+		t.Fatal(err)
+	}
+	outcome, ok := env.Verifier.Outcome(id)
+	if !ok || outcome.Claims[credential.FamilyName] != "ROE" {
+		t.Errorf("the verifier got %v, want JOHN ROE's credential", outcome)
+	}
+}

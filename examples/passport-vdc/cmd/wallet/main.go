@@ -24,6 +24,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -144,7 +145,9 @@ func receive(offerURI, dir string, cfg walletapp.Config, approver walletapp.Appr
 }
 
 // present answers a presentation request, first showing the holder
-// who is asking and what they'd see, unless yes.
+// who is asking and what each stored credential that answers would
+// disclose, and asking which to share — unless yes, which shares the
+// first (of format, when set).
 func present(link, dir, format string, yes bool, httpClient *http.Client, trust wallet.VerifierTrust) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -152,11 +155,24 @@ func present(link, dir, format string, yes bool, httpClient *http.Client, trust 
 	if err != nil {
 		return err
 	}
-	if !yes && !confirmShare(prepared, format) {
-		fmt.Println("declined — nothing was shared")
-		return nil
+	options := make([]walletapp.Option, 0, len(prepared.Options))
+	for _, o := range prepared.Options {
+		if format == "" || o.Format == format {
+			options = append(options, o)
+		}
 	}
-	presented, err := prepared.Send(ctx, format)
+	if len(options) == 0 {
+		return fmt.Errorf("no stored %s credential answers the request", format)
+	}
+	choice := options[0]
+	if !yes {
+		var ok bool
+		if choice, ok = chooseShare(prepared, options); !ok {
+			fmt.Println("declined — nothing was shared")
+			return nil
+		}
+	}
+	presented, err := prepared.Send(ctx, choice.CredentialID)
 	if err != nil {
 		return err
 	}
@@ -167,22 +183,27 @@ func present(link, dir, format string, yes bool, httpClient *http.Client, trust 
 	return nil
 }
 
-// confirmShare shows the verifier and what each way of answering in
-// format ("" for any) would disclose, and asks the holder to confirm.
-func confirmShare(p *walletapp.Prepared, format string) bool {
+// chooseShare shows the verifier and what each option would disclose,
+// and asks the holder which to share; false declines.
+func chooseShare(p *walletapp.Prepared, options []walletapp.Option) (walletapp.Option, bool) {
 	fmt.Printf("Verifier %q (%s) asks for your passport credential.\nThe answer goes to %s.\n", p.VerifierName, p.VerifierClientID, p.ResponseURI)
-	for _, o := range p.Options {
-		if format != "" && o.Format != format {
-			continue
+	for i, o := range options {
+		holder := o.Holder
+		if holder == "" {
+			holder = "a passport credential"
 		}
-		fmt.Printf("As %s it will see only:\n", o.Format)
+		fmt.Printf("%d. %s, as %s — it will see only:\n", i+1, holder, o.Format)
 		for _, c := range o.Claims {
-			fmt.Printf("  - %s\n", strings.Join(c, " › "))
+			fmt.Printf("     - %s\n", strings.Join(c, " › "))
 		}
 	}
-	fmt.Print("Share? [y/N] ")
+	fmt.Printf("Share which? [1-%d, or N to decline] ", len(options))
 	answer, _ := bufio.NewReader(os.Stdin).ReadString('\n')
-	return strings.EqualFold(strings.TrimSpace(answer), "y")
+	n, err := strconv.Atoi(strings.TrimSpace(answer))
+	if err != nil || n < 1 || n > len(options) {
+		return walletapp.Option{}, false
+	}
+	return options[n-1], true
 }
 
 func list(dir string) error {
