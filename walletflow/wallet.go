@@ -37,6 +37,11 @@ type Config struct {
 	// (OpenID4VP 1.0 §5.9.3). REQUIRED for StartPresentation.
 	VerifierTrust wallet.VerifierTrust
 
+	// Locales are the holder's preferred languages (BCP 47 tags, most
+	// preferred first), for the issuer's display metadata. None means
+	// the issuer's entry without a locale, else its first.
+	Locales []string
+
 	// Development relaxes what production requires, for a wallet
 	// talking to services on this machine: issuers, Authorization
 	// Servers and Verifiers on loopback addresses.

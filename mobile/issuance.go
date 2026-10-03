@@ -51,6 +51,7 @@ type offerJSON struct {
 	result
 	CredentialIssuer string        `json:"credential_issuer"`
 	IssuerName       string        `json:"issuer_name,omitempty"`
+	IssuerLogo       *logoJSON     `json:"issuer_logo,omitempty"`
 	Grant            string        `json:"grant"`
 	TxCode           *txCodeJSON   `json:"tx_code,omitempty"`
 	Credentials      []offeredJSON `json:"credentials"`
@@ -63,11 +64,15 @@ type txCodeJSON struct {
 }
 
 type offeredJSON struct {
-	ConfigurationID string `json:"configuration_id"`
-	Format          string `json:"format"`
-	VCT             string `json:"vct,omitempty"`
-	DocType         string `json:"doctype,omitempty"`
-	Name            string `json:"name,omitempty"`
+	ConfigurationID string    `json:"configuration_id"`
+	Format          string    `json:"format"`
+	VCT             string    `json:"vct,omitempty"`
+	DocType         string    `json:"doctype,omitempty"`
+	Name            string    `json:"name,omitempty"`
+	Description     string    `json:"description,omitempty"`
+	Logo            *logoJSON `json:"logo,omitempty"`
+	BackgroundColor string    `json:"background_color,omitempty"`
+	TextColor       string    `json:"text_color,omitempty"`
 }
 
 // Grant values in Offer.
@@ -77,13 +82,19 @@ const (
 )
 
 // Offer returns what the offer offers: {"abi", "credential_issuer",
-// "issuer_name", "grant": "authorization_code" | "pre-authorized_code",
-// "tx_code": {"input_mode", "length", "description"} (the PIN to ask
-// for, if any), "credentials": [{"configuration_id", "format", "vct",
-// "doctype", "name"}]}.
+// "issuer_name", "issuer_logo": {"uri", "alt_text"}, "grant":
+// "authorization_code" | "pre-authorized_code", "tx_code":
+// {"input_mode", "length", "description"} (the PIN to ask for, if any),
+// "credentials": [{"configuration_id", "format", "vct", "doctype",
+// "name", "description", "logo", "background_color", "text_color"}]}.
+// The display metadata is the issuer's, in the configuration's
+// "locales"; a logo is https or a data: image.
 func (s *Issuance) Offer() string {
 	o := s.s.Offer()
-	out := offerJSON{result: result{ABIVersion}, CredentialIssuer: o.CredentialIssuer, IssuerName: o.IssuerName, Grant: GrantAuthorizationCode}
+	out := offerJSON{
+		result: result{ABIVersion}, CredentialIssuer: o.CredentialIssuer, IssuerName: o.IssuerName,
+		IssuerLogo: logoOf(o.IssuerLogo), Grant: GrantAuthorizationCode,
+	}
 	if o.Grant == walletflow.GrantPreAuthorizedCode {
 		out.Grant = GrantPreAuthorizedCode
 	}
@@ -93,6 +104,7 @@ func (s *Issuance) Offer() string {
 	for _, c := range o.Credentials {
 		out.Credentials = append(out.Credentials, offeredJSON{
 			ConfigurationID: c.ConfigurationID, Format: c.Format, VCT: c.VCT, DocType: c.DocType, Name: c.Name,
+			Description: c.Description, Logo: logoOf(c.Logo), BackgroundColor: c.BackgroundColor, TextColor: c.TextColor,
 		})
 	}
 	text, _ := marshal(out) // plain data: can't fail

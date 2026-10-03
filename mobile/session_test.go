@@ -8,6 +8,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/idfoundry/oid4vcgo/walletflow/walletflowtest"
 )
 
 // goCredentialStore is a CredentialStore in memory, as the app's would
@@ -584,5 +586,46 @@ func TestSessions_ProductionNeedsDurableStores(t *testing.T) {
 	}
 	if _, err := w.StartIssuance(NewOperation(0), "openid-credential-offer://?credential_offer=%7B%7D"); err == nil || !strings.Contains(err.Error(), "Durable") {
 		t.Errorf("StartIssuance with a store that isn't durable: %v", err)
+	}
+}
+
+// A received credential's summary carries the issuer's display metadata
+// and its expiry; CheckStatus reads its status, and sees a revocation.
+func TestSessions_DisplayAndStatus(t *testing.T) {
+	h := newHarness(t, false)
+	held := h.receive(t)
+	type summaryWithDisplay struct {
+		ID      string
+		Display struct {
+			IssuerName string `json:"issuer_name"`
+			Name       string
+			Logo       *struct{ URI string }
+		}
+		ValidUntil *time.Time `json:"valid_until"`
+		Status     *struct{ Value string }
+	}
+	list := decode[struct{ Credentials []summaryWithDisplay }](t, mustText(t)(h.w.Credentials()))
+	for _, c := range list.Credentials {
+		if c.Display.IssuerName != walletflowtest.IssuerName || c.Display.Name == "" || c.Display.Logo == nil ||
+			c.ValidUntil == nil || !c.ValidUntil.After(time.Now()) || c.Status != nil {
+			t.Errorf("summary = %+v", c)
+		}
+	}
+	check := func(id string) string {
+		got := decode[summaryWithDisplay](t, mustText(t)(h.w.CheckStatus(NewOperation(0), id)))
+		if got.Status == nil {
+			return ""
+		}
+		return got.Status.Value
+	}
+	if v := check(held[0].ID); v != "valid" {
+		t.Errorf("status = %q, want valid", v)
+	}
+	h.env.Revoke()
+	if v := check(held[0].ID); v != "invalid" {
+		t.Errorf("status after Revoke = %q, want invalid", v)
+	}
+	if _, err := h.w.CheckStatus(NewOperation(0), "no-such"); code(err) != CodeNotFound {
+		t.Errorf("an unknown credential: %v", err)
 	}
 }

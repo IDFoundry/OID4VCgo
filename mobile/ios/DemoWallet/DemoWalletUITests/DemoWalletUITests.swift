@@ -86,6 +86,40 @@ final class DemoWalletUITests: XCTestCase {
         XCTAssertTrue(status.label.hasPrefix("Received 1"), status.label)
     }
 
+    /// A received credential shows its status, checked against the
+    /// issuer's status list: valid, then revoked once the issuer revokes
+    /// it.
+    @MainActor
+    func testCheckStatusAndRevocation() async throws {
+        let offer = try await Self.fetch("offer", query: [URLQueryItem(name: "pin", value: "493536")], method: "POST")["offer"] as! String
+        let app = try await launch(offer: offer)
+        let pin = app.textFields["pin"]
+        XCTAssertTrue(pin.waitForExistence(timeout: 20))
+        pin.tap()
+        pin.typeText("493536")
+        app.buttons["receive"].tap()
+        let credential = app.descendants(matching: .any).matching(identifier: "credential").firstMatch
+        XCTAssertTrue(credential.waitForExistence(timeout: 60))
+        XCTAssertTrue(credential.label.contains("Test PID"), credential.label)
+        credential.tap()
+        let check = app.buttons["check-status"]
+        XCTAssertTrue(check.waitForExistence(timeout: 10))
+        check.tap()
+        let status = app.descendants(matching: .any).matching(identifier: "credential-status").firstMatch
+        XCTAssertTrue(status.waitForExistence(timeout: 10))
+        XCTAssertTrue(waitFor(status, containing: "Valid"), status.label)
+        _ = try await Self.fetch("revoke", method: "POST")
+        check.tap()
+        XCTAssertTrue(waitFor(status, containing: "Revoked"), status.label)
+    }
+
+    /// Waits up to 10 seconds for element's label to contain text.
+    @MainActor
+    func waitFor(_ element: XCUIElement, containing text: String) -> Bool {
+        let expectation = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS %@", text), object: element)
+        return XCTWaiter().wait(for: [expectation], timeout: 10) == .completed
+    }
+
     /// Receives an SD-JWT VC, then presents it: the Verifier asks for
     /// family_name from either format, the holder shares the one
     /// credential held, and the Verifier gets the claim.

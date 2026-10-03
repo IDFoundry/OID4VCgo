@@ -34,10 +34,12 @@ const (
 
 // Offer is what a Credential Offer offers, for the holder to see.
 type Offer struct {
-	// CredentialIssuer is the issuer's identifier, and IssuerName its
-	// display name, if its metadata gives one.
+	// CredentialIssuer is the issuer's identifier, and IssuerName and
+	// IssuerLogo its display name and logo, if its metadata gives them,
+	// in the holder's preferred language (Config.Locales).
 	CredentialIssuer string
 	IssuerName       string
+	IssuerLogo       *Logo
 	// Credentials are the credentials offered.
 	Credentials []OfferedCredential
 	// Grant is how the wallet will redeem the offer.
@@ -53,9 +55,14 @@ type OfferedCredential struct {
 	Format          string
 	VCT             string
 	DocType         string
-	// Name is the credential's display name, if the issuer's metadata
-	// gives one.
-	Name string
+	// Name, Description, Logo and the colours are the credential's
+	// display metadata, if the issuer's metadata gives them, in the
+	// holder's preferred language.
+	Name            string
+	Description     string
+	Logo            *Logo
+	BackgroundColor string
+	TextColor       string
 }
 
 // IssuanceResult is what RequestCredentials obtained.
@@ -134,7 +141,7 @@ func (w *Wallet) StartIssuance(ctx context.Context, offerURI string) (*Issuance,
 		return nil, errors.New("walletflow: the issuer advertises no nonce endpoint, which the attestation proof needs")
 	}
 	s := &Issuance{w: w, offer: offer, metadata: metadata}
-	s.details = describeOffer(offer, metadata)
+	s.details = describeOffer(offer, metadata, w.cfg.Locales)
 	// Refuse an offer whose grant names an Authorization Server the
 	// issuer doesn't list before the holder sees it: a pre-authorized
 	// code and its PIN would go to that server.
@@ -149,11 +156,8 @@ func (w *Wallet) StartIssuance(ctx context.Context, offerURI string) (*Issuance,
 	return s, nil
 }
 
-func describeOffer(offer oid4vci.CredentialOffer, metadata oid4vci.Metadata) Offer {
+func describeOffer(offer oid4vci.CredentialOffer, metadata oid4vci.Metadata, locales []string) Offer {
 	o := Offer{CredentialIssuer: offer.CredentialIssuer, Grant: GrantAuthorizationCode}
-	if len(metadata.Display) > 0 {
-		o.IssuerName = metadata.Display[0].Name
-	}
 	// The pre-authorized code grant only when it's the one offered: an
 	// offer with both leaves the choice to the wallet, and the
 	// authorization code grant authenticates the holder at the issuer.
@@ -162,11 +166,12 @@ func describeOffer(offer oid4vci.CredentialOffer, metadata oid4vci.Metadata) Off
 	}
 	for _, id := range offer.CredentialConfigurationIDs {
 		conf := metadata.CredentialConfigurationsSupported[id]
-		oc := OfferedCredential{ConfigurationID: id, Format: conf.Format, VCT: conf.VCT, DocType: conf.DocType}
-		if cm := conf.CredentialMetadata; cm != nil && len(cm.Display) > 0 {
-			oc.Name = cm.Display[0].Name
-		}
-		o.Credentials = append(o.Credentials, oc)
+		d := displayFor(metadata, id, locales)
+		o.IssuerName, o.IssuerLogo = d.IssuerName, d.IssuerLogo
+		o.Credentials = append(o.Credentials, OfferedCredential{
+			ConfigurationID: id, Format: conf.Format, VCT: conf.VCT, DocType: conf.DocType,
+			Name: d.Name, Description: d.Description, Logo: d.Logo, BackgroundColor: d.BackgroundColor, TextColor: d.TextColor,
+		})
 	}
 	return o
 }
@@ -582,6 +587,8 @@ func (w *Wallet) accept(ctx context.Context, c issued) (StoredCredential, error)
 		ID: id, CredentialIssuer: c.issuer, ConfigurationID: c.configID,
 		Format: conf.Format, VCT: conf.VCT, DocType: conf.DocType,
 		Credential: credential, HolderKeyID: c.holder.ID(), ReceivedAt: now.UTC(), Claims: verified.Claims,
+		Display: displayFor(c.metadata, c.configID, w.cfg.Locales), ValidUntil: verified.ValidUntil,
+		StatusList: verified.StatusList, StatusListCWT: verified.StatusListCWT,
 	}
 	if err := w.deps.Credentials.Put(ctx, stored); err != nil {
 		w.notify(ctx, c, oid4vci.NotificationEventCredentialFailure, "the wallet couldn't store the credential")

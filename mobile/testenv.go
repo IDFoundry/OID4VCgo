@@ -81,6 +81,10 @@ func (e *TestEnv) Approve(authorizationURL string) (string, error) {
 // Decide approves or denies every deferred credential.
 func (e *TestEnv) Decide(approve bool) { e.env.Decide(approve) }
 
+// Revoke revokes every credential the issuer has issued: its status
+// list then says so.
+func (e *TestEnv) Revoke() { e.env.Revoke() }
+
 // Request has the Verifier ask for family_name from an SD-JWT VC
 // ("dc+sd-jwt"), an mdoc ("mso_mdoc"), or either ("") and returns
 // {"id", "link"}.

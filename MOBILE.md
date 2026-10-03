@@ -609,6 +609,34 @@ The protocol can't make some steps idempotent. A lost token or
 credential response leaves the issuer to decide whether a retry is
 refused (`invalid_grant`) or issues again.
 
+### After Phase 7: display, expiry and status
+
+What a wallet's UI needs to show a credential, from the SDK:
+
+- **Display metadata** (OpenID4VCI 1.0 §12.2.4):
+  - **What:** the issuer's name and logo, and each credential's name,
+    description, logo and colours.
+  - **Where:** in offers, and kept with each credential when it's
+    received.
+  - **Language:** chosen by the holder's `locales`: an exact match, then
+    the same language, then the issuer's entry without a locale.
+  - **Logos:** only an https URL or a `data:` image is passed on, since
+    an `http`, `javascript:` or custom-scheme logo would be the app's
+    to refuse. The app loads logos itself (`AsyncImage`); Go fetches
+    none.
+- **Expiry:** an SD-JWT VC's `exp`, or an mdoc's
+  `validityInfo.validUntil`, is kept as `valid_until`.
+- **Revocation status:**
+  - Each credential's Token Status List reference is kept.
+  - `CheckStatus` fetches the list, checks it's signed by a certificate
+    chaining to the issuer roots, and records the status with the time
+    it was checked.
+  - One list covers many credentials, so fetching it doesn't tell the
+    issuer which credential, or whose, was checked.
+  - The demo app checks every credential at launch, quietly, and on
+    demand from a credential's page. Its cards show the issuer's colours
+    and logo, the expiry, and a revocation.
+
 ## Open questions
 
 - The Wallet Provider's production design (App Attest verification, key

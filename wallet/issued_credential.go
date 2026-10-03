@@ -19,6 +19,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/internal/cose"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/internal/jwk"
+	"github.com/idfoundry/oid4vcgo/statuslist"
 )
 
 // VerifyIssuedCredentialParams is the input to VerifyIssuedCredential.
@@ -60,6 +61,16 @@ type VerifiedIssuedCredential struct {
 	// SD-JWT Payload with every disclosure resolved; for "mso_mdoc"
 	// namespace → element identifier → value.
 	Claims map[string]any
+
+	// ValidUntil is when the credential expires — an SD-JWT VC's "exp",
+	// an mdoc's validityInfo.validUntil — or zero when it doesn't say.
+	ValidUntil time.Time
+
+	// StatusList is where the issuer publishes the credential's
+	// revocation status (Token Status List), or nil when it has none;
+	// StatusListCWT is whether that list is a CWT, as an mdoc's is.
+	StatusList    *statuslist.StatusListRef
+	StatusListCWT bool
 }
 
 // VerifyIssuedCredential checks a credential a Credential Issuer just
@@ -132,7 +143,36 @@ func verifyIssuedSDJWTVC(p VerifyIssuedCredentialParams, now time.Time) (Verifie
 			return VerifiedIssuedCredential{}, err
 		}
 	}
-	return VerifiedIssuedCredential{IssuerCertificate: leaf, Claims: payload}, nil
+	verified := VerifiedIssuedCredential{IssuerCertificate: leaf, Claims: payload, ValidUntil: numericDate(payload["exp"])}
+	if status, ok := payload["status"].(map[string]any); ok {
+		ref, err := statuslist.ParseStatusClaim(status)
+		if err != nil {
+			return VerifiedIssuedCredential{}, fmt.Errorf("status: %w", err)
+		}
+		verified.StatusList = &ref
+	}
+	return verified, nil
+}
+
+// numericDate is a JWT NumericDate claim's time, or zero when it isn't
+// one.
+func numericDate(v any) time.Time {
+	var secs float64
+	switch n := v.(type) {
+	case float64:
+		secs = n
+	case int64:
+		secs = float64(n)
+	case json.Number:
+		f, err := n.Float64()
+		if err != nil {
+			return time.Time{}
+		}
+		secs = f
+	default:
+		return time.Time{}
+	}
+	return time.Unix(int64(secs), 0).UTC()
 }
 
 func verifyIssuedMdoc(p VerifyIssuedCredentialParams, now time.Time) (VerifiedIssuedCredential, error) {
@@ -173,7 +213,12 @@ func verifyIssuedMdoc(p VerifyIssuedCredentialParams, now time.Time) (VerifiedIs
 	for ns, elements := range mso.NameSpaces {
 		claims[ns] = elements
 	}
-	return VerifiedIssuedCredential{IssuerCertificate: leaf, Claims: claims}, nil
+	verified := VerifiedIssuedCredential{IssuerCertificate: leaf, Claims: claims, ValidUntil: mso.ValidityInfo.ValidUntil.UTC()}
+	if mso.Status != nil && mso.Status.StatusList != nil {
+		verified.StatusList = &statuslist.StatusListRef{Idx: mso.Status.StatusList.Idx, URI: mso.Status.StatusList.URI}
+		verified.StatusListCWT = true
+	}
+	return verified, nil
 }
 
 // cnfIsKey checks an SD-JWT VC's "cnf" claim names holderKey as its

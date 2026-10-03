@@ -321,13 +321,17 @@ func (a *App) buildIssuer() error {
 				Format: mdoc.CredentialFormat, DocType: credential.DocType, Scope: MdocScope,
 				CryptographicBindingMethodsSupported: []string{"cose_key"},
 				ProofTypesSupported:                  proofTypes,
+				CredentialMetadata:                   credentialDisplay("Passport (mdoc)"),
 			},
 			SDJWTConfigurationID: {
 				Format: sdjwtvc.CredentialFormat, VCT: a.vct, Scope: SDJWTScope,
 				CryptographicBindingMethodsSupported: []string{"jwk"},
 				ProofTypesSupported:                  proofTypes,
+				CredentialMetadata:                   credentialDisplay("Passport (SD-JWT)"),
 			},
 		},
+		// Display metadata (OID4VCI 1.0 §12.2.4), which wallets show.
+		Display: []oid4vci.Display{{Name: "IDFoundry passport demo", Locale: "en"}},
 	}, issuer.Dependencies{
 		Nonces:               oid4vcgostorage.NewNonceStore(),
 		DeferredTransactions: oid4vcgostorage.NewDeferredTransactionStore(),
@@ -450,4 +454,13 @@ func (a *App) loadStatusList() (*statusList, error) {
 		return newStatusList(), nil
 	}
 	return loadStatusList(a.cfg.StateDir)
+}
+
+// credentialDisplay is a passport credential's display metadata: its
+// name, with the demo's description and colours.
+func credentialDisplay(name string) *oid4vci.CredentialMetadata {
+	return &oid4vci.CredentialMetadata{Display: []oid4vci.CredentialDisplay{{
+		Name: name, Locale: "en", Description: "Identity from a verified ePassport. Demo only.",
+		BackgroundColor: "#0b3d2e", TextColor: "#ffffff",
+	}}}
 }

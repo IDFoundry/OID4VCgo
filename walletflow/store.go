@@ -6,6 +6,8 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/idfoundry/oid4vcgo/statuslist"
 )
 
 // StoredCredential is a credential the wallet holds.
@@ -36,6 +38,20 @@ type StoredCredential struct {
 	Claims map[string]any
 	// ReceivedAt is when the wallet received it.
 	ReceivedAt time.Time
+
+	// Display is how to show the credential, from the issuer's metadata
+	// when it was received.
+	Display Display
+	// ValidUntil is when the credential expires, or zero when it doesn't
+	// say.
+	ValidUntil time.Time
+	// StatusList is where the issuer publishes the credential's
+	// revocation status, nil when it has none; StatusListCWT is whether
+	// that list is a CWT. Status is what Wallet.CheckStatus last found
+	// there.
+	StatusList    *statuslist.StatusListRef
+	StatusListCWT bool
+	Status        CredentialStatus
 }
 
 // CredentialStore holds the wallet's credentials. They carry personal
