@@ -479,11 +479,22 @@ func decode<T: Decodable>(_ type: T.Type, _ json: String) throws -> T {
         if let date = f.date(from: text) { return date }
         f.formatOptions = [.withInternetDateTime]
         if let date = f.date(from: text) { return date }
-        throw DecodingError.dataCorrupted(.init(codingPath: d.codingPath, debugDescription: "not an RFC 3339 time: \(text)"))
+        throw DecodingError.dataCorrupted(.init(codingPath: d.codingPath, debugDescription: "not an RFC 3339 time"))
     }
     do {
         return try decoder.decode(type, from: Data(json.utf8))
     } catch {
-        throw WalletError(code: .internalError, message: "malformed result from the Go side: \(error)")
+        // Only where: the decoder's own text can quote a value, a claim.
+        throw WalletError(code: .internalError, message: "malformed result from the Go side at \(codingPath(error))")
     }
+}
+
+/// The coding path a decoding error names, as "a.b[2]", or "the top".
+func codingPath(_ error: Error) -> String {
+    let path: [CodingKey]
+    switch error as? DecodingError {
+    case .dataCorrupted(let c), .keyNotFound(_, let c), .typeMismatch(_, let c), .valueNotFound(_, let c): path = c.codingPath
+    default: return "the top"
+    }
+    return path.isEmpty ? "the top" : path.map { $0.intValue.map { "[\($0)]" } ?? $0.stringValue }.joined(separator: ".")
 }

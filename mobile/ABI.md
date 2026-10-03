@@ -26,7 +26,8 @@ format or error code below changes incompatibly.
   the main thread; callbacks run on the calling thread.
 - **Cancellation:** a call that waits on the network takes an
   `Operation` (`NewOperation(timeoutMillis)`, 0 for no timeout); `Cancel`
-  it from any thread, and the call returns `cancelled`.
+  it from any thread, and the call returns `cancelled`. Its timeout,
+  like a request's own, returns `network`.
 
 ## Error codes
 
@@ -34,8 +35,9 @@ format or error code below changes incompatibly.
 |---|---|
 | `invalid_input` | an argument or the configuration is malformed |
 | `platform` | a callback into the app failed (its message follows) |
-| `network` | a request couldn't be made, or got no answer |
-| `cancelled` | the Operation was cancelled or timed out |
+| `network` | a request couldn't be made, got no answer, or timed out; retryable |
+| `unavailable` | the service answered with HTTP 5xx or 429; retryable later |
+| `cancelled` | the Operation was cancelled |
 | `not_found` | no key, credential or deferred credential with that ID |
 | `wrong_step` | a session method called out of turn, or after Close |
 | `authorization_denied` | the Authorization Server refused, e.g. the holder declined |
@@ -43,6 +45,13 @@ format or error code below changes incompatibly.
 | `no_matching_credential` | nothing held answers the Verifier's request |
 | `protocol` | an issuer, Authorization Server or Verifier answered with an error, or with something the wallet refuses |
 | `internal` | a bug |
+
+An error's message is fit for an app's logs. It never carries a remote
+party's own description (`error_description`, an error body), a URL's
+path or query (which can carry a pre-authorized code, a `request_uri` or
+a `response_code`), credential claims, or control characters. It's at
+most 300 characters. The remote party's OAuth error code is the
+`detail`.
 
 ## Callbacks the app implements
 

@@ -45,6 +45,8 @@ final class OID4VCWalletTests: XCTestCase {
         XCTAssertNil(network.protocolError)
         XCTAssertTrue(network.isRetryable)
 
+        XCTAssertTrue(parse("[unavailable] the issuer refused the request (HTTP 503)").isRetryable)
+        XCTAssertTrue(parse("[protocol:invalid_nonce] stale").isRetryable)
         XCTAssertFalse(parse("[protocol:invalid_client] no").isRetryable)
         XCTAssertFalse(parse("[credential_denied] no").isRetryable)
         let plain = parse("no code")
