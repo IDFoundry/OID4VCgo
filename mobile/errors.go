@@ -40,6 +40,10 @@ func classify(err error) error {
 		return newError(CodeNotFound, err)
 	case errors.As(err, &protocol), errors.As(err, &rejected):
 		return newError(CodeProtocol, err)
+	case errors.As(err, &urlErr) && urlErr.Op == "parse":
+		// A malformed link: don't echo it, it may carry a
+		// pre-authorized code.
+		return newError(CodeInvalidInput, errors.New("malformed link or URL"))
 	case errors.As(err, &urlErr), errors.As(err, &netErr):
 		return newError(CodeNetwork, err)
 	default:

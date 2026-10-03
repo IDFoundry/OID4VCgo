@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
+	"strconv"
 	"time"
 
 	"github.com/fxamacker/cbor/v2"
@@ -152,6 +154,10 @@ func (s credentialStore) Get(_ context.Context, id string) (walletflow.StoredCre
 	if err := json.Unmarshal(raw, &r); err != nil {
 		return walletflow.StoredCredential{}, newError(CodePlatform, fmt.Errorf("credential %q's record: %w", id, err))
 	}
+	if r.ID != id {
+		// A record for another credential: its holder key isn't this one's.
+		return walletflow.StoredCredential{}, newError(CodePlatform, fmt.Errorf("the record stored as %q is for credential %q", id, r.ID))
+	}
 	c, err := r.stored()
 	if err != nil {
 		return walletflow.StoredCredential{}, newError(CodePlatform, fmt.Errorf("credential %q's record: %w", id, err))
@@ -172,7 +178,12 @@ func (s credentialStore) List(context.Context) ([]walletflow.StoredCredential, e
 		return nil, newError(CodePlatform, fmt.Errorf("credential records: %w", err))
 	}
 	out := make([]walletflow.StoredCredential, 0, len(records))
+	seen := make(map[string]bool, len(records))
 	for _, r := range records {
+		if r.ID == "" || seen[r.ID] {
+			return nil, newError(CodePlatform, fmt.Errorf("the credential store lists credential %q twice, or one without an ID", r.ID))
+		}
+		seen[r.ID] = true
 		c, err := r.stored()
 		if err != nil {
 			return nil, newError(CodePlatform, fmt.Errorf("credential %q's record: %w", r.ID, err))
@@ -262,6 +273,13 @@ func jsonClaims(v any) any {
 		return jsonClaims(v.Content)
 	case time.Time:
 		return v.UTC().Format(time.RFC3339)
+	case float64:
+		if math.IsNaN(v) || math.IsInf(v, 0) {
+			return strconv.FormatFloat(v, 'g', -1, 64) // JSON has no NaN or Inf
+		}
+		return v
+	case float32:
+		return jsonClaims(float64(v))
 	default:
 		return v
 	}

@@ -30,6 +30,7 @@ type goKeyStore struct {
 	noID       bool // CreateKey returns no ID
 	lose       bool // CreateKey's key isn't there afterwards
 	keepOnDrop bool // DeleteKey keeps the key
+	pubErr     error
 }
 
 func newGoKeyStore() *goKeyStore { return &goKeyStore{keys: map[string]*ecdsa.PrivateKey{}} }
@@ -57,6 +58,9 @@ func (s *goKeyStore) CreateKey(purpose string) (string, error) {
 }
 
 func (s *goKeyStore) PublicKey(id string) ([]byte, error) {
+	if s.pubErr != nil {
+		return nil, s.pubErr
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	k, ok := s.keys[id]
@@ -165,5 +169,18 @@ func TestKeyStoreIsAWalletflowKeyStore(t *testing.T) {
 	_, err = ks.Key(ctx, k.ID())
 	if !errors.Is(err, walletflow.ErrNotFound) || code(err) != CodeNotFound || !strings.HasPrefix(err.Error(), "[not_found] ") {
 		t.Errorf("a deleted key: %v", err)
+	}
+}
+
+// TestKeyStore_DeletesAKeyItCantLoad: a key the store creates but can't
+// return the public key of is deleted, not left behind.
+func TestKeyStore_DeletesAKeyItCantLoad(t *testing.T) {
+	s := newGoKeyStore()
+	s.pubErr = errors.New("keychain unavailable")
+	if _, err := (keyStore{s}).NewKey(context.Background(), walletflow.KeyPurposeHolder); code(err) != CodePlatform {
+		t.Fatalf("NewKey = %v", err)
+	}
+	if len(s.keys) != 0 {
+		t.Errorf("%d keys left behind", len(s.keys))
 	}
 }
