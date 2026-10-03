@@ -158,6 +158,66 @@ final class DemoWalletUITests: XCTestCase {
         XCTAssertTrue(waitFor(credential, containing: "2 of 3 copies unused"), credential.label)
     }
 
+    /// Receives a credential with the PIN, in an app launched fresh or,
+    /// with reset false, keeping what it holds.
+    @MainActor
+    func receiveWithPIN(reset: Bool) async throws -> XCUIApplication {
+        let offer = try await Self.fetch("offer", query: [URLQueryItem(name: "pin", value: "493536")], method: "POST")["offer"] as! String
+        let app = try await launch(offer: offer, reset: reset)
+        let pin = app.textFields["pin"]
+        XCTAssertTrue(pin.waitForExistence(timeout: 20))
+        pin.tap()
+        pin.typeText("493536")
+        app.buttons["receive"].tap()
+        let status = app.staticTexts["status"]
+        XCTAssertTrue(status.waitForExistence(timeout: 60))
+        XCTAssertTrue(status.label.hasPrefix("Received 1"), status.label)
+        return app
+    }
+
+    /// A request that takes several credentials (DCQL multiple): both
+    /// held are offered and chosen, unchoosing one leaves the other
+    /// chosen, and sharing both reaches the Verifier as two.
+    @MainActor
+    func testPresentSeveral() async throws {
+        try await receiveWithPIN(reset: true).terminate()
+        try await receiveWithPIN(reset: false).terminate()
+
+        let request = try await Self.fetch("request", query: [
+            URLQueryItem(name: "format", value: "dc+sd-jwt"), URLQueryItem(name: "multiple", value: "1"),
+        ], method: "POST")
+        let app = try await launch(request: request["link"] as? String, reset: false)
+        let share = app.buttons["share"]
+        XCTAssertTrue(share.waitForExistence(timeout: 20))
+        let candidates = app.buttons.matching(identifier: "candidate")
+        XCTAssertTrue(candidates.element(boundBy: 1).waitForExistence(timeout: 10), "both credentials aren't offered")
+        XCTAssertEqual(candidates.count, 2)
+        let first = candidates.element(boundBy: 0), second = candidates.element(boundBy: 1)
+        XCTAssertTrue(first.isSelected && second.isSelected, "the request takes several, so both start chosen")
+
+        first.tap()
+        XCTAssertTrue(waitForSelected(first, false) && second.isSelected, "unchoosing one unchose the other")
+        first.tap()
+        XCTAssertTrue(waitForSelected(first, true) && second.isSelected, "choosing one unchose the other")
+        let enabled = NSPredicate(format: "isEnabled == true")
+        await fulfillment(of: [XCTNSPredicateExpectation(predicate: enabled, object: share)], timeout: 10)
+        share.tap()
+        let status = app.staticTexts["status"]
+        XCTAssertTrue(status.waitForExistence(timeout: 30))
+        await fulfillment(of: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "label BEGINSWITH 'Shared with'"), object: status)], timeout: 30)
+
+        let result = try await Self.fetch("request/\(request["id"] as! String)")
+        XCTAssertEqual(result["status"] as? String, "done")
+        XCTAssertEqual(result["credentials"] as? Int, 2, "\(result)")
+    }
+
+    /// Waits up to 10 seconds for element to be chosen, or not.
+    @MainActor
+    func waitForSelected(_ element: XCUIElement, _ selected: Bool) -> Bool {
+        let expectation = XCTNSPredicateExpectation(predicate: NSPredicate(format: "isSelected == %@", NSNumber(value: selected)), object: element)
+        return XCTWaiter().wait(for: [expectation], timeout: 10) == .completed
+    }
+
     /// Declines a request the wallet can't answer; the Verifier records
     /// it.
     @MainActor
