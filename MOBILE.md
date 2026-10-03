@@ -156,8 +156,9 @@ PlatformKeys (implemented in Swift)
 
 The instance key, with its Wallet Attestation, and the DPoP key are new
 for each issuance and deleted when it ends, so issuers can't link one
-holder's issuances by them; deferred credentials are polled within the
-issuance. Holder keys need biometrics only when presenting, never at
+holder's issuances by them. The exception is a DPoP key that a pending
+deferred credential polls with: it's kept until the last such credential
+from its issuance is settled. Holder keys need biometrics only when presenting, never at
 issuance: a batch of credentials means a batch of keys, and prompting
 for each would be unusable.
 
@@ -214,7 +215,7 @@ networking.
 | 4 ✓ | OID4VCI slice | HAIP issuance from the iOS demo app against the passport-vdc issuer, with Key Attestations from the Wallet Provider |
 | 5 ✓ | Storage | The native credential store, with key references |
 | 6 ◐ | OID4VP slice | Request parsing, candidates, consent and presentation from the iOS demo app |
-| 7 | Hardening | Suspension and resumption, cancellation, network failures, issuer and verifier errors, logging without personal data |
+| 7 ◐ | Hardening | Suspension and resumption (deferred credentials survive the app quitting ✓), cancellation, network failures, issuer and verifier errors, logging without personal data |
 | 8 | Android | The same bridge over Android Keystore, packaged as an AAR |
 | 9 | DC API | A DC API adapter over the presentation engine |
 
@@ -395,12 +396,9 @@ declines. When the Verifier returns a redirect, the app opens it.
   public URL: its services listen on loopback only, its certificate names
   loopback only, and the wallet's fetcher refuses private-network
   addresses.
-- **Deferred credentials:** the app keeps a deferred credential's
-  issuance open (its access token and DPoP key poll), polls at the
-  issuer's interval with a Check again button, and closes the issuance
-  once every credential it deferred is issued or denied. They're held in
-  memory: persisting the access token to survive the app quitting is
-  Phase 7's.
+- **Deferred credentials:** the app polls a deferred credential at the
+  issuer's interval, with a Check again button. Since Phase 7 the wallet
+  keeps it, so it survives the app quitting (below).
 - **XCUITest:** opening a custom-scheme link from a test asks for
   confirmation, so the tests launch the app with the link instead.
 - **QR codes and portraits:** the app scans QR codes live with
@@ -464,9 +462,48 @@ Taken 2026-10-02:
    development; platform-evidence attestation later.
 5. **This document** lives in the repository, next to `ARCHITECTURE.md`.
 
+### Phase 7: deferred credentials survive the app quitting
+
+Polling a deferred credential needs the issuance's access token and the
+DPoP key that token is bound to, and nothing else from the issuance. So
+that state is what's persisted:
+
+- **Format:** walletflow's `PendingDeferred`, with the ID, the
+  credential issuer, the configuration, the transaction ID, the access
+  token and its expiry when known, the DPoP and holder key IDs, the
+  interval, and when it was deferred. A `DeferredStore` keeps them, and
+  `walletflow.Dependencies.Deferred` defaults to one in memory.
+- **Where:** on mobile, in the app's own `CredentialStore`, as a record
+  marked `"kind": "deferred"` under the ID `deferred-<id>`. It's under
+  the same data protection as the credentials (complete protection,
+  excluded from backups, with `FileCredentialStore`), and an app
+  implements no new protocol. The access token is bound to a DPoP key
+  that never leaves the Secure Enclave, so a copy of the record alone
+  can't poll.
+- **Lifecycle:**
+  - `RequestCredentials` stores each deferred credential.
+  - `Issuance.Close` keeps the DPoP key while a pending credential
+    polls with it.
+  - `Wallet.Deferred` lists the pending ones after a relaunch, making
+    no network calls. The first poll fetches the issuer's metadata
+    again and makes fresh encryption keys.
+  - A credential that's issued, denied, refused by the wallet's checks,
+    or abandoned (`AbandonDeferred`) leaves the store, with its keys.
+  - The launch key sweep keeps a pending credential's keys
+    (`KeysInUse`).
+- **Limits:**
+  - An access token that has expired can't poll. The wallet reports
+    the expiry when the issuer gave one, and the credential can then
+    only be abandoned. Refresh tokens would lift this, if an issuer
+    gives them.
+  - An authorization still in progress (the browser step) isn't
+    persisted. FAPIgo's client sessions can be sealed for that, a later
+    item.
+
 ## Open questions
 
-- Session persistence format and where it's kept, for suspension.
+- Persisting an issuance's authorization step across suspension, with
+  FAPIgo's sealed client sessions.
 - The Wallet Provider's production design (App Attest verification, key
   attestation formats), and whether it belongs in this repository.
 - iOS's integration point for the Digital Credentials API, when Phase 9
