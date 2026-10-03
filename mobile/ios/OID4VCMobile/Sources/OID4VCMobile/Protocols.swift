@@ -115,7 +115,8 @@ final class WalletProviderAdapter: NSObject, MobileWalletProviderProtocol, @unch
 
     func walletAttestation(_ clientID: String?, instanceKeyJWK: Data?) throws -> Data {
         let provider = self.provider
-        let id = clientID ?? "", key = instanceKeyJWK ?? Data()
+        let id = clientID ?? ""
+        let key = instanceKeyJWK ?? Data()
         return Data(try Self.wait { try await provider.walletAttestation(clientID: id, instanceKey: key) }.utf8)
     }
 
