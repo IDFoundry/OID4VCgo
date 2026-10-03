@@ -116,6 +116,7 @@ type Env struct {
 
 	mu            sync.Mutex
 	closers       []func()
+	deferAll      bool
 	decision      *bool
 	notifications []oid4vci.NotificationEvent
 }
@@ -126,6 +127,7 @@ func New(opts Options) (env *Env, err error) {
 	ts := httptest.NewUnstartedServer(nil)
 	e := &Env{IssuerURL: "https://" + ts.Listener.Addr().String(), preAuthCodes: oid4vcgostorage.NewPreAuthorizedCodeStore()}
 	e.vct = e.IssuerURL + "/vct/test"
+	e.deferAll = opts.Defer
 	e.Provider = newProvider()
 
 	tokenEndpoint := e.endpoint("/token")
@@ -217,7 +219,7 @@ func New(opts Options) (env *Env, err error) {
 	credentialHandler, err := e.iss.CredentialHandler(issuer.CredentialHandlerConfig{
 		URL: &credentialURL, Tokens: tokens,
 		Prepare: func(_ context.Context, _ issuer.Grant, req *issuer.CredentialRequest) (func(bool), error) {
-			if opts.Defer {
+			if e.deferring() {
 				req.Defer = &issuer.Deferral{}
 				return nil, nil
 			}
@@ -322,6 +324,21 @@ func (e *Env) Approve(ctx context.Context, authorizationURL string) (string, err
 		return "", errors.New("testhaip: the authorization endpoint didn't redirect")
 	}
 	return loc.String(), nil
+}
+
+// SetDefer turns deferral of every credential (Options.Defer) on or off
+// while the Env runs, and makes the deferred credentials still to come
+// wait for a new Decide.
+func (e *Env) SetDefer(on bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.deferAll, e.decision = on, nil
+}
+
+func (e *Env) deferring() bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.deferAll
 }
 
 // Decide approves or denies every deferred credential, issued or refused
