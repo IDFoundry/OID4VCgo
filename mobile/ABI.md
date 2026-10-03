@@ -1,7 +1,7 @@
 # OID4VCgo mobile ABI
 
 The API the Go `mobile` package exposes through gomobile: version
-**6** (`ABIVersion`). The Swift package `ios/OID4VCWallet` wraps it in
+**7** (`ABIVersion`). The Swift package `ios/OID4VCWallet` wraps it in
 typed Swift (`Wallet`, `Issuance`, `Presentation`, `WalletError`); this
 document is the contract underneath, for the Swift wrapper, a future
 Kotlin one, or an app calling the framework directly.
@@ -89,14 +89,17 @@ Opaque records kept by ID, under the platform's data protection.
 
 A record is JSON the app needn't read: `id`, `credential_issuer`,
 `configuration_id`, `format`, `vct`, `doctype`, `credential`,
-`holder_key_id`, `received_at`, and `claims` (absent from a record
-written before claims were kept).
+`holder_key_id`, `received_at`, `claims`, `display`, `valid_until`,
+`status_list` and `status`, and `copies` (each copy's `credential`,
+`holder_key_id` and `presented`). A record written before a field was
+kept lacks it.
 
 The store also keeps each **pending deferred credential**, under the ID
 `deferred-<id>`, as a record with `"kind": "deferred"`. The record holds
 what polling it after a relaunch needs: the issuer, the configuration,
-the transaction ID, the access token and its expiry, the DPoP and holder
-key IDs, the interval, and when it was deferred. The access token is
+the transaction ID, the access token and its expiry, the DPoP key ID
+and every copy's holder key ID, the interval, and when it was
+deferred. The access token is
 bound to the DPoP key, which never leaves the KeyStore. A store keeps
 these records like any other; `List` returns them too, and Go tells them
 apart.
@@ -136,7 +139,7 @@ The Swift package's adapter marks a `URLError` this way.
 ```json
 {"client_id": "…", "redirect_uri": "…",
  "issuer_roots": "<PEM>", "verifier_roots": "<PEM>",
- "development": false, "locales": ["en-AU", "en"]}
+ "development": false, "locales": ["en-AU", "en"], "batch_size": 0}
 ```
 
 `client_id`, `redirect_uri`, `issuer_roots` and a provider are needed to
@@ -144,7 +147,9 @@ receive credentials; `verifier_roots` to present them. `development`
 allows services on loopback addresses. `locales` are the holder's
 preferred languages (BCP 47, most preferred first) for issuers' display
 metadata. Without them, the issuer's entry without a locale is used,
-else its first.
+else its first. `batch_size` is how many copies of each credential to
+request when an issuer offers batches: 0 means 5, and it's capped at
+the issuer's `batch_size`.
 
 | Method | Result |
 |---|---|
@@ -173,6 +178,10 @@ A credential **summary** is `{"id", "credential_issuer",
   "text_color"}`. A logo is `{"uri", "alt_text"}`, and only an https URL
   or a `data:` image is passed on.
 - `valid_until` is when the credential expires.
+- `copies` is how many copies the wallet holds, each bound to its own
+  key, and `copies_left` how many no Verifier has seen. A presentation
+  uses one of those, so presentations can't be linked by the
+  credential. Once none is left, a copy is reused.
 - `status` is its revocation status as last checked: `{"value": "valid"
   | "invalid" | "suspended" | "0x…", "checked_at"}`.
 

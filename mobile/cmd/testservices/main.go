@@ -52,7 +52,8 @@ func main() {
 }
 
 func run(addr, redirect, certOut string) error {
-	env, err := walletflowtest.New(walletflowtest.Options{RedirectURIs: []string{redirect}})
+	// Batches of three: the app presents a fresh copy each time.
+	env, err := walletflowtest.New(walletflowtest.Options{RedirectURIs: []string{redirect}, BatchSize: 3})
 	if err != nil {
 		return err
 	}

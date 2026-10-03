@@ -188,10 +188,13 @@ final class WalletModel {
             let presented = try await presentation.respond(credentialIDs: Array(selection))
             phase = .done("Shared with \(presentation.verifier.name)")
             endPresentation()
+            // A copy of each shared credential is used up.
+            await refresh()
             if let url = presented.redirectURI, url.scheme == "https" { await UIApplication.shared.open(url) }
         } catch {
             phase = .failed(Self.describe(error))
             endPresentation()
+            await refresh()
         }
     }
 

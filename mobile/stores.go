@@ -74,10 +74,18 @@ type credentialRecord struct {
 	// Display, ValidUntil, StatusList and Status: absent from a record
 	// written before they were kept.
 	Display       *displayJSON    `json:"display,omitempty"`
+	Copies        []copyJSON      `json:"copies,omitempty"`
 	ValidUntil    *time.Time      `json:"valid_until,omitempty"`
 	StatusList    *statusListJSON `json:"status_list,omitempty"`
 	StatusListCWT bool            `json:"status_list_cwt,omitempty"`
 	Status        *statusJSON     `json:"status,omitempty"`
+}
+
+// copyJSON is a walletflow.CredentialCopy.
+type copyJSON struct {
+	Credential  string `json:"credential"`
+	HolderKeyID string `json:"holder_key_id"`
+	Presented   bool   `json:"presented,omitempty"`
 }
 
 // logoJSON is a walletflow.Logo.
@@ -149,6 +157,9 @@ func recordOf(c walletflow.StoredCredential) (credentialRecord, error) {
 		VCT: c.VCT, DocType: c.DocType, Credential: c.Credential, HolderKeyID: c.HolderKeyID, ReceivedAt: c.ReceivedAt,
 		Display: displayOf(c.Display), StatusListCWT: c.StatusListCWT,
 	}
+	for _, cp := range c.Copies {
+		r.Copies = append(r.Copies, copyJSON{Credential: cp.Credential, HolderKeyID: cp.HolderKeyID, Presented: cp.Presented})
+	}
 	if !c.ValidUntil.IsZero() {
 		r.ValidUntil = &c.ValidUntil
 	}
@@ -173,6 +184,9 @@ func (r credentialRecord) stored() (walletflow.StoredCredential, error) {
 		ID: r.ID, CredentialIssuer: r.CredentialIssuer, ConfigurationID: r.ConfigurationID, Format: r.Format,
 		VCT: r.VCT, DocType: r.DocType, Credential: r.Credential, HolderKeyID: r.HolderKeyID, ReceivedAt: r.ReceivedAt,
 		Display: r.Display.display(), StatusListCWT: r.StatusListCWT,
+	}
+	for _, cp := range r.Copies {
+		c.Copies = append(c.Copies, walletflow.CredentialCopy{Credential: cp.Credential, HolderKeyID: cp.HolderKeyID, Presented: cp.Presented})
 	}
 	if r.ValidUntil != nil {
 		c.ValidUntil = *r.ValidUntil
@@ -207,6 +221,12 @@ type credentialSummary struct {
 	Display    *displayJSON `json:"display,omitempty"`
 	ValidUntil *time.Time   `json:"valid_until,omitempty"`
 	Status     *statusJSON  `json:"status,omitempty"`
+	// Copies is how many copies the wallet holds, each bound to its own
+	// key; CopiesLeft how many no Verifier has seen. A presentation uses
+	// one of those, so presentations can't be linked by the credential,
+	// until none is left.
+	Copies     int `json:"copies"`
+	CopiesLeft int `json:"copies_left"`
 	// HolderKeyPresent is whether the key store still holds the
 	// credential's key; without it the credential can't be presented
 	// (restored from a backup to another device, say). Set only by
@@ -218,6 +238,7 @@ func summaryOf(c walletflow.StoredCredential) credentialSummary {
 	s := credentialSummary{
 		ID: c.ID, CredentialIssuer: c.CredentialIssuer, ConfigurationID: c.ConfigurationID, Format: c.Format,
 		VCT: c.VCT, DocType: c.DocType, ReceivedAt: c.ReceivedAt, Display: displayOf(c.Display),
+		Copies: len(c.AllCopies()), CopiesLeft: c.CopiesLeft(),
 	}
 	if !c.ValidUntil.IsZero() {
 		s.ValidUntil = &c.ValidUntil
@@ -362,9 +383,11 @@ type deferredRecord struct {
 	AccessToken          string     `json:"access_token"`
 	AccessTokenExpiresAt *time.Time `json:"access_token_expires_at,omitempty"`
 	DPoPKeyID            string     `json:"dpop_key_id"`
-	HolderKeyID          string     `json:"holder_key_id"`
-	IntervalSeconds      float64    `json:"interval_seconds"`
-	DeferredAt           time.Time  `json:"deferred_at"`
+	HolderKeyIDs         []string   `json:"holder_key_ids"`
+	// HolderKeyID is a record's one holder key from before batches.
+	HolderKeyID     string    `json:"holder_key_id,omitempty"`
+	IntervalSeconds float64   `json:"interval_seconds"`
+	DeferredAt      time.Time `json:"deferred_at"`
 }
 
 // deferredStoreID is the CredentialStore ID a pending deferred
@@ -380,7 +403,7 @@ func (s deferredStore) PutDeferred(_ context.Context, p walletflow.PendingDeferr
 	r := deferredRecord{
 		Kind: deferredKind, ID: p.ID, CredentialIssuer: p.CredentialIssuer, ConfigurationID: p.ConfigurationID,
 		TransactionID: p.TransactionID, AccessToken: p.AccessToken.Reveal(),
-		DPoPKeyID: p.DPoPKeyID, HolderKeyID: p.HolderKeyID, IntervalSeconds: p.Interval.Seconds(), DeferredAt: p.DeferredAt,
+		DPoPKeyID: p.DPoPKeyID, HolderKeyIDs: p.HolderKeyIDs, IntervalSeconds: p.Interval.Seconds(), DeferredAt: p.DeferredAt,
 	}
 	if !p.AccessTokenExpiresAt.IsZero() {
 		r.AccessTokenExpiresAt = &p.AccessTokenExpiresAt
@@ -414,11 +437,14 @@ func (s deferredStore) ListDeferred(context.Context) ([]walletflow.PendingDeferr
 		}
 		p := walletflow.PendingDeferred{
 			ID: r.ID, CredentialIssuer: r.CredentialIssuer, ConfigurationID: r.ConfigurationID, TransactionID: r.TransactionID,
-			AccessToken: fapi.NewSecret(r.AccessToken), DPoPKeyID: r.DPoPKeyID, HolderKeyID: r.HolderKeyID,
+			AccessToken: fapi.NewSecret(r.AccessToken), DPoPKeyID: r.DPoPKeyID, HolderKeyIDs: r.HolderKeyIDs,
 			Interval: time.Duration(r.IntervalSeconds * float64(time.Second)), DeferredAt: r.DeferredAt,
 		}
 		if r.AccessTokenExpiresAt != nil {
 			p.AccessTokenExpiresAt = *r.AccessTokenExpiresAt
+		}
+		if len(p.HolderKeyIDs) == 0 && r.HolderKeyID != "" {
+			p.HolderKeyIDs = []string{r.HolderKeyID}
 		}
 		out = append(out, p)
 	}

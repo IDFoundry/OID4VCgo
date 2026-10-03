@@ -24,7 +24,13 @@ type TestEnv struct {
 // StartTestEnv starts a TestEnv; deferIssuance has the issuer defer
 // every credential until Decide.
 func StartTestEnv(deferIssuance bool) (*TestEnv, error) {
-	env, err := walletflowtest.New(walletflowtest.Options{Defer: deferIssuance})
+	return StartBatchTestEnv(deferIssuance, 0)
+}
+
+// StartBatchTestEnv is StartTestEnv with an issuer offering batches of up
+// to batchSize copies of a credential (none below 2).
+func StartBatchTestEnv(deferIssuance bool, batchSize int) (*TestEnv, error) {
+	env, err := walletflowtest.New(walletflowtest.Options{Defer: deferIssuance, BatchSize: batchSize})
 	if err != nil {
 		return nil, newError(CodeInternal, err)
 	}
