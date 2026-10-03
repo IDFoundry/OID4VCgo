@@ -352,6 +352,9 @@ func TestSessions_Deferred(t *testing.T) {
 	if _, err := poll(got.Deferred[1].ID); code(err) != CodeCredentialDenied {
 		t.Errorf("after denial: %v", err)
 	}
+	if got.Deferred[0].ID == got.Deferred[1].ID || !strings.HasPrefix(got.Deferred[0].ID, "deferred-") || len(got.Deferred[0].ID) < 20 {
+		t.Errorf("deferred IDs %q and %q aren't distinct random IDs", got.Deferred[0].ID, got.Deferred[1].ID)
+	}
 	if _, err := poll("no-such"); code(err) != CodeNotFound {
 		t.Errorf("an unknown deferred credential: %v", err)
 	}

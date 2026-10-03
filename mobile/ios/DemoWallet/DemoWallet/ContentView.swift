@@ -64,6 +64,9 @@ struct ContentView: View {
     }
 
     @ViewBuilder private var status: some View {
+        if let notice = model.notice {
+            Section { Text(notice).foregroundStyle(.orange).accessibilityIdentifier("notice") }
+        }
         switch model.phase {
         case .done(let text):
             Section { Text(text).accessibilityIdentifier("status") }
@@ -197,7 +200,7 @@ struct ClaimRows: View {
         switch v {
         case .null: "—"
         case .bool(let b): b ? "yes" : "no"
-        case .number(let n): n.rounded() == n ? String(Int(n)) : String(n)
+        case .number(let n): Int(exactly: n).map(String.init) ?? String(n)
         case .string(let s): s.count > 80 ? String(s.prefix(77)) + "…" : s
         case .array(let a): a.map(text).joined(separator: ", ")
         case .object: "{…}"
@@ -236,9 +239,11 @@ struct RequestView: View {
                             }
                         }
                     }
-                    if !model.disclosures.isEmpty {
+                    if let error = model.previewError {
+                        Section { Text("Can't share this selection: \(error)").foregroundStyle(.red) }
+                    } else if !model.disclosures.isEmpty {
                         Section("Will share") {
-                            ForEach(model.disclosures, id: \.credentialID) { d in
+                            ForEach(Array(model.disclosures.enumerated()), id: \.offset) { _, d in
                                 ForEach(d.claims.indices, id: \.self) { i in
                                     Text(Self.path(d.claims[i]))
                                 }
@@ -247,7 +252,7 @@ struct RequestView: View {
                     }
                     Section {
                         Button(model.requestPhase == .sharing ? "Sharing…" : "Share") { Task { await model.share() } }
-                            .disabled(model.selected.isEmpty || model.requestPhase == .sharing)
+                            .disabled(!model.canShare)
                             .accessibilityIdentifier("share")
                         Button("Decline", role: .destructive) { Task { await model.decline() } }
                             .disabled(model.requestPhase == .sharing)

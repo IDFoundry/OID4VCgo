@@ -1,7 +1,12 @@
 package mobile
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
+	"math"
+	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -41,5 +46,61 @@ func TestRecordWithoutClaims(t *testing.T) {
 	}
 	if _, err := (credentialRecord{Claims: json.RawMessage(`[1]`)}).stored(); err == nil {
 		t.Error("a record whose claims aren't an object loaded")
+	}
+}
+
+func TestJSONClaims_NonFinite(t *testing.T) {
+	got, err := json.Marshal(jsonClaims(map[string]any{"a": math.NaN(), "b": math.Inf(1), "c": float32(1.5)}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != `{"a":"NaN","b":"+Inf","c":1.5}` {
+		t.Errorf("jsonClaims = %s", got)
+	}
+}
+
+// memStore is a CredentialStore holding records as given.
+type memStore struct{ records map[string][]byte }
+
+func (m memStore) Put(id string, r []byte) error { m.records[id] = r; return nil }
+func (m memStore) Get(id string) ([]byte, error) { return m.records[id], nil }
+func (m memStore) Delete(id string) error        { delete(m.records, id); return nil }
+func (m memStore) List() ([]byte, error) {
+	all := make([]json.RawMessage, 0, len(m.records))
+	for _, r := range m.records {
+		all = append(all, r)
+	}
+	return json.Marshal(all)
+}
+
+// TestCredentialStore_RefusesMismatchedRecords: a record stored under one
+// ID but naming another, or two records with one ID, is refused — a
+// deletion would otherwise remove another credential's holder key.
+func TestCredentialStore_RefusesMismatchedRecords(t *testing.T) {
+	ctx := context.Background()
+	b := []byte(`{"id":"b","format":"dc+sd-jwt","credential":"x","holder_key_id":"kb","received_at":"2026-10-01T00:00:00Z"}`)
+	mismatched := credentialStore{memStore{records: map[string][]byte{"a": b}}}
+	if _, err := mismatched.Get(ctx, "a"); code(err) != CodePlatform {
+		t.Errorf("Get of a record naming another ID = %v", err)
+	}
+	dup := credentialStore{memStore{records: map[string][]byte{"a": b, "c": b}}}
+	if _, err := dup.List(ctx); code(err) != CodePlatform {
+		t.Errorf("List with a duplicate ID = %v", err)
+	}
+	if c, err := (credentialStore{memStore{records: map[string][]byte{"b": b}}}).Get(ctx, "b"); err != nil || c.HolderKeyID != "kb" {
+		t.Errorf("Get of a good record = %+v, %v", c, err)
+	}
+}
+
+// TestClassify_MalformedLink: a link that doesn't parse is invalid_input,
+// and isn't echoed — it may carry a pre-authorized code.
+func TestClassify_MalformedLink(t *testing.T) {
+	_, perr := url.Parse("openid-credential-offer://?credential_offer=\x7fsecret-code") //nolint:staticcheck // deliberately malformed
+	if perr == nil {
+		t.Fatal("the link parsed")
+	}
+	err := classify(fmt.Errorf("walletflow: credential offer: %w", perr))
+	if code(err) != CodeInvalidInput || strings.Contains(err.Error(), "secret-code") {
+		t.Errorf("classify = %v", err)
 	}
 }

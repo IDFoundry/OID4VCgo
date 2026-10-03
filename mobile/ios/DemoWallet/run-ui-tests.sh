@@ -8,7 +8,8 @@ set -eu
 cd "$(dirname "$0")"
 DEVICE="${1:-iPhone 16}"
 WORK="$(mktemp -d)"
-trap 'kill "$SERVICES" 2>/dev/null || true; rm -rf "$WORK"' EXIT
+SERVICES=""
+trap 'if [ -n "$SERVICES" ]; then kill "$SERVICES" 2>/dev/null || true; fi; rm -rf "$WORK"' EXIT
 
 ../../build-xcframework.sh
 (cd ../.. && go build -o "$WORK/testservices" ./cmd/testservices)

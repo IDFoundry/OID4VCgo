@@ -52,16 +52,6 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: org.idfoundry.oid4vcgo.demowallet.tests
         GENERATE_INFOPLIST_FILE: YES
-  DemoWalletTests:
-    type: bundle.unit-test
-    platform: iOS
-    sources: [DemoWalletTests]
-    dependencies:
-      - target: DemoWallet
-    settings:
-      base:
-        PRODUCT_BUNDLE_IDENTIFIER: org.idfoundry.oid4vcgo.demowallet.tests
-        GENERATE_INFOPLIST_FILE: YES
   DemoWalletUITests:
     type: bundle.ui-testing
     platform: iOS

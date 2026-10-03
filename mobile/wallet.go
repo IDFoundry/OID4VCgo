@@ -7,7 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"time"
+	"sync/atomic"
 
 	"github.com/idfoundry/oid4vcgo/wallet"
 	"github.com/idfoundry/oid4vcgo/walletflow"
@@ -28,8 +28,9 @@ type config struct {
 }
 
 // testHTTP, when set (by the mobiletest build), is the HTTP client every
-// Wallet uses: one trusting the in-process test issuer's certificate.
-var testHTTP *http.Client
+// Wallet made afterwards uses: one trusting the in-process test issuer's
+// certificate.
+var testHTTP atomic.Pointer[http.Client]
 
 // Wallet is a holder's wallet: walletflow over the app's KeyStore,
 // CredentialStore and WalletProvider.
@@ -69,14 +70,11 @@ func NewWallet(configJSON string, keys KeyStore, credentials CredentialStore, pr
 		wcfg.VerifierTrust = wallet.X5CVerifierRoots{Roots: roots}
 	}
 	deps := walletflow.Dependencies{
-		Keys: keyStore{keys}, Credentials: credentialStore{credentials},
-		HTTP: &http.Client{Timeout: 30 * time.Second}, Random: randReader{},
+		Keys: keyStore{keys}, Credentials: credentialStore{credentials}, Random: randReader{},
+		HTTP: testHTTP.Load(), // nil: walletflow's own client
 	}
 	if provider != nil {
 		deps.Provider = walletProvider{provider}
-	}
-	if testHTTP != nil {
-		deps.HTTP = testHTTP
 	}
 	w, err := walletflow.New(wcfg, deps)
 	if err != nil {

@@ -2,6 +2,7 @@ package mobile
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"sync"
@@ -20,7 +21,7 @@ type Issuance struct {
 
 	mu       sync.Mutex
 	deferred map[string]*walletflow.Deferred
-	next     int
+	ids      map[*walletflow.Deferred]string
 }
 
 // StartIssuance resolves the Credential Offer offerURI and fetches the
@@ -30,7 +31,7 @@ func (w *Wallet) StartIssuance(op *Operation, offerURI string) (*Issuance, error
 	if err != nil {
 		return nil, classify(err)
 	}
-	return &Issuance{s: s, deferred: map[string]*walletflow.Deferred{}}, nil
+	return &Issuance{s: s, deferred: map[string]*walletflow.Deferred{}, ids: map[*walletflow.Deferred]string{}}, nil
 }
 
 type offerJSON struct {
@@ -117,19 +118,21 @@ type deferredJSON struct {
 
 // RequestCredentials requests, checks and stores every offered
 // credential, and returns {"abi", "credentials": [summary],
-// "deferred": [{"id", "configuration_id", "interval_seconds"}]}.
+// "deferred": [{"id", "configuration_id", "interval_seconds"}]}. A
+// deferred credential's id is unique across issuances. If a request
+// fails, call it again: the retry requests only the credentials not yet
+// obtained, and returns everything obtained by every call (what an
+// earlier, failed call stored is in the CredentialStore already).
 func (s *Issuance) RequestCredentials(op *Operation) (string, error) {
 	received, err := s.s.RequestCredentials(op.context())
+	s.register(received.Deferred)
 	if err != nil {
 		return "", classify(err)
 	}
 	s.mu.Lock()
 	deferred := make([]deferredJSON, 0, len(received.Deferred))
 	for _, d := range received.Deferred {
-		s.next++
-		id := fmt.Sprintf("deferred-%d", s.next)
-		s.deferred[id] = d
-		deferred = append(deferred, deferredJSON{ID: id, ConfigurationID: d.ConfigurationID(), IntervalSeconds: d.Interval().Seconds()})
+		deferred = append(deferred, deferredJSON{ID: s.ids[d], ConfigurationID: d.ConfigurationID(), IntervalSeconds: d.Interval().Seconds()})
 	}
 	s.mu.Unlock()
 	return marshal(struct {
@@ -137,6 +140,32 @@ func (s *Issuance) RequestCredentials(op *Operation) (string, error) {
 		Credentials []credentialSummary `json:"credentials"`
 		Deferred    []deferredJSON      `json:"deferred"`
 	}{result{ABIVersion}, summariesOf(received.Credentials), deferred})
+}
+
+// register gives each deferred credential not yet registered a random
+// ID, so it can be polled — including one from a call that failed.
+func (s *Issuance) register(deferred []*walletflow.Deferred) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, d := range deferred {
+		if _, ok := s.ids[d]; ok {
+			continue
+		}
+		id, err := randomID()
+		if err != nil {
+			continue
+		}
+		s.ids[d], s.deferred[id] = id, d
+	}
+}
+
+// randomID is a random 128-bit identifier.
+func randomID() (string, error) {
+	var b [16]byte
+	if _, err := (randReader{}).Read(b[:]); err != nil {
+		return "", err
+	}
+	return "deferred-" + base64.RawURLEncoding.EncodeToString(b[:]), nil
 }
 
 // Deferred credential statuses, in PollDeferred's result.

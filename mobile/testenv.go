@@ -33,13 +33,13 @@ func StartTestEnv(deferIssuance bool) (*TestEnv, error) {
 		env.Close()
 		return nil, newError(CodeInternal, err)
 	}
-	testHTTP = env.HTTP
+	testHTTP.Store(env.HTTP)
 	return &TestEnv{env: env, v: v}, nil
 }
 
 // Close stops the TestEnv.
 func (e *TestEnv) Close() {
-	testHTTP = nil
+	testHTTP.Store(nil)
 	e.env.Close()
 }
 

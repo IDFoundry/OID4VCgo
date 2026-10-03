@@ -27,6 +27,15 @@ type Deferred struct {
 	done          bool
 }
 
+// Done reports whether the Deferred is settled — issued, denied, or
+// refused by the wallet's checks — or its Issuance closed: polling it
+// again returns ErrWrongStep.
+func (d *Deferred) Done() bool {
+	d.s.mu.Lock()
+	defer d.s.mu.Unlock()
+	return d.done || d.s.step == stepClosed
+}
+
 // ConfigurationID is the credential configuration deferred.
 func (d *Deferred) ConfigurationID() string { return d.configID }
 
@@ -40,9 +49,11 @@ func (d *Deferred) Interval() time.Duration {
 
 // Poll asks the issuer once. It returns the credential once issued
 // (checked, stored, and the issuer notified), nil while it's still
-// pending, or ErrCredentialDenied. After it returns a credential or an
-// error other than a failed request, the Deferred is done, and Poll
-// returns ErrWrongStep.
+// pending, or ErrCredentialDenied. Once it has returned the credential,
+// ErrCredentialDenied, or an issued credential failing the wallet's
+// checks, the Deferred is done (Done), and Poll returns ErrWrongStep;
+// after any other error — a request that failed — it can be polled
+// again.
 func (d *Deferred) Poll(ctx context.Context) (*StoredCredential, error) {
 	s := d.s
 	s.mu.Lock()

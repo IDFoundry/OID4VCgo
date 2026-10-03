@@ -19,7 +19,7 @@ const (
 	CodeInvalidInput = "invalid_input"
 	// CodePlatform: a callback into the app failed.
 	CodePlatform = "platform"
-	// CodeNetwork: a request failed or got an unexpected answer.
+	// CodeNetwork: a request couldn't be made, or got no answer.
 	CodeNetwork = "network"
 	// CodeCancelled: the Operation was cancelled.
 	CodeCancelled = "cancelled"

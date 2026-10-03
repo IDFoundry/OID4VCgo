@@ -71,10 +71,15 @@ func (k keyStore) NewKey(_ context.Context, purpose walletflow.KeyPurpose) (wall
 		return nil, newError(CodePlatform, fmt.Errorf("new %s key: no key ID", purpose))
 	}
 	key, err := k.load(id)
-	if errors.Is(err, walletflow.ErrNotFound) {
-		return nil, newError(CodePlatform, fmt.Errorf("new %s key %q isn't in the key store", purpose, id))
+	if err != nil {
+		// Don't leave behind a key the wallet can't use.
+		_ = k.ks.DeleteKey(id)
+		if errors.Is(err, walletflow.ErrNotFound) {
+			return nil, newError(CodePlatform, fmt.Errorf("new %s key %q isn't in the key store", purpose, id))
+		}
+		return nil, err
 	}
-	return key, err
+	return key, nil
 }
 
 func (k keyStore) Key(_ context.Context, id string) (walletflow.Key, error) { return k.load(id) }
