@@ -123,14 +123,11 @@ func Prepare(ctx context.Context, requestLink string, store Store, hc *http.Clie
 	// One option per stored credential that answers: exactly what Send
 	// would present for it, claim sets included, and whose it is, for
 	// the holder to choose.
-	var seen []string
-	for _, cs := range p.Candidates() {
-		for _, c := range cs.Credentials {
-			if slices.Contains(seen, c.ID) {
-				continue
-			}
-			seen = append(seen, c.ID)
-			disclosed, err := p.Preview(ctx, []string{c.ID})
+	for _, q := range p.Queries() {
+		for _, c := range q.Credentials {
+			// The demo verifier's queries are alternatives (a credential
+			// set), so one credential answers the request.
+			disclosed, err := p.Preview(ctx, walletflow.Selection{q.ID: {c.ID}})
 			if err != nil {
 				continue
 			}
@@ -153,10 +150,11 @@ func Prepare(ctx context.Context, requestLink string, store Store, hc *http.Clie
 // the verifier's nonce, POSTed to the response_uri as an encrypted
 // direct_post.jwt response.
 func (p *Prepared) Send(ctx context.Context, credentialID string) (Presented, error) {
-	if !slices.ContainsFunc(p.Options, func(o Option) bool { return o.CredentialID == credentialID }) {
+	i := slices.IndexFunc(p.Options, func(o Option) bool { return o.CredentialID == credentialID })
+	if i < 0 {
 		return Presented{}, fmt.Errorf("walletapp: credential %q doesn't answer the request", credentialID)
 	}
-	presented, err := p.p.Respond(ctx, []string{credentialID})
+	presented, err := p.p.Respond(ctx, walletflow.Selection{p.Options[i].QueryID: {credentialID}})
 	if err != nil {
 		return Presented{}, fmt.Errorf("walletapp: %w", err)
 	}
