@@ -318,39 +318,41 @@ func deferUntilClosed(t *testing.T, f fixture, deferred walletflow.DeferredStore
 // kept access token and DPoP key, whichever grant obtained the token.
 func TestDeferred_SurvivesARestart(t *testing.T) {
 	for _, grant := range []walletflow.Grant{walletflow.GrantAuthorizationCode, walletflow.GrantPreAuthorizedCode} {
-		f := newFixture(t, walletflowtest.Options{Defer: true})
-		ctx := context.Background()
-		store := walletflow.NewMemoryDeferredStore()
-		id := deferUntilClosed(t, f, store, grant)
+		t.Run(string(grant), func(t *testing.T) { surviveARestart(t, grant) })
+	}
+}
 
-		relaunched := f.newWalletWith(t, store)
-		pending, err := relaunched.Deferred(ctx)
-		if err != nil || len(pending) != 1 || pending[0].ID() != id {
-			t.Fatalf("%s: Deferred after a restart = %v, %v", grant, pending, err)
-		}
-		inUse, err := relaunched.KeysInUse(ctx)
-		if err != nil || len(inUse) != 2 {
-			t.Errorf("%s: KeysInUse = %v, %v; want the DPoP and holder keys", grant, inUse, err)
-		}
-		if again, _ := relaunched.Deferred(ctx); again[0] != pending[0] {
-			t.Errorf("%s: a pending credential is a different *Deferred each time", grant)
-		}
-		if stored, err := pending[0].Poll(ctx); stored != nil || err != nil {
-			t.Fatalf("%s: Poll before a decision = %v, %v", grant, stored, err)
-		}
-		f.env.Decide(true)
-		waitCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		stored, err := pending[0].Wait(waitCtx)
-		cancel()
-		if err != nil || stored.VCT == "" {
-			t.Fatalf("%s: Wait = %+v, %v", grant, stored, err)
-		}
-		if left, _ := relaunched.Deferred(ctx); len(left) != 0 {
-			t.Errorf("%s: %d still pending once issued", grant, len(left))
-		}
-		if f.keys.Len() != 1 {
-			t.Errorf("%s: keys held = %d, want the credential's holder key", grant, f.keys.Len())
-		}
+func surviveARestart(t *testing.T, grant walletflow.Grant) {
+	f := newFixture(t, walletflowtest.Options{Defer: true})
+	ctx := context.Background()
+	store := walletflow.NewMemoryDeferredStore()
+	id := deferUntilClosed(t, f, store, grant)
+
+	relaunched := f.newWalletWith(t, store)
+	pending, err := relaunched.Deferred(ctx)
+	if err != nil || len(pending) != 1 || pending[0].ID() != id {
+		t.Fatalf("Deferred after a restart = %v, %v", pending, err)
+	}
+	if inUse, err := relaunched.KeysInUse(ctx); err != nil || len(inUse) != 2 {
+		t.Errorf("KeysInUse = %v, %v; want the DPoP and holder keys", inUse, err)
+	}
+	if again, _ := relaunched.Deferred(ctx); again[0] != pending[0] {
+		t.Error("a pending credential is a different *Deferred each time")
+	}
+	if stored, err := pending[0].Poll(ctx); stored != nil || err != nil {
+		t.Fatalf("Poll before a decision = %v, %v", stored, err)
+	}
+	f.env.Decide(true)
+	waitCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	if stored, err := pending[0].Wait(waitCtx); err != nil || stored.VCT == "" {
+		t.Fatalf("Wait = %+v, %v", stored, err)
+	}
+	if left, _ := relaunched.Deferred(ctx); len(left) != 0 {
+		t.Errorf("%d still pending once issued", len(left))
+	}
+	if f.keys.Len() != 1 {
+		t.Errorf("keys held = %d, want the credential's holder key", f.keys.Len())
 	}
 }
 
