@@ -506,32 +506,17 @@ func (s *Issuance) request(ctx context.Context, configID string, requestEnc *wal
 	if err != nil {
 		return StoredCredential{}, nil, fmt.Errorf("walletflow: nonce: %w", err)
 	}
-	// One holder key per copy requested, attested together: the issuer
-	// issues one copy bound to each.
-	var holders []Key
+	holders, keyAttestation, err := s.attestedHolders(ctx, nonce.CNonce)
+	if err != nil {
+		return StoredCredential{}, nil, err
+	}
 	keep := false
 	defer func() {
 		if !keep {
 			// Even when ctx is cancelled: a key left behind is an orphan.
-			for _, h := range holders {
-				_ = s.w.deps.Keys.DeleteKey(context.WithoutCancel(ctx), h.ID())
-			}
+			s.w.deleteKeys(context.WithoutCancel(ctx), holders)
 		}
 	}()
-	pubs := make([]*ecdsa.PublicKey, 0, s.batchSize())
-	for range s.batchSize() {
-		holder, err := newKey(ctx, s.w.deps.Keys, KeyPurposeHolder)
-		if err != nil {
-			return StoredCredential{}, nil, err
-		}
-		holders = append(holders, holder)
-		pub, _ := p256(holder) // newKey checked it
-		pubs = append(pubs, pub)
-	}
-	keyAttestation, err := s.w.deps.Provider.KeyAttestation(ctx, pubs, nonce.CNonce)
-	if err != nil {
-		return StoredCredential{}, nil, fmt.Errorf("walletflow: key attestation: %w", err)
-	}
 	result, err := s.w.core.RequestCredential(ctx, s.resource, s.metadata.CredentialEndpoint, wallet.CredentialRequest{
 		CredentialConfigurationID: configID, Attestation: keyAttestation,
 		RequestEncryption: requestEnc, ResponseEncryption: responseEnc,
@@ -540,18 +525,7 @@ func (s *Issuance) request(ctx context.Context, configID string, requestEnc *wal
 		return StoredCredential{}, nil, fmt.Errorf("walletflow: credential %q: %w", configID, err)
 	}
 	if result.TransactionID != "" {
-		if s.metadata.DeferredCredentialEndpoint == nil {
-			return StoredCredential{}, nil, fmt.Errorf("walletflow: credential %q was deferred, but the issuer advertises no deferred credential endpoint", configID)
-		}
-		id, err := randomID(s.w.deps.Random)
-		if err != nil {
-			return StoredCredential{}, nil, err
-		}
-		d, err := s.w.keepDeferred(ctx, PendingDeferred{
-			ID: id, CredentialIssuer: s.offer.CredentialIssuer, ConfigurationID: configID, TransactionID: result.TransactionID,
-			AccessToken: s.accessToken, AccessTokenExpiresAt: s.accessExpiresAt,
-			DPoPKeyID: s.dpopKey.ID(), HolderKeyIDs: keyIDs(holders), Interval: result.Interval, DeferredAt: s.w.deps.Clock().UTC(),
-		}, s.metadata, s.resource, requestEnc, responseEnc)
+		d, err := s.deferred(ctx, configID, holders, result, requestEnc, responseEnc)
 		if err != nil {
 			return StoredCredential{}, nil, err
 		}
@@ -568,6 +542,54 @@ func (s *Issuance) request(ctx context.Context, configID string, requestEnc *wal
 	keep = true
 	s.w.deleteUnused(context.WithoutCancel(ctx), keyIDs(holders), stored)
 	return stored, nil, nil
+}
+
+// attestedHolders creates one holder key per copy to request, and has
+// the Wallet Provider attest them together for nonce: the issuer issues
+// one copy bound to each. A key created before a failure is deleted.
+func (s *Issuance) attestedHolders(ctx context.Context, nonce string) ([]Key, string, error) {
+	holders := make([]Key, 0, s.batchSize())
+	pubs := make([]*ecdsa.PublicKey, 0, s.batchSize())
+	for range s.batchSize() {
+		holder, err := newKey(ctx, s.w.deps.Keys, KeyPurposeHolder)
+		if err != nil {
+			s.w.deleteKeys(context.WithoutCancel(ctx), holders)
+			return nil, "", err
+		}
+		holders = append(holders, holder)
+		pub, _ := p256(holder) // newKey checked it
+		pubs = append(pubs, pub)
+	}
+	keyAttestation, err := s.w.deps.Provider.KeyAttestation(ctx, pubs, nonce)
+	if err != nil {
+		s.w.deleteKeys(context.WithoutCancel(ctx), holders)
+		return nil, "", fmt.Errorf("walletflow: key attestation: %w", err)
+	}
+	return holders, keyAttestation, nil
+}
+
+// deferred keeps a credential the issuer deferred, with holders, to poll.
+func (s *Issuance) deferred(ctx context.Context, configID string, holders []Key, result wallet.CredentialResult,
+	requestEnc *wallet.RequestEncryption, responseEnc *wallet.ResponseEncryption) (*Deferred, error) {
+	if s.metadata.DeferredCredentialEndpoint == nil {
+		return nil, fmt.Errorf("walletflow: credential %q was deferred, but the issuer advertises no deferred credential endpoint", configID)
+	}
+	id, err := randomID(s.w.deps.Random)
+	if err != nil {
+		return nil, err
+	}
+	return s.w.keepDeferred(ctx, PendingDeferred{
+		ID: id, CredentialIssuer: s.offer.CredentialIssuer, ConfigurationID: configID, TransactionID: result.TransactionID,
+		AccessToken: s.accessToken, AccessTokenExpiresAt: s.accessExpiresAt,
+		DPoPKeyID: s.dpopKey.ID(), HolderKeyIDs: keyIDs(holders), Interval: result.Interval, DeferredAt: s.w.deps.Clock().UTC(),
+	}, s.metadata, s.resource, requestEnc, responseEnc)
+}
+
+// deleteKeys deletes keys, best effort.
+func (w *Wallet) deleteKeys(ctx context.Context, keys []Key) {
+	for _, k := range keys {
+		_ = w.deps.Keys.DeleteKey(ctx, k.ID())
+	}
 }
 
 // batchSize is how many copies of each credential to request: the
