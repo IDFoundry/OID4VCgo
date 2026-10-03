@@ -65,7 +65,10 @@ private struct LiveScanner: UIViewControllerRepresentable {
         return scanner
     }
 
-    func updateUIViewController(_: DataScannerViewController, context _: Context) {}
+    func updateUIViewController(_: DataScannerViewController, context _: Context) {
+        // Nothing to update: the scanner is configured once, in
+        // makeUIViewController, and reports through its coordinator.
+    }
 
     func makeCoordinator() -> Coordinator { Coordinator(found: found) }
 
