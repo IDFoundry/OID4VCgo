@@ -40,6 +40,11 @@ final class DemoWalletUITests: XCTestCase {
         let credentials = app.descendants(matching: .any).matching(identifier: "credential")
         XCTAssertTrue(credentials.element(boundBy: 1).waitForExistence(timeout: 10), "the two credentials aren't listed")
         XCTAssertEqual(credentials.count, 2)
+
+        // A credential's claims.
+        credentials.element(boundBy: 0).tap()
+        let family = app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS 'Doe'")).firstMatch
+        XCTAssertTrue(family.waitForExistence(timeout: 10), "family_name isn't shown")
     }
 
     /// The pre-authorized code grant, with the PIN typed in the app.

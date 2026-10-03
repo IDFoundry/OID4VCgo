@@ -151,6 +151,25 @@ func TestSessions_IssueThenPresent(t *testing.T) {
 		t.Errorf("keys held = %d, want 2", len(h.keys.keys))
 	}
 
+	sdjwt := checkPresentation(t, h, received)
+
+	checkClaims(t, h, received)
+
+	if err := h.w.DeleteCredential(sdjwt); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.w.DeleteCredential(sdjwt); code(err) != CodeNotFound {
+		t.Errorf("deleting it again: %v", err)
+	}
+
+	checkOrphan(t, h, received)
+}
+
+// checkPresentation presents the SD-JWT VC from received, chosen among
+// the candidates for a request that takes either format, and returns
+// its ID.
+func checkPresentation(t *testing.T, h harness, received []summary) string {
+	t.Helper()
 	req := decode[struct{ ID, Link string }](t, mustText(t)(h.env.Request("")))
 	p, err := h.w.StartPresentation(NewOperation(0), req.Link)
 	if err != nil {
@@ -195,12 +214,62 @@ func TestSessions_IssueThenPresent(t *testing.T) {
 	if _, err := p.Respond(NewOperation(0), chosen); code(err) != CodeWrongStep {
 		t.Errorf("Respond twice: %v", err)
 	}
+	return sdjwt
+}
 
-	if err := h.w.DeleteCredential(sdjwt); err != nil {
+// checkClaims checks each received credential's claims, for display.
+func checkClaims(t *testing.T, h harness, received []summary) {
+	t.Helper()
+	for _, c := range received {
+		detail := decode[struct {
+			ID               string
+			HolderKeyPresent *bool `json:"holder_key_present"`
+			Claims           map[string]any
+		}](t, mustText(t)(h.w.Credential(c.ID)))
+		if detail.ID != c.ID || detail.HolderKeyPresent == nil || !*detail.HolderKeyPresent {
+			t.Errorf("Credential(%s) = %+v", c.ID, detail)
+		}
+		family := detail.Claims["family_name"]
+		if c.Format == "mso_mdoc" {
+			ns, _ := detail.Claims["org.example.test.1"].(map[string]any)
+			family = ns["family_name"]
+		}
+		if family != "Doe" {
+			t.Errorf("%s claims = %v", c.Format, detail.Claims)
+		}
+	}
+	if _, err := h.w.Credential("no-such"); code(err) != CodeNotFound {
+		t.Errorf("Credential of an unknown ID: %v", err)
+	}
+}
+
+// checkOrphan checks that a credential whose holder key is gone is
+// listed as such.
+func checkOrphan(t *testing.T, h harness, received []summary) {
+	t.Helper()
+	var mdocCred summary
+	for _, c := range received {
+		if c.Format == "mso_mdoc" {
+			mdocCred = c
+		}
+	}
+	var keyID string
+	for _, raw := range h.creds.records {
+		var r credentialRecord
+		if err := json.Unmarshal(raw, &r); err == nil && r.ID == mdocCred.ID {
+			keyID = r.HolderKeyID
+		}
+	}
+	if err := h.keys.DeleteKey(keyID); err != nil {
 		t.Fatal(err)
 	}
-	if err := h.w.DeleteCredential(sdjwt); code(err) != CodeNotFound {
-		t.Errorf("deleting it again: %v", err)
+	listed := decode[struct {
+		Credentials []struct {
+			HolderKeyPresent *bool `json:"holder_key_present"`
+		}
+	}](t, mustText(t)(h.w.Credentials()))
+	if len(listed.Credentials) != 1 || listed.Credentials[0].HolderKeyPresent == nil || *listed.Credentials[0].HolderKeyPresent {
+		t.Errorf("after its key was deleted: %+v", listed)
 	}
 }
 

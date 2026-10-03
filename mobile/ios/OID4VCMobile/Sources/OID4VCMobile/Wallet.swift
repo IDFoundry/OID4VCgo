@@ -49,10 +49,64 @@ public struct CredentialSummary: Decodable, Equatable, Sendable {
     public let vct: String?
     public let doctype: String?
     public let receivedAt: Date
+    /// Whether the key store still holds the credential's key: without it
+    /// (restored to another device, say) it can't be presented. Set in
+    /// `Wallet.credentials()` and `Wallet.credential(id:)`.
+    public let holderKeyPresent: Bool?
 
     enum CodingKeys: String, CodingKey {
         case id, format, vct, doctype
         case credentialIssuer = "credential_issuer", configurationID = "configuration_id", receivedAt = "received_at"
+        case holderKeyPresent = "holder_key_present"
+    }
+}
+
+/// A credential with its claims, for display.
+public struct CredentialDetail: Decodable, Sendable {
+    public let summary: CredentialSummary
+    /// An SD-JWT VC's claims, or an mdoc's namespace → element → value;
+    /// byte strings (a portrait) are base64.
+    public let claims: JSONValue
+
+    public init(from decoder: Decoder) throws {
+        summary = try CredentialSummary(from: decoder)
+        let c = try decoder.container(keyedBy: Keys.self)
+        claims = try c.decodeIfPresent(JSONValue.self, forKey: .claims) ?? .null
+    }
+
+    enum Keys: String, CodingKey { case claims }
+}
+
+/// A JSON value.
+public enum JSONValue: Decodable, Sendable, Equatable {
+    case null
+    case bool(Bool)
+    case number(Double)
+    case string(String)
+    case array([JSONValue])
+    case object([String: JSONValue])
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.singleValueContainer()
+        if c.decodeNil() {
+            self = .null
+        } else if let b = try? c.decode(Bool.self) {
+            self = .bool(b)
+        } else if let n = try? c.decode(Double.self) {
+            self = .number(n)
+        } else if let s = try? c.decode(String.self) {
+            self = .string(s)
+        } else if let a = try? c.decode([JSONValue].self) {
+            self = .array(a)
+        } else {
+            self = .object(try c.decode([String: JSONValue].self))
+        }
+    }
+
+    /// The value at `key`, for an object.
+    public subscript(key: String) -> JSONValue? {
+        if case .object(let o) = self { return o[key] }
+        return nil
     }
 }
 
@@ -73,6 +127,13 @@ public final class Wallet: @unchecked Sendable {
         let wallet = handle
         let json = try await OID4VC.offMain { try OID4VC.call { wallet.credentials($0) } }
         return try decode(Result.self, json).credentials
+    }
+
+    /// One credential with its claims.
+    public func credential(id: String) async throws -> CredentialDetail {
+        let wallet = handle
+        let json = try await OID4VC.offMain { try OID4VC.call { wallet.credential(id, error: $0) } }
+        return try decode(CredentialDetail.self, json)
     }
 
     /// Deletes a credential and its holder key.

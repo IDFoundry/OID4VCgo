@@ -34,7 +34,8 @@ var testHTTP *http.Client
 // Wallet is a holder's wallet: walletflow over the app's KeyStore,
 // CredentialStore and WalletProvider.
 type Wallet struct {
-	w *walletflow.Wallet
+	w    *walletflow.Wallet
+	keys KeyStore
 }
 
 // NewWallet returns a Wallet configured by configJSON:
@@ -81,7 +82,7 @@ func NewWallet(configJSON string, keys KeyStore, credentials CredentialStore, pr
 	if err != nil {
 		return nil, newError(CodeInvalidInput, err)
 	}
-	return &Wallet{w: w}, nil
+	return &Wallet{w: w, keys: keys}, nil
 }
 
 func certPool(pemText string) (*x509.CertPool, error) {
@@ -94,16 +95,62 @@ func certPool(pemText string) (*x509.CertPool, error) {
 
 // Credentials returns {"abi", "credentials": [{"id",
 // "credential_issuer", "configuration_id", "format", "vct", "doctype",
-// "received_at"}]}: every credential the wallet holds.
+// "received_at", "holder_key_present"}]}: every credential the wallet
+// holds.
 func (w *Wallet) Credentials() (string, error) {
 	creds, err := w.w.Credentials(context.Background())
 	if err != nil {
 		return "", classify(err)
 	}
+	summaries := make([]credentialSummary, 0, len(creds))
+	for _, c := range creds {
+		s, err := w.summary(c)
+		if err != nil {
+			return "", err
+		}
+		summaries = append(summaries, s)
+	}
 	return marshal(struct {
 		result
 		Credentials []credentialSummary `json:"credentials"`
-	}{result{ABIVersion}, summariesOf(creds)})
+	}{result{ABIVersion}, summaries})
+}
+
+// Credential returns one credential for display: its summary with
+// "claims" — an SD-JWT VC's claims, or an mdoc's namespace → element →
+// value, byte strings in base64 — or not_found.
+func (w *Wallet) Credential(id string) (string, error) {
+	creds, err := w.w.Credentials(context.Background())
+	if err != nil {
+		return "", classify(err)
+	}
+	for _, c := range creds {
+		if c.ID != id {
+			continue
+		}
+		s, err := w.summary(c)
+		if err != nil {
+			return "", err
+		}
+		return marshal(struct {
+			result
+			credentialSummary
+			Claims any `json:"claims"`
+		}{result{ABIVersion}, s, jsonClaims(c.Claims)})
+	}
+	return "", newError(CodeNotFound, fmt.Errorf("no credential %q", id))
+}
+
+// summary is c's summary, with whether its holder key is still present.
+func (w *Wallet) summary(c walletflow.StoredCredential) (credentialSummary, error) {
+	s := summaryOf(c)
+	pub, err := w.keys.PublicKey(c.HolderKeyID)
+	if err != nil {
+		return credentialSummary{}, newError(CodePlatform, fmt.Errorf("credential %q's holder key: %w", c.ID, err))
+	}
+	present := len(pub) > 0
+	s.HolderKeyPresent = &present
+	return s, nil
 }
 
 // DeleteCredential deletes the credential id names, and its holder key.

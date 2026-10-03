@@ -106,9 +106,48 @@ final class SessionTests: XCTestCase {
             XCTAssertEqual(e.code, .wrongStep)
         }
 
+        // Claims for display, and whether the holder key is still there.
+        let detail = try await w.credential(id: sdjwt)
+        XCTAssertEqual(detail.summary.id, sdjwt)
+        XCTAssertEqual(detail.summary.holderKeyPresent, true)
+        XCTAssertEqual(detail.claims["family_name"], .string("Doe"))
+        let mdoc = held.first { $0.format == "mso_mdoc" }!.id
+        let mdocDetail = try await w.credential(id: mdoc)
+        XCTAssertEqual(mdocDetail.claims["org.example.test.1"]?["given_name"], .string("Jane"))
+
         try await w.deleteCredential(id: sdjwt)
         let remaining = try await w.credentials()
         XCTAssertEqual(remaining.count, 1)
+        do {
+            _ = try await w.credential(id: sdjwt)
+            XCTFail("a deleted credential's detail")
+        } catch let e as WalletError {
+            XCTAssertEqual(e.code, .notFound)
+        }
+    }
+
+    /// The SDK's file store, end to end: credentials survive a new Wallet
+    /// over the same directory, and one whose holder key is gone is
+    /// listed as such.
+    func testFileStoreAcrossWallets() async throws {
+        let env = try TestEnv()
+        defer { env.close() }
+        let dir = FileManager.default.temporaryDirectory.appending(path: "creds-\(UUID())", directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let keys = keyStore()
+        let first = try Wallet(configuration: try env.configuration, keyStore: keys,
+                               credentialStore: try FileCredentialStore(directory: dir), provider: env.env.provider())
+        let received = try await Self.receive(env, first)
+        let second = try Wallet(configuration: try env.configuration, keyStore: keys,
+                                credentialStore: try FileCredentialStore(directory: dir), provider: nil)
+        let held = try await second.credentials()
+        XCTAssertEqual(Set(held.map(\.id)), Set(received.credentials.map(\.id)))
+        XCTAssertTrue(held.allSatisfy { $0.holderKeyPresent == true })
+
+        let other = try Wallet(configuration: try env.configuration, keyStore: keyStore(),
+                               credentialStore: try FileCredentialStore(directory: dir), provider: nil)
+        let orphaned = try await other.credentials()
+        XCTAssertTrue(orphaned.allSatisfy { $0.holderKeyPresent == false }, "another key store holds none of the keys")
     }
 
     func testPreAuthorizedCodeWithPIN() async throws {

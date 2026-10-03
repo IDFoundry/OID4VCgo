@@ -116,6 +116,10 @@ final class WalletModel {
         phase = .idle
     }
 
+    func detail(_ c: CredentialSummary) async -> CredentialDetail? {
+        try? await wallet?.credential(id: c.id)
+    }
+
     func delete(_ c: CredentialSummary) async {
         try? await wallet?.deleteCredential(id: c.id)
         await refresh()
