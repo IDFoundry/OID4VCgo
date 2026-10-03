@@ -215,7 +215,7 @@ networking.
 | 4 ✓ | OID4VCI slice | HAIP issuance from the iOS demo app against the passport-vdc issuer, with Key Attestations from the Wallet Provider |
 | 5 ✓ | Storage | The native credential store, with key references |
 | 6 ◐ | OID4VP slice | Request parsing, candidates, consent and presentation from the iOS demo app |
-| 7 ◐ | Hardening | Suspension and resumption (deferred credentials survive the app quitting ✓), cancellation, network failures, issuer and verifier errors, logging without personal data |
+| 7 ◐ | Hardening | Suspension and resumption (deferred credentials ✓, an authorization in progress ✓), cancellation, network failures, issuer and verifier errors, logging without personal data (errors ✓) |
 | 8 | Android | The same bridge over Android Keystore, packaged as an AAR |
 | 9 | DC API | A DC API adapter over the presentation engine |
 
@@ -532,6 +532,32 @@ authentication session, through an eID or banking app, say.
   `FileCredentialStore`.
 - **Not covered:** an app killed after the token response and before
   the credential request loses the access token.
+
+### Phase 7: errors fit for logs
+
+The wallet logs nothing itself: there's no logging in walletflow, the
+wallet package, the mobile layer, the Swift package or FAPIgo's client.
+What reaches an app's logs is the errors it gets. Every error crossing
+the gomobile boundary is cleaned in one place, `classify`:
+
+- **Remote text:** a remote party's own text (`error_description`, a
+  FAPIgo error built from a whole error body) is replaced by fixed text
+  naming who refused, with the HTTP status. The OAuth error code, checked
+  to be a plain token, is the `detail`.
+- **URLs:** network errors drop their URL, which can carry a
+  `request_uri`, a pre-authorized code or a `response_code`. Any other
+  URL in a message is cut to its scheme and host.
+- **Control characters and length:** control characters become spaces,
+  so a message can't forge log lines, and it's capped at 300
+  characters.
+- **Timeouts:** they're `network` (retryable), no longer `cancelled`.
+  HTTP 5xx and 429 are `unavailable`, retryable later, and
+  `invalid_nonce` is retryable too.
+- **Swift:** a decoding failure names only the coding path, never the
+  decoder's text, which can quote a value.
+
+The credential's claims, the PIN, tokens and codes were never in an
+error message.
 
 ## Open questions
 
