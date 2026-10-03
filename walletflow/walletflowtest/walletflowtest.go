@@ -30,6 +30,7 @@ import (
 	"image"
 	"image/color"
 	"image/jpeg"
+	"image/png"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -52,6 +53,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/haip"
 	"github.com/idfoundry/oid4vcgo/issuer"
 	"github.com/idfoundry/oid4vcgo/issuer/fapiresource"
+	"github.com/idfoundry/oid4vcgo/statuslist"
 	oid4vcgostorage "github.com/idfoundry/oid4vcgo/storage"
 )
 
@@ -78,6 +80,25 @@ const (
 	FamilyName = "Doe"
 	GivenName  = "Jane"
 )
+
+// The issuer's display metadata (OID4VCI 1.0 §12.2.4): its name, and
+// each credential's name, description and colours, in English, with a
+// German name too; and a logo, served at LogoPath.
+const (
+	IssuerName      = "Test Issuer"
+	SDJWTName       = "Test PID"
+	SDJWTNameDE     = "Test-Personalausweis"
+	MdocName        = "Test mdoc"
+	Description     = "A test credential"
+	BackgroundColor = "#12107c"
+	TextColor       = "#ffffff"
+	LogoPath        = "/logo.png"
+	LogoAltText     = "Test Issuer logo"
+)
+
+// StatusListPath is where the issuer serves its Token Status List: every
+// credential references it.
+const StatusListPath = "/status-list"
 
 const preAuthorizedCodeGrantType = "urn:ietf:params:oauth:grant-type:pre-authorized_code"
 
@@ -115,6 +136,8 @@ type Env struct {
 	vct          string
 
 	mu            sync.Mutex
+	revoked       []uint8 // the status list, one entry per credential issued
+	publisher     *statuslist.Publisher
 	closers       []func()
 	deferAll      bool
 	decision      *bool
@@ -182,6 +205,18 @@ func New(opts Options) (env *Env, err error) {
 	e.IssuerCA, e.IssuerRoots = caCert, x509.NewCertPool()
 	e.IssuerRoots.AddCert(caCert)
 	proofTypes := map[string]oid4vci.ProofTypeConfiguration{oid4vci.ProofTypeAttestation: haip.RecommendedAttestationProofType()}
+	logo := &oid4vci.Logo{URI: e.IssuerURL + LogoPath, AltText: LogoAltText}
+	credentialDisplay := func(names ...string) *oid4vci.CredentialMetadata {
+		md := &oid4vci.CredentialMetadata{}
+		for i, name := range names {
+			locale := []string{"en", "de"}[i]
+			md.Display = append(md.Display, oid4vci.CredentialDisplay{
+				Name: name, Locale: locale, Logo: logo, Description: Description,
+				BackgroundColor: BackgroundColor, TextColor: TextColor,
+			})
+		}
+		return md
+	}
 	e.iss, err = issuer.New(issuer.Config{
 		Assurance: issuer.AssuranceDevelopment,
 		Issuer:    e.issuerURL(),
@@ -194,14 +229,17 @@ func New(opts Options) (env *Env, err error) {
 			AccessTokenLifetime: asCfg.Limits.AccessTokenLifetime, MaxTxCodeAttempts: 3,
 		},
 		PreAuthorizedCodeClientAuthentication: issuer.VerifiedPreAuthorizedCode{},
+		Display:                               []oid4vci.Display{{Name: IssuerName, Locale: "en", Logo: logo}},
 		CredentialConfigurationsSupported: map[string]issuer.CredentialConfiguration{
 			SDJWTConfigurationID: {
 				Format: sdjwtvc.CredentialFormat, VCT: e.vct, Scope: SDJWTConfigurationID,
 				CryptographicBindingMethodsSupported: []string{"jwk"}, ProofTypesSupported: proofTypes,
+				CredentialMetadata: credentialDisplay(SDJWTName, SDJWTNameDE),
 			},
 			MdocConfigurationID: {
 				Format: mdoc.CredentialFormat, DocType: DocType, Scope: MdocConfigurationID,
 				CryptographicBindingMethodsSupported: []string{"cose_key"}, ProofTypesSupported: proofTypes,
+				CredentialMetadata: credentialDisplay(MdocName),
 			},
 		},
 	}, issuer.Dependencies{
@@ -224,6 +262,7 @@ func New(opts Options) (env *Env, err error) {
 				return nil, nil
 			}
 			req.SDJWTClaims, req.MdocClaims = e.claims()
+			req.PerCredential = e.withStatus
 			return nil, nil
 		},
 	})
@@ -256,6 +295,20 @@ func New(opts Options) (env *Env, err error) {
 	mux.Handle("POST /credential", credentialHandler)
 	mux.Handle("POST /deferred_credential", deferredHandler)
 	mux.Handle("POST /notification", notificationHandler)
+	e.publisher = &statuslist.Publisher{
+		URI: e.IssuerURL + StatusListPath, Signer: signerKey, Chain: []*x509.Certificate{signerCert},
+		Statuses: func(context.Context) ([]uint8, error) {
+			e.mu.Lock()
+			defer e.mu.Unlock()
+			return append([]uint8(nil), e.revoked...), nil
+		},
+		Lifetime: time.Hour, Now: time.Now,
+	}
+	mux.Handle("GET "+StatusListPath, e.publisher)
+	mux.HandleFunc("GET "+LogoPath, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write(logoPNG)
+	})
 	ts.Config.Handler = mux
 	ts.StartTLS()
 	e.closers = append(e.closers, ts.Close)
@@ -349,6 +402,34 @@ func (e *Env) Decide(approve bool) {
 	e.decision = &approve
 }
 
+// withStatus gives a credential the next entry of the status list,
+// valid until Revoke.
+func (e *Env) withStatus(_ context.Context, c *issuer.CredentialInstance) error {
+	e.mu.Lock()
+	idx := len(e.revoked)
+	e.revoked = append(e.revoked, 0)
+	e.mu.Unlock()
+	ref := statuslist.StatusListRef{Idx: uint64(idx), URI: e.IssuerURL + StatusListPath} // #nosec G115 -- a slice length
+	if c.SDJWTClaims != nil {
+		c.SDJWTClaims.Status = ref.Claim()
+	}
+	if c.MdocClaims != nil {
+		c.MdocClaims.Status = &mdoc.StatusListRef{Idx: ref.Idx, URI: ref.URI}
+	}
+	return nil
+}
+
+// Revoke revokes every credential issued so far: the status list then
+// says so.
+func (e *Env) Revoke() {
+	e.mu.Lock()
+	for i := range e.revoked {
+		e.revoked[i] = uint8(statuslist.StatusInvalid)
+	}
+	e.mu.Unlock()
+	e.publisher.Invalidate()
+}
+
 // Notifications returns the events wallets have reported, in order.
 func (e *Env) Notifications() []oid4vci.NotificationEvent {
 	e.mu.Lock()
@@ -383,7 +464,9 @@ func (e *Env) resolveDeferred(ctx context.Context, _ issuer.Grant, transactionID
 		return e.iss.DenyDeferredCredential(ctx, transactionID)
 	}
 	sdjwtClaims, mdocClaims := e.claims()
-	return e.iss.IssueDeferredCredential(ctx, transactionID, issuer.DeferredIssuance{SDJWTClaims: sdjwtClaims, MdocClaims: mdocClaims})
+	return e.iss.IssueDeferredCredential(ctx, transactionID, issuer.DeferredIssuance{
+		SDJWTClaims: sdjwtClaims, MdocClaims: mdocClaims, PerCredential: e.withStatus,
+	})
 }
 
 type notificationRecorder struct{ e *Env }
@@ -675,4 +758,15 @@ var Portrait = func() []byte {
 		panic(err)
 	}
 	return buf.Bytes()
+}()
+
+// logoPNG is a 1×1 PNG: the issuer's logo.
+var logoPNG = func() []byte {
+	img := image.NewNRGBA(image.Rect(0, 0, 1, 1))
+	img.Set(0, 0, color.NRGBA{R: 0x12, G: 0x10, B: 0x7c, A: 0xff})
+	var b bytes.Buffer
+	if err := png.Encode(&b, img); err != nil {
+		panic(err)
+	}
+	return b.Bytes()
 }()

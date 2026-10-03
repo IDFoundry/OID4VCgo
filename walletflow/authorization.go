@@ -240,7 +240,7 @@ func (w *Wallet) rebuild(ctx context.Context, a PendingAuthorization) (*Issuance
 		return nil, errors.New("walletflow: the issuer no longer names the authorization server the authorization began at")
 	}
 	s := &Issuance{w: w, offer: a.Offer, metadata: metadata, step: stepAuthorizing}
-	s.details = describeOffer(a.Offer, metadata)
+	s.details = describeOffer(a.Offer, metadata, w.cfg.Locales)
 	if s.instanceKey, err = w.deps.Keys.Key(ctx, a.InstanceKeyID); err != nil {
 		return nil, fmt.Errorf("walletflow: the authorization's instance key: %w", err)
 	}
