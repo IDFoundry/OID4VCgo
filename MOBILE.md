@@ -110,10 +110,10 @@ Wallet
 - **Authorization** goes through the issuer's pages: the session hands
   the app an authorization URL, and the app returns the redirect it
   collects (`ASWebAuthenticationSession` or a Universal Link).
-- **Suspension:** FAPIgo's client sessions persist as an opaque record
-  (v0.43), so an in-flight authorization can be saved and resumed from
-  the redirect after the app is suspended. Session persistence is a
-  hardening-phase item.
+- **Suspension:** an authorization in progress is kept in the wallet's
+  `AuthorizationStore`, which backs FAPIgo's client `SessionStore`, so
+  the redirect can complete it after the app is killed
+  (`ResumeIssuance`; see Phase 7 below).
 
 Presentation is protocol-neutral inside `walletflow`: an adapter turns an
 OID4VP request (`wallet.ParseAuthorizationRequest`) or, later, a DC API
@@ -496,14 +496,45 @@ that state is what's persisted:
     the expiry when the issuer gave one, and the credential can then
     only be abandoned. Refresh tokens would lift this, if an issuer
     gives them.
-  - An authorization still in progress (the browser step) isn't
-    persisted. FAPIgo's client sessions can be sealed for that, a later
-    item.
+
+### Phase 7: an authorization survives the app being killed
+
+If iOS kills the app while the holder is at the issuer's pages, the
+in-memory issuance goes with it. A redirect that reaches the relaunched
+app could then complete nothing. This happens when the flow leaves the
+authentication session, through an eID or banking app, say.
+
+- **FAPIgo's extension point:** FAPIgo has no sealed sessions. Its
+  client keeps an authorization's state (the PKCE verifier, nonce,
+  issuer and redirect URI) in a `SessionStore` the caller provides,
+  keyed by the `state` parameter. walletflow implements that store over
+  its own `AuthorizationStore`. Each record also holds what rebuilding
+  the issuance needs: the resolved offer, the authorization server, and
+  the instance and DPoP key IDs.
+- **Where:** on mobile, it's the app's `CredentialStore` again: a
+  `"kind": "authorization"` record under `authorization-<SHA-256 of
+  state>`. The PKCE verifier is no use without the DPoP key the code is
+  bound to and the instance key the client authenticates with, both in
+  the Secure Enclave.
+- **Resuming:** `Wallet.ResumeIssuance(redirect)` finds the record by
+  the redirect's `state`. It fetches the issuer's metadata again, loads
+  the same keys, gets a fresh Wallet Attestation, and completes the
+  authorization. A record is consumed once, under a lock, and expires
+  with the session (10 minutes). A redirect that matches nothing, is
+  replayed or has expired is `not_found`. The launch key sweep keeps an
+  unexpired authorization's keys and forgets expired ones.
+- **Production assurance:** FAPIgo's production checks need this store
+  to be durable. walletflow at production assurance also needs a
+  KeyStore that declares durable custody, and `crypto/rand.Reader`
+  itself. Until this change, an issuance couldn't build its OAuth client
+  without `development`. The app's stores declare durability
+  (`isDurable`): `KeychainKeyStore` when persistent, and
+  `FileCredentialStore`.
+- **Not covered:** an app killed after the token response and before
+  the credential request loses the access token.
 
 ## Open questions
 
-- Persisting an issuance's authorization step across suspension, with
-  FAPIgo's sealed client sessions.
 - The Wallet Provider's production design (App Attest verification, key
   attestation formats), and whether it belongs in this repository.
 - iOS's integration point for the Digital Credentials API, when Phase 9
