@@ -62,23 +62,27 @@ func bestLocale(n int, locale func(int) string, prefs []string) int {
 	}
 	language := func(tag string) string { l, _, _ := strings.Cut(strings.ToLower(tag), "-"); return l }
 	for _, pref := range prefs {
-		for i := range n {
-			if strings.EqualFold(locale(i), pref) {
-				return i
-			}
+		if i := firstIndex(n, func(i int) bool { return strings.EqualFold(locale(i), pref) }); i >= 0 {
+			return i
 		}
-		for i := range n {
-			if locale(i) != "" && language(locale(i)) == language(pref) {
-				return i
-			}
-		}
-	}
-	for i := range n {
-		if locale(i) == "" {
+		if i := firstIndex(n, func(i int) bool { return locale(i) != "" && language(locale(i)) == language(pref) }); i >= 0 {
 			return i
 		}
 	}
+	if i := firstIndex(n, func(i int) bool { return locale(i) == "" }); i >= 0 {
+		return i
+	}
 	return 0
+}
+
+// firstIndex is the first of 0..n-1 that match is true for, or -1.
+func firstIndex(n int, match func(int) bool) int {
+	for i := range n {
+		if match(i) {
+			return i
+		}
+	}
+	return -1
 }
 
 // logoOf is l as a Logo, when its URI is one an app may load: https, or
