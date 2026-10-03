@@ -32,11 +32,15 @@ type Responded struct {
 // Show the holder PreviewPresentation's view of the same request and
 // credentials first: Respond sends without asking.
 func Respond(ctx context.Context, client fapihttp.HTTPClient, req AuthorizationRequest, credentials []HeldCredential, trustedAuthorities dcql.TrustedAuthoritiesChecker) (Responded, error) {
-	vpToken, err := PresentCredentials(ctx, PresentationRequest{
-		Query: req.Query, Credentials: credentials, Audience: req.ClientID, Nonce: req.Nonce,
-		ResponseURI: req.ResponseURI, ResponseEncryptionKey: req.ResponseEncryptionKey,
-		TrustedAuthorities: trustedAuthorities,
-	})
+	return respond(ctx, client, req, PresentationRequest{Credentials: credentials}, trustedAuthorities)
+}
+
+// respond presents what pr chooses (Credentials to match, or a
+// Selection) for req and submits it.
+func respond(ctx context.Context, client fapihttp.HTTPClient, req AuthorizationRequest, pr PresentationRequest, trustedAuthorities dcql.TrustedAuthoritiesChecker) (Responded, error) {
+	pr.Query, pr.Audience, pr.Nonce = req.Query, req.ClientID, req.Nonce
+	pr.ResponseURI, pr.ResponseEncryptionKey, pr.TrustedAuthorities = req.ResponseURI, req.ResponseEncryptionKey, trustedAuthorities
+	vpToken, err := PresentCredentials(ctx, pr)
 	if err != nil {
 		return Responded{}, fmt.Errorf("wallet: respond: %w", err)
 	}

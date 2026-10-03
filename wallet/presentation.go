@@ -737,6 +737,11 @@ type PresentationRequest struct {
 	// match Query against.
 	Credentials []HeldCredential
 
+	// Selection, when set, is presented exactly — for each Credential
+	// Query ID, the credentials chosen to answer it — after
+	// ValidateSelection, instead of matching Credentials against Query.
+	Selection map[string][]HeldCredential
+
 	// Audience is REQUIRED for the redirect flow (Origin empty): the
 	// Verifier's own Client Identifier (the Authorization Request's
 	// own "client_id", prefix included).
@@ -788,10 +793,19 @@ func PresentCredentials(ctx context.Context, req PresentationRequest) (map[strin
 	if req.Nonce == "" {
 		return nil, fmt.Errorf("wallet: present credentials: nonce is required")
 	}
-	matches, err := MatchDCQLQuery(ctx, req.Query, req.Credentials, req.TrustedAuthorities)
-	if err != nil {
-		return nil, fmt.Errorf("wallet: present credentials: %w", err)
+	matches := req.Selection
+	if matches != nil {
+		if err := ValidateSelection(ctx, req.Query, matches, req.TrustedAuthorities); err != nil {
+			return nil, fmt.Errorf("wallet: present credentials: %w", err)
+		}
+	} else {
+		m, err := MatchDCQLQuery(ctx, req.Query, req.Credentials, req.TrustedAuthorities)
+		if err != nil {
+			return nil, fmt.Errorf("wallet: present credentials: %w", err)
+		}
+		matches = m
 	}
+	var err error
 
 	aud := req.Audience
 	if req.Origin != "" {
