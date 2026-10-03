@@ -92,6 +92,10 @@ type Issuance struct {
 	session     client.SessionHandle
 	resource    wallet.ProtectedResourceClient
 	deferred    []*Deferred
+	// obtained is what RequestCredentials has obtained so far, and
+	// handled the configurations it has requested successfully.
+	obtained IssuanceResult
+	handled  map[string]bool
 }
 
 // StartIssuance resolves the Credential Offer offerURI (an
@@ -335,33 +339,43 @@ func (c clientClock) Now() time.Time { return c() }
 // new holder key that the Wallet Provider attests in a Key Attestation
 // carrying the issuer's nonce. Each credential issued is checked
 // (wallet.VerifyIssuedCredential), stored, and reported to the issuer's
-// Notification Endpoint; each deferred one is returned to poll. If a
-// request fails, the error comes with what was obtained before it.
+// Notification Endpoint; each deferred one is returned to poll.
+//
+// If a request fails, RequestCredentials returns the error with
+// everything obtained so far, and can be called again: the retry
+// requests only the credentials not yet obtained, and returns
+// everything obtained by every call.
 func (s *Issuance) RequestCredentials(ctx context.Context) (IssuanceResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.step != stepAuthorized {
 		return IssuanceResult{}, ErrWrongStep
 	}
-	s.step = stepRequested
 	requestEnc, responseEnc, err := wallet.EncryptionFromMetadata(s.metadata)
 	if err != nil {
-		return IssuanceResult{}, fmt.Errorf("walletflow: %w", err)
+		return s.obtained, fmt.Errorf("walletflow: %w", err)
 	}
-	var result IssuanceResult
+	if s.handled == nil {
+		s.handled = map[string]bool{}
+	}
 	for _, id := range s.offer.CredentialConfigurationIDs {
-		stored, deferred, err := s.request(ctx, id, requestEnc, responseEnc)
-		if err != nil {
-			return result, err
-		}
-		if deferred != nil {
-			s.deferred = append(s.deferred, deferred)
-			result.Deferred = append(result.Deferred, deferred)
+		if s.handled[id] {
 			continue
 		}
-		result.Credentials = append(result.Credentials, stored)
+		stored, deferred, err := s.request(ctx, id, requestEnc, responseEnc)
+		if err != nil {
+			return s.obtained, err
+		}
+		s.handled[id] = true
+		if deferred != nil {
+			s.deferred = append(s.deferred, deferred)
+			s.obtained.Deferred = append(s.obtained.Deferred, deferred)
+			continue
+		}
+		s.obtained.Credentials = append(s.obtained.Credentials, stored)
 	}
-	return result, nil
+	s.step = stepRequested
+	return s.obtained, nil
 }
 
 func (s *Issuance) request(ctx context.Context, configID string, requestEnc *wallet.RequestEncryption, responseEnc *wallet.ResponseEncryption) (StoredCredential, *Deferred, error) {

@@ -461,3 +461,56 @@ func TestIssuance_RefusesAnOfferNamingAnotherAuthorizationServer(t *testing.T) {
 		t.Errorf("keys held = %d, want none", f.keys.Len())
 	}
 }
+
+// flakyProvider fails its n-th Key Attestation, once.
+type flakyProvider struct {
+	walletflow.WalletProvider
+	failAt int
+	calls  atomic.Int32
+}
+
+func (p *flakyProvider) KeyAttestation(ctx context.Context, keys []*ecdsa.PublicKey, nonce string) (string, error) {
+	if int(p.calls.Add(1)) == p.failAt {
+		return "", errors.New("the Wallet Provider is unavailable")
+	}
+	return p.WalletProvider.KeyAttestation(ctx, keys, nonce)
+}
+
+// TestIssuance_RequestCredentialsRetries: a request failing partway
+// returns what was obtained with the error, and a retry requests only the
+// rest, returning everything.
+func TestIssuance_RequestCredentialsRetries(t *testing.T) {
+	f := newFixture(t, walletflowtest.Options{})
+	provider := &flakyProvider{WalletProvider: f.env.Provider, failAt: 2}
+	w, err := walletflow.New(walletflow.Config{
+		ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, IssuerRoots: f.env.IssuerRoots, Development: true,
+	}, walletflow.Dependencies{Keys: f.keys, Credentials: f.store, Provider: provider, HTTP: f.env.HTTP})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	s, err := w.StartIssuance(ctx, f.env.AuthorizationCodeOffer(t, walletflowtest.SDJWTConfigurationID, walletflowtest.MdocConfigurationID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s.Close(ctx) }()
+	authorize(t, f, s)
+
+	first, err := s.RequestCredentials(ctx)
+	if err == nil || len(first.Credentials) != 1 {
+		t.Fatalf("first RequestCredentials = %d credentials, %v; want 1 and an error", len(first.Credentials), err)
+	}
+	second, err := s.RequestCredentials(ctx)
+	if err != nil || len(second.Credentials) != 2 {
+		t.Fatalf("retry = %d credentials, %v; want both", len(second.Credentials), err)
+	}
+	if second.Credentials[0].ID != first.Credentials[0].ID {
+		t.Error("the retry requested the first credential again")
+	}
+	if held, _ := w.Credentials(ctx); len(held) != 2 {
+		t.Errorf("stored %d credentials, want 2", len(held))
+	}
+	if _, err := s.RequestCredentials(ctx); !errors.Is(err, walletflow.ErrWrongStep) {
+		t.Errorf("RequestCredentials after success = %v, want ErrWrongStep", err)
+	}
+}
