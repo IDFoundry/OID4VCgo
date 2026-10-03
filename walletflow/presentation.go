@@ -28,14 +28,38 @@ type Verifier struct {
 	ResponseURI string
 }
 
-// Candidates are the held credentials that can answer one of the
-// request's Credential Queries.
-type Candidates struct {
-	// QueryID is the DCQL Credential Query.
-	QueryID string
-	// Credentials can each answer it.
+// Query is one of the request's DCQL Credential Queries (OpenID4VP 1.0
+// §6.1), with the held credentials that can answer it.
+type Query struct {
+	ID string
+	// Multiple is whether it takes more than one credential; otherwise
+	// a Selection gives it exactly one.
+	Multiple bool
+	// Credentials can each answer it; none when nothing held can.
 	Credentials []StoredCredential
 }
+
+// CredentialSet is one of the request's credential_sets (§6.2): ways to
+// answer it, each the Credential Query IDs that together do, most
+// preferred first. A Required set must be answered by one of its
+// options; an optional one may be left out.
+type CredentialSet struct {
+	Options  [][]string
+	Required bool
+}
+
+// Selection is what to present: for each Credential Query ID, the IDs
+// of the stored credentials chosen to answer it. The wallet presents
+// exactly this, after checking it answers the request (ValidateSelection
+// in the wallet package); it never picks a credential of its own.
+type Selection map[string][]string
+
+// ErrInvalidSelection is wrapped by Preview and Respond for a Selection
+// that doesn't answer the request as it asks: an unknown query or
+// credential, a credential that doesn't answer its query, more than one
+// for a query that takes one, or a required credential set left
+// unanswered.
+var ErrInvalidSelection = wallet.ErrInvalidSelection
 
 // Disclosure is what presenting one credential would disclose.
 type Disclosure struct {
@@ -60,10 +84,10 @@ type Presented struct {
 
 // Presentation answers one Authorization Request.
 type Presentation struct {
-	w          *Wallet
-	req        wallet.AuthorizationRequest
-	candidates []Candidates
-	byID       map[string]StoredCredential
+	w       *Wallet
+	req     wallet.AuthorizationRequest
+	queries []Query
+	byID    map[string]StoredCredential
 
 	mu       sync.Mutex
 	answered bool
@@ -76,7 +100,9 @@ type Presentation struct {
 // Request requestLink (an openid4vp:// link with client_id and
 // request_uri) from a Verifier Config.VerifierTrust accepts, and finds
 // the held credentials that can answer it, without sending anything.
-// Show the holder Verifier and Candidates, then Respond or Decline.
+// Show the holder Verifier, Queries and CredentialSets, choose a
+// Selection (or start from DefaultSelection), Preview it, then Respond
+// or Decline.
 func (w *Wallet) StartPresentation(ctx context.Context, requestLink string) (*Presentation, error) {
 	if w.cfg.VerifierTrust == nil {
 		return nil, errors.New("walletflow: Config.VerifierTrust is required to present")
@@ -108,23 +134,21 @@ func (w *Wallet) newPresentation(ctx context.Context, req wallet.AuthorizationRe
 		byCredential[c.Credential] = c
 		held = append(held, heldCredential(c, nil))
 	}
-	// Each Credential Query on its own, for every credential that can
-	// answer it: the holder chooses among them, and among the request's
-	// credential_sets options. A query nothing answers is left out; none
+	// Each Credential Query, in the request's order, with every
+	// credential that can answer it on its own: the holder, or the
+	// application's policy, chooses. One nothing answers has none; none
 	// at all isn't an error here: the holder is told, and may decline.
 	for _, cq := range req.Query.Credentials {
-		cq.Multiple = true
-		matches, err := wallet.MatchDCQLQuery(ctx, dcql.Query{Credentials: []dcql.CredentialQuery{cq}}, held, trustedAuthorities)
-		if err != nil || len(matches[cq.ID]) == 0 {
-			continue
+		q := Query{ID: cq.ID, Multiple: cq.Multiple}
+		all := cq
+		all.Multiple = true
+		if matches, err := wallet.MatchDCQLQuery(ctx, dcql.Query{Credentials: []dcql.CredentialQuery{all}}, held, trustedAuthorities); err == nil {
+			for _, h := range matches[cq.ID] {
+				q.Credentials = append(q.Credentials, byCredential[h.Credential])
+			}
 		}
-		cs := Candidates{QueryID: cq.ID}
-		for _, h := range matches[cq.ID] {
-			cs.Credentials = append(cs.Credentials, byCredential[h.Credential])
-		}
-		p.candidates = append(p.candidates, cs)
+		p.queries = append(p.queries, q)
 	}
-	sort.Slice(p.candidates, func(i, j int) bool { return p.candidates[i].QueryID < p.candidates[j].QueryID })
 	return p, nil
 }
 
@@ -151,23 +175,60 @@ func (p *Presentation) Verifier() Verifier {
 	return v
 }
 
-// Candidates returns, for each Credential Query the held credentials
-// can answer, the credentials that can answer it, ordered by QueryID.
-// None means the wallet can't answer: Decline.
-func (p *Presentation) Candidates() []Candidates { return p.candidates }
+// Queries returns the request's Credential Queries, in its order, each
+// with the held credentials that can answer it. None answerable means
+// the wallet can't answer: Decline.
+func (p *Presentation) Queries() []Query { return p.queries }
 
-// Preview reports what Respond(ctx, credentialIDs) would disclose,
-// without sending anything: show it to the holder for consent.
-func (p *Presentation) Preview(ctx context.Context, credentialIDs []string) ([]Disclosure, error) {
-	held, _, err := p.chosen(ctx, credentialIDs, false)
-	if err != nil {
-		return nil, err
+// CredentialSets returns the request's credential_sets; none means
+// every query must be answered.
+func (p *Presentation) CredentialSets() []CredentialSet {
+	out := make([]CredentialSet, 0, len(p.req.Query.CredentialSets))
+	for _, cs := range p.req.Query.CredentialSets {
+		out = append(out, CredentialSet{Options: cs.Options, Required: cs.IsRequired()})
 	}
-	preview, err := wallet.PreviewPresentation(ctx, p.req.Query, held, trustedAuthorities)
+	return out
+}
+
+// DefaultSelection is the Selection the wallet would make itself, for an
+// application with no policy of its own, or to start from: the first
+// answerable option of each credential set, and each query's first
+// credential (all of them when it takes several). It returns
+// ErrNoMatchingCredential when the request can't be answered.
+func (p *Presentation) DefaultSelection(ctx context.Context) (Selection, error) {
+	held := make([]wallet.HeldCredential, 0, len(p.byID))
+	byCredential := make(map[string]string, len(p.byID))
+	for id, c := range p.byID {
+		held = append(held, heldCredential(c, nil))
+		byCredential[c.Credential] = id
+	}
+	matches, err := wallet.DefaultSelection(ctx, p.req.Query, held, trustedAuthorities)
 	if err != nil {
 		return nil, fmt.Errorf("walletflow: %w: %w", ErrNoMatchingCredential, err)
 	}
-	ids := p.idsByCredential(credentialIDs)
+	sel := make(Selection, len(matches))
+	for q, hs := range matches {
+		for _, h := range hs {
+			sel[q] = append(sel[q], byCredential[h.Credential])
+		}
+	}
+	return sel, nil
+}
+
+// Preview reports what Respond(ctx, sel) would disclose, without
+// signing or sending anything: show it to the holder for consent. It
+// returns an error wrapping ErrInvalidSelection for a Selection that
+// doesn't answer the request.
+func (p *Presentation) Preview(ctx context.Context, sel Selection) ([]Disclosure, error) {
+	held, _, err := p.held(ctx, sel, false)
+	if err != nil {
+		return nil, err
+	}
+	preview, err := wallet.PreviewSelection(ctx, p.req.Query, held, trustedAuthorities)
+	if err != nil {
+		return nil, fmt.Errorf("walletflow: %w", err)
+	}
+	ids := p.idsByCredential()
 	out := make([]Disclosure, 0, len(preview))
 	for _, c := range preview {
 		out = append(out, Disclosure{QueryID: c.QueryID, CredentialID: ids[c.Credential.Credential], Claims: c.Claims})
@@ -175,22 +236,23 @@ func (p *Presentation) Preview(ctx context.Context, credentialIDs []string) ([]D
 	return out, nil
 }
 
-// Respond presents credentialIDs — chosen from Candidates; nil means
-// every candidate, letting the request's query choose — bound to the
-// Verifier's nonce and client_id, and sends them in an encrypted
-// direct_post.jwt response. Holder keys sign here, so a KeyStore that
-// requires user presence prompts now. A Presentation is answered once.
-func (p *Presentation) Respond(ctx context.Context, credentialIDs []string) (Presented, error) {
+// Respond presents exactly sel — each query's chosen credentials,
+// checked to answer the request (ErrInvalidSelection otherwise) — bound
+// to the Verifier's nonce and client_id, in an encrypted direct_post.jwt
+// response. Each credential's next unused copy is presented. Holder keys
+// sign here, so a KeyStore that requires user presence prompts now. A
+// Presentation is answered once.
+func (p *Presentation) Respond(ctx context.Context, sel Selection) (Presented, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.answered || p.declined != "" {
 		return Presented{}, ErrWrongStep
 	}
-	held, picked, err := p.chosen(ctx, credentialIDs, true)
+	held, picked, err := p.held(ctx, sel, true)
 	if err != nil {
 		return Presented{}, err
 	}
-	responded, err := wallet.Respond(ctx, p.w.deps.HTTP, p.req, held, trustedAuthorities)
+	responded, err := wallet.RespondSelection(ctx, p.w.deps.HTTP, p.req, held, trustedAuthorities)
 	if err != nil && deliveryUnknown(err) {
 		// The Verifier may have it: sending again could present twice,
 		// with the same nonce. Its copies count as presented.
@@ -246,39 +308,38 @@ func (p *Presentation) Decline(ctx context.Context) (Presented, error) {
 	return Presented{RedirectURI: reply.RedirectURI}, nil
 }
 
-// chosen returns credentialIDs as held credentials (every candidate for
-// nil), with their holder keys when withKeys is set, and which copy of
-// each it picked: one no Verifier has seen, when one is left. Every ID
-// must be a candidate.
-func (p *Presentation) chosen(ctx context.Context, credentialIDs []string, withKeys bool) ([]wallet.HeldCredential, map[string]int, error) {
-	candidates := p.candidateIDs()
-	if len(candidates) == 0 {
-		return nil, nil, ErrNoMatchingCredential
+// held is sel as the wallet package presents it: each credential's
+// copy to present next, with its holder key when withKeys is set, and
+// which copy of each credential it picked. An ID that isn't a stored
+// credential is an invalid selection; whether each answers its query is
+// the wallet package's to check.
+func (p *Presentation) held(ctx context.Context, sel Selection, withKeys bool) (map[string][]wallet.HeldCredential, map[string]int, error) {
+	if len(sel) == 0 {
+		return nil, nil, fmt.Errorf("walletflow: %w: nothing is selected", ErrInvalidSelection)
 	}
-	if credentialIDs == nil {
-		credentialIDs = candidates
-	}
-	held := make([]wallet.HeldCredential, 0, len(credentialIDs))
-	picked := make(map[string]int, len(credentialIDs))
-	for _, id := range credentialIDs {
-		if !slices.Contains(candidates, id) {
-			return nil, nil, fmt.Errorf("walletflow: credential %q doesn't answer the request", id)
-		}
-		c := p.byID[id]
-		i, cp := c.nextCopy()
-		picked[id] = i
-		var key Key
-		if withKeys {
-			k, err := p.w.deps.Keys.Key(ctx, cp.HolderKeyID)
-			if err != nil {
-				return nil, nil, fmt.Errorf("walletflow: credential %q's holder key: %w", id, err)
+	out := make(map[string][]wallet.HeldCredential, len(sel))
+	picked := map[string]int{}
+	for q, ids := range sel {
+		for _, id := range ids {
+			c, ok := p.byID[id]
+			if !ok {
+				return nil, nil, fmt.Errorf("walletflow: %w: no credential %q", ErrInvalidSelection, id)
 			}
-			key = k
+			i, cp := c.nextCopy()
+			picked[id] = i
+			var key Key
+			if withKeys {
+				k, err := p.w.deps.Keys.Key(ctx, cp.HolderKeyID)
+				if err != nil {
+					return nil, nil, fmt.Errorf("walletflow: credential %q's holder key: %w", id, err)
+				}
+				key = k
+			}
+			c.Credential = cp.Credential
+			out[q] = append(out[q], heldCredential(c, key))
 		}
-		c.Credential = cp.Credential
-		held = append(held, heldCredential(c, key))
 	}
-	return held, picked, nil
+	return out, picked, nil
 }
 
 // markPresented records that the picked copies have been presented, so
@@ -299,28 +360,13 @@ func (p *Presentation) markPresented(ctx context.Context, picked map[string]int)
 	}
 }
 
-// candidateIDs are the IDs of every credential that answers a query.
-func (p *Presentation) candidateIDs() []string {
-	var ids []string
-	for _, cs := range p.candidates {
-		for _, c := range cs.Credentials {
-			if !slices.Contains(ids, c.ID) {
-				ids = append(ids, c.ID)
-			}
-		}
-	}
-	return ids
-}
-
-// idsByCredential maps the text of each copy of each chosen credential
-// to its ID.
-func (p *Presentation) idsByCredential(credentialIDs []string) map[string]string {
+// idsByCredential maps the text of every copy of every credential to
+// its ID.
+func (p *Presentation) idsByCredential() map[string]string {
 	ids := make(map[string]string, len(p.byID))
 	for id, c := range p.byID {
-		if credentialIDs == nil || slices.Contains(credentialIDs, id) {
-			for _, cp := range c.AllCopies() {
-				ids[cp.Credential] = id
-			}
+		for _, cp := range c.AllCopies() {
+			ids[cp.Credential] = id
 		}
 	}
 	return ids
