@@ -45,10 +45,22 @@ func (f fixture) newWallet(t *testing.T, roots *x509.CertPool) *walletflow.Walle
 
 func (f fixture) newWalletTrusting(t *testing.T, roots *x509.CertPool, verifiers wallet.VerifierTrust) *walletflow.Wallet {
 	t.Helper()
+	return f.newWalletOver(t, roots, verifiers, nil)
+}
+
+// newWalletWith is a wallet keeping its pending deferred credentials in
+// deferred.
+func (f fixture) newWalletWith(t *testing.T, deferred walletflow.DeferredStore) *walletflow.Wallet {
+	t.Helper()
+	return f.newWalletOver(t, f.env.IssuerRoots, nil, deferred)
+}
+
+func (f fixture) newWalletOver(t *testing.T, roots *x509.CertPool, verifiers wallet.VerifierTrust, deferred walletflow.DeferredStore) *walletflow.Wallet {
+	t.Helper()
 	w, err := walletflow.New(walletflow.Config{
 		ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, IssuerRoots: roots,
 		VerifierTrust: verifiers, Development: true,
-	}, walletflow.Dependencies{Keys: f.keys, Credentials: f.store, Provider: f.env.Provider, HTTP: f.env.HTTP})
+	}, walletflow.Dependencies{Keys: f.keys, Credentials: f.store, Provider: f.env.Provider, HTTP: f.env.HTTP, Deferred: deferred})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -266,29 +278,104 @@ func TestIssuance_Deferred(t *testing.T) {
 	}
 }
 
-func TestIssuance_CloseAbandonsDeferred(t *testing.T) {
+// deferUntilClosed has a wallet over deferred receive a credential the
+// issuer defers, by grant, and closes the issuance; it returns the
+// pending Deferred's ID.
+func deferUntilClosed(t *testing.T, f fixture, deferred walletflow.DeferredStore, grant walletflow.Grant) string {
+	t.Helper()
+	ctx := context.Background()
+	w := f.newWalletWith(t, deferred)
+	offer := f.env.AuthorizationCodeOffer(t, walletflowtest.SDJWTConfigurationID)
+	if grant == walletflow.GrantPreAuthorizedCode {
+		offer = f.env.PreAuthorizedOffer(t, "493536", walletflowtest.SDJWTConfigurationID)
+	}
+	s, err := w.StartIssuance(ctx, offer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if grant == walletflow.GrantPreAuthorizedCode {
+		if err := s.RedeemPreAuthorizedCode(ctx, "493536"); err != nil {
+			t.Fatal(err)
+		}
+	} else {
+		authorize(t, f, s)
+	}
+	result, err := s.RequestCredentials(ctx)
+	if err != nil || len(result.Deferred) != 1 {
+		t.Fatalf("RequestCredentials = %+v, %v", result, err)
+	}
+	if err := s.Close(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if f.keys.Len() != 2 {
+		t.Errorf("keys held after Close = %d, want the DPoP and holder keys", f.keys.Len())
+	}
+	return result.Deferred[0].ID()
+}
+
+// A deferred credential outlives its Issuance and the wallet: a new
+// Wallet over the same stores — the app relaunched — polls it with the
+// kept access token and DPoP key, whichever grant obtained the token.
+func TestDeferred_SurvivesARestart(t *testing.T) {
+	for _, grant := range []walletflow.Grant{walletflow.GrantAuthorizationCode, walletflow.GrantPreAuthorizedCode} {
+		f := newFixture(t, walletflowtest.Options{Defer: true})
+		ctx := context.Background()
+		store := walletflow.NewMemoryDeferredStore()
+		id := deferUntilClosed(t, f, store, grant)
+
+		relaunched := f.newWalletWith(t, store)
+		pending, err := relaunched.Deferred(ctx)
+		if err != nil || len(pending) != 1 || pending[0].ID() != id {
+			t.Fatalf("%s: Deferred after a restart = %v, %v", grant, pending, err)
+		}
+		inUse, err := relaunched.KeysInUse(ctx)
+		if err != nil || len(inUse) != 2 {
+			t.Errorf("%s: KeysInUse = %v, %v; want the DPoP and holder keys", grant, inUse, err)
+		}
+		if again, _ := relaunched.Deferred(ctx); again[0] != pending[0] {
+			t.Errorf("%s: a pending credential is a different *Deferred each time", grant)
+		}
+		if stored, err := pending[0].Poll(ctx); stored != nil || err != nil {
+			t.Fatalf("%s: Poll before a decision = %v, %v", grant, stored, err)
+		}
+		f.env.Decide(true)
+		waitCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		stored, err := pending[0].Wait(waitCtx)
+		cancel()
+		if err != nil || stored.VCT == "" {
+			t.Fatalf("%s: Wait = %+v, %v", grant, stored, err)
+		}
+		if left, _ := relaunched.Deferred(ctx); len(left) != 0 {
+			t.Errorf("%s: %d still pending once issued", grant, len(left))
+		}
+		if f.keys.Len() != 1 {
+			t.Errorf("%s: keys held = %d, want the credential's holder key", grant, f.keys.Len())
+		}
+	}
+}
+
+// Abandoning a deferred credential forgets it and deletes its keys.
+func TestDeferred_Abandon(t *testing.T) {
 	f := newFixture(t, walletflowtest.Options{Defer: true})
 	ctx := context.Background()
-	s, err := f.w.StartIssuance(ctx, f.env.AuthorizationCodeOffer(t, walletflowtest.SDJWTConfigurationID))
-	if err != nil {
+	store := walletflow.NewMemoryDeferredStore()
+	deferUntilClosed(t, f, store, walletflow.GrantAuthorizationCode)
+	w := f.newWalletWith(t, store)
+	pending, err := w.Deferred(ctx)
+	if err != nil || len(pending) != 1 {
+		t.Fatalf("Deferred = %v, %v", pending, err)
+	}
+	if err := pending[0].Abandon(ctx); err != nil {
 		t.Fatal(err)
 	}
-	authorize(t, f, s)
-	result, err := s.RequestCredentials(ctx)
-	if err != nil {
-		t.Fatal(err)
+	if err := pending[0].Abandon(ctx); err != nil {
+		t.Errorf("second Abandon: %v", err)
 	}
-	if err := s.Close(ctx); err != nil {
-		t.Fatal(err)
+	if _, err := pending[0].Poll(ctx); !errors.Is(err, walletflow.ErrWrongStep) {
+		t.Errorf("Poll once abandoned = %v, want ErrWrongStep", err)
 	}
-	if err := s.Close(ctx); err != nil {
-		t.Fatalf("second Close: %v", err)
-	}
-	if f.keys.Len() != 0 {
-		t.Errorf("keys held after Close = %d, want 0", f.keys.Len())
-	}
-	if _, err := result.Deferred[0].Poll(ctx); !errors.Is(err, walletflow.ErrWrongStep) {
-		t.Errorf("Poll after Close = %v, want ErrWrongStep", err)
+	if left, _ := w.Deferred(ctx); len(left) != 0 || f.keys.Len() != 0 {
+		t.Errorf("after Abandon: %d pending, %d keys; want none", len(left), f.keys.Len())
 	}
 }
 

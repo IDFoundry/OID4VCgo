@@ -8,8 +8,9 @@
 //
 // The app supplies the platform: a KeyStore whose keys never leave it
 // (secure hardware on a phone: walletflow only asks a Key to sign a
-// digest), a CredentialStore, and a WalletProvider that attests the
-// wallet and its keys. walletflow owns the protocols: every network
+// digest), a CredentialStore, a WalletProvider that attests the
+// wallet and its keys, and optionally a DeferredStore, so deferred
+// credentials survive a restart. walletflow owns the protocols: every network
 // request, every protocol message, and every check on what comes back.
 //
 // An issuance runs:
@@ -23,6 +24,10 @@
 //	err = s.RedeemPreAuthorizedCode(ctx, pin)
 //	result, err := s.RequestCredentials(ctx)  // stored; poll result.Deferred
 //
+// A deferred credential outlives its Issuance: after a restart,
+// w.Deferred(ctx) lists the pending ones to Poll, kept in the
+// DeferredStore with the access token and DPoP key ID that poll them.
+//
 // and a presentation:
 //
 //	p, err := w.StartPresentation(ctx, requestLink) // show p.Verifier()
@@ -32,7 +37,8 @@
 //
 // Every key walletflow creates is P-256 (ES256). Each issuance uses a
 // fresh wallet instance key (with a fresh Wallet Attestation) and a
-// fresh DPoP key, deleted by Issuance.Close, so issuers can't link two
+// fresh DPoP key, deleted by Issuance.Close (the DPoP key once no
+// pending deferred credential polls with it), so issuers can't link two
 // issuances by them; each credential is bound to its own holder key,
 // deleted with it.
 package walletflow
