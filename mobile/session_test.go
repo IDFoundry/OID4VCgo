@@ -473,7 +473,9 @@ func TestSessions_Cancel(t *testing.T) {
 	if _, err := h.w.StartIssuance(op, offer); code(err) != CodeCancelled {
 		t.Errorf("a cancelled StartIssuance: %v", err)
 	}
-	if _, err := h.w.StartIssuance(NewOperation(1), offer); err != nil && code(err) != CodeCancelled {
+	// A timeout is the service not answering in time: network, which
+	// can be retried — not the holder cancelling.
+	if _, err := h.w.StartIssuance(NewOperation(1), offer); err != nil && code(err) != CodeNetwork {
 		t.Errorf("a timed-out StartIssuance: %v", err)
 	}
 	time.Sleep(5 * time.Millisecond)

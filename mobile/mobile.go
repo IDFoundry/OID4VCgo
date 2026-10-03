@@ -19,8 +19,12 @@ const (
 	CodeInvalidInput = "invalid_input"
 	// CodePlatform: a callback into the app failed.
 	CodePlatform = "platform"
-	// CodeNetwork: a request couldn't be made, or got no answer.
+	// CodeNetwork: a request couldn't be made, got no answer, or timed
+	// out.
 	CodeNetwork = "network"
+	// CodeUnavailable: the service answered that it's failing or busy
+	// (HTTP 5xx or 429); trying again later may succeed.
+	CodeUnavailable = "unavailable"
 	// CodeCancelled: the Operation was cancelled.
 	CodeCancelled = "cancelled"
 	// CodeNotFound: no key, credential or deferred credential with that
@@ -64,7 +68,7 @@ func (e *Error) Error() string {
 }
 
 func newError(code string, err error) error {
-	return &Error{Code: code, Message: err.Error()}
+	return &Error{Code: code, Message: cleanText(err.Error())}
 }
 
 // result is the JSON envelope's common part.
