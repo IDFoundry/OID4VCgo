@@ -64,6 +64,17 @@ type IssuanceResult struct {
 	Credentials []StoredCredential
 	// Deferred are credentials the issuer will issue later: poll them.
 	Deferred []*Deferred
+	// Failed are credentials the issuer refused, or that failed the
+	// wallet's checks: asking again won't help, so they don't hold up
+	// the rest.
+	Failed []FailedCredential
+}
+
+// FailedCredential is an offered credential RequestCredentials couldn't
+// obtain for good.
+type FailedCredential struct {
+	ConfigurationID string
+	Err             error
 }
 
 type issuanceStep int
@@ -223,6 +234,12 @@ func (s *Issuance) CompleteAuthorization(ctx context.Context, redirect string) e
 	}
 	result, err := s.client.CompleteAuthorization(ctx, client.AuthorizationCallback{RawQuery: query, Session: s.session})
 	if err != nil {
+		// fapigo consumes the authorization once the redirect's state
+		// matches, whatever fails after (the token request, say): it
+		// can't be completed again. Start over from BeginAuthorization,
+		// with the same keys.
+		_ = s.w.deps.Authorizations.DeleteAuthorization(context.WithoutCancel(ctx), s.session.String())
+		s.step = stepStarted
 		return fmt.Errorf("walletflow: authorization: %w", err)
 	}
 	switch r := result.(type) {
@@ -410,6 +427,11 @@ func (s *Issuance) RequestCredentials(ctx context.Context) (IssuanceResult, erro
 			continue
 		}
 		stored, deferred, err := s.request(ctx, id, requestEnc, responseEnc)
+		if err != nil && permanent(err) {
+			s.handled[id] = true
+			s.obtained.Failed = append(s.obtained.Failed, FailedCredential{ConfigurationID: id, Err: err})
+			continue
+		}
 		if err != nil {
 			return s.obtained, err
 		}
@@ -421,7 +443,30 @@ func (s *Issuance) RequestCredentials(ctx context.Context) (IssuanceResult, erro
 		s.obtained.Credentials = append(s.obtained.Credentials, stored)
 	}
 	s.step = stepRequested
+	if len(s.obtained.Credentials) == 0 && len(s.obtained.Deferred) == 0 && len(s.obtained.Failed) > 0 {
+		// Nothing obtained: the first refusal is the answer.
+		return s.obtained, s.obtained.Failed[0].Err
+	}
 	return s.obtained, nil
+}
+
+// permanent reports whether err, requesting one credential, won't go
+// away by asking again: the credential failed the wallet's checks, or
+// the issuer refused the request itself (an HTTP 4xx) rather than the
+// nonce, the access token or the DPoP proof, which a retry renews.
+func permanent(err error) bool {
+	if errors.Is(err, errInvalidCredential) {
+		return true
+	}
+	var protocol *wallet.Error
+	if !errors.As(err, &protocol) || protocol.HTTPStatus < 400 || protocol.HTTPStatus >= 500 || protocol.HTTPStatus == 429 {
+		return false
+	}
+	switch protocol.Code {
+	case "invalid_nonce", "invalid_token", "invalid_dpop_proof", "use_dpop_nonce":
+		return false
+	}
+	return true
 }
 
 func (s *Issuance) request(ctx context.Context, configID string, requestEnc *wallet.RequestEncryption, responseEnc *wallet.ResponseEncryption) (StoredCredential, *Deferred, error) {
@@ -436,7 +481,8 @@ func (s *Issuance) request(ctx context.Context, configID string, requestEnc *wal
 	keep := false
 	defer func() {
 		if !keep {
-			_ = s.w.deps.Keys.DeleteKey(ctx, holder.ID())
+			// Even when ctx is cancelled: a key left behind is an orphan.
+			_ = s.w.deps.Keys.DeleteKey(context.WithoutCancel(ctx), holder.ID())
 		}
 	}()
 	pub, _ := p256(holder) // newKey checked it
@@ -481,6 +527,10 @@ func (s *Issuance) request(ctx context.Context, configID string, requestEnc *wal
 	return stored, nil, nil
 }
 
+// errInvalidCredential is wrapped by accept for a credential failing the
+// wallet's checks: asking again won't change it.
+var errInvalidCredential = errors.New("is invalid")
+
 // issued is a credential result to accept: from issuer, under
 // metadata, polled with resource, for configID, bound to holder.
 type issued struct {
@@ -507,7 +557,7 @@ func (w *Wallet) accept(ctx context.Context, c issued) (StoredCredential, error)
 	})
 	if err != nil {
 		w.notify(ctx, c, oid4vci.NotificationEventCredentialFailure, "the credential failed the wallet's checks")
-		return StoredCredential{}, fmt.Errorf("walletflow: credential %q is invalid: %w", c.configID, err)
+		return StoredCredential{}, fmt.Errorf("walletflow: credential %q %w: %w", c.configID, errInvalidCredential, err)
 	}
 	id, err := randomID(w.deps.Random)
 	if err != nil {

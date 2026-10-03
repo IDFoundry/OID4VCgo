@@ -320,6 +320,10 @@ public final class Issuance: @unchecked Sendable {
         return url
     }
 
+    /// Completes the authorization with the issuer's redirect back. The
+    /// redirect is used up whatever happens: if this fails — the token
+    /// request didn't get through, say — call `beginAuthorization()`
+    /// again, rather than retrying this.
     public func completeAuthorization(redirect: URL) async throws {
         let session = self.session
         try await OID4VC.cancellable { op in try OID4VC.wrap { try session.completeAuthorization(op, redirect: redirect.absoluteString) } }
@@ -335,6 +339,35 @@ public final class Issuance: @unchecked Sendable {
         /// Credentials the issuer will issue later: poll them with
         /// `Wallet.pollDeferred(id:)`, after `close()` and relaunches too.
         public let deferred: [DeferredCredential]
+        /// Credentials the issuer refused for good, or that failed the
+        /// wallet's checks: they don't hold up the rest.
+        public let failed: [FailedCredential]
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: Keys.self)
+            credentials = try c.decode([CredentialSummary].self, forKey: .credentials)
+            deferred = try c.decode([DeferredCredential].self, forKey: .deferred)
+            failed = try c.decodeIfPresent([FailedCredential].self, forKey: .failed) ?? []
+        }
+
+        enum Keys: String, CodingKey { case credentials, deferred, failed }
+    }
+
+    /// An offered credential that couldn't be obtained: its error's code
+    /// and, when the issuer gave one, its OAuth error code.
+    public struct FailedCredential: Decodable, Sendable, Equatable {
+        public let configurationID: String
+        public let code: WalletError.Code
+        public let protocolError: String?
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: Keys.self)
+            configurationID = try c.decode(String.self, forKey: .configurationID)
+            code = WalletError.Code(rawValue: try c.decode(String.self, forKey: .code))
+            protocolError = try c.decodeIfPresent(String.self, forKey: .detail)
+        }
+
+        enum Keys: String, CodingKey { case configurationID = "configuration_id", code, detail }
     }
 
     /// Requests, checks and stores every offered credential.

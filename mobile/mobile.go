@@ -11,7 +11,7 @@ import (
 // ABIVersion is the version of this package's API across the gomobile
 // boundary: its functions, objects, JSON results and error codes. It
 // changes whenever any of them changes incompatibly.
-const ABIVersion = 4
+const ABIVersion = 5
 
 // Error codes, at the start of every error's text in brackets.
 const (
@@ -42,6 +42,10 @@ const (
 	// CodeNoMatchingCredential: nothing the wallet holds answers the
 	// Verifier's request.
 	CodeNoMatchingCredential = "no_matching_credential"
+	// CodeDeliveryUnknown: sending a presentation failed in a way that
+	// leaves it unknown whether the Verifier received it. It isn't sent
+	// again: that could present twice.
+	CodeDeliveryUnknown = "delivery_unknown"
 	// CodeProtocol: an issuer, Authorization Server or Verifier answered
 	// with an error, or with something the wallet refuses.
 	CodeProtocol = "protocol"

@@ -112,6 +112,10 @@ type Deferred struct {
 	requestEnc  *wallet.RequestEncryption
 	responseEnc *wallet.ResponseEncryption
 	done        bool
+	// received is the credential the issuer handed over, kept until the
+	// wallet has stored it: a store that failed is retried by the next
+	// Poll, since the issuer won't hand it over again.
+	received *wallet.CredentialResult
 }
 
 // ID identifies the Deferred in the DeferredStore.
@@ -164,25 +168,30 @@ func (d *Deferred) Poll(ctx context.Context) (*StoredCredential, error) {
 	if err := d.prepare(ctx); err != nil {
 		return nil, err
 	}
-	result, err := d.w.core.RequestDeferredCredential(ctx, d.resource, *d.metadata.DeferredCredentialEndpoint, wallet.DeferredCredentialRequest{
-		TransactionID: d.p.TransactionID, RequestEncryption: d.requestEnc, ResponseEncryption: d.responseEnc,
-	})
-	var werr *wallet.Error
-	switch {
-	case errors.As(err, &werr) && werr.Code == "credential_request_denied":
-		// Cleanup is best effort: what it leaves behind, a key sweep
-		// (KeysInUse) or Abandon removes later.
-		_ = d.settle(ctx, true)
-		return nil, ErrCredentialDenied
-	case err != nil:
-		return nil, fmt.Errorf("walletflow: deferred credential %q: %w", d.p.ConfigurationID, err)
-	case len(result.Credentials) == 0:
-		if result.Interval > 0 && result.Interval != d.p.Interval {
-			d.p.Interval = result.Interval
-			_ = d.w.deps.Deferred.PutDeferred(ctx, d.p) // best effort: only the next wait's length
+	// Cleanup runs even when ctx is cancelled; it's best effort: what it
+	// leaves behind, a key sweep (KeysInUse) or Abandon removes later.
+	cleanup := context.WithoutCancel(ctx)
+	if d.received == nil {
+		result, err := d.w.core.RequestDeferredCredential(ctx, d.resource, *d.metadata.DeferredCredentialEndpoint, wallet.DeferredCredentialRequest{
+			TransactionID: d.p.TransactionID, RequestEncryption: d.requestEnc, ResponseEncryption: d.responseEnc,
+		})
+		var werr *wallet.Error
+		switch {
+		case errors.As(err, &werr) && werr.Code == "credential_request_denied":
+			_ = d.settle(cleanup, true)
+			return nil, ErrCredentialDenied
+		case err != nil:
+			return nil, fmt.Errorf("walletflow: deferred credential %q: %w", d.p.ConfigurationID, err)
+		case len(result.Credentials) == 0:
+			if result.Interval > 0 && result.Interval != d.p.Interval {
+				d.p.Interval = result.Interval
+				_ = d.w.deps.Deferred.PutDeferred(ctx, d.p) // best effort: only the next wait's length
+			}
+			return nil, nil
 		}
-		return nil, nil
+		d.received = &result
 	}
+	result := *d.received
 	holder, err := d.w.deps.Keys.Key(ctx, d.p.HolderKeyID)
 	if err != nil {
 		return nil, fmt.Errorf("walletflow: deferred credential %q's holder key: %w", d.p.ConfigurationID, err)
@@ -191,11 +200,16 @@ func (d *Deferred) Poll(ctx context.Context) (*StoredCredential, error) {
 		issuer: d.p.CredentialIssuer, metadata: *d.metadata, resource: d.resource,
 		configID: d.p.ConfigurationID, holder: holder, result: result,
 	})
-	if err != nil {
-		_ = d.settle(ctx, true)
+	if errors.Is(err, errInvalidCredential) {
+		_ = d.settle(cleanup, true)
 		return nil, err
 	}
-	_ = d.settle(ctx, false)
+	if err != nil {
+		// Storing it failed: the next Poll tries again, with what the
+		// issuer handed over.
+		return nil, err
+	}
+	_ = d.settle(cleanup, false)
 	return &stored, nil
 }
 

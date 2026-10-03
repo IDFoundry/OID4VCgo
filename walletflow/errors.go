@@ -1,8 +1,14 @@
 package walletflow
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"net"
+	"net/http"
+	"net/url"
+
+	"github.com/idfoundry/oid4vcgo/wallet"
 )
 
 var (
@@ -19,7 +25,28 @@ var (
 	// ErrNoMatchingCredential is returned by Presentation.Respond when
 	// the wallet holds nothing that answers the request.
 	ErrNoMatchingCredential = errors.New("walletflow: no held credential answers the request")
+	// ErrDeliveryUnknown is wrapped by Presentation.Respond when sending
+	// the response failed in a way that leaves it unknown whether the
+	// Verifier received it — the connection failed or timed out, or the
+	// Verifier answered with a server error. The Presentation is then
+	// answered: sending again could present twice.
+	ErrDeliveryUnknown = errors.New("walletflow: the response may or may not have reached the verifier")
 )
+
+// deliveryUnknown reports whether err, from sending a direct_post
+// response, leaves it unknown whether the Verifier received it: a
+// transport failure or a server error, rather than the Verifier's
+// refusal.
+func deliveryUnknown(err error) bool {
+	var rejected *wallet.DirectPostRejectedError
+	if errors.As(err, &rejected) {
+		return rejected.StatusCode >= http.StatusInternalServerError
+	}
+	var urlErr *url.Error
+	var netErr net.Error
+	return errors.As(err, &urlErr) || errors.As(err, &netErr) ||
+		errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+}
 
 // AuthorizationDeniedError is returned by Issuance.CompleteAuthorization
 // when the Authorization Server answered with an error, such as the
