@@ -147,8 +147,8 @@ final class OID4VCWalletTests: XCTestCase {
 
         // A provider's URLError reaches Go marked as a network failure.
         struct Offline: WalletProvider {
-            func walletAttestation(clientID: String, instanceKey: Data) async throws -> String { throw URLError(.notConnectedToInternet) }
-            func keyAttestation(keys: [Data], nonce: String) async throws -> String { "" }
+            func walletAttestation(clientID _: String, instanceKey _: Data) async throws -> String { throw URLError(.notConnectedToInternet) }
+            func keyAttestation(keys _: [Data], nonce _: String) async throws -> String { "" }
         }
         XCTAssertThrowsError(try WalletProviderAdapter(Offline()).walletAttestation("c", instanceKeyJWK: Data("{}".utf8))) { error in
             XCTAssertTrue(error.localizedDescription.hasPrefix("[network] "), error.localizedDescription)
