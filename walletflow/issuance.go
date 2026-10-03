@@ -91,7 +91,10 @@ type Issuance struct {
 	client      *client.Client
 	session     client.SessionHandle
 	resource    wallet.ProtectedResourceClient
-	deferred    []*Deferred
+	// accessToken and its expiry, if the Token Response gave one, are
+	// kept with each deferred credential.
+	accessToken     fapi.Secret
+	accessExpiresAt time.Time
 	// obtained is what RequestCredentials has obtained so far, and
 	// handled the configurations it has requested successfully.
 	obtained IssuanceResult
@@ -226,6 +229,10 @@ func (s *Issuance) CompleteAuthorization(ctx context.Context, redirect string) e
 	switch r := result.(type) {
 	case client.CompletionSuccess:
 		s.resource = s.client.ProtectedResource(r.Tokens)
+		s.accessToken = r.Tokens.AccessToken
+		if r.Tokens.HasExpiresIn {
+			s.accessExpiresAt = r.Tokens.ObtainedAt.Add(r.Tokens.ExpiresIn)
+		}
 		s.step = stepAuthorized
 		return nil
 	case client.CompletionDenied:
@@ -275,6 +282,10 @@ func (s *Issuance) RedeemPreAuthorizedCode(ctx context.Context, txCode string) e
 		return fmt.Errorf("walletflow: token: %w", err)
 	}
 	s.resource = s.w.core.DPoPResourceClient(token.AccessToken, s.dpopKey)
+	s.accessToken = token.AccessToken
+	if token.HasExpiresIn {
+		s.accessExpiresAt = s.w.deps.Clock().Add(token.ExpiresIn)
+	}
 	s.step = stepAuthorized
 	return nil
 }
@@ -304,7 +315,7 @@ func (s *Issuance) newClient(ctx context.Context, asURL string) error {
 		}
 	}
 	if s.dpopKey == nil {
-		if s.dpopKey, err = newKey(ctx, s.w.deps.Keys, KeyPurposeDPoP); err != nil {
+		if s.dpopKey, err = s.w.newDPoPKey(ctx); err != nil {
 			return err
 		}
 	}
@@ -385,7 +396,6 @@ func (s *Issuance) RequestCredentials(ctx context.Context) (IssuanceResult, erro
 		}
 		s.handled[id] = true
 		if deferred != nil {
-			s.deferred = append(s.deferred, deferred)
 			s.obtained.Deferred = append(s.obtained.Deferred, deferred)
 			continue
 		}
@@ -426,13 +436,25 @@ func (s *Issuance) request(ctx context.Context, configID string, requestEnc *wal
 		if s.metadata.DeferredCredentialEndpoint == nil {
 			return StoredCredential{}, nil, fmt.Errorf("walletflow: credential %q was deferred, but the issuer advertises no deferred credential endpoint", configID)
 		}
+		id, err := randomID(s.w.deps.Random)
+		if err != nil {
+			return StoredCredential{}, nil, err
+		}
+		d, err := s.w.keepDeferred(ctx, PendingDeferred{
+			ID: id, CredentialIssuer: s.offer.CredentialIssuer, ConfigurationID: configID, TransactionID: result.TransactionID,
+			AccessToken: s.accessToken, AccessTokenExpiresAt: s.accessExpiresAt,
+			DPoPKeyID: s.dpopKey.ID(), HolderKeyID: holder.ID(), Interval: result.Interval, DeferredAt: s.w.deps.Clock().UTC(),
+		}, s.metadata, s.resource, requestEnc, responseEnc)
+		if err != nil {
+			return StoredCredential{}, nil, err
+		}
 		keep = true
-		return StoredCredential{}, &Deferred{
-			s: s, configID: configID, holder: holder, transactionID: result.TransactionID,
-			interval: result.Interval, requestEnc: requestEnc, responseEnc: responseEnc,
-		}, nil
+		return StoredCredential{}, d, nil
 	}
-	stored, err := s.accept(ctx, configID, holder, result)
+	stored, err := s.w.accept(ctx, issued{
+		issuer: s.offer.CredentialIssuer, metadata: s.metadata, resource: s.resource,
+		configID: configID, holder: holder, result: result,
+	})
 	if err != nil {
 		return StoredCredential{}, nil, err
 	}
@@ -440,77 +462,82 @@ func (s *Issuance) request(ctx context.Context, configID string, requestEnc *wal
 	return stored, nil, nil
 }
 
-// accept checks the one credential result carries, bound to holder,
-// stores it, and tells the issuer whether the wallet kept it (§11).
-func (s *Issuance) accept(ctx context.Context, configID string, holder Key, result wallet.CredentialResult) (StoredCredential, error) {
-	if len(result.Credentials) != 1 {
-		return StoredCredential{}, fmt.Errorf("walletflow: credential %q: got %d credentials, want 1", configID, len(result.Credentials))
+// issued is a credential result to accept: from issuer, under
+// metadata, polled with resource, for configID, bound to holder.
+type issued struct {
+	issuer   string
+	metadata oid4vci.Metadata
+	resource wallet.ProtectedResourceClient
+	configID string
+	holder   Key
+	result   wallet.CredentialResult
+}
+
+// accept checks the one credential c's result carries, stores it, and
+// tells the issuer whether the wallet kept it (§11).
+func (w *Wallet) accept(ctx context.Context, c issued) (StoredCredential, error) {
+	if len(c.result.Credentials) != 1 {
+		return StoredCredential{}, fmt.Errorf("walletflow: credential %q: got %d credentials, want 1", c.configID, len(c.result.Credentials))
 	}
-	conf := s.metadata.CredentialConfigurationsSupported[configID]
-	credential := result.Credentials[0].Credential
-	now := s.w.deps.Clock()
+	conf := c.metadata.CredentialConfigurationsSupported[c.configID]
+	credential := c.result.Credentials[0].Credential
+	now := w.deps.Clock()
 	verified, err := wallet.VerifyIssuedCredential(ctx, wallet.VerifyIssuedCredentialParams{
-		Configuration: conf, Credential: credential, HolderKey: holder.Public(),
-		IssuerRoots: s.w.cfg.IssuerRoots, Now: now,
+		Configuration: conf, Credential: credential, HolderKey: c.holder.Public(),
+		IssuerRoots: w.cfg.IssuerRoots, Now: now,
 	})
 	if err != nil {
-		s.notify(ctx, result.NotificationID, oid4vci.NotificationEventCredentialFailure, "the credential failed the wallet's checks")
-		return StoredCredential{}, fmt.Errorf("walletflow: credential %q is invalid: %w", configID, err)
+		w.notify(ctx, c, oid4vci.NotificationEventCredentialFailure, "the credential failed the wallet's checks")
+		return StoredCredential{}, fmt.Errorf("walletflow: credential %q is invalid: %w", c.configID, err)
 	}
-	id, err := randomID(s.w.deps.Random)
+	id, err := randomID(w.deps.Random)
 	if err != nil {
 		return StoredCredential{}, err
 	}
 	stored := StoredCredential{
-		ID: id, CredentialIssuer: s.offer.CredentialIssuer, ConfigurationID: configID,
+		ID: id, CredentialIssuer: c.issuer, ConfigurationID: c.configID,
 		Format: conf.Format, VCT: conf.VCT, DocType: conf.DocType,
-		Credential: credential, HolderKeyID: holder.ID(), ReceivedAt: now.UTC(), Claims: verified.Claims,
+		Credential: credential, HolderKeyID: c.holder.ID(), ReceivedAt: now.UTC(), Claims: verified.Claims,
 	}
-	if err := s.w.deps.Credentials.Put(ctx, stored); err != nil {
-		s.notify(ctx, result.NotificationID, oid4vci.NotificationEventCredentialFailure, "the wallet couldn't store the credential")
-		return StoredCredential{}, fmt.Errorf("walletflow: store credential %q: %w", configID, err)
+	if err := w.deps.Credentials.Put(ctx, stored); err != nil {
+		w.notify(ctx, c, oid4vci.NotificationEventCredentialFailure, "the wallet couldn't store the credential")
+		return StoredCredential{}, fmt.Errorf("walletflow: store credential %q: %w", c.configID, err)
 	}
-	s.notify(ctx, result.NotificationID, oid4vci.NotificationEventCredentialAccepted, "")
+	w.notify(ctx, c, oid4vci.NotificationEventCredentialAccepted, "")
 	return stored, nil
 }
 
 // notify sends a Notification Request when the issuer gave the
 // credential a notification_id. It's best effort: a wallet is never
 // required to notify, so a failure doesn't fail receiving.
-func (s *Issuance) notify(ctx context.Context, notificationID string, event oid4vci.NotificationEvent, description string) {
-	if notificationID == "" || s.metadata.NotificationEndpoint == nil {
+func (w *Wallet) notify(ctx context.Context, c issued, event oid4vci.NotificationEvent, description string) {
+	if c.result.NotificationID == "" || c.metadata.NotificationEndpoint == nil {
 		return
 	}
-	_ = s.w.core.RequestNotification(ctx, s.resource, *s.metadata.NotificationEndpoint, wallet.NotificationRequest{
-		NotificationID: notificationID, Event: event, EventDescription: description,
+	_ = w.core.RequestNotification(ctx, c.resource, *c.metadata.NotificationEndpoint, wallet.NotificationRequest{
+		NotificationID: c.result.NotificationID, Event: event, EventDescription: description,
 	})
 }
 
-// Close ends the issuance: it deletes its instance and DPoP keys, and
-// the holder keys of deferred credentials not yet issued, which can no
-// longer be polled. Close is safe to call more than once.
+// Close ends the issuance: it deletes its instance key, and its DPoP
+// key unless a deferred credential it obtained still polls with it. Its
+// deferred credentials stay pending (Wallet.Deferred) until they're
+// settled or abandoned. Close is safe to call more than once.
 func (s *Issuance) Close(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.step == stepClosed && s.instanceKey == nil && s.dpopKey == nil && len(s.deferred) == 0 {
-		return nil
-	}
 	s.step = stepClosed
 	var errs []error
-	for _, k := range []Key{s.instanceKey, s.dpopKey} {
-		if k != nil {
-			errs = append(errs, s.w.deps.Keys.DeleteKey(ctx, k.ID()))
-		}
+	if s.instanceKey != nil {
+		errs = append(errs, s.w.deps.Keys.DeleteKey(ctx, s.instanceKey.ID()))
+	}
+	if s.dpopKey != nil {
+		s.w.mu.Lock()
+		delete(s.w.liveDPoP, s.dpopKey.ID())
+		s.w.mu.Unlock()
+		errs = append(errs, s.w.releaseDPoPKey(ctx, s.dpopKey.ID()))
 	}
 	s.instanceKey, s.dpopKey = nil, nil
-	for _, d := range s.deferred {
-		if d.done {
-			continue
-		}
-		d.done = true
-		errs = append(errs, s.w.deps.Keys.DeleteKey(ctx, d.holder.ID()))
-	}
-	s.deferred = nil
 	if err := errors.Join(errs...); err != nil {
 		return fmt.Errorf("walletflow: close issuance: %w", err)
 	}

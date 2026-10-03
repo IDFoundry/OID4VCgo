@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/idfoundry/fapigo/client"
@@ -46,6 +47,9 @@ type Dependencies struct {
 	Keys        KeyStore        // REQUIRED
 	Credentials CredentialStore // REQUIRED
 	Provider    WalletProvider  // REQUIRED for StartIssuance
+	// Deferred keeps pending deferred credentials, so they can be polled
+	// after a restart. nil means a MemoryDeferredStore.
+	Deferred DeferredStore
 
 	// HTTP makes every request. nil means a client with a 10 s timeout.
 	HTTP *http.Client
@@ -62,6 +66,10 @@ type Wallet struct {
 	cfg  Config
 	deps Dependencies
 	core *wallet.Wallet
+
+	mu       sync.Mutex
+	deferred map[string]*Deferred // the pending ones handed out, by ID
+	liveDPoP map[string]bool      // DPoP keys open issuances hold
 }
 
 const (
@@ -83,6 +91,9 @@ func New(cfg Config, deps Dependencies) (*Wallet, error) {
 	if deps.Random == nil {
 		deps.Random = rand.Reader
 	}
+	if deps.Deferred == nil {
+		deps.Deferred = NewMemoryDeferredStore()
+	}
 	core, err := wallet.New(wallet.Config{
 		Assurance: cfg.assurance(), ProofSigningAlg: oid4vci.ES256, VerifierTrust: cfg.VerifierTrust,
 		Fetch: fapihttp.Config{
@@ -93,7 +104,7 @@ func New(cfg Config, deps Dependencies) (*Wallet, error) {
 	if err != nil {
 		return nil, fmt.Errorf("walletflow: %w", err)
 	}
-	return &Wallet{cfg: cfg, deps: deps, core: core}, nil
+	return &Wallet{cfg: cfg, deps: deps, core: core, deferred: map[string]*Deferred{}, liveDPoP: map[string]bool{}}, nil
 }
 
 func (c Config) assurance() wallet.AssuranceLevel {
