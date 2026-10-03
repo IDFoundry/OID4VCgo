@@ -64,6 +64,28 @@ final class DemoWalletUITests: XCTestCase {
         XCTAssertTrue(status.label.hasPrefix("Received 1"), status.label)
     }
 
+    /// A wrong PIN keeps the offer open, saying so; the right one then
+    /// receives the credential.
+    @MainActor
+    func testWrongPINThenRetry() async throws {
+        let offer = try await Self.fetch("offer", query: [URLQueryItem(name: "pin", value: "493536")], method: "POST")["offer"] as! String
+        let app = try await launch(offer: offer)
+        let pin = app.textFields["pin"]
+        XCTAssertTrue(pin.waitForExistence(timeout: 20))
+        pin.tap()
+        pin.typeText("000000")
+        app.buttons["receive"].tap()
+        let error = app.staticTexts["offer-error"]
+        XCTAssertTrue(error.waitForExistence(timeout: 30), "a wrong PIN isn't reported on the offer")
+        XCTAssertTrue(error.label.contains("PIN"), error.label)
+        pin.tap()
+        pin.typeText("493536")
+        app.buttons["receive"].tap()
+        let status = app.staticTexts["status"]
+        XCTAssertTrue(status.waitForExistence(timeout: 60))
+        XCTAssertTrue(status.label.hasPrefix("Received 1"), status.label)
+    }
+
     /// Receives an SD-JWT VC, then presents it: the Verifier asks for
     /// family_name from either format, the holder shares the one
     /// credential held, and the Verifier gets the claim.

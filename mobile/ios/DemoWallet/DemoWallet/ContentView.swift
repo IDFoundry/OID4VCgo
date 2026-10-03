@@ -113,9 +113,14 @@ struct OfferView: View {
                                 .accessibilityIdentifier("pin")
                         }
                     }
+                    if let error = model.offerError {
+                        Section {
+                            Text(error).foregroundStyle(.red).accessibilityIdentifier("offer-error")
+                        }
+                    }
                     Section {
-                        Button(model.phase == .receiving ? "Receiving…" : "Receive") {
-                            Task { await model.receive(authorize: authorize) }
+                        Button(model.phase == .receiving ? "Receiving…" : model.offerError == nil ? "Receive" : "Try again") {
+                            model.startReceive(authorize: authorize)
                         }
                         .disabled(model.phase == .receiving)
                         .accessibilityIdentifier("receive")
