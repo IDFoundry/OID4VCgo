@@ -19,6 +19,7 @@ import (
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/attestation"
+	"github.com/idfoundry/oid4vcgo/statuslist"
 	"github.com/idfoundry/oid4vcgo/walletflow"
 )
 
@@ -70,12 +71,92 @@ type credentialRecord struct {
 	// Claims are the credential's claims for display, as JSON (see
 	// jsonClaims); absent from a record written before they were kept.
 	Claims json.RawMessage `json:"claims,omitempty"`
+	// Display, ValidUntil, StatusList and Status: absent from a record
+	// written before they were kept.
+	Display       *displayJSON    `json:"display,omitempty"`
+	ValidUntil    *time.Time      `json:"valid_until,omitempty"`
+	StatusList    *statusListJSON `json:"status_list,omitempty"`
+	StatusListCWT bool            `json:"status_list_cwt,omitempty"`
+	Status        *statusJSON     `json:"status,omitempty"`
+}
+
+// logoJSON is a walletflow.Logo.
+type logoJSON struct {
+	URI     string `json:"uri"`
+	AltText string `json:"alt_text,omitempty"`
+}
+
+func logoOf(l *walletflow.Logo) *logoJSON {
+	if l == nil {
+		return nil
+	}
+	return &logoJSON{URI: l.URI, AltText: l.AltText}
+}
+
+func (l *logoJSON) logo() *walletflow.Logo {
+	if l == nil {
+		return nil
+	}
+	return &walletflow.Logo{URI: l.URI, AltText: l.AltText}
+}
+
+// displayJSON is a walletflow.Display.
+type displayJSON struct {
+	IssuerName      string    `json:"issuer_name,omitempty"`
+	IssuerLogo      *logoJSON `json:"issuer_logo,omitempty"`
+	Name            string    `json:"name,omitempty"`
+	Description     string    `json:"description,omitempty"`
+	Logo            *logoJSON `json:"logo,omitempty"`
+	BackgroundColor string    `json:"background_color,omitempty"`
+	TextColor       string    `json:"text_color,omitempty"`
+}
+
+func displayOf(d walletflow.Display) *displayJSON {
+	if d == (walletflow.Display{}) {
+		return nil
+	}
+	return &displayJSON{
+		IssuerName: d.IssuerName, IssuerLogo: logoOf(d.IssuerLogo), Name: d.Name, Description: d.Description,
+		Logo: logoOf(d.Logo), BackgroundColor: d.BackgroundColor, TextColor: d.TextColor,
+	}
+}
+
+func (d *displayJSON) display() walletflow.Display {
+	if d == nil {
+		return walletflow.Display{}
+	}
+	return walletflow.Display{
+		IssuerName: d.IssuerName, IssuerLogo: d.IssuerLogo.logo(), Name: d.Name, Description: d.Description,
+		Logo: d.Logo.logo(), BackgroundColor: d.BackgroundColor, TextColor: d.TextColor,
+	}
+}
+
+// statusListJSON is a credential's status list reference.
+type statusListJSON struct {
+	Idx uint64 `json:"idx"`
+	URI string `json:"uri"`
+}
+
+// statusJSON is a walletflow.CredentialStatus.
+type statusJSON struct {
+	Value     string    `json:"value"`
+	CheckedAt time.Time `json:"checked_at"`
 }
 
 func recordOf(c walletflow.StoredCredential) (credentialRecord, error) {
 	r := credentialRecord{
 		ID: c.ID, CredentialIssuer: c.CredentialIssuer, ConfigurationID: c.ConfigurationID, Format: c.Format,
 		VCT: c.VCT, DocType: c.DocType, Credential: c.Credential, HolderKeyID: c.HolderKeyID, ReceivedAt: c.ReceivedAt,
+		Display: displayOf(c.Display), StatusListCWT: c.StatusListCWT,
+	}
+	if !c.ValidUntil.IsZero() {
+		r.ValidUntil = &c.ValidUntil
+	}
+	if c.StatusList != nil {
+		r.StatusList = &statusListJSON{Idx: c.StatusList.Idx, URI: c.StatusList.URI}
+	}
+	if c.Status.Value != "" {
+		r.Status = &statusJSON{Value: c.Status.Value, CheckedAt: c.Status.CheckedAt}
 	}
 	if c.Claims != nil {
 		raw, err := json.Marshal(jsonClaims(c.Claims))
@@ -91,6 +172,16 @@ func (r credentialRecord) stored() (walletflow.StoredCredential, error) {
 	c := walletflow.StoredCredential{
 		ID: r.ID, CredentialIssuer: r.CredentialIssuer, ConfigurationID: r.ConfigurationID, Format: r.Format,
 		VCT: r.VCT, DocType: r.DocType, Credential: r.Credential, HolderKeyID: r.HolderKeyID, ReceivedAt: r.ReceivedAt,
+		Display: r.Display.display(), StatusListCWT: r.StatusListCWT,
+	}
+	if r.ValidUntil != nil {
+		c.ValidUntil = *r.ValidUntil
+	}
+	if r.StatusList != nil {
+		c.StatusList = &statuslist.StatusListRef{Idx: r.StatusList.Idx, URI: r.StatusList.URI}
+	}
+	if r.Status != nil {
+		c.Status = walletflow.CredentialStatus{Value: r.Status.Value, CheckedAt: r.Status.CheckedAt}
 	}
 	if len(r.Claims) > 0 {
 		if err := json.Unmarshal(r.Claims, &c.Claims); err != nil {
@@ -110,6 +201,12 @@ type credentialSummary struct {
 	VCT              string    `json:"vct,omitempty"`
 	DocType          string    `json:"doctype,omitempty"`
 	ReceivedAt       time.Time `json:"received_at"`
+	// Display is how to show it, from the issuer's metadata; ValidUntil
+	// when it expires; Status its revocation status as last checked
+	// (Wallet.CheckStatus). Each is absent when unknown.
+	Display    *displayJSON `json:"display,omitempty"`
+	ValidUntil *time.Time   `json:"valid_until,omitempty"`
+	Status     *statusJSON  `json:"status,omitempty"`
 	// HolderKeyPresent is whether the key store still holds the
 	// credential's key; without it the credential can't be presented
 	// (restored from a backup to another device, say). Set only by
@@ -118,10 +215,17 @@ type credentialSummary struct {
 }
 
 func summaryOf(c walletflow.StoredCredential) credentialSummary {
-	return credentialSummary{
+	s := credentialSummary{
 		ID: c.ID, CredentialIssuer: c.CredentialIssuer, ConfigurationID: c.ConfigurationID, Format: c.Format,
-		VCT: c.VCT, DocType: c.DocType, ReceivedAt: c.ReceivedAt,
+		VCT: c.VCT, DocType: c.DocType, ReceivedAt: c.ReceivedAt, Display: displayOf(c.Display),
 	}
+	if !c.ValidUntil.IsZero() {
+		s.ValidUntil = &c.ValidUntil
+	}
+	if c.Status.Value != "" {
+		s.Status = &statusJSON{Value: c.Status.Value, CheckedAt: c.Status.CheckedAt}
+	}
+	return s
 }
 
 func summariesOf(cs []walletflow.StoredCredential) []credentialSummary {

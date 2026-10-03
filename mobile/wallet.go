@@ -26,6 +26,9 @@ type config struct {
 	VerifierRoots string `json:"verifier_roots"`
 	// Development allows services on loopback addresses.
 	Development bool `json:"development"`
+	// Locales are the holder's preferred languages (BCP 47, most
+	// preferred first), for issuers' display metadata.
+	Locales []string `json:"locales,omitempty"`
 }
 
 // testHTTP, when set (by the mobiletest build), is the HTTP client every
@@ -56,7 +59,7 @@ func NewWallet(configJSON string, keys KeyStore, credentials CredentialStore, pr
 	if keys == nil || credentials == nil {
 		return nil, newError(CodeInvalidInput, errors.New("a KeyStore and a CredentialStore are required"))
 	}
-	wcfg := walletflow.Config{ClientID: cfg.ClientID, RedirectURI: cfg.RedirectURI, Development: cfg.Development}
+	wcfg := walletflow.Config{ClientID: cfg.ClientID, RedirectURI: cfg.RedirectURI, Development: cfg.Development, Locales: cfg.Locales}
 	var err error
 	if cfg.IssuerRoots != "" {
 		if wcfg.IssuerRoots, err = certPool(cfg.IssuerRoots); err != nil {
@@ -175,6 +178,28 @@ func (w *Wallet) HolderKeyIDs() (string, error) {
 		result
 		KeyIDs []string `json:"key_ids"`
 	}{result{ABIVersion}, ids})
+}
+
+// CheckStatus fetches the issuer's status list for the credential
+// credentialID names, checks its signature, records the credential's revocation
+// status, and returns the credential's summary with it ("status":
+// {"value": "valid" | "invalid" | "suspended" | "0x…", "checked_at"}).
+// A credential without a status list is returned as it is. The list
+// covers many credentials, so fetching it doesn't tell the issuer which
+// one is checked.
+func (w *Wallet) CheckStatus(op *Operation, credentialID string) (string, error) {
+	c, err := w.w.CheckStatus(op.context(), credentialID)
+	if err != nil {
+		return "", classify(err)
+	}
+	s, err := w.summary(c)
+	if err != nil {
+		return "", err
+	}
+	return marshal(struct {
+		result
+		credentialSummary
+	}{result{ABIVersion}, s})
 }
 
 // DeleteCredential deletes the credential id names, and its holder key.

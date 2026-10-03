@@ -68,6 +68,7 @@ final class WalletModel {
             if let wallet, let keys { _ = try? await wallet.sweepOrphanedKeys(in: keys) }
             await resumeDeferred()
             await refresh()
+            await checkAllStatuses()
         }
     }
 
@@ -451,6 +452,32 @@ final class WalletModel {
             credentials = try await wallet.credentials()
         } catch {
             phase = .failed("Couldn't list credentials: " + Self.describe(error))
+        }
+    }
+
+    /// Checks a credential's revocation status in its issuer's status
+    /// list, and shows it.
+    func checkStatus(_ id: String) async {
+        guard let wallet else { return }
+        do {
+            let checked = try await wallet.checkStatus(id: id)
+            if let i = credentials.firstIndex(where: { $0.id == id }) { credentials[i] = checked }
+        } catch {
+            notice = "Couldn't check the status: " + Self.describe(error)
+        }
+    }
+
+    /// Checks every credential's status, at launch: one status list per
+    /// issuer covers many credentials, so this tells no issuer which
+    /// credentials the holder has.
+    /// Quietly: a status list out of reach at launch isn't worth a
+    /// notice, and the last status found stays shown.
+    private func checkAllStatuses() async {
+        guard let wallet else { return }
+        for c in credentials {
+            if let checked = try? await wallet.checkStatus(id: c.id), let i = credentials.firstIndex(where: { $0.id == c.id }) {
+                credentials[i] = checked
+            }
         }
     }
 

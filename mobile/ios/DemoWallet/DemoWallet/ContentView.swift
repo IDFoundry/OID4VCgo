@@ -25,15 +25,7 @@ struct ContentView: View {
                         Text("No credentials yet").foregroundStyle(.secondary)
                     }
                     ForEach(model.credentials, id: \.id) { c in
-                        NavigationLink(value: c.id) {
-                            VStack(alignment: .leading) {
-                                Text(c.vct ?? c.doctype ?? c.configurationID).font(.headline)
-                                Text("\(c.format) · \(c.credentialIssuer)").font(.caption).foregroundStyle(.secondary)
-                                if c.holderKeyPresent == false {
-                                    Text("Its key isn't on this device: it can't be presented").font(.caption).foregroundStyle(.red)
-                                }
-                            }
-                        }
+                        NavigationLink(value: c.id) { CredentialRow(summary: c) }
                         .accessibilityElement(children: .combine)
                         .accessibilityIdentifier("credential")
                         .swipeActions { Button("Delete", role: .destructive) { Task { await model.delete(c) } } }
@@ -100,10 +92,23 @@ struct OfferView: View {
         NavigationStack {
             Form {
                 if let offer = model.offer {
-                    Section("From") { Text(offer.issuerName ?? offer.credentialIssuer) }
+                    Section("From") {
+                        HStack {
+                            LogoView(logo: offer.issuerLogo)
+                            Text(offer.issuerName ?? offer.credentialIssuer)
+                        }
+                    }
                     Section("Credentials") {
                         ForEach(offer.credentials, id: \.configurationID) { c in
-                            Text(c.name ?? c.vct ?? c.doctype ?? c.configurationID)
+                            HStack {
+                                LogoView(logo: c.logo)
+                                VStack(alignment: .leading) {
+                                    Text(c.name ?? c.vct ?? c.doctype ?? c.configurationID)
+                                    if let description = c.description {
+                                        Text(description).font(.caption).foregroundStyle(.secondary)
+                                    }
+                                }
+                            }
                         }
                     }
                     if offer.grant == .preAuthorizedCode, let tx = offer.txCode {
@@ -151,20 +156,116 @@ struct CredentialView: View {
     @Environment(WalletModel.self) private var model
     let summary: CredentialSummary
     @State private var detail: CredentialDetail?
+    @State private var checking = false
 
     var body: some View {
         List {
             Section("Credential") {
                 LabeledContent("Format", value: summary.format)
-                LabeledContent("Issuer", value: summary.credentialIssuer)
+                LabeledContent("Issuer", value: summary.display?.issuerName ?? summary.credentialIssuer)
                 LabeledContent("Received", value: summary.receivedAt.formatted(date: .abbreviated, time: .shortened))
+                if let until = summary.validUntil {
+                    LabeledContent(summary.isExpired() ? "Expired" : "Expires", value: until.formatted(date: .abbreviated, time: .omitted))
+                }
+            }
+            Section("Status") {
+                LabeledContent("Status", value: CredentialRow.statusText(summary) ?? "Not checked yet")
+                    .accessibilityIdentifier("credential-status")
+                Button(checking ? "Checking…" : "Check status") {
+                    checking = true
+                    Task {
+                        await model.checkStatus(summary.id)
+                        checking = false
+                    }
+                }
+                .disabled(checking)
+                .accessibilityIdentifier("check-status")
             }
             if let detail {
                 Section("Claims") { ClaimRows(value: detail.claims, path: []) }
             }
         }
-        .navigationTitle(summary.vct ?? summary.doctype ?? summary.configurationID)
+        .navigationTitle(CredentialRow.title(summary))
         .task { detail = await model.detail(summary) }
+    }
+}
+
+/// A credential as a card in the issuer's colours: its logo, name,
+/// issuer, and expiry or revocation.
+struct CredentialRow: View {
+    let summary: CredentialSummary
+
+    var body: some View {
+        let d = summary.display
+        let text = Color(css: d?.textColor) ?? .primary
+        HStack {
+            LogoView(logo: d?.logo ?? d?.issuerLogo)
+            VStack(alignment: .leading) {
+                Text(Self.title(summary)).font(.headline).foregroundStyle(text)
+                Text(d?.issuerName ?? summary.credentialIssuer).font(.caption).foregroundStyle(text.opacity(0.8))
+                if let problem = Self.problem(summary) {
+                    Text(problem).font(.caption.bold()).foregroundStyle(.red)
+                } else if let until = summary.validUntil {
+                    Text("Expires \(until.formatted(date: .abbreviated, time: .omitted))").font(.caption).foregroundStyle(text.opacity(0.8))
+                }
+            }
+        }
+        .listRowBackground(Color(css: d?.backgroundColor))
+    }
+
+    static func title(_ c: CredentialSummary) -> String {
+        c.display?.name ?? c.vct ?? c.doctype ?? c.configurationID
+    }
+
+    /// Why the credential can't be relied on, if it can't.
+    static func problem(_ c: CredentialSummary) -> String? {
+        if c.holderKeyPresent == false { return "Its key isn't on this device: it can't be presented" }
+        if c.isExpired() { return "Expired" }
+        switch c.status?.value {
+        case .revoked: return "Revoked by the issuer"
+        case .suspended: return "Suspended by the issuer"
+        default: return nil
+        }
+    }
+
+    static func statusText(_ c: CredentialSummary) -> String? {
+        guard let status = c.status else { return nil }
+        let when = status.checkedAt.formatted(date: .omitted, time: .shortened)
+        switch status.value {
+        case .valid: return "Valid (checked \(when))"
+        case .revoked: return "Revoked (checked \(when))"
+        case .suspended: return "Suspended (checked \(when))"
+        case .other(let v): return "Status \(v) (checked \(when))"
+        }
+    }
+}
+
+/// An issuer's logo, loaded from its https or data: URL.
+struct LogoView: View {
+    let logo: Logo?
+
+    var body: some View {
+        if let url = logo?.url {
+            AsyncImage(url: url) { image in
+                image.resizable().scaledToFit()
+            } placeholder: {
+                Color.clear
+            }
+            .frame(width: 32, height: 32)
+            .accessibilityLabel(logo?.altText ?? "")
+        }
+    }
+}
+
+extension Color {
+    /// A CSS hex colour (#rgb or #rrggbb), as issuers' display metadata
+    /// gives them; nil for anything else.
+    init?(css: String?) {
+        guard var hex = css?.trimmingCharacters(in: .whitespaces), hex.hasPrefix("#") else { return nil }
+        hex.removeFirst()
+        if hex.count == 3 { hex = hex.map { "\($0)\($0)" }.joined() }
+        guard hex.count == 6, let v = UInt32(hex, radix: 16) else { return nil }
+        self.init(red: Double((v >> 16) & 0xff) / 255, green: Double((v >> 8) & 0xff) / 255, blue: Double(v & 0xff) / 255)
     }
 }
 

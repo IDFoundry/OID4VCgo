@@ -1,7 +1,7 @@
 # OID4VCgo mobile ABI
 
 The API the Go `mobile` package exposes through gomobile: version
-**5** (`ABIVersion`). The Swift package `ios/OID4VCWallet` wraps it in
+**6** (`ABIVersion`). The Swift package `ios/OID4VCWallet` wraps it in
 typed Swift (`Wallet`, `Issuance`, `Presentation`, `WalletError`); this
 document is the contract underneath, for the Swift wrapper, a future
 Kotlin one, or an app calling the framework directly.
@@ -136,12 +136,15 @@ The Swift package's adapter marks a `URLError` this way.
 ```json
 {"client_id": "…", "redirect_uri": "…",
  "issuer_roots": "<PEM>", "verifier_roots": "<PEM>",
- "development": false}
+ "development": false, "locales": ["en-AU", "en"]}
 ```
 
 `client_id`, `redirect_uri`, `issuer_roots` and a provider are needed to
 receive credentials; `verifier_roots` to present them. `development`
-allows services on loopback addresses.
+allows services on loopback addresses. `locales` are the holder's
+preferred languages (BCP 47, most preferred first) for issuers' display
+metadata. Without them, the issuer's entry without a locale is used,
+else its first.
 
 | Method | Result |
 |---|---|
@@ -152,16 +155,28 @@ allows services on loopback addresses.
 | `AbandonDeferred(deferredID)` | deletes a pending one and its keys, for example after its access token has expired |
 | `Credential(id)` | summary with `"claims"`: an SD-JWT VC's claims, or an mdoc's namespace → element → value, byte strings in base64 |
 | `DeleteCredential(id)` | deletes it and its holder key |
+| `CheckStatus(op, credentialID)` | the summary, with `"status"` checked now. It fetches the issuer's status list and checks the list's signature against `issuer_roots`. The list covers many credentials, so fetching it doesn't tell the issuer which one is checked. A credential without a status list is returned as it is |
 | `StartIssuance(op, offerURI)` | an `Issuance` |
 | `ResumeIssuance(op, redirect)` | an `Issuance` ready for `RequestCredentials`: completes the authorization in progress that the redirect's `state` names, after the app was killed during the browser step. One that matches nothing, has already been used, or has expired is `not_found` |
 | `StartPresentation(op, requestLink)` | a `Presentation` |
 
 A credential **summary** is `{"id", "credential_issuer",
 "configuration_id", "format", "vct", "doctype", "received_at",
-"holder_key_present"}`. `holder_key_present` is false when the key store
-no longer holds the credential's key, for example after a restore to
-another device, so it can't be presented. It's set by `Credentials` and
-`Credential`.
+"holder_key_present", "display", "valid_until", "status"}`.
+
+- `holder_key_present` is false when the key store no longer holds the
+  credential's key, for example after a restore to another device, so
+  it can't be presented. It's set by `Credentials` and `Credential`.
+- `display` is how to show the credential, from the issuer's metadata
+  when it was received, in `locales`' language: `{"issuer_name",
+  "issuer_logo", "name", "description", "logo", "background_color",
+  "text_color"}`. A logo is `{"uri", "alt_text"}`, and only an https URL
+  or a `data:` image is passed on.
+- `valid_until` is when the credential expires.
+- `status` is its revocation status as last checked: `{"value": "valid"
+  | "invalid" | "suspended" | "0x…", "checked_at"}`.
+
+Each of those three is absent when unknown.
 
 ## Issuance
 
@@ -173,7 +188,7 @@ Steps, in order: `Offer`; then `BeginAuthorization` and
 
 | Method | Result |
 |---|---|
-| `Offer()` | `{"credential_issuer", "issuer_name", "grant", "tx_code": {"input_mode", "length", "description"}, "credentials": [{"configuration_id", "format", "vct", "doctype", "name"}]}` |
+| `Offer()` | `{"credential_issuer", "issuer_name", "issuer_logo", "grant", "tx_code": {"input_mode", "length", "description"}, "credentials": [{"configuration_id", "format", "vct", "doctype", "name", "description", "logo", "background_color", "text_color"}]}`, with display metadata as in a summary |
 | `BeginAuthorization(op)` | the authorization URL, to open in `ASWebAuthenticationSession` |
 | `CompleteAuthorization(op, redirect)` | the redirect back to `redirect_uri`, whole or just its query. It's used up whatever happens: after a failure, start again with `BeginAuthorization` |
 | `RedeemPreAuthorizedCode(op, txCode)` | the PIN, `""` if `tx_code` is absent; a wrong one is `protocol` and can be retried |

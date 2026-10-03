@@ -232,6 +232,33 @@ final class SessionTests: XCTestCase {
         }
     }
 
+    /// A received credential shows the issuer's display metadata and its
+    /// expiry; checkStatus reads its revocation status, and sees a
+    /// revocation.
+    func testDisplayAndStatus() async throws {
+        let env = try TestEnv()
+        defer { env.close() }
+        let w = try wallet(env)
+        let received = try await Self.receive(env, w)
+        let held = try await w.credentials()
+        XCTAssertEqual(held.count, received.credentials.count)
+        for c in held {
+            XCTAssertEqual(c.display?.issuerName, "Test Issuer")
+            XCTAssertNotNil(c.display?.name)
+            XCTAssertNotNil(c.display?.logo?.url)
+            XCTAssertEqual(c.display?.backgroundColor, "#12107c")
+            XCTAssertFalse(c.isExpired())
+            XCTAssertNil(c.status, "status before any check")
+        }
+        let checked = try await w.checkStatus(id: held[0].id)
+        XCTAssertEqual(checked.status?.value, .valid)
+        env.env.revoke()
+        let revoked = try await w.checkStatus(id: held[0].id)
+        XCTAssertEqual(revoked.status?.value, .revoked)
+        let listed = try await w.credentials()
+        XCTAssertEqual(listed.first { $0.id == held[0].id }?.status?.value, .revoked, "the status isn't kept")
+    }
+
     func testAbandonDeferred() async throws {
         let env = try TestEnv(deferIssuance: true)
         defer { env.close() }

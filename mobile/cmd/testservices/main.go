@@ -14,6 +14,7 @@
 //	                               (on=0: issues at once), each awaiting /decide
 //	POST /decide?approve=1       → approves (approve=0: denies) every deferred
 //	                               credential, on its next poll
+//	POST /revoke                 → revokes every credential issued so far
 //
 // Every service is HTTPS with one self-signed certificate, written to
 // -cert for the Simulator to trust (xcrun simctl keychain booted
@@ -125,6 +126,10 @@ func run(addr, redirect, certOut string) error {
 	})
 	mux.HandleFunc("POST /decide", func(w http.ResponseWriter, r *http.Request) {
 		env.Decide(r.URL.Query().Get("approve") == "1")
+		writeJSON(w, map[string]bool{"ok": true})
+	})
+	mux.HandleFunc("POST /revoke", func(w http.ResponseWriter, _ *http.Request) {
+		env.Revoke()
 		writeJSON(w, map[string]bool{"ok": true})
 	})
 	control := httptest.NewUnstartedServer(mux)
