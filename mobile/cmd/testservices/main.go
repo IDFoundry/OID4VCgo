@@ -8,8 +8,12 @@
 //	POST /offer?pin=<digits>     → {"offer"}  (no pin: the authorization code grant)
 //	POST /request?format=<fmt>   → {"id", "link"}: the Verifier asks for family_name
 //	                               from an SD-JWT VC ("dc+sd-jwt"), an mdoc
-//	                               ("mso_mdoc") or either (no format)
-//	GET  /request/{id}           → {"status": "pending" | "done", "claims", "last_error"}
+//	                               ("mso_mdoc") or either (no format); with
+//	                               multiple=1, from one or more credentials
+//	                               (DCQL multiple)
+//	GET  /request/{id}           → {"status": "pending" | "done", "claims", "credentials",
+//	                               "last_error"}: claims are the first credential's,
+//	                               credentials how many were presented
 //	POST /defer?on=1             → the issuer defers every credential from now on
 //	                               (on=0: issues at once), each awaiting /decide
 //	POST /decide?approve=1       → approves (approve=0: denies) every deferred
@@ -97,7 +101,7 @@ func run(addr, redirect, certOut string) error {
 		writeJSON(w, map[string]string{"offer": offer})
 	})
 	mux.HandleFunc("POST /request", func(w http.ResponseWriter, r *http.Request) {
-		q, err := query(env, r.URL.Query().Get("format"))
+		q, err := query(env, r.URL.Query().Get("format"), r.URL.Query().Get("multiple") == "1")
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -118,6 +122,7 @@ func run(addr, redirect, certOut string) error {
 		out := map[string]any{"status": "pending", "last_error": view.LastError}
 		if view.Result != nil && len(view.Result.Credentials) > 0 {
 			out["status"], out["claims"] = "done", view.Result.Credentials[0].Claims
+			out["credentials"] = len(view.Result.Credentials)
 		}
 		writeJSON(w, out)
 	})
@@ -213,8 +218,9 @@ func writeJSON(w http.ResponseWriter, v any) {
 
 func netListen(addr string) (net.Listener, error) { return net.Listen("tcp", addr) }
 
-// query asks for family_name from an SD-JWT VC, an mdoc, or either.
-func query(env *walletflowtest.Env, format string) (dcql.Query, error) {
+// query asks for family_name from an SD-JWT VC, an mdoc, or either;
+// from one or more credentials when multiple is set.
+func query(env *walletflowtest.Env, format string, multiple bool) (dcql.Query, error) {
 	sdjwt, err := env.SDJWTQuery("pid", "family_name")
 	if err != nil {
 		return dcql.Query{}, err
@@ -223,6 +229,7 @@ func query(env *walletflowtest.Env, format string) (dcql.Query, error) {
 	if err != nil {
 		return dcql.Query{}, err
 	}
+	sdjwt.Multiple, mdoc.Multiple = multiple, multiple
 	switch format {
 	case "dc+sd-jwt":
 		return dcql.Query{Credentials: []dcql.CredentialQuery{sdjwt}}, nil

@@ -364,6 +364,7 @@ struct RequestView: View {
                                     }
                                 }
                                 .accessibilityIdentifier("candidate")
+                                .accessibilityAddTraits(model.isSelected(c.id, for: query.queryID) ? .isSelected : [])
                             }
                         }
                     }
