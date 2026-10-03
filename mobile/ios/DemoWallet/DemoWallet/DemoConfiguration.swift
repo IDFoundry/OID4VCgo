@@ -1,5 +1,5 @@
 import Foundation
-import OID4VCMobile
+import OID4VCWallet
 
 /// What the demo wallet talks to: the wallet's configuration and the
 /// Wallet Provider's URL — the JSON mobile/cmd/testservices serves at

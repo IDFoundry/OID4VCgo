@@ -11,7 +11,7 @@
 		212577FF75EB6D4DA46ED9C4 /* ScanView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13C76E55CD4881373A60A9E3 /* ScanView.swift */; };
 		22BEE44EFF06CBD3FDC082B6 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D97405F0E07310B8A204CF1 /* ContentView.swift */; };
 		6BDA4B0484E846748B5C2344 /* HTTPWalletProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F0E54791828D5171B822733 /* HTTPWalletProvider.swift */; };
-		7C33F773F766F688BFD56D9A /* OID4VCMobile in Frameworks */ = {isa = PBXBuildFile; productRef = E2E0ED95F892402D9954B8E2 /* OID4VCMobile */; };
+		7C33F773F766F688BFD56D9A /* OID4VCWallet in Frameworks */ = {isa = PBXBuildFile; productRef = 4AB71DB27554C3B1CA809FA4 /* OID4VCWallet */; };
 		8DD8D2D0F238F9CE3210FE0B /* QRCodeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2AFFCD3CFCF56E0310DC8DD0 /* QRCodeTests.swift */; };
 		C02517FB98677D16EA5E9C4F /* DemoWalletApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5F16C5C0BD25AEB7DAFC75E /* DemoWalletApp.swift */; };
 		DD51A0DDC2F2873B44E1AB43 /* WalletModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 727FF1B0EB18E15552480967 /* WalletModel.swift */; };
@@ -47,7 +47,7 @@
 		7D97405F0E07310B8A204CF1 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		819D7D3167D5646D27BE809E /* DemoWalletUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DemoWalletUITests.swift; sourceTree = "<group>"; };
 		8DD7E31109ADF78893A8C16D /* DemoWalletTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = DemoWalletTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		B7C5CBBB353EA82B6E1F07C6 /* OID4VCMobile */ = {isa = PBXFileReference; lastKnownFileType = folder; name = OID4VCMobile; path = ../OID4VCMobile; sourceTree = SOURCE_ROOT; };
+		975D3A5777574C44881B4A60 /* OID4VCWallet */ = {isa = PBXFileReference; lastKnownFileType = folder; name = OID4VCWallet; path = ../OID4VCWallet; sourceTree = SOURCE_ROOT; };
 		C5F16C5C0BD25AEB7DAFC75E /* DemoWalletApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DemoWalletApp.swift; sourceTree = "<group>"; };
 		DE034FF24178F629F3A024CC /* DemoWallet.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = DemoWallet.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		DF70DC76B16FF1F1DC92A09E /* DemoWalletUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = DemoWalletUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -58,7 +58,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				7C33F773F766F688BFD56D9A /* OID4VCMobile in Frameworks */,
+				7C33F773F766F688BFD56D9A /* OID4VCWallet in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -68,7 +68,7 @@
 		11EC226381DB71B07F60C77C /* Packages */ = {
 			isa = PBXGroup;
 			children = (
-				B7C5CBBB353EA82B6E1F07C6 /* OID4VCMobile */,
+				975D3A5777574C44881B4A60 /* OID4VCWallet */,
 			);
 			name = Packages;
 			sourceTree = "<group>";
@@ -177,7 +177,7 @@
 			);
 			name = DemoWallet;
 			packageProductDependencies = (
-				E2E0ED95F892402D9954B8E2 /* OID4VCMobile */,
+				4AB71DB27554C3B1CA809FA4 /* OID4VCWallet */,
 			);
 			productName = DemoWallet;
 			productReference = DE034FF24178F629F3A024CC /* DemoWallet.app */;
@@ -217,7 +217,7 @@
 			mainGroup = C39A6523D027BEA0A6689017;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				A4C9BFD3CCC92AFA7EF4916E /* XCLocalSwiftPackageReference "../OID4VCMobile" */,
+				DA6FBECC80142C0E930D89BB /* XCLocalSwiftPackageReference "../OID4VCWallet" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = F47AF6D1BF1721E049BA5948 /* Products */;
@@ -543,16 +543,16 @@
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
-		A4C9BFD3CCC92AFA7EF4916E /* XCLocalSwiftPackageReference "../OID4VCMobile" */ = {
+		DA6FBECC80142C0E930D89BB /* XCLocalSwiftPackageReference "../OID4VCWallet" */ = {
 			isa = XCLocalSwiftPackageReference;
-			relativePath = ../OID4VCMobile;
+			relativePath = ../OID4VCWallet;
 		};
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		E2E0ED95F892402D9954B8E2 /* OID4VCMobile */ = {
+		4AB71DB27554C3B1CA809FA4 /* OID4VCWallet */ = {
 			isa = XCSwiftPackageProductDependency;
-			productName = OID4VCMobile;
+			productName = OID4VCWallet;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

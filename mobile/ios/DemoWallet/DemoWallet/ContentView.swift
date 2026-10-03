@@ -1,5 +1,5 @@
 import AuthenticationServices
-import OID4VCMobile
+import OID4VCWallet
 import SwiftUI
 
 struct ContentView: View {

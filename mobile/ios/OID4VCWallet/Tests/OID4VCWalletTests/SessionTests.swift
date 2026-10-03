@@ -1,7 +1,7 @@
 import Foundation
 import Mobile
 import XCTest
-@testable import OID4VCMobile
+@testable import OID4VCWallet
 
 extension MobileTestEnv: @retroactive @unchecked Sendable {}
 

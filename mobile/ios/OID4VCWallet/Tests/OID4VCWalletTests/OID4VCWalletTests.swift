@@ -2,9 +2,9 @@ import CryptoKit
 import Foundation
 import Network
 import XCTest
-@testable import OID4VCMobile
+@testable import OID4VCWallet
 
-final class OID4VCMobileTests: XCTestCase {
+final class OID4VCWalletTests: XCTestCase {
     func testABIVersion() {
         XCTAssertEqual(OID4VC.abiVersion, 2)
         XCTAssertTrue(OID4VC.isTestBuild, "the tests run on the mobiletest build")

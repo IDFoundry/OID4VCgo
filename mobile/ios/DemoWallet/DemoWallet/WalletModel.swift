@@ -3,7 +3,7 @@ import Foundation
 import LocalAuthentication
 import Observation
 import UIKit
-import OID4VCMobile
+import OID4VCWallet
 
 /// The demo wallet's state: the wallet, what it holds, and the issuance
 /// in progress.

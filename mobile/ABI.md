@@ -1,7 +1,7 @@
 # OID4VCgo mobile ABI
 
 The API the Go `mobile` package exposes through gomobile: version
-**2** (`ABIVersion`). The Swift package `ios/OID4VCMobile` wraps it in
+**2** (`ABIVersion`). The Swift package `ios/OID4VCWallet` wraps it in
 typed Swift (`Wallet`, `Issuance`, `Presentation`, `WalletError`); this
 document is the contract underneath, for the Swift wrapper, a future
 Kotlin one, or an app calling the framework directly.
@@ -178,7 +178,7 @@ ships that build.
 
 ## Swift
 
-The Swift package (`ios/OID4VCMobile`) doesn't expose these gomobile
+The Swift package (`ios/OID4VCWallet`) doesn't expose these gomobile
 shapes: an app implements its own `KeyStore`, `CredentialStore` and
 `WalletProvider` protocols — throwing, non-optional, the provider
 `async` — which it adapts, and `WalletError` carries `code`,
