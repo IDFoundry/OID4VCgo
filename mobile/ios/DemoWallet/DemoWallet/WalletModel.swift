@@ -1,3 +1,4 @@
+import AuthenticationServices
 import CryptoKit
 import Foundation
 import LocalAuthentication
@@ -218,6 +219,7 @@ final class WalletModel {
     func start(offer link: String) async {
         guard let wallet else { return }
         await closeIssuance()
+        offerError = nil
         do {
             let s = try await wallet.startIssuance(offer: link)
             issuance = s
@@ -229,24 +231,58 @@ final class WalletModel {
         }
     }
 
+    /// Why the last attempt to receive failed, when trying again may
+    /// work: shown on the offer, which stays open.
+    private(set) var offerError: String?
+    /// Whether the issuance has its access token: a retry then only
+    /// requests the credentials.
+    private var authorized = false
+    private var receiveTask: Task<Void, Never>?
+
+    /// Starts receiving, as a task Cancel can stop.
+    func startReceive(authorize: @escaping (URL) async throws -> URL) {
+        receiveTask = Task { await receive(authorize: authorize) }
+    }
+
     /// Receives the offered credentials; `authorize` opens the issuer's
-    /// authorization page and returns the redirect.
+    /// authorization page and returns the redirect. A failure that
+    /// trying again may fix (the network, a wrong PIN) keeps the offer
+    /// open to try again; any other ends it.
     func receive(authorize: (URL) async throws -> URL) async {
         guard let issuance, let offer else { return }
         phase = .receiving
+        offerError = nil
         do {
-            if offer.grant == .preAuthorizedCode {
-                try await issuance.redeemPreAuthorizedCode(pin: pin)
-            } else {
-                let url = try await issuance.beginAuthorization()
-                try await issuance.completeAuthorization(redirect: try await authorize(url))
+            if !authorized {
+                if offer.grant == .preAuthorizedCode {
+                    try await issuance.redeemPreAuthorizedCode(pin: pin)
+                } else {
+                    // After a failed completeAuthorization this starts the
+                    // authorization over, as it must.
+                    let url = try await issuance.beginAuthorization()
+                    try await issuance.completeAuthorization(redirect: try await authorize(url))
+                }
+                authorized = true
             }
             try await requestCredentials(issuance)
+        } catch let e as WalletError where e.code == .cancelled {
+            if phase == .receiving { phase = .offered }
+        } catch let e as NSError where e.domain == ASWebAuthenticationSessionErrorDomain
+            && e.code == ASWebAuthenticationSessionError.canceledLogin.rawValue {
+            // The holder closed the issuer's page: the offer stays.
+            phase = .offered
+        } catch let e as WalletError where e.isRetryable {
+            phase = .offered
+            offerError = Self.describe(e)
+            if e.protocolError == "invalid_grant" { pin = "" }
+            // Anything deferred before the failure is pending already.
+            await resumeDeferred()
         } catch {
             phase = .failed(Self.describe(error))
             // Don't leave the issuance's keys in the Keychain: the holder
             // starts again from the offer.
             await closeIssuance()
+            await resumeDeferred()
         }
         await refresh()
     }
@@ -275,6 +311,7 @@ final class WalletModel {
         let result = try await issuance.requestCredentials()
         var summary = "Received \(result.credentials.count) credential(s)"
         if !result.deferred.isEmpty { summary += ", \(result.deferred.count) deferred" }
+        if !result.failed.isEmpty { summary += "; \(result.failed.count) couldn't be issued" }
         phase = .done(summary)
         // Deferred credentials are kept in the credential store, with
         // what polling them needs: they outlive the issuance, and the
@@ -351,6 +388,11 @@ final class WalletModel {
             update(id) { $0.state = .denied }
         } catch {
             update(id) { $0.state = .failed(Self.describe(error)) }
+            // A failure trying again may fix: keep polling, less often.
+            if let e = error as? WalletError, e.isRetryable {
+                update(id) { $0.intervalSeconds = min(max($0.intervalSeconds, 1) * 2, 60) }
+                schedule(id)
+            }
         }
     }
 
@@ -383,9 +425,15 @@ final class WalletModel {
         return error.localizedDescription
     }
 
+    /// Stops receiving — the request in progress included — and ends the
+    /// offer.
     func cancelOffer() async {
+        receiveTask?.cancel()
+        await receiveTask?.value
+        receiveTask = nil
         await closeIssuance()
         phase = .idle
+        offerError = nil
     }
 
     func detail(_ c: CredentialSummary) async -> CredentialDetail? {
@@ -410,5 +458,6 @@ final class WalletModel {
         try? await issuance?.close()
         issuance = nil
         offer = nil
+        authorized = false
     }
 }

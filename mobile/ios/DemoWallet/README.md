@@ -57,7 +57,8 @@ grants:
   session, redirecting back to the app's private-use scheme redirect URI
 - the pre-authorized code grant: the PIN typed in the app
 
-It also covers deferred issuance: approved, denied, and approved after
+A wrong PIN keeps the offer open with the error, and the right one then
+receives it. It also covers deferred issuance: approved, denied, and approved after
 the app is quit and relaunched while the credential is pending. And it
 presents: a received credential shared in answer to the
 Verifier's request (the Verifier gets `family_name`), and a request the

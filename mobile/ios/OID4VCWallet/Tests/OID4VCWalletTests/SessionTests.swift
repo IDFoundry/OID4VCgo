@@ -216,7 +216,7 @@ final class SessionTests: XCTestCase {
         let redirect = try env.approve(try await quit.beginAuthorization())
         // The app is killed: no close(), and no deinit either (which would
         // close it), so `quit` is kept alive to the end.
-        defer { withExtendedLifetime(quit) {} }
+        defer { withExtendedLifetime(quit) { XCTAssertFalse($0.offer.credentials.isEmpty) } }
         let relaunched = try wallet(env, keys: keys, store: store)
         let swept = try await relaunched.sweepOrphanedKeys(in: keys)
         XCTAssertEqual(swept, 0, "the sweep deleted the authorization's keys")
