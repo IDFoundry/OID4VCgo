@@ -26,6 +26,50 @@ import (
 	"github.com/idfoundry/oid4vcgo/haip"
 )
 
+// TestEndToEnd_PerFlowLoopbackPort receives with the CLI wallet's
+// browser approver on a port-less loopback redirect URI: it listens on a
+// port the operating system picks, the wallet sends that port, and the
+// issuer (which registered the wallet as a native app) redirects there.
+func TestEndToEnd_PerFlowLoopbackPort(t *testing.T) {
+	ctx := context.Background()
+	env := demotest.New(t, nil)
+	offer, err := env.Issuer.CreateTransaction(ctx, demotest.SyntheticEvidence())
+	if err != nil {
+		t.Fatalf("CreateTransaction: %v", err)
+	}
+	headless := walletapp.HeadlessApprover{HTTP: env.HTTP, Code: offer.ConfirmationCode}
+	redirected := make(chan string, 1)
+	browser := walletapp.BrowserApprover{
+		RedirectURI: demotest.RedirectURI,
+		// Stand in for the holder's browser: approve, then follow the
+		// issuer's redirect to the wallet.
+		Show: func(authorizationURL string) {
+			go func() {
+				loc, err := headless.Redirect(ctx, authorizationURL)
+				if err != nil {
+					redirected <- "error: " + err.Error()
+					return
+				}
+				redirected <- loc.Host
+				if resp, err := http.Get(loc.String()); err == nil { //nolint:noctx // a test's browser
+					_ = resp.Body.Close()
+				}
+			}()
+		},
+	}
+	received, err := walletapp.Receive(ctx, env.WalletConfig(), offer.URI, browser)
+	if err != nil {
+		t.Fatalf("Receive: %v", err)
+	}
+	if len(received) != 2 {
+		t.Errorf("received %d credentials, want 2", len(received))
+	}
+	host := <-redirected
+	if u, err := url.Parse("http://" + host); err != nil || u.Hostname() != "127.0.0.1" || u.Port() == "" || u.Port() == "0" {
+		t.Errorf("redirected to %q, want 127.0.0.1 on the port picked", host)
+	}
+}
+
 // TestEndToEnd_IssuesBothFormats drives the full HAIP issuance flow
 // against the demo issuer with the demo wallet (walletapp, built on a
 // real fapigo/client and oid4vcgo/wallet): credential offer → PAR

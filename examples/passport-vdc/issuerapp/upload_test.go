@@ -2,9 +2,11 @@ package issuerapp_test
 
 import (
 	"bytes"
+	"html"
 	"io"
 	"mime/multipart"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -12,6 +14,7 @@ import (
 	"github.com/gmrtd/gmrtd/cms"
 
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/demotest"
+	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/issuerapp"
 )
 
 func upload(t *testing.T, env *demotest.Env, data []byte) (*http.Response, string) {
@@ -89,5 +92,39 @@ func TestUpload_Sample(t *testing.T) {
 	}
 	if resp.Header.Get("Cache-Control") != "no-store" {
 		t.Errorf("offer page Cache-Control = %q, want no-store", resp.Header.Get("Cache-Control"))
+	}
+}
+
+// TestSampleDocument offers gmrtd's sample passport from the upload
+// page's button, as an ordinary passport's credentials, with the page
+// saying it wasn't checked.
+func TestSampleDocument(t *testing.T) {
+	env := demotest.New(t, nil)
+	resp, err := env.HTTP.Get(env.IssuerURL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	home, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if !strings.Contains(string(home), `formaction="/sample"`) {
+		t.Error("the upload page has no sample passport button")
+	}
+
+	resp, err = env.HTTP.PostForm(env.IssuerURL+"/sample", url.Values{"counter": {"1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("POST /sample: status %d", resp.StatusCode)
+	}
+	for _, want := range []string{"Sample passport — issued without checking", "PIN:", issuerapp.MdocConfigurationID} {
+		if !strings.Contains(string(page), want) && !strings.Contains(html.UnescapeString(string(page)), want) {
+			t.Errorf("the offer page doesn't mention %q", want)
+		}
+	}
+	if strings.Contains(string(page), "Passport verified") {
+		t.Error("the sample's offer page says the passport is verified")
 	}
 }

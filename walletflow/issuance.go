@@ -163,6 +163,22 @@ func (s *Issuance) Offer() Offer { return s.details }
 // browser, where the holder authenticates and approves, and pass the
 // redirect back to RedirectURI to CompleteAuthorization.
 func (s *Issuance) BeginAuthorization(ctx context.Context) (string, error) {
+	return s.BeginAuthorizationWith(ctx, AuthorizationOptions{})
+}
+
+// AuthorizationOptions adjusts one authorization's request.
+type AuthorizationOptions struct {
+	// RedirectPort, when not 0, is the loopback port this authorization's
+	// redirect comes back on, in place of Config.RedirectURI's own: for a
+	// wallet that listens on a port the operating system picks for each
+	// authorization (RFC 8252 §7.3). Config.RedirectURI must then be
+	// loopback http to 127.0.0.1 or [::1], registered as a native app's,
+	// which the Authorization Server matches on any port.
+	RedirectPort uint16
+}
+
+// BeginAuthorizationWith is BeginAuthorization with opts.
+func (s *Issuance) BeginAuthorizationWith(ctx context.Context, opts AuthorizationOptions) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.step != stepStarted || s.details.Grant != GrantAuthorizationCode {
@@ -179,6 +195,7 @@ func (s *Issuance) BeginAuthorization(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("walletflow: %w", err)
 	}
+	authReq.RedirectPort = opts.RedirectPort
 	session, err := s.client.BeginAuthorization(ctx, authReq)
 	if err != nil {
 		return "", fmt.Errorf("walletflow: pushed authorization request: %w", err)

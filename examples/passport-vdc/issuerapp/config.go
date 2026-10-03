@@ -59,6 +59,14 @@ type Config struct {
 	// offer page, linking to the demo web wallet's /receive.
 	WebWalletURL string
 
+	// AllowSampleDocument adds a button to the upload page that issues
+	// passport.SampleDocument without checking it, simulating an issuer
+	// that skipped Passive Authentication: its credentials look like any
+	// passport's, and only a verifier that re-verifies the passport file
+	// finds out. The issuer's own pages mark them. For the demo only:
+	// never on a deployment anyone else relies on.
+	AllowSampleDocument bool
+
 	// StateDir, if set, is an existing directory this issuer keeps its
 	// CA and signing keys and its status list in, so credentials it
 	// issued keep verifying, and revocations hold, across restarts.

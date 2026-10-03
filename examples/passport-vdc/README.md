@@ -171,6 +171,33 @@ issuer's redirect back is bound to the browser that started receiving
    verified claims, "Revocation status: valid" and, for the country
    trust path, the ICAO Passive Authentication result.
 
+**No passport? Issue gmrtd's sample passport, unchecked.** Click
+**Issue gmrtd's sample passport without checking it** on the upload page
+instead of choosing a file (the counter and review options apply to it
+too). It's gmrtd's `document.SampleDocument`: ICAO 9303-10 worked-example
+data groups, with an unrelated real security object. Its issuing
+country is "UTO", which no country's CSCA covers, so Passive
+Authentication fails before it checks a hash or a signature.
+
+The button simulates an issuer that skipped Passive Authentication. The
+sample is issued as an ordinary passport credential, so it shows the
+difference between the two trust paths:
+
+- **Trust the issuer:** the verifier accepts the sample's claims ("JOHN
+  J SMITH"), because the credential carries the demo issuer's valid
+  signature. It can't know the issuer didn't check.
+- **Trust only the issuing country:** re-verifying the passport file
+  fails Passive Authentication, because no country signed this data.
+
+Only the issuer's own pages know. The offer page reads "Sample passport
+— issued without checking", and the review and status pages mark its
+credentials. The sample isn't one consistent person either: DG11's names
+come with DG1's sex and nationality, and the document expired in 2012.
+
+`go run ./cmd/demo` offers it, and `cmd/issuer` does with
+`-allow-sample-document`. Never turn it on where anyone else relies on
+the issuer.
+
 **Optional: issue at the counter.** Tick **Issue at the counter** when
 uploading. The offer then carries a pre-authorized code (OID4VCI's other
 grant, §3.5), and the page shows a PIN instead of a confirmation code.
@@ -205,8 +232,10 @@ go run ./cmd/wallet present -state .demo-state [-format dc+sd-jwt] [-yes] 'openi
 
 The CLI's `receive` prints the authorization URL: open it, approve with
 the confirmation code, and it picks up the redirect on
-`http://127.0.0.1:8765/callback`; add `-headless -code <confirmation code>`
-to approve automatically.
+`http://127.0.0.1:<port>/callback`, listening on a port the operating
+system picks for that authorization (RFC 8252 §7.3; the issuer
+registers the wallet as a native app, so it accepts any loopback port).
+Add `-headless -code <confirmation code>` to approve automatically.
 
 The issuer's redirect back is bound to the wallet that asked (fapigo's
 protection against login CSRF, RFC 9700 §4.7): the web wallet sets a

@@ -52,7 +52,8 @@ type Identity struct {
 // Checks summarizes what gmrtd verified.
 type Checks struct {
 	// PassiveAuthentication is always true for Evidence Verify returns:
-	// it refuses a file whose data isn't trusted.
+	// it refuses a file whose data isn't trusted. It's false only for
+	// SampleDocument's.
 	PassiveAuthentication bool
 
 	// ChipAuthenticity is gmrtd's chip authentication status (e.g.

@@ -39,7 +39,7 @@ func main() {
 	store := fs.String("store", "wallet-store", "directory the wallet keeps credentials in")
 	providerURL := fs.String("wallet-provider-url", "https://127.0.0.1:6443", "receive: the demo Wallet Provider's service (cmd/wallet-provider)")
 	clientID := fs.String("client-id", "passport-vdc-wallet", "this wallet's client_id")
-	redirectURI := fs.String("redirect-uri", "http://127.0.0.1:8765/callback", "this wallet's loopback redirect URI")
+	redirectURI := fs.String("redirect-uri", "http://127.0.0.1/callback", "this wallet's loopback redirect URI")
 	trust := fs.String("trust", "issuer-tls.pem,verifier-tls.pem,wallet-provider-tls.pem", "comma-separated PEM files of TLS certificates to trust (from cmd/issuer, cmd/verifier and cmd/wallet-provider); missing files are skipped")
 	headless := fs.Bool("headless", false, "receive: approve automatically instead of in a browser (needs -code)")
 	code := fs.String("code", "", "receive -headless: the confirmation code shown with the offer")

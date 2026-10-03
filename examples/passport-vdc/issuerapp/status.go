@@ -53,6 +53,9 @@ type IssuedStatus struct {
 	Format   string
 	IssuedAt time.Time
 	Revoked  bool
+	// Unchecked marks a credential issued without Passive Authentication
+	// (Config.AllowSampleDocument): nothing in the credential says so.
+	Unchecked bool
 }
 
 // statusList is this issuer's Token Status List (draft-14): one bit per
@@ -68,8 +71,9 @@ func newStatusList() *statusList {
 	return &statusList{revoked: make([]uint8, statusListSize), entries: map[int]*IssuedStatus{}}
 }
 
-// allocate reserves a random unused index for a credential of format.
-func (s *statusList) allocate(format string, now time.Time) (int, error) {
+// allocate reserves a random unused index for a credential of format,
+// issued unchecked or not.
+func (s *statusList) allocate(format string, unchecked bool, now time.Time) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if len(s.entries) >= statusListSize/2 {
@@ -86,7 +90,7 @@ func (s *statusList) allocate(format string, now time.Time) (int, error) {
 			if err != nil {
 				return 0, err
 			}
-			s.entries[idx] = &IssuedStatus{Idx: idx, Handle: handle, Format: format, IssuedAt: now}
+			s.entries[idx] = &IssuedStatus{Idx: idx, Handle: handle, Format: format, IssuedAt: now, Unchecked: unchecked}
 			if err := s.save(); err != nil {
 				delete(s.entries, idx)
 				return 0, err
@@ -191,7 +195,7 @@ var statusTemplate = template.Must(template.New("status").Parse(pageHead + `
 <table>
 <tr><th>Format</th><th>Issued</th><th>Status</th><th></th></tr>
 {{range .Entries}}
-<tr><td><code>{{.Format}}</code></td><td>{{.IssuedAt.Format "15:04:05"}}</td>
+<tr><td><code>{{.Format}}</code>{{if .Unchecked}} <span class="warn">— issued without Passive Authentication (gmrtd's sample)</span>{{end}}</td><td>{{.IssuedAt.Format "15:04:05"}}</td>
 <td>{{if .Revoked}}<span class="warn">revoked</span>{{else}}<span class="ok">valid</span>{{end}}</td>
 <td>{{if not .Revoked}}<form method="post" action="/status/revoke"><input type="hidden" name="handle" value="{{.Handle}}"><button>Revoke</button></form>{{end}}</td></tr>
 {{end}}
