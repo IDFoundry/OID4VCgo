@@ -29,6 +29,20 @@
             buildForAnalyzing = "NO">
             <BuildableReference
                BuildableIdentifier = "primary"
+               BlueprintIdentifier = "3AD490734F9126417B732549"
+               BuildableName = "DemoWalletTests.xctest"
+               BlueprintName = "DemoWalletTests"
+               ReferencedContainer = "container:DemoWallet.xcodeproj">
+            </BuildableReference>
+         </BuildActionEntry>
+         <BuildActionEntry
+            buildForTesting = "YES"
+            buildForRunning = "NO"
+            buildForProfiling = "NO"
+            buildForArchiving = "NO"
+            buildForAnalyzing = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
                BlueprintIdentifier = "B0FFDFEEDF24A4623D36D38C"
                BuildableName = "DemoWalletUITests.xctest"
                BlueprintName = "DemoWalletUITests"
@@ -53,6 +67,17 @@
          </BuildableReference>
       </MacroExpansion>
       <Testables>
+         <TestableReference
+            skipped = "NO"
+            parallelizable = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "3AD490734F9126417B732549"
+               BuildableName = "DemoWalletTests.xctest"
+               BlueprintName = "DemoWalletTests"
+               ReferencedContainer = "container:DemoWallet.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
          <TestableReference
             skipped = "NO"
             parallelizable = "NO">

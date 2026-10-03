@@ -397,6 +397,12 @@ declines. When the Verifier returns a redirect, the app opens it.
   addresses.
 - **XCUITest:** opening a custom-scheme link from a test asks for
   confirmation, so the tests launch the app with the link instead.
+- **QR codes and portraits:** the app scans QR codes live with
+  VisionKit's `DataScannerViewController` where the device supports it,
+  and from a photo or screenshot anywhere. It decodes those with Core
+  Image's detector: Vision's barcode detector can't run on an Intel Mac's
+  Simulator. Image claims (an SD-JWT VC's `picture` data URL, an mdoc's
+  `portrait` bytes) show as images.
 
 ## Decisions
 

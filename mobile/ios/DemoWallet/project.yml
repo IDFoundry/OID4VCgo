@@ -32,6 +32,7 @@ targets:
         CFBundleVersion: "1"
         UILaunchScreen: {}
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        NSCameraUsageDescription: Scans credential offer and presentation request QR codes.
         CFBundleURLTypes:
           # The authorization redirect (RFC 8252 private-use scheme),
           # Credential Offer links, and presentation request links.
@@ -41,6 +42,26 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: org.idfoundry.oid4vcgo.demowallet
         TARGETED_DEVICE_FAMILY: "1"
+  DemoWalletTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources: [DemoWalletTests]
+    dependencies:
+      - target: DemoWallet
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: org.idfoundry.oid4vcgo.demowallet.tests
+        GENERATE_INFOPLIST_FILE: YES
+  DemoWalletTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources: [DemoWalletTests]
+    dependencies:
+      - target: DemoWallet
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: org.idfoundry.oid4vcgo.demowallet.tests
+        GENERATE_INFOPLIST_FILE: YES
   DemoWalletUITests:
     type: bundle.ui-testing
     platform: iOS
@@ -56,6 +77,7 @@ schemes:
     build:
       targets:
         DemoWallet: all
+        DemoWalletTests: [test]
         DemoWalletUITests: [test]
     test:
-      targets: [DemoWalletUITests]
+      targets: [DemoWalletTests, DemoWalletUITests]
