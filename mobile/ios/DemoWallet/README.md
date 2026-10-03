@@ -5,6 +5,10 @@ walletflow through gomobile (see [MOBILE.md](../../../MOBILE.md), Phase
 4). It receives credentials from a Credential Offer link
 (`openid-credential-offer://…`, opened in the app, or pasted), and
 presents them in answer to a presentation request link (`openid4vp://…`).
+Links can be opened from anywhere, pasted, or scanned in the app. On a
+device the camera scans QR codes live (VisionKit); anywhere, including
+the Simulator, the app reads a QR code from a photo or screenshot.
+A credential's claims show the holder's portrait as an image.
 For a request, it shows who's asking, which credentials can answer and
 exactly what sharing them discloses. Then it shares them, with holder
 keys signing (Face ID or the passcode on a device), or declines. Its keys are

@@ -4,6 +4,7 @@ import SwiftUI
 
 struct ContentView: View {
     @Environment(WalletModel.self) private var model
+    @State private var scanning = false
 
     var body: some View {
         NavigationStack {
@@ -39,10 +40,19 @@ struct ContentView: View {
                 if let c = model.credentials.first(where: { $0.id == id }) { CredentialView(summary: c) }
             }
             .toolbar {
-                Button("Paste offer") {
-                    if let text = UIPasteboard.general.string { Task { await model.start(offer: text) } }
+                ToolbarItemGroup {
+                    Button("Paste") {
+                        if let text = UIPasteboard.general.string, let url = URL(string: text) { model.open(url) }
+                    }
+                    Button {
+                        scanning = true
+                    } label: {
+                        Label("Scan", systemImage: "qrcode.viewfinder")
+                    }
+                    .accessibilityIdentifier("scan")
                 }
             }
+            .sheet(isPresented: $scanning) { ScanView { model.open($0) } }
             .sheet(isPresented: offerShown) { OfferView() }
             .sheet(isPresented: requestShown) { RequestView() }
         }
@@ -150,10 +160,29 @@ struct ClaimRows: View {
             ForEach(o.keys.sorted().filter { !Self.hidden.contains($0) || !path.isEmpty }, id: \.self) { key in
                 ClaimRows(value: o[key]!, path: path + [key])
             }
+        } else if let image = Self.image(value, key: path.last ?? "") {
+            LabeledContent(path.joined(separator: " · ")) {
+                Image(uiImage: image).resizable().scaledToFit().frame(maxWidth: 120, maxHeight: 160)
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                    .accessibilityIdentifier("portrait")
+            }
         } else {
             LabeledContent(path.joined(separator: " · "), value: Self.text(value))
                 .accessibilityIdentifier("claim")
         }
+    }
+
+    /// An image claim: a data: URL (an SD-JWT VC's picture), or base64
+    /// bytes under a name like an mdoc's portrait.
+    static func image(_ v: JSONValue, key: String) -> UIImage? {
+        guard case .string(let s) = v else { return nil }
+        if s.hasPrefix("data:image/"), let comma = s.firstIndex(of: ","),
+           let data = Data(base64Encoded: String(s[s.index(after: comma)...])) {
+            return UIImage(data: data)
+        }
+        let named = ["portrait", "picture", "photo", "image"].contains { key.lowercased().contains($0) }
+        guard named, let data = Data(base64Encoded: s) else { return nil }
+        return UIImage(data: data)
     }
 
     /// The SD-JWT VC's own top-level claims, not about the holder.

@@ -46,6 +46,7 @@ final class DemoWalletUITests: XCTestCase {
         credentials.element(boundBy: 0).tap()
         let family = app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS 'Doe'")).firstMatch
         XCTAssertTrue(family.waitForExistence(timeout: 10), "family_name isn't shown")
+        XCTAssertTrue(app.images["portrait"].waitForExistence(timeout: 10), "the portrait isn't shown as an image")
     }
 
     /// The pre-authorized code grant, with the PIN typed in the app.
@@ -111,5 +112,17 @@ final class DemoWalletUITests: XCTestCase {
         XCTAssertTrue(status.label.hasPrefix("Declined"), status.label)
         let result = try await Self.fetch("request/\(request["id"] as! String)")
         XCTAssertTrue((result["last_error"] as? String ?? "").contains("access_denied"), "\(result)")
+    }
+
+    /// The scanner: on the Simulator, which has no camera, it offers a QR
+    /// code image from Photos instead.
+    @MainActor
+    func testScanSheet() async throws {
+        let app = try await launch()
+        app.buttons["scan"].tap()
+        XCTAssertTrue(app.buttons["choose-image"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["No camera scanning here"].exists)
+        app.buttons["Cancel"].tap()
+        XCTAssertTrue(app.buttons["scan"].waitForExistence(timeout: 10))
     }
 }
