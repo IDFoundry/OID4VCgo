@@ -101,8 +101,9 @@ Wallet
  │      Cancel()
  └── StartPresentation(request) → PresentationSession
         Request()               verifier, purpose, what's asked
-        Candidates()            matching credentials and what each would disclose
-        Respond(choice) / Decline()
+        Queries()               each query, its matching credentials, credential sets
+        Preview(selection)      what the app's chosen selection would disclose
+        Respond(selection) / Decline()
         Result()                sent, and where to send the browser
         Cancel()
 ```

@@ -80,18 +80,27 @@ final class SessionTests: XCTestCase {
         let req = try env.request()
         let p = try await w.startPresentation(request: req.link)
         XCTAssertFalse(p.verifier.name.isEmpty)
-        XCTAssertEqual(p.candidates.map(\.queryID), ["mdl", "pid"])
+        XCTAssertEqual(p.queries.map(\.queryID), ["mdl", "pid"])
+        XCTAssertFalse(p.queries.contains { $0.multiple })
+        XCTAssertEqual(p.credentialSets.map(\.options), [[["mdl"], ["pid"]]])
         let sdjwt = held.first { $0.format == "dc+sd-jwt" }!.id
-        let disclosed = try await p.preview(credentialIDs: [sdjwt])
+        do {
+            _ = try await p.preview(selection: ["pid": [sdjwt, sdjwt]])
+            XCTFail("two credentials for a query that takes one")
+        } catch let e as WalletError {
+            XCTAssertEqual(e.code, .invalidSelection)
+        }
+        let selection: Presentation.Selection = ["pid": [sdjwt]]
+        let disclosed = try await p.preview(selection: selection)
         XCTAssertEqual(disclosed.first?.claims, [[.key("family_name")]])
-        let presented = try await p.respond(credentialIDs: [sdjwt])
+        let presented = try await p.respond(selection: selection)
         XCTAssertEqual(presented.queryIDs, ["pid"])
         let result = try env.result(req.id)
         XCTAssertEqual(result["status"] as? String, "done")
         XCTAssertEqual((result["claims"] as? [String: Any])?["family_name"] as? String, "Doe")
 
         do {
-            _ = try await p.respond(credentialIDs: [sdjwt])
+            _ = try await p.respond(selection: selection)
             XCTFail("a second answer")
         } catch let e as WalletError {
             XCTAssertEqual(e.code, .wrongStep)
@@ -270,7 +279,7 @@ final class SessionTests: XCTestCase {
         XCTAssertTrue(held.allSatisfy { $0.copies == 3 && $0.copiesLeft == 3 }, "\(held.map { ($0.copies, $0.copiesLeft) })")
         let req = try env.request(format: "dc+sd-jwt")
         let p = try await w.startPresentation(request: req.link)
-        _ = try await p.respond()
+        _ = try await p.respond(selection: try await p.defaultSelection())
         let after = try await w.credentials()
         XCTAssertEqual(after.map(\.copiesLeft).sorted(), [2, 3])
     }
@@ -297,10 +306,10 @@ final class SessionTests: XCTestCase {
         let w = try wallet(env)
         let req = try env.request(format: "mso_mdoc")
         let p = try await w.startPresentation(request: req.link)
-        XCTAssertTrue(p.candidates.isEmpty)
+        XCTAssertFalse(p.isAnswerable)
         do {
-            _ = try await p.respond()
-            XCTFail("responded with nothing held")
+            _ = try await p.defaultSelection()
+            XCTFail("a selection with nothing held")
         } catch let e as WalletError {
             XCTAssertEqual(e.code, .noMatchingCredential)
         }

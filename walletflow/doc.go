@@ -34,9 +34,16 @@
 // and a presentation:
 //
 //	p, err := w.StartPresentation(ctx, requestLink) // show p.Verifier()
-//	candidates := p.Candidates()                    // holder chooses
-//	disclosed, err := p.Preview(ctx, chosen)        // holder consents
-//	presented, err := p.Respond(ctx, chosen)        // or p.Decline(ctx)
+//	queries, sets := p.Queries(), p.CredentialSets()
+//	sel := walletflow.Selection{"pid": {credentialID}} // the holder's (or app's) choice,
+//	                                                   // or start from p.DefaultSelection(ctx)
+//	disclosed, err := p.Preview(ctx, sel)              // holder consents
+//	presented, err := p.Respond(ctx, sel)              // or p.Decline(ctx)
+//
+// The wallet presents exactly the Selection, after checking it answers
+// the request (ErrInvalidSelection otherwise): which credential answers
+// which query, and which credential_sets option, are the application's
+// to decide.
 //
 // When an issuer offers batch issuance, a credential arrives as several
 // copies (Config.BatchSize), each bound to its own key, and each

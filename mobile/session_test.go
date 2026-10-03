@@ -186,14 +186,22 @@ func checkPresentation(t *testing.T, h harness, received []summary) string {
 	if v := decode[struct{ Name string }](t, p.Verifier()); v.Name == "" {
 		t.Errorf("Verifier = %s", p.Verifier())
 	}
-	cands := decode[struct {
+	req2 := decode[struct {
 		Queries []struct {
 			QueryID     string `json:"query_id"`
+			Multiple    bool
 			Credentials []summary
 		}
-	}](t, p.Candidates())
-	if len(cands.Queries) != 2 {
-		t.Fatalf("Candidates = %s", p.Candidates())
+		CredentialSets []struct {
+			Options  [][]string
+			Required bool
+		} `json:"credential_sets"`
+	}](t, p.Queries())
+	if len(req2.Queries) != 2 || req2.Queries[0].Multiple || len(req2.CredentialSets) != 1 || !req2.CredentialSets[0].Required {
+		t.Fatalf("Queries = %s", p.Queries())
+	}
+	if def := mustText(t)(p.DefaultSelection()); !strings.Contains(def, `"selection":{"`) {
+		t.Errorf("DefaultSelection = %s", def)
 	}
 	var sdjwt string
 	for _, c := range received {
@@ -201,7 +209,10 @@ func checkPresentation(t *testing.T, h harness, received []summary) string {
 			sdjwt = c.ID
 		}
 	}
-	chosen := `["` + sdjwt + `"]`
+	if _, err := p.Preview(`{"pid":["` + sdjwt + `","` + sdjwt + `"]}`); code(err) != CodeInvalidSelection {
+		t.Errorf("Preview with two for a query that takes one: %v", err)
+	}
+	chosen := `{"pid":["` + sdjwt + `"]}`
 	preview := mustText(t)(p.Preview(chosen))
 	if !strings.Contains(preview, `"claims":[["family_name"]]`) {
 		t.Errorf("Preview = %s", preview)
@@ -445,14 +456,17 @@ func TestSessions_DeclineAndNoMatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(p.Candidates(), `"queries":[]`) {
-		t.Errorf("Candidates with nothing held = %s", p.Candidates())
+	if !strings.Contains(p.Queries(), `"credentials":[]`) {
+		t.Errorf("Queries with nothing held = %s", p.Queries())
 	}
-	if _, err := p.Respond(NewOperation(0), ""); code(err) != CodeNoMatchingCredential {
-		t.Errorf("Respond: %v", err)
+	if _, err := p.DefaultSelection(); code(err) != CodeNoMatchingCredential {
+		t.Errorf("DefaultSelection: %v", err)
+	}
+	if _, err := p.Respond(NewOperation(0), `{"mdl":["no-such"]}`); code(err) != CodeInvalidSelection {
+		t.Errorf("Respond with an unknown credential: %v", err)
 	}
 	if _, err := p.Preview("not json"); code(err) != CodeInvalidInput {
-		t.Errorf("Preview with bad IDs: %v", err)
+		t.Errorf("Preview with a bad selection: %v", err)
 	}
 	if _, err := p.Decline(NewOperation(0)); err != nil {
 		t.Fatal(err)

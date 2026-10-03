@@ -72,7 +72,7 @@ func presentOnce(t *testing.T, f fixture, v testVerifier, w *walletflow.Wallet, 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := p.Respond(ctx, nil); err != nil {
+	if _, err := p.Respond(ctx, walletflow.Selection{"pid": {id}}); err != nil {
 		t.Fatal(err)
 	}
 	if view := v.Lookup(t, txID); len(view.Result.Credentials) != 1 {

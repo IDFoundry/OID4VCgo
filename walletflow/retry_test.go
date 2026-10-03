@@ -81,7 +81,7 @@ func faultyWallet(t *testing.T, f fixture, verifiers testVerifier, credentials w
 func TestRespond_DeliveryUnknown(t *testing.T) {
 	f, v, _ := presentationFixture(t)
 	w, ft := faultyWallet(t, f, v, nil)
-	receive(t, f, w, walletflowtest.SDJWTConfigurationID)
+	held := receive(t, f, w, walletflowtest.SDJWTConfigurationID)
 	ctx := context.Background()
 	_, link := v.Begin(t, dcql.Query{Credentials: []dcql.CredentialQuery{f.env.SDJWTQuery(t, "pid", "given_name")}})
 	p, err := w.StartPresentation(ctx, link)
@@ -89,10 +89,10 @@ func TestRespond_DeliveryUnknown(t *testing.T) {
 		t.Fatal(err)
 	}
 	ft.failNext("/response", 1, "")
-	if _, err := p.Respond(ctx, nil); !errors.Is(err, walletflow.ErrDeliveryUnknown) {
+	if _, err := p.Respond(ctx, walletflow.Selection{"pid": {held[0].ID}}); !errors.Is(err, walletflow.ErrDeliveryUnknown) {
 		t.Fatalf("Respond, failing in transit = %v, want ErrDeliveryUnknown", err)
 	}
-	if _, err := p.Respond(ctx, nil); !errors.Is(err, walletflow.ErrWrongStep) {
+	if _, err := p.Respond(ctx, walletflow.Selection{"pid": {held[0].ID}}); !errors.Is(err, walletflow.ErrWrongStep) {
 		t.Errorf("Respond again = %v, want ErrWrongStep", err)
 	}
 	if _, err := p.Decline(ctx); !errors.Is(err, walletflow.ErrWrongStep) {
@@ -115,7 +115,7 @@ func TestDecline_ResendsAfterATransportFailure(t *testing.T) {
 	if _, err := p.Decline(ctx); err == nil || errors.Is(err, walletflow.ErrWrongStep) {
 		t.Fatalf("Decline, failing in transit = %v", err)
 	}
-	if _, err := p.Respond(ctx, nil); !errors.Is(err, walletflow.ErrWrongStep) {
+	if _, err := p.Respond(ctx, walletflow.Selection{"pid": {"any"}}); !errors.Is(err, walletflow.ErrWrongStep) {
 		t.Errorf("Respond after declining = %v, want ErrWrongStep", err)
 	}
 	if _, err := p.Decline(ctx); err != nil {

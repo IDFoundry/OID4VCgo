@@ -126,10 +126,11 @@ final class WalletModel {
     private(set) var presentation: Presentation?
     private(set) var disclosures: [Presentation.Disclosure] = []
     var requestPhase: RequestPhase = .idle
-    var selected: Set<String> = []
+    /// The holder's choice: for each query, the credentials to answer it.
+    private(set) var selected: Presentation.Selection = [:]
     /// The selection `disclosures` was computed for: Share sends only a
     /// selection the holder has seen previewed.
-    private(set) var previewed: Set<String>?
+    private(set) var previewed: Presentation.Selection?
     /// Why the selection couldn't be previewed, if it couldn't.
     private(set) var previewError: String?
 
@@ -138,14 +139,14 @@ final class WalletModel {
         !selected.isEmpty && previewed == selected && previewError == nil && requestPhase == .shown
     }
 
-    /// Fetches and verifies a presentation request, and preselects the
-    /// first credential that can answer it.
+    /// Fetches and verifies a presentation request, and preselects what
+    /// the wallet would choose itself.
     func startPresentation(request link: String) async {
         guard let wallet else { return }
         do {
             let p = try await wallet.startPresentation(request: link)
             presentation = p
-            selected = p.candidates.first?.credentials.first.map { [$0.id] } ?? []
+            selected = (try? await p.defaultSelection()) ?? [:]
             requestPhase = .shown
             await updatePreview()
         } catch {
@@ -153,18 +154,23 @@ final class WalletModel {
         }
     }
 
-    /// Chooses credential `id` to answer `queryID`, or unchooses it. A
+    /// Whether credential `id` is chosen to answer `queryID`.
+    func isSelected(_ id: String, for queryID: String) -> Bool {
+        selected[queryID]?.contains(id) ?? false
+    }
+
+    /// Chooses credential `id` to answer `query`, or unchooses it. A
     /// query takes one credential unless it asks for several (DCQL
-    /// `multiple`, OpenID4VP 1.0 §6.1), which no request here does: so
-    /// choosing one unchooses the query's others.
-    func toggle(_ id: String, for queryID: String) async {
-        if selected.contains(id) {
-            selected.remove(id)
+    /// `multiple`, OpenID4VP 1.0 §6.1): then choosing one unchooses its
+    /// others.
+    func toggle(_ id: String, for query: Presentation.Query) async {
+        var chosen = selected[query.queryID] ?? []
+        if chosen.contains(id) {
+            chosen.removeAll { $0 == id }
         } else {
-            let others = presentation?.candidates.first { $0.queryID == queryID }?.credentials.map(\.id) ?? []
-            selected.subtract(others)
-            selected.insert(id)
+            chosen = query.multiple ? chosen + [id] : [id]
         }
+        selected[query.queryID] = chosen.isEmpty ? nil : chosen
         await updatePreview()
     }
 
@@ -177,7 +183,7 @@ final class WalletModel {
             return
         }
         do {
-            let result = try await presentation.preview(credentialIDs: Array(selection))
+            let result = try await presentation.preview(selection: selection)
             // A newer selection's preview supersedes this one.
             guard selection == selected else { return }
             disclosures = result
@@ -195,7 +201,7 @@ final class WalletModel {
         guard let presentation, canShare, let selection = previewed else { return }
         requestPhase = .sharing
         do {
-            let presented = try await presentation.respond(credentialIDs: Array(selection))
+            let presented = try await presentation.respond(selection: selection)
             phase = .done("Shared with \(presentation.verifier.name)")
             endPresentation()
             // A copy of each shared credential is used up.
@@ -224,7 +230,7 @@ final class WalletModel {
     private func endPresentation() {
         presentation = nil
         disclosures = []
-        selected = []
+        selected = [:]
         previewed = nil
         previewError = nil
         requestPhase = .idle

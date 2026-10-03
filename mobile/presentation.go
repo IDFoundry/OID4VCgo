@@ -10,8 +10,9 @@ import (
 )
 
 // Presentation answers one OpenID4VP Authorization Request
-// (walletflow.Presentation): show Verifier and Candidates, Preview the
-// holder's choice, then Respond or Decline.
+// (walletflow.Presentation): show Verifier and Queries, choose a
+// selection (or start from DefaultSelection), Preview it, then Respond
+// or Decline.
 type Presentation struct {
 	p *walletflow.Presentation
 }
@@ -40,51 +41,78 @@ func (p *Presentation) Verifier() string {
 	return text
 }
 
-type candidatesJSON struct {
+type queryJSON struct {
 	QueryID     string              `json:"query_id"`
+	Multiple    bool                `json:"multiple"`
 	Credentials []credentialSummary `json:"credentials"`
 }
 
-// Candidates returns {"abi", "queries": [{"query_id", "credentials":
-// [summary]}]}: for each of the request's credential queries the
-// wallet can answer, the credentials that can answer it. None means
-// Decline.
-func (p *Presentation) Candidates() string {
+type credentialSetJSON struct {
+	Options  [][]string `json:"options"`
+	Required bool       `json:"required"`
+}
+
+// Queries returns the request, for the app to choose what to present:
+// {"abi", "queries": [{"query_id", "multiple", "credentials":
+// [summary]}], "credential_sets": [{"options": [[query ID]],
+// "required"}]}. Each query is the request's, in its order, with the
+// credentials that can answer it (none when nothing can); multiple says
+// whether it takes more than one. credential_sets are its sets of
+// alternatives, each option the query IDs that together answer it, most
+// preferred first; none means every query must be answered.
+func (p *Presentation) Queries() string {
 	out := struct {
 		result
-		Queries []candidatesJSON `json:"queries"`
-	}{result: result{ABIVersion}, Queries: []candidatesJSON{}}
-	for _, c := range p.p.Candidates() {
-		out.Queries = append(out.Queries, candidatesJSON{QueryID: c.QueryID, Credentials: summariesOf(c.Credentials)})
+		Queries        []queryJSON         `json:"queries"`
+		CredentialSets []credentialSetJSON `json:"credential_sets"`
+	}{result: result{ABIVersion}, Queries: []queryJSON{}, CredentialSets: []credentialSetJSON{}}
+	for _, q := range p.p.Queries() {
+		out.Queries = append(out.Queries, queryJSON{QueryID: q.ID, Multiple: q.Multiple, Credentials: summariesOf(q.Credentials)})
+	}
+	for _, cs := range p.p.CredentialSets() {
+		out.CredentialSets = append(out.CredentialSets, credentialSetJSON{Options: cs.Options, Required: cs.Required})
 	}
 	text, _ := marshal(out)
 	return text
 }
 
-// credentialIDs parses a JSON array of credential IDs; "" or "null"
-// means nil: every candidate.
-func credentialIDs(idsJSON string) ([]string, error) {
-	if idsJSON == "" || idsJSON == "null" {
-		return nil, nil
+// DefaultSelection returns the selection the wallet would make itself,
+// for an app with no policy of its own, or to start from: {"abi",
+// "selection": {query ID: [credential ID]}}. A request the wallet can't
+// answer is no_matching_credential.
+func (p *Presentation) DefaultSelection() (string, error) {
+	sel, err := p.p.DefaultSelection(context.Background())
+	if err != nil {
+		return "", classify(err)
 	}
-	var ids []string
-	if err := json.Unmarshal([]byte(idsJSON), &ids); err != nil {
-		return nil, newError(CodeInvalidInput, fmt.Errorf("credential IDs: %w", err))
-	}
-	return ids, nil
+	return marshal(struct {
+		result
+		Selection walletflow.Selection `json:"selection"`
+	}{result{ABIVersion}, sel})
 }
 
-// Preview returns what responding with credentialIDsJSON (a JSON array
-// of IDs from Candidates; "" for the request's own choice) would
-// disclose: {"abi", "disclosures": [{"query_id", "credential_id",
-// "claims": [claim path]}]}, a claim path being a JSON array of keys
-// (and indexes, or null for every element).
-func (p *Presentation) Preview(credentialIDsJSON string) (string, error) {
-	ids, err := credentialIDs(credentialIDsJSON)
+// selection parses a selection: a JSON object of query ID → array of
+// credential IDs.
+func selection(selectionJSON string) (walletflow.Selection, error) {
+	var sel walletflow.Selection
+	if err := json.Unmarshal([]byte(selectionJSON), &sel); err != nil {
+		return nil, newError(CodeInvalidInput, fmt.Errorf("selection: %w", err))
+	}
+	return sel, nil
+}
+
+// Preview returns what responding with selectionJSON — {query ID:
+// [credential ID]}, the app's choice from Queries — would disclose:
+// {"abi", "disclosures": [{"query_id", "credential_id", "claims":
+// [claim path]}]}, a claim path being a JSON array of keys (and
+// indexes, or null for every element). A selection that doesn't answer
+// the request as it asks is invalid_selection.
+func (p *Presentation) Preview(selectionJSON string) (string, error) {
+	sel, err := selection(selectionJSON)
 	if err != nil {
 		return "", err
 	}
-	disclosed, err := p.p.Preview(context.Background(), ids)
+	disclosed, err := p.p.Preview(context.Background(), sel)
 	if err != nil {
 		return "", classify(err)
 	}
@@ -103,16 +131,16 @@ func (p *Presentation) Preview(credentialIDsJSON string) (string, error) {
 	return marshal(out)
 }
 
-// Respond presents credentialIDsJSON (as for Preview) — holder keys sign
-// here, so a KeyStore requiring user presence prompts now — and returns
-// {"abi", "query_ids", "redirect_uri"}: when redirect_uri is set, open
-// it in the browser.
-func (p *Presentation) Respond(op *Operation, credentialIDsJSON string) (string, error) {
-	ids, err := credentialIDs(credentialIDsJSON)
+// Respond presents exactly selectionJSON (as for Preview) — holder keys
+// sign here, so a KeyStore requiring user presence prompts now — and
+// returns {"abi", "query_ids", "redirect_uri"}: when redirect_uri is
+// set, open it in the browser.
+func (p *Presentation) Respond(op *Operation, selectionJSON string) (string, error) {
+	sel, err := selection(selectionJSON)
 	if err != nil {
 		return "", err
 	}
-	presented, err := p.p.Respond(op.context(), ids)
+	presented, err := p.p.Respond(op.context(), sel)
 	if err != nil {
 		return "", classify(err)
 	}
