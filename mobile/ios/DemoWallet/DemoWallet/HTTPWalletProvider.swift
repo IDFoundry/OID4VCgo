@@ -1,5 +1,5 @@
 import Foundation
-import OID4VCMobile
+import OID4VCWallet
 
 /// The Wallet Provider's backend, over the passport-vdc demo Wallet
 /// Provider's HTTP API: POST /wallet-attestation and /key-attestation,

@@ -1,6 +1,6 @@
 # XcodeGen spec for the demo wallet app: `xcodegen` regenerates
 # DemoWallet.xcodeproj from it (brew install xcodegen). The app links the
-# OID4VCMobile Swift package, which needs ../../build/Mobile.xcframework
+# OID4VCWallet Swift package, which needs ../../build/Mobile.xcframework
 # (../../build-xcframework.sh).
 name: DemoWallet
 options:
@@ -9,8 +9,8 @@ options:
     iOS: "17.0"
   createIntermediateGroups: true
 packages:
-  OID4VCMobile:
-    path: ../OID4VCMobile
+  OID4VCWallet:
+    path: ../OID4VCWallet
 settings:
   base:
     SWIFT_VERSION: "6.0"
@@ -23,7 +23,7 @@ targets:
     platform: iOS
     sources: [DemoWallet]
     dependencies:
-      - package: OID4VCMobile
+      - package: OID4VCWallet
     info:
       path: DemoWallet/Info.plist
       properties:

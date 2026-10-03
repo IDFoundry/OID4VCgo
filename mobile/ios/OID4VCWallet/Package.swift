@@ -10,12 +10,12 @@ let testBuild = Context.environment["OID4VC_TEST_FRAMEWORK"] == "1"
 let framework = testBuild ? "../../build/test/Mobile.xcframework" : "../../build/release/Mobile.xcframework"
 
 let package = Package(
-    name: "OID4VCMobile",
+    name: "OID4VCWallet",
     platforms: [.iOS(.v16), .macOS(.v13)],
-    products: [.library(name: "OID4VCMobile", targets: ["OID4VCMobile"])],
+    products: [.library(name: "OID4VCWallet", targets: ["OID4VCWallet"])],
     targets: [
         .binaryTarget(name: "Mobile", path: framework),
-        .target(name: "OID4VCMobile", dependencies: ["Mobile"]),
-        .testTarget(name: "OID4VCMobileTests", dependencies: ["OID4VCMobile", "Mobile"]),
+        .target(name: "OID4VCWallet", dependencies: ["Mobile"]),
+        .testTarget(name: "OID4VCWalletTests", dependencies: ["OID4VCWallet", "Mobile"]),
     ]
 )

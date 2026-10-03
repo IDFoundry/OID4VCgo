@@ -1,6 +1,6 @@
 import Foundation
 import XCTest
-@testable import OID4VCMobile
+@testable import OID4VCWallet
 
 final class FileCredentialStoreTests: XCTestCase {
     func store() throws -> FileCredentialStore {
