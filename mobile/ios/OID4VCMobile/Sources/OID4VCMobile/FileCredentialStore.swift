@@ -1,5 +1,4 @@
 import Foundation
-import Mobile
 
 /// A credential store of files: one per credential record, in a directory
 /// of the app's (Application Support, by default). Records are written
@@ -7,7 +6,7 @@ import Mobile
 /// while the device is unlocked — and kept out of backups by default,
 /// since a credential is useless without its holder key, which is in
 /// this device's Secure Enclave and can't be restored elsewhere.
-public final class FileCredentialStore: NSObject, MobileCredentialStoreProtocol, @unchecked Sendable {
+public final class FileCredentialStore: CredentialStore, @unchecked Sendable {
     public struct Options: Sendable {
         /// The data protection class of every record.
         public var protection: FileProtectionType
@@ -27,7 +26,6 @@ public final class FileCredentialStore: NSObject, MobileCredentialStoreProtocol,
     public init(directory: URL, options: Options = Options()) throws {
         self.directory = directory
         self.options = options
-        super.init()
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
                                                 attributes: [.protectionKey: options.protection])
         var dir = directory
@@ -42,9 +40,9 @@ public final class FileCredentialStore: NSObject, MobileCredentialStoreProtocol,
         return try FileCredentialStore(directory: base.appending(path: "credentials", directoryHint: .isDirectory), options: options)
     }
 
-    private func file(_ id: String?) throws -> URL {
-        guard let id, !id.isEmpty, id.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "_") }) else {
-            throw KeyStoreError("malformed credential ID")
+    private func file(_ id: String) throws -> URL {
+        guard !id.isEmpty, id.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "_") }) else {
+            throw StoreError("malformed credential ID")
         }
         return directory.appending(path: id + ".json")
     }
@@ -58,34 +56,33 @@ public final class FileCredentialStore: NSObject, MobileCredentialStoreProtocol,
         }
     }
 
-    public func put(_ id: String?, record: Data?) throws {
+    public func put(id: String, record: Data) throws {
         let url = try file(id)
         let options = writeOptions
-        try lock.withLock { try (record ?? Data()).write(to: url, options: options) }
+        try lock.withLock { try record.write(to: url, options: options) }
     }
 
-    public func get(_ id: String?) throws -> Data {
+    public func record(id: String) throws -> Data? {
         let url = try file(id)
         return try lock.withLock {
             do {
                 return try Data(contentsOf: url)
             } catch CocoaError.fileReadNoSuchFile {
-                return Data()
+                return nil
             }
         }
     }
 
-    public func list() throws -> Data {
+    public func records() throws -> [Data] {
         try lock.withLock {
-            let files = try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
+            try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
                 .filter { $0.pathExtension == "json" }
                 .sorted { $0.lastPathComponent < $1.lastPathComponent }
-            let records = try files.map { String(decoding: try Data(contentsOf: $0), as: UTF8.self) }
-            return Data(("[" + records.joined(separator: ",") + "]").utf8)
+                .map { try Data(contentsOf: $0) }
         }
     }
 
-    public func delete(_ id: String?) throws {
+    public func delete(id: String) throws {
         let url = try file(id)
         try lock.withLock {
             do {

@@ -34,15 +34,6 @@ final class TestEnv: Sendable {
     }
 }
 
-extension WalletConfiguration: Decodable {
-    public init(from decoder: Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        self.init(clientID: try c.decode(String.self, forKey: .clientID), redirectURI: try c.decode(String.self, forKey: .redirectURI),
-                  issuerRoots: try c.decode(String.self, forKey: .issuerRoots), verifierRoots: try c.decode(String.self, forKey: .verifierRoots),
-                  development: try c.decode(Bool.self, forKey: .development))
-    }
-}
-
 final class SessionTests: XCTestCase {
     /// A key store as the platform allows here: Secure Enclave keys on the
     /// Simulator, software keys on macOS; in memory either way.
@@ -55,8 +46,8 @@ final class SessionTests: XCTestCase {
     }
 
     func wallet(_ env: TestEnv, keys: KeychainKeyStore? = nil, store: InMemoryCredentialStore = InMemoryCredentialStore()) throws -> Wallet {
-        try Wallet(configuration: try env.configuration, keyStore: keys ?? keyStore(), credentialStore: store,
-                   provider: env.env.provider())
+        try Wallet(configuration: try env.configuration, keys: KeyStoreAdapter(keys ?? keyStore()),
+                   credentials: CredentialStoreAdapter(store), provider: env.env.provider())
     }
 
     static func receive(_ env: TestEnv, _ w: Wallet) async throws -> Issuance.Result {
@@ -135,8 +126,8 @@ final class SessionTests: XCTestCase {
         let dir = FileManager.default.temporaryDirectory.appending(path: "creds-\(UUID())", directoryHint: .isDirectory)
         defer { try? FileManager.default.removeItem(at: dir) }
         let keys = keyStore()
-        let first = try Wallet(configuration: try env.configuration, keyStore: keys,
-                               credentialStore: try FileCredentialStore(directory: dir), provider: env.env.provider())
+        let first = try Wallet(configuration: try env.configuration, keys: KeyStoreAdapter(keys),
+                               credentials: CredentialStoreAdapter(try FileCredentialStore(directory: dir)), provider: env.env.provider())
         let received = try await Self.receive(env, first)
         let second = try Wallet(configuration: try env.configuration, keyStore: keys,
                                 credentialStore: try FileCredentialStore(directory: dir), provider: nil)
@@ -247,5 +238,40 @@ final class SessionTests: XCTestCase {
         }
         let held = try await w.credentials()
         XCTAssertEqual(held.count, 8)
+    }
+
+    /// The sweep keeps the keys the wallet's credentials are bound to and
+    /// deletes the rest.
+    func testSweepOrphanedKeys() async throws {
+        let env = try TestEnv()
+        defer { env.close() }
+        let keys = keyStore()
+        let w = try wallet(env, keys: keys)
+        let received = try await Self.receive(env, w)
+        XCTAssertEqual(received.credentials.count, 2)
+        let stray = try keys.createKey(purpose: .dpop)
+        let swept = try await w.sweepOrphanedKeys(in: keys)
+        XCTAssertEqual(swept, 1)
+        XCTAssertNil(try keys.publicKey(id: stray))
+        let held = try await w.credentials()
+        XCTAssertTrue(held.allSatisfy { $0.holderKeyPresent == true }, "a credential's key was swept")
+    }
+
+    /// An issuance dropped without close() still deletes its keys.
+    func testDroppedIssuanceClosesItself() async throws {
+        let env = try TestEnv()
+        defer { env.close() }
+        let keys = keyStore()
+        let w = try wallet(env, keys: keys)
+        let offer = try OID4VC.call { env.env.authorizationCodeOffer($0) }
+        do {
+            let s = try await w.startIssuance(offer: offer)
+            _ = try await s.beginAuthorization()
+            XCTAssertEqual(try keys.keyIDs().count, 2, "the instance and DPoP keys")
+        }
+        for _ in 0..<50 where try keys.keyIDs().count > 0 {
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        XCTAssertEqual(try keys.keyIDs(), [])
     }
 }

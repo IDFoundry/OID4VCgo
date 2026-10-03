@@ -16,12 +16,15 @@ an in-process test issuer and Verifier (`TestEnv`) a shipped framework
 must not have:
 
 ```sh
-./build-xcframework.sh -tags mobiletest   # → build/Mobile.xcframework (test build)
-./build-xcframework.sh                    # the build an app ships
+./build-xcframework.sh -tags mobiletest   # → build/test/Mobile.xcframework
+./build-xcframework.sh                    # → build/release/Mobile.xcframework, the one an app ships
 cd ios/OID4VCMobile
-swift test                            # macOS slice
-xcodebuild test -scheme OID4VCMobile -destination 'platform=iOS Simulator,name=iPhone 16'
+OID4VC_TEST_FRAMEWORK=1 swift test        # macOS slice, against the test build
+OID4VC_TEST_FRAMEWORK=1 xcodebuild test -scheme OID4VCMobile -destination 'platform=iOS Simulator,name=iPhone 16'
 ```
+
+The package links the release build unless `OID4VC_TEST_FRAMEWORK=1`
+is set, and `OID4VC.isTestBuild` says which one an app has.
 
 The Go package's own tests run anywhere: `go test -tags mobiletest ./...`
 for the end-to-end session tests too.

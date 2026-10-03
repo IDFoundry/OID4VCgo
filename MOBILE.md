@@ -410,6 +410,39 @@ declines. When the Verifier returns a redirect, the app opens it.
   Simulator. Image claims (an SD-JWT VC's `picture` data URL, an mdoc's
   `portrait` bytes) show as images.
 
+### Swift SDK shape (after the 2026-10-03 review)
+
+- **Idiomatic callbacks:** an app implements the package's own
+  `KeyStore`, `CredentialStore` and `WalletProvider` protocols: throwing,
+  non-optional, with a `KeyPurpose` enum and nil for "none". Internal
+  adapters bridge them to gomobile's Objective-C protocols, so the
+  `NSError`-pointer special case for string results is gone from the
+  app's view.
+- **An async Wallet Provider:** `WalletProvider` is `async`. Go calls
+  it on its own thread and waits, and the adapter bridges the two. That's
+  safe because no Go call is made on the main thread.
+- **Structured errors (ABI version 2):** errors carry the remote party's
+  OAuth code, `[protocol:invalid_grant]` for a wrong PIN, checked to be a
+  plain token. `WalletError` adds `protocolError`, `isRetryable` (network
+  failures, a wrong PIN, `temporarily_unavailable`, `slow_down`) and a
+  user-facing `localizedDescription`. A malformed result from Go is a
+  `WalletError` too.
+- **Separate test build:** `build/test/` (with `TestEnv`) and
+  `build/release/` are built apart. The package links the test build
+  only with `OID4VC_TEST_FRAMEWORK=1`, and `OID4VC.isTestBuild` lets an
+  app refuse it.
+- **Orphaned keys:** `KeychainKeyStore` labels each key with its purpose
+  and can list and sweep the keys under its tag prefix.
+  `Wallet.sweepOrphanedKeys(in:)`, at launch, keeps the keys the
+  credentials are bound to (`HolderKeyIDs`) and deletes the rest. An
+  `Issuance` dropped without `close()` closes itself.
+- **Still open: distribution.** SwiftPM fetches a package only from a
+  `Package.swift` at the root of a git repository, with the framework as
+  a release asset (`binaryTarget(url:checksum:)`). That means either a
+  root-level `Package.swift` here, with a workflow publishing the
+  XCFramework on mobile releases, or a separate repository for the Swift
+  package.
+
 ## Decisions
 
 Taken 2026-10-02:

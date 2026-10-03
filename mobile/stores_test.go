@@ -104,3 +104,17 @@ func TestClassify_MalformedLink(t *testing.T) {
 		t.Errorf("classify = %v", err)
 	}
 }
+
+func TestErrorCode(t *testing.T) {
+	for in, want := range map[string]string{
+		"invalid_grant": "invalid_grant", "access_denied": "access_denied", "": "",
+		"invalid grant": "", "a]b": "", "x:y": "", strings.Repeat("a", 65): "",
+	} {
+		if got := errorCode(in); got != want {
+			t.Errorf("errorCode(%q) = %q, want %q", in, got, want)
+		}
+	}
+	if got := (&Error{Code: CodeProtocol, Detail: "invalid_grant", Message: "m"}).Error(); got != "[protocol:invalid_grant] m" {
+		t.Errorf("Error() = %q", got)
+	}
+}

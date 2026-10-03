@@ -151,6 +151,26 @@ func (w *Wallet) summary(c walletflow.StoredCredential) (credentialSummary, erro
 	return s, nil
 }
 
+// HolderKeyIDs returns {"abi", "key_ids": [...]}: the IDs of the holder
+// keys the wallet's credentials are bound to. Every other key in the
+// KeyStore belongs to an issuance in progress — or to none, left by one
+// that never closed — so an app sweeping orphaned keys at launch,
+// before any issuance, keeps these and may delete the rest.
+func (w *Wallet) HolderKeyIDs() (string, error) {
+	creds, err := w.w.Credentials(context.Background())
+	if err != nil {
+		return "", classify(err)
+	}
+	ids := make([]string, 0, len(creds))
+	for _, c := range creds {
+		ids = append(ids, c.HolderKeyID)
+	}
+	return marshal(struct {
+		result
+		KeyIDs []string `json:"key_ids"`
+	}{result{ABIVersion}, ids})
+}
+
 // DeleteCredential deletes the credential id names, and its holder key.
 func (w *Wallet) DeleteCredential(id string) error {
 	return classify(w.w.DeleteCredential(context.Background(), id))

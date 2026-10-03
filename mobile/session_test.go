@@ -163,6 +163,9 @@ func TestSessions_IssueThenPresent(t *testing.T) {
 	}
 
 	checkOrphan(t, h, received)
+	if !IsTestBuild() {
+		t.Error("IsTestBuild = false in the mobiletest build")
+	}
 }
 
 // checkPresentation presents the SD-JWT VC from received, chosen among
@@ -220,6 +223,17 @@ func checkPresentation(t *testing.T, h harness, received []summary) string {
 // checkClaims checks each received credential's claims, for display.
 func checkClaims(t *testing.T, h harness, received []summary) {
 	t.Helper()
+	keys := decode[struct {
+		KeyIDs []string `json:"key_ids"`
+	}](t, mustText(t)(h.w.HolderKeyIDs()))
+	if len(keys.KeyIDs) != len(received) {
+		t.Errorf("HolderKeyIDs = %v, want one per credential", keys.KeyIDs)
+	}
+	for _, id := range keys.KeyIDs {
+		if _, ok := h.keys.keys[id]; !ok {
+			t.Errorf("HolderKeyIDs lists %q, which the key store doesn't hold", id)
+		}
+	}
 	for _, c := range received {
 		detail := decode[struct {
 			ID               string
@@ -294,7 +308,7 @@ func TestSessions_PreAuthorizedCode(t *testing.T) {
 	if _, err := s.BeginAuthorization(NewOperation(0)); code(err) != CodeWrongStep {
 		t.Errorf("BeginAuthorization: %v", err)
 	}
-	if err := s.RedeemPreAuthorizedCode(NewOperation(0), "000000"); code(err) != CodeProtocol {
+	if err := s.RedeemPreAuthorizedCode(NewOperation(0), "000000"); code(err) != CodeProtocol || !strings.HasPrefix(err.Error(), "[protocol:invalid_grant] ") {
 		t.Errorf("a wrong PIN: %v", err)
 	}
 	if err := s.RedeemPreAuthorizedCode(NewOperation(0), "123456"); err != nil {

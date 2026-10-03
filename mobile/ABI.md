@@ -1,7 +1,7 @@
 # OID4VCgo mobile ABI
 
 The API the Go `mobile` package exposes through gomobile: version
-**1** (`ABIVersion`). The Swift package `ios/OID4VCMobile` wraps it in
+**2** (`ABIVersion`). The Swift package `ios/OID4VCMobile` wraps it in
 typed Swift (`Wallet`, `Issuance`, `Presentation`, `WalletError`); this
 document is the contract underneath, for the Swift wrapper, a future
 Kotlin one, or an app calling the framework directly.
@@ -15,9 +15,13 @@ format or error code below changes incompatibly.
   below, and the callback interfaces the app implements.
 - **JSON:** every JSON result is an object with `"abi"`, the version it
   was written for. Times are RFC 3339.
-- **Errors:** a failing call's error text is `[code] message`; the code
-  is stable, the message is for logs. A callback's error comes back to
-  the app as `platform`, carrying its message.
+- **Errors:** a failing call's error text is `[code] message`, or
+  `[code:detail] message` when the issuer, Authorization Server or
+  Verifier answered with an OAuth error code of its own (`detail`: for
+  example `invalid_grant`, which a wrong PIN gets). The code and detail
+  are stable; the message is for logs. A callback's error comes back to
+  the app as `platform`, carrying its message. (Version 1 had no
+  detail.)
 - **Threads:** every call blocks. Call from a background thread, never
   the main thread; callbacks run on the calling thread.
 - **Cancellation:** a call that waits on the network takes an
@@ -106,6 +110,7 @@ allows services on loopback addresses.
 | Method | Result |
 |---|---|
 | `Credentials()` | `{"credentials": [summary]}` |
+| `HolderKeyIDs()` | `{"key_ids": [...]}`: the keys the credentials are bound to; any other key in the KeyStore, at launch before any issuance, is an orphan to delete |
 | `Credential(id)` | summary with `"claims"`: an SD-JWT VC's claims, or an mdoc's namespace → element → value, byte strings in base64 |
 | `DeleteCredential(id)` | deletes it and its holder key |
 | `StartIssuance(op, offerURI)` | an `Issuance` |
@@ -161,9 +166,21 @@ keys, indexes, and `null` for every element. Holder keys sign during
 |---|---|
 | `ParseRequestLink(link)` | `{"client_id", "request_uri", "request_uri_method"}` |
 | `CheckKeyStore(store)` | `{"checked": [purposes]}` |
+| `IsTestBuild()` | whether the framework is the `mobiletest` build: an app should refuse to run on one |
 
 ## Test build
 
-Built with `-tags mobiletest`, the framework adds `StartTestEnv`: an
-in-process HAIP issuer, Wallet Provider and Verifier, for the Swift
-package's end-to-end tests. An app never ships that build.
+Built with `-tags mobiletest` (into `build/test/`, apart from the
+release build in `build/release/`), the framework adds `StartTestEnv`:
+an in-process HAIP issuer, Wallet Provider and Verifier, for the Swift
+package's end-to-end tests. `IsTestBuild` is true in it. An app never
+ships that build.
+
+## Swift
+
+The Swift package (`ios/OID4VCMobile`) doesn't expose these gomobile
+shapes: an app implements its own `KeyStore`, `CredentialStore` and
+`WalletProvider` protocols — throwing, non-optional, the provider
+`async` — which it adapts, and `WalletError` carries `code`,
+`protocolError`, `isRetryable` and a user-facing
+`localizedDescription`.

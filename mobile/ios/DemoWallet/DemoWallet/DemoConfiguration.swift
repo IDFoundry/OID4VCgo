@@ -25,19 +25,3 @@ struct DemoConfiguration: Codable, Sendable {
         return try? JSONDecoder().decode(DemoConfiguration.self, from: data)
     }
 }
-
-extension WalletConfiguration: @retroactive Decodable {
-    enum DecodingKeys: String, CodingKey {
-        case clientID = "client_id", redirectURI = "redirect_uri", issuerRoots = "issuer_roots"
-        case verifierRoots = "verifier_roots", development
-    }
-
-    public init(from decoder: Decoder) throws {
-        let c = try decoder.container(keyedBy: DecodingKeys.self)
-        self.init(clientID: try c.decode(String.self, forKey: .clientID),
-                  redirectURI: try c.decode(String.self, forKey: .redirectURI),
-                  issuerRoots: try c.decodeIfPresent(String.self, forKey: .issuerRoots) ?? "",
-                  verifierRoots: try c.decodeIfPresent(String.self, forKey: .verifierRoots) ?? "",
-                  development: try c.decodeIfPresent(Bool.self, forKey: .development) ?? false)
-    }
-}
