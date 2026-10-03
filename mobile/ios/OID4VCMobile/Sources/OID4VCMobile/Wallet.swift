@@ -139,10 +139,13 @@ public final class Wallet: @unchecked Sendable {
     /// before any issuance: an issuance in progress holds keys of its own.
     @discardableResult
     public func sweepOrphanedKeys(in keyStore: KeychainKeyStore) async throws -> Int {
-        struct Keys: Decodable { let key_ids: [String] }
+        struct Keys: Decodable {
+            let keyIDs: [String]
+            enum CodingKeys: String, CodingKey { case keyIDs = "key_ids" }
+        }
         let wallet = handle
         let json = try await OID4VC.offMain { try OID4VC.call { wallet.holderKeyIDs($0) } }
-        let keep = Set(try decode(Keys.self, json).key_ids)
+        let keep = Set(try decode(Keys.self, json).keyIDs)
         return try await OID4VC.offMain { try keyStore.deleteKeys(except: keep) }
     }
 
