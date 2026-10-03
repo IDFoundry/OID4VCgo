@@ -5,6 +5,7 @@ import (
 	"crypto"
 	"crypto/ecdsa"
 	"encoding/base64"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -368,12 +369,10 @@ func credentialSetsRoundTrip(t *testing.T, query dcql.Query, vpToken func(compac
 	})
 }
 
-// TestVerifyResponseCredentialSetsPrefersFirstSatisfiableOption
-// mirrors §6.4.2's own rule: given a Credential Set Query whose first
-// option's Credential Query has no Presentation in the response, the
-// second (least-preferred) option still verifies if its own
-// Presentation does.
-func TestVerifyResponseCredentialSetsPrefersFirstSatisfiableOption(t *testing.T) {
+// TestVerifyResponseCredentialSetsAcceptsAnyOneOption mirrors §6.4.2's
+// own rule: the Wallet answers one of a Credential Set Query's
+// options, so the second (least-preferred) one verifies on its own.
+func TestVerifyResponseCredentialSetsAcceptsAnyOneOption(t *testing.T) {
 	query := dcql.Query{
 		Credentials:    twoCredentialQueries(t, "primary", "secondary"),
 		CredentialSets: []dcql.CredentialSetQuery{{Options: [][]string{{"primary"}, {"secondary"}}}},
@@ -554,5 +553,56 @@ func TestVerifyResponseRequiresMaxKeyBindingAge(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("VerifyResponse = nil error, want error (max_key_binding_age unset while a query requires holder binding)")
+	}
+}
+
+// TestVerifyResponseRefusesWhatTheQueryDidntAsk: a response answering
+// two alternatives of a Credential Set Query ("presentations of a set
+// of Credentials that match to one of the options", §6.4.2), or a
+// Credential Query the query doesn't have, is refused — not verified
+// in part with the rest ignored.
+func TestVerifyResponseRefusesWhatTheQueryDidntAsk(t *testing.T) {
+	alternatives := dcql.Query{
+		Credentials:    twoCredentialQueries(t, "primary", "secondary"),
+		CredentialSets: []dcql.CredentialSetQuery{{Options: [][]string{{"primary"}, {"secondary"}}}},
+	}
+	plain := dcql.Query{Credentials: []dcql.CredentialQuery{vctCredentialQuery(t, "pid")}}
+	for name, tc := range map[string]struct {
+		query   dcql.Query
+		vpToken func(string) map[string][]string
+	}{
+		"both alternatives": {alternatives, func(c string) map[string][]string {
+			return map[string][]string{"primary": {c}, "secondary": {c}}
+		}},
+		"an unknown credential query beside a credential set's option": {alternatives, func(c string) map[string][]string {
+			return map[string][]string{"primary": {c}, "other": {c}}
+		}},
+		"an unknown credential query beside every query": {plain, func(c string) map[string][]string {
+			return map[string][]string{"pid": {c}, "other": {c}}
+		}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := credentialSetsRoundTrip(t, tc.query, tc.vpToken)
+			var verr *verifier.Error
+			if !errors.As(err, &verr) {
+				t.Fatalf("VerifyResponse = %v, want a *verifier.Error", err)
+			}
+		})
+	}
+}
+
+// TestVerifyResponseCredentialSetsNestedOptions: an option nested in
+// another (["a"] within ["a", "b"]) isn't an alternative to it, so
+// answering the larger one is answering one option.
+func TestVerifyResponseCredentialSetsNestedOptions(t *testing.T) {
+	query := dcql.Query{
+		Credentials:    twoCredentialQueries(t, "a", "b"),
+		CredentialSets: []dcql.CredentialSetQuery{{Options: [][]string{{"a"}, {"a", "b"}}}},
+	}
+	result, err := credentialSetsRoundTrip(t, query, func(compact string) map[string][]string {
+		return map[string][]string{"a": {compact}, "b": {compact}}
+	})
+	if err != nil || len(result.Credentials) != 2 {
+		t.Fatalf("VerifyResponse = %+v, %v; want both credentials", result, err)
 	}
 }

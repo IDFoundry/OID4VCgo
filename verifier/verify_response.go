@@ -221,19 +221,18 @@ type VerifyResponseResult struct {
 // (credential/mdoc.CheckKeyAuthorizations), and checks the result via
 // dcql.CredentialQuery.SatisfiedByMdocClaims.
 //
-// req.Query.CredentialSets implements §6.4.2's own "Selecting
-// Credentials" rule: when absent, every Credential Query in
-// req.Query.Credentials is required (one with no verifying
-// Presentation is a hard error). When present, only the Credential
-// Queries referenced by req.Query.CredentialSets are checked at all —
-// for each dcql.CredentialSetQuery, the first Options entry
-// (most-preferred first) whose every referenced Credential Query id
-// actually verifies wins; a required
-// (dcql.CredentialSetQuery.IsRequired) Credential Set with no
-// satisfiable option fails VerifyResponse entirely (per §6.4.2's own
-// "MUST NOT return any Credential(s)"), while an optional one is
-// silently omitted from VerifyResponseResult. A Credential Query not
-// referenced by any Credential Set Query is never checked.
+// The Credential Queries req.Response.VPToken answers must select
+// Credentials as §6.4.2's own "Selecting Credentials" rule asks
+// (dcql.Query.CheckAnswered), or VerifyResponse fails: every key is
+// one of req.Query's Credential Queries; without credential_sets,
+// every Credential Query is answered; with them, the answers make up
+// exactly one option of each dcql.CredentialSetQuery — none of an
+// optional one, and never two alternatives ("presentations of a set
+// of Credentials that match to one of the options") — and every
+// answered Credential Query belongs to an answered option. A
+// response is refused rather than partly ignored. Every answered
+// Credential Query is then verified, and a failure fails
+// VerifyResponse.
 //
 // VerifyResponse doesn't check revocation: each VerifiedCredential
 // carries its status reference (see VerifiedCredential.StatusListRef)
@@ -273,10 +272,25 @@ func (v *Verifier) VerifyResponse(ctx context.Context, req VerifyResponseRequest
 		}
 	}
 
-	if len(req.Query.CredentialSets) == 0 {
-		return v.verifyResponseWithoutCredentialSets(ctx, req)
+	answered := make(map[string]bool, len(req.Response.VPToken))
+	for id := range req.Response.VPToken {
+		answered[id] = true
 	}
-	return v.verifyResponseWithCredentialSets(ctx, req)
+	if err := req.Query.CheckAnswered(answered); err != nil {
+		return VerifyResponseResult{}, fmt.Errorf("verifier: verify response: %w", newError("the vp_token doesn't answer the query as it asks", err))
+	}
+	result := VerifyResponseResult{}
+	for _, cq := range req.Query.Credentials {
+		if !answered[cq.ID] {
+			continue
+		}
+		vcs, err := v.verifyCredentialQuery(ctx, cq, req)
+		if err != nil {
+			return VerifyResponseResult{}, fmt.Errorf("verifier: verify response: credential query %q: %w", cq.ID, err)
+		}
+		result.Credentials = append(result.Credentials, vcs...)
+	}
+	return result, nil
 }
 
 // checkMaxKeyBindingAgeRequired and checkTrustedAuthoritiesConfigured
@@ -322,77 +336,6 @@ func isUnverifiedAKIChecker(checker dcql.TrustedAuthoritiesChecker) bool {
 		return c == nil || c.Roots == nil
 	}
 	return false
-}
-
-// verifyResponseWithoutCredentialSets is VerifyResponse's own "no
-// credential_sets" path — every Credential Query is checked
-// unconditionally — split out purely to keep VerifyResponse under the
-// linter's own cognitive complexity ceiling.
-func (v *Verifier) verifyResponseWithoutCredentialSets(ctx context.Context, req VerifyResponseRequest) (VerifyResponseResult, error) {
-	result := VerifyResponseResult{}
-	for _, cq := range req.Query.Credentials {
-		vcs, err := v.verifyCredentialQuery(ctx, cq, req)
-		if err != nil {
-			return VerifyResponseResult{}, fmt.Errorf("verifier: verify response: credential query %q: %w", cq.ID, err)
-		}
-		result.Credentials = append(result.Credentials, vcs...)
-	}
-	return result, nil
-}
-
-// verifyResponseWithCredentialSets is VerifyResponse's own
-// "credential_sets present" path (§6.4.2) — split out purely to keep
-// VerifyResponse under the linter's own cognitive complexity ceiling.
-func (v *Verifier) verifyResponseWithCredentialSets(ctx context.Context, req VerifyResponseRequest) (VerifyResponseResult, error) {
-	byID := make(map[string]dcql.CredentialQuery, len(req.Query.Credentials))
-	for _, cq := range req.Query.Credentials {
-		byID[cq.ID] = cq
-	}
-	verified := make(map[string][]VerifiedCredential, len(req.Query.Credentials))
-	for _, cs := range req.Query.CredentialSets {
-		option, err := v.satisfiableCredentialSetOption(ctx, cs, byID, req)
-		if err != nil {
-			if cs.IsRequired() {
-				return VerifyResponseResult{}, fmt.Errorf("verifier: verify response: credential set: %w", err)
-			}
-			continue
-		}
-		for id, vcs := range option {
-			verified[id] = vcs
-		}
-	}
-	result := VerifyResponseResult{}
-	for _, cq := range req.Query.Credentials {
-		if vcs, ok := verified[cq.ID]; ok {
-			result.Credentials = append(result.Credentials, vcs...)
-		}
-	}
-	return result, nil
-}
-
-// satisfiableCredentialSetOption returns the VerifiedCredentials for
-// the first entry in cs.Options (most-preferred first, §6.4.2) whose
-// every referenced Credential Query id actually verifies, or an error
-// naming the last option's own failure if none does.
-func (v *Verifier) satisfiableCredentialSetOption(ctx context.Context, cs dcql.CredentialSetQuery, byID map[string]dcql.CredentialQuery, req VerifyResponseRequest) (map[string][]VerifiedCredential, error) {
-	var lastErr error
-	for _, option := range cs.Options {
-		verified := make(map[string][]VerifiedCredential, len(option))
-		satisfied := true
-		for _, id := range option {
-			vcs, err := v.verifyCredentialQuery(ctx, byID[id], req)
-			if err != nil {
-				satisfied = false
-				lastErr = fmt.Errorf("credential query %q: %w", id, err)
-				break
-			}
-			verified[id] = vcs
-		}
-		if satisfied {
-			return verified, nil
-		}
-	}
-	return nil, fmt.Errorf("no option is satisfied: %w", lastErr)
 }
 
 // verifyCredentialQuery locates cq's own Presentation(s) in
