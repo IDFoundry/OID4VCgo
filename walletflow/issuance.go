@@ -111,6 +111,9 @@ type Issuance struct {
 	// sessions is the client's SessionStore: it knows the state of the
 	// authorization in progress, to forget it.
 	sessions *sessionStore
+	// resumed is set for an issuance ResumeIssuance rebuilt: its client
+	// completes the authorization from the callback alone.
+	resumed  bool
 	resource wallet.ProtectedResourceClient
 	// accessToken and its expiry, if the Token Response gave one, are
 	// kept with each deferred credential.
@@ -393,10 +396,18 @@ func (s *Issuance) oauthClient(issuer fapi.URL, endpoints client.Endpoints, asUR
 		ClientAuthMethod:               storage.ClientAuthMethodAttestation,
 		AuthorizationResponseIssPolicy: client.RequireAuthorizationResponseIss,
 		// A pure OAuth client: no ID tokens or JARM, so no issuer keys.
-		OAuthOnly:  true,
-		Algorithms: client.Algorithms{DPoP: fapi.ES256, ClientAttestationPoP: fapi.ES256},
+		OAuthOnly: true,
+		// A resumed issuance has no session handle: the session is the
+		// callback's state, safe because the AuthorizationStore holds only
+		// this wallet's own authorizations. Every other issuance holds
+		// its handle, and keeps the stricter default.
+		CallbackBinding: callbackBinding(s.resumed),
+		Algorithms:      client.Algorithms{DPoP: fapi.ES256, ClientAttestationPoP: fapi.ES256},
 		Limits: client.Limits{
-			SessionLifetime: 10 * time.Minute, MaxClockSkew: 5 * time.Second,
+			// Short: an authorization pending in the store can be
+			// resumed (ResumeIssuance) until it expires, and the issuer
+			// bounds its own side at about this too.
+			SessionLifetime: 5 * time.Minute, MaxClockSkew: 5 * time.Second,
 			HTTPTimeout: httpTimeout, MaxHTTPResponseBytes: maxResponseBytes, MaxJOSECompactBytes: 16 * 1024,
 		},
 	}, client.Dependencies{
@@ -697,4 +708,14 @@ func (s *Issuance) Close(ctx context.Context) error {
 		return fmt.Errorf("walletflow: close issuance: %w", err)
 	}
 	return nil
+}
+
+// callbackBinding is how an issuance's client ties the callback to the
+// wallet: by its session handle, or for a resumed one by the callback's
+// own state in the wallet's own store.
+func callbackBinding(resumed bool) client.CallbackBinding {
+	if resumed {
+		return client.CallbackBindingDeviceLocalStore
+	}
+	return client.CallbackBindingSessionHandle
 }

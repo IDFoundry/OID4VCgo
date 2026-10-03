@@ -520,16 +520,21 @@ authentication session, through an eID or banking app, say.
   the redirect's `state`. It fetches the issuer's metadata again, loads
   the same keys, gets a fresh Wallet Attestation, and completes the
   authorization. A record is consumed once, under a lock, and expires
-  with the session (10 minutes). A redirect that matches nothing, is
-  replayed or has expired is `not_found`. The launch key sweep keeps an
+  with the session: 5 minutes, about what the issuer allows on its
+  side. A redirect that matches nothing, is replayed or has expired is
+  `not_found`. The launch key sweep keeps an
   unexpired authorization's keys and forgets expired ones.
-- **No session handle needed:** the store declares FAPIgo's
-  `SingleUserAgent`, since it holds only this wallet's own
-  authorizations. FAPIgo then takes the session from the callback
-  itself, so resuming doesn't depend on the handle being the `state`.
+- **No session handle needed:** the client a resumed issuance builds
+  sets FAPIgo's `Config.CallbackBinding` to
+  `CallbackBindingDeviceLocalStore`, so FAPIgo takes the session from
+  the callback itself (from the verified signed response, under Message
+  Signing). Resuming doesn't depend on the handle being the `state`.
+  Every other issuance holds its handle and keeps the default binding.
   RFC 9700 §4.7's binding of the session to the user agent holds by
   construction: nothing else writes the app's store, so an attacker's
-  session is never in it.
+  session is never in it. walletflow finds its own record by the
+  redirect's `state` query parameter, which is enough since it doesn't
+  use Message Signing.
 - **Production assurance:** FAPIgo's production checks need this store
   to be durable. walletflow at production assurance also needs a
   KeyStore that declares durable custody, and `crypto/rand.Reader`
