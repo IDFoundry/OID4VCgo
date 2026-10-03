@@ -162,6 +162,20 @@ final class DemoWalletUITests: XCTestCase {
         XCTAssertFalse(app.buttons["check-again"].exists, "it's still listed as pending")
     }
 
+    /// A pending credential survives the app quitting: relaunched, the
+    /// app resumes polling it, and receives it once approved.
+    @MainActor
+    func testDeferredSurvivesARelaunch() async throws {
+        let app = try await receiveDeferred()
+        app.terminate()
+        let relaunched = try await launch(reset: false)
+        XCTAssertTrue(relaunched.buttons["check-again"].waitForExistence(timeout: 20), "the pending credential wasn't resumed")
+        XCTAssertEqual(relaunched.descendants(matching: .any).matching(identifier: "credential").count, 0)
+        _ = try await Self.fetch("decide", query: [URLQueryItem(name: "approve", value: "1")], method: "POST")
+        let credential = relaunched.descendants(matching: .any).matching(identifier: "credential").firstMatch
+        XCTAssertTrue(credential.waitForExistence(timeout: 30), "the approved credential isn't listed")
+    }
+
     @MainActor
     func testDeferredDenied() async throws {
         let app = try await receiveDeferred()

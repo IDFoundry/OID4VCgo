@@ -161,27 +161,61 @@ final class SessionTests: XCTestCase {
         try await s.close()
     }
 
-    func testDeferred() async throws {
+    /// Deferred credentials survive the issuance closing and the app
+    /// relaunching: a new Wallet over the same stores lists and polls
+    /// them.
+    func testDeferredSurvivesARelaunch() async throws {
         let env = try TestEnv(deferIssuance: true)
         defer { env.close() }
-        let w = try wallet(env)
+        let keys = keyStore()
+        let store = InMemoryCredentialStore()
+        let w = try wallet(env, keys: keys, store: store)
         let offer = try OID4VC.call { env.env.authorizationCodeOffer($0) }
         let s = try await w.startIssuance(offer: offer)
         try await s.completeAuthorization(redirect: env.approve(try await s.beginAuthorization()))
         let result = try await s.requestCredentials()
         XCTAssertEqual(result.deferred.count, 2)
-        guard case .pending = try await s.pollDeferred(id: result.deferred[0].id) else { return XCTFail("issued before a decision") }
+        try await s.close()
+
+        let relaunched = try wallet(env, keys: keys, store: store)
+        let pending = try await relaunched.deferredCredentials()
+        XCTAssertEqual(pending.map(\.id), result.deferred.map(\.id))
+        XCTAssertEqual(pending.first?.configurationID, result.deferred.first?.configurationID)
+        let held = try await relaunched.credentials()
+        XCTAssertTrue(held.isEmpty, "pending ones listed as credentials")
+        let swept = try await relaunched.sweepOrphanedKeys(in: keys)
+        XCTAssertEqual(swept, 0, "the sweep deleted a pending credential's key")
+
+        guard case .pending = try await relaunched.pollDeferred(id: pending[0].id) else { return XCTFail("issued before a decision") }
         env.env.decide(true)
-        guard case .issued(let c) = try await s.pollDeferred(id: result.deferred[0].id) else { return XCTFail("still pending") }
+        guard case .issued(let c) = try await relaunched.pollDeferred(id: pending[0].id) else { return XCTFail("still pending") }
         XCTAssertFalse(c.id.isEmpty)
         env.env.decide(false)
         do {
-            _ = try await s.pollDeferred(id: result.deferred[1].id)
+            _ = try await relaunched.pollDeferred(id: pending[1].id)
             XCTFail("a denied credential")
         } catch let e as WalletError {
             XCTAssertEqual(e.code, .credentialDenied)
         }
+        let left = try await relaunched.deferredCredentials()
+        XCTAssertTrue(left.isEmpty)
+        XCTAssertEqual(try keys.keyIDs().count, 1, "only the issued credential's key is left")
+    }
+
+    func testAbandonDeferred() async throws {
+        let env = try TestEnv(deferIssuance: true)
+        defer { env.close() }
+        let keys = keyStore()
+        let w = try wallet(env, keys: keys)
+        let offer = try OID4VC.call { env.env.authorizationCodeOffer($0) }
+        let s = try await w.startIssuance(offer: offer)
+        try await s.completeAuthorization(redirect: env.approve(try await s.beginAuthorization()))
+        let result = try await s.requestCredentials()
         try await s.close()
+        for d in result.deferred { try await w.abandonDeferred(id: d.id) }
+        let left = try await w.deferredCredentials()
+        XCTAssertTrue(left.isEmpty)
+        XCTAssertEqual(try keys.keyIDs(), [])
     }
 
     func testDeclineWithNothingToPresent() async throws {

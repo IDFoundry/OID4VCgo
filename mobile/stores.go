@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/fxamacker/cbor/v2"
+	fapi "github.com/idfoundry/fapigo"
 
 	"github.com/idfoundry/oid4vcgo/attestation"
 	"github.com/idfoundry/oid4vcgo/walletflow"
@@ -150,6 +151,9 @@ func (s credentialStore) Get(_ context.Context, id string) (walletflow.StoredCre
 	if len(raw) == 0 {
 		return walletflow.StoredCredential{}, fmt.Errorf("mobile: credential %q: %w", id, walletflow.ErrNotFound)
 	}
+	if kindOf(raw) == deferredKind {
+		return walletflow.StoredCredential{}, fmt.Errorf("mobile: credential %q: %w", id, walletflow.ErrNotFound)
+	}
 	var r credentialRecord
 	if err := json.Unmarshal(raw, &r); err != nil {
 		return walletflow.StoredCredential{}, newError(CodePlatform, fmt.Errorf("credential %q's record: %w", id, err))
@@ -166,16 +170,20 @@ func (s credentialStore) Get(_ context.Context, id string) (walletflow.StoredCre
 }
 
 func (s credentialStore) List(context.Context) ([]walletflow.StoredCredential, error) {
-	raw, err := s.cs.List()
+	all, err := listRecords(s.cs)
 	if err != nil {
-		return nil, newError(CodePlatform, fmt.Errorf("list credentials: %w", err))
-	}
-	if len(raw) == 0 {
-		return nil, nil
+		return nil, err
 	}
 	var records []credentialRecord
-	if err := json.Unmarshal(raw, &records); err != nil {
-		return nil, newError(CodePlatform, fmt.Errorf("credential records: %w", err))
+	for _, raw := range all {
+		if kindOf(raw) == deferredKind {
+			continue
+		}
+		var r credentialRecord
+		if err := json.Unmarshal(raw, &r); err != nil {
+			return nil, newError(CodePlatform, fmt.Errorf("credential records: %w", err))
+		}
+		records = append(records, r)
 	}
 	out := make([]walletflow.StoredCredential, 0, len(records))
 	seen := make(map[string]bool, len(records))
@@ -196,6 +204,117 @@ func (s credentialStore) List(context.Context) ([]walletflow.StoredCredential, e
 func (s credentialStore) Delete(_ context.Context, id string) error {
 	if err := s.cs.Delete(id); err != nil {
 		return newError(CodePlatform, fmt.Errorf("delete credential %q: %w", id, err))
+	}
+	return nil
+}
+
+// listRecords returns every record in cs.
+func listRecords(cs CredentialStore) ([]json.RawMessage, error) {
+	raw, err := cs.List()
+	if err != nil {
+		return nil, newError(CodePlatform, fmt.Errorf("list credentials: %w", err))
+	}
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	var all []json.RawMessage
+	if err := json.Unmarshal(raw, &all); err != nil {
+		return nil, newError(CodePlatform, fmt.Errorf("credential records: %w", err))
+	}
+	return all, nil
+}
+
+// deferredKind marks a record that's a pending deferred credential, not
+// a credential: both are kept in the app's CredentialStore, under its
+// data protection.
+const deferredKind = "deferred"
+
+// kindOf is a record's "kind": "" for a credential.
+func kindOf(raw json.RawMessage) string {
+	var k struct {
+		Kind string `json:"kind"`
+	}
+	_ = json.Unmarshal(raw, &k)
+	return k.Kind
+}
+
+// deferredRecord is a pending deferred credential as the CredentialStore
+// keeps it, under the ID deferredStoreID gives it.
+type deferredRecord struct {
+	Kind                 string     `json:"kind"`
+	ID                   string     `json:"id"`
+	CredentialIssuer     string     `json:"credential_issuer"`
+	ConfigurationID      string     `json:"configuration_id"`
+	TransactionID        string     `json:"transaction_id"`
+	AccessToken          string     `json:"access_token"`
+	AccessTokenExpiresAt *time.Time `json:"access_token_expires_at,omitempty"`
+	DPoPKeyID            string     `json:"dpop_key_id"`
+	HolderKeyID          string     `json:"holder_key_id"`
+	IntervalSeconds      float64    `json:"interval_seconds"`
+	DeferredAt           time.Time  `json:"deferred_at"`
+}
+
+// deferredStoreID is the CredentialStore ID a pending deferred
+// credential is kept under.
+func deferredStoreID(id string) string { return "deferred-" + id }
+
+// deferredStore is a CredentialStore as a walletflow.DeferredStore.
+type deferredStore struct{ cs CredentialStore }
+
+var _ walletflow.DeferredStore = deferredStore{}
+
+func (s deferredStore) PutDeferred(_ context.Context, p walletflow.PendingDeferred) error {
+	r := deferredRecord{
+		Kind: deferredKind, ID: p.ID, CredentialIssuer: p.CredentialIssuer, ConfigurationID: p.ConfigurationID,
+		TransactionID: p.TransactionID, AccessToken: p.AccessToken.Reveal(),
+		DPoPKeyID: p.DPoPKeyID, HolderKeyID: p.HolderKeyID, IntervalSeconds: p.Interval.Seconds(), DeferredAt: p.DeferredAt,
+	}
+	if !p.AccessTokenExpiresAt.IsZero() {
+		r.AccessTokenExpiresAt = &p.AccessTokenExpiresAt
+	}
+	// The access token is kept deliberately, to poll after a relaunch:
+	// it's bound to a DPoP key that never leaves the KeyStore, and the
+	// record is under the platform's data protection.
+	raw, err := json.Marshal(r) //nolint:gosec // G117: see above
+	if err != nil {
+		return newError(CodeInternal, err)
+	}
+	if err := s.cs.Put(deferredStoreID(p.ID), raw); err != nil {
+		return newError(CodePlatform, fmt.Errorf("store deferred credential: %w", err))
+	}
+	return nil
+}
+
+func (s deferredStore) ListDeferred(context.Context) ([]walletflow.PendingDeferred, error) {
+	all, err := listRecords(s.cs)
+	if err != nil {
+		return nil, err
+	}
+	var out []walletflow.PendingDeferred
+	for _, raw := range all {
+		if kindOf(raw) != deferredKind {
+			continue
+		}
+		var r deferredRecord
+		if err := json.Unmarshal(raw, &r); err != nil || r.ID == "" {
+			return nil, newError(CodePlatform, errors.New("a deferred credential's record is malformed"))
+		}
+		p := walletflow.PendingDeferred{
+			ID: r.ID, CredentialIssuer: r.CredentialIssuer, ConfigurationID: r.ConfigurationID, TransactionID: r.TransactionID,
+			AccessToken: fapi.NewSecret(r.AccessToken), DPoPKeyID: r.DPoPKeyID, HolderKeyID: r.HolderKeyID,
+			Interval: time.Duration(r.IntervalSeconds * float64(time.Second)), DeferredAt: r.DeferredAt,
+		}
+		if r.AccessTokenExpiresAt != nil {
+			p.AccessTokenExpiresAt = *r.AccessTokenExpiresAt
+		}
+		out = append(out, p)
+	}
+	return out, nil
+}
+
+func (s deferredStore) DeleteDeferred(_ context.Context, id string) error {
+	if err := s.cs.Delete(deferredStoreID(id)); err != nil {
+		return newError(CodePlatform, fmt.Errorf("delete deferred credential: %w", err))
 	}
 	return nil
 }

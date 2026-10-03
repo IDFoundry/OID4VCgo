@@ -61,6 +61,32 @@ public struct CredentialSummary: Decodable, Equatable, Sendable {
     }
 }
 
+/// A credential an issuer will issue later (OpenID4VCI 1.0 §9). It's
+/// kept in the credential store until it's issued, denied or abandoned,
+/// so it survives the app quitting.
+public struct DeferredCredential: Decodable, Equatable, Sendable {
+    public let id: String
+    public let credentialIssuer: String
+    public let configurationID: String
+    /// How long the issuer asked the wallet to wait between polls.
+    public let intervalSeconds: Double
+    public let deferredAt: Date
+    /// When the access token it's polled with expires, if the issuer
+    /// said: after it, polls fail and it can only be abandoned.
+    public let accessTokenExpiresAt: Date?
+
+    enum CodingKeys: String, CodingKey {
+        case id, deferredAt = "deferred_at", accessTokenExpiresAt = "access_token_expires_at"
+        case credentialIssuer = "credential_issuer", configurationID = "configuration_id", intervalSeconds = "interval_seconds"
+    }
+}
+
+/// A deferred credential's state, from `Wallet.pollDeferred(id:)`.
+public enum DeferredStatus: Sendable, Equatable {
+    case pending(intervalSeconds: Double)
+    case issued(CredentialSummary)
+}
+
 /// A credential with its claims, for display.
 public struct CredentialDetail: Decodable, Sendable {
     public let summary: CredentialSummary
@@ -170,6 +196,39 @@ public final class Wallet: @unchecked Sendable {
         try await OID4VC.offMain { try OID4VC.wrap { try wallet.deleteCredential(id) } }
     }
 
+    /// The credentials issuers have deferred and not yet settled, oldest
+    /// first — including ones from before the app last quit. Makes no
+    /// network calls: poll each at its interval.
+    public func deferredCredentials() async throws -> [DeferredCredential] {
+        struct Result: Decodable { let deferred: [DeferredCredential] }
+        let wallet = handle
+        let json = try await OID4VC.offMain { try OID4VC.call { wallet.deferred($0) } }
+        return try decode(Result.self, json).deferred
+    }
+
+    /// Asks the issuer once about a deferred credential. A refused one
+    /// throws `.credentialDenied`, and is then no longer pending.
+    public func pollDeferred(id: String) async throws -> DeferredStatus {
+        struct Status: Decodable {
+            let status: String
+            let credential: CredentialSummary?
+            let intervalSeconds: Double
+            enum CodingKeys: String, CodingKey { case status, credential, intervalSeconds = "interval_seconds" }
+        }
+        let wallet = handle
+        let json = try await OID4VC.cancellable { op in try OID4VC.call { wallet.pollDeferred(op, deferredID: id, error: $0) } }
+        let s = try decode(Status.self, json)
+        if s.status == MobileDeferredIssued, let c = s.credential { return .issued(c) }
+        return .pending(intervalSeconds: s.intervalSeconds)
+    }
+
+    /// Gives up on a deferred credential — its access token has expired,
+    /// say, or the holder no longer wants it — deleting it and its keys.
+    public func abandonDeferred(id: String) async throws {
+        let wallet = handle
+        try await OID4VC.offMain { try OID4VC.wrap { try wallet.abandonDeferred(id) } }
+    }
+
     /// Resolves a Credential Offer (openid-credential-offer://…) and the
     /// issuer's metadata.
     public func startIssuance(offer: String) async throws -> Issuance {
@@ -258,16 +317,11 @@ public final class Issuance: @unchecked Sendable {
         try await OID4VC.cancellable { op in try OID4VC.wrap { try session.redeemPreAuthorizedCode(op, txCode: pin) } }
     }
 
-    public struct Deferred: Decodable, Sendable {
-        public let id: String
-        public let configurationID: String
-        public let intervalSeconds: Double
-        enum CodingKeys: String, CodingKey { case id, configurationID = "configuration_id", intervalSeconds = "interval_seconds" }
-    }
-
     public struct Result: Decodable, Sendable {
         public let credentials: [CredentialSummary]
-        public let deferred: [Deferred]
+        /// Credentials the issuer will issue later: poll them with
+        /// `Wallet.pollDeferred(id:)`, after `close()` and relaunches too.
+        public let deferred: [DeferredCredential]
     }
 
     /// Requests, checks and stores every offered credential.
@@ -277,28 +331,8 @@ public final class Issuance: @unchecked Sendable {
         return try decode(Result.self, json)
     }
 
-    public enum DeferredStatus: Sendable, Equatable {
-        case pending(intervalSeconds: Double)
-        case issued(CredentialSummary)
-    }
-
-    /// Asks the issuer once about a deferred credential. A refused one
-    /// throws `.credentialDenied`.
-    public func pollDeferred(id: String) async throws -> DeferredStatus {
-        struct Status: Decodable {
-            let status: String
-            let credential: CredentialSummary?
-            let intervalSeconds: Double
-            enum CodingKeys: String, CodingKey { case status, credential, intervalSeconds = "interval_seconds" }
-        }
-        let session = self.session
-        let json = try await OID4VC.cancellable { op in try OID4VC.call { session.pollDeferred(op, deferredID: id, error: $0) } }
-        let s = try decode(Status.self, json)
-        if s.status == MobileDeferredIssued, let c = s.credential { return .issued(c) }
-        return .pending(intervalSeconds: s.intervalSeconds)
-    }
-
-    /// Ends the issuance, deleting its keys.
+    /// Ends the issuance, deleting its keys but those its deferred
+    /// credentials still poll with.
     public func close() async throws {
         let session = self.session
         try await OID4VC.offMain { try OID4VC.wrap { try session.close() } }
