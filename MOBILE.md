@@ -215,7 +215,7 @@ networking.
 | 4 ✓ | OID4VCI slice | HAIP issuance from the iOS demo app against the passport-vdc issuer, with Key Attestations from the Wallet Provider |
 | 5 ✓ | Storage | The native credential store, with key references |
 | 6 ◐ | OID4VP slice | Request parsing, candidates, consent and presentation from the iOS demo app |
-| 7 ◐ | Hardening | Suspension and resumption (deferred credentials ✓, an authorization in progress ✓), cancellation, network failures, issuer and verifier errors, logging without personal data (errors ✓) |
+| 7 ◐ | Hardening | Suspension and resumption (deferred credentials ✓, an authorization in progress ✓), cancellation and network failures ✓, issuer and verifier errors ✓, logging without personal data (errors ✓), the demo app's retry and cancel |
 | 8 | Android | The same bridge over Android Keystore, packaged as an AAR |
 | 9 | DC API | A DC API adapter over the presentation engine |
 
@@ -558,6 +558,39 @@ the gomobile boundary is cleaned in one place, `classify`:
 
 The credential's claims, the PIN, tokens and codes were never in an
 error message.
+
+### Phase 7: cancellation, failures and retries
+
+Each step either can be retried safely, or says it can't:
+
+- **Authorization:** the redirect is used up once its `state` matches,
+  whatever fails after it, the token request say. The issuance then
+  goes back to `BeginAuthorization`, with the same keys, rather than
+  getting stuck.
+- **Credentials:** one credential the issuer refuses for good (an HTTP
+  4xx other than a stale nonce, token or DPoP proof), or that fails the
+  wallet's checks, is reported in `failed` and doesn't block the rest. A
+  retry requests only what's still outstanding.
+- **Deferred credentials:** a credential the issuer has handed over is
+  kept until the wallet has stored it. If storing fails, the next poll
+  stores it without asking the issuer again, which wouldn't hand it over
+  twice.
+- **Presentation:**
+  - A Respond that failed in transit, or got a Verifier's server error,
+    may have arrived. It's `delivery_unknown` and isn't sent again,
+    since a second response with the same nonce could present twice.
+  - A Decline that failed in transit is sent again, as is.
+- **Cancellation:**
+  - It reaches every HTTP request, through the Operation's context. A
+    Wallet Provider callback still waiting on the network no longer
+    holds up a cancelled call.
+  - Clean-up (deleting a key, settling a deferred credential) runs even
+    when the call was cancelled.
+  - A provider's `URLError` is a network failure, not a platform one.
+
+The protocol can't make some steps idempotent. A lost token or
+credential response leaves the issuer to decide whether a retry is
+refused (`invalid_grant`) or issues again.
 
 ## Open questions
 
