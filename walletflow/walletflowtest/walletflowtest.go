@@ -15,6 +15,7 @@
 package walletflowtest
 
 import (
+	"bytes"
 	"context"
 	"crypto"
 	"crypto/ecdsa"
@@ -26,6 +27,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
+	"image/color"
+	"image/jpeg"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -67,7 +71,9 @@ const (
 )
 
 // The credentials' claims: family_name and given_name, selectively
-// disclosable in the SD-JWT VC, and elements of NameSpace in the mdoc.
+// disclosable in the SD-JWT VC, and elements of NameSpace in the mdoc;
+// and a portrait, Portrait: the SD-JWT VC's picture, as a data: URL, and
+// the mdoc's portrait element.
 const (
 	FamilyName = "Doe"
 	GivenName  = "Jane"
@@ -337,13 +343,14 @@ func (e *Env) claims() (*sdjwtvc.Claims, *mdoc.Claims) {
 	exp := sdjwtvc.RoundedExp(time.Now(), 24*time.Hour)
 	sdjwtClaims := &sdjwtvc.Claims{VCT: e.vct, Exp: &exp, Additional: map[string]any{
 		"family_name": sdjwtvc.SD(FamilyName), "given_name": sdjwtvc.SD(GivenName),
+		"picture": sdjwtvc.SD("data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(Portrait)),
 	}}
 	// Within the document signer certificate's validity (newLeaf: an
 	// hour back, a day ahead).
 	signed := time.Now().UTC().Truncate(time.Second)
 	mdocClaims := &mdoc.Claims{
 		DocType: DocType, Signed: signed, ValidFrom: signed, ValidUntil: signed.Add(12 * time.Hour),
-		NameSpaces: map[string]map[string]any{NameSpace: {"family_name": FamilyName, "given_name": GivenName}},
+		NameSpaces: map[string]map[string]any{NameSpace: {"family_name": FamilyName, "given_name": GivenName, "portrait": Portrait}},
 	}
 	return sdjwtClaims, mdocClaims
 }
@@ -637,3 +644,18 @@ func newCertificate(tmpl, parent *x509.Certificate, pub *ecdsa.PublicKey, signer
 	must(err)
 	return cert
 }
+
+// Portrait is the credentials' portrait: a small JPEG.
+var Portrait = func() []byte {
+	img := image.NewRGBA(image.Rect(0, 0, 32, 40))
+	for y := range 40 {
+		for x := range 32 {
+			img.Set(x, y, color.RGBA{R: uint8(x * 8), G: uint8(y * 6), B: 160, A: 255})
+		}
+	}
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, img, nil); err != nil {
+		panic(err)
+	}
+	return buf.Bytes()
+}()
