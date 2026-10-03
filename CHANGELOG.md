@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.25.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.24.0...v0.25.0) (2026-10-03)
+
+
+### Features
+
+* **walletflow:** add session-oriented wallet orchestration ([32a522a](https://github.com/IDFoundry/OID4VCgo/commit/32a522a10593b875361a7a0ce94c92c768ea42b0))
+* **walletflow:** add walletflowtest, an in-process HAIP issuer for wallet tests ([39db564](https://github.com/IDFoundry/OID4VCgo/commit/39db5643cd25442213ac7e033f8abeef8467f5a0))
+* **wallet:** report an issued credential's expiry and status list ([20aca69](https://github.com/IDFoundry/OID4VCgo/commit/20aca691a0235d9f08880afdcf3f5a1e2c127ad9))
+
+
+### Bug Fixes
+
+* **deps:** pin FAPIgo v0.46.0 ([b1ed1d8](https://github.com/IDFoundry/OID4VCgo/commit/b1ed1d85c38247c58e307583258f5609e3de1bc3))
+* **verifier:** answer a Wallet's error response with 200 ([0bf23c2](https://github.com/IDFoundry/OID4VCgo/commit/0bf23c2e7d18dd985df57725976fec8f9f73f1ed))
+* **wallet:** add PlanPreAuthorizedCode, refusing an unlisted Authorization Server ([7b06ab8](https://github.com/IDFoundry/OID4VCgo/commit/7b06ab87b4ac533951a230959c46c50409c7be44))
+
 ## [0.24.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.23.0...v0.24.0) (2026-10-02)
 
 
@@ -37,7 +53,6 @@
 
 ### Bug Fixes
 
-* **examples:** require DPoP nonces at the passport-vdc Credential Issuer's endpoints ([3891efa](https://github.com/IDFoundry/OID4VCgo/commit/3891efac3e23c00035cf66f77c6835dd39f886e5))
 * **issuer:** bind a deferred transaction to the token's subject ([4d2da01](https://github.com/IDFoundry/OID4VCgo/commit/4d2da01f0a528548ada4a1786330b5f95604ee2b))
 * **issuer:** check a deferred poll before Resolve, and deny an unsent deferral ([c6151c0](https://github.com/IDFoundry/OID4VCgo/commit/c6151c00936e0910b5318e02807d3692807c79c7))
 * **statuslist:** close the gaps in Fetcher's address policy ([be802ec](https://github.com/IDFoundry/OID4VCgo/commit/be802ec7fdb9741bcf824f68988a239926cd87e4))
