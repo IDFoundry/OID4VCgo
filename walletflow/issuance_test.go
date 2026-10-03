@@ -142,6 +142,61 @@ func TestIssuance_AuthorizationCode(t *testing.T) {
 	}
 }
 
+// A wallet listening on a loopback port picked for the authorization
+// sends that port, and gets its redirect there; the token request names
+// the same redirect URI.
+func TestIssuance_LoopbackRedirectPort(t *testing.T) {
+	const loopback = "http://127.0.0.1/callback"
+	f := newFixture(t, walletflowtest.Options{RedirectURIs: []string{loopback}})
+	w, err := walletflow.New(walletflow.Config{
+		ClientID: walletflowtest.ClientID, RedirectURI: loopback, IssuerRoots: f.env.IssuerRoots, Development: true,
+	}, walletflow.Dependencies{Keys: f.keys, Credentials: f.store, Provider: f.env.Provider, HTTP: f.env.HTTP})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	s, err := w.StartIssuance(ctx, f.env.AuthorizationCodeOffer(t, walletflowtest.SDJWTConfigurationID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s.Close(ctx) }()
+	authURL, err := s.BeginAuthorizationWith(ctx, walletflow.AuthorizationOptions{RedirectPort: 49152})
+	if err != nil {
+		t.Fatal(err)
+	}
+	redirect, err := f.env.Approve(ctx, authURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(redirect, "http://127.0.0.1:49152/callback?") {
+		t.Fatalf("redirect %q isn't to the port asked for", redirect)
+	}
+	if err := s.CompleteAuthorization(ctx, redirect); err != nil {
+		t.Fatal(err)
+	}
+	result, err := s.RequestCredentials(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Credentials) == 0 {
+		t.Fatal("no credentials")
+	}
+}
+
+// RedirectPort needs a loopback redirect URI.
+func TestIssuance_RedirectPortNeedsLoopback(t *testing.T) {
+	f := newFixture(t, walletflowtest.Options{})
+	ctx := context.Background()
+	s, err := f.w.StartIssuance(ctx, f.env.AuthorizationCodeOffer(t, walletflowtest.SDJWTConfigurationID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s.Close(ctx) }()
+	if _, err := s.BeginAuthorizationWith(ctx, walletflow.AuthorizationOptions{RedirectPort: 49152}); err == nil {
+		t.Fatal("a port was sent with an https redirect URI")
+	}
+}
+
 func TestIssuance_PreAuthorizedCodeWithPIN(t *testing.T) {
 	f := newFixture(t, walletflowtest.Options{})
 	ctx := context.Background()
