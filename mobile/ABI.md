@@ -1,7 +1,7 @@
 # OID4VCgo mobile ABI
 
 The API the Go `mobile` package exposes through gomobile: version
-**4** (`ABIVersion`). The Swift package `ios/OID4VCWallet` wraps it in
+**5** (`ABIVersion`). The Swift package `ios/OID4VCWallet` wraps it in
 typed Swift (`Wallet`, `Issuance`, `Presentation`, `WalletError`); this
 document is the contract underneath, for the Swift wrapper, a future
 Kotlin one, or an app calling the framework directly.
@@ -43,6 +43,7 @@ format or error code below changes incompatibly.
 | `authorization_denied` | the Authorization Server refused, e.g. the holder declined |
 | `credential_denied` | the issuer refused a deferred credential |
 | `no_matching_credential` | nothing held answers the Verifier's request |
+| `delivery_unknown` | sending a presentation failed in a way that leaves it unknown whether the Verifier received it; it isn't sent again, which could present twice |
 | `protocol` | an issuer, Authorization Server or Verifier answered with an error, or with something the wallet refuses |
 | `internal` | a bug |
 
@@ -123,6 +124,11 @@ JWKs; the results are compact JWTs.
 | `WalletAttestation(clientID, instanceKeyJWK) → []byte` | binds the instance key to the wallet's client ID |
 | `KeyAttestation(keysJWK, nonce) → []byte` | `keysJWK` is a JSON array of JWKs; the attestation carries the issuer's nonce |
 
+These may wait on the network. A cancelled call returns without waiting
+for them. An error whose message starts with `[network]` is a network
+failure, reported as `network` (retryable); any other is `platform`.
+The Swift package's adapter marks a `URLError` this way.
+
 ## Wallet
 
 `NewWallet(configJSON, keys, credentials, provider)`:
@@ -169,9 +175,9 @@ Steps, in order: `Offer`; then `BeginAuthorization` and
 |---|---|
 | `Offer()` | `{"credential_issuer", "issuer_name", "grant", "tx_code": {"input_mode", "length", "description"}, "credentials": [{"configuration_id", "format", "vct", "doctype", "name"}]}` |
 | `BeginAuthorization(op)` | the authorization URL, to open in `ASWebAuthenticationSession` |
-| `CompleteAuthorization(op, redirect)` | the redirect back to `redirect_uri`, whole or just its query |
+| `CompleteAuthorization(op, redirect)` | the redirect back to `redirect_uri`, whole or just its query. It's used up whatever happens: after a failure, start again with `BeginAuthorization` |
 | `RedeemPreAuthorizedCode(op, txCode)` | the PIN, `""` if `tx_code` is absent; a wrong one is `protocol` and can be retried |
-| `RequestCredentials(op)` | `{"credentials": [summary], "deferred": [pending]}` |
+| `RequestCredentials(op)` | `{"credentials": [summary], "deferred": [pending], "failed": [{"configuration_id", "code", "detail"}]}`. A failed one was refused for good, or failed the wallet's checks, and doesn't hold up the rest; only when nothing was obtained is a refusal an error |
 | `Close()` | deletes the issuance's instance key, and its DPoP key unless a pending deferred credential still polls with it |
 
 A **pending** deferred credential is `{"id", "credential_issuer",
@@ -193,8 +199,8 @@ Steps: `Verifier` and `Candidates`; `Preview` the holder's choice; then
 | `Verifier()` | `{"client_id", "name", "response_uri"}` |
 | `Candidates()` | `{"queries": [{"query_id", "credentials": [summary]}]}`, empty when nothing held answers |
 | `Preview(idsJSON)` | `{"disclosures": [{"query_id", "credential_id", "claims": [path]}]}` |
-| `Respond(op, idsJSON)` | `{"query_ids", "redirect_uri"}` |
-| `Decline(op)` | `{"query_ids": [], "redirect_uri"}` |
+| `Respond(op, idsJSON)` | `{"query_ids", "redirect_uri"}`. A failure in transit, or a Verifier's server error, is `delivery_unknown`, and the presentation is then answered |
+| `Decline(op)` | `{"query_ids": [], "redirect_uri"}`. The refusal stands from the first call. If sending it failed in transit, call `Decline` again to send the same refusal |
 
 `idsJSON` is a JSON array of credential IDs from `Candidates`, or `""`
 to let the request's query choose. A claim **path** is a JSON array of

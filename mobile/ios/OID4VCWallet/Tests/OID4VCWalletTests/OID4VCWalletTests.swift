@@ -6,7 +6,7 @@ import XCTest
 
 final class OID4VCWalletTests: XCTestCase {
     func testABIVersion() {
-        XCTAssertEqual(OID4VC.abiVersion, 4)
+        XCTAssertEqual(OID4VC.abiVersion, 5)
         XCTAssertTrue(OID4VC.isTestBuild, "the tests run on the mobiletest build")
     }
 
@@ -48,6 +48,7 @@ final class OID4VCWalletTests: XCTestCase {
         XCTAssertTrue(parse("[unavailable] the issuer refused the request (HTTP 503)").isRetryable)
         XCTAssertTrue(parse("[protocol:invalid_nonce] stale").isRetryable)
         XCTAssertFalse(parse("[protocol:invalid_client] no").isRetryable)
+        XCTAssertFalse(parse("[delivery_unknown] maybe").isRetryable)
         XCTAssertFalse(parse("[credential_denied] no").isRetryable)
         let plain = parse("no code")
         XCTAssertEqual(plain.code, .internalError)
@@ -143,6 +144,15 @@ final class OID4VCWalletTests: XCTestCase {
         XCTAssertEqual(String(decoding: try adapter.keyAttestation(Data("[{\"a\":1},{\"b\":2}]".utf8), nonce: "n"), as: UTF8.self), "ka-2-n")
         XCTAssertThrowsError(try adapter.keyAttestation(Data("[]".utf8), nonce: "fail"))
         XCTAssertThrowsError(try adapter.keyAttestation(Data("{}".utf8), nonce: "n"), "keys that aren't an array")
+
+        // A provider's URLError reaches Go marked as a network failure.
+        struct Offline: WalletProvider {
+            func walletAttestation(clientID: String, instanceKey: Data) async throws -> String { throw URLError(.notConnectedToInternet) }
+            func keyAttestation(keys: [Data], nonce: String) async throws -> String { "" }
+        }
+        XCTAssertThrowsError(try WalletProviderAdapter(Offline()).walletAttestation("c", instanceKeyJWK: Data("{}".utf8))) { error in
+            XCTAssertTrue(error.localizedDescription.hasPrefix("[network] "), error.localizedDescription)
+        }
     }
 }
 

@@ -123,6 +123,14 @@ func (s *Issuance) RedeemPreAuthorizedCode(op *Operation, txCode string) error {
 	return classify(s.s.RedeemPreAuthorizedCode(op.context(), txCode))
 }
 
+// failedJSON is a credential the issuer refused, or that failed the
+// wallet's checks: its error's code and detail.
+type failedJSON struct {
+	ConfigurationID string `json:"configuration_id"`
+	Code            string `json:"code"`
+	Detail          string `json:"detail,omitempty"`
+}
+
 type deferredJSON struct {
 	ID                   string     `json:"id"`
 	CredentialIssuer     string     `json:"credential_issuer"`
@@ -145,7 +153,11 @@ func deferredOf(d *walletflow.Deferred) deferredJSON {
 
 // RequestCredentials requests, checks and stores every offered
 // credential, and returns {"abi", "credentials": [summary],
-// "deferred": [pending]}, each pending one as Wallet.Deferred lists it.
+// "deferred": [pending], "failed": [{"configuration_id", "code",
+// "detail"}]}, each pending one as Wallet.Deferred lists it. A failed one
+// was refused for good, or failed the wallet's checks: it doesn't hold
+// up the rest. Only when nothing at all was obtained is a refusal an
+// error.
 // Deferred credentials are kept in the CredentialStore and polled with
 // Wallet.PollDeferred, after Close too. If a request fails, call it
 // again: the retry requests only the credentials not yet obtained, and
@@ -160,11 +172,18 @@ func (s *Issuance) RequestCredentials(op *Operation) (string, error) {
 	for _, d := range received.Deferred {
 		deferred = append(deferred, deferredOf(d))
 	}
+	failed := make([]failedJSON, 0, len(received.Failed))
+	for _, f := range received.Failed {
+		var e *Error
+		_ = errors.As(classify(f.Err), &e)
+		failed = append(failed, failedJSON{ConfigurationID: f.ConfigurationID, Code: e.Code, Detail: e.Detail})
+	}
 	return marshal(struct {
 		result
 		Credentials []credentialSummary `json:"credentials"`
 		Deferred    []deferredJSON      `json:"deferred"`
-	}{result{ABIVersion}, summariesOf(received.Credentials), deferred})
+		Failed      []failedJSON        `json:"failed"`
+	}{result{ABIVersion}, summariesOf(received.Credentials), deferred, failed})
 }
 
 // Deferred credential statuses, in PollDeferred's result.

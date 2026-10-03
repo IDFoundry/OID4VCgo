@@ -23,6 +23,9 @@ public struct WalletError: Error, Equatable, CustomStringConvertible, LocalizedE
         public static let authorizationDenied = Code(rawValue: MobileCodeAuthorizationDenied)
         public static let credentialDenied = Code(rawValue: MobileCodeCredentialDenied)
         public static let noMatchingCredential = Code(rawValue: MobileCodeNoMatchingCredential)
+        /// Sending a presentation failed in a way that leaves it unknown
+        /// whether the Verifier received it: it's not sent again.
+        public static let deliveryUnknown = Code(rawValue: MobileCodeDeliveryUnknown)
         public static let protocolError = Code(rawValue: MobileCodeProtocol)
         public static let internalError = Code(rawValue: MobileCodeInternal)
     }
@@ -58,6 +61,7 @@ public struct WalletError: Error, Equatable, CustomStringConvertible, LocalizedE
         case .authorizationDenied: "The issuer didn't authorize the request."
         case .credentialDenied: "The issuer declined to issue the credential."
         case .noMatchingCredential: "You have no credential that answers this request."
+        case .deliveryUnknown: "Your response may not have reached the verifier. Check with them before sharing again."
         case .protocolError where protocolError == "invalid_grant": "That code or PIN wasn't accepted."
         case .protocolError: "The service refused the request."
         case .platform: "The wallet couldn't use its keys or storage."

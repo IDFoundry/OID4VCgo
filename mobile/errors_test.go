@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/idfoundry/oid4vcgo/wallet"
 	"github.com/idfoundry/oid4vcgo/walletflow"
@@ -81,5 +82,43 @@ func TestCleanText(t *testing.T) {
 	got := cleanText("see https://verifier.example/cb?response_code=abc#x and openid-credential-offer://?credential_offer=%7B%7D")
 	if got != "see https://verifier.example and openid-credential-offer://" {
 		t.Errorf("cleanText = %q", got)
+	}
+}
+
+func TestClassify_DeliveryUnknown(t *testing.T) {
+	err := fmt.Errorf("walletflow: respond: %w: %w", walletflow.ErrDeliveryUnknown, &url.Error{Op: "Post", URL: "https://verifier.example/r", Err: errors.New("reset")})
+	if code(classify(err)) != CodeDeliveryUnknown {
+		t.Errorf("classify = %v, want delivery_unknown, not the retryable network", classify(err))
+	}
+}
+
+// A Wallet Provider callback's network failure, marked by the Swift
+// adapter, is network; another failure is platform.
+func TestProviderError(t *testing.T) {
+	if got := providerError("wallet attestation", errors.New("[network] The Internet connection appears to be offline.")); code(got) != CodeNetwork {
+		t.Errorf("a marked network failure: %v", got)
+	}
+	if got := providerError("key attestation", errors.New("the Wallet Provider refused key-attestation")); code(got) != CodePlatform {
+		t.Errorf("a refusal: %v", got)
+	}
+	if got := providerError("key attestation", context.Canceled); !errors.Is(got, context.Canceled) {
+		t.Errorf("a cancellation: %v", got)
+	}
+}
+
+// A Wallet Provider callback still waiting on the network doesn't hold up
+// a cancelled operation.
+func TestCancellable(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	release := make(chan struct{})
+	defer close(release)
+	go func() { time.Sleep(10 * time.Millisecond); cancel() }()
+	start := time.Now()
+	_, err := cancellable(ctx, func() ([]byte, error) { <-release; return []byte("jwt"), nil })
+	if !errors.Is(err, context.Canceled) || time.Since(start) > 2*time.Second {
+		t.Errorf("cancellable = %v after %v", err, time.Since(start))
+	}
+	if jwt, err := cancellable(context.Background(), func() ([]byte, error) { return []byte("jwt"), nil }); err != nil || string(jwt) != "jwt" {
+		t.Errorf("cancellable, not cancelled = %q, %v", jwt, err)
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/fxamacker/cbor/v2"
@@ -433,14 +434,14 @@ type walletProvider struct{ p WalletProvider }
 
 var _ walletflow.WalletProvider = walletProvider{}
 
-func (w walletProvider) WalletAttestation(_ context.Context, clientID string, instanceKey crypto.PublicKey) (string, error) {
+func (w walletProvider) WalletAttestation(ctx context.Context, clientID string, instanceKey crypto.PublicKey) (string, error) {
 	jwk, err := attestation.AttestedKey(instanceKey)
 	if err != nil {
 		return "", newError(CodeInternal, err)
 	}
-	jwt, err := w.p.WalletAttestation(clientID, jwk)
+	jwt, err := cancellable(ctx, func() ([]byte, error) { return w.p.WalletAttestation(clientID, jwk) })
 	if err != nil {
-		return "", newError(CodePlatform, fmt.Errorf("wallet attestation: %w", err))
+		return "", providerError("wallet attestation", err)
 	}
 	if len(jwt) == 0 {
 		return "", newError(CodePlatform, errors.New("wallet attestation: none returned"))
@@ -448,7 +449,7 @@ func (w walletProvider) WalletAttestation(_ context.Context, clientID string, in
 	return string(jwt), nil
 }
 
-func (w walletProvider) KeyAttestation(_ context.Context, keys []*ecdsa.PublicKey, nonce string) (string, error) {
+func (w walletProvider) KeyAttestation(ctx context.Context, keys []*ecdsa.PublicKey, nonce string) (string, error) {
 	jwks := make([]json.RawMessage, 0, len(keys))
 	for _, k := range keys {
 		jwk, err := attestation.AttestedKey(k)
@@ -461,14 +462,53 @@ func (w walletProvider) KeyAttestation(_ context.Context, keys []*ecdsa.PublicKe
 	if err != nil {
 		return "", newError(CodeInternal, err)
 	}
-	jwt, err := w.p.KeyAttestation(raw, nonce)
+	jwt, err := cancellable(ctx, func() ([]byte, error) { return w.p.KeyAttestation(raw, nonce) })
 	if err != nil {
-		return "", newError(CodePlatform, fmt.Errorf("key attestation: %w", err))
+		return "", providerError("key attestation", err)
 	}
 	if len(jwt) == 0 {
 		return "", newError(CodePlatform, errors.New("key attestation: none returned"))
 	}
 	return string(jwt), nil
+}
+
+// cancellable runs a Wallet Provider callback, which may wait on the
+// network, and returns early when ctx is done: the callback carries on,
+// and its result is dropped.
+func cancellable(ctx context.Context, call func() ([]byte, error)) ([]byte, error) {
+	type answer struct {
+		jwt []byte
+		err error
+	}
+	done := make(chan answer, 1)
+	go func() {
+		jwt, err := call()
+		done <- answer{jwt, err}
+	}()
+	select {
+	case a := <-done:
+		return a.jwt, a.err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// networkPrefix starts the message of a Wallet Provider callback's error
+// for a network failure, so it's classified as one: the Swift package's
+// adapter marks a URLError so.
+const networkPrefix = "[network]"
+
+// providerError is a Wallet Provider callback's err doing what: a
+// cancellation as is, a network failure the callback marked as network,
+// anything else as platform.
+func providerError(what string, err error) error {
+	switch {
+	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		return err
+	case strings.HasPrefix(err.Error(), networkPrefix):
+		return newError(CodeNetwork, fmt.Errorf("%s: %s", what, strings.TrimSpace(strings.TrimPrefix(err.Error(), networkPrefix))))
+	}
+	return newError(CodePlatform, fmt.Errorf("%s: %w", what, err))
 }
 
 // jsonClaims makes claims JSON-safe: an mdoc's element values are

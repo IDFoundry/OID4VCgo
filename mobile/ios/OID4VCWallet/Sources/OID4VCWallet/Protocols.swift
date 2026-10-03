@@ -151,12 +151,20 @@ final class WalletProviderAdapter: NSObject, MobileWalletProviderProtocol, @unch
         return Data(try Self.wait { try await provider.keyAttestation(keys: keys, nonce: n) }.utf8)
     }
 
-    /// Runs `body` and blocks this (Go's) thread until it finishes.
+    /// Runs `body` and blocks this (Go's) thread until it finishes. A
+    /// URLError is marked as a network failure, which Go reports as
+    /// `.network` (retryable) rather than `.platform`.
     static func wait<T: Sendable>(_ body: @escaping @Sendable () async throws -> T) throws -> T {
         let done = DispatchSemaphore(value: 0)
         let box = ResultBox<T>()
         Task.detached {
-            do { box.set(.success(try await body())) } catch { box.set(.failure(error)) }
+            do {
+                box.set(.success(try await body()))
+            } catch let e as URLError {
+                box.set(.failure(StoreError("[network] " + e.localizedDescription)))
+            } catch {
+                box.set(.failure(error))
+            }
             done.signal()
         }
         done.wait()
