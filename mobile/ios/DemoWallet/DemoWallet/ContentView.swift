@@ -119,7 +119,7 @@ struct OfferView: View {
                         }
                     }
                     Section {
-                        Button(model.phase == .receiving ? "Receiving…" : model.offerError == nil ? "Receive" : "Try again") {
+                        Button(receiveLabel) {
                             model.startReceive(authorize: authorize)
                         }
                         .disabled(model.phase == .receiving)
@@ -130,6 +130,11 @@ struct OfferView: View {
             .navigationTitle("Credential offer")
             .toolbar { Button("Cancel") { Task { await model.cancelOffer() } } }
         }
+    }
+
+    private var receiveLabel: String {
+        if model.phase == .receiving { return "Receiving…" }
+        return model.offerError == nil ? "Receive" : "Try again"
     }
 
     /// Opens the issuer's authorization page in an ephemeral session (no
