@@ -67,6 +67,9 @@ type Presentation struct {
 
 	mu       sync.Mutex
 	answered bool
+	// declined is the holder's refusal, built once: sent again, as is,
+	// when sending it failed in transit.
+	declined string
 }
 
 // StartPresentation fetches and verifies the OpenID4VP Authorization
@@ -180,7 +183,7 @@ func (p *Presentation) Preview(ctx context.Context, credentialIDs []string) ([]D
 func (p *Presentation) Respond(ctx context.Context, credentialIDs []string) (Presented, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.answered {
+	if p.answered || p.declined != "" {
 		return Presented{}, ErrWrongStep
 	}
 	held, err := p.chosen(ctx, credentialIDs, true)
@@ -188,6 +191,12 @@ func (p *Presentation) Respond(ctx context.Context, credentialIDs []string) (Pre
 		return Presented{}, err
 	}
 	responded, err := wallet.Respond(ctx, p.w.deps.HTTP, p.req, held, trustedAuthorities)
+	if err != nil && deliveryUnknown(err) {
+		// The Verifier may have it: sending again could present twice,
+		// with the same nonce.
+		p.answered = true
+		return Presented{}, fmt.Errorf("walletflow: respond: %w: %w", ErrDeliveryUnknown, err)
+	}
 	if err != nil {
 		return Presented{}, fmt.Errorf("walletflow: respond: %w", err)
 	}
@@ -201,25 +210,34 @@ func (p *Presentation) Respond(ctx context.Context, credentialIDs []string) (Pre
 }
 
 // Decline tells the Verifier the holder declined (access_denied, in an
-// encrypted direct_post.jwt error response). An error from the Verifier
-// is returned, but the Presentation is answered all the same: the
-// holder's refusal stands.
+// encrypted direct_post.jwt error response). The refusal stands from the
+// first call: Respond is refused after it. If sending it failed in
+// transit, Decline can be called again to send the same refusal; an
+// error the Verifier answered with is returned, and the Presentation is
+// answered all the same.
 func (p *Presentation) Decline(ctx context.Context) (Presented, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.answered {
 		return Presented{}, ErrWrongStep
 	}
-	responseJWE, err := wallet.BuildDirectPostErrorResponse(wallet.BuildDirectPostErrorResponseParams{
-		Error: "access_denied", ErrorDescription: "the holder declined", State: p.req.State,
-		EncryptionKey: p.req.ResponseEncryptionKey, EncryptionKeyID: p.req.ResponseEncryptionKeyID,
-		EncryptionEnc: p.req.ResponseEncryptionEnc,
-	})
-	if err != nil {
+	if p.declined == "" {
+		responseJWE, err := wallet.BuildDirectPostErrorResponse(wallet.BuildDirectPostErrorResponseParams{
+			Error: "access_denied", ErrorDescription: "the holder declined", State: p.req.State,
+			EncryptionKey: p.req.ResponseEncryptionKey, EncryptionKeyID: p.req.ResponseEncryptionKeyID,
+			EncryptionEnc: p.req.ResponseEncryptionEnc,
+		})
+		if err != nil {
+			return Presented{}, fmt.Errorf("walletflow: decline: %w", err)
+		}
+		p.declined = responseJWE
+	}
+	reply, err := wallet.SubmitDirectPostResponse(ctx, p.w.deps.HTTP, p.req.ResponseURI, p.declined)
+	if err != nil && deliveryUnknown(err) {
+		// Not known to have arrived: Decline may send it again.
 		return Presented{}, fmt.Errorf("walletflow: decline: %w", err)
 	}
 	p.answered = true
-	reply, err := wallet.SubmitDirectPostResponse(ctx, p.w.deps.HTTP, p.req.ResponseURI, responseJWE)
 	if err != nil {
 		return Presented{}, fmt.Errorf("walletflow: decline: %w", err)
 	}
