@@ -637,6 +637,39 @@ What a wallet's UI needs to show a credential, from the SDK:
     demand from a credential's page. Its cards show the issuer's colours
     and logo, the expiry, and a revocation.
 
+### Batch issuance and unlinkability
+
+A credential presented twice is the same signature and the same key,
+so two Verifiers, or one Verifier twice, can link the presentations. An
+issuer offering batches (OID4VCI 1.0 `batch_credential_issuance`) issues
+several copies with the same claims, each bound to its own key.
+SD-JWT copies also have their own salts, and mdoc copies their own
+MSOs.
+
+- **Requesting a batch:**
+  - The wallet asks for `Config.BatchSize` copies (5 by default, capped
+    at the issuer's `batch_size`).
+  - It creates one holder key per copy, and has the Wallet Provider
+    attest them all in one Key Attestation. The issuer binds one copy to
+    each key.
+  - The wallet checks every copy and matches it to its key. One copy
+    failing the checks fails the batch.
+- **Storing it:** as one credential with `Copies`. The claims are kept
+  once, and the first copy also fills the existing single-copy fields,
+  so code that reads one credential is unchanged.
+- **Presenting:** each presentation uses a copy no Verifier has seen,
+  and marks it presented once sent, or once its delivery is unknown.
+  When every copy has been presented, one is reused. The app can tell
+  from `copies_left`, and the demo warns then.
+- **Keys:** a deferred batch keeps every copy's key, deleting a
+  credential deletes them all, and the launch sweep keeps them.
+- **Not yet:** asking the issuer for fresh copies once they run out,
+  which needs a refresh grant.
+- **Configuration:** the passport-vdc issuer and the demo's test
+  services issue batches of three. The passport-vdc browser and CLI
+  wallets ask for one copy, because their file store holds one key per
+  credential.
+
 ## Open questions
 
 - The Wallet Provider's production design (App Attest verification, key
