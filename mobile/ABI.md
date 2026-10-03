@@ -1,7 +1,7 @@
 # OID4VCgo mobile ABI
 
 The API the Go `mobile` package exposes through gomobile: version
-**2** (`ABIVersion`). The Swift package `ios/OID4VCWallet` wraps it in
+**3** (`ABIVersion`). The Swift package `ios/OID4VCWallet` wraps it in
 typed Swift (`Wallet`, `Issuance`, `Presentation`, `WalletError`); this
 document is the contract underneath, for the Swift wrapper, a future
 Kotlin one, or an app calling the framework directly.
@@ -79,9 +79,19 @@ Opaque records kept by ID, under the platform's data protection.
 A record is JSON the app needn't read: `id`, `credential_issuer`,
 `configuration_id`, `format`, `vct`, `doctype`, `credential`,
 `holder_key_id`, `received_at`, and `claims` (absent from a record
-written before claims were kept). The Swift package's
-`FileCredentialStore` keeps records as files with complete data
-protection, excluded from backups.
+written before claims were kept).
+
+The store also keeps each **pending deferred credential**, under the ID
+`deferred-<id>`, as a record with `"kind": "deferred"`. The record holds
+what polling it after a relaunch needs: the issuer, the configuration,
+the transaction ID, the access token and its expiry, the DPoP and holder
+key IDs, the interval, and when it was deferred. The access token is
+bound to the DPoP key, which never leaves the KeyStore. A store keeps
+these records like any other; `List` returns them too, and Go tells them
+apart.
+
+The Swift package's `FileCredentialStore` keeps records as files with
+complete data protection, excluded from backups.
 
 ### WalletProvider
 
@@ -110,7 +120,10 @@ allows services on loopback addresses.
 | Method | Result |
 |---|---|
 | `Credentials()` | `{"credentials": [summary]}` |
-| `HolderKeyIDs()` | `{"key_ids": [...]}`: the keys the credentials are bound to; any other key in the KeyStore, at launch before any issuance, is an orphan to delete |
+| `HolderKeyIDs()` | `{"key_ids": [...]}`: the keys the wallet still needs: the credentials' holder keys, and each pending deferred credential's holder and DPoP keys. Any other key in the KeyStore, at launch before any issuance, is an orphan to delete |
+| `Deferred()` | `{"deferred": [pending]}`: the credentials issuers have deferred and not yet settled, oldest first, including ones from before the app last quit. No network calls |
+| `PollDeferred(op, deferredID)` | `{"status": "pending" \| "issued", "credential": summary, "interval_seconds"}`; a refusal is `credential_denied`, and is then no longer pending. The first poll after a relaunch fetches the issuer's metadata |
+| `AbandonDeferred(deferredID)` | deletes a pending one and its keys, for example after its access token has expired |
 | `Credential(id)` | summary with `"claims"`: an SD-JWT VC's claims, or an mdoc's namespace → element → value, byte strings in base64 |
 | `DeleteCredential(id)` | deletes it and its holder key |
 | `StartIssuance(op, offerURI)` | an `Issuance` |
@@ -128,8 +141,8 @@ another device, so it can't be presented. It's set by `Credentials` and
 Steps, in order: `Offer`; then `BeginAuthorization` and
 `CompleteAuthorization` (`grant` `authorization_code`), or
 `RedeemPreAuthorizedCode` (`grant` `pre-authorized_code`); then
-`RequestCredentials`; `PollDeferred` for each deferred credential;
-`Close`.
+`RequestCredentials`; `Close`. A deferred credential is polled from the
+`Wallet` (`PollDeferred`): it outlives `Close`, and the app quitting.
 
 | Method | Result |
 |---|---|
@@ -137,9 +150,17 @@ Steps, in order: `Offer`; then `BeginAuthorization` and
 | `BeginAuthorization(op)` | the authorization URL, to open in `ASWebAuthenticationSession` |
 | `CompleteAuthorization(op, redirect)` | the redirect back to `redirect_uri`, whole or just its query |
 | `RedeemPreAuthorizedCode(op, txCode)` | the PIN, `""` if `tx_code` is absent; a wrong one is `protocol` and can be retried |
-| `RequestCredentials(op)` | `{"credentials": [summary], "deferred": [{"id", "configuration_id", "interval_seconds"}]}` |
-| `PollDeferred(op, id)` | `{"status": "pending" \| "issued", "credential": summary, "interval_seconds"}` |
-| `Close()` | deletes the issuance's instance and DPoP keys; deferred credentials can't be polled after |
+| `RequestCredentials(op)` | `{"credentials": [summary], "deferred": [pending]}` |
+| `Close()` | deletes the issuance's instance key, and its DPoP key unless a pending deferred credential still polls with it |
+
+A **pending** deferred credential is `{"id", "credential_issuer",
+"configuration_id", "interval_seconds", "deferred_at",
+"access_token_expires_at"}`. `access_token_expires_at` is present only
+when the issuer gave the token a lifetime; once it has passed, polls
+fail and the credential can only be abandoned.
+
+ABI version 3 moved `PollDeferred` from the `Issuance` to the `Wallet`,
+and added `Deferred` and `AbandonDeferred`.
 
 ## Presentation
 
