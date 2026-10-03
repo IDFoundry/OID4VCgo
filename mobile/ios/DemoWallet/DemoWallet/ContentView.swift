@@ -15,6 +15,11 @@ struct ContentView: View {
                     }
                 }
                 status
+                if !model.pending.isEmpty {
+                    Section("Waiting for the issuer") {
+                        ForEach(model.pending) { p in PendingRow(pending: p) }
+                    }
+                }
                 Section("Credentials") {
                     if model.credentials.isEmpty {
                         Text("No credentials yet").foregroundStyle(.secondary)
@@ -262,5 +267,42 @@ struct RequestView: View {
             case .all: "*"
             }
         }.joined(separator: " · ")
+    }
+}
+
+/// A deferred credential: what it's waiting for, and a way to ask now.
+struct PendingRow: View {
+    @Environment(WalletModel.self) private var model
+    let pending: WalletModel.PendingCredential
+
+    var body: some View {
+        HStack {
+            VStack(alignment: .leading) {
+                Text(pending.configurationID).font(.headline)
+                    .accessibilityIdentifier("pending")
+                Text(detail).font(.caption).foregroundStyle(pending.state == .denied ? .red : .secondary)
+                    .accessibilityIdentifier("pending-state")
+            }
+            Spacer()
+            if pending.state == .denied {
+                Button("Dismiss") { Task { await model.dismiss(pending.id) } }
+                    .buttonStyle(.bordered)
+                    .accessibilityIdentifier("dismiss")
+            } else {
+                Button("Check again") { Task { await model.checkAgain(pending.id) } }
+                    .buttonStyle(.bordered)
+                    .disabled(pending.state == .checking)
+                    .accessibilityIdentifier("check-again")
+            }
+        }
+    }
+
+    private var detail: String {
+        switch pending.state {
+        case .waiting: "The issuer is reviewing it · checking every \(Int(max(pending.intervalSeconds, 1))) s"
+        case .checking: "Checking…"
+        case .denied: "Denied by the issuer"
+        case .failed(let message): "Couldn't check: \(message)"
+        }
     }
 }
