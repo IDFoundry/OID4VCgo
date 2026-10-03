@@ -234,8 +234,9 @@ The wallet presents exactly it, after checking it answers the request,
 and returns `invalid_selection` otherwise: an unknown query or
 credential, a credential that doesn't answer its query, more than one
 for a query whose `multiple` is false (OpenID4VP 1.0 §6.1), a required
-credential set with no option fully selected, or a query selected
-outside any fully selected option (§6.4.2). Each credential's next
+credential set with no option fully selected, two alternative options
+of one set selected, or a query selected outside any fully selected
+option (§6.4.2). Each credential's next
 unused copy is presented. A claim **path** is a JSON array of keys,
 indexes, and `null` for every element. Holder keys sign during
 `Respond`, so a key store requiring user presence prompts then. When

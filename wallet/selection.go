@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
 	"sort"
 
 	"github.com/idfoundry/fapigo/fapihttp"
@@ -27,9 +26,10 @@ var ErrInvalidSelection = errors.New("wallet: the selection doesn't answer the q
 //     trusted_authorities);
 //   - more than one credential only for a query whose multiple is true
 //     (§6.1);
-//   - without credential_sets, every query is answered; with them, each
-//     required set has one option fully answered, and every answered
-//     query belongs to a fully answered option (§6.4.2).
+//   - without credential_sets, every query is answered; with them, the
+//     selection answers exactly one option of each set (none of an
+//     optional one), and every answered query belongs to an answered
+//     option (§6.4.2, dcql.Query.CheckAnswered).
 //
 // It returns an error wrapping ErrInvalidSelection naming what's wrong.
 func ValidateSelection(ctx context.Context, query dcql.Query, selection map[string][]HeldCredential, trustedAuthorities dcql.TrustedAuthoritiesChecker) error {
@@ -69,38 +69,15 @@ func satisfies(ctx context.Context, cq dcql.CredentialQuery, held HeldCredential
 }
 
 // checkCredentialSets checks the selection answers query's
-// credential_sets, or every query when there are none (§6.4.2).
+// credential_sets, or every query when there are none (§6.4.2;
+// dcql.Query.CheckAnswered).
 func checkCredentialSets(query dcql.Query, selection map[string][]HeldCredential) error {
-	if len(query.CredentialSets) == 0 {
-		for _, cq := range query.Credentials {
-			if len(selection[cq.ID]) == 0 {
-				return fmt.Errorf("%w: credential query %q is required and has no credential selected", ErrInvalidSelection, cq.ID)
-			}
-		}
-		return nil
+	answered := make(map[string]bool, len(selection))
+	for id, held := range selection {
+		answered[id] = len(held) > 0
 	}
-	answered := func(option []string) bool {
-		return !slices.ContainsFunc(option, func(id string) bool { return len(selection[id]) == 0 })
-	}
-	covered := map[string]bool{}
-	for i, cs := range query.CredentialSets {
-		any := false
-		for _, option := range cs.Options {
-			if answered(option) {
-				any = true
-				for _, id := range option {
-					covered[id] = true
-				}
-			}
-		}
-		if !any && cs.IsRequired() {
-			return fmt.Errorf("%w: credential set %d is required and none of its options is fully selected", ErrInvalidSelection, i)
-		}
-	}
-	for _, id := range sortedKeys(selection) {
-		if !covered[id] {
-			return fmt.Errorf("%w: credential query %q is selected but no credential set option it's part of is fully selected", ErrInvalidSelection, id)
-		}
+	if err := query.CheckAnswered(answered); err != nil {
+		return fmt.Errorf("%w: %w", ErrInvalidSelection, err)
 	}
 	return nil
 }
