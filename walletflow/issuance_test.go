@@ -7,9 +7,13 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
+	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -417,5 +421,43 @@ func TestAuthorizationDeniedError(t *testing.T) {
 		if got := tc.err.Error(); got != tc.want {
 			t.Errorf("Error() = %q, want %q", got, tc.want)
 		}
+	}
+}
+
+// TestIssuance_RefusesAnOfferNamingAnotherAuthorizationServer: someone
+// holding a victim's pre-authorized code builds an offer naming the real
+// issuer but their own Authorization Server, to have the wallet send
+// them the code and the holder's PIN. The offer is refused before the
+// holder is shown it, and that server hears nothing.
+func TestIssuance_RefusesAnOfferNamingAnotherAuthorizationServer(t *testing.T) {
+	f := newFixture(t, walletflowtest.Options{})
+	var hits atomic.Int32
+	evil := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { hits.Add(1) }))
+	defer evil.Close()
+
+	genuine, err := url.Parse(f.env.PreAuthorizedOffer(t, "493536", walletflowtest.SDJWTConfigurationID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var offer map[string]any
+	if err := json.Unmarshal([]byte(genuine.Query().Get("credential_offer")), &offer); err != nil {
+		t.Fatal(err)
+	}
+	grants := offer["grants"].(map[string]any)
+	grants["urn:ietf:params:oauth:grant-type:pre-authorized_code"].(map[string]any)["authorization_server"] = evil.URL
+	raw, err := json.Marshal(offer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	forged := "openid-credential-offer://?" + url.Values{"credential_offer": {string(raw)}}.Encode()
+
+	if _, err := f.w.StartIssuance(context.Background(), forged); err == nil || !strings.Contains(err.Error(), "names authorization server") {
+		t.Fatalf("StartIssuance = %v, want the offer refused", err)
+	}
+	if n := hits.Load(); n != 0 {
+		t.Errorf("the offer's authorization server got %d requests", n)
+	}
+	if f.keys.Len() != 0 {
+		t.Errorf("keys held = %d, want none", f.keys.Len())
 	}
 }

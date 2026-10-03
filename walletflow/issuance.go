@@ -115,6 +115,17 @@ func (w *Wallet) StartIssuance(ctx context.Context, offerURI string) (*Issuance,
 	}
 	s := &Issuance{w: w, offer: offer, metadata: metadata}
 	s.details = describeOffer(offer, metadata)
+	// Refuse an offer whose grant names an Authorization Server the
+	// issuer doesn't list before the holder sees it: a pre-authorized
+	// code and its PIN would go to that server.
+	if s.details.Grant == GrantPreAuthorizedCode {
+		_, err = wallet.PlanPreAuthorizedCode(offer, metadata)
+	} else {
+		_, err = wallet.PlanAuthorization(offer, metadata)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("walletflow: %w", err)
+	}
 	return s, nil
 }
 
@@ -216,14 +227,13 @@ func (s *Issuance) RedeemPreAuthorizedCode(ctx context.Context, txCode string) e
 	if s.step != stepStarted || s.details.Grant != GrantPreAuthorizedCode {
 		return ErrWrongStep
 	}
-	grant := s.offer.Grants.PreAuthorizedCode
-	asURL := grant.AuthorizationServer
-	if asURL == "" {
-		asURL = s.offer.CredentialIssuer
-		if len(s.metadata.AuthorizationServers) == 1 {
-			asURL = s.metadata.AuthorizationServers[0].String()
-		}
+	// The code and PIN go to the server the issuer's metadata allows,
+	// never just one the offer names.
+	plan, err := wallet.PlanPreAuthorizedCode(s.offer, s.metadata)
+	if err != nil {
+		return fmt.Errorf("walletflow: %w", err)
 	}
+	asURL := plan.AuthorizationServer
 	if s.client == nil {
 		if err := s.newClient(ctx, asURL); err != nil {
 			return err
@@ -238,7 +248,7 @@ func (s *Issuance) RedeemPreAuthorizedCode(ctx context.Context, txCode string) e
 		return fmt.Errorf("walletflow: token endpoint: %w", err)
 	}
 	token, err := s.w.core.RequestPreAuthorizedCodeToken(ctx, tokenEndpoint, wallet.PreAuthorizedCodeTokenRequest{
-		PreAuthorizedCode: grant.PreAuthorizedCode, TxCode: txCode, DPoPKey: s.dpopKey, ClientAttestation: s.client,
+		PreAuthorizedCode: plan.PreAuthorizedCode, TxCode: txCode, DPoPKey: s.dpopKey, ClientAttestation: s.client,
 	})
 	if err != nil {
 		return fmt.Errorf("walletflow: token: %w", err)
