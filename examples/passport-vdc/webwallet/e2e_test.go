@@ -137,15 +137,26 @@ func openConsent(t *testing.T, env *demotest.Env, b *http.Client, presentURL str
 
 // reviewRequest opens a verifier request in the web wallet and returns
 // the consent page and its decision URL.
-// credentialOption is the consent page's option for sharing a
-// credential of format: its radio button's value.
+// credentialOption is the consent page's first option for sharing a
+// credential of format: its input's value.
 func credentialOption(t *testing.T, page, format string) string {
 	t.Helper()
-	m := regexp.MustCompile(`name="credential" value="([^"]+)"[^>]*>[^<]*(?:<strong>[^<]*</strong>[^<]*)? as <span class="fmt">` + regexp.QuoteMeta(format) + `<`).FindStringSubmatch(page)
-	if m == nil {
+	return credentialOptions(t, page, format)[0]
+}
+
+// credentialOptions are the consent page's options for sharing a
+// credential of format.
+func credentialOptions(t *testing.T, page, format string) []string {
+	t.Helper()
+	ms := regexp.MustCompile(`name="credential" value="([^"]+)"[^>]*>[^<]*(?:<strong>[^<]*</strong>[^<]*)? as <span class="fmt">`+regexp.QuoteMeta(format)+`<`).FindAllStringSubmatch(page, -1)
+	if ms == nil {
 		t.Fatalf("the consent page offers no %s credential", format)
 	}
-	return html.UnescapeString(m[1])
+	var out []string
+	for _, m := range ms {
+		out = append(out, html.UnescapeString(m[1]))
+	}
+	return out
 }
 
 func reviewRequest(t *testing.T, env *demotest.Env, b *http.Client, mode verifierapp.Mode) (id, page, decisionURL string) {
@@ -613,5 +624,35 @@ func TestWebWallet_PreAuthorizedOffer(t *testing.T) {
 	}
 	if stored, err := store.List(); err != nil || len(stored) != 2 {
 		t.Fatalf("store holds %d credentials, %v; want both", len(stored), err)
+	}
+}
+
+// A request for several passports offers checkboxes, and shares each
+// one ticked.
+func TestWebWallet_SharesSeveralPassports(t *testing.T) {
+	env := demotest.New(t, nil)
+	env.StartVerifier(t, nil)
+	store := walletapp.Store{Dir: filepath.Join(t.TempDir(), "wallet")}
+	env.StartWebWallet(t, store)
+	b := browser(env)
+	receiveViaBrowser(t, env, b)
+	receiveViaBrowser(t, env, b)
+
+	id, page, decision := reviewRequest(t, env, b, verifierapp.ModeGroup)
+	if !strings.Contains(page, `type="checkbox" name="credential"`) || strings.Contains(page, `type="radio"`) {
+		t.Error("the consent page for several passports doesn't offer checkboxes")
+	}
+	both := credentialOptions(t, page, "dc+sd-jwt")
+	if len(both) != 2 {
+		t.Fatalf("SD-JWT VC options = %d, want 2", len(both))
+	}
+	resp, err := b.PostForm(decision, url.Values{"decision": {"share"}, "credential": both})
+	if err != nil {
+		t.Fatalf("share: %v", err)
+	}
+	_ = read(t, resp)
+	outcome, ok := env.Verifier.Outcome(id)
+	if !ok || len(outcome.People) != 2 {
+		t.Fatalf("verifier outcome = %+v (ok %v), want two people", outcome, ok)
 	}
 }

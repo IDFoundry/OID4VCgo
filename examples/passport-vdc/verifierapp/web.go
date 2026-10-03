@@ -57,6 +57,11 @@ var homeTemplate = template.Must(template.New("home").Parse(pageHead + `</head><
 <p>Request the passport file read from the chip and re-verify it with gmrtd against the ICAO CSCA master list. The demo issuer can't have altered this data. The file is all-or-nothing: it includes the photo and every other data group.</p>
 <button name="mode" value="icao">Request</button>
 </form>
+<form method="post" action="/requests" class="card">
+<h2>Several passports</h2>
+<p>Request name, nationality and an over-18 check for a group, such as a family travelling together: the request takes several credentials, and the holder chooses whose to share. Trust the issuer, as above.</p>
+<button name="mode" value="group">Request</button>
+</form>
 ` + pageFoot))
 
 type requestPage struct {
@@ -68,8 +73,9 @@ type requestPage struct {
 	Closed        bool // answered and then rejected
 	LastError     string
 	Rows          [][2]string
-	Portrait      template.URL // the disclosed portrait as a data: URL, if any
-	ICAOPortrait  template.URL // the photo from the re-verified passport file, if any
+	Portrait      template.URL  // the disclosed portrait as a data: URL, if any
+	ICAOPortrait  template.URL  // the photo from the re-verified passport file, if any
+	People        [][][2]string // each person's rows, ModeGroup
 }
 
 var requestTemplate = template.Must(template.New("request").Parse(pageHead + `{{if not (or .Outcome .Closed)}}<meta http-equiv="refresh" content="2">{{end}}
@@ -90,6 +96,15 @@ var requestTemplate = template.Must(template.New("request").Parse(pageHead + `{{
 <p class="note">This page refreshes until the wallet answers.</p>
 {{else}}
 <h1 class="ok">✓ Presentation verified</h1>
+{{if .People}}
+<p>The wallet presented {{len .People}} {{if eq (len .People) 1}}passport{{else}}passports{{end}}, each as <code>{{.Outcome.Format}}</code>. Each issuer signature chains to the demo issuer's CA, and the holder proved possession of each credential's key.</p>
+{{range $i, $rows := .People}}{{with index $.Outcome.People $i}}
+<div class="card person">
+<table>{{range $rows}}<tr><th>{{index . 0}}</th><td>{{index . 1}}</td></tr>{{end}}
+<tr><th>Revocation status</th><td>{{if eq .Status "valid"}}<span class="ok">✓ valid</span>{{else}}{{.Status}}{{end}}</td></tr></table>
+</div>
+{{end}}{{end}}
+{{else}}
 <p>The wallet presented its <code>{{.Outcome.Format}}</code> credential. The issuer signature chains to the demo issuer's CA, and the holder proved possession of the credential's key.</p>
 <p>Revocation status: {{if eq .Outcome.Status "valid"}}<span class="ok">✓ valid</span> — checked against the issuer's status list{{else}}{{.Outcome.Status}}{{end}}</p>
 {{if eq .Outcome.Mode "icao"}}
@@ -114,6 +129,7 @@ var requestTemplate = template.Must(template.New("request").Parse(pageHead + `{{
 <h2>Disclosed claims</h2>
 {{if .Portrait}}<p><img src="{{.Portrait}}" alt="Portrait of the credential holder" class="portrait"></p>{{end}}
 <table>{{range .Rows}}<tr><th>{{index . 0}}</th><td>{{index . 1}}</td></tr>{{end}}</table>
+{{end}}
 {{end}}
 <p><a href="/">New request</a></p>
 ` + pageFoot))
@@ -224,6 +240,9 @@ func (a *App) requestPageFor(ctx context.Context, s *session) requestPage {
 	}
 	if page.Outcome != nil {
 		page.Rows = displayRows(page.Outcome.Claims)
+		for _, p := range page.Outcome.People {
+			page.People = append(page.People, displayRows(p.Claims))
+		}
 		if icao := page.Outcome.ICAO; icao != nil && icao.Verified {
 			if uri, ok := credential.PortraitDataURI(map[string]any{credential.Portrait: icao.Portrait}); ok {
 				page.ICAOPortrait = template.URL(uri) // #nosec G203 -- built by PortraitDataURI from decoded JPEG bytes

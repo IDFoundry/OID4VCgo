@@ -408,7 +408,7 @@ func (a *App) handlePresentConsent(w http.ResponseWriter, r *http.Request) {
 		responseHost = u.Host
 	}
 	render(w, http.StatusOK, consentTemplate, consentPage{
-		ID: id, VerifierName: prepared.VerifierName, VerifierID: prepared.VerifierClientID, ResponseHost: responseHost, Options: prepared.Options,
+		ID: id, VerifierName: prepared.VerifierName, VerifierID: prepared.VerifierClientID, ResponseHost: responseHost, Options: prepared.Options, Several: prepared.Several,
 	})
 }
 
@@ -432,7 +432,7 @@ func (a *App) handlePresentDecision(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
-	presented, err := p.prepared.Send(ctx, r.PostForm.Get("credential"))
+	presented, err := p.prepared.Send(ctx, r.PostForm["credential"]...)
 	if err != nil {
 		renderError(w, http.StatusBadGateway, err.Error())
 		return

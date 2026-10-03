@@ -52,9 +52,13 @@ type Prepared struct {
 	VerifierName string
 	// ResponseURI is where the answer would be sent.
 	ResponseURI string
-	// Options are the ways to answer, one per format the wallet can
-	// answer in.
+	// Options are the ways to answer: one per stored credential that
+	// can, in each format it can answer in.
 	Options []Option
+	// Several is whether the request takes several credentials (DCQL
+	// multiple, OpenID4VP 1.0 §6.1): Send may then be given several
+	// Options, of one format. Otherwise it takes one.
+	Several bool
 
 	p *walletflow.Presentation
 }
@@ -124,6 +128,7 @@ func Prepare(ctx context.Context, requestLink string, store Store, hc *http.Clie
 	// would present for it, claim sets included, and whose it is, for
 	// the holder to choose.
 	for _, q := range p.Queries() {
+		prepared.Several = prepared.Several || q.Multiple
 		for _, c := range q.Credentials {
 			// The demo verifier's queries are alternatives (a credential
 			// set), so one credential answers the request.
@@ -145,16 +150,32 @@ func Prepare(ctx context.Context, requestLink string, store Store, hc *http.Clie
 	return prepared, nil
 }
 
-// Send answers the request with the stored credential credentialID
-// names, one of Options': a selectively disclosed presentation bound to
-// the verifier's nonce, POSTed to the response_uri as an encrypted
-// direct_post.jwt response.
-func (p *Prepared) Send(ctx context.Context, credentialID string) (Presented, error) {
-	i := slices.IndexFunc(p.Options, func(o Option) bool { return o.CredentialID == credentialID })
-	if i < 0 {
-		return Presented{}, fmt.Errorf("walletapp: credential %q doesn't answer the request", credentialID)
+// Send answers the request with the stored credentials credentialIDs
+// name, each one of Options' — several only when the request takes
+// Several, and then of one format: a selectively disclosed presentation
+// of each, bound to the verifier's nonce, POSTed to the response_uri as
+// an encrypted direct_post.jwt response.
+func (p *Prepared) Send(ctx context.Context, credentialIDs ...string) (Presented, error) {
+	if len(credentialIDs) == 0 {
+		return Presented{}, fmt.Errorf("walletapp: choose a credential to share")
 	}
-	presented, err := p.p.Respond(ctx, walletflow.Selection{p.Options[i].QueryID: {credentialID}})
+	if len(credentialIDs) > 1 && !p.Several {
+		return Presented{}, fmt.Errorf("walletapp: the request takes one credential, not %d", len(credentialIDs))
+	}
+	// The demo verifier's formats are alternatives: it takes the first
+	// one answered, so several credentials must share one.
+	queryID := ""
+	for _, id := range credentialIDs {
+		i := slices.IndexFunc(p.Options, func(o Option) bool { return o.CredentialID == id })
+		switch {
+		case i < 0:
+			return Presented{}, fmt.Errorf("walletapp: credential %q doesn't answer the request", id)
+		case queryID != "" && p.Options[i].QueryID != queryID:
+			return Presented{}, fmt.Errorf("walletapp: share credentials of one format")
+		}
+		queryID = p.Options[i].QueryID
+	}
+	presented, err := p.p.Respond(ctx, walletflow.Selection{queryID: credentialIDs})
 	if err != nil {
 		return Presented{}, fmt.Errorf("walletapp: %w", err)
 	}

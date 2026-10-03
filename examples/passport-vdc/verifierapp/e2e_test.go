@@ -3,10 +3,12 @@ package verifierapp_test
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -303,28 +305,8 @@ func TestEndToEnd_SampleDocumentIssuedUnchecked(t *testing.T) {
 // A wallet holding several people's passports offers each, named, and
 // presents the one the holder chooses — not just the first stored.
 func TestEndToEnd_ChoosesAmongSeveralPeople(t *testing.T) {
-	env := demotest.New(t, nil)
-	env.StartVerifier(t, nil)
+	env, store := severalPeople(t)
 	ctx := context.Background()
-	store := walletapp.Store{Dir: filepath.Join(t.TempDir(), "wallet")}
-	for _, name := range [][2]string{{"JANE", "DOE"}, {"JOHN", "ROE"}} {
-		e := demotest.SyntheticEvidence()
-		e.Identity.GivenNames, e.Identity.FamilyName = name[0], name[1]
-		offer, err := env.Issuer.CreateTransaction(ctx, e)
-		if err != nil {
-			t.Fatal(err)
-		}
-		received, err := walletapp.Receive(ctx, env.WalletConfig(), offer.URI, walletapp.HeadlessApprover{HTTP: env.HTTP, Code: offer.ConfirmationCode})
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, r := range received {
-			if _, err := store.Save(r, time.Now()); err != nil {
-				t.Fatal(err)
-			}
-		}
-	}
-
 	id, link, err := env.Verifier.CreateRequest(verifierapp.ModeIssuer)
 	if err != nil {
 		t.Fatal(err)
@@ -350,5 +332,109 @@ func TestEndToEnd_ChoosesAmongSeveralPeople(t *testing.T) {
 	outcome, ok := env.Verifier.Outcome(id)
 	if !ok || outcome.Claims[credential.FamilyName] != "ROE" {
 		t.Errorf("the verifier got %v, want JOHN ROE's credential", outcome)
+	}
+}
+
+// severalPeople is a demo environment with a Verifier, and a wallet
+// holding JANE DOE's and JOHN ROE's passports in both formats.
+func severalPeople(t *testing.T) (*demotest.Env, walletapp.Store) {
+	t.Helper()
+	env := demotest.New(t, nil)
+	env.StartVerifier(t, nil)
+	ctx := context.Background()
+	store := walletapp.Store{Dir: filepath.Join(t.TempDir(), "wallet")}
+	for _, name := range [][2]string{{"JANE", "DOE"}, {"JOHN", "ROE"}} {
+		e := demotest.SyntheticEvidence()
+		e.Identity.GivenNames, e.Identity.FamilyName = name[0], name[1]
+		offer, err := env.Issuer.CreateTransaction(ctx, e)
+		if err != nil {
+			t.Fatal(err)
+		}
+		received, err := walletapp.Receive(ctx, env.WalletConfig(), offer.URI, walletapp.HeadlessApprover{HTTP: env.HTTP, Code: offer.ConfirmationCode})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, r := range received {
+			if _, err := store.Save(r, time.Now()); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	return env, store
+}
+
+// A request for several passports (DCQL multiple) takes the people the
+// holder chooses, in one format, and the Verifier checks each.
+func TestEndToEnd_SeveralPassports(t *testing.T) {
+	env, store := severalPeople(t)
+	ctx := context.Background()
+
+	id, link, err := env.Verifier.CreateRequest(verifierapp.ModeGroup)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := walletapp.Prepare(ctx, link, store, env.HTTP, env.VerifierTrust())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !prepared.Several {
+		t.Fatal("Several = false for a request that takes several passports")
+	}
+	ids := map[string]string{}
+	for _, o := range prepared.Options {
+		ids[o.Holder+" "+o.Format] = o.CredentialID
+	}
+	if _, err := prepared.Send(ctx, ids["JANE DOE mso_mdoc"], ids["JOHN ROE dc+sd-jwt"]); err == nil || !strings.Contains(err.Error(), "one format") {
+		t.Fatalf("sharing two formats = %v, want refused", err)
+	}
+	if _, err := prepared.Send(ctx, ids["JANE DOE dc+sd-jwt"], ids["JOHN ROE dc+sd-jwt"]); err != nil {
+		t.Fatal(err)
+	}
+	outcome, ok := env.Verifier.Outcome(id)
+	if !ok || len(outcome.People) != 2 {
+		t.Fatalf("the verifier got %+v, want two people", outcome)
+	}
+	var names []string
+	for _, p := range outcome.People {
+		if p.Format != "dc+sd-jwt" || p.Status == "" {
+			t.Errorf("person = %+v", p)
+		}
+		names = append(names, fmt.Sprint(p.Claims[credential.GivenName], " ", p.Claims[credential.FamilyName]))
+	}
+	slices.Sort(names)
+	if strings.Join(names, ", ") != "JANE DOE, JOHN ROE" {
+		t.Errorf("people = %v, want JANE DOE and JOHN ROE", names)
+	}
+	resp, err := env.HTTP.Get(env.VerifierURL + "/requests/" + id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	for _, want := range []string{"presented 2 passports", "JANE", "JOHN", `class="card person"`} {
+		if !strings.Contains(string(page), want) {
+			t.Errorf("the result page lacks %q", want)
+		}
+	}
+}
+
+// A request for one passport takes one: Send refuses several before
+// anything is sent.
+func TestEndToEnd_OnePassportTakesOne(t *testing.T) {
+	env, store := severalPeople(t)
+	ctx := context.Background()
+	_, link, err := env.Verifier.CreateRequest(verifierapp.ModeIssuer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := walletapp.Prepare(ctx, link, store, env.HTTP, env.VerifierTrust())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prepared.Several {
+		t.Fatal("Several = true for a request that takes one passport")
+	}
+	if _, err := prepared.Send(ctx, prepared.Options[0].CredentialID, prepared.Options[1].CredentialID); err == nil || !strings.Contains(err.Error(), "takes one") {
+		t.Errorf("sharing two = %v, want refused", err)
 	}
 }
