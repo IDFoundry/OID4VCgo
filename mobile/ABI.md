@@ -1,7 +1,7 @@
 # OID4VCgo mobile ABI
 
 The API the Go `mobile` package exposes through gomobile: version
-**3** (`ABIVersion`). The Swift package `ios/OID4VCWallet` wraps it in
+**4** (`ABIVersion`). The Swift package `ios/OID4VCWallet` wraps it in
 typed Swift (`Wallet`, `Issuance`, `Presentation`, `WalletError`); this
 document is the contract underneath, for the Swift wrapper, a future
 Kotlin one, or an app calling the framework directly.
@@ -60,6 +60,7 @@ P-256 keys that never leave the platform (the Secure Enclave on iOS).
 | `PublicKey(id) → []byte` | uncompressed X9.63 point; empty if there's no such key |
 | `Sign(id, digest) → []byte` | ECDSA over a SHA-256 digest, ASN.1 DER |
 | `DeleteKey(id)` | no error if absent |
+| `Durable() → bool` | whether keys survive the app quitting (the Keychain): receiving credentials without `development` needs it |
 
 Instance and DPoP keys sign protocol messages silently; holder keys sign
 only when presenting, and may require user presence. `CheckKeyStore`
@@ -90,8 +91,18 @@ bound to the DPoP key, which never leaves the KeyStore. A store keeps
 these records like any other; `List` returns them too, and Go tells them
 apart.
 
+It keeps each **authorization in progress** too, under the ID
+`authorization-<SHA-256 of its state>`, as a record with `"kind":
+"authorization"`: FAPIgo's session record (with the PKCE verifier), the
+resolved offer, the authorization server, and the instance and DPoP key
+IDs. `ResumeIssuance` completes it from the redirect after a relaunch.
+
+`Durable()` says whether records survive the app quitting. Receiving
+credentials without `development` needs a durable `CredentialStore` and
+`KeyStore`.
+
 The Swift package's `FileCredentialStore` keeps records as files with
-complete data protection, excluded from backups.
+complete data protection, excluded from backups. It's durable.
 
 ### WalletProvider
 
@@ -127,6 +138,7 @@ allows services on loopback addresses.
 | `Credential(id)` | summary with `"claims"`: an SD-JWT VC's claims, or an mdoc's namespace → element → value, byte strings in base64 |
 | `DeleteCredential(id)` | deletes it and its holder key |
 | `StartIssuance(op, offerURI)` | an `Issuance` |
+| `ResumeIssuance(op, redirect)` | an `Issuance` ready for `RequestCredentials`: completes the authorization in progress that the redirect's `state` names, after the app was killed during the browser step. One that matches nothing, has already been used, or has expired is `not_found` |
 | `StartPresentation(op, requestLink)` | a `Presentation` |
 
 A credential **summary** is `{"id", "credential_issuer",

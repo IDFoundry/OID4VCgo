@@ -356,6 +356,120 @@ func surviveARestart(t *testing.T, grant walletflow.Grant) {
 	}
 }
 
+// newWalletAuthorizing is a wallet keeping its authorizations in auth,
+// on clock.
+func (f fixture) newWalletAuthorizing(t *testing.T, auth walletflow.AuthorizationStore, clock func() time.Time) *walletflow.Wallet {
+	t.Helper()
+	w, err := walletflow.New(walletflow.Config{
+		ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, IssuerRoots: f.env.IssuerRoots, Development: true,
+	}, walletflow.Dependencies{Keys: f.keys, Credentials: f.store, Provider: f.env.Provider, HTTP: f.env.HTTP, Authorizations: auth, Clock: clock})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return w
+}
+
+// beginThenQuit begins an authorization on a wallet over auth and
+// "quits" — the Issuance is dropped, unclosed — returning the issuer's
+// redirect back, as the browser would deliver it to a relaunched app.
+func beginThenQuit(t *testing.T, f fixture, auth walletflow.AuthorizationStore) string {
+	t.Helper()
+	ctx := context.Background()
+	w := f.newWalletAuthorizing(t, auth, nil)
+	s, err := w.StartIssuance(ctx, f.env.AuthorizationCodeOffer(t, walletflowtest.SDJWTConfigurationID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	authURL, err := s.BeginAuthorization(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	redirect, err := f.env.Approve(ctx, authURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return redirect
+}
+
+// The redirect completes an authorization begun before the app quit: a
+// new Wallet over the same stores resumes it, with the same keys, and
+// receives the credential. The redirect can't be used again.
+func TestResumeIssuance(t *testing.T) {
+	f := newFixture(t, walletflowtest.Options{})
+	ctx := context.Background()
+	auth := walletflow.NewMemoryAuthorizationStore()
+	redirect := beginThenQuit(t, f, auth)
+
+	relaunched := f.newWalletAuthorizing(t, auth, nil)
+	if inUse, err := relaunched.KeysInUse(ctx); err != nil || len(inUse) != 2 {
+		t.Errorf("KeysInUse = %v, %v; want the authorization's instance and DPoP keys", inUse, err)
+	}
+	s, err := relaunched.ResumeIssuance(ctx, redirect)
+	if err != nil {
+		t.Fatalf("ResumeIssuance: %v", err)
+	}
+	if s.Offer().Grant != walletflow.GrantAuthorizationCode || len(s.Offer().Credentials) != 1 {
+		t.Errorf("resumed offer = %+v", s.Offer())
+	}
+	result, err := s.RequestCredentials(ctx)
+	if err != nil || len(result.Credentials) != 1 {
+		t.Fatalf("RequestCredentials = %+v, %v", result, err)
+	}
+	if err := s.Close(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if f.keys.Len() != 1 {
+		t.Errorf("keys held = %d, want the credential's holder key", f.keys.Len())
+	}
+	if _, err := relaunched.ResumeIssuance(ctx, redirect); !errors.Is(err, walletflow.ErrNoAuthorization) {
+		t.Errorf("the redirect again = %v, want ErrNoAuthorization", err)
+	}
+	if _, err := relaunched.ResumeIssuance(ctx, "org.example.wallet:/cb?code=x&state=not-ours"); !errors.Is(err, walletflow.ErrNoAuthorization) {
+		t.Errorf("an unknown state = %v, want ErrNoAuthorization", err)
+	}
+}
+
+// An authorization older than its session's lifetime can't be resumed,
+// and is forgotten with its keys.
+func TestResumeIssuance_Expired(t *testing.T) {
+	f := newFixture(t, walletflowtest.Options{})
+	ctx := context.Background()
+	auth := walletflow.NewMemoryAuthorizationStore()
+	redirect := beginThenQuit(t, f, auth)
+	later := func() time.Time { return time.Now().Add(time.Hour) }
+	relaunched := f.newWalletAuthorizing(t, auth, later)
+	if _, err := relaunched.ResumeIssuance(ctx, redirect); !errors.Is(err, walletflow.ErrNoAuthorization) {
+		t.Fatalf("ResumeIssuance after expiry = %v, want ErrNoAuthorization", err)
+	}
+	if f.keys.Len() != 0 {
+		t.Errorf("keys held = %d, want none", f.keys.Len())
+	}
+}
+
+// Closing an issuance mid-authorization forgets the authorization.
+func TestClose_ForgetsAnAuthorization(t *testing.T) {
+	f := newFixture(t, walletflowtest.Options{})
+	ctx := context.Background()
+	auth := walletflow.NewMemoryAuthorizationStore()
+	w := f.newWalletAuthorizing(t, auth, nil)
+	s, err := w.StartIssuance(ctx, f.env.AuthorizationCodeOffer(t, walletflowtest.SDJWTConfigurationID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.BeginAuthorization(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if all, _ := auth.ListAuthorizations(ctx); len(all) != 1 {
+		t.Fatalf("%d authorizations kept after BeginAuthorization, want 1", len(all))
+	}
+	if err := s.Close(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if all, _ := auth.ListAuthorizations(ctx); len(all) != 0 || f.keys.Len() != 0 {
+		t.Errorf("after Close: %d authorizations, %d keys; want none", len(all), f.keys.Len())
+	}
+}
+
 // Abandoning a deferred credential forgets it and deletes its keys.
 func TestDeferred_Abandon(t *testing.T) {
 	f := newFixture(t, walletflowtest.Options{Defer: true})

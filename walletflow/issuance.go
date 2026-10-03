@@ -14,7 +14,6 @@ import (
 	"github.com/idfoundry/fapigo/client"
 	"github.com/idfoundry/fapigo/keys"
 	"github.com/idfoundry/fapigo/storage"
-	"github.com/idfoundry/fapigo/storage/memstore"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/wallet"
@@ -323,13 +322,28 @@ func (s *Issuance) newClient(ctx context.Context, asURL string) error {
 	if err != nil {
 		return fmt.Errorf("walletflow: wallet attestation: %w", err)
 	}
+	c, err := s.oauthClient(issuer, endpoints, asURL, walletAttestation)
+	if err != nil {
+		return err
+	}
+	s.client = c
+	return nil
+}
+
+// oauthClient builds the fapigo/client for the authorization server
+// issuer, authenticating with walletAttestation and the issuance's keys.
+func (s *Issuance) oauthClient(issuer fapi.URL, endpoints client.Endpoints, asURL, walletAttestation string) (*client.Client, error) {
+	var custody []keys.CustodyOption
+	if c, ok := s.w.deps.Keys.(keys.KeyCustodyAssurance); ok {
+		custody = append(custody, keys.DeclareCustody(c.KeyCustody()))
+	}
 	km, err := keys.NewKeyManagerFromSigners(
 		map[keys.SigningPurpose]crypto.Signer{keys.ClientAttestationPoPSigning: s.instanceKey, keys.DPoPProofSigning: s.dpopKey},
 		map[keys.SigningPurpose]fapi.SignatureAlgorithm{keys.ClientAttestationPoPSigning: fapi.ES256, keys.DPoPProofSigning: fapi.ES256},
-		nil,
+		nil, custody...,
 	)
 	if err != nil {
-		return fmt.Errorf("walletflow: key manager: %w", err)
+		return nil, fmt.Errorf("walletflow: key manager: %w", err)
 	}
 	c, err := client.New(client.Config{
 		Issuer: issuer, ClientID: fapi.ClientID(s.w.cfg.ClientID), RedirectURI: s.w.cfg.RedirectURI,
@@ -345,7 +359,13 @@ func (s *Issuance) newClient(ctx context.Context, asURL string) error {
 			HTTPTimeout: httpTimeout, MaxHTTPResponseBytes: maxResponseBytes, MaxJOSECompactBytes: 16 * 1024,
 		},
 	}, client.Dependencies{
-		Sessions: memstore.NewSessionStore(), Keys: km, HTTP: s.w.deps.HTTP,
+		// The authorization's state, kept so the redirect can complete it
+		// after the app is suspended (ResumeIssuance).
+		Sessions: &sessionStore{
+			w: s.w, offer: s.offer, authorizationServer: asURL,
+			instanceKeyID: s.instanceKey.ID(), dpopKeyID: s.dpopKey.ID(),
+		},
+		Keys: km, HTTP: s.w.deps.HTTP,
 		Clock: clientClock(s.w.deps.Clock), Random: s.w.deps.Random,
 		Attestation: client.StaticAttestation(walletAttestation),
 		// Reuses the DPoP nonce each response hands out, so only the
@@ -353,10 +373,9 @@ func (s *Issuance) newClient(ctx context.Context, asURL string) error {
 		DPoPNonceCache: client.NewInMemoryDPoPNonceCache(),
 	})
 	if err != nil {
-		return fmt.Errorf("walletflow: oauth client: %w", err)
+		return nil, fmt.Errorf("walletflow: oauth client: %w", err)
 	}
-	s.client = c
-	return nil
+	return c, nil
 }
 
 type clientClock func() time.Time
@@ -526,8 +545,12 @@ func (w *Wallet) notify(ctx context.Context, c issued, event oid4vci.Notificatio
 func (s *Issuance) Close(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.step = stepClosed
 	var errs []error
+	if s.step == stepAuthorizing {
+		// An authorization begun and not completed can't be any more.
+		errs = append(errs, s.w.deps.Authorizations.DeleteAuthorization(ctx, s.session.String()))
+	}
+	s.step = stepClosed
 	if s.instanceKey != nil {
 		errs = append(errs, s.w.deps.Keys.DeleteKey(ctx, s.instanceKey.ID()))
 	}

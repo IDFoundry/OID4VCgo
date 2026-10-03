@@ -35,6 +35,8 @@ type goKeyStore struct {
 
 func newGoKeyStore() *goKeyStore { return &goKeyStore{keys: map[string]*ecdsa.PrivateKey{}} }
 
+func (s *goKeyStore) Durable() bool { return true }
+
 func (s *goKeyStore) CreateKey(purpose string) (string, error) {
 	if s.newKeyErr != nil {
 		return "", s.newKeyErr

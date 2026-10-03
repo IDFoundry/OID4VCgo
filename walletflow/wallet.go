@@ -13,6 +13,7 @@ import (
 
 	"github.com/idfoundry/fapigo/client"
 	"github.com/idfoundry/fapigo/fapihttp"
+	"github.com/idfoundry/fapigo/keys"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/wallet"
@@ -50,6 +51,13 @@ type Dependencies struct {
 	// Deferred keeps pending deferred credentials, so they can be polled
 	// after a restart. nil means a MemoryDeferredStore.
 	Deferred DeferredStore
+	// Authorizations keeps the authorizations in progress, so the
+	// redirect can complete one after a restart (ResumeIssuance). nil
+	// means a MemoryAuthorizationStore. Receiving credentials at
+	// production assurance (Config.Development false) needs a Durable
+	// one, Keys that declare durable custody (keys.KeyCustodyAssurance),
+	// and Random left nil or crypto/rand.Reader.
+	Authorizations AuthorizationStore
 
 	// HTTP makes every request. nil means a client with a 10 s timeout.
 	HTTP *http.Client
@@ -70,6 +78,7 @@ type Wallet struct {
 	mu       sync.Mutex
 	deferred map[string]*Deferred // the pending ones handed out, by ID
 	liveDPoP map[string]bool      // DPoP keys open issuances hold
+	authMu   sync.Mutex           // serializes consuming authorizations
 }
 
 const (
@@ -93,6 +102,9 @@ func New(cfg Config, deps Dependencies) (*Wallet, error) {
 	}
 	if deps.Deferred == nil {
 		deps.Deferred = NewMemoryDeferredStore()
+	}
+	if deps.Authorizations == nil {
+		deps.Authorizations = NewMemoryAuthorizationStore()
 	}
 	core, err := wallet.New(wallet.Config{
 		Assurance: cfg.assurance(), ProofSigningAlg: oid4vci.ES256, VerifierTrust: cfg.VerifierTrust,
@@ -155,5 +167,24 @@ func (w *Wallet) checkIssuance() error {
 	case w.deps.Provider == nil:
 		return errors.New("walletflow: Dependencies.Provider is required to receive credentials")
 	}
+	if w.cfg.Development {
+		return nil
+	}
+	// fapigo/client's production assurance, checked here first to say
+	// what to change.
+	switch {
+	case !w.deps.Authorizations.Durable():
+		return errors.New("walletflow: receiving credentials in production needs a Durable Dependencies.Authorizations, so an authorization survives the app being suspended")
+	case !durableKeys(w.deps.Keys):
+		return errors.New("walletflow: receiving credentials in production needs Dependencies.Keys to declare durable custody (keys.KeyCustodyAssurance)")
+	case w.deps.Random != rand.Reader:
+		return errors.New("walletflow: receiving credentials in production needs Dependencies.Random to be nil or crypto/rand.Reader")
+	}
 	return nil
+}
+
+// durableKeys reports whether ks declares it keeps its keys durably.
+func durableKeys(ks KeyStore) bool {
+	c, ok := ks.(keys.KeyCustodyAssurance)
+	return ok && c.KeyCustody().Durable
 }

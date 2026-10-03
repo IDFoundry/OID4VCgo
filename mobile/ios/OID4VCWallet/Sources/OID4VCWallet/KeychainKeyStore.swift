@@ -38,6 +38,9 @@ public final class KeychainKeyStore: KeyStore, @unchecked Sendable {
         self.options = options
     }
 
+    /// Durable when the keys are kept in the Keychain (`Options.persistent`).
+    public var isDurable: Bool { options.persistent }
+
     public func createKey(purpose: KeyPurpose) throws -> String {
         let id = UUID().uuidString
         var privateAttrs: [String: Any] = [

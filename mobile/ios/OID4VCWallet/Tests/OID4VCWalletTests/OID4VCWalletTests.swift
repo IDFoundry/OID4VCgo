@@ -6,7 +6,7 @@ import XCTest
 
 final class OID4VCWalletTests: XCTestCase {
     func testABIVersion() {
-        XCTAssertEqual(OID4VC.abiVersion, 3)
+        XCTAssertEqual(OID4VC.abiVersion, 4)
         XCTAssertTrue(OID4VC.isTestBuild, "the tests run on the mobiletest build")
     }
 

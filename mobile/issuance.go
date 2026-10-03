@@ -30,6 +30,23 @@ func (w *Wallet) StartIssuance(op *Operation, offerURI string) (*Issuance, error
 	return &Issuance{s: s}, nil
 }
 
+// ResumeIssuance completes an authorization begun before the app was
+// suspended or relaunched: redirect is the issuer's redirect back to
+// redirect_uri, the whole URL, delivered to the app. It returns the
+// Issuance ready for RequestCredentials; Close it when done. A redirect
+// no authorization in progress matches — not this wallet's, already
+// completed, or expired — is a not_found error.
+func (w *Wallet) ResumeIssuance(op *Operation, redirect string) (*Issuance, error) {
+	s, err := w.w.ResumeIssuance(op.context(), redirect)
+	if errors.Is(err, walletflow.ErrNoAuthorization) {
+		return nil, newError(CodeNotFound, err)
+	}
+	if err != nil {
+		return nil, classify(err)
+	}
+	return &Issuance{s: s}, nil
+}
+
 type offerJSON struct {
 	result
 	CredentialIssuer string        `json:"credential_issuer"`

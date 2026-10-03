@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto"
 	"crypto/ecdsa"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -15,6 +16,7 @@ import (
 	"github.com/fxamacker/cbor/v2"
 	fapi "github.com/idfoundry/fapigo"
 
+	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/attestation"
 	"github.com/idfoundry/oid4vcgo/walletflow"
 )
@@ -32,6 +34,12 @@ type CredentialStore interface {
 	// Delete deletes id's record. Deleting one that doesn't exist isn't
 	// an error.
 	Delete(id string) error
+	// Durable reports whether records survive the app quitting.
+	// Receiving credentials needs a durable CredentialStore unless the
+	// wallet is configured for development: it also keeps the
+	// authorization in progress while the holder is at the issuer's
+	// pages.
+	Durable() bool
 }
 
 // WalletProvider asks the Wallet Provider's backend for attestations
@@ -151,7 +159,7 @@ func (s credentialStore) Get(_ context.Context, id string) (walletflow.StoredCre
 	if len(raw) == 0 {
 		return walletflow.StoredCredential{}, fmt.Errorf("mobile: credential %q: %w", id, walletflow.ErrNotFound)
 	}
-	if kindOf(raw) == deferredKind {
+	if kindOf(raw) != "" {
 		return walletflow.StoredCredential{}, fmt.Errorf("mobile: credential %q: %w", id, walletflow.ErrNotFound)
 	}
 	var r credentialRecord
@@ -176,7 +184,7 @@ func (s credentialStore) List(context.Context) ([]walletflow.StoredCredential, e
 	}
 	var records []credentialRecord
 	for _, raw := range all {
-		if kindOf(raw) == deferredKind {
+		if kindOf(raw) != "" { // a deferred credential or an authorization
 			continue
 		}
 		var r credentialRecord
@@ -317,6 +325,107 @@ func (s deferredStore) DeleteDeferred(_ context.Context, id string) error {
 		return newError(CodePlatform, fmt.Errorf("delete deferred credential: %w", err))
 	}
 	return nil
+}
+
+// authorizationKind marks a record that's an authorization in progress.
+const authorizationKind = "authorization"
+
+// authorizationRecord is an authorization in progress as the
+// CredentialStore keeps it, under the ID authorizationStoreID gives it.
+type authorizationRecord struct {
+	Kind                string                  `json:"kind"`
+	State               string                  `json:"state"`
+	Session             json.RawMessage         `json:"session"`
+	ExpiresAt           time.Time               `json:"expires_at"`
+	Offer               oid4vci.CredentialOffer `json:"offer"`
+	AuthorizationServer string                  `json:"authorization_server"`
+	InstanceKeyID       string                  `json:"instance_key_id"`
+	DPoPKeyID           string                  `json:"dpop_key_id"`
+	CreatedAt           time.Time               `json:"created_at"`
+}
+
+// authorizationStoreID is the CredentialStore ID an authorization is
+// kept under: a hash of its state, which isn't put in an ID.
+func authorizationStoreID(state string) string {
+	sum := sha256.Sum256([]byte(state))
+	return "authorization-" + base64.RawURLEncoding.EncodeToString(sum[:])
+}
+
+// authorizationStore is a CredentialStore as a
+// walletflow.AuthorizationStore.
+type authorizationStore struct{ cs CredentialStore }
+
+var _ walletflow.AuthorizationStore = authorizationStore{}
+
+func (s authorizationStore) PutAuthorization(_ context.Context, a walletflow.PendingAuthorization) error {
+	// The session record holds the PKCE verifier: kept deliberately, to
+	// complete the authorization after a relaunch. It's no use without
+	// the DPoP and instance keys, which never leave the KeyStore.
+	raw, err := json.Marshal(authorizationRecord{ //nolint:gosec // G117: see above
+		Kind: authorizationKind, State: a.State, Session: a.Session, ExpiresAt: a.ExpiresAt, Offer: a.Offer,
+		AuthorizationServer: a.AuthorizationServer, InstanceKeyID: a.InstanceKeyID, DPoPKeyID: a.DPoPKeyID, CreatedAt: a.CreatedAt,
+	})
+	if err != nil {
+		return newError(CodeInternal, err)
+	}
+	if err := s.cs.Put(authorizationStoreID(a.State), raw); err != nil {
+		return newError(CodePlatform, fmt.Errorf("store authorization: %w", err))
+	}
+	return nil
+}
+
+func (s authorizationStore) GetAuthorization(_ context.Context, state string) (walletflow.PendingAuthorization, error) {
+	raw, err := s.cs.Get(authorizationStoreID(state))
+	if err != nil {
+		return walletflow.PendingAuthorization{}, newError(CodePlatform, fmt.Errorf("authorization: %w", err))
+	}
+	if len(raw) == 0 {
+		return walletflow.PendingAuthorization{}, fmt.Errorf("mobile: authorization: %w", walletflow.ErrNotFound)
+	}
+	a, err := pendingAuthorization(raw)
+	if err != nil || a.State != state {
+		return walletflow.PendingAuthorization{}, newError(CodePlatform, errors.New("an authorization's record is malformed"))
+	}
+	return a, nil
+}
+
+func (s authorizationStore) ListAuthorizations(context.Context) ([]walletflow.PendingAuthorization, error) {
+	all, err := listRecords(s.cs)
+	if err != nil {
+		return nil, err
+	}
+	var out []walletflow.PendingAuthorization
+	for _, raw := range all {
+		if kindOf(raw) != authorizationKind {
+			continue
+		}
+		a, err := pendingAuthorization(raw)
+		if err != nil {
+			return nil, newError(CodePlatform, errors.New("an authorization's record is malformed"))
+		}
+		out = append(out, a)
+	}
+	return out, nil
+}
+
+func (s authorizationStore) DeleteAuthorization(_ context.Context, state string) error {
+	if err := s.cs.Delete(authorizationStoreID(state)); err != nil {
+		return newError(CodePlatform, fmt.Errorf("delete authorization: %w", err))
+	}
+	return nil
+}
+
+func (s authorizationStore) Durable() bool { return s.cs.Durable() }
+
+func pendingAuthorization(raw []byte) (walletflow.PendingAuthorization, error) {
+	var r authorizationRecord
+	if err := json.Unmarshal(raw, &r); err != nil || r.State == "" {
+		return walletflow.PendingAuthorization{}, errors.New("malformed")
+	}
+	return walletflow.PendingAuthorization{
+		State: r.State, Session: r.Session, ExpiresAt: r.ExpiresAt, Offer: r.Offer, AuthorizationServer: r.AuthorizationServer,
+		InstanceKeyID: r.InstanceKeyID, DPoPKeyID: r.DPoPKeyID, CreatedAt: r.CreatedAt,
+	}, nil
 }
 
 // walletProvider is a WalletProvider as a walletflow.WalletProvider.

@@ -97,6 +97,13 @@ final class WalletModel {
     }
 
     func open(_ url: URL) {
+        // The issuer's redirect, arriving here rather than in the
+        // authorization session — the app was killed while the holder was
+        // at the issuer's pages — completes the issuance it began.
+        if url.scheme == callbackScheme, !callbackScheme.isEmpty {
+            if issuance == nil { Task { await resume(redirect: url) } }
+            return
+        }
         guard url.scheme == "openid-credential-offer" || url.scheme == "openid4vp" else { return }
         if busy {
             notice = "Finish or cancel the current request before opening another."
@@ -234,15 +241,7 @@ final class WalletModel {
                 let url = try await issuance.beginAuthorization()
                 try await issuance.completeAuthorization(redirect: try await authorize(url))
             }
-            let result = try await issuance.requestCredentials()
-            var summary = "Received \(result.credentials.count) credential(s)"
-            if !result.deferred.isEmpty { summary += ", \(result.deferred.count) deferred" }
-            phase = .done(summary)
-            // Deferred credentials are kept in the credential store, with
-            // what polling them needs: they outlive the issuance, and the
-            // app quitting.
-            await closeIssuance()
-            for d in result.deferred { track(d) }
+            try await requestCredentials(issuance)
         } catch {
             phase = .failed(Self.describe(error))
             // Don't leave the issuance's keys in the Keychain: the holder
@@ -250,6 +249,38 @@ final class WalletModel {
             await closeIssuance()
         }
         await refresh()
+    }
+
+    /// Completes, after a relaunch, an issuance whose authorization was in
+    /// progress when the app was killed.
+    func resume(redirect: URL) async {
+        guard let wallet, !busy else { return }
+        phase = .receiving
+        do {
+            let s = try await wallet.resumeIssuance(redirect: redirect)
+            issuance = s
+            offer = s.offer
+            try await requestCredentials(s)
+        } catch let e as WalletError where e.code == .notFound {
+            phase = .idle
+            notice = "That sign-in has expired or was already used. Open the offer again."
+        } catch {
+            phase = .failed(Self.describe(error))
+            await closeIssuance()
+        }
+        await refresh()
+    }
+
+    private func requestCredentials(_ issuance: Issuance) async throws {
+        let result = try await issuance.requestCredentials()
+        var summary = "Received \(result.credentials.count) credential(s)"
+        if !result.deferred.isEmpty { summary += ", \(result.deferred.count) deferred" }
+        phase = .done(summary)
+        // Deferred credentials are kept in the credential store, with
+        // what polling them needs: they outlive the issuance, and the
+        // app quitting.
+        await closeIssuance()
+        for d in result.deferred { track(d) }
     }
 
     // MARK: Deferred credentials
