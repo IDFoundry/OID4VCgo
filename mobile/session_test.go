@@ -319,8 +319,10 @@ func TestSessions_PreAuthorizedCode(t *testing.T) {
 	}
 }
 
-func TestSessions_Deferred(t *testing.T) {
-	h := newHarness(t, true)
+// deferTwo receives the test issuer's two credentials, both deferred,
+// closes the issuance, and returns the wallet's pending ones' IDs.
+func (h harness) deferTwo(t *testing.T) []string {
+	t.Helper()
 	offer, err := h.env.AuthorizationCodeOffer()
 	if err != nil {
 		t.Fatal(err)
@@ -329,7 +331,6 @@ func TestSessions_Deferred(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = s.Close() }()
 	authURL, err := s.BeginAuthorization(NewOperation(0))
 	if err != nil {
 		t.Fatal(err)
@@ -347,30 +348,88 @@ func TestSessions_Deferred(t *testing.T) {
 			IntervalSeconds float64 `json:"interval_seconds"`
 		}
 	}](t, mustText(t)(s.RequestCredentials(NewOperation(0))))
-	if len(got.Deferred) != 2 || got.Deferred[0].IntervalSeconds <= 0 {
+	if len(got.Deferred) != 2 || got.Deferred[0].IntervalSeconds <= 0 || got.Deferred[0].ID == got.Deferred[1].ID || len(got.Deferred[0].ID) < 20 {
 		t.Fatalf("deferred = %+v", got)
 	}
-	poll := func(id string) (string, error) { return s.PollDeferred(NewOperation(0), id) }
-	if st := decode[struct{ Status string }](t, mustText(t)(poll(got.Deferred[0].ID))); st.Status != DeferredPending {
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return []string{got.Deferred[0].ID, got.Deferred[1].ID}
+}
+
+// pending lists w's pending deferred credentials' IDs.
+func pending(t *testing.T, w *Wallet) []string {
+	t.Helper()
+	got := decode[struct{ Deferred []struct{ ID string } }](t, mustText(t)(w.Deferred()))
+	ids := make([]string, 0, len(got.Deferred))
+	for _, d := range got.Deferred {
+		ids = append(ids, d.ID)
+	}
+	return ids
+}
+
+// Deferred credentials survive the issuance closing and the app
+// relaunching: a new Wallet over the same stores lists and polls them,
+// and the key sweep keeps their keys.
+func TestSessions_Deferred(t *testing.T) {
+	h := newHarness(t, true)
+	ids := h.deferTwo(t)
+
+	relaunched, err := NewWallet(h.env.ConfigJSON(), h.keys, h.creds, h.env.Provider())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := pending(t, relaunched); len(got) != 2 {
+		t.Fatalf("pending after a relaunch = %v, want %v", got, ids)
+	}
+	if held := decode[struct{ Credentials []summary }](t, mustText(t)(relaunched.Credentials())); len(held.Credentials) != 0 {
+		t.Errorf("pending ones listed as credentials: %+v", held)
+	}
+	if keys := decode[struct {
+		KeyIDs []string `json:"key_ids"`
+	}](t, mustText(t)(relaunched.HolderKeyIDs())); len(keys.KeyIDs) != 3 {
+		t.Errorf("keys in use = %v, want two holder keys and the DPoP key", keys.KeyIDs)
+	}
+
+	poll := func(id string) (string, error) { return relaunched.PollDeferred(NewOperation(0), id) }
+	if st := decode[struct{ Status string }](t, mustText(t)(poll(ids[0]))); st.Status != DeferredPending {
 		t.Errorf("before a decision: %+v", st)
 	}
 	h.env.Decide(true)
 	issued := decode[struct {
 		Status     string
 		Credential *summary
-	}](t, mustText(t)(poll(got.Deferred[0].ID)))
+	}](t, mustText(t)(poll(ids[0])))
 	if issued.Status != DeferredIssued || issued.Credential == nil || issued.Credential.ID == "" {
 		t.Errorf("after approval: %+v", issued)
 	}
 	h.env.Decide(false)
-	if _, err := poll(got.Deferred[1].ID); code(err) != CodeCredentialDenied {
+	if _, err := poll(ids[1]); code(err) != CodeCredentialDenied {
 		t.Errorf("after denial: %v", err)
 	}
-	if got.Deferred[0].ID == got.Deferred[1].ID || !strings.HasPrefix(got.Deferred[0].ID, "deferred-") || len(got.Deferred[0].ID) < 20 {
-		t.Errorf("deferred IDs %q and %q aren't distinct random IDs", got.Deferred[0].ID, got.Deferred[1].ID)
+	if got := pending(t, relaunched); len(got) != 0 {
+		t.Errorf("still pending once settled: %v", got)
+	}
+	if len(h.keys.keys) != 1 {
+		t.Errorf("keys held = %d, want the issued credential's", len(h.keys.keys))
 	}
 	if _, err := poll("no-such"); code(err) != CodeNotFound {
 		t.Errorf("an unknown deferred credential: %v", err)
+	}
+}
+
+func TestSessions_AbandonDeferred(t *testing.T) {
+	h := newHarness(t, true)
+	for _, id := range h.deferTwo(t) {
+		if err := h.w.AbandonDeferred(id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := pending(t, h.w); len(got) != 0 || len(h.keys.keys) != 0 {
+		t.Errorf("after abandoning: pending %v, %d keys; want none", got, len(h.keys.keys))
+	}
+	if err := h.w.AbandonDeferred("no-such"); code(err) != CodeNotFound {
+		t.Errorf("abandoning an unknown one: %v", err)
 	}
 }
 

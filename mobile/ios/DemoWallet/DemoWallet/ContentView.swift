@@ -294,6 +294,11 @@ struct PendingRow: View {
                     .buttonStyle(.bordered)
                     .accessibilityIdentifier("dismiss")
             } else {
+                if case .failed = pending.state {
+                    Button("Give up") { Task { await model.abandon(pending.id) } }
+                        .buttonStyle(.bordered)
+                        .accessibilityIdentifier("give-up")
+                }
                 Button("Check again") { Task { await model.checkAgain(pending.id) } }
                     .buttonStyle(.bordered)
                     .disabled(pending.state == .checking)

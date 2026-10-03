@@ -57,10 +57,13 @@ grants:
   session, redirecting back to the app's private-use scheme redirect URI
 - the pre-authorized code grant: the PIN typed in the app
 
-It also covers deferred issuance, approved and denied. And it presents: a received credential shared in answer to the
+It also covers deferred issuance: approved, denied, and approved after
+the app is quit and relaunched while the credential is pending. And it
+presents: a received credential shared in answer to the
 Verifier's request (the Verifier gets `family_name`), and a request the
 wallet can't answer, declined. Each test launches with
-`OID4VC_DEMO_RESET=1`, which deletes every credential at launch.
+`OID4VC_DEMO_RESET=1`, which deletes every credential and pending
+deferred credential at launch.
 `OID4VC_DEMO_OFFER` and `OID4VC_DEMO_REQUEST` open a link at launch.
 
 ## Against the passport-vdc demo

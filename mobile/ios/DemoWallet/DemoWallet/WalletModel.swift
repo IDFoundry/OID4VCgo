@@ -65,16 +65,21 @@ final class WalletModel {
             // At launch, before any issuance: delete keys left by one the
             // app quit in the middle of.
             if let wallet, let keys { _ = try? await wallet.sweepOrphanedKeys(in: keys) }
+            await resumeDeferred()
             await refresh()
         }
     }
 
-    /// Deletes every credential and its holder key: for UI tests, which
-    /// launch with OID4VC_DEMO_RESET=1 to start from an empty wallet.
+    /// Deletes every credential and pending deferred credential, with
+    /// their keys: for UI tests, which launch with OID4VC_DEMO_RESET=1 to
+    /// start from an empty wallet.
     private func deleteAll() async {
-        guard let wallet, let held = try? await wallet.credentials() else { return }
-        for c in held {
+        guard let wallet else { return }
+        for c in (try? await wallet.credentials()) ?? [] {
             try? await wallet.deleteCredential(id: c.id)
+        }
+        for d in (try? await wallet.deferredCredentials()) ?? [] {
+            try? await wallet.abandonDeferred(id: d.id)
         }
     }
 
@@ -233,15 +238,11 @@ final class WalletModel {
             var summary = "Received \(result.credentials.count) credential(s)"
             if !result.deferred.isEmpty { summary += ", \(result.deferred.count) deferred" }
             phase = .done(summary)
-            if result.deferred.isEmpty {
-                await closeIssuance()
-            } else {
-                // The issuance stays open — its access token polls the
-                // deferred credentials — until they're all settled.
-                self.issuance = nil
-                self.offer = nil
-                for d in result.deferred { track(d, of: issuance) }
-            }
+            // Deferred credentials are kept in the credential store, with
+            // what polling them needs: they outlive the issuance, and the
+            // app quitting.
+            await closeIssuance()
+            for d in result.deferred { track(d) }
         } catch {
             phase = .failed(Self.describe(error))
             // Don't leave the issuance's keys in the Keychain: the holder
@@ -254,8 +255,9 @@ final class WalletModel {
     // MARK: Deferred credentials
 
     /// A credential the issuer will issue later (OpenID4VCI 1.0 §9),
-    /// polled at the issuer's interval until it's issued or denied. It
-    /// lives in memory: one still pending when the app quits is lost.
+    /// polled at the issuer's interval until it's issued or denied. The
+    /// wallet keeps it in the credential store, so after a relaunch it's
+    /// resumed (resumeDeferred).
     struct PendingCredential: Identifiable, Equatable {
         enum State: Equatable { case waiting, checking, denied, failed(String) }
 
@@ -263,19 +265,21 @@ final class WalletModel {
         let configurationID: String
         var intervalSeconds: Double
         var state: State
-
-        static func == (a: Self, b: Self) -> Bool {
-            a.id == b.id && a.state == b.state && a.intervalSeconds == b.intervalSeconds
-        }
     }
 
     private(set) var pending: [PendingCredential] = []
-    private var pendingIssuances: [String: Issuance] = [:]
     private var pollTasks: [String: Task<Void, Never>] = [:]
 
-    private func track(_ d: Issuance.Deferred, of issuance: Issuance) {
+    /// Picks up the deferred credentials the wallet holds — from before
+    /// the app last quit — and polls them.
+    private func resumeDeferred() async {
+        guard let wallet, let held = try? await wallet.deferredCredentials() else { return }
+        for d in held { track(d) }
+    }
+
+    private func track(_ d: DeferredCredential) {
+        guard !pending.contains(where: { $0.id == d.id }) else { return }
         pending.append(PendingCredential(id: d.id, configurationID: d.configurationID, intervalSeconds: d.intervalSeconds, state: .waiting))
-        pendingIssuances[d.id] = issuance
         schedule(d.id)
     }
 
@@ -298,48 +302,47 @@ final class WalletModel {
     }
 
     private func poll(_ id: String) async {
-        guard let i = pending.firstIndex(where: { $0.id == id }), let issuance = pendingIssuances[id] else { return }
+        guard let wallet, let i = pending.firstIndex(where: { $0.id == id }) else { return }
         pending[i].state = .checking
         do {
-            switch try await issuance.pollDeferred(id: id) {
+            switch try await wallet.pollDeferred(id: id) {
             case .pending(let interval):
                 update(id) { $0.state = .waiting; $0.intervalSeconds = interval }
                 schedule(id)
             case .issued:
-                await settle(id)
+                forget(id)
                 phase = .done("Received a deferred credential")
                 await refresh()
             }
         } catch let e as WalletError where e.code == .credentialDenied {
+            // The wallet has already forgotten it; the row stays until
+            // it's dismissed.
             update(id) { $0.state = .denied }
-            await release(id)
         } catch {
             update(id) { $0.state = .failed(Self.describe(error)) }
         }
     }
 
-    /// Forgets a denied credential.
+    /// Removes a denied credential's row.
     func dismiss(_ id: String) async {
-        await settle(id)
+        forget(id)
+    }
+
+    /// Gives up on a credential that can't be checked — its access token
+    /// expired, say — deleting it and its keys.
+    func abandon(_ id: String) async {
+        try? await wallet?.abandonDeferred(id: id)
+        forget(id)
     }
 
     private func update(_ id: String, _ change: (inout PendingCredential) -> Void) {
         if let i = pending.firstIndex(where: { $0.id == id }) { change(&pending[i]) }
     }
 
-    /// Removes `id`, and closes its issuance when nothing else waits on it.
-    private func settle(_ id: String) async {
-        pending.removeAll { $0.id == id }
-        await release(id)
-    }
-
-    private func release(_ id: String) async {
+    private func forget(_ id: String) {
         pollTasks[id]?.cancel()
         pollTasks[id] = nil
-        guard let issuance = pendingIssuances.removeValue(forKey: id) else { return }
-        if !pendingIssuances.values.contains(where: { $0 === issuance }) {
-            try? await issuance.close()
-        }
+        pending.removeAll { $0.id == id }
     }
 
     /// An error as the holder sees it: the wallet's own sentence, and —

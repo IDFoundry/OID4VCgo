@@ -2,10 +2,9 @@ package mobile
 
 import (
 	"context"
-	"encoding/base64"
 	"errors"
 	"fmt"
-	"sync"
+	"time"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/walletflow"
@@ -14,14 +13,11 @@ import (
 // Issuance receives the credentials one Credential Offer offers
 // (walletflow.Issuance): show Offer, then BeginAuthorization and
 // CompleteAuthorization, or RedeemPreAuthorizedCode, then
-// RequestCredentials; poll what's deferred with PollDeferred; Close when
-// done.
+// RequestCredentials; Close when done. What's deferred is polled from
+// the Wallet (Wallet.PollDeferred), and survives Close and the app
+// quitting.
 type Issuance struct {
 	s *walletflow.Issuance
-
-	mu       sync.Mutex
-	deferred map[string]*walletflow.Deferred
-	ids      map[*walletflow.Deferred]string
 }
 
 // StartIssuance resolves the Credential Offer offerURI and fetches the
@@ -31,7 +27,7 @@ func (w *Wallet) StartIssuance(op *Operation, offerURI string) (*Issuance, error
 	if err != nil {
 		return nil, classify(err)
 	}
-	return &Issuance{s: s, deferred: map[string]*walletflow.Deferred{}, ids: map[*walletflow.Deferred]string{}}, nil
+	return &Issuance{s: s}, nil
 }
 
 type offerJSON struct {
@@ -111,61 +107,47 @@ func (s *Issuance) RedeemPreAuthorizedCode(op *Operation, txCode string) error {
 }
 
 type deferredJSON struct {
-	ID              string  `json:"id"`
-	ConfigurationID string  `json:"configuration_id"`
-	IntervalSeconds float64 `json:"interval_seconds"`
+	ID                   string     `json:"id"`
+	CredentialIssuer     string     `json:"credential_issuer"`
+	ConfigurationID      string     `json:"configuration_id"`
+	IntervalSeconds      float64    `json:"interval_seconds"`
+	DeferredAt           time.Time  `json:"deferred_at"`
+	AccessTokenExpiresAt *time.Time `json:"access_token_expires_at,omitempty"`
+}
+
+func deferredOf(d *walletflow.Deferred) deferredJSON {
+	out := deferredJSON{
+		ID: d.ID(), CredentialIssuer: d.CredentialIssuer(), ConfigurationID: d.ConfigurationID(),
+		IntervalSeconds: d.Interval().Seconds(), DeferredAt: d.DeferredAt(),
+	}
+	if t := d.AccessTokenExpiresAt(); !t.IsZero() {
+		out.AccessTokenExpiresAt = &t
+	}
+	return out
 }
 
 // RequestCredentials requests, checks and stores every offered
 // credential, and returns {"abi", "credentials": [summary],
-// "deferred": [{"id", "configuration_id", "interval_seconds"}]}. A
-// deferred credential's id is unique across issuances. If a request
-// fails, call it again: the retry requests only the credentials not yet
-// obtained, and returns everything obtained by every call (what an
-// earlier, failed call stored is in the CredentialStore already).
+// "deferred": [pending]}, each pending one as Wallet.Deferred lists it.
+// Deferred credentials are kept in the CredentialStore and polled with
+// Wallet.PollDeferred, after Close too. If a request fails, call it
+// again: the retry requests only the credentials not yet obtained, and
+// returns everything obtained by every call (what an earlier, failed
+// call stored is in the CredentialStore already).
 func (s *Issuance) RequestCredentials(op *Operation) (string, error) {
 	received, err := s.s.RequestCredentials(op.context())
-	s.register(received.Deferred)
 	if err != nil {
 		return "", classify(err)
 	}
-	s.mu.Lock()
 	deferred := make([]deferredJSON, 0, len(received.Deferred))
 	for _, d := range received.Deferred {
-		deferred = append(deferred, deferredJSON{ID: s.ids[d], ConfigurationID: d.ConfigurationID(), IntervalSeconds: d.Interval().Seconds()})
+		deferred = append(deferred, deferredOf(d))
 	}
-	s.mu.Unlock()
 	return marshal(struct {
 		result
 		Credentials []credentialSummary `json:"credentials"`
 		Deferred    []deferredJSON      `json:"deferred"`
 	}{result{ABIVersion}, summariesOf(received.Credentials), deferred})
-}
-
-// register gives each deferred credential not yet registered a random
-// ID, so it can be polled — including one from a call that failed.
-func (s *Issuance) register(deferred []*walletflow.Deferred) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for _, d := range deferred {
-		if _, ok := s.ids[d]; ok {
-			continue
-		}
-		id, err := randomID()
-		if err != nil {
-			continue
-		}
-		s.ids[d], s.deferred[id] = id, d
-	}
-}
-
-// randomID is a random 128-bit identifier.
-func randomID() (string, error) {
-	var b [16]byte
-	if _, err := (randReader{}).Read(b[:]); err != nil {
-		return "", err
-	}
-	return "deferred-" + base64.RawURLEncoding.EncodeToString(b[:]), nil
 }
 
 // Deferred credential statuses, in PollDeferred's result.
@@ -174,16 +156,36 @@ const (
 	DeferredIssued  = "issued"
 )
 
-// PollDeferred asks the issuer once about deferredID, and returns
-// {"abi", "status": "pending" | "issued", "credential": summary (once
-// issued), "interval_seconds"}. A credential the issuer refused is a
-// credential_denied error.
-func (s *Issuance) PollDeferred(op *Operation, deferredID string) (string, error) {
-	s.mu.Lock()
-	d, ok := s.deferred[deferredID]
-	s.mu.Unlock()
-	if !ok {
-		return "", newError(CodeNotFound, fmt.Errorf("no deferred credential %q", deferredID))
+// Deferred returns {"abi", "deferred": [{"id", "credential_issuer",
+// "configuration_id", "interval_seconds", "deferred_at",
+// "access_token_expires_at" (when known)}]}: the credentials issuers
+// have deferred and not yet settled, oldest first — including ones from
+// before the app last quit. Listing makes no network calls.
+func (w *Wallet) Deferred() (string, error) {
+	pending, err := w.w.Deferred(context.Background())
+	if err != nil {
+		return "", classify(err)
+	}
+	out := make([]deferredJSON, 0, len(pending))
+	for _, d := range pending {
+		out = append(out, deferredOf(d))
+	}
+	return marshal(struct {
+		result
+		Deferred []deferredJSON `json:"deferred"`
+	}{result{ABIVersion}, out})
+}
+
+// PollDeferred asks the issuer once about the deferred credential
+// deferredID names, and returns {"abi", "status": "pending" | "issued",
+// "credential": summary (once issued), "interval_seconds"}. A credential
+// the issuer refused is a credential_denied error; it's then no longer
+// pending. The first poll after the app relaunches fetches the issuer's
+// metadata.
+func (w *Wallet) PollDeferred(op *Operation, deferredID string) (string, error) {
+	d, err := w.deferred(deferredID)
+	if err != nil {
+		return "", err
 	}
 	stored, err := d.Poll(op.context())
 	if err != nil {
@@ -202,8 +204,32 @@ func (s *Issuance) PollDeferred(op *Operation, deferredID string) (string, error
 	return marshal(out)
 }
 
-// Close ends the issuance, deleting its keys: deferred credentials can
-// no longer be polled. Safe to call more than once.
+// AbandonDeferred gives up on the deferred credential deferredID names — its
+// access token has expired, say, or the holder doesn't want it — and
+// deletes it and its keys.
+func (w *Wallet) AbandonDeferred(deferredID string) error {
+	d, err := w.deferred(deferredID)
+	if err != nil {
+		return err
+	}
+	return classify(d.Abandon(context.Background()))
+}
+
+func (w *Wallet) deferred(id string) (*walletflow.Deferred, error) {
+	pending, err := w.w.Deferred(context.Background())
+	if err != nil {
+		return nil, classify(err)
+	}
+	for _, d := range pending {
+		if d.ID() == id {
+			return d, nil
+		}
+	}
+	return nil, newError(CodeNotFound, fmt.Errorf("no deferred credential %q", id))
+}
+
+// Close ends the issuance, deleting its keys but those its deferred
+// credentials still poll with. Safe to call more than once.
 func (s *Issuance) Close() error {
 	err := s.s.Close(context.Background())
 	if err != nil && !errors.Is(err, walletflow.ErrWrongStep) {

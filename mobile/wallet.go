@@ -71,7 +71,8 @@ func NewWallet(configJSON string, keys KeyStore, credentials CredentialStore, pr
 	}
 	deps := walletflow.Dependencies{
 		Keys: keyStore{keys}, Credentials: credentialStore{credentials}, Random: randReader{},
-		HTTP: testHTTP.Load(), // nil: walletflow's own client
+		Deferred: deferredStore{credentials}, // pending deferred credentials, kept beside the credentials
+		HTTP:     testHTTP.Load(),            // nil: walletflow's own client
 	}
 	if provider != nil {
 		deps.Provider = walletProvider{provider}
@@ -151,19 +152,19 @@ func (w *Wallet) summary(c walletflow.StoredCredential) (credentialSummary, erro
 	return s, nil
 }
 
-// HolderKeyIDs returns {"abi", "key_ids": [...]}: the IDs of the holder
-// keys the wallet's credentials are bound to. Every other key in the
-// KeyStore belongs to an issuance in progress — or to none, left by one
-// that never closed — so an app sweeping orphaned keys at launch,
+// HolderKeyIDs returns {"abi", "key_ids": [...]}: the IDs of the keys
+// the wallet still needs — its credentials' holder keys, and each
+// pending deferred credential's holder and DPoP keys. Every other key in
+// the KeyStore belongs to an issuance in progress — or to none, left by
+// one that never closed — so an app sweeping orphaned keys at launch,
 // before any issuance, keeps these and may delete the rest.
 func (w *Wallet) HolderKeyIDs() (string, error) {
-	creds, err := w.w.Credentials(context.Background())
+	ids, err := w.w.KeysInUse(context.Background())
 	if err != nil {
 		return "", classify(err)
 	}
-	ids := make([]string, 0, len(creds))
-	for _, c := range creds {
-		ids = append(ids, c.HolderKeyID)
+	if ids == nil {
+		ids = []string{}
 	}
 	return marshal(struct {
 		result
