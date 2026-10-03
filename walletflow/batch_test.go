@@ -17,38 +17,15 @@ func TestBatch(t *testing.T) {
 	f := newFixture(t, walletflowtest.Options{BatchSize: 3})
 	v := f.env.StartVerifier(t)
 	w := f.newWalletTrusting(t, f.env.IssuerRoots, v.Trust)
-	held := receive(t, f, w, walletflowtest.SDJWTConfigurationID)
-	c := held[0]
+	c := receive(t, f, w, walletflowtest.SDJWTConfigurationID)[0]
 	if len(c.Copies) != 3 || c.CopiesLeft() != 3 || f.keys.Len() != 3 {
 		t.Fatalf("copies = %d (%d left), keys = %d; want 3 of each", len(c.Copies), c.CopiesLeft(), f.keys.Len())
 	}
-	seen := map[string]bool{}
-	for _, cp := range c.Copies {
-		if seen[cp.HolderKeyID] || seen[cp.Credential] {
-			t.Fatal("two copies share a key or a credential")
-		}
-		seen[cp.HolderKeyID], seen[cp.Credential] = true, true
-	}
+	assertDistinct(t, c.Copies)
 
-	ctx := context.Background()
 	presented := map[string]bool{}
 	for i := range 4 {
-		id, link := v.Begin(t, dcql.Query{Credentials: []dcql.CredentialQuery{f.env.SDJWTQuery(t, "pid", "given_name")}})
-		p, err := w.StartPresentation(ctx, link)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := p.Respond(ctx, nil); err != nil {
-			t.Fatalf("presentation %d: %v", i, err)
-		}
-		view := v.Lookup(t, id)
-		if len(view.Result.Credentials) != 1 {
-			t.Fatalf("presentation %d: verifier = %+v", i, view)
-		}
-		stored, err := f.store.Get(ctx, c.ID)
-		if err != nil {
-			t.Fatal(err)
-		}
+		stored := presentOnce(t, f, v, w, c.ID)
 		if want := max(0, 2-i); stored.CopiesLeft() != want {
 			t.Errorf("after presentation %d: %d copies left, want %d", i, stored.CopiesLeft(), want)
 		}
@@ -61,6 +38,7 @@ func TestBatch(t *testing.T) {
 		t.Errorf("presentations used %d distinct copies, want all 3", len(presented))
 	}
 
+	ctx := context.Background()
 	if inUse, err := w.KeysInUse(ctx); err != nil || len(inUse) != 3 {
 		t.Errorf("KeysInUse = %v, %v; want every copy's key", inUse, err)
 	}
@@ -70,6 +48,41 @@ func TestBatch(t *testing.T) {
 	if f.keys.Len() != 0 {
 		t.Errorf("keys held after deleting = %d, want none", f.keys.Len())
 	}
+}
+
+// assertDistinct checks no two copies share a key or a credential.
+func assertDistinct(t *testing.T, copies []walletflow.CredentialCopy) {
+	t.Helper()
+	seen := map[string]bool{}
+	for _, cp := range copies {
+		if seen[cp.HolderKeyID] || seen[cp.Credential] {
+			t.Fatal("two copies share a key or a credential")
+		}
+		seen[cp.HolderKeyID], seen[cp.Credential] = true, true
+	}
+}
+
+// presentOnce answers a fresh request for the SD-JWT VC and returns the
+// stored credential id names afterwards.
+func presentOnce(t *testing.T, f fixture, v testVerifier, w *walletflow.Wallet, id string) walletflow.StoredCredential {
+	t.Helper()
+	ctx := context.Background()
+	txID, link := v.Begin(t, dcql.Query{Credentials: []dcql.CredentialQuery{f.env.SDJWTQuery(t, "pid", "given_name")}})
+	p, err := w.StartPresentation(ctx, link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.Respond(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	if view := v.Lookup(t, txID); len(view.Result.Credentials) != 1 {
+		t.Fatalf("verifier = %+v", view)
+	}
+	stored, err := f.store.Get(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return stored
 }
 
 // presentedCopy is the key of a copy stored marks presented that isn't
