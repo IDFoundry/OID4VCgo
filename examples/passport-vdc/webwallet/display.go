@@ -2,7 +2,6 @@ package webwallet
 
 import (
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"html/template"
 	"sort"
@@ -10,8 +9,6 @@ import (
 
 	"github.com/fxamacker/cbor/v2"
 
-	"github.com/idfoundry/oid4vcgo/credential/mdoc"
-	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/credential"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/walletapp"
 )
@@ -38,14 +35,7 @@ func cardFor(s walletapp.Stored) card {
 	c := card{Path: s.Path, Format: s.Format, Title: "Passport credential"}
 	var claims map[string]any
 	var err error
-	switch s.Format {
-	case "dc+sd-jwt":
-		claims, err = sdjwtClaims(s.Credential)
-	case "mso_mdoc":
-		claims, err = mdocClaims(s.Credential)
-	default:
-		err = fmt.Errorf("unknown format %q", s.Format)
-	}
+	claims, err = walletapp.ReadClaims(s.Format, s.Credential)
 	if err != nil {
 		c.Error = "couldn't read this credential"
 		return c
@@ -71,48 +61,6 @@ func cardFor(s walletapp.Stored) card {
 		c.Claims = append(c.Claims, [2]string{label(k), display(v)})
 	}
 	return c
-}
-
-func sdjwtClaims(compact string) (map[string]any, error) {
-	pres, err := sdjwtvc.Parse(compact)
-	if err != nil {
-		return nil, err
-	}
-	parts := strings.Split(pres.IssuerJWT, ".")
-	if len(parts) != 3 {
-		return nil, fmt.Errorf("malformed issuer JWT")
-	}
-	raw, err := base64.RawURLEncoding.DecodeString(parts[1])
-	if err != nil {
-		return nil, err
-	}
-	var payload map[string]any
-	if err := json.Unmarshal(raw, &payload); err != nil {
-		return nil, err
-	}
-	alg := sdjwtvc.DefaultHashAlg
-	if a, ok := payload["_sd_alg"].(string); ok {
-		alg = sdjwtvc.HashAlg(a)
-	}
-	return sdjwtvc.ResolveDisclosures(payload, alg, pres.Disclosures)
-}
-
-func mdocClaims(encoded string) (map[string]any, error) {
-	wire, err := base64.RawURLEncoding.DecodeString(encoded)
-	if err != nil {
-		return nil, err
-	}
-	signed, err := mdoc.UnmarshalIssuerSigned(wire)
-	if err != nil {
-		return nil, err
-	}
-	out := map[string]any{}
-	for _, items := range signed.NameSpaces {
-		for _, it := range items {
-			out[it.ElementIdentifier] = it.ElementValue
-		}
-	}
-	return out, nil
 }
 
 // label turns a claim name into a heading.

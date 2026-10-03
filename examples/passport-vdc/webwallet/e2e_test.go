@@ -137,6 +137,17 @@ func openConsent(t *testing.T, env *demotest.Env, b *http.Client, presentURL str
 
 // reviewRequest opens a verifier request in the web wallet and returns
 // the consent page and its decision URL.
+// credentialOption is the consent page's option for sharing a
+// credential of format: its radio button's value.
+func credentialOption(t *testing.T, page, format string) string {
+	t.Helper()
+	m := regexp.MustCompile(`name="credential" value="([^"]+)"[^>]*>[^<]*(?:<strong>[^<]*</strong>[^<]*)? as <span class="fmt">` + regexp.QuoteMeta(format) + `<`).FindStringSubmatch(page)
+	if m == nil {
+		t.Fatalf("the consent page offers no %s credential", format)
+	}
+	return html.UnescapeString(m[1])
+}
+
 func reviewRequest(t *testing.T, env *demotest.Env, b *http.Client, mode verifierapp.Mode) (id, page, decisionURL string) {
 	t.Helper()
 	id, link, err := env.Verifier.CreateRequest(mode)
@@ -175,7 +186,7 @@ func TestWebWallet_ReceiveThenShareWithConsent(t *testing.T) {
 	// The consent screen shows what's asked for, in each format the
 	// wallet can answer with — and nothing is sent yet.
 	id, page, decision := reviewRequest(t, env, b, verifierapp.ModeICAO)
-	for _, want := range []string{"passport-vdc demo verifier", "gmrtd_verifiable_doc", `value="mso_mdoc"`, `value="dc+sd-jwt"`} {
+	for _, want := range []string{"passport-vdc demo verifier", "gmrtd_verifiable_doc", `as <span class="fmt">mso_mdoc`, `as <span class="fmt">dc+sd-jwt`, "JANE DOE"} {
 		if !strings.Contains(page, want) {
 			t.Errorf("consent page is missing %q", want)
 		}
@@ -187,7 +198,7 @@ func TestWebWallet_ReceiveThenShareWithConsent(t *testing.T) {
 		t.Fatal("the verifier got an answer before the holder consented")
 	}
 
-	resp, err = b.PostForm(decision, url.Values{"decision": {"share"}, "format": {"dc+sd-jwt"}})
+	resp, err = b.PostForm(decision, url.Values{"decision": {"share"}, "credential": {credentialOption(t, page, "dc+sd-jwt")}})
 	if err != nil {
 		t.Fatalf("share: %v", err)
 	}
@@ -325,11 +336,12 @@ func shareSameDevice(t *testing.T, env *demotest.Env, b *http.Client) (resultPat
 	if m == nil {
 		t.Fatal("the request page has no web wallet link")
 	}
-	d := regexp.MustCompile(`action="(/present/[^"]+)"`).FindStringSubmatch(openConsent(t, env, b, html.UnescapeString(m[1])))
+	consent := openConsent(t, env, b, html.UnescapeString(m[1]))
+	d := regexp.MustCompile(`action="(/present/[^"]+)"`).FindStringSubmatch(consent)
 	if d == nil {
 		t.Fatal("consent page has no decision form")
 	}
-	resp, err = b.PostForm(env.WebWalletURL+d[1], url.Values{"decision": {"share"}, "format": {"dc+sd-jwt"}})
+	resp, err = b.PostForm(env.WebWalletURL+d[1], url.Values{"decision": {"share"}, "credential": {credentialOption(t, consent, "dc+sd-jwt")}})
 	redirect = mustRedirect(t, resp, err, "share")
 	if !strings.HasPrefix(redirect.String(), env.VerifierURL+"/continue?response_code=") {
 		t.Fatalf("the wallet sent the browser to %s, want the verifier's redirect_uri", redirect)

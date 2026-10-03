@@ -432,7 +432,7 @@ func (a *App) handlePresentDecision(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
-	presented, err := p.prepared.Send(ctx, r.PostForm.Get("format"))
+	presented, err := p.prepared.Send(ctx, r.PostForm.Get("credential"))
 	if err != nil {
 		renderError(w, http.StatusBadGateway, err.Error())
 		return

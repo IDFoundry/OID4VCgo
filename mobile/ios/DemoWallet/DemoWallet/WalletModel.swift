@@ -153,8 +153,18 @@ final class WalletModel {
         }
     }
 
-    func toggle(_ id: String) async {
-        if selected.contains(id) { selected.remove(id) } else { selected.insert(id) }
+    /// Chooses credential `id` to answer `queryID`, or unchooses it. A
+    /// query takes one credential unless it asks for several (DCQL
+    /// `multiple`, OpenID4VP 1.0 §6.1), which no request here does: so
+    /// choosing one unchooses the query's others.
+    func toggle(_ id: String, for queryID: String) async {
+        if selected.contains(id) {
+            selected.remove(id)
+        } else {
+            let others = presentation?.candidates.first { $0.queryID == queryID }?.credentials.map(\.id) ?? []
+            selected.subtract(others)
+            selected.insert(id)
+        }
         await updatePreview()
     }
 

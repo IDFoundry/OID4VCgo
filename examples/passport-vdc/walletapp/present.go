@@ -16,10 +16,12 @@ import (
 
 // PresentOptions controls Present.
 type PresentOptions struct {
-	// Format, if set, restricts which stored credentials are offered to
-	// the Verifier's query ("mso_mdoc" or "dc+sd-jwt") — how the demo
-	// shows a Verifier accepting either format.
-	Format string
+	// Format, if set, presents a stored credential of that format
+	// ("mso_mdoc" or "dc+sd-jwt") — how the demo shows a Verifier
+	// accepting either — the first such option; CredentialID presents
+	// that credential. Neither: the first option.
+	Format       string
+	CredentialID string
 	// HTTP makes every request; nil means a client with a 10 s timeout.
 	HTTP *http.Client
 	// VerifierTrust decides which verifiers to answer (OpenID4VP
@@ -54,13 +56,15 @@ type Prepared struct {
 	// answer in.
 	Options []Option
 
-	p        *walletflow.Presentation
-	byFormat map[string][]string // candidate credential IDs, by format
+	p *walletflow.Presentation
 }
 
-// Option is one way to answer a request.
+// Option is one way to answer a request: one stored credential, whose
+// holder Holder names — a wallet can hold several people's passports.
 type Option struct {
-	Format string
+	CredentialID string
+	Holder       string
+	Format       string
 	// QueryID is the DCQL credential query this answers.
 	QueryID string
 	// Claims are the claim paths that would be disclosed (e.g.
@@ -75,7 +79,16 @@ func Present(ctx context.Context, requestLink string, store Store, opts PresentO
 	if err != nil {
 		return Presented{}, err
 	}
-	return p.Send(ctx, opts.Format)
+	id := opts.CredentialID
+	for _, o := range p.Options {
+		if id == "" && (opts.Format == "" || o.Format == opts.Format) {
+			id = o.CredentialID
+		}
+	}
+	if id == "" {
+		return Presented{}, fmt.Errorf("walletapp: no stored %s credential answers the request", opts.Format)
+	}
+	return p.Send(ctx, id)
 }
 
 // Prepare fetches and verifies an OpenID4VP Authorization Request (an
@@ -106,31 +119,27 @@ func Prepare(ctx context.Context, requestLink string, store Store, hc *http.Clie
 		return nil, fmt.Errorf("walletapp: %w", err)
 	}
 	v := p.Verifier()
-	prepared := &Prepared{
-		VerifierClientID: v.ClientID, VerifierName: v.Name, ResponseURI: v.ResponseURI,
-		p: p, byFormat: map[string][]string{},
-	}
+	prepared := &Prepared{VerifierClientID: v.ClientID, VerifierName: v.Name, ResponseURI: v.ResponseURI, p: p}
+	// One option per stored credential that answers: exactly what Send
+	// would present for it, claim sets included, and whose it is, for
+	// the holder to choose.
+	var seen []string
 	for _, cs := range p.Candidates() {
 		for _, c := range cs.Credentials {
-			if !slices.Contains(prepared.byFormat[c.Format], c.ID) {
-				prepared.byFormat[c.Format] = append(prepared.byFormat[c.Format], c.ID)
+			if slices.Contains(seen, c.ID) {
+				continue
 			}
-		}
-	}
-	// One option per format: exactly what Send would present in that
-	// format, claim sets included, for the holder to see before
-	// choosing.
-	for _, format := range []string{"mso_mdoc", "dc+sd-jwt"} {
-		ids := prepared.byFormat[format]
-		if len(ids) == 0 {
-			continue
-		}
-		disclosed, err := p.Preview(ctx, ids)
-		if err != nil {
-			continue
-		}
-		for _, d := range disclosed {
-			prepared.Options = append(prepared.Options, Option{Format: format, QueryID: d.QueryID, Claims: pathStrings(d.Claims)})
+			seen = append(seen, c.ID)
+			disclosed, err := p.Preview(ctx, []string{c.ID})
+			if err != nil {
+				continue
+			}
+			claims, _ := ReadClaims(c.Format, c.Credential)
+			for _, d := range disclosed {
+				prepared.Options = append(prepared.Options, Option{
+					CredentialID: c.ID, Holder: HolderName(claims), Format: c.Format, QueryID: d.QueryID, Claims: pathStrings(d.Claims),
+				})
+			}
 		}
 	}
 	if len(prepared.Options) == 0 {
@@ -139,18 +148,15 @@ func Prepare(ctx context.Context, requestLink string, store Store, hc *http.Clie
 	return prepared, nil
 }
 
-// Send answers the request with the stored credentials of format (""
-// for whichever the query chooses): selectively disclosed presentations
-// bound to the verifier's nonce, POSTed to the response_uri as an
-// encrypted direct_post.jwt response.
-func (p *Prepared) Send(ctx context.Context, format string) (Presented, error) {
-	var ids []string
-	if format != "" {
-		if ids = p.byFormat[format]; len(ids) == 0 {
-			return Presented{}, fmt.Errorf("walletapp: no stored %s credential answers the request", format)
-		}
+// Send answers the request with the stored credential credentialID
+// names, one of Options': a selectively disclosed presentation bound to
+// the verifier's nonce, POSTed to the response_uri as an encrypted
+// direct_post.jwt response.
+func (p *Prepared) Send(ctx context.Context, credentialID string) (Presented, error) {
+	if !slices.ContainsFunc(p.Options, func(o Option) bool { return o.CredentialID == credentialID }) {
+		return Presented{}, fmt.Errorf("walletapp: credential %q doesn't answer the request", credentialID)
 	}
-	presented, err := p.p.Respond(ctx, ids)
+	presented, err := p.p.Respond(ctx, []string{credentialID})
 	if err != nil {
 		return Presented{}, fmt.Errorf("walletapp: %w", err)
 	}
