@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.26.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.25.0...v0.26.0) (2026-10-03)
+
+
+### ⚠ BREAKING CHANGES
+
+* **mobile:** ABI version 8. Candidates is replaced by Queries, and Preview and Respond take a selection object instead of an array of credential IDs. In Swift, candidates becomes queries, and preview(credentialIDs:) and respond(credentialIDs:) become preview(selection:) and respond(selection:); call defaultSelection() for the former nil.
+* **walletflow:** Presentation.Candidates and the Candidates type are replaced by Queries and Query (QueryID becomes ID). Preview and Respond take a Selection instead of []string: pass walletflow.Selection{queryID: {credentialID}} for each query answered. Where nil let the request choose, pass p.DefaultSelection(ctx).
+
+### Features
+
+* **dcql:** check which credential queries a response answers ([a1eea1e](https://github.com/IDFoundry/OID4VCgo/commit/a1eea1ef11e82298a4b297cfb0b0ae472c5f1c48))
+* **mobile:** choose a presentation by selection (ABI 8) ([052c66e](https://github.com/IDFoundry/OID4VCgo/commit/052c66e61611a9183c4940b8da5b67268032df1b))
+* **walletflow:** present exactly the application's selection ([7eaeba2](https://github.com/IDFoundry/OID4VCgo/commit/7eaeba2d4f762df0624e5385cabf00e7172f1874))
+* **wallet:** validate and present a selection exactly ([67ce687](https://github.com/IDFoundry/OID4VCgo/commit/67ce6878e58fbc160a3ea42b4aa466297221fb15))
+
+
+### Bug Fixes
+
+* **verifier:** refuse a response that answers what the query didn't ask ([bc3aedd](https://github.com/IDFoundry/OID4VCgo/commit/bc3aedd5f189e4acdc1f18ab38b4c0f7cc1b226b))
+* **wallet:** refuse a selection that answers two alternatives ([b84b6ae](https://github.com/IDFoundry/OID4VCgo/commit/b84b6aef39dcde1d16c52a18acff34fd04220ccc))
+
 ## [0.25.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.24.0...v0.25.0) (2026-10-03)
 
 
