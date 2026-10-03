@@ -215,7 +215,7 @@ networking.
 | 4 ✓ | OID4VCI slice | HAIP issuance from the iOS demo app against the passport-vdc issuer, with Key Attestations from the Wallet Provider |
 | 5 ✓ | Storage | The native credential store, with key references |
 | 6 ◐ | OID4VP slice | Request parsing, candidates, consent and presentation from the iOS demo app |
-| 7 ◐ | Hardening | Suspension and resumption (deferred credentials ✓, an authorization in progress ✓), cancellation and network failures ✓, issuer and verifier errors ✓, logging without personal data (errors ✓), the demo app's retry and cancel |
+| 7 ✓ | Hardening | Suspension and resumption (deferred credentials, an authorization in progress), cancellation, network failures, issuer and verifier errors, logging without personal data, the demo app's retry and cancel |
 | 8 | Android | The same bridge over Android Keystore, packaged as an AAR |
 | 9 | DC API | A DC API adapter over the presentation engine |
 
@@ -587,6 +587,16 @@ Each step either can be retried safely, or says it can't:
   - Clean-up (deleting a key, settling a deferred credential) runs even
     when the call was cancelled.
   - A provider's `URLError` is a network failure, not a platform one.
+
+The demo app shows the pattern:
+- A failure `isRetryable` says may pass (the network, a wrong PIN)
+  keeps the offer open with the error and a Try again button. A retry
+  after the token only requests the credentials.
+- Cancel cancels the receive in progress, then closes the issuance.
+- Closing the issuer's page leaves the offer as it was.
+- A deferred credential whose poll fails retryably keeps being polled,
+  less often.
+- Anything deferred before a failure is picked up at once.
 
 The protocol can't make some steps idempotent. A lost token or
 credential response leaves the issuer to decide whether a retry is
