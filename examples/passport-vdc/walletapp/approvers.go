@@ -30,6 +30,16 @@ type HeadlessApprover struct {
 
 // Approve implements Approver.
 func (h HeadlessApprover) Approve(ctx context.Context, authorizationURL string) (Callback, error) {
+	loc, err := h.Redirect(ctx, authorizationURL)
+	if err != nil {
+		return Callback{}, err
+	}
+	return Callback{Query: loc.RawQuery}, nil
+}
+
+// Redirect approves as Approve does, and returns where the issuer
+// redirects the browser: the wallet's redirect URI, with the response.
+func (h HeadlessApprover) Redirect(ctx context.Context, authorizationURL string) (*url.URL, error) {
 	hc := &http.Client{Timeout: httpTimeout}
 	if h.HTTP != nil {
 		copied := *h.HTTP
@@ -40,52 +50,52 @@ func (h HeadlessApprover) Approve(ctx context.Context, authorizationURL string) 
 	// that opened the page; this process is that browser.
 	jar, err := cookiejar.New(nil)
 	if err != nil {
-		return Callback{}, err
+		return nil, err
 	}
 	hc.Jar = jar
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, authorizationURL, nil)
 	if err != nil {
-		return Callback{}, err
+		return nil, err
 	}
 	resp, err := hc.Do(req)
 	if err != nil {
-		return Callback{}, err
+		return nil, err
 	}
 	page, err := io.ReadAll(io.LimitReader(resp.Body, maxApprovalPageBytes))
 	_ = resp.Body.Close()
 	if err != nil {
-		return Callback{}, fmt.Errorf("authorization page: %w", err)
+		return nil, fmt.Errorf("authorization page: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return Callback{}, fmt.Errorf("authorization page: status %d", resp.StatusCode)
+		return nil, fmt.Errorf("authorization page: status %d", resp.StatusCode)
 	}
 	tag, err := ApprovalTag(page)
 	if err != nil {
-		return Callback{}, err
+		return nil, err
 	}
 
 	u, err := url.Parse(authorizationURL)
 	if err != nil {
-		return Callback{}, err
+		return nil, err
 	}
 	decision := (&url.URL{Scheme: u.Scheme, Host: u.Host, Path: "/authorize/decision"}).String()
 	form := url.Values{approvalTagField: {tag}, "decision": {"approve"}, "code": {h.Code}}
 	req, err = http.NewRequestWithContext(ctx, http.MethodPost, decision, strings.NewReader(form.Encode()))
 	if err != nil {
-		return Callback{}, err
+		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	resp, err = hc.Do(req)
 	if err != nil {
-		return Callback{}, err
+		return nil, err
 	}
 	_ = resp.Body.Close()
 	loc, err := resp.Location()
 	if err != nil {
-		return Callback{}, fmt.Errorf("approval: status %d, no redirect: %w", resp.StatusCode, err)
+		return nil, fmt.Errorf("approval: status %d, no redirect: %w", resp.StatusCode, err)
 	}
-	return Callback{Query: loc.RawQuery}, nil
+	return loc, nil
 }
 
 // maxApprovalPageBytes bounds the approval page HeadlessApprover reads.
@@ -119,7 +129,9 @@ func ApprovalTag(page []byte) (string, error) {
 // browsers, binds the callback to the browser with a cookie too: see the
 // webwallet package.)
 type BrowserApprover struct {
-	RedirectURI string // an http://127.0.0.1:<port>/<path> loopback URI
+	// RedirectURI is an http://127.0.0.1/<path> loopback URI: without a
+	// port, each authorization listens on one the operating system picks.
+	RedirectURI string
 	Show        func(authorizationURL string)
 	Timeout     time.Duration // zero means 5 minutes
 	// PromptPIN asks the holder for a pre-authorized offer's PIN; nil
@@ -137,38 +149,70 @@ func (b BrowserApprover) PIN(_ context.Context, txCode oid4vci.TxCode) (string, 
 
 // Approve implements Approver.
 func (b BrowserApprover) Approve(ctx context.Context, authorizationURL string) (Callback, error) {
+	l, err := b.Listen(ctx)
+	if err != nil {
+		return Callback{}, err
+	}
+	defer func() { _ = l.Close() }()
+	return l.Approve(ctx, authorizationURL)
+}
+
+// Listen implements LoopbackApprover. A RedirectURI without a port
+// (http://127.0.0.1/callback) listens on a port the operating system
+// picks, and the wallet sends that port; one with a port listens on it.
+func (b BrowserApprover) Listen(_ context.Context) (LoopbackListener, error) {
 	redirect, err := url.Parse(b.RedirectURI)
 	if err != nil || redirect.Scheme != "http" {
-		return Callback{}, fmt.Errorf("browser approval needs an http loopback redirect URI, got %q", b.RedirectURI)
+		return nil, fmt.Errorf("browser approval needs an http loopback redirect URI, got %q", b.RedirectURI)
 	}
-	ln, err := net.Listen("tcp", redirect.Host)
+	perFlow := redirect.Port() == ""
+	addr := redirect.Host
+	if perFlow {
+		addr = net.JoinHostPort(redirect.Hostname(), "0")
+	}
+	ln, err := net.Listen("tcp", addr)
 	if err != nil {
-		return Callback{}, fmt.Errorf("listen on %s: %w", redirect.Host, err)
+		return nil, fmt.Errorf("listen on %s: %w", addr, err)
 	}
-
-	got := make(chan Callback, 1)
+	l := &browserListener{approver: b, got: make(chan Callback, 1)}
+	if perFlow {
+		l.port = uint16(ln.Addr().(*net.TCPAddr).Port) //nolint:gosec // a TCP port fits
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET "+redirect.EscapedPath(), func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		_, _ = io.WriteString(w, "Done — you can close this window and return to the wallet.\n")
 		select {
-		case got <- Callback{Query: r.URL.RawQuery}:
+		case l.got <- Callback{Query: r.URL.RawQuery}:
 		default:
 		}
 	})
-	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
-	go func() { _ = srv.Serve(ln) }()
-	defer func() { _ = srv.Close() }()
+	l.srv = &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
+	go func() { _ = l.srv.Serve(ln) }()
+	return l, nil
+}
 
-	if b.Show != nil {
-		b.Show(authorizationURL)
+// browserListener is a BrowserApprover listening for one authorization's
+// redirect.
+type browserListener struct {
+	approver BrowserApprover
+	srv      *http.Server
+	got      chan Callback
+	port     uint16
+}
+
+func (l *browserListener) RedirectPort() uint16 { return l.port }
+
+func (l *browserListener) Approve(ctx context.Context, authorizationURL string) (Callback, error) {
+	if l.approver.Show != nil {
+		l.approver.Show(authorizationURL)
 	}
-	timeout := b.Timeout
+	timeout := l.approver.Timeout
 	if timeout == 0 {
 		timeout = 5 * time.Minute
 	}
 	select {
-	case cb := <-got:
+	case cb := <-l.got:
 		return cb, nil
 	case <-time.After(timeout):
 		return Callback{}, errors.New("timed out waiting for approval in the browser")
@@ -176,3 +220,5 @@ func (b BrowserApprover) Approve(ctx context.Context, authorizationURL string) (
 		return Callback{}, ctx.Err()
 	}
 }
+
+func (l *browserListener) Close() error { return l.srv.Close() }

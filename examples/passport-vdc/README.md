@@ -205,8 +205,10 @@ go run ./cmd/wallet present -state .demo-state [-format dc+sd-jwt] [-yes] 'openi
 
 The CLI's `receive` prints the authorization URL: open it, approve with
 the confirmation code, and it picks up the redirect on
-`http://127.0.0.1:8765/callback`; add `-headless -code <confirmation code>`
-to approve automatically.
+`http://127.0.0.1:<port>/callback`, listening on a port the operating
+system picks for that authorization (RFC 8252 §7.3; the issuer
+registers the wallet as a native app, so it accepts any loopback port).
+Add `-headless -code <confirmation code>` to approve automatically.
 
 The issuer's redirect back is bound to the wallet that asked (fapigo's
 protection against login CSRF, RFC 9700 §4.7): the web wallet sets a
