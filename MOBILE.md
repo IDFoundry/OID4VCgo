@@ -1,6 +1,6 @@
 # OID4VCgo Mobile — design
 
-Status: **in progress** — Phases 0 to 5 are done (see Phases). This is
+Status: **in progress** — Phases 0 to 5 are done, and Phase 6 is done on the Simulator (see Phases). This is
 the design for a mobile wallet SDK built on OID4VCgo, delivered in the
 phases below. It records the decisions taken so far, what each phase
 found, and the questions still open; update it as phases land.
@@ -213,7 +213,7 @@ networking.
 | 3 ✓ | ABI foundation | Versioned JSON envelope, error codes and session lifecycle, documented |
 | 4 ✓ | OID4VCI slice | HAIP issuance from the iOS demo app against the passport-vdc issuer, with Key Attestations from the Wallet Provider |
 | 5 ✓ | Storage | The native credential store, with key references |
-| 6 | OID4VP slice | Request parsing, candidates, consent and presentation from the iOS demo app |
+| 6 ◐ | OID4VP slice | Request parsing, candidates, consent and presentation from the iOS demo app |
 | 7 | Hardening | Suspension and resumption, cancellation, network failures, issuer and verifier errors, logging without personal data |
 | 8 | Android | The same bridge over Android Keystore, packaged as an AAR |
 | 9 | DC API | A DC API adapter over the presentation engine |
@@ -375,6 +375,28 @@ keeps credentials in a data-protected file store.
 - **Encryption at rest beyond data protection** isn't needed on iOS: the
   file protection class does it, keyed to the passcode. An Android store
   (Phase 8) needs its own answer.
+
+### Phase 6 progress
+
+The demo app presents. For an `openid4vp://` request it shows the
+Verifier, the credentials that can answer each of its queries (the
+first preselected), and exactly which claims sharing them discloses,
+previewed as the holder changes the selection. Then it shares them, or
+declines. When the Verifier returns a redirect, the app opens it.
+
+- **On the Simulator, end to end:** the UI tests have a received SD-JWT
+  VC shared in answer to the test Verifier's request, which then holds
+  `family_name`, and an unanswerable request declined, which the
+  Verifier records as `access_denied`. The holder key signs in the
+  Secure Enclave.
+- **Still on a device:** the Face ID or passcode prompt when holder keys
+  sign. The Simulator can't make a holder key that requires it.
+  Reaching the passport-vdc demo from a phone needs it served on a
+  public URL: its services listen on loopback only, its certificate names
+  loopback only, and the wallet's fetcher refuses private-network
+  addresses.
+- **XCUITest:** opening a custom-scheme link from a test asks for
+  confirmation, so the tests launch the app with the link instead.
 
 ## Decisions
 
