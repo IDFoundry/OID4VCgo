@@ -50,11 +50,11 @@ type PendingAuthorization struct {
 // the authorization's state must survive the app being suspended while
 // the holder is at the issuer's pages. MemoryAuthorizationStore isn't.
 //
-// It holds only this wallet's own authorizations — a native app's
-// on-device storage — never one shared between users or browsers: the
-// redirect's state alone then finds the authorization it completes
-// (fapigo's storage.Capabilities.SingleUserAgent). A wallet serving
-// several browsers must not call ResumeIssuance.
+// ResumeIssuance needs it to hold only this wallet's own authorizations —
+// a native app's on-device storage — never one shared between users or
+// browsers: the redirect's state alone then finds the authorization it
+// completes (fapigo's client.CallbackBindingDeviceLocalStore). A wallet
+// serving several browsers must not call ResumeIssuance.
 type AuthorizationStore interface {
 	// PutAuthorization stores a, replacing any with its State.
 	PutAuthorization(ctx context.Context, a PendingAuthorization) error
@@ -169,11 +169,9 @@ func (s *sessionStore) Consume(ctx context.Context, c storage.SessionConsumption
 
 // Capabilities implements storage.StoreAssurance: Durable as the
 // AuthorizationStore is, and Consume is atomic within the wallet's one
-// process. It's SingleUserAgent: a wallet's AuthorizationStore holds
-// only the authorizations the wallet itself began, so the callback's
-// state alone finds the one the redirect completes (ResumeIssuance).
+// process.
 func (s *sessionStore) Capabilities() storage.Capabilities {
-	return storage.Capabilities{Durable: s.w.deps.Authorizations.Durable(), AtomicConsume: true, SingleUserAgent: true}
+	return storage.Capabilities{Durable: s.w.deps.Authorizations.Durable(), AtomicConsume: true}
 }
 
 // ResumeIssuance completes an authorization begun before the app was
@@ -212,8 +210,9 @@ func (w *Wallet) ResumeIssuance(ctx context.Context, redirect string) (*Issuance
 	if err != nil {
 		return nil, err
 	}
-	// No session handle: the store is single-user-agent, so fapigo takes
-	// the session from the callback itself.
+	// No session handle: the client was built with
+	// CallbackBindingDeviceLocalStore (rebuild), so fapigo takes the
+	// session from the callback itself.
 	if err := s.CompleteAuthorization(ctx, redirect); err != nil {
 		var denied *AuthorizationDeniedError
 		if !errors.As(err, &denied) {
@@ -254,6 +253,7 @@ func (w *Wallet) rebuild(ctx context.Context, a PendingAuthorization) (*Issuance
 		w: w, offer: a.Offer, authorizationServer: a.AuthorizationServer,
 		instanceKeyID: a.InstanceKeyID, dpopKeyID: a.DPoPKeyID, state: a.State,
 	}
+	s.resumed = true
 	if err := s.newClient(ctx, a.AuthorizationServer); err != nil {
 		_ = s.Close(ctx)
 		return nil, err
