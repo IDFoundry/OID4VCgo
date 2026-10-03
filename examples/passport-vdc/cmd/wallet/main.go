@@ -164,15 +164,15 @@ func present(link, dir, format string, yes bool, httpClient *http.Client, trust 
 	if len(options) == 0 {
 		return fmt.Errorf("no stored %s credential answers the request", format)
 	}
-	choice := options[0]
+	chosen := []string{options[0].CredentialID}
 	if !yes {
 		var ok bool
-		if choice, ok = chooseShare(prepared, options); !ok {
+		if chosen, ok = chooseShare(prepared, options); !ok {
 			fmt.Println("declined — nothing was shared")
 			return nil
 		}
 	}
-	presented, err := prepared.Send(ctx, choice.CredentialID)
+	presented, err := prepared.Send(ctx, chosen...)
 	if err != nil {
 		return err
 	}
@@ -185,7 +185,7 @@ func present(link, dir, format string, yes bool, httpClient *http.Client, trust 
 
 // chooseShare shows the verifier and what each option would disclose,
 // and asks the holder which to share; false declines.
-func chooseShare(p *walletapp.Prepared, options []walletapp.Option) (walletapp.Option, bool) {
+func chooseShare(p *walletapp.Prepared, options []walletapp.Option) ([]string, bool) {
 	fmt.Printf("Verifier %q (%s) asks for your passport credential.\nThe answer goes to %s.\n", p.VerifierName, p.VerifierClientID, p.ResponseURI)
 	for i, o := range options {
 		holder := o.Holder
@@ -197,13 +197,21 @@ func chooseShare(p *walletapp.Prepared, options []walletapp.Option) (walletapp.O
 			fmt.Printf("     - %s\n", strings.Join(c, " › "))
 		}
 	}
-	fmt.Printf("Share which? [1-%d, or N to decline] ", len(options))
-	answer, _ := bufio.NewReader(os.Stdin).ReadString('\n')
-	n, err := strconv.Atoi(strings.TrimSpace(answer))
-	if err != nil || n < 1 || n > len(options) {
-		return walletapp.Option{}, false
+	if p.Several {
+		fmt.Printf("It accepts several. Share which? [numbers 1-%d separated by commas, all in one format, or N to decline] ", len(options))
+	} else {
+		fmt.Printf("Share which? [1-%d, or N to decline] ", len(options))
 	}
-	return options[n-1], true
+	answer, _ := bufio.NewReader(os.Stdin).ReadString('\n')
+	var chosen []string
+	for _, field := range strings.Split(answer, ",") {
+		n, err := strconv.Atoi(strings.TrimSpace(field))
+		if err != nil || n < 1 || n > len(options) {
+			return nil, false
+		}
+		chosen = append(chosen, options[n-1].CredentialID)
+	}
+	return chosen, true
 }
 
 func list(dir string) error {

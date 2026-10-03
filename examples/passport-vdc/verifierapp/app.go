@@ -118,6 +118,16 @@ type Outcome struct {
 	// ICAO is the result of re-verifying the disclosed passport file
 	// (ModeICAO).
 	ICAO *ICAOResult
+	// People are each credential presented in ModeGroup, in the order
+	// presented; Format, Claims and Status are then the first's.
+	People []Person
+}
+
+// Person is one credential of a ModeGroup presentation.
+type Person struct {
+	Format string
+	Claims map[string]any
+	Status string
 }
 
 // ICAOResult is a ModeICAO check of the passport file.
@@ -383,16 +393,21 @@ func (a *App) accept(ctx context.Context, txID string, result verifier.VerifyRes
 			}
 		}
 	}
-	if len(result.Credentials) != 1 {
+	if len(result.Credentials) == 0 || len(result.Credentials) > 1 && s.mode != ModeGroup {
 		return fmt.Errorf("expected one credential, got %d", len(result.Credentials))
 	}
-	vc := result.Credentials[0]
-	out := &Outcome{Mode: s.mode, Format: formatOf(vc.CredentialQueryID)}
-	var err error
-	if out.Status, err = a.checkStatus(ctx, vc); err != nil {
-		return err
+	out := &Outcome{Mode: s.mode}
+	for _, vc := range result.Credentials {
+		status, err := a.checkStatus(ctx, vc)
+		if err != nil {
+			return err
+		}
+		out.People = append(out.People, Person{Format: formatOf(vc.CredentialQueryID), Claims: flatten(vc.CredentialQueryID, vc.Claims), Status: status})
 	}
-	out.Claims = flatten(vc.CredentialQueryID, vc.Claims)
+	out.Format, out.Claims, out.Status = out.People[0].Format, out.People[0].Claims, out.People[0].Status
+	if s.mode != ModeGroup {
+		out.People = nil
+	}
 	if s.mode == ModeICAO {
 		out.ICAO = a.checkICAO(out.Claims)
 	}

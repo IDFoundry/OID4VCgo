@@ -115,6 +115,7 @@ type consentPage struct {
 	VerifierID   string
 	ResponseHost string
 	Options      []walletapp.Option
+	Several      bool
 }
 
 var consentTemplate = template.Must(template.New("consent").Funcs(template.FuncMap{
@@ -123,9 +124,10 @@ var consentTemplate = template.Must(template.New("consent").Funcs(template.FuncM
 <h1>A verifier is asking for your passport credential</h1>
 <p>Verifier: <strong>{{.VerifierName}}</strong><br><span class="note">Its request is signed by a certificate from a verifier CA this wallet trusts (identifier <code>{{.VerifierID}}</code>); the answer goes to <code>{{.ResponseHost}}</code>.</span></p>
 <form method="post" action="/present/{{.ID}}">
+{{if .Several}}<p>It accepts several passports: choose each one to share, all in one format.</p>{{end}}
 {{range $i, $o := .Options}}
 <div class="card">
-<label><input type="radio" name="credential" value="{{$o.CredentialID}}" {{if eq $i 0}}checked{{end}}> Share {{if $o.Holder}}<strong>{{$o.Holder}}</strong>'s passport{{else}}a passport credential{{end}} as <span class="fmt">{{$o.Format}}</span></label>
+<label><input type="{{if $.Several}}checkbox{{else}}radio{{end}}" name="credential" value="{{$o.CredentialID}}" {{if eq $i 0}}checked{{end}}> Share {{if $o.Holder}}<strong>{{$o.Holder}}</strong>'s passport{{else}}a passport credential{{end}} as <span class="fmt">{{$o.Format}}</span></label>
 <p>It will see only:</p>
 <ul>{{range $o.Claims}}<li><code>{{path .}}</code></li>{{end}}</ul>
 </div>

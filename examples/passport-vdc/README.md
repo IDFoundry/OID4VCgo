@@ -58,6 +58,13 @@ A verifier can choose:
    The price is disclosure: the verifier receives the whole passport
    content, not a chosen subset.
 
+The verifier page also offers **several passports**: the first path,
+for a group such as a family travelling together. Its DCQL query sets
+`multiple` (OpenID4VP 1.0 §6.1), so the wallet may answer with several
+credentials. The web and CLI wallets let the holder choose whose
+passports to share, all in one format; the verifier checks each and
+lists every person. Every other request takes exactly one credential.
+
 What the second path does and doesn't give you:
 
 - It removes trust in this issuer **for the data**: the issuer can't

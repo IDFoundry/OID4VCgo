@@ -11,6 +11,9 @@
 //     is one claim, so this discloses everything the chip held.
 //     The issuer signature is still checked, and the credential's
 //     device key still binds it to the presenter.
+//   - Several passports: as trusting the issuer, but for a group — the
+//     query takes several credentials (DCQL multiple), one per person
+//     the holder chooses to share.
 package verifierapp
 
 import (
@@ -30,6 +33,10 @@ const (
 	ModeIssuer Mode = "issuer"
 	// ModeICAO trusts only the issuing country, via the passport file.
 	ModeICAO Mode = "icao"
+	// ModeGroup trusts the issuer, as ModeIssuer, for several people at
+	// once: each query takes several credentials (DCQL multiple,
+	// OpenID4VP 1.0 §6.1), and the holder chooses whose to share.
+	ModeGroup Mode = "group"
 )
 
 // Credential query IDs: one per format, offered as alternatives.
@@ -74,15 +81,24 @@ func buildQuery(mode Mode, vct string, trusted dcql.TrustedAuthoritiesQuery) (dc
 	case ModeICAO:
 		mdocClaims = []dcql.ClaimsQuery{claim(credential.FileNamespace, credential.PassportFile)}
 		sdjwtClaims = []dcql.ClaimsQuery{claim(credential.PassportFile)}
+	case ModeGroup:
+		for _, el := range []string{credential.FamilyName, credential.GivenName, credential.Nationality, "age_over_18"} {
+			mdocClaims = append(mdocClaims, claim(credential.IdentityNamespace, el))
+		}
+		sdjwtClaims = []dcql.ClaimsQuery{
+			claim(credential.FamilyName), claim(credential.GivenName),
+			claim(credential.SDJWTNationalities), claim(credential.SDJWTAgeEqualOrOver, "18"),
+		}
 	default:
 		return dcql.Query{}, fmt.Errorf("verifierapp: unknown mode %q", mode)
 	}
 
 	trustedAuthorities := []dcql.TrustedAuthoritiesQuery{trusted}
+	multiple := mode == ModeGroup
 	q := dcql.Query{
 		Credentials: []dcql.CredentialQuery{
-			{ID: mdocQueryID, Format: mdoc.CredentialFormat, Meta: mdocMeta, Claims: mdocClaims, ClaimSets: claimSets, TrustedAuthorities: trustedAuthorities},
-			{ID: sdjwtQueryID, Format: sdjwtvc.CredentialFormat, Meta: sdjwtMeta, Claims: sdjwtClaims, ClaimSets: claimSets, TrustedAuthorities: trustedAuthorities},
+			{ID: mdocQueryID, Format: mdoc.CredentialFormat, Multiple: multiple, Meta: mdocMeta, Claims: mdocClaims, ClaimSets: claimSets, TrustedAuthorities: trustedAuthorities},
+			{ID: sdjwtQueryID, Format: sdjwtvc.CredentialFormat, Multiple: multiple, Meta: sdjwtMeta, Claims: sdjwtClaims, ClaimSets: claimSets, TrustedAuthorities: trustedAuthorities},
 		},
 		CredentialSets: []dcql.CredentialSetQuery{{Options: [][]string{{mdocQueryID}, {sdjwtQueryID}}}},
 	}
