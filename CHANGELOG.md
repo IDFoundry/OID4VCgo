@@ -5,37 +5,16 @@
 
 ### Features
 
-* **mobile:** add an iOS demo wallet app ([255cffa](https://github.com/IDFoundry/OID4VCgo/commit/255cffad4d8492cc8755e3f22593960c7544cb67))
 * **walletflow:** add session-oriented wallet orchestration ([32a522a](https://github.com/IDFoundry/OID4VCgo/commit/32a522a10593b875361a7a0ce94c92c768ea42b0))
 * **walletflow:** add walletflowtest, an in-process HAIP issuer for wallet tests ([39db564](https://github.com/IDFoundry/OID4VCgo/commit/39db5643cd25442213ac7e033f8abeef8467f5a0))
-* **walletflow:** issue a portrait from walletflowtest ([011d2b3](https://github.com/IDFoundry/OID4VCgo/commit/011d2b35a7b7b13888cf9dca0f80a66493a5c9e7))
-* **walletflow:** keep a received credential's claims with it ([f8a48ab](https://github.com/IDFoundry/OID4VCgo/commit/f8a48ab5877db255978c5d201d8b79b86c66dd1f))
-* **walletflow:** keep deferred credentials pending across restarts ([70e0c9a](https://github.com/IDFoundry/OID4VCgo/commit/70e0c9ad6369567fa6b98679652ae14c6d6b466e))
-* **walletflow:** let an authorization send a per-flow loopback redirect port ([2937b96](https://github.com/IDFoundry/OID4VCgo/commit/2937b96aafb3b1556a2828f8c94d4f5ee59eacaa))
-* **walletflow:** let walletflowtest serve a wallet app on the network ([f47393a](https://github.com/IDFoundry/OID4VCgo/commit/f47393afa4d18e146a42ab148cfd724aee928d0e))
-* **walletflow:** receive credentials in batches, and present a fresh copy each time ([4d77196](https://github.com/IDFoundry/OID4VCgo/commit/4d77196c75ecfdb21096c3434d4a680683f79cab))
-* **walletflow:** register walletflowtest's wallet as a native app ([10e3522](https://github.com/IDFoundry/OID4VCgo/commit/10e3522f0abf49d065743c4437c7059c858d5a80))
-* **walletflow:** require issuance settings only to receive credentials ([4c14b4f](https://github.com/IDFoundry/OID4VCgo/commit/4c14b4f177de22aa13630d8577973cf5d57648f9))
-* **walletflow:** show credentials' display metadata, expiry and revocation status ([f0994fd](https://github.com/IDFoundry/OID4VCgo/commit/f0994fd00652c76cad0be24d1967756b3c3c8eb0))
-* **walletflow:** switch walletflowtest's deferral while it runs ([1e2b26e](https://github.com/IDFoundry/OID4VCgo/commit/1e2b26eea07cffadafe2fa3a74fb6673db6524d3))
 * **wallet:** report an issued credential's expiry and status list ([20aca69](https://github.com/IDFoundry/OID4VCgo/commit/20aca691a0235d9f08880afdcf3f5a1e2c127ad9))
 
 
 ### Bug Fixes
 
-* **deps:** pin FAPIgo main d0fae2c ([a27b2c1](https://github.com/IDFoundry/OID4VCgo/commit/a27b2c16124a692bd30d2ef8d33c153ed01860f1))
-* **deps:** pin FAPIgo main fa120ab ([68328a8](https://github.com/IDFoundry/OID4VCgo/commit/68328a848142b624c3c04919bc286dab9b2010ab))
-* **deps:** pin FAPIgo v0.44.0 ([8751760](https://github.com/IDFoundry/OID4VCgo/commit/875176021511086c625a32872c625cd5ae473c20))
-* **deps:** pin FAPIgo v0.45.0 ([15daedd](https://github.com/IDFoundry/OID4VCgo/commit/15daedda19bd5aa0f6f5fa1342702fba7d514daa))
 * **deps:** pin FAPIgo v0.46.0 ([b1ed1d8](https://github.com/IDFoundry/OID4VCgo/commit/b1ed1d85c38247c58e307583258f5609e3de1bc3))
 * **verifier:** answer a Wallet's error response with 200 ([0bf23c2](https://github.com/IDFoundry/OID4VCgo/commit/0bf23c2e7d18dd985df57725976fec8f9f73f1ed))
 * **wallet:** add PlanPreAuthorizedCode, refusing an unlisted Authorization Server ([7b06ab8](https://github.com/IDFoundry/OID4VCgo/commit/7b06ab87b4ac533951a230959c46c50409c7be44))
-* **walletflow:** build the OAuth client at production assurance, keeping authorizations resumable ([163ac7b](https://github.com/IDFoundry/OID4VCgo/commit/163ac7be6dc350993d81a7c87fe7d0b790bf83cf))
-* **walletflow:** let RequestCredentials be retried, and report a settled Deferred ([03f524f](https://github.com/IDFoundry/OID4VCgo/commit/03f524fcad12f88e3bbe2eddfcc1e3ca1b06db0e))
-* **walletflow:** list candidates for every credential_sets option ([291973c](https://github.com/IDFoundry/OID4VCgo/commit/291973c09034525eaa2bdc8fc428c884771afd5a))
-* **walletflow:** make each step safe to retry, or say it isn't ([c98e459](https://github.com/IDFoundry/OID4VCgo/commit/c98e45990f43b561a7bbc9665806320249c23cdd))
-* **walletflow:** resume an authorization from the callback alone ([e2aacb6](https://github.com/IDFoundry/OID4VCgo/commit/e2aacb6410ad34b7a6183b2b5e6fc1ae439b9f81))
-* **walletflow:** resume with FAPIgo's CallbackBindingDeviceLocalStore ([8a02aca](https://github.com/IDFoundry/OID4VCgo/commit/8a02aca4011b9b9481895a2c441548ef9f205a7f))
 
 ## [0.24.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.23.0...v0.24.0) (2026-10-02)
 
@@ -74,7 +53,6 @@
 
 ### Bug Fixes
 
-* **examples:** require DPoP nonces at the passport-vdc Credential Issuer's endpoints ([3891efa](https://github.com/IDFoundry/OID4VCgo/commit/3891efac3e23c00035cf66f77c6835dd39f886e5))
 * **issuer:** bind a deferred transaction to the token's subject ([4d2da01](https://github.com/IDFoundry/OID4VCgo/commit/4d2da01f0a528548ada4a1786330b5f95604ee2b))
 * **issuer:** check a deferred poll before Resolve, and deny an unsent deferral ([c6151c0](https://github.com/IDFoundry/OID4VCgo/commit/c6151c00936e0910b5318e02807d3692807c79c7))
 * **statuslist:** close the gaps in Fetcher's address policy ([be802ec](https://github.com/IDFoundry/OID4VCgo/commit/be802ec7fdb9741bcf824f68988a239926cd87e4))
