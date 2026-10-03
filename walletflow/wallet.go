@@ -42,6 +42,13 @@ type Config struct {
 	// the issuer's entry without a locale, else its first.
 	Locales []string
 
+	// BatchSize is how many copies of each credential to request when
+	// the issuer offers batch issuance, each bound to its own key, so
+	// each presentation can use one no Verifier has seen. It's capped at
+	// the issuer's batch_size. Zero means DefaultBatchSize; 1 requests
+	// one copy.
+	BatchSize int
+
 	// Development relaxes what production requires, for a wallet
 	// talking to services on this machine: issuers, Authorization
 	// Servers and Verifiers on loopback addresses.
@@ -85,6 +92,10 @@ type Wallet struct {
 	liveDPoP map[string]bool      // DPoP keys open issuances hold
 	authMu   sync.Mutex           // serializes consuming authorizations
 }
+
+// DefaultBatchSize is how many copies of a credential a wallet requests
+// when Config.BatchSize is zero and the issuer offers batch issuance.
+const DefaultBatchSize = 5
 
 const (
 	httpTimeout      = 10 * time.Second
@@ -147,7 +158,8 @@ func (w *Wallet) Credentials(ctx context.Context) ([]StoredCredential, error) {
 	return creds, nil
 }
 
-// DeleteCredential deletes the credential id names, and its holder key.
+// DeleteCredential deletes the credential id names, and every copy's
+// holder key.
 func (w *Wallet) DeleteCredential(ctx context.Context, id string) error {
 	c, err := w.deps.Credentials.Get(ctx, id)
 	if err != nil {
@@ -156,8 +168,10 @@ func (w *Wallet) DeleteCredential(ctx context.Context, id string) error {
 	if err := w.deps.Credentials.Delete(ctx, id); err != nil {
 		return fmt.Errorf("walletflow: delete credential: %w", err)
 	}
-	if err := w.deps.Keys.DeleteKey(ctx, c.HolderKeyID); err != nil {
-		return fmt.Errorf("walletflow: delete credential's holder key: %w", err)
+	for _, cp := range c.AllCopies() {
+		if err := w.deps.Keys.DeleteKey(ctx, cp.HolderKeyID); err != nil {
+			return fmt.Errorf("walletflow: delete credential's holder key: %w", err)
+		}
 	}
 	return nil
 }
