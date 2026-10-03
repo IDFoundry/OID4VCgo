@@ -29,6 +29,9 @@ type config struct {
 	// Locales are the holder's preferred languages (BCP 47, most
 	// preferred first), for issuers' display metadata.
 	Locales []string `json:"locales,omitempty"`
+	// BatchSize is how many copies of each credential to request when an
+	// issuer offers batches; 0 means walletflow.DefaultBatchSize.
+	BatchSize int `json:"batch_size,omitempty"`
 }
 
 // testHTTP, when set (by the mobiletest build), is the HTTP client every
@@ -59,7 +62,7 @@ func NewWallet(configJSON string, keys KeyStore, credentials CredentialStore, pr
 	if keys == nil || credentials == nil {
 		return nil, newError(CodeInvalidInput, errors.New("a KeyStore and a CredentialStore are required"))
 	}
-	wcfg := walletflow.Config{ClientID: cfg.ClientID, RedirectURI: cfg.RedirectURI, Development: cfg.Development, Locales: cfg.Locales}
+	wcfg := walletflow.Config{ClientID: cfg.ClientID, RedirectURI: cfg.RedirectURI, Development: cfg.Development, Locales: cfg.Locales, BatchSize: cfg.BatchSize}
 	var err error
 	if cfg.IssuerRoots != "" {
 		if wcfg.IssuerRoots, err = certPool(cfg.IssuerRoots); err != nil {

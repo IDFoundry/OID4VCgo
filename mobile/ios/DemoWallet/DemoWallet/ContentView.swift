@@ -208,6 +208,9 @@ struct CredentialRow: View {
                 } else if let until = summary.validUntil {
                     Text("Expires \(until.formatted(date: .abbreviated, time: .omitted))").font(.caption).foregroundStyle(text.opacity(0.8))
                 }
+                if let copies = Self.copies(summary) {
+                    Text(copies).font(.caption).foregroundStyle(summary.copiesLeft == 0 ? .orange : text.opacity(0.8))
+                }
             }
         }
         .listRowBackground(Color(css: d?.backgroundColor))
@@ -226,6 +229,14 @@ struct CredentialRow: View {
         case .suspended: return "Suspended by the issuer"
         default: return nil
         }
+    }
+
+    /// How many fresh copies are left: each presentation uses one no
+    /// Verifier has seen, so they can't be linked by the credential.
+    static func copies(_ c: CredentialSummary) -> String? {
+        if c.copiesLeft == 0 { return "Every copy has been shared: Verifiers could link the next presentation" }
+        guard c.copies > 1 else { return nil }
+        return "\(c.copiesLeft) of \(c.copies) copies unused"
     }
 
     static func statusText(_ c: CredentialSummary) -> String? {

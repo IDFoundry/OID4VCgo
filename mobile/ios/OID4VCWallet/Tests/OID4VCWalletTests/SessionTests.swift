@@ -10,8 +10,8 @@ extension MobileTestEnv: @retroactive @unchecked Sendable {}
 final class TestEnv: Sendable {
     let env: MobileTestEnv
 
-    init(deferIssuance: Bool = false) throws {
-        env = try OID4VC.call { MobileStartTestEnv(deferIssuance, $0) }!
+    init(deferIssuance: Bool = false, batchSize: Int = 0) throws {
+        env = try OID4VC.call { MobileStartBatchTestEnv(deferIssuance, batchSize, $0) }!
     }
 
     func close() { env.close() }
@@ -257,6 +257,22 @@ final class SessionTests: XCTestCase {
         XCTAssertEqual(revoked.status?.value, .revoked)
         let listed = try await w.credentials()
         XCTAssertEqual(listed.first { $0.id == held[0].id }?.status?.value, .revoked, "the status isn't kept")
+    }
+
+    /// From an issuer offering batches, each credential arrives as
+    /// copies, and a presentation uses up one.
+    func testBatch() async throws {
+        let env = try TestEnv(batchSize: 3)
+        defer { env.close() }
+        let w = try wallet(env)
+        _ = try await Self.receive(env, w)
+        let held = try await w.credentials()
+        XCTAssertTrue(held.allSatisfy { $0.copies == 3 && $0.copiesLeft == 3 }, "\(held.map { ($0.copies, $0.copiesLeft) })")
+        let req = try env.request(format: "dc+sd-jwt")
+        let p = try await w.startPresentation(request: req.link)
+        _ = try await p.respond()
+        let after = try await w.credentials()
+        XCTAssertEqual(after.map(\.copiesLeft).sorted(), [2, 3])
     }
 
     func testAbandonDeferred() async throws {

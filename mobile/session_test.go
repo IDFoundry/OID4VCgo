@@ -629,3 +629,51 @@ func TestSessions_DisplayAndStatus(t *testing.T) {
 		t.Errorf("an unknown credential: %v", err)
 	}
 }
+
+// From an issuer offering batches, the wallet holds copies of each
+// credential, keeps every copy's key, and each presentation uses a
+// fresh copy; the copies survive a relaunch.
+func TestSessions_Batch(t *testing.T) {
+	env, err := StartBatchTestEnv(false, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(env.Close)
+	h := harness{env: env, keys: newGoKeyStore(), creds: newGoCredentialStore()}
+	if h.w, err = NewWallet(env.ConfigJSON(), h.keys, h.creds, env.Provider()); err != nil {
+		t.Fatal(err)
+	}
+	received := h.receive(t)
+	type copies struct {
+		ID, Format string
+		Copies     int `json:"copies"`
+		CopiesLeft int `json:"copies_left"`
+	}
+	list := func(w *Wallet) []copies {
+		return decode[struct{ Credentials []copies }](t, mustText(t)(w.Credentials())).Credentials
+	}
+	for _, c := range list(h.w) {
+		if c.Copies != 3 || c.CopiesLeft != 3 {
+			t.Errorf("%s: %d copies, %d left; want 3 and 3", c.Format, c.Copies, c.CopiesLeft)
+		}
+	}
+	if keys := decode[struct {
+		KeyIDs []string `json:"key_ids"`
+	}](t, mustText(t)(h.w.HolderKeyIDs())); len(keys.KeyIDs) != 6 {
+		t.Errorf("keys in use = %d, want every copy's: 6", len(keys.KeyIDs))
+	}
+	sdjwt := checkPresentation(t, h, received)
+	relaunched, err := NewWallet(env.ConfigJSON(), h.keys, h.creds, env.Provider())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range list(relaunched) {
+		want := 3
+		if c.ID == sdjwt {
+			want = 2
+		}
+		if c.CopiesLeft != want {
+			t.Errorf("%s after one presentation: %d left, want %d", c.Format, c.CopiesLeft, want)
+		}
+	}
+}

@@ -34,10 +34,10 @@ type PendingDeferred struct {
 	// when the Token Response didn't say. Once it has passed, the issuer
 	// refuses to be polled with it.
 	AccessTokenExpiresAt time.Time
-	// DPoPKeyID and HolderKeyID name the DPoP key the access token is
-	// bound to and the key the credential will be bound to.
-	DPoPKeyID   string
-	HolderKeyID string
+	// DPoPKeyID names the DPoP key the access token is bound to, and
+	// HolderKeyIDs the keys the credential's copies will be bound to.
+	DPoPKeyID    string
+	HolderKeyIDs []string
 	// Interval is how long the issuer asked the wallet to wait between
 	// polls.
 	Interval   time.Duration
@@ -192,13 +192,17 @@ func (d *Deferred) Poll(ctx context.Context) (*StoredCredential, error) {
 		d.received = &result
 	}
 	result := *d.received
-	holder, err := d.w.deps.Keys.Key(ctx, d.p.HolderKeyID)
-	if err != nil {
-		return nil, fmt.Errorf("walletflow: deferred credential %q's holder key: %w", d.p.ConfigurationID, err)
+	holders := make([]Key, 0, len(d.p.HolderKeyIDs))
+	for _, id := range d.p.HolderKeyIDs {
+		holder, err := d.w.deps.Keys.Key(ctx, id)
+		if err != nil {
+			return nil, fmt.Errorf("walletflow: deferred credential %q's holder key: %w", d.p.ConfigurationID, err)
+		}
+		holders = append(holders, holder)
 	}
 	stored, err := d.w.accept(ctx, issued{
 		issuer: d.p.CredentialIssuer, metadata: *d.metadata, resource: d.resource,
-		configID: d.p.ConfigurationID, holder: holder, result: result,
+		configID: d.p.ConfigurationID, holders: holders, result: result,
 	})
 	if errors.Is(err, errInvalidCredential) {
 		_ = d.settle(cleanup, true)
@@ -210,6 +214,7 @@ func (d *Deferred) Poll(ctx context.Context) (*StoredCredential, error) {
 		return nil, err
 	}
 	_ = d.settle(cleanup, false)
+	d.w.deleteUnused(cleanup, d.p.HolderKeyIDs, stored)
 	return &stored, nil
 }
 
@@ -258,7 +263,9 @@ func (d *Deferred) settle(ctx context.Context, deleteHolder bool) error {
 	d.done = true
 	errs := []error{d.w.deps.Deferred.DeleteDeferred(ctx, d.p.ID)}
 	if deleteHolder {
-		errs = append(errs, d.w.deps.Keys.DeleteKey(ctx, d.p.HolderKeyID))
+		for _, id := range d.p.HolderKeyIDs {
+			errs = append(errs, d.w.deps.Keys.DeleteKey(ctx, id))
+		}
 	}
 	errs = append(errs, d.w.releaseDPoPKey(ctx, d.p.DPoPKeyID))
 	d.w.forgetDeferred(d.p.ID)
@@ -359,7 +366,7 @@ func (w *Wallet) releaseDPoPKey(ctx context.Context, id string) error {
 }
 
 // KeysInUse are the IDs of the keys the wallet still needs: its
-// credentials' holder keys, each pending deferred credential's holder
+// credentials' holder keys, every copy's, each pending deferred credential's holder
 // and DPoP keys, and each authorization in progress's instance and DPoP
 // keys (ResumeIssuance). Any other key in the KeyStore — when no
 // issuance is open — is left over from one that never finished. It
@@ -382,10 +389,14 @@ func (w *Wallet) KeysInUse(ctx context.Context) ([]string, error) {
 		}
 	}
 	for _, c := range creds {
-		add(c.HolderKeyID)
+		for _, cp := range c.AllCopies() {
+			add(cp.HolderKeyID)
+		}
 	}
 	for _, p := range pending {
-		add(p.HolderKeyID)
+		for _, id := range p.HolderKeyIDs {
+			add(id)
+		}
 		add(p.DPoPKeyID)
 	}
 	authorizing, err := w.pendingAuthorizations(ctx)
@@ -410,4 +421,18 @@ func (w *Wallet) newDPoPKey(ctx context.Context) (Key, error) {
 	defer w.mu.Unlock()
 	w.liveDPoP[k.ID()] = true
 	return k, nil
+}
+
+// deleteUnused deletes the holder keys among ids that stored's copies
+// aren't bound to: the issuer issued fewer copies than requested.
+func (w *Wallet) deleteUnused(ctx context.Context, ids []string, stored StoredCredential) {
+	used := map[string]bool{}
+	for _, cp := range stored.AllCopies() {
+		used[cp.HolderKeyID] = true
+	}
+	for _, id := range ids {
+		if !used[id] {
+			_ = w.deps.Keys.DeleteKey(ctx, id)
+		}
+	}
 }

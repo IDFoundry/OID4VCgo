@@ -28,8 +28,14 @@ type StoredCredential struct {
 	// SD-JWT VC, or base64url-encoded mdoc IssuerSigned CBOR.
 	Credential string
 	// HolderKeyID names the key the credential is bound to, in the
-	// wallet's KeyStore.
+	// wallet's KeyStore. Credential and HolderKeyID are the first of
+	// Copies.
 	HolderKeyID string
+	// Copies are every copy the issuer issued in one batch: the same
+	// claims, each bound to its own key, so each presentation can use
+	// one no Verifier has seen (unlinkability). nil for a credential
+	// stored before copies were kept: its one copy is Credential.
+	Copies []CredentialCopy
 	// Claims are the credential's claims, as the wallet checked them
 	// on receipt (wallet.VerifyIssuedCredential), for display: an SD-JWT
 	// VC's processed payload with every disclosure resolved, or an
@@ -52,6 +58,46 @@ type StoredCredential struct {
 	StatusList    *statuslist.StatusListRef
 	StatusListCWT bool
 	Status        CredentialStatus
+}
+
+// CredentialCopy is one copy of a credential: the credential, the key
+// it's bound to, and whether it's been presented.
+type CredentialCopy struct {
+	Credential  string
+	HolderKeyID string
+	Presented   bool
+}
+
+// AllCopies are c's copies: Copies, or its one copy when it has none.
+func (c StoredCredential) AllCopies() []CredentialCopy {
+	if len(c.Copies) > 0 {
+		return c.Copies
+	}
+	return []CredentialCopy{{Credential: c.Credential, HolderKeyID: c.HolderKeyID}}
+}
+
+// CopiesLeft is how many of c's copies no Verifier has seen.
+func (c StoredCredential) CopiesLeft() int {
+	n := 0
+	for _, cp := range c.AllCopies() {
+		if !cp.Presented {
+			n++
+		}
+	}
+	return n
+}
+
+// nextCopy is the copy to present next: the first not yet presented,
+// else — every copy has been — the first, which a Verifier may link to
+// an earlier presentation.
+func (c StoredCredential) nextCopy() (int, CredentialCopy) {
+	copies := c.AllCopies()
+	for i, cp := range copies {
+		if !cp.Presented {
+			return i, cp
+		}
+	}
+	return 0, copies[0]
 }
 
 // CredentialStore holds the wallet's credentials. They carry personal

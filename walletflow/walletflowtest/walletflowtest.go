@@ -107,6 +107,9 @@ type Options struct {
 	// Defer has the Credential Endpoint defer every credential: the
 	// wallet polls until Env.Decide approves or denies them.
 	Defer bool
+	// BatchSize, when 2 or more, has the issuer offer batch issuance of
+	// up to that many copies of a credential, each bound to its own key.
+	BatchSize int
 	// RedirectURIs are registered for the wallet as well as
 	// RedirectURI: an app's private-use URI scheme redirect, say. The
 	// wallet is registered as a native app, so each must be a form RFC
@@ -230,6 +233,7 @@ func New(opts Options) (env *Env, err error) {
 		},
 		PreAuthorizedCodeClientAuthentication: issuer.VerifiedPreAuthorizedCode{},
 		Display:                               []oid4vci.Display{{Name: IssuerName, Locale: "en", Logo: logo}},
+		BatchCredentialIssuance:               batchIssuance(opts.BatchSize),
 		CredentialConfigurationsSupported: map[string]issuer.CredentialConfiguration{
 			SDJWTConfigurationID: {
 				Format: sdjwtvc.CredentialFormat, VCT: e.vct, Scope: SDJWTConfigurationID,
@@ -770,3 +774,12 @@ var logoPNG = func() []byte {
 	}
 	return b.Bytes()
 }()
+
+// batchIssuance is the issuer's batch_credential_issuance for size: nil,
+// no batches, below 2.
+func batchIssuance(size int) *oid4vci.BatchCredentialIssuance {
+	if size < 2 {
+		return nil
+	}
+	return &oid4vci.BatchCredentialIssuance{BatchSize: size}
+}

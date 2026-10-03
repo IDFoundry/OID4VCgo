@@ -38,6 +38,11 @@
 //	disclosed, err := p.Preview(ctx, chosen)        // holder consents
 //	presented, err := p.Respond(ctx, chosen)        // or p.Decline(ctx)
 //
+// When an issuer offers batch issuance, a credential arrives as several
+// copies (Config.BatchSize), each bound to its own key, and each
+// presentation uses a copy no Verifier has seen, so presentations can't
+// be linked by the credential.
+//
 // Every key walletflow creates is P-256 (ES256). Each issuance uses a
 // fresh wallet instance key (with a fresh Wallet Attestation) and a
 // fresh DPoP key, deleted by Issuance.Close (the DPoP key once no

@@ -332,6 +332,9 @@ func (a *App) buildIssuer() error {
 		},
 		// Display metadata (OID4VCI 1.0 §12.2.4), which wallets show.
 		Display: []oid4vci.Display{{Name: "IDFoundry passport demo", Locale: "en"}},
+		// Batches of copies, each bound to its own key, so a wallet can
+		// present a fresh one each time (HAIP 1.0's unlinkability).
+		BatchCredentialIssuance: &oid4vci.BatchCredentialIssuance{BatchSize: 3},
 	}, issuer.Dependencies{
 		Nonces:               oid4vcgostorage.NewNonceStore(),
 		DeferredTransactions: oid4vcgostorage.NewDeferredTransactionStore(),

@@ -151,6 +151,11 @@ final class DemoWalletUITests: XCTestCase {
         let result = try await Self.fetch("request/\(request["id"] as! String)")
         XCTAssertEqual(result["status"] as? String, "done")
         XCTAssertEqual((result["claims"] as? [String: Any])?["family_name"] as? String, "Doe")
+
+        // The issuer issued three copies; presenting used one.
+        let credential = presenting.descendants(matching: .any).matching(identifier: "credential").firstMatch
+        XCTAssertTrue(credential.waitForExistence(timeout: 10))
+        XCTAssertTrue(waitFor(credential, containing: "2 of 3 copies unused"), credential.label)
     }
 
     /// Declines a request the wallet can't answer; the Verifier records

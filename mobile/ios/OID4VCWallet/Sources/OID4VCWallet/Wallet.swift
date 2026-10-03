@@ -16,20 +16,26 @@ public struct WalletConfiguration: Codable, Sendable {
     /// for issuers' display metadata. `Locale.preferredLanguages` is the
     /// usual choice.
     public var locales: [String]
+    /// How many copies of each credential to request when an issuer
+    /// offers batches, each bound to its own key, so each presentation
+    /// can use one no Verifier has seen. 0 means the SDK's default (5);
+    /// it's capped at the issuer's batch size.
+    public var batchSize: Int
 
     public init(clientID: String, redirectURI: String, issuerRoots: String = "", verifierRoots: String = "", development: Bool = false,
-                locales: [String] = Locale.preferredLanguages) {
+                locales: [String] = Locale.preferredLanguages, batchSize: Int = 0) {
         self.clientID = clientID
         self.redirectURI = redirectURI
         self.issuerRoots = issuerRoots
         self.verifierRoots = verifierRoots
         self.development = development
         self.locales = locales
+        self.batchSize = batchSize
     }
 
     enum CodingKeys: String, CodingKey {
         case clientID = "client_id", redirectURI = "redirect_uri", issuerRoots = "issuer_roots"
-        case verifierRoots = "verifier_roots", development, locales
+        case verifierRoots = "verifier_roots", development, locales, batchSize = "batch_size"
     }
 
     public init(from decoder: Decoder) throws {
@@ -39,7 +45,8 @@ public struct WalletConfiguration: Codable, Sendable {
                   issuerRoots: try c.decodeIfPresent(String.self, forKey: .issuerRoots) ?? "",
                   verifierRoots: try c.decodeIfPresent(String.self, forKey: .verifierRoots) ?? "",
                   development: try c.decodeIfPresent(Bool.self, forKey: .development) ?? false,
-                  locales: try c.decodeIfPresent([String].self, forKey: .locales) ?? Locale.preferredLanguages)
+                  locales: try c.decodeIfPresent([String].self, forKey: .locales) ?? Locale.preferredLanguages,
+                  batchSize: try c.decodeIfPresent(Int.self, forKey: .batchSize) ?? 0)
     }
 
     /// The scheme of `redirectURI`: the callback scheme an
@@ -117,6 +124,11 @@ public struct CredentialSummary: Decodable, Equatable, Sendable {
     public let validUntil: Date?
     /// Its revocation status, as last checked; nil before any check.
     public let status: CredentialStatus?
+    /// How many copies the wallet holds, each bound to its own key, and
+    /// how many no Verifier has seen. Each presentation uses one of
+    /// those; once none is left, presentations can be linked.
+    public let copies: Int
+    public let copiesLeft: Int
 
     /// Whether it has expired by `now`.
     public func isExpired(at now: Date = Date()) -> Bool { validUntil.map { $0 <= now } ?? false }
@@ -125,6 +137,7 @@ public struct CredentialSummary: Decodable, Equatable, Sendable {
         case id, format, vct, doctype, display, status
         case credentialIssuer = "credential_issuer", configurationID = "configuration_id", receivedAt = "received_at"
         case holderKeyPresent = "holder_key_present", validUntil = "valid_until"
+        case copies, copiesLeft = "copies_left"
     }
 }
 

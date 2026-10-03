@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"slices"
 	"sync"
 	"time"
 
@@ -494,19 +495,29 @@ func (s *Issuance) request(ctx context.Context, configID string, requestEnc *wal
 	if err != nil {
 		return StoredCredential{}, nil, fmt.Errorf("walletflow: nonce: %w", err)
 	}
-	holder, err := newKey(ctx, s.w.deps.Keys, KeyPurposeHolder)
-	if err != nil {
-		return StoredCredential{}, nil, err
-	}
+	// One holder key per copy requested, attested together: the issuer
+	// issues one copy bound to each.
+	var holders []Key
 	keep := false
 	defer func() {
 		if !keep {
 			// Even when ctx is cancelled: a key left behind is an orphan.
-			_ = s.w.deps.Keys.DeleteKey(context.WithoutCancel(ctx), holder.ID())
+			for _, h := range holders {
+				_ = s.w.deps.Keys.DeleteKey(context.WithoutCancel(ctx), h.ID())
+			}
 		}
 	}()
-	pub, _ := p256(holder) // newKey checked it
-	keyAttestation, err := s.w.deps.Provider.KeyAttestation(ctx, []*ecdsa.PublicKey{pub}, nonce.CNonce)
+	pubs := make([]*ecdsa.PublicKey, 0, s.batchSize())
+	for range s.batchSize() {
+		holder, err := newKey(ctx, s.w.deps.Keys, KeyPurposeHolder)
+		if err != nil {
+			return StoredCredential{}, nil, err
+		}
+		holders = append(holders, holder)
+		pub, _ := p256(holder) // newKey checked it
+		pubs = append(pubs, pub)
+	}
+	keyAttestation, err := s.w.deps.Provider.KeyAttestation(ctx, pubs, nonce.CNonce)
 	if err != nil {
 		return StoredCredential{}, nil, fmt.Errorf("walletflow: key attestation: %w", err)
 	}
@@ -528,7 +539,7 @@ func (s *Issuance) request(ctx context.Context, configID string, requestEnc *wal
 		d, err := s.w.keepDeferred(ctx, PendingDeferred{
 			ID: id, CredentialIssuer: s.offer.CredentialIssuer, ConfigurationID: configID, TransactionID: result.TransactionID,
 			AccessToken: s.accessToken, AccessTokenExpiresAt: s.accessExpiresAt,
-			DPoPKeyID: s.dpopKey.ID(), HolderKeyID: holder.ID(), Interval: result.Interval, DeferredAt: s.w.deps.Clock().UTC(),
+			DPoPKeyID: s.dpopKey.ID(), HolderKeyIDs: keyIDs(holders), Interval: result.Interval, DeferredAt: s.w.deps.Clock().UTC(),
 		}, s.metadata, s.resource, requestEnc, responseEnc)
 		if err != nil {
 			return StoredCredential{}, nil, err
@@ -538,13 +549,37 @@ func (s *Issuance) request(ctx context.Context, configID string, requestEnc *wal
 	}
 	stored, err := s.w.accept(ctx, issued{
 		issuer: s.offer.CredentialIssuer, metadata: s.metadata, resource: s.resource,
-		configID: configID, holder: holder, result: result,
+		configID: configID, holders: holders, result: result,
 	})
 	if err != nil {
 		return StoredCredential{}, nil, err
 	}
 	keep = true
+	s.w.deleteUnused(context.WithoutCancel(ctx), keyIDs(holders), stored)
 	return stored, nil, nil
+}
+
+// batchSize is how many copies of each credential to request: the
+// wallet's BatchSize (DefaultBatchSize when zero), capped at the
+// issuer's batch_size; one when the issuer doesn't offer batches.
+func (s *Issuance) batchSize() int {
+	b := s.metadata.BatchCredentialIssuance
+	if b == nil {
+		return 1
+	}
+	want := s.w.cfg.BatchSize
+	if want <= 0 {
+		want = DefaultBatchSize
+	}
+	return max(1, min(want, b.BatchSize))
+}
+
+func keyIDs(keys []Key) []string {
+	ids := make([]string, len(keys))
+	for i, k := range keys {
+		ids[i] = k.ID()
+	}
+	return ids
 }
 
 // errInvalidCredential is wrapped by accept for a credential failing the
@@ -552,32 +587,40 @@ func (s *Issuance) request(ctx context.Context, configID string, requestEnc *wal
 var errInvalidCredential = errors.New("is invalid")
 
 // issued is a credential result to accept: from issuer, under
-// metadata, polled with resource, for configID, bound to holder.
+// metadata, polled with resource, for configID, its copies bound to
+// holders.
 type issued struct {
 	issuer   string
 	metadata oid4vci.Metadata
 	resource wallet.ProtectedResourceClient
 	configID string
-	holder   Key
+	holders  []Key
 	result   wallet.CredentialResult
 }
 
-// accept checks the one credential c's result carries, stores it, and
-// tells the issuer whether the wallet kept it (§11).
+// accept checks every copy c's result carries, each bound to one of
+// c.holders, stores them as one credential, and tells the issuer whether
+// the wallet kept it (§11).
 func (w *Wallet) accept(ctx context.Context, c issued) (StoredCredential, error) {
-	if len(c.result.Credentials) != 1 {
-		return StoredCredential{}, fmt.Errorf("walletflow: credential %q: got %d credentials, want 1", c.configID, len(c.result.Credentials))
+	if n := len(c.result.Credentials); n == 0 || n > len(c.holders) {
+		return StoredCredential{}, fmt.Errorf("walletflow: credential %q: got %d copies for %d keys", c.configID, n, len(c.holders))
 	}
 	conf := c.metadata.CredentialConfigurationsSupported[c.configID]
-	credential := c.result.Credentials[0].Credential
 	now := w.deps.Clock()
-	verified, err := wallet.VerifyIssuedCredential(ctx, wallet.VerifyIssuedCredentialParams{
-		Configuration: conf, Credential: credential, HolderKey: c.holder.Public(),
-		IssuerRoots: w.cfg.IssuerRoots, Now: now,
-	})
-	if err != nil {
-		w.notify(ctx, c, oid4vci.NotificationEventCredentialFailure, "the credential failed the wallet's checks")
-		return StoredCredential{}, fmt.Errorf("walletflow: credential %q %w: %w", c.configID, errInvalidCredential, err)
+	unbound := slices.Clone(c.holders)
+	copies := make([]CredentialCopy, 0, len(c.result.Credentials))
+	var first wallet.VerifiedIssuedCredential
+	for i, ic := range c.result.Credentials {
+		verified, key, err := w.verifyCopy(ctx, conf, ic.Credential, unbound, now)
+		if err != nil {
+			w.notify(ctx, c, oid4vci.NotificationEventCredentialFailure, "the credential failed the wallet's checks")
+			return StoredCredential{}, fmt.Errorf("walletflow: credential %q %w: %w", c.configID, errInvalidCredential, err)
+		}
+		unbound = slices.DeleteFunc(unbound, func(k Key) bool { return k.ID() == key.ID() })
+		copies = append(copies, CredentialCopy{Credential: ic.Credential, HolderKeyID: key.ID()})
+		if i == 0 {
+			first = verified
+		}
 	}
 	id, err := randomID(w.deps.Random)
 	if err != nil {
@@ -586,9 +629,10 @@ func (w *Wallet) accept(ctx context.Context, c issued) (StoredCredential, error)
 	stored := StoredCredential{
 		ID: id, CredentialIssuer: c.issuer, ConfigurationID: c.configID,
 		Format: conf.Format, VCT: conf.VCT, DocType: conf.DocType,
-		Credential: credential, HolderKeyID: c.holder.ID(), ReceivedAt: now.UTC(), Claims: verified.Claims,
-		Display: displayFor(c.metadata, c.configID, w.cfg.Locales), ValidUntil: verified.ValidUntil,
-		StatusList: verified.StatusList, StatusListCWT: verified.StatusListCWT,
+		Credential: copies[0].Credential, HolderKeyID: copies[0].HolderKeyID, Copies: copies,
+		ReceivedAt: now.UTC(), Claims: first.Claims,
+		Display: displayFor(c.metadata, c.configID, w.cfg.Locales), ValidUntil: first.ValidUntil,
+		StatusList: first.StatusList, StatusListCWT: first.StatusListCWT,
 	}
 	if err := w.deps.Credentials.Put(ctx, stored); err != nil {
 		w.notify(ctx, c, oid4vci.NotificationEventCredentialFailure, "the wallet couldn't store the credential")
@@ -596,6 +640,22 @@ func (w *Wallet) accept(ctx context.Context, c issued) (StoredCredential, error)
 	}
 	w.notify(ctx, c, oid4vci.NotificationEventCredentialAccepted, "")
 	return stored, nil
+}
+
+// verifyCopy checks one copy, and finds which of keys it's bound to.
+func (w *Wallet) verifyCopy(ctx context.Context, conf oid4vci.CredentialConfigurationMetadata, credential string, keys []Key, now time.Time) (wallet.VerifiedIssuedCredential, Key, error) {
+	var lastErr error
+	for _, k := range keys {
+		verified, err := wallet.VerifyIssuedCredential(ctx, wallet.VerifyIssuedCredentialParams{
+			Configuration: conf, Credential: credential, HolderKey: k.Public(),
+			IssuerRoots: w.cfg.IssuerRoots, Now: now,
+		})
+		if err == nil {
+			return verified, k, nil
+		}
+		lastErr = err
+	}
+	return wallet.VerifiedIssuedCredential{}, nil, lastErr
 }
 
 // notify sends a Notification Request when the issuer gave the

@@ -159,7 +159,7 @@ func (p *Presentation) Candidates() []Candidates { return p.candidates }
 // Preview reports what Respond(ctx, credentialIDs) would disclose,
 // without sending anything: show it to the holder for consent.
 func (p *Presentation) Preview(ctx context.Context, credentialIDs []string) ([]Disclosure, error) {
-	held, err := p.chosen(ctx, credentialIDs, false)
+	held, _, err := p.chosen(ctx, credentialIDs, false)
 	if err != nil {
 		return nil, err
 	}
@@ -186,20 +186,22 @@ func (p *Presentation) Respond(ctx context.Context, credentialIDs []string) (Pre
 	if p.answered || p.declined != "" {
 		return Presented{}, ErrWrongStep
 	}
-	held, err := p.chosen(ctx, credentialIDs, true)
+	held, picked, err := p.chosen(ctx, credentialIDs, true)
 	if err != nil {
 		return Presented{}, err
 	}
 	responded, err := wallet.Respond(ctx, p.w.deps.HTTP, p.req, held, trustedAuthorities)
 	if err != nil && deliveryUnknown(err) {
 		// The Verifier may have it: sending again could present twice,
-		// with the same nonce.
+		// with the same nonce. Its copies count as presented.
 		p.answered = true
+		p.markPresented(ctx, picked)
 		return Presented{}, fmt.Errorf("walletflow: respond: %w: %w", ErrDeliveryUnknown, err)
 	}
 	if err != nil {
 		return Presented{}, fmt.Errorf("walletflow: respond: %w", err)
 	}
+	p.markPresented(ctx, picked)
 	p.answered = true
 	presented := Presented{RedirectURI: responded.Reply.RedirectURI}
 	for id := range responded.VPToken {
@@ -245,33 +247,56 @@ func (p *Presentation) Decline(ctx context.Context) (Presented, error) {
 }
 
 // chosen returns credentialIDs as held credentials (every candidate for
-// nil), with their holder keys when withKeys is set. Every ID must be a
-// candidate.
-func (p *Presentation) chosen(ctx context.Context, credentialIDs []string, withKeys bool) ([]wallet.HeldCredential, error) {
+// nil), with their holder keys when withKeys is set, and which copy of
+// each it picked: one no Verifier has seen, when one is left. Every ID
+// must be a candidate.
+func (p *Presentation) chosen(ctx context.Context, credentialIDs []string, withKeys bool) ([]wallet.HeldCredential, map[string]int, error) {
 	candidates := p.candidateIDs()
 	if len(candidates) == 0 {
-		return nil, ErrNoMatchingCredential
+		return nil, nil, ErrNoMatchingCredential
 	}
 	if credentialIDs == nil {
 		credentialIDs = candidates
 	}
 	held := make([]wallet.HeldCredential, 0, len(credentialIDs))
+	picked := make(map[string]int, len(credentialIDs))
 	for _, id := range credentialIDs {
 		if !slices.Contains(candidates, id) {
-			return nil, fmt.Errorf("walletflow: credential %q doesn't answer the request", id)
+			return nil, nil, fmt.Errorf("walletflow: credential %q doesn't answer the request", id)
 		}
 		c := p.byID[id]
+		i, cp := c.nextCopy()
+		picked[id] = i
 		var key Key
 		if withKeys {
-			k, err := p.w.deps.Keys.Key(ctx, c.HolderKeyID)
+			k, err := p.w.deps.Keys.Key(ctx, cp.HolderKeyID)
 			if err != nil {
-				return nil, fmt.Errorf("walletflow: credential %q's holder key: %w", id, err)
+				return nil, nil, fmt.Errorf("walletflow: credential %q's holder key: %w", id, err)
 			}
 			key = k
 		}
+		c.Credential = cp.Credential
 		held = append(held, heldCredential(c, key))
 	}
-	return held, nil
+	return held, picked, nil
+}
+
+// markPresented records that the picked copies have been presented, so
+// the next presentation uses others. It's best effort: a copy not
+// marked is presented again, which a Verifier may link.
+func (p *Presentation) markPresented(ctx context.Context, picked map[string]int) {
+	ctx = context.WithoutCancel(ctx)
+	for id, i := range picked {
+		c, err := p.w.deps.Credentials.Get(ctx, id)
+		if err != nil {
+			continue
+		}
+		c.Copies = slices.Clone(c.AllCopies())
+		if i < len(c.Copies) {
+			c.Copies[i].Presented = true
+			_ = p.w.deps.Credentials.Put(ctx, c)
+		}
+	}
 }
 
 // candidateIDs are the IDs of every credential that answers a query.
@@ -287,12 +312,15 @@ func (p *Presentation) candidateIDs() []string {
 	return ids
 }
 
-// idsByCredential maps each chosen credential's text to its ID.
+// idsByCredential maps the text of each copy of each chosen credential
+// to its ID.
 func (p *Presentation) idsByCredential(credentialIDs []string) map[string]string {
 	ids := make(map[string]string, len(p.byID))
 	for id, c := range p.byID {
 		if credentialIDs == nil || slices.Contains(credentialIDs, id) {
-			ids[c.Credential] = id
+			for _, cp := range c.AllCopies() {
+				ids[cp.Credential] = id
+			}
 		}
 	}
 	return ids
