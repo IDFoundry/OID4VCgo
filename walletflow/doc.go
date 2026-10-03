@@ -9,8 +9,11 @@
 // The app supplies the platform: a KeyStore whose keys never leave it
 // (secure hardware on a phone: walletflow only asks a Key to sign a
 // digest), a CredentialStore, a WalletProvider that attests the
-// wallet and its keys, and optionally a DeferredStore, so deferred
-// credentials survive a restart. walletflow owns the protocols: every network
+// wallet and its keys, and optionally a DeferredStore and an
+// AuthorizationStore, so deferred credentials and an authorization in
+// progress survive a restart (Wallet.Deferred, Wallet.ResumeIssuance).
+// At production assurance, receiving credentials needs a Durable
+// AuthorizationStore and a KeyStore declaring durable custody. walletflow owns the protocols: every network
 // request, every protocol message, and every check on what comes back.
 //
 // An issuance runs:

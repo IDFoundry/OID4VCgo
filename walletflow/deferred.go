@@ -345,9 +345,11 @@ func (w *Wallet) releaseDPoPKey(ctx context.Context, id string) error {
 }
 
 // KeysInUse are the IDs of the keys the wallet still needs: its
-// credentials' holder keys, and each pending deferred credential's
-// holder and DPoP keys. Any other key in the KeyStore — when no issuance
-// is in progress — is left over from one that never finished.
+// credentials' holder keys, each pending deferred credential's holder
+// and DPoP keys, and each authorization in progress's instance and DPoP
+// keys (ResumeIssuance). Any other key in the KeyStore — when no
+// issuance is open — is left over from one that never finished. It
+// forgets, with their keys, authorizations that have expired.
 func (w *Wallet) KeysInUse(ctx context.Context) ([]string, error) {
 	creds, err := w.Credentials(ctx)
 	if err != nil {
@@ -371,6 +373,14 @@ func (w *Wallet) KeysInUse(ctx context.Context) ([]string, error) {
 	for _, p := range pending {
 		add(p.HolderKeyID)
 		add(p.DPoPKeyID)
+	}
+	authorizing, err := w.pendingAuthorizations(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, a := range authorizing {
+		add(a.InstanceKeyID)
+		add(a.DPoPKeyID)
 	}
 	sort.Strings(out)
 	return out, nil
