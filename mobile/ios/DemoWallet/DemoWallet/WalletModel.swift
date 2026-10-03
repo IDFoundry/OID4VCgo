@@ -24,6 +24,7 @@ final class WalletModel {
     var pin = ""
 
     private var wallet: Wallet?
+    private var keys: KeychainKeyStore?
     private var config: DemoConfiguration?
     private var issuance: Issuance?
 
@@ -43,6 +44,7 @@ final class WalletModel {
                                                        holderUserPresence: presence))
             wallet = try Wallet(configuration: config.wallet, keyStore: keys, credentialStore: try FileCredentialStore.standard(),
                                 provider: HTTPWalletProvider(baseURL: config.providerURL))
+            self.keys = keys
             self.config = config
             configured = true
             if let offer = ProcessInfo.processInfo.environment["OID4VC_DEMO_OFFER"], let url = URL(string: offer) {
@@ -52,11 +54,17 @@ final class WalletModel {
                 open(url)
             }
         } catch {
-            phase = .failed("\(error)")
+            phase = .failed(Self.describe(error))
+        }
+        if OID4VC.isTestBuild {
+            notice = "This build links the test framework, with its in-process test issuer: never ship it."
         }
         let reset = ProcessInfo.processInfo.environment["OID4VC_DEMO_RESET"] == "1"
         Task {
             if reset { await deleteAll() }
+            // At launch, before any issuance: delete keys left by one the
+            // app quit in the middle of.
+            if let wallet, let keys { _ = try? await wallet.sweepOrphanedKeys(in: keys) }
             await refresh()
         }
     }
@@ -71,7 +79,7 @@ final class WalletModel {
     }
 
     /// The redirect URI's scheme, for the authorization session.
-    var callbackScheme: String { config.flatMap { URL(string: $0.wallet.redirectURI)?.scheme } ?? "" }
+    var callbackScheme: String { config?.wallet.callbackScheme ?? "" }
 
     /// Something to tell the holder that isn't a receive's or
     /// presentation's outcome.
@@ -127,7 +135,7 @@ final class WalletModel {
             requestPhase = .shown
             await updatePreview()
         } catch {
-            phase = .failed("\(error)")
+            phase = .failed(Self.describe(error))
         }
     }
 
@@ -153,7 +161,7 @@ final class WalletModel {
         } catch {
             guard selection == selected else { return }
             disclosures = []
-            previewError = "\(error)"
+            previewError = Self.describe(error)
         }
     }
 
@@ -168,7 +176,7 @@ final class WalletModel {
             endPresentation()
             if let url = presented.redirectURI, url.scheme == "https" { await UIApplication.shared.open(url) }
         } catch {
-            phase = .failed("\(error)")
+            phase = .failed(Self.describe(error))
             endPresentation()
         }
     }
@@ -181,7 +189,7 @@ final class WalletModel {
             endPresentation()
             if let url = presented.redirectURI, url.scheme == "https" { await UIApplication.shared.open(url) }
         } catch {
-            phase = .failed("\(error)")
+            phase = .failed(Self.describe(error))
             endPresentation()
         }
     }
@@ -205,7 +213,7 @@ final class WalletModel {
             pin = ""
             phase = .offered
         } catch {
-            phase = .failed("\(error)")
+            phase = .failed(Self.describe(error))
         }
     }
 
@@ -235,7 +243,7 @@ final class WalletModel {
                 for d in result.deferred { track(d, of: issuance) }
             }
         } catch {
-            phase = .failed("\(error)")
+            phase = .failed(Self.describe(error))
             // Don't leave the issuance's keys in the Keychain: the holder
             // starts again from the offer.
             await closeIssuance()
@@ -306,7 +314,7 @@ final class WalletModel {
             update(id) { $0.state = .denied }
             await release(id)
         } catch {
-            update(id) { $0.state = .failed("\(error)") }
+            update(id) { $0.state = .failed(Self.describe(error)) }
         }
     }
 
@@ -334,6 +342,13 @@ final class WalletModel {
         }
     }
 
+    /// An error as the holder sees it: the wallet's own sentence, and —
+    /// for the demo — its code.
+    static func describe(_ error: Error) -> String {
+        if let e = error as? WalletError { return "\(e.localizedDescription) (\(e.code.rawValue)\(e.protocolError.map { ": " + $0 } ?? ""))" }
+        return error.localizedDescription
+    }
+
     func cancelOffer() async {
         await closeIssuance()
         phase = .idle
@@ -353,7 +368,7 @@ final class WalletModel {
         do {
             credentials = try await wallet.credentials()
         } catch {
-            phase = .failed("Couldn't list credentials: \(error)")
+            phase = .failed("Couldn't list credentials: " + Self.describe(error))
         }
     }
 

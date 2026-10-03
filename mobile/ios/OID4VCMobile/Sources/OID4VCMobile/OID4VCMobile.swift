@@ -1,9 +1,12 @@
 import Foundation
 import Mobile
 
-/// An error from OID4VCgo: a stable `code` (see `WalletError.Code`) and
-/// a message for logs.
-public struct WalletError: Error, Equatable, CustomStringConvertible {
+/// An error from OID4VCgo: a stable `code`, the issuer's, Authorization
+/// Server's or Verifier's own error code when it gave one
+/// (`protocolError`), and a message for logs. `localizedDescription` is
+/// a sentence fit to show the holder; `isRetryable` says whether trying
+/// the same step again may succeed.
+public struct WalletError: Error, Equatable, CustomStringConvertible, LocalizedError {
     public struct Code: RawRepresentable, Hashable, Sendable {
         public let rawValue: String
         public init(rawValue: String) { self.rawValue = rawValue }
@@ -22,24 +25,63 @@ public struct WalletError: Error, Equatable, CustomStringConvertible {
     }
 
     public let code: Code
+    /// The remote party's OAuth error code, such as `invalid_grant` (a
+    /// wrong PIN) or `access_denied`, when it gave one.
+    public let protocolError: String?
     public let message: String
 
-    public var description: String { "[\(code.rawValue)] \(message)" }
+    public var description: String {
+        protocolError.map { "[\(code.rawValue):\($0)] \(message)" } ?? "[\(code.rawValue)] \(message)"
+    }
 
-    init(code: Code, message: String) {
+    /// Whether the same step may succeed if tried again: the network
+    /// failed, or the issuer refused the PIN (`invalid_grant`, up to its
+    /// limit), or asked to be tried later.
+    public var isRetryable: Bool {
+        switch code {
+        case .network: true
+        case .protocolError: ["invalid_grant", "temporarily_unavailable", "slow_down"].contains(protocolError ?? "")
+        default: false
+        }
+    }
+
+    public var errorDescription: String? {
+        switch code {
+        case .network: "The service couldn't be reached. Check your connection and try again."
+        case .cancelled: "Cancelled."
+        case .authorizationDenied: "The issuer didn't authorize the request."
+        case .credentialDenied: "The issuer declined to issue the credential."
+        case .noMatchingCredential: "You have no credential that answers this request."
+        case .protocolError where protocolError == "invalid_grant": "That code or PIN wasn't accepted."
+        case .protocolError: "The service refused the request."
+        case .platform: "The wallet couldn't use its keys or storage."
+        case .invalidInput: "That link or code isn't valid."
+        case .notFound: "That credential is no longer in the wallet."
+        case .wrongStep: "That step isn't available now."
+        default: "Something went wrong."
+        }
+    }
+
+    init(code: Code, protocolError: String? = nil, message: String) {
         self.code = code
+        self.protocolError = protocolError
         self.message = message
     }
 
-    /// Parses an error crossing the boundary: its text is "[code] message".
+    /// Parses an error crossing the boundary: its text is "[code] message"
+    /// or "[code:detail] message".
     init(_ error: Error) {
         let text = (error as NSError).localizedDescription
-        if text.hasPrefix("["), let close = text.firstIndex(of: "]") {
-            code = Code(rawValue: String(text[text.index(after: text.startIndex)..<close]))
-            message = String(text[text.index(after: close)...]).trimmingCharacters(in: .whitespaces)
+        guard text.hasPrefix("["), let close = text.firstIndex(of: "]") else {
+            self.init(code: .internalError, message: text)
+            return
+        }
+        let tag = text[text.index(after: text.startIndex)..<close]
+        let message = String(text[text.index(after: close)...]).trimmingCharacters(in: .whitespaces)
+        if let colon = tag.firstIndex(of: ":") {
+            self.init(code: Code(rawValue: String(tag[..<colon])), protocolError: String(tag[tag.index(after: colon)...]), message: message)
         } else {
-            code = .internalError
-            message = text
+            self.init(code: Code(rawValue: String(tag)), message: message)
         }
     }
 }
@@ -55,43 +97,30 @@ public struct RequestLink: Decodable, Equatable, Sendable {
     }
 }
 
-/// The wallet's key store, implemented by the app and called by Go:
-/// `createKey(_:)` makes a P-256 key for a purpose (`KeyPurpose`) and
-/// returns its ID; `publicKey(_:)` returns a key's X9.63 point (0x04 ||
-/// X || Y), or empty data when there's no such key; `sign(_:digest:)`
-/// signs a SHA-256 digest, returning ASN.1 DER; `deleteKey(_:)` deletes
-/// one. A thrown error reaches Go, and comes back as a `.platform`
-/// WalletError. `KeychainKeyStore` is the standard implementation.
-public typealias PlatformKeyStore = MobileKeyStoreProtocol & Sendable
-
-/// What a key is for, as `PlatformKeyStore.createKey(_:)` receives it.
-public enum KeyPurpose {
-    /// The wallet instance key a Wallet Attestation binds.
-    public static let instance = MobilePurposeInstance
-    /// The key access tokens are bound to.
-    public static let dpop = MobilePurposeDPoP
-    /// The key a credential is bound to, used only when presenting it.
-    public static let holder = MobilePurposeHolder
-}
-
 /// OID4VCgo's mobile API. Every call runs off the caller's thread: Go
 /// calls block, and must never run on the main thread.
 public enum OID4VC {
     /// The ABI version of the Go side this package was built against.
     public static let abiVersion = Int(MobileABIVersion)
 
+    /// Whether the linked framework is the test build, carrying an
+    /// in-process test issuer and Verifier (`-tags mobiletest`): an app
+    /// should refuse to run on it.
+    public static let isTestBuild = MobileIsTestBuild()
+
     public static func parseRequestLink(_ link: String) async throws -> RequestLink {
         let json = try await offMain { try call { MobileParseRequestLink(link, $0) } }
-        return try JSONDecoder().decode(RequestLink.self, from: Data(json.utf8))
+        return try decode(RequestLink.self, json)
     }
 
     /// Exercises `keyStore` as the wallet will — for each purpose: create
     /// a key, sign with it, look it up, delete it — and returns the
     /// purposes checked. A store asking for user presence on holder keys
     /// prompts once.
-    public static func checkKeyStore(_ keyStore: some PlatformKeyStore) async throws -> [String] {
-        let json = try await offMain { try call { MobileCheckKeyStore(keyStore, $0) } }
-        return try JSONDecoder().decode(KeyStoreReport.self, from: Data(json.utf8)).checked
+    public static func checkKeyStore(_ keyStore: some KeyStore) async throws -> [KeyPurpose] {
+        let adapter = KeyStoreAdapter(keyStore)
+        let json = try await offMain { try call { MobileCheckKeyStore(adapter, $0) } }
+        return try decode(KeyStoreReport.self, json).checked.compactMap(KeyPurpose.init(rawValue:))
     }
 
     /// Runs `body` with an Operation, off the caller's thread; cancelling

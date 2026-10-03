@@ -6,7 +6,8 @@ import XCTest
 
 final class OID4VCMobileTests: XCTestCase {
     func testABIVersion() {
-        XCTAssertEqual(OID4VC.abiVersion, 1)
+        XCTAssertEqual(OID4VC.abiVersion, 2)
+        XCTAssertTrue(OID4VC.isTestBuild, "the tests run on the mobiletest build")
     }
 
     func testParseRequestLink() async throws {
@@ -22,17 +23,40 @@ final class OID4VCMobileTests: XCTestCase {
         } catch let error as WalletError {
             XCTAssertEqual(error.code, .invalidInput)
             XCTAssertFalse(error.message.isEmpty)
+            XCTAssertNotNil(error.errorDescription)
         } catch {
             XCTFail("unexpected error \(error)")
         }
     }
 
+    func testWalletErrorParsing() {
+        func parse(_ text: String) -> WalletError {
+            WalletError(NSError(domain: "go", code: 1, userInfo: [NSLocalizedDescriptionKey: text]))
+        }
+        let pin = parse("[protocol:invalid_grant] walletflow: token: wrong tx_code")
+        XCTAssertEqual(pin.code, .protocolError)
+        XCTAssertEqual(pin.protocolError, "invalid_grant")
+        XCTAssertTrue(pin.isRetryable)
+        XCTAssertEqual(pin.localizedDescription, "That code or PIN wasn't accepted.")
+        XCTAssertEqual(pin.description, "[protocol:invalid_grant] walletflow: token: wrong tx_code")
+
+        let network = parse("[network] dial tcp: refused")
+        XCTAssertEqual(network.code, .network)
+        XCTAssertNil(network.protocolError)
+        XCTAssertTrue(network.isRetryable)
+
+        XCTAssertFalse(parse("[protocol:invalid_client] no").isRetryable)
+        XCTAssertFalse(parse("[credential_denied] no").isRetryable)
+        let plain = parse("no code")
+        XCTAssertEqual(plain.code, .internalError)
+        XCTAssertEqual(plain.message, "no code")
+    }
+
     /// A Swift error thrown in a callback reaches Go, which reports it as
     /// a platform error carrying the Swift error's message.
     func testSwiftCallbackErrorsReachGo() async throws {
-        let refusing = Misbehaving(signError: "the user cancelled Face ID")
         do {
-            _ = try await OID4VC.checkKeyStore(refusing)
+            _ = try await OID4VC.checkKeyStore(Misbehaving(signError: "the user cancelled Face ID"))
             XCTFail("a refusing store passed")
         } catch let error as WalletError {
             XCTAssertEqual(error.code, .platform)
@@ -49,32 +73,37 @@ final class OID4VCMobileTests: XCTestCase {
 
     func testCheckKeyStoreSoftwareInMemory() async throws {
         let checked = try await OID4VC.checkKeyStore(KeychainKeyStore(options: .init(secureEnclave: false, persistent: false)))
-        XCTAssertEqual(checked, [KeyPurpose.instance, KeyPurpose.dpop, KeyPurpose.holder])
+        XCTAssertEqual(checked, KeyPurpose.allCases)
     }
 
-    /// Keys kept in the Keychain: found again by a new store, and gone
-    /// once deleted. (Hostless iOS Simulator tests have no Keychain.)
-    func testCheckKeyStoreKeychain() async throws {
+    /// Keys kept in the Keychain: found again by a new store, listed, and
+    /// swept. (Hostless iOS Simulator tests have no Keychain.)
+    func testKeychainKeysAndSweep() async throws {
         #if targetEnvironment(simulator)
         throw XCTSkip("the iOS Simulator's Keychain needs a signed host app")
         #else
-        let options = KeychainKeyStore.Options(secureEnclave: false, persistent: true, holderUserPresence: false, tagPrefix: "org.idfoundry.oid4vcgo.test.\(UUID()).")
+        let options = KeychainKeyStore.Options(secureEnclave: false, persistent: true, holderUserPresence: false,
+                                               tagPrefix: "org.idfoundry.oid4vcgo.test.\(UUID()).")
         let checked = try await OID4VC.checkKeyStore(KeychainKeyStore(options: options))
         XCTAssertEqual(checked.count, 3)
 
-        var error: NSError?
-        let id = KeychainKeyStore(options: options).createKey(KeyPurpose.holder, error: &error)
-        XCTAssertNil(error)
+        let store = KeychainKeyStore(options: options)
+        let kept = try store.createKey(purpose: .holder)
+        let orphan = try store.createKey(purpose: .dpop)
         let again = KeychainKeyStore(options: options)
-        XCTAssertFalse(try again.publicKey(id).isEmpty)
-        XCTAssertFalse(try again.sign(id, digest: Data(repeating: 1, count: 32)).isEmpty)
-        try again.deleteKey(id)
-        XCTAssertTrue(try again.publicKey(id).isEmpty)
+        XCTAssertNotNil(try again.publicKey(id: kept))
+        XCTAssertFalse(try again.sign(id: kept, digest: Data(repeating: 1, count: 32)).isEmpty)
+        XCTAssertEqual(Set(try again.keyIDs()), [kept, orphan])
+        XCTAssertEqual(try again.deleteKeys(except: [kept]), 1)
+        XCTAssertNil(try again.publicKey(id: orphan))
+        XCTAssertEqual(try again.keyIDs(), [kept])
+        try again.deleteKey(id: kept)
+        XCTAssertEqual(try again.keyIDs(), [])
         #endif
     }
 
     /// Keys in the Secure Enclave — simulated by the iOS Simulator; a
-    /// real device needs the demo app (MOBILE.md Phase 4).
+    /// real device needs the demo app.
     func testCheckKeyStoreSecureEnclave() async throws {
         #if targetEnvironment(simulator)
         let store = KeychainKeyStore(options: .init(secureEnclave: true, persistent: false, holderUserPresence: false))
@@ -85,16 +114,37 @@ final class OID4VCMobileTests: XCTestCase {
         #endif
     }
 
-    func testWalletErrorParsing() {
-        XCTAssertEqual(WalletError(NSError(domain: "go", code: 1, userInfo: [NSLocalizedDescriptionKey: "[network] status 404"])).code, .network)
-        let plain = WalletError(NSError(domain: "go", code: 1, userInfo: [NSLocalizedDescriptionKey: "no code"]))
-        XCTAssertEqual(plain.code, .internalError)
-        XCTAssertEqual(plain.message, "no code")
+    func testMemoryKeySweep() throws {
+        let store = KeychainKeyStore(options: .init(secureEnclave: false, persistent: false))
+        let a = try store.createKey(purpose: .instance), b = try store.createKey(purpose: .holder)
+        XCTAssertEqual(try store.deleteKeys(except: [b]), 1)
+        XCTAssertNil(try store.publicKey(id: a))
+        XCTAssertNotNil(try store.publicKey(id: b))
+    }
+
+    /// The async provider bridge: Go blocks its thread while a Swift
+    /// async provider answers.
+    func testAsyncProviderBridge() throws {
+        struct Slow: WalletProvider {
+            func walletAttestation(clientID: String, instanceKey: Data) async throws -> String {
+                try await Task.sleep(for: .milliseconds(50))
+                return "wa-\(clientID)-\(instanceKey.count)"
+            }
+            func keyAttestation(keys: [Data], nonce: String) async throws -> String {
+                if nonce == "fail" { throw StoreError("provider down") }
+                return "ka-\(keys.count)-\(nonce)"
+            }
+        }
+        let adapter = WalletProviderAdapter(Slow())
+        XCTAssertEqual(String(decoding: try adapter.walletAttestation("c", instanceKeyJWK: Data("{\"kty\":\"EC\"}".utf8)), as: UTF8.self), "wa-c-12")
+        XCTAssertEqual(String(decoding: try adapter.keyAttestation(Data("[{\"a\":1},{\"b\":2}]".utf8), nonce: "n"), as: UTF8.self), "ka-2-n")
+        XCTAssertThrowsError(try adapter.keyAttestation(Data("[]".utf8), nonce: "fail"))
+        XCTAssertThrowsError(try adapter.keyAttestation(Data("{}".utf8), nonce: "n"), "keys that aren't an array")
     }
 }
 
 /// A key store that fails as it's told to.
-final class Misbehaving: NSObject, PlatformKeyStore {
+final class Misbehaving: KeyStore, @unchecked Sendable {
     let inner = KeychainKeyStore(options: .init(secureEnclave: false, persistent: false))
     let createError: String?
     let signError: String?
@@ -104,24 +154,19 @@ final class Misbehaving: NSObject, PlatformKeyStore {
         self.signError = signError
     }
 
-    func createKey(_ purpose: String?, error: NSErrorPointer) -> String {
-        if let createError {
-            error?.pointee = NSError(domain: "test", code: 1, userInfo: [NSLocalizedDescriptionKey: createError])
-            return ""
-        }
-        return inner.createKey(purpose, error: error)
+    func createKey(purpose: KeyPurpose) throws -> String {
+        if let createError { throw StoreError(createError) }
+        return try inner.createKey(purpose: purpose)
     }
 
-    func publicKey(_ id: String?) throws -> Data { try inner.publicKey(id) }
+    func publicKey(id: String) throws -> Data? { try inner.publicKey(id: id) }
 
-    func sign(_ id: String?, digest: Data?) throws -> Data {
-        if let signError {
-            throw NSError(domain: "test", code: 7, userInfo: [NSLocalizedDescriptionKey: signError])
-        }
-        return try inner.sign(id, digest: digest)
+    func sign(id: String, digest: Data) throws -> Data {
+        if let signError { throw StoreError(signError) }
+        return try inner.sign(id: id, digest: digest)
     }
 
-    func deleteKey(_ id: String?) throws { try inner.deleteKey(id) }
+    func deleteKey(id: String) throws { try inner.deleteKey(id: id) }
 }
 
 func base64url(_ s: String) throws -> Data {
@@ -131,7 +176,6 @@ func base64url(_ s: String) throws -> Data {
     return d
 }
 
-/// A TCP server on loopback that accepts connections and never answers.
 final class SilentServer: @unchecked Sendable {
     final class Connections: @unchecked Sendable {
         let lock = NSLock()

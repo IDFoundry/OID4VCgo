@@ -11,7 +11,7 @@ import (
 // ABIVersion is the version of this package's API across the gomobile
 // boundary: its functions, objects, JSON results and error codes. It
 // changes whenever any of them changes incompatibly.
-const ABIVersion = 1
+const ABIVersion = 2
 
 // Error codes, at the start of every error's text in brackets.
 const (
@@ -46,13 +46,22 @@ const (
 )
 
 // Error is an error as it crosses the boundary: its text is
-// "[Code] Message".
+// "[Code] Message", or "[Code:Detail] Message" when the issuer,
+// Authorization Server or Verifier answered with an error code of its
+// own (Detail: an OAuth error code such as invalid_grant, which a wrong
+// PIN gets).
 type Error struct {
 	Code    string
+	Detail  string
 	Message string
 }
 
-func (e *Error) Error() string { return "[" + e.Code + "] " + e.Message }
+func (e *Error) Error() string {
+	if e.Detail != "" {
+		return "[" + e.Code + ":" + e.Detail + "] " + e.Message
+	}
+	return "[" + e.Code + "] " + e.Message
+}
 
 func newError(code string, err error) error {
 	return &Error{Code: code, Message: err.Error()}

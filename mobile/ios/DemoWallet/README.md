@@ -25,8 +25,10 @@ protection.
 The Xcode project is generated from `project.yml` with
 [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`xcodegen`); the
 generated `DemoWallet.xcodeproj` is checked in, so building needs only
-Xcode. It links `../../build/Mobile.xcframework`: build it first with
-`../../build-xcframework.sh`.
+Xcode. It links the release framework, `../../build/release/Mobile.xcframework`:
+build it first with `../../build-xcframework.sh`. At launch it deletes
+any key none of its credentials is bound to, which an issuance the app
+quit in the middle of leaves behind.
 
 ## Configuration
 

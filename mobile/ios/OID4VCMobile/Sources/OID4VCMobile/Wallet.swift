@@ -1,21 +1,8 @@
 import Foundation
 import Mobile
 
-/// The app's credential store, called by Go: opaque JSON records kept by
-/// ID, under the platform's data protection. `get(_:)` returns empty
-/// data when there's no record; `list()` returns a JSON array of every
-/// record. `InMemoryCredentialStore` serves tests and development.
-public typealias PlatformCredentialStore = MobileCredentialStoreProtocol & Sendable
-
-/// The Wallet Provider's backend, called by Go:
-/// `walletAttestation(_:instanceKeyJWK:)` and `keyAttestation(_:nonce:)`
-/// return compact JWTs (HAIP 1.0 §4.4.1, §4.5.1) for public JWKs. Go
-/// waits for the answer on its own thread, so these may block on the
-/// network.
-public typealias PlatformWalletProvider = MobileWalletProviderProtocol & Sendable
-
 /// NewWallet's configuration.
-public struct WalletConfiguration: Encodable, Sendable {
+public struct WalletConfiguration: Codable, Sendable {
     /// The wallet's registration with Authorization Servers.
     public var clientID: String
     public var redirectURI: String
@@ -38,6 +25,19 @@ public struct WalletConfiguration: Encodable, Sendable {
         case clientID = "client_id", redirectURI = "redirect_uri", issuerRoots = "issuer_roots"
         case verifierRoots = "verifier_roots", development
     }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(clientID: try c.decode(String.self, forKey: .clientID),
+                  redirectURI: try c.decode(String.self, forKey: .redirectURI),
+                  issuerRoots: try c.decodeIfPresent(String.self, forKey: .issuerRoots) ?? "",
+                  verifierRoots: try c.decodeIfPresent(String.self, forKey: .verifierRoots) ?? "",
+                  development: try c.decodeIfPresent(Bool.self, forKey: .development) ?? false)
+    }
+
+    /// The scheme of `redirectURI`: the callback scheme an
+    /// ASWebAuthenticationSession waits for.
+    public var callbackScheme: String? { URL(string: redirectURI)?.scheme }
 }
 
 /// A credential the wallet holds, as the app shows it.
@@ -114,11 +114,36 @@ public enum JSONValue: Decodable, Sendable, Equatable {
 /// credential store and Wallet Provider.
 public final class Wallet: @unchecked Sendable {
     let handle: MobileWallet
+    // Go holds these too; the wallet keeps them alive with it.
+    private let adapters: [AnyObject]
 
-    public init(configuration: WalletConfiguration, keyStore: some PlatformKeyStore, credentialStore: some PlatformCredentialStore,
-                provider: (any MobileWalletProviderProtocol)?) throws {
+    /// A wallet over `keyStore`, `credentialStore` and `provider` (which
+    /// receiving credentials needs; presenting doesn't). Creating it
+    /// makes no network calls.
+    public convenience init(configuration: WalletConfiguration, keyStore: some KeyStore, credentialStore: some CredentialStore,
+                            provider: (any WalletProvider)?) throws {
+        try self.init(configuration: configuration, keys: KeyStoreAdapter(keyStore), credentials: CredentialStoreAdapter(credentialStore),
+                      provider: provider.map(WalletProviderAdapter.init))
+    }
+
+    init(configuration: WalletConfiguration, keys: KeyStoreAdapter, credentials: CredentialStoreAdapter,
+         provider: (any MobileWalletProviderProtocol)?) throws {
         let json = String(decoding: try JSONEncoder().encode(configuration), as: UTF8.self)
-        handle = try OID4VC.call { MobileNewWallet(json, keyStore, credentialStore, provider, $0) }!
+        handle = try OID4VC.call { MobileNewWallet(json, keys, credentials, provider, $0) }!
+        adapters = [keys, credentials] + (provider.map { [$0 as AnyObject] } ?? [])
+    }
+
+    /// Deletes every key in `keyStore` that none of the wallet's
+    /// credentials is bound to — left by an issuance the app quit or
+    /// crashed in the middle of — and returns how many. Call it at launch,
+    /// before any issuance: an issuance in progress holds keys of its own.
+    @discardableResult
+    public func sweepOrphanedKeys(in keyStore: KeychainKeyStore) async throws -> Int {
+        struct Keys: Decodable { let key_ids: [String] }
+        let wallet = handle
+        let json = try await OID4VC.offMain { try OID4VC.call { wallet.holderKeyIDs($0) } }
+        let keep = Set(try decode(Keys.self, json).key_ids)
+        return try await OID4VC.offMain { try keyStore.deleteKeys(except: keep) }
     }
 
     /// Every credential the wallet holds.
@@ -205,6 +230,12 @@ public final class Issuance: @unchecked Sendable {
     init(_ session: MobileIssuance) throws {
         self.session = session
         offer = try decode(Offer.self, session.offer())
+    }
+
+    // An issuance dropped without close() still deletes its keys.
+    deinit {
+        let session = self.session
+        Task.detached { try? session.close() }
     }
 
     public func beginAuthorization() async throws -> URL {
@@ -356,29 +387,29 @@ public final class Presentation: @unchecked Sendable {
 }
 
 /// A credential store in memory, for tests and development.
-public final class InMemoryCredentialStore: NSObject, MobileCredentialStoreProtocol, @unchecked Sendable {
+public final class InMemoryCredentialStore: CredentialStore, @unchecked Sendable {
     private let lock = NSLock()
-    private var records: [(id: String, record: Data)] = []
+    private var stored: [(id: String, record: Data)] = []
 
-    public override init() {}
+    public init() {}
 
-    public func put(_ id: String?, record: Data?) throws {
+    public func put(id: String, record: Data) throws {
         lock.withLock {
-            records.removeAll { $0.id == id }
-            records.append((id ?? "", record ?? Data()))
+            stored.removeAll { $0.id == id }
+            stored.append((id, record))
         }
     }
 
-    public func get(_ id: String?) throws -> Data {
-        lock.withLock { records.first { $0.id == id }?.record ?? Data() }
+    public func record(id: String) throws -> Data? {
+        lock.withLock { stored.first { $0.id == id }?.record }
     }
 
-    public func list() throws -> Data {
-        lock.withLock { Data(("[" + records.map { String(decoding: $0.record, as: UTF8.self) }.joined(separator: ",") + "]").utf8) }
+    public func records() throws -> [Data] {
+        lock.withLock { stored.map(\.record) }
     }
 
-    public func delete(_ id: String?) throws {
-        lock.withLock { records.removeAll { $0.id == id } }
+    public func delete(id: String) throws {
+        lock.withLock { stored.removeAll { $0.id == id } }
     }
 }
 
@@ -400,5 +431,9 @@ func decode<T: Decodable>(_ type: T.Type, _ json: String) throws -> T {
         if let date = f.date(from: text) { return date }
         throw DecodingError.dataCorrupted(.init(codingPath: d.codingPath, debugDescription: "not an RFC 3339 time: \(text)"))
     }
-    return try decoder.decode(type, from: Data(json.utf8))
+    do {
+        return try decoder.decode(type, from: Data(json.utf8))
+    } catch {
+        throw WalletError(code: .internalError, message: "malformed result from the Go side: \(error)")
+    }
 }
