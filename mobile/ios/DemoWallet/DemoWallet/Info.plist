@@ -27,6 +27,7 @@
 			<array>
 				<string>org.idfoundry.oid4vcgo.demowallet</string>
 				<string>openid-credential-offer</string>
+				<string>openid4vp</string>
 			</array>
 		</dict>
 	</array>

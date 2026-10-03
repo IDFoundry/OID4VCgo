@@ -33,10 +33,10 @@ targets:
         UILaunchScreen: {}
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
         CFBundleURLTypes:
-          # The authorization redirect (RFC 8252 private-use scheme), and
-          # Credential Offer links.
+          # The authorization redirect (RFC 8252 private-use scheme),
+          # Credential Offer links, and presentation request links.
           - CFBundleURLName: org.idfoundry.oid4vcgo.demowallet
-            CFBundleURLSchemes: [org.idfoundry.oid4vcgo.demowallet, openid-credential-offer]
+            CFBundleURLSchemes: [org.idfoundry.oid4vcgo.demowallet, openid-credential-offer, openid4vp]
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: org.idfoundry.oid4vcgo.demowallet

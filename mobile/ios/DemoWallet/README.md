@@ -3,7 +3,11 @@
 A SwiftUI wallet app on the OID4VCMobile Swift package — OID4VCgo's
 walletflow through gomobile (see [MOBILE.md](../../../MOBILE.md), Phase
 4). It receives credentials from a Credential Offer link
-(`openid-credential-offer://…`, opened in the app, or pasted). Its keys are
+(`openid-credential-offer://…`, opened in the app, or pasted), and
+presents them in answer to a presentation request link (`openid4vp://…`).
+For a request, it shows who's asking, which credentials can answer and
+exactly what sharing them discloses. Then it shares them, with holder
+keys signing (Face ID or the passcode on a device), or declines. Its keys are
 Secure Enclave keys kept in the Keychain. It gets Wallet and Key
 Attestations from a Wallet Provider over HTTPS (the passport-vdc demo's
 API), and keeps credentials in Application Support with complete file
@@ -42,8 +46,11 @@ grants:
   session, redirecting back to the app's private-use scheme redirect URI
 - the pre-authorized code grant: the PIN typed in the app
 
-Each test launches with `OID4VC_DEMO_RESET=1`, which deletes every
-credential at launch.
+It also presents: a received credential shared in answer to the
+Verifier's request (the Verifier gets `family_name`), and a request the
+wallet can't answer, declined. Each test launches with
+`OID4VC_DEMO_RESET=1`, which deletes every credential at launch.
+`OID4VC_DEMO_OFFER` and `OID4VC_DEMO_REQUEST` open a link at launch.
 
 ## Against the passport-vdc demo
 

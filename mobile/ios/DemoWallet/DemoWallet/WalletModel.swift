@@ -2,6 +2,7 @@ import CryptoKit
 import Foundation
 import LocalAuthentication
 import Observation
+import UIKit
 import OID4VCMobile
 
 /// The demo wallet's state: the wallet, what it holds, and the issuance
@@ -47,6 +48,9 @@ final class WalletModel {
             if let offer = ProcessInfo.processInfo.environment["OID4VC_DEMO_OFFER"], let url = URL(string: offer) {
                 open(url)
             }
+            if let request = ProcessInfo.processInfo.environment["OID4VC_DEMO_REQUEST"], let url = URL(string: request) {
+                open(url)
+            }
         } catch {
             phase = .failed("\(error)")
         }
@@ -70,8 +74,84 @@ final class WalletModel {
     var callbackScheme: String { config.flatMap { URL(string: $0.wallet.redirectURI)?.scheme } ?? "" }
 
     func open(_ url: URL) {
-        guard url.scheme == "openid-credential-offer" else { return }
-        Task { await start(offer: url.absoluteString) }
+        switch url.scheme {
+        case "openid-credential-offer": Task { await start(offer: url.absoluteString) }
+        case "openid4vp": Task { await startPresentation(request: url.absoluteString) }
+        default: break
+        }
+    }
+
+    // MARK: Presentation
+
+    enum RequestPhase: Equatable { case idle, shown, sharing }
+
+    private(set) var presentation: Presentation?
+    private(set) var disclosures: [Presentation.Disclosure] = []
+    var requestPhase: RequestPhase = .idle
+    var selected: Set<String> = []
+
+    /// Fetches and verifies a presentation request, and preselects the
+    /// first credential that can answer it.
+    func startPresentation(request link: String) async {
+        guard let wallet else { return }
+        do {
+            let p = try await wallet.startPresentation(request: link)
+            presentation = p
+            selected = p.candidates.first?.credentials.first.map { [$0.id] } ?? []
+            requestPhase = .shown
+            await updatePreview()
+        } catch {
+            phase = .failed("\(error)")
+        }
+    }
+
+    func toggle(_ id: String) async {
+        if selected.contains(id) { selected.remove(id) } else { selected.insert(id) }
+        await updatePreview()
+    }
+
+    private func updatePreview() async {
+        guard let presentation, !selected.isEmpty else {
+            disclosures = []
+            return
+        }
+        disclosures = (try? await presentation.preview(credentialIDs: Array(selected))) ?? []
+    }
+
+    /// Shares the selected credentials: holder keys sign now, so Face ID
+    /// or the passcode is asked for on a device.
+    func share() async {
+        guard let presentation else { return }
+        requestPhase = .sharing
+        do {
+            let presented = try await presentation.respond(credentialIDs: Array(selected))
+            phase = .done("Shared with \(presentation.verifier.name)")
+            endPresentation()
+            if let url = presented.redirectURI { await UIApplication.shared.open(url) }
+        } catch {
+            phase = .failed("\(error)")
+            endPresentation()
+        }
+    }
+
+    func decline() async {
+        guard let presentation else { return }
+        do {
+            let presented = try await presentation.decline()
+            phase = .done("Declined \(presentation.verifier.name)")
+            endPresentation()
+            if let url = presented.redirectURI { await UIApplication.shared.open(url) }
+        } catch {
+            phase = .failed("\(error)")
+            endPresentation()
+        }
+    }
+
+    private func endPresentation() {
+        presentation = nil
+        disclosures = []
+        selected = []
+        requestPhase = .idle
     }
 
     func start(offer link: String) async {

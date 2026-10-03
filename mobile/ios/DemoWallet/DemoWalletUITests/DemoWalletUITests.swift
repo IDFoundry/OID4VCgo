@@ -15,12 +15,13 @@ final class DemoWalletUITests: XCTestCase {
     }
 
     @MainActor
-    func launch(offer: String) async throws -> XCUIApplication {
+    func launch(offer: String? = nil, request: String? = nil, reset: Bool = true) async throws -> XCUIApplication {
         let config = try await Self.fetch("config")
         let app = XCUIApplication()
         app.launchEnvironment["OID4VC_DEMO_CONFIG"] = String(decoding: try JSONSerialization.data(withJSONObject: config), as: UTF8.self)
         app.launchEnvironment["OID4VC_DEMO_OFFER"] = offer
-        app.launchEnvironment["OID4VC_DEMO_RESET"] = "1"
+        app.launchEnvironment["OID4VC_DEMO_REQUEST"] = request
+        app.launchEnvironment["OID4VC_DEMO_RESET"] = reset ? "1" : "0"
         app.launch()
         return app
     }
@@ -60,5 +61,55 @@ final class DemoWalletUITests: XCTestCase {
         let status = app.staticTexts["status"]
         XCTAssertTrue(status.waitForExistence(timeout: 60))
         XCTAssertTrue(status.label.hasPrefix("Received 1"), status.label)
+    }
+
+    /// Receives an SD-JWT VC, then presents it: the Verifier asks for
+    /// family_name from either format, the holder shares the one
+    /// credential held, and the Verifier gets the claim.
+    @MainActor
+    func testPresent() async throws {
+        let offer = try await Self.fetch("offer", query: [URLQueryItem(name: "pin", value: "493536")], method: "POST")["offer"] as! String
+        let app = try await launch(offer: offer)
+        let pin = app.textFields["pin"]
+        XCTAssertTrue(pin.waitForExistence(timeout: 20))
+        pin.tap()
+        pin.typeText("493536")
+        app.buttons["receive"].tap()
+        XCTAssertTrue(app.staticTexts["status"].waitForExistence(timeout: 60))
+
+        // Open the request in the app, relaunched with it (opening a
+        // custom-scheme link from a test asks for confirmation).
+        let request = try await Self.fetch("request", method: "POST")
+        app.terminate()
+        let presenting = try await launch(request: request["link"] as? String, reset: false)
+        let share = presenting.buttons["share"]
+        XCTAssertTrue(share.waitForExistence(timeout: 20))
+        XCTAssertTrue(presenting.staticTexts["family_name"].waitForExistence(timeout: 10), "the disclosure isn't shown")
+        share.tap()
+        let status = presenting.staticTexts["status"]
+        XCTAssertTrue(status.waitForExistence(timeout: 30))
+        let shared = NSPredicate(format: "label BEGINSWITH 'Shared with'")
+        await fulfillment(of: [XCTNSPredicateExpectation(predicate: shared, object: status)], timeout: 30)
+
+        let result = try await Self.fetch("request/\(request["id"] as! String)")
+        XCTAssertEqual(result["status"] as? String, "done")
+        XCTAssertEqual((result["claims"] as? [String: Any])?["family_name"] as? String, "Doe")
+    }
+
+    /// Declines a request the wallet can't answer; the Verifier records
+    /// it.
+    @MainActor
+    func testDecline() async throws {
+        let request = try await Self.fetch("request", query: [URLQueryItem(name: "format", value: "mso_mdoc")], method: "POST")
+        let app = try await launch(request: request["link"] as? String)
+        let decline = app.buttons["decline"]
+        XCTAssertTrue(decline.waitForExistence(timeout: 20))
+        XCTAssertFalse(app.buttons["share"].isEnabled)
+        decline.tap()
+        let status = app.staticTexts["status"]
+        XCTAssertTrue(status.waitForExistence(timeout: 30))
+        XCTAssertTrue(status.label.hasPrefix("Declined"), status.label)
+        let result = try await Self.fetch("request/\(request["id"] as! String)")
+        XCTAssertTrue((result["last_error"] as? String ?? "").contains("access_denied"), "\(result)")
     }
 }
