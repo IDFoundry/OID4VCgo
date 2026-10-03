@@ -343,17 +343,19 @@ struct RequestView: View {
                         Text(p.verifier.name).font(.headline)
                         Text(p.verifier.clientID).font(.caption).foregroundStyle(.secondary)
                     }
-                    if p.candidates.isEmpty {
+                    if !p.isAnswerable {
                         Section { Text("You have no credential this verifier accepts.") }
                     }
-                    ForEach(p.candidates, id: \.queryID) { query in
+                    ForEach(p.queries.filter { !$0.credentials.isEmpty }, id: \.queryID) { query in
                         Section("Answers “\(query.queryID)”") {
                             ForEach(query.credentials, id: \.id) { c in
                                 Button {
-                                    Task { await model.toggle(c.id, for: query.queryID) }
+                                    Task { await model.toggle(c.id, for: query) }
                                 } label: {
                                     HStack {
-                                        Image(systemName: model.selected.contains(c.id) ? "largecircle.fill.circle" : "circle")
+                                        Image(systemName: model.isSelected(c.id, for: query.queryID)
+                                            ? (query.multiple ? "checkmark.circle.fill" : "largecircle.fill.circle")
+                                            : "circle")
                                         VStack(alignment: .leading) {
                                             Text(CredentialRow.title(c))
                                             Text("Received \(c.receivedAt.formatted(date: .abbreviated, time: .shortened))")

@@ -43,6 +43,7 @@ format or error code below changes incompatibly.
 | `authorization_denied` | the Authorization Server refused, e.g. the holder declined |
 | `credential_denied` | the issuer refused a deferred credential |
 | `no_matching_credential` | nothing held answers the Verifier's request |
+| `invalid_selection` | a presentation's selection doesn't answer the request as it asks |
 | `delivery_unknown` | sending a presentation failed in a way that leaves it unknown whether the Verifier received it; it isn't sent again, which could present twice |
 | `protocol` | an issuer, Authorization Server or Verifier answered with an error, or with something the wallet refuses |
 | `internal` | a bug |
@@ -215,22 +216,34 @@ and added `Deferred` and `AbandonDeferred`.
 
 ## Presentation
 
-Steps: `Verifier` and `Candidates`; `Preview` the holder's choice; then
-`Respond` or `Decline`, once.
+Steps: `Verifier` and `Queries`; choose a selection (or start from
+`DefaultSelection`); `Preview` it; then `Respond` or `Decline`, once.
 
 | Method | Result |
 |---|---|
 | `Verifier()` | `{"client_id", "name", "response_uri"}` |
-| `Candidates()` | `{"queries": [{"query_id", "credentials": [summary]}]}`, empty when nothing held answers |
-| `Preview(idsJSON)` | `{"disclosures": [{"query_id", "credential_id", "claims": [path]}]}` |
-| `Respond(op, idsJSON)` | `{"query_ids", "redirect_uri"}`. A failure in transit, or a Verifier's server error, is `delivery_unknown`, and the presentation is then answered |
+| `Queries()` | `{"queries": [{"query_id", "multiple", "credentials": [summary]}], "credential_sets": [{"options": [[query ID]], "required"}]}`: the request's credential queries in its order, each with the credentials that can answer it (none when nothing can), and its sets of alternatives (none: every query must be answered) |
+| `DefaultSelection()` | `{"selection": {query ID: [credential ID]}}`: what the wallet would choose itself, the first answerable option of each set and each query's first credential (all when `multiple`). `no_matching_credential` when the request can't be answered |
+| `Preview(selectionJSON)` | `{"disclosures": [{"query_id", "credential_id", "claims": [path]}]}` |
+| `Respond(op, selectionJSON)` | `{"query_ids", "redirect_uri"}`. A failure in transit, or a Verifier's server error, is `delivery_unknown`, and the presentation is then answered |
 | `Decline(op)` | `{"query_ids": [], "redirect_uri"}`. The refusal stands from the first call. If sending it failed in transit, call `Decline` again to send the same refusal |
 
-`idsJSON` is a JSON array of credential IDs from `Candidates`, or `""`
-to let the request's query choose. A claim **path** is a JSON array of
-keys, indexes, and `null` for every element. Holder keys sign during
+`selectionJSON` is a JSON object of query ID to an array of credential
+IDs: the app's choice, from `Queries`, by whatever policy it applies.
+The wallet presents exactly it, after checking it answers the request,
+and returns `invalid_selection` otherwise: an unknown query or
+credential, a credential that doesn't answer its query, more than one
+for a query whose `multiple` is false (OpenID4VP 1.0 §6.1), a required
+credential set with no option fully selected, or a query selected
+outside any fully selected option (§6.4.2). Each credential's next
+unused copy is presented. A claim **path** is a JSON array of keys,
+indexes, and `null` for every element. Holder keys sign during
 `Respond`, so a key store requiring user presence prompts then. When
 `redirect_uri` is set, open it in the browser.
+
+ABI version 8 replaced `Candidates` with `Queries` and the credential ID
+arrays of `Preview` and `Respond` with a selection, and added
+`DefaultSelection` and `invalid_selection`.
 
 ## Other functions
 

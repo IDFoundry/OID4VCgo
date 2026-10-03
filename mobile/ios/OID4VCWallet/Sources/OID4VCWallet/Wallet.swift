@@ -486,9 +486,12 @@ public final class Issuance: @unchecked Sendable {
     }
 }
 
-/// Answers one OpenID4VP request: show `verifier` and `candidates`,
-/// `preview(credentialIDs:)` the holder's choice, then `respond` or
-/// `decline`.
+/// Answers one OpenID4VP request: show `verifier`, `queries` and
+/// `credentialSets`, choose a `Selection` (or start from
+/// `defaultSelection()`), `preview(selection:)` it, then
+/// `respond(selection:)` or `decline()`. The wallet presents exactly the
+/// selection, after checking it answers the request
+/// (`WalletError.Code.invalidSelection` otherwise).
 public final class Presentation: @unchecked Sendable {
     public struct Verifier: Decodable, Sendable {
         public let clientID: String
@@ -497,11 +500,28 @@ public final class Presentation: @unchecked Sendable {
         enum CodingKeys: String, CodingKey { case clientID = "client_id", name, responseURI = "response_uri" }
     }
 
-    public struct Candidates: Decodable, Sendable {
+    /// One of the request's credential queries, with the credentials
+    /// that can answer it: none when nothing held can.
+    public struct Query: Decodable, Sendable {
         public let queryID: String
+        /// Whether it takes more than one credential; otherwise a
+        /// selection gives it exactly one.
+        public let multiple: Bool
         public let credentials: [CredentialSummary]
-        enum CodingKeys: String, CodingKey { case queryID = "query_id", credentials }
+        enum CodingKeys: String, CodingKey { case queryID = "query_id", multiple, credentials }
     }
+
+    /// One of the request's sets of alternatives: each option is the
+    /// query IDs that together answer it, most preferred first. A
+    /// required set must be answered by one option.
+    public struct CredentialSet: Decodable, Sendable {
+        public let options: [[String]]
+        public let required: Bool
+    }
+
+    /// What to present: for each query ID, the IDs of the credentials
+    /// chosen to answer it.
+    public typealias Selection = [String: [String]]
 
     /// One claim path element: a key, an array index, or every element.
     public enum PathElement: Decodable, Sendable, Equatable {
@@ -529,32 +549,57 @@ public final class Presentation: @unchecked Sendable {
 
     let handle: MobilePresentation
     public let verifier: Verifier
-    public let candidates: [Candidates]
+    /// The request's credential queries, in its order.
+    public let queries: [Query]
+    /// The request's sets of alternatives; none means every query must
+    /// be answered.
+    public let credentialSets: [CredentialSet]
 
     init(_ p: MobilePresentation) throws {
         handle = p
         verifier = try decode(Verifier.self, p.verifier())
-        struct All: Decodable { let queries: [Candidates] }
-        candidates = try decode(All.self, p.candidates()).queries
+        struct All: Decodable {
+            let queries: [Query]
+            let credentialSets: [CredentialSet]
+            enum CodingKeys: String, CodingKey { case queries, credentialSets = "credential_sets" }
+        }
+        let all = try decode(All.self, p.queries())
+        queries = all.queries
+        credentialSets = all.credentialSets
     }
 
-    /// What responding with `credentialIDs` (nil: the request's own
-    /// choice) would disclose.
-    public func preview(credentialIDs: [String]? = nil) async throws -> [Disclosure] {
+    /// Whether some credential can answer some query: if not, decline.
+    public var isAnswerable: Bool { queries.contains { !$0.credentials.isEmpty } }
+
+    /// The selection the wallet would make itself, for an app with no
+    /// policy of its own, or to start from: the first answerable option
+    /// of each credential set, and each query's first credential (all of
+    /// them when it takes several). Throws `noMatchingCredential` when
+    /// the request can't be answered.
+    public func defaultSelection() async throws -> Selection {
+        struct All: Decodable { let selection: Selection }
+        let p = handle
+        let json = try await OID4VC.offMain { try OID4VC.call { p.defaultSelection($0) } }
+        return try decode(All.self, json).selection
+    }
+
+    /// What responding with `selection` would disclose, without signing
+    /// or sending anything.
+    public func preview(selection: Selection) async throws -> [Disclosure] {
         struct All: Decodable { let disclosures: [Disclosure] }
         let p = handle
-        let ids = try idsJSON(credentialIDs)
-        let json = try await OID4VC.offMain { try OID4VC.call { p.preview(ids, error: $0) } }
-        return try decode(All.self, json).disclosures
+        let json = try selectionJSON(selection)
+        let out = try await OID4VC.offMain { try OID4VC.call { p.preview(json, error: $0) } }
+        return try decode(All.self, out).disclosures
     }
 
-    /// Presents `credentialIDs`: holder keys sign now, so a key store
-    /// requiring user presence prompts.
-    public func respond(credentialIDs: [String]? = nil) async throws -> Presented {
+    /// Presents exactly `selection`: holder keys sign now, so a key
+    /// store requiring user presence prompts.
+    public func respond(selection: Selection) async throws -> Presented {
         let p = handle
-        let ids = try idsJSON(credentialIDs)
-        let json = try await OID4VC.cancellable { op in try OID4VC.call { p.respond(op, credentialIDsJSON: ids, error: $0) } }
-        return try decode(Presented.self, json)
+        let json = try selectionJSON(selection)
+        let out = try await OID4VC.cancellable { op in try OID4VC.call { p.respond(op, selectionJSON: json, error: $0) } }
+        return try decode(Presented.self, out)
     }
 
     /// Tells the Verifier the holder declined.
@@ -564,9 +609,8 @@ public final class Presentation: @unchecked Sendable {
         return try decode(Presented.self, json)
     }
 
-    private func idsJSON(_ ids: [String]?) throws -> String {
-        guard let ids else { return "" }
-        return String(decoding: try JSONEncoder().encode(ids), as: UTF8.self)
+    private func selectionJSON(_ selection: Selection) throws -> String {
+        String(decoding: try JSONEncoder().encode(selection), as: UTF8.self)
     }
 }
 

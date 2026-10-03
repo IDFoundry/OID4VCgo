@@ -54,6 +54,8 @@ func classify(err error) error {
 		return newError(CodeCredentialDenied, err)
 	case errors.Is(err, walletflow.ErrNoMatchingCredential):
 		return newError(CodeNoMatchingCredential, err)
+	case errors.Is(err, walletflow.ErrInvalidSelection):
+		return newError(CodeInvalidSelection, err)
 	case errors.Is(err, walletflow.ErrDeliveryUnknown):
 		// Before network: sending again could present twice.
 		return newError(CodeDeliveryUnknown, walletflow.ErrDeliveryUnknown)
