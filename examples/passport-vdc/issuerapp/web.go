@@ -100,6 +100,9 @@ func (a *App) routes(credentialHandler, deferredHandler, notificationHandler htt
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", a.handleUploadPage)
 	mux.HandleFunc("POST /passport", a.handleUpload)
+	if a.cfg.AllowSampleDocument {
+		mux.HandleFunc("POST /sample", a.handleSample)
+	}
 
 	mux.HandleFunc("GET /.well-known/oauth-authorization-server", a.handleASMetadata)
 	mux.HandleFunc("GET /.well-known/openid-configuration", a.handleASMetadata)
@@ -152,7 +155,9 @@ var uploadTemplate = template.Must(template.New("upload").Parse(pageHead + `
 <p><label><input type="checkbox" name="counter" value="1"> Issue at the counter — a pre-authorized code with a PIN, no approval in the browser (OID4VCI's other grant)</label></p>
 <p><label><input type="checkbox" name="review" value="1"> Hold for an operator's review — the wallet waits, and polls, until you decide on the <a href="/review">review page</a></label></p>
 <button>Verify passport</button>
+{{if .AllowSample}}<button formaction="/sample" formnovalidate>Issue gmrtd's sample passport without checking it</button>{{end}}
 </form>
+{{if .AllowSample}}<p class="note">No passport to hand? The second button simulates an issuer that skipped Passive Authentication: it issues gmrtd's sample passport — ICAO worked-example data no country signed — as an ordinary passport credential. A verifier trusting this issuer accepts it; one that re-verifies the passport file doesn't.</p>{{end}}
 <p class="note">Demo only. The passport is held in memory until the offer expires and is never stored.</p>
 <p><a href="/status">Issued credentials and revocation</a></p>
 ` + pageFoot))
@@ -173,9 +178,11 @@ var offerTemplate = template.Must(template.New("offer").Funcs(template.FuncMap{
 		return e.Identity.BirthDate.Date.Format("2006-01-02")
 	},
 }).Parse(pageHead + `
-<h1>Passport verified</h1>
+{{if .Evidence.Checks.PassiveAuthentication}}<h1>Passport verified</h1>
 <ul>
-<li class="ok">✓ Passive Authentication — issuing country's signature and data-group hashes</li>
+<li class="ok">✓ Passive Authentication — issuing country's signature and data-group hashes</li>{{else}}<h1>Sample passport — issued without checking</h1>
+<ul>
+<li class="warn">✗ Passive Authentication skipped — this simulates an issuer that didn't check. It's gmrtd's sample document: ICAO worked-example data no country signed (issuing country "UTO"). Its credentials look like any passport's: a verifier trusting this issuer accepts them, and only re-verifying the passport file shows the country never signed the data.</li>{{end}}
 <li>Chip authentication evidence in the file: {{.Evidence.Checks.ChipAuthenticity}} <span class="note">— recorded when the chip was read, so it can be replayed: it doesn't show that you hold the passport</span></li>
 </ul>
 <table>
@@ -193,12 +200,24 @@ var offerTemplate = template.Must(template.New("offer").Funcs(template.FuncMap{
 {{if .QR}}<p>Or scan with a wallet on another device:<br><img src="{{.QR}}" alt="QR code of the credential offer" width="296"></p>{{end}}
 <p class="note">Or pass this offer to the demo CLI wallet:</p>
 <p><code>{{.Offer.URI}}</code></p>
-<p class="warn">This proves the passport data is authentic, not that you hold the passport — see the demo README.</p>
+{{if .Evidence.Checks.PassiveAuthentication}}<p class="warn">This proves the passport data is authentic, not that you hold the passport — see the demo README.</p>{{end}}
 ` + pageFoot))
 
 func (a *App) handleUploadPage(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = uploadTemplate.Execute(w, nil)
+	_ = uploadTemplate.Execute(w, struct{ AllowSample bool }{a.cfg.AllowSampleDocument})
+}
+
+// handleSample offers gmrtd's sample passport (Config.AllowSampleDocument)
+// with the upload form's options, without checking it.
+func (a *App) handleSample(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxUploadBytes)
+	e, err := passport.SampleDocument(a.now())
+	if err != nil {
+		writeHTMLError(w, http.StatusInternalServerError, "couldn't load gmrtd's sample passport")
+		return
+	}
+	a.offer(w, r, e)
 }
 
 func (a *App) handleUpload(w http.ResponseWriter, r *http.Request) {
@@ -225,6 +244,12 @@ func (a *App) handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	a.offer(w, r, e)
+}
+
+// offer creates a transaction for e, with the upload form's options, and
+// shows its credential offer.
+func (a *App) offer(w http.ResponseWriter, r *http.Request, e passport.Evidence) {
 	offer, err := a.createTransaction(r.Context(), e, offerOptions{
 		review: r.FormValue("review") != "", preAuthorized: r.FormValue("counter") != "",
 	})

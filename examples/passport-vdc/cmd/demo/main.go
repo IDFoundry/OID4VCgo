@@ -144,6 +144,7 @@ func run(ctx context.Context, opts options) error {
 
 	issuer, err := issuerapp.New(issuerapp.Config{
 		IssuerURL: issuerURL, CSCAPool: csca, StateDir: issuerState, WebWalletURL: walletURL,
+		AllowSampleDocument: true, // run the demo without a passport, and show the trust paths' difference
 		Wallet: issuerapp.WalletClient{
 			ClientID: walletClientID, RedirectURIs: []string{cliRedirectURI, iosRedirectURI, walletURL + "/callback"},
 			ProviderIssuer: providerIssuer, ProviderCA: provider.CACertificatePEM(),

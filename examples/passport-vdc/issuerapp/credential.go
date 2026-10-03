@@ -122,7 +122,7 @@ func (a *App) prepareCredential(_ context.Context, grant issuer.Grant, req *issu
 	// Each credential — every one of a batch — gets its own status list
 	// index (HAIP 1.0 §6.1).
 	req.PerCredential = func(_ context.Context, c *issuer.CredentialInstance) error {
-		idx, err := a.statusList.allocate(credentialFormat(req.CredentialConfigurationID), a.now())
+		idx, err := a.statusList.allocate(credentialFormat(req.CredentialConfigurationID), !e.Checks.PassiveAuthentication, a.now())
 		if err != nil {
 			return err
 		}

@@ -136,6 +136,9 @@ type ReviewEntry struct {
 	ChipAuth       string
 	CreatedAt      time.Time
 	Decision       string
+	// Unchecked marks gmrtd's sample passport, which approving issues
+	// without Passive Authentication.
+	Unchecked bool
 }
 
 // Reviews lists the deferred issuances awaiting a decision or the
@@ -154,6 +157,7 @@ func (a *App) Reviews() []ReviewEntry {
 			Ref: ref, Format: credentialFormat(v.configID), IssuingCountry: id.IssuingCountry,
 			PassportExpiry: id.ExpiryDate.Format(time.DateOnly), Expired: id.ExpiredAt(now), ChipAuth: v.evidence.Checks.ChipAuthenticity,
 			CreatedAt: v.createdAt, Decision: [...]string{"awaiting review", "approved", "denied"}[v.decision],
+			Unchecked: !v.evidence.Checks.PassiveAuthentication,
 		})
 	}
 	slices.SortFunc(out, func(x, y ReviewEntry) int { return x.CreatedAt.Compare(y.CreatedAt) })
@@ -190,7 +194,7 @@ func (a *App) resolveDeferred(ctx context.Context, _ issuer.Grant, transactionID
 	err = a.issuer.IssueDeferredCredential(ctx, transactionID, issuer.DeferredIssuance{
 		MdocClaims: mdocClaims, SDJWTClaims: sdjwtClaims,
 		PerCredential: func(_ context.Context, c *issuer.CredentialInstance) error {
-			idx, err := a.statusList.allocate(credentialFormat(rv.configID), a.now())
+			idx, err := a.statusList.allocate(credentialFormat(rv.configID), !rv.evidence.Checks.PassiveAuthentication, a.now())
 			if err != nil {
 				return err
 			}
@@ -216,7 +220,7 @@ var reviewTemplate = template.Must(template.New("review").Parse(pageHead + `
 <table>
 <tr><th>Format</th><th>Issuing country</th><th>Passport expiry</th><th>Chip authentication evidence</th><th>Uploaded</th><th>Decision</th></tr>
 {{range .}}
-<tr><td><code>{{.Format}}</code></td><td>{{.IssuingCountry}}</td>
+<tr><td><code>{{.Format}}</code>{{if .Unchecked}} <span class="warn">— gmrtd's sample, not checked</span>{{end}}</td><td>{{.IssuingCountry}}</td>
 <td>{{.PassportExpiry}}{{if .Expired}} <span class="warn">expired</span>{{end}}</td>
 <td>{{.ChipAuth}}</td>
 <td>{{.CreatedAt.Format "15:04:05"}}</td>

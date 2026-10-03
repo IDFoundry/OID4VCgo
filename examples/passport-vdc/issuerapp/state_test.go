@@ -72,15 +72,15 @@ func TestStatusList_PersistsInStateDir(t *testing.T) {
 		t.Fatalf("load: %v", err)
 	}
 	now := time.Now().Truncate(time.Second)
-	kept, err := s.allocate("dc+sd-jwt", now)
+	kept, err := s.allocate("dc+sd-jwt", true, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	revoked, err := s.allocate("mso_mdoc", now)
+	revoked, err := s.allocate("mso_mdoc", false, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	released, err := s.allocate("mso_mdoc", now)
+	released, err := s.allocate("mso_mdoc", false, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,6 +103,9 @@ func TestStatusList_PersistsInStateDir(t *testing.T) {
 	if _, ok := reloaded.entries[released]; ok {
 		t.Error("a released index came back after reload")
 	}
+	if !reloaded.entries[kept].Unchecked || reloaded.entries[revoked].Unchecked {
+		t.Error("whether a credential was issued unchecked didn't survive reload")
+	}
 }
 
 func TestStatusList_RejectsDamagedFile(t *testing.T) {
@@ -124,7 +127,7 @@ func TestStatusList_RejectsDamagedFile(t *testing.T) {
 // writes nothing.
 func TestStatusList_InMemoryWithoutStateDir(t *testing.T) {
 	s := newStatusList()
-	if _, err := s.allocate("mso_mdoc", time.Now()); err != nil {
+	if _, err := s.allocate("mso_mdoc", false, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	if s.path != "" {
@@ -136,7 +139,7 @@ func TestStatusList_InMemoryWithoutStateDir(t *testing.T) {
 // by handle, never by status list index, and a handle revokes its entry.
 func TestStatusPage_HidesIndices(t *testing.T) {
 	s := newStatusList()
-	idx, err := s.allocate("mso_mdoc", time.Now())
+	idx, err := s.allocate("mso_mdoc", false, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}

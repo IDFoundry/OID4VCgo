@@ -3,6 +3,7 @@ package verifierapp_test
 import (
 	"bytes"
 	"context"
+	"io"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -260,6 +261,41 @@ func TestEndToEnd_ExpiredPassport(t *testing.T) {
 	for _, format := range []string{"mso_mdoc", "dc+sd-jwt"} {
 		if out := present(t, env, store, verifierapp.ModeIssuer, format); out.Claims[credential.FamilyName] != "DOE" {
 			t.Errorf("%s: outcome = %+v", format, out)
+		}
+	}
+}
+
+// TestEndToEnd_SampleDocumentIssuedUnchecked issues gmrtd's sample
+// passport without checking it, as an issuer that skipped Passive
+// Authentication would: trusting the issuer, a verifier accepts its
+// claims; trusting only the issuing country, its passport file fails.
+func TestEndToEnd_SampleDocumentIssuedUnchecked(t *testing.T) {
+	env := demotest.New(t, nil)
+	env.StartVerifier(t, nil)
+	sample, err := passport.SampleDocument(time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := receiveInto(t, env, sample)
+
+	// Only the issuer's own pages know.
+	resp, err := env.HTTP.Get(env.IssuerURL + "/status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if n := strings.Count(string(page), "issued without Passive Authentication"); n != 2 {
+		t.Errorf("the issuer's status page marks %d credentials as unchecked, want 2", n)
+	}
+
+	for _, format := range []string{"mso_mdoc", "dc+sd-jwt"} {
+		if outcome := present(t, env, store, verifierapp.ModeIssuer, format); outcome.Claims[credential.FamilyName] != "SMITH" {
+			t.Errorf("%s: trusting the issuer, claims = %v, want the sample's", format, outcome.Claims)
+		}
+		outcome := present(t, env, store, verifierapp.ModeICAO, format)
+		if outcome.ICAO == nil || outcome.ICAO.Verified || !strings.Contains(outcome.ICAO.Error, "Passive Authentication") {
+			t.Errorf("%s: trusting the country, ICAO = %+v, want a Passive Authentication failure", format, outcome.ICAO)
 		}
 	}
 }
