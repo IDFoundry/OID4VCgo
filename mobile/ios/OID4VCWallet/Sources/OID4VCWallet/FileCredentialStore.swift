@@ -56,6 +56,9 @@ public final class FileCredentialStore: CredentialStore, @unchecked Sendable {
         }
     }
 
+    /// Records are files: they survive the app quitting.
+    public var isDurable: Bool { true }
+
     public func put(id: String, record: Data) throws {
         let url = try file(id)
         let options = writeOptions

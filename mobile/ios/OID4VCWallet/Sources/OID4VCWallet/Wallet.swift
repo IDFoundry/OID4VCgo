@@ -237,6 +237,19 @@ public final class Wallet: @unchecked Sendable {
         return try Issuance(s)
     }
 
+    /// Completes an authorization begun before the app was suspended or
+    /// relaunched: `redirect` is the issuer's redirect back to the
+    /// redirect URI, delivered to the app (`onOpenURL`). Returns the
+    /// issuance ready for `requestCredentials()`. A redirect matching no
+    /// authorization in progress — not this wallet's, already completed,
+    /// or expired — throws `.notFound`.
+    public func resumeIssuance(redirect: URL) async throws -> Issuance {
+        let wallet = handle
+        let link = redirect.absoluteString
+        let s = try await OID4VC.cancellable { op in try OID4VC.wrap { try wallet.resumeIssuance(op, redirect: link) } }
+        return try Issuance(s)
+    }
+
     /// Fetches and verifies an OpenID4VP request (openid4vp://…), and
     /// finds the credentials that can answer it.
     public func startPresentation(request: String) async throws -> Presentation {

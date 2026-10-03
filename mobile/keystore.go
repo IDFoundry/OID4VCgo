@@ -55,10 +55,18 @@ type KeyStore interface {
 	// DeleteKey deletes key id. Deleting a key that doesn't exist isn't
 	// an error.
 	DeleteKey(id string) error
+	// Durable reports whether keys survive the app quitting (kept in the
+	// Keychain). Receiving credentials needs a durable KeyStore unless
+	// the wallet is configured for development.
+	Durable() bool
 }
 
 // keyStore is a KeyStore as a walletflow.KeyStore.
 type keyStore struct{ ks KeyStore }
+
+// KeyCustody declares the KeyStore's custody to fapigo/client: its keys
+// are durable when it says so.
+func (k keyStore) KeyCustody() keys.KeyCustody { return keys.KeyCustody{Durable: k.ks.Durable()} }
 
 var _ walletflow.KeyStore = keyStore{}
 

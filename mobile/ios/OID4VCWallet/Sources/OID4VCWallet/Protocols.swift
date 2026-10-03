@@ -28,6 +28,14 @@ public protocol KeyStore: Sendable {
     func sign(id: String, digest: Data) throws -> Data
     /// Deletes the key; deleting one that doesn't exist isn't an error.
     func deleteKey(id: String) throws
+    /// Whether keys survive the app quitting. Receiving credentials needs
+    /// a durable store unless the configuration is for development; the
+    /// default is false.
+    var isDurable: Bool { get }
+}
+
+public extension KeyStore {
+    var isDurable: Bool { false }
 }
 
 /// The wallet's credentials, as opaque records kept by ID under the
@@ -42,6 +50,15 @@ public protocol CredentialStore: Sendable {
     /// Deletes the record; deleting one that doesn't exist isn't an
     /// error.
     func delete(id: String) throws
+    /// Whether records survive the app quitting. Receiving credentials
+    /// needs a durable store unless the configuration is for development:
+    /// it also keeps an authorization in progress while the holder is at
+    /// the issuer's pages. The default is false.
+    var isDurable: Bool { get }
+}
+
+public extension CredentialStore {
+    var isDurable: Bool { false }
 }
 
 /// The Wallet Provider's backend, which attests the wallet and its keys
@@ -81,6 +98,8 @@ final class KeyStoreAdapter: NSObject, MobileKeyStoreProtocol, @unchecked Sendab
     func sign(_ id: String?, digest: Data?) throws -> Data { try store.sign(id: id ?? "", digest: digest ?? Data()) }
 
     func deleteKey(_ id: String?) throws { try store.deleteKey(id: id ?? "") }
+
+    func durable() -> Bool { store.isDurable }
 }
 
 /// A CredentialStore as gomobile's MobileCredentialStore.
@@ -104,6 +123,8 @@ final class CredentialStoreAdapter: NSObject, MobileCredentialStoreProtocol, @un
     }
 
     func delete(_ id: String?) throws { try store.delete(id: id ?? "") }
+
+    func durable() -> Bool { store.isDurable }
 }
 
 /// A WalletProvider as gomobile's MobileWalletProvider. Go calls it on

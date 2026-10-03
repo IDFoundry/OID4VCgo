@@ -2,6 +2,7 @@ package mobile
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/x509"
 	"encoding/json"
 	"errors"
@@ -70,9 +71,13 @@ func NewWallet(configJSON string, keys KeyStore, credentials CredentialStore, pr
 		wcfg.VerifierTrust = wallet.X5CVerifierRoots{Roots: roots}
 	}
 	deps := walletflow.Dependencies{
-		Keys: keyStore{keys}, Credentials: credentialStore{credentials}, Random: randReader{},
-		Deferred: deferredStore{credentials}, // pending deferred credentials, kept beside the credentials
-		HTTP:     testHTTP.Load(),            // nil: walletflow's own client
+		Keys: keyStore{keys}, Credentials: credentialStore{credentials},
+		// crypto/rand.Reader itself, which production assurance requires.
+		Random: rand.Reader,
+		// Pending deferred credentials and authorizations in progress,
+		// kept beside the credentials.
+		Deferred: deferredStore{credentials}, Authorizations: authorizationStore{credentials},
+		HTTP: testHTTP.Load(), // nil: walletflow's own client
 	}
 	if provider != nil {
 		deps.Provider = walletProvider{provider}

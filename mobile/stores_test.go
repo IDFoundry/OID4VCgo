@@ -64,6 +64,7 @@ type memStore struct{ records map[string][]byte }
 
 func (m memStore) Put(id string, r []byte) error { m.records[id] = r; return nil }
 func (m memStore) Get(id string) ([]byte, error) { return m.records[id], nil }
+func (m memStore) Durable() bool                 { return false }
 func (m memStore) Delete(id string) error        { delete(m.records, id); return nil }
 func (m memStore) List() ([]byte, error) {
 	all := make([]json.RawMessage, 0, len(m.records))

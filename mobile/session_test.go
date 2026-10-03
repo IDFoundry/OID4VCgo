@@ -13,14 +13,17 @@ import (
 // goCredentialStore is a CredentialStore in memory, as the app's would
 // be.
 type goCredentialStore struct {
-	mu      sync.Mutex
-	records map[string][]byte
-	order   []string
+	mu        sync.Mutex
+	records   map[string][]byte
+	order     []string
+	ephemeral bool // says it isn't Durable
 }
 
 func newGoCredentialStore() *goCredentialStore {
 	return &goCredentialStore{records: map[string][]byte{}}
 }
+
+func (s *goCredentialStore) Durable() bool { return !s.ephemeral }
 
 func (s *goCredentialStore) Put(id string, record []byte) error {
 	s.mu.Lock()
@@ -509,5 +512,75 @@ func mustText(t *testing.T) func(string, error) string {
 			t.Fatal(err)
 		}
 		return s
+	}
+}
+
+// The redirect completes an authorization begun before the app quit: a
+// relaunched Wallet over the same stores resumes it and receives the
+// credentials. A redirect matching nothing is not_found.
+func TestSessions_ResumeIssuance(t *testing.T) {
+	h := newHarness(t, false)
+	offer, err := h.env.AuthorizationCodeOffer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := h.w.StartIssuance(NewOperation(0), offer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authURL, err := s.BeginAuthorization(NewOperation(0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	redirect, err := h.env.Approve(authURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The app quits, s with it.
+	relaunched, err := NewWallet(h.env.ConfigJSON(), h.keys, h.creds, h.env.Provider())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if keys := decode[struct {
+		KeyIDs []string `json:"key_ids"`
+	}](t, mustText(t)(relaunched.HolderKeyIDs())); len(keys.KeyIDs) != 2 {
+		t.Errorf("keys in use = %v, want the authorization's instance and DPoP keys", keys.KeyIDs)
+	}
+	if held := decode[struct{ Credentials []summary }](t, mustText(t)(relaunched.Credentials())); len(held.Credentials) != 0 {
+		t.Errorf("the authorization is listed as a credential: %+v", held)
+	}
+	resumed, err := relaunched.ResumeIssuance(NewOperation(0), redirect)
+	if err != nil {
+		t.Fatalf("ResumeIssuance: %v", err)
+	}
+	got := decode[struct{ Credentials []summary }](t, mustText(t)(resumed.RequestCredentials(NewOperation(0))))
+	if len(got.Credentials) != 2 {
+		t.Errorf("received %+v, want 2 credentials", got)
+	}
+	if err := resumed.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := relaunched.ResumeIssuance(NewOperation(0), redirect); code(err) != CodeNotFound {
+		t.Errorf("the redirect again: %v", err)
+	}
+}
+
+// Without development, receiving credentials needs durable stores.
+func TestSessions_ProductionNeedsDurableStores(t *testing.T) {
+	h := newHarness(t, false)
+	var cfg map[string]any
+	if err := json.Unmarshal([]byte(h.env.ConfigJSON()), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	cfg["development"] = false
+	raw, _ := json.Marshal(cfg)
+	creds := newGoCredentialStore()
+	creds.ephemeral = true
+	w, err := NewWallet(string(raw), h.keys, creds, h.env.Provider())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.StartIssuance(NewOperation(0), "openid-credential-offer://?credential_offer=%7B%7D"); err == nil || !strings.Contains(err.Error(), "Durable") {
+		t.Errorf("StartIssuance with a store that isn't durable: %v", err)
 	}
 }

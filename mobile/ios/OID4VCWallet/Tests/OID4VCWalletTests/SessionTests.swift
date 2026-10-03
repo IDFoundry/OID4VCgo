@@ -202,6 +202,36 @@ final class SessionTests: XCTestCase {
         XCTAssertEqual(try keys.keyIDs().count, 1, "only the issued credential's key is left")
     }
 
+    /// The redirect completes an authorization begun before the app
+    /// quit: a relaunched wallet over the same stores resumes it, and the
+    /// launch sweep keeps its keys.
+    func testResumeIssuanceAfterARelaunch() async throws {
+        let env = try TestEnv()
+        defer { env.close() }
+        let keys = keyStore()
+        let store = InMemoryCredentialStore()
+        let w = try wallet(env, keys: keys, store: store)
+        let offer = try OID4VC.call { env.env.authorizationCodeOffer($0) }
+        let quit = try await w.startIssuance(offer: offer)
+        let redirect = try env.approve(try await quit.beginAuthorization())
+        // The app is killed: no close(), and no deinit either (which would
+        // close it), so `quit` is kept alive to the end.
+        defer { withExtendedLifetime(quit) {} }
+        let relaunched = try wallet(env, keys: keys, store: store)
+        let swept = try await relaunched.sweepOrphanedKeys(in: keys)
+        XCTAssertEqual(swept, 0, "the sweep deleted the authorization's keys")
+        let s = try await relaunched.resumeIssuance(redirect: redirect)
+        let result = try await s.requestCredentials()
+        XCTAssertEqual(result.credentials.count, 2)
+        try await s.close()
+        do {
+            _ = try await relaunched.resumeIssuance(redirect: redirect)
+            XCTFail("the redirect completed twice")
+        } catch let e as WalletError {
+            XCTAssertEqual(e.code, .notFound)
+        }
+    }
+
     func testAbandonDeferred() async throws {
         let env = try TestEnv(deferIssuance: true)
         defer { env.close() }
