@@ -248,14 +248,7 @@ func (p *Presentation) Decline(ctx context.Context) (Presented, error) {
 // nil), with their holder keys when withKeys is set. Every ID must be a
 // candidate.
 func (p *Presentation) chosen(ctx context.Context, credentialIDs []string, withKeys bool) ([]wallet.HeldCredential, error) {
-	var candidates []string
-	for _, cs := range p.candidates {
-		for _, c := range cs.Credentials {
-			if !slices.Contains(candidates, c.ID) {
-				candidates = append(candidates, c.ID)
-			}
-		}
-	}
+	candidates := p.candidateIDs()
 	if len(candidates) == 0 {
 		return nil, ErrNoMatchingCredential
 	}
@@ -279,6 +272,19 @@ func (p *Presentation) chosen(ctx context.Context, credentialIDs []string, withK
 		held = append(held, heldCredential(c, key))
 	}
 	return held, nil
+}
+
+// candidateIDs are the IDs of every credential that answers a query.
+func (p *Presentation) candidateIDs() []string {
+	var ids []string
+	for _, cs := range p.candidates {
+		for _, c := range cs.Credentials {
+			if !slices.Contains(ids, c.ID) {
+				ids = append(ids, c.ID)
+			}
+		}
+	}
+	return ids
 }
 
 // idsByCredential maps each chosen credential's text to its ID.
