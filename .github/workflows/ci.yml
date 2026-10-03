@@ -178,7 +178,7 @@ jobs:
         run: mobile/build-xcframework.sh -tags mobiletest
 
       - name: swift test
-        working-directory: mobile/ios/OID4VCMobile
+        working-directory: mobile/ios/OID4VCWallet
         env:
           OID4VC_TEST_FRAMEWORK: "1"
         run: swift test
@@ -190,6 +190,13 @@ jobs:
       - name: build the demo wallet app
         working-directory: mobile/ios/DemoWallet
         run: xcodebuild build -project DemoWallet.xcodeproj -scheme DemoWallet -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO -quiet
+
+      # The package as wallet-swift-release.yml publishes it, built
+      # against the zipped release framework.
+      - name: lay out the published Swift package
+        env:
+          SKIP_FRAMEWORK_BUILD: "1"
+        run: mkdir -p "$RUNNER_TEMP/pkg" && mobile/ios/package-swift-release.sh 0.0.0-ci "$RUNNER_TEMP/pkg" "$RUNNER_TEMP/assets"
 
   govulncheck:
     runs-on: ubuntu-latest
