@@ -299,3 +299,33 @@ func TestCopyPolicy_ReusesTheLeastShownCopy(t *testing.T) {
 		t.Errorf("four Verifiers across two copies: shown to %d and %d, want 2 and 2", n0, n1)
 	}
 }
+
+// A credential is linkable once a copy has been shown to two Verifiers,
+// and a presentation would be once it can only hand this Verifier a copy
+// another has seen.
+func TestCopyPolicy_Linkable(t *testing.T) {
+	f := newFixture(t, walletflowtest.Options{BatchSize: 1})
+	w, v1, v2 := twoVerifiersWallet(t, f, walletflow.CopyPerPresentation)
+	c := receive(t, f, w, walletflowtest.SDJWTConfigurationID)[0]
+	ctx := context.Background()
+	linkableTo := func(v testVerifier) bool {
+		_, link := v.Begin(t, dcql.Query{Credentials: []dcql.CredentialQuery{f.env.SDJWTQuery(t, "pid", "given_name")}})
+		p, err := w.StartPresentation(ctx, link)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return p.Linkable(c.ID)
+	}
+	if linkableTo(v1) {
+		t.Error("an unused copy is linkable")
+	}
+	if got := presentOnce(t, f, v1, w, c.ID); got.Linkable() || linkableTo(v1) {
+		t.Errorf("one Verifier: Linkable %v, to v1 again %v; want neither", got.Linkable(), linkableTo(v1))
+	}
+	if !linkableTo(v2) {
+		t.Error("presenting the only copy, seen by v1, to v2 isn't linkable")
+	}
+	if got := presentOnce(t, f, v2, w, c.ID); !got.Linkable() {
+		t.Error("a copy shown to two Verifiers isn't linkable")
+	}
+}
