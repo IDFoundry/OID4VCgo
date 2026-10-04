@@ -89,6 +89,9 @@ func TestRequest_ResultIsNotReachableFromTheLink(t *testing.T) {
 	if !strings.Contains(string(page), `src="data:image/png;base64,`) {
 		t.Error("the waiting page has no QR code of the request")
 	}
+	if !strings.Contains(string(page), `<a href="openid4vp://`) || strings.Contains(string(page), "ZgotmplZ") {
+		t.Error("the waiting page doesn't link the wallet app to the request")
+	}
 }
 
 // TestRequest_SignedWithCAIssuedCertificate checks the Request Object's
