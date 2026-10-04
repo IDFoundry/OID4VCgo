@@ -11,13 +11,13 @@ package credential
 // a change is a single edit.
 const (
 	// DocType is the mso_mdoc doctype.
-	DocType = "org.idfoundry.passport.1"
+	DocType = "dev.idfoundry.passport.1"
 
 	// IdentityNamespace holds the holder's identity attributes.
-	IdentityNamespace = "org.idfoundry.passport.1"
+	IdentityNamespace = "dev.idfoundry.passport.1"
 
 	// FileNamespace holds the gmrtd portable passport file.
-	FileNamespace = "org.idfoundry.passport.gmrtd.1"
+	FileNamespace = "dev.idfoundry.passport.gmrtd.1"
 )
 
 // Element and claim names shared by both formats, except where a
