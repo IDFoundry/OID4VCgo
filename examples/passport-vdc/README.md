@@ -74,6 +74,7 @@ shows as who's asking, and decides something from the answer.
 | 🏦 Bank KYC | Harbour Bank | the passport file | the issuing country | account opened only if the file re-verifies and the passport hasn't expired |
 | ❓ Unknown verifier | CheapFlights | the passport file, as the bank | — | nothing: see below |
 | 🏨 Family hotel check-in | Grand Hotel | each guest's passport file | the issuing country | guests checked in only if every file re-verifies |
+| ⚠️ Over-asking shop | Late Night Liquor | `age_over_18` and the names, though registered only for `age_over_18` | the issuer | sale allowed or refused — and it gets the names, if the holder shares them |
 
 **The unknown verifier** asks for exactly what the bank does, in a
 valid request, but its certificate comes from a CA the demo wallets
@@ -81,8 +82,18 @@ don't trust (`verifier-ca.pem` holds only the trusted one). A wallet
 refuses the request without opening it, so it shows nothing of what was
 asked for or who claims to be asking, and sends nothing back: the
 verifier's page keeps waiting. Its point is that a well-formed request
-doesn't entitle a verifier to your passport. Trust is all or nothing
-here: any trusted verifier may ask for anything.
+doesn't entitle a verifier to your passport.
+
+**Registrations.** Trust says who a verifier is, not what it may ask
+for. Each trusted relying party's requests also carry its registration
+(OpenID4VP `verifier_info`, OID4VCgo's `registration` format), signed
+by a demo registrar (`registrar-ca.pem`): its name, its purpose, and the
+claims it's registered to request — exactly what its scenario asks.
+A wallet trusting that registrar, such as the iOS demo app, shows the
+registration on the consent screen. **The over-asking shop** is
+registered for the age check only, but also asks for the holder's
+names: the app warns that it asks for more than it's registered for,
+and marks each such claim. It doesn't refuse: the holder decides.
 
 **The hotel** sets DCQL `multiple` (OpenID4VP 1.0 §6.1), so the wallet
 may answer with several credentials. The web and CLI wallets let the

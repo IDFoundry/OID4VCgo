@@ -46,10 +46,14 @@ const (
 	// each guest, re-verified, in one presentation (DCQL multiple,
 	// OpenID4VP 1.0 §6.1).
 	ScenarioHotel Scenario = "hotel"
+	// ScenarioOverAsking is age assurance from a shop registered to ask
+	// only whether you're over 18, which asks for your name too: a
+	// wallet checking its registration warns before you share.
+	ScenarioOverAsking Scenario = "overasking"
 )
 
 // Scenarios are the scenarios in the order the demo runs them.
-var Scenarios = []Scenario{ScenarioAge, ScenarioSignup, ScenarioBank, ScenarioUnknown, ScenarioHotel}
+var Scenarios = []Scenario{ScenarioAge, ScenarioSignup, ScenarioBank, ScenarioUnknown, ScenarioHotel, ScenarioOverAsking}
 
 // ScenarioInfo describes a scenario on the verifier's home page.
 type ScenarioInfo struct {
@@ -69,6 +73,10 @@ type ScenarioInfo struct {
 	// Trusted: its requests are signed under the verifier CA wallets
 	// trust (VerifierCACertificate); otherwise under one they don't.
 	Trusted bool
+	// RegisteredAs is the scenario whose query its registration covers,
+	// when not its own: a relying party registered for less than it
+	// asks. A trusted scenario's requests carry its registration.
+	RegisteredAs Scenario
 }
 
 var scenarioInfo = map[Scenario]ScenarioInfo{
@@ -96,6 +104,11 @@ var scenarioInfo = map[Scenario]ScenarioInfo{
 		Icon: "🏨", Title: "Family hotel check-in", Verifier: "Grand Hotel", Trusted: true, Evidence: true, Multiple: true,
 		Asks:  "the passport file of each guest",
 		Shows: "Several credentials in one presentation, each passport re-verified — as hotels scan passports today.",
+	},
+	ScenarioOverAsking: {
+		Icon: "⚠️", Title: "Over-asking shop", Verifier: "Late Night Liquor", Trusted: true, RegisteredAs: ScenarioAge,
+		Asks:  "whether you're over 18 — and your name, which it isn't registered to ask for",
+		Shows: "Verifier registration: the shop is registered to ask only whether you're over 18, so your wallet warns that it asks for more. Trust alone isn't entitlement.",
 	},
 }
 
@@ -149,6 +162,12 @@ func buildQuery(s Scenario, vct string, trusted dcql.TrustedAuthoritiesQuery) (d
 	case s == ScenarioAge:
 		mdocClaims = []dcql.ClaimsQuery{claim(credential.IdentityNamespace, "age_over_18")}
 		sdjwtClaims = []dcql.ClaimsQuery{claim(credential.SDJWTAgeEqualOrOver, "18")}
+	case s == ScenarioOverAsking:
+		mdocClaims = []dcql.ClaimsQuery{
+			claim(credential.IdentityNamespace, "age_over_18"),
+			claim(credential.IdentityNamespace, credential.GivenName), claim(credential.IdentityNamespace, credential.FamilyName),
+		}
+		sdjwtClaims = []dcql.ClaimsQuery{claim(credential.SDJWTAgeEqualOrOver, "18"), claim(credential.GivenName), claim(credential.FamilyName)}
 	case s == ScenarioSignup:
 		for _, el := range []string{credential.FamilyName, credential.GivenName, "age_over_18", credential.Portrait} {
 			mdocClaims = append(mdocClaims, claim(credential.IdentityNamespace, el))

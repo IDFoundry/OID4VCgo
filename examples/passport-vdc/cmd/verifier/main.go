@@ -32,6 +32,7 @@ func main() {
 	keyFile := flag.String("tls-key", "", "TLS private key PEM (with -tls-cert)")
 	certOut := flag.String("tls-cert-out", "verifier-tls.pem", "where to write a generated TLS certificate for the wallet to trust")
 	caOut := flag.String("verifier-ca-out", "verifier-ca.pem", "where to write the demo verifier CA certificate for wallets to trust")
+	registrarOut := flag.String("registrar-ca-out", "registrar-ca.pem", "where to write the demo registrar's CA certificate, for wallets checking the relying parties' registrations")
 	trust := flag.String("trust", "issuer-tls.pem", "comma-separated PEM files of TLS certificates to trust when fetching the issuer's status list (from cmd/issuer)")
 	webWallet := flag.String("web-wallet", "https://127.0.0.1:7443", "the demo web wallet's URL, for the request page's \"Open in web wallet\" button (empty to hide it)")
 	flag.Parse()
@@ -72,6 +73,10 @@ func main() {
 		log.Fatalf("write %s: %v", *caOut, err)
 	}
 	log.Printf("wrote the demo verifier CA certificate to %s for wallets to trust", *caOut)
+	registrarPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: app.RegistrarCACertificate().Raw})
+	if err := os.WriteFile(*registrarOut, registrarPEM, 0o600); err != nil { // #nosec G703 -- operator-supplied path
+		log.Fatalf("write %s: %v", *registrarOut, err)
+	}
 	cert, err := demotls.Certificate(*certFile, *keyFile, *certOut, "passport-vdc demo verifier (TLS)")
 	if err != nil {
 		log.Fatal(err)
