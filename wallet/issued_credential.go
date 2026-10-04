@@ -81,6 +81,13 @@ type VerifiedIssuedCredential struct {
 // proved possession of. A Credential Offer's issuer is not trusted just
 // because it sent the offer (OID4VCI 1.0 §13.5), so neither is what it
 // issues.
+// issuerClockSkew is how far the wallet's clock may be from the
+// issuer's when it checks a credential's validity window on receipt: an
+// issuer that makes a credential valid from the moment it signs it
+// would otherwise have it refused by a wallet whose clock is a second
+// behind.
+const issuerClockSkew = time.Minute
+
 func VerifyIssuedCredential(ctx context.Context, p VerifyIssuedCredentialParams) (VerifiedIssuedCredential, error) {
 	if p.IssuerRoots == nil {
 		return VerifiedIssuedCredential{}, errors.New("wallet: verify issued credential: IssuerRoots is required")
@@ -131,6 +138,7 @@ func verifyIssuedSDJWTVC(p VerifyIssuedCredentialParams, now time.Time) (Verifie
 	}
 	payload, _, err := sdjwtvc.Verify(p.Credential, leaf.PublicKey, alg, sdjwtvc.VerifyOptions{
 		RequireKeyBinding: sdjwtvc.KeyBindingNotRequired, Now: func() time.Time { return now },
+		MaxClockSkew: issuerClockSkew,
 	})
 	if err != nil {
 		return VerifiedIssuedCredential{}, fmt.Errorf("verify: %w", err)
@@ -202,7 +210,9 @@ func verifyIssuedMdoc(p VerifyIssuedCredentialParams, now time.Time) (VerifiedIs
 	if err != nil {
 		return VerifiedIssuedCredential{}, fmt.Errorf("issuer certificate: %w", err)
 	}
-	mso, err := mdoc.Verify(signed, p.Configuration.DocType, leaf.PublicKey, alg, mdoc.VerifyOptions{Now: func() time.Time { return now }})
+	mso, err := mdoc.Verify(signed, p.Configuration.DocType, leaf.PublicKey, alg, mdoc.VerifyOptions{
+		Now: func() time.Time { return now }, MaxClockSkew: issuerClockSkew,
+	})
 	if err != nil {
 		return VerifiedIssuedCredential{}, fmt.Errorf("verify: %w", err)
 	}

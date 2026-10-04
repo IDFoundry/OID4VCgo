@@ -369,6 +369,34 @@ func TestVerifyRejectsNotYetValid(t *testing.T) {
 	}
 }
 
+// A verifier whose clock is a little behind the issuer's still accepts
+// an MSO valid from the moment it was signed, within MaxClockSkew — and
+// one expired by less than it — but not beyond.
+func TestVerifyAllowsMaxClockSkew(t *testing.T) {
+	f := newFixture(t)
+	verify := func(at time.Time, skew time.Duration) error {
+		_, err := Verify(f.signed, f.claims.DocType, &f.issuerKey.PublicKey, cose.ES256, VerifyOptions{
+			Now: func() time.Time { return at }, MaxClockSkew: skew,
+		})
+		return err
+	}
+	if err := verify(f.claims.ValidFrom.Add(-30*time.Second), 0); err == nil {
+		t.Error("accepted 30 s before validFrom with no skew allowed")
+	}
+	if err := verify(f.claims.ValidFrom.Add(-30*time.Second), time.Minute); err != nil {
+		t.Errorf("30 s before validFrom, a minute's skew: %v", err)
+	}
+	if err := verify(f.claims.ValidUntil.Add(30*time.Second), time.Minute); err != nil {
+		t.Errorf("30 s after validUntil, a minute's skew: %v", err)
+	}
+	if err := verify(f.claims.ValidFrom.Add(-2*time.Minute), time.Minute); err == nil {
+		t.Error("accepted 2 minutes before validFrom with a minute's skew")
+	}
+	if err := verify(f.claims.ValidFrom, -time.Second); err == nil {
+		t.Error("accepted a negative MaxClockSkew")
+	}
+}
+
 func TestVerifyRejectsWrongKey(t *testing.T) {
 	f := newFixture(t)
 	otherKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)

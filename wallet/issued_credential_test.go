@@ -121,6 +121,25 @@ func TestVerifyIssuedCredential_Accepts(t *testing.T) {
 	}
 }
 
+// A credential valid from the moment the issuer signed it is accepted by
+// a wallet whose clock is a little behind the issuer's — within a
+// minute, not beyond.
+func TestVerifyIssuedCredential_AllowsIssuerClockSkew(t *testing.T) {
+	f := caIssuedFixture(t)
+	verify := func(at time.Time) error {
+		_, err := wallet.VerifyIssuedCredential(context.Background(), wallet.VerifyIssuedCredentialParams{
+			Configuration: f.mdocConf, Credential: f.mdocB, HolderKey: &f.holder.PublicKey, IssuerRoots: f.roots, Now: at,
+		})
+		return err
+	}
+	if err := verify(f.now.Add(-30 * time.Second)); err != nil {
+		t.Errorf("wallet clock 30 s behind the issuer's: %v", err)
+	}
+	if err := verify(f.now.Add(-2 * time.Minute)); err == nil {
+		t.Error("wallet clock 2 minutes behind: accepted, want not yet valid")
+	}
+}
+
 // TestVerifyIssuedCredential_Rejects covers what a Wallet must not keep.
 func TestVerifyIssuedCredential_Rejects(t *testing.T) {
 	f := caIssuedFixture(t)
