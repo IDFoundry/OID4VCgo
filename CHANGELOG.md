@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.27.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.26.0...v0.27.0) (2026-10-04)
+
+
+### ⚠ BREAKING CHANGES
+
+* **deps:** an Authorization Server built on fapigo/server now refuses to redeem a refresh token issued to an attested client unless the refresh request's Client Attestation is for the same instance key: invalid_grant, "refresh_token was issued to another client instance". A wallet must keep the instance key it received the refresh token with, and refresh with it, as walletflow does. Refresh tokens issued before this version have no recorded key and stay redeemable.
+
+### Features
+
+* **issuer:** let a pre-authorized code's Token Response carry a refresh token ([4d2c461](https://github.com/IDFoundry/OID4VCgo/commit/4d2c461278da2cfb02b2bd48f500387c13fa5ccf))
+* **walletflow:** refresh a credential's copies with a refresh token ([0c6ccc2](https://github.com/IDFoundry/OID4VCgo/commit/0c6ccc27534fb116aa0c21be59b11287b784d402))
+* **walletflow:** refresh credentials received with a pre-authorized code ([9e2b110](https://github.com/IDFoundry/OID4VCgo/commit/9e2b110445ce9a770fbd2b289a871eb1346551af))
+* **walletflow:** revoke a refresh token when its last credential is deleted ([6f3ce24](https://github.com/IDFoundry/OID4VCgo/commit/6f3ce243fb38b05af60b6abb65ea9508af3e57bf))
+* **wallet:** read a pre-authorized code Token Response's refresh token ([6ad3cd4](https://github.com/IDFoundry/OID4VCgo/commit/6ad3cd4e7363fbae1b08f1707283a93c8b2750d6))
+* **wallet:** read an Authorization Server's revocation endpoint ([2d69e72](https://github.com/IDFoundry/OID4VCgo/commit/2d69e720da90f06f80069e65416c27aa7d6e3187))
+
+
+### Bug Fixes
+
+* **dcql:** let credential sets that share a query each take one option ([db9afce](https://github.com/IDFoundry/OID4VCgo/commit/db9afce275578835c091dbc1b7c2824b1c7abe13))
+* **deps:** pin FAPIgo main 3e70d32, binding refresh tokens to the instance key ([102690b](https://github.com/IDFoundry/OID4VCgo/commit/102690b5301c5b6e055ca36974a231952cc4137b))
+* **issuer:** keep the pre-authorized Token Response out of caches ([ff12994](https://github.com/IDFoundry/OID4VCgo/commit/ff12994eb49120624776286353e67795d32e4b3d))
+* **walletflow:** don't release a refresh grant an open issuance still uses ([67b81a2](https://github.com/IDFoundry/OID4VCgo/commit/67b81a2f492637102eadc36be1b613144c7d7ea4))
+* **walletflow:** keep a credential refreshable through a deferred issuance ([1fc0456](https://github.com/IDFoundry/OID4VCgo/commit/1fc0456eaf02a4cb725dc9c61c6ee7f6ee6afd7c))
+* **walletflow:** serialize credential changes, and check refresh grants ([6813e8d](https://github.com/IDFoundry/OID4VCgo/commit/6813e8d13c24d2766989d835126782522692da8a))
+
 ## [0.26.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.25.0...v0.26.0) (2026-10-03)
 
 
