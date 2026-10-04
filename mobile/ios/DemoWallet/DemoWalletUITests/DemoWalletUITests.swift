@@ -134,6 +134,11 @@ final class DemoWalletUITests: XCTestCase {
         app.buttons["receive"].tap()
         XCTAssertTrue(app.staticTexts["status"].waitForExistence(timeout: 60))
 
+        // The home screen groups the credential under its holder.
+        let holderHeader = app.descendants(matching: .any).matching(identifier: "holder").firstMatch
+        XCTAssertTrue(holderHeader.waitForExistence(timeout: 10), "the credentials aren't grouped by holder")
+        XCTAssertTrue(holderHeader.label.contains("Doe"), holderHeader.label)
+
         // Open the request in the app, relaunched with it (opening a
         // custom-scheme link from a test asks for confirmation).
         let request = try await Self.fetch("request", method: "POST")
