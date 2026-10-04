@@ -10,6 +10,7 @@ import (
 	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/credential"
+	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/passport"
 	"github.com/idfoundry/oid4vcgo/issuer"
 	"github.com/idfoundry/oid4vcgo/issuer/fapiresource"
 )
@@ -117,24 +118,10 @@ func (a *App) prepareCredential(_ context.Context, grant issuer.Grant, req *issu
 		return done, nil
 	}
 
-	// Both formats are always built from the same Evidence;
-	// RequestCredential uses whichever the requested configuration
-	// needs.
-	opts := credential.Options{Now: a.now()}
-	mdocClaims, err := credential.MdocClaims(e, opts)
-	if err == nil {
-		req.SDJWTClaims, err = credential.SDJWTClaims(e, a.vct, opts)
-	}
-	if err != nil {
+	if err := a.fillClaims(e, req); err != nil {
 		done(false)
-		// Fixed text: what failed to parse can be the passport's own data.
-		reason := "its data couldn't be read"
-		if errors.Is(err, credential.ErrNoValidity) {
-			reason = "it yields no validity period"
-		}
-		return nil, issuer.NewError(issuer.ErrorCredentialRequestDenied, "this passport can't be issued: "+reason)
+		return nil, err
 	}
-	req.MdocClaims = mdocClaims
 
 	// Each credential — every one of a batch — gets its own status list
 	// index (HAIP 1.0 §6.1).
@@ -148,6 +135,26 @@ func (a *App) prepareCredential(_ context.Context, grant issuer.Grant, req *issu
 		return nil
 	}
 	return done, nil
+}
+
+// fillClaims builds req's claims from e, in both formats:
+// RequestCredential uses whichever the requested configuration needs.
+func (a *App) fillClaims(e passport.Evidence, req *issuer.CredentialRequest) error {
+	opts := credential.Options{Now: a.now()}
+	mdocClaims, err := credential.MdocClaims(e, opts)
+	if err == nil {
+		req.SDJWTClaims, err = credential.SDJWTClaims(e, a.vct, opts)
+	}
+	if err != nil {
+		// Fixed text: what failed to parse can be the passport's own data.
+		reason := "its data couldn't be read"
+		if errors.Is(err, credential.ErrNoValidity) {
+			reason = "it yields no validity period"
+		}
+		return issuer.NewError(issuer.ErrorCredentialRequestDenied, "this passport can't be issued: "+reason)
+	}
+	req.MdocClaims = mdocClaims
+	return nil
 }
 
 func (a *App) issuerMetadataHandler() http.HandlerFunc {
