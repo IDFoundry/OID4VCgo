@@ -15,8 +15,13 @@ final class DemoWalletUITests: XCTestCase {
     }
 
     @MainActor
-    func launch(offer: String? = nil, request: String? = nil, reset: Bool = true) async throws -> XCUIApplication {
-        let config = try await Self.fetch("config")
+    func launch(offer: String? = nil, request: String? = nil, reset: Bool = true, trustVerifier: Bool = true) async throws -> XCUIApplication {
+        var config = try await Self.fetch("config")
+        if !trustVerifier, var wallet = config["wallet"] as? [String: Any] {
+            // Another CA: the issuer's.
+            wallet["verifier_roots"] = wallet["issuer_roots"]
+            config["wallet"] = wallet
+        }
         let app = XCUIApplication()
         app.launchEnvironment["OID4VC_DEMO_CONFIG"] = String(decoding: try JSONSerialization.data(withJSONObject: config), as: UTF8.self)
         app.launchEnvironment["OID4VC_DEMO_OFFER"] = offer
@@ -333,6 +338,20 @@ final class DemoWalletUITests: XCTestCase {
         let credential = current.descendants(matching: .any).matching(identifier: "credential").firstMatch
         XCTAssertTrue(credential.waitForExistence(timeout: 10))
         XCTAssertTrue(waitFor(credential, containing: "2 of 3 copies unused"), credential.label)
+    }
+
+    /// A request from a verifier the wallet doesn't trust is refused
+    /// unopened, prominently: no consent screen, nothing shared.
+    @MainActor
+    func testUntrustedVerifierRefused() async throws {
+        let request = try await Self.fetch("request", query: [URLQueryItem(name: "format", value: "dc+sd-jwt")], method: "POST")
+        let app = try await launch(request: request["link"] as? String, trustVerifier: false)
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "untrusted-verifier").firstMatch.waitForExistence(timeout: 20),
+                      "no untrusted verifier screen")
+        XCTAssertTrue(app.staticTexts["nothing-shared"].exists)
+        XCTAssertFalse(app.buttons["share"].exists, "the consent screen opened for an untrusted verifier")
+        let result = try await Self.fetch("request/\(request["id"] as! String)")
+        XCTAssertNotEqual(result["status"] as? String, "done")
     }
 
     /// Declines a request the wallet can't answer; the Verifier records
