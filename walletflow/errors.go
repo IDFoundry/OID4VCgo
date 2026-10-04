@@ -30,6 +30,12 @@ var (
 	// Verifier received it — the connection failed or timed out, or the
 	// Verifier answered with a server error. The Presentation is then
 	// answered: sending again could present twice.
+	// ErrReissueRequired is wrapped by Wallet.RefreshCredential when a
+	// credential can't be refreshed: it came without a refresh token, or
+	// the Authorization Server no longer accepts it. Receive it again
+	// from a new Credential Offer.
+	ErrReissueRequired = errors.New("walletflow: the credential can't be refreshed: receive it again")
+
 	ErrDeliveryUnknown = errors.New("walletflow: the response may or may not have reached the verifier")
 )
 

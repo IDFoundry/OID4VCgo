@@ -42,6 +42,15 @@ type Config struct {
 	// the issuer's entry without a locale, else its first.
 	Locales []string
 
+	// RequestRefresh asks the Authorization Server, in the authorization
+	// code flow, for a refresh token (the offline_access scope), so
+	// Wallet.RefreshCredential can later replace a credential's copies
+	// without the holder (OpenID4VCI 1.0 §13.5). The server must allow
+	// the wallet that scope, or the authorization fails with
+	// invalid_scope. The refresh token and the wallet instance key are
+	// then kept in Dependencies.Grants.
+	RequestRefresh bool
+
 	// BatchSize is how many copies of each credential to request when
 	// the issuer offers batch issuance, each bound to its own key, so
 	// each presentation can use one no Verifier has seen. It's capped at
@@ -70,6 +79,10 @@ type Dependencies struct {
 	// one, Keys that declare durable custody (keys.KeyCustodyAssurance),
 	// and Random left nil or crypto/rand.Reader.
 	Authorizations AuthorizationStore
+	// Grants keeps refresh grants (Config.RequestRefresh). nil means a
+	// MemoryGrantStore. Receiving credentials at production assurance
+	// with RequestRefresh set needs a Durable one.
+	Grants GrantStore
 
 	// HTTP makes every request. nil means a client with a 10 s timeout.
 	HTTP *http.Client
@@ -122,6 +135,9 @@ func New(cfg Config, deps Dependencies) (*Wallet, error) {
 	if deps.Authorizations == nil {
 		deps.Authorizations = NewMemoryAuthorizationStore()
 	}
+	if deps.Grants == nil {
+		deps.Grants = NewMemoryGrantStore()
+	}
 	core, err := wallet.New(wallet.Config{
 		Assurance: cfg.assurance(), ProofSigningAlg: oid4vci.ES256, VerifierTrust: cfg.VerifierTrust,
 		Fetch: fapihttp.Config{
@@ -159,7 +175,8 @@ func (w *Wallet) Credentials(ctx context.Context) ([]StoredCredential, error) {
 }
 
 // DeleteCredential deletes the credential id names, and every copy's
-// holder key.
+// holder key, and its refresh grant, with its instance key, once no
+// other credential uses it.
 func (w *Wallet) DeleteCredential(ctx context.Context, id string) error {
 	c, err := w.deps.Credentials.Get(ctx, id)
 	if err != nil {
@@ -167,6 +184,9 @@ func (w *Wallet) DeleteCredential(ctx context.Context, id string) error {
 	}
 	if err := w.deps.Credentials.Delete(ctx, id); err != nil {
 		return fmt.Errorf("walletflow: delete credential: %w", err)
+	}
+	if err := w.releaseGrant(ctx, c.GrantID, id); err != nil {
+		return fmt.Errorf("walletflow: delete credential's refresh grant: %w", err)
 	}
 	for _, cp := range c.AllCopies() {
 		if err := w.deps.Keys.DeleteKey(ctx, cp.HolderKeyID); err != nil {
@@ -194,6 +214,8 @@ func (w *Wallet) checkIssuance() error {
 	switch {
 	case !w.deps.Authorizations.Durable():
 		return errors.New("walletflow: receiving credentials in production needs a Durable Dependencies.Authorizations, so an authorization survives the app being suspended")
+	case w.cfg.RequestRefresh && !w.deps.Grants.Durable():
+		return errors.New("walletflow: refreshing credentials in production needs a Durable Dependencies.Grants, so a refresh token survives a restart")
 	case !durableKeys(w.deps.Keys):
 		return errors.New("walletflow: receiving credentials in production needs Dependencies.Keys to declare durable custody (keys.KeyCustodyAssurance)")
 	case w.deps.Random != rand.Reader:

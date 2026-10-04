@@ -58,6 +58,11 @@ type StoredCredential struct {
 	StatusList    *statuslist.StatusListRef
 	StatusListCWT bool
 	Status        CredentialStatus
+
+	// GrantID names the RefreshGrant Wallet.RefreshCredential refreshes
+	// it with, when its issuance kept one (Config.RequestRefresh); ""
+	// when it can't be refreshed, only received again.
+	GrantID string
 }
 
 // CredentialCopy is one copy of a credential: the credential, the key

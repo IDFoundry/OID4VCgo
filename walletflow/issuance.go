@@ -123,6 +123,16 @@ type Issuance struct {
 	// handled the configurations it has requested successfully.
 	obtained IssuanceResult
 	handled  map[string]bool
+	// authorizationServer is the one the client authenticates to.
+	authorizationServer string
+	// refreshToken is the Token Response's, if it gave one
+	// (Config.RequestRefresh); grantID, once a credential is stored, the
+	// RefreshGrant keeping it, and the instance key with it.
+	refreshToken fapi.Secret
+	grantID      string
+	// replace, for a refresh, is the stored credential the new one
+	// replaces.
+	replace string
 }
 
 // StartIssuance resolves the Credential Offer offerURI (an
@@ -221,6 +231,9 @@ func (s *Issuance) BeginAuthorizationWith(ctx context.Context, opts Authorizatio
 		return "", fmt.Errorf("walletflow: %w", err)
 	}
 	authReq.RedirectPort = opts.RedirectPort
+	if s.w.cfg.RequestRefresh {
+		authReq.Scope = append(authReq.Scope, offlineAccess)
+	}
 	session, err := s.client.BeginAuthorization(ctx, authReq)
 	if err != nil {
 		return "", fmt.Errorf("walletflow: pushed authorization request: %w", err)
@@ -258,6 +271,9 @@ func (s *Issuance) CompleteAuthorization(ctx context.Context, redirect string) e
 	case client.CompletionSuccess:
 		s.resource = s.client.ProtectedResource(r.Tokens)
 		s.accessToken = r.Tokens.AccessToken
+		if r.Tokens.HasRefreshToken {
+			s.refreshToken = r.Tokens.RefreshToken
+		}
 		if r.Tokens.HasExpiresIn {
 			s.accessExpiresAt = r.Tokens.ObtainedAt.Add(r.Tokens.ExpiresIn)
 		}
@@ -355,7 +371,7 @@ func (s *Issuance) newClient(ctx context.Context, asURL string) error {
 	if err != nil {
 		return err
 	}
-	s.client = c
+	s.client, s.authorizationServer = c, asURL
 	return nil
 }
 
@@ -532,9 +548,13 @@ func (s *Issuance) request(ctx context.Context, configID string, requestEnc *wal
 		keep = true
 		return StoredCredential{}, d, nil
 	}
+	grantID, err := s.keepGrant(ctx)
+	if err != nil {
+		return StoredCredential{}, nil, err
+	}
 	stored, err := s.w.accept(ctx, issued{
 		issuer: s.offer.CredentialIssuer, metadata: s.metadata, resource: s.resource,
-		configID: configID, holders: holders, result: result,
+		configID: configID, holders: holders, result: result, grantID: grantID, replace: s.replace,
 	})
 	if err != nil {
 		return StoredCredential{}, nil, err
@@ -629,6 +649,9 @@ type issued struct {
 	configID string
 	holders  []Key
 	result   wallet.CredentialResult
+	// grantID is the RefreshGrant that can refresh it, if any; replace,
+	// the stored credential it replaces, if any.
+	grantID, replace string
 }
 
 // accept checks every copy c's result carries, each bound to one of
@@ -655,9 +678,12 @@ func (w *Wallet) accept(ctx context.Context, c issued) (StoredCredential, error)
 			first = verified
 		}
 	}
-	id, err := randomID(w.deps.Random)
-	if err != nil {
-		return StoredCredential{}, err
+	id := c.replace
+	if id == "" {
+		var err error
+		if id, err = randomID(w.deps.Random); err != nil {
+			return StoredCredential{}, err
+		}
 	}
 	stored := StoredCredential{
 		ID: id, CredentialIssuer: c.issuer, ConfigurationID: c.configID,
@@ -665,7 +691,7 @@ func (w *Wallet) accept(ctx context.Context, c issued) (StoredCredential, error)
 		Credential: copies[0].Credential, HolderKeyID: copies[0].HolderKeyID, Copies: copies,
 		ReceivedAt: now.UTC(), Claims: first.Claims,
 		Display: displayFor(c.metadata, c.configID, w.cfg.Locales), ValidUntil: first.ValidUntil,
-		StatusList: first.StatusList, StatusListCWT: first.StatusListCWT,
+		StatusList: first.StatusList, StatusListCWT: first.StatusListCWT, GrantID: c.grantID,
 	}
 	if err := w.deps.Credentials.Put(ctx, stored); err != nil {
 		w.notify(ctx, c, oid4vci.NotificationEventCredentialFailure, "the wallet couldn't store the credential")
@@ -703,8 +729,9 @@ func (w *Wallet) notify(ctx context.Context, c issued, event oid4vci.Notificatio
 	})
 }
 
-// Close ends the issuance: it deletes its instance key, and its DPoP
-// key unless a deferred credential it obtained still polls with it. Its
+// Close ends the issuance: it deletes its instance key unless a refresh
+// grant keeps it (Config.RequestRefresh), and its DPoP key unless a
+// deferred credential it obtained still polls with it. Its
 // deferred credentials stay pending (Wallet.Deferred) until they're
 // settled or abandoned. Close is safe to call more than once.
 func (s *Issuance) Close(ctx context.Context) error {
@@ -716,7 +743,9 @@ func (s *Issuance) Close(ctx context.Context) error {
 		errs = append(errs, s.forgetAuthorization(ctx))
 	}
 	s.step = stepClosed
-	if s.instanceKey != nil {
+	// The instance key stays with a refresh grant a stored credential
+	// uses: every refresh authenticates with it.
+	if s.instanceKey != nil && s.grantID == "" {
 		errs = append(errs, s.w.deps.Keys.DeleteKey(ctx, s.instanceKey.ID()))
 	}
 	if s.dpopKey != nil {
