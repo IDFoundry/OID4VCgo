@@ -24,6 +24,10 @@ type config struct {
 	// anchors for issuers' credentials and Verifiers' requests.
 	IssuerRoots   string `json:"issuer_roots"`
 	VerifierRoots string `json:"verifier_roots"`
+	// RegistrarRoots are PEM certificates: the registrars whose
+	// registrations of Verifiers the wallet checks
+	// (walletflow.Config.RegistrarRoots). Unset, they're ignored.
+	RegistrarRoots string `json:"registrar_roots,omitempty"`
 	// Development allows services on loopback addresses.
 	Development bool `json:"development"`
 	// Locales are the holder's preferred languages (BCP 47, most
@@ -102,6 +106,11 @@ func NewWallet(configJSON string, keys KeyStore, credentials CredentialStore, pr
 			return nil, newError(CodeInvalidInput, fmt.Errorf("verifier_roots: %w", err))
 		}
 		wcfg.VerifierTrust = wallet.X5CVerifierRoots{Roots: roots}
+	}
+	if cfg.RegistrarRoots != "" {
+		if wcfg.RegistrarRoots, err = certPool(cfg.RegistrarRoots); err != nil {
+			return nil, newError(CodeInvalidInput, fmt.Errorf("registrar_roots: %w", err))
+		}
 	}
 	deps := walletflow.Dependencies{
 		Keys: keyStore{keys}, Credentials: credentialStore{credentials},

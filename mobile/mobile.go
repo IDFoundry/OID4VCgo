@@ -11,7 +11,7 @@ import (
 // ABIVersion is the version of this package's API across the gomobile
 // boundary: its functions, objects, JSON results and error codes. It
 // changes whenever any of them changes incompatibly.
-const ABIVersion = 11
+const ABIVersion = 12
 
 // Error codes, at the start of every error's text in brackets.
 const (

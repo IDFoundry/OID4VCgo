@@ -1,7 +1,7 @@
 # OID4VCgo mobile ABI
 
 The API the Go `mobile` package exposes through gomobile: version
-**11** (`ABIVersion`). The Swift package `ios/OID4VCWallet` wraps it in
+**12** (`ABIVersion`). The Swift package `ios/OID4VCWallet` wraps it in
 typed Swift (`Wallet`, `Issuance`, `Presentation`, `WalletError`); this
 document is the contract underneath, for the Swift wrapper, a future
 Kotlin one, or an app calling the framework directly.
@@ -141,13 +141,16 @@ The Swift package's adapter marks a `URLError` this way.
 
 ```json
 {"client_id": "…", "redirect_uri": "…",
- "issuer_roots": "<PEM>", "verifier_roots": "<PEM>",
+ "issuer_roots": "<PEM>", "verifier_roots": "<PEM>", "registrar_roots": "<PEM>",
  "development": false, "locales": ["en-AU", "en"], "batch_size": 0,
  "request_refresh": false, "copy_policy": "per_presentation"}
 ```
 
 `client_id`, `redirect_uri`, `issuer_roots` and a provider are needed to
-receive credentials; `verifier_roots` to present them. `development`
+receive credentials; `verifier_roots` to present them.
+`registrar_roots`, if set, are the registrars whose registrations of
+Verifiers the wallet checks (OpenID4VP `verifier_info`, OID4VCgo's
+`registration` format); without them, registrations are ignored. `development`
 allows services on loopback addresses. `locales` are the holder's
 preferred languages (BCP 47, most preferred first) for issuers' display
 metadata. Without them, the issuer's entry without a locale is used,
@@ -254,8 +257,8 @@ Steps: `Verifier` and `Queries`; choose a selection (or start from
 
 | Method | Result |
 |---|---|
-| `Verifier()` | `{"client_id", "name", "response_uri"}` |
-| `Queries()` | `{"queries": [{"query_id", "multiple", "credentials": [summary]}], "credential_sets": [{"options": [[query ID]], "required"}]}`: the request's credential queries in its order, each with the credentials that can answer it (none when nothing can), and its sets of alternatives (none: every query must be answered) |
+| `Verifier()` | `{"client_id", "name", "response_uri", "registration": {"status", "name", "purpose", "privacy_policy", "registrar", "claims", "expires"}}`: the registration is the Verifier's, from its request's `verifier_info`, checked against `registrar_roots` — `status` `"verified"` (with the rest: `claims` are the claims paths it's registered to request), `"invalid"` (it didn't verify, so isn't relied on), or `"none"` (none, or no `registrar_roots`) |
+| `Queries()` | `{"queries": [{"query_id", "multiple", "credentials": [summary], "unregistered": [path], "unregistered_all"}], "credential_sets": [{"options": [[query ID]], "required"}]}`: the request's credential queries in its order, each with the credentials that can answer it (none when nothing can), and its sets of alternatives (none: every query must be answered). For a Verifier with a verified registration, `unregistered` are the claims paths a query asks for beyond it, and `unregistered_all` whether it asks for every claim; nothing is refused for them — the holder decides |
 | `DefaultSelection()` | `{"selection": {query ID: [credential ID]}}`: what the wallet would choose itself, the first answerable option of each set and each query's first credential (all when `multiple`). `no_matching_credential` when the request can't be answered |
 | `Preview(selectionJSON)` | `{"disclosures": [{"query_id", "credential_id", "claims": [path]}]}` |
 | `Respond(op, selectionJSON)` | `{"query_ids", "redirect_uri"}`. A failure in transit, or a Verifier's server error, is `delivery_unknown`, and the presentation is then answered |
@@ -274,6 +277,9 @@ unused copy is presented. A claim **path** is a JSON array of keys,
 indexes, and `null` for every element. Holder keys sign during
 `Respond`, so a key store requiring user presence prompts then. When
 `redirect_uri` is set, open it in the browser.
+
+ABI version 12 added `registrar_roots`, the Verifier's `registration`,
+and each query's `unregistered` and `unregistered_all`.
 
 ABI version 11 added `untrusted_verifier`.
 

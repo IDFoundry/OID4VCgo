@@ -297,6 +297,18 @@ final class DemoWalletUITests: XCTestCase {
         XCTAssertTrue(waitFor(credential, containing: "3 of 3 copies unused"), credential.label)
     }
 
+    /// Waits for element, scrolling down to it: a long consent screen
+    /// builds its last rows only once they're on screen.
+    @MainActor
+    func reveal(_ element: XCUIElement, in app: XCUIApplication) -> Bool {
+        if element.waitForExistence(timeout: 20) { return true }
+        for _ in 0..<4 {
+            app.swipeUp()
+            if element.waitForExistence(timeout: 2) { return true }
+        }
+        return false
+    }
+
     /// Presents to one verifier, through the consent screen, and waits
     /// for the result.
     @MainActor
@@ -304,7 +316,7 @@ final class DemoWalletUITests: XCTestCase {
         app.terminate()
         let presenting = try await launch(request: link, reset: false)
         let share = presenting.buttons["share"]
-        XCTAssertTrue(share.waitForExistence(timeout: 20))
+        XCTAssertTrue(reveal(share, in: presenting))
         await fulfillment(of: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "isEnabled == true"), object: share)], timeout: 10)
         return presenting
     }
@@ -352,6 +364,28 @@ final class DemoWalletUITests: XCTestCase {
         XCTAssertFalse(app.buttons["share"].exists, "the consent screen opened for an untrusted verifier")
         let result = try await Self.fetch("request/\(request["id"] as! String)")
         XCTAssertNotEqual(result["status"] as? String, "done")
+    }
+
+    /// A registered verifier's registration shows on the consent screen,
+    /// and a request beyond it is flagged, claim by claim.
+    @MainActor
+    func testRegisteredVerifier() async throws {
+        var app = try await receiveWithPIN(reset: true)
+        let within = try await Self.fetch("request", query: [URLQueryItem(name: "format", value: "dc+sd-jwt"), URLQueryItem(name: "registered", value: "1")], method: "POST")
+        app = try await presentOnce(app, link: within["link"] as! String)
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "registered").firstMatch.waitForExistence(timeout: 10), "the registration isn't shown")
+        XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "over-asking").firstMatch.exists, "a request within the registration was flagged")
+        XCTAssertTrue(reveal(app.buttons["decline"], in: app))
+        app.buttons["decline"].tap()
+
+        let over = try await Self.fetch("request", query: [
+            URLQueryItem(name: "format", value: "dc+sd-jwt"), URLQueryItem(name: "registered", value: "1"), URLQueryItem(name: "extra", value: "given_name"),
+        ], method: "POST")
+        app = try await presentOnce(app, link: over["link"] as! String)
+        let flagged = app.descendants(matching: .any).matching(identifier: "over-asking").firstMatch
+        XCTAssertTrue(flagged.waitForExistence(timeout: 10), "a request beyond the registration isn't flagged")
+        XCTAssertTrue(flagged.label.contains("given_name"), flagged.label)
+        XCTAssertTrue(app.staticTexts["disclosed-unregistered"].waitForExistence(timeout: 10), "the unregistered claim isn't marked")
     }
 
     /// Declines a request the wallet can't answer; the Verifier records

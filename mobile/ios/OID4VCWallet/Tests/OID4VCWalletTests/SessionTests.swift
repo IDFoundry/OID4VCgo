@@ -28,6 +28,14 @@ final class TestEnv: Sendable {
         return (d["id"]!, d["link"]!)
     }
 
+    /// A request from a Verifier registered for family_name only, asking
+    /// for family_name and extra, if set.
+    func registeredRequest(format: String = "dc+sd-jwt", extra: String = "") throws -> (id: String, link: String) {
+        let json = try OID4VC.call { env.registeredRequest(format, extra: extra, error: $0) }
+        let d = try JSONSerialization.jsonObject(with: Data(json.utf8)) as! [String: String]
+        return (d["id"]!, d["link"]!)
+    }
+
     func result(_ id: String) throws -> [String: Any] {
         let json = try OID4VC.call { env.requestResult(id, error: $0) }
         return try JSONSerialization.jsonObject(with: Data(json.utf8)) as! [String: Any]
@@ -282,6 +290,32 @@ final class SessionTests: XCTestCase {
         _ = try await p.respond(selection: try await p.defaultSelection())
         let after = try await w.credentials()
         XCTAssertEqual(after.map(\.copiesLeft).sorted(), [2, 3])
+    }
+
+    /// A registered Verifier's registration, and what a request asks
+    /// beyond it, reach the app typed.
+    func testRegistration() async throws {
+        let env = try TestEnv(batchSize: 3)
+        defer { env.close() }
+        XCTAssertFalse(try env.configuration.registrarRoots.isEmpty)
+        let w = try wallet(env)
+        _ = try await Self.receive(env, w)
+
+        let within = try await w.startPresentation(request: try env.registeredRequest().link)
+        XCTAssertEqual(within.verifier.registration.status, .verified)
+        XCTAssertEqual(within.verifier.registration.purpose, "Testing")
+        XCTAssertNotNil(within.verifier.registration.privacyPolicy)
+        XCTAssertEqual(within.verifier.registration.claims.count, 2)
+        XCTAssertTrue(within.queries.allSatisfy { $0.unregistered.isEmpty && !$0.unregisteredAll })
+        try await within.decline()
+
+        let over = try await w.startPresentation(request: try env.registeredRequest(extra: "given_name").link)
+        XCTAssertEqual(over.queries.first?.unregistered, [[.key("given_name")]])
+        try await over.decline()
+
+        let plain = try await w.startPresentation(request: try env.request(format: "dc+sd-jwt").link)
+        XCTAssertEqual(plain.verifier.registration.status, Presentation.Registration.Status.none)
+        try await plain.decline()
     }
 
     /// A credential received with a refresh token is refreshable: its
