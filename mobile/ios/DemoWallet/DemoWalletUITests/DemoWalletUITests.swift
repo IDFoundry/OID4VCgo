@@ -254,6 +254,26 @@ final class DemoWalletUITests: XCTestCase {
         XCTAssertTrue(waitFor(copies, containing: "3 of 3 copies unused"), copies.label)
     }
 
+    /// Once every copy of a refreshable credential has been presented, the
+    /// app refreshes it by itself: fresh copies, none presented.
+    @MainActor
+    func testAutoRefresh() async throws {
+        var current = try await receiveWithPIN(reset: true)
+        for _ in 0..<3 {
+            let request = try await Self.fetch("request", query: [URLQueryItem(name: "format", value: "dc+sd-jwt")], method: "POST")
+            current = try await presentOnce(current, link: request["link"] as! String)
+            current.buttons["share"].tap()
+            let status = current.staticTexts["status"]
+            XCTAssertTrue(status.waitForExistence(timeout: 30))
+            await fulfillment(of: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "label BEGINSWITH 'Shared with'"), object: status)], timeout: 30)
+        }
+        // The one credential received: after its third presentation it
+        // would show no copy unused.
+        let credential = current.descendants(matching: .any).matching(identifier: "credential").firstMatch
+        XCTAssertTrue(credential.waitForExistence(timeout: 10))
+        XCTAssertTrue(waitFor(credential, containing: "3 of 3 copies unused"), credential.label)
+    }
+
     /// Presents to one verifier, through the consent screen, and waits
     /// for the result.
     @MainActor

@@ -78,7 +78,10 @@ Then upload a passport on the issuer page, and open its offer link in
 the Simulator (`xcrun simctl openurl booted '<link>'`). For the
 authorization code offer, enter the confirmation code the page shows on
 the issuer's approval page. For the pre-authorized code offer, enter
-its PIN in the app.
+its PIN in the app. Tick **Keep for refresh** when uploading and the
+app gets a refresh token: once every copy of a credential has been
+shared, it fetches fresh copies by itself (and **Refresh copies** does
+so at any time), for 24 hours.
 
 ## On a device
 
