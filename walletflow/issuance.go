@@ -606,11 +606,23 @@ func (s *Issuance) deferred(ctx context.Context, configID string, holders []Key,
 	if err != nil {
 		return nil, err
 	}
-	return s.w.keepDeferred(ctx, PendingDeferred{
+	// The refresh grant the credential will use, kept from now: the
+	// deferred credential names it.
+	grantID, err := s.grantFor()
+	if err != nil {
+		return nil, err
+	}
+	d, err := s.w.keepDeferred(ctx, PendingDeferred{
 		ID: id, CredentialIssuer: s.offer.CredentialIssuer, ConfigurationID: configID, TransactionID: result.TransactionID,
 		AccessToken: s.accessToken, AccessTokenExpiresAt: s.accessExpiresAt,
 		DPoPKeyID: s.dpopKey.ID(), HolderKeyIDs: keyIDs(holders), Interval: result.Interval, DeferredAt: s.w.deps.Clock().UTC(),
+		GrantID: grantID, Replaces: s.replace,
 	}, s.metadata, s.resource, requestEnc, responseEnc)
+	if err != nil {
+		return nil, err
+	}
+	s.storeGrant(ctx)
+	return d, nil
 }
 
 // deleteKeys deletes keys, best effort.

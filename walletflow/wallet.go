@@ -200,12 +200,7 @@ func (w *Wallet) DeleteCredential(ctx context.Context, id string) error {
 	if err != nil || g == nil {
 		return err
 	}
-	defer w.lockGrant(g.ID)()
-	w.revokeGrant(ctx, *g, c.ConfigurationID)
-	if err := w.deps.Grants.DeleteGrant(ctx, g.ID); err != nil {
-		return fmt.Errorf("walletflow: delete credential's refresh grant: %w", err)
-	}
-	if err := w.deps.Keys.DeleteKey(ctx, g.InstanceKeyID); err != nil {
+	if err := w.releaseGrant(ctx, *g, c.ConfigurationID); err != nil {
 		return fmt.Errorf("walletflow: delete credential's refresh grant: %w", err)
 	}
 	return nil

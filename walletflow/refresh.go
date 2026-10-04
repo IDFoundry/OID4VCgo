@@ -167,8 +167,9 @@ func (w *Wallet) lockGrant(id string) func() {
 // again from a new Credential Offer then.
 //
 // If the issuer defers the new credential, the old one stays as it is
-// and the Deferred is returned to poll: once settled, its credential is
-// stored as a new one.
+// and the Deferred is returned to poll: once settled, its credential
+// replaces the old one, as a refresh does, keeping the grant — unless
+// the old one was deleted meanwhile, when it isn't kept.
 func (w *Wallet) RefreshCredential(ctx context.Context, id string) (StoredCredential, *Deferred, error) {
 	if err := w.checkIssuance(); err != nil {
 		return StoredCredential{}, nil, err
@@ -354,8 +355,9 @@ func (w *Wallet) forgetRefusedGrant(ctx context.Context, g RefreshGrant) {
 	w.forgetGrant(ctx, cur)
 }
 
-// unusedGrant returns the grant id names when no stored credential uses
-// it, nil otherwise or when there's none.
+// unusedGrant returns the grant id names when no stored credential or
+// pending deferred credential uses it, nil otherwise or when there's
+// none.
 func (w *Wallet) unusedGrant(ctx context.Context, id string) (*RefreshGrant, error) {
 	if id == "" {
 		return nil, nil
@@ -367,6 +369,13 @@ func (w *Wallet) unusedGrant(ctx context.Context, id string) (*RefreshGrant, err
 	if slices.ContainsFunc(creds, func(c StoredCredential) bool { return c.GrantID == id }) {
 		return nil, nil
 	}
+	pending, err := w.deps.Deferred.ListDeferred(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if slices.ContainsFunc(pending, func(p PendingDeferred) bool { return p.GrantID == id }) {
+		return nil, nil
+	}
 	g, err := w.deps.Grants.GetGrant(ctx, id)
 	if errors.Is(err, ErrNotFound) {
 		return nil, nil
@@ -375,6 +384,28 @@ func (w *Wallet) unusedGrant(ctx context.Context, id string) (*RefreshGrant, err
 		return nil, err
 	}
 	return &g, nil
+}
+
+// releaseGrant ends g, which nothing uses any more: it revokes the
+// refresh token (revokeGrant), then deletes the grant and its instance
+// key. configID is a configuration the grant was for.
+func (w *Wallet) releaseGrant(ctx context.Context, g RefreshGrant, configID string) error {
+	defer w.lockGrant(g.ID)()
+	w.revokeGrant(ctx, g, configID)
+	if err := w.deps.Grants.DeleteGrant(ctx, g.ID); err != nil {
+		return err
+	}
+	return w.deps.Keys.DeleteKey(ctx, g.InstanceKeyID)
+}
+
+// releaseUnusedGrant releases the grant grantID names once no stored or
+// pending deferred credential uses it.
+func (w *Wallet) releaseUnusedGrant(ctx context.Context, grantID, configID string) error {
+	g, err := w.unusedGrant(ctx, grantID)
+	if err != nil || g == nil {
+		return err
+	}
+	return w.releaseGrant(ctx, *g, configID)
 }
 
 // revokeGrant asks the Authorization Server to revoke g's refresh token

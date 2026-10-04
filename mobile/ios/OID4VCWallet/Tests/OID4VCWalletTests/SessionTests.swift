@@ -208,7 +208,7 @@ final class SessionTests: XCTestCase {
         }
         let left = try await relaunched.deferredCredentials()
         XCTAssertTrue(left.isEmpty)
-        XCTAssertEqual(try keys.keyIDs().count, 1, "only the issued credential's key is left")
+        XCTAssertEqual(try keys.keyIDs().count, 2, "only the issued credential's key, and its refresh grant's instance key, are left")
     }
 
     /// The redirect completes an authorization begun before the app

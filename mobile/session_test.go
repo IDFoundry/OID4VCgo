@@ -3,12 +3,16 @@
 package mobile
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	fapi "github.com/idfoundry/fapigo"
+
+	"github.com/idfoundry/oid4vcgo/walletflow"
 	"github.com/idfoundry/oid4vcgo/walletflow/walletflowtest"
 )
 
@@ -404,8 +408,8 @@ func TestSessions_Deferred(t *testing.T) {
 	}
 	if keys := decode[struct {
 		KeyIDs []string `json:"key_ids"`
-	}](t, mustText(t)(relaunched.HolderKeyIDs())); len(keys.KeyIDs) != 3 {
-		t.Errorf("keys in use = %v, want two holder keys and the DPoP key", keys.KeyIDs)
+	}](t, mustText(t)(relaunched.HolderKeyIDs())); len(keys.KeyIDs) != 4 {
+		t.Errorf("keys in use = %v, want two holder keys, the DPoP key and the refresh grant's instance key", keys.KeyIDs)
 	}
 
 	poll := func(id string) (string, error) { return relaunched.PollDeferred(NewOperation(0), id) }
@@ -427,8 +431,8 @@ func TestSessions_Deferred(t *testing.T) {
 	if got := pending(t, relaunched); len(got) != 0 {
 		t.Errorf("still pending once settled: %v", got)
 	}
-	if len(h.keys.keys) != 1 {
-		t.Errorf("keys held = %d, want the issued credential's", len(h.keys.keys))
+	if len(h.keys.keys) != 2 {
+		t.Errorf("keys held = %d, want the issued credential's and its refresh grant's instance key", len(h.keys.keys))
 	}
 	if _, err := poll("no-such"); code(err) != CodeNotFound {
 		t.Errorf("an unknown deferred credential: %v", err)
@@ -754,5 +758,20 @@ func TestSessions_Refresh(t *testing.T) {
 	}
 	if len(h.creds.records) != 0 || len(h.keys.keys) != 0 {
 		t.Errorf("after deleting both: %d records, %d keys; want none", len(h.creds.records), len(h.keys.keys))
+	}
+}
+
+// A pending deferred credential's refresh grant and the credential it
+// replaces survive the record.
+func TestDeferredStore_KeepsGrantAndReplaces(t *testing.T) {
+	ctx := context.Background()
+	s := deferredStore{newGoCredentialStore()}
+	p := walletflow.PendingDeferred{ID: "d", ConfigurationID: "c", AccessToken: fapi.NewSecret("at"), GrantID: "g", Replaces: "old"}
+	if err := s.PutDeferred(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.ListDeferred(ctx)
+	if err != nil || len(got) != 1 || got[0].GrantID != "g" || got[0].Replaces != "old" {
+		t.Errorf("ListDeferred = %+v, %v", got, err)
 	}
 }
