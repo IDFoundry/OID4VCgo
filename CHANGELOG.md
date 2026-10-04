@@ -10,10 +10,6 @@
 * **walletflow:** reuse the least-shown copy once every copy has been presented ([0743641](https://github.com/IDFoundry/OID4VCgo/commit/0743641a05fcf6ae48eb8aa084f3a7ad774a8bbb))
 
 
-### Bug Fixes
-
-* **mobile:** let the demo app use Face ID for holder keys ([da58797](https://github.com/IDFoundry/OID4VCgo/commit/da58797a6668eaaac096b41ea76004d49ab0d17d))
-
 ## [0.27.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.26.0...v0.27.0) (2026-10-04)
 
 
