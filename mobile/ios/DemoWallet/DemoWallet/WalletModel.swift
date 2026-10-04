@@ -27,6 +27,35 @@ final class WalletModel {
     private var wallet: Wallet?
     private var keys: KeychainKeyStore?
     private var config: DemoConfiguration?
+
+    /// Which copy of a credential a presentation uses, as chosen in the
+    /// app's settings; it overrides the configuration's.
+    private(set) var copyPolicy: WalletConfiguration.CopyPolicy = .perPresentation
+    private static let copyPolicyKey = "demo-copy-policy"
+
+    /// Not configured: there's no wallet to make.
+    private struct NotConfigured: Error {}
+
+    private func makeWallet() throws -> Wallet {
+        guard let config, let keys else { throw NotConfigured() }
+        var configuration = config.wallet
+        configuration.copyPolicy = copyPolicy
+        return try Wallet(configuration: configuration, keyStore: keys, credentialStore: try FileCredentialStore.standard(),
+                          provider: HTTPWalletProvider(baseURL: config.providerURL))
+    }
+
+    /// Switches the copy policy, rebuilding the wallet over the same keys
+    /// and credentials.
+    func setCopyPolicy(_ policy: WalletConfiguration.CopyPolicy) {
+        guard policy != copyPolicy, presentation == nil else { return }
+        copyPolicy = policy
+        UserDefaults.standard.set(policy.rawValue, forKey: Self.copyPolicyKey)
+        do {
+            wallet = try makeWallet()
+        } catch {
+            phase = .failed(Self.describe(error))
+        }
+    }
     private var issuance: Issuance?
 
     init() {
@@ -43,10 +72,20 @@ final class WalletModel {
             #endif
             let keys = KeychainKeyStore(options: .init(secureEnclave: SecureEnclave.isAvailable, persistent: true,
                                                        holderUserPresence: presence))
-            wallet = try Wallet(configuration: config.wallet, keyStore: keys, credentialStore: try FileCredentialStore.standard(),
-                                provider: HTTPWalletProvider(baseURL: config.providerURL))
             self.keys = keys
             self.config = config
+            // A reset (OID4VC_DEMO_RESET) starts from the configuration's
+            // copy policy too.
+            if ProcessInfo.processInfo.environment["OID4VC_DEMO_RESET"] == "1" {
+                UserDefaults.standard.removeObject(forKey: Self.copyPolicyKey)
+            }
+            if let saved = UserDefaults.standard.string(forKey: Self.copyPolicyKey),
+               let policy = WalletConfiguration.CopyPolicy(rawValue: saved) {
+                copyPolicy = policy
+            } else {
+                copyPolicy = config.wallet.copyPolicy
+            }
+            wallet = try makeWallet()
             configured = true
             if let offer = ProcessInfo.processInfo.environment["OID4VC_DEMO_OFFER"], let url = URL(string: offer) {
                 open(url)

@@ -36,6 +36,21 @@ type config struct {
 	// (walletflow.Config.RequestRefresh), so RefreshCredential can
 	// replace a credential's copies later without the holder.
 	RequestRefresh bool `json:"request_refresh,omitempty"`
+	// CopyPolicy is which copy of a credential a presentation uses:
+	// "per_presentation" (the default) or "per_verifier"
+	// (walletflow.Config.CopyPolicy).
+	CopyPolicy string `json:"copy_policy,omitempty"`
+}
+
+// copyPolicy is the walletflow.CopyPolicy name names.
+func copyPolicy(name string) (walletflow.CopyPolicy, error) {
+	switch name {
+	case "", "per_presentation":
+		return walletflow.CopyPerPresentation, nil
+	case "per_verifier":
+		return walletflow.CopyPerVerifier, nil
+	}
+	return 0, fmt.Errorf("copy_policy %q: want per_presentation or per_verifier", name)
 }
 
 // testHTTP, when set (by the mobiletest build), is the HTTP client every
@@ -54,7 +69,8 @@ type Wallet struct {
 //
 //	{"client_id": "…", "redirect_uri": "…",
 //	 "issuer_roots": "<PEM>", "verifier_roots": "<PEM>",
-//	 "development": false, "request_refresh": false}
+//	 "development": false, "request_refresh": false,
+//	 "copy_policy": "per_presentation"}
 //
 // issuer_roots is needed to receive credentials, and verifier_roots to
 // present them.
@@ -70,7 +86,11 @@ func NewWallet(configJSON string, keys KeyStore, credentials CredentialStore, pr
 		ClientID: cfg.ClientID, RedirectURI: cfg.RedirectURI, Development: cfg.Development, Locales: cfg.Locales,
 		BatchSize: cfg.BatchSize, RequestRefresh: cfg.RequestRefresh,
 	}
-	var err error
+	policy, err := copyPolicy(cfg.CopyPolicy)
+	if err != nil {
+		return nil, newError(CodeInvalidInput, err)
+	}
+	wcfg.CopyPolicy = policy
 	if cfg.IssuerRoots != "" {
 		if wcfg.IssuerRoots, err = certPool(cfg.IssuerRoots); err != nil {
 			return nil, newError(CodeInvalidInput, fmt.Errorf("issuer_roots: %w", err))

@@ -254,6 +254,49 @@ final class DemoWalletUITests: XCTestCase {
         XCTAssertTrue(waitFor(copies, containing: "3 of 3 copies unused"), copies.label)
     }
 
+    /// Presents to one verifier, through the consent screen, and waits
+    /// for the result.
+    @MainActor
+    func presentOnce(_ app: XCUIApplication, link: String) async throws -> XCUIApplication {
+        app.terminate()
+        let presenting = try await launch(request: link, reset: false)
+        let share = presenting.buttons["share"]
+        XCTAssertTrue(share.waitForExistence(timeout: 20))
+        await fulfillment(of: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "isEnabled == true"), object: share)], timeout: 10)
+        return presenting
+    }
+
+    /// With "Same copy for the same verifier", presenting twice to one
+    /// verifier uses one copy, and the second consent screen says the
+    /// verifier has seen the credential before.
+    @MainActor
+    func testCopyPolicyPerVerifier() async throws {
+        let app = try await receiveWithPIN(reset: true)
+        app.buttons["settings"].tap()
+        let perVerifier = app.buttons["Same copy for the same verifier"]
+        XCTAssertTrue(perVerifier.waitForExistence(timeout: 10))
+        perVerifier.tap()
+
+        var current = app
+        for round in 0..<2 {
+            let request = try await Self.fetch("request", query: [URLQueryItem(name: "format", value: "dc+sd-jwt")], method: "POST")
+            current = try await presentOnce(current, link: request["link"] as! String)
+            let shownBefore = current.staticTexts["shown-before"]
+            if round == 0 {
+                XCTAssertFalse(shownBefore.exists, "a first presentation says the verifier has seen the credential")
+            } else {
+                XCTAssertTrue(shownBefore.waitForExistence(timeout: 10), "the second consent screen doesn't say the verifier has seen it")
+            }
+            current.buttons["share"].tap()
+            let status = current.staticTexts["status"]
+            XCTAssertTrue(status.waitForExistence(timeout: 30))
+            await fulfillment(of: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "label BEGINSWITH 'Shared with'"), object: status)], timeout: 30)
+        }
+        let credential = current.descendants(matching: .any).matching(identifier: "credential").firstMatch
+        XCTAssertTrue(credential.waitForExistence(timeout: 10))
+        XCTAssertTrue(waitFor(credential, containing: "2 of 3 copies unused"), credential.label)
+    }
+
     /// Declines a request the wallet can't answer; the Verifier records
     /// it.
     @MainActor

@@ -314,6 +314,30 @@ final class SessionTests: XCTestCase {
         }
     }
 
+    /// Per Verifier, a Verifier is shown the copy it has seen before, and
+    /// its candidates say so.
+    func testCopyPolicyPerVerifier() async throws {
+        let env = try TestEnv(batchSize: 3)
+        defer { env.close() }
+        var configuration = try env.configuration
+        configuration.copyPolicy = .perVerifier
+        let w = try Wallet(configuration: configuration, keys: KeyStoreAdapter(keyStore()),
+                           credentials: CredentialStoreAdapter(InMemoryCredentialStore()), provider: env.env.provider())
+        _ = try await Self.receive(env, w)
+        var candidates: [CredentialSummary] = []
+        for _ in 0..<2 {
+            let req = try env.request(format: "dc+sd-jwt")
+            let p = try await w.startPresentation(request: req.link)
+            candidates.append(p.queries[0].credentials[0])
+            _ = try await p.respond(selection: try await p.defaultSelection())
+        }
+        XCTAssertEqual(candidates.map(\.shownToVerifier), [false, true])
+        XCTAssertEqual(candidates.map(\.linkableHere), [false, false])
+        let used = try await w.credentials().first { $0.format == "dc+sd-jwt" }!
+        XCTAssertEqual(used.copiesLeft, 2)
+        XCTAssertFalse(used.linkable)
+    }
+
     func testAbandonDeferred() async throws {
         let env = try TestEnv(deferIssuance: true)
         defer { env.close() }
