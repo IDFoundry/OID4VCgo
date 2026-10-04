@@ -1,7 +1,7 @@
 # OID4VCgo mobile ABI
 
 The API the Go `mobile` package exposes through gomobile: version
-**7** (`ABIVersion`). The Swift package `ios/OID4VCWallet` wraps it in
+**11** (`ABIVersion`). The Swift package `ios/OID4VCWallet` wraps it in
 typed Swift (`Wallet`, `Issuance`, `Presentation`, `WalletError`); this
 document is the contract underneath, for the Swift wrapper, a future
 Kotlin one, or an app calling the framework directly.
@@ -44,6 +44,7 @@ format or error code below changes incompatibly.
 | `credential_denied` | the issuer refused a deferred credential |
 | `no_matching_credential` | nothing held answers the Verifier's request |
 | `reissue_required` | a credential can't be refreshed: no refresh token was kept, or the Authorization Server no longer accepts it |
+| `untrusted_verifier` | the Verifier's request is signed with a certificate that doesn't chain to `verifier_roots`: it's refused unread |
 | `invalid_selection` | a presentation's selection doesn't answer the request as it asks |
 | `delivery_unknown` | sending a presentation failed in a way that leaves it unknown whether the Verifier received it; it isn't sent again, which could present twice |
 | `protocol` | an issuer, Authorization Server or Verifier answered with an error, or with something the wallet refuses |
@@ -273,6 +274,8 @@ unused copy is presented. A claim **path** is a JSON array of keys,
 indexes, and `null` for every element. Holder keys sign during
 `Respond`, so a key store requiring user presence prompts then. When
 `redirect_uri` is set, open it in the browser.
+
+ABI version 11 added `untrusted_verifier`.
 
 ABI version 10 added `copy_policy`, each copy's Verifier record, and the
 summary's `linkable`, `shown_to_verifier` and `linkable_here`.

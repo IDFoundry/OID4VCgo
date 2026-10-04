@@ -35,6 +35,9 @@ public struct WalletError: Error, Equatable, CustomStringConvertible, LocalizedE
         /// Sending a presentation failed in a way that leaves it unknown
         /// whether the Verifier received it: it's not sent again.
         public static let deliveryUnknown = Code(rawValue: MobileCodeDeliveryUnknown)
+        /// The Verifier's request is signed with a certificate that
+        /// doesn't chain to `verifierRoots`: it's refused unread.
+        public static let untrustedVerifier = Code(rawValue: MobileCodeUntrustedVerifier)
         public static let protocolError = Code(rawValue: MobileCodeProtocol)
         public static let internalError = Code(rawValue: MobileCodeInternal)
     }
@@ -73,6 +76,7 @@ public struct WalletError: Error, Equatable, CustomStringConvertible, LocalizedE
         case .invalidSelection: "Those credentials don't answer this request."
         case .reissueRequired: "This credential can't be refreshed. Receive it again from the issuer."
         case .deliveryUnknown: "Your response may not have reached the verifier. Check with them before sharing again."
+        case .untrustedVerifier: "This verifier isn't one your wallet trusts, so its request wasn't opened."
         case .protocolError where protocolError == "invalid_grant": "That code or PIN wasn't accepted."
         case .protocolError: "The service refused the request."
         case .platform: "The wallet couldn't use its keys or storage."
