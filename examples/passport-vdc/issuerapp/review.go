@@ -80,16 +80,27 @@ func (r *reviews) add(e passport.Evidence, configID string) (string, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	now := r.now()
-	for k, v := range r.items {
-		if now.Sub(v.createdAt) >= reviewLifetime {
-			delete(r.items, k)
-		}
-	}
+	r.pruneLocked(now)
 	if len(r.items) >= maxReviews {
 		return "", errTooManyReviews
 	}
 	r.items[ref] = &review{evidence: e, configID: configID, createdAt: now}
 	return ref, nil
+}
+
+// prune drops expired reviews, and their passport data.
+func (r *reviews) prune() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.pruneLocked(r.now())
+}
+
+func (r *reviews) pruneLocked(now time.Time) {
+	for k, v := range r.items {
+		if now.Sub(v.createdAt) >= reviewLifetime {
+			delete(r.items, k)
+		}
+	}
 }
 
 // get returns the unexpired review under ref.

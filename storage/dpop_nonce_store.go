@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/idfoundry/oid4vcgo/issuer"
 )
@@ -13,6 +14,7 @@ import (
 type DPoPNonceStore struct {
 	mu     sync.Mutex
 	issued map[string]issuer.DPoPNonceRecord
+	prune  pruner
 }
 
 // NewDPoPNonceStore builds an empty DPoPNonceStore.
@@ -24,6 +26,10 @@ func NewDPoPNonceStore() *DPoPNonceStore {
 func (s *DPoPNonceStore) Issue(_ context.Context, issuance issuer.DPoPNonceIssuance) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if now, ok := s.prune.due(len(s.issued)); ok {
+		pruneMap(s.issued, now, func(r issuer.DPoPNonceRecord) time.Time { return r.ExpiresAt })
+		s.prune.pruned(len(s.issued))
+	}
 	s.issued[issuance.Nonce] = issuer.DPoPNonceRecord{ExpiresAt: issuance.ExpiresAt}
 	return nil
 }

@@ -193,3 +193,47 @@ func TestTransactions_KeepForRefresh(t *testing.T) {
 		t.Errorf("reserve again after dontKeep: error = %v, want errAlreadyIssued", err)
 	}
 }
+
+// Sweep drops expired passport data without waiting for another upload:
+// an offer never redeemed and a review never decided.
+func TestSweep_DropsExpiredPassportData(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	a := &App{transactions: newTestTransactions(&now, 10), reviews: newReviews(func() time.Time { return now })}
+	mustPut(t, a.transactions)
+	if _, err := a.reviews.add(passport.Evidence{}, MdocConfigurationID); err != nil {
+		t.Fatal(err)
+	}
+	a.Sweep()
+	if len(a.transactions.items) != 1 || len(a.reviews.items) != 1 {
+		t.Fatalf("Sweep dropped live data: %d transactions, %d reviews", len(a.transactions.items), len(a.reviews.items))
+	}
+	now = now.Add(reviewLifetime + time.Hour)
+	a.Sweep()
+	if len(a.transactions.items) != 0 || len(a.reviews.items) != 0 {
+		t.Errorf("after expiry: %d transactions, %d reviews; want none", len(a.transactions.items), len(a.reviews.items))
+	}
+}
+
+// A passport kept for refresh answers at most maxIssuancesPerPassport
+// Credential Requests: each takes status list indices, and the list is
+// shared.
+func TestTransactions_KeptPassportIssuanceLimit(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	tx := newTestTransactions(&now, 10)
+	id, code, err := tx.put(passport.Evidence{}, testConfigIDs, false, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.claim(id, code); err != nil {
+		t.Fatal(err)
+	}
+	for i := range maxIssuancesPerPassport {
+		if _, _, err := tx.reserve(id, MdocConfigurationID); err != nil {
+			t.Fatalf("request %d: %v", i+1, err)
+		}
+		tx.done(id)
+	}
+	if _, _, err := tx.reserve(id, MdocConfigurationID); !errors.Is(err, errIssuanceLimit) {
+		t.Errorf("request past the limit: %v, want errIssuanceLimit", err)
+	}
+}

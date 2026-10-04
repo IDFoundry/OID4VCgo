@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/idfoundry/oid4vcgo/issuer"
 )
@@ -13,6 +14,7 @@ import (
 type NonceStore struct {
 	mu     sync.Mutex
 	issued map[string]issuer.NonceRecord
+	prune  pruner
 }
 
 // NewNonceStore builds an empty NonceStore.
@@ -24,6 +26,10 @@ func NewNonceStore() *NonceStore {
 func (s *NonceStore) Issue(_ context.Context, issuance issuer.NonceIssuance) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if now, ok := s.prune.due(len(s.issued)); ok {
+		pruneMap(s.issued, now, func(r issuer.NonceRecord) time.Time { return r.ExpiresAt })
+		s.prune.pruned(len(s.issued))
+	}
 	s.issued[issuance.Nonce] = issuer.NonceRecord{ExpiresAt: issuance.ExpiresAt}
 	return nil
 }

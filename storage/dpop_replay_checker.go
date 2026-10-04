@@ -16,22 +16,29 @@ import (
 // window. See the package doc comment for why that's development/
 // testing only.
 type DPoPReplayChecker struct {
-	mu   sync.Mutex
-	seen map[string]bool
+	mu    sync.Mutex
+	seen  map[string]time.Time // until when each jti is remembered
+	prune pruner
 }
 
 // NewDPoPReplayChecker builds an empty DPoPReplayChecker.
 func NewDPoPReplayChecker() *DPoPReplayChecker {
-	return &DPoPReplayChecker{seen: make(map[string]bool)}
+	return &DPoPReplayChecker{seen: make(map[string]time.Time)}
 }
 
 // UseOnce implements issuer.DPoPReplayChecker.
-func (s *DPoPReplayChecker) UseOnce(_ context.Context, jti string, _ time.Time) error {
+func (s *DPoPReplayChecker) UseOnce(_ context.Context, jti string, expiresAt time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.seen[jti] {
+	if _, seen := s.seen[jti]; seen {
 		return fmt.Errorf("storage: dpop proof jti %q already used", jti)
 	}
-	s.seen[jti] = true
+	// A proof past expiresAt is refused for its age, so its jti needn't
+	// be remembered beyond it.
+	if now, ok := s.prune.due(len(s.seen)); ok {
+		pruneMap(s.seen, now, func(until time.Time) time.Time { return until })
+		s.prune.pruned(len(s.seen))
+	}
+	s.seen[jti] = expiresAt
 	return nil
 }

@@ -77,6 +77,8 @@ func (a *App) prepareCredential(_ context.Context, grant issuer.Grant, req *issu
 		return nil, issuer.NewError(issuer.ErrorCredentialRequestDenied, "this credential has already been issued for this passport")
 	case errors.Is(err, errNotOffered):
 		return nil, issuer.NewError(issuer.ErrorCredentialRequestDenied, "this credential wasn't offered for this passport")
+	case errors.Is(err, errIssuanceLimit):
+		return nil, issuer.NewError(issuer.ErrorCredentialRequestDenied, "this passport has been issued as many times as the demo allows — upload it again")
 	case err != nil:
 		return nil, issuer.NewError(issuer.ErrorCredentialRequestDenied, "the passport transaction for this access token has expired")
 	}
@@ -118,7 +120,12 @@ func (a *App) prepareCredential(_ context.Context, grant issuer.Grant, req *issu
 	}
 	if err != nil {
 		done(false)
-		return nil, issuer.NewError(issuer.ErrorCredentialRequestDenied, "this passport can't be issued: "+err.Error())
+		// Fixed text: what failed to parse can be the passport's own data.
+		reason := "its data couldn't be read"
+		if errors.Is(err, credential.ErrNoValidity) {
+			reason = "it yields no validity period"
+		}
+		return nil, issuer.NewError(issuer.ErrorCredentialRequestDenied, "this passport can't be issued: "+reason)
 	}
 	req.MdocClaims = mdocClaims
 

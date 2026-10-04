@@ -5,10 +5,13 @@
 // TransactionStore — for local development and testing only. Never
 // production.
 //
-// Every type here is non-durable (an in-process map, gone on restart)
-// and grows unboundedly for the life of the process — there is no
-// expiry-driven garbage collection. That's fine for a short local
-// development session; it is not fine for anything long-running.
+// Every type here is non-durable (an in-process map, gone on restart).
+// The stores an unauthenticated caller can grow — NonceStore,
+// DPoPNonceStore, DPoPReplayChecker and VerifierTransactionStore — drop
+// expired entries as they grow, so they hold about what the request rate
+// times the entries' lifetime adds up to; the others grow for the life
+// of the process. That's fine for a development session or a demo; it
+// is not fine for production.
 //
 // None of these types implement issuer.StoreAssurance (or
 // verifier.StoreAssurance), and that is

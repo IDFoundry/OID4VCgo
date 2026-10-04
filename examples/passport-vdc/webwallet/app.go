@@ -310,7 +310,8 @@ func (a *App) handleCheckDeferred(w http.ResponseWriter, r *http.Request) {
 		a.dropDeferred(id)
 		http.Redirect(w, r, "/?denied=1", http.StatusSeeOther)
 	case err != nil:
-		renderError(w, http.StatusBadGateway, "checking failed: "+err.Error())
+		// Not the error itself: it can carry the issuer's words.
+		renderError(w, http.StatusBadGateway, "checking with the issuer failed — try again later")
 	case rc == nil:
 		http.Redirect(w, r, "/?waiting=1", http.StatusSeeOther)
 	default:

@@ -11,6 +11,7 @@
 package main
 
 import (
+	"context"
 	"encoding/pem"
 	"flag"
 	"log"
@@ -60,6 +61,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	go app.SweepEvery(context.Background(), time.Minute) // passport data goes when it expires
 
 	caPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: app.IssuerCACertificate().Raw})
 	if err := os.WriteFile(*caOut, caPEM, 0o600); err != nil { // #nosec G703 -- operator-supplied path

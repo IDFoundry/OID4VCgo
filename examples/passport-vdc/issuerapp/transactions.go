@@ -61,6 +61,13 @@ type transaction struct {
 // transaction — a million codes, a handful of guesses.
 const maxCodeFailures = 5
 
+// maxIssuancesPerPassport bounds how many Credential Requests a passport
+// kept for refresh answers. Each takes a batch of status list indices:
+// without a bound, one holder refreshing in a loop could use up the
+// list for everyone. 50 requests of a batch of 3, for each of the 100
+// passports held at most, is under half the list.
+const maxIssuancesPerPassport = 50
+
 var (
 	// errTooManyTransactions is returned by put when limit passports are
 	// already held.
@@ -71,6 +78,7 @@ var (
 	errTooManyWrongCodes   = errors.New("issuerapp: too many wrong confirmation codes — the offer is void; upload the passport again")
 	errAlreadyIssued       = errors.New("issuerapp: this credential has already been issued for this passport")
 	errNotOffered          = errors.New("issuerapp: this credential wasn't offered for this passport")
+	errIssuanceLimit       = errors.New("issuerapp: this passport has been issued as many times as the demo allows — upload it again")
 )
 
 // keepMargin is how much longer than keepFor a kept passport outlasts
@@ -213,6 +221,8 @@ func (t *transactions) reserve(id, configID string) (passport.Evidence, bool, er
 		return passport.Evidence{}, false, errNotOffered
 	case !pending && !v.keep:
 		return passport.Evidence{}, false, errAlreadyIssued
+	case v.issued >= maxIssuancesPerPassport:
+		return passport.Evidence{}, false, errIssuanceLimit
 	}
 	v.pending[configID] = false
 	if v.keep && !v.kept {
