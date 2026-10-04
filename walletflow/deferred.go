@@ -157,6 +157,45 @@ func (d *Deferred) Interval() time.Duration {
 	return d.p.Interval
 }
 
+// ask polls the issuer, setting d.received once the credential is
+// issued; while it's pending it leaves it nil, noting the issuer's new
+// interval. A denial settles the Deferred: ErrCredentialDenied.
+func (d *Deferred) ask(ctx, cleanup context.Context) error {
+	result, err := d.w.core.RequestDeferredCredential(ctx, d.resource, *d.metadata.DeferredCredentialEndpoint, wallet.DeferredCredentialRequest{
+		TransactionID: d.p.TransactionID, RequestEncryption: d.requestEnc, ResponseEncryption: d.responseEnc,
+	})
+	var werr *wallet.Error
+	switch {
+	case errors.As(err, &werr) && werr.Code == "credential_request_denied":
+		_ = d.settle(cleanup, true)
+		return ErrCredentialDenied
+	case err != nil:
+		return fmt.Errorf("walletflow: deferred credential %q: %w", d.p.ConfigurationID, err)
+	case len(result.Credentials) == 0:
+		if result.Interval > 0 && result.Interval != d.p.Interval {
+			d.p.Interval = result.Interval
+			_ = d.w.deps.Deferred.PutDeferred(ctx, d.p) // best effort: only the next wait's length
+		}
+		return nil
+	}
+	d.received = &result
+	return nil
+}
+
+// holderKeys are the keys the deferred credential's copies are bound
+// to.
+func (d *Deferred) holderKeys(ctx context.Context) ([]Key, error) {
+	holders := make([]Key, 0, len(d.p.HolderKeyIDs))
+	for _, id := range d.p.HolderKeyIDs {
+		holder, err := d.w.deps.Keys.Key(ctx, id)
+		if err != nil {
+			return nil, fmt.Errorf("walletflow: deferred credential %q's holder key: %w", d.p.ConfigurationID, err)
+		}
+		holders = append(holders, holder)
+	}
+	return holders, nil
+}
+
 // Poll asks the issuer once. It returns the credential once issued
 // (checked, stored, and the issuer notified), nil while it's still
 // pending, or ErrCredentialDenied. Once it has returned the credential,
@@ -177,33 +216,14 @@ func (d *Deferred) Poll(ctx context.Context) (*StoredCredential, error) {
 	// leaves behind, a key sweep (KeysInUse) or Abandon removes later.
 	cleanup := context.WithoutCancel(ctx)
 	if d.received == nil {
-		result, err := d.w.core.RequestDeferredCredential(ctx, d.resource, *d.metadata.DeferredCredentialEndpoint, wallet.DeferredCredentialRequest{
-			TransactionID: d.p.TransactionID, RequestEncryption: d.requestEnc, ResponseEncryption: d.responseEnc,
-		})
-		var werr *wallet.Error
-		switch {
-		case errors.As(err, &werr) && werr.Code == "credential_request_denied":
-			_ = d.settle(cleanup, true)
-			return nil, ErrCredentialDenied
-		case err != nil:
-			return nil, fmt.Errorf("walletflow: deferred credential %q: %w", d.p.ConfigurationID, err)
-		case len(result.Credentials) == 0:
-			if result.Interval > 0 && result.Interval != d.p.Interval {
-				d.p.Interval = result.Interval
-				_ = d.w.deps.Deferred.PutDeferred(ctx, d.p) // best effort: only the next wait's length
-			}
-			return nil, nil
+		if err := d.ask(ctx, cleanup); err != nil || d.received == nil {
+			return nil, err
 		}
-		d.received = &result
 	}
 	result := *d.received
-	holders := make([]Key, 0, len(d.p.HolderKeyIDs))
-	for _, id := range d.p.HolderKeyIDs {
-		holder, err := d.w.deps.Keys.Key(ctx, id)
-		if err != nil {
-			return nil, fmt.Errorf("walletflow: deferred credential %q's holder key: %w", d.p.ConfigurationID, err)
-		}
-		holders = append(holders, holder)
+	holders, err := d.holderKeys(ctx)
+	if err != nil {
+		return nil, err
 	}
 	stored, err := d.w.accept(ctx, issued{
 		issuer: d.p.CredentialIssuer, metadata: *d.metadata, resource: d.resource,
