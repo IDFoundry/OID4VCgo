@@ -67,6 +67,11 @@ type Config struct {
 	// check they haven't been revoked; it must trust the issuer's TLS
 	// certificate. Nil uses http.DefaultClient.
 	HTTP *http.Client
+
+	// StateDir, if set, is an existing directory this verifier keeps its
+	// request-signing key and certificates in, so wallets that trust its
+	// CA still trust it after a restart. Empty means a new CA each run.
+	StateDir string
 }
 
 // App is a running passport-vdc verifier.
@@ -189,7 +194,7 @@ func New(cfg Config) (*App, error) {
 	if err != nil {
 		return nil, fmt.Errorf("verifierapp: response URI: %w", err)
 	}
-	key, cert, caCert, err := newRequestSigningIdentity(time.Now())
+	key, cert, caCert, err := signingIdentity(cfg.StateDir, time.Now())
 	if err != nil {
 		return nil, err
 	}
@@ -584,6 +589,15 @@ func randomID() (string, error) {
 		return "", fmt.Errorf("verifierapp: random id: %w", err)
 	}
 	return base64.RawURLEncoding.EncodeToString(b[:]), nil
+}
+
+// signingIdentity is this verifier's request-signing identity: kept in
+// dir when set, generated afresh otherwise.
+func signingIdentity(dir string, now time.Time) (*ecdsa.PrivateKey, *x509.Certificate, *x509.Certificate, error) {
+	if dir == "" {
+		return newRequestSigningIdentity(now)
+	}
+	return loadOrCreateSigningIdentity(dir, now)
 }
 
 // newRequestSigningIdentity generates this verifier's request-signing

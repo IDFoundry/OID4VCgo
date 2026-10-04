@@ -8,9 +8,10 @@
 // (-state, default .demo-state): the TLS certificate the servers share,
 // so a browser's warning is accepted once; the stand-in Wallet
 // Provider's key, which only its service uses; the issuer's CA, signing keys and status list, so
-// issued credentials keep verifying and revocations hold; and the
-// wallet's credential store. The verifier's request-signing CA is
-// regenerated each run and handed to the wallet directly.
+// issued credentials keep verifying and revocations hold; the
+// verifier's request-signing CA and key, so wallets that trust it (the
+// iOS demo app, configured once) still do; and the wallet's credential
+// store.
 //
 // With -open it also starts Chrome on the three URLs, in a separate
 // profile (state/chrome-profile) that accepts the demo's certificate —
@@ -158,9 +159,11 @@ func (u serviceURLs) public() bool {
 func run(ctx context.Context, opts options) error {
 	state := opts.state
 	issuerURL, verifierURL := strings.TrimSuffix(opts.urls.issuer, "/"), strings.TrimSuffix(opts.urls.verifier, "/")
-	issuerState := filepath.Join(state, "issuer")
-	if err := os.MkdirAll(issuerState, 0o700); err != nil {
-		return fmt.Errorf("create %s: %w", issuerState, err)
+	issuerState, verifierState := filepath.Join(state, "issuer"), filepath.Join(state, "verifier")
+	for _, dir := range []string{issuerState, verifierState} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return fmt.Errorf("create %s: %w", dir, err)
+		}
 	}
 	if err := os.WriteFile(filepath.Join(state, stateMarker), []byte("passport-vdc demo state: delete with `go run ./cmd/demo -reset`\n"), 0o600); err != nil { // #nosec G703 -- operator-supplied state directory
 		return fmt.Errorf("mark %s: %w", state, err)
@@ -193,7 +196,7 @@ func run(ctx context.Context, opts options) error {
 	verifier, err := verifierapp.New(verifierapp.Config{
 		VerifierURL: verifierURL, IssuerVCT: issuerURL + issuerapp.VCTPath,
 		IssuerCAs: []*x509.Certificate{issuer.IssuerCACertificate()}, CSCAPool: csca,
-		WebWalletURL: walletURL, HTTP: httpClient,
+		WebWalletURL: walletURL, HTTP: httpClient, StateDir: verifierState,
 	})
 	if err != nil {
 		return err
