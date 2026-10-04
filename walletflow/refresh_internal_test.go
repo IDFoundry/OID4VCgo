@@ -107,3 +107,35 @@ func TestUnusedGrantAndDeleteErrors(t *testing.T) {
 		t.Error("KeysInUse with a grant store that can't list succeeded")
 	}
 }
+
+// A release decides on the grant as it is once it holds the grant's
+// lock: one a pending deferred credential names is kept.
+func TestReleaseUnusedGrant_KeepsAGrantInUse(t *testing.T) {
+	ctx := context.Background()
+	keys := NewMemoryKeyStore()
+	w, err := New(Config{}, Dependencies{Keys: keys, Credentials: NewMemoryCredentialStore()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.deps.Grants.PutGrant(ctx, RefreshGrant{ID: "g", RefreshToken: fapi.NewSecret("rt"), InstanceKeyID: "k"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.deps.Deferred.PutDeferred(ctx, PendingDeferred{ID: "d", GrantID: "g"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.releaseUnusedGrant(ctx, "g", "c"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.deps.Grants.GetGrant(ctx, "g"); err != nil {
+		t.Errorf("a grant a pending deferred credential names was released: %v", err)
+	}
+	if err := w.deps.Deferred.DeleteDeferred(ctx, "d"); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.releaseUnusedGrant(ctx, "g", "c"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.deps.Grants.GetGrant(ctx, "g"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("an unused grant was kept: %v", err)
+	}
+}

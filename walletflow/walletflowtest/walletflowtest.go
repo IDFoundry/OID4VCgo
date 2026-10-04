@@ -645,12 +645,10 @@ func (e *Env) handleToken(w http.ResponseWriter, r *http.Request) {
 		}
 		// A refresh token for this grant too, bound to the client's
 		// instance key, so the credentials can be refreshed.
-		refreshToken, err := e.issuePreAuthorizedRefreshToken(ctx, attested, binding, result)
-		if err != nil {
-			server.WriteError(w, err)
-			return
+		// Optional: without one, the credentials just can't be refreshed.
+		if refreshToken, err := e.issuePreAuthorizedRefreshToken(ctx, attested, binding, result); err == nil {
+			result.RefreshToken = refreshToken
 		}
-		result.RefreshToken = refreshToken
 		w.Header().Set("Cache-Control", "no-store")
 		result.WriteJSON(w)
 	default:

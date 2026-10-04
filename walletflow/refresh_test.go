@@ -433,3 +433,37 @@ func TestRefreshCredential_AbandonedDeferredReleasesTheGrant(t *testing.T) {
 		t.Errorf("after abandoning: %d grants, %d keys, %d revocations; want none, none, 1", len(g), f.keys.Len(), f.env.Revocations())
 	}
 }
+
+// An issuance still open keeps its refresh grant: deleting a credential
+// it stored doesn't revoke the grant the issuance may still need.
+// Closing the issuance releases a grant nothing uses.
+func TestRefreshCredential_OpenIssuanceHoldsItsGrant(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t, walletflowtest.Options{})
+	grants := walletflow.NewMemoryGrantStore()
+	w := f.newRefreshingWallet(t, nil, grants)
+	s, err := w.StartIssuance(ctx, f.env.AuthorizationCodeOffer(t, walletflowtest.SDJWTConfigurationID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	authorize(t, f, s)
+	result, err := s.RequestCredentials(ctx)
+	if err != nil || len(result.Credentials) != 1 {
+		t.Fatalf("RequestCredentials = %+v, %v", result, err)
+	}
+	if err := w.DeleteCredential(ctx, result.Credentials[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.KeysInUse(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if g, _ := grants.ListGrants(ctx); len(g) != 1 || f.env.Revocations() != 0 {
+		t.Fatalf("while the issuance is open: %d grants, %d revocations; want the grant kept", len(g), f.env.Revocations())
+	}
+	if err := s.Close(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if g, _ := grants.ListGrants(ctx); len(g) != 0 || f.keys.Len() != 0 || f.env.Revocations() != 1 {
+		t.Errorf("after Close: %d grants, %d keys, %d revocations; want none, none, 1", len(g), f.keys.Len(), f.env.Revocations())
+	}
+}
