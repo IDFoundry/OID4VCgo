@@ -14,6 +14,12 @@ type VerifyOptions struct {
 	// Now is compared against ValidityInfo's ValidFrom/ValidUntil.
 	// Defaults to time.Now.
 	Now func() time.Time
+	// MaxClockSkew is how far Now may be from the issuer's clock: an MSO
+	// is accepted up to MaxClockSkew before ValidFrom and after
+	// ValidUntil. Zero applies §12.8.1's window exactly — which refuses
+	// an MSO valid from the moment it was signed, when the verifier's
+	// clock is a second behind the issuer's.
+	MaxClockSkew time.Duration
 }
 
 // VerifiedMSO is Verify's result: the MSO's own fields, plus the
@@ -87,9 +93,12 @@ func Verify(signed IssuerSigned, docType string, issuerPub crypto.PublicKey, alg
 	// the lower one (found in the same review as the docType check
 	// above: this previously rejected the exact ValidUntil instant as
 	// already expired).
-	if t := now(); t.Before(mso.ValidityInfo.ValidFrom) {
+	if opts.MaxClockSkew < 0 {
+		return VerifiedMSO{}, fmt.Errorf("mdoc: MaxClockSkew must not be negative")
+	}
+	if t := now(); t.Add(opts.MaxClockSkew).Before(mso.ValidityInfo.ValidFrom) {
 		return VerifiedMSO{}, fmt.Errorf("mdoc: MSO is not yet valid (validFrom %s)", mso.ValidityInfo.ValidFrom)
-	} else if t.After(mso.ValidityInfo.ValidUntil) {
+	} else if t.Add(-opts.MaxClockSkew).After(mso.ValidityInfo.ValidUntil) {
 		return VerifiedMSO{}, fmt.Errorf("mdoc: MSO has expired (validUntil %s)", mso.ValidityInfo.ValidUntil)
 	}
 

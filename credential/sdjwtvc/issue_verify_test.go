@@ -424,6 +424,19 @@ func TestVerify_RejectsNotYetValidCredential(t *testing.T) {
 	}
 }
 
+// An nbf a little ahead of the verifier's clock passes within
+// MaxClockSkew, and not beyond it.
+func TestVerify_AllowsMaxClockSkew(t *testing.T) {
+	nbf := time.Now().Add(30 * time.Second).Unix()
+	issuerKey, presentation := issueBareCompact(t, Claims{VCT: "vc-type", Nbf: &nbf})
+	if _, _, err := Verify(presentation, &issuerKey.PublicKey, jose.ES256, VerifyOptions{RequireKeyBinding: KeyBindingNotRequired, MaxClockSkew: time.Minute}); err != nil {
+		t.Errorf("nbf 30 s ahead, a minute's skew: %v", err)
+	}
+	if _, _, err := Verify(presentation, &issuerKey.PublicKey, jose.ES256, VerifyOptions{RequireKeyBinding: KeyBindingNotRequired, MaxClockSkew: 10 * time.Second}); err == nil {
+		t.Error("nbf 30 s ahead accepted with 10 s of skew")
+	}
+}
+
 // TestVerify_AcceptsCredentialWithinValidityWindow proves the fix
 // above doesn't reject a legitimately-current credential — exp in the
 // future, nbf in the past both pass.

@@ -60,6 +60,11 @@ type VerifyOptions struct {
 	// the Key Binding JWT's own iat via MaxKeyBindingAge. Defaults to
 	// time.Now.
 	Now func() time.Time
+
+	// MaxClockSkew is how far Now may be from the issuer's clock: the
+	// Issuer JWT is accepted up to MaxClockSkew before its nbf and after
+	// its exp. Zero applies them exactly.
+	MaxClockSkew time.Duration
 }
 
 // Verify fully validates a presented SD-JWT or SD-JWT+KB against the
@@ -110,7 +115,10 @@ func Verify(s string, issuerPub crypto.PublicKey, issuerAlg jose.Alg, opts Verif
 	// statuslist.VerifyToken/VerifyTokenCWT, this repo's own sibling
 	// Verify functions, already check their own equivalent validity
 	// window unconditionally; this one didn't).
-	if err := checkIssuerJWTValidityWindow(decoded, now); err != nil {
+	if opts.MaxClockSkew < 0 {
+		return nil, nil, fmt.Errorf("sdjwtvc: MaxClockSkew must not be negative")
+	}
+	if err := checkIssuerJWTValidityWindow(decoded, now, opts.MaxClockSkew); err != nil {
 		return nil, nil, err
 	}
 
@@ -179,13 +187,13 @@ func checkNoRegisteredClaimDisclosed(decoded map[string]any, alg HashAlg, disclo
 	return nil
 }
 
-func checkIssuerJWTValidityWindow(decoded map[string]any, now func() time.Time) error {
+func checkIssuerJWTValidityWindow(decoded map[string]any, now func() time.Time, skew time.Duration) error {
 	if expRaw, ok := decoded["exp"]; ok {
 		exp, ok := expRaw.(float64)
 		if !ok {
 			return fmt.Errorf("sdjwtvc: exp claim is not a number")
 		}
-		if !now().Before(time.Unix(int64(exp), 0)) {
+		if !now().Add(-skew).Before(time.Unix(int64(exp), 0)) {
 			return fmt.Errorf("sdjwtvc: credential has expired")
 		}
 	}
@@ -194,7 +202,7 @@ func checkIssuerJWTValidityWindow(decoded map[string]any, now func() time.Time) 
 		if !ok {
 			return fmt.Errorf("sdjwtvc: nbf claim is not a number")
 		}
-		if now().Before(time.Unix(int64(nbf), 0)) {
+		if now().Add(skew).Before(time.Unix(int64(nbf), 0)) {
 			return fmt.Errorf("sdjwtvc: credential is not yet valid")
 		}
 	}
