@@ -330,6 +330,9 @@ func TestExchangePreAuthorizedCodeResult_WriteJSON_RefreshToken(t *testing.T) {
 		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 			t.Fatal(err)
 		}
+		if cc := rec.Header().Get("Cache-Control"); cc != "no-store" {
+			t.Errorf("Cache-Control = %q, want no-store", cc)
+		}
 		got, present := body["refresh_token"]
 		if tc.want == "" && present || tc.want != "" && got != tc.want {
 			t.Errorf("refresh token %q: body = %s", tc.token, rec.Body.String())
