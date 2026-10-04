@@ -79,6 +79,7 @@ type credentialRecord struct {
 	StatusList    *statusListJSON `json:"status_list,omitempty"`
 	StatusListCWT bool            `json:"status_list_cwt,omitempty"`
 	Status        *statusJSON     `json:"status,omitempty"`
+	GrantID       string          `json:"grant_id,omitempty"`
 }
 
 // copyJSON is a walletflow.CredentialCopy.
@@ -155,7 +156,7 @@ func recordOf(c walletflow.StoredCredential) (credentialRecord, error) {
 	r := credentialRecord{
 		ID: c.ID, CredentialIssuer: c.CredentialIssuer, ConfigurationID: c.ConfigurationID, Format: c.Format,
 		VCT: c.VCT, DocType: c.DocType, Credential: c.Credential, HolderKeyID: c.HolderKeyID, ReceivedAt: c.ReceivedAt,
-		Display: displayOf(c.Display), StatusListCWT: c.StatusListCWT,
+		Display: displayOf(c.Display), StatusListCWT: c.StatusListCWT, GrantID: c.GrantID,
 	}
 	for _, cp := range c.Copies {
 		r.Copies = append(r.Copies, copyJSON{Credential: cp.Credential, HolderKeyID: cp.HolderKeyID, Presented: cp.Presented})
@@ -183,7 +184,7 @@ func (r credentialRecord) stored() (walletflow.StoredCredential, error) {
 	c := walletflow.StoredCredential{
 		ID: r.ID, CredentialIssuer: r.CredentialIssuer, ConfigurationID: r.ConfigurationID, Format: r.Format,
 		VCT: r.VCT, DocType: r.DocType, Credential: r.Credential, HolderKeyID: r.HolderKeyID, ReceivedAt: r.ReceivedAt,
-		Display: r.Display.display(), StatusListCWT: r.StatusListCWT,
+		Display: r.Display.display(), StatusListCWT: r.StatusListCWT, GrantID: r.GrantID,
 	}
 	for _, cp := range r.Copies {
 		c.Copies = append(c.Copies, walletflow.CredentialCopy{Credential: cp.Credential, HolderKeyID: cp.HolderKeyID, Presented: cp.Presented})
@@ -227,6 +228,11 @@ type credentialSummary struct {
 	// until none is left.
 	Copies     int `json:"copies"`
 	CopiesLeft int `json:"copies_left"`
+	// Refreshable is whether its issuance kept a refresh token
+	// ("request_refresh"), so Wallet.RefreshCredential can replace its
+	// copies without the holder. The Authorization Server may still
+	// refuse it (reissue_required).
+	Refreshable bool `json:"refreshable"`
 	// HolderKeyPresent is whether the key store still holds the
 	// credential's key; without it the credential can't be presented
 	// (restored from a backup to another device, say). Set only by
@@ -238,7 +244,7 @@ func summaryOf(c walletflow.StoredCredential) credentialSummary {
 	s := credentialSummary{
 		ID: c.ID, CredentialIssuer: c.CredentialIssuer, ConfigurationID: c.ConfigurationID, Format: c.Format,
 		VCT: c.VCT, DocType: c.DocType, ReceivedAt: c.ReceivedAt, Display: displayOf(c.Display),
-		Copies: len(c.AllCopies()), CopiesLeft: c.CopiesLeft(),
+		Copies: len(c.AllCopies()), CopiesLeft: c.CopiesLeft(), Refreshable: c.GrantID != "",
 	}
 	if !c.ValidUntil.IsZero() {
 		s.ValidUntil = &c.ValidUntil

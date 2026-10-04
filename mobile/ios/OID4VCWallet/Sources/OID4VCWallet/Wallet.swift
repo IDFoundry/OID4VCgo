@@ -21,9 +21,14 @@ public struct WalletConfiguration: Codable, Sendable {
     /// can use one no Verifier has seen. 0 means the SDK's default (5);
     /// it's capped at the issuer's batch size.
     public var batchSize: Int
+    /// Asks Authorization Servers for a refresh token, so
+    /// `Wallet.refreshCredential(id:)` can later replace a credential's
+    /// copies without the holder. The server must allow the wallet the
+    /// `offline_access` scope, or the authorization fails.
+    public var requestRefresh: Bool
 
     public init(clientID: String, redirectURI: String, issuerRoots: String = "", verifierRoots: String = "", development: Bool = false,
-                locales: [String] = Locale.preferredLanguages, batchSize: Int = 0) {
+                locales: [String] = Locale.preferredLanguages, batchSize: Int = 0, requestRefresh: Bool = false) {
         self.clientID = clientID
         self.redirectURI = redirectURI
         self.issuerRoots = issuerRoots
@@ -31,11 +36,13 @@ public struct WalletConfiguration: Codable, Sendable {
         self.development = development
         self.locales = locales
         self.batchSize = batchSize
+        self.requestRefresh = requestRefresh
     }
 
     enum CodingKeys: String, CodingKey {
         case clientID = "client_id", redirectURI = "redirect_uri", issuerRoots = "issuer_roots"
         case verifierRoots = "verifier_roots", development, locales, batchSize = "batch_size"
+        case requestRefresh = "request_refresh"
     }
 
     public init(from decoder: Decoder) throws {
@@ -46,7 +53,8 @@ public struct WalletConfiguration: Codable, Sendable {
                   verifierRoots: try c.decodeIfPresent(String.self, forKey: .verifierRoots) ?? "",
                   development: try c.decodeIfPresent(Bool.self, forKey: .development) ?? false,
                   locales: try c.decodeIfPresent([String].self, forKey: .locales) ?? Locale.preferredLanguages,
-                  batchSize: try c.decodeIfPresent(Int.self, forKey: .batchSize) ?? 0)
+                  batchSize: try c.decodeIfPresent(Int.self, forKey: .batchSize) ?? 0,
+                  requestRefresh: try c.decodeIfPresent(Bool.self, forKey: .requestRefresh) ?? false)
     }
 
     /// The scheme of `redirectURI`: the callback scheme an
@@ -129,6 +137,12 @@ public struct CredentialSummary: Decodable, Equatable, Sendable {
     /// those; once none is left, presentations can be linked.
     public let copies: Int
     public let copiesLeft: Int
+    /// Whether its issuance kept a refresh token
+    /// (`Configuration.requestRefresh`), so
+    /// `Wallet.refreshCredential(id:)` can replace its copies. The
+    /// Authorization Server may still refuse
+    /// (`WalletError.Code.reissueRequired`).
+    public let refreshable: Bool
 
     /// Whether it has expired by `now`.
     public func isExpired(at now: Date = Date()) -> Bool { validUntil.map { $0 <= now } ?? false }
@@ -137,7 +151,7 @@ public struct CredentialSummary: Decodable, Equatable, Sendable {
         case id, format, vct, doctype, display, status
         case credentialIssuer = "credential_issuer", configurationID = "configuration_id", receivedAt = "received_at"
         case holderKeyPresent = "holder_key_present", validUntil = "valid_until"
-        case copies, copiesLeft = "copies_left"
+        case copies, copiesLeft = "copies_left", refreshable
     }
 }
 
@@ -281,7 +295,29 @@ public final class Wallet: @unchecked Sendable {
         return try decode(CredentialSummary.self, json)
     }
 
-    /// Deletes a credential and its holder key.
+    /// What `refreshCredential(id:)` obtained.
+    public struct Refreshed: Decodable, Sendable {
+        /// The credential, its ID unchanged: with every copy unused, or
+        /// as it was when the issuer deferred the new one.
+        public let credential: CredentialSummary
+        /// The deferred credential to poll, when the issuer deferred it:
+        /// it settles as a new credential.
+        public let deferred: DeferredCredential?
+    }
+
+    /// Replaces a `refreshable` credential's copies with a fresh batch,
+    /// each bound to a new attested key, without the holder (OpenID4VCI
+    /// 1.0 §13.5). Use it when `copiesLeft` runs low. Throws
+    /// `WalletError.Code.reissueRequired` when it can't be refreshed:
+    /// receive it again from a new offer.
+    public func refreshCredential(id: String) async throws -> Refreshed {
+        let wallet = handle
+        let json = try await OID4VC.cancellable { op in try OID4VC.call { wallet.refreshCredential(op, credentialID: id, error: $0) } }
+        return try decode(Refreshed.self, json)
+    }
+
+    /// Deletes a credential and its holder keys, and its refresh grant
+    /// once no other credential uses it.
     public func deleteCredential(id: String) async throws {
         let wallet = handle
         try await OID4VC.offMain { try OID4VC.wrap { try wallet.deleteCredential(id) } }

@@ -32,6 +32,10 @@ type config struct {
 	// BatchSize is how many copies of each credential to request when an
 	// issuer offers batches; 0 means walletflow.DefaultBatchSize.
 	BatchSize int `json:"batch_size,omitempty"`
+	// RequestRefresh asks Authorization Servers for a refresh token
+	// (walletflow.Config.RequestRefresh), so RefreshCredential can
+	// replace a credential's copies later without the holder.
+	RequestRefresh bool `json:"request_refresh,omitempty"`
 }
 
 // testHTTP, when set (by the mobiletest build), is the HTTP client every
@@ -50,7 +54,7 @@ type Wallet struct {
 //
 //	{"client_id": "…", "redirect_uri": "…",
 //	 "issuer_roots": "<PEM>", "verifier_roots": "<PEM>",
-//	 "development": false}
+//	 "development": false, "request_refresh": false}
 //
 // issuer_roots is needed to receive credentials, and verifier_roots to
 // present them.
@@ -62,7 +66,10 @@ func NewWallet(configJSON string, keys KeyStore, credentials CredentialStore, pr
 	if keys == nil || credentials == nil {
 		return nil, newError(CodeInvalidInput, errors.New("a KeyStore and a CredentialStore are required"))
 	}
-	wcfg := walletflow.Config{ClientID: cfg.ClientID, RedirectURI: cfg.RedirectURI, Development: cfg.Development, Locales: cfg.Locales, BatchSize: cfg.BatchSize}
+	wcfg := walletflow.Config{
+		ClientID: cfg.ClientID, RedirectURI: cfg.RedirectURI, Development: cfg.Development, Locales: cfg.Locales,
+		BatchSize: cfg.BatchSize, RequestRefresh: cfg.RequestRefresh,
+	}
 	var err error
 	if cfg.IssuerRoots != "" {
 		if wcfg.IssuerRoots, err = certPool(cfg.IssuerRoots); err != nil {
@@ -80,9 +87,9 @@ func NewWallet(configJSON string, keys KeyStore, credentials CredentialStore, pr
 		Keys: keyStore{keys}, Credentials: credentialStore{credentials},
 		// crypto/rand.Reader itself, which production assurance requires.
 		Random: rand.Reader,
-		// Pending deferred credentials and authorizations in progress,
-		// kept beside the credentials.
-		Deferred: deferredStore{credentials}, Authorizations: authorizationStore{credentials},
+		// Pending deferred credentials, authorizations in progress and
+		// refresh grants, kept beside the credentials.
+		Deferred: deferredStore{credentials}, Authorizations: authorizationStore{credentials}, Grants: grantStore{credentials},
 		HTTP: testHTTP.Load(), // nil: walletflow's own client
 	}
 	if provider != nil {
@@ -164,8 +171,9 @@ func (w *Wallet) summary(c walletflow.StoredCredential) (credentialSummary, erro
 }
 
 // HolderKeyIDs returns {"abi", "key_ids": [...]}: the IDs of the keys
-// the wallet still needs — its credentials' holder keys, and each
-// pending deferred credential's holder and DPoP keys. Every other key in
+// the wallet still needs — its credentials' holder keys, each pending
+// deferred credential's holder and DPoP keys, and each refresh grant's
+// wallet instance key. Every other key in
 // the KeyStore belongs to an issuance in progress — or to none, left by
 // one that never closed — so an app sweeping orphaned keys at launch,
 // before any issuance, keeps these and may delete the rest.
@@ -205,7 +213,8 @@ func (w *Wallet) CheckStatus(op *Operation, credentialID string) (string, error)
 	}{result{ABIVersion}, s})
 }
 
-// DeleteCredential deletes the credential id names, and its holder key.
+// DeleteCredential deletes the credential id names, and its holder
+// keys, and its refresh grant once no other credential uses it.
 func (w *Wallet) DeleteCredential(id string) error {
 	return classify(w.w.DeleteCredential(context.Background(), id))
 }

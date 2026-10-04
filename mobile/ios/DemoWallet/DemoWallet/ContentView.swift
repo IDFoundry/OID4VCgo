@@ -157,6 +157,7 @@ struct CredentialView: View {
     let summary: CredentialSummary
     @State private var detail: CredentialDetail?
     @State private var checking = false
+    @State private var refreshing = false
 
     var body: some View {
         List {
@@ -180,6 +181,23 @@ struct CredentialView: View {
                 }
                 .disabled(checking)
                 .accessibilityIdentifier("check-status")
+            }
+            if summary.copies > 1 || summary.refreshable {
+                Section("Copies") {
+                    Text(CredentialRow.copies(summary) ?? "\(summary.copiesLeft) of \(summary.copies) copies unused")
+                        .accessibilityIdentifier("credential-copies")
+                    if summary.refreshable {
+                        Button(refreshing ? "Refreshing…" : "Refresh copies") {
+                            refreshing = true
+                            Task {
+                                await model.refreshCopies(summary.id)
+                                refreshing = false
+                            }
+                        }
+                        .disabled(refreshing)
+                        .accessibilityIdentifier("refresh-copies")
+                    }
+                }
             }
             if let detail {
                 Section("Claims") { ClaimRows(value: detail.claims, path: []) }

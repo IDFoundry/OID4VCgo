@@ -28,6 +28,10 @@ public struct WalletError: Error, Equatable, CustomStringConvertible, LocalizedE
         /// its query, more than one for a query that takes one, or a
         /// required credential set left unanswered.
         public static let invalidSelection = Code(rawValue: MobileCodeInvalidSelection)
+        /// A credential can't be refreshed: no refresh token was kept, or
+        /// the Authorization Server no longer accepts it. Receive it again
+        /// from a new offer.
+        public static let reissueRequired = Code(rawValue: MobileCodeReissueRequired)
         /// Sending a presentation failed in a way that leaves it unknown
         /// whether the Verifier received it: it's not sent again.
         public static let deliveryUnknown = Code(rawValue: MobileCodeDeliveryUnknown)
@@ -67,6 +71,7 @@ public struct WalletError: Error, Equatable, CustomStringConvertible, LocalizedE
         case .credentialDenied: "The issuer declined to issue the credential."
         case .noMatchingCredential: "You have no credential that answers this request."
         case .invalidSelection: "Those credentials don't answer this request."
+        case .reissueRequired: "This credential can't be refreshed. Receive it again from the issuer."
         case .deliveryUnknown: "Your response may not have reached the verifier. Check with them before sharing again."
         case .protocolError where protocolError == "invalid_grant": "That code or PIN wasn't accepted."
         case .protocolError: "The service refused the request."

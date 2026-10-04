@@ -43,6 +43,7 @@ format or error code below changes incompatibly.
 | `authorization_denied` | the Authorization Server refused, e.g. the holder declined |
 | `credential_denied` | the issuer refused a deferred credential |
 | `no_matching_credential` | nothing held answers the Verifier's request |
+| `reissue_required` | a credential can't be refreshed: no refresh token was kept, or the Authorization Server no longer accepts it |
 | `invalid_selection` | a presentation's selection doesn't answer the request as it asks |
 | `delivery_unknown` | sending a presentation failed in a way that leaves it unknown whether the Verifier received it; it isn't sent again, which could present twice |
 | `protocol` | an issuer, Authorization Server or Verifier answered with an error, or with something the wallet refuses |
@@ -140,7 +141,8 @@ The Swift package's adapter marks a `URLError` this way.
 ```json
 {"client_id": "…", "redirect_uri": "…",
  "issuer_roots": "<PEM>", "verifier_roots": "<PEM>",
- "development": false, "locales": ["en-AU", "en"], "batch_size": 0}
+ "development": false, "locales": ["en-AU", "en"], "batch_size": 0,
+ "request_refresh": false}
 ```
 
 `client_id`, `redirect_uri`, `issuer_roots` and a provider are needed to
@@ -150,17 +152,25 @@ preferred languages (BCP 47, most preferred first) for issuers' display
 metadata. Without them, the issuer's entry without a locale is used,
 else its first. `batch_size` is how many copies of each credential to
 request when an issuer offers batches: 0 means 5, and it's capped at
-the issuer's `batch_size`.
+the issuer's `batch_size`. `request_refresh` asks Authorization Servers,
+in the authorization code grant, for a refresh token (the
+`offline_access` scope), so `RefreshCredential` can later replace a
+credential's copies without the holder (OpenID4VCI 1.0 §13.5). The
+server must allow the wallet that scope, or the authorization fails.
+The refresh token is kept in the CredentialStore, as a record of
+`"kind": "grant"`, with the wallet instance key ID, the key every
+refresh must authenticate with again.
 
 | Method | Result |
 |---|---|
 | `Credentials()` | `{"credentials": [summary]}` |
-| `HolderKeyIDs()` | `{"key_ids": [...]}`: the keys the wallet still needs: the credentials' holder keys, and each pending deferred credential's holder and DPoP keys. Any other key in the KeyStore, at launch before any issuance, is an orphan to delete |
+| `HolderKeyIDs()` | `{"key_ids": [...]}`: the keys the wallet still needs: the credentials' holder keys, each pending deferred credential's holder and DPoP keys, and each refresh grant's wallet instance key. Any other key in the KeyStore, at launch before any issuance, is an orphan to delete |
 | `Deferred()` | `{"deferred": [pending]}`: the credentials issuers have deferred and not yet settled, oldest first, including ones from before the app last quit. No network calls |
 | `PollDeferred(op, deferredID)` | `{"status": "pending" \| "issued", "credential": summary, "interval_seconds"}`; a refusal is `credential_denied`, and is then no longer pending. The first poll after a relaunch fetches the issuer's metadata |
 | `AbandonDeferred(deferredID)` | deletes a pending one and its keys, for example after its access token has expired |
 | `Credential(id)` | summary with `"claims"`: an SD-JWT VC's claims, or an mdoc's namespace → element → value, byte strings in base64 |
-| `DeleteCredential(id)` | deletes it and its holder key |
+| `DeleteCredential(id)` | deletes it and its holder keys, and its refresh grant with the grant's instance key once no other credential uses it |
+| `RefreshCredential(op, credentialID)` | `{"credential": summary, "deferred": pending or null}`: replaces a `refreshable` credential's copies with a fresh batch, each bound to a new attested key, under the same ID, without the holder. If the issuer defers it, the credential is returned as it was, with the deferred one to poll, which settles as a new credential. One that can't be refreshed (no refresh token was kept, or the Authorization Server no longer accepts it) is `reissue_required`: receive it again from a new offer |
 | `CheckStatus(op, credentialID)` | the summary, with `"status"` checked now. It fetches the issuer's status list and checks the list's signature against `issuer_roots`. The list covers many credentials, so fetching it doesn't tell the issuer which one is checked. A credential without a status list is returned as it is |
 | `StartIssuance(op, offerURI)` | an `Issuance` |
 | `ResumeIssuance(op, redirect)` | an `Issuance` ready for `RequestCredentials`: completes the authorization in progress that the redirect's `state` names, after the app was killed during the browser step. One that matches nothing, has already been used, or has expired is `not_found` |
@@ -183,6 +193,9 @@ A credential **summary** is `{"id", "credential_issuer",
   key, and `copies_left` how many no Verifier has seen. A presentation
   uses one of those, so presentations can't be linked by the
   credential. Once none is left, a copy is reused.
+- `refreshable` is whether its issuance kept a refresh token
+  (`request_refresh`), so `RefreshCredential` can replace its copies.
+  The Authorization Server may still refuse it (`reissue_required`).
 - `status` is its revocation status as last checked: `{"value": "valid"
   | "invalid" | "suspended" | "0x…", "checked_at"}`.
 
@@ -241,6 +254,9 @@ unused copy is presented. A claim **path** is a JSON array of keys,
 indexes, and `null` for every element. Holder keys sign during
 `Respond`, so a key store requiring user presence prompts then. When
 `redirect_uri` is set, open it in the browser.
+
+ABI version 9 added `RefreshCredential`, `request_refresh`, the
+summary's `refreshable` and `reissue_required`.
 
 ABI version 8 replaced `Candidates` with `Queries` and the credential ID
 arrays of `Preview` and `Respond` with a selection, and added

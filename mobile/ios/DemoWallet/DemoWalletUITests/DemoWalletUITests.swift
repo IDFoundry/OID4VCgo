@@ -218,6 +218,42 @@ final class DemoWalletUITests: XCTestCase {
         return XCTWaiter().wait(for: [expectation], timeout: 10) == .completed
     }
 
+    /// Credentials received by authorization code keep a refresh token:
+    /// after a presentation uses a copy, Refresh copies replaces them
+    /// with a fresh batch, every copy unused again.
+    @MainActor
+    func testRefreshCopies() async throws {
+        let offer = try await Self.fetch("offer", method: "POST")["offer"] as! String
+        let receiving = try await launch(offer: offer)
+        let receive = receiving.buttons["receive"]
+        XCTAssertTrue(receive.waitForExistence(timeout: 20))
+        receive.tap()
+        let received = receiving.staticTexts["status"]
+        XCTAssertTrue(received.waitForExistence(timeout: 60))
+        XCTAssertTrue(received.label.hasPrefix("Received 2"), received.label)
+        receiving.terminate()
+
+        let request = try await Self.fetch("request", query: [URLQueryItem(name: "format", value: "dc+sd-jwt")], method: "POST")
+        let app = try await launch(request: request["link"] as? String, reset: false)
+        let share = app.buttons["share"]
+        XCTAssertTrue(share.waitForExistence(timeout: 20))
+        await fulfillment(of: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "isEnabled == true"), object: share)], timeout: 10)
+        share.tap()
+        let status = app.staticTexts["status"]
+        XCTAssertTrue(status.waitForExistence(timeout: 30))
+        await fulfillment(of: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "label BEGINSWITH 'Shared with'"), object: status)], timeout: 30)
+
+        let used = app.descendants(matching: .any).matching(identifier: "credential")
+            .matching(NSPredicate(format: "label CONTAINS '2 of 3 copies unused'")).firstMatch
+        XCTAssertTrue(used.waitForExistence(timeout: 10), "the presented credential doesn't show a copy used")
+        used.tap()
+        let copies = app.staticTexts["credential-copies"]
+        XCTAssertTrue(copies.waitForExistence(timeout: 10))
+        XCTAssertTrue(copies.label.contains("2 of 3"), copies.label)
+        app.buttons["refresh-copies"].tap()
+        XCTAssertTrue(waitFor(copies, containing: "3 of 3 copies unused"), copies.label)
+    }
+
     /// Declines a request the wallet can't answer; the Verifier records
     /// it.
     @MainActor
