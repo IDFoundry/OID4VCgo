@@ -159,6 +159,11 @@ type TransactionsConfig struct {
 	// verification: recorded as LastError, with the request left open
 	// for another answer.
 	//
+	// Nothing else checks revocation: without an Accept that does, a
+	// revoked credential is accepted. A production Verifier sets one
+	// that checks each credential's StatusListRef, and refuses one whose
+	// status can't be read rather than taking it as valid.
+	//
 	// Accept runs before the request completes atomically, so when two
 	// answers to one request arrive together, both can be accepted and
 	// only one completes it. Keep it free of side effects, or tie what

@@ -25,9 +25,11 @@ with HAIP layered optionally on top — HAIP's overrides are unconditional
 in `issuer`/`wallet`/`verifier` themselves, not gated behind a separate
 opt-in. See "Relationship to FAPIgo" below for the specific list.
 
-A mobile wallet SDK on top of this library (a session-oriented
-`walletflow` package, and a gomobile façade for iOS and Android) is
-planned in [MOBILE.md](MOBILE.md).
+A mobile wallet SDK sits on top of this library: `walletflow`, a
+session-oriented wallet over key, credential and Wallet Provider
+interfaces, and `mobile`, its gomobile façade, published for iOS as the
+OID4VCWallet Swift package. [MOBILE.md](MOBILE.md) records its design
+and phases.
 
 ## Relationship to FAPIgo
 

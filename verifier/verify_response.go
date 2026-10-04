@@ -236,7 +236,8 @@ type VerifyResponseResult struct {
 //
 // VerifyResponse doesn't check revocation: each VerifiedCredential
 // carries its status reference (see VerifiedCredential.StatusListRef)
-// for the caller to check, e.g. with statuslist.Checker.
+// for the caller to check, e.g. with statuslist.Checker. A caller that
+// doesn't accepts revoked credentials; see TransactionsConfig.Accept.
 //
 // A Credential Query's own TrustedAuthorities (§6.1.1), when
 // non-empty, is checked against the verified Presentation's own issuer

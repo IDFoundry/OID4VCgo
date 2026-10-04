@@ -82,14 +82,27 @@ type Config struct {
 	BatchSize int
 
 	// Development relaxes what production requires, for a wallet
-	// talking to services on this machine: issuers, Authorization
-	// Servers and Verifiers on loopback addresses.
+	// talking to services on this machine. Never set it in a wallet
+	// that holders use. It:
+	//   - lets issuers, Authorization Servers, Verifiers and status
+	//     lists be on loopback addresses, over http there too;
+	//   - permits wallet.NoVerifierTrust as VerifierTrust;
+	//   - skips the checks receiving credentials makes at production
+	//     assurance: Durable Authorizations (and Grants, with
+	//     RequestRefresh), Keys declaring durable custody, Random
+	//     crypto/rand — and fapigo/client's own production checks.
 	Development bool
 }
 
 // Dependencies are what the app supplies.
 type Dependencies struct {
-	Keys        KeyStore        // REQUIRED
+	// Keys holds the wallet's keys. REQUIRED. Production assurance
+	// checks only that it declares durable custody
+	// (keys.KeyCustodyAssurance) — it can't check where the keys are.
+	// A wallet's holder keys belong in secure hardware that won't
+	// export them (the Secure Enclave, StrongBox), needing the holder's
+	// presence to present; that's the KeyStore's to provide.
+	Keys        KeyStore
 	Credentials CredentialStore // REQUIRED
 	Provider    WalletProvider  // REQUIRED for StartIssuance
 	// Deferred keeps pending deferred credentials, so they can be polled
