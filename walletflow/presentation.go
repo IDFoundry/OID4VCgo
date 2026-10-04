@@ -423,29 +423,15 @@ func (p *Presentation) reserve(ctx context.Context, sel Selection) ([]reservedCo
 			c, ok := current[id]
 			if !ok {
 				var err error
-				if c, err = w.deps.Credentials.Get(ctx, id); err != nil {
-					if errors.Is(err, ErrNotFound) {
-						return nil, fmt.Errorf("walletflow: %w: no credential %q", ErrInvalidSelection, id)
-					}
-					return nil, fmt.Errorf("walletflow: credential %q: %w", id, err)
+				if c, err = p.loadForReserve(ctx, id); err != nil {
+					return nil, err
 				}
-				c.Copies = slices.Clone(c.AllCopies())
 			}
-			i, cp, reused := c.copyFor(w.cfg.CopyPolicy, verifier)
-			linkable := slices.ContainsFunc(cp.ShownTo, func(h string) bool { return h != verifier })
-			if linkable && !p.Linkable(id) {
-				// What the holder saw said otherwise: don't send it.
-				return nil, fmt.Errorf("walletflow: credential %q: %w", id, ErrLinkable)
-			}
-			r := reservedCopy{query: q, id: id, index: i, keyID: cp.HolderKeyID, reused: reused,
-				wasPresented: cp.Presented, wasShown: slices.Contains(cp.ShownTo, verifier), linkable: linkable}
-			c.Copies[i].Presented = true
-			if !r.wasShown {
-				c.Copies[i].ShownTo = append(slices.Clone(cp.ShownTo), verifier)
+			r, err := p.reserveCopy(&c, q, id, verifier)
+			if err != nil {
+				return nil, err
 			}
 			current[id] = c
-			r.c = c
-			r.c.Credential = cp.Credential
 			out = append(out, r)
 		}
 	}
@@ -455,6 +441,40 @@ func (p *Presentation) reserve(ctx context.Context, sel Selection) ([]reservedCo
 		}
 	}
 	return out, nil
+}
+
+// loadForReserve reads credential id for reserve, with its copies its
+// own to change.
+func (p *Presentation) loadForReserve(ctx context.Context, id string) (StoredCredential, error) {
+	c, err := p.w.deps.Credentials.Get(ctx, id)
+	if errors.Is(err, ErrNotFound) {
+		return StoredCredential{}, fmt.Errorf("walletflow: %w: no credential %q", ErrInvalidSelection, id)
+	}
+	if err != nil {
+		return StoredCredential{}, fmt.Errorf("walletflow: credential %q: %w", id, err)
+	}
+	c.Copies = slices.Clone(c.AllCopies())
+	return c, nil
+}
+
+// reserveCopy picks c's copy to answer query q with, by
+// Config.CopyPolicy, and marks it presented to verifier in c.
+func (p *Presentation) reserveCopy(c *StoredCredential, q, id, verifier string) (reservedCopy, error) {
+	i, cp, reused := c.copyFor(p.w.cfg.CopyPolicy, verifier)
+	linkable := slices.ContainsFunc(cp.ShownTo, func(h string) bool { return h != verifier })
+	if linkable && !p.Linkable(id) {
+		// What the holder saw said otherwise: don't send it.
+		return reservedCopy{}, fmt.Errorf("walletflow: credential %q: %w", id, ErrLinkable)
+	}
+	r := reservedCopy{query: q, id: id, index: i, keyID: cp.HolderKeyID, reused: reused,
+		wasPresented: cp.Presented, wasShown: slices.Contains(cp.ShownTo, verifier), linkable: linkable}
+	c.Copies[i].Presented = true
+	if !r.wasShown {
+		c.Copies[i].ShownTo = append(slices.Clone(cp.ShownTo), verifier)
+	}
+	r.c = *c
+	r.c.Credential = cp.Credential
+	return r, nil
 }
 
 // release undoes what reserve recorded for a response that wasn't
