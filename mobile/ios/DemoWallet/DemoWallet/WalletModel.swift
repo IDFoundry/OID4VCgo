@@ -19,6 +19,9 @@ final class WalletModel {
     }
 
     private(set) var credentials: [CredentialSummary] = []
+    /// Each held credential's claims, by ID: to group the credentials by
+    /// whose they are.
+    private(set) var claims: [String: JSONValue] = [:]
     private(set) var configured = false
     private(set) var offer: Offer?
     var phase: Phase = .idle
@@ -519,9 +522,39 @@ final class WalletModel {
         guard let wallet else { return }
         do {
             credentials = try await wallet.credentials()
+            await loadClaims(reload: [])
         } catch {
             phase = .failed("Couldn't list credentials: " + Self.describe(error))
         }
+    }
+
+    /// Loads the claims of credentials not loaded yet, and of reload (a
+    /// refresh can change them, such as an age claim), dropping those of
+    /// credentials no longer held.
+    private func loadClaims(reload: Set<String>) async {
+        guard let wallet else { return }
+        var loaded = claims.filter { id, _ in credentials.contains { $0.id == id } && !reload.contains(id) }
+        for c in credentials where loaded[c.id] == nil {
+            loaded[c.id] = try? await wallet.credential(id: c.id).claims
+        }
+        claims = loaded
+    }
+
+    /// The held credentials grouped by whose they are — the holder's name
+    /// and date of birth from their claims — those of one holder oldest
+    /// first, and those naming no holder last.
+    var credentialsByHolder: [(holder: Holder?, credentials: [CredentialSummary])] {
+        var groups: [String: (holder: Holder?, credentials: [CredentialSummary])] = [:]
+        for c in credentials.sorted(by: { $0.receivedAt < $1.receivedAt }) {
+            let holder = Holder(claims: claims[c.id])
+            let key = holder.map { "\($0.name ?? "")|\($0.birthDate ?? "")" } ?? ""
+            groups[key, default: (holder, [])].credentials.append(c)
+            if groups[key]?.holder?.portrait == nil, holder?.portrait != nil { groups[key]?.holder = holder }
+        }
+        return groups.sorted { a, b in
+            if a.key.isEmpty != b.key.isEmpty { return !a.key.isEmpty }
+            return a.key < b.key
+        }.map(\.value)
     }
 
     /// Checks a credential's revocation status in its issuer's status
@@ -545,6 +578,7 @@ final class WalletModel {
             let refreshed = try await wallet.refreshCredential(id: id)
             if let i = credentials.firstIndex(where: { $0.id == id }) { credentials[i] = refreshed.credential }
             if let deferred = refreshed.deferred { track(deferred) }
+            await loadClaims(reload: [id])
         } catch let e as WalletError where e.code == .reissueRequired {
             notice = "This credential can't be refreshed any more: receive it again from the issuer."
             await refresh()

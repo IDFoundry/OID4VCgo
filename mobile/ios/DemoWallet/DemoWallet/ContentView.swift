@@ -20,15 +20,21 @@ struct ContentView: View {
                         ForEach(model.pending) { p in PendingRow(pending: p) }
                     }
                 }
-                Section("Credentials") {
-                    if model.credentials.isEmpty {
+                if model.credentials.isEmpty {
+                    Section("Credentials") {
                         Text("No credentials yet").foregroundStyle(.secondary)
                     }
-                    ForEach(model.credentials, id: \.id) { c in
-                        NavigationLink(value: c.id) { CredentialRow(summary: c) }
-                        .accessibilityElement(children: .combine)
-                        .accessibilityIdentifier("credential")
-                        .swipeActions { Button("Delete", role: .destructive) { Task { await model.delete(c) } } }
+                }
+                ForEach(Array(model.credentialsByHolder.enumerated()), id: \.offset) { _, group in
+                    Section {
+                        ForEach(group.credentials, id: \.id) { c in
+                            NavigationLink(value: c.id) { CredentialRow(summary: c) }
+                            .accessibilityElement(children: .combine)
+                            .accessibilityIdentifier("credential")
+                            .swipeActions { Button("Delete", role: .destructive) { Task { await model.delete(c) } } }
+                        }
+                    } header: {
+                        HolderHeader(holder: group.holder)
                     }
                 }
             }
@@ -222,6 +228,34 @@ struct CredentialView: View {
 
 /// A credential as a card in the issuer's colours: its logo, name,
 /// issuer, and expiry or revocation.
+/// Whose credentials a group holds: the holder's photo, name and date of
+/// birth.
+struct HolderHeader: View {
+    let holder: Holder?
+
+    var body: some View {
+        if let holder {
+            HStack(spacing: 12) {
+                if let portrait = holder.portrait {
+                    Image(uiImage: portrait).resizable().scaledToFill().frame(width: 40, height: 50)
+                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                }
+                VStack(alignment: .leading) {
+                    Text(holder.name ?? "Unnamed holder").font(.headline).foregroundStyle(.primary)
+                    if let born = holder.birthDate {
+                        Text("Born \(born)").font(.caption)
+                    }
+                }
+            }
+            .textCase(nil)
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("holder")
+        } else {
+            Text("Credentials")
+        }
+    }
+}
+
 struct CredentialRow: View {
     let summary: CredentialSummary
 
@@ -241,9 +275,20 @@ struct CredentialRow: View {
                 if let copies = Self.copies(summary) {
                     Text(copies).font(.caption).foregroundStyle(summary.copiesLeft == 0 ? .orange : text.opacity(0.8))
                 }
+                Text("\(Self.format(summary)) · received \(summary.receivedAt.formatted(date: .abbreviated, time: .shortened))")
+                    .font(.caption2).foregroundStyle(text.opacity(0.7))
             }
         }
         .listRowBackground(Color(css: d?.backgroundColor))
+    }
+
+    /// The credential's format, as a holder would name it.
+    static func format(_ c: CredentialSummary) -> String {
+        switch c.format {
+        case "dc+sd-jwt": "SD-JWT VC"
+        case "mso_mdoc": "mdoc"
+        default: c.format
+        }
     }
 
     static func title(_ c: CredentialSummary) -> String {
