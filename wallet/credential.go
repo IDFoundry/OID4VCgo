@@ -165,7 +165,10 @@ func (w *Wallet) RequestCredential(
 	if err != nil {
 		return CredentialResult{}, fmt.Errorf("wallet: request credential: marshal request: %w", err)
 	}
-	return w.postCredentialResult(ctx, resource, endpoint, body, req.RequestEncryption, respDecryptKey, responseZip(req.ResponseEncryption), "request credential")
+	return w.postCredentialResult(ctx, resource, endpoint, credentialPost{
+		body: body, reqEnc: req.RequestEncryption, respDecryptKey: respDecryptKey, respZip: responseZip(req.ResponseEncryption),
+		errPrefix: "request credential",
+	})
 }
 
 // buildCredentialProofs builds req's own "proofs" object: one jwt-type

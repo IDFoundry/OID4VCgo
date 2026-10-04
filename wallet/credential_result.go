@@ -86,6 +86,18 @@ func parseCredentialResult(statusCode int, body []byte) (CredentialResult, error
 	}
 }
 
+// credentialPost is one Credential or Deferred Credential Request for
+// postCredentialResult: its JSON body, how to encrypt it and decrypt the
+// Response (§10), and the operation its errors name (e.g. "request
+// credential").
+type credentialPost struct {
+	body           []byte
+	reqEnc         *RequestEncryption
+	respDecryptKey *ecdsa.PrivateKey
+	respZip        jwe.Zip
+	errPrefix      string
+}
+
 // postCredentialResult POSTs an already-marshaled JSON body to
 // endpoint as a sender-constrained request via resource, and parses
 // the resulting Credential Response or Deferred Credential Response —
@@ -94,20 +106,19 @@ func parseCredentialResult(statusCode int, body []byte) (CredentialResult, error
 // outbound body differs). errPrefix names the caller in every wrapped
 // error (e.g. "request credential").
 //
-// reqEnc/respDecryptKey implement §10 for both callers identically:
-// reqEnc (nil unless the caller set CredentialRequest.RequestEncryption
-// / DeferredCredentialRequest.RequestEncryption) encrypts body before
+// post.reqEnc/post.respDecryptKey implement §10 for both callers
+// identically: reqEnc (nil unless the caller set
+// CredentialRequest.RequestEncryption /
+// DeferredCredentialRequest.RequestEncryption) encrypts post.body before
 // it's sent; respDecryptKey (nil unless the caller set
 // .ResponseEncryption, via prepareResponseEncryption) decrypts the
 // Response — a Credential Error Response is never encrypted (§8.3.1.2's
 // own "Credential Error Responses are never encrypted, even if a valid
 // Credential Response would have been"), so decryption is only
 // attempted for a 200/202 status.
-func (w *Wallet) postCredentialResult(
-	ctx context.Context, resource ProtectedResourceClient, endpoint fapi.URL, body []byte,
-	reqEnc *RequestEncryption, respDecryptKey *ecdsa.PrivateKey, respZip jwe.Zip, errPrefix string,
-) (CredentialResult, error) {
-	outBody, contentType, err := encryptRequestBody(body, reqEnc)
+func (w *Wallet) postCredentialResult(ctx context.Context, resource ProtectedResourceClient, endpoint fapi.URL, post credentialPost) (CredentialResult, error) {
+	errPrefix := post.errPrefix
+	outBody, contentType, err := encryptRequestBody(post.body, post.reqEnc)
 	if err != nil {
 		return CredentialResult{}, fmt.Errorf("wallet: %s: %w", errPrefix, err)
 	}
@@ -131,7 +142,7 @@ func (w *Wallet) postCredentialResult(
 	}
 
 	if res.StatusCode == http.StatusOK || res.StatusCode == http.StatusAccepted {
-		respBody, err = decryptResponseBody(respBody, res.Header.Get("Content-Type"), respDecryptKey, respZip)
+		respBody, err = decryptResponseBody(respBody, res.Header.Get("Content-Type"), post.respDecryptKey, post.respZip)
 		if err != nil {
 			return CredentialResult{}, fmt.Errorf("wallet: %s: %w", errPrefix, err)
 		}
