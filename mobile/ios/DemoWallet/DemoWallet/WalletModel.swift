@@ -16,6 +16,9 @@ final class WalletModel {
         case receiving
         case done(String)
         case failed(String)
+        /// A presentation request from a verifier the wallet doesn't
+        /// trust was refused unopened.
+        case untrustedVerifier
     }
 
     private(set) var credentials: [CredentialSummary] = []
@@ -200,6 +203,8 @@ final class WalletModel {
             selected = (try? await p.defaultSelection()) ?? [:]
             requestPhase = .shown
             await updatePreview()
+        } catch let e as WalletError where e.code == .untrustedVerifier {
+            phase = .untrustedVerifier
         } catch {
             phase = .failed(Self.describe(error))
         }

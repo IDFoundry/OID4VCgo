@@ -82,6 +82,8 @@ struct ContentView: View {
             Section { Text(text).accessibilityIdentifier("status") }
         case .failed(let text):
             Section { Text(text).foregroundStyle(.red).accessibilityIdentifier("status") }
+        case .untrustedVerifier:
+            UntrustedVerifierSection()
         default:
             EmptyView()
         }
@@ -388,6 +390,35 @@ struct HolderHeader: View {
         } else {
             Text("Credentials")
         }
+    }
+}
+
+/// A refused presentation request from a verifier the wallet doesn't
+/// trust: prominent, since that's the point, with what happened under
+/// Details. Nothing about the request is shown — its contents, and the
+/// name it claims, are only trustworthy if its signature is, which is
+/// what failed.
+struct UntrustedVerifierSection: View {
+    var body: some View {
+        Section {
+            VStack(alignment: .leading, spacing: 10) {
+                Label("Verifier not trusted", systemImage: "exclamationmark.shield.fill")
+                    .font(.title3.bold()).foregroundStyle(.red)
+                    .accessibilityIdentifier("untrusted-verifier")
+                Text("The identity of this verifier couldn't be established, so your wallet didn't open its request.")
+                Text("Nothing was shared.").bold()
+                    .accessibilityIdentifier("nothing-shared")
+            }
+            .padding(.vertical, 4)
+            DisclosureGroup("Details") {
+                LabeledContent("Verifier authentication", value: "Failed")
+                LabeledContent("Request signed by", value: "A certificate your wallet doesn't recognise")
+                LabeledContent("Request opened", value: "No")
+                LabeledContent("Credentials shared", value: "None")
+            }
+            .accessibilityIdentifier("untrusted-details")
+        }
+        .listRowBackground(Color.red.opacity(0.08))
     }
 }
 
