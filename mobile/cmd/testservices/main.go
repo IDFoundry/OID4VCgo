@@ -88,7 +88,7 @@ func run(addr, redirect, certOut string) error {
 	config := map[string]any{
 		"wallet": map[string]any{
 			"client_id": walletflowtest.ClientID, "redirect_uri": redirect, "development": true, "request_refresh": true,
-			"issuer_roots":   string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: env.IssuerCA.Raw})),
+			"issuer_roots": string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: env.IssuerCA.Raw})),
 			"verifier_roots": string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: v.CA.Raw})) +
 				string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: rv.CA.Raw})),
 			"registrar_roots": string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: env.RegistrarCA.Raw})),

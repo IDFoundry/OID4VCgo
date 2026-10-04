@@ -60,7 +60,7 @@ func (e *TestEnv) Close() {
 func (e *TestEnv) ConfigJSON() string {
 	text, _ := marshal(config{
 		ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI,
-		IssuerRoots:   string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: e.env.IssuerCA.Raw})),
+		IssuerRoots: string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: e.env.IssuerCA.Raw})),
 		VerifierRoots: string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: e.v.CA.Raw})) +
 			string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: e.rv.CA.Raw})),
 		RegistrarRoots: string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: e.env.RegistrarCA.Raw})),
