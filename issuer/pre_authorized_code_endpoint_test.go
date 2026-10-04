@@ -303,13 +303,37 @@ func TestExchangePreAuthorizedCode_PassesSubjectThrough(t *testing.T) {
 		Scopes: []string{"identity_credential"}, ExpiresAt: f.now.Add(time.Minute),
 		Subject: "txn-8fd2",
 	})
-	if _, err := f.iss.ExchangePreAuthorizedCode(context.Background(), issuer.ExchangePreAuthorizedCodeRequest{
+	result, err := f.iss.ExchangePreAuthorizedCode(context.Background(), issuer.ExchangePreAuthorizedCodeRequest{
 		PreAuthorizedCode: "code-1", DPoPProof: f.validProof(t), TokenEndpoint: testTokenEndpointURL(t),
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatalf("ExchangePreAuthorizedCode: %v", err)
 	}
 	if got := f.tokens.lastParams.Subject; got != "txn-8fd2" {
 		t.Errorf("AccessTokenParams.Subject = %q, want %q", got, "txn-8fd2")
+	}
+	// What a refresh token for the grant would be issued for.
+	if result.Subject != "txn-8fd2" || len(result.Scope) != 1 || result.Scope[0] != "identity_credential" {
+		t.Errorf("result Subject %q, Scope %v; want the record's", result.Subject, result.Scope)
+	}
+}
+
+// A refresh token the caller sets is the Token Response's
+// refresh_token; none is written when it's unset.
+func TestExchangePreAuthorizedCodeResult_WriteJSON_RefreshToken(t *testing.T) {
+	for _, tc := range []struct{ token, want string }{{"rt-1", "rt-1"}, {"", ""}} {
+		rec := httptest.NewRecorder()
+		issuer.ExchangePreAuthorizedCodeResult{
+			AccessToken: "tok", TokenType: "DPoP", ExpiresIn: time.Minute, RefreshToken: fapi.NewSecret(tc.token),
+		}.WriteJSON(rec)
+		var body map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		got, present := body["refresh_token"]
+		if tc.want == "" && present || tc.want != "" && got != tc.want {
+			t.Errorf("refresh token %q: body = %s", tc.token, rec.Body.String())
+		}
 	}
 }
 
