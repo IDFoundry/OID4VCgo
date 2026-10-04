@@ -141,7 +141,7 @@ type Env struct {
 
 	mu            sync.Mutex
 	grantIDs      []string // every authorization code grant's, for RevokeGrants
-	revocations   int      // refresh tokens revoked at /revoke
+	revocations   int      // refresh tokens the Authorization Server revoked
 	revoked       []uint8  // the status list, one entry per credential issued
 	publisher     *statuslist.Publisher
 	closers       []func()
@@ -196,6 +196,7 @@ func New(opts Options) (env *Env, err error) {
 		Grants: memstore.NewGrantStore(), Replay: memstore.NewReplayStore(), ClientKeys: clientKeys, Keys: accessKeys,
 		AccessTokens: e.accessTokens, Revocation: memstore.NewRevocationStore(), Clock: server.SystemClock{}, Random: rand.Reader,
 		ClientCertificateTrust: server.NoClientCertificateChainTrust{},
+		Audit:                  revocationAudit{e},
 		AttesterTrust: server.X5CAttesterChain{
 			TrustAnchors:  server.StaticAttesterTrustAnchors{Roots: e.Provider.Roots},
 			IssuerBinding: server.AttesterIssuerInCertificate,
@@ -444,14 +445,26 @@ func (e *Env) handleRevoke(w http.ResponseWriter, r *http.Request) {
 		server.WriteError(w, err)
 		return
 	}
-	e.mu.Lock()
-	e.revocations++
-	e.mu.Unlock()
 	w.WriteHeader(http.StatusOK)
 }
 
-// Revocations is how many token revocation requests the Authorization
-// Server has answered with success.
+// revocationAudit counts the refresh tokens the Authorization Server
+// actually revoked: it answers 200 for one it didn't too (RFC 7009
+// §2.2), auditing that as "not revoked".
+type revocationAudit struct{ e *Env }
+
+func (a revocationAudit) Record(_ context.Context, ev server.AuditEvent) error {
+	if ev.Type == server.AuditEventRevokeToken && ev.Outcome == server.AuditOutcomeSuccess && ev.Description != "not revoked" {
+		a.e.mu.Lock()
+		a.e.revocations++
+		a.e.mu.Unlock()
+	}
+	return nil
+}
+
+// Revocations is how many refresh tokens the Authorization Server has
+// revoked: not counting requests it answered without revoking anything
+// (an unknown token, or another client's or installation's).
 func (e *Env) Revocations() int {
 	e.mu.Lock()
 	defer e.mu.Unlock()
