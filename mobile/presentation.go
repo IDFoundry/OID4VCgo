@@ -66,8 +66,16 @@ func (p *Presentation) Queries() string {
 		Queries        []queryJSON         `json:"queries"`
 		CredentialSets []credentialSetJSON `json:"credential_sets"`
 	}{result: result{ABIVersion}, Queries: []queryJSON{}, CredentialSets: []credentialSetJSON{}}
+	clientID := p.p.Verifier().ClientID
 	for _, q := range p.p.Queries() {
-		out.Queries = append(out.Queries, queryJSON{QueryID: q.ID, Multiple: q.Multiple, Credentials: summariesOf(q.Credentials)})
+		candidates := make([]credentialSummary, 0, len(q.Credentials))
+		for _, c := range q.Credentials {
+			s := summaryOf(c)
+			shown, linkable := c.ShownTo(clientID), p.p.Linkable(c.ID)
+			s.ShownToVerifier, s.LinkableHere = &shown, &linkable
+			candidates = append(candidates, s)
+		}
+		out.Queries = append(out.Queries, queryJSON{QueryID: q.ID, Multiple: q.Multiple, Credentials: candidates})
 	}
 	for _, cs := range p.p.CredentialSets() {
 		out.CredentialSets = append(out.CredentialSets, credentialSetJSON{Options: cs.Options, Required: cs.Required})

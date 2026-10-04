@@ -37,6 +37,18 @@ struct ContentView: View {
                 if let c = model.credentials.first(where: { $0.id == id }) { CredentialView(summary: c) }
             }
             .toolbar {
+                ToolbarItemGroup(placement: .topBarLeading) {
+                    Menu {
+                        Picker("Copies", selection: Binding(get: { model.copyPolicy }, set: { model.setCopyPolicy($0) })) {
+                            Text("New copy for every presentation").tag(WalletConfiguration.CopyPolicy.perPresentation)
+                            Text("Same copy for the same verifier").tag(WalletConfiguration.CopyPolicy.perVerifier)
+                        }
+                        .accessibilityIdentifier("copy-policy")
+                    } label: {
+                        Label("Settings", systemImage: "gearshape")
+                    }
+                    .accessibilityIdentifier("settings")
+                }
                 ToolbarItemGroup {
                     Button("Paste") {
                         if let text = UIPasteboard.general.string, let url = URL(string: text) { model.open(url) }
@@ -252,7 +264,8 @@ struct CredentialRow: View {
     /// How many fresh copies are left: each presentation uses one no
     /// Verifier has seen, so they can't be linked by the credential.
     static func copies(_ c: CredentialSummary) -> String? {
-        if c.copiesLeft == 0 { return "Every copy has been shared: Verifiers could link the next presentation" }
+        if c.linkable { return "Copies have been shown to several verifiers: they could link these presentations" }
+        if c.copiesLeft == 0 { return "Every copy has been shared: the next new verifier could link you with another" }
         guard c.copies > 1 else { return nil }
         return "\(c.copiesLeft) of \(c.copies) copies unused"
     }
@@ -378,6 +391,15 @@ struct RequestView: View {
                                             Text(CredentialRow.title(c))
                                             Text("Received \(c.receivedAt.formatted(date: .abbreviated, time: .shortened))")
                                                 .font(.caption).foregroundStyle(.secondary)
+                                            if c.linkableHere == true {
+                                                Text("Every copy has been shown elsewhere: this verifier and another could link you")
+                                                    .font(.caption).foregroundStyle(.orange)
+                                                    .accessibilityIdentifier("linkable-here")
+                                            } else if c.shownToVerifier == true {
+                                                Text("This verifier has seen this credential before")
+                                                    .font(.caption).foregroundStyle(.secondary)
+                                                    .accessibilityIdentifier("shown-before")
+                                            }
                                         }
                                     }
                                 }

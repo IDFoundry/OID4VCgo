@@ -176,6 +176,20 @@ func (p *Presentation) Verifier() Verifier {
 	return v
 }
 
+// Linkable reports whether presenting the credential id names to this
+// Verifier now, under Config.CopyPolicy, would hand it a copy another
+// Verifier has seen, so the two could link the holder: every copy has
+// been presented elsewhere. False for a credential not held.
+func (p *Presentation) Linkable(id string) bool {
+	c, ok := p.byID[id]
+	if !ok {
+		return false
+	}
+	verifier := VerifierHash(p.req.ClientID)
+	_, cp, _ := c.copyFor(p.w.cfg.CopyPolicy, verifier)
+	return slices.ContainsFunc(cp.ShownTo, func(h string) bool { return h != verifier })
+}
+
 // Queries returns the request's Credential Queries, in its order, each
 // with the held credentials that can answer it. None answerable means
 // the wallet can't answer: Decline.

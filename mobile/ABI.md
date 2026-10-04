@@ -142,7 +142,7 @@ The Swift package's adapter marks a `URLError` this way.
 {"client_id": "…", "redirect_uri": "…",
  "issuer_roots": "<PEM>", "verifier_roots": "<PEM>",
  "development": false, "locales": ["en-AU", "en"], "batch_size": 0,
- "request_refresh": false}
+ "request_refresh": false, "copy_policy": "per_presentation"}
 ```
 
 `client_id`, `redirect_uri`, `issuer_roots` and a provider are needed to
@@ -161,7 +161,17 @@ the pre-authorized code grant there's no scope to ask with: a refresh
 token the server issues anyway is kept.
 The refresh token is kept in the CredentialStore, as a record of
 `"kind": "grant"`, with the wallet instance key ID, the key every
-refresh must authenticate with again.
+refresh must authenticate with again. `copy_policy` is which copy of a
+credential a presentation uses (OpenID4VCI 1.0: "a unique Credential
+per presentation or per Verifier"). With `"per_presentation"`, the
+default, every presentation uses a copy no Verifier has seen, so not
+even one Verifier can link two presentations. With `"per_verifier"`, a
+Verifier is shown the copy it has seen before, and only a new Verifier
+an unused one: Verifiers can't link presentations to each other, but
+one can recognise a returning holder, and copies last longer. Each copy
+records the Verifiers it was shown to as hashes of their client_ids,
+never the client_ids. Once every copy has been presented, the one shown
+to the fewest Verifiers is reused.
 
 | Method | Result |
 |---|---|
@@ -195,6 +205,13 @@ A credential **summary** is `{"id", "credential_issuer",
   key, and `copies_left` how many no Verifier has seen. A presentation
   uses one of those, so presentations can't be linked by the
   credential. Once none is left, a copy is reused.
+- `linkable` is whether a copy has been presented to more than one
+  Verifier, so those Verifiers could link the holder's presentations.
+  Refreshing gives it copies no Verifier has seen.
+- `shown_to_verifier` and `linkable_here` are set only on a
+  presentation's candidates (`Queries`): whether the Verifier asking has
+  been shown this credential before, and whether presenting it now would
+  hand it a copy another Verifier has seen.
 - `refreshable` is whether its issuance kept a refresh token
   (`request_refresh`), so `RefreshCredential` can replace its copies.
   The Authorization Server may still refuse it (`reissue_required`).
@@ -256,6 +273,9 @@ unused copy is presented. A claim **path** is a JSON array of keys,
 indexes, and `null` for every element. Holder keys sign during
 `Respond`, so a key store requiring user presence prompts then. When
 `redirect_uri` is set, open it in the browser.
+
+ABI version 10 added `copy_policy`, each copy's Verifier record, and the
+summary's `linkable`, `shown_to_verifier` and `linkable_here`.
 
 ABI version 9 added `RefreshCredential`, `request_refresh`, the
 summary's `refreshable` and `reissue_required`.

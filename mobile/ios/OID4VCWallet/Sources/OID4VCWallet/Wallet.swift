@@ -26,9 +26,24 @@ public struct WalletConfiguration: Codable, Sendable {
     /// copies without the holder. The server must allow the wallet the
     /// `offline_access` scope, or the authorization fails.
     public var requestRefresh: Bool
+    /// Which copy of a credential a presentation uses.
+    public var copyPolicy: CopyPolicy
+
+    /// Which copy of a credential a presentation uses (OpenID4VCI 1.0: "a
+    /// unique Credential per presentation or per Verifier").
+    public enum CopyPolicy: String, Codable, Sendable, CaseIterable {
+        /// Every presentation uses a copy no Verifier has seen: not even
+        /// one Verifier can link two presentations. The default.
+        case perPresentation = "per_presentation"
+        /// A Verifier is shown the copy it has seen before, and only a new
+        /// Verifier an unused one: Verifiers can't link presentations to
+        /// each other, but one can recognise a returning holder.
+        case perVerifier = "per_verifier"
+    }
 
     public init(clientID: String, redirectURI: String, issuerRoots: String = "", verifierRoots: String = "", development: Bool = false,
-                locales: [String] = Locale.preferredLanguages, batchSize: Int = 0, requestRefresh: Bool = false) {
+                locales: [String] = Locale.preferredLanguages, batchSize: Int = 0, requestRefresh: Bool = false,
+                copyPolicy: CopyPolicy = .perPresentation) {
         self.clientID = clientID
         self.redirectURI = redirectURI
         self.issuerRoots = issuerRoots
@@ -37,12 +52,13 @@ public struct WalletConfiguration: Codable, Sendable {
         self.locales = locales
         self.batchSize = batchSize
         self.requestRefresh = requestRefresh
+        self.copyPolicy = copyPolicy
     }
 
     enum CodingKeys: String, CodingKey {
         case clientID = "client_id", redirectURI = "redirect_uri", issuerRoots = "issuer_roots"
         case verifierRoots = "verifier_roots", development, locales, batchSize = "batch_size"
-        case requestRefresh = "request_refresh"
+        case requestRefresh = "request_refresh", copyPolicy = "copy_policy"
     }
 
     public init(from decoder: Decoder) throws {
@@ -54,7 +70,8 @@ public struct WalletConfiguration: Codable, Sendable {
                   development: try c.decodeIfPresent(Bool.self, forKey: .development) ?? false,
                   locales: try c.decodeIfPresent([String].self, forKey: .locales) ?? Locale.preferredLanguages,
                   batchSize: try c.decodeIfPresent(Int.self, forKey: .batchSize) ?? 0,
-                  requestRefresh: try c.decodeIfPresent(Bool.self, forKey: .requestRefresh) ?? false)
+                  requestRefresh: try c.decodeIfPresent(Bool.self, forKey: .requestRefresh) ?? false,
+                  copyPolicy: try c.decodeIfPresent(CopyPolicy.self, forKey: .copyPolicy) ?? .perPresentation)
     }
 
     /// The scheme of `redirectURI`: the callback scheme an
@@ -143,6 +160,16 @@ public struct CredentialSummary: Decodable, Equatable, Sendable {
     /// Authorization Server may still refuse
     /// (`WalletError.Code.reissueRequired`).
     public let refreshable: Bool
+    /// Whether a copy has been presented to more than one Verifier, so
+    /// those Verifiers could link the holder's presentations. Refreshing
+    /// gives it copies no Verifier has seen.
+    public let linkable: Bool
+    /// Set only on a presentation's candidates (`Presentation.queries`):
+    /// whether the Verifier asking has been shown this credential before,
+    /// and whether presenting it now would hand it a copy another
+    /// Verifier has seen.
+    public let shownToVerifier: Bool?
+    public let linkableHere: Bool?
 
     /// Whether it has expired by `now`.
     public func isExpired(at now: Date = Date()) -> Bool { validUntil.map { $0 <= now } ?? false }
@@ -151,7 +178,8 @@ public struct CredentialSummary: Decodable, Equatable, Sendable {
         case id, format, vct, doctype, display, status
         case credentialIssuer = "credential_issuer", configurationID = "configuration_id", receivedAt = "received_at"
         case holderKeyPresent = "holder_key_present", validUntil = "valid_until"
-        case copies, copiesLeft = "copies_left", refreshable
+        case copies, copiesLeft = "copies_left", refreshable, linkable
+        case shownToVerifier = "shown_to_verifier", linkableHere = "linkable_here"
     }
 }
 

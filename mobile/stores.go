@@ -84,9 +84,10 @@ type credentialRecord struct {
 
 // copyJSON is a walletflow.CredentialCopy.
 type copyJSON struct {
-	Credential  string `json:"credential"`
-	HolderKeyID string `json:"holder_key_id"`
-	Presented   bool   `json:"presented,omitempty"`
+	Credential  string   `json:"credential"`
+	HolderKeyID string   `json:"holder_key_id"`
+	Presented   bool     `json:"presented,omitempty"`
+	ShownTo     []string `json:"shown_to,omitempty"`
 }
 
 // logoJSON is a walletflow.Logo.
@@ -159,7 +160,7 @@ func recordOf(c walletflow.StoredCredential) (credentialRecord, error) {
 		Display: displayOf(c.Display), StatusListCWT: c.StatusListCWT, GrantID: c.GrantID,
 	}
 	for _, cp := range c.Copies {
-		r.Copies = append(r.Copies, copyJSON{Credential: cp.Credential, HolderKeyID: cp.HolderKeyID, Presented: cp.Presented})
+		r.Copies = append(r.Copies, copyJSON{Credential: cp.Credential, HolderKeyID: cp.HolderKeyID, Presented: cp.Presented, ShownTo: cp.ShownTo})
 	}
 	if !c.ValidUntil.IsZero() {
 		r.ValidUntil = &c.ValidUntil
@@ -187,7 +188,7 @@ func (r credentialRecord) stored() (walletflow.StoredCredential, error) {
 		Display: r.Display.display(), StatusListCWT: r.StatusListCWT, GrantID: r.GrantID,
 	}
 	for _, cp := range r.Copies {
-		c.Copies = append(c.Copies, walletflow.CredentialCopy{Credential: cp.Credential, HolderKeyID: cp.HolderKeyID, Presented: cp.Presented})
+		c.Copies = append(c.Copies, walletflow.CredentialCopy{Credential: cp.Credential, HolderKeyID: cp.HolderKeyID, Presented: cp.Presented, ShownTo: cp.ShownTo})
 	}
 	if r.ValidUntil != nil {
 		c.ValidUntil = *r.ValidUntil
@@ -233,6 +234,17 @@ type credentialSummary struct {
 	// copies without the holder. The Authorization Server may still
 	// refuse it (reissue_required).
 	Refreshable bool `json:"refreshable"`
+	// Linkable is whether a copy has been presented to more than one
+	// Verifier, so those Verifiers could link the holder's presentations
+	// (walletflow.StoredCredential.Linkable). Refreshing gives it copies
+	// no Verifier has seen.
+	Linkable bool `json:"linkable"`
+	// ShownToVerifier and LinkableHere, set only for a presentation's
+	// candidates (Presentation.Queries): whether the Verifier asking has
+	// been shown this credential before, and whether presenting it now
+	// would hand it a copy another Verifier has seen.
+	ShownToVerifier *bool `json:"shown_to_verifier,omitempty"`
+	LinkableHere    *bool `json:"linkable_here,omitempty"`
 	// HolderKeyPresent is whether the key store still holds the
 	// credential's key; without it the credential can't be presented
 	// (restored from a backup to another device, say). Set only by
@@ -244,7 +256,7 @@ func summaryOf(c walletflow.StoredCredential) credentialSummary {
 	s := credentialSummary{
 		ID: c.ID, CredentialIssuer: c.CredentialIssuer, ConfigurationID: c.ConfigurationID, Format: c.Format,
 		VCT: c.VCT, DocType: c.DocType, ReceivedAt: c.ReceivedAt, Display: displayOf(c.Display),
-		Copies: len(c.AllCopies()), CopiesLeft: c.CopiesLeft(), Refreshable: c.GrantID != "",
+		Copies: len(c.AllCopies()), CopiesLeft: c.CopiesLeft(), Refreshable: c.GrantID != "", Linkable: c.Linkable(),
 	}
 	if !c.ValidUntil.IsZero() {
 		s.ValidUntil = &c.ValidUntil

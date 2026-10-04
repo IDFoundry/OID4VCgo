@@ -508,6 +508,7 @@ func TestNewWallet_RefusesBadConfiguration(t *testing.T) {
 		"not JSON":         "{",
 		"bad issuer roots": `{"issuer_roots": "not PEM"}`,
 		"bad verifier":     `{"verifier_roots": "not PEM"}`,
+		"bad copy policy":  `{"copy_policy": "sometimes"}`,
 	} {
 		if _, err := NewWallet(cfg, ks, cs, nil); code(err) != CodeInvalidInput {
 			t.Errorf("%s: %v", name, err)
@@ -773,5 +774,70 @@ func TestDeferredStore_KeepsGrantAndReplaces(t *testing.T) {
 	got, err := s.ListDeferred(ctx)
 	if err != nil || len(got) != 1 || got[0].GrantID != "g" || got[0].Replaces != "old" {
 		t.Errorf("ListDeferred = %+v, %v", got, err)
+	}
+}
+
+// Per Verifier, the same Verifier is shown the same copy again, and its
+// candidates say it has seen the credential; a record keeps that
+// across a relaunch.
+func TestSessions_CopyPolicyPerVerifier(t *testing.T) {
+	env, err := StartBatchTestEnv(false, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(env.Close)
+	var cfg map[string]any
+	if err := json.Unmarshal([]byte(env.ConfigJSON()), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	cfg["copy_policy"] = "per_verifier"
+	raw, _ := json.Marshal(cfg)
+	h := harness{env: env, keys: newGoKeyStore(), creds: newGoCredentialStore()}
+	if h.w, err = NewWallet(string(raw), h.keys, h.creds, env.Provider()); err != nil {
+		t.Fatal(err)
+	}
+	var sdjwt string
+	for _, c := range h.receive(t) {
+		if c.Format == "dc+sd-jwt" {
+			sdjwt = c.ID
+		}
+	}
+	type candidate struct {
+		ShownToVerifier *bool `json:"shown_to_verifier"`
+		LinkableHere    *bool `json:"linkable_here"`
+	}
+	present := func(w *Wallet) candidate {
+		req := decode[struct{ ID, Link string }](t, mustText(t)(h.env.Request("dc+sd-jwt")))
+		p, err := w.StartPresentation(NewOperation(0), req.Link)
+		if err != nil {
+			t.Fatal(err)
+		}
+		q := decode[struct {
+			Queries []struct{ Credentials []candidate }
+		}](t, p.Queries())
+		if _, err := p.Respond(NewOperation(0), `{"pid":["`+sdjwt+`"]}`); err != nil {
+			t.Fatal(err)
+		}
+		return q.Queries[0].Credentials[0]
+	}
+	if c := present(h.w); c.ShownToVerifier == nil || *c.ShownToVerifier || c.LinkableHere == nil || *c.LinkableHere {
+		t.Errorf("first presentation's candidate = %+v; want not shown, not linkable", c)
+	}
+	relaunched, err := NewWallet(string(raw), h.keys, h.creds, env.Provider())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c := present(relaunched); c.ShownToVerifier == nil || !*c.ShownToVerifier || *c.LinkableHere {
+		t.Errorf("second presentation's candidate = %+v; want shown to this Verifier, not linkable", c)
+	}
+	type summary struct {
+		ID         string
+		CopiesLeft int  `json:"copies_left"`
+		Linkable   bool `json:"linkable"`
+	}
+	for _, c := range decode[struct{ Credentials []summary }](t, mustText(t)(relaunched.Credentials())).Credentials {
+		if c.ID == sdjwt && (c.CopiesLeft != 2 || c.Linkable) {
+			t.Errorf("after two presentations to one Verifier: %+v; want 2 copies left, not linkable", c)
+		}
 	}
 }

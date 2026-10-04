@@ -95,6 +95,14 @@ func (c StoredCredential) ShownTo(clientID string) bool {
 	return slices.ContainsFunc(c.AllCopies(), func(cp CredentialCopy) bool { return slices.Contains(cp.ShownTo, h) })
 }
 
+// Linkable reports whether presentations of c can already be linked: a
+// copy has been presented to more than one Verifier, so those Verifiers
+// hold the same credential. Refreshing (Wallet.RefreshCredential) gives
+// it copies no Verifier has seen.
+func (c StoredCredential) Linkable() bool {
+	return slices.ContainsFunc(c.AllCopies(), func(cp CredentialCopy) bool { return len(cp.ShownTo) > 1 })
+}
+
 // copyFor is the copy to present to the Verifier verifierHash names
 // under policy, and whether it's one that Verifier has seen already.
 // Per Verifier, that's the copy it has seen, if any; otherwise, as per
