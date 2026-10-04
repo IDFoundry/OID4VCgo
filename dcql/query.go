@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"slices"
 )
 
 // idPattern is the character set §6.1 ("id" in a Credential Query) and
@@ -269,9 +270,12 @@ func (c CredentialSetQuery) Validate(knownIDs map[string]bool) error {
 		if len(opt) == 0 {
 			return fmt.Errorf("dcql: credential set query: options[%d] must be non-empty", i)
 		}
-		for _, id := range opt {
+		for j, id := range opt {
 			if !knownIDs[id] {
 				return fmt.Errorf("dcql: credential set query: options[%d] references unknown credential id %q", i, id)
+			}
+			if slices.Contains(opt[:j], id) {
+				return fmt.Errorf("dcql: credential set query: options[%d] lists credential id %q twice", i, id)
 			}
 		}
 	}

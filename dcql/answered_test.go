@@ -16,6 +16,14 @@ func TestCheckAnswered(t *testing.T) {
 	plain := dcql.Query{Credentials: queries}
 	alternatives := dcql.Query{Credentials: queries, CredentialSets: []dcql.CredentialSetQuery{{Options: [][]string{{"a"}, {"b"}}}}}
 	nested := dcql.Query{Credentials: queries, CredentialSets: []dcql.CredentialSetQuery{{Options: [][]string{{"a"}, {"a", "b"}}}}}
+	// Sets sharing a query: each takes one of its options, and a query
+	// in two sets counts for both.
+	shared := dcql.Query{Credentials: queries, CredentialSets: []dcql.CredentialSetQuery{
+		{Options: [][]string{{"a"}, {"b"}}}, {Options: [][]string{{"b"}}},
+	}}
+	sharedPair := dcql.Query{Credentials: queries, CredentialSets: []dcql.CredentialSetQuery{
+		{Options: [][]string{{"a", "b"}}}, {Options: [][]string{{"a"}, {"b"}}},
+	}}
 	withOptional := dcql.Query{Credentials: queries, CredentialSets: []dcql.CredentialSetQuery{
 		{Options: [][]string{{"a"}}}, {Required: &optional, Options: [][]string{{"b", "c"}}},
 	}}
@@ -37,6 +45,10 @@ func TestCheckAnswered(t *testing.T) {
 		{"an optional set left out", withOptional, []string{"a"}, ""},
 		{"an optional set answered", withOptional, []string{"a", "b", "c"}, ""},
 		{"an optional set's option in part", withOptional, []string{"a", "b"}, `"b" is answered but`},
+		{"a shared query answering both sets", shared, []string{"b"}, ""},
+		{"each set its own option", shared, []string{"a", "b"}, ""},
+		{"a shared query, the other set its own", sharedPair, []string{"a", "b"}, ""},
+		{"a shared set left unanswered", shared, []string{"a"}, "credential_sets[1] is required"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if err := tc.query.Validate(); err != nil {
@@ -54,5 +66,16 @@ func TestCheckAnswered(t *testing.T) {
 				t.Errorf("CheckAnswered = %v, want an error containing %q", err, tc.wantErr)
 			}
 		})
+	}
+}
+
+// An option listing a credential query twice isn't valid.
+func TestCredentialSetQuery_RejectsDuplicateIDs(t *testing.T) {
+	q := dcql.Query{
+		Credentials:    []dcql.CredentialQuery{{ID: "a", Format: "dc+sd-jwt", Meta: mustSDJWTVCMeta(t, "urn:example")}},
+		CredentialSets: []dcql.CredentialSetQuery{{Options: [][]string{{"a", "a"}}}},
+	}
+	if err := q.Validate(); err == nil || !strings.Contains(err.Error(), "twice") {
+		t.Errorf("Validate = %v, want the duplicate refused", err)
 	}
 }

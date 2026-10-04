@@ -606,3 +606,22 @@ func TestVerifyResponseCredentialSetsNestedOptions(t *testing.T) {
 		t.Fatalf("VerifyResponse = %+v, %v; want both credentials", result, err)
 	}
 }
+
+// TestVerifyResponseCredentialSetsSharedQuery: a query two Credential
+// Set Queries share counts for both, so each set answering its own
+// option is one option of each.
+func TestVerifyResponseCredentialSetsSharedQuery(t *testing.T) {
+	query := dcql.Query{
+		Credentials: twoCredentialQueries(t, "primary", "secondary"),
+		CredentialSets: []dcql.CredentialSetQuery{
+			{Options: [][]string{{"primary"}, {"secondary"}}},
+			{Options: [][]string{{"secondary"}}},
+		},
+	}
+	result, err := credentialSetsRoundTrip(t, query, func(compact string) map[string][]string {
+		return map[string][]string{"primary": {compact}, "secondary": {compact}}
+	})
+	if err != nil || len(result.Credentials) != 2 {
+		t.Fatalf("VerifyResponse = %+v, %v; want both", result, err)
+	}
+}
