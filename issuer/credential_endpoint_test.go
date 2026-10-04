@@ -785,6 +785,33 @@ func TestRequestCredential_JWTProof_KidResolved(t *testing.T) {
 	}
 }
 
+// TestRequestCredential_ResolverErrorStaysInternal: a proof-key
+// resolver's own error — certificate subjects, a DID method's upstream
+// message — is the error's cause, never the Wallet-facing
+// error_description.
+func TestRequestCredential_ResolverErrorStaysInternal(t *testing.T) {
+	bindingKey := testP256Key(t)
+	secret := errors.New("CN=internal-ca.corp.example, upstream http://10.0.0.7/did failed")
+	f := newCredentialEndpointFixture(t, func(_ *issuer.Config, d *issuer.Dependencies) {
+		d.ProofBindingKeys = fixedProofBindingKeyResolver{err: secret}
+	})
+	nonce := f.issueNonce(t)
+	proof, err := jose.Sign(jose.ES256, bindingKey, map[string]any{"typ": "openid4vci-proof+jwt", "kid": "did:example:wallet#key-1"},
+		[]byte(`{"aud":"`+testIssuer+`","iat":1,"nonce":"`+nonce+`"}`))
+	if err != nil {
+		t.Fatalf("jose.Sign: %v", err)
+	}
+	_, err = requestSDJWTWithProof(f, oid4vci.ProofTypeJWT, proof)
+	assertIssuerError(t, err, issuer.ErrorInvalidProof)
+	var ierr *issuer.Error
+	if errors.As(err, &ierr) && strings.Contains(ierr.PublicDescription(), "internal-ca") {
+		t.Errorf("error_description = %q leaks the resolver's error", ierr.PublicDescription())
+	}
+	if !errors.Is(err, secret) {
+		t.Error("the resolver's error isn't kept as the cause")
+	}
+}
+
 func TestRequestCredential_JWTProof_X5CResolved(t *testing.T) {
 	bindingKey := testP256Key(t)
 	f := newCredentialEndpointFixture(t, func(_ *issuer.Config, d *issuer.Dependencies) {

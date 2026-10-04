@@ -21,7 +21,7 @@ func TestPreAuthorizedCodeStore_IssueThenConsume(t *testing.T) {
 		t.Fatalf("Issue: %v", err)
 	}
 
-	record, _, err := s.Consume(ctx, "code-1", "493536")
+	record, _, err := s.Consume(ctx, "code-1", "493536", 0)
 	if err != nil {
 		t.Fatalf("Consume: %v", err)
 	}
@@ -42,17 +42,17 @@ func TestPreAuthorizedCodeStore_ConsumeIsSingleUse(t *testing.T) {
 	if err := s.Issue(ctx, "code-1", issuer.PreAuthorizedCodeRecord{ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
 		t.Fatalf("Issue: %v", err)
 	}
-	if _, _, err := s.Consume(ctx, "code-1", ""); err != nil {
+	if _, _, err := s.Consume(ctx, "code-1", "", 0); err != nil {
 		t.Fatalf("Consume (first): %v", err)
 	}
-	if _, _, err := s.Consume(ctx, "code-1", ""); err == nil {
+	if _, _, err := s.Consume(ctx, "code-1", "", 0); err == nil {
 		t.Fatalf("Consume (second) = nil error, want error")
 	}
 }
 
 func TestPreAuthorizedCodeStore_ConsumeRejectsUnknownCode(t *testing.T) {
 	s := storage.NewPreAuthorizedCodeStore()
-	if _, _, err := s.Consume(context.Background(), "never-issued", ""); err == nil {
+	if _, _, err := s.Consume(context.Background(), "never-issued", "", 0); err == nil {
 		t.Fatalf("Consume = nil error, want error")
 	}
 }
@@ -74,12 +74,12 @@ func TestPreAuthorizedCodeStore_WrongTxCodeDoesNotConsume(t *testing.T) {
 		t.Fatalf("Issue: %v", err)
 	}
 
-	if _, _, err := s.Consume(ctx, "code-1", "wrong-pin"); !errors.Is(err, issuer.ErrWrongTxCode) {
+	if _, _, err := s.Consume(ctx, "code-1", "wrong-pin", 0); !errors.Is(err, issuer.ErrWrongTxCode) {
 		t.Fatalf("Consume (wrong pin) error = %v, want issuer.ErrWrongTxCode", err)
 	}
 
 	// The code must still be usable — a wrong guess didn't consume it.
-	record, _, err := s.Consume(ctx, "code-1", "493536")
+	record, _, err := s.Consume(ctx, "code-1", "493536", 0)
 	if err != nil {
 		t.Fatalf("Consume (correct pin, after a wrong guess): %v", err)
 	}
@@ -88,7 +88,7 @@ func TestPreAuthorizedCodeStore_WrongTxCodeDoesNotConsume(t *testing.T) {
 	}
 
 	// Now it really is consumed.
-	if _, _, err := s.Consume(ctx, "code-1", "493536"); err == nil {
+	if _, _, err := s.Consume(ctx, "code-1", "493536", 0); err == nil {
 		t.Fatalf("Consume (after real consumption) = nil error, want error")
 	}
 }
@@ -111,7 +111,7 @@ func TestPreAuthorizedCodeStoreDoesNotAliasCallerOrInternalState(t *testing.T) {
 	}
 	scopes[0] = "tampered-by-caller-after-issue"
 
-	record, _, err := s.Consume(ctx, "code-1", "")
+	record, _, err := s.Consume(ctx, "code-1", "", 0)
 	if err != nil {
 		t.Fatalf("Consume: %v", err)
 	}
@@ -125,7 +125,7 @@ func TestPreAuthorizedCodeStoreDoesNotAliasCallerOrInternalState(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Issue (code-2): %v", err)
 	}
-	second, _, err := s.Consume(ctx, "code-2", "")
+	second, _, err := s.Consume(ctx, "code-2", "", 0)
 	if err != nil {
 		t.Fatalf("Consume (code-2): %v", err)
 	}

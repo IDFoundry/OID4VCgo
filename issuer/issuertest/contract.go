@@ -187,6 +187,7 @@ func TestPreAuthorizedCodeStoreContract(t *testing.T, factory func() issuer.PreA
 	t.Run("InvalidateUnknownCodeIsNoop", func(t *testing.T) { testPACInvalidateUnknownCodeIsNoop(t, factory) })
 	t.Run("ConcurrentWrongAttemptsAreCountedExactly", func(t *testing.T) { testPACConcurrentWrongAttemptsAreCountedExactly(t, factory) })
 	t.Run("ConcurrentConsumeHasExactlyOneWinner", func(t *testing.T) { testPACConcurrentConsumeHasExactlyOneWinner(t, factory) })
+	t.Run("ConcurrentGuessesAreBoundedByMaxAttempts", func(t *testing.T) { testPACConcurrentGuessesAreBounded(t, factory) })
 }
 
 // The testPAC* helpers below are TestPreAuthorizedCodeStoreContract's
@@ -207,7 +208,7 @@ func testPACIssueAndConsumeNoTxCode(t *testing.T, factory func() issuer.PreAutho
 	if err := store.Issue(ctx, "code1", want); err != nil {
 		t.Fatalf(msgIssueFailed, err)
 	}
-	got, _, err := store.Consume(ctx, "code1", "")
+	got, _, err := store.Consume(ctx, "code1", "", 0)
 	if err != nil {
 		t.Fatalf(msgConsumeFailed, err)
 	}
@@ -229,10 +230,10 @@ func testPACConsumeIsSingleUse(t *testing.T, factory func() issuer.PreAuthorized
 	if err := store.Issue(ctx, "code1", issuer.PreAuthorizedCodeRecord{ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
 		t.Fatalf(msgIssueFailed, err)
 	}
-	if _, _, err := store.Consume(ctx, "code1", ""); err != nil {
+	if _, _, err := store.Consume(ctx, "code1", "", 0); err != nil {
 		t.Fatalf("first Consume: %v", err)
 	}
-	if _, _, err := store.Consume(ctx, "code1", ""); err == nil {
+	if _, _, err := store.Consume(ctx, "code1", "", 0); err == nil {
 		t.Error("second Consume = nil error, want error (code already consumed)")
 	}
 }
@@ -240,7 +241,7 @@ func testPACConsumeIsSingleUse(t *testing.T, factory func() issuer.PreAuthorized
 func testPACConsumeUnknownFails(t *testing.T, factory func() issuer.PreAuthorizedCodeStore) {
 	t.Helper()
 	store := factory()
-	if _, _, err := store.Consume(context.Background(), nonceNeverIssued, ""); err == nil {
+	if _, _, err := store.Consume(context.Background(), nonceNeverIssued, "", 0); err == nil {
 		t.Error("Consume = nil error, want error (unknown code)")
 	}
 }
@@ -252,12 +253,12 @@ func testPACWrongTxCodeLeavesCodeConsumable(t *testing.T, factory func() issuer.
 	if err := store.Issue(ctx, "code1", issuer.PreAuthorizedCodeRecord{TxCode: "1234", ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
 		t.Fatalf(msgIssueFailed, err)
 	}
-	if _, _, err := store.Consume(ctx, "code1", "0000"); !errors.Is(err, issuer.ErrWrongTxCode) {
+	if _, _, err := store.Consume(ctx, "code1", "0000", 0); !errors.Is(err, issuer.ErrWrongTxCode) {
 		t.Fatalf("Consume with wrong tx_code: err = %v, want ErrWrongTxCode", err)
 	}
 	// The code must still be redeemable with the correct TxCode — a
 	// wrong guess must not have invalidated it.
-	if _, _, err := store.Consume(ctx, "code1", "1234"); err != nil {
+	if _, _, err := store.Consume(ctx, "code1", "1234", 0); err != nil {
 		t.Fatalf("Consume with correct tx_code after a wrong guess: %v", err)
 	}
 }
@@ -269,7 +270,7 @@ func testPACCorrectTxCodeConsumes(t *testing.T, factory func() issuer.PreAuthori
 	if err := store.Issue(ctx, "code1", issuer.PreAuthorizedCodeRecord{TxCode: "1234", ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
 		t.Fatalf(msgIssueFailed, err)
 	}
-	if _, _, err := store.Consume(ctx, "code1", "1234"); err != nil {
+	if _, _, err := store.Consume(ctx, "code1", "1234", 0); err != nil {
 		t.Fatalf(msgConsumeFailed, err)
 	}
 }
@@ -282,7 +283,7 @@ func testPACWrongTxCodeIncrementsAttempts(t *testing.T, factory func() issuer.Pr
 		t.Fatalf(msgIssueFailed, err)
 	}
 	for want := 1; want <= 3; want++ {
-		_, attempts, err := store.Consume(ctx, "code1", "0000")
+		_, attempts, err := store.Consume(ctx, "code1", "0000", 0)
 		if !errors.Is(err, issuer.ErrWrongTxCode) {
 			t.Fatalf("Consume with wrong tx_code (attempt %d): err = %v, want ErrWrongTxCode", want, err)
 		}
@@ -302,7 +303,7 @@ func testPACInvalidateThenConsumeFails(t *testing.T, factory func() issuer.PreAu
 	if err := store.Invalidate(ctx, "code1"); err != nil {
 		t.Fatalf("Invalidate: %v", err)
 	}
-	if _, _, err := store.Consume(ctx, "code1", ""); err == nil {
+	if _, _, err := store.Consume(ctx, "code1", "", 0); err == nil {
 		t.Error("Consume after Invalidate = nil error, want error")
 	}
 }
@@ -325,7 +326,7 @@ func testPACConcurrentWrongAttemptsAreCountedExactly(t *testing.T, factory func(
 	var mu sync.Mutex
 	seen := make(map[int]int, contractConcurrentAttempts)
 	runConcurrently(contractConcurrentAttempts, func() bool {
-		_, attempts, err := store.Consume(ctx, "code1", "0000")
+		_, attempts, err := store.Consume(ctx, "code1", "0000", 0)
 		if !errors.Is(err, issuer.ErrWrongTxCode) {
 			return false
 		}
@@ -347,6 +348,37 @@ func testPACConcurrentWrongAttemptsAreCountedExactly(t *testing.T, factory func(
 	}
 }
 
+// testPACConcurrentGuessesAreBounded: with maxAttempts set, at most
+// that many concurrent wrong guesses are compared — the rest are
+// refused as ErrTooManyTxCodeAttempts or find the code gone — and the
+// code is invalidated, so even the right tx_code then fails.
+func testPACConcurrentGuessesAreBounded(t *testing.T, factory func() issuer.PreAuthorizedCodeStore) {
+	t.Helper()
+	const maxAttempts = 3
+	store := factory()
+	ctx := context.Background()
+	if err := store.Issue(ctx, "code1", issuer.PreAuthorizedCodeRecord{TxCode: "1234", ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
+		t.Fatalf(msgIssueFailed, err)
+	}
+	var mu sync.Mutex
+	compared := 0
+	runConcurrently(contractConcurrentAttempts, func() bool {
+		_, _, err := store.Consume(ctx, "code1", "0000", maxAttempts)
+		if errors.Is(err, issuer.ErrWrongTxCode) {
+			mu.Lock()
+			compared++
+			mu.Unlock()
+		}
+		return err != nil
+	})
+	if compared > maxAttempts {
+		t.Errorf("%d concurrent wrong guesses were compared, want at most %d", compared, maxAttempts)
+	}
+	if _, _, err := store.Consume(ctx, "code1", "1234", maxAttempts); err == nil {
+		t.Error("the right tx_code redeemed the code after too many wrong guesses")
+	}
+}
+
 func testPACConcurrentConsumeHasExactlyOneWinner(t *testing.T, factory func() issuer.PreAuthorizedCodeStore) {
 	t.Helper()
 	store := factory()
@@ -355,7 +387,7 @@ func testPACConcurrentConsumeHasExactlyOneWinner(t *testing.T, factory func() is
 		t.Fatalf(msgIssueFailed, err)
 	}
 	wins := runConcurrently(contractConcurrentAttempts, func() bool {
-		_, _, err := store.Consume(ctx, "code1", "")
+		_, _, err := store.Consume(ctx, "code1", "", 0)
 		return err == nil
 	})
 	if wins != 1 {
