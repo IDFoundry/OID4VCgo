@@ -82,7 +82,43 @@ its PIN in the app.
 
 ## On a device
 
-Set `DEVELOPMENT_TEAM` in `project.yml`, regenerate the project, and run
-from Xcode. On a device, holder keys require Face ID or the passcode.
-They don't on the Simulator, which can't create a Secure Enclave key
-requiring user presence.
+On a device, holder keys require Face ID or the passcode. They don't on
+the Simulator, which can't create a Secure Enclave key requiring user
+presence.
+
+The phone can't reach services on this Mac's loopback address, so the
+passport-vdc demo's issuer, verifier and Wallet Provider go on public
+HTTPS URLs through a tunnel. The web wallet stays on this Mac: it has no
+login.
+
+1. Create a Cloudflare named tunnel, with a hostname for each of the
+   three, as `cloudflared.yml.example` shows. Copy it to `cloudflared.yml`
+   (ignored by git) with your tunnel and domain, and run it.
+2. Start the demo with those URLs, in its own state directory: the
+   credentials it issues name them. From `examples/passport-vdc`:
+
+   ```sh
+   go run ./cmd/demo -state .demo-state-device \
+     -issuer-url https://issuer.example.com \
+     -verifier-url https://verifier.example.com \
+     -provider-url https://provider.example.com
+   ```
+
+3. Install and launch the app on a connected iPhone, signed with your
+   team:
+
+   ```sh
+   TEAM_ID=ABCDE12345 PROVIDER_URL=https://provider.example.com \
+     STATE=../../../examples/passport-vdc/.demo-state-device ./run-device.sh
+   ```
+
+4. On the phone, open the issuer's page in Safari, upload a passport (or
+   use the sample), and open the offer link. For a presentation, open the
+   verifier's page on another screen and scan its QR code in the app.
+
+The demo's pages have no login, and the issuer takes passport uploads:
+run the tunnel only while you test, and stop it after.
+
+To run from Xcode instead, set `DEVELOPMENT_TEAM` in `project.yml` and
+regenerate the project; the app then needs `OID4VC_DEMO_CONFIG` in its
+scheme's environment once, as `run-device.sh` builds it.

@@ -1,0 +1,3 @@
+# A real tunnel configuration (cloudflared.yml.example): it names the
+# tunnel and its credentials file.
+cloudflared.yml
