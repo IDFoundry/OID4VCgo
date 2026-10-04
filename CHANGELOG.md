@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.30.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.29.0...v0.30.0) (2026-10-04)
+
+
+### ⚠ BREAKING CHANGES
+
+* **walletflow:** a walletflow.Wallet outside Development no longer reaches issuers, Authorization Servers or Verifiers at private, loopback or link-local addresses, or follows redirects, by default; set Dependencies.HTTP to a client that does if a deployment needs it. Presentation.Respond can return ErrLinkable.
+* **issuer:** issuer.PreAuthorizedCodeStore.Consume takes a fourth argument, maxAttempts (0 or less: no limit), and must invalidate the code and return issuer.ErrTooManyTxCodeAttempts, without comparing, once the code has maxAttempts wrong guesses, and invalidate it when a wrong guess reaches maxAttempts, atomically with the comparison. Custom store implementations need updating; issuertest's contract covers it.
+* **dcql:** Query.Validate (and so the verifier and wallet) refuses a dc+sd-jwt Credential Query without vct_values and an mso_mdoc one without doctype_value; NewSDJWTVCMeta and NewMdocMeta refuse empty input.
+* **registration:** Verify requires the registrar's iss to be a URI SAN of its signing certificate: reissue registrar certificates with one.
+* Certificate chains with a nil root pool, or a CA certificate as the leaf, no longer verify.
+* **verifier:** New under AssuranceProduction requires Dependencies.Random to be crypto/rand.Reader; Transactions.Begin requires a browser binding of at least 16 bytes; VerifiedCredential.StatusListRef returns an error for an mdoc whose status is only an identifier list.
+
+### Features
+
+* **verifier:** add ClientIDForCertificate, and check carried registrations ([d1afd1e](https://github.com/IDFoundry/OID4VCgo/commit/d1afd1edc8663cab6d5663e5887386cad5b4951b))
+
+
+### Bug Fixes
+
+* bound the demo's public state, and hide the offer code until revealed ([6441298](https://github.com/IDFoundry/OID4VCgo/commit/6441298018753ae95324d7d6f7ded7cca853554d))
+* harden trust anchors, DCQL types, registrar trust and status checks ([3d38e88](https://github.com/IDFoundry/OID4VCgo/commit/3d38e88271b37947de7a29cc93e30424afc5b2d9))
+* **issuer:** bound tx_code guesses atomically, and tighten the endpoints ([1f90d73](https://github.com/IDFoundry/OID4VCgo/commit/1f90d735d41065a5c7753c090d9947058238e011))
+* **walletflow:** recheck linkability at Respond, and harden the default client ([05f0c03](https://github.com/IDFoundry/OID4VCgo/commit/05f0c03fd9032b274bb9cce1ee711fde6ad76fc4))
+
 ## [0.29.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.28.0...v0.29.0) (2026-10-04)
 
 
