@@ -319,6 +319,10 @@ func TestCredentialOffer_WriteJSON(t *testing.T) {
 	if ct := rec.Header().Get("Content-Type"); ct != "application/json" {
 		t.Errorf("Content-Type = %q, want application/json", ct)
 	}
+	// An offer can carry a pre-authorized_code, a bearer secret.
+	if cc := rec.Header().Get("Cache-Control"); cc != "no-store" {
+		t.Errorf("Cache-Control = %q, want no-store", cc)
+	}
 	var got oid4vci.CredentialOffer
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("unmarshal response body: %v", err)

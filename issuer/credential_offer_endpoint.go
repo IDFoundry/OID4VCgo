@@ -157,8 +157,11 @@ func (iss *Issuer) GetCredentialOffer(ctx context.Context, reference string) (oi
 // application/json") — what an HTTP adapter's GET handler for
 // Config.CredentialOfferEndpoint calls after a successful
 // GetCredentialOffer. Must be called before anything else writes to w.
+// The response is marked Cache-Control: no-store: an offer can carry a
+// pre-authorized_code, a bearer secret no cache should keep.
 func WriteCredentialOfferJSON(w http.ResponseWriter, offer oid4vci.CredentialOffer) {
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(offer)
 }

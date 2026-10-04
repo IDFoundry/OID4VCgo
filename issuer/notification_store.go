@@ -12,6 +12,11 @@ type NotificationRecord struct {
 	// AuthorizedRequest.ClientIdentity isn't that client — including an
 	// anonymous one.
 	ClientID string
+	// Subject binds it to the access token's subject too, when set: a
+	// HAIP client_id names a whole wallet solution, shared by every
+	// installation, so the client alone doesn't say whose credential
+	// it is.
+	Subject string
 }
 
 // NotificationStore persists notification_id values this issuer has

@@ -42,15 +42,22 @@ func (f *fakePreAuthorizedCodeStore) Issue(_ context.Context, code string, recor
 	return nil
 }
 
-func (f *fakePreAuthorizedCodeStore) Consume(_ context.Context, code, wantTxCode string) (issuer.PreAuthorizedCodeRecord, int, error) {
+func (f *fakePreAuthorizedCodeStore) Consume(_ context.Context, code, wantTxCode string, maxAttempts int) (issuer.PreAuthorizedCodeRecord, int, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	record, ok := f.issued[code]
 	if !ok {
 		return issuer.PreAuthorizedCodeRecord{}, 0, errPreAuthorizedCodeNotFound
 	}
+	if record.TxCode != "" && maxAttempts > 0 && f.attempts[code] >= maxAttempts {
+		delete(f.issued, code)
+		return issuer.PreAuthorizedCodeRecord{}, 0, issuer.ErrTooManyTxCodeAttempts
+	}
 	if record.TxCode != "" && wantTxCode != record.TxCode {
 		f.attempts[code]++
+		if maxAttempts > 0 && f.attempts[code] >= maxAttempts {
+			delete(f.issued, code)
+		}
 		return issuer.PreAuthorizedCodeRecord{}, f.attempts[code], issuer.ErrWrongTxCode
 	}
 	delete(f.issued, code)

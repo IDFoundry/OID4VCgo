@@ -206,7 +206,9 @@ func (iss *Issuer) DecryptRequestBody(body []byte, contentType string) (plaintex
 		return nil, false, newError(ErrorInvalidEncryptionParameters, 400, fmt.Sprintf("unsupported zip %q", zipStr), nil)
 	}
 
-	plaintext, err = jwe.Decrypt(key.PrivateKey, string(body))
+	// The decrypted request may be no larger than an unencrypted one:
+	// a compressed one can't make the issuer allocate more.
+	plaintext, err = jwe.DecryptLimits(key.PrivateKey, string(body), jwe.MaxCompactBytes, MaxCredentialRequestBytes)
 	if err != nil {
 		return nil, false, newError(ErrorInvalidEncryptionParameters, 400, "decryption failed", err)
 	}

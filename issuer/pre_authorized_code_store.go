@@ -16,6 +16,11 @@ import (
 // polish).
 var ErrWrongTxCode = errors.New("issuer: tx_code does not match")
 
+// ErrTooManyTxCodeAttempts is returned by PreAuthorizedCodeStore.Consume
+// for a code whose tx_code was guessed wrong maxAttempts times: the code
+// is invalidated and no further guess is compared.
+var ErrTooManyTxCodeAttempts = errors.New("issuer: too many incorrect tx_code attempts")
+
 // PreAuthorizedCodeRecord is what a caller stores when it issues a
 // pre-authorized_code — as part of a Credential Offer's own
 // Grants.PreAuthorizedCode (§4.1.1) — everything ExchangePreAuthorizedCode
@@ -103,23 +108,27 @@ type PreAuthorizedCodeStore interface {
 	// outcomes so far (including this one), atomically incremented as
 	// part of this same call whenever it returns ErrWrongTxCode —
 	// meaningless (implementations may return 0) on any other outcome.
-	// Left unbounded, the "never invalidate on a wrong guess" rule
-	// above gives an attacker holding a leaked pre-authorized_code an
-	// unlimited number of tx_code guesses (found in a repo-wide
-	// security review); ExchangePreAuthorizedCode compares this against
-	// its own configured Config.Limits.MaxTxCodeAttempts and calls
-	// Invalidate once it's exceeded, turning that into a bounded
-	// window instead. Concurrent wrong guesses against the same code
-	// must still each observe a distinct, correctly-incrementing count —
-	// the same atomicity this method's own single-winner guarantee on
-	// the success path already requires.
-	Consume(ctx context.Context, code, wantTxCode string) (record PreAuthorizedCodeRecord, wrongAttempts int, err error)
+	//
+	// maxAttempts (ExchangePreAuthorizedCode passes
+	// Config.Limits.MaxTxCodeAttempts; 0 or less means no limit) bounds
+	// the guesses, in the same atomic step as the comparison: once code
+	// has maxAttempts wrong guesses, Consume MUST invalidate it and
+	// return ErrTooManyTxCodeAttempts without comparing wantTxCode —
+	// and a wrong guess that reaches maxAttempts invalidates it too.
+	// Left to a separate Invalidate call after the comparison,
+	// concurrent requests could each have a guess compared before any
+	// of them invalidated the code (found in an adversarial review:
+	// about 200 guesses per burst against a store with 1 ms latency).
+	// Concurrent guesses against one code must each observe a distinct,
+	// correctly incrementing count, and at most maxAttempts of them may
+	// be compared.
+	Consume(ctx context.Context, code, wantTxCode string, maxAttempts int) (record PreAuthorizedCodeRecord, wrongAttempts int, err error)
 
 	// Invalidate permanently invalidates code, the same way a
-	// successful Consume already does — called once
-	// ExchangePreAuthorizedCode's own Config.Limits.MaxTxCodeAttempts
-	// is exceeded (see Consume's own wrongAttempts), turning an
-	// otherwise-unbounded tx_code guessing window into a bounded one.
+	// successful Consume already does. ExchangePreAuthorizedCode also
+	// calls it once Config.Limits.MaxTxCodeAttempts is reached, though
+	// Consume itself must already have invalidated the code then (see
+	// maxAttempts).
 	// A no-op if code is already invalidated (consumed or previously
 	// invalidated) or was never issued — Invalidate's own caller has
 	// already decided code should stop existing, so there is nothing

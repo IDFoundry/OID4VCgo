@@ -61,7 +61,7 @@ func (iss *Issuer) IssueNotificationID(ctx context.Context, auth AuthorizedReque
 		return "", fmt.Errorf("issuer: issue notification id: %w", err)
 	}
 	id := base64.RawURLEncoding.EncodeToString(raw)
-	if err := iss.deps.Notifications.Issue(ctx, id, NotificationRecord{ClientID: auth.ClientID()}); err != nil {
+	if err := iss.deps.Notifications.Issue(ctx, id, NotificationRecord{ClientID: auth.ClientID(), Subject: auth.Subject}); err != nil {
 		return "", fmt.Errorf("issuer: issue notification id: %w", err)
 	}
 	return id, nil
@@ -110,8 +110,10 @@ func (iss *Issuer) RequestNotification(ctx context.Context, auth AuthorizedReque
 	// already rejected any other empty case before this ever runs) —
 	// this check is deliberately skipped for that acknowledged
 	// deployment choice, not by silent default.
-	if record.ClientID != "" && auth.ClientID() != record.ClientID {
-		return newError(ErrorInvalidNotificationID, 400, "notification_id was not issued to this client", nil)
+	if record.ClientID != "" && auth.ClientID() != record.ClientID || record.Subject != "" && auth.Subject != record.Subject {
+		// The same answer as an unknown one: which notification_ids
+		// exist isn't this caller's business.
+		return newError(ErrorInvalidNotificationID, 400, "unknown notification_id", nil)
 	}
 
 	if iss.deps.NotificationHandler == nil {

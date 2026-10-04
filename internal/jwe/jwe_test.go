@@ -81,6 +81,23 @@ func TestDecrypt_RejectsBomb(t *testing.T) {
 	}
 }
 
+// TestDecryptLimits_BoundsInflation: a caller that knows its plaintext
+// can't exceed a size gets a decompressed payload past it refused, well
+// short of the 128 MiB general limit.
+func TestDecryptLimits_BoundsInflation(t *testing.T) {
+	key := testP256Key(t)
+	compact, err := Encrypt(&key.PublicKey, A128GCM, make([]byte, 4<<20), EncryptOptions{Zip: DEF})
+	if err != nil {
+		t.Fatalf("Encrypt: %v", err)
+	}
+	if _, err := DecryptLimits(key, compact, MaxCompactBytes, 1<<20); err == nil || !strings.Contains(err.Error(), "exceeds 1048576") {
+		t.Errorf("DecryptLimits with a 1 MiB limit on 4 MiB: %v, want refused", err)
+	}
+	if got, err := DecryptLimits(key, compact, MaxCompactBytes, 8<<20); err != nil || len(got) != 4<<20 {
+		t.Errorf("DecryptLimits within the limit: %d bytes, %v", len(got), err)
+	}
+}
+
 func TestEncryptHeaderFields(t *testing.T) {
 	key := testP256Key(t)
 	compact, err := Encrypt(&key.PublicKey, A256GCM, []byte("hi"), EncryptOptions{KeyID: "kid-1", Zip: DEF})

@@ -378,8 +378,11 @@ func (iss *Issuer) preAuthorizedBinding(ctx context.Context, req ExchangePreAuth
 // out of exchangePreAuthorizedCode purely to keep its cognitive
 // complexity manageable.
 func (iss *Issuer) consumePreAuthorizedCode(ctx context.Context, req ExchangePreAuthorizedCodeRequest) (PreAuthorizedCodeRecord, error) {
-	record, wrongAttempts, err := iss.deps.PreAuthorizedCodes.Consume(ctx, req.PreAuthorizedCode, req.TxCode)
+	record, wrongAttempts, err := iss.deps.PreAuthorizedCodes.Consume(ctx, req.PreAuthorizedCode, req.TxCode, iss.cfg.Limits.MaxTxCodeAttempts)
 	if err != nil {
+		if errors.Is(err, ErrTooManyTxCodeAttempts) {
+			return PreAuthorizedCodeRecord{}, newError(ErrorInvalidGrant, 400, "too many incorrect tx_code attempts; pre-authorized_code is no longer valid", err)
+		}
 		if errors.Is(err, ErrWrongTxCode) {
 			if wrongAttempts >= iss.cfg.Limits.MaxTxCodeAttempts {
 				// Too many wrong guesses against this one code — close

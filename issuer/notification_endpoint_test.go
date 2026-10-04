@@ -225,6 +225,26 @@ func TestRequestNotification_RejectsMismatchedClient(t *testing.T) {
 	}
 }
 
+// TestRequestNotification_RejectsAnotherSubject: a HAIP client_id names
+// a whole wallet solution, so a notification_id is bound to the access
+// token's subject too — another installation of the same wallet, with
+// its own subject, can't report on someone else's credential.
+func TestRequestNotification_RejectsAnotherSubject(t *testing.T) {
+	store := newFakeNotificationStore()
+	store.put("notif-1", issuer.NotificationRecord{ClientID: "client-a", Subject: "holder-1"})
+	cfg := validConfig(t)
+	deps := validDependencies(t)
+	deps.Notifications = store
+	iss := newTestIssuer(t, cfg, deps)
+	req := issuer.NotificationRequest{NotificationID: "notif-1", Event: oid4vci.NotificationEventCredentialDeleted}
+
+	err := iss.RequestNotification(context.Background(), issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("client-a"), Subject: "holder-2"}, req)
+	assertIssuerError(t, err, issuer.ErrorInvalidNotificationID)
+	if err := iss.RequestNotification(context.Background(), issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("client-a"), Subject: "holder-1"}, req); err != nil {
+		t.Errorf("the subject it was issued to: %v", err)
+	}
+}
+
 func TestRequestNotification_RejectsWhenNotConfigured(t *testing.T) {
 	cfg := validConfig(t)
 	cfg.Endpoints.Notification = fapi.URL{}

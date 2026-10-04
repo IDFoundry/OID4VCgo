@@ -97,7 +97,10 @@ func (iss *Issuer) verifyJWTProof(ctx context.Context, auth AuthorizedRequest, r
 	}
 	pub, alg, jwkRaw, err := iss.resolveProofBindingKey(ctx, header)
 	if err != nil {
-		return nil, nil, "", newError(ErrorInvalidProof, 400, fmt.Sprintf("proof %d: %v", i, err), nil)
+		// The resolver's own error — certificate subjects, a DID
+		// method's upstream message — stays the cause, not the Wallet's
+		// error_description.
+		return nil, nil, "", newError(ErrorInvalidProof, 400, fmt.Sprintf("proof %d: its key couldn't be resolved or isn't trusted", i), err)
 	}
 
 	// alg, not jose.Alg(algStr): for a kid/x5c-conveyed key, alg is

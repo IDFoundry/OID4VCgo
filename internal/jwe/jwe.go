@@ -179,6 +179,14 @@ func Decrypt(priv *ecdsa.PrivateKey, compact string) ([]byte, error) {
 // DecryptMax is Decrypt with an explicit size ceiling, in bytes,
 // instead of MaxCompactBytes.
 func DecryptMax(priv *ecdsa.PrivateKey, compact string, maxBytes int) ([]byte, error) {
+	return DecryptLimits(priv, compact, maxBytes, maxInflatedSize)
+}
+
+// DecryptLimits is DecryptMax that also bounds a "zip":"DEF"
+// plaintext's decompressed size at maxInflated bytes — for a caller
+// whose plaintext can't legitimately exceed a known size, so a small
+// compressed payload can't make it allocate far more.
+func DecryptLimits(priv *ecdsa.PrivateKey, compact string, maxBytes, maxInflated int) ([]byte, error) {
 	if len(compact) > maxBytes {
 		return nil, fmt.Errorf("jwe: compact JWE is %d bytes, exceeds the %d byte limit", len(compact), maxBytes)
 	}
@@ -256,7 +264,7 @@ func DecryptMax(priv *ecdsa.PrivateKey, compact string, maxBytes int) ([]byte, e
 		if zipStr != string(DEF) {
 			return nil, fmt.Errorf("jwe: unsupported zip %q", zipStr)
 		}
-		plaintext, err = inflate(plaintext)
+		plaintext, err = inflate(plaintext, maxInflated)
 		if err != nil {
 			return nil, err
 		}
@@ -424,20 +432,23 @@ func deflate(data []byte) ([]byte, error) {
 // packages ever produce.
 const maxInflatedSize = 128 << 20 // 128 MiB
 
-// inflate reverses deflate, rejecting output larger than
-// maxInflatedSize rather than exhausting memory on a decompression
-// bomb.
-func inflate(data []byte) ([]byte, error) {
+// inflate reverses deflate, rejecting output larger than limit
+// (maxInflatedSize at most) rather than exhausting memory on a
+// decompression bomb.
+func inflate(data []byte, limit int) ([]byte, error) {
+	if limit <= 0 || limit > maxInflatedSize {
+		limit = maxInflatedSize
+	}
 	r := flate.NewReader(bytes.NewReader(data))
 	defer func() { _ = r.Close() }()
 	// Read one byte past the limit so exceeding it is distinguishable
 	// from landing exactly on it.
-	out, err := io.ReadAll(io.LimitReader(r, maxInflatedSize+1))
+	out, err := io.ReadAll(io.LimitReader(r, int64(limit)+1))
 	if err != nil {
 		return nil, fmt.Errorf("jwe: decompress: %w", err)
 	}
-	if len(out) > maxInflatedSize {
-		return nil, fmt.Errorf("jwe: decompress: decompressed size exceeds %d bytes", maxInflatedSize)
+	if len(out) > limit {
+		return nil, fmt.Errorf("jwe: decompress: decompressed size exceeds %d bytes", limit)
 	}
 	return out, nil
 }

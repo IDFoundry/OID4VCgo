@@ -48,16 +48,26 @@ func (s *PreAuthorizedCodeStore) Issue(_ context.Context, code string, record is
 // requirement is always consumed on a successful lookup, the same
 // unconditional-delete-on-success shape NonceStore.Consume already
 // establishes.
-func (s *PreAuthorizedCodeStore) Consume(_ context.Context, code, wantTxCode string) (issuer.PreAuthorizedCodeRecord, int, error) {
+func (s *PreAuthorizedCodeStore) Consume(_ context.Context, code, wantTxCode string, maxAttempts int) (issuer.PreAuthorizedCodeRecord, int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	record, ok := s.issued[code]
 	if !ok {
 		return issuer.PreAuthorizedCodeRecord{}, 0, fmt.Errorf("storage: unknown or already-consumed pre-authorized_code")
 	}
+	if record.TxCode != "" && maxAttempts > 0 && s.attempts[code] >= maxAttempts {
+		delete(s.issued, code)
+		delete(s.attempts, code)
+		return issuer.PreAuthorizedCodeRecord{}, 0, issuer.ErrTooManyTxCodeAttempts
+	}
 	if record.TxCode != "" && subtle.ConstantTimeCompare([]byte(wantTxCode), []byte(record.TxCode)) != 1 {
 		s.attempts[code]++
-		return issuer.PreAuthorizedCodeRecord{}, s.attempts[code], issuer.ErrWrongTxCode
+		attempts := s.attempts[code]
+		if maxAttempts > 0 && attempts >= maxAttempts {
+			delete(s.issued, code)
+			delete(s.attempts, code)
+		}
+		return issuer.PreAuthorizedCodeRecord{}, attempts, issuer.ErrWrongTxCode
 	}
 	delete(s.issued, code)
 	delete(s.attempts, code)
