@@ -97,7 +97,7 @@ func loadIdentities(dir string, now time.Time) (identities, error) {
 // current reports whether ids has an identity for every scenario, named
 // for its relying party, none expiring within renewBefore.
 func (ids identities) current(now time.Time) bool {
-	if ids.registrarCA == nil || ids.registrar.key == nil || !ids.registrar.cert.NotAfter.After(now.Add(renewBefore)) {
+	if ids.ca == nil || ids.untrustedCA == nil || ids.registrarCA == nil || ids.registrar.key == nil || !ids.registrar.cert.NotAfter.After(now.Add(renewBefore)) {
 		return false
 	}
 	for _, s := range Scenarios {
@@ -218,7 +218,9 @@ func parseIdentities(data []byte) (identities, error) {
 	}
 	ids := identities{signers: map[Scenario]signer{}, ca: certs[roleCA], untrustedCA: certs[roleUntrustedCA], registrarCA: certs[roleRegistrarCA]}
 	if ids.ca == nil || ids.untrustedCA == nil {
-		return identities{}, errors.New("incomplete verifier identities")
+		// An older layout (one CA, one request signer): not current, so
+		// replaced, rather than an error.
+		return identities{signers: map[Scenario]signer{}}, nil
 	}
 	if ids.registrarCA != nil || certs[roleRegistrar] != nil {
 		r := signer{key: keys[roleRegistrar], cert: certs[roleRegistrar]}
