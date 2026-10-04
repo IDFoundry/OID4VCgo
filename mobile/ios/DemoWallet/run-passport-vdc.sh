@@ -40,7 +40,7 @@ state = pathlib.Path(sys.argv[1])
 print(json.dumps({
     "wallet": {
         "client_id": "passport-vdc-wallet",
-        "redirect_uri": "org.idfoundry.oid4vcgo.demowallet:/callback",
+        "redirect_uri": "dev.idfoundry.oid4vcgo.demowallet:/callback",
         "issuer_roots": (state / "issuer-ca.pem").read_text(),
         "verifier_roots": (state / "verifier-ca.pem").read_text(),
         "development": True,
@@ -49,5 +49,5 @@ print(json.dumps({
 }))
 PY
 )"
-xcrun simctl terminate "$DEVICE" org.idfoundry.oid4vcgo.demowallet 2>/dev/null || true
-SIMCTL_CHILD_OID4VC_DEMO_CONFIG="$CONFIG" xcrun simctl launch "$DEVICE" org.idfoundry.oid4vcgo.demowallet
+xcrun simctl terminate "$DEVICE" dev.idfoundry.oid4vcgo.demowallet 2>/dev/null || true
+SIMCTL_CHILD_OID4VC_DEMO_CONFIG="$CONFIG" xcrun simctl launch "$DEVICE" dev.idfoundry.oid4vcgo.demowallet

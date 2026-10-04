@@ -30,9 +30,11 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -47,15 +49,18 @@ import (
 	"github.com/idfoundry/oid4vcgo/wallet"
 )
 
+// Where each service listens. It's known by its URL — this machine's by
+// default, or a public one (-issuer-url and so on) a tunnel forwards to
+// it here.
 const (
-	issuerAddr, issuerURL     = "127.0.0.1:8543", "https://127.0.0.1:8543"
-	verifierAddr, verifierURL = "127.0.0.1:9443", "https://127.0.0.1:9443"
-	walletAddr, walletURL     = "127.0.0.1:7443", "https://127.0.0.1:7443"
-	providerAddr, providerURL = "127.0.0.1:6443", "https://127.0.0.1:6443"
-	cliRedirectURI            = "http://127.0.0.1/callback"
-	iosRedirectURI            = "org.idfoundry.oid4vcgo.demowallet:/callback"
-	providerIssuer            = "https://wallet-provider.passport-vdc.demo"
-	walletClientID            = "passport-vdc-wallet"
+	issuerAddr, localIssuerURL     = "127.0.0.1:8543", "https://127.0.0.1:8543"
+	verifierAddr, localVerifierURL = "127.0.0.1:9443", "https://127.0.0.1:9443"
+	walletAddr, walletURL          = "127.0.0.1:7443", "https://127.0.0.1:7443"
+	providerAddr, localProviderURL = "127.0.0.1:6443", "https://127.0.0.1:6443"
+	cliRedirectURI                 = "http://127.0.0.1/callback"
+	iosRedirectURI                 = "dev.idfoundry.oid4vcgo.demowallet:/callback"
+	providerIssuer                 = "https://wallet-provider.passport-vdc.demo"
+	walletClientID                 = "passport-vdc-wallet"
 )
 
 func main() {
@@ -63,7 +68,14 @@ func main() {
 	reset := flag.Bool("reset", false, "delete the state directory first, starting over")
 	open := flag.Bool("open", false, "open the demo in Chrome, in a separate profile that trusts the demo's certificate (no warnings)")
 	chrome := flag.String("chrome", "", "with -open: the Chrome or Chromium executable (default: look in the usual places)")
+	issuerURL := flag.String("issuer-url", localIssuerURL, "the issuer's public https URL, when a tunnel forwards it to "+issuerAddr+" (for a phone)")
+	verifierURL := flag.String("verifier-url", localVerifierURL, "the verifier's public https URL, when a tunnel forwards it to "+verifierAddr)
+	providerURL := flag.String("provider-url", localProviderURL, "the Wallet Provider's public https URL, when a tunnel forwards it to "+providerAddr)
 	flag.Parse()
+	urls := serviceURLs{issuer: *issuerURL, verifier: *verifierURL, provider: *providerURL}
+	if err := urls.check(); err != nil {
+		log.Fatal(err)
+	}
 
 	if *reset {
 		if err := resetState(*state); err != nil {
@@ -72,7 +84,7 @@ func main() {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if err := run(ctx, options{state: *state, open: *open, chrome: *chrome}); err != nil {
+	if err := run(ctx, options{state: *state, open: *open, chrome: *chrome, urls: urls}); err != nil {
 		log.Fatal(err)
 	}
 }
@@ -117,10 +129,35 @@ type options struct {
 	state  string
 	open   bool   // open Chrome on the demo once it's listening
 	chrome string // Chrome's path, when not in the usual places
+	urls   serviceURLs
+}
+
+// serviceURLs are the URLs the issuer, verifier and Wallet Provider are
+// known by: in credentials, metadata and requests. The web wallet stays
+// on this machine: it has no login.
+type serviceURLs struct{ issuer, verifier, provider string }
+
+// check refuses a URL that isn't an https origin: a wallet must reach it,
+// and an issuer's identifier has no query or fragment.
+func (u serviceURLs) check() error {
+	for name, raw := range map[string]string{"-issuer-url": u.issuer, "-verifier-url": u.verifier, "-provider-url": u.provider} {
+		parsed, err := url.Parse(raw)
+		if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.RawQuery != "" || parsed.Fragment != "" || strings.TrimSuffix(parsed.Path, "/") != "" {
+			return fmt.Errorf("%s %q: want an https origin, such as https://issuer.example.com", name, raw)
+		}
+	}
+	return nil
+}
+
+// public reports whether any service is known by a URL other than this
+// machine's: a tunnel serves it.
+func (u serviceURLs) public() bool {
+	return u.issuer != localIssuerURL || u.verifier != localVerifierURL || u.provider != localProviderURL
 }
 
 func run(ctx context.Context, opts options) error {
 	state := opts.state
+	issuerURL, verifierURL := strings.TrimSuffix(opts.urls.issuer, "/"), strings.TrimSuffix(opts.urls.verifier, "/")
 	issuerState := filepath.Join(state, "issuer")
 	if err := os.MkdirAll(issuerState, 0o700); err != nil {
 		return fmt.Errorf("create %s: %w", issuerState, err)
@@ -165,7 +202,7 @@ func run(ctx context.Context, opts options) error {
 		WalletURL: walletURL,
 		Wallet: walletapp.Config{
 			ClientID: walletClientID, HTTP: httpClient,
-			Provider:    walletprovider.Client{URL: providerURL, HTTP: httpClient},
+			Provider:    walletprovider.Client{URL: localProviderURL, HTTP: httpClient},
 			IssuerRoots: pool(issuer.IssuerCACertificate()),
 		},
 		Store:         walletapp.Store{Dir: filepath.Join(state, "wallet-store")},
@@ -217,9 +254,9 @@ func serve(ctx context.Context, servers []*http.Server, opts options, cert *x509
 			}
 		}()
 	}
-	printBanner(opts.state, opts.open)
+	printBanner(opts)
 	if opts.open {
-		if err := openChrome(opts.chrome, opts.state, cert, issuerURL, verifierURL, walletURL); err != nil {
+		if err := openChrome(opts.chrome, opts.state, cert, opts.urls.issuer, opts.urls.verifier, walletURL); err != nil {
 			log.Printf("couldn't open Chrome (%v); open the URLs above yourself", err)
 		}
 	}
@@ -237,10 +274,20 @@ func serve(ctx context.Context, servers []*http.Server, opts options, cert *x509
 	return err
 }
 
-func printBanner(state string, open bool) {
+func printBanner(opts options) {
+	state, open := opts.state, opts.open
 	browser := fmt.Sprintf(`First time in this browser: open each URL once and accept the
 self-signed certificate warning (or run with -open). The certificate is
 kept in %s, so you won't be asked again.`, state)
+	if opts.urls.public() {
+		browser += `
+
+The issuer, verifier and Wallet Provider are known by public URLs: a
+tunnel must forward each to its address here (issuer ` + issuerAddr + `,
+verifier ` + verifierAddr + `, provider ` + providerAddr + `), trusting
+` + state + `/tls-cert.pem. They have no login: run the tunnel only while
+you test, and stop it after.`
+	}
 	if open {
 		browser = `Opening them in Chrome, in a separate demo profile that trusts the
 demo's certificate — use that window for the whole demo.`
@@ -261,7 +308,7 @@ CLI wallet, sharing the web wallet's credentials:
 %s holds credentials made from any passport you upload: delete it,
 or run with -reset, when you're done.
 
-`, issuerURL, verifierURL, walletURL, providerURL, browser, state, state)
+`, opts.urls.issuer, opts.urls.verifier, walletURL, opts.urls.provider, browser, state, state)
 }
 
 func writeCertificates(dir string, certs map[string]*x509.Certificate) error {

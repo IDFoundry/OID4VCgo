@@ -1,0 +1,33 @@
+# A Cloudflare named tunnel for the passport-vdc demo, so an iPhone can
+# reach its issuer, verifier and Wallet Provider (run-device.sh). Replace
+# example.com with your domain, and <tunnel-id> with the tunnel's:
+#
+#   cloudflared tunnel login
+#   cloudflared tunnel create passport-vdc
+#   cloudflared tunnel route dns passport-vdc issuer.example.com
+#   cloudflared tunnel route dns passport-vdc verifier.example.com
+#   cloudflared tunnel route dns passport-vdc provider.example.com
+#   cloudflared tunnel --config cloudflared.yml run passport-vdc
+#
+# Cloudflare serves each hostname with a real certificate, and forwards
+# to the demo on this machine over TLS, checking the demo's own
+# certificate (originRequest.caPool: the -state directory's
+# tls-cert.pem, issued for localhost and 127.0.0.1).
+#
+# The demo's pages have no login, and the issuer takes passport uploads:
+# run the tunnel only while you test, and stop it after.
+tunnel: <tunnel-id>
+credentials-file: /Users/<you>/.cloudflared/<tunnel-id>.json
+
+originRequest:
+  caPool: ../../../examples/passport-vdc/.demo-state-device/tls-cert.pem
+  originServerName: localhost
+
+ingress:
+  - hostname: issuer.example.com
+    service: https://127.0.0.1:8543
+  - hostname: verifier.example.com
+    service: https://127.0.0.1:9443
+  - hostname: provider.example.com
+    service: https://127.0.0.1:6443
+  - service: http_status:404
