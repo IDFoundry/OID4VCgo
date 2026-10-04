@@ -570,21 +570,37 @@ final class WalletModel {
         }
     }
 
+    /// How refreshing a credential's copies ended.
+    enum RefreshOutcome: Equatable {
+        /// Fresh copies replaced the old ones.
+        case refreshed(copies: Int)
+        /// The issuer will issue them later: they're waiting for it.
+        case deferred
+        /// It can't be refreshed any more: receive it again.
+        case reissueRequired
+        /// It couldn't be refreshed now, for this reason.
+        case failed(String)
+    }
+
     /// Replaces a credential's copies with a fresh batch, without the
     /// holder, using the refresh token its issuance kept. One that can't
     /// be refreshed any more has to be received again.
-    func refreshCopies(_ id: String) async {
-        guard let wallet else { return }
+    func refreshCopies(_ id: String) async -> RefreshOutcome {
+        guard let wallet else { return .failed("The wallet isn't configured.") }
         do {
             let refreshed = try await wallet.refreshCredential(id: id)
             if let i = credentials.firstIndex(where: { $0.id == id }) { credentials[i] = refreshed.credential }
-            if let deferred = refreshed.deferred { track(deferred) }
             await loadClaims(reload: [id])
+            if let deferred = refreshed.deferred {
+                track(deferred)
+                return .deferred
+            }
+            return .refreshed(copies: refreshed.credential.copies)
         } catch let e as WalletError where e.code == .reissueRequired {
-            notice = "This credential can't be refreshed any more: receive it again from the issuer."
             await refresh()
+            return .reissueRequired
         } catch {
-            notice = "Couldn't refresh the copies: " + Self.describe(error)
+            return .failed(Self.describe(error))
         }
     }
 
