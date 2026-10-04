@@ -7,7 +7,10 @@
 
 * **walletflow:** a walletflow.Wallet outside Development no longer reaches issuers, Authorization Servers or Verifiers at private, loopback or link-local addresses, or follows redirects, by default; set Dependencies.HTTP to a client that does if a deployment needs it. Presentation.Respond can return ErrLinkable.
 * **issuer:** issuer.PreAuthorizedCodeStore.Consume takes a fourth argument, maxAttempts (0 or less: no limit), and must invalidate the code and return issuer.ErrTooManyTxCodeAttempts, without comparing, once the code has maxAttempts wrong guesses, and invalidate it when a wrong guess reaches maxAttempts, atomically with the comparison. Custom store implementations need updating; issuertest's contract covers it.
-* Query.Validate (and so the verifier and wallet) refuses a dc+sd-jwt Credential Query without vct_values and an mso_mdoc one without doctype_value; NewSDJWTVCMeta and NewMdocMeta refuse empty input. registration.Verify requires the registrar's iss to be a URI SAN of its signing certificate: reissue registrar certificates with one. Certificate chains with a nil root pool, or a CA certificate as the leaf, no longer verify. verifier.New under AssuranceProduction requires Dependencies.Random to be crypto/rand.Reader (or leave it nil where a default applies). Transactions.Begin requires a browser binding of at least 16 bytes. VerifiedCredential.StatusListRef returns an error for an mdoc whose status is only an identifier list.
+* **dcql:** Query.Validate (and so the verifier and wallet) refuses a dc+sd-jwt Credential Query without vct_values and an mso_mdoc one without doctype_value; NewSDJWTVCMeta and NewMdocMeta refuse empty input.
+* **registration:** Verify requires the registrar's iss to be a URI SAN of its signing certificate: reissue registrar certificates with one.
+* Certificate chains with a nil root pool, or a CA certificate as the leaf, no longer verify.
+* **verifier:** New under AssuranceProduction requires Dependencies.Random to be crypto/rand.Reader; Transactions.Begin requires a browser binding of at least 16 bytes; VerifiedCredential.StatusListRef returns an error for an mdoc whose status is only an identifier list.
 
 ### Features
 
