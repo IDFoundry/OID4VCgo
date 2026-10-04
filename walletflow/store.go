@@ -132,16 +132,21 @@ func (c StoredCredential) CopiesLeft() int {
 }
 
 // nextCopy is the copy to present next: the first not yet presented,
-// else — every copy has been — the first, which a Verifier may link to
-// an earlier presentation.
+// else — every copy has been — the one shown to the fewest Verifiers,
+// which Verifiers may link to earlier presentations: reusing the least
+// shown keeps each set of Verifiers that can link the holder small.
 func (c StoredCredential) nextCopy() (int, CredentialCopy) {
 	copies := c.AllCopies()
+	least := 0
 	for i, cp := range copies {
 		if !cp.Presented {
 			return i, cp
 		}
+		if len(cp.ShownTo) < len(copies[least].ShownTo) {
+			least = i
+		}
 	}
-	return 0, copies[0]
+	return least, copies[least]
 }
 
 // CredentialStore holds the wallet's credentials. They carry personal

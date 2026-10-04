@@ -54,7 +54,8 @@
 // seen before, and only a new Verifier a new copy. Each copy records
 // which Verifiers saw it, as hashes of their client_ids
 // (StoredCredential.ShownTo). Once every copy has been presented, the
-// first is reused. With Config.RequestRefresh, the authorization code
+// one shown to the fewest Verifiers is reused, which those Verifiers can
+// link. With Config.RequestRefresh, the authorization code
 // grant asks for a refresh token (offline_access), kept in a GrantStore,
 // and w.RefreshCredential(ctx, id) replaces a credential's copies with a
 // fresh batch without the holder (OpenID4VCI 1.0 §13.5); when it can't
