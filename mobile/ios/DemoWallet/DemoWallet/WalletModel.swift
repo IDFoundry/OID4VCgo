@@ -26,6 +26,8 @@ final class WalletModel {
     /// whose they are.
     private(set) var claims: [String: JSONValue] = [:]
     private(set) var configured = false
+    /// Why the wallet can't run on this device, when it can't.
+    private(set) var unavailable: String?
     private(set) var offer: Offer?
     var phase: Phase = .idle
     var pin = ""
@@ -74,7 +76,13 @@ final class WalletModel {
             #if targetEnvironment(simulator)
             let presence = false
             #else
-            let presence = LAContext().canEvaluatePolicy(.deviceOwnerAuthentication, error: nil)
+            // Without a passcode, holder keys would present with no one
+            // there to agree: don't run.
+            guard LAContext().canEvaluatePolicy(.deviceOwnerAuthentication, error: nil) else {
+                unavailable = "Set a device passcode to use this wallet: presenting a credential needs Face ID or the passcode."
+                return
+            }
+            let presence = true
             #endif
             let keys = KeychainKeyStore(options: .init(secureEnclave: SecureEnclave.isAvailable, persistent: true,
                                                        holderUserPresence: presence))
@@ -142,6 +150,27 @@ final class WalletModel {
     /// arrives then is refused rather than replacing it.
     private var busy: Bool {
         phase == .offered || phase == .receiving || requestPhase != .idle
+    }
+
+    /// A link another app opened the wallet with, held until the holder
+    /// chooses to open it: opening it contacts the issuer or Verifier it
+    /// names.
+    var linkToConfirm: URL?
+
+    /// Opens a link from another app: an issuer's redirect at once, an
+    /// offer or a request once the holder confirms (linkToConfirm).
+    func openFromOutside(_ url: URL) {
+        guard url.scheme == "openid-credential-offer" || url.scheme == "openid4vp" else {
+            open(url)
+            return
+        }
+        linkToConfirm = url
+    }
+
+    func confirmLink() {
+        guard let url = linkToConfirm else { return }
+        linkToConfirm = nil
+        open(url)
     }
 
     func open(_ url: URL) {

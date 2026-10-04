@@ -29,6 +29,12 @@ if [ "${SKIP_FRAMEWORK_BUILD:-}" != 1 ]; then
 fi
 FRAMEWORK=../build/release/Mobile.xcframework
 [ -d "$FRAMEWORK" ] || { echo "no $FRAMEWORK" >&2; exit 1; }
+# Never publish the test build, whatever the directory holds: it carries
+# an in-process test issuer and Verifier (TestEnv).
+if grep -rqs MobileTestEnv "$FRAMEWORK"; then
+    echo "$FRAMEWORK is the mobiletest build: rebuild it without SKIP_FRAMEWORK_BUILD" >&2
+    exit 1
+fi
 
 ZIP="$ASSETS/Mobile.xcframework.zip"
 rm -f "$ZIP"

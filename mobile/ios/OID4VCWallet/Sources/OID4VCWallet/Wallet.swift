@@ -282,6 +282,10 @@ public final class Wallet: @unchecked Sendable {
 
     init(configuration: WalletConfiguration, keys: KeyStoreAdapter, credentials: CredentialStoreAdapter,
          provider: (any MobileWalletProviderProtocol)?) throws {
+        guard OID4VC.abiVersion == OID4VC.expectedABIVersion else {
+            throw WalletError(code: .internalError,
+                              message: "the linked framework has ABI \(OID4VC.abiVersion), these sources ABI \(OID4VC.expectedABIVersion): rebuild it")
+        }
         let json = String(decoding: try JSONEncoder().encode(configuration), as: UTF8.self)
         handle = try OID4VC.call { MobileNewWallet(json, keys, credentials, provider, $0) }!
         adapters = [keys, credentials] + (provider.map { [$0 as AnyObject] } ?? [])
