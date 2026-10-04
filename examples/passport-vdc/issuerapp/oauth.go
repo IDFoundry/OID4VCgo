@@ -76,9 +76,9 @@ var approvalTemplate = template.Must(template.New("approval").Parse(pageHead + `
 {{if .Error}}<p class="warn">{{.Error}}</p>{{end}}
 <form method="post" action="/authorize/decision">
 <input type="hidden" name="interaction" value="{{.Tag}}">
-<p><label>Confirmation code shown with the offer: <input name="code" inputmode="numeric" autocomplete="off" maxlength="6" size="8"></label></p>
+<p><label>Confirmation code shown with the offer:<input class="code" name="code" inputmode="numeric" pattern="[0-9]*" autocomplete="off" maxlength="6" required autofocus></label></p>
 <button name="decision" value="approve">Approve</button>
-<button name="decision" value="deny">Deny</button>
+<button name="decision" value="deny" formnovalidate>Deny</button>
 </form>
 <p class="note">Demo only: the holder is not authenticated here. The code only shows whoever approves saw the offer page.</p>
 ` + pageFoot))
