@@ -7,40 +7,56 @@ import (
 	"time"
 )
 
-// TestSigningIdentity_Persists: a saved identity is reused — same CA,
-// same key — until its certificate is within renewBefore of expiring,
-// and a damaged file is an error, not a silent new CA.
-func TestSigningIdentity_Persists(t *testing.T) {
+// TestIdentities_Persist: saved identities are reused — same CAs, same
+// keys — until a certificate is within renewBefore of expiring; each
+// scenario's names its relying party and chains to the CA its trust
+// calls for; and a damaged file is an error, not a silent new CA.
+func TestIdentities_Persist(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Now()
-	key, cert, ca, err := signingIdentity(dir, now)
+	ids, err := loadIdentities(dir, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	key2, cert2, ca2, err := signingIdentity(dir, now.Add(time.Hour))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !ca2.Equal(ca) || !cert2.Equal(cert) || !key2.Equal(key) {
-		t.Error("a restart made a new verifier identity")
+	for _, s := range Scenarios {
+		info, _ := s.Info()
+		sg := ids.signers[s]
+		if sg.cert.Subject.CommonName != info.Verifier {
+			t.Errorf("%s: certificate names %q, want %q", s, sg.cert.Subject.CommonName, info.Verifier)
+		}
+		ca, other := ids.ca, ids.untrustedCA
+		if !info.Trusted {
+			ca, other = other, ca
+		}
+		if sg.cert.CheckSignatureFrom(ca) != nil || sg.cert.CheckSignatureFrom(other) == nil {
+			t.Errorf("%s (trusted %v): not issued by the CA its trust calls for", s, info.Trusted)
+		}
 	}
 
-	_, cert3, ca3, err := signingIdentity(dir, cert.NotAfter.Add(-renewBefore))
+	again, err := loadIdentities(dir, now.Add(time.Hour))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ca3.Equal(ca) || cert3.Equal(cert) {
-		t.Error("an identity about to expire wasn't renewed")
+	if !again.ca.Equal(ids.ca) || !again.signers[ScenarioBank].key.Equal(ids.signers[ScenarioBank].key) {
+		t.Error("a restart made new verifier identities")
 	}
 
-	if _, _, ca4, _ := signingIdentity("", now); ca4.Equal(ca3) {
-		t.Error("without a state directory the identity was reused")
+	renewed, err := loadIdentities(dir, ids.signers[ScenarioAge].cert.NotAfter.Add(-renewBefore))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if renewed.ca.Equal(ids.ca) {
+		t.Error("identities about to expire weren't renewed")
+	}
+
+	if fresh, _ := loadIdentities("", now); fresh.ca.Equal(renewed.ca) {
+		t.Error("without a state directory the identities were reused")
 	}
 
 	if err := os.WriteFile(filepath.Join(dir, identityFile), []byte("-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, _, err := signingIdentity(dir, now); err == nil {
+	if _, err := loadIdentities(dir, now); err == nil {
 		t.Error("a damaged identity file was accepted")
 	}
 }

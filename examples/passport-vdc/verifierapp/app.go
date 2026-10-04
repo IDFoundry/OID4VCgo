@@ -2,12 +2,9 @@ package verifierapp
 
 import (
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/x509"
-	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -21,7 +18,6 @@ import (
 
 	"github.com/idfoundry/oid4vcgo/dcql"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/credential"
-	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/democert"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/passport"
 	"github.com/idfoundry/oid4vcgo/haip"
 	"github.com/idfoundry/oid4vcgo/storage"
@@ -35,10 +31,11 @@ type Config struct {
 	VerifierURL string
 
 	// Query, if set, builds a request's DCQL query in place of the
-	// mode's own, from the issuer's vct and its trusted_authorities: to
-	// ask for something else of the same credential. A response must
-	// still be one credential, or several in ModeGroup.
-	Query func(mode Mode, vct string, trusted dcql.TrustedAuthoritiesQuery) (dcql.Query, error)
+	// scenario's own, from the issuer's vct and its trusted_authorities:
+	// to ask for something else of the same credential. A response must
+	// still be one credential, or several where the scenario takes
+	// several.
+	Query func(s Scenario, vct string, trusted dcql.TrustedAuthoritiesQuery) (dcql.Query, error)
 
 	// IssuerVCT is the vct the demo issuer's SD-JWT credentials carry
 	// (its issuer URL + "/vct/passport/1").
@@ -51,7 +48,7 @@ type Config struct {
 	// they issued.
 	IssuerCAs []*x509.Certificate
 
-	// CSCAPool verifies the passport file in ModeICAO —
+	// CSCAPool verifies the passport file, for a scenario re-verifying it —
 	// cms.DefaultMasterList for real passports.
 	CSCAPool cms.CertPool
 
@@ -69,17 +66,16 @@ type Config struct {
 	HTTP *http.Client
 
 	// StateDir, if set, is an existing directory this verifier keeps its
-	// request-signing key and certificates in, so wallets that trust its
-	// CA still trust it after a restart. Empty means a new CA each run.
+	// request-signing keys and certificates in, so wallets that trust its
+	// CA still trust it after a restart. Empty means new CAs each run.
 	StateDir string
 }
 
 // App is a running passport-vdc verifier.
 type App struct {
-	cfg      Config
-	verifier *verifier.Verifier
-	txs      *verifier.Transactions
-	caCert   *x509.Certificate
+	cfg    Config
+	txs    map[Scenario]*verifier.Transactions // each scenario's relying party has its own identity
+	caCert *x509.Certificate
 
 	issuerRoots   *x509.CertPool
 	issuerTrusted dcql.TrustedAuthoritiesQuery // IssuerCAs, by Authority Key Identifier
@@ -103,7 +99,7 @@ type App struct {
 // the other is then closed. The page's own ID is unrelated to either
 // request's (OpenID4VP §14.3.3): only the page that created it knows it.
 type session struct {
-	mode         Mode
+	scenario     Scenario
 	browserToken string // the creating browser's session cookie; "" for CreateRequest
 	binding      string // what its requests are bound to: browserToken, or a secret kept here for CreateRequest
 	expiresAt    time.Time
@@ -115,10 +111,12 @@ type channel struct{ id, link string }
 
 // Outcome is what a verified presentation established.
 type Outcome struct {
-	Mode Mode
+	Scenario Scenario
+	// Decision is what the relying party decides from it.
+	Decision Decision
 	// Format is the credential format the wallet chose to present.
 	Format string
-	// Claims are the credential's verified, disclosed claims (ModeIssuer).
+	// Claims are the credential's verified, disclosed claims.
 	Claims map[string]any
 
 	// Status is the credential's revocation status, from the Token Status
@@ -126,12 +124,20 @@ type Outcome struct {
 	// credential without one. A revoked, suspended or uncheckable
 	// credential isn't accepted at all.
 	Status string
-	// ICAO is the result of re-verifying the disclosed passport file
-	// (ModeICAO).
+	// ICAO is the result of re-verifying the disclosed passport file,
+	// for a scenario that requests it.
 	ICAO *ICAOResult
-	// People are each credential presented in ModeGroup, in the order
-	// presented; Format, Claims and Status are then the first's.
+	// People are each credential presented, for a scenario that takes
+	// several, in the order presented; Format, Claims, Status and ICAO
+	// are then the first's.
 	People []Person
+}
+
+// Decision is what a scenario's relying party decides from a verified
+// presentation: whether it goes ahead, and why, in words.
+type Decision struct {
+	Approved bool
+	Text     string
 }
 
 // identityOf is the claims that say who a credential is about, in
@@ -149,18 +155,19 @@ func identityOf(claims map[string]any) map[string]any {
 	return out
 }
 
-// maxGroup is how many passports a ModeGroup presentation may hold:
-// each costs the verifier a status list check.
+// maxGroup is how many passports a presentation taking several may
+// hold: each costs the verifier a status list check.
 const maxGroup = 10
 
-// Person is one credential of a ModeGroup presentation.
+// Person is one credential of a presentation taking several.
 type Person struct {
 	Format string
 	Claims map[string]any
 	Status string
+	ICAO   *ICAOResult // for a scenario re-verifying the passport file
 }
 
-// ICAOResult is a ModeICAO check of the passport file.
+// ICAOResult is a re-verification of the disclosed passport file.
 type ICAOResult struct {
 	Verified bool
 	Identity passport.Identity
@@ -190,45 +197,59 @@ func New(cfg Config) (*App, error) {
 	if err != nil {
 		return nil, fmt.Errorf("verifierapp: %w", err)
 	}
-	responseURI, err := fapi.ParseEndpointURL(cfg.VerifierURL + "/response")
-	if err != nil {
-		return nil, fmt.Errorf("verifierapp: response URI: %w", err)
-	}
-	key, cert, caCert, err := signingIdentity(cfg.StateDir, time.Now())
+	ids, err := loadIdentities(cfg.StateDir, time.Now())
 	if err != nil {
 		return nil, err
 	}
+	a := &App{
+		cfg: cfg, txs: map[Scenario]*verifier.Transactions{}, caCert: ids.ca, issuerRoots: issuerRoots, issuerTrusted: issuerTrusted, now: time.Now,
+		sessions: map[string]*session{}, byTx: map[string]string{}, outcomes: map[string]map[string]*Outcome{},
+	}
+	for _, sc := range Scenarios {
+		if a.txs[sc], err = a.newTransactions(sc, ids.signers[sc]); err != nil {
+			return nil, err
+		}
+	}
+	a.handler = a.routes()
+	return a, nil
+}
+
+// newTransactions is scenario sc's relying party: a Verifier signing
+// its requests as sg, with its own endpoints under /s/<sc>/.
+func (a *App) newTransactions(sc Scenario, sg signer) (*verifier.Transactions, error) {
+	base := a.cfg.VerifierURL + "/s/" + string(sc)
+	responseURI, err := fapi.ParseEndpointURL(base + "/response")
+	if err != nil {
+		return nil, fmt.Errorf("verifierapp: response URI: %w", err)
+	}
 	rec := haip.RecommendedVerifierConfig()
 	v, err := verifier.New(verifier.Config{
-		Assurance: verifier.AssuranceDevelopment, ClientCertificate: cert, ResponseURI: responseURI,
+		Assurance: verifier.AssuranceDevelopment, ClientCertificate: sg.cert, ResponseURI: responseURI,
 		SigningAlg: rec.SigningAlg, EncValuesSupported: rec.EncValuesSupported,
 		VPFormatsSupported: mergeFormats(verifier.MdocFormatSupport(), verifier.SDJWTVCFormatSupport([]string{"ES256"}, []string{"ES256"})),
-	}, verifier.Dependencies{Signer: key, Random: rand.Reader})
+	}, verifier.Dependencies{Signer: sg.key, Random: rand.Reader})
 	if err != nil {
 		return nil, fmt.Errorf("verifierapp: verifier.New: %w", err)
 	}
-	a := &App{
-		cfg: cfg, verifier: v, caCert: caCert, issuerRoots: issuerRoots, issuerTrusted: issuerTrusted, now: time.Now,
-		sessions: map[string]*session{}, byTx: map[string]string{}, outcomes: map[string]map[string]*Outcome{},
-	}
-	a.txs, err = verifier.NewTransactions(v, storage.NewVerifierTransactionStore(), verifier.TransactionsConfig{
-		RequestURIBase: cfg.VerifierURL + "/request-objects",
-		RedirectURI:    cfg.VerifierURL + "/continue",
-		Lifetime:       cfg.RequestLifetime,
+	txs, err := verifier.NewTransactions(v, storage.NewVerifierTransactionStore(), verifier.TransactionsConfig{
+		RequestURIBase: base + "/request-objects",
+		RedirectURI:    base + "/continue",
+		Lifetime:       a.cfg.RequestLifetime,
 		Verify: verifier.VerifyResponseRequest{
-			IssuerKeys:         verifier.X5CIssuerKeyResolver{Roots: issuerRoots},
-			MdocIssuerKeys:     verifier.X5ChainIssuerKeyResolver{Roots: issuerRoots},
-			TrustedAuthorities: dcql.AKITrustedAuthoritiesChecker{Roots: issuerRoots},
+			IssuerKeys:         verifier.X5CIssuerKeyResolver{Roots: a.issuerRoots},
+			MdocIssuerKeys:     verifier.X5ChainIssuerKeyResolver{Roots: a.issuerRoots},
+			TrustedAuthorities: dcql.AKITrustedAuthoritiesChecker{Roots: a.issuerRoots},
 			MaxKeyBindingAge:   5 * time.Minute,
 			Now:                func() time.Time { return a.now() },
 		},
-		Accept: a.accept,
+		Accept: func(ctx context.Context, id string, result verifier.VerifyResponseResult) error {
+			return a.accept(ctx, sc, id, result)
+		},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("verifierapp: %w", err)
 	}
-	a.handler = a.routes()
-	return a, nil
+	return txs, nil
 }
 
 // VerifierCACertificate is the demo verifier CA that issued this
@@ -246,12 +267,12 @@ func (a *App) lifetime() time.Duration {
 	return a.cfg.RequestLifetime
 }
 
-// CreateRequest starts a cross-device presentation request in mode
-// and returns its page ID and the openid4vp:// link a wallet answers.
+// CreateRequest starts a cross-device presentation request for scenario
+// sc and returns its page ID and the openid4vp:// link a wallet answers.
 // The ID reads the result (Outcome, the result page) and never appears
 // in the link.
-func (a *App) CreateRequest(mode Mode) (id, link string, err error) {
-	id, err = a.createSession(context.Background(), mode, "")
+func (a *App) CreateRequest(sc Scenario) (id, link string, err error) {
+	id, err = a.createSession(context.Background(), sc, "")
 	if err != nil {
 		return "", "", err
 	}
@@ -259,13 +280,13 @@ func (a *App) CreateRequest(mode Mode) (id, link string, err error) {
 	return id, s.cross.link, nil
 }
 
-// createSession starts a page in mode: a cross-device request, and —
+// createSession starts a page for scenario sc: a cross-device request, and —
 // when browserToken, the creating browser's session cookie, is set — a
 // same-device request whose answer Transactions releases only when the
 // redirect back arrives in that browser. Without a browser, the page's
 // requests are bound to a secret kept here, so a result is released
 // only through the page's own ID, never through the request_uri's.
-func (a *App) createSession(ctx context.Context, mode Mode, browserToken string) (string, error) {
+func (a *App) createSession(ctx context.Context, sc Scenario, browserToken string) (string, error) {
 	binding := browserToken
 	if binding == "" {
 		var err error
@@ -273,14 +294,15 @@ func (a *App) createSession(ctx context.Context, mode Mode, browserToken string)
 			return "", err
 		}
 	}
-	if mode != ModeIssuer && mode != ModeICAO && mode != ModeGroup {
-		return "", fmt.Errorf("verifierapp: unknown mode %q", mode)
+	txs, ok := a.txs[sc]
+	if !ok {
+		return "", fmt.Errorf("verifierapp: unknown scenario %q", sc)
 	}
 	build := buildQuery
 	if a.cfg.Query != nil {
 		build = a.cfg.Query
 	}
-	query, err := build(mode, a.cfg.IssuerVCT, a.issuerTrusted)
+	query, err := build(sc, a.cfg.IssuerVCT, a.issuerTrusted)
 	if err != nil {
 		return "", err
 	}
@@ -288,14 +310,14 @@ func (a *App) createSession(ctx context.Context, mode Mode, browserToken string)
 	if err != nil {
 		return "", err
 	}
-	s := &session{mode: mode, browserToken: browserToken, binding: binding}
-	cross, err := a.txs.Begin(ctx, query, binding, false)
+	s := &session{scenario: sc, browserToken: browserToken, binding: binding}
+	cross, err := txs.Begin(ctx, query, binding, false)
 	if err != nil {
 		return "", err
 	}
 	s.cross = channel{id: cross.ID, link: cross.Link}
 	if browserToken != "" {
-		same, err := a.txs.Begin(ctx, query, binding, true)
+		same, err := txs.Begin(ctx, query, binding, true)
 		if err != nil {
 			return "", err
 		}
@@ -357,7 +379,7 @@ func (a *App) state(ctx context.Context, s *session) pageState {
 		if ch.id == "" {
 			continue
 		}
-		view, err := a.txs.Lookup(ctx, ch.id, s.binding)
+		view, err := a.txs[s.scenario].Lookup(ctx, ch.id, s.binding)
 		if err != nil {
 			continue
 		}
@@ -381,7 +403,7 @@ func (a *App) state(ctx context.Context, s *session) pageState {
 		st.awaiting, st.closed = false, false
 		for _, ch := range []channel{s.cross, s.same} {
 			if ch.id != "" {
-				_ = a.txs.Close(ctx, ch.id) // the other one; a completed request is left as is
+				_ = a.txs[s.scenario].Close(ctx, ch.id) // the other one; a completed request is left as is
 			}
 		}
 	}
@@ -409,62 +431,63 @@ func (a *App) LastError(id string) string {
 	return a.state(context.Background(), s).lastError
 }
 
-// accept is Transactions' Accept: it runs on each answer that verified,
-// before its request completes, and may run for an answer that then
-// loses to a concurrent one, so what it records is looked up by the
-// committed Result (resultKey). It refuses an answer to a page whose
-// other request already completed, and one whose credential is revoked
-// or suspended; otherwise it records what the answer established.
-func (a *App) accept(ctx context.Context, txID string, result verifier.VerifyResponseResult) error {
+// accept is a scenario's Transactions' Accept: it runs on each answer
+// that verified, before its request completes, and may run for an answer
+// that then loses to a concurrent one, so what it records is looked up
+// by the committed Result (resultKey). It refuses an answer to a page
+// whose other request already completed, and one whose credential is
+// revoked or suspended; otherwise it records what the answer
+// established, and what the scenario decides from it.
+func (a *App) accept(ctx context.Context, sc Scenario, txID string, result verifier.VerifyResponseResult) error {
 	a.mu.Lock()
 	s := a.sessions[a.byTx[txID]]
 	a.mu.Unlock()
-	if s == nil {
+	if s == nil || s.scenario != sc {
 		return errors.New("this request is no longer open")
 	}
+	info, _ := sc.Info()
 	for _, ch := range []channel{s.cross, s.same} {
 		if ch.id != "" && ch.id != txID {
-			if view, err := a.txs.Lookup(ctx, ch.id, s.binding); err == nil &&
+			if view, err := a.txs[sc].Lookup(ctx, ch.id, s.binding); err == nil &&
 				(view.Status == verifier.TransactionDone || view.Status == verifier.TransactionAwaitingRedirect) {
 				return errors.New("this request has already been answered")
 			}
 		}
 	}
 	switch n := len(result.Credentials); {
-	case n == 0 || n > 1 && s.mode != ModeGroup:
+	case n == 0 || n > 1 && !info.Multiple:
 		return fmt.Errorf("expected one credential, got %d", n)
 	case n > maxGroup:
 		return fmt.Errorf("expected at most %d passports, got %d", maxGroup, n)
 	}
-	out := &Outcome{Mode: s.mode}
+	out := &Outcome{Scenario: sc}
 	seen := map[[sha256.Size]byte]bool{}
 	for _, vc := range result.Credentials {
 		claims := flatten(vc.CredentialQueryID, vc.Claims)
-		// One person shown twice isn't two people: the same credential,
-		// or another copy or passport of theirs, discloses the same
-		// identity (each copy's own key, dates and status entry aside).
-		raw, err := json.Marshal(identityOf(claims))
+		sum, err := personKey(claims, info.Evidence)
 		if err != nil {
-			return errors.New("the credential's claims can't be compared")
+			return err
 		}
-		if sum := sha256.Sum256(raw); seen[sum] {
+		if seen[sum] {
 			return errors.New("the same passport was presented twice")
-		} else {
-			seen[sum] = true
 		}
+		seen[sum] = true
 		status, err := a.checkStatus(ctx, vc)
 		if err != nil {
 			return err
 		}
-		out.People = append(out.People, Person{Format: formatOf(vc.CredentialQueryID), Claims: claims, Status: status})
+		p := Person{Format: formatOf(vc.CredentialQueryID), Claims: claims, Status: status}
+		if info.Evidence {
+			p.ICAO = a.checkICAO(claims)
+		}
+		out.People = append(out.People, p)
 	}
-	out.Format, out.Claims, out.Status = out.People[0].Format, out.People[0].Claims, out.People[0].Status
-	if s.mode != ModeGroup {
+	first := out.People[0]
+	out.Format, out.Claims, out.Status, out.ICAO = first.Format, first.Claims, first.Status, first.ICAO
+	if !info.Multiple {
 		out.People = nil
 	}
-	if s.mode == ModeICAO {
-		out.ICAO = a.checkICAO(out.Claims)
-	}
+	out.Decision = decide(sc, out)
 	a.mu.Lock()
 	if a.outcomes[txID] == nil {
 		a.outcomes[txID] = map[string]*Outcome{}
@@ -472,6 +495,25 @@ func (a *App) accept(ctx context.Context, txID string, result verifier.VerifyRes
 	a.outcomes[txID][resultKey(result)] = out
 	a.mu.Unlock()
 	return nil
+}
+
+// personKey identifies whose credential claims is, so one person shown
+// twice isn't taken for two: the same credential, or another copy of
+// it, discloses the same identity (each copy's own key, dates and status
+// entry aside), or the same passport file.
+func personKey(claims map[string]any, evidence bool) ([sha256.Size]byte, error) {
+	if evidence {
+		file, err := rawBytes(claims[credential.PassportFile])
+		if err != nil {
+			return [sha256.Size]byte{}, errors.New("the credential didn't disclose a usable passport file")
+		}
+		return sha256.Sum256(file), nil
+	}
+	raw, err := json.Marshal(identityOf(claims))
+	if err != nil {
+		return [sha256.Size]byte{}, errors.New("the credential's claims can't be compared")
+	}
+	return sha256.Sum256(raw), nil
 }
 
 // resultKey identifies a verified answer's result, so the outcome shown
@@ -495,7 +537,12 @@ func (a *App) handleContinue(w http.ResponseWriter, r *http.Request) {
 	if c, err := r.Cookie(sessionCookie); err == nil {
 		token = c.Value
 	}
-	view, err := a.txs.Redeem(r.Context(), r.URL.Query().Get("response_code"), token)
+	txs, ok := a.txs[Scenario(r.PathValue("scenario"))]
+	if !ok {
+		writeHTMLError(w, http.StatusNotFound, "unknown scenario")
+		return
+	}
+	view, err := txs.Redeem(r.Context(), r.URL.Query().Get("response_code"), token)
 	switch {
 	case errors.Is(err, verifier.ErrWrongBrowser):
 		writeHTMLError(w, http.StatusForbidden, "Presentation rejected: the wallet's redirect back arrived in a different browser session than the one that asked.")
@@ -589,46 +636,4 @@ func randomID() (string, error) {
 		return "", fmt.Errorf("verifierapp: random id: %w", err)
 	}
 	return base64.RawURLEncoding.EncodeToString(b[:]), nil
-}
-
-// signingIdentity is this verifier's request-signing identity: kept in
-// dir when set, generated afresh otherwise.
-func signingIdentity(dir string, now time.Time) (*ecdsa.PrivateKey, *x509.Certificate, *x509.Certificate, error) {
-	if dir == "" {
-		return newRequestSigningIdentity(now)
-	}
-	return loadOrCreateSigningIdentity(dir, now)
-}
-
-// newRequestSigningIdentity generates this verifier's request-signing
-// key and a certificate for it from a demo verifier CA, whose key is
-// then discarded (HAIP 1.0 §5: the certificate signing the request must
-// not be self-signed). The certificate's hash is the x509_hash client
-// identifier; a wallet trusts it by trusting the CA.
-func newRequestSigningIdentity(now time.Time) (key *ecdsa.PrivateKey, cert, caCert *x509.Certificate, err error) {
-	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("verifierapp: CA key: %w", err)
-	}
-	caCert, err = democert.Create(&x509.Certificate{
-		Subject:   pkix.Name{CommonName: "passport-vdc demo verifier CA", Organization: []string{"IDFoundry demo"}},
-		NotBefore: now.Add(-time.Hour), NotAfter: now.AddDate(1, 0, 0),
-		KeyUsage: x509.KeyUsageCertSign, IsCA: true, BasicConstraintsValid: true, MaxPathLenZero: true,
-	}, nil, &caKey.PublicKey, caKey)
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("verifierapp: %w", err)
-	}
-	key, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("verifierapp: key: %w", err)
-	}
-	cert, err = democert.Create(&x509.Certificate{
-		Subject:   pkix.Name{CommonName: "passport-vdc demo verifier", Organization: []string{"IDFoundry demo"}},
-		NotBefore: now.Add(-time.Hour), NotAfter: now.AddDate(1, 0, 0),
-		KeyUsage: x509.KeyUsageDigitalSignature,
-	}, caCert, &key.PublicKey, caKey)
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("verifierapp: %w", err)
-	}
-	return key, cert, caCert, nil
 }

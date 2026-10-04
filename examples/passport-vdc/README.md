@@ -58,13 +58,38 @@ A verifier can choose:
    The price is disclosure: the verifier receives the whole passport
    content, not a chosen subset.
 
-The verifier page also offers **several passports**: the first path,
-for a group such as a family travelling together. Its DCQL query sets
-`multiple` (OpenID4VP 1.0 §6.1), so the wallet may answer with several
-credentials. The web and CLI wallets let the holder choose whose
-passports to share, all in one format; the verifier checks each and
-lists every person. It accepts up to ten, and refuses one person
-presented twice. Every other request takes exactly one credential.
+## The verifier's scenarios
+
+The verifier page is a set of relying parties, each asking for the
+passport credential for its own purpose. Run in order, they show what a
+verifier needs growing from one fact to the passport itself, and who is
+asking: a verifier the wallet trusts, or one it refuses outright. Each
+signs its requests with its own certificate, whose name the wallet
+shows as who's asking, and decides something from the answer.
+
+| Scenario | Relying party | Requests | Trusts | Decides |
+|---|---|---|---|---|
+| 🔞 Age assurance | Corner Bottle Shop | `age_over_18` only | the issuer | sale allowed, or refused under 18 |
+| 👤 Low-risk sign-up | Chirp Social | names, `age_over_18`, and the photo when there is one (DCQL `claim_sets`) | the issuer | account created, or refused under 18 |
+| 🏦 Bank KYC | Harbour Bank | the passport file | the issuing country | account opened only if the file re-verifies and the passport hasn't expired |
+| ❓ Unknown verifier | CheapFlights | the passport file, as the bank | — | nothing: see below |
+| 🏨 Family hotel check-in | Grand Hotel | each guest's passport file | the issuing country | guests checked in only if every file re-verifies |
+
+**The unknown verifier** asks for exactly what the bank does, in a
+valid request, but its certificate comes from a CA the demo wallets
+don't trust (`verifier-ca.pem` holds only the trusted one). A wallet
+refuses the request without opening it, so it shows nothing of what was
+asked for or who claims to be asking, and sends nothing back: the
+verifier's page keeps waiting. Its point is that a well-formed request
+doesn't entitle a verifier to your passport. Trust is all or nothing
+here: any trusted verifier may ask for anything.
+
+**The hotel** sets DCQL `multiple` (OpenID4VP 1.0 §6.1), so the wallet
+may answer with several credentials. The web and CLI wallets let the
+holder choose whose passports to share, all in one format; the verifier
+re-verifies each file and lists every guest. It accepts up to ten, and
+refuses one passport presented twice. Every other request takes exactly
+one credential.
 
 What the second path does and doesn't give you:
 
@@ -193,11 +218,12 @@ The button simulates an issuer that skipped Passive Authentication. The
 sample is issued as an ordinary passport credential, so it shows the
 difference between the two trust paths:
 
-- **Trust the issuer:** the verifier accepts the sample's claims ("JOHN
-  J SMITH"), because the credential carries the demo issuer's valid
-  signature. It can't know the issuer didn't check.
-- **Trust only the issuing country:** re-verifying the passport file
-  fails Passive Authentication, because no country signed this data.
+- **Trusting the issuer** (sign-up): the verifier accepts the sample's
+  claims ("JOHN J SMITH"), because the credential carries the demo
+  issuer's valid signature. It can't know the issuer didn't check.
+- **Trusting only the issuing country** (bank KYC): re-verifying the
+  passport file fails Passive Authentication, because no country signed
+  this data, so the bank doesn't open the account.
 
 Only the issuer's own pages know. The offer page reads "Sample passport
 — issued without checking", and the review and status pages mark its
@@ -481,20 +507,23 @@ format (a DCQL credential set with one option per format); the wallet
 answers with whichever it holds (`-format` picks when it holds both).
 It checks:
 
-| | Trust the issuer | Trust only the issuing country |
+| | Trust the issuer (age, sign-up) | Trust only the issuing country (bank, hotel) |
 |---|---|---|
-| Requested | `family_name`, `given_name`, nationality, `age_over_18`, and the portrait when there is one (DCQL `claim_sets`) — shown on the result page | `gmrtd_verifiable_doc` — the whole passport file, photo included |
+| Requested | only what the scenario needs: `age_over_18`, or names, `age_over_18` and the portrait when there is one (DCQL `claim_sets`) — shown on the result page | `gmrtd_verifiable_doc` — the whole passport file, photo included |
 | Issuer signature | verified, chained to the demo issuer's CA (`issuer-ca.pem`) | verified, likewise |
 | Revocation | the issuer's Token Status List says the credential is valid | likewise |
 | Holder binding | key-binding / device signature over the verifier's nonce | likewise |
 | Data trusted because… | the demo issuer signed it | gmrtd re-verifies the file (Passive Authentication against the CSCA master list, document checks): the country signed it. The result page shows the file's photo and chip authenticity |
 
-The request is a signed Request Object (`x509_hash` client identifier,
-certificate issued by a per-process demo verifier CA) fetched from its
-`request_uri`; the response is an encrypted `direct_post.jwt`, routed
-to its request by the JWE's key ID. Selective disclosure is real: in
-either mode the verifier receives only what it asked for — though in
-the ICAO mode that's the whole passport file.
+The request is a signed Request Object (`x509_hash` client identifier:
+each scenario's own certificate, issued by the demo verifier CA, or for
+the unknown verifier by an untrusted one, kept in the state directory)
+fetched from its `request_uri`; the response is an encrypted
+`direct_post.jwt`, routed to its request by the JWE's key ID. Each
+scenario has its own endpoints under `/s/<scenario>/`. Selective
+disclosure is real: in every scenario the verifier receives only what it
+asked for — though for the bank and the hotel that's the whole passport
+file.
 
 Each request also names the issuer CA in DCQL `trusted_authorities`
 (its Authority Key Identifier, the `aki` type HAIP 1.0 §5 requires):
