@@ -8,7 +8,7 @@ struct DemoWalletApp: App {
         WindowGroup {
             ContentView()
                 .environment(model)
-                .onOpenURL { model.open($0) }
+                .onOpenURL { model.openFromOutside($0) }
         }
     }
 }

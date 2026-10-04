@@ -128,6 +128,12 @@ public enum OID4VC {
     /// The ABI version of the Go side this package was built against.
     public static let abiVersion = Int(MobileABIVersion)
 
+    /// The ABI version these Swift sources were written for. A wallet
+    /// isn't made on a framework of another — a stale build, or the Go
+    /// side changed without these sources — rather than misreading its
+    /// JSON. The Go tests keep it equal to the mobile package's.
+    public static let expectedABIVersion = 12
+
     /// Whether the linked framework is the test build, carrying an
     /// in-process test issuer and Verifier (`-tags mobiletest`): an app
     /// should refuse to run on it.

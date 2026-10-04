@@ -9,7 +9,9 @@ struct ContentView: View {
     var body: some View {
         NavigationStack {
             List {
-                if !model.configured {
+                if let reason = model.unavailable {
+                    Section { Text(reason).foregroundStyle(.red).accessibilityIdentifier("unavailable") }
+                } else if !model.configured {
                     Section {
                         Text("Not configured: launch with OID4VC_DEMO_CONFIG (see mobile/ios/DemoWallet/README.md).")
                     }
@@ -69,6 +71,12 @@ struct ContentView: View {
             }
             .sheet(isPresented: $scanning) { ScanView { model.open($0) } }
             .sheet(isPresented: offerShown) { OfferView() }
+            .alert(linkTitle, isPresented: linkShown) {
+                Button("Open") { model.confirmLink() }
+                Button("Cancel", role: .cancel) { model.linkToConfirm = nil }
+            } message: {
+                Text("Another app opened this link. Opening it contacts the \(model.linkToConfirm?.scheme == "openid4vp" ? "verifier" : "issuer") it names; nothing is shared until you agree.")
+            }
             .sheet(isPresented: requestShown) { RequestView() }
         }
     }
@@ -87,6 +95,14 @@ struct ContentView: View {
         default:
             EmptyView()
         }
+    }
+
+    private var linkTitle: String {
+        model.linkToConfirm?.scheme == "openid4vp" ? "Open this presentation request?" : "Open this credential offer?"
+    }
+
+    private var linkShown: Binding<Bool> {
+        Binding(get: { model.linkToConfirm != nil }, set: { if !$0 { model.linkToConfirm = nil } })
     }
 
     private var requestShown: Binding<Bool> {
@@ -112,16 +128,26 @@ struct OfferView: View {
         NavigationStack {
             Form {
                 if let offer = model.offer {
-                    Section("From") {
-                        HStack {
-                            LogoView(logo: offer.issuerLogo)
-                            Text(offer.issuerName ?? offer.credentialIssuer)
+                    // Only the issuer's address is checked here (its TLS
+                    // certificate): its name and logos are its own claim
+                    // until the credential arrives and is checked against
+                    // the issuers this wallet trusts. So the address
+                    // leads, and no logo is fetched yet.
+                    Section {
+                        VStack(alignment: .leading) {
+                            Text(Self.host(offer.credentialIssuer)).font(.headline).accessibilityIdentifier("offer-issuer")
+                            if let name = offer.issuerName {
+                                Text("Calls itself “\(name)”").font(.caption).foregroundStyle(.secondary)
+                            }
                         }
+                    } header: {
+                        Text("From")
+                    } footer: {
+                        Text("Not verified yet: an issuer names itself. The credential is checked against the issuers this wallet trusts when it arrives.")
                     }
                     Section("Credentials") {
                         ForEach(offer.credentials, id: \.configurationID) { c in
                             HStack {
-                                LogoView(logo: c.logo)
                                 VStack(alignment: .leading) {
                                     Text(c.name ?? c.vct ?? c.doctype ?? c.configurationID)
                                     if let description = c.description {
@@ -155,6 +181,11 @@ struct OfferView: View {
             .navigationTitle("Credential offer")
             .toolbar { Button("Cancel") { Task { await model.cancelOffer() } } }
         }
+    }
+
+    /// The host of an issuer identifier, an https URL.
+    static func host(_ issuer: String) -> String {
+        URL(string: issuer)?.host() ?? issuer
     }
 
     private var receiveLabel: String {
