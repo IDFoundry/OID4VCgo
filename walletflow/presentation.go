@@ -365,11 +365,18 @@ type reservedCopy struct {
 	id    string
 	index int
 	keyID string
+	// reused is a copy this Verifier had seen already (CopyPerVerifier):
+	// reserving it changed nothing, so there's nothing to release.
+	reused bool
+	// wasPresented and wasShown are what the copy recorded before it was
+	// reserved, for release.
+	wasPresented, wasShown bool
 }
 
-// reserve picks each selected credential's next unused copy from the
-// store, as it is now, and marks it presented there before anything is
-// sent, so a presentation answered at the same time picks another.
+// reserve picks each selected credential's copy from the store, as it is
+// now, by Config.CopyPolicy, and marks it presented to this Verifier
+// there before anything is sent, so a presentation answered at the same
+// time picks another.
 // Credentials deleted since the request arrived are an invalid
 // selection.
 func (p *Presentation) reserve(ctx context.Context, sel Selection) ([]reservedCopy, error) {
@@ -377,6 +384,7 @@ func (p *Presentation) reserve(ctx context.Context, sel Selection) ([]reservedCo
 		return nil, err
 	}
 	w := p.w
+	verifier := VerifierHash(p.req.ClientID)
 	w.credMu.Lock()
 	defer w.credMu.Unlock()
 	current := map[string]StoredCredential{}
@@ -394,12 +402,17 @@ func (p *Presentation) reserve(ctx context.Context, sel Selection) ([]reservedCo
 				}
 				c.Copies = slices.Clone(c.AllCopies())
 			}
-			i, cp := c.nextCopy()
+			i, cp, reused := c.copyFor(w.cfg.CopyPolicy, verifier)
+			r := reservedCopy{query: q, id: id, index: i, keyID: cp.HolderKeyID, reused: reused,
+				wasPresented: cp.Presented, wasShown: slices.Contains(cp.ShownTo, verifier)}
 			c.Copies[i].Presented = true
+			if !r.wasShown {
+				c.Copies[i].ShownTo = append(slices.Clone(cp.ShownTo), verifier)
+			}
 			current[id] = c
-			held := c
-			held.Credential = cp.Credential
-			out = append(out, reservedCopy{query: q, c: held, id: id, index: i, keyID: cp.HolderKeyID})
+			r.c = c
+			r.c.Credential = cp.Credential
+			out = append(out, r)
 		}
 	}
 	for id, c := range current {
@@ -410,16 +423,20 @@ func (p *Presentation) reserve(ctx context.Context, sel Selection) ([]reservedCo
 	return out, nil
 }
 
-// release unmarks copies reserve marked for a response that wasn't
+// release undoes what reserve recorded for a response that wasn't
 // sent, unless the credential has changed since. It's best effort: a
 // copy left marked is one fewer to use, never one presented twice.
 func (p *Presentation) release(ctx context.Context, reserved []reservedCopy) {
 	ctx = context.WithoutCancel(ctx)
 	w := p.w
+	verifier := VerifierHash(p.req.ClientID)
 	w.credMu.Lock()
 	defer w.credMu.Unlock()
 	changed := map[string]StoredCredential{}
 	for _, r := range reserved {
+		if r.reused {
+			continue
+		}
 		c, ok := changed[r.id]
 		if !ok {
 			var err error
@@ -429,7 +446,11 @@ func (p *Presentation) release(ctx context.Context, reserved []reservedCopy) {
 			c.Copies = slices.Clone(c.AllCopies())
 		}
 		if r.index < len(c.Copies) && c.Copies[r.index].HolderKeyID == r.keyID {
-			c.Copies[r.index].Presented = false
+			cp := &c.Copies[r.index]
+			cp.Presented = r.wasPresented
+			if !r.wasShown {
+				cp.ShownTo = slices.DeleteFunc(slices.Clone(cp.ShownTo), func(h string) bool { return h == verifier })
+			}
 			changed[r.id] = c
 		}
 	}

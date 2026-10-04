@@ -54,6 +54,11 @@ type Config struct {
 	// discarded.
 	RequestRefresh bool
 
+	// CopyPolicy decides which copy of a credential a presentation uses
+	// (OpenID4VCI 1.0: "a unique Credential per presentation or per
+	// Verifier"). The zero value is CopyPerPresentation.
+	CopyPolicy CopyPolicy
+
 	// BatchSize is how many copies of each credential to request when
 	// the issuer offers batch issuance, each bound to its own key, so
 	// each presentation can use one no Verifier has seen. It's capped at
@@ -121,6 +126,21 @@ type Wallet struct {
 	grantMu    sync.Mutex
 	grantLocks map[string]*sync.Mutex
 }
+
+// CopyPolicy is which copy of a credential a presentation uses.
+type CopyPolicy int
+
+const (
+	// CopyPerPresentation presents a copy no Verifier has seen, every
+	// time: not even the same Verifier can link two presentations by the
+	// credential. Copies run out fastest. It's the default.
+	CopyPerPresentation CopyPolicy = iota
+	// CopyPerVerifier presents a Verifier the copy it has seen before, if
+	// any, else one no Verifier has seen: Verifiers can't link
+	// presentations to each other, but one Verifier can recognise a
+	// returning holder. Copies last as long as there are new Verifiers.
+	CopyPerVerifier
+)
 
 // DefaultBatchSize is how many copies of a credential a wallet requests
 // when Config.BatchSize is zero and the issuer offers batch issuance.

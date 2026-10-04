@@ -2,7 +2,10 @@ package walletflow
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"fmt"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -66,11 +69,47 @@ type StoredCredential struct {
 }
 
 // CredentialCopy is one copy of a credential: the credential, the key
-// it's bound to, and whether it's been presented.
+// it's bound to, whether it's been presented, and to which Verifiers.
 type CredentialCopy struct {
 	Credential  string
 	HolderKeyID string
 	Presented   bool
+	// ShownTo are the Verifiers it's been presented to, each as a hash of
+	// its client_id (VerifierHash), not the client_id itself: the wallet
+	// can tell whether a Verifier has seen it without keeping a readable
+	// list of where the holder has shown their credentials.
+	ShownTo []string
+}
+
+// VerifierHash is how a CredentialCopy's ShownTo records the Verifier
+// whose client_id is clientID.
+func VerifierHash(clientID string) string {
+	sum := sha256.Sum256([]byte("walletflow verifier " + clientID))
+	return base64.RawURLEncoding.EncodeToString(sum[:])
+}
+
+// ShownTo reports whether a copy of c has been presented to the Verifier
+// whose client_id is clientID (Presentation.Verifier().ClientID).
+func (c StoredCredential) ShownTo(clientID string) bool {
+	h := VerifierHash(clientID)
+	return slices.ContainsFunc(c.AllCopies(), func(cp CredentialCopy) bool { return slices.Contains(cp.ShownTo, h) })
+}
+
+// copyFor is the copy to present to the Verifier verifierHash names
+// under policy, and whether it's one that Verifier has seen already.
+// Per Verifier, that's the copy it has seen, if any; otherwise, as per
+// presentation, the next copy (nextCopy).
+func (c StoredCredential) copyFor(policy CopyPolicy, verifierHash string) (int, CredentialCopy, bool) {
+	copies := c.AllCopies()
+	if policy == CopyPerVerifier {
+		for i, cp := range copies {
+			if slices.Contains(cp.ShownTo, verifierHash) {
+				return i, cp, true
+			}
+		}
+	}
+	i, cp := c.nextCopy()
+	return i, cp, false
 }
 
 // AllCopies are c's copies: Copies, or its one copy when it has none.

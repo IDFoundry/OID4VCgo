@@ -63,6 +63,9 @@ func TestRefreshCredential(t *testing.T) {
 			t.Fatalf("refreshed = %+v", refreshed)
 		}
 		assertDistinct(t, append(append([]walletflow.CredentialCopy{}, sdjwt.Copies...), refreshed.Copies...))
+		if refreshed.ShownTo(v.ClientID) {
+			t.Error("refreshed copies carry the old copies' Verifier history")
+		}
 		sdjwt = refreshed
 	}
 	if f.keys.Len() != 7 {
