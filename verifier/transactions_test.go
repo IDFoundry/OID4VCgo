@@ -173,8 +173,8 @@ func (f *txFixture) begin(binding string, sameDevice bool) verifier.Begun {
 func TestTransactions_CrossDevice(t *testing.T) {
 	f := newTxFixture(t, nil)
 	ctx := context.Background()
-	begun := f.begin("browser-A", false)
-	if view, err := f.txs.Lookup(ctx, begun.ID, "browser-A"); err != nil || view.Status != verifier.TransactionPending {
+	begun := f.begin("browser-binding-A", false)
+	if view, err := f.txs.Lookup(ctx, begun.ID, "browser-binding-A"); err != nil || view.Status != verifier.TransactionPending {
 		t.Fatalf("Lookup before answer = %+v, %v", view, err)
 	}
 
@@ -183,11 +183,11 @@ func TestTransactions_CrossDevice(t *testing.T) {
 	if err != nil || answered.ID != begun.ID || answered.RedirectURI != "" {
 		t.Fatalf("HandleResponse = %+v, %v", answered, err)
 	}
-	view, err := f.txs.Lookup(ctx, begun.ID, "browser-A")
+	view, err := f.txs.Lookup(ctx, begun.ID, "browser-binding-A")
 	if err != nil || view.Status != verifier.TransactionDone || view.Result == nil || view.Result.Credentials[0].Claims["given_name"] != "Jean" {
 		t.Fatalf("Lookup after answer = %+v, %v", view, err)
 	}
-	if _, err := f.txs.Lookup(ctx, begun.ID, "browser-B"); !errors.Is(err, verifier.ErrWrongBrowser) {
+	if _, err := f.txs.Lookup(ctx, begun.ID, "browser-binding-B"); !errors.Is(err, verifier.ErrWrongBrowser) {
 		t.Errorf("Lookup from another browser: %v, want ErrWrongBrowser", err)
 	}
 	if _, err := f.txs.HandleResponse(ctx, jwe); !errors.Is(err, verifier.ErrTransactionAnswered) {
@@ -215,31 +215,31 @@ func TestTransactions_SameDevice(t *testing.T) {
 
 	t.Run("released to the browser that asked, once", func(t *testing.T) {
 		f := newTxFixture(t, nil)
-		begun := f.begin("browser-A", true)
+		begun := f.begin("browser-binding-A", true)
 		code := redirectCode(t, f, begun)
-		if view, _ := f.txs.Lookup(ctx, begun.ID, "browser-A"); view.Status != verifier.TransactionAwaitingRedirect || view.Result != nil {
+		if view, _ := f.txs.Lookup(ctx, begun.ID, "browser-binding-A"); view.Status != verifier.TransactionAwaitingRedirect || view.Result != nil {
 			t.Fatalf("before redeem: %+v, want awaiting redirect and no result", view)
 		}
-		view, err := f.txs.Redeem(ctx, code, "browser-A")
+		view, err := f.txs.Redeem(ctx, code, "browser-binding-A")
 		if err != nil || view.Status != verifier.TransactionDone || view.Result == nil {
 			t.Fatalf("Redeem = %+v, %v", view, err)
 		}
-		if _, err := f.txs.Redeem(ctx, code, "browser-A"); !errors.Is(err, verifier.ErrTransactionUnknown) {
+		if _, err := f.txs.Redeem(ctx, code, "browser-binding-A"); !errors.Is(err, verifier.ErrTransactionUnknown) {
 			t.Errorf("second Redeem: %v, want ErrTransactionUnknown", err)
 		}
 	})
 	t.Run("another browser closes it", func(t *testing.T) {
 		f := newTxFixture(t, nil)
-		begun := f.begin("browser-A", true)
+		begun := f.begin("browser-binding-A", true)
 		code := redirectCode(t, f, begun)
 		if _, err := f.txs.Redeem(ctx, code, "attacker-browser"); !errors.Is(err, verifier.ErrWrongBrowser) {
 			t.Fatalf("Redeem from another browser: %v, want ErrWrongBrowser", err)
 		}
-		view, err := f.txs.Lookup(ctx, begun.ID, "browser-A")
+		view, err := f.txs.Lookup(ctx, begun.ID, "browser-binding-A")
 		if err != nil || view.Status != verifier.TransactionClosed || view.Result != nil || view.LastError == "" {
 			t.Errorf("after a wrong-browser redirect: %+v, %v; want closed with no result", view, err)
 		}
-		if _, err := f.txs.Redeem(ctx, code, "browser-A"); err == nil {
+		if _, err := f.txs.Redeem(ctx, code, "browser-binding-A"); err == nil {
 			t.Error("the code redeemed after a wrong-browser attempt")
 		}
 	})
@@ -249,10 +249,15 @@ func TestTransactions_SameDevice(t *testing.T) {
 			if _, err := f.txs.Begin(ctx, f.query, "", sameDevice); err == nil {
 				t.Errorf("a request (same-device %v) began without a browser binding", sameDevice)
 			}
+			// A guessable binding — a user ID, a short session number —
+			// would give away the result to anyone who saw the request ID.
+			if _, err := f.txs.Begin(ctx, f.query, "user-42", sameDevice); err == nil {
+				t.Errorf("a request (same-device %v) began with a short browser binding", sameDevice)
+			}
 		}
 		g := newTxFixture(t, func(c *verifier.TransactionsConfig) { c.RedirectURI = "" })
-		if _, err := g.txs.Begin(ctx, g.query, "b", true); err == nil {
-			t.Error("a same-device request began without a RedirectURI")
+		if _, err := g.txs.Begin(ctx, g.query, "browser-binding-B", true); err == nil || !strings.Contains(err.Error(), "RedirectURI") {
+			t.Errorf("a same-device request without a RedirectURI: %v, want refused for it", err)
 		}
 	})
 }
@@ -271,7 +276,7 @@ func TestTransactions_RefusedAnswersLeaveItOpen(t *testing.T) {
 			return nil
 		}
 	})
-	begun := f.begin("browser-A", false)
+	begun := f.begin("browser-binding-A", false)
 
 	refusals := map[string]string{
 		"wrong nonce": f.answer(begun, func(r *wallet.AuthorizationRequest) { r.Nonce = "not-the-nonce" }),
@@ -286,7 +291,7 @@ func TestTransactions_RefusedAnswersLeaveItOpen(t *testing.T) {
 	if _, err := f.txs.HandleResponse(ctx, f.answer(begun, nil)); err == nil || !strings.Contains(err.Error(), "revoked") {
 		t.Errorf("Accept refusal: %v", err)
 	}
-	view, err := f.txs.Lookup(ctx, begun.ID, "browser-A")
+	view, err := f.txs.Lookup(ctx, begun.ID, "browser-binding-A")
 	if err != nil || view.Status != verifier.TransactionPending || !strings.Contains(view.LastError, "revoked") {
 		t.Fatalf("after refusals: %+v, %v; want still pending, with the last reason", view, err)
 	}
@@ -299,18 +304,18 @@ func TestTransactions_RefusedAnswersLeaveItOpen(t *testing.T) {
 func TestTransactions_ExpiryAndClose(t *testing.T) {
 	ctx := context.Background()
 	f := newTxFixture(t, func(c *verifier.TransactionsConfig) { c.Lifetime = time.Minute })
-	expired := f.begin("browser-A", false)
+	expired := f.begin("browser-binding-A", false)
 	jwe := f.answer(expired, nil)
 	f.now = f.now.Add(2 * time.Minute)
 	if _, err := f.txs.HandleResponse(ctx, jwe); !errors.Is(err, verifier.ErrTransactionExpired) {
 		t.Errorf("answer after expiry: %v, want ErrTransactionExpired", err)
 	}
-	if view, _ := f.txs.Lookup(ctx, expired.ID, "browser-A"); view.Status != verifier.TransactionExpired {
+	if view, _ := f.txs.Lookup(ctx, expired.ID, "browser-binding-A"); view.Status != verifier.TransactionExpired {
 		t.Errorf("Lookup after expiry: %v, want expired", view.Status)
 	}
 
 	f.now = time.Now()
-	closed := f.begin("browser-A", false)
+	closed := f.begin("browser-binding-A", false)
 	jwe = f.answer(closed, nil)
 	if err := f.txs.Close(ctx, closed.ID); err != nil {
 		t.Fatal(err)
@@ -324,7 +329,7 @@ func TestTransactions_ExpiryAndClose(t *testing.T) {
 // request, exactly one completes it.
 func TestTransactions_CompletesOnce(t *testing.T) {
 	f := newTxFixture(t, nil)
-	begun := f.begin("browser-A", false)
+	begun := f.begin("browser-binding-A", false)
 	answers := make([]string, 8)
 	for i := range answers {
 		answers[i] = f.answer(begun, nil)
@@ -357,7 +362,7 @@ func TestTransactions_Handlers(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	begun := f.begin("browser-A", true)
+	begun := f.begin("browser-binding-A", true)
 	resp, err := http.Get(srv.URL + "/request-objects/" + begun.ID)
 	if err != nil || resp.StatusCode != http.StatusOK || resp.Header.Get("Content-Type") != "application/oauth-authz-req+jwt" {
 		t.Fatalf("GET request object: %v %v", resp, err)
@@ -424,7 +429,7 @@ func TestTransactions_HandlerEdges(t *testing.T) {
 	resp := httptest.NewServer(f.txs.ResponseHandler())
 	defer resp.Close()
 
-	begun := f.begin("browser-A", false)
+	begun := f.begin("browser-binding-A", false)
 	if r, err := http.Get(reqObj.URL + "/any/prefix/" + begun.ID); err != nil || r.StatusCode != http.StatusOK {
 		t.Errorf("request object by last path segment: %v %v", r, err)
 	}
@@ -471,16 +476,16 @@ func TestTransactions_HandlerEdges(t *testing.T) {
 func TestTransactions_LookupNeedsTheBinding(t *testing.T) {
 	ctx := context.Background()
 	f := newTxFixture(t, nil)
-	begun := f.begin("browser-A", false)
+	begun := f.begin("browser-binding-A", false)
 	if _, err := f.txs.HandleResponse(ctx, f.answer(begun, nil)); err != nil {
 		t.Fatalf("HandleResponse: %v", err)
 	}
-	for _, binding := range []string{"", "browser-B"} {
+	for _, binding := range []string{"", "browser-binding-B"} {
 		if view, err := f.txs.Lookup(ctx, begun.ID, binding); !errors.Is(err, verifier.ErrWrongBrowser) || view.Result != nil {
 			t.Errorf("Lookup(binding %q) = %+v, %v; want ErrWrongBrowser and no result", binding, view, err)
 		}
 	}
-	if view, err := f.txs.Lookup(ctx, begun.ID, "browser-A"); err != nil || view.Result == nil {
+	if view, err := f.txs.Lookup(ctx, begun.ID, "browser-binding-A"); err != nil || view.Result == nil {
 		t.Errorf("Lookup with the binding = %+v, %v; want the result", view, err)
 	}
 }
@@ -491,7 +496,7 @@ func TestTransactions_LookupNeedsTheBinding(t *testing.T) {
 func TestTransactions_LastErrorFromAWalletErrorIsItsCodeOnly(t *testing.T) {
 	ctx := context.Background()
 	f := newTxFixture(t, nil)
-	begun := f.begin("browser-A", false)
+	begun := f.begin("browser-binding-A", false)
 	for _, c := range []struct{ code, want string }{
 		{"access_denied", "the wallet returned an error: access_denied"},
 		{"Call +1 555 0100 <b>now</b>", "the wallet returned an error"},
@@ -499,7 +504,7 @@ func TestTransactions_LastErrorFromAWalletErrorIsItsCodeOnly(t *testing.T) {
 		if _, err := f.txs.HandleResponse(ctx, f.errorAnswer(begun, c.code, "Your account is locked, call +1 555 0100")); err == nil {
 			t.Fatal("an error response was accepted")
 		}
-		view, err := f.txs.Lookup(ctx, begun.ID, "browser-A")
+		view, err := f.txs.Lookup(ctx, begun.ID, "browser-binding-A")
 		if err != nil || view.Status != verifier.TransactionPending || view.LastError != c.want {
 			t.Errorf("code %q: LastError = %q (%+v, %v); want %q and still pending", c.code, view.LastError, view, err, c.want)
 		}
@@ -515,11 +520,11 @@ func TestTransactions_LastErrorIsShortAndPrintable(t *testing.T) {
 			return errors.New("line one\nline two\x00" + strings.Repeat("x", 1000))
 		}
 	})
-	begun := f.begin("browser-A", false)
+	begun := f.begin("browser-binding-A", false)
 	if _, err := f.txs.HandleResponse(ctx, f.answer(begun, nil)); err == nil {
 		t.Fatal("refused answer was accepted")
 	}
-	view, err := f.txs.Lookup(ctx, begun.ID, "browser-A")
+	view, err := f.txs.Lookup(ctx, begun.ID, "browser-binding-A")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -551,21 +556,21 @@ func TestTransactions_ResponseHandlerAcceptsAWalletErrorResponse(t *testing.T) {
 		return r.StatusCode, body
 	}
 
-	begun := f.begin("browser-A", false)
+	begun := f.begin("browser-binding-A", false)
 	if status, body := post(f.errorAnswer(begun, "access_denied", "")); status != http.StatusOK || len(body) != 0 {
 		t.Errorf("error response: status %d, body %v; want 200 and {}", status, body)
 	}
-	view, err := f.txs.Lookup(context.Background(), begun.ID, "browser-A")
+	view, err := f.txs.Lookup(context.Background(), begun.ID, "browser-binding-A")
 	if err != nil || view.Status != verifier.TransactionPending || view.LastError != "the wallet returned an error: access_denied" {
 		t.Errorf("after the error response: %+v, %v; want it recorded and still pending", view, err)
 	}
 
-	other := f.begin("browser-A", false)
+	other := f.begin("browser-binding-A", false)
 	wrongState := f.errorAnswerWithState(other, "access_denied", "", func(s string) string { return s + "x" })
 	if status, _ := post(wrongState); status != http.StatusBadRequest {
 		t.Errorf("error response with another state: status %d, want 400", status)
 	}
-	view, err = f.txs.Lookup(context.Background(), other.ID, "browser-A")
+	view, err = f.txs.Lookup(context.Background(), other.ID, "browser-binding-A")
 	if err != nil || !strings.Contains(view.LastError, "state") {
 		t.Errorf("after the mismatched error response: %+v, %v", view, err)
 	}

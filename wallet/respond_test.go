@@ -75,7 +75,7 @@ func TestRespond(t *testing.T) {
 	begun, err := txs.Begin(ctx, dcql.Query{Credentials: []dcql.CredentialQuery{{
 		ID: "cred", Format: sdjwtvc.CredentialFormat, Meta: meta,
 		Claims: []dcql.ClaimsQuery{{Path: dcql.Path{dcql.PathKey("given_name")}}},
-	}}}, "holder-session", false)
+	}}}, "holder-browser-session", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +100,7 @@ func TestRespond(t *testing.T) {
 	if len(responded.VPToken["cred"]) != 1 {
 		t.Errorf("VPToken = %v, want one presentation for cred", responded.VPToken)
 	}
-	view, err := txs.Lookup(ctx, begun.ID, "holder-session")
+	view, err := txs.Lookup(ctx, begun.ID, "holder-browser-session")
 	if err != nil || view.Status != verifier.TransactionDone || view.Result.Credentials[0].Claims["given_name"] != "Jean" {
 		t.Fatalf("verifier after Respond: %+v, %v", view, err)
 	}

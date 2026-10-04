@@ -1,10 +1,14 @@
 package walletflow
 
 import (
+	"crypto"
+	"crypto/x509"
+	"errors"
 	"time"
 
 	"github.com/idfoundry/oid4vcgo/dcql"
 	"github.com/idfoundry/oid4vcgo/registration"
+	"github.com/idfoundry/oid4vcgo/wallet"
 )
 
 // RegistrationStatus is what the wallet found of the Verifier's
@@ -72,12 +76,10 @@ func (p *Presentation) verifyRegistrations(now time.Time) (Registration, map[str
 	out := Registration{Status: RegistrationNone}
 	applies := map[string]*registration.Registration{}
 	for _, vi := range p.req.VerifierInfo {
-		data, ok := vi.DataString()
-		if !ok || !registration.Recognize(vi.Format, data) {
-			continue
-		}
-		reg, err := registration.Verify(data, p.w.cfg.RegistrarRoots, p.req.ClientID, now)
+		reg, recognized, err := p.verifyEntry(vi, now)
 		switch {
+		case !recognized:
+			continue
 		case err != nil && out.Status == RegistrationNone:
 			out.Status = RegistrationInvalid
 		case err == nil && out.Status != RegistrationVerified:
@@ -93,6 +95,35 @@ func (p *Presentation) verifyRegistrations(now time.Time) (Registration, map[str
 		}
 	}
 	return out, applies
+}
+
+// verifyEntry verifies one verifier_info entry as a registration:
+// recognized is false for an attestation in another format, which is
+// ignored (OpenID4VP 1.0 §5.11).
+func (p *Presentation) verifyEntry(vi wallet.VerifierInfo, now time.Time) (reg registration.Registration, recognized bool, err error) {
+	data, ok := vi.DataString()
+	if !ok || !registration.Recognize(vi.Format, data) {
+		return registration.Registration{}, false, nil
+	}
+	reg, err = registration.VerifyWithPolicy(data, p.w.cfg.RegistrarRoots, p.req.ClientID, now, p.w.cfg.RegistrarLeafPolicy)
+	if err == nil && signedBySelf(reg, p.req.VerifierCertificate) {
+		err = errSelfRegistered
+	}
+	return reg, true, err
+}
+
+// errSelfRegistered is a registration signed with the Verifier's own
+// request-signing key: a Verifier vouching for itself.
+var errSelfRegistered = errors.New("walletflow: the registration is signed by the Verifier itself")
+
+// signedBySelf reports whether reg was signed with the same key as the
+// Verifier's request-signing certificate.
+func signedBySelf(reg registration.Registration, verifier *x509.Certificate) bool {
+	if verifier == nil || reg.RegistrarCertificate == nil {
+		return false
+	}
+	pub, ok := reg.RegistrarCertificate.PublicKey.(interface{ Equal(crypto.PublicKey) bool })
+	return ok && pub.Equal(verifier.PublicKey)
 }
 
 // Registration is the Verifier's registration, as checked when the

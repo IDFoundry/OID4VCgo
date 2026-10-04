@@ -75,7 +75,15 @@ func VerifyLeafWithPolicy(ders [][]byte, roots *x509.CertPool, policy func(leaf 
 // about who issued what can be relied on; what a certificate merely
 // states about its own issuer (its Authority Key Identifier extension)
 // can't — chain building doesn't require it to match.
+//
+// roots must be set: crypto/x509 treats a nil pool as "the system's
+// roots", which would trust any publicly trusted certificate. A leaf
+// that's itself a CA certificate is refused too: every role here signs
+// with an end-entity certificate.
 func VerifyChains(ders [][]byte, roots *x509.CertPool) (*x509.Certificate, [][]*x509.Certificate, error) {
+	if roots == nil {
+		return nil, nil, fmt.Errorf("certchain: no trust anchors configured (a nil root pool would mean the system roots)")
+	}
 	if len(ders) == 0 {
 		return nil, nil, fmt.Errorf("certchain: certificate chain is empty")
 	}
@@ -90,6 +98,9 @@ func VerifyChains(ders [][]byte, roots *x509.CertPool) (*x509.Certificate, [][]*
 	leaf := certs[0]
 	if IsSelfSigned(leaf) {
 		return nil, nil, fmt.Errorf("certchain: leaf certificate must not be self-signed")
+	}
+	if leaf.BasicConstraintsValid && leaf.IsCA {
+		return nil, nil, fmt.Errorf("certchain: leaf certificate must not be a CA certificate")
 	}
 
 	intermediates := x509.NewCertPool()

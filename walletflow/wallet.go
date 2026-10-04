@@ -41,8 +41,16 @@ type Config struct {
 	// Verifiers the wallet checks (the registration package): a
 	// request's registration, from its verifier_info, is reported with
 	// what the request asks beyond it (Presentation.Registration).
-	// Unset, registrations are ignored.
+	// Unset, registrations are ignored. They must anchor only
+	// registrars: any end-entity certificate under them can register a
+	// Verifier, so roots shared with Verifiers or Issuers would let them
+	// register themselves. A registration signed with the Verifier's own
+	// key is never accepted.
 	RegistrarRoots *x509.CertPool
+	// RegistrarLeafPolicy, if set, decides whether a certificate under
+	// RegistrarRoots may sign registrations: an extended key usage or
+	// certificate policy the ecosystem defines for registrars, say.
+	RegistrarLeafPolicy func(leaf *x509.Certificate, chains [][]*x509.Certificate) error
 
 	// Locales are the holder's preferred languages (BCP 47 tags, most
 	// preferred first), for the issuer's display metadata. None means

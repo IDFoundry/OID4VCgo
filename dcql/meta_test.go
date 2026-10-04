@@ -33,10 +33,31 @@ func TestSatisfiedBySDJWTVCClaims(t *testing.T) {
 	}
 }
 
-func TestSatisfiedBySDJWTVCClaimsAcceptsAnyVCTWhenUnconstrained(t *testing.T) {
-	cq := dcql.CredentialQuery{ID: "any", Format: "dc+sd-jwt", Meta: mustSDJWTVCMeta(t)}
-	if err := cq.SatisfiedBySDJWTVCClaims(map[string]any{"vct": "https://anything.example.com"}); err != nil {
-		t.Errorf("SatisfiedBySDJWTVCClaims = %v, want nil", err)
+// TestQueryWithoutTypeIsRefused: a Credential Query must name the type
+// it accepts — vct_values for dc+sd-jwt, doctype_value for mso_mdoc
+// (OpenID4VP 1.0 B.3.5, B.2.3) — or it would accept a Credential of any
+// type that has the claims. The constructors and Validate both refuse
+// one that doesn't.
+func TestQueryWithoutTypeIsRefused(t *testing.T) {
+	if _, err := dcql.NewSDJWTVCMeta(dcql.SDJWTVCMeta{}); err == nil {
+		t.Error("NewSDJWTVCMeta with no vct_values succeeded")
+	}
+	if _, err := dcql.NewSDJWTVCMeta(dcql.SDJWTVCMeta{VCTValues: []string{""}}); err == nil {
+		t.Error("NewSDJWTVCMeta with an empty vct succeeded")
+	}
+	if _, err := dcql.NewMdocMeta(dcql.MdocMeta{}); err == nil {
+		t.Error("NewMdocMeta with no doctype_value succeeded")
+	}
+	for name, cq := range map[string]dcql.CredentialQuery{
+		"sd-jwt, {}":             {ID: "a", Format: "dc+sd-jwt", Meta: []byte(`{}`)},
+		"sd-jwt, empty vct list": {ID: "a", Format: "dc+sd-jwt", Meta: []byte(`{"vct_values":[]}`)},
+		"sd-jwt, null vct list":  {ID: "a", Format: "dc+sd-jwt", Meta: []byte(`{"vct_values":null}`)},
+		"mdoc, {}":               {ID: "a", Format: "mso_mdoc", Meta: []byte(`{}`)},
+		"mdoc, empty doctype":    {ID: "a", Format: "mso_mdoc", Meta: []byte(`{"doctype_value":""}`)},
+	} {
+		if err := (dcql.Query{Credentials: []dcql.CredentialQuery{cq}}).Validate(); err == nil {
+			t.Errorf("%s: Validate succeeded", name)
+		}
 	}
 }
 
@@ -127,7 +148,7 @@ func TestSelectedSDJWTVCClaimPathsReturnsWinningOption(t *testing.T) {
 // "the Wallet MUST return only the claims that are mandatory to
 // present."
 func TestSelectedSDJWTVCClaimPathsEmptyWhenNoClaimsRequested(t *testing.T) {
-	cq := dcql.CredentialQuery{ID: "any", Format: "dc+sd-jwt", Meta: mustSDJWTVCMeta(t)}
+	cq := dcql.CredentialQuery{ID: "any", Format: "dc+sd-jwt", Meta: mustSDJWTVCMeta(t, "https://anything.example.com")}
 	paths, err := cq.SelectedSDJWTVCClaimPaths(map[string]any{"vct": "https://anything.example.com"})
 	if err != nil {
 		t.Fatalf("SelectedSDJWTVCClaimPaths: %v", err)

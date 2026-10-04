@@ -133,7 +133,7 @@ func (c CredentialQuery) Validate() error {
 // cognitive complexity ceiling.
 func (c CredentialQuery) validateMeta() error {
 	if len(c.Meta) == 0 {
-		return fmt.Errorf("dcql: credential query %q: meta is required (may be {})", c.ID)
+		return fmt.Errorf("dcql: credential query %q: meta is required", c.ID)
 	}
 	var probe any
 	if err := json.Unmarshal(c.Meta, &probe); err != nil {
@@ -141,6 +141,27 @@ func (c CredentialQuery) validateMeta() error {
 	}
 	if _, ok := probe.(map[string]any); !ok {
 		return fmt.Errorf("dcql: credential query %q: meta must be a JSON object", c.ID)
+	}
+	// The format's type constraint is REQUIRED (Appendix B.3.5's
+	// vct_values, B.2.3's doctype_value): without it the query accepts a
+	// Credential of any type that has the claims.
+	switch c.Format {
+	case formatSDJWTVC:
+		m, err := c.SDJWTVCMeta()
+		if err != nil {
+			return err
+		}
+		if err := m.validate(); err != nil {
+			return fmt.Errorf("dcql: credential query %q: %w", c.ID, err)
+		}
+	case formatMdoc:
+		m, err := c.MdocMeta()
+		if err != nil {
+			return err
+		}
+		if m.DoctypeValue == "" {
+			return fmt.Errorf("dcql: credential query %q: meta.doctype_value is required", c.ID)
+		}
 	}
 	return nil
 }

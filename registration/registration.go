@@ -14,7 +14,8 @@
 // The JWT has typ Type, is signed with ES256, and carries the
 // registrar's certificate chain in x5c. Its claims:
 //
-//	iss             the registrar
+//	iss             the registrar: a URI subject alternative name of
+//	                the signing certificate
 //	sub             the relying party's client_id
 //	iat, exp        when it was issued, and until when it holds
 //	name            the relying party's name
@@ -82,7 +83,8 @@ type wireClaims struct {
 
 // Issue signs r as a registration JWT with key, carrying chain (the
 // registrar's certificate first) in x5c. r needs a Registrar, ClientID,
-// Name and Expires; IssuedAt defaults to now.
+// Name and Expires; IssuedAt defaults to now. r.Registrar must be a URI
+// subject alternative name of chain[0], for Verify to accept it.
 func Issue(r Registration, key *ecdsa.PrivateKey, chain []*x509.Certificate) (string, error) {
 	if r.Registrar == "" || r.ClientID == "" || r.Name == "" || r.Expires.IsZero() || key == nil || len(chain) == 0 {
 		return "", errors.New("registration: Registrar, ClientID, Name, Expires, a key and its certificate are required")
@@ -133,9 +135,23 @@ func Recognize(format, data string) bool {
 }
 
 // Verify checks token, a registration JWT, and returns what it attests:
-// its typ is Type, it's signed with ES256 by a certificate chaining to
-// roots (not self-signed), it's for clientID (sub), and it holds at now.
+// its typ is Type, it's signed with ES256 by an end-entity certificate
+// chaining to roots (not self-signed, not a CA, for digital
+// signatures), its iss is one of that certificate's URI subject
+// alternative names, it's for clientID (sub), and it holds at now.
+//
+// roots must anchor only registrars: any end-entity certificate under
+// them can register any Verifier, so a root that also issues Verifiers'
+// or Issuers' certificates would let them register themselves.
+// VerifyWithPolicy narrows which certificates may sign.
 func Verify(token string, roots *x509.CertPool, clientID string, now time.Time) (Registration, error) {
+	return VerifyWithPolicy(token, roots, clientID, now, nil)
+}
+
+// VerifyWithPolicy is Verify, with policy (if non-nil) deciding whether
+// the verified signing certificate may act as a registrar — an extended
+// key usage or certificate policy the ecosystem defines, say.
+func VerifyWithPolicy(token string, roots *x509.CertPool, clientID string, now time.Time, policy func(leaf *x509.Certificate, chains [][]*x509.Certificate) error) (Registration, error) {
 	if roots == nil {
 		return Registration{}, errors.New("registration: no registrar roots")
 	}
@@ -153,12 +169,12 @@ func Verify(token string, roots *x509.CertPool, clientID string, now time.Time) 
 	if err != nil {
 		return Registration{}, fmt.Errorf("registration: %w", err)
 	}
-	leaf, err := certchain.VerifyLeaf(ders, roots)
+	leaf, err := certchain.VerifyLeafWithPolicy(ders, roots, policy)
 	if err != nil {
 		return Registration{}, fmt.Errorf("registration: registrar certificate: %w", err)
 	}
-	if certchain.IsSelfSigned(leaf) {
-		return Registration{}, errors.New("registration: the registrar certificate is self-signed")
+	if leaf.KeyUsage != 0 && leaf.KeyUsage&x509.KeyUsageDigitalSignature == 0 {
+		return Registration{}, errors.New("registration: the registrar certificate isn't for digital signatures")
 	}
 	_, payload, err := jose.Verify(jose.ES256, leaf.PublicKey, token)
 	if err != nil {
@@ -173,6 +189,8 @@ func Verify(token string, roots *x509.CertPool, clientID string, now time.Time) 
 		return Registration{}, errors.New("registration: iss, name, iat and exp are required")
 	case c.Sub != clientID:
 		return Registration{}, errors.New("registration: it's for another relying party")
+	case !slices.ContainsFunc(leaf.URIs, func(u *url.URL) bool { return u.String() == c.Iss }):
+		return Registration{}, errors.New("registration: iss isn't the signing certificate's: it must be one of its URI subject alternative names")
 	case !now.Before(time.Unix(c.Exp, 0)):
 		return Registration{}, errors.New("registration: expired")
 	case time.Unix(c.Iat, 0).After(now.Add(maxSkew)):

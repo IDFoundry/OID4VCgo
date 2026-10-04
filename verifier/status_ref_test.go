@@ -31,6 +31,10 @@ func TestVerifiedCredential_StatusListRef(t *testing.T) {
 			want: statuslist.StatusListRef{Idx: 9, URI: uri}, wantCWT: true, wantOK: true,
 		},
 		"mdoc status without a list": {vc: verifier.VerifiedCredential{MdocStatus: &mdoc.Status{}}},
+		"mdoc identifier list only": {
+			vc:      verifier.VerifiedCredential{MdocStatus: &mdoc.Status{IdentifierList: &mdoc.IdentifierListRef{URI: uri}}},
+			wantErr: true,
+		},
 		"mdoc index beyond int range": {
 			vc:   verifier.VerifiedCredential{MdocStatus: &mdoc.Status{StatusList: &mdoc.StatusListRef{Idx: math.MaxUint64, URI: uri}}},
 			want: statuslist.StatusListRef{Idx: math.MaxUint64, URI: uri}, wantCWT: true, wantOK: true,

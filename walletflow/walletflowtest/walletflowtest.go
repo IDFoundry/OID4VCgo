@@ -221,7 +221,13 @@ func New(opts Options) (env *Env, err error) {
 	e.IssuerCA, e.IssuerRoots = caCert, x509.NewCertPool()
 	e.IssuerRoots.AddCert(caCert)
 	registrarCA, registrarCAKey := newCA("walletflowtest registrar CA")
-	e.registrarCert, e.registrarKey = newLeaf("walletflowtest registrar", registrarCA, registrarCAKey)
+	e.registrarKey, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	must(err)
+	e.registrarCert = newCertificate(&x509.Certificate{
+		SerialNumber: big.NewInt(3), Subject: pkix.Name{CommonName: "walletflowtest registrar"},
+		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(24 * time.Hour),
+		KeyUsage: x509.KeyUsageDigitalSignature, URIs: []*url.URL{{Scheme: "https", Host: RegistrarHost}},
+	}, registrarCA, &e.registrarKey.PublicKey, registrarCAKey)
 	e.RegistrarRoots, e.RegistrarCA = x509.NewCertPool(), registrarCA
 	e.RegistrarRoots.AddCert(registrarCA)
 	proofTypes := map[string]oid4vci.ProofTypeConfiguration{oid4vci.ProofTypeAttestation: haip.RecommendedAttestationProofType()}
@@ -851,6 +857,10 @@ func newCertificate(tmpl, parent *x509.Certificate, pub *ecdsa.PublicKey, signer
 	must(err)
 	return cert
 }
+
+// RegistrarHost names the Env's registrar: its registrations' iss is
+// "https://" + RegistrarHost, a URI in the registrar's certificate.
+const RegistrarHost = "registrar.walletflowtest.example"
 
 // Portrait is the credentials' portrait: a small JPEG.
 var Portrait = func() []byte {
