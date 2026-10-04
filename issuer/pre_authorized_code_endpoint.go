@@ -87,6 +87,20 @@ type ExchangePreAuthorizedCodeResult struct {
 	// was empty — this exchange's own behavior is then unchanged from
 	// before this field existed.
 	AuthorizationDetails []oid4vci.AuthorizationDetail
+
+	// Subject and Scope are the redeemed PreAuthorizedCodeRecord's own
+	// Subject and Scopes: what the access token was issued for, and what
+	// a refresh token for this grant should grant (with
+	// AuthorizationDetails), for an Authorization Server that issues one
+	// (fapigo/server.Server.IssueRefreshToken).
+	Subject string
+	Scope   []string
+
+	// RefreshToken, set by the caller before WriteJSON, is the Token
+	// Response's refresh_token: one the Authorization Server issued for
+	// this grant, so the Wallet can refresh its credentials (OpenID4VCI
+	// 1.0 §13.5). Empty: none.
+	RefreshToken fapi.Secret
 }
 
 // WriteJSON writes r as a complete Token Response (§6.2): the
@@ -105,10 +119,11 @@ func (r ExchangePreAuthorizedCodeResult) WriteJSON(w http.ResponseWriter) {
 		AccessToken          string                        `json:"access_token"`
 		TokenType            string                        `json:"token_type"`
 		ExpiresIn            int64                         `json:"expires_in"`
+		RefreshToken         string                        `json:"refresh_token,omitempty"`
 		AuthorizationDetails []oid4vci.AuthorizationDetail `json:"authorization_details,omitempty"`
 	}{
 		AccessToken: r.AccessToken, TokenType: r.TokenType, ExpiresIn: int64(r.ExpiresIn.Seconds()),
-		AuthorizationDetails: r.AuthorizationDetails,
+		RefreshToken: r.RefreshToken.Reveal(), AuthorizationDetails: r.AuthorizationDetails,
 	})
 }
 
@@ -295,7 +310,7 @@ func (iss *Issuer) exchangePreAuthorizedCode(ctx context.Context, req ExchangePr
 
 	result := ExchangePreAuthorizedCodeResult{
 		AccessToken: accessToken, TokenType: "DPoP", ExpiresIn: iss.cfg.Limits.AccessTokenLifetime,
-		AuthorizationDetails: authDetails,
+		AuthorizationDetails: authDetails, Subject: record.Subject, Scope: record.Scopes,
 	}
 	switch {
 	case req.Verified != nil:

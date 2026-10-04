@@ -328,6 +328,12 @@ func (s *Issuance) RedeemPreAuthorizedCode(ctx context.Context, txCode string) e
 	}
 	s.resource = s.w.core.DPoPResourceClient(token.AccessToken, s.dpopKey)
 	s.accessToken = token.AccessToken
+	if s.w.cfg.RequestRefresh {
+		// An Authorization Server may issue a refresh token for this
+		// grant too: there's no scope to ask for one with, so it's the
+		// server's call.
+		s.refreshToken = token.RefreshToken
+	}
 	if token.HasExpiresIn {
 		s.accessExpiresAt = s.w.deps.Clock().Add(token.ExpiresIn)
 	}

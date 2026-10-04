@@ -156,7 +156,9 @@ the issuer's `batch_size`. `request_refresh` asks Authorization Servers,
 in the authorization code grant, for a refresh token (the
 `offline_access` scope), so `RefreshCredential` can later replace a
 credential's copies without the holder (OpenID4VCI 1.0 §13.5). The
-server must allow the wallet that scope, or the authorization fails.
+server must allow the wallet that scope, or the authorization fails. In
+the pre-authorized code grant there's no scope to ask with: a refresh
+token the server issues anyway is kept.
 The refresh token is kept in the CredentialStore, as a record of
 `"kind": "grant"`, with the wallet instance key ID, the key every
 refresh must authenticate with again.

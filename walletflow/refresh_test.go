@@ -253,3 +253,48 @@ func TestRefreshCredential_BoundToTheInstanceKey(t *testing.T) {
 		t.Fatalf("RefreshCredential with another instance key = %v, want the server's invalid_grant", err)
 	}
 }
+
+// A pre-authorized code's issuance keeps the refresh token the
+// Authorization Server issues with it, so its credential can be
+// refreshed too; a wallet not asking for refresh discards it.
+func TestRefreshCredential_PreAuthorizedCode(t *testing.T) {
+	ctx := context.Background()
+	receivePIN := func(f fixture, w *walletflow.Wallet) walletflow.StoredCredential {
+		t.Helper()
+		s, err := w.StartIssuance(ctx, f.env.PreAuthorizedOffer(t, "493536", walletflowtest.SDJWTConfigurationID))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = s.Close(ctx) }()
+		if err := s.RedeemPreAuthorizedCode(ctx, "493536"); err != nil {
+			t.Fatal(err)
+		}
+		result, err := s.RequestCredentials(ctx)
+		if err != nil || len(result.Credentials) != 1 {
+			t.Fatalf("RequestCredentials = %+v, %v", result, err)
+		}
+		return result.Credentials[0]
+	}
+
+	f := newFixture(t, walletflowtest.Options{BatchSize: 2})
+	if c := receivePIN(f, f.w); c.GrantID != "" || f.keys.Len() != 2 {
+		t.Errorf("without RequestRefresh: GrantID %q, %d keys; want no grant and only the copies' keys", c.GrantID, f.keys.Len())
+	}
+
+	f = newFixture(t, walletflowtest.Options{BatchSize: 2})
+	grants := walletflow.NewMemoryGrantStore()
+	w := f.newRefreshingWallet(t, nil, grants)
+	c := receivePIN(f, w)
+	if c.GrantID == "" {
+		t.Fatal("the pre-authorized credential isn't refreshable")
+	}
+	refreshed, _, err := w.RefreshCredential(ctx, c.ID)
+	if err != nil || refreshed.ID != c.ID || refreshed.CopiesLeft() != 2 {
+		t.Fatalf("RefreshCredential = %+v, %v", refreshed, err)
+	}
+	assertDistinct(t, append(append([]walletflow.CredentialCopy{}, c.Copies...), refreshed.Copies...))
+	f.env.RevokeGrants()
+	if _, _, err := w.RefreshCredential(ctx, c.ID); !errors.Is(err, walletflow.ErrReissueRequired) {
+		t.Errorf("after the grant was revoked: %v, want ErrReissueRequired", err)
+	}
+}
