@@ -412,7 +412,7 @@ func TestASMetadata_AdvertisesDPoP(t *testing.T) {
 func TestRevoke_Refuses(t *testing.T) {
 	env := demotest.New(t, nil)
 	post := func(origin, handle string) int {
-		req, err := http.NewRequest(http.MethodPost, env.IssuerURL+"/status/revoke", strings.NewReader(url.Values{"handle": {handle}}.Encode()))
+		req, err := http.NewRequest(http.MethodPost, env.IssuerURL+"/demo/status/revoke", strings.NewReader(url.Values{"handle": {handle}}.Encode()))
 		if err != nil {
 			t.Fatal(err)
 		}

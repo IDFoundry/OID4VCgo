@@ -197,7 +197,7 @@ var statusTemplate = template.Must(template.New("status").Parse(pageHead + `
 {{range .Entries}}
 <tr><td><code>{{.Format}}</code>{{if .Unchecked}} <span class="warn">— issued without Passive Authentication (gmrtd's sample)</span>{{end}}</td><td>{{.IssuedAt.Format "15:04:05"}}</td>
 <td>{{if .Revoked}}<span class="warn">revoked</span>{{else}}<span class="ok">valid</span>{{end}}</td>
-<td>{{if not .Revoked}}<form method="post" action="/status/revoke"><input type="hidden" name="handle" value="{{.Handle}}"><button>Revoke</button></form>{{end}}</td></tr>
+<td>{{if not .Revoked}}<form method="post" action="/demo/status/revoke"><input type="hidden" name="handle" value="{{.Handle}}"><button>Revoke</button></form>{{end}}</td></tr>
 {{end}}
 </table>
 {{else}}
@@ -216,7 +216,7 @@ var statusTemplate = template.Must(template.New("status").Parse(pageHead + `
 <p>None yet.</p>
 {{end}}
 <p class="note">Demo only: anyone who can reach this page can revoke. Entries record no passport data, and don't show the credentials' status list indices. They're kept across restarts only under <code>cmd/demo</code>.</p>
-<p><a href="/">Issue another</a> · <a href="/review">Issuances awaiting review</a></p>
+<p><a href="/demo/">Issue another</a> · <a href="/demo/review">Issuances awaiting review</a></p>
 ` + pageFoot))
 
 // IssuedStatuses lists every credential this issuer has issued, newest
@@ -249,7 +249,7 @@ func (a *App) handleRevoke(w http.ResponseWriter, r *http.Request) {
 	if a.publisher != nil {
 		a.publisher.Invalidate() // serve the revocation at once
 	}
-	http.Redirect(w, r, "/status", http.StatusSeeOther)
+	http.Redirect(w, r, "/demo/status", http.StatusSeeOther)
 }
 
 // credentialFormat is the format of credential configuration id.
