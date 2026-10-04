@@ -71,6 +71,9 @@ type AuthorizationServerMetadata struct {
 	AuthorizationEndpoint              string `json:"authorization_endpoint"`
 	TokenEndpoint                      string `json:"token_endpoint"`
 	PushedAuthorizationRequestEndpoint string `json:"pushed_authorization_request_endpoint"`
+	// RevocationEndpoint is its token revocation endpoint (RFC 7009),
+	// if it has one.
+	RevocationEndpoint string `json:"revocation_endpoint,omitempty"`
 }
 
 // FetchAuthorizationServerMetadata fetches and decodes issuerURL's own
