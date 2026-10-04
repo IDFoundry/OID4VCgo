@@ -430,8 +430,9 @@ func (e *Env) withStatus(_ context.Context, c *issuer.CredentialInstance) error 
 
 // Revoke revokes every credential issued so far: the status list then
 // says so.
-// RevokeGrants revokes every authorization code grant so far: their
-// refresh tokens are then refused (invalid_grant).
+// RevokeGrants revokes every grant so far, authorization code and
+// pre-authorized code: their refresh tokens are then refused
+// (invalid_grant).
 func (e *Env) RevokeGrants() {
 	e.mu.Lock()
 	ids := slices.Clone(e.grantIDs)
@@ -614,11 +615,44 @@ func (e *Env) handleToken(w http.ResponseWriter, r *http.Request) {
 			issuer.WriteError(w, err)
 			return
 		}
+		// A refresh token for this grant too, bound to the client's
+		// instance key, so the credentials can be refreshed.
+		refreshToken, err := e.issuePreAuthorizedRefreshToken(ctx, attested, binding, result)
+		if err != nil {
+			server.WriteError(w, err)
+			return
+		}
+		result.RefreshToken = refreshToken
 		w.Header().Set("Cache-Control", "no-store")
 		result.WriteJSON(w)
 	default:
 		server.NewError(server.ErrorUnsupportedGrantType, http.StatusBadRequest, "unsupported grant_type").WriteJSON(w)
 	}
+}
+
+// issuePreAuthorizedRefreshToken issues a refresh token for a redeemed
+// pre-authorized code, with an ID RevokeGrants revokes.
+func (e *Env) issuePreAuthorizedRefreshToken(ctx context.Context, attested server.AttestedClient, binding server.TokenBinding, result issuer.ExchangePreAuthorizedCodeResult) (fapi.Secret, error) {
+	subject, err := server.NewSubjectID(result.Subject)
+	if err != nil {
+		return fapi.Secret{}, err
+	}
+	var details []json.RawMessage
+	for _, d := range result.AuthorizationDetails {
+		raw, err := json.Marshal(d)
+		if err != nil {
+			return fapi.Secret{}, err
+		}
+		details = append(details, raw)
+	}
+	grantID := rand.Text()
+	e.mu.Lock()
+	e.grantIDs = append(e.grantIDs, grantID)
+	e.mu.Unlock()
+	return e.srv.IssueRefreshToken(ctx, server.IssueRefreshTokenRequest{
+		GrantType: preAuthorizedCodeGrantType, Client: attested, Binding: binding, Subject: subject,
+		Scope: result.Scope, AuthorizationDetails: details, GrantID: grantID,
+	})
 }
 
 func (e *Env) issuerURL() fapi.URL {
