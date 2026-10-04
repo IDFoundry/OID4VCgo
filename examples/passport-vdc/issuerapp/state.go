@@ -11,6 +11,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/statefile"
 )
 
 // Files an issuer keeps in Config.StateDir.
@@ -119,20 +121,8 @@ func parseIdentity(data []byte) (issuerIdentity, error) {
 
 // writeFileAtomic replaces path with data, readable only by its owner.
 func writeFileAtomic(path string, data []byte) error {
-	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp*")
-	if err != nil {
-		return fmt.Errorf("issuerapp: write %s: %w", path, err)
-	}
-	defer func() { _ = os.Remove(tmp.Name()) }()
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("issuerapp: write %s: %w", path, err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("issuerapp: write %s: %w", path, err)
-	}
-	if err := os.Rename(tmp.Name(), path); err != nil {
-		return fmt.Errorf("issuerapp: write %s: %w", path, err)
+	if err := statefile.WriteAtomic(path, data); err != nil {
+		return fmt.Errorf("issuerapp: %w", err)
 	}
 	return nil
 }

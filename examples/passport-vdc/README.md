@@ -129,9 +129,11 @@ go run ./cmd/demo
 It prints the URLs and runs until Ctrl-C. What should survive a
 restart is kept in `.demo-state/`: the TLS certificate the servers
 share, the stand-in Wallet Provider's key (only its service reads it), the issuer's CA, signing keys
-and status list, and the wallet's credentials. So a restart keeps your
-credentials verifying and your revocations in force, and the browser
-doesn't warn again. `go run ./cmd/demo -reset` deletes it and starts
+and status list, the verifier's CA and request-signing key, and the
+wallet's credentials. So a restart keeps your credentials verifying and
+your revocations in force, wallets configured with the verifier's CA
+(the iOS demo app) keep trusting it, and the browser doesn't warn
+again. `go run ./cmd/demo -reset` deletes it and starts
 over. It holds credentials made from your passport, and their holder
 keys, unencrypted: delete it (or `-reset`) when you're done.
 
