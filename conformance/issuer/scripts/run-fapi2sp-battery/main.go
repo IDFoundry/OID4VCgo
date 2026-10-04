@@ -307,6 +307,49 @@ func planFor(credentialFormat, proofTypeHint, encryption string, deferred, baseP
 	return planName, battery, planVariant
 }
 
+// prepareIssuer generates this run's identities, writes
+// cmd/conformance-issuer's config for them to configOut and, unless
+// skipRestart, restarts its container and waits for it.
+func prepareIssuer(httpClient *http.Client, alias, issuerBaseURL, configOut string, deferred, skipRestart bool) *run {
+	run, err := generateRun(alias, issuerBaseURL)
+	if err != nil {
+		log.Fatalf("generate run: %v", err)
+	}
+	run.deferred = deferred
+
+	serverConfig, err := buildServerConfig(run)
+	if err != nil {
+		log.Fatalf("build server config: %v", err)
+	}
+	// 0o644, not 0o600: this file is bind-mounted read-only into
+	// conformance-issuer's own container, which (like every
+	// cmd/conformance-* image) runs as gcr.io/distroless/static-
+	// debian12:nonroot's own fixed uid (65532) — a different uid than
+	// whatever process writes this file on the host, so 0o600 leaves
+	// the container itself unable to read its own config (confirmed
+	// live in CI for the same pattern in conformance-verifier: "open
+	// /config.json: permission denied"; every one of this binary's own
+	// four legs failed to become ready in that same run). Every
+	// key/cert here is throwaway, freshly generated per run — never a
+	// real production secret — so a host-world-readable file is an
+	// acceptable trade for a working readiness check.
+	if err := os.WriteFile(configOut, serverConfig, 0o644); err != nil { //nolint:gosec // G306: intentionally looser than 0600 — see the comment above; a throwaway CI config a differently-uid'd container must read
+		log.Fatalf("write %s: %v", configOut, err)
+	}
+	log.Printf("wrote %s", configOut)
+
+	if !skipRestart {
+		if err := restartIssuerContainer(); err != nil {
+			log.Fatalf("restart conformance-issuer container: %v", err)
+		}
+		log.Printf("restarted conformance-issuer container, waiting for it to come up")
+		if err := waitForIssuerReady(httpClient, issuerBaseURL); err != nil {
+			log.Fatalf("wait for conformance-issuer: %v", err)
+		}
+	}
+	return run
+}
+
 func main() {
 	apiBase := flag.String("suite", "https://localhost:8443/", "OIDF conformance suite base URL")
 	alias := flag.String("alias", "oid4vcgo-issuer", "suite plan alias — also the callback path segment; must match cmd/conformance-issuer's own registered redirect_uris")
@@ -325,42 +368,7 @@ func main() {
 
 	httpClient := insecureSuiteHTTPClient()
 
-	run, err := generateRun(*alias, *issuerBaseURL)
-	if err != nil {
-		log.Fatalf("generate run: %v", err)
-	}
-	run.deferred = *deferred
-
-	serverConfig, err := buildServerConfig(run)
-	if err != nil {
-		log.Fatalf("build server config: %v", err)
-	}
-	// 0o644, not 0o600: this file is bind-mounted read-only into
-	// conformance-issuer's own container, which (like every
-	// cmd/conformance-* image) runs as gcr.io/distroless/static-
-	// debian12:nonroot's own fixed uid (65532) — a different uid than
-	// whatever process writes this file on the host, so 0o600 leaves
-	// the container itself unable to read its own config (confirmed
-	// live in CI for the same pattern in conformance-verifier: "open
-	// /config.json: permission denied"; every one of this binary's own
-	// four legs failed to become ready in that same run). Every
-	// key/cert here is throwaway, freshly generated per run — never a
-	// real production secret — so a host-world-readable file is an
-	// acceptable trade for a working readiness check.
-	if err := os.WriteFile(*configOut, serverConfig, 0o644); err != nil { //nolint:gosec // G306: intentionally looser than 0600 — see the comment above; a throwaway CI config a differently-uid'd container must read
-		log.Fatalf("write %s: %v", *configOut, err)
-	}
-	log.Printf("wrote %s", *configOut)
-
-	if !*skipDockerRestart {
-		if err := restartIssuerContainer(); err != nil {
-			log.Fatalf("restart conformance-issuer container: %v", err)
-		}
-		log.Printf("restarted conformance-issuer container, waiting for it to come up")
-		if err := waitForIssuerReady(httpClient, *issuerBaseURL); err != nil {
-			log.Fatalf("wait for conformance-issuer: %v", err)
-		}
-	}
+	run := prepareIssuer(httpClient, *alias, *issuerBaseURL, *configOut, *deferred, *skipDockerRestart)
 
 	planConfig, err := buildPlanConfig(run, *credentialFormat, *credentialProofTypeHint)
 	if err != nil {
