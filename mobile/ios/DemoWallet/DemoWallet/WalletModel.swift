@@ -558,14 +558,15 @@ final class WalletModel {
     }
 
     /// Checks a credential's revocation status in its issuer's status
-    /// list, and shows it.
-    func checkStatus(_ id: String) async {
-        guard let wallet else { return }
+    /// list, and shows it. Returns why it couldn't, if it couldn't.
+    func checkStatus(_ id: String) async -> String? {
+        guard let wallet else { return "The wallet isn't configured." }
         do {
             let checked = try await wallet.checkStatus(id: id)
             if let i = credentials.firstIndex(where: { $0.id == id }) { credentials[i] = checked }
+            return nil
         } catch {
-            notice = "Couldn't check the status: " + Self.describe(error)
+            return Self.describe(error)
         }
     }
 

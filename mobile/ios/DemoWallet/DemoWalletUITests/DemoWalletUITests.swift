@@ -108,6 +108,9 @@ final class DemoWalletUITests: XCTestCase {
         let status = app.descendants(matching: .any).matching(identifier: "credential-status").firstMatch
         XCTAssertTrue(status.waitForExistence(timeout: 10))
         XCTAssertTrue(waitFor(status, containing: "Valid"), status.label)
+        // The check says it happened.
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "check-done").firstMatch.waitForExistence(timeout: 10),
+                      "no feedback that the check happened")
         _ = try await Self.fetch("revoke", method: "POST")
         check.tap()
         XCTAssertTrue(waitFor(status, containing: "Revoked"), status.label)

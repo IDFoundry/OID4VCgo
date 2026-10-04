@@ -175,6 +175,8 @@ struct CredentialView: View {
     let summary: CredentialSummary
     @State private var detail: CredentialDetail?
     @State private var checking = false
+    @State private var checkError: String?
+    @State private var justChecked = false
     @State private var refreshing = false
 
     var body: some View {
@@ -188,17 +190,29 @@ struct CredentialView: View {
                 }
             }
             Section("Status") {
-                LabeledContent("Status", value: CredentialRow.statusText(summary) ?? "Not checked yet")
-                    .accessibilityIdentifier("credential-status")
-                Button(checking ? "Checking…" : "Check status") {
-                    checking = true
-                    Task {
-                        await model.checkStatus(summary.id)
-                        checking = false
+                StatusRow(status: summary.status)
+                Button {
+                    check()
+                } label: {
+                    HStack {
+                        Text(checking ? "Checking with the issuer…" : "Check status")
+                        if checking {
+                            Spacer()
+                            ProgressView()
+                        }
                     }
                 }
                 .disabled(checking)
                 .accessibilityIdentifier("check-status")
+                if let checkError {
+                    Label("Couldn't check: \(checkError)", systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption).foregroundStyle(.red)
+                        .accessibilityIdentifier("check-error")
+                } else if justChecked {
+                    Label("Checked with the issuer just now", systemImage: "checkmark.circle.fill")
+                        .font(.caption).foregroundStyle(.green)
+                        .accessibilityIdentifier("check-done")
+                }
             }
             if summary.copies > 1 || summary.refreshable {
                 Section("Copies") {
@@ -223,6 +237,78 @@ struct CredentialView: View {
         }
         .navigationTitle(CredentialRow.title(summary))
         .task { detail = await model.detail(summary) }
+    }
+
+    /// Checks the status, with feedback whatever the outcome: a spinner
+    /// while it runs (for at least half a second, so a quick check is
+    /// still seen), then "Checked just now" or why it couldn't, and a
+    /// haptic.
+    private func check() {
+        checking = true
+        checkError = nil
+        justChecked = false
+        Task {
+            async let minimum: Void = Task.sleep(for: .milliseconds(500))
+            let error = await model.checkStatus(summary.id)
+            try? await minimum
+            checking = false
+            checkError = error
+            justChecked = error == nil
+            let revoked = summary.status.map { if case .valid = $0.value { false } else { true } } ?? false
+            UINotificationFeedbackGenerator().notificationOccurred(error != nil ? .error : revoked ? .warning : .success)
+        }
+    }
+}
+
+/// A credential's status: what its issuer's status list said, and how
+/// long ago that was checked, counting up.
+struct StatusRow: View {
+    let status: CredentialStatus?
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon).font(.title2).foregroundStyle(color)
+            VStack(alignment: .leading) {
+                Text(word).font(.headline)
+                if let status {
+                    (Text("Checked ") + Text(status.checkedAt, style: .relative) + Text(" ago"))
+                        .font(.caption).foregroundStyle(.secondary)
+                } else {
+                    Text("Not checked yet").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("credential-status")
+    }
+
+    private var word: String {
+        switch status?.value {
+        case nil: "Status unknown"
+        case .valid: "Valid"
+        case .revoked: "Revoked by the issuer"
+        case .suspended: "Suspended by the issuer"
+        case .other(let v): "Status \(v)"
+        }
+    }
+
+    private var icon: String {
+        switch status?.value {
+        case nil: "questionmark.circle"
+        case .valid: "checkmark.seal.fill"
+        case .revoked: "xmark.octagon.fill"
+        case .suspended: "pause.circle.fill"
+        case .other: "exclamationmark.circle"
+        }
+    }
+
+    private var color: Color {
+        switch status?.value {
+        case nil, .other: .secondary
+        case .valid: .green
+        case .revoked: .red
+        case .suspended: .orange
+        }
     }
 }
 
@@ -313,17 +399,6 @@ struct CredentialRow: View {
         if c.copiesLeft == 0 { return "Every copy has been shared: the next new verifier could link you with another" }
         guard c.copies > 1 else { return nil }
         return "\(c.copiesLeft) of \(c.copies) copies unused"
-    }
-
-    static func statusText(_ c: CredentialSummary) -> String? {
-        guard let status = c.status else { return nil }
-        let when = status.checkedAt.formatted(date: .omitted, time: .shortened)
-        switch status.value {
-        case .valid: return "Valid (checked \(when))"
-        case .revoked: return "Revoked (checked \(when))"
-        case .suspended: return "Suspended (checked \(when))"
-        case .other(let v): return "Status \(v) (checked \(when))"
-        }
     }
 }
 
