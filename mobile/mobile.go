@@ -11,7 +11,7 @@ import (
 // ABIVersion is the version of this package's API across the gomobile
 // boundary: its functions, objects, JSON results and error codes. It
 // changes whenever any of them changes incompatibly.
-const ABIVersion = 10
+const ABIVersion = 11
 
 // Error codes, at the start of every error's text in brackets.
 const (
@@ -52,6 +52,10 @@ const (
 	// token was kept, or the Authorization Server no longer accepts it):
 	// receive it again from a new offer.
 	CodeReissueRequired = "reissue_required"
+	// CodeUntrustedVerifier: the Verifier's request is signed with a
+	// certificate that doesn't chain to the wallet's verifier_roots, so
+	// it's refused unread.
+	CodeUntrustedVerifier = "untrusted_verifier"
 	// CodeDeliveryUnknown: sending a presentation failed in a way that
 	// leaves it unknown whether the Verifier received it. It isn't sent
 	// again: that could present twice.

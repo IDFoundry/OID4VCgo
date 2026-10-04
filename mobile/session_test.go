@@ -841,3 +841,29 @@ func TestSessions_CopyPolicyPerVerifier(t *testing.T) {
 		}
 	}
 }
+
+// TestStartPresentation_UntrustedVerifier: a request signed by a
+// Verifier whose certificate doesn't chain to verifier_roots is
+// untrusted_verifier, not a generic protocol error.
+func TestStartPresentation_UntrustedVerifier(t *testing.T) {
+	env, err := StartTestEnv(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(env.Close)
+	var cfg map[string]any
+	if err := json.Unmarshal([]byte(env.ConfigJSON()), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	// Another CA: the issuer's.
+	cfg["verifier_roots"] = cfg["issuer_roots"]
+	raw, _ := json.Marshal(cfg)
+	w, err := NewWallet(string(raw), newGoKeyStore(), newGoCredentialStore(), env.Provider())
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := decode[struct{ ID, Link string }](t, mustText(t)(env.Request("dc+sd-jwt")))
+	if _, err := w.StartPresentation(NewOperation(0), req.Link); code(err) != CodeUntrustedVerifier {
+		t.Errorf("StartPresentation from an untrusted verifier: %v, want %s", err, CodeUntrustedVerifier)
+	}
+}

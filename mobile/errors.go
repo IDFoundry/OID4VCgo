@@ -61,6 +61,8 @@ func classify(err error) error {
 	case errors.Is(err, walletflow.ErrDeliveryUnknown):
 		// Before network: sending again could present twice.
 		return newError(CodeDeliveryUnknown, walletflow.ErrDeliveryUnknown)
+	case errors.Is(err, wallet.ErrUntrustedVerifier):
+		return newError(CodeUntrustedVerifier, wallet.ErrUntrustedVerifier)
 	case errors.Is(err, walletflow.ErrNotFound):
 		return newError(CodeNotFound, err)
 	case errors.As(err, &protocol):
