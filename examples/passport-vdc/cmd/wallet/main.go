@@ -24,6 +24,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -164,7 +165,7 @@ func present(link, dir, format string, yes bool, httpClient *http.Client, trust 
 	if len(options) == 0 {
 		return fmt.Errorf("no stored %s credential answers the request", format)
 	}
-	chosen := []string{options[0].CredentialID}
+	chosen := []string{options[0].Ref}
 	if !yes {
 		var ok bool
 		if chosen, ok = chooseShare(prepared, options); !ok {
@@ -192,9 +193,10 @@ func chooseShare(p *walletapp.Prepared, options []walletapp.Option) ([]string, b
 		if holder == "" {
 			holder = "a passport credential"
 		}
-		fmt.Printf("%d. %s, as %s — it will see only:\n", i+1, holder, o.Format)
+		// %q: the name is the issuer's, and mustn't drive the terminal.
+		fmt.Printf("%d. %q, as %s — it will see only:\n", i+1, holder, o.Format)
 		for _, c := range o.Claims {
-			fmt.Printf("     - %s\n", strings.Join(c, " › "))
+			fmt.Printf("     - %q\n", strings.Join(c, " › "))
 		}
 	}
 	if p.Several {
@@ -206,10 +208,10 @@ func chooseShare(p *walletapp.Prepared, options []walletapp.Option) ([]string, b
 	var chosen []string
 	for _, field := range strings.Split(answer, ",") {
 		n, err := strconv.Atoi(strings.TrimSpace(field))
-		if err != nil || n < 1 || n > len(options) {
+		if err != nil || n < 1 || n > len(options) || slices.Contains(chosen, options[n-1].Ref) {
 			return nil, false
 		}
-		chosen = append(chosen, options[n-1].CredentialID)
+		chosen = append(chosen, options[n-1].Ref)
 	}
 	return chosen, true
 }

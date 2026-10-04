@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/demotest"
+	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/passport"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/verifierapp"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/walletapp"
 )
@@ -74,7 +75,13 @@ func mustRedirect(t *testing.T, resp *http.Response, err error, step string) *ur
 // wallet: wallet → issuer approval page → approve → back to the wallet.
 func receiveViaBrowser(t *testing.T, env *demotest.Env, b *http.Client) {
 	t.Helper()
-	offer, err := env.Issuer.CreateTransaction(context.Background(), demotest.SyntheticEvidence())
+	receiveEvidenceViaBrowser(t, env, b, demotest.SyntheticEvidence())
+}
+
+// receiveEvidenceViaBrowser is receiveViaBrowser for e's passport.
+func receiveEvidenceViaBrowser(t *testing.T, env *demotest.Env, b *http.Client, e passport.Evidence) {
+	t.Helper()
+	offer, err := env.Issuer.CreateTransaction(context.Background(), e)
 	if err != nil {
 		t.Fatalf("CreateTransaction: %v", err)
 	}
@@ -636,7 +643,9 @@ func TestWebWallet_SharesSeveralPassports(t *testing.T) {
 	env.StartWebWallet(t, store)
 	b := browser(env)
 	receiveViaBrowser(t, env, b)
-	receiveViaBrowser(t, env, b)
+	john := demotest.SyntheticEvidence()
+	john.Identity.GivenNames, john.Identity.FamilyName = "JOHN", "ROE"
+	receiveEvidenceViaBrowser(t, env, b, john)
 
 	id, page, decision := reviewRequest(t, env, b, verifierapp.ModeGroup)
 	if !strings.Contains(page, `type="checkbox" name="credential"`) || strings.Contains(page, `type="radio"`) {

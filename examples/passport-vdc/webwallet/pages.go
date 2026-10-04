@@ -127,7 +127,7 @@ var consentTemplate = template.Must(template.New("consent").Funcs(template.FuncM
 {{if .Several}}<p>It accepts several passports: choose each one to share, all in one format.</p>{{end}}
 {{range $i, $o := .Options}}
 <div class="card">
-<label><input type="{{if $.Several}}checkbox{{else}}radio{{end}}" name="credential" value="{{$o.CredentialID}}" {{if eq $i 0}}checked{{end}}> Share {{if $o.Holder}}<strong>{{$o.Holder}}</strong>'s passport{{else}}a passport credential{{end}} as <span class="fmt">{{$o.Format}}</span></label>
+<label><input type="{{if $.Several}}checkbox{{else}}radio{{end}}" name="credential" value="{{$o.Ref}}" {{if eq $i 0}}checked{{end}}> Share {{if $o.Holder}}<strong>{{$o.Holder}}</strong>'s passport{{else}}a passport credential{{end}} as <span class="fmt">{{$o.Format}}</span></label>
 <p>It will see only:</p>
 <ul>{{range $o.Claims}}<li><code>{{path .}}</code></li>{{end}}</ul>
 </div>

@@ -34,6 +34,12 @@ type Config struct {
 	// https (the response_uri a wallet posts to).
 	VerifierURL string
 
+	// Query, if set, builds a request's DCQL query in place of the
+	// mode's own, from the issuer's vct and its trusted_authorities: to
+	// ask for something else of the same credential. A response must
+	// still be one credential, or several in ModeGroup.
+	Query func(mode Mode, vct string, trusted dcql.TrustedAuthoritiesQuery) (dcql.Query, error)
+
 	// IssuerVCT is the vct the demo issuer's SD-JWT credentials carry
 	// (its issuer URL + "/vct/passport/1").
 	IssuerVCT string
@@ -122,6 +128,25 @@ type Outcome struct {
 	// presented; Format, Claims and Status are then the first's.
 	People []Person
 }
+
+// identityOf is the claims that say who a credential is about, in
+// either format, without the ones each copy has its own of.
+func identityOf(claims map[string]any) map[string]any {
+	out := map[string]any{}
+	for _, k := range []string{
+		credential.FamilyName, credential.GivenName, credential.Nationality, credential.SDJWTNationalities,
+		credential.BirthDate, "birthdate", credential.DocumentNumber, "age_over_18", credential.SDJWTAgeEqualOrOver,
+	} {
+		if v, ok := claims[k]; ok {
+			out[k] = v
+		}
+	}
+	return out
+}
+
+// maxGroup is how many passports a ModeGroup presentation may hold:
+// each costs the verifier a status list check.
+const maxGroup = 10
 
 // Person is one credential of a ModeGroup presentation.
 type Person struct {
@@ -243,7 +268,14 @@ func (a *App) createSession(ctx context.Context, mode Mode, browserToken string)
 			return "", err
 		}
 	}
-	query, err := buildQuery(mode, a.cfg.IssuerVCT, a.issuerTrusted)
+	if mode != ModeIssuer && mode != ModeICAO && mode != ModeGroup {
+		return "", fmt.Errorf("verifierapp: unknown mode %q", mode)
+	}
+	build := buildQuery
+	if a.cfg.Query != nil {
+		build = a.cfg.Query
+	}
+	query, err := build(mode, a.cfg.IssuerVCT, a.issuerTrusted)
 	if err != nil {
 		return "", err
 	}
@@ -393,16 +425,33 @@ func (a *App) accept(ctx context.Context, txID string, result verifier.VerifyRes
 			}
 		}
 	}
-	if len(result.Credentials) == 0 || len(result.Credentials) > 1 && s.mode != ModeGroup {
-		return fmt.Errorf("expected one credential, got %d", len(result.Credentials))
+	switch n := len(result.Credentials); {
+	case n == 0 || n > 1 && s.mode != ModeGroup:
+		return fmt.Errorf("expected one credential, got %d", n)
+	case n > maxGroup:
+		return fmt.Errorf("expected at most %d passports, got %d", maxGroup, n)
 	}
 	out := &Outcome{Mode: s.mode}
+	seen := map[[sha256.Size]byte]bool{}
 	for _, vc := range result.Credentials {
+		claims := flatten(vc.CredentialQueryID, vc.Claims)
+		// One person shown twice isn't two people: the same credential,
+		// or another copy or passport of theirs, discloses the same
+		// identity (each copy's own key, dates and status entry aside).
+		raw, err := json.Marshal(identityOf(claims))
+		if err != nil {
+			return errors.New("the credential's claims can't be compared")
+		}
+		if sum := sha256.Sum256(raw); seen[sum] {
+			return errors.New("the same passport was presented twice")
+		} else {
+			seen[sum] = true
+		}
 		status, err := a.checkStatus(ctx, vc)
 		if err != nil {
 			return err
 		}
-		out.People = append(out.People, Person{Format: formatOf(vc.CredentialQueryID), Claims: flatten(vc.CredentialQueryID, vc.Claims), Status: status})
+		out.People = append(out.People, Person{Format: formatOf(vc.CredentialQueryID), Claims: claims, Status: status})
 	}
 	out.Format, out.Claims, out.Status = out.People[0].Format, out.People[0].Claims, out.People[0].Status
 	if s.mode != ModeGroup {

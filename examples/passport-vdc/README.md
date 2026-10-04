@@ -63,7 +63,8 @@ for a group such as a family travelling together. Its DCQL query sets
 `multiple` (OpenID4VP 1.0 §6.1), so the wallet may answer with several
 credentials. The web and CLI wallets let the holder choose whose
 passports to share, all in one format; the verifier checks each and
-lists every person. Every other request takes exactly one credential.
+lists every person. It accepts up to ten, and refuses one person
+presented twice. Every other request takes exactly one credential.
 
 What the second path does and doesn't give you:
 
