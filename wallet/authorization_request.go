@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 
@@ -312,6 +313,11 @@ func ParseAuthorizationRequest(params ParseAuthorizationRequestParams) (Authoriz
 	}, nil
 }
 
+// ErrUntrustedVerifier is returned, wrapped, for a Request Object whose
+// x5c chain VerifierTrust doesn't accept: the Verifier isn't one the
+// wallet trusts, so its request is refused unread.
+var ErrUntrustedVerifier = errors.New("untrusted verifier")
+
 // verifyRequestObject checks a signed Request Object: its typ, its x5c
 // chain with trust (OID4VP §5.9.3), and its signature by the chain's
 // leaf. It returns the leaf, the x509_hash Client Identifier the leaf
@@ -333,7 +339,7 @@ func verifyRequestObject(requestObject string, trust VerifierTrust) (*x509.Certi
 	}
 	cert, err := trust.VerifyVerifierChain(chain)
 	if err != nil {
-		return nil, "", nil, fmt.Errorf("untrusted verifier: %w", err)
+		return nil, "", nil, fmt.Errorf("%w: %w", ErrUntrustedVerifier, err)
 	}
 	algStr, _ := header["alg"].(string)
 	_, payload, err := jose.Verify(jose.Alg(algStr), cert.PublicKey, requestObject)

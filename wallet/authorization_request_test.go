@@ -418,7 +418,7 @@ func TestParseAuthorizationRequest_ChecksVerifierTrust(t *testing.T) {
 	}
 
 	_, _, otherTrust := testVerifierSignerAndCert(t)
-	if _, err := parse(otherTrust); err == nil || !strings.Contains(err.Error(), "untrusted verifier") {
+	if _, err := parse(otherTrust); !errors.Is(err, wallet.ErrUntrustedVerifier) {
 		t.Errorf("another CA: error = %v, want an untrusted verifier error", err)
 	}
 	if _, err := parse(nil); err == nil || !strings.Contains(err.Error(), "VerifierTrust is required") {
