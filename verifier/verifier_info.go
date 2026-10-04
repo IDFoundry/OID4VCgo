@@ -1,10 +1,13 @@
 package verifier
 
 import (
+	"encoding/json"
 	"fmt"
 	"slices"
 
 	"github.com/idfoundry/oid4vcgo/dcql"
+	"github.com/idfoundry/oid4vcgo/internal/jose"
+	"github.com/idfoundry/oid4vcgo/registration"
 )
 
 // VerifierInfo is one attestation about the Verifier that its requests
@@ -43,6 +46,34 @@ func validateVerifierInfo(infos []VerifierInfo) error {
 		}
 		if vi.CredentialIDs != nil && len(vi.CredentialIDs) == 0 {
 			return fmt.Errorf("verifier_info[%d]: credential_ids, if set, must be non-empty", i)
+		}
+	}
+	return nil
+}
+
+// checkCarriedRegistrations checks each registration (registration.Format)
+// in infos names clientID as its subject: one issued for another
+// certificate's client_id would make every Wallet reject the request.
+// It doesn't verify the signature — the Wallet does, against its own
+// registrar roots.
+func checkCarriedRegistrations(infos []VerifierInfo, clientID string) error {
+	for i, vi := range infos {
+		data, ok := vi.Data.(string)
+		if !ok || !registration.Recognize(vi.Format, data) {
+			continue
+		}
+		_, payload, err := jose.DecodeUnverified(data)
+		if err != nil {
+			return fmt.Errorf("verifier_info[%d]: the registration is malformed: %w", i, err)
+		}
+		var claims struct {
+			Sub string `json:"sub"`
+		}
+		if err := json.Unmarshal(payload, &claims); err != nil {
+			return fmt.Errorf("verifier_info[%d]: the registration is malformed: %w", i, err)
+		}
+		if claims.Sub != clientID {
+			return fmt.Errorf("verifier_info[%d]: the registration is for client_id %q, not this Verifier's %q (see ClientIDForCertificate)", i, claims.Sub, clientID)
 		}
 	}
 	return nil

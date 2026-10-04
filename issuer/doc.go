@@ -45,9 +45,10 @@
 // issuer_state remains caller-supplied — this package treats offer
 // construction and pre-authorized_code redemption as two separate
 // steps; see PreAuthorizedCodeStore's own doc comment for the split),
-// DeferredTransactionRecord's own doc comment for why this package
-// never creates or resolves a Deferred Issuance transaction itself,
-// and NotificationHandler's own doc comment for why reacting to a
+// CredentialRequest.Defer and DeferredTransactionRecord's own doc
+// comment for deferring a request (RequestCredential creates the
+// transaction; the deployment resolves it with IssueDeferredCredential
+// or DenyDeferredCredential), and NotificationHandler's own doc comment for why reacting to a
 // Notification Request's event is entirely the caller's business
 // logic. authorization_server.go documents the recipe for pairing
 // this package with a real fapigo/server.Server for the Authorization

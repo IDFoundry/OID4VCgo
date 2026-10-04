@@ -93,3 +93,24 @@ package issuer
 // needs (RFC 9449 DPoP proof/mTLS certificate at verification time),
 // the same client/server split this repo's own ARCHITECTURE.md
 // describes for FAPIgo generally.
+//
+// # Refreshing credentials
+//
+// A refresh token (OpenID4VCI 1.0 §13.5) lets a Wallet get fresh
+// credentials — a new batch, for new holder keys — with no holder
+// present. Issue one only when the issuer will issue again from data it
+// keeps, and:
+//   - Keep the token's lifetime (server.Config.Limits.
+//     RefreshTokenLifetime) no longer than the data is kept, and delete
+//     the data when the grant ends.
+//   - Bind it to the Wallet instance: with Wallet Attestation,
+//     fapigo/server binds it to the attestation's key, so another
+//     installation of the same wallet can't redeem it.
+//   - Serve token revocation (RFC 7009, server.Server.RevokeToken), so a
+//     Wallet deleting the credential ends the grant; RevokeToken reports
+//     which grant ended, to delete what was kept for it.
+//   - Bound how often one grant is redeemed: each refresh takes new
+//     status list indices, which are shared by every credential.
+//
+// For the pre-authorized code grant, server.Server.IssueRefreshToken
+// issues one for PreAuthorizedCodeTokenResponse.RefreshToken.

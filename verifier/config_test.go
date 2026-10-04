@@ -3,12 +3,15 @@ package verifier_test
 import (
 	"crypto"
 	"crypto/rand"
+	"crypto/x509"
 	"io"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/idfoundry/oid4vcgo/internal/jose"
+	"github.com/idfoundry/oid4vcgo/registration"
 	"github.com/idfoundry/oid4vcgo/verifier"
 )
 
@@ -138,5 +141,38 @@ func TestMdocFormatSupport(t *testing.T) {
 	want := map[string]any{"mso_mdoc": map[string]any{}}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("MdocFormatSupport() = %#v, want %#v", got, want)
+	}
+}
+
+// A registration carried in verifier_info must name this Verifier's
+// client_id: one issued for another certificate would make every
+// Wallet reject the request, so New says so instead.
+func TestNewChecksCarriedRegistrationSubject(t *testing.T) {
+	registrarKey, registrarCert := testSignerAndCert(t)
+	for name, tc := range map[string]struct {
+		clientID func(cfg verifier.Config) string
+		ok       bool
+	}{
+		"this Verifier's": {func(cfg verifier.Config) string { return verifier.ClientIDForCertificate(cfg.ClientCertificate) }, true},
+		"another's":       {func(verifier.Config) string { return "x509_hash:someone-else" }, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg, deps := validConfig(t)
+			token, err := registration.Issue(registration.Registration{
+				Registrar: "https://registrar.example", ClientID: tc.clientID(cfg), Name: "Example",
+				Expires: time.Now().Add(time.Hour),
+			}, registrarKey, []*x509.Certificate{registrarCert})
+			if err != nil {
+				t.Fatal(err)
+			}
+			cfg.VerifierInfo = []verifier.VerifierInfo{{Format: registration.Format, Data: token}}
+			v, err := verifier.New(cfg, deps)
+			if tc.ok && (err != nil || v.ClientID() != verifier.ClientIDForCertificate(cfg.ClientCertificate)) {
+				t.Errorf("New = %v", err)
+			}
+			if !tc.ok && (err == nil || !strings.Contains(err.Error(), "ClientIDForCertificate")) {
+				t.Errorf("New with another client_id's registration: %v, want refused", err)
+			}
+		})
 	}
 }

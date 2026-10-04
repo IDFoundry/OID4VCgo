@@ -1,6 +1,10 @@
 # OID4VCgo Mobile — design
 
-Status: **in progress** — Phases 0 to 5 are done, and Phase 6 is done on the Simulator (see Phases). This is
+Status: **iOS done; Android and the DC API not started.** Phases 0 to 7
+are done: the SDK is published as the OID4VCWallet Swift package, and
+the demo app has issued and presented on a device, against the
+passport-vdc demo through a tunnel. Later work is recorded after Phase
+7. This is
 the design for a mobile wallet SDK built on OID4VCgo, delivered in the
 phases below. It records the decisions taken so far, what each phase
 found, and the questions still open; update it as phases land.
@@ -215,7 +219,7 @@ networking.
 | 3 ✓ | ABI foundation | Versioned JSON envelope, error codes and session lifecycle, documented |
 | 4 ✓ | OID4VCI slice | HAIP issuance from the iOS demo app against the passport-vdc issuer, with Key Attestations from the Wallet Provider |
 | 5 ✓ | Storage | The native credential store, with key references |
-| 6 ◐ | OID4VP slice | Request parsing, candidates, consent and presentation from the iOS demo app |
+| 6 ✓ | OID4VP slice | Request parsing, candidates, consent and presentation from the iOS demo app |
 | 7 ✓ | Hardening | Suspension and resumption (deferred credentials, an authorization in progress), cancellation, network failures, issuer and verifier errors, logging without personal data, the demo app's retry and cancel |
 | 8 | Android | The same bridge over Android Keystore, packaged as an AAR |
 | 9 | DC API | A DC API adapter over the presentation engine |

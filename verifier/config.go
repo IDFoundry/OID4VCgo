@@ -147,9 +147,10 @@ func New(cfg Config, deps Dependencies) (*Verifier, error) {
 	if err := deps.validate(cfg); err != nil {
 		return nil, err
 	}
-	hash := sha256.Sum256(cfg.ClientCertificate.Raw)
-	clientID := "x509_hash:" + base64.RawURLEncoding.EncodeToString(hash[:])
-
+	clientID := ClientIDForCertificate(cfg.ClientCertificate)
+	if err := checkCarriedRegistrations(cfg.VerifierInfo, clientID); err != nil {
+		return nil, fmt.Errorf("verifier: config: %w", err)
+	}
 	return &Verifier{cfg: cfg, deps: deps, clientID: clientID}, nil
 }
 
@@ -214,6 +215,15 @@ func (deps Dependencies) validate(cfg Config) error {
 		return fmt.Errorf("verifier: config: client_certificate's public key does not match dependencies.signer")
 	}
 	return nil
+}
+
+// ClientIDForCertificate is the "x509_hash:..." Client Identifier
+// (OpenID4VP 1.0 §5.9.3) of a Verifier whose Config.ClientCertificate is
+// cert: what a registrar registers it under (registration.Registration's
+// ClientID) before the Verifier is made.
+func ClientIDForCertificate(cert *x509.Certificate) string {
+	hash := sha256.Sum256(cert.Raw)
+	return "x509_hash:" + base64.RawURLEncoding.EncodeToString(hash[:])
 }
 
 // ClientID is this Verifier's own "x509_hash:..." Client Identifier

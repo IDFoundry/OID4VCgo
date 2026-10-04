@@ -13,11 +13,10 @@ import (
 
 	fapi "github.com/idfoundry/fapigo"
 
+	oid4vci "github.com/idfoundry/oid4vcgo"
+	"github.com/idfoundry/oid4vcgo/attestation"
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcgo/dcql"
-	"github.com/idfoundry/oid4vcgo/internal/jose"
-	"github.com/idfoundry/oid4vcgo/internal/jwe"
-	"github.com/idfoundry/oid4vcgo/internal/jwk"
 	"github.com/idfoundry/oid4vcgo/verifier"
 	"github.com/idfoundry/oid4vcgo/wallet"
 )
@@ -90,18 +89,18 @@ func ExampleVerifier_VerifyResponse() {
 	if err != nil {
 		panic(err)
 	}
-	holderJWK, err := jwk.Marshal(&holderKey.PublicKey)
+	holderJWK, err := attestation.AttestedKey(&holderKey.PublicKey) // any P-256 public key, as a JWK
 	if err != nil {
 		panic(err)
 	}
-	sdjwt, _, err := sdjwtvc.Issue(issuerKey, jose.ES256, sdjwtvc.Claims{
+	sdjwt, _, err := sdjwtvc.Issue(issuerKey, oid4vci.ES256, sdjwtvc.Claims{
 		VCT: "urn:eudi:pid:1", CNF: map[string]any{"jwk": holderJWK},
 		Additional: map[string]any{"given_name": sdjwtvc.SD("Jean")},
 	}, sdjwtvc.IssueOptions{IssuerCertificate: issuerCert})
 	if err != nil {
 		panic(err)
 	}
-	held := wallet.HeldCredential{Format: sdjwtvc.CredentialFormat, Credential: sdjwt, HolderKey: holderKey, HolderKeyAlg: jose.ES256}
+	held := wallet.HeldCredential{Format: sdjwtvc.CredentialFormat, Credential: sdjwt, HolderKey: holderKey, HolderKeyAlg: oid4vci.ES256}
 
 	// --- Verifier setup: its own signing identity (for the Request
 	// Object's own JAR signature) and query.
@@ -124,8 +123,8 @@ func ExampleVerifier_VerifyResponse() {
 		Assurance:          verifier.AssuranceDevelopment,
 		ClientCertificate:  verifierCert,
 		ResponseURI:        responseURI,
-		SigningAlg:         jose.ES256,
-		EncValuesSupported: []jwe.Enc{jwe.A128GCM},
+		SigningAlg:         oid4vci.ES256,
+		EncValuesSupported: []oid4vci.JWEEnc{oid4vci.A128GCM},
 		VPFormatsSupported: map[string]any{"dc+sd-jwt": map[string]any{"sd-jwt_alg_values": []string{"ES256"}}},
 	}, verifier.Dependencies{Signer: verifierKey, Random: rand.Reader})
 	if err != nil {

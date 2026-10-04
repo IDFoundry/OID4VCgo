@@ -18,7 +18,6 @@ import (
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/dcql"
-	"github.com/idfoundry/oid4vcgo/internal/jwe"
 	"github.com/idfoundry/oid4vcgo/verifier"
 	"github.com/idfoundry/oid4vcgo/wallet"
 )
@@ -62,7 +61,7 @@ func ExampleWallet_FetchAuthorizationRequest() {
 		ClientCertificate:  clientCert,
 		ResponseURI:        responseURI,
 		SigningAlg:         oid4vci.ES256,
-		EncValuesSupported: []jwe.Enc{jwe.A128GCM},
+		EncValuesSupported: []oid4vci.JWEEnc{oid4vci.A128GCM},
 		VPFormatsSupported: verifier.SDJWTVCFormatSupport([]string{oid4vci.ES256}, []string{oid4vci.ES256}),
 	}, verifier.Dependencies{Signer: clientKey, Random: rand.Reader})
 	if err != nil {
