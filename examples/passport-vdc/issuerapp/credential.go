@@ -63,6 +63,20 @@ func (a *App) protectedHandlers() (deferred, notification http.Handler, err erro
 	return deferred, notification, nil
 }
 
+// reserveError is the wallet's answer to reserve's err.
+func reserveError(err error) error {
+	switch {
+	case errors.Is(err, errAlreadyIssued):
+		return issuer.NewError(issuer.ErrorCredentialRequestDenied, "this credential has already been issued for this passport")
+	case errors.Is(err, errNotOffered):
+		return issuer.NewError(issuer.ErrorCredentialRequestDenied, "this credential wasn't offered for this passport")
+	case errors.Is(err, errIssuanceLimit):
+		return issuer.NewError(issuer.ErrorCredentialRequestDenied, "this passport has been issued as many times as the demo allows — upload it again")
+	default:
+		return issuer.NewError(issuer.ErrorCredentialRequestDenied, "the passport transaction for this access token has expired")
+	}
+}
+
 // prepareCredential finds the passport transaction the access token's
 // subject names and fills in the requested format from that passport's
 // Evidence. Each credential gets its own status list index; done
@@ -72,15 +86,8 @@ func (a *App) prepareCredential(_ context.Context, grant issuer.Grant, req *issu
 	// each request, for one kept for refresh: reserve it now, release it
 	// if issuing fails.
 	e, review, err := a.transactions.reserve(grant.Subject, req.CredentialConfigurationID)
-	switch {
-	case errors.Is(err, errAlreadyIssued):
-		return nil, issuer.NewError(issuer.ErrorCredentialRequestDenied, "this credential has already been issued for this passport")
-	case errors.Is(err, errNotOffered):
-		return nil, issuer.NewError(issuer.ErrorCredentialRequestDenied, "this credential wasn't offered for this passport")
-	case errors.Is(err, errIssuanceLimit):
-		return nil, issuer.NewError(issuer.ErrorCredentialRequestDenied, "this passport has been issued as many times as the demo allows — upload it again")
-	case err != nil:
-		return nil, issuer.NewError(issuer.ErrorCredentialRequestDenied, "the passport transaction for this access token has expired")
+	if err != nil {
+		return nil, reserveError(err)
 	}
 	var statusIdxs []int
 	var reviewRef string
