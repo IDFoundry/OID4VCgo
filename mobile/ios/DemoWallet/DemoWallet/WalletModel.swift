@@ -418,7 +418,12 @@ final class WalletModel {
         let result = try await issuance.requestCredentials()
         var summary = "Received \(result.credentials.count) credential(s)"
         if !result.deferred.isEmpty { summary += ", \(result.deferred.count) deferred" }
-        if !result.failed.isEmpty { summary += "; \(result.failed.count) couldn't be issued" }
+        if !result.failed.isEmpty {
+            let reasons = result.failed.map { f in
+                "\(f.configurationID): \(f.code.rawValue)" + (f.protocolError.map { " (\($0))" } ?? "")
+            }
+            summary += "; \(result.failed.count) couldn't be issued — \(reasons.joined(separator: "; "))"
+        }
         phase = .done(summary)
         // Deferred credentials are kept in the credential store, with
         // what polling them needs: they outlive the issuance, and the
