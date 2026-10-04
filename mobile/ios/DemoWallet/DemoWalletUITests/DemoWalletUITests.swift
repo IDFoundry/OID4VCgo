@@ -208,7 +208,6 @@ final class DemoWalletUITests: XCTestCase {
         ], method: "POST")
         let app = try await launch(request: request["link"] as? String, reset: false)
         let share = app.buttons["share"]
-        XCTAssertTrue(share.waitForExistence(timeout: 20))
         let candidates = app.buttons.matching(identifier: "candidate")
         XCTAssertTrue(candidates.element(boundBy: 1).waitForExistence(timeout: 10), "both credentials aren't offered")
         XCTAssertEqual(candidates.count, 2)
@@ -220,6 +219,7 @@ final class DemoWalletUITests: XCTestCase {
         XCTAssertTrue(waitForSelected(first, false) && second.isSelected, "unchoosing one unchose the other")
         first.tap()
         XCTAssertTrue(waitForSelected(first, true) && second.isSelected, "choosing one unchose the other")
+        XCTAssertTrue(reveal(share, in: app))
         let enabled = NSPredicate(format: "isEnabled == true")
         await fulfillment(of: [XCTNSPredicateExpectation(predicate: enabled, object: share)], timeout: 10)
         share.tap()

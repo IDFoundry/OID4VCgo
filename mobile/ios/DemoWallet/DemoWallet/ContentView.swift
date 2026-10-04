@@ -576,84 +576,94 @@ struct RequestView: View {
 
     var body: some View {
         NavigationStack {
-            Form {
+            List {
                 if let p = model.presentation {
-                    Section("Requested by") {
-                        Text(p.verifier.name).font(.headline)
-                        Text(p.verifier.clientID).font(.caption).foregroundStyle(.secondary)
-                        RegistrationRows(registration: p.verifier.registration)
-                    }
+                    Section { VerifierHeader(verifier: p.verifier) }
                     if !p.isAnswerable {
                         Section { Text("You have no credential this verifier accepts.") }
                     }
                     ForEach(p.queries.filter { !$0.credentials.isEmpty }, id: \.queryID) { query in
-                        Section("Answers “\(query.queryID)”") {
-                            if !query.unregistered.isEmpty || query.unregisteredAll {
-                                Label(Self.overAsking(query), systemImage: "exclamationmark.triangle.fill")
-                                    .font(.subheadline).foregroundStyle(.orange)
-                                    .accessibilityElement(children: .combine)
-                                    .accessibilityIdentifier("over-asking")
-                            }
-                            ForEach(query.credentials, id: \.id) { c in
-                                Button {
-                                    Task { await model.toggle(c.id, for: query) }
-                                } label: {
-                                    HStack {
-                                        Image(systemName: Self.choiceIcon(selected: model.isSelected(c.id, for: query.queryID), multiple: query.multiple))
-                                        VStack(alignment: .leading) {
-                                            Text(CredentialRow.title(c))
-                                            if let holder = Holder(claims: model.candidateClaims[c.id]) {
-                                                Text(holder.line).font(.subheadline)
-                                                    .accessibilityIdentifier("candidate-holder")
-                                            }
-                                            Text("Received \(c.receivedAt.formatted(date: .abbreviated, time: .shortened))")
-                                                .font(.caption).foregroundStyle(.secondary)
-                                            if c.linkableHere == true {
-                                                Text("Every copy has been shown elsewhere: this verifier and another could link you")
-                                                    .font(.caption).foregroundStyle(.orange)
-                                                    .accessibilityIdentifier("linkable-here")
-                                            } else if c.shownToVerifier == true {
-                                                Text("This verifier has seen this credential before")
-                                                    .font(.caption).foregroundStyle(.secondary)
-                                                    .accessibilityIdentifier("shown-before")
-                                            }
-                                        }
-                                        Spacer()
-                                        if let portrait = Holder(claims: model.candidateClaims[c.id])?.portrait {
-                                            Image(uiImage: portrait).resizable().scaledToFill().frame(width: 44, height: 56)
-                                                .clipShape(RoundedRectangle(cornerRadius: 4))
-                                        }
-                                    }
-                                }
-                                .accessibilityIdentifier("candidate")
-                                .accessibilityAddTraits(model.isSelected(c.id, for: query.queryID) ? .isSelected : [])
-                            }
-                        }
+                        querySection(query)
                     }
-                    if let error = model.previewError {
-                        Section { Text("Can't share this selection: \(error)").foregroundStyle(.red) }
-                    } else if !model.disclosures.isEmpty {
-                        ForEach(Array(model.disclosures.enumerated()), id: \.offset) { _, d in
-                            Section(Self.shareHeader(d, claims: model.candidateClaims[d.credentialID], in: p)) {
-                                ForEach(d.claims.indices, id: \.self) { i in
-                                    DisclosedRow(path: d.claims[i], claims: model.candidateClaims[d.credentialID],
-                                                 unregistered: Self.isUnregistered(d.claims[i], query: d.queryID, in: p))
-                                }
-                            }
-                        }
-                    }
-                    Section {
-                        Button(model.requestPhase == .sharing ? "Sharing…" : "Share") { Task { await model.share() } }
-                            .disabled(!model.canShare)
-                            .accessibilityIdentifier("share")
-                        Button("Decline", role: .destructive) { Task { await model.decline() } }
-                            .disabled(model.requestPhase == .sharing)
-                            .accessibilityIdentifier("decline")
-                    }
+                    disclosureSections(p)
+                    actions
                 }
             }
-            .navigationTitle("Presentation request")
+            .navigationTitle("Share credentials")
+            .navigationBarTitleDisplayMode(.inline)
         }
+    }
+
+    /// One query: what it asks beyond the Verifier's registration, if
+    /// anything, and the credentials that can answer it, as cards.
+    private func querySection(_ query: Presentation.Query) -> some View {
+        Section {
+            if !query.unregistered.isEmpty || query.unregisteredAll {
+                Label(Self.overAsking(query), systemImage: "exclamationmark.triangle.fill")
+                    .font(.subheadline).foregroundStyle(.orange)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityIdentifier("over-asking")
+            }
+            ForEach(query.credentials, id: \.id) { c in
+                let selected = model.isSelected(c.id, for: query.queryID)
+                Button {
+                    Task { await model.toggle(c.id, for: query) }
+                } label: {
+                    CandidateCard(summary: c, holder: Holder(claims: model.candidateClaims[c.id]), selected: selected, multiple: query.multiple)
+                }
+                .listRowBackground(Color(css: c.display?.backgroundColor))
+                .accessibilityIdentifier("candidate")
+                .accessibilityAddTraits(selected ? .isSelected : [])
+            }
+        } header: {
+            Text(query.multiple ? "Choose the credentials to share" : "Choose a credential to share")
+        }
+    }
+
+    /// What sharing the selection discloses, by credential, with each
+    /// claim's value.
+    @ViewBuilder private func disclosureSections(_ p: Presentation) -> some View {
+        if let error = model.previewError {
+            Section { Text("Can't share this selection: \(error)").foregroundStyle(.red) }
+        } else {
+            ForEach(Array(model.disclosures.enumerated()), id: \.offset) { _, d in
+                Section {
+                    ForEach(d.claims.indices, id: \.self) { i in
+                        DisclosedRow(path: d.claims[i], claims: model.candidateClaims[d.credentialID],
+                                     unregistered: Self.isUnregistered(d.claims[i], query: d.queryID, in: p))
+                    }
+                } header: {
+                    ShareHeader(holder: Holder(claims: model.candidateClaims[d.credentialID]),
+                                title: p.queries.flatMap(\.credentials).first { $0.id == d.credentialID }.map(CredentialRow.title) ?? "credential")
+                }
+            }
+        }
+    }
+
+    /// Share, prominent, and Decline under it.
+    private var actions: some View {
+        Section {
+            VStack(spacing: 10) {
+                Button {
+                    Task { await model.share() }
+                } label: {
+                    Text(model.requestPhase == .sharing ? "Sharing…" : "Share").bold().frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent).controlSize(.large)
+                .disabled(!model.canShare)
+                .accessibilityIdentifier("share")
+                Button(role: .destructive) {
+                    Task { await model.decline() }
+                } label: {
+                    Text("Decline").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered).controlSize(.large)
+                .disabled(model.requestPhase == .sharing)
+                .accessibilityIdentifier("decline")
+            }
+        }
+        .listRowBackground(Color.clear)
+        .listRowInsets(EdgeInsets())
     }
 
     /// A candidate's choice mark: a checkbox for a query taking several
@@ -676,14 +686,6 @@ struct RequestView: View {
         return q.unregisteredAll || q.unregistered.contains(path)
     }
 
-    /// "Will share from Jane Citizen's Passport (SD-JWT)": whose
-    /// credential each disclosure comes from.
-    static func shareHeader(_ d: Presentation.Disclosure, claims: JSONValue?, in p: Presentation) -> String {
-        let title = p.queries.flatMap(\.credentials).first { $0.id == d.credentialID }.map(CredentialRow.title) ?? "credential"
-        guard let name = Holder(claims: claims)?.name else { return "Will share from \(title)" }
-        return "Will share from \(name)'s \(title)"
-    }
-
     static func path(_ elements: [Presentation.PathElement]) -> String {
         elements.map {
             switch $0 {
@@ -692,6 +694,100 @@ struct RequestView: View {
             case .all: "*"
             }
         }.joined(separator: " · ")
+    }
+}
+
+/// Who's asking, at the top of the consent screen: the Verifier's name,
+/// its registration, and its client_id under Details.
+struct VerifierHeader: View {
+    let verifier: Presentation.Verifier
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 14) {
+            Image(systemName: "building.2.crop.circle.fill")
+                .font(.system(size: 40)).foregroundStyle(.tint)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(verifier.name).font(.title2.bold())
+                Text("is asking for your credentials").font(.subheadline).foregroundStyle(.secondary)
+            }
+        }
+        .padding(.vertical, 4)
+        RegistrationRows(registration: verifier.registration)
+        DisclosureGroup("Details") {
+            LabeledContent("Client ID") {
+                Text(verifier.clientID).font(.caption.monospaced()).foregroundStyle(.secondary).textSelection(.enabled)
+            }
+        }
+        .font(.subheadline)
+    }
+}
+
+/// A credential that can answer a query, as a card in its issuer's
+/// colours like the home screen's: logo, name, whose it is, and the
+/// selection mark.
+struct CandidateCard: View {
+    let summary: CredentialSummary
+    let holder: Holder?
+    let selected: Bool
+    let multiple: Bool
+
+    var body: some View {
+        let d = summary.display
+        let text = Color(css: d?.textColor) ?? .primary
+        HStack(spacing: 12) {
+            Image(systemName: RequestView.choiceIcon(selected: selected, multiple: multiple))
+                .font(.title2).foregroundStyle(selected ? text : text.opacity(0.45))
+            if let portrait = holder?.portrait {
+                Image(uiImage: portrait).resizable().scaledToFill().frame(width: 44, height: 56)
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+            } else {
+                LogoView(logo: d?.logo ?? d?.issuerLogo)
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                Text(CredentialRow.title(summary)).font(.headline).foregroundStyle(text)
+                if let holder {
+                    Text(holder.line).font(.subheadline).foregroundStyle(text)
+                        .accessibilityIdentifier("candidate-holder")
+                }
+                Text("\(d?.issuerName ?? summary.credentialIssuer) · \(CredentialRow.format(summary)) · received \(summary.receivedAt.formatted(date: .abbreviated, time: .omitted))")
+                    .font(.caption).foregroundStyle(text.opacity(0.8))
+                hint
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    @ViewBuilder private var hint: some View {
+        if summary.linkableHere == true {
+            Label("Every copy has been shown elsewhere: this verifier and another could link you", systemImage: "link")
+                .font(.caption).foregroundStyle(.orange)
+                .accessibilityIdentifier("linkable-here")
+        } else if summary.shownToVerifier == true {
+            Label("This verifier has seen this credential before", systemImage: "eye")
+                .font(.caption).foregroundStyle(Color(css: summary.display?.textColor)?.opacity(0.8) ?? .secondary)
+                .accessibilityIdentifier("shown-before")
+        }
+    }
+}
+
+/// Whose credential a "Will share" section discloses from: the holder's
+/// photo and name, and the credential.
+struct ShareHeader: View {
+    let holder: Holder?
+    let title: String
+
+    var body: some View {
+        HStack(spacing: 10) {
+            if let portrait = holder?.portrait {
+                Image(uiImage: portrait).resizable().scaledToFill().frame(width: 28, height: 36)
+                    .clipShape(RoundedRectangle(cornerRadius: 4))
+            }
+            VStack(alignment: .leading) {
+                Text("Will share").font(.caption)
+                Text(holder?.name.map { "\($0) · \(title)" } ?? title).font(.subheadline.bold()).foregroundStyle(.primary)
+            }
+        }
+        .textCase(nil)
     }
 }
 
