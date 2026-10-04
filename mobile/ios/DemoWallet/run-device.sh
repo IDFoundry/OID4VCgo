@@ -66,7 +66,7 @@ config = {
         "redirect_uri": "dev.idfoundry.oid4vcgo.demowallet:/callback",
         "issuer_roots": (state / "issuer-ca.pem").read_text(),
         "verifier_roots": (state / "verifier-ca.pem").read_text(),
-        # The registrar of the verifier's relying parties: the app shows
+        # The registrar of the verifier relying parties: the app shows
         # their registrations, and warns when one asks for more.
         "registrar_roots": (state / "registrar-ca.pem").read_text() if (state / "registrar-ca.pem").exists() else "",
         "development": True,
