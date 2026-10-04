@@ -68,14 +68,18 @@ type requestPage struct {
 	Link          string // the cross-device request, for the QR code and the CLI wallet
 	QR            template.URL
 	WebWalletLink string // the same-device request, opened in the web wallet
-	Outcome       *Outcome
-	Awaiting      bool // the same-device answer verified; waiting for the redirect back
-	Closed        bool // answered and then rejected
-	LastError     string
-	Rows          [][2]string
-	Portrait      template.URL  // the disclosed portrait as a data: URL, if any
-	ICAOPortrait  template.URL  // the photo from the re-verified passport file, if any
-	People        [][][2]string // each person's rows, ModeGroup
+	// AppLink is the cross-device request as a link a wallet app on this
+	// device opens: its openid4vp: URL, which html/template won't put in
+	// an href by itself.
+	AppLink      template.URL
+	Outcome      *Outcome
+	Awaiting     bool // the same-device answer verified; waiting for the redirect back
+	Closed       bool // answered and then rejected
+	LastError    string
+	Rows         [][2]string
+	Portrait     template.URL  // the disclosed portrait as a data: URL, if any
+	ICAOPortrait template.URL  // the photo from the re-verified passport file, if any
+	People       [][][2]string // each person's rows, ModeGroup
 }
 
 var requestTemplate = template.Must(template.New("request").Parse(pageHead + `{{if not (or .Outcome .Closed)}}<meta http-equiv="refresh" content="2">{{end}}
@@ -89,6 +93,7 @@ var requestTemplate = template.Must(template.New("request").Parse(pageHead + `{{
 {{else if not .Outcome}}
 <h1>Waiting for the wallet</h1>
 {{if .WebWalletLink}}<p><a href="{{.WebWalletLink}}" target="_blank"><strong>Open in web wallet</strong></a> <span class="note">(on this device: it brings you back here)</span></p>{{end}}
+{{if .AppLink}}<p><a href="{{.AppLink}}">Open in wallet app</a> <span class="note">(on this device; then come back to this page)</span></p>{{end}}
 {{if .QR}}<p>On another device, scan:<br><img src="{{.QR}}" alt="QR code of the presentation request" width="296"></p>{{end}}
 <p>Or give this request to the demo CLI wallet:</p>
 <p><code>{{.Link}}</code></p>
@@ -230,6 +235,7 @@ func (a *App) requestPageFor(ctx context.Context, s *session) requestPage {
 	st := a.state(ctx, s)
 	page := requestPage{
 		Link: s.cross.link, Outcome: st.outcome, Awaiting: st.awaiting, Closed: st.closed, LastError: st.lastError,
+		AppLink: appLink(s.cross.link),
 	}
 	if a.cfg.WebWalletURL != "" {
 		sameDevice := s.cross.link
@@ -266,4 +272,13 @@ func writeHTMLError(w http.ResponseWriter, status int, message string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
 	_ = errorTemplate.Execute(w, message)
+}
+
+// appLink is link as an href, when it's an OpenID4VP request link
+// (openid4vp:): the one scheme the page links to besides https.
+func appLink(link string) template.URL {
+	if u, err := url.Parse(link); err != nil || u.Scheme != "openid4vp" {
+		return ""
+	}
+	return template.URL(link) // #nosec G203 -- only an openid4vp: URL this verifier made, checked above
 }

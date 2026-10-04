@@ -168,6 +168,10 @@ type offerPage struct {
 	Offer         Offer
 	QR            template.URL
 	WebWalletLink string
+	// AppLink is the offer as a link a wallet app on this device opens:
+	// its openid-credential-offer: URL, which html/template won't put in
+	// an href by itself.
+	AppLink template.URL
 }
 
 var offerTemplate = template.Must(template.New("offer").Funcs(template.FuncMap{
@@ -196,7 +200,7 @@ var offerTemplate = template.Must(template.New("offer").Funcs(template.FuncMap{
 {{if .Offer.PreAuthorized}}<p>PIN: <strong style="font-size:1.4em;letter-spacing:.15em">{{.Offer.ConfirmationCode}}</strong><br><span class="note">Give it to the holder separately from the offer: their wallet sends it with the offer's pre-authorized code. There's no approval step; the offer can be redeemed once, by one wallet.</span></p>
 {{else}}<p>Confirmation code: <strong style="font-size:1.4em;letter-spacing:.15em">{{.Offer.ConfirmationCode}}</strong><br><span class="note">Enter it when the issuer asks you to approve. The offer can be redeemed once, by one wallet.</span></p>{{end}}
 {{if .WebWalletLink}}<p><a href="{{.WebWalletLink}}"><strong>Open in web wallet</strong></a></p>{{end}}
-<p><a href="{{.Offer.URI}}">Open in wallet app</a> (on this device)</p>
+{{if .AppLink}}<p><a href="{{.AppLink}}">Open in wallet app</a> (on this device)</p>{{end}}
 {{if .QR}}<p>Or scan with a wallet on another device:<br><img src="{{.QR}}" alt="QR code of the credential offer" width="296"></p>{{end}}
 <p class="note">Or pass this offer to the demo CLI wallet:</p>
 <p><code>{{.Offer.URI}}</code></p>
@@ -267,6 +271,7 @@ func (a *App) offer(w http.ResponseWriter, r *http.Request, e passport.Evidence)
 	if qr, err := demoqr.DataURI(offer.URI); err == nil {
 		page.QR = qr
 	}
+	page.AppLink = appLink(offer.URI)
 	if a.cfg.WebWalletURL != "" {
 		page.WebWalletLink = a.cfg.WebWalletURL + "/receive?offer=" + url.QueryEscape(offer.URI)
 	}
@@ -283,4 +288,14 @@ func writeHTMLError(w http.ResponseWriter, status int, message string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
 	_ = errorTemplate.Execute(w, message)
+}
+
+// appLink is uri as an href, when it's a Credential Offer link
+// (openid-credential-offer:): the one scheme the page links to besides
+// https.
+func appLink(uri string) template.URL {
+	if u, err := url.Parse(uri); err != nil || u.Scheme != "openid-credential-offer" {
+		return ""
+	}
+	return template.URL(uri) // #nosec G203 -- only an openid-credential-offer: URL the issuer made, checked above
 }

@@ -127,4 +127,9 @@ func TestSampleDocument(t *testing.T) {
 	if strings.Contains(string(page), "Passport verified") {
 		t.Error("the sample's offer page says the passport is verified")
 	}
+	// The wallet app link is the offer itself, not html/template's
+	// placeholder for a URL scheme it doesn't trust.
+	if !strings.Contains(string(page), `<a href="openid-credential-offer://`) || strings.Contains(string(page), "ZgotmplZ") {
+		t.Error("the offer page doesn't link the wallet app to the offer")
+	}
 }
