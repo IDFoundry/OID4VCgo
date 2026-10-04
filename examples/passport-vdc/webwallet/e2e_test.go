@@ -345,7 +345,7 @@ func cookieBrowser(t *testing.T, env *demotest.Env) *http.Client {
 // verifier's result page path and the redirect_uri the wallet sent b to.
 func shareSameDevice(t *testing.T, env *demotest.Env, b *http.Client) (resultPath string, redirect *url.URL) {
 	t.Helper()
-	resp, err := b.PostForm(env.VerifierURL+"/requests", url.Values{"scenario": {"signup"}})
+	resp, err := b.PostForm(env.VerifierURL+"/demo/requests", url.Values{"scenario": {"signup"}})
 	resultPath = mustRedirect(t, resp, err, "POST /requests").Path
 	resp, err = b.Get(env.VerifierURL + resultPath)
 	if err != nil || resp.StatusCode != http.StatusOK {
@@ -379,7 +379,7 @@ func TestSameDevice_RedirectBackReleasesTheResult(t *testing.T) {
 	receiveViaBrowser(t, env, b)
 
 	resultPath, redirect := shareSameDevice(t, env, b)
-	id := strings.TrimPrefix(resultPath, "/requests/")
+	id := strings.TrimPrefix(resultPath, "/demo/requests/")
 	if _, answered := env.Verifier.Outcome(id); answered {
 		t.Fatal("the result was released before the redirect back")
 	}
@@ -424,7 +424,7 @@ func TestSameDevice_RedirectInAnotherBrowserIsRejected(t *testing.T) {
 	if page := read(t, resp); resp.StatusCode != http.StatusForbidden || strings.Contains(page, "DOE") {
 		t.Fatalf("redirect back in another browser: status %d; want 403 without the claims", resp.StatusCode)
 	}
-	if _, answered := env.Verifier.Outcome(strings.TrimPrefix(resultPath, "/requests/")); answered {
+	if _, answered := env.Verifier.Outcome(strings.TrimPrefix(resultPath, "/demo/requests/")); answered {
 		t.Fatal("the verifier accepted an answer whose redirect came back elsewhere")
 	}
 	resp, err = b.Get(env.VerifierURL + resultPath)

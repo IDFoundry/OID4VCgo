@@ -120,8 +120,35 @@ login.
    use the sample), and open the offer link. For a presentation, open the
    verifier's page on another screen and scan its QR code in the app.
 
-The demo's pages have no login, and the issuer takes passport uploads:
-run the tunnel only while you test, and stop it after.
+### Restricting the pages with Cloudflare Access
+
+The demo's pages have no login of their own: through the tunnel, anyone
+could upload passports or the unchecked sample, approve reviews, revoke
+or forget credentials, and start requests in the demo's name. They're
+all under `/demo/` on the issuer and the verifier (`/` redirects
+there), and nothing else is: everything outside it is the OpenID4VCI,
+OAuth and OpenID4VP surface the wallet, the phone's browser during
+issuance (`/authorize`) and the verifier itself call, which must stay
+open. So one Access rule per host guards them:
+
+1. In Cloudflare Zero Trust, **Access → Applications → Add an
+   application → Self-hosted**.
+2. Name it, and add the public hostname `issuer.example.com` with path
+   `demo` (it covers everything under `/demo/`). Add a second
+   hostname, `verifier.example.com`, path `demo`.
+3. Add a policy: **Allow**, with an **Emails** rule listing who may
+   use the demo. The login method can be **One-time PIN**: Cloudflare
+   emails a code, with no identity provider to set up.
+4. Save. Don't add `provider.example.com`: the app calls it, with no
+   one to log in.
+
+Opening `https://issuer.example.com/` then asks for your email and the
+code once, and the phone, which uses only the endpoints outside
+`/demo/`, works as before. The Wallet Provider stays open, and attests
+any caller: that alone gets no credential (an offer and its code are
+still needed), but it's a stand-in, not a production service.
+
+Run the tunnel only while you test, and stop it after.
 
 To run from Xcode instead, set `DEVELOPMENT_TEAM` in `project.yml` and
 regenerate the project; the app then needs `OID4VC_DEMO_CONFIG` in its

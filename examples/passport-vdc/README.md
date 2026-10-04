@@ -207,7 +207,7 @@ issuer's redirect back is bound to the browser that started receiving
 
 **3. Verify.**
 
-1. Open https://127.0.0.1:9443, choose a trust path, click
+1. Open https://127.0.0.1:9443, choose a scenario, click
    **Open in web wallet**, then **Review the request**. (The wallet
    fetches a request only when you ask it to, so another site linking
    to it can't make it contact anything.)
@@ -256,7 +256,7 @@ for the PIN on the terminal (or takes `-headless -code <PIN>`).
 review** when uploading. The wallet then gets no credentials at once:
 the issuer defers them (OID4VCI 1.0 §9), and the web wallet lists them
 under **Waiting for the issuer**. Approve or deny each on the issuer's
-review page (https://127.0.0.1:8543/review), then click **Check now**
+review page (https://127.0.0.1:8543/demo/review), then click **Check now**
 in the wallet: an approved credential is stored, a denied one is
 dropped. The CLI wallet waits, polling, until you decide.
 
@@ -270,14 +270,14 @@ so by itself once every copy of a credential has been shared. The
 issuer deletes the data at that deadline, as soon as the wallet deletes
 the credentials (it revokes the refresh token, RFC 7009), or when you
 **Forget now** on the kept passports page
-(https://127.0.0.1:8543/kept); the wallet's next refresh is then
+(https://127.0.0.1:8543/demo/kept); the wallet's next refresh is then
 refused, and the app says to receive the credential again. Without the
 option, a wallet asking for a refresh token gets none, and the data is
 deleted once the credentials are issued. It can't be combined with
 **Hold for an operator's review**.
 
 **4. Revoke.** On the issuer, open **Issued credentials and revocation**
-(https://127.0.0.1:8543/status) and **Revoke** one credential. Verify
+(https://127.0.0.1:8543/demo/status) and **Revoke** one credential. Verify
 again sharing that format: the verifier rejects it as revoked, while
 the other format is still accepted. The verifier fetches the status
 list on every check, so a revocation applies at once.
@@ -305,6 +305,14 @@ protection against login CSRF, RFC 9700 §4.7): the web wallet sets a
 session cookie when it sends the browser to the issuer, so the approval
 must be completed in that same browser; the CLI's flow is bound to its
 own process.
+
+On both the issuer and the verifier, the pages people use are under
+`/demo/` (`/` redirects there): the upload page and the operator's
+review, status and kept-passport pages on the issuer, and the scenarios
+and request pages on the verifier. Everything else is the protocol
+surface wallets and verifiers call. Exposed through a tunnel, `/demo/`
+is the one path to put behind access control; see the iOS demo app's
+README ("Restricting the pages with Cloudflare Access").
 
 ### Running the servers separately
 

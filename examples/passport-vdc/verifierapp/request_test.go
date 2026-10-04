@@ -68,7 +68,7 @@ func TestRequest_ResultIsNotReachableFromTheLink(t *testing.T) {
 		t.Fatal("the request link or state carries the result ID")
 	}
 	for _, guess := range []string{claims.State, requestURI[strings.LastIndex(requestURI, "/")+1:]} {
-		resp, err := env.HTTP.Get(env.VerifierURL + "/requests/" + guess)
+		resp, err := env.HTTP.Get(env.VerifierURL + "/demo/requests/" + guess)
 		if err != nil {
 			t.Fatalf("GET result page: %v", err)
 		}
@@ -77,7 +77,7 @@ func TestRequest_ResultIsNotReachableFromTheLink(t *testing.T) {
 			t.Errorf("result page for %q: status %d, want 404", guess, resp.StatusCode)
 		}
 	}
-	resp, err := env.HTTP.Get(env.VerifierURL + "/requests/" + id)
+	resp, err := env.HTTP.Get(env.VerifierURL + "/demo/requests/" + id)
 	if err != nil {
 		t.Fatalf("GET result page: %v", err)
 	}

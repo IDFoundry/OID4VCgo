@@ -89,14 +89,14 @@ var keptTemplate = template.Must(template.New("kept").Parse(pageHead + `
 <tr><th>Uploaded</th><th>Kept until</th><th>Credentials issued</th><th></th></tr>
 {{range .}}
 <tr><td>{{.Uploaded.Format "2006-01-02 15:04:05"}}</td><td>{{.Until.Format "2006-01-02 15:04:05"}}</td><td>{{.Issued}}</td>
-<td><form method="post" action="/kept/forget"><input type="hidden" name="ref" value="{{.Ref}}"><button>Forget now</button></form></td></tr>
+<td><form method="post" action="/demo/kept/forget"><input type="hidden" name="ref" value="{{.Ref}}"><button>Forget now</button></form></td></tr>
 {{end}}
 </table>
 {{else}}
 <p>No passport is kept for refresh.</p>
 {{end}}
 <p class="note">Demo only: anyone who can reach this page can forget a passport. It shows no names or document numbers.</p>
-<p><a href="/">Issue another</a> · <a href="/status">Issued credentials</a></p>
+<p><a href="/demo/">Issue another</a> · <a href="/demo/status">Issued credentials</a></p>
 ` + pageFoot))
 
 func (a *App) handleKeptPage(w http.ResponseWriter, _ *http.Request) {
@@ -120,5 +120,5 @@ func (a *App) handleForget(w http.ResponseWriter, r *http.Request) {
 		writeHTMLError(w, http.StatusInternalServerError, "the passport is forgotten, but revoking its refresh token failed")
 		return
 	}
-	http.Redirect(w, r, "/kept", http.StatusSeeOther)
+	http.Redirect(w, r, "/demo/kept", http.StatusSeeOther)
 }

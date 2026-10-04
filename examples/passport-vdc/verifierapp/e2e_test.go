@@ -227,7 +227,7 @@ func TestEndToEnd_Revocation(t *testing.T) {
 	if revoked == "" {
 		t.Fatal("the issuer recorded no mso_mdoc credential")
 	}
-	resp, err := env.HTTP.PostForm(env.IssuerURL+"/status/revoke", url.Values{"handle": {revoked}})
+	resp, err := env.HTTP.PostForm(env.IssuerURL+"/demo/status/revoke", url.Values{"handle": {revoked}})
 	if err != nil {
 		t.Fatalf("revoke: %v", err)
 	}
@@ -281,7 +281,7 @@ func TestEndToEnd_SampleDocumentIssuedUnchecked(t *testing.T) {
 	store := receiveInto(t, env, sample)
 
 	// Only the issuer's own pages know.
-	resp, err := env.HTTP.Get(env.IssuerURL + "/status")
+	resp, err := env.HTTP.Get(env.IssuerURL + "/demo/status")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -418,7 +418,7 @@ func TestEndToEnd_SeveralPassports(t *testing.T) {
 	if outcome.Decision.Approved || !strings.Contains(outcome.Decision.Text, "2 of 2 passports") {
 		t.Errorf("decision = %+v, want the check-in refused", outcome.Decision)
 	}
-	resp, err := env.HTTP.Get(env.VerifierURL + "/requests/" + id)
+	resp, err := env.HTTP.Get(env.VerifierURL + "/demo/requests/" + id)
 	if err != nil {
 		t.Fatal(err)
 	}

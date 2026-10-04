@@ -131,10 +131,16 @@ func (a *App) CreateOffer(ctx context.Context, e passport.Evidence, opts OfferOp
 
 func (a *App) routes(credentialHandler, deferredHandler, notificationHandler http.Handler) http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /{$}", a.handleUploadPage)
-	mux.HandleFunc("POST /passport", a.handleUpload)
+	// The pages people use — uploading a passport, and the operator's
+	// review, status and kept-passport pages — are all under /demo/, so
+	// one access rule (Cloudflare Access on the path, say) can guard
+	// them; everything else is the OpenID4VCI and OAuth surface wallets
+	// and verifiers call, which must stay reachable.
+	mux.HandleFunc("GET /{$}", redirectToDemo)
+	mux.HandleFunc("GET /demo/{$}", a.handleUploadPage)
+	mux.HandleFunc("POST /demo/passport", a.handleUpload)
 	if a.cfg.AllowSampleDocument {
-		mux.HandleFunc("POST /sample", a.handleSample)
+		mux.HandleFunc("POST /demo/sample", a.handleSample)
 	}
 
 	mux.HandleFunc("GET /.well-known/oauth-authorization-server", a.handleASMetadata)
@@ -152,15 +158,20 @@ func (a *App) routes(credentialHandler, deferredHandler, notificationHandler htt
 	mux.Handle("POST /credential", credentialHandler)
 	mux.Handle("POST /deferred_credential", deferredHandler)
 	mux.Handle("POST /notification", notificationHandler)
-	mux.HandleFunc("GET /review", a.handleReviewPage)
-	mux.HandleFunc("POST /review/decision", a.handleReviewDecision)
-	mux.HandleFunc("GET /kept", a.handleKeptPage)
-	mux.HandleFunc("POST /kept/forget", a.handleForget)
+	mux.HandleFunc("GET /demo/review", a.handleReviewPage)
+	mux.HandleFunc("POST /demo/review/decision", a.handleReviewDecision)
+	mux.HandleFunc("GET /demo/kept", a.handleKeptPage)
+	mux.HandleFunc("POST /demo/kept/forget", a.handleForget)
 
 	mux.Handle("GET "+StatusListPath, a.statusPublisher())
-	mux.HandleFunc("GET /status", a.handleStatusPage)
-	mux.HandleFunc("POST /status/revoke", a.handleRevoke)
+	mux.HandleFunc("GET /demo/status", a.handleStatusPage)
+	mux.HandleFunc("POST /demo/status/revoke", a.handleRevoke)
 	return mux
+}
+
+// redirectToDemo sends a visitor to the pages under /demo/.
+func redirectToDemo(w http.ResponseWriter, r *http.Request) {
+	http.Redirect(w, r, "/demo/", http.StatusSeeOther)
 }
 
 const pageHead = `<!doctype html>
@@ -188,17 +199,17 @@ const pageFoot = `
 var uploadTemplate = template.Must(template.New("upload").Parse(pageHead + `
 <h1>Passport → Digital Credential</h1>
 <p>Upload a gmrtd portable passport file. It's verified against the issuing country's signatures, then offered to your wallet as both an <code>mso_mdoc</code> and a <code>dc+sd-jwt</code> credential.</p>
-<form method="post" action="/passport" enctype="multipart/form-data">
+<form method="post" action="/demo/passport" enctype="multipart/form-data">
 <input type="file" name="passport" accept=".gmrtd" required>
 <p><label><input type="checkbox" name="counter" value="1"> Issue at the counter — a pre-authorized code with a PIN, no approval in the browser (OID4VCI's other grant)</label></p>
-<p><label><input type="checkbox" name="review" value="1"> Hold for an operator's review — the wallet waits, and polls, until you decide on the <a href="/review">review page</a></label></p>
-<p><label><input type="checkbox" name="keep" value="1"> Keep for refresh (24 hours) — your wallet can get fresh copies of the credentials without you until then. The issuer keeps this passport's data until it expires, or until your wallet deletes the credentials (<a href="/kept">kept passports</a>)</label></p>
+<p><label><input type="checkbox" name="review" value="1"> Hold for an operator's review — the wallet waits, and polls, until you decide on the <a href="/demo/review">review page</a></label></p>
+<p><label><input type="checkbox" name="keep" value="1"> Keep for refresh (24 hours) — your wallet can get fresh copies of the credentials without you until then. The issuer keeps this passport's data until it expires, or until your wallet deletes the credentials (<a href="/demo/kept">kept passports</a>)</label></p>
 <button>Verify passport</button>
-{{if .AllowSample}}<button formaction="/sample" formnovalidate>Issue gmrtd's sample passport without checking it</button>{{end}}
+{{if .AllowSample}}<button formaction="/demo/sample" formnovalidate>Issue gmrtd's sample passport without checking it</button>{{end}}
 </form>
 {{if .AllowSample}}<p class="note">No passport to hand? The second button simulates an issuer that skipped Passive Authentication: it issues gmrtd's sample passport — ICAO worked-example data no country signed — as an ordinary passport credential. A verifier trusting this issuer accepts it; one that re-verifies the passport file doesn't.</p>{{end}}
 <p class="note">Demo only. The passport is held in memory until the offer expires, or kept for refresh, and is never stored.</p>
-<p><a href="/status">Issued credentials and revocation</a></p>
+<p><a href="/demo/status">Issued credentials and revocation</a></p>
 ` + pageFoot))
 
 type offerPage struct {
@@ -238,7 +249,7 @@ var offerTemplate = template.Must(template.New("offer").Funcs(template.FuncMap{
 <h2>Credential offer</h2>
 {{if .Offer.PreAuthorized}}<p>PIN: <strong style="font-size:1.4em;letter-spacing:.15em">{{.Offer.ConfirmationCode}}</strong><br><span class="note">Give it to the holder separately from the offer: their wallet sends it with the offer's pre-authorized code. There's no approval step; the offer can be redeemed once, by one wallet.</span></p>
 {{else}}<p>Confirmation code: <strong style="font-size:1.4em;letter-spacing:.15em">{{.Offer.ConfirmationCode}}</strong><br><span class="note">Enter it when the issuer asks you to approve. The offer can be redeemed once, by one wallet.</span></p>{{end}}
-{{if .Offer.KeptForRefresh}}<p class="note">Kept for refresh: the issuer keeps this passport's data for 24 hours after it first issues a credential, so your wallet can get fresh copies, then deletes it. Deleting the credentials in your wallet, or <a href="/kept">forgetting it</a>, deletes it sooner.</p>{{end}}
+{{if .Offer.KeptForRefresh}}<p class="note">Kept for refresh: the issuer keeps this passport's data for 24 hours after it first issues a credential, so your wallet can get fresh copies, then deletes it. Deleting the credentials in your wallet, or <a href="/demo/kept">forgetting it</a>, deletes it sooner.</p>{{end}}
 {{if .WebWalletLink}}<p><a href="{{.WebWalletLink}}"><strong>Open in web wallet</strong></a></p>{{end}}
 {{if .AppLink}}<p><a href="{{.AppLink}}">Open in wallet app</a> (on this device)</p>{{end}}
 {{if .QR}}<p>Or scan with a wallet on another device:<br><img src="{{.QR}}" alt="QR code of the credential offer" width="296"></p>{{end}}
@@ -324,7 +335,7 @@ func (a *App) offer(w http.ResponseWriter, r *http.Request, e passport.Evidence)
 var errorTemplate = template.Must(template.New("error").Parse(pageHead + `
 <h1>Something went wrong</h1>
 <p>{{.}}</p>
-<p><a href="/">Start again</a></p>
+<p><a href="/demo/">Start again</a></p>
 ` + pageFoot))
 
 func writeHTMLError(w http.ResponseWriter, status int, message string) {

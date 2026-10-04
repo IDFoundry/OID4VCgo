@@ -636,7 +636,7 @@ func (a *App) handleContinue(w http.ResponseWriter, r *http.Request) {
 	a.mu.Lock()
 	id := a.byTx[view.ID]
 	a.mu.Unlock()
-	http.Redirect(w, r, "/requests/"+id, http.StatusSeeOther) // #nosec G710 -- local path + a server-generated random ID
+	http.Redirect(w, r, "/demo/requests/"+id, http.StatusSeeOther) // #nosec G710 -- local path + a server-generated random ID
 }
 
 // checkICAO re-verifies the disclosed passport file exactly as the

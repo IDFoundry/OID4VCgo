@@ -21,9 +21,15 @@ const (
 
 func (a *App) routes() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /{$}", a.handleHome)
-	mux.HandleFunc("POST /requests", a.handleCreateRequest)
-	mux.HandleFunc("GET /requests/{id}", a.handleRequestPage)
+	// The pages people use are all under /demo/, so one access rule
+	// (Cloudflare Access on the path, say) can guard them; /s/ is the
+	// OpenID4VP surface wallets call, which must stay reachable.
+	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/demo/", http.StatusSeeOther)
+	})
+	mux.HandleFunc("GET /demo/{$}", a.handleHome)
+	mux.HandleFunc("POST /demo/requests", a.handleCreateRequest)
+	mux.HandleFunc("GET /demo/requests/{id}", a.handleRequestPage)
 	// Each scenario's relying party has its own OpenID4VP endpoints.
 	for sc, txs := range a.txs {
 		base := "/s/" + string(sc)
@@ -60,7 +66,7 @@ var homeTemplate = template.Must(template.New("home").Parse(pageHead + `</head><
 <h1>Who's asking for your passport?</h1>
 <p>Each card is a relying party asking a wallet for its passport-derived credential — as an <code>mso_mdoc</code> or a <code>dc+sd-jwt</code>, whichever it holds — for its own purpose. In order, they show what a verifier needs growing from one fact to the passport itself, and who is asking: a verifier the wallet trusts, or one it refuses outright.</p>
 {{range .}}
-<form method="post" action="/requests" class="card scenario">
+<form method="post" action="/demo/requests" class="card scenario">
 <h2>{{.Icon}} {{.Title}}</h2>
 <p class="who">{{.Verifier}} asks for {{.Asks}}.</p>
 <p>{{.Shows}}</p>
@@ -143,7 +149,7 @@ var requestTemplate = template.Must(template.New("request").Parse(pageHead + `{{
 {{end}}
 {{if .Scenario.Evidence}}<p class="note">Re-verifying proves the passport data is authentic, not that the presenter holds the passport. Chip authenticity replays evidence recorded when the chip was read: a genuine chip answered then, not necessarily now. Tying the data to the presenter still relies on the issuer: it bound each credential's device key to its passport.</p>{{end}}
 {{end}}
-<p><a href="/">New request</a></p>
+<p><a href="/demo/">New request</a></p>
 ` + pageFoot))
 
 func (a *App) handleHome(w http.ResponseWriter, _ *http.Request) {
@@ -179,7 +185,7 @@ func (a *App) handleCreateRequest(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{
 		Name: sessionCookie, Value: token, Path: "/", HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode,
 	})
-	http.Redirect(w, r, "/requests/"+id, http.StatusSeeOther) // #nosec G710 -- local path + a server-generated random ID, not user input
+	http.Redirect(w, r, "/demo/requests/"+id, http.StatusSeeOther) // #nosec G710 -- local path + a server-generated random ID, not user input
 }
 
 func (a *App) handleRequestPage(w http.ResponseWriter, r *http.Request) {
@@ -279,7 +285,7 @@ func (a *App) requestPageFor(ctx context.Context, s *session) requestPage {
 
 var errorTemplate = template.Must(template.New("error").Parse(pageHead + `</head><body>
 <h1 class="bad">{{.}}</h1>
-<p><a href="/">New request</a></p>
+<p><a href="/demo/">New request</a></p>
 ` + pageFoot))
 
 func writeHTMLError(w http.ResponseWriter, status int, message string) {

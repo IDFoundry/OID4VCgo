@@ -115,7 +115,7 @@ func TestNotifications_ReportImmediateIssuance(t *testing.T) {
 	if len(n) != 2 || n[0].Event != oid4vci.NotificationEventCredentialAccepted || n[1].Event != oid4vci.NotificationEventCredentialAccepted {
 		t.Fatalf("Notifications = %+v, want both credentials accepted", n)
 	}
-	if page := get(t, env, "/status"); !strings.Contains(page, "credential_accepted") {
+	if page := get(t, env, "/demo/status"); !strings.Contains(page, "credential_accepted") {
 		t.Error("the status page doesn't show the wallet's notifications")
 	}
 }
@@ -134,7 +134,7 @@ func TestReviewPage(t *testing.T) {
 	if _, _, err := walletapp.ReceiveDeferrable(ctx, env.WalletConfig(), offer.URI, walletapp.HeadlessApprover{HTTP: env.HTTP, Code: offer.ConfirmationCode}); err != nil {
 		t.Fatal(err)
 	}
-	page := get(t, env, "/review")
+	page := get(t, env, "/demo/review")
 	if !strings.Contains(page, e.Identity.IssuingCountry) || strings.Count(page, `name="ref"`) != 2 {
 		t.Errorf("review page doesn't list both deferred issuances:\n%s", page)
 	}
@@ -143,7 +143,7 @@ func TestReviewPage(t *testing.T) {
 	}
 
 	ref := env.Issuer.Reviews()[0].Ref
-	req, err := http.NewRequest(http.MethodPost, env.IssuerURL+"/review/decision", strings.NewReader(url.Values{"ref": {ref}, "decision": {"approve"}}.Encode()))
+	req, err := http.NewRequest(http.MethodPost, env.IssuerURL+"/demo/review/decision", strings.NewReader(url.Values{"ref": {ref}, "decision": {"approve"}}.Encode()))
 	if err != nil {
 		t.Fatal(err)
 	}

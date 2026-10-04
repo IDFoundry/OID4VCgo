@@ -31,7 +31,7 @@ func upload(t *testing.T, env *demotest.Env, data []byte) (*http.Response, strin
 	if err := mw.Close(); err != nil {
 		t.Fatalf("close multipart: %v", err)
 	}
-	resp, err := env.HTTP.Post(env.IssuerURL+"/passport", mw.FormDataContentType(), &body)
+	resp, err := env.HTTP.Post(env.IssuerURL+"/demo/passport", mw.FormDataContentType(), &body)
 	if err != nil {
 		t.Fatalf("POST /passport: %v", err)
 	}
@@ -106,11 +106,11 @@ func TestSampleDocument(t *testing.T) {
 	}
 	home, _ := io.ReadAll(resp.Body)
 	_ = resp.Body.Close()
-	if !strings.Contains(string(home), `formaction="/sample"`) {
+	if !strings.Contains(string(home), `formaction="/demo/sample"`) {
 		t.Error("the upload page has no sample passport button")
 	}
 
-	resp, err = env.HTTP.PostForm(env.IssuerURL+"/sample", url.Values{"counter": {"1"}})
+	resp, err = env.HTTP.PostForm(env.IssuerURL+"/demo/sample", url.Values{"counter": {"1"}})
 	if err != nil {
 		t.Fatal(err)
 	}

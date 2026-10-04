@@ -224,14 +224,14 @@ var reviewTemplate = template.Must(template.New("review").Parse(pageHead + `
 <td>{{.PassportExpiry}}{{if .Expired}} <span class="warn">expired</span>{{end}}</td>
 <td>{{.ChipAuth}}</td>
 <td>{{.CreatedAt.Format "15:04:05"}}</td>
-<td>{{if eq .Decision "awaiting review"}}<form method="post" action="/review/decision"><input type="hidden" name="ref" value="{{.Ref}}"><button name="decision" value="approve">Approve</button> <button name="decision" value="deny">Deny</button></form>{{else}}{{.Decision}}; waiting for the wallet's poll{{end}}</td></tr>
+<td>{{if eq .Decision "awaiting review"}}<form method="post" action="/demo/review/decision"><input type="hidden" name="ref" value="{{.Ref}}"><button name="decision" value="approve">Approve</button> <button name="decision" value="deny">Deny</button></form>{{else}}{{.Decision}}; waiting for the wallet's poll{{end}}</td></tr>
 {{end}}
 </table>
 {{else}}
 <p>Nothing is awaiting review.</p>
 {{end}}
 <p class="note">Demo only: anyone who can reach this page can decide. It shows no names or document numbers.</p>
-<p><a href="/">Issue another</a> · <a href="/status">Issued credentials</a></p>
+<p><a href="/demo/">Issue another</a> · <a href="/demo/status">Issued credentials</a></p>
 ` + pageFoot))
 
 func (a *App) handleReviewPage(w http.ResponseWriter, _ *http.Request) {
@@ -251,7 +251,7 @@ func (a *App) handleReviewDecision(w http.ResponseWriter, r *http.Request) {
 		writeHTMLError(w, http.StatusBadRequest, "unknown or already-decided review")
 		return
 	}
-	http.Redirect(w, r, "/review", http.StatusSeeOther)
+	http.Redirect(w, r, "/demo/review", http.StatusSeeOther)
 }
 
 // notifications records the wallets' Notification Requests (§11) for
