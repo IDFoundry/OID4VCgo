@@ -12,7 +12,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/democert"
@@ -213,69 +212,72 @@ func (ids identities) encode() ([]byte, error) {
 // key and issued by the CA the scenario's trust calls for. A scenario
 // with no identity in it is left out, for current to catch.
 func parseIdentities(data []byte) (identities, error) {
-	ids := identities{signers: map[Scenario]signer{}}
-	keys := map[Scenario]*ecdsa.PrivateKey{}
-	certs := map[Scenario]*x509.Certificate{}
-	for block, rest := pem.Decode(data); block != nil; block, rest = pem.Decode(rest) {
-		role := block.Headers[roleHeader]
-		scenario := Scenario(strings.TrimPrefix(role, roleSignerPre))
-		switch block.Type {
-		case "CERTIFICATE":
-			c, err := x509.ParseCertificate(block.Bytes)
-			if err != nil {
-				return identities{}, fmt.Errorf("%s certificate: %w", role, err)
-			}
-			switch {
-			case role == roleCA:
-				ids.ca = c
-			case role == roleUntrustedCA:
-				ids.untrustedCA = c
-			case role == roleRegistrarCA:
-				ids.registrarCA = c
-			case role == roleRegistrar:
-				ids.registrar.cert = c
-			case strings.HasPrefix(role, roleSignerPre):
-				certs[scenario] = c
-			}
-		case "EC PRIVATE KEY":
-			k, err := x509.ParseECPrivateKey(block.Bytes)
-			if err != nil {
-				return identities{}, fmt.Errorf("%s key: %w", role, err)
-			}
-			switch {
-			case role == roleRegistrar:
-				ids.registrar.key = k
-			case strings.HasPrefix(role, roleSignerPre):
-				keys[scenario] = k
-			}
-		}
+	certs, keys, err := decodeBlocks(data)
+	if err != nil {
+		return identities{}, err
 	}
+	ids := identities{signers: map[Scenario]signer{}, ca: certs[roleCA], untrustedCA: certs[roleUntrustedCA], registrarCA: certs[roleRegistrarCA]}
 	if ids.ca == nil || ids.untrustedCA == nil {
 		return identities{}, errors.New("incomplete verifier identities")
 	}
-	if ids.registrarCA != nil || ids.registrar.cert != nil {
-		r := ids.registrar
-		if ids.registrarCA == nil || r.key == nil || r.cert == nil || !r.key.PublicKey.Equal(r.cert.PublicKey) || r.cert.CheckSignatureFrom(ids.registrarCA) != nil {
+	if ids.registrarCA != nil || certs[roleRegistrar] != nil {
+		r := signer{key: keys[roleRegistrar], cert: certs[roleRegistrar]}
+		if ids.registrarCA == nil || checkSigner(r, ids.registrarCA) != nil {
 			return identities{}, errors.New("the registrar's identity is incomplete or doesn't chain to its CA")
 		}
+		ids.registrar = r
 	}
-	for s, cert := range certs {
-		info, known := s.Info()
-		key := keys[s]
-		if !known {
+	for _, s := range Scenarios {
+		role := roleSignerPre + string(s)
+		if certs[role] == nil {
 			continue
 		}
-		if key == nil || !key.PublicKey.Equal(cert.PublicKey) {
-			return identities{}, fmt.Errorf("%s: the signing certificate isn't for its key", s)
-		}
+		info, _ := s.Info()
 		parent := ids.ca
 		if !info.Trusted {
 			parent = ids.untrustedCA
 		}
-		if err := cert.CheckSignatureFrom(parent); err != nil {
-			return identities{}, fmt.Errorf("%s: the signing certificate isn't its CA's: %w", s, err)
+		sg := signer{key: keys[role], cert: certs[role]}
+		if err := checkSigner(sg, parent); err != nil {
+			return identities{}, fmt.Errorf("%s: %w", s, err)
 		}
-		ids.signers[s] = signer{key: key, cert: cert}
+		ids.signers[s] = sg
 	}
 	return ids, nil
+}
+
+// decodeBlocks reads an identityFile's certificates and keys, by role.
+func decodeBlocks(data []byte) (map[string]*x509.Certificate, map[string]*ecdsa.PrivateKey, error) {
+	certs := map[string]*x509.Certificate{}
+	keys := map[string]*ecdsa.PrivateKey{}
+	for block, rest := pem.Decode(data); block != nil; block, rest = pem.Decode(rest) {
+		role := block.Headers[roleHeader]
+		switch block.Type {
+		case "CERTIFICATE":
+			c, err := x509.ParseCertificate(block.Bytes)
+			if err != nil {
+				return nil, nil, fmt.Errorf("%s certificate: %w", role, err)
+			}
+			certs[role] = c
+		case "EC PRIVATE KEY":
+			k, err := x509.ParseECPrivateKey(block.Bytes)
+			if err != nil {
+				return nil, nil, fmt.Errorf("%s key: %w", role, err)
+			}
+			keys[role] = k
+		}
+	}
+	return certs, keys, nil
+}
+
+// checkSigner checks sg's certificate is for its key and issued by
+// parent.
+func checkSigner(sg signer, parent *x509.Certificate) error {
+	if sg.key == nil || sg.cert == nil || !sg.key.PublicKey.Equal(sg.cert.PublicKey) {
+		return errors.New("the signing certificate isn't for its key")
+	}
+	if err := sg.cert.CheckSignatureFrom(parent); err != nil {
+		return fmt.Errorf("the signing certificate isn't its CA's: %w", err)
+	}
+	return nil
 }

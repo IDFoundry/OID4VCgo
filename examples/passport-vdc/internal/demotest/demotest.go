@@ -26,6 +26,9 @@ import (
 	"github.com/idfoundry/oid4vcgo/wallet"
 )
 
+// httpsURL prefixes a test server's address to make its URL.
+const httpsURL = "https://"
+
 // Demo wallet registration shared by the issuer and wallet in tests.
 const (
 	WalletClientID = "passport-vdc-wallet"
@@ -66,10 +69,10 @@ func New(t *testing.T, cscaPool cms.CertPool) *Env {
 	}
 	e := &Env{Provider: provider, roots: x509.NewCertPool(), verifierCAs: x509.NewCertPool()}
 	providerSrv := httptest.NewUnstartedServer(nil)
-	e.ProviderURL = "https://" + providerSrv.Listener.Addr().String()
+	e.ProviderURL = httpsURL + providerSrv.Listener.Addr().String()
 	e.start(t, providerSrv, provider.Handler(WalletClientID))
 	e.webSrv = httptest.NewUnstartedServer(nil)
-	e.WebWalletURL = "https://" + e.webSrv.Listener.Addr().String()
+	e.WebWalletURL = httpsURL + e.webSrv.Listener.Addr().String()
 	t.Cleanup(func() {
 		if e.webSrv.URL == "" { // never started
 			_ = e.webSrv.Listener.Close()
@@ -77,7 +80,7 @@ func New(t *testing.T, cscaPool cms.CertPool) *Env {
 	})
 
 	srv := httptest.NewUnstartedServer(nil)
-	e.IssuerURL = "https://" + srv.Listener.Addr().String()
+	e.IssuerURL = httpsURL + srv.Listener.Addr().String()
 	e.Issuer, err = issuerapp.New(issuerapp.Config{
 		IssuerURL: e.IssuerURL, CSCAPool: cscaPool, AllowSampleDocument: true,
 		Wallet: issuerapp.WalletClient{
@@ -100,7 +103,7 @@ func (e *Env) StartVerifier(t *testing.T, cscaPool cms.CertPool, opts ...func(*v
 		cscaPool = &cms.GenericCertPool{}
 	}
 	srv := httptest.NewUnstartedServer(nil)
-	e.VerifierURL = "https://" + srv.Listener.Addr().String()
+	e.VerifierURL = httpsURL + srv.Listener.Addr().String()
 	var err error
 	cfg := verifierapp.Config{
 		VerifierURL: e.VerifierURL, IssuerVCT: e.IssuerURL + issuerapp.VCTPath,

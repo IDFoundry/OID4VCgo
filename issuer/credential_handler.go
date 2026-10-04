@@ -12,6 +12,9 @@ import (
 	"github.com/idfoundry/oid4vcgo"
 )
 
+// headerContentType is the Content-Type header's name.
+const headerContentType = "Content-Type"
+
 // AccessTokenVerifier checks the access token presented to a protected
 // Credential Issuer endpoint. This package doesn't verify access tokens
 // itself (see resource_verifier.go); issuer/fapiresource adapts a
@@ -96,7 +99,7 @@ func (iss *Issuer) serveCredential(w http.ResponseWriter, r *http.Request, cfg C
 	if !ok {
 		return
 	}
-	req, err := iss.ParseCredentialRequest(body, r.Header.Get("Content-Type"))
+	req, err := iss.ParseCredentialRequest(body, r.Header.Get(headerContentType))
 	if err != nil {
 		WriteError(w, err)
 		return
@@ -122,7 +125,7 @@ func (iss *Issuer) serveCredential(w http.ResponseWriter, r *http.Request, cfg C
 // writeCredentialResponse sends a Credential or Deferred Credential
 // Response body, uncached.
 func writeCredentialResponse(w http.ResponseWriter, status int, encoded []byte, contentType string) {
-	w.Header().Set("Content-Type", contentType)
+	w.Header().Set(headerContentType, contentType)
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(status)
@@ -214,7 +217,7 @@ func (iss *Issuer) DeferredCredentialHandler(cfg DeferredCredentialHandlerConfig
 		if !ok {
 			return
 		}
-		req, err := iss.ParseDeferredCredentialRequest(body, r.Header.Get("Content-Type"))
+		req, err := iss.ParseDeferredCredentialRequest(body, r.Header.Get(headerContentType))
 		if err == nil {
 			// Checked before Resolve, so a malformed poll can't make
 			// the deployment issue.

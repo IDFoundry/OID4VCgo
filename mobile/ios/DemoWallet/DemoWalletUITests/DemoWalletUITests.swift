@@ -212,7 +212,8 @@ final class DemoWalletUITests: XCTestCase {
         let candidates = app.buttons.matching(identifier: "candidate")
         XCTAssertTrue(candidates.element(boundBy: 1).waitForExistence(timeout: 10), "both credentials aren't offered")
         XCTAssertEqual(candidates.count, 2)
-        let first = candidates.element(boundBy: 0), second = candidates.element(boundBy: 1)
+        let first = candidates.element(boundBy: 0)
+        let second = candidates.element(boundBy: 1)
         XCTAssertTrue(first.isSelected && second.isSelected, "the request takes several, so both start chosen")
 
         first.tap()

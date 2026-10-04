@@ -9,6 +9,13 @@ import (
 	"github.com/idfoundry/oid4vcgo/internal/jwe"
 )
 
+// HTTP header names and values the handlers set.
+const (
+	headerContentType  = "Content-Type"
+	headerCacheControl = "Cache-Control"
+	cacheNoStore       = "no-store"
+)
+
 // requestObjectMediaType is RFC 9101 §10.2's media type for a Request
 // Object.
 const requestObjectMediaType = "application/oauth-authz-req+jwt"
@@ -35,9 +42,9 @@ func (t *Transactions) RequestObjectHandler() http.Handler {
 			http.NotFound(w, r)
 			return
 		}
-		w.Header().Set("Content-Type", requestObjectMediaType)
+		w.Header().Set(headerContentType, requestObjectMediaType)
 		w.Header().Set("X-Content-Type-Options", "nosniff")
-		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set(headerCacheControl, cacheNoStore)
 		_, _ = w.Write([]byte(object)) // #nosec G705 -- a JWT this Verifier signed, served as application/oauth-authz-req+jwt with nosniff, never HTML
 	})
 }
@@ -86,15 +93,15 @@ func (t *Transactions) ResponseHandler() http.Handler {
 		if answered.RedirectURI != "" {
 			body["redirect_uri"] = answered.RedirectURI
 		}
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set(headerContentType, "application/json")
+		w.Header().Set(headerCacheControl, cacheNoStore)
 		_ = json.NewEncoder(w).Encode(body)
 	})
 }
 
 func writeResponseError(w http.ResponseWriter, description string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set(headerContentType, "application/json")
+	w.Header().Set(headerCacheControl, cacheNoStore)
 	w.WriteHeader(http.StatusBadRequest)
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid_request", "error_description": description})
 }

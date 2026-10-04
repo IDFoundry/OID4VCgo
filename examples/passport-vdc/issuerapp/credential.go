@@ -167,6 +167,6 @@ func (a *App) handleVCTMetadata(w http.ResponseWriter, _ *http.Request) {
 			claim("Passport file (gmrtd, all data groups)", credential.PassportFile),
 		},
 	}
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(headerContentType, "application/json")
 	_ = json.NewEncoder(w).Encode(doc)
 }

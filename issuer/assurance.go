@@ -153,39 +153,30 @@ func checkProductionAssurance(cfg Config, deps Dependencies) error {
 			}
 		}
 	}
-	if !cfg.Endpoints.Nonce.IsZero() {
-		if err := checkStoreAssurance("nonces", deps.Nonces, true); err != nil {
-			return err
-		}
+	if deps.PreAuthorizedCodes != nil && cfg.PreAuthorizedCodeClientAuthentication == nil {
+		return fmt.Errorf("config.pre_authorized_code_client_authentication is required under AssuranceProduction when dependencies.pre_authorized_codes is set (issuer.AnonymousPreAuthorizedCode{} accepts the redemption without client authentication, which HAIP 1.0 §4.4.1 doesn't allow)")
 	}
-	if !cfg.CredentialOfferEndpoint.IsZero() {
-		if err := checkStoreAssurance("credential_offers", deps.CredentialOffers, false); err != nil {
-			return err
-		}
+	// Each store a configured feature uses, and whether consuming from
+	// it must be atomic.
+	stores := []struct {
+		used          bool
+		name          string
+		store         any
+		atomicConsume bool
+	}{
+		{!cfg.Endpoints.Nonce.IsZero(), "nonces", deps.Nonces, true},
+		{!cfg.CredentialOfferEndpoint.IsZero(), "credential_offers", deps.CredentialOffers, false},
+		{!cfg.Endpoints.DeferredCredential.IsZero(), "deferred_transactions", deps.DeferredTransactions, true},
+		{!cfg.Endpoints.Notification.IsZero(), "notifications", deps.Notifications, false},
+		{deps.PreAuthorizedCodes != nil, "pre_authorized_codes", deps.PreAuthorizedCodes, true},
+		{deps.PreAuthorizedCodes != nil, "dpop_replay", deps.DPoPReplay, true},
+		{deps.DPoPNonces != nil, "dpop_nonces", deps.DPoPNonces, true},
 	}
-	if !cfg.Endpoints.DeferredCredential.IsZero() {
-		if err := checkStoreAssurance("deferred_transactions", deps.DeferredTransactions, true); err != nil {
-			return err
+	for _, st := range stores {
+		if !st.used {
+			continue
 		}
-	}
-	if !cfg.Endpoints.Notification.IsZero() {
-		if err := checkStoreAssurance("notifications", deps.Notifications, false); err != nil {
-			return err
-		}
-	}
-	if deps.PreAuthorizedCodes != nil {
-		if cfg.PreAuthorizedCodeClientAuthentication == nil {
-			return fmt.Errorf("config.pre_authorized_code_client_authentication is required under AssuranceProduction when dependencies.pre_authorized_codes is set (issuer.AnonymousPreAuthorizedCode{} accepts the redemption without client authentication, which HAIP 1.0 §4.4.1 doesn't allow)")
-		}
-		if err := checkStoreAssurance("pre_authorized_codes", deps.PreAuthorizedCodes, true); err != nil {
-			return err
-		}
-		if err := checkStoreAssurance("dpop_replay", deps.DPoPReplay, true); err != nil {
-			return err
-		}
-	}
-	if deps.DPoPNonces != nil {
-		if err := checkStoreAssurance("dpop_nonces", deps.DPoPNonces, true); err != nil {
+		if err := checkStoreAssurance(st.name, st.store, st.atomicConsume); err != nil {
 			return err
 		}
 	}

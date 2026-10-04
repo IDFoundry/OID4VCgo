@@ -177,29 +177,8 @@ func issuerJWTHeader(opts IssueOptions) map[string]any {
 // Holder needs all of them to later choose a subset to present (via
 // Presentation/ResolveDisclosures).
 func Issue(signer crypto.Signer, alg jose.Alg, claims Claims, opts IssueOptions) (sdjwt string, disclosures []Disclosure, err error) {
-	if claims.VCT == "" {
-		return "", nil, fmt.Errorf("sdjwtvc: Claims.VCT is required")
-	}
-	if opts.Decoys < 0 || opts.Decoys > MaxDecoys {
-		return "", nil, fmt.Errorf("sdjwtvc: IssueOptions.Decoys must be between 0 and %d, got %d", MaxDecoys, opts.Decoys)
-	}
-	if opts.IssuerCertificate != nil {
-		// A two-value assertion, not a direct one: signer.Public() is
-		// every stdlib key type's own crypto.PublicKey, all of which
-		// implement Equal, but a custom Signer (an HSM/KMS-backed one)
-		// may not — a direct assertion would panic instead of
-		// returning this func's own documented config-mismatch error,
-		// the same "Signer may not be comparable" risk verifier.New's
-		// own equivalent check already guards against. Found in a
-		// repo-wide spec-comprehensiveness review, as a side effect of
-		// adding the analogous check to credential/mdoc.Issue.
-		comparableKey, ok := signer.Public().(interface{ Equal(crypto.PublicKey) bool })
-		if !ok {
-			return "", nil, fmt.Errorf("sdjwtvc: signer's own public key type %T does not implement Equal(crypto.PublicKey) bool", signer.Public())
-		}
-		if !comparableKey.Equal(opts.IssuerCertificate.PublicKey) {
-			return "", nil, fmt.Errorf("sdjwtvc: IssuerCertificate's public key does not match signer's public key")
-		}
+	if err := checkIssueInputs(signer, claims, opts); err != nil {
+		return "", nil, err
 	}
 	hashAlg := opts.HashAlg
 	if hashAlg == "" {
@@ -251,4 +230,34 @@ func Issue(signer crypto.Signer, alg jose.Alg, claims Claims, opts IssueOptions)
 		out += enc + "~"
 	}
 	return out, disclosures, nil
+}
+
+// checkIssueInputs checks Issue's claims and options: a vct, a decoy
+// count in range, and an IssuerCertificate, if given, for signer's key.
+func checkIssueInputs(signer crypto.Signer, claims Claims, opts IssueOptions) error {
+	if claims.VCT == "" {
+		return fmt.Errorf("sdjwtvc: Claims.VCT is required")
+	}
+	if opts.Decoys < 0 || opts.Decoys > MaxDecoys {
+		return fmt.Errorf("sdjwtvc: IssueOptions.Decoys must be between 0 and %d, got %d", MaxDecoys, opts.Decoys)
+	}
+	if opts.IssuerCertificate != nil {
+		// A two-value assertion, not a direct one: signer.Public() is
+		// every stdlib key type's own crypto.PublicKey, all of which
+		// implement Equal, but a custom Signer (an HSM/KMS-backed one)
+		// may not — a direct assertion would panic instead of
+		// returning this func's own documented config-mismatch error,
+		// the same "Signer may not be comparable" risk verifier.New's
+		// own equivalent check already guards against. Found in a
+		// repo-wide spec-comprehensiveness review, as a side effect of
+		// adding the analogous check to credential/mdoc.Issue.
+		comparableKey, ok := signer.Public().(interface{ Equal(crypto.PublicKey) bool })
+		if !ok {
+			return fmt.Errorf("sdjwtvc: signer's own public key type %T does not implement Equal(crypto.PublicKey) bool", signer.Public())
+		}
+		if !comparableKey.Equal(opts.IssuerCertificate.PublicKey) {
+			return fmt.Errorf("sdjwtvc: IssuerCertificate's public key does not match signer's public key")
+		}
+	}
+	return nil
 }

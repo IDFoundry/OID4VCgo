@@ -244,7 +244,7 @@ func (a *App) claimTransaction(w http.ResponseWriter, pending pendingInteraction
 }
 
 func (a *App) renderApproval(w http.ResponseWriter, pending pendingInteraction, clientID string, message string) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set(headerContentType, contentTypeHTML)
 	w.Header().Set("Cache-Control", "no-store")
 	_ = approvalTemplate.Execute(w, approvalPage{
 		Tag: pending.tag, ClientID: clientID, Scopes: pending.scopes, Error: message,
@@ -268,7 +268,7 @@ func transactionErrorMessage(err error) string {
 // handleASMetadata serves the Authorization Server's RFC 8414 metadata —
 // server.Metadata, dpop_signing_alg_values_supported included.
 func (a *App) handleASMetadata(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(headerContentType, "application/json")
 	_ = json.NewEncoder(w).Encode(a.server.Metadata(r.Context()))
 }
 
@@ -278,6 +278,6 @@ func (a *App) handleJWKS(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(headerContentType, "application/json")
 	_ = json.NewEncoder(w).Encode(set)
 }

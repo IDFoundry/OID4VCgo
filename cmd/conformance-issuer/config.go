@@ -147,6 +147,39 @@ type ConfigClient struct {
 // certificate chain rather than registered keys.
 func (c ConfigClient) usesAttesterTrustAnchors() bool { return c.AttesterTrustAnchorsPEM != "" }
 
+// validateClients checks client, and client2 when present: each valid,
+// and both trusting their attester the same way.
+func validateClients(cfg Config) error {
+	if err := validateConfigClient("client", cfg.Client); err != nil {
+		return err
+	}
+	if cfg.Client2 == nil {
+		return nil
+	}
+	if err := validateConfigClient("client2", *cfg.Client2); err != nil {
+		return err
+	}
+	if cfg.Client2.usesAttesterTrustAnchors() != cfg.Client.usesAttesterTrustAnchors() {
+		return fmt.Errorf("config: client and client2 must both use attester_trust_anchors_pem, or both attester_jwks")
+	}
+	return nil
+}
+
+// validateMdoc checks the mdoc configuration, when present.
+func validateMdoc(cfg Config) error {
+	m := cfg.Mdoc
+	if m == nil {
+		return nil
+	}
+	if m.CredentialConfigurationID == "" || m.DocType == "" || m.Namespace == "" || len(m.Claims) == 0 || m.Scope == "" {
+		return fmt.Errorf("config: mdoc.credential_configuration_id, mdoc.doctype, mdoc.namespace, mdoc.claims and mdoc.scope are all required when mdoc is present")
+	}
+	if m.CredentialConfigurationID == cfg.CredentialConfigurationID {
+		return fmt.Errorf("config: mdoc.credential_configuration_id must differ from the top-level credential_configuration_id")
+	}
+	return nil
+}
+
 func loadConfig(path string) (Config, error) {
 	raw, err := os.ReadFile(path) // #nosec G304 -- path is the operator's own -config flag value, not untrusted input
 	if err != nil {
@@ -162,16 +195,8 @@ func loadConfig(path string) (Config, error) {
 	if cfg.Issuer == "" {
 		return Config{}, fmt.Errorf("config: issuer is required")
 	}
-	if err := validateConfigClient("client", cfg.Client); err != nil {
+	if err := validateClients(cfg); err != nil {
 		return Config{}, err
-	}
-	if cfg.Client2 != nil {
-		if err := validateConfigClient("client2", *cfg.Client2); err != nil {
-			return Config{}, err
-		}
-		if cfg.Client2.usesAttesterTrustAnchors() != cfg.Client.usesAttesterTrustAnchors() {
-			return Config{}, fmt.Errorf("config: client and client2 must both use attester_trust_anchors_pem, or both attester_jwks")
-		}
 	}
 	if cfg.CredentialIssuerSigningKeyPEM == "" {
 		return Config{}, fmt.Errorf("config: credential_issuer_signing_key_pem is required")
@@ -185,14 +210,8 @@ func loadConfig(path string) (Config, error) {
 	if cfg.VCT == "" || len(cfg.Claims) == 0 || cfg.Scope == "" || cfg.CredentialConfigurationID == "" {
 		return Config{}, fmt.Errorf("config: vct, claims, scope and credential_configuration_id are all required")
 	}
-	if cfg.Mdoc != nil {
-		m := cfg.Mdoc
-		if m.CredentialConfigurationID == "" || m.DocType == "" || m.Namespace == "" || len(m.Claims) == 0 || m.Scope == "" {
-			return Config{}, fmt.Errorf("config: mdoc.credential_configuration_id, mdoc.doctype, mdoc.namespace, mdoc.claims and mdoc.scope are all required when mdoc is present")
-		}
-		if m.CredentialConfigurationID == cfg.CredentialConfigurationID {
-			return Config{}, fmt.Errorf("config: mdoc.credential_configuration_id must differ from the top-level credential_configuration_id")
-		}
+	if err := validateMdoc(cfg); err != nil {
+		return Config{}, err
 	}
 	if cfg.KeyAttestation != nil && len(cfg.KeyAttestation.TrustedJWK) == 0 {
 		return Config{}, fmt.Errorf("config: key_attestation.trusted_jwk is required when key_attestation is present")

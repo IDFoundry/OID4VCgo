@@ -10,58 +10,78 @@ import (
 // decide is what scenario sc's relying party decides from out, a
 // verified presentation.
 func decide(sc Scenario, out *Outcome) Decision {
-	switch sc {
-	case ScenarioAge:
-		switch over, ok := over18(out.Claims); {
-		case !ok:
-			return Decision{Text: "Sale refused: the credential didn't say whether the customer is over 18"}
-		case !over:
-			return Decision{Text: "Sale refused: the customer is under 18"}
-		}
-		return Decision{Approved: true, Text: "Sale allowed: the customer is over 18"}
-	case ScenarioOverAsking:
-		over, ok := over18(out.Claims)
-		if !ok || !over {
-			return Decision{Text: "Sale refused: the customer isn't shown to be over 18"}
-		}
-		if name := nameOf(out.Claims); name != "the holder" {
-			return Decision{Approved: true, Text: "Sale allowed — and the shop now has " + name + "'s name, which it isn't registered to ask for"}
-		}
-		return Decision{Approved: true, Text: "Sale allowed: the customer is over 18"}
-	case ScenarioSignup:
-		if over, ok := over18(out.Claims); ok && !over {
-			return Decision{Text: "Sign-up refused: under 18"}
-		}
-		return Decision{Approved: true, Text: "Account created for " + nameOf(out.Claims)}
-	case ScenarioBank:
-		switch icao := out.ICAO; {
-		case icao == nil || !icao.Verified:
-			return Decision{Text: "Account not opened: the passport couldn't be verified with its issuing country"}
-		case icao.Expired:
-			return Decision{Text: "Account not opened: the passport has expired"}
-		default:
-			return Decision{Approved: true, Text: fmt.Sprintf("Account opened: passport verified with its issuing country (%s)", icao.Identity.IssuingCountry)}
-		}
-	case ScenarioUnknown:
-		// No wallet trusting only the demo's verifier CA answers this.
-		return Decision{Text: "CheapFlights received the passport file: the wallet trusted a verifier it shouldn't have"}
-	case ScenarioHotel:
-		failed := 0
-		for _, p := range out.People {
-			if p.ICAO == nil || !p.ICAO.Verified {
-				failed++
-			}
-		}
-		if failed > 0 {
-			return Decision{Text: fmt.Sprintf("Check-in refused: %d of %d passports couldn't be verified with their issuing country", failed, len(out.People))}
-		}
-		guests := "guest"
-		if len(out.People) != 1 {
-			guests += "s"
-		}
-		return Decision{Approved: true, Text: fmt.Sprintf("Checked in %d %s", len(out.People), guests)}
+	if d, ok := deciders[sc]; ok {
+		return d(out)
 	}
 	return Decision{}
+}
+
+// deciders are each scenario's decision.
+var deciders = map[Scenario]func(*Outcome) Decision{
+	ScenarioAge:        decideAge,
+	ScenarioOverAsking: decideOverAsking,
+	ScenarioSignup:     decideSignup,
+	ScenarioBank:       decideBank,
+	ScenarioUnknown: func(*Outcome) Decision {
+		// No wallet trusting only the demo's verifier CA answers this.
+		return Decision{Text: "CheapFlights received the passport file: the wallet trusted a verifier it shouldn't have"}
+	},
+	ScenarioHotel: decideHotel,
+}
+
+func decideAge(out *Outcome) Decision {
+	switch over, ok := over18(out.Claims); {
+	case !ok:
+		return Decision{Text: "Sale refused: the credential didn't say whether the customer is over 18"}
+	case !over:
+		return Decision{Text: "Sale refused: the customer is under 18"}
+	}
+	return Decision{Approved: true, Text: "Sale allowed: the customer is over 18"}
+}
+
+func decideOverAsking(out *Outcome) Decision {
+	if over, ok := over18(out.Claims); !ok || !over {
+		return Decision{Text: "Sale refused: the customer isn't shown to be over 18"}
+	}
+	if name := nameOf(out.Claims); name != "the holder" {
+		return Decision{Approved: true, Text: "Sale allowed — and the shop now has " + name + "'s name, which it isn't registered to ask for"}
+	}
+	return Decision{Approved: true, Text: "Sale allowed: the customer is over 18"}
+}
+
+func decideSignup(out *Outcome) Decision {
+	if over, ok := over18(out.Claims); ok && !over {
+		return Decision{Text: "Sign-up refused: under 18"}
+	}
+	return Decision{Approved: true, Text: "Account created for " + nameOf(out.Claims)}
+}
+
+func decideBank(out *Outcome) Decision {
+	switch icao := out.ICAO; {
+	case icao == nil || !icao.Verified:
+		return Decision{Text: "Account not opened: the passport couldn't be verified with its issuing country"}
+	case icao.Expired:
+		return Decision{Text: "Account not opened: the passport has expired"}
+	default:
+		return Decision{Approved: true, Text: fmt.Sprintf("Account opened: passport verified with its issuing country (%s)", icao.Identity.IssuingCountry)}
+	}
+}
+
+func decideHotel(out *Outcome) Decision {
+	failed := 0
+	for _, p := range out.People {
+		if p.ICAO == nil || !p.ICAO.Verified {
+			failed++
+		}
+	}
+	if failed > 0 {
+		return Decision{Text: fmt.Sprintf("Check-in refused: %d of %d passports couldn't be verified with their issuing country", failed, len(out.People))}
+	}
+	guests := "guest"
+	if len(out.People) != 1 {
+		guests += "s"
+	}
+	return Decision{Approved: true, Text: fmt.Sprintf("Checked in %d %s", len(out.People), guests)}
 }
 
 // over18 reads the over-18 claim, in either format: an mdoc's

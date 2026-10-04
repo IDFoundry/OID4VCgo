@@ -44,33 +44,10 @@ type Registration struct {
 // (OpenID4VP 1.0 §5.11). A Credential Query no verified registration
 // applies to is unregistered in full.
 func (p *Presentation) checkRegistration(now time.Time) Registration {
-	roots := p.w.cfg.RegistrarRoots
-	if roots == nil {
+	if p.w.cfg.RegistrarRoots == nil {
 		return Registration{Status: RegistrationNone}
 	}
-	out := Registration{Status: RegistrationNone}
-	applies := map[string]*registration.Registration{}
-	for _, vi := range p.req.VerifierInfo {
-		data, ok := vi.DataString()
-		if !ok || !registration.Recognize(vi.Format, data) {
-			continue
-		}
-		reg, err := registration.Verify(data, roots, p.req.ClientID, now)
-		if err != nil {
-			if out.Status == RegistrationNone {
-				out.Status = RegistrationInvalid
-			}
-			continue
-		}
-		if out.Status != RegistrationVerified {
-			out.Status, out.Registration = RegistrationVerified, reg
-		}
-		for _, cq := range p.req.Query.Credentials {
-			if vi.AppliesTo(cq.ID) && applies[cq.ID] == nil {
-				applies[cq.ID] = &reg
-			}
-		}
-	}
+	out, applies := p.verifyRegistrations(now)
 	if out.Status != RegistrationVerified {
 		return out
 	}
@@ -85,6 +62,37 @@ func (p *Presentation) checkRegistration(now time.Time) Registration {
 		}
 	}
 	return out
+}
+
+// verifyRegistrations verifies the request's registrations in this
+// library's format, returning the first that verifies (or whether any
+// failed), and for each Credential Query ID the first verified one
+// applying to it.
+func (p *Presentation) verifyRegistrations(now time.Time) (Registration, map[string]*registration.Registration) {
+	out := Registration{Status: RegistrationNone}
+	applies := map[string]*registration.Registration{}
+	for _, vi := range p.req.VerifierInfo {
+		data, ok := vi.DataString()
+		if !ok || !registration.Recognize(vi.Format, data) {
+			continue
+		}
+		reg, err := registration.Verify(data, p.w.cfg.RegistrarRoots, p.req.ClientID, now)
+		switch {
+		case err != nil && out.Status == RegistrationNone:
+			out.Status = RegistrationInvalid
+		case err == nil && out.Status != RegistrationVerified:
+			out.Status, out.Registration = RegistrationVerified, reg
+		}
+		if err != nil {
+			continue
+		}
+		for _, cq := range p.req.Query.Credentials {
+			if vi.AppliesTo(cq.ID) && applies[cq.ID] == nil {
+				applies[cq.ID] = &reg
+			}
+		}
+	}
+	return out, applies
 }
 
 // Registration is the Verifier's registration, as checked when the

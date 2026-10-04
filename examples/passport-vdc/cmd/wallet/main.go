@@ -36,6 +36,12 @@ import (
 	"github.com/idfoundry/oid4vcgo/wallet"
 )
 
+// Flags useState fills from a cmd/demo state directory, among others.
+const (
+	flagTrustIssuerCA   = "trust-issuer-ca"
+	flagTrustVerifierCA = "trust-verifier-ca"
+)
+
 func main() {
 	fs := flag.NewFlagSet("wallet", flag.ExitOnError)
 	store := fs.String("store", "wallet-store", "directory the wallet keeps credentials in")
@@ -45,8 +51,8 @@ func main() {
 	trust := fs.String("trust", "issuer-tls.pem,verifier-tls.pem,wallet-provider-tls.pem", "comma-separated PEM files of TLS certificates to trust (from cmd/issuer, cmd/verifier and cmd/wallet-provider); missing files are skipped")
 	headless := fs.Bool("headless", false, "receive: approve automatically instead of in a browser (needs -code)")
 	code := fs.String("code", "", "receive -headless: the confirmation code shown with the offer")
-	issuerCA := fs.String("trust-issuer-ca", "issuer-ca.pem", "receive: comma-separated PEM files of issuer CAs whose credentials to accept (from cmd/issuer)")
-	verifierCA := fs.String("trust-verifier-ca", "verifier-ca.pem", "present: comma-separated PEM files of verifier CAs whose requests to answer (from cmd/verifier)")
+	issuerCA := fs.String(flagTrustIssuerCA, "issuer-ca.pem", "receive: comma-separated PEM files of issuer CAs whose credentials to accept (from cmd/issuer)")
+	verifierCA := fs.String(flagTrustVerifierCA, "verifier-ca.pem", "present: comma-separated PEM files of verifier CAs whose requests to answer (from cmd/verifier)")
 	yes := fs.Bool("yes", false, "present: share without asking")
 	format := fs.String("format", "", "present: only offer stored credentials of this format (mso_mdoc or dc+sd-jwt)")
 	state := fs.String("state", "", "a cmd/demo state directory: take the store and trust files from it (flags set explicitly still win)")
@@ -61,7 +67,7 @@ func main() {
 	if *state != "" {
 		useState(fs, *state, map[string]*string{
 			"store": store, "trust": trust,
-			"trust-issuer-ca": issuerCA, "trust-verifier-ca": verifierCA,
+			flagTrustIssuerCA: issuerCA, flagTrustVerifierCA: verifierCA,
 		})
 	}
 
@@ -238,7 +244,7 @@ func useState(fs *flag.FlagSet, dir string, flags map[string]*string) {
 	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
 	files := map[string]string{
 		"store": "wallet-store", "trust": "tls-cert.pem",
-		"trust-issuer-ca": "issuer-ca.pem", "trust-verifier-ca": "verifier-ca.pem",
+		flagTrustIssuerCA: "issuer-ca.pem", flagTrustVerifierCA: "verifier-ca.pem",
 	}
 	for name, v := range flags {
 		if !set[name] {

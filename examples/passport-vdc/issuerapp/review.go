@@ -235,7 +235,7 @@ var reviewTemplate = template.Must(template.New("review").Parse(pageHead + `
 ` + pageFoot))
 
 func (a *App) handleReviewPage(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set(headerContentType, contentTypeHTML)
 	w.Header().Set("Cache-Control", "no-store")
 	_ = reviewTemplate.Execute(w, a.Reviews())
 }
