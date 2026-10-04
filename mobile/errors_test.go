@@ -32,6 +32,10 @@ func TestClassify(t *testing.T) {
 			err:  &wallet.Error{HTTPStatus: 503, Description: "maintenance"},
 			code: CodeUnavailable, mustNotSee: "maintenance",
 		},
+		"linkable now": {
+			err:  fmt.Errorf("walletflow: credential %q: %w", "cred-1", walletflow.ErrLinkable),
+			code: CodeInvalidSelection, mustNotSee: "cred-1",
+		},
 		"rate limited": {
 			err:  &wallet.Error{HTTPStatus: 429, Code: "slow_down"},
 			code: CodeUnavailable, detail: "slow_down",

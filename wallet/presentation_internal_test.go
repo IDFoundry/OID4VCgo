@@ -6,6 +6,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
+	"strings"
 	"testing"
 
 	"github.com/idfoundry/oid4vcgo/internal/cose"
@@ -56,5 +57,15 @@ func TestMdocDeviceAlgForKey(t *testing.T) {
 				t.Errorf("mdocDeviceAlgForKey(%T) = %v, want %v", tc.pub, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestParseError_CleansIssuerText: a Credential Error Response's text
+// ends up in logs and in front of the holder, so control characters are
+// dropped and it's cut short.
+func TestParseError_CleansIssuerText(t *testing.T) {
+	e := parseError(400, []byte(`{"error":"invalid_proof\n","error_description":"bad\r\nINFO forged line`+strings.Repeat("x", 1000)+`"}`))
+	if e.Code != "invalid_proof" || strings.ContainsAny(e.Description, "\r\n") || len([]rune(e.Description)) > maxReplyTextRunes+1 {
+		t.Errorf("parseError = %q, %q", e.Code, e.Description)
 	}
 }

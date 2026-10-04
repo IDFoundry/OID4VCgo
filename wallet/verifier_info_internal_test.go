@@ -2,6 +2,7 @@ package wallet
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/idfoundry/oid4vcgo/dcql"
@@ -20,6 +21,7 @@ func TestParseVerifierInfo_Refuses(t *testing.T) {
 		"number data":           `[{"format":"jwt","data":7}]`,
 		"empty credential_ids":  `[{"format":"jwt","data":"x","credential_ids":[]}]`,
 		"unknown credential id": `[{"format":"jwt","data":"x","credential_ids":["other"]}]`,
+		"too many entries":      "[" + strings.Repeat(`{"format":"jwt","data":"x"},`, MaxVerifierInfo) + `{"format":"jwt","data":"x"}]`,
 	} {
 		if _, err := parseVerifierInfo(json.RawMessage(raw), q); err == nil {
 			t.Errorf("%s: accepted", name)

@@ -27,7 +27,12 @@ type RefreshGrant struct {
 	// came from, and where the refresh token is redeemed.
 	CredentialIssuer    string
 	AuthorizationServer string
-	RefreshToken        fapi.Secret
+	// ConfigurationID is a credential configuration the grant was for:
+	// what revoking it checks the issuer still names its Authorization
+	// Server for, once no credential does. Empty for a grant stored
+	// before it was kept, which is then forgotten without revoking.
+	ConfigurationID string
+	RefreshToken    fapi.Secret
 	// InstanceKeyID names the wallet instance key, kept in the KeyStore
 	// while the grant is.
 	InstanceKeyID string
@@ -135,7 +140,8 @@ func (s *Issuance) storeGrant(ctx context.Context) {
 	}
 	g := RefreshGrant{
 		ID: s.grantID, CredentialIssuer: s.offer.CredentialIssuer, AuthorizationServer: s.authorizationServer,
-		RefreshToken: s.refreshToken, InstanceKeyID: s.instanceKey.ID(), CreatedAt: s.w.deps.Clock().UTC(),
+		ConfigurationID: s.offer.CredentialConfigurationIDs[0],
+		RefreshToken:    s.refreshToken, InstanceKeyID: s.instanceKey.ID(), CreatedAt: s.w.deps.Clock().UTC(),
 	}
 	if err := s.w.deps.Grants.PutGrant(ctx, g); err == nil {
 		s.grantStored = true

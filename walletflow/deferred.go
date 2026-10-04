@@ -403,7 +403,8 @@ func (w *Wallet) releaseDPoPKey(ctx context.Context, id string) error {
 // credentials' holder keys, every copy's, each pending deferred credential's holder
 // and DPoP keys, each authorization in progress's instance and DPoP
 // keys (ResumeIssuance), and each refresh grant's instance key. It
-// forgets refresh grants no stored credential uses, with their keys.
+// revokes and forgets refresh grants no stored credential uses, with
+// their keys.
 // Sweep other keys only when no issuance or refresh is in progress: their
 // keys aren't stored yet. Any other key in the KeyStore — when no
 // issuance is open — is left over from one that never finished. It
@@ -443,9 +444,10 @@ func (w *Wallet) KeysInUse(ctx context.Context) ([]string, error) {
 }
 
 // grantKeysInUse is the instance keys of the refresh grants a stored or
-// pending credential uses, or that are held. It forgets the others,
-// with their keys: a deletion or an issuance that failed part way left
-// them, and nothing can use them.
+// pending credential uses, or that are held. It revokes and forgets the
+// others, with their keys: a deletion or an issuance that failed part
+// way left them, and nothing can use them — but their refresh tokens
+// would stay live at the Authorization Server.
 func (w *Wallet) grantKeysInUse(ctx context.Context, creds []StoredCredential, pending []PendingDeferred) ([]string, error) {
 	grants, err := w.deps.Grants.ListGrants(ctx)
 	if err != nil {
@@ -461,6 +463,9 @@ func (w *Wallet) grantKeysInUse(ctx context.Context, creds []StoredCredential, p
 	var out []string
 	for _, g := range grants {
 		if !named[g.ID] && !w.grantHeld(g.ID) {
+			if g.ConfigurationID != "" {
+				w.revokeGrant(ctx, g, g.ConfigurationID)
+			}
 			w.forgetGrant(ctx, g)
 			continue
 		}

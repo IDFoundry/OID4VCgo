@@ -282,7 +282,8 @@ func (s *Issuance) CompleteAuthorization(ctx context.Context, redirect string) e
 		return nil
 	case client.CompletionDenied:
 		s.step = stepClosed
-		return &AuthorizationDeniedError{Code: r.Code, Description: r.Description}
+		// The callback's text is anyone's who can make the redirect.
+		return &AuthorizationDeniedError{Code: cleanText(r.Code), Description: cleanText(r.Description)}
 	default:
 		return fmt.Errorf("walletflow: authorization: unexpected result %T", result)
 	}

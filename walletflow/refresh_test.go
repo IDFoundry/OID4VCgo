@@ -499,3 +499,24 @@ func TestRevocation_BoundToTheInstanceKey(t *testing.T) {
 		t.Errorf("refresh tokens revoked with another instance key = %d, want 0", n)
 	}
 }
+
+// A grant whose credential went from the store without DeleteCredential
+// (a store cleared or edited outside the wallet) is revoked by the next
+// KeysInUse, not only forgotten: its refresh token would otherwise stay
+// live at the Authorization Server.
+func TestKeysInUse_RevokesAnOrphanedGrant(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t, walletflowtest.Options{})
+	grants := walletflow.NewMemoryGrantStore()
+	w := f.newRefreshingWallet(t, nil, grants)
+	c := receive(t, f, w, walletflowtest.SDJWTConfigurationID)[0]
+	if err := f.store.Delete(ctx, c.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.KeysInUse(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if g, _ := grants.ListGrants(ctx); len(g) != 0 || f.env.Revocations() != 1 {
+		t.Errorf("after the sweep: %d grants, %d revocations; want none, 1", len(g), f.env.Revocations())
+	}
+}

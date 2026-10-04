@@ -22,6 +22,7 @@ type grantRecord struct {
 	ID                  string    `json:"id"`
 	CredentialIssuer    string    `json:"credential_issuer"`
 	AuthorizationServer string    `json:"authorization_server"`
+	ConfigurationID     string    `json:"configuration_id,omitempty"`
 	RefreshToken        string    `json:"refresh_token"`
 	InstanceKeyID       string    `json:"instance_key_id"`
 	CreatedAt           time.Time `json:"created_at"`
@@ -40,7 +41,7 @@ func (s grantStore) PutGrant(_ context.Context, g walletflow.RefreshGrant) error
 	// leaves the KeyStore.
 	raw, err := json.Marshal(grantRecord{ //nolint:gosec // G117: see above
 		Kind: grantKind, ID: g.ID, CredentialIssuer: g.CredentialIssuer, AuthorizationServer: g.AuthorizationServer,
-		RefreshToken: g.RefreshToken.Reveal(), InstanceKeyID: g.InstanceKeyID, CreatedAt: g.CreatedAt,
+		ConfigurationID: g.ConfigurationID, RefreshToken: g.RefreshToken.Reveal(), InstanceKeyID: g.InstanceKeyID, CreatedAt: g.CreatedAt,
 	})
 	if err != nil {
 		return newError(CodeInternal, err)
@@ -101,7 +102,7 @@ func refreshGrant(raw []byte) (walletflow.RefreshGrant, error) {
 	}
 	return walletflow.RefreshGrant{
 		ID: r.ID, CredentialIssuer: r.CredentialIssuer, AuthorizationServer: r.AuthorizationServer,
-		RefreshToken: fapi.NewSecret(r.RefreshToken), InstanceKeyID: r.InstanceKeyID, CreatedAt: r.CreatedAt,
+		ConfigurationID: r.ConfigurationID, RefreshToken: fapi.NewSecret(r.RefreshToken), InstanceKeyID: r.InstanceKeyID, CreatedAt: r.CreatedAt,
 	}, nil
 }
 
