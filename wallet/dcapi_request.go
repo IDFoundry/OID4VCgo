@@ -92,10 +92,18 @@ func ParseDCAPIRequest(params ParseDCAPIRequestParams) (AuthorizationRequest, er
 			op: "parse dc api request",
 		}
 	}
+	info, err := parseVerifierInfo(wire.VerifierInfo, wire.DCQLQuery)
+	if err != nil {
+		return AuthorizationRequest{}, &RequestRejectedError{
+			Code: "invalid_request", Description: err.Error(),
+			ResponseEncryptionKey: encPub, ResponseEncryptionKeyID: kid, ResponseEncryptionEnc: enc,
+			op: "parse dc api request",
+		}
+	}
 	return AuthorizationRequest{
 		ClientID: clientID, Nonce: wire.Nonce, Query: wire.DCQLQuery, VerifierCertificate: cert,
 		ResponseEncryptionKey: encPub, ResponseEncryptionKeyID: kid, ResponseEncryptionEnc: enc,
-		Origin: params.Origin,
+		Origin: params.Origin, VerifierInfo: info,
 	}, nil
 }
 

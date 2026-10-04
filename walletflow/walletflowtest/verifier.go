@@ -14,6 +14,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/dcql"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/internal/jwe"
+	"github.com/idfoundry/oid4vcgo/registration"
 	"github.com/idfoundry/oid4vcgo/storage"
 	"github.com/idfoundry/oid4vcgo/verifier"
 	"github.com/idfoundry/oid4vcgo/wallet"
@@ -40,7 +41,21 @@ const verifierBrowser = "testhaip-browser"
 // StartVerifier starts a Verifier on a loopback TLS server, stopped by
 // e.Close. httptest serves every server with the same certificate, so
 // e.HTTP reaches it too.
-func (e *Env) StartVerifier() (started *Verifier, err error) {
+func (e *Env) StartVerifier() (*Verifier, error) { return e.startVerifier(nil) }
+
+// StartRegisteredVerifier is StartVerifier for a Verifier e's registrar
+// (RegistrarRoots) has registered to request claims: its requests carry
+// the registration in verifier_info (the registration package).
+func (e *Env) StartRegisteredVerifier(claims ...dcql.Path) (*Verifier, error) {
+	if claims == nil {
+		claims = []dcql.Path{}
+	}
+	return e.startVerifier(claims)
+}
+
+// startVerifier starts a Verifier, registered for registered unless
+// it's nil.
+func (e *Env) startVerifier(registered []dcql.Path) (started *Verifier, err error) {
 	defer recoverInto(&err)
 	v := &Verifier{Name: "walletflowtest verifier"}
 	ts := httptest.NewUnstartedServer(nil)
@@ -53,12 +68,24 @@ func (e *Env) StartVerifier() (started *Verifier, err error) {
 	for k, val := range verifier.MdocFormatSupport() {
 		formats[k] = val
 	}
-	vv, err := verifier.New(verifier.Config{
+	cfg := verifier.Config{
 		Assurance: verifier.AssuranceDevelopment, ClientCertificate: cert, ResponseURI: responseURI,
 		SigningAlg: jose.ES256, EncValuesSupported: []jwe.Enc{jwe.A128GCM, jwe.A256GCM}, VPFormatsSupported: formats,
-	}, verifier.Dependencies{Signer: key, Random: rand.Reader})
+	}
+	vv, err := verifier.New(cfg, verifier.Dependencies{Signer: key, Random: rand.Reader})
 	must(err)
 	v.ClientID = vv.ClientID()
+	if registered != nil {
+		token, err := registration.Issue(registration.Registration{
+			Registrar: "https://registrar.walletflowtest.example", ClientID: v.ClientID, Name: "Registered " + v.Name,
+			Purpose: "Testing", PrivacyPolicy: "https://verifier.walletflowtest.example/privacy",
+			Claims: registered, Expires: time.Now().Add(24 * time.Hour),
+		}, e.registrarKey, []*x509.Certificate{e.registrarCert})
+		must(err)
+		cfg.VerifierInfo = []verifier.VerifierInfo{{Format: registration.Format, Data: token}}
+		vv, err = verifier.New(cfg, verifier.Dependencies{Signer: key, Random: rand.Reader})
+		must(err)
+	}
 	v.txs, err = verifier.NewTransactions(vv, storage.NewVerifierTransactionStore(), verifier.TransactionsConfig{
 		RequestURIBase: base + "/request-objects",
 		Verify: verifier.VerifyResponseRequest{

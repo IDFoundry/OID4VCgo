@@ -130,6 +130,11 @@ type Env struct {
 	// signer.
 	IssuerRoots *x509.CertPool
 	IssuerCA    *x509.Certificate
+	// RegistrarRoots holds the trust anchor of the registrar that
+	// registers Verifiers started with StartRegisteredVerifier.
+	RegistrarRoots *x509.CertPool
+	registrarCert  *x509.Certificate
+	registrarKey   *ecdsa.PrivateKey
 	// Provider attests the wallet and its keys.
 	Provider *Provider
 
@@ -214,6 +219,10 @@ func New(opts Options) (env *Env, err error) {
 	signerCert, signerKey := newLeaf("walletflowtest document signer", caCert, caKey)
 	e.IssuerCA, e.IssuerRoots = caCert, x509.NewCertPool()
 	e.IssuerRoots.AddCert(caCert)
+	registrarCA, registrarCAKey := newCA("walletflowtest registrar CA")
+	e.registrarCert, e.registrarKey = newLeaf("walletflowtest registrar", registrarCA, registrarCAKey)
+	e.RegistrarRoots = x509.NewCertPool()
+	e.RegistrarRoots.AddCert(registrarCA)
 	proofTypes := map[string]oid4vci.ProofTypeConfiguration{oid4vci.ProofTypeAttestation: haip.RecommendedAttestationProofType()}
 	logo := &oid4vci.Logo{URI: e.IssuerURL + LogoPath, AltText: LogoAltText}
 	credentialDisplay := func(names ...string) *oid4vci.CredentialMetadata {
