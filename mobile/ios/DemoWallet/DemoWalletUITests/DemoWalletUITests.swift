@@ -141,7 +141,14 @@ final class DemoWalletUITests: XCTestCase {
         let presenting = try await launch(request: request["link"] as? String, reset: false)
         let share = presenting.buttons["share"]
         XCTAssertTrue(share.waitForExistence(timeout: 20))
-        XCTAssertTrue(presenting.staticTexts["family_name"].waitForExistence(timeout: 10), "the disclosure isn't shown")
+        // Whose credential it is, and the value sharing discloses.
+        let holder = presenting.staticTexts.matching(identifier: "candidate-holder").firstMatch
+        XCTAssertTrue(holder.waitForExistence(timeout: 10), "the candidate doesn't say whose it is")
+        XCTAssertTrue(holder.label.contains("Doe"), holder.label)
+        let disclosed = presenting.descendants(matching: .any).matching(identifier: "disclosed")
+            .matching(NSPredicate(format: "label CONTAINS 'family_name'")).firstMatch
+        XCTAssertTrue(disclosed.waitForExistence(timeout: 10), "the disclosure isn't shown")
+        XCTAssertTrue(waitFor(disclosed, containing: "Doe"), disclosed.label)
         share.tap()
         let status = presenting.staticTexts["status"]
         XCTAssertTrue(status.waitForExistence(timeout: 30))
