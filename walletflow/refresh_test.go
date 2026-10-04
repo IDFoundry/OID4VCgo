@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/idfoundry/oid4vcgo/wallet"
 	"github.com/idfoundry/oid4vcgo/walletflow"
@@ -323,5 +324,112 @@ func TestRefreshCredential_InstanceKeyGone(t *testing.T) {
 	}
 	if _, err := grants.GetGrant(ctx, g.ID); !errors.Is(err, walletflow.ErrNotFound) {
 		t.Errorf("the grant was kept: %v", err)
+	}
+}
+
+// waitIssued waits for d to settle with the issuer's approval.
+func waitIssued(t *testing.T, f fixture, d *walletflow.Deferred) (walletflow.StoredCredential, error) {
+	t.Helper()
+	f.env.Decide(true)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return d.Wait(ctx)
+}
+
+// A credential deferred at issuance keeps its refresh grant, and its
+// instance key, while it's pending: once issued it can be refreshed.
+func TestRefreshCredential_DeferredAtIssuance(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t, walletflowtest.Options{Defer: true})
+	grants := walletflow.NewMemoryGrantStore()
+	w := f.newRefreshingWallet(t, nil, grants)
+	s, err := w.StartIssuance(ctx, f.env.AuthorizationCodeOffer(t, walletflowtest.SDJWTConfigurationID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	authorize(t, f, s)
+	result, err := s.RequestCredentials(ctx)
+	if err != nil || len(result.Deferred) != 1 {
+		t.Fatalf("RequestCredentials = %+v, %v", result, err)
+	}
+	if err := s.Close(ctx); err != nil {
+		t.Fatal(err)
+	}
+	// The pending credential keeps the grant: a sweep doesn't forget it.
+	if _, err := w.KeysInUse(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if g, _ := grants.ListGrants(ctx); len(g) != 1 {
+		t.Fatalf("grants while deferred = %d, want 1", len(g))
+	}
+	stored, err := waitIssued(t, f, result.Deferred[0])
+	if err != nil || stored.GrantID == "" {
+		t.Fatalf("issued = %+v, %v; want it refreshable", stored, err)
+	}
+	f.env.SetDefer(false)
+	if _, _, err := w.RefreshCredential(ctx, stored.ID); err != nil {
+		t.Errorf("RefreshCredential = %v", err)
+	}
+}
+
+// A refresh the issuer defers replaces the credential once issued,
+// keeping its ID and grant — unless the holder deleted it meanwhile.
+func TestRefreshCredential_Deferred(t *testing.T) {
+	ctx := context.Background()
+	for _, deleteMeanwhile := range []bool{false, true} {
+		f := newFixture(t, walletflowtest.Options{})
+		grants := walletflow.NewMemoryGrantStore()
+		w := f.newRefreshingWallet(t, nil, grants)
+		held := receive(t, f, w, walletflowtest.SDJWTConfigurationID, walletflowtest.MdocConfigurationID)
+		c := held[0]
+		f.env.SetDefer(true)
+		kept, d, err := w.RefreshCredential(ctx, c.ID)
+		if err != nil || d == nil || kept.ID != c.ID {
+			t.Fatalf("RefreshCredential = %+v, %v, %v; want the old credential and a deferred one", kept, d, err)
+		}
+		if deleteMeanwhile {
+			if err := w.DeleteCredential(ctx, c.ID); err != nil {
+				t.Fatal(err)
+			}
+		}
+		stored, err := waitIssued(t, f, d)
+		left, _ := w.Credentials(ctx)
+		switch {
+		case deleteMeanwhile:
+			if !errors.Is(err, walletflow.ErrNotFound) || len(left) != 1 {
+				t.Errorf("after deleting meanwhile: %v, %d credentials; want the deletion to stand", err, len(left))
+			}
+		case err != nil || stored.ID != c.ID || stored.GrantID != c.GrantID || len(left) != 2:
+			t.Errorf("issued = %+v, %v, %d credentials; want it to replace the old one", stored, err, len(left))
+		case stored.Copies[0].Credential == c.Copies[0].Credential:
+			t.Error("the refreshed credential is the old one")
+		}
+	}
+}
+
+// A deferred credential abandoned, its grant's only user, takes the
+// grant with it: the refresh token is revoked, and no key is left.
+func TestRefreshCredential_AbandonedDeferredReleasesTheGrant(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t, walletflowtest.Options{Defer: true})
+	grants := walletflow.NewMemoryGrantStore()
+	w := f.newRefreshingWallet(t, nil, grants)
+	s, err := w.StartIssuance(ctx, f.env.AuthorizationCodeOffer(t, walletflowtest.SDJWTConfigurationID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	authorize(t, f, s)
+	result, err := s.RequestCredentials(ctx)
+	if err != nil || len(result.Deferred) != 1 {
+		t.Fatalf("RequestCredentials = %+v, %v", result, err)
+	}
+	if err := s.Close(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := result.Deferred[0].Abandon(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if g, _ := grants.ListGrants(ctx); len(g) != 0 || f.keys.Len() != 0 || f.env.Revocations() != 1 {
+		t.Errorf("after abandoning: %d grants, %d keys, %d revocations; want none, none, 1", len(g), f.keys.Len(), f.env.Revocations())
 	}
 }

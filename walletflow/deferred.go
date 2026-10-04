@@ -42,6 +42,11 @@ type PendingDeferred struct {
 	// polls.
 	Interval   time.Duration
 	DeferredAt time.Time
+	// GrantID names the RefreshGrant the credential, once issued, can be
+	// refreshed with (Config.RequestRefresh); Replaces, for a deferred
+	// refresh, the stored credential it replaces.
+	GrantID  string
+	Replaces string
 }
 
 // DeferredStore keeps the wallet's pending deferred credentials, so they
@@ -203,8 +208,11 @@ func (d *Deferred) Poll(ctx context.Context) (*StoredCredential, error) {
 	stored, err := d.w.accept(ctx, issued{
 		issuer: d.p.CredentialIssuer, metadata: *d.metadata, resource: d.resource,
 		configID: d.p.ConfigurationID, holders: holders, result: result,
+		grantID: d.p.GrantID, replace: d.p.Replaces,
 	})
-	if errors.Is(err, errInvalidCredential) {
+	if errors.Is(err, errInvalidCredential) || d.p.Replaces != "" && errors.Is(err, ErrNotFound) {
+		// Invalid, or a refresh of a credential deleted meanwhile: the
+		// new copies aren't kept.
 		_ = d.settle(cleanup, true)
 		return nil, err
 	}
@@ -258,7 +266,8 @@ func (d *Deferred) Abandon(ctx context.Context) error {
 
 // settle ends the Deferred: it leaves the DeferredStore, its holder key
 // goes unless the credential was stored, and its DPoP key goes once no
-// other pending one shares it.
+// other pending one shares it. Unless the credential was stored, its
+// refresh grant goes too once nothing else uses it.
 func (d *Deferred) settle(ctx context.Context, deleteHolder bool) error {
 	d.done = true
 	errs := []error{d.w.deps.Deferred.DeleteDeferred(ctx, d.p.ID)}
@@ -268,6 +277,11 @@ func (d *Deferred) settle(ctx context.Context, deleteHolder bool) error {
 		}
 	}
 	errs = append(errs, d.w.releaseDPoPKey(ctx, d.p.DPoPKeyID))
+	if deleteHolder {
+		// Not stored: its refresh grant goes too, once nothing else uses
+		// it.
+		errs = append(errs, d.w.releaseUnusedGrant(ctx, d.p.GrantID, d.p.ConfigurationID))
+	}
 	d.w.forgetDeferred(d.p.ID)
 	if err := errors.Join(errs...); err != nil {
 		return fmt.Errorf("walletflow: settle deferred credential: %w", err)
@@ -417,6 +431,9 @@ func (w *Wallet) KeysInUse(ctx context.Context) ([]string, error) {
 	named := map[string]bool{}
 	for _, c := range creds {
 		named[c.GrantID] = true
+	}
+	for _, p := range pending {
+		named[p.GrantID] = true
 	}
 	for _, g := range grants {
 		if !named[g.ID] {
