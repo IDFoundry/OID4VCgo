@@ -467,3 +467,32 @@ func TestRefreshCredential_OpenIssuanceHoldsItsGrant(t *testing.T) {
 		t.Errorf("after Close: %d grants, %d keys, %d revocations; want none, none, 1", len(g), f.keys.Len(), f.env.Revocations())
 	}
 }
+
+// A refresh token is revoked only by the installation it's bound to: a
+// revocation with another instance key's attestation is answered, and
+// revokes nothing.
+func TestRevocation_BoundToTheInstanceKey(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t, walletflowtest.Options{})
+	grants := walletflow.NewMemoryGrantStore()
+	w := f.newRefreshingWallet(t, nil, grants)
+	c := receive(t, f, w, walletflowtest.SDJWTConfigurationID)[0]
+	g, err := grants.GetGrant(ctx, c.GrantID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := f.keys.NewKey(ctx, walletflow.KeyPurposeInstance)
+	if err != nil {
+		t.Fatal(err)
+	}
+	g.InstanceKeyID = other.ID()
+	if err := grants.PutGrant(ctx, g); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.DeleteCredential(ctx, c.ID); err != nil {
+		t.Fatal(err)
+	}
+	if n := f.env.Revocations(); n != 0 {
+		t.Errorf("refresh tokens revoked with another instance key = %d, want 0", n)
+	}
+}
