@@ -221,7 +221,7 @@ func (p *Presentation) DefaultSelection(ctx context.Context) (Selection, error) 
 // returns an error wrapping ErrInvalidSelection for a Selection that
 // doesn't answer the request.
 func (p *Presentation) Preview(ctx context.Context, sel Selection) ([]Disclosure, error) {
-	held, _, err := p.held(ctx, sel, false)
+	held, err := p.held(ctx, sel)
 	if err != nil {
 		return nil, err
 	}
@@ -249,22 +249,27 @@ func (p *Presentation) Respond(ctx context.Context, sel Selection) (Presented, e
 	if p.answered || p.declined != "" {
 		return Presented{}, ErrWrongStep
 	}
-	held, picked, err := p.held(ctx, sel, true)
+	reserved, err := p.reserve(ctx, sel)
 	if err != nil {
+		return Presented{}, err
+	}
+	held, err := p.withKeys(ctx, reserved)
+	if err != nil {
+		p.release(ctx, reserved)
 		return Presented{}, err
 	}
 	responded, err := wallet.RespondSelection(ctx, p.w.deps.HTTP, p.req, held, trustedAuthorities)
 	if err != nil && deliveryUnknown(err) {
 		// The Verifier may have it: sending again could present twice,
-		// with the same nonce. Its copies count as presented.
+		// with the same nonce. Its copies stay presented.
 		p.answered = true
-		p.markPresented(ctx, picked)
 		return Presented{}, fmt.Errorf("walletflow: respond: %w: %w", ErrDeliveryUnknown, err)
 	}
 	if err != nil {
+		// Not sent: the copies weren't seen.
+		p.release(ctx, reserved)
 		return Presented{}, fmt.Errorf("walletflow: respond: %w", err)
 	}
-	p.markPresented(ctx, picked)
 	p.answered = true
 	presented := Presented{RedirectURI: responded.Reply.RedirectURI}
 	for id := range responded.VPToken {
@@ -309,56 +314,151 @@ func (p *Presentation) Decline(ctx context.Context) (Presented, error) {
 	return Presented{RedirectURI: reply.RedirectURI}, nil
 }
 
-// held is sel as the wallet package presents it: each credential's
-// copy to present next, with its holder key when withKeys is set, and
-// which copy of each credential it picked. An ID that isn't a stored
-// credential is an invalid selection; whether each answers its query is
-// the wallet package's to check.
-func (p *Presentation) held(ctx context.Context, sel Selection, withKeys bool) (map[string][]wallet.HeldCredential, map[string]int, error) {
+// checkShape refuses a selection that names nothing, a query with no
+// credential, or one credential twice for the same query.
+func checkShape(sel Selection) error {
 	if len(sel) == 0 {
-		return nil, nil, fmt.Errorf("walletflow: %w: nothing is selected", ErrInvalidSelection)
+		return fmt.Errorf("walletflow: %w: nothing is selected", ErrInvalidSelection)
+	}
+	for q, ids := range sel {
+		if len(ids) == 0 {
+			return fmt.Errorf("walletflow: %w: query %q has no credential selected", ErrInvalidSelection, q)
+		}
+		for i, id := range ids {
+			if slices.Contains(ids[:i], id) {
+				return fmt.Errorf("walletflow: %w: credential %q is selected twice for query %q", ErrInvalidSelection, id, q)
+			}
+		}
+	}
+	return nil
+}
+
+// held is sel as the wallet package previews it: each credential's next
+// copy, from the credentials as they were when the request arrived,
+// without keys. An ID that isn't a stored credential is an invalid
+// selection; whether each answers its query is the wallet package's to
+// check.
+func (p *Presentation) held(_ context.Context, sel Selection) (map[string][]wallet.HeldCredential, error) {
+	if err := checkShape(sel); err != nil {
+		return nil, err
 	}
 	out := make(map[string][]wallet.HeldCredential, len(sel))
-	picked := map[string]int{}
 	for q, ids := range sel {
 		for _, id := range ids {
 			c, ok := p.byID[id]
 			if !ok {
-				return nil, nil, fmt.Errorf("walletflow: %w: no credential %q", ErrInvalidSelection, id)
+				return nil, fmt.Errorf("walletflow: %w: no credential %q", ErrInvalidSelection, id)
 			}
-			i, cp := c.nextCopy()
-			picked[id] = i
-			var key Key
-			if withKeys {
-				k, err := p.w.deps.Keys.Key(ctx, cp.HolderKeyID)
-				if err != nil {
-					return nil, nil, fmt.Errorf("walletflow: credential %q's holder key: %w", id, err)
-				}
-				key = k
-			}
+			_, cp := c.nextCopy()
 			c.Credential = cp.Credential
-			out[q] = append(out[q], heldCredential(c, key))
+			out[q] = append(out[q], heldCredential(c, nil))
 		}
 	}
-	return out, picked, nil
+	return out, nil
 }
 
-// markPresented records that the picked copies have been presented, so
-// the next presentation uses others. It's best effort: a copy not
-// marked is presented again, which a Verifier may link.
-func (p *Presentation) markPresented(ctx context.Context, picked map[string]int) {
-	ctx = context.WithoutCancel(ctx)
-	for id, i := range picked {
-		c, err := p.w.deps.Credentials.Get(ctx, id)
-		if err != nil {
-			continue
-		}
-		c.Copies = slices.Clone(c.AllCopies())
-		if i < len(c.Copies) {
+// reservedCopy is a copy Respond is presenting: credential id's copy
+// index, marked presented in the store.
+type reservedCopy struct {
+	query string
+	c     StoredCredential // with Credential the copy's
+	id    string
+	index int
+	keyID string
+}
+
+// reserve picks each selected credential's next unused copy from the
+// store, as it is now, and marks it presented there before anything is
+// sent, so a presentation answered at the same time picks another.
+// Credentials deleted since the request arrived are an invalid
+// selection.
+func (p *Presentation) reserve(ctx context.Context, sel Selection) ([]reservedCopy, error) {
+	if err := checkShape(sel); err != nil {
+		return nil, err
+	}
+	w := p.w
+	w.credMu.Lock()
+	defer w.credMu.Unlock()
+	current := map[string]StoredCredential{}
+	var out []reservedCopy
+	for _, q := range sortedQueries(sel) {
+		for _, id := range sel[q] {
+			c, ok := current[id]
+			if !ok {
+				var err error
+				if c, err = w.deps.Credentials.Get(ctx, id); err != nil {
+					if errors.Is(err, ErrNotFound) {
+						return nil, fmt.Errorf("walletflow: %w: no credential %q", ErrInvalidSelection, id)
+					}
+					return nil, fmt.Errorf("walletflow: credential %q: %w", id, err)
+				}
+				c.Copies = slices.Clone(c.AllCopies())
+			}
+			i, cp := c.nextCopy()
 			c.Copies[i].Presented = true
-			_ = p.w.deps.Credentials.Put(ctx, c)
+			current[id] = c
+			held := c
+			held.Credential = cp.Credential
+			out = append(out, reservedCopy{query: q, c: held, id: id, index: i, keyID: cp.HolderKeyID})
 		}
 	}
+	for id, c := range current {
+		if err := w.deps.Credentials.Put(ctx, c); err != nil {
+			return nil, fmt.Errorf("walletflow: store credential %q: %w", id, err)
+		}
+	}
+	return out, nil
+}
+
+// release unmarks copies reserve marked for a response that wasn't
+// sent, unless the credential has changed since. It's best effort: a
+// copy left marked is one fewer to use, never one presented twice.
+func (p *Presentation) release(ctx context.Context, reserved []reservedCopy) {
+	ctx = context.WithoutCancel(ctx)
+	w := p.w
+	w.credMu.Lock()
+	defer w.credMu.Unlock()
+	changed := map[string]StoredCredential{}
+	for _, r := range reserved {
+		c, ok := changed[r.id]
+		if !ok {
+			var err error
+			if c, err = w.deps.Credentials.Get(ctx, r.id); err != nil {
+				continue
+			}
+			c.Copies = slices.Clone(c.AllCopies())
+		}
+		if r.index < len(c.Copies) && c.Copies[r.index].HolderKeyID == r.keyID {
+			c.Copies[r.index].Presented = false
+			changed[r.id] = c
+		}
+	}
+	for _, c := range changed {
+		_ = w.deps.Credentials.Put(ctx, c)
+	}
+}
+
+// withKeys is reserved as the wallet package presents it, each copy with
+// its holder key.
+func (p *Presentation) withKeys(ctx context.Context, reserved []reservedCopy) (map[string][]wallet.HeldCredential, error) {
+	out := map[string][]wallet.HeldCredential{}
+	for _, r := range reserved {
+		k, err := p.w.deps.Keys.Key(ctx, r.keyID)
+		if err != nil {
+			return nil, fmt.Errorf("walletflow: credential %q's holder key: %w", r.id, err)
+		}
+		out[r.query] = append(out[r.query], heldCredential(r.c, k))
+	}
+	return out, nil
+}
+
+func sortedQueries(sel Selection) []string {
+	qs := make([]string, 0, len(sel))
+	for q := range sel {
+		qs = append(qs, q)
+	}
+	sort.Strings(qs)
+	return qs
 }
 
 // idsByCredential maps the text of every copy of every credential to

@@ -172,11 +172,12 @@ func (w *Wallet) summary(c walletflow.StoredCredential) (credentialSummary, erro
 
 // HolderKeyIDs returns {"abi", "key_ids": [...]}: the IDs of the keys
 // the wallet still needs — its credentials' holder keys, each pending
-// deferred credential's holder and DPoP keys, and each refresh grant's
-// wallet instance key. Every other key in
-// the KeyStore belongs to an issuance in progress — or to none, left by
-// one that never closed — so an app sweeping orphaned keys at launch,
-// before any issuance, keeps these and may delete the rest.
+// deferred credential's holder and DPoP keys, and each refresh grant
+// in use's wallet instance key (a grant no credential uses is forgotten,
+// with its key). Every other key in the KeyStore belongs to an issuance
+// or refresh in progress — or to none, left by one that never finished —
+// so an app sweeping orphaned keys at launch, before any issuance or
+// refresh, keeps these and may delete the rest.
 func (w *Wallet) HolderKeyIDs() (string, error) {
 	ids, err := w.w.KeysInUse(context.Background())
 	if err != nil {

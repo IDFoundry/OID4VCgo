@@ -104,6 +104,15 @@ type Wallet struct {
 	deferred map[string]*Deferred // the pending ones handed out, by ID
 	liveDPoP map[string]bool      // DPoP keys open issuances hold
 	authMu   sync.Mutex           // serializes consuming authorizations
+	// credMu serializes reading, changing and writing back a stored
+	// credential: choosing and marking the copies a presentation uses,
+	// recording a status, replacing a refreshed one, deleting one. It's
+	// never held across a network request.
+	credMu sync.Mutex
+	// grantMu serializes refreshes per refresh grant (grantLocks, by
+	// grant ID), held across the refresh's requests.
+	grantMu    sync.Mutex
+	grantLocks map[string]*sync.Mutex
 }
 
 // DefaultBatchSize is how many copies of a credential a wallet requests
@@ -148,7 +157,10 @@ func New(cfg Config, deps Dependencies) (*Wallet, error) {
 	if err != nil {
 		return nil, fmt.Errorf("walletflow: %w", err)
 	}
-	return &Wallet{cfg: cfg, deps: deps, core: core, deferred: map[string]*Deferred{}, liveDPoP: map[string]bool{}}, nil
+	return &Wallet{
+		cfg: cfg, deps: deps, core: core, deferred: map[string]*Deferred{}, liveDPoP: map[string]bool{},
+		grantLocks: map[string]*sync.Mutex{},
+	}, nil
 }
 
 func (c Config) assurance() wallet.AssuranceLevel {
@@ -178,6 +190,8 @@ func (w *Wallet) Credentials(ctx context.Context) ([]StoredCredential, error) {
 // holder key, and its refresh grant, with its instance key, once no
 // other credential uses it.
 func (w *Wallet) DeleteCredential(ctx context.Context, id string) error {
+	w.credMu.Lock()
+	defer w.credMu.Unlock()
 	c, err := w.deps.Credentials.Get(ctx, id)
 	if err != nil {
 		return fmt.Errorf("walletflow: delete credential: %w", err)

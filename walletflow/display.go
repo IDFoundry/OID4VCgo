@@ -143,11 +143,23 @@ func (w *Wallet) CheckStatus(ctx context.Context, id string) (StoredCredential, 
 	if err != nil {
 		return StoredCredential{}, fmt.Errorf("walletflow: credential %q's status: %w", id, err)
 	}
-	c.Status = CredentialStatus{Value: statusValue(status), CheckedAt: w.deps.Clock().UTC()}
-	if err := w.deps.Credentials.Put(ctx, c); err != nil {
+	// Recorded on the credential as it is now: a presentation or a
+	// refresh may have changed it meanwhile. A refreshed one references
+	// another status list entry, which this didn't check.
+	w.credMu.Lock()
+	defer w.credMu.Unlock()
+	cur, err := w.deps.Credentials.Get(ctx, id)
+	if err != nil {
+		return StoredCredential{}, fmt.Errorf("walletflow: credential: %w", err)
+	}
+	if cur.StatusList == nil || *cur.StatusList != *c.StatusList {
+		return cur, nil
+	}
+	cur.Status = CredentialStatus{Value: statusValue(status), CheckedAt: w.deps.Clock().UTC()}
+	if err := w.deps.Credentials.Put(ctx, cur); err != nil {
 		return StoredCredential{}, fmt.Errorf("walletflow: store credential %q's status: %w", id, err)
 	}
-	return c, nil
+	return cur, nil
 }
 
 func statusValue(s statuslist.StatusType) string {

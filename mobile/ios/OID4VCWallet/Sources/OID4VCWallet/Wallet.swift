@@ -256,7 +256,8 @@ public final class Wallet: @unchecked Sendable {
     /// Deletes every key in `keyStore` that none of the wallet's
     /// credentials is bound to — left by an issuance the app quit or
     /// crashed in the middle of — and returns how many. Call it at launch,
-    /// before any issuance: an issuance in progress holds keys of its own.
+    /// before any issuance or refresh: one in progress holds keys of its
+    /// own.
     @discardableResult
     public func sweepOrphanedKeys(in keyStore: KeychainKeyStore) async throws -> Int {
         struct Keys: Decodable {

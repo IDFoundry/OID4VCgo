@@ -107,10 +107,10 @@ func (s *MemoryGrantStore) Durable() bool { return false }
 // refresh token.
 const offlineAccess = "offline_access"
 
-// keepGrant stores the issuance's refresh grant the first time one of
-// its credentials is stored, and returns its ID: "" when the issuance
-// has no refresh token. The instance key is then kept with it.
-func (s *Issuance) keepGrant(ctx context.Context) (string, error) {
+// grantFor returns the ID of the issuance's refresh grant, choosing it
+// the first time: "" when the issuance has no refresh token. The grant
+// itself is stored once a credential naming it is (storeGrant).
+func (s *Issuance) grantFor() (string, error) {
 	if s.grantID != "" || s.refreshToken.Reveal() == "" {
 		return s.grantID, nil
 	}
@@ -118,15 +118,38 @@ func (s *Issuance) keepGrant(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	g := RefreshGrant{
-		ID: id, CredentialIssuer: s.offer.CredentialIssuer, AuthorizationServer: s.authorizationServer,
-		RefreshToken: s.refreshToken, InstanceKeyID: s.instanceKey.ID(), CreatedAt: s.w.deps.Clock().UTC(),
-	}
-	if err := s.w.deps.Grants.PutGrant(ctx, g); err != nil {
-		return "", fmt.Errorf("walletflow: store refresh grant: %w", err)
-	}
 	s.grantID = id
 	return id, nil
+}
+
+// storeGrant stores the issuance's refresh grant once a credential
+// naming it is stored, and keeps the instance key with it. It's best
+// effort: without it, the credential can't be refreshed
+// (ErrReissueRequired).
+func (s *Issuance) storeGrant(ctx context.Context) {
+	if s.grantID == "" || s.grantStored {
+		return
+	}
+	g := RefreshGrant{
+		ID: s.grantID, CredentialIssuer: s.offer.CredentialIssuer, AuthorizationServer: s.authorizationServer,
+		RefreshToken: s.refreshToken, InstanceKeyID: s.instanceKey.ID(), CreatedAt: s.w.deps.Clock().UTC(),
+	}
+	if err := s.w.deps.Grants.PutGrant(ctx, g); err == nil {
+		s.grantStored = true
+	}
+}
+
+// lockGrant serializes refreshes with grant id, and returns the unlock.
+func (w *Wallet) lockGrant(id string) func() {
+	w.grantMu.Lock()
+	m, ok := w.grantLocks[id]
+	if !ok {
+		m = &sync.Mutex{}
+		w.grantLocks[id] = m
+	}
+	w.grantMu.Unlock()
+	m.Lock()
+	return m.Unlock
 }
 
 // RefreshCredential replaces the copies of the credential id names with
@@ -157,12 +180,18 @@ func (w *Wallet) RefreshCredential(ctx context.Context, id string) (StoredCreden
 	if old.GrantID == "" {
 		return StoredCredential{}, nil, fmt.Errorf("walletflow: refresh credential: it came without a refresh token: %w", ErrReissueRequired)
 	}
+	// One refresh with a grant at a time: an Authorization Server that
+	// rotates refresh tokens refuses the old one once the new is issued.
+	defer w.lockGrant(old.GrantID)()
 	g, err := w.deps.Grants.GetGrant(ctx, old.GrantID)
 	if errors.Is(err, ErrNotFound) {
 		return StoredCredential{}, nil, fmt.Errorf("walletflow: refresh credential: its refresh grant is gone: %w", ErrReissueRequired)
 	}
 	if err != nil {
 		return StoredCredential{}, nil, fmt.Errorf("walletflow: refresh credential: %w", err)
+	}
+	if g.CredentialIssuer != old.CredentialIssuer {
+		return StoredCredential{}, nil, fmt.Errorf("walletflow: refresh credential: its refresh grant is another issuer's: %w", ErrReissueRequired)
 	}
 	instanceKey, err := w.deps.Keys.Key(ctx, g.InstanceKeyID)
 	if err != nil {
@@ -179,8 +208,17 @@ func (w *Wallet) RefreshCredential(ctx context.Context, id string) (StoredCreden
 	if metadata.NonceEndpoint == nil {
 		return StoredCredential{}, nil, errors.New("walletflow: the issuer advertises no nonce endpoint, which the attestation proof needs")
 	}
+	offer := oid4vci.CredentialOffer{
+		CredentialIssuer: old.CredentialIssuer, CredentialConfigurationIDs: []string{old.ConfigurationID},
+		Grants: &oid4vci.Grants{AuthorizationCode: &oid4vci.GrantAuthorizationCode{AuthorizationServer: g.AuthorizationServer}},
+	}
+	// The refresh token goes only to an Authorization Server the issuer
+	// still lists, as at issuance.
+	if _, err := wallet.PlanAuthorization(offer, metadata); err != nil {
+		return StoredCredential{}, nil, fmt.Errorf("walletflow: refresh credential: the issuer no longer names its authorization server: %w: %w", ErrReissueRequired, err)
+	}
 	s := &Issuance{
-		w: w, metadata: metadata, instanceKey: instanceKey, grantID: g.ID, replace: old.ID,
+		w: w, metadata: metadata, instanceKey: instanceKey, grantID: g.ID, grantStored: true, replace: old.ID,
 		offer: oid4vci.CredentialOffer{CredentialIssuer: old.CredentialIssuer, CredentialConfigurationIDs: []string{old.ConfigurationID}},
 	}
 	defer s.endRefresh(context.WithoutCancel(ctx))
@@ -190,7 +228,7 @@ func (w *Wallet) RefreshCredential(ctx context.Context, id string) (StoredCreden
 	tokens, err := s.client.RefreshTokens(ctx, client.RefreshTokenRequest{Tokens: client.TokenSet{RefreshToken: g.RefreshToken, HasRefreshToken: true}})
 	if err != nil {
 		if invalidGrant(err) {
-			w.forgetGrant(context.WithoutCancel(ctx), g)
+			w.forgetRefusedGrant(context.WithoutCancel(ctx), g)
 			return StoredCredential{}, nil, fmt.Errorf("walletflow: refresh credential: %w: %w", ErrReissueRequired, err)
 		}
 		return StoredCredential{}, nil, fmt.Errorf("walletflow: refresh token: %w", err)
@@ -217,16 +255,31 @@ func (w *Wallet) RefreshCredential(ctx context.Context, id string) (StoredCreden
 	if deferred != nil {
 		return old, deferred, nil
 	}
+	return stored, nil, nil
+}
+
+// replaceStored stores stored in place of the credential it replaces,
+// if that still exists and still uses grantID — it may have been
+// deleted while it was refreshed — and deletes the replaced copies'
+// holder keys. It's called with credMu held.
+func (w *Wallet) replaceStored(ctx context.Context, stored StoredCredential, grantID string) error {
+	cur, err := w.deps.Credentials.Get(ctx, stored.ID)
+	if err != nil || cur.GrantID != grantID {
+		return fmt.Errorf("walletflow: credential %q is gone: %w", stored.ID, ErrNotFound)
+	}
+	if err := w.deps.Credentials.Put(ctx, stored); err != nil {
+		return err
+	}
 	kept := map[string]bool{}
 	for _, cp := range stored.AllCopies() {
 		kept[cp.HolderKeyID] = true
 	}
-	for _, cp := range old.AllCopies() {
+	for _, cp := range cur.AllCopies() {
 		if !kept[cp.HolderKeyID] {
 			_ = w.deps.Keys.DeleteKey(context.WithoutCancel(ctx), cp.HolderKeyID)
 		}
 	}
-	return stored, nil, nil
+	return nil
 }
 
 // endRefresh releases a refresh's DPoP key, and never its instance key,
@@ -257,6 +310,17 @@ func invalidGrant(err error) bool {
 func (w *Wallet) forgetGrant(ctx context.Context, g RefreshGrant) {
 	_ = w.deps.Grants.DeleteGrant(ctx, g.ID)
 	_ = w.deps.Keys.DeleteKey(ctx, g.InstanceKeyID)
+}
+
+// forgetRefusedGrant forgets g after the Authorization Server refused
+// its refresh token — unless the grant now holds another token, which a
+// refresh elsewhere stored after this one read it.
+func (w *Wallet) forgetRefusedGrant(ctx context.Context, g RefreshGrant) {
+	cur, err := w.deps.Grants.GetGrant(ctx, g.ID)
+	if err != nil || cur.RefreshToken.Reveal() != g.RefreshToken.Reveal() {
+		return
+	}
+	w.forgetGrant(ctx, cur)
 }
 
 // releaseGrant forgets the grant id names once no stored credential
