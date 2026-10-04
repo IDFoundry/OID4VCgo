@@ -16,6 +16,9 @@ public final class KeychainKeyStore: KeyStore, @unchecked Sendable {
         public var persistent: Bool
         /// Require user presence (Face ID, Touch ID or the passcode) to
         /// sign with a holder key — that is, to present a credential.
+        /// For Face ID, the app's Info.plist must have an
+        /// `NSFaceIDUsageDescription`; without one, iOS asks for the
+        /// passcode instead.
         public var holderUserPresence: Bool
         /// Prefixes every key's Keychain application tag. Keys under
         /// another prefix are never touched, by a sweep or anything else.

@@ -84,7 +84,8 @@ its PIN in the app.
 
 On a device, holder keys require Face ID or the passcode. They don't on
 the Simulator, which can't create a Secure Enclave key requiring user
-presence.
+presence. Face ID needs the app's `NSFaceIDUsageDescription` (in
+`project.yml`): without it, iOS asks for the passcode instead.
 
 The phone can't reach services on this Mac's loopback address, so the
 passport-vdc demo's issuer, verifier and Wallet Provider go on public
