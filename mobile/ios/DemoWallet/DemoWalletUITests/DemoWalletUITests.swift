@@ -267,6 +267,9 @@ final class DemoWalletUITests: XCTestCase {
         XCTAssertTrue(copies.label.contains("2 of 3"), copies.label)
         app.buttons["refresh-copies"].tap()
         XCTAssertTrue(waitFor(copies, containing: "3 of 3 copies unused"), copies.label)
+        let done = app.descendants(matching: .any).matching(identifier: "refresh-done").firstMatch
+        XCTAssertTrue(done.waitForExistence(timeout: 10), "no feedback that the refresh happened")
+        XCTAssertTrue(done.label.contains("3 fresh copies"), done.label)
     }
 
     /// Once every copy of a refreshable credential has been presented, the

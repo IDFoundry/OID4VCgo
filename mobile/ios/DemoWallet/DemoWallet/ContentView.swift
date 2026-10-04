@@ -178,6 +178,7 @@ struct CredentialView: View {
     @State private var checkError: String?
     @State private var justChecked = false
     @State private var refreshing = false
+    @State private var refreshOutcome: WalletModel.RefreshOutcome?
 
     var body: some View {
         List {
@@ -207,27 +208,35 @@ struct CredentialView: View {
                 if let checkError {
                     Label("Couldn't check: \(checkError)", systemImage: "exclamationmark.triangle.fill")
                         .font(.caption).foregroundStyle(.red)
-                        .accessibilityIdentifier("check-error")
+                        .accessibilityElement(children: .combine).accessibilityIdentifier("check-error")
                 } else if justChecked {
                     Label("Checked with the issuer just now", systemImage: "checkmark.circle.fill")
                         .font(.caption).foregroundStyle(.green)
-                        .accessibilityIdentifier("check-done")
+                        .accessibilityElement(children: .combine).accessibilityIdentifier("check-done")
                 }
             }
-            if summary.copies > 1 || summary.refreshable {
+            if summary.copies > 1 || summary.refreshable || refreshOutcome != nil {
                 Section("Copies") {
                     Text(CredentialRow.copies(summary) ?? "\(summary.copiesLeft) of \(summary.copies) copies unused")
                         .accessibilityIdentifier("credential-copies")
                     if summary.refreshable {
-                        Button(refreshing ? "Refreshing…" : "Refresh copies") {
-                            refreshing = true
-                            Task {
-                                await model.refreshCopies(summary.id)
-                                refreshing = false
+                        Button {
+                            refreshCopies()
+                        } label: {
+                            HStack {
+                                Text(refreshing ? "Getting fresh copies from the issuer…" : "Refresh copies")
+                                if refreshing {
+                                    Spacer()
+                                    ProgressView()
+                                }
                             }
                         }
                         .disabled(refreshing)
                         .accessibilityIdentifier("refresh-copies")
+                    }
+                    if let refreshOutcome {
+                        Self.outcomeLabel(refreshOutcome).font(.caption)
+                            .accessibilityElement(children: .combine).accessibilityIdentifier("refresh-done")
                     }
                 }
             }
@@ -256,6 +265,46 @@ struct CredentialView: View {
             justChecked = error == nil
             let revoked = summary.status.map { if case .valid = $0.value { false } else { true } } ?? false
             UINotificationFeedbackGenerator().notificationOccurred(error != nil ? .error : revoked ? .warning : .success)
+        }
+    }
+}
+
+extension CredentialView {
+    /// Refreshes the copies, with feedback whatever the outcome: a
+    /// spinner while it runs (for at least half a second), then what
+    /// happened, and a haptic.
+    fileprivate func refreshCopies() {
+        refreshing = true
+        refreshOutcome = nil
+        Task {
+            async let minimum: Void = Task.sleep(for: .milliseconds(500))
+            let outcome = await model.refreshCopies(summary.id)
+            try? await minimum
+            refreshing = false
+            refreshOutcome = outcome
+            let feedback: UINotificationFeedbackGenerator.FeedbackType = switch outcome {
+            case .refreshed: .success
+            case .deferred, .reissueRequired: .warning
+            case .failed: .error
+            }
+            UINotificationFeedbackGenerator().notificationOccurred(feedback)
+        }
+    }
+
+    @ViewBuilder fileprivate static func outcomeLabel(_ outcome: WalletModel.RefreshOutcome) -> some View {
+        switch outcome {
+        case .refreshed(let copies):
+            Label("Got \(copies) fresh \(copies == 1 ? "copy" : "copies") just now", systemImage: "checkmark.circle.fill")
+                .foregroundStyle(.green)
+        case .deferred:
+            Label("The issuer will send fresh copies later: they're waiting on the home screen", systemImage: "clock.fill")
+                .foregroundStyle(.orange)
+        case .reissueRequired:
+            Label("This credential can't be refreshed any more: receive it again from the issuer", systemImage: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+        case .failed(let reason):
+            Label("Couldn't refresh: \(reason)", systemImage: "exclamationmark.triangle.fill")
+                .foregroundStyle(.red)
         }
     }
 }
