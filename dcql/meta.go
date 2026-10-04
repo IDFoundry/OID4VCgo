@@ -5,6 +5,12 @@ import (
 	"fmt"
 )
 
+// The Credential Format Identifiers whose meta this package knows.
+const (
+	formatSDJWTVC = "dc+sd-jwt"
+	formatMdoc    = "mso_mdoc"
+)
+
 // SDJWTVCMeta is the "dc+sd-jwt" Credential Format's own
 // format-specific parameter inside a Credential Query's "meta"
 // (Appendix B.3.5) — the format this repo's credential/sdjwtvc
@@ -26,6 +32,9 @@ type MdocMeta struct {
 // NewSDJWTVCMeta marshals meta for use as a CredentialQuery's own
 // Meta field.
 func NewSDJWTVCMeta(meta SDJWTVCMeta) (json.RawMessage, error) {
+	if err := meta.validate(); err != nil {
+		return nil, err
+	}
 	raw, err := json.Marshal(meta)
 	if err != nil {
 		return nil, fmt.Errorf("dcql: marshal sd-jwt vc meta: %w", err)
@@ -36,11 +45,28 @@ func NewSDJWTVCMeta(meta SDJWTVCMeta) (json.RawMessage, error) {
 // NewMdocMeta marshals meta for use as a CredentialQuery's own Meta
 // field.
 func NewMdocMeta(meta MdocMeta) (json.RawMessage, error) {
+	if meta.DoctypeValue == "" {
+		return nil, fmt.Errorf("dcql: mdoc meta: doctype_value is required")
+	}
 	raw, err := json.Marshal(meta)
 	if err != nil {
 		return nil, fmt.Errorf("dcql: marshal mdoc meta: %w", err)
 	}
 	return raw, nil
+}
+
+// validate checks m names at least one vct, none of them empty: without
+// one, the query would accept a Credential of any type.
+func (m SDJWTVCMeta) validate() error {
+	if len(m.VCTValues) == 0 {
+		return fmt.Errorf("dcql: sd-jwt vc meta: vct_values must be a non-empty array")
+	}
+	for _, v := range m.VCTValues {
+		if v == "" {
+			return fmt.Errorf("dcql: sd-jwt vc meta: vct_values must not contain an empty string")
+		}
+	}
+	return nil
 }
 
 // SDJWTVCMeta decodes c's own Meta as the "dc+sd-jwt" format's

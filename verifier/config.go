@@ -2,6 +2,7 @@ package verifier
 
 import (
 	"crypto"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
@@ -172,6 +173,12 @@ func New(cfg Config, deps Dependencies) (*Verifier, error) {
 	}
 	if deps.Random == nil {
 		return nil, fmt.Errorf("verifier: dependencies: random is required")
+	}
+	if cfg.Assurance == AssuranceProduction && deps.Random != rand.Reader {
+		// Every request's nonce, response decryption key, transaction
+		// ID and response_code come from it: a predictable reader makes
+		// them guessable.
+		return nil, fmt.Errorf("verifier: dependencies: random must be crypto/rand.Reader under AssuranceProduction")
 	}
 	// A two-value assertion, not a direct one: deps.Signer.Public() is
 	// every stdlib key type's own crypto.PublicKey, all of which

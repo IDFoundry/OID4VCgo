@@ -77,7 +77,7 @@ func (e *Env) startVerifier(registered []dcql.Path) (started *Verifier, err erro
 	v.ClientID = vv.ClientID()
 	if registered != nil {
 		token, err := registration.Issue(registration.Registration{
-			Registrar: "https://registrar.walletflowtest.example", ClientID: v.ClientID, Name: "Registered " + v.Name,
+			Registrar: "https://" + RegistrarHost, ClientID: v.ClientID, Name: "Registered " + v.Name,
 			Purpose: "Testing", PrivacyPolicy: "https://verifier.walletflowtest.example/privacy",
 			Claims: registered, Expires: time.Now().Add(24 * time.Hour),
 		}, e.registrarKey, []*x509.Certificate{e.registrarCert})

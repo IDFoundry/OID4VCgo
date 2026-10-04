@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"math/big"
+	"net/url"
 	"testing"
 	"time"
 
@@ -126,6 +127,7 @@ func testRegistration(t *testing.T, clientID string) (*x509.CertPool, string) {
 	der, err := x509.CreateCertificate(rand.Reader, &x509.Certificate{
 		SerialNumber: big.NewInt(7), Subject: pkix.Name{CommonName: "test registrar"},
 		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour), KeyUsage: x509.KeyUsageDigitalSignature,
+		URIs: []*url.URL{{Scheme: "https", Host: "registrar.example"}},
 	}, caCert, &key.PublicKey, caKey)
 	if err != nil {
 		t.Fatal(err)

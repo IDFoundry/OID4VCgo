@@ -1,6 +1,9 @@
 package walletflow
 
 import (
+	"crypto"
+	"crypto/x509"
+	"errors"
 	"time"
 
 	"github.com/idfoundry/oid4vcgo/dcql"
@@ -76,7 +79,10 @@ func (p *Presentation) verifyRegistrations(now time.Time) (Registration, map[str
 		if !ok || !registration.Recognize(vi.Format, data) {
 			continue
 		}
-		reg, err := registration.Verify(data, p.w.cfg.RegistrarRoots, p.req.ClientID, now)
+		reg, err := registration.VerifyWithPolicy(data, p.w.cfg.RegistrarRoots, p.req.ClientID, now, p.w.cfg.RegistrarLeafPolicy)
+		if err == nil && signedBySelf(reg, p.req.VerifierCertificate) {
+			err = errSelfRegistered
+		}
 		switch {
 		case err != nil && out.Status == RegistrationNone:
 			out.Status = RegistrationInvalid
@@ -93,6 +99,20 @@ func (p *Presentation) verifyRegistrations(now time.Time) (Registration, map[str
 		}
 	}
 	return out, applies
+}
+
+// errSelfRegistered is a registration signed with the Verifier's own
+// request-signing key: a Verifier vouching for itself.
+var errSelfRegistered = errors.New("walletflow: the registration is signed by the Verifier itself")
+
+// signedBySelf reports whether reg was signed with the same key as the
+// Verifier's request-signing certificate.
+func signedBySelf(reg registration.Registration, verifier *x509.Certificate) bool {
+	if verifier == nil || reg.RegistrarCertificate == nil {
+		return false
+	}
+	pub, ok := reg.RegistrarCertificate.PublicKey.(interface{ Equal(crypto.PublicKey) bool })
+	return ok && pub.Equal(verifier.PublicKey)
 }
 
 // Registration is the Verifier's registration, as checked when the

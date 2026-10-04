@@ -77,7 +77,7 @@ func TestIdentities_ReplacesAnOlderLayout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sg, err := newSigner(now, "passport-vdc demo verifier", ca, caKey)
+	sg, err := newSigner(now, "passport-vdc demo verifier", ca, caKey, "")
 	if err != nil {
 		t.Fatal(err)
 	}

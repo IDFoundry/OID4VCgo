@@ -1,6 +1,7 @@
 package verifier_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/x509"
 	"strings"
@@ -50,6 +51,22 @@ func TestNewProductionAcceptsHTTPSResponseURI(t *testing.T) {
 	cfg.Assurance = verifier.AssuranceProduction
 	if _, err := verifier.New(cfg, deps); err != nil {
 		t.Fatalf("New(AssuranceProduction): %v", err)
+	}
+}
+
+// TestNewProductionRequiresCryptoRand: under AssuranceProduction every
+// request secret must come from crypto/rand.Reader; a predictable
+// reader would make nonces, response_codes and response keys
+// guessable.
+func TestNewProductionRequiresCryptoRand(t *testing.T) {
+	cfg, deps := validConfig(t)
+	deps.Random = bytes.NewReader(make([]byte, 1<<16))
+	if _, err := verifier.New(cfg, deps); err != nil {
+		t.Fatalf("New(AssuranceDevelopment, another reader): %v", err)
+	}
+	cfg.Assurance = verifier.AssuranceProduction
+	if _, err := verifier.New(cfg, deps); err == nil || !strings.Contains(err.Error(), "crypto/rand") {
+		t.Errorf("New(AssuranceProduction, another reader) error = %v, want refused", err)
 	}
 }
 

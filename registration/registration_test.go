@@ -6,7 +6,9 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"errors"
 	"math/big"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -21,6 +23,8 @@ type registrar struct {
 	roots *x509.CertPool
 	key   *ecdsa.PrivateKey
 	chain []*x509.Certificate
+	ca    *x509.Certificate
+	caKey *ecdsa.PrivateKey
 }
 
 func newRegistrar(t *testing.T) registrar {
@@ -32,14 +36,15 @@ func newRegistrar(t *testing.T) registrar {
 		KeyUsage: x509.KeyUsageCertSign, IsCA: true, BasicConstraintsValid: true,
 	}, nil, &caKey.PublicKey, caKey)
 	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	registrarURI, _ := url.Parse("https://registrar.example")
 	leaf := mustCert(t, &x509.Certificate{
 		SerialNumber: big.NewInt(2), Subject: pkix.Name{CommonName: "test registrar"},
 		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour),
-		KeyUsage: x509.KeyUsageDigitalSignature,
+		KeyUsage: x509.KeyUsageDigitalSignature, URIs: []*url.URL{registrarURI},
 	}, ca, &key.PublicKey, caKey)
 	roots := x509.NewCertPool()
 	roots.AddCert(ca)
-	return registrar{roots: roots, key: key, chain: []*x509.Certificate{leaf}}
+	return registrar{roots: roots, key: key, chain: []*x509.Certificate{leaf}, ca: ca, caKey: caKey}
 }
 
 func mustCert(t *testing.T, tmpl, parent *x509.Certificate, pub *ecdsa.PublicKey, signer *ecdsa.PrivateKey) *x509.Certificate {
@@ -170,4 +175,48 @@ func slicesEqual(a, b dcql.Path) bool {
 		}
 	}
 	return true
+}
+
+// TestVerify_RegistrarCertificate: the registrar's iss must be a URI in
+// its signing certificate, the certificate must be for digital
+// signatures, and VerifyWithPolicy's policy can refuse it — so a
+// certificate merely chaining to the roots, such as a Verifier's own,
+// can't vouch for anyone.
+func TestVerify_RegistrarCertificate(t *testing.T) {
+	reg := newRegistrar(t)
+	other := shop()
+	other.Registrar = "https://another-registrar.example"
+	token, err := registration.Issue(other, reg.key, reg.chain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := registration.Verify(token, reg.roots, clientID, time.Now()); err == nil || !strings.Contains(err.Error(), "iss") {
+		t.Errorf("an iss not in the certificate: %v, want refused", err)
+	}
+
+	good, err := registration.Issue(shop(), reg.key, reg.chain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	refuse := func(*x509.Certificate, [][]*x509.Certificate) error { return errors.New("not a registrar") }
+	if _, err := registration.VerifyWithPolicy(good, reg.roots, clientID, time.Now(), refuse); err == nil || !strings.Contains(err.Error(), "not a registrar") {
+		t.Errorf("a policy refusing the certificate: %v, want refused", err)
+	}
+
+	// A key-agreement-only certificate under the same roots.
+	caKey, caCert := reg.caKey, reg.ca
+	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	registrarURI, _ := url.Parse("https://registrar.example")
+	noSign := mustCert(t, &x509.Certificate{
+		SerialNumber: big.NewInt(9), Subject: pkix.Name{CommonName: "not for signing"},
+		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour),
+		KeyUsage: x509.KeyUsageKeyAgreement, URIs: []*url.URL{registrarURI},
+	}, caCert, &key.PublicKey, caKey)
+	token, err = registration.Issue(shop(), key, []*x509.Certificate{noSign})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := registration.Verify(token, reg.roots, clientID, time.Now()); err == nil || !strings.Contains(err.Error(), "digital signatures") {
+		t.Errorf("a certificate not for signing: %v, want refused", err)
+	}
 }

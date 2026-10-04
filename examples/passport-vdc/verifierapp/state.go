@@ -10,8 +10,10 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/democert"
@@ -100,6 +102,10 @@ func (ids identities) current(now time.Time) bool {
 	if ids.ca == nil || ids.untrustedCA == nil || ids.registrarCA == nil || ids.registrar.key == nil || !ids.registrar.cert.NotAfter.After(now.Add(renewBefore)) {
 		return false
 	}
+	// A registrar certificate from before its iss was bound to it.
+	if !slices.ContainsFunc(ids.registrar.cert.URIs, func(u *url.URL) bool { return u.String() == registrarID }) {
+		return false
+	}
 	for _, s := range Scenarios {
 		info, _ := s.Info()
 		sg, ok := ids.signers[s]
@@ -128,7 +134,7 @@ func newIdentities(now time.Time) (identities, error) {
 		return identities{}, err
 	}
 	ids.registrarCA = registrarCA
-	if ids.registrar, err = newSigner(now, "passport-vdc demo registrar", registrarCA, registrarCAKey); err != nil {
+	if ids.registrar, err = newSigner(now, "passport-vdc demo registrar", registrarCA, registrarCAKey, registrarID); err != nil {
 		return identities{}, err
 	}
 	for _, s := range Scenarios {
@@ -137,7 +143,7 @@ func newIdentities(now time.Time) (identities, error) {
 		if !info.Trusted {
 			parent, parentKey = untrustedCA, untrustedKey
 		}
-		sg, err := newSigner(now, info.Verifier, parent, parentKey)
+		sg, err := newSigner(now, info.Verifier, parent, parentKey, "")
 		if err != nil {
 			return identities{}, err
 		}
@@ -147,17 +153,27 @@ func newIdentities(now time.Time) (identities, error) {
 }
 
 // newSigner generates a signing key and a certificate naming name,
-// issued by parent.
-func newSigner(now time.Time, name string, parent *x509.Certificate, parentKey *ecdsa.PrivateKey) (signer, error) {
+// issued by parent, with uri as its URI subject alternative name when
+// set (a registrar's identifier, which its registrations' iss must
+// match).
+func newSigner(now time.Time, name string, parent *x509.Certificate, parentKey *ecdsa.PrivateKey, uri string) (signer, error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return signer{}, fmt.Errorf("verifierapp: key: %w", err)
 	}
-	cert, err := democert.Create(&x509.Certificate{
+	tmpl := &x509.Certificate{
 		Subject:   pkix.Name{CommonName: name, Organization: []string{"IDFoundry demo"}},
 		NotBefore: now.Add(-time.Hour), NotAfter: now.AddDate(1, 0, 0),
 		KeyUsage: x509.KeyUsageDigitalSignature,
-	}, parent, &key.PublicKey, parentKey)
+	}
+	if uri != "" {
+		u, err := url.Parse(uri)
+		if err != nil {
+			return signer{}, fmt.Errorf("verifierapp: %w", err)
+		}
+		tmpl.URIs = []*url.URL{u}
+	}
+	cert, err := democert.Create(tmpl, parent, &key.PublicKey, parentKey)
 	if err != nil {
 		return signer{}, fmt.Errorf("verifierapp: %w", err)
 	}

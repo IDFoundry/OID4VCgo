@@ -92,11 +92,11 @@ func CheckX5C(token string, roots *x509.CertPool, ref StatusListRef, opts Verify
 // (IssueTokenCWTX5Chain) — protected or, as RFC 9360 allows,
 // unprotected; tagged or untagged.
 func CheckCWTX5Chain(token []byte, roots *x509.CertPool, ref StatusListRef, opts VerifyOptions) (StatusType, TokenClaims, error) {
-	decode := cose.DecodeUnverified
+	decode := cose.DecodeUnverifiedMax
 	if len(token) > 0 && token[0] == coseSign1TagByte {
-		decode = cose.DecodeUnverifiedTagged
+		decode = cose.DecodeUnverifiedTaggedMax
 	}
-	protected, unprotected, _, err := decode(token)
+	protected, unprotected, _, err := decode(token, maxTokenBytes)
 	if err != nil {
 		return 0, TokenClaims{}, fmt.Errorf("statuslist: decode token: %w", err)
 	}

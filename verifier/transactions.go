@@ -259,6 +259,12 @@ type Begun struct {
 	Link string
 }
 
+// MinBrowserBindingLength is the shortest browser binding Begin
+// accepts: enough for a base64url-encoded 96-bit random token, and well
+// past a user ID or a short session number, which an attacker who sees
+// the public request ID could guess.
+const MinBrowserBindingLength = 16
+
 // Begin creates a presentation request for query.
 //
 // browserBinding ties the request's result to whoever asked: an
@@ -267,12 +273,14 @@ type Begun struct {
 // passes back to Lookup and Redeem. Only its hash is stored. It is
 // required: the request's ID is public, as the last segment of the
 // request_uri in its link or QR code, so the binding is what keeps the
-// result from anyone who saw that. A same-device request (sameDevice)
+// result from anyone who saw that, and so must be at least
+// MinBrowserBindingLength bytes — a random token, not a user ID or a
+// short session number. A same-device request (sameDevice)
 // also needs TransactionsConfig.RedirectURI, where its answer sends the
 // browser back with a response_code.
 func (t *Transactions) Begin(ctx context.Context, query dcql.Query, browserBinding string, sameDevice bool) (Begun, error) {
-	if browserBinding == "" {
-		return Begun{}, errors.New("verifier: transactions: a browser binding is required")
+	if len(browserBinding) < MinBrowserBindingLength {
+		return Begun{}, fmt.Errorf("verifier: transactions: a browser binding of at least %d bytes is required: an unguessable random token", MinBrowserBindingLength)
 	}
 	if sameDevice && t.cfg.RedirectURI == "" {
 		return Begun{}, errors.New("verifier: transactions: a same-device request needs TransactionsConfig.RedirectURI")

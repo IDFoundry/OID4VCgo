@@ -1,6 +1,7 @@
 package statuslist
 
 import (
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
 	"testing"
@@ -379,4 +380,33 @@ func mustHexCWT(t *testing.T, s string) []byte {
 		t.Fatalf("decode hex: %v", err)
 	}
 	return b
+}
+
+// TestVerifyTokenCWTLargeList: a CWT Status List Token past COSE's
+// default 64 KiB verifies, as a JWT one of that size does — a list
+// grows with the credentials it covers.
+func TestVerifyTokenCWTLargeList(t *testing.T) {
+	key := testKey(t)
+	// Random statuses don't compress, so the token stays large.
+	statuses := make([]uint8, 1<<20)
+	if _, err := rand.Read(statuses); err != nil {
+		t.Fatal(err)
+	}
+	for i := range statuses {
+		statuses[i] &= 3
+	}
+	sl, err := New(Bits2, statuses, "")
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	token, err := IssueTokenCWT(key, cose.ES256, TokenClaims{Sub: "https://example.com/statuslists/1", Iat: time.Now().Unix(), StatusList: sl}, []byte("12"))
+	if err != nil {
+		t.Fatalf("IssueTokenCWT: %v", err)
+	}
+	if len(token) <= 1<<16 {
+		t.Fatalf("token is %d bytes; the test needs one past 64 KiB", len(token))
+	}
+	if _, err := VerifyTokenCWT(token, &key.PublicKey, cose.ES256, VerifyOptions{}); err != nil {
+		t.Errorf("VerifyTokenCWT of a %d-byte token: %v", len(token), err)
+	}
 }

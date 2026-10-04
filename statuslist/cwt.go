@@ -127,11 +127,13 @@ func VerifyTokenCWT(token []byte, pub crypto.PublicKey, alg cose.Alg, opts Verif
 	// Tagged (#6.18, the single byte 0xd2) or untagged COSE_Sign1:
 	// draft-14's own example is untagged, draft-12's was tagged, and the
 	// normative text requires neither.
-	verify := cose.Verify
+	// As large as a JWT Status List Token may be: a CWT list grows with
+	// the credentials it covers just the same.
+	verify := cose.VerifyMax
 	if len(token) > 0 && token[0] == coseSign1TagByte {
-		verify = cose.VerifyTagged
+		verify = cose.VerifyTaggedMax
 	}
-	protected, _, raw, err := verify(alg, pub, token, nil)
+	protected, _, raw, err := verify(alg, pub, token, nil, maxTokenBytes)
 	if err != nil {
 		return TokenClaims{}, fmt.Errorf("statuslist: verify CWT signature: %w", err)
 	}
