@@ -1,6 +1,8 @@
 package verifierapp
 
 import (
+	"crypto/x509"
+	"encoding/pem"
 	"os"
 	"path/filepath"
 	"testing"
@@ -62,5 +64,43 @@ func TestIdentities_Persist(t *testing.T) {
 	}
 	if _, err := loadIdentities(dir, now); err == nil {
 		t.Error("a damaged identity file was accepted")
+	}
+}
+
+// TestIdentities_ReplacesAnOlderLayout: a file from before the
+// scenarios, with one CA and one request signer, is replaced, not an
+// error that stops the verifier starting.
+func TestIdentities_ReplacesAnOlderLayout(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Now()
+	ca, caKey, err := newCA(now, "passport-vdc demo verifier CA")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sg, err := newSigner(now, "passport-vdc demo verifier", ca, caKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	der, err := x509.MarshalECPrivateKey(sg.key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var old []byte
+	old = append(old, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Headers: map[string]string{roleHeader: "ca"}, Bytes: ca.Raw})...)
+	old = append(old, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Headers: map[string]string{roleHeader: "request-signer"}, Bytes: der})...)
+	old = append(old, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Headers: map[string]string{roleHeader: "request-signer"}, Bytes: sg.cert.Raw})...)
+	if err := os.WriteFile(filepath.Join(dir, identityFile), old, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ids, err := loadIdentities(dir, now)
+	if err != nil {
+		t.Fatalf("loading an older layout: %v", err)
+	}
+	if ids.ca.Equal(ca) || ids.untrustedCA == nil || ids.registrarCA == nil || len(ids.signers) != len(Scenarios) {
+		t.Error("the older layout wasn't replaced with a full set of identities")
+	}
+	again, err := loadIdentities(dir, now)
+	if err != nil || !again.ca.Equal(ids.ca) {
+		t.Errorf("the replacement wasn't saved: %v", err)
 	}
 }
