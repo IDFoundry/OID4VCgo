@@ -185,5 +185,10 @@ func (m AuthorizationServerMetadata) ClientEndpoints(opts ...fapi.URLOption) (fa
 			return fapi.URL{}, client.Endpoints{}, fmt.Errorf("wallet: authorization server %s: %w", name, err)
 		}
 	}
+	if m.RevocationEndpoint != "" {
+		if endpoints.Revocation, err = fapi.ParseEndpointURL(m.RevocationEndpoint, opts...); err != nil {
+			return fapi.URL{}, client.Endpoints{}, fmt.Errorf("wallet: authorization server revocation_endpoint: %w", err)
+		}
+	}
 	return issuer, endpoints, nil
 }

@@ -79,8 +79,8 @@ func TestRefreshCredential(t *testing.T) {
 	if err := w.DeleteCredential(ctx, sdjwt.ID); err != nil {
 		t.Fatal(err)
 	}
-	if g, _ := grants.ListGrants(ctx); len(g) != 1 || f.keys.Len() != 4 {
-		t.Errorf("after deleting one: %d grants, %d keys; want the grant kept for the mdoc", len(g), f.keys.Len())
+	if g, _ := grants.ListGrants(ctx); len(g) != 1 || f.keys.Len() != 4 || f.env.Revocations() != 0 {
+		t.Errorf("after deleting one: %d grants, %d keys, %d revocations; want the grant kept for the mdoc", len(g), f.keys.Len(), f.env.Revocations())
 	}
 	for _, c := range held {
 		if c.ID != sdjwt.ID {
@@ -91,6 +91,10 @@ func TestRefreshCredential(t *testing.T) {
 	}
 	if g, _ := grants.ListGrants(ctx); len(g) != 0 || f.keys.Len() != 0 {
 		t.Errorf("after deleting both: %d grants, %d keys; want none", len(g), f.keys.Len())
+	}
+	// The issuer's grant ends with the last credential using it.
+	if n := f.env.Revocations(); n != 1 {
+		t.Errorf("refresh tokens revoked = %d, want 1", n)
 	}
 }
 
@@ -296,5 +300,28 @@ func TestRefreshCredential_PreAuthorizedCode(t *testing.T) {
 	f.env.RevokeGrants()
 	if _, _, err := w.RefreshCredential(ctx, c.ID); !errors.Is(err, walletflow.ErrReissueRequired) {
 		t.Errorf("after the grant was revoked: %v, want ErrReissueRequired", err)
+	}
+}
+
+// A grant whose instance key is gone can't be used: it's forgotten, and
+// the credential has to be received again.
+func TestRefreshCredential_InstanceKeyGone(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t, walletflowtest.Options{})
+	grants := walletflow.NewMemoryGrantStore()
+	w := f.newRefreshingWallet(t, nil, grants)
+	c := receive(t, f, w, walletflowtest.SDJWTConfigurationID)[0]
+	g, err := grants.GetGrant(ctx, c.GrantID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.keys.DeleteKey(ctx, g.InstanceKeyID); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := w.RefreshCredential(ctx, c.ID); !errors.Is(err, walletflow.ErrReissueRequired) {
+		t.Fatalf("RefreshCredential = %v, want ErrReissueRequired", err)
+	}
+	if _, err := grants.GetGrant(ctx, g.ID); !errors.Is(err, walletflow.ErrNotFound) {
+		t.Errorf("the grant was kept: %v", err)
 	}
 }

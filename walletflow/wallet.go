@@ -190,27 +190,50 @@ func (w *Wallet) Credentials(ctx context.Context) ([]StoredCredential, error) {
 }
 
 // DeleteCredential deletes the credential id names, and every copy's
-// holder key, and its refresh grant, with its instance key, once no
-// other credential uses it.
+// holder key. Once no other credential uses its refresh grant, the
+// refresh token is revoked at the Authorization Server (RFC 7009), best
+// effort and only when it has a revocation endpoint, so the issuer's
+// standing grant ends with it; then the grant and its instance key are
+// deleted.
 func (w *Wallet) DeleteCredential(ctx context.Context, id string) error {
+	c, g, err := w.deleteCredential(ctx, id)
+	if err != nil || g == nil {
+		return err
+	}
+	defer w.lockGrant(g.ID)()
+	w.revokeGrant(ctx, *g, c.ConfigurationID)
+	if err := w.deps.Grants.DeleteGrant(ctx, g.ID); err != nil {
+		return fmt.Errorf("walletflow: delete credential's refresh grant: %w", err)
+	}
+	if err := w.deps.Keys.DeleteKey(ctx, g.InstanceKeyID); err != nil {
+		return fmt.Errorf("walletflow: delete credential's refresh grant: %w", err)
+	}
+	return nil
+}
+
+// deleteCredential deletes the credential id names and its copies'
+// keys, and returns it, with its refresh grant when no other credential
+// uses it.
+func (w *Wallet) deleteCredential(ctx context.Context, id string) (StoredCredential, *RefreshGrant, error) {
 	w.credMu.Lock()
 	defer w.credMu.Unlock()
 	c, err := w.deps.Credentials.Get(ctx, id)
 	if err != nil {
-		return fmt.Errorf("walletflow: delete credential: %w", err)
+		return StoredCredential{}, nil, fmt.Errorf("walletflow: delete credential: %w", err)
 	}
 	if err := w.deps.Credentials.Delete(ctx, id); err != nil {
-		return fmt.Errorf("walletflow: delete credential: %w", err)
-	}
-	if err := w.releaseGrant(ctx, c.GrantID, id); err != nil {
-		return fmt.Errorf("walletflow: delete credential's refresh grant: %w", err)
+		return StoredCredential{}, nil, fmt.Errorf("walletflow: delete credential: %w", err)
 	}
 	for _, cp := range c.AllCopies() {
 		if err := w.deps.Keys.DeleteKey(ctx, cp.HolderKeyID); err != nil {
-			return fmt.Errorf("walletflow: delete credential's holder key: %w", err)
+			return StoredCredential{}, nil, fmt.Errorf("walletflow: delete credential's holder key: %w", err)
 		}
 	}
-	return nil
+	g, err := w.unusedGrant(ctx, c.GrantID)
+	if err != nil {
+		return StoredCredential{}, nil, fmt.Errorf("walletflow: delete credential's refresh grant: %w", err)
+	}
+	return c, g, nil
 }
 
 // checkIssuance reports what StartIssuance needs that w lacks.

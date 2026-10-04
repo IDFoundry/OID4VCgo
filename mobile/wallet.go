@@ -215,7 +215,9 @@ func (w *Wallet) CheckStatus(op *Operation, credentialID string) (string, error)
 }
 
 // DeleteCredential deletes the credential id names, and its holder
-// keys, and its refresh grant once no other credential uses it.
+// keys, and its refresh grant once no other credential uses it, first
+// revoking the refresh token at the Authorization Server (RFC 7009),
+// best effort: a network request.
 func (w *Wallet) DeleteCredential(id string) error {
 	return classify(w.w.DeleteCredential(context.Background(), id))
 }
