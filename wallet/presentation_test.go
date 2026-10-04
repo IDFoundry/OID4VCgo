@@ -429,3 +429,24 @@ func TestPresentCredentialsRejectsMissingAudienceOrNonce(t *testing.T) {
 		})
 	}
 }
+
+// With credential sets sharing a query, the wallet's own match — each
+// set its first satisfiable option — is a selection ValidateSelection
+// accepts: a query in two sets counts for both.
+func TestMatchDCQLQuerySharedCredentialSetsValidates(t *testing.T) {
+	fixture := newHeldSDJWTVC(t)
+	query := dcql.Query{
+		Credentials: twoVCTCredentials(t, "a", testPresentationVCT, "b", testPresentationVCT),
+		CredentialSets: []dcql.CredentialSetQuery{
+			{Options: [][]string{{"a"}, {"b"}}},
+			{Options: [][]string{{"b"}}},
+		},
+	}
+	matches, err := wallet.MatchDCQLQuery(context.Background(), query, []wallet.HeldCredential{fixture.held}, nil)
+	if err != nil {
+		t.Fatalf("MatchDCQLQuery: %v", err)
+	}
+	if err := wallet.ValidateSelection(context.Background(), query, matches, nil); err != nil {
+		t.Errorf("ValidateSelection of the wallet's own match = %v", err)
+	}
+}
