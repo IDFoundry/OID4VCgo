@@ -77,7 +77,11 @@ type CredentialCopy struct {
 	// ShownTo are the Verifiers it's been presented to, each as a hash of
 	// its client_id (VerifierHash), not the client_id itself: the wallet
 	// can tell whether a Verifier has seen it without keeping a readable
-	// list of where the holder has shown their credentials.
+	// list of where the holder has shown their credentials. It keeps the
+	// list from a casual reader, not from one who can read the store:
+	// the hash is unkeyed, so hashing candidate client_ids — a
+	// Verifier's is public — finds which ones are there. Protect the
+	// store as the credentials beside it already need.
 	ShownTo []string
 }
 

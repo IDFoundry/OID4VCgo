@@ -78,6 +78,10 @@ type Disclosure struct {
 type Presented struct {
 	// QueryIDs are the Credential Queries answered; none for Decline.
 	QueryIDs []string
+	// Linkable are the credentials presented with a copy another
+	// Verifier had already seen (Presentation.Linkable said so), by ID:
+	// the two Verifiers could link these presentations.
+	Linkable []string
 	// RedirectURI, when the Verifier returned one, is where the wallet
 	// must now send the browser (OpenID4VP 1.0 §8.2).
 	RedirectURI string
@@ -293,6 +297,12 @@ func (p *Presentation) Respond(ctx context.Context, sel Selection) (Presented, e
 		presented.QueryIDs = append(presented.QueryIDs, id)
 	}
 	sort.Strings(presented.QueryIDs)
+	for _, r := range reserved {
+		if r.linkable && !slices.Contains(presented.Linkable, r.id) {
+			presented.Linkable = append(presented.Linkable, r.id)
+		}
+	}
+	sort.Strings(presented.Linkable)
 	return presented, nil
 }
 
@@ -388,6 +398,8 @@ type reservedCopy struct {
 	// wasPresented and wasShown are what the copy recorded before it was
 	// reserved, for release.
 	wasPresented, wasShown bool
+	// linkable is a copy another Verifier has seen.
+	linkable bool
 }
 
 // reserve picks each selected credential's copy from the store, as it is
@@ -420,8 +432,13 @@ func (p *Presentation) reserve(ctx context.Context, sel Selection) ([]reservedCo
 				c.Copies = slices.Clone(c.AllCopies())
 			}
 			i, cp, reused := c.copyFor(w.cfg.CopyPolicy, verifier)
+			linkable := slices.ContainsFunc(cp.ShownTo, func(h string) bool { return h != verifier })
+			if linkable && !p.Linkable(id) {
+				// What the holder saw said otherwise: don't send it.
+				return nil, fmt.Errorf("walletflow: credential %q: %w", id, ErrLinkable)
+			}
 			r := reservedCopy{query: q, id: id, index: i, keyID: cp.HolderKeyID, reused: reused,
-				wasPresented: cp.Presented, wasShown: slices.Contains(cp.ShownTo, verifier)}
+				wasPresented: cp.Presented, wasShown: slices.Contains(cp.ShownTo, verifier), linkable: linkable}
 			c.Copies[i].Presented = true
 			if !r.wasShown {
 				c.Copies[i].ShownTo = append(slices.Clone(cp.ShownTo), verifier)

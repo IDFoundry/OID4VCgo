@@ -36,5 +36,6 @@ func parseError(httpStatus int, body []byte) *Error {
 		ErrorDescription string `json:"error_description"`
 	}
 	_ = json.Unmarshal(body, &wire)
-	return &Error{HTTPStatus: httpStatus, Code: wire.Error, Description: wire.ErrorDescription}
+	// The issuer's text ends up in logs and in front of the holder.
+	return &Error{HTTPStatus: httpStatus, Code: sanitizeReplyText(wire.Error), Description: sanitizeReplyText(wire.ErrorDescription)}
 }

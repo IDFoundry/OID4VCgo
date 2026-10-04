@@ -46,10 +46,15 @@ type wireVerifierInfo struct {
 	CredentialIDs *[]string       `json:"credential_ids"`
 }
 
+// MaxVerifierInfo is the most verifier_info entries a request may
+// carry: one per credential query is already generous.
+const MaxVerifierInfo = 16
+
 // parseVerifierInfo reads a request's verifier_info, nil when absent. It
 // checks the structure §5.1 defines: a non-empty array of objects, each
 // with a format, data that's a string or an object, and, if present,
-// non-empty credential_ids naming credential queries of q.
+// non-empty credential_ids naming credential queries of q; and that
+// there are at most MaxVerifierInfo.
 func parseVerifierInfo(raw json.RawMessage, q dcql.Query) ([]VerifierInfo, error) {
 	if len(raw) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
 		return nil, nil
@@ -60,6 +65,11 @@ func parseVerifierInfo(raw json.RawMessage, q dcql.Query) ([]VerifierInfo, error
 	}
 	if len(wire) == 0 {
 		return nil, errors.New("verifier_info must not be empty")
+	}
+	if len(wire) > MaxVerifierInfo {
+		// A wallet verifies each recognized entry's signature chain:
+		// an unbounded list would be that much work for one request.
+		return nil, fmt.Errorf("verifier_info has %d entries, more than %d", len(wire), MaxVerifierInfo)
 	}
 	out := make([]VerifierInfo, 0, len(wire))
 	for i, w := range wire {

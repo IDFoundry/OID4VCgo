@@ -56,6 +56,10 @@ func classify(err error) error {
 		return newError(CodeNoMatchingCredential, err)
 	case errors.Is(err, walletflow.ErrInvalidSelection):
 		return newError(CodeInvalidSelection, err)
+	case errors.Is(err, walletflow.ErrLinkable):
+		// What the holder agreed to no longer holds: the selection would
+		// now present a copy another Verifier has seen. Nothing was sent.
+		return newError(CodeInvalidSelection, walletflow.ErrLinkable)
 	case errors.Is(err, walletflow.ErrReissueRequired):
 		return newError(CodeReissueRequired, err)
 	case errors.Is(err, walletflow.ErrDeliveryUnknown):

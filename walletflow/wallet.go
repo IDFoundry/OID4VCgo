@@ -107,7 +107,11 @@ type Dependencies struct {
 	// with RequestRefresh set needs a Durable one.
 	Grants GrantStore
 
-	// HTTP makes every request. nil means a client with a 10 s timeout.
+	// HTTP makes every request. nil means a client with a 10 s timeout
+	// that, outside Development, is fapihttp's hardened one: it dials
+	// only public addresses and follows no redirect. One set here should
+	// be as careful: issuers' and Verifiers' endpoints come from offers
+	// and requests anyone can make.
 	HTTP *http.Client
 	// Clock returns the current time. nil means time.Now.
 	Clock func() time.Time
@@ -172,7 +176,11 @@ func New(cfg Config, deps Dependencies) (*Wallet, error) {
 		return nil, errors.New("walletflow: Dependencies.Keys and Credentials are required")
 	}
 	if deps.HTTP == nil {
-		deps.HTTP = &http.Client{Timeout: httpTimeout}
+		client, err := defaultHTTPClient(cfg.Development)
+		if err != nil {
+			return nil, err
+		}
+		deps.HTTP = client
 	}
 	if deps.Clock == nil {
 		deps.Clock = time.Now
@@ -297,4 +305,22 @@ func (w *Wallet) checkIssuance() error {
 func durableKeys(ks KeyStore) bool {
 	c, ok := ks.(keys.KeyCustodyAssurance)
 	return ok && c.KeyCustody().Durable
+}
+
+// defaultHTTPClient is the client New uses when Dependencies.HTTP is
+// nil. Outside Development it dials only public addresses, resolved
+// once and checked at dial time, and follows no redirect: an offer's or
+// a Verifier's endpoints can't point the wallet's requests into its own
+// network. In Development, services on the machine or the local network
+// are the point.
+func defaultHTTPClient(development bool) (*http.Client, error) {
+	if development {
+		return &http.Client{Timeout: httpTimeout}, nil
+	}
+	client, err := fapihttp.NewClient(fapihttp.TransportConfig{DialTimeout: httpTimeout, TLSHandshakeTimeout: httpTimeout})
+	if err != nil {
+		return nil, fmt.Errorf("walletflow: http client: %w", err)
+	}
+	client.Timeout = httpTimeout
+	return client, nil
 }

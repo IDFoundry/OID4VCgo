@@ -329,3 +329,57 @@ func TestCopyPolicy_Linkable(t *testing.T) {
 		t.Error("a copy shown to two Verifiers isn't linkable")
 	}
 }
+
+// TestRespond_RefusesACopyThatBecameLinkable: with one unused copy left
+// and two presentations open, both report the credential as not
+// linkable. Once the first takes that copy, the second's Respond would
+// present a copy the first Verifier has seen: it refuses with
+// ErrLinkable instead, sending nothing, and Linkable then says so. A
+// Respond the holder made knowing it's linkable reports it in
+// Presented.
+func TestRespond_RefusesACopyThatBecameLinkable(t *testing.T) {
+	f := newFixture(t, walletflowtest.Options{BatchSize: 2})
+	w, v1, v2 := twoVerifiersWallet(t, f, walletflow.CopyPerPresentation)
+	ctx := context.Background()
+	c := receive(t, f, w, walletflowtest.SDJWTConfigurationID)[0]
+	presentOnce(t, f, v1, w, c.ID) // one copy left
+
+	query := dcql.Query{Credentials: []dcql.CredentialQuery{f.env.SDJWTQuery(t, "pid", "given_name")}}
+	_, link1 := v1.Begin(t, query)
+	id2, link2 := v2.Begin(t, query)
+	p1, err := w.StartPresentation(ctx, link1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p2, err := w.StartPresentation(ctx, link2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p1.Linkable(c.ID) || p2.Linkable(c.ID) {
+		t.Fatal("a credential with an unused copy reads as linkable")
+	}
+	if _, err := p1.Respond(ctx, walletflow.Selection{"pid": {c.ID}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p2.Respond(ctx, walletflow.Selection{"pid": {c.ID}}); !errors.Is(err, walletflow.ErrLinkable) {
+		t.Fatalf("Respond after the last copy went: %v, want ErrLinkable", err)
+	}
+	if v2.Lookup(t, id2).Result != nil {
+		t.Error("the second Verifier got a response")
+	}
+
+	// Started now, the holder sees it's linkable; presenting anyway is
+	// reported.
+	_, link3 := v2.Begin(t, query)
+	p3, err := w.StartPresentation(ctx, link3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !p3.Linkable(c.ID) {
+		t.Fatal("Linkable doesn't say the credential is now linkable")
+	}
+	presented, err := p3.Respond(ctx, walletflow.Selection{"pid": {c.ID}})
+	if err != nil || !slices.Equal(presented.Linkable, []string{c.ID}) {
+		t.Errorf("Respond knowing it's linkable = %+v, %v; want it reported", presented, err)
+	}
+}
