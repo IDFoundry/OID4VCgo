@@ -24,7 +24,7 @@ cd "$(dirname "$0")"
 : "${TEAM_ID:?set TEAM_ID to your Apple developer team ID}"
 : "${PROVIDER_URL:?set PROVIDER_URL to the Wallet Provider public https URL, cmd/demo -provider-url}"
 STATE="${STATE:-../../../examples/passport-vdc/.demo-state}"
-BUNDLE_ID="${BUNDLE_ID:-org.idfoundry.oid4vcgo.demowallet}"
+BUNDLE_ID="${BUNDLE_ID:-dev.idfoundry.oid4vcgo.demowallet}"
 for f in issuer-ca.pem verifier-ca.pem; do
 	[ -s "$STATE/$f" ] || { echo "no $STATE/$f: run the passport-vdc demo first" >&2; exit 1; }
 done
@@ -63,7 +63,7 @@ state, provider = pathlib.Path(sys.argv[1]), sys.argv[2]
 config = {
     "wallet": {
         "client_id": "passport-vdc-wallet",
-        "redirect_uri": "org.idfoundry.oid4vcgo.demowallet:/callback",
+        "redirect_uri": "dev.idfoundry.oid4vcgo.demowallet:/callback",
         "issuer_roots": (state / "issuer-ca.pem").read_text(),
         "verifier_roots": (state / "verifier-ca.pem").read_text(),
         "development": True,

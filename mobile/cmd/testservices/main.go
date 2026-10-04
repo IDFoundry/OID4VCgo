@@ -49,7 +49,7 @@ import (
 
 func main() {
 	addr := flag.String("addr", "127.0.0.1:8600", "control endpoint address")
-	redirect := flag.String("redirect", "org.idfoundry.oid4vcgo.demowallet:/callback", "the app's redirect URI, registered with the issuer")
+	redirect := flag.String("redirect", "dev.idfoundry.oid4vcgo.demowallet:/callback", "the app's redirect URI, registered with the issuer")
 	certOut := flag.String("cert", "", "write the services' TLS certificate here, as PEM")
 	flag.Parse()
 	if err := run(*addr, *redirect, *certOut); err != nil {

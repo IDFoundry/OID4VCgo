@@ -288,7 +288,7 @@
 					"@executable_path/Frameworks",
 					"@loader_path/Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = org.idfoundry.oid4vcgo.demowallet.tests;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.idfoundry.oid4vcgo.demowallet.tests;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/DemoWallet.app/DemoWallet";
@@ -370,7 +370,7 @@
 					"@executable_path/Frameworks",
 					"@loader_path/Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = org.idfoundry.oid4vcgo.demowallet.uitests;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.idfoundry.oid4vcgo.demowallet.uitests;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				TEST_TARGET_NAME = DemoWallet;
@@ -445,7 +445,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = org.idfoundry.oid4vcgo.demowallet;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.idfoundry.oid4vcgo.demowallet;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = 1;
 			};
@@ -461,7 +461,7 @@
 					"@executable_path/Frameworks",
 					"@loader_path/Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = org.idfoundry.oid4vcgo.demowallet.tests;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.idfoundry.oid4vcgo.demowallet.tests;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/DemoWallet.app/DemoWallet";
@@ -478,7 +478,7 @@
 					"@executable_path/Frameworks",
 					"@loader_path/Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = org.idfoundry.oid4vcgo.demowallet.uitests;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.idfoundry.oid4vcgo.demowallet.uitests;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				TEST_TARGET_NAME = DemoWallet;
@@ -495,7 +495,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = org.idfoundry.oid4vcgo.demowallet;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.idfoundry.oid4vcgo.demowallet;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = 1;
 			};

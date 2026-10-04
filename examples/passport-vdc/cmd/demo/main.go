@@ -58,7 +58,7 @@ const (
 	walletAddr, walletURL          = "127.0.0.1:7443", "https://127.0.0.1:7443"
 	providerAddr, localProviderURL = "127.0.0.1:6443", "https://127.0.0.1:6443"
 	cliRedirectURI                 = "http://127.0.0.1/callback"
-	iosRedirectURI                 = "org.idfoundry.oid4vcgo.demowallet:/callback"
+	iosRedirectURI                 = "dev.idfoundry.oid4vcgo.demowallet:/callback"
 	providerIssuer                 = "https://wallet-provider.passport-vdc.demo"
 	walletClientID                 = "passport-vdc-wallet"
 )

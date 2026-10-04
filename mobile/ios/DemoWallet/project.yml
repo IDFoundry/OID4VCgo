@@ -4,7 +4,7 @@
 # (../../build-xcframework.sh).
 name: DemoWallet
 options:
-  bundleIdPrefix: org.idfoundry.oid4vcgo
+  bundleIdPrefix: dev.idfoundry.oid4vcgo
   deploymentTarget:
     iOS: "17.0"
   createIntermediateGroups: true
@@ -36,11 +36,11 @@ targets:
         CFBundleURLTypes:
           # The authorization redirect (RFC 8252 private-use scheme),
           # Credential Offer links, and presentation request links.
-          - CFBundleURLName: org.idfoundry.oid4vcgo.demowallet
-            CFBundleURLSchemes: [org.idfoundry.oid4vcgo.demowallet, openid-credential-offer, openid4vp]
+          - CFBundleURLName: dev.idfoundry.oid4vcgo.demowallet
+            CFBundleURLSchemes: [dev.idfoundry.oid4vcgo.demowallet, openid-credential-offer, openid4vp]
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: org.idfoundry.oid4vcgo.demowallet
+        PRODUCT_BUNDLE_IDENTIFIER: dev.idfoundry.oid4vcgo.demowallet
         TARGETED_DEVICE_FAMILY: "1"
   DemoWalletTests:
     type: bundle.unit-test
@@ -50,7 +50,7 @@ targets:
       - target: DemoWallet
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: org.idfoundry.oid4vcgo.demowallet.tests
+        PRODUCT_BUNDLE_IDENTIFIER: dev.idfoundry.oid4vcgo.demowallet.tests
         GENERATE_INFOPLIST_FILE: YES
   DemoWalletUITests:
     type: bundle.ui-testing
@@ -60,7 +60,7 @@ targets:
       - target: DemoWallet
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: org.idfoundry.oid4vcgo.demowallet.uitests
+        PRODUCT_BUNDLE_IDENTIFIER: dev.idfoundry.oid4vcgo.demowallet.uitests
         GENERATE_INFOPLIST_FILE: YES
 schemes:
   DemoWallet:
