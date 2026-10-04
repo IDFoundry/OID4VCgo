@@ -397,33 +397,36 @@ func (w *Wallet) KeysInUse(ctx context.Context) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("walletflow: list deferred credentials: %w", err)
 	}
-	seen := map[string]bool{}
-	var out []string
-	add := func(id string) {
-		if id != "" && !seen[id] {
-			seen[id] = true
-			out = append(out, id)
-		}
-	}
+	keys := keySet{}
 	for _, c := range creds {
 		for _, cp := range c.AllCopies() {
-			add(cp.HolderKeyID)
+			keys.add(cp.HolderKeyID)
 		}
 	}
 	for _, p := range pending {
-		for _, id := range p.HolderKeyIDs {
-			add(id)
-		}
-		add(p.DPoPKeyID)
+		keys.add(p.HolderKeyIDs...)
+		keys.add(p.DPoPKeyID)
 	}
 	authorizing, err := w.pendingAuthorizations(ctx)
 	if err != nil {
 		return nil, err
 	}
 	for _, a := range authorizing {
-		add(a.InstanceKeyID)
-		add(a.DPoPKeyID)
+		keys.add(a.InstanceKeyID, a.DPoPKeyID)
 	}
+	grantKeys, err := w.grantKeysInUse(ctx, creds, pending)
+	if err != nil {
+		return nil, err
+	}
+	keys.add(grantKeys...)
+	return keys.sorted(), nil
+}
+
+// grantKeysInUse is the instance keys of the refresh grants a stored or
+// pending credential uses, or that are held. It forgets the others,
+// with their keys: a deletion or an issuance that failed part way left
+// them, and nothing can use them.
+func (w *Wallet) grantKeysInUse(ctx context.Context, creds []StoredCredential, pending []PendingDeferred) ([]string, error) {
 	grants, err := w.deps.Grants.ListGrants(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("walletflow: list refresh grants: %w", err)
@@ -435,17 +438,35 @@ func (w *Wallet) KeysInUse(ctx context.Context) ([]string, error) {
 	for _, p := range pending {
 		named[p.GrantID] = true
 	}
+	var out []string
 	for _, g := range grants {
 		if !named[g.ID] && !w.grantHeld(g.ID) {
-			// Left by a deletion or an issuance that failed part way:
-			// nothing can use it.
 			w.forgetGrant(ctx, g)
 			continue
 		}
-		add(g.InstanceKeyID)
+		out = append(out, g.InstanceKeyID)
+	}
+	return out, nil
+}
+
+// keySet is a set of key IDs, ignoring empty ones.
+type keySet map[string]bool
+
+func (k keySet) add(ids ...string) {
+	for _, id := range ids {
+		if id != "" {
+			k[id] = true
+		}
+	}
+}
+
+func (k keySet) sorted() []string {
+	out := make([]string, 0, len(k))
+	for id := range k {
+		out = append(out, id)
 	}
 	sort.Strings(out)
-	return out, nil
+	return out
 }
 
 // newDPoPKey creates an issuance's DPoP key, held until it's closed.

@@ -266,7 +266,15 @@ struct CredentialView: View {
             checkError = error
             justChecked = error == nil
             let revoked = summary.status.map { if case .valid = $0.value { false } else { true } } ?? false
-            UINotificationFeedbackGenerator().notificationOccurred(error != nil ? .error : revoked ? .warning : .success)
+            let feedback: UINotificationFeedbackGenerator.FeedbackType
+            if error != nil {
+                feedback = .error
+            } else if revoked {
+                feedback = .warning
+            } else {
+                feedback = .success
+            }
+            UINotificationFeedbackGenerator().notificationOccurred(feedback)
         }
     }
 }
@@ -591,9 +599,7 @@ struct RequestView: View {
                                     Task { await model.toggle(c.id, for: query) }
                                 } label: {
                                     HStack {
-                                        Image(systemName: model.isSelected(c.id, for: query.queryID)
-                                            ? (query.multiple ? "checkmark.circle.fill" : "largecircle.fill.circle")
-                                            : "circle")
+                                        Image(systemName: Self.choiceIcon(selected: model.isSelected(c.id, for: query.queryID), multiple: query.multiple))
                                         VStack(alignment: .leading) {
                                             Text(CredentialRow.title(c))
                                             if let holder = Holder(claims: model.candidateClaims[c.id]) {
@@ -648,6 +654,13 @@ struct RequestView: View {
             }
             .navigationTitle("Presentation request")
         }
+    }
+
+    /// A candidate's choice mark: a checkbox for a query taking several
+    /// credentials, a radio button otherwise.
+    static func choiceIcon(selected: Bool, multiple: Bool) -> String {
+        guard selected else { return "circle" }
+        return multiple ? "checkmark.circle.fill" : "largecircle.fill.circle"
     }
 
     /// What a query asks beyond the Verifier's registration, in words.

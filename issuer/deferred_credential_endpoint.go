@@ -10,6 +10,10 @@ import (
 	"github.com/idfoundry/oid4vcgo"
 )
 
+// unknownTransactionID describes a transaction_id the issuer has no
+// pending deferral for, whatever the reason, so as not to say which.
+const unknownTransactionID = "unknown or already-used transaction_id"
+
 // DeferredCredentialRequest is a Deferred Credential Request (§9.1).
 type DeferredCredentialRequest struct {
 	// TransactionID is REQUIRED: identifies a Deferred Issuance
@@ -134,10 +138,10 @@ func (iss *Issuer) requestDeferredCredential(ctx context.Context, auth Authorize
 
 	record, err := iss.deps.DeferredTransactions.Get(ctx, req.TransactionID)
 	if err != nil {
-		return DeferredCredentialResult{}, newError(ErrorInvalidTransactionID, 400, "unknown or already-used transaction_id", err)
+		return DeferredCredentialResult{}, newError(ErrorInvalidTransactionID, 400, unknownTransactionID, err)
 	}
 	if iss.deferredExpired(record) {
-		return DeferredCredentialResult{}, newError(ErrorInvalidTransactionID, 400, "unknown or already-used transaction_id", nil)
+		return DeferredCredentialResult{}, newError(ErrorInvalidTransactionID, 400, unknownTransactionID, nil)
 	}
 	if !deferredOwner(record, auth) {
 		return DeferredCredentialResult{}, newError(ErrorInvalidTransactionID, 400, "transaction_id was not issued to this access token's client and subject", nil)
@@ -156,7 +160,7 @@ func (iss *Issuer) requestDeferredCredential(ctx context.Context, auth Authorize
 		// Invalidate is the single-use gate: only the request whose
 		// Invalidate succeeds gets the Credentials.
 		if err := iss.deps.DeferredTransactions.Invalidate(ctx, req.TransactionID); err != nil {
-			return DeferredCredentialResult{}, newError(ErrorInvalidTransactionID, 400, "unknown or already-used transaction_id", err)
+			return DeferredCredentialResult{}, newError(ErrorInvalidTransactionID, 400, unknownTransactionID, err)
 		}
 		return DeferredCredentialResult{Credentials: record.Credentials, NotificationID: record.NotificationID}, nil
 	default:

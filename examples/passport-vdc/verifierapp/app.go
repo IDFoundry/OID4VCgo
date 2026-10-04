@@ -437,24 +437,8 @@ func (a *App) state(ctx context.Context, s *session) pageState {
 		if ch.id == "" {
 			continue
 		}
-		view, err := a.txs[s.scenario].Lookup(ctx, ch.id, s.binding)
-		if err != nil {
-			continue
-		}
-		if view.LastError != "" {
-			st.lastError = view.LastError
-		}
-		switch view.Status {
-		case verifier.TransactionDone:
-			if view.Result != nil {
-				a.mu.Lock()
-				st.outcome = a.outcomes[ch.id][resultKey(*view.Result)]
-				a.mu.Unlock()
-			}
-		case verifier.TransactionAwaitingRedirect:
-			st.awaiting = true
-		case verifier.TransactionClosed:
-			st.closed = view.LastError != ""
+		if view, err := a.txs[s.scenario].Lookup(ctx, ch.id, s.binding); err == nil {
+			a.note(&st, ch.id, view)
 		}
 	}
 	if st.outcome != nil {
@@ -466,6 +450,25 @@ func (a *App) state(ctx context.Context, s *session) pageState {
 		}
 	}
 	return st
+}
+
+// note adds what request id's view says to st.
+func (a *App) note(st *pageState, id string, view verifier.TransactionView) {
+	if view.LastError != "" {
+		st.lastError = view.LastError
+	}
+	switch view.Status {
+	case verifier.TransactionDone:
+		if view.Result != nil {
+			a.mu.Lock()
+			st.outcome = a.outcomes[id][resultKey(*view.Result)]
+			a.mu.Unlock()
+		}
+	case verifier.TransactionAwaitingRedirect:
+		st.awaiting = true
+	case verifier.TransactionClosed:
+		st.closed = view.LastError != ""
+	}
 }
 
 // Outcome returns page id's outcome, once a wallet's presentation has
@@ -504,13 +507,8 @@ func (a *App) accept(ctx context.Context, sc Scenario, txID string, result verif
 		return errors.New("this request is no longer open")
 	}
 	info, _ := sc.Info()
-	for _, ch := range []channel{s.cross, s.same} {
-		if ch.id != "" && ch.id != txID {
-			if view, err := a.txs[sc].Lookup(ctx, ch.id, s.binding); err == nil &&
-				(view.Status == verifier.TransactionDone || view.Status == verifier.TransactionAwaitingRedirect) {
-				return errors.New("this request has already been answered")
-			}
-		}
+	if a.otherAnswered(ctx, s, txID) {
+		return errors.New("this request has already been answered")
 	}
 	switch n := len(result.Credentials); {
 	case n == 0 || n > 1 && !info.Multiple:
@@ -518,28 +516,11 @@ func (a *App) accept(ctx context.Context, sc Scenario, txID string, result verif
 	case n > maxGroup:
 		return fmt.Errorf("expected at most %d passports, got %d", maxGroup, n)
 	}
-	out := &Outcome{Scenario: sc}
-	seen := map[[sha256.Size]byte]bool{}
-	for _, vc := range result.Credentials {
-		claims := flatten(vc.CredentialQueryID, vc.Claims)
-		sum, err := personKey(claims, info.Evidence)
-		if err != nil {
-			return err
-		}
-		if seen[sum] {
-			return errors.New("the same passport was presented twice")
-		}
-		seen[sum] = true
-		status, err := a.checkStatus(ctx, vc)
-		if err != nil {
-			return err
-		}
-		p := Person{Format: formatOf(vc.CredentialQueryID), Claims: claims, Status: status}
-		if info.Evidence {
-			p.ICAO = a.checkICAO(claims)
-		}
-		out.People = append(out.People, p)
+	people, err := a.people(ctx, info, result.Credentials)
+	if err != nil {
+		return err
 	}
+	out := &Outcome{Scenario: sc, People: people}
 	first := out.People[0]
 	out.Format, out.Claims, out.Status, out.ICAO = first.Format, first.Claims, first.Status, first.ICAO
 	if !info.Multiple {
@@ -553,6 +534,49 @@ func (a *App) accept(ctx context.Context, sc Scenario, txID string, result verif
 	a.outcomes[txID][resultKey(result)] = out
 	a.mu.Unlock()
 	return nil
+}
+
+// otherAnswered reports whether s's other request, not txID, has
+// already been answered.
+func (a *App) otherAnswered(ctx context.Context, s *session, txID string) bool {
+	for _, ch := range []channel{s.cross, s.same} {
+		if ch.id == "" || ch.id == txID {
+			continue
+		}
+		view, err := a.txs[s.scenario].Lookup(ctx, ch.id, s.binding)
+		if err == nil && (view.Status == verifier.TransactionDone || view.Status == verifier.TransactionAwaitingRedirect) {
+			return true
+		}
+	}
+	return false
+}
+
+// people checks each presented credential: one person at most once,
+// not revoked, and, for a scenario re-verifying it, its passport file.
+func (a *App) people(ctx context.Context, info ScenarioInfo, vcs []verifier.VerifiedCredential) ([]Person, error) {
+	seen := map[[sha256.Size]byte]bool{}
+	var out []Person
+	for _, vc := range vcs {
+		claims := flatten(vc.CredentialQueryID, vc.Claims)
+		sum, err := personKey(claims, info.Evidence)
+		if err != nil {
+			return nil, err
+		}
+		if seen[sum] {
+			return nil, errors.New("the same passport was presented twice")
+		}
+		seen[sum] = true
+		status, err := a.checkStatus(ctx, vc)
+		if err != nil {
+			return nil, err
+		}
+		p := Person{Format: formatOf(vc.CredentialQueryID), Claims: claims, Status: status}
+		if info.Evidence {
+			p.ICAO = a.checkICAO(claims)
+		}
+		out = append(out, p)
+	}
+	return out, nil
 }
 
 // personKey identifies whose credential claims is, so one person shown

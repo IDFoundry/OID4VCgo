@@ -117,7 +117,7 @@ var haipBattery = []string{
 	// (wiring.go), regardless of which battery drives it.
 	metadataSignedTestName,
 	"oid4vci-1_0-issuer-happy-flow-additional-requests",
-	"oid4vci-1_0-issuer-happy-flow-multiple-clients",
+	multipleClientsTestName,
 	"oid4vci-1_0-issuer-batch-issuance",
 	"oid4vci-1_0-issuer-fail-invalid-nonce",
 	"oid4vci-1_0-issuer-fail-invalid-jwt-proof-signature",
@@ -205,7 +205,7 @@ var baseBattery = []string{
 	metadataSignedTestName,
 	happyFlowTestName,
 	"oid4vci-1_0-issuer-happy-flow-additional-requests",
-	"oid4vci-1_0-issuer-happy-flow-multiple-clients",
+	multipleClientsTestName,
 	"oid4vci-1_0-issuer-happy-flow-skip-notification",
 	"oid4vci-1_0-issuer-batch-issuance",
 	"oid4vci-1_0-issuer-fail-invalid-nonce",

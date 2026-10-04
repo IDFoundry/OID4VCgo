@@ -148,7 +148,9 @@ type PreAuthorizedCodeClientAuthentication interface {
 // following HAIP for this grant.
 type AnonymousPreAuthorizedCode struct{}
 
-func (AnonymousPreAuthorizedCode) isPreAuthorizedCodeClientAuthentication() {}
+func (AnonymousPreAuthorizedCode) isPreAuthorizedCodeClientAuthentication() {
+	// A marker: it only makes the type a PreAuthorizedCodeClientAuthentication.
+}
 
 // VerifiedPreAuthorizedCode redeems a pre-authorized_code for a Token
 // Request whose client and DPoP proof the Authorization Server serving
@@ -177,7 +179,9 @@ func (AnonymousPreAuthorizedCode) isPreAuthorizedCodeClientAuthentication() {}
 // and lists the grant in fapigo/server's Config.AdditionalGrantTypes.
 type VerifiedPreAuthorizedCode struct{}
 
-func (VerifiedPreAuthorizedCode) isPreAuthorizedCodeClientAuthentication() {}
+func (VerifiedPreAuthorizedCode) isPreAuthorizedCodeClientAuthentication() {
+	// A marker: it only makes the type a PreAuthorizedCodeClientAuthentication.
+}
 
 // VerifiedTokenRequest is what the Authorization Server verified about a
 // Token Request, for VerifiedPreAuthorizedCode.

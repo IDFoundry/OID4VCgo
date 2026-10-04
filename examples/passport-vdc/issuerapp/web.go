@@ -16,6 +16,12 @@ import (
 	"github.com/idfoundry/oid4vcgo/issuer"
 )
 
+// HTTP header names and values the pages use.
+const (
+	headerContentType = "Content-Type"
+	contentTypeHTML   = "text/html; charset=utf-8"
+)
+
 // maxUploadBytes bounds an uploaded passport file — a gmrtd portable
 // file with a facial image is typically well under 100 KiB.
 const maxUploadBytes = 2 << 20
@@ -242,7 +248,7 @@ var offerTemplate = template.Must(template.New("offer").Funcs(template.FuncMap{
 ` + pageFoot))
 
 func (a *App) handleUploadPage(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set(headerContentType, contentTypeHTML)
 	_ = uploadTemplate.Execute(w, struct{ AllowSample bool }{a.cfg.AllowSampleDocument})
 }
 
@@ -302,7 +308,7 @@ func (a *App) offer(w http.ResponseWriter, r *http.Request, e passport.Evidence)
 		writeHTMLError(w, http.StatusInternalServerError, "couldn't create a credential offer")
 		return
 	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set(headerContentType, contentTypeHTML)
 	w.Header().Set("Cache-Control", "no-store") // the offer is a bearer secret, next to the passport's identity
 	page := offerPage{Evidence: e, Offer: offer, Expired: e.Identity.ExpiredAt(a.now())}
 	if qr, err := demoqr.DataURI(offer.URI); err == nil {
@@ -322,7 +328,7 @@ var errorTemplate = template.Must(template.New("error").Parse(pageHead + `
 ` + pageFoot))
 
 func writeHTMLError(w http.ResponseWriter, status int, message string) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set(headerContentType, contentTypeHTML)
 	w.WriteHeader(status)
 	_ = errorTemplate.Execute(w, message)
 }

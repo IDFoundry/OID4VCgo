@@ -95,80 +95,7 @@ func run(addr, redirect, certOut string) error {
 		},
 		"provider_url": provider.URL,
 	}
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /config", func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, config) })
-	mux.HandleFunc("POST /offer", func(w http.ResponseWriter, r *http.Request) {
-		var offer string
-		var err error
-		if pin := r.URL.Query().Get("pin"); pin != "" {
-			offer, err = env.PreAuthorizedOffer(pin, walletflowtest.SDJWTConfigurationID)
-		} else {
-			offer, err = env.AuthorizationCodeOffer(walletflowtest.SDJWTConfigurationID, walletflowtest.MdocConfigurationID)
-		}
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		writeJSON(w, map[string]string{"offer": offer})
-	})
-	mux.HandleFunc("POST /request", func(w http.ResponseWriter, r *http.Request) {
-		q, err := query(env, r.URL.Query().Get("format"), r.URL.Query().Get("multiple") == "1")
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		asker := v
-		if r.URL.Query().Get("registered") == "1" {
-			asker = rv
-			if extra := r.URL.Query().Get("extra"); extra != "" {
-				for i := range q.Credentials {
-					path := dcql.Path{dcql.PathKey(extra)}
-					if q.Credentials[i].Format == "mso_mdoc" {
-						path = dcql.Path{dcql.PathKey(walletflowtest.NameSpace), dcql.PathKey(extra)}
-					}
-					q.Credentials[i].Claims = append(q.Credentials[i].Claims, dcql.ClaimsQuery{Path: path})
-				}
-			}
-		}
-		id, link, err := asker.Begin(q)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		writeJSON(w, map[string]string{"id": id, "link": link})
-	})
-	mux.HandleFunc("GET /request/{id}", func(w http.ResponseWriter, r *http.Request) {
-		view, err := v.Lookup(r.PathValue("id"))
-		if err != nil {
-			view, err = rv.Lookup(r.PathValue("id"))
-		}
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusNotFound)
-			return
-		}
-		out := map[string]any{"status": "pending", "last_error": view.LastError}
-		if view.Result != nil && len(view.Result.Credentials) > 0 {
-			out["status"], out["claims"] = "done", view.Result.Credentials[0].Claims
-			out["credentials"] = len(view.Result.Credentials)
-		}
-		writeJSON(w, out)
-	})
-	mux.HandleFunc("POST /defer", func(w http.ResponseWriter, r *http.Request) {
-		env.SetDefer(r.URL.Query().Get("on") == "1")
-		writeJSON(w, map[string]bool{"ok": true})
-	})
-	mux.HandleFunc("POST /decide", func(w http.ResponseWriter, r *http.Request) {
-		env.Decide(r.URL.Query().Get("approve") == "1")
-		writeJSON(w, map[string]bool{"ok": true})
-	})
-	mux.HandleFunc("POST /revoke", func(w http.ResponseWriter, _ *http.Request) {
-		env.Revoke()
-		writeJSON(w, map[string]bool{"ok": true})
-	})
-	mux.HandleFunc("POST /revoke-grants", func(w http.ResponseWriter, _ *http.Request) {
-		env.RevokeGrants()
-		writeJSON(w, map[string]bool{"ok": true})
-	})
+	mux := services{env: env, v: v, rv: rv}.routes(config)
 	control := httptest.NewUnstartedServer(mux)
 	if err := control.Listener.Close(); err != nil {
 		return err
@@ -184,6 +111,103 @@ func run(addr, redirect, certOut string) error {
 	defer stop()
 	<-ctx.Done()
 	return nil
+}
+
+// services are the control endpoints, over the test issuer, its
+// Verifier v and the registered Verifier rv.
+type services struct {
+	env   *walletflowtest.Env
+	v, rv *walletflowtest.Verifier
+}
+
+func (s services) routes(config map[string]any) *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /config", func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, config) })
+	mux.HandleFunc("POST /offer", s.handleOffer)
+	mux.HandleFunc("POST /request", s.handleRequest)
+	mux.HandleFunc("GET /request/{id}", s.handleResult)
+	mux.HandleFunc("POST /defer", func(w http.ResponseWriter, r *http.Request) {
+		s.env.SetDefer(r.URL.Query().Get("on") == "1")
+		writeJSON(w, map[string]bool{"ok": true})
+	})
+	mux.HandleFunc("POST /decide", func(w http.ResponseWriter, r *http.Request) {
+		s.env.Decide(r.URL.Query().Get("approve") == "1")
+		writeJSON(w, map[string]bool{"ok": true})
+	})
+	mux.HandleFunc("POST /revoke", func(w http.ResponseWriter, _ *http.Request) {
+		s.env.Revoke()
+		writeJSON(w, map[string]bool{"ok": true})
+	})
+	mux.HandleFunc("POST /revoke-grants", func(w http.ResponseWriter, _ *http.Request) {
+		s.env.RevokeGrants()
+		writeJSON(w, map[string]bool{"ok": true})
+	})
+	return mux
+}
+
+func (s services) handleOffer(w http.ResponseWriter, r *http.Request) {
+	var offer string
+	var err error
+	if pin := r.URL.Query().Get("pin"); pin != "" {
+		offer, err = s.env.PreAuthorizedOffer(pin, walletflowtest.SDJWTConfigurationID)
+	} else {
+		offer, err = s.env.AuthorizationCodeOffer(walletflowtest.SDJWTConfigurationID, walletflowtest.MdocConfigurationID)
+	}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]string{"offer": offer})
+}
+
+func (s services) handleRequest(w http.ResponseWriter, r *http.Request) {
+	q, err := query(s.env, r.URL.Query().Get("format"), r.URL.Query().Get("multiple") == "1")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	asker := s.v
+	if r.URL.Query().Get("registered") == "1" {
+		asker = s.rv
+		askAlso(&q, r.URL.Query().Get("extra"))
+	}
+	id, link, err := asker.Begin(q)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]string{"id": id, "link": link})
+}
+
+// askAlso adds claim, if set, to each of q's credential queries.
+func askAlso(q *dcql.Query, claim string) {
+	if claim == "" {
+		return
+	}
+	for i := range q.Credentials {
+		path := dcql.Path{dcql.PathKey(claim)}
+		if q.Credentials[i].Format == "mso_mdoc" {
+			path = dcql.Path{dcql.PathKey(walletflowtest.NameSpace), dcql.PathKey(claim)}
+		}
+		q.Credentials[i].Claims = append(q.Credentials[i].Claims, dcql.ClaimsQuery{Path: path})
+	}
+}
+
+func (s services) handleResult(w http.ResponseWriter, r *http.Request) {
+	view, err := s.v.Lookup(r.PathValue("id"))
+	if err != nil {
+		view, err = s.rv.Lookup(r.PathValue("id"))
+	}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	out := map[string]any{"status": "pending", "last_error": view.LastError}
+	if view.Result != nil && len(view.Result.Credentials) > 0 {
+		out["status"], out["claims"] = "done", view.Result.Credentials[0].Claims
+		out["credentials"] = len(view.Result.Credentials)
+	}
+	writeJSON(w, out)
 }
 
 // providerHandler serves walletflowtest's Wallet Provider with the

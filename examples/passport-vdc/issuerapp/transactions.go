@@ -39,7 +39,7 @@ type transactions struct {
 	now      func() time.Time
 	lifetime time.Duration
 	keepFor  time.Duration
-	max      int
+	limit    int
 	items    map[string]*transaction
 }
 
@@ -62,7 +62,7 @@ type transaction struct {
 const maxCodeFailures = 5
 
 var (
-	// errTooManyTransactions is returned by put when max passports are
+	// errTooManyTransactions is returned by put when limit passports are
 	// already held.
 	errTooManyTransactions = errors.New("issuerapp: too many passports awaiting issuance")
 	errNoTransaction       = errors.New("issuerapp: the passport transaction is unknown or has expired")
@@ -77,13 +77,13 @@ var (
 // its first credential: past the refresh token, issued before it.
 const keepMargin = time.Minute
 
-func newTransactions(now func() time.Time, lifetime, keepFor time.Duration, max int) *transactions {
-	return &transactions{now: now, lifetime: lifetime, keepFor: keepFor, max: max, items: make(map[string]*transaction)}
+func newTransactions(now func() time.Time, lifetime, keepFor time.Duration, limit int) *transactions {
+	return &transactions{now: now, lifetime: lifetime, keepFor: keepFor, limit: limit, items: make(map[string]*transaction)}
 }
 
 // put stores e, redeemable once for each of configIDs — or, with keep,
 // re-issuable for refresh — under a fresh ID with a fresh confirmation
-// code, and returns both, or errTooManyTransactions when max unexpired
+// code, and returns both, or errTooManyTransactions when limit unexpired
 // passports are already held.
 func (t *transactions) put(e passport.Evidence, configIDs []string, review, keep bool) (id, code string, err error) {
 	var b [32]byte
@@ -103,7 +103,7 @@ func (t *transactions) put(e passport.Evidence, configIDs []string, review, keep
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.prune()
-	if len(t.items) >= t.max {
+	if len(t.items) >= t.limit {
 		return "", "", errTooManyTransactions
 	}
 	now := t.now()

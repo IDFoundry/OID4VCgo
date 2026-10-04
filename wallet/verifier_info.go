@@ -63,26 +63,36 @@ func parseVerifierInfo(raw json.RawMessage, q dcql.Query) ([]VerifierInfo, error
 	}
 	out := make([]VerifierInfo, 0, len(wire))
 	for i, w := range wire {
-		if w.Format == "" {
-			return nil, fmt.Errorf("verifier_info[%d]: format is required", i)
-		}
-		data := bytes.TrimSpace(w.Data)
-		if len(data) == 0 || (data[0] != '"' && data[0] != '{') || bytes.Equal(data, []byte(`""`)) || bytes.Equal(data, []byte("{}")) {
-			return nil, fmt.Errorf("verifier_info[%d]: data must be a non-empty string or object", i)
-		}
-		vi := VerifierInfo{Format: w.Format, Data: json.RawMessage(data)}
-		if w.CredentialIDs != nil {
-			if len(*w.CredentialIDs) == 0 {
-				return nil, fmt.Errorf("verifier_info[%d]: credential_ids must not be empty", i)
-			}
-			for _, id := range *w.CredentialIDs {
-				if !slices.ContainsFunc(q.Credentials, func(c dcql.CredentialQuery) bool { return c.ID == id }) {
-					return nil, fmt.Errorf("verifier_info[%d]: credential_ids names %q, no credential query of the request", i, id)
-				}
-			}
-			vi.CredentialIDs = *w.CredentialIDs
+		vi, err := w.parse(q)
+		if err != nil {
+			return nil, fmt.Errorf("verifier_info[%d]: %w", i, err)
 		}
 		out = append(out, vi)
 	}
 	return out, nil
+}
+
+// parse checks one verifier_info entry, for a request with query q.
+func (w wireVerifierInfo) parse(q dcql.Query) (VerifierInfo, error) {
+	if w.Format == "" {
+		return VerifierInfo{}, errors.New("format is required")
+	}
+	data := bytes.TrimSpace(w.Data)
+	if len(data) == 0 || (data[0] != '"' && data[0] != '{') || bytes.Equal(data, []byte(`""`)) || bytes.Equal(data, []byte("{}")) {
+		return VerifierInfo{}, errors.New("data must be a non-empty string or object")
+	}
+	vi := VerifierInfo{Format: w.Format, Data: json.RawMessage(data)}
+	if w.CredentialIDs == nil {
+		return vi, nil
+	}
+	if len(*w.CredentialIDs) == 0 {
+		return VerifierInfo{}, errors.New("credential_ids must not be empty")
+	}
+	for _, id := range *w.CredentialIDs {
+		if !slices.ContainsFunc(q.Credentials, func(c dcql.CredentialQuery) bool { return c.ID == id }) {
+			return VerifierInfo{}, fmt.Errorf("credential_ids names %q, no credential query of the request", id)
+		}
+	}
+	vi.CredentialIDs = *w.CredentialIDs
+	return vi, nil
 }

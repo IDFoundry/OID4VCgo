@@ -29,6 +29,14 @@ import (
 	"github.com/idfoundry/oid4vcgo/wallet"
 )
 
+const (
+	// errMalformedForm is the error page for a form that doesn't parse.
+	errMalformedForm = "malformed form"
+	// callbackPath is the authorization redirect back to the web wallet,
+	// and the path its binding cookie is scoped to.
+	callbackPath = "/callback"
+)
+
 // Config configures an App.
 type Config struct {
 	// WalletURL is this wallet's own base URL; its /callback is the
@@ -102,7 +110,7 @@ func New(cfg Config) (*App, error) {
 	if cfg.WalletURL == "" || cfg.Store.Dir == "" || cfg.VerifierTrust == nil {
 		return nil, fmt.Errorf("webwallet: WalletURL, Store and VerifierTrust are required")
 	}
-	cfg.Wallet.RedirectURI = cfg.WalletURL + "/callback"
+	cfg.Wallet.RedirectURI = cfg.WalletURL + callbackPath
 	a := &App{cfg: cfg, pending: map[string]*pendingPresentation{}, deferred: map[string]*deferredCredential{}}
 	a.handler = a.routes()
 	return a, nil
@@ -164,7 +172,7 @@ func (a *App) handleReceiveConfirm(w http.ResponseWriter, r *http.Request) {
 // the issuer's approval page.
 func (a *App) handleReceive(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
-		renderError(w, http.StatusBadRequest, "malformed form")
+		renderError(w, http.StatusBadRequest, errMalformedForm)
 		return
 	}
 	offer := strings.TrimSpace(r.PostForm.Get("offer"))
@@ -194,7 +202,7 @@ func (a *App) handleReceive(w http.ResponseWriter, r *http.Request) {
 	select {
 	case authURL := <-op.authURL:
 		http.SetCookie(w, &http.Cookie{
-			Name: bindingCookie, Value: op.binding, Path: "/callback",
+			Name: bindingCookie, Value: op.binding, Path: callbackPath,
 			HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode,
 		})
 		http.Redirect(w, r, authURL, http.StatusSeeOther) // #nosec G710 -- the issuer's authorization URL, built by fapigo from discovered metadata
@@ -229,7 +237,7 @@ func (a *App) handleCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	a.receiving = nil
 	a.mu.Unlock()
-	http.SetCookie(w, &http.Cookie{Name: bindingCookie, Path: "/callback", MaxAge: -1, HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode})
+	http.SetCookie(w, &http.Cookie{Name: bindingCookie, Path: callbackPath, MaxAge: -1, HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode})
 	op.callback <- walletapp.Callback{Query: r.URL.RawQuery}
 	res := <-op.done
 	a.finishReceive(op)
@@ -374,7 +382,7 @@ func (a *App) handlePresentConfirm(w http.ResponseWriter, r *http.Request) {
 // it asks for. Nothing is sent until the holder chooses.
 func (a *App) handlePresentConsent(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
-		renderError(w, http.StatusBadRequest, "malformed form")
+		renderError(w, http.StatusBadRequest, errMalformedForm)
 		return
 	}
 	link := strings.TrimSpace(r.PostForm.Get("request"))
@@ -415,7 +423,7 @@ func (a *App) handlePresentConsent(w http.ResponseWriter, r *http.Request) {
 // handlePresentDecision shares the chosen credential, or declines.
 func (a *App) handlePresentDecision(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
-		renderError(w, http.StatusBadRequest, "malformed form")
+		renderError(w, http.StatusBadRequest, errMalformedForm)
 		return
 	}
 	a.mu.Lock()

@@ -10,8 +10,8 @@ import (
 
 var testConfigIDs = []string{MdocConfigurationID, SDJWTConfigurationID}
 
-func newTestTransactions(now *time.Time, max int) *transactions {
-	return newTransactions(func() time.Time { return *now }, time.Minute, time.Hour, max)
+func newTestTransactions(now *time.Time, limit int) *transactions {
+	return newTransactions(func() time.Time { return *now }, time.Minute, time.Hour, limit)
 }
 
 func mustPut(t *testing.T, tx *transactions) (id, code string) {

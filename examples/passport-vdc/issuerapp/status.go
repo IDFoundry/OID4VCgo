@@ -227,7 +227,7 @@ func (a *App) IssuedStatuses() []IssuedStatus {
 }
 
 func (a *App) handleStatusPage(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set(headerContentType, contentTypeHTML)
 	_ = statusTemplate.Execute(w, struct {
 		URI           string
 		Entries       []IssuedStatus

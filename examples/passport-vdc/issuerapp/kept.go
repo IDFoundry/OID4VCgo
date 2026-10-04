@@ -100,7 +100,7 @@ var keptTemplate = template.Must(template.New("kept").Parse(pageHead + `
 ` + pageFoot))
 
 func (a *App) handleKeptPage(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set(headerContentType, contentTypeHTML)
 	w.Header().Set("Cache-Control", "no-store")
 	_ = keptTemplate.Execute(w, a.Kept())
 }

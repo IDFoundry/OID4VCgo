@@ -13,6 +13,12 @@ import (
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/demoqr"
 )
 
+// HTTP header names and values the pages use.
+const (
+	headerContentType = "Content-Type"
+	contentTypeHTML   = "text/html; charset=utf-8"
+)
+
 func (a *App) routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", a.handleHome)
@@ -141,7 +147,7 @@ var requestTemplate = template.Must(template.New("request").Parse(pageHead + `{{
 ` + pageFoot))
 
 func (a *App) handleHome(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set(headerContentType, contentTypeHTML)
 	_ = homeTemplate.Execute(w, ScenarioInfos())
 }
 
@@ -186,7 +192,7 @@ func (a *App) handleRequestPage(w http.ResponseWriter, r *http.Request) {
 	page := a.requestPageFor(r.Context(), s)
 	// The page carries the verified claims; keep it out of caches.
 	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set(headerContentType, contentTypeHTML)
 	_ = requestTemplate.Execute(w, page)
 }
 
@@ -277,7 +283,7 @@ var errorTemplate = template.Must(template.New("error").Parse(pageHead + `</head
 ` + pageFoot))
 
 func writeHTMLError(w http.ResponseWriter, status int, message string) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set(headerContentType, contentTypeHTML)
 	w.WriteHeader(status)
 	_ = errorTemplate.Execute(w, message)
 }

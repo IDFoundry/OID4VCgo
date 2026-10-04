@@ -38,7 +38,9 @@ type Fixture struct {
 // Issue builds a Fixture.
 func Issue(t *testing.T) Fixture {
 	t.Helper()
-	return IssueWith(t, func(*mdoc.Claims) {})
+	return IssueWith(t, func(*mdoc.Claims) {
+		// The default claims, unchanged.
+	})
 }
 
 // IssueWith is Issue, with mutate applied to the claims before issuance
