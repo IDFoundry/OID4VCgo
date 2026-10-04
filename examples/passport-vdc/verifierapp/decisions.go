@@ -19,6 +19,15 @@ func decide(sc Scenario, out *Outcome) Decision {
 			return Decision{Text: "Sale refused: the customer is under 18"}
 		}
 		return Decision{Approved: true, Text: "Sale allowed: the customer is over 18"}
+	case ScenarioOverAsking:
+		over, ok := over18(out.Claims)
+		if !ok || !over {
+			return Decision{Text: "Sale refused: the customer isn't shown to be over 18"}
+		}
+		if name := nameOf(out.Claims); name != "the holder" {
+			return Decision{Approved: true, Text: "Sale allowed — and the shop now has " + name + "'s name, which it isn't registered to ask for"}
+		}
+		return Decision{Approved: true, Text: "Sale allowed: the customer is over 18"}
 	case ScenarioSignup:
 		if over, ok := over18(out.Claims); ok && !over {
 			return Decision{Text: "Sign-up refused: under 18"}

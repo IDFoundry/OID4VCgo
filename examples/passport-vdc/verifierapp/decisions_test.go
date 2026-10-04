@@ -38,6 +38,8 @@ func TestDecide(t *testing.T) {
 		{"unknown", ScenarioUnknown, Outcome{ICAO: verified}, false, "shouldn't have"},
 		{"hotel, all verified", ScenarioHotel, Outcome{People: []Person{{ICAO: verified}, {ICAO: expired}}}, true, "Checked in 2 guests"},
 		{"hotel, one guest", ScenarioHotel, Outcome{People: []Person{{ICAO: verified}}}, true, "Checked in 1 guest"},
+		{"over-asking, names given", ScenarioOverAsking, Outcome{Claims: map[string]any{"age_over_18": true, credential.GivenName: "JANE", credential.FamilyName: "DOE"}}, true, "now has JANE DOE's name"},
+		{"over-asking, under 18", ScenarioOverAsking, Outcome{Claims: sdjwtAge(false)}, false, "Sale refused"},
 		{"hotel, one failed", ScenarioHotel, Outcome{People: []Person{{ICAO: verified}, {ICAO: failed}}}, false, "1 of 2 passports"},
 	} {
 		got := decide(c.sc, &c.out)

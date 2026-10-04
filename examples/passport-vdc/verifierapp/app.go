@@ -20,6 +20,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/credential"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/passport"
 	"github.com/idfoundry/oid4vcgo/haip"
+	"github.com/idfoundry/oid4vcgo/registration"
 	"github.com/idfoundry/oid4vcgo/storage"
 	"github.com/idfoundry/oid4vcgo/verifier"
 )
@@ -76,6 +77,9 @@ type App struct {
 	cfg    Config
 	txs    map[Scenario]*verifier.Transactions // each scenario's relying party has its own identity
 	caCert *x509.Certificate
+	// registrarCA is the trust anchor of the registrar that registers
+	// the trusted scenarios' relying parties.
+	registrarCA *x509.Certificate
 
 	issuerRoots   *x509.CertPool
 	issuerTrusted dcql.TrustedAuthoritiesQuery // IssuerCAs, by Authority Key Identifier
@@ -202,11 +206,12 @@ func New(cfg Config) (*App, error) {
 		return nil, err
 	}
 	a := &App{
-		cfg: cfg, txs: map[Scenario]*verifier.Transactions{}, caCert: ids.ca, issuerRoots: issuerRoots, issuerTrusted: issuerTrusted, now: time.Now,
+		cfg: cfg, txs: map[Scenario]*verifier.Transactions{}, caCert: ids.ca, registrarCA: ids.registrarCA,
+		issuerRoots: issuerRoots, issuerTrusted: issuerTrusted, now: time.Now,
 		sessions: map[string]*session{}, byTx: map[string]string{}, outcomes: map[string]map[string]*Outcome{},
 	}
 	for _, sc := range Scenarios {
-		if a.txs[sc], err = a.newTransactions(sc, ids.signers[sc]); err != nil {
+		if a.txs[sc], err = a.newTransactions(sc, ids.signers[sc], ids.registrar); err != nil {
 			return nil, err
 		}
 	}
@@ -215,21 +220,33 @@ func New(cfg Config) (*App, error) {
 }
 
 // newTransactions is scenario sc's relying party: a Verifier signing
-// its requests as sg, with its own endpoints under /s/<sc>/.
-func (a *App) newTransactions(sc Scenario, sg signer) (*verifier.Transactions, error) {
+// its requests as sg, with its own endpoints under /s/<sc>/. A trusted
+// one's requests carry its registration, signed by registrar.
+func (a *App) newTransactions(sc Scenario, sg signer, registrar signer) (*verifier.Transactions, error) {
 	base := a.cfg.VerifierURL + "/s/" + string(sc)
 	responseURI, err := fapi.ParseEndpointURL(base + "/response")
 	if err != nil {
 		return nil, fmt.Errorf("verifierapp: response URI: %w", err)
 	}
 	rec := haip.RecommendedVerifierConfig()
-	v, err := verifier.New(verifier.Config{
+	cfg := verifier.Config{
 		Assurance: verifier.AssuranceDevelopment, ClientCertificate: sg.cert, ResponseURI: responseURI,
 		SigningAlg: rec.SigningAlg, EncValuesSupported: rec.EncValuesSupported,
 		VPFormatsSupported: mergeFormats(verifier.MdocFormatSupport(), verifier.SDJWTVCFormatSupport([]string{"ES256"}, []string{"ES256"})),
-	}, verifier.Dependencies{Signer: sg.key, Random: rand.Reader})
+	}
+	v, err := verifier.New(cfg, verifier.Dependencies{Signer: sg.key, Random: rand.Reader})
 	if err != nil {
 		return nil, fmt.Errorf("verifierapp: verifier.New: %w", err)
+	}
+	if info, _ := sc.Info(); info.Trusted {
+		token, err := a.register(sc, v.ClientID(), sg.cert.NotAfter, registrar)
+		if err != nil {
+			return nil, err
+		}
+		cfg.VerifierInfo = []verifier.VerifierInfo{{Format: registration.Format, Data: token}}
+		if v, err = verifier.New(cfg, verifier.Dependencies{Signer: sg.key, Random: rand.Reader}); err != nil {
+			return nil, fmt.Errorf("verifierapp: verifier.New: %w", err)
+		}
 	}
 	txs, err := verifier.NewTransactions(v, storage.NewVerifierTransactionStore(), verifier.TransactionsConfig{
 		RequestURIBase: base + "/request-objects",
@@ -251,6 +268,47 @@ func (a *App) newTransactions(sc Scenario, sg signer) (*verifier.Transactions, e
 	}
 	return txs, nil
 }
+
+// registrarID is the demo registrar's identifier, the registrations'
+// iss.
+const registrarID = "https://registrar.passport-vdc.demo"
+
+// register issues scenario sc's relying party, clientID, its
+// registration: its name, its purpose, and the claims its scenario's
+// query asks for — or, for one registered as another scenario
+// (ScenarioInfo.RegisteredAs), that scenario's.
+func (a *App) register(sc Scenario, clientID string, until time.Time, registrar signer) (string, error) {
+	info, _ := sc.Info()
+	as := sc
+	if info.RegisteredAs != "" {
+		as = info.RegisteredAs
+	}
+	asInfo, _ := as.Info()
+	q, err := buildQuery(as, a.cfg.IssuerVCT, a.issuerTrusted)
+	if err != nil {
+		return "", err
+	}
+	var claims []dcql.Path
+	for _, cq := range q.Credentials {
+		for _, c := range cq.Claims {
+			claims = append(claims, c.Path)
+		}
+	}
+	token, err := registration.Issue(registration.Registration{
+		Registrar: registrarID, ClientID: clientID, Name: info.Verifier, Purpose: asInfo.Title,
+		Claims: claims, IssuedAt: a.now(), Expires: until,
+	}, registrar.key, []*x509.Certificate{registrar.cert})
+	if err != nil {
+		return "", fmt.Errorf("verifierapp: register %s: %w", sc, err)
+	}
+	return token, nil
+}
+
+// RegistrarCACertificate is the trust anchor of the demo registrar that
+// registers the trusted scenarios' relying parties: a wallet configured
+// with it (walletflow.Config.RegistrarRoots) shows their registrations,
+// and warns when one asks for more.
+func (a *App) RegistrarCACertificate() *x509.Certificate { return a.registrarCA }
 
 // VerifierCACertificate is the demo verifier CA that issued this
 // verifier's request-signing certificate — the trust anchor a wallet

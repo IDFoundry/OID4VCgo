@@ -33,11 +33,15 @@ func TestIdentities_Persist(t *testing.T) {
 		}
 	}
 
+	if ids.registrarCA == nil || ids.registrar.cert.CheckSignatureFrom(ids.registrarCA) != nil {
+		t.Error("no registrar, or it doesn't chain to its CA")
+	}
+
 	again, err := loadIdentities(dir, now.Add(time.Hour))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !again.ca.Equal(ids.ca) || !again.signers[ScenarioBank].key.Equal(ids.signers[ScenarioBank].key) {
+	if !again.ca.Equal(ids.ca) || !again.signers[ScenarioBank].key.Equal(ids.signers[ScenarioBank].key) || !again.registrar.key.Equal(ids.registrar.key) {
 		t.Error("a restart made new verifier identities")
 	}
 

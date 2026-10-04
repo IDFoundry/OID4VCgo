@@ -29,6 +29,10 @@ import (
 type identities struct {
 	ca, untrustedCA *x509.Certificate
 	signers         map[Scenario]signer
+	// registrar registers the trusted scenarios' relying parties
+	// (registrations), under registrarCA, which wallets trust for that.
+	registrarCA *x509.Certificate
+	registrar   signer
 }
 
 type signer struct {
@@ -45,6 +49,8 @@ const (
 	roleHeader      = "Role"
 	roleCA          = "ca"
 	roleUntrustedCA = "untrusted-ca"
+	roleRegistrarCA = "registrar-ca"
+	roleRegistrar   = "registrar"
 	roleSignerPre   = "signer:"
 )
 
@@ -92,6 +98,9 @@ func loadIdentities(dir string, now time.Time) (identities, error) {
 // current reports whether ids has an identity for every scenario, named
 // for its relying party, none expiring within renewBefore.
 func (ids identities) current(now time.Time) bool {
+	if ids.registrarCA == nil || ids.registrar.key == nil || !ids.registrar.cert.NotAfter.After(now.Add(renewBefore)) {
+		return false
+	}
 	for _, s := range Scenarios {
 		info, _ := s.Info()
 		sg, ok := ids.signers[s]
@@ -115,27 +124,45 @@ func newIdentities(now time.Time) (identities, error) {
 		return identities{}, err
 	}
 	ids.ca, ids.untrustedCA = ca, untrustedCA
+	registrarCA, registrarCAKey, err := newCA(now, "passport-vdc demo registrar CA")
+	if err != nil {
+		return identities{}, err
+	}
+	ids.registrarCA = registrarCA
+	if ids.registrar, err = newSigner(now, "passport-vdc demo registrar", registrarCA, registrarCAKey); err != nil {
+		return identities{}, err
+	}
 	for _, s := range Scenarios {
 		info, _ := s.Info()
 		parent, parentKey := ca, caKey
 		if !info.Trusted {
 			parent, parentKey = untrustedCA, untrustedKey
 		}
-		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		sg, err := newSigner(now, info.Verifier, parent, parentKey)
 		if err != nil {
-			return identities{}, fmt.Errorf("verifierapp: key: %w", err)
+			return identities{}, err
 		}
-		cert, err := democert.Create(&x509.Certificate{
-			Subject:   pkix.Name{CommonName: info.Verifier, Organization: []string{"IDFoundry demo"}},
-			NotBefore: now.Add(-time.Hour), NotAfter: now.AddDate(1, 0, 0),
-			KeyUsage: x509.KeyUsageDigitalSignature,
-		}, parent, &key.PublicKey, parentKey)
-		if err != nil {
-			return identities{}, fmt.Errorf("verifierapp: %w", err)
-		}
-		ids.signers[s] = signer{key: key, cert: cert}
+		ids.signers[s] = sg
 	}
 	return ids, nil
+}
+
+// newSigner generates a signing key and a certificate naming name,
+// issued by parent.
+func newSigner(now time.Time, name string, parent *x509.Certificate, parentKey *ecdsa.PrivateKey) (signer, error) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return signer{}, fmt.Errorf("verifierapp: key: %w", err)
+	}
+	cert, err := democert.Create(&x509.Certificate{
+		Subject:   pkix.Name{CommonName: name, Organization: []string{"IDFoundry demo"}},
+		NotBefore: now.Add(-time.Hour), NotAfter: now.AddDate(1, 0, 0),
+		KeyUsage: x509.KeyUsageDigitalSignature,
+	}, parent, &key.PublicKey, parentKey)
+	if err != nil {
+		return signer{}, fmt.Errorf("verifierapp: %w", err)
+	}
+	return signer{key: key, cert: cert}, nil
 }
 
 func newCA(now time.Time, name string) (*x509.Certificate, *ecdsa.PrivateKey, error) {
@@ -158,15 +185,25 @@ func (ids identities) encode() ([]byte, error) {
 	var out []byte
 	out = append(out, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Headers: map[string]string{roleHeader: roleCA}, Bytes: ids.ca.Raw})...)
 	out = append(out, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Headers: map[string]string{roleHeader: roleUntrustedCA}, Bytes: ids.untrustedCA.Raw})...)
+	out = append(out, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Headers: map[string]string{roleHeader: roleRegistrarCA}, Bytes: ids.registrarCA.Raw})...)
+	signers := []struct {
+		role string
+		sg   signer
+	}{{roleRegistrar, ids.registrar}}
 	for _, s := range Scenarios {
-		sg := ids.signers[s]
-		der, err := x509.MarshalECPrivateKey(sg.key)
+		signers = append(signers, struct {
+			role string
+			sg   signer
+		}{roleSignerPre + string(s), ids.signers[s]})
+	}
+	for _, e := range signers {
+		der, err := x509.MarshalECPrivateKey(e.sg.key)
 		if err != nil {
-			return nil, fmt.Errorf("verifierapp: encode %s key: %w", s, err)
+			return nil, fmt.Errorf("verifierapp: encode %s key: %w", e.role, err)
 		}
-		role := map[string]string{roleHeader: roleSignerPre + string(s)}
+		role := map[string]string{roleHeader: e.role}
 		out = append(out, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Headers: role, Bytes: der})...)
-		out = append(out, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Headers: role, Bytes: sg.cert.Raw})...)
+		out = append(out, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Headers: role, Bytes: e.sg.cert.Raw})...)
 	}
 	return out, nil
 }
@@ -193,6 +230,10 @@ func parseIdentities(data []byte) (identities, error) {
 				ids.ca = c
 			case role == roleUntrustedCA:
 				ids.untrustedCA = c
+			case role == roleRegistrarCA:
+				ids.registrarCA = c
+			case role == roleRegistrar:
+				ids.registrar.cert = c
 			case strings.HasPrefix(role, roleSignerPre):
 				certs[scenario] = c
 			}
@@ -201,13 +242,22 @@ func parseIdentities(data []byte) (identities, error) {
 			if err != nil {
 				return identities{}, fmt.Errorf("%s key: %w", role, err)
 			}
-			if strings.HasPrefix(role, roleSignerPre) {
+			switch {
+			case role == roleRegistrar:
+				ids.registrar.key = k
+			case strings.HasPrefix(role, roleSignerPre):
 				keys[scenario] = k
 			}
 		}
 	}
 	if ids.ca == nil || ids.untrustedCA == nil {
 		return identities{}, errors.New("incomplete verifier identities")
+	}
+	if ids.registrarCA != nil || ids.registrar.cert != nil {
+		r := ids.registrar
+		if ids.registrarCA == nil || r.key == nil || r.cert == nil || !r.key.PublicKey.Equal(r.cert.PublicKey) || r.cert.CheckSignatureFrom(ids.registrarCA) != nil {
+			return identities{}, errors.New("the registrar's identity is incomplete or doesn't chain to its CA")
+		}
 	}
 	for s, cert := range certs {
 		info, known := s.Info()

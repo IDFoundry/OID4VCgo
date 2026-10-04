@@ -214,10 +214,12 @@ func run(ctx context.Context, opts options) error {
 	if err != nil {
 		return err
 	}
-	// For the CLI wallet (cmd/wallet -state): the trust anchors of this
-	// run.
+	// For the CLI wallet (cmd/wallet -state) and the iOS demo app: the
+	// trust anchors of this run, and the registrar's, whose
+	// registrations of the verifier's relying parties the app checks.
 	if err := writeCertificates(state, map[string]*x509.Certificate{
 		"issuer-ca.pem": issuer.IssuerCACertificate(), "verifier-ca.pem": verifier.VerifierCACertificate(),
+		"registrar-ca.pem": verifier.RegistrarCACertificate(),
 	}); err != nil {
 		return err
 	}
