@@ -2,11 +2,14 @@ package walletflow_test
 
 import (
 	"context"
+	"crypto/x509"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
 	"github.com/idfoundry/oid4vcgo/dcql"
+	"github.com/idfoundry/oid4vcgo/wallet"
 	"github.com/idfoundry/oid4vcgo/walletflow"
 	"github.com/idfoundry/oid4vcgo/walletflow/walletflowtest"
 )
@@ -189,5 +192,110 @@ func TestBatch_ConcurrentPresentationsUseDistinctCopies(t *testing.T) {
 	}
 	if presented != 2 || stored[0].CopiesLeft() != 1 {
 		t.Errorf("%d copies presented, %d left; want 2 distinct presented and 1 left", presented, stored[0].CopiesLeft())
+	}
+}
+
+// twoVerifiersWallet is a wallet, with copyPolicy, trusting two
+// Verifiers with different client_ids.
+func twoVerifiersWallet(t *testing.T, f fixture, policy walletflow.CopyPolicy) (*walletflow.Wallet, testVerifier, testVerifier) {
+	t.Helper()
+	v1, v2 := f.env.StartVerifier(t), f.env.StartVerifier(t)
+	roots := x509.NewCertPool()
+	roots.AddCert(v1.CA)
+	roots.AddCert(v2.CA)
+	w, err := walletflow.New(walletflow.Config{
+		ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, IssuerRoots: f.env.IssuerRoots,
+		VerifierTrust: wallet.X5CVerifierRoots{Roots: roots}, Development: true, CopyPolicy: policy,
+	}, walletflow.Dependencies{Keys: f.keys, Credentials: f.store, Provider: f.env.Provider, HTTP: f.env.HTTP})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return w, v1, v2
+}
+
+// Per presentation, every presentation uses a new copy, even to the same
+// Verifier; per Verifier, a Verifier sees the same copy each time, and
+// another Verifier a different one. Either way, each copy records which
+// Verifiers saw it.
+func TestCopyPolicy(t *testing.T) {
+	for _, tc := range []struct {
+		policy           walletflow.CopyPolicy
+		leftAfterSameTwo int
+		leftAfterOther   int
+	}{
+		{walletflow.CopyPerPresentation, 1, 0},
+		{walletflow.CopyPerVerifier, 2, 1},
+	} {
+		f := newFixture(t, walletflowtest.Options{BatchSize: 3})
+		w, v1, v2 := twoVerifiersWallet(t, f, tc.policy)
+		c := receive(t, f, w, walletflowtest.SDJWTConfigurationID)[0]
+		presentOnce(t, f, v1, w, c.ID)
+		second := presentOnce(t, f, v1, w, c.ID)
+		if second.CopiesLeft() != tc.leftAfterSameTwo {
+			t.Errorf("policy %d: after two presentations to one Verifier, %d copies left, want %d", tc.policy, second.CopiesLeft(), tc.leftAfterSameTwo)
+		}
+		if !second.ShownTo(v1.ClientID) || second.ShownTo(v2.ClientID) {
+			t.Errorf("policy %d: ShownTo v1 %v, v2 %v; want v1 only", tc.policy, second.ShownTo(v1.ClientID), second.ShownTo(v2.ClientID))
+		}
+		other := presentOnce(t, f, v2, w, c.ID)
+		if other.CopiesLeft() != tc.leftAfterOther || !other.ShownTo(v2.ClientID) {
+			t.Errorf("policy %d: after another Verifier, %d copies left (want %d), ShownTo v2 %v", tc.policy, other.CopiesLeft(), tc.leftAfterOther, other.ShownTo(v2.ClientID))
+		}
+		// The second Verifier never saw the first's copy.
+		for _, cp := range other.Copies {
+			if slices.Contains(cp.ShownTo, walletflow.VerifierHash(v1.ClientID)) && slices.Contains(cp.ShownTo, walletflow.VerifierHash(v2.ClientID)) {
+				t.Errorf("policy %d: one copy was shown to both Verifiers", tc.policy)
+			}
+		}
+	}
+}
+
+// Per Verifier, a response refused before it's sent leaves a reused
+// copy as it was: still presented, still shown to that Verifier.
+func TestCopyPolicy_PerVerifierReleaseKeepsAReusedCopy(t *testing.T) {
+	f := newFixture(t, walletflowtest.Options{BatchSize: 3})
+	w, v1, _ := twoVerifiersWallet(t, f, walletflow.CopyPerVerifier)
+	c := receive(t, f, w, walletflowtest.SDJWTConfigurationID)[0]
+	presentOnce(t, f, v1, w, c.ID)
+	ctx := context.Background()
+	_, link := v1.Begin(t, dcql.Query{Credentials: []dcql.CredentialQuery{f.env.SDJWTQuery(t, "pid", "given_name")}})
+	p, err := w.StartPresentation(ctx, link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.Respond(ctx, walletflow.Selection{"other": {c.ID}}); !errors.Is(err, walletflow.ErrInvalidSelection) {
+		t.Fatalf("Respond for an unknown query = %v, want ErrInvalidSelection", err)
+	}
+	kept, _ := w.Credentials(ctx)
+	if len(kept) != 1 || kept[0].CopiesLeft() != 2 || !kept[0].ShownTo(v1.ClientID) {
+		t.Errorf("after a refused response: %d left, ShownTo %v; want the reused copy kept as it was", kept[0].CopiesLeft(), kept[0].ShownTo(v1.ClientID))
+	}
+}
+
+// Once every copy has been presented, the copy shown to the fewest
+// Verifiers is reused, spreading Verifiers across copies rather than
+// piling them all onto one.
+func TestCopyPolicy_ReusesTheLeastShownCopy(t *testing.T) {
+	f := newFixture(t, walletflowtest.Options{BatchSize: 2})
+	vs := make([]testVerifier, 4)
+	roots := x509.NewCertPool()
+	for i := range vs {
+		vs[i] = f.env.StartVerifier(t)
+		roots.AddCert(vs[i].CA)
+	}
+	w, err := walletflow.New(walletflow.Config{
+		ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, IssuerRoots: f.env.IssuerRoots,
+		VerifierTrust: wallet.X5CVerifierRoots{Roots: roots}, Development: true,
+	}, walletflow.Dependencies{Keys: f.keys, Credentials: f.store, Provider: f.env.Provider, HTTP: f.env.HTTP})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := receive(t, f, w, walletflowtest.SDJWTConfigurationID)[0]
+	var last walletflow.StoredCredential
+	for _, v := range vs {
+		last = presentOnce(t, f, v, w, c.ID)
+	}
+	if n0, n1 := len(last.Copies[0].ShownTo), len(last.Copies[1].ShownTo); n0 != 2 || n1 != 2 {
+		t.Errorf("four Verifiers across two copies: shown to %d and %d, want 2 and 2", n0, n1)
 	}
 }

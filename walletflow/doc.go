@@ -47,10 +47,15 @@
 // to decide.
 //
 // When an issuer offers batch issuance, a credential arrives as several
-// copies (Config.BatchSize), each bound to its own key, and each
+// copies (Config.BatchSize), each bound to its own key. By default each
 // presentation uses a copy no Verifier has seen, so presentations can't
-// be linked by the credential. Once every copy has been presented, the
-// first is reused. With Config.RequestRefresh, the authorization code
+// be linked by the credential, not even by one Verifier; with
+// Config.CopyPolicy CopyPerVerifier, a Verifier is shown the copy it has
+// seen before, and only a new Verifier a new copy. Each copy records
+// which Verifiers saw it, as hashes of their client_ids
+// (StoredCredential.ShownTo). Once every copy has been presented, the
+// one shown to the fewest Verifiers is reused, which those Verifiers can
+// link. With Config.RequestRefresh, the authorization code
 // grant asks for a refresh token (offline_access), kept in a GrantStore,
 // and w.RefreshCredential(ctx, id) replaces a credential's copies with a
 // fresh batch without the holder (OpenID4VCI 1.0 §13.5); when it can't

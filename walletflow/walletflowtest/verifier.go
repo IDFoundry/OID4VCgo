@@ -26,8 +26,10 @@ type Verifier struct {
 	// anchor of its request-signing certificate.
 	Trust wallet.VerifierTrust
 	CA    *x509.Certificate
-	// Name is the common name of the Verifier's certificate.
-	Name string
+	// Name is the common name of the Verifier's certificate, and
+	// ClientID its client_id (x509_hash).
+	Name     string
+	ClientID string
 
 	txs *verifier.Transactions
 }
@@ -56,6 +58,7 @@ func (e *Env) StartVerifier() (started *Verifier, err error) {
 		SigningAlg: jose.ES256, EncValuesSupported: []jwe.Enc{jwe.A128GCM, jwe.A256GCM}, VPFormatsSupported: formats,
 	}, verifier.Dependencies{Signer: key, Random: rand.Reader})
 	must(err)
+	v.ClientID = vv.ClientID()
 	v.txs, err = verifier.NewTransactions(vv, storage.NewVerifierTransactionStore(), verifier.TransactionsConfig{
 		RequestURIBase: base + "/request-objects",
 		Verify: verifier.VerifyResponseRequest{
