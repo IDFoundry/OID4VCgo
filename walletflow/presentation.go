@@ -89,6 +89,8 @@ type Presentation struct {
 	req     wallet.AuthorizationRequest
 	queries []Query
 	byID    map[string]StoredCredential
+	// registration is the Verifier's, checked when it started.
+	registration Registration
 
 	mu       sync.Mutex
 	answered bool
@@ -128,6 +130,7 @@ func (w *Wallet) newPresentation(ctx context.Context, req wallet.AuthorizationRe
 		return nil, fmt.Errorf("walletflow: list credentials: %w", err)
 	}
 	p := &Presentation{w: w, req: req, byID: make(map[string]StoredCredential, len(stored))}
+	p.registration = p.checkRegistration(w.deps.Clock())
 	held := make([]wallet.HeldCredential, 0, len(stored))
 	byCredential := make(map[string]StoredCredential, len(stored))
 	for _, c := range stored {

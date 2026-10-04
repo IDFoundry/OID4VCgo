@@ -37,6 +37,13 @@ type Config struct {
 	// (OpenID4VP 1.0 §5.9.3). REQUIRED for StartPresentation.
 	VerifierTrust wallet.VerifierTrust
 
+	// RegistrarRoots, if set, are the registrars whose registrations of
+	// Verifiers the wallet checks (the registration package): a
+	// request's registration, from its verifier_info, is reported with
+	// what the request asks beyond it (Presentation.Registration).
+	// Unset, registrations are ignored.
+	RegistrarRoots *x509.CertPool
+
 	// Locales are the holder's preferred languages (BCP 47 tags, most
 	// preferred first), for the issuer's display metadata. None means
 	// the issuer's entry without a locale, else its first.

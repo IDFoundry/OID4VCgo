@@ -104,6 +104,11 @@ type AuthorizationRequest struct {
 	// the request's expected_origins listed it. ResponseURI and State
 	// are then empty.
 	Origin string
+
+	// VerifierInfo are the request's attestations about the Verifier
+	// (verifier_info, OpenID4VP 1.0 §5.11), unverified: check one
+	// before relying on it (registration.Verify, for a registration).
+	VerifierInfo []VerifierInfo
 }
 
 // RequestRejectedError is returned by ParseAuthorizationRequest when
@@ -177,6 +182,7 @@ type wireRequestObjectPayload struct {
 	ResponseType    string            `json:"response_type"`
 	ResponseMode    string            `json:"response_mode"`
 	ExpectedOrigins []string          `json:"expected_origins"`
+	VerifierInfo    json.RawMessage   `json:"verifier_info"`
 }
 
 // vpTokenResponseType is the only response_type either parser accepts:
@@ -305,11 +311,19 @@ func ParseAuthorizationRequest(params ParseAuthorizationRequestParams) (Authoriz
 			ResponseEncryptionKey: encPub, ResponseEncryptionKeyID: kid, ResponseEncryptionEnc: enc,
 		}
 	}
+	info, err := parseVerifierInfo(wire.VerifierInfo, wire.DCQLQuery)
+	if err != nil {
+		return AuthorizationRequest{}, &RequestRejectedError{
+			Code: "invalid_request", Description: err.Error(),
+			State: wire.State, ResponseURI: wire.ResponseURI,
+			ResponseEncryptionKey: encPub, ResponseEncryptionKeyID: kid, ResponseEncryptionEnc: enc,
+		}
+	}
 
 	return AuthorizationRequest{
 		ClientID: params.ClientID, ResponseURI: wire.ResponseURI, Nonce: wire.Nonce, State: wire.State,
 		Query: wire.DCQLQuery, VerifierCertificate: cert, ResponseEncryptionKey: encPub, ResponseEncryptionKeyID: kid,
-		ResponseEncryptionEnc: enc,
+		ResponseEncryptionEnc: enc, VerifierInfo: info,
 	}, nil
 }
 

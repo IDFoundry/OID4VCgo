@@ -118,6 +118,11 @@ func (v *Verifier) BuildDCAPIAuthorizationRequest(req BuildDCAPIAuthorizationReq
 	if req.State != "" {
 		payload["state"] = req.State
 	}
+	if info, err := v.verifierInfoFor(req.Query); err != nil {
+		return BuildDCAPIAuthorizationRequestResult{}, fmt.Errorf("verifier: build dc api authorization request: %w", err)
+	} else if info != nil {
+		payload["verifier_info"] = info
+	}
 
 	requestObject, err := v.signRequestObject(payload)
 	if err != nil {

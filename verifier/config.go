@@ -69,6 +69,12 @@ type Config struct {
 	// once set. REQUIRED, non-empty: a caller must state what it can
 	// actually verify, not leave the Wallet guessing.
 	VPFormatsSupported map[string]any
+
+	// VerifierInfo are attestations about this Verifier, such as its
+	// registration (the registration package), that every request it
+	// builds carries in verifier_info (OpenID4VP 1.0 §5.11). Optional:
+	// a Wallet may use them, and ignores a format it doesn't support.
+	VerifierInfo []VerifierInfo
 }
 
 // SDJWTVCFormatSupport builds Config.VPFormatsSupported's own
@@ -157,6 +163,9 @@ func New(cfg Config, deps Dependencies) (*Verifier, error) {
 	}
 	if len(cfg.VPFormatsSupported) == 0 {
 		return nil, fmt.Errorf("verifier: config: vp_formats_supported must be non-empty")
+	}
+	if err := validateVerifierInfo(cfg.VerifierInfo); err != nil {
+		return nil, fmt.Errorf("verifier: config: %w", err)
 	}
 	if deps.Signer == nil {
 		return nil, fmt.Errorf("verifier: dependencies: signer is required")

@@ -139,6 +139,11 @@ func (v *Verifier) BuildAuthorizationRequest(req BuildAuthorizationRequestReques
 	if req.WalletNonce != "" {
 		payload["wallet_nonce"] = req.WalletNonce
 	}
+	if info, err := v.verifierInfoFor(req.Query); err != nil {
+		return BuildAuthorizationRequestResult{}, fmt.Errorf("verifier: build authorization request: %w", err)
+	} else if info != nil {
+		payload["verifier_info"] = info
+	}
 
 	requestObject, err := v.signRequestObject(payload)
 	if err != nil {
