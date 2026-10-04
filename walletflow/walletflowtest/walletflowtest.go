@@ -196,7 +196,6 @@ func New(opts Options) (env *Env, err error) {
 		Grants: memstore.NewGrantStore(), Replay: memstore.NewReplayStore(), ClientKeys: clientKeys, Keys: accessKeys,
 		AccessTokens: e.accessTokens, Revocation: memstore.NewRevocationStore(), Clock: server.SystemClock{}, Random: rand.Reader,
 		ClientCertificateTrust: server.NoClientCertificateChainTrust{},
-		Audit:                  revocationAudit{e},
 		AttesterTrust: server.X5CAttesterChain{
 			TrustAnchors:  server.StaticAttesterTrustAnchors{Roots: e.Provider.Roots},
 			IssuerBinding: server.AttesterIssuerInCertificate,
@@ -441,25 +440,19 @@ func (e *Env) handleRevoke(w http.ResponseWriter, r *http.Request) {
 		server.NewError(server.ErrorInvalidRequest, http.StatusBadRequest, err.Error()).WriteJSON(w)
 		return
 	}
-	if err := e.srv.RevokeToken(r.Context(), req); err != nil {
+	result, err := e.srv.RevokeToken(r.Context(), req)
+	if err != nil {
 		server.WriteError(w, err)
 		return
 	}
-	w.WriteHeader(http.StatusOK)
-}
-
-// revocationAudit counts the refresh tokens the Authorization Server
-// actually revoked: it answers 200 for one it didn't too (RFC 7009
-// §2.2), auditing that as "not revoked".
-type revocationAudit struct{ e *Env }
-
-func (a revocationAudit) Record(_ context.Context, ev server.AuditEvent) error {
-	if ev.Type == server.AuditEventRevokeToken && ev.Outcome == server.AuditOutcomeSuccess && ev.Description != "not revoked" {
-		a.e.mu.Lock()
-		a.e.revocations++
-		a.e.mu.Unlock()
+	// The client gets the same 200 either way (RFC 7009 §2.2); only a
+	// token actually revoked counts.
+	if result.Revoked {
+		e.mu.Lock()
+		e.revocations++
+		e.mu.Unlock()
 	}
-	return nil
+	w.WriteHeader(http.StatusOK)
 }
 
 // Revocations is how many refresh tokens the Authorization Server has
