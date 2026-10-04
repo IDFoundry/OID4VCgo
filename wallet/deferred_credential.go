@@ -71,5 +71,8 @@ func (w *Wallet) RequestDeferredCredential(
 	if err != nil {
 		return CredentialResult{}, fmt.Errorf("wallet: request deferred credential: marshal request: %w", err)
 	}
-	return w.postCredentialResult(ctx, resource, endpoint, body, req.RequestEncryption, respDecryptKey, responseZip(req.ResponseEncryption), "request deferred credential")
+	return w.postCredentialResult(ctx, resource, endpoint, credentialPost{
+		body: body, reqEnc: req.RequestEncryption, respDecryptKey: respDecryptKey, respZip: responseZip(req.ResponseEncryption),
+		errPrefix: "request deferred credential",
+	})
 }
