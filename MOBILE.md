@@ -350,8 +350,11 @@ keeps credentials in a data-protected file store.
 - **Simulator limits:** it can't create a Secure Enclave key requiring
   user presence (OSStatus -25293), so the app requires it of holder keys
   only on a device. Persisted enclave keys work there, in an app.
-- **Still to prove on a device:** the Face ID prompt when presenting
-  (Phase 6), with a development team set in `project.yml`.
+- **On a device** (first run 2026-10-04, against the passport-vdc demo
+  through a tunnel, `run-device.sh`): receiving and presenting work, with
+  Secure Enclave holder keys requiring user presence. Face ID needs the
+  app's `NSFaceIDUsageDescription`: without it, iOS asks for the
+  passcode instead.
 - **SwiftUI and XCUITest:** the offer sheet must not treat its dismissal
   as cancelling a receive in progress, because the authorization session
   presents over it. A `Section`'s accessibility identifier overrides its

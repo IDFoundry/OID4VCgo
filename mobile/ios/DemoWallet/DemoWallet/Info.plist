@@ -35,6 +35,8 @@
 	<string>1</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Scans credential offer and presentation request QR codes.</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>Confirms it's you before your credentials' keys sign a presentation.</string>
 	<key>UILaunchScreen</key>
 	<dict/>
 	<key>UISupportedInterfaceOrientations</key>

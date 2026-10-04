@@ -33,6 +33,9 @@ targets:
         UILaunchScreen: {}
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
         NSCameraUsageDescription: Scans credential offer and presentation request QR codes.
+        # Without it, iOS asks for the passcode instead of Face ID when a
+        # holder key (Secure Enclave, user presence) signs.
+        NSFaceIDUsageDescription: Confirms it's you before your credentials' keys sign a presentation.
         CFBundleURLTypes:
           # The authorization redirect (RFC 8252 private-use scheme),
           # Credential Offer links, and presentation request links.
