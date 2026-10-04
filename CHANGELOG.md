@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.28.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.27.0...v0.28.0) (2026-10-04)
+
+
+### Features
+
+* **walletflow:** choose credential copies per presentation or per verifier ([321785a](https://github.com/IDFoundry/OID4VCgo/commit/321785a39ff60d5c4856c90f840856687152a156))
+* **walletflow:** report when presentations of a credential can be linked ([3f7a42e](https://github.com/IDFoundry/OID4VCgo/commit/3f7a42ee96536d8c53b398e89af19517cb390ec3))
+* **walletflow:** reuse the least-shown copy once every copy has been presented ([0743641](https://github.com/IDFoundry/OID4VCgo/commit/0743641a05fcf6ae48eb8aa084f3a7ad774a8bbb))
+
+
 ## [0.27.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.26.0...v0.27.0) (2026-10-04)
 
 
