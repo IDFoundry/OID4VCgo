@@ -20,10 +20,8 @@
 ### Bug Fixes
 
 * **dcql:** let credential sets that share a query each take one option ([db9afce](https://github.com/IDFoundry/OID4VCgo/commit/db9afce275578835c091dbc1b7c2824b1c7abe13))
-* **deps:** pin FAPIgo main 3e70d32, binding refresh tokens to the instance key ([102690b](https://github.com/IDFoundry/OID4VCgo/commit/102690b5301c5b6e055ca36974a231952cc4137b))
+* **deps:** pin FAPIgo v0.47.0, binding refresh tokens to the wallet instance key ([102690b](https://github.com/IDFoundry/OID4VCgo/commit/102690b5301c5b6e055ca36974a231952cc4137b))
 * **issuer:** keep the pre-authorized Token Response out of caches ([ff12994](https://github.com/IDFoundry/OID4VCgo/commit/ff12994eb49120624776286353e67795d32e4b3d))
-* **walletflow:** don't release a refresh grant an open issuance still uses ([67b81a2](https://github.com/IDFoundry/OID4VCgo/commit/67b81a2f492637102eadc36be1b613144c7d7ea4))
-* **walletflow:** keep a credential refreshable through a deferred issuance ([1fc0456](https://github.com/IDFoundry/OID4VCgo/commit/1fc0456eaf02a4cb725dc9c61c6ee7f6ee6afd7c))
 * **walletflow:** serialize credential changes, and check refresh grants ([6813e8d](https://github.com/IDFoundry/OID4VCgo/commit/6813e8d13c24d2766989d835126782522692da8a))
 
 ## [0.26.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.25.0...v0.26.0) (2026-10-03)
