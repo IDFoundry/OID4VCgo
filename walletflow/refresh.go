@@ -119,6 +119,9 @@ func (s *Issuance) grantFor() (string, error) {
 		return "", err
 	}
 	s.grantID = id
+	// In use while the issuance is open, whatever happens to the
+	// credentials it has stored so far.
+	s.w.holdGrant(id, true)
 	return id, nil
 }
 
@@ -355,11 +358,11 @@ func (w *Wallet) forgetRefusedGrant(ctx context.Context, g RefreshGrant) {
 	w.forgetGrant(ctx, cur)
 }
 
-// unusedGrant returns the grant id names when no stored credential or
-// pending deferred credential uses it, nil otherwise or when there's
-// none.
+// unusedGrant returns the grant id names when no stored credential,
+// pending deferred credential or open issuance uses it, nil otherwise or
+// when there's none.
 func (w *Wallet) unusedGrant(ctx context.Context, id string) (*RefreshGrant, error) {
-	if id == "" {
+	if id == "" || w.grantHeld(id) {
 		return nil, nil
 	}
 	creds, err := w.deps.Credentials.List(ctx)
@@ -386,26 +389,44 @@ func (w *Wallet) unusedGrant(ctx context.Context, id string) (*RefreshGrant, err
 	return &g, nil
 }
 
-// releaseGrant ends g, which nothing uses any more: it revokes the
-// refresh token (revokeGrant), then deletes the grant and its instance
-// key. configID is a configuration the grant was for.
-func (w *Wallet) releaseGrant(ctx context.Context, g RefreshGrant, configID string) error {
-	defer w.lockGrant(g.ID)()
-	w.revokeGrant(ctx, g, configID)
+// releaseUnusedGrant ends the grant grantID names once nothing uses it
+// — no stored or pending deferred credential, and no open issuance: it
+// revokes the refresh token (revokeGrant), then deletes the grant and
+// its instance key. It decides holding the grant's lock, on the grant as
+// it is then, so a refresh can't change it in between. configID is a
+// configuration the grant was for.
+func (w *Wallet) releaseUnusedGrant(ctx context.Context, grantID, configID string) error {
+	if grantID == "" {
+		return nil
+	}
+	defer w.lockGrant(grantID)()
+	g, err := w.unusedGrant(ctx, grantID)
+	if err != nil || g == nil {
+		return err
+	}
+	w.revokeGrant(ctx, *g, configID)
 	if err := w.deps.Grants.DeleteGrant(ctx, g.ID); err != nil {
 		return err
 	}
 	return w.deps.Keys.DeleteKey(ctx, g.InstanceKeyID)
 }
 
-// releaseUnusedGrant releases the grant grantID names once no stored or
-// pending deferred credential uses it.
-func (w *Wallet) releaseUnusedGrant(ctx context.Context, grantID, configID string) error {
-	g, err := w.unusedGrant(ctx, grantID)
-	if err != nil || g == nil {
-		return err
+// holdGrant marks grant id in use by an open issuance, or with held
+// false no longer.
+func (w *Wallet) holdGrant(id string, held bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if held {
+		w.openGrants[id] = true
+	} else {
+		delete(w.openGrants, id)
 	}
-	return w.releaseGrant(ctx, *g, configID)
+}
+
+func (w *Wallet) grantHeld(id string) bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.openGrants[id]
 }
 
 // revokeGrant asks the Authorization Server to revoke g's refresh token

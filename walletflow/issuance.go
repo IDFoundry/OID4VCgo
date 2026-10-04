@@ -780,9 +780,16 @@ func (s *Issuance) Close(ctx context.Context) error {
 	}
 	s.step = stepClosed
 	// The instance key stays with a refresh grant a stored credential
-	// uses: every refresh authenticates with it.
+	// uses: every refresh authenticates with it. A grant nothing uses
+	// once the issuance is done is released, revoking its token.
 	if s.instanceKey != nil && !s.grantStored {
 		errs = append(errs, s.w.deps.Keys.DeleteKey(ctx, s.instanceKey.ID()))
+	}
+	if s.grantID != "" && s.replace == "" {
+		s.w.holdGrant(s.grantID, false)
+		if s.grantStored && len(s.offer.CredentialConfigurationIDs) > 0 {
+			errs = append(errs, s.w.releaseUnusedGrant(ctx, s.grantID, s.offer.CredentialConfigurationIDs[0]))
+		}
 	}
 	if s.dpopKey != nil {
 		s.w.mu.Lock()

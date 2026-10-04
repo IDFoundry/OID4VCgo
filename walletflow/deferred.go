@@ -436,7 +436,7 @@ func (w *Wallet) KeysInUse(ctx context.Context) ([]string, error) {
 		named[p.GrantID] = true
 	}
 	for _, g := range grants {
-		if !named[g.ID] {
+		if !named[g.ID] && !w.grantHeld(g.ID) {
 			// Left by a deletion or an issuance that failed part way:
 			// nothing can use it.
 			w.forgetGrant(ctx, g)

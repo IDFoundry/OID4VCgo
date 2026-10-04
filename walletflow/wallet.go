@@ -106,7 +106,11 @@ type Wallet struct {
 	mu       sync.Mutex
 	deferred map[string]*Deferred // the pending ones handed out, by ID
 	liveDPoP map[string]bool      // DPoP keys open issuances hold
-	authMu   sync.Mutex           // serializes consuming authorizations
+	// openGrants are the refresh grants open issuances hold, by ID: in
+	// use until the issuance closes, however many credentials are stored
+	// yet.
+	openGrants map[string]bool
+	authMu     sync.Mutex // serializes consuming authorizations
 	// credMu serializes reading, changing and writing back a stored
 	// credential: choosing and marking the copies a presentation uses,
 	// recording a status, replacing a refreshed one, deleting one. It's
@@ -162,7 +166,7 @@ func New(cfg Config, deps Dependencies) (*Wallet, error) {
 	}
 	return &Wallet{
 		cfg: cfg, deps: deps, core: core, deferred: map[string]*Deferred{}, liveDPoP: map[string]bool{},
-		grantLocks: map[string]*sync.Mutex{},
+		openGrants: map[string]bool{}, grantLocks: map[string]*sync.Mutex{},
 	}, nil
 }
 
@@ -196,39 +200,34 @@ func (w *Wallet) Credentials(ctx context.Context) ([]StoredCredential, error) {
 // standing grant ends with it; then the grant and its instance key are
 // deleted.
 func (w *Wallet) DeleteCredential(ctx context.Context, id string) error {
-	c, g, err := w.deleteCredential(ctx, id)
-	if err != nil || g == nil {
+	c, err := w.deleteCredential(ctx, id)
+	if err != nil {
 		return err
 	}
-	if err := w.releaseGrant(ctx, *g, c.ConfigurationID); err != nil {
+	if err := w.releaseUnusedGrant(ctx, c.GrantID, c.ConfigurationID); err != nil {
 		return fmt.Errorf("walletflow: delete credential's refresh grant: %w", err)
 	}
 	return nil
 }
 
 // deleteCredential deletes the credential id names and its copies'
-// keys, and returns it, with its refresh grant when no other credential
-// uses it.
-func (w *Wallet) deleteCredential(ctx context.Context, id string) (StoredCredential, *RefreshGrant, error) {
+// keys, and returns it.
+func (w *Wallet) deleteCredential(ctx context.Context, id string) (StoredCredential, error) {
 	w.credMu.Lock()
 	defer w.credMu.Unlock()
 	c, err := w.deps.Credentials.Get(ctx, id)
 	if err != nil {
-		return StoredCredential{}, nil, fmt.Errorf("walletflow: delete credential: %w", err)
+		return StoredCredential{}, fmt.Errorf("walletflow: delete credential: %w", err)
 	}
 	if err := w.deps.Credentials.Delete(ctx, id); err != nil {
-		return StoredCredential{}, nil, fmt.Errorf("walletflow: delete credential: %w", err)
+		return StoredCredential{}, fmt.Errorf("walletflow: delete credential: %w", err)
 	}
 	for _, cp := range c.AllCopies() {
 		if err := w.deps.Keys.DeleteKey(ctx, cp.HolderKeyID); err != nil {
-			return StoredCredential{}, nil, fmt.Errorf("walletflow: delete credential's holder key: %w", err)
+			return StoredCredential{}, fmt.Errorf("walletflow: delete credential's holder key: %w", err)
 		}
 	}
-	g, err := w.unusedGrant(ctx, c.GrantID)
-	if err != nil {
-		return StoredCredential{}, nil, fmt.Errorf("walletflow: delete credential's refresh grant: %w", err)
-	}
-	return c, g, nil
+	return c, nil
 }
 
 // checkIssuance reports what StartIssuance needs that w lacks.

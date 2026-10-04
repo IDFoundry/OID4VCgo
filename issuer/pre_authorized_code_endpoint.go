@@ -99,7 +99,10 @@ type ExchangePreAuthorizedCodeResult struct {
 	// RefreshToken, set by the caller before WriteJSON, is the Token
 	// Response's refresh_token: one the Authorization Server issued for
 	// this grant, so the Wallet can refresh its credentials (OpenID4VCI
-	// 1.0 §13.5). Empty: none.
+	// 1.0 §13.5). Empty: none. It's optional: if issuing one fails,
+	// write the response without it — the pre-authorized code is
+	// redeemed already, so failing the response would leave the Wallet
+	// with nothing.
 	RefreshToken fapi.Secret
 }
 
@@ -113,6 +116,8 @@ func (r ExchangePreAuthorizedCodeResult) WriteJSON(w http.ResponseWriter) {
 	if r.NextDPoPNonce != "" {
 		w.Header().Set("DPoP-Nonce", r.NextDPoPNonce)
 	}
+	// It carries tokens: never cached (RFC 6749 §5.1).
+	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(struct { //nolint:gosec // the actual §6.2 Token Response body, meant to carry this
