@@ -91,3 +91,31 @@ func TestProductionAssurance(t *testing.T) {
 		}
 	}
 }
+
+// durableGrants is a MemoryGrantStore claiming to be Durable.
+type durableGrants struct{ *MemoryGrantStore }
+
+func (durableGrants) Durable() bool { return true }
+
+// At production assurance, asking for refresh tokens needs a durable
+// GrantStore: a refresh token kept only in memory is lost on a restart.
+func TestProductionAssurance_RefreshNeedsDurableGrants(t *testing.T) {
+	deps := Dependencies{
+		Keys: durableKeyStore{NewMemoryKeyStore()}, Credentials: NewMemoryCredentialStore(),
+		Provider: attestingProvider{}, Authorizations: durableAuthorizations{NewMemoryAuthorizationStore()},
+	}
+	refreshing := func(deps Dependencies) *Wallet {
+		w, err := New(Config{ClientID: "wallet", RedirectURI: "https://wallet.example/cb", IssuerRoots: x509.NewCertPool(), RequestRefresh: true}, deps)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return w
+	}
+	if err := refreshing(deps).checkIssuance(); err == nil || !strings.Contains(err.Error(), "Durable Dependencies.Grants") {
+		t.Errorf("with a memory GrantStore: checkIssuance = %v", err)
+	}
+	deps.Grants = durableGrants{NewMemoryGrantStore()}
+	if err := refreshing(deps).checkIssuance(); err != nil {
+		t.Errorf("with a durable GrantStore: checkIssuance = %v", err)
+	}
+}

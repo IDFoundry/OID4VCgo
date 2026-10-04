@@ -35,6 +35,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"sync"
 	"time"
 
@@ -139,7 +140,8 @@ type Env struct {
 	vct          string
 
 	mu            sync.Mutex
-	revoked       []uint8 // the status list, one entry per credential issued
+	grantIDs      []string // every authorization code grant's, for RevokeGrants
+	revoked       []uint8  // the status list, one entry per credential issued
 	publisher     *statuslist.Publisher
 	closers       []func()
 	deferAll      bool
@@ -170,6 +172,9 @@ func New(opts Options) (env *Env, err error) {
 	}
 	asCfg.Assurance = server.AssuranceDevelopment
 	asCfg.Limits.MaxClientAttestationLifetime = time.Hour
+	// A wallet asking for offline_access gets a refresh token, to refresh
+	// its credentials (OpenID4VCI 1.0 §13.5).
+	asCfg.Limits.RefreshTokenLifetime = time.Hour
 	asCfg.AdditionalGrantTypes = []string{preAuthorizedCodeGrantType}
 	clientCfg := haip.RecommendedWalletClient(fapi.ClientID(ClientID), ProviderIssuer)
 	// A wallet is a native app: its redirect URIs may be private-use
@@ -179,7 +184,7 @@ func New(opts Options) (env *Env, err error) {
 	for _, u := range opts.RedirectURIs {
 		clientCfg.RedirectURIs = append(clientCfg.RedirectURIs, fapi.RegisteredRedirectURI(u))
 	}
-	clientCfg.AllowedScopes = []string{SDJWTConfigurationID, MdocConfigurationID}
+	clientCfg.AllowedScopes = []string{SDJWTConfigurationID, MdocConfigurationID, "offline_access"}
 	client, err := storage.NewRegisteredClient(clientCfg)
 	must(err)
 	clientKeys, err := ephemeral.NewClientKeySource(nil, nil)
@@ -425,6 +430,17 @@ func (e *Env) withStatus(_ context.Context, c *issuer.CredentialInstance) error 
 
 // Revoke revokes every credential issued so far: the status list then
 // says so.
+// RevokeGrants revokes every authorization code grant so far: their
+// refresh tokens are then refused (invalid_grant).
+func (e *Env) RevokeGrants() {
+	e.mu.Lock()
+	ids := slices.Clone(e.grantIDs)
+	e.mu.Unlock()
+	for _, id := range ids {
+		must(e.srv.RevokeGrant(context.Background(), id))
+	}
+}
+
 func (e *Env) Revoke() {
 	e.mu.Lock()
 	for i := range e.revoked {
@@ -528,9 +544,13 @@ func (e *Env) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid authentication context", http.StatusInternalServerError)
 		return
 	}
+	grantID := rand.Text()
+	e.mu.Lock()
+	e.grantIDs = append(e.grantIDs, grantID)
+	e.mu.Unlock()
 	done, err := e.srv.CompleteAuthorization(r.Context(), server.CompleteAuthorizationRequest{
 		Handle: interaction.Handle,
-		Result: server.Authorize(subject, authCtx, server.GrantedAuthorization{Scope: interaction.Interaction.Scope}),
+		Result: server.Authorize(subject, authCtx, server.GrantedAuthorization{Scope: interaction.Interaction.Scope, GrantID: grantID}),
 	})
 	if err != nil {
 		http.Error(w, "failed to complete authorization", http.StatusInternalServerError)
@@ -555,6 +575,13 @@ func (e *Env) handleToken(w http.ResponseWriter, r *http.Request) {
 	switch req.GrantType() {
 	case "authorization_code":
 		result, err := e.srv.ExchangeAuthorizationCode(ctx, req.AuthorizationCodeExchange())
+		if err != nil {
+			server.WriteError(w, err)
+			return
+		}
+		result.WriteJSON(w)
+	case "refresh_token":
+		result, err := e.srv.RefreshAccessToken(ctx, req.RefreshToken())
 		if err != nil {
 			server.WriteError(w, err)
 			return
