@@ -3,6 +3,7 @@ package walletflow_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/idfoundry/oid4vcgo/wallet"
@@ -221,5 +222,34 @@ func TestRefreshCredential_GrantChecks(t *testing.T) {
 	}
 	if _, err := grants.GetGrant(ctx, g.ID); err != nil {
 		t.Errorf("the grant in use was forgotten: %v", err)
+	}
+}
+
+// A refresh token is bound to the wallet instance key it was issued
+// with (draft-ietf-oauth-attestation-based-client-auth-07 §10.3): an
+// attestation for another instance key of the same wallet can't redeem
+// it.
+func TestRefreshCredential_BoundToTheInstanceKey(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t, walletflowtest.Options{})
+	grants := walletflow.NewMemoryGrantStore()
+	w := f.newRefreshingWallet(t, nil, grants)
+	c := receive(t, f, w, walletflowtest.SDJWTConfigurationID)[0]
+	g, err := grants.GetGrant(ctx, c.GrantID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := f.keys.NewKey(ctx, walletflow.KeyPurposeInstance)
+	if err != nil {
+		t.Fatal(err)
+	}
+	moved := g
+	moved.InstanceKeyID = other.ID()
+	if err := grants.PutGrant(ctx, moved); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = w.RefreshCredential(ctx, c.ID)
+	if !errors.Is(err, walletflow.ErrReissueRequired) || !strings.Contains(err.Error(), "another client instance") {
+		t.Fatalf("RefreshCredential with another instance key = %v, want the server's invalid_grant", err)
 	}
 }
