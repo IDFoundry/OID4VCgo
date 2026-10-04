@@ -221,6 +221,22 @@ review page (https://127.0.0.1:8543/review), then click **Check now**
 in the wallet: an approved credential is stored, a denied one is
 dropped. The CLI wallet waits, polling, until you decide.
 
+**Optional: keep for refresh.** Tick **Keep for refresh (24 hours)**
+when uploading, in either flow. A wallet that asks for a refresh token
+(the iOS demo app does; `offline_access`, OID4VCI 1.0 §13.5) gets one,
+and can then fetch fresh copies of the credentials without the holder:
+the issuer keeps the passport's data, in memory, for 24 hours after it
+first issues a credential, issuing again on each request. The app does
+so by itself once every copy of a credential has been shared. The
+issuer deletes the data at that deadline, as soon as the wallet deletes
+the credentials (it revokes the refresh token, RFC 7009), or when you
+**Forget now** on the kept passports page
+(https://127.0.0.1:8543/kept); the wallet's next refresh is then
+refused, and the app says to receive the credential again. Without the
+option, a wallet asking for a refresh token gets none, and the data is
+deleted once the credentials are issued. It can't be combined with
+**Hold for an operator's review**.
+
 **4. Revoke.** On the issuer, open **Issued credentials and revocation**
 (https://127.0.0.1:8543/status) and **Revoke** one credential. Verify
 again sharing that format: the verifier rejects it as revoked, while
@@ -357,8 +373,8 @@ demo verifier's `response_uri`, though, must be `https`.
 | Upload | `POST /passport` | gmrtd verification → a transaction T holding the `Evidence` (in memory, 10 minutes, at most 100 at once) → a credential offer with `issuer_state` = T, as a link and a QR code, and a six-digit confirmation code |
 | PAR | `POST /par` | fapigo verifies the Wallet Attestation (its `x5c` chain to the Wallet Provider CA) + PoP and DPoP; the Wallet sends the offer's `issuer_state` (T) |
 | Approve | `GET /authorize`, `POST /authorize/decision` | reads T back from the interaction request's `issuer_state`, seals the interaction (handle and request) into an encrypted cookie on this browser (fapigo's `interactioncookie`), then asks for the confirmation code (the page shows no passport data). The decision is read back from that cookie, so it can't name another offer, and only that browser can submit it; a cross-origin post is refused. Approval with the right code **claims T** — no other authorization can reach it — and authorizes **subject = T**, granting the scopes the wallet requested |
-| Token | `POST /token` | DPoP-bound access token with `sub` = T |
-| Credential | `POST /nonce`, `POST /credential` | the request and response are both encrypted (OID4VCI 1.0 §10, required by the issuer's metadata: the credential carries passport data); the token's `sub` finds T's `Evidence`; the requested configuration (`passport_mdoc` or `passport_sdjwt`), if not already issued for T, is encoded, bound to the key the Key Attestation attests, given its own random index in the issuer's Token Status List, and signed; once both are issued, T and its passport data are dropped. The wallet checks each credential before keeping it: issuer signature chaining to `issuer-ca.pem`, bound to its own holder key, and the offered vct or doctype |
+| Token | `POST /token` | DPoP-bound access token with `sub` = T; for a passport kept for refresh whose wallet asked for `offline_access`, a refresh token too (grant ID T, lasting 24 hours), which the `refresh_token` grant redeems for another access token for T |
+| Credential | `POST /nonce`, `POST /credential` | the request and response are both encrypted (OID4VCI 1.0 §10, required by the issuer's metadata: the credential carries passport data); the token's `sub` finds T's `Evidence`; the requested configuration (`passport_mdoc` or `passport_sdjwt`), if not already issued for T, is encoded, bound to the key the Key Attestation attests, given its own random index in the issuer's Token Status List, and signed; once both are issued, T and its passport data are dropped — or, kept for refresh, T is issued again on each request until 24 hours after its first credential, or until the wallet revokes its refresh token at `POST /revoke` or T is forgotten on `/kept`. The wallet checks each credential before keeping it: issuer signature chaining to `issuer-ca.pem`, bound to its own holder key, and the offered vct or doctype |
 | Notify | `POST /notification` | the wallet reports each credential it kept as `credential_accepted`, or one that failed its checks as `credential_failure` (OID4VCI 1.0 §11); the status page lists what the wallets reported |
 
 Also served: `/.well-known/openid-credential-issuer` (signed metadata),

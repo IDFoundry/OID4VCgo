@@ -44,6 +44,9 @@ print(json.dumps({
         "issuer_roots": (state / "issuer-ca.pem").read_text(),
         "verifier_roots": (state / "verifier-ca.pem").read_text(),
         "development": True,
+        # Credentials from a passport kept for refresh come with a
+        # refresh token, so the app can fetch fresh copies.
+        "request_refresh": True,
     },
     "provider_url": "https://127.0.0.1:6443",
 }))

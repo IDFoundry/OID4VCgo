@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"net/http"
 
@@ -78,10 +79,19 @@ func (a *App) handleToken(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		result.WriteJSON(w)
+	case "refresh_token":
+		// A passport kept for refresh: a new access token for the same
+		// transaction, while it's kept.
+		result, err := a.server.RefreshAccessToken(r.Context(), req.RefreshToken())
+		if err != nil {
+			server.WriteError(w, err)
+			return
+		}
+		result.WriteJSON(w)
 	case preAuthorizedCodeGrantType:
 		a.handlePreAuthorizedToken(w, r, req)
 	default:
-		server.NewError(server.ErrorUnsupportedGrantType, http.StatusBadRequest, "grant_type must be authorization_code or "+preAuthorizedCodeGrantType).WriteJSON(w)
+		server.NewError(server.ErrorUnsupportedGrantType, http.StatusBadRequest, "grant_type must be authorization_code, refresh_token or "+preAuthorizedCodeGrantType).WriteJSON(w)
 	}
 }
 
@@ -125,8 +135,38 @@ func (a *App) handlePreAuthorizedToken(w http.ResponseWriter, r *http.Request, r
 		issuerError(w, err)
 		return
 	}
+	// A passport kept for refresh gets a refresh token too, under the
+	// transaction ID as its grant's ID, as handleDecision grants one.
+	// Without one the wallet still gets its credentials, and the
+	// passport is dropped once they're issued.
+	if a.transactions.keeps(result.Subject) {
+		if result.RefreshToken, err = a.issuePreAuthorizedRefreshToken(ctx, attested, binding, result); err != nil {
+			a.transactions.dontKeep(result.Subject)
+		}
+	}
 	w.Header().Set("Cache-Control", "no-store")
 	result.WriteJSON(w)
+}
+
+// issuePreAuthorizedRefreshToken issues a refresh token for a redeemed
+// pre-authorized code, granting what the code did.
+func (a *App) issuePreAuthorizedRefreshToken(ctx context.Context, attested server.AttestedClient, binding server.TokenBinding, result issuer.ExchangePreAuthorizedCodeResult) (fapi.Secret, error) {
+	subject, err := server.NewSubjectID(result.Subject)
+	if err != nil {
+		return fapi.Secret{}, err
+	}
+	details := make([]json.RawMessage, 0, len(result.AuthorizationDetails))
+	for _, d := range result.AuthorizationDetails {
+		raw, err := json.Marshal(d)
+		if err != nil {
+			return fapi.Secret{}, err
+		}
+		details = append(details, raw)
+	}
+	return a.server.IssueRefreshToken(ctx, server.IssueRefreshTokenRequest{
+		GrantType: preAuthorizedCodeGrantType, Client: attested, Binding: binding, Subject: subject,
+		Scope: result.Scope, AuthorizationDetails: details, GrantID: result.Subject,
+	})
 }
 
 // issuerError writes an issuer token error, or a 500 for anything else.

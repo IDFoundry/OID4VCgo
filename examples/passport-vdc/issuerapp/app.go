@@ -89,7 +89,7 @@ func New(cfg Config) (*App, error) {
 		return nil, err
 	}
 	a.vct = cfg.IssuerURL + VCTPath
-	a.transactions = newTransactions(a.now, cfg.transactionLifetime(), cfg.maxTransactions())
+	a.transactions = newTransactions(a.now, cfg.transactionLifetime(), KeepForRefresh, cfg.maxTransactions())
 	a.statusListURI = cfg.IssuerURL + StatusListPath
 	if a.statusList, err = a.loadStatusList(); err != nil {
 		return nil, err
@@ -148,8 +148,8 @@ func (a *App) endpoint(path string) (fapi.URL, error) {
 }
 
 func (a *App) buildAuthorizationServer() error {
-	var par, authorize, token, jwks fapi.URL
-	for path, dst := range map[string]*fapi.URL{"/par": &par, "/authorize": &authorize, "/token": &token, "/jwks": &jwks} {
+	var par, authorize, token, jwks, revoke fapi.URL
+	for path, dst := range map[string]*fapi.URL{"/par": &par, "/authorize": &authorize, "/token": &token, "/jwks": &jwks, "/revoke": &revoke} {
 		u, err := a.endpoint(path)
 		if err != nil {
 			return err
@@ -178,9 +178,12 @@ func (a *App) buildAuthorizationServer() error {
 		return fmt.Errorf("issuerapp: %w", err)
 	}
 	cfg.Issuer = a.issuerURL
-	cfg.Endpoints = server.Endpoints{Authorization: authorize, Token: token, PushedAuthorizationRequest: par, JWKS: jwks}
+	cfg.Endpoints = server.Endpoints{Authorization: authorize, Token: token, PushedAuthorizationRequest: par, JWKS: jwks, Revocation: revoke}
 	cfg.Assurance = server.AssuranceDevelopment
 	cfg.Limits.MaxClientAttestationLifetime = 24 * time.Hour
+	// A passport kept for refresh gives the wallet a refresh token
+	// lasting as long as the passport is kept (OfferOptions.KeepForRefresh).
+	cfg.Limits.RefreshTokenLifetime = KeepForRefresh
 	a.tokenLifetime = cfg.Limits.AccessTokenLifetime
 	// The approval step's state — the interaction handle and request —
 	// travels sealed in the browser's cookie, under a key per process:
@@ -240,7 +243,9 @@ func (a *App) registerWallet() (*memstore.ClientRepository, *ephemeral.ClientKey
 		redirects[i] = fapi.RegisteredRedirectURI(u)
 	}
 	clientCfg := haip.RecommendedWalletClient(fapi.ClientID(w.ClientID), w.ProviderIssuer)
-	clientCfg.RedirectURIs, clientCfg.AllowedScopes = redirects, []string{MdocScope, SDJWTScope}
+	// offline_access asks for a refresh token, granted only for a
+	// passport kept for refresh (handleDecision).
+	clientCfg.RedirectURIs, clientCfg.AllowedScopes = redirects, []string{MdocScope, SDJWTScope, offlineAccessScope}
 	// The demo's wallets are native apps — the CLI wallet (a loopback
 	// redirect), the iOS demo app (a private-use scheme) — and the web
 	// wallet (https), which a native registration allows too (RFC 8252).

@@ -108,6 +108,7 @@ final class WalletModel {
             await resumeDeferred()
             await refresh()
             await checkAllStatuses()
+            await refreshUsedUp()
         }
     }
 
@@ -245,6 +246,7 @@ final class WalletModel {
             endPresentation()
             // A copy of each shared credential is used up.
             await refresh()
+            await refreshUsedUp()
             if let url = presented.redirectURI, url.scheme == "https" { await UIApplication.shared.open(url) }
         } catch {
             phase = .failed(Self.describe(error))
@@ -539,6 +541,28 @@ final class WalletModel {
             await refresh()
         } catch {
             notice = "Couldn't refresh the copies: " + Self.describe(error)
+        }
+    }
+
+    /// Refreshes, without the holder, each credential that has a refresh
+    /// token and no unused copy left — after a presentation, and at
+    /// launch — so the next verifier gets a fresh copy rather than one
+    /// another verifier has seen. Quietly: one that fails for now is
+    /// tried again next time; one that can't be refreshed any more says
+    /// so, and isn't refreshable after that.
+    private func refreshUsedUp() async {
+        guard let wallet else { return }
+        for c in credentials where c.refreshable && c.copiesLeft == 0 {
+            do {
+                let refreshed = try await wallet.refreshCredential(id: c.id)
+                if let i = credentials.firstIndex(where: { $0.id == c.id }) { credentials[i] = refreshed.credential }
+                if let deferred = refreshed.deferred { track(deferred) }
+            } catch let e as WalletError where e.code == .reissueRequired {
+                notice = "Every copy of a credential has been shared, and it can't be refreshed any more: receive it again from the issuer."
+                await refresh()
+            } catch {
+                continue
+            }
         }
     }
 

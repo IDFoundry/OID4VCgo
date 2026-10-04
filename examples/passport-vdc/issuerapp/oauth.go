@@ -5,6 +5,7 @@ import (
 	"errors"
 	"html/template"
 	"net/http"
+	"slices"
 
 	"github.com/idfoundry/fapigo/extension"
 	"github.com/idfoundry/fapigo/server"
@@ -175,7 +176,7 @@ func (a *App) handleDecision(w http.ResponseWriter, r *http.Request) {
 			writeHTMLError(w, http.StatusInternalServerError, "invalid authentication context")
 			return
 		}
-		result = server.Authorize(subject, authCtx, server.GrantedAuthorization{Scope: pending.scopes})
+		result = server.Authorize(subject, authCtx, a.grantFor(pending))
 	case "deny":
 		result = server.Deny("the holder declined")
 	default:
@@ -198,6 +199,28 @@ func (a *App) handleDecision(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeHTMLError(w, http.StatusInternalServerError, "unrecognized authorization result")
 	}
+}
+
+// offlineAccessScope asks for a refresh token (OpenID Connect Core 1.0
+// §11), which this issuer grants for a passport kept for refresh.
+const offlineAccessScope = "offline_access"
+
+// grantFor is what approving pending grants: the scopes it requested —
+// with offline_access, and so a refresh token, only for a passport kept
+// for refresh — under the transaction ID as the grant's ID, so the
+// wallet revoking the refresh token drops the passport too
+// (handleTokenRevocation). A kept passport whose wallet asked for no
+// refresh token isn't kept after all.
+func (a *App) grantFor(pending pendingInteraction) server.GrantedAuthorization {
+	keep := a.transactions.keeps(pending.txID)
+	refresh := slices.Contains(pending.scopes, offlineAccessScope)
+	if keep && !refresh {
+		a.transactions.dontKeep(pending.txID)
+	}
+	if !keep || !refresh {
+		return server.GrantedAuthorization{Scope: slices.DeleteFunc(slices.Clone(pending.scopes), func(s string) bool { return s == offlineAccessScope })}
+	}
+	return server.GrantedAuthorization{Scope: pending.scopes, GrantID: pending.txID}
 }
 
 // claimTransaction redeems pending's transaction with code. On a wrong
