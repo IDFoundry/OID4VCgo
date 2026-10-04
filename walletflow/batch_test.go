@@ -2,6 +2,7 @@ package walletflow_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -140,5 +141,53 @@ func TestBatch_Deferred(t *testing.T) {
 	}
 	if f.keys.Len() != 3 {
 		t.Errorf("keys held = %d, want the 3 copies' keys", f.keys.Len())
+	}
+}
+
+// Two presentations open at once each present a copy the other doesn't:
+// copies are chosen from the store when answering, not when the request
+// arrived. A response refused before it's sent leaves its copy unused.
+func TestBatch_ConcurrentPresentationsUseDistinctCopies(t *testing.T) {
+	f := newFixture(t, walletflowtest.Options{BatchSize: 3})
+	v := f.env.StartVerifier(t)
+	w := f.newWalletTrusting(t, f.env.IssuerRoots, v.Trust)
+	c := receive(t, f, w, walletflowtest.SDJWTConfigurationID)[0]
+	ctx := context.Background()
+	start := func() *walletflow.Presentation {
+		_, link := v.Begin(t, dcql.Query{Credentials: []dcql.CredentialQuery{f.env.SDJWTQuery(t, "pid", "given_name")}})
+		p, err := w.StartPresentation(ctx, link)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	p1, p2 := start(), start()
+	if _, err := p2.Respond(ctx, walletflow.Selection{"pid": {c.ID, c.ID}}); !errors.Is(err, walletflow.ErrInvalidSelection) {
+		t.Fatalf("Respond with the credential twice = %v, want ErrInvalidSelection", err)
+	}
+	// Refused after its copy was reserved: the copy is released.
+	if _, err := p2.Respond(ctx, walletflow.Selection{"other": {c.ID}}); !errors.Is(err, walletflow.ErrInvalidSelection) {
+		t.Fatalf("Respond for an unknown query = %v, want ErrInvalidSelection", err)
+	}
+	if kept, _ := w.Credentials(ctx); len(kept) != 1 || kept[0].CopiesLeft() != 3 {
+		t.Fatalf("after a refused response: %+v; want every copy unused", kept)
+	}
+	for _, p := range []*walletflow.Presentation{p1, p2} {
+		if _, err := p.Respond(ctx, walletflow.Selection{"pid": {c.ID}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	stored, err := w.Credentials(ctx)
+	if err != nil || len(stored) != 1 {
+		t.Fatal(stored, err)
+	}
+	presented := 0
+	for _, cp := range stored[0].Copies {
+		if cp.Presented {
+			presented++
+		}
+	}
+	if presented != 2 || stored[0].CopiesLeft() != 1 {
+		t.Errorf("%d copies presented, %d left; want 2 distinct presented and 1 left", presented, stored[0].CopiesLeft())
 	}
 }

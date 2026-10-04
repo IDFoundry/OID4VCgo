@@ -127,3 +127,99 @@ func TestRefreshCredential_ReissueRequired(t *testing.T) {
 		}
 	})
 }
+
+// deletingStore deletes the credential victim the second time it's read,
+// as the holder deleting it while it's refreshed: the refresh reads it
+// when it starts, then again to replace it.
+type deletingStore struct {
+	*walletflow.MemoryCredentialStore
+	victim string
+	reads  int
+}
+
+func (s *deletingStore) Get(ctx context.Context, id string) (walletflow.StoredCredential, error) {
+	if id == s.victim {
+		if s.reads++; s.reads == 2 {
+			_ = s.Delete(ctx, id)
+		}
+	}
+	return s.MemoryCredentialStore.Get(ctx, id)
+}
+
+// A credential deleted while it's refreshed stays deleted: the new
+// copies, and their keys, aren't kept.
+func TestRefreshCredential_DeletedMeanwhile(t *testing.T) {
+	f := newFixture(t, walletflowtest.Options{BatchSize: 2})
+	grants := walletflow.NewMemoryGrantStore()
+	store := &deletingStore{MemoryCredentialStore: walletflow.NewMemoryCredentialStore()}
+	w, err := walletflow.New(walletflow.Config{
+		ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, IssuerRoots: f.env.IssuerRoots,
+		Development: true, RequestRefresh: true,
+	}, walletflow.Dependencies{Keys: f.keys, Credentials: store, Provider: f.env.Provider, HTTP: f.env.HTTP, Grants: grants})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := receive(t, f, w, walletflowtest.SDJWTConfigurationID)[0]
+	keysBefore := f.keys.Len()
+	store.victim = c.ID
+	ctx := context.Background()
+	if _, _, err := w.RefreshCredential(ctx, c.ID); !errors.Is(err, walletflow.ErrNotFound) {
+		t.Fatalf("RefreshCredential = %v, want ErrNotFound", err)
+	}
+	if left, _ := store.List(ctx); len(left) != 0 {
+		t.Errorf("credentials after the refresh = %d, want the deletion to stand", len(left))
+	}
+	if f.keys.Len() != keysBefore {
+		t.Errorf("keys = %d, want %d: the new copies' keys deleted", f.keys.Len(), keysBefore)
+	}
+}
+
+// A refresh grant is only used for its own issuer, and only at an
+// Authorization Server the issuer lists; one no credential uses is
+// forgotten.
+func TestRefreshCredential_GrantChecks(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t, walletflowtest.Options{})
+	grants := walletflow.NewMemoryGrantStore()
+	w := f.newRefreshingWallet(t, nil, grants)
+	c := receive(t, f, w, walletflowtest.SDJWTConfigurationID)[0]
+	g, err := grants.GetGrant(ctx, c.GrantID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, change := range map[string]func(*walletflow.RefreshGrant){
+		"another issuer's":                 func(g *walletflow.RefreshGrant) { g.CredentialIssuer = "https://other.example" },
+		"an authorization server unlisted": func(g *walletflow.RefreshGrant) { g.AuthorizationServer = "https://as.other.example" },
+	} {
+		changed := g
+		change(&changed)
+		if err := grants.PutGrant(ctx, changed); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := w.RefreshCredential(ctx, c.ID); !errors.Is(err, walletflow.ErrReissueRequired) {
+			t.Errorf("with %s grant: RefreshCredential = %v, want ErrReissueRequired", name, err)
+		}
+	}
+	if err := grants.PutGrant(ctx, g); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := w.RefreshCredential(ctx, c.ID); err != nil {
+		t.Fatalf("with the grant restored: %v", err)
+	}
+
+	// A grant nothing uses, as a failed issuance or deletion leaves.
+	orphan := g
+	orphan.ID, orphan.InstanceKeyID = "orphan", "orphan-key"
+	if err := grants.PutGrant(ctx, orphan); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.KeysInUse(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := grants.GetGrant(ctx, "orphan"); !errors.Is(err, walletflow.ErrNotFound) {
+		t.Errorf("an orphaned grant survived KeysInUse: %v", err)
+	}
+	if _, err := grants.GetGrant(ctx, g.ID); err != nil {
+		t.Errorf("the grant in use was forgotten: %v", err)
+	}
+}

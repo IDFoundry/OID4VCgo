@@ -164,7 +164,7 @@ refresh must authenticate with again.
 | Method | Result |
 |---|---|
 | `Credentials()` | `{"credentials": [summary]}` |
-| `HolderKeyIDs()` | `{"key_ids": [...]}`: the keys the wallet still needs: the credentials' holder keys, each pending deferred credential's holder and DPoP keys, and each refresh grant's wallet instance key. Any other key in the KeyStore, at launch before any issuance, is an orphan to delete |
+| `HolderKeyIDs()` | `{"key_ids": [...]}`: the keys the wallet still needs: the credentials' holder keys, each pending deferred credential's holder and DPoP keys, and each refresh grant's wallet instance key. A refresh grant no credential uses is forgotten, with its key. Any other key in the KeyStore, at launch before any issuance or refresh, is an orphan to delete |
 | `Deferred()` | `{"deferred": [pending]}`: the credentials issuers have deferred and not yet settled, oldest first, including ones from before the app last quit. No network calls |
 | `PollDeferred(op, deferredID)` | `{"status": "pending" \| "issued", "credential": summary, "interval_seconds"}`; a refusal is `credential_denied`, and is then no longer pending. The first poll after a relaunch fetches the issuer's metadata |
 | `AbandonDeferred(deferredID)` | deletes a pending one and its keys, for example after its access token has expired |

@@ -130,6 +130,7 @@ type Issuance struct {
 	// RefreshGrant keeping it, and the instance key with it.
 	refreshToken fapi.Secret
 	grantID      string
+	grantStored  bool
 	// replace, for a refresh, is the stored credential the new one
 	// replaces.
 	replace string
@@ -548,7 +549,7 @@ func (s *Issuance) request(ctx context.Context, configID string, requestEnc *wal
 		keep = true
 		return StoredCredential{}, d, nil
 	}
-	grantID, err := s.keepGrant(ctx)
+	grantID, err := s.grantFor()
 	if err != nil {
 		return StoredCredential{}, nil, err
 	}
@@ -559,6 +560,7 @@ func (s *Issuance) request(ctx context.Context, configID string, requestEnc *wal
 	if err != nil {
 		return StoredCredential{}, nil, err
 	}
+	s.storeGrant(ctx)
 	keep = true
 	s.w.deleteUnused(context.WithoutCancel(ctx), keyIDs(holders), stored)
 	return stored, nil, nil
@@ -693,12 +695,28 @@ func (w *Wallet) accept(ctx context.Context, c issued) (StoredCredential, error)
 		Display: displayFor(c.metadata, c.configID, w.cfg.Locales), ValidUntil: first.ValidUntil,
 		StatusList: first.StatusList, StatusListCWT: first.StatusListCWT, GrantID: c.grantID,
 	}
-	if err := w.deps.Credentials.Put(ctx, stored); err != nil {
+	if err := w.store(ctx, stored, c); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			// Deleted while it was refreshed: the new copies aren't kept.
+			w.notify(ctx, c, oid4vci.NotificationEventCredentialDeleted, "the holder deleted the credential")
+			return StoredCredential{}, err
+		}
 		w.notify(ctx, c, oid4vci.NotificationEventCredentialFailure, "the wallet couldn't store the credential")
 		return StoredCredential{}, fmt.Errorf("walletflow: store credential %q: %w", c.configID, err)
 	}
 	w.notify(ctx, c, oid4vci.NotificationEventCredentialAccepted, "")
 	return stored, nil
+}
+
+// store stores a new credential, or one replacing c.replace
+// (replaceStored).
+func (w *Wallet) store(ctx context.Context, stored StoredCredential, c issued) error {
+	if c.replace == "" {
+		return w.deps.Credentials.Put(ctx, stored)
+	}
+	w.credMu.Lock()
+	defer w.credMu.Unlock()
+	return w.replaceStored(ctx, stored, c.grantID)
 }
 
 // verifyCopy checks one copy, and finds which of keys it's bound to.
@@ -745,7 +763,7 @@ func (s *Issuance) Close(ctx context.Context) error {
 	s.step = stepClosed
 	// The instance key stays with a refresh grant a stored credential
 	// uses: every refresh authenticates with it.
-	if s.instanceKey != nil && s.grantID == "" {
+	if s.instanceKey != nil && !s.grantStored {
 		errs = append(errs, s.w.deps.Keys.DeleteKey(ctx, s.instanceKey.ID()))
 	}
 	if s.dpopKey != nil {
