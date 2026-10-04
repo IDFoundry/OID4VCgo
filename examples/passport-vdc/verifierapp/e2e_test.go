@@ -8,7 +8,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -46,9 +45,9 @@ func receiveInto(t *testing.T, env *demotest.Env, e passport.Evidence) walletapp
 
 // present answers a fresh request in mode with the stored credential of
 // format, and returns the verifier's outcome.
-func present(t *testing.T, env *demotest.Env, store walletapp.Store, mode verifierapp.Mode, format string) *verifierapp.Outcome {
+func present(t *testing.T, env *demotest.Env, store walletapp.Store, sc verifierapp.Scenario, format string) *verifierapp.Outcome {
 	t.Helper()
-	id, link, err := env.Verifier.CreateRequest(mode)
+	id, link, err := env.Verifier.CreateRequest(sc)
 	if err != nil {
 		t.Fatalf("CreateRequest: %v", err)
 	}
@@ -83,7 +82,7 @@ func TestEndToEnd_TrustIssuer(t *testing.T) {
 
 	for _, format := range []string{"mso_mdoc", "dc+sd-jwt"} {
 		t.Run(format, func(t *testing.T) {
-			out := present(t, env, store, verifierapp.ModeIssuer, format)
+			out := present(t, env, store, verifierapp.ScenarioSignup, format)
 			if out.Format != format || out.Claims[credential.FamilyName] != "DOE" {
 				t.Errorf("outcome = %+v", out)
 			}
@@ -115,7 +114,7 @@ func TestEndToEnd_TrustIssuer_NoPortrait(t *testing.T) {
 
 	for _, format := range []string{"mso_mdoc", "dc+sd-jwt"} {
 		t.Run(format, func(t *testing.T) {
-			out := present(t, env, store, verifierapp.ModeIssuer, format)
+			out := present(t, env, store, verifierapp.ScenarioSignup, format)
 			if out.Claims[credential.FamilyName] != "DOE" {
 				t.Errorf("outcome = %+v", out)
 			}
@@ -142,7 +141,7 @@ func TestEndToEnd_TrustICAO_SyntheticFileFails(t *testing.T) {
 
 	for _, format := range []string{"mso_mdoc", "dc+sd-jwt"} {
 		t.Run(format, func(t *testing.T) {
-			out := present(t, env, store, verifierapp.ModeICAO, format)
+			out := present(t, env, store, verifierapp.ScenarioBank, format)
 			if out.ICAO == nil || out.ICAO.Verified {
 				t.Fatalf("ICAO result = %+v, want a failed check", out.ICAO)
 			}
@@ -190,7 +189,7 @@ func TestEndToEnd_TrustICAO_Sample(t *testing.T) {
 
 	for _, format := range []string{"mso_mdoc", "dc+sd-jwt"} {
 		t.Run(format, func(t *testing.T) {
-			out := present(t, env, store, verifierapp.ModeICAO, format)
+			out := present(t, env, store, verifierapp.ScenarioBank, format)
 			if out.ICAO == nil || !out.ICAO.Verified {
 				t.Fatal("re-verifying the presented passport file failed")
 			}
@@ -214,7 +213,7 @@ func TestEndToEnd_Revocation(t *testing.T) {
 	store := receiveInto(t, env, demotest.SyntheticEvidence())
 
 	for _, format := range []string{"mso_mdoc", "dc+sd-jwt"} {
-		if out := present(t, env, store, verifierapp.ModeIssuer, format); out.Status != "valid" {
+		if out := present(t, env, store, verifierapp.ScenarioSignup, format); out.Status != "valid" {
 			t.Fatalf("%s: Status = %q before revocation, want valid", format, out.Status)
 		}
 	}
@@ -234,7 +233,7 @@ func TestEndToEnd_Revocation(t *testing.T) {
 	}
 	_ = resp.Body.Close()
 
-	id, link, err := env.Verifier.CreateRequest(verifierapp.ModeIssuer)
+	id, link, err := env.Verifier.CreateRequest(verifierapp.ScenarioSignup)
 	if err != nil {
 		t.Fatalf("CreateRequest: %v", err)
 	}
@@ -247,7 +246,7 @@ func TestEndToEnd_Revocation(t *testing.T) {
 	if reason := env.Verifier.LastError(id); !strings.Contains(reason, "revoked") {
 		t.Fatalf("the verifier recorded %q, want the revocation", reason)
 	}
-	if out := present(t, env, store, verifierapp.ModeIssuer, "dc+sd-jwt"); out.Status != "valid" {
+	if out := present(t, env, store, verifierapp.ScenarioSignup, "dc+sd-jwt"); out.Status != "valid" {
 		t.Errorf("the unrevoked SD-JWT VC: Status = %q, want valid", out.Status)
 	}
 }
@@ -262,7 +261,7 @@ func TestEndToEnd_ExpiredPassport(t *testing.T) {
 	store := receiveInto(t, env, e)
 
 	for _, format := range []string{"mso_mdoc", "dc+sd-jwt"} {
-		if out := present(t, env, store, verifierapp.ModeIssuer, format); out.Claims[credential.FamilyName] != "DOE" {
+		if out := present(t, env, store, verifierapp.ScenarioSignup, format); out.Claims[credential.FamilyName] != "DOE" {
 			t.Errorf("%s: outcome = %+v", format, out)
 		}
 	}
@@ -293,10 +292,10 @@ func TestEndToEnd_SampleDocumentIssuedUnchecked(t *testing.T) {
 	}
 
 	for _, format := range []string{"mso_mdoc", "dc+sd-jwt"} {
-		if outcome := present(t, env, store, verifierapp.ModeIssuer, format); outcome.Claims[credential.FamilyName] != "SMITH" {
+		if outcome := present(t, env, store, verifierapp.ScenarioSignup, format); outcome.Claims[credential.FamilyName] != "SMITH" {
 			t.Errorf("%s: trusting the issuer, claims = %v, want the sample's", format, outcome.Claims)
 		}
-		outcome := present(t, env, store, verifierapp.ModeICAO, format)
+		outcome := present(t, env, store, verifierapp.ScenarioBank, format)
 		if outcome.ICAO == nil || outcome.ICAO.Verified || !strings.Contains(outcome.ICAO.Error, "Passive Authentication") {
 			t.Errorf("%s: trusting the country, ICAO = %+v, want a Passive Authentication failure", format, outcome.ICAO)
 		}
@@ -308,7 +307,7 @@ func TestEndToEnd_SampleDocumentIssuedUnchecked(t *testing.T) {
 func TestEndToEnd_ChoosesAmongSeveralPeople(t *testing.T) {
 	env, store := severalPeople(t)
 	ctx := context.Background()
-	id, link, err := env.Verifier.CreateRequest(verifierapp.ModeIssuer)
+	id, link, err := env.Verifier.CreateRequest(verifierapp.ScenarioSignup)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -346,7 +345,8 @@ func severalPeople(t *testing.T) (*demotest.Env, walletapp.Store) {
 }
 
 // holding is a wallet holding a passport, in both formats, for each of
-// names (given, family); a name twice is two passports of one person.
+// names (given, family), each with its own passport file; a name twice
+// is the same passport twice.
 func holding(t *testing.T, env *demotest.Env, names ...[2]string) walletapp.Store {
 	t.Helper()
 	ctx := context.Background()
@@ -354,6 +354,7 @@ func holding(t *testing.T, env *demotest.Env, names ...[2]string) walletapp.Stor
 	for _, name := range names {
 		e := demotest.SyntheticEvidence()
 		e.Identity.GivenNames, e.Identity.FamilyName = name[0], name[1]
+		e.File = append(bytes.Clone(e.File), name[0]+" "+name[1]...)
 		offer, err := env.Issuer.CreateTransaction(ctx, e)
 		if err != nil {
 			t.Fatal(err)
@@ -377,7 +378,7 @@ func TestEndToEnd_SeveralPassports(t *testing.T) {
 	env, store := severalPeople(t)
 	ctx := context.Background()
 
-	id, link, err := env.Verifier.CreateRequest(verifierapp.ModeGroup)
+	id, link, err := env.Verifier.CreateRequest(verifierapp.ScenarioHotel)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -402,16 +403,20 @@ func TestEndToEnd_SeveralPassports(t *testing.T) {
 	if !ok || len(outcome.People) != 2 {
 		t.Fatalf("the verifier got %+v, want two people", outcome)
 	}
-	var names []string
+	// Each guest's passport file is re-verified: the synthetic ones
+	// aren't readable passports, so the hotel refuses the check-in.
+	files := map[string]bool{}
 	for _, p := range outcome.People {
-		if p.Format != "dc+sd-jwt" || p.Status == "" {
-			t.Errorf("person = %+v", p)
+		if p.Format != "dc+sd-jwt" || p.Status == "" || p.ICAO == nil || p.ICAO.Verified {
+			t.Errorf("person = %+v, want an unverifiable passport file checked", p)
 		}
-		names = append(names, fmt.Sprint(p.Claims[credential.GivenName], " ", p.Claims[credential.FamilyName]))
+		files[fmt.Sprint(p.Claims[credential.PassportFile])] = true
 	}
-	slices.Sort(names)
-	if strings.Join(names, ", ") != "JANE DOE, JOHN ROE" {
-		t.Errorf("people = %v, want JANE DOE and JOHN ROE", names)
+	if len(files) != 2 {
+		t.Error("the two guests presented the same passport file")
+	}
+	if outcome.Decision.Approved || !strings.Contains(outcome.Decision.Text, "2 of 2 passports") {
+		t.Errorf("decision = %+v, want the check-in refused", outcome.Decision)
 	}
 	resp, err := env.HTTP.Get(env.VerifierURL + "/requests/" + id)
 	if err != nil {
@@ -419,7 +424,7 @@ func TestEndToEnd_SeveralPassports(t *testing.T) {
 	}
 	page, _ := io.ReadAll(resp.Body)
 	_ = resp.Body.Close()
-	for _, want := range []string{"presented 2 passports", "JANE", "JOHN", `class="card person"`} {
+	for _, want := range []string{"presented 2 credentials", "Grand Hotel", "Check-in refused", `class="card person"`} {
 		if !strings.Contains(string(page), want) {
 			t.Errorf("the result page lacks %q", want)
 		}
@@ -431,7 +436,7 @@ func TestEndToEnd_SeveralPassports(t *testing.T) {
 func TestEndToEnd_OnePassportTakesOne(t *testing.T) {
 	env, store := severalPeople(t)
 	ctx := context.Background()
-	_, link, err := env.Verifier.CreateRequest(verifierapp.ModeIssuer)
+	_, link, err := env.Verifier.CreateRequest(verifierapp.ScenarioSignup)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -454,7 +459,7 @@ func TestEndToEnd_SeveralPassportsRefusesDuplicatesAndTooMany(t *testing.T) {
 	env.StartVerifier(t, nil)
 	ctx := context.Background()
 	share := func(store walletapp.Store) (string, error) {
-		id, link, err := env.Verifier.CreateRequest(verifierapp.ModeGroup)
+		id, link, err := env.Verifier.CreateRequest(verifierapp.ScenarioHotel)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -491,7 +496,7 @@ func TestEndToEnd_SeveralPassportsRefusesDuplicatesAndTooMany(t *testing.T) {
 func TestEndToEnd_PresentsTheChosenQuery(t *testing.T) {
 	env := demotest.New(t, nil)
 	env.StartVerifier(t, nil, func(c *verifierapp.Config) {
-		c.Query = func(_ verifierapp.Mode, vct string, trusted dcql.TrustedAuthoritiesQuery) (dcql.Query, error) {
+		c.Query = func(_ verifierapp.Scenario, vct string, trusted dcql.TrustedAuthoritiesQuery) (dcql.Query, error) {
 			meta, err := dcql.NewSDJWTVCMeta(dcql.SDJWTVCMeta{VCTValues: []string{vct}})
 			if err != nil {
 				return dcql.Query{}, err
@@ -515,7 +520,7 @@ func TestEndToEnd_PresentsTheChosenQuery(t *testing.T) {
 	})
 	store := holding(t, env, [2]string{"JANE", "DOE"})
 	ctx := context.Background()
-	id, link, err := env.Verifier.CreateRequest(verifierapp.ModeIssuer)
+	id, link, err := env.Verifier.CreateRequest(verifierapp.ScenarioSignup)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -538,5 +543,53 @@ func TestEndToEnd_PresentsTheChosenQuery(t *testing.T) {
 	outcome, ok := env.Verifier.Outcome(id)
 	if !ok || outcome.Claims[credential.FamilyName] != "DOE" || outcome.Claims[credential.GivenName] != nil {
 		t.Errorf("the verifier got %v; want only the family name", outcome)
+	}
+}
+
+// TestEndToEnd_AgeAssurance: the bottle shop learns whether the holder
+// is over 18, and nothing about who they are.
+func TestEndToEnd_AgeAssurance(t *testing.T) {
+	env := demotest.New(t, nil)
+	env.StartVerifier(t, nil)
+	store := receiveInto(t, env, demotest.SyntheticEvidence())
+	for _, format := range []string{"mso_mdoc", "dc+sd-jwt"} {
+		t.Run(format, func(t *testing.T) {
+			out := present(t, env, store, verifierapp.ScenarioAge, format)
+			if !out.Decision.Approved || !strings.Contains(out.Decision.Text, "Sale allowed") {
+				t.Errorf("decision = %+v, want the sale allowed", out.Decision)
+			}
+			for _, k := range []string{credential.FamilyName, credential.GivenName, credential.BirthDate, "birthdate", credential.DocumentNumber, credential.Portrait, credential.SDJWTPicture} {
+				if _, ok := out.Claims[k]; ok {
+					t.Errorf("age assurance disclosed %s", k)
+				}
+			}
+		})
+	}
+}
+
+// TestEndToEnd_UnknownVerifierIsRefused: CheapFlights asks for what the
+// bank does, but its requests are signed under a CA the wallet doesn't
+// trust: the wallet refuses before reading the request, and the
+// verifier gets nothing.
+func TestEndToEnd_UnknownVerifierIsRefused(t *testing.T) {
+	env := demotest.New(t, nil)
+	env.StartVerifier(t, nil)
+	store := receiveInto(t, env, demotest.SyntheticEvidence())
+	id, link, err := env.Verifier.CreateRequest(verifierapp.ScenarioUnknown)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := walletapp.Prepare(context.Background(), link, store, env.HTTP, env.VerifierTrust()); err == nil || !strings.Contains(err.Error(), "untrusted verifier") {
+		t.Fatalf("Prepare = %v, want the untrusted verifier refused", err)
+	}
+	if _, ok := env.Verifier.Outcome(id); ok {
+		t.Error("the untrusted verifier got an answer")
+	}
+	// The bank, asking for the same, is trusted.
+	if _, link, err = env.Verifier.CreateRequest(verifierapp.ScenarioBank); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := walletapp.Prepare(context.Background(), link, store, env.HTTP, env.VerifierTrust()); err != nil {
+		t.Errorf("Prepare for the bank: %v", err)
 	}
 }

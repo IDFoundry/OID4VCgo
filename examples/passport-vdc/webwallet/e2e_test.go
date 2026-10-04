@@ -1,6 +1,7 @@
 package webwallet_test
 
 import (
+	"bytes"
 	"context"
 	"html"
 	"io"
@@ -166,9 +167,9 @@ func credentialOptions(t *testing.T, page, format string) []string {
 	return out
 }
 
-func reviewRequest(t *testing.T, env *demotest.Env, b *http.Client, mode verifierapp.Mode) (id, page, decisionURL string) {
+func reviewRequest(t *testing.T, env *demotest.Env, b *http.Client, sc verifierapp.Scenario) (id, page, decisionURL string) {
 	t.Helper()
-	id, link, err := env.Verifier.CreateRequest(mode)
+	id, link, err := env.Verifier.CreateRequest(sc)
 	if err != nil {
 		t.Fatalf("CreateRequest: %v", err)
 	}
@@ -203,8 +204,8 @@ func TestWebWallet_ReceiveThenShareWithConsent(t *testing.T) {
 
 	// The consent screen shows what's asked for, in each format the
 	// wallet can answer with — and nothing is sent yet.
-	id, page, decision := reviewRequest(t, env, b, verifierapp.ModeICAO)
-	for _, want := range []string{"passport-vdc demo verifier", "gmrtd_verifiable_doc", `as <span class="fmt">mso_mdoc`, `as <span class="fmt">dc+sd-jwt`, "JANE DOE"} {
+	id, page, decision := reviewRequest(t, env, b, verifierapp.ScenarioBank)
+	for _, want := range []string{"Harbour Bank", "gmrtd_verifiable_doc", `as <span class="fmt">mso_mdoc`, `as <span class="fmt">dc+sd-jwt`, "JANE DOE"} {
 		if !strings.Contains(page, want) {
 			t.Errorf("consent page is missing %q", want)
 		}
@@ -237,7 +238,7 @@ func TestWebWallet_DeclineSendsNothing(t *testing.T) {
 	b := browser(env)
 	receiveViaBrowser(t, env, b)
 
-	id, _, decision := reviewRequest(t, env, b, verifierapp.ModeIssuer)
+	id, _, decision := reviewRequest(t, env, b, verifierapp.ScenarioSignup)
 	resp, err := b.PostForm(decision, url.Values{"decision": {"decline"}})
 	if err != nil {
 		t.Fatalf("decline: %v", err)
@@ -344,7 +345,7 @@ func cookieBrowser(t *testing.T, env *demotest.Env) *http.Client {
 // verifier's result page path and the redirect_uri the wallet sent b to.
 func shareSameDevice(t *testing.T, env *demotest.Env, b *http.Client) (resultPath string, redirect *url.URL) {
 	t.Helper()
-	resp, err := b.PostForm(env.VerifierURL+"/requests", url.Values{"mode": {"issuer"}})
+	resp, err := b.PostForm(env.VerifierURL+"/requests", url.Values{"scenario": {"signup"}})
 	resultPath = mustRedirect(t, resp, err, "POST /requests").Path
 	resp, err = b.Get(env.VerifierURL + resultPath)
 	if err != nil || resp.StatusCode != http.StatusOK {
@@ -361,7 +362,7 @@ func shareSameDevice(t *testing.T, env *demotest.Env, b *http.Client) (resultPat
 	}
 	resp, err = b.PostForm(env.WebWalletURL+d[1], url.Values{"decision": {"share"}, "credential": {credentialOption(t, consent, "dc+sd-jwt")}})
 	redirect = mustRedirect(t, resp, err, "share")
-	if !strings.HasPrefix(redirect.String(), env.VerifierURL+"/continue?response_code=") {
+	if !strings.HasPrefix(redirect.String(), env.VerifierURL+"/s/signup/continue?response_code=") {
 		t.Fatalf("the wallet sent the browser to %s, want the verifier's redirect_uri", redirect)
 	}
 	return resultPath, redirect
@@ -390,7 +391,7 @@ func TestSameDevice_RedirectBackReleasesTheResult(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET result page: %v", err)
 	}
-	if page := read(t, resp); !strings.Contains(page, "Presentation verified") || !strings.Contains(page, "DOE") {
+	if page := read(t, resp); !strings.Contains(page, "Account created for JANE DOE") {
 		t.Fatal("the result page doesn't show the verified presentation")
 	}
 
@@ -645,9 +646,10 @@ func TestWebWallet_SharesSeveralPassports(t *testing.T) {
 	receiveViaBrowser(t, env, b)
 	john := demotest.SyntheticEvidence()
 	john.Identity.GivenNames, john.Identity.FamilyName = "JOHN", "ROE"
+	john.File = append(bytes.Clone(john.File), "JOHN ROE"...)
 	receiveEvidenceViaBrowser(t, env, b, john)
 
-	id, page, decision := reviewRequest(t, env, b, verifierapp.ModeGroup)
+	id, page, decision := reviewRequest(t, env, b, verifierapp.ScenarioHotel)
 	if !strings.Contains(page, `type="checkbox" name="credential"`) || strings.Contains(page, `type="radio"`) {
 		t.Error("the consent page for several passports doesn't offer checkboxes")
 	}

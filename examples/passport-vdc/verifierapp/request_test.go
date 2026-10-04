@@ -54,7 +54,7 @@ func decodeSegment(t *testing.T, compact string, i int, v any) {
 func TestRequest_ResultIsNotReachableFromTheLink(t *testing.T) {
 	env := demotest.New(t, nil)
 	env.StartVerifier(t, nil)
-	id, link, err := env.Verifier.CreateRequest(verifierapp.ModeIssuer)
+	id, link, err := env.Verifier.CreateRequest(verifierapp.ScenarioSignup)
 	if err != nil {
 		t.Fatalf("CreateRequest: %v", err)
 	}
@@ -99,7 +99,7 @@ func TestRequest_ResultIsNotReachableFromTheLink(t *testing.T) {
 func TestRequest_SignedWithCAIssuedCertificate(t *testing.T) {
 	env := demotest.New(t, nil)
 	env.StartVerifier(t, nil)
-	_, link, err := env.Verifier.CreateRequest(verifierapp.ModeIssuer)
+	_, link, err := env.Verifier.CreateRequest(verifierapp.ScenarioSignup)
 	if err != nil {
 		t.Fatalf("CreateRequest: %v", err)
 	}
@@ -132,7 +132,7 @@ func TestResponse_ForgedResponseDoesNotCloseTheRequest(t *testing.T) {
 	env := demotest.New(t, nil)
 	env.StartVerifier(t, nil)
 	store := receiveInto(t, env, demotest.SyntheticEvidence())
-	id, link, err := env.Verifier.CreateRequest(verifierapp.ModeIssuer)
+	id, link, err := env.Verifier.CreateRequest(verifierapp.ScenarioSignup)
 	if err != nil {
 		t.Fatalf("CreateRequest: %v", err)
 	}
@@ -152,7 +152,7 @@ func TestResponse_ForgedResponseDoesNotCloseTheRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 	forged := base64.RawURLEncoding.EncodeToString(header) + "..AAAA.AAAA.AAAA" // well-formed, but not decryptable
-	resp, err := env.HTTP.PostForm(env.VerifierURL+"/response", url.Values{"response": {forged}})
+	resp, err := env.HTTP.PostForm(env.VerifierURL+"/s/signup/response", url.Values{"response": {forged}})
 	if err != nil {
 		t.Fatalf("POST forged response: %v", err)
 	}
@@ -177,7 +177,7 @@ func TestRequest_UntrustedVerifierIsRefused(t *testing.T) {
 	env := demotest.New(t, nil)
 	env.StartVerifier(t, nil)
 	store := receiveInto(t, env, demotest.SyntheticEvidence())
-	id, link, err := env.Verifier.CreateRequest(verifierapp.ModeIssuer)
+	id, link, err := env.Verifier.CreateRequest(verifierapp.ScenarioSignup)
 	if err != nil {
 		t.Fatalf("CreateRequest: %v", err)
 	}
@@ -204,7 +204,7 @@ func TestRequest_TrustedAuthorities(t *testing.T) {
 	})
 	store := receiveInto(t, env, demotest.SyntheticEvidence())
 
-	id, link, err := env.Verifier.CreateRequest(verifierapp.ModeIssuer)
+	id, link, err := env.Verifier.CreateRequest(verifierapp.ScenarioSignup)
 	if err != nil {
 		t.Fatalf("CreateRequest: %v", err)
 	}
@@ -233,5 +233,30 @@ func TestRequest_TrustedAuthorities(t *testing.T) {
 	}
 	if _, answered := env.Verifier.Outcome(id); answered {
 		t.Fatal("the verifier got an answer")
+	}
+}
+
+// TestHome_ListsScenarios: the home page offers every scenario, in
+// order, naming its relying party.
+func TestHome_ListsScenarios(t *testing.T) {
+	env := demotest.New(t, nil)
+	env.StartVerifier(t, nil)
+	resp, err := env.HTTP.Get(env.VerifierURL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	last := -1
+	for _, info := range verifierapp.ScenarioInfos() {
+		at := strings.Index(string(page), `value="`+string(info.Scenario)+`"`)
+		if at < 0 || !strings.Contains(string(page), info.Verifier) {
+			t.Errorf("home page lacks %s (%s)", info.Scenario, info.Verifier)
+			continue
+		}
+		if at < last {
+			t.Errorf("%s is out of order", info.Scenario)
+		}
+		last = at
 	}
 }
