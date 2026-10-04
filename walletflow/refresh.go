@@ -183,39 +183,16 @@ func (w *Wallet) RefreshCredential(ctx context.Context, id string) (StoredCreden
 	// One refresh with a grant at a time: an Authorization Server that
 	// rotates refresh tokens refuses the old one once the new is issued.
 	defer w.lockGrant(old.GrantID)()
-	g, err := w.deps.Grants.GetGrant(ctx, old.GrantID)
-	if errors.Is(err, ErrNotFound) {
-		return StoredCredential{}, nil, fmt.Errorf("walletflow: refresh credential: its refresh grant is gone: %w", ErrReissueRequired)
-	}
+	g, instanceKey, err := w.loadGrant(ctx, old)
 	if err != nil {
-		return StoredCredential{}, nil, fmt.Errorf("walletflow: refresh credential: %w", err)
+		return StoredCredential{}, nil, err
 	}
-	if g.CredentialIssuer != old.CredentialIssuer {
-		return StoredCredential{}, nil, fmt.Errorf("walletflow: refresh credential: its refresh grant is another issuer's: %w", ErrReissueRequired)
-	}
-	instanceKey, err := w.deps.Keys.Key(ctx, g.InstanceKeyID)
+	metadata, err := w.planGrant(ctx, g, old.ConfigurationID)
 	if err != nil {
-		if errors.Is(err, ErrNotFound) {
-			w.forgetGrant(context.WithoutCancel(ctx), g)
-			return StoredCredential{}, nil, fmt.Errorf("walletflow: refresh credential: its wallet instance key is gone: %w", ErrReissueRequired)
-		}
-		return StoredCredential{}, nil, fmt.Errorf("walletflow: refresh credential: %w", err)
-	}
-	metadata, err := w.core.FetchCredentialIssuerMetadata(ctx, old.CredentialIssuer)
-	if err != nil {
-		return StoredCredential{}, nil, fmt.Errorf("walletflow: issuer metadata: %w", err)
+		return StoredCredential{}, nil, err
 	}
 	if metadata.NonceEndpoint == nil {
 		return StoredCredential{}, nil, errors.New("walletflow: the issuer advertises no nonce endpoint, which the attestation proof needs")
-	}
-	offer := oid4vci.CredentialOffer{
-		CredentialIssuer: old.CredentialIssuer, CredentialConfigurationIDs: []string{old.ConfigurationID},
-		Grants: &oid4vci.Grants{AuthorizationCode: &oid4vci.GrantAuthorizationCode{AuthorizationServer: g.AuthorizationServer}},
-	}
-	// The refresh token goes only to an Authorization Server the issuer
-	// still lists, as at issuance.
-	if _, err := wallet.PlanAuthorization(offer, metadata); err != nil {
-		return StoredCredential{}, nil, fmt.Errorf("walletflow: refresh credential: the issuer no longer names its authorization server: %w: %w", ErrReissueRequired, err)
 	}
 	s := &Issuance{
 		w: w, metadata: metadata, instanceKey: instanceKey, grantID: g.ID, grantStored: true, replace: old.ID,
@@ -225,24 +202,8 @@ func (w *Wallet) RefreshCredential(ctx context.Context, id string) (StoredCreden
 	if err := s.newClient(ctx, g.AuthorizationServer); err != nil {
 		return StoredCredential{}, nil, err
 	}
-	tokens, err := s.client.RefreshTokens(ctx, client.RefreshTokenRequest{Tokens: client.TokenSet{RefreshToken: g.RefreshToken, HasRefreshToken: true}})
-	if err != nil {
-		if invalidGrant(err) {
-			w.forgetRefusedGrant(context.WithoutCancel(ctx), g)
-			return StoredCredential{}, nil, fmt.Errorf("walletflow: refresh credential: %w: %w", ErrReissueRequired, err)
-		}
-		return StoredCredential{}, nil, fmt.Errorf("walletflow: refresh token: %w", err)
-	}
-	if tokens.HasRefreshToken && tokens.RefreshToken.Reveal() != g.RefreshToken.Reveal() {
-		g.RefreshToken = tokens.RefreshToken
-		if err := w.deps.Grants.PutGrant(ctx, g); err != nil {
-			return StoredCredential{}, nil, fmt.Errorf("walletflow: store refresh grant: %w", err)
-		}
-	}
-	s.resource = s.client.ProtectedResource(tokens)
-	s.accessToken = tokens.AccessToken
-	if tokens.HasExpiresIn {
-		s.accessExpiresAt = tokens.ObtainedAt.Add(tokens.ExpiresIn)
+	if err := s.redeemGrant(ctx, g); err != nil {
+		return StoredCredential{}, nil, err
 	}
 	requestEnc, responseEnc, err := wallet.EncryptionFromMetadata(metadata)
 	if err != nil {
@@ -256,6 +217,76 @@ func (w *Wallet) RefreshCredential(ctx context.Context, id string) (StoredCreden
 		return old, deferred, nil
 	}
 	return stored, nil, nil
+}
+
+// loadGrant is the refresh grant of credential c, with its instance
+// key: ErrReissueRequired when either is gone, or the grant is another
+// issuer's. Called with the grant's lock held.
+func (w *Wallet) loadGrant(ctx context.Context, c StoredCredential) (RefreshGrant, Key, error) {
+	g, err := w.deps.Grants.GetGrant(ctx, c.GrantID)
+	if errors.Is(err, ErrNotFound) {
+		return RefreshGrant{}, nil, fmt.Errorf("walletflow: refresh credential: its refresh grant is gone: %w", ErrReissueRequired)
+	}
+	if err != nil {
+		return RefreshGrant{}, nil, fmt.Errorf("walletflow: refresh credential: %w", err)
+	}
+	if g.CredentialIssuer != c.CredentialIssuer {
+		return RefreshGrant{}, nil, fmt.Errorf("walletflow: refresh credential: its refresh grant is another issuer's: %w", ErrReissueRequired)
+	}
+	instanceKey, err := w.deps.Keys.Key(ctx, g.InstanceKeyID)
+	if errors.Is(err, ErrNotFound) {
+		w.forgetGrant(context.WithoutCancel(ctx), g)
+		return RefreshGrant{}, nil, fmt.Errorf("walletflow: refresh credential: its wallet instance key is gone: %w", ErrReissueRequired)
+	}
+	if err != nil {
+		return RefreshGrant{}, nil, fmt.Errorf("walletflow: refresh credential: %w", err)
+	}
+	return g, instanceKey, nil
+}
+
+// planGrant fetches g's issuer's metadata, and checks the issuer still
+// lists g's Authorization Server, as at issuance, for configuration
+// configID: the refresh token goes nowhere else. A server no longer
+// listed is ErrReissueRequired.
+func (w *Wallet) planGrant(ctx context.Context, g RefreshGrant, configID string) (oid4vci.Metadata, error) {
+	metadata, err := w.core.FetchCredentialIssuerMetadata(ctx, g.CredentialIssuer)
+	if err != nil {
+		return oid4vci.Metadata{}, fmt.Errorf("walletflow: issuer metadata: %w", err)
+	}
+	offer := oid4vci.CredentialOffer{
+		CredentialIssuer: g.CredentialIssuer, CredentialConfigurationIDs: []string{configID},
+		Grants: &oid4vci.Grants{AuthorizationCode: &oid4vci.GrantAuthorizationCode{AuthorizationServer: g.AuthorizationServer}},
+	}
+	if _, err := wallet.PlanAuthorization(offer, metadata); err != nil {
+		return oid4vci.Metadata{}, fmt.Errorf("walletflow: refresh credential: the issuer no longer names its authorization server: %w: %w", ErrReissueRequired, err)
+	}
+	return metadata, nil
+}
+
+// redeemGrant redeems g's refresh token for an access token, keeping a
+// rotated refresh token. A refused one is ErrReissueRequired, and the
+// grant is forgotten.
+func (s *Issuance) redeemGrant(ctx context.Context, g RefreshGrant) error {
+	tokens, err := s.client.RefreshTokens(ctx, client.RefreshTokenRequest{Tokens: client.TokenSet{RefreshToken: g.RefreshToken, HasRefreshToken: true}})
+	if err != nil {
+		if invalidGrant(err) {
+			s.w.forgetRefusedGrant(context.WithoutCancel(ctx), g)
+			return fmt.Errorf("walletflow: refresh credential: %w: %w", ErrReissueRequired, err)
+		}
+		return fmt.Errorf("walletflow: refresh token: %w", err)
+	}
+	if tokens.HasRefreshToken && tokens.RefreshToken.Reveal() != g.RefreshToken.Reveal() {
+		g.RefreshToken = tokens.RefreshToken
+		if err := s.w.deps.Grants.PutGrant(ctx, g); err != nil {
+			return fmt.Errorf("walletflow: store refresh grant: %w", err)
+		}
+	}
+	s.resource = s.client.ProtectedResource(tokens)
+	s.accessToken = tokens.AccessToken
+	if tokens.HasExpiresIn {
+		s.accessExpiresAt = tokens.ObtainedAt.Add(tokens.ExpiresIn)
+	}
+	return nil
 }
 
 // replaceStored stores stored in place of the credential it replaces,
@@ -360,20 +391,11 @@ func (w *Wallet) revokeGrant(ctx context.Context, g RefreshGrant, configID strin
 	if err != nil {
 		return
 	}
-	metadata, err := w.core.FetchCredentialIssuerMetadata(ctx, g.CredentialIssuer)
+	metadata, err := w.planGrant(ctx, g, configID)
 	if err != nil {
 		return
 	}
-	// The refresh token goes only to an Authorization Server the issuer
-	// still lists.
-	offer := oid4vci.CredentialOffer{
-		CredentialIssuer: g.CredentialIssuer, CredentialConfigurationIDs: []string{configID},
-		Grants: &oid4vci.Grants{AuthorizationCode: &oid4vci.GrantAuthorizationCode{AuthorizationServer: g.AuthorizationServer}},
-	}
-	if _, err := wallet.PlanAuthorization(offer, metadata); err != nil {
-		return
-	}
-	s := &Issuance{w: w, metadata: metadata, instanceKey: instanceKey, offer: offer}
+	s := &Issuance{w: w, metadata: metadata, instanceKey: instanceKey, offer: oid4vci.CredentialOffer{CredentialIssuer: g.CredentialIssuer}}
 	defer s.endRefresh(context.WithoutCancel(ctx))
 	if err := s.newClient(ctx, g.AuthorizationServer); err != nil {
 		return

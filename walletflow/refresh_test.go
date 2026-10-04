@@ -302,3 +302,26 @@ func TestRefreshCredential_PreAuthorizedCode(t *testing.T) {
 		t.Errorf("after the grant was revoked: %v, want ErrReissueRequired", err)
 	}
 }
+
+// A grant whose instance key is gone can't be used: it's forgotten, and
+// the credential has to be received again.
+func TestRefreshCredential_InstanceKeyGone(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t, walletflowtest.Options{})
+	grants := walletflow.NewMemoryGrantStore()
+	w := f.newRefreshingWallet(t, nil, grants)
+	c := receive(t, f, w, walletflowtest.SDJWTConfigurationID)[0]
+	g, err := grants.GetGrant(ctx, c.GrantID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.keys.DeleteKey(ctx, g.InstanceKeyID); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := w.RefreshCredential(ctx, c.ID); !errors.Is(err, walletflow.ErrReissueRequired) {
+		t.Fatalf("RefreshCredential = %v, want ErrReissueRequired", err)
+	}
+	if _, err := grants.GetGrant(ctx, g.ID); !errors.Is(err, walletflow.ErrNotFound) {
+		t.Errorf("the grant was kept: %v", err)
+	}
+}
