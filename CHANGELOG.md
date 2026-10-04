@@ -10,14 +10,12 @@
 ### Features
 
 * carry and check verifier registrations in verifier_info ([93fc83a](https://github.com/IDFoundry/OID4VCgo/commit/93fc83a27413e2b04833665198b4d4ca6644ce53))
-* **mobile:** show a Verifier's registration, and requests beyond it ([647784b](https://github.com/IDFoundry/OID4VCgo/commit/647784b51d07671bbae45848f3aba128c079c373))
 * **wallet:** ErrUntrustedVerifier for a request from an untrusted Verifier ([7495d50](https://github.com/IDFoundry/OID4VCgo/commit/7495d50b73431ffa83985acd1dfa02cc753c324f))
 
 
 ### Bug Fixes
 
-* **deps:** pin FAPIgo v0.48.0 ([fe3dec3](https://github.com/IDFoundry/OID4VCgo/commit/fe3dec3dde6822d70d31489667c6cd9f07e31fbd))
-* **deps:** pin FAPIgo v0.48.1 ([7b0002a](https://github.com/IDFoundry/OID4VCgo/commit/7b0002a3a7ae74768c139a211e4360cbb9a93277))
+* **deps:** pin FAPIgo v0.48.1 ([fe3dec3](https://github.com/IDFoundry/OID4VCgo/commit/fe3dec3dde6822d70d31489667c6cd9f07e31fbd), [7b0002a](https://github.com/IDFoundry/OID4VCgo/commit/7b0002a3a7ae74768c139a211e4360cbb9a93277))
 
 ## [0.28.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.27.0...v0.28.0) (2026-10-04)
 
