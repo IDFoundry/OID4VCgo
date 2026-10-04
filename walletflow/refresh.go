@@ -323,28 +323,60 @@ func (w *Wallet) forgetRefusedGrant(ctx context.Context, g RefreshGrant) {
 	w.forgetGrant(ctx, cur)
 }
 
-// releaseGrant forgets the grant id names once no stored credential
-// other than except uses it.
-func (w *Wallet) releaseGrant(ctx context.Context, id, except string) error {
+// unusedGrant returns the grant id names when no stored credential uses
+// it, nil otherwise or when there's none.
+func (w *Wallet) unusedGrant(ctx context.Context, id string) (*RefreshGrant, error) {
 	if id == "" {
-		return nil
+		return nil, nil
 	}
 	creds, err := w.deps.Credentials.List(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if slices.ContainsFunc(creds, func(c StoredCredential) bool { return c.GrantID == id && c.ID != except }) {
-		return nil
+	if slices.ContainsFunc(creds, func(c StoredCredential) bool { return c.GrantID == id }) {
+		return nil, nil
 	}
 	g, err := w.deps.Grants.GetGrant(ctx, id)
 	if errors.Is(err, ErrNotFound) {
-		return nil
+		return nil, nil
 	}
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if err := w.deps.Grants.DeleteGrant(ctx, id); err != nil {
-		return err
+	return &g, nil
+}
+
+// revokeGrant asks the Authorization Server to revoke g's refresh token
+// (RFC 7009), authenticating with g's instance key, as a refresh does;
+// configID is a configuration the grant was for.
+// It's best effort: a server without a revocation endpoint, an
+// unreachable one, or an issuer no longer naming it leaves the token to
+// expire there, and it's forgotten here all the same.
+func (w *Wallet) revokeGrant(ctx context.Context, g RefreshGrant, configID string) {
+	if w.deps.Provider == nil || w.cfg.ClientID == "" {
+		return
 	}
-	return w.deps.Keys.DeleteKey(ctx, g.InstanceKeyID)
+	instanceKey, err := w.deps.Keys.Key(ctx, g.InstanceKeyID)
+	if err != nil {
+		return
+	}
+	metadata, err := w.core.FetchCredentialIssuerMetadata(ctx, g.CredentialIssuer)
+	if err != nil {
+		return
+	}
+	// The refresh token goes only to an Authorization Server the issuer
+	// still lists.
+	offer := oid4vci.CredentialOffer{
+		CredentialIssuer: g.CredentialIssuer, CredentialConfigurationIDs: []string{configID},
+		Grants: &oid4vci.Grants{AuthorizationCode: &oid4vci.GrantAuthorizationCode{AuthorizationServer: g.AuthorizationServer}},
+	}
+	if _, err := wallet.PlanAuthorization(offer, metadata); err != nil {
+		return
+	}
+	s := &Issuance{w: w, metadata: metadata, instanceKey: instanceKey, offer: offer}
+	defer s.endRefresh(context.WithoutCancel(ctx))
+	if err := s.newClient(ctx, g.AuthorizationServer); err != nil {
+		return
+	}
+	_ = s.client.RevokeToken(ctx, g.RefreshToken)
 }

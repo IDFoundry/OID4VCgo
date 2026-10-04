@@ -318,7 +318,8 @@ public final class Wallet: @unchecked Sendable {
     }
 
     /// Deletes a credential and its holder keys, and its refresh grant
-    /// once no other credential uses it.
+    /// once no other credential uses it, first revoking the refresh token
+    /// at the Authorization Server, best effort.
     public func deleteCredential(id: String) async throws {
         let wallet = handle
         try await OID4VC.offMain { try OID4VC.wrap { try wallet.deleteCredential(id) } }

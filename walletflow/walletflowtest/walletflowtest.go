@@ -141,6 +141,7 @@ type Env struct {
 
 	mu            sync.Mutex
 	grantIDs      []string // every authorization code grant's, for RevokeGrants
+	revocations   int      // refresh tokens revoked at /revoke
 	revoked       []uint8  // the status list, one entry per credential issued
 	publisher     *statuslist.Publisher
 	closers       []func()
@@ -169,6 +170,7 @@ func New(opts Options) (env *Env, err error) {
 	asCfg.Endpoints = server.Endpoints{
 		Authorization: e.endpoint("/authorize"), Token: tokenEndpoint,
 		PushedAuthorizationRequest: e.endpoint("/par"), JWKS: e.endpoint("/jwks"),
+		Revocation: e.endpoint("/revoke"),
 	}
 	asCfg.Assurance = server.AssuranceDevelopment
 	asCfg.Limits.MaxClientAttestationLifetime = time.Hour
@@ -293,6 +295,7 @@ func New(opts Options) (env *Env, err error) {
 	mux.HandleFunc("POST /par", e.handlePAR)
 	mux.HandleFunc("GET /authorize", e.handleAuthorize)
 	mux.HandleFunc("POST /token", e.handleToken)
+	mux.HandleFunc("POST /revoke", e.handleRevoke)
 	mux.HandleFunc("POST /nonce", func(w http.ResponseWriter, r *http.Request) {
 		result, err := e.iss.RequestNonce(r.Context())
 		if err != nil {
@@ -430,6 +433,31 @@ func (e *Env) withStatus(_ context.Context, c *issuer.CredentialInstance) error 
 
 // Revoke revokes every credential issued so far: the status list then
 // says so.
+// handleRevoke is the token revocation endpoint (RFC 7009).
+func (e *Env) handleRevoke(w http.ResponseWriter, r *http.Request) {
+	req, err := server.TokenRevocationRequestFromHTTP(r)
+	if err != nil {
+		server.NewError(server.ErrorInvalidRequest, http.StatusBadRequest, err.Error()).WriteJSON(w)
+		return
+	}
+	if err := e.srv.RevokeToken(r.Context(), req); err != nil {
+		server.WriteError(w, err)
+		return
+	}
+	e.mu.Lock()
+	e.revocations++
+	e.mu.Unlock()
+	w.WriteHeader(http.StatusOK)
+}
+
+// Revocations is how many token revocation requests the Authorization
+// Server has answered with success.
+func (e *Env) Revocations() int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.revocations
+}
+
 // RevokeGrants revokes every grant so far, authorization code and
 // pre-authorized code: their refresh tokens are then refused
 // (invalid_grant).

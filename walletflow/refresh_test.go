@@ -79,8 +79,8 @@ func TestRefreshCredential(t *testing.T) {
 	if err := w.DeleteCredential(ctx, sdjwt.ID); err != nil {
 		t.Fatal(err)
 	}
-	if g, _ := grants.ListGrants(ctx); len(g) != 1 || f.keys.Len() != 4 {
-		t.Errorf("after deleting one: %d grants, %d keys; want the grant kept for the mdoc", len(g), f.keys.Len())
+	if g, _ := grants.ListGrants(ctx); len(g) != 1 || f.keys.Len() != 4 || f.env.Revocations() != 0 {
+		t.Errorf("after deleting one: %d grants, %d keys, %d revocations; want the grant kept for the mdoc", len(g), f.keys.Len(), f.env.Revocations())
 	}
 	for _, c := range held {
 		if c.ID != sdjwt.ID {
@@ -91,6 +91,10 @@ func TestRefreshCredential(t *testing.T) {
 	}
 	if g, _ := grants.ListGrants(ctx); len(g) != 0 || f.keys.Len() != 0 {
 		t.Errorf("after deleting both: %d grants, %d keys; want none", len(g), f.keys.Len())
+	}
+	// The issuer's grant ends with the last credential using it.
+	if n := f.env.Revocations(); n != 1 {
+		t.Errorf("refresh tokens revoked = %d, want 1", n)
 	}
 }
 
