@@ -183,7 +183,7 @@ const pageHead = `<!doctype html>
 <style>
 body{font-family:system-ui,sans-serif;max-width:40rem;margin:2rem auto;padding:0 1rem;line-height:1.5}
 table{border-collapse:collapse}th,td{text-align:left;padding:.25rem .75rem .25rem 0;vertical-align:top}
-code{word-break:break-all}.ok{color:#1a7f37}.warn{color:#9a6700}.note{color:#57606a;font-size:.9em}
+details.reveal summary{cursor:pointer;font-weight:600}code{word-break:break-all}.ok{color:#1a7f37}.warn{color:#9a6700}.note{color:#57606a;font-size:.9em}
 input.code{display:block;margin-top:.4em;font:1.8em ui-monospace,monospace;letter-spacing:.35em;width:calc(6ch + 2.5em);box-sizing:content-box;padding:.3em .5em;border:2px solid #57606a;border-radius:6px}
 button{font-size:1.05em;padding:.5em 1.1em;margin:.2em .4em .2em 0}
 </style>
@@ -247,8 +247,8 @@ var offerTemplate = template.Must(template.New("offer").Funcs(template.FuncMap{
 <tr><th>Expires</th><td>{{.Evidence.Identity.ExpiryDate.Format "2006-01-02"}}{{if .Expired}} <span class="note">— expired: the data is still country-signed, and the credential says when it expired</span>{{end}}</td></tr>
 </table>
 <h2>Credential offer</h2>
-{{if .Offer.PreAuthorized}}<p>PIN: <strong style="font-size:1.4em;letter-spacing:.15em">{{.Offer.ConfirmationCode}}</strong><br><span class="note">Give it to the holder separately from the offer: their wallet sends it with the offer's pre-authorized code. There's no approval step; the offer can be redeemed once, by one wallet.</span></p>
-{{else}}<p>Confirmation code: <strong style="font-size:1.4em;letter-spacing:.15em">{{.Offer.ConfirmationCode}}</strong><br><span class="note">Enter it when the issuer asks you to approve. The offer can be redeemed once, by one wallet.</span></p>{{end}}
+{{if .Offer.PreAuthorized}}<details class="reveal"><summary>Show the PIN</summary><p>PIN: <strong style="font-size:1.4em;letter-spacing:.15em">{{.Offer.ConfirmationCode}}</strong></p></details><p class="note">Give it to the holder separately from the offer, once their wallet has scanned it: their wallet sends it with the offer's pre-authorized code. There's no approval step, so anyone who sees both the offer and the PIN can redeem it — once, with one wallet.</p>
+{{else}}<details class="reveal"><summary>Show the confirmation code</summary><p>Confirmation code: <strong style="font-size:1.4em;letter-spacing:.15em">{{.Offer.ConfirmationCode}}</strong></p></details><p class="note">Show it once the wallet has scanned the offer, and enter it when the issuer asks you to approve. Anyone who sees both the offer and the code can redeem it — once, with one wallet.</p>{{end}}
 {{if .Offer.KeptForRefresh}}<p class="note">Kept for refresh: the issuer keeps this passport's data for 24 hours after it first issues a credential, so your wallet can get fresh copies, then deletes it. Deleting the credentials in your wallet, or <a href="/demo/kept">forgetting it</a>, deletes it sooner.</p>{{end}}
 {{if .WebWalletLink}}<p><a href="{{.WebWalletLink}}"><strong>Open in web wallet</strong></a></p>{{end}}
 {{if .AppLink}}<p><a href="{{.AppLink}}">Open in wallet app</a> (on this device)</p>{{end}}

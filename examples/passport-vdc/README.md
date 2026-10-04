@@ -490,11 +490,19 @@ for 60 seconds.
 - **The holder isn't authenticated.** An offer is redeemed once, by one
   wallet: the first approval with the right confirmation code claims
   it, its DPoP-bound access token can fetch each format once, and five
-  wrong codes void it. So a leaked offer link on its own is useless. But
-  the code is shown next to the QR code, so whoever sees the offer page
-  — over a shoulder, in a screenshot — can still redeem it first, with
-  any wallet the Wallet Provider attests, and get the passport's data
-  in a credential bound to *their* key.
+  wrong codes void it. So a leaked offer link on its own is useless. The
+  code (or the pre-authorized offer's PIN) stays hidden on the offer
+  page until it's revealed, to show once the holder's wallet has
+  scanned the offer: whoever sees both — over a shoulder, in a
+  screenshot — can still redeem it first, with any wallet the Wallet
+  Provider attests, and get the passport's data in a credential bound
+  to *their* key. And since the stand-in Wallet Provider attests
+  anyone who asks, "any wallet" is any HTTP client.
+- **Passports kept for refresh** answer at most 50 Credential Requests
+  each, so that refreshing in a loop can't use up the shared status
+  list. Expired passport data, whether offers never redeemed, kept
+  passports past their deadline or reviews never decided, is swept
+  every minute.
 - The signing keys and certificates (one for credentials, one for the
   issuer metadata, under one demo CA) are unencrypted files in
   `.demo-state/` under `cmd/demo`, and generated per process under

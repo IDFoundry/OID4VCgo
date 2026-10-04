@@ -122,3 +122,27 @@ func (a *App) handleForget(w http.ResponseWriter, r *http.Request) {
 	}
 	http.Redirect(w, r, "/demo/kept", http.StatusSeeOther)
 }
+
+// Sweep drops expired passport data — offers never redeemed, passports
+// kept for refresh past their deadline, reviews never decided — rather
+// than waiting for the next upload to. Run it periodically: SweepEvery.
+func (a *App) Sweep() {
+	a.transactions.mu.Lock()
+	a.transactions.prune()
+	a.transactions.mu.Unlock()
+	a.reviews.prune()
+}
+
+// SweepEvery runs Sweep every interval until ctx is done.
+func (a *App) SweepEvery(ctx context.Context, interval time.Duration) {
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			a.Sweep()
+		}
+	}
+}

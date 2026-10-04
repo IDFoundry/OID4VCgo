@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/idfoundry/oid4vcgo/dcql"
 	"github.com/idfoundry/oid4vcgo/verifier"
@@ -24,6 +25,7 @@ type VerifierTransactionStore struct {
 	byID   map[string]verifier.Transaction
 	byKey  map[string]string
 	byCode map[string]string
+	prune  pruner
 }
 
 // NewVerifierTransactionStore returns an empty VerifierTransactionStore.
@@ -46,8 +48,30 @@ func (s *VerifierTransactionStore) Create(_ context.Context, tx verifier.Transac
 	if _, used := s.byKey[tx.KeyID]; used && tx.KeyID != "" {
 		return fmt.Errorf("storage: transaction key ID is already in use")
 	}
+	if now, ok := s.prune.due(len(s.byID)); ok {
+		s.dropExpired(now)
+		s.prune.pruned(len(s.byID))
+	}
 	s.save(cloneTransaction(tx))
 	return nil
+}
+
+// dropExpired forgets transactions that expired more than expiryGrace
+// before now, with their indexes.
+func (s *VerifierTransactionStore) dropExpired(now time.Time) {
+	pruneMap(s.byID, now, func(tx verifier.Transaction) time.Time {
+		if tx.ExpiresAt.IsZero() {
+			return time.Time{}
+		}
+		return tx.ExpiresAt.Add(expiryGrace)
+	})
+	for _, index := range []map[string]string{s.byKey, s.byCode} {
+		for k, id := range index {
+			if _, ok := s.byID[id]; !ok {
+				delete(index, k)
+			}
+		}
+	}
 }
 
 // Get implements verifier.TransactionStore.
