@@ -147,13 +147,14 @@ func TestSessions_IssueThenPresent(t *testing.T) {
 	received := h.receive(t)
 
 	list := decode[struct{ Credentials []summary }](t, mustText(t)(h.w.Credentials()))
-	if len(list.Credentials) != 2 || len(h.creds.records) != 2 {
+	// The two credentials, and the refresh grant both use.
+	if len(list.Credentials) != 2 || len(h.creds.records) != 3 {
 		t.Fatalf("Credentials = %+v; store holds %d", list, len(h.creds.records))
 	}
-	// Only the two holder keys remain: Close deleted the instance and
-	// DPoP keys.
-	if len(h.keys.keys) != 2 {
-		t.Errorf("keys held = %d, want 2", len(h.keys.keys))
+	// The two holder keys and the instance key the refresh grant keeps:
+	// Close deleted the DPoP key.
+	if len(h.keys.keys) != 3 {
+		t.Errorf("keys held = %d, want 3", len(h.keys.keys))
 	}
 
 	sdjwt := checkPresentation(t, h, received)
@@ -242,8 +243,8 @@ func checkClaims(t *testing.T, h harness, received []summary) {
 	keys := decode[struct {
 		KeyIDs []string `json:"key_ids"`
 	}](t, mustText(t)(h.w.HolderKeyIDs()))
-	if len(keys.KeyIDs) != len(received) {
-		t.Errorf("HolderKeyIDs = %v, want one per credential", keys.KeyIDs)
+	if len(keys.KeyIDs) != len(received)+1 {
+		t.Errorf("HolderKeyIDs = %v, want one per credential and the refresh grant's instance key", keys.KeyIDs)
 	}
 	for _, id := range keys.KeyIDs {
 		if _, ok := h.keys.keys[id]; !ok {
@@ -673,8 +674,8 @@ func TestSessions_Batch(t *testing.T) {
 	}
 	if keys := decode[struct {
 		KeyIDs []string `json:"key_ids"`
-	}](t, mustText(t)(h.w.HolderKeyIDs())); len(keys.KeyIDs) != 6 {
-		t.Errorf("keys in use = %d, want every copy's: 6", len(keys.KeyIDs))
+	}](t, mustText(t)(h.w.HolderKeyIDs())); len(keys.KeyIDs) != 7 {
+		t.Errorf("keys in use = %d, want every copy's and the refresh grant's instance key: 7", len(keys.KeyIDs))
 	}
 	sdjwt := checkPresentation(t, h, received)
 	relaunched, err := NewWallet(env.ConfigJSON(), h.keys, h.creds, env.Provider())
@@ -689,5 +690,69 @@ func TestSessions_Batch(t *testing.T) {
 		if c.CopiesLeft != want {
 			t.Errorf("%s after one presentation: %d left, want %d", c.Format, c.CopiesLeft, want)
 		}
+	}
+}
+
+// A credential received with a refresh token is refreshable: refreshing
+// it replaces its copies, unused again, under the same ID, also after a
+// relaunch, until the grant is revoked (reissue_required). The grant's
+// record goes with the last credential using it.
+func TestSessions_Refresh(t *testing.T) {
+	env, err := StartBatchTestEnv(false, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(env.Close)
+	h := harness{env: env, keys: newGoKeyStore(), creds: newGoCredentialStore()}
+	if h.w, err = NewWallet(env.ConfigJSON(), h.keys, h.creds, env.Provider()); err != nil {
+		t.Fatal(err)
+	}
+	received := h.receive(t)
+	type refreshable struct {
+		ID          string
+		Refreshable bool `json:"refreshable"`
+		CopiesLeft  int  `json:"copies_left"`
+	}
+	for _, c := range decode[struct{ Credentials []refreshable }](t, mustText(t)(h.w.Credentials())).Credentials {
+		if !c.Refreshable {
+			t.Errorf("%s isn't refreshable", c.ID)
+		}
+	}
+	sdjwt := checkPresentation(t, h, received)
+	refresh := func(w *Wallet) refreshable {
+		out := decode[struct {
+			Credential refreshable
+			Deferred   *struct{ ID string }
+		}](t, mustText(t)(w.RefreshCredential(NewOperation(0), sdjwt)))
+		if out.Deferred != nil || out.Credential.ID != sdjwt {
+			t.Fatalf("RefreshCredential = %+v", out)
+		}
+		return out.Credential
+	}
+	if c := refresh(h.w); c.CopiesLeft != 3 || !c.Refreshable {
+		t.Errorf("refreshed = %+v, want 3 copies left", c)
+	}
+	relaunched, err := NewWallet(env.ConfigJSON(), h.keys, h.creds, env.Provider())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c := refresh(relaunched); c.CopiesLeft != 3 {
+		t.Errorf("refreshed after a relaunch = %+v", c)
+	}
+
+	env.RevokeGrants()
+	if _, err := relaunched.RefreshCredential(NewOperation(0), sdjwt); code(err) != CodeReissueRequired {
+		t.Errorf("after the grant was revoked: %v, want reissue_required", err)
+	}
+	if _, err := relaunched.RefreshCredential(NewOperation(0), "no-such"); code(err) != CodeNotFound {
+		t.Errorf("an unknown credential: %v", err)
+	}
+	for _, c := range received {
+		if err := relaunched.DeleteCredential(c.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(h.creds.records) != 0 || len(h.keys.keys) != 0 {
+		t.Errorf("after deleting both: %d records, %d keys; want none", len(h.creds.records), len(h.keys.keys))
 	}
 }

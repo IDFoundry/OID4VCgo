@@ -284,6 +284,36 @@ final class SessionTests: XCTestCase {
         XCTAssertEqual(after.map(\.copiesLeft).sorted(), [2, 3])
     }
 
+    /// A credential received with a refresh token is refreshable: its
+    /// copies are replaced, unused again, under the same ID, until the
+    /// grant is revoked (reissueRequired).
+    func testRefresh() async throws {
+        let env = try TestEnv(batchSize: 3)
+        defer { env.close() }
+        XCTAssertTrue(try env.configuration.requestRefresh)
+        let w = try wallet(env)
+        _ = try await Self.receive(env, w)
+        let held = try await w.credentials()
+        XCTAssertTrue(held.allSatisfy(\.refreshable))
+        let req = try env.request(format: "dc+sd-jwt")
+        let p = try await w.startPresentation(request: req.link)
+        _ = try await p.respond(selection: try await p.defaultSelection())
+        let used = try await w.credentials().first { $0.copiesLeft == 2 }!
+
+        let refreshed = try await w.refreshCredential(id: used.id)
+        XCTAssertNil(refreshed.deferred)
+        XCTAssertEqual(refreshed.credential.id, used.id)
+        XCTAssertEqual(refreshed.credential.copiesLeft, 3)
+
+        env.env.revokeGrants()
+        do {
+            _ = try await w.refreshCredential(id: used.id)
+            XCTFail("refreshed with a revoked grant")
+        } catch let e as WalletError {
+            XCTAssertEqual(e.code, .reissueRequired)
+        }
+    }
+
     func testAbandonDeferred() async throws {
         let env = try TestEnv(deferIssuance: true)
         defer { env.close() }

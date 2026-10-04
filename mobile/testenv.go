@@ -56,6 +56,8 @@ func (e *TestEnv) ConfigJSON() string {
 		IssuerRoots:   string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: e.env.IssuerCA.Raw})),
 		VerifierRoots: string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: e.v.CA.Raw})),
 		Development:   true,
+		// The test issuer issues refresh tokens for offline_access.
+		RequestRefresh: true,
 	})
 	return text
 }
@@ -90,6 +92,11 @@ func (e *TestEnv) Decide(approve bool) { e.env.Decide(approve) }
 // Revoke revokes every credential the issuer has issued: its status
 // list then says so.
 func (e *TestEnv) Revoke() { e.env.Revoke() }
+
+// RevokeGrants revokes every authorization code grant so far: their
+// refresh tokens are refused, and RefreshCredential is then
+// reissue_required.
+func (e *TestEnv) RevokeGrants() { e.env.RevokeGrants() }
 
 // Request has the Verifier ask for family_name from an SD-JWT VC
 // ("dc+sd-jwt"), an mdoc ("mso_mdoc"), or either ("") and returns

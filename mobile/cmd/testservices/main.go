@@ -19,6 +19,8 @@
 //	POST /decide?approve=1       → approves (approve=0: denies) every deferred
 //	                               credential, on its next poll
 //	POST /revoke                 → revokes every credential issued so far
+//	POST /revoke-grants          → revokes every authorization code grant so far:
+//	                               refreshing a credential is then reissue_required
 //
 // Every service is HTTPS with one self-signed certificate, written to
 // -cert for the Simulator to trust (xcrun simctl keychain booted
@@ -78,7 +80,7 @@ func run(addr, redirect, certOut string) error {
 
 	config := map[string]any{
 		"wallet": map[string]any{
-			"client_id": walletflowtest.ClientID, "redirect_uri": redirect, "development": true,
+			"client_id": walletflowtest.ClientID, "redirect_uri": redirect, "development": true, "request_refresh": true,
 			"issuer_roots":   string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: env.IssuerCA.Raw})),
 			"verifier_roots": string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: v.CA.Raw})),
 		},
@@ -136,6 +138,10 @@ func run(addr, redirect, certOut string) error {
 	})
 	mux.HandleFunc("POST /revoke", func(w http.ResponseWriter, _ *http.Request) {
 		env.Revoke()
+		writeJSON(w, map[string]bool{"ok": true})
+	})
+	mux.HandleFunc("POST /revoke-grants", func(w http.ResponseWriter, _ *http.Request) {
+		env.RevokeGrants()
 		writeJSON(w, map[string]bool{"ok": true})
 	})
 	control := httptest.NewUnstartedServer(mux)

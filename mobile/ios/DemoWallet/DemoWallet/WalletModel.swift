@@ -486,6 +486,23 @@ final class WalletModel {
         }
     }
 
+    /// Replaces a credential's copies with a fresh batch, without the
+    /// holder, using the refresh token its issuance kept. One that can't
+    /// be refreshed any more has to be received again.
+    func refreshCopies(_ id: String) async {
+        guard let wallet else { return }
+        do {
+            let refreshed = try await wallet.refreshCredential(id: id)
+            if let i = credentials.firstIndex(where: { $0.id == id }) { credentials[i] = refreshed.credential }
+            if let deferred = refreshed.deferred { track(deferred) }
+        } catch let e as WalletError where e.code == .reissueRequired {
+            notice = "This credential can't be refreshed any more: receive it again from the issuer."
+            await refresh()
+        } catch {
+            notice = "Couldn't refresh the copies: " + Self.describe(error)
+        }
+    }
+
     /// Checks every credential's status, at launch: one status list per
     /// issuer covers many credentials, so this tells no issuer which
     /// credentials the holder has.
