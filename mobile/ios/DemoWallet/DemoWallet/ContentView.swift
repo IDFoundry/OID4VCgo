@@ -573,12 +573,19 @@ struct RequestView: View {
                     Section("Requested by") {
                         Text(p.verifier.name).font(.headline)
                         Text(p.verifier.clientID).font(.caption).foregroundStyle(.secondary)
+                        RegistrationRows(registration: p.verifier.registration)
                     }
                     if !p.isAnswerable {
                         Section { Text("You have no credential this verifier accepts.") }
                     }
                     ForEach(p.queries.filter { !$0.credentials.isEmpty }, id: \.queryID) { query in
                         Section("Answers “\(query.queryID)”") {
+                            if !query.unregistered.isEmpty || query.unregisteredAll {
+                                Label(Self.overAsking(query), systemImage: "exclamationmark.triangle.fill")
+                                    .font(.subheadline).foregroundStyle(.orange)
+                                    .accessibilityElement(children: .combine)
+                                    .accessibilityIdentifier("over-asking")
+                            }
                             ForEach(query.credentials, id: \.id) { c in
                                 Button {
                                     Task { await model.toggle(c.id, for: query) }
@@ -623,7 +630,8 @@ struct RequestView: View {
                         ForEach(Array(model.disclosures.enumerated()), id: \.offset) { _, d in
                             Section(Self.shareHeader(d, claims: model.candidateClaims[d.credentialID], in: p)) {
                                 ForEach(d.claims.indices, id: \.self) { i in
-                                    DisclosedRow(path: d.claims[i], claims: model.candidateClaims[d.credentialID])
+                                    DisclosedRow(path: d.claims[i], claims: model.candidateClaims[d.credentialID],
+                                                 unregistered: Self.isUnregistered(d.claims[i], query: d.queryID, in: p))
                                 }
                             }
                         }
@@ -640,6 +648,19 @@ struct RequestView: View {
             }
             .navigationTitle("Presentation request")
         }
+    }
+
+    /// What a query asks beyond the Verifier's registration, in words.
+    static func overAsking(_ q: Presentation.Query) -> String {
+        if q.unregisteredAll { return "Asks for every claim, beyond what it's registered for" }
+        return "Asks for more than it's registered for: " + q.unregistered.map(path).joined(separator: ", ")
+    }
+
+    /// Whether disclosing path, for query, is beyond the Verifier's
+    /// registration.
+    static func isUnregistered(_ path: [Presentation.PathElement], query: String, in p: Presentation) -> Bool {
+        guard let q = p.queries.first(where: { $0.queryID == query }) else { return false }
+        return q.unregisteredAll || q.unregistered.contains(path)
     }
 
     /// "Will share from Jane Citizen's Passport (SD-JWT)": whose
@@ -666,8 +687,20 @@ struct RequestView: View {
 struct DisclosedRow: View {
     let path: [Presentation.PathElement]
     let claims: JSONValue?
+    /// Beyond the Verifier's registration.
+    var unregistered = false
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            row
+            if unregistered {
+                Text("Not in its registration").font(.caption2).foregroundStyle(.orange)
+                    .accessibilityIdentifier("disclosed-unregistered")
+            }
+        }
+    }
+
+    @ViewBuilder private var row: some View {
         let label = RequestView.path(path)
         let value = claims.flatMap { Self.resolve(path, in: $0) }
         if let value, let image = ClaimRows.image(value, key: Self.lastKey(path)) {
@@ -704,6 +737,39 @@ struct DisclosedRow: View {
     static func lastKey(_ path: [Presentation.PathElement]) -> String {
         for e in path.reversed() { if case .key(let k) = e { return k } }
         return ""
+    }
+}
+
+/// A Verifier's registration, on the consent screen: who registered it
+/// and for what, or that its registration didn't verify.
+struct RegistrationRows: View {
+    let registration: Presentation.Registration
+
+    var body: some View {
+        switch registration.status {
+        case .verified:
+            Label("Registered with \(Self.host(registration.registrar))", systemImage: "checkmark.seal.fill")
+                .font(.subheadline).foregroundStyle(.green)
+                .accessibilityElement(children: .combine).accessibilityIdentifier("registered")
+            if let name = registration.name { LabeledContent("Registered as", value: name) }
+            if let purpose = registration.purpose { LabeledContent("Purpose", value: purpose) }
+            if !registration.claims.isEmpty {
+                LabeledContent("Registered to ask for", value: registration.claims.map(RequestView.path).joined(separator: ", "))
+            }
+            if let policy = registration.privacyPolicy { Link("Privacy policy", destination: policy) }
+        case .invalid:
+            Label("Its registration couldn't be verified", systemImage: "exclamationmark.triangle.fill")
+                .font(.subheadline).foregroundStyle(.orange)
+                .accessibilityElement(children: .combine).accessibilityIdentifier("registration-invalid")
+        case .none:
+            Text("Not registered with a registrar this wallet knows").font(.caption).foregroundStyle(.secondary)
+                .accessibilityIdentifier("not-registered")
+        }
+    }
+
+    static func host(_ registrar: String?) -> String {
+        guard let registrar else { return "a registrar" }
+        return URL(string: registrar)?.host ?? registrar
     }
 }
 

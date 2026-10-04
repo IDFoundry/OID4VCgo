@@ -10,7 +10,9 @@
 //	                               from an SD-JWT VC ("dc+sd-jwt"), an mdoc
 //	                               ("mso_mdoc") or either (no format); with
 //	                               multiple=1, from one or more credentials
-//	                               (DCQL multiple)
+//	                               (DCQL multiple); with registered=1, from a
+//	                               Verifier registered for family_name only, also
+//	                               asking for extra=<claim> if given
 //	GET  /request/{id}           → {"status": "pending" | "done", "claims", "credentials",
 //	                               "last_error"}: claims are the first credential's,
 //	                               credentials how many were presented
@@ -68,6 +70,11 @@ func run(addr, redirect, certOut string) error {
 	if err != nil {
 		return err
 	}
+	// A Verifier the registrar registered for family_name only.
+	rv, err := env.StartRegisteredVerifier(dcql.Path{dcql.PathKey("family_name")}, dcql.Path{dcql.PathKey(walletflowtest.NameSpace), dcql.PathKey("family_name")})
+	if err != nil {
+		return err
+	}
 	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: env.TLSCertificate.Raw})
 	if certOut != "" {
 		if err := os.WriteFile(certOut, certPEM, 0o600); err != nil {
@@ -82,7 +89,9 @@ func run(addr, redirect, certOut string) error {
 		"wallet": map[string]any{
 			"client_id": walletflowtest.ClientID, "redirect_uri": redirect, "development": true, "request_refresh": true,
 			"issuer_roots":   string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: env.IssuerCA.Raw})),
-			"verifier_roots": string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: v.CA.Raw})),
+			"verifier_roots": string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: v.CA.Raw})) +
+				string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: rv.CA.Raw})),
+			"registrar_roots": string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: env.RegistrarCA.Raw})),
 		},
 		"provider_url": provider.URL,
 	}
@@ -108,7 +117,20 @@ func run(addr, redirect, certOut string) error {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		id, link, err := v.Begin(q)
+		asker := v
+		if r.URL.Query().Get("registered") == "1" {
+			asker = rv
+			if extra := r.URL.Query().Get("extra"); extra != "" {
+				for i := range q.Credentials {
+					path := dcql.Path{dcql.PathKey(extra)}
+					if q.Credentials[i].Format == "mso_mdoc" {
+						path = dcql.Path{dcql.PathKey(walletflowtest.NameSpace), dcql.PathKey(extra)}
+					}
+					q.Credentials[i].Claims = append(q.Credentials[i].Claims, dcql.ClaimsQuery{Path: path})
+				}
+			}
+		}
+		id, link, err := asker.Begin(q)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -117,6 +139,9 @@ func run(addr, redirect, certOut string) error {
 	})
 	mux.HandleFunc("GET /request/{id}", func(w http.ResponseWriter, r *http.Request) {
 		view, err := v.Lookup(r.PathValue("id"))
+		if err != nil {
+			view, err = rv.Lookup(r.PathValue("id"))
+		}
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusNotFound)
 			return

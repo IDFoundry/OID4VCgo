@@ -19,6 +19,8 @@ import (
 type TestEnv struct {
 	env *walletflowtest.Env
 	v   *walletflowtest.Verifier
+	// rv is a Verifier the registrar registered for family_name.
+	rv *walletflowtest.Verifier
 }
 
 // StartTestEnv starts a TestEnv; deferIssuance has the issuer defer
@@ -39,8 +41,13 @@ func StartBatchTestEnv(deferIssuance bool, batchSize int) (*TestEnv, error) {
 		env.Close()
 		return nil, newError(CodeInternal, err)
 	}
+	rv, err := env.StartRegisteredVerifier(dcql.Path{dcql.PathKey("family_name")}, dcql.Path{dcql.PathKey(walletflowtest.NameSpace), dcql.PathKey("family_name")})
+	if err != nil {
+		env.Close()
+		return nil, newError(CodeInternal, err)
+	}
 	testHTTP.Store(env.HTTP)
-	return &TestEnv{env: env, v: v}, nil
+	return &TestEnv{env: env, v: v, rv: rv}, nil
 }
 
 // Close stops the TestEnv.
@@ -54,8 +61,10 @@ func (e *TestEnv) ConfigJSON() string {
 	text, _ := marshal(config{
 		ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI,
 		IssuerRoots:   string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: e.env.IssuerCA.Raw})),
-		VerifierRoots: string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: e.v.CA.Raw})),
-		Development:   true,
+		VerifierRoots: string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: e.v.CA.Raw})) +
+			string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: e.rv.CA.Raw})),
+		RegistrarRoots: string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: e.env.RegistrarCA.Raw})),
+		Development:    true,
 		// The test issuer issues refresh tokens for offline_access.
 		RequestRefresh: true,
 	})
@@ -121,6 +130,35 @@ func (e *TestEnv) Request(format string) (string, error) {
 		q.CredentialSets = []dcql.CredentialSetQuery{{Options: [][]string{{"mdl"}, {"pid"}}}}
 	}
 	id, link, err := e.v.Begin(q)
+	if err != nil {
+		return "", wrapTest(err)
+	}
+	return marshal(map[string]string{"id": id, "link": link})
+}
+
+// RegisteredRequest is Request from a Verifier registered (with a
+// registrar registrar_roots trusts) for family_name only, asking for
+// family_name and also extra, if set: a claim beyond its registration.
+func (e *TestEnv) RegisteredRequest(format, extra string) (string, error) {
+	claims := []string{"family_name"}
+	if extra != "" {
+		claims = append(claims, extra)
+	}
+	var q dcql.Query
+	if format == "mso_mdoc" {
+		mdoc, err := walletflowtest.MdocQuery("mdl", claims...)
+		if err != nil {
+			return "", wrapTest(err)
+		}
+		q.Credentials = []dcql.CredentialQuery{mdoc}
+	} else {
+		sdjwt, err := e.env.SDJWTQuery("pid", claims...)
+		if err != nil {
+			return "", wrapTest(err)
+		}
+		q.Credentials = []dcql.CredentialQuery{sdjwt}
+	}
+	id, link, err := e.rv.Begin(q)
 	if err != nil {
 		return "", wrapTest(err)
 	}

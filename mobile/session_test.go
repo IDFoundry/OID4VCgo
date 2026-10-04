@@ -5,6 +5,7 @@ package mobile
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -865,5 +866,53 @@ func TestStartPresentation_UntrustedVerifier(t *testing.T) {
 	req := decode[struct{ ID, Link string }](t, mustText(t)(env.Request("dc+sd-jwt")))
 	if _, err := w.StartPresentation(NewOperation(0), req.Link); code(err) != CodeUntrustedVerifier {
 		t.Errorf("StartPresentation from an untrusted verifier: %v, want %s", err, CodeUntrustedVerifier)
+	}
+}
+
+// TestStartPresentation_Registration: a registered Verifier's
+// registration and what a request asks beyond it reach the app; an
+// unregistered Verifier's is "none".
+func TestStartPresentation_Registration(t *testing.T) {
+	h := newHarness(t, false)
+	h.receive(t)
+	type reg struct {
+		Status, Name, Purpose, Registrar string
+		PrivacyPolicy                    string  `json:"privacy_policy"`
+		Claims                           [][]any `json:"claims"`
+	}
+	type query struct {
+		QueryID         string  `json:"query_id"`
+		Unregistered    [][]any `json:"unregistered"`
+		UnregisteredAll bool    `json:"unregistered_all"`
+	}
+	start := func(link string) (reg, []query) {
+		t.Helper()
+		p, err := h.w.StartPresentation(NewOperation(0), link)
+		if err != nil {
+			t.Fatal(err)
+		}
+		v := decode[struct{ Registration reg }](t, p.Verifier())
+		q := decode[struct{ Queries []query }](t, p.Queries())
+		return v.Registration, q.Queries
+	}
+
+	within := decode[struct{ ID, Link string }](t, mustText(t)(h.env.RegisteredRequest("dc+sd-jwt", "")))
+	r, qs := start(within.Link)
+	if r.Status != "verified" || r.Name == "" || r.Purpose != "Testing" || r.Registrar == "" || r.PrivacyPolicy == "" || len(r.Claims) != 2 {
+		t.Errorf("registration = %+v", r)
+	}
+	if len(qs) != 1 || len(qs[0].Unregistered) != 0 || qs[0].UnregisteredAll {
+		t.Errorf("within the registration: %+v", qs)
+	}
+
+	over := decode[struct{ ID, Link string }](t, mustText(t)(h.env.RegisteredRequest("dc+sd-jwt", "given_name")))
+	_, qs = start(over.Link)
+	if len(qs) != 1 || len(qs[0].Unregistered) != 1 || fmt.Sprint(qs[0].Unregistered[0]) != "[given_name]" {
+		t.Errorf("beyond the registration: %+v", qs)
+	}
+
+	plain := decode[struct{ ID, Link string }](t, mustText(t)(h.env.Request("dc+sd-jwt")))
+	if r, qs := start(plain.Link); r.Status != "none" || r.Name != "" || len(qs) != 1 || qs[0].Unregistered == nil {
+		t.Errorf("an unregistered Verifier: %+v, %+v", r, qs)
 	}
 }

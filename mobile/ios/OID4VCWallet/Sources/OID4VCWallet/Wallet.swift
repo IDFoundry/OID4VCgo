@@ -10,6 +10,10 @@ public struct WalletConfiguration: Codable, Sendable {
     /// for Verifiers' requests.
     public var issuerRoots: String
     public var verifierRoots: String
+    /// PEM certificates: the registrars whose registrations of Verifiers
+    /// the wallet checks (`Presentation.Verifier.registration`). Empty:
+    /// registrations are ignored.
+    public var registrarRoots: String
     /// Allows services on loopback addresses.
     public var development: Bool
     /// The holder's preferred languages (BCP 47, most preferred first),
@@ -41,13 +45,14 @@ public struct WalletConfiguration: Codable, Sendable {
         case perVerifier = "per_verifier"
     }
 
-    public init(clientID: String, redirectURI: String, issuerRoots: String = "", verifierRoots: String = "", development: Bool = false,
-                locales: [String] = Locale.preferredLanguages, batchSize: Int = 0, requestRefresh: Bool = false,
+    public init(clientID: String, redirectURI: String, issuerRoots: String = "", verifierRoots: String = "", registrarRoots: String = "",
+                development: Bool = false, locales: [String] = Locale.preferredLanguages, batchSize: Int = 0, requestRefresh: Bool = false,
                 copyPolicy: CopyPolicy = .perPresentation) {
         self.clientID = clientID
         self.redirectURI = redirectURI
         self.issuerRoots = issuerRoots
         self.verifierRoots = verifierRoots
+        self.registrarRoots = registrarRoots
         self.development = development
         self.locales = locales
         self.batchSize = batchSize
@@ -57,7 +62,7 @@ public struct WalletConfiguration: Codable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case clientID = "client_id", redirectURI = "redirect_uri", issuerRoots = "issuer_roots"
-        case verifierRoots = "verifier_roots", development, locales, batchSize = "batch_size"
+        case verifierRoots = "verifier_roots", registrarRoots = "registrar_roots", development, locales, batchSize = "batch_size"
         case requestRefresh = "request_refresh", copyPolicy = "copy_policy"
     }
 
@@ -67,6 +72,7 @@ public struct WalletConfiguration: Codable, Sendable {
                   redirectURI: try c.decode(String.self, forKey: .redirectURI),
                   issuerRoots: try c.decodeIfPresent(String.self, forKey: .issuerRoots) ?? "",
                   verifierRoots: try c.decodeIfPresent(String.self, forKey: .verifierRoots) ?? "",
+                  registrarRoots: try c.decodeIfPresent(String.self, forKey: .registrarRoots) ?? "",
                   development: try c.decodeIfPresent(Bool.self, forKey: .development) ?? false,
                   locales: try c.decodeIfPresent([String].self, forKey: .locales) ?? Locale.preferredLanguages,
                   batchSize: try c.decodeIfPresent(Int.self, forKey: .batchSize) ?? 0,
@@ -563,7 +569,46 @@ public final class Presentation: @unchecked Sendable {
         public let clientID: String
         public let name: String
         public let responseURI: String
-        enum CodingKeys: String, CodingKey { case clientID = "client_id", name, responseURI = "response_uri" }
+        /// The Verifier's registration, from its request, checked against
+        /// `WalletConfiguration.registrarRoots`.
+        public let registration: Registration
+        enum CodingKeys: String, CodingKey { case clientID = "client_id", name, responseURI = "response_uri", registration }
+    }
+
+    /// A Verifier's registration with a registrar: who it is and what it
+    /// may request, as the registrar attests.
+    public struct Registration: Decodable, Sendable {
+        public enum Status: String, Decodable, Sendable {
+            /// A registrar the wallet trusts registered this Verifier.
+            case verified
+            /// The request carries a registration that didn't verify: it
+            /// isn't relied on.
+            case invalid
+            /// No registration, or no registrar roots to check one.
+            case none
+        }
+        public let status: Status
+        /// The rest are set when `status` is `.verified`.
+        public let name: String?
+        public let purpose: String?
+        public let privacyPolicy: URL?
+        public let registrar: String?
+        /// The claims paths it's registered to request.
+        public let claims: [[PathElement]]
+        public let expires: Date?
+
+        enum CodingKeys: String, CodingKey { case status, name, purpose, privacyPolicy = "privacy_policy", registrar, claims, expires }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            status = try c.decode(Status.self, forKey: .status)
+            name = try c.decodeIfPresent(String.self, forKey: .name)
+            purpose = try c.decodeIfPresent(String.self, forKey: .purpose)
+            privacyPolicy = try c.decodeIfPresent(URL.self, forKey: .privacyPolicy)
+            registrar = try c.decodeIfPresent(String.self, forKey: .registrar)
+            claims = try c.decodeIfPresent([[PathElement]].self, forKey: .claims) ?? []
+            expires = try c.decodeIfPresent(Date.self, forKey: .expires)
+        }
     }
 
     /// One of the request's credential queries, with the credentials
@@ -574,7 +619,14 @@ public final class Presentation: @unchecked Sendable {
         /// selection gives it exactly one.
         public let multiple: Bool
         public let credentials: [CredentialSummary]
-        enum CodingKeys: String, CodingKey { case queryID = "query_id", multiple, credentials }
+        /// For a Verifier with a verified registration: the claims paths
+        /// this query asks for beyond it, and whether it asks for every
+        /// claim. Nothing is refused for them: the holder decides.
+        public let unregistered: [[PathElement]]
+        public let unregisteredAll: Bool
+        enum CodingKeys: String, CodingKey {
+            case queryID = "query_id", multiple, credentials, unregistered, unregisteredAll = "unregistered_all"
+        }
     }
 
     /// One of the request's sets of alternatives: each option is the

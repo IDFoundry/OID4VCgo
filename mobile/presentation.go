@@ -1,6 +1,8 @@
 package mobile
 
 import (
+	"time"
+
 	"context"
 	"encoding/json"
 	"fmt"
@@ -29,22 +31,50 @@ func (w *Wallet) StartPresentation(op *Operation, requestLink string) (*Presenta
 }
 
 // Verifier returns who's asking: {"abi", "client_id", "name",
-// "response_uri"}.
+// "response_uri", "registration": {"status", "name", "purpose",
+// "privacy_policy", "registrar", "claims", "expires"}}. The registration
+// is the Verifier's, from its request's verifier_info, checked against
+// registrar_roots: status "verified" (with the rest), "invalid" (it
+// didn't verify, so isn't relied on), or "none".
 func (p *Presentation) Verifier() string {
 	v := p.p.Verifier()
+	reg := p.p.Registration()
+	r := registrationJSON{Status: string(reg.Status)}
+	if reg.Status == walletflow.RegistrationVerified {
+		r.Name, r.Purpose, r.PrivacyPolicy, r.Registrar = reg.Name, reg.Purpose, reg.PrivacyPolicy, reg.Registrar
+		r.Claims, r.Expires = reg.Claims, reg.Expires.UTC().Format(time.RFC3339)
+		if r.Claims == nil {
+			r.Claims = []dcql.Path{}
+		}
+	}
 	text, _ := marshal(struct {
 		result
-		ClientID    string `json:"client_id"`
-		Name        string `json:"name"`
-		ResponseURI string `json:"response_uri"`
-	}{result{ABIVersion}, v.ClientID, v.Name, v.ResponseURI})
+		ClientID     string           `json:"client_id"`
+		Name         string           `json:"name"`
+		ResponseURI  string           `json:"response_uri"`
+		Registration registrationJSON `json:"registration"`
+	}{result{ABIVersion}, v.ClientID, v.Name, v.ResponseURI, r})
 	return text
+}
+
+type registrationJSON struct {
+	Status        string      `json:"status"`
+	Name          string      `json:"name,omitempty"`
+	Purpose       string      `json:"purpose,omitempty"`
+	PrivacyPolicy string      `json:"privacy_policy,omitempty"`
+	Registrar     string      `json:"registrar,omitempty"`
+	Claims        []dcql.Path `json:"claims,omitempty"`
+	Expires       string      `json:"expires,omitempty"`
 }
 
 type queryJSON struct {
 	QueryID     string              `json:"query_id"`
 	Multiple    bool                `json:"multiple"`
 	Credentials []credentialSummary `json:"credentials"`
+	// Unregistered are the claims it asks for beyond the Verifier's
+	// registration, and UnregisteredAll whether it asks for every claim.
+	Unregistered    []dcql.Path `json:"unregistered"`
+	UnregisteredAll bool        `json:"unregistered_all"`
 }
 
 type credentialSetJSON struct {
@@ -54,10 +84,14 @@ type credentialSetJSON struct {
 
 // Queries returns the request, for the app to choose what to present:
 // {"abi", "queries": [{"query_id", "multiple", "credentials":
-// [summary]}], "credential_sets": [{"options": [[query ID]],
-// "required"}]}. Each query is the request's, in its order, with the
-// credentials that can answer it (none when nothing can); multiple says
-// whether it takes more than one. credential_sets are its sets of
+// [summary], "unregistered": [path], "unregistered_all"}],
+// "credential_sets": [{"options": [[query ID]], "required"}]}. Each
+// query is the request's, in its order, with the credentials that can
+// answer it (none when nothing can); multiple says whether it takes more
+// than one. For a Verifier with a verified registration, unregistered
+// are the claims paths the query asks for beyond it, and
+// unregistered_all whether it asks for every claim, which no
+// registration covers; nothing is refused for them. credential_sets are its sets of
 // alternatives, each option the query IDs that together answer it, most
 // preferred first; none means every query must be answered.
 func (p *Presentation) Queries() string {
@@ -75,7 +109,15 @@ func (p *Presentation) Queries() string {
 			s.ShownToVerifier, s.LinkableHere = &shown, &linkable
 			candidates = append(candidates, s)
 		}
-		out.Queries = append(out.Queries, queryJSON{QueryID: q.ID, Multiple: q.Multiple, Credentials: candidates})
+		qj := queryJSON{QueryID: q.ID, Multiple: q.Multiple, Credentials: candidates, Unregistered: []dcql.Path{}}
+		for _, path := range p.p.Registration().Unregistered[q.ID] {
+			if path == nil {
+				qj.UnregisteredAll = true
+				continue
+			}
+			qj.Unregistered = append(qj.Unregistered, path)
+		}
+		out.Queries = append(out.Queries, qj)
 	}
 	for _, cs := range p.p.CredentialSets() {
 		out.CredentialSets = append(out.CredentialSets, credentialSetJSON{Options: cs.Options, Required: cs.Required})
