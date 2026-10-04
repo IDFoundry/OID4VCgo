@@ -64,8 +64,12 @@ type Prepared struct {
 }
 
 // Option is one way to answer a request: one stored credential, whose
-// holder Holder names — a wallet can hold several people's passports.
+// holder Holder names — a wallet can hold several people's passports —
+// answering one of its credential queries. The same credential can
+// answer several queries, each disclosing different claims: Ref names
+// the option, which Send takes.
 type Option struct {
+	Ref          string
 	CredentialID string
 	Holder       string
 	Format       string
@@ -83,16 +87,12 @@ func Present(ctx context.Context, requestLink string, store Store, opts PresentO
 	if err != nil {
 		return Presented{}, err
 	}
-	id := opts.CredentialID
 	for _, o := range p.Options {
-		if id == "" && (opts.Format == "" || o.Format == opts.Format) {
-			id = o.CredentialID
+		if (opts.CredentialID == "" || o.CredentialID == opts.CredentialID) && (opts.Format == "" || o.Format == opts.Format) {
+			return p.Send(ctx, o.Ref)
 		}
 	}
-	if id == "" {
-		return Presented{}, fmt.Errorf("walletapp: no stored %s credential answers the request", opts.Format)
-	}
-	return p.Send(ctx, id)
+	return Presented{}, fmt.Errorf("walletapp: no stored %s credential answers the request", opts.Format)
 }
 
 // Prepare fetches and verifies an OpenID4VP Authorization Request (an
@@ -139,7 +139,7 @@ func Prepare(ctx context.Context, requestLink string, store Store, hc *http.Clie
 			claims, _ := ReadClaims(c.Format, c.Credential)
 			for _, d := range disclosed {
 				prepared.Options = append(prepared.Options, Option{
-					CredentialID: c.ID, Holder: HolderName(claims), Format: c.Format, QueryID: d.QueryID, Claims: pathStrings(d.Claims),
+					Ref: fmt.Sprintf("option-%d", len(prepared.Options)), CredentialID: c.ID, Holder: HolderName(claims), Format: c.Format, QueryID: d.QueryID, Claims: pathStrings(d.Claims),
 				})
 			}
 		}
@@ -150,32 +150,36 @@ func Prepare(ctx context.Context, requestLink string, store Store, hc *http.Clie
 	return prepared, nil
 }
 
-// Send answers the request with the stored credentials credentialIDs
-// name, each one of Options' — several only when the request takes
-// Several, and then of one format: a selectively disclosed presentation
-// of each, bound to the verifier's nonce, POSTed to the response_uri as
-// an encrypted direct_post.jwt response.
-func (p *Prepared) Send(ctx context.Context, credentialIDs ...string) (Presented, error) {
-	if len(credentialIDs) == 0 {
+// Send answers the request with the Options refs name (Option.Ref) —
+// several only when the request takes Several, then of one query and
+// each a different credential: a selectively disclosed presentation of
+// each, exactly as the option previewed, bound to the verifier's nonce,
+// POSTed to the response_uri as an encrypted direct_post.jwt response.
+func (p *Prepared) Send(ctx context.Context, refs ...string) (Presented, error) {
+	if len(refs) == 0 {
 		return Presented{}, fmt.Errorf("walletapp: choose a credential to share")
 	}
-	if len(credentialIDs) > 1 && !p.Several {
-		return Presented{}, fmt.Errorf("walletapp: the request takes one credential, not %d", len(credentialIDs))
+	if len(refs) > 1 && !p.Several {
+		return Presented{}, fmt.Errorf("walletapp: the request takes one credential, not %d", len(refs))
 	}
-	// The demo verifier's formats are alternatives: it takes the first
-	// one answered, so several credentials must share one.
+	// The demo verifier's queries are alternatives: a response answers
+	// one, so several credentials must answer the same.
 	queryID := ""
-	for _, id := range credentialIDs {
-		i := slices.IndexFunc(p.Options, func(o Option) bool { return o.CredentialID == id })
+	var ids []string
+	for _, ref := range refs {
+		i := slices.IndexFunc(p.Options, func(o Option) bool { return o.Ref == ref })
 		switch {
 		case i < 0:
-			return Presented{}, fmt.Errorf("walletapp: credential %q doesn't answer the request", id)
+			return Presented{}, fmt.Errorf("walletapp: %q isn't one of the request's options", ref)
 		case queryID != "" && p.Options[i].QueryID != queryID:
-			return Presented{}, fmt.Errorf("walletapp: share credentials of one format")
+			return Presented{}, fmt.Errorf("walletapp: share credentials answering one query (one format)")
+		case slices.Contains(ids, p.Options[i].CredentialID):
+			return Presented{}, fmt.Errorf("walletapp: the same credential is chosen twice")
 		}
 		queryID = p.Options[i].QueryID
+		ids = append(ids, p.Options[i].CredentialID)
 	}
-	presented, err := p.p.Respond(ctx, walletflow.Selection{queryID: credentialIDs})
+	presented, err := p.p.Respond(ctx, walletflow.Selection{queryID: ids})
 	if err != nil {
 		return Presented{}, fmt.Errorf("walletapp: %w", err)
 	}

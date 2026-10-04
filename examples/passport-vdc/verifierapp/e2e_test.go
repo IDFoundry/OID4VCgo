@@ -15,6 +15,7 @@ import (
 
 	"github.com/gmrtd/gmrtd/cms"
 
+	"github.com/idfoundry/oid4vcgo/dcql"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/credential"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/demotest"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/passport"
@@ -320,7 +321,7 @@ func TestEndToEnd_ChoosesAmongSeveralPeople(t *testing.T) {
 	for _, o := range prepared.Options {
 		holders[o.Holder]++
 		if o.Holder == "JOHN ROE" && o.Format == "dc+sd-jwt" {
-			john = o.CredentialID
+			john = o.Ref
 		}
 	}
 	if holders["JANE DOE"] != 2 || holders["JOHN ROE"] != 2 || john == "" {
@@ -341,9 +342,16 @@ func severalPeople(t *testing.T) (*demotest.Env, walletapp.Store) {
 	t.Helper()
 	env := demotest.New(t, nil)
 	env.StartVerifier(t, nil)
+	return env, holding(t, env, [2]string{"JANE", "DOE"}, [2]string{"JOHN", "ROE"})
+}
+
+// holding is a wallet holding a passport, in both formats, for each of
+// names (given, family); a name twice is two passports of one person.
+func holding(t *testing.T, env *demotest.Env, names ...[2]string) walletapp.Store {
+	t.Helper()
 	ctx := context.Background()
 	store := walletapp.Store{Dir: filepath.Join(t.TempDir(), "wallet")}
-	for _, name := range [][2]string{{"JANE", "DOE"}, {"JOHN", "ROE"}} {
+	for _, name := range names {
 		e := demotest.SyntheticEvidence()
 		e.Identity.GivenNames, e.Identity.FamilyName = name[0], name[1]
 		offer, err := env.Issuer.CreateTransaction(ctx, e)
@@ -360,7 +368,7 @@ func severalPeople(t *testing.T) (*demotest.Env, walletapp.Store) {
 			}
 		}
 	}
-	return env, store
+	return store
 }
 
 // A request for several passports (DCQL multiple) takes the people the
@@ -382,7 +390,7 @@ func TestEndToEnd_SeveralPassports(t *testing.T) {
 	}
 	ids := map[string]string{}
 	for _, o := range prepared.Options {
-		ids[o.Holder+" "+o.Format] = o.CredentialID
+		ids[o.Holder+" "+o.Format] = o.Ref
 	}
 	if _, err := prepared.Send(ctx, ids["JANE DOE mso_mdoc"], ids["JOHN ROE dc+sd-jwt"]); err == nil || !strings.Contains(err.Error(), "one format") {
 		t.Fatalf("sharing two formats = %v, want refused", err)
@@ -434,7 +442,101 @@ func TestEndToEnd_OnePassportTakesOne(t *testing.T) {
 	if prepared.Several {
 		t.Fatal("Several = true for a request that takes one passport")
 	}
-	if _, err := prepared.Send(ctx, prepared.Options[0].CredentialID, prepared.Options[1].CredentialID); err == nil || !strings.Contains(err.Error(), "takes one") {
+	if _, err := prepared.Send(ctx, prepared.Options[0].Ref, prepared.Options[1].Ref); err == nil || !strings.Contains(err.Error(), "takes one") {
 		t.Errorf("sharing two = %v, want refused", err)
+	}
+}
+
+// A group request refuses one person presented twice — two passports of
+// the same person disclose the same — and more than ten passports.
+func TestEndToEnd_SeveralPassportsRefusesDuplicatesAndTooMany(t *testing.T) {
+	env := demotest.New(t, nil)
+	env.StartVerifier(t, nil)
+	ctx := context.Background()
+	share := func(store walletapp.Store) (string, error) {
+		id, link, err := env.Verifier.CreateRequest(verifierapp.ModeGroup)
+		if err != nil {
+			t.Fatal(err)
+		}
+		prepared, err := walletapp.Prepare(ctx, link, store, env.HTTP, env.VerifierTrust())
+		if err != nil {
+			t.Fatal(err)
+		}
+		var refs []string
+		for _, o := range prepared.Options {
+			if o.Format == "dc+sd-jwt" {
+				refs = append(refs, o.Ref)
+			}
+		}
+		_, err = prepared.Send(ctx, refs...)
+		return id, err
+	}
+	id, err := share(holding(t, env, [2]string{"JANE", "DOE"}, [2]string{"JANE", "DOE"}))
+	if _, ok := env.Verifier.Outcome(id); err == nil || ok {
+		t.Errorf("the same passport twice: Send = %v, outcome %v; want it refused", err, ok)
+	}
+	var eleven [][2]string
+	for i := range 11 {
+		eleven = append(eleven, [2]string{"PERSON", string(rune('A' + i))})
+	}
+	id, err = share(holding(t, env, eleven...))
+	if _, ok := env.Verifier.Outcome(id); err == nil || ok {
+		t.Errorf("eleven passports: Send = %v, outcome %v; want it refused", err, ok)
+	}
+}
+
+// A request offering two queries of one format — all of the name, or
+// just the family name — presents the one the holder chooses, not the
+// first that names the credential.
+func TestEndToEnd_PresentsTheChosenQuery(t *testing.T) {
+	env := demotest.New(t, nil)
+	env.StartVerifier(t, nil, func(c *verifierapp.Config) {
+		c.Query = func(_ verifierapp.Mode, vct string, trusted dcql.TrustedAuthoritiesQuery) (dcql.Query, error) {
+			meta, err := dcql.NewSDJWTVCMeta(dcql.SDJWTVCMeta{VCTValues: []string{vct}})
+			if err != nil {
+				return dcql.Query{}, err
+			}
+			claims := func(names ...string) []dcql.ClaimsQuery {
+				var out []dcql.ClaimsQuery
+				for _, n := range names {
+					out = append(out, dcql.ClaimsQuery{Path: dcql.Path{dcql.PathKey(n)}})
+				}
+				return out
+			}
+			trustedAuthorities := []dcql.TrustedAuthoritiesQuery{trusted}
+			return dcql.Query{
+				Credentials: []dcql.CredentialQuery{
+					{ID: "full", Format: "dc+sd-jwt", Meta: meta, Claims: claims(credential.FamilyName, credential.GivenName), TrustedAuthorities: trustedAuthorities},
+					{ID: "min", Format: "dc+sd-jwt", Meta: meta, Claims: claims(credential.FamilyName), TrustedAuthorities: trustedAuthorities},
+				},
+				CredentialSets: []dcql.CredentialSetQuery{{Options: [][]string{{"full"}, {"min"}}}},
+			}, nil
+		}
+	})
+	store := holding(t, env, [2]string{"JANE", "DOE"})
+	ctx := context.Background()
+	id, link, err := env.Verifier.CreateRequest(verifierapp.ModeIssuer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := walletapp.Prepare(ctx, link, store, env.HTTP, env.VerifierTrust())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var minimal string
+	for _, o := range prepared.Options {
+		if o.QueryID == "min" {
+			minimal = o.Ref
+		}
+	}
+	if minimal == "" || len(prepared.Options) != 2 {
+		t.Fatalf("options = %+v; want the credential under both queries", prepared.Options)
+	}
+	if _, err := prepared.Send(ctx, minimal); err != nil {
+		t.Fatal(err)
+	}
+	outcome, ok := env.Verifier.Outcome(id)
+	if !ok || outcome.Claims[credential.FamilyName] != "DOE" || outcome.Claims[credential.GivenName] != nil {
+		t.Errorf("the verifier got %v; want only the family name", outcome)
 	}
 }
