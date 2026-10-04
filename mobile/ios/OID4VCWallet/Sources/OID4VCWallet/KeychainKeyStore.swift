@@ -182,8 +182,8 @@ public final class KeychainKeyStore: KeyStore, @unchecked Sendable {
     private func tag(_ id: String) -> Data { Data((options.tagPrefix + id).utf8) }
 
     /// The key's access control, when it needs one: in the Secure Enclave,
-    /// or — for a holder key, if asked — with user presence; always only
-    /// on this device, only when unlocked. (A key without one is kept
+    /// or — for a holder key, if asked — with user presence, which needs a
+    /// passcode set; always only on this device, only when unlocked. (A key without one is kept
     /// only on this device too, on iOS; on macOS, where this store serves
     /// tests, an access control would move it to the data protection
     /// keychain, which needs an entitlement.)
@@ -196,8 +196,12 @@ public final class KeychainKeyStore: KeyStore, @unchecked Sendable {
             flags.insert(.userPresence)
         }
         guard !flags.isEmpty else { return nil }
+        // A key needing user presence needs a passcode too: it can't be
+        // made without one, and goes if the passcode is removed.
+        let accessible = flags.contains(.userPresence)
+            ? kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly : kSecAttrAccessibleWhenUnlockedThisDeviceOnly
         var error: Unmanaged<CFError>?
-        guard let access = SecAccessControlCreateWithFlags(nil, kSecAttrAccessibleWhenUnlockedThisDeviceOnly, flags, &error) else {
+        guard let access = SecAccessControlCreateWithFlags(nil, accessible, flags, &error) else {
             throw error!.takeRetainedValue() as Error
         }
         return access
