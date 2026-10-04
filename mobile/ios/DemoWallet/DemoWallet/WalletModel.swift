@@ -173,6 +173,9 @@ final class WalletModel {
     private(set) var previewed: Presentation.Selection?
     /// Why the selection couldn't be previewed, if it couldn't.
     private(set) var previewError: String?
+    /// Each candidate credential's claims, by ID: to say whose it is,
+    /// and show the values sharing it discloses.
+    private(set) var candidateClaims: [String: JSONValue] = [:]
 
     /// Whether Share would send exactly what "Will share" shows.
     var canShare: Bool {
@@ -185,6 +188,11 @@ final class WalletModel {
         guard let wallet else { return }
         do {
             let p = try await wallet.startPresentation(request: link)
+            var claims: [String: JSONValue] = [:]
+            for c in p.queries.flatMap(\.credentials) where claims[c.id] == nil {
+                claims[c.id] = try? await wallet.credential(id: c.id).claims
+            }
+            candidateClaims = claims
             presentation = p
             selected = (try? await p.defaultSelection()) ?? [:]
             requestPhase = .shown
@@ -274,6 +282,7 @@ final class WalletModel {
         selected = [:]
         previewed = nil
         previewError = nil
+        candidateClaims = [:]
         requestPhase = .idle
     }
 

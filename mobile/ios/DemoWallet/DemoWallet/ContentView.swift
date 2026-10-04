@@ -389,6 +389,10 @@ struct RequestView: View {
                                             : "circle")
                                         VStack(alignment: .leading) {
                                             Text(CredentialRow.title(c))
+                                            if let holder = Holder(claims: model.candidateClaims[c.id]) {
+                                                Text(holder.line).font(.subheadline)
+                                                    .accessibilityIdentifier("candidate-holder")
+                                            }
                                             Text("Received \(c.receivedAt.formatted(date: .abbreviated, time: .shortened))")
                                                 .font(.caption).foregroundStyle(.secondary)
                                             if c.linkableHere == true {
@@ -401,6 +405,11 @@ struct RequestView: View {
                                                     .accessibilityIdentifier("shown-before")
                                             }
                                         }
+                                        Spacer()
+                                        if let portrait = Holder(claims: model.candidateClaims[c.id])?.portrait {
+                                            Image(uiImage: portrait).resizable().scaledToFill().frame(width: 44, height: 56)
+                                                .clipShape(RoundedRectangle(cornerRadius: 4))
+                                        }
                                     }
                                 }
                                 .accessibilityIdentifier("candidate")
@@ -411,10 +420,10 @@ struct RequestView: View {
                     if let error = model.previewError {
                         Section { Text("Can't share this selection: \(error)").foregroundStyle(.red) }
                     } else if !model.disclosures.isEmpty {
-                        Section("Will share") {
-                            ForEach(Array(model.disclosures.enumerated()), id: \.offset) { _, d in
+                        ForEach(Array(model.disclosures.enumerated()), id: \.offset) { _, d in
+                            Section(Self.shareHeader(d, claims: model.candidateClaims[d.credentialID], in: p)) {
                                 ForEach(d.claims.indices, id: \.self) { i in
-                                    Text(Self.path(d.claims[i]))
+                                    DisclosedRow(path: d.claims[i], claims: model.candidateClaims[d.credentialID])
                                 }
                             }
                         }
@@ -433,6 +442,14 @@ struct RequestView: View {
         }
     }
 
+    /// "Will share from Jane Citizen's Passport (SD-JWT)": whose
+    /// credential each disclosure comes from.
+    static func shareHeader(_ d: Presentation.Disclosure, claims: JSONValue?, in p: Presentation) -> String {
+        let title = p.queries.flatMap(\.credentials).first { $0.id == d.credentialID }.map(CredentialRow.title) ?? "credential"
+        guard let name = Holder(claims: claims)?.name else { return "Will share from \(title)" }
+        return "Will share from \(name)'s \(title)"
+    }
+
     static func path(_ elements: [Presentation.PathElement]) -> String {
         elements.map {
             switch $0 {
@@ -441,6 +458,90 @@ struct RequestView: View {
             case .all: "*"
             }
         }.joined(separator: " · ")
+    }
+}
+
+/// One claim sharing discloses: its path and the value the verifier will
+/// see, or the photo.
+struct DisclosedRow: View {
+    let path: [Presentation.PathElement]
+    let claims: JSONValue?
+
+    var body: some View {
+        let label = RequestView.path(path)
+        let value = claims.flatMap { Self.resolve(path, in: $0) }
+        if let value, let image = ClaimRows.image(value, key: Self.lastKey(path)) {
+            LabeledContent(label) {
+                Image(uiImage: image).resizable().scaledToFit().frame(maxWidth: 60, maxHeight: 80)
+                    .clipShape(RoundedRectangle(cornerRadius: 4))
+            }
+            .accessibilityIdentifier("disclosed")
+        } else if let value {
+            LabeledContent(label, value: ClaimRows.text(value)).accessibilityIdentifier("disclosed")
+        } else {
+            Text(label).accessibilityIdentifier("disclosed")
+        }
+    }
+
+    /// The value at path in claims (an SD-JWT VC's claims, or an mdoc's
+    /// namespace → element): null selects every element of an array.
+    static func resolve(_ path: [Presentation.PathElement], in claims: JSONValue) -> JSONValue? {
+        guard let first = path.first else { return claims }
+        let rest = Array(path.dropFirst())
+        switch (first, claims) {
+        case (.key(let k), .object(let o)):
+            return o[k].flatMap { resolve(rest, in: $0) }
+        case (.index(let i), .array(let a)) where a.indices.contains(i):
+            return resolve(rest, in: a[i])
+        case (.all, .array(let a)):
+            let values = a.compactMap { resolve(rest, in: $0) }
+            return values.isEmpty ? nil : .array(values)
+        default:
+            return nil
+        }
+    }
+
+    static func lastKey(_ path: [Presentation.PathElement]) -> String {
+        for e in path.reversed() { if case .key(let k) = e { return k } }
+        return ""
+    }
+}
+
+/// Whose credential this is, from its claims: the holder's name, date of
+/// birth and photo, wherever the format keeps them (an SD-JWT VC's
+/// top-level claims, an mdoc's namespaces).
+struct Holder {
+    let name: String?
+    let birthDate: String?
+    let portrait: UIImage?
+
+    init?(claims: JSONValue?) {
+        guard let claims else { return nil }
+        let given = Self.find(["given_name", "given_names"], in: claims)
+        let family = Self.find(["family_name"], in: claims)
+        let names = [given, family].compactMap { v -> String? in
+            if case .string(let s)? = v, !s.isEmpty { return s }
+            return nil
+        }
+        name = names.isEmpty ? nil : names.joined(separator: " ")
+        if case .string(let s)? = Self.find(["birth_date", "birthdate"], in: claims) { birthDate = s } else { birthDate = nil }
+        portrait = ["portrait", "picture"].lazy.compactMap { key in
+            Self.find([key], in: claims).flatMap { ClaimRows.image($0, key: key) }
+        }.first
+        if name == nil && birthDate == nil && portrait == nil { return nil }
+    }
+
+    /// "Jane Citizen · born 1990-01-01".
+    var line: String {
+        [name, birthDate.map { "born \($0)" }].compactMap { $0 }.joined(separator: " · ")
+    }
+
+    /// The first value under any of keys, searching objects depth-first.
+    static func find(_ keys: [String], in v: JSONValue) -> JSONValue? {
+        guard case .object(let o) = v else { return nil }
+        for k in keys { if let hit = o[k] { return hit } }
+        for k in o.keys.sorted() { if let hit = find(keys, in: o[k]!) { return hit } }
+        return nil
     }
 }
 
