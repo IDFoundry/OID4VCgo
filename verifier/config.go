@@ -141,44 +141,63 @@ type Verifier struct {
 // "x509_hash:..." Client Identifier from cfg.ClientCertificate, and
 // returns a ready-to-use Verifier.
 func New(cfg Config, deps Dependencies) (*Verifier, error) {
+	if err := cfg.validate(); err != nil {
+		return nil, err
+	}
+	if err := deps.validate(cfg); err != nil {
+		return nil, err
+	}
+	hash := sha256.Sum256(cfg.ClientCertificate.Raw)
+	clientID := "x509_hash:" + base64.RawURLEncoding.EncodeToString(hash[:])
+
+	return &Verifier{cfg: cfg, deps: deps, clientID: clientID}, nil
+}
+
+// validate is New's check of cfg on its own.
+func (cfg Config) validate() error {
 	if cfg.Assurance != AssuranceDevelopment && cfg.Assurance != AssuranceProduction {
-		return nil, fmt.Errorf("verifier: config: assurance level is invalid")
+		return fmt.Errorf("verifier: config: assurance level is invalid")
 	}
 	if cfg.ClientCertificate == nil {
-		return nil, fmt.Errorf("verifier: config: client_certificate is required")
+		return fmt.Errorf("verifier: config: client_certificate is required")
 	}
 	if cfg.ResponseURI.IsZero() {
-		return nil, fmt.Errorf("verifier: config: response_uri is required")
+		return fmt.Errorf("verifier: config: response_uri is required")
 	}
 	if cfg.Assurance == AssuranceProduction && cfg.ResponseURI.URL().Scheme == "http" {
-		return nil, fmt.Errorf("verifier: config: response_uri was parsed with fapi.AllowLoopbackHTTP, which is not permitted under AssuranceProduction")
+		return fmt.Errorf("verifier: config: response_uri was parsed with fapi.AllowLoopbackHTTP, which is not permitted under AssuranceProduction")
 	}
 	if cfg.SigningAlg == "" {
-		return nil, fmt.Errorf("verifier: config: signing_alg is required")
+		return fmt.Errorf("verifier: config: signing_alg is required")
 	}
 	if !jose.IsSupported(cfg.SigningAlg) {
-		return nil, fmt.Errorf("verifier: config: signing_alg %q is not supported", cfg.SigningAlg)
+		return fmt.Errorf("verifier: config: signing_alg %q is not supported", cfg.SigningAlg)
 	}
 	if len(cfg.EncValuesSupported) == 0 {
-		return nil, fmt.Errorf("verifier: config: enc_values_supported must be non-empty")
+		return fmt.Errorf("verifier: config: enc_values_supported must be non-empty")
 	}
 	if len(cfg.VPFormatsSupported) == 0 {
-		return nil, fmt.Errorf("verifier: config: vp_formats_supported must be non-empty")
+		return fmt.Errorf("verifier: config: vp_formats_supported must be non-empty")
 	}
 	if err := validateVerifierInfo(cfg.VerifierInfo); err != nil {
-		return nil, fmt.Errorf("verifier: config: %w", err)
+		return fmt.Errorf("verifier: config: %w", err)
 	}
+	return nil
+}
+
+// validate is New's check of deps, against cfg.
+func (deps Dependencies) validate(cfg Config) error {
 	if deps.Signer == nil {
-		return nil, fmt.Errorf("verifier: dependencies: signer is required")
+		return fmt.Errorf("verifier: dependencies: signer is required")
 	}
 	if deps.Random == nil {
-		return nil, fmt.Errorf("verifier: dependencies: random is required")
+		return fmt.Errorf("verifier: dependencies: random is required")
 	}
 	if cfg.Assurance == AssuranceProduction && deps.Random != rand.Reader {
 		// Every request's nonce, response decryption key, transaction
 		// ID and response_code come from it: a predictable reader makes
 		// them guessable.
-		return nil, fmt.Errorf("verifier: dependencies: random must be crypto/rand.Reader under AssuranceProduction")
+		return fmt.Errorf("verifier: dependencies: random must be crypto/rand.Reader under AssuranceProduction")
 	}
 	// A two-value assertion, not a direct one: deps.Signer.Public() is
 	// every stdlib key type's own crypto.PublicKey, all of which
@@ -189,16 +208,12 @@ func New(cfg Config, deps Dependencies) (*Verifier, error) {
 	// error. Found in a repo-wide security review.
 	comparableKey, ok := deps.Signer.Public().(interface{ Equal(crypto.PublicKey) bool })
 	if !ok {
-		return nil, fmt.Errorf("verifier: dependencies: signer's own public key type %T does not implement Equal(crypto.PublicKey) bool", deps.Signer.Public())
+		return fmt.Errorf("verifier: dependencies: signer's own public key type %T does not implement Equal(crypto.PublicKey) bool", deps.Signer.Public())
 	}
 	if !comparableKey.Equal(cfg.ClientCertificate.PublicKey) {
-		return nil, fmt.Errorf("verifier: config: client_certificate's public key does not match dependencies.signer")
+		return fmt.Errorf("verifier: config: client_certificate's public key does not match dependencies.signer")
 	}
-
-	hash := sha256.Sum256(cfg.ClientCertificate.Raw)
-	clientID := "x509_hash:" + base64.RawURLEncoding.EncodeToString(hash[:])
-
-	return &Verifier{cfg: cfg, deps: deps, clientID: clientID}, nil
+	return nil
 }
 
 // ClientID is this Verifier's own "x509_hash:..." Client Identifier
