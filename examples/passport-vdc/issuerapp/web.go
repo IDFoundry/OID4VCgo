@@ -167,7 +167,7 @@ const pageHead = `<!doctype html>
 body{font-family:system-ui,sans-serif;max-width:40rem;margin:2rem auto;padding:0 1rem;line-height:1.5}
 table{border-collapse:collapse}th,td{text-align:left;padding:.25rem .75rem .25rem 0;vertical-align:top}
 code{word-break:break-all}.ok{color:#1a7f37}.warn{color:#9a6700}.note{color:#57606a;font-size:.9em}
-input.code{display:block;margin-top:.4em;font:1.8em ui-monospace,monospace;letter-spacing:.35em;width:7ch;padding:.3em .5em;border:2px solid #57606a;border-radius:6px}
+input.code{display:block;margin-top:.4em;font:1.8em ui-monospace,monospace;letter-spacing:.35em;width:calc(6ch + 2.5em);box-sizing:content-box;padding:.3em .5em;border:2px solid #57606a;border-radius:6px}
 button{font-size:1.05em;padding:.5em 1.1em;margin:.2em .4em .2em 0}
 </style>
 </head>
