@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"time"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/demoqr"
@@ -34,6 +35,9 @@ type Offer struct {
 	// PreAuthorized reports a pre-authorized code offer: no browser
 	// approval, the wallet redeems it with the PIN.
 	PreAuthorized bool
+	// KeptForRefresh reports a passport kept for refresh
+	// (OfferOptions.KeepForRefresh).
+	KeptForRefresh bool
 }
 
 // CreateTransaction records an already-verified passport and returns
@@ -41,14 +45,14 @@ type Offer struct {
 // after passport.Verify; tests call it directly with synthetic
 // Evidence.
 func (a *App) CreateTransaction(ctx context.Context, e passport.Evidence) (Offer, error) {
-	return a.createTransaction(ctx, e, offerOptions{})
+	return a.CreateOffer(ctx, e, OfferOptions{})
 }
 
 // CreateTransactionForReview is CreateTransaction for a passport an
 // operator must review first: its credentials are deferred (OID4VCI 1.0
 // §9) until a decision on the /review page (Review).
 func (a *App) CreateTransactionForReview(ctx context.Context, e passport.Evidence) (Offer, error) {
-	return a.createTransaction(ctx, e, offerOptions{review: true})
+	return a.CreateOffer(ctx, e, OfferOptions{Review: true})
 }
 
 // CreatePreAuthorizedTransaction is CreateTransaction "at the counter":
@@ -56,22 +60,45 @@ func (a *App) CreateTransactionForReview(ctx context.Context, e passport.Evidenc
 // wallet redeems at the token endpoint with the PIN (Offer.ConfirmationCode)
 // and its Wallet Attestation, with no approval step in a browser.
 func (a *App) CreatePreAuthorizedTransaction(ctx context.Context, e passport.Evidence) (Offer, error) {
-	return a.createTransaction(ctx, e, offerOptions{preAuthorized: true})
+	return a.CreateOffer(ctx, e, OfferOptions{PreAuthorized: true})
 }
 
-// offerOptions are how an upload is offered.
-type offerOptions struct {
-	review        bool // defer issuance until an operator decides
-	preAuthorized bool // a pre-authorized code with a PIN, not an authorization
+// OfferOptions are how an upload is offered.
+type OfferOptions struct {
+	// Review defers issuance until an operator decides
+	// (CreateTransactionForReview).
+	Review bool
+	// PreAuthorized offers a pre-authorized code with a PIN, not an
+	// authorization (CreatePreAuthorizedTransaction).
+	PreAuthorized bool
+	// KeepForRefresh keeps the passport for KeepForRefresh after its
+	// first credential is issued, and gives the wallet a refresh token
+	// (OID4VCI 1.0 §13.5) to fetch fresh copies with until then — for an
+	// authorization, if it asks for one (offline_access). The wallet
+	// revoking that token, or Forget, drops the passport sooner. It
+	// can't be combined with Review.
+	KeepForRefresh bool
 }
 
-func (a *App) createTransaction(ctx context.Context, e passport.Evidence, opts offerOptions) (Offer, error) {
+// KeepForRefresh is how long a passport kept for refresh is kept after
+// its first credential is issued, and how long its refresh token lasts.
+const KeepForRefresh = 24 * time.Hour
+
+// errReviewAndKeep is returned by CreateOffer for OfferOptions with both
+// Review and KeepForRefresh.
+var errReviewAndKeep = errors.New("issuerapp: a passport held for review can't also be kept for refresh")
+
+// CreateOffer is CreateTransaction with opts.
+func (a *App) CreateOffer(ctx context.Context, e passport.Evidence, opts OfferOptions) (Offer, error) {
+	if opts.Review && opts.KeepForRefresh {
+		return Offer{}, errReviewAndKeep
+	}
 	configIDs := []string{MdocConfigurationID, SDJWTConfigurationID}
-	txID, code, err := a.transactions.put(e, configIDs, opts.review)
+	txID, code, err := a.transactions.put(e, configIDs, opts.Review, opts.KeepForRefresh)
 	if err != nil {
 		return Offer{}, err
 	}
-	if opts.preAuthorized {
+	if opts.PreAuthorized {
 		// The PIN stands in for the approval step: the transaction is
 		// claimed now, and only the pre-authorized code, with the PIN,
 		// reaches it.
@@ -82,7 +109,7 @@ func (a *App) createTransaction(ctx context.Context, e passport.Evidence, opts o
 		if err != nil {
 			return Offer{}, err
 		}
-		return Offer{URI: uri, IssuerState: txID, ConfirmationCode: code, PreAuthorized: true}, nil
+		return Offer{URI: uri, IssuerState: txID, ConfirmationCode: code, PreAuthorized: true, KeptForRefresh: opts.KeepForRefresh}, nil
 	}
 	result, err := a.issuer.CreateCredentialOffer(ctx, issuer.CreateCredentialOfferRequest{
 		CredentialConfigurationIDs: configIDs,
@@ -93,7 +120,7 @@ func (a *App) createTransaction(ctx context.Context, e passport.Evidence, opts o
 	if err != nil {
 		return Offer{}, fmt.Errorf("issuerapp: credential offer: %w", err)
 	}
-	return Offer{URI: result.URI, IssuerState: txID, ConfirmationCode: code}, nil
+	return Offer{URI: result.URI, IssuerState: txID, ConfirmationCode: code, KeptForRefresh: opts.KeepForRefresh}, nil
 }
 
 func (a *App) routes(credentialHandler, deferredHandler, notificationHandler http.Handler) http.Handler {
@@ -111,6 +138,7 @@ func (a *App) routes(credentialHandler, deferredHandler, notificationHandler htt
 	mux.HandleFunc("GET /authorize", a.handleAuthorize)
 	mux.HandleFunc("POST /authorize/decision", a.handleDecision)
 	mux.HandleFunc("POST /token", a.handleToken)
+	mux.HandleFunc("POST /revoke", a.handleTokenRevocation)
 
 	mux.HandleFunc("GET /.well-known/openid-credential-issuer", a.issuerMetadataHandler())
 	mux.HandleFunc("GET "+VCTPath, a.handleVCTMetadata)
@@ -120,6 +148,8 @@ func (a *App) routes(credentialHandler, deferredHandler, notificationHandler htt
 	mux.Handle("POST /notification", notificationHandler)
 	mux.HandleFunc("GET /review", a.handleReviewPage)
 	mux.HandleFunc("POST /review/decision", a.handleReviewDecision)
+	mux.HandleFunc("GET /kept", a.handleKeptPage)
+	mux.HandleFunc("POST /kept/forget", a.handleForget)
 
 	mux.Handle("GET "+StatusListPath, a.statusPublisher())
 	mux.HandleFunc("GET /status", a.handleStatusPage)
@@ -156,11 +186,12 @@ var uploadTemplate = template.Must(template.New("upload").Parse(pageHead + `
 <input type="file" name="passport" accept=".gmrtd" required>
 <p><label><input type="checkbox" name="counter" value="1"> Issue at the counter — a pre-authorized code with a PIN, no approval in the browser (OID4VCI's other grant)</label></p>
 <p><label><input type="checkbox" name="review" value="1"> Hold for an operator's review — the wallet waits, and polls, until you decide on the <a href="/review">review page</a></label></p>
+<p><label><input type="checkbox" name="keep" value="1"> Keep for refresh (24 hours) — your wallet can get fresh copies of the credentials without you until then. The issuer keeps this passport's data until it expires, or until your wallet deletes the credentials (<a href="/kept">kept passports</a>)</label></p>
 <button>Verify passport</button>
 {{if .AllowSample}}<button formaction="/sample" formnovalidate>Issue gmrtd's sample passport without checking it</button>{{end}}
 </form>
 {{if .AllowSample}}<p class="note">No passport to hand? The second button simulates an issuer that skipped Passive Authentication: it issues gmrtd's sample passport — ICAO worked-example data no country signed — as an ordinary passport credential. A verifier trusting this issuer accepts it; one that re-verifies the passport file doesn't.</p>{{end}}
-<p class="note">Demo only. The passport is held in memory until the offer expires and is never stored.</p>
+<p class="note">Demo only. The passport is held in memory until the offer expires, or kept for refresh, and is never stored.</p>
 <p><a href="/status">Issued credentials and revocation</a></p>
 ` + pageFoot))
 
@@ -201,6 +232,7 @@ var offerTemplate = template.Must(template.New("offer").Funcs(template.FuncMap{
 <h2>Credential offer</h2>
 {{if .Offer.PreAuthorized}}<p>PIN: <strong style="font-size:1.4em;letter-spacing:.15em">{{.Offer.ConfirmationCode}}</strong><br><span class="note">Give it to the holder separately from the offer: their wallet sends it with the offer's pre-authorized code. There's no approval step; the offer can be redeemed once, by one wallet.</span></p>
 {{else}}<p>Confirmation code: <strong style="font-size:1.4em;letter-spacing:.15em">{{.Offer.ConfirmationCode}}</strong><br><span class="note">Enter it when the issuer asks you to approve. The offer can be redeemed once, by one wallet.</span></p>{{end}}
+{{if .Offer.KeptForRefresh}}<p class="note">Kept for refresh: the issuer keeps this passport's data for 24 hours after it first issues a credential, so your wallet can get fresh copies, then deletes it. Deleting the credentials in your wallet, or <a href="/kept">forgetting it</a>, deletes it sooner.</p>{{end}}
 {{if .WebWalletLink}}<p><a href="{{.WebWalletLink}}"><strong>Open in web wallet</strong></a></p>{{end}}
 {{if .AppLink}}<p><a href="{{.AppLink}}">Open in wallet app</a> (on this device)</p>{{end}}
 {{if .QR}}<p>Or scan with a wallet on another device:<br><img src="{{.QR}}" alt="QR code of the credential offer" width="296"></p>{{end}}
@@ -256,10 +288,13 @@ func (a *App) handleUpload(w http.ResponseWriter, r *http.Request) {
 // offer creates a transaction for e, with the upload form's options, and
 // shows its credential offer.
 func (a *App) offer(w http.ResponseWriter, r *http.Request, e passport.Evidence) {
-	offer, err := a.createTransaction(r.Context(), e, offerOptions{
-		review: r.FormValue("review") != "", preAuthorized: r.FormValue("counter") != "",
+	offer, err := a.CreateOffer(r.Context(), e, OfferOptions{
+		Review: r.FormValue("review") != "", PreAuthorized: r.FormValue("counter") != "", KeepForRefresh: r.FormValue("keep") != "",
 	})
 	switch {
+	case errors.Is(err, errReviewAndKeep):
+		writeHTMLError(w, http.StatusBadRequest, "a passport held for review can't also be kept for refresh — choose one")
+		return
 	case errors.Is(err, errTooManyTransactions):
 		writeHTMLError(w, http.StatusServiceUnavailable, "too many passports are awaiting issuance — try again in a few minutes")
 		return

@@ -11,12 +11,12 @@ import (
 var testConfigIDs = []string{MdocConfigurationID, SDJWTConfigurationID}
 
 func newTestTransactions(now *time.Time, max int) *transactions {
-	return newTransactions(func() time.Time { return *now }, time.Minute, max)
+	return newTransactions(func() time.Time { return *now }, time.Minute, time.Hour, max)
 }
 
 func mustPut(t *testing.T, tx *transactions) (id, code string) {
 	t.Helper()
-	id, code, err := tx.put(passport.Evidence{}, testConfigIDs, false)
+	id, code, err := tx.put(passport.Evidence{}, testConfigIDs, false, false)
 	if err != nil {
 		t.Fatalf("put: %v", err)
 	}
@@ -31,7 +31,7 @@ func TestTransactions_CapsLivePassports(t *testing.T) {
 	tx := newTestTransactions(&now, 2)
 	mustPut(t, tx)
 	mustPut(t, tx)
-	if _, _, err := tx.put(passport.Evidence{}, testConfigIDs, false); !errors.Is(err, errTooManyTransactions) {
+	if _, _, err := tx.put(passport.Evidence{}, testConfigIDs, false, false); !errors.Is(err, errTooManyTransactions) {
 		t.Fatalf("third put: error = %v, want errTooManyTransactions", err)
 	}
 	now = now.Add(time.Minute) // both expire, freeing room
@@ -108,7 +108,7 @@ func TestTransactions_IssuesEachCredentialOnce(t *testing.T) {
 	if _, _, err := tx.reserve(id, MdocConfigurationID); !errors.Is(err, errAlreadyIssued) {
 		t.Fatalf("reserve mdoc again: error = %v, want errAlreadyIssued", err)
 	}
-	if _, _, err := tx.reserve(id, "unoffered"); !errors.Is(err, errAlreadyIssued) {
+	if _, _, err := tx.reserve(id, "unoffered"); !errors.Is(err, errNotOffered) {
 		t.Errorf("reserve an unoffered configuration: error = %v, want it refused", err)
 	}
 
@@ -121,5 +121,75 @@ func TestTransactions_IssuesEachCredentialOnce(t *testing.T) {
 	tx.mu.Unlock()
 	if held {
 		t.Error("the passport is still held after every credential was issued")
+	}
+}
+
+// TestTransactions_KeepForRefresh checks a kept passport is issued again
+// on each request, kept for keepFor (plus keepMargin) after its first
+// credential, listed while kept, and dropped by forget; and that one not
+// kept after all (dontKeep) is issued once.
+func TestTransactions_KeepForRefresh(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	tx := newTestTransactions(&now, 10)
+	id, code, err := tx.put(passport.Evidence{}, testConfigIDs, false, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.claim(id, code); err != nil {
+		t.Fatal(err)
+	}
+	if len(tx.kept()) != 0 {
+		t.Error("listed as kept before its first credential")
+	}
+	now = now.Add(30 * time.Second) // within the transaction lifetime
+	for range 3 {
+		if _, _, err := tx.reserve(id, MdocConfigurationID); err != nil {
+			t.Fatalf("reserve a kept credential: %v", err)
+		}
+		tx.done(id)
+	}
+	kept := tx.kept()
+	if len(kept) != 1 || kept[0].issued != 3 || !kept[0].until.Equal(now.Add(time.Hour+keepMargin)) {
+		t.Fatalf("kept = %+v, want one, 3 issued, until keepFor+keepMargin after the first", kept)
+	}
+	if kept[0].ref == id || kept[0].ref != keptRef(id) {
+		t.Errorf("kept ref = %q, want keptRef(id), not the ID", kept[0].ref)
+	}
+
+	now = kept[0].until.Add(-time.Second)
+	if _, _, err := tx.reserve(id, SDJWTConfigurationID); err != nil {
+		t.Fatalf("reserve just before the deadline: %v", err)
+	}
+	now = kept[0].until
+	if _, _, err := tx.reserve(id, SDJWTConfigurationID); !errors.Is(err, errNoTransaction) {
+		t.Errorf("reserve at the deadline: error = %v, want errNoTransaction", err)
+	}
+	if len(tx.items) != 0 || len(tx.kept()) != 0 {
+		t.Error("the passport is still held after its deadline")
+	}
+
+	id, code, _ = tx.put(passport.Evidence{}, testConfigIDs, false, true)
+	_ = tx.claim(id, code)
+	if _, _, err := tx.reserve(id, MdocConfigurationID); err != nil {
+		t.Fatal(err)
+	}
+	tx.forget(id)
+	tx.forget(id)
+	if _, _, err := tx.reserve(id, MdocConfigurationID); !errors.Is(err, errNoTransaction) {
+		t.Errorf("reserve after forget: error = %v, want errNoTransaction", err)
+	}
+
+	id, code, _ = tx.put(passport.Evidence{}, testConfigIDs, false, true)
+	_ = tx.claim(id, code)
+	tx.dontKeep(id)
+	if tx.keeps(id) {
+		t.Error("keeps after dontKeep")
+	}
+	if _, _, err := tx.reserve(id, MdocConfigurationID); err != nil {
+		t.Fatal(err)
+	}
+	tx.done(id)
+	if _, _, err := tx.reserve(id, MdocConfigurationID); !errors.Is(err, errAlreadyIssued) {
+		t.Errorf("reserve again after dontKeep: error = %v, want errAlreadyIssued", err)
 	}
 }

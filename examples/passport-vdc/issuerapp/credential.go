@@ -68,12 +68,15 @@ func (a *App) protectedHandlers() (deferred, notification http.Handler, err erro
 // Evidence. Each credential gets its own status list index; done
 // releases the reservation and the indexes if issuing fails.
 func (a *App) prepareCredential(_ context.Context, grant issuer.Grant, req *issuer.CredentialRequest) (func(bool), error) {
-	// Each offered credential is issued once per passport: reserve it
-	// now, release it if issuing fails.
+	// Each offered credential is issued once per passport — or again on
+	// each request, for one kept for refresh: reserve it now, release it
+	// if issuing fails.
 	e, review, err := a.transactions.reserve(grant.Subject, req.CredentialConfigurationID)
 	switch {
 	case errors.Is(err, errAlreadyIssued):
 		return nil, issuer.NewError(issuer.ErrorCredentialRequestDenied, "this credential has already been issued for this passport")
+	case errors.Is(err, errNotOffered):
+		return nil, issuer.NewError(issuer.ErrorCredentialRequestDenied, "this credential wasn't offered for this passport")
 	case err != nil:
 		return nil, issuer.NewError(issuer.ErrorCredentialRequestDenied, "the passport transaction for this access token has expired")
 	}
