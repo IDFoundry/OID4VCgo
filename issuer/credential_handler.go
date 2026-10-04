@@ -233,24 +233,31 @@ func (iss *Issuer) DeferredCredentialHandler(cfg DeferredCredentialHandlerConfig
 				return
 			}
 		}
-		result, err := iss.RequestDeferredCredential(r.Context(), grant.Authorized, req)
-		if err != nil {
-			WriteError(w, err)
-			return
-		}
-		status, plain := result.wire()
-		resultJSON, err := json.Marshal(plain)
-		if err != nil {
-			WriteError(w, fmt.Errorf("issuer: deferred credential handler: %w", err))
-			return
-		}
-		encoded, contentType, err := iss.EncryptResponseBody(resultJSON, req.ResponseEncryption)
-		if err != nil {
-			WriteError(w, err)
-			return
-		}
-		writeCredentialResponse(w, status, encoded, contentType)
+		iss.writeDeferredResult(w, r, grant, req)
 	}), nil
+}
+
+// writeDeferredResult answers a checked Deferred Credential Request
+// with RequestDeferredCredential's result, encrypted when the Wallet
+// asked for that.
+func (iss *Issuer) writeDeferredResult(w http.ResponseWriter, r *http.Request, grant Grant, req DeferredCredentialRequest) {
+	result, err := iss.RequestDeferredCredential(r.Context(), grant.Authorized, req)
+	if err != nil {
+		WriteError(w, err)
+		return
+	}
+	status, plain := result.wire()
+	resultJSON, err := json.Marshal(plain)
+	if err != nil {
+		WriteError(w, fmt.Errorf("issuer: deferred credential handler: %w", err))
+		return
+	}
+	encoded, contentType, err := iss.EncryptResponseBody(resultJSON, req.ResponseEncryption)
+	if err != nil {
+		WriteError(w, err)
+		return
+	}
+	writeCredentialResponse(w, status, encoded, contentType)
 }
 
 // NotificationEndpointHandler serves the Notification Endpoint (§11).

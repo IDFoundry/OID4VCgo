@@ -270,32 +270,21 @@ var keyAttestationBattery = []string{
 	"oid4vci-1_0-issuer-fail-invalid-key-attestation-signature",
 }
 
-func main() {
-	apiBase := flag.String("suite", "https://localhost:8443/", "OIDF conformance suite base URL")
-	alias := flag.String("alias", "oid4vcgo-issuer", "suite plan alias — also the callback path segment; must match cmd/conformance-issuer's own registered redirect_uris")
-	issuerBaseURL := flag.String("issuer", "https://conformance-issuer:8443", "cmd/conformance-issuer's own externally-reachable base URL (suite-network-internal hostname)")
-	configOut := flag.String("config-out", "conformance/issuer/oidf-config/haip.config.json", "path to write cmd/conformance-issuer's own generated server config to")
-	skipDockerRestart := flag.Bool("skip-docker-restart", false, "skip restarting the conformance-issuer container after writing the new config (for repeat runs against a container already restarted once)")
-	basePlan := flag.Bool("base-plan", false, "drive the suite's own base (non-HAIP) \"oid4vci-1_0-issuer-test-plan\" instead of the default HAIP plan — see baseBattery's own doc comment")
-	credentialFormat := flag.String("credential-format", "sd_jwt_vc", "credential_format variant to drive: \"sd_jwt_vc\" (default) or \"mdoc\" — mdoc restricts the driven module set to the 2 sanity-check modules (mdocBattery), since the other 40 FAPI2SP-generic battery modules don't exercise credential issuance format at all and are already proven under sd_jwt_vc")
-	credentialEncryption := flag.String("credential-encryption", "plain", "vci_credential_encryption variant to drive with -base-plan: \"plain\" (default) or \"encrypted\" — only meaningful with -base-plan, since the HAIP plan's own module list entries always pin \"plain\" themselves regardless of this flag; cmd/conformance-issuer already supports encrypted responses unconditionally, so this just lets oid4vci-1_0-issuer-fail-unsupported-encryption-algorithm (self-SKIPPED under \"plain\") actually run")
-	credentialProofTypeHint := flag.String("credential-proof-type-hint", "jwt", "vci.credential_proof_type_hint to drive with: \"jwt\" (default) or \"attestation\" — attestation restricts the driven module set to the 3 modules in keyAttestationBattery (metadata-test, happy-flow, fail-invalid-key-attestation-signature), the same restriction -credential-format mdoc applies, and for the same reason: none of the other 40 FAPI2SP-generic battery modules care which proof type is used")
-	deferred := flag.Bool("deferred", false, "configure cmd/conformance-issuer to defer every Credential Request (OID4VCI §9) and drive the 2 modules in deferredBattery, which follow the 202 to the Deferred Credential Endpoint")
-	issuerInitiated := flag.Bool("issuer-initiated", false, "drive the HAIP plan's issuer_initiated flow variant instead of the default wallet_initiated one — this binary must construct and submit a Credential Offer to the suite's own exposed credential_offer_endpoint before each module can proceed, see submitCredentialOffer's own doc comment")
-	flag.Parse()
-
-	planName := "oid4vci-1_0-issuer-haip-test-plan"
-	battery := haipBattery
+// planFor is the suite plan, module battery and plan variant the flags
+// select.
+func planFor(credentialFormat, proofTypeHint, encryption string, deferred, basePlan bool) (planName string, battery []string, planVariant map[string]string) {
+	planName = "oid4vci-1_0-issuer-haip-test-plan"
+	battery = haipBattery
 	switch {
-	case *credentialFormat == "mdoc":
+	case credentialFormat == "mdoc":
 		battery = mdocBattery
-	case *credentialProofTypeHint == "attestation":
+	case proofTypeHint == "attestation":
 		battery = keyAttestationBattery
-	case *deferred:
+	case deferred:
 		battery = deferredBattery
 	}
-	planVariant := map[string]string{"credential_format": *credentialFormat} //nolint:gosec // a suite variant selector value, not a credential
-	if *basePlan {
+	planVariant = map[string]string{"credential_format": credentialFormat} //nolint:gosec // a suite variant selector value, not a credential
+	if basePlan {
 		// The base plan's own module list entries pin no variant at all
 		// (VCIIssuerTestPlan.java's own testModulesWithVariants() passes
 		// an empty selector list to every ModuleListEntry) — every axis
@@ -311,10 +300,28 @@ func main() {
 		planVariant["fapi_profile"] = "vci"
 		planVariant["vci_grant_type"] = "authorization_code"
 		planVariant["authorization_request_type"] = "simple"
-		planVariant["vci_credential_encryption"] = *credentialEncryption
+		planVariant["vci_credential_encryption"] = encryption
 		planVariant["openid"] = "plain_oauth"
 		planVariant["fapi_response_mode"] = "plain_response"
 	}
+	return planName, battery, planVariant
+}
+
+func main() {
+	apiBase := flag.String("suite", "https://localhost:8443/", "OIDF conformance suite base URL")
+	alias := flag.String("alias", "oid4vcgo-issuer", "suite plan alias — also the callback path segment; must match cmd/conformance-issuer's own registered redirect_uris")
+	issuerBaseURL := flag.String("issuer", "https://conformance-issuer:8443", "cmd/conformance-issuer's own externally-reachable base URL (suite-network-internal hostname)")
+	configOut := flag.String("config-out", "conformance/issuer/oidf-config/haip.config.json", "path to write cmd/conformance-issuer's own generated server config to")
+	skipDockerRestart := flag.Bool("skip-docker-restart", false, "skip restarting the conformance-issuer container after writing the new config (for repeat runs against a container already restarted once)")
+	basePlan := flag.Bool("base-plan", false, "drive the suite's own base (non-HAIP) \"oid4vci-1_0-issuer-test-plan\" instead of the default HAIP plan — see baseBattery's own doc comment")
+	credentialFormat := flag.String("credential-format", "sd_jwt_vc", "credential_format variant to drive: \"sd_jwt_vc\" (default) or \"mdoc\" — mdoc restricts the driven module set to the 2 sanity-check modules (mdocBattery), since the other 40 FAPI2SP-generic battery modules don't exercise credential issuance format at all and are already proven under sd_jwt_vc")
+	credentialEncryption := flag.String("credential-encryption", "plain", "vci_credential_encryption variant to drive with -base-plan: \"plain\" (default) or \"encrypted\" — only meaningful with -base-plan, since the HAIP plan's own module list entries always pin \"plain\" themselves regardless of this flag; cmd/conformance-issuer already supports encrypted responses unconditionally, so this just lets oid4vci-1_0-issuer-fail-unsupported-encryption-algorithm (self-SKIPPED under \"plain\") actually run")
+	credentialProofTypeHint := flag.String("credential-proof-type-hint", "jwt", "vci.credential_proof_type_hint to drive with: \"jwt\" (default) or \"attestation\" — attestation restricts the driven module set to the 3 modules in keyAttestationBattery (metadata-test, happy-flow, fail-invalid-key-attestation-signature), the same restriction -credential-format mdoc applies, and for the same reason: none of the other 40 FAPI2SP-generic battery modules care which proof type is used")
+	deferred := flag.Bool("deferred", false, "configure cmd/conformance-issuer to defer every Credential Request (OID4VCI §9) and drive the 2 modules in deferredBattery, which follow the 202 to the Deferred Credential Endpoint")
+	issuerInitiated := flag.Bool("issuer-initiated", false, "drive the HAIP plan's issuer_initiated flow variant instead of the default wallet_initiated one — this binary must construct and submit a Credential Offer to the suite's own exposed credential_offer_endpoint before each module can proceed, see submitCredentialOffer's own doc comment")
+	flag.Parse()
+
+	planName, battery, planVariant := planFor(*credentialFormat, *credentialProofTypeHint, *credentialEncryption, *deferred, *basePlan)
 
 	httpClient := insecureSuiteHTTPClient()
 
