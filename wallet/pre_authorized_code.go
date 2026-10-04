@@ -101,17 +101,23 @@ type PreAuthorizedCodeTokenResult struct {
 	// RequestCredential call instead of CredentialConfigurationID
 	// (§8.2).
 	AuthorizationDetails []oid4vci.AuthorizationDetail
+
+	// RefreshToken is the Token Response's refresh_token, when the
+	// Authorization Server issued one, to refresh the credentials later
+	// (§13.5); empty otherwise.
+	RefreshToken fapi.Secret
 }
 
 // tokenResponseBody is the Token Response's own wire shape this
 // package reads — RFC 6749 §5.1 plus RFC 9449 §5's token_type value
-// and RFC 9396 §6.2's own authorization_details; every other optional
-// member (§6.2) is still ignored.
+// RFC 9396 §6.2's own authorization_details, and the refresh_token;
+// every other optional member (§6.2) is still ignored.
 type tokenResponseBody struct {
 	AccessToken          string                        `json:"access_token"`
 	TokenType            string                        `json:"token_type"`
 	ExpiresIn            *int64                        `json:"expires_in"`
 	AuthorizationDetails []oid4vci.AuthorizationDetail `json:"authorization_details,omitempty"`
+	RefreshToken         string                        `json:"refresh_token,omitempty"`
 }
 
 // RequestPreAuthorizedCodeToken implements the Pre-Authorized Code
@@ -237,7 +243,7 @@ func decodeTokenResponse(body []byte) (PreAuthorizedCodeTokenResult, error) {
 	result := PreAuthorizedCodeTokenResult{
 		AccessToken:          fapi.NewSecret(wire.AccessToken),
 		TokenType:            wire.TokenType,
-		AuthorizationDetails: wire.AuthorizationDetails,
+		AuthorizationDetails: wire.AuthorizationDetails, RefreshToken: fapi.NewSecret(wire.RefreshToken),
 	}
 	if wire.ExpiresIn != nil {
 		result.ExpiresIn = time.Duration(*wire.ExpiresIn) * time.Second
