@@ -6,7 +6,6 @@ import (
 
 	fapi "github.com/idfoundry/fapigo"
 
-	"github.com/idfoundry/oid4vcgo/internal/jwe"
 	"github.com/idfoundry/oid4vcgo/internal/jwk"
 )
 
@@ -306,8 +305,8 @@ type CredentialConfigurationMetadata struct {
 // cmd/conformance-verifier does.
 type JWK struct {
 	jwk.JWK
-	Kid string  `json:"kid"`
-	Alg jwe.Alg `json:"alg"`
+	Kid string `json:"kid"`
+	Alg JWEAlg `json:"alg"`
 
 	// Use is the key's intended use (RFC 7517 §4.2): "enc" for an
 	// encryption key, "sig" for a signing one. OPTIONAL.
@@ -332,10 +331,10 @@ type JWKSet struct {
 // which holds private decryption keys, not the public JWKS this
 // publishes).
 type RequestEncryptionMetadata struct {
-	JWKS               JWKSet    `json:"jwks"`
-	EncValuesSupported []jwe.Enc `json:"enc_values_supported"`
-	ZipValuesSupported []jwe.Zip `json:"zip_values_supported,omitempty"`
-	EncryptionRequired bool      `json:"encryption_required"`
+	JWKS               JWKSet   `json:"jwks"`
+	EncValuesSupported []JWEEnc `json:"enc_values_supported"`
+	ZipValuesSupported []JWEZip `json:"zip_values_supported,omitempty"`
+	EncryptionRequired bool     `json:"encryption_required"`
 }
 
 // ResponseEncryptionMetadata is Metadata's own "credential_response_encryption"
@@ -344,10 +343,10 @@ type RequestEncryptionMetadata struct {
 // exactly ["ECDH-ES"] for every issuer this repo builds (see
 // issuer.ResponseEncryptionSupport's own doc comment for why).
 type ResponseEncryptionMetadata struct {
-	AlgValuesSupported []jwe.Alg `json:"alg_values_supported"`
-	EncValuesSupported []jwe.Enc `json:"enc_values_supported"`
-	ZipValuesSupported []jwe.Zip `json:"zip_values_supported,omitempty"`
-	EncryptionRequired bool      `json:"encryption_required"`
+	AlgValuesSupported []JWEAlg `json:"alg_values_supported"`
+	EncValuesSupported []JWEEnc `json:"enc_values_supported"`
+	ZipValuesSupported []JWEZip `json:"zip_values_supported,omitempty"`
+	EncryptionRequired bool     `json:"encryption_required"`
 }
 
 // Metadata is a Credential Issuer's own Credential Issuer Metadata

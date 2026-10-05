@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 )
 
@@ -100,7 +101,7 @@ type wireClaims struct {
 }
 
 // Issue builds and signs a Key Attestation JWT.
-func Issue(signer crypto.Signer, alg jose.Alg, header Header, claims Claims) (string, error) {
+func Issue(signer crypto.Signer, alg oid4vci.JOSEAlg, header Header, claims Claims) (string, error) {
 	if claims.IssuedAt == 0 {
 		return "", fmt.Errorf("attestation: Claims.IssuedAt is required")
 	}
@@ -241,7 +242,7 @@ func (v VerifiedClaims) KeyAttested(pub crypto.PublicKey) (bool, error) {
 }
 
 // Verify checks a's signature against pub and its claims against opts.
-func (a KeyAttestation) Verify(pub crypto.PublicKey, alg jose.Alg, opts VerifyOptions) (VerifiedClaims, error) {
+func (a KeyAttestation) Verify(pub crypto.PublicKey, alg oid4vci.JOSEAlg, opts VerifyOptions) (VerifiedClaims, error) {
 	if typ, _ := a.header["typ"].(string); typ != TypHeader {
 		return VerifiedClaims{}, fmt.Errorf("attestation: typ is %q, want %q", typ, TypHeader)
 	}

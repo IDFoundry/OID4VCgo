@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 
+	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcgo/dcql"
@@ -69,7 +70,7 @@ type HeldCredential struct {
 	// derived from HolderKey's own public key type instead (see
 	// PresentMdoc), since credential/mdoc's own functions take a
 	// cose.Alg, not a jose.Alg.
-	HolderKeyAlg jose.Alg
+	HolderKeyAlg oid4vci.JOSEAlg
 
 	// MdocDocType is this credential's own ISO/IEC 18013-5 docType
 	// (e.g. "org.iso.18013.5.1.mDL") — "mso_mdoc" only, REQUIRED for

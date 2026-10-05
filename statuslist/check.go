@@ -5,8 +5,7 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/idfoundry/oid4vcgo/internal/cose"
-	"github.com/idfoundry/oid4vcgo/internal/jose"
+	oid4vci "github.com/idfoundry/oid4vcgo"
 )
 
 // Check validates a Status List Token against issuerPub/alg, checks
@@ -16,7 +15,7 @@ import (
 // ParseStatusClaim, and fetching token from ref.URI) are the caller's
 // job: this package has no HTTP client and doesn't validate the
 // Referenced Token itself.
-func Check(token string, issuerPub crypto.PublicKey, alg jose.Alg, ref StatusListRef, opts VerifyOptions) (StatusType, TokenClaims, error) {
+func Check(token string, issuerPub crypto.PublicKey, alg oid4vci.JOSEAlg, ref StatusListRef, opts VerifyOptions) (StatusType, TokenClaims, error) {
 	claims, err := VerifyToken(token, issuerPub, alg, opts)
 	if err != nil {
 		return 0, TokenClaims{}, err
@@ -25,7 +24,7 @@ func Check(token string, issuerPub crypto.PublicKey, alg jose.Alg, ref StatusLis
 }
 
 // CheckCWT is Check for a Status List Token in CWT format.
-func CheckCWT(token []byte, issuerPub crypto.PublicKey, alg cose.Alg, ref StatusListRef, opts VerifyOptions) (StatusType, TokenClaims, error) {
+func CheckCWT(token []byte, issuerPub crypto.PublicKey, alg oid4vci.COSEAlg, ref StatusListRef, opts VerifyOptions) (StatusType, TokenClaims, error) {
 	claims, err := VerifyTokenCWT(token, issuerPub, alg, opts)
 	if err != nil {
 		return 0, TokenClaims{}, err

@@ -9,6 +9,7 @@ import (
 
 	"github.com/fxamacker/cbor/v2"
 
+	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/internal/cose"
 	"github.com/idfoundry/oid4vcgo/internal/hkdf"
 )
@@ -209,7 +210,7 @@ func deviceSignedInput(
 // COSE_Sign1 via internal/cose, under signer's mdoc authentication
 // private key (SDeviceKey.Priv).
 func SignDeviceSignature(
-	signer crypto.Signer, alg cose.Alg,
+	signer crypto.Signer, alg oid4vci.COSEAlg,
 	sessionTranscriptBytes []byte, docType string,
 	nameSpaces map[string]map[string]interface{},
 ) (DeviceSigned, error) {
@@ -237,7 +238,7 @@ func SignDeviceSignature(
 // Verify) — using the same sessionTranscriptBytes/docType the Holder
 // authenticated over.
 func VerifyDeviceSignature(
-	signed DeviceSigned, deviceKey crypto.PublicKey, alg cose.Alg,
+	signed DeviceSigned, deviceKey crypto.PublicKey, alg oid4vci.COSEAlg,
 	sessionTranscriptBytes []byte, docType string,
 ) error {
 	authBytes, err := signed.deviceAuthBytes(DeviceAuthSignature, sessionTranscriptBytes, docType)

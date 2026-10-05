@@ -33,7 +33,7 @@ const MetadataJWSTyp = "openidvci-issuer-metadata+jwt"
 // parameters like x5c, kid or trust_chain") — this repo's own
 // established convention (see verifier/authorization_request.go's
 // signRequestObject).
-func SignMetadataJWS(meta oid4vci.Metadata, signer crypto.Signer, alg jose.Alg, cert *x509.Certificate) (string, error) {
+func SignMetadataJWS(meta oid4vci.Metadata, signer crypto.Signer, alg oid4vci.JOSEAlg, cert *x509.Certificate) (string, error) {
 	metaJSON, err := json.Marshal(meta)
 	if err != nil {
 		return "", fmt.Errorf("issuer: sign metadata: marshal metadata: %w", err)
@@ -75,7 +75,7 @@ func SignMetadataJWS(meta oid4vci.Metadata, signer crypto.Signer, alg jose.Alg, 
 // to plain JSON rather than a 500 — an operator error in signer/cert
 // config shouldn't take down the one endpoint every OID4VCI flow
 // starts with.
-func MetadataHandler(iss *Issuer, signer crypto.Signer, alg jose.Alg, cert *x509.Certificate) http.HandlerFunc {
+func MetadataHandler(iss *Issuer, signer crypto.Signer, alg oid4vci.JOSEAlg, cert *x509.Certificate) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		meta := iss.Metadata()
 		if strings.Contains(r.Header.Get("Accept"), "application/jwt") {

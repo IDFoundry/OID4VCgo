@@ -8,6 +8,7 @@ import (
 	"crypto/x509"
 	"fmt"
 
+	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/attestation"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 )
@@ -52,7 +53,7 @@ type X5CAttestationVerifier struct {
 }
 
 // ResolveAttestationKey implements AttestationVerifier.
-func (v X5CAttestationVerifier) ResolveAttestationKey(_ context.Context, a attestation.KeyAttestation) (crypto.PublicKey, jose.Alg, error) {
+func (v X5CAttestationVerifier) ResolveAttestationKey(_ context.Context, a attestation.KeyAttestation) (crypto.PublicKey, oid4vci.JOSEAlg, error) {
 	x5c := a.X5C()
 	entries := make([]any, len(x5c))
 	for i, s := range x5c {

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"time"
 
+	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 )
 
@@ -176,7 +177,7 @@ func issuerJWTHeader(opts IssueOptions) map[string]any {
 // §4. The returned Disclosures are every one Issue generated; the
 // Holder needs all of them to later choose a subset to present (via
 // Presentation/ResolveDisclosures).
-func Issue(signer crypto.Signer, alg jose.Alg, claims Claims, opts IssueOptions) (sdjwt string, disclosures []Disclosure, err error) {
+func Issue(signer crypto.Signer, alg oid4vci.JOSEAlg, claims Claims, opts IssueOptions) (sdjwt string, disclosures []Disclosure, err error) {
 	if err := checkIssueInputs(signer, claims, opts); err != nil {
 		return "", nil, err
 	}

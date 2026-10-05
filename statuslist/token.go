@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 )
 
@@ -31,7 +32,7 @@ type TokenClaims struct {
 
 // IssueToken signs claims into a Status List Token in JWT format
 // (draft-14 §5.1). keyID sets the JOSE "kid" header, if non-empty.
-func IssueToken(signer crypto.Signer, alg jose.Alg, claims TokenClaims, keyID string) (string, error) {
+func IssueToken(signer crypto.Signer, alg oid4vci.JOSEAlg, claims TokenClaims, keyID string) (string, error) {
 	header := map[string]any{"typ": TokenTyp}
 	if keyID != "" {
 		header["kid"] = keyID
@@ -100,7 +101,7 @@ const maxTokenBytes = 1 << 20 // 1 MiB
 // and rejects an expired token (draft-14 §5.1 rule 2-3, §8.3 step 4c).
 // It does not check sub against a specific Referenced Token — that's
 // Check's job, since it needs the StatusListRef to compare against.
-func VerifyToken(token string, pub crypto.PublicKey, alg jose.Alg, opts VerifyOptions) (TokenClaims, error) {
+func VerifyToken(token string, pub crypto.PublicKey, alg oid4vci.JOSEAlg, opts VerifyOptions) (TokenClaims, error) {
 	header, raw, err := jose.VerifyMax(alg, pub, token, maxTokenBytes)
 	if err != nil {
 		return TokenClaims{}, fmt.Errorf("statuslist: verify token signature: %w", err)

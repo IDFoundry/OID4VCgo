@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"slices"
 
+	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/internal/jwe"
 	"github.com/idfoundry/oid4vcgo/internal/jwk"
 )
@@ -57,11 +58,11 @@ type RequestEncryptionSupport struct {
 
 	// EncValuesSupported is REQUIRED: the JWE "enc" values this issuer
 	// can decrypt with.
-	EncValuesSupported []jwe.Enc
+	EncValuesSupported []oid4vci.JWEEnc
 
 	// ZipValuesSupported is OPTIONAL: the JWE "zip" values this issuer
 	// can decompress after decryption.
-	ZipValuesSupported []jwe.Zip
+	ZipValuesSupported []oid4vci.JWEZip
 
 	// Required, when true, rejects an unencrypted Credential/Deferred
 	// Credential Request (§12.2.4's own encryption_required).
@@ -110,11 +111,11 @@ func (s *RequestEncryptionSupport) validate() error {
 type ResponseEncryptionSupport struct {
 	// EncValuesSupported is REQUIRED: the JWE "enc" values this issuer
 	// can encode a Response with.
-	EncValuesSupported []jwe.Enc
+	EncValuesSupported []oid4vci.JWEEnc
 
 	// ZipValuesSupported is OPTIONAL: the JWE "zip" values this issuer
 	// can compress a Response with before encryption.
-	ZipValuesSupported []jwe.Zip
+	ZipValuesSupported []oid4vci.JWEZip
 
 	// Required, when true, means this issuer always encrypts every
 	// Response (§12.2.4's own encryption_required):
@@ -158,8 +159,8 @@ func validEnc(e jwe.Enc) bool {
 // — nil means the corresponding Response isn't encrypted.
 type ResponseEncryptionRequest struct {
 	JWK json.RawMessage // REQUIRED
-	Enc jwe.Enc         // REQUIRED
-	Zip jwe.Zip         // OPTIONAL
+	Enc oid4vci.JWEEnc  // REQUIRED
+	Zip oid4vci.JWEZip  // OPTIONAL
 }
 
 // DecryptRequestBody decrypts body if contentType is "application/jwt"

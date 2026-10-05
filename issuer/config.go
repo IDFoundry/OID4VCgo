@@ -226,7 +226,7 @@ type SDJWTSigner struct {
 	// bare string literal — jose.Alg itself lives in an unexported
 	// internal package, so those are the only named, typo-checked
 	// values an external caller has to reference.
-	Alg jose.Alg
+	Alg oid4vci.JOSEAlg
 
 	// KeyID optionally sets the JOSE "kid" header on issued credentials.
 	KeyID string
@@ -265,7 +265,7 @@ func (s *SDJWTSigner) validate() error {
 // credential/mdoc.CredentialFormat ("mso_mdoc") credentials.
 type MdocSigner struct {
 	Signer crypto.Signer
-	Alg    cose.Alg
+	Alg    oid4vci.COSEAlg
 
 	// X5Chain is the issuer's certificate (DER), followed by any
 	// intermediates, leaf first — see credential/mdoc.IssueOptions.X5Chain.

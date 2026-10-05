@@ -11,8 +11,8 @@ import (
 
 	fapi "github.com/idfoundry/fapigo"
 
+	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
-	"github.com/idfoundry/oid4vcgo/internal/jwe"
 )
 
 // Config is this Verifier's immutable configuration.
@@ -50,14 +50,14 @@ type Config struct {
 	// jose.Alg itself lives in an unexported internal package, so
 	// those are the only named, typo-checked values an external
 	// caller has to reference.
-	SigningAlg jose.Alg
+	SigningAlg oid4vci.JOSEAlg
 
 	// EncValuesSupported is this Verifier's own
 	// "encrypted_response_enc_values_supported" (§5.1) — the JWE
 	// "enc" values it advertises it can decrypt a direct_post.jwt
 	// response with. HAIP §5 requires both jwe.A128GCM and
 	// jwe.A256GCM be supported by Verifiers. REQUIRED, non-empty.
-	EncValuesSupported []jwe.Enc
+	EncValuesSupported []oid4vci.JWEEnc
 
 	// VPFormatsSupported is this Verifier's own "client_metadata"
 	// "vp_formats_supported" value (§10, §11.1) — a map from Credential
@@ -83,13 +83,8 @@ type Config struct {
 // algorithm names (e.g. "ES256") this Verifier accepts for the
 // Issuer-signed SD-JWT and the Key Binding JWT respectively (that
 // format's own "sd-jwt_alg_values"/"kb-jwt_alg_values" members). Typed
-// []string, not []jose.Alg: internal/jose is unimportable from outside
-// this module, so a []jose.Alg parameter — unlike Config.SigningAlg's
-// own single jose.Alg field, settable from an untyped string constant
-// without ever naming the type — made this function uncallable by any
-// caller outside this repo (there is no composite-literal spelling of
-// "[]jose.Alg" without importing its package). Found writing this
-// package's own first external, real-HTTP example.
+// []string, not []oid4vci.JOSEAlg: it predates that alias, when a
+// slice of internal/jose's type had no spelling outside this module.
 func SDJWTVCFormatSupport(sdJWTAlgs, kbJWTAlgs []string) map[string]any {
 	return map[string]any{
 		"dc+sd-jwt": map[string]any{

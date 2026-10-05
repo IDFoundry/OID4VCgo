@@ -7,6 +7,7 @@ import (
 
 	"github.com/idfoundry/fapigo/fapihttp"
 
+	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 )
 
@@ -27,7 +28,7 @@ type Config struct {
 	// string literal — jose.Alg itself lives in an unexported internal
 	// package, so those are the only named, typo-checked values an
 	// external caller has to reference.
-	ProofSigningAlg jose.Alg
+	ProofSigningAlg oid4vci.JOSEAlg
 
 	// Fetch bounds this Wallet's own unauthenticated HTTP calls — a
 	// by-reference Credential Offer's GET fetch (§4.1.3) and the Nonce
