@@ -20,6 +20,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/credential"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/passport"
 	"github.com/idfoundry/oid4vcgo/haip"
+	"github.com/idfoundry/oid4vcgo/mdocdcapi"
 	"github.com/idfoundry/oid4vcgo/registration"
 	"github.com/idfoundry/oid4vcgo/storage"
 	"github.com/idfoundry/oid4vcgo/verifier"
@@ -83,8 +84,12 @@ type App struct {
 
 	issuerRoots   *x509.CertPool
 	issuerTrusted dcql.TrustedAuthoritiesQuery // IssuerCAs, by Authority Key Identifier
-	now           func() time.Time
-	handler       http.Handler
+	// origin is the request pages' origin, and readers each scenario's
+	// key as an mdoc reader, for its Digital Credentials API requests.
+	origin  string
+	readers map[Scenario]mdocdcapi.ReaderKey
+	now     func() time.Time
+	handler http.Handler
 
 	mu       sync.Mutex
 	sessions map[string]*session // by page ID, known only to whoever created the request
@@ -108,6 +113,12 @@ type session struct {
 	binding      string // what its requests are bound to: browserToken, or a secret kept here for CreateRequest
 	expiresAt    time.Time
 	cross, same  channel // same.id is "" without a browser
+
+	// dcapi is the page's Digital Credentials API request waiting for
+	// its answer, and dcapiOutcome what its answer established; both
+	// under App.mu.
+	dcapi        *mdocdcapi.Pending
+	dcapiOutcome *Outcome
 }
 
 // channel is one of a session's two requests.
@@ -205,15 +216,21 @@ func New(cfg Config) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
+	origin, err := originOf(cfg.VerifierURL)
+	if err != nil {
+		return nil, err
+	}
 	a := &App{
 		cfg: cfg, txs: map[Scenario]*verifier.Transactions{}, caCert: ids.ca, registrarCA: ids.registrarCA,
 		issuerRoots: issuerRoots, issuerTrusted: issuerTrusted, now: time.Now,
+		origin: origin, readers: map[Scenario]mdocdcapi.ReaderKey{},
 		sessions: map[string]*session{}, byTx: map[string]string{}, outcomes: map[string]map[string]*Outcome{},
 	}
 	for _, sc := range Scenarios {
 		if a.txs[sc], err = a.newTransactions(sc, ids.signers[sc], ids.registrar); err != nil {
 			return nil, err
 		}
+		a.readers[sc] = mdocdcapi.ReaderKey{Signer: ids.signers[sc].key, Chain: []*x509.Certificate{ids.signers[sc].cert}}
 	}
 	a.handler = a.routes()
 	return a, nil
@@ -445,6 +462,11 @@ func (a *App) state(ctx context.Context, s *session) pageState {
 			a.note(&st, ch.id, view)
 		}
 	}
+	a.mu.Lock()
+	if s.dcapiOutcome != nil {
+		st.outcome = s.dcapiOutcome
+	}
+	a.mu.Unlock()
 	if st.outcome != nil {
 		st.awaiting, st.closed = false, false
 		for _, ch := range []channel{s.cross, s.same} {
