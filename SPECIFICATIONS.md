@@ -43,6 +43,8 @@ plain FAPI 2.0" below.
 | [SD-JWT-based Verifiable Credentials (SD-JWT VC)][sdjwtvc] | HAIP 1.0 §9.4 (overriding OID4VCI 1.0 §14.7's draft-11) | `draft-ietf-oauth-sd-jwt-vc-13` (2025-11-06) |
 | [ISO/IEC 18013-5:2021 — mdoc][iso18013-5] | OID4VCI 1.0 Appendix A.2, HAIP §5.3.1 | — |
 | ISO/IEC 23220 series | HAIP §5.3.1 (mdoc presentation specifics) | — |
+| [ISO/IEC TS 18013-7:2025 — mdoc online presentation][iso18013-7], Annex C (`org-iso-mdoc` over the Digital Credentials API) | — (`mdocdcapi`; outside HAIP, which uses OpenID4VP over the DC API) | — |
+| ISO/IEC 18013-5 second edition: `ReaderAuthAll`, DeviceRequest version "1.1" | — (`mdocdcapi`, which Apple's implementation expects) | CD ballot resolution draft |
 
 ## Attestation
 
@@ -127,6 +129,7 @@ the package layout.
 [asmeta]: https://www.rfc-editor.org/rfc/rfc8414.html
 [sdjwtvc]: https://datatracker.ietf.org/doc/html/draft-ietf-oauth-sd-jwt-vc-13
 [iso18013-5]: https://www.iso.org/standard/69084.html
+[iso18013-7]: https://www.iso.org/standard/91154.html
 [attclientauth]: https://datatracker.ietf.org/doc/html/draft-ietf-oauth-attestation-based-client-auth-07
 [statuslist]: https://datatracker.ietf.org/doc/html/draft-ietf-oauth-status-list-14
 [jws]: https://www.rfc-editor.org/rfc/rfc7515.html
