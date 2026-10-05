@@ -91,6 +91,15 @@ type VerifyResponseRequest struct {
 	// and Key Binding JWT freshness. Defaults to time.Now.
 	Now func() time.Time
 
+	// MaxClockSkew is how far Now may be from the issuer's clock when a
+	// credential's validity window is checked: SD-JWT nbf/exp and mdoc
+	// validFrom/validUntil are each widened by it. Zero checks them
+	// exactly, which refuses a credential presented just after it was
+	// issued valid from its signing time, when this Verifier's clock is
+	// behind the issuer's. A minute is typical. (A Key Binding JWT's iat
+	// is bounded by MaxKeyBindingAge in both directions already.)
+	MaxClockSkew time.Duration
+
 	// MaxKeyBindingAge bounds how old a Key Binding JWT's own "iat"
 	// may be. REQUIRED (must be positive) when Query includes any
 	// "dc+sd-jwt" Credential Query that requires holder binding (the
@@ -417,6 +426,7 @@ func (v *Verifier) verifySDJWTVCPresentation(ctx context.Context, cq dcql.Creden
 		ExpectedNonce:     req.ExpectedNonce,
 		MaxKeyBindingAge:  req.MaxKeyBindingAge,
 		Now:               req.Now,
+		MaxClockSkew:      req.MaxClockSkew,
 	})
 	if err != nil {
 		return nil, newError("verify", err)
@@ -485,7 +495,7 @@ func (v *Verifier) verifyMdocPresentation(ctx context.Context, cq dcql.Credentia
 		return nil, nil, newError("resolve issuer key", err)
 	}
 
-	verified, err := mdoc.Verify(doc.IssuerSigned, doc.DocType, issuerPub, issuerAlg, mdoc.VerifyOptions{Now: req.Now})
+	verified, err := mdoc.Verify(doc.IssuerSigned, doc.DocType, issuerPub, issuerAlg, mdoc.VerifyOptions{Now: req.Now, MaxClockSkew: req.MaxClockSkew})
 	if err != nil {
 		return nil, nil, newError("verify issuer signed", err)
 	}

@@ -376,3 +376,21 @@ func TestVerifyMdocResponseRejectsCraftedPresentations(t *testing.T) {
 		})
 	}
 }
+
+// A Verifier whose clock is behind the issuer's refuses an mdoc
+// presented just after it was issued valid from its signing time —
+// unless MaxClockSkew covers the difference.
+func TestVerifyMdocResponse_MaxClockSkew(t *testing.T) {
+	mf := newMdocVerifyFixture(t)
+	behind := func(skew time.Duration) func(*verifier.VerifyResponseRequest) {
+		return func(req *verifier.VerifyResponseRequest) {
+			req.Now = func() time.Time { return time.Now().Add(-30 * time.Second) }
+			req.MaxClockSkew = skew
+		}
+	}
+	if _, err := mf.verifyWith(t, mf.nonce, behind(0)); err == nil {
+		t.Error("a clock 30 s behind the issuer's, no skew allowed: accepted")
+	}
+	result, err := mf.verifyWith(t, mf.nonce, behind(time.Minute))
+	assertMdocGivenNameAlice(t, result, err)
+}

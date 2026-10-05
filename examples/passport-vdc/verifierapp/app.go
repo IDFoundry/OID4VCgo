@@ -257,7 +257,11 @@ func (a *App) newTransactions(sc Scenario, sg signer, registrar signer) (*verifi
 			MdocIssuerKeys:     verifier.X5ChainIssuerKeyResolver{Roots: a.issuerRoots},
 			TrustedAuthorities: dcql.AKITrustedAuthoritiesChecker{Roots: a.issuerRoots},
 			MaxKeyBindingAge:   5 * time.Minute,
-			Now:                func() time.Time { return a.now() },
+			// The issuer's clock may be ahead of this one (another
+			// machine, as through a tunnel): a credential is valid from
+			// the moment it's signed.
+			MaxClockSkew: time.Minute,
+			Now:          func() time.Time { return a.now() },
 		},
 		Accept: func(ctx context.Context, id string, result verifier.VerifyResponseResult) error {
 			return a.accept(ctx, sc, id, result)
