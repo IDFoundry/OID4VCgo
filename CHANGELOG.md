@@ -15,8 +15,7 @@
 
 ### Bug Fixes
 
-* **deps:** pin FAPIgo main d8ae446 ([a52a260](https://github.com/IDFoundry/OID4VCgo/commit/a52a2600395d83335d32861bd53e49928006293d))
-* **deps:** pin FAPIgo v0.50.0 ([6710083](https://github.com/IDFoundry/OID4VCgo/commit/6710083349e4d46e5036cae803d3f604390067d6))
+* **deps:** pin FAPIgo v0.50.0 ([a52a260](https://github.com/IDFoundry/OID4VCgo/commit/a52a2600395d83335d32861bd53e49928006293d), [6710083](https://github.com/IDFoundry/OID4VCgo/commit/6710083349e4d46e5036cae803d3f604390067d6))
 * **haip:** declare the recommendations with public types ([5da504e](https://github.com/IDFoundry/OID4VCgo/commit/5da504ec7295abea58c5daea6b0317a9c1337325))
 * name only public types in exported declarations ([deb3ad3](https://github.com/IDFoundry/OID4VCgo/commit/deb3ad30fd2c56a7bf265af6135678701db93e94))
 * **verifier:** don't present a refused answer as the holder's doing ([dd4e608](https://github.com/IDFoundry/OID4VCgo/commit/dd4e60825e548918d59efecff431b01411257605))
