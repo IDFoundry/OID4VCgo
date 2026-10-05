@@ -64,7 +64,17 @@ jobs:
       # the ordinary human-readable output (including the per-package
       # coverage summary above) as JSON events instead, which would
       # make this job's own log far harder to skim.
+      # A pull request from a fork gets no repository secrets, so no
+      # SONAR_TOKEN: the scan would fail "Not authorized" and fail this
+      # job though every test passed. Check for the token here — only
+      # this step and the scan see it, not the steps running the PR's
+      # code — and skip both Sonar steps without it.
+      - name: SonarQube token available?
+        id: sonar
+        run: echo "available=${{ secrets.SONAR_TOKEN != '' }}" >> "$GITHUB_OUTPUT"
+
       - name: go test (json, for SonarQube test reporting)
+        if: steps.sonar.outputs.available == 'true'
         run: go test -race ./... -json > report.json
 
       # Config lives in sonar-project.properties (organization,
@@ -74,6 +84,7 @@ jobs:
       # this repo's tests, so it can't see coverage at all; that's the
       # whole reason this step exists.
       - name: SonarQube Scan
+        if: steps.sonar.outputs.available == 'true'
         uses: SonarSource/sonarqube-scan-action@d209202bc7d53ff1cc128f7f907dac145c9d6ae9 # v8.3.0
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
