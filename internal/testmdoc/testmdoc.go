@@ -36,7 +36,7 @@ type Fixture struct {
 }
 
 // Issue builds a Fixture.
-func Issue(t *testing.T) Fixture {
+func Issue(t testing.TB) Fixture {
 	t.Helper()
 	return IssueWith(t, func(*mdoc.Claims) {
 		// The default claims, unchanged.
@@ -45,7 +45,7 @@ func Issue(t *testing.T) Fixture {
 
 // IssueWith is Issue, with mutate applied to the claims before issuance
 // — e.g. to add a Status reference.
-func IssueWith(t *testing.T, mutate func(*mdoc.Claims)) Fixture {
+func IssueWith(t testing.TB, mutate func(*mdoc.Claims)) Fixture {
 	t.Helper()
 	issuerKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
