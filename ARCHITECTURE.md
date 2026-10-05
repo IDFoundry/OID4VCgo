@@ -947,6 +947,32 @@ changes whether *every* bullet below is `(done)`.
   `BuildSessionTranscriptBytes` was held to. Wired into both
   `verifier` (`buildMdocSessionTranscriptBytes`) and `wallet`
   (identically named) — see their own bullets below.
+- **`proximity`** (done, BLE) — ISO/IEC 18013-5 in-person
+  presentation, both roles, as bytes in and bytes out: `DeviceSession`
+  (mdoc) and `ReaderSession` (reader). QR device engagement with one BLE
+  retrieval method (mdoc peripheral server or central client mode), the
+  SessionTranscript with a null Handover, SKReader/SKDevice derivation,
+  and AES-256-GCM SessionEstablishment/SessionData with implicit
+  per-direction counters, so replayed or reordered messages fail to
+  decrypt. `ParseDeviceRequest` keeps the request's element order and
+  exact `ItemsRequestBytes`. `BuildDeviceResponse` reuses
+  `credential/mdoc`'s `SelectNameSpaces`/`SignDeviceSignature` and
+  `oid4vpmdoc.MarshalDeviceResponse`, whose encoding is the
+  single-document DeviceResponse exactly. The reader parses responses
+  itself, because `oid4vpmdoc.UnmarshalDeviceResponse` refuses a
+  response with only `documentErrors`. `ReaderSession.Verify` checks
+  the issuer chain at a caller-given time
+  (`internal/certchain.VerifyChainsAt`, added for this), `mdoc.Verify`,
+  the device signature or MAC over its own transcript, key
+  authorizations, and that only requested elements came back. A
+  declined or unmatched request is a status-20 termination, not
+  `documentErrors`, following Multipaz. Tests reproduce ISO/IEC
+  18013-5 Annex D byte for byte (hex from Multipaz's `TestVectors.kt`).
+  Annex D uses NFC engagement, so those tests drive the transcript's
+  internal Handover parameter, though only QR engagement is exposed.
+  The transport — BLE GATT, and chunking — stays in the mobile app; see
+  `proximity/README.md`. Not yet: NFC engagement/handover, BLE L2CAP,
+  reader authentication, and more than one request per session.
 - **`verifier`** (done, `dc+sd-jwt`+`mso_mdoc`) — the OID4VP Verifier role.
   `BuildAuthorizationRequest` builds and signs a HAIP-§5-profiled
   redirect-flow Authorization Request: a JAR Request Object
