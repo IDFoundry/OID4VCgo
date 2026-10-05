@@ -50,9 +50,12 @@ in place of FAPI 2.0's normal `private_key_jwt`/mTLS client auth. FAPIgo's
 `server` side supports this — `storage.ClientAuthMethodAttestation`,
 `server.Config.AttestationBasedClientAuthentication`, and
 `server.Dependencies.AttesterTrust` (`X5CAttesterChain`, whose
-`IssuerBinding` ties the attester certificate to the client's attester, or
-`RegisteredAttesterKeys`) — so an Authorization Server pairing with
-`issuer` can verify an incoming Wallet Attestation.
+`IssuerBinding` ties the attester certificate to the client's attester —
+`AttesterIssuerBoundToAnchor` also binds each trust anchor to the
+attesters it may vouch for — or `RegisteredAttesterKeys`, whose `Keys` is
+a `keys.AttesterKeySource` of the attesters' own keys, never the
+clients') — so an Authorization Server pairing with `issuer` can verify
+an incoming Wallet Attestation.
 The *client* side landed in [FAPIgo PR #317](https://github.com/IDFoundry/FAPIgo/pull/317)
 (commit `ca54d10`, `go.mod` is pinned past it): `fapigo/client.Dependencies.Attestation`
 (an `AttestationSource` holding the wallet's own out-of-band-issued Client

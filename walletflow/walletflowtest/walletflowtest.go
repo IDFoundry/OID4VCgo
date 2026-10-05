@@ -202,9 +202,10 @@ func New(opts Options) (env *Env, err error) {
 		Grants: memstore.NewGrantStore(), Replay: memstore.NewReplayStore(), ClientKeys: clientKeys, Keys: accessKeys,
 		AccessTokens: e.accessTokens, Revocation: memstore.NewRevocationStore(), Clock: server.SystemClock{}, Random: rand.Reader,
 		ClientCertificateTrust: server.NoClientCertificateChainTrust{},
+		// The Wallet Provider CA may vouch for the Wallet Provider alone.
 		AttesterTrust: server.X5CAttesterChain{
-			TrustAnchors:  server.StaticAttesterTrustAnchors{Roots: e.Provider.Roots},
-			IssuerBinding: server.AttesterIssuerInCertificate,
+			Anchors:       server.StaticAttesterAnchors{{Certificate: e.Provider.CA, Issuers: []string{ProviderIssuer}}},
+			IssuerBinding: server.AttesterIssuerBoundToAnchor,
 		},
 	}
 	e.srv, err = server.New(asCfg, deps)
@@ -730,8 +731,10 @@ func (a accessTokenAdapter) IssueAccessToken(ctx context.Context, p issuer.Acces
 // Provider is the Wallet Provider: it attests any wallet instance and
 // key it's asked to, in process.
 type Provider struct {
-	// Roots is the Wallet Provider's CA.
+	// Roots is the Wallet Provider's CA, as a pool.
 	Roots *x509.CertPool
+	// CA is the Wallet Provider's CA certificate.
+	CA *x509.Certificate
 
 	key  *ecdsa.PrivateKey
 	cert *x509.Certificate
@@ -758,7 +761,7 @@ func newProvider() *Provider {
 	must(err)
 	roots := x509.NewCertPool()
 	roots.AddCert(caCert)
-	return &Provider{Roots: roots, key: key, cert: cert}
+	return &Provider{Roots: roots, CA: caCert, key: key, cert: cert}
 }
 
 func (p *Provider) header() attestation.Header {

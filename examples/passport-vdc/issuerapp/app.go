@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/pem"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -66,8 +67,9 @@ type App struct {
 	consent          *interactioncookie.Cookie // the approval step's state, sealed in the browser
 	metadataSigner   *ecdsa.PrivateKey
 	metadataCert     *x509.Certificate
-	providerRoots    *x509.CertPool    // the Wallet Provider CA: Wallet and Key Attestations
-	documentSigner   *ecdsa.PrivateKey // signs credentials and the status list
+	providerRoots    *x509.CertPool               // the Wallet Provider CA: Wallet and Key Attestations
+	providerAnchors  server.StaticAttesterAnchors // the same CA, bound to Wallet.ProviderIssuer
+	documentSigner   *ecdsa.PrivateKey            // signs credentials and the status list
 	documentCert     *x509.Certificate
 	caCert           *x509.Certificate
 	statusList       *statusList
@@ -97,6 +99,9 @@ func New(cfg Config) (*App, error) {
 	a.reviews = newReviews(a.now)
 	a.preAuthCodes = oid4vcgostorage.NewPreAuthorizedCodeStore()
 	a.notifications = &notifications{now: a.now}
+	if a.providerAnchors, err = attesterAnchors(cfg.Wallet.ProviderCA, cfg.Wallet.ProviderIssuer); err != nil {
+		return nil, err
+	}
 	if a.providerRoots, err = certPool(cfg.Wallet.ProviderCA); err != nil {
 		return nil, err
 	}
@@ -208,11 +213,12 @@ func (a *App) buildAuthorizationServer() error {
 		// Wallet Attestations are trusted by their x5c chain to the
 		// Wallet Provider CA (HAIP 1.0 §4.4.1), not by registered keys,
 		// from a certificate naming the wallet's registered Wallet
-		// Provider — so a CA certifying several providers doesn't let
-		// one attest for another's wallets.
+		// Provider. Each anchor is bound to the providers it may vouch
+		// for, so a CA on a shared trust list can't attest for another
+		// provider's wallets.
 		AttesterTrust: server.X5CAttesterChain{
-			TrustAnchors:  server.StaticAttesterTrustAnchors{Roots: a.providerRoots},
-			IssuerBinding: server.AttesterIssuerInCertificate,
+			Anchors:       a.providerAnchors,
+			IssuerBinding: server.AttesterIssuerBoundToAnchor,
 		},
 	}
 	if a.server, err = server.New(cfg, deps); err != nil {
@@ -429,6 +435,31 @@ func issueSigner(now time.Time, name string, ca *x509.Certificate, caKey *ecdsa.
 }
 
 // certPool parses the PEM certificates in data into a pool.
+// attesterAnchors is each certificate in the PEM data, bound to vouch
+// for the Wallet Provider providerIssuer alone.
+func attesterAnchors(data []byte, providerIssuer string) (server.StaticAttesterAnchors, error) {
+	var anchors server.StaticAttesterAnchors
+	for {
+		var block *pem.Block
+		block, data = pem.Decode(data)
+		if block == nil {
+			break
+		}
+		if block.Type != "CERTIFICATE" {
+			continue
+		}
+		cert, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			return nil, fmt.Errorf("issuerapp: Wallet.ProviderCA: %w", err)
+		}
+		anchors = append(anchors, server.AttesterAnchor{Certificate: cert, Issuers: []string{providerIssuer}})
+	}
+	if len(anchors) == 0 {
+		return nil, fmt.Errorf("issuerapp: Wallet.ProviderCA holds no PEM certificate")
+	}
+	return anchors, nil
+}
+
 func certPool(data []byte) (*x509.CertPool, error) {
 	pool := x509.NewCertPool()
 	if !pool.AppendCertsFromPEM(data) {
