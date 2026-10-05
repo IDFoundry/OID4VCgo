@@ -4,10 +4,15 @@ import (
 	"bytes"
 	"crypto/ecdsa"
 	"crypto/elliptic"
+	"crypto/x509"
 	"encoding/hex"
 	"testing"
+	"time"
 
 	"github.com/fxamacker/cbor/v2"
+
+	"github.com/idfoundry/oid4vcgo/credential/mdoc"
+	"github.com/idfoundry/oid4vcgo/internal/cose"
 )
 
 func mustHex(t testing.TB, s string) []byte {
@@ -150,5 +155,116 @@ func TestAnnexDSessionTranscript(t *testing.T) {
 	}
 	if !bytes.Equal(got, mustHex(t, annexDSessionTranscriptBytes)) {
 		t.Errorf("SessionTranscriptBytes differs:\n got %x\nwant %s", got, annexDSessionTranscriptBytes)
+	}
+}
+
+// TestAnnexDReader drives a ReaderSession through Annex D's session
+// from the other side: the published DeviceRequest encrypts under
+// SKReader to the published SessionEstablishment byte for byte, and the
+// published SessionData decrypts under SKDevice to the published
+// DeviceResponse.
+func TestAnnexDReader(t *testing.T) {
+	de, _, handover := annexDTranscriptParts(t)
+	key := annexDKey(t, annexDEphemeralReaderKeyD, annexDEphemeralReaderKeyX, annexDEphemeralReaderKeyY)
+	r, err := newReaderSession(key, de, handover)
+	if err != nil {
+		t.Fatalf("newReaderSession: %v", err)
+	}
+	if !bytes.Equal(r.SessionTranscriptBytes(), mustHex(t, annexDSessionTranscriptBytes)) {
+		t.Error("SessionTranscriptBytes differs from Annex D's")
+	}
+	msg, err := r.establishment(mustHex(t, annexDDeviceRequest))
+	if err != nil {
+		t.Fatalf("establishment: %v", err)
+	}
+	if !bytes.Equal(msg, mustHex(t, annexDSessionEstablishment)) {
+		t.Errorf("SessionEstablishment differs:\n got %x\nwant %s", msg, annexDSessionEstablishment)
+	}
+	data, status, err := receive(r.cipher, mustHex(t, annexDSessionData))
+	if err != nil || status != nil {
+		t.Fatalf("receive SessionData: %v, status %v", err, status)
+	}
+	if !bytes.Equal(data, mustHex(t, annexDDeviceResponse)) {
+		t.Error("decrypted DeviceResponse differs from Annex D's")
+	}
+}
+
+// TestAnnexDParseDeviceRequest: Annex D's DeviceRequest parses to its
+// six elements in request order, with portrait the one not retained,
+// the exact ItemsRequestBytes and the readerAuth kept.
+func TestAnnexDParseDeviceRequest(t *testing.T) {
+	reqs, err := ParseDeviceRequest(mustHex(t, annexDDeviceRequest))
+	if err != nil {
+		t.Fatalf("ParseDeviceRequest: %v", err)
+	}
+	if len(reqs) != 1 {
+		t.Fatalf("got %d DocRequests, want 1", len(reqs))
+	}
+	req := reqs[0]
+	if req.DocType != "org.iso.18013.5.1.mDL" {
+		t.Errorf("DocType = %q", req.DocType)
+	}
+	const ns = "org.iso.18013.5.1"
+	want := []string{"family_name", "document_number", "driving_privileges", "issue_date", "expiry_date", "portrait"}
+	if len(req.Elements) != len(want) {
+		t.Fatalf("Elements = %v, want %v", req.Elements, want)
+	}
+	for i, el := range want {
+		if req.Elements[i] != [2]string{ns, el} {
+			t.Errorf("Elements[%d] = %v, want %s", i, req.Elements[i], el)
+		}
+		if got := req.IntentToRetain[[2]string{ns, el}]; got != (el != "portrait") {
+			t.Errorf("IntentToRetain[%s] = %v", el, got)
+		}
+	}
+	items, err := unwrapTag24(req.ItemsRequestBytes)
+	if err != nil || !bytes.Equal(items, mustHex(t, annexDItemsRequest)) {
+		t.Errorf("ItemsRequestBytes does not wrap Annex D's ItemsRequest: %v", err)
+	}
+	if req.ReaderAuth == nil {
+		t.Error("ReaderAuth not kept")
+	}
+}
+
+// TestAnnexDDeviceResponse: Annex D's DeviceResponse parses, its issuer
+// signature and digests verify under the published document signer
+// certificate at a time inside its validity, and its DeviceMAC verifies
+// with the static device key and the ephemeral reader key over the
+// published transcript.
+func TestAnnexDDeviceResponse(t *testing.T) {
+	doc, err := parseDeviceResponse(mustHex(t, annexDDeviceResponse))
+	if err != nil {
+		t.Fatalf("parseDeviceResponse: %v", err)
+	}
+	if doc.deviceSigned.AuthType != mdoc.DeviceAuthMAC {
+		t.Fatalf("AuthType = %v, want DeviceAuthMAC", doc.deviceSigned.AuthType)
+	}
+	cert, err := x509.ParseCertificate(mustHex(t, annexDDsCert))
+	if err != nil {
+		t.Fatalf("parse DS certificate: %v", err)
+	}
+	at := cert.NotBefore.Add(24 * time.Hour)
+	verified, err := mdoc.Verify(doc.issuerSigned, doc.docType, cert.PublicKey, cose.ES256, mdoc.VerifyOptions{
+		Now: func() time.Time { return at },
+	})
+	if err != nil {
+		t.Fatalf("mdoc.Verify: %v", err)
+	}
+	if got := verified.NameSpaces["org.iso.18013.5.1"]["family_name"]; got != "Doe" {
+		t.Errorf("family_name = %v, want Doe", got)
+	}
+
+	static := annexDKey(t, annexDStaticDeviceKeyD, annexDStaticDeviceKeyX, annexDStaticDeviceKeyY)
+	if !static.PublicKey.Equal(verified.DeviceKey) {
+		t.Error("MSO device key is not Annex D's static device key")
+	}
+	reader := annexDKey(t, annexDEphemeralReaderKeyD, annexDEphemeralReaderKeyX, annexDEphemeralReaderKeyY)
+	transcript := mustHex(t, annexDSessionTranscriptBytes)
+	if err := mdoc.VerifyDeviceMAC(doc.deviceSigned, &static.PublicKey, reader, transcript, doc.docType); err != nil {
+		t.Errorf("VerifyDeviceMAC: %v", err)
+	}
+	transcript[len(transcript)-1] ^= 1
+	if err := mdoc.VerifyDeviceMAC(doc.deviceSigned, &static.PublicKey, reader, transcript, doc.docType); err == nil {
+		t.Error("VerifyDeviceMAC over a different transcript: verified")
 	}
 }
