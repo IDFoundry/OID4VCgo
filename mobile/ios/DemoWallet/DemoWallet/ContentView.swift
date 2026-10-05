@@ -930,7 +930,7 @@ struct Holder {
             return nil
         }
         name = names.isEmpty ? nil : names.joined(separator: " ")
-        if case .string(let s)? = Self.find(["birth_date", "birthdate"], in: claims) { birthDate = s } else { birthDate = nil }
+        birthDate = Self.birthDate(Self.find(["birth_date", "birthdate"], in: claims))
         portrait = ["portrait", "picture"].lazy.compactMap { key in
             Self.find([key], in: claims).flatMap { ClaimRows.image($0, key: key) }
         }.first
@@ -940,6 +940,29 @@ struct Holder {
     /// "Jane Citizen · born 1990-01-01".
     var line: String {
         [name, birthDate.map { "born \($0)" }].compactMap { $0 }.joined(separator: " · ")
+    }
+
+    /// A date of birth as text: an SD-JWT VC's string, or ISO/IEC TS
+    /// 23220-2's birth_date structure ({birth_date, approximate_mask}),
+    /// its masked digits shown as "x" — "xx14-06-01" when the century
+    /// isn't known.
+    static func birthDate(_ v: JSONValue?) -> String? {
+        switch v {
+        case .string(let s)?:
+            return s
+        case .object(let o)?:
+            guard case .string(let date)? = o["birth_date"] else { return nil }
+            guard case .string(let mask)? = o["approximate_mask"], mask.count == 8 else { return date }
+            // The mask covers YYYYMMDD; the date is YYYY-MM-DD.
+            var digits = Array(mask).makeIterator()
+            return String(date.map { c -> Character in
+                if c == "-" { return c }
+                if digits.next() == "1" { return "x" }
+                return c
+            })
+        default:
+            return nil
+        }
     }
 
     /// The first value under any of keys, searching objects depth-first.

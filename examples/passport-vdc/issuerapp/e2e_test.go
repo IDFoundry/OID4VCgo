@@ -113,8 +113,8 @@ func TestEndToEnd_IssuesBothFormats(t *testing.T) {
 	if err != nil {
 		t.Fatalf("mdoc.Verify: %v", err)
 	}
-	if verified.NameSpaces[credential.IdentityNamespace][credential.FamilyName] != "DOE" {
-		t.Errorf("mdoc family_name = %v", verified.NameSpaces[credential.IdentityNamespace][credential.FamilyName])
+	if verified.NameSpaces[credential.ISONamespace][credential.FamilyName] != "DOE" {
+		t.Errorf("mdoc family_name = %v", verified.NameSpaces[credential.ISONamespace][credential.FamilyName])
 	}
 	if got, _ := verified.NameSpaces[credential.FileNamespace][credential.PassportFile].([]byte); len(got) != 20<<10 {
 		t.Errorf("mdoc passport file is %d bytes, want %d", len(got), 20<<10)

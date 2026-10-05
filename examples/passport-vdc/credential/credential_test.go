@@ -9,6 +9,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/base64"
 	"math/big"
+	"strings"
 	"testing"
 	"time"
 
@@ -116,8 +117,8 @@ func TestExpiredPassportStillIssues(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MdocClaims: %v", err)
 	}
-	if exp, _ := claims.NameSpaces[IdentityNamespace][ExpiryDate].(cbor.Tag); exp.Content != "2020-01-01" {
-		t.Errorf("expiry_date = %v, want 2020-01-01", claims.NameSpaces[IdentityNamespace][ExpiryDate])
+	if exp, _ := claims.NameSpaces[DemoNamespace][PassportExpiryDate].(cbor.Tag); exp.Content != "2020-01-01" {
+		t.Errorf("passport_expiry_date = %v, want 2020-01-01", claims.NameSpaces[DemoNamespace][PassportExpiryDate])
 	}
 }
 
@@ -175,12 +176,27 @@ func TestMdocClaims_Adult(t *testing.T) {
 	}
 	ns := issueAndVerifyMdoc(t, claims)
 
-	identity := ns[IdentityNamespace]
-	if identity[FamilyName] != "DOE" || identity[DocumentNumber] != "K0000000A" || identity[NamesFromMRZ] != true {
-		t.Errorf("identity = %v", identity)
+	identity := ns[ISONamespace]
+	if identity[FamilyName] != "DOE" || identity[GivenName] != "JANE" || identity[IssuingAuthority] != IssuingAuthorityName {
+		t.Errorf("org.iso.23220.1 = %v", identity)
 	}
-	if bd, ok := identity[BirthDate].(cbor.Tag); !ok || bd.Number != fullDateTag || bd.Content != "1980-01-01" {
-		t.Errorf("birth_date = %#v, want tag 1004 \"1980-01-01\"", identity[BirthDate])
+	// ISO/IEC 5218 sex, alpha-2 issuing country, alpha-3 nationality.
+	if identity[Sex] != uint64(2) || identity[IssuingCountry] != "SG" || identity[Nationality] != "SGP" {
+		t.Errorf("sex/issuing_country/nationality = %v/%v/%v, want 2/SG/SGP", identity[Sex], identity[IssuingCountry], identity[Nationality])
+	}
+	// The mobile document's own issue and expiry dates: the credential's
+	// validity, not the passport's.
+	if iss, _ := identity[IssueDate].(cbor.Tag); iss.Content != now.Format(time.DateOnly) {
+		t.Errorf("issue_date = %v, want %s", identity[IssueDate], now.Format(time.DateOnly))
+	}
+	if bd := birthDateOf(t, identity); bd.date != "1980-01-01" || bd.mask != "" {
+		t.Errorf("birth_date = %+v, want 1980-01-01 with no mask", bd)
+	}
+	if ns[PhotoIDNamespace][TravelDocumentNumber] != "K0000000A" {
+		t.Errorf("travel_document_number = %v", ns[PhotoIDNamespace][TravelDocumentNumber])
+	}
+	if ns[DemoNamespace][NamesFromMRZ] != true {
+		t.Errorf("names_from_mrz = %v", ns[DemoNamespace][NamesFromMRZ])
 	}
 	if identity["age_over_18"] != true || identity["age_over_65"] != false {
 		t.Errorf("age_over_18/65 = %v/%v", identity["age_over_18"], identity["age_over_65"])
@@ -191,14 +207,16 @@ func TestMdocClaims_Adult(t *testing.T) {
 	}
 }
 
-func TestMdocClaims_ChildOmitsBirthDate(t *testing.T) {
+// A child's ambiguous MRZ birth year is the youngest reading, with its
+// century masked (ISO/IEC TS 23220-2's approximate_mask).
+func TestMdocClaims_ChildMasksTheCentury(t *testing.T) {
 	claims, err := MdocClaims(child(), Options{Now: now})
 	if err != nil {
 		t.Fatalf("MdocClaims: %v", err)
 	}
-	identity := issueAndVerifyMdoc(t, claims)[IdentityNamespace]
-	if _, ok := identity[BirthDate]; ok {
-		t.Error("birth_date issued for an ambiguous MRZ birth year")
+	identity := issueAndVerifyMdoc(t, claims)[ISONamespace]
+	if bd := birthDateOf(t, identity); !strings.HasPrefix(bd.date, "2014-") || bd.mask != "11000000" {
+		t.Errorf("birth_date = %+v, want the youngest reading with the century masked", bd)
 	}
 	if identity["age_over_18"] != false || identity["age_over_13"] != false {
 		t.Errorf("age_over_13/18 = %v/%v, want false/false", identity["age_over_13"], identity["age_over_18"])
@@ -279,5 +297,46 @@ func TestEncodersRequireThePassportFile(t *testing.T) {
 	}
 	if _, err := SDJWTClaims(adult(), "", Options{Now: now}); err == nil {
 		t.Error("SDJWTClaims without vct = nil error")
+	}
+}
+
+type birthDateValue struct{ date, mask string }
+
+// birthDateOf reads ISO/IEC TS 23220-2's birth_date structure.
+func birthDateOf(t *testing.T, ns map[string]interface{}) birthDateValue {
+	t.Helper()
+	raw, err := cbor.Marshal(ns[BirthDate])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var v struct {
+		Date cbor.Tag `cbor:"birth_date"`
+		Mask string   `cbor:"approximate_mask"`
+	}
+	if err := cbor.Unmarshal(raw, &v); err != nil {
+		t.Fatalf("birth_date %#v isn't the structure: %v", ns[BirthDate], err)
+	}
+	if v.Date.Number != fullDateTag {
+		t.Errorf("birth_date's date is tag %d, want %d", v.Date.Number, fullDateTag)
+	}
+	s, _ := v.Date.Content.(string)
+	return birthDateValue{date: s, mask: v.Mask}
+}
+
+// MRZ codes map to ISO/IEC 23220-2's encodings: countries to ISO 3166-1
+// alpha-2 (ICAO's own codes included, a code with no alpha-2 kept), sex
+// to ISO/IEC 5218.
+func TestISOEncodings(t *testing.T) {
+	for mrz, want := range map[string]string{
+		"DEU": "DE", "D": "DE", "D<<": "DE", "GBR": "GB", "GBD": "GB", "SGP": "SG", "RKS": "XK", "UTO": "UTO", "UNO": "UNO",
+	} {
+		if got := alpha2(mrz); got != want {
+			t.Errorf("alpha2(%q) = %q, want %q", mrz, got, want)
+		}
+	}
+	for mrz, want := range map[string]uint{"M": 1, "F": 2, "X": 0, "<": 0, "": 0} {
+		if got := isoSex(mrz); got != want {
+			t.Errorf("isoSex(%q) = %d, want %d", mrz, got, want)
+		}
 	}
 }

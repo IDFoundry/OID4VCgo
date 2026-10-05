@@ -149,17 +149,17 @@ func buildQuery(s Scenario, vct string, trusted dcql.TrustedAuthoritiesQuery) (d
 		mdocClaims = []dcql.ClaimsQuery{claim(credential.FileNamespace, credential.PassportFile)}
 		sdjwtClaims = []dcql.ClaimsQuery{claim(credential.PassportFile)}
 	case s == ScenarioAge:
-		mdocClaims = []dcql.ClaimsQuery{claim(credential.IdentityNamespace, "age_over_18")}
+		mdocClaims = []dcql.ClaimsQuery{claim(credential.ISONamespace, "age_over_18")}
 		sdjwtClaims = []dcql.ClaimsQuery{claim(credential.SDJWTAgeEqualOrOver, "18")}
 	case s == ScenarioOverAsking:
 		mdocClaims = []dcql.ClaimsQuery{
-			claim(credential.IdentityNamespace, "age_over_18"),
-			claim(credential.IdentityNamespace, credential.GivenName), claim(credential.IdentityNamespace, credential.FamilyName),
+			claim(credential.ISONamespace, "age_over_18"),
+			claim(credential.ISONamespace, credential.GivenName), claim(credential.ISONamespace, credential.FamilyName),
 		}
 		sdjwtClaims = []dcql.ClaimsQuery{claim(credential.SDJWTAgeEqualOrOver, "18"), claim(credential.GivenName), claim(credential.FamilyName)}
 	case s == ScenarioSignup:
 		for _, el := range []string{credential.FamilyName, credential.GivenName, "age_over_18", credential.Portrait} {
-			mdocClaims = append(mdocClaims, claim(credential.IdentityNamespace, el))
+			mdocClaims = append(mdocClaims, claim(credential.ISONamespace, el))
 		}
 		sdjwtClaims = []dcql.ClaimsQuery{
 			claim(credential.FamilyName), claim(credential.GivenName),
