@@ -110,14 +110,9 @@ func ExampleVerifier_VerifyResponse() {
 	if err != nil {
 		panic(err)
 	}
-	meta, err := dcql.NewSDJWTVCMeta(dcql.SDJWTVCMeta{VCTValues: []string{"urn:eudi:pid:1"}})
-	if err != nil {
-		panic(err)
-	}
-	query := dcql.Query{Credentials: []dcql.CredentialQuery{{
-		ID: "cred1", Format: sdjwtvc.CredentialFormat, Meta: meta,
-		Claims: []dcql.ClaimsQuery{{Path: dcql.Path{dcql.PathKey("given_name")}}},
-	}}}
+	query := dcql.Query{Credentials: []dcql.CredentialQuery{
+		dcql.SDJWTVCQuery("cred1", "urn:eudi:pid:1", dcql.KeyPath("given_name")),
+	}}
 
 	v, err := verifier.New(verifier.Config{
 		Assurance:          verifier.AssuranceDevelopment,
