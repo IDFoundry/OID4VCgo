@@ -69,7 +69,7 @@ func (iss dcapiIssuer) passportMdoc(t *testing.T, elements map[string]any) (mdoc
 	device, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	now := time.Now()
 	signed, err := mdoc.Issue(iss.signer, oid4vci.COSEES256, mdoc.Claims{
-		DocType: credential.DocType, NameSpaces: map[string]map[string]interface{}{credential.IdentityNamespace: elements},
+		DocType: credential.DocType, NameSpaces: map[string]map[string]interface{}{credential.ISONamespace: elements},
 		DeviceKey: &device.PublicKey, Signed: now, ValidFrom: now, ValidUntil: now.Add(time.Hour),
 	}, mdoc.IssueOptions{X5Chain: [][]byte{iss.signerDER}})
 	if err != nil {
