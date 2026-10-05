@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/fxamacker/cbor/v2"
@@ -252,11 +253,19 @@ func (r *ReaderSession) verifyDocument(doc responseDocument, roots *x509.CertPoo
 	if err != nil {
 		return Verified{}, fmt.Errorf("proximity: issuer certificate: %w", err)
 	}
+	if err := checkIACASubject(chains); err != nil {
+		return Verified{}, err
+	}
 	verified, err := mdoc.Verify(doc.issuerSigned, r.docType, leaf.PublicKey, protected.Alg, mdoc.VerifyOptions{
 		Now: func() time.Time { return now },
 	})
 	if err != nil {
 		return Verified{}, fmt.Errorf("proximity: %w", err)
+	}
+	// §9.3.1 step 5: the MSO's signed date is within the document
+	// signer certificate's validity.
+	if signed := verified.ValidityInfo.Signed; signed.Before(leaf.NotBefore) || signed.After(leaf.NotAfter) {
+		return Verified{}, fmt.Errorf("proximity: MSO signed %s, outside the document signer certificate's validity", signed.Format(time.RFC3339))
 	}
 
 	switch doc.deviceSigned.AuthType {
@@ -312,4 +321,25 @@ func (r *ReaderSession) verifyDocument(doc responseDocument, roots *x509.CertPoo
 func (r *ReaderSession) Termination() []byte {
 	r.closed = true
 	return StatusMessage(StatusSessionTermination)
+}
+
+// checkIACASubject applies §9.3.3's checks on top of RFC 5280 path
+// validation: on some verified path, the trust anchor's countryName
+// equals the document signer's, and so does stateOrProvinceName when
+// both certificates carry one.
+func checkIACASubject(chains [][]*x509.Certificate) error {
+	var lastErr error
+	for _, chain := range chains {
+		leaf, root := chain[0], chain[len(chain)-1]
+		if !slices.Equal(root.Subject.Country, leaf.Subject.Country) {
+			lastErr = fmt.Errorf("proximity: document signer countryName %v differs from its IACA's %v", leaf.Subject.Country, root.Subject.Country)
+			continue
+		}
+		if len(root.Subject.Province) > 0 && len(leaf.Subject.Province) > 0 && !slices.Equal(root.Subject.Province, leaf.Subject.Province) {
+			lastErr = fmt.Errorf("proximity: document signer stateOrProvinceName %v differs from its IACA's %v", leaf.Subject.Province, root.Subject.Province)
+			continue
+		}
+		return nil
+	}
+	return lastErr
 }

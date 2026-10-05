@@ -126,7 +126,7 @@ type parsedEngagement struct {
 // parseDeviceEngagement decodes b as a DeviceEngagement: version 1.x,
 // cipher suite 1 with a P-256 EDeviceKey, and the first BLE retrieval
 // method that offers a mode with a 16-byte UUID, preferring mdoc
-// peripheral server mode when both are offered.
+// central client mode when both are offered.
 func parseDeviceEngagement(b []byte) (parsedEngagement, error) {
 	if len(b) > MaxMessageBytes {
 		return parsedEngagement{}, fmt.Errorf("proximity: DeviceEngagement is %d bytes, over %d: %w", len(b), MaxMessageBytes, ErrCBORDecoding)
@@ -176,11 +176,13 @@ func parseDeviceEngagement(b []byte) (parsedEngagement, error) {
 		if err := decMode.Unmarshal(method[2], &opts); err != nil {
 			return parsedEngagement{}, fmt.Errorf("proximity: decode BleOptions: %w: %w", ErrCBORDecoding, err)
 		}
+		// §8.3.3.1.1.1: when the mdoc supports both modes, the reader
+		// should select mdoc central client mode.
 		switch {
-		case opts.PeripheralServer && len(opts.PeripheralUUID) == 16:
-			pe.ble, pe.bleMode, pe.uuid = true, PeripheralServer, opts.PeripheralUUID
 		case opts.CentralClient && len(opts.CentralUUID) == 16:
 			pe.ble, pe.bleMode, pe.uuid = true, CentralClient, opts.CentralUUID
+		case opts.PeripheralServer && len(opts.PeripheralUUID) == 16:
+			pe.ble, pe.bleMode, pe.uuid = true, PeripheralServer, opts.PeripheralUUID
 		default:
 			continue
 		}

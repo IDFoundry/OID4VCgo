@@ -40,7 +40,8 @@
 //   - DeviceEngagement (§8.2.1.1), carried in the QR code (§8.2.2.3):
 //     {0: "1.0", 1: [1, EDeviceKeyBytes], 2: [[2, 1, BleOptions]]}, with
 //     one BLE retrieval method in mdoc peripheral server mode (the
-//     default) or central client mode (WithBLEMode).
+//     default) or central client mode (WithBLEMode). A reader offered
+//     both selects central client mode (§8.3.3.1.1.1).
 //   - SessionTranscript (§9.1.5.1): [DeviceEngagementBytes,
 //     EReaderKeyBytes, Handover], Handover null for QR engagement.
 //   - Session keys (§9.1.5.2): ECDH over P-256, then HKDF-SHA256 with
@@ -53,8 +54,12 @@
 //     reordered message fails to decrypt.
 //   - DeviceRequest and DeviceResponse (§8.3.2.1.2): one DocRequest per
 //     session, and a DeviceResponse with one document, authenticated by
-//     a device signature — or, when reading, a device MAC
-//     (credential/mdoc implements both).
+//     a device signature (§9.1.3.6) — or, when reading, a device MAC
+//     (§9.1.3.5).
+//   - Reader verification (§9.3.1, §9.3.3): issuer chain to a trust
+//     anchor, the IACA's countryName (and stateOrProvinceName) matching
+//     the document signer's, the MSO's signed date within the signer
+//     certificate's validity, digests, docType and validity window.
 //   - BLE Ident (§8.3.3.1.1), for mdoc central client mode: BLEIdent.
 //
 // # Errors and status

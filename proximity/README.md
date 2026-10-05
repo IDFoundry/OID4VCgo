@@ -11,14 +11,15 @@ the app's job is to:
 
 This file covers BLE only. NFC isn't supported yet, nor is BLE L2CAP.
 
-The BLE details below follow ISO/IEC 18013-5 §8.3.3.1.1, cross-checked
-against [Multipaz](https://github.com/openwallet-foundation/multipaz)'s
+The BLE details below follow ISO/IEC 18013-5:2021 §8.3.3.1.1 (Tables 11–13),
+cross-checked against [Multipaz](https://github.com/openwallet-foundation/multipaz)'s
 BLE transport (`multipaz/src/commonMain/.../mdoc/transport/`).
 
 ## Roles
 
 The mdoc picks the BLE mode in its QR code (`WithBLEMode`). The reader
-learns it from `ReaderSession.BLEMode()`.
+learns it from `ReaderSession.BLEMode()`. If an engagement offers both
+modes, the reader picks central client mode, as §8.3.3.1.1.1 recommends.
 
 | | mdoc peripheral server mode (default) | mdoc central client mode |
 |---|---|---|
@@ -66,8 +67,12 @@ notifications.
    nothing matches, the mdoc sends `Termination()` instead. The reader
    passes either one to `Verify`.
 7. **End.** Either side can end the session. Send a `Termination()`
-   message (status 20), or write `0x02` (end) to State, then disconnect.
-   Treat a `0x02` from the other side the same way.
+   message (status 20), or write `0x02` (end) to State. Treat a `0x02`
+   from the other side the same way. The GATT client then unsubscribes
+   from State and Server2Client and disconnects (§8.3.3.1.1.7).
+8. **Lost connection.** Before State was set to `0x01`, reconnect. After
+   it, don't: start a new session with a new `NewDeviceSession`
+   (§8.3.3.1.1.8).
 
 ## Chunking
 
@@ -80,12 +85,19 @@ chunks, each of these:
   0x00 = last chunk
 ```
 
-Use a chunk size of `min(512, MTU − 3)` bytes, prefix included. That's
-what Multipaz uses. The receiver strips the prefix bytes and appends
+Use a chunk size of `MTU − 3` bytes, prefix included (§8.3.3.1.1.6),
+capped at 512 — the most a GATT attribute value can hold, and what
+Multipaz and the second-edition draft use. The receiver strips the prefix bytes and appends
 the rest. On a `0x00` chunk, it passes the whole message to this
 package. Any other prefix value is a protocol error: disconnect.
 
 This package never sees chunks, only whole messages.
+
+## Timeouts
+
+These are the app's to enforce. The spec recommends allowing at least
+30 seconds from engagement to the SessionEstablishment (§8.2.3), and at
+least 300 seconds of inactivity before ending a session (§9.1.1.4).
 
 ## Errors
 
