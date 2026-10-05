@@ -20,7 +20,7 @@ import (
 // BuildDeviceResponse builds the DeviceResponse (§8.3.2.1.2.2) for one
 // document: issuerSigned trimmed to elements — the requested elements
 // the user consented to, as DocRequest.Elements lists them — and a
-// device signature (§9.1.3.6) by holder, the mdoc's device key, over
+// device signature by holder, the mdoc's device key, over
 // sessionTranscriptBytes (DeviceSession.SessionTranscriptBytes), with
 // no device-signed elements. Encrypt the result with
 // DeviceSession.Encrypt.
