@@ -343,15 +343,10 @@ func buildClientRegistration(cfg Config) (clientRepo *memstore.ClientRepository,
 	if err != nil {
 		return nil, nil, err
 	}
-	// Registers the attester's own public key(s), when the config uses
-	// them (RegisteredAttesterKeys resolves a Client Attestation JWT's
-	// verification key via this same Dependencies.ClientKeys, keyed by
-	// client ID); under attester_trust_anchors_pem there are none, and
-	// the "x5c" chain is verified instead — see attesterTrust.
+	// The clients register no keys of their own: they authenticate with
+	// Client Attestations, whose keys come from attesterTrust — never
+	// from a client's own keys.
 	var clientKeySpecs []ephemeral.ClientKeySpec
-	if !cfg.Client.usesAttesterTrustAnchors() {
-		clientKeySpecs = append(clientKeySpecs, ephemeral.ClientKeySpec{ClientID: fapi.ClientID(cfg.Client.ID), JWKS: cfg.Client.AttesterJWKS})
-	}
 	allowedScopes := []string{cfg.Scope}
 	if cfg.Mdoc != nil {
 		allowedScopes = append(allowedScopes, cfg.Mdoc.Scope)
@@ -368,11 +363,6 @@ func buildClientRegistration(cfg Config) (clientRepo *memstore.ClientRepository,
 			return nil, nil, fmt.Errorf("register client %s: %w", cc.ID, regErr)
 		}
 		registeredClients = append(registeredClients, c)
-	}
-	if cfg.Client2 != nil && !cfg.Client2.usesAttesterTrustAnchors() {
-		clientKeySpecs = append(clientKeySpecs, ephemeral.ClientKeySpec{
-			ClientID: fapi.ClientID(cfg.Client2.ID), JWKS: cfg.Client2.AttesterJWKS,
-		})
 	}
 	clientKeys, err = ephemeral.NewClientKeySource(fetcher, clientKeySpecs)
 	if err != nil {

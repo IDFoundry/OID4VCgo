@@ -4,7 +4,7 @@ go 1.26.6
 
 require (
 	github.com/fxamacker/cbor/v2 v2.9.4
-	github.com/idfoundry/fapigo v0.48.1
+	github.com/idfoundry/fapigo v0.49.1-0.20261005135136-d8ae4469e166
 )
 
 require github.com/x448/float16 v0.8.4 // indirect
