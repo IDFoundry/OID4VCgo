@@ -23,7 +23,22 @@ gmrtd portable file ─► passport.Verify ─► passport.Evidence ─┬─►
                           Authentication)      portrait, file)
 ```
 
-Both credentials carry the same content:
+Both credentials carry the same content. The mdoc is a **Photo ID**
+(`org.iso.23220.photoid.1`, ISO/IEC TS 23220-4) — one of the document
+types an iOS app can present to a website over the Digital Credentials
+API:
+
+| Namespace | Elements |
+|---|---|
+| `org.iso.23220.1` (ISO/IEC TS 23220-2) | `family_name`, `given_name`, `birth_date` (the 23220-2 structure: `birth_date`, `approximate_mask`), `sex` (ISO/IEC 5218: 1 male, 2 female, 0 not known), `nationality` (alpha-3, as the MRZ has it), `issuing_country` (alpha-2), `issuing_authority`, `portrait`, `age_over_NN`, and the mobile document's own `issue_date` and `expiry_date` |
+| `org.iso.23220.photoid.1` | `travel_document_number`: the passport's number |
+| `dev.idfoundry.passport.1` (the demo's own) | `names_from_mrz`, `passport_expiry_date` |
+| `dev.idfoundry.passport.gmrtd.1` (the demo's own) | `gmrtd_verifiable_doc` |
+
+The data model follows the open implementations of the 23220-4 draft
+(Multipaz's `PhotoID` document type), checked against ISO/IEC TS
+23220-2; 23220-4 itself wasn't available to check against. The SD-JWT
+VC keeps its own claim names. Both carry:
 
 - **Identity attributes** — names, date of birth, age claims, sex,
   nationality, issuing country, document number, expiry.
@@ -127,16 +142,19 @@ What the second path does and doesn't give you:
 - **Date of birth from the MRZ has no century.** Without DG11 (e.g.
   Singapore passports), gmrtd returns `YYMMDD`:
   - one plausible century → `birth_date` is issued, century inferred;
-  - both plausible (typical for a child: age 12 or 112) → **no
-    `birth_date`**; age claims use the **youngest** reading, so they can
-    only understate age, never overstate it.
+  - both plausible (typical for a child: age 12 or 112) → the mdoc's
+    `birth_date` is the **youngest** reading with its century masked
+    (`approximate_mask` `11000000`); the SD-JWT has **no `birthdate`**.
+    Age claims use the youngest reading, so they can only understate
+    age, never overstate it.
 - **Age claims go stale.** A child's `age_over_18: false` becomes wrong
   on their 18th birthday, so the credential expires at the next age
   threshold the holder crosses.
 - **Expired passports are accepted.** Expiry ends a passport's use for
   travel; it doesn't make the chip data any less authentic, and Passive
   Authentication verifies it just the same. The credential's validity
-  isn't tied to the passport's: it carries `expiry_date`, and the issuer
+  isn't tied to the passport's: it carries the passport's expiry (the
+  SD-JWT's `expiry_date`, the mdoc's `passport_expiry_date`), and the issuer
   and verifier pages flag an expired passport, so a verifier that needs
   a current document checks that claim.
 - **MRZ names may be truncated or transliterated.** `names_from_mrz`
@@ -148,9 +166,10 @@ What the second path does and doesn't give you:
 - **The file format is gmrtd's own** (`gmrtd-verifiable-doc`, versioned),
   not an ICAO standard encoding: a verifier needs gmrtd — a compatible
   version — to read it.
-- **Identifiers are provisional.** The doctype, namespaces and claim
-  names (in `credential/names.go`) should be aligned with ISO/IEC
-  23220-4's DTC namespace before this is presented as interoperable.
+- **The mdoc's data model isn't checked against ISO/IEC TS 23220-4,**
+  only against its open implementations and 23220-2 (see above). The
+  SD-JWT VC's claim names (in `credential/names.go`) remain the demo's
+  own.
 
 ## Running the demo
 

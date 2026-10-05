@@ -15,7 +15,7 @@ func TestPortrait_BothFormatsRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MdocClaims: %v", err)
 	}
-	identity := issueAndVerifyMdoc(t, mdocClaims)[IdentityNamespace]
+	identity := issueAndVerifyMdoc(t, mdocClaims)[ISONamespace]
 	if got, ok := PortraitJPEG(identity); !ok || !bytes.Equal(got, testPortrait) {
 		t.Error("mdoc portrait did not round-trip byte-for-byte")
 	}
@@ -41,7 +41,7 @@ func TestPortrait_OmittedWithoutOne(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MdocClaims: %v", err)
 	}
-	if _, ok := mdocClaims.NameSpaces[IdentityNamespace][Portrait]; ok {
+	if _, ok := mdocClaims.NameSpaces[ISONamespace][Portrait]; ok {
 		t.Error("mdoc portrait issued without a portrait in the evidence")
 	}
 	sdClaims, err := SDJWTClaims(e, testVCT, Options{Now: now})
