@@ -370,9 +370,10 @@ certificate: every attestation it signs carries the provider's
 certificate as `x5c`, which must chain to the CA.
 
 A Wallet Attestation is accepted only if that certificate names the
-Wallet Provider the client is registered with (fapigo's
-`AttesterIssuerInCertificate`), so a CA certifying several Wallet
-Providers can't let one attest for another's wallets. A
+Wallet Provider the client is registered with, and its chain ends at a
+CA bound to that Wallet Provider (fapigo's
+`AttesterIssuerBoundToAnchor`): a CA on a trust list shared by several
+Wallet Providers can't let one attest for another's wallets. A
 `wallet-provider.pem` created before this has no such name; delete it
 and rerun `cmd/wallet-provider`.
 
