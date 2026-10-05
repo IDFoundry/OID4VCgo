@@ -15,6 +15,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"fmt"
+	"time"
 )
 
 // X5CDERsFromHeader extracts header's own "x5c" member (RFC 7515
@@ -81,6 +82,14 @@ func VerifyLeafWithPolicy(ders [][]byte, roots *x509.CertPool, policy func(leaf 
 // that's itself a CA certificate is refused too: every role here signs
 // with an end-entity certificate.
 func VerifyChains(ders [][]byte, roots *x509.CertPool) (*x509.Certificate, [][]*x509.Certificate, error) {
+	return VerifyChainsAt(ders, roots, time.Time{})
+}
+
+// VerifyChainsAt is VerifyChains, checking every certificate's validity
+// period at now instead of the current time — for a caller whose own
+// API takes an explicit verification time (proximity's reader). A zero
+// now means the current time.
+func VerifyChainsAt(ders [][]byte, roots *x509.CertPool, now time.Time) (*x509.Certificate, [][]*x509.Certificate, error) {
 	if roots == nil {
 		return nil, nil, fmt.Errorf("certchain: no trust anchors configured (a nil root pool would mean the system roots)")
 	}
@@ -111,6 +120,7 @@ func VerifyChains(ders [][]byte, roots *x509.CertPool) (*x509.Certificate, [][]*
 		Roots:         roots,
 		Intermediates: intermediates,
 		KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageAny},
+		CurrentTime:   now,
 	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("certchain: certificate chain does not verify against a trusted root: %w", err)
