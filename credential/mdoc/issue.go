@@ -90,6 +90,15 @@ type IssueOptions struct {
 // validateIssueInputs checks every Issue precondition on claims/opts
 // that doesn't itself require building any output.
 func validateIssueInputs(signer crypto.Signer, claims Claims, opts IssueOptions) error {
+	if err := validateClaims(claims); err != nil {
+		return err
+	}
+	return validateX5Chain(signer, claims, opts)
+}
+
+// validateClaims checks claims on their own: what's required, and the
+// order of the validity timestamps.
+func validateClaims(claims Claims) error {
 	if claims.DocType == "" {
 		return fmt.Errorf("mdoc: Claims.DocType is required")
 	}
@@ -113,6 +122,18 @@ func validateIssueInputs(signer crypto.Signer, claims Claims, opts IssueOptions)
 	if !claims.ValidUntil.After(claims.ValidFrom) {
 		return fmt.Errorf("mdoc: Claims.ValidUntil must be after Claims.ValidFrom")
 	}
+	if claims.Status != nil && claims.IdentifierList != nil {
+		return fmt.Errorf("mdoc: Claims.Status and Claims.IdentifierList must not both be set")
+	}
+	if claims.KeyAuthorizations != nil {
+		return claims.KeyAuthorizations.validate()
+	}
+	return nil
+}
+
+// validateX5Chain checks opts.X5Chain's leaf against signer and claims'
+// validity.
+func validateX5Chain(signer crypto.Signer, claims Claims, opts IssueOptions) error {
 	if len(opts.X5Chain) == 0 {
 		return fmt.Errorf("mdoc: IssueOptions.X5Chain must include at least one certificate")
 	}
@@ -136,14 +157,6 @@ func validateIssueInputs(signer crypto.Signer, claims Claims, opts IssueOptions)
 	// checks above.
 	if comparableKey, ok := signer.Public().(interface{ Equal(crypto.PublicKey) bool }); ok && !comparableKey.Equal(leaf.PublicKey) {
 		return fmt.Errorf("mdoc: IssueOptions.X5Chain[0]'s public key does not match signer's public key")
-	}
-	if claims.Status != nil && claims.IdentifierList != nil {
-		return fmt.Errorf("mdoc: Claims.Status and Claims.IdentifierList must not both be set")
-	}
-	if claims.KeyAuthorizations != nil {
-		if err := claims.KeyAuthorizations.validate(); err != nil {
-			return err
-		}
 	}
 	return nil
 }
