@@ -1,9 +1,6 @@
 package haip
 
-import (
-	"github.com/idfoundry/oid4vcgo/internal/cose"
-	"github.com/idfoundry/oid4vcgo/internal/jose"
-)
+import oid4vci "github.com/idfoundry/oid4vcgo"
 
 // RecommendedJOSEAlgorithm and RecommendedCOSEAlgorithm are the
 // digital signature algorithm HAIP 1.0 §7 requires every Issuer,
@@ -14,7 +11,7 @@ import (
 // as applicable)".
 //
 // §7 also names COSE identifier -9 "as applicable"; this repo's
-// internal/cose only implements -7 (RFC 9053's own ES256), which is
+// COSE implementation only supports -7 (RFC 9053's own ES256), which is
 // what credential/mdoc's IssuerAuth and DeviceSignature actually sign
 // with, so RecommendedCOSEAlgorithm names that one.
 //
@@ -25,6 +22,6 @@ import (
 // CredentialConfiguration's own signing-algorithm fields), not a
 // ceiling.
 const (
-	RecommendedJOSEAlgorithm = jose.ES256
-	RecommendedCOSEAlgorithm = cose.ES256
+	RecommendedJOSEAlgorithm oid4vci.JOSEAlg = oid4vci.ES256
+	RecommendedCOSEAlgorithm                 = oid4vci.COSEES256
 )

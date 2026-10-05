@@ -1,9 +1,6 @@
 package haip
 
-import (
-	"github.com/idfoundry/oid4vcgo/internal/jose"
-	"github.com/idfoundry/oid4vcgo/internal/jwe"
-)
+import oid4vci "github.com/idfoundry/oid4vcgo"
 
 // VerifierRecommendations is what RecommendedVerifierConfig returns:
 // the pieces of a verifier.Config HAIP 1.0 actually grounds a specific
@@ -21,7 +18,7 @@ type VerifierRecommendations struct {
 	// requests" on the Wallet's own validating side; a Verifier signs
 	// its Request Object with the same algorithm so that validation
 	// succeeds).
-	SigningAlg jose.Alg
+	SigningAlg oid4vci.JOSEAlg
 
 	// EncValuesSupported is ready to assign directly to verifier.Config's
 	// own field of the same name — HAIP 1.0 §5's own explicit
@@ -30,7 +27,7 @@ type VerifierRecommendations struct {
 	// requires to support one or the other, SHOULD-preferring A256GCM),
 	// a Verifier has no choice here — both are mandatory — so this is a
 	// fixed pair, not a single algorithm like SigningAlg.
-	EncValuesSupported []jwe.Enc
+	EncValuesSupported []oid4vci.JWEEnc
 }
 
 // RecommendedVerifierConfig returns HAIP 1.0's own recommendations for
@@ -41,6 +38,6 @@ type VerifierRecommendations struct {
 func RecommendedVerifierConfig() VerifierRecommendations {
 	return VerifierRecommendations{
 		SigningAlg:         RecommendedJOSEAlgorithm,
-		EncValuesSupported: []jwe.Enc{jwe.A128GCM, jwe.A256GCM},
+		EncValuesSupported: []oid4vci.JWEEnc{oid4vci.A128GCM, oid4vci.A256GCM},
 	}
 }

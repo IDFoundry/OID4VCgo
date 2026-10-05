@@ -1,6 +1,6 @@
 package haip
 
-import "github.com/idfoundry/oid4vcgo/internal/jose"
+import oid4vci "github.com/idfoundry/oid4vcgo"
 
 // WalletRecommendations is what RecommendedWalletConfig returns: the
 // pieces of a wallet.Config HAIP 1.0 actually grounds a specific
@@ -25,7 +25,7 @@ type WalletRecommendations struct {
 	// doesn't separately number an algorithm for it, so this
 	// recommendation carries over by construction (one Config field,
 	// not a second citation).
-	ProofSigningAlg jose.Alg
+	ProofSigningAlg oid4vci.JOSEAlg
 }
 
 // RecommendedWalletConfig returns HAIP 1.0's own recommendation for the
