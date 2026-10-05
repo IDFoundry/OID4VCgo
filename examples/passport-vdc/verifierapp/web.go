@@ -117,7 +117,7 @@ var requestTemplate = template.Must(template.New("request").Parse(pageHead + `{{
 {{if .QR}}<p>On another device, scan:<br><img src="{{.QR}}" alt="QR code of the presentation request" width="296"></p>{{end}}
 <p>Or give this request to the demo CLI wallet:</p>
 <p><code>{{.Link}}</code></p>
-{{if .LastError}}<p class="bad">✗ A response was rejected: {{.LastError}}. Still waiting for one that verifies.</p>{{end}}
+{{if .LastError}}<p class="bad">✗ A response was rejected: {{.LastError}}. Still waiting for one that verifies.</p><p class="note">A rejected response isn't necessarily the holder's: anyone who has this request's QR code or link can send one, so it doesn't end the request.</p>{{end}}
 <p class="note">This page refreshes until the wallet answers.</p>
 {{else}}
 <h1 class="decision {{if .Outcome.Decision.Approved}}ok{{else}}bad{{end}}">{{if .Outcome.Decision.Approved}}✓{{else}}✗{{end}} {{.Outcome.Decision.Text}}</h1>

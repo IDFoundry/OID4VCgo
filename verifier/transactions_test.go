@@ -498,8 +498,8 @@ func TestTransactions_LastErrorFromAWalletErrorIsItsCodeOnly(t *testing.T) {
 	f := newTxFixture(t, nil)
 	begun := f.begin("browser-binding-A", false)
 	for _, c := range []struct{ code, want string }{
-		{"access_denied", "the wallet returned an error: access_denied"},
-		{"Call +1 555 0100 <b>now</b>", "the wallet returned an error"},
+		{"access_denied", "an error response arrived: access_denied"},
+		{"Call +1 555 0100 <b>now</b>", "an error response arrived"},
 	} {
 		if _, err := f.txs.HandleResponse(ctx, f.errorAnswer(begun, c.code, "Your account is locked, call +1 555 0100")); err == nil {
 			t.Fatal("an error response was accepted")
@@ -561,7 +561,7 @@ func TestTransactions_ResponseHandlerAcceptsAWalletErrorResponse(t *testing.T) {
 		t.Errorf("error response: status %d, body %v; want 200 and {}", status, body)
 	}
 	view, err := f.txs.Lookup(context.Background(), begun.ID, "browser-binding-A")
-	if err != nil || view.Status != verifier.TransactionPending || view.LastError != "the wallet returned an error: access_denied" {
+	if err != nil || view.Status != verifier.TransactionPending || view.LastError != "an error response arrived: access_denied" {
 		t.Errorf("after the error response: %+v, %v; want it recorded and still pending", view, err)
 	}
 
