@@ -102,6 +102,19 @@ re-verifies each file and lists every guest. It accepts up to ten, and
 refuses one passport presented twice. Every other request takes exactly
 one credential.
 
+**Asking in the browser.** Each scenario's page except the hotel's also
+offers *Verify with an ID in this browser*: the passport mdoc, asked
+for over the W3C Digital Credentials API with ISO mdoc's own protocol,
+`org-iso-mdoc` (ISO/IEC TS 18013-7 Annex C, the library's `mdocdcapi`),
+which is what Safari supports. It asks for the scenario's mdoc claims,
+signed with the scenario's verifier certificate as the mdoc reader, and
+the answer is decided like an OpenID4VP one. Something has to answer it:
+an iOS app registered as a document provider for this document type
+(the demo app doesn't do this yet), or a Chrome-compatible Android mdoc
+wallet. Apple Wallet won't: it answers only requests signed with a
+certificate from Apple Business Connect, and holds no passport-vdc
+credential.
+
 What the second path does and doesn't give you:
 
 - It removes trust in this issuer **for the data**: the issuer can't

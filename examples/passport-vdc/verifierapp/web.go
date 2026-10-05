@@ -30,6 +30,8 @@ func (a *App) routes() http.Handler {
 	mux.HandleFunc("GET /demo/{$}", a.handleHome)
 	mux.HandleFunc("POST /demo/requests", a.handleCreateRequest)
 	mux.HandleFunc("GET /demo/requests/{id}", a.handleRequestPage)
+	mux.HandleFunc("POST /demo/requests/{id}/dcapi", a.handleDCAPIRequest)
+	mux.HandleFunc("POST /demo/requests/{id}/dcapi/response", a.handleDCAPIResponse)
 	// Each scenario's relying party has its own OpenID4VP endpoints.
 	for sc, txs := range a.txs {
 		base := "/s/" + string(sc)
@@ -76,8 +78,11 @@ var homeTemplate = template.Must(template.New("home").Parse(pageHead + `</head><
 ` + pageFoot))
 
 type requestPage struct {
-	Scenario      ScenarioInfo
-	Link          string // the cross-device request, for the QR code and the CLI wallet
+	Scenario ScenarioInfo
+	Link     string // the cross-device request, for the QR code and the CLI wallet
+	// DCAPI offers asking in this browser, over the Digital Credentials
+	// API: not for a scenario taking several passports.
+	DCAPI         bool
 	QR            template.URL
 	WebWalletLink string // the same-device request, opened in the web wallet
 	// AppLink is the cross-device request as a link a wallet app on this
@@ -100,7 +105,11 @@ type personView struct {
 	ICAOPortrait   template.URL // the photo from the re-verified passport file, if any
 }
 
-var requestTemplate = template.Must(template.New("request").Parse(pageHead + `{{if not (or .Outcome .Closed)}}<meta http-equiv="refresh" content="2">{{end}}
+var requestTemplate = template.Must(template.New("request").Parse(pageHead + `{{if not (or .Outcome .Closed)}}<script>
+// Refreshes until the wallet answers — a timer, not a meta refresh, so
+// asking in this browser can stop it while the browser's prompt is up.
+var refresh = setTimeout(function () { location.reload(); }, 2000);
+</script>{{end}}
 </head><body>
 <p class="who">{{.Scenario.Icon}} {{.Scenario.Title}} · <strong>{{.Scenario.Verifier}}</strong> asks for {{.Scenario.Asks}}.</p>
 {{if .Closed}}
@@ -114,6 +123,37 @@ var requestTemplate = template.Must(template.New("request").Parse(pageHead + `{{
 {{if not .Scenario.Trusted}}<div class="card warn"><p><strong>{{.Scenario.Verifier}} isn't a verifier the demo wallets trust.</strong> It signs its requests with a certificate from a CA they don't recognise, so a wallet refuses this request without opening it — and sends nothing back. This page keeps waiting: nothing is shared.</p></div>{{end}}
 {{if .WebWalletLink}}<p><a href="{{.WebWalletLink}}" target="_blank"><strong>Open in web wallet</strong></a> <span class="note">(on this device: it brings you back here)</span></p>{{end}}
 {{if .AppLink}}<p><a href="{{.AppLink}}">Open in wallet app</a> <span class="note">(on this device; then come back to this page)</span></p>{{end}}
+{{if .DCAPI}}<p><button type="button" id="dcapi">Verify with an ID in this browser</button> <span class="note">(the passport mdoc, over the Digital Credentials API with ISO's own protocol — what Safari supports)</span></p>
+<p id="dcapi-status" class="note" role="status"></p>
+<script>
+document.getElementById("dcapi").addEventListener("click", async function () {
+	var status = document.getElementById("dcapi-status");
+	if (!("DigitalCredential" in window) || !navigator.credentials) {
+		status.textContent = "This browser doesn't support the Digital Credentials API.";
+		return;
+	}
+	clearTimeout(refresh);
+	var base = location.pathname.replace(/\/$/, "");
+	try {
+		status.textContent = "Asking…";
+		var r = await fetch(base + "/dcapi", {method: "POST"});
+		if (!r.ok) throw new Error(await r.text());
+		var request = await r.json();
+		var credential = await navigator.credentials.get({mediation: "required", digital: {requests: [request]}});
+		var data = typeof credential.data === "string" ? JSON.parse(credential.data) : credential.data;
+		status.textContent = "Verifying…";
+		var v = await fetch(base + "/dcapi/response", {
+			method: "POST", headers: {"Content-Type": "application/json"},
+			body: JSON.stringify({response: data.response})
+		});
+		if (!v.ok) throw new Error(await v.text());
+		location.reload();
+	} catch (e) {
+		status.textContent = "Not verified: " + e.message;
+		refresh = setTimeout(function () { location.reload(); }, 15000);
+	}
+});
+</script>{{end}}
 {{if .QR}}<p>On another device, scan:<br><img src="{{.QR}}" alt="QR code of the presentation request" width="296"></p>{{end}}
 <p>Or give this request to the demo CLI wallet:</p>
 <p><code>{{.Link}}</code></p>
@@ -249,7 +289,7 @@ func (a *App) requestPageFor(ctx context.Context, s *session) requestPage {
 	info, _ := s.scenario.Info()
 	page := requestPage{
 		Scenario: info, Link: s.cross.link, Outcome: st.outcome, Awaiting: st.awaiting, Closed: st.closed, LastError: st.lastError,
-		AppLink: appLink(s.cross.link),
+		AppLink: appLink(s.cross.link), DCAPI: !info.Multiple,
 	}
 	if a.cfg.WebWalletURL != "" {
 		sameDevice := s.cross.link
