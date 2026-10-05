@@ -906,6 +906,22 @@ changes whether *every* bullet below is `(done)`.
   checked in the given order and returning satisfied as soon as one
   does (§6.4.1's own "the Wallet SHOULD return the first option that
   it can satisfy"), returning exactly that option's own `Path`s.
+- **`mdocdcapi`** (new) — a Verifier for `org-iso-mdoc`, ISO/IEC TS
+  18013-7 Annex C: an mdoc requested and presented over the W3C Digital
+  Credentials API without OpenID4VP, the only protocol Safari supports.
+  `BuildRequest` builds the `DeviceRequest` (one `DocRequest`, signed by
+  each reader as a `ReaderAuthAll` and by the first as its
+  `ReaderAuth`) and the `EncryptionInfo` (a nonce and a fresh P-256
+  key); `VerifyResponse` opens the HPKE-encrypted `DeviceResponse`
+  (`crypto/hpke`: DHKEM P-256, HKDF-SHA256, AES-128-GCM, the session
+  transcript as `info`) and verifies the document with
+  `credential/mdoc`, the device signature over the Annex C session
+  transcript `[null, null, ["dcapi", SHA-256([EncryptionInfo,
+  origin])]]`, and that only requested elements were disclosed. It
+  reuses `oid4vpmdoc`'s DeviceResponse codec and `verifier`'s issuer
+  key resolvers. A separate package rather than part of `verifier`:
+  it's an ISO protocol, not OpenID4VP. The wallet side (an iOS
+  document provider) is planned.
 - **`oid4vpmdoc`** (done) — the OID4VP-specific wire structures the
   "mso_mdoc" Credential Format's own Presentation needs on top of
   `credential/mdoc`'s own ISO/IEC 18013-5 primitives:
@@ -947,6 +963,32 @@ changes whether *every* bullet below is `(done)`.
   `BuildSessionTranscriptBytes` was held to. Wired into both
   `verifier` (`buildMdocSessionTranscriptBytes`) and `wallet`
   (identically named) — see their own bullets below.
+- **`proximity`** (done, BLE) — ISO/IEC 18013-5 in-person
+  presentation, both roles, as bytes in and bytes out: `DeviceSession`
+  (mdoc) and `ReaderSession` (reader). QR device engagement with one BLE
+  retrieval method (mdoc peripheral server or central client mode), the
+  SessionTranscript with a null Handover, SKReader/SKDevice derivation,
+  and AES-256-GCM SessionEstablishment/SessionData with implicit
+  per-direction counters, so replayed or reordered messages fail to
+  decrypt. `ParseDeviceRequest` keeps the request's element order and
+  exact `ItemsRequestBytes`. `BuildDeviceResponse` reuses
+  `credential/mdoc`'s `SelectNameSpaces`/`SignDeviceSignature` and
+  `oid4vpmdoc.MarshalDeviceResponse`, whose encoding is the
+  single-document DeviceResponse exactly. The reader parses responses
+  itself, because `oid4vpmdoc.UnmarshalDeviceResponse` refuses a
+  response with only `documentErrors`. `ReaderSession.Verify` checks
+  the issuer chain at a caller-given time
+  (`internal/certchain.VerifyChainsAt`, added for this), `mdoc.Verify`,
+  the device signature or MAC over its own transcript, key
+  authorizations, and that only requested elements came back. A
+  declined or unmatched request is a status-20 termination, not
+  `documentErrors`, following Multipaz. Tests reproduce ISO/IEC
+  18013-5 Annex D byte for byte (hex from Multipaz's `TestVectors.kt`).
+  Annex D uses NFC engagement, so those tests drive the transcript's
+  internal Handover parameter, though only QR engagement is exposed.
+  The transport — BLE GATT, and chunking — stays in the mobile app; see
+  `proximity/README.md`. Not yet: NFC engagement/handover, BLE L2CAP,
+  reader authentication, and more than one request per session.
 - **`verifier`** (done, `dc+sd-jwt`+`mso_mdoc`) — the OID4VP Verifier role.
   `BuildAuthorizationRequest` builds and signs a HAIP-§5-profiled
   redirect-flow Authorization Request: a JAR Request Object

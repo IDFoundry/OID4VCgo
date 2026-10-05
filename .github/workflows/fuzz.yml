@@ -78,6 +78,9 @@ jobs:
           - id: oid4vpmdoc-unmarshal-device-response
             pkg: ./oid4vpmdoc
             name: FuzzUnmarshalDeviceResponse
+          - id: mdocdcapi-verify-response
+            pkg: ./mdocdcapi
+            name: FuzzVerifyResponse
           - id: sdjwtvc-parse
             pkg: ./credential/sdjwtvc
             name: FuzzParse

@@ -54,7 +54,9 @@ FAPIgo" section for the specific list.
 > **⚠ Pre-1.0, APIs may still change.** Every role package — `issuer`,
 > `wallet`, `verifier`, `credential/sdjwtvc`, `credential/mdoc`,
 > `statuslist`, `attestation`, `dcql`, `oid4vpmdoc`, `haip`, `storage` —
-> is implemented and tested. All four roles were OpenID Certified as
+> is implemented and tested. `mdocdcapi`, the Verifier for ISO mdoc over
+> the Digital Credentials API (Safari's protocol), is new and not yet
+> proven against a real browser and wallet. All four roles were OpenID Certified as
 > 0.12.0 (see above), and every later release is checked against the
 > same OIDF test plans by the daily conformance workflows.
 > See [ARCHITECTURE.md](ARCHITECTURE.md) for the full package-by-package
