@@ -40,8 +40,10 @@ const RecommendedClientAttestationAlgorithm = fapi.ES256
 // which HAIP doesn't number, so it's left zero and server.New refuses
 // the Config until it's set. Server dependencies are the caller's too;
 // for Wallet Attestations trusted by certificate chain, use
-// server.X5CAttesterChain with an IssuerBinding, so one Wallet
-// Provider's certificate can't attest for another's wallets.
+// server.X5CAttesterChain with server.AttesterIssuerBoundToAnchor and
+// each Wallet Provider's anchor in Anchors, bound to the providers it
+// may vouch for, so one Wallet Provider can't attest for another's
+// wallets even under a shared trust list.
 func RecommendedAuthorizationServerConfig() (server.Config, error) {
 	extensions, err := extension.NewRegistry(oid4vci.IssuerStateExtension)
 	if err != nil {

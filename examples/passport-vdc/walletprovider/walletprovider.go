@@ -13,8 +13,9 @@
 // out of x5c, and the signing certificate isn't self-signed). The
 // certificate names the provider's identifier, the attestations' "iss",
 // as a URI subject alternative name, so the issuer can tell which
-// Wallet Provider the CA certified it for (fapigo/server's
-// AttesterIssuerInCertificate). The issuer trusts the CA certificate.
+// Wallet Provider the CA certified it for. The issuer trusts the CA
+// certificate for this provider alone (fapigo/server's
+// AttesterIssuerBoundToAnchor).
 package walletprovider
 
 import (
