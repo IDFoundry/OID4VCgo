@@ -143,7 +143,7 @@ func TestPresentation_NoMatchThenDecline(t *testing.T) {
 	if _, err := p.Decline(ctx); err != nil {
 		t.Fatalf("Decline = %v", err)
 	}
-	if view := v.Lookup(t, id); view.LastError != "the wallet returned an error: access_denied" {
+	if view := v.Lookup(t, id); view.LastError != "an error response arrived: access_denied" {
 		t.Errorf("verifier after Decline = %+v", view)
 	}
 	if _, err := p.Decline(ctx); !errors.Is(err, walletflow.ErrWrongStep) {

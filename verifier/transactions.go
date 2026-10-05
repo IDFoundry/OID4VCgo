@@ -74,11 +74,14 @@ type Transaction struct {
 	Result *VerifyResponseResult
 
 	// LastError is why the latest answer was refused, for the
-	// Verifier's own display. Never sent to the Wallet. Anyone holding
-	// the request's public key can send an answer, so this may carry
-	// text derived from one: it's kept short and printable, and a
-	// Wallet's own error response is reduced to its error code, but it
-	// must still be escaped when displayed.
+	// Verifier's own display. Never sent to the Wallet. It isn't
+	// evidence of anything the holder did: anyone who has fetched the
+	// request (its QR code or link is enough) can send an answer that
+	// fails, or an error response such as access_denied, which
+	// OpenID4VP doesn't authenticate — so don't show it as the holder
+	// declining. It may carry text derived from such an answer: it's
+	// kept short and printable, and an error response is reduced to its
+	// error code, but it must still be escaped when displayed.
 	LastError string
 }
 
@@ -358,7 +361,8 @@ type Answered struct {
 // A Wallet's Authorization Error Response (§8.5) whose state matches
 // the request is recorded the same way, and returned as a
 // *ResponseError: the request stays open, since the state is in the
-// request's public Request Object and anyone could send one. One whose
+// request's public Request Object and anyone could send one — which is
+// also why LastError mustn't be shown as the holder declining. One whose
 // state doesn't match is refused like any other answer.
 func (t *Transactions) HandleResponse(ctx context.Context, responseJWE string) (Answered, error) {
 	kid, err := ResponseKeyID(responseJWE)
@@ -466,9 +470,9 @@ func failureText(cause error) string {
 	var walletErr *ResponseError
 	if errors.As(cause, &walletErr) {
 		if isErrorCode(walletErr.Code) {
-			return "the wallet returned an error: " + walletErr.Code
+			return "an error response arrived: " + walletErr.Code
 		}
-		return "the wallet returned an error"
+		return "an error response arrived"
 	}
 	var b strings.Builder
 	for _, r := range cause.Error() {
@@ -549,7 +553,9 @@ type TransactionView struct {
 	Status TransactionStatus
 	// Result is set when Status is TransactionDone.
 	Result *VerifyResponseResult
-	// LastError is why the latest answer was refused, if one was.
+	// LastError is why the latest answer was refused, if one was —
+	// from anyone who has the request, not necessarily the holder (see
+	// Transaction.LastError).
 	LastError string
 }
 
