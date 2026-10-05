@@ -955,7 +955,11 @@ struct Holder {
             guard case .string(let mask)? = o["approximate_mask"], mask.count == 8 else { return date }
             // The mask covers YYYYMMDD; the date is YYYY-MM-DD.
             var digits = Array(mask).makeIterator()
-            return String(date.map { c in c == "-" ? c : (digits.next() == "1" ? "x" : c) })
+            return String(date.map { c -> Character in
+                if c == "-" { return c }
+                if digits.next() == "1" { return "x" }
+                return c
+            })
         default:
             return nil
         }
