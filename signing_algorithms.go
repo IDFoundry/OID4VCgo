@@ -39,9 +39,8 @@ const (
 // without a named constant here, an external config literal has to
 // spell the algorithm as a bare, unchecked string ("ES256") with no
 // compile-time typo protection. These are untyped string constants,
-// each directly assignable to any jose.Alg-typed field without an
-// explicit conversion, the same way jose.Alg's own ES256/EdDSA
-// constants are used internally. Only the two algorithms internal/jose
+// each directly assignable to any JOSEAlg-typed field or parameter
+// without an explicit conversion. Only the two algorithms internal/jose
 // actually supports are defined here; see that package's own doc
 // comment before adding a third.
 const (

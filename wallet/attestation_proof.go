@@ -4,8 +4,8 @@ import (
 	"crypto"
 	"fmt"
 
+	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/attestation"
-	"github.com/idfoundry/oid4vcgo/internal/jose"
 )
 
 // GenerateAttestationProof builds and signs a Key Attestation JWT
@@ -31,7 +31,7 @@ import (
 // a caller drives RequestNonce, then this method, then RequestCredential,
 // in that order.
 func (w *Wallet) GenerateAttestationProof(
-	signer crypto.Signer, alg jose.Alg, header attestation.Header, claims attestation.Claims, nonce string,
+	signer crypto.Signer, alg oid4vci.JOSEAlg, header attestation.Header, claims attestation.Claims, nonce string,
 ) (string, error) {
 	claims.IssuedAt = w.deps.Clock.Now().Unix()
 	if nonce != "" {

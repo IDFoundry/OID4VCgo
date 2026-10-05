@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"fmt"
 
+	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/internal/certchain"
 	"github.com/idfoundry/oid4vcgo/internal/cose"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
@@ -18,7 +19,7 @@ import (
 // validates a Status List Token to be in its x5c header, and the trust
 // anchor's certificate not to be. chain is the signer's certificate
 // first, then any intermediates — not the trust anchor.
-func IssueTokenX5C(signer crypto.Signer, alg jose.Alg, claims TokenClaims, chain []*x509.Certificate) (string, error) {
+func IssueTokenX5C(signer crypto.Signer, alg oid4vci.JOSEAlg, claims TokenClaims, chain []*x509.Certificate) (string, error) {
 	ders, err := signerChain(signer, chain)
 	if err != nil {
 		return "", err
@@ -33,7 +34,7 @@ func IssueTokenX5C(signer crypto.Signer, alg jose.Alg, claims TokenClaims, chain
 // IssueTokenCWTX5Chain is IssueTokenCWT with the signer's certificate
 // chain in the token's protected "x5chain" header (RFC 9360) instead of
 // a "kid" — the CWT counterpart to IssueTokenX5C.
-func IssueTokenCWTX5Chain(signer crypto.Signer, alg cose.Alg, claims TokenClaims, chain []*x509.Certificate) ([]byte, error) {
+func IssueTokenCWTX5Chain(signer crypto.Signer, alg oid4vci.COSEAlg, claims TokenClaims, chain []*x509.Certificate) ([]byte, error) {
 	ders, err := signerChain(signer, chain)
 	if err != nil {
 		return nil, err

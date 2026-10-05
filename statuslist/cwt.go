@@ -8,6 +8,7 @@ import (
 
 	"github.com/fxamacker/cbor/v2"
 
+	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/internal/cose"
 )
 
@@ -69,7 +70,7 @@ func fromCWTStatusList(c cwtStatusList) StatusList {
 // the tagged form — see internal/cose.SignTagged; draft-14 requires
 // neither form, and VerifyTokenCWT accepts both). keyID sets the COSE
 // "kid" header, if non-empty.
-func IssueTokenCWT(signer crypto.Signer, alg cose.Alg, claims TokenClaims, keyID []byte) ([]byte, error) {
+func IssueTokenCWT(signer crypto.Signer, alg oid4vci.COSEAlg, claims TokenClaims, keyID []byte) ([]byte, error) {
 	return issueTokenCWT(signer, alg, claims, cose.Headers{Typ: CWTTokenMediaType, KID: keyID})
 }
 
@@ -123,7 +124,7 @@ const coseSign1TagByte = 0xd2
 // and typ header, and rejects an expired token — the CWT counterpart to
 // VerifyToken. It does not check sub against a specific Referenced
 // Token — that's Check's job.
-func VerifyTokenCWT(token []byte, pub crypto.PublicKey, alg cose.Alg, opts VerifyOptions) (TokenClaims, error) {
+func VerifyTokenCWT(token []byte, pub crypto.PublicKey, alg oid4vci.COSEAlg, opts VerifyOptions) (TokenClaims, error) {
 	// Tagged (#6.18, the single byte 0xd2) or untagged COSE_Sign1:
 	// draft-14's own example is untagged, draft-12's was tagged, and the
 	// normative text requires neither.

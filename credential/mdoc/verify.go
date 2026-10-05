@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/internal/cose"
 )
 
@@ -61,7 +62,7 @@ type VerifiedMSO struct {
 // Resolving which key issuerPub is (the IssuerAuth x5chain and an
 // Issuer trust policy) is the caller's job — see the package doc
 // comment.
-func Verify(signed IssuerSigned, docType string, issuerPub crypto.PublicKey, alg cose.Alg, opts VerifyOptions) (VerifiedMSO, error) {
+func Verify(signed IssuerSigned, docType string, issuerPub crypto.PublicKey, alg oid4vci.COSEAlg, opts VerifyOptions) (VerifiedMSO, error) {
 	_, unprotected, payload, err := cose.Verify(alg, issuerPub, signed.IssuerAuth, []byte{})
 	if err != nil {
 		return VerifiedMSO{}, fmt.Errorf("mdoc: verify IssuerAuth: %w", err)

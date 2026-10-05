@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 )
 
@@ -118,7 +119,7 @@ type wireWalletAttestationClaims struct {
 // via Dependencies.Attestation); verifying it is the Authorization
 // Server's job (fapigo/server). header's KeyID/X5C/TrustChain convey
 // the Wallet Provider's own key, the same way they do for Issue.
-func IssueWalletAttestation(signer crypto.Signer, alg jose.Alg, header Header, claims WalletAttestationClaims) (string, error) {
+func IssueWalletAttestation(signer crypto.Signer, alg oid4vci.JOSEAlg, header Header, claims WalletAttestationClaims) (string, error) {
 	if claims.Issuer == "" {
 		return "", fmt.Errorf("attestation: WalletAttestationClaims.Issuer is required")
 	}

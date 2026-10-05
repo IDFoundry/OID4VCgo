@@ -10,6 +10,7 @@ import (
 
 	"github.com/fxamacker/cbor/v2"
 
+	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/internal/cose"
 )
 
@@ -153,7 +154,7 @@ func validateIssueInputs(signer crypto.Signer, claims Claims, opts IssueOptions)
 // builds the MSO from the resulting digests, and signs it as IssuerAuth
 // via internal/cose. Resolving the caller's actual signer/certificate
 // is out of scope — see the package doc comment.
-func Issue(signer crypto.Signer, alg cose.Alg, claims Claims, opts IssueOptions) (IssuerSigned, error) {
+func Issue(signer crypto.Signer, alg oid4vci.COSEAlg, claims Claims, opts IssueOptions) (IssuerSigned, error) {
 	if err := validateIssueInputs(signer, claims, opts); err != nil {
 		return IssuerSigned{}, err
 	}

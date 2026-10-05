@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 )
 
@@ -45,7 +46,7 @@ type VerifyOptions struct {
 	// defaulting to KeyBindingNotRequired.
 	RequireKeyBinding KeyBindingRequirement
 	HolderPublicKey   crypto.PublicKey // required if RequireKeyBinding is KeyBindingRequired
-	KeyBindingAlg     jose.Alg
+	KeyBindingAlg     oid4vci.JOSEAlg
 	ExpectedAudience  string
 	ExpectedNonce     string
 
@@ -73,7 +74,7 @@ type VerifyOptions struct {
 // header. Resolving *which* key issuerPub is — draft-13 §3.5's JWT VC
 // Issuer Metadata or X.509 Issuer Signature Mechanisms — is the
 // caller's job; see the package doc comment.
-func Verify(s string, issuerPub crypto.PublicKey, issuerAlg jose.Alg, opts VerifyOptions) (payload map[string]any, header map[string]any, err error) {
+func Verify(s string, issuerPub crypto.PublicKey, issuerAlg oid4vci.JOSEAlg, opts VerifyOptions) (payload map[string]any, header map[string]any, err error) {
 	if opts.RequireKeyBinding != KeyBindingRequired && opts.RequireKeyBinding != KeyBindingNotRequired {
 		return nil, nil, fmt.Errorf("sdjwtvc: VerifyOptions.RequireKeyBinding is required")
 	}

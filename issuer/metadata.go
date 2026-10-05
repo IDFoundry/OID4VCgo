@@ -7,7 +7,6 @@ import (
 	"github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
-	"github.com/idfoundry/oid4vcgo/internal/cose"
 	"github.com/idfoundry/oid4vcgo/internal/jwe"
 	"github.com/idfoundry/oid4vcgo/internal/jwk"
 )
@@ -64,7 +63,7 @@ type CredentialConfiguration struct {
 	// JSON numbers rather than JOSE alg strings. Set this instead of
 	// CredentialSigningAlgValuesSupported when Format is
 	// credential/mdoc.CredentialFormat — setting both is rejected.
-	CredentialSigningAlgValuesSupportedCOSE []cose.Alg
+	CredentialSigningAlgValuesSupportedCOSE []oid4vci.COSEAlg
 
 	// CredentialMetadata is OPTIONAL (Appendix A): display/claims
 	// metadata for this Credential — see oid4vci.CredentialMetadata's

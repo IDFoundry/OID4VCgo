@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 )
 
@@ -20,7 +21,7 @@ type KeyBindingClaims struct {
 // signer/alg. signer must correspond to the public key the Issuer
 // published in the SD-JWT's cnf claim (RFC 9901 §4.1.2) — that's the
 // key a Verifier checks against (§4.3.2).
-func NewKeyBindingJWT(signer crypto.Signer, alg jose.Alg, presentation Presentation, hashAlg HashAlg, claims KeyBindingClaims) (string, error) {
+func NewKeyBindingJWT(signer crypto.Signer, alg oid4vci.JOSEAlg, presentation Presentation, hashAlg HashAlg, claims KeyBindingClaims) (string, error) {
 	if claims.Audience == "" || claims.Nonce == "" {
 		return "", fmt.Errorf("sdjwtvc: KeyBindingClaims.Audience and Nonce are required")
 	}
@@ -79,7 +80,7 @@ type KeyBindingCheck struct {
 // VerifyKeyBindingJWT validates a Key Binding JWT per RFC 9901 §7.3
 // steps 5.b-5.h against the holder's public key and check's
 // expectations, returning its claims.
-func VerifyKeyBindingJWT(kbJWT string, holderPub crypto.PublicKey, alg jose.Alg, check KeyBindingCheck) (map[string]any, error) {
+func VerifyKeyBindingJWT(kbJWT string, holderPub crypto.PublicKey, alg oid4vci.JOSEAlg, check KeyBindingCheck) (map[string]any, error) {
 	if check.MaxAge <= 0 {
 		return nil, fmt.Errorf("sdjwtvc: KeyBindingCheck.MaxAge is required (must be positive)")
 	}

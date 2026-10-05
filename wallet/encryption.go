@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/internal/jwe"
 	"github.com/idfoundry/oid4vcgo/internal/jwk"
 )
@@ -27,12 +28,12 @@ type RequestEncryption struct {
 	// Enc is REQUIRED: the JWE content encryption algorithm to use —
 	// must be one the Issuer's own
 	// credential_request_encryption.enc_values_supported names.
-	Enc jwe.Enc
+	Enc oid4vci.JWEEnc
 
 	// Zip, if set, compresses the request body before encryption — must
 	// be one the Issuer's own
 	// credential_request_encryption.zip_values_supported names, if any.
-	Zip jwe.Zip
+	Zip oid4vci.JWEZip
 }
 
 // ResponseEncryption requests an encrypted Credential/Deferred
@@ -51,13 +52,13 @@ type ResponseEncryption struct {
 	// Enc is REQUIRED: the JWE content encryption algorithm to ask the
 	// Issuer to use — must be one the Issuer's own
 	// credential_response_encryption.enc_values_supported names.
-	Enc jwe.Enc
+	Enc oid4vci.JWEEnc
 
 	// Zip, if set, asks the Issuer to compress the Response before
 	// encryption — must be one the Issuer's own
 	// credential_response_encryption.zip_values_supported names, if
 	// any.
-	Zip jwe.Zip
+	Zip oid4vci.JWEZip
 }
 
 // wireResponseEncryptionRequest is ResponseEncryption's own wire shape
