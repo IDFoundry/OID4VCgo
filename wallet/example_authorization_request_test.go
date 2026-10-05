@@ -69,12 +69,7 @@ func ExampleWallet_FetchAuthorizationRequest() {
 		return
 	}
 
-	meta, err := dcql.NewSDJWTVCMeta(dcql.SDJWTVCMeta{VCTValues: []string{"urn:eudi:pid:1"}})
-	if err != nil {
-		fmt.Println("NewSDJWTVCMeta:", err)
-		return
-	}
-	query := dcql.Query{Credentials: []dcql.CredentialQuery{{ID: "cred1", Format: "dc+sd-jwt", Meta: meta}}}
+	query := dcql.Query{Credentials: []dcql.CredentialQuery{dcql.SDJWTVCQuery("cred1", "urn:eudi:pid:1")}}
 	built, err := v.BuildAuthorizationRequest(verifier.BuildAuthorizationRequestRequest{Query: query})
 	if err != nil {
 		fmt.Println("BuildAuthorizationRequest:", err)

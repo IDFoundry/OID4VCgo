@@ -112,11 +112,9 @@ func (e *Env) startVerifier(registered []dcql.Path) (started *Verifier, err erro
 // SDJWTQuery asks for an SD-JWT VC of the Env's type, disclosing claims.
 func (e *Env) SDJWTQuery(id string, claims ...string) (q dcql.CredentialQuery, err error) {
 	defer recoverInto(&err)
-	meta, err := dcql.NewSDJWTVCMeta(dcql.SDJWTVCMeta{VCTValues: []string{e.vct}})
-	must(err)
-	q = dcql.CredentialQuery{ID: id, Format: "dc+sd-jwt", Meta: meta}
+	q = dcql.SDJWTVCQuery(id, e.vct)
 	for _, c := range claims {
-		q.Claims = append(q.Claims, dcql.ClaimsQuery{Path: dcql.Path{dcql.PathKey(c)}})
+		q.Claims = append(q.Claims, dcql.ClaimsQuery{Path: dcql.KeyPath(c)})
 	}
 	return q, nil
 }
@@ -125,11 +123,9 @@ func (e *Env) SDJWTQuery(id string, claims ...string) (q dcql.CredentialQuery, e
 // NameSpace.
 func MdocQuery(id string, elements ...string) (q dcql.CredentialQuery, err error) {
 	defer recoverInto(&err)
-	meta, err := dcql.NewMdocMeta(dcql.MdocMeta{DoctypeValue: DocType})
-	must(err)
-	q = dcql.CredentialQuery{ID: id, Format: "mso_mdoc", Meta: meta}
+	q = dcql.MdocQuery(id, DocType)
 	for _, el := range elements {
-		q.Claims = append(q.Claims, dcql.ClaimsQuery{Path: dcql.Path{dcql.PathKey(NameSpace), dcql.PathKey(el)}})
+		q.Claims = append(q.Claims, dcql.ClaimsQuery{Path: dcql.KeyPath(NameSpace, el)})
 	}
 	return q, nil
 }

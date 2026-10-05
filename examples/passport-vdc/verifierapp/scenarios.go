@@ -19,8 +19,6 @@ package verifierapp
 import (
 	"fmt"
 
-	"github.com/idfoundry/oid4vcgo/credential/mdoc"
-	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcgo/dcql"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/credential"
 )
@@ -144,15 +142,6 @@ func buildQuery(s Scenario, vct string, trusted dcql.TrustedAuthoritiesQuery) (d
 	if !ok {
 		return dcql.Query{}, fmt.Errorf("verifierapp: unknown scenario %q", s)
 	}
-	mdocMeta, err := dcql.NewMdocMeta(dcql.MdocMeta{DoctypeValue: credential.DocType})
-	if err != nil {
-		return dcql.Query{}, err
-	}
-	sdjwtMeta, err := dcql.NewSDJWTVCMeta(dcql.SDJWTVCMeta{VCTValues: []string{vct}})
-	if err != nil {
-		return dcql.Query{}, err
-	}
-
 	var mdocClaims, sdjwtClaims []dcql.ClaimsQuery
 	var claimSets [][]string
 	switch {
@@ -186,12 +175,13 @@ func buildQuery(s Scenario, vct string, trusted dcql.TrustedAuthoritiesQuery) (d
 		return dcql.Query{}, fmt.Errorf("verifierapp: no query for scenario %q", s)
 	}
 
-	trustedAuthorities := []dcql.TrustedAuthoritiesQuery{trusted}
+	mdocQuery, sdjwtQuery := dcql.MdocQuery(mdocQueryID, credential.DocType), dcql.SDJWTVCQuery(sdjwtQueryID, vct)
+	mdocQuery.Claims, sdjwtQuery.Claims = mdocClaims, sdjwtClaims
+	for _, cq := range []*dcql.CredentialQuery{&mdocQuery, &sdjwtQuery} {
+		cq.Multiple, cq.ClaimSets, cq.TrustedAuthorities = info.Multiple, claimSets, []dcql.TrustedAuthoritiesQuery{trusted}
+	}
 	q := dcql.Query{
-		Credentials: []dcql.CredentialQuery{
-			{ID: mdocQueryID, Format: mdoc.CredentialFormat, Multiple: info.Multiple, Meta: mdocMeta, Claims: mdocClaims, ClaimSets: claimSets, TrustedAuthorities: trustedAuthorities},
-			{ID: sdjwtQueryID, Format: sdjwtvc.CredentialFormat, Multiple: info.Multiple, Meta: sdjwtMeta, Claims: sdjwtClaims, ClaimSets: claimSets, TrustedAuthorities: trustedAuthorities},
-		},
+		Credentials:    []dcql.CredentialQuery{mdocQuery, sdjwtQuery},
 		CredentialSets: []dcql.CredentialSetQuery{{Options: [][]string{{mdocQueryID}, {sdjwtQueryID}}}},
 	}
 	if err := q.Validate(); err != nil {
@@ -200,13 +190,7 @@ func buildQuery(s Scenario, vct string, trusted dcql.TrustedAuthoritiesQuery) (d
 	return q, nil
 }
 
-func claim(path ...string) dcql.ClaimsQuery {
-	p := make(dcql.Path, len(path))
-	for i, k := range path {
-		p[i] = dcql.PathKey(k)
-	}
-	return dcql.ClaimsQuery{Path: p}
-}
+func claim(path ...string) dcql.ClaimsQuery { return dcql.ClaimsQuery{Path: dcql.KeyPath(path...)} }
 
 // identified gives each claim query the id "c<index>", for claim_sets
 // to refer to.
