@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.31.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.30.1...v0.31.0) (2026-10-05)
+
+
+### ⚠ BREAKING CHANGES
+
+* **deps:** FAPIgo's own breaking changes since v0.48.1 reach integrators who use its packages beside OID4VCgo, e.g. an issuer's Authorization Server or resource verifier. Among them: server.RegisteredAttesterKeys needs Keys, a keys.AttesterKeySource of the attesters' own keys (keys.StaticAttesterKeys); resource.Config needs Assurance; production assurance refuses loopback http issuers and endpoints and needs a hardened CIBA notifier; prompt=login is enforced at CompleteAuthorization; and a federation Resolve Response is trusted only from the named resolver. See FAPIgo's CHANGELOG.
+
+### Features
+
+* **dcql:** add SDJWTVCQuery, MdocQuery and KeyPath ([b509fea](https://github.com/IDFoundry/OID4VCgo/commit/b509fea0b97ef1a49f61ac1a980799b21a72d935))
+* **verifier:** allow issuer clock skew on presented credentials ([bbad51f](https://github.com/IDFoundry/OID4VCgo/commit/bbad51fe5a97c121a70f2d250b864b12266a9a65))
+
+
+### Bug Fixes
+
+* **deps:** pin FAPIgo v0.50.0 ([a52a260](https://github.com/IDFoundry/OID4VCgo/commit/a52a2600395d83335d32861bd53e49928006293d), [6710083](https://github.com/IDFoundry/OID4VCgo/commit/6710083349e4d46e5036cae803d3f604390067d6))
+* **haip:** declare the recommendations with public types ([5da504e](https://github.com/IDFoundry/OID4VCgo/commit/5da504ec7295abea58c5daea6b0317a9c1337325))
+* name only public types in exported declarations ([deb3ad3](https://github.com/IDFoundry/OID4VCgo/commit/deb3ad30fd2c56a7bf265af6135678701db93e94))
+* **verifier:** don't present a refused answer as the holder's doing ([dd4e608](https://github.com/IDFoundry/OID4VCgo/commit/dd4e60825e548918d59efecff431b01411257605))
+
 ## [0.30.1](https://github.com/IDFoundry/OID4VCgo/compare/v0.30.0...v0.30.1) (2026-10-04)
 
 
