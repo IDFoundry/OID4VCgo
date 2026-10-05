@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.31.1](https://github.com/IDFoundry/OID4VCgo/compare/v0.31.0...v0.31.1) (2026-10-05)
+
+
+### Bug Fixes
+
+* bind the Wallet Provider's trust anchor to its provider ([c955299](https://github.com/IDFoundry/OID4VCgo/commit/c9552999a022a73b6355002ceaeff5ca42889d73))
+
 ## [0.31.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.30.1...v0.31.0) (2026-10-05)
 
 
