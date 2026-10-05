@@ -109,6 +109,11 @@ func (r *ReaderSession) ServiceUUID() string { return formatUUID(r.engagement.uu
 // CentralClient it advertises it as peripheral.
 func (r *ReaderSession) BLEMode() BLEMode { return r.engagement.bleMode }
 
+// BLEIdent is the value to serve on the Ident characteristic in mdoc
+// central client mode (§8.3.3.1.1), where the reader is the GATT
+// server. Peripheral server mode doesn't use it.
+func (r *ReaderSession) BLEIdent() []byte { return bleIdent(r.engagement.eDeviceKeyBytes) }
+
 // SessionTranscriptBytes is §9.1.5.1's SessionTranscriptBytes, which
 // the mdoc's device authentication covers.
 func (r *ReaderSession) SessionTranscriptBytes() []byte { return r.sessionTranscriptBytes }
@@ -238,7 +243,7 @@ func (r *ReaderSession) verifyDocument(doc responseDocument, roots *x509.CertPoo
 	if err != nil {
 		return Verified{}, fmt.Errorf("proximity: decode IssuerAuth: %w", err)
 	}
-	// §9.1.2.4: x5chain goes in the unprotected header.
+	// x5chain is an unprotected header in mdoc (as Multipaz reads it).
 	chain := unprotected.X5Chain
 	if len(chain) == 0 {
 		return Verified{}, fmt.Errorf("proximity: IssuerAuth has no x5chain")

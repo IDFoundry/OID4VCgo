@@ -18,6 +18,7 @@ type DeviceSession struct {
 	uuid             []byte
 	deviceEngagement []byte
 	handover         cbor.RawMessage
+	bleIdent         []byte
 
 	sessionTranscriptBytes []byte
 	cipher                 *cipherState
@@ -66,7 +67,13 @@ func NewDeviceSession(random io.Reader, opts ...DeviceOption) (*DeviceSession, e
 	if err != nil {
 		return nil, err
 	}
-	return newDeviceSession(key, uuid, de, nullHandover), nil
+	s := newDeviceSession(key, uuid, de, nullHandover)
+	pe, err := parseDeviceEngagement(de)
+	if err != nil {
+		return nil, err
+	}
+	s.bleIdent = bleIdent(pe.eDeviceKeyBytes)
+	return s, nil
 }
 
 // newDeviceSession is the engagement-independent constructor: Annex D's
@@ -83,6 +90,11 @@ func (s *DeviceSession) QRCode() string { return encodeQR(s.deviceEngagement) }
 // ServiceUUID is the BLE service UUID the engagement offers, in
 // 8-4-4-4-12 form.
 func (s *DeviceSession) ServiceUUID() string { return formatUUID(s.uuid) }
+
+// BLEIdent is the value the reader's Ident characteristic must hold in
+// mdoc central client mode (§8.3.3.1.1): after connecting, read it
+// and disconnect if it differs. Peripheral server mode doesn't use it.
+func (s *DeviceSession) BLEIdent() []byte { return s.bleIdent }
 
 // DeviceEngagementBytes is the encoded DeviceEngagement QRCode carries.
 func (s *DeviceSession) DeviceEngagementBytes() []byte { return s.deviceEngagement }

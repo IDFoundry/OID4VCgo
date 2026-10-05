@@ -152,6 +152,12 @@ func TestRoundTripMultipleElements(t *testing.T) {
 	if f.reader.BLEMode() != CentralClient {
 		t.Errorf("reader BLEMode = %v, want central client", f.reader.BLEMode())
 	}
+	if id := f.holder.BLEIdent(); len(id) != 16 || string(id) != string(f.reader.BLEIdent()) {
+		t.Errorf("BLEIdent: holder %x, reader %x", id, f.reader.BLEIdent())
+	}
+	if other := establish(t, mDL, requested); string(other.holder.BLEIdent()) == string(f.holder.BLEIdent()) {
+		t.Error("two sessions share a BLEIdent")
+	}
 	if len(f.req.Elements) != 4 {
 		t.Fatalf("holder saw %v", f.req.Elements)
 	}

@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"github.com/fxamacker/cbor/v2"
+
+	"github.com/idfoundry/oid4vcgo/internal/hkdf"
 )
 
 // engagementVersion is the DeviceEngagement version this package
@@ -111,6 +113,9 @@ func encodeDeviceEngagement(eDeviceKey *ecdsa.PublicKey, mode BLEMode, uuid []by
 // parsedEngagement is what a reader needs from a DeviceEngagement.
 type parsedEngagement struct {
 	eDeviceKey *ecdsa.PublicKey
+	// eDeviceKeyBytes is EDeviceKeyBytes as sent: #6.24(bstr .cbor
+	// COSE_Key).
+	eDeviceKeyBytes []byte
 	// ble is false when the engagement offers no BLE retrieval method
 	// (Annex D's NFC engagement carries none).
 	ble     bool
@@ -154,7 +159,7 @@ func parseDeviceEngagement(b []byte) (parsedEngagement, error) {
 		return parsedEngagement{}, fmt.Errorf("proximity: EDeviceKey: %w", err)
 	}
 
-	pe := parsedEngagement{eDeviceKey: eDeviceKey}
+	pe := parsedEngagement{eDeviceKey: eDeviceKey, eDeviceKeyBytes: []byte(security[1])}
 	for _, raw := range de.RetrievalMethods {
 		var method []cbor.RawMessage
 		if err := decMode.Unmarshal(raw, &method); err != nil || len(method) < 3 {
@@ -212,4 +217,17 @@ func formatUUID(u []byte) string {
 		return ""
 	}
 	return fmt.Sprintf("%x-%x-%x-%x-%x", u[0:4], u[4:6], u[6:8], u[8:10], u[10:16])
+}
+
+// bleIdent is the BLE Ident characteristic's value (§8.3.3.1.1):
+// HKDF-SHA256 with EDeviceKeyBytes as IKM, no salt, info "BLEIdent",
+// 16 bytes. Only mdoc central client mode uses it: the reader, as GATT
+// server, serves it, and the mdoc reads it to check it connected to
+// the reader that scanned its QR code.
+func bleIdent(eDeviceKeyBytes []byte) []byte {
+	ident, err := hkdf.Key(nil, eDeviceKeyBytes, []byte("BLEIdent"), 16)
+	if err != nil {
+		panic("proximity: derive BLE Ident: " + err.Error())
+	}
+	return ident
 }
