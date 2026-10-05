@@ -2,6 +2,7 @@ package walletflow_test
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"io"
 	"net/http"
@@ -43,9 +44,11 @@ func (f *faults) RoundTrip(r *http.Request) (*http.Response, error) {
 		if !ok {
 			return nil, errors.New("connection reset by peer")
 		}
+		// It stands for the server's own answer, over the same TLS
+		// connection a real one arrives on.
 		return &http.Response{
 			StatusCode: http.StatusBadRequest, Header: http.Header{"Content-Type": {"application/json"}},
-			Body: io.NopCloser(strings.NewReader(body)), Request: r,
+			Body: io.NopCloser(strings.NewReader(body)), Request: r, TLS: &tls.ConnectionState{HandshakeComplete: true},
 		}, nil
 	}
 	f.mu.Unlock()

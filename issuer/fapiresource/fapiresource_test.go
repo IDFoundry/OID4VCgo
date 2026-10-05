@@ -42,7 +42,7 @@ func TestNewRequiresVerifier(t *testing.T) {
 // by cmd/conformance-issuer's full-flow tests.
 func TestVerifyRefusesMissingToken(t *testing.T) {
 	rv, err := resource.NewVerifier(resource.Config{
-		Limits: resource.Limits{MaxDPoPProofAge: time.Minute, MaxClockSkew: time.Minute},
+		Assurance: resource.AssuranceDevelopment, Limits: resource.Limits{MaxDPoPProofAge: time.Minute, MaxClockSkew: time.Minute},
 	}, resource.Dependencies{
 		AccessTokens: noTokens{}, Replay: memstore.NewReplayStore(),
 		Revocation: resource.NoRevocation{}, Clock: resource.SystemClock{},
@@ -94,7 +94,7 @@ func TestVerifyMapsTheToken(t *testing.T) {
 	verify := func(tokens certBoundTokens) (issuer.Grant, error) {
 		t.Helper()
 		rv, err := resource.NewVerifier(resource.Config{
-			Limits: resource.Limits{MaxDPoPProofAge: time.Minute, MaxClockSkew: time.Minute},
+			Assurance: resource.AssuranceDevelopment, Limits: resource.Limits{MaxDPoPProofAge: time.Minute, MaxClockSkew: time.Minute},
 		}, resource.Dependencies{
 			AccessTokens: tokens, Replay: memstore.NewReplayStore(),
 			Revocation: resource.NoRevocation{}, Clock: resource.SystemClock{},

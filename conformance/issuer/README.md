@@ -91,7 +91,12 @@ alongside it:
   regardless of that issuer string (confirmed against
   `server/client_auth_attestation.go`'s own `resolveClientKey` call).
   Added `Config.Client.AttesterJWKS` and wired it into
-  `ephemeral.NewClientKeySource`.
+  `ephemeral.NewClientKeySource`. (Superseded: FAPIgo now resolves an
+  attester's keys by the attester's own issuer, never from the client's
+  keys, which would let a client attest for itself —
+  `server.RegisteredAttesterKeys.Keys`. `attester_jwks` is registered
+  there as a `keys.StaticAttesterKeys` under the client's
+  `expected_attester_issuer`, and the clients have no keys of their own.)
 - `credentialHandler` passed the incoming request's own `r.URL`
   straight into `resource.Verifier.Verify` for DPoP's own "htu" check
   — but a `net/http` server request's `URL` has no Scheme/Host
