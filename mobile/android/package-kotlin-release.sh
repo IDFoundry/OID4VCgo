@@ -1,12 +1,12 @@
 #!/bin/sh
 # Lays out a release of the OID4VCWallet Kotlin library for
-# github.com/IDFoundry/OID4VCgo-wallet-kotlin, whose GitHub Pages serve
-# it as a Maven repository: builds the release AAR (never the mobiletest
-# build), publishes dev.idfoundry:oid4vcwallet into the checkout's maven/
-# directory beside its earlier versions, mirrors the Kotlin sources and
-# writes the README, and copies the AAR to ASSET_DIR for the GitHub
-# release. Before that it builds an app depending on the published
-# version, as an app developer's would.
+# github.com/IDFoundry/OID4VCgo-wallet-kotlin, whose releases carry it:
+# builds the release AAR (never the mobiletest build), packages the
+# library — the AAR with the Kotlin API and the Go library, and its
+# sources jar — into ASSET_DIR for the GitHub release, and mirrors the
+# Kotlin sources and writes the README into the checkout. Before that it
+# builds an app on the AAR as the README tells app developers to: the
+# file, and the dependencies it lists.
 #
 #   ./package-kotlin-release.sh VERSION PACKAGE_DIR ASSET_DIR
 #
@@ -20,9 +20,6 @@ PKG="$(cd "$2" && pwd)"
 mkdir -p "$3"
 ASSETS="$(cd "$3" && pwd)"
 REPO="${OID4VC_WALLET_KOTLIN_REPO:-IDFoundry/OID4VCgo-wallet-kotlin}"
-OWNER="$(echo "${REPO%/*}" | tr '[:upper:]' '[:lower:]')"
-NAME="${REPO#*/}"
-MAVEN_URL="https://$OWNER.github.io/$NAME/maven"
 echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$' || { echo "not a version: $VERSION" >&2; exit 2; }
 cd "$(dirname "$0")"
 HERE="$PWD"
@@ -42,26 +39,37 @@ if unzip -l "$WORK/go.jar" | grep -q TestEnv; then
 	exit 1
 fi
 
-# The library, into a staging repository first: it's checked before the
-# checkout's repository is touched.
+# The library and its sources jar, as Gradle publishes them; the POM
+# says which libraries an app needs beside the file.
 ./gradlew -q --console=plain :OID4VCWallet:publishReleasePublicationToReleaseRepository \
 	-Poid4vc.version="$VERSION" -Poid4vc.publishTo="$WORK/maven"
-PUBLISHED="$WORK/maven/dev/idfoundry/oid4vcwallet/$VERSION/oid4vcwallet-$VERSION.aar"
-[ -f "$PUBLISHED" ] || { echo "nothing published at $PUBLISHED" >&2; exit 1; }
+OUT="$WORK/maven/dev/idfoundry/oid4vcwallet/$VERSION"
+LIBRARY="$OUT/oid4vcwallet-$VERSION.aar"
+SOURCES="$OUT/oid4vcwallet-$VERSION-sources.jar"
+[ -f "$LIBRARY" ] && [ -f "$SOURCES" ] || { echo "nothing published in $OUT" >&2; exit 1; }
+# Each dependency the POM names but the Kotlin standard library (which
+# an app's Kotlin brings), as group:artifact:version.
+DEPS="$(awk '
+	/<dependency>/ { g = ""; a = ""; v = "" }
+	/<groupId>/ { sub(/.*<groupId>/, ""); sub(/<\/groupId>.*/, ""); g = $0 }
+	/<artifactId>/ { sub(/.*<artifactId>/, ""); sub(/<\/artifactId>.*/, ""); a = $0 }
+	/<version>/ { sub(/.*<version>/, ""); sub(/<\/version>.*/, ""); v = $0 }
+	/<\/dependency>/ { if (a != "kotlin-stdlib") print g ":" a ":" v }
+' "$OUT/oid4vcwallet-$VERSION.pom")"
+[ -n "$DEPS" ] || { echo "the POM names no dependencies" >&2; exit 1; }
+DEPLINES="$(for d in $DEPS; do echo "    implementation(\"$d\")"; done)"
 
-# An app depending on it, as an app developer's would: from the Maven
-# repository, by its coordinates.
+# An app on the AAR, as the README says: the file, and those libraries.
 APP="$WORK/consumer"
-mkdir -p "$APP/app/src/main/kotlin/consumer"
+mkdir -p "$APP/app/src/main/kotlin/consumer" "$APP/app/libs"
 cp -R gradle gradlew "$APP/"
+cp "$LIBRARY" "$APP/app/libs/"
+AGP="$(sed -n 's/^agp = "\(.*\)"/\1/p' gradle/libs.versions.toml)"
 cat > "$APP/settings.gradle.kts" <<EOF
 pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
-dependencyResolutionManagement {
-    repositories { maven { url = uri("file://$WORK/maven") }; google(); mavenCentral() }
-}
+dependencyResolutionManagement { repositories { google(); mavenCentral() } }
 include(":app")
 EOF
-AGP="$(sed -n 's/^agp = "\(.*\)"/\1/p' gradle/libs.versions.toml)"
 cat > "$APP/build.gradle.kts" <<EOF
 plugins { id("com.android.application") version "$AGP" apply false }
 EOF
@@ -72,7 +80,10 @@ android {
     compileSdk = 37
     defaultConfig { applicationId = "dev.idfoundry.consumer"; minSdk = 30; targetSdk = 37 }
 }
-dependencies { implementation("dev.idfoundry:oid4vcwallet:$VERSION") }
+dependencies {
+    implementation(files("libs/oid4vcwallet-$VERSION.aar"))
+$DEPLINES
+}
 EOF
 cat > "$APP/app/src/main/AndroidManifest.xml" <<'EOF'
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"><application /></manifest>
@@ -88,20 +99,11 @@ cp local.properties "$APP/" 2>/dev/null || true
 (cd "$APP" && ./gradlew -q --console=plain :app:assembleDebug)
 unzip -l "$APP/app/build/outputs/apk/debug/app-debug.apk" | grep -q 'lib/arm64-v8a/libgojni.so' || { echo "the app has no Go library" >&2; exit 1; }
 
-# Checked: into the package repository, beside the earlier versions.
-mkdir -p "$PKG/maven/dev/idfoundry/oid4vcwallet"
-if [ -e "$PKG/maven/dev/idfoundry/oid4vcwallet/$VERSION" ]; then
-	echo "$PKG already has version $VERSION" >&2
-	exit 1
-fi
-./gradlew -q --console=plain :OID4VCWallet:publishReleasePublicationToReleaseRepository \
-	-Poid4vc.version="$VERSION" -Poid4vc.publishTo="$PKG/maven"
-cp "$PUBLISHED" "$ASSETS/oid4vcwallet-$VERSION.aar"
+cp "$LIBRARY" "$SOURCES" "$ASSETS/"
 
 rm -rf "$PKG/sources"
 mkdir -p "$PKG/sources"
 cp -R OID4VCWallet/src/main/kotlin OID4VCWallet/src/main/AndroidManifest.xml OID4VCWallet/consumer-rules.pro "$PKG/sources/"
-touch "$PKG/.nojekyll"
 
 cat > "$PKG/README.md" <<EOF
 # OID4VCgo-wallet-kotlin
@@ -109,8 +111,8 @@ cat > "$PKG/README.md" <<EOF
 \`OID4VCWallet\`: the Kotlin library of [OID4VCgo](https://github.com/IDFoundry/OID4VCgo)'s
 mobile wallet, for Android 11 (API 30) and later. It receives credentials
 over OpenID4VCI 1.0 and presents them over OpenID4VP 1.0, under HAIP 1.0,
-with SD-JWT VC and ISO mdoc credentials. OID4VCgo is OpenID Certified for
-those roles.
+with SD-JWT VC and ISO mdoc credentials, from links and over the Digital
+Credentials API. OID4VCgo is OpenID Certified for those roles.
 
 The protocols run in OID4VCgo's Go code, compiled with gomobile into the
 library. Your app owns the keys, the storage and the UI:
@@ -125,23 +127,23 @@ library. Your app owns the keys, the storage and the UI:
 
 ## Install
 
-\`\`\`kotlin
-// settings.gradle.kts
-dependencyResolutionManagement {
-    repositories {
-        google()
-        mavenCentral()
-        maven("$MAVEN_URL")
-    }
-}
+Download \`oid4vcwallet-$VERSION.aar\` from [the release](https://github.com/$REPO/releases/tag/$VERSION)
+(and \`oid4vcwallet-$VERSION-sources.jar\`, to browse its sources in
+Android Studio) into your app module's \`libs/\`, and add it with the
+libraries it uses:
 
-// build.gradle.kts
+\`\`\`kotlin
+// app/build.gradle.kts
 dependencies {
-    implementation("dev.idfoundry:oid4vcwallet:$VERSION")
+    implementation(files("libs/oid4vcwallet-$VERSION.aar"))
+$DEPLINES
 }
 \`\`\`
 
-An app can hold only one gomobile library.
+The AAR goes in an app module: an Android library can't depend on a
+local AAR. It holds the Go library for arm64 and x86_64 (the emulator),
+and an app can hold only one gomobile library. It's compiled for Kotlin
+2.2 and later.
 
 ## Documentation
 
@@ -165,4 +167,4 @@ Issues and pull requests belong in [OID4VCgo](https://github.com/IDFoundry/OID4V
 MIT. See [LICENSE](LICENSE).
 EOF
 cd "$HERE/.."
-echo "OID4VCWallet $VERSION: ABI $(sed -n 's/^const ABIVersion = //p' mobile.go), dev.idfoundry:oid4vcwallet:$VERSION at $MAVEN_URL"
+echo "OID4VCWallet $VERSION: ABI $(sed -n 's/^const ABIVersion = //p' mobile.go), oid4vcwallet-$VERSION.aar, with $(echo $DEPS | tr ' ' ',')"

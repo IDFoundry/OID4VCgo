@@ -693,11 +693,10 @@ Decisions taken 2026-10-06 (tracked in [#461](https://github.com/IDFoundry/OID4V
 1. **Layout:** `mobile/android` here: the Kotlin library `OID4VCWallet`,
    the demo app and their tests. [OID4VCgo-wallet-kotlin](https://github.com/IDFoundry/OID4VCgo-wallet-kotlin)
    is publish-only, as the Swift repository is.
-2. **Distribution:** a Maven repository on that repository's GitHub
-   Pages, `dev.idfoundry:oid4vcwallet`, one artifact holding the Kotlin
-   API and the Go library, with the AAR also on a GitHub release. Its
-   versions are the Swift package's, published from the same commit.
-   Maven Central later.
+2. **Distribution:** release artifacts of that repository — one AAR
+   holding the Kotlin API and the Go library, and its sources jar —
+   versioned as the Swift package, published from the same commit. No
+   Maven repository for now.
 3. **Scope:** parity with the Swift SDK and demo, and the DC API in the
    first release: OpenID4VP requests through a new ABI session (Phase
    9's adapter) and `org-iso-mdoc` ones through `MdocPresentation`. The
@@ -883,24 +882,24 @@ answer, bound to the page's origin.
 
 ### Phase 8 findings: publishing
 
-`wallet-kotlin-release.yml` publishes `dev.idfoundry:oid4vcwallet` into
-the Maven repository OID4VCgo-wallet-kotlin's GitHub Pages serve, as
+`wallet-kotlin-release.yml` publishes the library as release artifacts
+of OID4VCgo-wallet-kotlin — the AAR and its sources jar — as
 `wallet-swift-release.yml` publishes the Swift package, from the same
-commit and with the same version.
+commit and with the same version. No Maven repository for now: an app
+adds the AAR as a file, with the two libraries it uses, which the
+README lists.
 
-- **One artifact:** the AAR holds the Kotlin API, the Go bindings
-  (`libs/`) and the Go library for arm64 and x86_64, with a sources jar;
-  its POM names the Kotlin standard library, coroutines and
-  serialization.
+- **One file:** the AAR holds the Kotlin API, the Go bindings (`libs/`)
+  and the Go library for arm64 and x86_64. Only an app module can take a
+  local AAR: an Android library can't.
 - **Kotlin 2.2:** a library compiled with the newest Kotlin writes
   metadata only that compiler, or the next, can read: an app on AGP 9's
   own Kotlin (2.2) failed to compile against it. The library is built for
   Kotlin 2.2 — language and API version, and its standard library — so
   it can.
-- **Checked as published:** the release script builds an app depending
-  on the version from a staging copy of the repository before it touches
-  the real one, and refuses a version the repository already has. CI runs
-  it on every change.
+- **Checked as published:** the release script builds an app on the AAR
+  exactly as the README says — the file, and the libraries the library's
+  POM names — before it lays out anything. CI runs it on every change.
 
 ### Phase 8 findings: the demo's UI tests
 
@@ -924,7 +923,6 @@ Thirteen tests pass on the emulator, against `testservices`.
 
 ### Open items
 
-- Publish to Maven Central.
 - FAPIgo on 32-bit platforms.
 - The APEX store on golang/go#71258; drop `certdirs_android.go` once Go
   reads it.
@@ -989,7 +987,12 @@ Decisions taken 2026-10-06 (tracked in [#482](https://github.com/IDFoundry/OID4V
 
 ## Open questions
 
-- The Wallet Provider's production design (App Attest verification, key
-  attestation formats), and whether it belongs in this repository.
+- The Wallet Provider's production design, and whether it belongs in
+  this repository. Before it attests, it should check platform evidence
+  that it's talking to the genuine app — App Attest on iOS; on Android,
+  Android Key Attestation of the wallet's keys (StrongBox or TEE, the
+  app's signing certificate) or Play Integrity — and key attestation
+  formats. Both demos attest any key with the passport-vdc demo's
+  provider until then.
 - iOS's integration point for the Digital Credentials API, when Phase 9
   starts.

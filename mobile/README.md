@@ -48,29 +48,33 @@ and `OID4VC.isTestBuild` says which one an app has.
 
 ## Publishing the Kotlin library
 
-App developers add `dev.idfoundry:oid4vcwallet` from the Maven repository
-[OID4VCgo-wallet-kotlin](https://github.com/IDFoundry/OID4VCgo-wallet-kotlin)'s
-GitHub Pages serve:
+App developers take `oid4vcwallet-<version>.aar` from a release of
+[OID4VCgo-wallet-kotlin](https://github.com/IDFoundry/OID4VCgo-wallet-kotlin),
+into their app module's `libs/`, with the libraries it uses, which that
+repository's README lists:
 
 ```kotlin
-repositories { maven("https://idfoundry.github.io/OID4VCgo-wallet-kotlin/maven") }
-dependencies { implementation("dev.idfoundry:oid4vcwallet:0.7.0") }
+dependencies {
+    implementation(files("libs/oid4vcwallet-0.7.0.aar"))
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:…")
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:…")
+}
 ```
 
 To publish a version, run the `wallet-kotlin-release` workflow from the
 commit to publish, with the version: the Swift package's, from the same
 commit. It runs `android/package-kotlin-release.sh`, which:
-1. builds the release AAR
-2. publishes the library into a staging Maven repository, and builds an
-   app depending on it from there
-3. publishes it into the package repository's `maven/`, beside the
-   earlier versions, and mirrors the sources and the README
+1. builds the release AAR, and the library's AAR and sources jar
+2. builds an app on the AAR as the README says: the file, and the
+   libraries the library's POM names
+3. mirrors the sources into the package repository, and writes its
+   README with those libraries
 
 The workflow then commits the result there and creates the tagged
-release, carrying the AAR. It needs the `WALLET_KOTLIN_TOKEN` secret: a
-fine-grained token with Contents read and write on OID4VCgo-wallet-kotlin
-only; that repository's Pages serve its main branch. CI runs the same
-script on every change, without publishing.
+release, carrying the AAR and the sources jar. It needs the
+`WALLET_KOTLIN_TOKEN` secret: a fine-grained token with Contents read and
+write on OID4VCgo-wallet-kotlin only. CI runs the same script on every
+change, without publishing.
 
 The library is compiled for Kotlin 2.2 (language and API version, and
 its standard library), so an app on AGP 9's own Kotlin can use it.
