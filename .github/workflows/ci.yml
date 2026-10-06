@@ -286,6 +286,13 @@ jobs:
             echo "::error::the release library carries TestEnv"; exit 1
           fi
 
+      # The library as wallet-kotlin-release.yml publishes it, and an app
+      # built on it from the Maven repository.
+      - name: lay out the published Maven repository
+        env:
+          SKIP_AAR_BUILD: "1"
+        run: mkdir -p "$RUNNER_TEMP/kotlin-pkg" && mobile/android/package-kotlin-release.sh 0.0.0-ci "$RUNNER_TEMP/kotlin-pkg" "$RUNNER_TEMP/kotlin-assets"
+
   govulncheck:
     runs-on: ubuntu-latest
     steps:
