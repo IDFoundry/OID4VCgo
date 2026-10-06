@@ -129,6 +129,9 @@ jobs:
           - id: wallet-parse-dcapi-request
             pkg: ./wallet
             name: FuzzParseDCAPIRequest
+          - id: wallet-parse-dcapi-request-data
+            pkg: ./wallet
+            name: FuzzParseDCAPIRequestData
           - id: wallet-decode-credential-offer
             pkg: ./wallet
             name: FuzzDecodeCredentialOffer

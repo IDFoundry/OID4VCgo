@@ -1297,7 +1297,17 @@ changes whether *every* bullet below is `(done)`.
   `ParseAuthorizationRequest` does, requires `response_mode`
   `dc_api.jwt`, and refuses unless the origin the platform reports is
   one of the request's `expected_origins` (Appendix A.2) — without that
-  check, any site could replay a request another Verifier built. With
+  check, any site could replay a request another Verifier built.
+  `ParseDCAPIRequestData` takes the request as the platform delivers
+  it, by `protocol`, in all three forms HAIP §5.2 requires a Wallet to
+  support: `openid4vp-v1-signed` (the above), `openid4vp-v1-multisigned`
+  (JWS JSON Serialization: each signature is checked as a compact JWS
+  over the shared payload, the first one `VerifierTrust` accepts
+  authenticates the request, and `client_id`/`verifier_info` come only
+  from its protected header, Appendix A.3.2.2), and
+  `openid4vp-v1-unsigned` (the parameters themselves; `client_id` and
+  `expected_origins` are ignored, so the platform's origin is the only
+  identity). With
   this, the DC API flow (Appendix A/HAIP §5.2) is done end to end across
   `oid4vpmdoc`/`verifier`/`wallet` — the one remaining piece is actually invoking the W3C Digital Credentials
   API itself, a browser/OS platform concern outside any Go library's

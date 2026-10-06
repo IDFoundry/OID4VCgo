@@ -181,10 +181,14 @@
 // isn't built in). Only the "x509_hash" Client Identifier Prefix is
 // supported (HAIP's own mandate, and the only one verifier itself
 // produces). A DC API request arrives through the platform instead:
-// (*Wallet).ParseDCAPIRequest verifies it the same way, with the
-// Wallet's VerifierTrust, and checks the origin the platform reports
-// against its expected_origins, and PresentCredentials
-// builds its response when given that Origin. No other client_id
+// (*Wallet).ParseDCAPIRequestData takes it as delivered, in any of
+// the three forms HAIP §5.2 requires a Wallet to support — unsigned,
+// signed, or multi-signed (JWS JSON Serialization, authenticated by the
+// first signature VerifierTrust accepts) — verifies a signed one the
+// same way, with the Wallet's VerifierTrust, checks the origin the
+// platform reports against its expected_origins, and PresentCredentials
+// builds its response when given that Origin. An unsigned request is
+// identified by that origin alone. No other client_id
 // scheme, no di_vp presentations. Which Verifiers to trust is the caller's policy, a
 // VerifierTrust (OID4VP §5.9.3's trust chain validation):
 // X5CVerifierRoots for a fixed set of trust anchors, or the explicit
