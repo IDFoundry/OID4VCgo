@@ -3,12 +3,14 @@ package mobile
 import (
 	"context"
 	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"sync/atomic"
+	"time"
 
 	"github.com/idfoundry/oid4vcgo/mdocdcapi"
 	"github.com/idfoundry/oid4vcgo/wallet"
@@ -43,6 +45,11 @@ type config struct {
 	RequireTrustedMdocReader bool `json:"require_trusted_mdoc_reader,omitempty"`
 	// Development allows services on loopback addresses.
 	Development bool `json:"development"`
+	// DevelopmentRoots are PEM certificates the wallet's HTTPS requests
+	// trust besides the system's: a development service's own CA, where
+	// the platform's trust store can't be given it (Go on Android reads
+	// only the system's CA files). Only with Development.
+	DevelopmentRoots string `json:"development_roots,omitempty"`
 	// Locales are the holder's preferred languages (BCP 47, most
 	// preferred first), for issuers' display metadata.
 	Locales []string `json:"locales,omitempty"`
@@ -143,6 +150,16 @@ func NewWallet(configJSON string, keys KeyStore, credentials CredentialStore, pr
 		Deferred: deferredStore{credentials}, Authorizations: authorizationStore{credentials}, Grants: grantStore{credentials},
 		HTTP: testHTTP.Load(), // nil: walletflow's own client
 	}
+	if cfg.DevelopmentRoots != "" {
+		if !cfg.Development {
+			return nil, newError(CodeInvalidInput, errors.New("development_roots needs development"))
+		}
+		if deps.HTTP == nil {
+			if deps.HTTP, err = developmentClient(cfg.DevelopmentRoots); err != nil {
+				return nil, newError(CodeInvalidInput, fmt.Errorf("development_roots: %w", err))
+			}
+		}
+	}
 	if provider != nil {
 		deps.Provider = walletProvider{provider}
 	}
@@ -152,6 +169,26 @@ func NewWallet(configJSON string, keys KeyStore, credentials CredentialStore, pr
 	}
 	return &Wallet{w: w, keys: keys}, nil
 }
+
+// developmentClient is an HTTP client trusting the system's CAs and
+// those of pemText, as walletflow's own in development: no address
+// restrictions, its timeout.
+func developmentClient(pemText string) (*http.Client, error) {
+	pool, err := x509.SystemCertPool()
+	if err != nil {
+		pool = x509.NewCertPool()
+	}
+	if !pool.AppendCertsFromPEM([]byte(pemText)) {
+		return nil, errors.New("no PEM certificates")
+	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.TLSClientConfig = &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}
+	return &http.Client{Transport: transport, Timeout: developmentTimeout}, nil
+}
+
+// developmentTimeout bounds each request of developmentClient's, as
+// walletflow's own client's are.
+const developmentTimeout = 10 * time.Second
 
 func certPool(pemText string) (*x509.CertPool, error) {
 	pool := x509.NewCertPool()
