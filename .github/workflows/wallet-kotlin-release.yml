@@ -1,9 +1,9 @@
 # Publishes a release of the OID4VCWallet Kotlin library to
-# github.com/IDFoundry/OID4VCgo-wallet-kotlin, whose GitHub Pages serve
-# it as a Maven repository (dev.idfoundry:oid4vcwallet):
-# mobile/android/package-kotlin-release.sh builds the release AAR and
-# lays out the repository, then this commits it there and creates the
-# release, tagged with the version and carrying the AAR, in one step.
+# github.com/IDFoundry/OID4VCgo-wallet-kotlin, as release artifacts:
+# mobile/android/package-kotlin-release.sh builds the AAR and its sources
+# jar and lays out the repository (the mirrored sources, the README),
+# then this commits that there and creates the release, tagged with the
+# version and carrying both files, in one step.
 #
 # The version is the Swift package's, published from the same commit
 # (wallet-swift-release), apart from this module's release-please
@@ -12,8 +12,7 @@
 #
 # Uses a fine-grained personal access token secret (WALLET_KOTLIN_TOKEN)
 # with Contents read and write on OID4VCgo-wallet-kotlin only: the
-# default GITHUB_TOKEN can't write to another repository. That
-# repository's Pages serve its main branch's root.
+# default GITHUB_TOKEN can't write to another repository.
 name: wallet-kotlin-release
 
 on:
@@ -85,6 +84,6 @@ jobs:
             echo
             tail -1 "$RUNNER_TEMP/summary.txt"
           } > "$RUNNER_TEMP/notes.md"
-          gh release create "$VERSION" "$RUNNER_TEMP/assets/oid4vcwallet-$VERSION.aar" \
+          gh release create "$VERSION" "$RUNNER_TEMP/assets/oid4vcwallet-$VERSION.aar" "$RUNNER_TEMP/assets/oid4vcwallet-$VERSION-sources.jar" \
             --repo "$REPO" --target "$(git rev-parse HEAD)" --title "OID4VCWallet $VERSION" \
             --notes-file "$RUNNER_TEMP/notes.md"

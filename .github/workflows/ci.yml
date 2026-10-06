@@ -287,8 +287,8 @@ jobs:
           fi
 
       # The library as wallet-kotlin-release.yml publishes it, and an app
-      # built on it from the Maven repository.
-      - name: lay out the published Maven repository
+      # built on its AAR as the README says.
+      - name: lay out the published release
         env:
           SKIP_AAR_BUILD: "1"
         run: mkdir -p "$RUNNER_TEMP/kotlin-pkg" && mobile/android/package-kotlin-release.sh 0.0.0-ci "$RUNNER_TEMP/kotlin-pkg" "$RUNNER_TEMP/kotlin-assets"
