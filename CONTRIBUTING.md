@@ -29,6 +29,12 @@ fact.
   of either) and against the real OIDF HAIP conformance suite (see
   `conformance/`) before it's proposed as done. "It passes the Go test
   suite" isn't the same claim as "it's HAIP conformant."
+- `proximity`, `mdocdcapi` and `internal/readerauth` implement ISO
+  protocols no OIDF test plan covers. Their bar is the ISO text, the
+  standards' own test vectors reproduced byte for byte (ISO/IEC 18013-5
+  Annex D for `proximity`), and interoperability with an independent
+  implementation (Multipaz; Safari for `org-iso-mdoc`). Say in the PR
+  which of these a change was checked against.
 - A change that depends on FAPIgo behavior belonging to `server`/`client`/
   `keys`/`storage` (not this repo) — most notably Wallet Attestation client
   authentication — belongs in FAPIgo itself; see ARCHITECTURE.md for the
@@ -56,6 +62,16 @@ something a commit message alone should trigger.
   `govulncheck ./...` all need to be clean — this is what `ci.yml` enforces
   on every PR. `examples/passport-vdc` is its own Go module: run `go vet`,
   `go test` and `golangci-lint` there too (CI's `examples` job).
+- `mobile` is its own Go module too. Run `go vet ./...`,
+  `go test -race ./...` and `go test -race -tags mobiletest ./...` there,
+  and `golangci-lint run --build-tags mobiletest ./...` (CI's `mobile`
+  job). CI also runs `mobile-ios` (the Swift package's tests, the demo
+  app's build and the release layout, on macOS) and `mobile-android`
+  (instrumented tests on an emulator, the demo app and the release
+  layout); see [`mobile/README.md`](mobile/README.md) to run them
+  locally. A change to the gomobile API updates
+  [`mobile/ABI.md`](mobile/ABI.md), and an incompatible one bumps
+  `ABIVersion`.
 - Include tests for the behavior you're changing, not just the happy path.
 
 ## Reporting a security issue
