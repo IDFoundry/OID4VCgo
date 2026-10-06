@@ -89,7 +89,7 @@ func TestHandleDCAPI_Presents(t *testing.T) {
 	roots := x509.NewCertPool()
 	roots.AddCert(issuerCA)
 	result, err := v.VerifyResponse(context.Background(), verifier.VerifyResponseRequest{
-		Query: query, Response: parsed, ExpectedNonce: built.Nonce, Origin: testDCAPIOrigin, MaxKeyBindingAge: time.Hour,
+		Query: query, Response: parsed, ExpectedNonce: built.Nonce, Origin: testDCAPIOrigin, ExpectedOrigins: []string{testDCAPIOrigin}, MaxKeyBindingAge: time.Hour,
 		IssuerKeys: verifier.X5CIssuerKeyResolver{Roots: roots},
 	})
 	if err != nil || len(result.Credentials) != 1 {

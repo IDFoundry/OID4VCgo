@@ -3,6 +3,7 @@ package verifier
 import (
 	"crypto/ecdsa"
 	"fmt"
+	"slices"
 
 	"github.com/idfoundry/oid4vcgo/dcql"
 )
@@ -62,6 +63,10 @@ type BuildDCAPIAuthorizationRequestResult struct {
 	// caller must retain it to decrypt the eventual dc_api.jwt
 	// response.
 	ResponseDecryptionKey *ecdsa.PrivateKey
+
+	// ExpectedOrigins are the request's expected_origins: keep them for
+	// VerifyResponseRequest.ExpectedOrigins.
+	ExpectedOrigins []string
 }
 
 // BuildDCAPIAuthorizationRequest builds a signed OpenID4VP request for
@@ -130,5 +135,6 @@ func (v *Verifier) BuildDCAPIAuthorizationRequest(req BuildDCAPIAuthorizationReq
 	}
 	return BuildDCAPIAuthorizationRequestResult{
 		RequestObject: requestObject, ClientID: v.clientID, Nonce: nonce, ResponseDecryptionKey: encKey,
+		ExpectedOrigins: slices.Clone(req.ExpectedOrigins),
 	}, nil
 }

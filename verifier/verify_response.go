@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"time"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
@@ -151,18 +152,17 @@ type VerifyResponseRequest struct {
 	// B.2.6.1). Leave zero to verify a redirect-flow response, the
 	// same as before this field existed.
 	//
-	// WARNING: Origin becomes part of the audience check a "dc+sd-jwt"
-	// Presentation's own Key Binding JWT is verified against — it MUST
-	// come from the DC API platform's own authoritative report of the
-	// calling page's origin (the same value
-	// BuildDCAPIAuthorizationRequest's own ExpectedOrigins is compared
-	// against on the Wallet side, e.g. Android Credential Manager's
-	// own attested origin), never from anything the client/page itself
-	// could supply (a query parameter, a postMessage payload,
-	// document.location read inside a possibly-compromised or embedded
-	// context). Populating it from an untrustworthy source makes this
-	// audience check trivially spoofable.
+	// Origin is the origin of the page that made the request — this
+	// Verifier's own, as its configuration knows it. It must be one of
+	// ExpectedOrigins. Never take it from the response's HTTP request
+	// (an Origin header, a parameter): a site that relays a request as
+	// its own would then have its presentation accepted.
 	Origin string
+
+	// ExpectedOrigins is REQUIRED with Origin: the request's
+	// expected_origins (BuildDCAPIAuthorizationRequestResult.ExpectedOrigins).
+	// VerifyResponse refuses an Origin that isn't one of them.
+	ExpectedOrigins []string
 }
 
 // VerifiedCredential is one successfully verified Presentation.
@@ -269,6 +269,9 @@ func (v *Verifier) VerifyResponse(ctx context.Context, req VerifyResponseRequest
 	}
 	if req.ExpectedNonce == "" {
 		return VerifyResponseResult{}, fmt.Errorf("verifier: verify response: expected_nonce is required")
+	}
+	if req.Origin != "" && !slices.Contains(req.ExpectedOrigins, req.Origin) {
+		return VerifyResponseResult{}, fmt.Errorf("verifier: verify response: origin %q isn't one of the request's expected_origins %v", req.Origin, req.ExpectedOrigins)
 	}
 	if err := checkMaxKeyBindingAgeRequired(req); err != nil {
 		return VerifyResponseResult{}, err

@@ -122,8 +122,10 @@ type AuthorizationRequest struct {
 // if the parameter weren't there). Unlike a plain error (an invalid
 // signature, a client_id that doesn't match at all — see
 // ParseAuthorizationRequest's own doc comment), the Request Object's
-// authenticity here IS established, so ResponseURI/ResponseEncryptionKey
-// are safe to use: a caller can send an OID4VP §8.1 error response
+// authenticity here IS established — except for an unsigned DC API
+// request (ParseDCAPIRequestData), which is only bound to the origin the
+// platform reported, and whose error goes back to that page — so
+// ResponseURI/ResponseEncryptionKey are safe to use: a caller can send an OID4VP §8.1 error response
 // with them (wallet.BuildDirectPostErrorResponse) instead of only
 // rejecting locally. Mirrors verifier.ResponseError's own shape and
 // errors.As usage on the Verifier side of this same package family.

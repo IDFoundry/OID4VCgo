@@ -163,11 +163,11 @@ func verifySDJWTVCRoundTrip(t *testing.T, query dcql.Query, origin string) verif
 	fixture := newSDJWTVCPresentation(t, aud, nonce)
 
 	result, err := v.VerifyResponse(context.Background(), verifier.VerifyResponseRequest{
-		Query:            query,
-		Response:         verifier.ParsedResponse{VPToken: map[string][]string{"identity_credential": {fixture.compact}}},
-		ExpectedNonce:    nonce,
-		IssuerKeys:       fixedSDJWTVCIssuerKeyResolver{pub: &fixture.issuerKey.PublicKey, alg: jose.ES256},
-		Origin:           origin,
+		Query:         query,
+		Response:      verifier.ParsedResponse{VPToken: map[string][]string{"identity_credential": {fixture.compact}}},
+		ExpectedNonce: nonce,
+		IssuerKeys:    fixedSDJWTVCIssuerKeyResolver{pub: &fixture.issuerKey.PublicKey, alg: jose.ES256},
+		Origin:        origin, ExpectedOrigins: []string{origin},
 		MaxKeyBindingAge: time.Hour,
 	})
 	return testverify.RequireOneCredential(t, result, err, "identity_credential")
@@ -272,11 +272,11 @@ func TestVerifyResponseDCAPIRejectsWrongOrigin(t *testing.T) {
 	fixture := newSDJWTVCPresentation(t, "origin:https://attacker.example.com", built.Nonce)
 
 	_, err = v.VerifyResponse(context.Background(), verifier.VerifyResponseRequest{
-		Query:            query,
-		Response:         verifier.ParsedResponse{VPToken: map[string][]string{"identity_credential": {fixture.compact}}},
-		ExpectedNonce:    built.Nonce,
-		IssuerKeys:       fixedSDJWTVCIssuerKeyResolver{pub: &fixture.issuerKey.PublicKey, alg: jose.ES256},
-		Origin:           "https://verifier.example.com",
+		Query:         query,
+		Response:      verifier.ParsedResponse{VPToken: map[string][]string{"identity_credential": {fixture.compact}}},
+		ExpectedNonce: built.Nonce,
+		IssuerKeys:    fixedSDJWTVCIssuerKeyResolver{pub: &fixture.issuerKey.PublicKey, alg: jose.ES256},
+		Origin:        "https://verifier.example.com", ExpectedOrigins: []string{"https://verifier.example.com"},
 		MaxKeyBindingAge: time.Hour,
 	})
 	if err == nil {
@@ -619,5 +619,26 @@ func TestVerifyResponseCredentialSetsSharedQuery(t *testing.T) {
 	})
 	if err != nil || len(result.Credentials) != 2 {
 		t.Fatalf("VerifyResponse = %+v, %v; want both", result, err)
+	}
+}
+
+// A DC API response is verified only for an origin the request named:
+// a relaying site's own origin, or none to compare against, is refused.
+func TestVerifyResponse_OriginMustBeExpected(t *testing.T) {
+	v := newTestVerifier(t)
+	for name, tc := range map[string]struct {
+		origin   string
+		expected []string
+	}{
+		"not expected":        {"https://relay.example", []string{"https://verifier.example.com"}},
+		"no expected origins": {"https://verifier.example.com", nil},
+		"trailing slash":      {"https://verifier.example.com/", []string{"https://verifier.example.com"}},
+	} {
+		_, err := v.VerifyResponse(context.Background(), verifier.VerifyResponseRequest{
+			Query: testQuery(t), ExpectedNonce: "n", Origin: tc.origin, ExpectedOrigins: tc.expected, MaxKeyBindingAge: time.Hour,
+		})
+		if err == nil || !strings.Contains(err.Error(), "expected_origins") {
+			t.Errorf("%s: %v, want the origin refused", name, err)
+		}
 	}
 }
