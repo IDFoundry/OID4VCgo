@@ -5,8 +5,11 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/asn1"
 	"encoding/base64"
 	"errors"
+	"math/big"
 	"strings"
 	"testing"
 	"time"
@@ -15,7 +18,6 @@ import (
 
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/internal/cose"
-	"github.com/idfoundry/oid4vcgo/internal/testcert"
 )
 
 const (
@@ -32,10 +34,10 @@ type fixture struct {
 	roots        *x509.CertPool
 }
 
-func issueFixture(t *testing.T, docType string) fixture {
+func issueFixture(t testing.TB, docType string) fixture {
 	t.Helper()
-	ca, caKey := testcert.CA(t, "Test IACA")
-	ds, dsKey := testcert.Leaf(t, "Test Document Signer", ca, caKey)
+	ca, caKey := testIACA(t)
+	ds, dsKey := testDocumentSigner(t, ca, caKey)
 	deviceKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatal(err)
@@ -73,18 +75,18 @@ type flow struct {
 	req    DocRequest
 }
 
-func establish(t *testing.T, docType string, elements map[string][]string, opts ...DeviceOption) flow {
+func establish(t testing.TB, docType string, elements map[string][]string, opts ...DeviceOption) flow {
 	t.Helper()
 	return establishWith(t, docType, elements, opts, nil)
 }
 
 // establishReader is establish with reader options.
-func establishReader(t *testing.T, docType string, elements map[string][]string, opts ...ReaderOption) flow {
+func establishReader(t testing.TB, docType string, elements map[string][]string, opts ...ReaderOption) flow {
 	t.Helper()
 	return establishWith(t, docType, elements, nil, opts)
 }
 
-func establishWith(t *testing.T, docType string, elements map[string][]string, deviceOpts []DeviceOption, readerOpts []ReaderOption) flow {
+func establishWith(t testing.TB, docType string, elements map[string][]string, deviceOpts []DeviceOption, readerOpts []ReaderOption) flow {
 	t.Helper()
 	holder, err := NewDeviceSession(nil, deviceOpts...)
 	if err != nil {
@@ -582,4 +584,50 @@ func mustMarshal(t *testing.T, v any) []byte {
 		t.Fatal(err)
 	}
 	return b
+}
+
+// testIACA is an IACA certificate with the countryName Annex B
+// requires, and its key.
+func testIACA(t testing.TB) (*x509.Certificate, *ecdsa.PrivateKey) {
+	t.Helper()
+	return testCert(t, pkix.Name{CommonName: "Test IACA", Country: []string{"SG"}}, nil, nil, true, nil)
+}
+
+// testDocumentSigner is a document signer certificate under ca, in the
+// same country, with extended key usages ekus.
+func testDocumentSigner(t testing.TB, ca *x509.Certificate, caKey *ecdsa.PrivateKey, ekus ...asn1.ObjectIdentifier) (*x509.Certificate, *ecdsa.PrivateKey) {
+	t.Helper()
+	return testCert(t, pkix.Name{CommonName: "Test Document Signer", Country: []string{"SG"}}, ca, caKey, false, ekus)
+}
+
+func testCert(t testing.TB, subject pkix.Name, parent *x509.Certificate, parentKey *ecdsa.PrivateKey, isCA bool, ekus []asn1.ObjectIdentifier) (*x509.Certificate, *ecdsa.PrivateKey) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	serial, err := rand.Int(rand.Reader, big.NewInt(1<<62))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: serial, Subject: subject,
+		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(24 * time.Hour),
+		KeyUsage: x509.KeyUsageDigitalSignature, UnknownExtKeyUsage: ekus,
+	}
+	if isCA {
+		tmpl.IsCA, tmpl.BasicConstraintsValid, tmpl.KeyUsage = true, true, x509.KeyUsageCertSign|x509.KeyUsageCRLSign
+	}
+	if parent == nil {
+		parent, parentKey = tmpl, key
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, parent, &key.PublicKey, parentKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cert, key
 }

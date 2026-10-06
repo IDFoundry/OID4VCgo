@@ -30,7 +30,9 @@ var (
 
 	// ErrDeclined is ReaderSession.Verify's result when the mdoc ends
 	// the session (status 20) instead of responding: the user declined,
-	// or the holder had nothing matching the request.
+	// or the holder had nothing matching the request. A status message
+	// isn't encrypted (§9.1.1.4), so anyone within radio range can send
+	// one: don't treat it as the holder's authenticated decision.
 	ErrDeclined = errors.New("proximity: mdoc terminated the session without a response")
 )
 

@@ -70,7 +70,10 @@ func verifyFixture(t *testing.T, fx fixture) error {
 func TestIACASubjectChecks(t *testing.T) {
 	signed := time.Now().Add(-time.Minute)
 	name := func(cn, c, st string) pkix.Name {
-		n := pkix.Name{CommonName: cn, Country: []string{c}}
+		n := pkix.Name{CommonName: cn}
+		if c != "" {
+			n.Country = []string{c}
+		}
 		if st != "" {
 			n.Province = []string{st}
 		}
@@ -86,6 +89,7 @@ func TestIACASubjectChecks(t *testing.T) {
 		{"same state", name("IACA", "US", "CA"), name("DS", "US", "CA"), ""},
 		{"different state", name("IACA", "US", "CA"), name("DS", "US", "NY"), "stateOrProvinceName"},
 		{"state on one side only", name("IACA", "US", ""), name("DS", "US", "NY"), ""},
+		{"neither has a country", name("IACA", "", ""), name("DS", "", ""), "countryName"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

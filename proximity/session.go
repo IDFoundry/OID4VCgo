@@ -232,6 +232,11 @@ func receive(cs *cipherState, msg []byte) ([]byte, *uint64, error) {
 	if err != nil {
 		return nil, nil, err
 	}
+	if data == nil {
+		// An empty plaintext decrypts to nil, which callers read as a
+		// status-only message: it's data, if empty.
+		data = []byte{}
+	}
 	return data, sd.Status, nil
 }
 
