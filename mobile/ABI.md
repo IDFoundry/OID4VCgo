@@ -362,6 +362,41 @@ signs during `Respond`. A malformed request is `protocol`.
 `require_trusted_mdoc_reader`, `MdocCandidates`, MdocPresentation and
 `development_roots` were added within ABI version 12: they add to it without changing anything there.
 
+## ProximityPresentation
+
+An ISO/IEC 18013-5 in-person presentation, from the holder's side: the
+holder shows a QR code, a reader scans it and connects over BLE, and
+the reader asks for an mdoc. The app owns the BLE transport, in mdoc
+peripheral server mode: it advertises the service UUID, is the GATT
+server, reassembles each message from its chunks, and hands it to
+`HandleMessage`. Go does the rest. `Wallet.StartProximityPresentation()`
+starts a session. Steps: `Engagement`, then `HandleMessage` for each
+message, then `Respond` or `Terminate` on the `request` event. One
+request per session. Every method is safe to call from any thread.
+
+| Method | Result |
+|---|---|
+| `Engagement()` | `{"qr_code", "service_uuid", "ble_mode"}`: the QR code's text (`mdoc:` and the DeviceEngagement), the BLE service UUID to advertise, and `"peripheral_server"` |
+| `HandleMessage(op, message)` | `{"event", "send", "reason", "error"}`. If `send` is present, it's the base64 message to send the reader. `event` is `request` (show `Request`), `ended` (send `send`, then disconnect) or `none`. `reason`, for `ended`, is `reader_ended` (the reader ended the session first) or `error`. `error` is then the failing call's text: `protocol` for a bad message, `untrusted_verifier` for a reader `require_trusted_mdoc_reader` refuses |
+| `Request()` | `{"reader": {"status", "name", "chain", "error"}, "documents": [{"doctype", "elements": [{"namespace", "identifier", "retain"}], "credentials": [summary]}]}`, in the request's order. `reader.status` is `trusted` (its certificate chains to `mdoc_reader_roots` and passes `mdoc_reader_require_eku`), `untrusted` (signed by a certificate that doesn't), `unauthenticated` (not signed) or `invalid` (a signature that doesn't verify for this session). `name` is the certificate's subject common name, the reader's verified name only when `trusted`. `chain` is the certificates, leaf first, as base64 DER. `error` says why the reader isn't `trusted`. Each summary has `shown_to_verifier` (this reader, known by its certificate, was shown it before; never for an unsigned one) and `linkable_here` |
+| `Respond(op, document, credentialID, elementsJSON)` | `{"send", "linkable"}`: send `send`, the encrypted DeviceResponse, which ends the session, then disconnect. `linkable` is whether the copy presented had been seen by another Verifier. On an error, nothing is sent and the session goes on |
+| `Terminate()` | `{"send"}`: the holder declined, cancelled or timed out. Send `send` (status 20) if a reader is connected, then disconnect. Nothing is disclosed |
+
+`elementsJSON` and `document` are as in MdocPresentation. The
+credential's next unused copy is presented, recorded as shown to the
+reader by its certificate, or to a reader of that session alone when it
+didn't sign. The holder key signs during `Respond`. An mDL must release
+its mandatory elements to an unauthenticated reader (ISO/IEC 18013-5
+§7.2.1), so `require_trusted_mdoc_reader` suits other documents.
+
+The app enforces the timeouts. ISO/IEC 18013-5 recommends allowing at
+least 30 seconds from engagement to the request (§8.2.3), and ending a
+session after at least 300 seconds of inactivity (§9.1.1.4). The
+transport's own rules (chunking, the State characteristic, not
+reconnecting after a disconnect) are in `proximity/README.md`.
+
+ProximityPresentation was added within ABI version 12.
+
 ## Other functions
 
 | Function | |

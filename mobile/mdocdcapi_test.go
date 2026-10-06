@@ -80,11 +80,20 @@ func (r testReader) ask(t *testing.T) ([]byte, mdocdcapi.Pending) {
 // withReaderRoots is h with a wallet recognizing r.
 func (h harness) withReaderRoots(t *testing.T, r testReader) harness {
 	t.Helper()
+	return h.withConfig(t, map[string]any{"mdoc_reader_roots": r.caPEM})
+}
+
+// withConfig is h with a wallet configured with settings on top of the
+// test environment's configuration.
+func (h harness) withConfig(t *testing.T, settings map[string]any) harness {
+	t.Helper()
 	var cfg map[string]any
 	if err := json.Unmarshal([]byte(h.env.ConfigJSON()), &cfg); err != nil {
 		t.Fatal(err)
 	}
-	cfg["mdoc_reader_roots"] = r.caPEM
+	for k, v := range settings {
+		cfg[k] = v
+	}
 	text, _ := json.Marshal(cfg)
 	w, err := NewWallet(string(text), h.keys, h.creds, h.env.Provider())
 	if err != nil {
