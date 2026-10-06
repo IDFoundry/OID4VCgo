@@ -233,9 +233,8 @@ All 14 modules reachable by this binary's own scope (`direct_post.jwt`
 + `x509_hash` + `request_uri_signed`) have now been run live. The
 plan's other 2 modules (`negative-test-wrong-expected-origins`,
 `multisigned-one-invalid-signature`) 404 when requested against this
-variant — consistent with the "Scope" section below (DC API/JAR-JSON-
-Serialization-only checks, not something this binary's redirect-flow
-implementation is ever asked to handle).
+variant: they're DC API only, and run under `dc_api.jwt` (see
+"dc_api.jwt").
 
 **Update: all 14 of these are now driven by a committed, repeatable
 tool**, `conformance/wallet-vp/scripts/run-modules`, closing this

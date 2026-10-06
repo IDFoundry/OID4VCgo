@@ -55,7 +55,7 @@ repository's README lists:
 
 ```kotlin
 dependencies {
-    implementation(files("libs/oid4vcwallet-0.7.0.aar"))
+    implementation(files("libs/oid4vcwallet-<version>.aar"))
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:…")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:…")
 }
@@ -63,7 +63,9 @@ dependencies {
 
 To publish a version, run the `wallet-kotlin-release` workflow from the
 commit to publish, with the version: the Swift package's, from the same
-commit. It runs `android/package-kotlin-release.sh`, which:
+commit. A Kotlin release therefore goes with a Swift release from that
+commit: the first one, too, since OID4VCWallet 0.7.0 predates the Kotlin
+library. It runs `android/package-kotlin-release.sh`, which:
 1. builds the release AAR, and the library's AAR and sources jar
 2. builds an app on the AAR as the README says: the file, and the
    libraries the library's POM names
@@ -94,9 +96,11 @@ the commit to publish, with the version (`1.2.3`, versioned apart from
 the Go module). It runs `ios/package-swift-release.sh`, which:
 1. builds the release framework and zips it as the release asset
 2. copies `ios/OID4VCWallet/Sources` across
-3. writes a `Package.swift` naming the asset by URL and checksum
-4. builds the package against the zipped framework, for macOS and the
-   iOS Simulator
+3. builds the package against the zipped framework, for macOS and the
+   iOS Simulator, with `ios/ReadmeExample.swift` as a target of its own
+4. writes a `Package.swift` naming the asset by URL and checksum, and
+   the README, whose example is `ios/ReadmeExample.swift`: edit the
+   README there, not in the package repository
 
 The workflow then commits the result there and creates the tagged
 release. It needs the `WALLET_SWIFT_TOKEN` secret: a fine-grained token

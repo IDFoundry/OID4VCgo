@@ -34,7 +34,8 @@ type Config struct {
 	IssuerRoots *x509.CertPool
 
 	// VerifierTrust decides which Verifiers the wallet answers
-	// (OpenID4VP 1.0 §5.9.3). REQUIRED for StartPresentation.
+	// (OpenID4VP 1.0 §5.9.3). REQUIRED for StartPresentation, and for a
+	// signed request to StartDCAPIPresentation.
 	VerifierTrust wallet.VerifierTrust
 
 	// RegistrarRoots, if set, are the registrars whose registrations of
@@ -54,9 +55,10 @@ type Config struct {
 
 	// MdocReaderRoots, if set, are the mdoc readers the wallet
 	// recognizes when one signs an org-iso-mdoc request
-	// (MdocPresentation.Reader). An unsigned or unrecognized request is
-	// still answered if the holder agrees, shown by its origin — unless
-	// RequireTrustedMdocReader.
+	// (MdocPresentation.Reader) or an in-person one
+	// (ProximityPresentation's reader). An unsigned or unrecognized
+	// request is still answered if the holder agrees, shown by its
+	// origin or as an unknown reader — unless RequireTrustedMdocReader.
 	MdocReaderRoots *x509.CertPool
 	// MdocReaderLeafPolicy, if set, decides whether a certificate under
 	// MdocReaderRoots is a reader's: mdocdcapi.RequireReaderAuthenticationEKU
@@ -64,10 +66,12 @@ type Config struct {
 	// usage, so a certificate issued under the same roots for another
 	// role isn't taken for a reader.
 	MdocReaderLeafPolicy func(leaf *x509.Certificate, chains [][]*x509.Certificate) error
-	// RequireTrustedMdocReader refuses an org-iso-mdoc request no reader
-	// under MdocReaderRoots signed: StartMdocPresentation returns an
-	// error wrapping ErrUntrustedVerifier, and nothing is shown to the
-	// holder. It needs MdocReaderRoots.
+	// RequireTrustedMdocReader refuses an org-iso-mdoc or in-person
+	// request no reader under MdocReaderRoots signed, and nothing is
+	// shown to the holder: StartMdocPresentation returns an error
+	// wrapping ErrUntrustedVerifier, and an in-person session ends with
+	// a ProximityEvent whose Err wraps it, sending the reader a
+	// termination. It needs MdocReaderRoots.
 	RequireTrustedMdocReader bool
 
 	// RequireSignedDCAPIRequests refuses an unsigned OpenID4VP request

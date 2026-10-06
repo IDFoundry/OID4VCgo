@@ -76,8 +76,8 @@ attestations" requirement, distinct from Wallet Attestation above
 don't conflate the two "attestation" requirements. This is now built
 and proven live: `wallet.Wallet.GenerateAttestationProof` plus the
 `attestation` package (Key Attestation JWT issuance per Appendix D.1)
-implement it, and `cmd/conformance-wallet`'s `-attestation-proof` flag
-drives it against the suite's own independent validation — see
+implement it, and `cmd/conformance-wallet`'s `-proof-type attestation`
+and `-proof-type jwt-key-attestation` drive it against the suite's own independent validation — see
 `conformance/wallet/README.md`'s own "Status" section.
 
 See [SPECIFICATIONS.md](SPECIFICATIONS.md) for the exact spec/draft
