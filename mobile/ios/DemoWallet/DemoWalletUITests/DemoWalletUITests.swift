@@ -482,4 +482,58 @@ final class DemoWalletUITests: XCTestCase {
         XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "pending").firstMatch.waitForExistence(timeout: 3))
         XCTAssertEqual(app.descendants(matching: .any).matching(identifier: "credential").count, 0)
     }
+
+    /// Sharing in person: the screen opens over the wallet, showing the QR
+    /// code where there's Bluetooth, and on the Simulator — which has none
+    /// — saying so, with nothing shared.
+    @MainActor
+    func testShareInPerson() async throws {
+        let offer = try await Self.fetch("offer", query: [URLQueryItem(name: "pin", value: "493536"), URLQueryItem(name: "mdoc", value: "1")],
+                                         method: "POST")["offer"] as! String
+        let app = try await launch(offer: offer)
+        let pin = app.textFields["pin"]
+        XCTAssertTrue(pin.waitForExistence(timeout: 20))
+        pin.tap()
+        pin.typeText("493536")
+        app.buttons["receive"].tap()
+        let status = app.staticTexts["status"]
+        XCTAssertTrue(status.waitForExistence(timeout: 60))
+        XCTAssertTrue(status.label.hasPrefix("Received 2"), status.label)
+
+        app.buttons["share-in-person"].tap()
+        let qr = app.images["in-person-qr"]
+        let outcome = app.staticTexts["in-person-outcome"]
+        let deadline = Date().addingTimeInterval(20)
+        while !qr.exists && !outcome.exists && Date() < deadline { try await Task.sleep(for: .milliseconds(250)) }
+        if outcome.exists {
+            XCTAssertTrue(outcome.label.contains("Bluetooth"), outcome.label)
+            app.buttons["in-person-done"].tap()
+        } else {
+            XCTAssertTrue(qr.exists, "neither the QR code nor an outcome")
+            app.buttons["Close"].tap()
+        }
+        XCTAssertTrue(app.buttons["share-in-person"].waitForExistence(timeout: 10), "back on the wallet")
+    }
+
+    /// Reader mode, on in the settings, offers what to ask for.
+    @MainActor
+    func testReaderMode() async throws {
+        let app = try await launch()
+        app.buttons["settings"].tap()
+        let toggle = app.switches["reader-mode"].exists ? app.switches["reader-mode"] : app.buttons["reader-mode"]
+        XCTAssertTrue(toggle.waitForExistence(timeout: 10))
+        let verify = app.buttons["verify-in-person"]
+        if !verify.exists { toggle.tap() }
+        XCTAssertTrue(verify.waitForExistence(timeout: 10), "no Verify with reader mode on")
+        verify.tap()
+        let presets = app.buttons.matching(identifier: "reader-preset")
+        XCTAssertTrue(presets.firstMatch.waitForExistence(timeout: 10))
+        XCTAssertEqual(presets.count, 5)
+        app.buttons["Close"].tap()
+        // Off again, for the other tests.
+        app.buttons["settings"].tap()
+        toggle.tap()
+        XCTAssertTrue(app.buttons["share-in-person"].waitForExistence(timeout: 10))
+        XCTAssertFalse(verify.exists)
+    }
 }
