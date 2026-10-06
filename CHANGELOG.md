@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.33.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.32.0...v0.33.0) (2026-10-06)
+
+
+### ⚠ BREAKING CHANGES
+
+* verifier.VerifyResponseRequest needs ExpectedOrigins whenever Origin is set. Pass the ExpectedOrigins field of the BuildDCAPIAuthorizationRequestResult the request came from, and set Origin to this Verifier's own origin, never to a value from the response's HTTP request.
+
+### Features
+
+* check mdoc reader certificates' purpose and optionally require a trusted reader ([eb7fe8b](https://github.com/IDFoundry/OID4VCgo/commit/eb7fe8b9e3f6959dec47d872376ff53b679ba0f3))
+
+
+### Bug Fixes
+
+* bound the work a Digital Credentials API request can cause ([f2c8bac](https://github.com/IDFoundry/OID4VCgo/commit/f2c8bac0709a87371002f2949b43452219f1442c))
+* **mobile:** warn of linkable presentations in the iOS document provider ([6b2b6c8](https://github.com/IDFoundry/OID4VCgo/commit/6b2b6c8e008f7909c2e2794c9a36f823aad2d253))
+* **proximity:** stop an empty message crashing the reader; check document signers by default ([fef1a60](https://github.com/IDFoundry/OID4VCgo/commit/fef1a60ab17c2226f85d2b366dace8899c5225a5))
+* **proximity:** take the issuer algorithm from its certificate, expose the MSO status ([c854dae](https://github.com/IDFoundry/OID4VCgo/commit/c854daedc81c002c72897ee12ad8ba375e49d841))
+* verify a DC API response's origin against the request; tighten unsigned-request trust ([a054621](https://github.com/IDFoundry/OID4VCgo/commit/a054621379a067c9f6ccfee54e8a92ad0c366ce2))
+
 ## [0.32.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.31.1...v0.32.0) (2026-10-06)
 
 
