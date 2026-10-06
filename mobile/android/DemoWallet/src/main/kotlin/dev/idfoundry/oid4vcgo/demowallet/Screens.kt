@@ -96,13 +96,20 @@ fun DemoApp(model: WalletModel, authorize: suspend (String) -> String, openBrows
     MaterialTheme(colorScheme = if (isSystemInDarkTheme()) darkColorScheme() else lightColorScheme()) { Box(Modifier.semantics { testTagsAsResourceId = true }) {
         var shown by remember { mutableStateOf<String?>(null) }
         var scanning by remember { mutableStateOf(false) }
+        var verifying by remember { mutableStateOf(false) }
         val credential = shown?.let { id -> model.credentials.firstOrNull { it.id == id } }
+        LaunchedEffect(model.engagementToRead) { if (model.engagementToRead != null) verifying = true }
         when {
+            model.inPerson != null -> {
+                KeepScreenOn()
+                InPersonScreen(model)
+            }
+            verifying -> ReaderScreen(model, onClose = { verifying = false })
             scanning -> ScanScreen(onLink = { scanning = false; model.open(it) }, onClose = { scanning = false })
             model.requestPhase != WalletModel.RequestPhase.IDLE -> RequestScreen(model, openBrowser)
             model.phase == WalletModel.Phase.Offered || model.phase == WalletModel.Phase.Receiving -> OfferScreen(model, authorize)
             credential != null -> CredentialScreen(model, credential, onBack = { shown = null })
-            else -> HomeScreen(model, onCredential = { shown = it }, onScan = { scanning = true })
+            else -> HomeScreen(model, onCredential = { shown = it }, onScan = { scanning = true }, onVerify = { verifying = true })
         }
         model.linkToConfirm?.let { link ->
             val request = link.scheme == WalletModel.REQUEST_SCHEME
@@ -121,8 +128,9 @@ fun DemoApp(model: WalletModel, authorize: suspend (String) -> String, openBrows
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HomeScreen(model: WalletModel, onCredential: (String) -> Unit, onScan: () -> Unit) {
+fun HomeScreen(model: WalletModel, onCredential: (String) -> Unit, onScan: () -> Unit, onVerify: () -> Unit = {}) {
     val context = LocalContext.current
+    val shareInPerson = rememberShareInPerson(model)
     Scaffold(
         topBar = {
             TopAppBar(
@@ -133,6 +141,8 @@ fun HomeScreen(model: WalletModel, onCredential: (String) -> Unit, onScan: () ->
                         val text = context.getSystemService(ClipboardManager::class.java).primaryClip?.getItemAt(0)?.text?.toString()
                         text?.let { model.open(Uri.parse(it.trim())) }
                     }) { Text("Paste") }
+                    if (model.readerMode && model.readerAvailable) TextButton(onVerify, Modifier.testTag("verify-in-person")) { Text("Verify") }
+                    if (model.configured) TextButton(shareInPerson, Modifier.testTag("share-in-person")) { Text("In person") }
                     IconButton(onScan, Modifier.testTag("scan")) { Icon(Icons.Default.QrCodeScanner, "Scan") }
                 },
             )
@@ -142,7 +152,7 @@ fun HomeScreen(model: WalletModel, onCredential: (String) -> Unit, onScan: () ->
     }
 }
 
-/** The settings: which copy of a credential a presentation uses. */
+/** The settings: which copy of a credential a presentation uses, and reader mode. */
 @Composable
 private fun SettingsMenu(model: WalletModel) {
     var open by remember { mutableStateOf(false) }
@@ -164,6 +174,17 @@ private fun SettingsMenu(model: WalletModel) {
                 modifier = Modifier.testTag("copy-policy-${policy.name}"),
             )
         }
+        HorizontalDivider()
+        DropdownMenuItem(
+            text = { Text(if (model.readerAvailable) "Reader mode: verify others in person" else "Reader mode (needs a reader in the configuration)") },
+            leadingIcon = { Icon(if (model.readerMode) Icons.Default.CheckCircle else Icons.Default.RadioButtonUnchecked, null) },
+            onClick = {
+                model.chooseReaderMode(!model.readerMode)
+                open = false
+            },
+            enabled = model.readerAvailable,
+            modifier = Modifier.testTag("reader-mode"),
+        )
     }
 }
 

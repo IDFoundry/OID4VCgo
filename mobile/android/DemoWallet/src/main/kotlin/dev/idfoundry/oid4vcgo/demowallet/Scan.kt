@@ -47,6 +47,9 @@ import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.common.InputImage
 
 /** Whether [text] is a link the wallet opens: a Credential Offer or a presentation request. */
+/** An mdoc's device engagement QR code ("mdoc:…", ISO/IEC 18013-5 §8.2.2.3), for reader mode. */
+fun mdocEngagement(text: String?): Uri? = text?.trim()?.let(Uri::parse)?.takeIf { it.scheme.equals("mdoc", ignoreCase = true) }
+
 fun walletLink(text: String?): Uri? =
     text?.trim()?.let(Uri::parse)?.takeIf { it.scheme == WalletModel.OFFER_SCHEME || it.scheme == WalletModel.REQUEST_SCHEME }
 
@@ -57,7 +60,7 @@ fun walletLink(text: String?): Uri? =
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ScanScreen(onLink: (Uri) -> Unit, onClose: () -> Unit) {
+fun ScanScreen(onLink: (Uri) -> Unit, onClose: () -> Unit, accept: (String?) -> Uri? = ::walletLink, what: String = "offer or request") {
     BackHandler(onBack = onClose)
     val context = LocalContext.current
     var permitted by remember {
@@ -67,7 +70,7 @@ fun ScanScreen(onLink: (Uri) -> Unit, onClose: () -> Unit) {
     val askCamera = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { permitted = it }
     val pick = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         uri ?: return@rememberLauncherForActivityResult
-        readImage(context, uri, onFound = onLink, onNone = { message = "No offer or request QR code in that image." })
+        readImage(context, uri, accept, onFound = onLink, onNone = { message = "No $what QR code in that image." })
     }
     LaunchedEffect(Unit) { if (!permitted) askCamera.launch(Manifest.permission.CAMERA) }
     Scaffold(
@@ -79,7 +82,7 @@ fun ScanScreen(onLink: (Uri) -> Unit, onClose: () -> Unit) {
         },
     ) { padding ->
         Box(Modifier.fillMaxSize().padding(padding)) {
-            if (permitted) CameraScanner(onLink) else Text("The camera isn't allowed: choose an image instead.", Modifier.align(Alignment.Center))
+            if (permitted) CameraScanner(onLink, accept) else Text("The camera isn't allowed: choose an image instead.", Modifier.align(Alignment.Center))
             Button(
                 { pick.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
                 Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(16.dp).testTag("scan-image"),
@@ -89,7 +92,7 @@ fun ScanScreen(onLink: (Uri) -> Unit, onClose: () -> Unit) {
 }
 
 @Composable
-private fun CameraScanner(onLink: (Uri) -> Unit) {
+private fun CameraScanner(onLink: (Uri) -> Unit, accept: (String?) -> Uri?) {
     val context = LocalContext.current
     val owner = LocalLifecycleOwner.current
     val scanner = remember { BarcodeScanning.getClient(BarcodeScannerOptions.Builder().setBarcodeFormats(Barcode.FORMAT_QR_CODE).build()) }
@@ -111,7 +114,7 @@ private fun CameraScanner(onLink: (Uri) -> Unit) {
                     }
                     scanner.process(InputImage.fromMediaImage(image, proxy.imageInfo.rotationDegrees))
                         .addOnSuccessListener { codes ->
-                            codes.firstNotNullOfOrNull { walletLink(it.rawValue) }?.let {
+                            codes.firstNotNullOfOrNull { accept(it.rawValue) }?.let {
                                 if (!found) {
                                     found = true
                                     onLink(it)
@@ -130,11 +133,11 @@ private fun CameraScanner(onLink: (Uri) -> Unit) {
     )
 }
 
-private fun readImage(context: Context, uri: Uri, onFound: (Uri) -> Unit, onNone: () -> Unit) {
+private fun readImage(context: Context, uri: Uri, accept: (String?) -> Uri?, onFound: (Uri) -> Unit, onNone: () -> Unit) {
     val image = runCatching { InputImage.fromFilePath(context, uri) }.getOrNull() ?: return onNone()
     val scanner = BarcodeScanning.getClient(BarcodeScannerOptions.Builder().setBarcodeFormats(Barcode.FORMAT_QR_CODE).build())
     scanner.process(image)
-        .addOnSuccessListener { codes -> codes.firstNotNullOfOrNull { walletLink(it.rawValue) }?.let(onFound) ?: onNone() }
+        .addOnSuccessListener { codes -> codes.firstNotNullOfOrNull { accept(it.rawValue) }?.let(onFound) ?: onNone() }
         .addOnFailureListener { onNone() }
         .addOnCompleteListener { scanner.close() }
 }
