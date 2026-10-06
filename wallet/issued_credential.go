@@ -73,6 +73,13 @@ type VerifiedIssuedCredential struct {
 	StatusListCWT bool
 }
 
+// issuerClockSkew is how far the wallet's clock may be from the
+// issuer's when it checks a credential's validity window on receipt: an
+// issuer that makes a credential valid from the moment it signs it
+// would otherwise have it refused by a wallet whose clock is a second
+// behind.
+const issuerClockSkew = time.Minute
+
 // VerifyIssuedCredential checks a credential a Credential Issuer just
 // returned, before the Wallet keeps it: that it is signed by a
 // certificate chaining to IssuerRoots (HAIP 1.0 §6.1.1 has the Wallet,
@@ -81,13 +88,6 @@ type VerifiedIssuedCredential struct {
 // proved possession of. A Credential Offer's issuer is not trusted just
 // because it sent the offer (OID4VCI 1.0 §13.5), so neither is what it
 // issues.
-// issuerClockSkew is how far the wallet's clock may be from the
-// issuer's when it checks a credential's validity window on receipt: an
-// issuer that makes a credential valid from the moment it signs it
-// would otherwise have it refused by a wallet whose clock is a second
-// behind.
-const issuerClockSkew = time.Minute
-
 func VerifyIssuedCredential(ctx context.Context, p VerifyIssuedCredentialParams) (VerifiedIssuedCredential, error) {
 	if p.IssuerRoots == nil {
 		return VerifiedIssuedCredential{}, errors.New("wallet: verify issued credential: IssuerRoots is required")

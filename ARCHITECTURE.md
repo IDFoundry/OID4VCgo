@@ -998,9 +998,13 @@ changes whether *every* bullet below is `(done)`.
   18013-5 Annex D byte for byte (hex from Multipaz's `TestVectors.kt`).
   Annex D uses NFC engagement, so those tests drive the transcript's
   internal Handover parameter, though only QR engagement is exposed.
-  The transport — BLE GATT, and chunking — stays in the mobile app; see
-  `proximity/README.md`. Not yet: NFC engagement/handover, BLE L2CAP,
-  reader authentication, and more than one request per session.
+  Reader authentication (§9.1.4): `WithReaderAuth` signs each request,
+  and `VerifyReaderAuth` checks it against the holder's `ReaderTrust`,
+  sharing `internal/readerauth` with `mdocdcapi`. A request the holder
+  can't parse or answer gets an in-session `ErrorResponse` (status 11
+  or 12). The transport — BLE GATT, and chunking — stays in the mobile
+  app; see `proximity/README.md`. Not yet: NFC engagement/handover, BLE
+  L2CAP, and more than one request per session.
 - **`verifier`** (done, `dc+sd-jwt`+`mso_mdoc`) — the OID4VP Verifier role.
   `BuildAuthorizationRequest` builds and signs a HAIP-§5-profiled
   redirect-flow Authorization Request: a JAR Request Object
@@ -1418,11 +1422,11 @@ changes whether *every* bullet below is `(done)`.
   attaching to the suite's own network, a config generator producing
   throwaway key material rather than committing any) and its own
   AGENTS.md documentation convention. All four binaries exist, compile,
-  are unit-tested, and have each been confirmed live against a real,
+  and have each been confirmed live against a real,
   locally-run OIDF conformance suite instance — not just against each
   other: `cmd/conformance-verifier` (OID4VP 1.0 Final/HAIP Verifier
-  role), `cmd/conformance-wallet-vp` (OID4VP Wallet role,
-  `direct_post.jwt` module list), `cmd/conformance-issuer` (OID4VCI 1.0
+  role), `cmd/conformance-wallet-vp` (OID4VP Wallet role, the
+  `direct_post.jwt` module lists and the three `dc_api.jwt` ones), `cmd/conformance-issuer` (OID4VCI 1.0
   Final/HAIP Issuer role — every OID4VCI-specific module, the generic
   FAPI2SP battery, the base non-HAIP plan, and `mso_mdoc`), and
   `cmd/conformance-wallet` (OID4VCI 1.0 Final/HAIP Wallet role — every
@@ -1432,11 +1436,13 @@ changes whether *every* bullet below is `(done)`.
   surfaced and fixed real gaps, in this repo and (twice) upstream in
   FAPIgo; module counts change as coverage grows, so see
   `conformance/README.md` for current status per role rather than
-  trusting a specific number repeated here. The one gap every role's
-  own README calls out identically: actually invoking the W3C Digital
-  Credentials API for the `dc_api.jwt`/DC API module lists is a
-  browser/OS platform concern outside any Go library's own transport
-  responsibilities, not something left undone here. The local suite
+  trusting a specific number repeated here. `cmd/conformance-wallet`
+  is unit-test-free by design, an outbound-driving CLI tool whose own
+  verification is the live suite run; the other three are unit-tested.
+  The Wallet-VP `dc_api.jwt` lists run with a scripted stand-in for the
+  browser's Digital Credentials API (`conformance/wallet-vp/README.md`'s
+  "dc_api.jwt"); the Verifier's `dc_api.jwt` lists and the OID4VCI
+  Wallet's `issuer_initiated_dc_api` aren't driven. The local suite
   checkout itself needs periodic re-syncing against upstream — it was
   found 569 commits/two releases stale at one point, which had masked
   three real bugs (fixed once the suite was upgraded and the full

@@ -93,6 +93,9 @@
 //     response.
 //   - ISO/IEC 18013-7 (online presentation), OpenID4VP over the Digital
 //     Credentials API, and transaction data.
-//   - Mobile bindings: the exported API uses only bytes, strings,
-//     crypto.Signer and *x509.CertPool, for a later gomobile wrapper.
+//
+// The mobile module wraps this package for apps (ProximityPresentation
+// and ProximityReader in the Swift and Kotlin libraries, through
+// walletflow.StartProximityPresentation on the holder's side), and they
+// carry the BLE GATT transport.
 package proximity
