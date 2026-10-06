@@ -8,8 +8,9 @@ into a verifiable digital credential in **both** `mso_mdoc` and
 > **Status:** complete end to end — passport verification, both
 > credential formats, the OID4VCI issuer, a browser wallet and a
 > command-line wallet, and an OpenID4VP verifier demonstrating both
-> trust paths. An iOS wallet and
-> live NFC capture are next (see [Roadmap](#roadmap)).
+> trust paths. Wallet apps for iOS and Android are in
+> [`mobile/`](../../mobile); live NFC capture is next (see
+> [Roadmap](#roadmap)).
 
 This is a separate Go module: it's the only code in this repository
 that depends on gmrtd. It builds against this checkout of the library
@@ -670,5 +671,7 @@ generator, planned for gmrtd itself).
 1. ~~**Issuer**~~ — done.
 2. ~~**Wallet CLI**~~ — done.
 3. ~~**Verifier**~~ — done.
-4. **iOS wallet**, then **live NFC capture** with an issuer-chosen Active
-   Authentication challenge.
+4. ~~**Mobile wallets**~~ — done: the iOS and Android demo wallets in
+   [`mobile/`](../../mobile).
+5. **Live NFC capture** with an issuer-chosen Active Authentication
+   challenge.

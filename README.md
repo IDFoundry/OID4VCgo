@@ -51,14 +51,21 @@ FAPIgo" section for the specific list.
 > [conformance/README.md#oidf-certification](conformance/README.md#oidf-certification)
 > for every certified profile.
 
-> **⚠ Pre-1.0, APIs may still change.** Every role package — `issuer`,
-> `wallet`, `verifier`, `credential/sdjwtvc`, `credential/mdoc`,
-> `statuslist`, `attestation`, `dcql`, `oid4vpmdoc`, `haip`, `storage` —
-> is implemented and tested. `mdocdcapi`, both sides of ISO mdoc over
-> the Digital Credentials API (Safari's protocol), is new and not yet
-> proven against a real browser and wallet. All four roles were OpenID Certified as
-> 0.12.0 (see above), and every later release is checked against the
-> same OIDF test plans by the daily conformance workflows.
+> **⚠ Pre-1.0, APIs may still change.** Every package — `issuer`,
+> `wallet`, `verifier`, `walletflow`, `credential/sdjwtvc`,
+> `credential/mdoc`, `statuslist`, `attestation`, `dcql`, `oid4vpmdoc`,
+> `mdocdcapi`, `proximity`, `registration`, `haip`, `storage` — and the
+> separate `mobile` module are implemented and tested. All four roles
+> were OpenID Certified as 0.12.0 (see above), and every later release
+> is checked against the same OIDF test plans by the daily conformance
+> workflows. Those certified profiles are the redirect flows: the
+> Digital Credentials API (OpenID4VP's `dc_api.jwt` and `mdocdcapi`'s
+> `org-iso-mdoc`) and in-person presentation (`proximity`) aren't
+> certified. `org-iso-mdoc` has run in Safari on an iPhone, with the
+> demo iOS wallet as its document provider, and OpenID4VP over the DC
+> API in Chrome on the Android emulator, with the demo Android wallet
+> as its Credential Manager provider; `proximity` is tested against
+> ISO/IEC 18013-5 Annex D, not yet between two devices.
 > See [ARCHITECTURE.md](ARCHITECTURE.md) for the full package-by-package
 > status and what, if anything, remains.
 

@@ -163,7 +163,9 @@ signed, with `untrusted_verifier`; it needs `mdoc_reader_roots`.
 `require_signed_dcapi_requests` refuses an unsigned OpenID4VP request
 over the Digital Credentials API (`StartDCAPIPresentation`) with
 `untrusted_verifier`: off by default, since HAIP requires a wallet to
-support unsigned requests.
+support unsigned requests. The Kotlin library sets it
+(`requireSignedDCAPIRequests`); the Swift package doesn't, since Safari
+asks only with `org-iso-mdoc`.
 `development`
 allows services on loopback addresses. `development_roots`, only with
 `development`, are CAs the wallet's HTTPS requests trust besides the

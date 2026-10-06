@@ -9,8 +9,8 @@ roles below are now driven live. For the W3C Digital Credentials API
 (`dc_api.jwt`) module lists, the Wallet-VP driver stands in for the
 browser (see `wallet-vp/README.md`'s "dc_api.jwt"): that checks the
 wallet's protocol handling against the suite, but no real browser or
-platform hand-off. The Issuer role's `issuer_initiated_dc_api` isn't
-driven.
+platform hand-off. The OID4VCI Wallet role's `issuer_initiated_dc_api`
+and the Verifier's `dc_api.jwt` lists aren't driven.
 
 Conformance testing is tracked separately per role — passing one role's
 plan says nothing about another's, even where both sides share this
@@ -84,14 +84,15 @@ specific reason to suspect drift, not just when something seems off.
   `verifier.BuildAuthorizationRequest` never set `client_metadata`'s
   own `vp_formats_supported`, a field OID4VP marks REQUIRED here. See
   `verifier/README.md`.
-- **`wallet-vp/`** — OID4VP 1.0 Final/HAIP Wallet role, direct_post.jwt
-  module list only (`oid4vp-1final-wallet-haip-test-plan`):
+- **`wallet-vp/`** — OID4VP 1.0 Final/HAIP Wallet role, the
+  direct_post.jwt module list and the three dc_api.jwt ones
+  (`oid4vp-1final-wallet-haip-test-plan`; see `wallet-vp/README.md`'s
+  "dc_api.jwt"):
   `cmd/conformance-wallet-vp` stands up `wallet`'s own presentation
   half behind real HTTP; the suite plays Verifier. Confirmed live end
   to end against `cmd/conformance-verifier` itself, and **all 14
-  modules this binary's own scope can reach are now run live** (the
-  other 2 are DC API/JAR-JSON-Serialization-only, correctly 404 for
-  this variant). Five real gaps found and fixed along the way: the
+  direct_post.jwt modules are now run live** (the other 2 are DC API
+  only, 404 for this variant, and run under dc_api.jwt). Five real gaps found and fixed along the way: the
   same x5c-header/self-signed-leaf pair already found for
   `credential/sdjwtvc.Issue`, two request-object validation gaps this
   binary's own `requestobject.go` had — a request carrying
