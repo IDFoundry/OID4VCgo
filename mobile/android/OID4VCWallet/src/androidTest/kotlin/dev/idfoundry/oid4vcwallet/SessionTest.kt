@@ -366,7 +366,7 @@ class SessionTest {
 const val SD_JWT = "dc+sd-jwt"
 
 /** The TestEnv's Wallet Provider, as the app's WalletProvider. */
-private class ProviderOf(env: TestEnv) : WalletProvider {
+internal class ProviderOf(env: TestEnv) : WalletProvider {
     private val provider = env.env.provider()
 
     override suspend fun walletAttestation(clientID: String, instanceKey: ByteArray): String =
