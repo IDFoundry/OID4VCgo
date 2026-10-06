@@ -564,7 +564,8 @@ final class WalletModel {
             credentials = try await wallet.credentials()
             await loadClaims(reload: [])
             // In the background: the list needn't wait for iOS.
-            let held = credentials, roots = config?.wallet.mdocReaderRoots ?? ""
+            let held = credentials
+            let roots = config?.wallet.mdocReaderRoots ?? ""
             Task.detached { await DocumentRegistrations.sync(held, readerRootsPEM: roots) }
         } catch {
             phase = .failed("Couldn't list credentials: " + Self.describe(error))

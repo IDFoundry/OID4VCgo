@@ -831,7 +831,8 @@ public final class MdocPresentation: @unchecked Sendable {
     public static func origin(of url: URL) -> String? {
         guard let c = URLComponents(url: url, resolvingAgainstBaseURL: false), let scheme = c.scheme?.lowercased(),
               let host = c.encodedHost ?? c.host, !host.isEmpty else { return nil }
-        let defaultPort = scheme == "https" ? 443 : (scheme == "http" ? 80 : nil)
+        let defaultPorts = ["https": 443, "http": 80]
+        let defaultPort = defaultPorts[scheme]
         guard let port = c.port, port != defaultPort else { return "\(scheme)://\(host)" }
         return "\(scheme)://\(host):\(port)"
     }

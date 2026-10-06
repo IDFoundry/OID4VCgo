@@ -17,5 +17,7 @@ struct DocumentProvider: IdentityDocumentProvider {
 
     /// The app keeps the registrations up to date whenever its
     /// credentials change; there's nothing more to do here.
-    func performRegistrationUpdates() async {}
+    func performRegistrationUpdates() async {
+        // Nothing to do: WalletModel.refresh re-registers on every change.
+    }
 }
