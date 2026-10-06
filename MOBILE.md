@@ -799,6 +799,30 @@ issuances.
 - **Host tests:** what doesn't load Go — error parsing, the provider
   bridge, origins — runs on the host JVM (`testDebugUnitTest`).
 
+### Phase 8 findings: the credential store
+
+Phase 5 left Android's encryption at rest open: Android has no per-file
+protection class like iOS's complete protection, only file-based
+encryption, readable from the first unlock after a boot. So
+`FileCredentialStore` encrypts each record itself:
+
+- **Encryption:** AES-256-GCM under an Android Keystore key, the
+  record's ID as associated data, so a record copied under another ID,
+  or altered, doesn't decrypt. Its file is a version byte, the IV and
+  the ciphertext.
+- **Protection:** by default the key works only while the device is
+  unlocked (`setUnlockedDeviceRequired`). On the emulator, with the
+  screen locked, a record neither reads nor writes; unlocked, it does —
+  iOS's complete protection. `Protection.AFTER_FIRST_UNLOCK` drops the
+  requirement, for an app that must read credentials while locked: file
+  encryption alone, iOS's "until first user authentication".
+- **Backups:** the standard store is in `noBackupFilesDir`, which neither
+  backups nor device transfer copy, as iOS's store is excluded from
+  backups. A restored record without its key wouldn't decrypt anyway,
+  and its holder key doesn't move either.
+- **Writes** go to a temporary file renamed over the record, so a
+  reader never sees half of one.
+
 ### Open items
 
 - Publish to Maven Central.
