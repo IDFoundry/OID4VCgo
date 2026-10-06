@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.32.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.31.1...v0.32.0) (2026-10-06)
+
+
+### Features
+
+* **mdocdcapi:** answer an org-iso-mdoc request as a wallet ([1efa2c4](https://github.com/IDFoundry/OID4VCgo/commit/1efa2c48421c173bc784c7ac31bd1767a76bd6ce))
+* **mdocdcapi:** verify ISO mdoc presented over the Digital Credentials API ([bbf2925](https://github.com/IDFoundry/OID4VCgo/commit/bbf2925891b9ab6514434cdcb862a20a4dd61978))
+* **wallet:** accept unsigned and multi-signed DC API requests ([6ac6709](https://github.com/IDFoundry/OID4VCgo/commit/6ac67092872584c59c015c833a581c3ee6e03355))
+* **walletflow:** present an mdoc over the Digital Credentials API ([de2fcec](https://github.com/IDFoundry/OID4VCgo/commit/de2fcec8f0564277b05208401f73b7a38e005723))
+
 ## [0.31.1](https://github.com/IDFoundry/OID4VCgo/compare/v0.31.0...v0.31.1) (2026-10-05)
 
 
