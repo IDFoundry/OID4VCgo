@@ -161,6 +161,47 @@ func TestCompleteAuthorization_StartsOverAfterATokenFailure(t *testing.T) {
 	}
 }
 
+// An authorization the holder abandoned — they closed the issuer's
+// page — is begun again, and the new one completes.
+func TestBeginAuthorization_AgainAfterTheHolderLeft(t *testing.T) {
+	f := newFixture(t, walletflowtest.Options{})
+	w, _ := faultyWallet(t, f, testVerifier{}, nil)
+	ctx := context.Background()
+	s, err := w.StartIssuance(ctx, f.env.AuthorizationCodeOffer(t, walletflowtest.SDJWTConfigurationID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s.Close(ctx) }()
+	abandoned, err := s.BeginAuthorization(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys := f.keys.Len()
+	again, err := s.BeginAuthorization(ctx)
+	if err != nil {
+		t.Fatalf("BeginAuthorization again = %v", err)
+	}
+	if again == abandoned {
+		t.Error("the same authorization URL again")
+	}
+	if n := f.keys.Len(); n != keys {
+		t.Errorf("beginning again made keys: %d, then %d", keys, n)
+	}
+	redirect, err := f.env.Approve(ctx, again)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CompleteAuthorization(ctx, redirect); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.BeginAuthorization(ctx); !errors.Is(err, walletflow.ErrWrongStep) {
+		t.Errorf("BeginAuthorization once authorized = %v, want ErrWrongStep", err)
+	}
+	if result, err := s.RequestCredentials(ctx); err != nil || len(result.Credentials) != 1 {
+		t.Fatalf("RequestCredentials = %+v, %v", result, err)
+	}
+}
+
 // One credential the issuer refuses doesn't hold up the others.
 func TestRequestCredentials_OneRefusalDoesntBlockTheRest(t *testing.T) {
 	f := newFixture(t, walletflowtest.Options{})
