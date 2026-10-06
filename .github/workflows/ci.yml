@@ -252,7 +252,10 @@ jobs:
           arch: x86_64
           disable-animations: true
           working-directory: mobile/android
-          script: ./gradlew --console=plain :OID4VCWallet:connectedDebugAndroidTest -Poid4vc.testFramework=true
+          # A PIN: holder keys need a secure lock screen.
+          script: |
+            adb shell locksettings set-pin 1111
+            ./gradlew --console=plain :OID4VCWallet:connectedDebugAndroidTest -Poid4vc.testFramework=true
 
       # What an app ships: the release build, without TestEnv.
       - name: build the AAR (release build)

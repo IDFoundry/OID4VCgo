@@ -751,6 +751,32 @@ on an emulator, in CI too (`mobile-android`).
   instrumented, on an emulator: there's no host slice like the
   XCFramework's macOS one for `swift test`.
 
+### Phase 8 findings: the Android Keystore key store
+
+`AndroidKeystoreKeyStore` is `KeychainKeyStore`'s counterpart, and
+`CheckKeyStore` passes with it.
+
+- **Keys:** P-256 in StrongBox where the device has it (`Options.strongBox`,
+  preferred by default; required or off), else the TEE. They sign Go's
+  SHA-256 digests with `NONEwithECDSA`, which returns the DER `crypto.Signer`
+  expects. Every key needs the device unlocked
+  (`setUnlockedDeviceRequired`), as iOS's `WhenUnlockedThisDeviceOnly`.
+- **Holder keys:** each signature needs the holder's strong biometric or
+  screen lock (`setUserAuthenticationParameters(0, …)`, API 30), and a new
+  fingerprint doesn't void them, as iOS's user presence. Keystore
+  authorizes one `Signature` at a time, so the store hands it to the app's
+  `HolderAuthenticator` before signing, on Go's thread, which waits.
+  `BiometricPromptAuthenticator` is the framework prompt over the app's
+  activity: from API 30 it takes the screen lock with a CryptoObject, so
+  the SDK needs no AndroidX biometric library. A signature the
+  authenticator didn't authorize is refused by Keystore itself.
+- **Instance and DPoP keys** sign silently, as on iOS.
+- **IDs:** a key's ID is its alias after a prefix; the store lists and
+  sweeps only its own prefix's keys (`deleteKeys(except:)`).
+- **The emulator:** its Keystore is software, with no StrongBox; holder
+  keys still require authentication there, given a PIN (CI sets one).
+  StrongBox, the TEE and the prompt itself are for the device run.
+
 ### Open items
 
 - Publish to Maven Central.
