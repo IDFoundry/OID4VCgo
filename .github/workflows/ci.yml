@@ -277,10 +277,10 @@ jobs:
       - name: build the AAR (release build)
         run: mobile/build-aar.sh
 
-      - name: build the library (release)
+      - name: build the library (release), and its host tests
         working-directory: mobile/android
         run: |
-          ./gradlew --console=plain :OID4VCWallet:assembleRelease
+          ./gradlew --console=plain :OID4VCWallet:assembleRelease :OID4VCWallet:testDebugUnitTest
           unzip -p OID4VCWallet/build/outputs/aar/OID4VCWallet-release.aar libs/classes.jar > "$RUNNER_TEMP/go.jar"
           if unzip -l "$RUNNER_TEMP/go.jar" | grep -q TestEnv; then
             echo "::error::the release library carries TestEnv"; exit 1

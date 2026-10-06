@@ -780,6 +780,25 @@ on an emulator, in CI too (`mobile-android`).
   keys still require authentication there, given a PIN (CI sets one).
   StrongBox, the TEE and the prompt itself are for the device run.
 
+### Phase 8 findings: the Kotlin sessions
+
+`Wallet`, `Issuance`, `Presentation` and `MdocPresentation` are the
+Swift package's, in Kotlin: suspend functions, results as data classes
+(kotlinx.serialization), times as `java.time.Instant`, claims as
+`JsonElement`. The Swift session tests pass on the emulator against
+`TestEnv`, with Android Keystore keys: both grants, presentation and its
+selection rules, deferred credentials across a relaunch, resuming an
+authorization after the app was killed, status, batches, registrations,
+refresh, the per-Verifier copy policy, cancellation and four concurrent
+issuances.
+
+- **A dropped issuance:** Swift's `Issuance` closes itself in `deinit`;
+  Kotlin has none, and `java.lang.ref.Cleaner` needs API 33. An issuance
+  dropped without `close()` keeps its instance and DPoP keys until
+  `sweepOrphanedKeys` at the next launch.
+- **Host tests:** what doesn't load Go — error parsing, the provider
+  bridge, origins — runs on the host JVM (`testDebugUnitTest`).
+
 ### Open items
 
 - Publish to Maven Central.
