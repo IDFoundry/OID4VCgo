@@ -40,6 +40,8 @@ abstract class UnpackMobile : DefaultTask() {
 }
 
 val unpackMobile = tasks.register<UnpackMobile>("unpackMobile") {
+    group = "build"
+    description = "Unpacks the gomobile AAR into this library."
     aar.set(mobileAAR)
     jniLibs.set(layout.buildDirectory.dir("mobile/jniLibs"))
     classes.set(layout.buildDirectory.file("mobile/classes.jar"))
