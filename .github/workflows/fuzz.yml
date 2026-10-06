@@ -96,6 +96,9 @@ jobs:
           - id: proximity-handle-session-data
             pkg: ./proximity
             name: FuzzHandleSessionData
+          - id: proximity-reader-verify
+            pkg: ./proximity
+            name: FuzzReaderVerify
           - id: sdjwtvc-parse
             pkg: ./credential/sdjwtvc
             name: FuzzParse
