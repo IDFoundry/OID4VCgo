@@ -23,6 +23,9 @@
 //	POST /revoke                 → revokes every credential issued so far
 //	POST /revoke-grants          → revokes every authorization code grant so far:
 //	                               refreshing a credential is then reissue_required
+//	GET  /dcapi?format=<fmt>     → a page asking over the Digital Credentials API
+//	                               (dcapi.go), for the Android demo's
+//	                               Credential Manager provider
 //
 // Every service is HTTPS with one self-signed certificate, written to
 // -cert for the Simulator to trust (xcrun simctl keychain booted
@@ -96,6 +99,7 @@ func run(addr, redirect, certOut string) error {
 		"provider_url": provider.URL,
 	}
 	mux := services{env: env, v: v, rv: rv}.routes(config)
+	(&dcapiRequests{v: v, requests: map[string]*walletflowtest.DCAPIRequest{}, results: map[string]map[string]any{}}).routes(mux, env)
 	control := httptest.NewUnstartedServer(mux)
 	if err := control.Listener.Close(); err != nil {
 		return err
