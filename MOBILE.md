@@ -854,6 +854,27 @@ Verifier received `family_name`.
 - **Permissions:** the library declares `USE_BIOMETRIC`, for its
   prompt; the demo `INTERNET` and `CAMERA`, and backs nothing up.
 
+### Phase 8 findings: publishing
+
+`wallet-kotlin-release.yml` publishes `dev.idfoundry:oid4vcwallet` into
+the Maven repository OID4VCgo-wallet-kotlin's GitHub Pages serve, as
+`wallet-swift-release.yml` publishes the Swift package, from the same
+commit and with the same version.
+
+- **One artifact:** the AAR holds the Kotlin API, the Go bindings
+  (`libs/`) and the Go library for arm64 and x86_64, with a sources jar;
+  its POM names the Kotlin standard library, coroutines and
+  serialization.
+- **Kotlin 2.2:** a library compiled with the newest Kotlin writes
+  metadata only that compiler, or the next, can read: an app on AGP 9's
+  own Kotlin (2.2) failed to compile against it. The library is built for
+  Kotlin 2.2 — language and API version, and its standard library — so
+  it can.
+- **Checked as published:** the release script builds an app depending
+  on the version from a staging copy of the repository before it touches
+  the real one, and refuses a version the repository already has. CI runs
+  it on every change.
+
 ### Open items
 
 - Publish to Maven Central.
