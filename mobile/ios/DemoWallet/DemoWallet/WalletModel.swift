@@ -39,7 +39,7 @@ final class WalletModel {
     /// Which copy of a credential a presentation uses, as chosen in the
     /// app's settings; it overrides the configuration's.
     private(set) var copyPolicy: WalletConfiguration.CopyPolicy = .perPresentation
-    private static let copyPolicyKey = "demo-copy-policy"
+    private static let copyPolicyKey = SharedWallet.copyPolicyKey
 
     /// Not configured: there's no wallet to make.
     private struct NotConfigured: Error {}
@@ -57,7 +57,7 @@ final class WalletModel {
     func setCopyPolicy(_ policy: WalletConfiguration.CopyPolicy) {
         guard policy != copyPolicy, presentation == nil else { return }
         copyPolicy = policy
-        UserDefaults.standard.set(policy.rawValue, forKey: Self.copyPolicyKey)
+        SharedWallet.defaults.set(policy.rawValue, forKey: Self.copyPolicyKey)
         do {
             wallet = try makeWallet()
         } catch {
@@ -92,9 +92,9 @@ final class WalletModel {
             // A reset (OID4VC_DEMO_RESET) starts from the configuration's
             // copy policy too.
             if ProcessInfo.processInfo.environment["OID4VC_DEMO_RESET"] == "1" {
-                UserDefaults.standard.removeObject(forKey: Self.copyPolicyKey)
+                SharedWallet.defaults.removeObject(forKey: Self.copyPolicyKey)
             }
-            if let saved = UserDefaults.standard.string(forKey: Self.copyPolicyKey),
+            if let saved = SharedWallet.defaults.string(forKey: Self.copyPolicyKey),
                let policy = WalletConfiguration.CopyPolicy(rawValue: saved) {
                 copyPolicy = policy
             } else {

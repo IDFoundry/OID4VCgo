@@ -1,10 +1,12 @@
 package mobile
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 
+	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/walletflow"
 )
 
@@ -78,6 +80,37 @@ func (p *MdocPresentation) Request() string {
 	}
 	text, _ := marshal(out)
 	return text
+}
+
+// MdocCandidates returns the held mdocs, each with whether the page at
+// origin has been shown it (shown_to_verifier) and whether presenting
+// it there now would be linkable (linkable_here): {"abi",
+// "credentials": [summary]}. It's for a consent screen shown before the
+// request itself is available — iOS releases an org-iso-mdoc request
+// to a document provider only once the holder agrees — so the holder
+// can be told before agreeing; Request says the same once it is.
+func (w *Wallet) MdocCandidates(origin string) (string, error) {
+	creds, err := w.w.Credentials(context.Background())
+	if err != nil {
+		return "", classify(err)
+	}
+	out := make([]credentialSummary, 0, len(creds))
+	for _, c := range creds {
+		if c.Format != mdoc.CredentialFormat {
+			continue
+		}
+		s, err := w.summary(c)
+		if err != nil {
+			return "", err
+		}
+		shown, linkable := c.ShownTo("origin:"+origin), w.w.MdocLinkable(c, origin)
+		s.ShownToVerifier, s.LinkableHere = &shown, &linkable
+		out = append(out, s)
+	}
+	return marshal(struct {
+		result
+		Credentials []credentialSummary `json:"credentials"`
+	}{result{ABIVersion}, out})
 }
 
 // Respond presents the held mdoc credentialID for document number

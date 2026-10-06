@@ -26,6 +26,19 @@ enum SharedWallet {
     /// when the group is unavailable.
     static var defaults: UserDefaults { UserDefaults(suiteName: appGroup) ?? .standard }
 
+    /// The holder's copy policy, as chosen in the app's settings, in the
+    /// shared defaults so the extension presents by it too.
+    static let copyPolicyKey = "demo-copy-policy"
+
+    /// configuration with the holder's chosen copy policy, if any.
+    static func applyingHolderChoices(to configuration: WalletConfiguration) -> WalletConfiguration {
+        var configuration = configuration
+        if let saved = defaults.string(forKey: copyPolicyKey), let policy = WalletConfiguration.CopyPolicy(rawValue: saved) {
+            configuration.copyPolicy = policy
+        }
+        return configuration
+    }
+
     /// The credential store in the app group's container, or in the
     /// app's own Application Support when there's no container.
     static func credentialStore() throws -> FileCredentialStore {
