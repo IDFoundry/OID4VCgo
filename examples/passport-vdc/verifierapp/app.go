@@ -81,6 +81,9 @@ type App struct {
 	// registrarCA is the trust anchor of the registrar that registers
 	// the trusted scenarios' relying parties.
 	registrarCA *x509.Certificate
+	// readerCA issues the trusted scenarios' mdoc reader authentication
+	// certificates.
+	readerCA *x509.Certificate
 
 	issuerRoots   *x509.CertPool
 	issuerTrusted dcql.TrustedAuthoritiesQuery // IssuerCAs, by Authority Key Identifier
@@ -221,7 +224,7 @@ func New(cfg Config) (*App, error) {
 		return nil, err
 	}
 	a := &App{
-		cfg: cfg, txs: map[Scenario]*verifier.Transactions{}, caCert: ids.ca, registrarCA: ids.registrarCA,
+		cfg: cfg, txs: map[Scenario]*verifier.Transactions{}, caCert: ids.ca, registrarCA: ids.registrarCA, readerCA: ids.readerCA,
 		issuerRoots: issuerRoots, issuerTrusted: issuerTrusted, now: time.Now,
 		origin: origin, readers: map[Scenario]mdocdcapi.ReaderKey{},
 		sessions: map[string]*session{}, byTx: map[string]string{}, outcomes: map[string]map[string]*Outcome{},
@@ -230,7 +233,7 @@ func New(cfg Config) (*App, error) {
 		if a.txs[sc], err = a.newTransactions(sc, ids.signers[sc], ids.registrar); err != nil {
 			return nil, err
 		}
-		a.readers[sc] = mdocdcapi.ReaderKey{Signer: ids.signers[sc].key, Chain: []*x509.Certificate{ids.signers[sc].cert}}
+		a.readers[sc] = mdocdcapi.ReaderKey{Signer: ids.readers[sc].key, Chain: []*x509.Certificate{ids.readers[sc].cert}}
 	}
 	a.handler = a.routes()
 	return a, nil
@@ -330,6 +333,14 @@ func (a *App) register(sc Scenario, clientID string, until time.Time, registrar 
 // with it (walletflow.Config.RegistrarRoots) shows their registrations,
 // and warns when one asks for more.
 func (a *App) RegistrarCACertificate() *x509.Certificate { return a.registrarCA }
+
+// ReaderCACertificate is the demo mdoc reader CA: it issued the trusted
+// scenarios' reader authentication certificates, with the ISO/IEC
+// 18013-5 reader authentication extended key usage, which sign their
+// org-iso-mdoc requests. A wallet configured with it
+// (walletflow.Config.MdocReaderRoots, with
+// mdocdcapi.RequireReaderAuthenticationEKU) names the reader asking.
+func (a *App) ReaderCACertificate() *x509.Certificate { return a.readerCA }
 
 // VerifierCACertificate is the demo verifier CA that issued this
 // verifier's request-signing certificate — the trust anchor a wallet
