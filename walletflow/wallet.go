@@ -55,8 +55,20 @@ type Config struct {
 	// MdocReaderRoots, if set, are the mdoc readers the wallet
 	// recognizes when one signs an org-iso-mdoc request
 	// (MdocPresentation.Reader). An unsigned or unrecognized request is
-	// still answered if the holder agrees, shown by its origin.
+	// still answered if the holder agrees, shown by its origin — unless
+	// RequireTrustedMdocReader.
 	MdocReaderRoots *x509.CertPool
+	// MdocReaderLeafPolicy, if set, decides whether a certificate under
+	// MdocReaderRoots is a reader's: mdocdcapi.RequireReaderAuthenticationEKU
+	// requires the ISO/IEC 18013-5 reader authentication extended key
+	// usage, so a certificate issued under the same roots for another
+	// role isn't taken for a reader.
+	MdocReaderLeafPolicy func(leaf *x509.Certificate, chains [][]*x509.Certificate) error
+	// RequireTrustedMdocReader refuses an org-iso-mdoc request no reader
+	// under MdocReaderRoots signed: StartMdocPresentation returns an
+	// error wrapping ErrUntrustedVerifier, and nothing is shown to the
+	// holder. It needs MdocReaderRoots.
+	RequireTrustedMdocReader bool
 
 	// Locales are the holder's preferred languages (BCP 47 tags, most
 	// preferred first), for the issuer's display metadata. None means
@@ -193,6 +205,9 @@ const (
 func New(cfg Config, deps Dependencies) (*Wallet, error) {
 	if deps.Keys == nil || deps.Credentials == nil {
 		return nil, errors.New("walletflow: Dependencies.Keys and Credentials are required")
+	}
+	if cfg.RequireTrustedMdocReader && cfg.MdocReaderRoots == nil {
+		return nil, errors.New("walletflow: Config.RequireTrustedMdocReader needs MdocReaderRoots")
 	}
 	if deps.HTTP == nil {
 		client, err := defaultHTTPClient(cfg.Development)

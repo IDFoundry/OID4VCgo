@@ -6,6 +6,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/hpke"
 	"crypto/x509"
+	"encoding/asn1"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -199,20 +200,61 @@ func parseItemsRequest(itemsRequestBytes cbor.RawMessage) (RequestedDocument, er
 	return RequestedDocument{DocType: items.DocType, Elements: items.NameSpaces, itemsRequestBytes: itemsRequestBytes}, nil
 }
 
-// VerifyReader checks who signed the request: a ReaderAuthAll over the
-// whole request, or else a ReaderAuth on every DocRequest, whose
-// certificate chains to roots at now (zero: the current time). It
-// returns the reader's certificate, or an error wrapping
-// ErrUntrustedReader for an unsigned request or one no trusted reader
-// signed.
+// ReaderTrust is which mdoc readers a wallet recognizes.
+type ReaderTrust struct {
+	// Roots are the trust anchors a reader's certificate must chain to.
+	// REQUIRED: a nil pool recognizes no reader (never the system's
+	// roots).
+	Roots *x509.CertPool
+	// LeafPolicy, if set, is run on the chain-verified reader
+	// certificate and its verified paths, and can refuse it. Chain
+	// validation accepts a leaf with any key usage, so a certificate
+	// issued for another role under the same Roots would otherwise be
+	// recognized as a reader: RequireReaderAuthenticationEKU requires
+	// what ISO/IEC 18013-5 Annex B profiles a reader authentication
+	// certificate with.
+	LeafPolicy func(leaf *x509.Certificate, chains [][]*x509.Certificate) error
+	// Now is when the certificates must be valid; zero: the current
+	// time.
+	Now time.Time
+}
+
+// ReaderAuthenticationEKU is the extended key usage of an mdoc reader
+// authentication certificate (ISO/IEC 18013-5 Annex B.1.7:
+// 1.0.18013.5.1.6).
+var ReaderAuthenticationEKU = asn1.ObjectIdentifier{1, 0, 18013, 5, 1, 6}
+
+// RequireReaderAuthenticationEKU is a ReaderTrust.LeafPolicy refusing a
+// reader certificate without ReaderAuthenticationEKU.
+func RequireReaderAuthenticationEKU(leaf *x509.Certificate, _ [][]*x509.Certificate) error {
+	for _, eku := range leaf.UnknownExtKeyUsage {
+		if eku.Equal(ReaderAuthenticationEKU) {
+			return nil
+		}
+	}
+	return errors.New("the reader certificate lacks the mdoc reader authentication extended key usage (1.0.18013.5.1.6)")
+}
+
+// VerifyReader is VerifyReaderTrust with Roots roots and Now now, and
+// no LeafPolicy.
 func (in Incoming) VerifyReader(roots *x509.CertPool, now time.Time) (*x509.Certificate, error) {
+	return in.VerifyReaderTrust(ReaderTrust{Roots: roots, Now: now})
+}
+
+// VerifyReaderTrust checks who signed the request: a ReaderAuthAll over
+// the whole request, or else a ReaderAuth on every DocRequest, whose
+// certificate chains to t.Roots at t.Now and passes t.LeafPolicy. It
+// returns the reader's certificate, or an error wrapping
+// ErrUntrustedReader for an unsigned request or one no reader t
+// recognizes signed.
+func (in Incoming) VerifyReaderTrust(t ReaderTrust) (*x509.Certificate, error) {
 	items := make([][]byte, len(in.Documents))
 	for i, d := range in.Documents {
 		items[i] = d.itemsRequestBytes
 	}
 	var lastErr error
 	for _, sig := range in.readerAuthAll {
-		leaf, err := verifyReaderAuth(sig, readerAuthenticationAll(in.transcript, items, in.deviceRequestInfo), roots, now)
+		leaf, err := verifyReaderAuth(sig, readerAuthenticationAll(in.transcript, items, in.deviceRequestInfo), t)
 		if err == nil {
 			return leaf, nil
 		}
@@ -225,7 +267,7 @@ func (in Incoming) VerifyReader(roots *x509.CertPool, now time.Time) (*x509.Cert
 			reader, lastErr = nil, errors.New("a document request isn't signed")
 			break
 		}
-		leaf, err := verifyReaderAuth(d.readerAuth, readerAuthentication(in.transcript, d.itemsRequestBytes), roots, now)
+		leaf, err := verifyReaderAuth(d.readerAuth, readerAuthentication(in.transcript, d.itemsRequestBytes), t)
 		if err == nil && reader != nil && !reader.Equal(leaf) {
 			err = errors.New("the documents are signed by different readers")
 		}
@@ -248,14 +290,19 @@ func (in Incoming) VerifyReader(roots *x509.CertPool, now time.Time) (*x509.Cert
 // authentication, by the certificate in its x5chain, which must chain to
 // roots. The algorithm is the certificate key's, not the signature's own
 // header's.
-func verifyReaderAuth(sig []byte, authentication []any, roots *x509.CertPool, now time.Time) (*x509.Certificate, error) {
+func verifyReaderAuth(sig []byte, authentication []any, t ReaderTrust) (*x509.Certificate, error) {
 	_, unprotected, _, err := cose.DecodeUnverified(sig)
 	if err != nil {
 		return nil, fmt.Errorf("decode reader signature: %w", err)
 	}
-	leaf, _, err := certchain.VerifyChainsAt(unprotected.X5Chain, roots, now)
+	leaf, chains, err := certchain.VerifyChainsAt(unprotected.X5Chain, t.Roots, t.Now)
 	if err != nil {
 		return nil, err
+	}
+	if t.LeafPolicy != nil {
+		if err := t.LeafPolicy(leaf, chains); err != nil {
+			return nil, err
+		}
 	}
 	alg, err := readerKeyAlg(leaf.PublicKey)
 	if err != nil {

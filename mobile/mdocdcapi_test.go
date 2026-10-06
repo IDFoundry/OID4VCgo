@@ -213,3 +213,44 @@ func TestNewWallet_RefusesBadMdocReaderRoots(t *testing.T) {
 		t.Errorf("NewWallet = %v, want %s", err, CodeInvalidInput)
 	}
 }
+
+// require_trusted_mdoc_reader refuses an unrecognized reader as
+// untrusted_verifier; mdoc_reader_require_eku stops recognizing a
+// reader certificate without the reader authentication EKU (the test
+// reader's has none).
+func TestSessions_MdocReaderTrustSettings(t *testing.T) {
+	reader := newTestReader(t)
+	data, _ := reader.ask(t)
+	h := newHarness(t, false)
+	withSettings := func(settings map[string]any) *Wallet {
+		var cfg map[string]any
+		if err := json.Unmarshal([]byte(h.env.ConfigJSON()), &cfg); err != nil {
+			t.Fatal(err)
+		}
+		cfg["mdoc_reader_roots"] = reader.caPEM
+		for k, v := range settings {
+			cfg[k] = v
+		}
+		text, _ := json.Marshal(cfg)
+		w, err := NewWallet(string(text), h.keys, h.creds, h.env.Provider())
+		if err != nil {
+			t.Fatal(err)
+		}
+		return w
+	}
+	if _, err := withSettings(map[string]any{"require_trusted_mdoc_reader": true}).StartMdocPresentation(NewOperation(0), data, readerOrigin); err != nil {
+		t.Errorf("recognized reader, required: %v", err)
+	}
+	p, err := withSettings(map[string]any{"mdoc_reader_require_eku": true}).StartMdocPresentation(NewOperation(0), data, readerOrigin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req := decode[struct{ Reader string }](t, p.Request()); req.Reader != "" {
+		t.Errorf("a reader certificate without the EKU was recognized as %q", req.Reader)
+	}
+	_, err = withSettings(map[string]any{"mdoc_reader_require_eku": true, "require_trusted_mdoc_reader": true}).
+		StartMdocPresentation(NewOperation(0), data, readerOrigin)
+	if code(err) != CodeUntrustedVerifier {
+		t.Errorf("unrecognized reader, required: %v, want %s", err, CodeUntrustedVerifier)
+	}
+}

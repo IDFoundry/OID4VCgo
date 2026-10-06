@@ -260,3 +260,42 @@ func TestStartMdocPresentation_RefusesMalformed(t *testing.T) {
 		t.Error("an origin with a path was accepted")
 	}
 }
+
+// With RequireTrustedMdocReader, a request no recognized reader signed
+// is refused before the holder sees it; MdocReaderLeafPolicy can
+// refuse a reader the roots recognize.
+func TestStartMdocPresentation_ReaderTrust(t *testing.T) {
+	f := newFixture(t, walletflowtest.Options{})
+	reader := newMdocReader(t)
+	other := newMdocReader(t)
+	refuseAll := func(*x509.Certificate, [][]*x509.Certificate) error { return errors.New("not a reader certificate") }
+	data, _ := reader.ask(t, shopOrigin)
+	newWallet := func(roots *x509.CertPool, policy func(*x509.Certificate, [][]*x509.Certificate) error, require bool) *walletflow.Wallet {
+		w, err := walletflow.New(walletflow.Config{
+			ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, IssuerRoots: f.env.IssuerRoots,
+			MdocReaderRoots: roots, MdocReaderLeafPolicy: policy, RequireTrustedMdocReader: require, Development: true,
+		}, walletflow.Dependencies{Keys: f.keys, Credentials: f.store, Provider: f.env.Provider, HTTP: f.env.HTTP})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return w
+	}
+	ctx := context.Background()
+
+	if p, err := newWallet(reader.roots, nil, true).StartMdocPresentation(ctx, data, shopOrigin); err != nil || p.Reader() == nil {
+		t.Errorf("recognized reader, required: %v", err)
+	}
+	if _, err := newWallet(other.roots, nil, true).StartMdocPresentation(ctx, data, shopOrigin); !errors.Is(err, walletflow.ErrUntrustedVerifier) {
+		t.Errorf("unrecognized reader, required: %v, want ErrUntrustedVerifier", err)
+	}
+	if p, err := newWallet(reader.roots, refuseAll, false).StartMdocPresentation(ctx, data, shopOrigin); err != nil || p.Reader() != nil {
+		t.Errorf("leaf policy refusing, not required: reader %v, %v; want shown by origin", p, err)
+	}
+	if _, err := newWallet(reader.roots, refuseAll, true).StartMdocPresentation(ctx, data, shopOrigin); !errors.Is(err, walletflow.ErrUntrustedVerifier) {
+		t.Errorf("leaf policy refusing, required: %v, want ErrUntrustedVerifier", err)
+	}
+	if _, err := walletflow.New(walletflow.Config{RequireTrustedMdocReader: true},
+		walletflow.Dependencies{Keys: f.keys, Credentials: f.store}); err == nil {
+		t.Error("RequireTrustedMdocReader without roots was accepted")
+	}
+}

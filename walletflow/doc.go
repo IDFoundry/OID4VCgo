@@ -56,7 +56,9 @@
 //	// return presented.EncryptedResponse to the platform; to decline, cancel there
 //
 // The reader is recognized when it signs the request with a certificate
-// under Config.MdocReaderRoots; otherwise the holder is shown its origin.
+// under Config.MdocReaderRoots that Config.MdocReaderLeafPolicy accepts;
+// otherwise the holder is shown its origin, or, with
+// Config.RequireTrustedMdocReader, the request is refused.
 // Its copies are recorded as shown to the origin, as an OpenID4VP
 // Verifier over the Digital Credentials API would be ("origin:" +
 // origin).
