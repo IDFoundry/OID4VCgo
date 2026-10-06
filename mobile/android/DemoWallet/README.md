@@ -30,6 +30,25 @@ scanned), and presents them in answer to a presentation request link
 - **QR codes** scan live (CameraX, ML Kit's bundled model: no Play
   services) or from an image.
 
+## Presenting to Chrome (Digital Credentials API)
+
+The app is a Credential Manager provider: it registers each
+presentable SD-JWT VC and mdoc, with its claims, in an `OpenId4VpRegistry`
+(Google's OpenID4VP matcher), so when a page in Chrome asks over the
+Digital Credentials API with OpenID4VP (`openid4vp-v1-unsigned`,
+`-signed` or `-multisigned`), the system's chooser offers the matching
+credentials. Choosing one opens `GetCredentialActivity`: the same
+consent screen as a link's request, naming the page's origin (and the
+Verifier, for a signed request), and Share hands the encrypted response
+back through Chrome. The origin comes from Chrome, which the app trusts
+as a privileged browser (`res/raw/privileged_browsers.json`, Chrome's
+entries from Google's list). It needs Google Play services.
+
+Against the test services, open `https://127.0.0.1:8600/dcapi` in
+Chrome on the device (past the certificate warning), and tap Verify:
+the page shows what the test Verifier made of the answer.
+`org-iso-mdoc` requests aren't answered on Android yet.
+
 ## Configuration
 
 The app takes its configuration — the JSON mobile/cmd/testservices

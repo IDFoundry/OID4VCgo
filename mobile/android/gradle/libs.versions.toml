@@ -13,6 +13,8 @@ browser = "1.10.0"
 camerax = "1.6.2"
 mlkit-barcode = "17.3.0"
 coil = "3.6.3"
+credentials = "1.7.0-alpha03"
+registry = "1.0.0-alpha05"
 
 [libraries]
 kotlinx-coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "coroutines" }
@@ -34,6 +36,12 @@ androidx-camera-lifecycle = { module = "androidx.camera:camera-lifecycle", versi
 androidx-camera-view = { module = "androidx.camera:camera-view", version.ref = "camerax" }
 mlkit-barcode-scanning = { module = "com.google.mlkit:barcode-scanning", version.ref = "mlkit-barcode" }
 coil-compose = { module = "io.coil-kt.coil3:coil-compose", version.ref = "coil" }
+androidx-credentials = { module = "androidx.credentials:credentials", version.ref = "credentials" }
+androidx-credentials-registry-provider = { module = "androidx.credentials.registry:registry-provider", version.ref = "registry" }
+androidx-credentials-registry-play-services = { module = "androidx.credentials.registry:registry-provider-play-services", version.ref = "registry" }
+androidx-credentials-registry-openid = { module = "androidx.credentials.registry:registry-digitalcredentials-openid", version.ref = "registry" }
+androidx-credentials-registry-mdoc = { module = "androidx.credentials.registry:registry-digitalcredentials-mdoc", version.ref = "registry" }
+androidx-credentials-registry-sdjwtvc = { module = "androidx.credentials.registry:registry-digitalcredentials-sdjwtvc", version.ref = "registry" }
 coil-network = { module = "io.coil-kt.coil3:coil-network-okhttp", version.ref = "coil" }
 
 [plugins]

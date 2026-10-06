@@ -416,6 +416,20 @@ public class Wallet(
         Presentation(OID4VC.cancellable { op -> handle.startPresentation(op, request) })
 
     /**
+     * Parses an OpenID4VP request delivered through the Digital
+     * Credentials API (OpenID4VP 1.0 Appendix A), as Credential Manager
+     * hands it over: [protocol] (`openid4vp-v1-unsigned`, `-signed` or
+     * `-multisigned`), its [requestData] (the request's `data` object, as
+     * JSON) and the calling page's or app's [origin]. It's answered as a
+     * presentation from [startPresentation], but [Presentation.respond]
+     * and [Presentation.decline] send nothing: each returns, in
+     * [Presentation.Presented.dcapiResponse], the response's data for the
+     * platform to hand back.
+     */
+    public suspend fun startDCAPIPresentation(protocol: String, requestData: ByteArray, origin: String): Presentation =
+        Presentation(OID4VC.cancellable { op -> handle.startDCAPIPresentation(op, protocol, requestData, origin) })
+
+    /**
      * The held mdocs, each with whether the page at [origin] has been
      * shown it and whether presenting it there now would be linkable
      * (`shownToVerifier`, `linkableHere`): for a consent screen shown
@@ -548,14 +562,20 @@ public class Issuance internal constructor(private val session: MobileIssuance) 
 public class Presentation internal constructor(private val handle: MobilePresentation) {
     @Serializable
     public data class Verifier(
-        @SerialName("client_id") val clientID: String,
-        val name: String,
-        @SerialName("response_uri") val responseURI: String,
+        @SerialName("client_id") val clientID: String = "",
+        val name: String = "",
+        @SerialName("response_uri") val responseURI: String = "",
         /**
          * The Verifier's registration, from its request, checked against
          * [WalletConfiguration.registrarRoots].
          */
         val registration: Registration,
+        /**
+         * For a Digital Credentials API request ([Wallet.startDCAPIPresentation]),
+         * the calling page's or app's origin: all that names the Verifier
+         * of an unsigned request, which has no [clientID] or [name].
+         */
+        val origin: String? = null,
     )
 
     /**
@@ -626,6 +646,12 @@ public class Presentation internal constructor(private val handle: MobilePresent
         @SerialName("query_ids") val queryIDs: List<String> = emptyList(),
         /** Where to send the browser, when the Verifier asks. */
         @SerialName("redirect_uri") val redirectURI: String? = null,
+        /**
+         * For a Digital Credentials API request, the response's data — a
+         * JSON object, `{"response": …}` — to hand back to the platform:
+         * nothing was sent.
+         */
+        @SerialName("dcapi_response") val dcapiResponse: String? = null,
     )
 
     @Serializable

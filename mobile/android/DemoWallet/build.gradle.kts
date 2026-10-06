@@ -52,4 +52,12 @@ dependencies {
     implementation(libs.androidx.camera.lifecycle)
     implementation(libs.androidx.camera.view)
     implementation(libs.mlkit.barcode.scanning)
+    // The Digital Credentials API: Credential Manager's registry, and
+    // its matchers for OpenID4VP's mdoc and SD-JWT VC entries.
+    implementation(libs.androidx.credentials)
+    implementation(libs.androidx.credentials.registry.provider)
+    implementation(libs.androidx.credentials.registry.play.services)
+    implementation(libs.androidx.credentials.registry.openid)
+    implementation(libs.androidx.credentials.registry.mdoc)
+    implementation(libs.androidx.credentials.registry.sdjwtvc)
 }
