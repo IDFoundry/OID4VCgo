@@ -47,7 +47,7 @@ entries from Google's list). It needs Google Play services.
 Against the test services, open `https://127.0.0.1:8600/dcapi` in
 Chrome on the device (past the certificate warning), and tap Verify:
 the page shows what the test Verifier made of the answer.
-`org-iso-mdoc` requests aren't answered on Android yet.
+Android answers over OpenID4VP, mdocs included: `org-iso-mdoc` is the iOS demo's route.
 
 ## Configuration
 
@@ -66,6 +66,28 @@ With `development`, a `dev-ca.pem` pushed beside it is trusted too: the
 wallet's own requests take it as `development_roots`, since Go reads only
 Android's system CA files. The launch extras `reset` (delete every
 credential first), `offer` and `request` (open a link) are for tests.
+
+## UI tests, against test services
+
+```sh
+./run-ui-tests.sh            # an emulator or device, unlocked, screen lock PIN 1111
+./run-ui-tests.sh present    # one test
+```
+
+`../DemoWalletUITests` is a self-instrumenting test app driving the
+installed demo from outside, with UiAutomator, as the iOS demo's
+XCUITests do: it quits and relaunches the app, and answers the system's
+screen-lock prompt when a holder key signs. The script starts
+`mobile/cmd/testservices`, forwards their ports into the device, pushes
+their CA to the app and hands it to the tests, which reach the services'
+control endpoint over it. The tests cover the pre-authorized code grant
+(a wrong PIN, then the right one), status and revocation, presenting
+(one credential, several, per-verifier copies, a registered verifier and
+a request beyond its registration, an untrusted verifier, declining),
+deferred credentials (approved, denied, and approved after a relaunch),
+and the scanner. The authorization code grant isn't among them: the
+issuer's page is Chrome's, which doesn't trust the services' CA.
+`../unlock-emulator.sh` gives an emulator the PIN.
 
 ## Against the test services
 

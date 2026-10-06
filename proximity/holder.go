@@ -199,6 +199,25 @@ func (s *DeviceSession) Encrypt(plaintext []byte, terminate bool) ([]byte, error
 	return msg, nil
 }
 
+// ErrorResponse answers a request the holder decrypted but can't
+// process — a ParseDeviceRequest error — with an encrypted
+// DeviceResponse carrying no documents and DeviceResponseStatusFor(err)
+// (§8.3.2.1.2.3), and status 20: it closes the session.
+func (s *DeviceSession) ErrorResponse(err error) ([]byte, error) {
+	resp, encErr := encMode.Marshal(errorDeviceResponse{Version: deviceRequestVersion, Status: DeviceResponseStatusFor(err)})
+	if encErr != nil {
+		return nil, fmt.Errorf("proximity: encode DeviceResponse: %w", encErr)
+	}
+	return s.Encrypt(resp, true)
+}
+
+// errorDeviceResponse is a DeviceResponse with a status and no
+// documents.
+type errorDeviceResponse struct {
+	Version string `cbor:"version"`
+	Status  uint64 `cbor:"status"`
+}
+
 // Termination builds a SessionData carrying only status 20 and closes
 // the session — the reply when the user declines or nothing matches
 // the request, and the normal end of a session.

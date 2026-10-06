@@ -280,7 +280,7 @@ jobs:
       - name: build the library (release), its host tests, and the demo wallet app
         working-directory: mobile/android
         run: |
-          ./gradlew --console=plain :OID4VCWallet:assembleRelease :OID4VCWallet:testDebugUnitTest :DemoWallet:assembleDebug
+          ./gradlew --console=plain :OID4VCWallet:assembleRelease :OID4VCWallet:testDebugUnitTest :DemoWallet:assembleDebug :DemoWalletUITests:assembleDebug
           unzip -p OID4VCWallet/build/outputs/aar/OID4VCWallet-release.aar libs/classes.jar > "$RUNNER_TEMP/go.jar"
           if unzip -l "$RUNNER_TEMP/go.jar" | grep -q TestEnv; then
             echo "::error::the release library carries TestEnv"; exit 1

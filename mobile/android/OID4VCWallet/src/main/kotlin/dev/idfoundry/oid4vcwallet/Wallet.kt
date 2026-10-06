@@ -53,6 +53,15 @@ public data class WalletConfiguration(
      * nothing is shown to the holder. Needs [mdocReaderRoots].
      */
     @SerialName("require_trusted_mdoc_reader") val requireTrustedMdocReader: Boolean = false,
+    /**
+     * Refuses an unsigned OpenID4VP request over the Digital Credentials
+     * API: [Wallet.startDCAPIPresentation] throws `untrustedVerifier`,
+     * before the holder sees it. Its only identity is the origin the
+     * platform reports; HAIP requires a wallet to support unsigned
+     * requests, so set it only where every Verifier must be one
+     * [verifierRoots] accepts.
+     */
+    @SerialName("require_signed_dcapi_requests") val requireSignedDCAPIRequests: Boolean = false,
     /** Allows services on loopback addresses. */
     val development: Boolean = false,
     /**

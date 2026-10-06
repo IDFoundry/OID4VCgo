@@ -53,6 +53,9 @@ func mustDecMode() cbor.DecMode {
 		MaxArrayElements: 1 << 16,
 		MaxMapPairs:      1 << 16,
 		DupMapKey:        cbor.DupMapKeyEnforcedAPF,
+		// ISO/IEC 18013-5's map keys are case-sensitive: "DocType"
+		// isn't "docType".
+		FieldNameMatching: cbor.FieldNameMatchingCaseSensitive,
 	}.DecMode()
 	if err != nil {
 		panic(fmt.Sprintf("proximity: build CBOR decoder: %v", err))

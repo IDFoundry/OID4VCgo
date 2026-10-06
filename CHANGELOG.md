@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.34.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.33.0...v0.34.0) (2026-10-06)
+
+
+### Features
+
+* **walletflow:** answer OpenID4VP requests over the Digital Credentials API ([#471](https://github.com/IDFoundry/OID4VCgo/issues/471)) ([b640739](https://github.com/IDFoundry/OID4VCgo/commit/b64073941d54f5c423f83a28bc35a6fd7f93347a))
+
+
+### Bug Fixes
+
+* **walletflow:** let an abandoned authorization begin again ([#467](https://github.com/IDFoundry/OID4VCgo/issues/467)) ([ae5f09b](https://github.com/IDFoundry/OID4VCgo/commit/ae5f09bc48d655efb3603041c7a469d7c2bf1b28))
+* **walletflow:** retire an authorization begun again; refuse unsigned DC API requests on request ([471b7c2](https://github.com/IDFoundry/OID4VCgo/commit/471b7c2de20f3f8313d48eacc74e66b290eb0611))
+
 ## [0.33.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.32.0...v0.33.0) (2026-10-06)
 
 

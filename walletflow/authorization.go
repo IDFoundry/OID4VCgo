@@ -144,6 +144,17 @@ var (
 )
 
 func (s *sessionStore) Create(ctx context.Context, n storage.NewSession) error {
+	if s.state != "" && s.state != n.State {
+		// An authorization begun again replaces the earlier one: its
+		// redirect must not complete it, by ResumeIssuance or otherwise.
+		// Only its record goes — the new one uses the same keys.
+		s.w.authMu.Lock()
+		err := s.w.deps.Authorizations.DeleteAuthorization(ctx, s.state)
+		s.w.authMu.Unlock()
+		if err != nil && !errors.Is(err, ErrNotFound) {
+			return fmt.Errorf("walletflow: forget the earlier authorization: %w", err)
+		}
+	}
 	s.state = n.State
 	return s.w.deps.Authorizations.PutAuthorization(ctx, PendingAuthorization{
 		State: n.State, Session: n.Record, ExpiresAt: n.ExpiresAt,
