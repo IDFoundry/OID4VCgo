@@ -250,3 +250,45 @@ func mustJSON(v any) string {
 	b, _ := json.Marshal(v)
 	return string(b)
 }
+
+// TestEnv.ProximityReader's reader signs, and a wallet given its roots
+// recognizes it.
+func TestTestEnv_ProximityReader(t *testing.T) {
+	h := newHarness(t, false)
+	keys := newGoKeyStore()
+	setup := decode[struct {
+		ReaderConfig    string `json:"reader_config"`
+		MdocReaderRoots string `json:"mdoc_reader_roots"`
+	}](t, func() string {
+		text, err := h.env.ProximityReader(keys)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return text
+	}())
+	rd, err := NewProximityReader(setup.ReaderConfig, keys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h = h.withConfig(t, map[string]any{"mdoc_reader_roots": setup.MdocReaderRoots, "mdoc_reader_require_eku": true})
+	holder, err := h.w.StartProximityPresentation()
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := rd.Start(decode[struct {
+		QRCode string `json:"qr_code"`
+	}](t, holder.Engagement()).QRCode)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := s.Request("org.example.test.1", `{"org.example.test.1": ["family_name"]}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ev := decode[proximityEvent](t, holder.HandleMessage(NewOperation(0), sent(t, decode[struct{ Send string }](t, req).Send))); ev.Event != "request" {
+		t.Fatalf("holder: %+v", ev)
+	}
+	if got := decode[struct{ Reader struct{ Status, Name string } }](t, holder.Request()).Reader; got.Status != "trusted" || got.Name != "Test Reader" {
+		t.Errorf("the holder sees the reader as %+v", got)
+	}
+}

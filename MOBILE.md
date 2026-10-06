@@ -1016,6 +1016,44 @@ Decisions taken 2026-10-06 (tracked in [#482](https://github.com/IDFoundry/OID4V
 - **Revocation isn't checked:** the result carries the MSO's status
   list reference for the app to check, as `proximity.Verify` leaves it.
 
+### Phase 10 findings: the Android SDK
+
+- **The BLE code sits behind a transport interface:** `GattServerTransport`
+  (the holder, and a reader in central client mode) and
+  `GattClientTransport` (a reader in peripheral server mode) carry whole
+  messages, and the sessions never see GATT. The emulator tests pair a
+  holder and a reader over an in-memory transport, so everything but
+  the radio is tested in CI.
+- **Android 13 changed the GATT calls:** writing and notifying take the
+  value as an argument and return `BluetoothStatusCodes`, not GATT
+  statuses. Both forms are used, by API level.
+- **Multipaz's workarounds:** a scan that finds nothing for 10 s is
+  restarted, and a connection is tried up to 10 times (GATT error 133
+  among others). The MTU asked for is 517, so chunks of up to 512 bytes.
+- **The holder lingers after responding:** up to 5 s, until the reader
+  disconnects, so its last notification isn't lost to an early
+  disconnect.
+- **Permissions:** the library declares them, `ProximityPermissions`
+  lists the runtime ones (advertise and connect for a holder; scan,
+  connect and advertise for a reader; location on Android 11, which
+  delivers scan results only with it).
+
+### Phase 10 findings: the iOS SDK
+
+- **The same shape as Android's:** `ProximityPresentation` and
+  `ProximityReader` sessions with an `AsyncStream` of states, over a
+  `ProximityTransport`: `GattServerTransport` (CBPeripheralManager) and
+  `GattClientTransport` (CBCentralManager), each on its own serial
+  queue, in Swift 6 mode.
+- **A peripheral isn't told of disconnections:** iOS reports only the
+  central unsubscribing, which the holder takes as the reader leaving.
+- **Back-pressure is the platform's:** `updateValue` returning false
+  waits for `peripheralManagerIsReady`, and writes without response
+  wait for `canSendWriteWithoutResponse`. Chunk sizes come from the
+  central's `maximumUpdateValueLength` and the peripheral's
+  `maximumWriteValueLength`.
+- **Apps need `NSBluetoothAlwaysUsageDescription`** in Info.plist.
+
 ## Open questions
 
 - The Wallet Provider's production design, and whether it belongs in
