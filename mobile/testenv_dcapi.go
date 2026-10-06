@@ -18,10 +18,11 @@ import (
 
 // DCAPIRequest has the Verifier, from a page at origin, ask over the
 // Digital Credentials API for family_name from an SD-JWT VC
-// ("dc+sd-jwt") or an mdoc ("mso_mdoc"), signed or not, and returns
+// ("dc+sd-jwt") or an mdoc ("mso_mdoc"), signed (signedRequest) or
+// not, and returns
 // {"id", "protocol", "data", "origin"}: data is the request's, a JSON
 // object as text, as the platform hands it over.
-func (e *TestEnv) DCAPIRequest(format, origin string, signed bool) (string, error) {
+func (e *TestEnv) DCAPIRequest(format, origin string, signedRequest bool) (string, error) {
 	var q dcql.CredentialQuery
 	var err error
 	if format == "mso_mdoc" {
@@ -37,7 +38,7 @@ func (e *TestEnv) DCAPIRequest(format, origin string, signed bool) (string, erro
 		return "", wrapTest(err)
 	}
 	protocol, data := r.Protocol, r.Data
-	if !signed {
+	if !signedRequest {
 		if protocol, data, err = unsigned(data); err != nil {
 			return "", wrapTest(err)
 		}
