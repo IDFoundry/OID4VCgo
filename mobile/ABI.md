@@ -142,6 +142,7 @@ The Swift package's adapter marks a `URLError` this way.
 ```json
 {"client_id": "…", "redirect_uri": "…",
  "issuer_roots": "<PEM>", "verifier_roots": "<PEM>", "registrar_roots": "<PEM>",
+ "mdoc_reader_roots": "<PEM>",
  "development": false, "locales": ["en-AU", "en"], "batch_size": 0,
  "request_refresh": false, "copy_policy": "per_presentation"}
 ```
@@ -150,7 +151,10 @@ The Swift package's adapter marks a `URLError` this way.
 receive credentials; `verifier_roots` to present them.
 `registrar_roots`, if set, are the registrars whose registrations of
 Verifiers the wallet checks (OpenID4VP `verifier_info`, OID4VCgo's
-`registration` format); without them, registrations are ignored. `development`
+`registration` format); without them, registrations are ignored.
+`mdoc_reader_roots`, if set, are the mdoc readers recognized when one
+signs an `org-iso-mdoc` request (see MdocPresentation); without them,
+every such request is shown by its origin. `development`
 allows services on loopback addresses. `locales` are the holder's
 preferred languages (BCP 47, most preferred first) for issuers' display
 metadata. Without them, the issuer's entry without a locale is used,
@@ -292,6 +296,33 @@ summary's `refreshable` and `reissue_required`.
 ABI version 8 replaced `Candidates` with `Queries` and the credential ID
 arrays of `Preview` and `Respond` with a selection, and added
 `DefaultSelection` and `invalid_selection`.
+
+## MdocPresentation
+
+An mdoc asked for over the Digital Credentials API as `org-iso-mdoc`
+(ISO/IEC TS 18013-7 Annex C): what iOS hands a document provider
+extension. `Wallet.StartMdocPresentation(op, requestData, origin)`
+takes the request's data and the requesting page's origin as the
+platform reports them (on iOS, `IdentityDocumentWebPresentmentRawRequest.requestData`
+and `ISO18013MobileDocumentRequestContext.requestingWebsiteOrigin`,
+serialized as `scheme://host[:port]`, with no trailing slash: the
+session transcript binds it byte for byte). Steps: `Request`, then
+`Respond` once; to decline, cancel the platform's request — nothing is
+sent to the reader.
+
+| Method | Result |
+|---|---|
+| `Request()` | `{"origin", "reader", "documents": [{"doctype", "elements": [{"namespace", "identifier", "retain"}], "credentials": [summary]}]}`: `reader` is the subject common name of the reader that signed the request when its certificate chains to `mdoc_reader_roots`, else `""` — show `origin` then. Each document is the request's, with the held mdocs of its doctype (none when nothing can answer); `retain` is whether the reader says it will keep the value. Each summary has `shown_to_verifier` and `linkable_here`, for this origin |
+| `Respond(op, document, credentialID, elementsJSON)` | `{"response", "linkable"}`: `response` is the base64 `EncryptedResponse` to hand back to the platform (on iOS, `ISO18013MobileDocumentResponse(responseData:)`); `linkable` whether the copy presented had been seen by another Verifier |
+
+`elementsJSON` is a JSON array of `[namespace, identifier]` pairs, each
+one the document requested (`invalid_selection` otherwise), and
+`document` an index into `documents`. The credential's next unused copy
+is presented, recorded as shown to `"origin:" + origin`. Its holder key
+signs during `Respond`. A malformed request is `protocol`.
+
+`mdoc_reader_roots` and MdocPresentation were added within ABI version
+12: they add to it without changing anything there.
 
 ## Other functions
 

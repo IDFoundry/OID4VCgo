@@ -28,6 +28,11 @@ type config struct {
 	// registrations of Verifiers the wallet checks
 	// (walletflow.Config.RegistrarRoots). Unset, they're ignored.
 	RegistrarRoots string `json:"registrar_roots,omitempty"`
+	// MdocReaderRoots are PEM certificates: the mdoc readers recognized
+	// when one signs an org-iso-mdoc request
+	// (walletflow.Config.MdocReaderRoots). Unset, every request is shown
+	// by its origin.
+	MdocReaderRoots string `json:"mdoc_reader_roots,omitempty"`
 	// Development allows services on loopback addresses.
 	Development bool `json:"development"`
 	// Locales are the holder's preferred languages (BCP 47, most
@@ -110,6 +115,11 @@ func NewWallet(configJSON string, keys KeyStore, credentials CredentialStore, pr
 	if cfg.RegistrarRoots != "" {
 		if wcfg.RegistrarRoots, err = certPool(cfg.RegistrarRoots); err != nil {
 			return nil, newError(CodeInvalidInput, fmt.Errorf("registrar_roots: %w", err))
+		}
+	}
+	if cfg.MdocReaderRoots != "" {
+		if wcfg.MdocReaderRoots, err = certPool(cfg.MdocReaderRoots); err != nil {
+			return nil, newError(CodeInvalidInput, fmt.Errorf("mdoc_reader_roots: %w", err))
 		}
 	}
 	deps := walletflow.Dependencies{
