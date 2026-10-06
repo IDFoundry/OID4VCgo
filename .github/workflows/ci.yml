@@ -252,7 +252,26 @@ jobs:
           arch: x86_64
           disable-animations: true
           working-directory: mobile/android
-          script: ./gradlew --console=plain :OID4VCWallet:connectedDebugAndroidTest -Poid4vc.testFramework=true
+          # A PIN, and the emulator unlocked with it: holder keys need a
+          # secure lock screen, and every key needs the device unlocked.
+          script: |
+            ./unlock-emulator.sh
+            ./gradlew --console=plain :OID4VCWallet:connectedDebugAndroidTest -Poid4vc.testFramework=true
+
+      - name: the failing instrumented tests
+        if: failure()
+        run: |
+          for f in mobile/android/OID4VCWallet/build/outputs/androidTest-results/connected/debug/*.xml; do
+            python3 -c 'import sys, xml.etree.ElementTree as E
+          for c in E.parse(sys.argv[1]).iter("testcase"):
+              for f in c.findall("failure"): print("::error::%s.%s: %s" % (c.get("classname"), c.get("name"), (f.text or "").splitlines()[0][:400]))' "$f"
+          done
+
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: android-test-results
+          path: mobile/android/OID4VCWallet/build/outputs/androidTest-results/
 
       # What an app ships: the release build, without TestEnv.
       - name: build the AAR (release build)
