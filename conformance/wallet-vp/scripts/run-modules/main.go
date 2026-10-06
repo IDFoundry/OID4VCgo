@@ -540,6 +540,7 @@ func main() {
 	walletVPInternalBase := flag.String("walletvp-internal-base", "https://conformance-wallet-vp:8443", "cmd/conformance-wallet-vp's own suite-network-internal base URL")
 	alias := flag.String("alias", "oid4vcgo-wallet-vp", "suite plan alias")
 	skipDockerRestart := flag.Bool("skip-docker-restart", false, "skip restarting the conformance-wallet-vp container after writing the new config (only safe when the container is already running with matching key material from a prior run of this exact binary)")
+	responseMode := flag.String("response-mode", "direct_post.jwt", "response_mode variant to drive: \"direct_post.jwt\" (default) or \"dc_api.jwt\", whose three module lists — unsigned, signed and multi-signed requests over the Digital Credentials API — this script drives standing in for the browser (see dcapi.go)")
 	credentialFormat := flag.String("credential-format", "sd_jwt_vc", "credential_format variant to drive: \"sd_jwt_vc\" (default) or \"iso_mdl\" — confirmed live that both drive the exact same 14-module list (see this file's own package doc comment), only the fixture credential/DCQL query/trust anchor differ")
 	dumpPlanConfig := flag.Bool("dump-plan-config", false, "print the generated suite-side plan configuration JSON and exit instead of calling POST /api/plan — for a suite instance (e.g. the hosted certification.openid.net) whose admin API needs a login this script has no way to establish; pair with -walletvp-internal-base pointing at a real publicly-reachable URL (e.g. a cloudflared tunnel) and create the plan/module yourself through the suite's own authenticated web UI")
 
@@ -578,6 +579,13 @@ func main() {
 	cfg.VerifierTrustAnchorsPEM = verifierCAPEM
 	if err := writeConfigAndMaybeRestart(cfg, httpClient, *walletVPBase, *skipDockerRestart); err != nil {
 		log.Fatalf("%v", err)
+	}
+
+	if *responseMode == "dc_api.jwt" {
+		if !runDCAPI(httpClient, *apiBase, *walletVPBase, *alias, *credentialFormat, trustAnchorCertPEM, cfg, verifierCA, verifierCAKey) {
+			os.Exit(1)
+		}
+		return
 	}
 
 	clientJWK, err := generateClientJWK(verifierCA, verifierCAKey)

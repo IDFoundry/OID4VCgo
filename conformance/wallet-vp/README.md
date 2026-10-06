@@ -7,9 +7,9 @@ Presentations 1.0 Final/HAIP: Test a wallet") — specifically its
 **direct_post.jwt + x509_hash + request_uri_signed** module list, under
 either credential format the plan's own `credential_format` variant
 offers (`sd_jwt_vc`, the original/default, or `iso_mdl` — see
-"credential_format: iso_mdl" below); the plan's three `dc_api.jwt`
-module lists (W3C Digital Credentials API) aren't covered — see "Scope"
-below.
+"credential_format: iso_mdl" below) — and its three `dc_api.jwt`
+module lists (W3C Digital Credentials API), with `run-modules`
+standing in for the browser — see "dc_api.jwt" below.
 
 ## How the interaction model was confirmed
 
@@ -37,7 +37,8 @@ shape than an early read suggested:
   pair initially looked like the real wallet-driving mechanism, but
   that condition's own doc comment says it's "Integration-test-only...
   simulating a real wallet's DC API response" — the suite's own
-  self-test fixture, not something a real wallet AUT calls.
+  self-test fixture, not something a real wallet AUT calls. (The
+  `dc_api.jwt` lists' real mechanism is in "dc_api.jwt" below.)
 
 ## Endpoints
 
@@ -163,26 +164,60 @@ chain validation, not just a stub.
 
 ## Scope
 
-Only the `direct_post.jwt` + `x509_hash` + `request_uri_signed` module
-list is targeted. The plan's other three module lists all use
-`dc_api.jwt` (the suite's own DC API / W3C Digital Credentials API
-simulation, via `browser.requestCredential` — a genuinely different,
-browser-JS-level interaction, not a plain HTTP GET) — deliberately out
-of scope for this binary; `wallet`'s own DC API support
-(`PresentMdocSelective`'s own Origin-bound path, per ARCHITECTURE.md)
-exists but testing it against the live suite needs its own separate
-harness design, not attempted here. Confirmed against the HAIP 1.0
-spec text directly: HAIP §5.2's DC API requirements are conditional
-("The following requirements apply to OpenID for Verifiable
-Presentations via the W3C Digital Credentials API") — a separate,
-optional deployment variant alongside the redirect-based flow §5.1
-profiles (and that this binary implements), not a universal mandate.
-HAIP §5.1 also never permits a JSON-serialized (non-JWT) Authorization
-Request — "Signed Authorization Requests MUST be used by utilizing
-JWT-Secured Authorization Request (JAR) [RFC9101]" — so the suite's
-"JAR JSON Serialization" module list is testing a DC API-only
-serialization variant this binary's redirect-based flow never uses
-either way.
+All four of the plan's module lists: `direct_post.jwt` + `x509_hash`
++ `request_uri_signed` (the redirect flow, below), and the three
+`dc_api.jwt` lists — `web-origin` + `request_uri_unsigned`, and
+`x509_hash` with `request_uri_signed` or `request_uri_multisigned` —
+over the W3C Digital Credentials API (see "dc_api.jwt"). HAIP §5.2's
+DC API requirements are conditional ("The following requirements
+apply to OpenID for Verifiable Presentations via the W3C Digital
+Credentials API"), but within them "The Wallet MUST support unsigned,
+signed, and multi-signed requests as defined in Appendices A": what
+the three lists check, and what `wallet.ParseDCAPIRequestData`
+implements.
+
+## dc_api.jwt
+
+Under `dc_api.jwt` the suite builds an OpenID4VP request for the
+Digital Credentials API and hands it to its own log page, which calls
+`navigator.credentials.get()` in the tester's browser and POSTs what
+the wallet returned — `{"protocol", "data"}`, or `{"exception"}` when
+the promise rejects — to a per-module submit URL. There's no mock in
+the way: a real browser and platform wallet would answer it.
+`run-modules -response-mode dc_api.jwt` stands in for that browser:
+it reads each module's request from `GET /api/runner/{id}`
+(`browser.browserApiRequests`), passes it to this binary's
+`POST /dcapi` with the origin the page would have had (the suite's
+own, the submit URL's — the suite derives the origin it expects from
+its base URL, `SetWebOrigin`), and POSTs the answer to the submit URL
+as the page would. `POST /dcapi` (`dcapi.go`) parses the request with
+`wallet.ParseDCAPIRequestData`, presents the fixture credential bound
+to the origin, and returns the encrypted `dc_api.jwt` response; a
+protocol error (`RequestRejectedError`, no matching credential) is
+returned as an encrypted error response, and a request it can't trust
+at all (bad signature, untrusted or mismatched client, another
+origin) as a rejected promise.
+
+This proves the wallet's protocol handling — the three request forms,
+`expected_origins`, the origin-bound mdoc session transcript and
+SD-JWT `origin:` key-binding audience, response encryption, error
+responses — against the suite's own Verifier. It can't prove a real
+browser's or platform's hand-off of the request and origin, which is
+what certifying these profiles would also cover.
+
+Run live against the local suite, both credential formats: all 34
+modules of each plan (9 unsigned, 12 signed, 13 multi-signed) end as
+expected — every positive module `FINISHED`/`PASSED`, including
+`multisigned-one-invalid-signature`; `missing-nonce`,
+`unknown-transaction-data-type` and `required-non-matching-credential`
+`PASSED` on their error responses (`invalid_request`,
+`invalid_transaction_data`, `access_denied`); and
+`invalid-request-object-signature`, `wrong-expected-origins` and
+`invalid-client-id-prefix` refused without an answer, left for
+screenshot `REVIEW` as in the redirect flow. The first run found the
+library gap it was built to find: the wallet accepted only signed
+requests (fixed by `ParseDCAPIRequestData`), and refused a request
+without a nonce instead of answering `invalid_request`.
 
 ## Status: full module run against the real OIDF suite
 
@@ -345,8 +380,9 @@ failure).
 ## credential_format: iso_mdl
 
 Closes the OID4VP Wallet role's own "iso_mdl direct_post.jwt"
-certification profile (this repo's own remaining gap alongside
-`dc_api.jwt`'s two profiles — see "Scope" above). Confirmed live via
+certification profile (this repo's own remaining gap at the time,
+alongside `dc_api.jwt`'s two profiles — since covered, see
+"dc_api.jwt"). Confirmed live via
 `GET /api/plan/{id}` before writing any driving code that the plan's
 own module list under `credential_format=iso_mdl` is exactly the same
 14 modules `sd_jwt_vc` already reaches — no additional exclusions —

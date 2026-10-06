@@ -293,15 +293,21 @@ run_verifier() {
 }
 
 run_wallet_vp() {
-	# sd_jwt_vc + iso_mdl together are the OID4VP Wallet role's own 2 of
-	# 4 catalog profiles this repo covers (the other 2, both dc_api.jwt,
-	# are a deliberately separate, not-yet-attempted harness effort —
-	# see conformance/wallet-vp/README.md's own "Scope" section).
+	# The OID4VP Wallet role's 4 catalog profiles: sd_jwt_vc and iso_mdl,
+	# each over direct_post.jwt and over dc_api.jwt (the Digital
+	# Credentials API, run-modules standing in for the browser — see
+	# conformance/wallet-vp/README.md's "Scope" section).
 	run_go_self_graded "Wallet-VP sd_jwt_vc" "$WORKDIR/wallet-vp-sdjwt.log" \
 		go run ./conformance/wallet-vp/scripts/run-modules
 
 	run_go_self_graded "Wallet-VP iso_mdl" "$WORKDIR/wallet-vp-mdoc.log" \
 		go run ./conformance/wallet-vp/scripts/run-modules -credential-format iso_mdl
+
+	run_go_self_graded "Wallet-VP sd_jwt_vc dc_api" "$WORKDIR/wallet-vp-sdjwt-dcapi.log" \
+		go run ./conformance/wallet-vp/scripts/run-modules -response-mode dc_api.jwt
+
+	run_go_self_graded "Wallet-VP iso_mdl dc_api" "$WORKDIR/wallet-vp-mdoc-dcapi.log" \
+		go run ./conformance/wallet-vp/scripts/run-modules -response-mode dc_api.jwt -credential-format iso_mdl
 	return 0
 }
 
@@ -390,8 +396,8 @@ print_oid4vp_matrix() {
 	matrix_header "$ROW_FMT_18" "RESPONSE MODE"
 	matrix_row "$ROW_FMT_18" "$SD_JWT_VC" "$DIRECT_POST_JWT" "Wallet-VP sd_jwt_vc"
 	matrix_row "$ROW_FMT_18" "iso_mdl" "$DIRECT_POST_JWT" "Wallet-VP iso_mdl"
-	printf "$ROW_FMT_18" "$SD_JWT_VC" "dc_api.jwt" "NOT IMPLEMENTED"
-	printf "$ROW_FMT_18" "iso_mdl" "dc_api.jwt" "NOT IMPLEMENTED"
+	matrix_row "$ROW_FMT_18" "$SD_JWT_VC" "dc_api.jwt" "Wallet-VP sd_jwt_vc dc_api"
+	matrix_row "$ROW_FMT_18" "iso_mdl" "dc_api.jwt" "Wallet-VP iso_mdl dc_api"
 	return 0
 }
 

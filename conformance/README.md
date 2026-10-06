@@ -5,10 +5,12 @@ mirroring FAPIgo's own `conformance/` structure (binaries wiring the
 real production package behind real HTTP, Docker attaching to the
 suite's own network, `oidf-config/` per test plan, a generator script
 producing throwaway key material rather than committing any). All four
-roles below are now driven live; the one deliberately out-of-scope gap
-across every role is actually invoking the W3C Digital Credentials API
-for the `dc_api.jwt`/DC API module lists, a browser/OS platform concern
-outside any Go library's own transport responsibilities.
+roles below are now driven live. For the W3C Digital Credentials API
+(`dc_api.jwt`) module lists, the Wallet-VP driver stands in for the
+browser (see `wallet-vp/README.md`'s "dc_api.jwt"): that checks the
+wallet's protocol handling against the suite, but no real browser or
+platform hand-off. The Issuer role's `issuer_initiated_dc_api` isn't
+driven.
 
 Conformance testing is tracked separately per role — passing one role's
 plan says nothing about another's, even where both sides share this
@@ -35,8 +37,9 @@ submission (OpenID Certification Terms and Conditions §4(a)).
 | OID4VP 1.0 + HAIP 1.0 | Wallet | sd_jwt_vc direct_post.jwt; iso_mdl direct_post.jwt | [openid.net](https://openid.net/certification/certified-oid4vp-haip-final/) |
 
 Each listing links the signed test results for every certified profile.
-The DC API (`dc_api.jwt`) variants are not certified; they're out of
-scope for this library, as described above.
+The DC API (`dc_api.jwt`) variants are not certified. The Wallet's
+are run against the local suite with a scripted browser stand-in (see
+above), which certification would not cover.
 
 Later releases are checked against the same test plans by the
 [OID4VCI](../.github/workflows/oid4vci-conformance.yml) and
@@ -105,8 +108,11 @@ specific reason to suspect drift, not just when something seems off.
   automatically, the exact wire shape pinned down by decompiling the
   suite's own `fapi-test-suite.jar` rather than guessed), seven of
   seven reachable negative tests correctly reject before ever calling
-  `response_uri`. Its own three `dc_api.jwt` module lists are out of
-  scope for this binary. See `wallet-vp/README.md`.
+  `response_uri`. Its three `dc_api.jwt` module lists (unsigned,
+  signed, multi-signed requests over the Digital Credentials API) are
+  driven too, `run-modules` standing in for the browser: all 34
+  modules of each credential format end as expected. See
+  `wallet-vp/README.md`.
 - **`issuer/`** — OID4VCI 1.0 Final/HAIP Issuer role
   (`oid4vci-1_0-issuer-haip-test-plan`): `cmd/conformance-issuer` pairs
   a real `fapigo/server.Server` (FAPI 2.0 Security Profile Final,
@@ -350,8 +356,8 @@ specific reason to suspect drift, not just when something seems off.
   mutated its caller's own shared `params` map — fixed upstream
   ([FAPIgo PR #322](https://github.com/IDFoundry/FAPIgo/pull/322),
   merged, `go.mod` pinned past it). `issuer_initiated_dc_api` isn't
-  covered — same Digital Credentials API browser-JS scope cut as
-  `cmd/conformance-wallet-vp`'s own `dc_api.jwt` module lists.
+  covered: it needs the Digital Credentials API on the issuance side,
+  which no driver here stands in for.
   **Update: the suite's own base (non-HAIP) `oid4vci-1_0-wallet-test-plan`
   is driven too**, via `-base-plan` — the same 4 `VCIWallet*` modules
   already covered above (one `immediate`+`plain` crossing, no FAPI2SP

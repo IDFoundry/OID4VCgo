@@ -8,8 +8,9 @@
 // flow), under either credential format the plan's own
 // VP1FinalWalletCredentialFormat variant offers (sd_jwt_vc, the
 // default, or iso_mdl — see Config.CredentialFormat/credential.go's
-// own issueFixtureMdocCredential); the dc_api.jwt variants aren't
-// covered — see conformance/wallet-vp/README.md.
+// own issueFixtureMdocCredential) — and its three dc_api.jwt module
+// lists, through POST /dcapi (dcapi.go), with the driver standing in
+// for the browser — see conformance/wallet-vp/README.md.
 //
 // It's a conformance harness: it doesn't verify the Verifier's TLS
 // certificate, and checks the Verifier's Request Object certificate
@@ -76,6 +77,8 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /authorize", srv.handleAuthorize)
+	// The DC API stand-in: see handleDCAPI.
+	mux.HandleFunc("POST /dcapi", srv.handleDCAPI)
 
 	tlsCert, err := cfg.tlsCertificate()
 	if err != nil {
