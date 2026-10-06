@@ -40,6 +40,18 @@ public final class FileCredentialStore: CredentialStore, @unchecked Sendable {
         return try FileCredentialStore(directory: base.appending(path: "credentials", directoryHint: .isDirectory), options: options)
     }
 
+    /// A store in the app group `identifier`'s container
+    /// (Library/Application Support/credentials there), which the app and
+    /// its extensions listing the group in their
+    /// `com.apple.security.application-groups` entitlement share.
+    public static func inAppGroup(_ identifier: String, options: Options = Options()) throws -> FileCredentialStore {
+        guard let container = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: identifier) else {
+            throw StoreError("no container for app group \(identifier): is it in the target's entitlements?")
+        }
+        let dir = container.appending(path: "Library/Application Support/credentials", directoryHint: .isDirectory)
+        return try FileCredentialStore(directory: dir, options: options)
+    }
+
     private func file(_ id: String) throws -> URL {
         guard !id.isEmpty, id.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "_") }) else {
             throw StoreError("malformed credential ID")

@@ -51,7 +51,7 @@ BUILD="$(mktemp -d)"
 trap 'rm -rf "$BUILD"' EXIT
 xcodebuild build -project DemoWallet.xcodeproj -scheme DemoWallet -destination 'generic/platform=iOS' \
 	-derivedDataPath "$BUILD" -allowProvisioningUpdates -quiet \
-	DEVELOPMENT_TEAM="$TEAM_ID" CODE_SIGN_STYLE=Automatic PRODUCT_BUNDLE_IDENTIFIER="$BUNDLE_ID"
+	DEVELOPMENT_TEAM="$TEAM_ID" CODE_SIGN_STYLE=Automatic DEMO_BUNDLE_ID="$BUNDLE_ID"
 xcrun devicectl device install app --device "$DEVICE" "$BUILD/Build/Products/Debug-iphoneos/DemoWallet.app"
 
 # The demo's registration of its wallet (examples/passport-vdc/cmd/demo),
@@ -69,6 +69,10 @@ config = {
         # The registrar of the verifier relying parties: the app shows
         # their registrations, and warns when one asks for more.
         "registrar_roots": (state / "registrar-ca.pem").read_text() if (state / "registrar-ca.pem").exists() else "",
+        # The verifier relying parties sign their Digital Credentials
+        # API requests (org-iso-mdoc) as mdoc readers with the same
+        # certificates: the extension names the one asking.
+        "mdoc_reader_roots": (state / "verifier-ca.pem").read_text(),
         "development": True,
         # Credentials from a passport kept for refresh come with a
         # refresh token, so the app can fetch fresh copies.
