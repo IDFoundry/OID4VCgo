@@ -3,9 +3,6 @@ package mdocdcapi
 import (
 	"crypto"
 	"crypto/ecdh"
-	"crypto/ecdsa"
-	"crypto/ed25519"
-	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
 	"encoding/base64"
@@ -16,7 +13,7 @@ import (
 	"github.com/fxamacker/cbor/v2"
 
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
-	"github.com/idfoundry/oid4vcgo/internal/cose"
+	"github.com/idfoundry/oid4vcgo/internal/readerauth"
 )
 
 // Protocol is the Digital Credentials API protocol identifier for this
@@ -158,7 +155,7 @@ func checkRequestParams(p RequestParams) error {
 		}
 	}
 	for i, r := range p.Readers {
-		if _, err := readerAlg(r); err != nil {
+		if _, err := readerauth.CheckKey(r.Signer, r.Chain); err != nil {
 			return fmt.Errorf("mdocdcapi: reader %d: %w", i, err)
 		}
 	}
@@ -242,48 +239,11 @@ func signReaderAuth(r ReaderKey, authentication []any) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("mdocdcapi: encode %v: %w", authentication[0], err)
 	}
-	alg, err := readerAlg(r)
-	if err != nil {
-		return nil, err
-	}
-	chain := make([][]byte, len(r.Chain))
-	for i, c := range r.Chain {
-		chain[i] = c.Raw
-	}
-	sig, err := cose.SignDetached(alg, r.Signer, cose.Headers{Alg: alg}, cose.Headers{X5Chain: chain}, detached, nil)
+	sig, err := readerauth.Sign(r.Signer, r.Chain, detached)
 	if err != nil {
 		return nil, fmt.Errorf("mdocdcapi: sign %v: %w", authentication[0], err)
 	}
 	return sig, nil
-}
-
-// readerAlg is r's COSE algorithm, after checking its chain certifies
-// its key.
-func readerAlg(r ReaderKey) (cose.Alg, error) {
-	if r.Signer == nil || len(r.Chain) == 0 || r.Chain[0] == nil {
-		return 0, errors.New("a signer and its certificate chain are required")
-	}
-	pub := r.Signer.Public()
-	if leaf, ok := r.Chain[0].PublicKey.(interface{ Equal(crypto.PublicKey) bool }); !ok || !leaf.Equal(pub) {
-		return 0, errors.New("the leaf certificate doesn't certify the signer's key")
-	}
-	return readerKeyAlg(pub)
-}
-
-// readerKeyAlg is the COSE algorithm a reader key signs with: ES256 for
-// P-256, EdDSA for Ed25519.
-func readerKeyAlg(pub crypto.PublicKey) (cose.Alg, error) {
-	switch k := pub.(type) {
-	case *ecdsa.PublicKey:
-		if k.Curve != elliptic.P256() {
-			return 0, errors.New("an ECDSA reader key must be P-256")
-		}
-		return cose.ES256, nil
-	case ed25519.PublicKey:
-		return cose.EdDSA, nil
-	default:
-		return 0, fmt.Errorf("unsupported reader key type %T", pub)
-	}
 }
 
 func cloneElements(elements map[string]map[string]bool) map[string]map[string]bool {

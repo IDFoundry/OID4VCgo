@@ -127,9 +127,6 @@ func keyAlg(pub crypto.PublicKey) (oid4vci.COSEAlg, error) {
 	}
 }
 
-// deviceResponseStatusOK is §8.3.2.1.2.3's DeviceResponse status 0.
-const deviceResponseStatusOK = 0
-
 // wireDeviceResponse is the reader's own view of DeviceResponse
 // (§8.3.2.1.2.2). oid4vpmdoc.UnmarshalDeviceResponse is HAIP's
 // exactly-one-document form and refuses a response carrying only
@@ -172,8 +169,8 @@ func parseDeviceResponse(b []byte) (responseDocument, error) {
 	if !strings.HasPrefix(resp.Version, "1.") {
 		return responseDocument{}, fmt.Errorf("proximity: DeviceResponse version %q, want 1.x", resp.Version)
 	}
-	if resp.Status != deviceResponseStatusOK {
-		return responseDocument{}, fmt.Errorf("proximity: DeviceResponse status %d", resp.Status)
+	if resp.Status != DeviceResponseStatusOK {
+		return responseDocument{}, &DeviceResponseStatusError{Status: resp.Status}
 	}
 	switch len(resp.Documents) {
 	case 0:

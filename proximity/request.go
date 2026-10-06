@@ -35,7 +35,7 @@ type DocRequest struct {
 	ItemsRequestBytes []byte
 
 	// ReaderAuth is the request's readerAuth COSE_Sign1 as received, or
-	// nil. This package doesn't verify it.
+	// nil: DeviceSession.VerifyReaderAuth checks it.
 	ReaderAuth []byte
 }
 
@@ -57,20 +57,25 @@ type wireItemsRequest struct {
 
 // ParseDeviceRequest decodes a DeviceRequest (§8.3.2.1.2.1), as
 // DeviceSession.HandleSessionEstablishment or HandleSessionData
-// returns it. An error wrapping ErrCBORDecoding is a status 11 reply.
+// returns it. An error wraps ErrCBORDecoding for bytes that aren't
+// well-formed CBOR, or ErrCBORValidation for well-formed CBOR that isn't
+// a DeviceRequest: answer either with DeviceSession.ErrorResponse.
 func ParseDeviceRequest(b []byte) ([]DocRequest, error) {
 	if len(b) > MaxMessageBytes {
 		return nil, fmt.Errorf("proximity: DeviceRequest is %d bytes, over %d: %w", len(b), MaxMessageBytes, ErrCBORDecoding)
 	}
-	var req wireDeviceRequest
-	if err := decMode.Unmarshal(b, &req); err != nil {
+	if err := decMode.Wellformed(b); err != nil {
 		return nil, fmt.Errorf("proximity: decode DeviceRequest: %w: %w", ErrCBORDecoding, err)
 	}
+	var req wireDeviceRequest
+	if err := decMode.Unmarshal(b, &req); err != nil {
+		return nil, fmt.Errorf("proximity: decode DeviceRequest: %w: %w", ErrCBORValidation, err)
+	}
 	if !strings.HasPrefix(req.Version, "1.") {
-		return nil, fmt.Errorf("proximity: DeviceRequest version %q, want 1.x", req.Version)
+		return nil, fmt.Errorf("proximity: DeviceRequest version %q, want 1.x: %w", req.Version, ErrCBORValidation)
 	}
 	if len(req.DocRequests) == 0 {
-		return nil, fmt.Errorf("proximity: DeviceRequest has no docRequests: %w", ErrCBORDecoding)
+		return nil, fmt.Errorf("proximity: DeviceRequest has no docRequests: %w", ErrCBORValidation)
 	}
 
 	out := make([]DocRequest, 0, len(req.DocRequests))
@@ -86,27 +91,30 @@ func ParseDeviceRequest(b []byte) ([]DocRequest, error) {
 
 func parseDocRequest(dr wireDocRequest) (DocRequest, error) {
 	if dr.ItemsRequest == nil {
-		return DocRequest{}, fmt.Errorf("no itemsRequest: %w", ErrCBORDecoding)
+		return DocRequest{}, fmt.Errorf("no itemsRequest: %w", ErrCBORValidation)
 	}
 	itemsRequest, err := unwrapTag24(dr.ItemsRequest)
 	if err != nil {
-		return DocRequest{}, fmt.Errorf("decode ItemsRequestBytes: %w: %w", ErrCBORDecoding, err)
+		return DocRequest{}, fmt.Errorf("decode ItemsRequestBytes: %w: %w", ErrCBORValidation, err)
+	}
+	if err := decMode.Wellformed(itemsRequest); err != nil {
+		return DocRequest{}, fmt.Errorf("decode ItemsRequest: %w: %w", ErrCBORDecoding, err)
 	}
 	var items wireItemsRequest
 	if err := decMode.Unmarshal(itemsRequest, &items); err != nil {
-		return DocRequest{}, fmt.Errorf("decode ItemsRequest: %w: %w", ErrCBORDecoding, err)
+		return DocRequest{}, fmt.Errorf("decode ItemsRequest: %w: %w", ErrCBORValidation, err)
 	}
 	if items.DocType == "" {
-		return DocRequest{}, fmt.Errorf("ItemsRequest has no docType: %w", ErrCBORDecoding)
+		return DocRequest{}, fmt.Errorf("ItemsRequest has no docType: %w", ErrCBORValidation)
 	}
 	// Typed decode first, for its type and duplicate-key checks; then
 	// the ordered walk for the request's own element order.
 	var typed map[string]map[string]bool
 	if err := decMode.Unmarshal(items.NameSpaces, &typed); err != nil {
-		return DocRequest{}, fmt.Errorf("decode nameSpaces: %w: %w", ErrCBORDecoding, err)
+		return DocRequest{}, fmt.Errorf("decode nameSpaces: %w: %w", ErrCBORValidation, err)
 	}
 	if len(typed) == 0 {
-		return DocRequest{}, fmt.Errorf("ItemsRequest has no nameSpaces: %w", ErrCBORDecoding)
+		return DocRequest{}, fmt.Errorf("ItemsRequest has no nameSpaces: %w", ErrCBORValidation)
 	}
 
 	out := DocRequest{
@@ -127,7 +135,7 @@ func parseDocRequest(dr wireDocRequest) (DocRequest, error) {
 			return DocRequest{}, err
 		}
 		if len(elements) == 0 {
-			return DocRequest{}, fmt.Errorf("namespace %q requests no elements: %w", ns, ErrCBORDecoding)
+			return DocRequest{}, fmt.Errorf("namespace %q requests no elements: %w", ns, ErrCBORValidation)
 		}
 		for _, el := range elements {
 			pair := [2]string{ns, el}
@@ -193,9 +201,11 @@ func orderedMapEntries(raw []byte) (keys []string, values []cbor.RawMessage, err
 
 // encodeDeviceRequest builds a DeviceRequest with one DocRequest for
 // docType and elements (namespace → element identifiers), every
-// intentToRetain false. Namespaces and elements are encoded sorted, so
-// the same request always gives the same bytes.
-func encodeDeviceRequest(docType string, elements map[string][]string) ([]byte, error) {
+// intentToRetain false, and signed by sign if it isn't nil: it returns
+// the readerAuth for the request's ItemsRequestBytes. Namespaces and
+// elements are encoded sorted, so the same request always gives the
+// same bytes.
+func encodeDeviceRequest(docType string, elements map[string][]string, sign func(itemsRequestBytes []byte) ([]byte, error)) ([]byte, error) {
 	if docType == "" {
 		return nil, fmt.Errorf("proximity: docType is required")
 	}
@@ -224,9 +234,15 @@ func encodeDeviceRequest(docType string, elements map[string][]string) ([]byte, 
 	if err != nil {
 		return nil, fmt.Errorf("proximity: encode ItemsRequestBytes: %w", err)
 	}
+	doc := wireDocRequest{ItemsRequest: itemsBytes}
+	if sign != nil {
+		if doc.ReaderAuth, err = sign(itemsBytes); err != nil {
+			return nil, err
+		}
+	}
 	b, err := encMode.Marshal(wireDeviceRequest{
 		Version:     deviceRequestVersion,
-		DocRequests: []wireDocRequest{{ItemsRequest: itemsBytes}},
+		DocRequests: []wireDocRequest{doc},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("proximity: encode DeviceRequest: %w", err)

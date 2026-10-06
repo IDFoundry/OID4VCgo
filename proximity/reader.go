@@ -17,6 +17,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/internal/certchain"
 	"github.com/idfoundry/oid4vcgo/internal/cose"
+	"github.com/idfoundry/oid4vcgo/internal/readerauth"
 )
 
 // ReaderSession is the mdoc reader (verifier) side of one proximity
@@ -29,7 +30,7 @@ type ReaderSession struct {
 
 	sessionTranscriptBytes []byte
 	cipher                 *cipherState
-	readerAuth             crypto.Signer
+	readerAuth             *readerKey
 	maxClockSkew           time.Duration
 	signerPolicy           func(leaf *x509.Certificate, chains [][]*x509.Certificate) error
 
@@ -40,7 +41,7 @@ type ReaderSession struct {
 }
 
 type readerConfig struct {
-	readerAuth   crypto.Signer
+	readerAuth   *readerKey
 	maxClockSkew time.Duration
 	signerPolicy func(leaf *x509.Certificate, chains [][]*x509.Certificate) error
 }
@@ -48,11 +49,13 @@ type readerConfig struct {
 // ReaderOption configures NewReaderSession.
 type ReaderOption func(*readerConfig)
 
-// WithReaderAuth sets the key that would sign readerAuth (§9.1.4).
-// Reader authentication isn't implemented yet: with a signer set,
-// Establishment returns an error rather than send an unsigned request.
-func WithReaderAuth(signer crypto.Signer) ReaderOption {
-	return func(c *readerConfig) { c.readerAuth = signer }
+// WithReaderAuth signs the request as the reader whose key is signer —
+// P-256 ECDSA or Ed25519 — and whose certificate chain, leaf first, is
+// chain (§9.1.4): Establishment adds a readerAuth, which the holder
+// verifies to show who is asking. The leaf certifies signer's public
+// key, and should carry ReaderAuthenticationEKU.
+func WithReaderAuth(signer crypto.Signer, chain []*x509.Certificate) ReaderOption {
+	return func(c *readerConfig) { c.readerAuth = &readerKey{signer: signer, chain: slices.Clone(chain)} }
 }
 
 // MaxReaderClockSkew is the most WithMaxClockSkew allows: a larger
@@ -144,6 +147,11 @@ func NewReaderSession(qr string, opts ...ReaderOption) (*ReaderSession, error) {
 	if cfg.signerPolicy == nil {
 		cfg.signerPolicy = DefaultDocumentSignerPolicy
 	}
+	if cfg.readerAuth != nil {
+		if _, err := readerauth.CheckKey(cfg.readerAuth.signer, cfg.readerAuth.chain); err != nil {
+			return nil, fmt.Errorf("proximity: reader authentication: %w", err)
+		}
+	}
 	r.readerAuth, r.maxClockSkew, r.signerPolicy = cfg.readerAuth, cfg.maxClockSkew, cfg.signerPolicy
 	return r, nil
 }
@@ -202,10 +210,11 @@ func (r *ReaderSession) Establishment(docType string, elements map[string][]stri
 	if r.sent {
 		return nil, fmt.Errorf("proximity: SessionEstablishment already sent")
 	}
+	var sign func([]byte) ([]byte, error)
 	if r.readerAuth != nil {
-		return nil, fmt.Errorf("proximity: reader authentication is not supported yet")
+		sign = func(items []byte) ([]byte, error) { return r.readerAuth.sign(r.sessionTranscriptBytes, items) }
 	}
-	req, err := encodeDeviceRequest(docType, elements)
+	req, err := encodeDeviceRequest(docType, elements, sign)
 	if err != nil {
 		return nil, err
 	}
