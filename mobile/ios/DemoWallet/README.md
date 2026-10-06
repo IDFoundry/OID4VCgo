@@ -171,6 +171,15 @@ Known limitations, fine for the demo but not for a production wallet:
   Keychain group, so the extension can't use them, but a production
   wallet would keep those records out of the shared container.
 
+### In person
+
+Not in the demo yet: the Swift package has the holder's and the
+reader's sides (`startProximityPresentation`, `ProximityReader`, see
+[`mobile/README.md`](../../README.md#in-person-presentation)), and the
+demo's "Share in person" and reader mode are still to be built (MOBILE.md,
+Phase 10). Adding them needs `NSBluetoothAlwaysUsageDescription` in the
+app's Info.plist, and a device: the Simulator has no Bluetooth.
+
 ### Restricting the pages with Cloudflare Access
 
 The demo's pages have no login of their own: through the tunnel, anyone

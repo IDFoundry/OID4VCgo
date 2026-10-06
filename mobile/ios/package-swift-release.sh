@@ -108,6 +108,9 @@ storage and the UI:
 .package(url: "https://github.com/IDFoundry/OID4VCgo-wallet-swift", from: "@VERSION@")
 ```
 
+In-person presentation needs `NSBluetoothAlwaysUsageDescription` in your
+app's Info.plist.
+
 ## Use
 
 ```swift
@@ -126,7 +129,8 @@ Errors are `WalletError`s. Each has:
 ## Documentation
 
 - [OID4VCgo's `mobile/`](https://github.com/IDFoundry/OID4VCgo/tree/main/mobile):
-  the Go side and its [ABI](https://github.com/IDFoundry/OID4VCgo/blob/main/mobile/ABI.md).
+  what each platform supports, in-person presentation, the Go side and
+  its [ABI](https://github.com/IDFoundry/OID4VCgo/blob/main/mobile/ABI.md).
 - [MOBILE.md](https://github.com/IDFoundry/OID4VCgo/blob/main/MOBILE.md):
   the design.
 - [The demo wallet app](https://github.com/IDFoundry/OID4VCgo/tree/main/mobile/ios/DemoWallet):
