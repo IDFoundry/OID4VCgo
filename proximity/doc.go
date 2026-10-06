@@ -78,7 +78,10 @@
 //     only QR engagement is exposed.
 //   - Reader authentication: WithReaderAuth exists, and Establishment
 //     refuses to send until it's implemented. A received readerAuth is
-//     kept in DocRequest.ReaderAuth, unverified.
+//     kept in DocRequest.ReaderAuth, unverified. So the holder side
+//     can't tell who the reader is: whoever scanned the QR code can ask,
+//     and a consent prompt can show what it asks for, never a verified
+//     reader identity — the holder decides on that alone.
 //   - More than one request per session, and more than one document per
 //     response.
 //   - ISO/IEC 18013-7 (online presentation), OpenID4VP over the Digital
