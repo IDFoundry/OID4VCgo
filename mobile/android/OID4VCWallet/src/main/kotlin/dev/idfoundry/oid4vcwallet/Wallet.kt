@@ -1,5 +1,6 @@
 package dev.idfoundry.oid4vcwallet
 
+import android.content.Context
 import dev.idfoundry.oid4vcwallet.gomobile.mobile.Mobile
 import kotlinx.serialization.EncodeDefault
 import kotlinx.serialization.ExperimentalSerializationApi
@@ -457,6 +458,23 @@ public class Wallet(
      */
     public suspend fun startMdocPresentation(requestData: ByteArray, origin: String): MdocPresentation =
         MdocPresentation(OID4VC.cancellable { op -> handle.startMdocPresentation(op, requestData, origin) })
+
+    /**
+     * Starts an ISO/IEC 18013-5 in-person presentation over BLE: show
+     * its [ProximityPresentation.qrCode]; it advertises until a reader
+     * connects. It needs Bluetooth on and [ProximityPermissions.holder]
+     * granted ([ProximityException] otherwise).
+     */
+    public fun startProximityPresentation(context: Context, timeouts: ProximityTimeouts = ProximityTimeouts()): ProximityPresentation {
+        ProximityPermissions.require(context, ProximityPermissions.holder)
+        val app = context.applicationContext
+        return ProximityPresentation(OID4VC.wrap { handle.startProximityPresentation() }, { uuid ->
+            GattServerTransport(app, uuid, GattCharacteristics.peripheralServer)
+        }, timeouts)
+    }
+
+    internal fun startProximityPresentation(timeouts: ProximityTimeouts, transport: ProximityTransport): ProximityPresentation =
+        ProximityPresentation(OID4VC.wrap { handle.startProximityPresentation() }, { transport }, timeouts)
 }
 
 /** What a Credential Offer offers. */

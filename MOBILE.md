@@ -1003,6 +1003,41 @@ Decisions taken 2026-10-06 (tracked in [#482](https://github.com/IDFoundry/OID4V
   reader requires the IACA's and the document signer's countryName to
   match (§9.3.3), so `walletflowtest` now names one.
 
+### Phase 10 findings: the reader binding
+
+- **Standalone:** `NewProximityReader(configJSON, keys)` needs no
+  wallet: the IACAs it accepts, and optionally its key, in the app's
+  KeyStore, and certificate chain for reader authentication. It checks
+  the key against the chain when configured, not at the first holder.
+- **Both BLE modes:** the reader uses whichever mode the holder offers,
+  central client mode when it offers both. In that mode the reader is
+  the GATT server and serves the Ident characteristic. The holder side
+  offers peripheral server mode only.
+- **Revocation isn't checked:** the result carries the MSO's status
+  list reference for the app to check, as `proximity.Verify` leaves it.
+
+### Phase 10 findings: the Android SDK
+
+- **The BLE code sits behind a transport interface:** `GattServerTransport`
+  (the holder, and a reader in central client mode) and
+  `GattClientTransport` (a reader in peripheral server mode) carry whole
+  messages, and the sessions never see GATT. The emulator tests pair a
+  holder and a reader over an in-memory transport, so everything but
+  the radio is tested in CI.
+- **Android 13 changed the GATT calls:** writing and notifying take the
+  value as an argument and return `BluetoothStatusCodes`, not GATT
+  statuses. Both forms are used, by API level.
+- **Multipaz's workarounds:** a scan that finds nothing for 10 s is
+  restarted, and a connection is tried up to 10 times (GATT error 133
+  among others). The MTU asked for is 517, so chunks of up to 512 bytes.
+- **The holder lingers after responding:** up to 5 s, until the reader
+  disconnects, so its last notification isn't lost to an early
+  disconnect.
+- **Permissions:** the library declares them, `ProximityPermissions`
+  lists the runtime ones (advertise and connect for a holder; scan,
+  connect and advertise for a reader; location on Android 11, which
+  delivers scan results only with it).
+
 ## Open questions
 
 - The Wallet Provider's production design, and whether it belongs in
