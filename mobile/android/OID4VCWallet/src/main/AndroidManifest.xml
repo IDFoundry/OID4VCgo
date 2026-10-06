@@ -2,4 +2,6 @@
 <!-- The Go side makes the wallet's HTTPS requests itself. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- BiometricPromptAuthenticator asks the holder before a holder key signs. -->
+    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
 </manifest>
