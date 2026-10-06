@@ -555,7 +555,9 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
                     schedule(id)
                 }
                 is DeferredStatus.Issued -> {
-                    forget(id)
+                    // This poll is that job: cancelling it would cancel the
+                    // refresh below, and the new credential wouldn't show.
+                    forget(id, cancel = false)
                     phase = Phase.Done("Received a deferred credential")
                     refresh()
                 }
@@ -589,8 +591,9 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
         if (i >= 0) pending[i] = change(pending[i])
     }
 
-    private fun forget(id: String) {
-        pollJobs.remove(id)?.cancel()
+    private fun forget(id: String, cancel: Boolean = true) {
+        val job = pollJobs.remove(id)
+        if (cancel) job?.cancel()
         pending.removeAll { it.id == id }
     }
 
