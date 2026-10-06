@@ -900,6 +900,26 @@ commit and with the same version.
   the real one, and refuses a version the repository already has. CI runs
   it on every change.
 
+### Phase 8 findings: the demo's UI tests
+
+`mobile/android/DemoWalletUITests` ports the iOS demo's XCUITests:
+UiAutomator, from a self-instrumenting test app (`com.android.test`), so
+a test can quit and relaunch the demo and answer the system's
+screen-lock prompt — something an instrumented test inside the app
+couldn't do. Compose's test tags are resource IDs
+(`testTagsAsResourceId`), named as the iOS accessibility identifiers.
+Thirteen tests pass on the emulator, against `testservices`.
+
+- **What they found:** a deferred credential, once issued, didn't appear
+  until the app was relaunched. The poll that found it cancelled its own
+  job before refreshing the list, and Kotlin's cancellation is
+  cooperative, so the refresh was cancelled too; Swift's tasks run on.
+- **Two holder keys, two prompts:** sharing two credentials asks the
+  holder twice, once per key: Keystore authorizes one signature at a
+  time.
+- **Not covered:** the authorization code grant, whose issuer page is
+  Chrome's, which doesn't trust the test services' CA.
+
 ### Open items
 
 - Publish to Maven Central.
@@ -910,8 +930,8 @@ commit and with the same version.
   reads it.
 - On a device: StrongBox, the unlocked-device key, BiometricPrompt with a
   fingerprint, and the DC API in Chrome.
-- The demo's UI tests, with the test services' CA in the device's user
-  store for Chrome.
+- The authorization code grant in the demo's UI tests, with the test
+  services' CA in the device's user store for Chrome.
 
 ## Open questions
 
