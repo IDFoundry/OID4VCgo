@@ -100,7 +100,7 @@ fun DemoApp(model: WalletModel, authorize: suspend (String) -> String, openBrows
             else -> HomeScreen(model, onCredential = { shown = it }, onScan = { scanning = true })
         }
         model.linkToConfirm?.let { link ->
-            val request = link.scheme == "openid4vp"
+            val request = link.scheme == WalletModel.REQUEST_SCHEME
             AlertDialog(
                 onDismissRequest = { model.linkToConfirm = null },
                 title = { Text(if (request) "Open this presentation request?" else "Open this credential offer?") },
@@ -118,28 +118,11 @@ fun DemoApp(model: WalletModel, authorize: suspend (String) -> String, openBrows
 @Composable
 fun HomeScreen(model: WalletModel, onCredential: (String) -> Unit, onScan: () -> Unit) {
     val context = LocalContext.current
-    var settings by remember { mutableStateOf(false) }
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text("OID4VC Demo") },
-                navigationIcon = {
-                    IconButton({ settings = true }, Modifier.testTag("settings")) { Icon(Icons.Default.Settings, "Settings") }
-                    DropdownMenu(settings, { settings = false }) {
-                        Text("Copies", Modifier.padding(horizontal = 16.dp, vertical = 8.dp), style = MaterialTheme.typography.labelLarge)
-                        for ((policy, label) in listOf(
-                            WalletConfiguration.CopyPolicy.PER_PRESENTATION to "New copy for every presentation",
-                            WalletConfiguration.CopyPolicy.PER_VERIFIER to "Same copy for the same verifier",
-                        )) {
-                            DropdownMenuItem(
-                                text = { Text(label) },
-                                leadingIcon = { Icon(if (model.copyPolicy == policy) Icons.Default.RadioButtonChecked else Icons.Default.RadioButtonUnchecked, null) },
-                                onClick = { model.chooseCopyPolicy(policy); settings = false },
-                                modifier = Modifier.testTag("copy-policy-${policy.name}"),
-                            )
-                        }
-                    }
-                },
+                navigationIcon = { SettingsMenu(model) },
                 actions = {
                     TextButton({
                         val text = context.getSystemService(ClipboardManager::class.java).primaryClip?.getItemAt(0)?.text?.toString()
@@ -150,25 +133,53 @@ fun HomeScreen(model: WalletModel, onCredential: (String) -> Unit, onScan: () ->
             )
         },
     ) { padding ->
-        LazyColumn(Modifier.fillMaxSize(), contentPadding = padding) {
-            model.unavailable?.let { item { Banner(it, MaterialTheme.colorScheme.error, "unavailable") } }
-            if (!model.configured && model.unavailable == null) {
-                item { Banner("Not configured: launch with a configuration (see mobile/android/DemoWallet/README.md).", null, "not-configured") }
-            }
-            status(model)
-            if (model.pending.isNotEmpty()) {
-                item { SectionHeader("Waiting for the issuer") }
-                items(model.pending, key = { it.id }) { PendingRow(model, it) }
-            }
-            if (model.credentials.isEmpty()) {
-                item { SectionHeader("Credentials") }
-                item { Text("No credentials yet", Modifier.padding(16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
-            }
-            for ((holder, group) in model.credentialsByHolder) {
-                item { HolderHeader(holder) }
-                items(group, key = { it.id }) { c -> CredentialRow(c, Modifier.clickable { onCredential(c.id) }.testTag("credential")) }
-            }
+        LazyColumn(Modifier.fillMaxSize(), contentPadding = padding) { home(model, onCredential) }
+    }
+}
+
+/** The settings: which copy of a credential a presentation uses. */
+@Composable
+private fun SettingsMenu(model: WalletModel) {
+    var open by remember { mutableStateOf(false) }
+    IconButton({ open = true }, Modifier.testTag("settings")) { Icon(Icons.Default.Settings, "Settings") }
+    DropdownMenu(open, { open = false }) {
+        Text("Copies", Modifier.padding(horizontal = 16.dp, vertical = 8.dp), style = MaterialTheme.typography.labelLarge)
+        for ((policy, label) in listOf(
+            WalletConfiguration.CopyPolicy.PER_PRESENTATION to "New copy for every presentation",
+            WalletConfiguration.CopyPolicy.PER_VERIFIER to "Same copy for the same verifier",
+        )) {
+            val chosen = model.copyPolicy == policy
+            DropdownMenuItem(
+                text = { Text(label) },
+                leadingIcon = { Icon(if (chosen) Icons.Default.RadioButtonChecked else Icons.Default.RadioButtonUnchecked, null) },
+                onClick = {
+                    model.chooseCopyPolicy(policy)
+                    open = false
+                },
+                modifier = Modifier.testTag("copy-policy-${policy.name}"),
+            )
         }
+    }
+}
+
+/** The home screen's rows: why the wallet can't run, the last outcome, what's pending, and the credentials by holder. */
+private fun LazyListScope.home(model: WalletModel, onCredential: (String) -> Unit) {
+    model.unavailable?.let { item { Banner(it, Color(0xFFC62828), "unavailable") } }
+    if (!model.configured && model.unavailable == null) {
+        item { Banner("Not configured: launch with a configuration (see mobile/android/DemoWallet/README.md).", null, "not-configured") }
+    }
+    status(model)
+    if (model.pending.isNotEmpty()) {
+        item { SectionHeader("Waiting for the issuer") }
+        items(model.pending, key = { it.id }) { PendingRow(model, it) }
+    }
+    if (model.credentials.isEmpty()) {
+        item { SectionHeader("Credentials") }
+        item { Text("No credentials yet", Modifier.padding(16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
+    }
+    for ((holder, group) in model.credentialsByHolder) {
+        item { HolderHeader(holder) }
+        items(group, key = { it.id }) { c -> CredentialRow(c, Modifier.clickable { onCredential(c.id) }.testTag("credential")) }
     }
 }
 
@@ -382,13 +393,7 @@ fun OfferScreen(model: WalletModel, authorize: suspend (String) -> String) {
 fun CredentialScreen(model: WalletModel, summary: CredentialSummary, onBack: () -> Unit) {
     BackHandler(onBack = onBack)
     var detail by remember { mutableStateOf<CredentialDetail?>(null) }
-    var checking by remember { mutableStateOf(false) }
-    var checkError by remember { mutableStateOf<String?>(null) }
-    var justChecked by remember { mutableStateOf(false) }
-    var refreshing by remember { mutableStateOf(false) }
-    var outcome by remember { mutableStateOf<WalletModel.RefreshOutcome?>(null) }
     var confirmDelete by remember { mutableStateOf(false) }
-    val scope = rememberCoroutineScope()
     LaunchedEffect(summary.id) { detail = model.detail(summary) }
     Scaffold(
         topBar = {
@@ -405,66 +410,8 @@ fun CredentialScreen(model: WalletModel, summary: CredentialSummary, onBack: () 
             item { Labeled("Issuer", summary.display?.issuerName ?: summary.credentialIssuer) }
             item { Labeled("Received", Credentials.dateTime(summary.receivedAt)) }
             summary.validUntil?.let { item { Labeled(if (summary.isExpired()) "Expired" else "Expires", Credentials.date(it)) } }
-            item { SectionHeader("Status") }
-            item { StatusRow(summary.status) }
-            item {
-                // Feedback whatever the outcome: a spinner while it runs
-                // (for at least half a second, so a quick check is still
-                // seen), then "Checked just now" or why it couldn't.
-                OutlinedButton({
-                    checking = true
-                    checkError = null
-                    justChecked = false
-                    scope.launch {
-                        val started = System.currentTimeMillis()
-                        val error = model.checkStatus(summary.id)
-                        delay(maxOf(0, 500 - (System.currentTimeMillis() - started)))
-                        checking = false
-                        checkError = error
-                        justChecked = error == null
-                    }
-                }, Modifier.fillMaxWidth().testTag("check-status"), enabled = !checking) {
-                    if (checking) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
-                    Text(if (checking) "  Checking with the issuer…" else "Check status")
-                }
-            }
-            checkError?.let { item { Text("Couldn't check: $it", Modifier.testTag("check-error"), color = Color(0xFFC62828), style = MaterialTheme.typography.bodySmall) } }
-            if (justChecked && checkError == null) {
-                item { Text("Checked with the issuer just now", Modifier.testTag("check-done"), color = Color(0xFF2E7D32), style = MaterialTheme.typography.bodySmall) }
-            }
-            if (summary.copies > 1 || summary.refreshable || outcome != null) {
-                item { SectionHeader("Copies") }
-                item { Text(Credentials.copies(summary) ?: "${summary.copiesLeft} of ${summary.copies} copies unused", Modifier.testTag("credential-copies")) }
-                if (summary.refreshable) {
-                    item {
-                        OutlinedButton({
-                            refreshing = true
-                            outcome = null
-                            scope.launch {
-                                val started = System.currentTimeMillis()
-                                val result = model.refreshCopies(summary.id)
-                                delay(maxOf(0, 500 - (System.currentTimeMillis() - started)))
-                                refreshing = false
-                                outcome = result
-                            }
-                        }, Modifier.fillMaxWidth().testTag("refresh-copies"), enabled = !refreshing) {
-                            if (refreshing) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
-                            Text(if (refreshing) "  Getting fresh copies from the issuer…" else "Refresh copies")
-                        }
-                    }
-                }
-                outcome?.let { o ->
-                    item {
-                        val (text, color) = when (o) {
-                            is WalletModel.RefreshOutcome.Refreshed -> "Got ${o.copies} fresh ${if (o.copies == 1) "copy" else "copies"} just now" to Color(0xFF2E7D32)
-                            WalletModel.RefreshOutcome.Deferred -> "The issuer will send fresh copies later: they're waiting on the home screen" to Color(0xFFE65100)
-                            WalletModel.RefreshOutcome.ReissueRequired -> "This credential can't be refreshed any more: receive it again from the issuer" to Color(0xFFE65100)
-                            is WalletModel.RefreshOutcome.Failed -> "Couldn't refresh: ${o.reason}" to Color(0xFFC62828)
-                        }
-                        Text(text, Modifier.testTag("refresh-done"), color = color, style = MaterialTheme.typography.bodySmall)
-                    }
-                }
-            }
+            item { StatusSection(model, summary) }
+            item { CopiesSection(model, summary) }
             detail?.let { d ->
                 item { SectionHeader("Claims") }
                 claimRows(d.claims, emptyList())
@@ -472,14 +419,100 @@ fun CredentialScreen(model: WalletModel, summary: CredentialSummary, onBack: () 
         }
     }
     if (confirmDelete) {
-        AlertDialog(
-            onDismissRequest = { confirmDelete = false },
-            title = { Text("Delete this credential?") },
-            text = { Text("It and its keys leave this device. You'd need the issuer to receive it again.") },
-            confirmButton = { TextButton({ confirmDelete = false; model.delete(summary); onBack() }, Modifier.testTag("confirm-delete")) { Text("Delete") } },
-            dismissButton = { TextButton({ confirmDelete = false }) { Text("Cancel") } },
-        )
+        DeleteDialog(onDelete = { confirmDelete = false; model.delete(summary); onBack() }, onCancel = { confirmDelete = false })
     }
+}
+
+@Composable
+private fun DeleteDialog(onDelete: () -> Unit, onCancel: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onCancel,
+        title = { Text("Delete this credential?") },
+        text = { Text("It and its keys leave this device. You'd need the issuer to receive it again.") },
+        confirmButton = { TextButton(onDelete, Modifier.testTag("confirm-delete")) { Text("Delete") } },
+        dismissButton = { TextButton(onCancel) { Text("Cancel") } },
+    )
+}
+
+/** Runs [work], taking at least half a second, so a quick answer is still seen. */
+private suspend fun <T> atLeastHalfASecond(work: suspend () -> T): T {
+    val started = System.currentTimeMillis()
+    val result = work()
+    delay(maxOf(0, 500 - (System.currentTimeMillis() - started)))
+    return result
+}
+
+/** The status, with Check status: a spinner while it runs, then "Checked just now" or why it couldn't. */
+@Composable
+private fun StatusSection(model: WalletModel, summary: CredentialSummary) {
+    var checking by remember { mutableStateOf(false) }
+    var checkError by remember { mutableStateOf<String?>(null) }
+    var justChecked by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    Column {
+        SectionHeader("Status")
+        StatusRow(summary.status)
+        OutlinedButton({
+            checking = true
+            checkError = null
+            justChecked = false
+            scope.launch {
+                val error = atLeastHalfASecond { model.checkStatus(summary.id) }
+                checking = false
+                checkError = error
+                justChecked = error == null
+            }
+        }, Modifier.fillMaxWidth().testTag("check-status"), enabled = !checking) {
+            Busy(checking, "  Checking with the issuer…", "Check status")
+        }
+        checkError?.let { Text("Couldn't check: $it", Modifier.testTag("check-error"), color = Color(0xFFC62828), style = MaterialTheme.typography.bodySmall) }
+        if (justChecked && checkError == null) {
+            Text("Checked with the issuer just now", Modifier.testTag("check-done"), color = Color(0xFF2E7D32), style = MaterialTheme.typography.bodySmall)
+        }
+    }
+}
+
+/** The copies left, with Refresh copies when the issuance kept a refresh token. */
+@Composable
+private fun CopiesSection(model: WalletModel, summary: CredentialSummary) {
+    var refreshing by remember { mutableStateOf(false) }
+    var outcome by remember { mutableStateOf<WalletModel.RefreshOutcome?>(null) }
+    val scope = rememberCoroutineScope()
+    if (summary.copies <= 1 && !summary.refreshable && outcome == null) return
+    Column {
+        SectionHeader("Copies")
+        Text(Credentials.copies(summary) ?: "${summary.copiesLeft} of ${summary.copies} copies unused", Modifier.testTag("credential-copies"))
+        if (summary.refreshable) {
+            OutlinedButton({
+                refreshing = true
+                outcome = null
+                scope.launch {
+                    outcome = atLeastHalfASecond { model.refreshCopies(summary.id) }
+                    refreshing = false
+                }
+            }, Modifier.fillMaxWidth().testTag("refresh-copies"), enabled = !refreshing) {
+                Busy(refreshing, "  Getting fresh copies from the issuer…", "Refresh copies")
+            }
+        }
+        outcome?.let { RefreshOutcomeText(it) }
+    }
+}
+
+@Composable
+private fun Busy(busy: Boolean, busyText: String, idleText: String) {
+    if (busy) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+    Text(if (busy) busyText else idleText)
+}
+
+@Composable
+private fun RefreshOutcomeText(o: WalletModel.RefreshOutcome) {
+    val (text, color) = when (o) {
+        is WalletModel.RefreshOutcome.Refreshed -> "Got ${o.copies} fresh ${if (o.copies == 1) "copy" else "copies"} just now" to Color(0xFF2E7D32)
+        WalletModel.RefreshOutcome.Deferred -> "The issuer will send fresh copies later: they're waiting on the home screen" to Color(0xFFE65100)
+        WalletModel.RefreshOutcome.ReissueRequired -> "This credential can't be refreshed any more: receive it again from the issuer" to Color(0xFFE65100)
+        is WalletModel.RefreshOutcome.Failed -> "Couldn't refresh: ${o.reason}" to Color(0xFFC62828)
+    }
+    Text(text, Modifier.testTag("refresh-done"), color = color, style = MaterialTheme.typography.bodySmall)
 }
 
 /** A claim tree as rows: nested objects flattened to dotted paths. */
@@ -547,40 +580,49 @@ fun RequestScreen(model: WalletModel, openBrowser: (Uri) -> Unit) {
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(top = padding.calculateTopPadding(), bottom = 24.dp)) {
             item { VerifierHeader(p.verifier) }
             if (!p.isAnswerable) item { Banner("You have no credential this verifier accepts.", null, "unanswerable") }
-            for (query in p.queries.filter { it.credentials.isNotEmpty() }) {
-                item { SectionHeader(if (query.multiple) "Choose the credentials to share" else "Choose a credential to share") }
-                if (query.unregistered.isNotEmpty() || query.unregisteredAll) {
-                    item { Text(Credentials.overAsking(query), Modifier.padding(horizontal = 16.dp).testTag("over-asking"), color = Color(0xFFE65100)) }
-                }
-                items(query.credentials, key = { query.queryID + it.id }) { c ->
-                    CandidateCard(c, Holder.of(model.candidateClaims[c.id]), model.isSelected(c.id, query.queryID), query.multiple) {
-                        model.toggle(c.id, query)
-                    }
-                }
-            }
-            val error = model.previewError
-            if (error != null) {
-                item { Banner("Can't share this selection: $error", Color(0xFFC62828), "preview-error") }
-            } else {
-                for (d in model.disclosures) {
-                    val holder = Holder.of(model.candidateClaims[d.credentialID])
-                    val title = p.queries.flatMap { it.credentials }.firstOrNull { it.id == d.credentialID }?.let(Credentials::title) ?: "credential"
-                    item { SectionHeader("Will share · " + (holder?.name?.let { "$it · $title" } ?: title)) }
-                    items(d.claims) { path ->
-                        DisclosedRow(path, model.candidateClaims[d.credentialID], Credentials.isUnregistered(path, d.queryID, p))
-                    }
-                }
-            }
-            item {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Button({ model.share(openBrowser) }, Modifier.fillMaxWidth().height(52.dp).testTag("share"), enabled = model.canShare) {
-                        Text(if (sharing) "Sharing…" else "Share", fontWeight = FontWeight.Bold)
-                    }
-                    OutlinedButton({ model.decline(openBrowser) }, Modifier.fillMaxWidth().height(52.dp).testTag("decline"), enabled = !sharing) {
-                        Text("Decline", color = Color(0xFFC62828))
-                    }
-                }
-            }
+            p.queries.filter { it.credentials.isNotEmpty() }.forEach { candidates(model, it) }
+            disclosures(model, p)
+            item { ShareActions(model, sharing, openBrowser) }
+        }
+    }
+}
+
+/** One query: what it asks beyond the Verifier's registration, if anything, and the credentials that can answer it. */
+private fun LazyListScope.candidates(model: WalletModel, query: Presentation.Query) {
+    item { SectionHeader(if (query.multiple) "Choose the credentials to share" else "Choose a credential to share") }
+    if (query.unregistered.isNotEmpty() || query.unregisteredAll) {
+        item { Text(Credentials.overAsking(query), Modifier.padding(horizontal = 16.dp).testTag("over-asking"), color = Color(0xFFE65100)) }
+    }
+    items(query.credentials, key = { query.queryID + it.id }) { c ->
+        CandidateCard(c, Holder.of(model.candidateClaims[c.id]), model.isSelected(c.id, query.queryID), query.multiple) {
+            model.toggle(c.id, query)
+        }
+    }
+}
+
+/** What sharing the selection discloses, by credential, with each claim's value; or why it can't be shared. */
+private fun LazyListScope.disclosures(model: WalletModel, p: Presentation) {
+    model.previewError?.let {
+        item { Banner("Can't share this selection: $it", Color(0xFFC62828), "preview-error") }
+        return
+    }
+    for (d in model.disclosures) {
+        val holder = Holder.of(model.candidateClaims[d.credentialID])
+        val title = p.queries.flatMap { it.credentials }.firstOrNull { it.id == d.credentialID }?.let(Credentials::title) ?: "credential"
+        item { SectionHeader("Will share · " + (holder?.name?.let { "$it · $title" } ?: title)) }
+        items(d.claims) { path -> DisclosedRow(path, model.candidateClaims[d.credentialID], Credentials.isUnregistered(path, d.queryID, p)) }
+    }
+}
+
+/** Share, prominent, and Decline under it. */
+@Composable
+private fun ShareActions(model: WalletModel, sharing: Boolean, openBrowser: (Uri) -> Unit) {
+    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Button({ model.share(openBrowser) }, Modifier.fillMaxWidth().height(52.dp).testTag("share"), enabled = model.canShare) {
+            Text(if (sharing) "Sharing…" else "Share", fontWeight = FontWeight.Bold)
+        }
+        OutlinedButton({ model.decline(openBrowser) }, Modifier.fillMaxWidth().height(52.dp).testTag("decline"), enabled = !sharing) {
+            Text("Decline", color = Color(0xFFC62828))
         }
     }
 }
@@ -593,26 +635,31 @@ fun VerifierHeader(verifier: Presentation.Verifier) {
         Text(verifier.name, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
         Text("is asking for your credentials", color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(8.dp))
-        val r = verifier.registration
-        when (r.status) {
-            Presentation.Registration.Status.VERIFIED -> {
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.testTag("registered")) {
-                    Icon(Icons.Default.CheckCircle, null, tint = Color(0xFF2E7D32))
-                    Text(" Registered with ${r.registrar?.let(Credentials::host) ?: "a registrar"}", color = Color(0xFF2E7D32))
-                }
-                r.name?.let { Labeled("Registered as", it) }
-                r.purpose?.let { Labeled("Purpose", it) }
-                if (r.claims.isNotEmpty()) Labeled("Registered to ask for", r.claims.joinToString(", ") { Claims.path(it) })
-            }
-            Presentation.Registration.Status.INVALID ->
-                Text("Its registration couldn't be verified", Modifier.testTag("registration-invalid"), color = Color(0xFFE65100))
-            Presentation.Registration.Status.NONE ->
-                Text("Not registered with a registrar this wallet knows", Modifier.testTag("not-registered"),
-                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
+        RegistrationRows(verifier.registration)
         TextButton({ details = !details }) { Text(if (details) "Hide details" else "Details") }
         if (details) Labeled("Client ID", verifier.clientID)
         HorizontalDivider()
+    }
+}
+
+/** A Verifier's registration: who registered it and for what, or that its registration didn't verify. */
+@Composable
+private fun RegistrationRows(r: Presentation.Registration) {
+    when (r.status) {
+        Presentation.Registration.Status.VERIFIED -> {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.testTag("registered")) {
+                Icon(Icons.Default.CheckCircle, null, tint = Color(0xFF2E7D32))
+                Text(" Registered with ${r.registrar?.let(Credentials::host) ?: "a registrar"}", color = Color(0xFF2E7D32))
+            }
+            r.name?.let { Labeled("Registered as", it) }
+            r.purpose?.let { Labeled("Purpose", it) }
+            if (r.claims.isNotEmpty()) Labeled("Registered to ask for", r.claims.joinToString(", ") { Claims.path(it) })
+        }
+        Presentation.Registration.Status.INVALID ->
+            Text("Its registration couldn't be verified", Modifier.testTag("registration-invalid"), color = Color(0xFFE65100))
+        Presentation.Registration.Status.NONE ->
+            Text("Not registered with a registrar this wallet knows", Modifier.testTag("not-registered"),
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 

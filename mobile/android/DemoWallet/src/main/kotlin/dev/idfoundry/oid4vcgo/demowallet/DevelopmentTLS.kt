@@ -8,7 +8,6 @@ import java.security.cert.X509Certificate
 import javax.net.ssl.HttpsURLConnection
 import javax.net.ssl.SSLContext
 import javax.net.ssl.TrustManagerFactory
-import javax.net.ssl.X509TrustManager
 
 /**
  * One more CA to trust, for development only: the self-signed
@@ -34,26 +33,18 @@ object DevelopmentTLS {
         return config.copy(wallet = config.wallet.copy(developmentRoots = pem))
     }
 
+    /**
+     * The system's CAs and [extra], under the platform's own trust
+     * manager: the same checks, with one more anchor.
+     */
     private fun withExtra(extra: List<X509Certificate>): SSLContext {
-        val system = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm()).apply { init(null as KeyStore?) }
-            .trustManagers.filterIsInstance<X509TrustManager>().first()
-        val store = KeyStore.getInstance(KeyStore.getDefaultType()).apply {
+        val system = KeyStore.getInstance("AndroidCAStore").apply { load(null) }
+        val anchors = KeyStore.getInstance(KeyStore.getDefaultType()).apply {
             load(null)
+            for (alias in system.aliases()) setCertificateEntry(alias, system.getCertificate(alias))
             extra.forEachIndexed { i, c -> setCertificateEntry("dev-$i", c) }
         }
-        val dev = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm()).apply { init(store) }
-            .trustManagers.filterIsInstance<X509TrustManager>().first()
-        val both = object : X509TrustManager {
-            override fun checkClientTrusted(chain: Array<X509Certificate>, authType: String) = system.checkClientTrusted(chain, authType)
-            override fun checkServerTrusted(chain: Array<X509Certificate>, authType: String) {
-                try {
-                    system.checkServerTrusted(chain, authType)
-                } catch (e: java.security.cert.CertificateException) {
-                    dev.checkServerTrusted(chain, authType)
-                }
-            }
-            override fun getAcceptedIssuers(): Array<X509Certificate> = system.acceptedIssuers + dev.acceptedIssuers
-        }
-        return SSLContext.getInstance("TLS").apply { init(null, arrayOf(both), null) }
+        val trust = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm()).apply { init(anchors) }
+        return SSLContext.getInstance("TLSv1.3").apply { init(null, trust.trustManagers, null) }
     }
 }

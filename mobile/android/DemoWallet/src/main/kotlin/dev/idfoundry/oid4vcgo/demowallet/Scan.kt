@@ -48,7 +48,7 @@ import com.google.mlkit.vision.common.InputImage
 
 /** Whether [text] is a link the wallet opens: a Credential Offer or a presentation request. */
 fun walletLink(text: String?): Uri? =
-    text?.trim()?.let(Uri::parse)?.takeIf { it.scheme == "openid-credential-offer" || it.scheme == "openid4vp" }
+    text?.trim()?.let(Uri::parse)?.takeIf { it.scheme == WalletModel.OFFER_SCHEME || it.scheme == WalletModel.REQUEST_SCHEME }
 
 /**
  * Scans QR codes live with the camera, or reads one from an image —

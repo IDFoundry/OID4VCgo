@@ -12,7 +12,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import java.net.HttpURLConnection
-import java.net.URL
+import java.net.URI
 
 /**
  * The Wallet Provider's backend, over the passport-vdc demo Wallet
@@ -32,7 +32,7 @@ class HTTPWalletProvider(private val baseURL: String) : WalletProvider {
     // An IOException (no network, a timeout) reaches the wallet as a
     // network failure, which it reports as retryable.
     private suspend fun post(path: String, body: JsonObject): String = withContext(Dispatchers.IO) {
-        val connection = URL(baseURL.trimEnd('/') + "/" + path).openConnection() as HttpURLConnection
+        val connection = URI(baseURL.trimEnd('/') + "/" + path).toURL().openConnection() as HttpURLConnection
         try {
             connection.requestMethod = "POST"
             connection.connectTimeout = 15_000

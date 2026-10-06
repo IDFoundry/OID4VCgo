@@ -166,7 +166,7 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
 
     /** Opens a link from another app: an issuer's redirect at once, an offer or a request once the holder confirms. */
     fun openFromOutside(uri: Uri) {
-        if (uri.scheme == "openid-credential-offer" || uri.scheme == "openid4vp") linkToConfirm = uri else open(uri)
+        if (uri.scheme == OFFER_SCHEME || uri.scheme == REQUEST_SCHEME) linkToConfirm = uri else open(uri)
     }
 
     fun confirmLink() {
@@ -187,14 +187,14 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
             if (issuance == null) viewModelScope.launch { resume(uri.toString()) }
             return
         }
-        if (uri.scheme != "openid-credential-offer" && uri.scheme != "openid4vp") return
+        if (uri.scheme != OFFER_SCHEME && uri.scheme != REQUEST_SCHEME) return
         if (busy) {
             notice = "Finish or cancel the current request before opening another."
             return
         }
         notice = null
         viewModelScope.launch {
-            if (uri.scheme == "openid-credential-offer") start(offer = uri.toString()) else startPresentation(uri.toString())
+            if (uri.scheme == OFFER_SCHEME) start(offer = uri.toString()) else startPresentation(uri.toString())
         }
     }
 
@@ -684,6 +684,10 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
 
     companion object {
         private const val COPY_POLICY = "demo-copy-policy"
+
+        /** Credential Offer links' scheme, and presentation requests'. */
+        const val OFFER_SCHEME = "openid-credential-offer"
+        const val REQUEST_SCHEME = "openid4vp"
 
         /** An error as the holder sees it: the wallet's own sentence, and — for the demo — its code. */
         fun describe(e: Throwable): String {
