@@ -145,10 +145,31 @@ identifiers but not the group names, which are in the entitlements files
 and `Shared/SharedWallet.swift`.
 
 The extension names the reader asking when its request is signed by a
-certificate under `mdoc_reader_roots` (`run-device.sh` passes the
-passport-vdc verifier CA), and otherwise shows only the website's
+certificate under `mdoc_reader_roots` with the ISO/IEC 18013-5 reader
+authentication extended key usage (`run-device.sh` passes the
+passport-vdc demo's mdoc reader CA, `mdoc-reader-ca.pem`, and sets
+`mdoc_reader_require_eku`), and otherwise shows only the website's
 origin. Before answering, it checks that the request iOS releases is the
-one it showed: same document, same elements, same reader.
+one it showed: same document, same elements, same reader — and no copy
+another website has seen unless the sheet said so. The sheet lists only
+mdocs that can be presented (holder key here, unexpired, not revoked or
+suspended as last checked), warns when the chosen one's every copy has
+been shown to another website, and presents by the copy policy chosen in
+the app's settings.
+
+Known limitations, fine for the demo but not for a production wallet:
+
+- The app and the extension each read, change and write a credential's
+  record (marking a copy presented, replacing copies on refresh) under a
+  lock that only spans their own process. If the app refreshes a
+  credential at the moment the extension presents it, one can overwrite
+  the other's change. A file lock across processes isn't the answer on
+  iOS — an app suspended holding a lock in a shared container is
+  terminated — so it needs writes that check the record's version.
+- The extension reads the whole credential store, including refresh
+  grants and pending issuances. Their keys stay in the app's own
+  Keychain group, so the extension can't use them, but a production
+  wallet would keep those records out of the shared container.
 
 ### Restricting the pages with Cloudflare Access
 

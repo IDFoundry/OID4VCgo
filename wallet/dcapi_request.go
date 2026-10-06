@@ -156,6 +156,16 @@ const (
 	DCAPIProtocolMultiSigned = "openid4vp-v1-multisigned"
 )
 
+// Limits on what ParseDCAPIRequestData accepts: each signature of a
+// multi-signed request costs a certificate chain verification.
+const (
+	// MaxDCAPIRequestBytes is the largest request data accepted.
+	MaxDCAPIRequestBytes = 1 << 20
+	// MaxDCAPISignatures is the most signatures a multi-signed request
+	// may carry.
+	MaxDCAPISignatures = 8
+)
+
 // ParseDCAPIRequestDataParams is the input to ParseDCAPIRequestData.
 type ParseDCAPIRequestDataParams struct {
 	// Protocol is REQUIRED: the request's "protocol", one of the
@@ -188,6 +198,9 @@ type ParseDCAPIRequestDataParams struct {
 //     verifier_info is the request's. client_id and verifier_info may
 //     appear only there, never in the payload (Appendix A.3.2.2).
 //     Signatures that don't verify are skipped, as long as one does.
+//     When several Verifiers VerifierTrust accepts signed it, the first
+//     one's identity is returned, whichever of them is calling: show
+//     the holder the origin too.
 //   - DCAPIProtocolUnsigned: data's own members are the request. Its
 //     client_id and expected_origins are ignored (Appendix A.2), so the
 //     returned AuthorizationRequest has no ClientID or
@@ -201,6 +214,9 @@ type ParseDCAPIRequestDataParams struct {
 func ParseDCAPIRequestData(params ParseDCAPIRequestDataParams) (AuthorizationRequest, error) {
 	if params.Origin == "" {
 		return AuthorizationRequest{}, errors.New("wallet: parse dc api request: Origin is required")
+	}
+	if len(params.Data) > MaxDCAPIRequestBytes {
+		return AuthorizationRequest{}, fmt.Errorf("wallet: parse dc api request: data is %d bytes, more than %d", len(params.Data), MaxDCAPIRequestBytes)
 	}
 	switch params.Protocol {
 	case DCAPIProtocolSigned:
@@ -243,6 +259,9 @@ func parseMultiSignedDCAPIRequest(params ParseDCAPIRequestDataParams) (Authoriza
 	if err := json.Unmarshal(params.Data, &data); err != nil || data.Request.Payload == "" || len(data.Request.Signatures) == 0 {
 		return AuthorizationRequest{}, errors.New("wallet: parse dc api request: data.request must be a Request Object in JWS JSON Serialization")
 	}
+	if len(data.Request.Signatures) > MaxDCAPISignatures {
+		return AuthorizationRequest{}, fmt.Errorf("wallet: parse dc api request: %d signatures, more than %d", len(data.Request.Signatures), MaxDCAPISignatures)
+	}
 	var errs []error
 	for i, sig := range data.Request.Signatures {
 		// Each signature over the one payload is a JWS of its own, in
@@ -282,7 +301,13 @@ func parseMultiSignedDCAPIRequest(params ParseDCAPIRequestDataParams) (Authoriza
 // this Wallet's Config.VerifierTrust for signed requests. protocol and
 // data are the DC API request's; origin is the calling origin the
 // platform reports.
+//
+// With Config.RequireSignedDCAPIRequests, an unsigned request is refused
+// with an error wrapping ErrUntrustedVerifier.
 func (w *Wallet) ParseDCAPIRequestData(protocol string, data []byte, origin string) (AuthorizationRequest, error) {
+	if protocol == DCAPIProtocolUnsigned && w.cfg.RequireSignedDCAPIRequests {
+		return AuthorizationRequest{}, fmt.Errorf("wallet: parse dc api request: %w: unsigned requests are refused (Config.RequireSignedDCAPIRequests)", ErrUntrustedVerifier)
+	}
 	if protocol != DCAPIProtocolUnsigned && w.cfg.VerifierTrust == nil {
 		return AuthorizationRequest{}, errors.New("wallet: parse dc api request: Config.VerifierTrust is required (NoVerifierTrust{} opts out explicitly)")
 	}

@@ -121,7 +121,7 @@ func (mf mdocVerifyFixture) verifyWith(t *testing.T, nonce string, mutate func(*
 		ExpectedNonce:         mf.nonce,
 		MdocIssuerKeys:        fixedMdocIssuerKeyResolver{pub: &mf.f.IssuerKey.PublicKey, alg: cose.ES256},
 		ResponseEncryptionKey: mf.responseDecryptionKey,
-		Origin:                mf.origin,
+		Origin:                mf.origin, ExpectedOrigins: []string{mf.origin},
 	}
 	mutate(&req)
 	return mf.v.VerifyResponse(context.Background(), req)

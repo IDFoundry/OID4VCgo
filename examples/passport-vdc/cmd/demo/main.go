@@ -220,7 +220,7 @@ func run(ctx context.Context, opts options) error {
 	// registrations of the verifier's relying parties the app checks.
 	if err := writeCertificates(state, map[string]*x509.Certificate{
 		"issuer-ca.pem": issuer.IssuerCACertificate(), "verifier-ca.pem": verifier.VerifierCACertificate(),
-		"registrar-ca.pem": verifier.RegistrarCACertificate(),
+		"registrar-ca.pem": verifier.RegistrarCACertificate(), "mdoc-reader-ca.pem": verifier.ReaderCACertificate(),
 	}); err != nil {
 		return err
 	}

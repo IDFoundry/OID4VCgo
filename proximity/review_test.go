@@ -6,15 +6,12 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
-	"crypto/x509/pkix"
 	"encoding/asn1"
-	"math/big"
 	"testing"
 	"time"
 
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/internal/cose"
-	"github.com/idfoundry/oid4vcgo/internal/testcert"
 )
 
 // issueWith issues the fixture's claims signed by dsKey, with ds as the
@@ -40,8 +37,8 @@ func issueWith(t *testing.T, fx fixture, dsKey *ecdsa.PrivateKey, ds *x509.Certi
 // Verified carries the MSO's status list reference for the reader to
 // check revocation with.
 func TestVerifiedCarriesStatus(t *testing.T) {
-	ca, caKey := testcert.CA(t, "Test IACA")
-	ds, dsKey := testcert.Leaf(t, "Test Document Signer", ca, caKey)
+	ca, caKey := testIACA(t)
+	ds, dsKey := testDocumentSigner(t, ca, caKey)
 	fx := issueFixture(t, mDL)
 	fx.roots = x509.NewCertPool()
 	fx.roots.AddCert(ca)
@@ -80,8 +77,8 @@ func TestKeyAlg(t *testing.T) {
 // reader whose clock runs behind the issuer's sees it in the future.
 func issueValidFrom(t *testing.T, fx fixture, from time.Time) fixture {
 	t.Helper()
-	ca, caKey := testcert.CA(t, "Test IACA")
-	ds, dsKey := testcert.Leaf(t, "Test Document Signer", ca, caKey)
+	ca, caKey := testIACA(t)
+	ds, dsKey := testDocumentSigner(t, ca, caKey)
 	issuerSigned, err := mdoc.Issue(dsKey, cose.ES256, mdoc.Claims{
 		DocType:    fx.docType,
 		NameSpaces: map[string]map[string]interface{}{mDLNS: {"age_over_18": true}},
@@ -118,24 +115,8 @@ func TestWithMaxClockSkew(t *testing.T) {
 // with the extended key usages ekus.
 func documentSigner(t *testing.T, ekus ...asn1.ObjectIdentifier) (*x509.Certificate, *ecdsa.PrivateKey, *x509.CertPool) {
 	t.Helper()
-	ca, caKey := testcert.CA(t, "Test IACA")
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	tmpl := &x509.Certificate{
-		SerialNumber: big.NewInt(11), Subject: pkix.Name{CommonName: "Test Document Signer"},
-		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour),
-		KeyUsage: x509.KeyUsageDigitalSignature, UnknownExtKeyUsage: ekus,
-	}
-	der, err := x509.CreateCertificate(rand.Reader, tmpl, ca, &key.PublicKey, caKey)
-	if err != nil {
-		t.Fatal(err)
-	}
-	cert, err := x509.ParseCertificate(der)
-	if err != nil {
-		t.Fatal(err)
-	}
+	ca, caKey := testIACA(t)
+	cert, key := testDocumentSigner(t, ca, caKey, ekus...)
 	roots := x509.NewCertPool()
 	roots.AddCert(ca)
 	return cert, key, roots
@@ -162,5 +143,39 @@ func TestRequireMDLDocumentSignerEKU(t *testing.T) {
 				t.Errorf("Verify = %v, want ok %v", err, tc.ok)
 			}
 		})
+	}
+}
+
+// By default an OCSP signer, or a certificate whose key usage doesn't
+// allow digital signatures, doesn't sign mdocs; AnyDocumentSigner turns
+// the check off.
+func TestDefaultDocumentSignerPolicy(t *testing.T) {
+	ds := &x509.Certificate{}
+	if err := DefaultDocumentSignerPolicy(ds, nil); err != nil {
+		t.Errorf("no extensions: %v", err)
+	}
+	ds = &x509.Certificate{KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageOCSPSigning}}
+	if err := DefaultDocumentSignerPolicy(ds, nil); err == nil {
+		t.Error("an OCSP signer was accepted")
+	}
+	ds = &x509.Certificate{KeyUsage: x509.KeyUsageKeyEncipherment}
+	if err := DefaultDocumentSignerPolicy(ds, nil); err == nil {
+		t.Error("a key usage without digitalSignature was accepted")
+	}
+	if err := AnyDocumentSigner(ds, nil); err != nil {
+		t.Errorf("AnyDocumentSigner: %v", err)
+	}
+}
+
+func TestMaxReaderClockSkew(t *testing.T) {
+	holder, err := NewDeviceSession(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewReaderSession(holder.QRCode(), WithMaxClockSkew(MaxReaderClockSkew+time.Second)); err == nil {
+		t.Error("a skew allowance over the maximum was accepted")
+	}
+	if _, err := NewReaderSession(holder.QRCode(), WithMaxClockSkew(MaxReaderClockSkew)); err != nil {
+		t.Errorf("the maximum: %v", err)
 	}
 }

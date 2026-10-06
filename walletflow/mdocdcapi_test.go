@@ -216,6 +216,14 @@ func TestMdocPresentation_LinkableAcrossOrigins(t *testing.T) {
 	if linkable, presented := present(shopOrigin); linkable || presented.Linkable {
 		t.Error("the first presentation is linkable")
 	}
+	c, err := f.store.Get(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w.MdocLinkable(c, shopOrigin) || !w.MdocLinkable(c, otherOrigin) {
+		t.Errorf("MdocLinkable before the second presentation: %s %v, %s %v; want false, true",
+			shopOrigin, w.MdocLinkable(c, shopOrigin), otherOrigin, w.MdocLinkable(c, otherOrigin))
+	}
 	if linkable, presented := present(otherOrigin); !linkable || !presented.Linkable {
 		t.Errorf("the only copy, seen by %s, presented to %s: Linkable %v, Presented.Linkable %v", shopOrigin, otherOrigin, linkable, presented.Linkable)
 	}

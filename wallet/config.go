@@ -42,6 +42,14 @@ type Config struct {
 	// Wallet that only receives credentials. NoVerifierTrust{} is
 	// rejected under AssuranceProduction.
 	VerifierTrust VerifierTrust
+
+	// RequireSignedDCAPIRequests refuses unsigned OpenID4VP requests over
+	// the Digital Credentials API (ParseDCAPIRequestData's
+	// DCAPIProtocolUnsigned) with ErrUntrustedVerifier: their only
+	// identity is the origin the platform reports, which VerifierTrust
+	// can't judge. HAIP 1.0 §5.2 requires a Wallet to support them, so
+	// set it only where every Verifier must be one VerifierTrust accepts.
+	RequireSignedDCAPIRequests bool
 }
 
 // Clock supplies the current time — a plain function value satisfies

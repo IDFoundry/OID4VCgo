@@ -14,7 +14,8 @@ enum DocumentRegistrations {
     static let doctypes: Set<String> = ["org.iso.23220.photoid.1"]
 
     /// Registers each presentable mdoc in `credentials` — one of
-    /// `doctypes`, unexpired, with its holder key — for readers whose
+    /// `doctypes`, unexpired, not revoked or suspended as last checked,
+    /// with its holder key — for readers whose
     /// certificates the `readerRootsPEM` CAs issued, and removes every
     /// other registration. Before the holder has allowed the app to
     /// provide documents, the first registration asks them.
@@ -26,10 +27,18 @@ enum DocumentRegistrations {
         let now = Date()
         let wanted = credentials.filter { c in
             c.format == "mso_mdoc" && doctypes.contains(c.doctype ?? "") && !c.isExpired(at: now) && c.holderKeyPresent != false
+                && c.status?.value != .revoked && c.status?.value != .suspended
         }
-        let registered = (try? await store.registrations.map(\.documentIdentifier)) ?? []
-        for id in registered where !wanted.contains(where: { $0.id == id }) {
-            try? await store.removeRegistration(forDocumentIdentifier: id)
+        // A registration is current while its credential is wanted and
+        // expires when it does: a refresh can change that.
+        var registered: [String] = []
+        for r in (try? await store.registrations) ?? [] {
+            let current = wanted.first { $0.id == r.documentIdentifier }
+            if let current, (r as? MobileDocumentRegistration)?.invalidationDate == current.validUntil {
+                registered.append(r.documentIdentifier)
+            } else {
+                try? await store.removeRegistration(forDocumentIdentifier: r.documentIdentifier)
+            }
         }
         for c in wanted where !registered.contains(c.id) {
             let registration = MobileDocumentRegistration(mobileDocumentType: c.doctype ?? "", supportedAuthorityKeyIdentifiers: authorities,

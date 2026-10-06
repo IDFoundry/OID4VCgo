@@ -55,24 +55,49 @@ func WithReaderAuth(signer crypto.Signer) ReaderOption {
 	return func(c *readerConfig) { c.readerAuth = signer }
 }
 
+// MaxReaderClockSkew is the most WithMaxClockSkew allows: a larger
+// allowance would all but switch off the MSO's validity check.
+const MaxReaderClockSkew = time.Hour
+
 // WithMaxClockSkew tolerates a reader clock up to d off the issuer's:
 // Verify accepts an MSO up to d before its validFrom and after its
 // validUntil (credential/mdoc.VerifyOptions.MaxClockSkew). Without it,
 // a freshly issued mdoc is refused when the reader's clock runs behind
-// the issuer's.
+// the issuer's. NewReaderSession refuses more than MaxReaderClockSkew.
 func WithMaxClockSkew(d time.Duration) ReaderOption {
 	return func(c *readerConfig) { c.maxClockSkew = d }
 }
 
 // WithDocumentSignerPolicy runs policy on the chain-verified document
-// signer certificate and its verified paths, and Verify refuses the
-// document when it fails. Chain validation accepts a leaf with any key
-// usage, so any end-entity certificate under a trusted IACA could
-// otherwise sign mdocs: RequireMDLDocumentSignerEKU requires what
-// ISO/IEC 18013-5 Annex B profiles an mDL document signer with.
+// signer certificate and its verified paths, in place of
+// DefaultDocumentSignerPolicy, and Verify refuses the document when it
+// fails. Chain validation accepts a leaf with any key usage, so without
+// a policy any end-entity certificate under a trusted IACA could sign
+// mdocs: RequireMDLDocumentSignerEKU requires what ISO/IEC 18013-5
+// Annex B profiles an mDL document signer with, and AnyDocumentSigner
+// checks nothing.
 func WithDocumentSignerPolicy(policy func(leaf *x509.Certificate, chains [][]*x509.Certificate) error) ReaderOption {
 	return func(c *readerConfig) { c.signerPolicy = policy }
 }
+
+// DefaultDocumentSignerPolicy is the document signer check Verify makes
+// unless WithDocumentSignerPolicy replaces it: a certificate whose key
+// usage extension doesn't allow digital signatures, or that is an OCSP
+// signer — the other end-entity certificates an IACA issues — doesn't
+// sign mdocs. It accepts a certificate without those extensions.
+func DefaultDocumentSignerPolicy(leaf *x509.Certificate, _ [][]*x509.Certificate) error {
+	if leaf.KeyUsage != 0 && leaf.KeyUsage&x509.KeyUsageDigitalSignature == 0 {
+		return errors.New("the document signer certificate's key usage doesn't allow digital signatures")
+	}
+	if slices.Contains(leaf.ExtKeyUsage, x509.ExtKeyUsageOCSPSigning) {
+		return errors.New("the document signer certificate is an OCSP signer's")
+	}
+	return nil
+}
+
+// AnyDocumentSigner is a WithDocumentSignerPolicy policy accepting any
+// certificate chain validation accepts.
+func AnyDocumentSigner(*x509.Certificate, [][]*x509.Certificate) error { return nil }
 
 // MDLDocumentSignerEKU is the extended key usage of an mDL document
 // signer certificate (ISO/IEC 18013-5 Annex B: id-mdl-kp-mdlDS,
@@ -112,6 +137,12 @@ func NewReaderSession(qr string, opts ...ReaderOption) (*ReaderSession, error) {
 	}
 	if !r.engagement.ble {
 		return nil, fmt.Errorf("proximity: DeviceEngagement offers no BLE retrieval method")
+	}
+	if cfg.maxClockSkew > MaxReaderClockSkew {
+		return nil, fmt.Errorf("proximity: clock skew allowance %s is more than %s", cfg.maxClockSkew, MaxReaderClockSkew)
+	}
+	if cfg.signerPolicy == nil {
+		cfg.signerPolicy = DefaultDocumentSignerPolicy
 	}
 	r.readerAuth, r.maxClockSkew, r.signerPolicy = cfg.readerAuth, cfg.maxClockSkew, cfg.signerPolicy
 	return r, nil
@@ -250,7 +281,9 @@ type Verified struct {
 //   - every returned element was requested.
 //
 // It doesn't check revocation: Verified.Status is the reference to
-// check.
+// check. Nor that the requested elements came back: the holder may
+// withhold any of them, and an empty Claims verifies. Check each
+// element you need is there.
 //
 // A reply carrying only status 20 is ErrDeclined; a DeviceResponse with
 // no documents is ErrNoDocument. Errors that wrap ErrSessionEncryption
@@ -290,7 +323,8 @@ func (r *ReaderSession) verifyDocument(doc responseDocument, roots *x509.CertPoo
 		return Verified{}, fmt.Errorf("proximity: document docType %q, requested %q", doc.docType, r.docType)
 	}
 
-	_, unprotected, _, err := cose.DecodeUnverifiedMax(doc.issuerSigned.IssuerAuth, MaxMessageBytes)
+	// The size credential/mdoc verifies IssuerAuth up to.
+	_, unprotected, _, err := cose.DecodeUnverified(doc.issuerSigned.IssuerAuth)
 	if err != nil {
 		return Verified{}, fmt.Errorf("proximity: decode IssuerAuth: %w", err)
 	}
@@ -303,7 +337,8 @@ func (r *ReaderSession) verifyDocument(doc responseDocument, roots *x509.CertPoo
 	if err != nil {
 		return Verified{}, fmt.Errorf("proximity: issuer certificate: %w", err)
 	}
-	if err := checkIACASubject(chains); err != nil {
+	anchored, err := checkIACASubject(chains)
+	if err != nil {
 		return Verified{}, err
 	}
 	if r.signerPolicy != nil {
@@ -373,9 +408,8 @@ func (r *ReaderSession) verifyDocument(doc responseDocument, roots *x509.CertPoo
 	if len(doc.deviceSigned.NameSpaces) > 0 {
 		out.DeviceSignedClaims = doc.deviceSigned.NameSpaces
 	}
-	if len(chains) > 0 && len(chains[0]) > 0 {
-		out.TrustAnchorCN = chains[0][len(chains[0])-1].Subject.CommonName
-	}
+	// The root of the path the §9.3.3 checks passed on.
+	out.TrustAnchorCN = anchored[len(anchored)-1].Subject.CommonName
 	return out, nil
 }
 
@@ -390,11 +424,13 @@ func (r *ReaderSession) Termination() []byte {
 // validation: on some verified path, the trust anchor's countryName
 // equals the document signer's, and so does stateOrProvinceName when
 // both certificates carry one.
-func checkIACASubject(chains [][]*x509.Certificate) error {
-	var lastErr error
+func checkIACASubject(chains [][]*x509.Certificate) ([]*x509.Certificate, error) {
+	lastErr := errors.New("proximity: no verified certificate path")
 	for _, chain := range chains {
 		leaf, root := chain[0], chain[len(chain)-1]
-		if !slices.Equal(root.Subject.Country, leaf.Subject.Country) {
+		// Annex B makes countryName mandatory in both certificates: two
+		// without one don't match.
+		if len(root.Subject.Country) == 0 || !slices.Equal(root.Subject.Country, leaf.Subject.Country) {
 			lastErr = fmt.Errorf("proximity: document signer countryName %v differs from its IACA's %v", leaf.Subject.Country, root.Subject.Country)
 			continue
 		}
@@ -402,7 +438,7 @@ func checkIACASubject(chains [][]*x509.Certificate) error {
 			lastErr = fmt.Errorf("proximity: document signer stateOrProvinceName %v differs from its IACA's %v", leaf.Subject.Province, root.Subject.Province)
 			continue
 		}
-		return nil
+		return chain, nil
 	}
-	return lastErr
+	return nil, lastErr
 }

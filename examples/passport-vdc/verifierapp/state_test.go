@@ -3,6 +3,7 @@ package verifierapp
 import (
 	"crypto/x509"
 	"encoding/pem"
+	"github.com/idfoundry/oid4vcgo/mdocdcapi"
 	"os"
 	"path/filepath"
 	"testing"
@@ -39,11 +40,28 @@ func TestIdentities_Persist(t *testing.T) {
 		t.Error("no registrar, or it doesn't chain to its CA")
 	}
 
+	// Each scenario's mdoc reader certificate is its own, with the
+	// reader authentication EKU, under the reader CA (the untrusted CA
+	// for an untrusted scenario) — never its OpenID4VP signer's.
+	for _, s := range Scenarios {
+		info, _ := s.Info()
+		rd := ids.readers[s]
+		ca := ids.readerCA
+		if !info.Trusted {
+			ca = ids.untrustedCA
+		}
+		if rd.cert == nil || rd.cert.CheckSignatureFrom(ca) != nil || rd.key.Equal(ids.signers[s].key) ||
+			mdocdcapi.RequireReaderAuthenticationEKU(rd.cert, nil) != nil {
+			t.Errorf("%s: reader certificate missing, not its CA's, sharing the signer's key, or without the reader EKU", s)
+		}
+	}
+
 	again, err := loadIdentities(dir, now.Add(time.Hour))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !again.ca.Equal(ids.ca) || !again.signers[ScenarioBank].key.Equal(ids.signers[ScenarioBank].key) || !again.registrar.key.Equal(ids.registrar.key) {
+	if !again.ca.Equal(ids.ca) || !again.signers[ScenarioBank].key.Equal(ids.signers[ScenarioBank].key) || !again.registrar.key.Equal(ids.registrar.key) ||
+		!again.readers[ScenarioBank].key.Equal(ids.readers[ScenarioBank].key) {
 		t.Error("a restart made new verifier identities")
 	}
 

@@ -128,11 +128,11 @@ func presentAndVerifySDJWTVC(t *testing.T, v *verifier.Verifier, query dcql.Quer
 		return &fixture.issuerKey.PublicKey, jose.ES256, nil
 	})
 	result, err := v.VerifyResponse(context.Background(), verifier.VerifyResponseRequest{
-		Query:            query,
-		Response:         parsed,
-		ExpectedNonce:    pc.Nonce,
-		IssuerKeys:       issuerKeys,
-		Origin:           pc.Origin,
+		Query:         query,
+		Response:      parsed,
+		ExpectedNonce: pc.Nonce,
+		IssuerKeys:    issuerKeys,
+		Origin:        pc.Origin, ExpectedOrigins: []string{pc.Origin},
 		MaxKeyBindingAge: time.Hour,
 	})
 	return testverify.RequireOneCredential(t, result, err, "identity_credential")
