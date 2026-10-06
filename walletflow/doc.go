@@ -46,6 +46,21 @@
 // which query, and which credential_sets option, are the application's
 // to decide.
 //
+// An mdoc asked for over the Digital Credentials API as "org-iso-mdoc"
+// (ISO/IEC TS 18013-7 Annex C, package mdocdcapi) — what iOS hands a
+// document provider — is presented the same way, without OpenID4VP:
+//
+//	p, err := w.StartMdocPresentation(ctx, data, origin) // show p.Origin(), p.Reader()
+//	requests := p.Requests()                             // documents, elements, held mdocs
+//	presented, err := p.Respond(ctx, 0, credentialID, elements) // holder consents
+//	// return presented.EncryptedResponse to the platform; to decline, cancel there
+//
+// The reader is recognized when it signs the request with a certificate
+// under Config.MdocReaderRoots; otherwise the holder is shown its origin.
+// Its copies are recorded as shown to the origin, as an OpenID4VP
+// Verifier over the Digital Credentials API would be ("origin:" +
+// origin).
+//
 // When an issuer offers batch issuance, a credential arrives as several
 // copies (Config.BatchSize), each bound to its own key. By default each
 // presentation uses a copy no Verifier has seen, so presentations can't

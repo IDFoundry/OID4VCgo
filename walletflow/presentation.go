@@ -189,11 +189,14 @@ func (p *Presentation) Verifier() Verifier {
 // been presented elsewhere. False for a credential not held.
 func (p *Presentation) Linkable(id string) bool {
 	c, ok := p.byID[id]
-	if !ok {
-		return false
-	}
-	verifier := VerifierHash(p.req.ClientID)
-	_, cp, _ := c.copyFor(p.w.cfg.CopyPolicy, verifier)
+	return ok && p.w.linkable(c, VerifierHash(p.req.ClientID))
+}
+
+// linkable reports whether presenting c to the Verifier whose
+// VerifierHash is verifier, under Config.CopyPolicy, would use a copy
+// another Verifier has seen.
+func (w *Wallet) linkable(c StoredCredential, verifier string) bool {
+	_, cp, _ := c.copyFor(w.cfg.CopyPolicy, verifier)
 	return slices.ContainsFunc(cp.ShownTo, func(h string) bool { return h != verifier })
 }
 
@@ -412,8 +415,13 @@ func (p *Presentation) reserve(ctx context.Context, sel Selection) ([]reservedCo
 	if err := checkShape(sel); err != nil {
 		return nil, err
 	}
-	w := p.w
-	verifier := VerifierHash(p.req.ClientID)
+	return p.w.reserve(ctx, sel, VerifierHash(p.req.ClientID), p.Linkable)
+}
+
+// reserve is Presentation.reserve for the Verifier whose VerifierHash is
+// verifier; linkable is what the holder was told about each credential
+// (Presentation.Linkable), which a reserved copy must agree with.
+func (w *Wallet) reserve(ctx context.Context, sel Selection, verifier string, linkable func(id string) bool) ([]reservedCopy, error) {
 	w.credMu.Lock()
 	defer w.credMu.Unlock()
 	current := map[string]StoredCredential{}
@@ -423,11 +431,11 @@ func (p *Presentation) reserve(ctx context.Context, sel Selection) ([]reservedCo
 			c, ok := current[id]
 			if !ok {
 				var err error
-				if c, err = p.loadForReserve(ctx, id); err != nil {
+				if c, err = w.loadForReserve(ctx, id); err != nil {
 					return nil, err
 				}
 			}
-			r, err := p.reserveCopy(&c, q, id, verifier)
+			r, err := w.reserveCopy(&c, q, id, verifier, linkable(id))
 			if err != nil {
 				return nil, err
 			}
@@ -445,8 +453,8 @@ func (p *Presentation) reserve(ctx context.Context, sel Selection) ([]reservedCo
 
 // loadForReserve reads credential id for reserve, with its copies its
 // own to change.
-func (p *Presentation) loadForReserve(ctx context.Context, id string) (StoredCredential, error) {
-	c, err := p.w.deps.Credentials.Get(ctx, id)
+func (w *Wallet) loadForReserve(ctx context.Context, id string) (StoredCredential, error) {
+	c, err := w.deps.Credentials.Get(ctx, id)
 	if errors.Is(err, ErrNotFound) {
 		return StoredCredential{}, fmt.Errorf("walletflow: %w: no credential %q", ErrInvalidSelection, id)
 	}
@@ -458,11 +466,12 @@ func (p *Presentation) loadForReserve(ctx context.Context, id string) (StoredCre
 }
 
 // reserveCopy picks c's copy to answer query q with, by
-// Config.CopyPolicy, and marks it presented to verifier in c.
-func (p *Presentation) reserveCopy(c *StoredCredential, q, id, verifier string) (reservedCopy, error) {
-	i, cp, reused := c.copyFor(p.w.cfg.CopyPolicy, verifier)
+// Config.CopyPolicy, and marks it presented to verifier in c. toldLinkable
+// is whether the holder was told presenting it would be linkable.
+func (w *Wallet) reserveCopy(c *StoredCredential, q, id, verifier string, toldLinkable bool) (reservedCopy, error) {
+	i, cp, reused := c.copyFor(w.cfg.CopyPolicy, verifier)
 	linkable := slices.ContainsFunc(cp.ShownTo, func(h string) bool { return h != verifier })
-	if linkable && !p.Linkable(id) {
+	if linkable && !toldLinkable {
 		// What the holder saw said otherwise: don't send it.
 		return reservedCopy{}, fmt.Errorf("walletflow: credential %q: %w", id, ErrLinkable)
 	}
@@ -481,9 +490,13 @@ func (p *Presentation) reserveCopy(c *StoredCredential, q, id, verifier string) 
 // sent, unless the credential has changed since. It's best effort: a
 // copy left marked is one fewer to use, never one presented twice.
 func (p *Presentation) release(ctx context.Context, reserved []reservedCopy) {
+	p.w.release(ctx, reserved, VerifierHash(p.req.ClientID))
+}
+
+// release is Presentation.release for the Verifier whose VerifierHash
+// is verifier.
+func (w *Wallet) release(ctx context.Context, reserved []reservedCopy, verifier string) {
 	ctx = context.WithoutCancel(ctx)
-	w := p.w
-	verifier := VerifierHash(p.req.ClientID)
 	w.credMu.Lock()
 	defer w.credMu.Unlock()
 	changed := map[string]StoredCredential{}

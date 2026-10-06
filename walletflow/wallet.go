@@ -52,6 +52,12 @@ type Config struct {
 	// certificate policy the ecosystem defines for registrars, say.
 	RegistrarLeafPolicy func(leaf *x509.Certificate, chains [][]*x509.Certificate) error
 
+	// MdocReaderRoots, if set, are the mdoc readers the wallet
+	// recognizes when one signs an org-iso-mdoc request
+	// (MdocPresentation.Reader). An unsigned or unrecognized request is
+	// still answered if the holder agrees, shown by its origin.
+	MdocReaderRoots *x509.CertPool
+
 	// Locales are the holder's preferred languages (BCP 47 tags, most
 	// preferred first), for the issuer's display metadata. None means
 	// the issuer's entry without a locale, else its first.
