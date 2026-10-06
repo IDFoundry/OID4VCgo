@@ -263,6 +263,12 @@ func (s *Issuance) CompleteAuthorization(ctx context.Context, redirect string) e
 	}
 	result, err := s.client.CompleteAuthorization(ctx, client.AuthorizationCallback{RawQuery: query, Session: s.session})
 	if err != nil {
+		if s.authorizationPending(context.WithoutCancel(ctx)) {
+			// Not consumed — a redirect that isn't this authorization's
+			// (another's state, a stale one): the genuine redirect can
+			// still complete it.
+			return fmt.Errorf("walletflow: authorization: %w", err)
+		}
 		// fapigo consumes the authorization once the redirect's state
 		// matches, whatever fails after (the token request, say): it
 		// can't be completed again. Start over from BeginAuthorization,
@@ -388,6 +394,16 @@ func (s *Issuance) newClient(ctx context.Context, asURL string) error {
 
 // forgetAuthorization deletes the authorization in progress, if there
 // is one.
+// authorizationPending reports whether the authorization in progress is
+// still recorded — not yet consumed by a redirect.
+func (s *Issuance) authorizationPending(ctx context.Context) bool {
+	if s.sessions == nil || s.sessions.state == "" {
+		return false
+	}
+	_, err := s.w.deps.Authorizations.GetAuthorization(ctx, s.sessions.state)
+	return err == nil
+}
+
 func (s *Issuance) forgetAuthorization(ctx context.Context) error {
 	if s.sessions == nil || s.sessions.state == "" {
 		return nil
