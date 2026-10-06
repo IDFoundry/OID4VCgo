@@ -75,11 +75,22 @@ type flow struct {
 
 func establish(t *testing.T, docType string, elements map[string][]string, opts ...DeviceOption) flow {
 	t.Helper()
-	holder, err := NewDeviceSession(nil, opts...)
+	return establishWith(t, docType, elements, opts, nil)
+}
+
+// establishReader is establish with reader options.
+func establishReader(t *testing.T, docType string, elements map[string][]string, opts ...ReaderOption) flow {
+	t.Helper()
+	return establishWith(t, docType, elements, nil, opts)
+}
+
+func establishWith(t *testing.T, docType string, elements map[string][]string, deviceOpts []DeviceOption, readerOpts []ReaderOption) flow {
+	t.Helper()
+	holder, err := NewDeviceSession(nil, deviceOpts...)
 	if err != nil {
 		t.Fatalf("NewDeviceSession: %v", err)
 	}
-	reader, err := NewReaderSession(holder.QRCode())
+	reader, err := NewReaderSession(holder.QRCode(), readerOpts...)
 	if err != nil {
 		t.Fatalf("NewReaderSession: %v", err)
 	}
@@ -107,7 +118,7 @@ func establish(t *testing.T, docType string, elements map[string][]string, opts 
 // respond builds and encrypts the holder's DeviceResponse for elements.
 func (f flow) respond(t *testing.T, fx fixture, elements [][2]string) []byte {
 	t.Helper()
-	resp, err := BuildDeviceResponse(fx.issuerSigned, fx.docType, fx.deviceKey, f.holder.SessionTranscriptBytes(), elements)
+	resp, err := buildDeviceResponse(fx.issuerSigned, fx.docType, fx.deviceKey, f.holder.SessionTranscriptBytes(), elements)
 	if err != nil {
 		t.Fatalf("BuildDeviceResponse: %v", err)
 	}
@@ -236,7 +247,7 @@ func TestRejects(t *testing.T) {
 			fx := issueFixture(t, mDL)
 			f := establish(t, mDL, age)
 			other := establish(t, mDL, age)
-			resp, err := BuildDeviceResponse(fx.issuerSigned, mDL, fx.deviceKey, other.holder.SessionTranscriptBytes(), ageOnly)
+			resp, err := buildDeviceResponse(fx.issuerSigned, mDL, fx.deviceKey, other.holder.SessionTranscriptBytes(), ageOnly)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -501,12 +512,33 @@ func TestReaderAuthNotSupported(t *testing.T) {
 
 func TestBuildDeviceResponseRejects(t *testing.T) {
 	fx := issueFixture(t, mDL)
-	f := establish(t, mDL, map[string][]string{mDLNS: {"age_over_18"}})
-	if _, err := BuildDeviceResponse(fx.issuerSigned, mDL, fx.deviceKey, f.holder.SessionTranscriptBytes(), [][2]string{{mDLNS, "portrait"}}); err == nil {
-		t.Error("a response disclosing nothing: built")
+	f := establish(t, mDL, map[string][]string{mDLNS: {"age_over_18", "portrait"}})
+	st := f.holder.SessionTranscriptBytes()
+	ageOnly := [][2]string{{mDLNS, "age_over_18"}}
+	other := issueFixture(t, "org.example.other")
+	for name, tc := range map[string]struct {
+		req          DocRequest
+		issuerSigned mdoc.IssuerSigned
+		transcript   []byte
+		elements     [][2]string
+		want         string
+	}{
+		"an element not requested":  {f.req, fx.issuerSigned, st, [][2]string{{mDLNS, "age_over_18"}, {mDLNS, "family_name"}}, "family_name wasn't requested"},
+		"nothing to disclose":       {f.req, fx.issuerSigned, st, nil, "no element"},
+		"held none of the elements": {f.req, fx.issuerSigned, st, [][2]string{{mDLNS, "portrait"}}, "holds none"},
+		"no session transcript":     {f.req, fx.issuerSigned, nil, ageOnly, "no session transcript"},
+		"no request":                {DocRequest{}, fx.issuerSigned, st, ageOnly, "no document request"},
+		"an mdoc of another type":   {f.req, other.issuerSigned, st, ageOnly, `the mdoc is a "org.example.other"`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := BuildDeviceResponse(tc.req, tc.issuerSigned, fx.deviceKey, tc.transcript, tc.elements)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("BuildDeviceResponse = %v, want an error containing %q", err, tc.want)
+			}
+		})
 	}
-	if _, err := BuildDeviceResponse(fx.issuerSigned, mDL, fx.deviceKey, nil, [][2]string{{mDLNS, "age_over_18"}}); err == nil {
-		t.Error("a response without a session transcript: built")
+	if _, err := BuildDeviceResponse(f.req, fx.issuerSigned, fx.deviceKey, st, ageOnly); err != nil {
+		t.Errorf("a requested element: %v", err)
 	}
 }
 

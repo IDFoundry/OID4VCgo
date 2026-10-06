@@ -84,6 +84,18 @@ jobs:
           - id: mdocdcapi-parse-request
             pkg: ./mdocdcapi
             name: FuzzParseRequest
+          - id: proximity-parse-device-request
+            pkg: ./proximity
+            name: FuzzParseDeviceRequest
+          - id: proximity-new-reader-session
+            pkg: ./proximity
+            name: FuzzNewReaderSession
+          - id: proximity-handle-session-establishment
+            pkg: ./proximity
+            name: FuzzHandleSessionEstablishment
+          - id: proximity-handle-session-data
+            pkg: ./proximity
+            name: FuzzHandleSessionData
           - id: sdjwtvc-parse
             pkg: ./credential/sdjwtvc
             name: FuzzParse

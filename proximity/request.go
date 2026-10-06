@@ -20,8 +20,8 @@ type DocRequest struct {
 	DocType string
 
 	// Elements are the requested [namespace, element] pairs, in the
-	// order the request lists them — the form BuildDeviceResponse and
-	// mdoc.IssuerSigned.SelectNameSpaces take.
+	// order the request lists them — the form BuildDeviceResponse takes
+	// the consented ones in.
 	Elements [][2]string
 
 	// IntentToRetain is each requested element's intentToRetain flag:

@@ -67,11 +67,16 @@ notifications.
    is requested, and whether the reader says it will keep each element,
    and let the holder decide on that.
 6. **Respond.** If the user consents, the mdoc sends
-   `Encrypt(BuildDeviceResponse(...), false)`. If they decline, or
+   `Encrypt(BuildDeviceResponse(req, ...), false)`, disclosing only
+   elements the request lists (any other is refused). If they decline, or
    nothing matches, the mdoc sends `Termination()` instead. The reader
    passes either one to `Verify`. `Verify` doesn't check revocation:
    check `Verified.Status`, the MSO's status list reference, before
-   relying on the document.
+   relying on the document. A reader can pass `NewReaderSession`
+   `WithMaxClockSkew` — so an mdoc issued by a clock a little ahead of
+   the reader's isn't refused as not yet valid — and
+   `WithDocumentSignerPolicy(RequireMDLDocumentSignerEKU)`, to accept
+   only document signer certificates issued for that purpose.
 7. **End.** Either side can end the session. Send a `Termination()`
    message (status 20), or write `0x02` (end) to State. Treat a `0x02`
    from the other side the same way. The GATT client then unsubscribes
@@ -134,7 +139,7 @@ onMessage { msg ->            // a reassembled Client2Server message
     val consented = askUser(req)          // null if declined
     val reply = if (consented == null) session.termination()
       else session.encrypt(Proximity.buildDeviceResponse(
-             mdoc, req[0].docType, deviceKey, session.sessionTranscriptBytes(), consented), false)
+             req[0], mdoc, deviceKey, session.sessionTranscriptBytes(), consented), false)
     sendChunked(reply)                    // as Server2Client notifications
   } catch (e: Exception) {
     Proximity.statusFor(e)?.let { sendChunked(Proximity.statusMessage(it)) }

@@ -6,6 +6,8 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
+	"encoding/asn1"
+	"errors"
 	"fmt"
 	"slices"
 	"time"
@@ -28,6 +30,8 @@ type ReaderSession struct {
 	sessionTranscriptBytes []byte
 	cipher                 *cipherState
 	readerAuth             crypto.Signer
+	maxClockSkew           time.Duration
+	signerPolicy           func(leaf *x509.Certificate, chains [][]*x509.Certificate) error
 
 	docType   string
 	requested requestedSet
@@ -36,7 +40,9 @@ type ReaderSession struct {
 }
 
 type readerConfig struct {
-	readerAuth crypto.Signer
+	readerAuth   crypto.Signer
+	maxClockSkew time.Duration
+	signerPolicy func(leaf *x509.Certificate, chains [][]*x509.Certificate) error
 }
 
 // ReaderOption configures NewReaderSession.
@@ -47,6 +53,41 @@ type ReaderOption func(*readerConfig)
 // Establishment returns an error rather than send an unsigned request.
 func WithReaderAuth(signer crypto.Signer) ReaderOption {
 	return func(c *readerConfig) { c.readerAuth = signer }
+}
+
+// WithMaxClockSkew tolerates a reader clock up to d off the issuer's:
+// Verify accepts an MSO up to d before its validFrom and after its
+// validUntil (credential/mdoc.VerifyOptions.MaxClockSkew). Without it,
+// a freshly issued mdoc is refused when the reader's clock runs behind
+// the issuer's.
+func WithMaxClockSkew(d time.Duration) ReaderOption {
+	return func(c *readerConfig) { c.maxClockSkew = d }
+}
+
+// WithDocumentSignerPolicy runs policy on the chain-verified document
+// signer certificate and its verified paths, and Verify refuses the
+// document when it fails. Chain validation accepts a leaf with any key
+// usage, so any end-entity certificate under a trusted IACA could
+// otherwise sign mdocs: RequireMDLDocumentSignerEKU requires what
+// ISO/IEC 18013-5 Annex B profiles an mDL document signer with.
+func WithDocumentSignerPolicy(policy func(leaf *x509.Certificate, chains [][]*x509.Certificate) error) ReaderOption {
+	return func(c *readerConfig) { c.signerPolicy = policy }
+}
+
+// MDLDocumentSignerEKU is the extended key usage of an mDL document
+// signer certificate (ISO/IEC 18013-5 Annex B: id-mdl-kp-mdlDS,
+// 1.0.18013.5.1.2).
+var MDLDocumentSignerEKU = asn1.ObjectIdentifier{1, 0, 18013, 5, 1, 2}
+
+// RequireMDLDocumentSignerEKU is a WithDocumentSignerPolicy policy
+// refusing a document signer certificate without MDLDocumentSignerEKU.
+func RequireMDLDocumentSignerEKU(leaf *x509.Certificate, _ [][]*x509.Certificate) error {
+	for _, eku := range leaf.UnknownExtKeyUsage {
+		if eku.Equal(MDLDocumentSignerEKU) {
+			return nil
+		}
+	}
+	return errors.New("the document signer certificate lacks the mDL document signer extended key usage (1.0.18013.5.1.2)")
 }
 
 // NewReaderSession decodes the mdoc's QR code (§8.2.2.3), checks its
@@ -72,7 +113,7 @@ func NewReaderSession(qr string, opts ...ReaderOption) (*ReaderSession, error) {
 	if !r.engagement.ble {
 		return nil, fmt.Errorf("proximity: DeviceEngagement offers no BLE retrieval method")
 	}
-	r.readerAuth = cfg.readerAuth
+	r.readerAuth, r.maxClockSkew, r.signerPolicy = cfg.readerAuth, cfg.maxClockSkew, cfg.signerPolicy
 	return r, nil
 }
 
@@ -265,6 +306,11 @@ func (r *ReaderSession) verifyDocument(doc responseDocument, roots *x509.CertPoo
 	if err := checkIACASubject(chains); err != nil {
 		return Verified{}, err
 	}
+	if r.signerPolicy != nil {
+		if err := r.signerPolicy(leaf, chains); err != nil {
+			return Verified{}, fmt.Errorf("proximity: document signer certificate: %w", err)
+		}
+	}
 	// The algorithm is the verified certificate's key's (ISO/IEC
 	// 18013-5 §9.3.1: its working public key algorithm), never the
 	// document's own header's, which IssuerAuth must then match.
@@ -273,7 +319,7 @@ func (r *ReaderSession) verifyDocument(doc responseDocument, roots *x509.CertPoo
 		return Verified{}, fmt.Errorf("proximity: document signer key: %w", err)
 	}
 	verified, err := mdoc.Verify(doc.issuerSigned, r.docType, leaf.PublicKey, issuerAlg, mdoc.VerifyOptions{
-		Now: func() time.Time { return now },
+		Now: func() time.Time { return now }, MaxClockSkew: r.maxClockSkew,
 	})
 	if err != nil {
 		return Verified{}, fmt.Errorf("proximity: %w", err)

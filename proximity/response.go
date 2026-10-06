@@ -7,6 +7,7 @@ import (
 	"crypto/elliptic"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/fxamacker/cbor/v2"
@@ -17,9 +18,10 @@ import (
 	"github.com/idfoundry/oid4vcgo/oid4vpmdoc"
 )
 
-// BuildDeviceResponse builds the DeviceResponse (§8.3.2.1.2.2) for one
-// document: issuerSigned trimmed to elements — the requested elements
-// the user consented to, as DocRequest.Elements lists them — and a
+// BuildDeviceResponse builds the DeviceResponse (§8.3.2.1.2.2) answering
+// req: issuerSigned, an mdoc of req.DocType, trimmed to elements — the
+// elements of req.Elements the user consented to; any req didn't
+// request is refused, so nothing it didn't ask for is disclosed — and a
 // device signature (§9.1.3.6) by holder, the mdoc's device key, over
 // sessionTranscriptBytes (DeviceSession.SessionTranscriptBytes), with
 // no device-signed elements. Encrypt the result with
@@ -27,7 +29,21 @@ import (
 //
 // When nothing matches the request or the user declines, don't call
 // this: send DeviceSession.Termination instead, as Multipaz does.
-func BuildDeviceResponse(issuerSigned mdoc.IssuerSigned, docType string, holder crypto.Signer, sessionTranscriptBytes []byte, elements [][2]string) ([]byte, error) {
+func BuildDeviceResponse(req DocRequest, issuerSigned mdoc.IssuerSigned, holder crypto.Signer, sessionTranscriptBytes []byte, elements [][2]string) ([]byte, error) {
+	if err := checkRequested(req, elements); err != nil {
+		return nil, err
+	}
+	if held, err := msoDocType(issuerSigned); err != nil {
+		return nil, fmt.Errorf("proximity: build DeviceResponse: %w", err)
+	} else if held != req.DocType {
+		return nil, fmt.Errorf("proximity: build DeviceResponse: the mdoc is a %q, the request is for %q", held, req.DocType)
+	}
+	return buildDeviceResponse(issuerSigned, req.DocType, holder, sessionTranscriptBytes, elements)
+}
+
+// buildDeviceResponse is BuildDeviceResponse without its checks against
+// the request.
+func buildDeviceResponse(issuerSigned mdoc.IssuerSigned, docType string, holder crypto.Signer, sessionTranscriptBytes []byte, elements [][2]string) ([]byte, error) {
 	if holder == nil {
 		return nil, fmt.Errorf("proximity: build DeviceResponse: no device key")
 	}
@@ -55,6 +71,43 @@ func BuildDeviceResponse(issuerSigned mdoc.IssuerSigned, docType string, holder 
 		return nil, fmt.Errorf("proximity: build DeviceResponse: %w", err)
 	}
 	return b, nil
+}
+
+// msoDocType is the docType in issuerSigned's MSO — the holder's own
+// mdoc, read without verifying it.
+func msoDocType(issuerSigned mdoc.IssuerSigned) (string, error) {
+	_, _, payload, err := cose.DecodeUnverifiedMax(issuerSigned.IssuerAuth, MaxMessageBytes)
+	if err != nil {
+		return "", fmt.Errorf("decode IssuerAuth: %w", err)
+	}
+	msoBytes, err := unwrapTag24(payload)
+	if err != nil {
+		return "", fmt.Errorf("decode MSO: %w", err)
+	}
+	var mso struct {
+		DocType string `cbor:"docType"`
+	}
+	if err := decMode.Unmarshal(msoBytes, &mso); err != nil {
+		return "", fmt.Errorf("decode MSO: %w", err)
+	}
+	return mso.DocType, nil
+}
+
+// checkRequested refuses an empty disclosure, and any element req
+// doesn't request.
+func checkRequested(req DocRequest, elements [][2]string) error {
+	if req.DocType == "" {
+		return fmt.Errorf("proximity: build DeviceResponse: no document request")
+	}
+	if len(elements) == 0 {
+		return fmt.Errorf("proximity: build DeviceResponse: no element to disclose")
+	}
+	for _, e := range elements {
+		if !slices.Contains(req.Elements, e) {
+			return fmt.Errorf("proximity: build DeviceResponse: %s/%s wasn't requested", e[0], e[1])
+		}
+	}
+	return nil
 }
 
 // keyAlg is the COSE algorithm a key signs with — a device key, or a
