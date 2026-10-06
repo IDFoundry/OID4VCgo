@@ -35,11 +35,13 @@
 // A wallet — an iOS document provider extension, given the request by
 // ISO18013MobileDocumentRequestContext — calls ParseRequest with the
 // request data and the requesting page's origin, which the platform
-// reports. VerifyReader checks who signed the request against the
-// reader roots the wallet trusts, and returns the reader's certificate
-// to show the holder; a request no trusted reader signed still comes
-// from the origin the platform reports, which is what the holder sees
-// then. Respond answers one requested document with the held mdoc,
+// reports. VerifyReaderTrust checks who signed the request against the
+// reader roots the wallet trusts — and, with a LeafPolicy such as
+// RequireReaderAuthenticationEKU, that the certificate is one issued
+// for reader authentication — and returns the reader's certificate to
+// show the holder; a request no trusted reader signed still comes from
+// the origin the platform reports, which is what the holder sees then,
+// unless the wallet refuses such requests. Respond answers one requested document with the held mdoc,
 // disclosing only the elements the holder consented to — each of which
 // must have been requested — signed by the mdoc's device key over the
 // session transcript, and encrypted to the request's key. It returns

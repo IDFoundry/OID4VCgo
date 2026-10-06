@@ -46,8 +46,10 @@ type MdocPresentation struct {
 
 // StartMdocPresentation parses data, an org-iso-mdoc request, from the
 // page at origin — both as the platform reports them — checks who
-// signed it against Config.MdocReaderRoots, and finds the held mdocs
-// that can answer it, without answering. Show the holder Origin,
+// signed it against Config.MdocReaderRoots and MdocReaderLeafPolicy,
+// and finds the held mdocs that can answer it, without answering. With
+// Config.RequireTrustedMdocReader, a request no recognized reader
+// signed is refused with an error wrapping ErrUntrustedVerifier. Show the holder Origin,
 // Reader and Requests, then Respond; to decline, the app cancels the
 // platform's request: nothing is sent to the reader.
 func (w *Wallet) StartMdocPresentation(ctx context.Context, data []byte, origin string) (*MdocPresentation, error) {
@@ -57,9 +59,15 @@ func (w *Wallet) StartMdocPresentation(ctx context.Context, data []byte, origin 
 	}
 	p := &MdocPresentation{w: w, in: in, byID: map[string]StoredCredential{}}
 	if w.cfg.MdocReaderRoots != nil {
-		// An untrusted reader isn't refused: the holder sees the origin
-		// instead.
-		p.reader, _ = in.VerifyReader(w.cfg.MdocReaderRoots, w.deps.Clock())
+		reader, err := in.VerifyReaderTrust(mdocdcapi.ReaderTrust{
+			Roots: w.cfg.MdocReaderRoots, LeafPolicy: w.cfg.MdocReaderLeafPolicy, Now: w.deps.Clock(),
+		})
+		if err != nil && w.cfg.RequireTrustedMdocReader {
+			return nil, fmt.Errorf("walletflow: %w: %w", ErrUntrustedVerifier, err)
+		}
+		// Otherwise an unrecognized reader isn't refused: the holder sees
+		// the origin instead.
+		p.reader = reader
 	}
 	stored, err := w.deps.Credentials.List(ctx)
 	if err != nil {

@@ -18,6 +18,15 @@ public struct WalletConfiguration: Codable, Sendable {
     /// `org-iso-mdoc` request (`MdocPresentation.Request.reader`). Empty:
     /// every such request is shown by its origin.
     public var mdocReaderRoots: String
+    /// Recognizes only reader certificates with the ISO/IEC 18013-5
+    /// reader authentication extended key usage (1.0.18013.5.1.6), so a
+    /// certificate issued for another role under `mdocReaderRoots`
+    /// isn't taken for a reader's.
+    public var mdocReaderRequireEKU: Bool
+    /// Refuses an `org-iso-mdoc` request no recognized reader signed:
+    /// `startMdocPresentation` throws `untrustedVerifier`, and nothing is
+    /// shown to the holder. Needs `mdocReaderRoots`.
+    public var requireTrustedMdocReader: Bool
     /// Allows services on loopback addresses.
     public var development: Bool
     /// The holder's preferred languages (BCP 47, most preferred first),
@@ -50,7 +59,8 @@ public struct WalletConfiguration: Codable, Sendable {
     }
 
     public init(clientID: String, redirectURI: String, issuerRoots: String = "", verifierRoots: String = "", registrarRoots: String = "",
-                mdocReaderRoots: String = "", development: Bool = false, locales: [String] = Locale.preferredLanguages, batchSize: Int = 0, requestRefresh: Bool = false,
+                mdocReaderRoots: String = "", mdocReaderRequireEKU: Bool = false, requireTrustedMdocReader: Bool = false,
+                development: Bool = false, locales: [String] = Locale.preferredLanguages, batchSize: Int = 0, requestRefresh: Bool = false,
                 copyPolicy: CopyPolicy = .perPresentation) {
         self.clientID = clientID
         self.redirectURI = redirectURI
@@ -58,6 +68,8 @@ public struct WalletConfiguration: Codable, Sendable {
         self.verifierRoots = verifierRoots
         self.registrarRoots = registrarRoots
         self.mdocReaderRoots = mdocReaderRoots
+        self.mdocReaderRequireEKU = mdocReaderRequireEKU
+        self.requireTrustedMdocReader = requireTrustedMdocReader
         self.development = development
         self.locales = locales
         self.batchSize = batchSize
@@ -68,6 +80,7 @@ public struct WalletConfiguration: Codable, Sendable {
     enum CodingKeys: String, CodingKey {
         case clientID = "client_id", redirectURI = "redirect_uri", issuerRoots = "issuer_roots"
         case verifierRoots = "verifier_roots", registrarRoots = "registrar_roots", mdocReaderRoots = "mdoc_reader_roots"
+        case mdocReaderRequireEKU = "mdoc_reader_require_eku", requireTrustedMdocReader = "require_trusted_mdoc_reader"
         case development, locales, batchSize = "batch_size"
         case requestRefresh = "request_refresh", copyPolicy = "copy_policy"
     }
@@ -80,6 +93,8 @@ public struct WalletConfiguration: Codable, Sendable {
                   verifierRoots: try c.decodeIfPresent(String.self, forKey: .verifierRoots) ?? "",
                   registrarRoots: try c.decodeIfPresent(String.self, forKey: .registrarRoots) ?? "",
                   mdocReaderRoots: try c.decodeIfPresent(String.self, forKey: .mdocReaderRoots) ?? "",
+                  mdocReaderRequireEKU: try c.decodeIfPresent(Bool.self, forKey: .mdocReaderRequireEKU) ?? false,
+                  requireTrustedMdocReader: try c.decodeIfPresent(Bool.self, forKey: .requireTrustedMdocReader) ?? false,
                   development: try c.decodeIfPresent(Bool.self, forKey: .development) ?? false,
                   locales: try c.decodeIfPresent([String].self, forKey: .locales) ?? Locale.preferredLanguages,
                   batchSize: try c.decodeIfPresent(Int.self, forKey: .batchSize) ?? 0,

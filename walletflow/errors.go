@@ -47,7 +47,9 @@ var (
 	ErrLinkable = errors.New("walletflow: a copy another verifier has seen would now be presented")
 	// ErrUntrustedVerifier is wallet.ErrUntrustedVerifier, wrapped by
 	// StartPresentation for a request from a Verifier VerifierTrust
-	// doesn't accept.
+	// doesn't accept, and by StartMdocPresentation, under
+	// Config.RequireTrustedMdocReader, for one no recognized reader
+	// signed.
 	ErrUntrustedVerifier = wallet.ErrUntrustedVerifier
 )
 

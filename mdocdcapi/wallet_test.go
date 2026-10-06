@@ -1,10 +1,16 @@
 package mdocdcapi
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/asn1"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"math/big"
 	"strings"
 	"testing"
 	"time"
@@ -280,6 +286,66 @@ func TestParseRequestRefuses(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			if _, err := ParseRequest(c.data, c.origin); err == nil {
 				t.Error("ParseRequest succeeded")
+			}
+		})
+	}
+}
+
+// readerWithEKU is a reader whose certificate, from its own CA, has
+// the extended key usages ekus.
+func readerWithEKU(t *testing.T, ekus ...asn1.ObjectIdentifier) (ReaderKey, *x509.CertPool) {
+	t.Helper()
+	ca, caKey := testcert.CA(t, "mdocdcapi EKU test reader CA")
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(7), Subject: pkix.Name{CommonName: "mdocdcapi EKU test reader"},
+		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour),
+		KeyUsage: x509.KeyUsageDigitalSignature, UnknownExtKeyUsage: ekus,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, ca, &key.PublicKey, caKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatal(err)
+	}
+	roots := x509.NewCertPool()
+	roots.AddCert(ca)
+	return ReaderKey{Signer: key, Chain: []*x509.Certificate{cert, ca}}, roots
+}
+
+// A LeafPolicy can refuse a reader the roots recognize:
+// RequireReaderAuthenticationEKU refuses one whose certificate isn't a
+// reader authentication certificate.
+func TestVerifyReaderTrust_LeafPolicy(t *testing.T) {
+	for name, tc := range map[string]struct {
+		ekus []asn1.ObjectIdentifier
+		ok   bool
+	}{
+		"reader authentication EKU": {[]asn1.ObjectIdentifier{ReaderAuthenticationEKU}, true},
+		"another EKU":               {[]asn1.ObjectIdentifier{{1, 0, 18013, 5, 1, 2}}, false},
+		"no EKU":                    {nil, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			reader, roots := readerWithEKU(t, tc.ekus...)
+			req, err := BuildRequest(RequestParams{Origin: testOrigin, DocType: testmdoc.DocType, Elements: bothNames(), Readers: []ReaderKey{reader}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			in, err := ParseRequest(marshalData(t, req.Data), testOrigin)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := in.VerifyReader(roots, time.Time{}); err != nil {
+				t.Fatalf("without a LeafPolicy: %v", err)
+			}
+			_, err = in.VerifyReaderTrust(ReaderTrust{Roots: roots, LeafPolicy: RequireReaderAuthenticationEKU})
+			if tc.ok != (err == nil) || (err != nil && !errors.Is(err, ErrUntrustedReader)) {
+				t.Errorf("with RequireReaderAuthenticationEKU: %v, want ok %v", err, tc.ok)
 			}
 		})
 	}

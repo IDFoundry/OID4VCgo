@@ -142,7 +142,7 @@ The Swift package's adapter marks a `URLError` this way.
 ```json
 {"client_id": "…", "redirect_uri": "…",
  "issuer_roots": "<PEM>", "verifier_roots": "<PEM>", "registrar_roots": "<PEM>",
- "mdoc_reader_roots": "<PEM>",
+ "mdoc_reader_roots": "<PEM>", "mdoc_reader_require_eku": false, "require_trusted_mdoc_reader": false,
  "development": false, "locales": ["en-AU", "en"], "batch_size": 0,
  "request_refresh": false, "copy_policy": "per_presentation"}
 ```
@@ -154,7 +154,12 @@ Verifiers the wallet checks (OpenID4VP `verifier_info`, OID4VCgo's
 `registration` format); without them, registrations are ignored.
 `mdoc_reader_roots`, if set, are the mdoc readers recognized when one
 signs an `org-iso-mdoc` request (see MdocPresentation); without them,
-every such request is shown by its origin. `development`
+every such request is shown by its origin. `mdoc_reader_require_eku`
+recognizes only reader certificates with the ISO/IEC 18013-5 reader
+authentication extended key usage (1.0.18013.5.1.6), and
+`require_trusted_mdoc_reader` refuses a request no recognized reader
+signed, with `untrusted_verifier`; it needs `mdoc_reader_roots`.
+`development`
 allows services on loopback addresses. `locales` are the holder's
 preferred languages (BCP 47, most preferred first) for issuers' display
 metadata. Without them, the issuer's entry without a locale is used,
@@ -321,8 +326,9 @@ one the document requested (`invalid_selection` otherwise), and
 is presented, recorded as shown to `"origin:" + origin`. Its holder key
 signs during `Respond`. A malformed request is `protocol`.
 
-`mdoc_reader_roots` and MdocPresentation were added within ABI version
-12: they add to it without changing anything there.
+`mdoc_reader_roots`, `mdoc_reader_require_eku`,
+`require_trusted_mdoc_reader` and MdocPresentation were added within
+ABI version 12: they add to it without changing anything there.
 
 ## Other functions
 

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"sync/atomic"
 
+	"github.com/idfoundry/oid4vcgo/mdocdcapi"
 	"github.com/idfoundry/oid4vcgo/wallet"
 	"github.com/idfoundry/oid4vcgo/walletflow"
 )
@@ -33,6 +34,13 @@ type config struct {
 	// (walletflow.Config.MdocReaderRoots). Unset, every request is shown
 	// by its origin.
 	MdocReaderRoots string `json:"mdoc_reader_roots,omitempty"`
+	// MdocReaderRequireEKU recognizes only reader certificates with the
+	// ISO/IEC 18013-5 reader authentication extended key usage
+	// (mdocdcapi.RequireReaderAuthenticationEKU), and
+	// RequireTrustedMdocReader refuses a request no recognized reader
+	// signed (walletflow.Config.RequireTrustedMdocReader).
+	MdocReaderRequireEKU     bool `json:"mdoc_reader_require_eku,omitempty"`
+	RequireTrustedMdocReader bool `json:"require_trusted_mdoc_reader,omitempty"`
 	// Development allows services on loopback addresses.
 	Development bool `json:"development"`
 	// Locales are the holder's preferred languages (BCP 47, most
@@ -122,6 +130,10 @@ func NewWallet(configJSON string, keys KeyStore, credentials CredentialStore, pr
 			return nil, newError(CodeInvalidInput, fmt.Errorf("mdoc_reader_roots: %w", err))
 		}
 	}
+	if cfg.MdocReaderRequireEKU {
+		wcfg.MdocReaderLeafPolicy = mdocdcapi.RequireReaderAuthenticationEKU
+	}
+	wcfg.RequireTrustedMdocReader = cfg.RequireTrustedMdocReader
 	deps := walletflow.Dependencies{
 		Keys: keyStore{keys}, Credentials: credentialStore{credentials},
 		// crypto/rand.Reader itself, which production assurance requires.

@@ -924,8 +924,11 @@ changes whether *every* bullet below is `(done)`.
   document provider: `ParseRequest` decodes the request for the origin
   the platform reports; `VerifyReader` checks its `ReaderAuthAll` (or,
   from a first-edition reader, every `DocRequest`'s `ReaderAuth`)
-  against the wallet's reader roots, taking the algorithm from the
-  certificate's key, never the signature's header; `Respond` discloses
+  against the wallet's reader roots (`ReaderTrust`, with an optional
+  `LeafPolicy`: `RequireReaderAuthenticationEKU` requires ISO/IEC
+  18013-5 Annex B's reader authentication EKU, 1.0.18013.5.1.6),
+  taking the algorithm from the certificate's key, never the
+  signature's header; `Respond` discloses
   only consented, requested elements, device-signs the session
   transcript and seals the `DeviceResponse` to the request's key,
   returning the `EncryptedResponse` iOS hands back. Both sides build
