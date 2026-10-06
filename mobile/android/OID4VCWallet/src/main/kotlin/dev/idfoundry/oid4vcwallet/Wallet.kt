@@ -56,6 +56,13 @@ public data class WalletConfiguration(
     /** Allows services on loopback addresses. */
     val development: Boolean = false,
     /**
+     * PEM certificates the wallet's HTTPS requests trust besides the
+     * system's: a development service's own CA (Go reads only Android's
+     * system CA files, so a CA installed on the device doesn't reach it).
+     * Only with [development].
+     */
+    @SerialName("development_roots") val developmentRoots: String = "",
+    /**
      * The holder's preferred languages (BCP 47, most preferred first),
      * for issuers' display metadata. The device's languages are the
      * usual choice, and the default.
