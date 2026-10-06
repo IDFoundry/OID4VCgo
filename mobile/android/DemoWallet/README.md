@@ -47,7 +47,7 @@ entries from Google's list). It needs Google Play services.
 Against the test services, open `https://127.0.0.1:8600/dcapi` in
 Chrome on the device (past the certificate warning), and tap Verify:
 the page shows what the test Verifier made of the answer.
-`org-iso-mdoc` requests aren't answered on Android yet.
+Android answers over OpenID4VP, mdocs included: `org-iso-mdoc` is the iOS demo's route.
 
 ## Configuration
 

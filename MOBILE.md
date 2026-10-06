@@ -876,8 +876,9 @@ answer, bound to the page's origin.
 - **The provider activity** opens the wallet without the app's launch
   work: the orphaned-key sweep would take the keys of an issuance the app
   has in progress.
-- **Not yet:** `org-iso-mdoc` requests on Android, and whether Google's
-  matcher answers them; passport-vdc's page asking with OpenID4VP too.
+- **`org-iso-mdoc` isn't planned on Android:** Chrome's requests are
+  answered over OpenID4VP, mdocs included; `org-iso-mdoc` stays iOS's
+  route (#476). passport-vdc's page offers both (#474).
 
 ### Phase 8 findings: publishing
 
@@ -923,8 +924,6 @@ Thirteen tests pass on the emulator, against `testservices`.
 ### Open items
 
 - Publish to Maven Central.
-- Whether `OpenId4VpRegistry`'s default matcher answers `org-iso-mdoc`
-  requests; if not, Multipaz's matcher.
 - FAPIgo on 32-bit platforms.
 - The APEX store on golang/go#71258; drop `certdirs_android.go` once Go
   reads it.
