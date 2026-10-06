@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.34.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.33.0...v0.34.0) (2026-10-06)
+
+
+### Features
+
+* **mobile:** Android gomobile spike and the Kotlin library's foundation ([3305f86](https://github.com/IDFoundry/OID4VCgo/commit/3305f867378d5ad77402fdd7c620c7f5207d4979))
+* **mobile:** Android Keystore key store with per-use holder authentication ([b56e507](https://github.com/IDFoundry/OID4VCgo/commit/b56e507d8ccdf1dbfc679fa55837aadee7b9d983))
+* **mobile:** answer Chrome's Digital Credentials API requests in the Android demo ([#472](https://github.com/IDFoundry/OID4VCgo/issues/472)) ([6059e37](https://github.com/IDFoundry/OID4VCgo/commit/6059e379415ff1e3ec1394affa2dd0765579713b))
+* **mobile:** FileCredentialStore, encrypted credential records for Android ([cd3587c](https://github.com/IDFoundry/OID4VCgo/commit/cd3587ccc0e9422ebb02511b7acad300536b5dea))
+* **mobile:** Kotlin Wallet, Issuance, Presentation and MdocPresentation ([9a85db1](https://github.com/IDFoundry/OID4VCgo/commit/9a85db1cff9e040b6593daa9af38b1328cee018e))
+* **mobile:** the Android demo wallet app ([#468](https://github.com/IDFoundry/OID4VCgo/issues/468)) ([05ce524](https://github.com/IDFoundry/OID4VCgo/commit/05ce524bffa2a62eb205bccd88b0e752ef094f69))
+* **walletflow:** answer OpenID4VP requests over the Digital Credentials API ([b640739](https://github.com/IDFoundry/OID4VCgo/commit/b64073941d54f5c423f83a28bc35a6fd7f93347a))
+* **walletflow:** answer OpenID4VP requests over the Digital Credentials API ([5f1b7e6](https://github.com/IDFoundry/OID4VCgo/commit/5f1b7e6087ae5eb6bac21f112d261bc2bd8618b4)), closes [#461](https://github.com/IDFoundry/OID4VCgo/issues/461)
+
+
+### Bug Fixes
+
+* **walletflow:** let an abandoned authorization begin again ([#467](https://github.com/IDFoundry/OID4VCgo/issues/467)) ([ae5f09b](https://github.com/IDFoundry/OID4VCgo/commit/ae5f09bc48d655efb3603041c7a469d7c2bf1b28))
+* **walletflow:** retire an authorization begun again; refuse unsigned DC API requests on request ([471b7c2](https://github.com/IDFoundry/OID4VCgo/commit/471b7c2de20f3f8313d48eacc74e66b290eb0611))
+
 ## [0.33.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.32.0...v0.33.0) (2026-10-06)
 
 
