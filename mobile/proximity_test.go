@@ -89,6 +89,12 @@ func TestSessions_ProximityPresentation(t *testing.T) {
 		Reader struct {
 			Status, Name, Error string
 			Chain               []string
+			Certificates        []struct {
+				Subject, Issuer, Serial, SHA256 string
+				NotBefore                       string   `json:"not_before"`
+				IsCA                            bool     `json:"is_ca"`
+				KeyUsages                       []string `json:"key_usages"`
+			}
 		}
 		Documents []struct {
 			DocType     string `json:"doctype"`
@@ -105,6 +111,12 @@ func TestSessions_ProximityPresentation(t *testing.T) {
 	}
 	if leaf, err := x509.ParseCertificate(sent(t, req.Reader.Chain[0])); err != nil || !leaf.Equal(reader.key.Chain[0]) {
 		t.Errorf("chain[0] isn't the reader's certificate: %v", err)
+	}
+	if cs := req.Reader.Certificates; len(cs) != 2 || cs[0].Subject != "CN=Test Shop" || cs[0].Issuer != "CN=mobile test reader CA" ||
+		cs[0].IsCA || !cs[1].IsCA || len(cs[0].SHA256) != 64 || cs[0].Serial == "" || len(cs[0].KeyUsages) == 0 {
+		t.Errorf("certificates = %+v", cs)
+	} else if _, err := time.Parse(time.RFC3339, cs[0].NotBefore); err != nil {
+		t.Errorf("not_before: %v", err)
 	}
 	if len(req.Documents) != 1 || len(req.Documents[0].Elements) != 2 || len(req.Documents[0].Credentials) != 1 {
 		t.Fatalf("Request = %d documents", len(req.Documents))
