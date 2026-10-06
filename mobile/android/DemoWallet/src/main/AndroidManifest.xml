@@ -34,5 +34,16 @@
                 <data android:scheme="openid4vp" />
             </intent-filter>
         </activity>
+        <!-- Credential Manager launches it for a Digital Credentials API
+             request the holder chose one of the wallet's credentials for. -->
+        <activity
+            android:name=".GetCredentialActivity"
+            android:exported="true"
+            android:theme="@android:style/Theme.Material.NoActionBar">
+            <intent-filter>
+                <action android:name="androidx.credentials.registry.provider.action.GET_CREDENTIAL" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
     </application>
 </manifest>

@@ -90,8 +90,14 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
         this.activity = WeakReference(activity)
     }
 
-    /** Configures the wallet from the launch intent, once, and resumes what it holds. */
-    fun start(intent: Intent?) {
+    /**
+     * Configures the wallet from the launch intent, once, and resumes what
+     * it holds. As a Credential Manager provider (GetCredentialActivity),
+     * it only answers the request: the launch work — the orphaned-key
+     * sweep above all, which would take the keys of an issuance the app
+     * has in progress — is the app's.
+     */
+    fun start(intent: Intent?, provider: Boolean = false) {
         if (configured || unavailable != null) return
         val context = getApplication<Application>()
         val loaded = DemoConfiguration.load(context, intent) ?: return
@@ -117,6 +123,7 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
             return
         }
         if (OID4VC.isTestBuild) notice = "This build links the test Go library, with its in-process test issuer: never ship it."
+        if (provider) return
         viewModelScope.launch {
             if (reset) deleteAll()
             // At launch, before any issuance: delete keys left by one the
@@ -226,11 +233,51 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
     /** Whether Share would send exactly what "Will share" shows. */
     val canShare: Boolean get() = selected.isNotEmpty() && previewed == selected && previewError == null && requestPhase == RequestPhase.SHOWN
 
+    /**
+     * Where a Digital Credentials API presentation's answer goes: the
+     * response's data for the platform, or null when there's none to
+     * give (the request couldn't be opened, or answering failed).
+     */
+    private var dcapiAnswer: ((String?) -> Unit)? = null
+
+    /**
+     * Opens an OpenID4VP request Credential Manager handed over, from
+     * the page or app at [origin], for the consent screen; [answer] gets
+     * the response's data once the holder shares or declines.
+     * [preselect] is the credential the holder chose in the system's
+     * chooser.
+     */
+    fun startDCAPI(protocol: String, data: ByteArray, origin: String, preselect: String?, answer: (String?) -> Unit) {
+        dcapiAnswer = answer
+        viewModelScope.launch {
+            val wallet = wallet ?: return@launch answerDCAPI(null)
+            open { wallet.startDCAPIPresentation(protocol, data, origin) }
+            val p = presentation ?: return@launch answerDCAPI(null)
+            // The holder already chose in the system's chooser: start from that.
+            preselect?.let { id ->
+                val query = p.queries.firstOrNull { q -> q.credentials.any { it.id == id } } ?: return@let
+                selected = mapOf(query.queryID to listOf(id))
+                updatePreview()
+            }
+        }
+    }
+
+    private fun answerDCAPI(data: String?) {
+        dcapiAnswer?.invoke(data)
+        dcapiAnswer = null
+    }
+
     /** Fetches and verifies a presentation request, and preselects what the wallet would choose itself. */
     private suspend fun startPresentation(link: String) {
         val wallet = wallet ?: return
+        open { wallet.startPresentation(link) }
+    }
+
+    /** Opens the presentation [start] begins, for the consent screen. */
+    private suspend fun open(start: suspend () -> Presentation) {
+        val wallet = wallet ?: return
         try {
-            val p = wallet.startPresentation(link)
+            val p = start()
             candidateClaims.clear()
             for (c in p.queries.flatMap { it.credentials }) {
                 if (c.id !in candidateClaims) runCatching { wallet.credential(c.id).claims }.getOrNull()?.let { candidateClaims[c.id] = it }
@@ -288,8 +335,9 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
         requestPhase = RequestPhase.SHARING
         try {
             val presented = p.respond(selection)
-            phase = Phase.Done("Shared with ${p.verifier.name}")
+            phase = Phase.Done("Shared with ${verifierName(p)}")
             endPresentation()
+            presented.dcapiResponse?.let { answerDCAPI(it) }
             // A copy of each shared credential is used up.
             refresh()
             refreshUsedUp()
@@ -297,20 +345,26 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
         } catch (e: WalletException) {
             phase = Phase.Failed(describe(e))
             endPresentation()
+            answerDCAPI(null)
             refresh()
         }
     }
+
+    /** Who's asking, in words: the Verifier's name, or a DC API request's origin. */
+    fun verifierName(p: Presentation): String = p.verifier.name.ifEmpty { p.verifier.origin?.let(Credentials::host) ?: "the verifier" }
 
     fun decline(openBrowser: (Uri) -> Unit) = viewModelScope.launch {
         val p = presentation ?: return@launch
         try {
             val presented = p.decline()
-            phase = Phase.Done("Declined ${p.verifier.name}")
+            phase = Phase.Done("Declined ${verifierName(p)}")
             endPresentation()
+            presented.dcapiResponse?.let { answerDCAPI(it) }
             presented.redirectURI?.let(Uri::parse)?.takeIf { it.scheme == "https" }?.let(openBrowser)
         } catch (e: WalletException) {
             phase = Phase.Failed(describe(e))
             endPresentation()
+            answerDCAPI(null)
         }
     }
 
@@ -562,6 +616,10 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
         try {
             credentials = wallet.credentials()
             loadClaims(emptySet())
+            // In the background: the list needn't wait for Credential Manager.
+            val held = credentials
+            val all = claims.toMap()
+            viewModelScope.launch { DigitalCredentials.sync(getApplication(), held, all) }
         } catch (e: WalletException) {
             phase = Phase.Failed("Couldn't list credentials: " + describe(e))
         }
