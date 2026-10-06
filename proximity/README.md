@@ -61,11 +61,23 @@ notifications.
    Server2Client notifications, then writes `0x01` (start) to State.
 5. **Request.** The reader sends `Establishment(docType, elements)`. The
    mdoc passes it to `HandleSessionEstablishment`, then
-   `ParseDeviceRequest`, and shows a consent prompt. Reader
-   authentication isn't implemented, so the prompt can't say who is
-   asking: anyone who scanned the QR code can send a request. Show what
-   is requested, and whether the reader says it will keep each element,
-   and let the holder decide on that.
+   `ParseDeviceRequest`, then `VerifyReaderAuth` with its trusted reader
+   roots, and shows a consent prompt: who is asking, what, and whether
+   the reader says it will keep each element. A reader that passes
+   `NewReaderSession` `WithReaderAuth(key, chain)` signs its request
+   (§9.1.4). `VerifyReaderAuth`'s `Status` is one of:
+   - **`ReaderTrusted`:** the signature verifies, by a certificate that
+     chains to the roots. `Chain[0]` names the reader.
+   - **`ReaderUntrusted`:** the signature verifies, but the certificate
+     doesn't chain to the roots, or fails the `LeafPolicy`
+     (`RequireReaderAuthenticationEKU`). Show the name it claims, as
+     unverified.
+   - **`ReaderUnauthenticated`:** no readerAuth. Anyone who scanned the
+     QR code can send a request. Reader authentication is optional, and
+     an mDL must release its mandatory elements without it (§7.2.1).
+   - **`ReaderInvalid`:** a readerAuth that's malformed, or doesn't sign
+     this session's request: possibly replayed. Refuse it, or treat it
+     as unauthenticated.
 6. **Respond.** If the user consents, the mdoc sends
    `Encrypt(BuildDeviceResponse(req, ...), false)`, disclosing only
    elements the request lists (any other is refused). If they decline, or
@@ -121,6 +133,14 @@ returns an error when the message is bad. Map it to a reply with
 - **`ok == false`:** the error is a verification failure, or the session
   was already closed. Show the error and disconnect.
 
+A `ParseDeviceRequest` error is a request that decrypted but isn't a
+valid DeviceRequest: `ErrCBORDecoding` for bytes that aren't CBOR,
+`ErrCBORValidation` for CBOR of the wrong shape. The holder can answer
+it inside the session instead, with `ErrorResponse(err)`: an encrypted
+DeviceResponse with no documents and status 11 or 12 (§8.3.2.1.2.3),
+which also ends the session. The reader's `Verify` returns it as a
+`*DeviceResponseStatusError`.
+
 `MaxMessageBytes` (2 MiB) caps every message. Reassembly can drop a
 message as soon as it grows past that, instead of buffering it.
 
@@ -135,8 +155,13 @@ gattServer.advertise(session.serviceUUID())
 
 onMessage { msg ->            // a reassembled Client2Server message
   try {
-    val req = Proximity.parseDeviceRequest(session.handleSessionEstablishment(msg))
-    val consented = askUser(req)          // null if declined
+    val req = try {
+      Proximity.parseDeviceRequest(session.handleSessionEstablishment(msg))
+    } catch (e: ParseError) {             // decrypted, but not a DeviceRequest
+      sendChunked(session.errorResponse(e)); disconnect(); return
+    }
+    val reader = session.verifyReaderAuth(req[0], readerTrust)
+    val consented = askUser(req, reader)  // null if declined
     val reply = if (consented == null) session.termination()
       else session.encrypt(Proximity.buildDeviceResponse(
              req[0], mdoc, deviceKey, session.sessionTranscriptBytes(), consented), false)

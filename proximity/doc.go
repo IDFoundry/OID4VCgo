@@ -24,7 +24,8 @@
 //	HandleSessionEstablishment ◀── SessionEstablishment ──
 //	  SKReader/SKDevice                           {eReaderKey, data: E(DeviceRequest)}
 //	  → DeviceRequest
-//	ParseDeviceRequest → []DocRequest
+//	ParseDeviceRequest → []DocRequest          (WithReaderAuth: signed)
+//	VerifyReaderAuth → who is asking
 //	  (consent prompt)
 //	BuildDeviceResponse
 //	Encrypt(resp, false) ── SessionData ──────▶  Verify(msg, roots, now)
@@ -60,7 +61,13 @@
 //     anchor, the IACA's countryName (and stateOrProvinceName) matching
 //     the document signer's, the MSO's signed date within the signer
 //     certificate's validity, digests, docType and validity window.
+//   - Reader authentication (§9.1.4): WithReaderAuth signs each
+//     request's ItemsRequestBytes, with the SessionTranscript, by the
+//     reader's key, its certificate chain in x5chain; the holder's
+//     VerifyReaderAuth checks the signature and the chain against its
+//     ReaderTrust. Shared with mdocdcapi's DC API org-iso-mdoc.
 //   - BLE Ident (§8.3.3.1.1), for mdoc central client mode: BLEIdent.
+//   - Map keys are matched case-sensitively, as CBOR's are.
 //
 // # Errors and status
 //
@@ -70,18 +77,18 @@
 // 11). Either one closes the session: send StatusMessage(status) from
 // StatusFor, then disconnect. Status 20 ends a session normally.
 //
+// A DeviceRequest that decrypts but doesn't parse — ErrCBORDecoding, or
+// ErrCBORValidation for well-formed CBOR of the wrong shape — can be
+// answered inside the session instead: DeviceSession.ErrorResponse
+// sends a DeviceResponse with status 11 or 12 (§8.3.2.1.2.3 Table 8),
+// which the reader's Verify returns as a DeviceResponseStatusError.
+//
 // # Out of scope
 //
 //   - BLE, NFC and Wi-Fi Aware transport code, and BLE L2CAP.
 //   - NFC engagement and NFC handover. The session transcript takes the
 //     Handover as a parameter internally (the Annex D tests use it), but
 //     only QR engagement is exposed.
-//   - Reader authentication: WithReaderAuth exists, and Establishment
-//     refuses to send until it's implemented. A received readerAuth is
-//     kept in DocRequest.ReaderAuth, unverified. So the holder side
-//     can't tell who the reader is: whoever scanned the QR code can ask,
-//     and a consent prompt can show what it asks for, never a verified
-//     reader identity — the holder decides on that alone.
 //   - More than one request per session, and more than one document per
 //     response.
 //   - ISO/IEC 18013-7 (online presentation), OpenID4VP over the Digital

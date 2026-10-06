@@ -225,6 +225,7 @@ networking.
 | 7 ✓ | Hardening | Suspension and resumption (deferred credentials, an authorization in progress), cancellation, network failures, issuer and verifier errors, logging without personal data, the demo app's retry and cancel |
 | 8 | Android | The same bridge over Android Keystore, packaged as an AAR, with the demo app and the DC API (below) |
 | 9 | DC API | A DC API adapter over the presentation engine: `org-iso-mdoc` (MdocPresentation, iOS) and OpenID4VP (`StartDCAPIPresentation`, for Android's Credential Manager) |
+| 10 | Proximity | ISO/IEC 18013-5 device retrieval over BLE in both SDKs: the holder shows a QR code and answers a reader; a reader mode in both demo apps; iPhone ↔ Android in both directions |
 
 ### Phase 1 findings
 
@@ -931,6 +932,60 @@ Thirteen tests pass on the emulator, against `testservices`.
   fingerprint, and the DC API in Chrome.
 - The authorization code grant in the demo's UI tests, with the test
   services' CA in the device's user store for Chrome.
+
+## Phase 10: Proximity
+
+Decisions taken 2026-10-06 (tracked in [#482](https://github.com/IDFoundry/OID4VCgo/issues/482)):
+
+1. **One product:** the holder (`ProximityPresentation`) and the reader
+   (`ProximityReader`) are two interfaces in the same SDK and Go
+   library, so an app can use either, or both.
+2. **BLE modes, as ISO/IEC 18013-5 requires:** the holder supports mdoc
+   peripheral server mode (it shows the QR code, advertises and is the
+   GATT server). The reader supports both modes (§8.3.3.1.1), choosing
+   central client mode when the holder offers both.
+3. **GATT first.** The L2CAP transmission profile (Annex A) is the next
+   phase, behind the same transport.
+4. **One request per session**, as `proximity` handles.
+5. **Reader trust** reuses `mdoc_reader_roots`, `mdoc_reader_require_eku`
+   and `require_trusted_mdoc_reader`, as the DC API's `org-iso-mdoc`
+   does.
+6. **The Go binding is bytes in, bytes out**: the native SDK moves
+   whole messages over GATT, chunks them and handles State; Go does
+   the rest. The additions are within ABI version 12.
+7. **The native API** is a session with a state stream (`Flow`,
+   `AsyncSequence`). Apps never see GATT. Every timeout is
+   configurable: by default 60 s for a reader to connect, 30 s to its
+   request, and 300 s idle (§8.2.3, §9.1.1.4).
+8. **Demos:** "Share in person" with a consent screen naming the
+   reader and its trust, a reader certificate page, and a reader mode
+   behind settings. A presentation history is the app's job, not the
+   SDK's.
+
+### Phase 10 findings: the `proximity` gaps
+
+- **Reader authentication** (§9.1.4) now works both ways. The holder's
+  `VerifyReaderAuth` sorts a request into trusted, untrusted (it
+  verifies by its own certificate, which doesn't chain), unauthenticated
+  (no readerAuth) or invalid (it doesn't sign this session's request).
+  Annex D's readerAuth verifies over its own transcript. The signing
+  and verification are now shared with `mdocdcapi`, in
+  `internal/readerauth`.
+- **An mDL must release its mandatory elements to an unauthenticated
+  reader** (§7.2.1). So `require_trusted_mdoc_reader` is a wallet's
+  policy for other documents, or for optional elements, and stays off
+  by default.
+- **Status 12:** a DeviceRequest that decrypts but isn't valid is now
+  `ErrCBORValidation` (or `ErrCBORDecoding` for bytes that aren't CBOR),
+  which `ErrorResponse` answers with an encrypted DeviceResponse of
+  status 12 (or 11), and the reader reports as
+  `DeviceResponseStatusError`.
+- **Map keys are matched case-sensitively.** The CBOR library fell
+  back to a case-insensitive match, so `"DocType"` was read as
+  `"docType"`.
+- **The reader's key was already used as received:** the
+  SessionTranscript embeds the EReaderKeyBytes the reader sent, not a
+  re-encoding (the Annex D transcript test checks it byte for byte).
 
 ## Open questions
 

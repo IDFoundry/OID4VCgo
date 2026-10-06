@@ -6,7 +6,6 @@ import (
 	"crypto/ecdsa"
 	"crypto/hpke"
 	"crypto/x509"
-	"encoding/asn1"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -19,8 +18,7 @@ import (
 	"github.com/fxamacker/cbor/v2"
 
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
-	"github.com/idfoundry/oid4vcgo/internal/certchain"
-	"github.com/idfoundry/oid4vcgo/internal/cose"
+	"github.com/idfoundry/oid4vcgo/internal/readerauth"
 	"github.com/idfoundry/oid4vcgo/oid4vpmdoc"
 )
 
@@ -248,17 +246,12 @@ type ReaderTrust struct {
 // ReaderAuthenticationEKU is the extended key usage of an mdoc reader
 // authentication certificate (ISO/IEC 18013-5 Annex B.1.7:
 // 1.0.18013.5.1.6).
-var ReaderAuthenticationEKU = asn1.ObjectIdentifier{1, 0, 18013, 5, 1, 6}
+var ReaderAuthenticationEKU = readerauth.EKU
 
 // RequireReaderAuthenticationEKU is a ReaderTrust.LeafPolicy refusing a
 // reader certificate without ReaderAuthenticationEKU.
-func RequireReaderAuthenticationEKU(leaf *x509.Certificate, _ [][]*x509.Certificate) error {
-	for _, eku := range leaf.UnknownExtKeyUsage {
-		if eku.Equal(ReaderAuthenticationEKU) {
-			return nil
-		}
-	}
-	return errors.New("the reader certificate lacks the mdoc reader authentication extended key usage (1.0.18013.5.1.6)")
+func RequireReaderAuthenticationEKU(leaf *x509.Certificate, chains [][]*x509.Certificate) error {
+	return readerauth.RequireEKU(leaf, chains)
 }
 
 // VerifyReader is VerifyReaderTrust with Roots roots and Now now, and
@@ -325,30 +318,9 @@ func (in Incoming) VerifyReaderTrust(t ReaderTrust) (*x509.Certificate, error) {
 
 // verifyReaderAuth verifies one ReaderAuth or ReaderAuthAll over
 // detached, the encoded ReaderAuthentication(All), by the certificate in
-// its x5chain, which must chain to t's roots and pass its LeafPolicy. The algorithm is the certificate key's, not the signature's own
-// header's.
+// its x5chain, which must chain to t's roots and pass its LeafPolicy.
 func verifyReaderAuth(sig, detached []byte, t ReaderTrust) (*x509.Certificate, error) {
-	_, unprotected, _, err := cose.DecodeUnverified(sig)
-	if err != nil {
-		return nil, fmt.Errorf("decode reader signature: %w", err)
-	}
-	leaf, chains, err := certchain.VerifyChainsAt(unprotected.X5Chain, t.Roots, t.Now)
-	if err != nil {
-		return nil, err
-	}
-	if t.LeafPolicy != nil {
-		if err := t.LeafPolicy(leaf, chains); err != nil {
-			return nil, err
-		}
-	}
-	alg, err := readerKeyAlg(leaf.PublicKey)
-	if err != nil {
-		return nil, err
-	}
-	if _, _, err := cose.VerifyDetached(alg, leaf.PublicKey, sig, detached, nil); err != nil {
-		return nil, fmt.Errorf("reader signature: %w", err)
-	}
-	return leaf, nil
+	return readerauth.Verify(sig, detached, readerauth.Trust{Roots: t.Roots, LeafPolicy: t.LeafPolicy, Now: t.Now})
 }
 
 // Respond answers document doc of the request with issuerSigned — the

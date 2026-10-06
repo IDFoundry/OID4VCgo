@@ -2,6 +2,7 @@ package proximity
 
 import (
 	"errors"
+	"fmt"
 )
 
 // SessionData status codes (ISO/IEC 18013-5 §9.1.1.4 Table 20). Each
@@ -10,6 +11,16 @@ const (
 	StatusSessionEncryptionError uint64 = 10
 	StatusCBORDecodingError      uint64 = 11
 	StatusSessionTermination     uint64 = 20
+)
+
+// DeviceResponse status codes (§8.3.2.1.2.3 Table 8): an mdoc's answer,
+// encrypted, to a DeviceRequest it decrypted but can't process. A
+// DeviceResponse with a status other than 0 carries no documents.
+const (
+	DeviceResponseStatusOK             uint64 = 0
+	DeviceResponseStatusGeneralError   uint64 = 10
+	DeviceResponseStatusCBORDecoding   uint64 = 11
+	DeviceResponseStatusCBORValidation uint64 = 12
 )
 
 var (
@@ -23,6 +34,12 @@ var (
 	// step expects, or is larger than MaxMessageBytes. Reply with
 	// StatusCBORDecodingError.
 	ErrCBORDecoding = errors.New("proximity: CBOR decoding error")
+
+	// ErrCBORValidation is a DeviceRequest that is well-formed CBOR but
+	// not a valid DeviceRequest: a missing or mistyped field, a version
+	// other than 1.x, or a request for nothing. ParseDeviceRequest
+	// returns it; answer with DeviceSession.ErrorResponse (status 12).
+	ErrCBORValidation = errors.New("proximity: CBOR validation error")
 
 	// ErrSessionClosed is a call on a session that has terminated — by
 	// either side's status message, or by an earlier error.
@@ -44,10 +61,45 @@ func StatusFor(err error) (status uint64, ok bool) {
 	switch {
 	case errors.Is(err, ErrSessionEncryption):
 		return StatusSessionEncryptionError, true
-	case errors.Is(err, ErrCBORDecoding):
+	case errors.Is(err, ErrCBORDecoding), errors.Is(err, ErrCBORValidation):
 		return StatusCBORDecodingError, true
 	default:
 		return 0, false
+	}
+}
+
+// DeviceResponseStatusFor maps an error from ParseDeviceRequest, or the
+// holder's own failure to process a request, to the DeviceResponse
+// status DeviceSession.ErrorResponse sends: 11 for ErrCBORDecoding, 12
+// for ErrCBORValidation, and 10 for anything else.
+func DeviceResponseStatusFor(err error) uint64 {
+	switch {
+	case errors.Is(err, ErrCBORDecoding):
+		return DeviceResponseStatusCBORDecoding
+	case errors.Is(err, ErrCBORValidation):
+		return DeviceResponseStatusCBORValidation
+	default:
+		return DeviceResponseStatusGeneralError
+	}
+}
+
+// DeviceResponseStatusError is ReaderSession.Verify's result for a
+// DeviceResponse with a status other than 0: the mdoc couldn't process
+// the request (§8.3.2.1.2.3).
+type DeviceResponseStatusError struct {
+	Status uint64
+}
+
+func (e *DeviceResponseStatusError) Error() string {
+	switch e.Status {
+	case DeviceResponseStatusGeneralError:
+		return "proximity: DeviceResponse status 10 (general error)"
+	case DeviceResponseStatusCBORDecoding:
+		return "proximity: DeviceResponse status 11 (CBOR decoding error)"
+	case DeviceResponseStatusCBORValidation:
+		return "proximity: DeviceResponse status 12 (CBOR validation error)"
+	default:
+		return fmt.Sprintf("proximity: DeviceResponse status %d", e.Status)
 	}
 }
 

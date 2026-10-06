@@ -497,21 +497,6 @@ func TestNewReaderSessionRejects(t *testing.T) {
 	})
 }
 
-func TestReaderAuthNotSupported(t *testing.T) {
-	holder, err := NewDeviceSession(nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	reader, err := NewReaderSession(holder.QRCode(), WithReaderAuth(key))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := reader.Establishment(mDL, map[string][]string{mDLNS: {"age_over_18"}}); err == nil {
-		t.Error("Establishment with a readerAuth signer: sent an unsigned request")
-	}
-}
-
 func TestBuildDeviceResponseRejects(t *testing.T) {
 	fx := issueFixture(t, mDL)
 	f := establish(t, mDL, map[string][]string{mDLNS: {"age_over_18", "portrait"}})

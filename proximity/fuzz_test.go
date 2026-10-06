@@ -26,6 +26,28 @@ func FuzzParseDeviceRequest(f *testing.F) {
 	})
 }
 
+// FuzzVerifyReaderAuth: a received readerAuth never panics, and with
+// no trust anchors is never trusted; ParseDeviceRequest's errors are
+// always decoding or validation errors.
+func FuzzVerifyReaderAuth(f *testing.F) {
+	reqs, err := ParseDeviceRequest(mustHex(f, annexDDeviceRequest))
+	if err != nil {
+		f.Fatal(err)
+	}
+	transcript := mustHex(f, annexDSessionTranscriptBytes)
+	f.Add(reqs[0].ReaderAuth, reqs[0].ItemsRequestBytes)
+	f.Add([]byte{0x84, 0x40, 0xa0, 0xf6, 0x40}, reqs[0].ItemsRequestBytes)
+	f.Fuzz(func(t *testing.T, readerAuth, items []byte) {
+		req := DocRequest{ReaderAuth: readerAuth, ItemsRequestBytes: items}
+		if got := VerifyReaderAuth(req, transcript, ReaderTrust{}); got.Status == ReaderTrusted || got.Err == nil {
+			t.Fatalf("trusted with no roots: %+v", got)
+		}
+		if _, err := ParseDeviceRequest(items); err != nil && !errors.Is(err, ErrCBORDecoding) && !errors.Is(err, ErrCBORValidation) {
+			t.Fatalf("ParseDeviceRequest error is neither decoding nor validation: %v", err)
+		}
+	})
+}
+
 func FuzzNewReaderSession(f *testing.F) {
 	f.Add("mdoc:" + base64.RawURLEncoding.EncodeToString(mustHex(f, annexDDeviceEngagement)))
 	holder, err := NewDeviceSession(nil)
