@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/asn1"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/democert"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/statefile"
+	"github.com/idfoundry/oid4vcgo/mdocdcapi"
 )
 
 // identities are the verifier's request-signing identities: one per
@@ -34,7 +36,18 @@ type identities struct {
 	// (registrations), under registrarCA, which wallets trust for that.
 	registrarCA *x509.Certificate
 	registrar   signer
+	// readerCA issues the trusted scenarios' mdoc reader authentication
+	// certificates, which sign their org-iso-mdoc requests; an untrusted
+	// scenario's is the untrusted CA's. Each has the ISO/IEC 18013-5
+	// reader authentication extended key usage, and none is an OpenID4VP
+	// request signer's.
+	readerCA *x509.Certificate
+	readers  map[Scenario]signer
 }
+
+// readerAuthenticationEKU is ISO/IEC 18013-5 Annex B's mdoc reader
+// authentication extended key usage (mdocdcapi.ReaderAuthenticationEKU).
+var readerAuthenticationEKU = mdocdcapi.ReaderAuthenticationEKU
 
 type signer struct {
 	key  *ecdsa.PrivateKey
@@ -53,6 +66,8 @@ const (
 	roleRegistrarCA = "registrar-ca"
 	roleRegistrar   = "registrar"
 	roleSignerPre   = "signer:"
+	roleReaderCA    = "reader-ca"
+	roleReaderPre   = "reader:"
 )
 
 // renewBefore is how long before a signing certificate expires saved
@@ -106,10 +121,18 @@ func (ids identities) current(now time.Time) bool {
 	if !slices.ContainsFunc(ids.registrar.cert.URIs, func(u *url.URL) bool { return u.String() == registrarID }) {
 		return false
 	}
+	if ids.readerCA == nil {
+		return false
+	}
 	for _, s := range Scenarios {
 		info, _ := s.Info()
 		sg, ok := ids.signers[s]
 		if !ok || sg.cert.Subject.CommonName != info.Verifier || !sg.cert.NotAfter.After(now.Add(renewBefore)) {
+			return false
+		}
+		rd, ok := ids.readers[s]
+		if !ok || rd.cert.Subject.CommonName != info.Verifier || !rd.cert.NotAfter.After(now.Add(renewBefore)) ||
+			!slices.ContainsFunc(rd.cert.UnknownExtKeyUsage, readerAuthenticationEKU.Equal) {
 			return false
 		}
 	}
@@ -119,7 +142,7 @@ func (ids identities) current(now time.Time) bool {
 // newIdentities generates a trusted and an untrusted CA, and an identity
 // for each scenario under the one its trust calls for.
 func newIdentities(now time.Time) (identities, error) {
-	ids := identities{signers: map[Scenario]signer{}}
+	ids := identities{signers: map[Scenario]signer{}, readers: map[Scenario]signer{}}
 	ca, caKey, err := newCA(now, "passport-vdc demo verifier CA")
 	if err != nil {
 		return identities{}, err
@@ -137,19 +160,48 @@ func newIdentities(now time.Time) (identities, error) {
 	if ids.registrar, err = newSigner(now, "passport-vdc demo registrar", registrarCA, registrarCAKey, registrarID); err != nil {
 		return identities{}, err
 	}
+	readerCA, readerCAKey, err := newCA(now, "passport-vdc demo mdoc reader CA")
+	if err != nil {
+		return identities{}, err
+	}
+	ids.readerCA = readerCA
 	for _, s := range Scenarios {
 		info, _ := s.Info()
 		parent, parentKey := ca, caKey
+		readerParent, readerParentKey := readerCA, readerCAKey
 		if !info.Trusted {
 			parent, parentKey = untrustedCA, untrustedKey
+			readerParent, readerParentKey = untrustedCA, untrustedKey
 		}
 		sg, err := newSigner(now, info.Verifier, parent, parentKey, "")
 		if err != nil {
 			return identities{}, err
 		}
 		ids.signers[s] = sg
+		if ids.readers[s], err = newReader(now, info.Verifier, readerParent, readerParentKey); err != nil {
+			return identities{}, err
+		}
 	}
 	return ids, nil
+}
+
+// newReader generates an mdoc reader authentication key and certificate
+// naming name, issued by parent, with the reader authentication
+// extended key usage.
+func newReader(now time.Time, name string, parent *x509.Certificate, parentKey *ecdsa.PrivateKey) (signer, error) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return signer{}, fmt.Errorf("verifierapp: key: %w", err)
+	}
+	cert, err := democert.Create(&x509.Certificate{
+		Subject:   pkix.Name{CommonName: name, Organization: []string{"IDFoundry demo"}},
+		NotBefore: now.Add(-time.Hour), NotAfter: now.AddDate(1, 0, 0),
+		KeyUsage: x509.KeyUsageDigitalSignature, UnknownExtKeyUsage: []asn1.ObjectIdentifier{readerAuthenticationEKU},
+	}, parent, &key.PublicKey, parentKey)
+	if err != nil {
+		return signer{}, fmt.Errorf("verifierapp: %w", err)
+	}
+	return signer{key: key, cert: cert}, nil
 }
 
 // newSigner generates a signing key and a certificate naming name,
@@ -201,6 +253,7 @@ func (ids identities) encode() ([]byte, error) {
 	out = append(out, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Headers: map[string]string{roleHeader: roleCA}, Bytes: ids.ca.Raw})...)
 	out = append(out, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Headers: map[string]string{roleHeader: roleUntrustedCA}, Bytes: ids.untrustedCA.Raw})...)
 	out = append(out, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Headers: map[string]string{roleHeader: roleRegistrarCA}, Bytes: ids.registrarCA.Raw})...)
+	out = append(out, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Headers: map[string]string{roleHeader: roleReaderCA}, Bytes: ids.readerCA.Raw})...)
 	signers := []struct {
 		role string
 		sg   signer
@@ -209,7 +262,10 @@ func (ids identities) encode() ([]byte, error) {
 		signers = append(signers, struct {
 			role string
 			sg   signer
-		}{roleSignerPre + string(s), ids.signers[s]})
+		}{roleSignerPre + string(s), ids.signers[s]}, struct {
+			role string
+			sg   signer
+		}{roleReaderPre + string(s), ids.readers[s]})
 	}
 	for _, e := range signers {
 		der, err := x509.MarshalECPrivateKey(e.sg.key)
@@ -232,7 +288,10 @@ func parseIdentities(data []byte) (identities, error) {
 	if err != nil {
 		return identities{}, err
 	}
-	ids := identities{signers: map[Scenario]signer{}, ca: certs[roleCA], untrustedCA: certs[roleUntrustedCA], registrarCA: certs[roleRegistrarCA]}
+	ids := identities{
+		signers: map[Scenario]signer{}, readers: map[Scenario]signer{},
+		ca: certs[roleCA], untrustedCA: certs[roleUntrustedCA], registrarCA: certs[roleRegistrarCA], readerCA: certs[roleReaderCA],
+	}
 	if ids.ca == nil || ids.untrustedCA == nil {
 		// An older layout (one CA, one request signer): not current, so
 		// replaced, rather than an error.
@@ -260,6 +319,20 @@ func parseIdentities(data []byte) (identities, error) {
 			return identities{}, fmt.Errorf("%s: %w", s, err)
 		}
 		ids.signers[s] = sg
+		// An older file has no readers: left out, for current to catch.
+		readerRole := roleReaderPre + string(s)
+		if certs[readerRole] == nil || ids.readerCA == nil {
+			continue
+		}
+		readerParent := ids.readerCA
+		if !info.Trusted {
+			readerParent = ids.untrustedCA
+		}
+		rd := signer{key: keys[readerRole], cert: certs[readerRole]}
+		if err := checkSigner(rd, readerParent); err != nil {
+			return identities{}, fmt.Errorf("%s reader: %w", s, err)
+		}
+		ids.readers[s] = rd
 	}
 	return ids, nil
 }

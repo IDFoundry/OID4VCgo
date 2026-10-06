@@ -145,8 +145,10 @@ identifiers but not the group names, which are in the entitlements files
 and `Shared/SharedWallet.swift`.
 
 The extension names the reader asking when its request is signed by a
-certificate under `mdoc_reader_roots` (`run-device.sh` passes the
-passport-vdc verifier CA), and otherwise shows only the website's
+certificate under `mdoc_reader_roots` with the ISO/IEC 18013-5 reader
+authentication extended key usage (`run-device.sh` passes the
+passport-vdc demo's mdoc reader CA, `mdoc-reader-ca.pem`, and sets
+`mdoc_reader_require_eku`), and otherwise shows only the website's
 origin. Before answering, it checks that the request iOS releases is the
 one it showed: same document, same elements, same reader — and no copy
 another website has seen unless the sheet said so. The sheet lists only

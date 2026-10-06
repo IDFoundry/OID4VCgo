@@ -122,7 +122,11 @@ offers *Verify with an ID in this browser*: the passport mdoc, asked
 for over the W3C Digital Credentials API with ISO mdoc's own protocol,
 `org-iso-mdoc` (ISO/IEC TS 18013-7 Annex C, the library's `mdocdcapi`),
 which is what Safari supports. It asks for the scenario's mdoc claims,
-signed with the scenario's verifier certificate as the mdoc reader, and
+signed with the scenario's own mdoc reader authentication certificate —
+issued by the demo's mdoc reader CA (`mdoc-reader-ca.pem` in the state
+directory; the untrusted CA for the unknown verifier), with the ISO/IEC
+18013-5 reader authentication extended key usage, and separate from its
+OpenID4VP request-signing certificate — and
 the answer is decided like an OpenID4VP one. It needs a browser with the
 API, such as Safari on iOS 26, where the demo iOS wallet answers it as
 an Identity Document Provider (`mobile/ios/DemoWallet`, "Presenting to

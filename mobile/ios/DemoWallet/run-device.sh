@@ -25,7 +25,7 @@ cd "$(dirname "$0")"
 : "${PROVIDER_URL:?set PROVIDER_URL to the Wallet Provider public https URL, cmd/demo -provider-url}"
 STATE="${STATE:-../../../examples/passport-vdc/.demo-state}"
 BUNDLE_ID="${BUNDLE_ID:-dev.idfoundry.oid4vcgo.demowallet}"
-for f in issuer-ca.pem verifier-ca.pem; do
+for f in issuer-ca.pem verifier-ca.pem mdoc-reader-ca.pem; do
 	[ -s "$STATE/$f" ] || { echo "no $STATE/$f: run the passport-vdc demo first" >&2; exit 1; }
 done
 
@@ -70,9 +70,13 @@ config = {
         # their registrations, and warns when one asks for more.
         "registrar_roots": (state / "registrar-ca.pem").read_text() if (state / "registrar-ca.pem").exists() else "",
         # The verifier relying parties sign their Digital Credentials
-        # API requests (org-iso-mdoc) as mdoc readers with the same
-        # certificates: the extension names the one asking.
-        "mdoc_reader_roots": (state / "verifier-ca.pem").read_text(),
+        # API requests (org-iso-mdoc) with mdoc reader authentication
+        # certificates from the demo reader CA, which carry the ISO
+        # reader authentication extended key usage: the extension names
+        # the one asking, and recognizes no other certificate as a
+        # reader.
+        "mdoc_reader_roots": (state / "mdoc-reader-ca.pem").read_text(),
+        "mdoc_reader_require_eku": True,
         "development": True,
         # Credentials from a passport kept for refresh come with a
         # refresh token, so the app can fetch fresh copies.

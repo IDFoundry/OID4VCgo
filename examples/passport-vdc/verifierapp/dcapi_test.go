@@ -10,6 +10,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/json"
+	"github.com/idfoundry/oid4vcgo/mdocdcapi"
 	"io"
 	"math/big"
 	"net/http"
@@ -133,6 +134,7 @@ type dcapiClient struct {
 	t      *testing.T
 	srv    *httptest.Server
 	cookie *http.Cookie
+	app    *verifierapp.App
 }
 
 func (c *dcapiClient) do(method, path, contentType string, body io.Reader) *http.Response {
@@ -215,7 +217,7 @@ func newDCAPIApp(t *testing.T, iss dcapiIssuer) *dcapiClient {
 	}
 	srv := httptest.NewServer(app)
 	t.Cleanup(srv.Close)
-	return &dcapiClient{t: t, srv: srv}
+	return &dcapiClient{t: t, srv: srv, app: app}
 }
 
 // The age check, asked in the browser: the page offers it, the answer
@@ -273,5 +275,33 @@ func TestDCAPI_OnlyThePagesBrowser(t *testing.T) {
 	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusNotFound {
 		t.Errorf("another browser starting the request: status %d, want 404", resp.StatusCode)
+	}
+}
+
+// The request is signed with the scenario's mdoc reader authentication
+// certificate: a wallet trusting the reader CA, and requiring the
+// reader authentication EKU, names the scenario's relying party.
+func TestDCAPI_SignedAsAReader(t *testing.T) {
+	c := newDCAPIApp(t, newDCAPIIssuer(t))
+	data := c.askInBrowser(c.startPage(verifierapp.ScenarioAge))
+	raw, _ := json.Marshal(data)
+	in, err := mdocdcapi.ParseRequest(raw, dcapiOrigin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	roots := x509.NewCertPool()
+	roots.AddCert(c.app.ReaderCACertificate())
+	reader, err := in.VerifyReaderTrust(mdocdcapi.ReaderTrust{Roots: roots, LeafPolicy: mdocdcapi.RequireReaderAuthenticationEKU})
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, _ := verifierapp.ScenarioAge.Info()
+	if reader.Subject.CommonName != info.Verifier {
+		t.Errorf("reader %q, want %q", reader.Subject.CommonName, info.Verifier)
+	}
+	verifierRoots := x509.NewCertPool()
+	verifierRoots.AddCert(c.app.VerifierCACertificate())
+	if _, err := in.VerifyReader(verifierRoots, time.Time{}); err == nil {
+		t.Error("the request verifies under the OpenID4VP verifier CA: its reader certificate isn't separate")
 	}
 }
