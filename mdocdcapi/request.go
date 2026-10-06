@@ -190,14 +190,14 @@ func buildDeviceRequest(p RequestParams, transcript []byte) (string, error) {
 	docRequest := map[string]any{"itemsRequest": cbor.RawMessage(itemsRequestBytes)}
 	deviceRequest := map[string]any{"version": "1.0", "docRequests": []any{docRequest}}
 	if len(p.Readers) > 0 {
-		readerAuth, err := signReaderAuth(p.Readers[0], []any{"ReaderAuthentication", cbor.RawMessage(transcript), cbor.RawMessage(itemsRequestBytes)})
+		readerAuth, err := signReaderAuth(p.Readers[0], readerAuthentication(transcript, itemsRequestBytes))
 		if err != nil {
 			return "", err
 		}
 		docRequest["readerAuth"] = cbor.RawMessage(readerAuth)
 		all := make([]any, 0, len(p.Readers))
 		for _, r := range p.Readers {
-			sig, err := signReaderAuth(r, []any{"ReaderAuthenticationAll", cbor.RawMessage(transcript), []any{cbor.RawMessage(itemsRequestBytes)}, nil})
+			sig, err := signReaderAuth(r, readerAuthenticationAll(transcript, [][]byte{itemsRequestBytes}, nil))
 			if err != nil {
 				return "", err
 			}
@@ -211,6 +211,27 @@ func buildDeviceRequest(p RequestParams, transcript []byte) (string, error) {
 		return "", fmt.Errorf("mdocdcapi: encode DeviceRequest: %w", err)
 	}
 	return base64.RawURLEncoding.EncodeToString(raw), nil
+}
+
+// readerAuthentication is ISO/IEC 18013-5 §12.5's ReaderAuthentication,
+// which a DocRequest's ReaderAuth signs.
+func readerAuthentication(transcript, itemsRequestBytes []byte) []any {
+	return []any{"ReaderAuthentication", cbor.RawMessage(transcript), cbor.RawMessage(itemsRequestBytes)}
+}
+
+// readerAuthenticationAll is the second edition's ReaderAuthenticationAll,
+// which a ReaderAuthAll signs: every DocRequest's ItemsRequestBytes, in
+// order, and the DeviceRequestInfoBytes or null.
+func readerAuthenticationAll(transcript []byte, itemsRequestBytes [][]byte, deviceRequestInfo []byte) []any {
+	items := make([]any, len(itemsRequestBytes))
+	for i, b := range itemsRequestBytes {
+		items[i] = cbor.RawMessage(b)
+	}
+	var info any
+	if deviceRequestInfo != nil {
+		info = cbor.RawMessage(deviceRequestInfo)
+	}
+	return []any{"ReaderAuthenticationAll", cbor.RawMessage(transcript), items, info}
 }
 
 // signReaderAuth is a ReaderAuth or ReaderAuthAll: a COSE_Sign1 with a
@@ -246,6 +267,12 @@ func readerAlg(r ReaderKey) (cose.Alg, error) {
 	if leaf, ok := r.Chain[0].PublicKey.(interface{ Equal(crypto.PublicKey) bool }); !ok || !leaf.Equal(pub) {
 		return 0, errors.New("the leaf certificate doesn't certify the signer's key")
 	}
+	return readerKeyAlg(pub)
+}
+
+// readerKeyAlg is the COSE algorithm a reader key signs with: ES256 for
+// P-256, EdDSA for Ed25519.
+func readerKeyAlg(pub crypto.PublicKey) (cose.Alg, error) {
 	switch k := pub.(type) {
 	case *ecdsa.PublicKey:
 		if k.Curve != elliptic.P256() {

@@ -1,7 +1,9 @@
-// Package mdocdcapi implements a Verifier for "org-iso-mdoc": the
+// Package mdocdcapi implements both sides of "org-iso-mdoc": the
 // presentation of an mdoc over the W3C Digital Credentials API, as
 // ISO/IEC TS 18013-7:2025 Annex C defines it — the one protocol Safari
 // supports, answered by Apple Wallet or an iOS document provider app.
+// A Verifier builds the request and verifies the response; a wallet
+// parses the request and answers it.
 //
 // It is not OpenID4VP: the request is an ISO/IEC 18013-5 DeviceRequest,
 // and the response an HPKE-encrypted DeviceResponse. For OpenID4VP over
@@ -27,4 +29,22 @@
 // The origin is the Verifier's own, from its configuration: never one
 // the page reports, since the session transcript must be the one the
 // browser gave the mdoc.
+//
+// # Wallet
+//
+// A wallet — an iOS document provider extension, given the request by
+// ISO18013MobileDocumentRequestContext — calls ParseRequest with the
+// request data and the requesting page's origin, which the platform
+// reports. VerifyReader checks who signed the request against the
+// reader roots the wallet trusts, and returns the reader's certificate
+// to show the holder; a request no trusted reader signed still comes
+// from the origin the platform reports, which is what the holder sees
+// then. Respond answers one requested document with the held mdoc,
+// disclosing only the elements the holder consented to — each of which
+// must have been requested — signed by the mdoc's device key over the
+// session transcript, and encrypted to the request's key. It returns
+// the EncryptedResponse an iOS document provider hands back as
+// ISO18013MobileDocumentResponse's responseData; ResponseData wraps it
+// as the {"response"} object a platform that takes the whole object
+// expects.
 package mdocdcapi

@@ -21,6 +21,21 @@ var encMode = func() cbor.EncMode {
 	return mode
 }()
 
+// decMode decodes what a wallet receives: a duplicate map key is an
+// error, and nesting and sizes are bounded.
+var decMode = func() cbor.DecMode {
+	mode, err := cbor.DecOptions{
+		DupMapKey:        cbor.DupMapKeyEnforcedAPF,
+		MaxNestedLevels:  16,
+		MaxArrayElements: 1024,
+		MaxMapPairs:      1024,
+	}.DecMode()
+	if err != nil {
+		panic(fmt.Sprintf("mdocdcapi: build CBOR decoder: %v", err))
+	}
+	return mode
+}()
+
 // wrapTag24 is #6.24(bstr .cbor v).
 func wrapTag24(v any) ([]byte, error) {
 	inner, err := encMode.Marshal(v)

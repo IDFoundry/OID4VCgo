@@ -906,7 +906,7 @@ changes whether *every* bullet below is `(done)`.
   checked in the given order and returning satisfied as soon as one
   does (§6.4.1's own "the Wallet SHOULD return the first option that
   it can satisfy"), returning exactly that option's own `Path`s.
-- **`mdocdcapi`** (new) — a Verifier for `org-iso-mdoc`, ISO/IEC TS
+- **`mdocdcapi`** (new) — both sides of `org-iso-mdoc`, ISO/IEC TS
   18013-7 Annex C: an mdoc requested and presented over the W3C Digital
   Credentials API without OpenID4VP, the only protocol Safari supports.
   `BuildRequest` builds the `DeviceRequest` (one `DocRequest`, signed by
@@ -920,8 +920,17 @@ changes whether *every* bullet below is `(done)`.
   origin])]]`, and that only requested elements were disclosed. It
   reuses `oid4vpmdoc`'s DeviceResponse codec and `verifier`'s issuer
   key resolvers. A separate package rather than part of `verifier`:
-  it's an ISO protocol, not OpenID4VP. The wallet side (an iOS
-  document provider) is planned.
+  it's an ISO protocol, not OpenID4VP. The wallet side, for an iOS
+  document provider: `ParseRequest` decodes the request for the origin
+  the platform reports; `VerifyReader` checks its `ReaderAuthAll` (or,
+  from a first-edition reader, every `DocRequest`'s `ReaderAuth`)
+  against the wallet's reader roots, taking the algorithm from the
+  certificate's key, never the signature's header; `Respond` discloses
+  only consented, requested elements, device-signs the session
+  transcript and seals the `DeviceResponse` to the request's key,
+  returning the `EncryptedResponse` iOS hands back. Both sides build
+  `ReaderAuthentication`/`ReaderAuthenticationAll` with the same
+  functions, so what one signs is what the other checks.
 - **`oid4vpmdoc`** (done) — the OID4VP-specific wire structures the
   "mso_mdoc" Credential Format's own Presentation needs on top of
   `credential/mdoc`'s own ISO/IEC 18013-5 primitives:
