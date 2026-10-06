@@ -296,3 +296,23 @@ func TestParseDCAPIRequestData_MissingNonceIsAnErrorResponse(t *testing.T) {
 		}
 	}
 }
+
+func TestParseDCAPIRequestData_Limits(t *testing.T) {
+	f := newDCAPIForms(t)
+	me := signer{key: f.key, cert: f.cert}
+	signers := make([]signer, wallet.MaxDCAPISignatures+1)
+	for i := range signers {
+		signers[i] = me
+	}
+	if _, err := wallet.ParseDCAPIRequestData(wallet.ParseDCAPIRequestDataParams{
+		Protocol: wallet.DCAPIProtocolMultiSigned, Data: f.multiSigned(t, nil, signers...), Origin: testDCAPIOrigin, VerifierTrust: f.trust,
+	}); err == nil || !strings.Contains(err.Error(), "signatures, more than") {
+		t.Errorf("too many signatures: %v", err)
+	}
+	big := json.RawMessage(`{"padding":"` + strings.Repeat("a", wallet.MaxDCAPIRequestBytes) + `"}`)
+	if _, err := wallet.ParseDCAPIRequestData(wallet.ParseDCAPIRequestDataParams{
+		Protocol: wallet.DCAPIProtocolUnsigned, Data: big, Origin: testDCAPIOrigin,
+	}); err == nil || !strings.Contains(err.Error(), "bytes, more than") {
+		t.Errorf("too large: %v", err)
+	}
+}
