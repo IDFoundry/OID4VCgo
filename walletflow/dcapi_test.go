@@ -92,7 +92,7 @@ func TestDCAPIPresentation_Signed(t *testing.T) {
 }
 
 // An unsigned request names no Verifier but its origin, and is answered
-// the same way; a wallet requiring signed requests refuses it.
+// the same way.
 func TestDCAPIPresentation_Unsigned(t *testing.T) {
 	f, v, w := presentationFixture(t)
 	receive(t, f, w, walletflowtest.SDJWTConfigurationID)
@@ -135,6 +135,29 @@ func TestDCAPIPresentation_Unsigned(t *testing.T) {
 	}
 	if _, err := v.VerifyDCAPIResponse(ctx, r, misbound.DCAPIResponse); err == nil {
 		t.Error("the page accepted a presentation bound to another origin")
+	}
+}
+
+// A wallet requiring signed requests refuses an unsigned one as from an
+// untrusted Verifier, before the holder sees it, and still opens a
+// signed one.
+func TestDCAPIPresentation_RequireSigned(t *testing.T) {
+	f, v, _ := presentationFixture(t)
+	w, err := walletflow.New(walletflow.Config{
+		ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, IssuerRoots: f.env.IssuerRoots,
+		VerifierTrust: v.Trust, RequireSignedDCAPIRequests: true, Development: true,
+	}, walletflow.Dependencies{Keys: f.keys, Credentials: f.store, Provider: f.env.Provider, HTTP: f.env.HTTP})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	r := v.BeginDCAPI(t, dcql.Query{Credentials: []dcql.CredentialQuery{f.env.SDJWTQuery(t, "pid", "given_name")}}, dcapiOrigin)
+	unsigned := unsignedOf(t, r)
+	if _, err := w.StartDCAPIPresentation(ctx, unsigned.Protocol, unsigned.Data, unsigned.Origin); !errors.Is(err, walletflow.ErrUntrustedVerifier) {
+		t.Errorf("an unsigned request: %v, want ErrUntrustedVerifier", err)
+	}
+	if _, err := w.StartDCAPIPresentation(ctx, r.Protocol, r.Data, r.Origin); err != nil {
+		t.Errorf("a signed request: %v", err)
 	}
 }
 

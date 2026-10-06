@@ -27,6 +27,12 @@ public struct WalletConfiguration: Codable, Sendable {
     /// `startMdocPresentation` throws `untrustedVerifier`, and nothing is
     /// shown to the holder. Needs `mdocReaderRoots`.
     public var requireTrustedMdocReader: Bool
+    /// Refuses an unsigned OpenID4VP request over the Digital Credentials
+    /// API with `untrustedVerifier`, before the holder sees it: its only
+    /// identity is the origin the platform reports. HAIP requires a wallet
+    /// to support unsigned requests, so set it only where every Verifier
+    /// must be one `verifierRoots` accepts.
+    public var requireSignedDCAPIRequests: Bool
     /// Allows services on loopback addresses.
     public var development: Bool
     /// The holder's preferred languages (BCP 47, most preferred first),
@@ -60,6 +66,7 @@ public struct WalletConfiguration: Codable, Sendable {
 
     public init(clientID: String, redirectURI: String, issuerRoots: String = "", verifierRoots: String = "", registrarRoots: String = "",
                 mdocReaderRoots: String = "", mdocReaderRequireEKU: Bool = false, requireTrustedMdocReader: Bool = false,
+                requireSignedDCAPIRequests: Bool = false,
                 development: Bool = false, locales: [String] = Locale.preferredLanguages, batchSize: Int = 0, requestRefresh: Bool = false,
                 copyPolicy: CopyPolicy = .perPresentation) {
         self.clientID = clientID
@@ -70,6 +77,7 @@ public struct WalletConfiguration: Codable, Sendable {
         self.mdocReaderRoots = mdocReaderRoots
         self.mdocReaderRequireEKU = mdocReaderRequireEKU
         self.requireTrustedMdocReader = requireTrustedMdocReader
+        self.requireSignedDCAPIRequests = requireSignedDCAPIRequests
         self.development = development
         self.locales = locales
         self.batchSize = batchSize
@@ -81,6 +89,7 @@ public struct WalletConfiguration: Codable, Sendable {
         case clientID = "client_id", redirectURI = "redirect_uri", issuerRoots = "issuer_roots"
         case verifierRoots = "verifier_roots", registrarRoots = "registrar_roots", mdocReaderRoots = "mdoc_reader_roots"
         case mdocReaderRequireEKU = "mdoc_reader_require_eku", requireTrustedMdocReader = "require_trusted_mdoc_reader"
+        case requireSignedDCAPIRequests = "require_signed_dcapi_requests"
         case development, locales, batchSize = "batch_size"
         case requestRefresh = "request_refresh", copyPolicy = "copy_policy"
     }
@@ -95,6 +104,7 @@ public struct WalletConfiguration: Codable, Sendable {
                   mdocReaderRoots: try c.decodeIfPresent(String.self, forKey: .mdocReaderRoots) ?? "",
                   mdocReaderRequireEKU: try c.decodeIfPresent(Bool.self, forKey: .mdocReaderRequireEKU) ?? false,
                   requireTrustedMdocReader: try c.decodeIfPresent(Bool.self, forKey: .requireTrustedMdocReader) ?? false,
+                  requireSignedDCAPIRequests: try c.decodeIfPresent(Bool.self, forKey: .requireSignedDCAPIRequests) ?? false,
                   development: try c.decodeIfPresent(Bool.self, forKey: .development) ?? false,
                   locales: try c.decodeIfPresent([String].self, forKey: .locales) ?? Locale.preferredLanguages,
                   batchSize: try c.decodeIfPresent(Int.self, forKey: .batchSize) ?? 0,
