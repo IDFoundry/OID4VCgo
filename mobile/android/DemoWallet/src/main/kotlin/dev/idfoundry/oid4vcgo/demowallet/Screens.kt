@@ -673,10 +673,7 @@ fun CandidateCard(summary: CredentialSummary, holder: Holder?, selected: Boolean
         colors = CardDefaults.cardColors(containerColor = cssColor(d?.backgroundColor) ?: MaterialTheme.colorScheme.surfaceVariant),
     ) {
         Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(
-                if (!selected) Icons.Default.RadioButtonUnchecked else if (multiple) Icons.Default.CheckCircle else Icons.Default.RadioButtonChecked,
-                if (selected) "Selected" else "Not selected", tint = if (selected) text else text.copy(alpha = 0.45f),
-            )
+            ChoiceMark(selected, multiple, text)
             Spacer(Modifier.width(12.dp))
             val portrait = holder?.portrait
             if (portrait != null) {
@@ -689,15 +686,32 @@ fun CandidateCard(summary: CredentialSummary, holder: Holder?, selected: Boolean
                 holder?.let { Text(it.line, Modifier.testTag("candidate-holder"), color = text) }
                 Text("${d?.issuerName ?: summary.credentialIssuer} · ${Credentials.format(summary)} · received ${Credentials.date(summary.receivedAt)}",
                     style = MaterialTheme.typography.bodySmall, color = text.copy(alpha = 0.8f))
-                if (summary.linkableHere == true) {
-                    Text("Every copy has been shown elsewhere: this verifier and another could link you", Modifier.testTag("linkable-here"),
-                        style = MaterialTheme.typography.bodySmall, color = Color(0xFFFB8C00))
-                } else if (summary.shownToVerifier == true) {
-                    Text("This verifier has seen this credential before", Modifier.testTag("shown-before"),
-                        style = MaterialTheme.typography.bodySmall, color = text.copy(alpha = 0.8f))
-                }
+                LinkabilityHint(summary, text)
             }
         }
+    }
+}
+
+/** A candidate's choice mark: a checkbox for a query taking several credentials, a radio button otherwise. */
+@Composable
+private fun ChoiceMark(selected: Boolean, multiple: Boolean, text: Color) {
+    val icon = when {
+        !selected -> Icons.Default.RadioButtonUnchecked
+        multiple -> Icons.Default.CheckCircle
+        else -> Icons.Default.RadioButtonChecked
+    }
+    Icon(icon, if (selected) "Selected" else "Not selected", tint = if (selected) text else text.copy(alpha = 0.45f))
+}
+
+/** Whether presenting a candidate would be linkable, or this verifier has seen it before. */
+@Composable
+private fun LinkabilityHint(summary: CredentialSummary, text: Color) {
+    if (summary.linkableHere == true) {
+        Text("Every copy has been shown elsewhere: this verifier and another could link you", Modifier.testTag("linkable-here"),
+            style = MaterialTheme.typography.bodySmall, color = Color(0xFFFB8C00))
+    } else if (summary.shownToVerifier == true) {
+        Text("This verifier has seen this credential before", Modifier.testTag("shown-before"),
+            style = MaterialTheme.typography.bodySmall, color = text.copy(alpha = 0.8f))
     }
 }
 
