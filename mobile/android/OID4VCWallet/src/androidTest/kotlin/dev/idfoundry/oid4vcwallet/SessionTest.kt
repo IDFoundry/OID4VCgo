@@ -40,7 +40,7 @@ class TestEnv(deferIssuance: Boolean = false, batchSize: Int = 0) : AutoCloseabl
     fun request(format: String = ""): Pair<String, String> = pair(env.request(format))
 
     /** A request from a Verifier registered for family_name only, asking for family_name and [extra], if set. */
-    fun registeredRequest(format: String = "dc+sd-jwt", extra: String = ""): Pair<String, String> = pair(env.registeredRequest(format, extra))
+    fun registeredRequest(format: String = SD_JWT, extra: String = ""): Pair<String, String> = pair(env.registeredRequest(format, extra))
 
     fun result(id: String): JsonObject = json.parseToJsonElement(env.requestResult(id)).jsonObject
 
@@ -82,7 +82,7 @@ class SessionTest {
     private suspend fun receive(env: TestEnv, w: Wallet): Issuance.Result {
         val s = w.startIssuance(env.env.authorizationCodeOffer())
         assertEquals(Offer.Grant.AUTHORIZATION_CODE, s.offer.grant)
-        assertEquals(listOf("dc+sd-jwt", "mso_mdoc"), s.offer.credentials.map { it.format }.sorted())
+        assertEquals(listOf(SD_JWT, "mso_mdoc"), s.offer.credentials.map { it.format }.sorted())
         s.completeAuthorization(env.approve(s.beginAuthorization()))
         val result = s.requestCredentials()
         s.close()
@@ -114,7 +114,7 @@ class SessionTest {
         assertEquals(listOf("mdl", "pid"), p.queries.map { it.queryID })
         assertTrue(p.queries.none { it.multiple })
         assertEquals(listOf(listOf(listOf("mdl"), listOf("pid"))), p.credentialSets.map { it.options })
-        val sdjwt = held.first { it.format == "dc+sd-jwt" }.id
+        val sdjwt = held.first { it.format == SD_JWT }.id
         expectCode(WalletException.Code.invalidSelection) { p.preview(mapOf("pid" to listOf(sdjwt, sdjwt))) }
         val selection = mapOf("pid" to listOf(sdjwt))
         assertEquals(listOf(listOf(PathElement.Key("family_name"))), p.preview(selection).first().claims)
@@ -230,7 +230,7 @@ class SessionTest {
         val w = wallet(env)
         receive(env, w)
         assertTrue(w.credentials().all { it.copies == 3 && it.copiesLeft == 3 })
-        val p = w.startPresentation(env.request("dc+sd-jwt").second)
+        val p = w.startPresentation(env.request(SD_JWT).second)
         p.respond(p.defaultSelection())
         assertEquals(listOf(2, 3), w.credentials().map { it.copiesLeft }.sorted())
     }
@@ -254,7 +254,7 @@ class SessionTest {
         assertEquals(listOf(listOf(PathElement.Key("given_name"))), over.queries.first().unregistered)
         over.decline()
 
-        val plain = w.startPresentation(env.request("dc+sd-jwt").second)
+        val plain = w.startPresentation(env.request(SD_JWT).second)
         assertEquals(Presentation.Registration.Status.NONE, plain.verifier.registration.status)
         plain.decline()
     }
@@ -266,7 +266,7 @@ class SessionTest {
         val w = wallet(env)
         receive(env, w)
         assertTrue(w.credentials().all { it.refreshable })
-        val p = w.startPresentation(env.request("dc+sd-jwt").second)
+        val p = w.startPresentation(env.request(SD_JWT).second)
         p.respond(p.defaultSelection())
         val used = w.credentials().first { it.copiesLeft == 2 }
 
@@ -285,12 +285,12 @@ class SessionTest {
         val w = wallet(env, configuration = env.configuration.copy(copyPolicy = WalletConfiguration.CopyPolicy.PER_VERIFIER))
         receive(env, w)
         val candidates = (0 until 2).map {
-            val p = w.startPresentation(env.request("dc+sd-jwt").second)
+            val p = w.startPresentation(env.request(SD_JWT).second)
             p.queries[0].credentials[0].also { p.respond(p.defaultSelection()) }
         }
         assertEquals(listOf(false, true), candidates.map { it.shownToVerifier })
         assertEquals(listOf(false, false), candidates.map { it.linkableHere })
-        val used = w.credentials().first { it.format == "dc+sd-jwt" }
+        val used = w.credentials().first { it.format == SD_JWT }
         assertEquals(2, used.copiesLeft)
         assertFalse(used.linkable)
     }
@@ -361,6 +361,9 @@ class SessionTest {
         assertTrue("a credential's key was swept", w.credentials().all { it.holderKeyPresent == true })
     }
 }
+
+/** The SD-JWT VC format. */
+const val SD_JWT = "dc+sd-jwt"
 
 /** The TestEnv's Wallet Provider, as the app's WalletProvider. */
 private class ProviderOf(env: TestEnv) : WalletProvider {
