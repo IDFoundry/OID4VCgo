@@ -1,8 +1,10 @@
 package dev.idfoundry.oid4vcwallet
 
+import android.annotation.SuppressLint
 import android.app.Activity
 import android.hardware.biometrics.BiometricManager.Authenticators
 import android.hardware.biometrics.BiometricPrompt
+import android.os.Build
 import android.os.CancellationSignal
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyInfo
@@ -190,10 +192,19 @@ public class AndroidKeystoreKeyStore(
         return deleted
     }
 
-    /** Where key [id] lives: StrongBox, the TEE, or software. */
+    /**
+     * Where key [id] lives, as a KeyProperties.SECURITY_LEVEL_ value:
+     * StrongBox, the TEE, or software. Android 11 can't tell StrongBox from
+     * the TEE: there, a key in secure hardware is the TEE's. (The
+     * constants are API 31's, but compile-time ints: they work on 30.)
+     */
+    @SuppressLint("InlinedApi")
     public fun securityLevel(id: String): Int? {
         val key = keystore.getKey(alias(id), null) as? PrivateKey ?: return null
-        return info(key).securityLevel
+        val info = info(key)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) return info.securityLevel
+        @Suppress("DEPRECATION")
+        return if (info.isInsideSecureHardware) KeyProperties.SECURITY_LEVEL_TRUSTED_ENVIRONMENT else KeyProperties.SECURITY_LEVEL_SOFTWARE
     }
 
     private fun requiresHolder(key: PrivateKey): Boolean = info(key).isUserAuthenticationRequired
