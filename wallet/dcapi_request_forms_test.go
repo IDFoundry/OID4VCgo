@@ -154,7 +154,7 @@ func (f dcapiForms) answer(t *testing.T, req wallet.AuthorizationRequest) {
 		t.Fatalf("ParseDirectPostJWTResponse: %v", err)
 	}
 	result, err := f.v.VerifyResponse(context.Background(), verifier.VerifyResponseRequest{
-		Query: testPresentationQuery(t), Response: parsed, ExpectedNonce: f.built.Nonce, Origin: testDCAPIOrigin, MaxKeyBindingAge: time.Hour,
+		Query: testPresentationQuery(t), Response: parsed, ExpectedNonce: f.built.Nonce, Origin: testDCAPIOrigin, ExpectedOrigins: []string{testDCAPIOrigin}, MaxKeyBindingAge: time.Hour,
 		IssuerKeys: issuerKeyResolverFunc(func(context.Context, map[string]any, map[string]any) (crypto.PublicKey, jose.Alg, error) {
 			return &fixture.issuerKey.PublicKey, jose.ES256, nil
 		}),
@@ -294,5 +294,43 @@ func TestParseDCAPIRequestData_MissingNonceIsAnErrorResponse(t *testing.T) {
 		if !errors.As(err, &rejected) || rejected.Code != "invalid_request" || rejected.ResponseEncryptionKey == nil {
 			t.Errorf("%s: err = %v, want an invalid_request error response", protocol, err)
 		}
+	}
+}
+
+// RequireSignedDCAPIRequests refuses an unsigned request as from an
+// untrusted Verifier; signed ones are unaffected.
+func TestWallet_RequireSignedDCAPIRequests(t *testing.T) {
+	f := newDCAPIForms(t)
+	cfg := validConfig()
+	cfg.VerifierTrust, cfg.RequireSignedDCAPIRequests = f.trust, true
+	w, err := wallet.New(cfg, wallet.Dependencies{HTTP: fakeHTTPClient{}, Clock: wallet.ClockFunc(time.Now)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.ParseDCAPIRequestData(wallet.DCAPIProtocolUnsigned, f.unsigned(t, nil), testDCAPIOrigin); !errors.Is(err, wallet.ErrUntrustedVerifier) {
+		t.Errorf("unsigned: %v, want ErrUntrustedVerifier", err)
+	}
+	if _, err := w.ParseDCAPIRequestData(wallet.DCAPIProtocolMultiSigned, f.multiSigned(t, nil, signer{key: f.key, cert: f.cert}), testDCAPIOrigin); err != nil {
+		t.Errorf("multi-signed: %v", err)
+	}
+}
+
+func TestParseDCAPIRequestData_Limits(t *testing.T) {
+	f := newDCAPIForms(t)
+	me := signer{key: f.key, cert: f.cert}
+	signers := make([]signer, wallet.MaxDCAPISignatures+1)
+	for i := range signers {
+		signers[i] = me
+	}
+	if _, err := wallet.ParseDCAPIRequestData(wallet.ParseDCAPIRequestDataParams{
+		Protocol: wallet.DCAPIProtocolMultiSigned, Data: f.multiSigned(t, nil, signers...), Origin: testDCAPIOrigin, VerifierTrust: f.trust,
+	}); err == nil || !strings.Contains(err.Error(), "signatures, more than") {
+		t.Errorf("too many signatures: %v", err)
+	}
+	big := json.RawMessage(`{"padding":"` + strings.Repeat("a", wallet.MaxDCAPIRequestBytes) + `"}`)
+	if _, err := wallet.ParseDCAPIRequestData(wallet.ParseDCAPIRequestDataParams{
+		Protocol: wallet.DCAPIProtocolUnsigned, Data: big, Origin: testDCAPIOrigin,
+	}); err == nil || !strings.Contains(err.Error(), "bytes, more than") {
+		t.Errorf("too large: %v", err)
 	}
 }

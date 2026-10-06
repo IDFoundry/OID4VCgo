@@ -122,12 +122,25 @@ func (p *MdocPresentation) Linkable(id string) bool {
 	return ok && p.w.linkable(c, p.verifier())
 }
 
+// MdocLinkable reports whether presenting c to the page at origin over
+// the Digital Credentials API now would use a copy another Verifier has
+// seen, as MdocPresentation.Linkable does: for a consent screen shown
+// before the request itself is available — iOS releases it to a
+// document provider only once the holder agrees.
+func (w *Wallet) MdocLinkable(c StoredCredential, origin string) bool {
+	return w.linkable(c, originVerifier(origin))
+}
+
 // verifier identifies the origin among the Verifiers credential copies
-// were shown to: as an OpenID4VP Verifier without a client_id of its
-// own is known over the Digital Credentials API ("origin:" prefix,
-// OpenID4VP 1.0 Appendix A.2).
-func (p *MdocPresentation) verifier() string {
-	return VerifierHash("origin:" + p.in.Origin)
+// were shown to.
+func (p *MdocPresentation) verifier() string { return originVerifier(p.in.Origin) }
+
+// originVerifier is the VerifierHash a page at origin is known by, as
+// an OpenID4VP Verifier without a client_id of its own is known over
+// the Digital Credentials API ("origin:" prefix, OpenID4VP 1.0
+// Appendix A.2).
+func originVerifier(origin string) string {
+	return VerifierHash("origin:" + origin)
 }
 
 // MdocPresented is Respond's answer.

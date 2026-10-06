@@ -10,6 +10,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math/big"
 	"strings"
 	"testing"
@@ -348,5 +349,49 @@ func TestVerifyReaderTrust_LeafPolicy(t *testing.T) {
 				t.Errorf("with RequireReaderAuthenticationEKU: %v, want ok %v", err, tc.ok)
 			}
 		})
+	}
+}
+
+// A request past a limit is refused before any signature is checked.
+func TestParseRequestRefusesOverLimits(t *testing.T) {
+	h := newWalletHarness(t, bothNames())
+	var good RequestData
+	if err := json.Unmarshal(h.data, &good); err != nil {
+		t.Fatal(err)
+	}
+	repeat := func(key string, n int) []byte {
+		return func() []byte {
+			d := good
+			d.DeviceRequest = rewriteDeviceRequest(t, d.DeviceRequest, func(dr map[string]cbor.RawMessage) {
+				var one []cbor.RawMessage
+				if err := cbor.Unmarshal(dr[key], &one); err != nil || len(one) == 0 {
+					t.Fatalf("%s: %v", key, err)
+				}
+				many := make([]cbor.RawMessage, n)
+				for i := range many {
+					many[i] = one[0]
+				}
+				dr[key] = mustCBOR(t, many)
+			})
+			return marshalData(t, d)
+		}()
+	}
+	many := map[string]bool{}
+	for i := 0; i <= MaxRequestedElements; i++ {
+		many[fmt.Sprintf("element_%d", i)] = false
+	}
+	tooManyElements := newWalletHarness(t, map[string]map[string]bool{isoNS: many})
+
+	for name, data := range map[string][]byte{
+		"documents":         repeat("docRequests", MaxDocRequests+1),
+		"reader signatures": repeat("readerAuthAll", MaxReaderSignatures+1),
+		"elements":          tooManyElements.data,
+	} {
+		if _, err := ParseRequest(data, testOrigin); err == nil || !strings.Contains(err.Error(), "more than") {
+			t.Errorf("too many %s: %v", name, err)
+		}
+	}
+	if _, err := ParseRequest(repeat("readerAuthAll", MaxReaderSignatures), testOrigin); err != nil {
+		t.Errorf("%d reader signatures: %v", MaxReaderSignatures, err)
 	}
 }

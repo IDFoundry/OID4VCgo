@@ -77,8 +77,10 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /authorize", srv.handleAuthorize)
-	// The DC API stand-in: see handleDCAPI.
+	// The DC API stand-in: see handleDCAPI. It presents the fixture
+	// credential to anyone who asks, for any origin they name.
 	mux.HandleFunc("POST /dcapi", srv.handleDCAPI)
+	log.Printf("WARNING: POST /dcapi presents the configured credential to any caller, for any origin: run this harness only against a conformance suite, with throwaway keys and credentials")
 
 	tlsCert, err := cfg.tlsCertificate()
 	if err != nil {
