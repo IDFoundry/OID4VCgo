@@ -29,10 +29,6 @@ import dev.idfoundry.oid4vcwallet.gomobile.mobile.TestEnv as MobileTestEnv
 
 /** The in-process test issuer, Wallet Provider and Verifier (Go's TestEnv, in the mobiletest build). */
 class TestEnv(deferIssuance: Boolean = false, batchSize: Int = 0) : AutoCloseable {
-    init {
-        OID4VC.abiVersion // Go starts after OID4VC has set its environment.
-    }
-
     val env: MobileTestEnv = Mobile.startBatchTestEnv(deferIssuance, batchSize.toLong())
 
     override fun close() = env.close()
