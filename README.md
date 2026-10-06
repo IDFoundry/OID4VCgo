@@ -117,6 +117,26 @@ Where to start, by role:
   other two protected endpoints; `issuer.NewError` builds an OID4VCI error
   response (e.g. `credential_request_denied`); `statuslist.Publisher`
   serves a signed Status List Token.
+- **A browser's Digital Credentials API** — the Verifier builds an
+  OpenID4VP request with `Verifier.BuildDCAPIAuthorizationRequest` and
+  checks the answer with `Verifier.VerifyResponse`, setting
+  `VerifyResponseRequest.Origin` to its page's origin and
+  `ExpectedOrigins` to the request's. A wallet parses the request with
+  `wallet.ParseDCAPIRequestData` (unsigned, signed or multi-signed).
+  Safari's `org-iso-mdoc` protocol is package `mdocdcapi`, both sides:
+  `BuildRequest` and `VerifyResponse` for the page, `ParseRequest` and
+  `Incoming.Respond` for the wallet.
+- **In person** — package `proximity` is ISO/IEC 18013-5 over BLE:
+  `NewDeviceSession` for the holder, `NewReaderSession` for the reader.
+  The app carries the BLE messages; the package does everything else.
+- **A wallet app** — package `walletflow` runs issuance and
+  presentation as sessions over keys, stores and a Wallet Provider the
+  app supplies: `StartIssuance`, `StartPresentation`,
+  `StartDCAPIPresentation` (OpenID4VP over the DC API),
+  `StartMdocPresentation` (`org-iso-mdoc`) and
+  `StartProximityPresentation`. The separate `mobile` module binds it
+  for iOS (the OID4VCWallet Swift package) and Android (a Kotlin
+  library); see [MOBILE.md](MOBILE.md) and [`mobile/`](mobile).
 - **Your own stores and resolvers** — `issuer/issuertest` and
   `verifier/verifiertest` hold contract tests to run against them.
 

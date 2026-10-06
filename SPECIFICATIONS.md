@@ -44,7 +44,26 @@ plain FAPI 2.0" below.
 | [ISO/IEC 18013-5:2021 — mdoc][iso18013-5] | OID4VCI 1.0 Appendix A.2, HAIP §5.3.1 | — |
 | ISO/IEC 23220 series | HAIP §5.3.1 (mdoc presentation specifics) | — |
 | [ISO/IEC TS 18013-7:2025 — mdoc online presentation][iso18013-7], Annex C (`org-iso-mdoc` over the Digital Credentials API) | — (`mdocdcapi`; outside HAIP, which uses OpenID4VP over the DC API) | — |
-| ISO/IEC 18013-5 second edition: `ReaderAuthAll`, DeviceRequest version "1.1" | — (`mdocdcapi`, which Apple's implementation expects) | CD ballot resolution draft |
+| ISO/IEC 18013-5 second edition: `ReaderAuthAll`, DeviceRequest version "1.1" | — (`mdocdcapi` only, which Apple's implementation expects; `proximity` uses the first edition's per-`DocRequest` `ReaderAuth`) | CD ballot resolution draft |
+| ISO/IEC TS 23220-2 and the 23220-4 draft — Photo ID (`org.iso.23220.photoid.1`) | — (`examples/passport-vdc` only; checked against open implementations, not 23220-4 itself) | — |
+
+## Beyond HAIP
+
+HAIP covers OpenID4VCI and OpenID4VP. These are the other protocols
+the library implements, for a wallet's presentations outside the
+redirect flow.
+
+| Spec | Used by | Version |
+|---|---|---|
+| [ISO/IEC 18013-5:2021][iso18013-5] §8.2–§8.3 (device engagement, BLE GATT), §9.1 (session encryption, §9.1.4 reader authentication), Annex B (reader authentication EKU 1.0.18013.5.1.6), Annex D (test vectors) | `proximity`, `internal/readerauth` | First edition |
+| OpenID4VP 1.0 Appendix A — the Digital Credentials API | `verifier`, `wallet`, `walletflow` (HAIP §5.2 profiles it: unsigned, signed and multi-signed requests) | Final |
+| [W3C Digital Credentials][dcapi] | The browser API the DC API flows run over; this library builds and answers the requests, the platform invokes the API | Not pinned: what Safari and Chrome ship |
+| [RFC 9180 — HPKE][hpke] | `mdocdcapi` (ISO/IEC TS 18013-7 Annex C's response encryption) | Informational |
+
+Platform APIs the mobile wallets use, not specifications: Apple's
+IdentityDocumentServices (an iOS document provider for `org-iso-mdoc`)
+and Android's Credential Manager (`androidx.credentials` registry
+providers for OpenID4VP). See [MOBILE.md](MOBILE.md).
 
 ## Attestation
 
@@ -57,9 +76,9 @@ plain FAPI 2.0" below.
 Wallet Attestation's format is the Client Attestation JWT of §5.1 of the
 attestation-based-client-auth draft, plus OID4VCI-specific claims (Appendix
 E). This is the client authentication mechanism HAIP requires in place of
-FAPI 2.0's normal `private_key_jwt`/mTLS — see FAPIgo's
-`storage.ClientAuthMethodAttestation` (tracked separately, in FAPIgo, not
-this repo — see ARCHITECTURE.md).
+FAPI 2.0's normal `private_key_jwt`/mTLS — implemented by FAPIgo's
+`server` and `client` (`storage.ClientAuthMethodAttestation`); see
+AGENTS.md's "Relationship to FAPIgo".
 
 ## Status
 
@@ -115,8 +134,9 @@ Confirmed directly against HAIP 1.0's text (not paraphrased from memory):
 HAIP as a whole spans both OID4VCI (issuance) and OID4VP (presentation);
 OID4VCgo's name covers both, not issuance alone — the repo's own scope
 is the full HAIP profile: `issuer` + wallet's OID4VCI role, and
-`verifier` + wallet's OID4VP presentation role. See ARCHITECTURE.md for
-the package layout.
+`verifier` + wallet's OID4VP presentation role. It also implements the
+mdoc protocols in "Beyond HAIP" above, which HAIP doesn't profile. See
+ARCHITECTURE.md for the package layout.
 
 [oid4vci]: https://openid.net/specs/openid-4-verifiable-credential-issuance-1_0.html
 [oid4vp]: https://openid.net/specs/openid-4-verifiable-presentations-1_0.html
@@ -138,3 +158,5 @@ the package layout.
 [jwa]: https://www.rfc-editor.org/rfc/rfc7518.html
 [jwt]: https://www.rfc-editor.org/rfc/rfc7519.html
 [cose]: https://www.rfc-editor.org/rfc/rfc9052.html
+[dcapi]: https://www.w3.org/TR/digital-credentials/
+[hpke]: https://www.rfc-editor.org/rfc/rfc9180.html
