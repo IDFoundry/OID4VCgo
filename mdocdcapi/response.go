@@ -12,8 +12,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/fxamacker/cbor/v2"
-
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/internal/cose"
 	"github.com/idfoundry/oid4vcgo/oid4vpmdoc"
@@ -82,7 +80,7 @@ func VerifyResponse(ctx context.Context, p VerifyParams) (Verified, error) {
 	if err != nil {
 		return Verified{}, err
 	}
-	doc, err := oid4vpmdoc.UnmarshalDeviceResponse(deviceResponse)
+	doc, err := oid4vpmdoc.UnmarshalDeviceResponseMax(deviceResponse, MaxResponseBytes)
 	if err != nil {
 		return Verified{}, fmt.Errorf("mdocdcapi: %w", err)
 	}
@@ -107,7 +105,7 @@ func decrypt(response string, key *ecdh.PrivateKey, transcript []byte) ([]byte, 
 		Protocol string
 		Data     encryptedResponseData
 	}
-	if err := cbor.Unmarshal(raw, &wire); err != nil {
+	if err := decMode.Unmarshal(raw, &wire); err != nil {
 		return nil, fmt.Errorf("mdocdcapi: decode EncryptedResponse: %w", err)
 	}
 	if wire.Protocol != "dcapi" {

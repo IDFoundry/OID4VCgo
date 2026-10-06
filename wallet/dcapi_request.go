@@ -156,6 +156,16 @@ const (
 	DCAPIProtocolMultiSigned = "openid4vp-v1-multisigned"
 )
 
+// Limits on what ParseDCAPIRequestData accepts: each signature of a
+// multi-signed request costs a certificate chain verification.
+const (
+	// MaxDCAPIRequestBytes is the largest request data accepted.
+	MaxDCAPIRequestBytes = 1 << 20
+	// MaxDCAPISignatures is the most signatures a multi-signed request
+	// may carry.
+	MaxDCAPISignatures = 8
+)
+
 // ParseDCAPIRequestDataParams is the input to ParseDCAPIRequestData.
 type ParseDCAPIRequestDataParams struct {
 	// Protocol is REQUIRED: the request's "protocol", one of the
@@ -205,6 +215,9 @@ func ParseDCAPIRequestData(params ParseDCAPIRequestDataParams) (AuthorizationReq
 	if params.Origin == "" {
 		return AuthorizationRequest{}, errors.New("wallet: parse dc api request: Origin is required")
 	}
+	if len(params.Data) > MaxDCAPIRequestBytes {
+		return AuthorizationRequest{}, fmt.Errorf("wallet: parse dc api request: data is %d bytes, more than %d", len(params.Data), MaxDCAPIRequestBytes)
+	}
 	switch params.Protocol {
 	case DCAPIProtocolSigned:
 		var data struct {
@@ -245,6 +258,9 @@ func parseMultiSignedDCAPIRequest(params ParseDCAPIRequestDataParams) (Authoriza
 	}
 	if err := json.Unmarshal(params.Data, &data); err != nil || data.Request.Payload == "" || len(data.Request.Signatures) == 0 {
 		return AuthorizationRequest{}, errors.New("wallet: parse dc api request: data.request must be a Request Object in JWS JSON Serialization")
+	}
+	if len(data.Request.Signatures) > MaxDCAPISignatures {
+		return AuthorizationRequest{}, fmt.Errorf("wallet: parse dc api request: %d signatures, more than %d", len(data.Request.Signatures), MaxDCAPISignatures)
 	}
 	var errs []error
 	for i, sig := range data.Request.Signatures {

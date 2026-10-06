@@ -33,6 +33,20 @@ import (
 // MaxRequestBytes bounds the request data ParseRequest decodes.
 const MaxRequestBytes = 1 << 20
 
+// Limits on what ParseRequest accepts, beyond its size: each reader
+// signature costs a certificate chain verification, and each requested
+// element a line on the holder's consent screen.
+const (
+	// MaxDocRequests is the most documents one request may ask for.
+	MaxDocRequests = 8
+	// MaxReaderSignatures is the most ReaderAuthAll signatures one
+	// request may carry.
+	MaxReaderSignatures = 8
+	// MaxRequestedElements is the most data elements one request may
+	// ask for, across its documents.
+	MaxRequestedElements = 256
+)
+
 // ErrUntrustedReader is VerifyReader's error when no reader signature on
 // the request verifies under a trusted root.
 var ErrUntrustedReader = errors.New("mdocdcapi: the request isn't signed by a trusted reader")
@@ -157,13 +171,25 @@ func (in *Incoming) parseDeviceRequest(deviceRequest string) error {
 	if !strings.HasPrefix(wire.Version, "1.") {
 		return fmt.Errorf("mdocdcapi: DeviceRequest version %q, want 1.x", wire.Version)
 	}
-	if len(wire.DocRequests) == 0 {
+	switch {
+	case len(wire.DocRequests) == 0:
 		return errors.New("mdocdcapi: DeviceRequest requests no document")
+	case len(wire.DocRequests) > MaxDocRequests:
+		return fmt.Errorf("mdocdcapi: DeviceRequest requests %d documents, more than %d", len(wire.DocRequests), MaxDocRequests)
+	case len(wire.ReaderAuthAll) > MaxReaderSignatures:
+		return fmt.Errorf("mdocdcapi: DeviceRequest carries %d reader signatures, more than %d", len(wire.ReaderAuthAll), MaxReaderSignatures)
 	}
+	elements := 0
 	for i, dr := range wire.DocRequests {
 		doc, err := parseItemsRequest(dr.ItemsRequest)
 		if err != nil {
 			return fmt.Errorf("mdocdcapi: docRequests[%d]: %w", i, err)
+		}
+		for _, els := range doc.Elements {
+			elements += len(els)
+		}
+		if elements > MaxRequestedElements {
+			return fmt.Errorf("mdocdcapi: DeviceRequest asks for more than %d data elements", MaxRequestedElements)
 		}
 		doc.readerAuth = dr.ReaderAuth
 		in.Documents = append(in.Documents, doc)
@@ -253,12 +279,19 @@ func (in Incoming) VerifyReaderTrust(t ReaderTrust) (*x509.Certificate, error) {
 		items[i] = d.itemsRequestBytes
 	}
 	var lastErr error
-	for _, sig := range in.readerAuthAll {
-		leaf, err := verifyReaderAuth(sig, readerAuthenticationAll(in.transcript, items, in.deviceRequestInfo), t)
-		if err == nil {
-			return leaf, nil
+	if len(in.readerAuthAll) > 0 {
+		// Every ReaderAuthAll signs the same structure: encode it once.
+		detached, err := wrapTag24(readerAuthenticationAll(in.transcript, items, in.deviceRequestInfo))
+		if err != nil {
+			return nil, fmt.Errorf("mdocdcapi: encode ReaderAuthenticationAll: %w", err)
 		}
-		lastErr = err
+		for _, sig := range in.readerAuthAll {
+			leaf, err := verifyReaderAuth(sig, detached, t)
+			if err == nil {
+				return leaf, nil
+			}
+			lastErr = err
+		}
 	}
 	// An mdoc reader of the first edition signs each DocRequest instead.
 	var reader *x509.Certificate
@@ -267,7 +300,11 @@ func (in Incoming) VerifyReaderTrust(t ReaderTrust) (*x509.Certificate, error) {
 			reader, lastErr = nil, errors.New("a document request isn't signed")
 			break
 		}
-		leaf, err := verifyReaderAuth(d.readerAuth, readerAuthentication(in.transcript, d.itemsRequestBytes), t)
+		detached, err := wrapTag24(readerAuthentication(in.transcript, d.itemsRequestBytes))
+		if err != nil {
+			return nil, fmt.Errorf("mdocdcapi: encode ReaderAuthentication: %w", err)
+		}
+		leaf, err := verifyReaderAuth(d.readerAuth, detached, t)
 		if err == nil && reader != nil && !reader.Equal(leaf) {
 			err = errors.New("the documents are signed by different readers")
 		}
@@ -287,10 +324,10 @@ func (in Incoming) VerifyReaderTrust(t ReaderTrust) (*x509.Certificate, error) {
 }
 
 // verifyReaderAuth verifies one ReaderAuth or ReaderAuthAll over
-// authentication, by the certificate in its x5chain, which must chain to
-// roots. The algorithm is the certificate key's, not the signature's own
+// detached, the encoded ReaderAuthentication(All), by the certificate in
+// its x5chain, which must chain to t's roots and pass its LeafPolicy. The algorithm is the certificate key's, not the signature's own
 // header's.
-func verifyReaderAuth(sig []byte, authentication []any, t ReaderTrust) (*x509.Certificate, error) {
+func verifyReaderAuth(sig, detached []byte, t ReaderTrust) (*x509.Certificate, error) {
 	_, unprotected, _, err := cose.DecodeUnverified(sig)
 	if err != nil {
 		return nil, fmt.Errorf("decode reader signature: %w", err)
@@ -307,10 +344,6 @@ func verifyReaderAuth(sig []byte, authentication []any, t ReaderTrust) (*x509.Ce
 	alg, err := readerKeyAlg(leaf.PublicKey)
 	if err != nil {
 		return nil, err
-	}
-	detached, err := wrapTag24(authentication)
-	if err != nil {
-		return nil, fmt.Errorf("encode %v: %w", authentication[0], err)
 	}
 	if _, _, err := cose.VerifyDetached(alg, leaf.PublicKey, sig, detached, nil); err != nil {
 		return nil, fmt.Errorf("reader signature: %w", err)
