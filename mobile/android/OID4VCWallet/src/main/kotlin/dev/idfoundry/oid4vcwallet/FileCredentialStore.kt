@@ -4,6 +4,9 @@ import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import java.io.File
+import java.io.IOException
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.security.KeyStore as JavaKeyStore
 import java.util.concurrent.locks.ReentrantLock
 import javax.crypto.Cipher
@@ -64,12 +67,14 @@ public class FileCredentialStore(
         val target = file(id)
         val sealed = seal(id, record)
         lock.withLock {
-            // Written whole, then renamed over the old one: a reader never
+            // Written whole, then moved over the old one: a reader never
             // sees half a record.
             val temp = File(directory, ".$id.tmp")
-            temp.writeBytes(sealed)
-            if (!temp.renameTo(target)) {
-                temp.delete()
+            try {
+                temp.writeBytes(sealed)
+                Files.move(temp.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+            } catch (e: IOException) {
+                Files.deleteIfExists(temp.toPath())
                 throw StoreException("can't write credential record $id")
             }
         }
@@ -92,7 +97,11 @@ public class FileCredentialStore(
 
     override fun delete(id: String) {
         val f = file(id)
-        lock.withLock { f.delete() }
+        try {
+            lock.withLock { Files.deleteIfExists(f.toPath()) }
+        } catch (e: IOException) {
+            throw StoreException("can't delete credential record $id")
+        }
     }
 
     private fun file(id: String): File {
