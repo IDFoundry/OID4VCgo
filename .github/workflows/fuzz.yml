@@ -81,6 +81,9 @@ jobs:
           - id: mdocdcapi-verify-response
             pkg: ./mdocdcapi
             name: FuzzVerifyResponse
+          - id: mdocdcapi-parse-request
+            pkg: ./mdocdcapi
+            name: FuzzParseRequest
           - id: sdjwtvc-parse
             pkg: ./credential/sdjwtvc
             name: FuzzParse
