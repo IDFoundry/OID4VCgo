@@ -46,16 +46,28 @@ type dcapiPlanConfig struct {
 	Client2 planClient2 `json:"client2"`
 }
 
+// browserAPIRequest is one of GET /api/runner/{id}'s
+// browser.browserApiRequests: the navigator.credentials.get argument,
+// and where the page posts the result.
 type browserAPIRequest struct {
-	Request struct {
-		Digital struct {
-			Requests []struct {
-				Protocol string          `json:"protocol"`
-				Data     json.RawMessage `json:"data"`
-			} `json:"requests"`
-		} `json:"digital"`
-	} `json:"request"`
-	SubmitURL string `json:"submitUrl"`
+	Request   browserAPICall `json:"request"`
+	SubmitURL string         `json:"submitUrl"`
+}
+
+// browserAPICall is navigator.credentials.get's argument.
+type browserAPICall struct {
+	Digital browserAPIDigital `json:"digital"`
+}
+
+// browserAPIDigital is its "digital" member.
+type browserAPIDigital struct {
+	Requests []dcapiProtocolRequest `json:"requests"`
+}
+
+// dcapiProtocolRequest is one DC API request: a protocol and its data.
+type dcapiProtocolRequest struct {
+	Protocol string          `json:"protocol"`
+	Data     json.RawMessage `json:"data"`
 }
 
 // dcapiAnswer is cmd/conformance-wallet-vp's POST /dcapi response.
@@ -64,10 +76,21 @@ type dcapiAnswer struct {
 	SentError string          `json:"sent_error"`
 }
 
-// runDCAPI creates the dc_api.jwt plan for credentialFormat and drives
+// dcapiRun is one -response-mode dc_api.jwt run.
+type dcapiRun struct {
+	httpClient                                     *http.Client
+	apiBase, walletVPBase, alias, credentialFormat string
+	trustAnchorCertPEM                             string
+	cfg                                            generatedConfig
+	verifierCA                                     *x509.Certificate
+	verifierCAKey                                  *ecdsa.PrivateKey
+}
+
+// run creates the dc_api.jwt plan for the credential format and drives
 // every module it lists, and reports whether each ended as expected.
-func runDCAPI(httpClient *http.Client, apiBase, walletVPBase, alias, credentialFormat, trustAnchorCertPEM string,
-	cfg generatedConfig, verifierCA *x509.Certificate, verifierCAKey *ecdsa.PrivateKey) bool {
+func (d dcapiRun) run() bool {
+	httpClient, apiBase, walletVPBase := d.httpClient, d.apiBase, d.walletVPBase
+	verifierCA, verifierCAKey := d.verifierCA, d.verifierCAKey
 	clientJWK, err := generateClientJWK(verifierCA, verifierCAKey)
 	if err != nil {
 		log.Fatalf("generate plan client signing key: %v", err)
@@ -78,14 +101,14 @@ func runDCAPI(httpClient *http.Client, apiBase, walletVPBase, alias, credentialF
 	}
 	client2JWK.Kid = "wallet-vp-test-client2-sig"
 	pc := dcapiPlanConfig{
-		planConfig: buildPlanConfig(alias+"-dcapi", "OID4VCgo cmd/conformance-wallet-vp live run (dc_api.jwt)", trustAnchorCertPEM, clientJWK, buildDCQLCredential(cfg), ""),
+		planConfig: buildPlanConfig(d.alias+"-dcapi", "OID4VCgo cmd/conformance-wallet-vp live run (dc_api.jwt)", d.trustAnchorCertPEM, clientJWK, buildDCQLCredential(d.cfg), ""),
 		Client2:    planClient2{JWKs: jwk.Set{Keys: []jwk.SetEntry{client2JWK}}},
 	}
 	pcRaw, err := json.MarshalIndent(pc, "", "  ")
 	if err != nil {
 		log.Fatalf("marshal plan config: %v", err)
 	}
-	planVariant := map[string]string{"credential_format": credentialFormat, "response_mode": "dc_api.jwt"} //nolint:gosec // a suite variant selector value, not a credential
+	planVariant := map[string]string{"credential_format": d.credentialFormat, "response_mode": "dc_api.jwt"} //nolint:gosec // a suite variant selector value, not a credential
 	planID, modules, err := conformancesuite.CreatePlan(httpClient, apiBase, planName, planVariant, pcRaw)
 	if err != nil {
 		log.Fatalf("create plan: %v", err)
