@@ -224,7 +224,7 @@ networking.
 | 6 ✓ | OID4VP slice | Request parsing, candidates, consent and presentation from the iOS demo app |
 | 7 ✓ | Hardening | Suspension and resumption (deferred credentials, an authorization in progress), cancellation, network failures, issuer and verifier errors, logging without personal data, the demo app's retry and cancel |
 | 8 | Android | The same bridge over Android Keystore, packaged as an AAR, with the demo app and the DC API (below) |
-| 9 | DC API | A DC API adapter over the presentation engine |
+| 9 | DC API | A DC API adapter over the presentation engine: `org-iso-mdoc` (MdocPresentation, iOS) and OpenID4VP (`StartDCAPIPresentation`, for Android's Credential Manager) |
 
 ### Phase 1 findings
 
@@ -799,6 +799,107 @@ issuances.
 - **Host tests:** what doesn't load Go — error parsing, the provider
   bridge, origins — runs on the host JVM (`testDebugUnitTest`).
 
+### Phase 8 findings: the credential store
+
+Phase 5 left Android's encryption at rest open: Android has no per-file
+protection class like iOS's complete protection, only file-based
+encryption, readable from the first unlock after a boot. So
+`FileCredentialStore` encrypts each record itself:
+
+- **Encryption:** AES-256-GCM under an Android Keystore key, the
+  record's ID as associated data, so a record copied under another ID,
+  or altered, doesn't decrypt. Its file is a version byte, the IV and
+  the ciphertext.
+- **Protection:** by default the key works only while the device is
+  unlocked (`setUnlockedDeviceRequired`). On the emulator, with the
+  screen locked, a record neither reads nor writes; unlocked, it does —
+  iOS's complete protection. `Protection.AFTER_FIRST_UNLOCK` drops the
+  requirement, for an app that must read credentials while locked: file
+  encryption alone, iOS's "until first user authentication".
+- **Backups:** the standard store is in `noBackupFilesDir`, which neither
+  backups nor device transfer copy, as iOS's store is excluded from
+  backups. A restored record without its key wouldn't decrypt anyway,
+  and its holder key doesn't move either.
+- **Writes** go to a temporary file renamed over the record, so a
+  reader never sees half of one.
+
+### Phase 8 findings: the demo app
+
+`mobile/android/DemoWallet` is the iOS demo's counterpart, in Jetpack
+Compose: receiving (both grants, deferred credentials, resuming after
+the app was killed), the credential list and pages, presenting with the
+consent screen and its preview, QR codes, copies, status and refresh.
+On the emulator, against `mobile/cmd/testservices`
+(`run-test-services.sh`), it has received an SD-JWT VC (three copies,
+the PIN refused once and then accepted), and shared it: the system
+prompt asked for the screen lock before the holder key signed, and the
+Verifier received `family_name`.
+
+- **Go's environment:** Go loaded as an app's library starts with none,
+  so neither `SSL_CERT_DIR` (see above) nor a development CA can be
+  handed to it through the process environment. The wallet
+  configuration's `development_roots`, only with `development`, are CAs
+  its HTTPS requests trust besides the system's: the test services' own.
+  The app's own requests (the Wallet Provider's) trust it through a
+  trust manager of its own.
+- **The services' ports** reach the device through `adb reverse`, so
+  their loopback certificate holds there.
+- **The authorization page** opens in an Auth Tab, else an ephemeral
+  Custom Tab; closing it leaves the offer open, as on iOS. Beginning the
+  authorization again then needed walletflow to allow it (#467), on iOS
+  too.
+- **Chrome** doesn't trust the test services' CA, unlike Go and the
+  app: the issuer's page shows a certificate warning. The UI tests need
+  the CA in the device's user store, which Chrome trusts.
+- **Permissions:** the library declares `USE_BIOMETRIC`, for its
+  prompt; the demo `INTERNET` and `CAMERA`, and backs nothing up.
+
+### Phase 8 findings: the Digital Credentials API on Android
+
+The demo is a Credential Manager provider for OpenID4VP over the DC API
+(`StartDCAPIPresentation`, the OpenID4VP half of Phase 9). On the API 37
+emulator with Google Play, end to end: a page served by the test
+services asked with a signed request; Chrome asked whether to trust the
+site; Credential Manager's chooser offered the registered SD-JWT VC and
+the claim asked for; the app's consent screen opened on it; the holder
+key signed after the screen lock; and the test Verifier verified the
+answer, bound to the page's origin.
+
+- **Registration:** each presentable credential, with its claims, in an
+  `OpenId4VpRegistry` (androidx.credentials registry, alpha), whose
+  default matcher is Google's: the app writes no matcher. Registering
+  again replaces the set, after every change to the credentials.
+- **The origin** is Chrome's, which Credential Manager hands over only
+  for a browser on the app's privileged list (Chrome's entries from
+  Google's published list); an app calling directly is named by its
+  signing certificate.
+- **The provider activity** opens the wallet without the app's launch
+  work: the orphaned-key sweep would take the keys of an issuance the app
+  has in progress.
+- **Not yet:** `org-iso-mdoc` requests on Android, and whether Google's
+  matcher answers them; passport-vdc's page asking with OpenID4VP too.
+
+### Phase 8 findings: publishing
+
+`wallet-kotlin-release.yml` publishes `dev.idfoundry:oid4vcwallet` into
+the Maven repository OID4VCgo-wallet-kotlin's GitHub Pages serve, as
+`wallet-swift-release.yml` publishes the Swift package, from the same
+commit and with the same version.
+
+- **One artifact:** the AAR holds the Kotlin API, the Go bindings
+  (`libs/`) and the Go library for arm64 and x86_64, with a sources jar;
+  its POM names the Kotlin standard library, coroutines and
+  serialization.
+- **Kotlin 2.2:** a library compiled with the newest Kotlin writes
+  metadata only that compiler, or the next, can read: an app on AGP 9's
+  own Kotlin (2.2) failed to compile against it. The library is built for
+  Kotlin 2.2 — language and API version, and its standard library — so
+  it can.
+- **Checked as published:** the release script builds an app depending
+  on the version from a staging copy of the repository before it touches
+  the real one, and refuses a version the repository already has. CI runs
+  it on every change.
+
 ### Open items
 
 - Publish to Maven Central.
@@ -807,8 +908,10 @@ issuances.
 - FAPIgo on 32-bit platforms.
 - The APEX store on golang/go#71258; drop `certdirs_android.go` once Go
   reads it.
-- On a device: StrongBox, the unlocked-device key, BiometricPrompt, and
-  the DC API in Chrome.
+- On a device: StrongBox, the unlocked-device key, BiometricPrompt with a
+  fingerprint, and the DC API in Chrome.
+- The demo's UI tests, with the test services' CA in the device's user
+  store for Chrome.
 
 ## Open questions
 

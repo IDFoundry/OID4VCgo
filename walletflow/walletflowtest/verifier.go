@@ -33,6 +33,10 @@ type Verifier struct {
 	ClientID string
 
 	txs *verifier.Transactions
+	// v and verify answer DC API requests, which no transaction holds:
+	// the response comes back through the platform.
+	v      *verifier.Verifier
+	verify verifier.VerifyResponseRequest
 }
 
 // The browser binding every request is begun with.
@@ -86,12 +90,12 @@ func (e *Env) startVerifier(registered []dcql.Path) (started *Verifier, err erro
 		vv, err = verifier.New(cfg, verifier.Dependencies{Signer: key, Random: rand.Reader})
 		must(err)
 	}
+	v.v, v.verify = vv, verifier.VerifyResponseRequest{
+		IssuerKeys: verifier.X5CIssuerKeyResolver{Roots: e.IssuerRoots}, MdocIssuerKeys: verifier.X5ChainIssuerKeyResolver{Roots: e.IssuerRoots},
+		MaxKeyBindingAge: time.Hour,
+	}
 	v.txs, err = verifier.NewTransactions(vv, storage.NewVerifierTransactionStore(), verifier.TransactionsConfig{
-		RequestURIBase: base + "/request-objects",
-		Verify: verifier.VerifyResponseRequest{
-			IssuerKeys: verifier.X5CIssuerKeyResolver{Roots: e.IssuerRoots}, MdocIssuerKeys: verifier.X5ChainIssuerKeyResolver{Roots: e.IssuerRoots},
-			MaxKeyBindingAge: time.Hour,
-		},
+		RequestURIBase: base + "/request-objects", Verify: v.verify,
 	})
 	must(err)
 	roots := x509.NewCertPool()

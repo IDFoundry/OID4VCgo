@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A wallet card, for the launcher. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp" android:height="48dp" android:viewportWidth="48" android:viewportHeight="48">
+    <path android:fillColor="#12107C" android:pathData="M6,10h36a4,4 0 0 1 4,4v20a4,4 0 0 1 -4,4H6a4,4 0 0 1 -4,-4V14a4,4 0 0 1 4,-4z" />
+    <path android:fillColor="#FFFFFF" android:pathData="M8,18h20v3H8zM8,24h14v3H8z" />
+    <path android:fillColor="#FFFFFF" android:pathData="M36,25m-5,0a5,5 0 1 1 10,0a5,5 0 1 1 -10,0" />
+</vector>

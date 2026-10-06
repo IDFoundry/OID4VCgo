@@ -197,7 +197,10 @@ func (s *Issuance) Offer() Offer { return s.details }
 // BeginAuthorization sends the Pushed Authorization Request, with a
 // Wallet Attestation, and returns the authorization URL: open it in a
 // browser, where the holder authenticates and approves, and pass the
-// redirect back to RedirectURI to CompleteAuthorization.
+// redirect back to RedirectURI to CompleteAuthorization. Called again
+// before then — the holder closed the issuer's page, say — it starts
+// a new authorization with the same keys, and the earlier one's
+// redirect no longer completes it.
 func (s *Issuance) BeginAuthorization(ctx context.Context) (string, error) {
 	return s.BeginAuthorizationWith(ctx, AuthorizationOptions{})
 }
@@ -217,7 +220,7 @@ type AuthorizationOptions struct {
 func (s *Issuance) BeginAuthorizationWith(ctx context.Context, opts AuthorizationOptions) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.step != stepStarted || s.details.Grant != GrantAuthorizationCode {
+	if (s.step != stepStarted && s.step != stepAuthorizing) || s.details.Grant != GrantAuthorizationCode {
 		return "", ErrWrongStep
 	}
 	plan, err := wallet.PlanAuthorization(s.offer, s.metadata)

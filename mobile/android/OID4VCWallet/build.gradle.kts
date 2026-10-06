@@ -8,6 +8,7 @@ import javax.inject.Inject
 plugins {
     alias(libs.plugins.android.library)
     alias(libs.plugins.kotlin.serialization)
+    `maven-publish`
 }
 
 val testFramework = providers.gradleProperty("oid4vc.testFramework").map { it == "true" }.getOrElse(false)
@@ -59,6 +60,11 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+    publishing {
+        singleVariant("release") {
+            withSourcesJar()
+        }
+    }
 }
 
 androidComponents {
@@ -70,6 +76,14 @@ androidComponents {
 kotlin {
     jvmToolchain(17)
     explicitApi()
+    // Readable by apps on Kotlin 2.2 — AGP 9's own — and later: a
+    // library built with the newest compiler would otherwise need its
+    // apps to have it too.
+    compilerOptions {
+        languageVersion.set(org.jetbrains.kotlin.gradle.dsl.KotlinVersion.KOTLIN_2_2)
+        apiVersion.set(org.jetbrains.kotlin.gradle.dsl.KotlinVersion.KOTLIN_2_2)
+    }
+    coreLibrariesVersion = "2.2.21"
 }
 
 dependencies {
@@ -82,4 +96,41 @@ dependencies {
     androidTestImplementation(libs.androidx.test.junit)
     androidTestImplementation(libs.kotlinx.coroutines.test)
     androidTestImplementation(libs.junit)
+}
+
+// dev.idfoundry:oid4vcwallet, as ../package-kotlin-release.sh publishes
+// it: -Poid4vc.version is the release's version (the Swift package's),
+// and -Poid4vc.publishTo the Maven repository directory it's written
+// into, a checkout of OID4VCgo-wallet-kotlin's.
+publishing {
+    publications {
+        register<MavenPublication>("release") {
+            groupId = "dev.idfoundry"
+            artifactId = "oid4vcwallet"
+            version = providers.gradleProperty("oid4vc.version").getOrElse("0.0.0-SNAPSHOT")
+            afterEvaluate { from(components["release"]) }
+            pom {
+                name.set("OID4VCWallet")
+                description.set("OID4VCgo's mobile wallet for Android: OpenID4VCI 1.0 and OpenID4VP 1.0 under HAIP 1.0, with SD-JWT VC and ISO mdoc credentials.")
+                url.set("https://github.com/IDFoundry/OID4VCgo-wallet-kotlin")
+                licenses {
+                    license {
+                        name.set("MIT")
+                        url.set("https://github.com/IDFoundry/OID4VCgo/blob/main/LICENSE")
+                    }
+                }
+                scm {
+                    url.set("https://github.com/IDFoundry/OID4VCgo")
+                }
+            }
+        }
+    }
+    repositories {
+        providers.gradleProperty("oid4vc.publishTo").orNull?.let { dir ->
+            maven {
+                name = "release"
+                url = uri(file(dir))
+            }
+        }
+    }
 }

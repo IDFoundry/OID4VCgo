@@ -348,6 +348,37 @@ class SessionTest {
         assertEquals(8, w.credentials().size)
     }
 
+    /**
+     * An OpenID4VP request over the Digital Credentials API, signed or
+     * not, is answered with the response's data for the platform, which
+     * the page verifies; declining hands back the encrypted refusal.
+     */
+    @Test
+    fun dcapiPresentation(): Unit = runBlocking {
+        val env = env()
+        val w = wallet(env)
+        receive(env, w)
+        val origin = "https://verifier.android.example"
+        for ((format, signed) in listOf(SD_JWT to true, "mso_mdoc" to true, SD_JWT to false)) {
+            val r = json.parseToJsonElement(env.env.dcapiRequest(format, origin, signed)).jsonObject
+            val p = w.startDCAPIPresentation(
+                r["protocol"]!!.jsonPrimitive.content, r["data"]!!.jsonPrimitive.content.toByteArray(), origin,
+            )
+            assertEquals(origin, p.verifier.origin)
+            assertEquals("unsigned requests name no Verifier", signed, p.verifier.name.isNotEmpty())
+            val presented = p.respond(p.defaultSelection())
+            val response = presented.dcapiResponse
+            assertNotNull("$format: no DC API response", response)
+            val result = json.parseToJsonElement(env.env.dcapiResult(r["id"]!!.jsonPrimitive.content, response!!)).jsonObject
+            assertEquals("$format signed=$signed: $result", "done", result["status"]?.jsonPrimitive?.content)
+        }
+        val r = json.parseToJsonElement(env.env.dcapiRequest(SD_JWT, origin, true)).jsonObject
+        val p = w.startDCAPIPresentation(r["protocol"]!!.jsonPrimitive.content, r["data"]!!.jsonPrimitive.content.toByteArray(), origin)
+        assertEquals("the origin has been shown it before", true, p.queries[0].credentials[0].shownToVerifier)
+        val refusal = json.parseToJsonElement(env.env.dcapiResult(r["id"]!!.jsonPrimitive.content, p.decline().dcapiResponse!!)).jsonObject
+        assertEquals("access_denied", refusal["error"]?.jsonPrimitive?.content)
+    }
+
     /** The sweep keeps the keys the wallet's credentials are bound to and deletes the rest. */
     @Test
     fun sweepOrphanedKeys(): Unit = runBlocking {
@@ -366,7 +397,7 @@ class SessionTest {
 const val SD_JWT = "dc+sd-jwt"
 
 /** The TestEnv's Wallet Provider, as the app's WalletProvider. */
-private class ProviderOf(env: TestEnv) : WalletProvider {
+internal class ProviderOf(env: TestEnv) : WalletProvider {
     private val provider = env.env.provider()
 
     override suspend fun walletAttestation(clientID: String, instanceKey: ByteArray): String =

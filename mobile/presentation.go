@@ -30,12 +30,33 @@ func (w *Wallet) StartPresentation(op *Operation, requestLink string) (*Presenta
 	return &Presentation{p: p}, nil
 }
 
+// StartDCAPIPresentation parses an OpenID4VP request delivered through
+// the Digital Credentials API (OpenID4VP 1.0 Appendix A): protocol and
+// requestData as the platform hands them over (on Android, Credential
+// Manager's openid4vp-v1-unsigned, -signed or -multisigned request and
+// its data), and origin the calling page's or app's origin as the
+// platform reports it. A signed request's Verifier must chain to
+// verifier_roots. The Presentation is answered as one from
+// StartPresentation, but Respond and Decline send nothing: each returns
+// the response's data for the platform to hand back, in
+// "dcapi_response".
+func (w *Wallet) StartDCAPIPresentation(op *Operation, protocol string, requestData []byte, origin string) (*Presentation, error) {
+	p, err := w.w.StartDCAPIPresentation(op.context(), protocol, requestData, origin)
+	if err != nil {
+		return nil, classify(err)
+	}
+	return &Presentation{p: p}, nil
+}
+
 // Verifier returns who's asking: {"abi", "client_id", "name",
-// "response_uri", "registration": {"status", "name", "purpose",
+// "response_uri", "origin", "registration": {"status", "name", "purpose",
 // "privacy_policy", "registrar", "claims", "expires"}}. The registration
 // is the Verifier's, from its request's verifier_info, checked against
 // registrar_roots: status "verified" (with the rest), "invalid" (it
-// didn't verify, so isn't relied on), or "none".
+// didn't verify, so isn't relied on), or "none". origin is set for a DC
+// API request: the calling page's or app's origin, all that names the
+// Verifier of an unsigned one (no client_id or name), and response_uri
+// is empty.
 func (p *Presentation) Verifier() string {
 	v := p.p.Verifier()
 	reg := p.p.Registration()
@@ -52,8 +73,9 @@ func (p *Presentation) Verifier() string {
 		ClientID     string           `json:"client_id"`
 		Name         string           `json:"name"`
 		ResponseURI  string           `json:"response_uri"`
+		Origin       string           `json:"origin,omitempty"`
 		Registration registrationJSON `json:"registration"`
-	}{result{ABIVersion}, v.ClientID, v.Name, v.ResponseURI, r})
+	}{result{ABIVersion}, v.ClientID, v.Name, v.ResponseURI, v.Origin, r})
 	return text
 }
 
@@ -100,12 +122,17 @@ func (p *Presentation) Queries() string {
 		Queries        []queryJSON         `json:"queries"`
 		CredentialSets []credentialSetJSON `json:"credential_sets"`
 	}{result: result{ABIVersion}, Queries: []queryJSON{}, CredentialSets: []credentialSetJSON{}}
-	clientID := p.p.Verifier().ClientID
+	// Who copies count as shown to: the client_id, or a DC API request's
+	// origin (walletflow.StartDCAPIPresentation).
+	shownTo := p.p.Verifier().ClientID
+	if origin := p.p.Verifier().Origin; origin != "" {
+		shownTo = "origin:" + origin
+	}
 	for _, q := range p.p.Queries() {
 		candidates := make([]credentialSummary, 0, len(q.Credentials))
 		for _, c := range q.Credentials {
 			s := summaryOf(c)
-			shown, linkable := c.ShownTo(clientID), p.p.Linkable(c.ID)
+			shown, linkable := c.ShownTo(shownTo), p.p.Linkable(c.ID)
 			s.ShownToVerifier, s.LinkableHere = &shown, &linkable
 			candidates = append(candidates, s)
 		}
@@ -183,8 +210,10 @@ func (p *Presentation) Preview(selectionJSON string) (string, error) {
 
 // Respond presents exactly selectionJSON (as for Preview) — holder keys
 // sign here, so a KeyStore requiring user presence prompts now — and
-// returns {"abi", "query_ids", "redirect_uri"}: when redirect_uri is
-// set, open it in the browser.
+// returns {"abi", "query_ids", "redirect_uri", "dcapi_response"}: when
+// redirect_uri is set, open it in the browser. For a DC API request,
+// dcapi_response is the response's data, a JSON object as text, for the
+// platform to hand back: nothing was sent.
 func (p *Presentation) Respond(op *Operation, selectionJSON string) (string, error) {
 	sel, err := selection(selectionJSON)
 	if err != nil {
@@ -198,7 +227,8 @@ func (p *Presentation) Respond(op *Operation, selectionJSON string) (string, err
 }
 
 // Decline tells the Verifier the holder declined, and returns {"abi",
-// "query_ids": [], "redirect_uri"}.
+// "query_ids": [], "redirect_uri", "dcapi_response"}; for a DC API
+// request, dcapi_response is the encrypted refusal for the platform.
 func (p *Presentation) Decline(op *Operation) (string, error) {
 	presented, err := p.p.Decline(op.context())
 	if err != nil {
@@ -214,7 +244,8 @@ func presentedJSON(p walletflow.Presented) (string, error) {
 	}
 	return marshal(struct {
 		result
-		QueryIDs    []string `json:"query_ids"`
-		RedirectURI string   `json:"redirect_uri,omitempty"`
-	}{result{ABIVersion}, queryIDs, p.RedirectURI})
+		QueryIDs      []string `json:"query_ids"`
+		RedirectURI   string   `json:"redirect_uri,omitempty"`
+		DCAPIResponse string   `json:"dcapi_response,omitempty"`
+	}{result{ABIVersion}, queryIDs, p.RedirectURI, string(p.DCAPIResponse)})
 }

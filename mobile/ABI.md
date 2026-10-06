@@ -143,7 +143,7 @@ The Swift package's adapter marks a `URLError` this way.
 {"client_id": "…", "redirect_uri": "…",
  "issuer_roots": "<PEM>", "verifier_roots": "<PEM>", "registrar_roots": "<PEM>",
  "mdoc_reader_roots": "<PEM>", "mdoc_reader_require_eku": false, "require_trusted_mdoc_reader": false,
- "development": false, "locales": ["en-AU", "en"], "batch_size": 0,
+ "development": false, "development_roots": "<PEM>", "locales": ["en-AU", "en"], "batch_size": 0,
  "request_refresh": false, "copy_policy": "per_presentation"}
 ```
 
@@ -160,7 +160,10 @@ authentication extended key usage (1.0.18013.5.1.6), and
 `require_trusted_mdoc_reader` refuses a request no recognized reader
 signed, with `untrusted_verifier`; it needs `mdoc_reader_roots`.
 `development`
-allows services on loopback addresses. `locales` are the holder's
+allows services on loopback addresses. `development_roots`, only with
+`development`, are CAs the wallet's HTTPS requests trust besides the
+system's: a development service's own, where the platform's trust store
+can't be given it — Go on Android reads only the system's CA files. `locales` are the holder's
 preferred languages (BCP 47, most preferred first) for issuers' display
 metadata. Without them, the issuer's entry without a locale is used,
 else its first. `batch_size` is how many copies of each credential to
@@ -302,6 +305,29 @@ ABI version 8 replaced `Candidates` with `Queries` and the credential ID
 arrays of `Preview` and `Respond` with a selection, and added
 `DefaultSelection` and `invalid_selection`.
 
+### Over the Digital Credentials API
+
+`Wallet.StartDCAPIPresentation(op, protocol, requestData, origin)` takes
+an OpenID4VP request delivered through the Digital Credentials API
+(OpenID4VP 1.0 Appendix A) as the platform hands it over — on Android,
+Credential Manager's protocol (`openid4vp-v1-unsigned`,
+`openid4vp-v1-signed` or `openid4vp-v1-multisigned`) and its data — and
+the calling page's or app's origin as the platform reports it. It
+returns a `Presentation`, answered with the same steps, except:
+
+- `Verifier()` has `"origin"`, and no `response_uri`. An unsigned
+  request names no Verifier but its origin (no `client_id` or `name`):
+  show that. A signed one's must chain to `verifier_roots`.
+- `Respond` and `Decline` send nothing. Each returns, in
+  `"dcapi_response"`, the response's data — a JSON object as text,
+  `{"response": <the encrypted response>}` — for the platform to hand
+  back to the page; `Decline`'s is the encrypted `access_denied`.
+- Presentations are bound to `"origin:" + origin`, and a copy presented
+  counts as shown to it (`shown_to_verifier`, `linkable_here`).
+
+`StartDCAPIPresentation` and these fields were added within ABI version
+12, without changing anything there.
+
 ## MdocPresentation
 
 An mdoc asked for over the Digital Credentials API as `org-iso-mdoc`
@@ -328,8 +354,8 @@ is presented, recorded as shown to `"origin:" + origin`. Its holder key
 signs during `Respond`. A malformed request is `protocol`.
 
 `mdoc_reader_roots`, `mdoc_reader_require_eku`,
-`require_trusted_mdoc_reader`, `MdocCandidates` and MdocPresentation
-were added within ABI version 12: they add to it without changing anything there.
+`require_trusted_mdoc_reader`, `MdocCandidates`, MdocPresentation and
+`development_roots` were added within ABI version 12: they add to it without changing anything there.
 
 ## Other functions
 
