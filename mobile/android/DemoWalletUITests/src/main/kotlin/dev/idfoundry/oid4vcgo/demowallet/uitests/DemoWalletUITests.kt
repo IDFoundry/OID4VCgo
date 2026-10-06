@@ -22,7 +22,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
-import java.net.URL
+import java.net.URI
 import java.security.KeyStore
 import java.security.cert.CertificateFactory
 import java.util.Base64
@@ -49,7 +49,7 @@ class DemoWalletUITests {
 
     /** Asks the test services' control endpoint, over TLS to their own CA. */
     private fun control(path: String, method: String = "GET"): JsonObject {
-        val connection = URL("$CONTROL/$path").openConnection() as HttpsURLConnection
+        val connection = URI("$CONTROL/$path").toURL().openConnection() as HttpsURLConnection
         connection.sslSocketFactory = controlTLS.socketFactory
         connection.requestMethod = method
         return connection.inputStream.use { Json.parseToJsonElement(it.readBytes().decodeToString()).jsonObject }
@@ -120,12 +120,12 @@ class DemoWalletUITests {
      * holder key signs: once for each credential shared.
      */
     private fun confirmWithScreenLock() {
-        assertNotNull("no prompt for the holder", device.wait(Until.hasObject(By.text("Confirm it's you")), 20_000))
+        assertNotNull("no prompt for the holder", device.wait(Until.hasObject(By.text(PROMPT)), 20_000))
         do {
             device.executeShellCommand("input text 1111")
             device.executeShellCommand("input keyevent KEYCODE_ENTER")
-            device.wait(Until.gone(By.text("Confirm it's you")), 5_000)
-        } while (device.wait(Until.hasObject(By.text("Confirm it's you")), 3_000))
+            device.wait(Until.gone(By.text(PROMPT)), 5_000)
+        } while (device.wait(Until.hasObject(By.text(PROMPT)), 3_000))
     }
 
     private fun offerWithPIN(): String = control("offer?pin=$pin", "POST")["offer"]!!.jsonPrimitive.content
@@ -301,7 +301,7 @@ class DemoWalletUITests {
         typePIN(pin)
         need("receive").click()
         assertTrue("not deferred", waitFor("status", "1 deferred", 60_000))
-        need("check-again")
+        need(CHECK_AGAIN)
     }
 
     @Test
@@ -310,7 +310,7 @@ class DemoWalletUITests {
         assertNull(find(res("credential"), 2_000))
         control("decide?approve=1", "POST")
         assertNotNull("the approved credential isn't listed", find(res("credential"), 30_000))
-        assertNull("it's still listed as pending", find(res("check-again"), 2_000))
+        assertNull("it's still listed as pending", find(res(CHECK_AGAIN), 2_000))
     }
 
     /** A pending credential survives the app quitting: relaunched, the app polls it, and receives it once approved. */
@@ -318,7 +318,7 @@ class DemoWalletUITests {
     fun deferredSurvivesARelaunch() {
         receiveDeferred()
         launch(reset = false)
-        need("check-again")
+        need(CHECK_AGAIN)
         control("decide?approve=1", "POST")
         assertNotNull("the approved credential isn't listed", find(res("credential"), 30_000))
     }
@@ -337,5 +337,9 @@ class DemoWalletUITests {
     private companion object {
         const val APP = "dev.idfoundry.oid4vcgo.demowallet"
         const val CONTROL = "https://127.0.0.1:8600"
+
+        /** The title of the demo's prompt before a holder key signs. */
+        const val PROMPT = "Confirm it's you"
+        const val CHECK_AGAIN = "check-again"
     }
 }
