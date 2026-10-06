@@ -187,6 +187,12 @@ type Verified struct {
 	// DeviceAuth is how the mdoc authenticated: DeviceAuthSignature or
 	// DeviceAuthMAC.
 	DeviceAuth mdoc.DeviceAuthType
+
+	// Status is the MSO's revocation reference (§12.3.6), nil when it
+	// has none. Verify doesn't check it: fetch and check the status
+	// list (package statuslist) before relying on the document, as
+	// §9.3.3's verification includes revocation.
+	Status *mdoc.Status
 }
 
 // Verify decrypts the mdoc's reply and verifies the DeviceResponse in
@@ -201,6 +207,9 @@ type Verified struct {
 //     MSO's device key over this session's transcript, and any
 //     device-signed elements are within the MSO's key authorizations;
 //   - every returned element was requested.
+//
+// It doesn't check revocation: Verified.Status is the reference to
+// check.
 //
 // A reply carrying only status 20 is ErrDeclined; a DeviceResponse with
 // no documents is ErrNoDocument. Errors that wrap ErrSessionEncryption
@@ -240,7 +249,7 @@ func (r *ReaderSession) verifyDocument(doc responseDocument, roots *x509.CertPoo
 		return Verified{}, fmt.Errorf("proximity: document docType %q, requested %q", doc.docType, r.docType)
 	}
 
-	protected, unprotected, _, err := cose.DecodeUnverifiedMax(doc.issuerSigned.IssuerAuth, MaxMessageBytes)
+	_, unprotected, _, err := cose.DecodeUnverifiedMax(doc.issuerSigned.IssuerAuth, MaxMessageBytes)
 	if err != nil {
 		return Verified{}, fmt.Errorf("proximity: decode IssuerAuth: %w", err)
 	}
@@ -256,7 +265,14 @@ func (r *ReaderSession) verifyDocument(doc responseDocument, roots *x509.CertPoo
 	if err := checkIACASubject(chains); err != nil {
 		return Verified{}, err
 	}
-	verified, err := mdoc.Verify(doc.issuerSigned, r.docType, leaf.PublicKey, protected.Alg, mdoc.VerifyOptions{
+	// The algorithm is the verified certificate's key's (ISO/IEC
+	// 18013-5 §9.3.1: its working public key algorithm), never the
+	// document's own header's, which IssuerAuth must then match.
+	issuerAlg, err := keyAlg(leaf.PublicKey)
+	if err != nil {
+		return Verified{}, fmt.Errorf("proximity: document signer key: %w", err)
+	}
+	verified, err := mdoc.Verify(doc.issuerSigned, r.docType, leaf.PublicKey, issuerAlg, mdoc.VerifyOptions{
 		Now: func() time.Time { return now },
 	})
 	if err != nil {
@@ -270,7 +286,7 @@ func (r *ReaderSession) verifyDocument(doc responseDocument, roots *x509.CertPoo
 
 	switch doc.deviceSigned.AuthType {
 	case mdoc.DeviceAuthSignature:
-		alg, err := deviceAuthAlg(verified.DeviceKey)
+		alg, err := keyAlg(verified.DeviceKey)
 		if err != nil {
 			return Verified{}, fmt.Errorf("proximity: MSO device key: %w", err)
 		}
@@ -306,6 +322,7 @@ func (r *ReaderSession) verifyDocument(doc responseDocument, roots *x509.CertPoo
 		ValidFrom:  verified.ValidityInfo.ValidFrom,
 		ValidUntil: verified.ValidityInfo.ValidUntil,
 		DeviceAuth: doc.deviceSigned.AuthType,
+		Status:     verified.Status,
 	}
 	if len(doc.deviceSigned.NameSpaces) > 0 {
 		out.DeviceSignedClaims = doc.deviceSigned.NameSpaces

@@ -38,7 +38,7 @@ func BuildDeviceResponse(issuerSigned mdoc.IssuerSigned, docType string, holder 
 	if len(selected.NameSpaces) == 0 {
 		return nil, fmt.Errorf("proximity: build DeviceResponse: the credential holds none of the elements to disclose")
 	}
-	alg, err := deviceAuthAlg(holder.Public())
+	alg, err := keyAlg(holder.Public())
 	if err != nil {
 		return nil, fmt.Errorf("proximity: build DeviceResponse: %w", err)
 	}
@@ -57,9 +57,10 @@ func BuildDeviceResponse(issuerSigned mdoc.IssuerSigned, docType string, holder 
 	return b, nil
 }
 
-// deviceAuthAlg is the COSE algorithm for a device key: ES256 for
-// P-256, EdDSA for Ed25519 — the two credential/mdoc supports.
-func deviceAuthAlg(pub crypto.PublicKey) (oid4vci.COSEAlg, error) {
+// keyAlg is the COSE algorithm a key signs with — a device key, or a
+// document signer's: ES256 for P-256, EdDSA for Ed25519, the two
+// credential/mdoc supports.
+func keyAlg(pub crypto.PublicKey) (oid4vci.COSEAlg, error) {
 	switch k := pub.(type) {
 	case *ecdsa.PublicKey:
 		if k.Curve != elliptic.P256() {

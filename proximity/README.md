@@ -61,11 +61,17 @@ notifications.
    Server2Client notifications, then writes `0x01` (start) to State.
 5. **Request.** The reader sends `Establishment(docType, elements)`. The
    mdoc passes it to `HandleSessionEstablishment`, then
-   `ParseDeviceRequest`, and shows a consent prompt.
+   `ParseDeviceRequest`, and shows a consent prompt. Reader
+   authentication isn't implemented, so the prompt can't say who is
+   asking: anyone who scanned the QR code can send a request. Show what
+   is requested, and whether the reader says it will keep each element,
+   and let the holder decide on that.
 6. **Respond.** If the user consents, the mdoc sends
    `Encrypt(BuildDeviceResponse(...), false)`. If they decline, or
    nothing matches, the mdoc sends `Termination()` instead. The reader
-   passes either one to `Verify`.
+   passes either one to `Verify`. `Verify` doesn't check revocation:
+   check `Verified.Status`, the MSO's status list reference, before
+   relying on the document.
 7. **End.** Either side can end the session. Send a `Termination()`
    message (status 20), or write `0x02` (end) to State. Treat a `0x02`
    from the other side the same way. The GATT client then unsubscribes
