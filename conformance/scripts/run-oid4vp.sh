@@ -2,9 +2,10 @@
 # Runs every OID4VP conformance configuration this repo has driver
 # support for — the Verifier and Wallet-VP roles, all 6 of the OIDF
 # certification catalog's own oid4vp-1final-*-haip-test-plan profiles
-# this repo covers (2 Verifier + 4 Wallet, the other 2 Wallet profiles
-# being dc_api.jwt — see conformance/wallet-vp/README.md's own "Scope"
-# section) — against one freshly-started OIDF conformance suite. The
+# (2 Verifier + 4 Wallet, the Wallet's 2 dc_api.jwt profiles driven
+# with a browser stand-in — see conformance/wallet-vp/README.md's
+# "dc_api.jwt" section) — against one freshly-started OIDF conformance
+# suite. The
 # OID4VCI half (Issuer, Wallet) lives in the sibling run-oid4vci.sh
 # instead — see that script's own doc comment, and lib.sh's, for why
 # the CI workflow split this way. Every actual driving/grading helper
