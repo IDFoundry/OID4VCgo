@@ -75,8 +75,11 @@ type Config struct {
 
 // App is a running passport-vdc verifier.
 type App struct {
-	cfg    Config
-	txs    map[Scenario]*verifier.Transactions // each scenario's relying party has its own identity
+	cfg Config
+	txs map[Scenario]*verifier.Transactions // each scenario's relying party has its own identity
+	// rps are the same relying parties, for the Digital Credentials API's
+	// OpenID4VP requests, which no transaction holds.
+	rps    map[Scenario]relyingParty
 	caCert *x509.Certificate
 	// registrarCA is the trust anchor of the registrar that registers
 	// the trusted scenarios' relying parties.
@@ -121,6 +124,7 @@ type session struct {
 	// its answer, and dcapiOutcome what its answer established; both
 	// under App.mu.
 	dcapi        *mdocdcapi.Pending
+	dcapiOpenID  *openID4VPPending
 	dcapiOutcome *Outcome
 }
 
@@ -224,7 +228,7 @@ func New(cfg Config) (*App, error) {
 		return nil, err
 	}
 	a := &App{
-		cfg: cfg, txs: map[Scenario]*verifier.Transactions{}, caCert: ids.ca, registrarCA: ids.registrarCA, readerCA: ids.readerCA,
+		cfg: cfg, txs: map[Scenario]*verifier.Transactions{}, rps: map[Scenario]relyingParty{}, caCert: ids.ca, registrarCA: ids.registrarCA, readerCA: ids.readerCA,
 		issuerRoots: issuerRoots, issuerTrusted: issuerTrusted, now: time.Now,
 		origin: origin, readers: map[Scenario]mdocdcapi.ReaderKey{},
 		sessions: map[string]*session{}, byTx: map[string]string{}, outcomes: map[string]map[string]*Outcome{},
@@ -268,21 +272,23 @@ func (a *App) newTransactions(sc Scenario, sg signer, registrar signer) (*verifi
 			return nil, fmt.Errorf("verifierapp: verifier.New: %w", err)
 		}
 	}
+	verify := verifier.VerifyResponseRequest{
+		IssuerKeys:         verifier.X5CIssuerKeyResolver{Roots: a.issuerRoots},
+		MdocIssuerKeys:     verifier.X5ChainIssuerKeyResolver{Roots: a.issuerRoots},
+		TrustedAuthorities: dcql.AKITrustedAuthoritiesChecker{Roots: a.issuerRoots},
+		MaxKeyBindingAge:   5 * time.Minute,
+		// The issuer's clock may be ahead of this one (another
+		// machine, as through a tunnel): a credential is valid from
+		// the moment it's signed.
+		MaxClockSkew: time.Minute,
+		Now:          func() time.Time { return a.now() },
+	}
+	a.rps[sc] = relyingParty{v: v, verify: verify}
 	txs, err := verifier.NewTransactions(v, storage.NewVerifierTransactionStore(), verifier.TransactionsConfig{
 		RequestURIBase: base + "/request-objects",
 		RedirectURI:    base + "/continue",
 		Lifetime:       a.cfg.RequestLifetime,
-		Verify: verifier.VerifyResponseRequest{
-			IssuerKeys:         verifier.X5CIssuerKeyResolver{Roots: a.issuerRoots},
-			MdocIssuerKeys:     verifier.X5ChainIssuerKeyResolver{Roots: a.issuerRoots},
-			TrustedAuthorities: dcql.AKITrustedAuthoritiesChecker{Roots: a.issuerRoots},
-			MaxKeyBindingAge:   5 * time.Minute,
-			// The issuer's clock may be ahead of this one (another
-			// machine, as through a tunnel): a credential is valid from
-			// the moment it's signed.
-			MaxClockSkew: time.Minute,
-			Now:          func() time.Time { return a.now() },
-		},
+		Verify:         verify,
 		Accept: func(ctx context.Context, id string, result verifier.VerifyResponseResult) error {
 			return a.accept(ctx, sc, id, result)
 		},
@@ -543,19 +549,35 @@ func (a *App) accept(ctx context.Context, sc Scenario, txID string, result verif
 	if s == nil || s.scenario != sc {
 		return errors.New("this request is no longer open")
 	}
-	info, _ := sc.Info()
 	if a.otherAnswered(ctx, s, txID) {
 		return errors.New("this request has already been answered")
 	}
+	out, err := a.outcomeOf(ctx, sc, result)
+	if err != nil {
+		return err
+	}
+	a.mu.Lock()
+	if a.outcomes[txID] == nil {
+		a.outcomes[txID] = map[string]*Outcome{}
+	}
+	a.outcomes[txID][resultKey(result)] = out
+	a.mu.Unlock()
+	return nil
+}
+
+// outcomeOf is what a verified OpenID4VP answer for scenario sc
+// establishes, and what sc decides from it.
+func (a *App) outcomeOf(ctx context.Context, sc Scenario, result verifier.VerifyResponseResult) (*Outcome, error) {
+	info, _ := sc.Info()
 	switch n := len(result.Credentials); {
 	case n == 0 || n > 1 && !info.Multiple:
-		return fmt.Errorf("expected one credential, got %d", n)
+		return nil, fmt.Errorf("expected one credential, got %d", n)
 	case n > maxGroup:
-		return fmt.Errorf("expected at most %d passports, got %d", maxGroup, n)
+		return nil, fmt.Errorf("expected at most %d passports, got %d", maxGroup, n)
 	}
 	people, err := a.people(ctx, info, result.Credentials)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	out := &Outcome{Scenario: sc, People: people}
 	first := out.People[0]
@@ -564,13 +586,7 @@ func (a *App) accept(ctx context.Context, sc Scenario, txID string, result verif
 		out.People = nil
 	}
 	out.Decision = decide(sc, out)
-	a.mu.Lock()
-	if a.outcomes[txID] == nil {
-		a.outcomes[txID] = map[string]*Outcome{}
-	}
-	a.outcomes[txID][resultKey(result)] = out
-	a.mu.Unlock()
-	return nil
+	return out, nil
 }
 
 // otherAnswered reports whether s's other request, not txID, has

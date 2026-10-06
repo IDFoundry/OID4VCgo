@@ -1,6 +1,7 @@
 package verifierapp_test
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/hpke"
@@ -25,9 +26,11 @@ import (
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
+	"github.com/idfoundry/oid4vcgo/dcql"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/credential"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/verifierapp"
 	"github.com/idfoundry/oid4vcgo/oid4vpmdoc"
+	"github.com/idfoundry/oid4vcgo/wallet"
 )
 
 const dcapiOrigin = "https://verifier.example"
@@ -135,6 +138,9 @@ type dcapiClient struct {
 	srv    *httptest.Server
 	cookie *http.Cookie
 	app    *verifierapp.App
+	// openID is the OpenID4VP request the page last offered beside
+	// org-iso-mdoc's: its data.
+	openID map[string]string
 }
 
 func (c *dcapiClient) do(method, path, contentType string, body io.Reader) *http.Response {
@@ -177,22 +183,36 @@ func (c *dcapiClient) askInBrowser(page string) map[string]string {
 		body, _ := io.ReadAll(resp.Body)
 		c.t.Fatalf("start the DC API request: status %d: %s", resp.StatusCode, body)
 	}
-	var req struct {
-		Protocol string            `json:"protocol"`
-		Data     map[string]string `json:"data"`
+	var offered struct {
+		Requests []struct {
+			Protocol string            `json:"protocol"`
+			Data     map[string]string `json:"data"`
+		} `json:"requests"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(resp.Body).Decode(&offered); err != nil {
 		c.t.Fatal(err)
 	}
-	if req.Protocol != "org-iso-mdoc" || req.Data["deviceRequest"] == "" || req.Data["encryptionInfo"] == "" {
-		c.t.Fatalf("request = %+v, want org-iso-mdoc with a deviceRequest and encryptionInfo", req)
+	if len(offered.Requests) != 2 {
+		c.t.Fatalf("requests = %+v, want org-iso-mdoc's and OpenID4VP's", offered.Requests)
 	}
-	return req.Data
+	mdocReq, openID := offered.Requests[0], offered.Requests[1]
+	if mdocReq.Protocol != "org-iso-mdoc" || mdocReq.Data["deviceRequest"] == "" || mdocReq.Data["encryptionInfo"] == "" {
+		c.t.Fatalf("request = %+v, want org-iso-mdoc with a deviceRequest and encryptionInfo", mdocReq)
+	}
+	if openID.Protocol != wallet.DCAPIProtocolSigned || openID.Data["request"] == "" {
+		c.t.Fatalf("request = %+v, want a signed OpenID4VP request", openID)
+	}
+	c.openID = openID.Data
+	return mdocReq.Data
 }
 
 func (c *dcapiClient) postResponse(page, response string) (int, string) {
+	return c.postResponseAs(page, "org-iso-mdoc", response)
+}
+
+func (c *dcapiClient) postResponseAs(page, protocol, response string) (int, string) {
 	c.t.Helper()
-	body, _ := json.Marshal(map[string]string{"response": response})
+	body, _ := json.Marshal(map[string]string{"protocol": protocol, "response": response})
 	resp := c.do(http.MethodPost, page+"/dcapi/response", "application/json", strings.NewReader(string(body)))
 	defer func() { _ = resp.Body.Close() }()
 	text, _ := io.ReadAll(resp.Body)
@@ -232,6 +252,59 @@ func TestDCAPI_AgeCheck(t *testing.T) {
 	data := c.askInBrowser(page)
 	issuerSigned, device := iss.passportMdoc(t, map[string]any{"age_over_18": true})
 	if status, body := c.postResponse(page, answerDCAPI(t, data, dcapiOrigin, issuerSigned, device)); status != http.StatusNoContent {
+		t.Fatalf("response: status %d: %s", status, body)
+	}
+	if text := c.pageText(page); !strings.Contains(text, "Sale allowed") {
+		t.Errorf("the page doesn't show the decision:\n%s", text)
+	}
+}
+
+// The age check, answered over OpenID4VP, as Chrome's wallets do: the
+// mdoc presented bound to the page's origin verifies into the same
+// decision; one bound to another origin doesn't.
+func TestDCAPI_AgeCheckOverOpenID4VP(t *testing.T) {
+	iss := newDCAPIIssuer(t)
+	c := newDCAPIApp(t, iss)
+	issuerSigned, device := iss.passportMdoc(t, map[string]any{"age_over_18": true})
+	encoded, err := issuerSigned.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	held := wallet.HeldCredential{
+		Format: "mso_mdoc", Credential: base64.RawURLEncoding.EncodeToString(encoded),
+		HolderKey: device, HolderKeyAlg: oid4vci.ES256, MdocDocType: credential.DocType,
+	}
+	answer := func(origin string) string {
+		data, _ := json.Marshal(c.openID)
+		req, err := wallet.ParseDCAPIRequestData(wallet.ParseDCAPIRequestDataParams{
+			Protocol: wallet.DCAPIProtocolSigned, Data: data, Origin: dcapiOrigin, VerifierTrust: wallet.NoVerifierTrust{},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		vpToken, err := wallet.PresentCredentials(context.Background(), wallet.PresentationRequest{
+			Query: req.Query, Credentials: []wallet.HeldCredential{held}, Origin: origin, Nonce: req.Nonce,
+			ResponseEncryptionKey: req.ResponseEncryptionKey, TrustedAuthorities: dcql.AKITrustedAuthoritiesChecker{},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		jwe, err := wallet.BuildDirectPostResponse(wallet.BuildDirectPostResponseParams{
+			VPToken: vpToken, EncryptionKey: req.ResponseEncryptionKey, EncryptionKeyID: req.ResponseEncryptionKeyID, EncryptionEnc: req.ResponseEncryptionEnc,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return jwe
+	}
+
+	page := c.startPage(verifierapp.ScenarioAge)
+	c.askInBrowser(page)
+	if status, _ := c.postResponseAs(page, wallet.DCAPIProtocolSigned, answer("https://attacker.example")); status != http.StatusBadRequest {
+		t.Errorf("an answer bound to another origin: status %d, want 400", status)
+	}
+	c.askInBrowser(page)
+	if status, body := c.postResponseAs(page, wallet.DCAPIProtocolSigned, answer(dcapiOrigin)); status != http.StatusNoContent {
 		t.Fatalf("response: status %d: %s", status, body)
 	}
 	if text := c.pageText(page); !strings.Contains(text, "Sale allowed") {

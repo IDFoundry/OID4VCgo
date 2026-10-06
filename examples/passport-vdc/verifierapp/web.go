@@ -123,7 +123,7 @@ var refresh = setTimeout(function () { location.reload(); }, 2000);
 {{if not .Scenario.Trusted}}<div class="card warn"><p><strong>{{.Scenario.Verifier}} isn't a verifier the demo wallets trust.</strong> It signs its requests with a certificate from a CA they don't recognise, so a wallet refuses this request without opening it — and sends nothing back. This page keeps waiting: nothing is shared.</p></div>{{end}}
 {{if .WebWalletLink}}<p><a href="{{.WebWalletLink}}" target="_blank"><strong>Open in web wallet</strong></a> <span class="note">(on this device: it brings you back here)</span></p>{{end}}
 {{if .AppLink}}<p><a href="{{.AppLink}}">Open in wallet app</a> <span class="note">(on this device; then come back to this page)</span></p>{{end}}
-{{if .DCAPI}}<p><button type="button" id="dcapi">Verify with an ID in this browser</button> <span class="note">(the passport mdoc, over the Digital Credentials API with ISO's own protocol — what Safari supports)</span></p>
+{{if .DCAPI}}<p><button type="button" id="dcapi">Verify with an ID in this browser</button> <span class="note">(the passport, over the Digital Credentials API: ISO's own protocol for Safari, OpenID4VP for Chrome)</span></p>
 <p id="dcapi-status" class="note" role="status"></p>
 <script>
 document.getElementById("dcapi").addEventListener("click", async function () {
@@ -138,13 +138,13 @@ document.getElementById("dcapi").addEventListener("click", async function () {
 		status.textContent = "Asking…";
 		var r = await fetch(base + "/dcapi", {method: "POST"});
 		if (!r.ok) throw new Error(await r.text());
-		var request = await r.json();
-		var credential = await navigator.credentials.get({mediation: "required", digital: {requests: [request]}});
+		var offered = await r.json();
+		var credential = await navigator.credentials.get({mediation: "required", digital: {requests: offered.requests}});
 		var data = typeof credential.data === "string" ? JSON.parse(credential.data) : credential.data;
 		status.textContent = "Verifying…";
 		var v = await fetch(base + "/dcapi/response", {
 			method: "POST", headers: {"Content-Type": "application/json"},
-			body: JSON.stringify({response: data.response})
+			body: JSON.stringify({protocol: credential.protocol, response: data.response})
 		});
 		if (!v.ok) throw new Error(await v.text());
 		location.reload();
