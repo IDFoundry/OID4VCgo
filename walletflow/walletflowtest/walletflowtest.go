@@ -825,13 +825,15 @@ func recoverInto(err *error) {
 	}
 }
 
-// newCA returns a self-signed P-256 CA certificate and key.
+// newCA returns a self-signed P-256 CA certificate and key. Its subject
+// and newLeaf's name a country, as an IACA and a document signer's must
+// for an ISO/IEC 18013-5 reader (§9.3.3).
 func newCA(commonName string) (*x509.Certificate, *ecdsa.PrivateKey) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	must(err)
 	now := time.Now()
 	return newCertificate(&x509.Certificate{
-		SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: commonName},
+		SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: commonName, Country: []string{"US"}},
 		NotBefore: now.Add(-time.Hour), NotAfter: now.Add(24 * time.Hour),
 		KeyUsage: x509.KeyUsageCertSign, IsCA: true, BasicConstraintsValid: true,
 	}, nil, &key.PublicKey, key), key
@@ -844,7 +846,7 @@ func newLeaf(commonName string, ca *x509.Certificate, caKey *ecdsa.PrivateKey) (
 	must(err)
 	now := time.Now()
 	return newCertificate(&x509.Certificate{
-		SerialNumber: big.NewInt(2), Subject: pkix.Name{CommonName: commonName},
+		SerialNumber: big.NewInt(2), Subject: pkix.Name{CommonName: commonName, Country: []string{"US"}},
 		NotBefore: now.Add(-time.Hour), NotAfter: now.Add(24 * time.Hour),
 		KeyUsage: x509.KeyUsageDigitalSignature,
 	}, ca, &key.PublicKey, caKey), key
