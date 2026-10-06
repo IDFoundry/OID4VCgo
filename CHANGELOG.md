@@ -5,6 +5,7 @@
 
 ### ⚠ BREAKING CHANGES
 
+* **proximity:** `BuildDeviceResponse` takes the `DocRequest` it answers in place of its docType — `BuildDeviceResponse(req, issuerSigned, holder, sessionTranscriptBytes, elements)` — and refuses elements the request doesn't list: pass the `DocRequest` from `ParseDeviceRequest` ([06df34b](https://github.com/IDFoundry/OID4VCgo/commit/06df34b))
 * verifier.VerifyResponseRequest needs ExpectedOrigins whenever Origin is set. Pass the ExpectedOrigins field of the BuildDCAPIAuthorizationRequestResult the request came from, and set Origin to this Verifier's own origin, never to a value from the response's HTTP request.
 
 ### Features
@@ -16,6 +17,7 @@
 
 * bound the work a Digital Credentials API request can cause ([f2c8bac](https://github.com/IDFoundry/OID4VCgo/commit/f2c8bac0709a87371002f2949b43452219f1442c))
 * **mobile:** warn of linkable presentations in the iOS document provider ([6b2b6c8](https://github.com/IDFoundry/OID4VCgo/commit/6b2b6c8e008f7909c2e2794c9a36f823aad2d253))
+* **proximity:** disclose only requested elements; reader clock skew and document signer policy ([06df34b](https://github.com/IDFoundry/OID4VCgo/commit/06df34b))
 * **proximity:** stop an empty message crashing the reader; check document signers by default ([fef1a60](https://github.com/IDFoundry/OID4VCgo/commit/fef1a60ab17c2226f85d2b366dace8899c5225a5))
 * **proximity:** take the issuer algorithm from its certificate, expose the MSO status ([c854dae](https://github.com/IDFoundry/OID4VCgo/commit/c854daedc81c002c72897ee12ad8ba375e49d841))
 * verify a DC API response's origin against the request; tighten unsigned-request trust ([a054621](https://github.com/IDFoundry/OID4VCgo/commit/a054621379a067c9f6ccfee54e8a92ad0c366ce2))
