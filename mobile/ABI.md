@@ -453,8 +453,11 @@ ProximityReader was added within ABI version 12.
 Built with `-tags mobiletest` (into `build/test/`, apart from the
 release build in `build/release/`), the framework adds `StartTestEnv`:
 an in-process HAIP issuer, Wallet Provider and Verifier, for the Swift
-package's end-to-end tests. `IsTestBuild` is true in it. An app never
-ships that build.
+package's end-to-end tests. Its `ProximityReader(keys)` creates a key in
+`keys` and issues it a reader authentication certificate from a new test
+CA ("Test Reader"), returning `{"reader_config", "mdoc_reader_roots"}`:
+a `NewProximityReader` configuration and the CA to recognize the reader
+by. `IsTestBuild` is true in it. An app never ships that build.
 
 ## Swift
 
