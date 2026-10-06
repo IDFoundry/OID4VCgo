@@ -7,6 +7,8 @@ separate Go module (it needs `golang.org/x/mobile`).
 - `mobile` (this directory): the Go package `gomobile bind` compiles.
 - `ios/OID4VCWallet`: the Swift package wrapping the XCFramework, with
   its tests.
+- `android/OID4VCWallet`: the Kotlin library wrapping the AAR, with its
+  tests.
 
 The API is described in [ABI.md](ABI.md).
 
@@ -25,6 +27,24 @@ OID4VC_TEST_FRAMEWORK=1 xcodebuild test -scheme OID4VCWallet -destination 'platf
 
 The package links the release build unless `OID4VC_TEST_FRAMEWORK=1`
 is set, and `OID4VC.isTestBuild` says which one an app has.
+
+## Android
+
+Build the AAR (Go and the Android SDK with an NDK needed, `ANDROID_HOME`
+set or the SDK in its default place), then the Kotlin library. Its tests
+are instrumented: they need the test build, and an emulator or device
+attached:
+
+```sh
+./build-aar.sh -tags mobiletest   # → build/test/mobile.aar
+./build-aar.sh                    # → build/release/mobile.aar, the one an app ships
+cd android
+./gradlew :OID4VCWallet:connectedDebugAndroidTest -Poid4vc.testFramework=true
+./gradlew :OID4VCWallet:assembleRelease   # against the release build
+```
+
+The library links the release build unless `-Poid4vc.testFramework=true`,
+and `OID4VC.isTestBuild` says which one an app has.
 
 ## Publishing the Swift package
 

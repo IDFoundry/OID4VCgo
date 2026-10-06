@@ -1,10 +1,10 @@
 # OID4VCgo Mobile — design
 
-Status: **iOS done; Android and the DC API not started.** Phases 0 to 7
-are done: the SDK is published as the OID4VCWallet Swift package, and
-the demo app has issued and presented on a device, against the
-passport-vdc demo through a tunnel. Later work is recorded after Phase
-7. This is
+Status: **iOS done; Android in progress (Phase 8, [#461](https://github.com/IDFoundry/OID4VCgo/issues/461)).**
+Phases 0 to 7 are done: the SDK is published as the OID4VCWallet Swift
+package, and the demo app has issued and presented on a device, against
+the passport-vdc demo through a tunnel. Later work is recorded after
+Phase 7. This is
 the design for a mobile wallet SDK built on OID4VCgo, delivered in the
 phases below. It records the decisions taken so far, what each phase
 found, and the questions still open; update it as phases land.
@@ -69,6 +69,8 @@ agrees, and holds the keys.
   from this module's release-please package.
 - **`mobile/ios`** holds the Swift package wrapping the XCFramework, and
   a demo app.
+- **`mobile/android`** holds the Kotlin library wrapping the AAR, and
+  (from later in Phase 8) a demo app.
 
 ## The gomobile boundary
 
@@ -221,7 +223,7 @@ networking.
 | 5 ✓ | Storage | The native credential store, with key references |
 | 6 ✓ | OID4VP slice | Request parsing, candidates, consent and presentation from the iOS demo app |
 | 7 ✓ | Hardening | Suspension and resumption (deferred credentials, an authorization in progress), cancellation, network failures, issuer and verifier errors, logging without personal data, the demo app's retry and cancel |
-| 8 | Android | The same bridge over Android Keystore, packaged as an AAR |
+| 8 | Android | The same bridge over Android Keystore, packaged as an AAR, with the demo app and the DC API (below) |
 | 9 | DC API | A DC API adapter over the presentation engine |
 
 ### Phase 1 findings
@@ -682,6 +684,83 @@ MSOs.
   services issue batches of three. The passport-vdc browser and CLI
   wallets ask for one copy, because their file store holds one key per
   credential.
+
+## Phase 8: Android
+
+Decisions taken 2026-10-06 (tracked in [#461](https://github.com/IDFoundry/OID4VCgo/issues/461)):
+
+1. **Layout:** `mobile/android` here: the Kotlin library `OID4VCWallet`,
+   the demo app and their tests. [OID4VCgo-wallet-kotlin](https://github.com/IDFoundry/OID4VCgo-wallet-kotlin)
+   is publish-only, as the Swift repository is.
+2. **Distribution:** a Maven repository on that repository's GitHub
+   Pages, `dev.idfoundry:oid4vcwallet`, one artifact holding the Kotlin
+   API and the Go library, with the AAR also on a GitHub release. Its
+   versions are the Swift package's, published from the same commit.
+   Maven Central later.
+3. **Scope:** parity with the Swift SDK and demo, and the DC API in the
+   first release: OpenID4VP requests through a new ABI session (Phase
+   9's adapter) and `org-iso-mdoc` ones through `MdocPresentation`. The
+   Credential Manager integration lives in the demo app, as the iOS
+   document provider does.
+4. **Platform:** minSdk 30, the first level where a key can require
+   biometrics *or* the screen lock for each use, as holder keys do on
+   iOS. Keys are P-256 in StrongBox, or else the TEE; credentials are
+   files encrypted under a key that needs the device unlocked, kept out
+   of backups.
+5. **API:** the Swift API's names and shapes, in Kotlin: suspend
+   functions, a cancelled coroutine cancelling the Go `Operation`.
+
+### Phase 8 findings: the gomobile spike
+
+`mobile/build-aar.sh` builds the Go package into `mobile.aar`;
+`mobile/android/OID4VCWallet` wraps it, and its instrumented tests run
+on an emulator, in CI too (`mobile-android`).
+
+- **Build:** `gomobile bind -target=android/arm64,android/amd64
+  -androidapi=30` with NDK 30. Stripped, the release arm64 library is
+  8.4 MB, as the iOS device slice is. Both libraries' segments are 16 KB
+  aligned, as Google Play requires, by the NDK's default.
+- **No 32-bit arm:** FAPIgo doesn't build where `int` is 32 bits
+  (`math.MaxUint32` overflows `int` in its `internal/jwe`). iOS never
+  had a 32-bit target; Play requires the 64-bit ones anyway.
+- **One library:** the AAR's Java bindings are in
+  `dev.idfoundry.oid4vcwallet.gomobile` (`-javapkg`), but gomobile's own
+  runtime (`go.Seq`, `libgojni.so`) isn't renamed, so an app can hold
+  only one gomobile library. The Kotlin library unpacks the AAR into its
+  own, so app developers get one artifact.
+- **Errors:** every gomobile method and callback throws on the JVM, with
+  the Go error's text, so the `NSError` special case Swift has for
+  `CreateKey` doesn't arise. A callback's exception comes back as
+  `platform`, carrying its message.
+- **Cancellation:** the coroutine's cancellation cancels the
+  `Operation`, and the blocked Go call returns at once; Go's
+  `cancelled` answer becomes the coroutine's `CancellationException`.
+- **Threads:** 32 concurrent calls, each calling back into Kotlin on
+  Go's thread, work.
+- **TLS:** Go verifies certificates itself, against CA files: on
+  Android, only `/system/etc/security/cacerts`, which Android 14 no
+  longer updates ([golang/go#71258](https://github.com/golang/go/issues/71258)),
+  and not Network Security Config or user CAs. And Go loaded as an app's
+  library starts with an empty environment — its runtime is given no
+  envp (`rt0_android_*.s`) — so the app can't set `SSL_CERT_DIR` for it.
+  The `mobile` package does, on Android (`certdirs_android.go`): the
+  Conscrypt APEX store, then the system one, before anything verifies a
+  certificate. On an API 37 emulator, public sites verify and an expired
+  certificate is refused.
+- **Tests:** Go builds for Android only, so the library's tests are
+  instrumented, on an emulator: there's no host slice like the
+  XCFramework's macOS one for `swift test`.
+
+### Open items
+
+- Publish to Maven Central.
+- Whether `OpenId4VpRegistry`'s default matcher answers `org-iso-mdoc`
+  requests; if not, Multipaz's matcher.
+- FAPIgo on 32-bit platforms.
+- The APEX store on golang/go#71258; drop `certdirs_android.go` once Go
+  reads it.
+- On a device: StrongBox, the unlocked-device key, BiometricPrompt, and
+  the DC API in Chrome.
 
 ## Open questions
 
