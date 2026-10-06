@@ -155,6 +155,11 @@ func VerifyWithPolicy(token string, roots *x509.CertPool, clientID string, now t
 	if roots == nil {
 		return Registration{}, errors.New("registration: no registrar roots")
 	}
+	if clientID == "" {
+		// A registration is of a Client Identifier: a request without one
+		// (an unsigned DC API request) has nothing to bind it to.
+		return Registration{}, errors.New("registration: no client_id to bind the registration to")
+	}
 	header, _, err := jose.DecodeUnverified(token)
 	if err != nil {
 		return Registration{}, fmt.Errorf("registration: %w", err)

@@ -220,3 +220,12 @@ func TestVerify_RegistrarCertificate(t *testing.T) {
 		t.Errorf("a certificate not for signing: %v, want refused", err)
 	}
 }
+
+// A registration is bound to a Client Identifier: with none to bind it
+// to — an unsigned DC API request has none — it isn't accepted.
+func TestVerify_RefusesNoClientID(t *testing.T) {
+	roots := x509.NewCertPool()
+	if _, err := registration.Verify("eyJ.e30.sig", roots, "", time.Now()); err == nil || !strings.Contains(err.Error(), "client_id") {
+		t.Errorf("Verify with no client_id: %v", err)
+	}
+}
