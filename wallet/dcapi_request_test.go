@@ -63,7 +63,7 @@ func TestParseDCAPIRequest_RoundTrip(t *testing.T) {
 		t.Fatalf("ParseDirectPostJWTResponse: %v", err)
 	}
 	result, err := v.VerifyResponse(context.Background(), verifier.VerifyResponseRequest{
-		Query: query, Response: parsed, ExpectedNonce: built.Nonce, Origin: testDCAPIOrigin, MaxKeyBindingAge: time.Hour,
+		Query: query, Response: parsed, ExpectedNonce: built.Nonce, Origin: testDCAPIOrigin, ExpectedOrigins: []string{testDCAPIOrigin}, MaxKeyBindingAge: time.Hour,
 		IssuerKeys: issuerKeyResolverFunc(func(context.Context, map[string]any, map[string]any) (crypto.PublicKey, jose.Alg, error) {
 			return &fixture.issuerKey.PublicKey, jose.ES256, nil
 		}),

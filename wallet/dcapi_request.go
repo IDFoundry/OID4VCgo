@@ -198,6 +198,9 @@ type ParseDCAPIRequestDataParams struct {
 //     verifier_info is the request's. client_id and verifier_info may
 //     appear only there, never in the payload (Appendix A.3.2.2).
 //     Signatures that don't verify are skipped, as long as one does.
+//     When several Verifiers VerifierTrust accepts signed it, the first
+//     one's identity is returned, whichever of them is calling: show
+//     the holder the origin too.
 //   - DCAPIProtocolUnsigned: data's own members are the request. Its
 //     client_id and expected_origins are ignored (Appendix A.2), so the
 //     returned AuthorizationRequest has no ClientID or
@@ -298,7 +301,13 @@ func parseMultiSignedDCAPIRequest(params ParseDCAPIRequestDataParams) (Authoriza
 // this Wallet's Config.VerifierTrust for signed requests. protocol and
 // data are the DC API request's; origin is the calling origin the
 // platform reports.
+//
+// With Config.RequireSignedDCAPIRequests, an unsigned request is refused
+// with an error wrapping ErrUntrustedVerifier.
 func (w *Wallet) ParseDCAPIRequestData(protocol string, data []byte, origin string) (AuthorizationRequest, error) {
+	if protocol == DCAPIProtocolUnsigned && w.cfg.RequireSignedDCAPIRequests {
+		return AuthorizationRequest{}, fmt.Errorf("wallet: parse dc api request: %w: unsigned requests are refused (Config.RequireSignedDCAPIRequests)", ErrUntrustedVerifier)
+	}
 	if protocol != DCAPIProtocolUnsigned && w.cfg.VerifierTrust == nil {
 		return AuthorizationRequest{}, errors.New("wallet: parse dc api request: Config.VerifierTrust is required (NoVerifierTrust{} opts out explicitly)")
 	}
