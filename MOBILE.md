@@ -224,7 +224,7 @@ networking.
 | 6 ✓ | OID4VP slice | Request parsing, candidates, consent and presentation from the iOS demo app |
 | 7 ✓ | Hardening | Suspension and resumption (deferred credentials, an authorization in progress), cancellation, network failures, issuer and verifier errors, logging without personal data, the demo app's retry and cancel |
 | 8 | Android | The same bridge over Android Keystore, packaged as an AAR, with the demo app and the DC API (below) |
-| 9 | DC API | A DC API adapter over the presentation engine |
+| 9 | DC API | A DC API adapter over the presentation engine: `org-iso-mdoc` (MdocPresentation, iOS) and OpenID4VP (`StartDCAPIPresentation`, for Android's Credential Manager) |
 
 ### Phase 1 findings
 
