@@ -171,6 +171,20 @@ func TestSessions_MdocPresentation(t *testing.T) {
 	if got.NameSpaces[walletflowtest.NameSpace]["family_name"] != walletflowtest.FamilyName || len(got.NameSpaces[walletflowtest.NameSpace]) != 1 {
 		t.Errorf("disclosed %v", got.NameSpaces)
 	}
+	type candidate struct {
+		ID              string
+		ShownToVerifier *bool `json:"shown_to_verifier"`
+		LinkableHere    *bool `json:"linkable_here"`
+	}
+	text, err := h.w.MdocCandidates(readerOrigin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cands := decode[struct{ Credentials []candidate }](t, text).Credentials
+	if len(cands) != 1 || cands[0].ID != mdocID || cands[0].ShownToVerifier == nil || !*cands[0].ShownToVerifier ||
+		cands[0].LinkableHere == nil || *cands[0].LinkableHere {
+		t.Errorf("MdocCandidates after presenting there = %s", text)
+	}
 	if _, err := p.Respond(NewOperation(0), 0, mdocID, `[["`+walletflowtest.NameSpace+`","family_name"]]`); code(err) != CodeWrongStep {
 		t.Errorf("a second Respond: %v, want %s", err, CodeWrongStep)
 	}

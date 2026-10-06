@@ -318,6 +318,7 @@ sent to the reader.
 | Method | Result |
 |---|---|
 | `Request()` | `{"origin", "reader", "documents": [{"doctype", "elements": [{"namespace", "identifier", "retain"}], "credentials": [summary]}]}`: `reader` is the subject common name of the reader that signed the request when its certificate chains to `mdoc_reader_roots`, else `""` — show `origin` then. Each document is the request's, with the held mdocs of its doctype (none when nothing can answer); `retain` is whether the reader says it will keep the value. Each summary has `shown_to_verifier` and `linkable_here`, for this origin |
+| `Wallet.MdocCandidates(origin)` | `{"credentials": [summary]}`: the held mdocs, each with `shown_to_verifier` and `linkable_here` for `origin` — for a consent screen shown before iOS releases the request itself |
 | `Respond(op, document, credentialID, elementsJSON)` | `{"response", "linkable"}`: `response` is the base64 `EncryptedResponse` to hand back to the platform (on iOS, `ISO18013MobileDocumentResponse(responseData:)`); `linkable` whether the copy presented had been seen by another Verifier |
 
 `elementsJSON` is a JSON array of `[namespace, identifier]` pairs, each
@@ -327,8 +328,8 @@ is presented, recorded as shown to `"origin:" + origin`. Its holder key
 signs during `Respond`. A malformed request is `protocol`.
 
 `mdoc_reader_roots`, `mdoc_reader_require_eku`,
-`require_trusted_mdoc_reader` and MdocPresentation were added within
-ABI version 12: they add to it without changing anything there.
+`require_trusted_mdoc_reader`, `MdocCandidates` and MdocPresentation
+were added within ABI version 12: they add to it without changing anything there.
 
 ## Other functions
 

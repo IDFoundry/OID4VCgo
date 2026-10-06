@@ -447,6 +447,18 @@ public final class Wallet: @unchecked Sendable {
         return try Presentation(p)
     }
 
+    /// The held mdocs, each with whether the page at `origin` has been
+    /// shown it and whether presenting it there now would be linkable
+    /// (`shownToVerifier`, `linkableHere`): for a document provider's
+    /// consent screen, shown before iOS releases the request itself.
+    /// `MdocPresentation.request` says the same once it has.
+    public func mdocCandidates(origin: String) async throws -> [CredentialSummary] {
+        struct All: Decodable { let credentials: [CredentialSummary] }
+        let wallet = handle
+        let json = try await OID4VC.offMain { try OID4VC.call { wallet.mdocCandidates(origin, error: $0) } }
+        return try decode(All.self, json).credentials
+    }
+
     /// Parses an `org-iso-mdoc` request — an mdoc asked for over the
     /// Digital Credentials API, as iOS hands one to a document provider
     /// extension — and finds the held mdocs that can answer it.

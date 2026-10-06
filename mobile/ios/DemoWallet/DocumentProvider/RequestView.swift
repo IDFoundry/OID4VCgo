@@ -44,6 +44,9 @@ struct RequestView: View {
     /// The first requested document the wallet holds an mdoc for.
     private var answerable: Asked? { asked.first { a in held.contains { $0.doctype == a.doctype } } }
 
+    /// The chosen credential, as last loaded.
+    private var chosenCredential: CredentialSummary? { held.first { $0.id == chosen } }
+
     /// The reader's name, when the request is signed by a certificate
     /// under the configured mdoc reader roots: checked again, with the
     /// request's own signature, before anything is shared.
@@ -89,11 +92,18 @@ struct RequestView: View {
                         Section("Which one") {
                             Picker("Credential", selection: $chosen) {
                                 ForEach(candidates, id: \.id) { c in
-                                    Text(c.display?.name ?? name(of: a.doctype)).tag(Optional(c.id))
+                                    Text((c.display?.name ?? name(of: a.doctype)) + (c.linkableHere == true ? " (linkable)" : "")).tag(Optional(c.id))
                                 }
                             }
                             .pickerStyle(.inline)
                             .labelsHidden()
+                        }
+                    }
+                    if chosenCredential?.linkableHere == true {
+                        Section {
+                            Label("Every copy of this ID has been shown to another website, so this website and that one could tell it's you both times. Refresh it in the wallet app for new copies.",
+                                  systemImage: "link")
+                                .foregroundStyle(.orange)
                         }
                     }
                 } else if problem == nil {
@@ -125,24 +135,41 @@ struct RequestView: View {
     private func wallet() throws -> Wallet {
         guard let config = DemoConfiguration.load() else { throw RequestError("Open the wallet app first.") }
         let presence = LAContext().canEvaluatePolicy(.deviceOwnerAuthentication, error: nil)
-        return try Wallet(configuration: config.wallet, keyStore: SharedWallet.keyStore(presence: presence),
+        // The holder's own choices in the app, such as which copy a
+        // presentation uses, apply here too.
+        return try Wallet(configuration: SharedWallet.applyingHolderChoices(to: config.wallet), keyStore: SharedWallet.keyStore(presence: presence),
                           credentialStore: try SharedWallet.credentialStore(), provider: nil)
     }
 
     private func load() async {
+        guard let origin else { return }
         do {
-            held = try await wallet().credentials().filter { $0.format == "mso_mdoc" && $0.holderKeyPresent != false }
+            // Each with whether presenting it to this origin would be
+            // linkable, for the holder to see before agreeing.
+            held = try await wallet().mdocCandidates(origin: origin).filter(Self.presentable)
             if let a = answerable {
-                chosen = held.first { $0.doctype == a.doctype && !$0.isExpired() }?.id ?? held.first { $0.doctype == a.doctype }?.id
+                let candidates = held.filter { $0.doctype == a.doctype }
+                chosen = (candidates.first { $0.linkableHere != true } ?? candidates.first)?.id
             }
         } catch {
             problem = describe(error)
         }
     }
 
+    /// Whether c can be presented: its key is here, it hasn't expired, and
+    /// its issuer hasn't revoked or suspended it, as last checked.
+    static func presentable(_ c: CredentialSummary) -> Bool {
+        guard c.holderKeyPresent != false, !c.isExpired() else { return false }
+        switch c.status?.value {
+        case .revoked, .suspended: return false
+        default: return true
+        }
+    }
+
     private func share() {
         guard let shown = answerable, let credentialID = chosen, let origin, let originURL = context.requestingWebsiteOrigin else { return }
         let reader = recognizedReader
+        let toldLinkable = chosenCredential?.linkableHere == true
         sharing = true
         problem = nil
         Task {
@@ -161,6 +188,11 @@ struct RequestView: View {
                     }
                     if let reader, p.request.reader != reader {
                         throw RequestError("The request isn't signed by \(reader).")
+                    }
+                    // Nor a copy another website has seen, unless the
+                    // holder was told.
+                    if p.request.documents[index].credentials.first(where: { $0.id == credentialID })?.linkableHere == true, !toldLinkable {
+                        throw RequestError("Sharing this ID now would be linkable to another website. Try again to see why.")
                     }
                     let response = try await p.respond(document: index, credentialID: credentialID, elements: shown.elements)
                     return ISO18013MobileDocumentResponse(responseData: response.response)
