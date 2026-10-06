@@ -5,6 +5,7 @@ package mobile
 import (
 	"context"
 	"encoding/pem"
+	"os"
 
 	"github.com/idfoundry/oid4vcgo/dcql"
 	"github.com/idfoundry/oid4vcgo/mobile/internal/devjwk"
@@ -206,3 +207,7 @@ func (t testProvider) KeyAttestation(keysJWK []byte, nonce string) ([]byte, erro
 	jwt, err := t.p.KeyAttestation(context.Background(), keys, nonce)
 	return []byte(jwt), err
 }
+
+// CertDirectories is SSL_CERT_DIR as Go sees it: where it reads CA
+// certificates on Android, for the Kotlin tests to check.
+func CertDirectories() string { return os.Getenv("SSL_CERT_DIR") }
