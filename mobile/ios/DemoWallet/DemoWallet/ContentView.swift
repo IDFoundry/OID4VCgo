@@ -4,7 +4,10 @@ import SwiftUI
 
 struct ContentView: View {
     @Environment(WalletModel.self) private var model
+    @Environment(InPersonModel.self) private var inPerson
     @State private var scanning = false
+    @State private var sharingInPerson = false
+    @State private var verifying = false
 
     var body: some View {
         NavigationStack {
@@ -52,12 +55,27 @@ struct ContentView: View {
                             Text("Same copy for the same verifier").tag(WalletConfiguration.CopyPolicy.perVerifier)
                         }
                         .accessibilityIdentifier("copy-policy")
+                        Toggle(model.config?.reader != nil ? "Reader mode: verify others in person" : "Reader mode (needs a reader in the configuration)",
+                               isOn: Binding(get: { inPerson.readerMode }, set: { inPerson.setReaderMode($0) }))
+                            .disabled(model.config?.reader == nil)
+                            .accessibilityIdentifier("reader-mode")
                     } label: {
                         Label("Settings", systemImage: "gearshape")
                     }
                     .accessibilityIdentifier("settings")
                 }
                 ToolbarItemGroup {
+                    if inPerson.readerMode, model.config?.reader != nil {
+                        Button("Verify") { verifying = true }.accessibilityIdentifier("verify-in-person")
+                    }
+                    if model.configured {
+                        Button("In person") {
+                            inPerson.share(model)
+                            sharingInPerson = inPerson.presentation != nil
+                            if let notice = inPerson.notice { model.notice = notice }
+                        }
+                        .accessibilityIdentifier("share-in-person")
+                    }
                     Button("Paste") {
                         if let text = UIPasteboard.general.string, let url = URL(string: text) { model.open(url) }
                     }
@@ -78,6 +96,9 @@ struct ContentView: View {
                 Text("Another app opened this link. Opening it contacts the \(model.linkToConfirm?.scheme == "openid4vp" ? "verifier" : "issuer") it names; nothing is shared until you agree.")
             }
             .sheet(isPresented: requestShown) { RequestView() }
+            .fullScreenCover(isPresented: $sharingInPerson, onDismiss: { inPerson.closeSharing() }) { InPersonView() }
+            .sheet(isPresented: $verifying, onDismiss: { inPerson.closeReading(); model.engagementToRead = nil }) { ReaderView() }
+            .onChange(of: model.engagementToRead) { _, given in if given != nil { verifying = true } }
         }
     }
 

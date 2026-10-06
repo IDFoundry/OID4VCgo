@@ -32,9 +32,9 @@ final class WalletModel {
     var phase: Phase = .idle
     var pin = ""
 
-    private var wallet: Wallet?
+    private(set) var wallet: Wallet?
     private var keys: KeychainKeyStore?
-    private var config: DemoConfiguration?
+    private(set) var config: DemoConfiguration?
 
     /// Which copy of a credential a presentation uses, as chosen in the
     /// app's settings; it overrides the configuration's.
@@ -160,7 +160,19 @@ final class WalletModel {
 
     /// Opens a link from another app: an issuer's redirect at once, an
     /// offer or a request once the holder confirms (linkToConfirm).
+    /// A holder's engagement another app handed over (an mdoc: link), for
+    /// reader mode to read.
+    var engagementToRead: String?
+
     func openFromOutside(_ url: URL) {
+        if QRCode.isEngagement(url) {
+            if config?.reader != nil, InPersonModel.readerMode {
+                engagementToRead = url.absoluteString
+            } else {
+                notice = "Turn on reader mode in the settings to verify in person."
+            }
+            return
+        }
         guard url.scheme == "openid-credential-offer" || url.scheme == "openid4vp" else {
             open(url)
             return

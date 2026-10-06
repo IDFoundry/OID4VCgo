@@ -42,6 +42,32 @@ through), and remembers it:
  "provider_url": "https://…"}
 ```
 
+## In person (ISO/IEC 18013-5 over BLE)
+
+**Share in person:** "In person" shows a QR code (iOS asks for
+Bluetooth the first time). A reader that scans it connects over
+Bluetooth, and the app shows who is asking (the reader's name, whether
+it's verified, and its certificate chain under "Reader certificate") and
+what, element by element, marking those the reader says it will keep.
+"Share" sends the chosen elements after Face ID or the passcode;
+"Decline" sends nothing. Only mdocs can be shared in person.
+
+**Reader mode:** with a `reader` in the configuration (`{"issuer_roots",
+"reader_chain", "reader_key"}`: the test services and the scripts here
+add one), turn on "Reader mode" in the settings menu. "Verify" offers
+what to ask for, scans the holder's QR code, and shows what verified.
+Revocation isn't checked: the status list reference is shown. An
+`mdoc:` link opens reader mode too. The reader key arrives in the
+configuration as a demo shortcut; a real reader makes its key in the
+Secure Enclave.
+
+BLE needs real devices: the Simulator has no Bluetooth. Try it between
+two iPhones, or an iPhone and an Android phone with the Android demo,
+both against the same services, by the steps in
+mobile/android/DemoWallet/README.md ("Two phones, by hand"):
+`run-device.sh` here and `run-passport-vdc.sh` there both use the
+passport-vdc demo.
+
 ## UI tests, against test services
 
 ```sh

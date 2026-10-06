@@ -98,7 +98,11 @@ shown. An `mdoc:` link opens reader mode too, without the camera.
 The test services give a reader (`Test Services Reader`) the wallet
 recognizes; passport-vdc's demo writes its own to
 `.demo-state/mdoc-reader.pem` (key, then chain) and its CA to
-`mdoc-reader-ca.pem`.
+`mdoc-reader-ca.pem`, which `run-passport-vdc.sh` puts in the
+configuration: it runs the app against the passport-vdc demo, on an
+emulator or a USB-connected phone, as the iOS demo's `run-device.sh`
+does on an iPhone. Use it to try an Android phone and an iPhone
+together.
 
 ### Two phones, by hand
 
