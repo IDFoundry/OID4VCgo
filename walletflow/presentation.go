@@ -24,8 +24,13 @@ type Verifier struct {
 	Name string
 	// Certificate is that certificate.
 	Certificate *x509.Certificate
-	// ResponseURI is where the answer would be sent.
+	// ResponseURI is where the answer would be sent; none for a DC API
+	// request, whose answer goes back through the platform.
 	ResponseURI string
+	// Origin, for a DC API request, is the calling page's or app's
+	// origin as the platform reported it: what identifies the Verifier
+	// of an unsigned request, which has no ClientID or Certificate.
+	Origin string
 }
 
 // Query is one of the request's DCQL Credential Queries (OpenID4VP 1.0
@@ -85,6 +90,11 @@ type Presented struct {
 	// RedirectURI, when the Verifier returned one, is where the wallet
 	// must now send the browser (OpenID4VP 1.0 §8.2).
 	RedirectURI string
+	// DCAPIResponse, for a DC API request, is the response's data to
+	// hand back to the platform: {"response": <the encrypted response>}
+	// (OpenID4VP 1.0 Appendix A.4). Nothing was sent: the platform
+	// delivers it.
+	DCAPIResponse []byte
 }
 
 // Presentation answers one Authorization Request.
@@ -176,7 +186,7 @@ func heldCredential(c StoredCredential, holderKey Key) wallet.HeldCredential {
 
 // Verifier returns who's asking.
 func (p *Presentation) Verifier() Verifier {
-	v := Verifier{ClientID: p.req.ClientID, Certificate: p.req.VerifierCertificate, ResponseURI: p.req.ResponseURI}
+	v := Verifier{ClientID: p.req.ClientID, Certificate: p.req.VerifierCertificate, ResponseURI: p.req.ResponseURI, Origin: p.req.Origin}
 	if p.req.VerifierCertificate != nil {
 		v.Name = p.req.VerifierCertificate.Subject.CommonName
 	}
@@ -189,7 +199,7 @@ func (p *Presentation) Verifier() Verifier {
 // been presented elsewhere. False for a credential not held.
 func (p *Presentation) Linkable(id string) bool {
 	c, ok := p.byID[id]
-	return ok && p.w.linkable(c, VerifierHash(p.req.ClientID))
+	return ok && p.w.linkable(c, p.verifier())
 }
 
 // linkable reports whether presenting c to the Verifier whose
@@ -282,6 +292,17 @@ func (p *Presentation) Respond(ctx context.Context, sel Selection) (Presented, e
 		p.release(ctx, reserved)
 		return Presented{}, err
 	}
+	if p.req.Origin != "" {
+		presented, err := p.answerDCAPI(ctx, held)
+		if err != nil {
+			p.release(ctx, reserved)
+			return Presented{}, err
+		}
+		// Handed to the platform from here: its copies count as seen.
+		p.answered = true
+		presented.Linkable = linkableOf(reserved)
+		return presented, nil
+	}
 	responded, err := wallet.RespondSelection(ctx, p.w.deps.HTTP, p.req, held, trustedAuthorities)
 	if err != nil && deliveryUnknown(err) {
 		// The Verifier may have it: sending again could present twice,
@@ -300,13 +321,21 @@ func (p *Presentation) Respond(ctx context.Context, sel Selection) (Presented, e
 		presented.QueryIDs = append(presented.QueryIDs, id)
 	}
 	sort.Strings(presented.QueryIDs)
+	presented.Linkable = linkableOf(reserved)
+	return presented, nil
+}
+
+// linkableOf is the IDs of reserved's credentials presented with a copy
+// another Verifier had seen, sorted.
+func linkableOf(reserved []reservedCopy) []string {
+	var out []string
 	for _, r := range reserved {
-		if r.linkable && !slices.Contains(presented.Linkable, r.id) {
-			presented.Linkable = append(presented.Linkable, r.id)
+		if r.linkable && !slices.Contains(out, r.id) {
+			out = append(out, r.id)
 		}
 	}
-	sort.Strings(presented.Linkable)
-	return presented, nil
+	sort.Strings(out)
+	return out
 }
 
 // Decline tells the Verifier the holder declined (access_denied, in an
@@ -320,6 +349,9 @@ func (p *Presentation) Decline(ctx context.Context) (Presented, error) {
 	defer p.mu.Unlock()
 	if p.answered {
 		return Presented{}, ErrWrongStep
+	}
+	if p.req.Origin != "" {
+		return p.declineDCAPI()
 	}
 	if p.declined == "" {
 		responseJWE, err := wallet.BuildDirectPostErrorResponse(wallet.BuildDirectPostErrorResponseParams{
@@ -415,7 +447,7 @@ func (p *Presentation) reserve(ctx context.Context, sel Selection) ([]reservedCo
 	if err := checkShape(sel); err != nil {
 		return nil, err
 	}
-	return p.w.reserve(ctx, sel, VerifierHash(p.req.ClientID), p.Linkable)
+	return p.w.reserve(ctx, sel, p.verifier(), p.Linkable)
 }
 
 // reserve is Presentation.reserve for the Verifier whose VerifierHash is
@@ -490,7 +522,7 @@ func (w *Wallet) reserveCopy(c *StoredCredential, q, id, verifier string, toldLi
 // sent, unless the credential has changed since. It's best effort: a
 // copy left marked is one fewer to use, never one presented twice.
 func (p *Presentation) release(ctx context.Context, reserved []reservedCopy) {
-	p.w.release(ctx, reserved, VerifierHash(p.req.ClientID))
+	p.w.release(ctx, reserved, p.verifier())
 }
 
 // release is Presentation.release for the Verifier whose VerifierHash

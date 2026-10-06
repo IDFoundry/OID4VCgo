@@ -46,6 +46,15 @@
 // which query, and which credential_sets option, are the application's
 // to decide.
 //
+// An OpenID4VP request over the Digital Credentials API (OpenID4VP 1.0
+// Appendix A) — what Android's Credential Manager hands a wallet — is a
+// Presentation too, answered through the platform rather than the
+// network:
+//
+//	p, err := w.StartDCAPIPresentation(ctx, protocol, data, origin) // show p.Verifier().Origin
+//	presented, err := p.Respond(ctx, sel)                           // or p.Decline(ctx)
+//	// return presented.DCAPIResponse to the platform
+//
 // An mdoc asked for over the Digital Credentials API as "org-iso-mdoc"
 // (ISO/IEC TS 18013-7 Annex C, package mdocdcapi) — what iOS hands a
 // document provider — is presented the same way, without OpenID4VP:

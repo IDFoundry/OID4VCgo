@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/pem"
 	"os"
+	"sync"
 
 	"github.com/idfoundry/oid4vcgo/dcql"
 	"github.com/idfoundry/oid4vcgo/mobile/internal/devjwk"
@@ -22,6 +23,9 @@ type TestEnv struct {
 	v   *walletflowtest.Verifier
 	// rv is a Verifier the registrar registered for family_name.
 	rv *walletflowtest.Verifier
+
+	mu    sync.Mutex
+	dcapi map[string]*walletflowtest.DCAPIRequest
 }
 
 // StartTestEnv starts a TestEnv; deferIssuance has the issuer defer
@@ -48,7 +52,7 @@ func StartBatchTestEnv(deferIssuance bool, batchSize int) (*TestEnv, error) {
 		return nil, newError(CodeInternal, err)
 	}
 	testHTTP.Store(env.HTTP)
-	return &TestEnv{env: env, v: v, rv: rv}, nil
+	return &TestEnv{env: env, v: v, rv: rv, dcapi: map[string]*walletflowtest.DCAPIRequest{}}, nil
 }
 
 // Close stops the TestEnv.

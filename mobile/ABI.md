@@ -305,6 +305,29 @@ ABI version 8 replaced `Candidates` with `Queries` and the credential ID
 arrays of `Preview` and `Respond` with a selection, and added
 `DefaultSelection` and `invalid_selection`.
 
+### Over the Digital Credentials API
+
+`Wallet.StartDCAPIPresentation(op, protocol, requestData, origin)` takes
+an OpenID4VP request delivered through the Digital Credentials API
+(OpenID4VP 1.0 Appendix A) as the platform hands it over — on Android,
+Credential Manager's protocol (`openid4vp-v1-unsigned`,
+`openid4vp-v1-signed` or `openid4vp-v1-multisigned`) and its data — and
+the calling page's or app's origin as the platform reports it. It
+returns a `Presentation`, answered with the same steps, except:
+
+- `Verifier()` has `"origin"`, and no `response_uri`. An unsigned
+  request names no Verifier but its origin (no `client_id` or `name`):
+  show that. A signed one's must chain to `verifier_roots`.
+- `Respond` and `Decline` send nothing. Each returns, in
+  `"dcapi_response"`, the response's data — a JSON object as text,
+  `{"response": <the encrypted response>}` — for the platform to hand
+  back to the page; `Decline`'s is the encrypted `access_denied`.
+- Presentations are bound to `"origin:" + origin`, and a copy presented
+  counts as shown to it (`shown_to_verifier`, `linkable_here`).
+
+`StartDCAPIPresentation` and these fields were added within ABI version
+12, without changing anything there.
+
 ## MdocPresentation
 
 An mdoc asked for over the Digital Credentials API as `org-iso-mdoc`
