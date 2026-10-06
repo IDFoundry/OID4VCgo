@@ -40,6 +40,16 @@ class BoundaryTest {
         assertTrue("the instrumented tests need the test build", OID4VC.isTestBuild)
     }
 
+    /**
+     * Go, loaded as a library, starts with an empty environment: the Go
+     * side itself points it at Android 14's updatable CA store, then the
+     * system one (golang/go#71258).
+     */
+    @Test
+    fun goReadsAndroidsCAStores() {
+        assertEquals("/apex/com.android.conscrypt/cacerts:/system/etc/security/cacerts", Mobile.certDirectories())
+    }
+
     @Test
     fun parseRequestLink() = runBlocking {
         val link = "openid4vp://?client_id=x509_hash%3Aabc&request_uri=https%3A%2F%2Fverifier.example%2Fr%2F1&request_uri_method=post"
@@ -78,7 +88,6 @@ class BoundaryTest {
     /** Cancelling the coroutine cancels a Go call waiting on the network. */
     @Test
     fun cancellationReachesGo() = runBlocking {
-        OID4VC.abiVersion // Go starts after OID4VC has set its environment.
         // Accepts connections and never answers: the TLS handshake hangs.
         val silent = ServerSocket(0)
         val held = mutableListOf<java.net.Socket>()

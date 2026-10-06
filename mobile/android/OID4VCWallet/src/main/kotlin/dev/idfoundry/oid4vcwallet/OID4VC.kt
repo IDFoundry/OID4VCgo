@@ -1,6 +1,5 @@
 package dev.idfoundry.oid4vcwallet
 
-import android.system.Os
 import dev.idfoundry.oid4vcwallet.gomobile.mobile.Mobile
 import dev.idfoundry.oid4vcwallet.gomobile.mobile.Operation
 import kotlinx.coroutines.CancellationException
@@ -151,19 +150,6 @@ public data class RequestLink(
  * calls block, and must never run on the main thread.
  */
 public object OID4VC {
-    /**
-     * Where Go reads CA certificates on Android: Android 14's updatable
-     * store first, then the system one. Go itself reads only the system
-     * directory (golang/go#71258), which Android 14 no longer updates.
-     * Set before Go starts — Go reads its environment once, as the
-     * library loads — and not over a value the app set itself.
-     */
-    private const val CA_DIRECTORIES = "/apex/com.android.conscrypt/cacerts:/system/etc/security/cacerts"
-
-    init {
-        Os.setenv("SSL_CERT_DIR", CA_DIRECTORIES, false)
-    }
-
     /** The ABI version of the Go side this library was built against. */
     public val abiVersion: Int = Mobile.ABIVersion.toInt()
 

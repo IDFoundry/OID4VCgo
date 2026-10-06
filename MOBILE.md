@@ -740,11 +740,13 @@ on an emulator, in CI too (`mobile-android`).
 - **TLS:** Go verifies certificates itself, against CA files: on
   Android, only `/system/etc/security/cacerts`, which Android 14 no
   longer updates ([golang/go#71258](https://github.com/golang/go/issues/71258)),
-  and not Network Security Config or user CAs. The Kotlin library sets
-  `SSL_CERT_DIR` to the Conscrypt APEX store, then the system one,
-  before Go starts. Go reads its environment once, as the library
-  loads, so the library loads Go only after setting it. On an API 37
-  emulator, public sites verify and an expired certificate is refused.
+  and not Network Security Config or user CAs. And Go loaded as an app's
+  library starts with an empty environment — its runtime is given no
+  envp (`rt0_android_*.s`) — so the app can't set `SSL_CERT_DIR` for it.
+  The `mobile` package does, on Android (`certdirs_android.go`): the
+  Conscrypt APEX store, then the system one, before anything verifies a
+  certificate. On an API 37 emulator, public sites verify and an expired
+  certificate is refused.
 - **Tests:** Go builds for Android only, so the library's tests are
   instrumented, on an emulator: there's no host slice like the
   XCFramework's macOS one for `swift test`.
@@ -755,8 +757,8 @@ on an emulator, in CI too (`mobile-android`).
 - Whether `OpenId4VpRegistry`'s default matcher answers `org-iso-mdoc`
   requests; if not, Multipaz's matcher.
 - FAPIgo on 32-bit platforms.
-- The APEX store on golang/go#71258; drop `SSL_CERT_DIR` once Go reads
-  it.
+- The APEX store on golang/go#71258; drop `certdirs_android.go` once Go
+  reads it.
 - On a device: StrongBox, the unlocked-device key, BiometricPrompt, and
   the DC API in Chrome.
 
