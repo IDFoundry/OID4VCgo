@@ -823,6 +823,37 @@ encryption, readable from the first unlock after a boot. So
 - **Writes** go to a temporary file renamed over the record, so a
   reader never sees half of one.
 
+### Phase 8 findings: the demo app
+
+`mobile/android/DemoWallet` is the iOS demo's counterpart, in Jetpack
+Compose: receiving (both grants, deferred credentials, resuming after
+the app was killed), the credential list and pages, presenting with the
+consent screen and its preview, QR codes, copies, status and refresh.
+On the emulator, against `mobile/cmd/testservices`
+(`run-test-services.sh`), it has received an SD-JWT VC (three copies,
+the PIN refused once and then accepted), and shared it: the system
+prompt asked for the screen lock before the holder key signed, and the
+Verifier received `family_name`.
+
+- **Go's environment:** Go loaded as an app's library starts with none,
+  so neither `SSL_CERT_DIR` (see above) nor a development CA can be
+  handed to it through the process environment. The wallet
+  configuration's `development_roots`, only with `development`, are CAs
+  its HTTPS requests trust besides the system's: the test services' own.
+  The app's own requests (the Wallet Provider's) trust it through a
+  trust manager of its own.
+- **The services' ports** reach the device through `adb reverse`, so
+  their loopback certificate holds there.
+- **The authorization page** opens in an Auth Tab, else an ephemeral
+  Custom Tab; closing it leaves the offer open, as on iOS. Beginning the
+  authorization again then needed walletflow to allow it (#467), on iOS
+  too.
+- **Chrome** doesn't trust the test services' CA, unlike Go and the
+  app: the issuer's page shows a certificate warning. The UI tests need
+  the CA in the device's user store, which Chrome trusts.
+- **Permissions:** the library declares `USE_BIOMETRIC`, for its
+  prompt; the demo `INTERNET` and `CAMERA`, and backs nothing up.
+
 ### Open items
 
 - Publish to Maven Central.
@@ -831,8 +862,10 @@ encryption, readable from the first unlock after a boot. So
 - FAPIgo on 32-bit platforms.
 - The APEX store on golang/go#71258; drop `certdirs_android.go` once Go
   reads it.
-- On a device: StrongBox, the unlocked-device key, BiometricPrompt, and
-  the DC API in Chrome.
+- On a device: StrongBox, the unlocked-device key, BiometricPrompt with a
+  fingerprint, and the DC API in Chrome.
+- The demo's UI tests, with the test services' CA in the device's user
+  store for Chrome.
 
 ## Open questions
 
