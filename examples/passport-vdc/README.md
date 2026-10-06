@@ -118,10 +118,15 @@ refuses one passport presented twice. Every other request takes exactly
 one credential.
 
 **Asking in the browser.** Each scenario's page except the hotel's also
-offers *Verify with an ID in this browser*: the passport mdoc, asked
-for over the W3C Digital Credentials API with ISO mdoc's own protocol,
-`org-iso-mdoc` (ISO/IEC TS 18013-7 Annex C, the library's `mdocdcapi`),
-which is what Safari supports. It asks for the scenario's mdoc claims,
+offers *Verify with an ID in this browser*: the passport, asked for over
+the W3C Digital Credentials API with two requests, of which the browser
+and wallet answer one — ISO mdoc's own protocol, `org-iso-mdoc` (ISO/IEC
+TS 18013-7 Annex C, the library's `mdocdcapi`), which is what Safari
+supports, and a signed OpenID4VP request (`openid4vp-v1-signed`,
+OpenID4VP 1.0 Appendix A) with the scenario's own query, which is what
+Chrome hands an Android wallet through Credential Manager (the Android
+demo wallet, `mobile/android/DemoWallet`, answers it). Either answer is
+bound to the page's origin. It asks for the scenario's mdoc claims,
 signed with the scenario's own mdoc reader authentication certificate —
 issued by the demo's mdoc reader CA (`mdoc-reader-ca.pem` in the state
 directory; the untrusted CA for the unknown verifier), with the ISO/IEC
@@ -131,8 +136,8 @@ the answer is decided like an OpenID4VP one. It needs a browser with the
 API, such as Safari on iOS 26, where the demo iOS wallet answers it as
 an Identity Document Provider (`mobile/ios/DemoWallet`, "Presenting to
 Safari"). A browser without the API — Safari 26 on macOS 15, for one —
-gets the page's "not supported" message. Chrome hands such a request to
-an Android device, so it would need an Android mdoc wallet. Apple Wallet won't answer: it answers only requests signed with a
+gets the page's "not supported" message. Chrome on a computer hands
+such a request to an Android device nearby, whose wallet answers it. Apple Wallet won't answer: it answers only requests signed with a
 certificate from Apple Business Connect, and holds no passport-vdc
 credential.
 

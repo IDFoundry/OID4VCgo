@@ -1,6 +1,7 @@
 package verifierapp
 
 import (
+	"crypto/ecdsa"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,11 +16,19 @@ import (
 )
 
 // The request page can also ask in the browser, over the Digital
-// Credentials API with ISO mdoc's own protocol ("org-iso-mdoc", ISO/IEC
-// TS 18013-7 Annex C) — Safari's, answered by an iOS document provider
-// app or Apple Wallet. It asks for the scenario's mdoc claims, signed
-// with the scenario's own verifier certificate as the mdoc reader, and
-// verifies the answer into the same Outcome as the OpenID4VP requests.
+// Credentials API, offering two requests, of which the browser and
+// wallet answer one:
+//
+//   - ISO mdoc's own protocol ("org-iso-mdoc", ISO/IEC TS 18013-7 Annex
+//     C) — Safari's, answered by an iOS document provider app or Apple
+//     Wallet: the scenario's mdoc claims, signed with the scenario's own
+//     mdoc reader certificate.
+//   - OpenID4VP ("openid4vp-v1-signed", OpenID4VP 1.0 Appendix A) —
+//     Chrome's, answered by an Android wallet through Credential Manager:
+//     the scenario's own query, signed by its relying party.
+//
+// Either answer is verified into the same Outcome as the OpenID4VP
+// requests.
 
 // maxDCAPIResponseBody bounds the page's POST of a response.
 const maxDCAPIResponseBody = mdocdcapi.MaxResponseBytes + 1024
@@ -27,8 +36,26 @@ const maxDCAPIResponseBody = mdocdcapi.MaxResponseBytes + 1024
 // dcapiRequest is what the page passes to navigator.credentials.get as
 // one of digital.requests.
 type dcapiRequest struct {
-	Protocol string                `json:"protocol"`
-	Data     mdocdcapi.RequestData `json:"data"`
+	Protocol string `json:"protocol"`
+	Data     any    `json:"data"`
+}
+
+// openID4VPProtocol is the DC API protocol of a signed OpenID4VP request.
+const openID4VPProtocol = "openid4vp-v1-signed"
+
+// relyingParty is a scenario's Verifier, for the Digital Credentials
+// API's OpenID4VP requests, and how it verifies their answers.
+type relyingParty struct {
+	v      *verifier.Verifier
+	verify verifier.VerifyResponseRequest
+}
+
+// openID4VPPending is an OpenID4VP DC API request waiting for its
+// answer: what verifying it needs.
+type openID4VPPending struct {
+	query dcql.Query
+	nonce string
+	key   *ecdsa.PrivateKey
 }
 
 // originOf is the serialized origin of verifierURL: the origin the
@@ -95,12 +122,30 @@ func (a *App) handleDCAPIRequest(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "couldn't build the request", http.StatusInternalServerError)
 		return
 	}
+	query, err := buildQuery(s.scenario, a.cfg.IssuerVCT, a.issuerTrusted)
+	if err != nil {
+		http.Error(w, "couldn't build the request", http.StatusInternalServerError)
+		return
+	}
+	built, err := a.rps[s.scenario].v.BuildDCAPIAuthorizationRequest(verifier.BuildDCAPIAuthorizationRequestRequest{
+		Query: query, ExpectedOrigins: []string{a.origin},
+	})
+	if err != nil {
+		http.Error(w, "couldn't build the request", http.StatusInternalServerError)
+		return
+	}
 	a.mu.Lock()
 	s.dcapi = &req.Pending
+	s.dcapiOpenID = &openID4VPPending{query: query, nonce: built.Nonce, key: built.ResponseDecryptionKey}
 	a.mu.Unlock()
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set(headerContentType, "application/json")
-	_ = json.NewEncoder(w).Encode(dcapiRequest{Protocol: mdocdcapi.Protocol, Data: req.Data})
+	_ = json.NewEncoder(w).Encode(struct {
+		Requests []dcapiRequest `json:"requests"`
+	}{[]dcapiRequest{
+		{Protocol: mdocdcapi.Protocol, Data: req.Data},
+		{Protocol: openID4VPProtocol, Data: map[string]string{"request": built.RequestObject}},
+	}})
 }
 
 // handleDCAPIResponse verifies the page's Digital Credentials API
@@ -112,6 +157,7 @@ func (a *App) handleDCAPIResponse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
+		Protocol string `json:"protocol"`
 		Response string `json:"response"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxDCAPIResponseBody)).Decode(&body); err != nil {
@@ -119,14 +165,20 @@ func (a *App) handleDCAPIResponse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.mu.Lock()
-	pending := s.dcapi
-	s.dcapi = nil
+	pending, openID := s.dcapi, s.dcapiOpenID
+	s.dcapi, s.dcapiOpenID = nil, nil
 	a.mu.Unlock()
-	if pending == nil {
+	if pending == nil || openID == nil {
 		http.Error(w, "no request is waiting for an answer: start again", http.StatusConflict)
 		return
 	}
-	out, err := a.verifyDCAPI(r, s, *pending, body.Response)
+	var out *Outcome
+	var err error
+	if body.Protocol == openID4VPProtocol {
+		out, err = a.verifyDCAPIOpenID4VP(r, s, *openID, body.Response)
+	} else {
+		out, err = a.verifyDCAPI(r, s, *pending, body.Response)
+	}
 	if err != nil {
 		http.Error(w, "not verified: "+err.Error(), http.StatusBadRequest)
 		return
@@ -166,6 +218,28 @@ func (a *App) verifyDCAPI(r *http.Request, s *session, pending mdocdcapi.Pending
 	out := &Outcome{Scenario: s.scenario, Format: p.Format, Claims: p.Claims, Status: p.Status, ICAO: p.ICAO}
 	out.Decision = decide(s.scenario, out)
 	return out, nil
+}
+
+// verifyDCAPIOpenID4VP verifies the OpenID4VP answer, response (the
+// encrypted dc_api.jwt response), to pending, bound to the page's
+// origin, and decides s's scenario from it.
+func (a *App) verifyDCAPIOpenID4VP(r *http.Request, s *session, pending openID4VPPending, response string) (*Outcome, error) {
+	if a.answered(r, s) {
+		return nil, errors.New("this request has already been answered")
+	}
+	rp := a.rps[s.scenario]
+	parsed, err := rp.v.ParseDirectPostJWTResponse(response, pending.key)
+	if err != nil {
+		return nil, err
+	}
+	req := rp.verify
+	req.Query, req.Response, req.ExpectedNonce, req.ResponseEncryptionKey = pending.query, parsed, pending.nonce, pending.key
+	req.Origin, req.ExpectedOrigins = a.origin, []string{a.origin}
+	result, err := rp.v.VerifyResponse(r.Context(), req)
+	if err != nil {
+		return nil, err
+	}
+	return a.outcomeOf(r.Context(), s.scenario, result)
 }
 
 // answered reports whether s already has an outcome, from either
