@@ -773,6 +773,9 @@ on an emulator, in CI too (`mobile-android`).
 - **Instance and DPoP keys** sign silently, as on iOS.
 - **IDs:** a key's ID is its alias after a prefix; the store lists and
   sweeps only its own prefix's keys (`deleteKeys(except:)`).
+- **Locked means locked:** with the screen locked, every key's signature
+  fails ("Keystore operation failed"), as `setUnlockedDeviceRequired`
+  says — so CI unlocks the emulator with its PIN before the tests.
 - **The emulator:** its Keystore is software, with no StrongBox; holder
   keys still require authentication there, given a PIN (CI sets one).
   StrongBox, the TEE and the prompt itself are for the device run.

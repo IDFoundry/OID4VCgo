@@ -252,9 +252,18 @@ jobs:
           arch: x86_64
           disable-animations: true
           working-directory: mobile/android
-          # A PIN: holder keys need a secure lock screen.
+          # A PIN: holder keys need a secure lock screen. Then unlock with
+          # it and keep the screen on: every key needs the device unlocked.
           script: |
             adb shell locksettings set-pin 1111
+            adb shell svc power stayon true
+            adb shell input keyevent KEYCODE_WAKEUP
+            adb shell wm dismiss-keyguard
+            sleep 1
+            adb shell input text 1111
+            adb shell input keyevent KEYCODE_ENTER
+            sleep 2
+            adb shell dumpsys window | grep -q 'isKeyguardShowing=false'
             ./gradlew --console=plain :OID4VCWallet:connectedDebugAndroidTest -Poid4vc.testFramework=true
 
       - name: the failing instrumented tests
