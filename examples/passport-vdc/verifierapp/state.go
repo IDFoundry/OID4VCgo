@@ -54,6 +54,9 @@ type signer struct {
 	cert *x509.Certificate
 }
 
+// demoOrganization is the organization every demo certificate names.
+const demoOrganization = "IDFoundry demo"
+
 // identityFile is the file a verifier keeps its identities in, in
 // Config.StateDir.
 const identityFile = "verifier-identity.pem"
@@ -194,7 +197,7 @@ func newReader(now time.Time, name string, parent *x509.Certificate, parentKey *
 		return signer{}, fmt.Errorf("verifierapp: key: %w", err)
 	}
 	cert, err := democert.Create(&x509.Certificate{
-		Subject:   pkix.Name{CommonName: name, Organization: []string{"IDFoundry demo"}},
+		Subject:   pkix.Name{CommonName: name, Organization: []string{demoOrganization}},
 		NotBefore: now.Add(-time.Hour), NotAfter: now.AddDate(1, 0, 0),
 		KeyUsage: x509.KeyUsageDigitalSignature, UnknownExtKeyUsage: []asn1.ObjectIdentifier{readerAuthenticationEKU},
 	}, parent, &key.PublicKey, parentKey)
@@ -214,7 +217,7 @@ func newSigner(now time.Time, name string, parent *x509.Certificate, parentKey *
 		return signer{}, fmt.Errorf("verifierapp: key: %w", err)
 	}
 	tmpl := &x509.Certificate{
-		Subject:   pkix.Name{CommonName: name, Organization: []string{"IDFoundry demo"}},
+		Subject:   pkix.Name{CommonName: name, Organization: []string{demoOrganization}},
 		NotBefore: now.Add(-time.Hour), NotAfter: now.AddDate(1, 0, 0),
 		KeyUsage: x509.KeyUsageDigitalSignature,
 	}
@@ -238,7 +241,7 @@ func newCA(now time.Time, name string) (*x509.Certificate, *ecdsa.PrivateKey, er
 		return nil, nil, fmt.Errorf("verifierapp: CA key: %w", err)
 	}
 	cert, err := democert.Create(&x509.Certificate{
-		Subject:   pkix.Name{CommonName: name, Organization: []string{"IDFoundry demo"}},
+		Subject:   pkix.Name{CommonName: name, Organization: []string{demoOrganization}},
 		NotBefore: now.Add(-time.Hour), NotAfter: now.AddDate(1, 0, 0),
 		KeyUsage: x509.KeyUsageCertSign, IsCA: true, BasicConstraintsValid: true, MaxPathLenZero: true,
 	}, nil, &key.PublicKey, key)
@@ -305,36 +308,41 @@ func parseIdentities(data []byte) (identities, error) {
 		ids.registrar = r
 	}
 	for _, s := range Scenarios {
-		role := roleSignerPre + string(s)
-		if certs[role] == nil {
-			continue
+		if err := ids.parseScenario(s, certs, keys); err != nil {
+			return identities{}, err
 		}
-		info, _ := s.Info()
-		parent := ids.ca
-		if !info.Trusted {
-			parent = ids.untrustedCA
-		}
-		sg := signer{key: keys[role], cert: certs[role]}
-		if err := checkSigner(sg, parent); err != nil {
-			return identities{}, fmt.Errorf("%s: %w", s, err)
-		}
-		ids.signers[s] = sg
-		// An older file has no readers: left out, for current to catch.
-		readerRole := roleReaderPre + string(s)
-		if certs[readerRole] == nil || ids.readerCA == nil {
-			continue
-		}
-		readerParent := ids.readerCA
-		if !info.Trusted {
-			readerParent = ids.untrustedCA
-		}
-		rd := signer{key: keys[readerRole], cert: certs[readerRole]}
-		if err := checkSigner(rd, readerParent); err != nil {
-			return identities{}, fmt.Errorf("%s reader: %w", s, err)
-		}
-		ids.readers[s] = rd
 	}
 	return ids, nil
+}
+
+// parseScenario adds s's request signer and mdoc reader from an
+// identityFile's blocks to ids, each checked against the CA s's trust
+// calls for. One missing is left out, for current to catch.
+func (ids identities) parseScenario(s Scenario, certs map[string]*x509.Certificate, keys map[string]*ecdsa.PrivateKey) error {
+	info, _ := s.Info()
+	parent, readerParent := ids.ca, ids.readerCA
+	if !info.Trusted {
+		parent, readerParent = ids.untrustedCA, ids.untrustedCA
+	}
+	role := roleSignerPre + string(s)
+	if certs[role] == nil {
+		return nil
+	}
+	sg := signer{key: keys[role], cert: certs[role]}
+	if err := checkSigner(sg, parent); err != nil {
+		return fmt.Errorf("%s: %w", s, err)
+	}
+	ids.signers[s] = sg
+	readerRole := roleReaderPre + string(s)
+	if certs[readerRole] == nil || ids.readerCA == nil {
+		return nil
+	}
+	rd := signer{key: keys[readerRole], cert: certs[readerRole]}
+	if err := checkSigner(rd, readerParent); err != nil {
+		return fmt.Errorf("%s reader: %w", s, err)
+	}
+	ids.readers[s] = rd
+	return nil
 }
 
 // decodeBlocks reads an identityFile's certificates and keys, by role.
