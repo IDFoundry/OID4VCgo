@@ -39,7 +39,7 @@ class AndroidKeystoreKeyStoreTest {
     }
 
     @Test
-    fun checkKeyStore() = runBlocking {
+    fun checkKeyStore(): Unit = runBlocking {
         val keys = store()
         assertEquals(KeyPurpose.entries.toList(), OID4VC.checkKeyStore(keys))
         assertTrue("every key was deleted", keys.keyIDs().isEmpty())
