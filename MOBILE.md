@@ -1038,6 +1038,22 @@ Decisions taken 2026-10-06 (tracked in [#482](https://github.com/IDFoundry/OID4V
   connect and advertise for a reader; location on Android 11, which
   delivers scan results only with it).
 
+### Phase 10 findings: the iOS SDK
+
+- **The same shape as Android's:** `ProximityPresentation` and
+  `ProximityReader` sessions with an `AsyncStream` of states, over a
+  `ProximityTransport`: `GattServerTransport` (CBPeripheralManager) and
+  `GattClientTransport` (CBCentralManager), each on its own serial
+  queue, in Swift 6 mode.
+- **A peripheral isn't told of disconnections:** iOS reports only the
+  central unsubscribing, which the holder takes as the reader leaving.
+- **Back-pressure is the platform's:** `updateValue` returning false
+  waits for `peripheralManagerIsReady`, and writes without response
+  wait for `canSendWriteWithoutResponse`. Chunk sizes come from the
+  central's `maximumUpdateValueLength` and the peripheral's
+  `maximumWriteValueLength`.
+- **Apps need `NSBluetoothAlwaysUsageDescription`** in Info.plist.
+
 ## Open questions
 
 - The Wallet Provider's production design, and whether it belongs in
