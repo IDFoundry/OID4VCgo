@@ -854,6 +854,31 @@ Verifier received `family_name`.
 - **Permissions:** the library declares `USE_BIOMETRIC`, for its
   prompt; the demo `INTERNET` and `CAMERA`, and backs nothing up.
 
+### Phase 8 findings: the Digital Credentials API on Android
+
+The demo is a Credential Manager provider for OpenID4VP over the DC API
+(`StartDCAPIPresentation`, the OpenID4VP half of Phase 9). On the API 37
+emulator with Google Play, end to end: a page served by the test
+services asked with a signed request; Chrome asked whether to trust the
+site; Credential Manager's chooser offered the registered SD-JWT VC and
+the claim asked for; the app's consent screen opened on it; the holder
+key signed after the screen lock; and the test Verifier verified the
+answer, bound to the page's origin.
+
+- **Registration:** each presentable credential, with its claims, in an
+  `OpenId4VpRegistry` (androidx.credentials registry, alpha), whose
+  default matcher is Google's: the app writes no matcher. Registering
+  again replaces the set, after every change to the credentials.
+- **The origin** is Chrome's, which Credential Manager hands over only
+  for a browser on the app's privileged list (Chrome's entries from
+  Google's published list); an app calling directly is named by its
+  signing certificate.
+- **The provider activity** opens the wallet without the app's launch
+  work: the orphaned-key sweep would take the keys of an issuance the app
+  has in progress.
+- **Not yet:** `org-iso-mdoc` requests on Android, and whether Google's
+  matcher answers them; passport-vdc's page asking with OpenID4VP too.
+
 ### Open items
 
 - Publish to Maven Central.
