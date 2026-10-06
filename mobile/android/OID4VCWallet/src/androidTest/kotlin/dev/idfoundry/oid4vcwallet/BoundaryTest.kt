@@ -51,7 +51,7 @@ class BoundaryTest {
     }
 
     @Test
-    fun parseRequestLink() = runBlocking {
+    fun parseRequestLink(): Unit = runBlocking {
         val link = "openid4vp://?client_id=x509_hash%3Aabc&request_uri=https%3A%2F%2Fverifier.example%2Fr%2F1&request_uri_method=post"
         assertEquals(RequestLink("x509_hash:abc", "https://verifier.example/r/1", "post"), OID4VC.parseRequestLink(link))
         try {
@@ -64,7 +64,7 @@ class BoundaryTest {
 
     /** Go creates, signs with (checking the signatures) and deletes keys held in Kotlin. */
     @Test
-    fun checkKeyStoreCallsBack() = runBlocking {
+    fun checkKeyStoreCallsBack(): Unit = runBlocking {
         val store = SoftwareKeyStore()
         assertEquals(KeyPurpose.entries.toList(), OID4VC.checkKeyStore(store))
         assertTrue("every key was deleted", store.keys.isEmpty())
@@ -72,7 +72,7 @@ class BoundaryTest {
 
     /** A callback's exception reaches Go and comes back as a platform error carrying its message. */
     @Test
-    fun callbackErrorIsPlatform() = runBlocking {
+    fun callbackErrorIsPlatform(): Unit = runBlocking {
         val failing = object : KeyStore by SoftwareKeyStore() {
             override fun createKey(purpose: KeyPurpose): String = throw StoreException("no keys today")
         }
@@ -87,7 +87,7 @@ class BoundaryTest {
 
     /** Cancelling the coroutine cancels a Go call waiting on the network. */
     @Test
-    fun cancellationReachesGo() = runBlocking {
+    fun cancellationReachesGo(): Unit = runBlocking {
         // Accepts connections and never answers: the TLS handshake hangs.
         val silent = ServerSocket(0)
         val held = mutableListOf<java.net.Socket>()
@@ -114,7 +114,7 @@ class BoundaryTest {
 
     /** Many Go calls at once, each calling back into Kotlin on its own thread. */
     @Test
-    fun concurrentCalls() = runBlocking {
+    fun concurrentCalls(): Unit = runBlocking {
         val results = (1..32).map { async { OID4VC.checkKeyStore(SoftwareKeyStore()) } }.awaitAll()
         assertTrue(results.all { it == KeyPurpose.entries.toList() })
     }

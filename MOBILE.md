@@ -751,6 +751,109 @@ on an emulator, in CI too (`mobile-android`).
   instrumented, on an emulator: there's no host slice like the
   XCFramework's macOS one for `swift test`.
 
+### Phase 8 findings: the Android Keystore key store
+
+`AndroidKeystoreKeyStore` is `KeychainKeyStore`'s counterpart, and
+`CheckKeyStore` passes with it.
+
+- **Keys:** P-256 in StrongBox where the device has it (`Options.strongBox`,
+  preferred by default; required or off), else the TEE. They sign Go's
+  SHA-256 digests with `NONEwithECDSA`, which returns the DER `crypto.Signer`
+  expects. Every key needs the device unlocked
+  (`setUnlockedDeviceRequired`), as iOS's `WhenUnlockedThisDeviceOnly`.
+- **Holder keys:** each signature needs the holder's strong biometric or
+  screen lock (`setUserAuthenticationParameters(0, …)`, API 30), and a new
+  fingerprint doesn't void them, as iOS's user presence. Keystore
+  authorizes one `Signature` at a time, so the store hands it to the app's
+  `HolderAuthenticator` before signing, on Go's thread, which waits.
+  `BiometricPromptAuthenticator` is the framework prompt over the app's
+  activity: from API 30 it takes the screen lock with a CryptoObject, so
+  the SDK needs no AndroidX biometric library. A signature the
+  authenticator didn't authorize is refused by Keystore itself.
+- **Instance and DPoP keys** sign silently, as on iOS.
+- **IDs:** a key's ID is its alias after a prefix; the store lists and
+  sweeps only its own prefix's keys (`deleteKeys(except:)`).
+- **Locked means locked:** with the screen locked, every key's signature
+  fails ("Keystore operation failed"), as `setUnlockedDeviceRequired`
+  says — so CI unlocks the emulator with its PIN before the tests.
+- **The emulator:** its Keystore is software, with no StrongBox; holder
+  keys still require authentication there, given a PIN (CI sets one).
+  StrongBox, the TEE and the prompt itself are for the device run.
+
+### Phase 8 findings: the Kotlin sessions
+
+`Wallet`, `Issuance`, `Presentation` and `MdocPresentation` are the
+Swift package's, in Kotlin: suspend functions, results as data classes
+(kotlinx.serialization), times as `java.time.Instant`, claims as
+`JsonElement`. The Swift session tests pass on the emulator against
+`TestEnv`, with Android Keystore keys: both grants, presentation and its
+selection rules, deferred credentials across a relaunch, resuming an
+authorization after the app was killed, status, batches, registrations,
+refresh, the per-Verifier copy policy, cancellation and four concurrent
+issuances.
+
+- **A dropped issuance:** Swift's `Issuance` closes itself in `deinit`;
+  Kotlin has none, and `java.lang.ref.Cleaner` needs API 33. An issuance
+  dropped without `close()` keeps its instance and DPoP keys until
+  `sweepOrphanedKeys` at the next launch.
+- **Host tests:** what doesn't load Go — error parsing, the provider
+  bridge, origins — runs on the host JVM (`testDebugUnitTest`).
+
+### Phase 8 findings: the credential store
+
+Phase 5 left Android's encryption at rest open: Android has no per-file
+protection class like iOS's complete protection, only file-based
+encryption, readable from the first unlock after a boot. So
+`FileCredentialStore` encrypts each record itself:
+
+- **Encryption:** AES-256-GCM under an Android Keystore key, the
+  record's ID as associated data, so a record copied under another ID,
+  or altered, doesn't decrypt. Its file is a version byte, the IV and
+  the ciphertext.
+- **Protection:** by default the key works only while the device is
+  unlocked (`setUnlockedDeviceRequired`). On the emulator, with the
+  screen locked, a record neither reads nor writes; unlocked, it does —
+  iOS's complete protection. `Protection.AFTER_FIRST_UNLOCK` drops the
+  requirement, for an app that must read credentials while locked: file
+  encryption alone, iOS's "until first user authentication".
+- **Backups:** the standard store is in `noBackupFilesDir`, which neither
+  backups nor device transfer copy, as iOS's store is excluded from
+  backups. A restored record without its key wouldn't decrypt anyway,
+  and its holder key doesn't move either.
+- **Writes** go to a temporary file renamed over the record, so a
+  reader never sees half of one.
+
+### Phase 8 findings: the demo app
+
+`mobile/android/DemoWallet` is the iOS demo's counterpart, in Jetpack
+Compose: receiving (both grants, deferred credentials, resuming after
+the app was killed), the credential list and pages, presenting with the
+consent screen and its preview, QR codes, copies, status and refresh.
+On the emulator, against `mobile/cmd/testservices`
+(`run-test-services.sh`), it has received an SD-JWT VC (three copies,
+the PIN refused once and then accepted), and shared it: the system
+prompt asked for the screen lock before the holder key signed, and the
+Verifier received `family_name`.
+
+- **Go's environment:** Go loaded as an app's library starts with none,
+  so neither `SSL_CERT_DIR` (see above) nor a development CA can be
+  handed to it through the process environment. The wallet
+  configuration's `development_roots`, only with `development`, are CAs
+  its HTTPS requests trust besides the system's: the test services' own.
+  The app's own requests (the Wallet Provider's) trust it through a
+  trust manager of its own.
+- **The services' ports** reach the device through `adb reverse`, so
+  their loopback certificate holds there.
+- **The authorization page** opens in an Auth Tab, else an ephemeral
+  Custom Tab; closing it leaves the offer open, as on iOS. Beginning the
+  authorization again then needed walletflow to allow it (#467), on iOS
+  too.
+- **Chrome** doesn't trust the test services' CA, unlike Go and the
+  app: the issuer's page shows a certificate warning. The UI tests need
+  the CA in the device's user store, which Chrome trusts.
+- **Permissions:** the library declares `USE_BIOMETRIC`, for its
+  prompt; the demo `INTERNET` and `CAMERA`, and backs nothing up.
+
 ### Open items
 
 - Publish to Maven Central.
@@ -759,8 +862,10 @@ on an emulator, in CI too (`mobile-android`).
 - FAPIgo on 32-bit platforms.
 - The APEX store on golang/go#71258; drop `certdirs_android.go` once Go
   reads it.
-- On a device: StrongBox, the unlocked-device key, BiometricPrompt, and
-  the DC API in Chrome.
+- On a device: StrongBox, the unlocked-device key, BiometricPrompt with a
+  fingerprint, and the DC API in Chrome.
+- The demo's UI tests, with the test services' CA in the device's user
+  store for Chrome.
 
 ## Open questions
 

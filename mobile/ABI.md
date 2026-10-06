@@ -143,7 +143,7 @@ The Swift package's adapter marks a `URLError` this way.
 {"client_id": "…", "redirect_uri": "…",
  "issuer_roots": "<PEM>", "verifier_roots": "<PEM>", "registrar_roots": "<PEM>",
  "mdoc_reader_roots": "<PEM>", "mdoc_reader_require_eku": false, "require_trusted_mdoc_reader": false,
- "development": false, "locales": ["en-AU", "en"], "batch_size": 0,
+ "development": false, "development_roots": "<PEM>", "locales": ["en-AU", "en"], "batch_size": 0,
  "request_refresh": false, "copy_policy": "per_presentation"}
 ```
 
@@ -160,7 +160,10 @@ authentication extended key usage (1.0.18013.5.1.6), and
 `require_trusted_mdoc_reader` refuses a request no recognized reader
 signed, with `untrusted_verifier`; it needs `mdoc_reader_roots`.
 `development`
-allows services on loopback addresses. `locales` are the holder's
+allows services on loopback addresses. `development_roots`, only with
+`development`, are CAs the wallet's HTTPS requests trust besides the
+system's: a development service's own, where the platform's trust store
+can't be given it — Go on Android reads only the system's CA files. `locales` are the holder's
 preferred languages (BCP 47, most preferred first) for issuers' display
 metadata. Without them, the issuer's entry without a locale is used,
 else its first. `batch_size` is how many copies of each credential to
@@ -351,8 +354,8 @@ is presented, recorded as shown to `"origin:" + origin`. Its holder key
 signs during `Respond`. A malformed request is `protocol`.
 
 `mdoc_reader_roots`, `mdoc_reader_require_eku`,
-`require_trusted_mdoc_reader`, `MdocCandidates` and MdocPresentation
-were added within ABI version 12: they add to it without changing anything there.
+`require_trusted_mdoc_reader`, `MdocCandidates`, MdocPresentation and
+`development_roots` were added within ABI version 12: they add to it without changing anything there.
 
 ## Other functions
 
