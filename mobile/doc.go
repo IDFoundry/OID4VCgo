@@ -19,9 +19,13 @@
 //   - A callback that can fail returns []byte or nothing besides its
 //     error: one returning a string isn't a throwing Swift method.
 //
-// The API (ABIVersion 1, MOBILE.md Phase 3): NewWallet takes a JSON
-// configuration and the app's KeyStore, CredentialStore and
+// The API, ABIVersion 12, is documented call by call in ABI.md. NewWallet
+// takes a JSON configuration and the app's KeyStore, CredentialStore and
 // WalletProvider; StartIssuance and StartPresentation return the
 // walletflow sessions, step by step, each step taking an Operation.
+// Over the Digital Credentials API, StartDCAPIPresentation answers
+// OpenID4VP and StartMdocPresentation org-iso-mdoc. In person,
+// StartProximityPresentation is the holder and NewProximityReader the
+// reader: bytes in and out, with the BLE transport left to the app.
 // CheckKeyStore exercises a KeyStore as the wallet will.
 package mobile

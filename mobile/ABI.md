@@ -2,9 +2,20 @@
 
 The API the Go `mobile` package exposes through gomobile: version
 **12** (`ABIVersion`). The Swift package `ios/OID4VCWallet` wraps it in
-typed Swift (`Wallet`, `Issuance`, `Presentation`, `WalletError`); this
-document is the contract underneath, for the Swift wrapper, a future
-Kotlin one, or an app calling the framework directly.
+typed Swift (`Wallet`, `Issuance`, `Presentation`, `WalletError`), and
+the Kotlin library `android/OID4VCWallet` in Kotlin (the same types,
+with suspend functions, `WalletException` and `StateFlow`s); this
+document is the contract underneath, for those wrappers or an app
+calling the framework directly.
+
+Some additions came within version 12 without bumping it: they add
+calls and optional JSON fields, so an older wrapper is unaffected, but
+an app can't tell from `ABIVersion` whether a library has them. The
+DC API's `StartMdocPresentation` and `MdocCandidates` arrived in
+OID4VCWallet 0.7.0 (Swift); `StartDCAPIPresentation`, proximity
+(`StartProximityPresentation`, `NewProximityReader`) and
+`require_signed_dcapi_requests` came after it. Check a library's
+release notes for the calls it has.
 
 The version changes whenever a function, object, JSON result, record
 format or error code below changes incompatibly.
@@ -65,7 +76,8 @@ so Swift sees it with an `NSError` out-parameter instead.
 
 ### KeyStore
 
-P-256 keys that never leave the platform (the Secure Enclave on iOS).
+P-256 keys that never leave the platform: the Secure Enclave on iOS,
+Android Keystore (StrongBox, else the TEE) on Android.
 
 | Method | |
 |---|---|
@@ -89,20 +101,21 @@ Opaque records kept by ID, under the platform's data protection.
 | `Get(id) → []byte` | empty if there's none |
 | `List() → []byte` | a JSON array of every record |
 | `Delete(id)` | no error if absent |
+| `Durable() → bool` | whether records survive the app quitting (below) |
 
 A record is JSON the app needn't read: `id`, `credential_issuer`,
 `configuration_id`, `format`, `vct`, `doctype`, `credential`,
 `holder_key_id`, `received_at`, `claims`, `display`, `valid_until`,
-`status_list` and `status`, and `copies` (each copy's `credential`,
-`holder_key_id` and `presented`). A record written before a field was
-kept lacks it.
+`status_list`, `status_list_cwt`, `status` and `grant_id`, and `copies`
+(each copy's `credential`, `holder_key_id`, `presented` and
+`shown_to`). A record written before a field was kept lacks it.
 
 The store also keeps each **pending deferred credential**, under the ID
 `deferred-<id>`, as a record with `"kind": "deferred"`. The record holds
 what polling it after a relaunch needs: the issuer, the configuration,
 the transaction ID, the access token and its expiry, the DPoP key ID
-and every copy's holder key ID, the interval, and when it was
-deferred. The access token is
+and every copy's holder key ID, the interval, when it was deferred,
+and the grant it came from and the credential it replaces, if any. The access token is
 bound to the DPoP key, which never leaves the KeyStore. A store keeps
 these records like any other; `List` returns them too, and Go tells them
 apart.
@@ -118,7 +131,10 @@ credentials without `development` needs a durable `CredentialStore` and
 `KeyStore`.
 
 The Swift package's `FileCredentialStore` keeps records as files with
-complete data protection, excluded from backups. It's durable.
+complete data protection, excluded from backups. The Kotlin library's
+keeps each as a file in `noBackupFilesDir`, encrypted with AES-256-GCM
+under an Android Keystore key that works only while the device is
+unlocked. Both are durable.
 
 ### WalletProvider
 
@@ -133,7 +149,8 @@ JWKs; the results are compact JWTs.
 These may wait on the network. A cancelled call returns without waiting
 for them. An error whose message starts with `[network]` is a network
 failure, reported as `network` (retryable); any other is `platform`.
-The Swift package's adapter marks a `URLError` this way.
+The Swift package's adapter marks a `URLError` this way, and the Kotlin
+library's an `IOException`.
 
 ## Wallet
 
@@ -213,7 +230,9 @@ to the fewest Verifiers is reused.
 
 A credential **summary** is `{"id", "credential_issuer",
 "configuration_id", "format", "vct", "doctype", "received_at",
-"holder_key_present", "display", "valid_until", "status"}`.
+"holder_key_present", "display", "valid_until", "status", "copies",
+"copies_left", "linkable", "refreshable"}`, and on a presentation's
+candidates `"shown_to_verifier"` and `"linkable_here"`.
 
 - `holder_key_present` is false when the key store no longer holds the
   credential's key, for example after a restore to another device, so
@@ -241,7 +260,7 @@ A credential **summary** is `{"id", "credential_issuer",
 - `status` is its revocation status as last checked: `{"value": "valid"
   | "invalid" | "suspended" | "0x…", "checked_at"}`.
 
-Each of those three is absent when unknown.
+`display`, `valid_until` and `status` are absent when unknown.
 
 ## Issuance
 
@@ -254,7 +273,7 @@ Steps, in order: `Offer`; then `BeginAuthorization` and
 | Method | Result |
 |---|---|
 | `Offer()` | `{"credential_issuer", "issuer_name", "issuer_logo", "grant", "tx_code": {"input_mode", "length", "description"}, "credentials": [{"configuration_id", "format", "vct", "doctype", "name", "description", "logo", "background_color", "text_color"}]}`, with display metadata as in a summary |
-| `BeginAuthorization(op)` | the authorization URL, to open in `ASWebAuthenticationSession` |
+| `BeginAuthorization(op)` | the authorization URL, to open in `ASWebAuthenticationSession` (iOS) or an Auth Tab, falling back to a Custom Tab (Android) |
 | `CompleteAuthorization(op, redirect)` | the redirect back to `redirect_uri`, whole or just its query. It's used up whatever happens: after a failure, start again with `BeginAuthorization` |
 | `RedeemPreAuthorizedCode(op, txCode)` | the PIN, `""` if `tx_code` is absent; a wrong one is `protocol` and can be retried |
 | `RequestCredentials(op)` | `{"credentials": [summary], "deferred": [pending], "failed": [{"configuration_id", "code", "detail"}]}`. A failed one was refused for good, or failed the wallet's checks, and doesn't hold up the rest; only when nothing was obtained is a refusal an error |
@@ -453,9 +472,15 @@ ProximityReader was added within ABI version 12.
 ## Test build
 
 Built with `-tags mobiletest` (into `build/test/`, apart from the
-release build in `build/release/`), the framework adds `StartTestEnv`:
-an in-process HAIP issuer, Wallet Provider and Verifier, for the Swift
-package's end-to-end tests. Its `ProximityReader(keys)` creates a key in
+release build in `build/release/`), the framework adds `StartTestEnv`
+and `StartBatchTestEnv`: an in-process HAIP issuer, Wallet Provider and
+Verifier, for the Swift and Kotlin libraries' end-to-end tests. A
+`TestEnv` makes offers, approves or denies authorizations and deferred
+credentials (`Approve`, `Decide`), revokes (`Revoke`, `RevokeGrants`),
+and plays a Verifier: `Request`, `RegisteredRequest` and
+`RequestResult` for a link, `DCAPIRequest` and `DCAPIResult` over the
+Digital Credentials API. `CertDirectories` reports `SSL_CERT_DIR` as Go
+sees it, for the Android tests. Its `ProximityReader(keys)` creates a key in
 `keys` and issues it a reader authentication certificate from a new test
 CA ("Test Reader"), returning `{"reader_config", "mdoc_reader_roots"}`:
 a `NewProximityReader` configuration and the CA to recognize the reader
@@ -469,3 +494,15 @@ shapes: an app implements its own `KeyStore`, `CredentialStore` and
 `async` — which it adapts, and `WalletError` carries `code`,
 `protocolError`, `isRetryable` and a user-facing
 `localizedDescription`.
+
+## Kotlin
+
+The Kotlin library (`android/OID4VCWallet`) does the same: an app
+implements its `KeyStore`, `CredentialStore` and `WalletProvider`
+interfaces (the provider's calls `suspend`), or uses
+`AndroidKeystoreKeyStore` and `FileCredentialStore`. Calls that can
+wait on the network or the holder are `suspend` functions run on
+`Dispatchers.IO` and cancelled with their coroutine, and failures are `WalletException`s with the same `code`,
+`protocolError` and `isRetryable`. In-person sessions add
+`ProximityException` for Bluetooth failures, and need the runtime
+permissions `ProximityPermissions` lists.
