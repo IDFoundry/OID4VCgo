@@ -7,6 +7,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -66,6 +67,8 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -88,7 +91,9 @@ import java.time.Instant
 /** The app: the home screen, a credential's page, and the offer, request and scanner over them. */
 @Composable
 fun DemoApp(model: WalletModel, authorize: suspend (String) -> String, openBrowser: (Uri) -> Unit) {
-    MaterialTheme(colorScheme = if (isSystemInDarkTheme()) darkColorScheme() else lightColorScheme()) {
+    // Test tags as resource IDs: the UI tests (DemoWalletUITests) find
+    // views by them, as the iOS demo's by accessibility identifiers.
+    MaterialTheme(colorScheme = if (isSystemInDarkTheme()) darkColorScheme() else lightColorScheme()) { Box(Modifier.semantics { testTagsAsResourceId = true }) {
         var shown by remember { mutableStateOf<String?>(null) }
         var scanning by remember { mutableStateOf(false) }
         val credential = shown?.let { id -> model.credentials.firstOrNull { it.id == id } }
@@ -111,7 +116,7 @@ fun DemoApp(model: WalletModel, authorize: suspend (String) -> String, openBrows
                 dismissButton = { TextButton({ model.linkToConfirm = null }) { Text("Cancel") } },
             )
         }
-    }
+    } }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
