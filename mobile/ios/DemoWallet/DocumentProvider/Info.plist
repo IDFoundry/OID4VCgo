@@ -14,36 +14,18 @@
 	<string>6.0</string>
 	<key>CFBundleName</key>
 	<string>$(PRODUCT_NAME)</string>
-	<key>CFBundlePackageType</key>
-	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.1</string>
-	<key>CFBundleURLTypes</key>
-	<array>
-		<dict>
-			<key>CFBundleURLName</key>
-			<string>dev.idfoundry.oid4vcgo.demowallet</string>
-			<key>CFBundleURLSchemes</key>
-			<array>
-				<string>dev.idfoundry.oid4vcgo.demowallet</string>
-				<string>openid-credential-offer</string>
-				<string>openid4vp</string>
-			</array>
-		</dict>
-	</array>
+	<string>1.0</string>
 	<key>CFBundleVersion</key>
 	<string>1</string>
-	<key>NSCameraUsageDescription</key>
-	<string>Scans credential offer and presentation request QR codes.</string>
+	<key>EXAppExtensionAttributes</key>
+	<dict>
+		<key>EXExtensionPointIdentifier</key>
+		<string>com.apple.identity-document-services.document-provider-ui</string>
+	</dict>
 	<key>NSFaceIDUsageDescription</key>
-	<string>Confirms it's you before your credentials' keys sign a presentation.</string>
+	<string>Confirms it's you before your ID's key signs what you share.</string>
 	<key>OID4VCHolderKeychainGroup</key>
 	<string>$(AppIdentifierPrefix)dev.idfoundry.oid4vcgo.demowallet.shared</string>
-	<key>UILaunchScreen</key>
-	<dict/>
-	<key>UISupportedInterfaceOrientations</key>
-	<array>
-		<string>UIInterfaceOrientationPortrait</string>
-	</array>
 </dict>
 </plist>

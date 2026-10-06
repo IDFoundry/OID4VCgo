@@ -6,7 +6,8 @@ import OID4VCWallet
 /// /config, or mobile/ios/DemoWallet/run-passport-vdc.sh builds for the
 /// passport-vdc demo. It comes from the OID4VC_DEMO_CONFIG environment
 /// variable (simctl launch passes SIMCTL_CHILD_OID4VC_DEMO_CONFIG), and
-/// is remembered for later launches.
+/// is remembered for later launches, in the app group, where the document
+/// provider extension reads it.
 struct DemoConfiguration: Codable, Sendable {
     var wallet: WalletConfiguration
     var providerURL: URL
@@ -18,10 +19,10 @@ struct DemoConfiguration: Codable, Sendable {
     static func load() -> DemoConfiguration? {
         if let text = ProcessInfo.processInfo.environment["OID4VC_DEMO_CONFIG"], let data = text.data(using: .utf8),
            let config = try? JSONDecoder().decode(DemoConfiguration.self, from: data) {
-            UserDefaults.standard.set(data, forKey: defaultsKey)
+            SharedWallet.defaults.set(data, forKey: defaultsKey)
             return config
         }
-        guard let data = UserDefaults.standard.data(forKey: defaultsKey) else { return nil }
+        guard let data = SharedWallet.defaults.data(forKey: defaultsKey) else { return nil }
         return try? JSONDecoder().decode(DemoConfiguration.self, from: data)
     }
 }

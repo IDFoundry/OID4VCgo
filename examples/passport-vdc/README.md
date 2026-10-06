@@ -123,10 +123,12 @@ for over the W3C Digital Credentials API with ISO mdoc's own protocol,
 `org-iso-mdoc` (ISO/IEC TS 18013-7 Annex C, the library's `mdocdcapi`),
 which is what Safari supports. It asks for the scenario's mdoc claims,
 signed with the scenario's verifier certificate as the mdoc reader, and
-the answer is decided like an OpenID4VP one. Something has to answer it:
-an iOS app registered as a document provider for this document type
-(the demo app doesn't do this yet), or a Chrome-compatible Android mdoc
-wallet. Apple Wallet won't: it answers only requests signed with a
+the answer is decided like an OpenID4VP one. It needs a browser with the
+API, such as Safari on iOS 26, where the demo iOS wallet answers it as
+an Identity Document Provider (`mobile/ios/DemoWallet`, "Presenting to
+Safari"). A browser without the API — Safari 26 on macOS 15, for one —
+gets the page's "not supported" message. Chrome hands such a request to
+an Android device, so it would need an Android mdoc wallet. Apple Wallet won't answer: it answers only requests signed with a
 certificate from Apple Business Connect, and holds no passport-vdc
 credential.
 

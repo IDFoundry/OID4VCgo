@@ -48,7 +48,7 @@ final class WalletModel {
         guard let config, let keys else { throw NotConfigured() }
         var configuration = config.wallet
         configuration.copyPolicy = copyPolicy
-        return try Wallet(configuration: configuration, keyStore: keys, credentialStore: try FileCredentialStore.standard(),
+        return try Wallet(configuration: configuration, keyStore: keys, credentialStore: try SharedWallet.credentialStore(),
                           provider: HTTPWalletProvider(baseURL: config.providerURL))
     }
 
@@ -84,8 +84,9 @@ final class WalletModel {
             }
             let presence = true
             #endif
-            let keys = KeychainKeyStore(options: .init(secureEnclave: SecureEnclave.isAvailable, persistent: true,
-                                                       holderUserPresence: presence))
+            // Holder keys in the access group the document provider
+            // extension shares, so it can present.
+            let keys = SharedWallet.keyStore(presence: presence)
             self.keys = keys
             self.config = config
             // A reset (OID4VC_DEMO_RESET) starts from the configuration's
@@ -562,6 +563,10 @@ final class WalletModel {
         do {
             credentials = try await wallet.credentials()
             await loadClaims(reload: [])
+            // In the background: the list needn't wait for iOS.
+            let held = credentials
+            let roots = config?.wallet.mdocReaderRoots ?? ""
+            Task.detached { await DocumentRegistrations.sync(held, readerRootsPEM: roots) }
         } catch {
             phase = .failed("Couldn't list credentials: " + Self.describe(error))
         }

@@ -17,13 +17,18 @@ settings:
     CODE_SIGN_STYLE: Automatic
     # Set your team to run on a device; the Simulator needs none.
     DEVELOPMENT_TEAM: ""
+    # The app's bundle identifier; the extension's is under it.
+    DEMO_BUNDLE_ID: dev.idfoundry.oid4vcgo.demowallet
 targets:
   DemoWallet:
     type: application
     platform: iOS
-    sources: [DemoWallet]
+    sources: [DemoWallet, Shared]
     dependencies:
       - package: OID4VCWallet
+      # The Identity Document Provider extension: answers Safari's
+      # org-iso-mdoc requests (iOS 26).
+      - target: DocumentProvider
     info:
       path: DemoWallet/Info.plist
       properties:
@@ -36,6 +41,9 @@ targets:
         # Without it, iOS asks for the passcode instead of Face ID when a
         # holder key (Secure Enclave, user presence) signs.
         NSFaceIDUsageDescription: Confirms it's you before your credentials' keys sign a presentation.
+        # The Keychain access group holder keys are made in, shared with
+        # the document provider extension (Shared/SharedWallet.swift).
+        OID4VCHolderKeychainGroup: $(AppIdentifierPrefix)dev.idfoundry.oid4vcgo.demowallet.shared
         CFBundleURLTypes:
           # The authorization redirect (RFC 8252 private-use scheme),
           # Credential Offer links, and presentation request links.
@@ -43,8 +51,29 @@ targets:
             CFBundleURLSchemes: [dev.idfoundry.oid4vcgo.demowallet, openid-credential-offer, openid4vp]
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: dev.idfoundry.oid4vcgo.demowallet
+        PRODUCT_BUNDLE_IDENTIFIER: $(DEMO_BUNDLE_ID)
         TARGETED_DEVICE_FAMILY: "1"
+        CODE_SIGN_ENTITLEMENTS: DemoWallet/DemoWallet.entitlements
+  DocumentProvider:
+    type: extensionkit-extension
+    platform: iOS
+    deploymentTarget: "26.0"
+    sources: [DocumentProvider, Shared]
+    dependencies:
+      - package: OID4VCWallet
+    info:
+      path: DocumentProvider/Info.plist
+      properties:
+        CFBundleDisplayName: OID4VC Demo
+        EXAppExtensionAttributes:
+          EXExtensionPointIdentifier: com.apple.identity-document-services.document-provider-ui
+        NSFaceIDUsageDescription: Confirms it's you before your ID's key signs what you share.
+        OID4VCHolderKeychainGroup: $(AppIdentifierPrefix)dev.idfoundry.oid4vcgo.demowallet.shared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(DEMO_BUNDLE_ID).documentprovider
+        TARGETED_DEVICE_FAMILY: "1"
+        CODE_SIGN_ENTITLEMENTS: DocumentProvider/DocumentProvider.entitlements
   DemoWalletTests:
     type: bundle.unit-test
     platform: iOS

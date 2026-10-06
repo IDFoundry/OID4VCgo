@@ -120,6 +120,36 @@ login.
    use the sample), and open the offer link. For a presentation, open the
    verifier's page on another screen and scan its QR code in the app.
 
+### Presenting to Safari (Digital Credentials API)
+
+The app is also an Identity Document Provider (iOS 26): when a page in
+Safari asks for an mdoc over the Digital Credentials API
+(`org-iso-mdoc`), iOS offers the app for the doctypes it registered —
+the passport-vdc Photo ID (`org.iso.23220.photoid.1`) — and shows the
+`DocumentProvider` extension's consent sheet. In the passport-vdc demo,
+open a verifier scenario in Safari on the phone and choose *Verify with
+an ID in this browser*. The first time a Photo ID is received, iOS asks
+whether the app may provide documents.
+
+The extension is a separate process, so the app keeps what it reads in
+shared places: the credential store and configuration in the app group
+`group.dev.idfoundry.oid4vcgo.demowallet`, and holder keys in the
+Keychain access group `<team>.dev.idfoundry.oid4vcgo.demowallet.shared`.
+Instance and DPoP keys stay in the app's own group. On a device, before
+the first build, register the app group in the Apple Developer portal
+(Identifiers → App Groups) and enable on both App IDs
+(`dev.idfoundry.oid4vcgo.demowallet` and its `.documentprovider`) the
+App Groups capability with that group and the Digital Credentials API –
+Mobile Document Provider capability. `BUNDLE_ID` changes both bundle
+identifiers but not the group names, which are in the entitlements files
+and `Shared/SharedWallet.swift`.
+
+The extension names the reader asking when its request is signed by a
+certificate under `mdoc_reader_roots` (`run-device.sh` passes the
+passport-vdc verifier CA), and otherwise shows only the website's
+origin. Before answering, it checks that the request iOS releases is the
+one it showed: same document, same elements, same reader.
+
 ### Restricting the pages with Cloudflare Access
 
 The demo's pages have no login of their own: through the tunnel, anyone

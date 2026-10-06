@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- The mdoc doctypes the app registers for the Digital Credentials API. -->
+	<key>com.apple.developer.identity-document-services.document-provider.mobile-document-types</key>
+	<array>
+		<string>org.iso.23220.photoid.1</string>
+	</array>
+	<!-- The credential store and configuration, shared with the document provider extension. -->
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.dev.idfoundry.oid4vcgo.demowallet</string>
+	</array>
+	<!-- The app's own group first, its default: instance and DPoP keys stay there.
+	     Holder keys are made in the second, which the extension shares. -->
+	<key>keychain-access-groups</key>
+	<array>
+		<string>$(AppIdentifierPrefix)dev.idfoundry.oid4vcgo.demowallet</string>
+		<string>$(AppIdentifierPrefix)dev.idfoundry.oid4vcgo.demowallet.shared</string>
+	</array>
+</dict>
+</plist>

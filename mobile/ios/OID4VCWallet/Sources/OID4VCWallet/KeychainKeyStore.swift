@@ -23,13 +23,21 @@ public final class KeychainKeyStore: KeyStore, @unchecked Sendable {
         /// Prefixes every key's Keychain application tag. Keys under
         /// another prefix are never touched, by a sweep or anything else.
         public var tagPrefix: String
+        /// The Keychain access group holder keys are made in, when the
+        /// app shares them with an extension — a document provider
+        /// presenting credentials, say — that lists the group in its
+        /// `keychain-access-groups` entitlement. Instance and DPoP keys
+        /// stay in the app's default group: only the app issues. nil:
+        /// every key is in the default group.
+        public var holderAccessGroup: String?
 
         public init(secureEnclave: Bool = true, persistent: Bool = true, holderUserPresence: Bool = true,
-                    tagPrefix: String = "org.idfoundry.oid4vcgo.key.") {
+                    tagPrefix: String = "org.idfoundry.oid4vcgo.key.", holderAccessGroup: String? = nil) {
             self.secureEnclave = secureEnclave
             self.persistent = persistent
             self.holderUserPresence = holderUserPresence
             self.tagPrefix = tagPrefix
+            self.holderAccessGroup = holderAccessGroup
         }
     }
 
@@ -51,6 +59,9 @@ public final class KeychainKeyStore: KeyStore, @unchecked Sendable {
             kSecAttrApplicationTag as String: tag(id),
             kSecAttrLabel as String: "oid4vcgo " + purpose.rawValue,
         ]
+        if purpose == .holder, let group = options.holderAccessGroup {
+            privateAttrs[kSecAttrAccessGroup as String] = group
+        }
         if let access = try accessControl(purpose: purpose) {
             privateAttrs[kSecAttrAccessControl as String] = access
         } else {

@@ -14,6 +14,10 @@ public struct WalletConfiguration: Codable, Sendable {
     /// the wallet checks (`Presentation.Verifier.registration`). Empty:
     /// registrations are ignored.
     public var registrarRoots: String
+    /// PEM certificates: the mdoc readers recognized when one signs an
+    /// `org-iso-mdoc` request (`MdocPresentation.Request.reader`). Empty:
+    /// every such request is shown by its origin.
+    public var mdocReaderRoots: String
     /// Allows services on loopback addresses.
     public var development: Bool
     /// The holder's preferred languages (BCP 47, most preferred first),
@@ -46,13 +50,14 @@ public struct WalletConfiguration: Codable, Sendable {
     }
 
     public init(clientID: String, redirectURI: String, issuerRoots: String = "", verifierRoots: String = "", registrarRoots: String = "",
-                development: Bool = false, locales: [String] = Locale.preferredLanguages, batchSize: Int = 0, requestRefresh: Bool = false,
+                mdocReaderRoots: String = "", development: Bool = false, locales: [String] = Locale.preferredLanguages, batchSize: Int = 0, requestRefresh: Bool = false,
                 copyPolicy: CopyPolicy = .perPresentation) {
         self.clientID = clientID
         self.redirectURI = redirectURI
         self.issuerRoots = issuerRoots
         self.verifierRoots = verifierRoots
         self.registrarRoots = registrarRoots
+        self.mdocReaderRoots = mdocReaderRoots
         self.development = development
         self.locales = locales
         self.batchSize = batchSize
@@ -62,7 +67,8 @@ public struct WalletConfiguration: Codable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case clientID = "client_id", redirectURI = "redirect_uri", issuerRoots = "issuer_roots"
-        case verifierRoots = "verifier_roots", registrarRoots = "registrar_roots", development, locales, batchSize = "batch_size"
+        case verifierRoots = "verifier_roots", registrarRoots = "registrar_roots", mdocReaderRoots = "mdoc_reader_roots"
+        case development, locales, batchSize = "batch_size"
         case requestRefresh = "request_refresh", copyPolicy = "copy_policy"
     }
 
@@ -73,6 +79,7 @@ public struct WalletConfiguration: Codable, Sendable {
                   issuerRoots: try c.decodeIfPresent(String.self, forKey: .issuerRoots) ?? "",
                   verifierRoots: try c.decodeIfPresent(String.self, forKey: .verifierRoots) ?? "",
                   registrarRoots: try c.decodeIfPresent(String.self, forKey: .registrarRoots) ?? "",
+                  mdocReaderRoots: try c.decodeIfPresent(String.self, forKey: .mdocReaderRoots) ?? "",
                   development: try c.decodeIfPresent(Bool.self, forKey: .development) ?? false,
                   locales: try c.decodeIfPresent([String].self, forKey: .locales) ?? Locale.preferredLanguages,
                   batchSize: try c.decodeIfPresent(Int.self, forKey: .batchSize) ?? 0,
@@ -424,6 +431,21 @@ public final class Wallet: @unchecked Sendable {
         let p = try await OID4VC.cancellable { op in try OID4VC.wrap { try wallet.startPresentation(op, requestLink: request) } }
         return try Presentation(p)
     }
+
+    /// Parses an `org-iso-mdoc` request — an mdoc asked for over the
+    /// Digital Credentials API, as iOS hands one to a document provider
+    /// extension — and finds the held mdocs that can answer it.
+    /// `requestData` is `IdentityDocumentWebPresentmentRawRequest.requestData`;
+    /// `origin` the requesting page's origin
+    /// (`ISO18013MobileDocumentRequestContext.requestingWebsiteOrigin`),
+    /// as `MdocPresentation.origin(of:)` serializes it.
+    public func startMdocPresentation(requestData: Data, origin: String) async throws -> MdocPresentation {
+        let wallet = handle
+        let p = try await OID4VC.cancellable { op in
+            try OID4VC.wrap { try wallet.startMdocPresentation(op, request: requestData, origin: origin) }
+        }
+        return try MdocPresentation(p)
+    }
 }
 
 /// What a Credential Offer offers.
@@ -736,6 +758,86 @@ public final class Presentation: @unchecked Sendable {
     }
 }
 
+/// An `org-iso-mdoc` request (ISO/IEC TS 18013-7 Annex C): show
+/// `request` for the holder's consent, then `respond` once; to decline,
+/// cancel the platform's request — nothing is sent to the reader.
+public final class MdocPresentation: @unchecked Sendable {
+    public struct Request: Decodable, Sendable {
+        /// The requesting page's origin.
+        public let origin: String
+        /// The subject common name of the reader that signed the request,
+        /// when its certificate chains to
+        /// `WalletConfiguration.mdocReaderRoots`; "" when the holder can
+        /// only be shown `origin`.
+        public let reader: String
+        public let documents: [Document]
+    }
+
+    public struct Document: Decodable, Sendable {
+        public let doctype: String
+        public let elements: [Element]
+        /// The held mdocs of `doctype`; none when nothing can answer.
+        public let credentials: [CredentialSummary]
+    }
+
+    public struct Element: Decodable, Sendable, Hashable {
+        public let namespace: String
+        public let identifier: String
+        /// Whether the reader says it will keep the value.
+        public let retain: Bool
+
+        public init(namespace: String, identifier: String, retain: Bool) {
+            self.namespace = namespace
+            self.identifier = identifier
+            self.retain = retain
+        }
+    }
+
+    public struct Response: Decodable, Sendable {
+        /// The CBOR EncryptedResponse, for
+        /// `ISO18013MobileDocumentResponse(responseData:)`.
+        public let response: Data
+        /// Whether the copy presented had been seen by another Verifier.
+        public let linkable: Bool
+    }
+
+    let handle: MobileMdocPresentation
+    public let request: Request
+
+    init(_ p: MobileMdocPresentation) throws {
+        handle = p
+        request = try decode(Request.self, p.request())
+    }
+
+    /// Presents the held mdoc `credentialID` for document number
+    /// `document`, disclosing exactly `elements`, each one it requested.
+    /// The holder key signs now, so a key store requiring user presence
+    /// prompts.
+    public func respond(document: Int, credentialID: String, elements: [Element]) async throws -> Response {
+        let p = handle
+        let pairs = elements.map { [$0.namespace, $0.identifier] }
+        let json = String(decoding: try JSONEncoder().encode(pairs), as: UTF8.self)
+        let out = try await OID4VC.cancellable { op in
+            try OID4VC.call { p.respond(op, document: document, credentialID: credentialID, elementsJSON: json, error: $0) }
+        }
+        return try decode(Response.self, out)
+    }
+
+    /// `url`'s web origin, as a browser serializes it and the session
+    /// transcript binds it: `scheme://host`, with the port only when it
+    /// isn't the scheme's default, and no path — the form
+    /// `startMdocPresentation(requestData:origin:)` takes. iOS reports the
+    /// origin as a URL, whose `absoluteString` can end in "/".
+    public static func origin(of url: URL) -> String? {
+        guard let c = URLComponents(url: url, resolvingAgainstBaseURL: false), let scheme = c.scheme?.lowercased(),
+              let host = c.encodedHost ?? c.host, !host.isEmpty else { return nil }
+        let defaultPorts = ["https": 443, "http": 80]
+        let defaultPort = defaultPorts[scheme]
+        guard let port = c.port, port != defaultPort else { return "\(scheme)://\(host)" }
+        return "\(scheme)://\(host):\(port)"
+    }
+}
+
 /// A credential store in memory, for tests and development.
 public final class InMemoryCredentialStore: CredentialStore, @unchecked Sendable {
     private let lock = NSLock()
@@ -768,6 +870,7 @@ public final class InMemoryCredentialStore: CredentialStore, @unchecked Sendable
 extension MobileWallet: @retroactive @unchecked Sendable {}
 extension MobileIssuance: @retroactive @unchecked Sendable {}
 extension MobilePresentation: @retroactive @unchecked Sendable {}
+extension MobileMdocPresentation: @retroactive @unchecked Sendable {}
 
 /// Decodes one of the Go side's JSON results.
 func decode<T: Decodable>(_ type: T.Type, _ json: String) throws -> T {
