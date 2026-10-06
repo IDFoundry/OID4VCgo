@@ -70,6 +70,15 @@ type Config struct {
 	// holder. It needs MdocReaderRoots.
 	RequireTrustedMdocReader bool
 
+	// RequireSignedDCAPIRequests refuses an unsigned OpenID4VP request
+	// over the Digital Credentials API (StartDCAPIPresentation) with an
+	// error wrapping ErrUntrustedVerifier, before the holder sees it: its
+	// only identity is the origin the platform reports, which
+	// VerifierTrust can't judge. HAIP 1.0 §5.2 requires a Wallet to
+	// support unsigned requests, so set it only where every Verifier must
+	// be one VerifierTrust accepts.
+	RequireSignedDCAPIRequests bool
+
 	// Locales are the holder's preferred languages (BCP 47 tags, most
 	// preferred first), for the issuer's display metadata. None means
 	// the issuer's entry without a locale, else its first.
@@ -233,6 +242,7 @@ func New(cfg Config, deps Dependencies) (*Wallet, error) {
 	}
 	core, err := wallet.New(wallet.Config{
 		Assurance: cfg.assurance(), ProofSigningAlg: oid4vci.ES256, VerifierTrust: cfg.VerifierTrust,
+		RequireSignedDCAPIRequests: cfg.RequireSignedDCAPIRequests,
 		Fetch: fapihttp.Config{
 			MaxResponseBytes: maxResponseBytes, RequestTimeout: httpTimeout, MaxRedirects: 2,
 			AllowLoopbackHosts: cfg.Development,

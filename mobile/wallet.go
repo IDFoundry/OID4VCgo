@@ -43,6 +43,10 @@ type config struct {
 	// signed (walletflow.Config.RequireTrustedMdocReader).
 	MdocReaderRequireEKU     bool `json:"mdoc_reader_require_eku,omitempty"`
 	RequireTrustedMdocReader bool `json:"require_trusted_mdoc_reader,omitempty"`
+	// RequireSignedDCAPIRequests refuses an unsigned OpenID4VP request
+	// over the Digital Credentials API, as untrusted_verifier
+	// (walletflow.Config.RequireSignedDCAPIRequests).
+	RequireSignedDCAPIRequests bool `json:"require_signed_dcapi_requests,omitempty"`
 	// Development allows services on loopback addresses.
 	Development bool `json:"development"`
 	// DevelopmentRoots are PEM certificates the wallet's HTTPS requests
@@ -141,6 +145,7 @@ func NewWallet(configJSON string, keys KeyStore, credentials CredentialStore, pr
 		wcfg.MdocReaderLeafPolicy = mdocdcapi.RequireReaderAuthenticationEKU
 	}
 	wcfg.RequireTrustedMdocReader = cfg.RequireTrustedMdocReader
+	wcfg.RequireSignedDCAPIRequests = cfg.RequireSignedDCAPIRequests
 	deps := walletflow.Dependencies{
 		Keys: keyStore{keys}, Credentials: credentialStore{credentials},
 		// crypto/rand.Reader itself, which production assurance requires.

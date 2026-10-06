@@ -95,3 +95,27 @@ func TestDCAPIPresentation_Garbled(t *testing.T) {
 		t.Fatalf("no origin: %v", err)
 	}
 }
+
+// require_signed_dcapi_requests refuses an unsigned request as
+// untrusted_verifier, and still opens a signed one.
+func TestDCAPIPresentation_RequireSigned(t *testing.T) {
+	h := newHarness(t, false)
+	var cfg map[string]any
+	if err := json.Unmarshal([]byte(h.env.ConfigJSON()), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	cfg["require_signed_dcapi_requests"] = true
+	text, _ := json.Marshal(cfg)
+	w, err := NewWallet(string(text), h.keys, h.creds, h.env.Provider())
+	if err != nil {
+		t.Fatal(err)
+	}
+	unsigned := decode[dcapiRequest](t, mustText(t)(h.env.DCAPIRequest("dc+sd-jwt", dcapiOrigin, false)))
+	if _, err := w.StartDCAPIPresentation(NewOperation(0), unsigned.Protocol, []byte(unsigned.Data), unsigned.Origin); code(err) != CodeUntrustedVerifier {
+		t.Errorf("an unsigned request: %v, want %s", err, CodeUntrustedVerifier)
+	}
+	signed := decode[dcapiRequest](t, mustText(t)(h.env.DCAPIRequest("dc+sd-jwt", dcapiOrigin, true)))
+	if _, err := w.StartDCAPIPresentation(NewOperation(0), signed.Protocol, []byte(signed.Data), signed.Origin); err != nil {
+		t.Errorf("a signed request: %v", err)
+	}
+}

@@ -1,16 +1,13 @@
 #!/bin/sh
-# Runs the demo wallet on an Android emulator or device against
-# mobile/cmd/testservices: builds the release Go library and the app,
-# starts the services, forwards their ports into the device (adb
-# reverse, so their loopback certificate holds), pushes the app's
-# configuration and the services' CA, and launches it from an empty
-# wallet. The services run until Ctrl-C; their control endpoint
-# (https://127.0.0.1:8600) makes offers and requests:
+# Runs the demo wallet's UI tests (../DemoWalletUITests) on an emulator
+# or device against mobile/cmd/testservices: builds the release Go
+# library, starts the services, forwards their ports into the device
+# (adb reverse, so their loopback certificate holds), pushes their CA to
+# the app, and runs the tests, which reach the services' control
+# endpoint over the same CA. The device needs a screen lock with PIN
+# 1111, and unlocked (../unlock-emulator.sh sets one on an emulator).
 #
-#   curl -sk -X POST 'https://127.0.0.1:8600/offer?pin=493536'
-#   curl -sk -X POST 'https://127.0.0.1:8600/request?format=dc%2Bsd-jwt'
-#
-# then open the link in the app: adb shell am start -a android.intent.action.VIEW -d '"<link>"'
+#   ./run-ui-tests.sh [test]   (a test method, say present, to run only it)
 set -eu
 cd "$(dirname "$0")"
 WORK="$(mktemp -d)"
@@ -20,7 +17,6 @@ ADB="${ANDROID_HOME:-$HOME/Library/Android/sdk}/platform-tools/adb"
 PKG=dev.idfoundry.oid4vcgo.demowallet
 
 ../../build-aar.sh
-(cd .. && ./gradlew -q :DemoWallet:installDebug)
 (cd ../.. && go build -o "$WORK/testservices" ./cmd/testservices)
 "$WORK/testservices" -addr 127.0.0.1:8600 -cert "$WORK/services.pem" > "$WORK/services.log" 2>&1 &
 SERVICES=$!
@@ -33,11 +29,15 @@ PORTS="$(printf '%s\n%s\n%s' "$(cat "$WORK/config.json" "$WORK/services.log")" "
 	| grep -oE '127\.0\.0\.1:[0-9]+' | cut -d: -f2 | sort -u)"
 for p in $PORTS; do "$ADB" reverse "tcp:$p" "tcp:$p" >/dev/null; done
 
+# The app takes the CA from its external files directory, which exists
+# once it's installed.
+(cd .. && ./gradlew -q :DemoWallet:installDebug)
 FILES=/sdcard/Android/data/$PKG/files
 "$ADB" shell mkdir -p "$FILES"
-"$ADB" push -q "$WORK/config.json" "$FILES/demo-config.json"
 "$ADB" push -q "$WORK/services.pem" "$FILES/dev-ca.pem"
-"$ADB" shell am force-stop "$PKG"
-"$ADB" shell am start -n "$PKG/.MainActivity" --ez reset true >/dev/null
-echo "the demo wallet is running against the test services (ports $(echo $PORTS | tr '\n' ' ')); Ctrl-C to stop them"
-wait "$SERVICES"
+
+CA="$(base64 < "$WORK/services.pem" | tr -d '\n')"
+ONLY=""
+[ $# -gt 0 ] && ONLY="-Pandroid.testInstrumentationRunnerArguments.class=dev.idfoundry.oid4vcgo.demowallet.uitests.DemoWalletUITests#$1"
+(cd .. && ./gradlew --console=plain :DemoWalletUITests:connectedDebugAndroidTest \
+	-Pandroid.testInstrumentationRunnerArguments.controlCA="$CA" $ONLY)

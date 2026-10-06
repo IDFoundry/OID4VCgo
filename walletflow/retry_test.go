@@ -202,6 +202,82 @@ func TestBeginAuthorization_AgainAfterTheHolderLeft(t *testing.T) {
 	}
 }
 
+// The abandoned authorization's redirect, arriving late — the holder
+// went back to the first issuer page — completes nothing: not by
+// ResumeIssuance, which would issue a second time from one offer and,
+// closing, delete the live issuance's keys; nor by the live issuance,
+// which keeps its own authorization for the genuine redirect.
+func TestBeginAuthorization_TheAbandonedRedirectCompletesNothing(t *testing.T) {
+	f := newFixture(t, walletflowtest.Options{})
+	w, _ := faultyWallet(t, f, testVerifier{}, nil)
+	ctx := context.Background()
+	s, err := w.StartIssuance(ctx, f.env.AuthorizationCodeOffer(t, walletflowtest.SDJWTConfigurationID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s.Close(ctx) }()
+	abandoned, err := s.BeginAuthorization(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, err := s.BeginAuthorization(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys := f.keys.Len()
+	stale, err := f.env.Approve(ctx, abandoned)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if r, err := w.ResumeIssuance(ctx, stale); !errors.Is(err, walletflow.ErrNoAuthorization) {
+		if r != nil {
+			_ = r.Close(ctx)
+		}
+		t.Fatalf("ResumeIssuance(the abandoned redirect) = %v, want ErrNoAuthorization", err)
+	}
+	if err := s.CompleteAuthorization(ctx, stale); err == nil {
+		t.Fatal("the live issuance completed with the abandoned authorization's redirect")
+	}
+	if n := f.keys.Len(); n != keys {
+		t.Errorf("the abandoned redirect changed the keys: %d, then %d", keys, n)
+	}
+
+	redirect, err := f.env.Approve(ctx, again)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CompleteAuthorization(ctx, redirect); err != nil {
+		t.Fatalf("the genuine redirect after a stale one: %v", err)
+	}
+	if result, err := s.RequestCredentials(ctx); err != nil || len(result.Credentials) != 1 {
+		t.Fatalf("RequestCredentials = %+v, %v", result, err)
+	}
+}
+
+// Beginning again leaves one authorization recorded, not two: the
+// earlier one can't be resumed after a relaunch, nor expire later and
+// take the issuance's keys with it.
+func TestBeginAuthorization_AgainRecordsOneAuthorization(t *testing.T) {
+	f := newFixture(t, walletflowtest.Options{})
+	auths := walletflow.NewMemoryAuthorizationStore()
+	w := f.newWalletAuthorizing(t, auths, nil)
+	ctx := context.Background()
+	s, err := w.StartIssuance(ctx, f.env.AuthorizationCodeOffer(t, walletflowtest.SDJWTConfigurationID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s.Close(ctx) }()
+	for range 3 {
+		if _, err := s.BeginAuthorization(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if all, err := auths.ListAuthorizations(ctx); err != nil || len(all) != 1 {
+		t.Errorf("authorizations recorded after beginning three times: %d, %v; want 1", len(all), err)
+	}
+}
+
 // One credential the issuer refuses doesn't hold up the others.
 func TestRequestCredentials_OneRefusalDoesntBlockTheRest(t *testing.T) {
 	f := newFixture(t, walletflowtest.Options{})

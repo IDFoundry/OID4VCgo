@@ -20,3 +20,4 @@ dependencyResolutionManagement {
 rootProject.name = "OID4VCgo-android"
 include(":OID4VCWallet")
 include(":DemoWallet")
+include(":DemoWalletUITests")

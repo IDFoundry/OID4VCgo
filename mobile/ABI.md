@@ -143,6 +143,7 @@ The Swift package's adapter marks a `URLError` this way.
 {"client_id": "…", "redirect_uri": "…",
  "issuer_roots": "<PEM>", "verifier_roots": "<PEM>", "registrar_roots": "<PEM>",
  "mdoc_reader_roots": "<PEM>", "mdoc_reader_require_eku": false, "require_trusted_mdoc_reader": false,
+ "require_signed_dcapi_requests": false,
  "development": false, "development_roots": "<PEM>", "locales": ["en-AU", "en"], "batch_size": 0,
  "request_refresh": false, "copy_policy": "per_presentation"}
 ```
@@ -159,6 +160,10 @@ recognizes only reader certificates with the ISO/IEC 18013-5 reader
 authentication extended key usage (1.0.18013.5.1.6), and
 `require_trusted_mdoc_reader` refuses a request no recognized reader
 signed, with `untrusted_verifier`; it needs `mdoc_reader_roots`.
+`require_signed_dcapi_requests` refuses an unsigned OpenID4VP request
+over the Digital Credentials API (`StartDCAPIPresentation`) with
+`untrusted_verifier`: off by default, since HAIP requires a wallet to
+support unsigned requests.
 `development`
 allows services on loopback addresses. `development_roots`, only with
 `development`, are CAs the wallet's HTTPS requests trust besides the
