@@ -514,10 +514,9 @@ already proven under `sd_jwt_vc` above.
 
 **Not yet covered** (separate, later, only if asked):
 
-- `issuer_initiated_dc_api` — needs real Digital Credentials API
-  browser-JS interaction, the same scope cut this repo's own
-  `cmd/conformance-wallet-vp` already makes for its own `dc_api.jwt`
-  module lists.
+- `issuer_initiated_dc_api` — needs a Digital Credentials API
+  stand-in on the issuance side, which no driver here has
+  (`cmd/conformance-wallet-vp`'s covers presentation only).
 - The base (non-HAIP) `VCIWalletTestPlan`'s `ClientAuthType`≠`client_attestation`
   variants, and its own FAPI2SP-battery-equivalent coverage (the base
   plan doesn't reuse the battery at all, so there's nothing to drive
