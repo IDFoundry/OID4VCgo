@@ -1003,6 +1003,19 @@ Decisions taken 2026-10-06 (tracked in [#482](https://github.com/IDFoundry/OID4V
   reader requires the IACA's and the document signer's countryName to
   match (§9.3.3), so `walletflowtest` now names one.
 
+### Phase 10 findings: the reader binding
+
+- **Standalone:** `NewProximityReader(configJSON, keys)` needs no
+  wallet: the IACAs it accepts, and optionally its key, in the app's
+  KeyStore, and certificate chain for reader authentication. It checks
+  the key against the chain when configured, not at the first holder.
+- **Both BLE modes:** the reader uses whichever mode the holder offers,
+  central client mode when it offers both. In that mode the reader is
+  the GATT server and serves the Ident characteristic. The holder side
+  offers peripheral server mode only.
+- **Revocation isn't checked:** the result carries the MSO's status
+  list reference for the app to check, as `proximity.Verify` leaves it.
+
 ## Open questions
 
 - The Wallet Provider's production design, and whether it belongs in

@@ -397,6 +397,49 @@ reconnecting after a disconnect) are in `proximity/README.md`.
 
 ProximityPresentation was added within ABI version 12.
 
+## ProximityReader
+
+The reader's side of an ISO/IEC 18013-5 in-person presentation: a
+verifier asking for an mdoc over BLE. It doesn't need a `Wallet`.
+`NewProximityReader(configJSON, keys)` configures a reader, and `keys`
+may be nil for a reader that doesn't sign. Its `Start(qrCode)` begins a
+`ProximityReaderSession` for the holder's QR code. A QR code the reader
+can't use is `invalid_input`.
+
+The configuration is `{"issuer_roots", "reader_key_id", "reader_chain",
+"max_clock_skew_seconds", "require_mdl_signer_eku"}`:
+- `issuer_roots` (PEM) are the IACAs whose mdocs are accepted.
+- With `reader_key_id` (a P-256 key in `keys`) and `reader_chain` (PEM,
+  leaf first, the leaf certifying that key), each request is signed
+  (reader authentication, §9.1.4), so the holder sees who is asking.
+  The leaf should carry the mdoc reader authentication extended key
+  usage (1.0.18013.5.1.6).
+- `max_clock_skew_seconds` (at most 3600) tolerates an issuer's clock
+  that far off.
+- `require_mdl_signer_eku` accepts only document signers with the mDL
+  document signer extended key usage.
+
+| Method | Result |
+|---|---|
+| `Engagement()` | `{"service_uuid", "ble_mode", "ident", "signed"}`. `ble_mode` is the BLE mode the reader uses, from those the holder offers, preferring `central_client` (§8.3.3.1.1). In `peripheral_server` mode the holder advertises `service_uuid`, and the reader scans, connects and is the GATT client. In `central_client` mode the reader advertises `service_uuid` and is the GATT server, serving `ident` (base64) on the Ident characteristic. `signed` is whether the request will carry reader authentication |
+| `Request(docType, elementsJSON)` | `{"send"}`: send the base64 SessionEstablishment once connected. `elementsJSON` is `{namespace: [identifiers]}`. A reader key requiring user presence prompts now. Once per session (`wrong_step` otherwise) |
+| `HandleMessage(message)` | `{"event", "verified", "send", "reason", "error"}` for the holder's answer. The session is then over: send `send` if present, write `0x02` to State, and disconnect. `event` is `verified` or `ended`. `reason`, for `ended`, is `declined` (status 20, which isn't authenticated) or `error`, with `error` the failing call's text (`protocol` for a response that doesn't verify) |
+| `Terminate()` | `{"send"}`: the reader cancelled or timed out. Send `send` (status 20) if connected, then disconnect |
+
+`verified` is `{"doctype", "claims", "device_signed_claims", "issuer",
+"trust_anchor", "valid_from", "valid_until", "device_auth", "status"}`.
+It means the issuer's chain reaches `issuer_roots` (with §9.3.3's
+country checks), and the digests, validity and device authentication
+over this session all verified. The disclosed elements are only ones
+the request asked for. `claims` is `{namespace: {identifier: value}}`
+with values as a wallet's claims (byte strings as base64, dates as
+their text). The holder may withhold elements, so check that each one
+needed is there. `device_auth` is `signature` or `mac`. `status`, when
+present, is the MSO's status list reference `{"uri", "idx"}`, which
+isn't checked: check it before relying on the document.
+
+ProximityReader was added within ABI version 12.
+
 ## Other functions
 
 | Function | |
