@@ -117,15 +117,23 @@ fun rememberBluetoothPermissions(permissions: List<String>, then: () -> Unit, de
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun InPersonScaffold(title: String, onBack: () -> Unit, content: @Composable () -> Unit) {
-    BackHandler(onBack = onBack)
+private fun InPersonScaffold(
+    title: String,
+    onBack: (() -> Unit)?,
+    bottomBar: @Composable () -> Unit = {},
+    content: @Composable () -> Unit,
+) {
+    onBack?.let { BackHandler(onBack = it) }
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text(title) },
-                navigationIcon = { IconButton(onBack, Modifier.testTag("in-person-back")) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
+                navigationIcon = {
+                    onBack?.let { IconButton(it, Modifier.testTag("in-person-back")) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } }
+                },
             )
         },
+        bottomBar = bottomBar,
     ) { padding -> Column(Modifier.padding(padding).fillMaxSize()) { content() } }
 }
 
@@ -310,9 +318,13 @@ private fun CertificateDetails(c: X509Certificate) {
     )
 }
 
-/** Reader mode: choose what to ask for, scan the holder's QR code, see what it verified. */
+/**
+ * The Verify tab, reader mode: choose what to ask for, scan the holder's
+ * QR code, see what it verified. Back leaves a reading for the choice,
+ * and the choice for the wallet.
+ */
 @Composable
-fun ReaderScreen(model: WalletModel, onClose: () -> Unit) {
+fun ReaderScreen(model: WalletModel, bottomBar: @Composable () -> Unit, onLeave: () -> Unit) {
     var preset by remember { mutableStateOf<ReaderPreset?>(null) }
     var scanning by remember { mutableStateOf(false) }
     var denied by remember { mutableStateOf(false) }
@@ -328,8 +340,14 @@ fun ReaderScreen(model: WalletModel, onClose: () -> Unit) {
         )
     }
     val state = model.readingState
-    InPersonScaffold("Verify in person", onBack = { model.closeReading(); preset = null; onClose() }) {
+    if (model.reading == null) BackHandler(onBack = onLeave)
+    val back = if (model.reading != null) ({ model.closeReading(); preset = null }) else null
+    InPersonScaffold("Verify in person", onBack = back, bottomBar = bottomBar) {
         when {
+            !model.readerAvailable -> Text(
+                "Verifying needs a reader in the configuration: see mobile/android/DemoWallet/README.md.",
+                Modifier.padding(16.dp).testTag("reader-unavailable"),
+            )
             model.reading == null -> LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
                 item {
                     Text(

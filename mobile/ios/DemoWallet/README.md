@@ -52,12 +52,12 @@ what, element by element, marking those the reader says it will keep.
 "Share" sends the chosen elements after Face ID or the passcode;
 "Decline" sends nothing. Only mdocs can be shared in person.
 
-**Reader mode:** with a `reader` in the configuration (`{"issuer_roots",
-"reader_chain", "reader_key"}`: the test services and the scripts here
-add one), turn on "Reader mode" in the settings menu. "Verify" offers
-what to ask for, scans the holder's QR code, and shows what verified.
+**Reader mode, the Verify tab:** with a `reader` in the configuration
+(`{"issuer_roots", "reader_chain", "reader_key"}`: the test services and
+the scripts here add one), the Verify tab in the tab bar offers what to
+ask for, scans the holder's QR code, and shows what verified.
 Revocation isn't checked: the status list reference is shown. An
-`mdoc:` link opens reader mode too. The reader key arrives in the
+`mdoc:` link opens the Verify tab too. The reader key arrives in the
 configuration as a demo shortcut; a real reader makes its key in the
 Secure Enclave.
 
@@ -199,12 +199,11 @@ Known limitations, fine for the demo but not for a production wallet:
 
 ### In person
 
-Not in the demo yet: the Swift package has the holder's and the
-reader's sides (`startProximityPresentation`, `ProximityReader`, see
-[`mobile/README.md`](../../README.md#in-person-presentation)), and the
-demo's "Share in person" and reader mode are still to be built (MOBILE.md,
-Phase 10). Adding them needs `NSBluetoothAlwaysUsageDescription` in the
-app's Info.plist, and a device: the Simulator has no Bluetooth.
+The demo shares in person and verifies others in person (the Verify
+tab): see [In person](#in-person-isoiec-18013-5-over-ble) above, over the
+Swift package's `startProximityPresentation` and `ProximityReader`
+([`mobile/README.md`](../../README.md#in-person-presentation)). It needs
+a device: the Simulator has no Bluetooth.
 
 ### Restricting the pages with Cloudflare Access
 

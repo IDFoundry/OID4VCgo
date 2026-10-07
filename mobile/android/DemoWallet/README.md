@@ -51,14 +51,6 @@ Android answers over OpenID4VP, mdocs included: `org-iso-mdoc` is the iOS demo's
 This has run on the API 37 emulator with Google Play; on a physical
 device it's still to be tried (MOBILE.md's Phase 8 open items).
 
-## In person
-
-Not in the demo yet: the Kotlin library has the holder's and the
-reader's sides (`startProximityPresentation`, `ProximityReader`, see
-[`mobile/README.md`](../../README.md#in-person-presentation)), and the
-demo's "Share in person" and reader mode are still to be built (MOBILE.md,
-Phase 10). BLE needs a physical device: the emulator has no Bluetooth.
-
 ## Configuration
 
 The app takes its configuration — the JSON mobile/cmd/testservices
@@ -86,6 +78,9 @@ credential first), `offer` and `request` (open a link) are for tests.
 
 ## In person (ISO/IEC 18013-5 over BLE)
 
+Over the Kotlin library's `startProximityPresentation` and
+`ProximityReader` ([`mobile/README.md`](../../README.md#in-person-presentation)).
+
 **Share in person:** "In person" on the home screen asks for the nearby
 devices permission, then shows a QR code. A reader that scans it
 connects over Bluetooth, and the app shows:
@@ -97,13 +92,13 @@ connects over Bluetooth, and the app shows:
 "Share" sends the chosen elements after the fingerprint or screen lock
 prompt; "Decline" sends nothing. Only mdocs can be shared in person.
 
-**Reader mode:** with a `reader` in the configuration, turn on "Reader
-mode" in the settings. "Verify" then offers what to ask for (a Photo
+**Reader mode, the Verify tab:** with a `reader` in the configuration,
+the Verify tab in the bottom bar offers what to ask for (a Photo
 ID's or a driving licence's age, or name, photo and age; the test
 services' mdoc), scans the holder's QR code, and shows what verified:
 the elements, the issuer and the IACA it chains to, validity and device
 authentication. Revocation isn't checked: the status list reference is
-shown. An `mdoc:` link opens reader mode too, without the camera.
+shown. An `mdoc:` link opens the Verify tab too, without the camera.
 
 The test services give a reader (`Test Services Reader`) the wallet
 recognizes; passport-vdc's demo writes its own to
@@ -123,8 +118,8 @@ the same services, Bluetooth on, screen lock set:
 1. On the holder, receive the test mdoc: `curl -sk -X POST
    'https://127.0.0.1:8600/offer?pin=493536&mdoc=1'`, open the link, enter
    493536.
-2. On the reader, turn on reader mode. "Verify", choose "Test mdoc: name",
-   and scan the holder's QR code ("In person" on the holder).
+2. On the reader, open the Verify tab, choose "Test mdoc: name", and scan
+   the holder's QR code ("In person" on the holder).
 3. The holder sees "Test Services Reader" as verified. "Share" (with the
    screen lock): the reader shows Verified, with only the shared names.
 4. Again, then: "Decline" (the reader shows declined); untick an

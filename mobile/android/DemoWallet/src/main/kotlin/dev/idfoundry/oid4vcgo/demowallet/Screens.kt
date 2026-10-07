@@ -43,6 +43,11 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.material.icons.filled.VerifiedUser
+import androidx.compose.material.icons.filled.AccountBalanceWallet
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -96,20 +101,22 @@ fun DemoApp(model: WalletModel, authorize: suspend (String) -> String, openBrows
     MaterialTheme(colorScheme = if (isSystemInDarkTheme()) darkColorScheme() else lightColorScheme()) { Box(Modifier.semantics { testTagsAsResourceId = true }) {
         var shown by remember { mutableStateOf<String?>(null) }
         var scanning by remember { mutableStateOf(false) }
-        var verifying by remember { mutableStateOf(false) }
+        var tab by rememberSaveable { mutableStateOf(DemoTab.WALLET) }
         val credential = shown?.let { id -> model.credentials.firstOrNull { it.id == id } }
-        LaunchedEffect(model.engagementToRead) { if (model.engagementToRead != null) verifying = true }
+        // An mdoc: link from another app is for the reader.
+        LaunchedEffect(model.engagementToRead) { if (model.engagementToRead != null) tab = DemoTab.VERIFY }
+        val tabBar: @Composable () -> Unit = { DemoTabBar(tab) { tab = it } }
         when {
             model.inPerson != null -> {
                 KeepScreenOn()
                 InPersonScreen(model)
             }
-            verifying -> ReaderScreen(model, onClose = { verifying = false })
             scanning -> ScanScreen(onLink = { scanning = false; model.open(it) }, onClose = { scanning = false })
             model.requestPhase != WalletModel.RequestPhase.IDLE -> RequestScreen(model, openBrowser)
             model.phase == WalletModel.Phase.Offered || model.phase == WalletModel.Phase.Receiving -> OfferScreen(model, authorize)
             credential != null -> CredentialScreen(model, credential, onBack = { shown = null })
-            else -> HomeScreen(model, onCredential = { shown = it }, onScan = { scanning = true }, onVerify = { verifying = true })
+            tab == DemoTab.VERIFY -> ReaderScreen(model, tabBar, onLeave = { tab = DemoTab.WALLET })
+            else -> HomeScreen(model, onCredential = { shown = it }, onScan = { scanning = true }, bottomBar = tabBar)
         }
         model.linkToConfirm?.let { link ->
             val request = link.scheme == WalletModel.REQUEST_SCHEME
@@ -128,7 +135,7 @@ fun DemoApp(model: WalletModel, authorize: suspend (String) -> String, openBrows
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HomeScreen(model: WalletModel, onCredential: (String) -> Unit, onScan: () -> Unit, onVerify: () -> Unit = {}) {
+fun HomeScreen(model: WalletModel, onCredential: (String) -> Unit, onScan: () -> Unit, bottomBar: @Composable () -> Unit = {}) {
     val context = LocalContext.current
     val shareInPerson = rememberShareInPerson(model)
     Scaffold(
@@ -141,18 +148,38 @@ fun HomeScreen(model: WalletModel, onCredential: (String) -> Unit, onScan: () ->
                         val text = context.getSystemService(ClipboardManager::class.java).primaryClip?.getItemAt(0)?.text?.toString()
                         text?.let { model.open(Uri.parse(it.trim())) }
                     }) { Text("Paste") }
-                    if (model.readerMode && model.readerAvailable) TextButton(onVerify, Modifier.testTag("verify-in-person")) { Text("Verify") }
                     if (model.configured) TextButton(shareInPerson, Modifier.testTag("share-in-person")) { Text("In person") }
                     IconButton(onScan, Modifier.testTag("scan")) { Icon(Icons.Default.QrCodeScanner, "Scan") }
                 },
             )
         },
+        bottomBar = bottomBar,
     ) { padding ->
         LazyColumn(Modifier.fillMaxSize(), contentPadding = padding) { home(model, onCredential) }
     }
 }
 
-/** The settings: which copy of a credential a presentation uses, and reader mode. */
+/** The app's two sides: the holder's wallet, and the reader. */
+enum class DemoTab { WALLET, VERIFY }
+
+/** The bottom navigation bar between the wallet and the reader. */
+@Composable
+fun DemoTabBar(selected: DemoTab, onSelect: (DemoTab) -> Unit) {
+    NavigationBar {
+        NavigationBarItem(
+            selected = selected == DemoTab.WALLET, onClick = { onSelect(DemoTab.WALLET) },
+            icon = { Icon(Icons.Default.AccountBalanceWallet, null) }, label = { Text("Wallet") },
+            modifier = Modifier.testTag("tab-wallet"),
+        )
+        NavigationBarItem(
+            selected = selected == DemoTab.VERIFY, onClick = { onSelect(DemoTab.VERIFY) },
+            icon = { Icon(Icons.Default.VerifiedUser, null) }, label = { Text("Verify") },
+            modifier = Modifier.testTag("tab-verify"),
+        )
+    }
+}
+
+/** The settings: which copy of a credential a presentation uses. */
 @Composable
 private fun SettingsMenu(model: WalletModel) {
     var open by remember { mutableStateOf(false) }
@@ -174,17 +201,6 @@ private fun SettingsMenu(model: WalletModel) {
                 modifier = Modifier.testTag("copy-policy-${policy.name}"),
             )
         }
-        HorizontalDivider()
-        DropdownMenuItem(
-            text = { Text(if (model.readerAvailable) "Reader mode: verify others in person" else "Reader mode (needs a reader in the configuration)") },
-            leadingIcon = { Icon(if (model.readerMode) Icons.Default.CheckCircle else Icons.Default.RadioButtonUnchecked, null) },
-            onClick = {
-                model.chooseReaderMode(!model.readerMode)
-                open = false
-            },
-            enabled = model.readerAvailable,
-            modifier = Modifier.testTag("reader-mode"),
-        )
     }
 }
 

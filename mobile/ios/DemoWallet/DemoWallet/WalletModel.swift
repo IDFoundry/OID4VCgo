@@ -158,18 +158,19 @@ final class WalletModel {
     /// names.
     var linkToConfirm: URL?
 
-    /// Opens a link from another app: an issuer's redirect at once, an
-    /// offer or a request once the holder confirms (linkToConfirm).
     /// A holder's engagement another app handed over (an mdoc: link), for
-    /// reader mode to read.
+    /// the Verify tab to read.
     var engagementToRead: String?
 
+    /// Opens a link from another app: an issuer's redirect at once, an
+    /// offer or a request once the holder confirms (linkToConfirm), a
+    /// holder's engagement in the Verify tab.
     func openFromOutside(_ url: URL) {
         if QRCode.isEngagement(url) {
-            if config?.reader != nil, InPersonModel.readerMode {
+            if config?.reader != nil {
                 engagementToRead = url.absoluteString
             } else {
-                notice = "Turn on reader mode in the settings to verify in person."
+                notice = "This wallet has no reader in its configuration."
             }
             return
         }

@@ -8,7 +8,7 @@ struct DemoWalletApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            RootView()
                 .environment(model)
                 .environment(inPerson)
                 .onOpenURL { model.openFromOutside($0) }

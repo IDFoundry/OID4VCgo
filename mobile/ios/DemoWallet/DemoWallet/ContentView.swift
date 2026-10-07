@@ -2,12 +2,32 @@ import AuthenticationServices
 import OID4VCWallet
 import SwiftUI
 
+/// The app's two sides, in a tab bar: the holder's wallet, and the
+/// reader (Verify), which an mdoc: link from another app opens.
+struct RootView: View {
+    @Environment(WalletModel.self) private var model
+    @State private var tab = Tab.wallet
+
+    enum Tab { case wallet, verify }
+
+    var body: some View {
+        TabView(selection: $tab) {
+            ContentView()
+                .tabItem { Label("Wallet", systemImage: "wallet.bifold") }
+                .tag(Tab.wallet)
+            ReaderView()
+                .tabItem { Label("Verify", systemImage: "checkmark.shield") }
+                .tag(Tab.verify)
+        }
+        .onChange(of: model.engagementToRead) { _, given in if given != nil { tab = .verify } }
+    }
+}
+
 struct ContentView: View {
     @Environment(WalletModel.self) private var model
     @Environment(InPersonModel.self) private var inPerson
     @State private var scanning = false
     @State private var sharingInPerson = false
-    @State private var verifying = false
 
     var body: some View {
         NavigationStack {
@@ -55,19 +75,12 @@ struct ContentView: View {
                             Text("Same copy for the same verifier").tag(WalletConfiguration.CopyPolicy.perVerifier)
                         }
                         .accessibilityIdentifier("copy-policy")
-                        Toggle(model.config?.reader != nil ? "Reader mode: verify others in person" : "Reader mode (needs a reader in the configuration)",
-                               isOn: Binding(get: { inPerson.readerMode }, set: { inPerson.setReaderMode($0) }))
-                            .disabled(model.config?.reader == nil)
-                            .accessibilityIdentifier("reader-mode")
                     } label: {
                         Label("Settings", systemImage: "gearshape")
                     }
                     .accessibilityIdentifier("settings")
                 }
                 ToolbarItemGroup {
-                    if inPerson.readerMode, model.config?.reader != nil {
-                        Button("Verify") { verifying = true }.accessibilityIdentifier("verify-in-person")
-                    }
                     if model.configured {
                         Button("In person") {
                             inPerson.share(model)
@@ -97,8 +110,6 @@ struct ContentView: View {
             }
             .sheet(isPresented: requestShown) { RequestView() }
             .fullScreenCover(isPresented: $sharingInPerson, onDismiss: { inPerson.closeSharing() }) { InPersonView() }
-            .sheet(isPresented: $verifying, onDismiss: { inPerson.closeReading(); model.engagementToRead = nil }) { ReaderView() }
-            .onChange(of: model.engagementToRead) { _, given in if given != nil { verifying = true } }
         }
     }
 

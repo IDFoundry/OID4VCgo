@@ -1005,7 +1005,7 @@ Decisions taken 2026-10-06 (tracked in [#482](https://github.com/IDFoundry/OID4V
    request, and 300 s idle (§8.2.3, §9.1.1.4).
 8. **Demos:** "Share in person" with a consent screen naming the
    reader and its trust, a reader certificate page, and a reader mode
-   behind settings. A presentation history is the app's job, not the
+   behind settings (since moved to a Verify tab in the bottom bar). A presentation history is the app's job, not the
    SDK's.
 
 ### Phase 10 findings: the `proximity` gaps
@@ -1118,6 +1118,10 @@ Decisions taken 2026-10-06 (tracked in [#482](https://github.com/IDFoundry/OID4V
   recognize (`mdoc_reader_roots`), so a holder sees it as verified. The
   key arrives in the configuration, a demo shortcut; a real reader makes
   its own in the Secure Enclave or Android Keystore.
+- **Reader mode is a tab:** at first a setting turned it on, which
+  hid it. It's now a Verify tab beside the wallet, in each platform's
+  own bottom bar (a Material `NavigationBar`, a SwiftUI `TabView`), and
+  an `mdoc:` link opens it.
 - **iOS can't read a certificate's fields:** beyond a subject summary,
   Security has no public API. The request carries each reader
   certificate's fields from Go, for the certificate page.

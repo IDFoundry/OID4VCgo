@@ -81,21 +81,6 @@ final class InPersonModel {
     private var watch: Task<Void, Never>?
     private var reader: ProximityReader?
 
-    private static let readerModeKey = "demo-reader-mode"
-
-    /// Whether reader mode is on (settings).
-    static var readerMode: Bool {
-        get { UserDefaults.standard.bool(forKey: readerModeKey) }
-        set { UserDefaults.standard.set(newValue, forKey: readerModeKey) }
-    }
-
-    private(set) var readerMode = InPersonModel.readerMode
-
-    func setReaderMode(_ on: Bool) {
-        readerMode = on
-        Self.readerMode = on
-    }
-
     func share(_ model: WalletModel) {
         guard presentation == nil, let wallet = model.wallet else { return }
         notice = nil
@@ -360,11 +345,11 @@ private struct OutcomeView: View {
 
 // MARK: Reader mode
 
-/// Choose what to ask for, scan the holder's QR code, see what verified.
+/// The Verify tab: choose what to ask for, scan the holder's QR code,
+/// see what verified.
 struct ReaderView: View {
     @Environment(WalletModel.self) private var model
     @Environment(InPersonModel.self) private var inPerson
-    @Environment(\.dismiss) private var dismiss
     @State private var preset: ReaderPreset?
     @State private var scanning = false
 
@@ -372,6 +357,10 @@ struct ReaderView: View {
         NavigationStack {
             Group {
                 switch inPerson.readingState {
+                case nil where model.config?.reader == nil:
+                    ContentUnavailableView("No reader", systemImage: "checkmark.shield",
+                                           description: Text("Verifying needs a reader in the configuration: see mobile/ios/DemoWallet/README.md."))
+                        .accessibilityIdentifier("reader-unavailable")
                 case nil where inPerson.reading == nil:
                     presets
                 case nil, .connecting?:
@@ -388,10 +377,11 @@ struct ReaderView: View {
             .navigationTitle("Verify in person")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                Button("Close") {
-                    inPerson.closeReading()
-                    model.engagementToRead = nil
-                    dismiss()
+                if inPerson.reading != nil {
+                    Button("Cancel") {
+                        inPerson.closeReading()
+                        model.engagementToRead = nil
+                    }
                 }
             }
             .sheet(isPresented: $scanning) {

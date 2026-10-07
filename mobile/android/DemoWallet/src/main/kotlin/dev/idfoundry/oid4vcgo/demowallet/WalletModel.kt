@@ -181,7 +181,7 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
     fun openFromOutside(uri: Uri) {
         when {
             uri.scheme.equals("mdoc", ignoreCase = true) ->
-                if (readerAvailable && readerMode) engagementToRead = uri.toString() else notice = "Turn on reader mode in the settings to verify in person."
+                if (readerAvailable) engagementToRead = uri.toString() else notice = "This wallet has no reader in its configuration."
             uri.scheme == OFFER_SCHEME || uri.scheme == REQUEST_SCHEME -> linkToConfirm = uri
             else -> open(uri)
         }
@@ -839,15 +839,6 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
     /** Whether the demo reader is configured: the services gave it an identity. */
     val readerAvailable: Boolean get() = config?.reader != null
 
-    /** Whether reader mode is on (settings). */
-    var readerMode by mutableStateOf(prefs.getBoolean(READER_MODE, false))
-        private set
-
-    fun chooseReaderMode(on: Boolean) {
-        readerMode = on
-        prefs.edit().putBoolean(READER_MODE, on).apply()
-    }
-
     /** A holder's engagement another app handed over (an mdoc: link), for reader mode to read. */
     var engagementToRead by mutableStateOf<String?>(null)
 
@@ -897,7 +888,6 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
 
     companion object {
         private const val COPY_POLICY = "demo-copy-policy"
-        private const val READER_MODE = "demo-reader-mode"
 
         /** Credential Offer links' scheme, and presentation requests'. */
         const val OFFER_SCHEME = "openid-credential-offer"

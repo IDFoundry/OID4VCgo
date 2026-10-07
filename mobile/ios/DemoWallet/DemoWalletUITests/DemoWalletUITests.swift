@@ -515,25 +515,18 @@ final class DemoWalletUITests: XCTestCase {
         XCTAssertTrue(app.buttons["share-in-person"].waitForExistence(timeout: 10), "back on the wallet")
     }
 
-    /// Reader mode, on in the settings, offers what to ask for.
+    /// The Verify tab offers what to ask for; the Wallet tab is back to
+    /// the credentials.
     @MainActor
     func testReaderMode() async throws {
         let app = try await launch()
-        app.buttons["settings"].tap()
-        let toggle = app.switches["reader-mode"].exists ? app.switches["reader-mode"] : app.buttons["reader-mode"]
-        XCTAssertTrue(toggle.waitForExistence(timeout: 10))
-        let verify = app.buttons["verify-in-person"]
-        if !verify.exists { toggle.tap() }
-        XCTAssertTrue(verify.waitForExistence(timeout: 10), "no Verify with reader mode on")
+        let verify = app.tabBars.buttons["Verify"]
+        XCTAssertTrue(verify.waitForExistence(timeout: 10), "no Verify tab")
         verify.tap()
         let presets = app.buttons.matching(identifier: "reader-preset")
         XCTAssertTrue(presets.firstMatch.waitForExistence(timeout: 10))
         XCTAssertEqual(presets.count, 5)
-        app.buttons["Close"].tap()
-        // Off again, for the other tests.
-        app.buttons["settings"].tap()
-        toggle.tap()
+        app.tabBars.buttons["Wallet"].tap()
         XCTAssertTrue(app.buttons["share-in-person"].waitForExistence(timeout: 10))
-        XCTAssertFalse(verify.exists)
     }
 }
