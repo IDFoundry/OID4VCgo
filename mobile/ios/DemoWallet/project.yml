@@ -38,6 +38,8 @@ targets:
         UILaunchScreen: {}
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
         NSCameraUsageDescription: Scans credential offer and presentation request QR codes.
+        # Sharing in person, and reader mode (ISO/IEC 18013-5 over BLE).
+        NSBluetoothAlwaysUsageDescription: Connects to the reader you show your QR code to, or to the phone you verify, to share credentials in person.
         # Without it, iOS asks for the passcode instead of Face ID when a
         # holder key (Secure Enclave, user presence) signs.
         NSFaceIDUsageDescription: Confirms it's you before your credentials' keys sign a presentation.
@@ -49,6 +51,9 @@ targets:
           # Credential Offer links, and presentation request links.
           - CFBundleURLName: dev.idfoundry.oid4vcgo.demowallet
             CFBundleURLSchemes: [dev.idfoundry.oid4vcgo.demowallet, openid-credential-offer, openid4vp]
+          # An mdoc's device engagement, for reader mode.
+          - CFBundleURLName: dev.idfoundry.oid4vcgo.demowallet.mdoc
+            CFBundleURLSchemes: [mdoc]
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: $(DEMO_BUNDLE_ID)

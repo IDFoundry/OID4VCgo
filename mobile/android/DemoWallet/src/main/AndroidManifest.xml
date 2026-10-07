@@ -33,6 +33,13 @@
                 <data android:scheme="openid-credential-offer" />
                 <data android:scheme="openid4vp" />
             </intent-filter>
+            <!-- An mdoc's device engagement (ISO/IEC 18013-5 §8.2.2.3), for
+                 reader mode: what the holder's QR code carries. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="mdoc" />
+            </intent-filter>
         </activity>
         <!-- Credential Manager launches it for a Digital Credentials API
              request the holder chose one of the wallet's credentials for. -->

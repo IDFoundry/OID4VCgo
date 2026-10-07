@@ -3,12 +3,14 @@ import SwiftUI
 @main
 struct DemoWalletApp: App {
     @State private var model = WalletModel()
+    @State private var inPerson = InPersonModel()
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            RootView()
                 .environment(model)
+                .environment(inPerson)
                 .onOpenURL { model.openFromOutside($0) }
         }
         .onChange(of: scenePhase) { _, phase in

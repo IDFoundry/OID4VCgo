@@ -4,8 +4,13 @@
 // mobile/ios/DemoWallet). A control endpoint on -addr serves the app's
 // configuration and fresh Credential Offers:
 //
-//	GET  /config                 → {"wallet": NewWallet config, "provider_url"}
-//	POST /offer?pin=<digits>     → {"offer"}  (no pin: the authorization code grant)
+//	GET  /config                 → {"wallet": NewWallet config, "provider_url", "reader"}:
+//	                               reader is the demo reader mode's identity
+//	                               ({"issuer_roots", "reader_chain", "reader_key"}),
+//	                               which the wallet recognizes (mdoc_reader_roots)
+//	POST /offer?pin=<digits>     → {"offer"}  (no pin: the authorization code grant);
+//	                               with mdoc=1, a PIN offer has the mdoc too, for
+//	                               presenting in person
 //	POST /request?format=<fmt>   → {"id", "link"}: the Verifier asks for family_name
 //	                               from an SD-JWT VC ("dc+sd-jwt"), an mdoc
 //	                               ("mso_mdoc") or either (no format); with
@@ -87,16 +92,23 @@ func run(addr, redirect, certOut string) error {
 
 	provider := httptest.NewTLSServer(providerHandler(env.Provider))
 	defer provider.Close()
+	reader, err := newDemoReader("Test Services Reader")
+	if err != nil {
+		return err
+	}
+	issuerRoots := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: env.IssuerCA.Raw}))
 
 	config := map[string]any{
 		"wallet": map[string]any{
 			"client_id": walletflowtest.ClientID, "redirect_uri": redirect, "development": true, "request_refresh": true,
-			"issuer_roots": string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: env.IssuerCA.Raw})),
+			"issuer_roots":      issuerRoots,
+			"mdoc_reader_roots": reader.caPEM,
 			"verifier_roots": string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: v.CA.Raw})) +
 				string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: rv.CA.Raw})),
 			"registrar_roots": string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: env.RegistrarCA.Raw})),
 		},
 		"provider_url": provider.URL,
+		"reader":       map[string]any{"issuer_roots": issuerRoots, "reader_chain": reader.chainPEM, "reader_key": reader.keyPEM},
 	}
 	mux := services{env: env, v: v, rv: rv}.routes(config)
 	(&dcapiRequests{v: v, requests: map[string]*walletflowtest.DCAPIRequest{}, results: map[string]map[string]any{}}).routes(mux, env)
@@ -153,7 +165,11 @@ func (s services) handleOffer(w http.ResponseWriter, r *http.Request) {
 	var offer string
 	var err error
 	if pin := r.URL.Query().Get("pin"); pin != "" {
-		offer, err = s.env.PreAuthorizedOffer(pin, walletflowtest.SDJWTConfigurationID)
+		configs := []string{walletflowtest.SDJWTConfigurationID}
+		if r.URL.Query().Get("mdoc") == "1" {
+			configs = append(configs, walletflowtest.MdocConfigurationID)
+		}
+		offer, err = s.env.PreAuthorizedOffer(pin, configs...)
 	} else {
 		offer, err = s.env.AuthorizationCodeOffer(walletflowtest.SDJWTConfigurationID, walletflowtest.MdocConfigurationID)
 	}

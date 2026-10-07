@@ -24,6 +24,7 @@
 		E50E0D87D6C92E1DC93F8EF6 /* DemoConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53476392F3D2B71F29355950 /* DemoConfiguration.swift */; };
 		E98FBE42130D1532A07D617D /* OID4VCWallet in Frameworks */ = {isa = PBXBuildFile; productRef = 1F342BBC39685470A402E36E /* OID4VCWallet */; };
 		F5C4EB4E4628345580B28CB3 /* QRCode.swift in Sources */ = {isa = PBXBuildFile; fileRef = 79295F2DA87108CEC198C9A8 /* QRCode.swift */; };
+		0A618630DB6DCA4DF328DAFA /* InPerson.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF0E82C6603A7E9C3A8B54E8 /* InPerson.swift */; };
 		FC263E54B582B9FBC79575D9 /* SharedWallet.swift in Sources */ = {isa = PBXBuildFile; fileRef = CFF88E2B6EA38D11AAE88FF5 /* SharedWallet.swift */; };
 /* End PBXBuildFile section */
 
@@ -79,6 +80,7 @@
 		71C07640C370F23881BE60F2 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		727FF1B0EB18E15552480967 /* WalletModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WalletModel.swift; sourceTree = "<group>"; };
 		79295F2DA87108CEC198C9A8 /* QRCode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRCode.swift; sourceTree = "<group>"; };
+		BF0E82C6603A7E9C3A8B54E8 /* InPerson.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InPerson.swift; sourceTree = "<group>"; };
 		7D97405F0E07310B8A204CF1 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		819D7D3167D5646D27BE809E /* DemoWalletUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DemoWalletUITests.swift; sourceTree = "<group>"; };
 		8DD7E31109ADF78893A8C16D /* DemoWalletTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = DemoWalletTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -187,6 +189,7 @@
 				0ED8F6CCAAF9AD82083F4C15 /* DocumentRegistrations.swift */,
 				2F0E54791828D5171B822733 /* HTTPWalletProvider.swift */,
 				71C07640C370F23881BE60F2 /* Info.plist */,
+				BF0E82C6603A7E9C3A8B54E8 /* InPerson.swift */,
 				79295F2DA87108CEC198C9A8 /* QRCode.swift */,
 				13C76E55CD4881373A60A9E3 /* ScanView.swift */,
 				727FF1B0EB18E15552480967 /* WalletModel.swift */,
@@ -336,6 +339,7 @@
 				C02517FB98677D16EA5E9C4F /* DemoWalletApp.swift in Sources */,
 				812422A5EC3D1B52E33696C3 /* DocumentRegistrations.swift in Sources */,
 				6BDA4B0484E846748B5C2344 /* HTTPWalletProvider.swift in Sources */,
+				0A618630DB6DCA4DF328DAFA /* InPerson.swift in Sources */,
 				F5C4EB4E4628345580B28CB3 /* QRCode.swift in Sources */,
 				212577FF75EB6D4DA46ED9C4 /* ScanView.swift in Sources */,
 				190A563E9E40A7E1BAE19C2D /* SharedWallet.swift in Sources */,

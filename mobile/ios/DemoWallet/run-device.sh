@@ -84,6 +84,18 @@ config = {
     },
     "provider_url": provider,
 }
+# Reader mode identity: the in-person reader of the verifier, its key
+# then its chain (a demo shortcut: a real reader keeps its key on the device).
+reader_file = state / "mdoc-reader.pem"
+if reader_file.exists():
+    text = reader_file.read_text()
+    end = "-----END PRIVATE KEY-----"
+    key, chain = text.split(end, 1)
+    config["reader"] = {
+        "issuer_roots": (state / "issuer-ca.pem").read_text(),
+        "reader_key": key + end + "\n",
+        "reader_chain": chain.lstrip(),
+    }
 print(json.dumps({"OID4VC_DEMO_CONFIG": json.dumps(config)}))
 PY
 )"

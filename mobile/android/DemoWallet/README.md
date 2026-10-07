@@ -51,14 +51,6 @@ Android answers over OpenID4VP, mdocs included: `org-iso-mdoc` is the iOS demo's
 This has run on the API 37 emulator with Google Play; on a physical
 device it's still to be tried (MOBILE.md's Phase 8 open items).
 
-## In person
-
-Not in the demo yet: the Kotlin library has the holder's and the
-reader's sides (`startProximityPresentation`, `ProximityReader`, see
-[`mobile/README.md`](../../README.md#in-person-presentation)), and the
-demo's "Share in person" and reader mode are still to be built (MOBILE.md,
-Phase 10). BLE needs a physical device: the emulator has no Bluetooth.
-
 ## Configuration
 
 The app takes its configuration — the JSON mobile/cmd/testservices
@@ -68,14 +60,81 @@ remembers it:
 
 ```json
 {"wallet": {"client_id": "…", "redirect_uri": "…", "issuer_roots": "<PEM>",
-            "verifier_roots": "<PEM>", "development": true},
- "provider_url": "https://…"}
+            "verifier_roots": "<PEM>", "mdoc_reader_roots": "<PEM>", "development": true},
+ "provider_url": "https://…",
+ "reader": {"issuer_roots": "<PEM>", "reader_chain": "<PEM>", "reader_key": "<PKCS #8 PEM>"}}
 ```
+
+`reader`, optional, is reader mode's identity (below): the IACAs it
+accepts, and its certificate chain and key. The key comes in the
+configuration as a demo shortcut; a real reader's key is made in Android
+Keystore and never leaves the device. `mdoc_reader_roots` is the CA the
+wallet recognizes readers by.
 
 With `development`, a `dev-ca.pem` pushed beside it is trusted too: the
 wallet's own requests take it as `development_roots`, since Go reads only
 Android's system CA files. The launch extras `reset` (delete every
 credential first), `offer` and `request` (open a link) are for tests.
+
+## In person (ISO/IEC 18013-5 over BLE)
+
+Over the Kotlin library's `startProximityPresentation` and
+`ProximityReader` ([`mobile/README.md`](../../README.md#in-person-presentation)).
+
+**Share in person, the Present tab:** it asks for the nearby devices
+permission the first time, then shows a QR code at once, and a new one
+after each session; leaving the tab ends the session. A reader that scans it
+connects over Bluetooth, and the app shows:
+- who is asking: the reader's name and whether it's verified, its
+  certificate chain on "Reader certificate";
+- what it asks for, element by element, marking those the reader says
+  it will keep.
+
+"Share" sends the chosen elements after the fingerprint or screen lock
+prompt; "Decline" sends nothing. Only mdocs can be shared in person.
+
+**Reader mode, the Verify tab:** with a `reader` in the configuration,
+the Verify tab in the bottom bar offers what to ask for (a Photo
+ID's or a driving licence's age, or name, photo and age; the test
+services' mdoc), scans the holder's QR code, and shows what verified:
+the elements, the issuer and the IACA it chains to, validity and device
+authentication. Revocation isn't checked: the status list reference is
+shown. An `mdoc:` link opens the Verify tab too, without the camera.
+
+The test services give a reader (`Test Services Reader`) the wallet
+recognizes; passport-vdc's demo writes its own to
+`.demo-state/mdoc-reader.pem` (key, then chain) and its CA to
+`mdoc-reader-ca.pem`, which `run-passport-vdc.sh` puts in the
+configuration: it runs the app against the passport-vdc demo, on an
+emulator or a USB-connected phone, as the iOS demo's `run-device.sh`
+does on an iPhone. Use it to try an Android phone and an iPhone
+together.
+
+### Two phones, by hand
+
+BLE doesn't run in CI: try it on two phones (two Android phones, or an
+Android phone and an iPhone with the iOS demo), each configured against
+the same services, Bluetooth on, screen lock set:
+
+1. On the holder, receive the test mdoc: `curl -sk -X POST
+   'https://127.0.0.1:8600/offer?pin=493536&mdoc=1'`, open the link, enter
+   493536.
+2. On the reader, open the Verify tab, choose "Test mdoc: name", and scan
+   the holder's QR code (its Present tab).
+3. The holder sees "Test Services Reader" as verified. "Share" (with the
+   screen lock): the reader shows Verified, with only the shared names.
+4. Again, then: "Decline" (the reader shows declined); untick an
+   element (it's missing from the result); cancel on the reader while
+   the holder decides (the holder shows the reader ended it); walk out of
+   range mid-transfer, or turn on airplane mode (both show the
+   connection lost); a reader without `reader` in its configuration (the
+   holder shows an unknown reader).
+5. Swap the phones' roles.
+
+Two Android emulators can do it too, over the emulator's own Bluetooth:
+the holder's debug build logs its QR code's text (`adb logcat -s
+DemoWallet`), and `adb -s <reader> shell am start -a
+android.intent.action.VIEW -d '<mdoc:…>'` hands it to the reader.
 
 ## UI tests, against test services
 

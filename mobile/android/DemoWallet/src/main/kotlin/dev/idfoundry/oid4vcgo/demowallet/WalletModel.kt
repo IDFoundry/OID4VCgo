@@ -21,6 +21,12 @@ import dev.idfoundry.oid4vcwallet.DeferredCredential
 import dev.idfoundry.oid4vcwallet.DeferredStatus
 import dev.idfoundry.oid4vcwallet.FileCredentialStore
 import dev.idfoundry.oid4vcwallet.Issuance
+import dev.idfoundry.oid4vcwallet.MdocPresentation
+import dev.idfoundry.oid4vcwallet.ProximityException
+import dev.idfoundry.oid4vcwallet.ProximityPresentation
+import dev.idfoundry.oid4vcwallet.ProximityReader
+import dev.idfoundry.oid4vcwallet.ProximityReaderConfiguration
+import dev.idfoundry.oid4vcwallet.ProximityReaderSession
 import dev.idfoundry.oid4vcwallet.OID4VC
 import dev.idfoundry.oid4vcwallet.Offer
 import dev.idfoundry.oid4vcwallet.Presentation
@@ -173,7 +179,12 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
 
     /** Opens a link from another app: an issuer's redirect at once, an offer or a request once the holder confirms. */
     fun openFromOutside(uri: Uri) {
-        if (uri.scheme == OFFER_SCHEME || uri.scheme == REQUEST_SCHEME) linkToConfirm = uri else open(uri)
+        when {
+            uri.scheme.equals("mdoc", ignoreCase = true) ->
+                if (readerAvailable) engagementToRead = uri.toString() else notice = "This wallet has no reader in its configuration."
+            uri.scheme == OFFER_SCHEME || uri.scheme == REQUEST_SCHEME -> linkToConfirm = uri
+            else -> open(uri)
+        }
     }
 
     fun confirmLink() {
@@ -755,6 +766,124 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
         issuance = null
         offer = null
         authorized = false
+    }
+
+    // In person (ISO/IEC 18013-5 over BLE)
+
+    /** The in-person presentation in progress, the holder's side. */
+    var inPerson by mutableStateOf<ProximityPresentation?>(null)
+        private set
+    var inPersonState by mutableStateOf<ProximityPresentation.State?>(null)
+        private set
+    private var inPersonJob: Job? = null
+
+    /**
+     * Starts sharing in person: the QR code to show, and advertising. The
+     * Bluetooth permissions are the screen's to have asked for.
+     */
+    fun shareInPerson() {
+        val wallet = wallet ?: return
+        if (busy || inPerson != null) return
+        notice = null
+        try {
+            val p = wallet.startProximityPresentation(getApplication())
+            inPerson = p
+            // For driving two emulators: the QR code's text, an ephemeral
+            // key and a service UUID, in debug builds.
+            if (getApplication<Application>().applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) {
+                android.util.Log.d("DemoWallet", "in person: ${p.qrCode}")
+            }
+            inPersonJob = viewModelScope.launch {
+                p.state.collect { s ->
+                    inPersonState = s
+                    if (s.isFinal) refresh()
+                }
+            }
+        } catch (e: ProximityException) {
+            notice = e.description
+        } catch (e: WalletException) {
+            notice = describe(e)
+        }
+    }
+
+    /** Shares [elements] of [credentialID] with the reader, for document [document]. */
+    fun respondInPerson(document: Int, credentialID: String, elements: List<MdocPresentation.Element>) {
+        val p = inPerson ?: return
+        viewModelScope.launch {
+            try {
+                p.respond(document, credentialID, elements)
+            } catch (e: WalletException) {
+                // A cancelled prompt leaves the request standing: try again or decline.
+                notice = describe(e)
+            } catch (e: ProximityException) {
+                notice = e.description
+            }
+        }
+    }
+
+    fun declineInPerson() {
+        val p = inPerson ?: return
+        viewModelScope.launch { p.decline() }
+    }
+
+    /** Leaves the in-person screen, ending the session if it's still going. */
+    fun closeInPerson() {
+        inPerson?.cancel()
+        inPersonJob?.cancel()
+        inPerson = null
+        inPersonState = null
+    }
+
+    // Reader mode
+
+    /** Whether the demo reader is configured: the services gave it an identity. */
+    val readerAvailable: Boolean get() = config?.reader != null
+
+    /** A holder's engagement another app handed over (an mdoc: link), for reader mode to read. */
+    var engagementToRead by mutableStateOf<String?>(null)
+
+    var reading by mutableStateOf<ProximityReaderSession?>(null)
+        private set
+    var readingState by mutableStateOf<ProximityReaderSession.State?>(null)
+        private set
+    var readingPreset by mutableStateOf<ReaderPreset?>(null)
+        private set
+    private var readingJob: Job? = null
+
+    private val reader: ProximityReader? by lazy {
+        val r = config?.reader ?: return@lazy null
+        runCatching {
+            ProximityReader(
+                ProximityReaderConfiguration(
+                    issuerRoots = r.issuerRoots, readerKeyID = DemoReaderKeys.ID, readerChain = r.readerChain, maxClockSkewSeconds = 300,
+                ),
+                DemoReaderKeys(r),
+            )
+        }.onFailure { notice = describe(it) }.getOrNull()
+    }
+
+    /** Reads the holder's [qrCode], asking for [preset]. */
+    fun read(qrCode: String, preset: ReaderPreset) {
+        val reader = reader ?: return
+        try {
+            val session = reader.start(getApplication(), qrCode, preset.docType, preset.elements)
+            reading = session
+            readingPreset = preset
+            readingJob = viewModelScope.launch { session.state.collect { readingState = it } }
+        } catch (e: ProximityException) {
+            notice = e.description
+        } catch (e: WalletException) {
+            notice = describe(e)
+        }
+    }
+
+    fun closeReading() {
+        engagementToRead = null
+        reading?.cancel()
+        readingJob?.cancel()
+        reading = null
+        readingState = null
+        readingPreset = null
     }
 
     companion object {

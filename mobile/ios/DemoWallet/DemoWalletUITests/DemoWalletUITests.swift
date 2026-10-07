@@ -482,4 +482,50 @@ final class DemoWalletUITests: XCTestCase {
         XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "pending").firstMatch.waitForExistence(timeout: 3))
         XCTAssertEqual(app.descendants(matching: .any).matching(identifier: "credential").count, 0)
     }
+
+    /// Sharing in person: the Present tab shows the QR code at once where
+    /// there's Bluetooth, and on the Simulator — which has none — says so,
+    /// with nothing shared.
+    @MainActor
+    func testShareInPerson() async throws {
+        let offer = try await Self.fetch("offer", query: [URLQueryItem(name: "pin", value: "493536"), URLQueryItem(name: "mdoc", value: "1")],
+                                         method: "POST")["offer"] as! String
+        let app = try await launch(offer: offer)
+        let pin = app.textFields["pin"]
+        XCTAssertTrue(pin.waitForExistence(timeout: 20))
+        pin.tap()
+        pin.typeText("493536")
+        app.buttons["receive"].tap()
+        let status = app.staticTexts["status"]
+        XCTAssertTrue(status.waitForExistence(timeout: 60))
+        XCTAssertTrue(status.label.hasPrefix("Received 2"), status.label)
+
+        app.tabBars.buttons["Present"].tap()
+        let qr = app.images["in-person-qr"]
+        let outcome = app.staticTexts["in-person-outcome"]
+        let deadline = Date().addingTimeInterval(20)
+        while !qr.exists && !outcome.exists && Date() < deadline { try await Task.sleep(for: .milliseconds(250)) }
+        if outcome.exists {
+            XCTAssertTrue(outcome.label.contains("Bluetooth"), outcome.label)
+        } else {
+            XCTAssertTrue(qr.exists, "neither the QR code nor an outcome")
+        }
+        app.tabBars.buttons["Wallet"].tap()
+        XCTAssertTrue(app.buttons["scan"].waitForExistence(timeout: 10), "back on the wallet")
+    }
+
+    /// The Verify tab offers what to ask for; the Wallet tab is back to
+    /// the credentials.
+    @MainActor
+    func testReaderMode() async throws {
+        let app = try await launch()
+        let verify = app.tabBars.buttons["Verify"]
+        XCTAssertTrue(verify.waitForExistence(timeout: 10), "no Verify tab")
+        verify.tap()
+        let presets = app.buttons.matching(identifier: "reader-preset")
+        XCTAssertTrue(presets.firstMatch.waitForExistence(timeout: 10))
+        XCTAssertEqual(presets.count, 5)
+        app.tabBars.buttons["Wallet"].tap()
+        XCTAssertTrue(app.buttons["scan"].waitForExistence(timeout: 10), "back on the wallet")
+    }
 }
