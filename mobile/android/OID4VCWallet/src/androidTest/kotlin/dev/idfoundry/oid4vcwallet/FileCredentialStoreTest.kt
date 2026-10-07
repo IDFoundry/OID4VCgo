@@ -96,7 +96,7 @@ class FileCredentialStoreTest {
                 assertEquals(received.credentials.map { it.id }.toSet(), held.map { it.id }.toSet())
                 assertTrue(held.all { it.holderKeyPresent == true })
 
-                val otherKeys = AndroidKeystoreKeyStore(AndroidKeystoreKeyStore.Options(aliasPrefix = "$prefix.none."))
+                val otherKeys = AndroidKeystoreKeyStore(AndroidKeystoreKeyStore.Options(holderUserAuthentication = false, aliasPrefix = "$prefix.none."))
                 val other = Wallet(env.configuration, otherKeys, store(dir), null)
                 assertTrue("another key store holds none of the keys", other.credentials().all { it.holderKeyPresent == false })
             } finally {
