@@ -1,8 +1,8 @@
 # OID4VC demo wallet (iOS)
 
 A SwiftUI wallet app on the OID4VCWallet Swift package — OID4VCgo's
-walletflow through gomobile (see [MOBILE.md](../../../MOBILE.md), Phase
-4). It receives credentials from a Credential Offer link
+walletflow through gomobile (see [MOBILE.md](../../../MOBILE.md), Phases
+4 to 9). It receives credentials from a Credential Offer link
 (`openid-credential-offer://…`, opened in the app, or pasted), and
 presents them in answer to a presentation request link (`openid4vp://…`).
 Links can be opened from anywhere, pasted, or scanned in the app. On a
@@ -12,8 +12,8 @@ A credential's claims show the holder's portrait as an image.
 A credential the issuer defers (passport-vdc's operator review, say)
 waits under "Waiting for the issuer". It's polled at the issuer's
 interval, and Check again asks at once. It joins the credentials once
-issued, or says it was denied. Pending credentials are kept in memory,
-so one still waiting when the app quits is lost.
+issued, or says it was denied. A credential still waiting when the app
+quits is waited for again when it's relaunched.
 For a request, it shows who's asking, which credentials can answer and
 exactly what sharing them discloses. Then it shares them, with holder
 keys signing (Face ID or the passcode on a device), or declines. Its keys are
@@ -196,6 +196,15 @@ Known limitations, fine for the demo but not for a production wallet:
   grants and pending issuances. Their keys stay in the app's own
   Keychain group, so the extension can't use them, but a production
   wallet would keep those records out of the shared container.
+
+### In person
+
+Not in the demo yet: the Swift package has the holder's and the
+reader's sides (`startProximityPresentation`, `ProximityReader`, see
+[`mobile/README.md`](../../README.md#in-person-presentation)), and the
+demo's "Share in person" and reader mode are still to be built (MOBILE.md,
+Phase 10). Adding them needs `NSBluetoothAlwaysUsageDescription` in the
+app's Info.plist, and a device: the Simulator has no Bluetooth.
 
 ### Restricting the pages with Cloudflare Access
 

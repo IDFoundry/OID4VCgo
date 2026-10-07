@@ -4,6 +4,7 @@ import SwiftUI
 struct DemoWalletApp: App {
     @State private var model = WalletModel()
     @State private var inPerson = InPersonModel()
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
         WindowGroup {
@@ -11,6 +12,9 @@ struct DemoWalletApp: App {
                 .environment(model)
                 .environment(inPerson)
                 .onOpenURL { model.openFromOutside($0) }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { Task { await model.becameActive() } }
         }
     }
 }

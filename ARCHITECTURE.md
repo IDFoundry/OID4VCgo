@@ -1,7 +1,7 @@
 # Architecture
 
 > **Status: every planned package is `(done)`**, including `conformance`
-> (all four OIDF conformance-suite binaries built, unit-tested, and each
+> (all four OIDF conformance-suite binaries built and each
 > confirmed live against a real, locally-run OIDF conformance suite
 > instance — see its own bullet below for the one deliberate, permanent
 > gap). See "Planned package layout" below for the per-package detail;
@@ -28,8 +28,14 @@ opt-in. See "Relationship to FAPIgo" below for the specific list.
 A mobile wallet SDK sits on top of this library: `walletflow`, a
 session-oriented wallet over key, credential and Wallet Provider
 interfaces, and `mobile`, its gomobile façade, published for iOS as the
-OID4VCWallet Swift package. [MOBILE.md](MOBILE.md) records its design
-and phases.
+OID4VCWallet Swift package and for Android as a Kotlin library (an AAR
+released from OID4VCgo-wallet-kotlin, with no Maven repository).
+[MOBILE.md](MOBILE.md) records its design and phases.
+
+Beyond HAIP, the library also covers what a wallet meets outside
+OpenID4VC's redirect flows: Safari's `org-iso-mdoc` protocol over the
+Digital Credentials API (ISO/IEC TS 18013-7 Annex C, `mdocdcapi`), and
+in-person presentation over BLE (ISO/IEC 18013-5, `proximity`).
 
 ## Relationship to FAPIgo
 
@@ -233,6 +239,15 @@ changes whether *every* bullet below is `(done)`.
   simulation of one), the same "real round trip, not just our own
   assumption" discipline every other cross-package wire-format claim
   here is held to.
+- **`internal/certchain`** (done) — the one certificate-chain primitive
+  every X5C-shaped resolver shares: parse a leaf-first chain and verify
+  it against trust anchors (at a caller-given time, `VerifyChainsAt`),
+  refusing a self-signed leaf even when it is itself a root.
+- **`internal/readerauth`** (done) — ISO/IEC 18013-5 §9.1.4 mdoc
+  reader authentication, shared by `mdocdcapi` and `proximity` so what
+  a reader signs is what a holder checks: a COSE_Sign1 with a detached
+  payload and the reader's chain in `x5chain`, the algorithm taken from
+  the certificate's key, and Annex B's reader EKU (1.0.18013.5.1.6).
 - **`credential/mdoc`** (done) — ISO/IEC 18013-5 mdoc, both roles:
   - **Issuer side**: `Issue`/`Verify` for `IssuerSigned`
     (namespace/data-element digest+salt selective disclosure, §10.3.3),
@@ -906,7 +921,7 @@ changes whether *every* bullet below is `(done)`.
   checked in the given order and returning satisfied as soon as one
   does (§6.4.1's own "the Wallet SHOULD return the first option that
   it can satisfy"), returning exactly that option's own `Path`s.
-- **`mdocdcapi`** (new) — both sides of `org-iso-mdoc`, ISO/IEC TS
+- **`mdocdcapi`** (done) — both sides of `org-iso-mdoc`, ISO/IEC TS
   18013-7 Annex C: an mdoc requested and presented over the W3C Digital
   Credentials API without OpenID4VP, the only protocol Safari supports.
   `BuildRequest` builds the `DeviceRequest` (one `DocRequest`, signed by
@@ -933,7 +948,12 @@ changes whether *every* bullet below is `(done)`.
   transcript and seals the `DeviceResponse` to the request's key,
   returning the `EncryptedResponse` iOS hands back. Both sides build
   `ReaderAuthentication`/`ReaderAuthenticationAll` with the same
-  functions, so what one signs is what the other checks.
+  functions (`internal/readerauth`), so what one signs is what the
+  other checks. `ParseRequest` takes a web origin only
+  (`scheme://host[:port]`), and bounds the work a request can cause
+  (`MaxRequestBytes`, `MaxDocRequests`, `MaxReaderSignatures`,
+  `MaxRequestedElements`). The iOS demo wallet's document provider
+  answers it in Safari (see [MOBILE.md](MOBILE.md)).
 - **`oid4vpmdoc`** (done) — the OID4VP-specific wire structures the
   "mso_mdoc" Credential Format's own Presentation needs on top of
   `credential/mdoc`'s own ISO/IEC 18013-5 primitives:
@@ -998,9 +1018,13 @@ changes whether *every* bullet below is `(done)`.
   18013-5 Annex D byte for byte (hex from Multipaz's `TestVectors.kt`).
   Annex D uses NFC engagement, so those tests drive the transcript's
   internal Handover parameter, though only QR engagement is exposed.
-  The transport — BLE GATT, and chunking — stays in the mobile app; see
-  `proximity/README.md`. Not yet: NFC engagement/handover, BLE L2CAP,
-  reader authentication, and more than one request per session.
+  Reader authentication (§9.1.4): `WithReaderAuth` signs each request,
+  and `VerifyReaderAuth` checks it against the holder's `ReaderTrust`,
+  sharing `internal/readerauth` with `mdocdcapi`. A request the holder
+  can't parse or answer gets an in-session `ErrorResponse` (status 11
+  or 12). The transport — BLE GATT, and chunking — stays in the mobile
+  app; see `proximity/README.md`. Not yet: NFC engagement/handover, BLE
+  L2CAP, and more than one request per session.
 - **`verifier`** (done, `dc+sd-jwt`+`mso_mdoc`) — the OID4VP Verifier role.
   `BuildAuthorizationRequest` builds and signs a HAIP-§5-profiled
   redirect-flow Authorization Request: a JAR Request Object
@@ -1159,7 +1183,11 @@ changes whether *every* bullet below is `(done)`.
   `req.Query.Credentials` is required. `claim_sets` (§6.4.1): see the
   `dcql` bullet's own `claimsSatisfiedBy`. `VerifyResponse` now
   verifies either flow: a new `VerifyResponseRequest.Origin` (empty
-  for the redirect flow, set for the DC API flow) drives both
+  for the redirect flow, set for the DC API flow, with
+  `ExpectedOrigins` — the request's, from
+  `BuildDCAPIAuthorizationRequestResult.ExpectedOrigins` — which
+  `Origin` must be one of; never taken from the response's HTTP
+  request) drives both
   `expectedAudience` (the Key Binding JWT `aud` check) and
   `buildMdocSessionTranscriptBytes` (which Handover to rebuild) — see
   its own doc comment above. This completes the DC API flow's own
@@ -1312,9 +1340,13 @@ changes whether *every* bullet below is `(done)`.
   `expected_origins` are ignored, so the platform's origin is the only
   identity). With
   this, the DC API flow (Appendix A/HAIP §5.2) is done end to end across
-  `oid4vpmdoc`/`verifier`/`wallet` — the one remaining piece is actually invoking the W3C Digital Credentials
-  API itself, a browser/OS platform concern outside any Go library's
-  own transport responsibilities (see the `verifier` bullet above).
+  `oid4vpmdoc`/`verifier`/`wallet`. Invoking the W3C Digital
+  Credentials API itself is the platform's: the Android demo wallet
+  answers OpenID4VP requests as a Credential Manager provider, through
+  `walletflow.StartDCAPIPresentation` (see [MOBILE.md](MOBILE.md)).
+  `Config.RequireSignedDCAPIRequests` refuses an unsigned request
+  (`ErrUntrustedVerifier`), and `MaxDCAPIRequestBytes` and
+  `MaxDCAPISignatures` bound one.
   `ParseAuthorizationRequest` requires the Request Object's
   `response_uri` to be an absolute https URL (loopback http only with
   `AllowLoopbackHTTP`), and `SubmitDirectPostResponse` never follows a
@@ -1412,17 +1444,51 @@ changes whether *every* bullet below is `(done)`.
   its own `expiresAt`), the simplest reading of RFC 9449 §11.1's literal
   "MUST reject any DPoP proof in which the jti has been seen before",
   and consistent with this package's own no-garbage-collection caveat.
+- **`registration`** (done) — this library's verifier registration
+  attestation: a JWT a registrar issues for a relying party (who it is,
+  why it asks, which claims it may request), carried in a request's
+  `verifier_info` (OpenID4VP §5.11) and bound to its `client_id`. A
+  wallet trusting the registrar (`walletflow.Config.RegistrarRoots`)
+  shows the holder who's asking and flags a request for more than the
+  registration allows. Not an ecosystem's format (such as the EU's
+  relying-party registration certificates).
+- **`walletflow`** (done) — a holder's wallet as sessions, over a
+  `KeyStore`, `CredentialStore` and `WalletProvider` the app supplies
+  (and optional stores so deferred credentials, an authorization in
+  progress and refresh tokens survive a restart): `StartIssuance`
+  (both grants, deferred and batch issuance), `RefreshCredential`,
+  `StartPresentation` (OpenID4VP links), and over the
+  Digital Credentials API `StartDCAPIPresentation` (OpenID4VP's
+  `openid4vp-v1-*` protocols) and `StartMdocPresentation`
+  (`org-iso-mdoc`), plus `StartProximityPresentation` (ISO/IEC
+  18013-5, the holder in peripheral server mode). Reader trust for the
+  last two is `Config.MdocReaderRoots`, `MdocReaderLeafPolicy` and
+  `RequireTrustedMdocReader`. Each presentation uses a copy chosen by
+  `Config.CopyPolicy`, recorded as shown to that Verifier, so the app
+  can warn when a presentation is linkable. `walletflow/walletflowtest`
+  runs a HAIP Credential Issuer, its Authorization Server, a Wallet
+  Provider and a Verifier in process, for end-to-end tests of
+  walletflow and the mobile module. See [MOBILE.md](MOBILE.md).
+- **`mobile`** (done; its own Go module) — the gomobile façade over
+  `walletflow`: JSON in and out across the boundary, `ABIVersion` 12
+  ([`mobile/ABI.md`](mobile/ABI.md)), with the platform's keys and
+  stores called back through interfaces, plus `ProximityPresentation`
+  and `ProximityReader` sessions whose BLE transport the native
+  libraries carry. `mobile/ios` (the OID4VCWallet Swift package and
+  the iOS demo wallet) and `mobile/android` (the Kotlin library and
+  the Android demo wallet) build on it. A separate module so the
+  library's own consumers never pull in gomobile.
 - **`conformance`** (done) — OIDF HAIP conformance suite harness,
   mirroring FAPIgo's own `conformance/` structure (`cmd/conformance-*`
   binaries wiring the real production package behind real HTTP, Docker
   attaching to the suite's own network, a config generator producing
   throwaway key material rather than committing any) and its own
   AGENTS.md documentation convention. All four binaries exist, compile,
-  are unit-tested, and have each been confirmed live against a real,
+  and have each been confirmed live against a real,
   locally-run OIDF conformance suite instance — not just against each
   other: `cmd/conformance-verifier` (OID4VP 1.0 Final/HAIP Verifier
-  role), `cmd/conformance-wallet-vp` (OID4VP Wallet role,
-  `direct_post.jwt` module list), `cmd/conformance-issuer` (OID4VCI 1.0
+  role), `cmd/conformance-wallet-vp` (OID4VP Wallet role, the
+  `direct_post.jwt` module lists and the three `dc_api.jwt` ones), `cmd/conformance-issuer` (OID4VCI 1.0
   Final/HAIP Issuer role — every OID4VCI-specific module, the generic
   FAPI2SP battery, the base non-HAIP plan, and `mso_mdoc`), and
   `cmd/conformance-wallet` (OID4VCI 1.0 Final/HAIP Wallet role — every
@@ -1432,11 +1498,13 @@ changes whether *every* bullet below is `(done)`.
   surfaced and fixed real gaps, in this repo and (twice) upstream in
   FAPIgo; module counts change as coverage grows, so see
   `conformance/README.md` for current status per role rather than
-  trusting a specific number repeated here. The one gap every role's
-  own README calls out identically: actually invoking the W3C Digital
-  Credentials API for the `dc_api.jwt`/DC API module lists is a
-  browser/OS platform concern outside any Go library's own transport
-  responsibilities, not something left undone here. The local suite
+  trusting a specific number repeated here. `cmd/conformance-wallet`
+  is unit-test-free by design, an outbound-driving CLI tool whose own
+  verification is the live suite run; the other three are unit-tested.
+  The Wallet-VP `dc_api.jwt` lists run with a scripted stand-in for the
+  browser's Digital Credentials API (`conformance/wallet-vp/README.md`'s
+  "dc_api.jwt"); the Verifier's `dc_api.jwt` lists and the OID4VCI
+  Wallet's `issuer_initiated_dc_api` aren't driven. The local suite
   checkout itself needs periodic re-syncing against upstream — it was
   found 569 commits/two releases stale at one point, which had masked
   three real bugs (fixed once the suite was upgraded and the full

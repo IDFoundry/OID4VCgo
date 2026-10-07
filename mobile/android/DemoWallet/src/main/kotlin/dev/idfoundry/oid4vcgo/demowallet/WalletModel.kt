@@ -625,6 +625,20 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
         refresh()
     }
 
+    /**
+     * Lists the credentials again, as the activity resumes, and refreshes
+     * any used up, as after presenting here: [GetCredentialActivity]
+     * presents with its own model, using copies, while this one is in
+     * the background. Not during an issuance or a presentation of this
+     * model's own.
+     */
+    fun reload() {
+        viewModelScope.launch {
+            refresh()
+            if (issuance == null && presentation == null) refreshUsedUp()
+        }
+    }
+
     suspend fun refresh() {
         val wallet = wallet ?: return
         try {

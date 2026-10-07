@@ -146,7 +146,9 @@ message as soon as it grows past that, instead of buffering it.
 
 ## Sketch (holder, peripheral server mode)
 
-This is pseudocode, because the gomobile wrapper doesn't exist yet.
+This is pseudocode against this package's API. Apps use the mobile
+libraries' `ProximityPresentation` and `ProximityReader` instead (see
+[`mobile/`](../mobile)), which wrap it and carry the GATT side.
 
 ```kotlin
 val session = Proximity.newDeviceSession(null)

@@ -111,8 +111,11 @@ cat > "$PKG/README.md" <<EOF
 \`OID4VCWallet\`: the Kotlin library of [OID4VCgo](https://github.com/IDFoundry/OID4VCgo)'s
 mobile wallet, for Android 11 (API 30) and later. It receives credentials
 over OpenID4VCI 1.0 and presents them over OpenID4VP 1.0, under HAIP 1.0,
-with SD-JWT VC and ISO mdoc credentials, from links and over the Digital
-Credentials API. OID4VCgo is OpenID Certified for those roles.
+with SD-JWT VC and ISO mdoc credentials, from links and, through
+Credential Manager, from Chrome's Digital Credentials API. OID4VCgo is
+OpenID Certified for those roles (over links). It also presents in
+person over Bluetooth (ISO/IEC 18013-5), as the holder or as the
+reader.
 
 The protocols run in OID4VCgo's Go code, compiled with gomobile into the
 library. Your app owns the keys, the storage and the UI:
@@ -140,6 +143,11 @@ $DEPLINES
 }
 \`\`\`
 
+In-person presentation needs Bluetooth permissions, which the
+library's manifest adds to your app's: request
+\`ProximityPermissions.holder\` or \`.reader\` at runtime before starting
+a session.
+
 The AAR goes in an app module: an Android library can't depend on a
 local AAR. It holds the Go library for arm64 and x86_64 (the emulator),
 and an app can hold only one gomobile library. It's compiled for Kotlin
@@ -150,7 +158,8 @@ and an app can hold only one gomobile library. It's compiled for Kotlin
 - [The Android library's sources](https://github.com/IDFoundry/OID4VCgo/tree/main/mobile/android/OID4VCWallet),
   mirrored in \`sources/\`.
 - [OID4VCgo's \`mobile/\`](https://github.com/IDFoundry/OID4VCgo/tree/main/mobile):
-  the Go side and its [ABI](https://github.com/IDFoundry/OID4VCgo/blob/main/mobile/ABI.md).
+  what each platform supports, in-person presentation, the Go side and
+  its [ABI](https://github.com/IDFoundry/OID4VCgo/blob/main/mobile/ABI.md).
 - [MOBILE.md](https://github.com/IDFoundry/OID4VCgo/blob/main/MOBILE.md): the design.
 - [The demo wallet app](https://github.com/IDFoundry/OID4VCgo/tree/main/mobile/android/DemoWallet):
   a complete app on this library.

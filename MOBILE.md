@@ -1,10 +1,15 @@
 # OID4VCgo Mobile — design
 
-Status: **iOS done; Android in progress (Phase 8, [#461](https://github.com/IDFoundry/OID4VCgo/issues/461)).**
+Status: **iOS done; Android built, with checks on a device open
+(Phase 8, [#461](https://github.com/IDFoundry/OID4VCgo/issues/461));
+the DC API done on both (Phase 9); proximity in both SDKs, with the
+demos and iPhone ↔ Android runs to come (Phase 10, [#482](https://github.com/IDFoundry/OID4VCgo/issues/482)).**
 Phases 0 to 7 are done: the SDK is published as the OID4VCWallet Swift
 package, and the demo app has issued and presented on a device, against
-the passport-vdc demo through a tunnel. Later work is recorded after
-Phase 7. This is
+the passport-vdc demo through a tunnel, and presented to Safari as a
+document provider. The Android library, the Android demo and the
+Kotlin library's release are built; the Kotlin library has no release
+yet. Later work is recorded after Phase 7. This is
 the design for a mobile wallet SDK built on OID4VCgo, delivered in the
 phases below. It records the decisions taken so far, what each phase
 found, and the questions still open; update it as phases land.
@@ -12,15 +17,18 @@ found, and the questions still open; update it as phases land.
 ## Goal
 
 A cross-platform wallet SDK, compiled with `gomobile bind` into an iOS
-XCFramework first and an Android AAR later, covering the wallet's side
-of the credential lifecycle:
+XCFramework and an Android AAR, covering the wallet's side of the
+credential lifecycle:
 
 - **Issuance:** Credential Offer → OID4VCI 1.0 / HAIP 1.0 → Credential →
   wallet storage.
 - **Presentation:** Authorization Request → OID4VP 1.0 / HAIP 1.0 → the
   holder's approval → Authorization Response.
-- **Later:** a Digital Credentials API request through the same
-  presentation engine.
+- **Digital Credentials API:** a browser's request through the same
+  presentation engine: `org-iso-mdoc` from Safari on iOS, OpenID4VP
+  from Chrome through Credential Manager on Android.
+- **In person:** ISO/IEC 18013-5 over BLE, as the holder or the
+  reader.
 
 One principle governs the split: **Go owns the protocols and the
 wallet's orchestration; the native app owns platform capabilities and
@@ -70,7 +78,7 @@ agrees, and holds the keys.
 - **`mobile/ios`** holds the Swift package wrapping the XCFramework, and
   a demo app.
 - **`mobile/android`** holds the Kotlin library wrapping the AAR, and
-  (from later in Phase 8) a demo app.
+  a demo app.
 
 ## The gomobile boundary
 
@@ -123,8 +131,8 @@ Wallet
   (`ResumeIssuance`; see Phase 7 below).
 
 Presentation is protocol-neutral inside `walletflow`: an adapter turns an
-OID4VP request (`wallet.ParseAuthorizationRequest`) or, later, a DC API
-request (`wallet.ParseDCAPIRequest`, which already yields the same
+OID4VP request (`wallet.ParseAuthorizationRequest`) or a DC API request
+(`wallet.ParseDCAPIRequestData`, which yields the same
 `AuthorizationRequest` with `Origin` set) into one presentation request:
 DCQL query, nonce, audience (client_id or origin) and response
 encryption key.
@@ -223,9 +231,9 @@ networking.
 | 5 ✓ | Storage | The native credential store, with key references |
 | 6 ✓ | OID4VP slice | Request parsing, candidates, consent and presentation from the iOS demo app |
 | 7 ✓ | Hardening | Suspension and resumption (deferred credentials, an authorization in progress), cancellation, network failures, issuer and verifier errors, logging without personal data, the demo app's retry and cancel |
-| 8 | Android | The same bridge over Android Keystore, packaged as an AAR, with the demo app and the DC API (below) |
-| 9 | DC API | A DC API adapter over the presentation engine: `org-iso-mdoc` (MdocPresentation, iOS) and OpenID4VP (`StartDCAPIPresentation`, for Android's Credential Manager) |
-| 10 | Proximity | ISO/IEC 18013-5 device retrieval over BLE in both SDKs: the holder shows a QR code and answers a reader; a reader mode in both demo apps; iPhone ↔ Android in both directions |
+| 8 ✓ | Android | The same bridge over Android Keystore, packaged as an AAR, with the demo app and the DC API (below); checks on a device are open items |
+| 9 ✓ | DC API | A DC API adapter over the presentation engine: `org-iso-mdoc` (MdocPresentation, iOS) and OpenID4VP (`StartDCAPIPresentation`, for Android's Credential Manager) |
+| 10 | Proximity | ISO/IEC 18013-5 device retrieval over BLE in both SDKs: the holder shows a QR code and answers a reader; a reader mode in both demo apps; iPhone ↔ Android in both directions. The SDKs are done; the demos and the runs between devices aren't |
 
 ### Phase 1 findings
 
@@ -446,8 +454,9 @@ declines. When the Verifier returns a redirect, the app opens it.
   credentials are bound to (`HolderKeyIDs`) and deletes the rest. An
   `Issuance` dropped without `close()` closes itself.
 - **Distribution:** the Swift module is `OID4VCWallet`, since it's
-  the wallet side only; a mobile Verifier would be a package of its
-  own. SwiftPM fetches a package only from a `Package.swift` at the
+  the wallet side. The reader's side of in-person presentation
+  (`ProximityReader`, Phase 10) later joined it, so an app can be
+  either. SwiftPM fetches a package only from a `Package.swift` at the
   root of a git repository, so integrators get it from
   [OID4VCgo-wallet-swift](https://github.com/IDFoundry/OID4VCgo-wallet-swift).
   That repository is publish-only. Development, the tests (which need
@@ -701,7 +710,9 @@ Decisions taken 2026-10-06 (tracked in [#461](https://github.com/IDFoundry/OID4V
    first release: OpenID4VP requests through a new ABI session (Phase
    9's adapter) and `org-iso-mdoc` ones through `MdocPresentation`. The
    Credential Manager integration lives in the demo app, as the iOS
-   document provider does.
+   document provider does. Superseded for `org-iso-mdoc`: it stays
+   iOS's route, and Android answers OpenID4VP only (see "the Digital
+   Credentials API on Android" below).
 4. **Platform:** minSdk 30, the first level where a key can require
    biometrics *or* the screen lock for each use, as holder keys do on
    iOS. Keys are P-256 in StrongBox, or else the TEE; credentials are
@@ -931,6 +942,43 @@ Thirteen tests pass on the emulator, against `testservices`.
 - The authorization code grant in the demo's UI tests, with the test
   services' CA in the device's user store for Chrome.
 
+## Phase 9 findings: `org-iso-mdoc` on iOS
+
+The demo app is an Identity Document Provider (iOS 26): Safari's
+`org-iso-mdoc` requests reach its `DocumentProvider` extension, which
+answers through `StartMdocPresentation` (#447–#449). It worked on an
+iPhone against the passport-vdc verifier. Safari on macOS has no
+document providers, so a page there reports the API unsupported.
+
+- **Registration:** the app registers each held mdoc's doctype with
+  `IdentityDocumentServices` (`MobileDocumentRegistration`); iOS offers
+  the app only for those. The doctype must be one Apple allows, which
+  is why passport-vdc issues an ISO Photo ID (#444). The Digital
+  Credentials API – Mobile Document Provider capability goes on both
+  App IDs in the Developer portal.
+- **The extension is another process:** the credential store and the
+  configuration are in an App Group, and holder keys in a shared
+  Keychain access group; instance and DPoP keys stay in the app's own,
+  so the extension can present but not receive or refresh.
+  `KeychainKeyStore`'s `holderAccessGroup` and
+  `FileCredentialStore.inAppGroup` set this up.
+- **What the holder is shown is what's released:** the extension checks
+  that the request iOS releases is the one it showed (the document,
+  the elements, the reader).
+- **Reader trust** (#452): the reader is named only when its request
+  is signed by a certificate under `mdoc_reader_roots`, with the reader
+  authentication EKU when `mdoc_reader_require_eku`; otherwise only the
+  website's origin is shown. `require_trusted_mdoc_reader` refuses the
+  rest.
+- **Linkability** (#459): `mdocCandidates` lists only mdocs that can be
+  presented, each saying whether its every copy has been shown to
+  another website, so the sheet can warn before the holder chooses.
+- **Open:** the app and the extension each write a credential's record
+  under a lock that only spans their own process, so a refresh in the
+  app can overwrite the extension marking a copy presented. A lock
+  across processes would get a suspended app terminated, so this needs
+  writes that check the record's version.
+
 ## Phase 10: Proximity
 
 Decisions taken 2026-10-06 (tracked in [#482](https://github.com/IDFoundry/OID4VCgo/issues/482)):
@@ -1083,5 +1131,3 @@ Decisions taken 2026-10-06 (tracked in [#482](https://github.com/IDFoundry/OID4V
   app's signing certificate) or Play Integrity — and key attestation
   formats. Both demos attest any key with the passport-vdc demo's
   provider until then.
-- iOS's integration point for the Digital Credentials API, when Phase 9
-  starts.

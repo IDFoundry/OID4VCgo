@@ -32,9 +32,9 @@
 // BuildDCAPISessionTranscriptBytes implements Appendix B.2.6.2 (the DC
 // API flow — same null DeviceEngagementBytes/EReaderKeyBytes, Handover
 // the OpenID4VPDCAPIHandover structure instead, committing to an
-// Origin rather than a client_id/response_uri pair), not wired into
-// verifier/wallet yet — see their own package doc comments for
-// exactly what's still cut on the DC API side.
+// Origin rather than a client_id/response_uri pair), which
+// verifier.VerifyResponse and the wallet's presentation use whenever
+// the response goes back over the DC API.
 // MarshalDeviceResponse/UnmarshalDeviceResponse cover exactly one
 // Document per DeviceResponse — HAIP §5.3.1's own MUST for multiple
 // returned mdocs ("each ISO mdoc MUST be returned in a separate

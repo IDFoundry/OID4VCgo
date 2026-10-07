@@ -51,14 +51,21 @@ FAPIgo" section for the specific list.
 > [conformance/README.md#oidf-certification](conformance/README.md#oidf-certification)
 > for every certified profile.
 
-> **⚠ Pre-1.0, APIs may still change.** Every role package — `issuer`,
-> `wallet`, `verifier`, `credential/sdjwtvc`, `credential/mdoc`,
-> `statuslist`, `attestation`, `dcql`, `oid4vpmdoc`, `haip`, `storage` —
-> is implemented and tested. `mdocdcapi`, both sides of ISO mdoc over
-> the Digital Credentials API (Safari's protocol), is new and not yet
-> proven against a real browser and wallet. All four roles were OpenID Certified as
-> 0.12.0 (see above), and every later release is checked against the
-> same OIDF test plans by the daily conformance workflows.
+> **⚠ Pre-1.0, APIs may still change.** Every package — `issuer`,
+> `wallet`, `verifier`, `walletflow`, `credential/sdjwtvc`,
+> `credential/mdoc`, `statuslist`, `attestation`, `dcql`, `oid4vpmdoc`,
+> `mdocdcapi`, `proximity`, `registration`, `haip`, `storage` — and the
+> separate `mobile` module are implemented and tested. All four roles
+> were OpenID Certified as 0.12.0 (see above), and every later release
+> is checked against the same OIDF test plans by the daily conformance
+> workflows. Those certified profiles are the redirect flows: the
+> Digital Credentials API (OpenID4VP's `dc_api.jwt` and `mdocdcapi`'s
+> `org-iso-mdoc`) and in-person presentation (`proximity`) aren't
+> certified. `org-iso-mdoc` has run in Safari on an iPhone, with the
+> demo iOS wallet as its document provider, and OpenID4VP over the DC
+> API in Chrome on the Android emulator, with the demo Android wallet
+> as its Credential Manager provider; `proximity` is tested against
+> ISO/IEC 18013-5 Annex D, not yet between two devices.
 > See [ARCHITECTURE.md](ARCHITECTURE.md) for the full package-by-package
 > status and what, if anything, remains.
 
@@ -110,6 +117,26 @@ Where to start, by role:
   other two protected endpoints; `issuer.NewError` builds an OID4VCI error
   response (e.g. `credential_request_denied`); `statuslist.Publisher`
   serves a signed Status List Token.
+- **A browser's Digital Credentials API** — the Verifier builds an
+  OpenID4VP request with `Verifier.BuildDCAPIAuthorizationRequest` and
+  checks the answer with `Verifier.VerifyResponse`, setting
+  `VerifyResponseRequest.Origin` to its page's origin and
+  `ExpectedOrigins` to the request's. A wallet parses the request with
+  `wallet.ParseDCAPIRequestData` (unsigned, signed or multi-signed).
+  Safari's `org-iso-mdoc` protocol is package `mdocdcapi`, both sides:
+  `BuildRequest` and `VerifyResponse` for the page, `ParseRequest` and
+  `Incoming.Respond` for the wallet.
+- **In person** — package `proximity` is ISO/IEC 18013-5 over BLE:
+  `NewDeviceSession` for the holder, `NewReaderSession` for the reader.
+  The app carries the BLE messages; the package does everything else.
+- **A wallet app** — package `walletflow` runs issuance and
+  presentation as sessions over keys, stores and a Wallet Provider the
+  app supplies: `StartIssuance`, `StartPresentation`,
+  `StartDCAPIPresentation` (OpenID4VP over the DC API),
+  `StartMdocPresentation` (`org-iso-mdoc`) and
+  `StartProximityPresentation`. The separate `mobile` module binds it
+  for iOS (the OID4VCWallet Swift package) and Android (a Kotlin
+  library); see [MOBILE.md](MOBILE.md) and [`mobile/`](mobile).
 - **Your own stores and resolvers** — `issuer/issuertest` and
   `verifier/verifiertest` hold contract tests to run against them.
 

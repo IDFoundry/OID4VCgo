@@ -48,6 +48,16 @@ Against the test services, open `https://127.0.0.1:8600/dcapi` in
 Chrome on the device (past the certificate warning), and tap Verify:
 the page shows what the test Verifier made of the answer.
 Android answers over OpenID4VP, mdocs included: `org-iso-mdoc` is the iOS demo's route.
+This has run on the API 37 emulator with Google Play; on a physical
+device it's still to be tried (MOBILE.md's Phase 8 open items).
+
+## In person
+
+Not in the demo yet: the Kotlin library has the holder's and the
+reader's sides (`startProximityPresentation`, `ProximityReader`, see
+[`mobile/README.md`](../../README.md#in-person-presentation)), and the
+demo's "Share in person" and reader mode are still to be built (MOBILE.md,
+Phase 10). BLE needs a physical device: the emulator has no Bluetooth.
 
 ## Configuration
 
@@ -166,3 +176,7 @@ endpoint, as the script's header shows.
 
 The app links the release Go library, `../../build/release/mobile.aar`
 (`../../build-aar.sh`).
+
+Running it against the passport-vdc demo, as the iOS demo's
+`run-device.sh` does, hasn't been tried on Android yet, and has no
+script.
