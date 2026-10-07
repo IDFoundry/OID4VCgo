@@ -157,70 +157,39 @@ final class InPersonModel {
 
 // MARK: The holder's side
 
-/// The Present tab: what presenting in person does, and the button that
-/// shows the QR code. The session itself (InPersonView) opens over it.
-struct PresentView: View {
-    @Environment(WalletModel.self) private var model
-    @Environment(InPersonModel.self) private var inPerson
-    @State private var sharing = false
-
-    var body: some View {
-        NavigationStack {
-            List {
-                Section {
-                    Text("Show a QR code to a reader nearby. It connects over Bluetooth and asks for what it needs; you see who is asking, and choose what to share.")
-                    let mdocs = model.credentials.filter { $0.format == "mso_mdoc" }.count
-                    Text(mdocs == 0 ? "You hold no mdoc to share in person yet." : mdocs == 1 ? "1 mdoc can be shared in person." : "\(mdocs) mdocs can be shared in person.")
-                        .foregroundStyle(.secondary)
-                }
-                if let notice = inPerson.notice {
-                    Section { Text(notice).foregroundStyle(.orange) }
-                }
-                Section {
-                    Button("Show QR code") {
-                        inPerson.share(model)
-                        sharing = inPerson.presentation != nil
-                    }
-                    .disabled(!model.configured)
-                    .accessibilityIdentifier("share-in-person")
-                }
-            }
-            .navigationTitle("Share in person")
-            .fullScreenCover(isPresented: $sharing, onDismiss: { inPerson.closeSharing() }) { InPersonView() }
-        }
-    }
-}
-
+/// The Present tab: the QR code, the reader's request, and the outcome;
+/// with no session, why not, and Try again. RootView starts a session on
+/// opening the tab and ends it on leaving; Done starts the next.
 struct InPersonView: View {
     @Environment(WalletModel.self) private var model
     @Environment(InPersonModel.self) private var inPerson
-    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         NavigationStack {
             Group {
-                switch inPerson.state {
-                case nil, .waitingForReader?:
-                    QRCodeView(text: inPerson.presentation?.qrCode ?? "")
-                case .connected?:
-                    ProgressView("Reader connected: waiting for its request…").accessibilityIdentifier("in-person-status")
-                case .requestReceived(let request)?:
-                    ConsentView(request: request)
-                case .responding?:
-                    ProgressView("Sharing…")
-                case let s?:
-                    OutcomeView(text: outcome(s)) { close() }
+                if inPerson.presentation == nil {
+                    NoSessionView { inPerson.share(model) }
+                } else {
+                    switch inPerson.state {
+                    case nil, .waitingForReader?:
+                        QRCodeView(text: inPerson.presentation?.qrCode ?? "")
+                    case .connected?:
+                        ProgressView("Reader connected: waiting for its request…").accessibilityIdentifier("in-person-status")
+                    case .requestReceived(let request)?:
+                        ConsentView(request: request)
+                    case .responding?:
+                        ProgressView("Sharing…")
+                    case let s?:
+                        OutcomeView(text: outcome(s)) {
+                            inPerson.closeSharing()
+                            inPerson.share(model)
+                        }
+                    }
                 }
             }
             .navigationTitle("Share in person")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { Button("Close") { close() } }
         }
-    }
-
-    private func close() {
-        inPerson.closeSharing()
-        dismiss()
     }
 
     private func outcome(_ s: ProximityPresentation.State) -> String {
@@ -234,6 +203,23 @@ struct InPersonView: View {
         case .failed(let error): WalletModel.describe(error)
         default: ""
         }
+    }
+}
+
+/// No session: Bluetooth off, nothing to share, or not configured.
+private struct NoSessionView: View {
+    @Environment(WalletModel.self) private var model
+    @Environment(InPersonModel.self) private var inPerson
+    let start: () -> Void
+
+    var body: some View {
+        VStack(spacing: 20) {
+            Text(inPerson.notice ?? (model.credentials.contains { $0.format == "mso_mdoc" } ? "Not sharing." : "You hold no mdoc to share in person yet."))
+                .multilineTextAlignment(.center)
+                .accessibilityIdentifier("in-person-status")
+            Button("Try again", action: start).disabled(!model.configured).accessibilityIdentifier("share-in-person")
+        }
+        .padding(24)
     }
 }
 
@@ -252,9 +238,6 @@ private struct QRCodeView: View {
                     .accessibilityLabel("QR code for the reader")
                     .accessibilityIdentifier("in-person-qr")
             }
-            Text("Show this QR code to the reader. Nothing is shared until you agree.")
-                .multilineTextAlignment(.center)
-                .accessibilityIdentifier("in-person-status")
         }
         .padding(24)
     }

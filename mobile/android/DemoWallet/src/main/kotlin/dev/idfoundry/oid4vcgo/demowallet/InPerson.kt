@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -39,6 +40,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
@@ -137,22 +139,41 @@ private fun InPersonScaffold(
     ) { padding -> Column(Modifier.padding(padding).fillMaxSize()) { content() } }
 }
 
-/** The holder's side: the QR code, the reader's request, and the outcome. */
+/**
+ * The holder's side, in the Present tab: the QR code, the reader's
+ * request, and the outcome; with no session, why not, and Try again.
+ */
 @Composable
-fun InPersonScreen(model: WalletModel) {
+fun InPersonScreen(model: WalletModel, bottomBar: @Composable () -> Unit, onLeave: () -> Unit, start: () -> Unit) {
     var certificates by remember { mutableStateOf<List<X509Certificate>?>(null) }
     certificates?.let { chain ->
         return ReaderCertificatesScreen(chain, onBack = { certificates = null })
     }
     val state = model.inPersonState
-    InPersonScaffold("Share in person", onBack = { model.closeInPerson() }) {
-        when (state) {
-            null, ProximityPresentation.State.WaitingForReader, ProximityPresentation.State.Connected ->
+    BackHandler(onBack = onLeave)
+    InPersonScaffold("Share in person", onBack = null, bottomBar = bottomBar) {
+        when {
+            model.inPerson == null -> NoSession(model, start)
+            state == null || state == ProximityPresentation.State.WaitingForReader || state == ProximityPresentation.State.Connected ->
                 QRCodeView(model.inPerson?.qrCode.orEmpty(), connected = state == ProximityPresentation.State.Connected)
-            is ProximityPresentation.State.RequestReceived -> InPersonConsent(model, state.request, onCertificates = { certificates = it })
-            ProximityPresentation.State.Responding -> Waiting("Sharing…")
+            state is ProximityPresentation.State.RequestReceived -> InPersonConsent(model, state.request, onCertificates = { certificates = it })
+            state == ProximityPresentation.State.Responding -> Waiting("Sharing…")
+            // Done starts the next session: a new QR code.
             else -> InPersonOutcome(state, onDone = { model.closeInPerson() })
         }
+    }
+}
+
+/** No session: Bluetooth off, no permission, or nothing to share. */
+@Composable
+private fun NoSession(model: WalletModel, start: () -> Unit) {
+    Column(Modifier.fillMaxSize().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+        Text(
+            model.notice ?: if (model.credentials.none { it.format == "mso_mdoc" }) "You hold no mdoc to share in person yet." else "Not sharing.",
+            Modifier.testTag("in-person-status"),
+        )
+        Spacer(Modifier.height(16.dp))
+        Button(start, Modifier.testTag("share-in-person"), enabled = model.configured) { Text("Try again") }
     }
 }
 
@@ -166,10 +187,12 @@ private fun QRCodeView(qrCode: String, connected: Boolean) {
             Text("Reader connected: waiting for its request…", Modifier.testTag("in-person-status"))
         } else {
             bitmap?.let {
-                Image(it.asImageBitmap(), "QR code for the reader", Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(Color.White).testTag("in-person-qr"))
+                // Square, so the white is only the code's own quiet zone.
+                Image(
+                    it.asImageBitmap(), "QR code for the reader",
+                    Modifier.fillMaxWidth().aspectRatio(1f).clip(RoundedCornerShape(8.dp)).background(Color.White).testTag("in-person-qr"),
+                )
             }
-            Spacer(Modifier.height(16.dp))
-            Text("Show this QR code to the reader. Nothing is shared until you agree.", Modifier.testTag("in-person-status"))
         }
     }
 }
@@ -433,29 +456,16 @@ private fun ReaderClaim(identifier: String, value: JsonElement) {
 }
 
 /**
- * The Present tab: what presenting in person does, and the button that
- * shows the QR code. The session itself (InPersonScreen) opens over it.
+ * The Present tab: it shows its QR code at once, and a new one after each
+ * session ends. Leaving the tab ends the session.
  */
 @Composable
 fun PresentScreen(model: WalletModel, bottomBar: @Composable () -> Unit, onLeave: () -> Unit) {
     val share = rememberShareInPerson(model)
-    val mdocs = model.credentials.count { it.format == "mso_mdoc" }
-    BackHandler(onBack = onLeave)
-    InPersonScaffold("Share in person", onBack = null, bottomBar = bottomBar) {
-        Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            Text("Show a QR code to a reader nearby. It connects over Bluetooth and asks for what it needs; you see who is asking, and choose what to share.")
-            Text(
-                when (mdocs) {
-                    0 -> "You hold no mdoc to share in person yet."
-                    1 -> "1 mdoc can be shared in person."
-                    else -> "$mdocs mdocs can be shared in person."
-                },
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            model.notice?.let { Text(it, color = Color(0xFFE65100)) }
-            Button(share, Modifier.fillMaxWidth().testTag("share-in-person"), enabled = model.configured) { Text("Show QR code") }
-        }
-    }
+    LaunchedEffect(model.inPerson == null) { if (model.inPerson == null && model.configured) share() }
+    DisposableEffect(Unit) { onDispose { model.closeInPerson() } }
+    KeepScreenOn()
+    InPersonScreen(model, bottomBar, onLeave, start = share)
 }
 
 /** Starts sharing in person once the Bluetooth permissions are granted. */

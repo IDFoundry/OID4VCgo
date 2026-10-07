@@ -108,10 +108,6 @@ fun DemoApp(model: WalletModel, authorize: suspend (String) -> String, openBrows
         LaunchedEffect(model.engagementToRead) { if (model.engagementToRead != null) tab = DemoTab.VERIFY }
         val tabBar: @Composable () -> Unit = { DemoTabBar(tab) { tab = it } }
         when {
-            model.inPerson != null -> {
-                KeepScreenOn()
-                InPersonScreen(model)
-            }
             scanning -> ScanScreen(onLink = { scanning = false; model.open(it) }, onClose = { scanning = false })
             model.requestPhase != WalletModel.RequestPhase.IDLE -> RequestScreen(model, openBrowser)
             model.phase == WalletModel.Phase.Offered || model.phase == WalletModel.Phase.Receiving -> OfferScreen(model, authorize)

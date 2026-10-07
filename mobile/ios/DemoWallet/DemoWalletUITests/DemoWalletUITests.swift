@@ -483,9 +483,9 @@ final class DemoWalletUITests: XCTestCase {
         XCTAssertEqual(app.descendants(matching: .any).matching(identifier: "credential").count, 0)
     }
 
-    /// Sharing in person: the screen opens over the wallet, showing the QR
-    /// code where there's Bluetooth, and on the Simulator — which has none
-    /// — saying so, with nothing shared.
+    /// Sharing in person: the Present tab shows the QR code at once where
+    /// there's Bluetooth, and on the Simulator — which has none — says so,
+    /// with nothing shared.
     @MainActor
     func testShareInPerson() async throws {
         let offer = try await Self.fetch("offer", query: [URLQueryItem(name: "pin", value: "493536"), URLQueryItem(name: "mdoc", value: "1")],
@@ -501,19 +501,17 @@ final class DemoWalletUITests: XCTestCase {
         XCTAssertTrue(status.label.hasPrefix("Received 2"), status.label)
 
         app.tabBars.buttons["Present"].tap()
-        app.buttons["share-in-person"].tap()
         let qr = app.images["in-person-qr"]
         let outcome = app.staticTexts["in-person-outcome"]
         let deadline = Date().addingTimeInterval(20)
         while !qr.exists && !outcome.exists && Date() < deadline { try await Task.sleep(for: .milliseconds(250)) }
         if outcome.exists {
             XCTAssertTrue(outcome.label.contains("Bluetooth"), outcome.label)
-            app.buttons["in-person-done"].tap()
         } else {
             XCTAssertTrue(qr.exists, "neither the QR code nor an outcome")
-            app.buttons["Close"].tap()
         }
-        XCTAssertTrue(app.buttons["share-in-person"].waitForExistence(timeout: 10), "back on the Present tab")
+        app.tabBars.buttons["Wallet"].tap()
+        XCTAssertTrue(app.buttons["scan"].waitForExistence(timeout: 10), "back on the wallet")
     }
 
     /// The Verify tab offers what to ask for; the Wallet tab is back to

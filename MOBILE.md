@@ -1121,8 +1121,9 @@ Decisions taken 2026-10-06 (tracked in [#482](https://github.com/IDFoundry/OID4V
 - **Each side is a tab:** reader mode was at first a setting, which
   hid it, and sharing in person a button in the top bar. Both demos now
   have a bottom bar in each platform's own component (a Material
-  `NavigationBar`, a SwiftUI `TabView`): Wallet, Present (show the QR
-  code) and Verify (the reader, which an `mdoc:` link opens).
+  `NavigationBar`, a SwiftUI `TabView`): Wallet, Present (its QR code
+  at once, a new session after each, ended on leaving the tab) and
+  Verify (the reader, which an `mdoc:` link opens).
 - **iOS can't read a certificate's fields:** beyond a subject summary,
   Security has no public API. The request carries each reader
   certificate's fields from Go, for the certificate page.
