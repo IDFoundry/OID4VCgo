@@ -32,9 +32,9 @@ final class WalletModel {
     var phase: Phase = .idle
     var pin = ""
 
-    private var wallet: Wallet?
+    private(set) var wallet: Wallet?
     private var keys: KeychainKeyStore?
-    private var config: DemoConfiguration?
+    private(set) var config: DemoConfiguration?
 
     /// Which copy of a credential a presentation uses, as chosen in the
     /// app's settings; it overrides the configuration's.
@@ -158,9 +158,22 @@ final class WalletModel {
     /// names.
     var linkToConfirm: URL?
 
+    /// A holder's engagement another app handed over (an mdoc: link), for
+    /// the Verify tab to read.
+    var engagementToRead: String?
+
     /// Opens a link from another app: an issuer's redirect at once, an
-    /// offer or a request once the holder confirms (linkToConfirm).
+    /// offer or a request once the holder confirms (linkToConfirm), a
+    /// holder's engagement in the Verify tab.
     func openFromOutside(_ url: URL) {
+        if QRCode.isEngagement(url) {
+            if config?.reader != nil {
+                engagementToRead = url.absoluteString
+            } else {
+                notice = "This wallet has no reader in its configuration."
+            }
+            return
+        }
         guard url.scheme == "openid-credential-offer" || url.scheme == "openid4vp" else {
             open(url)
             return

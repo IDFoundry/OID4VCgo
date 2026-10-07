@@ -2,6 +2,41 @@ import AuthenticationServices
 import OID4VCWallet
 import SwiftUI
 
+/// The app's sides, in a tab bar: the holder's wallet, presenting in
+/// person, and the reader (Verify), which an mdoc: link from another app
+/// opens.
+struct RootView: View {
+    @Environment(WalletModel.self) private var model
+    @Environment(InPersonModel.self) private var inPerson
+    @State private var tab = Tab.wallet
+
+    enum Tab { case wallet, present, verify }
+
+    var body: some View {
+        TabView(selection: $tab) {
+            ContentView()
+                .tabItem { Label("Wallet", systemImage: "wallet.bifold") }
+                .tag(Tab.wallet)
+            InPersonView()
+                .tabItem { Label("Present", systemImage: "qrcode") }
+                .tag(Tab.present)
+            ReaderView()
+                .tabItem { Label("Verify", systemImage: "checkmark.shield") }
+                .tag(Tab.verify)
+        }
+        .onChange(of: model.engagementToRead) { _, given in if given != nil { tab = .verify } }
+        // The Present tab shows its QR code at once; leaving it ends the
+        // session.
+        .onChange(of: tab) { _, tab in
+            if tab == .present {
+                if inPerson.presentation == nil, model.configured { inPerson.share(model) }
+            } else {
+                inPerson.closeSharing()
+            }
+        }
+    }
+}
+
 struct ContentView: View {
     @Environment(WalletModel.self) private var model
     @State private var scanning = false

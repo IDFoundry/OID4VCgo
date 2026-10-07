@@ -11,15 +11,17 @@ import (
 	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/json"
-	"github.com/idfoundry/oid4vcgo/mdocdcapi"
 	"io"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/idfoundry/oid4vcgo/mdocdcapi"
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/gmrtd/gmrtd/cms"
@@ -376,5 +378,27 @@ func TestDCAPI_SignedAsAReader(t *testing.T) {
 	verifierRoots.AddCert(c.app.VerifierCACertificate())
 	if _, err := in.VerifyReader(verifierRoots, time.Time{}); err == nil {
 		t.Error("the request verifies under the OpenID4VP verifier CA: its reader certificate isn't separate")
+	}
+}
+
+// The in-person reader a phone reads mdocs as: its key is its leaf's,
+// and its chain verifies to the reader CA wallets recognize, for mdoc
+// reader authentication.
+func TestInPersonReader(t *testing.T) {
+	c := newDCAPIApp(t, newDCAPIIssuer(t))
+	key, chain, err := c.app.InPersonReader()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chain) != 2 || !key.PublicKey.Equal(chain[0].PublicKey) || !chain[1].Equal(c.app.ReaderCACertificate()) {
+		t.Fatalf("chain of %d certificates, or not the key's", len(chain))
+	}
+	roots := x509.NewCertPool()
+	roots.AddCert(c.app.ReaderCACertificate())
+	if _, err := chain[0].Verify(x509.VerifyOptions{Roots: roots, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageAny}}); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.ContainsFunc(chain[0].UnknownExtKeyUsage, mdocdcapi.ReaderAuthenticationEKU.Equal) {
+		t.Error("the reader certificate lacks the reader authentication EKU")
 	}
 }
