@@ -66,6 +66,8 @@ struct ContentView: View {
                     Section {
                         ForEach(group.credentials, id: \.id) { c in
                             NavigationLink(value: c.id) { CredentialRow(summary: c) }
+                            // The row's: a NavigationLink's label can't set it.
+                            .listRowBackground(Color(css: c.display?.backgroundColor))
                             .accessibilityElement(children: .combine)
                             .accessibilityIdentifier("credential")
                             .swipeActions { Button("Delete", role: .destructive) { Task { await model.delete(c) } } }
@@ -501,7 +503,7 @@ struct CredentialRow: View {
 
     var body: some View {
         let d = summary.display
-        let text = Color(css: d?.textColor) ?? .primary
+        let text = CredentialRow.textColor(d)
         HStack {
             LogoView(logo: d?.logo ?? d?.issuerLogo)
             VStack(alignment: .leading) {
@@ -519,7 +521,14 @@ struct CredentialRow: View {
                     .font(.caption2).foregroundStyle(text.opacity(0.7))
             }
         }
-        .listRowBackground(Color(css: d?.backgroundColor))
+    }
+
+    /// The issuer's text colour, where the issuer's background is there to
+    /// read it on; the system's, which follows light and dark mode,
+    /// otherwise.
+    static func textColor(_ display: CredentialDisplay?) -> Color {
+        guard Color(css: display?.backgroundColor) != nil, let text = Color(css: display?.textColor) else { return .primary }
+        return text
     }
 
     /// The credential's format, as a holder would name it.
@@ -799,7 +808,7 @@ struct CandidateCard: View {
 
     var body: some View {
         let d = summary.display
-        let text = Color(css: d?.textColor) ?? .primary
+        let text = CredentialRow.textColor(d)
         HStack(spacing: 12) {
             Image(systemName: RequestView.choiceIcon(selected: selected, multiple: multiple))
                 .font(.title2).foregroundStyle(selected ? text : text.opacity(0.45))
