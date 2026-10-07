@@ -52,7 +52,7 @@ android {
     namespace = "dev.idfoundry.oid4vcwallet"
     compileSdk = 37
     defaultConfig {
-        minSdk = 30
+        minSdk = 26
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         consumerProguardFiles("consumer-rules.pro")
     }
@@ -88,6 +88,7 @@ kotlin {
 
 dependencies {
     implementation(files(unpackMobile.flatMap { it.classes }))
+    implementation(libs.androidx.annotation)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.serialization.json)
     testImplementation(libs.junit)

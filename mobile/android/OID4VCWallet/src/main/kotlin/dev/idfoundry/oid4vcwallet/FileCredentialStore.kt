@@ -1,6 +1,7 @@
 package dev.idfoundry.oid4vcwallet
 
 import android.content.Context
+import android.os.Build
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import java.io.File
@@ -139,7 +140,9 @@ public class FileCredentialStore(
                 .setKeySize(256)
                 .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
                 .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
-                .setUnlockedDeviceRequired(options.protection == Protection.WHEN_UNLOCKED)
+                // API 28's: below it, WHEN_UNLOCKED holds only until the
+                // first unlock since boot, as AFTER_FIRST_UNLOCK does.
+                .apply { if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) setUnlockedDeviceRequired(options.protection == Protection.WHEN_UNLOCKED) }
                 .build()
             KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, PROVIDER).run {
                 init(spec)

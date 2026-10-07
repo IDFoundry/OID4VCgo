@@ -25,9 +25,9 @@ OUT=build/release
 case " $* " in *" -tags mobiletest "*) OUT=build/test ;; esac
 rm -f "$OUT/mobile.aar" "$OUT/mobile-sources.jar"
 mkdir -p "$OUT"
-# -androidapi matches the Kotlin library's minSdk.
+# -androidapi matches the Kotlin library's minSdk (26).
 PATH="$PWD/build/bin:$PATH" gomobile bind \
-	-target=android/arm64,android/amd64 -androidapi=30 \
+	-target=android/arm64,android/amd64 -androidapi=26 \
 	-javapkg=dev.idfoundry.oid4vcwallet.gomobile \
 	-trimpath -ldflags="-s -w" "$@" \
 	-o "$OUT/mobile.aar" .
