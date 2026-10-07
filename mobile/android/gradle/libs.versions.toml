@@ -13,11 +13,14 @@ lifecycle = "2.11.0"
 browser = "1.10.0"
 camerax = "1.6.2"
 mlkit-barcode = "17.3.0"
+zxing = "3.5.3"
 coil = "3.6.3"
 credentials = "1.7.0-alpha03"
 registry = "1.0.0-alpha05"
 
 [libraries]
+# @RequiresApi, so lint tells an app calling an API 28 class below 28.
+androidx-annotation = { module = "androidx.annotation:annotation", version = "1.7.0" }
 kotlinx-coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "coroutines" }
 kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
 kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "serialization" }
@@ -37,6 +40,8 @@ androidx-camera-camera2 = { module = "androidx.camera:camera-camera2", version.r
 androidx-camera-lifecycle = { module = "androidx.camera:camera-lifecycle", version.ref = "camerax" }
 androidx-camera-view = { module = "androidx.camera:camera-view", version.ref = "camerax" }
 mlkit-barcode-scanning = { module = "com.google.mlkit:barcode-scanning", version.ref = "mlkit-barcode" }
+# Draws the QR code a holder shows a reader in person.
+zxing-core = { module = "com.google.zxing:core", version.ref = "zxing" }
 coil-compose = { module = "io.coil-kt.coil3:coil-compose", version.ref = "coil" }
 androidx-credentials = { module = "androidx.credentials:credentials", version.ref = "credentials" }
 androidx-credentials-registry-provider = { module = "androidx.credentials.registry:registry-provider", version.ref = "registry" }

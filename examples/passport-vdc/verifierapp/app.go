@@ -2,6 +2,7 @@ package verifierapp
 
 import (
 	"context"
+	"crypto/ecdsa"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/x509"
@@ -10,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"sync"
 	"time"
 
@@ -347,6 +349,19 @@ func (a *App) RegistrarCACertificate() *x509.Certificate { return a.registrarCA 
 // (walletflow.Config.MdocReaderRoots, with
 // mdocdcapi.RequireReaderAuthenticationEKU) names the reader asking.
 func (a *App) ReaderCACertificate() *x509.Certificate { return a.readerCA }
+
+// InPersonReader is the age scenario's mdoc reader key and its
+// certificate chain, leaf first, for a phone reading mdocs in person
+// (ISO/IEC 18013-5 over BLE) as this demo's verifier: a wallet
+// recognizing ReaderCACertificate shows it as verified.
+func (a *App) InPersonReader() (*ecdsa.PrivateKey, []*x509.Certificate, error) {
+	r, ok := a.readers[ScenarioAge]
+	key, isECDSA := r.Signer.(*ecdsa.PrivateKey)
+	if !ok || !isECDSA || len(r.Chain) == 0 {
+		return nil, nil, errors.New("verifierapp: no in-person reader")
+	}
+	return key, append(slices.Clone(r.Chain), a.readerCA), nil
+}
 
 // VerifierCACertificate is the demo verifier CA that issued this
 // verifier's request-signing certificate — the trust anchor a wallet

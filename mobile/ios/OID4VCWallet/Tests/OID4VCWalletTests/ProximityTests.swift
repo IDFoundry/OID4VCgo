@@ -123,6 +123,9 @@ final class ProximityTests: XCTestCase {
         XCTAssertEqual(r.reader.status, .trusted)
         XCTAssertEqual(r.reader.name, "Test Reader")
         XCTAssertEqual(r.reader.chain.count, 2)
+        XCTAssertEqual(r.reader.certificates.map(\.subject), ["CN=Test Reader,C=US", "CN=Test Reader CA,C=US"])
+        XCTAssertEqual(r.reader.certificates.map(\.isCA), [false, true])
+        XCTAssertTrue(r.reader.certificates[0].extendedKeyUsages.contains { $0.hasPrefix("mdoc reader authentication") })
         let document = try XCTUnwrap(r.documents.first)
         XCTAssertEqual(document.doctype, Self.docType)
         // In the request's order: the reader encodes them sorted.

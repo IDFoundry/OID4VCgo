@@ -51,7 +51,9 @@ final class DemoWalletUITests: XCTestCase {
         credentials.element(boundBy: 0).tap()
         let family = app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS 'Doe'")).firstMatch
         XCTAssertTrue(family.waitForExistence(timeout: 10), "family_name isn't shown")
-        XCTAssertTrue(app.images["portrait"].waitForExistence(timeout: 10), "the portrait isn't shown as an image")
+        // Below the fold on a taller layout (iOS 27): a List makes a row
+        // only once it scrolls into view.
+        XCTAssertTrue(reveal(app.images["portrait"], in: app, wait: 5), "the portrait isn't shown as an image")
     }
 
     /// The pre-authorized code grant, with the PIN typed in the app.
@@ -298,13 +300,20 @@ final class DemoWalletUITests: XCTestCase {
         XCTAssertTrue(waitFor(credential, containing: "3 of 3 copies unused"), credential.label)
     }
 
-    /// Waits for element, scrolling down to it: a long consent screen
-    /// builds its last rows only once they're on screen.
+    /// Waits for element, scrolling to it: a long consent screen builds
+    /// its rows only once they're on screen, so one at the top goes once
+    /// the screen is scrolled down to Share.
     @MainActor
-    func reveal(_ element: XCUIElement, in app: XCUIApplication) -> Bool {
-        if element.waitForExistence(timeout: 20) { return true }
+    func reveal(_ element: XCUIElement, in app: XCUIApplication, wait: TimeInterval = 20) -> Bool {
+        if element.waitForExistence(timeout: wait) { return true }
+        // Down first, then back up: a List makes only the rows in view,
+        // and a taller layout (iOS 27) leaves more of them out of it.
         for _ in 0..<4 {
             app.swipeUp()
+            if element.waitForExistence(timeout: 2) { return true }
+        }
+        for _ in 0..<8 {
+            app.swipeDown()
             if element.waitForExistence(timeout: 2) { return true }
         }
         return false
@@ -374,7 +383,7 @@ final class DemoWalletUITests: XCTestCase {
         var app = try await receiveWithPIN(reset: true)
         let within = try await Self.fetch("request", query: [URLQueryItem(name: "format", value: "dc+sd-jwt"), URLQueryItem(name: "registered", value: "1")], method: "POST")
         app = try await presentOnce(app, link: within["link"] as! String)
-        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "registered").firstMatch.waitForExistence(timeout: 10), "the registration isn't shown")
+        XCTAssertTrue(reveal(app.descendants(matching: .any).matching(identifier: "registered").firstMatch, in: app, wait: 10), "the registration isn't shown")
         XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "over-asking").firstMatch.exists, "a request within the registration was flagged")
         XCTAssertTrue(reveal(app.buttons["decline"], in: app))
         app.buttons["decline"].tap()
@@ -384,9 +393,9 @@ final class DemoWalletUITests: XCTestCase {
         ], method: "POST")
         app = try await presentOnce(app, link: over["link"] as! String)
         let flagged = app.descendants(matching: .any).matching(identifier: "over-asking").firstMatch
-        XCTAssertTrue(flagged.waitForExistence(timeout: 10), "a request beyond the registration isn't flagged")
+        XCTAssertTrue(reveal(flagged, in: app, wait: 10), "a request beyond the registration isn't flagged")
         XCTAssertTrue(flagged.label.contains("given_name"), flagged.label)
-        XCTAssertTrue(app.staticTexts["disclosed-unregistered"].waitForExistence(timeout: 10), "the unregistered claim isn't marked")
+        XCTAssertTrue(reveal(app.staticTexts["disclosed-unregistered"], in: app, wait: 10), "the unregistered claim isn't marked")
     }
 
     /// Declines a request the wallet can't answer; the Verifier records
@@ -481,5 +490,51 @@ final class DemoWalletUITests: XCTestCase {
         dismiss.tap()
         XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "pending").firstMatch.waitForExistence(timeout: 3))
         XCTAssertEqual(app.descendants(matching: .any).matching(identifier: "credential").count, 0)
+    }
+
+    /// Sharing in person: the Present tab shows the QR code at once where
+    /// there's Bluetooth, and on the Simulator — which has none — says so,
+    /// with nothing shared.
+    @MainActor
+    func testShareInPerson() async throws {
+        let offer = try await Self.fetch("offer", query: [URLQueryItem(name: "pin", value: "493536"), URLQueryItem(name: "mdoc", value: "1")],
+                                         method: "POST")["offer"] as! String
+        let app = try await launch(offer: offer)
+        let pin = app.textFields["pin"]
+        XCTAssertTrue(pin.waitForExistence(timeout: 20))
+        pin.tap()
+        pin.typeText("493536")
+        app.buttons["receive"].tap()
+        let status = app.staticTexts["status"]
+        XCTAssertTrue(status.waitForExistence(timeout: 60))
+        XCTAssertTrue(status.label.hasPrefix("Received 2"), status.label)
+
+        app.tabBars.buttons["Present"].tap()
+        let qr = app.images["in-person-qr"]
+        let outcome = app.staticTexts["in-person-outcome"]
+        let deadline = Date().addingTimeInterval(20)
+        while !qr.exists && !outcome.exists && Date() < deadline { try await Task.sleep(for: .milliseconds(250)) }
+        if outcome.exists {
+            XCTAssertTrue(outcome.label.contains("Bluetooth"), outcome.label)
+        } else {
+            XCTAssertTrue(qr.exists, "neither the QR code nor an outcome")
+        }
+        app.tabBars.buttons["Wallet"].tap()
+        XCTAssertTrue(app.buttons["scan"].waitForExistence(timeout: 10), "back on the wallet")
+    }
+
+    /// The Verify tab offers what to ask for; the Wallet tab is back to
+    /// the credentials.
+    @MainActor
+    func testReaderMode() async throws {
+        let app = try await launch()
+        let verify = app.tabBars.buttons["Verify"]
+        XCTAssertTrue(verify.waitForExistence(timeout: 10), "no Verify tab")
+        verify.tap()
+        let presets = app.buttons.matching(identifier: "reader-preset")
+        XCTAssertTrue(presets.firstMatch.waitForExistence(timeout: 10))
+        XCTAssertEqual(presets.count, 5)
+        app.tabBars.buttons["Wallet"].tap()
+        XCTAssertTrue(app.buttons["scan"].waitForExistence(timeout: 10), "back on the wallet")
     }
 }

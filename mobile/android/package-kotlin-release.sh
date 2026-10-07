@@ -78,7 +78,7 @@ plugins { id("com.android.application") }
 android {
     namespace = "dev.idfoundry.consumer"
     compileSdk = 37
-    defaultConfig { applicationId = "dev.idfoundry.consumer"; minSdk = 30; targetSdk = 37 }
+    defaultConfig { applicationId = "dev.idfoundry.consumer"; minSdk = 26; targetSdk = 37 }
 }
 dependencies {
     implementation(files("libs/oid4vcwallet-$VERSION.aar"))
@@ -109,7 +109,7 @@ cat > "$PKG/README.md" <<EOF
 # OID4VCgo-wallet-kotlin
 
 \`OID4VCWallet\`: the Kotlin library of [OID4VCgo](https://github.com/IDFoundry/OID4VCgo)'s
-mobile wallet, for Android 11 (API 30) and later. It receives credentials
+mobile wallet, for Android 8 (API 26) and later. It receives credentials
 over OpenID4VCI 1.0 and presents them over OpenID4VP 1.0, under HAIP 1.0,
 with SD-JWT VC and ISO mdoc credentials, from links and, through
 Credential Manager, from Chrome's Digital Credentials API. OID4VCgo is
@@ -122,7 +122,9 @@ library. Your app owns the keys, the storage and the UI:
 
 - **Keys:** \`AndroidKeystoreKeyStore\` keeps them in StrongBox where the
   device has it, else the TEE. Holder keys ask for the holder's
-  fingerprint or screen lock to present (\`BiometricPromptAuthenticator\`).
+  fingerprint or screen lock to present (\`BiometricPromptAuthenticator\`),
+  from Android 11 (API 30); below it, the app authenticates the holder
+  itself. [What each API level guarantees](https://github.com/IDFoundry/OID4VCgo/blob/main/mobile/README.md#what-each-platform-supports).
 - **Storage:** \`FileCredentialStore\` encrypts each record under a key
   that works only while the device is unlocked, out of backups.
 - **Wallet Provider:** you implement \`WalletProvider\`, which attests the

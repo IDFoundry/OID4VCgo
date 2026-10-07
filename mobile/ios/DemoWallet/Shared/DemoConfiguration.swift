@@ -11,8 +11,23 @@ import OID4VCWallet
 struct DemoConfiguration: Codable, Sendable {
     var wallet: WalletConfiguration
     var providerURL: URL
+    /// The reader mode's identity, when the services give one.
+    var reader: Reader?
 
-    enum CodingKeys: String, CodingKey { case wallet, providerURL = "provider_url" }
+    /// A demo reader: the IACAs it accepts, and its key (PKCS #8 PEM) and
+    /// certificate chain (PEM, leaf first). A demo shortcut: a real
+    /// reader's key is made on its device and never leaves it.
+    struct Reader: Codable, Sendable {
+        var issuerRoots: String
+        var readerChain: String
+        var readerKey: String
+
+        enum CodingKeys: String, CodingKey {
+            case issuerRoots = "issuer_roots", readerChain = "reader_chain", readerKey = "reader_key"
+        }
+    }
+
+    enum CodingKeys: String, CodingKey { case wallet, providerURL = "provider_url", reader }
 
     private static let defaultsKey = "demo-configuration"
 

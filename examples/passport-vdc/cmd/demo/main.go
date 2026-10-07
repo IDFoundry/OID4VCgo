@@ -224,6 +224,12 @@ func run(ctx context.Context, opts options) error {
 	}); err != nil {
 		return err
 	}
+	// For the demo apps' reader mode: the verifier's in-person reader,
+	// its key and chain. A demo shortcut: a real reader's key never
+	// leaves its device.
+	if err := writeReader(filepath.Join(state, "mdoc-reader.pem"), verifier); err != nil {
+		return err
+	}
 
 	servers := []*http.Server{
 		// The wallets ask it for attestations; they never hold its key.
@@ -324,6 +330,27 @@ func writeCertificates(dir string, certs map[string]*x509.Certificate) error {
 		if err := os.WriteFile(path, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: c.Raw}), 0o600); err != nil { // #nosec G703 -- operator-supplied state directory
 			return fmt.Errorf("write %s: %w", path, err)
 		}
+	}
+	return nil
+}
+
+// writeReader writes verifier's in-person reader to path: its PKCS #8
+// key, then its certificate chain, leaf first.
+func writeReader(path string, verifier *verifierapp.App) error {
+	key, chain, err := verifier.InPersonReader()
+	if err != nil {
+		return err
+	}
+	der, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		return err
+	}
+	out := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})
+	for _, c := range chain {
+		out = append(out, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: c.Raw})...)
+	}
+	if err := os.WriteFile(path, out, 0o600); err != nil { // #nosec G703 -- operator-supplied state directory
+		return fmt.Errorf("write %s: %w", path, err)
 	}
 	return nil
 }
