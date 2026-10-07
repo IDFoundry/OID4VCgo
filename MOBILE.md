@@ -929,8 +929,9 @@ Thirteen tests pass on the emulator, against `testservices`.
 - **Two holder keys, two prompts:** sharing two credentials asks the
   holder twice, once per key: Keystore authorizes one signature at a
   time.
-- **Not covered:** the authorization code grant, whose issuer page is
-  Chrome's, which doesn't trust the test services' CA.
+- **The authorization code grant,** whose issuer page is Chrome's, came
+  later (#478): Chrome accepts the test services' certificate by an SPKI
+  pin on its debug command line, which the script sets and removes.
 
 ### Open items
 
@@ -939,8 +940,6 @@ Thirteen tests pass on the emulator, against `testservices`.
   reads it.
 - On a device: StrongBox, the unlocked-device key, BiometricPrompt with a
   fingerprint, and the DC API in Chrome.
-- The authorization code grant in the demo's UI tests, with the test
-  services' CA in the device's user store for Chrome.
 
 ## Phase 9 findings: `org-iso-mdoc` on iOS
 
