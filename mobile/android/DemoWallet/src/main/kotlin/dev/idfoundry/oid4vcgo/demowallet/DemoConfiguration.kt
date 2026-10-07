@@ -20,7 +20,21 @@ import java.io.File
 data class DemoConfiguration(
     val wallet: WalletConfiguration,
     @SerialName("provider_url") val providerURL: String,
+    /** The reader mode's identity, when the services give one. */
+    val reader: Reader? = null,
 ) {
+    /**
+     * A demo reader: the IACAs it accepts, and its key (PKCS #8 PEM) and
+     * certificate chain (PEM, leaf first). A demo shortcut: a real
+     * reader's key is made on its device and never leaves it.
+     */
+    @Serializable
+    data class Reader(
+        @SerialName("issuer_roots") val issuerRoots: String,
+        @SerialName("reader_chain") val readerChain: String,
+        @SerialName("reader_key") val readerKey: String,
+    )
+
     companion object {
         private const val PREFS = "demo"
         private const val KEY = "demo-configuration"
