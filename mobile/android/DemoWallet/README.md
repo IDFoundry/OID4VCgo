@@ -149,14 +149,21 @@ XCUITests do: it quits and relaunches the app, and answers the system's
 screen-lock prompt when a holder key signs. The script starts
 `mobile/cmd/testservices`, forwards their ports into the device, pushes
 their CA to the app and hands it to the tests, which reach the services'
-control endpoint over it. The tests cover the pre-authorized code grant
-(a wrong PIN, then the right one), status and revocation, presenting
+control endpoint over it. The tests cover both grants (the authorization
+code, through Chrome, and the pre-authorized code: a wrong PIN, then the
+right one), refreshing copies (by hand, and by itself once every copy is
+used), status and revocation, presenting
 (one credential, several, per-verifier copies, a registered verifier and
 a request beyond its registration, an untrusted verifier, declining),
 deferred credentials (approved, denied, and approved after a relaunch),
-and the scanner. The authorization code grant isn't among them: the
-issuer's page is Chrome's, which doesn't trust the services' CA.
-`../unlock-emulator.sh` gives an emulator the PIN.
+and the scanner. For the issuer's page, the script has Chrome accept the
+services' self-signed certificate by its key: it writes Chrome's command
+line (`--ignore-certificate-errors-spki-list`, skipping the first-run
+screens) to `/data/local/tmp/chrome-command-line`, makes Chrome the debug
+app so it reads it, and removes both when done.
+`../unlock-emulator.sh` gives an emulator the PIN. `UI_TEST_PORT` moves
+the control endpoint off 8600; the script stops if something already
+answers there.
 
 ## Against the test services
 
