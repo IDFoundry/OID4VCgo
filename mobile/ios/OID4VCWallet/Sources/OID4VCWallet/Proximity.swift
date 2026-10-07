@@ -1,5 +1,6 @@
 import Foundation
 import Mobile
+import os
 import Security
 
 extension MobileProximityPresentation: @retroactive @unchecked Sendable {}
@@ -323,6 +324,7 @@ public final class ProximityPresentation: @unchecked Sendable {
         case let s where s.isFinal: return
         default: break
         }
+        ending.withLock { $0 = .declined }
         await sendTermination()
         finish(.declined)
     }
@@ -330,11 +332,18 @@ public final class ProximityPresentation: @unchecked Sendable {
     /// Ends the session now, from any state.
     public func cancel() {
         guard !state.isFinal else { return }
+        ending.withLock { $0 = .cancelled }
         Task.detached { [self] in
             _ = try? await withTimeout(.seconds(2)) { await self.sendTermination() }
             finish(.cancelled)
         }
     }
+
+    /// How the holder chose to end the session, once they did: the
+    /// reader disconnecting on the termination sent then doesn't end it
+    /// as anything else.
+    private enum Ending { case declined, cancelled }
+    private let ending = OSAllocatedUnfairLock<Ending?>(initialState: nil)
 
     /// Sends status 20, if a reader is connected.
     private func sendTermination() async {
@@ -347,6 +356,11 @@ public final class ProximityPresentation: @unchecked Sendable {
     /// transport: at once, or with `letReaderEnd` once the reader
     /// disconnects or a few seconds pass, so the last message reaches it.
     private func finish(_ final: State, letReaderEnd: Bool = false) {
+        switch ending.withLock({ $0 }) {
+        case .declined?: guard case .declined = final else { return }
+        case .cancelled?: guard case .cancelled = final else { return }
+        case nil: break
+        }
         guard broadcast.update(final, if: { !$0.isFinal }) else { return }
         let transport = self.transport
         Task.detached {
@@ -615,11 +629,16 @@ public final class ProximityReaderSession: @unchecked Sendable {
     /// Ends the session now, from any state.
     public func cancel() {
         guard !state.isFinal else { return }
+        cancelling.withLock { $0 = true }
         Task.detached { [self] in
             _ = try? await withTimeout(.seconds(2)) { await self.terminate() }
             finish(.cancelled)
         }
     }
+
+    /// Set by cancel: the holder disconnecting on its termination
+    /// doesn't end the session as a failure.
+    private let cancelling = OSAllocatedUnfairLock(initialState: false)
 
     private func terminate() async {
         guard let message = try? decode(SendJSON.self, handle.terminate()).send else { return }
@@ -627,6 +646,7 @@ public final class ProximityReaderSession: @unchecked Sendable {
     }
 
     private func finish(_ final: State) {
+        if cancelling.withLock({ $0 }) { guard case .cancelled = final else { return } }
         guard broadcast.update(final, if: { !$0.isFinal }) else { return }
         transport.close()
     }

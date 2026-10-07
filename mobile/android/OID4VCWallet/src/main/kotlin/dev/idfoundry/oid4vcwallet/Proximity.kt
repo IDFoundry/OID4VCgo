@@ -291,6 +291,7 @@ public class ProximityPresentation internal constructor(
     /** Declines the request, or ends the session before one: the reader is told, and nothing is disclosed. */
     public suspend fun decline() {
         if (_state.value.isFinal || _state.value is State.Responding) return
+        ending = State.Declined
         sendTermination()
         finish(State.Declined)
     }
@@ -298,6 +299,7 @@ public class ProximityPresentation internal constructor(
     /** Ends the session now, from any state. */
     public fun cancel() {
         if (_state.value.isFinal) return
+        ending = State.Cancelled
         scope.launch {
             withTimeoutOrNull(TERMINATION_TIMEOUT) { sendTermination() }
             finish(State.Cancelled)
@@ -313,11 +315,20 @@ public class ProximityPresentation internal constructor(
     private fun advance(from: State, to: State): Boolean = _state.compareAndSet(from, to)
 
     /**
+     * How the holder chose to end the session, once they did: the reader
+     * disconnecting on the termination sent then doesn't end it as
+     * anything else.
+     */
+    @Volatile
+    private var ending: State? = null
+
+    /**
      * Moves to [final] unless the session is over already, then closes
      * the transport: at once, or with [letReaderEnd] after the reader
      * disconnects or a few seconds pass, so the last message reaches it.
      */
     private fun finish(final: State, letReaderEnd: Boolean = false) {
+        if (ending.let { it != null && it != final }) return
         while (true) {
             val current = _state.value
             if (current.isFinal) return
@@ -551,11 +562,16 @@ public class ProximityReaderSession internal constructor(
     /** Ends the session now, from any state. */
     public fun cancel() {
         if (_state.value.isFinal) return
+        cancelling = true
         scope.launch {
             withTimeoutOrNull(2.seconds) { terminate() }
             finish(State.Cancelled)
         }
     }
+
+    /** Set by cancel: the holder disconnecting on its termination doesn't end the session as a failure. */
+    @Volatile
+    private var cancelling = false
 
     private suspend fun terminate() {
         val message = decode<SendJSON>(handle.terminate()).send
@@ -563,6 +579,7 @@ public class ProximityReaderSession internal constructor(
     }
 
     private fun finish(final: State) {
+        if (cancelling && final != State.Cancelled) return
         while (true) {
             val current = _state.value
             if (current.isFinal) return
