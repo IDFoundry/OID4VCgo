@@ -44,7 +44,7 @@ through), and remembers it:
 
 ## In person (ISO/IEC 18013-5 over BLE)
 
-**Share in person:** "In person" shows a QR code (iOS asks for
+**Share in person, the Present tab:** "Show QR code" shows one (iOS asks for
 Bluetooth the first time). A reader that scans it connects over
 Bluetooth, and the app shows who is asking (the reader's name, whether
 it's verified, and its certificate chain under "Reader certificate") and

@@ -81,7 +81,7 @@ credential first), `offer` and `request` (open a link) are for tests.
 Over the Kotlin library's `startProximityPresentation` and
 `ProximityReader` ([`mobile/README.md`](../../README.md#in-person-presentation)).
 
-**Share in person:** "In person" on the home screen asks for the nearby
+**Share in person, the Present tab:** "Show QR code" asks for the nearby
 devices permission, then shows a QR code. A reader that scans it
 connects over Bluetooth, and the app shows:
 - who is asking: the reader's name and whether it's verified, its
@@ -119,7 +119,7 @@ the same services, Bluetooth on, screen lock set:
    'https://127.0.0.1:8600/offer?pin=493536&mdoc=1'`, open the link, enter
    493536.
 2. On the reader, open the Verify tab, choose "Test mdoc: name", and scan
-   the holder's QR code ("In person" on the holder).
+   the holder's QR code (the Present tab's "Show QR code" on the holder).
 3. The holder sees "Test Services Reader" as verified. "Share" (with the
    screen lock): the reader shows Verified, with only the shared names.
 4. Again, then: "Decline" (the reader shows declined); untick an

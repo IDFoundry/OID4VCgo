@@ -432,6 +432,32 @@ private fun ReaderClaim(identifier: String, value: JsonElement) {
     }
 }
 
+/**
+ * The Present tab: what presenting in person does, and the button that
+ * shows the QR code. The session itself (InPersonScreen) opens over it.
+ */
+@Composable
+fun PresentScreen(model: WalletModel, bottomBar: @Composable () -> Unit, onLeave: () -> Unit) {
+    val share = rememberShareInPerson(model)
+    val mdocs = model.credentials.count { it.format == "mso_mdoc" }
+    BackHandler(onBack = onLeave)
+    InPersonScaffold("Share in person", onBack = null, bottomBar = bottomBar) {
+        Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            Text("Show a QR code to a reader nearby. It connects over Bluetooth and asks for what it needs; you see who is asking, and choose what to share.")
+            Text(
+                when (mdocs) {
+                    0 -> "You hold no mdoc to share in person yet."
+                    1 -> "1 mdoc can be shared in person."
+                    else -> "$mdocs mdocs can be shared in person."
+                },
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            model.notice?.let { Text(it, color = Color(0xFFE65100)) }
+            Button(share, Modifier.fillMaxWidth().testTag("share-in-person"), enabled = model.configured) { Text("Show QR code") }
+        }
+    }
+}
+
 /** Starts sharing in person once the Bluetooth permissions are granted. */
 @Composable
 fun rememberShareInPerson(model: WalletModel): () -> Unit =

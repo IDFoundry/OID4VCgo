@@ -27,6 +27,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.QrCode2
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.RadioButtonChecked
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
@@ -115,6 +116,7 @@ fun DemoApp(model: WalletModel, authorize: suspend (String) -> String, openBrows
             model.requestPhase != WalletModel.RequestPhase.IDLE -> RequestScreen(model, openBrowser)
             model.phase == WalletModel.Phase.Offered || model.phase == WalletModel.Phase.Receiving -> OfferScreen(model, authorize)
             credential != null -> CredentialScreen(model, credential, onBack = { shown = null })
+            tab == DemoTab.PRESENT -> PresentScreen(model, tabBar, onLeave = { tab = DemoTab.WALLET })
             tab == DemoTab.VERIFY -> ReaderScreen(model, tabBar, onLeave = { tab = DemoTab.WALLET })
             else -> HomeScreen(model, onCredential = { shown = it }, onScan = { scanning = true }, bottomBar = tabBar)
         }
@@ -137,7 +139,6 @@ fun DemoApp(model: WalletModel, authorize: suspend (String) -> String, openBrows
 @Composable
 fun HomeScreen(model: WalletModel, onCredential: (String) -> Unit, onScan: () -> Unit, bottomBar: @Composable () -> Unit = {}) {
     val context = LocalContext.current
-    val shareInPerson = rememberShareInPerson(model)
     Scaffold(
         topBar = {
             TopAppBar(
@@ -148,7 +149,6 @@ fun HomeScreen(model: WalletModel, onCredential: (String) -> Unit, onScan: () ->
                         val text = context.getSystemService(ClipboardManager::class.java).primaryClip?.getItemAt(0)?.text?.toString()
                         text?.let { model.open(Uri.parse(it.trim())) }
                     }) { Text("Paste") }
-                    if (model.configured) TextButton(shareInPerson, Modifier.testTag("share-in-person")) { Text("In person") }
                     IconButton(onScan, Modifier.testTag("scan")) { Icon(Icons.Default.QrCodeScanner, "Scan") }
                 },
             )
@@ -159,10 +159,10 @@ fun HomeScreen(model: WalletModel, onCredential: (String) -> Unit, onScan: () ->
     }
 }
 
-/** The app's two sides: the holder's wallet, and the reader. */
-enum class DemoTab { WALLET, VERIFY }
+/** The app's sides: the holder's wallet, presenting in person, and the reader. */
+enum class DemoTab { WALLET, PRESENT, VERIFY }
 
-/** The bottom navigation bar between the wallet and the reader. */
+/** The bottom navigation bar: the wallet, presenting in person, and the reader. */
 @Composable
 fun DemoTabBar(selected: DemoTab, onSelect: (DemoTab) -> Unit) {
     NavigationBar {
@@ -170,6 +170,11 @@ fun DemoTabBar(selected: DemoTab, onSelect: (DemoTab) -> Unit) {
             selected = selected == DemoTab.WALLET, onClick = { onSelect(DemoTab.WALLET) },
             icon = { Icon(Icons.Default.AccountBalanceWallet, null) }, label = { Text("Wallet") },
             modifier = Modifier.testTag("tab-wallet"),
+        )
+        NavigationBarItem(
+            selected = selected == DemoTab.PRESENT, onClick = { onSelect(DemoTab.PRESENT) },
+            icon = { Icon(Icons.Default.QrCode2, null) }, label = { Text("Present") },
+            modifier = Modifier.testTag("tab-present"),
         )
         NavigationBarItem(
             selected = selected == DemoTab.VERIFY, onClick = { onSelect(DemoTab.VERIFY) },

@@ -500,6 +500,7 @@ final class DemoWalletUITests: XCTestCase {
         XCTAssertTrue(status.waitForExistence(timeout: 60))
         XCTAssertTrue(status.label.hasPrefix("Received 2"), status.label)
 
+        app.tabBars.buttons["Present"].tap()
         app.buttons["share-in-person"].tap()
         let qr = app.images["in-person-qr"]
         let outcome = app.staticTexts["in-person-outcome"]
@@ -512,7 +513,7 @@ final class DemoWalletUITests: XCTestCase {
             XCTAssertTrue(qr.exists, "neither the QR code nor an outcome")
             app.buttons["Close"].tap()
         }
-        XCTAssertTrue(app.buttons["share-in-person"].waitForExistence(timeout: 10), "back on the wallet")
+        XCTAssertTrue(app.buttons["share-in-person"].waitForExistence(timeout: 10), "back on the Present tab")
     }
 
     /// The Verify tab offers what to ask for; the Wallet tab is back to
@@ -527,6 +528,6 @@ final class DemoWalletUITests: XCTestCase {
         XCTAssertTrue(presets.firstMatch.waitForExistence(timeout: 10))
         XCTAssertEqual(presets.count, 5)
         app.tabBars.buttons["Wallet"].tap()
-        XCTAssertTrue(app.buttons["share-in-person"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["scan"].waitForExistence(timeout: 10), "back on the wallet")
     }
 }

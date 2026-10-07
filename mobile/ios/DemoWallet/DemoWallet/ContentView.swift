@@ -2,19 +2,23 @@ import AuthenticationServices
 import OID4VCWallet
 import SwiftUI
 
-/// The app's two sides, in a tab bar: the holder's wallet, and the
-/// reader (Verify), which an mdoc: link from another app opens.
+/// The app's sides, in a tab bar: the holder's wallet, presenting in
+/// person, and the reader (Verify), which an mdoc: link from another app
+/// opens.
 struct RootView: View {
     @Environment(WalletModel.self) private var model
     @State private var tab = Tab.wallet
 
-    enum Tab { case wallet, verify }
+    enum Tab { case wallet, present, verify }
 
     var body: some View {
         TabView(selection: $tab) {
             ContentView()
                 .tabItem { Label("Wallet", systemImage: "wallet.bifold") }
                 .tag(Tab.wallet)
+            PresentView()
+                .tabItem { Label("Present", systemImage: "qrcode") }
+                .tag(Tab.present)
             ReaderView()
                 .tabItem { Label("Verify", systemImage: "checkmark.shield") }
                 .tag(Tab.verify)
@@ -25,9 +29,7 @@ struct RootView: View {
 
 struct ContentView: View {
     @Environment(WalletModel.self) private var model
-    @Environment(InPersonModel.self) private var inPerson
     @State private var scanning = false
-    @State private var sharingInPerson = false
 
     var body: some View {
         NavigationStack {
@@ -81,14 +83,6 @@ struct ContentView: View {
                     .accessibilityIdentifier("settings")
                 }
                 ToolbarItemGroup {
-                    if model.configured {
-                        Button("In person") {
-                            inPerson.share(model)
-                            sharingInPerson = inPerson.presentation != nil
-                            if let notice = inPerson.notice { model.notice = notice }
-                        }
-                        .accessibilityIdentifier("share-in-person")
-                    }
                     Button("Paste") {
                         if let text = UIPasteboard.general.string, let url = URL(string: text) { model.open(url) }
                     }
@@ -109,7 +103,6 @@ struct ContentView: View {
                 Text("Another app opened this link. Opening it contacts the \(model.linkToConfirm?.scheme == "openid4vp" ? "verifier" : "issuer") it names; nothing is shared until you agree.")
             }
             .sheet(isPresented: requestShown) { RequestView() }
-            .fullScreenCover(isPresented: $sharingInPerson, onDismiss: { inPerson.closeSharing() }) { InPersonView() }
         }
     }
 

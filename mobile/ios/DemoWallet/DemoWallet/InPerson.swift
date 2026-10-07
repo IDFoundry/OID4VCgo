@@ -157,6 +157,40 @@ final class InPersonModel {
 
 // MARK: The holder's side
 
+/// The Present tab: what presenting in person does, and the button that
+/// shows the QR code. The session itself (InPersonView) opens over it.
+struct PresentView: View {
+    @Environment(WalletModel.self) private var model
+    @Environment(InPersonModel.self) private var inPerson
+    @State private var sharing = false
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    Text("Show a QR code to a reader nearby. It connects over Bluetooth and asks for what it needs; you see who is asking, and choose what to share.")
+                    let mdocs = model.credentials.filter { $0.format == "mso_mdoc" }.count
+                    Text(mdocs == 0 ? "You hold no mdoc to share in person yet." : mdocs == 1 ? "1 mdoc can be shared in person." : "\(mdocs) mdocs can be shared in person.")
+                        .foregroundStyle(.secondary)
+                }
+                if let notice = inPerson.notice {
+                    Section { Text(notice).foregroundStyle(.orange) }
+                }
+                Section {
+                    Button("Show QR code") {
+                        inPerson.share(model)
+                        sharing = inPerson.presentation != nil
+                    }
+                    .disabled(!model.configured)
+                    .accessibilityIdentifier("share-in-person")
+                }
+            }
+            .navigationTitle("Share in person")
+            .fullScreenCover(isPresented: $sharing, onDismiss: { inPerson.closeSharing() }) { InPersonView() }
+        }
+    }
+}
+
 struct InPersonView: View {
     @Environment(WalletModel.self) private var model
     @Environment(InPersonModel.self) private var inPerson
