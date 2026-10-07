@@ -78,7 +78,7 @@ agrees, and holds the keys.
 - **`mobile/ios`** holds the Swift package wrapping the XCFramework, and
   a demo app.
 - **`mobile/android`** holds the Kotlin library wrapping the AAR, and
-  (from later in Phase 8) a demo app.
+  a demo app.
 
 ## The gomobile boundary
 
@@ -131,8 +131,8 @@ Wallet
   (`ResumeIssuance`; see Phase 7 below).
 
 Presentation is protocol-neutral inside `walletflow`: an adapter turns an
-OID4VP request (`wallet.ParseAuthorizationRequest`) or, later, a DC API
-request (`wallet.ParseDCAPIRequest`, which already yields the same
+OID4VP request (`wallet.ParseAuthorizationRequest`) or a DC API request
+(`wallet.ParseDCAPIRequestData`, which yields the same
 `AuthorizationRequest` with `Origin` set) into one presentation request:
 DCQL query, nonce, audience (client_id or origin) and response
 encryption key.
@@ -941,6 +941,43 @@ Thirteen tests pass on the emulator, against `testservices`.
   fingerprint, and the DC API in Chrome.
 - The authorization code grant in the demo's UI tests, with the test
   services' CA in the device's user store for Chrome.
+
+## Phase 9 findings: `org-iso-mdoc` on iOS
+
+The demo app is an Identity Document Provider (iOS 26): Safari's
+`org-iso-mdoc` requests reach its `DocumentProvider` extension, which
+answers through `StartMdocPresentation` (#447–#449). It worked on an
+iPhone against the passport-vdc verifier. Safari on macOS has no
+document providers, so a page there reports the API unsupported.
+
+- **Registration:** the app registers each held mdoc's doctype with
+  `IdentityDocumentServices` (`MobileDocumentRegistration`); iOS offers
+  the app only for those. The doctype must be one Apple allows, which
+  is why passport-vdc issues an ISO Photo ID (#444). The Digital
+  Credentials API – Mobile Document Provider capability goes on both
+  App IDs in the Developer portal.
+- **The extension is another process:** the credential store and the
+  configuration are in an App Group, and holder keys in a shared
+  Keychain access group; instance and DPoP keys stay in the app's own,
+  so the extension can present but not receive or refresh.
+  `KeychainKeyStore`'s `holderAccessGroup` and
+  `FileCredentialStore.inAppGroup` set this up.
+- **What the holder is shown is what's released:** the extension checks
+  that the request iOS releases is the one it showed (the document,
+  the elements, the reader).
+- **Reader trust** (#452): the reader is named only when its request
+  is signed by a certificate under `mdoc_reader_roots`, with the reader
+  authentication EKU when `mdoc_reader_require_eku`; otherwise only the
+  website's origin is shown. `require_trusted_mdoc_reader` refuses the
+  rest.
+- **Linkability** (#459): `mdocCandidates` lists only mdocs that can be
+  presented, each saying whether its every copy has been shown to
+  another website, so the sheet can warn before the holder chooses.
+- **Open:** the app and the extension each write a credential's record
+  under a lock that only spans their own process, so a refresh in the
+  app can overwrite the extension marking a copy presented. A lock
+  across processes would get a suspended app terminated, so this needs
+  writes that check the record's version.
 
 ## Phase 10: Proximity
 

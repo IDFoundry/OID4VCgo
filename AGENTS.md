@@ -84,6 +84,34 @@ See [SPECIFICATIONS.md](SPECIFICATIONS.md) for the exact spec/draft
 versions this repo targets, and [ARCHITECTURE.md](ARCHITECTURE.md) for
 package layout and design rationale as it's built out.
 
+## Mobile, the DC API and proximity
+
+- `mobile/` is a separate Go module (gomobile's façade over
+  `walletflow`), with the Swift package and iOS demo under
+  `mobile/ios` and the Kotlin library and Android demo under
+  `mobile/android`. [MOBILE.md](MOBILE.md) is the design and its
+  per-phase findings; record what a phase finds there.
+- The gomobile API is versioned: [`mobile/ABI.md`](mobile/ABI.md)
+  documents every call and JSON shape, and an incompatible change bumps
+  `ABIVersion` in `mobile/mobile.go`.
+- The Swift and Kotlin libraries are released by hand, by the
+  `wallet-swift-release` and `wallet-kotlin-release` workflows, into
+  their own publish-only repositories, independently of release-please.
+  Both release from the same commit with the same version. The scripts
+  they run (`mobile/ios/package-swift-release.sh`,
+  `mobile/android/package-kotlin-release.sh`) write those repositories'
+  READMEs: edit them there, never in the published repository.
+- Which entry point answers a Digital Credentials API request depends
+  on its `protocol`: `openid4vp-v1-*` is OpenID4VP
+  (`walletflow.StartDCAPIPresentation`, `wallet.ParseDCAPIRequestData`;
+  Android's route), and `org-iso-mdoc` is ISO/IEC TS 18013-7 Annex C
+  (`walletflow.StartMdocPresentation`, `mdocdcapi`; Safari's, so iOS's).
+- `proximity` carries no transport: the native libraries carry BLE GATT
+  (and chunking) and hand it whole messages. Keep platform transport
+  out of the Go packages.
+- The ISO standards these packages implement are paid documents: cite
+  their section numbers, but never commit their text.
+
 ## Where conformance-suite knowledge lives
 
 All four roles are OpenID Certified (OID4VCI + HAIP Issuer and Wallet,

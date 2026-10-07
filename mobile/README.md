@@ -12,6 +12,74 @@ separate Go module (it needs `golang.org/x/mobile`).
 
 The API is described in [ABI.md](ABI.md).
 
+## What each platform supports
+
+| | Swift (iOS) | Kotlin (Android) |
+|---|---|---|
+| Issuance (`openid-credential-offer://` links) | ✓ | ✓ |
+| Presentation (`openid4vp://` links) | ✓ | ✓ |
+| OpenID4VP over the Digital Credentials API (`startDCAPIPresentation`, with `requireSignedDCAPIRequests`) | — Safari doesn't send it | ✓ Chrome, through Credential Manager |
+| `org-iso-mdoc` over the Digital Credentials API (`startMdocPresentation`, `mdocCandidates`) | ✓ Safari, through a document provider extension | in the library, but Chrome sends OpenID4VP instead |
+| In person, as the holder (`startProximityPresentation`) | ✓ | ✓ |
+| In person, as the reader (`ProximityReader`) | ✓ | ✓ |
+| Keys | `KeychainKeyStore` (Secure Enclave) | `AndroidKeystoreKeyStore` (StrongBox or TEE) |
+| Credential store | `FileCredentialStore` | `FileCredentialStore` |
+| Extra development CAs (`developmentRoots`) | — the system trust store's | ✓ |
+| Bluetooth permissions | asked by iOS on first use | `ProximityPermissions`, for the app to request |
+
+The demo apps show each platform's integration with the browser: the
+iOS document provider extension, and the Android Credential Manager
+provider activity.
+
+## In-person presentation
+
+ISO/IEC 18013-5 device retrieval over BLE. The libraries carry the BLE
+GATT transport: an app shows or scans a QR code and follows a session's
+states; it never sees GATT.
+
+- **The holder:** `wallet.startProximityPresentation()` returns a
+  session whose `qrCode` the app shows. It advertises (mdoc peripheral
+  server mode) until a reader connects, then reports
+  `requestReceived` with the reader's identity (`trusted` under
+  `mdocReaderRoots`, `untrusted`, `unauthenticated` if unsigned, or
+  `invalid`) and the requested
+  documents with the held mdocs that match. The app asks the holder,
+  then calls `respond(document:credentialID:elements:)` or `decline()`.
+  `presented(linkable:)` says whether the copy shown had been seen by
+  another Verifier. `requireTrustedMdocReader` ends a session from an
+  unrecognized reader before anything is shown.
+- **The reader:** `ProximityReader(configuration:keyStore:)`, with the
+  IACAs whose mdocs it accepts and, to sign its requests, its key and
+  certificate chain (with the reader authentication extended key
+  usage, 1.0.18013.5.1.6). `start` takes the holder's QR code, the
+  doctype and the elements to ask for. It connects in whichever mode
+  the holder offers, preferring central client mode, and ends in
+  `verified` with the issuer-verified elements, or another final state.
+- **States** are an `AsyncStream` (`states`) in Swift and a `StateFlow`
+  (`state`) in Kotlin; `isFinal` says when a session is over, and
+  `cancel()` ends one.
+- **Timeouts** (`ProximityTimeouts`): by default 60 s for the other
+  device to connect, 30 s for the request, and 300 s for the holder to
+  decide or the answer to arrive.
+- **Bluetooth failures** are `ProximityError` (Swift) or
+  `ProximityException` (Kotlin): Bluetooth off or not allowed, a
+  timeout, or a lost connection, each with a sentence to show.
+  Protocol failures are `WalletError`/`WalletException`.
+- **iOS:** the app's Info.plist needs `NSBluetoothAlwaysUsageDescription`.
+- **Android:** the library's manifest adds the Bluetooth permissions
+  (on Android 11, `BLUETOOTH`, `BLUETOOTH_ADMIN` and
+  `ACCESS_FINE_LOCATION`, which a reader needs for scan results; from
+  Android 12, `BLUETOOTH_ADVERTISE`, `BLUETOOTH_CONNECT` and
+  `BLUETOOTH_SCAN` with `neverForLocation`). Request
+  `ProximityPermissions.holder` or `.reader` before starting a
+  session; without them it throws `ProximityException`
+  (`PermissionMissing`).
+- **Keep the app in the foreground** during a session: neither library
+  declares Bluetooth background modes or keeps a session through the
+  app being suspended.
+- **Not supported:** the L2CAP transport, NFC engagement, and more than
+  one request per session.
+
 Build the XCFramework (Xcode and Go needed; gomobile and gobind are the
 versions `go.mod` pins). The Swift tests need the test build, which adds
 an in-process test issuer and Verifier (`TestEnv`) a shipped framework
@@ -88,8 +156,11 @@ Integrators add the package from
 which SwiftPM can fetch:
 
 ```swift
-.package(url: "https://github.com/IDFoundry/OID4VCgo-wallet-swift", from: "0.1.0")
+.package(url: "https://github.com/IDFoundry/OID4VCgo-wallet-swift", from: "0.7.0")
 ```
+
+0.7.0 is the first with `org-iso-mdoc`; in-person presentation comes in
+the release after it.
 
 To publish a version, run the `wallet-swift-release` workflow from
 the commit to publish, with the version (`1.2.3`, versioned apart from
