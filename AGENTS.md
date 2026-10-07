@@ -89,7 +89,7 @@ package layout and design rationale as it's built out.
 - `mobile/` is a separate Go module (gomobile's façade over
   `walletflow`), with the Swift package and iOS demo under
   `mobile/ios` and the Kotlin library and Android demo under
-  `mobile/android`. [MOBILE.md](MOBILE.md) is the design and its
+  `mobile/android`. [mobile/MOBILE.md](mobile/MOBILE.md) is the design and its
   per-phase findings; record what a phase finds there.
 - The gomobile API is versioned: [`mobile/ABI.md`](mobile/ABI.md)
   documents every call and JSON shape, and an incompatible change bumps
