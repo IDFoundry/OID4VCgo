@@ -156,7 +156,9 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
     fun chooseCopyPolicy(policy: WalletConfiguration.CopyPolicy) {
         if (policy == copyPolicy || presentation != null) return
         copyPolicy = policy
-        prefs.edit().putString(COPY_POLICY, policy.name).apply()
+        // At once, not apply()'s later write: the app may be stopped
+        // right after (a UI test relaunching it did).
+        prefs.edit().putString(COPY_POLICY, policy.name).commit()
         try {
             wallet = makeWallet()
         } catch (e: Exception) {

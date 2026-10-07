@@ -10,6 +10,7 @@ import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyInfo
 import android.security.keystore.KeyProperties
 import android.security.keystore.StrongBoxUnavailableException
+import androidx.annotation.RequiresApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -43,6 +44,9 @@ public fun interface HolderAuthenticator {
  * ([activity], null when none is showing), allowing a strong biometric
  * or the screen lock, as Face ID or the passcode on iOS.
  */
+// API 30's: it allows biometrics or the screen lock (setAllowedAuthenticators),
+// as the per-use holder keys it's for do, which need 30 too.
+@RequiresApi(Build.VERSION_CODES.R)
 public class BiometricPromptAuthenticator(
     private val activity: () -> Activity?,
     private val title: String = "Confirm it's you",
@@ -87,6 +91,14 @@ public class AndroidKeystoreKeyStore(
     public val options: Options = Options(),
     private val authenticator: HolderAuthenticator? = null,
 ) : KeyStore {
+    init {
+        // Per-use authentication by biometrics or the screen lock is API
+        // 30's: below it, fail now rather than make weaker keys.
+        check(!options.holderUserAuthentication || Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            "holderUserAuthentication needs API 30; set it false and authenticate the holder in the app"
+        }
+    }
+
     /** Where keys are made. */
     public enum class StrongBox {
         /** In StrongBox when the device has it, else the TEE. */
@@ -105,7 +117,9 @@ public class AndroidKeystoreKeyStore(
          * Require the holder's biometrics or screen lock for each
          * signature by a holder key — that is, to present a credential.
          * It needs a secure lock screen; without one, creating a holder
-         * key fails.
+         * key fails. It needs API 30: below it the key store refuses it
+         * at construction; set it false there, and authenticate the
+         * holder in the app before presenting.
          */
         val holderUserAuthentication: Boolean = true,
         /** Prefixes every key's alias. Keys under another prefix are never touched, by a sweep or anything else. */
@@ -123,19 +137,30 @@ public class AndroidKeystoreKeyStore(
             .setAlgorithmParameterSpec(ECGenParameterSpec("secp256r1"))
             // Go hands over a SHA-256 digest: NONEwithECDSA signs it as is.
             .setDigests(KeyProperties.DIGEST_NONE, KeyProperties.DIGEST_SHA256)
-            .setUnlockedDeviceRequired(true)
+        // API 28's: below it, a key works while the device is locked,
+        // once unlocked since boot.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) spec.setUnlockedDeviceRequired(true)
         // Only holder keys can require the holder: instance and DPoP keys
         // sign protocol messages silently (a Client Attestation PoP at PAR
         // and the token endpoint, a DPoP proof on every protocol request),
         // so prompting for them would interrupt each issuance several
         // times.
-        if (purpose == KeyPurpose.HOLDER && options.holderUserAuthentication) {
+        // The constructor refused holderUserAuthentication below API 30.
+        if (purpose == KeyPurpose.HOLDER && options.holderUserAuthentication && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             spec.setUserAuthenticationRequired(true)
                 .setUserAuthenticationParameters(0, KeyProperties.AUTH_BIOMETRIC_STRONG or KeyProperties.AUTH_DEVICE_CREDENTIAL)
                 // As iOS's user presence: a new fingerprint doesn't void the key.
                 .setInvalidatedByBiometricEnrollment(false)
         }
         val generator = KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_EC, PROVIDER)
+        // StrongBox is API 28's: below it, PREFERRED is the TEE and
+        // REQUIRED fails, as on a device without it.
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) {
+            if (options.strongBox == StrongBox.REQUIRED) throw StoreException("StrongBox needs API 28")
+            generator.initialize(spec.build())
+            generator.generateKeyPair()
+            return id
+        }
         when (options.strongBox) {
             StrongBox.OFF -> generator.initialize(spec.build())
             StrongBox.REQUIRED -> generator.initialize(spec.setIsStrongBoxBacked(true).build())

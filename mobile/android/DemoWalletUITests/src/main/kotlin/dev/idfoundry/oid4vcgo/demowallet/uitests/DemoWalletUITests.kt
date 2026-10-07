@@ -161,6 +161,59 @@ class DemoWalletUITests {
 
     private fun result(id: String): JsonObject = control("request/$id")
 
+    /**
+     * Receives by the authorization code grant: Chrome opens the issuer's
+     * page, which approves at once and redirects back to the app.
+     * run-ui-tests.sh has Chrome accept the services' certificate.
+     */
+    private fun receiveWithAuthorizationCode() {
+        launch(offer = control("offer", "POST")["offer"]!!.jsonPrimitive.content)
+        need("receive").click()
+        assertTrue("not received", waitFor("status", "Received 2", 90_000))
+    }
+
+    /** The authorization code grant, through Chrome; both credentials are listed, with their claims. */
+    @Test
+    fun receiveWithAuthorizationCodeGrant() {
+        receiveWithAuthorizationCode()
+        assertTrue("the two credentials aren't listed", device.wait(Until.hasObject(res("credential")), 10_000))
+        assertEquals(2, device.findObjects(res("credential")).size)
+        device.findObjects(res("credential")).first().click()
+        assertNotNull("family_name isn't shown", find(By.textContains("Doe"), 10_000))
+        assertNotNull("the portrait isn't shown as an image", find(res("portrait"), 10_000))
+    }
+
+    /**
+     * Credentials received by authorization code keep a refresh token:
+     * after a presentation uses a copy, Refresh copies replaces them
+     * with a fresh batch, every copy unused again.
+     */
+    @Test
+    fun refreshCopies() {
+        receiveWithAuthorizationCode()
+        presentOnce(request("format=dc%2Bsd-jwt").second)
+        share()
+        (find(res("credential").hasDescendant(By.textContains("2 of 3 copies unused")), 10_000)
+            ?: find(res("credential").textContains("2 of 3 copies unused"), 1_000)
+            ?: error("the presented credential doesn't show a copy used")).click()
+        assertTrue(waitFor("credential-copies", "2 of 3"))
+        reveal("refresh-copies").click()
+        assertTrue("not refreshed", waitFor("credential-copies", "3 of 3 copies unused", 30_000))
+        assertTrue("no feedback that the refresh happened", waitFor("refresh-done", "3 fresh copies", 10_000))
+    }
+
+    /** Once every copy of a refreshable credential has been presented, the app refreshes it by itself. */
+    @Test
+    fun autoRefresh() {
+        receiveWithPIN()
+        repeat(3) {
+            presentOnce(request("format=dc%2Bsd-jwt").second)
+            share()
+        }
+        // After its third presentation it would show no copy unused.
+        assertTrue("not refreshed by itself", waitFor("credential", "3 of 3 copies unused", 30_000))
+    }
+
     /** The pre-authorized code grant, with the PIN typed in the app. */
     @Test
     fun receiveWithPINGrant() {
@@ -336,7 +389,8 @@ class DemoWalletUITests {
 
     private companion object {
         const val APP = "dev.idfoundry.oid4vcgo.demowallet"
-        const val CONTROL = "https://127.0.0.1:8600"
+        /** The test services' control endpoint, on run-ui-tests.sh's port. */
+        val CONTROL = "https://127.0.0.1:" + (InstrumentationRegistry.getArguments().getString("controlPort") ?: "8600")
 
         /** The title of the demo's prompt before a holder key signs. */
         const val PROMPT = "Confirm it's you"

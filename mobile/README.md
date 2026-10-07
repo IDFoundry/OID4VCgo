@@ -27,6 +27,19 @@ The API is described in [ABI.md](ABI.md).
 | Extra development CAs (`developmentRoots`) | — the system trust store's | ✓ |
 | Bluetooth permissions | asked by iOS on first use | `ProximityPermissions`, for the app to request |
 
+The Kotlin library runs on Android 8 (API 26) and later. What its keys
+guarantee depends on the API level:
+
+| Android | Holder keys | Every key, and the credential store's | Where keys are made |
+|---|---|---|---|
+| 11 and later (API 30+) | can require biometrics or the screen lock for each use (`holderUserAuthentication`, the default) | work only while the device is unlocked | StrongBox where the device has it, else the TEE |
+| 9 and 10 (API 28–29) | can't require the holder: set `holderUserAuthentication` false, which a key store with it true refuses, and authenticate the holder in the app before presenting | work only while the device is unlocked | StrongBox or the TEE |
+| 8 (API 26–27) | as API 28–29 | work while the device is locked, once it was unlocked after boot (as `FileCredentialStore`'s `AFTER_FIRST_UNLOCK`) | the TEE; `StrongBox.REQUIRED` fails |
+
+`BiometricPromptAuthenticator` is API 30's, like the per-use holder keys
+it serves. Key attestation on API 26–27 can be software-backed on some
+devices; the Wallet Provider decides whether to accept it.
+
 The demo apps show each platform's integration with the browser: the
 iOS document provider extension, and the Android Credential Manager
 provider activity.
@@ -68,7 +81,7 @@ states; it never sees GATT.
   Protocol failures are `WalletError`/`WalletException`.
 - **iOS:** the app's Info.plist needs `NSBluetoothAlwaysUsageDescription`.
 - **Android:** the library's manifest adds the Bluetooth permissions
-  (on Android 11, `BLUETOOTH`, `BLUETOOTH_ADMIN` and
+  (up to Android 11, `BLUETOOTH`, `BLUETOOTH_ADMIN` and
   `ACCESS_FINE_LOCATION`, which a reader needs for scan results; from
   Android 12, `BLUETOOTH_ADVERTISE`, `BLUETOOTH_CONNECT` and
   `BLUETOOTH_SCAN` with `neverForLocation`). Request

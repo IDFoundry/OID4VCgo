@@ -6,6 +6,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.security.keystore.KeyProperties
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.filters.SdkSuppress
 import androidx.test.platform.app.InstrumentationRegistry
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -73,7 +74,9 @@ class AndroidKeystoreKeyStoreTest {
     }
 
     /** A holder key requiring the holder signs only once its signature is authenticated. */
+    // Per-use authentication is API 30's.
     @Test
+    @SdkSuppress(minSdkVersion = Build.VERSION_CODES.R)
     fun holderKeyNeedsAuthentication() {
         assumeTrue("needs a secure lock screen", context.getSystemService(KeyguardManager::class.java).isDeviceSecure)
         val digest = MessageDigest.getInstance("SHA-256").digest("presentation".toByteArray())
@@ -91,6 +94,22 @@ class AndroidKeystoreKeyStoreTest {
         assertTrue(fake.sign(dpop, digest).isNotEmpty())
     }
 
+    /** Below API 30, holder keys can't require the holder each time: the store refuses to pretend. */
+    @Test
+    @SdkSuppress(maxSdkVersion = Build.VERSION_CODES.Q)
+    fun holderAuthenticationNeedsAPI30() {
+        try {
+            store(holderAuth = true)
+            fail("made a store whose holder keys can't require the holder")
+        } catch (e: IllegalStateException) {
+            assertTrue(e.message, e.message!!.contains("API 30"))
+        }
+        // Without it, keys work: the app authenticates the holder itself.
+        val keys = store(holderAuth = false)
+        val id = keys.createKey(KeyPurpose.HOLDER)
+        assertTrue(keys.sign(id, MessageDigest.getInstance("SHA-256").digest(byteArrayOf(1))).isNotEmpty())
+    }
+
     @Test
     fun sweepKeepsOnlyWhatsAsked() {
         val keys = store()
@@ -100,7 +119,7 @@ class AndroidKeystoreKeyStoreTest {
         assertEquals(2, keys.deleteKeys(setOf(kept)))
         assertEquals(listOf(kept), keys.keyIDs())
         // Another prefix's keys are never touched.
-        val other = AndroidKeystoreKeyStore(AndroidKeystoreKeyStore.Options(aliasPrefix = "org.idfoundry.oid4vcgo.othertest.${System.nanoTime()}."))
+        val other = AndroidKeystoreKeyStore(AndroidKeystoreKeyStore.Options(holderUserAuthentication = false, aliasPrefix = "org.idfoundry.oid4vcgo.othertest.${System.nanoTime()}."))
         val theirs = other.createKey(KeyPurpose.DPOP)
         keys.deleteKeys(emptySet())
         assertEquals(listOf(theirs), other.keyIDs())

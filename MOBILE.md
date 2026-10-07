@@ -715,7 +715,10 @@ Decisions taken 2026-10-06 (tracked in [#461](https://github.com/IDFoundry/OID4V
    Credentials API on Android" below).
 4. **Platform:** minSdk 30, the first level where a key can require
    biometrics *or* the screen lock for each use, as holder keys do on
-   iOS. Keys are P-256 in StrongBox, or else the TEE; credentials are
+   iOS. Since lowered to minSdk 26, for apps that authenticate the
+   holder themselves: per-use holder authentication still needs API 30
+   (below it, a key store asking for it refuses to be made), and keys
+   need the device unlocked from API 28 (see mobile/README.md's table). Keys are P-256 in StrongBox, or else the TEE; credentials are
    files encrypted under a key that needs the device unlocked, kept out
    of backups.
 5. **API:** the Swift API's names and shapes, in Kotlin: suspend
@@ -929,8 +932,9 @@ Thirteen tests pass on the emulator, against `testservices`.
 - **Two holder keys, two prompts:** sharing two credentials asks the
   holder twice, once per key: Keystore authorizes one signature at a
   time.
-- **Not covered:** the authorization code grant, whose issuer page is
-  Chrome's, which doesn't trust the test services' CA.
+- **The authorization code grant,** whose issuer page is Chrome's, came
+  later (#478): Chrome accepts the test services' certificate by an SPKI
+  pin on its debug command line, which the script sets and removes.
 
 ### Open items
 
@@ -939,8 +943,6 @@ Thirteen tests pass on the emulator, against `testservices`.
   reads it.
 - On a device: StrongBox, the unlocked-device key, BiometricPrompt with a
   fingerprint, and the DC API in Chrome.
-- The authorization code grant in the demo's UI tests, with the test
-  services' CA in the device's user store for Chrome.
 
 ## Phase 9 findings: `org-iso-mdoc` on iOS
 
@@ -1083,7 +1085,7 @@ Decisions taken 2026-10-06 (tracked in [#482](https://github.com/IDFoundry/OID4V
   disconnect.
 - **Permissions:** the library declares them, `ProximityPermissions`
   lists the runtime ones (advertise and connect for a holder; scan,
-  connect and advertise for a reader; location on Android 11, which
+  connect and advertise for a reader; location up to Android 11, which
   delivers scan results only with it).
 
 ### Phase 10 findings: the iOS SDK
