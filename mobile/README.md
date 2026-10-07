@@ -42,7 +42,8 @@ states; it never sees GATT.
   server mode) until a reader connects, then reports
   `requestReceived` with the reader's identity (`trusted` under
   `mdocReaderRoots`, `untrusted`, `unauthenticated` if unsigned, or
-  `invalid`) and the requested
+  `invalid`, with its certificate chain; in Swift also `certificates`,
+  each certificate's fields, which iOS has no API to read) and the requested
   documents with the held mdocs that match. The app asks the holder,
   then calls `respond(document:credentialID:elements:)` or `decline()`.
   `presented(linkable:)` says whether the copy shown had been seen by

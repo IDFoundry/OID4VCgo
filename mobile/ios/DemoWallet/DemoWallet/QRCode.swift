@@ -23,6 +23,9 @@ enum QRCode {
         url.scheme == "openid-credential-offer" || url.scheme == "openid4vp"
     }
 
+    /// An mdoc's device engagement ("mdoc:…", ISO/IEC 18013-5 §8.2.2.3), for reader mode.
+    static func isEngagement(_ url: URL) -> Bool { url.scheme?.lowercased() == "mdoc" }
+
     /// A QR code holding `text`, for tests.
     static func image(of text: String) -> CGImage? {
         let filter = CIFilter(name: "CIQRCodeGenerator", parameters: ["inputMessage": Data(text.utf8), "inputCorrectionLevel": "M"])
