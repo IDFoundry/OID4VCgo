@@ -79,8 +79,37 @@ public struct ProximityReaderIdentity: Sendable {
     public let name: String
     /// The certificate chain the request carried, leaf first.
     public let chain: [SecCertificate]
+    /// `chain`'s certificates' fields, which the platform can't read
+    /// itself: for showing them.
+    public let certificates: [CertificateDetails]
     /// Why `status` isn't `.trusted`, for logs.
     public let error: String?
+
+    /// A certificate's fields.
+    public struct CertificateDetails: Decodable, Sendable {
+        public let subject: String
+        public let issuer: String
+        public let notBefore: Date
+        public let notAfter: Date
+        /// Hexadecimal.
+        public let serial: String
+        public let subjectAltNames: [String]
+        public let extendedKeyUsages: [String]
+        public let keyUsages: [String]
+        public let isCA: Bool
+        public let signatureAlgorithm: String
+        /// The extensions' OIDs, "(critical)" after the critical ones'.
+        public let extensions: [String]
+        /// The certificate's SHA-256, hexadecimal.
+        public let sha256: String
+
+        enum CodingKeys: String, CodingKey {
+            case subject, issuer, serial, extensions, sha256
+            case notBefore = "not_before", notAfter = "not_after", subjectAltNames = "subject_alt_names"
+            case extendedKeyUsages = "extended_key_usages", keyUsages = "key_usages", isCA = "is_ca"
+            case signatureAlgorithm = "signature_algorithm"
+        }
+    }
 }
 
 /// Publishes a session's state to any number of observers.
@@ -348,6 +377,7 @@ struct ReaderJSON: Decodable {
     let status: String
     let name: String
     let chain: [Data]
+    let certificates: [ProximityReaderIdentity.CertificateDetails]?
     let error: String?
 
     var identity: ProximityReaderIdentity {
@@ -355,6 +385,7 @@ struct ReaderJSON: Decodable {
             status: ProximityReaderIdentity.Status(rawValue: status) ?? .unauthenticated,
             name: name,
             chain: chain.compactMap { SecCertificateCreateWithData(nil, $0 as CFData) },
+            certificates: certificates ?? [],
             error: error)
     }
 }

@@ -27,6 +27,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.QrCode2
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.RadioButtonChecked
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
@@ -43,6 +44,11 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.material.icons.filled.VerifiedUser
+import androidx.compose.material.icons.filled.AccountBalanceWallet
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -96,13 +102,19 @@ fun DemoApp(model: WalletModel, authorize: suspend (String) -> String, openBrows
     MaterialTheme(colorScheme = if (isSystemInDarkTheme()) darkColorScheme() else lightColorScheme()) { Box(Modifier.semantics { testTagsAsResourceId = true }) {
         var shown by remember { mutableStateOf<String?>(null) }
         var scanning by remember { mutableStateOf(false) }
+        var tab by rememberSaveable { mutableStateOf(DemoTab.WALLET) }
         val credential = shown?.let { id -> model.credentials.firstOrNull { it.id == id } }
+        // An mdoc: link from another app is for the reader.
+        LaunchedEffect(model.engagementToRead) { if (model.engagementToRead != null) tab = DemoTab.VERIFY }
+        val tabBar: @Composable () -> Unit = { DemoTabBar(tab) { tab = it } }
         when {
             scanning -> ScanScreen(onLink = { scanning = false; model.open(it) }, onClose = { scanning = false })
             model.requestPhase != WalletModel.RequestPhase.IDLE -> RequestScreen(model, openBrowser)
             model.phase == WalletModel.Phase.Offered || model.phase == WalletModel.Phase.Receiving -> OfferScreen(model, authorize)
             credential != null -> CredentialScreen(model, credential, onBack = { shown = null })
-            else -> HomeScreen(model, onCredential = { shown = it }, onScan = { scanning = true })
+            tab == DemoTab.PRESENT -> PresentScreen(model, tabBar, onLeave = { tab = DemoTab.WALLET })
+            tab == DemoTab.VERIFY -> ReaderScreen(model, tabBar, onLeave = { tab = DemoTab.WALLET })
+            else -> HomeScreen(model, onCredential = { shown = it }, onScan = { scanning = true }, bottomBar = tabBar)
         }
         model.linkToConfirm?.let { link ->
             val request = link.scheme == WalletModel.REQUEST_SCHEME
@@ -121,7 +133,7 @@ fun DemoApp(model: WalletModel, authorize: suspend (String) -> String, openBrows
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HomeScreen(model: WalletModel, onCredential: (String) -> Unit, onScan: () -> Unit) {
+fun HomeScreen(model: WalletModel, onCredential: (String) -> Unit, onScan: () -> Unit, bottomBar: @Composable () -> Unit = {}) {
     val context = LocalContext.current
     Scaffold(
         topBar = {
@@ -137,8 +149,34 @@ fun HomeScreen(model: WalletModel, onCredential: (String) -> Unit, onScan: () ->
                 },
             )
         },
+        bottomBar = bottomBar,
     ) { padding ->
         LazyColumn(Modifier.fillMaxSize(), contentPadding = padding) { home(model, onCredential) }
+    }
+}
+
+/** The app's sides: the holder's wallet, presenting in person, and the reader. */
+enum class DemoTab { WALLET, PRESENT, VERIFY }
+
+/** The bottom navigation bar: the wallet, presenting in person, and the reader. */
+@Composable
+fun DemoTabBar(selected: DemoTab, onSelect: (DemoTab) -> Unit) {
+    NavigationBar {
+        NavigationBarItem(
+            selected = selected == DemoTab.WALLET, onClick = { onSelect(DemoTab.WALLET) },
+            icon = { Icon(Icons.Default.AccountBalanceWallet, null) }, label = { Text("Wallet") },
+            modifier = Modifier.testTag("tab-wallet"),
+        )
+        NavigationBarItem(
+            selected = selected == DemoTab.PRESENT, onClick = { onSelect(DemoTab.PRESENT) },
+            icon = { Icon(Icons.Default.QrCode2, null) }, label = { Text("Present") },
+            modifier = Modifier.testTag("tab-present"),
+        )
+        NavigationBarItem(
+            selected = selected == DemoTab.VERIFY, onClick = { onSelect(DemoTab.VERIFY) },
+            icon = { Icon(Icons.Default.VerifiedUser, null) }, label = { Text("Verify") },
+            modifier = Modifier.testTag("tab-verify"),
+        )
     }
 }
 

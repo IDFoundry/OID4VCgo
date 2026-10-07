@@ -1,11 +1,17 @@
 package mobile
 
 import (
+	"crypto/sha256"
+	"crypto/x509"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
+	"time"
 
+	"github.com/idfoundry/oid4vcgo/proximity"
 	"github.com/idfoundry/oid4vcgo/walletflow"
 )
 
@@ -89,10 +95,83 @@ func (p *ProximityPresentation) HandleMessage(op *Operation, message []byte) str
 }
 
 type proximityReaderJSON struct {
-	Status string   `json:"status"`
-	Name   string   `json:"name"`
-	Chain  []string `json:"chain"`
-	Error  string   `json:"error,omitempty"`
+	Status       string            `json:"status"`
+	Name         string            `json:"name"`
+	Chain        []string          `json:"chain"`
+	Certificates []certificateJSON `json:"certificates"`
+	Error        string            `json:"error,omitempty"`
+}
+
+// certificateJSON is a certificate's fields, for an app to show where
+// the platform can't parse one (iOS).
+type certificateJSON struct {
+	Subject           string   `json:"subject"`
+	Issuer            string   `json:"issuer"`
+	NotBefore         string   `json:"not_before"`
+	NotAfter          string   `json:"not_after"`
+	Serial            string   `json:"serial"`
+	SubjectAltNames   []string `json:"subject_alt_names"`
+	ExtendedKeyUsages []string `json:"extended_key_usages"`
+	KeyUsages         []string `json:"key_usages"`
+	IsCA              bool     `json:"is_ca"`
+	SignatureAlg      string   `json:"signature_algorithm"`
+	Extensions        []string `json:"extensions"`
+	SHA256            string   `json:"sha256"`
+}
+
+func certificateOf(c *x509.Certificate) certificateJSON {
+	out := certificateJSON{
+		Subject: c.Subject.String(), Issuer: c.Issuer.String(),
+		NotBefore: c.NotBefore.UTC().Format(time.RFC3339), NotAfter: c.NotAfter.UTC().Format(time.RFC3339),
+		Serial: c.SerialNumber.Text(16), IsCA: c.IsCA, SignatureAlg: c.SignatureAlgorithm.String(),
+		SubjectAltNames:   append(append(append([]string{}, c.DNSNames...), c.EmailAddresses...), ipStrings(c)...),
+		ExtendedKeyUsages: []string{}, KeyUsages: []string{}, Extensions: []string{},
+	}
+	for _, u := range c.URIs {
+		out.SubjectAltNames = append(out.SubjectAltNames, u.String())
+	}
+	for _, eku := range c.ExtKeyUsage {
+		out.ExtendedKeyUsages = append(out.ExtendedKeyUsages, extKeyUsageNames[eku])
+	}
+	for _, eku := range c.UnknownExtKeyUsage {
+		name := eku.String()
+		if eku.Equal(proximity.ReaderAuthenticationEKU) {
+			name = "mdoc reader authentication (" + name + ")"
+		}
+		out.ExtendedKeyUsages = append(out.ExtendedKeyUsages, name)
+	}
+	for i, name := range keyUsageNames {
+		if c.KeyUsage&(1<<i) != 0 {
+			out.KeyUsages = append(out.KeyUsages, name)
+		}
+	}
+	for _, e := range c.Extensions {
+		name := e.Id.String()
+		if e.Critical {
+			name += " (critical)"
+		}
+		out.Extensions = append(out.Extensions, name)
+	}
+	sum := sha256.Sum256(c.Raw)
+	out.SHA256 = strings.ToUpper(hex.EncodeToString(sum[:]))
+	return out
+}
+
+func ipStrings(c *x509.Certificate) []string {
+	out := make([]string, 0, len(c.IPAddresses))
+	for _, ip := range c.IPAddresses {
+		out = append(out, ip.String())
+	}
+	return out
+}
+
+// keyUsageNames are x509.KeyUsage's bits, in order.
+var keyUsageNames = []string{"digitalSignature", "contentCommitment", "keyEncipherment", "dataEncipherment", "keyAgreement", "keyCertSign", "cRLSign", "encipherOnly", "decipherOnly"}
+
+var extKeyUsageNames = map[x509.ExtKeyUsage]string{
+	x509.ExtKeyUsageAny: "any", x509.ExtKeyUsageServerAuth: "serverAuth", x509.ExtKeyUsageClientAuth: "clientAuth",
+	x509.ExtKeyUsageCodeSigning: "codeSigning", x509.ExtKeyUsageEmailProtection: "emailProtection",
+	x509.ExtKeyUsageTimeStamping: "timeStamping", x509.ExtKeyUsageOCSPSigning: "OCSPSigning",
 }
 
 // Request returns the reader's request, for the holder's consent:
@@ -104,14 +183,19 @@ type proximityReaderJSON struct {
 // doesn't), "unauthenticated" (not signed) or "invalid" (a signature
 // that doesn't verify for this session); name is the certificate's
 // subject common name — the reader's verified name only when
-// "trusted" — and chain its certificates, leaf first, base64 DER.
+// "trusted" — and chain its certificates, leaf first, base64 DER, with
+// certificates their fields, for an app that can't parse them: {"subject",
+// "issuer", "not_before", "not_after", "serial" (hex),
+// "subject_alt_names", "extended_key_usages", "key_usages", "is_ca",
+// "signature_algorithm", "extensions" (OIDs), "sha256" (hex)}.
 // Each summary has shown_to_verifier and linkable_here for this reader.
 // Before the "request" event, documents is empty.
 func (p *ProximityPresentation) Request() string {
 	r := p.p.Reader()
-	reader := proximityReaderJSON{Status: r.Status.String(), Chain: []string{}}
+	reader := proximityReaderJSON{Status: r.Status.String(), Chain: []string{}, Certificates: []certificateJSON{}}
 	for _, c := range r.Chain {
 		reader.Chain = append(reader.Chain, base64.StdEncoding.EncodeToString(c.Raw))
+		reader.Certificates = append(reader.Certificates, certificateOf(c))
 	}
 	if len(r.Chain) > 0 {
 		reader.Name = r.Chain[0].Subject.CommonName

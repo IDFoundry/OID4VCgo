@@ -37,7 +37,7 @@ xcrun simctl install "$DEVICE" "$BUILD/Build/Products/Debug-iphonesimulator/Demo
 CONFIG="$(python3 - "$STATE" <<'PY'
 import json, pathlib, sys
 state = pathlib.Path(sys.argv[1])
-print(json.dumps({
+config = {
     "wallet": {
         "client_id": "passport-vdc-wallet",
         "redirect_uri": "dev.idfoundry.oid4vcgo.demowallet:/callback",
@@ -50,9 +50,25 @@ print(json.dumps({
         # Credentials from a passport kept for refresh come with a
         # refresh token, so the app can fetch fresh copies.
         "request_refresh": True,
+        # Readers in person (and org-iso-mdoc requests) are recognized by
+        # the mdoc reader CA of the demo.
+        "mdoc_reader_roots": (state / "mdoc-reader-ca.pem").read_text() if (state / "mdoc-reader-ca.pem").exists() else "",
     },
     "provider_url": "https://127.0.0.1:6443",
-}))
+}
+# Reader mode identity: the in-person reader of the verifier, its key
+# then its chain (a demo shortcut: a real reader keeps its key on the device).
+reader_file = state / "mdoc-reader.pem"
+if reader_file.exists():
+    text = reader_file.read_text()
+    end = "-----END PRIVATE KEY-----"
+    key, chain = text.split(end, 1)
+    config["reader"] = {
+        "issuer_roots": (state / "issuer-ca.pem").read_text(),
+        "reader_key": key + end + "\n",
+        "reader_chain": chain.lstrip(),
+    }
+print(json.dumps(config))
 PY
 )"
 xcrun simctl terminate "$DEVICE" dev.idfoundry.oid4vcgo.demowallet 2>/dev/null || true

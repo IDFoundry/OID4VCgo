@@ -30,9 +30,19 @@
 				<string>openid4vp</string>
 			</array>
 		</dict>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>dev.idfoundry.oid4vcgo.demowallet.mdoc</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>mdoc</string>
+			</array>
+		</dict>
 	</array>
 	<key>CFBundleVersion</key>
 	<string>1</string>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>Connects to the reader you show your QR code to, or to the phone you verify, to share credentials in person.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Scans credential offer and presentation request QR codes.</string>
 	<key>NSFaceIDUsageDescription</key>

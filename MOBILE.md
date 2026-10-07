@@ -1005,7 +1005,7 @@ Decisions taken 2026-10-06 (tracked in [#482](https://github.com/IDFoundry/OID4V
    request, and 300 s idle (§8.2.3, §9.1.1.4).
 8. **Demos:** "Share in person" with a consent screen naming the
    reader and its trust, a reader certificate page, and a reader mode
-   behind settings. A presentation history is the app's job, not the
+   behind settings (since moved to a Verify tab in the bottom bar). A presentation history is the app's job, not the
    SDK's.
 
 ### Phase 10 findings: the `proximity` gaps
@@ -1101,6 +1101,32 @@ Decisions taken 2026-10-06 (tracked in [#482](https://github.com/IDFoundry/OID4V
   central's `maximumUpdateValueLength` and the peripheral's
   `maximumWriteValueLength`.
 - **Apps need `NSBluetoothAlwaysUsageDescription`** in Info.plist.
+
+### Phase 10 findings: the demos
+
+- **Two Android emulators can try BLE:** the emulator's own Bluetooth
+  (netsim) carries a real GATT session between two of them on one Mac.
+  The holder's debug build logs its QR code's text, and an `mdoc:` link
+  hands it to the reader. A full presentation ran that way:
+  - the holder saw the test reader as verified
+  - it shared one element after the screen lock prompt
+  - the reader verified it
+
+  The iOS Simulator has no Bluetooth, so iOS needs devices.
+- **A demo reader identity:** the test services and passport-vdc's demo
+  give reader mode a key and certificate under a CA the wallets
+  recognize (`mdoc_reader_roots`), so a holder sees it as verified. The
+  key arrives in the configuration, a demo shortcut; a real reader makes
+  its own in the Secure Enclave or Android Keystore.
+- **Each side is a tab:** reader mode was at first a setting, which
+  hid it, and sharing in person a button in the top bar. Both demos now
+  have a bottom bar in each platform's own component (a Material
+  `NavigationBar`, a SwiftUI `TabView`): Wallet, Present (its QR code
+  at once, a new session after each, ended on leaving the tab) and
+  Verify (the reader, which an `mdoc:` link opens).
+- **iOS can't read a certificate's fields:** beyond a subject summary,
+  Security has no public API. The request carries each reader
+  certificate's fields from Go, for the certificate page.
 
 ## Open questions
 

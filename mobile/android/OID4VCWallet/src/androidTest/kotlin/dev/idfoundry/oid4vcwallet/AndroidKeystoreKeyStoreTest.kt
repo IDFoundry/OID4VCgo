@@ -3,6 +3,7 @@ package dev.idfoundry.oid4vcwallet
 import android.app.KeyguardManager
 import android.content.Context
 import android.content.pm.PackageManager
+import android.os.Build
 import android.security.keystore.KeyProperties
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -66,7 +67,9 @@ class AndroidKeystoreKeyStoreTest {
         val keys = store(AndroidKeystoreKeyStore.StrongBox.REQUIRED)
         val result = runCatching { keys.createKey(KeyPurpose.INSTANCE) }
         assertEquals("StrongBox present: $has", has, result.isSuccess)
-        result.getOrNull()?.let { assertEquals(KeyProperties.SECURITY_LEVEL_STRONGBOX, keys.securityLevel(it)) }
+        // Android 11 reports secure hardware, not which.
+        val expected = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) KeyProperties.SECURITY_LEVEL_STRONGBOX else KeyProperties.SECURITY_LEVEL_TRUSTED_ENVIRONMENT
+        result.getOrNull()?.let { assertEquals(expected, keys.securityLevel(it)) }
     }
 
     /** A holder key requiring the holder signs only once its signature is authenticated. */
