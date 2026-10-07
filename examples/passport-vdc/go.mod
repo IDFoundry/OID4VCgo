@@ -5,9 +5,10 @@ go 1.26.6
 require (
 	github.com/fxamacker/cbor/v2 v2.9.4
 	github.com/gmrtd/gmrtd v1.3.3
-	github.com/idfoundry/fapigo v0.50.0
+	github.com/idfoundry/fapigo v0.50.1
 	github.com/idfoundry/oid4vcgo v0.0.0-00010101000000-000000000000
 	github.com/mrjoshuak/go-jpeg2000 v1.5.12
+	golang.org/x/text v0.42.0
 	rsc.io/qr v0.2.0
 )
 
@@ -15,7 +16,6 @@ require (
 	github.com/aead/cmac v0.0.0-20160719120800-7af84192f0b1 // indirect
 	github.com/osanderson/brainpool v1.0.0 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
-	golang.org/x/text v0.42.0 // indirect
 )
 
 // The demo always builds against this checkout of the library, not a
