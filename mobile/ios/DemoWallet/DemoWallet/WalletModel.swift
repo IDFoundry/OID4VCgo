@@ -558,6 +558,15 @@ final class WalletModel {
         await refresh()
     }
 
+    /// The document provider extension presents from its own process,
+    /// using copies in the shared store: on returning to the app, list
+    /// them again, and refresh any it used up, as after presenting here.
+    /// Not during an issuance or a presentation of the app's own.
+    func becameActive() async {
+        await refresh()
+        if issuance == nil && presentation == nil { await refreshUsedUp() }
+    }
+
     func refresh() async {
         guard let wallet else { return }
         do {

@@ -11,10 +11,8 @@ struct DemoWalletApp: App {
                 .environment(model)
                 .onOpenURL { model.openFromOutside($0) }
         }
-        // The document provider extension presents from its own process,
-        // using copies in the shared store: list them again on return.
         .onChange(of: scenePhase) { _, phase in
-            if phase == .active { Task { await model.refresh() } }
+            if phase == .active { Task { await model.becameActive() } }
         }
     }
 }
