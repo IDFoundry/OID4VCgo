@@ -57,6 +57,7 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         model.attach(this)
+        model.reload()
         // Back from a Custom Tab without the redirect: the holder closed
         // the issuer's page, which leaves the offer as it was. (The
         // redirect, when there is one, arrives through onNewIntent first.)
