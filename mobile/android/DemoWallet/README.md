@@ -1,7 +1,7 @@
 # OID4VC demo wallet (Android)
 
 A Jetpack Compose wallet app on the OID4VCWallet Kotlin library —
-OID4VCgo's walletflow through gomobile (see [MOBILE.md](../../../MOBILE.md),
+OID4VCgo's walletflow through gomobile (see [MOBILE.md](../../MOBILE.md),
 Phase 8) — the Android counterpart of [the iOS demo](../../ios/DemoWallet).
 It receives credentials from a Credential Offer link
 (`openid-credential-offer://…`, opened from anywhere, pasted, or

@@ -131,7 +131,7 @@ Errors are `WalletError`s. Each has:
 - [OID4VCgo's `mobile/`](https://github.com/IDFoundry/OID4VCgo/tree/main/mobile):
   what each platform supports, in-person presentation, the Go side and
   its [ABI](https://github.com/IDFoundry/OID4VCgo/blob/main/mobile/ABI.md).
-- [MOBILE.md](https://github.com/IDFoundry/OID4VCgo/blob/main/MOBILE.md):
+- [`mobile/MOBILE.md`](https://github.com/IDFoundry/OID4VCgo/blob/main/mobile/MOBILE.md):
   the design.
 - [The demo wallet app](https://github.com/IDFoundry/OID4VCgo/tree/main/mobile/ios/DemoWallet):
   a complete app on this package, including the document provider.

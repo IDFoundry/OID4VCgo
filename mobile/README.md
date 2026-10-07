@@ -1,7 +1,7 @@
 # OID4VCgo mobile
 
 The gomobile boundary of OID4VCgo's mobile wallet SDK — see
-[MOBILE.md](../MOBILE.md) for the design and its phases. This is a
+[MOBILE.md](MOBILE.md) for the design and its phases. This is a
 separate Go module (it needs `golang.org/x/mobile`).
 
 - `mobile` (this directory): the Go package `gomobile bind` compiles.

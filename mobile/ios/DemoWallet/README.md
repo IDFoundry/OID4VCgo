@@ -1,7 +1,7 @@
 # OID4VC demo wallet (iOS)
 
 A SwiftUI wallet app on the OID4VCWallet Swift package — OID4VCgo's
-walletflow through gomobile (see [MOBILE.md](../../../MOBILE.md), Phases
+walletflow through gomobile (see [MOBILE.md](../../MOBILE.md), Phases
 4 to 9). It receives credentials from a Credential Offer link
 (`openid-credential-offer://…`, opened in the app, or pasted), and
 presents them in answer to a presentation request link (`openid4vp://…`).
