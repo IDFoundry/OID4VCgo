@@ -51,10 +51,12 @@ public data class ProximityTimeouts(
 
 /** An in-person session failed over Bluetooth, rather than in the protocol ([WalletException]). */
 public class ProximityException internal constructor(
+    /** Why the session failed. */
     public val reason: Reason,
     message: String,
     cause: Throwable? = null,
 ) : Exception(message, cause) {
+    /** Why a session failed. */
     public enum class Reason {
         /** Bluetooth is off, or the device can't do BLE advertising or scanning. */
         BluetoothUnavailable,
@@ -69,6 +71,7 @@ public class ProximityException internal constructor(
         ConnectionLost,
     }
 
+    /** Detail for logs. */
     override val message: String get() = super.message ?: ""
 
     /** A sentence fit to show the holder. */
@@ -114,6 +117,7 @@ public object ProximityPermissions {
 
 /** Who sent a request, as the holder sees it. */
 public data class ProximityReaderIdentity(
+    /** Whether the request was signed, and by a reader the wallet recognizes. */
     public val status: Status,
     /**
      * The reader certificate's subject common name: its verified name only
@@ -125,6 +129,7 @@ public data class ProximityReaderIdentity(
     /** Why [status] isn't [Status.Trusted], for logs. */
     public val error: String?,
 ) {
+    /** How far a request's reader authentication goes. */
     public enum class Status {
         /** Signed by a certificate that chains to [WalletConfiguration.mdocReaderRoots]. */
         Trusted,
@@ -152,6 +157,7 @@ public class ProximityPresentation internal constructor(
     transportFor: (serviceUUID: UUID) -> ProximityTransport,
     private val timeouts: ProximityTimeouts,
 ) {
+    /** Where the session is: follow [state]. */
     public sealed interface State {
         /** Showing the QR code, advertising, waiting for a reader. */
         public data object WaitingForReader : State
@@ -159,13 +165,21 @@ public class ProximityPresentation internal constructor(
         /** A reader connected; its request is on its way. */
         public data object Connected : State
 
-        /** The reader's request, for the holder's consent. */
+        /**
+         * The reader's request, for the holder's consent.
+         *
+         * @property request The reader's request.
+         */
         public data class RequestReceived(val request: Request) : State
 
         /** Answering: the holder key is signing, or the response is being sent. */
         public data object Responding : State
 
-        /** The response was sent. [linkable]: the copy presented had been seen by another Verifier. */
+        /**
+         * The response was sent. [linkable]: the copy presented had been seen by another Verifier.
+         *
+         * @property linkable Whether the copy presented had been seen by another Verifier.
+         */
         public data class Presented(val linkable: Boolean) : State
 
         /** The holder declined: nothing was disclosed. */
@@ -177,7 +191,11 @@ public class ProximityPresentation internal constructor(
         /** [cancel] was called, or the app is gone. */
         public data object Cancelled : State
 
-        /** The session failed: [error] is a [ProximityException] or [WalletException]. */
+        /**
+         * The session failed: [error] is a [ProximityException] or [WalletException].
+         *
+         * @property error A [ProximityException] or a [WalletException].
+         */
         public data class Failed(val error: Exception) : State
 
         /** Whether the session is over. */
@@ -187,6 +205,7 @@ public class ProximityPresentation internal constructor(
 
     /** The reader's request. */
     public data class Request(
+        /** Who sent the request. */
         val reader: ProximityReaderIdentity,
         /** The requested documents, in the request's order, each with the held mdocs of its doctype. */
         val documents: List<MdocPresentation.Document>,
@@ -198,6 +217,10 @@ public class ProximityPresentation internal constructor(
     public val qrCode: String = engagement.qrCode
 
     private val _state = MutableStateFlow<State>(State.WaitingForReader)
+    /**
+     * The session's state: [State.WaitingForReader] first, until one of the final states
+     * ([State.isFinal]).
+     */
     public val state: StateFlow<State> = _state.asStateFlow()
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -425,6 +448,7 @@ public data class ProximityReaderConfiguration(
      * authentication extended key usage (1.0.18013.5.1.6).
      */
     @SerialName("reader_key_id") val readerKeyID: String? = null,
+    /** The reader's PEM certificate chain, leaf first, for [readerKeyID]. */
     @SerialName("reader_chain") val readerChain: String? = null,
     /** Tolerates an issuer's clock this far off the reader's, at most an hour. */
     @SerialName("max_clock_skew_seconds") val maxClockSkewSeconds: Long? = null,
@@ -482,6 +506,7 @@ public class ProximityReaderSession internal constructor(
     private val timeouts: ProximityTimeouts,
     transportFor: (ReaderEngagementJSON) -> ProximityTransport,
 ) {
+    /** Where the session is: follow [state]. */
     public sealed interface State {
         /** Looking for the holder's device, or waiting for it to connect. */
         public data object Connecting : State
@@ -489,7 +514,11 @@ public class ProximityReaderSession internal constructor(
         /** Connected: the request is sent, and the holder is deciding. */
         public data object WaitingForResponse : State
 
-        /** The mdoc verified. */
+        /**
+         * The mdoc verified.
+         *
+         * @property result The verified mdoc.
+         */
         public data class Verified(val result: VerifiedMdoc) : State
 
         /** The holder declined (not authenticated: anyone nearby could send that). */
@@ -498,9 +527,14 @@ public class ProximityReaderSession internal constructor(
         /** [cancel] was called. */
         public data object Cancelled : State
 
-        /** The session failed: [error] is a [ProximityException] or [WalletException]. */
+        /**
+         * The session failed: [error] is a [ProximityException] or [WalletException].
+         *
+         * @property error A [ProximityException] or a [WalletException].
+         */
         public data class Failed(val error: Exception) : State
 
+        /** Whether the session is over. */
         public val isFinal: Boolean get() = this is Verified || this is Declined || this is Cancelled || this is Failed
     }
 
@@ -510,6 +544,10 @@ public class ProximityReaderSession internal constructor(
     public val signed: Boolean = engagement.signed
 
     private val _state = MutableStateFlow<State>(State.Connecting)
+    /**
+     * The session's state: [State.Connecting] first, until one of the final states
+     * ([State.isFinal]).
+     */
     public val state: StateFlow<State> = _state.asStateFlow()
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -592,6 +630,7 @@ public class ProximityReaderSession internal constructor(
 
 /** A verified mdoc, as a [ProximityReaderSession] received it. */
 public data class VerifiedMdoc(
+    /** The mdoc's document type. */
     val doctype: String,
     /** The disclosed elements: namespace → identifier → value, byte strings as base64 and dates as their text. */
     val claims: JsonObject,
@@ -601,7 +640,9 @@ public data class VerifiedMdoc(
     val issuer: String,
     /** The common name of the IACA it chains to. */
     val trustAnchor: String,
+    /** When the mdoc's signed data (its MSO) became valid. */
     val validFrom: Instant,
+    /** When it expires. */
     val validUntil: Instant,
     /** "signature" or "mac". */
     val deviceAuth: String,
@@ -611,6 +652,13 @@ public data class VerifiedMdoc(
      */
     val statusList: StatusListReference?,
 ) {
+    /**
+     * Where the mdoc's status is published: a Token Status List at [uri], and the mdoc's [index]
+     * in it.
+     *
+     * @property uri The status list's URL.
+     * @property index The mdoc's index in the list.
+     */
     public data class StatusListReference(val uri: String, val index: Long)
 }
 

@@ -102,12 +102,13 @@ dependencies {
 
 // The API reference (./gradlew :OID4VCWallet:dokkaGenerate, into
 // build/dokka/html): Module.md is its front page, and a warning fails
-// it. Source links point at -Poid4vc.sourceRef, the commit a release is
+// it, an undocumented public declaration included. Source links point at -Poid4vc.sourceRef, the commit a release is
 // built from, main by default.
 dokka {
     moduleName.set("OID4VCWallet")
     dokkaSourceSets.configureEach {
         includes.from("Module.md")
+        reportUndocumented.set(true)
         sourceLink {
             localDirectory.set(file("src/main/kotlin"))
             val ref = providers.gradleProperty("oid4vc.sourceRef").getOrElse("main")
