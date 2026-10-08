@@ -63,7 +63,7 @@ redirect flow.
 Platform APIs the mobile wallets use, not specifications: Apple's
 IdentityDocumentServices (an iOS document provider for `org-iso-mdoc`)
 and Android's Credential Manager (`androidx.credentials` registry
-providers for OpenID4VP). See [MOBILE.md](MOBILE.md).
+providers for OpenID4VP). See [mobile/MOBILE.md](mobile/MOBILE.md).
 
 ## Attestation
 

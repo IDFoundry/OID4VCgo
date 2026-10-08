@@ -140,7 +140,7 @@ jobs:
           working-directory: examples/passport-vdc
 
   # mobile/ is its own Go module too: the gomobile boundary (see
-  # MOBILE.md), which needs golang.org/x/mobile.
+  # mobile/MOBILE.md), which needs golang.org/x/mobile.
   mobile:
     runs-on: ubuntu-latest
     defaults:

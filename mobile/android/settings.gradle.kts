@@ -1,6 +1,6 @@
 // The Android side of OID4VCgo's mobile wallet SDK: the Kotlin library
 // wrapping the gomobile AAR (../build-aar.sh), and the demo wallet app on
-// it. See ../../MOBILE.md.
+// it. See ../MOBILE.md.
 pluginManagement {
     repositories {
         google()

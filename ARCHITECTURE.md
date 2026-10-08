@@ -30,7 +30,7 @@ session-oriented wallet over key, credential and Wallet Provider
 interfaces, and `mobile`, its gomobile façade, published for iOS as the
 OID4VCWallet Swift package and for Android as a Kotlin library (an AAR
 released from OID4VCgo-wallet-kotlin, with no Maven repository).
-[MOBILE.md](MOBILE.md) records its design and phases.
+[mobile/MOBILE.md](mobile/MOBILE.md) records its design and phases.
 
 Beyond HAIP, the library also covers what a wallet meets outside
 OpenID4VC's redirect flows: Safari's `org-iso-mdoc` protocol over the
@@ -953,7 +953,7 @@ changes whether *every* bullet below is `(done)`.
   (`scheme://host[:port]`), and bounds the work a request can cause
   (`MaxRequestBytes`, `MaxDocRequests`, `MaxReaderSignatures`,
   `MaxRequestedElements`). The iOS demo wallet's document provider
-  answers it in Safari (see [MOBILE.md](MOBILE.md)).
+  answers it in Safari (see [mobile/MOBILE.md](mobile/MOBILE.md)).
 - **`oid4vpmdoc`** (done) — the OID4VP-specific wire structures the
   "mso_mdoc" Credential Format's own Presentation needs on top of
   `credential/mdoc`'s own ISO/IEC 18013-5 primitives:
@@ -1343,7 +1343,7 @@ changes whether *every* bullet below is `(done)`.
   `oid4vpmdoc`/`verifier`/`wallet`. Invoking the W3C Digital
   Credentials API itself is the platform's: the Android demo wallet
   answers OpenID4VP requests as a Credential Manager provider, through
-  `walletflow.StartDCAPIPresentation` (see [MOBILE.md](MOBILE.md)).
+  `walletflow.StartDCAPIPresentation` (see [mobile/MOBILE.md](mobile/MOBILE.md)).
   `Config.RequireSignedDCAPIRequests` refuses an unsigned request
   (`ErrUntrustedVerifier`), and `MaxDCAPIRequestBytes` and
   `MaxDCAPISignatures` bound one.
@@ -1468,7 +1468,7 @@ changes whether *every* bullet below is `(done)`.
   can warn when a presentation is linkable. `walletflow/walletflowtest`
   runs a HAIP Credential Issuer, its Authorization Server, a Wallet
   Provider and a Verifier in process, for end-to-end tests of
-  walletflow and the mobile module. See [MOBILE.md](MOBILE.md).
+  walletflow and the mobile module. See [mobile/MOBILE.md](mobile/MOBILE.md).
 - **`mobile`** (done; its own Go module) — the gomobile façade over
   `walletflow`: JSON in and out across the boundary, `ABIVersion` 12
   ([`mobile/ABI.md`](mobile/ABI.md)), with the platform's keys and
