@@ -53,6 +53,13 @@ what, element by element, marking those the reader says it will keep.
 "Share" sends the chosen elements after Face ID or the passcode;
 "Decline" sends nothing. Only mdocs can be shared in person.
 
+**Bluetooth modes:** the QR code offers both ISO/IEC 18013-5 modes by
+default: the phone advertises for the reader and scans for it at once,
+and the reader picks (central client mode, where the holder connects to
+the reader, when it supports both). Settings, "Presenting in person",
+limits it to one, for trying a reader that supports only that mode. The
+Verify tab's result says which mode a session used.
+
 **Reader mode, the Verify tab:** with a `reader` in the configuration
 (`{"issuer_roots", "reader_chain", "reader_key"}`: the test services and
 the scripts here add one), the Verify tab in the tab bar offers what to

@@ -93,6 +93,13 @@ connects over Bluetooth, and the app shows:
 "Share" sends the chosen elements after the fingerprint or screen lock
 prompt; "Decline" sends nothing. Only mdocs can be shared in person.
 
+**Bluetooth modes:** the QR code offers both ISO/IEC 18013-5 modes by
+default: the phone advertises for the reader and scans for it at once,
+and the reader picks (central client mode, where the holder connects to
+the reader, when it supports both). Settings, "Presenting in person",
+limits it to one, for trying a reader that supports only that mode. The
+Verify tab's result says which mode a session used.
+
 **Reader mode, the Verify tab:** with a `reader` in the configuration,
 the Verify tab in the bottom bar offers what to ask for (a Photo
 ID's or a driving licence's age, or name, photo and age; the test

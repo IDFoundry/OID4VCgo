@@ -79,6 +79,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
+import dev.idfoundry.oid4vcwallet.ProximityBLEMode
 import dev.idfoundry.oid4vcwallet.CredentialDetail
 import dev.idfoundry.oid4vcwallet.CredentialStatus
 import dev.idfoundry.oid4vcwallet.CredentialSummary
@@ -200,6 +201,24 @@ private fun SettingsMenu(model: WalletModel) {
                     open = false
                 },
                 modifier = Modifier.testTag("copy-policy-${policy.name}"),
+            )
+        }
+        HorizontalDivider()
+        Text("Presenting in person", Modifier.padding(horizontal = 16.dp, vertical = 8.dp), style = MaterialTheme.typography.labelLarge)
+        for ((modes, label) in listOf(
+            ProximityBLEMode.entries.toSet() to "Both Bluetooth modes (the reader picks)",
+            setOf(ProximityBLEMode.PERIPHERAL_SERVER) to "Advertise only (peripheral server)",
+            setOf(ProximityBLEMode.CENTRAL_CLIENT) to "Scan for the reader only (central client)",
+        )) {
+            val chosen = model.bleModes == modes
+            DropdownMenuItem(
+                text = { Text(label) },
+                leadingIcon = { Icon(if (chosen) Icons.Default.RadioButtonChecked else Icons.Default.RadioButtonUnchecked, null) },
+                onClick = {
+                    model.chooseBLEModes(modes)
+                    open = false
+                },
+                modifier = Modifier.testTag("ble-modes-${modes.joinToString("-") { it.name }}"),
             )
         }
     }

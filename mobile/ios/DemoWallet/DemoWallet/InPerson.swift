@@ -85,7 +85,7 @@ final class InPersonModel {
         guard presentation == nil, let wallet = model.wallet else { return }
         notice = nil
         do {
-            let p = try wallet.startProximityPresentation()
+            let p = try wallet.startProximityPresentation(modes: model.bleModes)
             presentation = p
             UIApplication.shared.isIdleTimerDisabled = true
             watch = Task { [weak self] in
@@ -385,7 +385,7 @@ struct ReaderView: View {
                 case .waitingForResponse?:
                     ProgressView("Waiting for the holder to agree…")
                 case let s?:
-                    ReaderOutcomeView(state: s, preset: inPerson.readingPreset) {
+                    ReaderOutcomeView(state: s, preset: inPerson.readingPreset, mode: inPerson.reading?.mode) {
                         inPerson.closeReading()
                         model.engagementToRead = nil
                     }
@@ -440,6 +440,7 @@ struct ReaderView: View {
 private struct ReaderOutcomeView: View {
     let state: ProximityReaderSession.State
     let preset: ReaderPreset?
+    let mode: ProximityBLEMode?
     let done: () -> Void
 
     var body: some View {
@@ -466,6 +467,12 @@ private struct ReaderOutcomeView: View {
                     LabeledContent("Issued by", value: "\(v.issuer) (trusted via \(v.trustAnchor))")
                     LabeledContent("Valid", value: "\(v.validFrom.formatted(date: .abbreviated, time: .shortened)) to \(v.validUntil.formatted(date: .abbreviated, time: .shortened))")
                     LabeledContent("Holder's device", value: v.deviceAuth == "mac" ? "authenticated (MAC)" : "authenticated (signature)")
+                    if let mode {
+                        LabeledContent("Bluetooth", value: mode == .centralClient
+                            ? "Central client mode: the holder connected to this reader"
+                            : "Peripheral server mode: this reader connected to the holder")
+                            .accessibilityIdentifier("reader-ble-mode")
+                    }
                     if let s = v.statusList { LabeledContent("Revocation", value: "not checked: \(s.uri) #\(s.index)") }
                 }
             case .declined:
