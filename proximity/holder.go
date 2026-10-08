@@ -14,11 +14,13 @@ import (
 // it engages by QR code, then decrypts the reader's requests and
 // encrypts the responses. It isn't safe for concurrent use.
 type DeviceSession struct {
-	eDeviceKey       *ecdsa.PrivateKey
-	uuid             []byte
-	deviceEngagement []byte
-	handover         cbor.RawMessage
-	bleIdent         []byte
+	eDeviceKey *ecdsa.PrivateKey
+	// uuid is ServiceUUID's; peripheralUUID and centralUUID each
+	// mode's, nil for a mode not offered.
+	uuid, peripheralUUID, centralUUID []byte
+	deviceEngagement                  []byte
+	handover                          cbor.RawMessage
+	bleIdent                          []byte
 
 	sessionTranscriptBytes []byte
 	cipher                 *cipherState
@@ -26,16 +28,25 @@ type DeviceSession struct {
 }
 
 type deviceConfig struct {
-	bleMode BLEMode
+	bleModes []BLEMode
 }
 
 // DeviceOption configures NewDeviceSession.
 type DeviceOption func(*deviceConfig)
 
-// WithBLEMode sets the BLE mode the engagement offers. The default is
-// PeripheralServer.
+// WithBLEMode sets the one BLE mode the engagement offers. The default
+// is PeripheralServer.
 func WithBLEMode(mode BLEMode) DeviceOption {
-	return func(c *deviceConfig) { c.bleMode = mode }
+	return WithBLEModes(mode)
+}
+
+// WithBLEModes sets the BLE modes the engagement offers, each with its
+// own service UUID. Offering both, the mdoc advertises
+// PeripheralServerUUID and scans for CentralClientUUID until the
+// reader connects either way; a reader offered both should select
+// central client mode (§8.3.3.1.1.1).
+func WithBLEModes(modes ...BLEMode) DeviceOption {
+	return func(c *deviceConfig) { c.bleModes = modes }
 }
 
 // NewDeviceSession generates the mdoc's ephemeral key (EDeviceKey) and a
@@ -44,9 +55,23 @@ func WithBLEMode(mode BLEMode) DeviceOption {
 // crypto/rand. Key generation always uses the crypto package's own
 // source.
 func NewDeviceSession(random io.Reader, opts ...DeviceOption) (*DeviceSession, error) {
-	cfg := deviceConfig{bleMode: PeripheralServer}
+	cfg := deviceConfig{bleModes: []BLEMode{PeripheralServer}}
 	for _, opt := range opts {
 		opt(&cfg)
+	}
+	var peripheral, central bool
+	for _, m := range cfg.bleModes {
+		switch m {
+		case PeripheralServer:
+			peripheral = true
+		case CentralClient:
+			central = true
+		default:
+			return nil, fmt.Errorf("proximity: unknown BLE mode %d", int(m))
+		}
+	}
+	if !peripheral && !central {
+		return nil, fmt.Errorf("proximity: no BLE mode offered")
 	}
 	if random == nil {
 		random = rand.Reader
@@ -55,15 +80,25 @@ func NewDeviceSession(random io.Reader, opts ...DeviceOption) (*DeviceSession, e
 	if err != nil {
 		return nil, fmt.Errorf("proximity: generate EDeviceKey: %w", err)
 	}
-	uuid := make([]byte, 16)
-	if _, err := io.ReadFull(random, uuid); err != nil {
-		return nil, fmt.Errorf("proximity: generate service UUID: %w", err)
+	// Peripheral server mode's first, so a single-mode session reads
+	// the one UUID it always did.
+	var peripheralUUID, centralUUID []byte
+	if peripheral {
+		if peripheralUUID, err = randomUUID(random); err != nil {
+			return nil, err
+		}
 	}
-	// RFC 9562 §5.4: a random (version 4, variant 10) UUID.
-	uuid[6] = uuid[6]&0x0f | 0x40
-	uuid[8] = uuid[8]&0x3f | 0x80
+	if central {
+		if centralUUID, err = randomUUID(random); err != nil {
+			return nil, err
+		}
+	}
+	uuid := peripheralUUID
+	if uuid == nil {
+		uuid = centralUUID
+	}
 
-	de, err := encodeDeviceEngagement(&key.PublicKey, cfg.bleMode, uuid)
+	de, err := encodeDeviceEngagement(&key.PublicKey, peripheralUUID, centralUUID)
 	if err != nil {
 		return nil, err
 	}
@@ -73,7 +108,19 @@ func NewDeviceSession(random io.Reader, opts ...DeviceOption) (*DeviceSession, e
 		return nil, err
 	}
 	s.bleIdent = bleIdent(pe.eDeviceKeyBytes)
+	s.peripheralUUID, s.centralUUID = peripheralUUID, centralUUID
 	return s, nil
+}
+
+// randomUUID is a random (version 4, variant 10) UUID, RFC 9562 §5.4.
+func randomUUID(random io.Reader) ([]byte, error) {
+	uuid := make([]byte, 16)
+	if _, err := io.ReadFull(random, uuid); err != nil {
+		return nil, fmt.Errorf("proximity: generate service UUID: %w", err)
+	}
+	uuid[6] = uuid[6]&0x0f | 0x40
+	uuid[8] = uuid[8]&0x3f | 0x80
+	return uuid, nil
 }
 
 // newDeviceSession is the engagement-independent constructor: Annex D's
@@ -88,8 +135,26 @@ func newDeviceSession(key *ecdsa.PrivateKey, uuid, deviceEngagement []byte, hand
 func (s *DeviceSession) QRCode() string { return encodeQR(s.deviceEngagement) }
 
 // ServiceUUID is the BLE service UUID the engagement offers, in
-// 8-4-4-4-12 form.
+// 8-4-4-4-12 form: PeripheralServerUUID's when it offers that mode,
+// else CentralClientUUID's.
 func (s *DeviceSession) ServiceUUID() string { return formatUUID(s.uuid) }
+
+// PeripheralServerUUID is the service UUID to advertise as GATT server
+// in mdoc peripheral server mode, in 8-4-4-4-12 form; empty when the
+// engagement doesn't offer that mode.
+func (s *DeviceSession) PeripheralServerUUID() string { return formatOptionalUUID(s.peripheralUUID) }
+
+// CentralClientUUID is the service UUID to scan for, and connect to as
+// GATT client, in mdoc central client mode, in 8-4-4-4-12 form; empty
+// when the engagement doesn't offer that mode.
+func (s *DeviceSession) CentralClientUUID() string { return formatOptionalUUID(s.centralUUID) }
+
+func formatOptionalUUID(uuid []byte) string {
+	if uuid == nil {
+		return ""
+	}
+	return formatUUID(uuid)
+}
 
 // BLEIdent is the value the reader's Ident characteristic must hold in
 // mdoc central client mode (§8.3.3.1.1): after connecting, read it

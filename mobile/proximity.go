@@ -21,32 +21,85 @@ import (
 // app hands each whole message from the reader to HandleMessage and
 // sends what comes back. The BLE transport is the app's: in mdoc
 // peripheral server mode, the holder's device advertises the service
-// UUID and is the GATT server. Its methods are safe to call from any
-// thread.
+// UUID and is the GATT server; in mdoc central client mode, it scans
+// for the reader's and connects as GATT client. Its methods are safe to
+// call from any thread.
 type ProximityPresentation struct {
 	p *walletflow.ProximityPresentation
 }
 
-// StartProximityPresentation starts a session, generating its
-// ephemeral key and service UUID.
+// StartProximityPresentation starts a session in mdoc peripheral server
+// mode, generating its ephemeral key and service UUID.
 func (w *Wallet) StartProximityPresentation() (*ProximityPresentation, error) {
-	p, err := w.w.StartProximityPresentation()
+	return w.StartProximityPresentationWithModes(`["peripheral_server"]`)
+}
+
+// StartProximityPresentationWithModes starts a session offering the BLE
+// modes modesJSON lists: "peripheral_server", "central_client", or
+// both, each with its own service UUID (Engagement's ble_modes).
+// Offering both, the app advertises and scans until the reader connects
+// one way; a reader offered both should choose central client mode.
+func (w *Wallet) StartProximityPresentationWithModes(modesJSON string) (*ProximityPresentation, error) {
+	var names []string
+	if err := json.Unmarshal([]byte(modesJSON), &names); err != nil {
+		return nil, newError(CodeInvalidInput, fmt.Errorf("modes: %w", err))
+	}
+	if len(names) == 0 {
+		return nil, newError(CodeInvalidInput, errors.New("modes: none given"))
+	}
+	modes := make([]proximity.BLEMode, 0, len(names))
+	for _, n := range names {
+		switch n {
+		case "peripheral_server":
+			modes = append(modes, proximity.PeripheralServer)
+		case "central_client":
+			modes = append(modes, proximity.CentralClient)
+		default:
+			return nil, newError(CodeInvalidInput, fmt.Errorf("modes: %q isn't peripheral_server or central_client", cleanText(n)))
+		}
+	}
+	p, err := w.w.StartProximityPresentation(modes...)
 	if err != nil {
 		return nil, classify(err)
 	}
 	return &ProximityPresentation{p: p}, nil
 }
 
-// Engagement returns {"abi", "qr_code", "service_uuid", "ble_mode"}:
-// the QR code's text ("mdoc:" and the DeviceEngagement), the BLE
-// service UUID to advertise, and "peripheral_server", the mode.
+type bleModeJSON struct {
+	Mode        string `json:"mode"`
+	ServiceUUID string `json:"service_uuid"`
+}
+
+// Engagement returns {"abi", "qr_code", "service_uuid", "ble_mode",
+// "ble_modes", "ident"}: the QR code's text ("mdoc:" and the
+// DeviceEngagement), and each mode offered in ble_modes, with its
+// service UUID:
+//   - "peripheral_server": advertise service_uuid and be the GATT
+//     server;
+//   - "central_client": scan for service_uuid, connect as GATT client,
+//     and disconnect from a reader whose Ident characteristic isn't
+//     ident (base64).
+//
+// service_uuid and ble_mode are ble_modes' first, peripheral server
+// mode's when offered.
 func (p *ProximityPresentation) Engagement() string {
+	var modes []bleModeJSON
+	if u := p.p.PeripheralServerUUID(); u != "" {
+		modes = append(modes, bleModeJSON{"peripheral_server", u})
+	}
+	ident := ""
+	if u := p.p.CentralClientUUID(); u != "" {
+		modes = append(modes, bleModeJSON{"central_client", u})
+		ident = base64.StdEncoding.EncodeToString(p.p.BLEIdent())
+	}
 	text, _ := marshal(struct {
 		result
-		QRCode      string `json:"qr_code"`
-		ServiceUUID string `json:"service_uuid"`
-		BLEMode     string `json:"ble_mode"`
-	}{result{ABIVersion}, p.p.QRCode(), p.p.ServiceUUID(), "peripheral_server"})
+		QRCode      string        `json:"qr_code"`
+		ServiceUUID string        `json:"service_uuid"`
+		BLEMode     string        `json:"ble_mode"`
+		BLEModes    []bleModeJSON `json:"ble_modes"`
+		Ident       string        `json:"ident,omitempty"`
+	}{result{ABIVersion}, p.p.QRCode(), modes[0].ServiceUUID, modes[0].Mode, modes, ident})
 	return text
 }
 

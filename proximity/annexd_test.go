@@ -91,7 +91,11 @@ func TestAnnexDDeviceEngagement(t *testing.T) {
 		t.Errorf("UUID = %s, want %s", got, want)
 	}
 
-	encoded, err := encodeDeviceEngagement(pe.eDeviceKey, pe.bleMode, pe.uuid)
+	peripheralUUID, centralUUID := pe.uuid, []byte(nil)
+	if pe.bleMode == CentralClient {
+		peripheralUUID, centralUUID = nil, pe.uuid
+	}
+	encoded, err := encodeDeviceEngagement(pe.eDeviceKey, peripheralUUID, centralUUID)
 	if err != nil {
 		t.Fatalf("encodeDeviceEngagement: %v", err)
 	}

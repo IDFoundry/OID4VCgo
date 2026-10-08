@@ -96,8 +96,13 @@ func establishWith(t testing.TB, docType string, elements map[string][]string, d
 	if err != nil {
 		t.Fatalf("NewReaderSession: %v", err)
 	}
-	if reader.ServiceUUID() != holder.ServiceUUID() {
-		t.Fatalf("reader UUID %s, holder %s", reader.ServiceUUID(), holder.ServiceUUID())
+	// The UUID of the mode the reader chose.
+	want := holder.PeripheralServerUUID()
+	if reader.BLEMode() == CentralClient {
+		want = holder.CentralClientUUID()
+	}
+	if reader.ServiceUUID() != want {
+		t.Fatalf("reader UUID %s, holder %s", reader.ServiceUUID(), want)
 	}
 	est, err := reader.Establishment(docType, elements)
 	if err != nil {
@@ -153,6 +158,47 @@ func TestRoundTripAgeOver18(t *testing.T) {
 	}
 	if v.ValidUntil.Before(time.Now()) || v.ValidFrom.After(time.Now()) {
 		t.Errorf("validity %v – %v does not cover now", v.ValidFrom, v.ValidUntil)
+	}
+}
+
+// A holder offering both modes gives each its own UUID, and the reader
+// selects central client mode (§8.3.3.1.1.1); one mode, the other is
+// empty.
+func TestBothBLEModes(t *testing.T) {
+	requested := map[string][]string{mDLNS: {"given_name"}}
+	f := establish(t, mDL, requested, WithBLEModes(PeripheralServer, CentralClient))
+	h := f.holder
+	if h.PeripheralServerUUID() == "" || h.CentralClientUUID() == "" || h.PeripheralServerUUID() == h.CentralClientUUID() {
+		t.Fatalf("UUIDs: peripheral %q, central %q", h.PeripheralServerUUID(), h.CentralClientUUID())
+	}
+	if h.ServiceUUID() != h.PeripheralServerUUID() {
+		t.Errorf("ServiceUUID %s, want the peripheral server UUID %s", h.ServiceUUID(), h.PeripheralServerUUID())
+	}
+	if f.reader.BLEMode() != CentralClient || f.reader.ServiceUUID() != h.CentralClientUUID() {
+		t.Errorf("reader chose %v with %s, want central client with %s", f.reader.BLEMode(), f.reader.ServiceUUID(), h.CentralClientUUID())
+	}
+
+	for mode, check := range map[BLEMode]func(*DeviceSession) bool{
+		PeripheralServer: func(s *DeviceSession) bool {
+			return s.CentralClientUUID() == "" && s.ServiceUUID() == s.PeripheralServerUUID()
+		},
+		CentralClient: func(s *DeviceSession) bool {
+			return s.PeripheralServerUUID() == "" && s.ServiceUUID() == s.CentralClientUUID()
+		},
+	} {
+		s, err := NewDeviceSession(nil, WithBLEMode(mode))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !check(s) {
+			t.Errorf("%v only: peripheral %q, central %q, service %q", mode, s.PeripheralServerUUID(), s.CentralClientUUID(), s.ServiceUUID())
+		}
+	}
+	if _, err := NewDeviceSession(nil, WithBLEModes()); err == nil {
+		t.Error("NewDeviceSession offered no mode")
+	}
+	if _, err := NewDeviceSession(nil, WithBLEModes(BLEMode(7))); err == nil {
+		t.Error("NewDeviceSession took an unknown mode")
 	}
 }
 

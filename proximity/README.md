@@ -17,7 +17,9 @@ BLE transport (`multipaz/src/commonMain/.../mdoc/transport/`).
 
 ## Roles
 
-The mdoc picks the BLE mode in its QR code (`WithBLEMode`). The reader
+The mdoc picks the BLE modes in its QR code (`WithBLEMode`, or
+`WithBLEModes` for both, each with its own service UUID:
+`PeripheralServerUUID`, `CentralClientUUID`). The reader
 learns it from `ReaderSession.BLEMode()`. If an engagement offers both
 modes, the reader picks central client mode, as §8.3.3.1.1.1 recommends.
 

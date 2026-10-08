@@ -70,8 +70,14 @@ type bleOptions struct {
 }
 
 // encodeDeviceEngagement builds the DeviceEngagement for a QR code: the
-// mdoc's ephemeral key and one BLE retrieval method in mode, with uuid.
-func encodeDeviceEngagement(eDeviceKey *ecdsa.PublicKey, mode BLEMode, uuid []byte) ([]byte, error) {
+// mdoc's ephemeral key and one BLE retrieval method offering each mode
+// that has a UUID: peripheralUUID for mdoc peripheral server mode,
+// centralUUID for mdoc central client mode (§8.3.3.1.1.2: one UUID per
+// mode offered).
+func encodeDeviceEngagement(eDeviceKey *ecdsa.PublicKey, peripheralUUID, centralUUID []byte) ([]byte, error) {
+	if peripheralUUID == nil && centralUUID == nil {
+		return nil, fmt.Errorf("proximity: no BLE mode offered")
+	}
 	coseKey, err := encodeCoseKey(eDeviceKey)
 	if err != nil {
 		return nil, err
@@ -85,14 +91,9 @@ func encodeDeviceEngagement(eDeviceKey *ecdsa.PublicKey, mode BLEMode, uuid []by
 		return nil, fmt.Errorf("proximity: encode Security: %w", err)
 	}
 
-	opts := bleOptions{}
-	switch mode {
-	case PeripheralServer:
-		opts.PeripheralServer, opts.PeripheralUUID = true, uuid
-	case CentralClient:
-		opts.CentralClient, opts.CentralUUID = true, uuid
-	default:
-		return nil, fmt.Errorf("proximity: unknown BLE mode %d", int(mode))
+	opts := bleOptions{
+		PeripheralServer: peripheralUUID != nil, PeripheralUUID: peripheralUUID,
+		CentralClient: centralUUID != nil, CentralUUID: centralUUID,
 	}
 	method, err := encMode.Marshal([]any{retrievalTypeBLE, retrievalVersionBLE, opts})
 	if err != nil {
