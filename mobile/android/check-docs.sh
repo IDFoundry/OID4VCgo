@@ -41,7 +41,13 @@ trap 'rm -rf "$EXAMPLES"' EXIT
 for guide in docs/*.md; do
     name="$(basename "$guide" .md)"
     awk '/^```kotlin[[:space:]]*$/ { inside = 1; next } /^```/ { inside = 0; next } inside { print }' "$guide" > "$EXAMPLES/$name.kt"
-    [ -s "$EXAMPLES/$name.kt" ] || rm "$EXAMPLES/$name.kt"
+    if [ -s "$EXAMPLES/$name.kt" ]; then
+        # A top-level value, so the file compiles to its own class
+        # (${name}Kt) even when its examples declare only classes.
+        printf '\ninternal val guideExample%s: Boolean = true\n' "$name" >> "$EXAMPLES/$name.kt"
+    else
+        rm "$EXAMPLES/$name.kt"
+    fi
 done
 ./gradlew -q :DemoWallet:compileDebugUnitTestKotlin
 # Each guide's file compiled to its own class (GettingStarted.kt to
