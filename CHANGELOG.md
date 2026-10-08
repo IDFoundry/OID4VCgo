@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.35.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.34.0...v0.35.0) (2026-10-08)
+
+
+### Features
+
+* **android:** in-person presentation over BLE ([af26ce4](https://github.com/IDFoundry/OID4VCgo/commit/af26ce4cfc1156fe915b467df56090919d42c13e))
+* **android:** in-person presentation over BLE ([27f1f5c](https://github.com/IDFoundry/OID4VCgo/commit/27f1f5c895df36605b1df6dc9fc8a7ad932ff7ce))
+* **android:** minSdk 26, per-use holder authentication from API 30 ([1b36995](https://github.com/IDFoundry/OID4VCgo/commit/1b36995f3794fb5f4386e07475439b6904b870e8))
+* **demo:** presenting in person as a Present tab ([ecc559f](https://github.com/IDFoundry/OID4VCgo/commit/ecc559fe8c59853230d7bc7589226b6d084b8fea))
+* **demo:** reader mode as a Verify tab in the bottom bar ([0a33ad2](https://github.com/IDFoundry/OID4VCgo/commit/0a33ad25f4bf4beae7d7a2ac88cf49948865a003))
+* **demo:** the Present tab shows its QR code at once ([a7e0287](https://github.com/IDFoundry/OID4VCgo/commit/a7e02877165ed154788489b2bb930647e25aae2d))
+* **ios:** in-person presentation over BLE ([88a4225](https://github.com/IDFoundry/OID4VCgo/commit/88a42252a6b9a5e108d46dbe2d81e80980f740a3))
+* **ios:** in-person presentation over BLE ([4314f1f](https://github.com/IDFoundry/OID4VCgo/commit/4314f1f1254910398f57b6d85bacc37a517351c1))
+* **mobile:** ProximityPresentation, the holder's side of ISO 18013-5 ([ead1661](https://github.com/IDFoundry/OID4VCgo/commit/ead1661547933e2fa88a7d58ff61673b1e3fd0d8))
+* **mobile:** ProximityPresentation, the holder's side of ISO 18013-5 ([dae54a7](https://github.com/IDFoundry/OID4VCgo/commit/dae54a70e36572d0e8e0c177df6bba2bde4a0f6a))
+* **mobile:** ProximityReader, the reader's side of ISO 18013-5 ([da7428b](https://github.com/IDFoundry/OID4VCgo/commit/da7428bee66c84dcac53eb1ad1f662e0ba0e5bd8))
+* **proximity:** reader authentication, status 12, case-sensitive keys ([ae8cdb9](https://github.com/IDFoundry/OID4VCgo/commit/ae8cdb95136ef8d059d41a071e05ece02857d1d8))
+
+
+### Bug Fixes
+
+* **deps:** pin FAPIgo v0.50.1 ([2bc0e73](https://github.com/IDFoundry/OID4VCgo/commit/2bc0e732c1f01f3cb6655f62403616d7a0d75dec))
+* **deps:** pin FAPIgo v0.51.0 ([c92b0cd](https://github.com/IDFoundry/OID4VCgo/commit/c92b0cd23e4a518b8447c4a15c0cf536892cb68b))
+
 ## [0.34.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.33.0...v0.34.0) (2026-10-06)
 
 
