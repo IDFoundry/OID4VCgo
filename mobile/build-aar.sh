@@ -1,8 +1,8 @@
 #!/bin/sh
 # Builds the Go "mobile" package with gomobile bind into an Android
 # library (AAR) for arm64 and x86_64 (the emulator). 32-bit arm is left
-# out: FAPIgo doesn't build where int is 32 bits, and Play requires
-# 64-bit libraries anyway:
+# out: Play requires 64-bit libraries, and a 32-bit one would only add
+# size:
 #
 #   ./build-aar.sh                   → build/release/mobile.aar
 #   ./build-aar.sh -tags mobiletest  → build/test/mobile.aar
