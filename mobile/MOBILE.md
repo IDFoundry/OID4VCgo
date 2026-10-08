@@ -730,13 +730,29 @@ Decisions taken 2026-10-06 (tracked in [#461](https://github.com/IDFoundry/OID4V
 `mobile/android/OID4VCWallet` wraps it, and its instrumented tests run
 on an emulator, in CI too (`mobile-android`).
 
-- **Build:** `gomobile bind -target=android/arm64,android/amd64
-  -androidapi=30` with NDK 30. Stripped, the release arm64 library is
-  8.4 MB, as the iOS device slice is. Both libraries' segments are 16 KB
-  aligned, as Google Play requires, by the NDK's default.
-- **No 32-bit arm:** FAPIgo doesn't build where `int` is 32 bits
-  (`math.MaxUint32` overflows `int` in its `internal/jwe`). iOS never
-  had a 32-bit target; Play requires the 64-bit ones anyway.
+- **Build:** `gomobile bind -target=android/arm64,android/arm,android/amd64,android/386
+  -androidapi=26` with NDK 30: every Android ABI. The release libraries,
+  stripped:
+
+  | ABI | Library | Compressed in the AAR |
+  |---|---|---|
+  | arm64-v8a | 9.1 MB | 3.6 MB |
+  | armeabi-v7a | 9.2 MB | 3.9 MB |
+  | x86_64 | 9.9 MB | 4.0 MB |
+  | x86 | 9.3 MB | 4.2 MB |
+
+  The AAR is 15.7 MB, or 7.6 MB with `OID4VC_ABIS=64` (arm64-v8a and
+  x86_64 only). From an App Bundle, a device downloads its own ABI's
+  library only. The 64-bit libraries' segments are 16 KB aligned, as
+  Google Play requires, by the NDK's default; the 32-bit ones' are
+  4 KB, as 16 KB pages exist only on 64-bit devices.
+- **32-bit:** armeabi-v7a and x86 came once FAPIgo built where `int` is
+  32 bits (its `internal/jwe` compared with `math.MaxUint32`). For
+  devices that run only 32-bit apps; an app shipping 64-bit only filters
+  them out (`ndk { abiFilters += listOf("arm64-v8a", "x86_64") }`). CI
+  runs the Go tests at `GOARCH=386` and the instrumented tests on a
+  32-bit x86 emulator (`mobile-android-api26`). iOS never had a 32-bit
+  target.
 - **One library:** the AAR's Java bindings are in
   `dev.idfoundry.oid4vcwallet.gomobile` (`-javapkg`), but gomobile's own
   runtime (`go.Seq`, `libgojni.so`) isn't renamed, so an app can hold
@@ -904,7 +920,7 @@ adds the AAR as a file, with the two libraries it uses, which the
 README lists.
 
 - **One file:** the AAR holds the Kotlin API, the Go bindings (`libs/`)
-  and the Go library for arm64 and x86_64. Only an app module can take a
+  and the Go library for every ABI. Only an app module can take a
   local AAR: an Android library can't.
 - **Kotlin 2.2:** a library compiled with the newest Kotlin writes
   metadata only that compiler, or the next, can read: an app on AGP 9's
@@ -938,7 +954,6 @@ Thirteen tests pass on the emulator, against `testservices`.
 
 ### Open items
 
-- FAPIgo on 32-bit platforms.
 - The APEX store on golang/go#71258; drop `certdirs_android.go` once Go
   reads it.
 - On a device: StrongBox, the unlocked-device key, BiometricPrompt with a
