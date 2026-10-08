@@ -158,6 +158,7 @@ public class FileCredentialStore(
         }
     }
 
+    /** Stores in the app's standard places. */
     public companion object {
         private const val PROVIDER = "AndroidKeyStore"
         private const val TRANSFORMATION = "AES/GCM/NoPadding"

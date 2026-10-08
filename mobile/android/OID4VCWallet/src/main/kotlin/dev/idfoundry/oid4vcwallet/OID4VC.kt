@@ -31,11 +31,17 @@ public class WalletException internal constructor(
     public val protocolError: String?,
     message: String,
 ) : Exception(message) {
-    /** An error code, as the Go side names it. */
+    /**
+     * An error code, as the Go side names it.
+     *
+     * @property rawValue The code as the Go side names it, such as `network`.
+     */
     @JvmInline
     public value class Code(public val rawValue: String) {
+        /** The code as the Go side names it. */
         override fun toString(): String = rawValue
 
+        /** The codes. */
         public companion object {
             /** An argument, a link or the configuration is malformed. */
             public val invalidInput: Code = Code(Mobile.CodeInvalidInput)
@@ -100,8 +106,10 @@ public class WalletException internal constructor(
         }
     }
 
+    /** Detail for logs: it never carries personal data, a remote party's own description, or a URL's path or query. */
     override val message: String get() = super.message ?: ""
 
+    /** The code, the remote party's error code if any, and the message, for logs. */
     override fun toString(): String =
         protocolError?.let { "[${code.rawValue}:$it] $message" } ?: "[${code.rawValue}] $message"
 

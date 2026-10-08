@@ -71,6 +71,7 @@ public class ProximityException internal constructor(
         ConnectionLost,
     }
 
+    /** Detail for logs. */
     override val message: String get() = super.message ?: ""
 
     /** A sentence fit to show the holder. */
@@ -164,13 +165,21 @@ public class ProximityPresentation internal constructor(
         /** A reader connected; its request is on its way. */
         public data object Connected : State
 
-        /** The reader's request, for the holder's consent. */
+        /**
+         * The reader's request, for the holder's consent.
+         *
+         * @property request The reader's request.
+         */
         public data class RequestReceived(val request: Request) : State
 
         /** Answering: the holder key is signing, or the response is being sent. */
         public data object Responding : State
 
-        /** The response was sent. [linkable]: the copy presented had been seen by another Verifier. */
+        /**
+         * The response was sent. [linkable]: the copy presented had been seen by another Verifier.
+         *
+         * @property linkable Whether the copy presented had been seen by another Verifier.
+         */
         public data class Presented(val linkable: Boolean) : State
 
         /** The holder declined: nothing was disclosed. */
@@ -182,7 +191,11 @@ public class ProximityPresentation internal constructor(
         /** [cancel] was called, or the app is gone. */
         public data object Cancelled : State
 
-        /** The session failed: [error] is a [ProximityException] or [WalletException]. */
+        /**
+         * The session failed: [error] is a [ProximityException] or [WalletException].
+         *
+         * @property error A [ProximityException] or a [WalletException].
+         */
         public data class Failed(val error: Exception) : State
 
         /** Whether the session is over. */
@@ -501,7 +514,11 @@ public class ProximityReaderSession internal constructor(
         /** Connected: the request is sent, and the holder is deciding. */
         public data object WaitingForResponse : State
 
-        /** The mdoc verified. */
+        /**
+         * The mdoc verified.
+         *
+         * @property result The verified mdoc.
+         */
         public data class Verified(val result: VerifiedMdoc) : State
 
         /** The holder declined (not authenticated: anyone nearby could send that). */
@@ -510,7 +527,11 @@ public class ProximityReaderSession internal constructor(
         /** [cancel] was called. */
         public data object Cancelled : State
 
-        /** The session failed: [error] is a [ProximityException] or [WalletException]. */
+        /**
+         * The session failed: [error] is a [ProximityException] or [WalletException].
+         *
+         * @property error A [ProximityException] or a [WalletException].
+         */
         public data class Failed(val error: Exception) : State
 
         /** Whether the session is over. */
@@ -634,6 +655,9 @@ public data class VerifiedMdoc(
     /**
      * Where the mdoc's status is published: a Token Status List at [uri], and the mdoc's [index]
      * in it.
+     *
+     * @property uri The status list's URL.
+     * @property index The mdoc's index in the list.
      */
     public data class StatusListReference(val uri: String, val index: Long)
 }

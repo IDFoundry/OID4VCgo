@@ -120,6 +120,7 @@ public data class WalletConfiguration(
     /** The scheme of [redirectURI]: the scheme the authorization's redirect comes back on. */
     val callbackScheme: String? get() = runCatching { java.net.URI(redirectURI).scheme }.getOrNull()
 
+    /** The configuration's defaults. */
     public companion object {
         /** The device's languages, most preferred first. */
         public fun defaultLocales(): List<String> {
@@ -132,6 +133,9 @@ public data class WalletConfiguration(
 /**
  * An image the issuer names for display: an https URL or a data: image
  * (nothing else reaches the app), with alternative text.
+ *
+ * @property uri The image: an https URL or a `data:` URL.
+ * @property altText Text describing the image, for accessibility.
  */
 @Serializable
 public data class Logo(val uri: String, @SerialName("alt_text") val altText: String? = null)
@@ -182,7 +186,11 @@ public data class CredentialStatus(
         /** Suspended, for now. */
         public data object Suspended : Value
 
-        /** A status the issuer's list defines itself, as "0x" and its value. */
+        /**
+         * A status the issuer's list defines itself, as "0x" and its value.
+         *
+         * @property value The status, as "0x" and its value.
+         */
         public data class Other(val value: String) : Value
     }
 
@@ -290,9 +298,17 @@ public data class DeferredCredential(
 
 /** A deferred credential's state, from [Wallet.pollDeferred]. */
 public sealed interface DeferredStatus {
-    /** Not issued yet: poll again after [intervalSeconds]. */
+    /**
+     * Not issued yet: poll again after [intervalSeconds].
+     *
+     * @property intervalSeconds How long to wait before polling again, in seconds.
+     */
     public data class Pending(val intervalSeconds: Double) : DeferredStatus
-    /** Issued, and stored: [credential]. */
+    /**
+     * Issued, and stored: [credential].
+     *
+     * @property credential The credential, now stored.
+     */
     public data class Issued(val credential: CredentialSummary) : DeferredStatus
 }
 
@@ -310,9 +326,17 @@ public data class CredentialDetail(
 /** One claim path element: a key, an array index, or every element. */
 @Serializable(PathElementSerializer::class)
 public sealed interface PathElement {
-    /** A claim name: [key]. */
+    /**
+     * A claim name: [key].
+     *
+     * @property key The claim's name.
+     */
     public data class Key(val key: String) : PathElement
-    /** An array element: [index]. */
+    /**
+     * An array element: [index].
+     *
+     * @property index The element's index.
+     */
     public data class Index(val index: Int) : PathElement
     /** Every element of an array. */
     public data object All : PathElement
@@ -755,6 +779,9 @@ public class Presentation internal constructor(private val handle: MobilePresent
      * One of the request's sets of alternatives: each option is the
      * query IDs that together answer it, most preferred first. A
      * required set must be answered by one option.
+     *
+     * @property options Each option's query IDs, most preferred first.
+     * @property required Whether one of the options must be answered.
      */
     @Serializable
     public data class CredentialSet(val options: List<List<String>>, val required: Boolean = true)
@@ -907,6 +934,7 @@ public class MdocPresentation internal constructor(private val handle: MobileMdo
         return decode(OID4VC.cancellable { op -> handle.respond(op, document.toLong(), credentialID, pairs) })
     }
 
+    /** Origins, as the platform reports them. */
     public companion object {
         /**
          * [url]'s web origin, as a browser serializes it and the session
