@@ -51,11 +51,10 @@ GATT transport: an app shows or scans a QR code and follows a session's
 states; it never sees GATT.
 
 - **The holder:** `wallet.startProximityPresentation()` returns a
-  session whose `qrCode` the app shows. In Kotlin it offers both BLE
-  modes by default (`modes`): it advertises (mdoc peripheral server
-  mode) and scans for the reader (mdoc central client mode, checking
-  the reader's Ident) until a reader connects either way. The Swift
-  package offers peripheral server mode only, for now. It then reports
+  session whose `qrCode` the app shows. It offers both BLE modes by
+  default (`modes`): it advertises (mdoc peripheral server mode) and
+  scans for the reader (mdoc central client mode, checking the reader's
+  Ident) until a reader connects either way. It then reports
   `requestReceived` with the reader's identity (`trusted` under
   `mdocReaderRoots`, `untrusted`, `unauthenticated` if unsigned, or
   `invalid`, with its certificate chain; in Swift also `certificates`,
@@ -70,7 +69,8 @@ states; it never sees GATT.
   certificate chain (with the reader authentication extended key
   usage, 1.0.18013.5.1.6). `start` takes the holder's QR code, the
   doctype and the elements to ask for. It connects in whichever mode
-  the holder offers, preferring central client mode, and ends in
+  the holder offers, preferring central client mode (`mode` says
+  which), and ends in
   `verified` with the issuer-verified elements, or another final state.
 - **States** are an `AsyncStream` (`states`) in Swift and a `StateFlow`
   (`state`) in Kotlin; `isFinal` says when a session is over, and

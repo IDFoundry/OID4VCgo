@@ -73,6 +73,64 @@ protocol ProximityTransport: AnyObject, Sendable {
     func close()
 }
 
+/// Several transports at once, for a holder offering both BLE modes: it
+/// advertises and scans until a reader connects either way, keeps that
+/// transport and closes the others. It fails only once every one has.
+final class EitherTransport: ProximityTransport, @unchecked Sendable {
+    private let transports: [any ProximityTransport]
+    private let lock = NSLock()
+    private var chosen: (any ProximityTransport)?
+
+    init(_ transports: [any ProximityTransport]) { self.transports = transports }
+
+    /// The one that connected.
+    var connected: (any ProximityTransport)? { lock.withLock { chosen } }
+
+    func connect() async throws {
+        let winner: any ProximityTransport = try await withThrowingTaskGroup(of: Result<Int, any Error>.self) { group in
+            for (i, t) in transports.enumerated() {
+                group.addTask {
+                    do {
+                        try await t.connect()
+                        return .success(i)
+                    } catch {
+                        return .failure(error)
+                    }
+                }
+            }
+            var failure: (any Error)?
+            for try await result in group {
+                switch result {
+                case .success(let i):
+                    // Closing ends the others' connect, which the group
+                    // waits for before it returns.
+                    for (j, t) in transports.enumerated() where j != i { t.close() }
+                    group.cancelAll()
+                    return transports[i]
+                case .failure(let error):
+                    failure = failure ?? error
+                }
+            }
+            throw failure ?? ProximityTransportError("couldn't connect")
+        }
+        lock.withLock { chosen = winner }
+    }
+
+    func send(_ message: Data) async throws {
+        guard let t = connected else { throw ProximityTransportError("the session hasn't started") }
+        try await t.send(message)
+    }
+
+    func receive() async throws -> Data {
+        guard let t = connected else { throw ProximityTransportError("the session hasn't started") }
+        return try await t.receive()
+    }
+
+    func close() {
+        for t in transports { t.close() }
+    }
+}
+
 /// The transport failed, or the other side ended the session.
 struct ProximityTransportError: Error, CustomStringConvertible {
     let message: String

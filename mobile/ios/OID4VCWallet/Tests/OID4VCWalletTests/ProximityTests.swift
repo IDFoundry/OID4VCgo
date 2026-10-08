@@ -90,10 +90,10 @@ final class ProximityTests: XCTestCase {
 
     let timeouts = ProximityTimeouts(connect: .seconds(10), request: .seconds(10), idle: .seconds(30))
 
-    func start(_ s: inout Setup) throws -> (ProximityPresentation, ProximityReaderSession) {
+    func start(_ s: inout Setup, modes: Set<ProximityBLEMode> = [.peripheralServer]) throws -> (ProximityPresentation, ProximityReaderSession) {
         let (holderEnd, readerEnd) = PipeTransport.pair()
         s.pipes = [holderEnd, readerEnd]
-        let holder = try s.wallet.startProximityPresentation(timeouts: timeouts) { _ in holderEnd }
+        let holder = try s.wallet.startProximityPresentation(timeouts: timeouts, modes: modes) { _ in holderEnd }
         let reader = try s.reader.start(qrCode: holder.qrCode, docType: Self.docType,
                                         elements: [Self.namespace: ["family_name", "given_name"]], timeouts: timeouts) { _ in readerEnd }
         return (holder, reader)
@@ -174,6 +174,30 @@ final class ProximityTests: XCTestCase {
         guard case .verified = result else { return XCTFail("reader: \(result)") }
     }
 
+    /// Offered both modes, a reader chooses central client mode; offered
+    /// one, that one.
+    func testBLEModes() async throws {
+        var s = try await setup()
+        defer { s.env.close() }
+        let cases: [(Set<ProximityBLEMode>, ProximityBLEMode)] = [
+            (Set(ProximityBLEMode.allCases), .centralClient), ([.centralClient], .centralClient), ([.peripheralServer], .peripheralServer),
+        ]
+        for (modes, chosen) in cases {
+            let (holder, reader) = try start(&s, modes: modes)
+            XCTAssertEqual(reader.mode, chosen, "offered \(modes)")
+            _ = try await request(holder)
+            holder.cancel()
+            let h = try await final(holder.states) { $0.isFinal }
+            guard case .cancelled = h else { return XCTFail("holder: \(h)") }
+        }
+        do {
+            _ = try s.wallet.startProximityPresentation(timeouts: timeouts, modes: []) { _ in PipeTransport() }
+            XCTFail("started with no mode")
+        } catch let e as WalletError {
+            XCTAssertEqual(e.code, .invalidInput)
+        }
+    }
+
     func testReaderCancels() async throws {
         var s = try await setup()
         defer { s.env.close() }
@@ -238,5 +262,67 @@ final class ProximityTests: XCTestCase {
         XCTAssertThrowsError(try r.add(Data()))
         XCTAssertThrowsError(try r.add(Data([0x02, 0x41])))
         XCTAssertEqual(try r.add(Data([0x00, 0x42])), Data([0x42]))
+    }
+}
+
+/// A holder offering both BLE modes: the first transport to connect is
+/// kept, the others closed.
+final class EitherTransportTests: XCTestCase {
+    final class Fake: ProximityTransport, @unchecked Sendable {
+        let connects: @Sendable (Fake) async throws -> Void
+        private let lock = NSLock()
+        private var _closed = false
+        var closed: Bool { lock.withLock { _closed } }
+        let stop = Signal()
+
+        init(_ connects: @escaping @Sendable (Fake) async throws -> Void) { self.connects = connects }
+
+        /// Connects never: until closed.
+        static func never() -> Fake { Fake { try await $0.stop.wait() } }
+
+        func connect() async throws { try await connects(self) }
+        func send(_ message: Data) async throws {}
+        func receive() async throws -> Data { Data([7]) }
+        func close() {
+            lock.withLock { _closed = true }
+            stop.fail(ProximityTransportError("closed"))
+        }
+    }
+
+    func testFirstToConnectWins() async throws {
+        let waiting = Fake.never()
+        let connecting = Fake { _ in }
+        let either = EitherTransport([waiting, connecting])
+        try await either.connect()
+        XCTAssertTrue(either.connected === connecting)
+        XCTAssertTrue(waiting.closed, "the other wasn't stopped")
+        XCTAssertFalse(connecting.closed)
+        let got = try await either.receive()
+        XCTAssertEqual(got, Data([7]))
+        either.close()
+        XCTAssertTrue(connecting.closed)
+    }
+
+    /// One way failing (no advertising, say) leaves the other to connect.
+    func testOneFailingLeavesTheOther() async throws {
+        let failing = Fake { _ in throw ProximityTransportError("can't advertise") }
+        let connecting = Fake { _ in try await Task.sleep(for: .milliseconds(50)) }
+        let either = EitherTransport([failing, connecting])
+        try await either.connect()
+        XCTAssertTrue(either.connected === connecting)
+    }
+
+    func testFailsOnceEveryOneHas() async throws {
+        let either = EitherTransport([Fake { _ in throw ProximityTransportError("first") }, Fake { _ in throw ProximityTransportError("second") }])
+        do {
+            try await either.connect()
+            XCTFail("connected")
+        } catch let e as ProximityTransportError {
+            XCTAssertTrue(["first", "second"].contains(e.message), e.message)
+        }
+        do {
+            try await either.send(Data([1]))
+            XCTFail("sent without a connection")
+        } catch is ProximityTransportError {}
     }
 }
