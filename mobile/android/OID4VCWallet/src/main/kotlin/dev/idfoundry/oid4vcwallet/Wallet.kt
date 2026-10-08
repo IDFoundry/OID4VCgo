@@ -569,20 +569,31 @@ public class Wallet(
 
     /**
      * Starts an ISO/IEC 18013-5 in-person presentation over BLE: show
-     * its [ProximityPresentation.qrCode]; it advertises until a reader
-     * connects. It needs Bluetooth on and [ProximityPermissions.holder]
-     * granted ([ProximityException] otherwise).
+     * its [ProximityPresentation.qrCode]. In [modes], both by default, it
+     * advertises for a reader (peripheral server mode) and scans for one
+     * (central client mode) until a reader connects either way; a reader
+     * offered both should choose central client mode. It needs
+     * Bluetooth on and [ProximityPermissions.holder] for [modes] granted
+     * ([ProximityException] otherwise).
      */
-    public fun startProximityPresentation(context: Context, timeouts: ProximityTimeouts = ProximityTimeouts()): ProximityPresentation {
-        ProximityPermissions.require(context, ProximityPermissions.holder)
+    public fun startProximityPresentation(
+        context: Context,
+        timeouts: ProximityTimeouts = ProximityTimeouts(),
+        modes: Set<ProximityBLEMode> = ProximityBLEMode.entries.toSet(),
+    ): ProximityPresentation {
+        require(modes.isNotEmpty()) { "no BLE mode" }
+        ProximityPermissions.require(context, ProximityPermissions.holder(modes))
         val app = context.applicationContext
-        return ProximityPresentation(OID4VC.wrap { handle.startProximityPresentation() }, { uuid ->
-            GattServerTransport(app, uuid, GattCharacteristics.peripheralServer)
-        }, timeouts)
+        return ProximityPresentation(start(modes), { it.transport(app) }, timeouts)
     }
 
-    internal fun startProximityPresentation(timeouts: ProximityTimeouts, transport: ProximityTransport): ProximityPresentation =
-        ProximityPresentation(OID4VC.wrap { handle.startProximityPresentation() }, { transport }, timeouts)
+    internal fun startProximityPresentation(timeouts: ProximityTimeouts, transport: ProximityTransport, modes: Set<ProximityBLEMode> = setOf(ProximityBLEMode.PERIPHERAL_SERVER)): ProximityPresentation =
+        ProximityPresentation(start(modes), { transport }, timeouts)
+
+    private fun start(modes: Set<ProximityBLEMode>) = OID4VC.wrap {
+        // In the order Go lists them: peripheral server mode first.
+        handle.startProximityPresentationWithModes(json.encodeToString(ListSerializer(String.serializer()), ProximityBLEMode.entries.filter { it in modes }.map { it.rawValue }))
+    }
 }
 
 /** What a Credential Offer offers. */

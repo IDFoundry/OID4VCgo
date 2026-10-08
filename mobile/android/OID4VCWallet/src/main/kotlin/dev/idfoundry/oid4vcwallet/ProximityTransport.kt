@@ -1,5 +1,9 @@
 package dev.idfoundry.oid4vcwallet
 
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import java.util.UUID
 
 /**
@@ -31,6 +35,47 @@ internal interface ProximityTransport {
      * does nothing.
      */
     fun close()
+}
+
+/**
+ * Several transports at once, for a holder offering both BLE modes: it
+ * advertises and scans until a reader connects either way, keeps that
+ * transport and closes the others. It fails only once every one has.
+ */
+internal class EitherTransport(private val transports: List<ProximityTransport>) : ProximityTransport {
+    @Volatile private var chosen: ProximityTransport? = null
+
+    /** The one that connected. */
+    val connected: ProximityTransport? get() = chosen
+
+    override suspend fun connect(): Unit = coroutineScope {
+        val results = Channel<Result<ProximityTransport>>(transports.size)
+        val jobs: List<Job> = transports.map { t -> launch { results.send(runCatching { t.connect(); t }) } }
+        var failure: Throwable? = null
+        repeat(transports.size) {
+            val result = results.receive()
+            val winner = result.getOrNull()
+            if (winner != null) {
+                chosen = winner
+                jobs.forEach { it.cancel() }
+                transports.filter { it !== winner }.forEach { it.close() }
+                return@coroutineScope
+            }
+            failure = failure ?: result.exceptionOrNull()
+        }
+        throw failure ?: ProximityTransportException("couldn't connect")
+    }
+
+    override suspend fun send(message: ByteArray) {
+        (chosen ?: throw ProximityTransportException("the session hasn't started")).send(message)
+    }
+
+    override suspend fun receive(): ByteArray =
+        (chosen ?: throw ProximityTransportException("the session hasn't started")).receive()
+
+    override fun close() {
+        transports.forEach { it.close() }
+    }
 }
 
 /** The transport failed, or the other side ended the session ([peerEnded]). */

@@ -86,10 +86,25 @@ public class ProximityException internal constructor(
 
 /** The runtime permissions an in-person session needs, for the app to request. */
 public object ProximityPermissions {
-    /** The holder's: advertising and accepting a connection. */
+    /** The holder's, in the default modes (both): [holder] of every [ProximityBLEMode]. */
     public val holder: List<String>
-        get() = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            listOf(Manifest.permission.BLUETOOTH_ADVERTISE, Manifest.permission.BLUETOOTH_CONNECT)
+        get() = holder(ProximityBLEMode.entries.toSet())
+
+    /**
+     * The holder's in [modes]: advertising and accepting a connection in
+     * peripheral server mode, scanning and connecting in central client
+     * mode.
+     */
+    public fun holder(modes: Set<ProximityBLEMode>): List<String> =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            buildList {
+                if (ProximityBLEMode.CENTRAL_CLIENT in modes) add(Manifest.permission.BLUETOOTH_SCAN)
+                add(Manifest.permission.BLUETOOTH_CONNECT)
+                if (ProximityBLEMode.PERIPHERAL_SERVER in modes) add(Manifest.permission.BLUETOOTH_ADVERTISE)
+            }
+        } else if (ProximityBLEMode.CENTRAL_CLIENT in modes) {
+            // Android 11 delivers BLE scan results only with location.
+            listOf(Manifest.permission.ACCESS_FINE_LOCATION)
         } else {
             emptyList()
         }
@@ -113,6 +128,19 @@ public object ProximityPermissions {
             throw ProximityException(ProximityException.Reason.PermissionMissing, "missing ${missing.joinToString()}")
         }
     }
+}
+
+/**
+ * The BLE roles a holder offers in its QR code (ISO/IEC 18013-5
+ * §8.3.3.1.1); the reader picks one, central client mode when offered
+ * both.
+ */
+public enum class ProximityBLEMode(internal val rawValue: String) {
+    /** The holder advertises and is the GATT server; the reader connects. */
+    PERIPHERAL_SERVER("peripheral_server"),
+
+    /** The reader advertises and is the GATT server; the holder scans and connects. */
+    CENTRAL_CLIENT("central_client"),
 }
 
 /** Who sent a request, as the holder sees it. */
@@ -147,19 +175,20 @@ public data class ProximityReaderIdentity(
 
 /**
  * The holder's side of an ISO/IEC 18013-5 in-person presentation over
- * BLE, in mdoc peripheral server mode: show [qrCode], and the reader
- * that scans it connects. Follow [state]: on [State.RequestReceived],
+ * BLE: show [qrCode], and the reader that scans it connects, or
+ * advertises for the holder to connect, in one of the
+ * [ProximityBLEMode]s the session offers. Follow [state]: on [State.RequestReceived],
  * ask the holder, then [respond] or [decline]. [cancel] ends it at any
  * point. One request per session.
  */
 public class ProximityPresentation internal constructor(
     private val handle: MobileProximityPresentation,
-    transportFor: (serviceUUID: UUID) -> ProximityTransport,
+    transportFor: (HolderEngagement) -> ProximityTransport,
     private val timeouts: ProximityTimeouts,
 ) {
     /** Where the session is: follow [state]. */
     public sealed interface State {
-        /** Showing the QR code, advertising, waiting for a reader. */
+        /** Showing the QR code, advertising or scanning, waiting for a reader. */
         public data object WaitingForReader : State
 
         /** A reader connected; its request is on its way. */
@@ -224,7 +253,7 @@ public class ProximityPresentation internal constructor(
     public val state: StateFlow<State> = _state.asStateFlow()
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val transport = transportFor(UUID.fromString(engagement.serviceUUID))
+    private val transport = transportFor(engagement.toHolderEngagement())
 
     init {
         scope.launch { run() }
@@ -377,8 +406,20 @@ public class ProximityPresentation internal constructor(
     @Serializable
     private data class EngagementJSON(
         @SerialName("qr_code") val qrCode: String,
-        @SerialName("service_uuid") val serviceUUID: String,
-    )
+        @SerialName("ble_modes") val bleModes: List<BLEModeJSON>,
+        val ident: String = "",
+    ) {
+        fun toHolderEngagement(): HolderEngagement = HolderEngagement(
+            bleModes.map { m ->
+                (ProximityBLEMode.entries.firstOrNull { it.rawValue == m.mode } ?: throw WalletException(WalletException.Code.internal, null, "unknown BLE mode ${m.mode}")) to
+                    UUID.fromString(m.serviceUUID)
+            },
+            if (ident.isEmpty()) null else Base64.getDecoder().decode(ident),
+        )
+    }
+
+    @Serializable
+    private data class BLEModeJSON(val mode: String, @SerialName("service_uuid") val serviceUUID: String)
 
     @Serializable
     private data class RequestJSON(val reader: ReaderJSON, val documents: List<MdocPresentation.Document> = emptyList()) {
@@ -391,6 +432,20 @@ public class ProximityPresentation internal constructor(
     private companion object {
         val LINGER = 5.seconds
         val TERMINATION_TIMEOUT = 2.seconds
+    }
+}
+
+/** The modes a holder's session offers, each with its service UUID, and the Ident a central client checks. */
+internal class HolderEngagement(val modes: List<Pair<ProximityBLEMode, UUID>>, val ident: ByteArray?) {
+    /** The BLE transports for these modes: one, or [EitherTransport] over both. */
+    fun transport(context: Context): ProximityTransport {
+        val transports = modes.map { (mode, uuid) ->
+            when (mode) {
+                ProximityBLEMode.PERIPHERAL_SERVER -> GattServerTransport(context, uuid, GattCharacteristics.peripheralServer)
+                ProximityBLEMode.CENTRAL_CLIENT -> GattClientTransport(context, uuid, GattCharacteristics.centralClient, ident)
+            }
+        }
+        return transports.singleOrNull() ?: EitherTransport(transports)
     }
 }
 
@@ -542,6 +597,9 @@ public class ProximityReaderSession internal constructor(
 
     /** Whether requests carry reader authentication. */
     public val signed: Boolean = engagement.signed
+
+    /** The BLE mode this session uses, of those the holder offered: central client mode when it offered both. */
+    public val mode: ProximityBLEMode = ProximityBLEMode.entries.first { it.rawValue == engagement.bleMode }
 
     private val _state = MutableStateFlow<State>(State.Connecting)
     /**

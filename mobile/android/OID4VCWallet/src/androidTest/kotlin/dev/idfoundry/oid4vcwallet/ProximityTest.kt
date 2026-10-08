@@ -104,9 +104,9 @@ class ProximityTest {
         return Setup(wallet, reader, mdocID)
     }
 
-    private fun start(s: Setup): Pair<ProximityPresentation, ProximityReaderSession> {
+    private fun start(s: Setup, modes: Set<ProximityBLEMode> = setOf(ProximityBLEMode.PERIPHERAL_SERVER)): Pair<ProximityPresentation, ProximityReaderSession> {
         val (holderEnd, readerEnd) = PipeTransport.pair()
-        val holder = s.wallet.startProximityPresentation(timeouts, holderEnd)
+        val holder = s.wallet.startProximityPresentation(timeouts, holderEnd, modes)
         val reader = s.reader.startWith(holder.qrCode, DOC_TYPE, mapOf(NAMESPACE to listOf("family_name", "given_name")), timeouts, readerEnd)
         return holder to reader
     }
@@ -176,6 +176,23 @@ class ProximityTest {
         assertTrue(holder.state.value is ProximityPresentation.State.RequestReceived)
         holder.respond(0, s.mdocID, listOf(MdocPresentation.Element(NAMESPACE, "given_name")))
         assertTrue(awaitFinal(reader.state) { it.isFinal } is ProximityReaderSession.State.Verified)
+    }
+
+    /** Offered both modes, a reader chooses central client mode; offered one, that one. */
+    @Test
+    fun bleModes(): Unit = runBlocking {
+        val s = setup()
+        for ((modes, chosen) in listOf(
+            ProximityBLEMode.entries.toSet() to ProximityBLEMode.CENTRAL_CLIENT,
+            setOf(ProximityBLEMode.CENTRAL_CLIENT) to ProximityBLEMode.CENTRAL_CLIENT,
+            setOf(ProximityBLEMode.PERIPHERAL_SERVER) to ProximityBLEMode.PERIPHERAL_SERVER,
+        )) {
+            val (holder, reader) = start(s, modes)
+            assertEquals("offered $modes", chosen, reader.mode)
+            awaitRequest(holder)
+            holder.cancel()
+            assertEquals(ProximityPresentation.State.Cancelled, awaitFinal(holder.state) { it.isFinal })
+        }
     }
 
     @Test

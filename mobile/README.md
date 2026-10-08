@@ -59,8 +59,11 @@ GATT transport: an app shows or scans a QR code and follows a session's
 states; it never sees GATT.
 
 - **The holder:** `wallet.startProximityPresentation()` returns a
-  session whose `qrCode` the app shows. It advertises (mdoc peripheral
-  server mode) until a reader connects, then reports
+  session whose `qrCode` the app shows. In Kotlin it offers both BLE
+  modes by default (`modes`): it advertises (mdoc peripheral server
+  mode) and scans for the reader (mdoc central client mode, checking
+  the reader's Ident) until a reader connects either way. The Swift
+  package offers peripheral server mode only, for now. It then reports
   `requestReceived` with the reader's identity (`trusted` under
   `mdocReaderRoots`, `untrusted`, `unauthenticated` if unsigned, or
   `invalid`, with its certificate chain; in Swift also `certificates`,
@@ -93,9 +96,11 @@ states; it never sees GATT.
   `ACCESS_FINE_LOCATION`, which a reader needs for scan results; from
   Android 12, `BLUETOOTH_ADVERTISE`, `BLUETOOTH_CONNECT` and
   `BLUETOOTH_SCAN` with `neverForLocation`). Request
-  `ProximityPermissions.holder` or `.reader` before starting a
-  session; without them it throws `ProximityException`
-  (`PermissionMissing`).
+  `ProximityPermissions.holder` (or `.holder(modes)`) or `.reader`
+  before starting a session; without them it throws
+  `ProximityException` (`PermissionMissing`). A holder in central
+  client mode scans, so it needs `BLUETOOTH_SCAN` (location up to
+  Android 11) as a reader does.
 - **Keep the app in the foreground** during a session: neither library
   declares Bluetooth background modes or keeps a session through the
   app being suspended.

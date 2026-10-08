@@ -31,8 +31,10 @@ import java.util.UUID
 /**
  * The GATT client's side of a session: scans for [serviceUUID],
  * connects, subscribes and starts the session. The reader in mdoc
- * peripheral server mode. Bluetooth permissions are the caller's to
- * have checked.
+ * peripheral server mode, and the holder in mdoc central client mode,
+ * where it first reads the reader's Ident characteristic and
+ * disconnects unless it's [ident] (§8.3.3.1.1.4). Bluetooth
+ * permissions are the caller's to have checked.
  *
  * Android's own failures are worked around as Multipaz does: a scan
  * that reports nothing for [SCAN_RESTART_MS] is restarted (Android
@@ -45,11 +47,14 @@ internal class GattClientTransport(
     private val context: Context,
     private val serviceUUID: UUID,
     private val characteristics: GattCharacteristics,
+    private val ident: ByteArray? = null,
 ) : ProximityTransport {
     private val manager = context.getSystemService(BluetoothManager::class.java)
         ?: throw ProximityTransportException("this device has no Bluetooth")
 
     private var gatt: BluetoothGatt? = null
+    /** The pending characteristic read's value, null when it failed. */
+    private val reads = Channel<ByteArray?>(Channel.CONFLATED)
     private var state: BluetoothGattCharacteristic? = null
     private var client2Server: BluetoothGattCharacteristic? = null
 
@@ -95,6 +100,18 @@ internal class GattClientTransport(
 
         override fun onCharacteristicWrite(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
             results.trySend(status)
+        }
+
+        override fun onCharacteristicRead(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, value: ByteArray, status: Int) {
+            reads.trySend(if (status == BluetoothGatt.GATT_SUCCESS) value else null)
+        }
+
+        @Deprecated("Before Android 13")
+        override fun onCharacteristicRead(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
+            @Suppress("DEPRECATION")
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+                reads.trySend(if (status == BluetoothGatt.GATT_SUCCESS) characteristic.value else null)
+            }
         }
 
         override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, value: ByteArray) {
@@ -194,12 +211,24 @@ internal class GattClientTransport(
         val c2s = service.getCharacteristic(characteristics.client2Server)
         val s2c = service.getCharacteristic(characteristics.server2Client)
         if (st == null || c2s == null || s2c == null) throw ProximityTransportException("the mdoc service lacks a characteristic")
+        if (ident != null) checkIdent(g, service.getCharacteristic(characteristics.ident ?: error("no Ident in this mode")))
         state = st
         client2Server = c2s
         subscribe(g, s2c)
         subscribe(g, st)
         write(st, byteArrayOf(GattCharacteristics.STATE_START))
         sessionStarted = true
+    }
+
+    /** Reads the reader's Ident: a device advertising the service UUID that isn't this session's reader fails the session. */
+    private suspend fun checkIdent(g: BluetoothGatt, characteristic: BluetoothGattCharacteristic?) {
+        characteristic ?: throw ProximityTransportException("the reader's service lacks Ident")
+        while (reads.tryReceive().isSuccess) Unit
+        @Suppress("DEPRECATION")
+        if (!g.readCharacteristic(characteristic)) throw ProximityTransportException("couldn't read the reader's Ident")
+        val value = withTimeoutOrNull(OPERATION_TIMEOUT_MS) { reads.receive() }
+            ?: throw ProximityTransportException("couldn't read the reader's Ident")
+        if (!value.contentEquals(ident)) throw ProximityTransportException("the device found isn't this session's reader (its Ident differs)")
     }
 
     private suspend fun subscribe(g: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {
