@@ -31,13 +31,15 @@ OID4VCgo is OpenID Certified for the OpenID4VCI and OpenID4VP wallet
 roles under HAIP, over links. The Digital Credentials API and in-person
 presentation aren't covered by that certification.
 
-Start with <doc:GettingStarted>.
+Start with <doc:GettingStarted>, then the article for each task.
 
 ## Topics
 
 ### Essentials
 
 - <doc:GettingStarted>
+- <doc:HandlingErrors>
+- <doc:GoingToProduction>
 - ``Wallet``
 - ``WalletConfiguration``
 - ``WalletProvider``
@@ -54,6 +56,7 @@ Start with <doc:GettingStarted>.
 
 ### Receiving credentials
 
+- <doc:ReceivingCredentials>
 - ``Issuance``
 - ``Offer``
 - ``DeferredCredential``
@@ -70,15 +73,18 @@ Start with <doc:GettingStarted>.
 
 ### Presenting from a link
 
+- <doc:PresentingFromALink>
 - ``Presentation``
 - ``RequestLink``
 
 ### Presenting to Safari
 
+- <doc:PresentingToSafari>
 - ``MdocPresentation``
 
 ### Presenting in person
 
+- <doc:PresentingInPerson>
 - ``ProximityPresentation``
 - ``ProximityReaderIdentity``
 - ``ProximityTimeouts``

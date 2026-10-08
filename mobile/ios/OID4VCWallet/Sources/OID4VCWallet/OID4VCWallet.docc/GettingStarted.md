@@ -142,6 +142,9 @@ so it can refuse to run on the test build.
 
 ### Next steps
 
-- Receive a credential: ``Wallet/startIssuance(offer:)``.
-- Present one in answer to a link: ``Wallet/startPresentation(request:)``.
-- List what the wallet holds: ``Wallet/credentials()``.
+- <doc:ReceivingCredentials>
+- <doc:PresentingFromALink>
+- <doc:PresentingToSafari>
+- <doc:PresentingInPerson>
+- <doc:HandlingErrors>
+- <doc:GoingToProduction>
