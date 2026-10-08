@@ -104,6 +104,9 @@ cp "$LIBRARY" "$SOURCES" "$ASSETS/"
 rm -rf "$PKG/sources"
 mkdir -p "$PKG/sources"
 cp -R OID4VCWallet/src/main/kotlin OID4VCWallet/src/main/AndroidManifest.xml OID4VCWallet/consumer-rules.pro "$PKG/sources/"
+# The guides (docs/*.md), which GitHub renders there.
+rm -rf "$PKG/docs"
+cp -R docs "$PKG/docs"
 
 cat > "$PKG/README.md" <<EOF
 # OID4VCgo-wallet-kotlin
@@ -161,6 +164,9 @@ and an app can hold only one gomobile library. It's compiled for Kotlin
 
 ## Documentation
 
+- [Guides](docs/GettingStarted.md): getting started, receiving
+  credentials, presenting from a link, to Chrome and in person,
+  handling errors, and going to production.
 - [The Android library's sources](https://github.com/IDFoundry/OID4VCgo/tree/main/mobile/android/OID4VCWallet),
   mirrored in \`sources/\`.
 - [OID4VCgo's \`mobile/\`](https://github.com/IDFoundry/OID4VCgo/tree/main/mobile):

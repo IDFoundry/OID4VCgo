@@ -1,8 +1,17 @@
 #!/bin/sh
-# Builds the OID4VCWallet Kotlin library's API reference with Dokka,
-# failing on any Dokka warning (OID4VCWallet/build.gradle.kts), and
-# checks the site has its front page and a class page. DOKKA_OUTPUT, if
-# set, is where the HTML site is copied.
+# Checks the OID4VCWallet Kotlin library's documentation:
+#
+# 1. builds its API reference with Dokka, failing on any Dokka warning
+#    (OID4VCWallet/build.gradle.kts), and checks the site has its front
+#    page and a class page. DOKKA_OUTPUT, if set, is where the HTML site
+#    is copied.
+# 2. compiles each guide's ```kotlin code blocks (docs/*.md), concatenated
+#    in order, as a file of the demo app's unit-test sources
+#    (DemoWallet/src/test/kotlin/guideexamples, which git ignores): the
+#    demo depends on the library and on what the guides use beside it
+#    (androidx.browser, Credential Manager). A block that isn't Kotlin to
+#    compile is fenced without a language. Names are shared across
+#    guides: each guide's must be its own.
 #
 # It needs the release Go library (../build-aar.sh), as the library
 # compiles against it.
@@ -24,4 +33,15 @@ if [ -n "${DOKKA_OUTPUT:-}" ]; then
     rm -rf "$DOKKA_OUTPUT"
     cp -R "$SITE" "$DOKKA_OUTPUT"
 fi
-echo "OID4VCWallet API reference: built"
+
+EXAMPLES=DemoWallet/src/test/kotlin/guideexamples
+rm -rf "$EXAMPLES"
+mkdir -p "$EXAMPLES"
+trap 'rm -rf "$EXAMPLES"' EXIT
+for guide in docs/*.md; do
+    name="$(basename "$guide" .md)"
+    awk '/^```kotlin[[:space:]]*$/ { inside = 1; next } /^```/ { inside = 0; next } inside { print }' "$guide" > "$EXAMPLES/$name.kt"
+    [ -s "$EXAMPLES/$name.kt" ] || rm "$EXAMPLES/$name.kt"
+done
+./gradlew -q :DemoWallet:compileDebugUnitTestKotlin
+echo "OID4VCWallet API reference: built, and the guides' examples compile"
