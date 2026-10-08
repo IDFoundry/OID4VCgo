@@ -3,15 +3,21 @@
 # fetches it from: mobile/ios/package-swift-release.sh builds the release
 # XCFramework and lays out the package, then this commits it there and
 # creates the release, tagged with the version and carrying the
-# framework, in one step.
+# framework, its SHA256SUMS and a build provenance attestation, in one
+# step. (SwiftPM itself checks the framework against the checksum in
+# Package.swift.)
 #
 # The Swift package is versioned on its own, apart from this module's
 # release-please versions. Run it by hand (Actions → wallet-swift-release
-# → Run workflow) from the commit to publish.
+# → Run workflow) from main.
 #
 # Uses a fine-grained personal access token secret (WALLET_SWIFT_TOKEN)
 # with Contents read and write on OID4VCgo-wallet-swift only: the
-# default GITHUB_TOKEN can't write to another repository.
+# default GITHUB_TOKEN can't write to another repository. The token
+# reaches only the steps that publish, never the build, and no checkout
+# keeps it. The job runs in the mobile-release environment: give it
+# required reviewers and limit it to main in the repository's settings
+# (Environments), and keep the token as its secret.
 name: wallet-swift-release
 
 on:
@@ -30,27 +36,42 @@ concurrency:
 jobs:
   publish:
     runs-on: macos-latest
+    environment: mobile-release
+    permissions:
+      contents: read
+      id-token: write # the provenance attestation
+      attestations: write
     env:
       VERSION: ${{ inputs.version }}
-      GH_TOKEN: ${{ secrets.WALLET_SWIFT_TOKEN }}
       REPO: IDFoundry/OID4VCgo-wallet-swift
     steps:
-      - uses: actions/checkout@v7
+      - name: only from main
+        if: github.ref != 'refs/heads/main'
+        run: |
+          echo "::error::publish from main, not $GITHUB_REF"
+          exit 1
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: check the version is new
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$' || { echo "::error::not a version: $VERSION"; exit 1; }
           if gh release view "$VERSION" --repo "$REPO" >/dev/null 2>&1; then
             echo "::error::$REPO already has release $VERSION"; exit 1
           fi
 
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: IDFoundry/OID4VCgo-wallet-swift
           token: ${{ secrets.WALLET_SWIFT_TOKEN }}
+          persist-credentials: false
           path: wallet-swift
 
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: mobile/go.mod
           check-latest: true
@@ -59,19 +80,42 @@ jobs:
       - name: build and lay out the package
         run: mobile/ios/package-swift-release.sh "$VERSION" wallet-swift "$RUNNER_TEMP/assets" | tee "$RUNNER_TEMP/summary.txt"
 
+      - name: checksums
+        working-directory: ${{ runner.temp }}/assets
+        run: shasum -a 256 Mobile.xcframework.zip | tee SHA256SUMS
+
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: ${{ runner.temp }}/assets/Mobile.xcframework.zip
+
       - name: commit, tag and release
         working-directory: wallet-swift
+        env:
+          GH_TOKEN: ${{ secrets.WALLET_SWIFT_TOKEN }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
           git commit -m "OID4VCWallet $VERSION from IDFoundry/OID4VCgo@$GITHUB_SHA"
-          git push origin HEAD:main
+          auth="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')"
+          git -c "http.https://github.com/.extraheader=$auth" push origin HEAD:main
           {
             echo "Built from [IDFoundry/OID4VCgo@${GITHUB_SHA:0:7}](https://github.com/IDFoundry/OID4VCgo/commit/$GITHUB_SHA)."
             echo
             tail -1 "$RUNNER_TEMP/summary.txt"
+            echo
+            echo "SwiftPM checks the framework against Package.swift's checksum. Check its provenance with"
+            echo "\`gh attestation verify Mobile.xcframework.zip --repo IDFoundry/OID4VCgo\`."
           } > "$RUNNER_TEMP/notes.md"
-          gh release create "$VERSION" "$RUNNER_TEMP/assets/Mobile.xcframework.zip" \
+          gh release create "$VERSION" "$RUNNER_TEMP/assets/Mobile.xcframework.zip" "$RUNNER_TEMP/assets/SHA256SUMS" \
             --repo "$REPO" --target "$(git rev-parse HEAD)" --title "OID4VCWallet $VERSION" \
             --notes-file "$RUNNER_TEMP/notes.md"
+
+      - name: check the published framework is the one built
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir "$RUNNER_TEMP/published"
+          cd "$RUNNER_TEMP/published"
+          gh release download "$VERSION" --repo "$REPO" --pattern Mobile.xcframework.zip
+          shasum -a 256 -c "$RUNNER_TEMP/assets/SHA256SUMS"
