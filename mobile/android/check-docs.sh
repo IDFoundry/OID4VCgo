@@ -4,7 +4,8 @@
 # 1. builds its API reference with Dokka, failing on any Dokka warning
 #    (OID4VCWallet/build.gradle.kts), and checks the site has its front
 #    page and a class page. DOKKA_OUTPUT, if set, is where the HTML site
-#    is copied.
+#    is copied; DOKKA_SOURCE_REF, the commit its source links point at
+#    (main by default).
 # 2. compiles each guide's ```kotlin code blocks (docs/*.md), concatenated
 #    in order, as a file of the demo app's unit-test sources
 #    (DemoWallet/src/test/kotlin/guideexamples, which git ignores): the
@@ -19,7 +20,7 @@ set -eu
 cd "$(dirname "$0")"
 [ -f ../build/release/mobile.aar ] || { echo "no ../build/release/mobile.aar: run ../build-aar.sh" >&2; exit 1; }
 
-if ! ./gradlew -q :OID4VCWallet:dokkaGenerate; then
+if ! ./gradlew -q :OID4VCWallet:dokkaGenerate -Poid4vc.sourceRef="${DOKKA_SOURCE_REF:-main}"; then
     # Dokka reports its warnings in its worker's log, not on the console.
     find OID4VCWallet/build -name 'dokka-worker.log' -exec grep -h -i -E 'warn|error' {} + >&2 || true
     exit 1

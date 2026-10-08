@@ -168,8 +168,13 @@ The library's API reference is built with Dokka
 `OID4VCWallet/Module.md`, its front page. The guides are Markdown in
 `android/docs/`, which the release copies into the package repository's
 `docs/`. `android/check-docs.sh` builds the reference, failing on any
-Dokka warning, and compiles each guide's `kotlin` code blocks against
-the library; CI runs it.
+Dokka warning (an undocumented public declaration included), and
+compiles each guide's `kotlin` code blocks against the library; CI runs
+it. The release workflow publishes the reference to the package
+repository's `gh-pages` branch, under the version and `latest/`
+(`android/docs-site.sh` lays it out), and the README links the
+version's. GitHub Pages serves it once the package repository's
+settings (Pages) deploy from that branch.
 
 The library is compiled for Kotlin 2.2 (language and API version, and
 its standard library), so an app on AGP 9's own Kotlin can use it.

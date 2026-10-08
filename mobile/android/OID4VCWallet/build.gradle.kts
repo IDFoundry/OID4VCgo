@@ -105,7 +105,8 @@ dependencies {
 // it, an undocumented public declaration included. Source links point at -Poid4vc.sourceRef, the commit a release is
 // built from, main by default.
 dokka {
-    moduleName.set("OID4VCWallet")
+    // Lowercase: Dokka escapes capitals in its paths (-o-i-d4-v-c-wallet).
+    moduleName.set("oid4vcwallet")
     dokkaSourceSets.configureEach {
         includes.from("Module.md")
         reportUndocumented.set(true)
