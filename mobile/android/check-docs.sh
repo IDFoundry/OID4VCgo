@@ -44,4 +44,10 @@ for guide in docs/*.md; do
     [ -s "$EXAMPLES/$name.kt" ] || rm "$EXAMPLES/$name.kt"
 done
 ./gradlew -q :DemoWallet:compileDebugUnitTestKotlin
+# Each guide's file compiled to its own class (GettingStarted.kt to
+# GettingStartedKt, …), so the examples really were built.
+for example in "$EXAMPLES"/*.kt; do
+    class="$(basename "$example" .kt)Kt.class"
+    [ -n "$(find DemoWallet/build -name "$class" -path '*UnitTest*' | head -1)" ] || { echo "no $class: the guides' examples weren't compiled" >&2; exit 1; }
+done
 echo "OID4VCWallet API reference: built, and the guides' examples compile"
