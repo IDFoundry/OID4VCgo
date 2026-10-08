@@ -202,6 +202,11 @@ jobs:
         working-directory: mobile/ios/DemoWallet
         run: xcodebuild build -project DemoWallet.xcodeproj -scheme DemoWallet -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO -quiet
 
+      # The package's DocC documentation, failing on any DocC warning,
+      # with its articles' examples compiled against the package.
+      - name: check the documentation
+        run: mobile/ios/check-docs.sh
+
       # The package as wallet-swift-release.yml publishes it, built
       # against the zipped release framework.
       - name: lay out the published Swift package
