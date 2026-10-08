@@ -185,7 +185,10 @@ final class ResultBox<T: Sendable>: @unchecked Sendable {
 
 /// A store's or provider's own failure.
 public struct StoreError: LocalizedError, Sendable {
+    /// What went wrong.
     public let message: String
+    /// An error carrying `message`.
     public init(_ message: String) { self.message = message }
+    /// The message.
     public var errorDescription: String? { message }
 }

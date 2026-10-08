@@ -22,6 +22,8 @@ PKG="$(cd "$2" && pwd)"
 mkdir -p "$3"
 ASSETS="$(cd "$3" && pwd)"
 REPO="${OID4VC_WALLET_SWIFT_REPO:-IDFoundry/OID4VCgo-wallet-swift}"
+# Where wallet-swift-release publishes the documentation (GitHub Pages).
+DOCS="https://$(echo "${REPO%%/*}" | tr '[:upper:]' '[:lower:]').github.io/${REPO#*/}/$VERSION/documentation/oid4vcwallet/"
 echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$' || { echo "not a version: $VERSION" >&2; exit 2; }
 cd "$(dirname "$0")"
 HERE="$PWD"
@@ -81,7 +83,7 @@ manifest '.binaryTarget(name: "Mobile", path: "Mobile.xcframework")' '
 
 manifest ".binaryTarget(name: \"Mobile\", url: \"https://github.com/$REPO/releases/download/$VERSION/Mobile.xcframework.zip\", checksum: \"$CHECKSUM\")" > "$PKG/Package.swift"
 {
-    sed "s/@VERSION@/$VERSION/" <<'README'
+    sed -e "s/@VERSION@/$VERSION/" -e "s|@DOCS@|$DOCS|" <<'README'
 # OID4VCgo-wallet-swift
 
 `OID4VCWallet`: the Swift package of [OID4VCgo](https://github.com/IDFoundry/OID4VCgo)'s
@@ -116,7 +118,7 @@ app's Info.plist.
 ```swift
 README
     cat ReadmeExample.swift
-    cat <<'README'
+    sed -e "s/@VERSION@/$VERSION/" -e "s|@DOCS@|$DOCS|" <<'README'
 ```
 
 Errors are `WalletError`s. Each has:
@@ -128,6 +130,8 @@ Errors are `WalletError`s. Each has:
 
 ## Documentation
 
+- [The OID4VCWallet documentation](@DOCS@): getting started, an article
+  for each task, and the API reference.
 - [OID4VCgo's `mobile/`](https://github.com/IDFoundry/OID4VCgo/tree/main/mobile):
   what each platform supports, in-person presentation, the Go side and
   its [ABI](https://github.com/IDFoundry/OID4VCgo/blob/main/mobile/ABI.md).
