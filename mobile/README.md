@@ -189,6 +189,12 @@ the Go module). It runs `ios/package-swift-release.sh`, which:
    the README, whose example is `ios/ReadmeExample.swift`: edit the
    README there, not in the package repository
 
+The package's documentation is a DocC catalog,
+`ios/OID4VCWallet/Sources/OID4VCWallet/OID4VCWallet.docc`, so it ships
+with the sources. `ios/check-docs.sh` builds it, failing on any DocC
+warning, and compiles each article's `swift` code blocks against the
+package; CI runs it.
+
 The workflow then commits the result there and creates the tagged
 release, carrying the framework, its `SHA256SUMS` and a build
 provenance attestation, and checks that the published framework is the
