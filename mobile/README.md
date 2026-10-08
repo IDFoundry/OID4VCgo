@@ -193,7 +193,11 @@ The package's documentation is a DocC catalog,
 `ios/OID4VCWallet/Sources/OID4VCWallet/OID4VCWallet.docc`, so it ships
 with the sources. `ios/check-docs.sh` builds it, failing on any DocC
 warning, and compiles each article's `swift` code blocks against the
-package; CI runs it.
+package; CI runs it. The release workflow then publishes the
+documentation to the package repository's `gh-pages` branch, under the
+version and `latest/` (`ios/docs-site.sh` lays it out), and the
+generated README links the version's. GitHub Pages serves it once the
+package repository's settings (Pages) deploy from that branch.
 
 The workflow then commits the result there and creates the tagged
 release, carrying the framework, its `SHA256SUMS` and a build
