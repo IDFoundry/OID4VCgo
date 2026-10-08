@@ -9,19 +9,36 @@ import Mobile
 /// a sentence fit to show the holder; `isRetryable` says whether trying
 /// the same step again may succeed.
 public struct WalletError: Error, Equatable, CustomStringConvertible, LocalizedError {
+    /// What kind of failure an error is: stable across releases, so an app can
+    /// act on it.
     public struct Code: RawRepresentable, Hashable, Sendable {
+        /// The code as the Go side names it, such as `network`.
         public let rawValue: String
+        /// A code from its raw value.
         public init(rawValue: String) { self.rawValue = rawValue }
 
+        /// An argument, a link or the configuration is malformed.
         public static let invalidInput = Code(rawValue: MobileCodeInvalidInput)
+        /// A key store, credential store or Wallet Provider call failed; its
+        /// message follows.
         public static let platform = Code(rawValue: MobileCodePlatform)
+        /// A request couldn't be made, got no answer, or timed out. Retryable.
         public static let network = Code(rawValue: MobileCodeNetwork)
+        /// The service answered with HTTP 5xx or 429. Retryable later.
         public static let unavailable = Code(rawValue: MobileCodeUnavailable)
+        /// The calling task was cancelled.
         public static let cancelled = Code(rawValue: MobileCodeCancelled)
+        /// No key, credential, deferred credential or authorization in progress
+        /// with that ID.
         public static let notFound = Code(rawValue: MobileCodeNotFound)
+        /// A session method was called out of turn, or after the session ended.
         public static let wrongStep = Code(rawValue: MobileCodeWrongStep)
+        /// The Authorization Server refused the authorization: the holder
+        /// declined, say.
         public static let authorizationDenied = Code(rawValue: MobileCodeAuthorizationDenied)
+        /// The issuer refused a deferred credential.
         public static let credentialDenied = Code(rawValue: MobileCodeCredentialDenied)
+        /// Nothing held answers the Verifier's request.
         public static let noMatchingCredential = Code(rawValue: MobileCodeNoMatchingCredential)
         /// A presentation's selection doesn't answer the request as it
         /// asks: an unknown query or credential, one that doesn't answer
@@ -38,16 +55,25 @@ public struct WalletError: Error, Equatable, CustomStringConvertible, LocalizedE
         /// The Verifier's request is signed with a certificate that
         /// doesn't chain to `verifierRoots`: it's refused unread.
         public static let untrustedVerifier = Code(rawValue: MobileCodeUntrustedVerifier)
+        /// An issuer, Authorization Server or Verifier answered with an error,
+        /// or with something the wallet refuses. `WalletError.protocolError`
+        /// carries its OAuth error code, when it gave one.
         public static let protocolError = Code(rawValue: MobileCodeProtocol)
+        /// A bug.
         public static let internalError = Code(rawValue: MobileCodeInternal)
     }
 
+    /// What kind of failure this is.
     public let code: Code
     /// The remote party's OAuth error code, such as `invalid_grant` (a
     /// wrong PIN) or `access_denied`, when it gave one.
     public let protocolError: String?
+    /// Detail for logs: at most 300 characters, with no personal data, no
+    /// remote party's own description, and no URL's path or query.
     public let message: String
 
+    /// The code, the remote party's error code if any, and the message, for
+    /// logs.
     public var description: String {
         protocolError.map { "[\(code.rawValue):\($0)] \(message)" } ?? "[\(code.rawValue)] \(message)"
     }
@@ -65,6 +91,7 @@ public struct WalletError: Error, Equatable, CustomStringConvertible, LocalizedE
         }
     }
 
+    /// A sentence fit to show the holder.
     public var errorDescription: String? {
         switch code {
         case .network: "The service couldn't be reached. Check your connection and try again."
@@ -113,8 +140,11 @@ public struct WalletError: Error, Equatable, CustomStringConvertible, LocalizedE
 
 /// An OpenID4VP request link's parts.
 public struct RequestLink: Decodable, Equatable, Sendable {
+    /// The Verifier's client ID.
     public let clientID: String
+    /// Where the request object is fetched from.
     public let requestURI: String
+    /// How to fetch it: `post` when the Verifier asks for POST; nil means GET.
     public let requestURIMethod: String?
 
     enum CodingKeys: String, CodingKey {
@@ -139,6 +169,9 @@ public enum OID4VC {
     /// should refuse to run on it.
     public static let isTestBuild = MobileIsTestBuild()
 
+    /// Parses an OpenID4VP request link (`openid4vp://…`) into its parts,
+    /// without fetching anything. `Wallet.startPresentation(request:)` does
+    /// this itself.
     public static func parseRequestLink(_ link: String) async throws -> RequestLink {
         let json = try await offMain { try call { MobileParseRequestLink(link, $0) } }
         return try decode(RequestLink.self, json)

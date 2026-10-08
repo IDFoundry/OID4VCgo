@@ -7,22 +7,28 @@ import Foundation
 /// since a credential is useless without its holder key, which is in
 /// this device's Secure Enclave and can't be restored elsewhere.
 public final class FileCredentialStore: CredentialStore, @unchecked Sendable {
+    /// How the store keeps its files.
     public struct Options: Sendable {
         /// The data protection class of every record.
         public var protection: FileProtectionType
         /// Keeps the store's directory out of iCloud and device backups.
         public var excludedFromBackup: Bool
 
+        /// Options: by default, complete file protection, out of backups.
         public init(protection: FileProtectionType = .complete, excludedFromBackup: Bool = true) {
             self.protection = protection
             self.excludedFromBackup = excludedFromBackup
         }
     }
 
+    /// The directory the records are kept in.
     public let directory: URL
+    /// How the records are kept.
     public let options: Options
     private let lock = NSLock()
 
+    /// A store in `directory`, created if need be, with `options`' file
+    /// protection, and out of backups unless `options` says otherwise.
     public init(directory: URL, options: Options = Options()) throws {
         self.directory = directory
         self.options = options
