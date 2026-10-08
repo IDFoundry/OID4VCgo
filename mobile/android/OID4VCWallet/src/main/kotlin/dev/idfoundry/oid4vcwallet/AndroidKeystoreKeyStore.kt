@@ -29,13 +29,16 @@ import java.security.KeyStore as JavaKeyStore
 
 /**
  * Authenticates the holder for one signature by a holder key: a key
- * that needs the holder's biometrics or screen lock for each use. It
- * returns once [signature] is authorized — after BiometricPrompt
- * succeeds with it as the CryptoObject — and throws if the holder
- * cancels. The key store calls it on Go's thread, which waits.
+ * that needs the holder's biometrics or screen lock for each use. The
+ * key store calls it on Go's thread, which waits.
  * [BiometricPromptAuthenticator] is the standard one.
  */
 public fun interface HolderAuthenticator {
+    /**
+     * Returns once [signature] is authorized — after BiometricPrompt
+     * succeeds with it as the CryptoObject — and throws if the holder
+     * cancels.
+     */
     public suspend fun authenticate(signature: Signature)
 }
 
@@ -202,7 +205,7 @@ public class AndroidKeystoreKeyStore(
         keystore.aliases().toList().filter { it.startsWith(options.aliasPrefix) }.map { it.removePrefix(options.aliasPrefix) }
 
     /**
-     * Deletes every key this store holds except [keep], and returns how
+     * Deletes every key this store holds except [except], and returns how
      * many it deleted. `Wallet.sweepOrphanedKeys` calls it with the keys
      * the wallet's credentials are bound to.
      */
