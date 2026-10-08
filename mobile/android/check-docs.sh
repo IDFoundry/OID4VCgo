@@ -16,9 +16,10 @@ if ! ./gradlew -q :OID4VCWallet:dokkaGenerate; then
     exit 1
 fi
 SITE=OID4VCWallet/build/dokka/html
-for page in index.html oid4vcwallet/dev.idfoundry.oid4vcwallet/-wallet/index.html; do
-    [ -f "$SITE/$page" ] || { echo "the reference has no $page" >&2; exit 1; }
-done
+[ -f "$SITE/index.html" ] || { echo "the reference has no front page" >&2; exit 1; }
+WALLET="$(find "$SITE" -path '*/dev.idfoundry.oid4vcwallet/-wallet/index.html' | head -1)"
+[ -n "$WALLET" ] || { echo "the reference has no page for Wallet" >&2; exit 1; }
+echo "Wallet's page: ${WALLET#"$SITE"/}"
 if [ -n "${DOKKA_OUTPUT:-}" ]; then
     rm -rf "$DOKKA_OUTPUT"
     cp -R "$SITE" "$DOKKA_OUTPUT"
