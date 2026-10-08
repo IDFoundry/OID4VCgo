@@ -1,4 +1,4 @@
-# Module OID4VCWallet
+# Module oid4vcwallet
 
 Receive verifiable credentials and present them from an Android app:
 over OpenID4VCI and OpenID4VP under HAIP, to Chrome's Digital

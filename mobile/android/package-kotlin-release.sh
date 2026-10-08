@@ -167,6 +167,8 @@ and an app can hold only one gomobile library. It's compiled for Kotlin
 - [Guides](docs/GettingStarted.md): getting started, receiving
   credentials, presenting from a link, to Chrome and in person,
   handling errors, and going to production.
+- [The API reference](https://$(echo "${REPO%%/*}" | tr '[:upper:]' '[:lower:]').github.io/${REPO#*/}/$VERSION/), for this
+  release.
 - [The Android library's sources](https://github.com/IDFoundry/OID4VCgo/tree/main/mobile/android/OID4VCWallet),
   mirrored in \`sources/\`.
 - [OID4VCgo's \`mobile/\`](https://github.com/IDFoundry/OID4VCgo/tree/main/mobile):

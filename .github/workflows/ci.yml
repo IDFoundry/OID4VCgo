@@ -294,9 +294,12 @@ jobs:
             echo "::error::the release library carries TestEnv"; exit 1
           fi
 
-      # The library's Dokka API reference, failing on any Dokka warning.
+      # The library's Dokka API reference, failing on any Dokka warning,
+      # and laid out for GitHub Pages as the release workflow publishes it.
       - name: check the documentation
-        run: mobile/android/check-docs.sh
+        run: |
+          DOKKA_OUTPUT="$RUNNER_TEMP/dokka" mobile/android/check-docs.sh
+          mobile/android/docs-site.sh 0.0.0-ci "$RUNNER_TEMP/dokka" "$RUNNER_TEMP/docs"
 
       # The library as wallet-kotlin-release.yml publishes it, and an app
       # built on its AAR as the README says.
