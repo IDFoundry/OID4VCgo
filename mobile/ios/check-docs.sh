@@ -4,9 +4,12 @@
 # 1. builds it with xcodebuild docbuild, failing on any DocC warning (a
 #    link to a symbol that doesn't exist, say), and
 # 2. compiles each article's ```swift code blocks, concatenated in
-#    order, as a file of a package depending on OID4VCWallet, so the
-#    examples can't drift from the API. A block that isn't Swift to
-#    compile is fenced without a language.
+#    order, as a file of a package depending on OID4VCWallet, for the
+#    iOS Simulator (so iOS-only frameworks such as
+#    IdentityDocumentServices are checked too), so the examples can't
+#    drift from the API. A block that isn't Swift to compile is fenced
+#    without a language. Names are shared across articles: each
+#    article's must be its own.
 #
 # It needs the release framework (../build-xcframework.sh), as the
 # package links it. DOCC_OUTPUT, if set, is where the .doccarchive is
@@ -44,10 +47,12 @@ import PackageDescription
 let package = Package(
     name: "DocExamples",
     platforms: [.iOS(.v16), .macOS(.v13)],
+    products: [.library(name: "DocExamples", targets: ["DocExamples"])],
     dependencies: [.package(path: "$HERE/OID4VCWallet")],
     targets: [.target(name: "DocExamples", dependencies: ["OID4VCWallet"])]
 )
 MANIFEST
-    (cd "$WORK/examples" && swift build -q)
+    (cd "$WORK/examples" && xcodebuild build -scheme DocExamples -destination 'generic/platform=iOS Simulator' \
+        -derivedDataPath "$WORK/examples-derived" -quiet)
 fi
 echo "OID4VCWallet docs: built, and their examples compile"
