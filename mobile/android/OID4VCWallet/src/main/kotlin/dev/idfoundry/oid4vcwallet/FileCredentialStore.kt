@@ -27,7 +27,9 @@ import kotlin.concurrent.withLock
  * elsewhere; so is a record without the store's key.
  */
 public class FileCredentialStore(
+    /** The directory the records are kept in. */
     public val directory: File,
+    /** How the records are encrypted. */
     public val options: Options = Options(),
 ) : CredentialStore {
     /** When records can be read and written. */
@@ -44,7 +46,12 @@ public class FileCredentialStore(
         AFTER_FIRST_UNLOCK,
     }
 
+    /**
+     * How a [FileCredentialStore] encrypts its records: by default under a key that works only
+     * while the device is unlocked.
+     */
     public data class Options(
+        /** When records can be read and written. */
         val protection: Protection = Protection.WHEN_UNLOCKED,
         /**
          * The Keystore alias of the key the records are encrypted under.

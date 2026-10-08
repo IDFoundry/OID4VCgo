@@ -42,13 +42,13 @@ public fun interface HolderAuthenticator {
     public suspend fun authenticate(signature: Signature)
 }
 
-/**
- * The system's biometric prompt over the app's current activity
- * ([activity], null when none is showing), allowing a strong biometric
- * or the screen lock, as Face ID or the passcode on iOS.
- */
 // API 30's: it allows biometrics or the screen lock (setAllowedAuthenticators),
 // as the per-use holder keys it's for do, which need 30 too.
+/**
+ * The system's biometric prompt over the app's current activity
+ * (`activity`'s, null when none is showing), allowing a strong biometric
+ * or the screen lock, as Face ID or the passcode on iOS.
+ */
 @RequiresApi(Build.VERSION_CODES.R)
 public class BiometricPromptAuthenticator(
     private val activity: () -> Activity?,
@@ -91,6 +91,7 @@ public class BiometricPromptAuthenticator(
  * [authenticator] has authenticated the holder.
  */
 public class AndroidKeystoreKeyStore(
+    /** How the store makes keys. */
     public val options: Options = Options(),
     private val authenticator: HolderAuthenticator? = null,
 ) : KeyStore {
@@ -114,7 +115,12 @@ public class AndroidKeystoreKeyStore(
         OFF,
     }
 
+    /**
+     * How an [AndroidKeystoreKeyStore] makes keys: by default in StrongBox where the device has
+     * it, holder keys asking for the holder each time.
+     */
     public data class Options(
+        /** Where keys are made. */
         val strongBox: StrongBox = StrongBox.PREFERRED,
         /**
          * Require the holder's biometrics or screen lock for each

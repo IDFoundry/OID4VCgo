@@ -22,7 +22,12 @@ import kotlinx.serialization.json.Json
  * succeed.
  */
 public class WalletException internal constructor(
+    /** What kind of failure this is: stable across releases, so an app can act on it. */
     public val code: Code,
+    /**
+     * The remote party's OAuth error code, such as `invalid_grant` (a wrong PIN) or
+     * `access_denied`, when it gave one.
+     */
     public val protocolError: String?,
     message: String,
 ) : Exception(message) {
@@ -32,15 +37,29 @@ public class WalletException internal constructor(
         override fun toString(): String = rawValue
 
         public companion object {
+            /** An argument, a link or the configuration is malformed. */
             public val invalidInput: Code = Code(Mobile.CodeInvalidInput)
+            /**
+             * A key store, credential store or Wallet Provider call failed; its message follows.
+             */
             public val platform: Code = Code(Mobile.CodePlatform)
+            /** A request couldn't be made, got no answer, or timed out. Retryable. */
             public val network: Code = Code(Mobile.CodeNetwork)
+            /** The service answered with HTTP 5xx or 429. Retryable later. */
             public val unavailable: Code = Code(Mobile.CodeUnavailable)
+            /** The call was cancelled. */
             public val cancelled: Code = Code(Mobile.CodeCancelled)
+            /**
+             * No key, credential, deferred credential or authorization in progress with that ID.
+             */
             public val notFound: Code = Code(Mobile.CodeNotFound)
+            /** A session method was called out of turn, or after the session ended. */
             public val wrongStep: Code = Code(Mobile.CodeWrongStep)
+            /** The Authorization Server refused the authorization: the holder declined, say. */
             public val authorizationDenied: Code = Code(Mobile.CodeAuthorizationDenied)
+            /** The issuer refused a deferred credential. */
             public val credentialDenied: Code = Code(Mobile.CodeCredentialDenied)
+            /** Nothing held answers the Verifier's request. */
             public val noMatchingCredential: Code = Code(Mobile.CodeNoMatchingCredential)
 
             /**
@@ -69,7 +88,14 @@ public class WalletException internal constructor(
              * doesn't chain to `verifierRoots`: it's refused unread.
              */
             public val untrustedVerifier: Code = Code(Mobile.CodeUntrustedVerifier)
+            /**
+             * An issuer, Authorization Server or Verifier answered with an
+             * error, or with something the wallet refuses:
+             * [WalletException.protocolError] carries its OAuth error code,
+             * when it gave one.
+             */
             public val protocol: Code = Code(Mobile.CodeProtocol)
+            /** A bug. */
             public val internal: Code = Code(Mobile.CodeInternal)
         }
     }
@@ -140,8 +166,11 @@ public class WalletException internal constructor(
 /** An OpenID4VP request link's parts. */
 @Serializable
 public data class RequestLink(
+    /** The Verifier's client ID. */
     @SerialName("client_id") val clientID: String,
+    /** Where the request object is fetched from. */
     @SerialName("request_uri") val requestURI: String,
+    /** How to fetch it: `post` when the Verifier asks for POST; null means GET. */
     @SerialName("request_uri_method") val requestURIMethod: String? = null,
 )
 
@@ -168,6 +197,10 @@ public object OID4VC {
      */
     public val isTestBuild: Boolean = Mobile.isTestBuild()
 
+    /**
+     * Parses an OpenID4VP request link (`openid4vp://…`) into its parts, without fetching
+     * anything. [Wallet.startPresentation] does this itself.
+     */
     public suspend fun parseRequestLink(link: String): RequestLink =
         decode(offMain { Mobile.parseRequestLink(link) })
 
