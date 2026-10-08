@@ -174,15 +174,16 @@ final class StateBroadcast<State: Sendable>: @unchecked Sendable {
 }
 
 /// The holder's side of an ISO/IEC 18013-5 in-person presentation over
-/// BLE, in mdoc peripheral server mode: show `qrCode`, and the reader
-/// that scans it connects. Follow `states`: on `.requestReceived`, ask
+/// BLE: show `qrCode`, and the reader that scans it connects, or
+/// advertises for the holder to connect, in one of the
+/// `ProximityBLEMode`s the session offers. Follow `states`: on `.requestReceived`, ask
 /// the holder, then `respond` or `decline`. `cancel` ends it at any
 /// point. One request per session. The app's Info.plist needs
 /// NSBluetoothAlwaysUsageDescription.
 public final class ProximityPresentation: @unchecked Sendable {
     /// Where the session is: follow `states`.
     public enum State: Sendable {
-        /// Showing the QR code, advertising, waiting for a reader.
+        /// Showing the QR code, advertising or scanning, waiting for a reader.
         case waitingForReader
         /// A reader connected; its request is on its way.
         case connected
@@ -233,20 +234,29 @@ public final class ProximityPresentation: @unchecked Sendable {
     /// The current state, then each change.
     public var states: AsyncStream<State> { broadcast.stream() }
 
-    init(_ handle: MobileProximityPresentation, timeouts: ProximityTimeouts, transport: (UUID) -> any ProximityTransport) throws {
+    init(_ handle: MobileProximityPresentation, timeouts: ProximityTimeouts, transport: (HolderEngagement) -> any ProximityTransport) throws {
+        struct Mode: Decodable {
+            let mode: String
+            let serviceUUID: String
+            enum CodingKeys: String, CodingKey { case mode, serviceUUID = "service_uuid" }
+        }
         struct Engagement: Decodable {
             let qrCode: String
-            let serviceUUID: String
-            enum CodingKeys: String, CodingKey { case qrCode = "qr_code", serviceUUID = "service_uuid" }
+            let bleModes: [Mode]
+            let ident: String?
+            enum CodingKeys: String, CodingKey { case qrCode = "qr_code", bleModes = "ble_modes", ident }
         }
         let e = try decode(Engagement.self, handle.engagement())
-        guard let uuid = UUID(uuidString: e.serviceUUID) else {
-            throw WalletError(code: .internalError, message: "a malformed service UUID")
+        let modes = try e.bleModes.map { m in
+            guard let mode = ProximityBLEMode(rawValue: m.mode), let uuid = UUID(uuidString: m.serviceUUID) else {
+                throw WalletError(code: .internalError, message: "a malformed BLE mode")
+            }
+            return (mode, uuid)
         }
         self.handle = handle
         self.timeouts = timeouts
         self.qrCode = e.qrCode
-        self.transport = transport(uuid)
+        self.transport = transport(HolderEngagement(modes: modes, ident: e.ident.flatMap { Data(base64Encoded: $0) }))
         task = Task.detached { [self] in await run() }
     }
 
@@ -441,21 +451,57 @@ extension WalletError {
     }
 }
 
+/// The BLE roles a holder offers in its QR code (ISO/IEC 18013-5
+/// §8.3.3.1.1); the reader picks one, central client mode when offered
+/// both.
+public enum ProximityBLEMode: String, CaseIterable, Sendable {
+    /// The holder advertises and is the GATT server; the reader connects.
+    case peripheralServer = "peripheral_server"
+    /// The reader advertises and is the GATT server; the holder scans and connects.
+    case centralClient = "central_client"
+}
+
+/// The modes a holder's session offers, each with its service UUID, and
+/// the Ident a central client checks.
+struct HolderEngagement {
+    let modes: [(ProximityBLEMode, UUID)]
+    let ident: Data?
+
+    /// The BLE transports for these modes: one, or `EitherTransport`
+    /// over both.
+    func transport() -> any ProximityTransport {
+        let transports: [any ProximityTransport] = modes.map { mode, uuid in
+            switch mode {
+            case .peripheralServer: GattServerTransport(serviceUUID: uuid, characteristics: .peripheralServer)
+            case .centralClient: GattClientTransport(serviceUUID: uuid, characteristics: .centralClient, ident: ident)
+            }
+        }
+        return transports.count == 1 ? transports[0] : EitherTransport(transports)
+    }
+}
+
 public extension Wallet {
     /// Starts an ISO/IEC 18013-5 in-person presentation over BLE: show
-    /// its `qrCode`; it advertises until a reader connects. Bluetooth
-    /// failures end it as `.failed` with a `ProximityError`.
-    func startProximityPresentation(timeouts: ProximityTimeouts = ProximityTimeouts()) throws -> ProximityPresentation {
-        try startProximityPresentation(timeouts: timeouts) { uuid in
-            GattServerTransport(serviceUUID: uuid, characteristics: .peripheralServer)
-        }
+    /// its `qrCode`. In `modes`, both by default, it advertises for a
+    /// reader (peripheral server mode) and scans for one (central client
+    /// mode) until a reader connects either way; a reader offered both
+    /// should choose central client mode. Bluetooth failures end it as
+    /// `.failed` with a `ProximityError`.
+    func startProximityPresentation(timeouts: ProximityTimeouts = ProximityTimeouts(),
+                                    modes: Set<ProximityBLEMode> = Set(ProximityBLEMode.allCases)) throws -> ProximityPresentation {
+        try startProximityPresentation(timeouts: timeouts, modes: modes) { $0.transport() }
     }
 }
 
 extension Wallet {
-    func startProximityPresentation(timeouts: ProximityTimeouts, transport: (UUID) -> any ProximityTransport) throws -> ProximityPresentation {
+    func startProximityPresentation(timeouts: ProximityTimeouts, modes: Set<ProximityBLEMode> = [.peripheralServer],
+                                    transport: (HolderEngagement) -> any ProximityTransport) throws -> ProximityPresentation {
+        guard !modes.isEmpty else { throw WalletError(code: .invalidInput, message: "no BLE mode") }
+        // In the order Go lists them: peripheral server mode first.
+        let names = ProximityBLEMode.allCases.filter(modes.contains).map(\.rawValue)
+        let modesJSON = String(decoding: try JSONEncoder().encode(names), as: UTF8.self)
         let wallet = handle
-        let p = try OID4VC.wrap { try wallet.startProximityPresentation() }
+        let p = try OID4VC.wrap { try wallet.startProximityPresentation(withModes: modesJSON) }
         return try ProximityPresentation(p, timeouts: timeouts, transport: transport)
     }
 }
@@ -595,6 +641,9 @@ public final class ProximityReaderSession: @unchecked Sendable {
 
     /// Whether requests carry reader authentication.
     public let signed: Bool
+    /// The BLE mode this session uses, of those the holder offered:
+    /// central client mode when it offered both.
+    public let mode: ProximityBLEMode
 
     /// The current state.
     public var state: State { broadcast.value }
@@ -609,6 +658,10 @@ public final class ProximityReaderSession: @unchecked Sendable {
         self.elementsJSON = String(decoding: try JSONEncoder().encode(elements), as: UTF8.self)
         self.timeouts = timeouts
         self.signed = e.signed
+        guard let mode = ProximityBLEMode(rawValue: e.bleMode) else {
+            throw WalletError(code: .internalError, message: "an unknown BLE mode")
+        }
+        self.mode = mode
         self.transport = transport(e)
         task = Task.detached { [self] in await run() }
     }
