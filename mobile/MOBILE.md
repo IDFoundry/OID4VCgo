@@ -219,6 +219,27 @@ are refused with Security framework errors). Still to check: behaviour
 with proxies and VPNs. App Transport Security doesn't apply to Go's
 networking.
 
+**Certificate pinning** (`tls_pins`; Swift and Kotlin `tlsPins`): an
+app pins hosts to public keys, base64 SHA-256 digests of the
+SubjectPublicKeyInfo. The check runs in Go, as each handshake's
+`VerifyConnection` (FAPIgo's `fapihttp.TransportConfig.VerifyConnection`),
+over the chains that verified, so a pin only adds to verification. A
+mismatch fails before the request is sent, as `tls_pin`.
+
+- **What's covered:** every request Go makes: issuers, Authorization
+  Servers, Verifiers, status lists, in development too. Not the app's
+  own requests, such as to its Wallet Provider (attestations): the app
+  pins that client itself (`URLSession` delegate on iOS; OkHttp's
+  `CertificatePinner` or a network security configuration on Android).
+  The platforms' own pinning (`NSPinnedDomains`, network security
+  configuration) doesn't reach Go's requests.
+- **Hosts:** a name, or `*.` and a name for one label below it. Not an
+  IP address: a handshake to one sends no SNI, so the check has no host
+  to look up. Hosts without pins are verified as before.
+- **What to pin:** a CA's key (an intermediate's) survives leaf
+  renewals; keep a backup pin, since a wrong pin set locks the wallet
+  out of that host until an app update.
+
 ## Phases
 
 | # | Phase | Exit criteria |

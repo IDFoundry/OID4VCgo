@@ -54,6 +54,12 @@ type config struct {
 	// the platform's trust store can't be given it (Go on Android reads
 	// only the system's CA files). Only with Development.
 	DevelopmentRoots string `json:"development_roots,omitempty"`
+	// TLSPins pins hosts' certificates for the wallet's HTTPS requests:
+	// host (a name, or "*." and one, matching a label below it) → base64
+	// SHA-256 digests of a certificate's SubjectPublicKeyInfo, one of
+	// which a certificate in the verified chain must have
+	// (walletflow.TLSPins). A mismatch fails the request as tls_pin.
+	TLSPins map[string][]string `json:"tls_pins,omitempty"`
 	// Locales are the holder's preferred languages (BCP 47, most
 	// preferred first), for issuers' display metadata.
 	Locales []string `json:"locales,omitempty"`
@@ -165,6 +171,18 @@ func NewWallet(configJSON string, keys KeyStore, credentials CredentialStore, pr
 			}
 		}
 	}
+	if pins := walletflow.TLSPins(cfg.TLSPins); len(pins) > 0 {
+		if err := pins.Validate(); err != nil {
+			return nil, newError(CodeInvalidInput, fmt.Errorf("tls_pins: %w", err))
+		}
+		// walletflow pins its own client; a development or test one is
+		// this package's to pin.
+		if deps.HTTP == nil {
+			wcfg.TLSPins = pins
+		} else if deps.HTTP, err = withPins(deps.HTTP, pins); err != nil {
+			return nil, newError(CodeInternal, err)
+		}
+	}
 	if provider != nil {
 		deps.Provider = walletProvider{provider}
 	}
@@ -189,6 +207,22 @@ func developmentClient(pemText string) (*http.Client, error) {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.TLSClientConfig = &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}
 	return &http.Client{Transport: transport, Timeout: developmentTimeout}, nil
+}
+
+// withPins is c checking pins after each TLS handshake.
+func withPins(c *http.Client, pins walletflow.TLSPins) (*http.Client, error) {
+	base, ok := c.Transport.(*http.Transport)
+	if !ok {
+		return nil, errors.New("tls_pins: the HTTP client's transport isn't an *http.Transport")
+	}
+	transport := base.Clone()
+	if transport.TLSClientConfig == nil {
+		transport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+	}
+	transport.TLSClientConfig.VerifyConnection = pins.VerifyConnection
+	pinned := *c
+	pinned.Transport = transport
+	return &pinned, nil
 }
 
 // developmentTimeout bounds each request of developmentClient's, as

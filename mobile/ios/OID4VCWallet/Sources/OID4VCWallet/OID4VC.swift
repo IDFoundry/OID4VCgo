@@ -38,6 +38,10 @@ public struct WalletError: Error, Equatable, CustomStringConvertible, LocalizedE
         /// The Verifier's request is signed with a certificate that
         /// doesn't chain to `verifierRoots`: it's refused unread.
         public static let untrustedVerifier = Code(rawValue: MobileCodeUntrustedVerifier)
+        /// A pinned host's certificate matched none of its `tlsPins`: an
+        /// interception, or a server whose keys changed beyond its pins.
+        /// Nothing was sent to it.
+        public static let tlsPin = Code(rawValue: MobileCodeTLSPin)
         public static let protocolError = Code(rawValue: MobileCodeProtocol)
         public static let internalError = Code(rawValue: MobileCodeInternal)
     }

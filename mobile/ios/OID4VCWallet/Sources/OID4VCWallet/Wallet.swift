@@ -45,6 +45,18 @@ public struct WalletConfiguration: Codable, Sendable {
     public var requestRefresh: Bool
     /// Which copy of a credential a presentation uses.
     public var copyPolicy: CopyPolicy
+    /// Pins hosts' certificates for the wallet's own HTTPS requests:
+    /// host → base64 SHA-256 digests of a certificate's
+    /// SubjectPublicKeyInfo, one of which a certificate in the verified
+    /// chain must have, or the request fails as `tlsPin` before anything
+    /// is sent. A host is a name, or `*.` and one, matching any name a
+    /// label below it; not an IP address. Pins add to certificate
+    /// verification, never replace it: pin a CA's key, so a leaf renewal
+    /// doesn't break the app, and keep a backup pin. They cover the
+    /// requests the SDK makes (issuers, Authorization Servers,
+    /// Verifiers, status lists), not the app's own, such as to its
+    /// Wallet Provider: pin that client yourself.
+    public var tlsPins: [String: [String]]
 
     /// Which copy of a credential a presentation uses (OpenID4VCI 1.0: "a
     /// unique Credential per presentation or per Verifier").
@@ -61,7 +73,7 @@ public struct WalletConfiguration: Codable, Sendable {
     public init(clientID: String, redirectURI: String, issuerRoots: String = "", verifierRoots: String = "", registrarRoots: String = "",
                 mdocReaderRoots: String = "", mdocReaderRequireEKU: Bool = false, requireTrustedMdocReader: Bool = false,
                 development: Bool = false, locales: [String] = Locale.preferredLanguages, batchSize: Int = 0, requestRefresh: Bool = false,
-                copyPolicy: CopyPolicy = .perPresentation) {
+                copyPolicy: CopyPolicy = .perPresentation, tlsPins: [String: [String]] = [:]) {
         self.clientID = clientID
         self.redirectURI = redirectURI
         self.issuerRoots = issuerRoots
@@ -75,6 +87,7 @@ public struct WalletConfiguration: Codable, Sendable {
         self.batchSize = batchSize
         self.requestRefresh = requestRefresh
         self.copyPolicy = copyPolicy
+        self.tlsPins = tlsPins
     }
 
     enum CodingKeys: String, CodingKey {
@@ -82,7 +95,7 @@ public struct WalletConfiguration: Codable, Sendable {
         case verifierRoots = "verifier_roots", registrarRoots = "registrar_roots", mdocReaderRoots = "mdoc_reader_roots"
         case mdocReaderRequireEKU = "mdoc_reader_require_eku", requireTrustedMdocReader = "require_trusted_mdoc_reader"
         case development, locales, batchSize = "batch_size"
-        case requestRefresh = "request_refresh", copyPolicy = "copy_policy"
+        case requestRefresh = "request_refresh", copyPolicy = "copy_policy", tlsPins = "tls_pins"
     }
 
     public init(from decoder: Decoder) throws {
@@ -99,7 +112,8 @@ public struct WalletConfiguration: Codable, Sendable {
                   locales: try c.decodeIfPresent([String].self, forKey: .locales) ?? Locale.preferredLanguages,
                   batchSize: try c.decodeIfPresent(Int.self, forKey: .batchSize) ?? 0,
                   requestRefresh: try c.decodeIfPresent(Bool.self, forKey: .requestRefresh) ?? false,
-                  copyPolicy: try c.decodeIfPresent(CopyPolicy.self, forKey: .copyPolicy) ?? .perPresentation)
+                  copyPolicy: try c.decodeIfPresent(CopyPolicy.self, forKey: .copyPolicy) ?? .perPresentation,
+                  tlsPins: try c.decodeIfPresent([String: [String]].self, forKey: .tlsPins) ?? [:])
     }
 
     /// The scheme of `redirectURI`: the callback scheme an

@@ -69,6 +69,12 @@ public class WalletException internal constructor(
              * doesn't chain to `verifierRoots`: it's refused unread.
              */
             public val untrustedVerifier: Code = Code(Mobile.CodeUntrustedVerifier)
+            /**
+             * A pinned host's certificate matched none of its `tlsPins`: an
+             * interception, or a server whose keys changed beyond its pins.
+             * Nothing was sent to it.
+             */
+            public val tlsPin: Code = Code(Mobile.CodeTLSPin)
             public val protocol: Code = Code(Mobile.CodeProtocol)
             public val internal: Code = Code(Mobile.CodeInternal)
         }
