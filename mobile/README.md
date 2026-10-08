@@ -165,8 +165,11 @@ runs the same script on every change, without publishing.
 The library's API reference is built with Dokka
 (`./gradlew :OID4VCWallet:dokkaGenerate`, into
 `OID4VCWallet/build/dokka/html`), from its KDoc and
-`OID4VCWallet/Module.md`, its front page. `android/check-docs.sh` builds
-it, failing on any Dokka warning; CI runs it.
+`OID4VCWallet/Module.md`, its front page. The guides are Markdown in
+`android/docs/`, which the release copies into the package repository's
+`docs/`. `android/check-docs.sh` builds the reference, failing on any
+Dokka warning, and compiles each guide's `kotlin` code blocks against
+the library; CI runs it.
 
 The library is compiled for Kotlin 2.2 (language and API version, and
 its standard library), so an app on AGP 9's own Kotlin can use it.
