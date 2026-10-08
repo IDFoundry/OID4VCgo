@@ -203,9 +203,12 @@ jobs:
         run: xcodebuild build -project DemoWallet.xcodeproj -scheme DemoWallet -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO -quiet
 
       # The package's DocC documentation, failing on any DocC warning,
-      # with its articles' examples compiled against the package.
+      # with its articles' examples compiled against the package, and
+      # laid out for GitHub Pages as the release workflow publishes it.
       - name: check the documentation
-        run: mobile/ios/check-docs.sh
+        run: |
+          DOCC_OUTPUT="$RUNNER_TEMP/OID4VCWallet.doccarchive" mobile/ios/check-docs.sh
+          mobile/ios/docs-site.sh 0.0.0-ci "$RUNNER_TEMP/OID4VCWallet.doccarchive" "$RUNNER_TEMP/docs"
 
       # The package as wallet-swift-release.yml publishes it, built
       # against the zipped release framework.
