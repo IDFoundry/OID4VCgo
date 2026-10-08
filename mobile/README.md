@@ -155,10 +155,12 @@ library. It runs `android/package-kotlin-release.sh`, which:
    README with those libraries
 
 The workflow then commits the result there and creates the tagged
-release, carrying the AAR and the sources jar. It needs the
-`WALLET_KOTLIN_TOKEN` secret: a fine-grained token with Contents read and
-write on OID4VCgo-wallet-kotlin only. CI runs the same script on every
-change, without publishing.
+release, carrying the AAR, the sources jar, their `SHA256SUMS` and a
+build provenance attestation, and checks that the published files are
+the ones it built. It needs the `WALLET_KOTLIN_TOKEN` secret: a
+fine-grained token with Contents read and write on
+OID4VCgo-wallet-kotlin only, which only the publishing steps see. CI
+runs the same script on every change, without publishing.
 
 The library is compiled for Kotlin 2.2 (language and API version, and
 its standard library), so an app on AGP 9's own Kotlin can use it.
@@ -188,9 +190,19 @@ the Go module). It runs `ios/package-swift-release.sh`, which:
    README there, not in the package repository
 
 The workflow then commits the result there and creates the tagged
-release. It needs the `WALLET_SWIFT_TOKEN` secret: a fine-grained token
-with Contents read and write on OID4VCgo-wallet-swift only. CI runs the
-same script on every change, without publishing.
+release, carrying the framework, its `SHA256SUMS` and a build
+provenance attestation, and checks that the published framework is the
+one it built. It needs the `WALLET_SWIFT_TOKEN` secret: a fine-grained
+token with Contents read and write on OID4VCgo-wallet-swift only, which
+only the publishing steps see. CI runs the same script on every change,
+without publishing.
+
+Both release workflows run only from `main`, in the `mobile-release`
+environment. In the repository's settings (Environments →
+mobile-release), give it required reviewers, limit its deployment
+branches to `main`, and keep `WALLET_SWIFT_TOKEN` and
+`WALLET_KOTLIN_TOKEN` as its secrets rather than the repository's, so a
+release waits for approval and no other workflow can read the tokens.
 
 ## Go tests
 

@@ -145,6 +145,10 @@ $DEPLINES
 }
 \`\`\`
 
+Check the download against the release's \`SHA256SUMS\`
+(\`sha256sum -c SHA256SUMS\`), and its provenance with the GitHub CLI:
+\`gh attestation verify oid4vcwallet-$VERSION.aar --repo IDFoundry/OID4VCgo\`.
+
 In-person presentation needs Bluetooth permissions, which the
 library's manifest adds to your app's: request
 \`ProximityPermissions.holder\` or \`.reader\` at runtime before starting
