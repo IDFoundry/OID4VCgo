@@ -162,6 +162,12 @@ fine-grained token with Contents read and write on
 OID4VCgo-wallet-kotlin only, which only the publishing steps see. CI
 runs the same script on every change, without publishing.
 
+The library's API reference is built with Dokka
+(`./gradlew :OID4VCWallet:dokkaGenerate`, into
+`OID4VCWallet/build/dokka/html`), from its KDoc and
+`OID4VCWallet/Module.md`, its front page. `android/check-docs.sh` builds
+it, failing on any Dokka warning; CI runs it.
+
 The library is compiled for Kotlin 2.2 (language and API version, and
 its standard library), so an app on AGP 9's own Kotlin can use it.
 
