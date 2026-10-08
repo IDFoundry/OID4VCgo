@@ -438,17 +438,23 @@ signs during `Respond`. A malformed request is `protocol`.
 
 An ISO/IEC 18013-5 in-person presentation, from the holder's side: the
 holder shows a QR code, a reader scans it and connects over BLE, and
-the reader asks for an mdoc. The app owns the BLE transport, in mdoc
-peripheral server mode: it advertises the service UUID, is the GATT
-server, reassembles each message from its chunks, and hands it to
-`HandleMessage`. Go does the rest. `Wallet.StartProximityPresentation()`
-starts a session. Steps: `Engagement`, then `HandleMessage` for each
+the reader asks for an mdoc. The app owns the BLE transport: in mdoc
+peripheral server mode it advertises the service UUID and is the GATT
+server; in mdoc central client mode it scans for the reader's service
+UUID and connects as GATT client. Either way it reassembles each
+message from its chunks and hands it to `HandleMessage`. Go does the
+rest. `Wallet.StartProximityPresentation()` starts a session in
+peripheral server mode; `Wallet.StartProximityPresentationWithModes(modesJSON)`
+in the modes a JSON array lists, `"peripheral_server"`,
+`"central_client"` or both (`invalid_input` otherwise). Offering both,
+the app advertises and scans until the reader connects one way; a
+reader offered both should choose central client mode (§8.3.3.1.1). Steps: `Engagement`, then `HandleMessage` for each
 message, then `Respond` or `Terminate` on the `request` event. One
 request per session. Every method is safe to call from any thread.
 
 | Method | Result |
 |---|---|
-| `Engagement()` | `{"qr_code", "service_uuid", "ble_mode"}`: the QR code's text (`mdoc:` and the DeviceEngagement), the BLE service UUID to advertise, and `"peripheral_server"` |
+| `Engagement()` | `{"qr_code", "service_uuid", "ble_mode", "ble_modes", "ident"}`: the QR code's text (`mdoc:` and the DeviceEngagement), and in `ble_modes` each mode offered, `{"mode", "service_uuid"}`, each with its own UUID. In `peripheral_server` mode, advertise `service_uuid` and be the GATT server. In `central_client` mode, scan for `service_uuid`, connect as GATT client, and disconnect from a reader whose Ident characteristic isn't `ident` (base64, present only with that mode). `service_uuid` and `ble_mode` are `ble_modes`' first: peripheral server mode's, when offered |
 | `HandleMessage(op, message)` | `{"event", "send", "reason", "error"}`. If `send` is present, it's the base64 message to send the reader. `event` is `request` (show `Request`), `ended` (send `send`, then disconnect) or `none`. `reason`, for `ended`, is `reader_ended` (the reader ended the session first) or `error`. `error` is then the failing call's text: `protocol` for a bad message, `untrusted_verifier` for a reader `require_trusted_mdoc_reader` refuses |
 | `Request()` | `{"reader": {"status", "name", "chain", "error"}, "documents": [{"doctype", "elements": [{"namespace", "identifier", "retain"}], "credentials": [summary]}]}`, in the request's order. `reader.status` is `trusted` (its certificate chains to `mdoc_reader_roots` and passes `mdoc_reader_require_eku`), `untrusted` (signed by a certificate that doesn't), `unauthenticated` (not signed) or `invalid` (a signature that doesn't verify for this session). `name` is the certificate's subject common name, the reader's verified name only when `trusted`. `chain` is the certificates, leaf first, as base64 DER, and `certificates` their fields, for an app that can't parse them (iOS): `{"subject", "issuer", "not_before", "not_after", "serial", "subject_alt_names", "extended_key_usages", "key_usages", "is_ca", "signature_algorithm", "extensions", "sha256"}`. `error` says why the reader isn't `trusted`. Each summary has `shown_to_verifier` (this reader, known by its certificate, was shown it before; never for an unsigned one) and `linkable_here` |
 | `Respond(op, document, credentialID, elementsJSON)` | `{"send", "linkable"}`: send `send`, the encrypted DeviceResponse, which ends the session, then disconnect. `linkable` is whether the copy presented had been seen by another Verifier. On an error, nothing is sent and the session goes on |
@@ -467,7 +473,8 @@ session after at least 300 seconds of inactivity (§9.1.1.4). The
 transport's own rules (chunking, the State characteristic, not
 reconnecting after a disconnect) are in `proximity/README.md`.
 
-ProximityPresentation was added within ABI version 12.
+ProximityPresentation was added within ABI version 12, and later within
+it `StartProximityPresentationWithModes`, `ble_modes` and `ident`.
 
 ## ProximityReader
 

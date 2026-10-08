@@ -1032,7 +1032,11 @@ Decisions taken 2026-10-06 (tracked in [#482](https://github.com/IDFoundry/OID4V
 2. **BLE modes, as ISO/IEC 18013-5 requires:** the holder supports mdoc
    peripheral server mode (it shows the QR code, advertises and is the
    GATT server). The reader supports both modes (§8.3.3.1.1), choosing
-   central client mode when the holder offers both.
+   central client mode when the holder offers both. Since extended: the
+   holder offers central client mode too (it scans for the reader and
+   connects as GATT client), each mode with its own UUID, and the
+   native SDKs offer both by default
+   (`StartProximityPresentationWithModes`).
 3. **GATT first.** The L2CAP transmission profile (Annex A) is the next
    phase, behind the same transport.
 4. **One request per session**, as `proximity` handles.
@@ -1103,7 +1107,8 @@ Decisions taken 2026-10-06 (tracked in [#482](https://github.com/IDFoundry/OID4V
 - **Both BLE modes:** the reader uses whichever mode the holder offers,
   central client mode when it offers both. In that mode the reader is
   the GATT server and serves the Ident characteristic. The holder side
-  offers peripheral server mode only.
+  offered peripheral server mode only at first; it offers either, or
+  both, now.
 - **Revocation isn't checked:** the result carries the MSO's status
   list reference for the app to check, as `proximity.Verify` leaves it.
 

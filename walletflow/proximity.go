@@ -48,11 +48,19 @@ const (
 	proximityEnded
 )
 
-// StartProximityPresentation starts a session in mdoc peripheral server
-// mode: the holder's device advertises ServiceUUID and is the GATT
-// server, after showing QRCode.
-func (w *Wallet) StartProximityPresentation() (*ProximityPresentation, error) {
-	s, err := proximity.NewDeviceSession(w.deps.Random)
+// StartProximityPresentation starts a session offering modes, mdoc
+// peripheral server mode alone without any. After showing QRCode, the
+// holder's device, in peripheral server mode, advertises
+// PeripheralServerUUID and is the GATT server; in central client mode,
+// it scans for CentralClientUUID and connects as GATT client, checking
+// the reader's Ident characteristic against BLEIdent. Offering both, it
+// does both until the reader connects one way.
+func (w *Wallet) StartProximityPresentation(modes ...proximity.BLEMode) (*ProximityPresentation, error) {
+	var opts []proximity.DeviceOption
+	if len(modes) > 0 {
+		opts = append(opts, proximity.WithBLEModes(modes...))
+	}
+	s, err := proximity.NewDeviceSession(w.deps.Random, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("walletflow: %w", err)
 	}
@@ -63,8 +71,21 @@ func (w *Wallet) StartProximityPresentation() (*ProximityPresentation, error) {
 // (§8.2.2.3).
 func (p *ProximityPresentation) QRCode() string { return p.s.QRCode() }
 
-// ServiceUUID is the BLE service UUID to advertise.
+// ServiceUUID is the BLE service UUID: PeripheralServerUUID when the
+// session offers that mode, else CentralClientUUID.
 func (p *ProximityPresentation) ServiceUUID() string { return p.s.ServiceUUID() }
+
+// PeripheralServerUUID is the service UUID to advertise in mdoc
+// peripheral server mode; empty when the session doesn't offer it.
+func (p *ProximityPresentation) PeripheralServerUUID() string { return p.s.PeripheralServerUUID() }
+
+// CentralClientUUID is the service UUID to scan for and connect to in
+// mdoc central client mode; empty when the session doesn't offer it.
+func (p *ProximityPresentation) CentralClientUUID() string { return p.s.CentralClientUUID() }
+
+// BLEIdent is the value the reader's Ident characteristic must hold in
+// mdoc central client mode: disconnect from a reader whose differs.
+func (p *ProximityPresentation) BLEIdent() []byte { return p.s.BLEIdent() }
 
 // ProximityEvent is what HandleMessage made of a message.
 type ProximityEvent struct {

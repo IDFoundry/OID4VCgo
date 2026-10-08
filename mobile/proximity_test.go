@@ -204,3 +204,74 @@ func TestSessions_ProximityPresentationEnds(t *testing.T) {
 		}
 	})
 }
+
+// Both BLE modes: the engagement lists each with its own UUID, and the
+// ident a central client checks; a reader chooses central client mode,
+// on the central client UUID, and the session goes on as in the other.
+func TestSessions_ProximityBothModes(t *testing.T) {
+	reader := newTestReader(t)
+	h := newHarness(t, false).withReaderRoots(t, reader)
+	h.receive(t)
+	p, err := h.w.StartProximityPresentationWithModes(`["peripheral_server","central_client"]`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	type mode struct {
+		Mode        string `json:"mode"`
+		ServiceUUID string `json:"service_uuid"`
+	}
+	eng := decode[struct {
+		QRCode      string `json:"qr_code"`
+		ServiceUUID string `json:"service_uuid"`
+		BLEMode     string `json:"ble_mode"`
+		BLEModes    []mode `json:"ble_modes"`
+		Ident       string
+	}](t, p.Engagement())
+	if len(eng.BLEModes) != 2 || eng.BLEModes[0].Mode != "peripheral_server" || eng.BLEModes[1].Mode != "central_client" ||
+		eng.BLEModes[0].ServiceUUID == eng.BLEModes[1].ServiceUUID || eng.ServiceUUID != eng.BLEModes[0].ServiceUUID || eng.BLEMode != "peripheral_server" {
+		t.Fatalf("Engagement = %s", p.Engagement())
+	}
+	r, err := proximity.NewReaderSession(eng.QRCode, proximity.WithReaderAuth(reader.key.Signer, reader.key.Chain))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.BLEMode() != proximity.CentralClient || r.ServiceUUID() != eng.BLEModes[1].ServiceUUID {
+		t.Fatalf("reader chose %v on %s", r.BLEMode(), r.ServiceUUID())
+	}
+	if string(sent(t, eng.Ident)) != string(r.BLEIdent()) {
+		t.Fatal("ident isn't the reader's BLEIdent")
+	}
+	msg, err := r.Establishment(walletflowtest.DocType, map[string][]string{walletflowtest.NameSpace: {"family_name"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ev := decode[proximityEvent](t, p.HandleMessage(NewOperation(0), msg)); ev.Event != "request" {
+		t.Fatalf("HandleMessage = %+v", ev)
+	}
+
+	// The default, and one mode alone, are as before; bad modes are
+	// invalid_input.
+	single := decode[struct {
+		BLEModes []mode `json:"ble_modes"`
+		Ident    string
+	}]
+	old, err := h.w.StartProximityPresentation()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e := single(t, old.Engagement()); len(e.BLEModes) != 1 || e.BLEModes[0].Mode != "peripheral_server" || e.Ident != "" {
+		t.Errorf("StartProximityPresentation's Engagement = %s", old.Engagement())
+	}
+	central, err := h.w.StartProximityPresentationWithModes(`["central_client"]`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e := single(t, central.Engagement()); len(e.BLEModes) != 1 || e.BLEModes[0].Mode != "central_client" || e.Ident == "" {
+		t.Errorf("central client's Engagement = %s", central.Engagement())
+	}
+	for _, bad := range []string{`[]`, `["l2cap"]`, `{`} {
+		if _, err := h.w.StartProximityPresentationWithModes(bad); code(err) != CodeInvalidInput {
+			t.Errorf("modes %s: %v, want %s", bad, err, CodeInvalidInput)
+		}
+	}
+}
