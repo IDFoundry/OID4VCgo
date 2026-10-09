@@ -45,6 +45,9 @@ fun describe(error: Throwable): Pair<String, Boolean> = when (error) {
 | `invalidSelection` | The selection doesn't answer the request | Choose again |
 | `deliveryUnknown` | A response may or may not have reached the Verifier: it isn't sent again | Ask the holder to check with the Verifier |
 | `reissueRequired` | A credential can't be refreshed | Receive it again from the issuer |
+| `profileViolation` | Under the `HAIP` issuance profile, the issuer doesn't follow HAIP 1.0 | Tell the holder: the wallet doesn't receive from this issuer |
+| `clientAuthUnsupported` | The issuer needs a Wallet Attestation the wallet can't give: no `WalletProvider` or `clientID` | Tell the holder, or configure a provider |
+| `proofUnsupported` | The wallet can't hold the credential, or the issuer needs a proof it can't give (a key attestation needs a `WalletProvider`) | Tell the holder |
 | `notFound` | No such credential, deferred credential or authorization | Refresh the list |
 | `wrongStep` | The session isn't at that step | A bug in the app's flow |
 | `cancelled` | The call was cancelled (a cancelled coroutine ends with its own `CancellationException` instead) | Nothing |

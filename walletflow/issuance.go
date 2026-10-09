@@ -4,12 +4,15 @@ import (
 	"context"
 	"crypto"
 	"crypto/ecdsa"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
 	"slices"
+	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	fapi "github.com/idfoundry/fapigo"
 	"github.com/idfoundry/fapigo/client"
@@ -119,12 +122,29 @@ type Issuance struct {
 	// kept with each deferred credential.
 	accessToken     fapi.Secret
 	accessExpiresAt time.Time
+	// identifiers are the credential_identifiers the Token Response
+	// granted for each configuration, in its authorization_details:
+	// a configuration listed here is requested by one of them, never by
+	// its configuration ID (OpenID4VCI 1.0 §8.2).
+	identifiers map[string][]string
 	// obtained is what RequestCredentials has obtained so far, and
 	// handled the configurations it has requested successfully.
 	obtained IssuanceResult
 	handled  map[string]bool
-	// authorizationServer is the one the client authenticates to.
+	// grant is the grant that redeems the offer, authorizationServer
+	// the server it's redeemed at, with its metadata, and auth how the
+	// wallet authenticates there (chooseGrant).
+	grant               Grant
 	authorizationServer string
+	asMeta              wallet.AuthorizationServerMetadata
+	auth                clientAuth
+	// tokenType is the access token's: wallet.TokenTypeDPoP or
+	// wallet.TokenTypeBearer.
+	tokenType string
+	// nonceRetries counts the requests retried on invalid_nonce, each
+	// with fresh holder keys (and Key Attestations), up to
+	// maxNonceRetries for the whole issuance.
+	nonceRetries int
 	// refreshToken is the Token Response's, if it gave one
 	// (Config.RequestRefresh); grantID, once a credential is stored, the
 	// RefreshGrant keeping it, and the instance key with it.
@@ -152,32 +172,129 @@ func (w *Wallet) StartIssuance(ctx context.Context, offerURI string) (*Issuance,
 	if err != nil {
 		return nil, fmt.Errorf("walletflow: issuer metadata: %w", err)
 	}
-	if metadata.NonceEndpoint == nil {
-		return nil, errors.New("walletflow: the issuer advertises no nonce endpoint, which the attestation proof needs")
+	for _, id := range offer.CredentialConfigurationIDs {
+		conf, ok := metadata.CredentialConfigurationsSupported[id]
+		if !ok {
+			// §4.1.1: each identifies one of credential_configurations_supported.
+			return nil, fmt.Errorf("walletflow: credential %q isn't in the issuer's metadata", id)
+		}
+		if err := checkBindable(conf); err != nil {
+			return nil, fmt.Errorf("walletflow: credential %q: %w", id, err)
+		}
+	}
+	if err := w.checkProfile(metadata, offer.CredentialConfigurationIDs); err != nil {
+		return nil, err
 	}
 	s := &Issuance{w: w, offer: offer, metadata: metadata}
-	s.details = describeOffer(offer, metadata, w.cfg.Locales)
-	// Refuse an offer whose grant names an Authorization Server the
-	// issuer doesn't list before the holder sees it: a pre-authorized
-	// code and its PIN would go to that server.
-	if s.details.Grant == GrantPreAuthorizedCode {
-		_, err = wallet.PlanPreAuthorizedCode(offer, metadata)
-	} else {
-		_, err = wallet.PlanAuthorization(offer, metadata)
+	// The grant, and how its token request authenticates, are settled
+	// before the holder sees the offer: an offer the wallet can't redeem
+	// is refused now, not after the holder has entered a PIN.
+	if err := s.chooseGrant(ctx); err != nil {
+		return nil, err
 	}
-	if err != nil {
-		return nil, fmt.Errorf("walletflow: %w", err)
-	}
+	s.details = describeOffer(offer, metadata, s.grant, w.cfg.Locales)
 	return s, nil
 }
 
-func describeOffer(offer oid4vci.CredentialOffer, metadata oid4vci.Metadata, locales []string) Offer {
-	o := Offer{CredentialIssuer: offer.CredentialIssuer, Grant: GrantAuthorizationCode}
-	// The pre-authorized code grant only when it's the one offered: an
-	// offer with both leaves the choice to the wallet, and the
-	// authorization code grant authenticates the holder at the issuer.
-	if g := offer.Grants; g != nil && g.PreAuthorizedCode != nil && g.AuthorizationCode == nil {
-		o.Grant, o.TxCode = GrantPreAuthorizedCode, g.PreAuthorizedCode.TxCode
+// chooseGrant settles which grant redeems the offer, at which
+// Authorization Server, and how the wallet authenticates there. An
+// offer with both grants leaves the choice to the wallet (OpenID4VCI
+// 1.0 §4.1.1): the authorization code grant, which authenticates the
+// holder at the issuer, where the wallet can complete it, else the
+// pre-authorized code. An offer naming an Authorization Server the
+// issuer doesn't list is refused: a pre-authorized code and its PIN
+// would go to that server.
+func (s *Issuance) chooseGrant(ctx context.Context) error {
+	g := s.offer.Grants
+	var candidates []Grant
+	if g == nil {
+		// No grants: the authorization code grant, the only one a wallet
+		// can begin without an offer's code (§4.1.1).
+		candidates = []Grant{GrantAuthorizationCode}
+	} else {
+		if g.AuthorizationCode != nil {
+			candidates = append(candidates, GrantAuthorizationCode)
+		}
+		if g.PreAuthorizedCode != nil {
+			candidates = append(candidates, GrantPreAuthorizedCode)
+		}
+	}
+	var errs []error
+	for _, grant := range candidates {
+		err := s.planGrant(ctx, grant)
+		if err == nil {
+			return nil
+		}
+		errs = append(errs, err)
+	}
+	// Every grant's reason, so errors.Is finds whichever sentinel applies.
+	return errors.Join(errs...)
+}
+
+// planGrant checks the wallet can redeem the offer with grant, and if
+// so keeps the choice: the Authorization Server, and how the wallet
+// authenticates at it.
+func (s *Issuance) planGrant(ctx context.Context, grant Grant) error {
+	var asURL string
+	if grant == GrantPreAuthorizedCode {
+		plan, err := wallet.PlanPreAuthorizedCode(s.offer, s.metadata)
+		if err != nil {
+			return fmt.Errorf("walletflow: %w", err)
+		}
+		asURL = plan.AuthorizationServer
+	} else {
+		if err := s.w.checkAuthorizationCode(); err != nil {
+			return err
+		}
+		plan, err := wallet.PlanAuthorization(s.offer, s.metadata)
+		if err != nil {
+			return fmt.Errorf("walletflow: %w", err)
+		}
+		asURL = plan.AuthorizationServer
+	}
+	asMeta, err := s.w.core.FetchAuthorizationServerMetadata(ctx, asURL)
+	if err != nil {
+		return fmt.Errorf("walletflow: authorization server metadata: %w", err)
+	}
+	// An offer's grants are the issuer's to give: its server is held to
+	// grant_types_supported only for an offer with none, where the
+	// wallet chooses the grant (§4.1.1).
+	if s.offer.Grants == nil && !asMeta.SupportsGrantType(string(grant)) {
+		return fmt.Errorf("walletflow: the authorization server doesn't serve the %s grant", grant)
+	}
+	auth, err := s.w.chooseClientAuth(asMeta, grant)
+	if err != nil {
+		return fmt.Errorf("walletflow: %s grant: %w", grant, err)
+	}
+	if grant == GrantAuthorizationCode && auth != clientAuthAttestation {
+		// fapigo/client's authorization code flow authenticates the
+		// client; it has no public client.
+		return fmt.Errorf("walletflow: %s grant: %w", grant, ErrClientAuthUnsupported)
+	}
+	s.grant, s.auth, s.authorizationServer, s.asMeta = grant, auth, asURL, asMeta
+	return nil
+}
+
+// checkBindable reports a credential the wallet can't hold: one bound to
+// no key (no cryptographic_binding_methods_supported, OpenID4VCI 1.0
+// §12.2.4), which the wallet doesn't receive — anyone holding a copy
+// could present it, and an mdoc's MSO always names a device key, so one
+// the wallet didn't prove would be someone else's — or one bound by a
+// method the wallet lacks.
+func checkBindable(conf oid4vci.CredentialConfigurationMetadata) error {
+	if len(conf.CryptographicBindingMethodsSupported) == 0 {
+		return fmt.Errorf("%w: it's bound to no key", ErrProofUnsupported)
+	}
+	if !supportsBinding(conf) {
+		return fmt.Errorf("%w: it binds credentials only by %v", ErrProofUnsupported, conf.CryptographicBindingMethodsSupported)
+	}
+	return nil
+}
+
+func describeOffer(offer oid4vci.CredentialOffer, metadata oid4vci.Metadata, grant Grant, locales []string) Offer {
+	o := Offer{CredentialIssuer: offer.CredentialIssuer, Grant: grant}
+	if g := offer.Grants; grant == GrantPreAuthorizedCode && g != nil && g.PreAuthorizedCode != nil {
+		o.TxCode = g.PreAuthorizedCode.TxCode
 	}
 	for _, id := range offer.CredentialConfigurationIDs {
 		conf := metadata.CredentialConfigurationsSupported[id]
@@ -220,14 +337,14 @@ type AuthorizationOptions struct {
 func (s *Issuance) BeginAuthorizationWith(ctx context.Context, opts AuthorizationOptions) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if (s.step != stepStarted && s.step != stepAuthorizing) || s.details.Grant != GrantAuthorizationCode {
+	if (s.step != stepStarted && s.step != stepAuthorizing) || s.grant != GrantAuthorizationCode {
 		return "", ErrWrongStep
 	}
 	plan, err := wallet.PlanAuthorization(s.offer, s.metadata)
 	if err != nil {
 		return "", fmt.Errorf("walletflow: %w", err)
 	}
-	if err := s.newClient(ctx, plan.AuthorizationServer); err != nil {
+	if err := s.newClient(ctx, plan.AuthorizationServer, true); err != nil {
 		return "", err
 	}
 	authReq, err := wallet.BuildAuthorizationRequest(s.offer, plan.Scopes)
@@ -279,8 +396,16 @@ func (s *Issuance) CompleteAuthorization(ctx context.Context, redirect string) e
 	}
 	switch r := result.(type) {
 	case client.CompletionSuccess:
+		if s.tokenType, err = s.w.tokenType(r.Tokens.TokenType); err != nil {
+			s.step = stepClosed
+			return err
+		}
 		s.resource = s.client.ProtectedResource(r.Tokens)
 		s.accessToken = r.Tokens.AccessToken
+		if s.identifiers, err = credentialIdentifiers(r.Tokens.AuthorizationDetails); err != nil {
+			s.step = stepClosed
+			return fmt.Errorf("walletflow: token response: %w", err)
+		}
 		if r.Tokens.HasRefreshToken {
 			s.refreshToken = r.Tokens.RefreshToken
 		}
@@ -300,15 +425,20 @@ func (s *Issuance) CompleteAuthorization(ctx context.Context, redirect string) e
 
 // RedeemPreAuthorizedCode redeems the offer's pre-authorized code at the
 // token endpoint, with txCode, the PIN the holder entered ("" when
-// Offer.TxCode is nil), authenticating with a Wallet Attestation (HAIP
-// 1.0 §4.4.1). The access token is bound to this issuance's DPoP key.
-// A wrong PIN fails with the issuer's error and can be retried, up to
-// the issuer's limit.
+// Offer.TxCode is nil). It authenticates with a Wallet Attestation
+// where the Authorization Server takes one (HAIP 1.0 §4.4.1), and
+// otherwise with none, where the server allows that (OpenID4VCI 1.0
+// §12.3). The access token is bound to this issuance's DPoP key, unless
+// the server issues a Bearer one. A wrong PIN fails with the issuer's
+// error and can be retried, up to the issuer's limit.
 func (s *Issuance) RedeemPreAuthorizedCode(ctx context.Context, txCode string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.step != stepStarted || s.details.Grant != GrantPreAuthorizedCode {
+	if s.step != stepStarted || s.grant != GrantPreAuthorizedCode {
 		return ErrWrongStep
+	}
+	if err := checkTxCode(s.details.TxCode, txCode); err != nil {
+		return err
 	}
 	// The code and PIN go to the server the issuer's metadata allows,
 	// never just one the offer names.
@@ -316,28 +446,34 @@ func (s *Issuance) RedeemPreAuthorizedCode(ctx context.Context, txCode string) e
 	if err != nil {
 		return fmt.Errorf("walletflow: %w", err)
 	}
-	asURL := plan.AuthorizationServer
-	if s.client == nil {
-		if err := s.newClient(ctx, asURL); err != nil {
-			return err
-		}
-	}
-	asMeta, err := s.w.core.FetchAuthorizationServerMetadata(ctx, asURL)
-	if err != nil {
-		return fmt.Errorf("walletflow: authorization server metadata: %w", err)
-	}
-	tokenEndpoint, err := fapi.ParseEndpointURL(asMeta.TokenEndpoint, s.w.urlOptions()...)
+	tokenEndpoint, err := fapi.ParseEndpointURL(s.asMeta.TokenEndpoint, s.w.urlOptions()...)
 	if err != nil {
 		return fmt.Errorf("walletflow: token endpoint: %w", err)
 	}
-	token, err := s.w.core.RequestPreAuthorizedCodeToken(ctx, tokenEndpoint, wallet.PreAuthorizedCodeTokenRequest{
-		PreAuthorizedCode: plan.PreAuthorizedCode, TxCode: txCode, DPoPKey: s.dpopKey, ClientAttestation: s.client,
-	})
+	req := wallet.PreAuthorizedCodeTokenRequest{PreAuthorizedCode: plan.PreAuthorizedCode, TxCode: txCode}
+	if s.auth == clientAuthAttestation {
+		if s.client == nil {
+			if err := s.newClient(ctx, plan.AuthorizationServer, false); err != nil {
+				return err
+			}
+		}
+		req.ClientAttestation = s.client
+	} else if s.dpopKey == nil {
+		if s.dpopKey, err = s.w.newDPoPKey(ctx); err != nil {
+			return err
+		}
+	}
+	req.DPoPKey = s.dpopKey
+	token, err := s.w.core.RequestPreAuthorizedCodeToken(ctx, tokenEndpoint, req)
 	if err != nil {
 		return fmt.Errorf("walletflow: token: %w", err)
 	}
-	s.resource = s.w.core.DPoPResourceClient(token.AccessToken, s.dpopKey)
+	if s.tokenType, err = s.w.tokenType(token.TokenType); err != nil {
+		return err
+	}
+	s.resource = s.w.resourceClient(token.AccessToken, s.tokenType, s.dpopKey)
 	s.accessToken = token.AccessToken
+	s.identifiers = identifiersByConfiguration(token.AuthorizationDetails)
 	if s.w.cfg.RequestRefresh {
 		// An Authorization Server may issue a refresh token for this
 		// grant too: there's no scope to ask for one with, so it's the
@@ -351,6 +487,36 @@ func (s *Issuance) RedeemPreAuthorizedCode(ctx context.Context, txCode string) e
 	return nil
 }
 
+// checkTxCode checks the PIN against what the offer asked for
+// (OpenID4VCI 1.0 §4.1.1, §6.1): one where it asked for one (an empty
+// tx_code object asks too), of its length and input mode when it gives
+// them, and none where it didn't, which the issuer would refuse.
+func checkTxCode(want *oid4vci.TxCode, got string) error {
+	switch {
+	case want == nil && got != "":
+		return errors.New("walletflow: the offer asks for no PIN")
+	case want == nil:
+		return nil
+	case got == "":
+		return errors.New("walletflow: the offer asks for a PIN")
+	case want.Length > 0 && utf8.RuneCountInString(got) != want.Length:
+		return fmt.Errorf("walletflow: the PIN must be %d characters", want.Length)
+	case want.InputMode != "text" && strings.Trim(got, "0123456789") != "":
+		// numeric, the default input mode.
+		return errors.New("walletflow: the PIN must be digits")
+	}
+	return nil
+}
+
+// resourceClient presents accessToken, of tokenType, to the issuer's
+// protected endpoints: DPoP-bound to dpopKey, or as a Bearer token.
+func (w *Wallet) resourceClient(accessToken fapi.Secret, tokenType string, dpopKey Key) wallet.ProtectedResourceClient {
+	if tokenType == wallet.TokenTypeBearer {
+		return w.core.BearerResourceClient(accessToken)
+	}
+	return w.core.DPoPResourceClient(accessToken, dpopKey)
+}
+
 func (w *Wallet) urlOptions() []fapi.URLOption {
 	if w.cfg.Development {
 		return []fapi.URLOption{fapi.AllowLoopbackHTTP()}
@@ -361,12 +527,23 @@ func (w *Wallet) urlOptions() []fapi.URLOption {
 // newClient creates this issuance's instance and DPoP keys, has the
 // Wallet Provider attest the instance key, and builds the
 // fapigo/client that authenticates with that attestation at asURL.
-func (s *Issuance) newClient(ctx context.Context, asURL string) error {
+// Only a client that starts an authorization (authorize) needs the
+// server's authorization and pushed authorization request endpoints:
+// redeeming a pre-authorized code, refreshing and revoking need only
+// its token endpoint.
+func (s *Issuance) newClient(ctx context.Context, asURL string, authorize bool) error {
+	if s.w.deps.Provider == nil || s.w.cfg.ClientID == "" {
+		return fmt.Errorf("walletflow: a Wallet Attestation needs Dependencies.Provider and Config.ClientID: %w", ErrClientAuthUnsupported)
+	}
 	asMeta, err := s.w.core.FetchAuthorizationServerMetadata(ctx, asURL)
 	if err != nil {
 		return fmt.Errorf("walletflow: authorization server metadata: %w", err)
 	}
-	issuer, endpoints, err := asMeta.ClientEndpoints()
+	endpointsOf := asMeta.TokenClientEndpoints
+	if authorize {
+		endpointsOf = asMeta.ClientEndpoints
+	}
+	issuer, endpoints, err := endpointsOf()
 	if err != nil {
 		return fmt.Errorf("walletflow: authorization server metadata: %w", err)
 	}
@@ -384,12 +561,37 @@ func (s *Issuance) newClient(ctx context.Context, asURL string) error {
 	if err != nil {
 		return fmt.Errorf("walletflow: wallet attestation: %w", err)
 	}
-	c, err := s.oauthClient(issuer, endpoints, asURL, walletAttestation)
+	attestation := client.StaticAttestation(walletAttestation)
+	if asMeta.ChallengeEndpoint != "" {
+		endpoint, err := fapi.ParseEndpointURL(asMeta.ChallengeEndpoint, s.w.urlOptions()...)
+		if err != nil {
+			return fmt.Errorf("walletflow: authorization server challenge_endpoint: %w", err)
+		}
+		attestation = challengedAttestation{AttestationSource: attestation, w: s.w.core, endpoint: endpoint}
+	}
+	c, err := s.oauthClient(issuer, endpoints, asURL, attestation)
 	if err != nil {
 		return err
 	}
 	s.client, s.authorizationServer = c, asURL
 	return nil
+}
+
+// challengedAttestation is the Wallet Attestation for an Authorization
+// Server with a challenge endpoint, where the client MUST put a fresh
+// challenge in every Client Attestation PoP
+// (draft-ietf-oauth-attestation-based-client-auth-07 §8). fapigo/client
+// asks the attestation source itself for one (client.ChallengeSource),
+// for every request it signs a PoP for.
+type challengedAttestation struct {
+	client.AttestationSource
+	w        *wallet.Wallet
+	endpoint fapi.URL
+}
+
+// CurrentChallenge implements client.ChallengeSource.
+func (a challengedAttestation) CurrentChallenge(ctx context.Context) (string, error) {
+	return a.w.RequestAttestationChallenge(ctx, a.endpoint)
 }
 
 // forgetAuthorization deletes the authorization in progress, if there
@@ -412,8 +614,8 @@ func (s *Issuance) forgetAuthorization(ctx context.Context) error {
 }
 
 // oauthClient builds the fapigo/client for the authorization server
-// issuer, authenticating with walletAttestation and the issuance's keys.
-func (s *Issuance) oauthClient(issuer fapi.URL, endpoints client.Endpoints, asURL, walletAttestation string) (*client.Client, error) {
+// issuer, authenticating with attestation and the issuance's keys.
+func (s *Issuance) oauthClient(issuer fapi.URL, endpoints client.Endpoints, asURL string, attestation client.AttestationSource) (*client.Client, error) {
 	if s.sessions == nil {
 		s.sessions = &sessionStore{
 			w: s.w, offer: s.offer, authorizationServer: asURL,
@@ -459,7 +661,7 @@ func (s *Issuance) oauthClient(issuer fapi.URL, endpoints client.Endpoints, asUR
 		Sessions: s.sessions,
 		Keys:     km, HTTP: s.w.deps.HTTP,
 		Clock: clientClock(s.w.deps.Clock), Random: s.w.deps.Random,
-		Attestation: client.StaticAttestation(walletAttestation),
+		Attestation: attestation,
 		// Reuses the DPoP nonce each response hands out, so only the
 		// first request to an endpoint is challenged for one.
 		DPoPNonceCache: client.NewInMemoryDPoPNonceCache(),
@@ -468,6 +670,38 @@ func (s *Issuance) oauthClient(issuer fapi.URL, endpoints client.Endpoints, asUR
 		return nil, fmt.Errorf("walletflow: oauth client: %w", err)
 	}
 	return c, nil
+}
+
+// credentialIdentifiers is identifiersByConfiguration for a Token
+// Response's raw authorization_details, as fapigo/client returns it.
+func credentialIdentifiers(raw json.RawMessage) (map[string][]string, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	var details []oid4vci.AuthorizationDetail
+	if err := json.Unmarshal(raw, &details); err != nil {
+		return nil, fmt.Errorf("authorization_details: %w", err)
+	}
+	return identifiersByConfiguration(details), nil
+}
+
+// identifiersByConfiguration maps each configuration an
+// "openid_credential" authorization detail names to the
+// credential_identifiers it granted (OpenID4VCI 1.0 §6.2). Details of
+// any other type are ignored, as are unrecognized fields (§6.2: the
+// Wallet MUST ignore them).
+func identifiersByConfiguration(details []oid4vci.AuthorizationDetail) map[string][]string {
+	var ids map[string][]string
+	for _, d := range details {
+		if d.Type != oid4vci.AuthorizationDetailsTypeOpenIDCredential || len(d.CredentialIdentifiers) == 0 {
+			continue
+		}
+		if ids == nil {
+			ids = map[string][]string{}
+		}
+		ids[d.CredentialConfigurationID] = append(ids[d.CredentialConfigurationID], d.CredentialIdentifiers...)
+	}
+	return ids
 }
 
 type clientClock func() time.Time
@@ -530,7 +764,7 @@ func (s *Issuance) RequestCredentials(ctx context.Context) (IssuanceResult, erro
 // the issuer refused the request itself (an HTTP 4xx) rather than the
 // nonce, the access token or the DPoP proof, which a retry renews.
 func permanent(err error) bool {
-	if errors.Is(err, errInvalidCredential) {
+	if errors.Is(err, errInvalidCredential) || errors.Is(err, errNoFreshNonce) {
 		return true
 	}
 	var protocol *wallet.Error
@@ -545,14 +779,11 @@ func permanent(err error) bool {
 }
 
 func (s *Issuance) request(ctx context.Context, configID string, requestEnc *wallet.RequestEncryption, responseEnc *wallet.ResponseEncryption) (StoredCredential, *Deferred, error) {
-	nonce, err := s.w.core.RequestNonce(ctx, *s.metadata.NonceEndpoint)
+	plan, err := s.w.chooseProof(s.metadata.CredentialConfigurationsSupported[configID])
 	if err != nil {
-		return StoredCredential{}, nil, fmt.Errorf("walletflow: nonce: %w", err)
+		return StoredCredential{}, nil, fmt.Errorf("walletflow: credential %q: %w", configID, err)
 	}
-	holders, keyAttestation, err := s.attestedHolders(ctx, nonce.CNonce)
-	if err != nil {
-		return StoredCredential{}, nil, err
-	}
+	var holders []Key
 	keep := false
 	defer func() {
 		if !keep {
@@ -560,11 +791,34 @@ func (s *Issuance) request(ctx context.Context, configID string, requestEnc *wal
 			s.w.deleteKeys(context.WithoutCancel(ctx), holders)
 		}
 	}()
-	result, err := s.w.core.RequestCredential(ctx, s.resource, s.metadata.CredentialEndpoint, wallet.CredentialRequest{
-		CredentialConfigurationID: configID, Attestation: keyAttestation,
-		RequestEncryption: requestEnc, ResponseEncryption: responseEnc,
-	})
-	if err != nil {
+	// One retry on invalid_nonce, with fresh keys and a fresh nonce
+	// (OpenID4VCI 1.0 §8.3.1.2): the issuer may expire a nonce before
+	// it's used. An issuer with no nonce endpoint has none to renew.
+	var result wallet.CredentialResult
+	for attempt := 0; ; attempt++ {
+		s.w.deleteKeys(context.WithoutCancel(ctx), holders)
+		var req wallet.CredentialRequest
+		if holders, req, err = s.proofs(ctx, plan); err != nil {
+			return StoredCredential{}, nil, err
+		}
+		req.RequestEncryption, req.ResponseEncryption = requestEnc, responseEnc
+		if ids := s.identifiers[configID]; len(ids) > 0 {
+			req.CredentialIdentifier = ids[0]
+		} else {
+			req.CredentialConfigurationID = configID
+		}
+		result, err = s.w.core.RequestCredential(ctx, s.resource, s.metadata.CredentialEndpoint, req)
+		if err == nil {
+			break
+		}
+		if invalidNonce(err) && s.metadata.NonceEndpoint == nil {
+			// No nonce to renew: asking again would be refused again.
+			return StoredCredential{}, nil, fmt.Errorf("walletflow: credential %q: %w: %w", configID, errNoFreshNonce, err)
+		}
+		if attempt == 0 && s.nonceRetries < maxNonceRetries && invalidNonce(err) {
+			s.nonceRetries++
+			continue
+		}
 		return StoredCredential{}, nil, fmt.Errorf("walletflow: credential %q: %w", configID, err)
 	}
 	if result.TransactionID != "" {
@@ -590,6 +844,51 @@ func (s *Issuance) request(ctx context.Context, configID string, requestEnc *wal
 	keep = true
 	s.w.deleteUnused(context.WithoutCancel(ctx), keyIDs(holders), stored)
 	return stored, nil, nil
+}
+
+// proofs creates one holder key per copy to request, and proves
+// possession of them by plan, with a fresh c_nonce where the issuer has
+// a nonce endpoint (OpenID4VCI 1.0 §7): one jwt proof each, or one key
+// attestation for them all. The issuer issues one copy bound to each.
+func (s *Issuance) proofs(ctx context.Context, plan proofPlan) ([]Key, wallet.CredentialRequest, error) {
+	var nonce string
+	if s.metadata.NonceEndpoint != nil {
+		n, err := s.w.core.RequestNonce(ctx, *s.metadata.NonceEndpoint)
+		if err != nil {
+			return nil, wallet.CredentialRequest{}, fmt.Errorf("walletflow: nonce: %w", err)
+		}
+		nonce = n.CNonce
+	}
+	if plan == proofAttestation {
+		holders, attestation, err := s.attestedHolders(ctx, nonce)
+		return holders, wallet.CredentialRequest{Attestation: attestation}, err
+	}
+	holders := make([]Key, 0, s.batchSize())
+	req := wallet.CredentialRequest{CredentialIssuer: s.offer.CredentialIssuer, Nonce: nonce}
+	for range s.batchSize() {
+		holder, err := newKey(ctx, s.w.deps.Keys, KeyPurposeHolder)
+		if err != nil {
+			s.w.deleteKeys(context.WithoutCancel(ctx), holders)
+			return nil, wallet.CredentialRequest{}, err
+		}
+		holders = append(holders, holder)
+		req.Keys = append(req.Keys, holder)
+	}
+	return holders, req, nil
+}
+
+// errNoFreshNonce is wrapped for an invalid_nonce from an issuer with no
+// nonce endpoint, or for a proof with no nonce: there's none to renew.
+var errNoFreshNonce = errors.New("the issuer has no fresh nonce to give")
+
+// maxNonceRetries caps an issuance's invalid_nonce retries.
+const maxNonceRetries = 2
+
+// invalidNonce reports whether err is the issuer refusing a proof's
+// c_nonce (OpenID4VCI 1.0 §8.3.1.2).
+func invalidNonce(err error) bool {
+	var protocol *wallet.Error
+	return errors.As(err, &protocol) && protocol.Code == "invalid_nonce"
 }
 
 // attestedHolders creates one holder key per copy to request, and has
@@ -632,12 +931,18 @@ func (s *Issuance) deferred(ctx context.Context, configID string, holders []Key,
 	if err != nil {
 		return nil, err
 	}
-	d, err := s.w.keepDeferred(ctx, PendingDeferred{
+	p := PendingDeferred{
 		ID: id, CredentialIssuer: s.offer.CredentialIssuer, ConfigurationID: configID, TransactionID: result.TransactionID,
 		AccessToken: s.accessToken, AccessTokenExpiresAt: s.accessExpiresAt,
-		DPoPKeyID: s.dpopKey.ID(), HolderKeyIDs: keyIDs(holders), Interval: result.Interval, DeferredAt: s.w.deps.Clock().UTC(),
+		HolderKeyIDs: keyIDs(holders), Interval: result.Interval, DeferredAt: s.w.deps.Clock().UTC(),
 		GrantID: grantID, Replaces: s.replace,
-	}, s.metadata, s.resource, requestEnc, responseEnc)
+	}
+	if s.tokenType == wallet.TokenTypeBearer {
+		p.TokenType = wallet.TokenTypeBearer
+	} else {
+		p.DPoPKeyID = s.dpopKey.ID()
+	}
+	d, err := s.w.keepDeferred(ctx, p, s.metadata, s.resource, requestEnc, responseEnc)
 	if err != nil {
 		return nil, err
 	}
@@ -698,10 +1003,15 @@ type issued struct {
 // c.holders, stores them as one credential, and tells the issuer whether
 // the wallet kept it (§11).
 func (w *Wallet) accept(ctx context.Context, c issued) (StoredCredential, error) {
+	conf := c.metadata.CredentialConfigurationsSupported[c.configID]
+	if err := checkBindable(conf); err != nil {
+		// The issuer's metadata changed since the request: a deferred
+		// credential's, re-fetched after a restart.
+		return StoredCredential{}, fmt.Errorf("walletflow: credential %q: %w", c.configID, err)
+	}
 	if n := len(c.result.Credentials); n == 0 || n > len(c.holders) {
 		return StoredCredential{}, fmt.Errorf("walletflow: credential %q: got %d copies for %d keys", c.configID, n, len(c.holders))
 	}
-	conf := c.metadata.CredentialConfigurationsSupported[c.configID]
 	now := w.deps.Clock()
 	unbound := slices.Clone(c.holders)
 	copies := make([]CredentialCopy, 0, len(c.result.Credentials))
@@ -712,8 +1022,9 @@ func (w *Wallet) accept(ctx context.Context, c issued) (StoredCredential, error)
 			w.notify(ctx, c, oid4vci.NotificationEventCredentialFailure, "the credential failed the wallet's checks")
 			return StoredCredential{}, fmt.Errorf("walletflow: credential %q %w: %w", c.configID, errInvalidCredential, err)
 		}
-		unbound = slices.DeleteFunc(unbound, func(k Key) bool { return k.ID() == key.ID() })
-		copies = append(copies, CredentialCopy{Credential: ic.Credential, HolderKeyID: key.ID()})
+		keyID := key.ID()
+		unbound = slices.DeleteFunc(unbound, func(k Key) bool { return k.ID() == keyID })
+		copies = append(copies, CredentialCopy{Credential: ic.Credential, HolderKeyID: keyID})
 		if i == 0 {
 			first = verified
 		}

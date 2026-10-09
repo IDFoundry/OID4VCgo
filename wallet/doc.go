@@ -126,7 +126,8 @@
 // GenerateProofWithKeyID, GenerateProofWithX5C, GenerateAttestationProof,
 // GenerateProofWithKeyAttestation, RequestCredential, BuildAuthorizationRequest,
 // RequestDeferredCredential, RequestNotification, RequestPreAuthorizedCodeToken,
-// DPoPResourceClient, GenerateDPoPProof
+// RequestRefreshToken, RevokeToken, RequestAttestationChallenge,
+// DPoPResourceClient, BearerResourceClient, GenerateDPoPProof
 // and DPoPAccessTokenHash exist so far. This package does not yet cover:
 //
 //   - di_vp proofs (needs W3C VCDM, which this repo doesn't implement,
@@ -143,7 +144,9 @@
 // Credential Offer and its issuer's metadata, which Authorization Server
 // to use (OID4VCI 1.0 §12.2.4, §4.1.1), the scopes to request and the
 // offer's issuer_state; AuthorizationServerMetadata.ClientEndpoints
-// turns that server's metadata into fapigo/client's endpoint types.
+// turns that server's metadata into fapigo/client's endpoint types, and
+// TokenClientEndpoints does so for a client that never starts an
+// authorization, needing only the token endpoint.
 // PlanPreAuthorizedCode does the same for the pre-authorized code grant:
 // its server's token endpoint is where RequestPreAuthorizedCodeToken
 // sends the code and the holder's PIN, so an offer naming a server the

@@ -112,7 +112,10 @@ func (g GrantPreAuthorizedCode) Validate() error {
 // Credential Offer (§4.1.1) — nil on CredentialOffer means the Wallet
 // must instead determine available grants from the Credential Issuer's
 // Metadata. Only the two Grant Types this specification defines are
-// supported; at least one must be set when Grants itself is present.
+// supported; one with neither, empty or holding only grant types this
+// package doesn't know, is treated as absent (§4.1.1: "If grants is not
+// present or is empty, the Wallet MUST determine the Grant Types ...
+// using the respective metadata").
 type Grants struct {
 	AuthorizationCode *GrantAuthorizationCode `json:"authorization_code,omitempty"`
 
@@ -121,13 +124,10 @@ type Grants struct {
 	PreAuthorizedCode *GrantPreAuthorizedCode `json:"urn:ietf:params:oauth:grant-type:pre-authorized_code,omitempty"`
 }
 
-// Validate checks g against §4.1.1's own structural requirements: at
-// least one grant type must be set, and PreAuthorizedCode, if present,
-// must itself validate.
+// Validate checks g against §4.1.1's own structural requirements:
+// PreAuthorizedCode, if present, must itself validate. Empty grants are
+// valid: a Wallet then determines the grant from the metadata.
 func (g Grants) Validate() error {
-	if g.AuthorizationCode == nil && g.PreAuthorizedCode == nil {
-		return fmt.Errorf("must declare at least one grant type when present")
-	}
 	if g.PreAuthorizedCode != nil {
 		if err := g.PreAuthorizedCode.Validate(); err != nil {
 			return fmt.Errorf("urn:ietf:params:oauth:grant-type:pre-authorized_code: %w", err)
