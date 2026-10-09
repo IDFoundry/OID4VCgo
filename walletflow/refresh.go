@@ -2,6 +2,7 @@ package walletflow
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -16,11 +17,13 @@ import (
 )
 
 // RefreshGrant is what an issuance keeps to refresh its credentials
-// later without the holder (OpenID4VCI 1.0 §13.5): the refresh token the
-// Authorization Server issued, and the wallet instance key the Wallet
-// Attestation was bound to when it did, which every refresh must
-// authenticate with again (draft-ietf-oauth-attestation-based-client-auth-07
-// §10.3). It's a secret, like a credential.
+// later without the holder (OpenID4VCI 1.0 §14.5): the refresh token the
+// Authorization Server issued, and how the wallet authenticated when it
+// did, which every refresh must do again. With a Wallet Attestation
+// that's the wallet instance key the attestation was bound to
+// (draft-ietf-oauth-attestation-based-client-auth-07 §10.3); with no
+// client authentication, a public client's refresh token is bound to
+// the DPoP key instead (RFC 9449 §5). It's a secret, like a credential.
 type RefreshGrant struct {
 	ID string
 	// CredentialIssuer and AuthorizationServer are where the credentials
@@ -34,9 +37,41 @@ type RefreshGrant struct {
 	ConfigurationID string
 	RefreshToken    fapi.Secret
 	// InstanceKeyID names the wallet instance key, kept in the KeyStore
-	// while the grant is.
+	// while the grant is: a ClientAuth "attestation" grant's.
 	InstanceKeyID string
 	CreatedAt     time.Time
+	// ClientAuth is how the refresh authenticates: GrantAuthAttestation,
+	// the empty value, with a Wallet Attestation bound to InstanceKeyID;
+	// GrantAuthNone with none. Empty for a grant stored before it was
+	// kept: those all authenticated with a Wallet Attestation.
+	ClientAuth GrantAuth
+	// DPoPKeyID names the DPoP key a GrantAuthNone grant's refresh token
+	// is bound to, kept in the KeyStore while the grant is; "" for a
+	// Bearer one (TokenType).
+	DPoPKeyID string
+	// TokenType is the access tokens' type: "DPoP", or "" for a grant
+	// stored before it was kept, or "Bearer" (wallet.TokenTypeBearer).
+	TokenType string
+}
+
+// GrantAuth is how a refresh grant's refreshes authenticate.
+type GrantAuth string
+
+const (
+	// GrantAuthAttestation authenticates with a Wallet Attestation bound
+	// to RefreshGrant.InstanceKeyID. It's the empty value.
+	GrantAuthAttestation GrantAuth = ""
+	// GrantAuthNone authenticates no client: the refresh token is held
+	// to RefreshGrant.DPoPKeyID instead, or is a Bearer grant's.
+	GrantAuthNone GrantAuth = "none"
+)
+
+// keyIDs are the keys g keeps in the KeyStore.
+func (g RefreshGrant) keyIDs() []string {
+	if g.ClientAuth == GrantAuthNone {
+		return []string{g.DPoPKeyID}
+	}
+	return []string{g.InstanceKeyID}
 }
 
 // GrantStore keeps refresh grants.
@@ -141,7 +176,18 @@ func (s *Issuance) storeGrant(ctx context.Context) {
 	g := RefreshGrant{
 		ID: s.grantID, CredentialIssuer: s.offer.CredentialIssuer, AuthorizationServer: s.authorizationServer,
 		ConfigurationID: s.offer.CredentialConfigurationIDs[0],
-		RefreshToken:    s.refreshToken, InstanceKeyID: s.instanceKey.ID(), CreatedAt: s.w.deps.Clock().UTC(),
+		RefreshToken:    s.refreshToken, CreatedAt: s.w.deps.Clock().UTC(),
+	}
+	if s.tokenType == wallet.TokenTypeBearer {
+		g.TokenType = wallet.TokenTypeBearer
+	}
+	switch {
+	case s.auth == clientAuthAttestation:
+		g.InstanceKeyID = s.instanceKey.ID()
+	case s.tokenType == wallet.TokenTypeBearer:
+		g.ClientAuth = GrantAuthNone
+	default:
+		g.ClientAuth, g.DPoPKeyID = GrantAuthNone, s.dpopKey.ID()
 	}
 	if err := s.w.deps.Grants.PutGrant(ctx, g); err == nil {
 		s.grantStored = true
@@ -193,7 +239,7 @@ func (w *Wallet) RefreshCredential(ctx context.Context, id string) (StoredCreden
 	// One refresh with a grant at a time: an Authorization Server that
 	// rotates refresh tokens refuses the old one once the new is issued.
 	defer w.lockGrant(old.GrantID)()
-	g, instanceKey, err := w.loadGrant(ctx, old)
+	g, grantKey, err := w.loadGrant(ctx, old)
 	if err != nil {
 		return StoredCredential{}, nil, err
 	}
@@ -201,17 +247,22 @@ func (w *Wallet) RefreshCredential(ctx context.Context, id string) (StoredCreden
 	if err != nil {
 		return StoredCredential{}, nil, err
 	}
-	if metadata.NonceEndpoint == nil {
-		return StoredCredential{}, nil, errors.New("walletflow: the issuer advertises no nonce endpoint, which the attestation proof needs")
-	}
-	s := &Issuance{
-		w: w, metadata: metadata, instanceKey: instanceKey, grantID: g.ID, grantStored: true, replace: old.ID,
-		offer: oid4vci.CredentialOffer{CredentialIssuer: old.CredentialIssuer, CredentialConfigurationIDs: []string{old.ConfigurationID}},
-	}
-	defer s.endRefresh(context.WithoutCancel(ctx))
-	if err := s.newClient(ctx, g.AuthorizationServer, false); err != nil {
+	// The issuer may have changed since the credential was received: a
+	// HAIP wallet refreshes only from an issuer that still follows HAIP.
+	if err := w.checkProfile(metadata, []string{old.ConfigurationID}); err != nil {
 		return StoredCredential{}, nil, err
 	}
+	s := &Issuance{
+		w: w, metadata: metadata, grantID: g.ID, grantStored: true, replace: old.ID, grant: GrantAuthorizationCode,
+		authorizationServer: g.AuthorizationServer,
+		offer:               oid4vci.CredentialOffer{CredentialIssuer: old.CredentialIssuer, CredentialConfigurationIDs: []string{old.ConfigurationID}},
+	}
+	if g.ClientAuth == GrantAuthNone {
+		s.auth, s.dpopKey = clientAuthNone, grantKey
+	} else {
+		s.auth, s.instanceKey = clientAuthAttestation, grantKey
+	}
+	defer s.endRefresh(context.WithoutCancel(ctx))
 	if err := s.redeemGrant(ctx, g); err != nil {
 		return StoredCredential{}, nil, err
 	}
@@ -229,9 +280,11 @@ func (w *Wallet) RefreshCredential(ctx context.Context, id string) (StoredCreden
 	return stored, nil, nil
 }
 
-// loadGrant is the refresh grant of credential c, with its instance
-// key: ErrReissueRequired when either is gone, or the grant is another
-// issuer's. Called with the grant's lock held.
+// loadGrant is the refresh grant of credential c, with the key its
+// refreshes need — its instance key, or for a GrantAuthNone grant its
+// DPoP key, nil for a Bearer one: ErrReissueRequired when either is
+// gone, or the grant is another issuer's, and ErrProfileViolation for
+// one ProfileHAIP doesn't allow. Called with the grant's lock held.
 func (w *Wallet) loadGrant(ctx context.Context, c StoredCredential) (RefreshGrant, Key, error) {
 	g, err := w.deps.Grants.GetGrant(ctx, c.GrantID)
 	if errors.Is(err, ErrNotFound) {
@@ -243,15 +296,22 @@ func (w *Wallet) loadGrant(ctx context.Context, c StoredCredential) (RefreshGran
 	if g.CredentialIssuer != c.CredentialIssuer {
 		return RefreshGrant{}, nil, fmt.Errorf("walletflow: refresh credential: its refresh grant is another issuer's: %w", ErrReissueRequired)
 	}
-	instanceKey, err := w.deps.Keys.Key(ctx, g.InstanceKeyID)
+	if w.cfg.IssuanceProfile == ProfileHAIP && (g.ClientAuth == GrantAuthNone || g.TokenType == wallet.TokenTypeBearer) {
+		return RefreshGrant{}, nil, fmt.Errorf("walletflow: refresh credential: %w: its grant authenticates no client, or isn't DPoP-bound", ErrProfileViolation)
+	}
+	keyID := g.keyIDs()[0]
+	if keyID == "" {
+		return g, nil, nil
+	}
+	key, err := w.deps.Keys.Key(ctx, keyID)
 	if errors.Is(err, ErrNotFound) {
 		w.forgetGrant(context.WithoutCancel(ctx), g)
-		return RefreshGrant{}, nil, fmt.Errorf("walletflow: refresh credential: its wallet instance key is gone: %w", ErrReissueRequired)
+		return RefreshGrant{}, nil, fmt.Errorf("walletflow: refresh credential: its key is gone: %w", ErrReissueRequired)
 	}
 	if err != nil {
 		return RefreshGrant{}, nil, fmt.Errorf("walletflow: refresh credential: %w", err)
 	}
-	return g, instanceKey, nil
+	return g, key, nil
 }
 
 // planGrant fetches g's issuer's metadata, and checks the issuer still
@@ -274,32 +334,103 @@ func (w *Wallet) planGrant(ctx context.Context, g RefreshGrant, configID string)
 }
 
 // redeemGrant redeems g's refresh token for an access token, keeping a
-// rotated refresh token. A refused one is ErrReissueRequired, and the
-// grant is forgotten.
+// rotated refresh token: with a Wallet Attestation through
+// fapigo/client, or for a GrantAuthNone grant as a public client. The
+// grant is refused, ErrReissueRequired, where its Authorization Server
+// no longer takes how it authenticates, or the wallet can no longer
+// give a Wallet Attestation; and where the server refuses the refresh
+// token, when it's forgotten too.
 func (s *Issuance) redeemGrant(ctx context.Context, g RefreshGrant) error {
-	tokens, err := s.client.RefreshTokens(ctx, client.RefreshTokenRequest{Tokens: client.TokenSet{RefreshToken: g.RefreshToken, HasRefreshToken: true}})
+	asMeta, err := s.w.core.FetchAuthorizationServerMetadata(ctx, g.AuthorizationServer)
 	if err != nil {
-		if invalidGrant(err) {
-			s.w.forgetRefusedGrant(context.WithoutCancel(ctx), g)
-			return fmt.Errorf("walletflow: refresh credential: %w: %w", ErrReissueRequired, err)
-		}
-		return fmt.Errorf("walletflow: refresh token: %w", err)
+		return fmt.Errorf("walletflow: authorization server metadata: %w", err)
 	}
-	if tokens.HasRefreshToken && tokens.RefreshToken.Reveal() != g.RefreshToken.Reveal() {
-		g.RefreshToken = tokens.RefreshToken
+	if g.ClientAuth != GrantAuthNone && !takesAttestation(asMeta) {
+		// Never a silent switch to no client authentication.
+		return fmt.Errorf("walletflow: refresh credential: the authorization server no longer takes a Wallet Attestation: %w", ErrReissueRequired)
+	}
+	s.asMeta = asMeta
+	var (
+		refreshed   fapi.Secret
+		hasRefresh  bool
+		tokenType   string
+		details     json.RawMessage
+		expiresIn   time.Duration
+		hasExpiry   bool
+		accessToken fapi.Secret
+	)
+	if g.ClientAuth == GrantAuthNone {
+		tokenEndpoint, err := fapi.ParseEndpointURL(asMeta.TokenEndpoint, s.w.urlOptions()...)
+		if err != nil {
+			return fmt.Errorf("walletflow: token endpoint: %w", err)
+		}
+		req := wallet.RefreshTokenRequest{RefreshToken: g.RefreshToken}
+		if s.dpopKey != nil {
+			// A Bearer grant's refresh carries no DPoP proof: a nil
+			// Key in the interface would send one.
+			req.DPoPKey = s.dpopKey
+		}
+		res, err := s.w.core.RequestRefreshToken(ctx, tokenEndpoint, req)
+		if err != nil {
+			return s.refreshFailed(ctx, g, err)
+		}
+		refreshed, hasRefresh = res.RefreshToken, res.RefreshToken.Reveal() != ""
+		tokenType, accessToken, expiresIn, hasExpiry = res.TokenType, res.AccessToken, res.ExpiresIn, res.HasExpiresIn
+		if details, err = json.Marshal(res.AuthorizationDetails); err != nil {
+			return fmt.Errorf("walletflow: token response: %w", err)
+		}
+	} else {
+		if err := s.newClient(ctx, g.AuthorizationServer, false); err != nil {
+			if errors.Is(err, ErrClientAuthUnsupported) {
+				// A wallet without its Wallet Provider now.
+				return fmt.Errorf("walletflow: refresh credential: %w: %w", ErrReissueRequired, err)
+			}
+			return err
+		}
+		tokens, err := s.client.RefreshTokens(ctx, client.RefreshTokenRequest{Tokens: client.TokenSet{RefreshToken: g.RefreshToken, HasRefreshToken: true}})
+		if err != nil {
+			return s.refreshFailed(ctx, g, err)
+		}
+		s.resource = s.client.ProtectedResource(tokens)
+		refreshed, hasRefresh = tokens.RefreshToken, tokens.HasRefreshToken
+		tokenType, accessToken, details = tokens.TokenType, tokens.AccessToken, tokens.AuthorizationDetails
+		expiresIn, hasExpiry = tokens.ExpiresIn, tokens.HasExpiresIn
+	}
+	if hasRefresh && refreshed.Reveal() != g.RefreshToken.Reveal() {
+		g.RefreshToken = refreshed
 		if err := s.w.deps.Grants.PutGrant(ctx, g); err != nil {
 			return fmt.Errorf("walletflow: store refresh grant: %w", err)
 		}
 	}
-	s.resource = s.client.ProtectedResource(tokens)
-	s.accessToken = tokens.AccessToken
-	if s.identifiers, err = credentialIdentifiers(tokens.AuthorizationDetails); err != nil {
+	if s.tokenType, err = s.w.tokenType(tokenType, s.unbound()); err != nil {
+		return err
+	}
+	if g.ClientAuth == GrantAuthNone && s.tokenType == wallet.TokenTypeDPoP && s.dpopKey == nil {
+		// A Bearer grant's refresh sent no DPoP proof to bind it to.
+		return fmt.Errorf("walletflow: refresh credential: a DPoP access token for a refresh with no DPoP key: %w", ErrReissueRequired)
+	}
+	if g.ClientAuth == GrantAuthNone {
+		s.resource = s.w.resourceClient(accessToken, s.tokenType, s.dpopKey)
+	}
+	s.accessToken = accessToken
+	if s.identifiers, err = credentialIdentifiers(details); err != nil {
 		return fmt.Errorf("walletflow: token response: %w", err)
 	}
-	if tokens.HasExpiresIn {
-		s.accessExpiresAt = tokens.ObtainedAt.Add(tokens.ExpiresIn)
+	if hasExpiry {
+		s.accessExpiresAt = s.w.deps.Clock().Add(expiresIn)
 	}
 	return nil
+}
+
+// refreshFailed is a refresh's failure: ErrReissueRequired, with the
+// grant forgotten, where the Authorization Server refused the refresh
+// token itself.
+func (s *Issuance) refreshFailed(ctx context.Context, g RefreshGrant, err error) error {
+	if invalidGrant(err) {
+		s.w.forgetRefusedGrant(context.WithoutCancel(ctx), g)
+		return fmt.Errorf("walletflow: refresh credential: %w: %w", ErrReissueRequired, err)
+	}
+	return fmt.Errorf("walletflow: refresh token: %w", err)
 }
 
 // replaceStored stores stored in place of the credential it replaces,
@@ -353,6 +484,17 @@ func invalidGrant(err error) bool {
 // still naming it can't be refreshed any more (ErrReissueRequired).
 func (w *Wallet) forgetGrant(ctx context.Context, g RefreshGrant) {
 	_ = w.deps.Grants.DeleteGrant(ctx, g.ID)
+	w.deleteGrantKeys(ctx, g)
+}
+
+// deleteGrantKeys deletes the keys g kept, best effort, once g itself
+// is deleted: a GrantAuthNone grant's DPoP key only once nothing else
+// holds it.
+func (w *Wallet) deleteGrantKeys(ctx context.Context, g RefreshGrant) {
+	if g.ClientAuth == GrantAuthNone {
+		_ = w.releaseDPoPKey(ctx, g.DPoPKeyID)
+		return
+	}
 	_ = w.deps.Keys.DeleteKey(ctx, g.InstanceKeyID)
 }
 
@@ -417,7 +559,8 @@ func (w *Wallet) releaseUnusedGrant(ctx context.Context, grantID, configID strin
 	if err := w.deps.Grants.DeleteGrant(ctx, g.ID); err != nil {
 		return err
 	}
-	return w.deps.Keys.DeleteKey(ctx, g.InstanceKeyID)
+	w.deleteGrantKeys(ctx, *g)
+	return nil
 }
 
 // holdGrant marks grant id in use by an open issuance, or with held
@@ -445,6 +588,10 @@ func (w *Wallet) grantHeld(id string) bool {
 // unreachable one, or an issuer no longer naming it leaves the token to
 // expire there, and it's forgotten here all the same.
 func (w *Wallet) revokeGrant(ctx context.Context, g RefreshGrant, configID string) {
+	if g.ClientAuth == GrantAuthNone {
+		w.revokePublicGrant(ctx, g, configID)
+		return
+	}
 	if w.deps.Provider == nil || w.cfg.ClientID == "" {
 		return
 	}
@@ -462,4 +609,21 @@ func (w *Wallet) revokeGrant(ctx context.Context, g RefreshGrant, configID strin
 		return
 	}
 	_ = s.client.RevokeToken(ctx, g.RefreshToken)
+}
+
+// revokePublicGrant revokes a GrantAuthNone grant's refresh token as a
+// public client (RFC 7009 §5), best effort, as revokeGrant does.
+func (w *Wallet) revokePublicGrant(ctx context.Context, g RefreshGrant, configID string) {
+	if _, err := w.planGrant(ctx, g, configID); err != nil {
+		return
+	}
+	asMeta, err := w.core.FetchAuthorizationServerMetadata(ctx, g.AuthorizationServer)
+	if err != nil || asMeta.RevocationEndpoint == "" {
+		return
+	}
+	endpoint, err := fapi.ParseEndpointURL(asMeta.RevocationEndpoint, w.urlOptions()...)
+	if err != nil {
+		return
+	}
+	_ = w.core.RevokeToken(ctx, endpoint, g.RefreshToken, "refresh_token")
 }

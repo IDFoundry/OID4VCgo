@@ -131,6 +131,14 @@ type Options struct {
 	// takes jwt proofs (Appendix F.1) with no key attestation. An
 	// authorization code offer can't be redeemed at it.
 	Anonymous bool
+	// BearerTokens has the Authorization Server issue Bearer access
+	// tokens, not DPoP-bound ones, to the pre-authorized code grant
+	// under Anonymous, as RFC 9449 §5 lets it.
+	BearerTokens bool
+	// AnonymousRefresh has an Anonymous issuer issue refresh tokens to
+	// public clients, bound to the DPoP key (RFC 9449 §5), or for
+	// BearerTokens unbound.
+	AnonymousRefresh bool
 	// NoNonceEndpoint has the issuer publish no nonce endpoint: its
 	// proofs then carry no c_nonce, and iat dates them (OpenID4VCI 1.0
 	// §7, Appendix F.4).
@@ -188,6 +196,9 @@ type Env struct {
 	challenges map[string]bool
 	// anonymous is Options.Anonymous.
 	anonymous bool
+	// public mints and checks the anonymous grant's own tokens, under
+	// Options.BearerTokens or AnonymousRefresh; nil otherwise.
+	public *publicTokens
 }
 
 // New starts an Env. Close stops it.
@@ -248,8 +259,13 @@ func New(opts Options) (env *Env, err error) {
 		Nonces: memstore.NewNonceStore(), NonceLifetime: 5 * time.Minute,
 	})
 	must(err)
-	tokens, err := fapiresource.New(resourceVerifier)
+	dpopTokens, err := fapiresource.New(resourceVerifier)
 	must(err)
+	var tokens issuer.AccessTokenVerifier = dpopTokens
+	if opts.Anonymous && (opts.BearerTokens || opts.AnonymousRefresh) {
+		e.public = &publicTokens{dpop: dpopTokens, bearer: opts.BearerTokens, replay: oid4vcgostorage.NewDPoPReplayChecker(), grants: map[string]publicGrant{}}
+		tokens = e.public
+	}
 
 	caCert, caKey := newCA("walletflowtest issuer CA")
 	signerCert, signerKey := newLeaf("walletflowtest document signer", caCert, caKey)
@@ -366,8 +382,13 @@ func New(opts Options) (env *Env, err error) {
 		asMetadataJSON["pre-authorized_grant_anonymous_access_supported"] = true
 		asMetadataJSON["token_endpoint_auth_methods_supported"] = []string{"none"}
 		asMetadataJSON["grant_types_supported"] = []string{preAuthorizedCodeGrantType}
-		for _, k := range []string{"client_attestation_signing_alg_values_supported", "client_attestation_pop_signing_alg_values_supported", "revocation_endpoint"} {
+		for _, k := range []string{"client_attestation_signing_alg_values_supported", "client_attestation_pop_signing_alg_values_supported"} {
 			delete(asMetadataJSON, k)
+		}
+		if opts.AnonymousRefresh {
+			asMetadataJSON["grant_types_supported"] = []string{preAuthorizedCodeGrantType, "refresh_token"}
+		} else {
+			delete(asMetadataJSON, "revocation_endpoint")
 		}
 		e.anonymous = true
 	}
@@ -530,6 +551,15 @@ func (e *Env) withStatus(_ context.Context, c *issuer.CredentialInstance) error 
 // says so.
 // handleRevoke is the token revocation endpoint (RFC 7009).
 func (e *Env) handleRevoke(w http.ResponseWriter, r *http.Request) {
+	if e.public != nil {
+		if e.public.revoke(r) {
+			e.mu.Lock()
+			e.revocations++
+			e.mu.Unlock()
+		}
+		w.WriteHeader(http.StatusOK)
+		return
+	}
 	req, err := server.TokenRevocationRequestFromHTTP(r)
 	if err != nil {
 		server.NewError(server.ErrorInvalidRequest, http.StatusBadRequest, err.Error()).WriteJSON(w)
@@ -767,6 +797,15 @@ func (e *Env) handleToken(w http.ResponseWriter, r *http.Request) {
 		}
 		result.WriteJSON(w)
 	case "refresh_token":
+		if e.public != nil {
+			params, err := req.Parameters()
+			if err != nil {
+				server.WriteError(w, err)
+				return
+			}
+			e.public.refresh(w, r, e, params["refresh_token"])
+			return
+		}
 		result, err := e.srv.RefreshAccessToken(ctx, req.RefreshToken())
 		if err != nil {
 			server.WriteError(w, err)
@@ -828,6 +867,10 @@ func (e *Env) redeemAnonymously(w http.ResponseWriter, r *http.Request, params m
 	w.Header().Set("Cache-Control", "no-store")
 	if err != nil {
 		issuer.WriteError(w, err)
+		return
+	}
+	if e.public != nil {
+		e.public.issue(w, r, e, result)
 		return
 	}
 	result.WriteJSON(w)

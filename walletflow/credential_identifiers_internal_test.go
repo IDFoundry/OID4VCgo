@@ -3,6 +3,8 @@ package walletflow
 import (
 	"reflect"
 	"testing"
+
+	oid4vci "github.com/idfoundry/oid4vcgo"
 )
 
 // A Token Response's credential_identifiers are kept per configuration,
@@ -25,5 +27,20 @@ func TestCredentialIdentifiers(t *testing.T) {
 	}
 	if _, err := credentialIdentifiers([]byte(`{"type":"openid_credential"}`)); err == nil {
 		t.Error("authorization_details that isn't an array accepted")
+	}
+}
+
+// An offer is unbound, and so refused a Bearer access token, if any
+// credential it offers is bound to no key.
+func TestIssuanceUnbound(t *testing.T) {
+	bound := oid4vci.CredentialConfigurationMetadata{CryptographicBindingMethodsSupported: []string{"jwk"}}
+	metadata := oid4vci.Metadata{CredentialConfigurationsSupported: map[string]oid4vci.CredentialConfigurationMetadata{
+		"bound": bound, "unbound": {},
+	}}
+	for ids, want := range map[[2]string]bool{{"bound", "bound"}: false, {"bound", "unbound"}: true, {"unbound", "unbound"}: true} {
+		s := &Issuance{metadata: metadata, offer: oid4vci.CredentialOffer{CredentialConfigurationIDs: ids[:]}}
+		if got := s.unbound(); got != want {
+			t.Errorf("unbound(%v) = %v, want %v", ids, got, want)
+		}
 	}
 }

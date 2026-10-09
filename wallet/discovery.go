@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"slices"
 	"strings"
 
 	fapi "github.com/idfoundry/fapigo"
@@ -79,6 +80,46 @@ type AuthorizationServerMetadata struct {
 	// client authenticating with its Wallet Attestation then MUST put a
 	// challenge from it in every Client Attestation PoP.
 	ChallengeEndpoint string `json:"challenge_endpoint,omitempty"`
+
+	// GrantTypesSupported are the grant types it serves (RFC 8414 §2);
+	// absent means ["authorization_code", "implicit"].
+	GrantTypesSupported []string `json:"grant_types_supported,omitempty"`
+	// TokenEndpointAuthMethodsSupported are the client authentication
+	// methods its token endpoint takes (RFC 8414 §2):
+	// "attest_jwt_client_auth" for a Wallet Attestation
+	// (draft-ietf-oauth-attestation-based-client-auth-07 §10.1).
+	TokenEndpointAuthMethodsSupported []string `json:"token_endpoint_auth_methods_supported,omitempty"`
+	// ClientAttestationPoPSigningAlgValuesSupported are the algorithms
+	// it takes a Client Attestation PoP signed with (draft-07 §10.1).
+	ClientAttestationPoPSigningAlgValuesSupported []string `json:"client_attestation_pop_signing_alg_values_supported,omitempty"`
+	// PreAuthorizedGrantAnonymousAccessSupported is whether it redeems a
+	// pre-authorized code with no client_id: no client authentication
+	// (OpenID4VCI 1.0 §12.3). The default is false.
+	PreAuthorizedGrantAnonymousAccessSupported bool `json:"pre-authorized_grant_anonymous_access_supported,omitempty"`
+}
+
+// AttestJWTClientAuth is the token_endpoint_auth_methods_supported
+// value for authenticating with a Wallet Attestation
+// (draft-ietf-oauth-attestation-based-client-auth-07 §10.1, §13.4).
+const AttestJWTClientAuth = "attest_jwt_client_auth"
+
+// SupportsGrantType reports whether m serves grantType, by
+// grant_types_supported or RFC 8414 §2's default for it when absent
+// (["authorization_code", "implicit"]).
+func (m AuthorizationServerMetadata) SupportsGrantType(grantType string) bool {
+	if len(m.GrantTypesSupported) == 0 {
+		return grantType == "authorization_code" || grantType == "implicit"
+	}
+	return slices.Contains(m.GrantTypesSupported, grantType)
+}
+
+// SupportsAttestationAuth reports whether m takes a Wallet Attestation
+// at its token endpoint (attest_jwt_client_auth), with a Client
+// Attestation PoP signed with alg: an Authorization Server advertising
+// the method MUST list the PoP algorithms it takes (draft-07 §10.1).
+func (m AuthorizationServerMetadata) SupportsAttestationAuth(alg string) bool {
+	return slices.Contains(m.TokenEndpointAuthMethodsSupported, AttestJWTClientAuth) &&
+		slices.Contains(m.ClientAttestationPoPSigningAlgValuesSupported, alg)
 }
 
 // FetchAuthorizationServerMetadata fetches and decodes issuerURL's own

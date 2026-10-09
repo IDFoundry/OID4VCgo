@@ -66,6 +66,12 @@ type StoredCredential struct {
 	// it with, when its issuance kept one (Config.RequestRefresh); ""
 	// when it can't be refreshed, only received again.
 	GrantID string
+
+	// Unbound is set for a credential bound to no key: its configuration
+	// declared no cryptographic binding (OpenID4VCI 1.0 §12.2.4), so its
+	// one copy has no HolderKeyID, and anyone holding a copy can present
+	// it.
+	Unbound bool
 }
 
 // CredentialCopy is one copy of a credential: the credential, the key

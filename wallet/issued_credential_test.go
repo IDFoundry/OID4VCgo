@@ -121,6 +121,35 @@ func TestVerifyIssuedCredential_Accepts(t *testing.T) {
 	}
 }
 
+// A credential whose configuration declares no binding must be bound to
+// no key (OpenID4VCI 1.0 §12.2.4): an SD-JWT VC naming one in cnf is
+// refused, since the wallet proved no key, and one without is accepted.
+func TestVerifyIssuedCredential_Unbound(t *testing.T) {
+	f := caIssuedFixture(t)
+	unboundConf := f.sdjwtConf
+	unboundConf.CryptographicBindingMethodsSupported = nil
+	if _, err := wallet.VerifyIssuedCredential(context.Background(), wallet.VerifyIssuedCredentialParams{
+		Configuration: unboundConf, Credential: f.sdjwt, IssuerRoots: f.roots,
+	}); err == nil || !strings.Contains(err.Error(), "cnf") {
+		t.Errorf("an unbound configuration's credential naming a key: %v, want it refused", err)
+	}
+
+	ca, caKey := testcert.CA(t, "unbound test CA")
+	leaf, leafKey := testcert.Leaf(t, "unbound test issuer", ca, caKey)
+	roots := x509.NewCertPool()
+	roots.AddCert(ca)
+	exp := time.Now().Add(time.Hour).Unix()
+	unbound, _, err := sdjwtvc.Issue(leafKey, jose.ES256, sdjwtvc.Claims{VCT: issuedVCT, Exp: &exp}, sdjwtvc.IssueOptions{IssuerCertificate: leaf})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := wallet.VerifyIssuedCredential(context.Background(), wallet.VerifyIssuedCredentialParams{
+		Configuration: unboundConf, Credential: unbound, IssuerRoots: roots,
+	}); err != nil {
+		t.Errorf("an unbound credential: %v", err)
+	}
+}
+
 // A credential valid from the moment the issuer signed it is accepted by
 // a wallet whose clock is a little behind the issuer's — within a
 // minute, not beyond.
