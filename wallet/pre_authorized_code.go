@@ -161,12 +161,13 @@ func (w *Wallet) postToken(
 	target := endpoint.URL()
 	htu := target
 	htu.RawQuery, htu.Fragment = "", ""
+	post := tokenPost{target: target.String(), htu: htu.String(), body: form, dpopKey: dpopKey, attestation: attestation, op: op}
 
 	// At most two attempts: the second only after a DPoP nonce
 	// challenge to the first.
 	var nonce string
 	for attempt := 0; ; attempt++ {
-		res, err := w.postTokenOnce(ctx, target.String(), htu.String(), form, nonce, dpopKey, attestation, op)
+		res, err := w.postTokenOnce(ctx, post, nonce)
 		if err != nil {
 			return nil, err
 		}
@@ -212,26 +213,35 @@ type tokenHTTPResponse struct {
 	body   []byte
 }
 
-// postTokenOnce sends one request to target with, when dpopKey is set,
-// a fresh DPoP proof for htu (with nonce, if set) and, when attestation
-// is set, a fresh attestation PoP: both are single-use.
-func (w *Wallet) postTokenOnce(
-	ctx context.Context, target, htu string, body []byte, nonce string, dpopKey crypto.Signer, attestation ClientAttestationSource, op string,
-) (tokenHTTPResponse, error) {
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(body))
+// tokenPost is a Token Request, the same on each attempt: body POSTed
+// to target, with a DPoP proof for htu when dpopKey is set and the
+// attestation headers when attestation is. op names the call in errors.
+type tokenPost struct {
+	target, htu string
+	body        []byte
+	dpopKey     crypto.Signer
+	attestation ClientAttestationSource
+	op          string
+}
+
+// postTokenOnce sends p once, with a fresh DPoP proof (with nonce, if
+// set) and a fresh attestation PoP: both are single-use.
+func (w *Wallet) postTokenOnce(ctx context.Context, p tokenPost, nonce string) (tokenHTTPResponse, error) {
+	op := p.op
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, p.target, bytes.NewReader(p.body))
 	if err != nil {
 		return tokenHTTPResponse{}, fmt.Errorf("wallet: %s: build request: %w", op, err)
 	}
 	httpReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	if dpopKey != nil {
-		proof, err := w.GenerateDPoPProof(dpopKey, http.MethodPost, htu, nonce, "")
+	if p.dpopKey != nil {
+		proof, err := w.GenerateDPoPProof(p.dpopKey, http.MethodPost, p.htu, nonce, "")
 		if err != nil {
 			return tokenHTTPResponse{}, fmt.Errorf("wallet: %s: %w", op, err)
 		}
 		httpReq.Header.Set("DPoP", proof)
 	}
-	if attestation != nil {
-		attestation, pop, err := attestation.ClientAttestationHeaders(ctx)
+	if p.attestation != nil {
+		attestation, pop, err := p.attestation.ClientAttestationHeaders(ctx)
 		if err != nil {
 			return tokenHTTPResponse{}, fmt.Errorf("wallet: %s: client attestation: %w", op, err)
 		}

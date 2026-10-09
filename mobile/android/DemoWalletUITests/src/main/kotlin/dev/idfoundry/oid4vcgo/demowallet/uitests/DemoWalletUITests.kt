@@ -139,7 +139,7 @@ class DemoWalletUITests {
         launch(offer = offerWithPIN(), reset = reset)
         typePIN(pin)
         need("receive").click()
-        assertTrue("not received", waitFor("status", "Received 1", 60_000))
+        assertTrue(NOT_RECEIVED, waitFor("status", "Received 1", 60_000))
     }
 
     /** Opens [link] in a relaunched app, keeping what it holds, ready to share. */
@@ -169,7 +169,7 @@ class DemoWalletUITests {
     private fun receiveWithAuthorizationCode() {
         launch(offer = control("offer", "POST")["offer"]!!.jsonPrimitive.content)
         need("receive").click()
-        assertTrue("not received", waitFor("status", "Received 2", 90_000))
+        assertTrue(NOT_RECEIVED, waitFor("status", "Received 2", 90_000))
     }
 
     /** The authorization code grant, through Chrome; both credentials are listed, with their claims. */
@@ -191,10 +191,10 @@ class DemoWalletUITests {
     @Test
     fun refreshCopies() {
         receiveWithAuthorizationCode()
-        presentOnce(request("format=dc%2Bsd-jwt").second)
+        presentOnce(request(SD_JWT_FORMAT).second)
         share()
-        (find(res("credential").hasDescendant(By.textContains("2 of 3 copies unused")), 10_000)
-            ?: find(res("credential").textContains("2 of 3 copies unused"), 1_000)
+        (find(res("credential").hasDescendant(By.textContains(TWO_COPIES_UNUSED)), 10_000)
+            ?: find(res("credential").textContains(TWO_COPIES_UNUSED), 1_000)
             ?: error("the presented credential doesn't show a copy used")).click()
         assertTrue(waitFor("credential-copies", "2 of 3"))
         reveal("refresh-copies").click()
@@ -207,7 +207,7 @@ class DemoWalletUITests {
     fun autoRefresh() {
         receiveWithPIN()
         repeat(3) {
-            presentOnce(request("format=dc%2Bsd-jwt").second)
+            presentOnce(request(SD_JWT_FORMAT).second)
             share()
         }
         // After its third presentation it would show no copy unused.
@@ -229,7 +229,7 @@ class DemoWalletUITests {
         assertTrue("a wrong PIN isn't reported on the offer", waitFor("offer-error", "PIN", 30_000))
         typePIN(pin)
         need("receive").click()
-        assertTrue("not received", waitFor("status", "Received 1", 60_000))
+        assertTrue(NOT_RECEIVED, waitFor("status", "Received 1", 60_000))
     }
 
     /** A received credential's status: valid, then revoked once the issuer revokes it. */
@@ -264,7 +264,7 @@ class DemoWalletUITests {
         assertEquals("done", r["status"]?.jsonPrimitive?.content)
         assertEquals("Doe", r["claims"]?.jsonObject?.get("family_name")?.jsonPrimitive?.content)
         // The issuer issued three copies; presenting used one.
-        assertTrue(waitFor("credential", "2 of 3 copies unused"))
+        assertTrue(waitFor("credential", TWO_COPIES_UNUSED))
     }
 
     /** A request taking several credentials (DCQL multiple): both are offered and chosen, and both reach the Verifier. */
@@ -272,7 +272,7 @@ class DemoWalletUITests {
     fun presentSeveral() {
         receiveWithPIN()
         receiveWithPIN(reset = false)
-        val (id, link) = request("format=dc%2Bsd-jwt&multiple=1")
+        val (id, link) = request(SD_JWT_FORMAT + "&multiple=1")
         presentOnce(link)
         assertTrue("both credentials aren't offered", device.wait(Until.hasObject(res("candidate")), 10_000))
         assertEquals(2, device.findObjects(res("candidate")).size)
@@ -288,7 +288,7 @@ class DemoWalletUITests {
         need("settings").click()
         (find(By.text("Same copy for the same verifier"), 10_000) ?: error("no copy policy setting")).click()
         for (round in 0 until 2) {
-            presentOnce(request("format=dc%2Bsd-jwt").second)
+            presentOnce(request(SD_JWT_FORMAT).second)
             if (round == 0) {
                 assertNull("a first presentation says the verifier has seen it", find(res("shown-before"), 2_000))
             } else {
@@ -296,13 +296,13 @@ class DemoWalletUITests {
             }
             share()
         }
-        assertTrue(waitFor("credential", "2 of 3 copies unused"))
+        assertTrue(waitFor("credential", TWO_COPIES_UNUSED))
     }
 
     /** A request from a verifier the wallet doesn't trust is refused unopened: no consent screen, nothing shared. */
     @Test
     fun untrustedVerifierRefused() {
-        val (id, link) = request("format=dc%2Bsd-jwt")
+        val (id, link) = request(SD_JWT_FORMAT)
         launch(request = link, trustVerifier = false)
         need("untrusted-verifier")
         assertNotNull(find(res("nothing-shared"), 5_000))
@@ -314,12 +314,12 @@ class DemoWalletUITests {
     @Test
     fun registeredVerifier() {
         receiveWithPIN()
-        presentOnce(request("format=dc%2Bsd-jwt&registered=1").second)
+        presentOnce(request(SD_JWT_FORMAT + "&registered=1").second)
         need("registered")
         assertNull("a request within the registration was flagged", find(res("over-asking"), 2_000))
         tapWhenEnabled("decline")
         assertTrue(waitFor("status", "Declined", 30_000))
-        presentOnce(request("format=dc%2Bsd-jwt&registered=1&extra=given_name").second)
+        presentOnce(request(SD_JWT_FORMAT + "&registered=1&extra=given_name").second)
         assertTrue("a request beyond the registration isn't flagged", waitFor("over-asking", "given_name"))
         assertNotNull("the unregistered claim isn't marked", find(res("disclosed-unregistered"), 10_000))
     }
@@ -395,5 +395,10 @@ class DemoWalletUITests {
         /** The title of the demo's prompt before a holder key signs. */
         const val PROMPT = "Confirm it's you"
         const val CHECK_AGAIN = "check-again"
+        const val NOT_RECEIVED = "not received"
+        /** The test verifier's query for an SD-JWT VC request. */
+        const val SD_JWT_FORMAT = "format=dc%2Bsd-jwt"
+        /** A batch of three after one unlinkable presentation. */
+        const val TWO_COPIES_UNUSED = "2 of 3 copies unused"
     }
 }

@@ -20,7 +20,7 @@ struct DemoReaderKeys: KeyStore {
         x963 = try P256.Signing.PrivateKey(pemRepresentation: reader.readerKey).x963Representation
     }
 
-    func createKey(purpose: KeyPurpose) throws -> String { throw DemoReaderKeysError() }
+    func createKey(purpose _: KeyPurpose) throws -> String { throw DemoReaderKeysError() }
 
     func publicKey(id: String) throws -> Data? {
         guard id == Self.id else { return nil }
@@ -38,7 +38,9 @@ struct DemoReaderKeys: KeyStore {
         return signature as Data
     }
 
-    func deleteKey(id: String) throws {}
+    func deleteKey(id _: String) throws {
+        // The demo reader's one key is fixed: there's nothing to delete.
+    }
 }
 
 struct DemoReaderKeysError: Error {}
@@ -296,13 +298,22 @@ private struct ConsentView: View {
 private struct ReaderHeader: View {
     let reader: ProximityReaderIdentity
 
+    /// Green for a trusted reader, red for an invalid one, orange otherwise.
+    private var trustColor: Color {
+        switch reader.status {
+        case .trusted: .green
+        case .invalid: .red
+        default: .orange
+        }
+    }
+
     var body: some View {
         let trusted = reader.status == .trusted
         VStack(alignment: .leading, spacing: 6) {
             let name = reader.name.isEmpty ? "A nearby reader" : reader.name
             Text(trusted ? name : "“\(name)”").font(.title2).accessibilityIdentifier("in-person-reader")
             Label(badge, systemImage: trusted ? "checkmark.seal.fill" : "exclamationmark.triangle.fill")
-                .foregroundStyle(trusted ? .green : (reader.status == .invalid ? .red : .orange))
+                .foregroundStyle(trustColor)
                 .accessibilityIdentifier("in-person-trust")
             if !reader.certificates.isEmpty {
                 NavigationLink("Reader certificate") { CertificatesView(certificates: reader.certificates) }
@@ -325,10 +336,16 @@ private struct ReaderHeader: View {
 struct CertificatesView: View {
     let certificates: [ProximityReaderIdentity.CertificateDetails]
 
+    /// The certificate at index i: the reader's, the root, or between.
+    private func role(_ i: Int) -> String {
+        if i == 0 { return "Reader" }
+        return i == certificates.count - 1 ? "Root" : "Intermediate"
+    }
+
     var body: some View {
         List {
             ForEach(Array(certificates.enumerated()), id: \.offset) { i, c in
-                Section(i == 0 ? "Reader" : (i == certificates.count - 1 ? "Root" : "Intermediate")) {
+                Section(role(i)) {
                     LabeledContent("Subject", value: c.subject)
                     LabeledContent("Issuer", value: c.issuer)
                     LabeledContent("Valid", value: "\(c.notBefore.formatted(date: .abbreviated, time: .shortened)) to \(c.notAfter.formatted(date: .abbreviated, time: .shortened))")

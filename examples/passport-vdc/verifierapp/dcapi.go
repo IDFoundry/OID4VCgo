@@ -15,6 +15,9 @@ import (
 	"github.com/idfoundry/oid4vcgo/verifier"
 )
 
+// errBuildRequest answers a request the page couldn't build.
+const errBuildRequest = "couldn't build the request"
+
 // The request page can also ask in the browser, over the Digital
 // Credentials API, offering two requests, of which the browser and
 // wallet answer one:
@@ -111,7 +114,7 @@ func (a *App) handleDCAPIRequest(w http.ResponseWriter, r *http.Request) {
 	}
 	elements, err := a.mdocElements(s.scenario)
 	if err != nil {
-		http.Error(w, "couldn't build the request", http.StatusInternalServerError)
+		http.Error(w, errBuildRequest, http.StatusInternalServerError)
 		return
 	}
 	req, err := mdocdcapi.BuildRequest(mdocdcapi.RequestParams{
@@ -119,19 +122,19 @@ func (a *App) handleDCAPIRequest(w http.ResponseWriter, r *http.Request) {
 		Readers: []mdocdcapi.ReaderKey{a.readers[s.scenario]},
 	})
 	if err != nil {
-		http.Error(w, "couldn't build the request", http.StatusInternalServerError)
+		http.Error(w, errBuildRequest, http.StatusInternalServerError)
 		return
 	}
 	query, err := buildQuery(s.scenario, a.cfg.IssuerVCT, a.issuerTrusted)
 	if err != nil {
-		http.Error(w, "couldn't build the request", http.StatusInternalServerError)
+		http.Error(w, errBuildRequest, http.StatusInternalServerError)
 		return
 	}
 	built, err := a.rps[s.scenario].v.BuildDCAPIAuthorizationRequest(verifier.BuildDCAPIAuthorizationRequestRequest{
 		Query: query, ExpectedOrigins: []string{a.origin},
 	})
 	if err != nil {
-		http.Error(w, "couldn't build the request", http.StatusInternalServerError)
+		http.Error(w, errBuildRequest, http.StatusInternalServerError)
 		return
 	}
 	a.mu.Lock()
