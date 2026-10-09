@@ -174,17 +174,68 @@ func WriteConfig(cfg Config) error {
 	return nil
 }
 
-// RestartContainer rebuilds and restarts the conformance-verifier
-// container so it picks up a freshly-written ConfigOutPath.
+// RestartContainer rebuilds the conformance-verifier image and
+// restarts its container so it picks up a freshly-written
+// ConfigOutPath, which it bind-mounts. Where the container already runs
+// the image just built, as between one run's phases, it's restarted
+// rather than recreated: a new container can come up on a new address
+// on the suite's network, while the suite has the old one cached for
+// the conformance-verifier name for a while, so the next module's first
+// request from the suite never reached the verifier (the mdoc phase's
+// happy-flow, run straight after the sd_jwt phase's, then never got an
+// upload placeholder). docker compose up --build recreates the
+// container even when the image is unchanged, so the choice is made
+// here.
 func RestartContainer() error {
 	dockerPath, err := exec.LookPath("docker")
 	if err != nil {
 		return fmt.Errorf("find docker: %w", err)
 	}
-	cmd := exec.Command(dockerPath, "compose", "-f", DockerComposeFile, "up", "-d", "--build", "--force-recreate") //nolint:gosec // dockerPath comes from exec.LookPath, args are fixed literals
+	if err := runDocker(dockerPath, "compose", "-f", DockerComposeFile, "build"); err != nil {
+		return err
+	}
+	if current, err := containerRunsBuiltImage(dockerPath); err != nil {
+		return err
+	} else if current {
+		return runDocker(dockerPath, "compose", "-f", DockerComposeFile, "restart")
+	}
+	return runDocker(dockerPath, "compose", "-f", DockerComposeFile, "up", "-d")
+}
+
+// containerRunsBuiltImage reports whether the conformance-verifier
+// container is running the image docker compose build last built.
+func containerRunsBuiltImage(dockerPath string) (bool, error) {
+	out, err := exec.Command(dockerPath, "compose", "-f", DockerComposeFile, "ps", "-q", "conformance-verifier").Output() //nolint:gosec // dockerPath comes from exec.LookPath, args are fixed literals
+	if err != nil {
+		return false, fmt.Errorf("docker compose ps: %w", err)
+	}
+	container := strings.TrimSpace(string(out))
+	if container == "" {
+		return false, nil
+	}
+	out, err = exec.Command(dockerPath, "inspect", "-f", "{{.Image}}", container).Output() //nolint:gosec // dockerPath comes from exec.LookPath; container is docker's own ID
+	if err != nil {
+		return false, fmt.Errorf("docker inspect container: %w", err)
+	}
+	running := strings.TrimSpace(string(out))
+	// The image docker compose names for the verifier project's service.
+	out, err = exec.Command(dockerPath, "image", "inspect", "-f", "{{.Id}}", "verifier-conformance-verifier").Output() //nolint:gosec // dockerPath comes from exec.LookPath, args are fixed literals
+	if err != nil {
+		return false, fmt.Errorf("docker image inspect: %w", err)
+	}
+	built := strings.TrimSpace(string(out))
+	log.Printf("conformance-verifier container image %s, built image %s", running, built)
+	return running == built, nil
+}
+
+func runDocker(dockerPath string, args ...string) error {
+	cmd := exec.Command(dockerPath, args...) //nolint:gosec // dockerPath comes from exec.LookPath, args are fixed literals
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("docker %s: %w", strings.Join(args, " "), err)
+	}
+	return nil
 }
 
 // WaitReady polls verifierBase's own /result/<probe> route (any
