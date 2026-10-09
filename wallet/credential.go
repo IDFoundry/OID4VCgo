@@ -79,7 +79,9 @@ type CredentialRequest struct {
 	// attested key (Appendix F-5.2). The Credential Issuer issues one
 	// Credential per key in the attestation's own attested_keys claim,
 	// so this alone can request a batch. Set this, or Keys, but not
-	// both.
+	// both — or neither, for a credential bound to no key, whose
+	// configuration has no cryptographic_binding_methods_supported: the
+	// request then carries no proofs (§12.2.4).
 	Attestation string
 
 	// CredentialIssuer is the Credential Issuer Identifier — the aud
@@ -114,7 +116,7 @@ type CredentialRequest struct {
 type credentialRequestBody struct {
 	CredentialConfigurationID string                         `json:"credential_configuration_id,omitempty"`
 	CredentialIdentifier      string                         `json:"credential_identifier,omitempty"`
-	Proofs                    map[string][]string            `json:"proofs"`
+	Proofs                    map[string][]string            `json:"proofs,omitempty"`
 	ResponseEncryption        *wireResponseEncryptionRequest `json:"credential_response_encryption,omitempty"`
 }
 
@@ -139,8 +141,8 @@ func (w *Wallet) RequestCredential(
 	}
 	hasJWT := len(req.Keys) > 0 || len(req.JWTProofs) > 0
 	hasAttestation := req.Attestation != ""
-	if hasJWT == hasAttestation {
-		return CredentialResult{}, fmt.Errorf("wallet: request credential: exactly one of keys/jwt_proofs or attestation is required")
+	if hasJWT && hasAttestation {
+		return CredentialResult{}, fmt.Errorf("wallet: request credential: at most one of keys/jwt_proofs or attestation is allowed")
 	}
 	if req.ResponseEncryption != nil && req.RequestEncryption == nil {
 		return CredentialResult{}, fmt.Errorf("wallet: request credential: response_encryption requires request_encryption to also be set")
@@ -179,6 +181,10 @@ func (w *Wallet) RequestCredential(
 func (w *Wallet) buildCredentialProofs(req CredentialRequest) (map[string][]string, error) {
 	if req.Attestation != "" {
 		return map[string][]string{oid4vci.ProofTypeAttestation: {req.Attestation}}, nil
+	}
+	if len(req.Keys) == 0 && len(req.JWTProofs) == 0 {
+		// A credential bound to no key takes no proofs (§12.2.4).
+		return nil, nil
 	}
 
 	proofs := make([]string, 0, len(req.Keys)+len(req.JWTProofs))

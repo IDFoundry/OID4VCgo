@@ -160,3 +160,27 @@ func TestResolveCredentialOffer_PropagatesFetchError(t *testing.T) {
 		t.Fatalf("ResolveCredentialOffer = nil error, want error")
 	}
 }
+
+// An offer whose grants are empty, or name only grant types the Wallet
+// doesn't know, is resolved as one with none (OpenID4VCI 1.0 §4.1.1:
+// "If grants is not present or is empty, the Wallet MUST determine the
+// Grant Types ... using the respective metadata").
+func TestResolveCredentialOffer_EmptyGrantsAreAbsent(t *testing.T) {
+	w := newTestWallet(t, func(*http.Request) (*http.Response, error) {
+		t.Fatalf("unexpected HTTP call for a by-value offer")
+		return nil, nil
+	})
+	for _, grants := range []string{`{}`, `{"urn:example:unknown-grant":{"code":"x"}}`} {
+		raw := `{"credential_issuer":"https://issuer.example.com","credential_configuration_ids":["IdentityCredential"],"grants":` + grants + `}`
+		got, err := w.ResolveCredentialOffer(context.Background(), "openid-credential-offer://?credential_offer="+url.QueryEscape(raw))
+		if err != nil {
+			t.Fatalf("grants %s: ResolveCredentialOffer: %v", grants, err)
+		}
+		if got.Grants != nil {
+			t.Errorf("grants %s: Grants = %+v, want none", grants, got.Grants)
+		}
+		if _, err := wallet.PlanAuthorization(got, testMetadata(t, got.CredentialIssuer)); err != nil {
+			t.Errorf("grants %s: PlanAuthorization: %v", grants, err)
+		}
+	}
+}

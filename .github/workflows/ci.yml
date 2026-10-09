@@ -89,6 +89,33 @@ jobs:
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
+  # 32-bit Android (armeabi-v7a, x86): the tests at GOARCH=386, where
+  # int is 32 bits as on both, and vet at GOARCH=arm. The mobile
+  # module's too, with its test build.
+  test-32-bit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          check-latest: true
+          cache-dependency-path: go.mod
+
+      - name: go vet (arm)
+        run: GOARCH=arm go vet ./...
+
+      - name: go test (386)
+        run: GOARCH=386 go test ./...
+
+      - name: mobile
+        working-directory: mobile
+        run: |
+          GOARCH=arm go vet ./...
+          GOARCH=arm go vet -tags mobiletest ./...
+          GOARCH=386 go test -tags mobiletest ./...
+
   lint:
     runs-on: ubuntu-latest
     steps:
@@ -202,6 +229,14 @@ jobs:
         working-directory: mobile/ios/DemoWallet
         run: xcodebuild build -project DemoWallet.xcodeproj -scheme DemoWallet -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO -quiet
 
+      # The package's DocC documentation, failing on any DocC warning,
+      # with its articles' examples compiled against the package, and
+      # laid out for GitHub Pages as the release workflow publishes it.
+      - name: check the documentation
+        run: |
+          DOCC_OUTPUT="$RUNNER_TEMP/OID4VCWallet.doccarchive" mobile/ios/check-docs.sh
+          mobile/ios/docs-site.sh 0.0.0-ci "$RUNNER_TEMP/OID4VCWallet.doccarchive" "$RUNNER_TEMP/docs"
+
       # The package as wallet-swift-release.yml publishes it, built
       # against the zipped release framework.
       - name: lay out the published Swift package
@@ -286,6 +321,13 @@ jobs:
             echo "::error::the release library carries TestEnv"; exit 1
           fi
 
+      # The library's Dokka API reference, failing on any Dokka warning,
+      # and laid out for GitHub Pages as the release workflow publishes it.
+      - name: check the documentation
+        run: |
+          DOKKA_OUTPUT="$RUNNER_TEMP/dokka" mobile/android/check-docs.sh
+          mobile/android/docs-site.sh 0.0.0-ci "$RUNNER_TEMP/dokka" "$RUNNER_TEMP/docs"
+
       # The library as wallet-kotlin-release.yml publishes it, and an app
       # built on its AAR as the README says.
       - name: lay out the published release
@@ -295,7 +337,8 @@ jobs:
 
   # The library's floor, minSdk 26: its instrumented tests on an API 26
   # emulator, where API 28 and 30 calls must be guarded (lint catches
-  # most, this the rest). Holder keys there can't require the holder
+  # most, this the rest). It's the 32-bit x86 image, so the 32-bit Go
+  # library runs there too (mobile-android runs the 64-bit one). Holder keys there can't require the holder
   # (that needs API 30), so no lock screen is needed; the unlock is
   # best effort, since API 26 may lack locksettings.
   mobile-android-api26:
@@ -330,12 +373,12 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
-      - name: instrumented tests (API 26)
+      - name: instrumented tests (API 26, x86)
         uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
         with:
           api-level: 26
           target: google_apis
-          arch: x86_64
+          arch: x86
           disable-animations: true
           working-directory: mobile/android
           script: |

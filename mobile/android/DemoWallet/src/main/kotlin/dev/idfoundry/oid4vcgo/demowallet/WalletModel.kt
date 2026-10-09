@@ -148,7 +148,7 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
         val config = config ?: throw IllegalStateException("not configured")
         return Wallet(
             config.wallet.copy(copyPolicy = copyPolicy), keys!!,
-            FileCredentialStore.standard(getApplication()), HTTPWalletProvider(config.providerURL),
+            FileCredentialStore.standard(getApplication()), config.providerURL?.let(::HTTPWalletProvider),
         )
     }
 

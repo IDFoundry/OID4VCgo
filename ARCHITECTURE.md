@@ -1453,10 +1453,11 @@ changes whether *every* bullet below is `(done)`.
   registration allows. Not an ecosystem's format (such as the EU's
   relying-party registration certificates).
 - **`walletflow`** (done) — a holder's wallet as sessions, over a
-  `KeyStore`, `CredentialStore` and `WalletProvider` the app supplies
-  (and optional stores so deferred credentials, an authorization in
-  progress and refresh tokens survive a restart): `StartIssuance`
-  (both grants, deferred and batch issuance), `RefreshCredential`,
+  `KeyStore` and `CredentialStore` the app supplies, an optional
+  `WalletProvider`, and optional stores so deferred credentials, an
+  authorization in progress and refresh tokens survive a restart:
+  `StartIssuance` (both grants, deferred and batch issuance),
+  `RefreshCredential`,
   `StartPresentation` (OpenID4VP links), and over the
   Digital Credentials API `StartDCAPIPresentation` (OpenID4VP's
   `openid4vp-v1-*` protocols) and `StartMdocPresentation`
@@ -1465,10 +1466,21 @@ changes whether *every* bullet below is `(done)`.
   last two is `Config.MdocReaderRoots`, `MdocReaderLeafPolicy` and
   `RequireTrustedMdocReader`. Each presentation uses a copy chosen by
   `Config.CopyPolicy`, recorded as shown to that Verifier, so the app
-  can warn when a presentation is linkable. `walletflow/walletflowtest`
-  runs a HAIP Credential Issuer, its Authorization Server, a Wallet
-  Provider and a Verifier in process, for end-to-end tests of
-  walletflow and the mobile module. See [mobile/MOBILE.md](mobile/MOBILE.md).
+  can warn when a presentation is linkable. Issuance follows the
+  issuer's and Authorization Server's metadata by default
+  (`Config.IssuanceProfile`'s `ProfileOpenID4VCI`): a Wallet
+  Attestation or none at the token endpoint, a jwt proof or a key
+  attestation, a c_nonce or none, as the metadata asks;
+  `ProfileHAIP` also refuses issuers outside HAIP 1.0 §4. The checks
+  that protect the holder (https, identifiers matching metadata, the
+  offer's Authorization Server being one the issuer lists, PKCE/PAR/`iss`
+  in the authorization code grant, credentials checked against
+  `IssuerRoots`) never relax. `walletflow/walletflowtest` runs a HAIP
+  Credential Issuer, its Authorization Server, a Wallet Provider and a
+  Verifier in process — or, with `Options.Anonymous`, an issuer outside
+  HAIP: an anonymous pre-authorized code and jwt proofs — for
+  end-to-end tests of walletflow and the mobile module. See
+  [mobile/MOBILE.md](mobile/MOBILE.md).
 - **`mobile`** (done; its own Go module) — the gomobile façade over
   `walletflow`: JSON in and out across the boundary, `ABIVersion` 12
   ([`mobile/ABI.md`](mobile/ABI.md)), with the platform's keys and

@@ -132,6 +132,8 @@ func ReceiveDeferrable(ctx context.Context, cfg Config, offerURI string, approve
 	keys := newSoftwareKeys()
 	w, err := walletflow.New(walletflow.Config{
 		ClientID: cfg.ClientID, RedirectURI: cfg.RedirectURI, IssuerRoots: cfg.IssuerRoots, Development: true,
+		// The demo's issuer follows HAIP, and the wallet holds it to it.
+		IssuanceProfile: walletflow.ProfileHAIP,
 		// One copy: this wallet's store keeps one credential per file,
 		// with one software key.
 		BatchSize: 1,

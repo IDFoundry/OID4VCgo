@@ -295,6 +295,19 @@ class SessionTest {
         assertFalse(used.linkable)
     }
 
+    /**
+     * tlsPins reach Go: a malformed one (an IP address, which a handshake
+     * doesn't name) is refused, and a pin for another host leaves the
+     * services' requests as they were.
+     */
+    @Test
+    fun tlsPins(): Unit = runBlocking {
+        val env = env()
+        val pin = java.util.Base64.getEncoder().encodeToString(ByteArray(32))
+        expectCode(WalletException.Code.invalidInput) { wallet(env, configuration = env.configuration.copy(tlsPins = mapOf("127.0.0.1" to listOf(pin)))) }
+        receive(env, wallet(env, configuration = env.configuration.copy(tlsPins = mapOf("issuer.example" to listOf(pin)))))
+    }
+
     @Test
     fun abandonDeferred(): Unit = runBlocking {
         val env = env(deferIssuance = true)

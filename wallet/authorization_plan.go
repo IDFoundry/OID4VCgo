@@ -168,22 +168,38 @@ func PlanPreAuthorizedCode(offer oid4vci.CredentialOffer, metadata oid4vci.Metad
 // and pushed authorization request endpoints. opts apply to every URL
 // (e.g. fapi.AllowLoopbackHTTP() for local development).
 func (m AuthorizationServerMetadata) ClientEndpoints(opts ...fapi.URLOption) (fapi.URL, client.Endpoints, error) {
-	issuer, err := fapi.ParseIssuerURL(m.Issuer, opts...)
+	issuer, endpoints, err := m.TokenClientEndpoints(opts...)
 	if err != nil {
-		return fapi.URL{}, client.Endpoints{}, fmt.Errorf("wallet: authorization server issuer: %w", err)
+		return fapi.URL{}, client.Endpoints{}, err
 	}
-	var endpoints client.Endpoints
 	for name, field := range map[string]struct {
 		raw string
 		dst *fapi.URL
 	}{
 		"authorization_endpoint":                {m.AuthorizationEndpoint, &endpoints.Authorization},
-		"token_endpoint":                        {m.TokenEndpoint, &endpoints.Token},
 		"pushed_authorization_request_endpoint": {m.PushedAuthorizationRequestEndpoint, &endpoints.PushedAuthorizationRequest},
 	} {
 		if *field.dst, err = fapi.ParseEndpointURL(field.raw, opts...); err != nil {
 			return fapi.URL{}, client.Endpoints{}, fmt.Errorf("wallet: authorization server %s: %w", name, err)
 		}
+	}
+	return issuer, endpoints, nil
+}
+
+// TokenClientEndpoints is ClientEndpoints for a client that never
+// starts an authorization: one that redeems a pre-authorized code,
+// refreshes or revokes a token. It needs only the issuer identifier and
+// the token endpoint (and the revocation endpoint, if there is one); an
+// Authorization Server serving only the pre-authorized code grant has
+// no authorization or pushed authorization request endpoint to give.
+func (m AuthorizationServerMetadata) TokenClientEndpoints(opts ...fapi.URLOption) (fapi.URL, client.Endpoints, error) {
+	issuer, err := fapi.ParseIssuerURL(m.Issuer, opts...)
+	if err != nil {
+		return fapi.URL{}, client.Endpoints{}, fmt.Errorf("wallet: authorization server issuer: %w", err)
+	}
+	var endpoints client.Endpoints
+	if endpoints.Token, err = fapi.ParseEndpointURL(m.TokenEndpoint, opts...); err != nil {
+		return fapi.URL{}, client.Endpoints{}, fmt.Errorf("wallet: authorization server token_endpoint: %w", err)
 	}
 	if m.RevocationEndpoint != "" {
 		if endpoints.Revocation, err = fapi.ParseEndpointURL(m.RevocationEndpoint, opts...); err != nil {

@@ -61,7 +61,10 @@ type RequestParams struct {
 // RequestData is the request's "data" member for
 // navigator.credentials.get (Annex C.2), as JSON.
 type RequestData struct {
-	DeviceRequest  string `json:"deviceRequest"`
+	// DeviceRequest is the CBOR DeviceRequest, base64url-encoded.
+	DeviceRequest string `json:"deviceRequest"`
+	// EncryptionInfo is the CBOR EncryptionInfo (the nonce and the key
+	// the response is sealed to), base64url-encoded.
 	EncryptionInfo string `json:"encryptionInfo"`
 }
 
@@ -70,11 +73,17 @@ type RequestData struct {
 // response: keep it as secret as any private key, and only as long as
 // the request.
 type Pending struct {
-	Origin         string
-	DocType        string
-	Elements       map[string]map[string]bool
+	// Origin is the page's origin the request was built for: the
+	// response's session transcript binds it.
+	Origin string
+	// DocType and Elements are what was requested: VerifyResponse
+	// refuses a document of another type, or an element not asked for.
+	DocType  string
+	Elements map[string]map[string]bool
+	// EncryptionInfo is the request's, as sent.
 	EncryptionInfo string
-	RecipientKey   *ecdh.PrivateKey
+	// RecipientKey is the private key the response is sealed to.
+	RecipientKey *ecdh.PrivateKey
 }
 
 // Request is BuildRequest's result.

@@ -20,8 +20,11 @@ const minPollInterval = time.Second
 
 // PendingDeferred is a deferred credential (OpenID4VCI 1.0 §9) as a
 // DeferredStore keeps it: what polling it needs after the wallet
-// restarts. The access token is bound to the DPoP key (RFC 9449), which
-// never leaves the KeyStore, so it's no use to anyone without that key.
+// restarts. A DPoP access token is bound to the DPoP key (RFC 9449),
+// which never leaves the KeyStore, so it's no use to anyone without that
+// key; a Bearer one (TokenType) is usable by whoever holds it, so a
+// DeferredStore must keep it "in a secure manner" (OpenID4VCI 1.0
+// §13.10), as it does credentials.
 type PendingDeferred struct {
 	ID               string
 	CredentialIssuer string
@@ -47,6 +50,10 @@ type PendingDeferred struct {
 	// refresh, the stored credential it replaces.
 	GrantID  string
 	Replaces string
+	// TokenType is the access token's type: "" or "DPoP"
+	// (wallet.TokenTypeDPoP), or "Bearer" (wallet.TokenTypeBearer), with
+	// no DPoPKeyID.
+	TokenType string
 }
 
 // DeferredStore keeps the wallet's pending deferred credentials, so they
@@ -259,14 +266,18 @@ func (d *Deferred) prepare(ctx context.Context) error {
 	if metadata.DeferredCredentialEndpoint == nil {
 		return fmt.Errorf("walletflow: the issuer no longer advertises a deferred credential endpoint")
 	}
-	dpop, err := d.w.deps.Keys.Key(ctx, d.p.DPoPKeyID)
-	if err != nil {
-		return fmt.Errorf("walletflow: deferred credential %q's DPoP key: %w", d.p.ConfigurationID, err)
-	}
 	if d.requestEnc, d.responseEnc, err = wallet.EncryptionFromMetadata(metadata); err != nil {
 		return fmt.Errorf("walletflow: %w", err)
 	}
-	d.resource = d.w.core.DPoPResourceClient(d.p.AccessToken, dpop)
+	if d.p.TokenType == wallet.TokenTypeBearer {
+		d.resource = d.w.core.BearerResourceClient(d.p.AccessToken)
+	} else {
+		dpop, err := d.w.deps.Keys.Key(ctx, d.p.DPoPKeyID)
+		if err != nil {
+			return fmt.Errorf("walletflow: deferred credential %q's DPoP key: %w", d.p.ConfigurationID, err)
+		}
+		d.resource = d.w.core.DPoPResourceClient(d.p.AccessToken, dpop)
+	}
 	d.metadata = &metadata
 	return nil
 }
@@ -379,7 +390,8 @@ func (w *Wallet) forgetDeferred(id string) {
 }
 
 // releaseDPoPKey deletes the DPoP key id names unless an open issuance
-// holds it or a pending deferred credential still polls with it.
+// holds it, a pending deferred credential still polls with it, or a
+// refresh grant's refresh token is bound to it (GrantAuthNone).
 func (w *Wallet) releaseDPoPKey(ctx context.Context, id string) error {
 	w.mu.Lock()
 	live := w.liveDPoP[id]
@@ -393,6 +405,15 @@ func (w *Wallet) releaseDPoPKey(ctx context.Context, id string) error {
 	}
 	for _, p := range pending {
 		if p.DPoPKeyID == id {
+			return nil
+		}
+	}
+	grants, err := w.deps.Grants.ListGrants(ctx)
+	if err != nil {
+		return err
+	}
+	for _, g := range grants {
+		if g.ClientAuth == GrantAuthNone && g.DPoPKeyID == id {
 			return nil
 		}
 	}
@@ -469,7 +490,7 @@ func (w *Wallet) grantKeysInUse(ctx context.Context, creds []StoredCredential, p
 			w.forgetGrant(ctx, g)
 			continue
 		}
-		out = append(out, g.InstanceKeyID)
+		out = append(out, g.keyIDs()...)
 	}
 	return out, nil
 }
