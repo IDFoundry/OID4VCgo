@@ -755,9 +755,11 @@ on an emulator, in CI too (`mobile-android`).
   -androidapi=30` with NDK 30. Stripped, the release arm64 library is
   8.4 MB, as the iOS device slice is. Both libraries' segments are 16 KB
   aligned, as Google Play requires, by the NDK's default.
-- **No 32-bit arm:** FAPIgo doesn't build where `int` is 32 bits
-  (`math.MaxUint32` overflows `int` in its `internal/jwe`). iOS never
-  had a 32-bit target; Play requires the 64-bit ones anyway.
+- **No 32-bit arm:** FAPIgo didn't build where `int` is 32 bits
+  (`math.MaxUint32` overflowed `int` in its `internal/jwe`) until
+  v0.51.0, which fixed it. The AAR still leaves 32-bit arm out: Play
+  requires the 64-bit libraries, and a 32-bit one would only add size.
+  iOS never had a 32-bit target.
 - **One library:** the AAR's Java bindings are in
   `dev.idfoundry.oid4vcwallet.gomobile` (`-javapkg`), but gomobile's own
   runtime (`go.Seq`, `libgojni.so`) isn't renamed, so an app can hold
@@ -959,7 +961,6 @@ Thirteen tests pass on the emulator, against `testservices`.
 
 ### Open items
 
-- FAPIgo on 32-bit platforms.
 - The APEX store on golang/go#71258; drop `certdirs_android.go` once Go
   reads it.
 - On a device: StrongBox, the unlocked-device key, BiometricPrompt with a

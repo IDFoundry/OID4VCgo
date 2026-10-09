@@ -12,6 +12,13 @@ separate Go module (it needs `golang.org/x/mobile`).
 
 The API is described in [ABI.md](ABI.md).
 
+The libraries' documentation, for app developers, is published with
+each release:
+
+- **Swift:** [the OID4VCWallet documentation](https://idfoundry.github.io/OID4VCgo-wallet-swift/latest/documentation/oid4vcwallet/) — getting started,
+  an article for each task, and the API reference.
+- **Kotlin:** [the guides](https://github.com/IDFoundry/OID4VCgo-wallet-kotlin/tree/main/docs) and [the API reference](https://idfoundry.github.io/OID4VCgo-wallet-kotlin/latest/).
+
 ## What each platform supports
 
 | | Swift (iOS) | Kotlin (Android) |
@@ -156,10 +163,26 @@ library. It runs `android/package-kotlin-release.sh`, which:
    README with those libraries
 
 The workflow then commits the result there and creates the tagged
-release, carrying the AAR and the sources jar. It needs the
-`WALLET_KOTLIN_TOKEN` secret: a fine-grained token with Contents read and
-write on OID4VCgo-wallet-kotlin only. CI runs the same script on every
-change, without publishing.
+release, carrying the AAR, the sources jar, their `SHA256SUMS` and a
+build provenance attestation, and checks that the published files are
+the ones it built. It needs the `WALLET_KOTLIN_TOKEN` secret: a
+fine-grained token with Contents read and write on
+OID4VCgo-wallet-kotlin only, which only the publishing steps see. CI
+runs the same script on every change, without publishing.
+
+The library's API reference is built with Dokka
+(`./gradlew :OID4VCWallet:dokkaGenerate`, into
+`OID4VCWallet/build/dokka/html`), from its KDoc and
+`OID4VCWallet/Module.md`, its front page. The guides are Markdown in
+`android/docs/`, which the release copies into the package repository's
+`docs/`. `android/check-docs.sh` builds the reference, failing on any
+Dokka warning (an undocumented public declaration included), and
+compiles each guide's `kotlin` code blocks against the library; CI runs
+it. The release workflow publishes the reference to the package
+repository's `gh-pages` branch, under the version and `latest/`
+(`android/docs-site.sh` lays it out), and the README links the
+version's. GitHub Pages serves it once the package repository's
+settings (Pages) deploy from that branch.
 
 The library is compiled for Kotlin 2.2 (language and API version, and
 its standard library), so an app on AGP 9's own Kotlin can use it.
@@ -188,10 +211,30 @@ the Go module). It runs `ios/package-swift-release.sh`, which:
    the README, whose example is `ios/ReadmeExample.swift`: edit the
    README there, not in the package repository
 
+The package's documentation is a DocC catalog,
+`ios/OID4VCWallet/Sources/OID4VCWallet/OID4VCWallet.docc`, so it ships
+with the sources. `ios/check-docs.sh` builds it, failing on any DocC
+warning, and compiles each article's `swift` code blocks against the
+package; CI runs it. The release workflow then publishes the
+documentation to the package repository's `gh-pages` branch, under the
+version and `latest/` (`ios/docs-site.sh` lays it out), and the
+generated README links the version's. GitHub Pages serves it once the
+package repository's settings (Pages) deploy from that branch.
+
 The workflow then commits the result there and creates the tagged
-release. It needs the `WALLET_SWIFT_TOKEN` secret: a fine-grained token
-with Contents read and write on OID4VCgo-wallet-swift only. CI runs the
-same script on every change, without publishing.
+release, carrying the framework, its `SHA256SUMS` and a build
+provenance attestation, and checks that the published framework is the
+one it built. It needs the `WALLET_SWIFT_TOKEN` secret: a fine-grained
+token with Contents read and write on OID4VCgo-wallet-swift only, which
+only the publishing steps see. CI runs the same script on every change,
+without publishing.
+
+Both release workflows run only from `main`, in the `mobile-release`
+environment. In the repository's settings (Environments →
+mobile-release), give it required reviewers, limit its deployment
+branches to `main`, and keep `WALLET_SWIFT_TOKEN` and
+`WALLET_KOTLIN_TOKEN` as its secrets rather than the repository's, so a
+release waits for approval and no other workflow can read the tokens.
 
 ## Go tests
 

@@ -18,6 +18,8 @@ public struct ProximityTimeouts: Sendable {
     /// For the holder to decide, or the holder's answer to arrive.
     public var idle: Duration
 
+    /// Timeouts: by default 60 seconds to connect, 30 for the request, and 300
+    /// idle.
     public init(connect: Duration = .seconds(60), request: Duration = .seconds(30), idle: Duration = .seconds(300)) {
         self.connect = connect
         self.request = request
@@ -28,6 +30,7 @@ public struct ProximityTimeouts: Sendable {
 /// An in-person session failed over Bluetooth, rather than in the
 /// protocol (`WalletError`).
 public struct ProximityError: Error, Sendable, CustomStringConvertible {
+    /// Why a session failed.
     public enum Reason: Sendable {
         /// Bluetooth is off, or not allowed for this app.
         case bluetoothUnavailable
@@ -37,9 +40,12 @@ public struct ProximityError: Error, Sendable, CustomStringConvertible {
         case connectionLost
     }
 
+    /// Why the session failed.
     public let reason: Reason
+    /// Detail for logs.
     public let message: String
 
+    /// The message.
     public var description: String { message }
 
     /// A sentence fit to show the holder.
@@ -63,6 +69,7 @@ public struct ProximityError: Error, Sendable, CustomStringConvertible {
 
 /// Who sent a request, as the holder sees it.
 public struct ProximityReaderIdentity: Sendable {
+    /// How far the request's reader authentication goes.
     public enum Status: String, Sendable {
         /// Signed by a certificate that chains to `WalletConfiguration.mdocReaderRoots`.
         case trusted
@@ -74,6 +81,7 @@ public struct ProximityReaderIdentity: Sendable {
         case invalid
     }
 
+    /// Whether the request was signed, and by a reader the wallet recognizes.
     public let status: Status
     /// The reader certificate's subject common name: its verified name only
     /// when `status` is `.trusted`; "" when the request wasn't signed.
@@ -88,16 +96,25 @@ public struct ProximityReaderIdentity: Sendable {
 
     /// A certificate's fields.
     public struct CertificateDetails: Decodable, Sendable {
+        /// The certificate's subject.
         public let subject: String
+        /// The certificate's issuer.
         public let issuer: String
+        /// When it becomes valid.
         public let notBefore: Date
+        /// When it expires.
         public let notAfter: Date
         /// Hexadecimal.
         public let serial: String
+        /// Its subject alternative names.
         public let subjectAltNames: [String]
+        /// Its extended key usages.
         public let extendedKeyUsages: [String]
+        /// Its key usages.
         public let keyUsages: [String]
+        /// Whether it's a CA certificate.
         public let isCA: Bool
+        /// The algorithm its issuer signed it with.
         public let signatureAlgorithm: String
         /// The extensions' OIDs, "(critical)" after the critical ones'.
         public let extensions: [String]
@@ -163,6 +180,7 @@ final class StateBroadcast<State: Sendable>: @unchecked Sendable {
 /// point. One request per session. The app's Info.plist needs
 /// NSBluetoothAlwaysUsageDescription.
 public final class ProximityPresentation: @unchecked Sendable {
+    /// Where the session is: follow `states`.
     public enum State: Sendable {
         /// Showing the QR code, advertising, waiting for a reader.
         case waitingForReader
@@ -183,6 +201,7 @@ public final class ProximityPresentation: @unchecked Sendable {
         /// The session failed: a `ProximityError` or `WalletError`.
         case failed(any Error & Sendable)
 
+        /// Whether the session is over.
         public var isFinal: Bool {
             switch self {
             case .presented, .declined, .readerEnded, .cancelled, .failed: true
@@ -193,6 +212,7 @@ public final class ProximityPresentation: @unchecked Sendable {
 
     /// The reader's request.
     public struct Request: Sendable {
+        /// Who sent the request.
         public let reader: ProximityReaderIdentity
         /// The requested documents, in the request's order, each with the held mdocs of its doctype.
         public let documents: [MdocPresentation.Document]
@@ -449,12 +469,15 @@ public struct ProximityReaderConfiguration: Codable, Sendable {
     /// so holders see who is asking. The leaf should carry the mdoc reader
     /// authentication extended key usage (1.0.18013.5.1.6).
     public var readerKeyID: String?
+    /// The reader's PEM certificate chain, leaf first, for `readerKeyID`.
     public var readerChain: String?
     /// Tolerates an issuer's clock this far off the reader's, at most an hour.
     public var maxClockSkewSeconds: Int?
     /// Accepts only document signers with the mDL document signer extended key usage.
     public var requireMDLSignerEKU: Bool
 
+    /// A configuration accepting mdocs under `issuerRoots`; with `readerKeyID`
+    /// and `readerChain`, requests are signed.
     public init(issuerRoots: String, readerKeyID: String? = nil, readerChain: String? = nil,
                 maxClockSkewSeconds: Int? = nil, requireMDLSignerEKU: Bool = false) {
         self.issuerRoots = issuerRoots
@@ -487,6 +510,8 @@ public final class ProximityReader: @unchecked Sendable {
     private let handle: MobileProximityReader
     private let adapter: KeyStoreAdapter?
 
+    /// A reader configured by `configuration`; `keyStore` holds its key, when
+    /// it signs requests.
     public convenience init(configuration: ProximityReaderConfiguration, keyStore: (any KeyStore)? = nil) throws {
         try self.init(configuration: configuration, keys: keyStore.map(KeyStoreAdapter.init))
     }
@@ -536,6 +561,7 @@ struct ReaderEngagement: Decodable {
 
 /// One reader session: follow `states` to `.verified` or another final state.
 public final class ProximityReaderSession: @unchecked Sendable {
+    /// Where the session is: follow `states`.
     public enum State: Sendable {
         /// Looking for the holder's device, or waiting for it to connect.
         case connecting
@@ -550,6 +576,7 @@ public final class ProximityReaderSession: @unchecked Sendable {
         /// The session failed: a `ProximityError` or `WalletError`.
         case failed(any Error & Sendable)
 
+        /// Whether the session is over.
         public var isFinal: Bool {
             switch self {
             case .verified, .declined, .cancelled, .failed: true
@@ -569,7 +596,9 @@ public final class ProximityReaderSession: @unchecked Sendable {
     /// Whether requests carry reader authentication.
     public let signed: Bool
 
+    /// The current state.
     public var state: State { broadcast.value }
+    /// The current state, then each change.
     public var states: AsyncStream<State> { broadcast.stream() }
 
     init(_ handle: MobileProximityReaderSession, docType: String, elements: [String: [String]], timeouts: ProximityTimeouts,
@@ -654,6 +683,7 @@ public final class ProximityReaderSession: @unchecked Sendable {
 
 /// A verified mdoc, as a `ProximityReaderSession` received it.
 public struct VerifiedMdoc: Sendable {
+    /// The mdoc's document type.
     public let doctype: String
     /// The disclosed elements: namespace → identifier → value, byte
     /// strings as base64 and dates as their text.
@@ -664,7 +694,9 @@ public struct VerifiedMdoc: Sendable {
     public let issuer: String
     /// The common name of the IACA it chains to.
     public let trustAnchor: String
+    /// When the mdoc's signed data (its MSO) became valid.
     public let validFrom: Date
+    /// When it expires.
     public let validUntil: Date
     /// "signature" or "mac".
     public let deviceAuth: String
@@ -672,8 +704,12 @@ public struct VerifiedMdoc: Sendable {
     /// relying on the document.
     public let statusList: StatusListReference?
 
+    /// Where the mdoc's status is published: a Token Status List, and its index
+    /// in it.
     public struct StatusListReference: Sendable {
+        /// The status list's URL.
         public let uri: String
+        /// The mdoc's index in the list.
         public let index: Int
     }
 }

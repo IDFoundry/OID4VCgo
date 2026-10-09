@@ -2,10 +2,12 @@ module github.com/idfoundry/oid4vcgo/examples/passport-vdc
 
 go 1.26.6
 
+toolchain go1.26.9
+
 require (
 	github.com/fxamacker/cbor/v2 v2.9.4
 	github.com/gmrtd/gmrtd v1.3.3
-	github.com/idfoundry/fapigo v0.50.2-0.20261008011720-3377a3fb2418
+	github.com/idfoundry/fapigo v0.51.0
 	github.com/idfoundry/oid4vcgo v0.0.0-00010101000000-000000000000
 	github.com/mrjoshuak/go-jpeg2000 v1.5.12
 	golang.org/x/text v0.42.0

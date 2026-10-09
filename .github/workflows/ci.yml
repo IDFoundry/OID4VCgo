@@ -202,6 +202,14 @@ jobs:
         working-directory: mobile/ios/DemoWallet
         run: xcodebuild build -project DemoWallet.xcodeproj -scheme DemoWallet -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO -quiet
 
+      # The package's DocC documentation, failing on any DocC warning,
+      # with its articles' examples compiled against the package, and
+      # laid out for GitHub Pages as the release workflow publishes it.
+      - name: check the documentation
+        run: |
+          DOCC_OUTPUT="$RUNNER_TEMP/OID4VCWallet.doccarchive" mobile/ios/check-docs.sh
+          mobile/ios/docs-site.sh 0.0.0-ci "$RUNNER_TEMP/OID4VCWallet.doccarchive" "$RUNNER_TEMP/docs"
+
       # The package as wallet-swift-release.yml publishes it, built
       # against the zipped release framework.
       - name: lay out the published Swift package
@@ -285,6 +293,13 @@ jobs:
           if unzip -l "$RUNNER_TEMP/go.jar" | grep -q TestEnv; then
             echo "::error::the release library carries TestEnv"; exit 1
           fi
+
+      # The library's Dokka API reference, failing on any Dokka warning,
+      # and laid out for GitHub Pages as the release workflow publishes it.
+      - name: check the documentation
+        run: |
+          DOKKA_OUTPUT="$RUNNER_TEMP/dokka" mobile/android/check-docs.sh
+          mobile/android/docs-site.sh 0.0.0-ci "$RUNNER_TEMP/dokka" "$RUNNER_TEMP/docs"
 
       # The library as wallet-kotlin-release.yml publishes it, and an app
       # built on its AAR as the README says.

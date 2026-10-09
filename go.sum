@@ -1,6 +1,6 @@
 github.com/fxamacker/cbor/v2 v2.9.4 h1:xwjVlxEMR3S605oUlgBjKLTTeGFciYPGYCtF/35LKGo=
 github.com/fxamacker/cbor/v2 v2.9.4/go.mod h1:vM4b+DJCtHn+zz7h3FFp/hDAI9WNWCsZj23V5ytsSxQ=
-github.com/idfoundry/fapigo v0.50.2-0.20261008011720-3377a3fb2418 h1:1TMYtA//LgzPZd4zlBAr1G42u7GhO2uroCOGq8NnVwU=
-github.com/idfoundry/fapigo v0.50.2-0.20261008011720-3377a3fb2418/go.mod h1:MxjYEvx5fS3qa0ZAyemzox2RQhh9bTy0GFXehGyYw8o=
+github.com/idfoundry/fapigo v0.51.0 h1:fWW5Qs+oZBpMGzks2bY3tl5H/5m/Yj8AANRsgntCAdM=
+github.com/idfoundry/fapigo v0.51.0/go.mod h1:MxjYEvx5fS3qa0ZAyemzox2RQhh9bTy0GFXehGyYw8o=
 github.com/x448/float16 v0.8.4 h1:qLwI1I70+NjRFUR3zs1JPUCgaCXSh3SW62uAKT1mSBM=
 github.com/x448/float16 v0.8.4/go.mod h1:14CWIYCyZA/cWjXOioeEpHeN/83MdbZDRQHoFcYsOfg=
