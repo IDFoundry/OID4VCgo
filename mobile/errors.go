@@ -42,6 +42,8 @@ func classify(err error) error {
 		// A request's own timeout, or the Operation's: either way, the
 		// service didn't answer in time.
 		return newError(CodeNetwork, errors.New("the request timed out"))
+	case errors.Is(err, walletflow.ErrTLSPinMismatch):
+		return newError(CodeTLSPin, walletflow.ErrTLSPinMismatch)
 	case errors.As(err, &mobileErr):
 		// A KeyStore or other callback's error, inside walletflow's
 		// context.
@@ -69,6 +71,12 @@ func classify(err error) error {
 		return newError(CodeUntrustedVerifier, wallet.ErrUntrustedVerifier)
 	case errors.Is(err, walletflow.ErrNotFound):
 		return newError(CodeNotFound, err)
+	case errors.Is(err, walletflow.ErrProfileViolation):
+		return newError(CodeProfileViolation, err)
+	case errors.Is(err, walletflow.ErrClientAuthUnsupported):
+		return newError(CodeClientAuthUnsupported, err)
+	case errors.Is(err, walletflow.ErrProofUnsupported):
+		return newError(CodeProofUnsupported, err)
 	case errors.As(err, &protocol):
 		return refused(protocol.HTTPStatus, protocol.Code, "the issuer or authorization server")
 	case errors.As(err, &rejected):

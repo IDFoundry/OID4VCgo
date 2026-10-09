@@ -43,10 +43,12 @@ type VerifyParams struct {
 
 // Verified is a verified document.
 type Verified struct {
+	// DocType is the document's type, the one requested.
 	DocType string
 	// NameSpaces are the disclosed data elements, by namespace — each
 	// one requested, issuer signed and bound to this request.
-	NameSpaces   map[string]map[string]any
+	NameSpaces map[string]map[string]any
+	// ValidityInfo is the MSO's: when it was signed, and its validity.
 	ValidityInfo mdoc.ValidityInfo
 	// IssuerChain is the IssuerAuth x5chain IssuerKeys resolved.
 	IssuerChain [][]byte

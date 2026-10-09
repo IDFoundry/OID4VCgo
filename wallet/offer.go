@@ -65,5 +65,11 @@ func decodeCredentialOffer(raw []byte) (oid4vci.CredentialOffer, error) {
 	if err := offer.Validate(); err != nil {
 		return oid4vci.CredentialOffer{}, fmt.Errorf("wallet: resolve credential offer: %w", err)
 	}
+	if g := offer.Grants; g != nil && g.AuthorizationCode == nil && g.PreAuthorizedCode == nil {
+		// Empty, or only grant types this package doesn't know: as if
+		// absent (§4.1.1), so the Wallet determines the grant from the
+		// metadata.
+		offer.Grants = nil
+	}
 	return offer, nil
 }

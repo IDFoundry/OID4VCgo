@@ -6,6 +6,7 @@ import Security
 /// ID is its Keychain application tag (after `Options.tagPrefix`), and
 /// its label names its purpose.
 public final class KeychainKeyStore: KeyStore, @unchecked Sendable {
+    /// How the store makes and keeps keys.
     public struct Options: Sendable {
         /// Generate keys in the Secure Enclave. Off, keys are software
         /// keys — for development, and where there's no enclave.
@@ -31,6 +32,8 @@ public final class KeychainKeyStore: KeyStore, @unchecked Sendable {
         /// every key is in the default group.
         public var holderAccessGroup: String?
 
+        /// Options: by default, Secure Enclave keys kept in the Keychain, and
+        /// holder keys asking for user presence.
         public init(secureEnclave: Bool = true, persistent: Bool = true, holderUserPresence: Bool = true,
                     tagPrefix: String = "org.idfoundry.oid4vcgo.key.", holderAccessGroup: String? = nil) {
             self.secureEnclave = secureEnclave
@@ -41,10 +44,12 @@ public final class KeychainKeyStore: KeyStore, @unchecked Sendable {
         }
     }
 
+    /// How this store makes and keeps keys.
     public let options: Options
     private let lock = NSLock()
     private var ephemeral: [String: SecKey] = [:]
 
+    /// A store making and keeping keys as `options` say.
     public init(options: Options = Options()) {
         self.options = options
     }

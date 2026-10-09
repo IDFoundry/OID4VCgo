@@ -372,6 +372,28 @@ final class SessionTests: XCTestCase {
         XCTAssertFalse(used.linkable)
     }
 
+    /// tlsPins reach Go: a malformed one (an IP address, which a
+    /// handshake doesn't name) is refused, and a pin for another host
+    /// leaves the services' requests as they were.
+    func testTLSPins() async throws {
+        let env = try TestEnv()
+        defer { env.close() }
+        let pin = Data(repeating: 0, count: 32).base64EncodedString()
+        var configuration = try env.configuration
+        configuration.tlsPins = ["127.0.0.1": [pin]]
+        do {
+            _ = try Wallet(configuration: configuration, keys: KeyStoreAdapter(keyStore()),
+                           credentials: CredentialStoreAdapter(InMemoryCredentialStore()), provider: env.env.provider())
+            XCTFail("took a pin for an IP address")
+        } catch let e as WalletError {
+            XCTAssertEqual(e.code, .invalidInput)
+        }
+        configuration.tlsPins = ["issuer.example": [pin]]
+        let w = try Wallet(configuration: configuration, keys: KeyStoreAdapter(keyStore()),
+                           credentials: CredentialStoreAdapter(InMemoryCredentialStore()), provider: env.env.provider())
+        _ = try await Self.receive(env, w)
+    }
+
     func testAbandonDeferred() async throws {
         let env = try TestEnv(deferIssuance: true)
         defer { env.close() }

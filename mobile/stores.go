@@ -408,6 +408,9 @@ type deferredRecord struct {
 	DeferredAt      time.Time `json:"deferred_at"`
 	GrantID         string    `json:"grant_id,omitempty"`
 	Replaces        string    `json:"replaces,omitempty"`
+	// TokenType is "Bearer" for a Bearer access token, with no
+	// dpop_key_id; absent for a DPoP-bound one.
+	TokenType string `json:"token_type,omitempty"`
 }
 
 // deferredStoreID is the CredentialStore ID a pending deferred
@@ -424,14 +427,16 @@ func (s deferredStore) PutDeferred(_ context.Context, p walletflow.PendingDeferr
 		Kind: deferredKind, ID: p.ID, CredentialIssuer: p.CredentialIssuer, ConfigurationID: p.ConfigurationID,
 		TransactionID: p.TransactionID, AccessToken: p.AccessToken.Reveal(),
 		DPoPKeyID: p.DPoPKeyID, HolderKeyIDs: p.HolderKeyIDs, IntervalSeconds: p.Interval.Seconds(), DeferredAt: p.DeferredAt,
-		GrantID: p.GrantID, Replaces: p.Replaces,
+		GrantID: p.GrantID, Replaces: p.Replaces, TokenType: p.TokenType,
 	}
 	if !p.AccessTokenExpiresAt.IsZero() {
 		r.AccessTokenExpiresAt = &p.AccessTokenExpiresAt
 	}
 	// The access token is kept deliberately, to poll after a relaunch:
-	// it's bound to a DPoP key that never leaves the KeyStore, and the
-	// record is under the platform's data protection.
+	// it's bound to a DPoP key that never leaves the KeyStore — or, a
+	// Bearer one, isn't, which is why the record is under the platform's
+	// data protection (OpenID4VCI 1.0 §13.10: "stored in a secure
+	// manner").
 	raw, err := json.Marshal(r) //nolint:gosec // G117: see above
 	if err != nil {
 		return newError(CodeInternal, err)
@@ -460,7 +465,7 @@ func (s deferredStore) ListDeferred(context.Context) ([]walletflow.PendingDeferr
 			ID: r.ID, CredentialIssuer: r.CredentialIssuer, ConfigurationID: r.ConfigurationID, TransactionID: r.TransactionID,
 			AccessToken: fapi.NewSecret(r.AccessToken), DPoPKeyID: r.DPoPKeyID, HolderKeyIDs: r.HolderKeyIDs,
 			Interval: time.Duration(r.IntervalSeconds * float64(time.Second)), DeferredAt: r.DeferredAt,
-			GrantID: r.GrantID, Replaces: r.Replaces,
+			GrantID: r.GrantID, Replaces: r.Replaces, TokenType: r.TokenType,
 		}
 		if r.AccessTokenExpiresAt != nil {
 			p.AccessTokenExpiresAt = *r.AccessTokenExpiresAt

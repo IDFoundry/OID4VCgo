@@ -6,9 +6,13 @@
 // parses the request and answers it.
 //
 // It is not OpenID4VP: the request is an ISO/IEC 18013-5 DeviceRequest,
-// and the response an HPKE-encrypted DeviceResponse. For OpenID4VP over
-// the Digital Credentials API (OpenID4VP Appendix A), see package
-// verifier's BuildDCAPIAuthorizationRequest instead.
+// and the response an HPKE-encrypted DeviceResponse. A Digital
+// Credentials API request's protocol says which it is: Protocol
+// ("org-iso-mdoc") is this package's, and "openid4vp-v1-…" OpenID4VP
+// (OpenID4VP Appendix A): package verifier's BuildDCAPIAuthorizationRequest
+// for a Verifier, and wallet.ParseDCAPIRequestData or
+// walletflow.StartDCAPIPresentation for a wallet. A wallet built on
+// walletflow answers this protocol with walletflow.StartMdocPresentation.
 //
 // A Verifier's server calls BuildRequest for the page's origin, the
 // requested document type and data elements, and the reader keys that
@@ -35,13 +39,16 @@
 // A wallet — an iOS document provider extension, given the request by
 // ISO18013MobileDocumentRequestContext — calls ParseRequest with the
 // request data and the requesting page's origin, which the platform
-// reports. VerifyReaderTrust checks who signed the request against the
+// reports: a web origin, scheme://host[:port] with no path or trailing
+// slash (an iOS URL's absoluteString ends in "/": strip it), which
+// ParseRequest refuses otherwise. VerifyReaderTrust checks who signed the request against the
 // reader roots the wallet trusts — and, with a LeafPolicy such as
 // RequireReaderAuthenticationEKU, that the certificate is one issued
 // for reader authentication — and returns the reader's certificate to
 // show the holder; a request no trusted reader signed still comes from
 // the origin the platform reports, which is what the holder sees then,
-// unless the wallet refuses such requests. Respond answers one requested document with the held mdoc,
+// unless the wallet refuses such requests. Respond answers one
+// requested document with the held mdoc,
 // disclosing only the elements the holder consented to — each of which
 // must have been requested — signed by the mdoc's device key over the
 // session transcript, and encrypted to the request's key. It returns

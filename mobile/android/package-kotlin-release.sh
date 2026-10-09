@@ -97,13 +97,18 @@ fun abi(): Int = OID4VC.abiVersion
 EOF
 cp local.properties "$APP/" 2>/dev/null || true
 (cd "$APP" && ./gradlew -q --console=plain :app:assembleDebug)
-unzip -l "$APP/app/build/outputs/apk/debug/app-debug.apk" | grep -q 'lib/arm64-v8a/libgojni.so' || { echo "the app has no Go library" >&2; exit 1; }
+for abi in arm64-v8a armeabi-v7a x86_64 x86; do
+	unzip -l "$APP/app/build/outputs/apk/debug/app-debug.apk" | grep -q "lib/$abi/libgojni.so" || { echo "the app has no Go library for $abi" >&2; exit 1; }
+done
 
 cp "$LIBRARY" "$SOURCES" "$ASSETS/"
 
 rm -rf "$PKG/sources"
 mkdir -p "$PKG/sources"
 cp -R OID4VCWallet/src/main/kotlin OID4VCWallet/src/main/AndroidManifest.xml OID4VCWallet/consumer-rules.pro "$PKG/sources/"
+# The guides (docs/*.md), which GitHub renders there.
+rm -rf "$PKG/docs"
+cp -R docs "$PKG/docs"
 
 cat > "$PKG/README.md" <<EOF
 # OID4VCgo-wallet-kotlin
@@ -128,7 +133,10 @@ library. Your app owns the keys, the storage and the UI:
 - **Storage:** \`FileCredentialStore\` encrypts each record under a key
   that works only while the device is unlocked, out of backups.
 - **Wallet Provider:** you implement \`WalletProvider\`, which attests the
-  wallet.
+  wallet, for issuers that ask for attestations, as HAIP issuers do; pass
+  \`null\` for issuers that don't. Issuance follows each issuer's
+  metadata, or with \`issuanceProfile = IssuanceProfile.HAIP\` refuses
+  issuers outside HAIP.
 
 ## Install
 
@@ -155,12 +163,19 @@ library's manifest adds to your app's: request
 a session.
 
 The AAR goes in an app module: an Android library can't depend on a
-local AAR. It holds the Go library for arm64 and x86_64 (the emulator),
-and an app can hold only one gomobile library. It's compiled for Kotlin
-2.2 and later.
+local AAR. It holds the Go library for every Android ABI (arm64-v8a,
+armeabi-v7a, x86_64, x86; about 4 MB each, compressed), and an app can
+hold only one gomobile library. An app shipping 64-bit only filters the
+32-bit ones out: \`ndk { abiFilters += listOf("arm64-v8a", "x86_64") }\`.
+It's compiled for Kotlin 2.2 and later.
 
 ## Documentation
 
+- [Guides](docs/GettingStarted.md): getting started, receiving
+  credentials, presenting from a link, to Chrome and in person,
+  handling errors, and going to production.
+- [The API reference](https://$(echo "${REPO%%/*}" | tr '[:upper:]' '[:lower:]').github.io/${REPO#*/}/$VERSION/), for this
+  release.
 - [The Android library's sources](https://github.com/IDFoundry/OID4VCgo/tree/main/mobile/android/OID4VCWallet),
   mirrored in \`sources/\`.
 - [OID4VCgo's \`mobile/\`](https://github.com/IDFoundry/OID4VCgo/tree/main/mobile):
