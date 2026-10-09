@@ -26,6 +26,7 @@ import dev.idfoundry.oid4vcwallet.ProximityException
 import dev.idfoundry.oid4vcwallet.ProximityPresentation
 import dev.idfoundry.oid4vcwallet.ProximityReader
 import dev.idfoundry.oid4vcwallet.ProximityReaderConfiguration
+import dev.idfoundry.oid4vcwallet.ProximityBLEMode
 import dev.idfoundry.oid4vcwallet.ProximityReaderSession
 import dev.idfoundry.oid4vcwallet.OID4VC
 import dev.idfoundry.oid4vcwallet.Offer
@@ -83,11 +84,28 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
     var copyPolicy by mutableStateOf(WalletConfiguration.CopyPolicy.PER_PRESENTATION)
         private set
 
+    /** The BLE modes presenting in person offers, as chosen in the app's settings: both by default. */
+    var bleModes by mutableStateOf(ProximityBLEMode.entries.toSet())
+        private set
+
     private var wallet: Wallet? = null
     private var keys: AndroidKeystoreKeyStore? = null
     private var config: DemoConfiguration? = null
     private var issuance: Issuance? = null
     private val prefs = application.getSharedPreferences("demo", Context.MODE_PRIVATE)
+
+    init {
+        prefs.getStringSet(BLE_MODES, null)?.let { saved ->
+            ProximityBLEMode.entries.filter { it.name in saved }.toSet().takeIf { it.isNotEmpty() }?.let { bleModes = it }
+        }
+    }
+
+    /** Chooses the BLE modes presenting in person offers, from the next session. */
+    fun chooseBLEModes(modes: Set<ProximityBLEMode>) {
+        if (modes.isEmpty()) return
+        bleModes = modes
+        prefs.edit().putStringSet(BLE_MODES, modes.map { it.name }.toSet()).commit()
+    }
 
     /** The activity holder keys ask the holder in. */
     private var activity = WeakReference<Activity>(null)
@@ -117,7 +135,10 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
         keys = AndroidKeystoreKeyStore(authenticator = BiometricPromptAuthenticator({ activity.get() }))
         this.config = config
         val reset = intent?.getBooleanExtra("reset", false) == true
-        if (reset) prefs.edit().remove(COPY_POLICY).apply()
+        if (reset) {
+            prefs.edit().remove(COPY_POLICY).remove(BLE_MODES).apply()
+            bleModes = ProximityBLEMode.entries.toSet()
+        }
         copyPolicy = prefs.getString(COPY_POLICY, null)?.let { saved ->
             WalletConfiguration.CopyPolicy.entries.firstOrNull { it.name == saved }
         } ?: config.wallet.copyPolicy
@@ -788,7 +809,7 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
         if (busy || inPerson != null) return
         notice = null
         try {
-            val p = wallet.startProximityPresentation(getApplication())
+            val p = wallet.startProximityPresentation(getApplication(), modes = bleModes)
             inPerson = p
             // For driving two emulators: the QR code's text, an ephemeral
             // key and a service UUID, in debug builds.
@@ -890,6 +911,7 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
 
     companion object {
         private const val COPY_POLICY = "demo-copy-policy"
+        private const val BLE_MODES = "demo-ble-modes"
 
         /** Credential Offer links' scheme, and presentation requests'. */
         const val OFFER_SCHEME = "openid-credential-offer"

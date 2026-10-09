@@ -61,6 +61,7 @@ import com.google.zxing.BarcodeFormat
 import com.google.zxing.EncodeHintType
 import com.google.zxing.qrcode.QRCodeWriter
 import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel
+import dev.idfoundry.oid4vcwallet.ProximityBLEMode
 import dev.idfoundry.oid4vcwallet.MdocPresentation
 import dev.idfoundry.oid4vcwallet.ProximityException
 import dev.idfoundry.oid4vcwallet.ProximityPermissions
@@ -391,13 +392,13 @@ fun ReaderScreen(model: WalletModel, bottomBar: @Composable () -> Unit, onLeave:
             }
             state == null || state == ProximityReaderSession.State.Connecting -> Waiting("Connecting to the holder's phone…")
             state == ProximityReaderSession.State.WaitingForResponse -> Waiting("Waiting for the holder to agree…")
-            else -> ReaderOutcome(state, model.readingPreset, onDone = { model.closeReading(); preset = null })
+            else -> ReaderOutcome(state, model.readingPreset, model.reading?.mode, onDone = { model.closeReading(); preset = null })
         }
     }
 }
 
 @Composable
-private fun ReaderOutcome(state: ProximityReaderSession.State, preset: ReaderPreset?, onDone: () -> Unit) {
+private fun ReaderOutcome(state: ProximityReaderSession.State, preset: ReaderPreset?, mode: ProximityBLEMode?, onDone: () -> Unit) {
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
         when (state) {
             is ProximityReaderSession.State.Verified -> {
@@ -418,6 +419,18 @@ private fun ReaderOutcome(state: ProximityReaderSession.State, preset: ReaderPre
                 }
                 item { HorizontalDivider(Modifier.padding(vertical = 8.dp)) }
                 item { Labeled("Document", v.doctype) }
+                mode?.let { m ->
+                    item {
+                        Labeled(
+                            "Bluetooth",
+                            when (m) {
+                                ProximityBLEMode.CENTRAL_CLIENT -> "Central client mode: the holder connected to this reader"
+                                ProximityBLEMode.PERIPHERAL_SERVER -> "Peripheral server mode: this reader connected to the holder"
+                            },
+                            Modifier.testTag("reader-ble-mode"),
+                        )
+                    }
+                }
                 item { Labeled("Issued by", "${v.issuer} (trusted via ${v.trustAnchor})") }
                 item { Labeled("Valid", "${dateFormat.format(v.validFrom)} to ${dateFormat.format(v.validUntil)}") }
                 item { Labeled("Holder's device", if (v.deviceAuth == "mac") "authenticated (MAC)" else "authenticated (signature)") }
@@ -472,7 +485,7 @@ fun PresentScreen(model: WalletModel, bottomBar: @Composable () -> Unit, onLeave
 @Composable
 fun rememberShareInPerson(model: WalletModel): () -> Unit =
     rememberBluetoothPermissions(
-        ProximityPermissions.holder,
+        ProximityPermissions.holder(model.bleModes),
         then = { model.shareInPerson() },
         denied = { model.notice = "Allow nearby devices to share in person." },
     )

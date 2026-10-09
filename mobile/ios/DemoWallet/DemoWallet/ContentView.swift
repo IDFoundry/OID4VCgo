@@ -89,6 +89,12 @@ struct ContentView: View {
                             Text("Same copy for the same verifier").tag(WalletConfiguration.CopyPolicy.perVerifier)
                         }
                         .accessibilityIdentifier("copy-policy")
+                        Picker("Presenting in person", selection: Binding(get: { model.bleModes }, set: { model.setBLEModes($0) })) {
+                            Text("Both Bluetooth modes (the reader picks)").tag(Set(ProximityBLEMode.allCases))
+                            Text("Advertise only (peripheral server)").tag(Set([ProximityBLEMode.peripheralServer]))
+                            Text("Scan for the reader only (central client)").tag(Set([ProximityBLEMode.centralClient]))
+                        }
+                        .accessibilityIdentifier("ble-modes")
                     } label: {
                         Label("Settings", systemImage: "gearshape")
                     }

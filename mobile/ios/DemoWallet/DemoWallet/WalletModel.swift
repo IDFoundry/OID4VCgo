@@ -41,6 +41,19 @@ final class WalletModel {
     private(set) var copyPolicy: WalletConfiguration.CopyPolicy = .perPresentation
     private static let copyPolicyKey = SharedWallet.copyPolicyKey
 
+    /// The BLE modes presenting in person offers, as chosen in the app's
+    /// settings: both by default.
+    private(set) var bleModes: Set<ProximityBLEMode> = Set(ProximityBLEMode.allCases)
+    private static let bleModesKey = "demo-ble-modes"
+
+    /// Chooses the BLE modes presenting in person offers, from the next
+    /// session.
+    func setBLEModes(_ modes: Set<ProximityBLEMode>) {
+        guard !modes.isEmpty else { return }
+        bleModes = modes
+        SharedWallet.defaults.set(modes.map(\.rawValue).sorted(), forKey: Self.bleModesKey)
+    }
+
     /// Not configured: there's no wallet to make.
     private struct NotConfigured: Error {}
 
@@ -93,7 +106,10 @@ final class WalletModel {
             // copy policy too.
             if ProcessInfo.processInfo.environment["OID4VC_DEMO_RESET"] == "1" {
                 SharedWallet.defaults.removeObject(forKey: Self.copyPolicyKey)
+                SharedWallet.defaults.removeObject(forKey: Self.bleModesKey)
             }
+            let savedModes = Set((SharedWallet.defaults.stringArray(forKey: Self.bleModesKey) ?? []).compactMap(ProximityBLEMode.init(rawValue:)))
+            bleModes = savedModes.isEmpty ? Set(ProximityBLEMode.allCases) : savedModes
             if let saved = SharedWallet.defaults.string(forKey: Self.copyPolicyKey),
                let policy = WalletConfiguration.CopyPolicy(rawValue: saved) {
                 copyPolicy = policy
