@@ -174,17 +174,32 @@ func WriteConfig(cfg Config) error {
 	return nil
 }
 
-// RestartContainer rebuilds and restarts the conformance-verifier
-// container so it picks up a freshly-written ConfigOutPath.
+// RestartContainer rebuilds the conformance-verifier container and
+// restarts it so it picks up a freshly-written ConfigOutPath, which it
+// bind-mounts. It keeps the container where the image is unchanged, as
+// between one run's phases, rather than recreating it: a new container
+// can come up on a new address on the suite's network, and the suite
+// caches the old one for its conformance-verifier name for a while, so
+// the next module's first request from the suite never reached the
+// verifier (the mdoc phase's happy-flow, run straight after the sd_jwt
+// phase's, then never got an upload placeholder).
 func RestartContainer() error {
 	dockerPath, err := exec.LookPath("docker")
 	if err != nil {
 		return fmt.Errorf("find docker: %w", err)
 	}
-	cmd := exec.Command(dockerPath, "compose", "-f", DockerComposeFile, "up", "-d", "--build", "--force-recreate") //nolint:gosec // dockerPath comes from exec.LookPath, args are fixed literals
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	for _, args := range [][]string{
+		{"compose", "-f", DockerComposeFile, "up", "-d", "--build"},
+		{"compose", "-f", DockerComposeFile, "restart"},
+	} {
+		cmd := exec.Command(dockerPath, args...) //nolint:gosec // dockerPath comes from exec.LookPath, args are fixed literals
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("docker %s: %w", strings.Join(args[3:], " "), err)
+		}
+	}
+	return nil
 }
 
 // WaitReady polls verifierBase's own /result/<probe> route (any
