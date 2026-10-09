@@ -1,7 +1,5 @@
 package mobile
 
-import "os"
-
 // Android keeps its CA certificates in the system directory, which
 // Android 14 stopped updating, and from Android 14 in the updatable
 // Conscrypt APEX. Go itself reads only the system directory there
@@ -20,9 +18,4 @@ func androidCertDir(exists func(string) bool) string {
 		return androidAPEXCertDir
 	}
 	return androidSystemCertDir
-}
-
-func dirExists(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && info.IsDir()
 }
