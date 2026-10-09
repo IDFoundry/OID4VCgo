@@ -772,9 +772,10 @@ on an emulator, in CI too (`mobile-android`).
   v0.51.0, which fixed it; armeabi-v7a and x86 came then. Play requires
   the 64-bit libraries, but takes 32-bit ones beside them: they serve
   devices that run only 32-bit apps, such as low-end phones with a
-  32-bit userland on a 64-bit SoC. Each device downloads only its own
-  ABI's from an App Bundle, so they cost a 64-bit device nothing; an
-  app shipping 64-bit only filters them out
+  32-bit userland on a 64-bit SoC. From an App Bundle each device
+  downloads only its own ABI's, so they cost a 64-bit device nothing;
+  a universal APK carries all four (about 16 MB compressed rather than
+  8 MB). An app shipping 64-bit only filters them out
   (`ndk { abiFilters += listOf("arm64-v8a", "x86_64") }`). CI
   runs the Go tests at `GOARCH=386` and the instrumented tests on a
   32-bit x86 emulator (`mobile-android-api26`). iOS never had a 32-bit
