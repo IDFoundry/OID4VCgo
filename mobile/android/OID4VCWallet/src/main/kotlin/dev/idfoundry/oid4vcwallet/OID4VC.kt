@@ -22,25 +22,50 @@ import kotlinx.serialization.json.Json
  * succeed.
  */
 public class WalletException internal constructor(
+    /** What kind of failure this is: stable across releases, so an app can act on it. */
     public val code: Code,
+    /**
+     * The remote party's OAuth error code, such as `invalid_grant` (a wrong PIN) or
+     * `access_denied`, when it gave one.
+     */
     public val protocolError: String?,
     message: String,
 ) : Exception(message) {
-    /** An error code, as the Go side names it. */
+    /**
+     * An error code, as the Go side names it.
+     *
+     * @property rawValue The code as the Go side names it, such as `network`.
+     */
     @JvmInline
     public value class Code(public val rawValue: String) {
+        /** The code as the Go side names it. */
         override fun toString(): String = rawValue
 
+        /** The codes. */
         public companion object {
+            /** An argument, a link or the configuration is malformed. */
             public val invalidInput: Code = Code(Mobile.CodeInvalidInput)
+            /**
+             * A key store, credential store or Wallet Provider call failed; its message follows.
+             */
             public val platform: Code = Code(Mobile.CodePlatform)
+            /** A request couldn't be made, got no answer, or timed out. Retryable. */
             public val network: Code = Code(Mobile.CodeNetwork)
+            /** The service answered with HTTP 5xx or 429. Retryable later. */
             public val unavailable: Code = Code(Mobile.CodeUnavailable)
+            /** The call was cancelled. */
             public val cancelled: Code = Code(Mobile.CodeCancelled)
+            /**
+             * No key, credential, deferred credential or authorization in progress with that ID.
+             */
             public val notFound: Code = Code(Mobile.CodeNotFound)
+            /** A session method was called out of turn, or after the session ended. */
             public val wrongStep: Code = Code(Mobile.CodeWrongStep)
+            /** The Authorization Server refused the authorization: the holder declined, say. */
             public val authorizationDenied: Code = Code(Mobile.CodeAuthorizationDenied)
+            /** The issuer refused a deferred credential. */
             public val credentialDenied: Code = Code(Mobile.CodeCredentialDenied)
+            /** Nothing held answers the Verifier's request. */
             public val noMatchingCredential: Code = Code(Mobile.CodeNoMatchingCredential)
 
             /**
@@ -69,13 +94,46 @@ public class WalletException internal constructor(
              * doesn't chain to `verifierRoots`: it's refused unread.
              */
             public val untrustedVerifier: Code = Code(Mobile.CodeUntrustedVerifier)
+            /**
+             * A pinned host's certificate matched none of its `tlsPins`: an
+             * interception, or a server whose keys changed beyond its pins.
+             * Nothing was sent to it.
+             */
+            public val tlsPin: Code = Code(Mobile.CodeTLSPin)
+            /**
+             * Under the `haip` issuance profile, the issuer doesn't follow
+             * HAIP 1.0: it's refused.
+             */
+            public val profileViolation: Code = Code(Mobile.CodeProfileViolation)
+            /**
+             * The offer's Authorization Server takes no client
+             * authentication the wallet can give: a Wallet Attestation
+             * needs a `WalletProvider` and a `clientId`.
+             */
+            public val clientAuthUnsupported: Code = Code(Mobile.CodeClientAuthUnsupported)
+            /**
+             * The wallet can't hold an offered credential — it's bound to
+             * no key, or by a method other than `jwk` or `cose_key` — or
+             * the issuer takes no proof it can give: a key attestation
+             * needs a `WalletProvider`.
+             */
+            public val proofUnsupported: Code = Code(Mobile.CodeProofUnsupported)
+            /**
+             * An issuer, Authorization Server or Verifier answered with an
+             * error, or with something the wallet refuses:
+             * [WalletException.protocolError] carries its OAuth error code,
+             * when it gave one.
+             */
             public val protocol: Code = Code(Mobile.CodeProtocol)
+            /** A bug. */
             public val internal: Code = Code(Mobile.CodeInternal)
         }
     }
 
+    /** Detail for logs: it never carries personal data, a remote party's own description, or a URL's path or query. */
     override val message: String get() = super.message ?: ""
 
+    /** The code, the remote party's error code if any, and the message, for logs. */
     override fun toString(): String =
         protocolError?.let { "[${code.rawValue}:$it] $message" } ?: "[${code.rawValue}] $message"
 
@@ -106,6 +164,8 @@ public class WalletException internal constructor(
             code == Code.reissueRequired -> "This credential can't be refreshed. Receive it again from the issuer."
             code == Code.deliveryUnknown -> "Your response may not have reached the verifier. Check with them before sharing again."
             code == Code.untrustedVerifier -> "This verifier isn't one your wallet trusts, so its request wasn't opened."
+            code == Code.profileViolation || code == Code.clientAuthUnsupported || code == Code.proofUnsupported ->
+                "This wallet can't receive credentials from this issuer."
             code == Code.protocol && protocolError == "invalid_grant" -> "That code or PIN wasn't accepted."
             code == Code.protocol -> "The service refused the request."
             code == Code.platform -> "The wallet couldn't use its keys or storage."
@@ -140,8 +200,11 @@ public class WalletException internal constructor(
 /** An OpenID4VP request link's parts. */
 @Serializable
 public data class RequestLink(
+    /** The Verifier's client ID. */
     @SerialName("client_id") val clientID: String,
+    /** Where the request object is fetched from. */
     @SerialName("request_uri") val requestURI: String,
+    /** How to fetch it: `post` when the Verifier asks for POST; null means GET. */
     @SerialName("request_uri_method") val requestURIMethod: String? = null,
 )
 
@@ -168,6 +231,10 @@ public object OID4VC {
      */
     public val isTestBuild: Boolean = Mobile.isTestBuild()
 
+    /**
+     * Parses an OpenID4VP request link (`openid4vp://…`) into its parts, without fetching
+     * anything. [Wallet.startPresentation] does this itself.
+     */
     public suspend fun parseRequestLink(link: String): RequestLink =
         decode(offMain { Mobile.parseRequestLink(link) })
 

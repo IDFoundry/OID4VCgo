@@ -3,6 +3,7 @@ package walletflow
 import (
 	"context"
 	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
 	"errors"
 	"fmt"
@@ -24,7 +25,10 @@ type Config struct {
 	// ClientID and RedirectURI are the wallet's registration with
 	// Authorization Servers: the client_id its Wallet Attestations
 	// name, and where the authorization code grant redirects back to.
-	// REQUIRED for StartIssuance.
+	// ClientID is REQUIRED to authenticate with a Wallet Attestation,
+	// and RedirectURI for the authorization code grant; a wallet
+	// receiving credentials only from pre-authorized codes redeemed
+	// with no client authentication needs neither.
 	ClientID    string
 	RedirectURI string
 
@@ -32,6 +36,11 @@ type Config struct {
 	// credential must be signed by a certificate chaining to one of
 	// them, or it's refused. REQUIRED for StartIssuance.
 	IssuerRoots *x509.CertPool
+
+	// IssuanceProfile is the profile issuance follows. The zero value,
+	// ProfileOpenID4VCI, follows the issuer's and Authorization Server's
+	// metadata; ProfileHAIP also refuses issuers outside HAIP 1.0.
+	IssuanceProfile IssuanceProfile
 
 	// VerifierTrust decides which Verifiers the wallet answers
 	// (OpenID4VP 1.0 §5.9.3). REQUIRED for StartPresentation, and for a
@@ -123,6 +132,13 @@ type Config struct {
 	//     RequestRefresh), Keys declaring durable custody, Random
 	//     crypto/rand — and fapigo/client's own production checks.
 	Development bool
+
+	// TLSPins, if set, pins hosts' certificates (see TLSPins) on the
+	// HTTP client New builds when Dependencies.HTTP is nil, in
+	// Development too. With Dependencies.HTTP set, New refuses them:
+	// set TLSPins.VerifyConnection on that client's TLS configuration
+	// instead.
+	TLSPins TLSPins
 }
 
 // Dependencies are what the app supplies.
@@ -135,7 +151,14 @@ type Dependencies struct {
 	// presence to present; that's the KeyStore's to provide.
 	Keys        KeyStore
 	Credentials CredentialStore // REQUIRED
-	Provider    WalletProvider  // REQUIRED for StartIssuance
+	// Provider attests the wallet (Wallet Attestations) and its keys
+	// (Key Attestations), for issuers that require them: HAIP 1.0's,
+	// and any whose Authorization Server takes only a Wallet Attestation
+	// or that sets key_attestations_required. nil means the wallet gives
+	// neither, and receives credentials only from issuers that need
+	// neither (OpenID4VCI 1.0 allows both to be left out). REQUIRED
+	// under ProfileHAIP.
+	Provider WalletProvider
 	// Deferred keeps pending deferred credentials, so they can be polled
 	// after a restart. nil means a MemoryDeferredStore.
 	Deferred DeferredStore
@@ -222,12 +245,17 @@ func New(cfg Config, deps Dependencies) (*Wallet, error) {
 	if cfg.RequireTrustedMdocReader && cfg.MdocReaderRoots == nil {
 		return nil, errors.New("walletflow: Config.RequireTrustedMdocReader needs MdocReaderRoots")
 	}
+	if err := cfg.TLSPins.Validate(); err != nil {
+		return nil, err
+	}
 	if deps.HTTP == nil {
-		client, err := defaultHTTPClient(cfg.Development)
+		client, err := defaultHTTPClient(cfg.Development, cfg.TLSPins)
 		if err != nil {
 			return nil, err
 		}
 		deps.HTTP = client
+	} else if len(cfg.TLSPins) > 0 {
+		return nil, errors.New("walletflow: Config.TLSPins applies to the wallet's own HTTP client, not Dependencies.HTTP: set TLSPins.VerifyConnection on that client's TLS configuration instead")
 	}
 	if deps.Clock == nil {
 		deps.Clock = time.Now
@@ -321,15 +349,15 @@ func (w *Wallet) deleteCredential(ctx context.Context, id string) (StoredCredent
 	return c, nil
 }
 
-// checkIssuance reports what StartIssuance needs that w lacks.
+// checkIssuance reports what StartIssuance needs that w lacks, whatever
+// the offer: what the grant an offer has needs is checked once it's
+// known (checkAuthorizationCode, chooseClientAuth).
 func (w *Wallet) checkIssuance() error {
 	switch {
-	case w.cfg.ClientID == "" || w.cfg.RedirectURI == "":
-		return errors.New("walletflow: Config.ClientID and Config.RedirectURI are required to receive credentials")
 	case w.cfg.IssuerRoots == nil:
 		return errors.New("walletflow: Config.IssuerRoots is required to receive credentials")
-	case w.deps.Provider == nil:
-		return errors.New("walletflow: Dependencies.Provider is required to receive credentials")
+	case w.cfg.IssuanceProfile == ProfileHAIP && (w.deps.Provider == nil || w.cfg.ClientID == ""):
+		return errors.New("walletflow: Dependencies.Provider and Config.ClientID are required to receive credentials under ProfileHAIP")
 	}
 	if w.cfg.Development {
 		return nil
@@ -337,14 +365,26 @@ func (w *Wallet) checkIssuance() error {
 	// fapigo/client's production assurance, checked here first to say
 	// what to change.
 	switch {
-	case !w.deps.Authorizations.Durable():
-		return errors.New("walletflow: receiving credentials in production needs a Durable Dependencies.Authorizations, so an authorization survives the app being suspended")
 	case w.cfg.RequestRefresh && !w.deps.Grants.Durable():
 		return errors.New("walletflow: refreshing credentials in production needs a Durable Dependencies.Grants, so a refresh token survives a restart")
 	case !durableKeys(w.deps.Keys):
 		return errors.New("walletflow: receiving credentials in production needs Dependencies.Keys to declare durable custody (keys.KeyCustodyAssurance)")
 	case w.deps.Random != rand.Reader:
 		return errors.New("walletflow: receiving credentials in production needs Dependencies.Random to be nil or crypto/rand.Reader")
+	}
+	return nil
+}
+
+// checkAuthorizationCode reports what the authorization code grant needs
+// that w lacks, beyond checkIssuance: a redirect URI, and in production
+// a Durable Authorizations store, so an authorization survives the app
+// being suspended.
+func (w *Wallet) checkAuthorizationCode() error {
+	switch {
+	case w.cfg.RedirectURI == "":
+		return errors.New("walletflow: Config.RedirectURI is required to receive credentials with the authorization code grant")
+	case !w.cfg.Development && !w.deps.Authorizations.Durable():
+		return errors.New("walletflow: receiving credentials in production needs a Durable Dependencies.Authorizations, so an authorization survives the app being suspended")
 	}
 	return nil
 }
@@ -360,12 +400,21 @@ func durableKeys(ks KeyStore) bool {
 // once and checked at dial time, and follows no redirect: an offer's or
 // a Verifier's endpoints can't point the wallet's requests into its own
 // network. In Development, services on the machine or the local network
-// are the point.
-func defaultHTTPClient(development bool) (*http.Client, error) {
-	if development {
-		return &http.Client{Timeout: httpTimeout}, nil
+// are the point. Either checks pins, when there are any.
+func defaultHTTPClient(development bool, pins TLSPins) (*http.Client, error) {
+	var verify func(tls.ConnectionState) error
+	if len(pins) > 0 {
+		verify = pins.VerifyConnection
 	}
-	client, err := fapihttp.NewClient(fapihttp.TransportConfig{DialTimeout: httpTimeout, TLSHandshakeTimeout: httpTimeout})
+	if development {
+		if verify == nil {
+			return &http.Client{Timeout: httpTimeout}, nil
+		}
+		transport := http.DefaultTransport.(*http.Transport).Clone()
+		transport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12, VerifyConnection: verify}
+		return &http.Client{Transport: transport, Timeout: httpTimeout}, nil
+	}
+	client, err := fapihttp.NewClient(fapihttp.TransportConfig{DialTimeout: httpTimeout, TLSHandshakeTimeout: httpTimeout, VerifyConnection: verify})
 	if err != nil {
 		return nil, fmt.Errorf("walletflow: http client: %w", err)
 	}

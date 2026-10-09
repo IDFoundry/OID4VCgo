@@ -5,7 +5,9 @@
 # creates the release, tagged with the version and carrying the
 # framework, its SHA256SUMS and a build provenance attestation, in one
 # step. (SwiftPM itself checks the framework against the checksum in
-# Package.swift.)
+# Package.swift.) Last, it publishes the package's DocC documentation to
+# that repository's gh-pages branch, under the version and latest/,
+# keeping earlier versions: GitHub Pages serves it, from that branch.
 #
 # The Swift package is versioned on its own, apart from this module's
 # release-please versions. Run it by hand (Actions → wallet-swift-release
@@ -80,6 +82,11 @@ jobs:
       - name: build and lay out the package
         run: mobile/ios/package-swift-release.sh "$VERSION" wallet-swift "$RUNNER_TEMP/assets" | tee "$RUNNER_TEMP/summary.txt"
 
+      - name: build the documentation
+        run: |
+          DOCC_OUTPUT="$RUNNER_TEMP/OID4VCWallet.doccarchive" mobile/ios/check-docs.sh
+          mobile/ios/docs-site.sh "$VERSION" "$RUNNER_TEMP/OID4VCWallet.doccarchive" "$RUNNER_TEMP/docs"
+
       - name: checksums
         working-directory: ${{ runner.temp }}/assets
         run: shasum -a 256 Mobile.xcframework.zip | tee SHA256SUMS
@@ -119,3 +126,21 @@ jobs:
           cd "$RUNNER_TEMP/published"
           gh release download "$VERSION" --repo "$REPO" --pattern Mobile.xcframework.zip
           shasum -a 256 -c "$RUNNER_TEMP/assets/SHA256SUMS"
+
+      - name: publish the documentation
+        env:
+          GH_TOKEN: ${{ secrets.WALLET_SWIFT_TOKEN }}
+        run: |
+          mkdir "$RUNNER_TEMP/site"
+          cd "$RUNNER_TEMP/site"
+          git init -q -b gh-pages
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add origin "https://github.com/$REPO.git"
+          if git fetch -q --depth 1 origin gh-pages; then git reset -q --hard FETCH_HEAD; fi
+          rm -rf "$VERSION" latest
+          cp -R "$RUNNER_TEMP/docs/$VERSION" "$RUNNER_TEMP/docs/latest" "$RUNNER_TEMP/docs/index.html" "$RUNNER_TEMP/docs/.nojekyll" .
+          git add -A
+          git commit -q -m "Documentation for OID4VCWallet $VERSION from IDFoundry/OID4VCgo@$GITHUB_SHA"
+          auth="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')"
+          git -c "http.https://github.com/.extraheader=$auth" push origin gh-pages

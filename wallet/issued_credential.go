@@ -38,7 +38,10 @@ type VerifyIssuedCredentialParams struct {
 	// HolderKey is the public key the Wallet proved possession of in
 	// its Credential Request. When set, the credential must be bound to
 	// it (SD-JWT "cnf.jwk", mdoc DeviceKey). REQUIRED when Configuration
-	// declares cryptographic binding methods.
+	// declares cryptographic binding methods. Without it (a configuration
+	// declaring none, §12.2.4), an SD-JWT VC must be bound to no key: one
+	// with "cnf" is refused, since the Wallet proved no key, so a key it
+	// names would be someone else's.
 	HolderKey crypto.PublicKey
 
 	// IssuerRoots are the trust anchors for issuer certificates: the
@@ -150,6 +153,11 @@ func verifyIssuedSDJWTVC(p VerifyIssuedCredentialParams, now time.Time) (Verifie
 		if err := cnfIsKey(payload["cnf"], p.HolderKey); err != nil {
 			return VerifiedIssuedCredential{}, err
 		}
+	} else if _, ok := payload["cnf"]; ok {
+		// Only a configuration declaring no binding gets here: the
+		// Wallet proved no key, so a key the credential names would be
+		// someone else's.
+		return VerifiedIssuedCredential{}, errors.New("the credential is bound to a key (cnf), but the Wallet proved none")
 	}
 	verified := VerifiedIssuedCredential{IssuerCertificate: leaf, Claims: payload, ValidUntil: numericDate(payload["exp"])}
 	if status, ok := payload["status"].(map[string]any); ok {

@@ -4,7 +4,10 @@
 # jar and lays out the repository (the mirrored sources, the README),
 # then this commits that there and creates the release, tagged with the
 # version and carrying both files, their SHA256SUMS, and a build
-# provenance attestation, in one step.
+# provenance attestation, in one step. Last, it publishes the library's
+# Dokka API reference to that repository's gh-pages branch, under the
+# version and latest/, keeping earlier versions: GitHub Pages serves it,
+# from that branch.
 #
 # The version is the Swift package's, published from the same commit
 # (wallet-swift-release), apart from this module's release-please
@@ -91,6 +94,14 @@ jobs:
       - name: build and lay out the repository
         run: mobile/android/package-kotlin-release.sh "$VERSION" wallet-kotlin "$RUNNER_TEMP/assets" | tee "$RUNNER_TEMP/summary.txt"
 
+      - name: build the API reference
+        env:
+          DOKKA_OUTPUT: ${{ runner.temp }}/dokka
+          DOKKA_SOURCE_REF: ${{ github.sha }}
+        run: |
+          mobile/android/check-docs.sh
+          mobile/android/docs-site.sh "$VERSION" "$RUNNER_TEMP/dokka" "$RUNNER_TEMP/docs"
+
       - name: checksums
         working-directory: ${{ runner.temp }}/assets
         run: sha256sum "oid4vcwallet-$VERSION.aar" "oid4vcwallet-$VERSION-sources.jar" | tee SHA256SUMS
@@ -133,3 +144,21 @@ jobs:
           cd "$RUNNER_TEMP/published"
           gh release download "$VERSION" --repo "$REPO"
           sha256sum -c "$RUNNER_TEMP/assets/SHA256SUMS"
+
+      - name: publish the API reference
+        env:
+          GH_TOKEN: ${{ secrets.WALLET_KOTLIN_TOKEN }}
+        run: |
+          mkdir "$RUNNER_TEMP/site"
+          cd "$RUNNER_TEMP/site"
+          git init -q -b gh-pages
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add origin "https://github.com/$REPO.git"
+          if git fetch -q --depth 1 origin gh-pages; then git reset -q --hard FETCH_HEAD; fi
+          rm -rf "$VERSION" latest
+          cp -R "$RUNNER_TEMP/docs/$VERSION" "$RUNNER_TEMP/docs/latest" "$RUNNER_TEMP/docs/index.html" "$RUNNER_TEMP/docs/.nojekyll" .
+          git add -A
+          git commit -q -m "API reference for OID4VCWallet $VERSION from IDFoundry/OID4VCgo@$GITHUB_SHA"
+          auth="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')"
+          git -c "http.https://github.com/.extraheader=$auth" push origin gh-pages

@@ -87,6 +87,9 @@ func DeviceResponseStatusFor(err error) uint64 {
 // DeviceResponse with a status other than 0: the mdoc couldn't process
 // the request (§8.3.2.1.2.3).
 type DeviceResponseStatusError struct {
+	// Status is the DeviceResponse's status (§8.3.2.1.2.3 Table 8):
+	// DeviceResponseStatusGeneralError, DeviceResponseStatusCBORDecoding
+	// or DeviceResponseStatusCBORValidation.
 	Status uint64
 }
 

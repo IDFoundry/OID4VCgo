@@ -23,11 +23,21 @@ import dev.idfoundry.oid4vcwallet.gomobile.mobile.Wallet as MobileWallet
 @OptIn(ExperimentalSerializationApi::class)
 @Serializable
 public data class WalletConfiguration(
-    /** The wallet's registration with Authorization Servers. */
-    @SerialName("client_id") val clientID: String,
-    @SerialName("redirect_uri") val redirectURI: String,
+    /**
+     * The wallet's registration with Authorization Servers: empty for a
+     * wallet with no [WalletProvider], receiving credentials only from
+     * pre-authorized codes redeemed with no client authentication.
+     */
+    @SerialName("client_id") val clientID: String = "",
+    /**
+     * Where the issuer's pages send the holder back to: a private-use URI
+     * the app receives. Empty for a wallet that receives only
+     * pre-authorized codes.
+     */
+    @SerialName("redirect_uri") val redirectURI: String = "",
     /** PEM certificates: the trust anchors for issuers' credentials, and for Verifiers' requests. */
     @SerialName("issuer_roots") val issuerRoots: String = "",
+    /** PEM certificates: the trust anchors for Verifiers' requests. */
     @SerialName("verifier_roots") val verifierRoots: String = "",
     /**
      * PEM certificates: the registrars whose registrations of Verifiers
@@ -94,7 +104,42 @@ public data class WalletConfiguration(
     @SerialName("request_refresh") val requestRefresh: Boolean = false,
     /** Which copy of a credential a presentation uses. */
     @SerialName("copy_policy") val copyPolicy: CopyPolicy = CopyPolicy.PER_PRESENTATION,
+    /**
+     * Pins hosts' certificates for the wallet's own HTTPS requests:
+     * host → base64 SHA-256 digests of a certificate's
+     * SubjectPublicKeyInfo, one of which a certificate in the verified
+     * chain must have, or the request fails as `tlsPin` before anything
+     * is sent. A host is a name, or `*.` and one, matching any name a
+     * label below it; not an IP address. Pins add to certificate
+     * verification, never replace it: pin a CA's key, so a leaf renewal
+     * doesn't break the app, and keep a backup pin. They cover the
+     * requests the SDK makes (issuers, Authorization Servers, Verifiers,
+     * status lists), not the app's own, such as to its Wallet Provider:
+     * pin that client yourself (OkHttp's CertificatePinner, or a network
+     * security configuration).
+     */
+    @SerialName("tls_pins") val tlsPins: Map<String, List<String>> = emptyMap(),
+    /** The profile issuance follows. */
+    @SerialName("issuance_profile") val issuanceProfile: IssuanceProfile = IssuanceProfile.OPENID4VCI,
 ) {
+    /** The profile issuance follows. */
+    @Serializable
+    public enum class IssuanceProfile {
+        /**
+         * The issuer's and its Authorization Server's metadata, as
+         * OpenID4VCI 1.0 has a wallet do: a Wallet Attestation and a key
+         * attestation only where they ask for them. The default.
+         */
+        @SerialName("openid4vci") OPENID4VCI,
+
+        /**
+         * Also refuses an issuer that doesn't follow HAIP 1.0
+         * ([WalletException.Code.profileViolation]). Needs a
+         * [WalletProvider] and a `clientID`.
+         */
+        @SerialName("haip") HAIP,
+    }
+
     /**
      * Which copy of a credential a presentation uses (OpenID4VCI 1.0: "a
      * unique Credential per presentation or per Verifier").
@@ -118,6 +163,7 @@ public data class WalletConfiguration(
     /** The scheme of [redirectURI]: the scheme the authorization's redirect comes back on. */
     val callbackScheme: String? get() = runCatching { java.net.URI(redirectURI).scheme }.getOrNull()
 
+    /** The configuration's defaults. */
     public companion object {
         /** The device's languages, most preferred first. */
         public fun defaultLocales(): List<String> {
@@ -130,6 +176,9 @@ public data class WalletConfiguration(
 /**
  * An image the issuer names for display: an https URL or a data: image
  * (nothing else reaches the app), with alternative text.
+ *
+ * @property uri The image: an https URL or a `data:` URL.
+ * @property altText Text describing the image, for accessibility.
  */
 @Serializable
 public data class Logo(val uri: String, @SerialName("alt_text") val altText: String? = null)
@@ -141,12 +190,19 @@ public data class Logo(val uri: String, @SerialName("alt_text") val altText: Str
  */
 @Serializable
 public data class CredentialDisplay(
+    /** The issuer's name. */
     @SerialName("issuer_name") val issuerName: String? = null,
+    /** The issuer's logo. */
     @SerialName("issuer_logo") val issuerLogo: Logo? = null,
+    /** The credential's name. */
     val name: String? = null,
+    /** A description of the credential. */
     val description: String? = null,
+    /** The credential's logo. */
     val logo: Logo? = null,
+    /** The card's background colour. */
     @SerialName("background_color") val backgroundColor: String? = null,
+    /** The card's text colour. */
     @SerialName("text_color") val textColor: String? = null,
 )
 
@@ -156,18 +212,32 @@ public data class CredentialDisplay(
  */
 @Serializable
 public data class CredentialStatus(
+    /**
+     * The status as the issuer's list names it: `valid`, `invalid`, `suspended`, or "0x" and a
+     * value of the list's own. [value] reads it.
+     */
     @SerialName("value") val rawValue: String,
+    /** When it was checked. */
     @SerialName("checked_at") @Serializable(InstantSerializer::class) val checkedAt: Instant,
 ) {
+    /** A status in the issuer's list. */
     public sealed interface Value {
+        /** Not revoked or suspended. */
         public data object Valid : Value
+        /** Revoked for good (the list's `invalid`). */
         public data object Revoked : Value
+        /** Suspended, for now. */
         public data object Suspended : Value
 
-        /** A status the issuer's list defines itself, as "0x" and its value. */
+        /**
+         * A status the issuer's list defines itself, as "0x" and its value.
+         *
+         * @property value The status, as "0x" and its value.
+         */
         public data class Other(val value: String) : Value
     }
 
+    /** [rawValue], read. */
     val value: Value
         get() = when (rawValue) {
             "valid" -> Value.Valid
@@ -180,12 +250,19 @@ public data class CredentialStatus(
 /** A credential the wallet holds, as the app shows it. */
 @Serializable
 public data class CredentialSummary(
+    /** The credential's ID in the wallet. */
     val id: String,
+    /** The issuer's identifier, an https URL. */
     @SerialName("credential_issuer") val credentialIssuer: String,
+    /** The issuer's credential configuration it was issued under. */
     @SerialName("configuration_id") val configurationID: String,
+    /** Its format: `dc+sd-jwt` or `mso_mdoc`. */
     val format: String,
+    /** An SD-JWT VC's type. */
     val vct: String? = null,
+    /** An mdoc's document type. */
     val doctype: String? = null,
+    /** When the wallet received it. */
     @SerialName("received_at") @Serializable(InstantSerializer::class) val receivedAt: Instant,
     /**
      * Whether the key store still holds the credential's key: without it
@@ -205,6 +282,7 @@ public data class CredentialSummary(
      * those; once none is left, presentations can be linked.
      */
     val copies: Int = 0,
+    /** How many copies no Verifier has seen. */
     @SerialName("copies_left") val copiesLeft: Int = 0,
     /**
      * Whether its issuance kept a refresh token
@@ -227,6 +305,10 @@ public data class CredentialSummary(
      * Verifier has seen.
      */
     @SerialName("shown_to_verifier") val shownToVerifier: Boolean? = null,
+    /**
+     * Whether presenting it to the Verifier asking would hand it a copy
+     * another Verifier has seen. Set only on a presentation's candidates.
+     */
     @SerialName("linkable_here") val linkableHere: Boolean? = null,
 ) {
     /** Whether it has expired by [now]. */
@@ -240,11 +322,15 @@ public data class CredentialSummary(
  */
 @Serializable
 public data class DeferredCredential(
+    /** The deferred credential's ID, for [Wallet.pollDeferred]. */
     val id: String,
+    /** The issuer's identifier, an https URL. */
     @SerialName("credential_issuer") val credentialIssuer: String,
+    /** The issuer's credential configuration requested. */
     @SerialName("configuration_id") val configurationID: String,
     /** How long the issuer asked the wallet to wait between polls. */
     @SerialName("interval_seconds") val intervalSeconds: Double,
+    /** When the issuer deferred it. */
     @SerialName("deferred_at") @Serializable(InstantSerializer::class) val deferredAt: Instant,
     /**
      * When the access token it's polled with expires, if the issuer
@@ -255,12 +341,23 @@ public data class DeferredCredential(
 
 /** A deferred credential's state, from [Wallet.pollDeferred]. */
 public sealed interface DeferredStatus {
+    /**
+     * Not issued yet: poll again after [intervalSeconds].
+     *
+     * @property intervalSeconds How long to wait before polling again, in seconds.
+     */
     public data class Pending(val intervalSeconds: Double) : DeferredStatus
+    /**
+     * Issued, and stored: [credential].
+     *
+     * @property credential The credential, now stored.
+     */
     public data class Issued(val credential: CredentialSummary) : DeferredStatus
 }
 
 /** A credential with its claims, for display. */
 public data class CredentialDetail(
+    /** The credential. */
     val summary: CredentialSummary,
     /**
      * An SD-JWT VC's claims, or an mdoc's namespace → element → value;
@@ -272,8 +369,19 @@ public data class CredentialDetail(
 /** One claim path element: a key, an array index, or every element. */
 @Serializable(PathElementSerializer::class)
 public sealed interface PathElement {
+    /**
+     * A claim name: [key].
+     *
+     * @property key The claim's name.
+     */
     public data class Key(val key: String) : PathElement
+    /**
+     * An array element: [index].
+     *
+     * @property index The element's index.
+     */
     public data class Index(val index: Int) : PathElement
+    /** Every element of an array. */
     public data object All : PathElement
 }
 
@@ -491,38 +599,60 @@ public class Wallet(
 /** What a Credential Offer offers. */
 @Serializable
 public data class Offer(
+    /** The issuer's identifier, an https URL. */
     @SerialName("credential_issuer") val credentialIssuer: String,
+    /** The issuer's name, in the holder's language. */
     @SerialName("issuer_name") val issuerName: String? = null,
+    /** The issuer's logo. */
     @SerialName("issuer_logo") val issuerLogo: Logo? = null,
+    /** The grant the offer names. */
     val grant: Grant,
     /** The PIN to ask the holder for, for a pre-authorized code offer. */
     @SerialName("tx_code") val txCode: TxCode? = null,
+    /** The offered credentials. */
     val credentials: List<Credential>,
 ) {
+    /** The PIN a pre-authorized code offer asks for, as the issuer describes it. */
     @Serializable
     public data class TxCode(
+        /** `numeric` or `text`, if the issuer says. */
         @SerialName("input_mode") val inputMode: String? = null,
+        /** How many characters it has, if the issuer says. */
         val length: Int? = null,
+        /** The issuer's description, to show the holder: where to find the PIN, say. */
         val description: String? = null,
     )
 
+    /** One offered credential. */
     @Serializable
     public data class Credential(
+        /** The issuer's credential configuration. */
         @SerialName("configuration_id") val configurationID: String,
+        /** Its format: `dc+sd-jwt` or `mso_mdoc`. */
         val format: String,
+        /** An SD-JWT VC's type. */
         val vct: String? = null,
+        /** An mdoc's document type. */
         val doctype: String? = null,
         /** The issuer's display metadata for it, in the holder's language. */
         val name: String? = null,
+        /** The issuer's description of it. */
         val description: String? = null,
+        /** Its logo. */
         val logo: Logo? = null,
+        /** The card's background colour. */
         @SerialName("background_color") val backgroundColor: String? = null,
+        /** The card's text colour. */
         @SerialName("text_color") val textColor: String? = null,
     )
 
+    /** How the holder is authorized. */
     @Serializable
     public enum class Grant {
+        /** The holder signs in at the issuer's pages, in a browser. */
         @SerialName("authorization_code") AUTHORIZATION_CODE,
+
+        /** The issuer has already authenticated the holder, and may ask for a PIN ([Offer.txCode]). */
         @SerialName("pre-authorized_code") PRE_AUTHORIZED_CODE,
     }
 }
@@ -535,8 +665,14 @@ public data class Offer(
  * [close] leaves its keys until [Wallet.sweepOrphanedKeys].
  */
 public class Issuance internal constructor(private val session: MobileIssuance) {
+    /** What's offered: show it before going on. */
     public val offer: Offer = decode(session.offer())
 
+    /**
+     * Begins the authorization code grant, returning the issuer's authorization URL to open in an
+     * Auth Tab or Custom Tab. Calling it again begins again: after the holder closed the page,
+     * say.
+     */
     public suspend fun beginAuthorization(): String = OID4VC.cancellable { op -> session.beginAuthorization(op) }
 
     /**
@@ -549,12 +685,18 @@ public class Issuance internal constructor(private val session: MobileIssuance) 
         OID4VC.cancellable { op -> session.completeAuthorization(op, redirect) }
     }
 
+    /**
+     * Redeems a pre-authorized code offer, with the PIN the holder typed when [Offer.txCode] asks
+     * for one. A wrong PIN throws a retryable `protocol` error (`invalid_grant`): ask again.
+     */
     public suspend fun redeemPreAuthorizedCode(pin: String = "") {
         OID4VC.cancellable { op -> session.redeemPreAuthorizedCode(op, pin) }
     }
 
+    /** What [Issuance.requestCredentials] obtained. */
     @Serializable
     public data class Result(
+        /** The credentials received and stored. */
         val credentials: List<CredentialSummary>,
         /**
          * Credentials the issuer will issue later: poll them with
@@ -574,10 +716,14 @@ public class Issuance internal constructor(private val session: MobileIssuance) 
      */
     @Serializable
     public data class FailedCredential(
+        /** The offered credential's configuration. */
         @SerialName("configuration_id") val configurationID: String,
+        /** Why it failed, as the Go side names it: [code] reads it. */
         @SerialName("code") val rawCode: String,
+        /** The issuer's OAuth error code, when it gave one. */
         @SerialName("detail") val protocolError: String? = null,
     ) {
+        /** Why it failed. */
         val code: WalletException.Code get() = WalletException.Code(rawCode)
     }
 
@@ -598,10 +744,20 @@ public class Issuance internal constructor(private val session: MobileIssuance) 
  * request ([WalletException.Code.invalidSelection] otherwise).
  */
 public class Presentation internal constructor(private val handle: MobilePresentation) {
+    /** Who is asking. */
     @Serializable
     public data class Verifier(
+        /**
+         * The Verifier's client ID; "" for an unsigned Digital Credentials API request, whose only
+         * identity is its origin.
+         */
         @SerialName("client_id") val clientID: String = "",
+        /** A name to show for the Verifier. */
         val name: String = "",
+        /**
+         * Where the response is sent; "" for a Digital Credentials API request, answered through
+         * the platform.
+         */
         @SerialName("response_uri") val responseURI: String = "",
         /**
          * The Verifier's registration, from its request, checked against
@@ -622,16 +778,22 @@ public class Presentation internal constructor(private val handle: MobilePresent
      */
     @Serializable
     public data class Registration(
+        /** Whether the registration verified. */
         val status: Status,
         /** The rest are set when [status] is [Status.VERIFIED]. */
         val name: String? = null,
+        /** Why it asks, as registered. */
         val purpose: String? = null,
+        /** Its privacy policy's URL. */
         @SerialName("privacy_policy") val privacyPolicy: String? = null,
+        /** The registrar that registered it. */
         val registrar: String? = null,
         /** The claims paths it's registered to request. */
         val claims: List<List<PathElement>> = emptyList(),
+        /** When the registration expires. */
         @Serializable(InstantSerializer::class) val expires: Instant? = null,
     ) {
+        /** Whether a registration verified. */
         @Serializable
         public enum class Status {
             /** A registrar the wallet trusts registered this Verifier. */
@@ -651,9 +813,11 @@ public class Presentation internal constructor(private val handle: MobilePresent
      */
     @Serializable
     public data class Query(
+        /** The query's ID: a key in a [Selection]. */
         @SerialName("query_id") val queryID: String,
         /** Whether it takes more than one credential; otherwise a selection gives it exactly one. */
         val multiple: Boolean = false,
+        /** The held credentials that can answer it. */
         val credentials: List<CredentialSummary> = emptyList(),
         /**
          * For a Verifier with a verified registration: the claims paths
@@ -661,6 +825,7 @@ public class Presentation internal constructor(private val handle: MobilePresent
          * claim. Nothing is refused for them: the holder decides.
          */
         val unregistered: List<List<PathElement>> = emptyList(),
+        /** Whether it asks for every claim, beyond a verified registration. */
         @SerialName("unregistered_all") val unregisteredAll: Boolean = false,
     )
 
@@ -668,19 +833,28 @@ public class Presentation internal constructor(private val handle: MobilePresent
      * One of the request's sets of alternatives: each option is the
      * query IDs that together answer it, most preferred first. A
      * required set must be answered by one option.
+     *
+     * @property options Each option's query IDs, most preferred first.
+     * @property required Whether one of the options must be answered.
      */
     @Serializable
     public data class CredentialSet(val options: List<List<String>>, val required: Boolean = true)
 
+    /** What a selection would disclose from one credential. */
     @Serializable
     public data class Disclosure(
+        /** The query it answers. */
         @SerialName("query_id") val queryID: String,
+        /** The credential. */
         @SerialName("credential_id") val credentialID: String,
+        /** The claims it would disclose, as paths. */
         val claims: List<List<PathElement>>,
     )
 
+    /** What responding or declining sent. */
     @Serializable
     public data class Presented(
+        /** The queries answered. */
         @SerialName("query_ids") val queryIDs: List<String> = emptyList(),
         /** Where to send the browser, when the Verifier asks. */
         @SerialName("redirect_uri") val redirectURI: String? = null,
@@ -698,6 +872,7 @@ public class Presentation internal constructor(private val handle: MobilePresent
         @SerialName("credential_sets") val credentialSets: List<CredentialSet> = emptyList(),
     )
 
+    /** Who is asking. */
     public val verifier: Verifier = decode(handle.verifier())
     private val all: All = decode(handle.queries())
 
@@ -752,6 +927,7 @@ public typealias Selection = Map<String, List<String>>
  * cancel the platform's request — nothing is sent to the reader.
  */
 public class MdocPresentation internal constructor(private val handle: MobileMdocPresentation) {
+    /** What the page asks for. */
     @Serializable
     public data class Request(
         /** The requesting page's origin. */
@@ -763,25 +939,33 @@ public class MdocPresentation internal constructor(private val handle: MobileMdo
          * only be shown [origin].
          */
         val reader: String = "",
+        /** The requested documents, in the request's order. */
         val documents: List<Document>,
     )
 
+    /** One requested document. */
     @Serializable
     public data class Document(
+        /** Its document type. */
         val doctype: String,
+        /** The elements requested. */
         val elements: List<Element>,
         /** The held mdocs of [doctype]; none when nothing can answer. */
         val credentials: List<CredentialSummary> = emptyList(),
     )
 
+    /** One requested element. */
     @Serializable
     public data class Element(
+        /** Its namespace. */
         val namespace: String,
+        /** Its identifier in the namespace. */
         val identifier: String,
         /** Whether the reader says it will keep the value. */
         val retain: Boolean = false,
     )
 
+    /** The answer to hand back to the platform. */
     @Serializable
     public data class Response(
         /** The CBOR EncryptedResponse, to hand back to the platform. */
@@ -790,6 +974,7 @@ public class MdocPresentation internal constructor(private val handle: MobileMdo
         val linkable: Boolean = false,
     )
 
+    /** What's asked: show it for the holder's consent. */
     public val request: Request = decode(handle.request())
 
     /**
@@ -803,6 +988,7 @@ public class MdocPresentation internal constructor(private val handle: MobileMdo
         return decode(OID4VC.cancellable { op -> handle.respond(op, document.toLong(), credentialID, pairs) })
     }
 
+    /** Origins, as the platform reports them. */
     public companion object {
         /**
          * [url]'s web origin, as a browser serializes it and the session

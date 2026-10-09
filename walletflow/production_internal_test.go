@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/idfoundry/fapigo/client"
 	"github.com/idfoundry/fapigo/keys"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
@@ -75,12 +76,11 @@ func TestProductionAssurance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.oauthClient(issuer, endpoints, "https://as.example", "eyJ.attestation.jwt"); err != nil {
+	if _, err := s.oauthClient(issuer, endpoints, "https://as.example", client.StaticAttestation("eyJ.attestation.jwt")); err != nil {
 		t.Fatalf("the OAuth client doesn't build at production assurance: %v", err)
 	}
 
 	for name, change := range map[string]func(*Dependencies){
-		"Durable":            func(d *Dependencies) { d.Authorizations = NewMemoryAuthorizationStore() },
 		"custody":            func(d *Dependencies) { d.Keys = NewMemoryKeyStore() },
 		"crypto/rand.Reader": func(d *Dependencies) { d.Random = strings.NewReader("not random") },
 	} {
@@ -89,6 +89,17 @@ func TestProductionAssurance(t *testing.T) {
 		if err := productionWallet(t, deps).checkIssuance(); err == nil || !strings.Contains(err.Error(), name) {
 			t.Errorf("without %s: checkIssuance = %v", name, err)
 		}
+	}
+	// A Durable Authorizations store is the authorization code grant's
+	// alone: nothing else keeps an authorization across a suspension.
+	deps := durable
+	deps.Authorizations = NewMemoryAuthorizationStore()
+	w = productionWallet(t, deps)
+	if err := w.checkIssuance(); err != nil {
+		t.Errorf("a pre-authorized code wallet without a Durable Authorizations: checkIssuance = %v", err)
+	}
+	if err := w.checkAuthorizationCode(); err == nil || !strings.Contains(err.Error(), "Durable") {
+		t.Errorf("without Durable: checkAuthorizationCode = %v", err)
 	}
 }
 

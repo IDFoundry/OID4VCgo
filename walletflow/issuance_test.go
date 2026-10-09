@@ -599,12 +599,14 @@ func TestNew_RequiresConfiguration(t *testing.T) {
 		}
 	}
 	// A wallet that only presents needs none of issuance's settings,
-	// which StartIssuance asks for.
+	// which StartIssuance asks for: the issuer roots always, and under
+	// ProfileHAIP a Wallet Provider and client_id too. What a grant
+	// needs beyond them is asked for once the offer's grant is known.
+	haip := func(c *walletflow.Config) { c.IssuanceProfile = walletflow.ProfileHAIP }
 	for name, mutate := range map[string]func(*walletflow.Config, *walletflow.Dependencies){
-		"no client_id":    func(c *walletflow.Config, _ *walletflow.Dependencies) { c.ClientID = "" },
-		"no redirect URI": func(c *walletflow.Config, _ *walletflow.Dependencies) { c.RedirectURI = "" },
-		"no issuer roots": func(c *walletflow.Config, _ *walletflow.Dependencies) { c.IssuerRoots = nil },
-		"no provider":     func(_ *walletflow.Config, d *walletflow.Dependencies) { d.Provider = nil },
+		"no issuer roots":          func(c *walletflow.Config, _ *walletflow.Dependencies) { c.IssuerRoots = nil },
+		"HAIP without a client_id": func(c *walletflow.Config, _ *walletflow.Dependencies) { haip(c); c.ClientID = "" },
+		"HAIP without a provider":  func(c *walletflow.Config, d *walletflow.Dependencies) { haip(c); d.Provider = nil },
 	} {
 		c, d := good, deps
 		mutate(&c, &d)

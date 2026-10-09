@@ -27,6 +27,11 @@ func validateCredentialOffer(o oid4vci.CredentialOffer, cfg Config) error {
 	if o.Grants == nil {
 		return nil
 	}
+	if o.Grants.AuthorizationCode == nil && o.Grants.PreAuthorizedCode == nil {
+		// A Wallet takes empty grants as absent (§4.1.1): an issuer
+		// offering none omits them.
+		return fmt.Errorf("grants must declare at least one grant type when present")
+	}
 	if o.Grants.AuthorizationCode != nil {
 		if err := checkGrantAuthorizationServer(o.Grants.AuthorizationCode.AuthorizationServer, cfg.AuthorizationServers); err != nil {
 			return fmt.Errorf("grants.authorization_code.%w", err)
