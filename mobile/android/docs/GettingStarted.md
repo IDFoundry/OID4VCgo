@@ -166,3 +166,5 @@ has, so it can refuse to run on the test build.
 - [Presenting in person](PresentingInPerson.md)
 - [Handling errors](HandlingErrors.md)
 - [Going to production](GoingToProduction.md)
+
+Every class and function is in [the API reference](https://idfoundry.github.io/OID4VCgo-wallet-kotlin/latest/).

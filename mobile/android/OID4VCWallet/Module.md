@@ -36,6 +36,10 @@ OID4VCgo is OpenID Certified for the OpenID4VCI and OpenID4VP wallet
 roles under HAIP, over links. The Digital Credentials API and in-person
 presentation aren't covered by that certification.
 
+Start with [the guides](https://github.com/IDFoundry/OID4VCgo-wallet-kotlin/tree/main/docs): getting started, receiving
+credentials, presenting from a link, to Chrome and in person, handling
+errors, and going to production.
+
 See also [OID4VCgo's mobile README](https://github.com/IDFoundry/OID4VCgo/tree/main/mobile),
 for what each platform supports and the in-person guide, and
 [the demo wallet app](https://github.com/IDFoundry/OID4VCgo/tree/main/mobile/android/DemoWallet),

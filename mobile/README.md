@@ -12,6 +12,13 @@ separate Go module (it needs `golang.org/x/mobile`).
 
 The API is described in [ABI.md](ABI.md).
 
+The libraries' documentation, for app developers, is published with
+each release:
+
+- **Swift:** [the OID4VCWallet documentation](https://idfoundry.github.io/OID4VCgo-wallet-swift/latest/documentation/oid4vcwallet/) — getting started,
+  an article for each task, and the API reference.
+- **Kotlin:** [the guides](https://github.com/IDFoundry/OID4VCgo-wallet-kotlin/tree/main/docs) and [the API reference](https://idfoundry.github.io/OID4VCgo-wallet-kotlin/latest/).
+
 ## What each platform supports
 
 | | Swift (iOS) | Kotlin (Android) |
