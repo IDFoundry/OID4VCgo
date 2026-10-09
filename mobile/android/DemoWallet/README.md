@@ -54,9 +54,12 @@ device it's still to be tried (MOBILE.md's Phase 8 open items).
 ## Configuration
 
 The app takes its configuration — the JSON mobile/cmd/testservices
-serves at `/config` — from the launch intent's `config` extra, or from
-`demo-config.json` pushed to its external files directory, and
-remembers it:
+serves at `/config` — from `demo-config.json` pushed to its external
+files directory, or, in a debug build only, from the launch intent's
+`config` extra, and remembers it. The other test extras (`reset`,
+`offer`, `request`) are debug-only too: the main activity is exported
+for its links, and a release build mustn't let any app replace its
+trust roots, wipe it, or skip a link's confirmation.
 
 ```json
 {"wallet": {"client_id": "…", "redirect_uri": "…", "issuer_roots": "<PEM>",

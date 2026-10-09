@@ -1,6 +1,7 @@
 package dev.idfoundry.oid4vcgo.demowallet
 
 import android.content.Intent
+import android.content.pm.ApplicationInfo
 import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -43,16 +44,28 @@ class MainActivity : ComponentActivity() {
                 true
             } ?: false
         }
-        model.start(intent)
+        model.start(testExtras(intent))
         if (savedInstanceState == null) intent?.data?.let(model::openFromOutside)
         setContent { DemoApp(model, authorize = ::authorize, openBrowser = ::openBrowser) }
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        model.start(intent)
+        model.start(testExtras(intent))
         intent.data?.let(model::openFromOutside)
     }
+
+    /**
+     * [intent], for its test extras (config, reset, offer, request), in a
+     * debuggable build only. This activity is exported, for its deep
+     * links: in a release build any app could otherwise replace the
+     * wallet's trust roots, wipe it, or open an offer or request without
+     * the confirmation a link gets. Any build also takes its
+     * configuration from the demo-config.json the run scripts push to
+     * its external files directory, which only adb and the app write.
+     */
+    private fun testExtras(intent: Intent?): Intent? =
+        intent.takeIf { applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0 }
 
     override fun onResume() {
         super.onResume()
