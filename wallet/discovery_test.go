@@ -146,6 +146,10 @@ func TestFetchAuthorizationServerMetadata_RoundTrips(t *testing.T) {
 		want = wallet.AuthorizationServerMetadata{
 			Issuer: srvURL + "/test/a/alias/", AuthorizationEndpoint: srvURL + "/authorize",
 			TokenEndpoint: srvURL + "/token", PushedAuthorizationRequestEndpoint: srvURL + "/par",
+			GrantTypesSupported:                           []string{wallet.PreAuthorizedCodeGrantType},
+			TokenEndpointAuthMethodsSupported:             []string{wallet.AttestJWTClientAuth},
+			ClientAttestationPoPSigningAlgValuesSupported: []string{"ES256"},
+			PreAuthorizedGrantAnonymousAccessSupported:    true,
 		}
 		return want
 	})
@@ -155,8 +159,32 @@ func TestFetchAuthorizationServerMetadata_RoundTrips(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FetchAuthorizationServerMetadata: %v", err)
 	}
-	if got != want {
+	if !reflect.DeepEqual(got, want) {
 		t.Errorf("FetchAuthorizationServerMetadata = %+v, want %+v", got, want)
+	}
+}
+
+func TestAuthorizationServerMetadata_Supports(t *testing.T) {
+	var none wallet.AuthorizationServerMetadata
+	if !none.SupportsGrantType("authorization_code") || none.SupportsGrantType(wallet.PreAuthorizedCodeGrantType) {
+		t.Error("without grant_types_supported, RFC 8414's default isn't assumed")
+	}
+	preAuth := wallet.AuthorizationServerMetadata{GrantTypesSupported: []string{wallet.PreAuthorizedCodeGrantType}}
+	if preAuth.SupportsGrantType("authorization_code") || !preAuth.SupportsGrantType(wallet.PreAuthorizedCodeGrantType) {
+		t.Error("grant_types_supported not followed")
+	}
+
+	attested := wallet.AuthorizationServerMetadata{
+		TokenEndpointAuthMethodsSupported:             []string{"private_key_jwt", wallet.AttestJWTClientAuth},
+		ClientAttestationPoPSigningAlgValuesSupported: []string{"ES256"},
+	}
+	if !attested.SupportsAttestationAuth("ES256") || attested.SupportsAttestationAuth("PS256") {
+		t.Error("attestation auth with the PoP algorithms listed")
+	}
+	noAlgs := attested
+	noAlgs.ClientAttestationPoPSigningAlgValuesSupported = nil
+	if noAlgs.SupportsAttestationAuth("ES256") || none.SupportsAttestationAuth("ES256") {
+		t.Error("attestation auth assumed without the method and its PoP algorithms")
 	}
 }
 

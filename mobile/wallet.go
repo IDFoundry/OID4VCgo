@@ -49,6 +49,9 @@ type config struct {
 	RequireSignedDCAPIRequests bool `json:"require_signed_dcapi_requests,omitempty"`
 	// Development allows services on loopback addresses.
 	Development bool `json:"development"`
+	// IssuanceProfile is "openid4vci" (the default) or "haip"
+	// (walletflow.Config.IssuanceProfile).
+	IssuanceProfile string `json:"issuance_profile,omitempty"`
 	// DevelopmentRoots are PEM certificates the wallet's HTTPS requests
 	// trust besides the system's: a development service's own CA, where
 	// the platform's trust store can't be given it (Go on Android reads
@@ -98,10 +101,15 @@ type Wallet struct {
 //	{"client_id": "…", "redirect_uri": "…",
 //	 "issuer_roots": "<PEM>", "verifier_roots": "<PEM>",
 //	 "development": false, "request_refresh": false,
-//	 "copy_policy": "per_presentation"}
+//	 "copy_policy": "per_presentation", "issuance_profile": "openid4vci"}
 //
 // issuer_roots is needed to receive credentials, and verifier_roots to
-// present them.
+// present them. provider may be nil: the wallet then receives
+// credentials only from issuers that ask for no attestation, and needs
+// no client_id or, for pre-authorized codes, redirect_uri.
+// issuance_profile is "openid4vci", the default, following the issuer's
+// metadata, or "haip", also refusing issuers outside HAIP 1.0, which
+// needs a provider and client_id.
 func NewWallet(configJSON string, keys KeyStore, credentials CredentialStore, provider WalletProvider) (*Wallet, error) {
 	var cfg config
 	if err := json.Unmarshal([]byte(configJSON), &cfg); err != nil {
@@ -113,6 +121,13 @@ func NewWallet(configJSON string, keys KeyStore, credentials CredentialStore, pr
 	wcfg := walletflow.Config{
 		ClientID: cfg.ClientID, RedirectURI: cfg.RedirectURI, Development: cfg.Development, Locales: cfg.Locales,
 		BatchSize: cfg.BatchSize, RequestRefresh: cfg.RequestRefresh,
+	}
+	switch cfg.IssuanceProfile {
+	case "", "openid4vci":
+	case "haip":
+		wcfg.IssuanceProfile = walletflow.ProfileHAIP
+	default:
+		return nil, newError(CodeInvalidInput, fmt.Errorf("issuance_profile %q: want \"openid4vci\" or \"haip\"", cfg.IssuanceProfile))
 	}
 	policy, err := copyPolicy(cfg.CopyPolicy)
 	if err != nil {

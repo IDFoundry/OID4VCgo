@@ -125,6 +125,44 @@ func TestAuthorizationServerMetadata_ClientEndpoints(t *testing.T) {
 	}
 }
 
+func TestAuthorizationServerMetadata_TokenClientEndpoints(t *testing.T) {
+	// A server serving only the pre-authorized code grant.
+	m := wallet.AuthorizationServerMetadata{
+		Issuer: "https://as.example.com", TokenEndpoint: "https://as.example.com/token",
+		RevocationEndpoint: "https://as.example.com/revoke",
+	}
+	issuer, endpoints, err := m.TokenClientEndpoints()
+	if err != nil {
+		t.Fatalf("TokenClientEndpoints: %v", err)
+	}
+	if issuer.String() != m.Issuer || endpoints.Token.String() != m.TokenEndpoint || endpoints.Revocation.String() != m.RevocationEndpoint ||
+		!endpoints.Authorization.IsZero() || !endpoints.PushedAuthorizationRequest.IsZero() {
+		t.Errorf("TokenClientEndpoints = %v, %+v", issuer, endpoints)
+	}
+	if _, _, err := m.ClientEndpoints(); err == nil {
+		t.Error("ClientEndpoints accepted a server with no authorization endpoint")
+	}
+
+	// The authorization endpoints, when a server has them, are left out.
+	full := m
+	full.AuthorizationEndpoint, full.PushedAuthorizationRequestEndpoint = "https://as.example.com/authorize", "https://as.example.com/par"
+	if _, endpoints, err := full.TokenClientEndpoints(); err != nil || !endpoints.Authorization.IsZero() || !endpoints.PushedAuthorizationRequest.IsZero() {
+		t.Errorf("TokenClientEndpoints = %+v, %v; want only the token and revocation endpoints", endpoints, err)
+	}
+
+	for name, change := range map[string]func(*wallet.AuthorizationServerMetadata){
+		"token_endpoint":      func(m *wallet.AuthorizationServerMetadata) { m.TokenEndpoint = "" },
+		"issuer":              func(m *wallet.AuthorizationServerMetadata) { m.Issuer = "http://as.example.com" },
+		"revocation_endpoint": func(m *wallet.AuthorizationServerMetadata) { m.RevocationEndpoint = "http://as.example.com/revoke" },
+	} {
+		bad := m
+		change(&bad)
+		if _, _, err := bad.TokenClientEndpoints(); err == nil || !strings.Contains(err.Error(), name) {
+			t.Errorf("bad %s: error = %v", name, err)
+		}
+	}
+}
+
 func TestParseAuthorizationRequestLink(t *testing.T) {
 	got, err := wallet.ParseAuthorizationRequestLink("openid4vp://?client_id=x509_hash%3Aabc&request_uri=https%3A%2F%2Fverifier.example%2Fro%2F1")
 	if err != nil {

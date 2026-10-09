@@ -35,6 +35,8 @@ plain FAPI 2.0" below.
 | [RFC 7636 — PKCE][pkce] | Standards Track | — |
 | [RFC 9207 — Authorization Server Issuer Identification][iss] | Standards Track | — |
 | [RFC 8414 — OAuth Authorization Server Metadata][asmeta] | Standards Track | — |
+| [RFC 7009 — OAuth 2.0 Token Revocation][revocation] (a public client's refresh token, outside HAIP) | Standards Track | — |
+| [RFC 6750 — Bearer Token Usage][bearer] (an Authorization Server's Bearer access token, outside HAIP) | Standards Track | — |
 
 ## Credential formats (HAIP requires at least one; OID4VCgo supports both)
 
@@ -147,6 +149,8 @@ ARCHITECTURE.md for the package layout.
 [pkce]: https://www.rfc-editor.org/rfc/rfc7636.html
 [iss]: https://www.rfc-editor.org/rfc/rfc9207.html
 [asmeta]: https://www.rfc-editor.org/rfc/rfc8414.html
+[revocation]: https://www.rfc-editor.org/rfc/rfc7009.html
+[bearer]: https://www.rfc-editor.org/rfc/rfc6750.html
 [sdjwtvc]: https://datatracker.ietf.org/doc/html/draft-ietf-oauth-sd-jwt-vc-13
 [iso18013-5]: https://www.iso.org/standard/69084.html
 [iso18013-7]: https://www.iso.org/standard/91154.html

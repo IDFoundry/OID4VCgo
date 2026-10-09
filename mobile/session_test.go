@@ -916,3 +916,92 @@ func TestStartPresentation_Registration(t *testing.T) {
 		t.Errorf("an unregistered Verifier: %+v, %+v", r, qs)
 	}
 }
+
+// A wallet with no WalletProvider, client_id or redirect URI receives
+// an mdoc from an issuer outside HAIP: the pre-authorized code redeemed
+// with no client authentication, then refreshed as a public client.
+// The grant record keeps how; under "haip", the issuer is refused.
+func TestSessions_AnonymousIssuer(t *testing.T) {
+	env, err := StartAnonymousTestEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(env.Close)
+	var cfg config
+	if err := json.Unmarshal([]byte(env.ConfigJSON()), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	cfg.ClientID, cfg.RedirectURI = "", ""
+	configJSON, _ := marshal(cfg)
+	keys, creds := newGoKeyStore(), newGoCredentialStore()
+	w, err := NewWallet(configJSON, keys, creds, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	offer, err := env.AnonymousOffer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := w.StartIssuance(NewOperation(0), offer)
+	if err != nil {
+		t.Fatalf("StartIssuance: %v", err)
+	}
+	defer func() { _ = s.Close() }()
+	o := decode[struct {
+		Grant       string
+		TxCode      *struct{} `json:"tx_code"`
+		Credentials []struct{}
+	}](t, s.Offer())
+	if o.Grant != GrantPreAuthorizedCode || o.TxCode != nil || len(o.Credentials) != 1 {
+		t.Fatalf("Offer = %s", s.Offer())
+	}
+	if err := s.RedeemPreAuthorizedCode(NewOperation(0), ""); err != nil {
+		t.Fatalf("RedeemPreAuthorizedCode: %v", err)
+	}
+	result, err := s.RequestCredentials(NewOperation(0))
+	if err != nil {
+		t.Fatalf("RequestCredentials: %v", err)
+	}
+	got := decode[struct{ Credentials []struct{ ID string } }](t, result)
+	if len(got.Credentials) != 1 {
+		t.Fatalf("credentials = %+v", got)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	var grant grantRecord
+	for _, raw := range creds.records {
+		if kindOf(raw) == grantKind {
+			if err := json.Unmarshal(raw, &grant); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if grant.ClientAuth != "none" || grant.InstanceKeyID != "" || grant.DPoPKeyID == "" {
+		t.Fatalf("grant record = %+v; want an anonymous grant bound to its DPoP key", grant)
+	}
+	if _, err := w.RefreshCredential(NewOperation(0), got.Credentials[0].ID); err != nil {
+		t.Fatalf("RefreshCredential: %v", err)
+	}
+
+	cfg.IssuanceProfile, cfg.ClientID = "haip", walletflowtest.ClientID
+	haipJSON, _ := marshal(cfg)
+	haip, err := NewWallet(haipJSON, keys, creds, env.Provider())
+	if err != nil {
+		t.Fatal(err)
+	}
+	offer, err = env.AnonymousOffer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := haip.StartIssuance(NewOperation(0), offer); code(err) != CodeProfileViolation {
+		t.Errorf("HAIP wallet, anonymous issuer: %v, want %s", err, CodeProfileViolation)
+	}
+	cfg.IssuanceProfile = "eudi"
+	bad, _ := marshal(cfg)
+	if _, err := NewWallet(bad, keys, creds, nil); code(err) != CodeInvalidInput {
+		t.Errorf("an unknown issuance_profile: %v", err)
+	}
+}
