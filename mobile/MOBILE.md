@@ -1131,6 +1131,37 @@ Decisions taken 2026-10-06 (tracked in [#482](https://github.com/IDFoundry/OID4V
   Security has no public API. The request carries each reader
   certificate's fields from Go, for the certificate page.
 
+## Phase 11 findings: issuers outside HAIP
+
+The libraries were HAIP-only: every issuance authenticated with a
+Wallet Attestation and proved its keys with a Key Attestation, so an
+OpenID4VCI issuer that asks for neither — an in-house mdoc issuer
+redeeming pre-authorized codes anonymously, with jwt proofs — couldn't
+be received from at all. Issuance now follows the issuer's metadata
+(walletflow's `ProfileOpenID4VCI`), with HAIP an opt-in profile.
+
+- **The provider is optional:** `NewWallet` takes a nil
+  `WalletProvider`, and the Swift and Kotlin `Wallet`s already took an
+  optional one. Without it, the wallet receives only from issuers that
+  ask for no attestation; one that does fails with
+  `client_auth_unsupported` or `proof_unsupported` before the holder sees
+  the offer. The demos' `provider_url` is optional to match.
+- **`issuance_profile`:** `"openid4vci"` by default, or `"haip"`,
+  refusing issuers outside HAIP 1.0 with `profile_violation`. Under the
+  default, a HAIP issuer's offers are received as before.
+- **A public client's refresh:** a grant from an anonymous redemption
+  has no instance key. Its record says `"client_auth": "none"` and keeps
+  the DPoP key its refresh token is bound to, so the refresh needs no
+  attestation. Every record from before has no `client_auth`, and still
+  refreshes with its instance key.
+- **Unbound credentials:** an offer's `bound` and a summary's `unbound`
+  report a credential bound to no key, which anyone holding a copy can
+  present: worth telling the holder before accepting.
+- **Within ABI 12:** each change is a new field, a new code for a new
+  situation, or a call that accepted nil and now does something with it,
+  so an older wrapper is unaffected (it shows a new code as "Something
+  went wrong.").
+
 ## Open questions
 
 - The Wallet Provider's production design, and whether it belongs in

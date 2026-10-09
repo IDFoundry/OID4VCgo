@@ -80,6 +80,10 @@ type credentialRecord struct {
 	StatusListCWT bool            `json:"status_list_cwt,omitempty"`
 	Status        *statusJSON     `json:"status,omitempty"`
 	GrantID       string          `json:"grant_id,omitempty"`
+	// Unbound marks a credential bound to no key: its copy has no
+	// holder key. Absent from a record written before it was kept, all
+	// of them bound.
+	Unbound bool `json:"unbound,omitempty"`
 }
 
 // copyJSON is a walletflow.CredentialCopy.
@@ -157,7 +161,7 @@ func recordOf(c walletflow.StoredCredential) (credentialRecord, error) {
 	r := credentialRecord{
 		ID: c.ID, CredentialIssuer: c.CredentialIssuer, ConfigurationID: c.ConfigurationID, Format: c.Format,
 		VCT: c.VCT, DocType: c.DocType, Credential: c.Credential, HolderKeyID: c.HolderKeyID, ReceivedAt: c.ReceivedAt,
-		Display: displayOf(c.Display), StatusListCWT: c.StatusListCWT, GrantID: c.GrantID,
+		Display: displayOf(c.Display), StatusListCWT: c.StatusListCWT, GrantID: c.GrantID, Unbound: c.Unbound,
 	}
 	for _, cp := range c.Copies {
 		r.Copies = append(r.Copies, copyJSON{Credential: cp.Credential, HolderKeyID: cp.HolderKeyID, Presented: cp.Presented, ShownTo: cp.ShownTo})
@@ -185,7 +189,7 @@ func (r credentialRecord) stored() (walletflow.StoredCredential, error) {
 	c := walletflow.StoredCredential{
 		ID: r.ID, CredentialIssuer: r.CredentialIssuer, ConfigurationID: r.ConfigurationID, Format: r.Format,
 		VCT: r.VCT, DocType: r.DocType, Credential: r.Credential, HolderKeyID: r.HolderKeyID, ReceivedAt: r.ReceivedAt,
-		Display: r.Display.display(), StatusListCWT: r.StatusListCWT, GrantID: r.GrantID,
+		Display: r.Display.display(), StatusListCWT: r.StatusListCWT, GrantID: r.GrantID, Unbound: r.Unbound,
 	}
 	for _, cp := range r.Copies {
 		c.Copies = append(c.Copies, walletflow.CredentialCopy{Credential: cp.Credential, HolderKeyID: cp.HolderKeyID, Presented: cp.Presented, ShownTo: cp.ShownTo})
@@ -229,6 +233,9 @@ type credentialSummary struct {
 	// until none is left.
 	Copies     int `json:"copies"`
 	CopiesLeft int `json:"copies_left"`
+	// Unbound is whether it's bound to no key: anyone holding a copy can
+	// present it.
+	Unbound bool `json:"unbound,omitempty"`
 	// Refreshable is whether its issuance kept a refresh token
 	// ("request_refresh"), so Wallet.RefreshCredential can replace its
 	// copies without the holder. The Authorization Server may still
@@ -257,6 +264,7 @@ func summaryOf(c walletflow.StoredCredential) credentialSummary {
 		ID: c.ID, CredentialIssuer: c.CredentialIssuer, ConfigurationID: c.ConfigurationID, Format: c.Format,
 		VCT: c.VCT, DocType: c.DocType, ReceivedAt: c.ReceivedAt, Display: displayOf(c.Display),
 		Copies: len(c.AllCopies()), CopiesLeft: c.CopiesLeft(), Refreshable: c.GrantID != "", Linkable: c.Linkable(),
+		Unbound: c.Unbound,
 	}
 	if !c.ValidUntil.IsZero() {
 		s.ValidUntil = &c.ValidUntil
@@ -408,6 +416,9 @@ type deferredRecord struct {
 	DeferredAt      time.Time `json:"deferred_at"`
 	GrantID         string    `json:"grant_id,omitempty"`
 	Replaces        string    `json:"replaces,omitempty"`
+	// TokenType is "Bearer" for a Bearer access token, with no
+	// dpop_key_id; absent for a DPoP-bound one.
+	TokenType string `json:"token_type,omitempty"`
 }
 
 // deferredStoreID is the CredentialStore ID a pending deferred
@@ -424,14 +435,16 @@ func (s deferredStore) PutDeferred(_ context.Context, p walletflow.PendingDeferr
 		Kind: deferredKind, ID: p.ID, CredentialIssuer: p.CredentialIssuer, ConfigurationID: p.ConfigurationID,
 		TransactionID: p.TransactionID, AccessToken: p.AccessToken.Reveal(),
 		DPoPKeyID: p.DPoPKeyID, HolderKeyIDs: p.HolderKeyIDs, IntervalSeconds: p.Interval.Seconds(), DeferredAt: p.DeferredAt,
-		GrantID: p.GrantID, Replaces: p.Replaces,
+		GrantID: p.GrantID, Replaces: p.Replaces, TokenType: p.TokenType,
 	}
 	if !p.AccessTokenExpiresAt.IsZero() {
 		r.AccessTokenExpiresAt = &p.AccessTokenExpiresAt
 	}
 	// The access token is kept deliberately, to poll after a relaunch:
-	// it's bound to a DPoP key that never leaves the KeyStore, and the
-	// record is under the platform's data protection.
+	// it's bound to a DPoP key that never leaves the KeyStore — or, a
+	// Bearer one, isn't, which is why the record is under the platform's
+	// data protection (OpenID4VCI 1.0 §13.10: "stored in a secure
+	// manner").
 	raw, err := json.Marshal(r) //nolint:gosec // G117: see above
 	if err != nil {
 		return newError(CodeInternal, err)
@@ -460,7 +473,7 @@ func (s deferredStore) ListDeferred(context.Context) ([]walletflow.PendingDeferr
 			ID: r.ID, CredentialIssuer: r.CredentialIssuer, ConfigurationID: r.ConfigurationID, TransactionID: r.TransactionID,
 			AccessToken: fapi.NewSecret(r.AccessToken), DPoPKeyID: r.DPoPKeyID, HolderKeyIDs: r.HolderKeyIDs,
 			Interval: time.Duration(r.IntervalSeconds * float64(time.Second)), DeferredAt: r.DeferredAt,
-			GrantID: r.GrantID, Replaces: r.Replaces,
+			GrantID: r.GrantID, Replaces: r.Replaces, TokenType: r.TokenType,
 		}
 		if r.AccessTokenExpiresAt != nil {
 			p.AccessTokenExpiresAt = *r.AccessTokenExpiresAt

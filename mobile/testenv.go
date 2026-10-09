@@ -37,7 +37,20 @@ func StartTestEnv(deferIssuance bool) (*TestEnv, error) {
 // StartBatchTestEnv is StartTestEnv with an issuer offering batches of up
 // to batchSize copies of a credential (none below 2).
 func StartBatchTestEnv(deferIssuance bool, batchSize int) (*TestEnv, error) {
-	env, err := walletflowtest.New(walletflowtest.Options{Defer: deferIssuance, BatchSize: batchSize})
+	return startTestEnv(walletflowtest.Options{Defer: deferIssuance, BatchSize: batchSize})
+}
+
+// StartAnonymousTestEnv starts a TestEnv whose issuer is outside HAIP,
+// as the in-house mdoc issuer is (walletflowtest.Options.Anonymous): a
+// pre-authorized code redeemed with no client authentication, at a
+// server with no authorization endpoints, jwt proofs, and refresh
+// tokens for the public client.
+func StartAnonymousTestEnv() (*TestEnv, error) {
+	return startTestEnv(walletflowtest.Options{Anonymous: true, AnonymousRefresh: true})
+}
+
+func startTestEnv(opts walletflowtest.Options) (*TestEnv, error) {
+	env, err := walletflowtest.New(opts)
 	if err != nil {
 		return nil, newError(CodeInternal, err)
 	}
@@ -90,6 +103,14 @@ func (e *TestEnv) AuthorizationCodeOffer() (string, error) {
 // pre-authorized code grant, redeemed with pin.
 func (e *TestEnv) PreAuthorizedOffer(pin string) (string, error) {
 	uri, err := e.env.PreAuthorizedOffer(pin, walletflowtest.SDJWTConfigurationID)
+	return uri, wrapTest(err)
+}
+
+// AnonymousOffer returns an offer of the mdoc through the
+// pre-authorized code grant, with no PIN: what an Anonymous TestEnv
+// issues.
+func (e *TestEnv) AnonymousOffer() (string, error) {
+	uri, err := e.env.PreAuthorizedOffer("", walletflowtest.MdocConfigurationID)
 	return uri, wrapTest(err)
 }
 

@@ -95,6 +95,22 @@ public class WalletException internal constructor(
              */
             public val untrustedVerifier: Code = Code(Mobile.CodeUntrustedVerifier)
             /**
+             * Under the `haip` issuance profile, the issuer doesn't follow
+             * HAIP 1.0: it's refused.
+             */
+            public val profileViolation: Code = Code(Mobile.CodeProfileViolation)
+            /**
+             * The offer's Authorization Server takes no client
+             * authentication the wallet can give: a Wallet Attestation
+             * needs a `WalletProvider` and a `clientId`.
+             */
+            public val clientAuthUnsupported: Code = Code(Mobile.CodeClientAuthUnsupported)
+            /**
+             * The issuer takes no proof the wallet can give for a
+             * credential: a key attestation needs a `WalletProvider`.
+             */
+            public val proofUnsupported: Code = Code(Mobile.CodeProofUnsupported)
+            /**
              * An issuer, Authorization Server or Verifier answered with an
              * error, or with something the wallet refuses:
              * [WalletException.protocolError] carries its OAuth error code,
@@ -140,6 +156,8 @@ public class WalletException internal constructor(
             code == Code.reissueRequired -> "This credential can't be refreshed. Receive it again from the issuer."
             code == Code.deliveryUnknown -> "Your response may not have reached the verifier. Check with them before sharing again."
             code == Code.untrustedVerifier -> "This verifier isn't one your wallet trusts, so its request wasn't opened."
+            code == Code.profileViolation || code == Code.clientAuthUnsupported || code == Code.proofUnsupported ->
+                "This wallet can't receive credentials from this issuer."
             code == Code.protocol && protocolError == "invalid_grant" -> "That code or PIN wasn't accepted."
             code == Code.protocol -> "The service refused the request."
             code == Code.platform -> "The wallet couldn't use its keys or storage."

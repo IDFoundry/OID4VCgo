@@ -102,7 +102,9 @@ storage and the UI:
 - **Storage:** `FileCredentialStore` uses complete file protection and
   is excluded from backup.
 - **Wallet Provider:** you implement `WalletProvider`, which attests the
-  wallet.
+  wallet, for issuers that ask for attestations, as HAIP issuers do; pass
+  `nil` for issuers that don't. Issuance follows each issuer's metadata,
+  or with `issuanceProfile: .haip` refuses issuers outside HAIP.
 
 ## Install
 

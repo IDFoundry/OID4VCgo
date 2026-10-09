@@ -58,6 +58,9 @@ format or error code below changes incompatibly.
 | `untrusted_verifier` | the Verifier's request is signed with a certificate that doesn't chain to `verifier_roots`: it's refused unread |
 | `invalid_selection` | a presentation's selection doesn't answer the request as it asks |
 | `delivery_unknown` | sending a presentation failed in a way that leaves it unknown whether the Verifier received it; it isn't sent again, which could present twice |
+| `profile_violation` | under `"issuance_profile": "haip"`, the issuer doesn't follow HAIP 1.0: it's refused |
+| `client_auth_unsupported` | the offer's Authorization Server takes no client authentication the wallet can give: a Wallet Attestation needs a provider and `client_id` |
+| `proof_unsupported` | the issuer takes no proof the wallet can give for a credential: a key attestation needs a provider |
 | `protocol` | an issuer, Authorization Server or Verifier answered with an error, or with something the wallet refuses |
 | `internal` | a bug |
 
@@ -116,7 +119,10 @@ what polling it after a relaunch needs: the issuer, the configuration,
 the transaction ID, the access token and its expiry, the DPoP key ID
 and every copy's holder key ID, the interval, when it was deferred,
 and the grant it came from and the credential it replaces, if any. The access token is
-bound to the DPoP key, which never leaves the KeyStore. A store keeps
+bound to the DPoP key, which never leaves the KeyStore — unless the
+record has `"token_type": "Bearer"` and no DPoP key: a Bearer token,
+usable by whoever holds it, which is why the store must keep these
+records under the platform's data protection (OpenID4VCI 1.0 §13.10). A store keeps
 these records like any other; `List` returns them too, and Go tells them
 apart.
 
@@ -139,7 +145,11 @@ unlocked. Both are durable.
 ### WalletProvider
 
 The Wallet Provider's backend (HAIP 1.0 §4.4.1, §4.5.1). Keys are public
-JWKs; the results are compact JWTs.
+JWKs; the results are compact JWTs. It's optional: without one, the
+wallet gives neither attestation, and receives credentials only from
+issuers that ask for neither (OpenID4VCI 1.0 allows both to be left
+out). An issuer asking for one is then refused with
+`client_auth_unsupported` or `proof_unsupported`.
 
 | Method | |
 |---|---|
@@ -162,11 +172,24 @@ library's an `IOException`.
  "mdoc_reader_roots": "<PEM>", "mdoc_reader_require_eku": false, "require_trusted_mdoc_reader": false,
  "require_signed_dcapi_requests": false,
  "development": false, "development_roots": "<PEM>", "locales": ["en-AU", "en"], "batch_size": 0,
- "request_refresh": false, "copy_policy": "per_presentation"}
+ "request_refresh": false, "copy_policy": "per_presentation", "issuance_profile": "openid4vci"}
 ```
 
-`client_id`, `redirect_uri`, `issuer_roots` and a provider are needed to
-receive credentials; `verifier_roots` to present them.
+`issuer_roots` is needed to receive credentials, and `verifier_roots` to
+present them. `issuance_profile` is `"openid4vci"`, the default, or
+`"haip"`. Under `"openid4vci"`, an issuance follows the issuer's and its
+Authorization Server's metadata: a Wallet Attestation at the token
+endpoint where the server takes one, and none for a pre-authorized code
+where it allows that (`pre-authorized_grant_anonymous_access_supported`);
+a key attestation where the issuer requires one
+(`key_attestations_required`), and a jwt proof otherwise; a c_nonce where
+the issuer has a nonce endpoint; a DPoP-bound access token, or a Bearer
+one where the server issues that. `"haip"` also refuses an issuer that
+doesn't follow HAIP 1.0 §4 (`profile_violation`), and needs a provider
+and `client_id`. A Wallet Attestation needs a provider and `client_id`,
+and the authorization code grant a `redirect_uri`: a wallet receiving
+credentials only from pre-authorized codes redeemed with no client
+authentication needs none of them.
 `registrar_roots`, if set, are the registrars whose registrations of
 Verifiers the wallet checks (OpenID4VP `verifier_info`, OID4VCgo's
 `registration` format); without them, registrations are ignored.
@@ -201,7 +224,10 @@ the pre-authorized code grant there's no scope to ask with: a refresh
 token the server issues anyway is kept.
 The refresh token is kept in the CredentialStore, as a record of
 `"kind": "grant"`, with the wallet instance key ID, the key every
-refresh must authenticate with again. `copy_policy` is which copy of a
+refresh must authenticate with again — or, for a grant that
+authenticated no client (`"client_auth": "none"`), the `dpop_key_id`
+its refresh token is bound to, none for a Bearer one (`"token_type":
+"Bearer"`). A record without `client_auth` is a Wallet Attestation's. `copy_policy` is which copy of a
 credential a presentation uses (OpenID4VCI 1.0: "a unique Credential
 per presentation or per Verifier"). With `"per_presentation"`, the
 default, every presentation uses a copy no Verifier has seen, so not
@@ -231,8 +257,8 @@ to the fewest Verifiers is reused.
 A credential **summary** is `{"id", "credential_issuer",
 "configuration_id", "format", "vct", "doctype", "received_at",
 "holder_key_present", "display", "valid_until", "status", "copies",
-"copies_left", "linkable", "refreshable"}`, and on a presentation's
-candidates `"shown_to_verifier"` and `"linkable_here"`.
+"copies_left", "linkable", "refreshable", "unbound"}`, and on a
+presentation's candidates `"shown_to_verifier"` and `"linkable_here"`.
 
 - `holder_key_present` is false when the key store no longer holds the
   credential's key, for example after a restore to another device, so
@@ -254,6 +280,9 @@ candidates `"shown_to_verifier"` and `"linkable_here"`.
   presentation's candidates (`Queries`): whether the Verifier asking has
   been shown this credential before, and whether presenting it now would
   hand it a copy another Verifier has seen.
+- `unbound`, when true, is a credential bound to no key: its
+  configuration declared no cryptographic binding, so anyone holding a
+  copy can present it.
 - `refreshable` is whether its issuance kept a refresh token
   (`request_refresh`), so `RefreshCredential` can replace its copies.
   The Authorization Server may still refuse it (`reissue_required`).
@@ -272,7 +301,7 @@ Steps, in order: `Offer`; then `BeginAuthorization` and
 
 | Method | Result |
 |---|---|
-| `Offer()` | `{"credential_issuer", "issuer_name", "issuer_logo", "grant", "tx_code": {"input_mode", "length", "description"}, "credentials": [{"configuration_id", "format", "vct", "doctype", "name", "description", "logo", "background_color", "text_color"}]}`, with display metadata as in a summary |
+| `Offer()` | `{"credential_issuer", "issuer_name", "issuer_logo", "grant", "tx_code": {"input_mode", "length", "description"}, "credentials": [{"configuration_id", "format", "vct", "doctype", "name", "description", "logo", "background_color", "text_color", "bound"}]}`, with display metadata as in a summary. `bound` false is a credential bound to no key, which anyone holding a copy can present: tell the holder before accepting |
 | `BeginAuthorization(op)` | the authorization URL, to open in `ASWebAuthenticationSession` (iOS) or an Auth Tab, falling back to a Custom Tab (Android) |
 | `CompleteAuthorization(op, redirect)` | the redirect back to `redirect_uri`, whole or just its query. It's used up whatever happens: after a failure, start again with `BeginAuthorization` |
 | `RedeemPreAuthorizedCode(op, txCode)` | the PIN, `""` if `tx_code` is absent; a wrong one is `protocol` and can be retried |
@@ -317,7 +346,12 @@ indexes, and `null` for every element. Holder keys sign during
 `redirect_uri` is set, open it in the browser.
 
 ABI version 12 added `registrar_roots`, the Verifier's `registration`,
-and each query's `unregistered` and `unregistered_all`.
+and each query's `unregistered` and `unregistered_all`. Within it,
+`issuance_profile`, an optional provider, `profile_violation`,
+`client_auth_unsupported` and `proof_unsupported`, the offer's `bound`,
+the summary's `unbound`, and the grant record's `client_auth`,
+`dpop_key_id` and `token_type` came later: each is new, so an older
+wrapper is unaffected.
 
 ABI version 11 added `untrusted_verifier`.
 

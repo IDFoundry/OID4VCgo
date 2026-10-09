@@ -60,6 +60,18 @@ const (
 	// leaves it unknown whether the Verifier received it. It isn't sent
 	// again: that could present twice.
 	CodeDeliveryUnknown = "delivery_unknown"
+	// CodeProfileViolation: under "issuance_profile": "haip", the issuer
+	// doesn't follow HAIP 1.0 (walletflow.ErrProfileViolation).
+	CodeProfileViolation = "profile_violation"
+	// CodeClientAuthUnsupported: the offer's Authorization Server takes
+	// no client authentication the wallet can give: a Wallet Attestation
+	// needs a WalletProvider and client_id
+	// (walletflow.ErrClientAuthUnsupported).
+	CodeClientAuthUnsupported = "client_auth_unsupported"
+	// CodeProofUnsupported: the issuer takes no proof the wallet can give
+	// for a credential: a key attestation needs a WalletProvider
+	// (walletflow.ErrProofUnsupported).
+	CodeProofUnsupported = "proof_unsupported"
 	// CodeProtocol: an issuer, Authorization Server or Verifier answered
 	// with an error, or with something the wallet refuses.
 	CodeProtocol = "protocol"
