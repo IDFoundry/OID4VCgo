@@ -48,6 +48,10 @@ public fun interface HolderAuthenticator {
  * The system's biometric prompt over the app's current activity
  * (`activity`'s, null when none is showing), allowing a strong biometric
  * or the screen lock, as Face ID or the passcode on iOS.
+ *
+ * A prompt shown while the wallet signs stays until the holder answers
+ * or dismisses it: cancelling the coroutine that started the presentation
+ * doesn't dismiss it yet.
  */
 @RequiresApi(Build.VERSION_CODES.R)
 public class BiometricPromptAuthenticator(
@@ -88,7 +92,8 @@ public class BiometricPromptAuthenticator(
  * Keystore alias after [Options.aliasPrefix]. Keys are usable only while
  * the device is unlocked, and holder keys, if
  * [Options.holderUserAuthentication], each time they sign only after
- * [authenticator] has authenticated the holder.
+ * [authenticator] has authenticated the holder: the store refuses to be
+ * made without one then.
  */
 public class AndroidKeystoreKeyStore(
     /** How the store makes keys. */
@@ -100,6 +105,16 @@ public class AndroidKeystoreKeyStore(
         // 30's: below it, fail now rather than make weaker keys.
         check(!options.holderUserAuthentication || Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             "holderUserAuthentication needs API 30; set it false and authenticate the holder in the app"
+        }
+        // Without one, holder keys could never sign: say so now, not at
+        // the first presentation.
+        require(!options.holderUserAuthentication || authenticator != null) {
+            "holderUserAuthentication needs an authenticator (BiometricPromptAuthenticator, say)"
+        }
+        // deleteKeys deletes every key under the prefix: an empty one, or
+        // one over the credential store's key, would delete that too.
+        require(options.aliasPrefix.isNotEmpty() && !FileCredentialStore.DEFAULT_KEY_ALIAS.startsWith(options.aliasPrefix)) {
+            "aliasPrefix must be non-empty and not cover the credential store's key"
         }
     }
 
@@ -131,7 +146,12 @@ public class AndroidKeystoreKeyStore(
          * holder in the app before presenting.
          */
         val holderUserAuthentication: Boolean = true,
-        /** Prefixes every key's alias. Keys under another prefix are never touched, by a sweep or anything else. */
+        /**
+         * Prefixes every key's alias. Keys under another prefix are never
+         * touched, by a sweep or anything else. It must be non-empty, and
+         * must not cover [FileCredentialStore]'s default key alias, which a
+         * sweep would then delete.
+         */
         val aliasPrefix: String = "org.idfoundry.oid4vcgo.key.",
     )
 

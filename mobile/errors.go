@@ -69,6 +69,9 @@ func classify(err error) error {
 		return newError(CodeDeliveryUnknown, walletflow.ErrDeliveryUnknown)
 	case errors.Is(err, wallet.ErrUntrustedVerifier):
 		return newError(CodeUntrustedVerifier, wallet.ErrUntrustedVerifier)
+	case errors.Is(err, walletflow.ErrMalformedRequest):
+		// What the platform handed over, not a service's refusal.
+		return newError(CodeInvalidInput, walletflow.ErrMalformedRequest)
 	case errors.Is(err, walletflow.ErrNotFound):
 		return newError(CodeNotFound, err)
 	case errors.Is(err, walletflow.ErrProfileViolation):

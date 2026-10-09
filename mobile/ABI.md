@@ -401,6 +401,10 @@ returns a `Presentation`, answered with the same steps, except:
   back to the page; `Decline`'s is the encrypted `access_denied`.
 - Presentations are bound to `"origin:" + origin`, and a copy presented
   counts as shown to it (`shown_to_verifier`, `linkable_here`).
+- A request that can't be parsed, or comes with no origin, is
+  `invalid_input`: what the platform handed over, not a service's
+  refusal. `StartMdocPresentation`'s is too. (Before OID4VCWallet 0.9.0
+  both were `protocol`.)
 
 `StartDCAPIPresentation` and these fields were added within ABI version
 12, without changing anything there.

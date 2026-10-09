@@ -75,6 +75,10 @@ class FileCredentialStoreTest {
         bytes[bytes.size - 1] = (bytes[bytes.size - 1].toInt() xor 1).toByte()
         file.writeBytes(bytes)
         expectStoreFailure { s.record("a") }
+
+        // One record that doesn't decrypt doesn't hide the others.
+        s.put("c", """{"id":"c"}""".toByteArray())
+        assertEquals(listOf("""{"id":"c"}"""), s.records().map { it.decodeToString() })
     }
 
     /** Credentials survive a new Wallet over the same directory; another key store's wallet sees their keys gone. */
