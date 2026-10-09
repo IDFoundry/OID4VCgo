@@ -26,6 +26,14 @@ type grantRecord struct {
 	RefreshToken        string    `json:"refresh_token"`
 	InstanceKeyID       string    `json:"instance_key_id"`
 	CreatedAt           time.Time `json:"created_at"`
+	// ClientAuth is "none" for a grant that authenticates no client,
+	// whose refresh token is bound to DPoPKeyID instead (empty for a
+	// Bearer one, TokenType "Bearer"), with no instance_key_id; absent
+	// for a Wallet Attestation's, as every grant written before it was
+	// kept is.
+	ClientAuth string `json:"client_auth,omitempty"`
+	DPoPKeyID  string `json:"dpop_key_id,omitempty"`
+	TokenType  string `json:"token_type,omitempty"`
 }
 
 func grantStoreID(id string) string { return "grant-" + id }
@@ -37,11 +45,14 @@ var _ walletflow.GrantStore = grantStore{}
 
 func (s grantStore) PutGrant(_ context.Context, g walletflow.RefreshGrant) error {
 	// The refresh token is kept deliberately, beside the credentials it
-	// refreshes: redeeming it needs the wallet instance key, which never
-	// leaves the KeyStore.
+	// refreshes: redeeming it needs the wallet instance key, or the DPoP
+	// key it's bound to, which never leave the KeyStore — a Bearer
+	// grant's needs neither, which is why the record is under the
+	// platform's data protection.
 	raw, err := json.Marshal(grantRecord{ //nolint:gosec // G117: see above
 		Kind: grantKind, ID: g.ID, CredentialIssuer: g.CredentialIssuer, AuthorizationServer: g.AuthorizationServer,
 		ConfigurationID: g.ConfigurationID, RefreshToken: g.RefreshToken.Reveal(), InstanceKeyID: g.InstanceKeyID, CreatedAt: g.CreatedAt,
+		ClientAuth: string(g.ClientAuth), DPoPKeyID: g.DPoPKeyID, TokenType: g.TokenType,
 	})
 	if err != nil {
 		return newError(CodeInternal, err)
@@ -103,6 +114,7 @@ func refreshGrant(raw []byte) (walletflow.RefreshGrant, error) {
 	return walletflow.RefreshGrant{
 		ID: r.ID, CredentialIssuer: r.CredentialIssuer, AuthorizationServer: r.AuthorizationServer,
 		ConfigurationID: r.ConfigurationID, RefreshToken: fapi.NewSecret(r.RefreshToken), InstanceKeyID: r.InstanceKeyID, CreatedAt: r.CreatedAt,
+		ClientAuth: walletflow.GrantAuth(r.ClientAuth), DPoPKeyID: r.DPoPKeyID, TokenType: r.TokenType,
 	}, nil
 }
 

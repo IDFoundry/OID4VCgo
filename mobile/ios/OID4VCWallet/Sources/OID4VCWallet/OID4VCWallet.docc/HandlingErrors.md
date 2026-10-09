@@ -53,6 +53,9 @@ func describe(_ error: Error) -> (message: String, canRetry: Bool) {
 | ``WalletError/Code/invalidSelection`` | The selection doesn't answer the request | Choose again |
 | ``WalletError/Code/deliveryUnknown`` | A response may or may not have reached the Verifier: it isn't sent again | Ask the holder to check with the Verifier |
 | ``WalletError/Code/reissueRequired`` | A credential can't be refreshed | Receive it again from the issuer |
+| ``WalletError/Code/profileViolation`` | Under the `.haip` issuance profile, the issuer doesn't follow HAIP 1.0 | Tell the holder: the wallet doesn't receive from this issuer |
+| ``WalletError/Code/clientAuthUnsupported`` | The issuer needs a Wallet Attestation the wallet can't give: no `WalletProvider` or `clientID` | Tell the holder, or configure a provider |
+| ``WalletError/Code/proofUnsupported`` | The wallet can't hold the credential, or the issuer needs a proof it can't give (a key attestation needs a `WalletProvider`) | Tell the holder |
 | ``WalletError/Code/notFound`` | No such credential, deferred credential or authorization | Refresh the list |
 | ``WalletError/Code/wrongStep`` | The session isn't at that step | A bug in the app's flow |
 | ``WalletError/Code/cancelled`` | The calling task was cancelled | Nothing |

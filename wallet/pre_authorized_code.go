@@ -144,7 +144,20 @@ func (w *Wallet) RequestPreAuthorizedCodeToken(
 	if err := w.checkPreAuthorizedCodeTokenRequest(req); err != nil {
 		return PreAuthorizedCodeTokenResult{}, err
 	}
-	body := preAuthorizedCodeTokenForm(req)
+	body, err := w.postToken(ctx, endpoint, preAuthorizedCodeTokenForm(req), req.DPoPKey, req.ClientAttestation, "request pre-authorized code token")
+	if err != nil {
+		return PreAuthorizedCodeTokenResult{}, err
+	}
+	return decodeTokenResponse(body)
+}
+
+// postToken POSTs form to the token endpoint, with a DPoP proof when
+// dpopKey is set and the attestation headers when attestation is,
+// retrying once on a DPoP nonce challenge, and returns the 200
+// response's body. op names the call in errors.
+func (w *Wallet) postToken(
+	ctx context.Context, endpoint fapi.URL, form []byte, dpopKey crypto.Signer, attestation ClientAttestationSource, op string,
+) ([]byte, error) {
 	target := endpoint.URL()
 	htu := target
 	htu.RawQuery, htu.Fragment = "", ""
@@ -153,19 +166,19 @@ func (w *Wallet) RequestPreAuthorizedCodeToken(
 	// challenge to the first.
 	var nonce string
 	for attempt := 0; ; attempt++ {
-		res, err := w.postPreAuthorizedCodeToken(ctx, target.String(), htu.String(), body, nonce, req)
+		res, err := w.postTokenOnce(ctx, target.String(), htu.String(), form, nonce, dpopKey, attestation, op)
 		if err != nil {
-			return PreAuthorizedCodeTokenResult{}, err
+			return nil, err
 		}
 		if res.status == http.StatusOK {
-			return decodeTokenResponse(res.body)
+			return res.body, nil
 		}
-		if attempt == 0 {
+		if attempt == 0 && dpopKey != nil {
 			if nonce = dpopNonceChallenge(res.status, res.header, res.body); nonce != "" {
 				continue
 			}
 		}
-		return PreAuthorizedCodeTokenResult{}, parseError(res.status, res.body)
+		return nil, parseError(res.status, res.body)
 	}
 }
 
@@ -199,38 +212,40 @@ type tokenHTTPResponse struct {
 	body   []byte
 }
 
-// postPreAuthorizedCodeToken sends one Token Request to target with a
-// fresh DPoP proof for htu (with nonce, if set) and, when the request has
-// a ClientAttestation, a fresh attestation PoP: both are single-use.
-func (w *Wallet) postPreAuthorizedCodeToken(
-	ctx context.Context, target, htu string, body []byte, nonce string, req PreAuthorizedCodeTokenRequest,
+// postTokenOnce sends one request to target with, when dpopKey is set,
+// a fresh DPoP proof for htu (with nonce, if set) and, when attestation
+// is set, a fresh attestation PoP: both are single-use.
+func (w *Wallet) postTokenOnce(
+	ctx context.Context, target, htu string, body []byte, nonce string, dpopKey crypto.Signer, attestation ClientAttestationSource, op string,
 ) (tokenHTTPResponse, error) {
-	proof, err := w.GenerateDPoPProof(req.DPoPKey, http.MethodPost, htu, nonce, "")
-	if err != nil {
-		return tokenHTTPResponse{}, fmt.Errorf("wallet: request pre-authorized code token: %w", err)
-	}
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(body))
 	if err != nil {
-		return tokenHTTPResponse{}, fmt.Errorf("wallet: request pre-authorized code token: build request: %w", err)
+		return tokenHTTPResponse{}, fmt.Errorf("wallet: %s: build request: %w", op, err)
 	}
 	httpReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	httpReq.Header.Set("DPoP", proof)
-	if req.ClientAttestation != nil {
-		attestation, pop, err := req.ClientAttestation.ClientAttestationHeaders(ctx)
+	if dpopKey != nil {
+		proof, err := w.GenerateDPoPProof(dpopKey, http.MethodPost, htu, nonce, "")
 		if err != nil {
-			return tokenHTTPResponse{}, fmt.Errorf("wallet: request pre-authorized code token: client attestation: %w", err)
+			return tokenHTTPResponse{}, fmt.Errorf("wallet: %s: %w", op, err)
+		}
+		httpReq.Header.Set("DPoP", proof)
+	}
+	if attestation != nil {
+		attestation, pop, err := attestation.ClientAttestationHeaders(ctx)
+		if err != nil {
+			return tokenHTTPResponse{}, fmt.Errorf("wallet: %s: client attestation: %w", op, err)
 		}
 		httpReq.Header.Set("OAuth-Client-Attestation", attestation)
 		httpReq.Header.Set("OAuth-Client-Attestation-PoP", pop)
 	}
 	res, err := w.deps.HTTP.Do(httpReq)
 	if err != nil {
-		return tokenHTTPResponse{}, fmt.Errorf("wallet: request pre-authorized code token: %w", err)
+		return tokenHTTPResponse{}, fmt.Errorf("wallet: %s: %w", op, err)
 	}
 	respBody, readErr := io.ReadAll(io.LimitReader(res.Body, maxTokenResponseBytes))
 	_ = res.Body.Close()
 	if readErr != nil {
-		return tokenHTTPResponse{}, fmt.Errorf("wallet: request pre-authorized code token: read response: %w", readErr)
+		return tokenHTTPResponse{}, fmt.Errorf("wallet: %s: read response: %w", op, readErr)
 	}
 	return tokenHTTPResponse{status: res.StatusCode, header: res.Header, body: respBody}, nil
 }

@@ -249,8 +249,8 @@ func (w *Wallet) rebuild(ctx context.Context, a PendingAuthorization) (*Issuance
 	if plan.AuthorizationServer != a.AuthorizationServer {
 		return nil, errors.New("walletflow: the issuer no longer names the authorization server the authorization began at")
 	}
-	s := &Issuance{w: w, offer: a.Offer, metadata: metadata, step: stepAuthorizing}
-	s.details = describeOffer(a.Offer, metadata, w.cfg.Locales)
+	s := &Issuance{w: w, offer: a.Offer, metadata: metadata, step: stepAuthorizing, grant: GrantAuthorizationCode, auth: clientAuthAttestation}
+	s.details = describeOffer(a.Offer, metadata, GrantAuthorizationCode, w.cfg.Locales)
 	if s.instanceKey, err = w.deps.Keys.Key(ctx, a.InstanceKeyID); err != nil {
 		return nil, fmt.Errorf("walletflow: the authorization's instance key: %w", err)
 	}
@@ -265,7 +265,7 @@ func (w *Wallet) rebuild(ctx context.Context, a PendingAuthorization) (*Issuance
 		instanceKeyID: a.InstanceKeyID, dpopKeyID: a.DPoPKeyID, state: a.State,
 	}
 	s.resumed = true
-	if err := s.newClient(ctx, a.AuthorizationServer); err != nil {
+	if err := s.newClient(ctx, a.AuthorizationServer, true); err != nil {
 		_ = s.Close(ctx)
 		return nil, err
 	}

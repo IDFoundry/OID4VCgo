@@ -126,7 +126,8 @@
 // GenerateProofWithKeyID, GenerateProofWithX5C, GenerateAttestationProof,
 // GenerateProofWithKeyAttestation, RequestCredential, BuildAuthorizationRequest,
 // RequestDeferredCredential, RequestNotification, RequestPreAuthorizedCodeToken,
-// DPoPResourceClient, GenerateDPoPProof
+// RequestRefreshToken, RevokeToken, RequestAttestationChallenge,
+// DPoPResourceClient, BearerResourceClient, GenerateDPoPProof
 // and DPoPAccessTokenHash exist so far. This package does not yet cover:
 //
 //   - di_vp proofs (needs W3C VCDM, which this repo doesn't implement,
@@ -143,7 +144,9 @@
 // Credential Offer and its issuer's metadata, which Authorization Server
 // to use (OID4VCI 1.0 §12.2.4, §4.1.1), the scopes to request and the
 // offer's issuer_state; AuthorizationServerMetadata.ClientEndpoints
-// turns that server's metadata into fapigo/client's endpoint types.
+// turns that server's metadata into fapigo/client's endpoint types, and
+// TokenClientEndpoints does so for a client that never starts an
+// authorization, needing only the token endpoint.
 // PlanPreAuthorizedCode does the same for the pre-authorized code grant:
 // its server's token endpoint is where RequestPreAuthorizedCodeToken
 // sends the code and the holder's PIN, so an offer naming a server the
@@ -188,8 +191,13 @@
 // same way, with the Wallet's VerifierTrust, checks the origin the
 // platform reports against its expected_origins, and PresentCredentials
 // builds its response when given that Origin. An unsigned request is
-// identified by that origin alone. No other client_id
-// scheme, no di_vp presentations. Which Verifiers to trust is the caller's policy, a
+// identified by that origin alone; with Config.RequireSignedDCAPIRequests
+// it's refused instead (ErrUntrustedVerifier). An mdoc requested with the
+// "org-iso-mdoc" protocol isn't OpenID4VP: package mdocdcapi answers
+// that. This package supports no other Client Identifier Prefix, and no
+// di_vp presentations.
+//
+// Which Verifiers to trust is the caller's policy, a
 // VerifierTrust (OID4VP §5.9.3's trust chain validation):
 // X5CVerifierRoots for a fixed set of trust anchors, or the explicit
 // NoVerifierTrust opt-out, which AssuranceProduction rejects.

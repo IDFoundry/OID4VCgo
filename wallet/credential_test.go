@@ -342,20 +342,29 @@ func TestRequestCredential_CredentialIdentifier(t *testing.T) {
 	}
 }
 
-func TestRequestCredential_RejectsNoKeys(t *testing.T) {
+// A credential bound to no key is requested with no proofs at all
+// (OpenID4VCI 1.0 §12.2.4: "If absent, the Wallet is not required to
+// supply proofs"), not an empty proofs object.
+func TestRequestCredential_NoProofs(t *testing.T) {
 	w, err := wallet.New(validConfig(), validDependencies())
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 	resource := &fakeProtectedResourceClient{do: func(context.Context, *http.Request) (*http.Response, error) {
-		t.Fatalf("unexpected HTTP call")
-		return nil, nil
+		return jsonResponse([]byte(`{"credentials":[{"credential":"unbound"}]}`)), nil
 	}}
-	_, err = w.RequestCredential(context.Background(), resource, testCredentialEndpoint(t), wallet.CredentialRequest{
+	result, err := w.RequestCredential(context.Background(), resource, testCredentialEndpoint(t), wallet.CredentialRequest{
 		CredentialConfigurationID: "IdentityCredential",
 	})
-	if err == nil {
-		t.Fatalf("RequestCredential = nil error, want error")
+	if err != nil || len(result.Credentials) != 1 {
+		t.Fatalf("RequestCredential = %+v, %v", result, err)
+	}
+	var sentBody map[string]any
+	if err := json.Unmarshal(resource.lastBody, &sentBody); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := sentBody["proofs"]; ok {
+		t.Errorf("sent body = %v, want no proofs", sentBody)
 	}
 }
 

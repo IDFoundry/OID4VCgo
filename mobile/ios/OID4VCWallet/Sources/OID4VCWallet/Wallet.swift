@@ -3,10 +3,12 @@ import Mobile
 
 /// NewWallet's configuration.
 public struct WalletConfiguration: Codable, Sendable {
-    /// The wallet's registration with Authorization Servers.
+    /// The wallet's registration with Authorization Servers. Empty for a
+    /// wallet with no `WalletProvider`.
     public var clientID: String
     /// Where the issuer's pages send the holder back to: a private-use URI the
-    /// app opens, registered with the issuers' Authorization Servers.
+    /// app opens, registered with the issuers' Authorization Servers. Empty
+    /// for a wallet that receives only pre-authorized codes.
     public var redirectURI: String
     /// PEM certificates: the trust anchors for issuers' credentials, and
     /// for Verifiers' requests.
@@ -61,6 +63,20 @@ public struct WalletConfiguration: Codable, Sendable {
     /// Verifiers, status lists), not the app's own, such as to its
     /// Wallet Provider: pin that client yourself.
     public var tlsPins: [String: [String]]
+    /// The profile issuance follows.
+    public var issuanceProfile: IssuanceProfile
+
+    /// The profile issuance follows.
+    public enum IssuanceProfile: String, Codable, Sendable, CaseIterable {
+        /// The issuer's and its Authorization Server's metadata, as
+        /// OpenID4VCI 1.0 has a wallet do: a Wallet Attestation and a key
+        /// attestation only where they ask for them. The default.
+        case openID4VCI = "openid4vci"
+        /// Also refuses an issuer that doesn't follow HAIP 1.0
+        /// (`WalletError.Code.profileViolation`). Needs a `WalletProvider`
+        /// and a `clientID`.
+        case haip
+    }
 
     /// Which copy of a credential a presentation uses (OpenID4VCI 1.0: "a
     /// unique Credential per presentation or per Verifier").
@@ -74,12 +90,15 @@ public struct WalletConfiguration: Codable, Sendable {
         case perVerifier = "per_verifier"
     }
 
-    /// A configuration: every field but the client ID and the redirect URI has
-    /// a default.
-    public init(clientID: String, redirectURI: String, issuerRoots: String = "", verifierRoots: String = "", registrarRoots: String = "",
+    /// A configuration: every field has a default. A wallet with no
+    /// `WalletProvider`, receiving credentials only from pre-authorized
+    /// codes redeemed with no client authentication, leaves the client ID
+    /// and the redirect URI empty.
+    public init(clientID: String = "", redirectURI: String = "", issuerRoots: String = "", verifierRoots: String = "", registrarRoots: String = "",
                 mdocReaderRoots: String = "", mdocReaderRequireEKU: Bool = false, requireTrustedMdocReader: Bool = false,
                 development: Bool = false, locales: [String] = Locale.preferredLanguages, batchSize: Int = 0, requestRefresh: Bool = false,
-                copyPolicy: CopyPolicy = .perPresentation, tlsPins: [String: [String]] = [:]) {
+                copyPolicy: CopyPolicy = .perPresentation, issuanceProfile: IssuanceProfile = .openID4VCI,
+                tlsPins: [String: [String]] = [:]) {
         self.clientID = clientID
         self.redirectURI = redirectURI
         self.issuerRoots = issuerRoots
@@ -94,6 +113,7 @@ public struct WalletConfiguration: Codable, Sendable {
         self.requestRefresh = requestRefresh
         self.copyPolicy = copyPolicy
         self.tlsPins = tlsPins
+        self.issuanceProfile = issuanceProfile
     }
 
     enum CodingKeys: String, CodingKey {
@@ -101,13 +121,14 @@ public struct WalletConfiguration: Codable, Sendable {
         case verifierRoots = "verifier_roots", registrarRoots = "registrar_roots", mdocReaderRoots = "mdoc_reader_roots"
         case mdocReaderRequireEKU = "mdoc_reader_require_eku", requireTrustedMdocReader = "require_trusted_mdoc_reader"
         case development, locales, batchSize = "batch_size"
-        case requestRefresh = "request_refresh", copyPolicy = "copy_policy", tlsPins = "tls_pins"
+        case requestRefresh = "request_refresh", copyPolicy = "copy_policy", issuanceProfile = "issuance_profile"
+        case tlsPins = "tls_pins"
     }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        self.init(clientID: try c.decode(String.self, forKey: .clientID),
-                  redirectURI: try c.decode(String.self, forKey: .redirectURI),
+        self.init(clientID: try c.decodeIfPresent(String.self, forKey: .clientID) ?? "",
+                  redirectURI: try c.decodeIfPresent(String.self, forKey: .redirectURI) ?? "",
                   issuerRoots: try c.decodeIfPresent(String.self, forKey: .issuerRoots) ?? "",
                   verifierRoots: try c.decodeIfPresent(String.self, forKey: .verifierRoots) ?? "",
                   registrarRoots: try c.decodeIfPresent(String.self, forKey: .registrarRoots) ?? "",
@@ -119,6 +140,7 @@ public struct WalletConfiguration: Codable, Sendable {
                   batchSize: try c.decodeIfPresent(Int.self, forKey: .batchSize) ?? 0,
                   requestRefresh: try c.decodeIfPresent(Bool.self, forKey: .requestRefresh) ?? false,
                   copyPolicy: try c.decodeIfPresent(CopyPolicy.self, forKey: .copyPolicy) ?? .perPresentation,
+                  issuanceProfile: try c.decodeIfPresent(IssuanceProfile.self, forKey: .issuanceProfile) ?? .openID4VCI,
                   tlsPins: try c.decodeIfPresent([String: [String]].self, forKey: .tlsPins) ?? [:])
     }
 

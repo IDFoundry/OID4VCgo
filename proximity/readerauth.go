@@ -79,6 +79,8 @@ func (s ReaderStatus) String() string {
 
 // ReaderAuthentication is VerifyReaderAuth's result.
 type ReaderAuthentication struct {
+	// Status is how far the request's reader authentication goes:
+	// trusted, untrusted, unauthenticated (unsigned) or invalid.
 	Status ReaderStatus
 	// Chain is the certificate chain readerAuth carries, leaf first, as
 	// received: for ReaderTrusted the reader's verified identity; for

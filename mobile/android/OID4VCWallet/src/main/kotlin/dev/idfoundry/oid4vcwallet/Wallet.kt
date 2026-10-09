@@ -23,10 +23,18 @@ import dev.idfoundry.oid4vcwallet.gomobile.mobile.Wallet as MobileWallet
 @OptIn(ExperimentalSerializationApi::class)
 @Serializable
 public data class WalletConfiguration(
-    /** The wallet's registration with Authorization Servers. */
-    @SerialName("client_id") val clientID: String,
-    /** Where the issuer's pages send the holder back to: a private-use URI the app receives. */
-    @SerialName("redirect_uri") val redirectURI: String,
+    /**
+     * The wallet's registration with Authorization Servers: empty for a
+     * wallet with no [WalletProvider], receiving credentials only from
+     * pre-authorized codes redeemed with no client authentication.
+     */
+    @SerialName("client_id") val clientID: String = "",
+    /**
+     * Where the issuer's pages send the holder back to: a private-use URI
+     * the app receives. Empty for a wallet that receives only
+     * pre-authorized codes.
+     */
+    @SerialName("redirect_uri") val redirectURI: String = "",
     /** PEM certificates: the trust anchors for issuers' credentials, and for Verifiers' requests. */
     @SerialName("issuer_roots") val issuerRoots: String = "",
     /** PEM certificates: the trust anchors for Verifiers' requests. */
@@ -111,7 +119,27 @@ public data class WalletConfiguration(
      * security configuration).
      */
     @SerialName("tls_pins") val tlsPins: Map<String, List<String>> = emptyMap(),
+    /** The profile issuance follows. */
+    @SerialName("issuance_profile") val issuanceProfile: IssuanceProfile = IssuanceProfile.OPENID4VCI,
 ) {
+    /** The profile issuance follows. */
+    @Serializable
+    public enum class IssuanceProfile {
+        /**
+         * The issuer's and its Authorization Server's metadata, as
+         * OpenID4VCI 1.0 has a wallet do: a Wallet Attestation and a key
+         * attestation only where they ask for them. The default.
+         */
+        @SerialName("openid4vci") OPENID4VCI,
+
+        /**
+         * Also refuses an issuer that doesn't follow HAIP 1.0
+         * ([WalletException.Code.profileViolation]). Needs a
+         * [WalletProvider] and a `clientID`.
+         */
+        @SerialName("haip") HAIP,
+    }
+
     /**
      * Which copy of a credential a presentation uses (OpenID4VCI 1.0: "a
      * unique Credential per presentation or per Verifier").
