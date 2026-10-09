@@ -33,7 +33,8 @@ import java.util.UUID
  * connects, subscribes and starts the session. The reader in mdoc
  * peripheral server mode, and the holder in mdoc central client mode,
  * where it first reads the reader's Ident characteristic and
- * disconnects unless it's [ident] (§8.3.3.1.1.4). Bluetooth
+ * disconnects unless it's [ident] (§8.3.3.1.1.4), ignoring that device
+ * from then on. Bluetooth
  * permissions are the caller's to have checked.
  *
  * Android's own failures are worked around as Multipaz does: a scan
@@ -68,6 +69,8 @@ internal class GattClientTransport(
     @Volatile private var mtu = BleChunks.DEFAULT_MTU
     @Volatile private var sessionStarted = false
     @Volatile private var closed = false
+    /** Devices whose Ident wasn't this session's reader's: never again. */
+    private val ignored: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
 
     private val callback = object : BluetoothGattCallback() {
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
@@ -142,15 +145,29 @@ internal class GattClientTransport(
         val adapter = manager.adapter
         if (adapter == null || !adapter.isEnabled) throw ProximityTransportException("Bluetooth is off")
         var lastStatus = 0
-        repeat(CONNECT_ATTEMPTS) { attempt ->
+        var attempt = 0
+        while (attempt < CONNECT_ATTEMPTS) {
             val device = scan()
             val status = attemptConnection(device)
             if (status == BluetoothGatt.GATT_SUCCESS) {
-                start()
-                return
+                try {
+                    start()
+                    return
+                } catch (e: ProximityTransportException) {
+                    if (!e.wrongReader) throw e
+                    // Another session's reader: keep looking for this
+                    // one's, until the caller's connect timeout.
+                    Log.i(TAG, "ignoring a device that isn't this session's reader")
+                    ignored.add(device.address)
+                    gatt?.disconnect()
+                    gatt?.close()
+                    gatt = null
+                    continue
+                }
             }
             lastStatus = status
-            Log.i(TAG, "connecting failed with status $status (attempt ${attempt + 1} of $CONNECT_ATTEMPTS)")
+            attempt++
+            Log.i(TAG, "connecting failed with status $status (attempt $attempt of $CONNECT_ATTEMPTS)")
             gatt?.close()
             gatt = null
             delay(RETRY_DELAY_MS)
@@ -165,7 +182,7 @@ internal class GattClientTransport(
             val found = CompletableDeferred<BluetoothDevice>()
             val scanCallback = object : ScanCallback() {
                 override fun onScanResult(callbackType: Int, result: ScanResult) {
-                    found.complete(result.device)
+                    if (result.device.address !in ignored) found.complete(result.device)
                 }
 
                 override fun onScanFailed(errorCode: Int) {
@@ -220,7 +237,7 @@ internal class GattClientTransport(
         sessionStarted = true
     }
 
-    /** Reads the reader's Ident: a device advertising the service UUID that isn't this session's reader fails the session. */
+    /** Reads the reader's Ident: a device advertising the service UUID that isn't this session's reader is refused, [ProximityTransportException.wrongReader]. */
     private suspend fun checkIdent(g: BluetoothGatt, characteristic: BluetoothGattCharacteristic?) {
         characteristic ?: throw ProximityTransportException("the reader's service lacks Ident")
         while (reads.tryReceive().isSuccess) Unit
@@ -228,7 +245,9 @@ internal class GattClientTransport(
         if (!g.readCharacteristic(characteristic)) throw ProximityTransportException("couldn't read the reader's Ident")
         val value = withTimeoutOrNull(OPERATION_TIMEOUT_MS) { reads.receive() }
             ?: throw ProximityTransportException("couldn't read the reader's Ident")
-        if (!value.contentEquals(ident)) throw ProximityTransportException("the device found isn't this session's reader (its Ident differs)")
+        if (!value.contentEquals(ident)) {
+            throw ProximityTransportException("the device found isn't this session's reader (its Ident differs)", wrongReader = true)
+        }
     }
 
     private suspend fun subscribe(g: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {

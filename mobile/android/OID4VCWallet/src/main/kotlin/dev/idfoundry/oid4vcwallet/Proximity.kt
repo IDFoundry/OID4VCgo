@@ -409,13 +409,19 @@ public class ProximityPresentation internal constructor(
         @SerialName("ble_modes") val bleModes: List<BLEModeJSON>,
         val ident: String = "",
     ) {
-        fun toHolderEngagement(): HolderEngagement = HolderEngagement(
-            bleModes.map { m ->
+        fun toHolderEngagement(): HolderEngagement {
+            val modes = bleModes.map { m ->
                 (ProximityBLEMode.entries.firstOrNull { it.rawValue == m.mode } ?: throw WalletException(WalletException.Code.internal, null, "unknown BLE mode ${m.mode}")) to
                     UUID.fromString(m.serviceUUID)
-            },
-            if (ident.isEmpty()) null else Base64.getDecoder().decode(ident),
-        )
+            }
+            val decoded = if (ident.isEmpty()) null else runCatching { Base64.getDecoder().decode(ident) }.getOrNull()
+            // Central client mode checks the reader's Ident (§8.3.3.1.1.4):
+            // without one, any device advertising the service would do.
+            if (modes.any { it.first == ProximityBLEMode.CENTRAL_CLIENT } && decoded?.size != 16) {
+                throw WalletException(WalletException.Code.internal, null, "central client mode without the reader's Ident")
+            }
+            return HolderEngagement(modes, decoded)
+        }
     }
 
     @Serializable

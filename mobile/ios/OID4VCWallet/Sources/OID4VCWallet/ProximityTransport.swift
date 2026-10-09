@@ -136,11 +136,14 @@ struct ProximityTransportError: Error, CustomStringConvertible {
     let message: String
     var peerEnded = false
     var bluetoothUnavailable = false
+    /// The device found isn't this session's reader: its Ident differs.
+    var wrongReader = false
 
-    init(_ message: String, peerEnded: Bool = false, bluetoothUnavailable: Bool = false) {
+    init(_ message: String, peerEnded: Bool = false, bluetoothUnavailable: Bool = false, wrongReader: Bool = false) {
         self.message = message
         self.peerEnded = peerEnded
         self.bluetoothUnavailable = bluetoothUnavailable
+        self.wrongReader = wrongReader
     }
 
     var description: String { message }

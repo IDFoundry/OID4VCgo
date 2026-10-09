@@ -256,7 +256,13 @@ public final class ProximityPresentation: @unchecked Sendable {
         self.handle = handle
         self.timeouts = timeouts
         self.qrCode = e.qrCode
-        self.transport = transport(HolderEngagement(modes: modes, ident: e.ident.flatMap { Data(base64Encoded: $0) }))
+        // Central client mode checks the reader's Ident (§8.3.3.1.1.4):
+        // without one, any device advertising the service would do.
+        let ident = e.ident.flatMap { Data(base64Encoded: $0) }
+        if modes.contains(where: { $0.0 == .centralClient }), ident?.count != 16 {
+            throw WalletError(code: .internalError, message: "central client mode without the reader's Ident")
+        }
+        self.transport = transport(HolderEngagement(modes: modes, ident: ident))
         task = Task.detached { [self] in await run() }
     }
 

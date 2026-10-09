@@ -1115,9 +1115,12 @@ Decisions taken 2026-10-06 (tracked in [#482](https://github.com/IDFoundry/OID4V
 ### Phase 10 findings: the Android SDK
 
 - **The BLE code sits behind a transport interface:** `GattServerTransport`
-  (the holder, and a reader in central client mode) and
-  `GattClientTransport` (a reader in peripheral server mode) carry whole
-  messages, and the sessions never see GATT. The emulator tests pair a
+  (a holder in peripheral server mode, and a reader in central client
+  mode) and `GattClientTransport` (a reader in peripheral server mode,
+  and a holder in central client mode) carry whole messages, and the
+  sessions never see GATT. A holder offering both modes runs both
+  through `EitherTransport`, keeps the one a reader connects with, and
+  closes the other once it has stopped. The emulator tests pair a
   holder and a reader over an in-memory transport, so everything but
   the radio is tested in CI.
 - **Android 13 changed the GATT calls:** writing and notifying take the
@@ -1130,9 +1133,16 @@ Decisions taken 2026-10-06 (tracked in [#482](https://github.com/IDFoundry/OID4V
   disconnects, so its last notification isn't lost to an early
   disconnect.
 - **Permissions:** the library declares them, `ProximityPermissions`
-  lists the runtime ones (advertise and connect for a holder; scan,
-  connect and advertise for a reader; location up to Android 11, which
-  delivers scan results only with it).
+  lists the runtime ones (for a holder, advertise and connect in
+  peripheral server mode and scan and connect in central client mode,
+  so both by default; scan, connect and advertise for a reader; location
+  up to Android 11 wherever there's scanning, which it delivers results
+  for only with it).
+- **A holder in central client mode checks the reader's Ident**
+  (§8.3.3.1.1.4) before starting the session, and refuses to start
+  without one. A device whose Ident differs, another session's reader
+  advertising the same service, is disconnected and ignored, and the
+  scan goes on, on both platforms.
 
 ### Phase 10 findings: the iOS SDK
 
