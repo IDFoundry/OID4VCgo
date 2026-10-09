@@ -31,6 +31,8 @@ final class GattClientTransport: NSObject, ProximityTransport, CBCentralManagerD
     private var identCharacteristic: CBCharacteristic?
     private var sessionStarted = false
     private var closed = false
+    /// Devices whose Ident wasn't this session's reader's: never again.
+    private var ignored = Set<UUID>()
 
     private let poweredOn = Signal()
     private let incoming = MessageQueue()
@@ -48,19 +50,33 @@ final class GattClientTransport: NSObject, ProximityTransport, CBCentralManagerD
         try await poweredOn.wait()
         let attempts = 3
         var lastError: (any Error)?
-        for attempt in 1...attempts {
+        var attempt = 1
+        while attempt <= attempts {
             try await scan()
             do {
                 try await connectToDiscovered()
                 try await start()
                 return
             } catch let error as ProximityTransportError {
+                // A closed session's "the session ended": never rescan.
+                if queue.sync(execute: { closed }) { throw error }
                 lastError = error
-                log.info("connecting failed (attempt \(attempt) of \(attempts)): \(error.message, privacy: .public)")
+                let wrongReader = error.wrongReader
                 queue.sync {
-                    if let peripheral { manager?.cancelPeripheralConnection(peripheral) }
+                    if let peripheral {
+                        if wrongReader { ignored.insert(peripheral.identifier) }
+                        manager?.cancelPeripheralConnection(peripheral)
+                    }
                     peripheral = nil
                 }
+                if wrongReader {
+                    // Another session's reader: keep looking for this
+                    // one's, until the caller's connect timeout.
+                    log.info("ignoring a device that isn't this session's reader")
+                    continue
+                }
+                log.info("connecting failed (attempt \(attempt) of \(attempts)): \(error.message, privacy: .public)")
+                attempt += 1
             }
         }
         throw lastError ?? ProximityTransportError("couldn't connect to the other device")
@@ -69,7 +85,8 @@ final class GattClientTransport: NSObject, ProximityTransport, CBCentralManagerD
     /// Scans until a peripheral advertising `serviceUUID` is found.
     private func scan() async throws {
         let p = Pending<Void>()
-        queue.sync {
+        try queue.sync {
+            guard !closed else { throw ProximityTransportError("the session ended") }
             discovered = nil
             found = p
             manager?.scanForPeripherals(withServices: [serviceUUID])
@@ -82,6 +99,7 @@ final class GattClientTransport: NSObject, ProximityTransport, CBCentralManagerD
     private func connectToDiscovered() async throws {
         let p = Pending<Void>()
         try queue.sync {
+            guard !closed else { throw ProximityTransportError("the session ended") }
             guard let device = discovered else { throw ProximityTransportError("nothing found") }
             peripheral = device
             device.delegate = self
@@ -131,7 +149,9 @@ final class GattClientTransport: NSObject, ProximityTransport, CBCentralManagerD
             peripheral.readValue(for: c)
         }
         let got = try await withTimeout(.seconds(5)) { try await p.wait() }
-        guard got == want else { throw ProximityTransportError("the device found isn't this session's reader (its Ident differs)") }
+        guard got == want else {
+            throw ProximityTransportError("the device found isn't this session's reader (its Ident differs)", wrongReader: true)
+        }
     }
 
     /// Starts one GATT operation on the peripheral and waits for its
@@ -226,7 +246,7 @@ final class GattClientTransport: NSObject, ProximityTransport, CBCentralManagerD
     }
 
     func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral, advertisementData: [String: Any], rssi RSSI: NSNumber) {
-        guard let p = found else { return }
+        guard let p = found, !ignored.contains(peripheral.identifier) else { return }
         found = nil
         discovered = peripheral
         p.resolve(.success(()))
