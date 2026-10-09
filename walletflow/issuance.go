@@ -2,7 +2,6 @@ package walletflow
 
 import (
 	"context"
-	"crypto"
 	"crypto/ecdsa"
 	"encoding/json"
 	"errors"
@@ -626,11 +625,10 @@ func (s *Issuance) oauthClient(issuer fapi.URL, endpoints client.Endpoints, asUR
 	if c, ok := s.w.deps.Keys.(keys.KeyCustodyAssurance); ok {
 		custody = append(custody, keys.DeclareCustody(c.KeyCustody()))
 	}
-	km, err := keys.NewKeyManagerFromSigners(
-		map[keys.SigningPurpose]crypto.Signer{keys.ClientAttestationPoPSigning: s.instanceKey, keys.DPoPProofSigning: s.dpopKey},
-		map[keys.SigningPurpose]fapi.SignatureAlgorithm{keys.ClientAttestationPoPSigning: fapi.ES256, keys.DPoPProofSigning: fapi.ES256},
-		nil, custody...,
-	)
+	km, err := keys.NewKeyManagerFromSigners([]keys.SignerSpec{
+		{Purpose: keys.ClientAttestationPoPSigning, Algorithm: fapi.ES256, Signer: s.instanceKey},
+		{Purpose: keys.DPoPProofSigning, Algorithm: fapi.ES256, Signer: s.dpopKey},
+	}, custody...)
 	if err != nil {
 		return nil, fmt.Errorf("walletflow: key manager: %w", err)
 	}

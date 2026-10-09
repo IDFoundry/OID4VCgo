@@ -448,7 +448,11 @@ func (s *Issuance) refreshWithAttestation(ctx context.Context, g RefreshGrant) (
 		}
 		return refreshResult{}, err
 	}
-	tokens, err := s.client.RefreshTokens(ctx, client.RefreshTokenRequest{Tokens: client.TokenSet{RefreshToken: g.RefreshToken, HasRefreshToken: true}})
+	// The grant's own authorization server, so fapigo/client refuses to
+	// send its refresh token to any other.
+	tokens, err := s.client.RefreshTokens(ctx, client.RefreshTokenRequest{Tokens: client.TokenSet{
+		RefreshToken: g.RefreshToken, HasRefreshToken: true, Issuer: g.AuthorizationServer,
+	}})
 	if err != nil {
 		return refreshResult{}, s.refreshFailed(ctx, g, err)
 	}

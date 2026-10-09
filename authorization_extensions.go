@@ -21,9 +21,15 @@ import "github.com/idfoundry/fapigo/extension"
 // each side is a real interop bug, not a cosmetic one) — the same
 // "shared public value types only where semantics match" reasoning
 // that moved CredentialOffer and friends here.
+//
+// It's Sensitive: an issuer can use issuer_state as the handle on a
+// pending issuance (the passport-vdc example's unguessable transaction
+// ID), and it decides whose Credential is issued, so it's kept out of
+// log lines and error messages.
 var IssuerStateExtension = extension.Definition[string]{
 	Name:           "issuer_state",
 	Cardinality:    extension.Single,
 	AllowedSources: extension.SourcePlainParameter | extension.SourceRequestObject,
 	MaxBytes:       2048,
+	Sensitivity:    extension.Sensitive,
 }

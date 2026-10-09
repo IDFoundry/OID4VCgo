@@ -211,9 +211,7 @@ func checkPurpose(ctx context.Context, ks keyStore, w *wallet.Wallet, purpose wa
 		_ = ks.DeleteKey(ctx, key.ID())
 		return newError(CodePlatform, fmt.Errorf("%s key: %w", purpose, err))
 	}
-	km, err := keys.NewKeyManagerFromSigners(
-		map[keys.SigningPurpose]crypto.Signer{keys.DPoPProofSigning: key},
-		map[keys.SigningPurpose]fapi.SignatureAlgorithm{keys.DPoPProofSigning: fapi.ES256}, nil)
+	km, err := keys.NewKeyManagerFromSigners([]keys.SignerSpec{{Purpose: keys.DPoPProofSigning, Algorithm: fapi.ES256, Signer: key}})
 	if err != nil {
 		_ = ks.DeleteKey(ctx, key.ID())
 		return newError(CodeInternal, fmt.Errorf("%s key: key manager: %w", purpose, err))
