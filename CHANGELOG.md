@@ -5,9 +5,6 @@
 
 ### Bug Fixes
 
-* **conformance:** drive a verifier module only once it's WAITING ([2ba3bea](https://github.com/IDFoundry/OID4VCgo/commit/2ba3bea446c926a60c82ba1a64e2954430735c1a))
-* **conformance:** keep the verifier's container between plan phases ([c87e5fa](https://github.com/IDFoundry/OID4VCgo/commit/c87e5fa263093b5c5b54eb4611e723854b7dd938))
-* **conformance:** restart the verifier's container only when it runs the built image ([ec51efb](https://github.com/IDFoundry/OID4VCgo/commit/ec51efbea31b15930cbdec1cc09a9c6e12982e41))
 * **issuer:** accept only an end user's access token at the Credential Endpoint ([f9f8d4d](https://github.com/IDFoundry/OID4VCgo/commit/f9f8d4d5709958bb1a81e604074b4659bb0a93b1))
 
 ## [0.37.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.36.0...v0.37.0) (2026-10-09)
