@@ -751,15 +751,34 @@ Decisions taken 2026-10-06 (tracked in [#461](https://github.com/IDFoundry/OID4V
 `mobile/android/OID4VCWallet` wraps it, and its instrumented tests run
 on an emulator, in CI too (`mobile-android`).
 
-- **Build:** `gomobile bind -target=android/arm64,android/amd64
-  -androidapi=30` with NDK 30. Stripped, the release arm64 library is
-  8.4 MB, as the iOS device slice is. Both libraries' segments are 16 KB
-  aligned, as Google Play requires, by the NDK's default.
-- **No 32-bit arm:** FAPIgo didn't build where `int` is 32 bits
+- **Build:** `gomobile bind -target=android/arm64,android/arm,android/amd64,android/386
+  -androidapi=26` with NDK 30: every Android ABI. The release libraries,
+  stripped:
+
+  | ABI | Library | Compressed in the AAR |
+  |---|---|---|
+  | arm64-v8a | 9.1 MB | 3.6 MB |
+  | armeabi-v7a | 9.2 MB | 3.9 MB |
+  | x86_64 | 9.9 MB | 4.0 MB |
+  | x86 | 9.3 MB | 4.2 MB |
+
+  The AAR is 15.7 MB, or 7.6 MB with `OID4VC_ABIS=64` (arm64-v8a and
+  x86_64 only). From an App Bundle, a device downloads its own ABI's
+  library only. The 64-bit libraries' segments are 16 KB aligned, as
+  Google Play requires, by the NDK's default; the 32-bit ones' are
+  4 KB, as 16 KB pages exist only on 64-bit devices.
+- **32-bit:** FAPIgo didn't build where `int` is 32 bits
   (`math.MaxUint32` overflowed `int` in its `internal/jwe`) until
-  v0.51.0, which fixed it. The AAR still leaves 32-bit arm out: Play
-  requires the 64-bit libraries, and a 32-bit one would only add size.
-  iOS never had a 32-bit target.
+  v0.51.0, which fixed it; armeabi-v7a and x86 came then. Play requires
+  the 64-bit libraries, but takes 32-bit ones beside them: they serve
+  devices that run only 32-bit apps, such as low-end phones with a
+  32-bit userland on a 64-bit SoC. Each device downloads only its own
+  ABI's from an App Bundle, so they cost a 64-bit device nothing; an
+  app shipping 64-bit only filters them out
+  (`ndk { abiFilters += listOf("arm64-v8a", "x86_64") }`). CI
+  runs the Go tests at `GOARCH=386` and the instrumented tests on a
+  32-bit x86 emulator (`mobile-android-api26`). iOS never had a 32-bit
+  target.
 - **One library:** the AAR's Java bindings are in
   `dev.idfoundry.oid4vcwallet.gomobile` (`-javapkg`), but gomobile's own
   runtime (`go.Seq`, `libgojni.so`) isn't renamed, so an app can hold
@@ -927,7 +946,7 @@ adds the AAR as a file, with the two libraries it uses, which the
 README lists.
 
 - **One file:** the AAR holds the Kotlin API, the Go bindings (`libs/`)
-  and the Go library for arm64 and x86_64. Only an app module can take a
+  and the Go library for every ABI. Only an app module can take a
   local AAR: an Android library can't.
 - **Kotlin 2.2:** a library compiled with the newest Kotlin writes
   metadata only that compiler, or the next, can read: an app on AGP 9's
