@@ -2,9 +2,11 @@ module github.com/idfoundry/oid4vcgo/mobile
 
 go 1.26.6
 
+toolchain go1.26.9
+
 require (
 	github.com/fxamacker/cbor/v2 v2.9.4
-	github.com/idfoundry/fapigo v0.50.2-0.20261008000722-40885c78070f
+	github.com/idfoundry/fapigo v0.51.0
 	github.com/idfoundry/oid4vcgo v0.0.0
 )
 

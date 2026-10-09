@@ -6,7 +6,11 @@ import dev.idfoundry.oid4vcwallet.gomobile.mobile.CredentialStore as MobileCrede
 import dev.idfoundry.oid4vcwallet.gomobile.mobile.KeyStore as MobileKeyStore
 import dev.idfoundry.oid4vcwallet.gomobile.mobile.WalletProvider as MobileWalletProvider
 
-/** What a key is for. */
+/**
+ * What a key is for.
+ *
+ * @property rawValue The purpose as the Go side names it.
+ */
 public enum class KeyPurpose(public val rawValue: String) {
     /**
      * The wallet instance key a Wallet Attestation binds; it signs

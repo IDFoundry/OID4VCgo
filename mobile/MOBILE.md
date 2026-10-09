@@ -746,10 +746,15 @@ on an emulator, in CI too (`mobile-android`).
   library only. The 64-bit libraries' segments are 16 KB aligned, as
   Google Play requires, by the NDK's default; the 32-bit ones' are
   4 KB, as 16 KB pages exist only on 64-bit devices.
-- **32-bit:** armeabi-v7a and x86 came once FAPIgo built where `int` is
-  32 bits (its `internal/jwe` compared with `math.MaxUint32`). For
-  devices that run only 32-bit apps; an app shipping 64-bit only filters
-  them out (`ndk { abiFilters += listOf("arm64-v8a", "x86_64") }`). CI
+- **32-bit:** FAPIgo didn't build where `int` is 32 bits
+  (`math.MaxUint32` overflowed `int` in its `internal/jwe`) until
+  v0.51.0, which fixed it; armeabi-v7a and x86 came then. Play requires
+  the 64-bit libraries, but takes 32-bit ones beside them: they serve
+  devices that run only 32-bit apps, such as low-end phones with a
+  32-bit userland on a 64-bit SoC. Each device downloads only its own
+  ABI's from an App Bundle, so they cost a 64-bit device nothing; an
+  app shipping 64-bit only filters them out
+  (`ndk { abiFilters += listOf("arm64-v8a", "x86_64") }`). CI
   runs the Go tests at `GOARCH=386` and the instrumented tests on a
   32-bit x86 emulator (`mobile-android-api26`). iOS never had a 32-bit
   target.

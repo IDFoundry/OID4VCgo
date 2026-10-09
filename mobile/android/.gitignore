@@ -4,3 +4,6 @@ local.properties
 .idea/
 .kotlin/
 *.iml
+
+# The guides' examples, which check-docs.sh compiles here.
+DemoWallet/src/test/kotlin/guideexamples/

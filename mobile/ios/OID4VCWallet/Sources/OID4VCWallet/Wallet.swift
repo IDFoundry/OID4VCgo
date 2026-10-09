@@ -5,10 +5,14 @@ import Mobile
 public struct WalletConfiguration: Codable, Sendable {
     /// The wallet's registration with Authorization Servers.
     public var clientID: String
+    /// Where the issuer's pages send the holder back to: a private-use URI the
+    /// app opens, registered with the issuers' Authorization Servers.
     public var redirectURI: String
     /// PEM certificates: the trust anchors for issuers' credentials, and
     /// for Verifiers' requests.
     public var issuerRoots: String
+    /// PEM certificates: the trust anchors for Verifiers' requests. A request
+    /// signed by a certificate that doesn't chain to them is refused unread.
     public var verifierRoots: String
     /// PEM certificates: the registrars whose registrations of Verifiers
     /// the wallet checks (`Presentation.Verifier.registration`). Empty:
@@ -58,6 +62,8 @@ public struct WalletConfiguration: Codable, Sendable {
         case perVerifier = "per_verifier"
     }
 
+    /// A configuration: every field but the client ID and the redirect URI has
+    /// a default.
     public init(clientID: String, redirectURI: String, issuerRoots: String = "", verifierRoots: String = "", registrarRoots: String = "",
                 mdocReaderRoots: String = "", mdocReaderRequireEKU: Bool = false, requireTrustedMdocReader: Bool = false,
                 development: Bool = false, locales: [String] = Locale.preferredLanguages, batchSize: Int = 0, requestRefresh: Bool = false,
@@ -110,7 +116,9 @@ public struct WalletConfiguration: Codable, Sendable {
 /// An image the issuer names for display: an https URL or a data: image
 /// (nothing else reaches the app), with alternative text.
 public struct Logo: Decodable, Equatable, Sendable {
+    /// The image: an https URL or a `data:` URL.
     public let uri: String
+    /// Text describing the image, for accessibility.
     public let altText: String?
     /// `uri` as a URL, for `AsyncImage`.
     public var url: URL? { URL(string: uri) }
@@ -121,12 +129,19 @@ public struct Logo: Decodable, Equatable, Sendable {
 /// §12.2.4) in the holder's language: each part only when the issuer
 /// gives it. Colours are CSS colours, such as "#12107c".
 public struct CredentialDisplay: Decodable, Equatable, Sendable {
+    /// The issuer's name.
     public let issuerName: String?
+    /// The issuer's logo.
     public let issuerLogo: Logo?
+    /// The credential's name.
     public let name: String?
+    /// A description of the credential.
     public let description: String?
+    /// The credential's logo.
     public let logo: Logo?
+    /// The card's background colour.
     public let backgroundColor: String?
+    /// The card's text colour.
     public let textColor: String?
     enum CodingKeys: String, CodingKey {
         case issuerName = "issuer_name", issuerLogo = "issuer_logo", name, description, logo
@@ -137,12 +152,15 @@ public struct CredentialDisplay: Decodable, Equatable, Sendable {
 /// A credential's revocation status in the issuer's status list, as last
 /// checked (`Wallet.checkStatus(id:)`).
 public struct CredentialStatus: Decodable, Equatable, Sendable {
+    /// A status in the issuer's list.
     public enum Value: Equatable, Sendable {
         case valid, revoked, suspended
         /// A status the issuer's list defines itself, as "0x" and its value.
         case other(String)
     }
+    /// The status found.
     public let value: Value
+    /// When it was checked.
     public let checkedAt: Date
 
     public init(from decoder: Decoder) throws {
@@ -160,12 +178,19 @@ public struct CredentialStatus: Decodable, Equatable, Sendable {
 
 /// A credential the wallet holds, as the app shows it.
 public struct CredentialSummary: Decodable, Equatable, Sendable {
+    /// The credential's ID in the wallet.
     public let id: String
+    /// The issuer's identifier, an https URL.
     public let credentialIssuer: String
+    /// The issuer's credential configuration it was issued under.
     public let configurationID: String
+    /// Its format: `dc+sd-jwt` or `mso_mdoc`.
     public let format: String
+    /// An SD-JWT VC's type.
     public let vct: String?
+    /// An mdoc's document type.
     public let doctype: String?
+    /// When the wallet received it.
     public let receivedAt: Date
     /// Whether the key store still holds the credential's key: without it
     /// (restored to another device, say) it can't be presented. Set in
@@ -181,6 +206,7 @@ public struct CredentialSummary: Decodable, Equatable, Sendable {
     /// how many no Verifier has seen. Each presentation uses one of
     /// those; once none is left, presentations can be linked.
     public let copies: Int
+    /// How many copies no Verifier has seen.
     public let copiesLeft: Int
     /// Whether its issuance kept a refresh token
     /// (`Configuration.requestRefresh`), so
@@ -197,6 +223,8 @@ public struct CredentialSummary: Decodable, Equatable, Sendable {
     /// and whether presenting it now would hand it a copy another
     /// Verifier has seen.
     public let shownToVerifier: Bool?
+    /// Whether presenting it to the Verifier asking would hand it a copy
+    /// another Verifier has seen. Set only on a presentation's candidates.
     public let linkableHere: Bool?
 
     /// Whether it has expired by `now`.
@@ -215,11 +243,15 @@ public struct CredentialSummary: Decodable, Equatable, Sendable {
 /// kept in the credential store until it's issued, denied or abandoned,
 /// so it survives the app quitting.
 public struct DeferredCredential: Decodable, Equatable, Sendable {
+    /// The deferred credential's ID, for `Wallet.pollDeferred(id:)`.
     public let id: String
+    /// The issuer's identifier, an https URL.
     public let credentialIssuer: String
+    /// The issuer's credential configuration requested.
     public let configurationID: String
     /// How long the issuer asked the wallet to wait between polls.
     public let intervalSeconds: Double
+    /// When the issuer deferred it.
     public let deferredAt: Date
     /// When the access token it's polled with expires, if the issuer
     /// said: after it, polls fail and it can only be abandoned.
@@ -239,6 +271,7 @@ public enum DeferredStatus: Sendable, Equatable {
 
 /// A credential with its claims, for display.
 public struct CredentialDetail: Decodable, Sendable {
+    /// The credential.
     public let summary: CredentialSummary
     /// An SD-JWT VC's claims, or an mdoc's namespace → element → value;
     /// byte strings (a portrait) are base64.
@@ -477,23 +510,38 @@ public final class Wallet: @unchecked Sendable {
 
 /// What a Credential Offer offers.
 public struct Offer: Decodable, Sendable {
+    /// The PIN a pre-authorized code offer asks for, as the issuer describes
+    /// it.
     public struct TxCode: Decodable, Sendable {
+        /// `numeric` or `text`, if the issuer says.
         public let inputMode: String?
+        /// How many characters it has, if the issuer says.
         public let length: Int?
+        /// The issuer's description, to show the holder: where to find the PIN,
+        /// say.
         public let description: String?
         enum CodingKeys: String, CodingKey { case inputMode = "input_mode", length, description }
     }
 
+    /// One offered credential.
     public struct Credential: Decodable, Sendable {
+        /// The issuer's credential configuration.
         public let configurationID: String
+        /// Its format: `dc+sd-jwt` or `mso_mdoc`.
         public let format: String
+        /// An SD-JWT VC's type.
         public let vct: String?
+        /// An mdoc's document type.
         public let doctype: String?
         /// The issuer's display metadata for it, in the holder's language.
         public let name: String?
+        /// The issuer's description of it.
         public let description: String?
+        /// Its logo.
         public let logo: Logo?
+        /// The card's background colour.
         public let backgroundColor: String?
+        /// The card's text colour.
         public let textColor: String?
         enum CodingKeys: String, CodingKey {
             case configurationID = "configuration_id", format, vct, doctype, name, description, logo
@@ -501,17 +549,23 @@ public struct Offer: Decodable, Sendable {
         }
     }
 
+    /// How the holder is authorized.
     public enum Grant: String, Decodable, Sendable {
         case authorizationCode = "authorization_code"
         case preAuthorizedCode = "pre-authorized_code"
     }
 
+    /// The issuer's identifier, an https URL.
     public let credentialIssuer: String
+    /// The issuer's name, in the holder's language.
     public let issuerName: String?
+    /// The issuer's logo.
     public let issuerLogo: Logo?
+    /// The grant the offer names.
     public let grant: Grant
     /// The PIN to ask the holder for, for a pre-authorized code offer.
     public let txCode: TxCode?
+    /// The offered credentials.
     public let credentials: [Credential]
 
     enum CodingKeys: String, CodingKey {
@@ -526,6 +580,7 @@ public struct Offer: Decodable, Sendable {
 /// then `requestCredentials()`; `close()` when done.
 public final class Issuance: @unchecked Sendable {
     let session: MobileIssuance
+    /// What's offered: show it before going on.
     public let offer: Offer
 
     init(_ session: MobileIssuance) throws {
@@ -539,6 +594,9 @@ public final class Issuance: @unchecked Sendable {
         Task.detached { try? session.close() }
     }
 
+    /// Begins the authorization code grant, returning the issuer's
+    /// authorization URL to open in an `ASWebAuthenticationSession`. Calling it
+    /// again begins again: after the holder closed the page, say.
     public func beginAuthorization() async throws -> URL {
         let session = self.session
         let text = try await OID4VC.cancellable { op in try OID4VC.call { session.beginAuthorization(op, error: $0) } }
@@ -555,12 +613,17 @@ public final class Issuance: @unchecked Sendable {
         try await OID4VC.cancellable { op in try OID4VC.wrap { try session.completeAuthorization(op, redirect: redirect.absoluteString) } }
     }
 
+    /// Redeems a pre-authorized code offer, with the PIN the holder typed when
+    /// `offer.txCode` asks for one. A wrong PIN throws a retryable
+    /// `.protocolError` (`invalid_grant`): ask again.
     public func redeemPreAuthorizedCode(pin: String = "") async throws {
         let session = self.session
         try await OID4VC.cancellable { op in try OID4VC.wrap { try session.redeemPreAuthorizedCode(op, txCode: pin) } }
     }
 
+    /// What `requestCredentials()` obtained.
     public struct Result: Decodable, Sendable {
+        /// The credentials received and stored.
         public let credentials: [CredentialSummary]
         /// Credentials the issuer will issue later: poll them with
         /// `Wallet.pollDeferred(id:)`, after `close()` and relaunches too.
@@ -582,8 +645,11 @@ public final class Issuance: @unchecked Sendable {
     /// An offered credential that couldn't be obtained: its error's code
     /// and, when the issuer gave one, its OAuth error code.
     public struct FailedCredential: Decodable, Sendable, Equatable {
+        /// The offered credential's configuration.
         public let configurationID: String
+        /// Why it failed.
         public let code: WalletError.Code
+        /// The issuer's OAuth error code, when it gave one.
         public let protocolError: String?
 
         public init(from decoder: Decoder) throws {
@@ -618,9 +684,13 @@ public final class Issuance: @unchecked Sendable {
 /// selection, after checking it answers the request
 /// (`WalletError.Code.invalidSelection` otherwise).
 public final class Presentation: @unchecked Sendable {
+    /// Who is asking.
     public struct Verifier: Decodable, Sendable {
+        /// The Verifier's client ID.
         public let clientID: String
+        /// A name to show for the Verifier.
         public let name: String
+        /// Where the response is sent.
         public let responseURI: String
         /// The Verifier's registration, from its request, checked against
         /// `WalletConfiguration.registrarRoots`.
@@ -631,6 +701,7 @@ public final class Presentation: @unchecked Sendable {
     /// A Verifier's registration with a registrar: who it is and what it
     /// may request, as the registrar attests.
     public struct Registration: Decodable, Sendable {
+        /// Whether the registration verified.
         public enum Status: String, Decodable, Sendable {
             /// A registrar the wallet trusts registered this Verifier.
             case verified
@@ -640,14 +711,19 @@ public final class Presentation: @unchecked Sendable {
             /// No registration, or no registrar roots to check one.
             case none
         }
+        /// Whether the registration verified.
         public let status: Status
         /// The rest are set when `status` is `.verified`.
         public let name: String?
+        /// Why it asks, as registered.
         public let purpose: String?
+        /// Its privacy policy.
         public let privacyPolicy: URL?
+        /// The registrar that registered it.
         public let registrar: String?
         /// The claims paths it's registered to request.
         public let claims: [[PathElement]]
+        /// When the registration expires.
         public let expires: Date?
 
         enum CodingKeys: String, CodingKey { case status, name, purpose, privacyPolicy = "privacy_policy", registrar, claims, expires }
@@ -667,15 +743,18 @@ public final class Presentation: @unchecked Sendable {
     /// One of the request's credential queries, with the credentials
     /// that can answer it: none when nothing held can.
     public struct Query: Decodable, Sendable {
+        /// The query's ID: a key in a `Selection`.
         public let queryID: String
         /// Whether it takes more than one credential; otherwise a
         /// selection gives it exactly one.
         public let multiple: Bool
+        /// The held credentials that can answer it.
         public let credentials: [CredentialSummary]
         /// For a Verifier with a verified registration: the claims paths
         /// this query asks for beyond it, and whether it asks for every
         /// claim. Nothing is refused for them: the holder decides.
         public let unregistered: [[PathElement]]
+        /// Whether it asks for every claim, beyond a verified registration.
         public let unregisteredAll: Bool
         enum CodingKeys: String, CodingKey {
             case queryID = "query_id", multiple, credentials, unregistered, unregisteredAll = "unregistered_all"
@@ -686,7 +765,9 @@ public final class Presentation: @unchecked Sendable {
     /// query IDs that together answer it, most preferred first. A
     /// required set must be answered by one option.
     public struct CredentialSet: Decodable, Sendable {
+        /// Each option's query IDs, most preferred first.
         public let options: [[String]]
+        /// Whether the request needs one of the options answered.
         public let required: Bool
     }
 
@@ -704,14 +785,20 @@ public final class Presentation: @unchecked Sendable {
         }
     }
 
+    /// What a selection would disclose from one credential.
     public struct Disclosure: Decodable, Sendable {
+        /// The query it answers.
         public let queryID: String
+        /// The credential.
         public let credentialID: String
+        /// The claims it would disclose, as paths.
         public let claims: [[PathElement]]
         enum CodingKeys: String, CodingKey { case queryID = "query_id", credentialID = "credential_id", claims }
     }
 
+    /// What responding or declining sent.
     public struct Presented: Decodable, Sendable {
+        /// The queries answered.
         public let queryIDs: [String]
         /// Where to send the browser, when the Verifier asks.
         public let redirectURI: URL?
@@ -719,6 +806,7 @@ public final class Presentation: @unchecked Sendable {
     }
 
     let handle: MobilePresentation
+    /// Who is asking.
     public let verifier: Verifier
     /// The request's credential queries, in its order.
     public let queries: [Query]
@@ -789,6 +877,7 @@ public final class Presentation: @unchecked Sendable {
 /// `request` for the holder's consent, then `respond` once; to decline,
 /// cancel the platform's request — nothing is sent to the reader.
 public final class MdocPresentation: @unchecked Sendable {
+    /// What the page asks for.
     public struct Request: Decodable, Sendable {
         /// The requesting page's origin.
         public let origin: String
@@ -797,22 +886,30 @@ public final class MdocPresentation: @unchecked Sendable {
         /// `WalletConfiguration.mdocReaderRoots`; "" when the holder can
         /// only be shown `origin`.
         public let reader: String
+        /// The requested documents, in the request's order.
         public let documents: [Document]
     }
 
+    /// One requested document.
     public struct Document: Decodable, Sendable {
+        /// Its document type.
         public let doctype: String
+        /// The elements requested.
         public let elements: [Element]
         /// The held mdocs of `doctype`; none when nothing can answer.
         public let credentials: [CredentialSummary]
     }
 
+    /// One requested element.
     public struct Element: Decodable, Sendable, Hashable {
+        /// Its namespace.
         public let namespace: String
+        /// Its identifier in the namespace.
         public let identifier: String
         /// Whether the reader says it will keep the value.
         public let retain: Bool
 
+        /// An element.
         public init(namespace: String, identifier: String, retain: Bool) {
             self.namespace = namespace
             self.identifier = identifier
@@ -820,6 +917,7 @@ public final class MdocPresentation: @unchecked Sendable {
         }
     }
 
+    /// The answer to hand iOS.
     public struct Response: Decodable, Sendable {
         /// The CBOR EncryptedResponse, for
         /// `ISO18013MobileDocumentResponse(responseData:)`.
@@ -829,6 +927,7 @@ public final class MdocPresentation: @unchecked Sendable {
     }
 
     let handle: MobileMdocPresentation
+    /// What's asked: show it for the holder's consent.
     public let request: Request
 
     init(_ p: MobileMdocPresentation) throws {
@@ -870,6 +969,7 @@ public final class InMemoryCredentialStore: CredentialStore, @unchecked Sendable
     private let lock = NSLock()
     private var stored: [(id: String, record: Data)] = []
 
+    /// An empty store.
     public init() {}
 
     public func put(id: String, record: Data) throws {
