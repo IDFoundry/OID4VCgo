@@ -403,12 +403,37 @@ func (s *Issuance) newClient(ctx context.Context, asURL string, authorize bool) 
 	if err != nil {
 		return fmt.Errorf("walletflow: wallet attestation: %w", err)
 	}
-	c, err := s.oauthClient(issuer, endpoints, asURL, walletAttestation)
+	attestation := client.StaticAttestation(walletAttestation)
+	if asMeta.ChallengeEndpoint != "" {
+		endpoint, err := fapi.ParseEndpointURL(asMeta.ChallengeEndpoint, s.w.urlOptions()...)
+		if err != nil {
+			return fmt.Errorf("walletflow: authorization server challenge_endpoint: %w", err)
+		}
+		attestation = challengedAttestation{AttestationSource: attestation, w: s.w.core, endpoint: endpoint}
+	}
+	c, err := s.oauthClient(issuer, endpoints, asURL, attestation)
 	if err != nil {
 		return err
 	}
 	s.client, s.authorizationServer = c, asURL
 	return nil
+}
+
+// challengedAttestation is the Wallet Attestation for an Authorization
+// Server with a challenge endpoint, where the client MUST put a fresh
+// challenge in every Client Attestation PoP
+// (draft-ietf-oauth-attestation-based-client-auth-07 §8). fapigo/client
+// asks the attestation source itself for one (client.ChallengeSource),
+// for every request it signs a PoP for.
+type challengedAttestation struct {
+	client.AttestationSource
+	w        *wallet.Wallet
+	endpoint fapi.URL
+}
+
+// CurrentChallenge implements client.ChallengeSource.
+func (a challengedAttestation) CurrentChallenge(ctx context.Context) (string, error) {
+	return a.w.RequestAttestationChallenge(ctx, a.endpoint)
 }
 
 // forgetAuthorization deletes the authorization in progress, if there
@@ -431,8 +456,8 @@ func (s *Issuance) forgetAuthorization(ctx context.Context) error {
 }
 
 // oauthClient builds the fapigo/client for the authorization server
-// issuer, authenticating with walletAttestation and the issuance's keys.
-func (s *Issuance) oauthClient(issuer fapi.URL, endpoints client.Endpoints, asURL, walletAttestation string) (*client.Client, error) {
+// issuer, authenticating with attestation and the issuance's keys.
+func (s *Issuance) oauthClient(issuer fapi.URL, endpoints client.Endpoints, asURL string, attestation client.AttestationSource) (*client.Client, error) {
 	if s.sessions == nil {
 		s.sessions = &sessionStore{
 			w: s.w, offer: s.offer, authorizationServer: asURL,
@@ -478,7 +503,7 @@ func (s *Issuance) oauthClient(issuer fapi.URL, endpoints client.Endpoints, asUR
 		Sessions: s.sessions,
 		Keys:     km, HTTP: s.w.deps.HTTP,
 		Clock: clientClock(s.w.deps.Clock), Random: s.w.deps.Random,
-		Attestation: client.StaticAttestation(walletAttestation),
+		Attestation: attestation,
 		// Reuses the DPoP nonce each response hands out, so only the
 		// first request to an endpoint is challenged for one.
 		DPoPNonceCache: client.NewInMemoryDPoPNonceCache(),

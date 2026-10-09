@@ -74,6 +74,11 @@ type AuthorizationServerMetadata struct {
 	// RevocationEndpoint is its token revocation endpoint (RFC 7009),
 	// if it has one.
 	RevocationEndpoint string `json:"revocation_endpoint,omitempty"`
+	// ChallengeEndpoint is its Attestation Challenge endpoint, if it has
+	// one (draft-ietf-oauth-attestation-based-client-auth-07 §8): a
+	// client authenticating with its Wallet Attestation then MUST put a
+	// challenge from it in every Client Attestation PoP.
+	ChallengeEndpoint string `json:"challenge_endpoint,omitempty"`
 }
 
 // FetchAuthorizationServerMetadata fetches and decodes issuerURL's own

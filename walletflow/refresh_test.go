@@ -341,6 +341,32 @@ func TestRefreshCredential_PreAuthorizedCodeOnlyServer(t *testing.T) {
 	}
 }
 
+// An Authorization Server with a challenge endpoint gets a fresh
+// challenge in every Client Attestation PoP
+// (draft-ietf-oauth-attestation-based-client-auth-07 §8): at the pushed
+// authorization request and token endpoints of the authorization code
+// grant, and the token endpoint of the pre-authorized code grant. It
+// refuses any PoP without one.
+func TestIssuance_AttestationChallenges(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t, walletflowtest.Options{AttestationChallenges: true})
+	if held := receive(t, f, f.w, walletflowtest.SDJWTConfigurationID); len(held) != 1 {
+		t.Fatalf("authorization code grant: %d credentials, want 1", len(held))
+	}
+
+	s, err := f.w.StartIssuance(ctx, f.env.PreAuthorizedOffer(t, "493536", walletflowtest.SDJWTConfigurationID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s.Close(ctx) }()
+	if err := s.RedeemPreAuthorizedCode(ctx, "493536"); err != nil {
+		t.Fatalf("pre-authorized code grant: %v", err)
+	}
+	if result, err := s.RequestCredentials(ctx); err != nil || len(result.Credentials) != 1 {
+		t.Fatalf("RequestCredentials = %+v, %v", result, err)
+	}
+}
+
 // A grant whose instance key is gone can't be used: it's forgotten, and
 // the credential has to be received again.
 func TestRefreshCredential_InstanceKeyGone(t *testing.T) {

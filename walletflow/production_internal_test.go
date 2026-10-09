@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/idfoundry/fapigo/client"
 	"github.com/idfoundry/fapigo/keys"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
@@ -75,7 +76,7 @@ func TestProductionAssurance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.oauthClient(issuer, endpoints, "https://as.example", "eyJ.attestation.jwt"); err != nil {
+	if _, err := s.oauthClient(issuer, endpoints, "https://as.example", client.StaticAttestation("eyJ.attestation.jwt")); err != nil {
 		t.Fatalf("the OAuth client doesn't build at production assurance: %v", err)
 	}
 

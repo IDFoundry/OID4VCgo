@@ -36,6 +36,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -116,6 +117,12 @@ type Options struct {
 	// wallet is registered as a native app, so each must be a form RFC
 	// 8252 allows one.
 	RedirectURIs []string
+	// AttestationChallenges has the Authorization Server offer a
+	// challenge endpoint, and refuse a Client Attestation PoP at its
+	// pushed authorization request and token endpoints without a
+	// challenge from it, each used once
+	// (draft-ietf-oauth-attestation-based-client-auth-07 §8).
+	AttestationChallenges bool
 	// PreAuthorizedCodeOnly has the Authorization Server's metadata
 	// publish no authorization or pushed authorization request endpoint,
 	// as a server serving only the pre-authorized code grant does: its
@@ -160,6 +167,10 @@ type Env struct {
 	deferAll      bool
 	decision      *bool
 	notifications []oid4vci.NotificationEvent
+
+	// challenges are the attestation challenges issued and not yet
+	// used, under Options.AttestationChallenges.
+	challenges map[string]bool
 }
 
 // New starts an Env. Close stops it.
@@ -315,6 +326,10 @@ func New(opts Options) (env *Env, err error) {
 	raw, err := json.Marshal(asMetadata)
 	must(err)
 	must(json.Unmarshal(raw, &asMetadataJSON))
+	if opts.AttestationChallenges {
+		asMetadataJSON["challenge_endpoint"] = e.endpoint("/challenge").String()
+		e.challenges = map[string]bool{}
+	}
 	if opts.PreAuthorizedCodeOnly {
 		delete(asMetadataJSON, "authorization_endpoint")
 		delete(asMetadataJSON, "pushed_authorization_request_endpoint")
@@ -325,9 +340,12 @@ func New(opts Options) (env *Env, err error) {
 		_ = json.NewEncoder(w).Encode(asMetadataJSON)
 	})
 	mux.HandleFunc("GET /.well-known/openid-credential-issuer", issuer.MetadataHandler(e.iss, nil, "", nil))
-	mux.HandleFunc("POST /par", e.handlePAR)
+	mux.HandleFunc("POST /par", e.challenged(e.handlePAR))
 	mux.HandleFunc("GET /authorize", e.handleAuthorize)
-	mux.HandleFunc("POST /token", e.handleToken)
+	mux.HandleFunc("POST /token", e.challenged(e.handleToken))
+	if opts.AttestationChallenges {
+		mux.HandleFunc("POST /challenge", e.handleChallenge)
+	}
 	mux.HandleFunc("POST /revoke", e.handleRevoke)
 	mux.HandleFunc("POST /nonce", func(w http.ResponseWriter, r *http.Request) {
 		result, err := e.iss.RequestNonce(r.Context())
@@ -578,6 +596,62 @@ func (e *Env) handlePAR(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result.WriteJSON(w)
+}
+
+// handleChallenge issues an attestation challenge (draft-07 §8).
+func (e *Env) handleChallenge(w http.ResponseWriter, _ *http.Request) {
+	challenge := rand.Text()
+	e.mu.Lock()
+	e.challenges[challenge] = true
+	e.mu.Unlock()
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	_ = json.NewEncoder(w).Encode(map[string]string{"attestation_challenge": challenge})
+}
+
+// challenged, under Options.AttestationChallenges, refuses a request
+// whose Client Attestation PoP carries no challenge this server issued
+// and hasn't seen used, before next sees it. fapigo/server checks the
+// PoP's signature; this only reads its challenge claim. A refresh,
+// token revocation or request without a PoP passes through.
+func (e *Env) challenged(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		pop := r.Header.Get("OAuth-Client-Attestation-PoP")
+		if e.challenges == nil || pop == "" {
+			next(w, r)
+			return
+		}
+		challenge, ok := popChallenge(pop)
+		e.mu.Lock()
+		ok = ok && e.challenges[challenge]
+		delete(e.challenges, challenge)
+		e.mu.Unlock()
+		if !ok {
+			server.NewError(server.ErrorInvalidClient, http.StatusUnauthorized, "the Client Attestation PoP carries no fresh attestation challenge").WriteJSON(w)
+			return
+		}
+		next(w, r)
+	}
+}
+
+// popChallenge is the challenge claim of a Client Attestation PoP JWT,
+// unverified.
+func popChallenge(pop string) (string, bool) {
+	parts := strings.Split(pop, ".")
+	if len(parts) != 3 {
+		return "", false
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return "", false
+	}
+	var claims struct {
+		Challenge string `json:"challenge"`
+	}
+	if json.Unmarshal(payload, &claims) != nil || claims.Challenge == "" {
+		return "", false
+	}
+	return claims.Challenge, true
 }
 
 // handleAuthorize approves every request at once, for subject "holder".
