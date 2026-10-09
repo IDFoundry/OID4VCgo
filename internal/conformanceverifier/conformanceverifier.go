@@ -178,14 +178,11 @@ func WriteConfig(cfg Config) error {
 // restarts its container so it picks up a freshly-written
 // ConfigOutPath, which it bind-mounts. Where the container already runs
 // the image just built, as between one run's phases, it's restarted
-// rather than recreated: a new container can come up on a new address
-// on the suite's network, while the suite has the old one cached for
-// the conformance-verifier name for a while, so the next module's first
-// request from the suite never reached the verifier (the mdoc phase's
-// happy-flow, run straight after the sd_jwt phase's, then never got an
-// upload placeholder). docker compose up --build recreates the
-// container even when the image is unchanged, so the choice is made
-// here.
+// rather than recreated, keeping its address on the suite's network
+// (docker compose up --build recreates the container even when the
+// image is unchanged, so the choice is made here). The intermittent
+// missing upload placeholders this was first meant to fix were the
+// suite getting a module's first request before WAITING (DriveModule).
 func RestartContainer() error {
 	dockerPath, err := exec.LookPath("docker")
 	if err != nil {
@@ -326,6 +323,12 @@ func DriveModule(httpClient *http.Client, apiBase, verifierBase, planID, testNam
 	if err != nil {
 		return "", "", fmt.Errorf("create module instance: %w", err)
 	}
+	// The suite sets a module up asynchronously: a wallet request that
+	// reaches it before WAITING can leave it stuck, and it then never
+	// asks for its upload placeholder.
+	if err := conformancesuite.WaitUntilWaiting(httpClient, apiBase, module.ID, restartTimeout); err != nil {
+		return "", "", err
+	}
 
 	noRedirect := &http.Client{
 		Transport:     httpClient.Transport,
@@ -432,7 +435,11 @@ func fillUploadPlaceholder(httpClient *http.Client, apiBase, moduleID string) er
 			}
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("no upload placeholder appeared within %s", uploadTimeout)
+			status := "unknown"
+			if info, infoErr := conformancesuite.FetchModuleInfo(httpClient, apiBase, moduleID); infoErr == nil {
+				status = info.Status + " (result " + info.Result + ")"
+			}
+			return fmt.Errorf("no upload placeholder appeared within %s; the module is %s, log %sapi/log/%s", uploadTimeout, status, apiBase, moduleID)
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
