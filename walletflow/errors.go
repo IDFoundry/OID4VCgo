@@ -45,6 +45,11 @@ var (
 	// Nothing is sent. Check Linkable again — it now says true — and let
 	// the holder decide, or refresh the credential first.
 	ErrLinkable = errors.New("walletflow: a copy another verifier has seen would now be presented")
+
+	// ErrMalformedRequest is wrapped for a Digital Credentials API
+	// request (StartDCAPIPresentation, StartMdocPresentation) that can't
+	// be parsed: what the platform handed over, not a service's answer.
+	ErrMalformedRequest = errors.New("walletflow: the request is malformed")
 	// ErrUntrustedVerifier is wallet.ErrUntrustedVerifier, wrapped by
 	// StartPresentation for a request from a Verifier VerifierTrust
 	// doesn't accept, and by StartMdocPresentation, under

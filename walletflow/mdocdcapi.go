@@ -57,7 +57,7 @@ type MdocPresentation struct {
 func (w *Wallet) StartMdocPresentation(ctx context.Context, data []byte, origin string) (*MdocPresentation, error) {
 	in, err := mdocdcapi.ParseRequest(data, origin)
 	if err != nil {
-		return nil, fmt.Errorf("walletflow: %w", err)
+		return nil, fmt.Errorf("walletflow: %w: %w", ErrMalformedRequest, err)
 	}
 	p := &MdocPresentation{w: w, in: in, byID: map[string]StoredCredential{}}
 	if w.cfg.MdocReaderRoots != nil {
