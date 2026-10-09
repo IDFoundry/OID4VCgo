@@ -116,6 +116,12 @@ type Options struct {
 	// wallet is registered as a native app, so each must be a form RFC
 	// 8252 allows one.
 	RedirectURIs []string
+	// PreAuthorizedCodeOnly has the Authorization Server's metadata
+	// publish no authorization or pushed authorization request endpoint,
+	// as a server serving only the pre-authorized code grant does: its
+	// offers, refresh and revocation then work from the token and
+	// revocation endpoints alone.
+	PreAuthorizedCodeOnly bool
 }
 
 // Env is a running issuer and Wallet Provider.
@@ -304,9 +310,19 @@ func New(opts Options) (env *Env, err error) {
 	must(err)
 
 	mux := http.NewServeMux()
+	asMetadata := e.srv.Metadata(context.Background())
+	var asMetadataJSON map[string]any
+	raw, err := json.Marshal(asMetadata)
+	must(err)
+	must(json.Unmarshal(raw, &asMetadataJSON))
+	if opts.PreAuthorizedCodeOnly {
+		delete(asMetadataJSON, "authorization_endpoint")
+		delete(asMetadataJSON, "pushed_authorization_request_endpoint")
+		delete(asMetadataJSON, "require_pushed_authorization_requests")
+	}
 	mux.HandleFunc("GET /.well-known/oauth-authorization-server", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(e.srv.Metadata(r.Context()))
+		_ = json.NewEncoder(w).Encode(asMetadataJSON)
 	})
 	mux.HandleFunc("GET /.well-known/openid-credential-issuer", issuer.MetadataHandler(e.iss, nil, "", nil))
 	mux.HandleFunc("POST /par", e.handlePAR)

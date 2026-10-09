@@ -265,7 +265,7 @@ func (w *Wallet) rebuild(ctx context.Context, a PendingAuthorization) (*Issuance
 		instanceKeyID: a.InstanceKeyID, dpopKeyID: a.DPoPKeyID, state: a.State,
 	}
 	s.resumed = true
-	if err := s.newClient(ctx, a.AuthorizationServer); err != nil {
+	if err := s.newClient(ctx, a.AuthorizationServer, true); err != nil {
 		_ = s.Close(ctx)
 		return nil, err
 	}

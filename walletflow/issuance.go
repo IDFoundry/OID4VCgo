@@ -227,7 +227,7 @@ func (s *Issuance) BeginAuthorizationWith(ctx context.Context, opts Authorizatio
 	if err != nil {
 		return "", fmt.Errorf("walletflow: %w", err)
 	}
-	if err := s.newClient(ctx, plan.AuthorizationServer); err != nil {
+	if err := s.newClient(ctx, plan.AuthorizationServer, true); err != nil {
 		return "", err
 	}
 	authReq, err := wallet.BuildAuthorizationRequest(s.offer, plan.Scopes)
@@ -318,7 +318,7 @@ func (s *Issuance) RedeemPreAuthorizedCode(ctx context.Context, txCode string) e
 	}
 	asURL := plan.AuthorizationServer
 	if s.client == nil {
-		if err := s.newClient(ctx, asURL); err != nil {
+		if err := s.newClient(ctx, asURL, false); err != nil {
 			return err
 		}
 	}
@@ -361,12 +361,20 @@ func (w *Wallet) urlOptions() []fapi.URLOption {
 // newClient creates this issuance's instance and DPoP keys, has the
 // Wallet Provider attest the instance key, and builds the
 // fapigo/client that authenticates with that attestation at asURL.
-func (s *Issuance) newClient(ctx context.Context, asURL string) error {
+// Only a client that starts an authorization (authorize) needs the
+// server's authorization and pushed authorization request endpoints:
+// redeeming a pre-authorized code, refreshing and revoking need only
+// its token endpoint.
+func (s *Issuance) newClient(ctx context.Context, asURL string, authorize bool) error {
 	asMeta, err := s.w.core.FetchAuthorizationServerMetadata(ctx, asURL)
 	if err != nil {
 		return fmt.Errorf("walletflow: authorization server metadata: %w", err)
 	}
-	issuer, endpoints, err := asMeta.ClientEndpoints()
+	endpointsOf := asMeta.TokenClientEndpoints
+	if authorize {
+		endpointsOf = asMeta.ClientEndpoints
+	}
+	issuer, endpoints, err := endpointsOf()
 	if err != nil {
 		return fmt.Errorf("walletflow: authorization server metadata: %w", err)
 	}

@@ -209,7 +209,7 @@ func (w *Wallet) RefreshCredential(ctx context.Context, id string) (StoredCreden
 		offer: oid4vci.CredentialOffer{CredentialIssuer: old.CredentialIssuer, CredentialConfigurationIDs: []string{old.ConfigurationID}},
 	}
 	defer s.endRefresh(context.WithoutCancel(ctx))
-	if err := s.newClient(ctx, g.AuthorizationServer); err != nil {
+	if err := s.newClient(ctx, g.AuthorizationServer, false); err != nil {
 		return StoredCredential{}, nil, err
 	}
 	if err := s.redeemGrant(ctx, g); err != nil {
@@ -455,7 +455,7 @@ func (w *Wallet) revokeGrant(ctx context.Context, g RefreshGrant, configID strin
 	}
 	s := &Issuance{w: w, metadata: metadata, instanceKey: instanceKey, offer: oid4vci.CredentialOffer{CredentialIssuer: g.CredentialIssuer}}
 	defer s.endRefresh(context.WithoutCancel(ctx))
-	if err := s.newClient(ctx, g.AuthorizationServer); err != nil {
+	if err := s.newClient(ctx, g.AuthorizationServer, false); err != nil {
 		return
 	}
 	_ = s.client.RevokeToken(ctx, g.RefreshToken)
