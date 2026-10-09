@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -133,5 +134,16 @@ func TestVerifyMapsTheToken(t *testing.T) {
 
 	if _, err := verify(certBoundTokens{cert: cert, clientID: "wallet-1", claims: map[string]json.RawMessage{"authorization_details": json.RawMessage(`{"not":"a list"}`)}}); err == nil {
 		t.Error("a malformed authorization_details was accepted")
+	}
+
+	// A client credentials token: its subject could equal a holder's.
+	_, err = verify(certBoundTokens{cert: cert, clientID: "holder-1", claims: map[string]json.RawMessage{"grant_type": json.RawMessage(`"client_credentials"`)}})
+	if err == nil {
+		t.Fatal("a client credentials token was accepted")
+	}
+	w := httptest.NewRecorder()
+	resource.WriteError(w, err)
+	if w.Code != http.StatusForbidden || !strings.Contains(w.Header().Get("WWW-Authenticate"), "insufficient_scope") {
+		t.Errorf("a client credentials token: %d %q, want 403 insufficient_scope", w.Code, w.Header().Get("WWW-Authenticate"))
 	}
 }

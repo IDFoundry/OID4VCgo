@@ -45,6 +45,11 @@ package issuer
 //	if err != nil {
 //		// respond per *resource.Error — Verify's own doc comment covers this.
 //	}
+//	if authCtx.SubjectKind != resource.SubjectEndUser {
+//		// a client credentials token: its Subject is the client's own
+//		// client_id, which could equal a holder's (RFC 9068 §5).
+//		return resource.NewInsufficientScopeError(authCtx, "a Credential needs an end user's access token")
+//	}
 //	var client issuer.ClientIdentity = issuer.NoClientIdentity{}
 //	if authCtx.ClientID != "" {
 //		client = issuer.KnownClientID(authCtx.ClientID)
