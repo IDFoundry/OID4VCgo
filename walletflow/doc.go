@@ -36,13 +36,12 @@
 //     a Wallet Attestation, as fapigo/client has no public client;
 //   - the proof: a jwt proof (Appendix F.1), or a key attestation
 //     (the attestation proof type, Appendix F.3) where the issuer
-//     requires one (key_attestations_required); none for a credential
-//     bound to no key, which OfferedCredential.Bound and
-//     StoredCredential.Unbound report, so the app can tell the holder;
+//     requires one (key_attestations_required). A credential bound to
+//     no key isn't received (ErrProofUnsupported);
 //   - a c_nonce where the issuer has a nonce endpoint (§7), and none
 //     where it hasn't;
 //   - a DPoP-bound access token, or a Bearer one where the server issues
-//     that (§13.2), refused only for a credential bound to no key.
+//     that (§13.2).
 //
 // Some checks are the holder's, and never relax: https outside
 // Development, the issuer's and Authorization Server's identifiers

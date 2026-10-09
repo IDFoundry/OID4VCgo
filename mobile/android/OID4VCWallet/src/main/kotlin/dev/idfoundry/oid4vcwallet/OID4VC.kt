@@ -106,8 +106,10 @@ public class WalletException internal constructor(
              */
             public val clientAuthUnsupported: Code = Code(Mobile.CodeClientAuthUnsupported)
             /**
-             * The issuer takes no proof the wallet can give for a
-             * credential: a key attestation needs a `WalletProvider`.
+             * The wallet can't hold an offered credential — it's bound to
+             * no key, or by a method other than `jwk` or `cose_key` — or
+             * the issuer takes no proof it can give: a key attestation
+             * needs a `WalletProvider`.
              */
             public val proofUnsupported: Code = Code(Mobile.CodeProofUnsupported)
             /**

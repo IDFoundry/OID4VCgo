@@ -38,11 +38,10 @@ type VerifyIssuedCredentialParams struct {
 	// HolderKey is the public key the Wallet proved possession of in
 	// its Credential Request. When set, the credential must be bound to
 	// it (SD-JWT "cnf.jwk", mdoc DeviceKey). REQUIRED when Configuration
-	// declares cryptographic binding methods. When Configuration declares
-	// none, the credential must be bound to no key (§12.2.4): an SD-JWT
-	// VC with no "cnf". It's refused otherwise, whether or not HolderKey
-	// is set: the Wallet proved no key, so a key it names would be
-	// someone else's.
+	// declares cryptographic binding methods. Without it (a configuration
+	// declaring none, §12.2.4), an SD-JWT VC must be bound to no key: one
+	// with "cnf" is refused, since the Wallet proved no key, so a key it
+	// names would be someone else's.
 	HolderKey crypto.PublicKey
 
 	// IssuerRoots are the trust anchors for issuer certificates: the
@@ -150,15 +149,15 @@ func verifyIssuedSDJWTVC(p VerifyIssuedCredentialParams, now time.Time) (Verifie
 	if vct, _ := payload["vct"].(string); vct != p.Configuration.VCT {
 		return VerifiedIssuedCredential{}, fmt.Errorf("vct is %q, want %q", vct, p.Configuration.VCT)
 	}
-	switch {
-	case len(p.Configuration.CryptographicBindingMethodsSupported) == 0:
-		if _, ok := payload["cnf"]; ok {
-			return VerifiedIssuedCredential{}, errors.New("the credential is bound to a key (cnf), but its configuration declares no binding")
-		}
-	case p.HolderKey != nil:
+	if p.HolderKey != nil {
 		if err := cnfIsKey(payload["cnf"], p.HolderKey); err != nil {
 			return VerifiedIssuedCredential{}, err
 		}
+	} else if _, ok := payload["cnf"]; ok {
+		// Only a configuration declaring no binding gets here: the
+		// Wallet proved no key, so a key the credential names would be
+		// someone else's.
+		return VerifiedIssuedCredential{}, errors.New("the credential is bound to a key (cnf), but the Wallet proved none")
 	}
 	verified := VerifiedIssuedCredential{IssuerCertificate: leaf, Claims: payload, ValidUntil: numericDate(payload["exp"])}
 	if status, ok := payload["status"].(map[string]any); ok {

@@ -62,8 +62,10 @@ public struct WalletError: Error, Equatable, CustomStringConvertible, LocalizedE
         /// the wallet can give: a Wallet Attestation needs a
         /// `WalletProvider` and a `clientID`.
         public static let clientAuthUnsupported = Code(rawValue: MobileCodeClientAuthUnsupported)
-        /// The issuer takes no proof the wallet can give for a credential:
-        /// a key attestation needs a `WalletProvider`.
+        /// The wallet can't hold an offered credential — it's bound to no
+        /// key, or by a method other than `jwk` or `cose_key` — or the
+        /// issuer takes no proof it can give: a key attestation needs a
+        /// `WalletProvider`.
         public static let proofUnsupported = Code(rawValue: MobileCodeProofUnsupported)
         /// An issuer, Authorization Server or Verifier answered with an error,
         /// or with something the wallet refuses. `WalletError.protocolError`

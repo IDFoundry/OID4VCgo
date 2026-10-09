@@ -73,9 +73,6 @@ type offeredJSON struct {
 	Logo            *logoJSON `json:"logo,omitempty"`
 	BackgroundColor string    `json:"background_color,omitempty"`
 	TextColor       string    `json:"text_color,omitempty"`
-	// Bound is whether the credential is bound to a key the wallet
-	// holds: one that isn't can be presented by anyone holding a copy.
-	Bound bool `json:"bound"`
 }
 
 // Grant values in Offer.
@@ -89,9 +86,7 @@ const (
 // "authorization_code" | "pre-authorized_code", "tx_code":
 // {"input_mode", "length", "description"} (the PIN to ask for, if any),
 // "credentials": [{"configuration_id", "format", "vct", "doctype",
-// "name", "description", "logo", "background_color", "text_color",
-// "bound"}]}. "bound" false is a credential bound to no key, which
-// anyone holding a copy can present: tell the holder before accepting.
+// "name", "description", "logo", "background_color", "text_color"}]}.
 // The display metadata is the issuer's, in the configuration's
 // "locales"; a logo is https or a data: image.
 func (s *Issuance) Offer() string {
@@ -110,7 +105,6 @@ func (s *Issuance) Offer() string {
 		out.Credentials = append(out.Credentials, offeredJSON{
 			ConfigurationID: c.ConfigurationID, Format: c.Format, VCT: c.VCT, DocType: c.DocType, Name: c.Name,
 			Description: c.Description, Logo: logoOf(c.Logo), BackgroundColor: c.BackgroundColor, TextColor: c.TextColor,
-			Bound: c.Bound,
 		})
 	}
 	text, _ := marshal(out) // plain data: can't fail

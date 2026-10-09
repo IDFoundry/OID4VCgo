@@ -22,7 +22,8 @@ const (
 	// requires one (key_attestations_required, §12.2.4), and plain jwt
 	// proofs otherwise; it does without a nonce endpoint the issuer
 	// doesn't have (§7), and takes a Bearer access token the
-	// Authorization Server issues (§13.2). It's the default.
+	// Authorization Server issues (§13.2). It doesn't receive a
+	// credential bound to no key (ErrProofUnsupported). It's the default.
 	ProfileOpenID4VCI IssuanceProfile = iota
 	// ProfileHAIP also refuses, with ErrProfileViolation, an issuer that
 	// doesn't follow HAIP 1.0 §4: one whose Authorization Server takes
@@ -37,6 +38,7 @@ const (
 	ProfileHAIP
 )
 
+// String is the profile's name: "openid4vci" or "haip".
 func (p IssuanceProfile) String() string {
 	switch p {
 	case ProfileOpenID4VCI:
@@ -59,9 +61,12 @@ var (
 	// or a method or algorithm the wallet lacks) nor, for a
 	// pre-authorized code, a request with no client authentication.
 	ErrClientAuthUnsupported = errors.New("walletflow: the authorization server takes no client authentication the wallet supports")
-	// ErrProofUnsupported is wrapped, for one credential, when the issuer
-	// takes no proof the wallet can give: none signed with ES256, or a
-	// key attestation without Dependencies.Provider.
+	// ErrProofUnsupported is wrapped by StartIssuance, for a credential
+	// the wallet can't hold — one bound to no key, which it doesn't
+	// receive, or by a binding method other than jwk or cose_key — and by
+	// RequestCredentials for one whose issuer takes no proof the wallet
+	// can give: none signed with ES256, or a key attestation without
+	// Dependencies.Provider.
 	ErrProofUnsupported = errors.New("walletflow: the issuer takes no proof the wallet can give")
 )
 
@@ -124,31 +129,26 @@ func takesAttestation(asMeta wallet.AuthorizationServerMetadata) bool {
 }
 
 // proofPlan is how to prove possession of the keys a credential is
-// bound to: no proof for an unbound one, jwt proofs (Appendix F.1), or
-// a key attestation (Appendix F.3).
+// bound to: jwt proofs (Appendix F.1), or a key attestation (Appendix
+// F.3).
 type proofPlan int
 
 const (
-	proofNone proofPlan = iota
-	proofJWT
+	proofJWT proofPlan = iota
 	proofAttestation
 )
 
-// chooseProof is the proof the wallet sends for conf. A credential with
-// no cryptographic_binding_methods_supported is bound to no key, and
-// needs no proof (§12.2.4). Otherwise the proof is signed with ES256,
-// which the proof type must take. The default profile sends a plain jwt
+// chooseProof is the proof the wallet sends for conf, a credential
+// bound to a key (checkBindable). The proof is signed with ES256, which
+// the proof type must take. The default profile sends a plain jwt
 // proof unless the issuer requires a key attestation with it
 // (key_attestations_required), when it sends the attestation proof type
 // instead: a key attestation the issuer didn't ask for tells it more
 // about the holder's device than it needs. ProfileHAIP prefers the
 // attestation proof type wherever the issuer offers it.
 func (w *Wallet) chooseProof(conf oid4vci.CredentialConfigurationMetadata) (proofPlan, error) {
-	if len(conf.CryptographicBindingMethodsSupported) == 0 {
-		return proofNone, nil
-	}
-	if !supportsBinding(conf) {
-		return 0, fmt.Errorf("%w: it binds credentials only by %v", ErrProofUnsupported, conf.CryptographicBindingMethodsSupported)
+	if err := checkBindable(conf); err != nil {
+		return 0, err
 	}
 	usable := func(pt string) (oid4vci.ProofTypeConfiguration, bool) {
 		c, ok := conf.ProofTypesSupported[pt]
@@ -183,7 +183,7 @@ func supportsBinding(conf oid4vci.CredentialConfigurationMetadata) bool {
 
 // checkProfile reports what about the issuer, under ProfileHAIP, HAIP
 // 1.0 §4 doesn't allow, for the configurations configIDs it's asked for:
-// each needs a scope, and one bound to a key a nonce endpoint.
+// each needs a scope, and the issuer a nonce endpoint.
 func (w *Wallet) checkProfile(metadata oid4vci.Metadata, configIDs []string) error {
 	if w.cfg.IssuanceProfile != ProfileHAIP {
 		return nil
@@ -193,8 +193,6 @@ func (w *Wallet) checkProfile(metadata oid4vci.Metadata, configIDs []string) err
 		switch {
 		case conf.Scope == "":
 			return fmt.Errorf("%w: credential %q has no scope (HAIP 1.0 §4.2)", ErrProfileViolation, id)
-		case len(conf.CryptographicBindingMethodsSupported) == 0:
-			return fmt.Errorf("%w: credential %q is bound to no key", ErrProfileViolation, id)
 		case metadata.NonceEndpoint == nil:
 			return fmt.Errorf("%w: the issuer has no nonce endpoint (HAIP 1.0 §4.1)", ErrProfileViolation)
 		}
@@ -204,20 +202,14 @@ func (w *Wallet) checkProfile(metadata oid4vci.Metadata, configIDs []string) err
 
 // tokenType is a Token Response's token_type, as wallet.TokenTypeDPoP
 // or wallet.TokenTypeBearer. A Bearer token is refused under
-// ProfileHAIP, and for a credential bound to no key, where anyone
-// holding the token could use the credential it obtains.
-func (w *Wallet) tokenType(got string, unbound bool) (string, error) {
+// ProfileHAIP.
+func (w *Wallet) tokenType(got string) (string, error) {
 	t, err := wallet.CanonicalTokenType(got)
 	if err != nil {
 		return "", fmt.Errorf("walletflow: %w", err)
 	}
-	if t == wallet.TokenTypeBearer {
-		switch {
-		case w.cfg.IssuanceProfile == ProfileHAIP:
-			return "", fmt.Errorf("%w: the access token isn't DPoP-bound (HAIP 1.0 §4)", ErrProfileViolation)
-		case unbound:
-			return "", errors.New("walletflow: a Bearer access token for a credential bound to no key: anyone holding the token could use the credential")
-		}
+	if t == wallet.TokenTypeBearer && w.cfg.IssuanceProfile == ProfileHAIP {
+		return "", fmt.Errorf("%w: the access token isn't DPoP-bound (HAIP 1.0 §4)", ErrProfileViolation)
 	}
 	return t, nil
 }

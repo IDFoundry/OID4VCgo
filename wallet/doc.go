@@ -126,7 +126,8 @@
 // GenerateProofWithKeyID, GenerateProofWithX5C, GenerateAttestationProof,
 // GenerateProofWithKeyAttestation, RequestCredential, BuildAuthorizationRequest,
 // RequestDeferredCredential, RequestNotification, RequestPreAuthorizedCodeToken,
-// DPoPResourceClient, GenerateDPoPProof
+// RequestRefreshToken, RevokeToken, RequestAttestationChallenge,
+// DPoPResourceClient, BearerResourceClient, GenerateDPoPProof
 // and DPoPAccessTokenHash exist so far. This package does not yet cover:
 //
 //   - di_vp proofs (needs W3C VCDM, which this repo doesn't implement,

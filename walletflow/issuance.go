@@ -67,11 +67,6 @@ type OfferedCredential struct {
 	Logo            *Logo
 	BackgroundColor string
 	TextColor       string
-	// Bound is whether the credential is bound to a key the wallet
-	// holds. One that isn't (no cryptographic_binding_methods_supported,
-	// OpenID4VCI 1.0 §12.2.4) can be presented by anyone holding a copy:
-	// tell the holder before accepting it.
-	Bound bool
 }
 
 // IssuanceResult is what RequestCredentials obtained.
@@ -212,12 +207,11 @@ func (w *Wallet) StartIssuance(ctx context.Context, offerURI string) (*Issuance,
 func (s *Issuance) chooseGrant(ctx context.Context) error {
 	g := s.offer.Grants
 	var candidates []Grant
-	switch {
-	case g == nil || (g.AuthorizationCode == nil && g.PreAuthorizedCode == nil):
+	if g == nil {
 		// No grants: the authorization code grant, the only one a wallet
 		// can begin without an offer's code (§4.1.1).
 		candidates = []Grant{GrantAuthorizationCode}
-	default:
+	} else {
 		if g.AuthorizationCode != nil {
 			candidates = append(candidates, GrantAuthorizationCode)
 		}
@@ -265,7 +259,7 @@ func (s *Issuance) planGrant(ctx context.Context, grant Grant) error {
 	// An offer's grants are the issuer's to give: its server is held to
 	// grant_types_supported only for an offer with none, where the
 	// wallet chooses the grant (§4.1.1).
-	if g := s.offer.Grants; (g == nil || (g.AuthorizationCode == nil && g.PreAuthorizedCode == nil)) && !asMeta.SupportsGrantType(string(grant)) {
+	if s.offer.Grants == nil && !asMeta.SupportsGrantType(string(grant)) {
 		return fmt.Errorf("walletflow: the authorization server doesn't serve the %s grant", grant)
 	}
 	auth, err := s.w.chooseClientAuth(asMeta, grant)
@@ -281,16 +275,15 @@ func (s *Issuance) planGrant(ctx context.Context, grant Grant) error {
 	return nil
 }
 
-// checkBindable reports a credential the wallet can't hold: an mdoc
-// bound to no key — its MSO always names a device key, so one the
-// wallet didn't prove would be someone else's — or one bound by a
+// checkBindable reports a credential the wallet can't hold: one bound to
+// no key (no cryptographic_binding_methods_supported, OpenID4VCI 1.0
+// §12.2.4), which the wallet doesn't receive — anyone holding a copy
+// could present it, and an mdoc's MSO always names a device key, so one
+// the wallet didn't prove would be someone else's — or one bound by a
 // method the wallet lacks.
 func checkBindable(conf oid4vci.CredentialConfigurationMetadata) error {
 	if len(conf.CryptographicBindingMethodsSupported) == 0 {
-		if conf.Format == "mso_mdoc" {
-			return fmt.Errorf("%w: an mdoc bound to no key", ErrProofUnsupported)
-		}
-		return nil
+		return fmt.Errorf("%w: it's bound to no key", ErrProofUnsupported)
 	}
 	if !supportsBinding(conf) {
 		return fmt.Errorf("%w: it binds credentials only by %v", ErrProofUnsupported, conf.CryptographicBindingMethodsSupported)
@@ -310,7 +303,6 @@ func describeOffer(offer oid4vci.CredentialOffer, metadata oid4vci.Metadata, gra
 		o.Credentials = append(o.Credentials, OfferedCredential{
 			ConfigurationID: id, Format: conf.Format, VCT: conf.VCT, DocType: conf.DocType,
 			Name: d.Name, Description: d.Description, Logo: d.Logo, BackgroundColor: d.BackgroundColor, TextColor: d.TextColor,
-			Bound: len(conf.CryptographicBindingMethodsSupported) > 0,
 		})
 	}
 	return o
@@ -404,7 +396,7 @@ func (s *Issuance) CompleteAuthorization(ctx context.Context, redirect string) e
 	}
 	switch r := result.(type) {
 	case client.CompletionSuccess:
-		if s.tokenType, err = s.w.tokenType(r.Tokens.TokenType, s.unbound()); err != nil {
+		if s.tokenType, err = s.w.tokenType(r.Tokens.TokenType); err != nil {
 			s.step = stepClosed
 			return err
 		}
@@ -476,7 +468,7 @@ func (s *Issuance) RedeemPreAuthorizedCode(ctx context.Context, txCode string) e
 	if err != nil {
 		return fmt.Errorf("walletflow: token: %w", err)
 	}
-	if s.tokenType, err = s.w.tokenType(token.TokenType, s.unbound()); err != nil {
+	if s.tokenType, err = s.w.tokenType(token.TokenType); err != nil {
 		return err
 	}
 	s.resource = s.w.resourceClient(token.AccessToken, s.tokenType, s.dpopKey)
@@ -523,16 +515,6 @@ func (w *Wallet) resourceClient(accessToken fapi.Secret, tokenType string, dpopK
 		return w.core.BearerResourceClient(accessToken)
 	}
 	return w.core.DPoPResourceClient(accessToken, dpopKey)
-}
-
-// unbound reports whether any credential offered is bound to no key.
-func (s *Issuance) unbound() bool {
-	for _, id := range s.offer.CredentialConfigurationIDs {
-		if len(s.metadata.CredentialConfigurationsSupported[id].CryptographicBindingMethodsSupported) == 0 {
-			return true
-		}
-	}
-	return false
 }
 
 func (w *Wallet) urlOptions() []fapi.URLOption {
@@ -829,7 +811,7 @@ func (s *Issuance) request(ctx context.Context, configID string, requestEnc *wal
 		if err == nil {
 			break
 		}
-		if invalidNonce(err) && (plan == proofNone || s.metadata.NonceEndpoint == nil) {
+		if invalidNonce(err) && s.metadata.NonceEndpoint == nil {
 			// No nonce to renew: asking again would be refused again.
 			return StoredCredential{}, nil, fmt.Errorf("walletflow: credential %q: %w: %w", configID, errNoFreshNonce, err)
 		}
@@ -868,11 +850,7 @@ func (s *Issuance) request(ctx context.Context, configID string, requestEnc *wal
 // possession of them by plan, with a fresh c_nonce where the issuer has
 // a nonce endpoint (OpenID4VCI 1.0 §7): one jwt proof each, or one key
 // attestation for them all. The issuer issues one copy bound to each.
-// A credential bound to no key needs neither keys nor proofs.
 func (s *Issuance) proofs(ctx context.Context, plan proofPlan) ([]Key, wallet.CredentialRequest, error) {
-	if plan == proofNone {
-		return nil, wallet.CredentialRequest{}, nil
-	}
 	var nonce string
 	if s.metadata.NonceEndpoint != nil {
 		n, err := s.w.core.RequestNonce(ctx, *s.metadata.NonceEndpoint)
@@ -1026,9 +1004,12 @@ type issued struct {
 // the wallet kept it (§11).
 func (w *Wallet) accept(ctx context.Context, c issued) (StoredCredential, error) {
 	conf := c.metadata.CredentialConfigurationsSupported[c.configID]
-	bound := len(conf.CryptographicBindingMethodsSupported) > 0
-	// An unbound credential is one copy: the wallet asked for no keys.
-	if n, keys := len(c.result.Credentials), max(len(c.holders), 1); n == 0 || n > keys || (!bound && len(c.holders) > 0) {
+	if err := checkBindable(conf); err != nil {
+		// The issuer's metadata changed since the request: a deferred
+		// credential's, re-fetched after a restart.
+		return StoredCredential{}, fmt.Errorf("walletflow: credential %q: %w", c.configID, err)
+	}
+	if n := len(c.result.Credentials); n == 0 || n > len(c.holders) {
 		return StoredCredential{}, fmt.Errorf("walletflow: credential %q: got %d copies for %d keys", c.configID, n, len(c.holders))
 	}
 	now := w.deps.Clock()
@@ -1041,11 +1022,8 @@ func (w *Wallet) accept(ctx context.Context, c issued) (StoredCredential, error)
 			w.notify(ctx, c, oid4vci.NotificationEventCredentialFailure, "the credential failed the wallet's checks")
 			return StoredCredential{}, fmt.Errorf("walletflow: credential %q %w: %w", c.configID, errInvalidCredential, err)
 		}
-		var keyID string
-		if key != nil {
-			keyID = key.ID()
-			unbound = slices.DeleteFunc(unbound, func(k Key) bool { return k.ID() == keyID })
-		}
+		keyID := key.ID()
+		unbound = slices.DeleteFunc(unbound, func(k Key) bool { return k.ID() == keyID })
 		copies = append(copies, CredentialCopy{Credential: ic.Credential, HolderKeyID: keyID})
 		if i == 0 {
 			first = verified
@@ -1065,7 +1043,6 @@ func (w *Wallet) accept(ctx context.Context, c issued) (StoredCredential, error)
 		ReceivedAt: now.UTC(), Claims: first.Claims,
 		Display: displayFor(c.metadata, c.configID, w.cfg.Locales), ValidUntil: first.ValidUntil,
 		StatusList: first.StatusList, StatusListCWT: first.StatusListCWT, GrantID: c.grantID,
-		Unbound: !bound,
 	}
 	if err := w.store(ctx, stored, c); err != nil {
 		if errors.Is(err, ErrNotFound) {
@@ -1091,15 +1068,8 @@ func (w *Wallet) store(ctx context.Context, stored StoredCredential, c issued) e
 	return w.replaceStored(ctx, stored, c.grantID)
 }
 
-// verifyCopy checks one copy, and finds which of keys it's bound to: nil
-// for a credential bound to none.
+// verifyCopy checks one copy, and finds which of keys it's bound to.
 func (w *Wallet) verifyCopy(ctx context.Context, conf oid4vci.CredentialConfigurationMetadata, credential string, keys []Key, now time.Time) (wallet.VerifiedIssuedCredential, Key, error) {
-	if len(conf.CryptographicBindingMethodsSupported) == 0 {
-		verified, err := wallet.VerifyIssuedCredential(ctx, wallet.VerifyIssuedCredentialParams{
-			Configuration: conf, Credential: credential, IssuerRoots: w.cfg.IssuerRoots, Now: now,
-		})
-		return verified, nil, err
-	}
 	var lastErr error
 	for _, k := range keys {
 		verified, err := wallet.VerifyIssuedCredential(ctx, wallet.VerifyIssuedCredentialParams{

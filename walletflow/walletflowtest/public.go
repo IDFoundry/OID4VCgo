@@ -42,13 +42,13 @@ type publicGrant struct {
 // issue answers an anonymous redemption with result: its access token,
 // a Bearer one under Options.BearerTokens, and a refresh token.
 func (p *publicTokens) issue(w http.ResponseWriter, r *http.Request, e *Env, result issuer.ExchangePreAuthorizedCodeResult) {
-	thumbprint := ""
-	if !p.bearer {
-		var err error
-		if thumbprint, err = p.dpopKey(r, e); err != nil {
-			issuer.NewError(issuer.ErrorInvalidTokenRequest, err.Error()).WriteJSON(w)
-			return
-		}
+	// The refresh token is bound to the request's DPoP key whatever the
+	// access token's type (RFC 9449 §5): a public client's refresh token
+	// is.
+	thumbprint, err := p.dpopKey(r, e)
+	if err != nil {
+		issuer.NewError(issuer.ErrorInvalidTokenRequest, err.Error()).WriteJSON(w)
+		return
 	}
 	refresh := rand.Text()
 	p.mu.Lock()
@@ -194,4 +194,11 @@ func (e *Env) verifyTokenEndpointDPoP(r *http.Request, replay issuer.DPoPReplayC
 		return "", err
 	}
 	return verified.Thumbprint, nil
+}
+
+// revokeAll revokes every public client's refresh token.
+func (p *publicTokens) revokeAll() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	clear(p.grants)
 }

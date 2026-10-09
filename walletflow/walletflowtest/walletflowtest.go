@@ -1,5 +1,6 @@
 // Package walletflowtest runs a complete HAIP 1.0 Credential Issuer in
-// process, for tests that drive a wallet built on walletflow end to end
+// process — or, with Options, one outside HAIP that OpenID4VCI 1.0
+// allows (Anonymous) — for tests that drive a wallet built on walletflow end to end
 // (walletflow's own, and the mobile module's): a fapigo/server
 // Authorization Server authenticating wallets by Wallet Attestation, an
 // issuer.Issuer taking Key Attestations (the attestation proof type),
@@ -135,9 +136,9 @@ type Options struct {
 	// tokens, not DPoP-bound ones, to the pre-authorized code grant
 	// under Anonymous, as RFC 9449 §5 lets it.
 	BearerTokens bool
-	// AnonymousRefresh has an Anonymous issuer issue refresh tokens to
-	// public clients, bound to the DPoP key (RFC 9449 §5), or for
-	// BearerTokens unbound.
+	// AnonymousRefresh (with Anonymous) has the issuer issue refresh tokens to
+	// public clients, bound to the token request's DPoP key (RFC 9449
+	// §5), under BearerTokens too.
 	AnonymousRefresh bool
 	// NoNonceEndpoint has the issuer publish no nonce endpoint: its
 	// proofs then carry no c_nonce, and iat dates them (OpenID4VCI 1.0
@@ -204,6 +205,9 @@ type Env struct {
 // New starts an Env. Close stops it.
 func New(opts Options) (env *Env, err error) {
 	defer recoverInto(&err)
+	if (opts.BearerTokens || opts.AnonymousRefresh) && !opts.Anonymous {
+		return nil, errors.New("walletflowtest: BearerTokens and AnonymousRefresh need Anonymous")
+	}
 	ts := httptest.NewUnstartedServer(nil)
 	e := &Env{IssuerURL: "https://" + ts.Listener.Addr().String(), preAuthCodes: oid4vcgostorage.NewPreAuthorizedCodeStore()}
 	e.vct = e.IssuerURL + "/vct/test"
@@ -598,6 +602,9 @@ func (e *Env) RevokeGrants() {
 	e.mu.Unlock()
 	for _, id := range ids {
 		must(e.srv.RevokeGrant(context.Background(), id))
+	}
+	if e.public != nil {
+		e.public.revokeAll()
 	}
 }
 

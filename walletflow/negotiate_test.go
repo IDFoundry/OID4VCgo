@@ -58,8 +58,8 @@ func TestIssuance_AnonymousPreAuthorizedCode(t *testing.T) {
 		w := f.anonymousWallet(t, walletflow.ProfileOpenID4VCI, nil)
 		held := receivePreAuthorized(t, f, w, walletflowtest.MdocConfigurationID, walletflowtest.SDJWTConfigurationID)
 		for _, c := range held {
-			if c.Unbound || c.HolderKeyID == "" {
-				t.Errorf("no nonce endpoint %v: %s is unbound", noNonce, c.ConfigurationID)
+			if c.HolderKeyID == "" {
+				t.Errorf("no nonce endpoint %v: %s is bound to no key", noNonce, c.ConfigurationID)
 			}
 		}
 		if n := f.env.Provider.KeyAttestations(); n != 0 {
@@ -158,7 +158,9 @@ func TestRefreshCredential_AnonymousGrant(t *testing.T) {
 			t.Fatalf("bearer %v: the credential isn't refreshable", bearer)
 		}
 		g, err := grants.GetGrant(ctx, c.GrantID)
-		if err != nil || g.ClientAuth != walletflow.GrantAuthNone || g.InstanceKeyID != "" || (g.DPoPKeyID == "") != bearer {
+		// The DPoP key is kept even for a Bearer grant: the refresh token
+		// is bound to it (RFC 9449 §5).
+		if err != nil || g.ClientAuth != walletflow.GrantAuthNone || g.InstanceKeyID != "" || g.DPoPKeyID == "" {
 			t.Fatalf("bearer %v: grant = %+v, %v", bearer, g, err)
 		}
 		refreshed, _, err := w.RefreshCredential(ctx, c.ID)
@@ -187,6 +189,16 @@ func TestRefreshCredential_AnonymousGrant(t *testing.T) {
 		}
 		if _, _, err := haip.RefreshCredential(ctx, c.ID); !errors.Is(err, walletflow.ErrProfileViolation) {
 			t.Errorf("bearer %v: a HAIP wallet refreshing an anonymous grant: %v, want ErrProfileViolation", bearer, err)
+		}
+
+		// A refresh token the server has revoked: the credential must be
+		// reissued, and the grant and its key are forgotten.
+		f.env.RevokeGrants()
+		if _, _, err := w.RefreshCredential(ctx, c.ID); !errors.Is(err, walletflow.ErrReissueRequired) {
+			t.Errorf("bearer %v: refreshing a revoked public grant: %v, want ErrReissueRequired", bearer, err)
+		}
+		if _, err := grants.GetGrant(ctx, c.GrantID); !errors.Is(err, walletflow.ErrNotFound) {
+			t.Errorf("bearer %v: the revoked grant is kept: %v", bearer, err)
 		}
 	}
 }

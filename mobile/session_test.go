@@ -951,9 +951,9 @@ func TestSessions_AnonymousIssuer(t *testing.T) {
 	o := decode[struct {
 		Grant       string
 		TxCode      *struct{} `json:"tx_code"`
-		Credentials []struct{ Bound bool }
+		Credentials []struct{}
 	}](t, s.Offer())
-	if o.Grant != GrantPreAuthorizedCode || o.TxCode != nil || len(o.Credentials) != 1 || !o.Credentials[0].Bound {
+	if o.Grant != GrantPreAuthorizedCode || o.TxCode != nil || len(o.Credentials) != 1 {
 		t.Fatalf("Offer = %s", s.Offer())
 	}
 	if err := s.RedeemPreAuthorizedCode(NewOperation(0), ""); err != nil {

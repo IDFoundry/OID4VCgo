@@ -1143,24 +1143,33 @@ be received from at all. Issuance now follows the issuer's metadata
 - **The provider is optional:** `NewWallet` takes a nil
   `WalletProvider`, and the Swift and Kotlin `Wallet`s already took an
   optional one. Without it, the wallet receives only from issuers that
-  ask for no attestation; one that does fails with
-  `client_auth_unsupported` or `proof_unsupported` before the holder sees
-  the offer. The demos' `provider_url` is optional to match.
+  ask for no attestation. One whose Authorization Server needs a Wallet
+  Attestation fails with `client_auth_unsupported` before the holder
+  sees the offer; one requiring a key attestation fails with
+  `proof_unsupported` when the credentials are requested. The demos'
+  `provider_url`, and the configuration's `client_id` and
+  `redirect_uri`, are optional to match.
 - **`issuance_profile`:** `"openid4vci"` by default, or `"haip"`,
   refusing issuers outside HAIP 1.0 with `profile_violation`. Under the
-  default, a HAIP issuer's offers are received as before.
+  default, a HAIP issuer's offers are still received, with a Wallet
+  Attestation — but anonymously where its Authorization Server also
+  allows that, and with plain jwt proofs where it doesn't require a key
+  attestation.
 - **A public client's refresh:** a grant from an anonymous redemption
   has no instance key. Its record says `"client_auth": "none"` and keeps
   the DPoP key its refresh token is bound to, so the refresh needs no
   attestation. Every record from before has no `client_auth`, and still
   refreshes with its instance key.
-- **Unbound credentials:** an offer's `bound` and a summary's `unbound`
-  report a credential bound to no key, which anyone holding a copy can
-  present: worth telling the holder before accepting.
+- **Unbound credentials:** one whose configuration declares no
+  cryptographic binding is refused (`proof_unsupported`) before the
+  holder sees the offer: anyone holding a copy could present it.
 - **Within ABI 12:** each change is a new field, a new code for a new
   situation, or a call that accepted nil and now does something with it,
-  so an older wrapper is unaffected (it shows a new code as "Something
-  went wrong.").
+  so an older wrapper still works (it shows a new code as "Something
+  went wrong."). It's still a behaviour change: an older wrapper sends no
+  `issuance_profile`, so its wallet follows the default and receives
+  from issuers outside HAIP. An app that relied on the old strictness
+  sets `"haip"`.
 
 ## Open questions
 

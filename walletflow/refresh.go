@@ -46,11 +46,12 @@ type RefreshGrant struct {
 	// kept: those all authenticated with a Wallet Attestation.
 	ClientAuth GrantAuth
 	// DPoPKeyID names the DPoP key a GrantAuthNone grant's refresh token
-	// is bound to, kept in the KeyStore while the grant is; "" for a
-	// Bearer one (TokenType).
+	// may be bound to — the key of the token request that obtained it,
+	// whatever the access tokens' TokenType — kept in the KeyStore while
+	// the grant is.
 	DPoPKeyID string
-	// TokenType is the access tokens' type: "DPoP", or "" for a grant
-	// stored before it was kept, or "Bearer" (wallet.TokenTypeBearer).
+	// TokenType is the access tokens' type: "" for DPoP (and every grant
+	// stored before it was kept), or "Bearer" (wallet.TokenTypeBearer).
 	TokenType string
 }
 
@@ -62,7 +63,7 @@ const (
 	// to RefreshGrant.InstanceKeyID. It's the empty value.
 	GrantAuthAttestation GrantAuth = ""
 	// GrantAuthNone authenticates no client: the refresh token is held
-	// to RefreshGrant.DPoPKeyID instead, or is a Bearer grant's.
+	// to RefreshGrant.DPoPKeyID instead.
 	GrantAuthNone GrantAuth = "none"
 )
 
@@ -181,12 +182,12 @@ func (s *Issuance) storeGrant(ctx context.Context) {
 	if s.tokenType == wallet.TokenTypeBearer {
 		g.TokenType = wallet.TokenTypeBearer
 	}
-	switch {
-	case s.auth == clientAuthAttestation:
+	if s.auth == clientAuthAttestation {
 		g.InstanceKeyID = s.instanceKey.ID()
-	case s.tokenType == wallet.TokenTypeBearer:
-		g.ClientAuth = GrantAuthNone
-	default:
+	} else {
+		// Kept even with a Bearer access token: the token request sent a
+		// DPoP proof, and the server may have bound the refresh token to
+		// its key all the same (RFC 9449 §5).
 		g.ClientAuth, g.DPoPKeyID = GrantAuthNone, s.dpopKey.ID()
 	}
 	if err := s.w.deps.Grants.PutGrant(ctx, g); err == nil {
@@ -251,6 +252,14 @@ func (w *Wallet) RefreshCredential(ctx context.Context, id string) (StoredCreden
 	// HAIP wallet refreshes only from an issuer that still follows HAIP.
 	if err := w.checkProfile(metadata, []string{old.ConfigurationID}); err != nil {
 		return StoredCredential{}, nil, err
+	}
+	// Nor one that no longer binds it to a key the wallet can hold.
+	conf, ok := metadata.CredentialConfigurationsSupported[old.ConfigurationID]
+	if !ok {
+		return StoredCredential{}, nil, fmt.Errorf("walletflow: refresh credential: the issuer no longer offers it: %w", ErrReissueRequired)
+	}
+	if err := checkBindable(conf); err != nil {
+		return StoredCredential{}, nil, fmt.Errorf("walletflow: refresh credential: %w: %w", ErrReissueRequired, err)
 	}
 	s := &Issuance{
 		w: w, metadata: metadata, grantID: g.ID, grantStored: true, replace: old.ID, grant: GrantAuthorizationCode,
@@ -366,8 +375,8 @@ func (s *Issuance) redeemGrant(ctx context.Context, g RefreshGrant) error {
 		}
 		req := wallet.RefreshTokenRequest{RefreshToken: g.RefreshToken}
 		if s.dpopKey != nil {
-			// A Bearer grant's refresh carries no DPoP proof: a nil
-			// Key in the interface would send one.
+			// A grant stored before DPoPKeyID was kept for Bearer grants
+			// has no key: a nil Key in the interface would send a proof.
 			req.DPoPKey = s.dpopKey
 		}
 		res, err := s.w.core.RequestRefreshToken(ctx, tokenEndpoint, req)
@@ -402,7 +411,7 @@ func (s *Issuance) redeemGrant(ctx context.Context, g RefreshGrant) error {
 			return fmt.Errorf("walletflow: store refresh grant: %w", err)
 		}
 	}
-	if s.tokenType, err = s.w.tokenType(tokenType, s.unbound()); err != nil {
+	if s.tokenType, err = s.w.tokenType(tokenType); err != nil {
 		return err
 	}
 	if g.ClientAuth == GrantAuthNone && s.tokenType == wallet.TokenTypeDPoP && s.dpopKey == nil {
@@ -472,6 +481,12 @@ func (s *Issuance) endRefresh(ctx context.Context) {
 // invalidGrant reports whether err is the Authorization Server refusing
 // the refresh token itself: expired, revoked or unknown.
 func invalidGrant(err error) bool {
+	// A public client's refresh fails with a *wallet.Error, fapigo/client's
+	// with a *client.Error.
+	var we *wallet.Error
+	if errors.As(err, &we) {
+		return we.Code == "invalid_grant"
+	}
 	var ce *client.Error
 	if !errors.As(err, &ce) {
 		return false

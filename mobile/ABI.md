@@ -60,7 +60,7 @@ format or error code below changes incompatibly.
 | `delivery_unknown` | sending a presentation failed in a way that leaves it unknown whether the Verifier received it; it isn't sent again, which could present twice |
 | `profile_violation` | under `"issuance_profile": "haip"`, the issuer doesn't follow HAIP 1.0: it's refused |
 | `client_auth_unsupported` | the offer's Authorization Server takes no client authentication the wallet can give: a Wallet Attestation needs a provider and `client_id` |
-| `proof_unsupported` | the issuer takes no proof the wallet can give for a credential: a key attestation needs a provider |
+| `proof_unsupported` | the wallet can't hold an offered credential, or the issuer takes no proof it can give: one bound to no key (which the wallet doesn't receive) or by a method other than `jwk`/`cose_key`, both refused before the holder sees the offer; or, when the credentials are requested, no proof type signed with ES256, or a key attestation without a provider |
 | `protocol` | an issuer, Authorization Server or Verifier answered with an error, or with something the wallet refuses |
 | `internal` | a bug |
 
@@ -226,8 +226,9 @@ The refresh token is kept in the CredentialStore, as a record of
 `"kind": "grant"`, with the wallet instance key ID, the key every
 refresh must authenticate with again — or, for a grant that
 authenticated no client (`"client_auth": "none"`), the `dpop_key_id`
-its refresh token is bound to, none for a Bearer one (`"token_type":
-"Bearer"`). A record without `client_auth` is a Wallet Attestation's. `copy_policy` is which copy of a
+its refresh token is bound to, whether its access tokens are DPoP or
+Bearer (`"token_type": "Bearer"`). A record without `client_auth` is a
+Wallet Attestation's. `copy_policy` is which copy of a
 credential a presentation uses (OpenID4VCI 1.0: "a unique Credential
 per presentation or per Verifier"). With `"per_presentation"`, the
 default, every presentation uses a copy no Verifier has seen, so not
@@ -257,7 +258,7 @@ to the fewest Verifiers is reused.
 A credential **summary** is `{"id", "credential_issuer",
 "configuration_id", "format", "vct", "doctype", "received_at",
 "holder_key_present", "display", "valid_until", "status", "copies",
-"copies_left", "linkable", "refreshable", "unbound"}`, and on a
+"copies_left", "linkable", "refreshable"}`, and on a
 presentation's candidates `"shown_to_verifier"` and `"linkable_here"`.
 
 - `holder_key_present` is false when the key store no longer holds the
@@ -280,9 +281,6 @@ presentation's candidates `"shown_to_verifier"` and `"linkable_here"`.
   presentation's candidates (`Queries`): whether the Verifier asking has
   been shown this credential before, and whether presenting it now would
   hand it a copy another Verifier has seen.
-- `unbound`, when true, is a credential bound to no key: its
-  configuration declared no cryptographic binding, so anyone holding a
-  copy can present it.
 - `refreshable` is whether its issuance kept a refresh token
   (`request_refresh`), so `RefreshCredential` can replace its copies.
   The Authorization Server may still refuse it (`reissue_required`).
@@ -301,7 +299,7 @@ Steps, in order: `Offer`; then `BeginAuthorization` and
 
 | Method | Result |
 |---|---|
-| `Offer()` | `{"credential_issuer", "issuer_name", "issuer_logo", "grant", "tx_code": {"input_mode", "length", "description"}, "credentials": [{"configuration_id", "format", "vct", "doctype", "name", "description", "logo", "background_color", "text_color", "bound"}]}`, with display metadata as in a summary. `bound` false is a credential bound to no key, which anyone holding a copy can present: tell the holder before accepting |
+| `Offer()` | `{"credential_issuer", "issuer_name", "issuer_logo", "grant", "tx_code": {"input_mode", "length", "description"}, "credentials": [{"configuration_id", "format", "vct", "doctype", "name", "description", "logo", "background_color", "text_color"}]}`, with display metadata as in a summary |
 | `BeginAuthorization(op)` | the authorization URL, to open in `ASWebAuthenticationSession` (iOS) or an Auth Tab, falling back to a Custom Tab (Android) |
 | `CompleteAuthorization(op, redirect)` | the redirect back to `redirect_uri`, whole or just its query. It's used up whatever happens: after a failure, start again with `BeginAuthorization` |
 | `RedeemPreAuthorizedCode(op, txCode)` | the PIN, `""` if `tx_code` is absent; a wrong one is `protocol` and can be retried |
@@ -348,10 +346,14 @@ indexes, and `null` for every element. Holder keys sign during
 ABI version 12 added `registrar_roots`, the Verifier's `registration`,
 and each query's `unregistered` and `unregistered_all`. Within it,
 `issuance_profile`, an optional provider, `profile_violation`,
-`client_auth_unsupported` and `proof_unsupported`, the offer's `bound`,
-the summary's `unbound`, and the grant record's `client_auth`,
-`dpop_key_id` and `token_type` came later: each is new, so an older
-wrapper is unaffected.
+`client_auth_unsupported` and `proof_unsupported`, the grant record's
+`client_auth`, `dpop_key_id` and `token_type`, and the deferred
+record's `token_type` came later: each is new, and an older wrapper
+shows a new code as a generic failure. An older wrapper sends no
+`issuance_profile`, so its wallet follows the default, `"openid4vci"`:
+it now receives from issuers outside HAIP 1.0, and redeems a
+pre-authorized code anonymously where the Authorization Server allows
+it. Set `"haip"` to keep refusing them.
 
 ABI version 11 added `untrusted_verifier`.
 
