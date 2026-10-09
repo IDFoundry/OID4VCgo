@@ -368,14 +368,10 @@ func (s *Issuance) redeemGrant(ctx context.Context, g RefreshGrant) error {
 	if err != nil {
 		return err
 	}
-	refreshed, hasRefresh := res.refreshToken, res.hasRefreshToken
 	tokenType, accessToken, details := res.tokenType, res.accessToken, res.details
 	expiresIn, hasExpiry := res.expiresIn, res.hasExpiresIn
-	if hasRefresh && refreshed.Reveal() != g.RefreshToken.Reveal() {
-		g.RefreshToken = refreshed
-		if err := s.w.deps.Grants.PutGrant(ctx, g); err != nil {
-			return fmt.Errorf("walletflow: store refresh grant: %w", err)
-		}
+	if err := s.keepRotatedRefreshToken(ctx, g, res); err != nil {
+		return err
 	}
 	if s.tokenType, err = s.w.tokenType(tokenType); err != nil {
 		return err
@@ -393,6 +389,19 @@ func (s *Issuance) redeemGrant(ctx context.Context, g RefreshGrant) error {
 	}
 	if hasExpiry {
 		s.accessExpiresAt = s.w.deps.Clock().Add(expiresIn)
+	}
+	return nil
+}
+
+// keepRotatedRefreshToken stores the refresh token res rotated g's to,
+// if it did.
+func (s *Issuance) keepRotatedRefreshToken(ctx context.Context, g RefreshGrant, res refreshResult) error {
+	if !res.hasRefreshToken || res.refreshToken.Reveal() == g.RefreshToken.Reveal() {
+		return nil
+	}
+	g.RefreshToken = res.refreshToken
+	if err := s.w.deps.Grants.PutGrant(ctx, g); err != nil {
+		return fmt.Errorf("walletflow: store refresh grant: %w", err)
 	}
 	return nil
 }
@@ -448,7 +457,11 @@ func (s *Issuance) refreshWithAttestation(ctx context.Context, g RefreshGrant) (
 		}
 		return refreshResult{}, err
 	}
-	tokens, err := s.client.RefreshTokens(ctx, client.RefreshTokenRequest{Tokens: client.TokenSet{RefreshToken: g.RefreshToken, HasRefreshToken: true}})
+	// The grant's own authorization server, so fapigo/client refuses to
+	// send its refresh token to any other.
+	tokens, err := s.client.RefreshTokens(ctx, client.RefreshTokenRequest{Tokens: client.TokenSet{
+		RefreshToken: g.RefreshToken, HasRefreshToken: true, Issuer: g.AuthorizationServer,
+	}})
 	if err != nil {
 		return refreshResult{}, s.refreshFailed(ctx, g, err)
 	}

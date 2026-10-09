@@ -34,7 +34,9 @@ const RecommendedClientAttestationAlgorithm = fapi.ES256
 //   - Limits.MaxClientAttestationPoPAge set to MaxDPoPProofAge: a PoP,
 //     like a DPoP proof, is created fresh for each request.
 //
-// The caller sets the rest: Issuer, Endpoints and Assurance, and
+// The caller sets the rest: Issuer, Endpoints and Assurance, under
+// server.AssuranceProduction Deployment (single instance or
+// horizontally scaled, which server.New then requires), and
 // Limits.MaxClientAttestationLifetime — how long a Wallet Attestation
 // stays usable is the Wallet Provider's and the ecosystem's decision,
 // which HAIP doesn't number, so it's left zero and server.New refuses
@@ -43,7 +45,9 @@ const RecommendedClientAttestationAlgorithm = fapi.ES256
 // server.X5CAttesterChain with server.AttesterIssuerBoundToAnchor and
 // each Wallet Provider's anchor in Anchors, bound to the providers it
 // may vouch for, so one Wallet Provider can't attest for another's
-// wallets even under a shared trust list.
+// wallets even under a shared trust list. Under production assurance,
+// server.New takes only an anchor source declaring itself hardened for
+// live fetches, as server.StaticAttesterAnchors does.
 func RecommendedAuthorizationServerConfig() (server.Config, error) {
 	extensions, err := extension.NewRegistry(oid4vci.IssuerStateExtension)
 	if err != nil {
