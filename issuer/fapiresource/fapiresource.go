@@ -45,10 +45,20 @@ func New(v *resource.Verifier) (*Verifier, error) {
 // transaction bound to a client refuses it. Its AuthorizationDetails
 // are the token's authorization_details claim; a malformed one fails
 // verification.
+//
+// Only an end user's token is accepted (resource.SubjectEndUser): a
+// client credentials token's subject is the client's own client_id,
+// which a client choosing its own (through OpenID Federation, say)
+// could make equal to a holder's subject, and the Grant's Subject
+// decides whose Credential is issued. It's refused as 403
+// insufficient_scope.
 func (v *Verifier) Verify(r *http.Request, endpoint *url.URL) (issuer.Grant, error) {
 	authCtx, err := v.resource.Verify(r.Context(), resource.VerifyRequestFromHTTP(r, endpoint))
 	if err != nil {
 		return issuer.Grant{}, err
+	}
+	if authCtx.SubjectKind != resource.SubjectEndUser {
+		return issuer.Grant{}, resource.NewInsufficientScopeError(authCtx, "a Credential needs an end user's access token")
 	}
 	var client issuer.ClientIdentity = issuer.NoClientIdentity{}
 	if authCtx.ClientID != "" {
