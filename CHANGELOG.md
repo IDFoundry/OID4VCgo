@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.37.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.36.0...v0.37.0) (2026-10-09)
+
+
+### ⚠ BREAKING CHANGES
+
+* **deps:** FAPIgo v0.52.0's breaking changes reach applications that use its packages beside OID4VCgo's. A deployment of issuer with fapigo/server or fapigo/serverresource at production assurance must set server.Config.Deployment (and resource.Config's), in place of HorizontallyScaled, and give X5CAttesterChain an anchor source declaring keys.KeySourceAssurance LiveFetchHardened (server.StaticAttesterAnchors and StaticAttesterTrustAnchors do). Every extension.Definition registered beside oid4vci.IssuerStateExtension must set Sensitivity. A client.TokenSet built by hand for RefreshTokens must set Issuer. keys.NewKeyManagerFromSigners takes []keys.SignerSpec. Go 1.26.9 or later is now required, as FAPIgo's go.mod requires it. See FAPIgo's UPGRADING.md for v0.52.0.
+
+### Bug Fixes
+
+* **deps:** pin FAPIgo v0.52.1 ([4155b0d](https://github.com/IDFoundry/OID4VCgo/commit/4155b0db4a69f840985fc1b0ee2c28e00200ad67))
+
 ## [0.36.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.35.0...v0.36.0) (2026-10-09)
 
 
