@@ -6,6 +6,7 @@
 ### Features
 
 * **proximity:** the holder offers mdoc central client mode, or both modes ([797466d](https://github.com/IDFoundry/OID4VCgo/commit/797466d9e3643408828b7735922dbabe295076c4))
+* **walletflow:** pin hosts' certificates for the wallet's HTTPS requests (`Config.TLSPins`) ([#506](https://github.com/IDFoundry/OID4VCgo/issues/506)) ([055d13b](https://github.com/IDFoundry/OID4VCgo/commit/055d13bd2079cbd41deaea1fe95859d302f9738c))
 
 ## [0.35.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.34.0...v0.35.0) (2026-10-08)
 
