@@ -2,6 +2,8 @@ module github.com/idfoundry/oid4vcgo/examples/passport-vdc
 
 go 1.26.6
 
+toolchain go1.26.9
+
 require (
 	github.com/fxamacker/cbor/v2 v2.9.4
 	github.com/gmrtd/gmrtd v1.3.3
