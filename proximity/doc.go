@@ -60,7 +60,12 @@
 //   - Reader verification (§9.3.1, §9.3.3): issuer chain to a trust
 //     anchor, the IACA's countryName (and stateOrProvinceName) matching
 //     the document signer's, the MSO's signed date within the signer
-//     certificate's validity, digests, docType and validity window.
+//     certificate's validity, digests, docType and validity window,
+//     with the reader's clock allowed WithMaxClockSkew off the issuer's;
+//     and the document signer certificate's purpose, by
+//     DefaultDocumentSignerPolicy or WithDocumentSignerPolicy's. The
+//     MSO's status (Verified.Status) isn't checked: resolve it before
+//     relying on the document.
 //   - Reader authentication (§9.1.4): WithReaderAuth signs each
 //     request's ItemsRequestBytes, with the SessionTranscript, by the
 //     reader's key, its certificate chain in x5chain; the holder's

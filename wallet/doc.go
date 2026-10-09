@@ -188,8 +188,13 @@
 // same way, with the Wallet's VerifierTrust, checks the origin the
 // platform reports against its expected_origins, and PresentCredentials
 // builds its response when given that Origin. An unsigned request is
-// identified by that origin alone. No other client_id
-// scheme, no di_vp presentations. Which Verifiers to trust is the caller's policy, a
+// identified by that origin alone; with Config.RequireSignedDCAPIRequests
+// it's refused instead (ErrUntrustedVerifier). An mdoc requested with the
+// "org-iso-mdoc" protocol isn't OpenID4VP: package mdocdcapi answers
+// that. This package supports no other Client Identifier Prefix, and no
+// di_vp presentations.
+//
+// Which Verifiers to trust is the caller's policy, a
 // VerifierTrust (OID4VP §5.9.3's trust chain validation):
 // X5CVerifierRoots for a fixed set of trust anchors, or the explicit
 // NoVerifierTrust opt-out, which AssuranceProduction rejects.

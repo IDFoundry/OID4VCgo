@@ -20,9 +20,10 @@
 // own proof of possession of the mdoc authentication key at
 // presentation time, via either of §12.4's two mechanisms. Building
 // SessionTranscript itself (DeviceEngagement, EReaderKey, Handover,
-// §12.7.1) is deliberately out of scope: for an OID4VP presentation
-// this needs OID4VP's own "Handover" construction, a different spec's
-// concern entirely, not ISO/IEC 18013-5's proximity-flow one — every
+// §12.7.1) is deliberately out of scope, as each flow builds its own:
+// package oid4vpmdoc for OID4VP's Handover, package proximity for
+// ISO/IEC 18013-5 device retrieval's, and package mdocdcapi for ISO/IEC
+// TS 18013-7 Annex C's over the Digital Credentials API — so every
 // function that needs it takes SessionTranscriptBytes as an opaque,
 // caller-supplied value instead, the same "resolving trust is the
 // caller's job" split this package already draws for the Issuer's

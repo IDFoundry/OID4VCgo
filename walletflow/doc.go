@@ -46,18 +46,35 @@
 // which query, and which credential_sets option, are the application's
 // to decide.
 //
+// A Digital Credentials API request names its protocol, and that, not
+// the platform, decides which entry point answers it: "openid4vp-v1-
+// unsigned", "-signed" and "-multisigned" (wallet.DCAPIProtocolUnsigned
+// and the rest) are OpenID4VP, answered by StartDCAPIPresentation, and
+// "org-iso-mdoc" (mdocdcapi.Protocol) is ISO/IEC TS 18013-7 Annex C,
+// answered by StartMdocPresentation. Today Chrome on Android sends
+// OpenID4VP, through Credential Manager, and Safari on iOS org-iso-mdoc,
+// to a document provider.
+//
+// Each takes the origin the platform reports for the calling page,
+// which the response is bound to: on iOS,
+// ISO18013MobileDocumentRequestContext.requestingWebsiteOrigin,
+// serialized as scheme://host[:port] with no trailing slash; on Android,
+// Credential Manager's CallingAppInfo origin, a web origin for a browser
+// on the privileged-browsers list, or "android:apk-key-hash:" and the
+// app's signing certificate digest for an app. StartMdocPresentation
+// takes web origins only (mdocdcapi.ParseRequest refuses anything else).
+// Never take the origin from the request itself.
+//
 // An OpenID4VP request over the Digital Credentials API (OpenID4VP 1.0
-// Appendix A) — what Android's Credential Manager hands a wallet — is a
-// Presentation too, answered through the platform rather than the
-// network:
+// Appendix A) is a Presentation too, answered through the platform
+// rather than the network:
 //
 //	p, err := w.StartDCAPIPresentation(ctx, protocol, data, origin) // show p.Verifier().Origin
 //	presented, err := p.Respond(ctx, sel)                           // or p.Decline(ctx)
 //	// return presented.DCAPIResponse to the platform
 //
-// An mdoc asked for over the Digital Credentials API as "org-iso-mdoc"
-// (ISO/IEC TS 18013-7 Annex C, package mdocdcapi) — what iOS hands a
-// document provider — is presented the same way, without OpenID4VP:
+// An mdoc asked for as "org-iso-mdoc" (package mdocdcapi) is presented
+// the same way, without OpenID4VP:
 //
 //	p, err := w.StartMdocPresentation(ctx, data, origin) // show p.Origin(), p.Reader()
 //	requests := p.Requests()                             // documents, elements, held mdocs
@@ -71,6 +88,25 @@
 // Its copies are recorded as shown to the origin, as an OpenID4VP
 // Verifier over the Digital Credentials API would be ("origin:" +
 // origin).
+//
+// In person, over Bluetooth (ISO/IEC 18013-5 device retrieval, package
+// proximity), the holder shows a QR code and the reader that scans it
+// connects:
+//
+//	p, err := w.StartProximityPresentation()  // mdoc peripheral server mode
+//	qr := p.QRCode()                           // show it; advertise p.ServiceUUID()
+//	ev := p.HandleMessage(ctx, msg)            // each message the transport receives:
+//	                                           // send ev.Send; ev.Ended: disconnect
+//	reader, requests := p.Reader(), p.Requests() // once the request arrives: ask the holder
+//	presented, err := p.Respond(ctx, 0, credentialID, elements) // send presented.Send
+//	// or, to decline, send p.Terminate()
+//
+// The app carries the BLE GATT transport, whole messages in and out;
+// walletflow does the rest. The reader is recognized as for
+// org-iso-mdoc (Config.MdocReaderRoots, MdocReaderLeafPolicy), and with
+// Config.RequireTrustedMdocReader a request from any other reader ends
+// the session, with an event whose Err wraps ErrUntrustedVerifier,
+// before the holder sees it.
 //
 // When an issuer offers batch issuance, a credential arrives as several
 // copies (Config.BatchSize), each bound to its own key. By default each

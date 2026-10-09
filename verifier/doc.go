@@ -44,7 +44,9 @@
 // §6's own Credential/Claims selection rules: "multiple" (§6.1),
 // "claim_sets" (§6.4.1), and "credential_sets" (§6.4.2) — and for both
 // the redirect and DC API flows (VerifyResponseRequest.Origin selects
-// which): it checks a Presentation's own Holder Binding proof against
+// which, with ExpectedOrigins, the request's, which Origin must be one
+// of: the page's own origin, from the Verifier's configuration, never
+// from the response's HTTP request): it checks a Presentation's own Holder Binding proof against
 // either this Verifier's own Client Identifier or the DC API's own
 // Origin-bound audience ("origin:..." per Appendix A.4), and rebuilds
 // the mdoc SessionTranscript via oid4vpmdoc.BuildSessionTranscriptBytes
@@ -53,6 +55,9 @@
 // decrypting it. VerifyResponse doesn't check revocation: each
 // VerifiedCredential carries its status reference (Claims["status"], or
 // MdocStatus) for the caller to resolve with package statuslist.
+// An mdoc requested over the DC API with the "org-iso-mdoc" protocol,
+// as Safari does, isn't OpenID4VP: package mdocdcapi builds and verifies
+// that.
 // request_uri hosting/dereferencing (and, for the DC API flow, actually
 // invoking the Digital Credentials API itself) are out of scope for
 // this package regardless — like issuer.CreateCredentialOffer's own
