@@ -61,7 +61,7 @@ func TestGrants_Validate(t *testing.T) {
 		g       oid4vci.Grants
 		wantErr bool
 	}{
-		"empty grants":         {g: oid4vci.Grants{}, wantErr: true},
+		"empty grants":         {g: oid4vci.Grants{}, wantErr: false},
 		"authorization_code":   {g: oid4vci.Grants{AuthorizationCode: &oid4vci.GrantAuthorizationCode{}}, wantErr: false},
 		"valid pre-authorized": {g: oid4vci.Grants{PreAuthorizedCode: &oid4vci.GrantPreAuthorizedCode{PreAuthorizedCode: "abc"}}, wantErr: false},
 		"invalid pre-authorized": {
@@ -94,7 +94,9 @@ func TestCredentialOffer_Validate(t *testing.T) {
 		"duplicate configuration ids": func(o *oid4vci.CredentialOffer) {
 			o.CredentialConfigurationIDs = []string{"A", "A"}
 		},
-		"invalid grants": func(o *oid4vci.CredentialOffer) { o.Grants = &oid4vci.Grants{} },
+		"invalid grants": func(o *oid4vci.CredentialOffer) {
+			o.Grants = &oid4vci.Grants{PreAuthorizedCode: &oid4vci.GrantPreAuthorizedCode{}}
+		},
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
