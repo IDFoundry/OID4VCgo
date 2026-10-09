@@ -26,8 +26,12 @@ are `WalletException`s. The emulator has no Bluetooth: use devices.
 ## Share as the holder
 
 `Wallet.startProximityPresentation` returns a `ProximityPresentation`
-whose `qrCode` you show. It advertises until a reader connects, then its
-`state` becomes `RequestReceived`, with who is asking and what: ask the
+whose `qrCode` you show. It offers both `ProximityBLEMode`s by default:
+it advertises for the reader and scans for it at once, until a reader
+connects either way (a reader offered both should connect in central
+client mode). Pass `modes` to offer one, and request
+`ProximityPermissions.holder(modes)` for them. Then its `state` becomes
+`RequestReceived`, with who is asking and what: ask the
 holder, then respond or decline.
 
 ```kotlin
