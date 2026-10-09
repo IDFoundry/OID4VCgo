@@ -97,7 +97,9 @@ fun abi(): Int = OID4VC.abiVersion
 EOF
 cp local.properties "$APP/" 2>/dev/null || true
 (cd "$APP" && ./gradlew -q --console=plain :app:assembleDebug)
-unzip -l "$APP/app/build/outputs/apk/debug/app-debug.apk" | grep -q 'lib/arm64-v8a/libgojni.so' || { echo "the app has no Go library" >&2; exit 1; }
+for abi in arm64-v8a armeabi-v7a x86_64 x86; do
+	unzip -l "$APP/app/build/outputs/apk/debug/app-debug.apk" | grep -q "lib/$abi/libgojni.so" || { echo "the app has no Go library for $abi" >&2; exit 1; }
+done
 
 cp "$LIBRARY" "$SOURCES" "$ASSETS/"
 
@@ -161,9 +163,11 @@ library's manifest adds to your app's: request
 a session.
 
 The AAR goes in an app module: an Android library can't depend on a
-local AAR. It holds the Go library for arm64 and x86_64 (the emulator),
-and an app can hold only one gomobile library. It's compiled for Kotlin
-2.2 and later.
+local AAR. It holds the Go library for every Android ABI (arm64-v8a,
+armeabi-v7a, x86_64, x86; about 4 MB each, compressed), and an app can
+hold only one gomobile library. An app shipping 64-bit only filters the
+32-bit ones out: \`ndk { abiFilters += listOf("arm64-v8a", "x86_64") }\`.
+It's compiled for Kotlin 2.2 and later.
 
 ## Documentation
 
