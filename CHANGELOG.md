@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.36.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.35.0...v0.36.0) (2026-10-09)
+
+
+### Features
+
+* **proximity:** the holder offers mdoc central client mode, or both modes ([797466d](https://github.com/IDFoundry/OID4VCgo/commit/797466d9e3643408828b7735922dbabe295076c4))
+
 ## [0.35.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.34.0...v0.35.0) (2026-10-08)
 
 
