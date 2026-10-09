@@ -387,7 +387,7 @@ func (e *Env) PreAuthorizedOffer(pin string, configIDs ...string) (uri string, e
 	_, _ = rand.Read(b[:])
 	code := base64.RawURLEncoding.EncodeToString(b[:])
 	must(e.preAuthCodes.Issue(context.Background(), code, issuer.PreAuthorizedCodeRecord{
-		TxCode: pin, Scopes: configIDs, ExpiresAt: time.Now().Add(time.Hour), Subject: "holder",
+		TxCode: pin, Scopes: configIDs, CredentialConfigurationIDs: configIDs, ExpiresAt: time.Now().Add(time.Hour), Subject: "holder",
 	}))
 	return e.offer(configIDs, &oid4vci.Grants{PreAuthorizedCode: &oid4vci.GrantPreAuthorizedCode{
 		PreAuthorizedCode: code, TxCode: &oid4vci.TxCode{InputMode: "numeric", Length: len(pin)},
@@ -702,21 +702,17 @@ func (e *Env) issuePreAuthorizedRefreshToken(ctx context.Context, attested serve
 	if err != nil {
 		return fapi.Secret{}, err
 	}
-	var details []json.RawMessage
-	for _, d := range result.AuthorizationDetails {
-		raw, err := json.Marshal(d)
-		if err != nil {
-			return fapi.Secret{}, err
-		}
-		details = append(details, raw)
-	}
 	grantID := rand.Text()
 	e.mu.Lock()
 	e.grantIDs = append(e.grantIDs, grantID)
 	e.mu.Unlock()
 	return e.srv.IssueRefreshToken(ctx, server.IssueRefreshTokenRequest{
 		GrantType: preAuthorizedCodeGrantType, Client: attested, Binding: binding, Subject: subject,
-		Scope: result.Scope, AuthorizationDetails: details, GrantID: grantID,
+		// The grant's scope alone: the server has no openid_credential
+		// authorization details type registered, so a refreshed access
+		// token grants the configurations by scope, and the wallet then
+		// requests them by credential_configuration_id.
+		Scope: result.Scope, GrantID: grantID,
 	})
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto"
 	"crypto/ecdsa"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -119,6 +120,11 @@ type Issuance struct {
 	// kept with each deferred credential.
 	accessToken     fapi.Secret
 	accessExpiresAt time.Time
+	// identifiers are the credential_identifiers the Token Response
+	// granted for each configuration, in its authorization_details:
+	// a configuration listed here is requested by one of them, never by
+	// its configuration ID (OpenID4VCI 1.0 §8.2).
+	identifiers map[string][]string
 	// obtained is what RequestCredentials has obtained so far, and
 	// handled the configurations it has requested successfully.
 	obtained IssuanceResult
@@ -281,6 +287,10 @@ func (s *Issuance) CompleteAuthorization(ctx context.Context, redirect string) e
 	case client.CompletionSuccess:
 		s.resource = s.client.ProtectedResource(r.Tokens)
 		s.accessToken = r.Tokens.AccessToken
+		if s.identifiers, err = credentialIdentifiers(r.Tokens.AuthorizationDetails); err != nil {
+			s.step = stepClosed
+			return fmt.Errorf("walletflow: token response: %w", err)
+		}
 		if r.Tokens.HasRefreshToken {
 			s.refreshToken = r.Tokens.RefreshToken
 		}
@@ -338,6 +348,7 @@ func (s *Issuance) RedeemPreAuthorizedCode(ctx context.Context, txCode string) e
 	}
 	s.resource = s.w.core.DPoPResourceClient(token.AccessToken, s.dpopKey)
 	s.accessToken = token.AccessToken
+	s.identifiers = identifiersByConfiguration(token.AuthorizationDetails)
 	if s.w.cfg.RequestRefresh {
 		// An Authorization Server may issue a refresh token for this
 		// grant too: there's no scope to ask for one with, so it's the
@@ -478,6 +489,38 @@ func (s *Issuance) oauthClient(issuer fapi.URL, endpoints client.Endpoints, asUR
 	return c, nil
 }
 
+// credentialIdentifiers is identifiersByConfiguration for a Token
+// Response's raw authorization_details, as fapigo/client returns it.
+func credentialIdentifiers(raw json.RawMessage) (map[string][]string, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	var details []oid4vci.AuthorizationDetail
+	if err := json.Unmarshal(raw, &details); err != nil {
+		return nil, fmt.Errorf("authorization_details: %w", err)
+	}
+	return identifiersByConfiguration(details), nil
+}
+
+// identifiersByConfiguration maps each configuration an
+// "openid_credential" authorization detail names to the
+// credential_identifiers it granted (OpenID4VCI 1.0 §6.2). Details of
+// any other type are ignored, as are unrecognized fields (§6.2: the
+// Wallet MUST ignore them).
+func identifiersByConfiguration(details []oid4vci.AuthorizationDetail) map[string][]string {
+	var ids map[string][]string
+	for _, d := range details {
+		if d.Type != oid4vci.AuthorizationDetailsTypeOpenIDCredential || len(d.CredentialIdentifiers) == 0 {
+			continue
+		}
+		if ids == nil {
+			ids = map[string][]string{}
+		}
+		ids[d.CredentialConfigurationID] = append(ids[d.CredentialConfigurationID], d.CredentialIdentifiers...)
+	}
+	return ids
+}
+
 type clientClock func() time.Time
 
 func (c clientClock) Now() time.Time { return c() }
@@ -568,10 +611,15 @@ func (s *Issuance) request(ctx context.Context, configID string, requestEnc *wal
 			s.w.deleteKeys(context.WithoutCancel(ctx), holders)
 		}
 	}()
-	result, err := s.w.core.RequestCredential(ctx, s.resource, s.metadata.CredentialEndpoint, wallet.CredentialRequest{
-		CredentialConfigurationID: configID, Attestation: keyAttestation,
-		RequestEncryption: requestEnc, ResponseEncryption: responseEnc,
-	})
+	req := wallet.CredentialRequest{
+		Attestation: keyAttestation, RequestEncryption: requestEnc, ResponseEncryption: responseEnc,
+	}
+	if ids := s.identifiers[configID]; len(ids) > 0 {
+		req.CredentialIdentifier = ids[0]
+	} else {
+		req.CredentialConfigurationID = configID
+	}
+	result, err := s.w.core.RequestCredential(ctx, s.resource, s.metadata.CredentialEndpoint, req)
 	if err != nil {
 		return StoredCredential{}, nil, fmt.Errorf("walletflow: credential %q: %w", configID, err)
 	}

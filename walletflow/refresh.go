@@ -293,6 +293,9 @@ func (s *Issuance) redeemGrant(ctx context.Context, g RefreshGrant) error {
 	}
 	s.resource = s.client.ProtectedResource(tokens)
 	s.accessToken = tokens.AccessToken
+	if s.identifiers, err = credentialIdentifiers(tokens.AuthorizationDetails); err != nil {
+		return fmt.Errorf("walletflow: token response: %w", err)
+	}
 	if tokens.HasExpiresIn {
 		s.accessExpiresAt = tokens.ObtainedAt.Add(tokens.ExpiresIn)
 	}
