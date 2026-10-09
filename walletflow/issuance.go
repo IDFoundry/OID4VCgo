@@ -546,15 +546,8 @@ func (s *Issuance) newClient(ctx context.Context, asURL string, authorize bool) 
 	if err != nil {
 		return fmt.Errorf("walletflow: authorization server metadata: %w", err)
 	}
-	if s.instanceKey == nil {
-		if s.instanceKey, err = newKey(ctx, s.w.deps.Keys, KeyPurposeInstance); err != nil {
-			return err
-		}
-	}
-	if s.dpopKey == nil {
-		if s.dpopKey, err = s.w.newDPoPKey(ctx); err != nil {
-			return err
-		}
+	if err := s.ensureClientKeys(ctx); err != nil {
+		return err
 	}
 	walletAttestation, err := s.w.deps.Provider.WalletAttestation(ctx, s.w.cfg.ClientID, s.instanceKey.Public())
 	if err != nil {
@@ -610,6 +603,23 @@ func (s *Issuance) forgetAuthorization(ctx context.Context) error {
 		return nil
 	}
 	return s.w.deps.Authorizations.DeleteAuthorization(ctx, s.sessions.state)
+}
+
+// ensureClientKeys creates the instance key a Wallet Attestation binds
+// and the DPoP key, where the issuance doesn't have them yet.
+func (s *Issuance) ensureClientKeys(ctx context.Context) error {
+	var err error
+	if s.instanceKey == nil {
+		if s.instanceKey, err = newKey(ctx, s.w.deps.Keys, KeyPurposeInstance); err != nil {
+			return err
+		}
+	}
+	if s.dpopKey == nil {
+		if s.dpopKey, err = s.w.newDPoPKey(ctx); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // oauthClient builds the fapigo/client for the authorization server
@@ -789,35 +799,9 @@ func (s *Issuance) request(ctx context.Context, configID string, requestEnc *wal
 			s.w.deleteKeys(context.WithoutCancel(ctx), holders)
 		}
 	}()
-	// One retry on invalid_nonce, with fresh keys and a fresh nonce
-	// (OpenID4VCI 1.0 §8.3.1.2): the issuer may expire a nonce before
-	// it's used. An issuer with no nonce endpoint has none to renew.
 	var result wallet.CredentialResult
-	for attempt := 0; ; attempt++ {
-		s.w.deleteKeys(context.WithoutCancel(ctx), holders)
-		var req wallet.CredentialRequest
-		if holders, req, err = s.proofs(ctx, plan); err != nil {
-			return StoredCredential{}, nil, err
-		}
-		req.RequestEncryption, req.ResponseEncryption = requestEnc, responseEnc
-		if ids := s.identifiers[configID]; len(ids) > 0 {
-			req.CredentialIdentifier = ids[0]
-		} else {
-			req.CredentialConfigurationID = configID
-		}
-		result, err = s.w.core.RequestCredential(ctx, s.resource, s.metadata.CredentialEndpoint, req)
-		if err == nil {
-			break
-		}
-		if invalidNonce(err) && s.metadata.NonceEndpoint == nil {
-			// No nonce to renew: asking again would be refused again.
-			return StoredCredential{}, nil, fmt.Errorf("walletflow: credential %q: %w: %w", configID, errNoFreshNonce, err)
-		}
-		if attempt == 0 && s.nonceRetries < maxNonceRetries && invalidNonce(err) {
-			s.nonceRetries++
-			continue
-		}
-		return StoredCredential{}, nil, fmt.Errorf("walletflow: credential %q: %w", configID, err)
+	if holders, result, err = s.sendCredentialRequest(ctx, configID, plan, requestEnc, responseEnc); err != nil {
+		return StoredCredential{}, nil, err
 	}
 	if result.TransactionID != "" {
 		d, err := s.deferred(ctx, configID, holders, result, requestEnc, responseEnc)
@@ -842,6 +826,45 @@ func (s *Issuance) request(ctx context.Context, configID string, requestEnc *wal
 	keep = true
 	s.w.deleteUnused(context.WithoutCancel(ctx), keyIDs(holders), stored)
 	return stored, nil, nil
+}
+
+// sendCredentialRequest requests configID's credential with fresh
+// holder keys, which it returns, proved by plan, even on failure, for
+// the caller to delete. It retries once on invalid_nonce, with fresh keys
+// and a fresh nonce (OpenID4VCI 1.0 §8.3.1.2): the issuer may expire a
+// nonce before it's used. An issuer with no nonce endpoint has none to
+// renew.
+func (s *Issuance) sendCredentialRequest(ctx context.Context, configID string, plan proofPlan, requestEnc *wallet.RequestEncryption, responseEnc *wallet.ResponseEncryption) ([]Key, wallet.CredentialResult, error) {
+	var holders []Key
+	for attempt := 0; ; attempt++ {
+		s.w.deleteKeys(context.WithoutCancel(ctx), holders)
+		var (
+			req wallet.CredentialRequest
+			err error
+		)
+		if holders, req, err = s.proofs(ctx, plan); err != nil {
+			return holders, wallet.CredentialResult{}, err
+		}
+		req.RequestEncryption, req.ResponseEncryption = requestEnc, responseEnc
+		if ids := s.identifiers[configID]; len(ids) > 0 {
+			req.CredentialIdentifier = ids[0]
+		} else {
+			req.CredentialConfigurationID = configID
+		}
+		result, err := s.w.core.RequestCredential(ctx, s.resource, s.metadata.CredentialEndpoint, req)
+		if err == nil {
+			return holders, result, nil
+		}
+		if invalidNonce(err) && s.metadata.NonceEndpoint == nil {
+			// No nonce to renew: asking again would be refused again.
+			return holders, wallet.CredentialResult{}, fmt.Errorf("walletflow: credential %q: %w: %w", configID, errNoFreshNonce, err)
+		}
+		if attempt == 0 && s.nonceRetries < maxNonceRetries && invalidNonce(err) {
+			s.nonceRetries++
+			continue
+		}
+		return holders, wallet.CredentialResult{}, fmt.Errorf("walletflow: credential %q: %w", configID, err)
+	}
 }
 
 // proofs creates one holder key per copy to request, and proves
