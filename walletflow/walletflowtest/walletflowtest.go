@@ -123,6 +123,18 @@ type Options struct {
 	// challenge from it, each used once
 	// (draft-ietf-oauth-attestation-based-client-auth-07 §8).
 	AttestationChallenges bool
+	// Anonymous makes the issuer one outside HAIP, as OpenID4VCI 1.0
+	// allows: it serves only the pre-authorized code grant
+	// (PreAuthorizedCodeOnly), redeemed with no client authentication
+	// (pre-authorized_grant_anonymous_access_supported, §12.3; the
+	// token request's DPoP proof checked by the issuer itself), and
+	// takes jwt proofs (Appendix F.1) with no key attestation. An
+	// authorization code offer can't be redeemed at it.
+	Anonymous bool
+	// NoNonceEndpoint has the issuer publish no nonce endpoint: its
+	// proofs then carry no c_nonce, and iat dates them (OpenID4VCI 1.0
+	// §7, Appendix F.4).
+	NoNonceEndpoint bool
 	// PreAuthorizedCodeOnly has the Authorization Server's metadata
 	// publish no authorization or pushed authorization request endpoint,
 	// as a server serving only the pre-authorized code grant does: its
@@ -168,9 +180,14 @@ type Env struct {
 	decision      *bool
 	notifications []oid4vci.NotificationEvent
 
+	// Set once in New, before the server starts, and only read after:
+	// mu guards challenges' entries, not the map itself.
+	//
 	// challenges are the attestation challenges issued and not yet
 	// used, under Options.AttestationChallenges.
 	challenges map[string]bool
+	// anonymous is Options.Anonymous.
+	anonymous bool
 }
 
 // New starts an Env. Close stops it.
@@ -249,6 +266,21 @@ func New(opts Options) (env *Env, err error) {
 	e.RegistrarRoots, e.RegistrarCA = x509.NewCertPool(), registrarCA
 	e.RegistrarRoots.AddCert(registrarCA)
 	proofTypes := map[string]oid4vci.ProofTypeConfiguration{oid4vci.ProofTypeAttestation: haip.RecommendedAttestationProofType()}
+	var preAuthClientAuth issuer.PreAuthorizedCodeClientAuthentication = issuer.VerifiedPreAuthorizedCode{}
+	if opts.Anonymous {
+		proofTypes = map[string]oid4vci.ProofTypeConfiguration{
+			oid4vci.ProofTypeJWT: {ProofSigningAlgValuesSupported: []string{oid4vci.ES256}},
+		}
+		preAuthClientAuth = issuer.AnonymousPreAuthorizedCode{}
+		opts.PreAuthorizedCodeOnly = true
+	}
+	issuerEndpoints := issuer.Endpoints{
+		Credential: e.endpoint("/credential"), Nonce: e.endpoint("/nonce"),
+		DeferredCredential: e.endpoint("/deferred_credential"), Notification: e.endpoint("/notification"),
+	}
+	if opts.NoNonceEndpoint {
+		issuerEndpoints.Nonce = fapi.URL{}
+	}
 	logo := &oid4vci.Logo{URI: e.IssuerURL + LogoPath, AltText: LogoAltText}
 	credentialDisplay := func(names ...string) *oid4vci.CredentialMetadata {
 		md := &oid4vci.CredentialMetadata{}
@@ -264,15 +296,13 @@ func New(opts Options) (env *Env, err error) {
 	e.iss, err = issuer.New(issuer.Config{
 		Assurance: issuer.AssuranceDevelopment,
 		Issuer:    e.issuerURL(),
-		Endpoints: issuer.Endpoints{
-			Credential: e.endpoint("/credential"), Nonce: e.endpoint("/nonce"),
-			DeferredCredential: e.endpoint("/deferred_credential"), Notification: e.endpoint("/notification"),
-		},
+		Endpoints: issuerEndpoints,
 		Limits: issuer.Limits{
 			NonceLifetime: 5 * time.Minute, DeferredIssuancePollInterval: time.Second, DeferredTransactionLifetime: time.Hour,
 			AccessTokenLifetime: asCfg.Limits.AccessTokenLifetime, MaxTxCodeAttempts: 3,
+			MaxDPoPProofAge: time.Minute, MaxDPoPClockSkew: 30 * time.Second, MaxProofAge: time.Minute,
 		},
-		PreAuthorizedCodeClientAuthentication: issuer.VerifiedPreAuthorizedCode{},
+		PreAuthorizedCodeClientAuthentication: preAuthClientAuth,
 		Display:                               []oid4vci.Display{{Name: IssuerName, Locale: "en", Logo: logo}},
 		BatchCredentialIssuance:               batchIssuance(opts.BatchSize),
 		CredentialConfigurationsSupported: map[string]issuer.CredentialConfiguration{
@@ -291,7 +321,7 @@ func New(opts Options) (env *Env, err error) {
 		Nonces: oid4vcgostorage.NewNonceStore(), DeferredTransactions: oid4vcgostorage.NewDeferredTransactionStore(),
 		PreAuthorizedCodes: e.preAuthCodes, AccessTokens: accessTokenAdapter{inner: e.accessTokens},
 		Notifications: oid4vcgostorage.NewNotificationStore(), NotificationHandler: notificationRecorder{e},
-		Clock: issuer.ClockFunc(time.Now), Random: rand.Reader,
+		Clock: issuer.ClockFunc(time.Now), Random: rand.Reader, DPoPReplay: oid4vcgostorage.NewDPoPReplayChecker(),
 		AttestationVerifier: issuer.X5CAttestationVerifier{Roots: e.Provider.Roots},
 		SDJWTSigner:         &issuer.SDJWTSigner{Signer: signerKey, Alg: oid4vci.ES256, IssuerCertificate: signerCert},
 		MdocSigner:          &issuer.MdocSigner{Signer: signerKey, Alg: haip.RecommendedCOSEAlgorithm, X5Chain: [][]byte{signerCert.Raw}},
@@ -329,6 +359,17 @@ func New(opts Options) (env *Env, err error) {
 	if opts.AttestationChallenges {
 		asMetadataJSON["challenge_endpoint"] = e.endpoint("/challenge").String()
 		e.challenges = map[string]bool{}
+	}
+	if opts.Anonymous {
+		// The in-house issuer's own metadata: anonymous access, and no
+		// client authentication to advertise.
+		asMetadataJSON["pre-authorized_grant_anonymous_access_supported"] = true
+		asMetadataJSON["token_endpoint_auth_methods_supported"] = []string{"none"}
+		asMetadataJSON["grant_types_supported"] = []string{preAuthorizedCodeGrantType}
+		for _, k := range []string{"client_attestation_signing_alg_values_supported", "client_attestation_pop_signing_alg_values_supported", "revocation_endpoint"} {
+			delete(asMetadataJSON, k)
+		}
+		e.anonymous = true
 	}
 	if opts.PreAuthorizedCodeOnly {
 		delete(asMetadataJSON, "authorization_endpoint")
@@ -398,7 +439,8 @@ func (e *Env) AuthorizationCodeOffer(configIDs ...string) (uri string, err error
 }
 
 // PreAuthorizedOffer returns a Credential Offer URI for configIDs
-// redeemed with the pre-authorized code grant and pin.
+// redeemed with the pre-authorized code grant and pin; with pin "", the
+// offer asks for no PIN (no tx_code).
 func (e *Env) PreAuthorizedOffer(pin string, configIDs ...string) (uri string, err error) {
 	defer recoverInto(&err)
 	var b [32]byte
@@ -407,9 +449,11 @@ func (e *Env) PreAuthorizedOffer(pin string, configIDs ...string) (uri string, e
 	must(e.preAuthCodes.Issue(context.Background(), code, issuer.PreAuthorizedCodeRecord{
 		TxCode: pin, Scopes: configIDs, CredentialConfigurationIDs: configIDs, ExpiresAt: time.Now().Add(time.Hour), Subject: "holder",
 	}))
-	return e.offer(configIDs, &oid4vci.Grants{PreAuthorizedCode: &oid4vci.GrantPreAuthorizedCode{
-		PreAuthorizedCode: code, TxCode: &oid4vci.TxCode{InputMode: "numeric", Length: len(pin)},
-	}}), nil
+	grant := &oid4vci.GrantPreAuthorizedCode{PreAuthorizedCode: code}
+	if pin != "" {
+		grant.TxCode = &oid4vci.TxCode{InputMode: "numeric", Length: len(pin)}
+	}
+	return e.offer(configIDs, &oid4vci.Grants{PreAuthorizedCode: grant}), nil
 }
 
 func (e *Env) offer(configIDs []string, grants *oid4vci.Grants) string {
@@ -735,6 +779,10 @@ func (e *Env) handleToken(w http.ResponseWriter, r *http.Request) {
 			server.WriteError(w, err)
 			return
 		}
+		if e.anonymous {
+			e.redeemAnonymously(w, r, params)
+			return
+		}
 		attested, err := e.srv.AuthenticateAttestedClient(ctx, req.AttestedClientAuthentication())
 		if err != nil {
 			server.WriteError(w, err)
@@ -767,6 +815,22 @@ func (e *Env) handleToken(w http.ResponseWriter, r *http.Request) {
 	default:
 		server.NewError(server.ErrorUnsupportedGrantType, http.StatusBadRequest, "unsupported grant_type").WriteJSON(w)
 	}
+}
+
+// redeemAnonymously redeems a pre-authorized code with no client
+// authentication, under Options.Anonymous: the issuer verifies the
+// request's DPoP proof itself, and no refresh token is issued.
+func (e *Env) redeemAnonymously(w http.ResponseWriter, r *http.Request, params map[string]string) {
+	result, err := e.iss.ExchangePreAuthorizedCode(r.Context(), issuer.ExchangePreAuthorizedCodeRequest{
+		PreAuthorizedCode: params["pre-authorized_code"], TxCode: params["tx_code"],
+		DPoPProof: r.Header.Get("DPoP"), TokenEndpoint: e.endpoint("/token"),
+	})
+	w.Header().Set("Cache-Control", "no-store")
+	if err != nil {
+		issuer.WriteError(w, err)
+		return
+	}
+	result.WriteJSON(w)
 }
 
 // issuePreAuthorizedRefreshToken issues a refresh token for a redeemed
@@ -802,14 +866,26 @@ func (e *Env) endpoint(path string) fapi.URL {
 	return u
 }
 
+// anonymousClientID stands in for the client of an anonymous
+// pre-authorized code redemption in its access token.
+const anonymousClientID = "anonymous"
+
 // accessTokenAdapter mints the pre-authorized code grant's access tokens
 // with the Authorization Server's keys.
 type accessTokenAdapter struct{ inner server.AccessTokenIssuer }
 
 func (a accessTokenAdapter) IssueAccessToken(ctx context.Context, p issuer.AccessTokenParams) (string, string, error) {
+	clientID := p.ClientID
+	if clientID == "" {
+		// An anonymous redemption has no client; fapigo's JWT access
+		// tokens need one. Nothing checks it: the resource server only
+		// compares a proof's iss to it, and a wallet redeeming
+		// anonymously leaves iss out (OpenID4VCI 1.0 Appendix F.1).
+		clientID = anonymousClientID
+	}
 	return a.inner.IssueAccessToken(ctx, server.AccessTokenParams{
 		Scope: p.Scope, Thumbprint: p.Thumbprint, Claims: p.Claims, Subject: p.Subject,
-		ClientID: fapi.ClientID(p.ClientID), Issuer: p.Issuer, Audience: p.Audience,
+		ClientID: fapi.ClientID(clientID), Issuer: p.Issuer, Audience: p.Audience,
 		Now: p.Now, Lifetime: p.Lifetime, Random: p.Random,
 	})
 }
