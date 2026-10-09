@@ -138,7 +138,13 @@ func TestReviewPage(t *testing.T) {
 	if !strings.Contains(page, e.Identity.IssuingCountry) || strings.Count(page, `name="ref"`) != 2 {
 		t.Errorf("review page doesn't list both deferred issuances:\n%s", page)
 	}
-	if strings.Contains(page, e.Identity.FamilyName) || strings.Contains(page, e.Identity.DocumentNumber) {
+	// The page carries each review's random reference, which can spell
+	// "DOE" by chance: look for the holder's data in the rest of it.
+	readable := page
+	for _, r := range env.Issuer.Reviews() {
+		readable = strings.ReplaceAll(readable, r.Ref, "")
+	}
+	if strings.Contains(readable, e.Identity.FamilyName) || strings.Contains(readable, e.Identity.DocumentNumber) {
 		t.Error("the review page shows the holder's name or document number")
 	}
 

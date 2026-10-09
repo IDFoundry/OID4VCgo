@@ -55,6 +55,18 @@ public struct WalletError: Error, Equatable, CustomStringConvertible, LocalizedE
         /// The Verifier's request is signed with a certificate that
         /// doesn't chain to `verifierRoots`: it's refused unread.
         public static let untrustedVerifier = Code(rawValue: MobileCodeUntrustedVerifier)
+        /// Under the `haip` issuance profile, the issuer doesn't follow
+        /// HAIP 1.0: it's refused.
+        public static let profileViolation = Code(rawValue: MobileCodeProfileViolation)
+        /// The offer's Authorization Server takes no client authentication
+        /// the wallet can give: a Wallet Attestation needs a
+        /// `WalletProvider` and a `clientID`.
+        public static let clientAuthUnsupported = Code(rawValue: MobileCodeClientAuthUnsupported)
+        /// The wallet can't hold an offered credential — it's bound to no
+        /// key, or by a method other than `jwk` or `cose_key` — or the
+        /// issuer takes no proof it can give: a key attestation needs a
+        /// `WalletProvider`.
+        public static let proofUnsupported = Code(rawValue: MobileCodeProofUnsupported)
         /// An issuer, Authorization Server or Verifier answered with an error,
         /// or with something the wallet refuses. `WalletError.protocolError`
         /// carries its OAuth error code, when it gave one.
@@ -104,6 +116,7 @@ public struct WalletError: Error, Equatable, CustomStringConvertible, LocalizedE
         case .reissueRequired: "This credential can't be refreshed. Receive it again from the issuer."
         case .deliveryUnknown: "Your response may not have reached the verifier. Check with them before sharing again."
         case .untrustedVerifier: "This verifier isn't one your wallet trusts, so its request wasn't opened."
+        case .profileViolation, .clientAuthUnsupported, .proofUnsupported: "This wallet can't receive credentials from this issuer."
         case .protocolError where protocolError == "invalid_grant": "That code or PIN wasn't accepted."
         case .protocolError: "The service refused the request."
         case .platform: "The wallet couldn't use its keys or storage."

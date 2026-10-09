@@ -14,6 +14,7 @@ import (
 
 // MdocRequest is one document an org-iso-mdoc request asks for.
 type MdocRequest struct {
+	// DocType is the requested document type.
 	DocType string
 	// Elements are the requested data elements, by namespace then
 	// identifier.
@@ -25,6 +26,7 @@ type MdocRequest struct {
 
 // MdocElement is one requested data element.
 type MdocElement struct {
+	// Namespace and Identifier name the element.
 	Namespace, Identifier string
 	// Retain is whether the reader says it will keep the value.
 	Retain bool

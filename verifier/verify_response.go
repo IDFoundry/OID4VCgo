@@ -149,8 +149,7 @@ type VerifyResponseRequest struct {
 	// Presentation's own SessionTranscript is rebuilt via
 	// oid4vpmdoc.BuildDCAPISessionTranscriptBytes (Appendix B.2.6.2)
 	// instead of oid4vpmdoc.BuildSessionTranscriptBytes (Appendix
-	// B.2.6.1). Leave zero to verify a redirect-flow response, the
-	// same as before this field existed.
+	// B.2.6.1). Leave zero to verify a redirect-flow response.
 	//
 	// Origin is the origin of the page that made the request — this
 	// Verifier's own, as its configuration knows it. It must be one of

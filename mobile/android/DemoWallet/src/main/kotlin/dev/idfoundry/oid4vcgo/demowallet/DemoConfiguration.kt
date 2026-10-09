@@ -19,7 +19,11 @@ import java.io.File
 @Serializable
 data class DemoConfiguration(
     val wallet: WalletConfiguration,
-    @SerialName("provider_url") val providerURL: String,
+    /**
+     * The Wallet Provider, for issuers that ask for attestations; null
+     * for a wallet that receives only from issuers that don't.
+     */
+    @SerialName("provider_url") val providerURL: String? = null,
     /** The reader mode's identity, when the services give one. */
     val reader: Reader? = null,
 ) {

@@ -10,7 +10,9 @@ import OID4VCWallet
 /// provider extension reads it.
 struct DemoConfiguration: Codable, Sendable {
     var wallet: WalletConfiguration
-    var providerURL: URL
+    /// The Wallet Provider, for issuers that ask for attestations; nil
+    /// for a wallet that receives only from issuers that don't.
+    var providerURL: URL?
     /// The reader mode's identity, when the services give one.
     var reader: Reader?
 

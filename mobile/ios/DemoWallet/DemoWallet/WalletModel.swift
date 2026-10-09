@@ -49,7 +49,7 @@ final class WalletModel {
         var configuration = config.wallet
         configuration.copyPolicy = copyPolicy
         return try Wallet(configuration: configuration, keyStore: keys, credentialStore: try SharedWallet.credentialStore(),
-                          provider: HTTPWalletProvider(baseURL: config.providerURL))
+                          provider: config.providerURL.map { HTTPWalletProvider(baseURL: $0) })
     }
 
     /// Switches the copy policy, rebuilding the wallet over the same keys

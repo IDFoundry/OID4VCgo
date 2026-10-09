@@ -74,11 +74,11 @@ func WithMaxClockSkew(d time.Duration) ReaderOption {
 // WithDocumentSignerPolicy runs policy on the chain-verified document
 // signer certificate and its verified paths, in place of
 // DefaultDocumentSignerPolicy, and Verify refuses the document when it
-// fails. Chain validation accepts a leaf with any key usage, so without
-// a policy any end-entity certificate under a trusted IACA could sign
-// mdocs: RequireMDLDocumentSignerEKU requires what ISO/IEC 18013-5
-// Annex B profiles an mDL document signer with, and AnyDocumentSigner
-// checks nothing.
+// fails. Chain validation accepts a leaf with any key usage; the
+// default refuses only certificates an IACA issues for other jobs.
+// RequireMDLDocumentSignerEKU requires what ISO/IEC 18013-5 Annex B
+// profiles an mDL document signer with, and AnyDocumentSigner checks
+// nothing.
 func WithDocumentSignerPolicy(policy func(leaf *x509.Certificate, chains [][]*x509.Certificate) error) ReaderOption {
 	return func(c *readerConfig) { c.signerPolicy = policy }
 }
@@ -246,6 +246,7 @@ func (r *ReaderSession) establishment(deviceRequest []byte) ([]byte, error) {
 
 // Verified is a verified proximity presentation.
 type Verified struct {
+	// DocType is the document's type, the one requested.
 	DocType string
 
 	// Claims are the disclosed issuer-signed elements: namespace →
@@ -262,6 +263,8 @@ type Verified struct {
 	IssuerCN      string
 	TrustAnchorCN string
 
+	// ValidFrom and ValidUntil are the MSO's validity, which Verify
+	// checked against the reader's clock and its allowed skew.
 	ValidFrom  time.Time
 	ValidUntil time.Time
 
