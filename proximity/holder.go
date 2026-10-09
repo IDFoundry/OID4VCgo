@@ -59,19 +59,9 @@ func NewDeviceSession(random io.Reader, opts ...DeviceOption) (*DeviceSession, e
 	for _, opt := range opts {
 		opt(&cfg)
 	}
-	var peripheral, central bool
-	for _, m := range cfg.bleModes {
-		switch m {
-		case PeripheralServer:
-			peripheral = true
-		case CentralClient:
-			central = true
-		default:
-			return nil, fmt.Errorf("proximity: unknown BLE mode %d", int(m))
-		}
-	}
-	if !peripheral && !central {
-		return nil, fmt.Errorf("proximity: no BLE mode offered")
+	peripheral, central, err := offeredModes(cfg.bleModes)
+	if err != nil {
+		return nil, err
 	}
 	if random == nil {
 		random = rand.Reader
@@ -80,18 +70,9 @@ func NewDeviceSession(random io.Reader, opts ...DeviceOption) (*DeviceSession, e
 	if err != nil {
 		return nil, fmt.Errorf("proximity: generate EDeviceKey: %w", err)
 	}
-	// Peripheral server mode's first, so a single-mode session reads
-	// the one UUID it always did.
-	var peripheralUUID, centralUUID []byte
-	if peripheral {
-		if peripheralUUID, err = randomUUID(random); err != nil {
-			return nil, err
-		}
-	}
-	if central {
-		if centralUUID, err = randomUUID(random); err != nil {
-			return nil, err
-		}
+	peripheralUUID, centralUUID, err := modeUUIDs(random, peripheral, central)
+	if err != nil {
+		return nil, err
 	}
 	uuid := peripheralUUID
 	if uuid == nil {
@@ -110,6 +91,42 @@ func NewDeviceSession(random io.Reader, opts ...DeviceOption) (*DeviceSession, e
 	s.bleIdent = bleIdent(pe.eDeviceKeyBytes)
 	s.peripheralUUID, s.centralUUID = peripheralUUID, centralUUID
 	return s, nil
+}
+
+// offeredModes reports which BLE modes modes offers: at least one, and
+// none unknown.
+func offeredModes(modes []BLEMode) (peripheral, central bool, err error) {
+	for _, m := range modes {
+		switch m {
+		case PeripheralServer:
+			peripheral = true
+		case CentralClient:
+			central = true
+		default:
+			return false, false, fmt.Errorf("proximity: unknown BLE mode %d", int(m))
+		}
+	}
+	if !peripheral && !central {
+		return false, false, fmt.Errorf("proximity: no BLE mode offered")
+	}
+	return peripheral, central, nil
+}
+
+// modeUUIDs draws a service UUID for each offered mode, peripheral
+// server mode's first, so a single-mode session reads the one UUID it
+// always did.
+func modeUUIDs(random io.Reader, peripheral, central bool) (peripheralUUID, centralUUID []byte, err error) {
+	if peripheral {
+		if peripheralUUID, err = randomUUID(random); err != nil {
+			return nil, nil, err
+		}
+	}
+	if central {
+		if centralUUID, err = randomUUID(random); err != nil {
+			return nil, nil, err
+		}
+	}
+	return peripheralUUID, centralUUID, nil
 }
 
 // randomUUID is a random (version 4, variant 10) UUID, RFC 9562 §5.4.

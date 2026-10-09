@@ -124,49 +124,10 @@ func NewWallet(configJSON string, keys KeyStore, credentials CredentialStore, pr
 	if keys == nil || credentials == nil {
 		return nil, newError(CodeInvalidInput, errors.New("a KeyStore and a CredentialStore are required"))
 	}
-	wcfg := walletflow.Config{
-		ClientID: cfg.ClientID, RedirectURI: cfg.RedirectURI, Development: cfg.Development, Locales: cfg.Locales,
-		BatchSize: cfg.BatchSize, RequestRefresh: cfg.RequestRefresh,
-	}
-	switch cfg.IssuanceProfile {
-	case "", "openid4vci":
-	case "haip":
-		wcfg.IssuanceProfile = walletflow.ProfileHAIP
-	default:
-		return nil, newError(CodeInvalidInput, fmt.Errorf("issuance_profile %q: want \"openid4vci\" or \"haip\"", cfg.IssuanceProfile))
-	}
-	policy, err := copyPolicy(cfg.CopyPolicy)
+	wcfg, err := walletConfig(cfg)
 	if err != nil {
-		return nil, newError(CodeInvalidInput, err)
+		return nil, err
 	}
-	wcfg.CopyPolicy = policy
-	if cfg.IssuerRoots != "" {
-		if wcfg.IssuerRoots, err = certPool(cfg.IssuerRoots); err != nil {
-			return nil, newError(CodeInvalidInput, fmt.Errorf("issuer_roots: %w", err))
-		}
-	}
-	if cfg.VerifierRoots != "" {
-		roots, err := certPool(cfg.VerifierRoots)
-		if err != nil {
-			return nil, newError(CodeInvalidInput, fmt.Errorf("verifier_roots: %w", err))
-		}
-		wcfg.VerifierTrust = wallet.X5CVerifierRoots{Roots: roots}
-	}
-	if cfg.RegistrarRoots != "" {
-		if wcfg.RegistrarRoots, err = certPool(cfg.RegistrarRoots); err != nil {
-			return nil, newError(CodeInvalidInput, fmt.Errorf("registrar_roots: %w", err))
-		}
-	}
-	if cfg.MdocReaderRoots != "" {
-		if wcfg.MdocReaderRoots, err = certPool(cfg.MdocReaderRoots); err != nil {
-			return nil, newError(CodeInvalidInput, fmt.Errorf("mdoc_reader_roots: %w", err))
-		}
-	}
-	if cfg.MdocReaderRequireEKU {
-		wcfg.MdocReaderLeafPolicy = mdocdcapi.RequireReaderAuthenticationEKU
-	}
-	wcfg.RequireTrustedMdocReader = cfg.RequireTrustedMdocReader
-	wcfg.RequireSignedDCAPIRequests = cfg.RequireSignedDCAPIRequests
 	deps := walletflow.Dependencies{
 		Keys: keyStore{keys}, Credentials: credentialStore{credentials},
 		// crypto/rand.Reader itself, which production assurance requires.
@@ -176,27 +137,8 @@ func NewWallet(configJSON string, keys KeyStore, credentials CredentialStore, pr
 		Deferred: deferredStore{credentials}, Authorizations: authorizationStore{credentials}, Grants: grantStore{credentials},
 		HTTP: testHTTP.Load(), // nil: walletflow's own client
 	}
-	if cfg.DevelopmentRoots != "" {
-		if !cfg.Development {
-			return nil, newError(CodeInvalidInput, errors.New("development_roots needs development"))
-		}
-		if deps.HTTP == nil {
-			if deps.HTTP, err = developmentClient(cfg.DevelopmentRoots); err != nil {
-				return nil, newError(CodeInvalidInput, fmt.Errorf("development_roots: %w", err))
-			}
-		}
-	}
-	if pins := walletflow.TLSPins(cfg.TLSPins); len(pins) > 0 {
-		if err := pins.Validate(); err != nil {
-			return nil, newError(CodeInvalidInput, fmt.Errorf("tls_pins: %w", err))
-		}
-		// walletflow pins its own client; a development or test one is
-		// this package's to pin.
-		if deps.HTTP == nil {
-			wcfg.TLSPins = pins
-		} else if deps.HTTP, err = withPins(deps.HTTP, pins); err != nil {
-			return nil, newError(CodeInternal, err)
-		}
+	if deps.HTTP, err = walletHTTP(cfg, &wcfg, deps.HTTP); err != nil {
+		return nil, err
 	}
 	if provider != nil {
 		deps.Provider = walletProvider{provider}
@@ -206,6 +148,96 @@ func NewWallet(configJSON string, keys KeyStore, credentials CredentialStore, pr
 		return nil, newError(CodeInvalidInput, err)
 	}
 	return &Wallet{w: w, keys: keys}, nil
+}
+
+// walletConfig is cfg as walletflow's Config, its HTTP settings aside
+// (walletHTTP).
+func walletConfig(cfg config) (walletflow.Config, error) {
+	wcfg := walletflow.Config{
+		ClientID: cfg.ClientID, RedirectURI: cfg.RedirectURI, Development: cfg.Development, Locales: cfg.Locales,
+		BatchSize: cfg.BatchSize, RequestRefresh: cfg.RequestRefresh,
+		RequireTrustedMdocReader: cfg.RequireTrustedMdocReader, RequireSignedDCAPIRequests: cfg.RequireSignedDCAPIRequests,
+	}
+	switch cfg.IssuanceProfile {
+	case "", "openid4vci":
+	case "haip":
+		wcfg.IssuanceProfile = walletflow.ProfileHAIP
+	default:
+		return walletflow.Config{}, newError(CodeInvalidInput, fmt.Errorf("issuance_profile %q: want \"openid4vci\" or \"haip\"", cfg.IssuanceProfile))
+	}
+	policy, err := copyPolicy(cfg.CopyPolicy)
+	if err != nil {
+		return walletflow.Config{}, newError(CodeInvalidInput, err)
+	}
+	wcfg.CopyPolicy = policy
+	if wcfg.IssuerRoots, err = optionalCertPool("issuer_roots", cfg.IssuerRoots); err != nil {
+		return walletflow.Config{}, err
+	}
+	verifierRoots, err := optionalCertPool("verifier_roots", cfg.VerifierRoots)
+	if err != nil {
+		return walletflow.Config{}, err
+	}
+	if verifierRoots != nil {
+		wcfg.VerifierTrust = wallet.X5CVerifierRoots{Roots: verifierRoots}
+	}
+	if wcfg.RegistrarRoots, err = optionalCertPool("registrar_roots", cfg.RegistrarRoots); err != nil {
+		return walletflow.Config{}, err
+	}
+	if wcfg.MdocReaderRoots, err = optionalCertPool("mdoc_reader_roots", cfg.MdocReaderRoots); err != nil {
+		return walletflow.Config{}, err
+	}
+	if cfg.MdocReaderRequireEKU {
+		wcfg.MdocReaderLeafPolicy = mdocdcapi.RequireReaderAuthenticationEKU
+	}
+	return wcfg, nil
+}
+
+// optionalCertPool is the PEM certificates of the config key name as a
+// pool, or nil when there are none.
+func optionalCertPool(name, pemText string) (*x509.CertPool, error) {
+	if pemText == "" {
+		return nil, nil
+	}
+	pool, err := certPool(pemText)
+	if err != nil {
+		return nil, newError(CodeInvalidInput, fmt.Errorf("%s: %w", name, err))
+	}
+	return pool, nil
+}
+
+// walletHTTP is the HTTP client the wallet uses: client (a test one) or,
+// for development_roots, a development client, pinned to cfg's
+// tls_pins. nil leaves walletflow its own client, which it pins itself
+// (wcfg.TLSPins).
+func walletHTTP(cfg config, wcfg *walletflow.Config, client *http.Client) (*http.Client, error) {
+	var err error
+	if cfg.DevelopmentRoots != "" {
+		if !cfg.Development {
+			return nil, newError(CodeInvalidInput, errors.New("development_roots needs development"))
+		}
+		if client == nil {
+			if client, err = developmentClient(cfg.DevelopmentRoots); err != nil {
+				return nil, newError(CodeInvalidInput, fmt.Errorf("development_roots: %w", err))
+			}
+		}
+	}
+	pins := walletflow.TLSPins(cfg.TLSPins)
+	if len(pins) == 0 {
+		return client, nil
+	}
+	if err := pins.Validate(); err != nil {
+		return nil, newError(CodeInvalidInput, fmt.Errorf("tls_pins: %w", err))
+	}
+	// walletflow pins its own client; a development or test one is this
+	// package's to pin.
+	if client == nil {
+		wcfg.TLSPins = pins
+		return nil, nil
+	}
+	if client, err = withPins(client, pins); err != nil {
+		return nil, newError(CodeInternal, err)
+	}
+	return client, nil
 }
 
 // developmentClient is an HTTP client trusting the system's CAs and

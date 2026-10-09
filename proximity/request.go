@@ -151,31 +151,10 @@ func parseDocRequest(dr wireDocRequest) (DocRequest, error) {
 // order a Go map can't keep. raw has already been decoded once with
 // decMode, so its structure is known to be valid.
 func orderedMapEntries(raw []byte) (keys []string, values []cbor.RawMessage, err error) {
-	if len(raw) == 0 || raw[0]>>5 != 5 {
-		return nil, nil, fmt.Errorf("not a CBOR map: %w", ErrCBORDecoding)
+	n, indefinite, rest, err := cborMapHeader(raw)
+	if err != nil {
+		return nil, nil, err
 	}
-	info := raw[0] & 0x1f
-	rest := raw[1:]
-	var n uint64
-	indefinite := false
-	switch {
-	case info < 24:
-		n = uint64(info)
-	case info <= 27:
-		size := 1 << (info - 24)
-		if len(rest) < size {
-			return nil, nil, fmt.Errorf("truncated map header: %w", ErrCBORDecoding)
-		}
-		for _, b := range rest[:size] {
-			n = n<<8 | uint64(b)
-		}
-		rest = rest[size:]
-	case info == 31:
-		indefinite = true
-	default:
-		return nil, nil, fmt.Errorf("invalid map header: %w", ErrCBORDecoding)
-	}
-
 	for i := uint64(0); indefinite || i < n; i++ {
 		if indefinite {
 			if len(rest) == 0 {
@@ -197,6 +176,33 @@ func orderedMapEntries(raw []byte) (keys []string, values []cbor.RawMessage, err
 		values = append(values, value)
 	}
 	return keys, values, nil
+}
+
+// cborMapHeader decodes a CBOR map's header: its number of pairs, or
+// indefinite, and the bytes after the header.
+func cborMapHeader(raw []byte) (n uint64, indefinite bool, rest []byte, err error) {
+	if len(raw) == 0 || raw[0]>>5 != 5 {
+		return 0, false, nil, fmt.Errorf("not a CBOR map: %w", ErrCBORDecoding)
+	}
+	info := raw[0] & 0x1f
+	rest = raw[1:]
+	switch {
+	case info < 24:
+		return uint64(info), false, rest, nil
+	case info <= 27:
+		size := 1 << (info - 24)
+		if len(rest) < size {
+			return 0, false, nil, fmt.Errorf("truncated map header: %w", ErrCBORDecoding)
+		}
+		for _, b := range rest[:size] {
+			n = n<<8 | uint64(b)
+		}
+		return n, false, rest[size:], nil
+	case info == 31:
+		return 0, true, rest, nil
+	default:
+		return 0, false, nil, fmt.Errorf("invalid map header: %w", ErrCBORDecoding)
+	}
 }
 
 // encodeDeviceRequest builds a DeviceRequest with one DocRequest for
