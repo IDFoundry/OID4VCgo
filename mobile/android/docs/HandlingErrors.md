@@ -41,6 +41,7 @@ fun describe(error: Throwable): Pair<String, Boolean> = when (error) {
 | `authorizationDenied` | The Authorization Server refused the authorization: the holder declined, say | Start again from the offer |
 | `credentialDenied` | The issuer refused a deferred credential | Tell the holder |
 | `untrustedVerifier` | The Verifier or reader isn't one the wallet trusts: nothing was shown | Tell the holder |
+| `tlsPin` | A pinned host's certificate matched none of its `tlsPins`: an interception, or keys changed beyond the pins. Nothing was sent | Don't retry; tell the holder to try another network, or ship new pins |
 | `noMatchingCredential` | No held credential answers the request | Decline |
 | `invalidSelection` | The selection doesn't answer the request | Choose again |
 | `deliveryUnknown` | A response may or may not have reached the Verifier: it isn't sent again | Ask the holder to check with the Verifier |

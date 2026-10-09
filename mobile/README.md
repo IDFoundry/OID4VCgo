@@ -31,6 +31,7 @@ each release:
 | In person, as the reader (`ProximityReader`) | ✓ | ✓ |
 | Keys | `KeychainKeyStore` (Secure Enclave) | `AndroidKeystoreKeyStore` (StrongBox or TEE) |
 | Credential store | `FileCredentialStore` | `FileCredentialStore` |
+| Certificate pinning for the SDK's requests (`tlsPins`) | ✓ | ✓ |
 | Extra development CAs (`developmentRoots`) | — the system trust store's | ✓ |
 | Bluetooth permissions | asked by iOS on first use | `ProximityPermissions`, for the app to request |
 

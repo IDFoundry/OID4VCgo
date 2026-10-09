@@ -42,6 +42,8 @@ func classify(err error) error {
 		// A request's own timeout, or the Operation's: either way, the
 		// service didn't answer in time.
 		return newError(CodeNetwork, errors.New("the request timed out"))
+	case errors.Is(err, walletflow.ErrTLSPinMismatch):
+		return newError(CodeTLSPin, walletflow.ErrTLSPinMismatch)
 	case errors.As(err, &mobileErr):
 		// A KeyStore or other callback's error, inside walletflow's
 		// context.

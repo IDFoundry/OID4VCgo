@@ -14,8 +14,9 @@ an app can't tell from `ABIVersion` whether a library has them. The
 DC API's `StartMdocPresentation` and `MdocCandidates` arrived in
 OID4VCWallet 0.7.0 (Swift); `StartDCAPIPresentation`, proximity
 (`StartProximityPresentation`, `NewProximityReader`) and
-`require_signed_dcapi_requests` came after it. Check a library's
-release notes for the calls it has.
+`require_signed_dcapi_requests` came after it, then `tls_pins` and the
+`tls_pin` code. An older wrapper shows a code it doesn't know as it is.
+Check a library's release notes for the calls it has.
 
 The version changes whenever a function, object, JSON result, record
 format or error code below changes incompatibly.
@@ -58,6 +59,7 @@ format or error code below changes incompatibly.
 | `untrusted_verifier` | the Verifier's request is signed with a certificate that doesn't chain to `verifier_roots`: it's refused unread |
 | `invalid_selection` | a presentation's selection doesn't answer the request as it asks |
 | `delivery_unknown` | sending a presentation failed in a way that leaves it unknown whether the Verifier received it; it isn't sent again, which could present twice |
+| `tls_pin` | a host in `tls_pins` presented a certificate matching none of its pins; nothing was sent to it |
 | `profile_violation` | under `"issuance_profile": "haip"`, the issuer doesn't follow HAIP 1.0: it's refused |
 | `client_auth_unsupported` | the offer's Authorization Server takes no client authentication the wallet can give: a Wallet Attestation needs a provider and `client_id` |
 | `proof_unsupported` | the wallet can't hold an offered credential, or the issuer takes no proof it can give: one bound to no key (which the wallet doesn't receive) or by a method other than `jwk`/`cose_key`, both refused before the holder sees the offer; or, when the credentials are requested, no proof type signed with ES256, or a key attestation without a provider |
@@ -172,7 +174,8 @@ library's an `IOException`.
  "mdoc_reader_roots": "<PEM>", "mdoc_reader_require_eku": false, "require_trusted_mdoc_reader": false,
  "require_signed_dcapi_requests": false,
  "development": false, "development_roots": "<PEM>", "locales": ["en-AU", "en"], "batch_size": 0,
- "request_refresh": false, "copy_policy": "per_presentation", "issuance_profile": "openid4vci"}
+ "request_refresh": false, "copy_policy": "per_presentation", "issuance_profile": "openid4vci",
+ "tls_pins": {"issuer.example": ["<base64 SHA-256 of an SPKI>"]}}
 ```
 
 `issuer_roots` is needed to receive credentials, and `verifier_roots` to
@@ -239,6 +242,18 @@ one can recognise a returning holder, and copies last longer. Each copy
 records the Verifiers it was shown to as hashes of their client_ids,
 never the client_ids. Once every copy has been presented, the one shown
 to the fewest Verifiers is reused.
+
+`tls_pins` pins hosts' certificates for the wallet's HTTPS requests:
+host → base64 SHA-256 digests of a certificate's SubjectPublicKeyInfo
+(`walletflow.TLSPins`). A request to a pinned host fails with `tls_pin`,
+before anything is sent, unless a certificate in a chain that verified
+has one of its pins: pins add to certificate verification, never
+replace it. A host is a name, matched without case, or `*.` and a name,
+matching any name one label below it. An IP address can't be pinned,
+since a handshake to one names no host. A malformed host or pin, or a
+host without pins, is `invalid_input`. The pins cover the requests Go
+makes, in development too; an app's own requests, such as to its Wallet
+Provider, are the app's to pin.
 
 | Method | Result |
 |---|---|
@@ -417,7 +432,7 @@ signs during `Respond`. A malformed request is `protocol`.
 
 `mdoc_reader_roots`, `mdoc_reader_require_eku`,
 `require_trusted_mdoc_reader`, `MdocCandidates`, MdocPresentation and
-`development_roots` were added within ABI version 12: they add to it without changing anything there.
+`development_roots`, `tls_pins` and `tls_pin` were added within ABI version 12: they add to it without changing anything there.
 
 ## ProximityPresentation
 

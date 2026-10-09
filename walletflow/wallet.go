@@ -3,6 +3,7 @@ package walletflow
 import (
 	"context"
 	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
 	"errors"
 	"fmt"
@@ -131,6 +132,13 @@ type Config struct {
 	//     RequestRefresh), Keys declaring durable custody, Random
 	//     crypto/rand — and fapigo/client's own production checks.
 	Development bool
+
+	// TLSPins, if set, pins hosts' certificates (see TLSPins) on the
+	// HTTP client New builds when Dependencies.HTTP is nil, in
+	// Development too. With Dependencies.HTTP set, New refuses them:
+	// set TLSPins.VerifyConnection on that client's TLS configuration
+	// instead.
+	TLSPins TLSPins
 }
 
 // Dependencies are what the app supplies.
@@ -237,12 +245,17 @@ func New(cfg Config, deps Dependencies) (*Wallet, error) {
 	if cfg.RequireTrustedMdocReader && cfg.MdocReaderRoots == nil {
 		return nil, errors.New("walletflow: Config.RequireTrustedMdocReader needs MdocReaderRoots")
 	}
+	if err := cfg.TLSPins.Validate(); err != nil {
+		return nil, err
+	}
 	if deps.HTTP == nil {
-		client, err := defaultHTTPClient(cfg.Development)
+		client, err := defaultHTTPClient(cfg.Development, cfg.TLSPins)
 		if err != nil {
 			return nil, err
 		}
 		deps.HTTP = client
+	} else if len(cfg.TLSPins) > 0 {
+		return nil, errors.New("walletflow: Config.TLSPins applies to the wallet's own HTTP client, not Dependencies.HTTP: set TLSPins.VerifyConnection on that client's TLS configuration instead")
 	}
 	if deps.Clock == nil {
 		deps.Clock = time.Now
@@ -387,12 +400,21 @@ func durableKeys(ks KeyStore) bool {
 // once and checked at dial time, and follows no redirect: an offer's or
 // a Verifier's endpoints can't point the wallet's requests into its own
 // network. In Development, services on the machine or the local network
-// are the point.
-func defaultHTTPClient(development bool) (*http.Client, error) {
-	if development {
-		return &http.Client{Timeout: httpTimeout}, nil
+// are the point. Either checks pins, when there are any.
+func defaultHTTPClient(development bool, pins TLSPins) (*http.Client, error) {
+	var verify func(tls.ConnectionState) error
+	if len(pins) > 0 {
+		verify = pins.VerifyConnection
 	}
-	client, err := fapihttp.NewClient(fapihttp.TransportConfig{DialTimeout: httpTimeout, TLSHandshakeTimeout: httpTimeout})
+	if development {
+		if verify == nil {
+			return &http.Client{Timeout: httpTimeout}, nil
+		}
+		transport := http.DefaultTransport.(*http.Transport).Clone()
+		transport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12, VerifyConnection: verify}
+		return &http.Client{Transport: transport, Timeout: httpTimeout}, nil
+	}
+	client, err := fapihttp.NewClient(fapihttp.TransportConfig{DialTimeout: httpTimeout, TLSHandshakeTimeout: httpTimeout, VerifyConnection: verify})
 	if err != nil {
 		return nil, fmt.Errorf("walletflow: http client: %w", err)
 	}

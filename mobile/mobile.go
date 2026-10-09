@@ -60,6 +60,10 @@ const (
 	// leaves it unknown whether the Verifier received it. It isn't sent
 	// again: that could present twice.
 	CodeDeliveryUnknown = "delivery_unknown"
+	// CodeTLSPin: a pinned host's certificate matched none of its
+	// tls_pins: an interception, or a server whose keys changed beyond
+	// its pins. Nothing was sent to it.
+	CodeTLSPin = "tls_pin"
 	// CodeProfileViolation: under "issuance_profile": "haip", the issuer
 	// doesn't follow HAIP 1.0 (walletflow.ErrProfileViolation).
 	CodeProfileViolation = "profile_violation"

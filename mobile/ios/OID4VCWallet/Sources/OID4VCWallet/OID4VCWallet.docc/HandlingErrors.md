@@ -48,6 +48,7 @@ func describe(_ error: Error) -> (message: String, canRetry: Bool) {
 | ``WalletError/Code/authorizationDenied`` | The holder or the issuer refused the authorization | Start again from the offer |
 | ``WalletError/Code/credentialDenied`` | The issuer refused to issue a credential | Tell the holder |
 | ``WalletError/Code/untrustedVerifier`` | The Verifier or reader isn't one the wallet trusts: nothing was shown | Tell the holder |
+| ``WalletError/Code/tlsPin`` | A pinned host's certificate matched none of its ``WalletConfiguration/tlsPins``: an interception, or keys changed beyond the pins. Nothing was sent | Don't retry; tell the holder to try another network, or ship new pins |
 | ``WalletError/Code/noMatchingCredential`` | No held credential answers the request | Decline |
 | ``WalletError/Code/invalidSelection`` | The selection doesn't answer the request | Choose again |
 | ``WalletError/Code/deliveryUnknown`` | A response may or may not have reached the Verifier: it isn't sent again | Ask the holder to check with the Verifier |

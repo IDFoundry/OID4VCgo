@@ -104,6 +104,21 @@ public data class WalletConfiguration(
     @SerialName("request_refresh") val requestRefresh: Boolean = false,
     /** Which copy of a credential a presentation uses. */
     @SerialName("copy_policy") val copyPolicy: CopyPolicy = CopyPolicy.PER_PRESENTATION,
+    /**
+     * Pins hosts' certificates for the wallet's own HTTPS requests:
+     * host → base64 SHA-256 digests of a certificate's
+     * SubjectPublicKeyInfo, one of which a certificate in the verified
+     * chain must have, or the request fails as `tlsPin` before anything
+     * is sent. A host is a name, or `*.` and one, matching any name a
+     * label below it; not an IP address. Pins add to certificate
+     * verification, never replace it: pin a CA's key, so a leaf renewal
+     * doesn't break the app, and keep a backup pin. They cover the
+     * requests the SDK makes (issuers, Authorization Servers, Verifiers,
+     * status lists), not the app's own, such as to its Wallet Provider:
+     * pin that client yourself (OkHttp's CertificatePinner, or a network
+     * security configuration).
+     */
+    @SerialName("tls_pins") val tlsPins: Map<String, List<String>> = emptyMap(),
     /** The profile issuance follows. */
     @SerialName("issuance_profile") val issuanceProfile: IssuanceProfile = IssuanceProfile.OPENID4VCI,
 ) {
