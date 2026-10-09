@@ -12,6 +12,13 @@ separate Go module (it needs `golang.org/x/mobile`).
 
 The API is described in [ABI.md](ABI.md).
 
+The libraries' documentation, for app developers, is published with
+each release:
+
+- **Swift:** [the OID4VCWallet documentation](https://idfoundry.github.io/OID4VCgo-wallet-swift/latest/documentation/oid4vcwallet/) — getting started,
+  an article for each task, and the API reference.
+- **Kotlin:** [the guides](https://github.com/IDFoundry/OID4VCgo-wallet-kotlin/tree/main/docs) and [the API reference](https://idfoundry.github.io/OID4VCgo-wallet-kotlin/latest/).
+
 ## What each platform supports
 
 | | Swift (iOS) | Kotlin (Android) |
@@ -24,6 +31,7 @@ The API is described in [ABI.md](ABI.md).
 | In person, as the reader (`ProximityReader`) | ✓ | ✓ |
 | Keys | `KeychainKeyStore` (Secure Enclave) | `AndroidKeystoreKeyStore` (StrongBox or TEE) |
 | Credential store | `FileCredentialStore` | `FileCredentialStore` |
+| Certificate pinning for the SDK's requests (`tlsPins`) | ✓ | ✓ |
 | Extra development CAs (`developmentRoots`) | — the system trust store's | ✓ |
 | Bluetooth permissions | asked by iOS on first use | `ProximityPermissions`, for the app to request |
 
@@ -162,6 +170,20 @@ fine-grained token with Contents read and write on
 OID4VCgo-wallet-kotlin only, which only the publishing steps see. CI
 runs the same script on every change, without publishing.
 
+The library's API reference is built with Dokka
+(`./gradlew :OID4VCWallet:dokkaGenerate`, into
+`OID4VCWallet/build/dokka/html`), from its KDoc and
+`OID4VCWallet/Module.md`, its front page. The guides are Markdown in
+`android/docs/`, which the release copies into the package repository's
+`docs/`. `android/check-docs.sh` builds the reference, failing on any
+Dokka warning (an undocumented public declaration included), and
+compiles each guide's `kotlin` code blocks against the library; CI runs
+it. The release workflow publishes the reference to the package
+repository's `gh-pages` branch, under the version and `latest/`
+(`android/docs-site.sh` lays it out), and the README links the
+version's. GitHub Pages serves it once the package repository's
+settings (Pages) deploy from that branch.
+
 The library is compiled for Kotlin 2.2 (language and API version, and
 its standard library), so an app on AGP 9's own Kotlin can use it.
 
@@ -188,6 +210,16 @@ the Go module). It runs `ios/package-swift-release.sh`, which:
 4. writes a `Package.swift` naming the asset by URL and checksum, and
    the README, whose example is `ios/ReadmeExample.swift`: edit the
    README there, not in the package repository
+
+The package's documentation is a DocC catalog,
+`ios/OID4VCWallet/Sources/OID4VCWallet/OID4VCWallet.docc`, so it ships
+with the sources. `ios/check-docs.sh` builds it, failing on any DocC
+warning, and compiles each article's `swift` code blocks against the
+package; CI runs it. The release workflow then publishes the
+documentation to the package repository's `gh-pages` branch, under the
+version and `latest/` (`ios/docs-site.sh` lays it out), and the
+generated README links the version's. GitHub Pages serves it once the
+package repository's settings (Pages) deploy from that branch.
 
 The workflow then commits the result there and creates the tagged
 release, carrying the framework, its `SHA256SUMS` and a build

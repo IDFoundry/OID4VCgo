@@ -8,6 +8,7 @@ import (
 // DigestAlg identifies an MSO digest algorithm (Table 16).
 type DigestAlg string
 
+// The digest algorithms ISO/IEC 18013-5 allows in an MSO.
 const (
 	SHA256 DigestAlg = "SHA-256"
 	SHA384 DigestAlg = "SHA-384"

@@ -130,13 +130,16 @@ Where to start, by role:
   `NewDeviceSession` for the holder, `NewReaderSession` for the reader.
   The app carries the BLE messages; the package does everything else.
 - **A wallet app** — package `walletflow` runs issuance and
-  presentation as sessions over keys, stores and a Wallet Provider the
-  app supplies: `StartIssuance`, `StartPresentation`,
+  presentation as sessions over keys and stores the app supplies, and a
+  Wallet Provider for issuers that ask for attestations (HAIP 1.0, an
+  opt-in profile): `StartIssuance`, `StartPresentation`,
   `StartDCAPIPresentation` (OpenID4VP over the DC API),
   `StartMdocPresentation` (`org-iso-mdoc`) and
   `StartProximityPresentation`. The separate `mobile` module binds it
   for iOS (the OID4VCWallet Swift package) and Android (a Kotlin
-  library); see [mobile/MOBILE.md](mobile/MOBILE.md) and [`mobile/`](mobile).
+  library), each with its documentation: [Swift](https://idfoundry.github.io/OID4VCgo-wallet-swift/latest/documentation/oid4vcwallet/) and
+  [Kotlin](https://idfoundry.github.io/OID4VCgo-wallet-kotlin/latest/) ([guides](https://github.com/IDFoundry/OID4VCgo-wallet-kotlin/tree/main/docs)). See also
+  [mobile/MOBILE.md](mobile/MOBILE.md) and [`mobile/`](mobile).
 - **Your own stores and resolvers** — `issuer/issuertest` and
   `verifier/verifiertest` hold contract tests to run against them.
 

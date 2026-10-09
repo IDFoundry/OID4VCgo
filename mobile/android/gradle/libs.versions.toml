@@ -17,6 +17,7 @@ zxing = "3.5.3"
 coil = "3.6.3"
 credentials = "1.7.0-alpha03"
 registry = "1.0.0-alpha05"
+dokka = "2.2.0"
 
 [libraries]
 # @RequiresApi, so lint tells an app calling an API 28 class below 28.
@@ -57,3 +58,4 @@ android-application = { id = "com.android.application", version.ref = "agp" }
 android-test = { id = "com.android.test", version.ref = "agp" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
+dokka = { id = "org.jetbrains.dokka", version.ref = "dokka" }

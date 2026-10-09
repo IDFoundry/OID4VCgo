@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.35.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.34.0...v0.35.0) (2026-10-08)
+
+
+### Features
+
+* **proximity:** reader authentication, status 12, case-sensitive keys ([ae8cdb9](https://github.com/IDFoundry/OID4VCgo/commit/ae8cdb95136ef8d059d41a071e05ece02857d1d8))
+
+
+### Bug Fixes
+
+* **deps:** pin FAPIgo v0.50.1 ([2bc0e73](https://github.com/IDFoundry/OID4VCgo/commit/2bc0e732c1f01f3cb6655f62403616d7a0d75dec))
+* **deps:** pin FAPIgo v0.51.0 ([c92b0cd](https://github.com/IDFoundry/OID4VCgo/commit/c92b0cd23e4a518b8447c4a15c0cf536892cb68b))
+
 ## [0.34.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.33.0...v0.34.0) (2026-10-06)
 
 

@@ -45,8 +45,9 @@ const (
 	MaxRequestedElements = 256
 )
 
-// ErrUntrustedReader is VerifyReader's error when no reader signature on
-// the request verifies under a trusted root.
+// ErrUntrustedReader is VerifyReader's and VerifyReaderTrust's error
+// when no reader signature on the request verifies under a trusted root
+// (and, for VerifyReaderTrust, passes its LeafPolicy).
 var ErrUntrustedReader = errors.New("mdocdcapi: the request isn't signed by a trusted reader")
 
 // Incoming is an org-iso-mdoc request, as a wallet receives it.

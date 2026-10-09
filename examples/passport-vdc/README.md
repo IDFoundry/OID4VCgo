@@ -209,8 +209,10 @@ go run ./cmd/demo
 It prints the URLs and runs until Ctrl-C. What should survive a
 restart is kept in `.demo-state/`: the TLS certificate the servers
 share, the stand-in Wallet Provider's key (only its service reads it), the issuer's CA, signing keys
-and status list, the verifier's CA and request-signing key, and the
-wallet's credentials. So a restart keeps your credentials verifying and
+and status list, the verifier's identities (its CA, request-signing,
+registrar and mdoc reader keys and certificates, with
+`verifier-ca.pem`, `registrar-ca.pem` and `mdoc-reader-ca.pem` for
+wallets to trust), and the wallet's credentials. So a restart keeps your credentials verifying and
 your revocations in force, wallets configured with the verifier's CA
 (the iOS demo app) keep trusting it, and the browser doesn't warn
 again. `go run ./cmd/demo -reset` deletes it and starts
@@ -370,7 +372,7 @@ keeps everything in memory:
 ```sh
 go run ./cmd/wallet-provider     # terminal 1: https://127.0.0.1:6443 — writes wallet-provider.pem (once), wallet-provider-ca.pem, wallet-provider-tls.pem
 go run ./cmd/issuer              # terminal 2: https://127.0.0.1:8543 — writes issuer-tls.pem, issuer-ca.pem; trusts wallet-provider-ca.pem
-go run ./cmd/verifier            # terminal 3: https://127.0.0.1:9443 — writes verifier-tls.pem, verifier-ca.pem; trusts issuer-ca.pem and issuer-tls.pem
+go run ./cmd/verifier            # terminal 3: https://127.0.0.1:9443 — writes verifier-tls.pem, verifier-ca.pem, registrar-ca.pem and mdoc-reader-ca.pem; trusts issuer-ca.pem and issuer-tls.pem
 go run ./cmd/webwallet           # terminal 4: https://127.0.0.1:7443 — writes webwallet-tls.pem; trusts issuer-ca.pem, verifier-ca.pem and the other TLS certificates
 ```
 

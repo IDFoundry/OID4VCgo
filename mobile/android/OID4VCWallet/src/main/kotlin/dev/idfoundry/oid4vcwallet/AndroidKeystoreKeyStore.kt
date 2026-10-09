@@ -29,23 +29,26 @@ import java.security.KeyStore as JavaKeyStore
 
 /**
  * Authenticates the holder for one signature by a holder key: a key
- * that needs the holder's biometrics or screen lock for each use. It
- * returns once [signature] is authorized — after BiometricPrompt
- * succeeds with it as the CryptoObject — and throws if the holder
- * cancels. The key store calls it on Go's thread, which waits.
+ * that needs the holder's biometrics or screen lock for each use. The
+ * key store calls it on Go's thread, which waits.
  * [BiometricPromptAuthenticator] is the standard one.
  */
 public fun interface HolderAuthenticator {
+    /**
+     * Returns once [signature] is authorized — after BiometricPrompt
+     * succeeds with it as the CryptoObject — and throws if the holder
+     * cancels.
+     */
     public suspend fun authenticate(signature: Signature)
 }
 
-/**
- * The system's biometric prompt over the app's current activity
- * ([activity], null when none is showing), allowing a strong biometric
- * or the screen lock, as Face ID or the passcode on iOS.
- */
 // API 30's: it allows biometrics or the screen lock (setAllowedAuthenticators),
 // as the per-use holder keys it's for do, which need 30 too.
+/**
+ * The system's biometric prompt over the app's current activity
+ * (`activity`'s, null when none is showing), allowing a strong biometric
+ * or the screen lock, as Face ID or the passcode on iOS.
+ */
 @RequiresApi(Build.VERSION_CODES.R)
 public class BiometricPromptAuthenticator(
     private val activity: () -> Activity?,
@@ -88,6 +91,7 @@ public class BiometricPromptAuthenticator(
  * [authenticator] has authenticated the holder.
  */
 public class AndroidKeystoreKeyStore(
+    /** How the store makes keys. */
     public val options: Options = Options(),
     private val authenticator: HolderAuthenticator? = null,
 ) : KeyStore {
@@ -111,7 +115,12 @@ public class AndroidKeystoreKeyStore(
         OFF,
     }
 
+    /**
+     * How an [AndroidKeystoreKeyStore] makes keys: by default in StrongBox where the device has
+     * it, holder keys asking for the holder each time.
+     */
     public data class Options(
+        /** Where keys are made. */
         val strongBox: StrongBox = StrongBox.PREFERRED,
         /**
          * Require the holder's biometrics or screen lock for each
@@ -202,7 +211,7 @@ public class AndroidKeystoreKeyStore(
         keystore.aliases().toList().filter { it.startsWith(options.aliasPrefix) }.map { it.removePrefix(options.aliasPrefix) }
 
     /**
-     * Deletes every key this store holds except [keep], and returns how
+     * Deletes every key this store holds except [except], and returns how
      * many it deleted. `Wallet.sweepOrphanedKeys` calls it with the keys
      * the wallet's credentials are bound to.
      */
