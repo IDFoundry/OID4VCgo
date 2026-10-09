@@ -245,7 +245,7 @@ final class GattClientTransport: NSObject, ProximityTransport, CBCentralManagerD
         }
     }
 
-    func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral, advertisementData: [String: Any], rssi RSSI: NSNumber) {
+    func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral, advertisementData: [String: Any], rssi: NSNumber) {
         guard let p = found, !ignored.contains(peripheral.identifier) else { return }
         found = nil
         discovered = peripheral

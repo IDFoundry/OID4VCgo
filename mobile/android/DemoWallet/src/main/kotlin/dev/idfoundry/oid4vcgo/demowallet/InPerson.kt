@@ -75,6 +75,9 @@ import java.security.cert.X509Certificate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
+/** The reader's outcome text, for the UI tests. */
+private const val READER_OUTCOME = "reader-outcome"
+
 /** A request reader mode makes: a document type and its elements. */
 data class ReaderPreset(val title: String, val docType: String, val elements: Map<String, List<String>>)
 
@@ -407,7 +410,7 @@ private fun ReaderOutcome(state: ProximityReaderSession.State, preset: ReaderPre
                     Row(Modifier.padding(vertical = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Default.CheckCircle, null, tint = Color(0xFF2E7D32))
                         Spacer(Modifier.width(8.dp))
-                        Text("Verified", style = MaterialTheme.typography.titleLarge, modifier = Modifier.testTag("reader-outcome"))
+                        Text("Verified", style = MaterialTheme.typography.titleLarge, modifier = Modifier.testTag(READER_OUTCOME))
                     }
                 }
                 for ((namespace, elements) in v.claims) {
@@ -436,8 +439,8 @@ private fun ReaderOutcome(state: ProximityReaderSession.State, preset: ReaderPre
                 item { Labeled("Holder's device", if (v.deviceAuth == "mac") "authenticated (MAC)" else "authenticated (signature)") }
                 v.statusList?.let { item { Labeled("Revocation", "not checked: ${it.uri} #${it.index}") } }
             }
-            ProximityReaderSession.State.Declined -> item { Text("The holder declined.", Modifier.padding(vertical = 24.dp).testTag("reader-outcome")) }
-            ProximityReaderSession.State.Cancelled -> item { Text("Cancelled.", Modifier.padding(vertical = 24.dp).testTag("reader-outcome")) }
+            ProximityReaderSession.State.Declined -> item { Text("The holder declined.", Modifier.padding(vertical = 24.dp).testTag(READER_OUTCOME)) }
+            ProximityReaderSession.State.Cancelled -> item { Text("Cancelled.", Modifier.padding(vertical = 24.dp).testTag(READER_OUTCOME)) }
             is ProximityReaderSession.State.Failed -> item {
                 val e = state.error
                 Text(
@@ -446,7 +449,7 @@ private fun ReaderOutcome(state: ProximityReaderSession.State, preset: ReaderPre
                         is WalletException -> "Not verified: ${WalletModel.describe(e)}"
                         else -> e.toString()
                     },
-                    Modifier.padding(vertical = 24.dp).testTag("reader-outcome"), color = Color(0xFFC62828),
+                    Modifier.padding(vertical = 24.dp).testTag(READER_OUTCOME), color = Color(0xFFC62828),
                 )
             }
             else -> {}

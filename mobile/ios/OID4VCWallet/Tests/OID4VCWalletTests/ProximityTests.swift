@@ -271,8 +271,8 @@ final class EitherTransportTests: XCTestCase {
     final class Fake: ProximityTransport, @unchecked Sendable {
         let connects: @Sendable (Fake) async throws -> Void
         private let lock = NSLock()
-        private var _closed = false
-        var closed: Bool { lock.withLock { _closed } }
+        private var isClosed = false
+        var closed: Bool { lock.withLock { isClosed } }
         let stop = Signal()
 
         init(_ connects: @escaping @Sendable (Fake) async throws -> Void) { self.connects = connects }
@@ -281,17 +281,21 @@ final class EitherTransportTests: XCTestCase {
         static func never() -> Fake { Fake { try await $0.stop.wait() } }
 
         func connect() async throws { try await connects(self) }
-        func send(_ message: Data) async throws {}
+        func send(_: Data) async throws {
+            // These tests send nothing.
+        }
         func receive() async throws -> Data { Data([7]) }
         func close() {
-            lock.withLock { _closed = true }
+            lock.withLock { isClosed = true }
             stop.fail(ProximityTransportError("closed"))
         }
     }
 
     func testFirstToConnectWins() async throws {
         let waiting = Fake.never()
-        let connecting = Fake { _ in }
+        let connecting = Fake { _ in
+            // Connects at once.
+        }
         let either = EitherTransport([waiting, connecting])
         try await either.connect()
         XCTAssertTrue(either.connected === connecting)
@@ -323,6 +327,8 @@ final class EitherTransportTests: XCTestCase {
         do {
             try await either.send(Data([1]))
             XCTFail("sent without a connection")
-        } catch is ProximityTransportError {}
+        } catch is ProximityTransportError {
+            // Expected: nothing connected.
+        }
     }
 }

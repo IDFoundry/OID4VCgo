@@ -48,6 +48,10 @@ const ConfigOutPath = "conformance/verifier/oidf-config/haip.config.json"
 // credential_format plan variant.
 const PlanName = "oid4vp-1final-verifier-haip-test-plan"
 
+// verifierService is conformance-verifier's docker compose service, and
+// its hostname on the suite's network.
+const verifierService = "conformance-verifier"
+
 const (
 	restartTimeout = 30 * time.Second
 	// uploadTimeout bounds fillUploadPlaceholder's own poll for the
@@ -112,7 +116,7 @@ func GenerateKeyMaterial(clientCN, clientCACN, internalBaseURL string) (KeyMater
 	if err != nil {
 		return KeyMaterial{}, fmt.Errorf("generate client key/certificate: %w", err)
 	}
-	tlsCertPEM, tlsKeyPEM, err := conformancecert.SelfSignedPEM("conformance-verifier", []string{"conformance-verifier", "localhost"})
+	tlsCertPEM, tlsKeyPEM, err := conformancecert.SelfSignedPEM(verifierService, []string{verifierService, "localhost"})
 	if err != nil {
 		return KeyMaterial{}, fmt.Errorf("generate tls cert: %w", err)
 	}
@@ -202,7 +206,7 @@ func RestartContainer() error {
 // containerRunsBuiltImage reports whether the conformance-verifier
 // container is running the image docker compose build last built.
 func containerRunsBuiltImage(dockerPath string) (bool, error) {
-	out, err := exec.Command(dockerPath, "compose", "-f", DockerComposeFile, "ps", "-q", "conformance-verifier").Output() //nolint:gosec // dockerPath comes from exec.LookPath, args are fixed literals
+	out, err := exec.Command(dockerPath, "compose", "-f", DockerComposeFile, "ps", "-q", verifierService).Output() //nolint:gosec // dockerPath comes from exec.LookPath, args are fixed literals
 	if err != nil {
 		return false, fmt.Errorf("docker compose ps: %w", err)
 	}

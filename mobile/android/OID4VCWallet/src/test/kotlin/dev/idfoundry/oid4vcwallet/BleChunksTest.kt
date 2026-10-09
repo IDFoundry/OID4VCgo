@@ -52,6 +52,7 @@ class BleChunksTest {
             body()
             fail("no IOException")
         } catch (_: IOException) {
+            // Expected.
         }
     }
 }

@@ -48,7 +48,9 @@ class DemoReaderKeys(reader: DemoConfiguration.Reader) : KeyStore {
         }
     }
 
-    override fun deleteKey(id: String) {}
+    override fun deleteKey(id: String) {
+        // The demo reader's one key is fixed: there's nothing to delete.
+    }
 
     companion object {
         const val ID: String = "demo-reader"
