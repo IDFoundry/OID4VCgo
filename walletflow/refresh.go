@@ -359,52 +359,18 @@ func (s *Issuance) redeemGrant(ctx context.Context, g RefreshGrant) error {
 		return fmt.Errorf("walletflow: refresh credential: the authorization server no longer takes a Wallet Attestation: %w", ErrReissueRequired)
 	}
 	s.asMeta = asMeta
-	var (
-		refreshed   fapi.Secret
-		hasRefresh  bool
-		tokenType   string
-		details     json.RawMessage
-		expiresIn   time.Duration
-		hasExpiry   bool
-		accessToken fapi.Secret
-	)
+	var res refreshResult
 	if g.ClientAuth == GrantAuthNone {
-		tokenEndpoint, err := fapi.ParseEndpointURL(asMeta.TokenEndpoint, s.w.urlOptions()...)
-		if err != nil {
-			return fmt.Errorf("walletflow: token endpoint: %w", err)
-		}
-		req := wallet.RefreshTokenRequest{RefreshToken: g.RefreshToken}
-		if s.dpopKey != nil {
-			// A grant stored before DPoPKeyID was kept for Bearer grants
-			// has no key: a nil Key in the interface would send a proof.
-			req.DPoPKey = s.dpopKey
-		}
-		res, err := s.w.core.RequestRefreshToken(ctx, tokenEndpoint, req)
-		if err != nil {
-			return s.refreshFailed(ctx, g, err)
-		}
-		refreshed, hasRefresh = res.RefreshToken, res.RefreshToken.Reveal() != ""
-		tokenType, accessToken, expiresIn, hasExpiry = res.TokenType, res.AccessToken, res.ExpiresIn, res.HasExpiresIn
-		if details, err = json.Marshal(res.AuthorizationDetails); err != nil {
-			return fmt.Errorf("walletflow: token response: %w", err)
-		}
+		res, err = s.refreshAsPublicClient(ctx, g, asMeta)
 	} else {
-		if err := s.newClient(ctx, g.AuthorizationServer, false); err != nil {
-			if errors.Is(err, ErrClientAuthUnsupported) {
-				// A wallet without its Wallet Provider now.
-				return fmt.Errorf("walletflow: refresh credential: %w: %w", ErrReissueRequired, err)
-			}
-			return err
-		}
-		tokens, err := s.client.RefreshTokens(ctx, client.RefreshTokenRequest{Tokens: client.TokenSet{RefreshToken: g.RefreshToken, HasRefreshToken: true}})
-		if err != nil {
-			return s.refreshFailed(ctx, g, err)
-		}
-		s.resource = s.client.ProtectedResource(tokens)
-		refreshed, hasRefresh = tokens.RefreshToken, tokens.HasRefreshToken
-		tokenType, accessToken, details = tokens.TokenType, tokens.AccessToken, tokens.AuthorizationDetails
-		expiresIn, hasExpiry = tokens.ExpiresIn, tokens.HasExpiresIn
+		res, err = s.refreshWithAttestation(ctx, g)
 	}
+	if err != nil {
+		return err
+	}
+	refreshed, hasRefresh := res.refreshToken, res.hasRefreshToken
+	tokenType, accessToken, details := res.tokenType, res.accessToken, res.details
+	expiresIn, hasExpiry := res.expiresIn, res.hasExpiresIn
 	if hasRefresh && refreshed.Reveal() != g.RefreshToken.Reveal() {
 		g.RefreshToken = refreshed
 		if err := s.w.deps.Grants.PutGrant(ctx, g); err != nil {
@@ -429,6 +395,69 @@ func (s *Issuance) redeemGrant(ctx context.Context, g RefreshGrant) error {
 		s.accessExpiresAt = s.w.deps.Clock().Add(expiresIn)
 	}
 	return nil
+}
+
+// refreshResult is what a refresh's token response gave.
+type refreshResult struct {
+	refreshToken    fapi.Secret
+	hasRefreshToken bool
+	tokenType       string
+	accessToken     fapi.Secret
+	details         json.RawMessage
+	expiresIn       time.Duration
+	hasExpiresIn    bool
+}
+
+// refreshAsPublicClient redeems a GrantAuthNone grant's refresh token
+// at asMeta's token endpoint, with a DPoP proof when the issuance has a
+// DPoP key.
+func (s *Issuance) refreshAsPublicClient(ctx context.Context, g RefreshGrant, asMeta wallet.AuthorizationServerMetadata) (refreshResult, error) {
+	tokenEndpoint, err := fapi.ParseEndpointURL(asMeta.TokenEndpoint, s.w.urlOptions()...)
+	if err != nil {
+		return refreshResult{}, fmt.Errorf("walletflow: token endpoint: %w", err)
+	}
+	req := wallet.RefreshTokenRequest{RefreshToken: g.RefreshToken}
+	if s.dpopKey != nil {
+		// A grant stored before DPoPKeyID was kept for Bearer grants
+		// has no key: a nil Key in the interface would send a proof.
+		req.DPoPKey = s.dpopKey
+	}
+	res, err := s.w.core.RequestRefreshToken(ctx, tokenEndpoint, req)
+	if err != nil {
+		return refreshResult{}, s.refreshFailed(ctx, g, err)
+	}
+	details, err := json.Marshal(res.AuthorizationDetails)
+	if err != nil {
+		return refreshResult{}, fmt.Errorf("walletflow: token response: %w", err)
+	}
+	return refreshResult{
+		refreshToken: res.RefreshToken, hasRefreshToken: res.RefreshToken.Reveal() != "",
+		tokenType: res.TokenType, accessToken: res.AccessToken, details: details,
+		expiresIn: res.ExpiresIn, hasExpiresIn: res.HasExpiresIn,
+	}, nil
+}
+
+// refreshWithAttestation redeems g's refresh token through fapigo/client,
+// authenticating with a Wallet Attestation, and keeps the protected
+// resource client for the new tokens.
+func (s *Issuance) refreshWithAttestation(ctx context.Context, g RefreshGrant) (refreshResult, error) {
+	if err := s.newClient(ctx, g.AuthorizationServer, false); err != nil {
+		if errors.Is(err, ErrClientAuthUnsupported) {
+			// A wallet without its Wallet Provider now.
+			return refreshResult{}, fmt.Errorf("walletflow: refresh credential: %w: %w", ErrReissueRequired, err)
+		}
+		return refreshResult{}, err
+	}
+	tokens, err := s.client.RefreshTokens(ctx, client.RefreshTokenRequest{Tokens: client.TokenSet{RefreshToken: g.RefreshToken, HasRefreshToken: true}})
+	if err != nil {
+		return refreshResult{}, s.refreshFailed(ctx, g, err)
+	}
+	s.resource = s.client.ProtectedResource(tokens)
+	return refreshResult{
+		refreshToken: tokens.RefreshToken, hasRefreshToken: tokens.HasRefreshToken,
+		tokenType: tokens.TokenType, accessToken: tokens.AccessToken, details: tokens.AuthorizationDetails,
+		expiresIn: tokens.ExpiresIn, hasExpiresIn: tokens.HasExpiresIn,
+	}, nil
 }
 
 // refreshFailed is a refresh's failure: ErrReissueRequired, with the

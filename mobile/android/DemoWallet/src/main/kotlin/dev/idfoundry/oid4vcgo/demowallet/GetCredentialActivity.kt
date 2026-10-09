@@ -13,6 +13,7 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.padding
+import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.credentials.DigitalCredential
@@ -20,6 +21,7 @@ import androidx.credentials.ExperimentalDigitalCredentialApi
 import androidx.credentials.GetCredentialResponse
 import androidx.credentials.GetDigitalCredentialOption
 import androidx.credentials.exceptions.GetCredentialUnknownException
+import androidx.credentials.provider.CallingAppInfo
 import androidx.credentials.provider.PendingIntentHandler
 import androidx.credentials.registry.provider.selectedEntryId
 import kotlinx.serialization.json.Json
@@ -49,11 +51,7 @@ class GetCredentialActivity : ComponentActivity() {
         val option = request?.credentialOptions?.filterIsInstance<GetDigitalCredentialOption>()?.firstOrNull()
         val asked = option?.let { openid4vp(it.requestJson) }
         if (request == null || asked == null) return fail()
-        // The calling page's origin, which the browser vouches for when
-        // it's one the privileged list names; an app's own identity
-        // otherwise.
-        val origin = request.callingAppInfo.getOrigin(resources.openRawResource(R.raw.privileged_browsers).bufferedReader().readText())
-            ?: appOrigin(request.callingAppInfo.signingInfoCompat.signingCertificateHistory.firstOrNull()?.toByteArray())
+        val origin = callerOrigin(request.callingAppInfo)
         if (savedInstanceState == null) {
             model.startDCAPI(asked.first, asked.second.toString().toByteArray(), origin, request.selectedEntryId) { data ->
                 if (data == null) fail() else answer(asked.first, data)
@@ -61,18 +59,32 @@ class GetCredentialActivity : ComponentActivity() {
         }
         setContent {
             MaterialTheme(colorScheme = if (isSystemInDarkTheme()) darkColorScheme() else lightColorScheme()) {
-                if (model.requestPhase != WalletModel.RequestPhase.IDLE) {
-                    RequestScreen(model, openBrowser = {})
-                } else {
-                    when (val phase = model.phase) {
-                        is WalletModel.Phase.Failed -> Text(phase.text, Modifier.padding(24.dp))
-                        WalletModel.Phase.UntrustedVerifier -> UntrustedVerifier()
-                        else -> Text("Opening the request…", Modifier.padding(24.dp))
-                    }
-                }
+                Content()
             }
         }
     }
+
+    /** The consent screen once the request is open, else where opening it is. */
+    @Composable
+    private fun Content() {
+        if (model.requestPhase != WalletModel.RequestPhase.IDLE) {
+            RequestScreen(model, openBrowser = {})
+            return
+        }
+        when (val phase = model.phase) {
+            is WalletModel.Phase.Failed -> Text(phase.text, Modifier.padding(24.dp))
+            WalletModel.Phase.UntrustedVerifier -> UntrustedVerifier()
+            else -> Text("Opening the request…", Modifier.padding(24.dp))
+        }
+    }
+
+    /**
+     * The calling page's origin, which the browser vouches for when it's
+     * one the privileged list names; an app's own identity otherwise.
+     */
+    private fun callerOrigin(caller: CallingAppInfo): String =
+        caller.getOrigin(resources.openRawResource(R.raw.privileged_browsers).bufferedReader().readText())
+            ?: appOrigin(caller.signingInfoCompat.signingCertificateHistory.firstOrNull()?.toByteArray())
 
     /** The request's first OpenID4VP request: its protocol and data. */
     private fun openid4vp(requestJson: String): Pair<String, JsonObject>? {

@@ -140,56 +140,70 @@ func parseDeviceEngagement(b []byte) (parsedEngagement, error) {
 		return parsedEngagement{}, fmt.Errorf("proximity: DeviceEngagement version %q, want 1.x", de.Version)
 	}
 
+	eDeviceKey, eDeviceKeyBytes, err := decodeEngagementSecurity(de.Security)
+	if err != nil {
+		return parsedEngagement{}, err
+	}
+	pe := parsedEngagement{eDeviceKey: eDeviceKey, eDeviceKeyBytes: eDeviceKeyBytes}
+	if pe.ble, pe.bleMode, pe.uuid, err = selectBLEMethod(de.RetrievalMethods); err != nil {
+		return parsedEngagement{}, err
+	}
+	return pe, nil
+}
+
+// decodeEngagementSecurity decodes the DeviceEngagement's Security:
+// cipher suite 1 and the EDeviceKey, with its EDeviceKeyBytes as sent.
+func decodeEngagementSecurity(raw cbor.RawMessage) (*ecdsa.PublicKey, []byte, error) {
 	var security []cbor.RawMessage
-	if err := decMode.Unmarshal(de.Security, &security); err != nil || len(security) != 2 {
-		return parsedEngagement{}, fmt.Errorf("proximity: Security is not a 2-member array: %w", ErrCBORDecoding)
+	if err := decMode.Unmarshal(raw, &security); err != nil || len(security) != 2 {
+		return nil, nil, fmt.Errorf("proximity: Security is not a 2-member array: %w", ErrCBORDecoding)
 	}
 	var suite int64
 	if err := decMode.Unmarshal(security[0], &suite); err != nil {
-		return parsedEngagement{}, fmt.Errorf("proximity: decode cipher suite: %w: %w", ErrCBORDecoding, err)
+		return nil, nil, fmt.Errorf("proximity: decode cipher suite: %w: %w", ErrCBORDecoding, err)
 	}
 	if suite != cipherSuite1 {
-		return parsedEngagement{}, fmt.Errorf("proximity: cipher suite %d, want %d", suite, cipherSuite1)
+		return nil, nil, fmt.Errorf("proximity: cipher suite %d, want %d", suite, cipherSuite1)
 	}
 	coseKey, err := unwrapTag24(security[1])
 	if err != nil {
-		return parsedEngagement{}, fmt.Errorf("proximity: decode EDeviceKeyBytes: %w: %w", ErrCBORDecoding, err)
+		return nil, nil, fmt.Errorf("proximity: decode EDeviceKeyBytes: %w: %w", ErrCBORDecoding, err)
 	}
 	eDeviceKey, err := decodeCoseKey(coseKey)
 	if err != nil {
-		return parsedEngagement{}, fmt.Errorf("proximity: EDeviceKey: %w", err)
+		return nil, nil, fmt.Errorf("proximity: EDeviceKey: %w", err)
 	}
+	return eDeviceKey, []byte(security[1]), nil
+}
 
-	pe := parsedEngagement{eDeviceKey: eDeviceKey, eDeviceKeyBytes: []byte(security[1])}
-	for _, raw := range de.RetrievalMethods {
+// selectBLEMethod picks the first BLE retrieval method that offers a
+// mode with a 16-byte UUID, preferring mdoc central client mode when
+// both are offered (§8.3.3.1.1.1). ble is false when none does.
+func selectBLEMethod(methods []cbor.RawMessage) (ble bool, mode BLEMode, uuid []byte, err error) {
+	for _, raw := range methods {
 		var method []cbor.RawMessage
 		if err := decMode.Unmarshal(raw, &method); err != nil || len(method) < 3 {
-			return parsedEngagement{}, fmt.Errorf("proximity: decode DeviceRetrievalMethod: %w", ErrCBORDecoding)
+			return false, 0, nil, fmt.Errorf("proximity: decode DeviceRetrievalMethod: %w", ErrCBORDecoding)
 		}
 		var typ int64
 		if err := decMode.Unmarshal(method[0], &typ); err != nil {
-			return parsedEngagement{}, fmt.Errorf("proximity: decode DeviceRetrievalMethod type: %w: %w", ErrCBORDecoding, err)
+			return false, 0, nil, fmt.Errorf("proximity: decode DeviceRetrievalMethod type: %w: %w", ErrCBORDecoding, err)
 		}
 		if typ != retrievalTypeBLE {
 			continue
 		}
 		var opts bleOptions
 		if err := decMode.Unmarshal(method[2], &opts); err != nil {
-			return parsedEngagement{}, fmt.Errorf("proximity: decode BleOptions: %w: %w", ErrCBORDecoding, err)
+			return false, 0, nil, fmt.Errorf("proximity: decode BleOptions: %w: %w", ErrCBORDecoding, err)
 		}
-		// §8.3.3.1.1.1: when the mdoc supports both modes, the reader
-		// should select mdoc central client mode.
 		switch {
 		case opts.CentralClient && len(opts.CentralUUID) == 16:
-			pe.ble, pe.bleMode, pe.uuid = true, CentralClient, opts.CentralUUID
+			return true, CentralClient, opts.CentralUUID, nil
 		case opts.PeripheralServer && len(opts.PeripheralUUID) == 16:
-			pe.ble, pe.bleMode, pe.uuid = true, PeripheralServer, opts.PeripheralUUID
-		default:
-			continue
+			return true, PeripheralServer, opts.PeripheralUUID, nil
 		}
-		break
 	}
-	return pe, nil
+	return false, 0, nil, nil
 }
 
 // encodeQR is §8.2.2.3's QR code payload.
