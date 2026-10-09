@@ -19,9 +19,12 @@ are ``WalletError``s.
 
 ### Share as the holder
 
-``Wallet/startProximityPresentation(timeouts:)`` returns a
+``Wallet/startProximityPresentation(timeouts:modes:)`` returns a
 ``ProximityPresentation`` whose ``ProximityPresentation/qrCode`` you
-show. It advertises until a reader connects, then reports
+show. It offers both ``ProximityBLEMode``s by default: it advertises
+for the reader and scans for it at once, until a reader connects
+either way (a reader offered both should connect in central client
+mode). Pass `modes` to offer one. It then reports
 ``ProximityPresentation/State/requestReceived(_:)`` with who is asking
 and what: ask the holder, then respond or decline.
 
