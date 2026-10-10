@@ -32,6 +32,7 @@ func TestDecide(t *testing.T) {
 		{"age, no claim", ScenarioAge, Outcome{Claims: map[string]any{}}, false, "didn't say"},
 		{"signup", ScenarioSignup, Outcome{Claims: map[string]any{credential.GivenName: "JANE", credential.FamilyName: "DOE", "age_over_18": true}}, true, "Account created for JANE DOE"},
 		{"signup, under 18", ScenarioSignup, Outcome{Claims: sdjwtAge(false)}, false, "Sign-up refused"},
+		{"signup, age withheld", ScenarioSignup, Outcome{Claims: map[string]any{credential.GivenName: "JANE", credential.FamilyName: "DOE"}}, false, "Sign-up refused"},
 		{"bank, verified", ScenarioBank, Outcome{ICAO: verified}, true, "Account opened: passport verified with its issuing country (SGP)"},
 		{"bank, expired", ScenarioBank, Outcome{ICAO: expired}, false, "expired"},
 		{"bank, not verified", ScenarioBank, Outcome{ICAO: failed}, false, "couldn't be verified"},

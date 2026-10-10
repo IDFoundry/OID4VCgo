@@ -50,7 +50,12 @@ func decideOverAsking(out *Outcome) Decision {
 }
 
 func decideSignup(out *Outcome) Decision {
-	if over, ok := over18(out.Claims); ok && !over {
+	// A holder can withhold age_over_18 (over the Digital Credentials
+	// API, nothing else requires it): no answer isn't a yes.
+	switch over, ok := over18(out.Claims); {
+	case !ok:
+		return Decision{Text: "Sign-up refused: the credential didn't say whether the holder is over 18"}
+	case !over:
 		return Decision{Text: "Sign-up refused: under 18"}
 	}
 	return Decision{Approved: true, Text: "Account created for " + nameOf(out.Claims)}

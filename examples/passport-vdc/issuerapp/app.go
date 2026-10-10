@@ -401,7 +401,7 @@ func newIssuerIdentity(now time.Time) (issuerIdentity, error) {
 	}
 	var id issuerIdentity
 	id.caCert, err = democert.Create(&x509.Certificate{
-		Subject:   pkix.Name{CommonName: "passport-vdc demo CA", Organization: []string{"IDFoundry demo"}},
+		Subject:   pkix.Name{CommonName: "passport-vdc demo CA", Organization: []string{"IDFoundry demo"}, Country: []string{demoCountry}},
 		NotBefore: now.Add(-time.Hour), NotAfter: now.AddDate(5, 0, 0),
 		KeyUsage: x509.KeyUsageCertSign, IsCA: true, BasicConstraintsValid: true, MaxPathLenZero: true,
 	}, nil, &caKey.PublicKey, caKey)
@@ -417,6 +417,12 @@ func newIssuerIdentity(now time.Time) (issuerIdentity, error) {
 	return id, nil
 }
 
+// demoCountry is the demo CA's and signers' countryName: ISO/IEC
+// 18013-5 Annex B makes it mandatory, and verifiers check that a
+// document signer's matches its CA's. ZZ is an ISO 3166 user-assigned
+// code: the demo issues for no real country.
+const demoCountry = "ZZ"
+
 // issueSigner generates a signing key and its certificate under ca.
 func issueSigner(now time.Time, name string, ca *x509.Certificate, caKey *ecdsa.PrivateKey) (*ecdsa.PrivateKey, *x509.Certificate, error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -424,7 +430,7 @@ func issueSigner(now time.Time, name string, ca *x509.Certificate, caKey *ecdsa.
 		return nil, nil, fmt.Errorf("issuerapp: %s key: %w", name, err)
 	}
 	cert, err := democert.Create(&x509.Certificate{
-		Subject:   pkix.Name{CommonName: name, Organization: []string{"IDFoundry demo"}},
+		Subject:   pkix.Name{CommonName: name, Organization: []string{"IDFoundry demo"}, Country: []string{demoCountry}},
 		NotBefore: now.Add(-time.Hour), NotAfter: now.AddDate(2, 0, 0),
 		KeyUsage: x509.KeyUsageDigitalSignature,
 	}, ca, &key.PublicKey, caKey)
