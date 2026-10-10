@@ -5,11 +5,13 @@
 
 ### ⚠ BREAKING CHANGES
 
-* **deps:** pin FAPIgo v0.53.0 ([#542](https://github.com/IDFoundry/OID4VCgo/issues/542))
+* **deps:** FAPIgo v0.53.0's breaking changes reach applications that use its server beside OID4VCgo's issuer. server.NewSubjectID refuses a value over 255 bytes or outside printable ASCII: use a stable ID of your own as the subject, not a DID or an email address. Under production assurance, server.New refuses Limits outside FAPI 2.0's (MaxClockSkew outside 10 to 60 seconds, an authorization code lifetime over 60 seconds, a pushed request lifetime of 600 seconds or more, a request object lifetime over 60 minutes): start from server.RecommendedLimits, as haip does. A CIBA endpoint can't be combined with OAuthOnly, and a CIBA request needs openid. An id_token_hint or claims sub is now enforced. Sealer and cookie keys that are one byte repeated are refused. See FAPIgo's UPGRADING.md for v0.53.0.
+* **issuer:** under AssuranceProduction with Dependencies.PreAuthorizedCodes set, and a PreAuthorizedCodeClientAuthentication other than VerifiedPreAuthorizedCode, issuer.New refuses a Limits.MaxDPoPClockSkew under 10 seconds (zero included) or over 60. Set it to 10 seconds.
 
 ### Bug Fixes
 
 * **deps:** pin FAPIgo v0.53.0 ([#542](https://github.com/IDFoundry/OID4VCgo/issues/542)) ([464eeae](https://github.com/IDFoundry/OID4VCgo/commit/464eeaecaa91afd00c6a778022cd9bb0c31f1b16))
+* **issuer:** hold the DPoP clock skew to FAPI 2.0's bounds under production ([#542](https://github.com/IDFoundry/OID4VCgo/issues/542)) ([464eeae](https://github.com/IDFoundry/OID4VCgo/commit/464eeaecaa91afd00c6a778022cd9bb0c31f1b16))
 
 ## [0.38.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.37.1...v0.38.0) (2026-10-10)
 
