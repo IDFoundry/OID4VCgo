@@ -183,6 +183,14 @@ type VerifiedCredential struct {
 	// StatusListRef reads this (or Claims["status"]) as one reference,
 	// and statuslist.Checker fetches and checks it.
 	MdocStatus *mdoc.Status
+
+	// IssuerChain is the credential's issuer certificate chain (DER,
+	// leaf first) — an SD-JWT VC's x5c, an mdoc's IssuerAuth x5chain —
+	// when its leaf's key is the one the credential verified with, and
+	// nil otherwise. The issuer is that leaf's subject: an SD-JWT VC's
+	// "iss" claim, when the issuer key comes from x5c, is whatever the
+	// issuer wrote, not checked against it (SD-JWT VC §3.5).
+	IssuerChain [][]byte
 }
 
 // VerifyResponseResult is returned by a successful VerifyResponse.
@@ -369,43 +377,44 @@ func (v *Verifier) verifyCredentialQuery(ctx context.Context, cq dcql.Credential
 	for _, presented := range presentations {
 		var claims map[string]any
 		var status *mdoc.Status
+		var chain [][]byte
 		var err error
 		switch cq.Format {
 		case sdjwtvc.CredentialFormat:
-			claims, err = v.verifySDJWTVCPresentation(ctx, cq, presented, req)
+			claims, chain, err = v.verifySDJWTVCPresentation(ctx, cq, presented, req)
 		case mdoc.CredentialFormat:
-			claims, status, err = v.verifyMdocPresentation(ctx, cq, presented, req)
+			claims, status, chain, err = v.verifyMdocPresentation(ctx, cq, presented, req)
 		default:
 			return nil, fmt.Errorf("format %q is not yet supported", cq.Format)
 		}
 		if err != nil {
 			return nil, err
 		}
-		vcs = append(vcs, VerifiedCredential{CredentialQueryID: cq.ID, Claims: claims, MdocStatus: status})
+		vcs = append(vcs, VerifiedCredential{CredentialQueryID: cq.ID, Claims: claims, MdocStatus: status, IssuerChain: chain})
 	}
 	return vcs, nil
 }
 
-func (v *Verifier) verifySDJWTVCPresentation(ctx context.Context, cq dcql.CredentialQuery, compact string, req VerifyResponseRequest) (map[string]any, error) {
+func (v *Verifier) verifySDJWTVCPresentation(ctx context.Context, cq dcql.CredentialQuery, compact string, req VerifyResponseRequest) (map[string]any, [][]byte, error) {
 	if req.IssuerKeys == nil {
-		return nil, fmt.Errorf("dependencies.issuer_keys is required for a %q credential query — see X5CIssuerKeyResolver for a ready-made implementation backed by a trust anchor pool", sdjwtvc.CredentialFormat)
+		return nil, nil, fmt.Errorf("dependencies.issuer_keys is required for a %q credential query — see X5CIssuerKeyResolver for a ready-made implementation backed by a trust anchor pool", sdjwtvc.CredentialFormat)
 	}
 	pres, err := sdjwtvc.Parse(compact)
 	if err != nil {
-		return nil, newError("parse presentation", err)
+		return nil, nil, newError("parse presentation", err)
 	}
 	header, rawPayload, err := jose.DecodeUnverified(pres.IssuerJWT)
 	if err != nil {
-		return nil, newError("decode issuer jwt", err)
+		return nil, nil, newError("decode issuer jwt", err)
 	}
 	var payload map[string]any
 	if err := json.Unmarshal(rawPayload, &payload); err != nil {
-		return nil, newError("unmarshal issuer jwt payload", err)
+		return nil, nil, newError("unmarshal issuer jwt payload", err)
 	}
 
 	issuerPub, issuerAlg, err := req.IssuerKeys.ResolveIssuerKey(ctx, header, payload)
 	if err != nil {
-		return nil, newError("resolve issuer key", err)
+		return nil, nil, newError("resolve issuer key", err)
 	}
 
 	requireHolderBinding := cq.RequiresCryptographicHolderBinding()
@@ -416,7 +425,7 @@ func (v *Verifier) verifySDJWTVCPresentation(ctx context.Context, cq dcql.Creden
 		keyBindingRequirement = sdjwtvc.KeyBindingRequired
 		holderPub, holderAlg, err = holderPublicKeyFromCNF(payload["cnf"])
 		if err != nil {
-			return nil, newError("resolve holder binding key", err)
+			return nil, nil, newError("resolve holder binding key", err)
 		}
 	}
 
@@ -431,23 +440,23 @@ func (v *Verifier) verifySDJWTVCPresentation(ctx context.Context, cq dcql.Creden
 		MaxClockSkew:      req.MaxClockSkew,
 	})
 	if err != nil {
-		return nil, newError("verify", err)
+		return nil, nil, newError("verify", err)
 	}
 
 	if err := cq.SatisfiedBySDJWTVCClaims(claims); err != nil {
-		return nil, newError("satisfied by sdjwtvc claims", err)
+		return nil, nil, newError("satisfied by sdjwtvc claims", err)
 	}
 
+	// The header's chain only where it's the key that verified the
+	// credential: a header can carry anyone's public chain.
+	headerChain, _ := certchain.X5CDERsFromHeader(header)
+	chain := keyBoundChain(headerChain, issuerPub)
 	if len(cq.TrustedAuthorities) > 0 {
-		chain, err := certchain.X5CDERsFromHeader(header)
-		if err != nil {
-			return nil, newError(errCategoryTrustedAuthorities, err)
-		}
 		if err := req.TrustedAuthorities.CheckTrustedAuthorities(ctx, cq.TrustedAuthorities, chain); err != nil {
-			return nil, newError(errCategoryTrustedAuthorities, err)
+			return nil, nil, newError(errCategoryTrustedAuthorities, err)
 		}
 	}
-	return claims, nil
+	return claims, chain, nil
 }
 
 // expectedAudience returns the audience a Presentation's own Holder
@@ -471,68 +480,72 @@ func (v *Verifier) expectedAudience(origin string) string {
 // (Appendix B.2.6.1) always sets EReaderKeyBytes to null — there is no
 // in-band reader ephemeral key to agree a MAC key from, so only
 // DeviceAuthSignature (§12.4.6, ECDSA/EdDSA) is meaningful here.
-func (v *Verifier) verifyMdocPresentation(ctx context.Context, cq dcql.CredentialQuery, presented string, req VerifyResponseRequest) (map[string]any, *mdoc.Status, error) {
+func (v *Verifier) verifyMdocPresentation(ctx context.Context, cq dcql.CredentialQuery, presented string, req VerifyResponseRequest) (map[string]any, *mdoc.Status, [][]byte, error) {
 	if req.MdocIssuerKeys == nil {
-		return nil, nil, fmt.Errorf("dependencies.mdoc_issuer_keys is required for a %q credential query — see X5ChainIssuerKeyResolver for a ready-made implementation backed by a trust anchor pool", mdoc.CredentialFormat)
+		return nil, nil, nil, fmt.Errorf("dependencies.mdoc_issuer_keys is required for a %q credential query — see X5ChainIssuerKeyResolver for a ready-made implementation backed by a trust anchor pool", mdoc.CredentialFormat)
 	}
 	if req.ResponseEncryptionKey == nil {
-		return nil, nil, fmt.Errorf("response_encryption_key is required for a %q credential query", mdoc.CredentialFormat)
+		return nil, nil, nil, fmt.Errorf("response_encryption_key is required for a %q credential query", mdoc.CredentialFormat)
 	}
 
 	raw, err := base64.RawURLEncoding.DecodeString(presented)
 	if err != nil {
-		return nil, nil, newError("decode device response", err)
+		return nil, nil, nil, newError("decode device response", err)
 	}
 	doc, err := oid4vpmdoc.UnmarshalDeviceResponse(raw)
 	if err != nil {
-		return nil, nil, newError("unmarshal device response", err)
+		return nil, nil, nil, newError("unmarshal device response", err)
 	}
 
 	_, unprotected, _, err := cose.DecodeUnverified(doc.IssuerSigned.IssuerAuth)
 	if err != nil {
-		return nil, nil, newError("decode issuer auth", err)
+		return nil, nil, nil, newError("decode issuer auth", err)
 	}
 	issuerPub, issuerAlg, err := req.MdocIssuerKeys.ResolveMdocIssuerKey(ctx, unprotected.X5Chain, doc.DocType)
 	if err != nil {
-		return nil, nil, newError("resolve issuer key", err)
+		return nil, nil, nil, newError("resolve issuer key", err)
 	}
 
 	verified, err := mdoc.Verify(doc.IssuerSigned, doc.DocType, issuerPub, issuerAlg, mdoc.VerifyOptions{Now: req.Now, MaxClockSkew: req.MaxClockSkew})
 	if err != nil {
-		return nil, nil, newError("verify issuer signed", err)
+		return nil, nil, nil, newError("verify issuer signed", err)
+	}
+	chain, err := CheckMdocIssuer(ctx, req.MdocIssuerKeys, unprotected.X5Chain, doc.DocType, issuerPub, verified)
+	if err != nil {
+		return nil, nil, nil, newError("check document signer", err)
 	}
 
 	thumbprintBytes, err := jwk.Thumbprint(&req.ResponseEncryptionKey.PublicKey)
 	if err != nil {
-		return nil, nil, fmt.Errorf("response encryption key: %w", err)
+		return nil, nil, nil, fmt.Errorf("response encryption key: %w", err)
 	}
 	sessionTranscriptBytes, err := v.buildMdocSessionTranscriptBytes(req, thumbprintBytes)
 	if err != nil {
-		return nil, nil, fmt.Errorf("build session transcript: %w", err)
+		return nil, nil, nil, fmt.Errorf("build session transcript: %w", err)
 	}
 
 	if doc.DeviceSigned.AuthType != mdoc.DeviceAuthSignature {
-		return nil, nil, newError(fmt.Sprintf("device authentication type %d is not supported (see verifyMdocPresentation's own doc comment)", doc.DeviceSigned.AuthType), nil)
+		return nil, nil, nil, newError(fmt.Sprintf("device authentication type %d is not supported (see verifyMdocPresentation's own doc comment)", doc.DeviceSigned.AuthType), nil)
 	}
 	deviceAlg, err := mdocAlgForKey(verified.DeviceKey)
 	if err != nil {
-		return nil, nil, newError("device key", err)
+		return nil, nil, nil, newError("device key", err)
 	}
 	if err := mdoc.VerifyDeviceSignature(doc.DeviceSigned, verified.DeviceKey, deviceAlg, sessionTranscriptBytes, doc.DocType); err != nil {
-		return nil, nil, newError("verify device signature", err)
+		return nil, nil, nil, newError("verify device signature", err)
 	}
 
 	if err := mdoc.CheckKeyAuthorizations(doc.DeviceSigned.NameSpaces, verified.KeyAuthorizations); err != nil {
-		return nil, nil, newError("check key authorizations", err)
+		return nil, nil, nil, newError("check key authorizations", err)
 	}
 
 	if err := cq.SatisfiedByMdocClaims(verified.DocType, verified.NameSpaces); err != nil {
-		return nil, nil, newError("satisfied by mdoc claims", err)
+		return nil, nil, nil, newError("satisfied by mdoc claims", err)
 	}
 
 	if len(cq.TrustedAuthorities) > 0 {
-		if err := req.TrustedAuthorities.CheckTrustedAuthorities(ctx, cq.TrustedAuthorities, unprotected.X5Chain); err != nil {
-			return nil, nil, newError(errCategoryTrustedAuthorities, err)
+		if err := req.TrustedAuthorities.CheckTrustedAuthorities(ctx, cq.TrustedAuthorities, chain); err != nil {
+			return nil, nil, nil, newError(errCategoryTrustedAuthorities, err)
 		}
 	}
 
@@ -540,7 +553,7 @@ func (v *Verifier) verifyMdocPresentation(ctx context.Context, cq dcql.Credentia
 	for namespace, elements := range verified.NameSpaces {
 		claims[namespace] = elements
 	}
-	return claims, verified.Status, nil
+	return claims, verified.Status, chain, nil
 }
 
 // buildMdocSessionTranscriptBytes rebuilds SessionTranscriptBytes

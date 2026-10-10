@@ -10,6 +10,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
@@ -48,9 +49,16 @@ type Verified struct {
 	// NameSpaces are the disclosed data elements, by namespace — each
 	// one requested, issuer signed and bound to this request.
 	NameSpaces map[string]map[string]any
+	// Missing are the requested data elements the document didn't
+	// disclose, by namespace, sorted: a holder can withhold any of them,
+	// so a caller relying on one checks it's there, not just that its
+	// value isn't a refusal.
+	Missing map[string][]string
 	// ValidityInfo is the MSO's: when it was signed, and its validity.
 	ValidityInfo mdoc.ValidityInfo
-	// IssuerChain is the IssuerAuth x5chain IssuerKeys resolved.
+	// IssuerChain is the IssuerAuth x5chain, when its leaf's key is the
+	// one IssuerKeys resolved and the document verified with; nil
+	// otherwise.
 	IssuerChain [][]byte
 	// Status is the MSO's revocation reference, nil if it has none;
 	// checking it is the caller's (package statuslist).
@@ -144,6 +152,10 @@ func verifyDocument(ctx context.Context, p VerifyParams, doc oid4vpmdoc.Document
 	if err != nil {
 		return Verified{}, fmt.Errorf("mdocdcapi: %w", err)
 	}
+	issuerChain, err := verifier.CheckMdocIssuer(ctx, p.IssuerKeys, unprotected.X5Chain, doc.DocType, issuerPub, mso)
+	if err != nil {
+		return Verified{}, fmt.Errorf("mdocdcapi: document signer: %w", err)
+	}
 
 	// No reader key was exchanged, so only a device signature can bind
 	// the document to this request.
@@ -168,8 +180,8 @@ func verifyDocument(ctx context.Context, p VerifyParams, doc oid4vpmdoc.Document
 		return Verified{}, err
 	}
 	return Verified{
-		DocType: mso.DocType, NameSpaces: mso.NameSpaces, ValidityInfo: mso.ValidityInfo,
-		IssuerChain: unprotected.X5Chain, Status: mso.Status,
+		DocType: mso.DocType, NameSpaces: mso.NameSpaces, Missing: missing(mso.NameSpaces, p.Pending.Elements), ValidityInfo: mso.ValidityInfo,
+		IssuerChain: issuerChain, Status: mso.Status,
 	}, nil
 }
 
@@ -184,6 +196,27 @@ func checkRequested(disclosed map[string]map[string]any, requested map[string]ma
 		}
 	}
 	return nil
+}
+
+// missing are the requested elements not disclosed, by namespace,
+// sorted; nil when every one was.
+func missing(disclosed map[string]map[string]any, requested map[string]map[string]bool) map[string][]string {
+	var out map[string][]string
+	for ns, elements := range requested {
+		for el := range elements {
+			if _, ok := disclosed[ns][el]; ok {
+				continue
+			}
+			if out == nil {
+				out = map[string][]string{}
+			}
+			out[ns] = append(out[ns], el)
+		}
+	}
+	for ns := range out {
+		slices.Sort(out[ns])
+	}
+	return out
 }
 
 func deviceAlgFor(pub crypto.PublicKey) (cose.Alg, error) {
