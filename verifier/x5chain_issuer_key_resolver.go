@@ -50,3 +50,18 @@ func (r X5ChainIssuerKeyResolver) ResolveMdocIssuerKey(_ context.Context, x5chai
 func (r X5ChainIssuerKeyResolver) Capabilities() KeySourceCapabilities {
 	return KeySourceCapabilities{LiveFetchHardened: true}
 }
+
+// ResolveMdocIssuerChains implements MdocIssuerChainResolver: the
+// certificate paths x5chain verifies on, under Roots and LeafPolicy.
+func (r X5ChainIssuerKeyResolver) ResolveMdocIssuerChains(_ context.Context, x5chain [][]byte, _ string) ([][]*x509.Certificate, error) {
+	leaf, chains, err := certchain.VerifyChains(x5chain, r.Roots)
+	if err != nil {
+		return nil, err
+	}
+	if r.LeafPolicy != nil {
+		if err := r.LeafPolicy(leaf, chains); err != nil {
+			return nil, err
+		}
+	}
+	return chains, nil
+}

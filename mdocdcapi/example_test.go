@@ -96,7 +96,7 @@ func ExampleBuildRequest() {
 // newCA is a throwaway P-256 CA certificate valid for a day.
 func newCA(name string) (*x509.Certificate, *ecdsa.PrivateKey) {
 	return newCert(&x509.Certificate{
-		Subject: pkix.Name{CommonName: name}, IsCA: true, BasicConstraintsValid: true,
+		Subject: pkix.Name{CommonName: name, Country: []string{"US"}}, IsCA: true, BasicConstraintsValid: true,
 		KeyUsage: x509.KeyUsageCertSign,
 	}, nil, nil)
 }
@@ -105,7 +105,7 @@ func newCA(name string) (*x509.Certificate, *ecdsa.PrivateKey) {
 // the extended key usages ekus.
 func newLeaf(name string, ca *x509.Certificate, caKey *ecdsa.PrivateKey, ekus ...asn1.ObjectIdentifier) (*x509.Certificate, *ecdsa.PrivateKey) {
 	return newCert(&x509.Certificate{
-		Subject: pkix.Name{CommonName: name}, KeyUsage: x509.KeyUsageDigitalSignature, UnknownExtKeyUsage: ekus,
+		Subject: pkix.Name{CommonName: name, Country: []string{"US"}}, KeyUsage: x509.KeyUsageDigitalSignature, UnknownExtKeyUsage: ekus,
 	}, ca, caKey)
 }
 

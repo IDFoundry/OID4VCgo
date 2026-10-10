@@ -49,18 +49,18 @@ func newDCAPIIssuer(t *testing.T) dcapiIssuer {
 	caKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	now := time.Now()
 	caDER, err := x509.CreateCertificate(rand.Reader, &x509.Certificate{
-		SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "dcapi test issuer CA"},
+		SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "dcapi test issuer CA", Country: []string{"ZZ"}},
 		NotBefore: now.Add(-time.Hour), NotAfter: now.Add(24 * time.Hour),
 		IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign,
 		SubjectKeyId: []byte{1, 2, 3, 4},
-	}, &x509.Certificate{Subject: pkix.Name{CommonName: "dcapi test issuer CA"}, SubjectKeyId: []byte{1, 2, 3, 4}}, &caKey.PublicKey, caKey)
+	}, &x509.Certificate{Subject: pkix.Name{CommonName: "dcapi test issuer CA", Country: []string{"ZZ"}}, SubjectKeyId: []byte{1, 2, 3, 4}}, &caKey.PublicKey, caKey)
 	if err != nil {
 		t.Fatal(err)
 	}
 	ca, _ := x509.ParseCertificate(caDER)
 	signer, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	der, err := x509.CreateCertificate(rand.Reader, &x509.Certificate{
-		SerialNumber: big.NewInt(2), Subject: pkix.Name{CommonName: "dcapi test document signer"},
+		SerialNumber: big.NewInt(2), Subject: pkix.Name{CommonName: "dcapi test document signer", Country: []string{"ZZ"}},
 		NotBefore: now.Add(-time.Hour), NotAfter: now.Add(24 * time.Hour), KeyUsage: x509.KeyUsageDigitalSignature,
 	}, ca, &signer.PublicKey, caKey)
 	if err != nil {

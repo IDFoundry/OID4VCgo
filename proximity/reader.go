@@ -349,10 +349,6 @@ func (r *ReaderSession) verifyDocument(doc responseDocument, roots *x509.CertPoo
 	if err != nil {
 		return Verified{}, fmt.Errorf("proximity: issuer certificate: %w", err)
 	}
-	anchored, err := checkIACASubject(chains)
-	if err != nil {
-		return Verified{}, err
-	}
 	if r.signerPolicy != nil {
 		if err := r.signerPolicy(leaf, chains); err != nil {
 			return Verified{}, fmt.Errorf("proximity: document signer certificate: %w", err)
@@ -371,10 +367,11 @@ func (r *ReaderSession) verifyDocument(doc responseDocument, roots *x509.CertPoo
 	if err != nil {
 		return Verified{}, fmt.Errorf("proximity: %w", err)
 	}
-	// §9.3.1 step 5: the MSO's signed date is within the document
-	// signer certificate's validity.
-	if signed := verified.ValidityInfo.Signed; signed.Before(leaf.NotBefore) || signed.After(leaf.NotAfter) {
-		return Verified{}, fmt.Errorf("proximity: MSO signed %s, outside the document signer certificate's validity", signed.Format(time.RFC3339))
+	// §9.3.3's IACA subject checks, §9.3.1 step 5's signed date, and
+	// an mDL's issuing_country and issuing_jurisdiction.
+	anchored, err := mdoc.CheckDocumentSigner(verified, chains)
+	if err != nil {
+		return Verified{}, fmt.Errorf("proximity: %w", err)
 	}
 
 	switch doc.deviceSigned.AuthType {
@@ -430,27 +427,4 @@ func (r *ReaderSession) verifyDocument(doc responseDocument, roots *x509.CertPoo
 func (r *ReaderSession) Termination() []byte {
 	r.closed = true
 	return StatusMessage(StatusSessionTermination)
-}
-
-// checkIACASubject applies §9.3.3's checks on top of RFC 5280 path
-// validation: on some verified path, the trust anchor's countryName
-// equals the document signer's, and so does stateOrProvinceName when
-// both certificates carry one.
-func checkIACASubject(chains [][]*x509.Certificate) ([]*x509.Certificate, error) {
-	lastErr := errors.New("proximity: no verified certificate path")
-	for _, chain := range chains {
-		leaf, root := chain[0], chain[len(chain)-1]
-		// Annex B makes countryName mandatory in both certificates: two
-		// without one don't match.
-		if len(root.Subject.Country) == 0 || !slices.Equal(root.Subject.Country, leaf.Subject.Country) {
-			lastErr = fmt.Errorf("proximity: document signer countryName %v differs from its IACA's %v", leaf.Subject.Country, root.Subject.Country)
-			continue
-		}
-		if len(root.Subject.Province) > 0 && len(leaf.Subject.Province) > 0 && !slices.Equal(root.Subject.Province, leaf.Subject.Province) {
-			lastErr = fmt.Errorf("proximity: document signer stateOrProvinceName %v differs from its IACA's %v", leaf.Subject.Province, root.Subject.Province)
-			continue
-		}
-		return chain, nil
-	}
-	return nil, lastErr
 }

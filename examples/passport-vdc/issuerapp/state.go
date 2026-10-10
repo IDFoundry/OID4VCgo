@@ -41,7 +41,9 @@ func loadOrCreateIdentity(dir string, now time.Time) (issuerIdentity, error) {
 		if err != nil {
 			return issuerIdentity{}, fmt.Errorf("issuerapp: %s: %w", path, err)
 		}
-		if id.documentSignerCert.NotAfter.After(now.AddDate(1, 0, 0)) {
+		// An identity from before the CA carried a countryName is made
+		// again: verifiers refuse its mdocs.
+		if id.documentSignerCert.NotAfter.After(now.AddDate(1, 0, 0)) && len(id.caCert.Subject.Country) > 0 {
 			return id, nil
 		}
 	case !errors.Is(err, fs.ErrNotExist):

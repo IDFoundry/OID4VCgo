@@ -2,7 +2,11 @@ package dcql
 
 import (
 	"context"
+	"crypto/sha1" //nolint:gosec // RFC 5280's key identifier method
+	"crypto/sha256"
 	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/asn1"
 	"encoding/base64"
 	"fmt"
 	"slices"
@@ -20,11 +24,13 @@ import (
 // How it matches depends on Roots:
 //
 //   - With Roots set, it verifies issuerChain against Roots and matches
-//     the requested values against the Subject Key Identifiers of the
-//     certificate authorities actually on a verified path — every
-//     intermediate and the root. That establishes which CA really
-//     issued the credential's certificate, so it's a verification
-//     control. verifier.VerifyResponse requires it.
+//     the requested values against the key identifiers of the
+//     certificate authorities actually on a verified path: the root's
+//     declared Subject Key Identifier, and every CA's identifier derived
+//     from its own public key (an intermediate's declared one can name
+//     another CA's). That establishes which CA really issued the
+//     credential's certificate, so it's a verification control.
+//     verifier.VerifyResponse requires it.
 //   - Without Roots, it reads the leaf certificate's own Authority Key
 //     Identifier extension. That's what the leaf states about its
 //     issuer, not something chain validation checks: any CA can issue
@@ -78,18 +84,56 @@ func (c AKITrustedAuthoritiesChecker) CheckTrustedAuthorities(_ context.Context,
 
 // checkVerifiedChainAKI succeeds when a certificate authority on a
 // verified path from issuerChain's leaf to roots has one of wantAKIs as
-// its Subject Key Identifier.
+// its key identifier.
+//
+// A trust anchor's Subject Key Identifier is taken as it declares it:
+// the Verifier chose to trust that certificate. An intermediate's is
+// written by whoever issued it, so another trusted CA could issue an
+// intermediate declaring someone else's identifier; an intermediate
+// matches only by an identifier derived from its own public key
+// (RFC 5280 §4.2.1.2 method 1, RFC 7093 method 1), which no certificate
+// for another key can carry and still sign the leaf.
 func checkVerifiedChainAKI(issuerChain [][]byte, roots *x509.CertPool, wantAKIs []string) error {
 	_, chains, err := certchain.VerifyChains(issuerChain, roots)
 	if err != nil {
 		return fmt.Errorf("dcql: issuer certificate chain: %w", err)
 	}
 	for _, chain := range chains {
-		for _, ca := range chain[1:] {
-			if len(ca.SubjectKeyId) > 0 && slices.Contains(wantAKIs, base64.RawURLEncoding.EncodeToString(ca.SubjectKeyId)) {
-				return nil
+		anchor := len(chain) - 1
+		for i, ca := range chain[1:] {
+			for _, id := range caKeyIdentifiers(ca, i+1 == anchor) {
+				if slices.Contains(wantAKIs, base64.RawURLEncoding.EncodeToString(id)) {
+					return nil
+				}
 			}
 		}
 	}
 	return fmt.Errorf("dcql: no certificate authority on the issuer's verified chain is among the requested trusted_authorities")
+}
+
+// caKeyIdentifiers are the key identifiers ca can be matched by: those
+// derived from its public key, and its declared Subject Key Identifier
+// where it's the trust anchor.
+func caKeyIdentifiers(ca *x509.Certificate, anchor bool) [][]byte {
+	ids := derivedKeyIdentifiers(ca)
+	if anchor && len(ca.SubjectKeyId) > 0 {
+		ids = append(ids, ca.SubjectKeyId)
+	}
+	return ids
+}
+
+// derivedKeyIdentifiers are RFC 5280 §4.2.1.2 method 1's key
+// identifier (SHA-1 of the subjectPublicKey BIT STRING's value) and
+// RFC 7093 method 1's (SHA-256 of it, truncated to 160 bits).
+func derivedKeyIdentifiers(cert *x509.Certificate) [][]byte {
+	var spki struct {
+		Algorithm pkix.AlgorithmIdentifier
+		PublicKey asn1.BitString
+	}
+	if rest, err := asn1.Unmarshal(cert.RawSubjectPublicKeyInfo, &spki); err != nil || len(rest) != 0 {
+		return nil
+	}
+	sha1Sum := sha1.Sum(spki.PublicKey.Bytes) //nolint:gosec // RFC 5280's key identifier method, not a security use of SHA-1
+	sha256Sum := sha256.Sum256(spki.PublicKey.Bytes)
+	return [][]byte{sha1Sum[:], sha256Sum[:20]}
 }
