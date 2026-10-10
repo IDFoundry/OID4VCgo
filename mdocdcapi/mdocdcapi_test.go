@@ -9,6 +9,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -159,6 +160,31 @@ func TestRoundTrip(t *testing.T) {
 	}
 	if got.DocType != testmdoc.DocType || got.NameSpaces[isoNS]["given_name"] != "Alice" || got.NameSpaces[isoNS]["family_name"] != "Doe" {
 		t.Errorf("Verified = %+v", got)
+	}
+}
+
+// A requested element the document doesn't disclose is reported as
+// Missing, so a caller doesn't take its absence for an answer.
+func TestRoundTrip_Missing(t *testing.T) {
+	h := newHarness(t, bothNames())
+	if got, err := verify(t, h, respond(t, h.request.Data, testOrigin, h.f), nil); err != nil || got.Missing != nil {
+		t.Fatalf("all disclosed: Missing = %v, %v; want none", got.Missing, err)
+	}
+	got, err := verify(t, h, respond(t, h.request.Data, testOrigin, h.f), func(p *VerifyParams) {
+		elements := map[string]map[string]bool{}
+		for ns, els := range p.Pending.Elements {
+			elements[ns] = map[string]bool{"age_over_18": false}
+			for el, retain := range els {
+				elements[ns][el] = retain
+			}
+		}
+		p.Pending.Elements = elements
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"age_over_18"}; len(got.Missing) != 1 || !slices.Equal(got.Missing[isoNS], want) {
+		t.Errorf("Missing = %v, want %s: %v", got.Missing, isoNS, want)
 	}
 }
 
