@@ -4,7 +4,7 @@ go 1.26.9
 
 require (
 	github.com/fxamacker/cbor/v2 v2.9.4
-	github.com/idfoundry/fapigo v0.52.1
+	github.com/idfoundry/fapigo v0.53.0
 	github.com/idfoundry/oid4vcgo v0.0.0
 )
 

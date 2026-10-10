@@ -784,7 +784,8 @@ func (e *Env) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "authorization failed", http.StatusBadRequest)
 		return
 	}
-	http.Redirect(w, r, redirect.Destination().String(), http.StatusFound)
+	// 303, not 302 or 307, after the consent form's POST (RFC 9700 §4.12).
+	http.Redirect(w, r, redirect.Destination().String(), http.StatusSeeOther)
 }
 
 // handleToken serves both grants, as the passport-vdc demo does.

@@ -101,7 +101,10 @@ type Limits struct {
 	// DPoP proof's own "iat" may be before ExchangePreAuthorizedCode
 	// rejects it. Zero means no tolerance for a future-dated proof —
 	// matching internal/dpop.VerifyRequest's own zero-value meaning, no
-	// separate "required" check.
+	// separate "required" check. Under AssuranceProduction, where this
+	// issuer verifies the proof itself, it must be from 10 to 60 seconds:
+	// FAPI 2.0 has a token endpoint accept a JWT up to 10 seconds in the
+	// future, and refuse one more than 60.
 	MaxDPoPClockSkew time.Duration
 
 	// MaxProofAge bounds how far a jwt proof's "iat" may be from Now,

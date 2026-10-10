@@ -302,6 +302,31 @@ func TestNewRequiresPreAuthorizedCodeClientAuthenticationUnderProduction(t *test
 	}
 }
 
+// TestNewHoldsDPoPClockSkewToFAPIUnderProduction: where the issuer
+// verifies the token request's DPoP proof, a production issuer's skew
+// must be from 10 to 60 seconds, as FAPI 2.0 has it; development
+// assurance takes any non-negative skew.
+func TestNewHoldsDPoPClockSkewToFAPIUnderProduction(t *testing.T) {
+	cfg, deps := preAuthorizedCodeProductionConfig(t)
+	for _, skew := range []time.Duration{10 * time.Second, 60 * time.Second} {
+		cfg.Limits.MaxDPoPClockSkew = skew
+		if _, err := issuer.New(cfg, deps); err != nil {
+			t.Errorf("skew %s: %v", skew, err)
+		}
+	}
+	for _, skew := range []time.Duration{0, 9 * time.Second, 61 * time.Second} {
+		cfg.Limits.MaxDPoPClockSkew = skew
+		if _, err := issuer.New(cfg, deps); err == nil || !strings.Contains(err.Error(), "max_dpop_clock_skew") {
+			t.Errorf("skew %s: %v, want it refused", skew, err)
+		}
+	}
+	cfg.Limits.MaxDPoPClockSkew = 0
+	cfg.Assurance = issuer.AssuranceDevelopment
+	if _, err := issuer.New(cfg, deps); err != nil {
+		t.Errorf("skew 0 under AssuranceDevelopment: %v", err)
+	}
+}
+
 // preAuthorizedCodeProductionConfig is a production configuration with
 // every store assured and the pre-authorized_code flow wired in, its
 // client authentication choice made.
@@ -311,6 +336,7 @@ func preAuthorizedCodeProductionConfig(t *testing.T) (issuer.Config, issuer.Depe
 	cfg.Assurance = issuer.AssuranceProduction
 	cfg.Limits.AccessTokenLifetime = time.Hour
 	cfg.Limits.MaxDPoPProofAge = time.Minute
+	cfg.Limits.MaxDPoPClockSkew = 10 * time.Second
 	cfg.Limits.MaxTxCodeAttempts = 3
 	cfg.PreAuthorizedCodeClientAuthentication = issuer.AnonymousPreAuthorizedCode{}
 	deps := validDependencies(t)
