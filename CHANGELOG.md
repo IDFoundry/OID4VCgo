@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.38.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.37.1...v0.38.0) (2026-10-10)
+
+
+### Features
+
+* **walletflow:** ErrMalformedRequest for a Digital Credentials API request that can't be parsed ([76bf989](https://github.com/IDFoundry/OID4VCgo/commit/76bf98931d6cabedf5e3c019349f89405a3358dc))
+
 ## [0.37.1](https://github.com/IDFoundry/OID4VCgo/compare/v0.37.0...v0.37.1) (2026-10-09)
 
 
