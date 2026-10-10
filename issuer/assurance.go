@@ -2,6 +2,7 @@ package issuer
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/idfoundry/oid4vcgo"
 )
@@ -156,6 +157,9 @@ func checkProductionAssurance(cfg Config, deps Dependencies) error {
 	if deps.PreAuthorizedCodes != nil && cfg.PreAuthorizedCodeClientAuthentication == nil {
 		return fmt.Errorf("config.pre_authorized_code_client_authentication is required under AssuranceProduction when dependencies.pre_authorized_codes is set (issuer.AnonymousPreAuthorizedCode{} accepts the redemption without client authentication, which HAIP 1.0 §4.4.1 doesn't allow)")
 	}
+	if err := checkProductionDPoPClockSkew(cfg, deps); err != nil {
+		return err
+	}
 	// Each store a configured feature uses, and whether consuming from
 	// it must be atomic.
 	stores := []struct {
@@ -192,6 +196,32 @@ func checkProductionAssurance(cfg Config, deps Dependencies) error {
 	}
 	if deps.Audit == nil {
 		return fmt.Errorf("dependencies.audit is required under AssuranceProduction")
+	}
+	return nil
+}
+
+// Production bounds on the skew this issuer allows a DPoP proof's iat
+// into the future: FAPI 2.0 has an authorization server accept a JWT up
+// to 10 seconds in the future and refuse one more than 60, the bounds
+// fapigo/server enforces under its own production assurance.
+const (
+	minProductionDPoPClockSkew = 10 * time.Second
+	maxProductionDPoPClockSkew = 60 * time.Second
+)
+
+// checkProductionDPoPClockSkew holds Limits.MaxDPoPClockSkew to FAPI
+// 2.0's bounds where this issuer verifies the token request's DPoP
+// proof itself: with dependencies.pre_authorized_codes set, unless the
+// Authorization Server verified the redemption (VerifiedPreAuthorizedCode).
+func checkProductionDPoPClockSkew(cfg Config, deps Dependencies) error {
+	if deps.PreAuthorizedCodes == nil {
+		return nil
+	}
+	if _, ok := cfg.PreAuthorizedCodeClientAuthentication.(VerifiedPreAuthorizedCode); ok {
+		return nil
+	}
+	if skew := cfg.Limits.MaxDPoPClockSkew; skew < minProductionDPoPClockSkew || skew > maxProductionDPoPClockSkew {
+		return fmt.Errorf("config: limits.max_dpop_clock_skew is %s; under AssuranceProduction it must be from %s to %s (FAPI 2.0)", skew, minProductionDPoPClockSkew, maxProductionDPoPClockSkew)
 	}
 	return nil
 }
