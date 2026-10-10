@@ -4,7 +4,9 @@ import android.content.Context
 import android.os.Build
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
+import android.util.Log
 import java.io.File
+import java.io.FileOutputStream
 import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
@@ -25,6 +27,12 @@ import kotlin.concurrent.withLock
  * complete file protection. A credential is useless without its holder
  * key, which is in this device's Keystore and can't be restored
  * elsewhere; so is a record without the store's key.
+ *
+ * A [directory] of your own should be one no backup copies too
+ * (`noBackupFilesDir`, or excluded in the app's backup rules): a
+ * restored record can't be read without the key, which isn't restored.
+ * [records] skips a record that doesn't decrypt, logging its ID, rather
+ * than make every other credential unreadable; [record] reports it.
  */
 public class FileCredentialStore(
     /** The directory the records are kept in. */
@@ -59,7 +67,7 @@ public class FileCredentialStore(
          * [protection] on first use, and keeps it: a store with another
          * protection needs another alias.
          */
-        val keyAlias: String = "org.idfoundry.oid4vcgo.store.credentials",
+        val keyAlias: String = FileCredentialStore.DEFAULT_KEY_ALIAS,
     )
 
     private val lock = ReentrantLock()
@@ -79,7 +87,12 @@ public class FileCredentialStore(
             // sees half a record.
             val temp = File(directory, ".$id.tmp")
             try {
-                temp.writeBytes(sealed)
+                // Synced before the move, so a crash can't leave a
+                // renamed but empty record.
+                FileOutputStream(temp).use { out ->
+                    out.write(sealed)
+                    out.fd.sync()
+                }
                 Files.move(temp.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
             } catch (e: IOException) {
                 Files.deleteIfExists(temp.toPath())
@@ -100,7 +113,14 @@ public class FileCredentialStore(
                 .sortedBy { it.name }
                 .map { it.name.removeSuffix(SUFFIX) to it.readBytes() }
         }
-        return files.map { (id, sealed) -> open(id, sealed) }
+        return files.mapNotNull { (id, sealed) ->
+            try {
+                open(id, sealed)
+            } catch (e: StoreException) {
+                Log.w(TAG, "skipping credential record $id: ${e.message}")
+                null
+            }
+        }
     }
 
     override fun delete(id: String) {
@@ -143,6 +163,10 @@ public class FileCredentialStore(
     private fun key(): SecretKey = lock.withLock {
         val keystore = JavaKeyStore.getInstance(PROVIDER).apply { load(null) }
         (keystore.getKey(options.keyAlias, null) as? SecretKey) ?: run {
+            if (directory.listFiles { f -> f.name.endsWith(SUFFIX) }.orEmpty().isNotEmpty()) {
+                // Restored files, or a deleted key: they're unreadable now.
+                Log.w(TAG, "the store's key is missing: making a new one, so its existing records can't be read")
+            }
             val spec = KeyGenParameterSpec.Builder(options.keyAlias, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
                 .setKeySize(256)
                 .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
@@ -160,6 +184,9 @@ public class FileCredentialStore(
 
     /** Stores in the app's standard places. */
     public companion object {
+        /** The default store key's alias, which no key store's sweep may reach. */
+        internal const val DEFAULT_KEY_ALIAS = "org.idfoundry.oid4vcgo.store.credentials"
+        private const val TAG = "OID4VCWallet"
         private const val PROVIDER = "AndroidKeyStore"
         private const val TRANSFORMATION = "AES/GCM/NoPadding"
         private const val SUFFIX = ".rec"

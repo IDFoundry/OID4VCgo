@@ -42,12 +42,15 @@ class BoundaryTest {
 
     /**
      * Go, loaded as a library, starts with an empty environment: the Go
-     * side itself points it at Android 14's updatable CA store, then the
-     * system one (golang/go#71258).
+     * side itself points it at the one CA store Android trusts, Android
+     * 14's updatable one where it exists, else the system one
+     * (golang/go#71258). Not both: Go trusts every directory listed.
      */
     @Test
-    fun goReadsAndroidsCAStores() {
-        assertEquals("/apex/com.android.conscrypt/cacerts:/system/etc/security/cacerts", Mobile.certDirectories())
+    fun goReadsAndroidsCAStore() {
+        val apex = "/apex/com.android.conscrypt/cacerts"
+        val want = if (java.io.File(apex).isDirectory) apex else "/system/etc/security/cacerts"
+        assertEquals(want, Mobile.certDirectories())
     }
 
     @Test

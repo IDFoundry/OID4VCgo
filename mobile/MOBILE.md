@@ -789,8 +789,14 @@ on an emulator, in CI too (`mobile-android`).
   `CreateKey` doesn't arise. A callback's exception comes back as
   `platform`, carrying its message.
 - **Cancellation:** the coroutine's cancellation cancels the
-  `Operation`, and the blocked Go call returns at once; Go's
-  `cancelled` answer becomes the coroutine's `CancellationException`.
+  `Operation`, and the blocked Go call returns as soon as Go next checks
+  it; Go's `cancelled` answer becomes the coroutine's
+  `CancellationException`. Not while Go is inside a callback, though: a
+  holder key's signature waits in `AndroidKeystoreKeyStore` for the
+  holder, on Go's thread, and cancelling the operation doesn't dismiss
+  the BiometricPrompt showing meanwhile. The call returns once the
+  holder answers or dismisses it. Passing the operation's cancellation
+  into its callbacks is still to do.
 - **Threads:** 32 concurrent calls, each calling back into Kotlin on
   Go's thread, work.
 - **TLS:** Go verifies certificates itself, against CA files: on

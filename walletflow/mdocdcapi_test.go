@@ -260,12 +260,12 @@ func TestMdocPresentation_FailureReleasesTheCopy(t *testing.T) {
 func TestStartMdocPresentation_RefusesMalformed(t *testing.T) {
 	f := newFixture(t, walletflowtest.Options{})
 	w := mdocWallet(t, f, nil, walletflow.CopyPerPresentation)
-	if _, err := w.StartMdocPresentation(context.Background(), []byte("{}"), shopOrigin); err == nil {
-		t.Error("an empty request parsed")
+	if _, err := w.StartMdocPresentation(context.Background(), []byte("{}"), shopOrigin); !errors.Is(err, walletflow.ErrMalformedRequest) {
+		t.Errorf("an empty request: %v, want ErrMalformedRequest", err)
 	}
 	data, _ := newMdocReader(t).ask(t, shopOrigin)
-	if _, err := w.StartMdocPresentation(context.Background(), data, shopOrigin+"/"); err == nil {
-		t.Error("an origin with a path was accepted")
+	if _, err := w.StartMdocPresentation(context.Background(), data, shopOrigin+"/"); !errors.Is(err, walletflow.ErrMalformedRequest) {
+		t.Errorf("an origin with a path: %v, want ErrMalformedRequest", err)
 	}
 }
 

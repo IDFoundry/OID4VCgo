@@ -32,7 +32,10 @@ func (w *Wallet) StartDCAPIPresentation(ctx context.Context, protocol string, da
 	}
 	req, err := w.core.ParseDCAPIRequestData(protocol, data, origin)
 	if err != nil {
-		return nil, fmt.Errorf("walletflow: dc api request: %w", err)
+		if errors.Is(err, wallet.ErrUntrustedVerifier) {
+			return nil, fmt.Errorf("walletflow: dc api request: %w", err)
+		}
+		return nil, fmt.Errorf("walletflow: dc api request: %w: %w", ErrMalformedRequest, err)
 	}
 	return w.newPresentation(ctx, req)
 }

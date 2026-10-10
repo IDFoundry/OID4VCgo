@@ -156,6 +156,11 @@ func TestDCAPIPresentation_RequireSigned(t *testing.T) {
 	if _, err := w.StartDCAPIPresentation(ctx, unsigned.Protocol, unsigned.Data, unsigned.Origin); !errors.Is(err, walletflow.ErrUntrustedVerifier) {
 		t.Errorf("an unsigned request: %v, want ErrUntrustedVerifier", err)
 	}
+	// What the platform handed over doesn't parse: malformed, not untrusted.
+	_, err = w.StartDCAPIPresentation(ctx, r.Protocol, []byte(`{"request":"not.a.jws"}`), r.Origin)
+	if !errors.Is(err, walletflow.ErrMalformedRequest) || errors.Is(err, walletflow.ErrUntrustedVerifier) {
+		t.Errorf("a garbled request: %v, want ErrMalformedRequest alone", err)
+	}
 	if _, err := w.StartDCAPIPresentation(ctx, r.Protocol, r.Data, r.Origin); err != nil {
 		t.Errorf("a signed request: %v", err)
 	}

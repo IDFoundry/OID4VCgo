@@ -543,6 +543,13 @@ public class Wallet(
      * and [Presentation.decline] send nothing: each returns, in
      * [Presentation.Presented.dcapiResponse], the response's data for the
      * platform to hand back.
+     *
+     * [origin] must be one the platform verified: Credential Manager's
+     * `CallingAppInfo.getOrigin` for a privileged browser, or the calling
+     * app's signing-certificate origin. Never take it from the request:
+     * an unsigned request names no Verifier but its origin, and presented
+     * copies are bound to it. A request that can't be parsed is
+     * [WalletException.Code.invalidInput].
      */
     public suspend fun startDCAPIPresentation(protocol: String, requestData: ByteArray, origin: String): Presentation =
         Presentation(OID4VC.cancellable { op -> handle.startDCAPIPresentation(op, protocol, requestData, origin) })

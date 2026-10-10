@@ -90,8 +90,10 @@ kotlin {
 dependencies {
     implementation(files(unpackMobile.flatMap { it.classes }))
     implementation(libs.androidx.annotation)
-    implementation(libs.kotlinx.coroutines.android)
-    implementation(libs.kotlinx.serialization.json)
+    // api: the public API exposes their types (ProximityPresentation.state
+    // is a StateFlow, CredentialDetail.claims a JsonElement).
+    api(libs.kotlinx.coroutines.android)
+    api(libs.kotlinx.serialization.json)
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
     androidTestImplementation(libs.androidx.test.runner)

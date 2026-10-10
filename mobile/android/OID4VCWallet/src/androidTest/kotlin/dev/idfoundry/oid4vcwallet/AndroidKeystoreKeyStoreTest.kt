@@ -81,12 +81,17 @@ class AndroidKeystoreKeyStoreTest {
         assumeTrue("needs a secure lock screen", context.getSystemService(KeyguardManager::class.java).isDeviceSecure)
         val digest = MessageDigest.getInstance("SHA-256").digest("presentation".toByteArray())
 
-        val noAuthenticator = store(holderAuth = true)
-        val id = noAuthenticator.createKey(KeyPurpose.HOLDER)
-        expectFailure("signed without an authenticator") { noAuthenticator.sign(id, digest) }
+        // Without an authenticator, holder keys could never sign: refused up front.
+        try {
+            store(holderAuth = true)
+            fail("made a store whose holder keys can never sign")
+        } catch (e: IllegalArgumentException) {
+            assertTrue(e.message, e.message!!.contains("authenticator"))
+        }
 
         // An authenticator that doesn't authenticate: Keystore refuses the signature.
         val fake = store(holderAuth = true, authenticator = { })
+        val id = fake.createKey(KeyPurpose.HOLDER)
         expectFailure("signed without the holder") { fake.sign(id, digest) }
 
         // Instance and DPoP keys sign silently, even when holder keys need the holder.
