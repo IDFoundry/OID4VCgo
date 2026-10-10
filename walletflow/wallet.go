@@ -237,7 +237,13 @@ const (
 	maxResponseBytes = 1 << 20
 )
 
-// New returns a Wallet.
+// New returns a Wallet. Make one per set of stores and share it: a
+// Wallet serializes its own use of them (choosing the copies a
+// presentation uses, consuming an authorization, refreshing a grant), so
+// two over the same Keys and Credentials don't coordinate, and could
+// present the same copy twice, linking the presentations, or redeem the
+// same refresh token twice, which an authorization server rotating
+// refresh tokens answers by revoking the grant.
 func New(cfg Config, deps Dependencies) (*Wallet, error) {
 	if deps.Keys == nil || deps.Credentials == nil {
 		return nil, errors.New("walletflow: Dependencies.Keys and Credentials are required")
