@@ -6,8 +6,10 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha1" //nolint:gosec // RFC 5280 key identifier
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/asn1"
 	"encoding/base64"
 	"math/big"
 	"testing"
@@ -134,7 +136,9 @@ func TestAKITrustedAuthoritiesChecker_Roots_MatchesAnyCAOnThePath(t *testing.T) 
 	intermediateKey := newKey(t)
 	intermediate := issue(t, &x509.Certificate{
 		SerialNumber: big.NewInt(10), Subject: pkix.Name{CommonName: "test-intermediate"},
-		IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign, SubjectKeyId: []byte{9, 9, 9, 9},
+		// No SubjectKeyId: crypto/x509 derives it from the key (RFC 5280
+		// §4.2.1.2 method 1), as CAs normally do.
+		IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign,
 	}, &intermediateKey.PublicKey, root, rootKey, nil)
 	leaf := issue(t, &x509.Certificate{SerialNumber: big.NewInt(11), Subject: pkix.Name{CommonName: "test-leaf"}},
 		&newKey(t).PublicKey, intermediate, intermediateKey, nil)
@@ -184,4 +188,66 @@ func TestAKITrustedAuthoritiesChecker_Roots_RejectsUntrustedChain(t *testing.T) 
 	if err := checker.CheckTrustedAuthorities(context.Background(), verifiedAKI(ca), [][]byte{leaf.Raw}); err == nil {
 		t.Error("CheckTrustedAuthorities accepted a chain that doesn't verify against Roots")
 	}
+}
+
+// TestAKITrustedAuthoritiesChecker_Roots_RejectsSpoofedIntermediateSKI:
+// another trusted CA issues an intermediate declaring the wanted
+// authority's Subject Key Identifier. The chain verifies through the
+// other CA, but an intermediate matches only by an identifier derived
+// from its own key, so the declared one doesn't count.
+func TestAKITrustedAuthoritiesChecker_Roots_RejectsSpoofedIntermediateSKI(t *testing.T) {
+	wanted, _ := testcert.CA(t, "wanted-authority")
+	other, otherKey := testcert.CA(t, "other-trusted-ca")
+	spoofKey := newKey(t)
+	spoof := issue(t, &x509.Certificate{
+		SerialNumber: big.NewInt(20), Subject: pkix.Name{CommonName: "other's sub-CA"},
+		IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign, SubjectKeyId: wanted.SubjectKeyId,
+	}, &spoofKey.PublicKey, other, otherKey, nil)
+	leaf := issue(t, &x509.Certificate{SerialNumber: big.NewInt(21), Subject: pkix.Name{CommonName: "other's issuer"}},
+		&newKey(t).PublicKey, spoof, spoofKey, nil)
+
+	checker := dcql.AKITrustedAuthoritiesChecker{Roots: pool(wanted, other)}
+	chain := [][]byte{leaf.Raw, spoof.Raw}
+	if err := checker.CheckTrustedAuthorities(context.Background(), verifiedAKI(wanted), chain); err == nil {
+		t.Error("an intermediate declaring the wanted authority's identifier was accepted as it")
+	}
+	if err := checker.CheckTrustedAuthorities(context.Background(), verifiedAKI(other), chain); err != nil {
+		t.Errorf("the chain's real root didn't match: %v", err)
+	}
+}
+
+// TestAKITrustedAuthoritiesChecker_Roots_IntermediateDeclaredSKI: an
+// intermediate whose declared identifier isn't derived from its key
+// matches by the derived one, not the declared one.
+func TestAKITrustedAuthoritiesChecker_Roots_IntermediateDeclaredSKI(t *testing.T) {
+	root, rootKey := testcert.CA(t, "test-root")
+	intermediateKey := newKey(t)
+	intermediate := issue(t, &x509.Certificate{
+		SerialNumber: big.NewInt(30), Subject: pkix.Name{CommonName: "test-intermediate"},
+		IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign, SubjectKeyId: []byte{9, 9, 9, 9},
+	}, &intermediateKey.PublicKey, root, rootKey, nil)
+	leaf := issue(t, &x509.Certificate{SerialNumber: big.NewInt(31), Subject: pkix.Name{CommonName: "test-leaf"}},
+		&newKey(t).PublicKey, intermediate, intermediateKey, nil)
+	checker := dcql.AKITrustedAuthoritiesChecker{Roots: pool(root)}
+	chain := [][]byte{leaf.Raw, intermediate.Raw}
+	if err := checker.CheckTrustedAuthorities(context.Background(), verifiedAKI(intermediate), chain); err == nil {
+		t.Error("an intermediate's declared, non-derived identifier matched")
+	}
+	sum := sha1.Sum(intermediateKeyBits(t, intermediate))
+	derived := []dcql.TrustedAuthoritiesQuery{{Type: dcql.TrustedAuthorityAKI, Values: []string{base64.RawURLEncoding.EncodeToString(sum[:])}}}
+	if err := checker.CheckTrustedAuthorities(context.Background(), derived, chain); err != nil {
+		t.Errorf("the intermediate's key-derived identifier didn't match: %v", err)
+	}
+}
+
+func intermediateKeyBits(t *testing.T, cert *x509.Certificate) []byte {
+	t.Helper()
+	var spki struct {
+		Algorithm pkix.AlgorithmIdentifier
+		PublicKey asn1.BitString
+	}
+	if _, err := asn1.Unmarshal(cert.RawSubjectPublicKeyInfo, &spki); err != nil {
+		t.Fatal(err)
+	}
+	return spki.PublicKey.Bytes
 }
