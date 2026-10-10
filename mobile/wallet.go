@@ -266,7 +266,17 @@ func withPins(c *http.Client, pins walletflow.TLSPins) (*http.Client, error) {
 	if transport.TLSClientConfig == nil {
 		transport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12}
 	}
-	transport.TLSClientConfig.VerifyConnection = pins.VerifyConnection
+	// After any check the client already makes, not instead of it.
+	if prev := transport.TLSClientConfig.VerifyConnection; prev != nil {
+		transport.TLSClientConfig.VerifyConnection = func(cs tls.ConnectionState) error {
+			if err := prev(cs); err != nil {
+				return err
+			}
+			return pins.VerifyConnection(cs)
+		}
+	} else {
+		transport.TLSClientConfig.VerifyConnection = pins.VerifyConnection
+	}
 	pinned := *c
 	pinned.Transport = transport
 	return &pinned, nil

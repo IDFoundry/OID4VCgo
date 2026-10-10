@@ -4,8 +4,10 @@ import (
 	"context"
 	"crypto/ecdsa"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/pem"
+	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -72,5 +74,40 @@ func TestTLSPins(t *testing.T) {
 	if _, err := NewWallet(`{"client_id":"c","redirect_uri":"c:/cb","development":true,"tls_pins":{"issuer.example":["`+good+`"]}}`,
 		&goKeyStore{keys: map[string]*ecdsa.PrivateKey{}}, memStore{records: map[string][]byte{}}, nil); err != nil {
 		t.Errorf("tls_pins without development_roots: %v", err)
+	}
+}
+
+// withPins keeps a check the client already makes, before the pins, and
+// leaves the client it was given as it was.
+func TestWithPins_KeepsTheClientsCheck(t *testing.T) {
+	var called bool
+	refuse := errors.New("refused by the client's own check")
+	verdict := error(nil)
+	base := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{
+		MinVersion: tls.VersionTLS12,
+		VerifyConnection: func(tls.ConnectionState) error {
+			called = true
+			return verdict
+		},
+	}}}
+	pinned, err := withPins(base, walletflow.TLSPins{"issuer.example": {base64.StdEncoding.EncodeToString(make([]byte, sha256.Size))}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	verify := pinned.Transport.(*http.Transport).TLSClientConfig.VerifyConnection
+	// An unpinned host passes the pins: the client's check decides.
+	if err := verify(tls.ConnectionState{ServerName: "other.example"}); err != nil || !called {
+		t.Errorf("unpinned host: %v, client's check called %v", err, called)
+	}
+	verdict = refuse
+	if err := verify(tls.ConnectionState{ServerName: "other.example"}); !errors.Is(err, refuse) {
+		t.Errorf("the client's check refusing: %v, want its error", err)
+	}
+	verdict = nil
+	if err := verify(tls.ConnectionState{ServerName: "issuer.example"}); !errors.Is(err, walletflow.ErrTLSPinMismatch) {
+		t.Errorf("pinned host, no matching pin: %v, want ErrTLSPinMismatch", err)
+	}
+	if base.Transport.(*http.Transport).TLSClientConfig.VerifyConnection == nil {
+		t.Error("the original client lost its check")
 	}
 }
