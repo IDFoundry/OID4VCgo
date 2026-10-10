@@ -193,7 +193,8 @@ func (a *App) handleDecision(w http.ResponseWriter, r *http.Request) {
 	}
 	switch v := done.(type) {
 	case server.AuthorizationRedirect:
-		http.Redirect(w, r, v.Destination().String(), http.StatusFound)
+		// 303, not 302 or 307, after the consent form's POST (RFC 9700 §4.12).
+		http.Redirect(w, r, v.Destination().String(), http.StatusSeeOther)
 	case server.AuthorizationLocalError:
 		writeHTMLError(w, v.Error.HTTPStatus(), v.Error.PublicDescription())
 	default:
