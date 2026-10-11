@@ -1,8 +1,15 @@
 package issuerapp_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
+	"io"
+	"net/http"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/demotest"
@@ -167,5 +174,90 @@ func TestKeepForRefresh_OptIn(t *testing.T) {
 	}
 	if _, err := env.Issuer.CreateOffer(ctx, demotest.SyntheticEvidence(), issuerapp.OfferOptions{Review: true, KeepForRefresh: true}); err == nil {
 		t.Error("an offer both held for review and kept for refresh was created")
+	}
+}
+
+// tokenRecorder records the access tokens token responses carry.
+type tokenRecorder struct {
+	next   http.RoundTripper
+	mu     sync.Mutex
+	tokens []string
+}
+
+func (r *tokenRecorder) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := r.next.RoundTrip(req)
+	if err != nil || req.Method != http.MethodPost || !strings.HasSuffix(req.URL.Path, "/token") {
+		return resp, err
+	}
+	body, readErr := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	resp.Body = io.NopCloser(bytes.NewReader(body))
+	if readErr != nil {
+		return resp, err
+	}
+	var tr struct {
+		AccessToken string `json:"access_token"`
+	}
+	if json.Unmarshal(body, &tr) == nil && tr.AccessToken != "" {
+		r.mu.Lock()
+		r.tokens = append(r.tokens, tr.AccessToken)
+		r.mu.Unlock()
+	}
+	return resp, err
+}
+
+// grantID is a JWT access token's grant_id claim, unverified: the
+// token came from the issuer under test.
+func grantID(t *testing.T, token string) string {
+	t.Helper()
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		t.Fatalf("not a JWT access token: %d parts", len(parts))
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var claims struct {
+		GrantID string `json:"grant_id"`
+	}
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		t.Fatal(err)
+	}
+	return claims.GrantID
+}
+
+// TestKeepForRefresh_PreAuthorizedTokenNamesItsGrant: the access token
+// a pre-authorized code gets names the same grant as the ones its
+// refresh token gets, so revoking the grant ends it too, not only the
+// refreshed ones.
+func TestKeepForRefresh_PreAuthorizedTokenNamesItsGrant(t *testing.T) {
+	ctx := context.Background()
+	env := demotest.New(t, nil)
+	recorder := &tokenRecorder{next: env.HTTP.Transport}
+	if recorder.next == nil {
+		recorder.next = http.DefaultTransport
+	}
+	httpClient := *env.HTTP
+	httpClient.Transport = recorder
+	env.HTTP = &httpClient
+	w := refreshingWallet(t, env)
+	offer, err := env.Issuer.CreateOffer(ctx, demotest.SyntheticEvidence(), issuerapp.OfferOptions{PreAuthorized: true, KeepForRefresh: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored := receive(t, env, w, offer)
+	if _, _, err := w.RefreshCredential(ctx, stored[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	recorder.mu.Lock()
+	tokens := append([]string(nil), recorder.tokens...)
+	recorder.mu.Unlock()
+	if len(tokens) < 2 {
+		t.Fatalf("recorded %d access tokens, want the pre-authorized one and a refreshed one", len(tokens))
+	}
+	first, refreshed := grantID(t, tokens[0]), grantID(t, tokens[len(tokens)-1])
+	if first == "" || first != refreshed {
+		t.Errorf("grant_id: the pre-authorized token's %q, the refreshed one's %q; want the same grant", first, refreshed)
 	}
 }

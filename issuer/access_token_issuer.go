@@ -64,8 +64,13 @@ type AccessTokenParams struct {
 // token-issuance concern (a self-contained JWT, an opaque
 // storage-backed value, ...); this package has no opinion on format.
 //
-// A caller already pairing issuer with a real fapigo/server.Server for
-// the Authorization Code Flow (see authorization_server.go's own doc
+// A caller pairing issuer with a fapigo/server.Server whose Token
+// Endpoint verifies the client and DPoP proof (VerifiedPreAuthorizedCode)
+// needs none: it redeems the code with RedeemPreAuthorizedCode, and
+// issues the token with server.Server.IssueAccessToken, which names the
+// token's grant (its GrantID) so that revoking the grant ends it — a
+// token issued here can't be. Otherwise, a caller with a fapigo/server.Server
+// for the Authorization Code Flow (see authorization_server.go's own doc
 // comment) can reuse that same signing infrastructure here via a thin
 // adapter around its own server.AccessTokenIssuer
 // (server.JWTAccessTokens/OpaqueAccessTokens), rather than this

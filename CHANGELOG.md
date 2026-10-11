@@ -1,5 +1,39 @@
 # Changelog
 
+## [0.40.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.39.0...v0.40.0) (2026-10-11)
+
+
+### ⚠ BREAKING CHANGES
+
+* **deps:** an application pairing OID4VCgo with fapigo/server gets FAPIgo v0.54.0's changes. CompleteAuthorization refuses an Authorize whose authentication time is in the future; pass the time the user authenticated to NewAuthenticationContext, which also refuses one before 1970. The fapigo client refuses an ID token whose auth_time is in the future. Under production assurance with CIBA, keep MaxBackchannelAuthenticationRequestLifetime at 60 minutes or less, and keep openid in a CIBA approval's granted scope. See FAPIgo's UPGRADING.md for v0.54.0.
+* **statuslist:** a Status List Token without an iat, or issued more than a minute in the future, is refused. Set VerifyOptions.MaxClockSkew for a status list issuer whose clock runs further ahead, and MaxAge to bound how stale a list may be.
+* **verifier:** VerifyResponse and mdocdcapi.VerifyResponse, with X5ChainIssuerKeyResolver, refuse an mdoc whose document signer certificate's countryName differs from its IACA's (or neither has one, which Annex B makes mandatory), which was signed outside the DS certificate's validity, or whose mDL issuing_country or issuing_jurisdiction doesn't match the DS certificate. trusted_authorities fails for a credential whose header chain didn't sign it. mdocdcapi.Verified.IssuerChain is nil in that case.
+* **dcql:** with AKITrustedAuthoritiesChecker.Roots, an "aki" value naming an intermediate CA whose Subject Key Identifier isn't derived from its key (method 1 SHA-1, or SHA-256 truncated to 160 bits) no longer matches. Name the trust anchor, or the intermediate's key-derived identifier.
+
+### Features
+
+* **issuer:** redeem a pre-authorized code without issuing its token ([20d2be8](https://github.com/IDFoundry/OID4VCgo/commit/20d2be831abba0ed18acb7af28a4e889472d1cd1))
+* **mdoc:** compute DeviceMac from an ECDH shared secret ([791b329](https://github.com/IDFoundry/OID4VCgo/commit/791b3294d68386d4a3cd5fa65716293c372cbd30))
+* **mdocdcapi:** report the requested elements a document didn't disclose ([3145a5c](https://github.com/IDFoundry/OID4VCgo/commit/3145a5c1cb74840fc6921bc21f6f3af605bd61fb))
+* **proximity:** answer with MAC device authentication ([b7c164e](https://github.com/IDFoundry/OID4VCgo/commit/b7c164e35a72f49909e4558b268879a9fe03cca7))
+* **walletflow:** prefer MAC device authentication in person ([d5fd7b8](https://github.com/IDFoundry/OID4VCgo/commit/d5fd7b8aecf62ddad2042df6847eff861dc2a340))
+* **wallet:** the preview names the claims every presentation discloses, and the copy that's sent ([5c1c6b0](https://github.com/IDFoundry/OID4VCgo/commit/5c1c6b0e432dfd776e91e67c02b5f1d5dc8484cd))
+
+
+### Bug Fixes
+
+* **android:** keep a holder key in StrongBox rather than move it to the TEE to agree keys ([fdf676c](https://github.com/IDFoundry/OID4VCgo/commit/fdf676c93743c0a3efc61f184c3b6be35573b486))
+* compare JWT times instead of negating ages, and refuse dates outside 1970–9999 ([9197622](https://github.com/IDFoundry/OID4VCgo/commit/91976222e2820df294dd33ad7c35400e3002acbd))
+* **dcql:** match an intermediate CA only by a key identifier derived from its key ([a7fadf0](https://github.com/IDFoundry/OID4VCgo/commit/a7fadf091d7e6828c91f7e69803ec23be2e32e26))
+* **deps:** pin FAPIgo v0.54.0 ([5af8405](https://github.com/IDFoundry/OID4VCgo/commit/5af84058f8d2de58fd7f7c98506e1c3517e29068))
+* **issuer:** a pointer client-authentication choice, and deferred notification_ids bound to the holder ([9972b2e](https://github.com/IDFoundry/OID4VCgo/commit/9972b2e63e4f24bdaa477577159c426502e5ebc4))
+* **jwk:** refuse small-order Ed25519 keys, and give each key one thumbprint ([f2c457c](https://github.com/IDFoundry/OID4VCgo/commit/f2c457c2e336eef5bfb87c14d10fc0d08ec8530d))
+* **proximity:** limit what one DeviceRequest may ask for ([c73a2b5](https://github.com/IDFoundry/OID4VCgo/commit/c73a2b5612a35bb00f124de847d68f10926f6b02))
+* **statuslist:** require a Status List Token's iat, and allow a maximum age ([604f5c2](https://github.com/IDFoundry/OID4VCgo/commit/604f5c221cb7f735fa8ef7baf875b566a1710e3e))
+* **verifier:** tie an issuer's chain to the key that verified it, and check mdoc document signers ([74bdf8b](https://github.com/IDFoundry/OID4VCgo/commit/74bdf8bcf30b79963607fb14d9d62b859388cfa6))
+* **walletflow:** an issuance's keys survive another closing, and a batch's copies must agree ([2960f37](https://github.com/IDFoundry/OID4VCgo/commit/2960f37c5320d79e96de5edba0d017fe587bd711))
+* **walletflow:** trust an in-person reader only when every document request is signed by it ([a3945bc](https://github.com/IDFoundry/OID4VCgo/commit/a3945bc6a45654650d67cfd44c1cb6dcd9784954))
+
 ## [0.39.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.38.0...v0.39.0) (2026-10-10)
 
 

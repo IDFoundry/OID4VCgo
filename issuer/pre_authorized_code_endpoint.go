@@ -268,43 +268,22 @@ func (iss *Issuer) ExchangePreAuthorizedCode(ctx context.Context, req ExchangePr
 }
 
 func (iss *Issuer) exchangePreAuthorizedCode(ctx context.Context, req ExchangePreAuthorizedCodeRequest, clientID *string) (ExchangePreAuthorizedCodeResult, error) {
-	if iss.deps.PreAuthorizedCodes == nil {
-		return ExchangePreAuthorizedCodeResult{}, fmt.Errorf("issuer: exchange pre-authorized code: the pre-authorized_code grant is not configured")
-	}
-	if req.PreAuthorizedCode == "" {
-		return ExchangePreAuthorizedCodeResult{}, newError(ErrorInvalidTokenRequest, 400, "pre-authorized_code is required", nil)
+	if iss.deps.PreAuthorizedCodes != nil && iss.deps.AccessTokens == nil {
+		return ExchangePreAuthorizedCodeResult{}, fmt.Errorf("issuer: exchange pre-authorized code: dependencies.access_tokens isn't set: the Authorization Server issues the token (RedeemPreAuthorizedCode)")
 	}
 	now := iss.deps.Clock.Now()
-
-	// The client and DPoP proof: verified by the Authorization Server
-	// (VerifiedPreAuthorizedCode), or the DPoP proof here. Either way
-	// before the code is consumed, so neither a nonce challenge nor an
-	// unauthenticated client spends it.
-	binding, err := iss.preAuthorizedBinding(ctx, req, now)
+	redeemed, err := iss.redeemPreAuthorizedCode(ctx, req, now, clientID)
 	if err != nil {
 		return ExchangePreAuthorizedCodeResult{}, err
 	}
-	*clientID = binding.ClientID
-
-	record, err := iss.consumePreAuthorizedCode(ctx, req)
-	if err != nil {
-		return ExchangePreAuthorizedCodeResult{}, err
-	}
-	if now.After(record.ExpiresAt) {
-		return ExchangePreAuthorizedCodeResult{}, newError(ErrorInvalidGrant, 400, "pre-authorized_code has expired", nil)
-	}
+	binding, record, authDetails := redeemed.binding, redeemed.record, redeemed.AuthorizationDetails
 
 	params := AccessTokenParams{
 		Scope: record.Scopes, Thumbprint: binding.DPoPThumbprint, Subject: record.Subject, ClientID: binding.ClientID,
 		Issuer: iss.cfg.Issuer.String(), Audience: iss.cfg.Issuer.String(),
 		Now: now, Lifetime: iss.cfg.Limits.AccessTokenLifetime, Random: iss.deps.Random,
 	}
-	var authDetails []oid4vci.AuthorizationDetail
-	if len(record.CredentialConfigurationIDs) > 0 {
-		authDetails, err = iss.mintAuthorizationDetails(record.CredentialConfigurationIDs)
-		if err != nil {
-			return ExchangePreAuthorizedCodeResult{}, fmt.Errorf("issuer: exchange pre-authorized code: %w", err)
-		}
+	if len(authDetails) > 0 {
 		raw, err := json.Marshal(authDetails)
 		if err != nil {
 			return ExchangePreAuthorizedCodeResult{}, fmt.Errorf("issuer: exchange pre-authorized code: marshal authorization_details: %w", err)
@@ -332,6 +311,100 @@ func (iss *Issuer) exchangePreAuthorizedCode(ctx context.Context, req ExchangePr
 		result.NextDPoPNonce = nextNonce
 	}
 	return result, nil
+}
+
+// RedeemedPreAuthorizedCode is a pre-authorized_code that
+// RedeemPreAuthorizedCode redeemed: what to issue an access token for.
+type RedeemedPreAuthorizedCode struct {
+	// ClientID is the client the Authorization Server authenticated
+	// (VerifiedTokenRequest.ClientID).
+	ClientID string
+
+	// Subject and Scope are the redeemed PreAuthorizedCodeRecord's own
+	// Subject and Scopes.
+	Subject string
+	Scope   []string
+
+	// AuthorizationDetails is one "openid_credential" entry per
+	// CredentialConfigurationIDs entry of the record, each with a freshly
+	// minted credential_identifier, as ExchangePreAuthorizedCodeResult's.
+	// The access token must carry them, and the Token Response return
+	// them (§6.2). Empty when the record names none.
+	AuthorizationDetails []oid4vci.AuthorizationDetail
+
+	binding VerifiedTokenRequest
+	record  PreAuthorizedCodeRecord
+}
+
+// RedeemPreAuthorizedCode redeems a pre-authorized_code for an
+// Authorization Server that issues the access token itself, rather than
+// ExchangePreAuthorizedCode issuing it through Dependencies.AccessTokens:
+// fapigo/server's Server.IssueAccessToken, which binds the token to its
+// grant (GrantID), so that revoking the grant ends it.
+//
+// It needs VerifiedPreAuthorizedCode, and does what ExchangePreAuthorizedCode
+// does but issue the token: it consumes req.PreAuthorizedCode once,
+// checks its expiry and tx_code (and bounds wrong tx_code attempts), and
+// mints the authorization_details. The caller then issues the access
+// token for the result's Subject, Scope and AuthorizationDetails, bound
+// to the request's DPoP key, and writes the Token Response with the
+// authorization_details in it. A failure to issue after this succeeded
+// leaves the code spent.
+//
+// Every call records an AuditEventRedeemPreAuthorizedCode.
+func (iss *Issuer) RedeemPreAuthorizedCode(ctx context.Context, req ExchangePreAuthorizedCodeRequest) (RedeemedPreAuthorizedCode, error) {
+	var clientID string
+	redeemed, err := iss.redeemVerifiedPreAuthorizedCode(ctx, req, &clientID)
+	iss.audit(ctx, AuditEventRedeemPreAuthorizedCode, clientID, err)
+	return redeemed, err
+}
+
+func (iss *Issuer) redeemVerifiedPreAuthorizedCode(ctx context.Context, req ExchangePreAuthorizedCodeRequest, clientID *string) (RedeemedPreAuthorizedCode, error) {
+	if _, ok := iss.cfg.PreAuthorizedCodeClientAuthentication.(VerifiedPreAuthorizedCode); !ok {
+		return RedeemedPreAuthorizedCode{}, fmt.Errorf("issuer: redeem pre-authorized code: needs pre_authorized_code_client_authentication VerifiedPreAuthorizedCode")
+	}
+	return iss.redeemPreAuthorizedCode(ctx, req, iss.deps.Clock.Now(), clientID)
+}
+
+// redeemPreAuthorizedCode is ExchangePreAuthorizedCode's and
+// RedeemPreAuthorizedCode's shared redemption: the client and DPoP key,
+// the record it consumed, and the authorization_details it minted.
+func (iss *Issuer) redeemPreAuthorizedCode(ctx context.Context, req ExchangePreAuthorizedCodeRequest, now time.Time, clientID *string) (RedeemedPreAuthorizedCode, error) {
+	if iss.deps.PreAuthorizedCodes == nil {
+		return RedeemedPreAuthorizedCode{}, fmt.Errorf("issuer: exchange pre-authorized code: the pre-authorized_code grant is not configured")
+	}
+	if req.PreAuthorizedCode == "" {
+		return RedeemedPreAuthorizedCode{}, newError(ErrorInvalidTokenRequest, 400, "pre-authorized_code is required", nil)
+	}
+
+	// The client and DPoP proof: verified by the Authorization Server
+	// (VerifiedPreAuthorizedCode), or the DPoP proof here. Either way
+	// before the code is consumed, so neither a nonce challenge nor an
+	// unauthenticated client spends it.
+	binding, err := iss.preAuthorizedBinding(ctx, req, now)
+	if err != nil {
+		return RedeemedPreAuthorizedCode{}, err
+	}
+	*clientID = binding.ClientID
+
+	record, err := iss.consumePreAuthorizedCode(ctx, req)
+	if err != nil {
+		return RedeemedPreAuthorizedCode{}, err
+	}
+	if now.After(record.ExpiresAt) {
+		return RedeemedPreAuthorizedCode{}, newError(ErrorInvalidGrant, 400, "pre-authorized_code has expired", nil)
+	}
+	var authDetails []oid4vci.AuthorizationDetail
+	if len(record.CredentialConfigurationIDs) > 0 {
+		authDetails, err = iss.mintAuthorizationDetails(record.CredentialConfigurationIDs)
+		if err != nil {
+			return RedeemedPreAuthorizedCode{}, fmt.Errorf("issuer: exchange pre-authorized code: %w", err)
+		}
+	}
+	return RedeemedPreAuthorizedCode{
+		ClientID: binding.ClientID, Subject: record.Subject, Scope: record.Scopes, AuthorizationDetails: authDetails,
+		binding: binding, record: record,
+	}, nil
 }
 
 // preAuthorizedBinding is a Token Request's client and DPoP key, for

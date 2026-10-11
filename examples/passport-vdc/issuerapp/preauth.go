@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"net/http"
 
-	fapi "github.com/idfoundry/fapigo"
 	"github.com/idfoundry/fapigo/server"
 	"github.com/idfoundry/fapigo/storage"
 
@@ -125,65 +124,65 @@ func (a *App) handlePreAuthorizedToken(w http.ResponseWriter, r *http.Request, r
 		server.NewError(server.ErrorInvalidRequest, http.StatusBadRequest, "this grant issues DPoP-bound tokens only").WriteJSON(w)
 		return
 	}
-	result, err := a.issuer.ExchangePreAuthorizedCode(ctx, issuer.ExchangePreAuthorizedCodeRequest{
+	redeemed, err := a.issuer.RedeemPreAuthorizedCode(ctx, issuer.ExchangePreAuthorizedCodeRequest{
 		PreAuthorizedCode: params["pre-authorized_code"], TxCode: params["tx_code"],
-		Verified: &issuer.VerifiedTokenRequest{
-			ClientID: clientID, DPoPThumbprint: binding.Thumbprint, NextDPoPNonce: binding.NextDPoPNonce,
-		},
+		Verified: &issuer.VerifiedTokenRequest{ClientID: clientID, DPoPThumbprint: binding.Thumbprint},
 	})
 	if err != nil {
 		issuerError(w, err)
 		return
 	}
-	// A passport kept for refresh gets a refresh token too, under the
-	// transaction ID as its grant's ID, as handleDecision grants one.
-	// Without one the wallet still gets its credentials, and the
-	// passport is dropped once they're issued.
-	if a.transactions.keeps(result.Subject) {
-		if result.RefreshToken, err = a.issuePreAuthorizedRefreshToken(ctx, attested, binding, result); err != nil {
-			a.transactions.dontKeep(result.Subject)
+	// The access token, and a refresh token when there is one, belong to
+	// one grant, named by the transaction ID: revoking it (RevokeGrant,
+	// or the wallet revoking its refresh token) ends both.
+	grant, err := preAuthorizedGrant(attested, binding, redeemed)
+	if err != nil {
+		server.WriteError(w, err)
+		return
+	}
+	result, err := a.server.IssueAccessToken(ctx, grant)
+	if err != nil {
+		server.WriteError(w, err)
+		return
+	}
+	// A passport kept for refresh gets a refresh token too, as
+	// handleDecision grants one. Without one the wallet still gets its
+	// credentials, and the passport is dropped once they're issued.
+	if a.transactions.keeps(redeemed.Subject) {
+		refresh, err := a.server.IssueRefreshToken(ctx, server.IssueRefreshTokenRequest(grant))
+		if err != nil {
+			a.transactions.dontKeep(redeemed.Subject)
+		} else {
+			result.RefreshToken, result.HasRefreshToken = refresh, true
 		}
 	}
-	w.Header().Set("Cache-Control", "no-store")
 	result.WriteJSON(w)
 }
 
-// issuePreAuthorizedRefreshToken issues a refresh token for a redeemed
-// pre-authorized code, granting what the code did.
-func (a *App) issuePreAuthorizedRefreshToken(ctx context.Context, attested server.AttestedClient, binding server.TokenBinding, result issuer.ExchangePreAuthorizedCodeResult) (fapi.Secret, error) {
-	subject, err := server.NewSubjectID(result.Subject)
+// preAuthorizedGrant is a redeemed pre-authorized code's grant: what the
+// code granted, to the client and DPoP key the token request verified,
+// named by the transaction ID.
+func preAuthorizedGrant(attested server.AttestedClient, binding server.TokenBinding, redeemed issuer.RedeemedPreAuthorizedCode) (server.IssueAccessTokenRequest, error) {
+	subject, err := server.NewSubjectID(redeemed.Subject)
 	if err != nil {
-		return fapi.Secret{}, err
+		return server.IssueAccessTokenRequest{}, err
 	}
-	details := make([]json.RawMessage, 0, len(result.AuthorizationDetails))
-	for _, d := range result.AuthorizationDetails {
+	details := make([]json.RawMessage, 0, len(redeemed.AuthorizationDetails))
+	for _, d := range redeemed.AuthorizationDetails {
 		raw, err := json.Marshal(d)
 		if err != nil {
-			return fapi.Secret{}, err
+			return server.IssueAccessTokenRequest{}, err
 		}
 		details = append(details, raw)
 	}
-	return a.server.IssueRefreshToken(ctx, server.IssueRefreshTokenRequest{
+	return server.IssueAccessTokenRequest{
 		GrantType: preAuthorizedCodeGrantType, Client: attested, Binding: binding, Subject: subject,
-		Scope: result.Scope, AuthorizationDetails: details, GrantID: result.Subject,
-	})
+		Scope: redeemed.Scope, AuthorizationDetails: details, GrantID: redeemed.Subject,
+	}, nil
 }
 
 // issuerError writes an issuer token error, or a 500 for anything else.
 func issuerError(w http.ResponseWriter, err error) {
 	w.Header().Set("Cache-Control", "no-store")
 	issuer.WriteError(w, err)
-}
-
-// accessTokenAdapter mints the pre-authorized code grant's access tokens
-// with the Authorization Server's own signing keys, so the Credential
-// Endpoint's resource verifier accepts them unchanged.
-type accessTokenAdapter struct{ inner server.AccessTokenIssuer }
-
-func (t accessTokenAdapter) IssueAccessToken(ctx context.Context, p issuer.AccessTokenParams) (string, string, error) {
-	return t.inner.IssueAccessToken(ctx, server.AccessTokenParams{
-		Scope: p.Scope, Thumbprint: p.Thumbprint, Claims: p.Claims, Subject: p.Subject,
-		ClientID: fapi.ClientID(p.ClientID), Issuer: p.Issuer, Audience: p.Audience,
-		Now: p.Now, Lifetime: p.Lifetime, Random: p.Random,
-	})
 }

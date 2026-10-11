@@ -425,7 +425,10 @@ type Dependencies struct {
 	DPoPReplay DPoPReplayChecker
 
 	// AccessTokens mints the access token ExchangePreAuthorizedCode
-	// returns on success. Required when PreAuthorizedCodes is set.
+	// returns on success. Required when PreAuthorizedCodes is set,
+	// unless PreAuthorizedCodeClientAuthentication is
+	// VerifiedPreAuthorizedCode: an Authorization Server that issues the
+	// token itself redeems codes with RedeemPreAuthorizedCode instead.
 	AccessTokens AccessTokenIssuer
 
 	// DPoPNonces enables RFC 9449 §8's own DPoP nonce-challenge flow for
@@ -616,13 +619,14 @@ func validatePreAuthorizedCodeDependencies(cfg Config, deps Dependencies) error 
 	if cfg.Limits.MaxTxCodeAttempts <= 0 {
 		return fmt.Errorf("issuer: config: limits.max_tx_code_attempts must be positive when dependencies.pre_authorized_codes is set")
 	}
-	if deps.AccessTokens == nil {
-		return fmt.Errorf("issuer: dependencies: access_tokens is required when dependencies.pre_authorized_codes is set")
-	}
 	// The DPoP proof is the Authorization Server's to verify under
-	// VerifiedPreAuthorizedCode, and this issuer's otherwise.
+	// VerifiedPreAuthorizedCode, and this issuer's otherwise; so is the
+	// access token, if it issues it (RedeemPreAuthorizedCode).
 	if _, ok := cfg.PreAuthorizedCodeClientAuthentication.(VerifiedPreAuthorizedCode); ok {
 		return nil
+	}
+	if deps.AccessTokens == nil {
+		return fmt.Errorf("issuer: dependencies: access_tokens is required when dependencies.pre_authorized_codes is set")
 	}
 	if cfg.Limits.MaxDPoPProofAge <= 0 {
 		return fmt.Errorf("issuer: config: limits.max_dpop_proof_age must be positive when dependencies.pre_authorized_codes is set")

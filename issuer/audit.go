@@ -37,6 +37,10 @@ const (
 	// a deferred transaction.
 	AuditEventIssueDeferredCredential
 	AuditEventDenyDeferredCredential
+
+	// AuditEventRedeemPreAuthorizedCode records the outcome of a
+	// RedeemPreAuthorizedCode call.
+	AuditEventRedeemPreAuthorizedCode
 )
 
 // AuditOutcome is a closed set of outcomes for an AuditEvent.

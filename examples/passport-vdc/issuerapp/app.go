@@ -54,7 +54,6 @@ type App struct {
 	credentialURL    url.URL
 	deferredURL      url.URL
 	notificationURL  url.URL
-	accessTokens     server.AccessTokenIssuer // the Authorization Server's
 	preAuthCodes     issuer.PreAuthorizedCodeStore
 	tokenLifetime    time.Duration  // the Authorization Server's access token lifetime
 	reviews          *reviews       // deferred issuances awaiting a decision
@@ -174,7 +173,6 @@ func (a *App) buildAuthorizationServer() error {
 	if err != nil {
 		return fmt.Errorf("issuerapp: access tokens: %w", err)
 	}
-	a.accessTokens = accessTokens
 
 	// HAIP's Authorization Server settings, including the issuer_state
 	// extension the approval step reads the passport transaction from.
@@ -353,7 +351,6 @@ func (a *App) buildIssuer() error {
 		// the Authorization Server's keys, for a Wallet Attestation the
 		// Authorization Server authenticates.
 		PreAuthorizedCodes:  a.preAuthCodes,
-		AccessTokens:        accessTokenAdapter{inner: a.accessTokens},
 		Notifications:       oid4vcgostorage.NewNotificationStore(),
 		NotificationHandler: a.notifications,
 		Clock:               issuer.ClockFunc(a.now),
