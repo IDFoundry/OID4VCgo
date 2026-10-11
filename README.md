@@ -4,6 +4,7 @@
 [![CI](https://github.com/IDFoundry/OID4VCgo/actions/workflows/ci.yml/badge.svg)](https://github.com/IDFoundry/OID4VCgo/actions/workflows/ci.yml)
 [![OID4VCI Conformance](https://github.com/IDFoundry/OID4VCgo/actions/workflows/oid4vci-conformance.yml/badge.svg)](https://github.com/IDFoundry/OID4VCgo/actions/workflows/oid4vci-conformance.yml)
 [![OID4VP Conformance](https://github.com/IDFoundry/OID4VCgo/actions/workflows/oid4vp-conformance.yml/badge.svg)](https://github.com/IDFoundry/OID4VCgo/actions/workflows/oid4vp-conformance.yml)
+[![Polaris interop](https://github.com/IDFoundry/OID4VCgo/actions/workflows/polaris-interop.yml/badge.svg)](https://github.com/IDFoundry/OID4VCgo/actions/workflows/polaris-interop.yml)
 [![Go Reference](https://pkg.go.dev/badge/github.com/idfoundry/oid4vcgo.svg)](https://pkg.go.dev/github.com/idfoundry/oid4vcgo)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
@@ -58,7 +59,10 @@ FAPIgo" section for the specific list.
 > separate `mobile` module are implemented and tested. All four roles
 > were OpenID Certified as 0.12.0 (see above), and every later release
 > is checked against the same OIDF test plans by the daily conformance
-> workflows. Those certified profiles are the redirect flows: the
+> workflows. The OpenID4VP wallet harness is also run daily, and on each
+> release, against [polaris-oid4vp](conformance/README.md#interop-with-polaris-oid4vp),
+> an independent verifier, with negative controls the OIDF suite lacks.
+> Those certified profiles are the redirect flows: the
 > Digital Credentials API (OpenID4VP's `dc_api.jwt` and `mdocdcapi`'s
 > `org-iso-mdoc`) and in-person presentation (`proximity`) aren't
 > certified. `org-iso-mdoc` has run in Safari on an iPhone, with the

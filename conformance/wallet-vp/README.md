@@ -78,6 +78,13 @@ Verifier's security by. For every Verifier it talks to:
   Object's certificate chain isn't checked at all. The binary logs a
   warning at startup in that case, and always for TLS.
 
+This binary is also run daily, and on each release, against
+polaris-oid4vp, an independent Verifier, with four controls that must
+each be refused: a replayed request, a `client_id` that isn't the signed
+request's, an issuer CA the Verifier doesn't trust, and a Verifier CA
+this binary doesn't trust (`verifier_trust_anchors_pem`). See
+[Interop with polaris-oid4vp](../README.md#interop-with-polaris-oid4vp).
+
 `scripts/run-modules` issues the suite's Request Object signing
 certificate from a CA it generates per run and sets that CA as
 `verifier_trust_anchors_pem`, so every conformance run exercises the
