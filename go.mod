@@ -3,7 +3,7 @@ module github.com/idfoundry/oid4vcgo
 go 1.26.9
 
 require (
-	github.com/fxamacker/cbor/v2 v2.9.4
+	github.com/fxamacker/cbor/v2 v2.9.6
 	github.com/idfoundry/fapigo v0.54.0
 )
 
