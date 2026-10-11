@@ -1,19 +1,27 @@
 version: 2
 updates:
-  # This module has real third-party Go dependencies (fxamacker/cbor,
-  # idfoundry/fapigo — see go.mod), unlike FAPIgo's own dependabot.yml
-  # comment, which documents the opposite case for that zero-dependency
-  # module.
+  # The Go modules: this one, mobile/ (golang.org/x/mobile, for
+  # gomobile) and examples/passport-vdc. The other two use this one
+  # through a replace, so a dependency they share must move in all
+  # three at once, or CI's go mod tidy check fails: one pull request per
+  # dependency, across the directories that use it.
   - package-ecosystem: gomod
-    directory: /
+    directories:
+      - /
+      - /mobile
+      - /examples/passport-vdc
     schedule:
       interval: weekly
-
-  # mobile/ is its own module (golang.org/x/mobile, for gomobile).
-  - package-ecosystem: gomod
-    directory: /mobile
-    schedule:
-      interval: weekly
+    groups:
+      go-modules:
+        group-by: dependency-name
+        patterns:
+          - "*"
+    ignore:
+      # Pinned by hand after reading each release: a FAPIgo release with
+      # breaking or security changes is a fix(deps)! with a migration
+      # note (AGENTS.md), not a chore.
+      - dependency-name: github.com/idfoundry/fapigo
 
   # Keeps the pinned actions/checkout, actions/setup-go,
   # actions/upload-artifact, golang/govulncheck-action,
