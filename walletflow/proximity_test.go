@@ -5,13 +5,17 @@ import (
 	"crypto/ecdh"
 	"crypto/ecdsa"
 	"crypto/x509"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"testing"
 	"time"
 
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
+	"github.com/idfoundry/oid4vcgo/dcql"
+	"github.com/idfoundry/oid4vcgo/mdocdcapi"
 	"github.com/idfoundry/oid4vcgo/proximity"
+	"github.com/idfoundry/oid4vcgo/verifier"
 	"github.com/idfoundry/oid4vcgo/walletflow"
 	"github.com/idfoundry/oid4vcgo/walletflow/walletflowtest"
 )
@@ -344,9 +348,90 @@ func TestProximityPresentationDeviceAuth(t *testing.T) {
 			if v.Claims[walletflowtest.NameSpace]["family_name"] != walletflowtest.FamilyName {
 				t.Errorf("disclosed %v", v.Claims)
 			}
-			if wantAgreed := tc.want == mdoc.DeviceAuthMAC; (keys.agreed > 0) != wantAgreed {
+			if (keys.agreed > 0) != (tc.want == mdoc.DeviceAuthMAC) {
 				t.Errorf("agreed %d times", keys.agreed)
 			}
 		})
+	}
+}
+
+// ProximityDeviceMACPreferred is for in-person presentation only: an
+// OpenID4VP presentation, over the web or the DC API, and an org-iso-mdoc
+// DC API one have no EReaderKey (ISO/IEC TS 18013-7 Annex B and C), so
+// they sign even with a holder key that agrees keys — the verifiers here
+// accept only deviceSignature.
+func TestDeviceMACPreferredOnlyInPerson(t *testing.T) {
+	f := newFixture(t, walletflowtest.Options{})
+	v := f.env.StartVerifier(t)
+	reader := newMdocReader(t)
+	keys := &agreeingKeys{MemoryKeyStore: f.keys}
+	w, err := walletflow.New(walletflow.Config{
+		ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, IssuerRoots: f.env.IssuerRoots,
+		VerifierTrust: v.Trust, MdocReaderRoots: reader.roots, Development: true,
+		ProximityDeviceAuth: walletflow.ProximityDeviceMACPreferred,
+	}, walletflow.Dependencies{Keys: keys, Credentials: f.store, Provider: f.env.Provider, HTTP: f.env.HTTP})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	query := dcql.Query{Credentials: []dcql.CredentialQuery{mdocQuery(t, "mdl", "family_name")}}
+
+	t.Run("OpenID4VP", func(t *testing.T) {
+		receive(t, f, w, walletflowtest.MdocConfigurationID)
+		id, link := v.Begin(t, query)
+		p, err := w.StartPresentation(ctx, link)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sel, err := p.DefaultSelection(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := p.Respond(ctx, sel); err != nil {
+			t.Fatal(err)
+		}
+		if view := v.Lookup(t, id); view.Status != verifier.TransactionDone {
+			t.Fatalf("verifier = %+v", view)
+		}
+	})
+	t.Run("OpenID4VP DC API", func(t *testing.T) {
+		receive(t, f, w, walletflowtest.MdocConfigurationID)
+		r := v.BeginDCAPI(t, query, dcapiOrigin)
+		p, err := w.StartDCAPIPresentation(ctx, r.Protocol, r.Data, r.Origin)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sel, err := p.DefaultSelection(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		presented, err := p.Respond(ctx, sel)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := v.VerifyDCAPIResponse(ctx, r, presented.DCAPIResponse); err != nil {
+			t.Fatalf("the page refused the response: %v", err)
+		}
+	})
+	t.Run("org-iso-mdoc DC API", func(t *testing.T) {
+		mdocID := heldMdoc(t, receive(t, f, w, walletflowtest.MdocConfigurationID))
+		data, pending := reader.ask(t, shopOrigin)
+		p, err := w.StartMdocPresentation(ctx, data, shopOrigin)
+		if err != nil {
+			t.Fatal(err)
+		}
+		presented, err := p.Respond(ctx, 0, mdocID, familyName())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := mdocdcapi.VerifyResponse(ctx, mdocdcapi.VerifyParams{
+			Pending: pending, Response: base64.RawURLEncoding.EncodeToString(presented.EncryptedResponse),
+			IssuerKeys: verifier.X5ChainIssuerKeyResolver{Roots: f.env.IssuerRoots},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if keys.agreed != 0 {
+		t.Errorf("agreed keys %d times outside proximity", keys.agreed)
 	}
 }

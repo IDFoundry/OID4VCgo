@@ -10,6 +10,7 @@ import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyInfo
 import android.security.keystore.KeyProperties
 import android.security.keystore.StrongBoxUnavailableException
+import android.util.Log
 import androidx.annotation.RequiresApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
@@ -128,7 +129,15 @@ public class AndroidKeystoreKeyStore(
 
     /** Where keys are made. */
     public enum class StrongBox {
-        /** In StrongBox when the device has it, else the TEE. */
+        /**
+         * In StrongBox when the device makes the key there, else the TEE.
+         * Any StrongBox failure turns to the TEE, with a warning logged
+         * (tag `OID4VCWallet`); [securityLevel] says where a key is.
+         * Creating a key tries at most every storage, purpose set and
+         * digest set (8 generations for a holder key that agrees keys),
+         * each retried up to 3 times where Keystore reports its failure
+         * transient.
+         */
         PREFERRED,
 
         /** Only in StrongBox: creating a key fails on a device without it. */
@@ -166,7 +175,9 @@ public class AndroidKeystoreKeyStore(
          * for deviceMac in person
          * ([WalletConfiguration.ProximityDeviceAuth.MAC_PREFERRED]). It
          * needs API 31; below it, or where the hardware refuses a key for
-         * both, holder keys sign only, and the wallet signs. A holder key
+         * both, holder keys sign only, and the wallet signs. StrongBox
+         * comes first: a holder key StrongBox can't make for both is made
+         * there to sign, never moved to the TEE to agree keys. A holder key
          * that also requires the holder ([holderUserAuthentication]) signs
          * too: the holder is authenticated for a signature, not an
          * agreement.
@@ -180,22 +191,48 @@ public class AndroidKeystoreKeyStore(
     override val isDurable: Boolean get() = true
 
     override fun createKey(purpose: KeyPurpose): String {
-        val id = UUID.randomUUID().toString()
-        // API 31's: holder keys that also agree keys, for deviceMac. If the
-        // hardware refuses a key for both (some StrongBox or older
-        // KeyMint), it signs only, and the wallet signs.
-        if (purpose == KeyPurpose.HOLDER && options.holderKeyAgreement && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            try {
-                generate(id, purpose, KeyProperties.PURPOSE_SIGN or KeyProperties.PURPOSE_AGREE_KEY)
-                return id
-            } catch (e: GeneralSecurityException) {
-                keystore.deleteEntry(alias(id))
-            } catch (e: ProviderException) {
-                keystore.deleteEntry(alias(id))
-            }
+        if (options.strongBox == StrongBox.REQUIRED && Build.VERSION.SDK_INT < Build.VERSION_CODES.P) {
+            throw StoreException("StrongBox needs API 28")
         }
-        generate(id, purpose, KeyProperties.PURPOSE_SIGN)
-        return id
+        val id = UUID.randomUUID().toString()
+        val generator = KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_EC, PROVIDER)
+        val agree = purpose == KeyPurpose.HOLDER && options.holderKeyAgreement
+        var failure: Exception? = null
+        var noStrongBox = false
+        var toldTEE = false
+        for (attempt in keyAttempts(options.strongBox, agree, Build.VERSION.SDK_INT)) {
+            if (attempt.strongBox == true && noStrongBox) continue
+            if (attempt.strongBox == false && failure != null && options.strongBox == StrongBox.PREFERRED && !toldTEE) {
+                // Once, as the attempts turn to the TEE: where a key lives
+                // is securityLevel(id)'s to say.
+                Log.w(TAG, "StrongBox couldn't make a $purpose key (${failure.javaClass.simpleName}): making it in the TEE")
+                toldTEE = true
+            }
+            val e = tryGenerate(generator, id, purpose, attempt) ?: return id
+            failure = e
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && e is StrongBoxUnavailableException) noStrongBox = true
+        }
+        throw failure ?: StoreException("no key storage to try")
+    }
+
+    /**
+     * Generates key [id] as [attempt] says, checking it's really there;
+     * null when it is, else why not, the attempt's leftovers deleted.
+     */
+    private fun tryGenerate(generator: KeyPairGenerator, id: String, purpose: KeyPurpose, attempt: KeyAttempt): Exception? {
+        val purposes = if (attempt.agree) KeyProperties.PURPOSE_SIGN or KeyProperties.PURPOSE_AGREE_KEY else KeyProperties.PURPOSE_SIGN
+        return try {
+            generator.initialize(spec(id, purpose, purposes, attempt.digests.toTypedArray(), attempt.strongBox))
+            generateRetryingTransient(generator)
+            checkGenerated(id)
+            null
+        } catch (e: GeneralSecurityException) {
+            keystore.deleteEntry(alias(id))
+            e
+        } catch (e: ProviderException) {
+            keystore.deleteEntry(alias(id))
+            e
+        }
     }
 
     /**
@@ -216,56 +253,7 @@ public class AndroidKeystoreKeyStore(
         return agreement.generateSecret()
     }
 
-    /**
-     * Generates key [id] for [purposes]. Keystore implementations differ
-     * by vendor and chipset, and some fail key generation with errors the
-     * platform documents for none of these causes, so it tries each
-     * storage it may use ([Options.strongBox]: StrongBox, then the TEE),
-     * and in each the digest sets of [DIGEST_FALLBACKS], until one makes a
-     * key that is really there. The spec is kept to what the wallet needs —
-     * no attestation challenge, certificate subject or serial number, each
-     * of which fails generation on some devices.
-     */
-    private fun generate(id: String, purpose: KeyPurpose, purposes: Int) {
-        val generator = KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_EC, PROVIDER)
-        var failure: Exception? = null
-        for (strongBox in storages()) {
-            for (digests in DIGEST_FALLBACKS) {
-                try {
-                    generator.initialize(spec(id, purpose, purposes, digests, strongBox))
-                    generateRetryingTransient(generator)
-                    checkGenerated(id)
-                    return
-                } catch (e: GeneralSecurityException) {
-                    keystore.deleteEntry(alias(id))
-                    failure = e
-                } catch (e: ProviderException) {
-                    keystore.deleteEntry(alias(id))
-                    failure = e
-                    // No StrongBox: other digests won't find one.
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && e is StrongBoxUnavailableException) break
-                }
-            }
-        }
-        throw failure ?: StoreException("no key storage to try")
-    }
 
-    /**
-     * Whether each storage to try is StrongBox, in order; null below API
-     * 28, where StrongBox doesn't exist (PREFERRED is then the TEE, and
-     * REQUIRED fails, as on a device without it).
-     */
-    private fun storages(): List<Boolean?> {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) {
-            if (options.strongBox == StrongBox.REQUIRED) throw StoreException("StrongBox needs API 28")
-            return listOf(null)
-        }
-        return when (options.strongBox) {
-            StrongBox.OFF -> listOf(false)
-            StrongBox.REQUIRED -> listOf(true)
-            StrongBox.PREFERRED -> listOf(true, false)
-        }
-    }
 
     private fun spec(id: String, purpose: KeyPurpose, purposes: Int, digests: Array<String>, strongBox: Boolean?): KeyGenParameterSpec {
         val spec = KeyGenParameterSpec.Builder(alias(id), purposes)
@@ -412,13 +400,38 @@ public class AndroidKeystoreKeyStore(
         const val TRANSIENT_RETRIES = 3
         const val TRANSIENT_BACKOFF_MILLIS = 100L
 
-        // Go hands over a SHA-256 digest, which NONEwithECDSA signs as is:
-        // only DIGEST_NONE is needed. SHA-256 comes first, as keys always
-        // had it; some Keystore implementations fail generation for some
-        // digest sets, so NONE alone is tried next.
-        val DIGEST_FALLBACKS: List<Array<String>> = listOf(
-            arrayOf(KeyProperties.DIGEST_NONE, KeyProperties.DIGEST_SHA256),
-            arrayOf(KeyProperties.DIGEST_NONE),
-        )
+        const val TAG = "OID4VCWallet"
     }
+}
+
+/** One key generation [AndroidKeystoreKeyStore] tries: where, whether the key also agrees keys, and its digests. */
+internal data class KeyAttempt(val strongBox: Boolean?, val agree: Boolean, val digests: List<String>)
+
+// Go hands over a SHA-256 digest, which NONEwithECDSA signs as is: only
+// DIGEST_NONE is needed. SHA-256 comes first, as keys always had it; some
+// Keystore implementations fail generation for some digest sets, so NONE
+// alone is tried next.
+internal val DIGEST_FALLBACKS: List<List<String>> = listOf(
+    listOf(KeyProperties.DIGEST_NONE, KeyProperties.DIGEST_SHA256),
+    listOf(KeyProperties.DIGEST_NONE),
+)
+
+/**
+ * The key generations to try, in order, for [strongBox] on API level
+ * [apiLevel]: storage first (StrongBox, then the TEE, as [strongBox]
+ * allows; null below API 28, which has no StrongBox), so a holder key
+ * whose StrongBox can't agree keys is still made in StrongBox, to sign,
+ * before the TEE is tried — deviceMac never costs a key its StrongBox.
+ * Within a storage, a key that also agrees keys ([agree], from API 31)
+ * comes before one that only signs, each with every digest set.
+ */
+internal fun keyAttempts(strongBox: AndroidKeystoreKeyStore.StrongBox, agree: Boolean, apiLevel: Int): List<KeyAttempt> {
+    val storages: List<Boolean?> = when {
+        apiLevel < 28 -> listOf(null)
+        strongBox == AndroidKeystoreKeyStore.StrongBox.OFF -> listOf(false)
+        strongBox == AndroidKeystoreKeyStore.StrongBox.REQUIRED -> listOf(true)
+        else -> listOf(true, false)
+    }
+    val agreements = if (agree && apiLevel >= 31) listOf(true, false) else listOf(false)
+    return storages.flatMap { storage -> agreements.flatMap { a -> DIGEST_FALLBACKS.map { KeyAttempt(storage, a, it) } } }
 }

@@ -86,7 +86,8 @@ type KeyAgreer interface {
 // the mdoc's device key, agrees a key with eReaderKey
 // (DeviceSession.EReaderKey), and the DeviceResponse carries deviceMac
 // under the EMacKey derived from it. Unlike a signature, the reader can
-// check a MAC but can't show anyone else the holder made it.
+// check a MAC but can't show anyone else the holder made it; the
+// issuer-signed elements stay as provable as with a signature.
 func BuildDeviceResponseMAC(req DocRequest, issuerSigned mdoc.IssuerSigned, holder KeyAgreer, eReaderKey *ecdsa.PublicKey, sessionTranscriptBytes []byte, elements [][2]string) ([]byte, error) {
 	if err := checkRequested(req, elements); err != nil {
 		return nil, err

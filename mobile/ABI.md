@@ -492,7 +492,9 @@ reader by its certificate, or to a reader of that session alone when it
 didn't sign. The holder key signs during `Respond` — or, with
 `"proximity_device_auth": "mac_preferred"` and a KeyAgreement that can
 agree with it, agrees a key with the reader's ephemeral key for
-deviceMac, which the reader can check but can't show anyone else. An mDL must release
+deviceMac. The reader can check a MAC but can't prove to anyone else that
+the holder's device took part; the issuer-signed elements it receives
+stay as provable as with a signature. An mDL must release
 its mandatory elements to an unauthenticated reader (ISO/IEC 18013-5
 §7.2.1), so `require_trusted_mdoc_reader` suits other documents.
 

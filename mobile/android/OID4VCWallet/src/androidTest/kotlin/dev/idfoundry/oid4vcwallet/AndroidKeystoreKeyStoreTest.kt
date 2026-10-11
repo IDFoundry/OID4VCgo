@@ -87,7 +87,7 @@ class AndroidKeystoreKeyStoreTest {
     @SdkSuppress(minSdkVersion = Build.VERSION_CODES.R)
     fun holderKeyNeedsAuthentication() {
         assumeTrue("needs a secure lock screen", context.getSystemService(KeyguardManager::class.java).isDeviceSecure)
-        val digest = MessageDigest.getInstance("SHA-256").digest("presentation".toByteArray())
+        val digest = sha256().digest("presentation".toByteArray())
 
         // Without an authenticator, holder keys could never sign: refused up front.
         try {
@@ -120,7 +120,7 @@ class AndroidKeystoreKeyStoreTest {
         // Without it, keys work: the app authenticates the holder itself.
         val keys = store(holderAuth = false)
         val id = keys.createKey(KeyPurpose.HOLDER)
-        assertTrue(keys.sign(id, MessageDigest.getInstance("SHA-256").digest(byteArrayOf(1))).isNotEmpty())
+        assertTrue(keys.sign(id, sha256().digest(byteArrayOf(1))).isNotEmpty())
     }
 
     @Test
@@ -155,7 +155,7 @@ class AndroidKeystoreKeyStoreTest {
             doPhase(holderPub, true)
         }.generateSecret()
         assertArrayEquals(want, z)
-        assertTrue(keys.sign(id, MessageDigest.getInstance("SHA-256").digest(byteArrayOf(1))).isNotEmpty())
+        assertTrue(keys.sign(id, sha256().digest(byteArrayOf(1))).isNotEmpty())
         // Instance and DPoP keys never agree keys.
         val dpop = keys.createKey(KeyPurpose.DPOP)
         expectUnsupported { keys.agree(dpop, point) }
@@ -203,3 +203,5 @@ class AndroidKeystoreKeyStoreTest {
         }
     }
 }
+
+private fun sha256(): MessageDigest = MessageDigest.getInstance("SHA-256")

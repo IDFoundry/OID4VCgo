@@ -76,9 +76,10 @@ public struct WalletConfiguration: Codable, Sendable {
         /// The default.
         case signature
         /// The holder key agrees a key with the reader's ephemeral key and
-        /// the response carries a MAC (deviceMac), which the reader can
-        /// check but can't show anyone else; a holder key that can't agree
-        /// keys signs instead.
+        /// the response carries a MAC (deviceMac). The reader can check it
+        /// but can't prove to anyone else that this device took part; the
+        /// issuer-signed elements stay provable. A holder key that can't
+        /// agree keys signs instead.
         case macPreferred = "mac_preferred"
     }
 
