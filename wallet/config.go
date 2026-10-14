@@ -1,6 +1,7 @@
 package wallet
 
 import (
+	"crypto/x509"
 	"fmt"
 	"io"
 	"net/http"
@@ -51,6 +52,20 @@ type Config struct {
 	// can't judge. HAIP 1.0 §5.2 requires a Wallet to support them, so
 	// set it only where every Verifier must be one VerifierTrust accepts.
 	RequireSignedDCAPIRequests bool
+
+	// IssuerMetadataRoots are the trust anchors for signed Credential
+	// Issuer Metadata (OpenID4VCI §12.2.3, HAIP 1.0 §4.1). When set,
+	// FetchCredentialIssuerMetadata asks for the signed form, and uses
+	// a signed response only once its x5c chains to one of these and
+	// its sub names the issuer. An issuer that answers with plain JSON
+	// is still used, unless RequireSignedIssuerMetadata is set. When
+	// unset, a signed response is refused, since it can't be verified.
+	IssuerMetadataRoots *x509.CertPool
+
+	// RequireSignedIssuerMetadata refuses Credential Issuer Metadata
+	// that isn't signed by a certificate chaining to
+	// IssuerMetadataRoots, which it requires.
+	RequireSignedIssuerMetadata bool
 }
 
 // Clock supplies the current time — a plain function value satisfies
@@ -106,6 +121,9 @@ type Wallet struct {
 	cfg     Config
 	deps    Dependencies
 	fetcher *fapihttp.Client
+	// metadataFetcher fetches Credential Issuer Metadata: fetcher, or
+	// with IssuerMetadataRoots one that also asks for signed metadata.
+	metadataFetcher *fapihttp.Client
 }
 
 // New validates cfg and deps and returns a ready-to-use Wallet.
@@ -137,11 +155,21 @@ func New(cfg Config, deps Dependencies) (*Wallet, error) {
 		return nil, fmt.Errorf("wallet: dependencies: clock is required")
 	}
 
+	if cfg.RequireSignedIssuerMetadata && cfg.IssuerMetadataRoots == nil {
+		return nil, fmt.Errorf("wallet: config: require_signed_issuer_metadata needs issuer_metadata_roots")
+	}
+
 	fetcher, err := fapihttp.New(deps.HTTP, cfg.Fetch)
 	if err != nil {
 		return nil, fmt.Errorf("wallet: config: fetch: %w", err)
 	}
-	return &Wallet{cfg: cfg, deps: deps, fetcher: fetcher}, nil
+	w := &Wallet{cfg: cfg, deps: deps, fetcher: fetcher, metadataFetcher: fetcher}
+	if cfg.IssuerMetadataRoots != nil {
+		if w.metadataFetcher, err = newSignedMetadataFetcher(deps.HTTP, cfg.Fetch); err != nil {
+			return nil, fmt.Errorf("wallet: config: fetch: %w", err)
+		}
+	}
+	return w, nil
 }
 
 // defaultHTTPTimeout bounds each request of the HTTP client New builds

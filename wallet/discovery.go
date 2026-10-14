@@ -27,12 +27,22 @@ import (
 // simple string comparison with no normalization), the data contained
 // in the response MUST NOT be used") — otherwise a Credential Issuer
 // could vouch for metadata naming another issuer.
+//
+// With Config.IssuerMetadataRoots set, it asks for signed metadata
+// (§12.2.3) and verifies a signed response before using it; see
+// IssuerMetadataRoots and RequireSignedIssuerMetadata.
 func (w *Wallet) FetchCredentialIssuerMetadata(ctx context.Context, issuerURL string) (oid4vci.Metadata, error) {
 	target, err := wellKnownURL(issuerURL, "openid-credential-issuer", false)
 	if err != nil {
 		return oid4vci.Metadata{}, fmt.Errorf("wallet: fetch credential issuer metadata: %w", err)
 	}
-	res, err := w.fetcher.Fetch(ctx, fapihttp.FetchRequest{URL: target, ExpectedContentType: "application/json"})
+	res, err := w.metadataFetcher.Fetch(ctx, fapihttp.FetchRequest{
+		URL: target, ExpectedContentType: "application/json", AlternateContentTypes: []string{"application/jwt"},
+	})
+	if err != nil {
+		return oid4vci.Metadata{}, fmt.Errorf("wallet: fetch credential issuer metadata: %w", err)
+	}
+	body, err := w.metadataJSON(res.Body, issuerURL)
 	if err != nil {
 		return oid4vci.Metadata{}, fmt.Errorf("wallet: fetch credential issuer metadata: %w", err)
 	}
@@ -45,7 +55,7 @@ func (w *Wallet) FetchCredentialIssuerMetadata(ctx context.Context, issuerURL st
 	var identity struct {
 		CredentialIssuer string `json:"credential_issuer"`
 	}
-	if err := json.Unmarshal(res.Body, &identity); err != nil {
+	if err := json.Unmarshal(body, &identity); err != nil {
 		return oid4vci.Metadata{}, fmt.Errorf("wallet: fetch credential issuer metadata: decode: %w", err)
 	}
 	if identity.CredentialIssuer != issuerURL {
@@ -55,7 +65,7 @@ func (w *Wallet) FetchCredentialIssuerMetadata(ctx context.Context, issuerURL st
 	if w.cfg.Fetch.AllowLoopbackHTTP {
 		opts = append(opts, fapi.AllowLoopbackHTTP())
 	}
-	meta, err := oid4vci.DecodeMetadata(res.Body, opts...)
+	meta, err := oid4vci.DecodeMetadata(body, opts...)
 	if err != nil {
 		return oid4vci.Metadata{}, fmt.Errorf("wallet: fetch credential issuer metadata: decode: %w", err)
 	}
