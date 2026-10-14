@@ -1,6 +1,7 @@
 package verifier
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/idfoundry/oid4vcgo/statuslist"
@@ -16,9 +17,15 @@ import (
 // caller that checks status when ok doesn't skip it.
 //
 //	ref, cwt, ok, err := vc.StatusListRef()
-//	if ok {
-//		status, _, err = checker.Check(ctx, ref, cwt)
+//	if err == nil && ok {
+//		err = checker.RequireValid(ctx, ref, cwt)
 //	}
+//	if err != nil {
+//		// refuse vc: revoked, suspended, or its status unreadable
+//	}
+//
+// RequireValidStatus does this for every credential in an answer, as a
+// TransactionsConfig.Accept.
 func (vc VerifiedCredential) StatusListRef() (ref statuslist.StatusListRef, cwt, ok bool, err error) {
 	if vc.MdocStatus != nil {
 		sl := vc.MdocStatus.StatusList
@@ -40,4 +47,26 @@ func (vc VerifiedCredential) StatusListRef() (ref statuslist.StatusListRef, cwt,
 		return statuslist.StatusListRef{}, false, false, err
 	}
 	return ref, false, true, nil
+}
+
+// RequireValidStatus is a TransactionsConfig.Accept that checks the
+// status of every credential in an answer that carries a status list
+// reference, with checker: an answer is refused when any of them isn't
+// VALID (statuslist.NotValidError), when a status can't be read, or
+// when a reference is malformed or uses a mechanism this package can't
+// check. A credential with no status reference passes: it has no
+// status to check.
+func RequireValidStatus(checker statuslist.Checker) func(ctx context.Context, id string, result VerifyResponseResult) error {
+	return func(ctx context.Context, _ string, result VerifyResponseResult) error {
+		for _, vc := range result.Credentials {
+			ref, cwt, ok, err := vc.StatusListRef()
+			if err == nil && ok {
+				err = checker.RequireValid(ctx, ref, cwt)
+			}
+			if err != nil {
+				return fmt.Errorf("verifier: credential status: %w", err)
+			}
+		}
+		return nil
+	}
 }

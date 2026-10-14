@@ -163,9 +163,9 @@ type TransactionsConfig struct {
 	// for another answer.
 	//
 	// Nothing else checks revocation: without an Accept that does, a
-	// revoked credential is accepted. A production Verifier sets one
-	// that checks each credential's StatusListRef, and refuses one whose
-	// status can't be read rather than taking it as valid.
+	// revoked credential is accepted. RequireValidStatus is one that
+	// checks each credential's status list reference, and refuses one
+	// whose status can't be read rather than taking it as valid.
 	//
 	// Accept runs before the request completes atomically, so when two
 	// answers to one request arrive together, both can be accepted and
