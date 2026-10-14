@@ -402,7 +402,7 @@ func decodeRaw(sign1 []byte, maxBytes int) (rawSign1, error) {
 		return rawSign1{}, fmt.Errorf("cose: COSE_Sign1 is %d bytes, exceeds the %d byte limit", len(sign1), maxBytes)
 	}
 	var raw rawSign1
-	if err := cbor.Unmarshal(sign1, &raw); err != nil {
+	if err := decMode.Unmarshal(sign1, &raw); err != nil {
 		return rawSign1{}, fmt.Errorf("cose: unmarshal COSE_Sign1: %w", err)
 	}
 	return raw, nil
@@ -468,7 +468,7 @@ func stripSign1Tag(sign1 []byte, maxBytes int) ([]byte, error) {
 		return nil, fmt.Errorf("cose: COSE_Sign1_Tagged is %d bytes, exceeds the %d byte limit", len(sign1), maxBytes)
 	}
 	var raw cbor.RawTag
-	if err := cbor.Unmarshal(sign1, &raw); err != nil {
+	if err := decMode.Unmarshal(sign1, &raw); err != nil {
 		return nil, fmt.Errorf("cose: unmarshal COSE_Sign1_Tagged: %w", err)
 	}
 	if raw.Number != sign1Tag {
@@ -479,7 +479,7 @@ func stripSign1Tag(sign1 []byte, maxBytes int) ([]byte, error) {
 
 func (raw rawSign1) headers() (protected, unprotected Headers, err error) {
 	var protectedMap map[int]interface{}
-	if err := cbor.Unmarshal(raw.Protected, &protectedMap); err != nil {
+	if err := decMode.Unmarshal(raw.Protected, &protectedMap); err != nil {
 		return Headers{}, Headers{}, fmt.Errorf("cose: unmarshal protected headers: %w", err)
 	}
 	protected, err = headersFromMap(protectedMap)
@@ -559,3 +559,19 @@ func verifyBytes(alg Alg, pub crypto.PublicKey, toVerify, sig []byte) error {
 		return fmt.Errorf("cose: unsupported algorithm %d", alg)
 	}
 }
+
+// decMode decodes the COSE structures this package parses, before any
+// signature is checked, with bounds: nesting, elements per array and
+// pairs per map, and no duplicate map key.
+var decMode = func() cbor.DecMode {
+	mode, err := cbor.DecOptions{
+		MaxNestedLevels:  16,
+		MaxArrayElements: 4096,
+		MaxMapPairs:      4096,
+		DupMapKey:        cbor.DupMapKeyEnforcedAPF,
+	}.DecMode()
+	if err != nil {
+		panic("cose: build CBOR decoder: " + err.Error())
+	}
+	return mode
+}()

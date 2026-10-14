@@ -28,9 +28,26 @@ func mustEncMode() cbor.EncMode {
 	return mode
 }
 
+// MaxCBORNestedLevels and MaxCBORContainerItems bound the CBOR this
+// package decodes: how deeply items nest, and how many elements an
+// array, or pairs a map, may hold. Duplicate map keys are refused.
+const (
+	MaxCBORNestedLevels   = 16
+	MaxCBORContainerItems = 4096
+)
+
 func mustDecMode() cbor.DecMode {
 	mode, err := cbor.DecOptions{
 		TimeTag: cbor.DecTagRequired,
+		// Bounds on what an untrusted IssuerSigned or DeviceResponse
+		// can make the decoder build before any signature is checked:
+		// the library's defaults (131 072 elements or pairs per item)
+		// let a 1 MB response of empty maps decode to ~60 MB. Real
+		// mdocs hold hundreds of elements at most.
+		MaxNestedLevels:  MaxCBORNestedLevels,
+		MaxArrayElements: MaxCBORContainerItems,
+		MaxMapPairs:      MaxCBORContainerItems,
+		DupMapKey:        cbor.DupMapKeyEnforcedAPF,
 	}.DecMode()
 	if err != nil {
 		panic(fmt.Sprintf("mdoc: build CBOR decoder: %v", err))

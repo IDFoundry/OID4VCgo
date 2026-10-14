@@ -111,7 +111,7 @@ func UnmarshalDeviceResponseMax(data []byte, maxBytes int) (Document, error) {
 		return Document{}, fmt.Errorf("oid4vpmdoc: device response is %d bytes, exceeds the %d byte limit", len(data), maxBytes)
 	}
 	var wire wireDeviceResponse
-	if err := cbor.Unmarshal(data, &wire); err != nil {
+	if err := decMode.Unmarshal(data, &wire); err != nil {
 		return Document{}, fmt.Errorf("oid4vpmdoc: unmarshal device response: %w", err)
 	}
 	if wire.Status != mdocResponseStatusOK {
@@ -137,3 +137,18 @@ func UnmarshalDeviceResponseMax(data []byte, maxBytes int) (Document, error) {
 	}
 	return Document{DocType: d.DocType, IssuerSigned: issuerSigned, DeviceSigned: deviceSigned}, nil
 }
+
+// decMode decodes an untrusted DeviceResponse within credential/mdoc's
+// bounds, before any signature is checked.
+var decMode = func() cbor.DecMode {
+	mode, err := cbor.DecOptions{
+		MaxNestedLevels:  mdoc.MaxCBORNestedLevels,
+		MaxArrayElements: mdoc.MaxCBORContainerItems,
+		MaxMapPairs:      mdoc.MaxCBORContainerItems,
+		DupMapKey:        cbor.DupMapKeyEnforcedAPF,
+	}.DecMode()
+	if err != nil {
+		panic("oid4vpmdoc: build CBOR decoder: " + err.Error())
+	}
+	return mode
+}()

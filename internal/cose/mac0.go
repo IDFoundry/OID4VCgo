@@ -5,8 +5,6 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
-
-	"github.com/fxamacker/cbor/v2"
 )
 
 // HMAC256 is "HMAC 256/256" (HMAC using SHA-256, truncated to 256
@@ -92,7 +90,7 @@ func VerifyMACMax(key []byte, mac0, detachedPayload, externalAAD []byte, maxByte
 		return Headers{}, Headers{}, fmt.Errorf("cose: COSE_Mac0 is %d bytes, exceeds the %d byte limit", len(mac0), maxBytes)
 	}
 	var raw rawMac0
-	if unmarshalErr := cbor.Unmarshal(mac0, &raw); unmarshalErr != nil {
+	if unmarshalErr := decMode.Unmarshal(mac0, &raw); unmarshalErr != nil {
 		return Headers{}, Headers{}, fmt.Errorf("cose: unmarshal COSE_Mac0: %w", unmarshalErr)
 	}
 	if raw.Payload != nil {
@@ -100,7 +98,7 @@ func VerifyMACMax(key []byte, mac0, detachedPayload, externalAAD []byte, maxByte
 	}
 
 	var protectedMap map[int]interface{}
-	if unmarshalErr := cbor.Unmarshal(raw.Protected, &protectedMap); unmarshalErr != nil {
+	if unmarshalErr := decMode.Unmarshal(raw.Protected, &protectedMap); unmarshalErr != nil {
 		return Headers{}, Headers{}, fmt.Errorf("cose: unmarshal protected headers: %w", unmarshalErr)
 	}
 	protected, err = headersFromMap(protectedMap)
