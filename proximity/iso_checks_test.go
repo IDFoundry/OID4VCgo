@@ -140,3 +140,27 @@ func TestReaderPrefersCentralClient(t *testing.T) {
 		t.Errorf("BLEMode %v, UUID %s; want central client with its UUID", r.BLEMode(), r.ServiceUUID())
 	}
 }
+
+// WithIssuerRootsByDocType holds a document type to its own anchors:
+// an mDL whose issuer chains only to the anchors Verify is given is
+// refused when the type's own anchors are another IACA, and accepted
+// when they're its own, even though the given anchors lack it.
+func TestIssuerRootsByDocType(t *testing.T) {
+	signed := time.Now().Add(-time.Minute)
+	fx := issueUnder(t, pkix.Name{CommonName: "mDL IACA", Country: []string{"US"}}, pkix.Name{CommonName: "mDL DS", Country: []string{"US"}}, signed)
+	other := issueUnder(t, pkix.Name{CommonName: "PID IACA", Country: []string{"DE"}}, pkix.Name{CommonName: "PID DS", Country: []string{"DE"}}, signed)
+	verify := func(given *x509.CertPool, byType map[string]*x509.CertPool) error {
+		f := establishReader(t, mDL, map[string][]string{mDLNS: {"age_over_18"}}, WithIssuerRootsByDocType(byType))
+		_, err := f.reader.Verify(f.respond(t, fx, [][2]string{{mDLNS, "age_over_18"}}), given, time.Now())
+		return err
+	}
+	if err := verify(fx.roots, map[string]*x509.CertPool{mDL: other.roots}); err == nil {
+		t.Error("an mDL accepted from an anchor the mDL type isn't given")
+	}
+	if err := verify(other.roots, map[string]*x509.CertPool{mDL: fx.roots}); err != nil {
+		t.Errorf("an mDL from its type's own anchor: %v", err)
+	}
+	if err := verify(fx.roots, map[string]*x509.CertPool{"org.example.other": other.roots}); err != nil {
+		t.Errorf("a type the map doesn't name, under the given anchors: %v", err)
+	}
+}

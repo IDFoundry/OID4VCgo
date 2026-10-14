@@ -9,6 +9,7 @@ import (
 	"encoding/asn1"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"time"
 
@@ -33,6 +34,7 @@ type ReaderSession struct {
 	readerAuth             *readerKey
 	maxClockSkew           time.Duration
 	signerPolicy           func(leaf *x509.Certificate, chains [][]*x509.Certificate) error
+	rootsByDocType         map[string]*x509.CertPool
 
 	docType   string
 	requested requestedSet
@@ -41,9 +43,10 @@ type ReaderSession struct {
 }
 
 type readerConfig struct {
-	readerAuth   *readerKey
-	maxClockSkew time.Duration
-	signerPolicy func(leaf *x509.Certificate, chains [][]*x509.Certificate) error
+	readerAuth     *readerKey
+	maxClockSkew   time.Duration
+	signerPolicy   func(leaf *x509.Certificate, chains [][]*x509.Certificate) error
+	rootsByDocType map[string]*x509.CertPool
 }
 
 // ReaderOption configures NewReaderSession.
@@ -81,6 +84,16 @@ func WithMaxClockSkew(d time.Duration) ReaderOption {
 // nothing.
 func WithDocumentSignerPolicy(policy func(leaf *x509.Certificate, chains [][]*x509.Certificate) error) ReaderOption {
 	return func(c *readerConfig) { c.signerPolicy = policy }
+}
+
+// WithIssuerRootsByDocType holds each document type to its own trust
+// anchors: Verify checks a document of a type roots names against that
+// type's anchors instead of the roots it's given. Without it, every
+// anchor Verify is given may sign every document type, a PID issuer's
+// an mDL, say: where the anchors come from different ecosystems, name
+// each one's types here.
+func WithIssuerRootsByDocType(roots map[string]*x509.CertPool) ReaderOption {
+	return func(c *readerConfig) { c.rootsByDocType = maps.Clone(roots) }
 }
 
 // DefaultDocumentSignerPolicy is the document signer check Verify makes
@@ -153,6 +166,7 @@ func NewReaderSession(qr string, opts ...ReaderOption) (*ReaderSession, error) {
 		}
 	}
 	r.readerAuth, r.maxClockSkew, r.signerPolicy = cfg.readerAuth, cfg.maxClockSkew, cfg.signerPolicy
+	r.rootsByDocType = cfg.rootsByDocType
 	return r, nil
 }
 
@@ -344,6 +358,9 @@ func (r *ReaderSession) verifyDocument(doc responseDocument, roots *x509.CertPoo
 	chain := unprotected.X5Chain
 	if len(chain) == 0 {
 		return Verified{}, fmt.Errorf("proximity: IssuerAuth has no x5chain")
+	}
+	if byType, ok := r.rootsByDocType[doc.docType]; ok && byType != nil {
+		roots = byType
 	}
 	leaf, chains, err := certchain.VerifyChainsAt(chain, roots, now)
 	if err != nil {
