@@ -516,9 +516,16 @@ may be nil for a reader that doesn't sign. Its `Start(qrCode)` begins a
 `ProximityReaderSession` for the holder's QR code. A QR code the reader
 can't use is `invalid_input`.
 
-The configuration is `{"issuer_roots", "reader_key_id", "reader_chain",
-"max_clock_skew_seconds", "require_mdl_signer_eku"}`:
-- `issuer_roots` (PEM) are the IACAs whose mdocs are accepted.
+The configuration is `{"issuer_roots", "issuer_roots_by_doctype",
+"reader_key_id", "reader_chain", "max_clock_skew_seconds",
+"require_mdl_signer_eku"}`:
+- `issuer_roots` (PEM) are the IACAs whose mdocs are accepted, of any
+  document type `issuer_roots_by_doctype` doesn't name.
+- `issuer_roots_by_doctype` (an object of document type to PEM) are each
+  document type's own IACAs: a document of a type it names must chain to
+  them, not to `issuer_roots`, so an issuer trusted for one document type
+  can't sign another. With it, `issuer_roots` is optional, and then only
+  the types it names are accepted. Additive within ABI 12.
 - With `reader_key_id` (a P-256 key in `keys`) and `reader_chain` (PEM,
   leaf first, the leaf certifying that key), each request is signed
   (reader authentication, §9.1.4), so the holder sees who is asking.

@@ -204,6 +204,7 @@ func TestNewProximityReader_Refuses(t *testing.T) {
 		"no KeyStore":        {good, nil},
 		"another key":        {good, otherKS},
 		"skew over an hour":  {`{"issuer_roots": ` + mustJSON(issuerRootsPEM(t, h)) + `, "max_clock_skew_seconds": 7200}`, nil},
+		"bad by-doctype PEM": {`{"issuer_roots_by_doctype": {"org.example.test.1": "not PEM"}}`, nil},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := NewProximityReader(tc.cfg, tc.ks); code(err) != CodeInvalidInput {
@@ -217,6 +218,16 @@ func TestNewProximityReader_Refuses(t *testing.T) {
 	}
 	if _, err := rd.Start("mdoc:AAAA"); code(err) != CodeInvalidInput {
 		t.Errorf("Start with a bad QR code: %v, want %s", err, CodeInvalidInput)
+	}
+}
+
+// issuer_roots_by_doctype alone is a configuration: issuer_roots is
+// optional with it.
+func TestNewProximityReader_RootsByDocType(t *testing.T) {
+	h := newHarness(t, false)
+	cfg := `{"issuer_roots_by_doctype": {"org.example.test.1": ` + mustJSON(issuerRootsPEM(t, h)) + `}}`
+	if _, err := NewProximityReader(cfg, nil); err != nil {
+		t.Errorf("NewProximityReader with issuer_roots_by_doctype only: %v", err)
 	}
 }
 

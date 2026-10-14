@@ -527,26 +527,36 @@ public struct ProximityReaderConfiguration: Codable, Sendable {
     public var maxClockSkewSeconds: Int?
     /// Accepts only document signers with the mDL document signer extended key usage.
     public var requireMDLSignerEKU: Bool
+    /// Each document type's own IACAs, as PEM certificates: a document of a
+    /// type named here must chain to them, not to `issuerRoots`, so an
+    /// issuer trusted for one document type can't sign another. With it,
+    /// `issuerRoots` may be empty, and then only the types named here are
+    /// accepted.
+    public var issuerRootsByDocType: [String: String]
 
     /// A configuration accepting mdocs under `issuerRoots`; with `readerKeyID`
     /// and `readerChain`, requests are signed.
     public init(issuerRoots: String, readerKeyID: String? = nil, readerChain: String? = nil,
-                maxClockSkewSeconds: Int? = nil, requireMDLSignerEKU: Bool = false) {
+                maxClockSkewSeconds: Int? = nil, requireMDLSignerEKU: Bool = false,
+                issuerRootsByDocType: [String: String] = [:]) {
         self.issuerRoots = issuerRoots
         self.readerKeyID = readerKeyID
         self.readerChain = readerChain
         self.maxClockSkewSeconds = maxClockSkewSeconds
         self.requireMDLSignerEKU = requireMDLSignerEKU
+        self.issuerRootsByDocType = issuerRootsByDocType
     }
 
     enum CodingKeys: String, CodingKey {
         case issuerRoots = "issuer_roots", readerKeyID = "reader_key_id", readerChain = "reader_chain"
         case maxClockSkewSeconds = "max_clock_skew_seconds", requireMDLSignerEKU = "require_mdl_signer_eku"
+        case issuerRootsByDocType = "issuer_roots_by_doctype"
     }
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        issuerRoots = try c.decode(String.self, forKey: .issuerRoots)
+        issuerRootsByDocType = try c.decodeIfPresent([String: String].self, forKey: .issuerRootsByDocType) ?? [:]
+        issuerRoots = try c.decodeIfPresent(String.self, forKey: .issuerRoots) ?? ""
         readerKeyID = try c.decodeIfPresent(String.self, forKey: .readerKeyID)
         readerChain = try c.decodeIfPresent(String.self, forKey: .readerChain)
         maxClockSkewSeconds = try c.decodeIfPresent(Int.self, forKey: .maxClockSkewSeconds)

@@ -28,8 +28,15 @@ type ProximityReader struct {
 // proximityReaderConfig is NewProximityReader's configuration.
 type proximityReaderConfig struct {
 	// IssuerRoots are PEM certificates: the IACAs whose mdocs the
-	// reader accepts.
-	IssuerRoots string `json:"issuer_roots"`
+	// reader accepts, of any document type IssuerRootsByDocType doesn't
+	// name. Optional when IssuerRootsByDocType is set: then only its
+	// types are accepted.
+	IssuerRoots string `json:"issuer_roots,omitempty"`
+	// IssuerRootsByDocType are each document type's own IACAs, as PEM
+	// certificates: a document of a type it names must chain to them,
+	// not to IssuerRoots, so an issuer trusted for one document type
+	// can't sign another.
+	IssuerRootsByDocType map[string]string `json:"issuer_roots_by_doctype,omitempty"`
 	// ReaderKeyID names the reader's key in the KeyStore, and
 	// ReaderChain is its PEM certificate chain, leaf first: with both,
 	// requests are signed (reader authentication), so a holder sees who
@@ -46,7 +53,7 @@ type proximityReaderConfig struct {
 }
 
 // NewProximityReader configures a reader from configJSON: {"abi",
-// "issuer_roots", "reader_key_id", "reader_chain",
+// "issuer_roots", "issuer_roots_by_doctype", "reader_key_id", "reader_chain",
 // "max_clock_skew_seconds", "require_mdl_signer_eku"}. keys holds the
 // reader's key, reader_key_id; it may be nil for a reader that doesn't
 // sign.
@@ -55,11 +62,25 @@ func NewProximityReader(configJSON string, keys KeyStore) (*ProximityReader, err
 	if err := json.Unmarshal([]byte(configJSON), &cfg); err != nil {
 		return nil, newError(CodeInvalidInput, fmt.Errorf("reader config: %w", err))
 	}
-	roots, err := certPool(cfg.IssuerRoots)
-	if err != nil {
-		return nil, newError(CodeInvalidInput, fmt.Errorf("issuer_roots: %w", err))
+	var roots *x509.CertPool
+	if cfg.IssuerRoots != "" || len(cfg.IssuerRootsByDocType) == 0 {
+		var err error
+		if roots, err = certPool(cfg.IssuerRoots); err != nil {
+			return nil, newError(CodeInvalidInput, fmt.Errorf("issuer_roots: %w", err))
+		}
 	}
 	r := &ProximityReader{roots: roots, clock: time.Now}
+	if len(cfg.IssuerRootsByDocType) > 0 {
+		byType := make(map[string]*x509.CertPool, len(cfg.IssuerRootsByDocType))
+		for docType, pemText := range cfg.IssuerRootsByDocType {
+			pool, err := certPool(pemText)
+			if err != nil {
+				return nil, newError(CodeInvalidInput, fmt.Errorf("issuer_roots_by_doctype[%q]: %w", docType, err))
+			}
+			byType[docType] = pool
+		}
+		r.opts = append(r.opts, proximity.WithIssuerRootsByDocType(byType))
+	}
 	if cfg.MaxClockSkewSeconds != 0 {
 		r.opts = append(r.opts, proximity.WithMaxClockSkew(time.Duration(cfg.MaxClockSkewSeconds)*time.Second))
 	}

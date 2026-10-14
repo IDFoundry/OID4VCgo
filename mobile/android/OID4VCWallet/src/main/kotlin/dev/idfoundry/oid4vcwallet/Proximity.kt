@@ -515,6 +515,14 @@ public data class ProximityReaderConfiguration(
     @SerialName("max_clock_skew_seconds") val maxClockSkewSeconds: Long? = null,
     /** Accepts only document signers with the mDL document signer extended key usage. */
     @SerialName("require_mdl_signer_eku") val requireMDLSignerEKU: Boolean = false,
+    /**
+     * Each document type's own IACAs, as PEM certificates: a document of
+     * a type named here must chain to them, not to [issuerRoots], so an
+     * issuer trusted for one document type can't sign another. With it,
+     * [issuerRoots] may be empty, and then only the types named here are
+     * accepted.
+     */
+    @SerialName("issuer_roots_by_doctype") val issuerRootsByDocType: Map<String, String> = emptyMap(),
 )
 
 /**
