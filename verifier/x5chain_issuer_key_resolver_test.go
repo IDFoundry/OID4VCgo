@@ -75,3 +75,42 @@ func TestX5ChainIssuerKeyResolver_RejectsMalformedEntry(t *testing.T) {
 		t.Error("ResolveMdocIssuerKey accepted a malformed x5chain entry")
 	}
 }
+
+// RootsByDocType holds each document type to its own anchors: an
+// issuer trusted for PIDs can't sign an mDL, and a type it doesn't
+// name falls back to Roots, or is refused without Roots.
+func TestX5ChainIssuerKeyResolver_RootsByDocType(t *testing.T) {
+	const mdl, pid, other = "org.iso.18013.5.1.mDL", "eu.europa.ec.eudi.pid.1", "org.example.other"
+	mdlCA, mdlCAKey := verifiertest.ContractCA(t, "mDL CA")
+	pidCA, pidCAKey := verifiertest.ContractCA(t, "PID CA")
+	mdlLeaf, _ := verifiertest.ContractLeaf(t, "mDL signer", mdlCA, mdlCAKey)
+	pidLeaf, _ := verifiertest.ContractLeaf(t, "PID signer", pidCA, pidCAKey)
+	pool := func(c *x509.Certificate) *x509.CertPool {
+		p := x509.NewCertPool()
+		p.AddCert(c)
+		return p
+	}
+	ctx := context.Background()
+	byType := verifier.X5ChainIssuerKeyResolver{RootsByDocType: map[string]*x509.CertPool{mdl: pool(mdlCA), pid: pool(pidCA)}}
+	for name, tc := range map[string]struct {
+		r       verifier.X5ChainIssuerKeyResolver
+		leaf    *x509.Certificate
+		docType string
+		ok      bool
+	}{
+		"mDL signer, mDL":          {byType, mdlLeaf, mdl, true},
+		"PID signer, PID":          {byType, pidLeaf, pid, true},
+		"PID signer, mDL":          {byType, pidLeaf, mdl, false},
+		"mDL signer, PID":          {byType, mdlLeaf, pid, false},
+		"unnamed type, no Roots":   {byType, mdlLeaf, other, false},
+		"unnamed type, Roots":      {verifier.X5ChainIssuerKeyResolver{Roots: pool(pidCA), RootsByDocType: byType.RootsByDocType}, pidLeaf, other, true},
+		"named type ignores Roots": {verifier.X5ChainIssuerKeyResolver{Roots: pool(pidCA), RootsByDocType: byType.RootsByDocType}, pidLeaf, mdl, false},
+		"neither":                  {verifier.X5ChainIssuerKeyResolver{}, mdlLeaf, mdl, false},
+	} {
+		_, _, err := tc.r.ResolveMdocIssuerKey(ctx, x5chainOf(tc.leaf), tc.docType)
+		_, chainsErr := tc.r.ResolveMdocIssuerChains(ctx, x5chainOf(tc.leaf), tc.docType)
+		if (err == nil) != tc.ok || (chainsErr == nil) != tc.ok {
+			t.Errorf("%s: key %v, chains %v; want ok=%v", name, err, chainsErr, tc.ok)
+		}
+	}
+}
