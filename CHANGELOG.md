@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.41.1](https://github.com/IDFoundry/OID4VCgo/compare/v0.41.0...v0.41.1) (2026-10-14)
+
+
+### Bug Fixes
+
+* **wallet:** name always-disclosed claims in a selection's preview too ([0afdb2c](https://github.com/IDFoundry/OID4VCgo/commit/0afdb2c5e86c8078e34d93d6e45440893332d9d6))
+
 ## [0.41.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.40.1...v0.41.0) (2026-10-13)
 
 
