@@ -131,6 +131,11 @@ type Checker struct {
 // form when cwt is true (an mdoc's reference), the JWT form otherwise
 // (an SD-JWT VC's — SD-JWT VC requires a JWT Status List Token).
 func (c Checker) Check(ctx context.Context, ref StatusListRef, cwt bool) (StatusType, TokenClaims, error) {
+	return failClosed(c.check(ctx, ref, cwt))
+}
+
+// check is Checker.Check, before failClosed.
+func (c Checker) check(ctx context.Context, ref StatusListRef, cwt bool) (StatusType, TokenClaims, error) {
 	if c.Roots == nil {
 		return 0, TokenClaims{}, errors.New("statuslist: Checker.Roots is required")
 	}
@@ -146,6 +151,33 @@ func (c Checker) Check(ctx context.Context, ref StatusListRef, cwt bool) (Status
 		return CheckCWTX5Chain(token, c.Roots, ref, c.Options)
 	}
 	return CheckX5C(string(token), c.Roots, ref, c.Options)
+}
+
+// NotValidError is RequireValid's error for a Referenced Token whose
+// status could be read and isn't VALID: revoked (INVALID), suspended,
+// or an application-specific value.
+type NotValidError struct {
+	Status StatusType
+}
+
+func (e *NotValidError) Error() string {
+	return "statuslist: the referenced token's status is " + e.Status.String()
+}
+
+// RequireValid checks ref as Check does, and returns nil only when the
+// Referenced Token's status is VALID: a *NotValidError for any other
+// status, and Check's error when the status can't be read. Prefer it to
+// Check where VALID is the only acceptable answer: there's no status to
+// misread.
+func (c Checker) RequireValid(ctx context.Context, ref StatusListRef, cwt bool) error {
+	status, _, err := c.Check(ctx, ref, cwt)
+	if err != nil {
+		return err
+	}
+	if status != StatusValid {
+		return &NotValidError{Status: status}
+	}
+	return nil
 }
 
 // transport returns rt with f's address policy applied to its

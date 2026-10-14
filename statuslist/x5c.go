@@ -64,6 +64,11 @@ func signerChain(signer crypto.Signer, chain []*x509.Certificate) ([][]byte, err
 // chain must verify to one of roots, and its leaf must not be
 // self-signed; the leaf's key then validates the token.
 func CheckX5C(token string, roots *x509.CertPool, ref StatusListRef, opts VerifyOptions) (StatusType, TokenClaims, error) {
+	return failClosed(checkX5C(token, roots, ref, opts))
+}
+
+// checkX5C is CheckX5C, before failClosed.
+func checkX5C(token string, roots *x509.CertPool, ref StatusListRef, opts VerifyOptions) (StatusType, TokenClaims, error) {
 	header, _, err := jose.DecodeUnverifiedMax(token, maxTokenBytes)
 	if err != nil {
 		return 0, TokenClaims{}, fmt.Errorf("statuslist: decode token: %w", err)
@@ -93,6 +98,11 @@ func CheckX5C(token string, roots *x509.CertPool, ref StatusListRef, opts Verify
 // (IssueTokenCWTX5Chain) — protected or, as RFC 9360 allows,
 // unprotected; tagged or untagged.
 func CheckCWTX5Chain(token []byte, roots *x509.CertPool, ref StatusListRef, opts VerifyOptions) (StatusType, TokenClaims, error) {
+	return failClosed(checkCWTX5Chain(token, roots, ref, opts))
+}
+
+// checkCWTX5Chain is CheckCWTX5Chain, before failClosed.
+func checkCWTX5Chain(token []byte, roots *x509.CertPool, ref StatusListRef, opts VerifyOptions) (StatusType, TokenClaims, error) {
 	decode := cose.DecodeUnverifiedMax
 	if len(token) > 0 && token[0] == coseSign1TagByte {
 		decode = cose.DecodeUnverifiedTaggedMax

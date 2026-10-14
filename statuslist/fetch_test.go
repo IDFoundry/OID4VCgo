@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -251,3 +252,51 @@ func TestFetcher_TransportHooksCantBypass(t *testing.T) {
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// A status that can't be read comes back as INVALID with its error,
+// never as the zero value VALID: a caller reading the status without
+// the error still refuses. RequireValid returns nil only for VALID.
+func TestChecker_FailsClosed(t *testing.T) {
+	srv, roots := statusServer(t)
+	c := Checker{Fetcher: Fetcher{HTTP: srv.Client(), AllowLoopback: true}, Roots: roots}
+	ctx := context.Background()
+	other := x509.NewCertPool()
+	otherCA, _ := testcert.CA(t, "unrelated CA")
+	other.AddCert(otherCA)
+	for name, check := range map[string]func() (StatusType, TokenClaims, error){
+		"no roots": func() (StatusType, TokenClaims, error) {
+			return Checker{Fetcher: c.Fetcher}.Check(ctx, StatusListRef{URI: srv.URL}, false)
+		},
+		"unknown list": func() (StatusType, TokenClaims, error) {
+			return c.Check(ctx, StatusListRef{URI: srv.URL + "/statuslists/missing"}, false)
+		},
+		"untrusted": func() (StatusType, TokenClaims, error) {
+			return Checker{Fetcher: c.Fetcher, Roots: other}.Check(ctx, StatusListRef{URI: srv.URL + "/statuslists/1"}, true)
+		},
+		"x5c garbage": func() (StatusType, TokenClaims, error) {
+			return CheckX5C("not.a.token", roots, StatusListRef{URI: srv.URL}, VerifyOptions{})
+		},
+		"cwt garbage": func() (StatusType, TokenClaims, error) {
+			return CheckCWTX5Chain([]byte{0xff}, roots, StatusListRef{URI: srv.URL}, VerifyOptions{})
+		},
+	} {
+		status, _, err := check()
+		if err == nil || status != StatusInvalid {
+			t.Errorf("%s: %v, %v; want StatusInvalid with an error", name, status, err)
+		}
+	}
+
+	for idx, want := range map[uint64]StatusType{0: StatusValid, 1: StatusInvalid} {
+		err := c.RequireValid(ctx, StatusListRef{Idx: idx, URI: srv.URL + "/statuslists/1"}, false)
+		var notValid *NotValidError
+		switch {
+		case want == StatusValid && err != nil:
+			t.Errorf("RequireValid of a valid token: %v", err)
+		case want != StatusValid && (!errors.As(err, &notValid) || notValid.Status != want):
+			t.Errorf("RequireValid of a %v token: %v, want a NotValidError", want, err)
+		}
+	}
+	if err := c.RequireValid(ctx, StatusListRef{URI: srv.URL + "/statuslists/missing"}, false); err == nil {
+		t.Error("RequireValid accepted a status it couldn't read")
+	}
+}

@@ -16,6 +16,11 @@ import (
 // job: this package has no HTTP client and doesn't validate the
 // Referenced Token itself.
 func Check(token string, issuerPub crypto.PublicKey, alg oid4vci.JOSEAlg, ref StatusListRef, opts VerifyOptions) (StatusType, TokenClaims, error) {
+	return failClosed(checkJWT(token, issuerPub, alg, ref, opts))
+}
+
+// checkJWT is Check, before failClosed.
+func checkJWT(token string, issuerPub crypto.PublicKey, alg oid4vci.JOSEAlg, ref StatusListRef, opts VerifyOptions) (StatusType, TokenClaims, error) {
 	claims, err := VerifyToken(token, issuerPub, alg, opts)
 	if err != nil {
 		return 0, TokenClaims{}, err
@@ -25,6 +30,11 @@ func Check(token string, issuerPub crypto.PublicKey, alg oid4vci.JOSEAlg, ref St
 
 // CheckCWT is Check for a Status List Token in CWT format.
 func CheckCWT(token []byte, issuerPub crypto.PublicKey, alg oid4vci.COSEAlg, ref StatusListRef, opts VerifyOptions) (StatusType, TokenClaims, error) {
+	return failClosed(checkCWT(token, issuerPub, alg, ref, opts))
+}
+
+// checkCWT is CheckCWT, before failClosed.
+func checkCWT(token []byte, issuerPub crypto.PublicKey, alg oid4vci.COSEAlg, ref StatusListRef, opts VerifyOptions) (StatusType, TokenClaims, error) {
 	claims, err := VerifyTokenCWT(token, issuerPub, alg, opts)
 	if err != nil {
 		return 0, TokenClaims{}, err

@@ -36,3 +36,14 @@ func (s StatusType) String() string {
 		return fmt.Sprintf("StatusType(0x%02X)", uint8(s))
 	}
 }
+
+// failClosed is the status every Check function returns with an
+// error: StatusInvalid, not the zero value StatusValid, so a caller
+// that reads the status without the error rejects the Referenced Token
+// rather than accepting it.
+func failClosed(status StatusType, claims TokenClaims, err error) (StatusType, TokenClaims, error) {
+	if err != nil {
+		return StatusInvalid, claims, err
+	}
+	return status, claims, nil
+}
