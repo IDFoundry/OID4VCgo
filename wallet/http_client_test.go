@@ -1,6 +1,9 @@
 package wallet
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -8,6 +11,8 @@ import (
 	"time"
 
 	"github.com/idfoundry/fapigo/fapihttp"
+
+	"github.com/idfoundry/oid4vcgo/internal/jwe"
 )
 
 // With no HTTP client, the Wallet builds fapihttp's hardened one: it
@@ -82,5 +87,27 @@ func TestDecryptResponseBody_MediaTypeParameters(t *testing.T) {
 	}
 	if body, err := decryptResponseBody([]byte(`{}`), "application/json; charset=utf-8", nil, ""); err != nil || string(body) != `{}` {
 		t.Errorf("plaintext JSON: %s, %v", body, err)
+	}
+}
+
+// A compressed Credential Response the Wallet asked for still can't
+// inflate past maxInflatedCredentialResponse.
+func TestDecryptResponseBody_InflateBound(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encrypt := func(size int) []byte {
+		compact, err := jwe.Encrypt(&key.PublicKey, jwe.A128GCM, make([]byte, size), jwe.EncryptOptions{Zip: jwe.DEF})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return []byte(compact)
+	}
+	if _, err := decryptResponseBody(encrypt(1<<20), "application/jwt", key, jwe.DEF); err != nil {
+		t.Errorf("a 1 MiB response: %v", err)
+	}
+	if _, err := decryptResponseBody(encrypt(maxInflatedCredentialResponse+1), "application/jwt", key, jwe.DEF); err == nil {
+		t.Error("inflated a response past the bound")
 	}
 }

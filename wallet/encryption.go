@@ -184,9 +184,15 @@ func decryptResponseBody(body []byte, contentType string, priv *ecdsa.PrivateKey
 	if zip, present := header["zip"]; present && (requestedZip == "" || zip != string(requestedZip)) {
 		return nil, fmt.Errorf("received a compressed (zip %v) response, which wasn't requested", zip)
 	}
-	plaintext, err := jwe.Decrypt(priv, string(body))
+	plaintext, err := jwe.DecryptLimits(priv, string(body), jwe.MaxCompactBytes, maxInflatedCredentialResponse)
 	if err != nil {
 		return nil, fmt.Errorf("decrypt response: %w", err)
 	}
 	return plaintext, nil
 }
+
+// maxInflatedCredentialResponse bounds a compressed ("zip") Credential
+// Response's decompressed size, far above any real one (a batch of
+// credentials with portraits is a few megabytes), so an issuer can't
+// make the Wallet inflate a small response to jwe's default of 128 MiB.
+const maxInflatedCredentialResponse = 16 << 20
