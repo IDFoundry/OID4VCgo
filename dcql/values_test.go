@@ -4,6 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"testing"
+	"time"
+
+	"github.com/fxamacker/cbor/v2"
 
 	"github.com/idfoundry/oid4vcgo/dcql"
 )
@@ -92,7 +95,14 @@ func TestSatisfiedByMdocClaims_EnforcesValues(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewMdocMeta: %v", err)
 	}
-	nameSpaces := map[string]map[string]any{"ns": {"age_over_18": false, "age_birth_year": uint64(1985)}}
+	nameSpaces := map[string]map[string]any{"ns": {
+		"age_over_18": false, "age_birth_year": uint64(1985),
+		// As the CBOR decoder delivers them: a full-date (tag 1004), a
+		// tdate (tag 0) and a byte string.
+		"birth_date":  cbor.Tag{Number: 1004, Content: "1985-04-12"},
+		"issue_date":  time.Date(2024, 1, 2, 3, 4, 5, 0, time.UTC),
+		"portrait_id": []byte{0xfb, 0xff},
+	}}
 	for name, c := range map[string]struct {
 		claim  dcql.ClaimsQuery
 		wantOK bool
@@ -101,6 +111,11 @@ func TestSatisfiedByMdocClaims_EnforcesValues(t *testing.T) {
 		"CBOR uint vs JSON number":  {dcql.ClaimsQuery{Path: key("ns", "age_birth_year"), Values: fromJSON(t, "[1985]")}, true},
 		"CBOR uint differs":         {dcql.ClaimsQuery{Path: key("ns", "age_birth_year"), Values: []any{int64(1984)}}, false},
 		"presence only (no values)": {dcql.ClaimsQuery{Path: key("ns", "age_over_18")}, true},
+		// OpenID4VP §6.3: the CBOR value is converted to JSON first.
+		"full-date as its string": {dcql.ClaimsQuery{Path: key("ns", "birth_date"), Values: fromJSON(t, `["1985-04-12"]`)}, true},
+		"full-date differs":       {dcql.ClaimsQuery{Path: key("ns", "birth_date"), Values: fromJSON(t, `["1985-04-13"]`)}, false},
+		"tdate as RFC 3339":       {dcql.ClaimsQuery{Path: key("ns", "issue_date"), Values: fromJSON(t, `["2024-01-02T03:04:05Z"]`)}, true},
+		"bytes as base64url":      {dcql.ClaimsQuery{Path: key("ns", "portrait_id"), Values: fromJSON(t, `["-_8"]`)}, true},
 	} {
 		q := dcql.CredentialQuery{ID: "q", Format: "mso_mdoc", Meta: meta, Claims: []dcql.ClaimsQuery{c.claim}}
 		if err := q.SatisfiedByMdocClaims("org.test", nameSpaces); (err == nil) != c.wantOK {

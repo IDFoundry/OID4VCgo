@@ -1,8 +1,12 @@
 package dcql
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"math/big"
+	"time"
+
+	"github.com/fxamacker/cbor/v2"
 )
 
 // anyValueMatches reports whether one of selected equals one of want
@@ -22,6 +26,7 @@ func anyValueMatches(selected, want []any) bool {
 }
 
 func valueEquals(got, want any) bool {
+	got = jsonValue(got)
 	switch w := want.(type) {
 	case string:
 		g, ok := got.(string)
@@ -58,4 +63,25 @@ func number(v any) (*big.Rat, bool) {
 	default:
 		return nil, false
 	}
+}
+
+// jsonValue is an mdoc element's CBOR value as JSON would hold it,
+// which OpenID4VP §6.3 requires before matching ("the CBOR value used
+// for matching MUST first be converted to JSON, following the advice
+// given in Section 6.1 of [RFC8949]"): a tagged item becomes its
+// content (a full-date, tag 1004, its string), a date-time its RFC
+// 3339 string, and a byte string its base64url form without padding.
+// Anything else, including every JSON value, is returned as it is.
+func jsonValue(v any) any {
+	switch x := v.(type) {
+	case cbor.Tag:
+		return jsonValue(x.Content)
+	case time.Time:
+		return x.UTC().Format(time.RFC3339Nano)
+	case []byte:
+		return base64.RawURLEncoding.EncodeToString(x)
+	case cbor.ByteString:
+		return base64.RawURLEncoding.EncodeToString([]byte(x))
+	}
+	return v
 }
