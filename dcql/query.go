@@ -32,6 +32,9 @@ func (q Query) Validate() error {
 	if len(q.Credentials) == 0 {
 		return fmt.Errorf("dcql: query: credentials must be non-empty")
 	}
+	if err := q.checkSize(); err != nil {
+		return err
+	}
 	ids := make(map[string]bool, len(q.Credentials))
 	for i, cq := range q.Credentials {
 		if err := cq.Validate(); err != nil {
@@ -45,6 +48,54 @@ func (q Query) Validate() error {
 	for i, cs := range q.CredentialSets {
 		if err := cs.Validate(ids); err != nil {
 			return fmt.Errorf("dcql: query: credential_sets[%d]: %w", i, err)
+		}
+	}
+	return nil
+}
+
+// Bounds on a query's size, which Validate enforces. Matching a query
+// against held credentials costs time in its size (each credential set
+// option, each claim set and each value is tried), and a query can come
+// from any web page over the Digital Credentials API: without bounds, a
+// 1 MB query kept a wallet busy for minutes. Each is far above what any
+// real query needs.
+const (
+	MaxCredentialQueries    = 64  // credentials
+	MaxCredentialSets       = 64  // credential_sets
+	MaxCredentialSetOptions = 64  // options in one credential set
+	MaxClaimsPerCredential  = 256 // claims in one credential query
+	MaxClaimSets            = 64  // claim_sets in one credential query
+	MaxValuesPerClaim       = 64  // values in one claims query
+	MaxPathLength           = 32  // components in one claims path
+)
+
+// checkSize enforces the size bounds above.
+func (q Query) checkSize() error {
+	switch {
+	case len(q.Credentials) > MaxCredentialQueries:
+		return fmt.Errorf("dcql: query: %d credential queries, more than %d", len(q.Credentials), MaxCredentialQueries)
+	case len(q.CredentialSets) > MaxCredentialSets:
+		return fmt.Errorf("dcql: query: %d credential sets, more than %d", len(q.CredentialSets), MaxCredentialSets)
+	}
+	for i, cs := range q.CredentialSets {
+		if len(cs.Options) > MaxCredentialSetOptions {
+			return fmt.Errorf("dcql: query: credential_sets[%d]: %d options, more than %d", i, len(cs.Options), MaxCredentialSetOptions)
+		}
+	}
+	for i, cq := range q.Credentials {
+		switch {
+		case len(cq.Claims) > MaxClaimsPerCredential:
+			return fmt.Errorf("dcql: query: credentials[%d]: %d claims, more than %d", i, len(cq.Claims), MaxClaimsPerCredential)
+		case len(cq.ClaimSets) > MaxClaimSets:
+			return fmt.Errorf("dcql: query: credentials[%d]: %d claim sets, more than %d", i, len(cq.ClaimSets), MaxClaimSets)
+		}
+		for j, c := range cq.Claims {
+			switch {
+			case len(c.Values) > MaxValuesPerClaim:
+				return fmt.Errorf("dcql: query: credentials[%d].claims[%d]: %d values, more than %d", i, j, len(c.Values), MaxValuesPerClaim)
+			case len(c.Path) > MaxPathLength:
+				return fmt.Errorf("dcql: query: credentials[%d].claims[%d]: a path of %d components, more than %d", i, j, len(c.Path), MaxPathLength)
+			}
 		}
 	}
 	return nil
