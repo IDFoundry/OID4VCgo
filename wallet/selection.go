@@ -108,7 +108,7 @@ func PreviewSelection(ctx context.Context, query dcql.Query, selection map[strin
 			if err != nil {
 				return nil, fmt.Errorf("wallet: preview selection: credential query %q: %w", id, err)
 			}
-			preview = append(preview, PreviewedCredential{QueryID: id, Credential: held, Claims: paths})
+			preview = append(preview, PreviewedCredential{QueryID: id, Credential: held, Claims: paths, AlwaysDisclosed: alwaysDisclosed(held)})
 		}
 	}
 	return preview, nil

@@ -257,3 +257,36 @@ func TestPresentation_SelectionMustAnswerEveryRequiredQuery(t *testing.T) {
 		t.Errorf("both answered: %v", err)
 	}
 }
+
+// The preview names the claims the issuer issued in plaintext: they go
+// to the Verifier with whatever it asked for, so the consent screen
+// must show them too.
+func TestPresentation_PreviewShowsAlwaysDisclosed(t *testing.T) {
+	f := newFixture(t, walletflowtest.Options{PlainClaims: map[string]any{"nationality": "SG"}})
+	v := f.env.StartVerifier(t)
+	w := f.newWalletTrusting(t, f.env.IssuerRoots, v.Trust)
+	receive(t, f, w, walletflowtest.SDJWTConfigurationID)
+	ctx := context.Background()
+	id, link := v.Begin(t, dcql.Query{Credentials: []dcql.CredentialQuery{f.env.SDJWTQuery(t, "pid", "given_name")}})
+	p, err := w.StartPresentation(ctx, link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sel, err := p.DefaultSelection(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	disclosed, err := p.Preview(ctx, sel)
+	if err != nil || len(disclosed) != 1 {
+		t.Fatalf("Preview = %+v, %v", disclosed, err)
+	}
+	if a := disclosed[0].AlwaysDisclosed; len(a) != 1 || len(a[0]) != 1 || a[0][0].Key() != "nationality" {
+		t.Fatalf("AlwaysDisclosed = %v, want [nationality]", a)
+	}
+	if _, err := p.Respond(ctx, sel); err != nil {
+		t.Fatal(err)
+	}
+	if view := v.Lookup(t, id); view.Result.Credentials[0].Claims["nationality"] != "SG" {
+		t.Errorf("the Verifier received %v, without the plaintext claim the preview named", view.Result.Credentials[0].Claims)
+	}
+}

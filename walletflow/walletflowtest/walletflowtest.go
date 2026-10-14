@@ -140,6 +140,9 @@ type Options struct {
 	// public clients, bound to the token request's DPoP key (RFC 9449
 	// §5), under BearerTokens too.
 	AnonymousRefresh bool
+	// PlainClaims are SD-JWT VC claims issued in plaintext, not
+	// selectively disclosable: every presentation sends them.
+	PlainClaims map[string]any
 	// NoNonceEndpoint has the issuer publish no nonce endpoint: its
 	// proofs then carry no c_nonce, and iat dates them (OpenID4VCI 1.0
 	// §7, Appendix F.4).
@@ -177,6 +180,7 @@ type Env struct {
 	srv          *server.Server
 	accessTokens server.AccessTokenIssuer
 	preAuthCodes issuer.PreAuthorizedCodeStore
+	plainClaims  map[string]any
 	vct          string
 
 	mu            sync.Mutex
@@ -209,7 +213,7 @@ func New(opts Options) (env *Env, err error) {
 		return nil, errors.New("walletflowtest: BearerTokens and AnonymousRefresh need Anonymous")
 	}
 	ts := httptest.NewUnstartedServer(nil)
-	e := &Env{IssuerURL: "https://" + ts.Listener.Addr().String(), preAuthCodes: oid4vcgostorage.NewPreAuthorizedCodeStore()}
+	e := &Env{IssuerURL: "https://" + ts.Listener.Addr().String(), preAuthCodes: oid4vcgostorage.NewPreAuthorizedCodeStore(), plainClaims: opts.PlainClaims}
 	e.vct = e.IssuerURL + "/vct/test"
 	e.deferAll = opts.Defer
 	e.Provider = newProvider()
@@ -630,6 +634,9 @@ func (e *Env) claims() (*sdjwtvc.Claims, *mdoc.Claims) {
 		"family_name": sdjwtvc.SD(FamilyName), "given_name": sdjwtvc.SD(GivenName),
 		"picture": sdjwtvc.SD("data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(Portrait)),
 	}}
+	for k, v := range e.plainClaims {
+		sdjwtClaims.Additional[k] = v
+	}
 	// Within the document signer certificate's validity (newLeaf: an
 	// hour back, a day ahead).
 	signed := time.Now().UTC().Truncate(time.Second)

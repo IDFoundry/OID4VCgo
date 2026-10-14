@@ -76,7 +76,12 @@ type harness struct {
 
 func newHarness(t *testing.T, deferIssuance bool) harness {
 	t.Helper()
-	env, err := StartTestEnv(deferIssuance)
+	return newHarnessWith(t, walletflowtest.Options{Defer: deferIssuance})
+}
+
+func newHarnessWith(t *testing.T, opts walletflowtest.Options) harness {
+	t.Helper()
+	env, err := startTestEnv(opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1003,5 +1008,28 @@ func TestSessions_AnonymousIssuer(t *testing.T) {
 	bad, _ := marshal(cfg)
 	if _, err := NewWallet(bad, keys, creds, nil); code(err) != CodeInvalidInput {
 		t.Errorf("an unknown issuance_profile: %v", err)
+	}
+}
+
+// The consent screen's preview names the claims the issuer issued in
+// plaintext (always_disclosed): they're sent whatever the holder
+// chooses.
+func TestSessions_PreviewShowsAlwaysDisclosed(t *testing.T) {
+	h := newHarnessWith(t, walletflowtest.Options{PlainClaims: map[string]any{"nationality": "SG"}})
+	received := h.receive(t)
+	var sdjwt string
+	for _, c := range received {
+		if c.Format == "dc+sd-jwt" {
+			sdjwt = c.ID
+		}
+	}
+	req := decode[struct{ ID, Link string }](t, mustText(t)(h.env.Request("")))
+	p, err := h.w.StartPresentation(NewOperation(0), req.Link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	preview := mustText(t)(p.Preview(`{"pid":["` + sdjwt + `"]}`))
+	if !strings.Contains(preview, `"always_disclosed":[["nationality"]]`) {
+		t.Errorf("Preview = %s, want always_disclosed naming nationality", preview)
 	}
 }

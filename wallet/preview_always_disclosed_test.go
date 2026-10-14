@@ -52,12 +52,24 @@ func TestPreviewPresentation_AlwaysDisclosed(t *testing.T) {
 		ID: "pid", Format: sdjwtvc.CredentialFormat, Meta: meta,
 		Claims: []dcql.ClaimsQuery{{Path: dcql.Path{dcql.PathKey("given_name")}}},
 	}}}
-	preview, err := wallet.PreviewPresentation(context.Background(), query, held, nil)
-	if err != nil || len(preview) != 1 {
-		t.Fatalf("PreviewPresentation = %+v, %v", preview, err)
-	}
-	got, _ := json.Marshal(preview[0].AlwaysDisclosed)
-	if want := `[["address","country"],["nationality"]]`; string(got) != want {
-		t.Errorf("AlwaysDisclosed = %s, want %s", got, want)
+	// Both previews — of the default choice, and of a selection the
+	// holder made — name them.
+	ctx := context.Background()
+	for name, preview := range map[string]func() ([]wallet.PreviewedCredential, error){
+		"PreviewPresentation": func() ([]wallet.PreviewedCredential, error) {
+			return wallet.PreviewPresentation(ctx, query, held, nil)
+		},
+		"PreviewSelection": func() ([]wallet.PreviewedCredential, error) {
+			return wallet.PreviewSelection(ctx, query, map[string][]wallet.HeldCredential{"pid": held}, nil)
+		},
+	} {
+		got, err := preview()
+		if err != nil || len(got) != 1 {
+			t.Fatalf("%s = %+v, %v", name, got, err)
+		}
+		always, _ := json.Marshal(got[0].AlwaysDisclosed)
+		if want := `[["address","country"],["nationality"]]`; string(always) != want {
+			t.Errorf("%s: AlwaysDisclosed = %s, want %s", name, always, want)
+		}
 	}
 }
