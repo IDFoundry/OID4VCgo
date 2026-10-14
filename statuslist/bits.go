@@ -3,6 +3,7 @@ package statuslist
 import (
 	"bytes"
 	"compress/zlib"
+	"errors"
 	"fmt"
 	"io"
 )
@@ -132,4 +133,30 @@ func decompress(b []byte) ([]byte, error) {
 		return nil, fmt.Errorf("statuslist: decompress: checksum: %w", err)
 	}
 	return out, nil
+}
+
+// decompressedByte is the byte at offset idx of b's decompressed form,
+// read in constant memory: the bytes before it are discarded as they
+// inflate. ok is false when the stream ends before it. The stream's
+// checksum is never reached, so it isn't checked: the Status List
+// Token's signature already covers the compressed bytes.
+func decompressedByte(b []byte, idx int) (value byte, ok bool, err error) {
+	r, err := zlib.NewReader(bytes.NewReader(b))
+	if err != nil {
+		return 0, false, fmt.Errorf("statuslist: create zlib reader: %w", err)
+	}
+	if _, err := io.CopyN(io.Discard, r, int64(idx)); err != nil {
+		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+			return 0, false, nil
+		}
+		return 0, false, fmt.Errorf("statuslist: decompress: %w", err)
+	}
+	var one [1]byte
+	if _, err := io.ReadFull(r, one[:]); err != nil {
+		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+			return 0, false, nil
+		}
+		return 0, false, fmt.Errorf("statuslist: decompress: %w", err)
+	}
+	return one[0], true, nil
 }

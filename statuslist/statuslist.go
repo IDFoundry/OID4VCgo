@@ -65,13 +65,35 @@ func (d Decoded) Status(idx int) (uint8, error) {
 	return Unpack(d.Bits, d.Packed, idx)
 }
 
-// Status decompresses sl and returns the status at idx (draft-14 §8.3
-// steps 5-6). Prefer Decode when checking more than one index, to
+// Status returns the status at idx (draft-14 §8.3 steps 5-6),
+// decompressing sl only as far as the byte holding it, in constant
+// memory: a list whose
+// compressed form is small can inflate to far more than the one entry
+// needs (a 173 KB token to 128 MiB), so reading the whole list to check
+// one Referenced Token would let a status list cost its reader that
+// much memory. Prefer Decode when checking more than one index, to
 // avoid repeating the decompression.
 func (sl StatusList) Status(idx int) (uint8, error) {
-	d, err := sl.Decode()
-	if err != nil {
-		return 0, err
+	if !sl.Bits.valid() {
+		return 0, fmt.Errorf("statuslist: invalid bits value %d (must be 1, 2, 4 or 8)", sl.Bits)
 	}
-	return d.Status(idx)
+	if idx < 0 {
+		return 0, fmt.Errorf("statuslist: negative index %d", idx)
+	}
+	byteIdx := idx / sl.Bits.perByte()
+	if byteIdx >= maxDecompressedSize {
+		return 0, fmt.Errorf("statuslist: index %d is out of bounds", idx)
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(sl.Lst)
+	if err != nil {
+		return 0, fmt.Errorf("statuslist: decode lst: %w", err)
+	}
+	b, ok, err := decompressedByte(raw, byteIdx)
+	switch {
+	case err != nil:
+		return 0, err
+	case !ok:
+		return 0, fmt.Errorf("statuslist: index %d is out of bounds", idx)
+	}
+	return (b >> (uint(idx%sl.Bits.perByte()) * uint(sl.Bits))) & sl.Bits.mask(), nil
 }
