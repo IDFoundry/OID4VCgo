@@ -1,5 +1,54 @@
 # Changelog
 
+## [0.53.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.52.0...v0.53.0) (2026-10-24)
+
+
+### ⚠ BREAKING CHANGES
+
+* **dcql:** with AKITrustedAuthoritiesChecker.Roots, a trust anchor whose Subject Key Identifier isn't derived from its key (SHA-1, or SHA-256 truncated to 160 bits, of its subjectPublicKey) no longer matches an "aki" value naming that identifier. Set Anchors to the anchor certificates in place of Roots, e.g. dcql.AKITrustedAuthoritiesChecker{Anchors: issuerCAs}, and call Validate at startup to catch anchors claiming the same identifier.
+* **wallet:** wallet.VerifyIssuedCredential, and so walletflow, now refuse an issued mdoc that fails mdoc.CheckDocumentSigner, as verifiers already do: among others one whose IACA or document signer certificate has no countryName, or whose issuing_country doesn't match its signer. Issue mdocs from an IACA and document signer that name their country.
+* **issuer:** PreAuthorizedCodeStore.Consume gains a final parameter, accept func(PreAuthorizedCodeRecord) error. A custom store must, after its tx_code check succeeds and before it invalidates the code, call accept (when non-nil) with a copy of the record inside the same transaction or lock; if accept returns an error, return that error unchanged (or wrapped so errors.Is finds it), leave the code in place, and count no wrong attempt. Accept is never called for an unknown code or a missing, unexpected or wrong tx_code. Callers of Consume that check nothing pass nil. Run issuertest's TestPreAuthorizedCodeStoreContract against the store to confirm.
+* **issuer:** AttestationStatusChecker.CheckAttestationStatus takes an issuer.VerifiedKeyAttestation instead of an attestation.VerifiedClaims. Read the claims from its Claims field, and bind the status list's signer to SignerKey (and Claims.Issuer, when set).
+* **issuer:** an AccessTokenVerifier must set Grant.Authorized.Subject to Grant.Subject. A verifier that set only Grant.Subject now gets a 500 for every request; set both to the access token's subject.
+* **walletflow:** outside Development, walletflow.New refuses a Config whose IssuerRoots, IssuerMetadataRoots, RegistrarRoots, MdocReaderRoots and VerifierTrust roots share a certificate subject between any two roles, or use a platform system pool beside another role, unless both roles have a leaf policy. Give each such role a leaf policy (an extended key usage) that tells its certificates apart, or build each role's pool from anchors no other role uses.
+* **walletflow:** a copy presented over a signed DC API request is no longer recorded as shown to "origin:" + origin, so asking StoredCredential.ShownTo for "origin:" + origin is false for it. Ask the presentation instead: Presentation.ShownTo with the credential's ID reports whether its Verifier has seen it.
+* **mdoc:** an mdoc whose document signer certificate has an extended key usage extension without 1.0.18013.5.1.2 (one listing only another purpose, such as clientAuth or a private OID) is now refused by the default policy. Issue document signers with the mDL document signer EKU, or set LeafPolicy, IssuerLeafPolicy or WithDocumentSignerPolicy to a policy accepting the EKU your document signers carry.
+* **mdoc:** an mdoc whose status list is signed under a CA other than the one that issued its document signer (directly under the root above that CA, say) now fails its status check. The issuer signs its status lists under the CA that issued its document signer, or names the status list's trust point in the MSO's status Certificate.
+
+### Features
+
+* **issuer:** bind key attestation signers to the attestation's iss ([9adc860](https://github.com/IDFoundry/OID4VCgo/commit/9adc86036f0f6f8afab31295e6aa3c9fa3d48659))
+* **issuer:** give AttestationStatusChecker the key attestation's signer ([f48396f](https://github.com/IDFoundry/OID4VCgo/commit/f48396f7d062fa07d19841fad4e97603e604bcb2))
+* **mdoc:** add decoy digests to the MSO's valueDigests ([2f533b1](https://github.com/IDFoundry/OID4VCgo/commit/2f533b153856f692462f4e4a22e661244ab0a301))
+* **sdjwtvc:** add decoy digests to nested _sd arrays ([a265df5](https://github.com/IDFoundry/OID4VCgo/commit/a265df55e8d223b59b414fe68b98691eba950643))
+* **verifier:** add RequireStatusReference to refuse credentials without a status ([32cca0b](https://github.com/IDFoundry/OID4VCgo/commit/32cca0b6ae7923ca67e51ac5a839d284de968931))
+* **verifier:** refuse one credential for two queries under DistinctCredentials ([5e557f1](https://github.com/IDFoundry/OID4VCgo/commit/5e557f1b234eb825bcdf2c5106549bc79d2e7101))
+* **walletflow:** fetch request_uri by POST when the link asks for it ([921b81c](https://github.com/IDFoundry/OID4VCgo/commit/921b81c6d5e98c51e6f483a22d43d6ea0695ebb6))
+* **walletflow:** give mdocs their own issuer roots and leaf policy ([7ed704f](https://github.com/IDFoundry/OID4VCgo/commit/7ed704f014ceb8f341a7f371e3a6242b392f50dd))
+
+
+### Bug Fixes
+
+* compare DPoP htm exactly, refuse non-canonical origins, keep results as long as Lookup reports them ([3811bf6](https://github.com/IDFoundry/OID4VCgo/commit/3811bf678121d5a23c612e5c39f1625d78badcd1))
+* **dcql:** match trust anchors by key-derived identifiers ([f60ef52](https://github.com/IDFoundry/OID4VCgo/commit/f60ef5227499a901b0c6a47d1645f3503fd402c4))
+* **issuer:** call Prepare only once the Credential Request is authorized and its proofs verified ([f618425](https://github.com/IDFoundry/OID4VCgo/commit/f6184259753aae5c6f7dfa7942a9dc318c24d694))
+* **issuer:** cap the keys jwt proofs resolve at batch_size in every case ([3cde3ad](https://github.com/IDFoundry/OID4VCgo/commit/3cde3ad68a5ed1cd43c08b51808cad35590727a1))
+* **issuer:** check a pre-authorized code's record before consuming it ([1ea1c1a](https://github.com/IDFoundry/OID4VCgo/commit/1ea1c1ae2ff0c366b1b5559ef63d89b5c03c198c))
+* **issuer:** refuse a Grant whose two subjects disagree ([df3ed23](https://github.com/IDFoundry/OID4VCgo/commit/df3ed234f2fb031b3c40c5fda6d8eba83b864e7f))
+* **issuer:** verify a deferred transaction's key attestations again before issuing ([c89ea8a](https://github.com/IDFoundry/OID4VCgo/commit/c89ea8a3f2277d8fee5958739b880c254b6d3312))
+* **mdoc:** bind an mdoc status list's signer to the CA that signed the document signer ([0187d28](https://github.com/IDFoundry/OID4VCgo/commit/0187d285e57a289dcc5c4816e47902c860bcefc5))
+* **mdoc:** refuse a document signer whose EKU leaves out the mDL DS purpose ([3f5307a](https://github.com/IDFoundry/OID4VCgo/commit/3f5307a277e1a3ec08d7a48bb4e4251ec03fd95e))
+* **verifier:** report only issuer chains the leaf policy approves ([dd83fe7](https://github.com/IDFoundry/OID4VCgo/commit/dd83fe7a90260cf48bb3eee1aa9eda847e4af46f))
+* **wallet:** decode issuer, server and verifier responses strictly ([15cc1af](https://github.com/IDFoundry/OID4VCgo/commit/15cc1af4fb1892b2749cf2b86aaf285bfb7f89c8))
+* **walletflow:** drop issuer logos on local host names ([2d91744](https://github.com/IDFoundry/OID4VCgo/commit/2d9174401c3c1dbf5d461d894229b87c2c9fcf3b))
+* **walletflow:** give a caller's HTTP client a timeout ([cc2da90](https://github.com/IDFoundry/OID4VCgo/commit/cc2da9030f0fc27797b342b61b3afed986433acf))
+* **walletflow:** refuse trust pools that may share an anchor ([2600784](https://github.com/IDFoundry/OID4VCgo/commit/2600784da25f13999bbb0ab083129ae9ba6df26a))
+* **walletflow:** report copies correlated by shared digests or timestamps ([b154373](https://github.com/IDFoundry/OID4VCgo/commit/b1543739b04af7f85bf5b531886048c40366e5ee))
+* **walletflow:** tell apart signed DC API Verifiers sharing an origin ([2d2bc52](https://github.com/IDFoundry/OID4VCgo/commit/2d2bc5291755a0752dfd9760e06ead5700340412))
+* **wallet:** preview every claim a presentation reveals inside arrays ([e0fffaf](https://github.com/IDFoundry/OID4VCgo/commit/e0fffaf8a6f040a7d2dde466c37478f789630ea4))
+* **wallet:** refuse an issued SD-JWT VC that doesn't end with '~' ([40eb450](https://github.com/IDFoundry/OID4VCgo/commit/40eb450d278bb10938abc96be46f6a393d0265f8))
+* **wallet:** run the mdoc document signer checks on receipt ([297d0a1](https://github.com/IDFoundry/OID4VCgo/commit/297d0a1482da4ae762b3a0cb84757e16c663c177))
+
 ## [0.52.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.51.0...v0.52.0) (2026-10-23)
 
 
