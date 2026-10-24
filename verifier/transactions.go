@@ -300,6 +300,9 @@ func checkTransactionsVerify(verify VerifyResponseRequest) error {
 	if err := checkTimeBounds(verify); err != nil {
 		return err
 	}
+	if err := checkIssuerKeysValid(verify); err != nil {
+		return fmt.Errorf("verifier: transactions: verify: %w", err)
+	}
 	if verify.Accept != nil || verify.NoStatusCheck {
 		return errors.New("verifier: transactions: set accept and no_status_check on the transactions config, not on verify")
 	}

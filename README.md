@@ -55,8 +55,9 @@ FAPIgo" section for the specific list.
 
 > **⚠ Pre-1.0, APIs may still change.** Every package — `issuer`,
 > `wallet`, `verifier`, `walletflow`, `credential/sdjwtvc`,
-> `credential/mdoc`, `statuslist`, `attestation`, `dcql`, `oid4vpmdoc`,
-> `mdocdcapi`, `proximity`, `registration`, `haip`, `storage` — and the
+> `credential/mdoc`, `statuslist`, `certrevocation`, `attestation`,
+> `dcql`, `oid4vpmdoc`, `mdocdcapi`, `proximity`, `registration`,
+> `haip`, `storage` — and the
 > separate `mobile` module are implemented and tested. All four roles
 > were OpenID Certified as 0.12.0 (see above), and every later release
 > is checked against the same OIDF test plans by the daily conformance
@@ -107,7 +108,9 @@ Where to start, by role:
   and `ResponseHandler` as ready `http.Handler`s over a
   `verifier.TransactionStore` (`storage.NewVerifierTransactionStore`
   for development). `VerifiedCredential.StatusListRef` plus
-  `statuslist.Checker` check revocation.
+  `statuslist.Checker` check a credential's revocation; the issuer key
+  resolvers' required `Revocation` (`certrevocation.CRLs`) checks its
+  issuer certificate's.
 - **Wallet** — `wallet.EncryptionFromMetadata` picks credential
   request/response encryption from the Issuer's metadata;
   `wallet.Respond` answers a verified Authorization Request in one call

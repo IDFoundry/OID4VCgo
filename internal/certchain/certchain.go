@@ -12,6 +12,7 @@ package certchain
 
 import (
 	"bytes"
+	"context"
 	"crypto"
 	"crypto/ed25519"
 	"crypto/x509"
@@ -23,6 +24,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/internal/jwk"
 )
 
@@ -116,6 +118,58 @@ func ApprovedChains(leaf *x509.Certificate, chains [][]*x509.Certificate, policy
 		return nil, fmt.Errorf("certchain: leaf certificate policy: no verified path passes it on its own: %w", lastErr)
 	}
 	return approved, nil
+}
+
+// VerifyTrustedChainsAt is VerifyChainsAt, then ApprovedChains with
+// policy, then NotRevokedChains with revocation: the leaf, and the
+// verified paths from it that policy approves each on its own and that
+// pass revocation. The leaf is accepted when at least one path is left,
+// and every path returned has passed both, so whatever a caller goes on
+// to rely on — the issuer chain it reports, authorizes and binds status
+// to — never runs through a certificate revocation refused. A nil
+// policy approves every path; a nil revocation checks none.
+func VerifyTrustedChainsAt(ctx context.Context, ders [][]byte, roots *x509.CertPool, policy func(leaf *x509.Certificate, chains [][]*x509.Certificate) error, revocation certrevocation.Checker, now time.Time) (*x509.Certificate, [][]*x509.Certificate, error) {
+	leaf, chains, err := VerifyChainsAt(ders, roots, now)
+	if err != nil {
+		return nil, nil, err
+	}
+	approved, err := ApprovedChains(leaf, chains, policy)
+	if err != nil {
+		return nil, nil, err
+	}
+	good, err := NotRevokedChains(ctx, approved, revocation, now)
+	if err != nil {
+		return nil, nil, err
+	}
+	return leaf, good, nil
+}
+
+// NotRevokedChains is chains narrowed to those revocation passes, each
+// checked on its own at now (the current time when zero). Through a CA
+// certified twice, one path may run through an intermediate that's
+// been revoked beside another that hasn't; the leaf is on every path,
+// so a revoked leaf leaves none. When none passes, the error wraps the
+// last path's, so errors.Is finds certrevocation.ErrRevoked or
+// certrevocation.ErrNoCurrentCRL through it. A nil revocation passes
+// every path.
+func NotRevokedChains(ctx context.Context, chains [][]*x509.Certificate, revocation certrevocation.Checker, now time.Time) ([][]*x509.Certificate, error) {
+	if revocation == nil {
+		return chains, nil
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	good := make([][]*x509.Certificate, 0, len(chains))
+	lastErr := errors.New("no verified path")
+	for _, chain := range chains {
+		if lastErr = revocation.CheckRevocation(ctx, certrevocation.Check{Chain: chain, Now: now}); lastErr == nil {
+			good = append(good, chain)
+		}
+	}
+	if len(good) == 0 {
+		return nil, fmt.Errorf("certchain: revocation: no verified path passes it: %w", lastErr)
+	}
+	return good, nil
 }
 
 // VerifyChains is VerifyLeaf, also returning every verified path from

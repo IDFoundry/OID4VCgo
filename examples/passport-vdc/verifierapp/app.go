@@ -18,6 +18,7 @@ import (
 	"github.com/gmrtd/gmrtd/cms"
 	fapi "github.com/idfoundry/fapigo"
 
+	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/dcql"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/credential"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/passport"
@@ -249,6 +250,14 @@ func New(cfg Config) (*App, error) {
 	return a, nil
 }
 
+// issuerRevocation is the revocation check on the demo issuer's
+// certificates: none. The demo issuer discards its CA key once it has
+// certified its signers, so it can't sign a CRL, and its signers live
+// no longer than the demo's state. A real verifier passes
+// certrevocation.CRLs with each issuer CA's current CRL; credentials
+// themselves are still checked against their status lists (Accept).
+var issuerRevocation certrevocation.Checker = certrevocation.NoCheck{}
+
 // newTransactions is scenario sc's relying party: a Verifier signing
 // its requests as sg, with its own endpoints under /s/<sc>/. A trusted
 // one's requests carry its registration, signed by registrar.
@@ -279,8 +288,8 @@ func (a *App) newTransactions(sc Scenario, sg signer, registrar signer) (*verifi
 		}
 	}
 	verify := verifier.VerifyResponseRequest{
-		IssuerKeys:         verifier.X5CIssuerKeyResolver{Roots: a.issuerRoots},
-		MdocIssuerKeys:     verifier.X5ChainIssuerKeyResolver{Roots: a.issuerRoots},
+		IssuerKeys:         verifier.X5CIssuerKeyResolver{Roots: a.issuerRoots, Revocation: issuerRevocation},
+		MdocIssuerKeys:     verifier.X5ChainIssuerKeyResolver{Roots: a.issuerRoots, Revocation: issuerRevocation},
 		TrustedAuthorities: dcql.AKITrustedAuthoritiesChecker{Anchors: a.cfg.IssuerCAs},
 		MaxKeyBindingAge:   5 * time.Minute,
 		// The issuer's clock may be ahead of this one (another

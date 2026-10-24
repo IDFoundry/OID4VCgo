@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/internal/testcert"
@@ -21,7 +22,7 @@ func TestX5CIssuerKeyResolver_ChainThroughIntermediate(t *testing.T) {
 	leaf, leafKey := testcert.Leaf(t, "issuer", mid, midKey)
 	roots := x509.NewCertPool()
 	roots.AddCert(root)
-	resolver := verifier.X5CIssuerKeyResolver{Roots: roots}
+	resolver := verifier.X5CIssuerKeyResolver{Roots: roots, Revocation: certrevocation.NoCheck{}}
 	header := func(intermediates []*x509.Certificate) map[string]any {
 		credential, _, err := sdjwtvc.Issue(leafKey, jose.ES256, sdjwtvc.Claims{VCT: "urn:test"},
 			sdjwtvc.IssueOptions{IssuerCertificate: leaf, IssuerIntermediates: intermediates})

@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/internal/testcert"
 	"github.com/idfoundry/oid4vcgo/verifier"
 )
@@ -52,7 +53,7 @@ func TestX5CIssuerKeyResolver_BindsIssToLeaf(t *testing.T) {
 	ca, caKey := testcert.CA(t, "shared root")
 	roots := x509.NewCertPool()
 	roots.AddCert(ca)
-	r := verifier.X5CIssuerKeyResolver{Roots: roots, RequireIssuerName: true}
+	r := verifier.X5CIssuerKeyResolver{Roots: roots, RequireIssuerName: true, Revocation: certrevocation.NoCheck{}}
 	const trusted = "https://issuer-a.example"
 	for name, tc := range map[string]struct {
 		uris, dnsNames []string
@@ -87,7 +88,7 @@ func TestX5CIssuerKeyResolver_IssNotBoundByDefault(t *testing.T) {
 	ca, caKey := testcert.CA(t, "shared root")
 	roots := x509.NewCertPool()
 	roots.AddCert(ca)
-	r := verifier.X5CIssuerKeyResolver{Roots: roots}
+	r := verifier.X5CIssuerKeyResolver{Roots: roots, Revocation: certrevocation.NoCheck{}}
 	for name, uris := range map[string][]string{
 		"a leaf with no subject alternative name": nil,
 		"a leaf naming another issuer":            {"https://issuer-b.example"},
@@ -113,7 +114,7 @@ func TestX5CIssuerKeyResolver_ResolveIssuerChainsIsTheVerifiedPath(t *testing.T)
 	header := map[string]any{"x5c": []any{
 		base64.StdEncoding.EncodeToString(leaf.Raw), base64.StdEncoding.EncodeToString(unrelated.Raw),
 	}}
-	chains, err := verifier.X5CIssuerKeyResolver{Roots: roots}.ResolveIssuerChains(context.Background(), header)
+	chains, err := verifier.X5CIssuerKeyResolver{Roots: roots, Revocation: certrevocation.NoCheck{}}.ResolveIssuerChains(context.Background(), header)
 	if err != nil {
 		t.Fatal(err)
 	}

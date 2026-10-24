@@ -8,6 +8,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/verifier"
 	"github.com/idfoundry/oid4vcgo/verifier/verifiertest"
 )
@@ -26,7 +27,7 @@ func TestX5CIssuerKeyResolver_AcceptsCASignedLeaf(t *testing.T) {
 
 	roots := x509.NewCertPool()
 	roots.AddCert(ca)
-	resolver := verifier.X5CIssuerKeyResolver{Roots: roots}
+	resolver := verifier.X5CIssuerKeyResolver{Roots: roots, Revocation: certrevocation.NoCheck{}}
 
 	pub, alg, err := resolver.ResolveIssuerKey(context.Background(), x5cHeader(leaf), nil)
 	if err != nil {
@@ -42,14 +43,14 @@ func TestX5CIssuerKeyResolver_AcceptsCASignedLeaf(t *testing.T) {
 }
 
 func TestX5CIssuerKeyResolver_RejectsMissingX5C(t *testing.T) {
-	resolver := verifier.X5CIssuerKeyResolver{Roots: x509.NewCertPool()}
+	resolver := verifier.X5CIssuerKeyResolver{Roots: x509.NewCertPool(), Revocation: certrevocation.NoCheck{}}
 	if _, _, err := resolver.ResolveIssuerKey(context.Background(), map[string]any{}, nil); err == nil {
 		t.Error("ResolveIssuerKey accepted a header with no x5c")
 	}
 }
 
 func TestX5CIssuerKeyResolver_RejectsEmptyX5C(t *testing.T) {
-	resolver := verifier.X5CIssuerKeyResolver{Roots: x509.NewCertPool()}
+	resolver := verifier.X5CIssuerKeyResolver{Roots: x509.NewCertPool(), Revocation: certrevocation.NoCheck{}}
 	header := map[string]any{"x5c": []any{}}
 	if _, _, err := resolver.ResolveIssuerKey(context.Background(), header, nil); err == nil {
 		t.Error("ResolveIssuerKey accepted an empty x5c array")
@@ -64,7 +65,7 @@ func TestX5CIssuerKeyResolver_RejectsSelfSignedLeafEvenIfTrusted(t *testing.T) {
 	// leaf outright regardless.
 	roots := x509.NewCertPool()
 	roots.AddCert(leaf)
-	resolver := verifier.X5CIssuerKeyResolver{Roots: roots}
+	resolver := verifier.X5CIssuerKeyResolver{Roots: roots, Revocation: certrevocation.NoCheck{}}
 
 	if _, _, err := resolver.ResolveIssuerKey(context.Background(), x5cHeader(leaf), nil); err == nil {
 		t.Error("ResolveIssuerKey accepted a self-signed leaf")
@@ -76,7 +77,7 @@ func TestX5CIssuerKeyResolver_RejectsUntrustedChain(t *testing.T) {
 	leaf, _ := verifiertest.ContractLeaf(t, "test-leaf", ca, caKey)
 
 	// Roots doesn't contain the issuing CA at all.
-	resolver := verifier.X5CIssuerKeyResolver{Roots: x509.NewCertPool()}
+	resolver := verifier.X5CIssuerKeyResolver{Roots: x509.NewCertPool(), Revocation: certrevocation.NoCheck{}}
 
 	if _, _, err := resolver.ResolveIssuerKey(context.Background(), x5cHeader(leaf), nil); err == nil {
 		t.Error("ResolveIssuerKey accepted a chain that doesn't lead to a trusted root")
@@ -90,7 +91,7 @@ func TestX5CIssuerKeyResolver_RejectsWrongTrustAnchor(t *testing.T) {
 	otherCA, _ := verifiertest.ContractCA(t, "other-ca")
 	roots := x509.NewCertPool()
 	roots.AddCert(otherCA)
-	resolver := verifier.X5CIssuerKeyResolver{Roots: roots}
+	resolver := verifier.X5CIssuerKeyResolver{Roots: roots, Revocation: certrevocation.NoCheck{}}
 
 	if _, _, err := resolver.ResolveIssuerKey(context.Background(), x5cHeader(leaf), nil); err == nil {
 		t.Error("ResolveIssuerKey accepted a leaf chaining to a CA that isn't a trusted root")
@@ -98,7 +99,7 @@ func TestX5CIssuerKeyResolver_RejectsWrongTrustAnchor(t *testing.T) {
 }
 
 func TestX5CIssuerKeyResolver_RejectsMalformedX5CEntry(t *testing.T) {
-	resolver := verifier.X5CIssuerKeyResolver{Roots: x509.NewCertPool()}
+	resolver := verifier.X5CIssuerKeyResolver{Roots: x509.NewCertPool(), Revocation: certrevocation.NoCheck{}}
 	header := map[string]any{"x5c": []any{"not valid base64!!!"}}
 	if _, _, err := resolver.ResolveIssuerKey(context.Background(), header, nil); err == nil {
 		t.Error("ResolveIssuerKey accepted a malformed x5c entry")
@@ -124,11 +125,11 @@ func TestX5CResolvers_LeafPolicy(t *testing.T) {
 
 	resolve := map[string]func(policy func(*x509.Certificate, [][]*x509.Certificate) error) error{
 		"x5c": func(policy func(*x509.Certificate, [][]*x509.Certificate) error) error {
-			_, _, err := verifier.X5CIssuerKeyResolver{Roots: roots, LeafPolicy: policy}.ResolveIssuerKey(context.Background(), x5cHeader(leaf), nil)
+			_, _, err := verifier.X5CIssuerKeyResolver{Roots: roots, LeafPolicy: policy, Revocation: certrevocation.NoCheck{}}.ResolveIssuerKey(context.Background(), x5cHeader(leaf), nil)
 			return err
 		},
 		"x5chain": func(policy func(*x509.Certificate, [][]*x509.Certificate) error) error {
-			_, _, err := verifier.X5ChainIssuerKeyResolver{Roots: roots, LeafPolicy: policy}.ResolveMdocIssuerKey(context.Background(), [][]byte{leaf.Raw}, "doc")
+			_, _, err := verifier.X5ChainIssuerKeyResolver{Roots: roots, LeafPolicy: policy, Revocation: certrevocation.NoCheck{}}.ResolveMdocIssuerKey(context.Background(), [][]byte{leaf.Raw}, "doc")
 			return err
 		},
 	}

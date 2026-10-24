@@ -10,6 +10,7 @@ import (
 	"math/big"
 	"testing"
 
+	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/internal/certchain"
 	"github.com/idfoundry/oid4vcgo/internal/testcert"
 	"github.com/idfoundry/oid4vcgo/verifier"
@@ -85,7 +86,7 @@ func (f crossCertifiedIssuer) assertOnlyOpenPaths(t *testing.T, chains [][]*x509
 // their own, whatever order the x5c lists the CA's certificates in.
 func TestX5CIssuerKeyResolver_ChainsAreThePolicyApprovedPaths(t *testing.T) {
 	f := newCrossCertifiedIssuer(t)
-	r := verifier.X5CIssuerKeyResolver{Roots: f.roots, LeafPolicy: f.policy}
+	r := verifier.X5CIssuerKeyResolver{Roots: f.roots, LeafPolicy: f.policy, Revocation: certrevocation.NoCheck{}}
 	for _, ders := range f.x5chains {
 		x5c := make([]any, len(ders))
 		for i, der := range ders {
@@ -106,7 +107,7 @@ func TestX5CIssuerKeyResolver_ChainsAreThePolicyApprovedPaths(t *testing.T) {
 // The same for an mdoc's document signer.
 func TestX5ChainIssuerKeyResolver_ChainsAreThePolicyApprovedPaths(t *testing.T) {
 	f := newCrossCertifiedIssuer(t)
-	r := verifier.X5ChainIssuerKeyResolver{Roots: f.roots, LeafPolicy: f.policy}
+	r := verifier.X5ChainIssuerKeyResolver{Roots: f.roots, LeafPolicy: f.policy, Revocation: certrevocation.NoCheck{}}
 	for _, x5chain := range f.x5chains {
 		chains, err := r.ResolveMdocIssuerChains(context.Background(), x5chain, "org.iso.18013.5.1.mDL")
 		if err != nil {

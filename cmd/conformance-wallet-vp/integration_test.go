@@ -18,6 +18,7 @@ import (
 
 	fapi "github.com/idfoundry/fapigo"
 
+	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/dcql"
 	"github.com/idfoundry/oid4vcgo/internal/conformancecert"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
@@ -143,7 +144,7 @@ func newFakeVerifierServer(t *testing.T, w *server, query dcql.Query, issuerCA *
 
 	roots := x509.NewCertPool()
 	roots.AddCert(issuerCA)
-	issuerKeys := verifier.X5CIssuerKeyResolver{Roots: roots}
+	issuerKeys := verifier.X5CIssuerKeyResolver{Roots: roots, Revocation: certrevocation.NoCheck{}}
 	got := &verifyOutcome{}
 
 	mux.HandleFunc("GET /request/1", func(w http.ResponseWriter, r *http.Request) {

@@ -13,6 +13,7 @@ import (
 
 	fapi "github.com/idfoundry/fapigo"
 
+	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcgo/dcql"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
@@ -65,7 +66,7 @@ func TestRespond(t *testing.T) {
 	roots.AddCert(issuerCA)
 	if txs, err = verifier.NewTransactions(v, storage.NewVerifierTransactionStore(), verifier.TransactionsConfig{
 		RequestURIBase: "https://verifier.example.com/request-objects",
-		Verify:         verifier.VerifyResponseRequest{IssuerKeys: verifier.X5CIssuerKeyResolver{Roots: roots}, MaxKeyBindingAge: time.Hour},
+		Verify:         verifier.VerifyResponseRequest{IssuerKeys: verifier.X5CIssuerKeyResolver{Roots: roots, Revocation: certrevocation.NoCheck{}}, MaxKeyBindingAge: time.Hour},
 	}); err != nil {
 		t.Fatal(err)
 	}

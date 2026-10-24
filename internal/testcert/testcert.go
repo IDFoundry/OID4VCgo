@@ -70,7 +70,7 @@ func CAWithSubject(t testing.TB, subject pkix.Name) (*x509.Certificate, *ecdsa.P
 		NotBefore:             time.Now().Add(-time.Hour),
 		NotAfter:              time.Now().Add(24 * time.Hour),
 		IsCA:                  true,
-		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature,
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign | x509.KeyUsageDigitalSignature,
 		BasicConstraintsValid: true,
 	}
 	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
@@ -98,7 +98,7 @@ func Intermediate(t testing.TB, commonName string, parent *x509.Certificate, par
 		NotBefore:             time.Now().Add(-time.Hour),
 		NotAfter:              time.Now().Add(24 * time.Hour),
 		IsCA:                  true,
-		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature,
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign | x509.KeyUsageDigitalSignature,
 		BasicConstraintsValid: true,
 	}
 	der, err := x509.CreateCertificate(rand.Reader, tmpl, parent, &key.PublicKey, parentKey)
@@ -165,6 +165,69 @@ func Issue(t testing.TB, tmpl *x509.Certificate, parent *x509.Certificate, paren
 		t.Fatalf("testcert: parse certificate: %v", err)
 	}
 	return cert, key
+}
+
+// CrossCertify issues a second CA certificate for ca's own subject and
+// key under parent/parentKey: a CA certified twice, so a chain through
+// it has a path to each parent.
+func CrossCertify(t testing.TB, ca *x509.Certificate, parent *x509.Certificate, parentKey *ecdsa.PrivateKey) *x509.Certificate {
+	t.Helper()
+	tmpl := &x509.Certificate{
+		SerialNumber:          big.NewInt(5),
+		Subject:               ca.Subject,
+		SubjectKeyId:          ca.SubjectKeyId,
+		NotBefore:             ca.NotBefore,
+		NotAfter:              ca.NotAfter,
+		IsCA:                  true,
+		KeyUsage:              ca.KeyUsage,
+		BasicConstraintsValid: true,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, parent, ca.PublicKey, parentKey)
+	if err != nil {
+		t.Fatalf("testcert: create cross-certificate: %v", err)
+	}
+	cert, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatalf("testcert: parse cross-certificate: %v", err)
+	}
+	return cert
+}
+
+// CRL issues a CRL under issuer/key (a CA built with CA or
+// Intermediate) naming the revoked serial numbers, current from an
+// hour ago to an hour from now.
+func CRL(t testing.TB, issuer *x509.Certificate, key crypto.Signer, revoked ...*big.Int) *x509.RevocationList {
+	t.Helper()
+	tmpl := &x509.RevocationList{}
+	for _, serial := range revoked {
+		tmpl.RevokedCertificateEntries = append(tmpl.RevokedCertificateEntries, x509.RevocationListEntry{SerialNumber: serial, RevocationTime: time.Now().Add(-time.Minute)})
+	}
+	return CRLFromTemplate(t, tmpl, issuer, key)
+}
+
+// CRLFromTemplate issues tmpl under issuer/key, for a test that needs
+// what CRL doesn't set (its own update times, an extension). A zero
+// Number, ThisUpdate or NextUpdate gets CRL's.
+func CRLFromTemplate(t testing.TB, tmpl *x509.RevocationList, issuer *x509.Certificate, key crypto.Signer) *x509.RevocationList {
+	t.Helper()
+	if tmpl.Number == nil {
+		tmpl.Number = big.NewInt(1)
+	}
+	if tmpl.ThisUpdate.IsZero() {
+		tmpl.ThisUpdate = time.Now().Add(-time.Hour)
+	}
+	if tmpl.NextUpdate.IsZero() {
+		tmpl.NextUpdate = time.Now().Add(time.Hour)
+	}
+	der, err := x509.CreateRevocationList(rand.Reader, tmpl, issuer, key)
+	if err != nil {
+		t.Fatalf("testcert: create CRL: %v", err)
+	}
+	list, err := x509.ParseRevocationList(der)
+	if err != nil {
+		t.Fatalf("testcert: parse CRL: %v", err)
+	}
+	return list
 }
 
 // SelfSignedLeaf builds a fresh EC P-256 self-signed leaf certificate

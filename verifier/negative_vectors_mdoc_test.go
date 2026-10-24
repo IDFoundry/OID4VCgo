@@ -12,6 +12,7 @@ import (
 
 	"github.com/fxamacker/cbor/v2"
 
+	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/internal/cose"
 	"github.com/idfoundry/oid4vcgo/internal/testmdoc"
@@ -152,7 +153,7 @@ var mdocNegativeVectors = []negativeVector{
 			return presentDocument(t, oid4vpmdoc.Document{DocType: testmdoc.DocType, IssuerSigned: mf.f.IssuerSigned, DeviceSigned: mf.deviceSigned(t, mf.f, nil)})
 		},
 		mutate: func(r *verifier.VerifyResponseRequest) {
-			r.MdocIssuerKeys = verifier.X5ChainIssuerKeyResolver{Roots: x509.NewCertPool()}
+			r.MdocIssuerKeys = verifier.X5ChainIssuerKeyResolver{Roots: x509.NewCertPool(), Revocation: certrevocation.NoCheck{}}
 		},
 	},
 }

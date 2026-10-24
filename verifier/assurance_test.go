@@ -11,6 +11,7 @@ import (
 	fapi "github.com/idfoundry/fapigo"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
+	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/internal/testcert"
 	"github.com/idfoundry/oid4vcgo/verifier"
 )
@@ -132,7 +133,7 @@ func TestVerifyResponseKeySourceAssurance(t *testing.T) {
 		},
 		{
 			name: "production, X5CIssuerKeyResolver", assurance: verifier.AssuranceProduction,
-			req: verifier.VerifyResponseRequest{IssuerKeys: verifier.X5CIssuerKeyResolver{Roots: roots}},
+			req: verifier.VerifyResponseRequest{IssuerKeys: verifier.X5CIssuerKeyResolver{Roots: roots, Revocation: certrevocation.NoCheck{}}},
 		},
 		{
 			name: "production, hardened issuer_keys", assurance: verifier.AssuranceProduction,
@@ -140,7 +141,7 @@ func TestVerifyResponseKeySourceAssurance(t *testing.T) {
 		},
 		{
 			name: "production, X5ChainIssuerKeyResolver", assurance: verifier.AssuranceProduction,
-			req: verifier.VerifyResponseRequest{MdocIssuerKeys: verifier.X5ChainIssuerKeyResolver{Roots: roots}},
+			req: verifier.VerifyResponseRequest{MdocIssuerKeys: verifier.X5ChainIssuerKeyResolver{Roots: roots, Revocation: certrevocation.NoCheck{}}},
 		},
 		{
 			name: "development, undeclared issuer_keys", assurance: verifier.AssuranceDevelopment,
@@ -213,7 +214,7 @@ func TestVerifyResponse_ProductionDecisions(t *testing.T) {
 	} {
 		req := verifier.VerifyResponseRequest{
 			Query: testIdentityQuery(t), ExpectedNonce: "nonce", MaxKeyBindingAge: time.Hour,
-			IssuerKeys: verifier.X5CIssuerKeyResolver{Roots: x509.NewCertPool()},
+			IssuerKeys: verifier.X5CIssuerKeyResolver{Roots: x509.NewCertPool(), Revocation: certrevocation.NoCheck{}},
 		}
 		tc.set(&req)
 		_, err := v.VerifyResponse(context.Background(), req)
@@ -236,7 +237,7 @@ func TestVerifyResponse_TimeBounds(t *testing.T) {
 		"KB-JWT age of a day": {MaxKeyBindingAge: 24 * time.Hour},
 	} {
 		req.Query, req.ExpectedNonce = testIdentityQuery(t), "nonce"
-		req.IssuerKeys = verifier.X5CIssuerKeyResolver{Roots: x509.NewCertPool()}
+		req.IssuerKeys = verifier.X5CIssuerKeyResolver{Roots: x509.NewCertPool(), Revocation: certrevocation.NoCheck{}}
 		if _, err := v.VerifyResponse(context.Background(), req); err == nil || !strings.Contains(err.Error(), "outside") {
 			t.Errorf("%s: %v, want refused", name, err)
 		}

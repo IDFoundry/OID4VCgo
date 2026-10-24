@@ -243,6 +243,17 @@ changes whether *every* bullet below is `(done)`.
   every X5C-shaped resolver shares: parse a leaf-first chain and verify
   it against trust anchors (at a caller-given time, `VerifyChainsAt`),
   refusing a self-signed leaf even when it is itself a root.
+  `VerifyTrustedChainsAt` narrows the verified paths to those the leaf
+  policy approves and a `certrevocation.Checker` passes, so the issuer
+  chain a resolver reports never runs through a revoked certificate.
+- **`certrevocation`** (done) — X.509 certificate revocation for a
+  relying party: the `Checker` interface over a verified chain, `CRLs`
+  (RFC 5280 CRLs the caller fetches and refreshes, used only when
+  complete, current and signed by the certificate's issuer; a missing or
+  stale list fails closed with `ErrNoCurrentCRL`, a listed serial with
+  `ErrRevoked`), and `NoCheck`, the explicit opt-out. Its design mirrors
+  FAPIgo's `server.ClientCertificateCRLs` for client certificates. No
+  OCSP client: OCSP, or any other source, implements `Checker`.
 - **`internal/readerauth`** (done) — ISO/IEC 18013-5 §9.1.4 mdoc
   reader authentication, shared by `mdocdcapi` and `proximity` so what
   a reader signs is what a holder checks: a COSE_Sign1 with a detached
@@ -1228,12 +1239,17 @@ changes whether *every* bullet below is `(done)`.
   mdoc validity included, uses `VerifyResponseRequest.Now`.
   `RequireValidStatus` (an `Accept`) passes a credential with no status
   reference; `RequireStatusReference` refuses one. Certificate
-  revocation isn't checked anywhere in this library, for any
-  certificate role (issuer, document signer, status list signer,
-  attestation signer, reader, or a CA on their paths): no CRL or OCSP
-  responder is consulted, so a certificate is trusted from its chain to
-  the configured roots and its validity period alone, and a credential
-  is revoked only through its own status list.
+  revocation is checked for a credential's issuer: `X5CIssuerKeyResolver`
+  and `X5ChainIssuerKeyResolver` require a `certrevocation.Checker`
+  (`Revocation`, no default — `certrevocation.NoCheck{}` declines it
+  explicitly) and accept an issuer or document signer certificate only
+  through a verified path that passes it; `VerifyResponse`,
+  `NewTransactions` and `mdocdcapi.VerifyResponse` refuse a resolver
+  without one before any credential reaches it. Other certificate roles
+  (status list signer, attestation signer, reader, relying party) aren't
+  checked yet: they're trusted from their chain to the configured roots
+  and their validity period alone, and a credential is revoked only
+  through its own status list.
   `Transactions` runs a whole presentation session over a
   `TransactionStore`: `Begin` creates the signed Request Object and the
   link or QR payload for it, `HandleResponse` routes an encrypted

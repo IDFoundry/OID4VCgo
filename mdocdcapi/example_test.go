@@ -15,6 +15,7 @@ import (
 	"time"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
+	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/mdocdcapi"
 	"github.com/idfoundry/oid4vcgo/verifier"
@@ -78,12 +79,14 @@ func ExampleBuildRequest() {
 
 	// Page (server side): verify the response the page posted back,
 	// trusting documents signed under the IACA.
+	// Revocation: NoCheck keeps the example short; a deployment passes
+	// certrevocation.CRLs with each IACA's current CRL.
 	iacaRoots := x509.NewCertPool()
 	iacaRoots.AddCert(iaca)
 	verified := must(mdocdcapi.VerifyResponse(context.Background(), mdocdcapi.VerifyParams{
 		Pending:    req.Pending,
 		Response:   base64.RawURLEncoding.EncodeToString(encrypted),
-		IssuerKeys: verifier.X5ChainIssuerKeyResolver{Roots: iacaRoots},
+		IssuerKeys: verifier.X5ChainIssuerKeyResolver{Roots: iacaRoots, Revocation: certrevocation.NoCheck{}},
 		// Every issuer under the IACA may issue the doctype, and the
 		// example document carries no status reference.
 		Assurance: verifier.AssuranceProduction, AnyIssuerForAnyType: true, NoStatusCheck: true,

@@ -7,6 +7,7 @@ import (
 	"errors"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
+	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/internal/certchain"
 )
 
@@ -35,6 +36,11 @@ import (
 // A self-signed leaf is always rejected, even if that exact
 // certificate also happens to be present in Roots — see
 // internal/certchain.VerifyLeaf's own doc comment for why.
+//
+// Revocation is checked on every verified path from the leaf to Roots
+// that LeafPolicy approves: the credential is accepted only through a
+// path on which no certificate is revoked, and that path is the issuer
+// chain VerifyResponse reports.
 type X5CIssuerKeyResolver struct {
 	// Roots is the trust anchor set a presented x5c chain must
 	// validate against. REQUIRED.
@@ -48,6 +54,16 @@ type X5CIssuerKeyResolver struct {
 	// distinguishes them (an extended key usage, a certificate policy)
 	// where the anchors are shared.
 	LeafPolicy func(leaf *x509.Certificate, chains [][]*x509.Certificate) error
+	// Revocation decides whether a certificate on a verified path — the
+	// issuer's own, or an intermediate CA's — has been revoked. A chain
+	// that verifies says nothing about a certificate its CA has since
+	// revoked: an issuer whose key was stolen would keep signing
+	// accepted credentials until its certificate expired. REQUIRED,
+	// with no default: pass certrevocation.CRLs{...} with your CAs'
+	// current lists, your own certrevocation.Checker (OCSP, for
+	// example), or certrevocation.NoCheck{} to decline — see its doc
+	// comment for when that's acceptable.
+	Revocation certrevocation.Checker
 	// RequireIssuerName refuses a credential whose iss the leaf doesn't
 	// name: a "dns:" iss must be one of its dNSName subject alternative
 	// names, any other exactly one of its uniformResourceIdentifier
@@ -60,20 +76,32 @@ type X5CIssuerKeyResolver struct {
 	RequireIssuerName bool
 }
 
+// Validate reports a resolver that can't verify anything as
+// configured: one without Revocation, or whose Revocation is itself
+// incomplete (a certrevocation.CRLs without Lists). VerifyResponse,
+// NewTransactions and mdocdcapi.VerifyResponse call it on the
+// resolvers they're given, so the mistake shows before any credential
+// does; ResolveIssuerKey and ResolveIssuerChains refuse to resolve
+// without it passing too.
+func (r X5CIssuerKeyResolver) Validate() error {
+	return validateRevocation("X5CIssuerKeyResolver", r.Revocation)
+}
+
 // ResolveIssuerChains implements SDJWTVCIssuerChainResolver: the paths
 // from the x5c header's leaf to Roots, as ResolveIssuerKey verifies it,
-// that LeafPolicy approves each on its own (certchain.ApprovedChains):
-// the issuer chain VerifyResponse reports is one of them.
+// that LeafPolicy approves each on its own (certchain.ApprovedChains)
+// and Revocation passes: the issuer chain VerifyResponse reports is one
+// of them.
 func (r X5CIssuerKeyResolver) ResolveIssuerChains(ctx context.Context, header map[string]any) ([][]*x509.Certificate, error) {
+	if err := r.Validate(); err != nil {
+		return nil, err
+	}
 	ders, err := certchain.X5CDERsFromHeader(header)
 	if err != nil {
 		return nil, err
 	}
-	leaf, chains, err := certchain.VerifyChainsAt(ders, r.Roots, verificationTime(ctx))
-	if err != nil {
-		return nil, err
-	}
-	return certchain.ApprovedChains(leaf, chains, r.LeafPolicy)
+	_, chains, err := certchain.VerifyTrustedChainsAt(ctx, ders, r.Roots, r.LeafPolicy, r.Revocation, verificationTime(ctx))
+	return chains, err
 }
 
 // BindsIssuerName implements IssuerNameBinding.
@@ -81,6 +109,9 @@ func (r X5CIssuerKeyResolver) BindsIssuerName() bool { return r.RequireIssuerNam
 
 // ResolveIssuerKey implements SDJWTVCIssuerKeyResolver.
 func (r X5CIssuerKeyResolver) ResolveIssuerKey(ctx context.Context, header, payload map[string]any) (crypto.PublicKey, oid4vci.JOSEAlg, error) {
+	if err := r.Validate(); err != nil {
+		return nil, "", err
+	}
 	ders, err := certchain.X5CDERsFromHeader(header)
 	if err != nil {
 		return nil, "", err
@@ -88,7 +119,7 @@ func (r X5CIssuerKeyResolver) ResolveIssuerKey(ctx context.Context, header, payl
 	if err := certchain.CheckNoAnchor(ders); err != nil {
 		return nil, "", err
 	}
-	leaf, err := certchain.VerifyLeafWithPolicyAt(ders, r.Roots, r.LeafPolicy, verificationTime(ctx))
+	leaf, _, err := certchain.VerifyTrustedChainsAt(ctx, ders, r.Roots, r.LeafPolicy, r.Revocation, verificationTime(ctx))
 	if err != nil {
 		return nil, "", err
 	}

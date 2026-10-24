@@ -14,6 +14,7 @@ import (
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/attestation"
+	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcgo/dcql"
 	"github.com/idfoundry/oid4vcgo/storage"
@@ -52,7 +53,9 @@ func ExampleNewTransactions() {
 	txs, err := verifier.NewTransactions(v, storage.NewVerifierTransactionStore(), verifier.TransactionsConfig{
 		RequestURIBase: "https://verifier.example.com/request",
 		Verify: verifier.VerifyResponseRequest{
-			IssuerKeys: verifier.X5CIssuerKeyResolver{Roots: issuerRoots}, MaxKeyBindingAge: 5 * time.Minute,
+			// NoCheck keeps the example short: a deployment passes
+			// certrevocation.CRLs with its CAs' current lists.
+			IssuerKeys: verifier.X5CIssuerKeyResolver{Roots: issuerRoots, Revocation: certrevocation.NoCheck{}}, MaxKeyBindingAge: 5 * time.Minute,
 			// Which issuers may issue which types: here issuerCA issues
 			// PIDs and nothing else. Under AssuranceProduction this, or
 			// AnyIssuerForAnyType, is required.

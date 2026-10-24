@@ -13,6 +13,7 @@ import (
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/attestation"
+	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcgo/dcql"
 	"github.com/idfoundry/oid4vcgo/verifier"
@@ -120,7 +121,9 @@ func ExampleVerifier_BuildDCAPIAuthorizationRequest() {
 	issuerRoots.AddCert(issuerCA)
 	result, err := v.VerifyResponse(context.Background(), verifier.VerifyResponseRequest{
 		Query: query, Response: parsed, ExpectedNonce: built.Nonce,
-		IssuerKeys:       &verifier.X5CIssuerKeyResolver{Roots: issuerRoots},
+		// NoCheck keeps the example short: a deployment passes
+		// certrevocation.CRLs with its CAs' current lists.
+		IssuerKeys:       &verifier.X5CIssuerKeyResolver{Roots: issuerRoots, Revocation: certrevocation.NoCheck{}},
 		MaxKeyBindingAge: 5 * time.Minute,
 		// Origin is this Verifier's own page origin, from its
 		// configuration: never from the HTTP request carrying the

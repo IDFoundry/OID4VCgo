@@ -127,6 +127,9 @@ func VerifyResponse(ctx context.Context, p VerifyParams) (Verified, error) {
 	if p.IssuerKeys == nil {
 		return Verified{}, errors.New("mdocdcapi: IssuerKeys is required")
 	}
+	if err := validIssuerKeys(p.IssuerKeys); err != nil {
+		return Verified{}, fmt.Errorf("mdocdcapi: IssuerKeys: %w", err)
+	}
 	if err := checkAssurance(p); err != nil {
 		return Verified{}, err
 	}
@@ -206,6 +209,25 @@ func verifiesChains(resolver verifier.MdocIssuerKeyResolver) bool {
 		resolver = wrapper.Unwrap()
 	}
 	return false
+}
+
+// validIssuerKeys runs Validate on resolver, and on each resolver it
+// wraps, that has one (verifier.X5ChainIssuerKeyResolver's refuses a
+// missing Revocation), as verifier.VerifyResponse does.
+func validIssuerKeys(resolver verifier.MdocIssuerKeyResolver) error {
+	for range 16 {
+		if v, ok := resolver.(interface{ Validate() error }); ok {
+			if err := v.Validate(); err != nil {
+				return err
+			}
+		}
+		wrapper, ok := resolver.(verifier.MdocIssuerKeyResolverWrapper)
+		if !ok {
+			return nil
+		}
+		resolver = wrapper.Unwrap()
+	}
+	return nil
 }
 
 // decrypt opens response's EncryptedResponse (Annex C.4) with key,

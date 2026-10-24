@@ -7,6 +7,7 @@ import (
 	"encoding/asn1"
 	"testing"
 
+	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/internal/testcert"
 	"github.com/idfoundry/oid4vcgo/verifier"
@@ -36,11 +37,11 @@ func TestX5ChainIssuerKeyResolver_DefaultDocumentSignerPolicy(t *testing.T) {
 	roots.AddCert(ca)
 	ctx := context.Background()
 
-	if _, _, err := (verifier.X5ChainIssuerKeyResolver{Roots: roots}).ResolveMdocIssuerKey(ctx, x5chainOf(documentSigner), "org.iso.18013.5.1.mDL"); err != nil {
+	if _, _, err := (verifier.X5ChainIssuerKeyResolver{Roots: roots, Revocation: certrevocation.NoCheck{}}).ResolveMdocIssuerKey(ctx, x5chainOf(documentSigner), "org.iso.18013.5.1.mDL"); err != nil {
 		t.Errorf("an mDL document signer: %v", err)
 	}
 	for name, cert := range map[string]*x509.Certificate{"OCSP signer": ocsp, "no digitalSignature": crlSigner, "reader authentication": reader} {
-		r := verifier.X5ChainIssuerKeyResolver{Roots: roots}
+		r := verifier.X5ChainIssuerKeyResolver{Roots: roots, Revocation: certrevocation.NoCheck{}}
 		if _, _, err := r.ResolveMdocIssuerKey(ctx, x5chainOf(cert), "org.iso.18013.5.1.mDL"); err == nil {
 			t.Errorf("%s: ResolveMdocIssuerKey accepted it as a document signer", name)
 		}
@@ -49,7 +50,7 @@ func TestX5ChainIssuerKeyResolver_DefaultDocumentSignerPolicy(t *testing.T) {
 		}
 	}
 
-	anySigner := verifier.X5ChainIssuerKeyResolver{Roots: roots, LeafPolicy: func(*x509.Certificate, [][]*x509.Certificate) error { return nil }}
+	anySigner := verifier.X5ChainIssuerKeyResolver{Revocation: certrevocation.NoCheck{}, Roots: roots, LeafPolicy: func(*x509.Certificate, [][]*x509.Certificate) error { return nil }}
 	if _, _, err := anySigner.ResolveMdocIssuerKey(ctx, x5chainOf(ocsp), "org.iso.18013.5.1.mDL"); err != nil {
 		t.Errorf("with a LeafPolicy accepting anything: %v", err)
 	}

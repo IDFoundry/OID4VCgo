@@ -221,7 +221,7 @@ func (a *App) verifyDCAPI(r *http.Request, s *session, pending mdocdcapi.Pending
 	var people []Person
 	_, err := mdocdcapi.VerifyResponse(r.Context(), mdocdcapi.VerifyParams{
 		Pending: pending, Response: response,
-		IssuerKeys: verifier.X5ChainIssuerKeyResolver{Roots: a.issuerRoots},
+		IssuerKeys: verifier.X5ChainIssuerKeyResolver{Roots: a.issuerRoots, Revocation: issuerRevocation},
 		Now:        a.now, MaxClockSkew: time.Minute,
 		Assurance: verifier.AssuranceDevelopment,
 		// The demo's one issuer issues every document it asks for.

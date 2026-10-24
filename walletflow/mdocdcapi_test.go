@@ -8,6 +8,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/internal/testcert"
 	"github.com/idfoundry/oid4vcgo/mdocdcapi"
 	"github.com/idfoundry/oid4vcgo/verifier"
@@ -106,7 +107,7 @@ func TestMdocPresentation(t *testing.T) {
 	}
 	got, err := mdocdcapi.VerifyResponse(ctx, mdocdcapi.VerifyParams{
 		Pending: pending, Response: base64.RawURLEncoding.EncodeToString(presented.EncryptedResponse),
-		IssuerKeys: verifier.X5ChainIssuerKeyResolver{Roots: f.env.IssuerRoots},
+		IssuerKeys: verifier.X5ChainIssuerKeyResolver{Roots: f.env.IssuerRoots, Revocation: certrevocation.NoCheck{}},
 		Assurance:  verifier.AssuranceDevelopment,
 	})
 	if err != nil {

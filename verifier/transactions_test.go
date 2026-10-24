@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcgo/dcql"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
@@ -72,7 +73,7 @@ func newTxFixture(t *testing.T, tweak func(*verifier.TransactionsConfig)) *txFix
 	cfg := verifier.TransactionsConfig{
 		RequestURIBase: txBase, RedirectURI: "https://verifier.example.com/continue?x=1",
 		Verify: verifier.VerifyResponseRequest{
-			IssuerKeys: verifier.X5CIssuerKeyResolver{Roots: roots}, MaxKeyBindingAge: time.Hour,
+			IssuerKeys: verifier.X5CIssuerKeyResolver{Roots: roots, Revocation: certrevocation.NoCheck{}}, MaxKeyBindingAge: time.Hour,
 			Now: func() time.Time { return f.now },
 		},
 	}
@@ -445,7 +446,7 @@ func TestNewTransactions_Validates(t *testing.T) {
 	// NoStatusCheck: a Verifier that forgot Accept would take revoked
 	// credentials.
 	assured := assuredTransactionStore{store}
-	verify := verifier.VerifyResponseRequest{IssuerKeys: verifier.X5CIssuerKeyResolver{Roots: x509.NewCertPool()}}
+	verify := verifier.VerifyResponseRequest{IssuerKeys: verifier.X5CIssuerKeyResolver{Roots: x509.NewCertPool(), Revocation: certrevocation.NoCheck{}}}
 	if _, err := verifier.NewTransactions(prod, assured, verifier.TransactionsConfig{RequestURIBase: txBase, Verify: verify}); err == nil || !strings.Contains(err.Error(), "no_status_check") {
 		t.Errorf("no Accept and no NoStatusCheck under AssuranceProduction: %v", err)
 	}

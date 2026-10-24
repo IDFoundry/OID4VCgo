@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/verifier"
 )
 
@@ -19,7 +20,7 @@ import (
 // fuzzer-generated certificates, so there's no useful oracle beyond
 // "never crashes, never loops".
 func FuzzResolveIssuerKey(f *testing.F) {
-	resolver := verifier.X5CIssuerKeyResolver{Roots: x509.NewCertPool()}
+	resolver := verifier.X5CIssuerKeyResolver{Roots: x509.NewCertPool(), Revocation: certrevocation.NoCheck{}}
 
 	validX5C, err := json.Marshal(map[string]any{
 		"x5c": []string{base64.StdEncoding.EncodeToString([]byte("not-a-real-certificate"))},

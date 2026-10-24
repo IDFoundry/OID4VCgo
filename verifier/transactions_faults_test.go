@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/storage"
 	"github.com/idfoundry/oid4vcgo/verifier"
 )
@@ -50,7 +51,7 @@ func TestTransactions_StoreFaultIs500(t *testing.T) {
 	store := &failingStore{TransactionStore: storage.NewVerifierTransactionStore()}
 	txs, err := verifier.NewTransactions(f.v, store, verifier.TransactionsConfig{
 		RequestURIBase: txBase,
-		Verify:         verifier.VerifyResponseRequest{IssuerKeys: verifier.X5CIssuerKeyResolver{Roots: x509.NewCertPool()}, MaxKeyBindingAge: time.Hour},
+		Verify:         verifier.VerifyResponseRequest{IssuerKeys: verifier.X5CIssuerKeyResolver{Roots: x509.NewCertPool(), Revocation: certrevocation.NoCheck{}}, MaxKeyBindingAge: time.Hour},
 	})
 	if err != nil {
 		t.Fatal(err)

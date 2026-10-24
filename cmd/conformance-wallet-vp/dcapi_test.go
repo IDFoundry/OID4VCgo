@@ -13,6 +13,7 @@ import (
 
 	fapi "github.com/idfoundry/fapigo"
 
+	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/internal/jwe"
 	"github.com/idfoundry/oid4vcgo/internal/testcert"
@@ -89,7 +90,7 @@ func TestHandleDCAPI_Presents(t *testing.T) {
 	roots.AddCert(issuerCA)
 	result, err := v.VerifyResponse(context.Background(), verifier.VerifyResponseRequest{
 		Query: query, Response: parsed, ExpectedNonce: built.Nonce, Origin: testDCAPIOrigin, ExpectedOrigins: []string{testDCAPIOrigin}, MaxKeyBindingAge: time.Hour,
-		IssuerKeys: verifier.X5CIssuerKeyResolver{Roots: roots},
+		IssuerKeys: verifier.X5CIssuerKeyResolver{Roots: roots, Revocation: certrevocation.NoCheck{}},
 	})
 	if err != nil || len(result.Credentials) != 1 {
 		t.Fatalf("VerifyResponse = %+v, %v", result, err)

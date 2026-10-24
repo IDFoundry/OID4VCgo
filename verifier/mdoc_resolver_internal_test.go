@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
+	"github.com/idfoundry/oid4vcgo/certrevocation"
 )
 
 // loggingResolver wraps another resolver, as a logging or caching one
@@ -38,5 +39,20 @@ func TestMdocChainResolver(t *testing.T) {
 	}
 	if _, ok := mdocChainResolver(loggingResolver{keyOnlyResolver{}}); ok {
 		t.Error("a wrapped key-only resolver was taken for a chain resolver")
+	}
+}
+
+// A wrapped resolver without Revocation is refused through Unwrap, as
+// an unwrapped one is.
+func TestCheckIssuerKeysValid_Wrapped(t *testing.T) {
+	if err := checkIssuerKeysValid(VerifyResponseRequest{MdocIssuerKeys: loggingResolver{X5ChainIssuerKeyResolver{}}}); err == nil {
+		t.Error("a wrapped X5ChainIssuerKeyResolver without Revocation was accepted")
+	}
+	ok := loggingResolver{X5ChainIssuerKeyResolver{Revocation: certrevocation.NoCheck{}}}
+	if err := checkIssuerKeysValid(VerifyResponseRequest{MdocIssuerKeys: ok}); err != nil {
+		t.Errorf("a wrapped resolver with NoCheck: %v", err)
+	}
+	if err := checkIssuerKeysValid(VerifyResponseRequest{MdocIssuerKeys: loggingResolver{keyOnlyResolver{}}}); err != nil {
+		t.Errorf("a resolver with no Validate: %v", err)
 	}
 }

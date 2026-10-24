@@ -11,6 +11,7 @@ import (
 
 	fapi "github.com/idfoundry/fapigo"
 
+	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/dcql"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/internal/jwe"
@@ -91,7 +92,8 @@ func (e *Env) startVerifier(registered []dcql.Path) (started *Verifier, err erro
 		must(err)
 	}
 	v.v, v.verify = vv, verifier.VerifyResponseRequest{
-		IssuerKeys: verifier.X5CIssuerKeyResolver{Roots: e.IssuerRoots}, MdocIssuerKeys: verifier.X5ChainIssuerKeyResolver{Roots: e.IssuerRoots},
+		// The test issuer publishes no CRLs.
+		IssuerKeys: verifier.X5CIssuerKeyResolver{Roots: e.IssuerRoots, Revocation: certrevocation.NoCheck{}}, MdocIssuerKeys: verifier.X5ChainIssuerKeyResolver{Roots: e.IssuerRoots, Revocation: certrevocation.NoCheck{}},
 		MaxKeyBindingAge: time.Hour,
 	}
 	v.txs, err = verifier.NewTransactions(vv, storage.NewVerifierTransactionStore(), verifier.TransactionsConfig{

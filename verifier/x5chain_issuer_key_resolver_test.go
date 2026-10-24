@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"testing"
 
+	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/internal/cose"
 	"github.com/idfoundry/oid4vcgo/verifier"
 	"github.com/idfoundry/oid4vcgo/verifier/verifiertest"
@@ -25,7 +26,7 @@ func TestX5ChainIssuerKeyResolver_AcceptsCASignedLeaf(t *testing.T) {
 
 	roots := x509.NewCertPool()
 	roots.AddCert(ca)
-	resolver := verifier.X5ChainIssuerKeyResolver{Roots: roots}
+	resolver := verifier.X5ChainIssuerKeyResolver{Roots: roots, Revocation: certrevocation.NoCheck{}}
 
 	pub, alg, err := resolver.ResolveMdocIssuerKey(context.Background(), x5chainOf(leaf), "org.iso.18013.5.1.mDL")
 	if err != nil {
@@ -41,7 +42,7 @@ func TestX5ChainIssuerKeyResolver_AcceptsCASignedLeaf(t *testing.T) {
 }
 
 func TestX5ChainIssuerKeyResolver_RejectsEmptyChain(t *testing.T) {
-	resolver := verifier.X5ChainIssuerKeyResolver{Roots: x509.NewCertPool()}
+	resolver := verifier.X5ChainIssuerKeyResolver{Roots: x509.NewCertPool(), Revocation: certrevocation.NoCheck{}}
 	if _, _, err := resolver.ResolveMdocIssuerKey(context.Background(), nil, "org.iso.18013.5.1.mDL"); err == nil {
 		t.Error("ResolveMdocIssuerKey accepted an empty x5chain")
 	}
@@ -52,7 +53,7 @@ func TestX5ChainIssuerKeyResolver_RejectsSelfSignedLeafEvenIfTrusted(t *testing.
 
 	roots := x509.NewCertPool()
 	roots.AddCert(leaf)
-	resolver := verifier.X5ChainIssuerKeyResolver{Roots: roots}
+	resolver := verifier.X5ChainIssuerKeyResolver{Roots: roots, Revocation: certrevocation.NoCheck{}}
 
 	if _, _, err := resolver.ResolveMdocIssuerKey(context.Background(), x5chainOf(leaf), "org.iso.18013.5.1.mDL"); err == nil {
 		t.Error("ResolveMdocIssuerKey accepted a self-signed leaf")
@@ -63,14 +64,14 @@ func TestX5ChainIssuerKeyResolver_RejectsUntrustedChain(t *testing.T) {
 	ca, caKey := verifiertest.ContractCA(t, "test-ca")
 	leaf, _ := verifiertest.ContractLeaf(t, "test-leaf", ca, caKey)
 
-	resolver := verifier.X5ChainIssuerKeyResolver{Roots: x509.NewCertPool()}
+	resolver := verifier.X5ChainIssuerKeyResolver{Roots: x509.NewCertPool(), Revocation: certrevocation.NoCheck{}}
 	if _, _, err := resolver.ResolveMdocIssuerKey(context.Background(), x5chainOf(leaf), "org.iso.18013.5.1.mDL"); err == nil {
 		t.Error("ResolveMdocIssuerKey accepted a chain that doesn't lead to a trusted root")
 	}
 }
 
 func TestX5ChainIssuerKeyResolver_RejectsMalformedEntry(t *testing.T) {
-	resolver := verifier.X5ChainIssuerKeyResolver{Roots: x509.NewCertPool()}
+	resolver := verifier.X5ChainIssuerKeyResolver{Roots: x509.NewCertPool(), Revocation: certrevocation.NoCheck{}}
 	if _, _, err := resolver.ResolveMdocIssuerKey(context.Background(), [][]byte{[]byte("not a certificate")}, "org.iso.18013.5.1.mDL"); err == nil {
 		t.Error("ResolveMdocIssuerKey accepted a malformed x5chain entry")
 	}
@@ -91,7 +92,7 @@ func TestX5ChainIssuerKeyResolver_RootsByDocType(t *testing.T) {
 		return p
 	}
 	ctx := context.Background()
-	byType := verifier.X5ChainIssuerKeyResolver{RootsByDocType: map[string]*x509.CertPool{mdl: pool(mdlCA), pid: pool(pidCA)}}
+	byType := verifier.X5ChainIssuerKeyResolver{Revocation: certrevocation.NoCheck{}, RootsByDocType: map[string]*x509.CertPool{mdl: pool(mdlCA), pid: pool(pidCA)}}
 	for name, tc := range map[string]struct {
 		r       verifier.X5ChainIssuerKeyResolver
 		leaf    *x509.Certificate
@@ -103,9 +104,9 @@ func TestX5ChainIssuerKeyResolver_RootsByDocType(t *testing.T) {
 		"PID signer, mDL":          {byType, pidLeaf, mdl, false},
 		"mDL signer, PID":          {byType, mdlLeaf, pid, false},
 		"unnamed type, no Roots":   {byType, mdlLeaf, other, false},
-		"unnamed type, Roots":      {verifier.X5ChainIssuerKeyResolver{Roots: pool(pidCA), RootsByDocType: byType.RootsByDocType}, pidLeaf, other, true},
-		"named type ignores Roots": {verifier.X5ChainIssuerKeyResolver{Roots: pool(pidCA), RootsByDocType: byType.RootsByDocType}, pidLeaf, mdl, false},
-		"neither":                  {verifier.X5ChainIssuerKeyResolver{}, mdlLeaf, mdl, false},
+		"unnamed type, Roots":      {verifier.X5ChainIssuerKeyResolver{Roots: pool(pidCA), RootsByDocType: byType.RootsByDocType, Revocation: certrevocation.NoCheck{}}, pidLeaf, other, true},
+		"named type ignores Roots": {verifier.X5ChainIssuerKeyResolver{Roots: pool(pidCA), RootsByDocType: byType.RootsByDocType, Revocation: certrevocation.NoCheck{}}, pidLeaf, mdl, false},
+		"neither":                  {verifier.X5ChainIssuerKeyResolver{Revocation: certrevocation.NoCheck{}}, mdlLeaf, mdl, false},
 	} {
 		_, _, err := tc.r.ResolveMdocIssuerKey(ctx, x5chainOf(tc.leaf), tc.docType)
 		_, chainsErr := tc.r.ResolveMdocIssuerChains(ctx, x5chainOf(tc.leaf), tc.docType)

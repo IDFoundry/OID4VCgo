@@ -16,6 +16,7 @@ import (
 	"time"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
+	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/mdocdcapi"
 	"github.com/idfoundry/oid4vcgo/verifier"
@@ -67,7 +68,7 @@ func exchange(t *testing.T) (mdocdcapi.VerifyParams, *x509.CertPool, *x509.Certi
 	roots.AddCert(iaca)
 	return mdocdcapi.VerifyParams{
 		Pending: req.Pending, Response: base64.RawURLEncoding.EncodeToString(encrypted),
-		IssuerKeys: verifier.X5ChainIssuerKeyResolver{Roots: roots},
+		IssuerKeys: verifier.X5ChainIssuerKeyResolver{Roots: roots, Revocation: certrevocation.NoCheck{}},
 	}, roots, ds
 }
 
@@ -111,6 +112,19 @@ func TestVerifyResponse_ProductionDecisions(t *testing.T) {
 			p.Assurance, p.AnyIssuerForAnyType, p.NoStatusCheck = verifier.AssuranceProduction, true, true
 		}, ""},
 		"development": {func(p *mdocdcapi.VerifyParams) { p.Assurance = verifier.AssuranceDevelopment }, ""},
+		// Revocation is required at every level, and applied: the IACA
+		// here publishes no CRL, so CRLs fails closed.
+		"no revocation": {func(p *mdocdcapi.VerifyParams) {
+			p.Assurance = verifier.AssuranceDevelopment
+			p.IssuerKeys = verifier.X5ChainIssuerKeyResolver{Roots: p.IssuerKeys.(verifier.X5ChainIssuerKeyResolver).Roots}
+		}, "Revocation is required"},
+		"no current CRL": {func(p *mdocdcapi.VerifyParams) {
+			p.Assurance = verifier.AssuranceDevelopment
+			p.IssuerKeys = verifier.X5ChainIssuerKeyResolver{
+				Roots:      p.IssuerKeys.(verifier.X5ChainIssuerKeyResolver).Roots,
+				Revocation: certrevocation.CRLs{Lists: func(context.Context) ([]*x509.RevocationList, error) { return nil, nil }},
+			}
+		}, "no current CRL"},
 	} {
 		p, _, _ := exchange(t)
 		tc.mutate(&p)

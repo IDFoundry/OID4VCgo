@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/internal/testcert"
 	"github.com/idfoundry/oid4vcgo/verifier"
 )
@@ -31,7 +32,7 @@ func TestX5CIssuerKeyResolver_RefusesAnchorInChain(t *testing.T) {
 	leaf, _ := testcert.Leaf(t, "issuer", mid, midKey)
 	roots := x509.NewCertPool()
 	roots.AddCert(root)
-	r := verifier.X5CIssuerKeyResolver{Roots: roots}
+	r := verifier.X5CIssuerKeyResolver{Roots: roots, Revocation: certrevocation.NoCheck{}}
 	if _, _, err := r.ResolveIssuerKey(context.Background(), x5cOf(leaf, mid), map[string]any{}); err != nil {
 		t.Errorf("leaf and intermediate: %v", err)
 	}
@@ -63,7 +64,7 @@ func TestX5CIssuerKeyResolver_ChecksValidityAtVerificationTime(t *testing.T) {
 	}
 	roots := x509.NewCertPool()
 	roots.AddCert(root)
-	r := verifier.X5CIssuerKeyResolver{Roots: roots}
+	r := verifier.X5CIssuerKeyResolver{Roots: roots, Revocation: certrevocation.NoCheck{}}
 	if _, _, err := r.ResolveIssuerKey(context.Background(), x5cOf(leaf), map[string]any{}); err == nil {
 		t.Error("accepted a certificate not yet valid at the current time")
 	}

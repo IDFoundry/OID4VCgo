@@ -6,6 +6,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/internal/jwk"
@@ -39,7 +40,7 @@ func TestAkaVCTs_DerivedTypeAnswersTheRequest(t *testing.T) {
 		return wallet.HeldCredential{Format: sdjwtvc.CredentialFormat, Credential: cred, HolderKey: holderKey, HolderKeyAlg: jose.ES256}
 	}
 	useRoots := func(c *verifier.TransactionsConfig) {
-		c.Verify.IssuerKeys = verifier.X5CIssuerKeyResolver{Roots: roots}
+		c.Verify.IssuerKeys = verifier.X5CIssuerKeyResolver{Roots: roots, Revocation: certrevocation.NoCheck{}}
 	}
 
 	// IssuerAuthorized sees the credential's own type, the type it was

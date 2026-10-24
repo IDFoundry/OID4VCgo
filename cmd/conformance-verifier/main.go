@@ -18,6 +18,7 @@ import (
 
 	fapi "github.com/idfoundry/fapigo"
 
+	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/internal/jwe"
 	"github.com/idfoundry/oid4vcgo/verifier"
@@ -49,7 +50,10 @@ func main() {
 		if poolErr != nil {
 			log.Fatalf("mdoc trust anchor: %v", poolErr)
 		}
-		mdocIssuerKeys = verifier.X5ChainIssuerKeyResolver{Roots: mdocTrustAnchorPool}
+		// No revocation check: the OIDF suite generates its own IACA
+		// and document signer for each run, and publishes no CRL for
+		// them that this binary could fetch.
+		mdocIssuerKeys = verifier.X5ChainIssuerKeyResolver{Roots: mdocTrustAnchorPool, Revocation: certrevocation.NoCheck{}}
 	}
 	responseURI, err := fapi.ParseEndpointURL(cfg.BaseURL + "/response")
 	if err != nil {

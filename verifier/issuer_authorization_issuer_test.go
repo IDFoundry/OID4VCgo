@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/internal/jwk"
@@ -50,7 +51,7 @@ func TestIssuerAuthorized_IssuerOnlyWhenChecked(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			var seen verifier.IssuerAuthorization
 			f := newTxFixture(t, func(c *verifier.TransactionsConfig) {
-				c.Verify.IssuerKeys = verifier.X5CIssuerKeyResolver{Roots: roots, RequireIssuerName: requireName}
+				c.Verify.IssuerKeys = verifier.X5CIssuerKeyResolver{Roots: roots, RequireIssuerName: requireName, Revocation: certrevocation.NoCheck{}}
 				c.Verify.IssuerAuthorized = func(_ context.Context, a verifier.IssuerAuthorization) error {
 					seen = a
 					return nil

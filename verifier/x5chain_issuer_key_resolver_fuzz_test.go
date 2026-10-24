@@ -5,6 +5,7 @@ import (
 	"crypto/x509"
 	"testing"
 
+	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/internal/testcert"
 	"github.com/idfoundry/oid4vcgo/verifier"
 )
@@ -22,7 +23,7 @@ func FuzzResolveMdocIssuerKey(f *testing.F) {
 	leaf, _ := testcert.Leaf(f, "fuzz leaf", ca, caKey)
 	roots := x509.NewCertPool()
 	roots.AddCert(ca)
-	resolver := verifier.X5ChainIssuerKeyResolver{Roots: roots}
+	resolver := verifier.X5ChainIssuerKeyResolver{Roots: roots, Revocation: certrevocation.NoCheck{}}
 
 	f.Add(leaf.Raw, []byte{}, false)
 	f.Add(leaf.Raw, ca.Raw, true)

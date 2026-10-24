@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/internal/conformancecert"
 	"github.com/idfoundry/oid4vcgo/verifier"
@@ -40,7 +41,7 @@ func TestCheckMdocIssuer_ReturnsTheVerifiedPath(t *testing.T) {
 	}
 	roots := x509.NewCertPool()
 	roots.AddCert(iaca)
-	resolver := verifier.X5ChainIssuerKeyResolver{Roots: roots}
+	resolver := verifier.X5ChainIssuerKeyResolver{Roots: roots, Revocation: certrevocation.NoCheck{}}
 	verified := mdoc.VerifiedMSO{ValidityInfo: mdoc.ValidityInfo{Signed: time.Now()}}
 	edited := [][]byte{ds.Raw, wanted.Raw}
 

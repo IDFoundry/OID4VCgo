@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/mdocdcapi"
 	"github.com/idfoundry/oid4vcgo/verifier"
 	"github.com/idfoundry/oid4vcgo/walletflow/walletflowtest"
@@ -177,7 +178,7 @@ func TestSessions_MdocPresentation(t *testing.T) {
 	}
 	got, err := mdocdcapi.VerifyResponse(t.Context(), mdocdcapi.VerifyParams{
 		Pending: pending, Response: base64.RawURLEncoding.EncodeToString(encrypted),
-		IssuerKeys: verifier.X5ChainIssuerKeyResolver{Roots: roots},
+		IssuerKeys: verifier.X5ChainIssuerKeyResolver{Roots: roots, Revocation: certrevocation.NoCheck{}},
 		Assurance:  verifier.AssuranceDevelopment,
 	})
 	if err != nil {

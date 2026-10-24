@@ -18,6 +18,7 @@ import (
 	"time"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
+	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcgo/dcql"
 	"github.com/idfoundry/oid4vcgo/internal/jwk"
@@ -263,7 +264,7 @@ func (r polarisRun) judge(t *testing.T, v polarisVector) (verdict, why string) {
 	var keys SDJWTVCIssuerKeyResolver
 	switch v.Trust {
 	case "x5c":
-		keys = X5CIssuerKeyResolver{Roots: r.roots, RequireIssuerName: polarisRequireIssuerName[v.ID]}
+		keys = X5CIssuerKeyResolver{Roots: r.roots, RequireIssuerName: polarisRequireIssuerName[v.ID], Revocation: certrevocation.NoCheck{}}
 	case "jwks":
 		keys = polarisFixedKey{pub: r.issuerPub}
 	default:

@@ -26,6 +26,27 @@ change) — see the [latest release](https://github.com/IDFoundry/OID4VCgo/relea
 for the current tag. Reports against `main` or the latest tag are the
 ones we can act on.
 
+## Certificate revocation
+
+A verified X.509 chain says nothing about a certificate its CA has since
+revoked. The verifier's issuer trust checks revocation:
+`verifier.X5CIssuerKeyResolver` and `verifier.X5ChainIssuerKeyResolver`
+require a `Revocation` (a `certrevocation.Checker`) and accept a
+credential only through a verified path from its issuer's certificate
+to a trust anchor on which no certificate is revoked. Supply your CAs'
+CRLs with `certrevocation.CRLs{Lists: ...}`: fetch each CA's CRL from
+the distribution point its certificates name (ISO/IEC 18013-5 Annex B
+makes one mandatory for an IACA's), keep the parsed lists in memory and
+refresh them before their nextUpdate. A missing or stale CRL fails
+closed. `certrevocation.NoCheck{}` declines the check explicitly, for
+short-lived certificates or a trust framework that removes compromised
+issuers from the anchor set itself.
+
+Other certificate roles don't check revocation yet: a status list
+signer's, a Wallet or Key Attestation signer's, an mdoc reader's, and a
+relying party's access certificate are trusted from their chain and
+validity period alone.
+
 ## What to include
 
 - The affected package/file and, if possible, a minimal reproduction.

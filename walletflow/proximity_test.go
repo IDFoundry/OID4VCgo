@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/dcql"
 	"github.com/idfoundry/oid4vcgo/mdocdcapi"
@@ -426,7 +427,7 @@ func TestDeviceMACPreferredOnlyInPerson(t *testing.T) {
 		}
 		if _, err := mdocdcapi.VerifyResponse(ctx, mdocdcapi.VerifyParams{
 			Pending: pending, Response: base64.RawURLEncoding.EncodeToString(presented.EncryptedResponse),
-			IssuerKeys: verifier.X5ChainIssuerKeyResolver{Roots: f.env.IssuerRoots},
+			IssuerKeys: verifier.X5ChainIssuerKeyResolver{Roots: f.env.IssuerRoots, Revocation: certrevocation.NoCheck{}},
 			Assurance:  verifier.AssuranceDevelopment,
 		}); err != nil {
 			t.Fatal(err)
