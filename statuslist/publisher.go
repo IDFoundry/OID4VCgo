@@ -10,6 +10,7 @@ import (
 	"crypto/elliptic"
 	"crypto/x509"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -54,7 +55,8 @@ type Publisher struct {
 	// neither — draft-14 §8.1 lets a Relying Party send none when the
 	// form is "known implicitly or out-of-band". Zero means FormJWT; set
 	// FormCWT for a list only mdocs reference, since an mdoc reader may
-	// send no Accept and expects a CWT.
+	// send no Accept and expects a CWT. Any other value is refused: Token
+	// fails, and ServeHTTP answers 500.
 	DefaultForm Form
 
 	// Bits is how many bits each status takes; zero means Bits1.
@@ -102,7 +104,9 @@ func (p *Publisher) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "historical resolution (the time parameter) is not supported", http.StatusNotImplemented)
 		return
 	}
-	cwt := p.servesCWT(r.Header.Get("Accept"))
+	// Every Accept line: RFC 9110 §5.3 lets a client split the list
+	// across several.
+	cwt := p.servesCWT(strings.Join(r.Header.Values("Accept"), ", "))
 	gz := acceptsGzip(r.Header.Values("Accept-Encoding"))
 	token, err := p.cachedTokenFor(r.Context(), cwt, gz)
 	if err != nil {
@@ -138,6 +142,17 @@ const (
 	// FormCWT is a token served as CWTTokenMediaType.
 	FormCWT
 )
+
+// String returns "jwt" or "cwt", or Form(n) for any other value.
+func (f Form) String() string {
+	switch f {
+	case FormJWT:
+		return "jwt"
+	case FormCWT:
+		return "cwt"
+	}
+	return "Form(" + strconv.Itoa(int(f)) + ")"
+}
 
 // servesCWT reports whether accept asks for the CWT form: CWT when it
 // names CWTTokenMediaType, JWT when it names only TokenMediaType, and
@@ -269,6 +284,9 @@ func (p *Publisher) now() time.Time {
 func (p *Publisher) Token(ctx context.Context, cwt bool) ([]byte, error) {
 	if p.URI == "" || p.Signer == nil || len(p.Chain) == 0 || p.Statuses == nil {
 		return nil, errors.New("statuslist: Publisher.URI, Signer, Chain and Statuses are required")
+	}
+	if p.DefaultForm != FormJWT && p.DefaultForm != FormCWT {
+		return nil, fmt.Errorf("statuslist: Publisher.DefaultForm is %v, not FormJWT or FormCWT", p.DefaultForm)
 	}
 	statuses, err := p.Statuses(ctx)
 	if err != nil {

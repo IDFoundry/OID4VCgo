@@ -15,6 +15,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -238,30 +239,61 @@ func TestPublisher_Gzip(t *testing.T) {
 
 // TestPublisher_DefaultForm: the form Accept names alone is served;
 // otherwise DefaultForm, JWT when unset (draft-14 §8.1's absent Accept).
+// Every Accept line counts, as RFC 9110 §5.3 lets a client split the list.
 func TestPublisher_DefaultForm(t *testing.T) {
 	ca, caKey := testcert.CA(t, "status CA")
 	cert, key := testcert.Leaf(t, "status signer", ca, caKey)
 	for _, tc := range []struct {
-		accept      string
+		accept      []string // Accept header lines
 		defaultForm Form
 		want        string
 	}{
-		{"", FormJWT, TokenMediaType},
-		{"", FormCWT, CWTTokenMediaType},
-		{TokenMediaType, FormCWT, TokenMediaType},
-		{CWTTokenMediaType, FormJWT, CWTTokenMediaType},
-		{CWTTokenMediaType + ", " + TokenMediaType, FormJWT, CWTTokenMediaType},
+		{nil, FormJWT, TokenMediaType},
+		{nil, FormCWT, CWTTokenMediaType},
+		{[]string{"*/*"}, FormJWT, TokenMediaType},
+		{[]string{"*/*"}, FormCWT, CWTTokenMediaType},
+		{[]string{"text/html"}, FormCWT, CWTTokenMediaType},
+		{[]string{TokenMediaType}, FormCWT, TokenMediaType},
+		{[]string{CWTTokenMediaType}, FormJWT, CWTTokenMediaType},
+		{[]string{CWTTokenMediaType + ", " + TokenMediaType}, FormJWT, CWTTokenMediaType},
+		{[]string{"application/json", CWTTokenMediaType}, FormJWT, CWTTokenMediaType},
+		{[]string{"text/html", TokenMediaType}, FormCWT, TokenMediaType},
 	} {
 		p := &Publisher{URI: "https://i.example/s", Signer: key, Chain: []*x509.Certificate{cert}, DefaultForm: tc.defaultForm,
 			Statuses: func(context.Context) ([]uint8, error) { return []uint8{0}, nil }}
 		r := httptest.NewRequest(http.MethodGet, "/s", nil)
-		if tc.accept != "" {
-			r.Header.Set("Accept", tc.accept)
+		for _, line := range tc.accept {
+			r.Header.Add("Accept", line)
 		}
 		rec := httptest.NewRecorder()
 		p.ServeHTTP(rec, r)
 		if got := rec.Header().Get("Content-Type"); got != tc.want {
 			t.Errorf("Accept %q, DefaultForm %v: served %q, want %q", tc.accept, tc.defaultForm, got, tc.want)
+		}
+	}
+}
+
+// TestPublisher_UnknownDefaultForm: a DefaultForm other than FormJWT or
+// FormCWT is refused, not served as JWT.
+func TestPublisher_UnknownDefaultForm(t *testing.T) {
+	ca, caKey := testcert.CA(t, "status CA")
+	cert, key := testcert.Leaf(t, "status signer", ca, caKey)
+	p := &Publisher{URI: "https://i.example/s", Signer: key, Chain: []*x509.Certificate{cert}, DefaultForm: Form(2),
+		Statuses: func(context.Context) ([]uint8, error) { return []uint8{0}, nil }}
+	if _, err := p.Token(context.Background(), false); err == nil || !strings.Contains(err.Error(), "DefaultForm is Form(2)") {
+		t.Errorf("Token err = %v, want DefaultForm refused", err)
+	}
+	rec := httptest.NewRecorder()
+	p.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/s", nil))
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("ServeHTTP status = %d, want 500", rec.Code)
+	}
+}
+
+func TestForm_String(t *testing.T) {
+	for f, want := range map[Form]string{FormJWT: "jwt", FormCWT: "cwt", Form(2): "Form(2)"} {
+		if got := f.String(); got != want {
+			t.Errorf("Form(%d).String() = %q, want %q", int(f), got, want)
 		}
 	}
 }
