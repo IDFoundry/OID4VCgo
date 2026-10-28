@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.56.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.55.0...v0.56.0) (2026-10-28)
+
+
+### ⚠ BREAKING CHANGES
+
+* **issuer:** issuer.DPoPNonceStore's Consume method is now Lookup, and issuer.DPoPNonceConsumption is now issuer.DPoPNonceLookup. Lookup must leave the record in place, so every lookup of an issued nonce succeeds until it expires; drop records only after their ExpiresAt. Return an error wrapping issuer.ErrDPoPNonceUnknown for an unknown nonce: any other error now fails the request with a 500 rather than a use_dpop_nonce challenge. Run issuertest.TestDPoPNonceStoreContract against your store. Under issuer.AssuranceProduction, an issuer that sets Dependencies.PreAuthorizedCodes without issuer.VerifiedPreAuthorizedCode must set Dependencies.DPoPNonces to a durable store (declaring StoreCapabilities{Durable: true}) with a Limits.DPoPNonceLifetime of at most 15 minutes, or to issuer.NoDPoPNonces{} to keep accepting proofs without a nonce.
+* **deps:** resource.NewVerifier and serverresource.NewVerifier require ResourceURLs, and VerifyRequestFromHTTP takes only the request. Under production, the server and the resource verifier each need a DPoP nonce store (or NoDPoPNonces{}), a Clock reading the system time, and lifetimes within FAPIgo's production bounds; server Limits need MaxAccessTokenClaimsBytes. Pre-authorized code refresh tokens issued before this release are refused with invalid_grant, and the wallet receives a new code. RSA keys must use the exponent 65537, and one a wallet or Wallet Provider supplies is at most 4096 bits. Outside Development, walletflow.New refuses a Dependencies.Clock when the wallet receives credentials. See UPGRADING.md and FAPIgo's UPGRADING.md.
+
+### Features
+
+* **statuslist:** let a Publisher choose its form when Accept names neither ([b7c71ae](https://github.com/IDFoundry/OID4VCgo/commit/b7c71aedc7f53ef3206f463a224db009d0f691d8))
+
+
+### Bug Fixes
+
+* **deps:** pin FAPIgo v0.65.1 ([63d55f7](https://github.com/IDFoundry/OID4VCgo/commit/63d55f7a14255a1e7a381365b1c9dcf052e130d2))
+* **issuer:** keep DPoP nonces valid for a time window ([b80049c](https://github.com/IDFoundry/OID4VCgo/commit/b80049c86e1dbe6c4db34ddce1b578b11bc8a4c0))
+* **statuslist:** read every Accept line, and refuse an unknown DefaultForm ([de839a4](https://github.com/IDFoundry/OID4VCgo/commit/de839a43220260993921e80e1ce0340e6c96e302))
+
 ## [0.55.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.54.0...v0.55.0) (2026-10-27)
 
 
