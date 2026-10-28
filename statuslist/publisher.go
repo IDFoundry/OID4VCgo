@@ -23,10 +23,11 @@ import (
 // Publisher serves a Status List Token at its uri (draft-14 §8.1): an
 // http.Handler that serves a token signed from the current statuses,
 // in the form the Accept header asks for — CWT for
-// CWTTokenMediaType (an mdoc's reference), JWT otherwise (an SD-JWT
-// VC's) — carrying the signer's certificate chain as x5c/x5chain, as
-// HAIP 1.0 §6.1 requires. The signing algorithm follows the signer's
-// key: ES256 for P-256, EdDSA for Ed25519.
+// CWTTokenMediaType (an mdoc's reference), JWT for TokenMediaType (an
+// SD-JWT VC's), and DefaultForm when it names neither —
+// carrying the signer's certificate chain as x5c/x5chain, as HAIP 1.0
+// §6.1 requires. The signing algorithm follows the signer's key: ES256
+// for P-256, EdDSA for Ed25519.
 //
 // Each form's token is signed once and served for CacheFor, so
 // requests — which anyone can make — don't each cost a signature. A
@@ -48,6 +49,13 @@ type Publisher struct {
 
 	// Statuses returns the current status of every index. REQUIRED.
 	Statuses func(ctx context.Context) ([]uint8, error)
+
+	// DefaultForm is the form served when the Accept header names
+	// neither — draft-14 §8.1 lets a Relying Party send none when the
+	// form is "known implicitly or out-of-band". Zero means FormJWT; set
+	// FormCWT for a list only mdocs reference, since an mdoc reader may
+	// send no Accept and expects a CWT.
+	DefaultForm Form
 
 	// Bits is how many bits each status takes; zero means Bits1.
 	Bits Bits
@@ -94,7 +102,7 @@ func (p *Publisher) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "historical resolution (the time parameter) is not supported", http.StatusNotImplemented)
 		return
 	}
-	cwt := strings.Contains(r.Header.Get("Accept"), CWTTokenMediaType)
+	cwt := p.servesCWT(r.Header.Get("Accept"))
 	gz := acceptsGzip(r.Header.Values("Accept-Encoding"))
 	token, err := p.cachedTokenFor(r.Context(), cwt, gz)
 	if err != nil {
@@ -118,6 +126,30 @@ func (p *Publisher) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// #nosec G705 -- token is a Status List Token this Publisher signed,
 	// sent as its own media type with nosniff, never HTML.
 	_, _ = w.Write(token)
+}
+
+// Form is a Status List Token's form: a JWT (an SD-JWT VC's reference)
+// or a CWT (an mdoc's).
+type Form int
+
+const (
+	// FormJWT is a token served as TokenMediaType.
+	FormJWT Form = iota
+	// FormCWT is a token served as CWTTokenMediaType.
+	FormCWT
+)
+
+// servesCWT reports whether accept asks for the CWT form: CWT when it
+// names CWTTokenMediaType, JWT when it names only TokenMediaType, and
+// DefaultForm when it names neither.
+func (p *Publisher) servesCWT(accept string) bool {
+	if strings.Contains(accept, CWTTokenMediaType) {
+		return true
+	}
+	if strings.Contains(accept, TokenMediaType) {
+		return false
+	}
+	return p.DefaultForm == FormCWT
 }
 
 // cachedTokenFor returns the form's cached token, signing a new one

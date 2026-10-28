@@ -235,3 +235,33 @@ func TestPublisher_Gzip(t *testing.T) {
 		t.Error("gzip;q=0 was answered with gzip")
 	}
 }
+
+// TestPublisher_DefaultForm: the form Accept names alone is served;
+// otherwise DefaultForm, JWT when unset (draft-14 §8.1's absent Accept).
+func TestPublisher_DefaultForm(t *testing.T) {
+	ca, caKey := testcert.CA(t, "status CA")
+	cert, key := testcert.Leaf(t, "status signer", ca, caKey)
+	for _, tc := range []struct {
+		accept      string
+		defaultForm Form
+		want        string
+	}{
+		{"", FormJWT, TokenMediaType},
+		{"", FormCWT, CWTTokenMediaType},
+		{TokenMediaType, FormCWT, TokenMediaType},
+		{CWTTokenMediaType, FormJWT, CWTTokenMediaType},
+		{CWTTokenMediaType + ", " + TokenMediaType, FormJWT, CWTTokenMediaType},
+	} {
+		p := &Publisher{URI: "https://i.example/s", Signer: key, Chain: []*x509.Certificate{cert}, DefaultForm: tc.defaultForm,
+			Statuses: func(context.Context) ([]uint8, error) { return []uint8{0}, nil }}
+		r := httptest.NewRequest(http.MethodGet, "/s", nil)
+		if tc.accept != "" {
+			r.Header.Set("Accept", tc.accept)
+		}
+		rec := httptest.NewRecorder()
+		p.ServeHTTP(rec, r)
+		if got := rec.Header().Get("Content-Type"); got != tc.want {
+			t.Errorf("Accept %q, DefaultForm %v: served %q, want %q", tc.accept, tc.defaultForm, got, tc.want)
+		}
+	}
+}
