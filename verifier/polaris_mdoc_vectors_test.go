@@ -67,6 +67,21 @@ var polarisMdocKnownGaps = map[string]polarisGap{}
 // verdict.
 var polarisMdocPoliciesNotApplied = map[string]string{}
 
+// polarisMdocLayerReasons are the Reasons a refusal at each of the file's
+// layers is expected to carry. A refusal with another Reason was made for
+// something other than the vector's one defect, and fails the test. The
+// device authentication covers the DeviceKey in the MSO (an
+// invalid_credential) and a missing DeviceSignature (malformed) as well as
+// the signature itself; the IssuerAuth covers COSE headers the package
+// can't parse (malformed).
+var polarisMdocLayerReasons = map[string][]Reason{
+	"session-transcript": {ReasonHolderBinding},
+	"device-auth":        {ReasonHolderBinding, ReasonInvalidCredential, ReasonMalformed},
+	"request":            {ReasonNotAnswered},
+	"issuer-auth":        {ReasonInvalidCredential, ReasonMalformed},
+	"mso":                {ReasonInvalidCredential},
+}
+
 type polarisMdocFile struct {
 	Version  string              `json:"version"`
 	Policies map[string]string   `json:"policies"`
@@ -130,10 +145,16 @@ func TestPolarisMdocVectors(t *testing.T) {
 
 	var controls, refusals []polarisMdocVector
 	for _, v := range file.Vectors {
-		if v.Class == "control" {
+		switch {
+		case v.Class == "control" && v.Expected == "accept":
 			controls = append(controls, v)
-		} else {
+		case v.Class != "control" && v.Expected == "reject":
+			if _, ok := polarisMdocLayerReasons[v.Layer]; !ok {
+				t.Errorf("vector %s is at layer %q, which polarisMdocLayerReasons doesn't name: add it", v.ID, v.Layer)
+			}
 			refusals = append(refusals, v)
+		default:
+			t.Fatalf("vector %s has class %q and expects %q: a control is accepted, and every other vector refused", v.ID, v.Class, v.Expected)
 		}
 	}
 	if len(controls) == 0 || len(refusals) == 0 {
@@ -167,7 +188,7 @@ func TestPolarisMdocVectors(t *testing.T) {
 	var passed, gaps, notApplied, twins, failed int
 	for _, v := range controls {
 		ok := t.Run(v.ID, func(t *testing.T) {
-			got, why := polarisMdocJudge(t, v.ID, v, v.Inputs, v.Response)
+			got, _, why := polarisMdocJudge(t, v.ID, v, v.Inputs, v.Response)
 			if got == v.Expected {
 				passed++
 				t.Logf("pass: %s (%s)", got, why)
@@ -182,7 +203,7 @@ func TestPolarisMdocVectors(t *testing.T) {
 	}
 	for _, v := range refusals {
 		t.Run(v.ID, func(t *testing.T) {
-			got, why := polarisMdocJudge(t, v.ID, v, v.Inputs, v.Response)
+			got, reason, why := polarisMdocJudge(t, v.ID, v, v.Inputs, v.Response)
 			policyWhy, policyNotApplied := polarisMdocPoliciesNotApplied[v.Policy]
 			gap, listed := polarisMdocKnownGaps[v.ID]
 			switch {
@@ -195,6 +216,9 @@ func TestPolarisMdocVectors(t *testing.T) {
 			case got == v.Expected && listed:
 				failed++
 				t.Errorf("fail: %s is now %sed, as the file says, but is in polarisMdocKnownGaps: remove it from the map", v.ID, got)
+			case got == v.Expected && !slices.Contains(polarisMdocLayerReasons[v.Layer], reason):
+				failed++
+				t.Errorf("fail: %s is refused as %s, not as a refusal at layer %s is (%v): it was refused for something else (%s)", v.ID, reason, v.Layer, polarisMdocLayerReasons[v.Layer], why)
 			case got == v.Expected:
 				passed++
 				t.Logf("pass: %s (%s)", got, why)
@@ -218,7 +242,7 @@ func TestPolarisMdocVectors(t *testing.T) {
 		// The corpus changes one thing per vector, so a refused twin means
 		// the refusal it pairs with measures nothing.
 		t.Run(v.ID+"-repaired", func(t *testing.T) {
-			got, why := polarisMdocJudge(t, v.ID+" (repaired)", v, v.Repaired.Inputs, v.Repaired.Response)
+			got, _, why := polarisMdocJudge(t, v.ID+" (repaired)", v, v.Repaired.Inputs, v.Repaired.Response)
 			if got == "accept" {
 				twins++
 				t.Logf("pass: twin accepted (%s)", why)
@@ -233,11 +257,18 @@ func TestPolarisMdocVectors(t *testing.T) {
 }
 
 // polarisMdocJudge gives one response, with the request in inputs, to the
-// package and returns "accept" or "reject" and why. The trust anchors and
-// the instant are v's. An error that isn't the package refusing the
-// presentation (a mistake in this test's own setup) fails the test.
-func polarisMdocJudge(t *testing.T, name string, v polarisMdocVector, in polarisMdocInputs, response string) (verdict, why string) {
+// package and returns "accept" or "reject", the refusal's Reason, and why.
+// The trust anchors and the instant are v's. An error that isn't the
+// package refusing the presentation (a mistake in this test's own setup)
+// fails the test, as does a panic, such as one from the encryption key's
+// missing private half below.
+func polarisMdocJudge(t *testing.T, name string, v polarisMdocVector, in polarisMdocInputs, response string) (verdict string, reason Reason, why string) {
 	t.Helper()
+	defer func() {
+		if p := recover(); p != nil {
+			t.Fatalf("%s: VerifyResponse panicked: %v", name, p)
+		}
+	}()
 	at, err := time.Parse(time.RFC3339, v.At)
 	if err != nil {
 		t.Fatalf("%s: at: %v", name, err)
@@ -322,10 +353,10 @@ func polarisMdocJudge(t *testing.T, name string, v polarisMdocVector, in polaris
 		if !errors.As(err, &refused) {
 			t.Fatalf("%s: VerifyResponse failed for a reason other than refusing the presentation: %v", name, err)
 		}
-		return "reject", fmt.Sprintf("%s: %s", refused.Reason(), err)
+		return "reject", refused.Reason(), fmt.Sprintf("%s: %s", refused.Reason(), err)
 	}
 	if len(result.Credentials) != 1 {
 		t.Fatalf("%s: VerifyResponse accepted %d credentials, want 1", name, len(result.Credentials))
 	}
-	return "accept", "verified"
+	return "accept", "", "verified"
 }
