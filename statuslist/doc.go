@@ -26,8 +26,9 @@
 // Claims.Status expects for the JOSE form.
 //
 // Publisher serves a Status List Token over HTTP: an http.Handler that
-// signs a fresh token for each request, JWT or CWT by the Accept header,
-// with the signer's certificate chain.
+// signs a fresh token for each request, JWT or CWT by the Accept header
+// (its DefaultForm when it names neither), with the signer's
+// certificate chain.
 //
 // # Checking
 //
