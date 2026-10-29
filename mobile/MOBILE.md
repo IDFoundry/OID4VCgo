@@ -462,6 +462,17 @@ keeps credentials in a data-protected file store.
   Secure Enclave holder keys requiring user presence. Face ID needs the
   app's `NSFaceIDUsageDescription`: without it, iOS asks for the
   passcode instead.
+- **User presence on the key asks at issuance too** (2026-10-29): once
+  the passport-vdc issuer took only jwt proofs carrying the key
+  attestation, the holder key signed each Credential Request's proof,
+  so receiving asked for Face ID once per Credential Request, and so
+  did refreshing used-up copies in the background, where the holder
+  expects nothing. The demo now makes holder keys without user
+  presence and asks for Face ID or the passcode itself
+  (`LAContext.evaluatePolicy`) before each presentation: in the app,
+  in person and in the document provider extension. The app enforces
+  that check, not the Secure Enclave. `holderUserPresence` stays on by
+  default in the library, with the trade-off documented.
 - **SwiftUI and XCUITest:** the offer sheet must not treat its dismissal
   as cancelling a receive in progress, because the authorization session
   presents over it. A `Section`'s accessibility identifier overrides its

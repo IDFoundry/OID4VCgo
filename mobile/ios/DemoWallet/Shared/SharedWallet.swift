@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import LocalAuthentication
 import Security
 import OID4VCWallet
 
@@ -48,12 +49,24 @@ enum SharedWallet {
         return try FileCredentialStore.standard()
     }
 
-    /// The wallet's keys: in the Secure Enclave, holder keys requiring
-    /// user presence when `presence` is set, and in the shared access
-    /// group.
-    static func keyStore(presence: Bool) -> KeychainKeyStore {
-        KeychainKeyStore(options: .init(secureEnclave: SecureEnclave.isAvailable, persistent: true, holderUserPresence: presence,
+    /// The wallet's keys: in the Secure Enclave, and in the shared access
+    /// group. Holder keys don't require user presence themselves: they
+    /// also sign each Credential Request's proof, so a key asking for Face
+    /// ID would ask whenever the app refreshes copies in the background.
+    /// The holder confirms each presentation instead
+    /// (`confirmHolder(reason:)`).
+    static func keyStore() -> KeychainKeyStore {
+        KeychainKeyStore(options: .init(secureEnclave: SecureEnclave.isAvailable, persistent: true, holderUserPresence: false,
                                         holderAccessGroup: holderAccessGroup))
+    }
+
+    /// Asks for Face ID, Touch ID or the passcode before a presentation's
+    /// holder keys sign, throwing if the holder doesn't confirm. Not on
+    /// the Simulator, which has no passcode to ask for.
+    static func confirmHolder(reason: String) async throws {
+        #if !targetEnvironment(simulator)
+        try await LAContext().evaluatePolicy(.deviceOwnerAuthentication, localizedReason: reason)
+        #endif
     }
 
     /// The Subject Key Identifiers of the certificates in `pem`, base64:

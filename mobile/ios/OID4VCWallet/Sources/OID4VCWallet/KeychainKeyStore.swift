@@ -17,11 +17,17 @@ public final class KeychainKeyStore: KeyStore, KeyAgreement, @unchecked Sendable
         /// only as long as this store (for tests: the Keychain needs a
         /// signed host app on iOS).
         public var persistent: Bool
-        /// Require user presence (Face ID, Touch ID or the passcode) to
-        /// sign with a holder key — that is, to present a credential.
-        /// For Face ID, the app's Info.plist must have an
-        /// `NSFaceIDUsageDescription`; without one, iOS asks for the
-        /// passcode instead.
+        /// Require user presence (Face ID, Touch ID or the passcode) for
+        /// every signature with a holder key: to present a credential,
+        /// and to sign each Credential Request's jwt proof, so receiving
+        /// and refreshing credentials ask too, once per Credential
+        /// Request, even when an app refreshes without the holder. The
+        /// Secure Enclave enforces it. Off, an app wanting the holder to
+        /// confirm only presentations asks for it itself (with
+        /// `LAContext.evaluatePolicy`) before presenting: a check the
+        /// app's own code keeps, not the key. For Face ID, the app's
+        /// Info.plist must have an `NSFaceIDUsageDescription`; without
+        /// one, iOS asks for the passcode instead.
         public var holderUserPresence: Bool
         /// Prefixes every key's Keychain application tag. Keys under
         /// another prefix are never touched, by a sweep or anything else.

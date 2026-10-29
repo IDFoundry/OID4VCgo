@@ -105,6 +105,7 @@ final class InPersonModel {
         guard let p = presentation else { return }
         Task {
             do {
+                try await SharedWallet.confirmHolder(reason: "Share your credential with the reader.")
                 try await p.respond(document: document, credentialID: credentialID, elements: elements)
             } catch {
                 // A cancelled prompt leaves the request standing.

@@ -1,6 +1,5 @@
 import IdentityDocumentServices
 import IdentityDocumentServicesUI
-import LocalAuthentication
 import OID4VCWallet
 import Security
 import SwiftUI
@@ -136,10 +135,9 @@ struct RequestView: View {
 
     private func wallet() throws -> Wallet {
         guard let config = DemoConfiguration.load() else { throw RequestError("Open the wallet app first.") }
-        let presence = LAContext().canEvaluatePolicy(.deviceOwnerAuthentication, error: nil)
         // The holder's own choices in the app, such as which copy a
         // presentation uses, apply here too.
-        return try Wallet(configuration: SharedWallet.applyingHolderChoices(to: config.wallet), keyStore: SharedWallet.keyStore(presence: presence),
+        return try Wallet(configuration: SharedWallet.applyingHolderChoices(to: config.wallet), keyStore: SharedWallet.keyStore(),
                           credentialStore: try SharedWallet.credentialStore(), provider: nil)
     }
 
@@ -176,6 +174,7 @@ struct RequestView: View {
         problem = nil
         Task {
             do {
+                try await SharedWallet.confirmHolder(reason: "Share your ID with \(reader?.name ?? origin).")
                 let wallet = try wallet()
                 try await context.sendResponse { raw in
                     // Apple's guidance: check the raw request against the
