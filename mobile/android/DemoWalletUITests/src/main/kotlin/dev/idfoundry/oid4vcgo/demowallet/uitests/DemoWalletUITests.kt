@@ -116,8 +116,8 @@ class DemoWalletUITests {
     }
 
     /**
-     * Answers the system's prompt with the screen lock, each time a
-     * holder key signs: once for each credential shared.
+     * Answers the system's prompt with the screen lock: once, before the
+     * app shares.
      */
     private fun confirmWithScreenLock() {
         assertNotNull("no prompt for the holder", device.wait(Until.hasObject(By.text(PROMPT)), 20_000))

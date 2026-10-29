@@ -928,7 +928,11 @@ on an emulator, in CI too (`mobile-android`).
   `BiometricPromptAuthenticator` is the framework prompt over the app's
   activity: from API 30 it takes the screen lock with a CryptoObject, so
   the SDK needs no AndroidX biometric library. A signature the
-  authenticator didn't authorize is refused by Keystore itself.
+  authenticator didn't authorize is refused by Keystore itself. The
+  demo turns this off, as the iOS demo turns off user presence
+  (2026-10-29): holder keys sign issuance proofs too, so it asked at
+  every background refresh. The demo shows a BiometricPrompt, without a
+  CryptoObject, before each presentation instead.
 - **Instance and DPoP keys** sign silently, as on iOS.
 - **IDs:** a key's ID is its alias after a prefix; the store lists and
   sweeps only its own prefix's keys (`deleteKeys(except:)`).

@@ -5,7 +5,10 @@ import android.app.Application
 import android.app.KeyguardManager
 import android.content.Context
 import android.content.Intent
+import android.hardware.biometrics.BiometricManager.Authenticators
+import android.hardware.biometrics.BiometricPrompt
 import android.net.Uri
+import android.os.CancellationSignal
 import android.util.Log
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
@@ -15,7 +18,6 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import dev.idfoundry.oid4vcwallet.AndroidKeystoreKeyStore
-import dev.idfoundry.oid4vcwallet.BiometricPromptAuthenticator
 import dev.idfoundry.oid4vcwallet.CredentialDetail
 import dev.idfoundry.oid4vcwallet.CredentialSummary
 import dev.idfoundry.oid4vcwallet.DeferredCredential
@@ -42,8 +44,10 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.serialization.json.JsonElement
 import java.lang.ref.WeakReference
+import kotlin.coroutines.resume
 
 /**
  * The demo wallet's state: the wallet, what it holds, and the issuance
@@ -110,12 +114,11 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
         prefs.edit().putStringSet(BLE_MODES, modes.map { it.name }.toSet()).commit()
     }
 
-    /** The activity holder keys ask the holder in. */
+    /** This model's activity: the holder confirms a presentation in it. */
     private var activity = WeakReference<Activity>(null)
 
     fun attach(activity: Activity) {
         this.activity = WeakReference(activity)
-        foreground = WeakReference(activity)
     }
 
     /**
@@ -387,11 +390,13 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /** Shares the selected credentials: holder keys sign now, so the holder is asked for their fingerprint or screen lock. */
+    /** Shares the selected credentials once the holder confirms with their fingerprint, face or screen lock: holder keys sign now. */
     fun share(openBrowser: (Uri) -> Unit) = viewModelScope.launch {
         val p = presentation ?: return@launch
         val selection = previewed ?: return@launch
         if (!canShare) return@launch
+        // A cancelled prompt leaves the request standing.
+        if (!confirmHolder("Share your credentials with ${verifierName(p)}.")) return@launch
         requestPhase = RequestPhase.SHARING
         try {
             val presented = p.respond(selection)
@@ -903,6 +908,8 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
     fun respondInPerson(document: Int, credentialID: String, elements: List<MdocPresentation.Element>) {
         val p = inPerson ?: return
         viewModelScope.launch {
+            // A cancelled prompt leaves the request standing.
+            if (!confirmHolder("Share your credential with the reader.")) return@launch
             try {
                 p.respond(document, credentialID, elements)
             } catch (e: WalletException) {
@@ -911,6 +918,35 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
             } catch (e: ProximityException) {
                 notice = e.description
             }
+        }
+    }
+
+    /**
+     * Asks for the holder's fingerprint, face or screen lock before a
+     * presentation's holder keys sign: whether they confirmed. Holder keys
+     * don't ask themselves (sharedKeys): they also sign each Credential
+     * Request's proof, so a key asking for each use would ask whenever the
+     * app refreshes copies in the background.
+     */
+    private suspend fun confirmHolder(reason: String): Boolean {
+        val host = activity.get() ?: return false
+        return suspendCancellableCoroutine { cont ->
+            val cancel = CancellationSignal()
+            cont.invokeOnCancellation { cancel.cancel() }
+            BiometricPrompt.Builder(host)
+                .setTitle("Confirm it's you")
+                .setSubtitle(reason)
+                .setAllowedAuthenticators(Authenticators.BIOMETRIC_STRONG or Authenticators.DEVICE_CREDENTIAL)
+                .build()
+                .authenticate(cancel, host.mainExecutor, object : BiometricPrompt.AuthenticationCallback() {
+                    override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                        cont.resume(true)
+                    }
+
+                    override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                        cont.resume(false)
+                    }
+                })
         }
     }
 
@@ -1035,11 +1071,14 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
             return make().also { shared = Triple(config, policy, it) }
         }
 
-        /** The activity holder keys ask the holder in: the one last attached, of either model's. */
-        private var foreground = WeakReference<Activity>(null)
-
-        /** The shared Wallet's keys. */
-        private val sharedKeys by lazy { AndroidKeystoreKeyStore(authenticator = BiometricPromptAuthenticator({ foreground.get() })) }
+        /**
+         * The shared Wallet's keys. Holder keys need no authentication for
+         * each use: the holder confirms each presentation instead
+         * (confirmHolder), not each issuance or refresh.
+         */
+        private val sharedKeys by lazy {
+            AndroidKeystoreKeyStore(AndroidKeystoreKeyStore.Options(holderUserAuthentication = false))
+        }
 
         private const val COPY_POLICY = "demo-copy-policy"
         private const val BLE_MODES = "demo-ble-modes"
