@@ -130,6 +130,26 @@ them.
   `walletflow.Config.MdocIssuerLeafPolicy`). The mobile libraries have
   no lenient option.
 
+### Registrations (`registration`, `walletflow`)
+
+- **`Registrars.Revocation` is required.** `Registrars.Verify` refuses
+  a nil `Revocation`: pass `certrevocation.CRLs{...}`, your own
+  `certrevocation.Checker`, or `certrevocation.NoCheck{}` to decline.
+  `walletflow` passes `NoCheck{}` itself in development when
+  `Config.RegistrarRevocation` is unset; outside development it was
+  already required.
+- **Registrar certificates.** With `LeafPolicy` unset,
+  `Registrars.Verify` now applies `registration.DefaultRegistrarLeafPolicy`,
+  which refuses the same certificates as
+  `issuer.DefaultAttestationLeafPolicy` above. Set `LeafPolicy` to your
+  ecosystem's own check, calling `DefaultRegistrarLeafPolicy` first, or
+  to `registration.AnyRegistrarLeaf` to accept every chain-verified
+  leaf. `walletflow.Config.RegistrarLeafPolicy` defaults the same way.
+- **`Verify` and `VerifyWithPolicy` are deprecated.** Use
+  `Registrars.Verify`, which takes a context and a revocation choice.
+  The deprecated functions check no revocation and apply
+  `DefaultRegistrarLeafPolicy` when no policy is given.
+
 ## v0.55.0 → v0.56.0
 
 This release pins FAPIgo v0.65.1, which carries the breaking changes of

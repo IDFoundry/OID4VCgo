@@ -62,7 +62,7 @@ func TestIssueVerify_Credentials(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := registration.Verify(token, reg.roots, clientID, time.Now())
+	got, err := verify(token, reg.roots, clientID, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}

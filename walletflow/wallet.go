@@ -185,6 +185,8 @@ type Config struct {
 	// RegistrarLeafPolicy, if set, decides whether a certificate under
 	// RegistrarRoots may sign registrations: an extended key usage or
 	// certificate policy the ecosystem defines for registrars, say.
+	// Unset, registration.DefaultRegistrarLeafPolicy refuses the
+	// certificates whose key usage clearly denotes another role.
 	RegistrarLeafPolicy func(leaf *x509.Certificate, chains [][]*x509.Certificate) error
 	// RegistrarRevocation checks a registrar's certificate chain for
 	// revocation (registration.Registrars.Revocation): a registration

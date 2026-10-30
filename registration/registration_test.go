@@ -1,6 +1,7 @@
 package registration_test
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -13,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/dcql"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/registration"
@@ -74,6 +76,11 @@ func path(keys ...string) dcql.Path {
 
 const clientID = "x509_hash:abc"
 
+// verify is Registrars.Verify under roots, with no revocation check.
+func verify(token string, roots *x509.CertPool, clientID string, now time.Time) (registration.Registration, error) {
+	return registration.Registrars{Roots: roots, Revocation: certrevocation.NoCheck{}}.Verify(context.Background(), token, clientID, now)
+}
+
 func shop() registration.Registration {
 	return registration.Registration{
 		Registrar: "https://registrar.example", ClientID: clientID, Name: "Corner Bottle Shop",
@@ -89,7 +96,7 @@ func TestIssueVerify_RoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := registration.Verify(token, reg.roots, clientID, time.Now())
+	got, err := verify(token, reg.roots, clientID, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +132,7 @@ func TestVerify_Refuses(t *testing.T) {
 		"tampered":              {tampered, clientID, reg.roots, time.Now(), "registration"},
 		"no roots":              {token, clientID, nil, time.Now(), "no registrar roots"},
 	} {
-		if _, err := registration.Verify(c.token, c.roots, c.clientID, c.now); err == nil || !strings.Contains(err.Error(), c.want) {
+		if _, err := verify(c.token, c.roots, c.clientID, c.now); err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("%s: %v, want an error containing %q", name, err, c.want)
 		}
 	}
@@ -152,7 +159,7 @@ func TestVerify_RefusesAmbiguousClaims(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := registration.Verify(resigned, reg.roots, clientID, time.Now()); err == nil {
+		if _, err := verify(resigned, reg.roots, clientID, time.Now()); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
 	}
@@ -224,7 +231,7 @@ func slicesEqual(a, b dcql.Path) bool {
 
 // TestVerify_RegistrarCertificate: the registrar's iss must be a URI in
 // its signing certificate, the certificate must be for digital
-// signatures, and VerifyWithPolicy's policy can refuse it — so a
+// signatures, and Registrars.LeafPolicy can refuse it — so a
 // certificate merely chaining to the roots, such as a Verifier's own,
 // can't vouch for anyone.
 func TestVerify_RegistrarCertificate(t *testing.T) {
@@ -235,7 +242,7 @@ func TestVerify_RegistrarCertificate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := registration.Verify(token, reg.roots, clientID, time.Now()); err == nil || !strings.Contains(err.Error(), "iss") {
+	if _, err := verify(token, reg.roots, clientID, time.Now()); err == nil || !strings.Contains(err.Error(), "iss") {
 		t.Errorf("an iss not in the certificate: %v, want refused", err)
 	}
 
@@ -244,7 +251,8 @@ func TestVerify_RegistrarCertificate(t *testing.T) {
 		t.Fatal(err)
 	}
 	refuse := func(*x509.Certificate, [][]*x509.Certificate) error { return errors.New("not a registrar") }
-	if _, err := registration.VerifyWithPolicy(good, reg.roots, clientID, time.Now(), refuse); err == nil || !strings.Contains(err.Error(), "not a registrar") {
+	registrars := registration.Registrars{Roots: reg.roots, LeafPolicy: refuse, Revocation: certrevocation.NoCheck{}}
+	if _, err := registrars.Verify(context.Background(), good, clientID, time.Now()); err == nil || !strings.Contains(err.Error(), "not a registrar") {
 		t.Errorf("a policy refusing the certificate: %v, want refused", err)
 	}
 
@@ -261,7 +269,7 @@ func TestVerify_RegistrarCertificate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := registration.Verify(token, reg.roots, clientID, time.Now()); err == nil || !strings.Contains(err.Error(), "digitalSignature") {
+	if _, err := verify(token, reg.roots, clientID, time.Now()); err == nil || !strings.Contains(err.Error(), "digitalSignature") {
 		t.Errorf("a certificate not for signing: %v, want refused", err)
 	}
 }
@@ -270,7 +278,7 @@ func TestVerify_RegistrarCertificate(t *testing.T) {
 // to — an unsigned DC API request has none — it isn't accepted.
 func TestVerify_RefusesNoClientID(t *testing.T) {
 	roots := x509.NewCertPool()
-	if _, err := registration.Verify("eyJ.e30.sig", roots, "", time.Now()); err == nil || !strings.Contains(err.Error(), "client_id") {
+	if _, err := verify("eyJ.e30.sig", roots, "", time.Now()); err == nil || !strings.Contains(err.Error(), "client_id") {
 		t.Errorf("Verify with no client_id: %v", err)
 	}
 }
@@ -286,10 +294,10 @@ func TestVerify_RegistrarCertificateAtNow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := registration.Verify(token, reg.roots, clientID, time.Now()); err != nil {
+	if _, err := verify(token, reg.roots, clientID, time.Now()); err != nil {
 		t.Fatalf("now: %v", err)
 	}
-	if _, err := registration.Verify(token, reg.roots, clientID, reg.chain[0].NotAfter.Add(time.Hour)); err == nil {
+	if _, err := verify(token, reg.roots, clientID, reg.chain[0].NotAfter.Add(time.Hour)); err == nil {
 		t.Error("accepted a registration at a time after its registrar's certificate expired")
 	}
 }

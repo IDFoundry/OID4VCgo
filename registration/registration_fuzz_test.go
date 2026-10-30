@@ -65,7 +65,7 @@ func fuzzQuery(f *testing.F) dcql.CredentialQuery {
 }
 
 // FuzzVerifyRegistration feeds arbitrary strings, as a registration
-// arrives in an untrusted Verifier's verifier_info, to VerifyWithPolicy.
+// arrives in an untrusted Verifier's verifier_info, to Registrars.Verify.
 func FuzzVerifyRegistration(f *testing.F) {
 	now := time.Now()
 	roots, key, chain := fuzzRegistrar(f, now)
@@ -81,7 +81,7 @@ func FuzzVerifyRegistration(f *testing.F) {
 	f.Add("")
 	f.Add("a.b.c")
 	f.Fuzz(func(_ *testing.T, s string) {
-		_, _ = registration.VerifyWithPolicy(s, roots, clientID, now, nil)
+		_, _ = verify(s, roots, clientID, now)
 	})
 }
 
@@ -114,7 +114,7 @@ func FuzzVerifyRegistrationSigned(f *testing.F) {
 		if err != nil {
 			t.Skip()
 		}
-		reg, err := registration.VerifyWithPolicy(signed, roots, clientID, now, nil)
+		reg, err := verify(signed, roots, clientID, now)
 		if err != nil {
 			return
 		}
