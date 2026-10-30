@@ -25,8 +25,8 @@
 //     Deferred and, with a Sealer, Keys. Authorizations and Grants
 //     report Durable, Keys declares durable custody.
 //
-// The issuer's DPoP replay and DPoP nonce stores aren't here, and
-// neither are FAPIgo's Authorization Server stores.
+// The Authorization Server's stores, and the Credential Endpoint's DPoP
+// replay and nonce stores, are FAPIgo's: see A whole issuer deployment.
 //
 // For SQLite, with a driver such as modernc.org/sqlite (pure Go, no
 // cgo), open the file in WAL mode with a busy timeout, so readers don't
@@ -50,6 +50,59 @@
 // options=-csearch_path=tenant_a in a key/value one — or a role whose
 // default search_path is that schema. Migrate creates the tables in the
 // connection's current schema. On SQLite, use a file each.
+//
+// # A whole issuer deployment
+//
+// A Credential Issuer also runs an Authorization Server
+// (fapigo/server), and its Credential Endpoint checks access tokens
+// with fapigo/serverresource: their stores are FAPIgo's interfaces,
+// which github.com/idfoundry/fapigo/sqlstore implements. The two
+// modules share one database and one *sql.DB:
+//
+//	sqlDB, err := sql.Open("pgx", dsn)
+//	sealer, err := verifier.AESGCMSealer(key)
+//	issuerDB, err := sqlstore.New(sqlDB, sqlstore.Postgres, sqlstore.Options{Sealer: sealer})
+//	asDB, err := fapisqlstore.New(sqlDB, fapisqlstore.Postgres, fapisqlstore.Options{Sealer: sealer})
+//	rsDB, err := fapisqlstore.New(sqlDB, fapisqlstore.Postgres, fapisqlstore.Options{TablePrefix: "fapigo_rs_", Sealer: sealer})
+//	// Migrate (or CheckSchema) each of issuerDB, asDB and rsDB.
+//
+//	asDeps := server.Dependencies{
+//		Clients: asDB.Clients(), Transactions: asDB.Transactions(), Grants: asDB.Grants(),
+//		Replay: asDB.Replay(), Nonces: asDB.Nonces(), Revocation: asDB.Revocation(),
+//		// ...
+//	}
+//	tokens, err := serverresource.NewVerifier(asCfg, asDeps, serverresource.Options{
+//		ResourceURLs: resourceURLs,
+//		Nonces:       rsDB.Nonces(), // the Credential Endpoint's DPoP nonces, never the server's
+//	})
+//	issuerDeps := issuer.Dependencies{
+//		Nonces: issuerDB.Nonces(), PreAuthorizedCodes: issuerDB.PreAuthorizedCodes(),
+//		DeferredTransactions: issuerDB.DeferredTransactions(), Notifications: issuerDB.Notifications(),
+//		CredentialOffers: issuerDB.CredentialOffers(),
+//		// ...
+//	}
+//
+// They keep apart:
+//
+//   - Tables: this package's all start oid4vc_, FAPIgo's with its
+//     TablePrefix (fapigo_ by default). Never give FAPIgo's a prefix
+//     starting oid4vc_: its schema_migrations table could then be this
+//     package's.
+//   - Migrations: each module migrates only its own tables, records its
+//     version in its own schema_migrations table and, on Postgres, takes
+//     an advisory lock key of its own, so they migrate in either order,
+//     or at once.
+//   - Isolation: a Postgres schema (search_path), or a SQLite file,
+//     holds both, as it holds either alone. On SQLite, which FAPIgo's
+//     stores don't declare CrossInstanceConsistent, a production
+//     server.Config sets Deployment to server.DeploymentSingleInstance.
+//   - Sealing: fapigo/sqlstore's Sealer has this package's method set,
+//     so one sealer value serves both, and the verifier's
+//     TransactionCodec too. Each module binds its records to additional
+//     data of its own, so a record one sealed never opens as the
+//     other's.
+//
+// Sweep each DB: neither sweeps the other's tables.
 //
 // # Migrations
 //

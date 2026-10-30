@@ -77,7 +77,12 @@ attesting it:
    or the TEE; user authentication only for a holder key whose
    hardware-enforced list requires it (`AndroidKeystoreKeyStore`'s
    `holderUserAuthentication`) — and never more.
-5. **Keep your own signing key in an HSM.**
+5. **Keep your own signing key in an HSM,** and sign attestations with
+   a certificate made for that alone: no extended key usage for TLS,
+   OCSP, code signing or an mdoc role. Put that certificate and its
+   intermediates in each attestation's `x5c`, never the root (HAIP 1.0
+   §4.4.1): issuers on FAPIgo refuse an attestation that breaks either
+   rule (`invalid_client`).
 
 A key is attested once, when it's made, over that moment's challenge. A
 key attested again later — the instance key, when a refresh needs a new

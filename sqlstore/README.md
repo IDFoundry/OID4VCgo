@@ -49,6 +49,30 @@ pure Go, no cgo) needs WAL mode and a busy timeout:
 sql.Open("sqlite", "file:store.db?_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)")
 ```
 
+## A whole issuer deployment
+
+A Credential Issuer also runs a `fapigo/server` Authorization Server and
+checks access tokens with `fapigo/serverresource`, whose stores are
+FAPIgo's: [`github.com/idfoundry/fapigo/sqlstore`](https://pkg.go.dev/github.com/idfoundry/fapigo/sqlstore)
+implements them. Both modules share one database, one `*sql.DB` and one
+sealer:
+
+```go
+issuerDB, err := sqlstore.New(sqlDB, sqlstore.Postgres, sqlstore.Options{Sealer: sealer})
+asDB, err := fapisqlstore.New(sqlDB, fapisqlstore.Postgres, fapisqlstore.Options{Sealer: sealer})
+// The Credential Endpoint's DPoP nonces, never the Authorization Server's:
+rsDB, err := fapisqlstore.New(sqlDB, fapisqlstore.Postgres, fapisqlstore.Options{TablePrefix: "fapigo_rs_", Sealer: sealer})
+// Migrate each; take server.Dependencies' stores from asDB,
+// serverresource.Options.Nonces from rsDB, issuer.Dependencies' from issuerDB.
+```
+
+Their tables don't collide (`oid4vc_…` here, FAPIgo's `TablePrefix`,
+`fapigo_` by default — never one starting `oid4vc_`), each migrates its
+own tables under its own version table and Postgres advisory lock, one
+schema or SQLite file holds both, and one sealer serves both, each
+binding its records to additional data of its own. Sweep each. See
+[doc.go](doc.go)'s "A whole issuer deployment".
+
 ## Running it
 
 - **Migrations** are embedded and versioned. `Migrate` applies the

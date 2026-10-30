@@ -36,8 +36,12 @@ Issuers trust the wallet because its Wallet Provider attests it. A
 production Wallet Provider should attest a wallet and its keys only
 after checking App Attest evidence that it's talking to your genuine
 app on a genuine device, and should keep its own signing key in an
-HSM. The demo wallet's provider attests anything, and is for
-development only.
+HSM. It signs attestations with a certificate made for that alone (no
+extended key usage for TLS, OCSP, code signing or an mdoc role), and
+puts that certificate and its intermediates in each attestation's
+`x5c`, never the root (HAIP 1.0 §4.4.1): issuers on FAPIgo refuse an
+attestation that breaks either rule (`invalid_client`). The demo
+wallet's provider attests anything, and is for development only.
 
 App Attest attests your app, not where its keys live: it can't show
 that the wallet's keys are in the Secure Enclave, and iOS has no

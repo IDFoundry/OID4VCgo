@@ -35,15 +35,14 @@ import (
 //     none where none were requested); and credential_identifiers that
 //     the granted object may add where the requested one has none —
 //     the Authorization Server minting them at consent — and otherwise
-//     may only narrow, as at the token endpoint, where the grant's
-//     identifiers are the "requested" side.
-//
-// One case the definition can't see: a token request narrowing a grant
-// whose openid_credential objects carry no credential_identifiers is
-// compared as consent is, so it could add identifiers of its own. Mint
-// identifiers for every openid_credential object granted at consent, or
-// refuse a token request whose authorization_details carry
-// credential_identifiers.
+//     may only narrow.
+//   - ValidateNarrowing, on the object a token request asks for
+//     (exchanging a code or a CIBA auth_req_id, or refreshing) against
+//     the granted one it narrows: the same checks, except that it may
+//     never add credential_identifiers. It keeps some or all of the
+//     grant's identifiers, or drops them, and a grant that holds none
+//     admits none. A token request naming an identifier the grant
+//     doesn't hold is refused with invalid_authorization_details.
 //
 // The binding rule for the Credential Issuer: a credential_identifier
 // is a handle the Authorization Server minted for one grant, not an
@@ -59,6 +58,7 @@ func AuthorizationDetailRARDefinition(maxObjects, maxBytesPerObject int) extensi
 		Validate:          validateAuthorizationDetail,
 		ValidateRequest:   validateRequestedAuthorizationDetail,
 		ValidateGrant:     validateGrantedAuthorizationDetail,
+		ValidateNarrowing: validateNarrowedAuthorizationDetail,
 	}
 }
 
@@ -89,19 +89,40 @@ func validateRequestedAuthorizationDetail(d AuthorizationDetail) error {
 	return nil
 }
 
+// validateGrantedAuthorizationDetail judges consent: granted may add
+// credential_identifiers where requested has none.
 func validateGrantedAuthorizationDetail(requested, granted AuthorizationDetail) error {
+	return validateNarrowerAuthorizationDetail(requested, granted, len(requested.CredentialIdentifiers) == 0, "granted", "requested")
+}
+
+// validateNarrowedAuthorizationDetail judges a token request's
+// narrowing of its grant: narrowed may only keep or drop the grant's
+// credential_identifiers, never add one.
+func validateNarrowedAuthorizationDetail(granted, narrowed AuthorizationDetail) error {
+	return validateNarrowerAuthorizationDetail(granted, narrowed, false, "token request's", "granted")
+}
+
+// validateNarrowerAuthorizationDetail reports whether narrower is no
+// wider than wider: the same credential_configuration_id, and
+// locations, claims and credential_identifiers among wider's. With
+// mayAddIdentifiers, narrower's credential_identifiers aren't checked.
+// narrowerName and widerName name the two sides in the error.
+func validateNarrowerAuthorizationDetail(wider, narrower AuthorizationDetail, mayAddIdentifiers bool, narrowerName, widerName string) error {
+	var member string
 	switch {
-	case granted.CredentialConfigurationID != requested.CredentialConfigurationID:
-		return errors.New("oid4vci: openid_credential authorization_details: the granted credential_configuration_id isn't the requested one")
-	case !subsetOf(granted.Locations, requested.Locations, func(a, b string) bool { return a == b }):
-		return errors.New("oid4vci: openid_credential authorization_details: the granted locations aren't among the requested ones")
-	case !subsetOf(granted.Claims, requested.Claims, func(a, b ClaimsDescription) bool { return reflect.DeepEqual(a, b) }):
-		return errors.New("oid4vci: openid_credential authorization_details: the granted claims aren't among the requested ones")
-	case len(requested.CredentialIdentifiers) > 0 &&
-		!subsetOf(granted.CredentialIdentifiers, requested.CredentialIdentifiers, func(a, b string) bool { return a == b }):
-		return errors.New("oid4vci: openid_credential authorization_details: the granted credential_identifiers aren't among the requested ones")
+	case narrower.CredentialConfigurationID != wider.CredentialConfigurationID:
+		return fmt.Errorf("oid4vci: openid_credential authorization_details: the %s credential_configuration_id isn't the %s one", narrowerName, widerName)
+	case !subsetOf(narrower.Locations, wider.Locations, func(a, b string) bool { return a == b }):
+		member = "locations"
+	case !subsetOf(narrower.Claims, wider.Claims, func(a, b ClaimsDescription) bool { return reflect.DeepEqual(a, b) }):
+		member = "claims"
+	case !mayAddIdentifiers &&
+		!subsetOf(narrower.CredentialIdentifiers, wider.CredentialIdentifiers, func(a, b string) bool { return a == b }):
+		member = "credential_identifiers"
+	default:
+		return nil
 	}
-	return nil
+	return fmt.Errorf("oid4vci: openid_credential authorization_details: the %s %s aren't among the %s ones", narrowerName, member, widerName)
 }
 
 // subsetOf reports whether every element of sub equals one of super.

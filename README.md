@@ -166,7 +166,9 @@ Where to start, by role:
   the issuer's, the verifier's and walletflow's stores in PostgreSQL or
   SQLite through `database/sql`: versioned migrations, atomic consumes
   and updates across processes, records optionally sealed, and a
-  `Sweep` for expired ones.
+  `Sweep` for expired ones. For a whole issuer deployment it shares one
+  database with FAPIgo's [`fapigo/sqlstore`](https://pkg.go.dev/github.com/idfoundry/fapigo/sqlstore),
+  which keeps the Authorization Server's stores.
 - **Your own stores and resolvers** — `issuer/issuertest`,
   `verifier/verifiertest` and `walletflow/storetest` hold contract tests
   to run against them.
@@ -176,8 +178,9 @@ credential formats, a browser and a command-line wallet, and a verifier
 with revocation — see [`examples/passport-vdc`](examples/passport-vdc).
 It wires the production entry points above (`verifier.Transactions`,
 `issuer.New` with `haip.IssuerProfile`, `walletflow`), though under
-development assurance and with in-memory stores; its README lists those
-demo-only settings.
+development assurance and with in-memory stores by default (`-db` keeps
+the issuer's in SQLite, with both `sqlstore` modules); its README lists
+those demo-only settings.
 
 The four `cmd/conformance-*` binaries under `conformance/` are test
 harnesses for the OIDF conformance suite, not models for a deployment.

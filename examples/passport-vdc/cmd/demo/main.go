@@ -13,6 +13,11 @@
 // iOS demo app, configured once) still do; and the wallet's credential
 // store.
 //
+// With -db the issuer keeps its Authorization Server's and Credential
+// Issuer's stores in a SQLite database in the state directory
+// (issuer/stores.db, sealed under issuer/stores.key) rather than in
+// memory: fapigo/sqlstore and oid4vcgo/sqlstore side by side.
+//
 // With -open it also starts Chrome on the three URLs, in a separate
 // profile (state/chrome-profile) that accepts the demo's certificate —
 // and only that one — without a warning.
@@ -72,6 +77,7 @@ func main() {
 	issuerURL := flag.String("issuer-url", localIssuerURL, "the issuer's public https URL, when a tunnel forwards it to "+issuerAddr+" (for a phone)")
 	verifierURL := flag.String("verifier-url", localVerifierURL, "the verifier's public https URL, when a tunnel forwards it to "+verifierAddr)
 	providerURL := flag.String("provider-url", localProviderURL, "the Wallet Provider's public https URL, when a tunnel forwards it to "+providerAddr)
+	db := flag.Bool("db", false, "keep the issuer's stores in a SQLite database in the state directory (issuer/stores.db) rather than in memory")
 	requireHardware := flag.Bool("require-hardware-key-attestation", false, "have the Wallet Provider refuse an Android key whose attestation chain isn't from hardware Google vouches for (an emulator's, say), rather than only log it")
 	flag.Parse()
 	urls := serviceURLs{issuer: *issuerURL, verifier: *verifierURL, provider: *providerURL}
@@ -86,7 +92,7 @@ func main() {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if err := run(ctx, options{state: *state, open: *open, chrome: *chrome, urls: urls, requireHardware: *requireHardware}); err != nil {
+	if err := run(ctx, options{state: *state, open: *open, chrome: *chrome, urls: urls, requireHardware: *requireHardware, db: *db}); err != nil {
 		log.Fatal(err)
 	}
 }
@@ -135,6 +141,7 @@ type options struct {
 	// requireHardware: the Wallet Provider refuses Android keys whose
 	// attestation isn't hardware Google vouches for.
 	requireHardware bool
+	db              bool // the issuer's stores in a SQLite database in state
 }
 
 // serviceURLs are the URLs the issuer, verifier and Wallet Provider are
@@ -193,14 +200,21 @@ func run(ctx context.Context, opts options) error {
 	}
 	httpClient := demotls.ClientTrusting(leaf)
 
-	issuer, err := issuerapp.New(issuerapp.Config{
+	issuerCfg := issuerapp.Config{
 		IssuerURL: issuerURL, CSCAPool: csca, StateDir: issuerState, WebWalletURL: walletURL,
 		AllowSampleDocument: true, // run the demo without a passport, and show the trust paths' difference
 		Wallet: issuerapp.WalletClient{
 			ClientID: walletClientID, RedirectURIs: []string{cliRedirectURI, iosRedirectURI, walletURL + "/callback"},
 			ProviderIssuer: providerIssuer, ProviderCA: provider.CACertificatePEM(),
 		},
-	})
+	}
+	if opts.db {
+		if issuerCfg.Database, issuerCfg.DatabaseSealer, err = issuerapp.OpenDatabase(filepath.Join(issuerState, "stores.db"), filepath.Join(issuerState, "stores.key")); err != nil {
+			return err
+		}
+		defer func() { _ = issuerCfg.Database.Close() }()
+	}
+	issuer, err := issuerapp.New(issuerCfg)
 	if err != nil {
 		return err
 	}
