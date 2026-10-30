@@ -35,12 +35,27 @@ import OID4VCWallet
 /// where to send the browser, when the Verifier asks.
 func present(requestLink: String, wallet: Wallet,
              confirm: (Presentation, [Presentation.Disclosure]) async -> Bool) async throws -> URL? {
-    let presentation = try await wallet.startPresentation(request: requestLink)
+    let presentation: Presentation
+    do {
+        presentation = try await wallet.startPresentation(request: requestLink)
+    } catch let error as WalletError where error.code == .requestRefused {
+        // A refused request: the Verifier was told, and may say where to
+        // take the holder next (OpenID4VP §8.2).
+        return wallet.takeRefusalRedirect()
+    }
     guard presentation.isAnswerable else {
         return try await presentation.decline().redirectURI
     }
-    let selection = try await presentation.defaultSelection()
-    let disclosures = try await presentation.preview(selection: selection)
+    let selection: Presentation.Selection
+    let disclosures: [Presentation.Disclosure]
+    do {
+        selection = try await presentation.defaultSelection()
+        disclosures = try await presentation.preview(selection: selection)
+    } catch {
+        // Nothing can be shown: decline, so the Verifier isn't left waiting.
+        _ = try? await presentation.decline()
+        throw error
+    }
     guard await confirm(presentation, disclosures) else {
         return try await presentation.decline().redirectURI
     }
@@ -62,7 +77,27 @@ agrees.
 
 Open ``Presentation/Presented/redirectURI``, when the Verifier sends
 one, in the browser the request came from: it's how a same-device
-flow returns to the Verifier's page.
+flow returns to the Verifier's page. The library refuses http and
+schemes that run code or read local data, but lets through a scheme the
+Verifier's own app may have registered: open an https URL in the
+browser, any other only through `UIApplication.open`, never in a web
+view, and never one in the wallet's own schemes (`openid4vp`,
+`openid-credential-offer`, its redirect URI's), which would start
+another flow in the wallet.
+
+### When the wallet refuses a request
+
+A request the wallet must not answer — one with `transaction_data` it
+doesn't support, or a parameter OpenID4VP forbids — makes
+``Wallet/startPresentation(request:)`` throw
+``WalletError/Code/requestRefused``, its ``WalletError/protocolError``
+the error code the wallet sent the Verifier, such as
+`invalid_transaction_data`. Nothing is shown to the holder, and nothing
+is presented. The Verifier may answer the refusal with a redirect:
+``Wallet/takeRefusalRedirect()`` returns it, once, and you open it in
+the browser the request came from, as a
+``Presentation/Presented/redirectURI``, so the holder isn't left
+stranded. Tell the holder the request wasn't answered.
 
 ### Show what's being asked beyond a registration
 

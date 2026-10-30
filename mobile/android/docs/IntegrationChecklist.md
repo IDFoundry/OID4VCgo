@@ -34,6 +34,8 @@ is a complete, working app on this library to compare against.
   and refuses a key without one. *Check:* the backend refuses a key
   made without its challenge, a key from an emulator, and a key from a
   build signed with another certificate.
+- [ ] One `Wallet`, created at launch and kept for the app's life, with
+  `Wallet.sweepOrphanedKeys` run before any issuance.
 - [ ] Each setting in [Going to production](GoingToProduction.md)'s
   "Settings to decide" is decided and recorded.
 - [ ] Trust roots are PEM in `WalletConfiguration`, each in its own

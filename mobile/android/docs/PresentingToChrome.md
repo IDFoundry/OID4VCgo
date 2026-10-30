@@ -126,8 +126,14 @@ suspend fun answerFromChrome(
     if (!presentation.isAnswerable) return presentation.decline().dcapiResponse
         ?.let { DigitalCredentials.response(request, it) } ?: DigitalCredentials.failure()
     // The holder agrees to exactly this selection, and it's what is sent.
-    val selection = presentation.defaultSelection()
-    val disclosures = presentation.preview(selection)
+    val (selection, disclosures) = try {
+        val chosen = presentation.defaultSelection()
+        chosen to presentation.preview(chosen)
+    } catch (e: WalletException) {
+        // Nothing can be shown: decline, so the page isn't left waiting.
+        return presentation.decline().dcapiResponse
+            ?.let { DigitalCredentials.response(request, it) } ?: DigitalCredentials.failure()
+    }
     val presented = if (askTheHolder(request.origin, presentation, disclosures)) {
         presentation.respond(selection)
     } else {
