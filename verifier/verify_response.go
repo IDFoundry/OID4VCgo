@@ -95,7 +95,11 @@ type VerifyResponseRequest struct {
 
 	// Now, if set, is used instead of time.Now for every time check:
 	// credential validity (SD-JWT exp/nbf, mdoc validFrom/validUntil)
-	// and Key Binding JWT freshness. Defaults to time.Now.
+	// and Key Binding JWT freshness. Defaults to time.Now. It's for
+	// tests: no assurance level refuses it, and a fixed or offset clock
+	// left in a deployment can accept expired credentials and stale Key
+	// Binding JWTs (and, through TransactionsConfig.Verify, keeps
+	// requests from expiring).
 	Now func() time.Time
 
 	// MaxClockSkew is how far Now may be from the issuer's clock when a

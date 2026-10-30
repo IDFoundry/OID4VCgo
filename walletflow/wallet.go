@@ -54,6 +54,14 @@ type Config struct {
 	// MdocIssuerRootsByDocType don't apply to it. REQUIRED for
 	// StartIssuance, unless the wallet receives only mdocs and those
 	// are set.
+	//
+	// Use the issuers' own CAs, never x509.SystemCertPool or a pool
+	// built from it: that anchors every public CA, a TLS server's
+	// certificate among them. New doesn't refuse one (the verifier's
+	// resolvers do under production), and on macOS, iOS and Windows a
+	// system pool with certificates appended to it can't be told from
+	// any other pool. The same goes for MdocIssuerRoots,
+	// MdocIssuerRootsByDocType, IssuerMetadataRoots and RegistrarRoots.
 	IssuerRoots *x509.CertPool
 	// IssuerLeafPolicy, if set, decides whether a certificate under
 	// IssuerRoots may sign credentials

@@ -28,6 +28,14 @@
 // §8.2 and §13.3 require, which the lower-level functions below leave
 // to the caller.
 //
+// Choose the flow by what the result is for. Only the same-device flow
+// and the Digital Credentials API bind the result to the browser that
+// asked: a cross-device request's QR code can be shown on any page, and
+// whoever started the request gets the result of the holder who
+// scanned it (OpenID4VP 1.0 §14.2; SECURITY.md, "Relayed cross-device
+// requests"). Where the session must belong to the person presenting,
+// as for a login, don't offer the cross-device flow.
+//
 // Several Transactions may share one TransactionStore, each reading
 // only its own transactions (TransactionsConfig.Scope). The scope a
 // Transactions derives when Scope is unset tells apart only Verifiers
