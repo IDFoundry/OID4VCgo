@@ -83,6 +83,32 @@ them.
   characters dropped, and is trimmed of surrounding space. A walletflow
   control character becomes a space instead of being dropped.
 
+### Credential Issuer (`issuer`)
+
+- **Key attestation signing certificates.** With `LeafPolicy` unset,
+  `X5CAttestationVerifier` and `X5CProofBindingKeyResolver` now apply
+  `issuer.DefaultAttestationLeafPolicy`. It refuses a signing certificate
+  whose key usage doesn't allow digital signatures, that is an OCSP
+  signer, or whose extended key usage lists any other role's purpose:
+  TLS server or client, code signing, email, time stamping, IPsec, the
+  mDL document signer's, or mdoc reader authentication. It also refuses
+  one reached only through an intermediate restricted to such purposes.
+  Give Wallet Providers their own certificates, or set `LeafPolicy`:
+  call `issuer.DefaultAttestationLeafPolicy` from yours to keep these
+  refusals, or set `issuer.AnyAttestationLeaf` to accept every
+  chain-verified leaf.
+- **Attestation issuer binding.** Under production, an
+  `X5CAttestationVerifier` left at `AttestationIssuerUnbound` is
+  refused. Set `IssuerBinding` to `AttestationIssuerBoundToAnchor` (with
+  `Anchors`) where the roots certify more than one Wallet Provider, or
+  to `AttestationIssuerInCertificate`. Where the roots certify a single
+  Wallet Provider, set `SingleWalletProvider: true`. `New` refuses
+  `SingleWalletProvider` together with any other binding.
+- **Attestation status lists.** Bind an `AttestationStatusChecker`'s
+  Status List Token signer by the attestation's key
+  (`Options.IssuerKey = a.SignerKey`), not by `a.Claims.Issuer`, as the
+  interface's doc comment now says.
+
 ## v0.55.0 → v0.56.0
 
 This release pins FAPIgo v0.65.1, which carries the breaking changes of

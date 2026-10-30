@@ -153,7 +153,7 @@ func TestNewRejectsInadequateKeySourcesUnderProduction(t *testing.T) {
 // fake — satisfy KeySourceAssurance.
 func TestNewAcceptsAdequateKeySourcesUnderProduction(t *testing.T) {
 	cfg, deps := productionAssuredConfigAndDeps(t)
-	deps.AttestationVerifier = issuer.X5CAttestationVerifier{Roots: x509.NewCertPool(), Revocation: certrevocation.NoCheck{}}
+	deps.AttestationVerifier = issuer.X5CAttestationVerifier{Roots: x509.NewCertPool(), Revocation: certrevocation.NoCheck{}, SingleWalletProvider: true}
 	deps.ProofBindingKeys = issuer.X5CProofBindingKeyResolver{Roots: x509.NewCertPool(), Revocation: certrevocation.NoCheck{}}
 	cfg.NoAttestationStatusCheck = true
 
@@ -506,7 +506,7 @@ func TestNewCapsDPoPNonceLifetimeUnderProduction(t *testing.T) {
 func productionIssuer(t *testing.T) (issuer.Config, issuer.Dependencies) {
 	t.Helper()
 	cfg, deps := productionAssuredConfigAndDeps(t)
-	deps.AttestationVerifier = issuer.X5CAttestationVerifier{Roots: x509.NewCertPool(), Revocation: certrevocation.NoCheck{}}
+	deps.AttestationVerifier = issuer.X5CAttestationVerifier{Roots: x509.NewCertPool(), Revocation: certrevocation.NoCheck{}, SingleWalletProvider: true}
 	cfg.NoAttestationStatusCheck = true
 	return cfg, deps
 }
@@ -554,7 +554,7 @@ func TestNewProductionRequiresHTTPS(t *testing.T) {
 // it deliberately doesn't.
 func TestNewProductionRequiresAttestationStatus(t *testing.T) {
 	cfg, deps := productionAssuredConfigAndDeps(t)
-	deps.AttestationVerifier = issuer.X5CAttestationVerifier{Roots: x509.NewCertPool(), Revocation: certrevocation.NoCheck{}}
+	deps.AttestationVerifier = issuer.X5CAttestationVerifier{Roots: x509.NewCertPool(), Revocation: certrevocation.NoCheck{}, SingleWalletProvider: true}
 	if _, err := issuer.New(cfg, deps); err == nil || !strings.Contains(err.Error(), "attestation_status") {
 		t.Fatalf("New without an attestation status check = %v, want an attestation_status error", err)
 	}
@@ -575,10 +575,10 @@ func TestNewProductionRequiresX5CRevocation(t *testing.T) {
 		want string
 	}{
 		"attestation verifier": {func(deps *issuer.Dependencies, revocation certrevocation.Checker) {
-			deps.AttestationVerifier = issuer.X5CAttestationVerifier{Roots: roots, Revocation: revocation}
+			deps.AttestationVerifier = issuer.X5CAttestationVerifier{Roots: roots, Revocation: revocation, SingleWalletProvider: true}
 		}, "X5CAttestationVerifier.Revocation"},
 		"attestation verifier, by pointer": {func(deps *issuer.Dependencies, revocation certrevocation.Checker) {
-			deps.AttestationVerifier = &issuer.X5CAttestationVerifier{Roots: roots, Revocation: revocation}
+			deps.AttestationVerifier = &issuer.X5CAttestationVerifier{Roots: roots, Revocation: revocation, SingleWalletProvider: true}
 		}, "X5CAttestationVerifier.Revocation"},
 		"proof binding keys": {func(deps *issuer.Dependencies, revocation certrevocation.Checker) {
 			deps.ProofBindingKeys = issuer.X5CProofBindingKeyResolver{Roots: roots, Revocation: revocation}

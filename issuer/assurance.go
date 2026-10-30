@@ -64,7 +64,9 @@ const (
 	// bare crypto.Signer to self-declare). An X5CAttestationVerifier or
 	// X5CProofBindingKeyResolver must also set Revocation, to
 	// certrevocation.NoCheck{} to decline checking certificate
-	// revocation.
+	// revocation, and an X5CAttestationVerifier an IssuerBinding other
+	// than AttestationIssuerUnbound, or SingleWalletProvider to declare
+	// that its roots certify one Wallet Provider alone.
 	//
 	// Also requires Dependencies.Audit to be configured — the same
 	// requirement FAPIgo's own server.AssuranceProduction places on
@@ -248,6 +250,9 @@ func checkProductionAssurance(cfg Config, deps Dependencies, declinedDPoPNonces 
 		}
 	}
 	if err := checkProductionX5CRevocation(deps); err != nil {
+		return err
+	}
+	if err := checkProductionAttestationBinding(deps); err != nil {
 		return err
 	}
 	if deps.Audit == nil {

@@ -6,6 +6,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/x509"
+	"encoding/asn1"
 	"errors"
 	"fmt"
 	"slices"
@@ -28,11 +29,13 @@ import (
 // Bind the Status List Token's signer to the attestation's: under
 // roots shared by several Wallet Providers, any of them could otherwise
 // sign a list that decides another's attestation's status. Set the
-// checker's Options.IssuerKey to a.SignerKey, so a list signed with the
-// attestation's own key is accepted, and Options.Issuer to
-// a.Claims.Issuer, when it has one, so a list whose signer's
-// certificate names that issuer is too — as verifier.RequireValidStatus
-// does for a credential's status list.
+// checker's Options.IssuerKey to a.SignerKey, so only a list signed
+// with the attestation's own key is accepted. Don't bind it by
+// a.Claims.Issuer (Options.Issuer): the attestation's iss is whatever
+// its signer wrote, and unless the X5CAttestationVerifier binds it
+// (AttestationIssuerInCertificate, AttestationIssuerBoundToAnchor),
+// any provider trusted under the same roots could name another
+// provider there, and so choose whose lists decide its attestation.
 //
 // The status list's uri is the Wallet Provider's to choose, and this
 // runs before anything about it is trusted beyond the attestation's
@@ -134,11 +137,14 @@ func signerCertificates(a attestation.KeyAttestation, signer crypto.PublicKey) [
 // could sign an attestation in another's name. IssuerBinding ties the
 // signing certificate to the attestation's "iss", the choice
 // fapigo/server.X5CAttesterChain's IssuerBinding makes for a Wallet
-// Attestation. It's opt-in, and AssuranceProduction doesn't require
-// it: a deployment whose providers' certificates name no identifier,
-// or whose attestations carry no "iss", would otherwise stop accepting
-// every key attestation. Set AttestationIssuerBoundToAnchor whenever
-// the anchors certify more than one Wallet Provider.
+// Attestation. AssuranceProduction requires the choice to be explicit:
+// a binding, or SingleWalletProvider to declare that Roots certify one
+// Wallet Provider alone, so nothing needs binding. Set
+// AttestationIssuerBoundToAnchor whenever the anchors certify more than
+// one Wallet Provider.
+//
+// LeafPolicy defaults to DefaultAttestationLeafPolicy, which refuses a
+// signing certificate issued for another role under the same roots.
 type X5CAttestationVerifier struct {
 	// Roots is the trust anchor set a presented x5c chain must
 	// validate against. Required unless IssuerBinding is
@@ -152,9 +158,15 @@ type X5CAttestationVerifier struct {
 	// would otherwise be accepted too: prefer Roots that anchor only
 	// this role's certificates, and use LeafPolicy to require what
 	// distinguishes them (an extended key usage, a certificate policy)
-	// where the anchors are shared. Under AttestationIssuerBoundToAnchor
-	// only a path LeafPolicy approves on its own can end at the bound
-	// anchor.
+	// where the anchors are shared. nil means
+	// DefaultAttestationLeafPolicy, which refuses the certificates whose
+	// key usage clearly denotes another role (a TLS server's, an mdoc
+	// reader's, an OCSP signer's, say). A LeafPolicy that's set
+	// replaces it: one adding a requirement calls
+	// DefaultAttestationLeafPolicy first, so as not to drop those
+	// refusals, and AnyAttestationLeaf opts out of them explicitly.
+	// Under AttestationIssuerBoundToAnchor only a path LeafPolicy
+	// approves on its own can end at the bound anchor.
 	LeafPolicy func(leaf *x509.Certificate, chains [][]*x509.Certificate) error
 
 	// Revocation, if set, checks the attestation's certificate chain
@@ -177,8 +189,17 @@ type X5CAttestationVerifier struct {
 
 	// IssuerBinding decides what ties the signing certificate to the
 	// attestation's "iss". The zero value, AttestationIssuerUnbound,
-	// ties nothing — see AttestationIssuerBinding.
+	// ties nothing — see AttestationIssuerBinding — and
+	// AssuranceProduction takes it only with SingleWalletProvider.
 	IssuerBinding AttestationIssuerBinding
+
+	// SingleWalletProvider declares that Roots anchor the certificates
+	// of a single Wallet Provider, so IssuerBinding is deliberately
+	// AttestationIssuerUnbound: no other provider's certificate can
+	// chain to them to sign in its name. Under AssuranceProduction,
+	// AttestationIssuerUnbound needs it; with any other IssuerBinding
+	// it's refused, as a contradiction.
+	SingleWalletProvider bool
 
 	// Anchors are the trust anchors, each bound to the attestation
 	// issuers it may vouch for, under AttestationIssuerBoundToAnchor.
@@ -242,6 +263,9 @@ type AttestationAnchor struct {
 func (v X5CAttestationVerifier) validate() error {
 	if err := certchain.ValidateRevocation(v.Revocation); err != nil {
 		return fmt.Errorf("X5CAttestationVerifier.Revocation: %w", err)
+	}
+	if v.SingleWalletProvider && v.IssuerBinding != AttestationIssuerUnbound {
+		return errors.New("X5CAttestationVerifier.SingleWalletProvider declares that nothing needs binding; it applies only to AttestationIssuerUnbound")
 	}
 	switch v.IssuerBinding {
 	case AttestationIssuerUnbound, AttestationIssuerInCertificate:
@@ -319,7 +343,7 @@ func (v X5CAttestationVerifier) ResolveAttestationKey(ctx context.Context, a att
 	var leaf *x509.Certificate
 	var err error
 	if v.IssuerBinding == AttestationIssuerUnbound {
-		leaf, _, err = resolveX5CLeaf(ctx, entries, v.Roots, v.LeafPolicy, v.Revocation)
+		leaf, _, err = resolveX5CLeaf(ctx, entries, v.Roots, attestationLeafPolicy(v.LeafPolicy), v.Revocation)
 	} else {
 		leaf, err = v.resolveBoundLeaf(ctx, entries, a.Issuer())
 	}
@@ -348,7 +372,7 @@ func (v X5CAttestationVerifier) resolveBoundLeaf(ctx context.Context, x5c []any,
 			roots.AddCert(anchor.Certificate)
 		}
 	}
-	leaf, approved, err := resolveX5CLeaf(ctx, x5c, roots, v.LeafPolicy, v.Revocation)
+	leaf, approved, err := resolveX5CLeaf(ctx, x5c, roots, attestationLeafPolicy(v.LeafPolicy), v.Revocation)
 	if err != nil {
 		return nil, err
 	}
@@ -377,6 +401,65 @@ func chainEndsAtAnchorFor(chains [][]*x509.Certificate, anchors []AttestationAnc
 		}
 	}
 	return false
+}
+
+// attestationRole is DefaultAttestationLeafPolicy's role: a Wallet
+// Provider's, certifying a Wallet's keys. Neither an mDL document
+// signer nor an mdoc reader is one.
+var attestationRole = certchain.LeafRole{
+	Name:         "the attestation signing certificate",
+	OtherISOEKUs: []asn1.ObjectIdentifier{certchain.MDLDocumentSignerEKU, certchain.ReaderAuthenticationEKU},
+	Strict:       true,
+}
+
+// DefaultAttestationLeafPolicy is the signing certificate check
+// X5CAttestationVerifier and X5CProofBindingKeyResolver make where no
+// LeafPolicy is set. Chain validation alone accepts any certificate
+// under Roots, so a TLS server's certificate from an ecosystem CA that
+// also certifies Wallet Providers could sign a key attestation
+// claiming any key storage for any key. It refuses a certificate whose
+// key usage extension doesn't allow digital signatures, that is an
+// OCSP signer, whose extended key usage lists any purpose that denotes
+// another role — TLS server or client authentication, code signing,
+// email protection, time stamping, IPsec, or ISO/IEC 18013-5's mDL
+// document signer or mdoc reader authentication (Annex B) — or every
+// verified path in chains (leaf first, as a LeafPolicy receives them)
+// of which has an intermediate CA whose extended key usage lists only
+// such purposes. It accepts a certificate without those extensions, or
+// whose extended key usage lists only anyExtendedKeyUsage or purposes
+// of its own: OpenID4VCI defines no Wallet Provider purpose to require.
+// A deployment whose providers' certificates carry one sets LeafPolicy
+// to require it, after calling this.
+func DefaultAttestationLeafPolicy(leaf *x509.Certificate, chains [][]*x509.Certificate) error {
+	return attestationRole.Check(leaf, chains)
+}
+
+// AnyAttestationLeaf is a LeafPolicy that accepts every chain-verified
+// leaf: the explicit opt-out of DefaultAttestationLeafPolicy, for an
+// X5CAttestationVerifier or X5CProofBindingKeyResolver whose Roots
+// anchor only that role's certificates.
+func AnyAttestationLeaf(*x509.Certificate, [][]*x509.Certificate) error { return nil }
+
+// attestationLeafPolicy is policy, or DefaultAttestationLeafPolicy when
+// it's nil.
+func attestationLeafPolicy(policy func(*x509.Certificate, [][]*x509.Certificate) error) func(*x509.Certificate, [][]*x509.Certificate) error {
+	if policy != nil {
+		return policy
+	}
+	return DefaultAttestationLeafPolicy
+}
+
+// checkProductionAttestationBinding refuses, under AssuranceProduction,
+// an X5CAttestationVerifier left at AttestationIssuerUnbound without
+// SingleWalletProvider: under roots that certify several Wallet
+// Providers, any of them could sign a key attestation in another's
+// name.
+func checkProductionAttestationBinding(deps Dependencies) error {
+	v, ok := asX5CAttestationVerifier(deps.AttestationVerifier)
+	if !ok || v.IssuerBinding != AttestationIssuerUnbound || v.SingleWalletProvider {
+		return nil
+	}
+	return errors.New("dependencies.attestation_verifier: X5CAttestationVerifier needs an explicit IssuerBinding under AssuranceProduction: AttestationIssuerBoundToAnchor (with Anchors) where its roots certify more than one Wallet Provider, AttestationIssuerInCertificate, or SingleWalletProvider to declare that its Roots certify one Wallet Provider alone")
 }
 
 // Capabilities implements KeySourceAssurance: validating an
