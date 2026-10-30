@@ -116,8 +116,9 @@ requires (`server.NoClientAttestationStatusCheck{}` to decline).
 
 ## Known limitations
 
-These are risks the library documents rather than closes, because
-closing them is up to a party it doesn't control:
+These are risks the library documents rather than closes: most because
+closing them is up to a party it doesn't control, the rest because
+they're not yet closed in the library.
 
 - **Bearer access tokens.** Under `walletflow.ProfileOpenID4VCI` a
   wallet takes a Bearer access token where the Authorization Server
@@ -159,6 +160,63 @@ closing them is up to a party it doesn't control:
   2^53 in magnitude is rounded: it can match a claim one off it, and
   miss its own. This applies to the wallet's filter and the verifier's
   check alike.
+- **Relayed cross-device requests.** In the cross-device flow nothing
+  ties the device that shows a QR code to the one that started the
+  Verifier's session (OpenID4VP 1.0 §14.2). An attacker can start a
+  session at a genuine Verifier, show its QR code on a page of their
+  own, and receive the result when the holder presents to it: the
+  request is genuinely the Verifier's, so the wallet's checks pass.
+  `verifier.Transactions` closes this for the same-device flow, where
+  the result is released only to the browser that began the request,
+  through a single-use `response_code` (HAIP 1.0 §5.1), and for the
+  Digital Credentials API, whose response is bound to the requesting
+  page's origin (`TransactionsConfig.Origins`). A cross-device
+  presentation can only be judged by the holder, from the Verifier the
+  wallet names on its consent screen. Where the Verifier's session must
+  be bound to the person presenting, such as a login, use the
+  same-device flow or the Digital Credentials API, not a QR code.
+- **Response endpoint timing.** `verifier.Transactions` answers every
+  refused or unknown answer to its response endpoint with the same
+  reply, so whoever holds a request's QR code can't learn from it
+  whether the holder has presented. The time taken still differs: a
+  refused answer to a pending request is recorded on the transaction
+  (`LastError`), a store write, and one to an answered or expired
+  request isn't. Over a quiet network, the timing can tell that party
+  whether and when the holder presented.
+- **Key storage evidence on iOS.** A Wallet Provider attests the
+  wallet's keys to issuers (OpenID4VCI 1.0 Appendix D, HAIP 1.0
+  §4.5.1), and its `key_storage` claim is only as good as its evidence.
+  The Android library hands the provider each key's Android Key
+  Attestation chain, over the provider's challenge, when the keys are
+  made by `AndroidKeystoreKeyStore`. iOS has no attestation of Secure
+  Enclave keys a provider can verify: App Attest attests the app, not
+  where its keys live. An iOS provider's `key_storage` rests on the app
+  keeping keys in the Secure Enclave, as `KeychainKeyStore` does, not on
+  hardware evidence. The mobile libraries' "Going to production" guides
+  say what a provider checks on each platform.
+- **One mdoc device key may both MAC and sign.** With
+  `walletflow.ProximityDeviceMACPreferred`, a proximity presentation
+  MACs with the credential's device key where it can and signs where it
+  can't, and OpenID4VP and the DC API always sign. Nothing records which
+  mechanism a key has used, though ISO/IEC 18013-5 §12.4.4 has each key
+  use one. The deniability a MAC gives is then lost for that key; no
+  attack on the key is known.
+- **Linkability across credentials.** `walletflow` warns before a
+  presentation would hand one Verifier a copy another has seen
+  (`Presentation.Linkable`), judging copies of one credential against
+  each other. It doesn't compare values an issuer reuses across
+  credentials (a status list index, `sub` or `jti` shared by the
+  SD-JWT VC and the mdoc of one issuance, or kept by a refresh): two
+  Verifiers given those can link the holder with no warning. HAIP 1.0
+  §6.1 makes avoiding such values the issuer's job.
+- **A credential matched only through `aka_vcts`.** The wallet's DCQL
+  matching treats an SD-JWT VC's `aka_vcts` as types it is of, and
+  `wallet.DefaultSelection` takes the first matching credential, with no
+  preference for one whose own `vct` was asked for. A credential that
+  claims another type through `aka_vcts` can be offered, and
+  pre-selected, for a request for that type. A Verifier decides whether
+  its issuer may issue that type: authorize each of
+  `IssuerAuthorization.MatchedTypes`, not only `Type`.
 
 ## What to include
 
