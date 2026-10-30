@@ -102,14 +102,17 @@ type config struct {
 	RequireSignedIssuerMetadata bool   `json:"require_signed_issuer_metadata,omitempty"`
 	RequireIssuerMetadataName   bool   `json:"require_issuer_metadata_name,omitempty"`
 	MaxIssuerMetadataAgeSeconds int64  `json:"max_issuer_metadata_age_seconds,omitempty"`
-	// Development relaxes what production requires, for a wallet talking to services on a
-	// development machine. Never ship an app with it set. It lets issuers,
-	// Authorization Servers, Verifiers and status lists be on loopback
-	// addresses, over http there too; with development_roots, makes requests
-	// through an ordinary HTTPS client, without the hardened one's refusal of
-	// private network addresses; and skips the production checks on
-	// receiving credentials: durable stores and keys, and the random source.
-	// (walletflow.Config.Development).
+	// Development relaxes what production requires, for a wallet talking to
+	// services on a development machine. Never ship an app with it set. It
+	// lets issuers, Authorization Servers, Verifiers and status lists be on
+	// loopback addresses, over http there too; makes requests through an
+	// ordinary HTTPS client, which reaches private network addresses,
+	// instead of the hardened one (trusting development_roots too, when
+	// set); requires no revocation choice for a trust role, so a role in
+	// neither revocation nor no_revocation_check is checked for nothing;
+	// skips the check that different roles' roots share no anchor; and
+	// skips the production checks on receiving credentials: durable stores
+	// and keys, and the random source (walletflow.Config.Development).
 	Development bool `json:"development"`
 	// IssuanceProfile is "openid4vci" (the default) or "haip"
 	// (walletflow.Config.IssuanceProfile).

@@ -81,11 +81,14 @@ public data class WalletConfiguration(
      * Relaxes what production requires, for a wallet talking to services
      * on a development machine. Never ship an app with it set. It lets
      * issuers, Authorization Servers, Verifiers and status lists be on
-     * loopback addresses, over http there too; with [developmentRoots],
-     * makes requests through an ordinary HTTPS client, without the
-     * hardened one's refusal of private network addresses; and skips the
-     * production checks on receiving credentials: durable stores and
-     * keys, and the random source.
+     * loopback addresses, over http there too; makes requests through an
+     * ordinary HTTPS client, which reaches private network addresses,
+     * instead of the hardened one (trusting [developmentRoots] too, when
+     * set); requires no revocation choice for a trust role, so a role in
+     * neither [revocation] nor [noRevocationCheck] is checked for nothing;
+     * skips the check that different roles' roots share no anchor; and
+     * skips the production checks on receiving credentials: durable
+     * stores and keys, and the random source.
      */
     val development: Boolean = false,
     /**

@@ -90,6 +90,52 @@ chain.
   ``ProximityReader`` takes the same, for its document signers and
   status lists.
 
+### Settings to decide
+
+Each of these is off or open by default. Decide each for your
+ecosystem, and record why:
+
+- ``WalletConfiguration/issuanceProfile``:
+  ``WalletConfiguration/IssuanceProfile/haip`` refuses issuers that
+  don't follow HAIP 1.0 (``WalletError/Code/profileViolation``); it
+  needs a `WalletProvider` and ``WalletConfiguration/clientID``. Set it
+  where every issuer should be a HAIP one.
+- Signed issuer metadata: ``WalletConfiguration/issuerMetadataRoots``
+  asks for and verifies it;
+  ``WalletConfiguration/requireSignedIssuerMetadata`` refuses an issuer
+  without it before the holder signs in or enters a code;
+  ``WalletConfiguration/requireIssuerMetadataName`` refuses metadata
+  whose certificate doesn't name the issuer;
+  ``WalletConfiguration/maxIssuerMetadataAgeSeconds`` bounds its age;
+  and ``WalletConfiguration/issuerMetadataRequireEKU`` its signer's
+  extended key usage. Set them together where your issuers sign their
+  metadata.
+- ``WalletConfiguration/requireIssuerName``: refuses an SD-JWT VC whose
+  `iss` its signing certificate doesn't name. Set it where
+  ``WalletConfiguration/issuerRoots`` certify several issuers, so one
+  can't issue in another's name.
+- ``WalletConfiguration/allowForeignIss``: receives an SD-JWT VC whose
+  `iss` isn't the issuer it came from. Leave it off unless an issuer
+  names itself differently, and ``WalletConfiguration/issuerRoots``
+  certify it alone.
+- ``WalletConfiguration/statusIssuers``: the Status Issuers that may
+  sign an issuer's status lists for it. Without it, only the issuer's
+  own lists are accepted: add only delegations your ecosystem
+  publishes.
+- ``WalletConfiguration/mdocIssuerRoots`` and
+  ``WalletConfiguration/mdocIssuerRootsByDocType``: the IACAs mdocs, or
+  each document type, must chain to, instead of
+  ``WalletConfiguration/issuerRoots``, so an SD-JWT VC issuer's CA
+  can't sign an mDL. ``WalletConfiguration/mdocIssuerRequireEKU``
+  requires document signers' extended key usage (the mDL's is
+  1.0.18013.5.1.2).
+- ``WalletConfiguration/proximityDeviceAuth``:
+  ``WalletConfiguration/ProximityDeviceAuth/macPreferred`` answers
+  readers with deviceMac, which the reader can't show anyone else; it
+  needs a key store that is also a ``KeyAgreement``.
+  ``WalletConfiguration/ProximityDeviceAuth/signature``, the default,
+  signs.
+
 ### Privacy
 
 - Request batches of copies (``WalletConfiguration/batchSize``) and
@@ -112,7 +158,9 @@ Verifier: check ``OID4VC/isTestBuild`` at launch.
 ### A document provider extension
 
 The app and its extension each update a credential's record — marking
-a copy presented, replacing copies on refresh — with a lock that spans
-only their own process. Refresh credentials when the app becomes
-active, not while it's in the background, so the two don't write the
-same record at once.
+a copy presented, replacing copies on refresh. Give both one
+``FileCredentialStore/inAppGroup(_:options:)`` store, whose
+``FileCredentialStore/compareAndSwap(id:expected:record:)`` takes a
+file lock in the shared container, so their updates don't overwrite
+each other. A ``CredentialStore`` of your own must make
+`compareAndSwap` atomic across both processes too.

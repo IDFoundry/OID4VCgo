@@ -385,13 +385,11 @@ there is no automatic switch to a different static transcript. Its incomplete
 tap leaves QR available, but cannot establish NFC retrieval. To use such a
 reader over NFC, close this owner and create a static presentation.
 
-ISO/IEC 18013-5:2021's published sample, §6.3.2.3, permits a holder to offer
-either handover method or both; it requires both on the reader. See the
-[ISO-authored sample](https://standards.theiteh.com/catalog/standards/iso/8b349f37-4a4d-4379-9feb-0061079dba81/iso-iec-18013-5-2021)
-and NFC Forum's [CH overview](https://nfc-forum.org/build/specifications/connection-handover-technical-specification/).
-These support explicit mode selection, not a mandatory silent fallback.
-Detailed licensed review of §8.2.2.1, CH 1.5 and TNEP 1.0 hasn't been
-done; public overviews do not replace those normative texts.
+ISO/IEC 18013-5:2021 §6.3.2.3 permits a holder to offer either handover
+method or both, and requires both on the reader; NFC Forum's
+[Connection Handover overview](https://nfc-forum.org/build/specifications/connection-handover-technical-specification/)
+describes them. Choose the mode explicitly: there is no silent fallback
+from one to the other.
 
 For opt-in Android lifecycle diagnostics:
 
