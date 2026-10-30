@@ -25,7 +25,7 @@ type NonceStore struct{ t *table[issuer.NonceIssuance] }
 
 // Nonces returns d's issuer.NonceStore.
 func (d *DB) Nonces() *NonceStore {
-	return &NonceStore{&table[issuer.NonceIssuance]{d: d, name: "issuer_nonces", rowOf: func(n issuer.NonceIssuance) row {
+	return &NonceStore{&table[issuer.NonceIssuance]{d: d, name: "issuer_nonces", sql: tableSQL{insert: d.sql.nonceInsert, consume: d.sql.nonceConsumeOwned}, rowOf: func(n issuer.NonceIssuance) row {
 		return row{owner: n.Owner, sweepAfter: n.ExpiresAt}
 	}}}
 }
@@ -41,7 +41,7 @@ func (s *NonceStore) Issue(ctx context.Context, issuance issuer.NonceIssuance) e
 // Consume implements issuer.NonceStore: one DELETE … RETURNING, of the
 // nonce issued with consumption.Owner only.
 func (s *NonceStore) Consume(ctx context.Context, consumption issuer.NonceConsumption) (issuer.NonceRecord, error) {
-	n, err := s.t.consume(ctx, consumption.Nonce, true, consumption.Owner)
+	n, err := s.t.consume(ctx, consumption.Nonce, consumption.Owner)
 	switch {
 	case errors.Is(err, errNoRow):
 		return issuer.NonceRecord{}, fmt.Errorf("sqlstore: %w", issuer.ErrNonceUnknown)
@@ -66,7 +66,7 @@ type PreAuthorizedCodeStore struct {
 // PreAuthorizedCodes returns d's issuer.PreAuthorizedCodeStore.
 func (d *DB) PreAuthorizedCodes() *PreAuthorizedCodeStore {
 	return &PreAuthorizedCodeStore{&table[issuer.PreAuthorizedCodeRecord]{
-		d: d, name: "issuer_pre_authorized_codes", extra: []string{"tx_code_hash"},
+		d: d, name: "issuer_pre_authorized_codes", sql: tableSQL{insert: d.sql.pacInsert, delete: d.sql.pacDelete},
 		rowOf: func(r issuer.PreAuthorizedCodeRecord) row {
 			return row{owner: r.Owner, sweepAfter: r.ExpiresAt, extra: []any{r.TxCodeHash}}
 		},
@@ -114,7 +114,7 @@ func (s *PreAuthorizedCodeStore) consumeOn(ctx context.Context, q querier, codeH
 	var txCodeHash string
 	var attempts int
 	var data []byte
-	err = q.QueryRowContext(ctx, d.q("SELECT tx_code_hash, wrong_attempts, record FROM {issuer_pre_authorized_codes} WHERE id = ?"+d.forUpdate()), codeHash).
+	err = q.QueryRowContext(ctx, d.sql.pacSelectForConsume, codeHash).
 		Scan(&txCodeHash, &attempts, &data)
 	if errors.Is(err, sql.ErrNoRows) {
 		return record, 0, nil, errNoRow
@@ -123,7 +123,7 @@ func (s *PreAuthorizedCodeStore) consumeOn(ctx context.Context, q querier, codeH
 		return record, 0, nil, fmt.Errorf("sqlstore: consume pre-authorized code: %w", err)
 	}
 	invalidate := func() error {
-		_, err := q.ExecContext(ctx, d.q("DELETE FROM {issuer_pre_authorized_codes} WHERE id = ?"), codeHash)
+		_, err := q.ExecContext(ctx, d.sql.pacDelete, codeHash)
 		return err
 	}
 	tooMany := maxAttempts > 0 && attempts >= maxAttempts
@@ -142,7 +142,7 @@ func (s *PreAuthorizedCodeStore) consumeOn(ctx context.Context, q querier, codeH
 		if maxAttempts > 0 && attempts >= maxAttempts {
 			err = invalidate()
 		} else {
-			_, err = q.ExecContext(ctx, d.q("UPDATE {issuer_pre_authorized_codes} SET wrong_attempts = ? WHERE id = ?"), attempts, codeHash)
+			_, err = q.ExecContext(ctx, d.sql.pacSetAttempts, attempts, codeHash)
 		}
 		if err != nil {
 			return record, 0, nil, err
@@ -182,7 +182,10 @@ type DeferredTransactionStore struct {
 // DeferredTransactions returns d's issuer.DeferredTransactionStore.
 func (d *DB) DeferredTransactions() *DeferredTransactionStore {
 	return &DeferredTransactionStore{&table[issuer.DeferredTransactionRecord]{
-		d: d, name: "issuer_deferred_transactions",
+		d: d, name: "issuer_deferred_transactions", sql: tableSQL{
+			insert: d.sql.deferredTxInsert, get: d.sql.deferredTxGet, getForUpdate: d.sql.deferredTxGetForUpdate,
+			update: d.sql.deferredTxUpdate, delete: d.sql.deferredTxDelete,
+		},
 		rowOf: func(r issuer.DeferredTransactionRecord) row { return row{owner: r.Owner, sweepAfter: r.ExpiresAt} },
 	}}
 }
@@ -248,7 +251,7 @@ type NotificationStore struct {
 // Notifications returns d's issuer.NotificationStore.
 func (d *DB) Notifications() *NotificationStore {
 	return &NotificationStore{&table[issuer.NotificationRecord]{
-		d: d, name: "issuer_notifications",
+		d: d, name: "issuer_notifications", sql: tableSQL{insert: d.sql.notificationInsert, get: d.sql.notificationGet},
 		rowOf: func(r issuer.NotificationRecord) row { return row{owner: r.Owner, sweepAfter: r.ExpiresAt} },
 	}}
 }
@@ -286,7 +289,7 @@ type CredentialOfferStore struct {
 // CredentialOffers returns d's issuer.CredentialOfferStore.
 func (d *DB) CredentialOffers() *CredentialOfferStore {
 	return &CredentialOfferStore{&table[issuer.CredentialOfferRecord]{
-		d: d, name: "issuer_credential_offers",
+		d: d, name: "issuer_credential_offers", sql: tableSQL{insert: d.sql.offerInsert, get: d.sql.offerGet},
 		rowOf: func(r issuer.CredentialOfferRecord) row { return row{sweepAfter: r.ExpiresAt} },
 	}}
 }

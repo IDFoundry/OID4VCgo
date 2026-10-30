@@ -23,42 +23,73 @@ import (
 // run against SQLite alone.
 const postgresDSNEnv = "SQLSTORE_POSTGRES_DSN"
 
-// postgresDSN is postgresDSNEnv's DSN, its search_path set to a schema
-// of this test run's own (TestMain), or "".
-var postgresDSN string
+// postgres is the test run's Postgres connection, and postgresRun the
+// prefix of the schemas it creates (newPostgresSchema); nil without
+// postgresDSNEnv.
+var (
+	postgres    *sql.DB
+	postgresRun string
+)
 
 func TestMain(m *testing.M) {
 	os.Exit(runTests(m))
 }
 
 func runTests(m *testing.M) int {
-	base := os.Getenv(postgresDSNEnv)
-	if base == "" {
+	if os.Getenv(postgresDSNEnv) == "" {
 		return m.Run()
 	}
-	schema := "sqlstore_test_" + randomHex(6)
-	admin, err := sql.Open("pgx", base)
+	db, err := sql.Open("pgx", os.Getenv(postgresDSNEnv))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "open postgres:", err)
 		return 1
 	}
-	defer admin.Close()
-	ctx := context.Background()
-	if _, err := admin.ExecContext(ctx, "CREATE SCHEMA "+schema); err != nil {
-		fmt.Fprintln(os.Stderr, "create schema:", err)
-		return 1
+	defer db.Close()
+	postgres, postgresRun = db, "sqlstore_test_"+randomHex(4)+"_"
+	defer dropPostgresSchemas()
+	return m.Run()
+}
+
+// newPostgresSchema creates an empty schema and returns a DSN using it:
+// the storages of one test run are kept apart by schema, as deployments
+// sharing a database are.
+func newPostgresSchema(t *testing.T) string {
+	t.Helper()
+	schema := postgresRun + randomHex(4)
+	if _, err := postgres.ExecContext(context.Background(), "CREATE SCHEMA "+schema); err != nil {
+		t.Fatalf("create schema: %v", err)
 	}
-	defer func() { _, _ = admin.ExecContext(ctx, "DROP SCHEMA "+schema+" CASCADE") }()
-	u, err := url.Parse(base)
+	u, err := url.Parse(os.Getenv(postgresDSNEnv))
 	if err != nil {
-		fmt.Fprintln(os.Stderr, postgresDSNEnv+":", err)
-		return 1
+		t.Fatalf("%s: %v", postgresDSNEnv, err)
 	}
 	query := u.Query()
 	query.Set("search_path", schema)
 	u.RawQuery = query.Encode()
-	postgresDSN = u.String()
-	return m.Run()
+	return u.String()
+}
+
+// dropPostgresSchemas drops every schema the test run created.
+func dropPostgresSchemas() {
+	ctx := context.Background()
+	rows, err := postgres.QueryContext(ctx, "SELECT schema_name FROM information_schema.schemata WHERE starts_with(schema_name, $1)", postgresRun)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "list test schemas:", err)
+		return
+	}
+	var schemas []string
+	for rows.Next() {
+		var name string
+		if rows.Scan(&name) == nil {
+			schemas = append(schemas, name)
+		}
+	}
+	_ = rows.Close()
+	for _, name := range schemas {
+		if _, err := postgres.ExecContext(ctx, "DROP SCHEMA "+name+" CASCADE"); err != nil {
+			fmt.Fprintln(os.Stderr, "drop test schema:", err)
+		}
+	}
 }
 
 func randomHex(n int) string {
@@ -70,7 +101,7 @@ func randomHex(n int) string {
 // dialects are the databases the tests run against: SQLite always,
 // PostgreSQL with postgresDSNEnv set.
 func dialects() []sqlstore.Dialect {
-	if postgresDSN != "" {
+	if postgres != nil {
 		return []sqlstore.Dialect{sqlstore.SQLite, sqlstore.Postgres}
 	}
 	return []sqlstore.Dialect{sqlstore.SQLite}
@@ -88,8 +119,8 @@ func forEachDialect(t *testing.T, fn func(t *testing.T, e *env)) {
 	}
 }
 
-// env makes empty storages — a SQLite file, or a table prefix of their
-// own in the test run's Postgres schema — and handles on them.
+// env makes empty storages — a SQLite file, or a Postgres schema of
+// their own — and handles on them.
 type env struct {
 	t       *testing.T
 	dialect sqlstore.Dialect
@@ -116,16 +147,11 @@ func (e *env) closeAll() {
 func (e *env) storage() func() *sqlstore.DB {
 	e.t.Helper()
 	e.closeAll()
-	var dsn, driver string
-	opts := e.opts
-	switch e.dialect {
-	case sqlstore.SQLite:
-		driver = "sqlite"
-		dsn = "file:" + filepath.Join(e.t.TempDir(), "store.db") + "?_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)"
-	case sqlstore.Postgres:
-		driver, dsn = "pgx", postgresDSN
-		opts.TablePrefix = "t" + randomHex(4) + "_"
+	driver, dsn := "sqlite", "file:"+filepath.Join(e.t.TempDir(), "store.db")+"?_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)"
+	if e.dialect == sqlstore.Postgres {
+		driver, dsn = "pgx", newPostgresSchema(e.t)
 	}
+	opts := e.opts
 	open := func() *sqlstore.DB {
 		e.t.Helper()
 		db, err := sql.Open(driver, dsn)

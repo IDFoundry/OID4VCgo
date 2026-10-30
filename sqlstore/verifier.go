@@ -26,7 +26,9 @@ type TransactionStore struct {
 // disclosed. The DB's own Options.Sealer doesn't apply here.
 func (d *DB) Transactions(codec verifier.TransactionCodec) *TransactionStore {
 	return &TransactionStore{&table[verifier.Transaction]{
-		d: d, name: "verifier_transactions", extra: []string{"key_id", "response_code_hash"},
+		d: d, name: "verifier_transactions", sql: tableSQL{
+			insert: d.sql.txInsert, get: d.sql.txGet, getForUpdate: d.sql.txGetForUpdate, update: d.sql.txUpdate,
+		},
 		encode: func(_ string, tx verifier.Transaction) ([]byte, error) { return codec.Marshal(tx) },
 		decode: func(id string, data []byte) (verifier.Transaction, error) {
 			tx, err := codec.Unmarshal(data)
@@ -82,26 +84,24 @@ func (s *TransactionStore) Update(ctx context.Context, id string, fn func(*verif
 
 // IDByKeyID implements verifier.TransactionStore.
 func (s *TransactionStore) IDByKeyID(ctx context.Context, kid string) (string, error) {
-	return s.idBy(ctx, sqlTransactionByKeyID, kid)
+	if kid == "" {
+		return "", txUnknown("find", errNoRow)
+	}
+	return s.scanID(s.t.d.db.QueryRowContext(ctx, s.t.d.sql.txIDByKeyID, kid))
 }
 
 // IDByResponseCode implements verifier.TransactionStore.
 func (s *TransactionStore) IDByResponseCode(ctx context.Context, codeHash string) (string, error) {
-	return s.idBy(ctx, sqlTransactionByResponseCode, codeHash)
-}
-
-// The statements idBy finds a transaction's id with.
-const (
-	sqlTransactionByKeyID        = "SELECT id FROM {verifier_transactions} WHERE key_id = ?"
-	sqlTransactionByResponseCode = "SELECT id FROM {verifier_transactions} WHERE response_code_hash = ?"
-)
-
-func (s *TransactionStore) idBy(ctx context.Context, statement, value string) (string, error) {
-	if value == "" {
+	if codeHash == "" {
 		return "", txUnknown("find", errNoRow)
 	}
+	return s.scanID(s.t.d.db.QueryRowContext(ctx, s.t.d.sql.txIDByResponseCode, codeHash))
+}
+
+// scanID is the transaction ID r holds, or ErrTransactionUnknown.
+func (s *TransactionStore) scanID(r *sql.Row) (string, error) {
 	var id string
-	err := s.t.d.db.QueryRowContext(ctx, s.t.d.q(statement), value).Scan(&id)
+	err := r.Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		err = errNoRow
 	}

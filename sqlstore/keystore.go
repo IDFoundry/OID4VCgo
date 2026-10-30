@@ -38,7 +38,7 @@ func (d *DB) Keys() (*KeyStore, error) {
 	if d.sealer == nil {
 		return nil, errors.New("sqlstore: a KeyStore needs Options.Sealer: private keys are never stored unsealed")
 	}
-	return &KeyStore{&table[keyRecord]{d: d, name: "wallet_keys", rowOf: func(keyRecord) row { return row{} }}}, nil
+	return &KeyStore{&table[keyRecord]{d: d, name: "wallet_keys", sql: tableSQL{insert: d.sql.keyInsert, get: d.sql.keyGet, delete: d.sql.keyDelete}, rowOf: func(keyRecord) row { return row{} }}}, nil
 }
 
 // storedKey is a KeyStore's walletflow.Key.

@@ -6,7 +6,6 @@ import (
 	"database/sql/driver"
 	"errors"
 	"fmt"
-	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -27,8 +26,8 @@ const (
 	// SQLite is SQLite, 3.35 or later, through any database/sql driver
 	// (modernc.org/sqlite, say, which needs no cgo). A transaction
 	// starts with BEGIN IMMEDIATE, taking the database's write lock up
-	// front. Open it with a busy timeout and in WAL mode — see the
-	// package documentation.
+	// front, after setting the connection's busy timeout to 10 seconds.
+	// Open it in WAL mode — see the package documentation.
 	SQLite
 )
 
@@ -45,12 +44,6 @@ func (d Dialect) String() string {
 
 // Options configures a DB.
 type Options struct {
-	// TablePrefix is put before every table name, so several DBs — or
-	// another application's tables — can share one database or schema:
-	// lower-case letters, digits and underscores, starting with a letter,
-	// at most 32 characters. Empty means "oid4vc_".
-	TablePrefix string
-
 	// Sealer, if set, seals every record the issuer and walletflow stores
 	// write (an AEAD such as verifier.AESGCMSealer, with a key kept
 	// outside the database), each bound to its table and key, so a copy
@@ -63,11 +56,6 @@ type Options struct {
 	// A DB with a Sealer refuses records written without one, and one
 	// without a Sealer those written with one. KeyStore requires it.
 	Sealer Sealer
-
-	// SQLiteBusyTimeout is how long a SQLite transaction waits for
-	// another connection's write lock before failing. Zero means 10
-	// seconds. Ignored for Postgres.
-	SQLiteBusyTimeout time.Duration
 }
 
 // DB holds the issuer, verifier and walletflow stores' tables in one
@@ -76,23 +64,15 @@ type Options struct {
 type DB struct {
 	db      *sql.DB
 	dialect Dialect
-	prefix  string
-	sealer  Sealer
-	busy    time.Duration
-	// busyPragma sets busy on a SQLite connection.
-	busyPragma string
+	// sql is the dialect's statements.
+	sql    *queries
+	sealer Sealer
 
 	// sqliteWrites serializes this DB's own SQLite transactions, which
 	// would otherwise only wait on SQLite's busy handler for each other.
 	// Other processes, and other DBs on the same file, still do.
 	sqliteWrites sync.Mutex
-
-	queries sync.Map // query template → the dialect's query
 }
-
-const defaultTablePrefix = "oid4vc_"
-
-var tablePrefixPattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,31}$`)
 
 // New returns a DB using db, a database of dialect. It doesn't touch the
 // database: call Migrate, from a deployment step or at startup, before
@@ -104,22 +84,11 @@ func New(db *sql.DB, dialect Dialect, opts Options) (*DB, error) {
 	if dialect != Postgres && dialect != SQLite {
 		return nil, fmt.Errorf("sqlstore: unknown dialect %v", dialect)
 	}
-	prefix := opts.TablePrefix
-	if prefix == "" {
-		prefix = defaultTablePrefix
+	q := &postgresQueries
+	if dialect == SQLite {
+		q = &sqliteQueries
 	}
-	if !tablePrefixPattern.MatchString(prefix) {
-		return nil, fmt.Errorf("sqlstore: table prefix %q must be lower-case letters, digits and underscores, starting with a letter, at most 32 characters", prefix)
-	}
-	busy := opts.SQLiteBusyTimeout
-	if busy == 0 {
-		busy = 10 * time.Second
-	}
-	if busy < 0 {
-		return nil, errors.New("sqlstore: negative SQLiteBusyTimeout")
-	}
-	return &DB{db: db, dialect: dialect, prefix: prefix, sealer: opts.Sealer, busy: busy,
-		busyPragma: "PRAGMA busy_timeout = " + strconv.FormatInt(busy.Milliseconds(), 10)}, nil
+	return &DB{db: db, dialect: dialect, sql: q, sealer: opts.Sealer}, nil
 }
 
 // Dialect is the database's dialect.
@@ -131,44 +100,6 @@ type querier interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
-}
-
-// q turns template into the dialect's query: each {name} becomes the
-// prefixed table name, and each ? a Postgres $n placeholder.
-func (d *DB) q(template string) string {
-	if v, ok := d.queries.Load(template); ok {
-		return v.(string)
-	}
-	var b strings.Builder
-	n := 0
-	for i := 0; i < len(template); i++ {
-		switch c := template[i]; {
-		case c == '{':
-			end := strings.IndexByte(template[i:], '}')
-			b.WriteString(d.prefix)
-			b.WriteString(template[i+1 : i+end])
-			i += end
-		case c == '?' && d.dialect == Postgres:
-			n++
-			b.WriteByte('$')
-			b.WriteString(strconv.Itoa(n))
-		default:
-			b.WriteByte(c)
-		}
-	}
-	query := b.String()
-	d.queries.Store(template, query)
-	return query
-}
-
-// forUpdate is what a SELECT that locks its rows for the rest of the
-// transaction ends with: SQLite's BEGIN IMMEDIATE has already locked
-// the whole database.
-func (d *DB) forUpdate() string {
-	if d.dialect == Postgres {
-		return " FOR UPDATE"
-	}
-	return ""
 }
 
 // write runs fn in a transaction that holds the write lock on whatever
@@ -213,22 +144,22 @@ func (d *DB) sqliteWrite(ctx context.Context, fn func(q querier) error) (err err
 	defer func() {
 		if err != nil {
 			// Never hand the pool a connection still in a transaction.
-			if _, rbErr := conn.ExecContext(context.WithoutCancel(ctx), "ROLLBACK"); rbErr != nil && !noTransaction(rbErr) {
+			if _, rbErr := conn.ExecContext(context.WithoutCancel(ctx), sqliteRollback); rbErr != nil && !noTransaction(rbErr) {
 				_ = conn.Raw(func(any) error { return driver.ErrBadConn })
 			}
 		}
 		_ = conn.Close()
 	}()
-	if _, err := conn.ExecContext(ctx, d.busyPragma); err != nil {
+	if _, err := conn.ExecContext(ctx, sqliteBusyTimeout); err != nil {
 		return err
 	}
-	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+	if _, err := conn.ExecContext(ctx, sqliteBegin); err != nil {
 		return err
 	}
 	if err := fn(conn); err != nil {
 		return err
 	}
-	_, err = conn.ExecContext(ctx, "COMMIT")
+	_, err = conn.ExecContext(ctx, sqliteCommit)
 	return err
 }
 

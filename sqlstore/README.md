@@ -53,8 +53,12 @@ sql.Open("sqlite", "file:store.db?_pragma=busy_timeout(10000)&_pragma=journal_mo
 
 - **Migrations** are embedded and versioned. `Migrate` applies the
   missing ones and is safe to run from several processes at once; nothing
-  migrates implicitly. `Options.TablePrefix` (default `oid4vc_`)
-  prefixes every table.
+  migrates implicitly.
+- **Isolation**: table names are fixed (`oid4vc_issuer_nonces`, …),
+  and every statement is a per-dialect constant. Deployments or tenants
+  sharing a PostgreSQL database each get a schema, selected with
+  `search_path` (`postgres://…/db?search_path=tenant_a` with pgx);
+  on SQLite, a file each.
 - **Sweeping**: stores never delete expired records. Call
   `db.Sweep(ctx, time.Now())` every few minutes.
 - **Sealing**: with `Options.Sealer` every issuer and walletflow record

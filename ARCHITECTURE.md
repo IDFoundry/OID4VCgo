@@ -1561,11 +1561,14 @@ changes whether *every* bullet below is `(done)`.
   `TransactionStore` and walletflow's five, over `database/sql` for
   PostgreSQL and SQLite. A module of its own so the library takes no
   driver; its tests bring `pgx` and `modernc.org/sqlite` (pure Go, so
-  no cgo). One `DB` wraps a `*sql.DB`, a `Dialect` and a table prefix,
-  and hands out each store; the dialects differ only in column types,
-  placeholders and how a transaction locks (`SELECT … FOR UPDATE` on
-  Postgres, `BEGIN IMMEDIATE` on SQLite), so every store's SQL is
-  written once. Each table has the same four columns — `id`, `owner`,
+  no cgo). One `DB` wraps a `*sql.DB` and a `Dialect`, and hands out
+  each store. Every statement is a string literal, in one `queries`
+  set per dialect (`?` or `$n` placeholders, `FOR UPDATE` on Postgres,
+  `BEGIN IMMEDIATE` on SQLite), and the migrations are written out per
+  dialect too, so no SQL is built at run time; a test checks the two
+  sets differ only in placeholders and locking. Table names are fixed
+  (`oid4vc_…`): deployments sharing a Postgres database keep apart by
+  schema (`search_path`). Each table has the same four columns — `id`, `owner`,
   `sweep_after`, `record` — plus the few a store looks rows up by (a
   pre-authorized code's `tx_code_hash` and `wrong_attempts`, a
   transaction's `key_id` and `response_code_hash`); `record` is the

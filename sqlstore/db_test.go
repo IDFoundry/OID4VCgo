@@ -26,12 +26,8 @@ func TestNewRefusesBadOptions(t *testing.T) {
 		dialect sqlstore.Dialect
 		opts    sqlstore.Options
 	}{
-		"nil db":            {nil, sqlstore.SQLite, sqlstore.Options{}},
-		"no dialect":        {db, 0, sqlstore.Options{}},
-		"upper-case prefix": {db, sqlstore.SQLite, sqlstore.Options{TablePrefix: "Oid_"}},
-		"quoting prefix":    {db, sqlstore.SQLite, sqlstore.Options{TablePrefix: `x"; DROP TABLE y; --`}},
-		"digit first":       {db, sqlstore.SQLite, sqlstore.Options{TablePrefix: "1x"}},
-		"negative timeout":  {db, sqlstore.SQLite, sqlstore.Options{SQLiteBusyTimeout: -time.Second}},
+		"nil db":     {nil, sqlstore.SQLite, sqlstore.Options{}},
+		"no dialect": {db, 0, sqlstore.Options{}},
 	} {
 		if _, err := sqlstore.New(c.db, c.dialect, c.opts); err == nil {
 			t.Errorf("%s: New = nil error, want an error", name)
@@ -72,22 +68,37 @@ func TestCheckSchemaBeforeMigrate(t *testing.T) {
 	}
 }
 
-// Two prefixes in one database are two separate sets of stores.
-func TestTablePrefixesKeepStoresApart(t *testing.T) {
+// On PostgreSQL, two schemas in one database are two separate sets of
+// stores.
+func TestSchemasKeepStoresApart(t *testing.T) {
+	if postgres == nil {
+		t.Skip(postgresDSNEnv + " isn't set")
+	}
 	ctx := context.Background()
-	path := filepath.Join(t.TempDir(), "store.db")
-	a, _ := openSQLite(t, path, sqlstore.Options{TablePrefix: "a_"})
-	b, _ := openSQLite(t, path, sqlstore.Options{TablePrefix: "b_"})
-	for _, d := range []*sqlstore.DB{a, b} {
+	var dbs []*sqlstore.DB
+	for range 2 {
+		db, err := sql.Open("pgx", newPostgresSchema(t))
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = db.Close() })
+		d, err := sqlstore.New(db, sqlstore.Postgres, sqlstore.Options{})
+		if err != nil {
+			t.Fatal(err)
+		}
 		if err := d.Migrate(ctx); err != nil {
 			t.Fatal(err)
 		}
+		dbs = append(dbs, d)
 	}
-	if err := a.Notifications().Issue(ctx, "n", issuer.NotificationRecord{}); err != nil {
+	if err := dbs[0].Notifications().Issue(ctx, "n", issuer.NotificationRecord{}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := b.Notifications().Get(ctx, "n"); !errors.Is(err, issuer.ErrNotificationIDUnknown) {
-		t.Errorf("another prefix's Get = %v, want ErrNotificationIDUnknown", err)
+	if _, err := dbs[1].Notifications().Get(ctx, "n"); !errors.Is(err, issuer.ErrNotificationIDUnknown) {
+		t.Errorf("another schema's Get = %v, want ErrNotificationIDUnknown", err)
+	}
+	if _, err := dbs[0].Notifications().Get(ctx, "n"); err != nil {
+		t.Errorf("Get in its own schema: %v", err)
 	}
 }
 

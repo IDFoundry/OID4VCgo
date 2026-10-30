@@ -6,18 +6,6 @@ import (
 	"time"
 )
 
-// sweptTables are the tables whose records Sweep deletes once past
-// their sweep_after: what each store's records say they're good until.
-var sweptTables = []string{
-	"issuer_nonces",                // NonceIssuance.ExpiresAt
-	"issuer_pre_authorized_codes",  // PreAuthorizedCodeRecord.ExpiresAt
-	"issuer_deferred_transactions", // DeferredTransactionRecord.ExpiresAt; never when zero
-	"issuer_notifications",         // NotificationRecord.ExpiresAt; never when zero
-	"issuer_credential_offers",     // CredentialOfferRecord.ExpiresAt
-	"verifier_transactions",        // Transaction.RetainUntil; never when zero
-	"wallet_authorizations",        // PendingAuthorization.ExpiresAt
-}
-
 // Sweep deletes every record that expired before now, from every table
 // that has them, and returns how many it deleted. The stores never
 // delete an expired record themselves — each is answered as unknown, or
@@ -37,10 +25,20 @@ var sweptTables = []string{
 // A wallet's credentials, refresh grants, pending deferred credentials
 // and keys have no expiry here: walletflow deletes them itself.
 func (d *DB) Sweep(ctx context.Context, now time.Time) (int64, error) {
+	// What each table's records say they're good until.
+	sweeps := []struct{ table, statement string }{
+		{"issuer_nonces", d.sql.nonceSweep},                     // NonceIssuance.ExpiresAt
+		{"issuer_pre_authorized_codes", d.sql.pacSweep},         // PreAuthorizedCodeRecord.ExpiresAt
+		{"issuer_deferred_transactions", d.sql.deferredTxSweep}, // DeferredTransactionRecord.ExpiresAt; never when zero
+		{"issuer_notifications", d.sql.notificationSweep},       // NotificationRecord.ExpiresAt; never when zero
+		{"issuer_credential_offers", d.sql.offerSweep},          // CredentialOfferRecord.ExpiresAt
+		{"verifier_transactions", d.sql.txSweep},                // Transaction.RetainUntil; never when zero
+		{"wallet_authorizations", d.sql.authorizationSweep},     // PendingAuthorization.ExpiresAt
+	}
 	var total int64
-	for _, name := range sweptTables {
+	for _, sw := range sweeps {
 		err := d.writeOne(ctx, func(q querier) error {
-			res, err := q.ExecContext(ctx, d.q("DELETE FROM {"+name+"} WHERE sweep_after < ?"), now.Unix())
+			res, err := q.ExecContext(ctx, sw.statement, now.Unix())
 			if err != nil {
 				return err
 			}
@@ -49,7 +47,7 @@ func (d *DB) Sweep(ctx context.Context, now time.Time) (int64, error) {
 			return err
 		})
 		if err != nil {
-			return total, fmt.Errorf("sqlstore: sweep %s: %w", name, err)
+			return total, fmt.Errorf("sqlstore: sweep %s: %w", sw.table, err)
 		}
 	}
 	return total, nil

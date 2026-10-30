@@ -35,6 +35,22 @@
 //
 //	sql.Open("sqlite", "file:wallet.db?_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)")
 //
+// The stores set a 10-second busy timeout themselves on each connection
+// they write on (PRAGMA busy_timeout = 10000), so the DSN's matters for
+// reads.
+//
+// # Tables and isolation
+//
+// The tables have fixed names, all starting oid4vc_ (oid4vc_issuer_nonces,
+// oid4vc_schema_migrations, ...), and every statement the stores run is
+// a constant, one set per dialect. To keep deployments, or tenants,
+// sharing a PostgreSQL database apart, give each a schema of its own and
+// point its connections at it with search_path — in a pgx DSN,
+// postgres://…/db?search_path=tenant_a, or
+// options=-csearch_path=tenant_a in a key/value one — or a role whose
+// default search_path is that schema. Migrate creates the tables in the
+// connection's current schema. On SQLite, use a file each.
+//
 // # Migrations
 //
 // The schema is versioned, its migrations embedded in the package.
@@ -43,8 +59,7 @@
 // running it at once (a Postgres advisory lock; SQLite's write lock).
 // Run it from a deployment step with a role that may create tables, or
 // at startup; CheckSchema, at startup, fails fast where the schema is
-// behind. Options.TablePrefix ("oid4vc_" by default) prefixes every
-// table, so several DBs can share a database.
+// behind.
 //
 // # Atomicity
 //
@@ -95,9 +110,9 @@
 //
 // # Production
 //
-//   - Use one Options.TablePrefix per deployment, and the same one in
-//     every process that shares its records. Credential Issuers may
-//     share the issuer tables: every record keeps its Owner.
+//   - Use one schema (PostgreSQL) or file (SQLite) per deployment, and
+//     the same one in every process that shares its records. Credential
+//     Issuers may share the issuer tables: every record keeps its Owner.
 //   - Don't share a wallet's tables between users: walletflow's
 //     ResumeIssuance finds an authorization by its state alone.
 //   - Back up the database with the Sealer's key kept apart from it.

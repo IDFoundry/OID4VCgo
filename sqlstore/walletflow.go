@@ -44,7 +44,10 @@ type CredentialStore struct {
 // Credentials returns d's walletflow.CredentialStore.
 func (d *DB) Credentials() *CredentialStore {
 	return &CredentialStore{&table[walletflow.StoredCredential]{
-		d: d, name: "wallet_credentials", rowOf: func(walletflow.StoredCredential) row { return row{} },
+		d: d, name: "wallet_credentials", sql: tableSQL{
+			upsert: d.sql.credentialUpsert, get: d.sql.credentialGet, getForUpdate: d.sql.credentialGetForUpdate,
+			update: d.sql.credentialUpdate, list: d.sql.credentialList, delete: d.sql.credentialDelete,
+		}, rowOf: func(walletflow.StoredCredential) row { return row{} },
 	}}
 }
 
@@ -92,7 +95,10 @@ type AuthorizationStore struct {
 // Authorizations returns d's walletflow.AuthorizationStore.
 func (d *DB) Authorizations() *AuthorizationStore {
 	return &AuthorizationStore{&table[walletflow.PendingAuthorization]{
-		d: d, name: "wallet_authorizations",
+		d: d, name: "wallet_authorizations", sql: tableSQL{
+			upsert: d.sql.authorizationUpsert, get: d.sql.authorizationGet, consume: d.sql.authorizationConsume,
+			list: d.sql.authorizationList, delete: d.sql.authorizationDelete,
+		},
 		rowOf: func(a walletflow.PendingAuthorization) row { return row{sweepAfter: a.ExpiresAt} },
 	}}
 }
@@ -111,7 +117,7 @@ func (s *AuthorizationStore) GetAuthorization(ctx context.Context, state string)
 // ConsumeAuthorization implements walletflow.AuthorizationStore: one
 // DELETE … RETURNING.
 func (s *AuthorizationStore) ConsumeAuthorization(ctx context.Context, state string) (walletflow.PendingAuthorization, error) {
-	a, err := s.t.consume(ctx, state, false, "")
+	a, err := s.t.consume(ctx, state)
 	return a, notFound("authorization", state, err)
 }
 
@@ -165,7 +171,10 @@ type GrantStore struct {
 
 // Grants returns d's walletflow.GrantStore.
 func (d *DB) Grants() *GrantStore {
-	return &GrantStore{withEncoding(&table[walletflow.RefreshGrant]{d: d, name: "wallet_grants", rowOf: func(walletflow.RefreshGrant) row { return row{} }},
+	return &GrantStore{withEncoding(&table[walletflow.RefreshGrant]{d: d, name: "wallet_grants", sql: tableSQL{
+		upsert: d.sql.grantUpsert, get: d.sql.grantGet, getForUpdate: d.sql.grantGetForUpdate,
+		update: d.sql.grantUpdate, list: d.sql.grantList, delete: d.sql.grantDelete,
+	}, rowOf: func(walletflow.RefreshGrant) row { return row{} }},
 		func(g walletflow.RefreshGrant) grantRecord {
 			return grantRecord{RefreshGrant: g, RefreshToken: g.RefreshToken.Reveal()}
 		},
@@ -225,7 +234,9 @@ type DeferredStore struct {
 
 // Deferred returns d's walletflow.DeferredStore.
 func (d *DB) Deferred() *DeferredStore {
-	return &DeferredStore{withEncoding(&table[walletflow.PendingDeferred]{d: d, name: "wallet_deferred", rowOf: func(walletflow.PendingDeferred) row { return row{} }},
+	return &DeferredStore{withEncoding(&table[walletflow.PendingDeferred]{d: d, name: "wallet_deferred", sql: tableSQL{
+		upsert: d.sql.deferredUpsert, list: d.sql.deferredList, delete: d.sql.deferredDelete,
+	}, rowOf: func(walletflow.PendingDeferred) row { return row{} }},
 		func(p walletflow.PendingDeferred) deferredRecord {
 			return deferredRecord{PendingDeferred: p, AccessToken: p.AccessToken.Reveal()}
 		},
