@@ -78,9 +78,8 @@ type Claims struct {
 	// ExpiresAt: OPTIONAL, but "MUST be present if the attestation is
 	// used with the JWT proof type" (Appendix D.1) — a context this
 	// package doesn't know about at Claims-construction time, so that
-	// requirement is left to the caller (e.g. the future issuer
-	// package, which does know which proof type it's validating
-	// against).
+	// requirement is left to the caller: package issuer refuses a jwt
+	// proof whose key_attestation has no exp.
 	ExpiresAt *int64
 
 	// AttestedKeys is a non-empty array of attested public keys, each a

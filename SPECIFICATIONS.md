@@ -98,6 +98,11 @@ instead of `lang`, `mandatory` claims, `vct` required) and a Status List
 Token CWT that may be untagged; the credential formats and verification
 rules are otherwise unchanged.
 
+Section numbers this repository cites for SD-JWT VC and Token Status
+List, in code and documentation, are those of the pinned drafts
+(draft-13 and draft-14), unless another draft is named alongside them.
+Later drafts renumber sections.
+
 One later SD-JWT VC addition is implemented ahead of HAIP: draft-19
 §2.2.2.2's `aka_vcts`, the other types a credential is of. It's
 optional, and draft-13 permits a claim it doesn't define. An Issuer can
