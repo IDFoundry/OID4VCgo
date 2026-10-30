@@ -247,6 +247,22 @@ them.
   a status mechanism this library doesn't know: accept those
   credentials only with `NoStatusCheck` and a check of your own.
 
+### Credential Issuer (`issuer`) production bounds
+
+- **Proof ages are capped under production.** Without a Nonce Endpoint,
+  `Limits.MaxProofAge` may be at most `issuer.MaxProductionProofAge` (5
+  minutes): a jwt proof's `iat` is then its only freshness, and one
+  proof is good for any number of Credentials. Set `Endpoints.Nonce`
+  (HAIP 1.0 §4.1 requires it) to make each proof single-use instead.
+  Where the issuer verifies the Token Request's DPoP proof itself
+  (anonymous pre-authorized code redemption), `Limits.MaxDPoPProofAge`
+  may be at most `issuer.MaxProductionDPoPProofAge` (5 minutes), as
+  fapigo/server requires.
+- **No DPoP replay store under `VerifiedPreAuthorizedCode`.** The
+  Authorization Server verifies the DPoP proof there, so production no
+  longer checks `Dependencies.DPoPReplay`'s `StoreAssurance`; leave it
+  nil.
+
 ## v0.55.0 → v0.56.0
 
 This release pins FAPIgo v0.65.1, which carries the breaking changes of

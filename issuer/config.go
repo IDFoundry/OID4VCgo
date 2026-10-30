@@ -84,8 +84,11 @@ type Limits struct {
 
 	// MaxDPoPProofAge bounds how old (relative to Now) a DPoP proof's
 	// own "iat" may be before ExchangePreAuthorizedCode rejects it
-	// (RFC 9449 §4.3). Required only when Dependencies.PreAuthorizedCodes
-	// is set.
+	// (RFC 9449 §4.3). Required only where this issuer verifies the
+	// Token Request's DPoP proof itself: Dependencies.PreAuthorizedCodes
+	// is set, and PreAuthorizedCodeClientAuthentication isn't
+	// VerifiedPreAuthorizedCode. At most MaxProductionDPoPProofAge (5
+	// minutes) there under AssuranceProduction.
 	MaxDPoPProofAge time.Duration
 
 	// MaxTxCodeAttempts bounds how many consecutive incorrect tx_code
@@ -120,6 +123,10 @@ type Limits struct {
 	// managed timestamp via the nonce claim, is within an acceptable
 	// window"). Required only when Endpoints.Nonce is not set; with one,
 	// the consumed c_nonce's own lifetime (NonceLifetime) is that window.
+	// Without one, nothing records that a proof was used, so a proof is
+	// good for any number of Credentials within this window: under
+	// AssuranceProduction it must be at most MaxProductionProofAge (5
+	// minutes).
 	MaxProofAge time.Duration
 
 	// DPoPNonceLifetime bounds how long a DPoP nonce
@@ -635,13 +642,18 @@ type Dependencies struct {
 	// since (unlike the Credential/Nonce/Deferred Credential/Notification
 	// Endpoints) the Token Endpoint itself belongs to whichever
 	// Authorization Server this issuer is paired with, not to this
-	// package. Required, along with DPoPReplay and AccessTokens below,
-	// exactly when a caller wants to call ExchangePreAuthorizedCode.
+	// package. Required, along with DPoPReplay and AccessTokens below
+	// unless the Authorization Server verifies the redemption
+	// (VerifiedPreAuthorizedCode), exactly when a caller wants to
+	// redeem pre-authorized codes.
 	PreAuthorizedCodes PreAuthorizedCodeStore
 
 	// DPoPReplay detects DPoP proof replay by "jti" for
 	// ExchangePreAuthorizedCode's own Token Request (RFC 9449 §11.1).
-	// Required when PreAuthorizedCodes is set.
+	// Required when PreAuthorizedCodes is set, unless
+	// PreAuthorizedCodeClientAuthentication is VerifiedPreAuthorizedCode:
+	// the Authorization Server verifies the DPoP proof then, and this
+	// issuer never uses it.
 	DPoPReplay DPoPReplayChecker
 
 	// AccessTokens mints the access token ExchangePreAuthorizedCode
