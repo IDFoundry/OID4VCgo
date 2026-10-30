@@ -346,6 +346,9 @@ public class ProximityPresentation internal constructor(
             _state.compareAndSet(State.Responding, request)
             throw e
         }
+        // Cancelled once Go's respond had returned (cancelled before, it
+        // gives nothing to send): the response stays here.
+        if (ending != null) throw WalletException(WalletException.Code.cancelled, null, "the session was cancelled")
         try {
             transport.send(answer.send)
         } catch (e: ProximityTransportException) {
