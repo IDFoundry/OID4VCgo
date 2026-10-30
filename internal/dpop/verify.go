@@ -8,17 +8,18 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"github.com/idfoundry/oid4vcgo/internal/strictjson"
-	"net/url"
+	"math"
 	"time"
 
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/internal/jwk"
 	"github.com/idfoundry/oid4vcgo/internal/jwtdate"
+	"github.com/idfoundry/oid4vcgo/internal/strictjson"
 )
 
 // proofTyp is DPoP's own required JOSE "typ" header (RFC 9449 §4.2) —
-// the same constant wallet's own GenerateDPoPProof sets.
+// the same constant wallet's own GenerateDPoPProof sets. It's compared
+// as a media type (jose.TypeIs).
 const proofTyp = "dpop+jwt"
 
 // MaxJTILength bounds a proof's "jti" in bytes. RFC 9449 §4.2 asks only
@@ -44,9 +45,11 @@ type VerifyRequest struct {
 
 	// Method and URL are the HTTP method and target URI of the request
 	// the proof was presented with — the proof's own "htm"/"htu"
-	// claims must match them (RFC 9449 §4.3: htu is compared with its
-	// own query/fragment ignored, so URL should already have neither,
-	// matching wallet's own GenerateDPoPProof caller convention).
+	// claims must match them. URL must be an absolute http or https
+	// URL. The two URIs are compared normalized (RFC 9449 §4.3, RFC 3986
+	// §6.2.2-§6.2.3; see canonicalURI): query and fragment ignored,
+	// scheme and host compared case-insensitively, a default port
+	// dropped and dot segments removed.
 	Method string
 	URL    string
 
@@ -58,8 +61,11 @@ type VerifyRequest struct {
 	MaxProofAge time.Duration
 
 	// MaxClockSkew bounds how far in the future (relative to Now) a
-	// proof's own "iat" may be before it's rejected. Zero means no
-	// tolerance for a future-dated proof.
+	// proof's own "iat" or "nbf" may be, and how long past its "exp" it
+	// is still taken. Zero means no tolerance. Verify keeps a proof's
+	// replay record until MaxProofAge plus twice MaxClockSkew after its
+	// iat, so a server whose clock runs up to MaxClockSkew behind this
+	// one's can't take it again either.
 	MaxClockSkew time.Duration
 
 	// RequiredNonce, if non-empty, must equal the proof's own "nonce"
@@ -93,12 +99,17 @@ type VerifiedProof struct {
 }
 
 // dpopClaims is the DPoP proof body's own wire shape (RFC 9449 §4.2).
+// Its NumericDates may be fractional (RFC 7519 §2), so they're read as
+// numbers; nbf and exp are optional, and checked when present (RFC 7519
+// §4.1.4-§4.1.5).
 type dpopClaims struct {
-	JTI   string `json:"jti"`
-	HTM   string `json:"htm"`
-	HTU   string `json:"htu"`
-	IAT   int64  `json:"iat"`
-	Nonce string `json:"nonce"`
+	JTI   string   `json:"jti"`
+	HTM   string   `json:"htm"`
+	HTU   string   `json:"htu"`
+	IAT   *float64 `json:"iat"`
+	NBF   *float64 `json:"nbf"`
+	EXP   *float64 `json:"exp"`
+	Nonce string   `json:"nonce"`
 }
 
 // Verify checks a DPoP proof against req. On success, the returned
@@ -141,7 +152,12 @@ func Verify(ctx context.Context, req VerifyRequest) (VerifiedProof, error) {
 		}
 	}
 
-	if err := req.Replay.UseOnce(ctx, JTIDigest(claims.JTI), iat.Add(req.MaxProofAge)); err != nil {
+	// Another server accepts this proof until iat+MaxProofAge by its own
+	// clock, which may run up to MaxClockSkew behind this one's; keeping
+	// the record 2×MaxClockSkew longer covers that, so a store that drops
+	// records at expiresAt can't let the proof be replayed there.
+	expiresAt := iat.Add(saturatingAdd(req.MaxProofAge, req.MaxClockSkew, req.MaxClockSkew))
+	if err := req.Replay.UseOnce(ctx, JTIDigest(claims.JTI), expiresAt); err != nil {
 		return VerifiedProof{}, fmt.Errorf("dpop: replay check: %w", err)
 	}
 
@@ -159,6 +175,19 @@ func JTIDigest(jti string) string {
 	return base64.RawURLEncoding.EncodeToString(sum[:])
 }
 
+// saturatingAdd is the sum of ds, all non-negative, or the longest
+// Duration when it would overflow.
+func saturatingAdd(ds ...time.Duration) time.Duration {
+	var sum time.Duration
+	for _, d := range ds {
+		if d > math.MaxInt64-sum {
+			return math.MaxInt64
+		}
+		sum += d
+	}
+	return sum
+}
+
 // validateVerifyRequest checks req's own required fields — split out
 // of Verify purely to keep it under the linter's own cognitive
 // complexity ceiling.
@@ -169,11 +198,17 @@ func validateVerifyRequest(req VerifyRequest) error {
 	if req.URL == "" {
 		return fmt.Errorf("dpop: url is required")
 	}
+	if _, ok := parseHTTPURL(req.URL); !ok {
+		return fmt.Errorf("dpop: url must be an absolute http or https URL with an ASCII host")
+	}
 	if req.Now.IsZero() {
 		return fmt.Errorf("dpop: now is required")
 	}
 	if req.MaxProofAge <= 0 {
 		return fmt.Errorf("dpop: max_proof_age must be positive")
+	}
+	if req.MaxClockSkew < 0 {
+		return fmt.Errorf("dpop: max_clock_skew must not be negative")
 	}
 	if req.Replay == nil {
 		return fmt.Errorf("dpop: replay is required")
@@ -185,7 +220,7 @@ func validateVerifyRequest(req VerifyRequest) error {
 // "jwk" member into a usable public key — split out of Verify purely
 // to keep it under the linter's own cognitive complexity ceiling.
 func resolveDPoPProofKey(header map[string]any) (crypto.PublicKey, jwk.JWK, error) {
-	if typ, _ := header["typ"].(string); typ != proofTyp {
+	if typ, _ := header["typ"].(string); !jose.TypeIs(typ, proofTyp) {
 		return nil, jwk.JWK{}, fmt.Errorf("dpop: typ is %q, want %q", header["typ"], proofTyp)
 	}
 	jwkVal, ok := header["jwk"]
@@ -212,9 +247,9 @@ func resolveDPoPProofKey(header map[string]any) (crypto.PublicKey, jwk.JWK, erro
 	return pub, parsedJWK, nil
 }
 
-// validateDPoPClaims checks claims against req (jti/htm/htu/iat/nonce)
-// and returns the parsed iat — split out of Verify purely to keep it
-// under the linter's own cognitive complexity ceiling.
+// validateDPoPClaims checks claims against req (jti/htm/htu/iat/nbf/
+// exp/nonce) and returns the parsed iat — split out of Verify purely to
+// keep it under the linter's own cognitive complexity ceiling.
 func validateDPoPClaims(claims dpopClaims, req VerifyRequest) (time.Time, error) {
 	if claims.JTI == "" {
 		return time.Time{}, fmt.Errorf("dpop: jti is required")
@@ -228,29 +263,12 @@ func validateDPoPClaims(claims dpopClaims, req VerifyRequest) (time.Time, error)
 	if claims.HTM != req.Method {
 		return time.Time{}, fmt.Errorf("dpop: htm does not match")
 	}
-	htu, err := url.Parse(claims.HTU)
-	if err != nil {
-		return time.Time{}, fmt.Errorf("dpop: malformed htu")
-	}
-	want, err := url.Parse(req.URL)
-	if err != nil {
-		return time.Time{}, fmt.Errorf("dpop: malformed url")
-	}
-	if canonicalURI(htu) != canonicalURI(want) {
+	if !sameTarget(claims.HTU, req.URL) {
 		return time.Time{}, fmt.Errorf("dpop: htu does not match")
 	}
-	if claims.IAT == 0 {
-		return time.Time{}, fmt.Errorf("dpop: iat is required")
-	}
-	iat, err := jwtdate.FromUnix(claims.IAT)
+	iat, err := checkProofTimes(claims, req)
 	if err != nil {
-		return time.Time{}, fmt.Errorf("dpop: iat: %w", err)
-	}
-	if iat.After(req.Now.Add(req.MaxClockSkew)) {
-		return time.Time{}, fmt.Errorf("dpop: iat is in the future")
-	}
-	if iat.Before(req.Now.Add(-req.MaxProofAge)) {
-		return time.Time{}, fmt.Errorf("dpop: proof has expired")
+		return time.Time{}, err
 	}
 	if req.RequiredNonce != "" {
 		if subtle.ConstantTimeCompare([]byte(claims.Nonce), []byte(req.RequiredNonce)) != 1 {
@@ -260,10 +278,43 @@ func validateDPoPClaims(claims dpopClaims, req VerifyRequest) (time.Time, error)
 	return iat, nil
 }
 
-// canonicalURI strips u's own query and fragment (RFC 9449 §4.3: "the
-// query and fragment parts of the htu... are ignored").
-func canonicalURI(u *url.URL) string {
-	v := *u
-	v.RawQuery, v.Fragment = "", ""
-	return v.String()
+// checkProofTimes holds the proof to its iat: no further in the future
+// than MaxClockSkew and no older than MaxProofAge. An nbf or exp the
+// proof carries counts too (RFC 7519 §4.1.4-§4.1.5), with MaxClockSkew
+// the tolerance either way, as fapigo/server's DPoP verification has
+// it. It returns the proof's iat.
+func checkProofTimes(claims dpopClaims, req VerifyRequest) (time.Time, error) {
+	if claims.IAT == nil || *claims.IAT == 0 {
+		return time.Time{}, fmt.Errorf("dpop: iat is required")
+	}
+	iat, err := jwtdate.FromFloat(*claims.IAT)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("dpop: iat: %w", err)
+	}
+	latest := req.Now.Add(req.MaxClockSkew)
+	if iat.After(latest) {
+		return time.Time{}, fmt.Errorf("dpop: iat is in the future")
+	}
+	if iat.Before(req.Now.Add(-req.MaxProofAge)) {
+		return time.Time{}, fmt.Errorf("dpop: proof has expired")
+	}
+	if claims.NBF != nil {
+		nbf, err := jwtdate.FromFloat(*claims.NBF)
+		if err != nil {
+			return time.Time{}, fmt.Errorf("dpop: nbf: %w", err)
+		}
+		if nbf.After(latest) {
+			return time.Time{}, fmt.Errorf("dpop: nbf is in the future")
+		}
+	}
+	if claims.EXP != nil {
+		exp, err := jwtdate.FromFloat(*claims.EXP)
+		if err != nil {
+			return time.Time{}, fmt.Errorf("dpop: exp: %w", err)
+		}
+		if req.Now.After(exp.Add(req.MaxClockSkew)) {
+			return time.Time{}, fmt.Errorf("dpop: proof has expired (exp)")
+		}
+	}
+	return iat, nil
 }

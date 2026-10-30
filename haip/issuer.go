@@ -1,6 +1,7 @@
 package haip
 
 import (
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -95,39 +96,54 @@ func RecommendedIssuerConfig() IssuerRecommendations {
 	}
 }
 
-// ValidateIssuerConfig checks cfg against HAIP 1.0 §4.1's own
-// additional requirements on top of plain OID4VCI:
+// IssuerProfile is HAIP 1.0 as an issuer.Profile: with
+// issuer.Config.Profile set to it, issuer.New runs ValidateIssuerConfig
+// along with its own checks, under either assurance level, and reports
+// what it finds with them.
+type IssuerProfile struct{}
+
+// CheckIssuer implements issuer.Profile with ValidateIssuerConfig.
+func (IssuerProfile) CheckIssuer(cfg issuer.Config, deps issuer.Dependencies) error {
+	return ValidateIssuerConfig(cfg, deps)
+}
+
+// ValidateIssuerConfig checks cfg and deps against HAIP 1.0's own
+// additional requirements on an issuer on top of plain OID4VCI, and
+// reports every one they miss (errors.Join):
 //
-//   - every Credential Configuration must declare a Scope ("The
+//   - every Credential Configuration must declare a Scope (§4.1: "The
 //     Credential Issuer metadata MUST include a scope for every
-//     Credential Configuration it supports").
+//     Credential Configuration it supports"), mapping to one Credential
+//     Type and one key attestation requirement (§4.3).
 //   - Endpoints.Nonce must be configured whenever any Credential
-//     Configuration requires cryptographic key binding ("If the Issuer
-//     supports Credential Configurations that require key binding, as
-//     indicated by the presence of cryptographic_binding_methods_supported,
-//     the nonce_endpoint MUST be present in the Credential Issuer
-//     Metadata").
-//   - PreAuthorizedCodeClientAuthentication must not be
-//     issuer.AnonymousPreAuthorizedCode{}: HAIP 1.0 §4.4.1 requires
-//     client authentication at the Token Endpoint ("Wallets MUST use,
-//     and Issuers MUST require, an OAuth2 Client authentication
-//     mechanism at OAuth2 Endpoints that support client
-//     authentication"), and that choice redeems pre-authorized codes
-//     without it. Leaving it nil does too, under development assurance,
-//     when Dependencies.PreAuthorizedCodes is set (production assurance
-//     refuses that): an issuer redeeming pre-authorized codes sets
+//     Configuration requires cryptographic key binding (§4.1: "If the
+//     Issuer supports Credential Configurations that require key
+//     binding, as indicated by the presence of
+//     cryptographic_binding_methods_supported, the nonce_endpoint MUST
+//     be present in the Credential Issuer Metadata"). Every key proof is
+//     then single-use, and Limits.MaxProofAge plays no part.
+//   - every proof type must accept ES256 (§7: issuers MUST support it
+//     for validating proofs and key attestations), or HAIP Wallets,
+//     which may sign with nothing else, are refused.
+//   - pre-authorized codes, when deps.PreAuthorizedCodes redeems them,
+//     must be redeemed with client authentication (§4.4.1: "Wallets
+//     MUST use, and Issuers MUST require, an OAuth2 Client
+//     authentication mechanism at OAuth2 Endpoints that support client
+//     authentication"): PreAuthorizedCodeClientAuthentication is
 //     issuer.VerifiedPreAuthorizedCode{}, its Authorization Server
-//     having authenticated the client.
+//     having authenticated the client and verified the DPoP proof.
+//     issuer.AnonymousPreAuthorizedCode{} redeems without it, and so
+//     does nil under development assurance.
 //
-// issuer.New never runs these checks itself: they are HAIP-specific
-// profiling on top of plain OID4VCI (base OID4VCI leaves both scope and
-// the Nonce Endpoint optional), not something the protocol-generic
-// issuer package can assume every deployment wants. Call this after
-// issuer.New succeeds, on the same Config passed to it.
-func ValidateIssuerConfig(cfg issuer.Config) error {
-	switch cfg.PreAuthorizedCodeClientAuthentication.(type) {
-	case issuer.AnonymousPreAuthorizedCode, *issuer.AnonymousPreAuthorizedCode:
-		return fmt.Errorf("haip: pre_authorized_code_client_authentication: anonymous pre-authorized code redemption has no client authentication at the Token Endpoint, which HAIP 1.0 §4.4.1 requires")
+// They are HAIP-specific profiling on top of plain OID4VCI (base OID4VCI
+// leaves scope, the Nonce Endpoint and client authentication at the
+// Token Endpoint optional), so issuer.New runs them only when
+// issuer.Config.Profile is IssuerProfile{}. Called directly, it takes
+// the Config and Dependencies passed to issuer.New.
+func ValidateIssuerConfig(cfg issuer.Config, deps issuer.Dependencies) error {
+	var errs []error
+	if err := checkPreAuthorizedCodeClientAuthentication(cfg, deps); err != nil {
+		errs = append(errs, err)
 	}
 	// HAIP 1.0 §4.3: "The scope value MUST map to a specific Credential
 	// Type": configurations sharing a scope must be of one type, or a
@@ -137,23 +153,54 @@ func ValidateIssuerConfig(cfg issuer.Config) error {
 	types, attestations := map[string]string{}, map[string]string{}
 	for _, id := range slices.Sorted(maps.Keys(cfg.CredentialConfigurationsSupported)) {
 		c := cfg.CredentialConfigurationsSupported[id]
+		errs = append(errs, checkCredentialConfiguration(cfg, id, c)...)
 		if c.Scope == "" {
-			return fmt.Errorf("haip: credential_configurations_supported[%q]: scope is required", id)
-		}
-		if len(c.CryptographicBindingMethodsSupported) > 0 && cfg.Endpoints.Nonce.IsZero() {
-			return fmt.Errorf("haip: credential_configurations_supported[%q]: requires cryptographic key binding, so endpoints.nonce is required", id)
+			continue
 		}
 		credentialType := c.Format + " " + c.VCT + c.DocType
 		if seen, ok := types[c.Scope]; ok && seen != credentialType {
-			return fmt.Errorf("haip: credential_configurations_supported[%q]: scope %q is another configuration's, of another Credential Type (HAIP 1.0 §4.3)", id, c.Scope)
+			errs = append(errs, fmt.Errorf("haip: credential_configurations_supported[%q]: scope %q is another configuration's, of another Credential Type (HAIP 1.0 §4.3)", id, c.Scope))
 		}
 		required := keyAttestationsRequired(c)
 		if seen, ok := attestations[c.Scope]; ok && seen != required {
-			return fmt.Errorf("haip: credential_configurations_supported[%q]: scope %q is another configuration's that requires other key attestations, so a token for either is good for both (HAIP 1.0 §4.3, §4.5.1)", id, c.Scope)
+			errs = append(errs, fmt.Errorf("haip: credential_configurations_supported[%q]: scope %q is another configuration's that requires other key attestations, so a token for either is good for both (HAIP 1.0 §4.3, §4.5.1)", id, c.Scope))
 		}
 		types[c.Scope], attestations[c.Scope] = credentialType, required
 	}
+	return errors.Join(errs...)
+}
+
+// checkPreAuthorizedCodeClientAuthentication refuses pre-authorized
+// code redemption without client authentication (HAIP 1.0 §4.4.1).
+func checkPreAuthorizedCodeClientAuthentication(cfg issuer.Config, deps issuer.Dependencies) error {
+	switch cfg.PreAuthorizedCodeClientAuthentication.(type) {
+	case issuer.AnonymousPreAuthorizedCode, *issuer.AnonymousPreAuthorizedCode:
+		return fmt.Errorf("haip: pre_authorized_code_client_authentication: anonymous pre-authorized code redemption has no client authentication at the Token Endpoint, which HAIP 1.0 §4.4.1 requires")
+	case nil:
+		if deps.PreAuthorizedCodes != nil {
+			return fmt.Errorf("haip: pre_authorized_code_client_authentication: with none set, dependencies.pre_authorized_codes redeems pre-authorized codes without client authentication at the Token Endpoint, which HAIP 1.0 §4.4.1 requires: set issuer.VerifiedPreAuthorizedCode{}")
+		}
+	}
 	return nil
+}
+
+// checkCredentialConfiguration checks one Credential Configuration's
+// own HAIP requirements: a scope (§4.1), the Nonce Endpoint when it
+// binds a key (§4.1), and ES256 for every proof type (§7).
+func checkCredentialConfiguration(cfg issuer.Config, id string, c issuer.CredentialConfiguration) []error {
+	var errs []error
+	if c.Scope == "" {
+		errs = append(errs, fmt.Errorf("haip: credential_configurations_supported[%q]: scope is required (HAIP 1.0 §4.1)", id))
+	}
+	if len(c.CryptographicBindingMethodsSupported) > 0 && cfg.Endpoints.Nonce.IsZero() {
+		errs = append(errs, fmt.Errorf("haip: credential_configurations_supported[%q]: requires cryptographic key binding, so endpoints.nonce is required (HAIP 1.0 §4.1)", id))
+	}
+	for _, proofType := range slices.Sorted(maps.Keys(c.ProofTypesSupported)) {
+		if !slices.Contains(c.ProofTypesSupported[proofType].ProofSigningAlgValuesSupported, string(RecommendedJOSEAlgorithm)) {
+			errs = append(errs, fmt.Errorf("haip: credential_configurations_supported[%q]: proof type %q must accept %s in proof_signing_alg_values_supported (HAIP 1.0 §7)", id, proofType, RecommendedJOSEAlgorithm))
+		}
+	}
+	return errs
 }
 
 // keyAttestationsRequired is what c's proof types require of a key

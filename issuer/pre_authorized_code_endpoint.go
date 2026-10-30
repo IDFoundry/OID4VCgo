@@ -23,7 +23,10 @@ import (
 // public API into an internal one. The jti UseOnce receives is the
 // proof's own jti hashed (base64url SHA-256, 43 characters), so a
 // store holds a fixed-size key per proof whatever the client sent; a
-// jti over 256 bytes is refused before it gets here.
+// jti over 256 bytes is refused before it gets here. expiresAt is the
+// proof's iat plus Limits.MaxDPoPProofAge plus twice
+// Limits.MaxDPoPClockSkew: keep the record until then, so an instance
+// whose clock runs behind can't take the proof again.
 type DPoPReplayChecker interface {
 	UseOnce(ctx context.Context, jti string, expiresAt time.Time) error
 }

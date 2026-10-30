@@ -111,15 +111,25 @@ func (s *DeferredTransactionStore) Update(_ context.Context, transactionID strin
 // see cloneStrings' own doc comment.
 func cloneDeferredRecord(r issuer.DeferredTransactionRecord) issuer.DeferredTransactionRecord {
 	r.Credentials = cloneIssuedCredentials(r.Credentials)
-	if r.BindingKeys != nil {
-		keys := make([]json.RawMessage, len(r.BindingKeys))
-		for i, k := range r.BindingKeys {
-			keys[i] = append(json.RawMessage(nil), k...)
-		}
-		r.BindingKeys = keys
-	}
+	r.BindingKeys = cloneRawMessages(r.BindingKeys)
+	r.ProofKeyHeaders = cloneRawMessages(r.ProofKeyHeaders)
 	r.KeyAttestations = cloneStrings(r.KeyAttestations)
 	return r
+}
+
+// cloneRawMessages returns a copy of ms sharing no bytes with it, nil
+// for nil, and a nil entry for a nil one.
+func cloneRawMessages(ms []json.RawMessage) []json.RawMessage {
+	if ms == nil {
+		return nil
+	}
+	out := make([]json.RawMessage, len(ms))
+	for i, m := range ms {
+		if m != nil {
+			out[i] = append(json.RawMessage(nil), m...)
+		}
+	}
+	return out
 }
 
 // Invalidate implements issuer.DeferredTransactionStore. It drops the

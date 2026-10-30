@@ -1023,6 +1023,7 @@ func TestDeferredTransactionStoreContract(t *testing.T, seed func(t *testing.T, 
 			Owner: contractOwner, ClientID: contractClientID, Status: issuer.DeferredTransactionPending, CredentialConfigurationID: "pid",
 			BindingKeys: []json.RawMessage{json.RawMessage(`{"kty":"EC"}`)}, Reference: "ref-1",
 			KeyAttestations: []string{"key-attestation-1"},
+			ProofKeyHeaders: []json.RawMessage{json.RawMessage(`{"x5c":["AAAA"]}`)},
 		}
 		if err := store.Create(ctx, "txn2", want); err != nil {
 			t.Fatalf("Create: %v", err)
@@ -1032,7 +1033,8 @@ func TestDeferredTransactionStoreContract(t *testing.T, seed func(t *testing.T, 
 			t.Fatalf(msgGetFailed, err)
 		}
 		if got.CredentialConfigurationID != "pid" || got.Reference != "ref-1" || len(got.BindingKeys) != 1 || string(got.BindingKeys[0]) != `{"kty":"EC"}` ||
-			len(got.KeyAttestations) != 1 || got.KeyAttestations[0] != "key-attestation-1" {
+			len(got.KeyAttestations) != 1 || got.KeyAttestations[0] != "key-attestation-1" ||
+			len(got.ProofKeyHeaders) != 1 || string(got.ProofKeyHeaders[0]) != `{"x5c":["AAAA"]}` {
 			t.Errorf("Get after Create = %+v, want %+v", got, want)
 		}
 		if got.Owner != want.Owner {

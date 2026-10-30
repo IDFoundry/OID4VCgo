@@ -5,7 +5,6 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"fmt"
-	"strings"
 	"time"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
@@ -175,11 +174,7 @@ func VerifyToken(token string, pub crypto.PublicKey, alg oid4vci.JOSEAlg, opts V
 	// typ is a media type (RFC 7515 §4.1.9): matched case-insensitively,
 	// with "application/" implied when it has no "/".
 	typ, _ := header["typ"].(string)
-	mediaType := typ
-	if !strings.Contains(mediaType, "/") {
-		mediaType = "application/" + mediaType
-	}
-	if !strings.EqualFold(mediaType, TokenMediaType) {
+	if !jose.TypeIs(typ, TokenMediaType) {
 		return TokenClaims{}, fmt.Errorf("statuslist: token typ is %q, want %q", typ, TokenTyp)
 	}
 

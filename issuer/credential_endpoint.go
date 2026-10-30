@@ -310,6 +310,11 @@ type resolvedKey struct {
 	Public         crypto.PublicKey
 	JWKRaw         json.RawMessage
 	KeyAttestation string
+
+	// ProofKeyHeader is the JOSE header, in JSON, of the jwt proof that
+	// conveyed this key by kid or x5c, resolved through
+	// Dependencies.ProofBindingKeys; nil for a key conveyed otherwise.
+	ProofKeyHeader json.RawMessage
 }
 
 // RequestCredential implements the Credential Endpoint (§8): it

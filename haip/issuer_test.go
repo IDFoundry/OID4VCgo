@@ -70,7 +70,7 @@ func TestValidateIssuerConfig_Accepts(t *testing.T) {
 			},
 		},
 	}
-	if err := haip.ValidateIssuerConfig(cfg); err != nil {
+	if err := haip.ValidateIssuerConfig(cfg, issuer.Dependencies{}); err != nil {
 		t.Fatalf("ValidateIssuerConfig: %v", err)
 	}
 }
@@ -82,7 +82,7 @@ func TestValidateIssuerConfig_RejectsMissingScope(t *testing.T) {
 			"IdentityCredential": {},
 		},
 	}
-	if err := haip.ValidateIssuerConfig(cfg); err == nil {
+	if err := haip.ValidateIssuerConfig(cfg, issuer.Dependencies{}); err == nil {
 		t.Fatalf("ValidateIssuerConfig = nil error, want error")
 	}
 }
@@ -97,7 +97,7 @@ func TestValidateIssuerConfig_RejectsKeyBindingWithoutNonceEndpoint(t *testing.T
 			},
 		},
 	}
-	if err := haip.ValidateIssuerConfig(cfg); err == nil {
+	if err := haip.ValidateIssuerConfig(cfg, issuer.Dependencies{}); err == nil {
 		t.Fatalf("ValidateIssuerConfig = nil error, want error (key binding requires endpoints.nonce)")
 	}
 }
@@ -108,7 +108,7 @@ func TestValidateIssuerConfig_RejectsAnonymousPreAuthorizedCode(t *testing.T) {
 		"pointer": &issuer.AnonymousPreAuthorizedCode{},
 	} {
 		cfg := issuer.Config{Assurance: issuer.AssuranceDevelopment, PreAuthorizedCodeClientAuthentication: choice}
-		if err := haip.ValidateIssuerConfig(cfg); err == nil {
+		if err := haip.ValidateIssuerConfig(cfg, issuer.Dependencies{}); err == nil {
 			t.Errorf("%s: ValidateIssuerConfig = nil error, want anonymous pre-authorized code redemption refused", name)
 		}
 	}
@@ -125,7 +125,7 @@ func TestValidateIssuerConfig_ScopeMapsToOneType(t *testing.T) {
 				"pid":   {Format: "dc+sd-jwt", Scope: "pid", VCT: "urn:eudi:pid:1"},
 				"other": second,
 			},
-		})
+		}, issuer.Dependencies{})
 	}
 	if err := validate(issuer.CredentialConfiguration{Format: "dc+sd-jwt", Scope: "pid", VCT: "urn:eudi:pid:1"}); err != nil {
 		t.Errorf("one type under one scope: %v", err)
@@ -144,13 +144,21 @@ func TestValidateIssuerConfig_ScopeMapsToOneType(t *testing.T) {
 func TestValidateIssuerConfig_ScopeSharesKeyAttestations(t *testing.T) {
 	hardware := &oid4vci.KeyAttestationRequirement{KeyStorage: []string{"iso_18045_high"}}
 	validate := func(first, second map[string]oid4vci.ProofTypeConfiguration) error {
+		// Every proof type takes ES256 (HAIP 1.0 §7), so only the key
+		// attestations differ.
+		for _, ptcs := range []map[string]oid4vci.ProofTypeConfiguration{first, second} {
+			for name, ptc := range ptcs {
+				ptc.ProofSigningAlgValuesSupported = []string{"ES256"}
+				ptcs[name] = ptc
+			}
+		}
 		return haip.ValidateIssuerConfig(issuer.Config{
 			Assurance: issuer.AssuranceDevelopment,
 			CredentialConfigurationsSupported: map[string]issuer.CredentialConfiguration{
 				"pid_hw": {Format: "dc+sd-jwt", Scope: "pid", VCT: "urn:eudi:pid:1", ProofTypesSupported: first},
 				"pid_sw": {Format: "dc+sd-jwt", Scope: "pid", VCT: "urn:eudi:pid:1", ProofTypesSupported: second},
 			},
-		})
+		}, issuer.Dependencies{})
 	}
 	jwtHW := map[string]oid4vci.ProofTypeConfiguration{oid4vci.ProofTypeJWT: {KeyAttestationsRequired: hardware}}
 	if err := validate(jwtHW, map[string]oid4vci.ProofTypeConfiguration{oid4vci.ProofTypeAttestation: {KeyAttestationsRequired: hardware}}); err != nil {

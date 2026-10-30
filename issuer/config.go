@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"math/big"
 	"slices"
 	"strings"
@@ -84,8 +85,11 @@ type Limits struct {
 
 	// MaxDPoPProofAge bounds how old (relative to Now) a DPoP proof's
 	// own "iat" may be before ExchangePreAuthorizedCode rejects it
-	// (RFC 9449 §4.3). Required only when Dependencies.PreAuthorizedCodes
-	// is set.
+	// (RFC 9449 §4.3). Required only where this issuer verifies the
+	// Token Request's DPoP proof itself: Dependencies.PreAuthorizedCodes
+	// is set, and PreAuthorizedCodeClientAuthentication isn't
+	// VerifiedPreAuthorizedCode. At most MaxProductionDPoPProofAge (5
+	// minutes) there under AssuranceProduction.
 	MaxDPoPProofAge time.Duration
 
 	// MaxTxCodeAttempts bounds how many consecutive incorrect tx_code
@@ -120,6 +124,10 @@ type Limits struct {
 	// managed timestamp via the nonce claim, is within an acceptable
 	// window"). Required only when Endpoints.Nonce is not set; with one,
 	// the consumed c_nonce's own lifetime (NonceLifetime) is that window.
+	// Without one, nothing records that a proof was used, so a proof is
+	// good for any number of Credentials within this window: under
+	// AssuranceProduction it must be at most MaxProductionProofAge (5
+	// minutes).
 	MaxProofAge time.Duration
 
 	// DPoPNonceLifetime bounds how long a DPoP nonce
@@ -153,6 +161,15 @@ type Config struct {
 	// rather than silently getting AssuranceDevelopment's weaker
 	// checks by omission.
 	Assurance AssuranceLevel
+
+	// Profile, if set, holds this issuer to a profile of OpenID4VCI,
+	// whose requirements New checks along with its own:
+	// haip.IssuerProfile{} for HAIP 1.0. Nil is plain OpenID4VCI.
+	// Production assurance enforces what binds every deployment; a
+	// profile adds what binds only the deployments that adopt it (HAIP's
+	// Nonce Endpoint, scopes, client authentication at the Token
+	// Endpoint and ES256 proofs, say), under either assurance level.
+	Profile Profile
 
 	// PreAuthorizedCodeClientAuthentication is how ExchangePreAuthorizedCode
 	// authenticates the client redeeming a pre-authorized_code:
@@ -253,10 +270,36 @@ type Config struct {
 	BatchCredentialIssuance *oid4vci.BatchCredentialIssuance
 }
 
+// Profile is a profile of OpenID4VCI an issuer is held to
+// (Config.Profile). haip.IssuerProfile is HAIP 1.0's.
+type Profile interface {
+	// CheckIssuer reports every way cfg and deps fall short of the
+	// profile, nil if none. New calls it with cfg and deps as the Issuer
+	// will use them: a pointer PreAuthorizedCodeClientAuthentication
+	// taken as its value, and a nil Dependencies.Clock as the system
+	// clock.
+	CheckIssuer(cfg Config, deps Dependencies) error
+}
+
 // Clock supplies the current time — a plain function value satisfies
-// it (e.g. Clock(time.Now)), or a fixed-time fake in tests.
+// it (e.g. ClockFunc(time.Now)), or a fixed-time fake in tests.
+// Dependencies.Clock left nil is the system clock.
 type Clock interface {
 	Now() time.Time
+}
+
+// ClockAssurance is implemented by a Clock to declare, under
+// AssuranceProduction, that Now reads the system's current time: every
+// c_nonce, code, token, transaction and proof window this issuer
+// enforces is only as sound as that reading, and a fixed or offset
+// clock meant for tests would stop them from expiring. New refuses any
+// other Clock under AssuranceProduction. A nil Dependencies.Clock is the
+// system clock and needs no declaration; fapigo/server.SystemClock
+// declares it, as fapigo/server.ClockAssurance is the same method. A
+// clock of the application's own (one adding tracing, say) declares it
+// only if Now does return the current time.
+type ClockAssurance interface {
+	ReadsSystemTime() bool
 }
 
 // ClockFunc adapts a function to Clock.
@@ -264,6 +307,20 @@ type ClockFunc func() time.Time
 
 // Now implements Clock.
 func (f ClockFunc) Now() time.Time { return f() }
+
+// systemClock is the Clock a nil Dependencies.Clock means.
+type systemClock struct{}
+
+func (systemClock) Now() time.Time { return time.Now() }
+
+// ReadsSystemTime implements ClockAssurance.
+func (systemClock) ReadsSystemTime() bool { return true }
+
+// readsSystemTime reports whether clock declares ClockAssurance.
+func readsSystemTime(clock Clock) bool {
+	declared, ok := clock.(ClockAssurance)
+	return ok && declared.ReadsSystemTime()
+}
 
 // SDJWTSigner configures how this issuer signs
 // credential/sdjwtvc.CredentialFormat ("dc+sd-jwt") credentials.
@@ -551,7 +608,10 @@ type Dependencies struct {
 	// DPoP nonce.
 	CredentialDPoPNonces CredentialDPoPNonceIssuer
 
-	// Clock supplies the current time.
+	// Clock supplies the current time. nil is the system clock, the
+	// only one AssuranceProduction takes besides a Clock declaring
+	// ClockAssurance: a fixed or offset test clock left in production
+	// would stop every lifetime this issuer enforces from running.
 	Clock Clock
 
 	// Random is the source of cryptographically secure randomness for
@@ -635,13 +695,18 @@ type Dependencies struct {
 	// since (unlike the Credential/Nonce/Deferred Credential/Notification
 	// Endpoints) the Token Endpoint itself belongs to whichever
 	// Authorization Server this issuer is paired with, not to this
-	// package. Required, along with DPoPReplay and AccessTokens below,
-	// exactly when a caller wants to call ExchangePreAuthorizedCode.
+	// package. Required, along with DPoPReplay and AccessTokens below
+	// unless the Authorization Server verifies the redemption
+	// (VerifiedPreAuthorizedCode), exactly when a caller wants to
+	// redeem pre-authorized codes.
 	PreAuthorizedCodes PreAuthorizedCodeStore
 
 	// DPoPReplay detects DPoP proof replay by "jti" for
 	// ExchangePreAuthorizedCode's own Token Request (RFC 9449 §11.1).
-	// Required when PreAuthorizedCodes is set.
+	// Required when PreAuthorizedCodes is set, unless
+	// PreAuthorizedCodeClientAuthentication is VerifiedPreAuthorizedCode:
+	// the Authorization Server verifies the DPoP proof then, and this
+	// issuer never uses it.
 	DPoPReplay DPoPReplayChecker
 
 	// AccessTokens mints the access token ExchangePreAuthorizedCode
@@ -694,20 +759,14 @@ type Issuer struct {
 }
 
 // New validates cfg and deps and returns a ready-to-use Issuer.
+//
+// It reports every problem it finds in cfg and deps, joined
+// (errors.Join), not just the first.
 func New(cfg Config, deps Dependencies) (*Issuer, error) {
+	var errs []error
 	var err error
-	if cfg.PreAuthorizedCodeClientAuthentication, err = normalizeClientAuthentication(cfg.PreAuthorizedCodeClientAuthentication); err != nil {
-		return nil, err
-	}
-	if err := validateConfig(cfg); err != nil {
-		return nil, err
-	}
-	if err := validateOptionalEndpointDependencies(cfg, deps); err != nil {
-		return nil, err
-	}
-	if err := validatePreAuthorizedCodeDependencies(cfg, deps); err != nil {
-		return nil, err
-	}
+	cfg.PreAuthorizedCodeClientAuthentication, err = normalizeClientAuthentication(cfg.PreAuthorizedCodeClientAuthentication)
+	errs = append(errs, err)
 	// declinedDPoPNonces is kept for checkProductionAssurance, which
 	// tells a decline apart from nil; every other nonce check tests
 	// deps.DPoPNonces against nil.
@@ -715,87 +774,103 @@ func New(cfg Config, deps Dependencies) (*Issuer, error) {
 	if declinedDPoPNonces {
 		deps.DPoPNonces = nil
 	}
-	if deps.DPoPNonces != nil && cfg.Limits.DPoPNonceLifetime <= 0 {
-		return nil, fmt.Errorf("issuer: config: limits.dpop_nonce_lifetime must be positive when dependencies.dpop_nonces is set")
-	}
 	if deps.Clock == nil {
-		return nil, fmt.Errorf("issuer: dependencies: clock is required")
+		deps.Clock = systemClock{}
+	}
+	errs = append(errs, validateConfig(cfg)...)
+	errs = append(errs,
+		validateOptionalEndpointDependencies(cfg, deps),
+		validatePreAuthorizedCodeDependencies(cfg, deps),
+		validateEncryption(cfg),
+		prefixError("issuer: dependencies: ", validateSignerDependencies(cfg, deps)),
+		prefixError("issuer: dependencies: ", validateAttestationVerifier(deps.AttestationVerifier)),
+		prefixError("issuer: dependencies: ", validateProofBindingKeys(deps.ProofBindingKeys)),
+	)
+	if deps.DPoPNonces != nil && cfg.Limits.DPoPNonceLifetime <= 0 {
+		errs = append(errs, fmt.Errorf("issuer: config: limits.dpop_nonce_lifetime must be positive when dependencies.dpop_nonces is set"))
 	}
 	if deps.Random == nil {
-		return nil, fmt.Errorf("issuer: dependencies: random is required")
+		errs = append(errs, fmt.Errorf("issuer: dependencies: random is required"))
 	}
+	if cfg.Assurance == AssuranceProduction {
+		for _, err := range checkProductionAssurance(cfg, deps, declinedDPoPNonces) {
+			errs = append(errs, prefixError("issuer: ", err))
+		}
+	}
+	if cfg.Profile != nil {
+		err := cfg.Profile.CheckIssuer(cfg, deps)
+		if joined, ok := err.(interface{ Unwrap() []error }); ok {
+			for _, err := range joined.Unwrap() {
+				errs = append(errs, prefixError("issuer: profile: ", err))
+			}
+		} else {
+			errs = append(errs, prefixError("issuer: profile: ", err))
+		}
+	}
+	if err := errors.Join(errs...); err != nil {
+		return nil, err
+	}
+	return &Issuer{cfg: cfg, deps: deps}, nil
+}
 
-	if err := validateSignerDependencies(cfg, deps); err != nil {
-		return nil, fmt.Errorf("issuer: dependencies: %w", err)
+// prefixError is err with prefix before its message, nil for nil.
+func prefixError(prefix string, err error) error {
+	if err == nil {
+		return nil
 	}
-	if err := validateAttestationVerifier(deps.AttestationVerifier); err != nil {
-		return nil, fmt.Errorf("issuer: dependencies: %w", err)
-	}
-	if err := validateProofBindingKeys(deps.ProofBindingKeys); err != nil {
-		return nil, fmt.Errorf("issuer: dependencies: %w", err)
-	}
+	return fmt.Errorf("%s%w", prefix, err)
+}
 
+// validateEncryption checks cfg's request and response encryption.
+func validateEncryption(cfg Config) error {
 	if err := cfg.RequestEncryption.validate(); err != nil {
-		return nil, fmt.Errorf("issuer: config: request_encryption: %w", err)
+		return fmt.Errorf("issuer: config: request_encryption: %w", err)
 	}
 	if err := cfg.ResponseEncryption.validate(); err != nil {
-		return nil, fmt.Errorf("issuer: config: response_encryption: %w", err)
+		return fmt.Errorf("issuer: config: response_encryption: %w", err)
 	}
 	// §8.2: "Credential Request encryption MUST be used if the
 	// credential_response_encryption parameter is included", so an
 	// issuer offering encrypted responses must take encrypted requests.
 	if cfg.ResponseEncryption != nil && cfg.RequestEncryption == nil {
-		return nil, fmt.Errorf("issuer: config: response_encryption needs request_encryption (OpenID4VCI §8.2: an encrypted response is asked for in an encrypted request)")
+		return fmt.Errorf("issuer: config: response_encryption needs request_encryption (OpenID4VCI §8.2: an encrypted response is asked for in an encrypted request)")
 	}
-
-	if cfg.Assurance == AssuranceProduction {
-		if err := checkProductionAssurance(cfg, deps, declinedDPoPNonces); err != nil {
-			return nil, fmt.Errorf("issuer: %w", err)
-		}
-	}
-
-	return &Issuer{cfg: cfg, deps: deps}, nil
+	return nil
 }
 
 // validateConfig checks cfg's own self-contained fields — no
-// Dependencies involved — split out of New purely to keep it under the
-// linter's own cognitive complexity ceiling.
-func validateConfig(cfg Config) error {
+// Dependencies involved — and returns every problem it finds. Split out
+// of New purely to keep it under the linter's own cognitive complexity
+// ceiling.
+func validateConfig(cfg Config) []error {
+	var errs []error
 	if cfg.Assurance != AssuranceDevelopment && cfg.Assurance != AssuranceProduction {
-		return fmt.Errorf("issuer: config: assurance level is invalid")
+		errs = append(errs, fmt.Errorf("issuer: config: assurance level is invalid"))
 	}
 	if cfg.Issuer.IsZero() {
-		return fmt.Errorf("issuer: config: issuer is required")
-	}
-	// OpenID4VCI §12.2.1: an identifier with "no query or fragment
-	// components". Wallets build the metadata URL from it (§12.2.2),
-	// which a query would land in the middle of.
-	if u := cfg.Issuer.URL(); u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.RawFragment != "" {
-		return fmt.Errorf("issuer: config: issuer must have no query or fragment (OpenID4VCI §12.2.1)")
-	}
-	if err := validateAuthorizationServers(cfg.AuthorizationServers); err != nil {
-		return err
+		errs = append(errs, fmt.Errorf("issuer: config: issuer is required"))
+	} else if u := cfg.Issuer.URL(); u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.RawFragment != "" {
+		// OpenID4VCI §12.2.1: an identifier with "no query or fragment
+		// components". Wallets build the metadata URL from it (§12.2.2),
+		// which a query would land in the middle of.
+		errs = append(errs, fmt.Errorf("issuer: config: issuer must have no query or fragment (OpenID4VCI §12.2.1)"))
 	}
 	if cfg.Endpoints.Credential.IsZero() {
-		return fmt.Errorf("issuer: config: endpoints.credential is required")
+		errs = append(errs, fmt.Errorf("issuer: config: endpoints.credential is required"))
 	}
 	if len(cfg.CredentialConfigurationsSupported) == 0 {
-		return fmt.Errorf("issuer: config: credential_configurations_supported must not be empty")
+		errs = append(errs, fmt.Errorf("issuer: config: credential_configurations_supported must not be empty"))
 	}
-	for id, c := range cfg.CredentialConfigurationsSupported {
-		if err := c.validate(); err != nil {
-			return fmt.Errorf("issuer: config: credential_configurations_supported[%q]: %w", id, err)
+	for _, id := range slices.Sorted(maps.Keys(cfg.CredentialConfigurationsSupported)) {
+		if err := cfg.CredentialConfigurationsSupported[id].validate(); err != nil {
+			errs = append(errs, fmt.Errorf("issuer: config: credential_configurations_supported[%q]: %w", id, err))
 		}
 	}
-	if err := oid4vci.ValidateDisplays(cfg.Display); err != nil {
-		return fmt.Errorf("issuer: config: %w", err)
-	}
+	errs = append(errs, validateAuthorizationServers(cfg.AuthorizationServers), prefixError("issuer: config: ", oid4vci.ValidateDisplays(cfg.Display)))
 	if cfg.BatchCredentialIssuance != nil {
-		if err := cfg.BatchCredentialIssuance.Validate(); err != nil {
-			return fmt.Errorf("issuer: config: batch_credential_issuance: %w", err)
-		}
+		errs = append(errs, prefixError("issuer: config: batch_credential_issuance: ", cfg.BatchCredentialIssuance.Validate()))
 	}
-	return nil
+	return errs
 }
 
 // validateOptionalEndpointDependencies checks that Dependencies carries
@@ -807,22 +882,18 @@ func validateConfig(cfg Config) error {
 // same-shaped "if enabled { check limit; check dependency }" blocks
 // side by side were still enough nesting to trip the same ceiling.
 func validateOptionalEndpointDependencies(cfg Config, deps Dependencies) error {
-	if err := validateNonceEndpointDependencies(cfg, deps); err != nil {
-		return err
-	}
-	if err := validateCredentialOfferEndpointDependencies(cfg, deps); err != nil {
-		return err
-	}
-	if err := validateDeferredCredentialEndpointDependencies(cfg, deps); err != nil {
-		return err
+	errs := []error{
+		validateNonceEndpointDependencies(cfg, deps),
+		validateCredentialOfferEndpointDependencies(cfg, deps),
+		validateDeferredCredentialEndpointDependencies(cfg, deps),
 	}
 	if !cfg.Endpoints.Notification.IsZero() && deps.Notifications == nil {
-		return fmt.Errorf("issuer: dependencies: notifications is required when endpoints.notification is set")
+		errs = append(errs, fmt.Errorf("issuer: dependencies: notifications is required when endpoints.notification is set"))
 	}
 	if cfg.Limits.NotificationLifetime < 0 {
-		return fmt.Errorf("issuer: config: limits.notification_lifetime must not be negative")
+		errs = append(errs, fmt.Errorf("issuer: config: limits.notification_lifetime must not be negative"))
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func validateNonceEndpointDependencies(cfg Config, deps Dependencies) error {
@@ -878,23 +949,24 @@ func validatePreAuthorizedCodeDependencies(cfg Config, deps Dependencies) error 
 	if deps.PreAuthorizedCodes == nil {
 		return nil
 	}
+	var errs []error
 	if cfg.Limits.AccessTokenLifetime <= 0 {
-		return fmt.Errorf("issuer: config: limits.access_token_lifetime must be positive when dependencies.pre_authorized_codes is set")
+		errs = append(errs, fmt.Errorf("issuer: config: limits.access_token_lifetime must be positive when dependencies.pre_authorized_codes is set"))
 	}
 	if cfg.Limits.MaxTxCodeAttempts <= 0 {
-		return fmt.Errorf("issuer: config: limits.max_tx_code_attempts must be positive when dependencies.pre_authorized_codes is set")
+		errs = append(errs, fmt.Errorf("issuer: config: limits.max_tx_code_attempts must be positive when dependencies.pre_authorized_codes is set"))
 	}
 	// The DPoP proof is the Authorization Server's to verify under
 	// VerifiedPreAuthorizedCode, and this issuer's otherwise; so is the
 	// access token, if it issues it (RedeemPreAuthorizedCode).
-	if _, ok := cfg.PreAuthorizedCodeClientAuthentication.(VerifiedPreAuthorizedCode); ok {
-		return nil
+	if !verifiesDPoPProofs(cfg, deps) {
+		return errors.Join(errs...)
 	}
 	if deps.AccessTokens == nil {
-		return fmt.Errorf("issuer: dependencies: access_tokens is required when dependencies.pre_authorized_codes is set")
+		errs = append(errs, fmt.Errorf("issuer: dependencies: access_tokens is required when dependencies.pre_authorized_codes is set"))
 	}
 	if cfg.Limits.MaxDPoPProofAge <= 0 {
-		return fmt.Errorf("issuer: config: limits.max_dpop_proof_age must be positive when dependencies.pre_authorized_codes is set")
+		errs = append(errs, fmt.Errorf("issuer: config: limits.max_dpop_proof_age must be positive when dependencies.pre_authorized_codes is set"))
 	}
 	// Unlike MaxDPoPProofAge, zero is MaxDPoPClockSkew's own legitimate
 	// strictest value (see its own doc comment) — but a negative one
@@ -909,12 +981,12 @@ func validatePreAuthorizedCodeDependencies(cfg Config, deps Dependencies) error 
 	// already rejects a non-positive value outright; this is the one
 	// exception, because unlike those, zero itself is meaningful here.
 	if cfg.Limits.MaxDPoPClockSkew < 0 {
-		return fmt.Errorf("issuer: config: limits.max_dpop_clock_skew must not be negative when dependencies.pre_authorized_codes is set")
+		errs = append(errs, fmt.Errorf("issuer: config: limits.max_dpop_clock_skew must not be negative when dependencies.pre_authorized_codes is set"))
 	}
 	if deps.DPoPReplay == nil {
-		return fmt.Errorf("issuer: dependencies: dpop_replay is required when dependencies.pre_authorized_codes is set")
+		errs = append(errs, fmt.Errorf("issuer: dependencies: dpop_replay is required when dependencies.pre_authorized_codes is set"))
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 // validateSignerDependencies checks that Dependencies carries whichever

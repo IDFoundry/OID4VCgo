@@ -43,8 +43,13 @@ const (
 	// the Token Request's DPoP proof itself (PreAuthorizedCodes set,
 	// PreAuthorizedCodeClientAuthentication not VerifiedPreAuthorizedCode),
 	// DPoPNonces is required, as a store or the explicit NoDPoPNonces{}
-	// decline, and a store's Limits.DPoPNonceLifetime must be at most
-	// 15 minutes. A store that doesn't implement
+	// decline, Limits.MaxDPoPProofAge must be at most
+	// MaxProductionDPoPProofAge, and a store's Limits.DPoPNonceLifetime
+	// must be at most 15 minutes; DPoPReplay is checked only there, since
+	// otherwise the Authorization Server keeps the replay records.
+	// Without a Nonce Endpoint, Limits.MaxProofAge must be at most
+	// MaxProductionProofAge; with one, Limits.NonceLifetime at most an
+	// hour. A store that doesn't implement
 	// StoreAssurance at all is rejected rather than assumed adequate —
 	// declaring capabilities is not optional under this level. This
 	// does not verify any declaration; a store should still be tested
@@ -70,7 +75,8 @@ const (
 	//
 	// Also requires Dependencies.Audit to be configured — the same
 	// requirement FAPIgo's own server.AssuranceProduction places on
-	// server.Dependencies.Audit.
+	// server.Dependencies.Audit — and Dependencies.Clock to be nil, the
+	// system clock, or a Clock declaring ClockAssurance.
 	AssuranceProduction
 )
 
@@ -182,36 +188,45 @@ func checkProductionAttestationProofType(cfg Config) error {
 // configured — called only once cfg.Assurance is known to be
 // AssuranceProduction. declinedDPoPNonces is whether
 // Dependencies.DPoPNonces was NoDPoPNonces{}, which New has already
-// turned into nil. Split out of New purely to keep its own cognitive
+// turned into nil. It returns every problem it finds, for New to report
+// together. Split out of New purely to keep its own cognitive
 // complexity manageable.
-func checkProductionAssurance(cfg Config, deps Dependencies, declinedDPoPNonces bool) error {
+func checkProductionAssurance(cfg Config, deps Dependencies, declinedDPoPNonces bool) []error {
+	var errs []error
 	// Nonces, transaction IDs, notification IDs, Credential Offer
 	// references and access tokens all come from it: a predictable
 	// source makes them guessable.
 	if deps.Random != rand.Reader {
-		return fmt.Errorf("dependencies.random must be crypto/rand.Reader under AssuranceProduction")
+		errs = append(errs, fmt.Errorf("dependencies.random must be crypto/rand.Reader under AssuranceProduction"))
 	}
-	if err := checkProductionHTTPS(cfg); err != nil {
-		return err
-	}
-	if err := checkProductionAttestationProofType(cfg); err != nil {
-		return err
-	}
-	if !cfg.Endpoints.Nonce.IsZero() && cfg.Limits.NonceLifetime > maxProductionNonceLifetime {
-		return fmt.Errorf("config: limits.nonce_lifetime is %s; under AssuranceProduction it must be at most %s", cfg.Limits.NonceLifetime, maxProductionNonceLifetime)
+	if !readsSystemTime(deps.Clock) {
+		errs = append(errs, fmt.Errorf("dependencies.clock must be nil, the system clock, or declare issuer.ClockAssurance under AssuranceProduction"))
 	}
 	if deps.PreAuthorizedCodes != nil && cfg.PreAuthorizedCodeClientAuthentication == nil {
-		return fmt.Errorf("config.pre_authorized_code_client_authentication is required under AssuranceProduction when dependencies.pre_authorized_codes is set (issuer.AnonymousPreAuthorizedCode{} accepts the redemption without client authentication, which HAIP 1.0 §4.4.1 doesn't allow)")
-	}
-	if err := checkProductionDPoPClockSkew(cfg, deps); err != nil {
-		return err
-	}
-	if err := checkProductionDPoPNonces(cfg, deps, declinedDPoPNonces); err != nil {
-		return err
+		errs = append(errs, fmt.Errorf("config.pre_authorized_code_client_authentication is required under AssuranceProduction when dependencies.pre_authorized_codes is set (issuer.AnonymousPreAuthorizedCode{} accepts the redemption without client authentication, which HAIP 1.0 §4.4.1 doesn't allow)"))
 	}
 	if deps.PreAuthorizedCodes != nil && cfg.Limits.MaxTxCodeAttempts > MaxProductionTxCodeAttempts {
-		return fmt.Errorf("config: limits.max_tx_code_attempts is %d; under AssuranceProduction it must be at most %d", cfg.Limits.MaxTxCodeAttempts, MaxProductionTxCodeAttempts)
+		errs = append(errs, fmt.Errorf("config: limits.max_tx_code_attempts is %d; under AssuranceProduction it must be at most %d", cfg.Limits.MaxTxCodeAttempts, MaxProductionTxCodeAttempts))
 	}
+	if deps.Audit == nil {
+		errs = append(errs, fmt.Errorf("dependencies.audit is required under AssuranceProduction"))
+	}
+	errs = append(errs,
+		checkProductionHTTPS(cfg),
+		checkProductionAttestationProofType(cfg),
+		checkProductionProofFreshness(cfg),
+		checkProductionDPoPProof(cfg, deps),
+		checkProductionDPoPNonces(cfg, deps, declinedDPoPNonces),
+		checkProductionX5CRevocation(deps),
+		checkProductionAttestationBinding(deps),
+	)
+	errs = append(errs, checkProductionKeySources(cfg, deps)...)
+	return append(errs, checkProductionStores(cfg, deps)...)
+}
+
+// checkProductionStores runs checkStoreAssurance on each store a
+// configured feature uses.
+func checkProductionStores(cfg Config, deps Dependencies) []error {
 	// Each store a configured feature uses, and whether consuming from
 	// it must be atomic.
 	stores := []struct {
@@ -225,40 +240,35 @@ func checkProductionAssurance(cfg Config, deps Dependencies, declinedDPoPNonces 
 		{!cfg.Endpoints.DeferredCredential.IsZero(), "deferred_transactions", deps.DeferredTransactions, true},
 		{!cfg.Endpoints.Notification.IsZero(), "notifications", deps.Notifications, false},
 		{deps.PreAuthorizedCodes != nil, "pre_authorized_codes", deps.PreAuthorizedCodes, true},
-		{deps.PreAuthorizedCodes != nil, "dpop_replay", deps.DPoPReplay, true},
+		// Under VerifiedPreAuthorizedCode the Authorization Server
+		// verifies the DPoP proof and keeps its replay records.
+		{verifiesDPoPProofs(cfg, deps), "dpop_replay", deps.DPoPReplay, true},
 		{deps.DPoPNonces != nil, "dpop_nonces", deps.DPoPNonces, false},
 	}
+	var errs []error
 	for _, st := range stores {
-		if !st.used {
-			continue
-		}
-		if err := checkStoreAssurance(st.name, st.store, st.atomicConsume); err != nil {
-			return err
+		if st.used {
+			errs = append(errs, checkStoreAssurance(st.name, st.store, st.atomicConsume))
 		}
 	}
+	return errs
+}
+
+// checkProductionKeySources runs checkKeySourceAssurance on the
+// configured AttestationVerifier and ProofBindingKeys, and requires a
+// key attestation status decision with the former.
+func checkProductionKeySources(cfg Config, deps Dependencies) []error {
+	var errs []error
 	if deps.AttestationVerifier != nil {
-		if err := checkKeySourceAssurance("attestation_verifier", deps.AttestationVerifier); err != nil {
-			return err
-		}
+		errs = append(errs, checkKeySourceAssurance("attestation_verifier", deps.AttestationVerifier))
 		if deps.AttestationStatus == nil && !cfg.NoAttestationStatusCheck {
-			return fmt.Errorf("dependencies.attestation_status is required under AssuranceProduction when dependencies.attestation_verifier is set, unless config.no_attestation_status_check: without it, a revoked key attestation is accepted until it expires")
+			errs = append(errs, fmt.Errorf("dependencies.attestation_status is required under AssuranceProduction when dependencies.attestation_verifier is set, unless config.no_attestation_status_check: without it, a revoked key attestation is accepted until it expires"))
 		}
 	}
 	if deps.ProofBindingKeys != nil {
-		if err := checkKeySourceAssurance("proof_binding_keys", deps.ProofBindingKeys); err != nil {
-			return err
-		}
+		errs = append(errs, checkKeySourceAssurance("proof_binding_keys", deps.ProofBindingKeys))
 	}
-	if err := checkProductionX5CRevocation(deps); err != nil {
-		return err
-	}
-	if err := checkProductionAttestationBinding(deps); err != nil {
-		return err
-	}
-	if deps.Audit == nil {
-		return fmt.Errorf("dependencies.audit is required under AssuranceProduction")
-	}
-	return nil
+	return errs
 }
 
 // Production bounds on the skew this issuer allows a DPoP proof's iat
@@ -276,6 +286,49 @@ const (
 // they're sent.
 const maxProductionNonceLifetime = time.Hour
 
+// MaxProductionProofAge is the longest Limits.MaxProofAge
+// AssuranceProduction takes when there is no Nonce Endpoint: a jwt
+// proof's iat is then its only freshness, and nothing records that a
+// proof was used, so one captured proof is good for another Credential
+// bound to the Wallet's key until it ages out (OpenID4VCI 1.0 §13.8).
+// A Nonce Endpoint (Endpoints.Nonce), which HAIP 1.0 §4.1 requires,
+// makes each proof single-use instead.
+const MaxProductionProofAge = 5 * time.Minute
+
+// MaxProductionDPoPProofAge is the longest Limits.MaxDPoPProofAge
+// AssuranceProduction takes where this issuer verifies the Token
+// Request's DPoP proof itself, the bound fapigo/server enforces on its
+// own: a proof is fresh (RFC 9449 §11.1) only while it's young.
+const MaxProductionDPoPProofAge = 5 * time.Minute
+
+// checkProductionProofFreshness bounds how long a key proof stays
+// usable: a c_nonce's lifetime with a Nonce Endpoint, and the proof's
+// own age without one.
+func checkProductionProofFreshness(cfg Config) error {
+	if !cfg.Endpoints.Nonce.IsZero() {
+		if cfg.Limits.NonceLifetime > maxProductionNonceLifetime {
+			return fmt.Errorf("config: limits.nonce_lifetime is %s; under AssuranceProduction it must be at most %s", cfg.Limits.NonceLifetime, maxProductionNonceLifetime)
+		}
+		return nil
+	}
+	if cfg.Limits.MaxProofAge > MaxProductionProofAge {
+		return fmt.Errorf("config: limits.max_proof_age is %s; without endpoints.nonce, under AssuranceProduction it must be at most %s (a proof's iat is then its only freshness: set endpoints.nonce, as HAIP 1.0 §4.1 requires, to make each proof single-use)", cfg.Limits.MaxProofAge, MaxProductionProofAge)
+	}
+	return nil
+}
+
+// verifiesDPoPProofs reports whether this issuer verifies the Token
+// Request's DPoP proof itself: it redeems pre-authorized codes
+// (Dependencies.PreAuthorizedCodes), and the Authorization Server
+// hasn't verified the redemption (VerifiedPreAuthorizedCode).
+func verifiesDPoPProofs(cfg Config, deps Dependencies) bool {
+	if deps.PreAuthorizedCodes == nil {
+		return false
+	}
+	_, verified := cfg.PreAuthorizedCodeClientAuthentication.(VerifiedPreAuthorizedCode)
+	return !verified
+}
+
 // maxProductionDPoPNonceLifetime is the longest Limits.DPoPNonceLifetime
 // AssuranceProduction takes, the bound fapigo/server enforces on its
 // own: a nonce is a DPoP proof's freshness, valid for any number of
@@ -288,36 +341,32 @@ const maxProductionDPoPNonceLifetime = 15 * time.Minute
 var errProductionDPoPNoncesRequired = errors.New("dependencies.dpop_nonces is required under AssuranceProduction when dependencies.pre_authorized_codes is set and this issuer verifies the token request's DPoP proof (pass a durable issuer.DPoPNonceStore, with limits.dpop_nonce_lifetime, to challenge DPoP proofs for a nonce, or issuer.NoDPoPNonces{} to explicitly decline)")
 
 // checkProductionDPoPNonces requires a DPoP nonce choice where this
-// issuer verifies the Token Request's DPoP proof itself: with
-// dependencies.pre_authorized_codes set, unless the Authorization Server
-// verified the redemption (VerifiedPreAuthorizedCode). A configured
-// store's lifetime is bounded wherever it is used.
+// issuer verifies the Token Request's DPoP proof itself
+// (verifiesDPoPProofs). A configured store's lifetime is bounded
+// wherever it is used.
 func checkProductionDPoPNonces(cfg Config, deps Dependencies, declined bool) error {
 	if deps.DPoPNonces != nil && cfg.Limits.DPoPNonceLifetime > maxProductionDPoPNonceLifetime {
 		return fmt.Errorf("config: limits.dpop_nonce_lifetime is %s; under AssuranceProduction it must be at most %s", cfg.Limits.DPoPNonceLifetime, maxProductionDPoPNonceLifetime)
 	}
-	if deps.PreAuthorizedCodes == nil || deps.DPoPNonces != nil || declined {
-		return nil
-	}
-	if _, ok := cfg.PreAuthorizedCodeClientAuthentication.(VerifiedPreAuthorizedCode); ok {
+	if deps.DPoPNonces != nil || declined || !verifiesDPoPProofs(cfg, deps) {
 		return nil
 	}
 	return errProductionDPoPNoncesRequired
 }
 
-// checkProductionDPoPClockSkew holds Limits.MaxDPoPClockSkew to FAPI
-// 2.0's bounds where this issuer verifies the token request's DPoP
-// proof itself: with dependencies.pre_authorized_codes set, unless the
-// Authorization Server verified the redemption (VerifiedPreAuthorizedCode).
-func checkProductionDPoPClockSkew(cfg Config, deps Dependencies) error {
-	if deps.PreAuthorizedCodes == nil {
-		return nil
-	}
-	if _, ok := cfg.PreAuthorizedCodeClientAuthentication.(VerifiedPreAuthorizedCode); ok {
+// checkProductionDPoPProof holds Limits.MaxDPoPClockSkew to FAPI 2.0's
+// bounds, and Limits.MaxDPoPProofAge to MaxProductionDPoPProofAge,
+// where this issuer verifies the Token Request's DPoP proof itself
+// (verifiesDPoPProofs).
+func checkProductionDPoPProof(cfg Config, deps Dependencies) error {
+	if !verifiesDPoPProofs(cfg, deps) {
 		return nil
 	}
 	if skew := cfg.Limits.MaxDPoPClockSkew; skew < minProductionDPoPClockSkew || skew > maxProductionDPoPClockSkew {
 		return fmt.Errorf("config: limits.max_dpop_clock_skew is %s; under AssuranceProduction it must be from %s to %s (FAPI 2.0)", skew, minProductionDPoPClockSkew, maxProductionDPoPClockSkew)
+	}
+	if age := cfg.Limits.MaxDPoPProofAge; age > MaxProductionDPoPProofAge {
+		return fmt.Errorf("config: limits.max_dpop_proof_age is %s; under AssuranceProduction it must be at most %s (RFC 9449 §11.1)", age, MaxProductionDPoPProofAge)
 	}
 	return nil
 }

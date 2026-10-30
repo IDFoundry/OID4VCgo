@@ -247,6 +247,50 @@ them.
   a status mechanism this library doesn't know: accept those
   credentials only with `NoStatusCheck` and a check of your own.
 
+### Credential Issuer (`issuer`) production bounds
+
+- **Proof ages are capped under production.** Without a Nonce Endpoint,
+  `Limits.MaxProofAge` may be at most `issuer.MaxProductionProofAge` (5
+  minutes): a jwt proof's `iat` is then its only freshness, and one
+  proof is good for any number of Credentials. Set `Endpoints.Nonce`
+  (HAIP 1.0 §4.1 requires it) to make each proof single-use instead.
+  Where the issuer verifies the Token Request's DPoP proof itself
+  (anonymous pre-authorized code redemption), `Limits.MaxDPoPProofAge`
+  may be at most `issuer.MaxProductionDPoPProofAge` (5 minutes), as
+  fapigo/server requires.
+- **No DPoP replay store under `VerifiedPreAuthorizedCode`.** The
+  Authorization Server verifies the DPoP proof there, so production no
+  longer checks `Dependencies.DPoPReplay`'s `StoreAssurance`; leave it
+  nil.
+- **The system clock.** `Dependencies.Clock` is optional: nil is the
+  system clock. Under production `issuer.New` refuses any other `Clock`
+  unless it declares `issuer.ClockAssurance` (`ReadsSystemTime() bool`,
+  the same method as `fapigo/server.ClockAssurance`, so
+  `server.SystemClock` declares it): a fixed or offset test clock would
+  stop every lifetime the issuer enforces. Replace
+  `Clock: issuer.ClockFunc(time.Now)` with nothing.
+- **HAIP as a profile (`haip`).** `haip.ValidateIssuerConfig` takes the
+  `Dependencies` too: `haip.ValidateIssuerConfig(cfg, deps)`. It now
+  also refuses a proof type whose `ProofSigningAlgValuesSupported`
+  lacks ES256 (HAIP 1.0 §7), and a nil
+  `PreAuthorizedCodeClientAuthentication` when `deps.PreAuthorizedCodes`
+  is set (anonymous redemption under development assurance), and it
+  reports every problem it finds rather than the first. Rather than
+  calling it after `issuer.New`, set `Config.Profile:
+  haip.IssuerProfile{}`, and `issuer.New` runs it with its own checks.
+- **Deferred transactions keep x5c- and kid-conveyed proof keys'
+  headers.** `DeferredTransactionRecord` gains `ProofKeyHeaders`: for a
+  binding key a jwt proof conveyed by `kid` or `x5c`, the proof's JOSE
+  header, which `IssueDeferredCredential` resolves again with
+  `Dependencies.ProofBindingKeys`. A certificate revoked or no longer
+  trusted while the transaction was pending now denies it
+  (`issuer.ErrDeferredProofKey`), and one whose revocation can't be
+  decided leaves it pending (`issuer.ErrDeferredProofKeyTrustUnknown`),
+  as for key attestations. A custom `DeferredTransactionStore` must
+  persist `ProofKeyHeaders` like any other field (the `issuertest`
+  contract checks it), and an issuer issuing such a transaction needs
+  the `ProofBindingKeys` that resolved it.
+
 ## v0.55.0 → v0.56.0
 
 This release pins FAPIgo v0.65.1, which carries the breaking changes of
