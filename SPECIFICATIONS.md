@@ -124,6 +124,48 @@ implemented here.
 - [RFC 9052 — CBOR Object Signing and Encryption (COSE)][cose] — mdoc's
   `IssuerSigned`/`DeviceSigned` structures (ISO 18013-5) are COSE_Sign1-based.
 
+## Known leniencies
+
+Where this library (or FAPIgo, for the OAuth layer) accepts input a
+specification says to refuse, or doesn't implement all a specification
+asks of a reader, deliberately or not yet. None lets a credential,
+presentation or client authentication through that fails a signature or
+trust check.
+
+- **Client Attestation PoP without `iss`.** The pinned
+  attestation-based-client-auth draft-07 §5.2 makes the PoP JWT's `iss`
+  required. FAPIgo's `server`, which verifies Wallet Attestations for
+  this library's Authorization Server, accepts a PoP without one,
+  checking `aud`, `jti`, `iat` and the signature by the attested key as
+  usual; a PoP with an `iss` must name the client. This is FAPIgo's to
+  change.
+- **Encryption JWKs without `alg`.** OpenID4VP 1.0 §8.3 requires the
+  Verifier's response encryption JWK to carry `alg`. The wallet accepts
+  an EC P-256 key with `alg` absent and uses it for ECDH-ES, as it does
+  for an Issuer's credential request encryption key (OpenID4VCI 1.0
+  §10): a key whose `alg` names another algorithm is still passed over.
+- **Unrecognised Credential Request members** are ignored (OpenID4VCI
+  1.0 §8.2), but one that differs from a known member only in case is
+  refused, deliberately: parsers that fold case would read it as the
+  known member.
+- **JWE headers.** A `zip` that isn't a string, or is empty, is read as
+  no compression rather than refused (RFC 7516 §4.1.3), and an `epk`
+  carrying a private `d` member is accepted, its `d` ignored (RFC 7518
+  §4.6.1.1).
+- **mdoc encoding.** A one-element `x5chain` array is accepted as well as
+  the single byte string RFC 9360 §2 asks for, and a `tdate` in an MSO's
+  validityInfo is accepted with fractional seconds or a UTC offset,
+  which ISO/IEC 18013-5 §12.3.4 excludes; `mdoc.Issue` produces neither.
+- **mdoc status lists with `bits` other than 1.** ISO/IEC 18013-5
+  §12.3.6.5 requires one bit per status for a list an mdoc references.
+  Neither `statuslist.Publisher` nor the Checker enforces it; a list
+  with any valid `bits` is read correctly.
+- **mdoc algorithms.** A reader is to support every algorithm and curve
+  ISO/IEC 18013-5 §12.3.4 and §12.7.2 list. This library supports ES256
+  (P-256) and EdDSA (Ed25519) for issuer and device authentication, and
+  refuses the others (`credential/mdoc`'s package doc, "Algorithm and
+  curve support").
+
 ## HAIP's deviations from plain FAPI 2.0
 
 Confirmed directly against HAIP 1.0's text (not paraphrased from memory):
