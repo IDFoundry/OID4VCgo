@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
+	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcgo/internal/certchain"
 	"github.com/idfoundry/oid4vcgo/internal/displaytext"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
@@ -183,9 +184,12 @@ const (
 	StatusInvalid   = "invalid"
 	StatusSuspended = "suspended"
 	// StatusUnknown is an mdoc whose MSO names an identifier list
-	// (ISO/IEC 18013-5 §12.3.6.4), which the wallet can't check, and
-	// either no status list or one on which it's valid: the identifier
-	// list may still revoke it.
+	// (ISO/IEC 18013-5 §12.3.6.4), which the wallet can't check, or a
+	// credential whose status names no mechanism the wallet knows (an
+	// SD-JWT VC status claim with no status_list, an MSO status with
+	// neither status_list nor identifier_list), and either no status
+	// list or one on which it's valid: that mechanism may still revoke
+	// it.
 	StatusUnknown = "unknown"
 )
 
@@ -203,13 +207,15 @@ type CredentialStatus struct {
 // names, checks it's signed by a certificate chaining to the issuer
 // roots the credential was received under (IssuerRoots, or an mdoc's),
 // and records the credential's status in it: the stored credential is
-// returned with its Status. A credential without a status list has
+// returned with its Status. A credential without a status has
 // nothing to check, and is returned as it is, as is an expired one: it
 // isn't valid whatever its status, so its status list isn't fetched
 // (draft-ietf-oauth-status-list §8.3). An mdoc naming an identifier
 // list (ISO/IEC 18013-5 §12.3.6.4), which the wallet can't check, is
 // StatusUnknown, unless a status list it names too says it's revoked,
-// suspended or another status than valid. The status list tells the
+// suspended or another status than valid; so is a credential whose
+// status names no mechanism the wallet knows, rather than one with
+// nothing to check. The status list tells the
 // issuer nothing about which credential is checked: it's one list for
 // many credentials (the Token Status List's herd privacy).
 func (w *Wallet) CheckStatus(ctx context.Context, id string) (StoredCredential, error) {
@@ -219,7 +225,7 @@ func (w *Wallet) CheckStatus(ctx context.Context, id string) (StoredCredential, 
 	}
 	now := w.deps.Clock()
 	live := liveStatusRefs(c, now)
-	listed := identifierListed(c, now)
+	listed := uncheckedStatus(c, now)
 	if len(live) == 0 && !listed {
 		return c, nil
 	}
@@ -242,7 +248,7 @@ func (w *Wallet) CheckStatus(ctx context.Context, id string) (StoredCredential, 
 	if err != nil {
 		return StoredCredential{}, fmt.Errorf("walletflow: credential: %w", err)
 	}
-	if !slices.Equal(statusRefs(cur), statusRefs(c)) || identifierListed(cur, now) != listed {
+	if !slices.Equal(statusRefs(cur), statusRefs(c)) || uncheckedStatus(cur, now) != listed {
 		return cur, nil
 	}
 	cur.Status = CredentialStatus{Value: value, CheckedAt: now.UTC()}
@@ -276,20 +282,37 @@ func (w *Wallet) checkStatusLists(ctx context.Context, c StoredCredential, live 
 	return checkCopies(ctx, checker, live, c.StatusListCWT)
 }
 
-// identifierListed reports whether a copy of c, an mdoc, not yet
-// expired at now names an identifier list in its MSO's status
-// (mdocStatus).
-func identifierListed(c StoredCredential, now time.Time) bool {
-	if c.Format != mdoc.CredentialFormat {
-		return false
-	}
+// uncheckedStatus reports whether a copy of c not yet expired at now
+// has a status the wallet can't check: an mdoc's identifier list
+// (mdocStatus), or a status naming no mechanism the wallet knows — an
+// MSO status with neither member, an SD-JWT VC status claim with no
+// status_list. Either may still revoke it.
+func uncheckedStatus(c StoredCredential, now time.Time) bool {
 	for _, cp := range c.AllCopies() {
-		if !copyLive(c, cp, now) {
-			continue
-		}
-		if status, err := mdocStatus(cp.Credential); err == nil && status != nil && status.IdentifierList != nil {
+		if copyLive(c, cp, now) && copyStatusUnchecked(c.Format, cp.Credential) {
 			return true
 		}
+	}
+	return false
+}
+
+// copyStatusUnchecked reports whether credential, one copy in format,
+// has a status the wallet can't check (uncheckedStatus). A copy that
+// doesn't parse was checked on receipt, so it isn't one.
+func copyStatusUnchecked(format, credential string) bool {
+	switch format {
+	case mdoc.CredentialFormat:
+		status, err := mdocStatus(credential)
+		return err == nil && status != nil && (status.IdentifierList != nil || status.StatusList == nil)
+	case sdjwtvc.CredentialFormat:
+		payload, err := sdjwtvcPayload(credential)
+		if err != nil {
+			return false
+		}
+		raw, present := payload["status"]
+		status, isObject := raw.(map[string]any)
+		_, hasList := status["status_list"]
+		return present && (!isObject || !hasList)
 	}
 	return false
 }

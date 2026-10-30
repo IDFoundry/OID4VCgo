@@ -18,7 +18,12 @@ import (
 // status is mutate's, valid until validUntil: its ID.
 func storedMdoc(t *testing.T, client *http.Client, validUntil time.Time, mutate func(*mdoc.Claims)) (*walletflow.Wallet, string) {
 	t.Helper()
-	f := testmdoc.IssueWith(t, mutate)
+	return storedFixture(t, client, validUntil, testmdoc.IssueWith(t, mutate))
+}
+
+// storedFixture is storedMdoc for f, an mdoc already issued.
+func storedFixture(t *testing.T, client *http.Client, validUntil time.Time, f testmdoc.Fixture) (*walletflow.Wallet, string) {
+	t.Helper()
 	raw, err := f.IssuerSigned.Marshal()
 	if err != nil {
 		t.Fatal(err)
@@ -35,6 +40,12 @@ func storedMdoc(t *testing.T, client *http.Client, validUntil time.Time, mutate 
 		c.StatusList = &statuslist.StatusListRef{Idx: mso.Status.StatusList.Idx, URI: mso.Status.StatusList.URI}
 		c.StatusListCWT = true
 	}
+	return walletHolding(t, client, c), c.ID
+}
+
+// walletHolding is a wallet over client whose store holds c.
+func walletHolding(t *testing.T, client *http.Client, c walletflow.StoredCredential) *walletflow.Wallet {
+	t.Helper()
 	store := walletflow.NewMemoryCredentialStore()
 	if err := store.Put(context.Background(), c); err != nil {
 		t.Fatal(err)
@@ -45,7 +56,7 @@ func storedMdoc(t *testing.T, client *http.Client, validUntil time.Time, mutate 
 	if err != nil {
 		t.Fatal(err)
 	}
-	return w, c.ID
+	return w
 }
 
 // An mdoc's status list is read as ISO/IEC 18013-5 §12.3.6.3 has it: a

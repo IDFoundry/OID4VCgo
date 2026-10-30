@@ -37,7 +37,8 @@ func TestVerifyIssuedCredential_CertificateTimeAndPolicy(t *testing.T) {
 }
 
 // A status claim using another mechanism than a status list is no
-// reason to refuse the credential: only status_list is read.
+// reason to refuse the credential: only status_list is read. Its status
+// is unknown, though, not absent (UnrecognizedStatus).
 func TestVerifyIssuedCredential_OtherStatusMechanism(t *testing.T) {
 	ca, caKey := testcert.CA(t, "issued credential test CA")
 	leaf, leafKey := testcert.Leaf(t, "issued credential test issuer", ca, caKey)
@@ -59,7 +60,7 @@ func TestVerifyIssuedCredential_OtherStatusMechanism(t *testing.T) {
 	got, err := wallet.VerifyIssuedCredential(context.Background(), wallet.VerifyIssuedCredentialParams{
 		Configuration: f.sdjwtConf, Credential: credential, HolderKey: &f.holder.PublicKey, IssuerRoots: roots,
 	})
-	if err != nil || got.StatusList != nil {
-		t.Errorf("VerifyIssuedCredential = %+v, %v; want accepted with no status list", got.StatusList, err)
+	if err != nil || got.StatusList != nil || !got.UnrecognizedStatus {
+		t.Errorf("VerifyIssuedCredential = %+v (unrecognized %v), %v; want accepted with no status list and an unrecognized status", got.StatusList, got.UnrecognizedStatus, err)
 	}
 }
