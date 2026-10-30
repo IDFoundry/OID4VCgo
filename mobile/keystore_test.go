@@ -306,3 +306,19 @@ func TestKeyStore_DeletesAKeyItCantLoad(t *testing.T) {
 		t.Errorf("%d keys left behind", len(s.keys))
 	}
 }
+
+// TestKeyStore_CreateKeyNetworkFailure: a CreateKey error marked as a
+// network failure (a Wallet Provider challenge the store couldn't fetch)
+// is reported as network, retryable; any other as platform.
+func TestKeyStore_CreateKeyNetworkFailure(t *testing.T) {
+	s := newGoKeyStore()
+	s.newKeyErr = errors.New("[network] challenge: offline")
+	_, err := (keyStore{ks: s}).NewKey(context.Background(), walletflow.KeyPurposeHolder)
+	if code(err) != CodeNetwork || !strings.Contains(err.Error(), "new holder key: challenge: offline") {
+		t.Errorf("NewKey = %v", err)
+	}
+	s.newKeyErr = errors.New("keystore broken")
+	if _, err := (keyStore{ks: s}).NewKey(context.Background(), walletflow.KeyPurposeHolder); code(err) != CodePlatform {
+		t.Errorf("NewKey = %v", err)
+	}
+}

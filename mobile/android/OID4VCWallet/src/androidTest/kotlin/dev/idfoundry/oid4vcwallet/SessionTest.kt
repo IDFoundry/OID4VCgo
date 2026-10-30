@@ -98,6 +98,31 @@ class SessionTest {
         }
     }
 
+    /**
+     * A Wallet Provider giving attestation challenges receives each key
+     * it attests with its ID and an Android Key Attestation chain over its
+     * challenge: the instance key's for the Wallet Attestation, the holder
+     * keys' for the Key Attestation.
+     */
+    @Test
+    fun providerReceivesKeyEvidence(): Unit = runBlocking {
+        val env = env()
+        val keys = keyStore()
+        val provider = EvidenceRecorder(ProviderOf(env))
+        val w = Wallet(env.configuration, keys, InMemoryCredentialStore(), provider)
+        receive(env, w)
+
+        val instance = provider.walletRequests.first().instanceKey
+        assertNotNull(instance.keyID)
+        assertEquals(keys.attestationChain(instance.keyID!!)!!.map { it.toList() }, instance.certificateChain.map { it.toList() })
+        assertTrue(provider.keyRequests.isNotEmpty())
+        for (k in provider.keyRequests.flatMap { it.keys }) {
+            assertNotNull(k.keyID)
+            assertTrue("holder key ${k.keyID} has no attestation chain", k.certificateChain.size > 1)
+        }
+        assertTrue(provider.asked.toString(), provider.asked.containsAll(listOf(KeyPurpose.INSTANCE, KeyPurpose.HOLDER)))
+    }
+
     @Test
     fun issueThenPresent(): Unit = runBlocking {
         val env = env()
@@ -424,6 +449,32 @@ class SessionTest {
 
 /** The SD-JWT VC format. */
 const val SD_JWT = "dc+sd-jwt"
+
+/**
+ * A Wallet Provider that gives an attestation challenge for instance and
+ * holder keys and records the evidence it's asked to attest, then asks
+ * [provider].
+ */
+internal class EvidenceRecorder(private val provider: WalletProvider) : WalletProvider {
+    val asked: MutableList<KeyPurpose> = java.util.Collections.synchronizedList(mutableListOf())
+    val walletRequests: MutableList<WalletAttestationRequest> = java.util.Collections.synchronizedList(mutableListOf())
+    val keyRequests: MutableList<KeyAttestationRequest> = java.util.Collections.synchronizedList(mutableListOf())
+
+    override suspend fun attestationChallenge(purpose: KeyPurpose): ByteArray? {
+        asked += purpose
+        return if (purpose == KeyPurpose.DPOP) null else "challenge-${purpose.rawValue}".toByteArray()
+    }
+
+    override suspend fun walletAttestation(request: WalletAttestationRequest): String {
+        walletRequests += request
+        return provider.walletAttestation(request)
+    }
+
+    override suspend fun keyAttestation(request: KeyAttestationRequest): String {
+        keyRequests += request
+        return provider.keyAttestation(request)
+    }
+}
 
 /** The TestEnv's Wallet Provider, as the app's WalletProvider. */
 internal class ProviderOf(env: TestEnv) : WalletProvider {

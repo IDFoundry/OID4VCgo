@@ -48,7 +48,10 @@ type KeyStore interface {
 	// CreateKey creates a P-256 key for purpose (PurposeInstance,
 	// PurposeDPoP or PurposeHolder) and returns its ID. (Not NewKey:
 	// Objective-C reserves methods named new… for returning an owned
-	// object.)
+	// object.) An error whose message starts with "[network]" — a store
+	// that fetched a key attestation challenge from the Wallet Provider
+	// first, say — is reported as CodeNetwork (retryable); any other as
+	// CodePlatform.
 	CreateKey(purpose string) (string, error)
 	// PublicKey returns key id's public key as an uncompressed X9.63
 	// point (0x04 || X || Y) — empty, with no error, when there's no
@@ -113,7 +116,10 @@ var _ walletflow.KeyStore = keyStore{}
 func (k keyStore) NewKey(_ context.Context, purpose walletflow.KeyPurpose) (walletflow.Key, error) {
 	id, err := k.ks.CreateKey(string(purpose))
 	if err != nil {
-		return nil, newError(CodePlatform, fmt.Errorf("new %s key: %w", purpose, err))
+		// A store that asks the Wallet Provider for a key attestation
+		// challenge first (the Kotlin library's) marks its network
+		// failure as a provider's is marked: retryable.
+		return nil, providerError("new "+string(purpose)+" key", err)
 	}
 	if id == "" {
 		return nil, newError(CodePlatform, fmt.Errorf("new %s key: no key ID", purpose))

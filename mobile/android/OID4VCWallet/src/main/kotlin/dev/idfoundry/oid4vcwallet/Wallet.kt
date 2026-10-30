@@ -580,7 +580,10 @@ public sealed interface PathElement {
  * A holder's wallet: OID4VCgo's walletflow over the app's key store,
  * credential store and Wallet Provider. Creating it makes no network
  * calls; [provider] is needed to receive credentials, not to present
- * them.
+ * them. Each key the wallet makes is made over the challenge
+ * [WalletProvider.attestationChallenge] gives for it, and reaches the
+ * provider's attestation calls with its ID and attestation chain
+ * ([KeyEvidence]).
  */
 public class Wallet(
     configuration: WalletConfiguration,
@@ -600,9 +603,12 @@ public class Wallet(
                 "the linked Go library has ABI ${OID4VC.abiVersion}, these sources ABI ${OID4VC.expectedABIVersion}: rebuild it",
             )
         }
-        val keys = KeyStoreAdapter(keyStore)
+        // Keys are made over the provider's attestation challenges, and
+        // reach it with their attestation chains.
+        val created = CreatedKeys()
+        val keys = KeyStoreAdapter(keyStore, provider, created)
         val credentials = CredentialStoreAdapter(credentialStore)
-        val wp = provider?.let(::WalletProviderAdapter)
+        val wp = provider?.let { WalletProviderAdapter(it, keyStore, created) }
         val config = json.encodeToString(WalletConfiguration.serializer(), configuration)
         handle = OID4VC.wrap { Mobile.newWallet(config, keys, credentials, wp) }
         val agreement = (keyStore as? KeyAgreement)?.let(::KeyAgreementAdapter)

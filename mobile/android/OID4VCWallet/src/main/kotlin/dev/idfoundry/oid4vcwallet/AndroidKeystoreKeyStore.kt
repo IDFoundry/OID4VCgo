@@ -25,6 +25,7 @@ import java.security.PrivateKey
 import java.security.ProviderException
 import java.security.PublicKey
 import java.security.Signature
+import java.security.cert.X509Certificate
 import java.security.interfaces.ECPublicKey
 import java.security.spec.ECGenParameterSpec
 import java.security.spec.ECParameterSpec
@@ -102,7 +103,10 @@ public class BiometricPromptAuthenticator(
  * the device is unlocked, and holder keys, if
  * [Options.holderUserAuthentication], each time they sign only after
  * [authenticator] has authenticated the holder: the store refuses to be
- * made without one then.
+ * made without one then. A key made with an attestation challenge — the
+ * one the wallet's [WalletProvider.attestationChallenge] gives — carries
+ * an Android Key Attestation chain ([attestationChain]), which the wallet
+ * hands the Wallet Provider with the key.
  */
 public class AndroidKeystoreKeyStore(
     /** How the store makes keys. */
@@ -196,7 +200,20 @@ public class AndroidKeystoreKeyStore(
     /** Keystore keys survive the app quitting. */
     override val isDurable: Boolean get() = true
 
-    override fun createKey(purpose: KeyPurpose): String {
+    override fun createKey(purpose: KeyPurpose): String = createKey(purpose, null)
+
+    /**
+     * Creates a key for [purpose], as [createKey] does; with an
+     * [attestationChallenge] (1 to 128 bytes), Android Keystore attests
+     * it over the challenge (`setAttestationChallenge`), and
+     * [attestationChain] returns its chain. A storage that makes the key
+     * but doesn't attest it counts as failing: StrongBox then turns to the
+     * TEE, as [StrongBox] says.
+     */
+    override fun createKey(purpose: KeyPurpose, attestationChallenge: ByteArray?): String {
+        if (attestationChallenge != null && (attestationChallenge.isEmpty() || attestationChallenge.size > MAX_ATTESTATION_CHALLENGE)) {
+            throw StoreException("an attestation challenge must be 1 to $MAX_ATTESTATION_CHALLENGE bytes, not ${attestationChallenge.size}")
+        }
         if (options.strongBox == StrongBox.REQUIRED && Build.VERSION.SDK_INT < Build.VERSION_CODES.P) {
             throw StoreException("StrongBox needs API 28")
         }
@@ -214,7 +231,7 @@ public class AndroidKeystoreKeyStore(
                 Log.w(TAG, "StrongBox couldn't make a $purpose key (${failure.javaClass.simpleName}): making it in the TEE")
                 toldTEE = true
             }
-            val e = tryGenerate(generator, id, purpose, attempt) ?: return id
+            val e = tryGenerate(generator, id, purpose, attempt, attestationChallenge) ?: return id
             failure = e
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && e is StrongBoxUnavailableException) noStrongBox = true
         }
@@ -225,12 +242,13 @@ public class AndroidKeystoreKeyStore(
      * Generates key [id] as [attempt] says, checking it's really there;
      * null when it is, else why not, the attempt's leftovers deleted.
      */
-    private fun tryGenerate(generator: KeyPairGenerator, id: String, purpose: KeyPurpose, attempt: KeyAttempt): Exception? {
+    private fun tryGenerate(generator: KeyPairGenerator, id: String, purpose: KeyPurpose, attempt: KeyAttempt, challenge: ByteArray?): Exception? {
         val purposes = if (attempt.agree) KeyProperties.PURPOSE_SIGN or KeyProperties.PURPOSE_AGREE_KEY else KeyProperties.PURPOSE_SIGN
         return try {
-            generator.initialize(spec(id, purpose, purposes, attempt.digests.toTypedArray(), attempt.strongBox))
+            generator.initialize(spec(id, purpose, purposes, attempt.digests.toTypedArray(), attempt.strongBox, challenge))
             generateRetryingTransient(generator)
             checkGenerated(id)
+            if (challenge != null && attestationChain(id) == null) throw ProviderException("Keystore didn't attest key $id")
             null
         } catch (e: GeneralSecurityException) {
             keystore.deleteEntry(alias(id))
@@ -261,7 +279,7 @@ public class AndroidKeystoreKeyStore(
 
 
 
-    private fun spec(id: String, purpose: KeyPurpose, purposes: Int, digests: Array<String>, strongBox: Boolean?): KeyGenParameterSpec {
+    private fun spec(id: String, purpose: KeyPurpose, purposes: Int, digests: Array<String>, strongBox: Boolean?, challenge: ByteArray?): KeyGenParameterSpec {
         val spec = KeyGenParameterSpec.Builder(alias(id), purposes)
             .setAlgorithmParameterSpec(ECGenParameterSpec("secp256r1"))
             .setDigests(*digests)
@@ -281,6 +299,10 @@ public class AndroidKeystoreKeyStore(
                 .setInvalidatedByBiometricEnrollment(false)
         }
         if (strongBox != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) spec.setIsStrongBoxBacked(strongBox)
+        // Android Key Attestation: the key's certificate chain, to a
+        // Google root, says where it lives and which app made it, over
+        // the Wallet Provider's challenge.
+        if (challenge != null) spec.setAttestationChallenge(challenge)
         return spec.build()
     }
 
@@ -348,6 +370,27 @@ public class AndroidKeystoreKeyStore(
         keystore.deleteEntry(alias(id))
     }
 
+    /**
+     * Key [id]'s Android Key Attestation certificate chain
+     * (`KeyStore.getCertificateChain`), each certificate DER-encoded, the
+     * key's own first, up to a Google attestation root: null when the key
+     * wasn't made with an attestation challenge (its only certificate is
+     * then a self-signed placeholder, with no attestation extension) or
+     * there's no such key. A Wallet Provider verifies the chain and reads
+     * the leaf's attestation extension (OID 1.3.6.1.4.1.11129.2.1.17):
+     * its challenge, security level, the key's purposes and
+     * authorizations, and the app that made it.
+     */
+    override fun attestationChain(id: String): List<ByteArray>? {
+        val chain = keystore.getCertificateChain(alias(id)) ?: return null
+        val leaf = chain.firstOrNull() as? X509Certificate ?: return null
+        if (leaf.getExtensionValue(KEY_ATTESTATION_OID) == null) return null
+        return chain.map { it.encoded }
+    }
+
+    /** The ID of the key whose public key is [point] (uncompressed X9.63), or null. */
+    internal fun keyID(point: ByteArray): String? = keyIDs().firstOrNull { publicKey(it)?.contentEquals(point) == true }
+
     /** The IDs of every key this store holds (under its alias prefix). */
     public fun keyIDs(): List<String> =
         keystore.aliases().toList().filter { it.startsWith(options.aliasPrefix) }.map { it.removePrefix(options.aliasPrefix) }
@@ -407,6 +450,9 @@ public class AndroidKeystoreKeyStore(
         const val TRANSIENT_BACKOFF_MILLIS = 100L
 
         const val TAG = "OID4VCWallet"
+
+        // The Android Key Attestation extension.
+        const val KEY_ATTESTATION_OID = "1.3.6.1.4.1.11129.2.1.17"
     }
 }
 
