@@ -2,6 +2,7 @@ package proximity
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"testing"
 	"time"
@@ -42,7 +43,7 @@ func TestCombinedRoundTrips(t *testing.T) {
 					}
 					var r *ReaderSession
 					if !nfcWins {
-						r, err = NewReaderSession(c.qr.QRCode())
+						r, err = NewReaderSession(c.qr.QRCode(), devReader()...)
 					} else {
 						hs := h.HandoverSelect()
 						var hr []byte
@@ -62,13 +63,13 @@ func TestCombinedRoundTrips(t *testing.T) {
 						}
 						switch {
 						case options.NFCData != nil && negotiated:
-							r, err = NewNFCNegotiatedDataReaderSession(hs, hr)
+							r, err = NewNFCNegotiatedDataReaderSession(hs, hr, devReader()...)
 						case options.NFCData != nil:
-							r, err = NewNFCDataReaderSession(hs)
+							r, err = NewNFCDataReaderSession(hs, devReader()...)
 						case negotiated:
-							r, err = NewNFCNegotiatedReaderSession(hs, hr)
+							r, err = NewNFCNegotiatedReaderSession(hs, hr, devReader()...)
 						default:
-							r, err = NewNFCReaderSession(hs)
+							r, err = NewNFCReaderSession(hs, devReader()...)
 						}
 					}
 					if err != nil {
@@ -105,10 +106,10 @@ func TestCombinedRoundTrips(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					if _, err := wrong.Verify(response, fx.roots, time.Now()); err == nil {
+					if _, err := wrong.Verify(context.Background(), response, fx.roots, time.Now()); err == nil {
 						t.Fatal("wrong handover verified")
 					}
-					v, err := r.Verify(response, fx.roots, time.Now())
+					v, err := r.Verify(context.Background(), response, fx.roots, time.Now())
 					if err != nil || v.Claims[mDLNS]["age_over_18"] != true {
 						t.Fatalf("verification: %v %v", v, err)
 					}

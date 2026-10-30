@@ -2,6 +2,7 @@ package proximity
 
 import (
 	"bytes"
+	"context"
 	"testing"
 	"time"
 
@@ -42,7 +43,7 @@ func TestNFCNegotiationWithoutCollisionResolution(t *testing.T) {
 			if err != nil {
 				t.Fatalf("TNEP Hr without collision record: %v", err)
 			}
-			reader, err := NewNFCNegotiatedReaderSession(hs, hr)
+			reader, err := NewNFCNegotiatedReaderSession(hs, hr, devReader()...)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -131,7 +132,7 @@ func TestNFCDataNegotiationWithoutCollisionResolution(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	reader, err := NewNFCNegotiatedDataReaderSession(hs, hr)
+	reader, err := NewNFCNegotiatedDataReaderSession(hs, hr, devReader()...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,7 +150,7 @@ func TestNFCDataNegotiationWithoutCollisionResolution(t *testing.T) {
 		t.Fatal(err)
 	}
 	f := flow{holder: holder, reader: reader, req: requests[0]}
-	if _, err := reader.Verify(f.respond(t, fx, requests[0].Elements), fx.roots, time.Now()); err != nil {
+	if _, err := reader.Verify(context.Background(), f.respond(t, fx, requests[0].Elements), fx.roots, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	if !bytes.Equal(holder.SessionTranscriptBytes(), reader.sessionTranscriptBytes) {
@@ -190,7 +191,7 @@ func TestNFCNegotiatedPresentation(t *testing.T) {
 			if _, err := h.HandleHandoverRequest(other); err == nil {
 				t.Fatal("accepted replacement Hr")
 			}
-			r, err := NewNFCNegotiatedReaderSession(hs, hr)
+			r, err := NewNFCNegotiatedReaderSession(hs, hr, devReader()...)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -210,7 +211,7 @@ func TestNFCNegotiatedPresentation(t *testing.T) {
 				t.Fatal(err)
 			}
 			f := flow{holder: h, reader: r, req: reqs[0]}
-			v, err := r.Verify(f.respond(t, fx, reqs[0].Elements), fx.roots, time.Now())
+			v, err := r.Verify(context.Background(), f.respond(t, fx, reqs[0].Elements), fx.roots, time.Now())
 			if err != nil || v.Claims[mDLNS]["age_over_18"] != true {
 				t.Fatalf("verification: %+v %v", v, err)
 			}
@@ -248,7 +249,7 @@ func TestNFCNegotiatedAnnexD(t *testing.T) {
 	if !bytes.Equal(r.sessionTranscriptBytes, mustHex(t, annexDSessionTranscriptBytes)) {
 		t.Fatal("Annex D NFC SessionTranscriptBytes differ")
 	}
-	if _, err := NewNFCReaderSession(messages[0]); err == nil {
+	if _, err := NewNFCReaderSession(messages[0], devReader()...); err == nil {
 		t.Fatal("accepted negotiated Hs without Hr UUID")
 	}
 }
@@ -273,7 +274,7 @@ func TestNFCNegotiationRejectsUnofferedRole(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := NewNFCNegotiatedReaderSession(hs, centralOnly); err == nil {
+	if _, err := NewNFCNegotiatedReaderSession(hs, centralOnly, devReader()...); err == nil {
 		t.Fatal("accepted Hs role absent from Hr")
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"sync"
+	"sync/atomic"
 
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/proximity"
@@ -29,6 +30,11 @@ type ProximityPresentation struct {
 	w        *Wallet
 	s        *proximity.DeviceSession
 	combined *proximity.CombinedDeviceSession
+
+	// terminating is set by Terminate before it waits for mu, so a
+	// Respond holding mu — waiting on a holder key's prompt — sees it
+	// and gives nothing to send.
+	terminating atomic.Bool
 
 	mu       sync.Mutex
 	state    proximityState
@@ -413,12 +419,19 @@ type ProximityPresented struct {
 // credential's next unused copy, its holder key signing over the
 // session transcript, and ends the session. A KeyStore that requires
 // user presence prompts now. On an error the session goes on, nothing
-// sent: the holder can try again, or Terminate.
+// sent: the holder can try again, or Terminate. Terminate called before
+// Respond returns — while the holder key prompts, say — wins: Respond
+// fails with ErrTerminated, releasing the copy, and gives no message.
+// Once Respond has returned, the app checks it hasn't ended the session
+// itself before it sends Send.
 func (p *ProximityPresentation) Respond(ctx context.Context, request int, credentialID string, elements [][2]string) (ProximityPresented, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.state != proximityRequested {
 		return ProximityPresented{}, ErrWrongStep
+	}
+	if p.terminating.Load() {
+		return ProximityPresented{}, ErrTerminated
 	}
 	if err := p.checkSelection(request, credentialID, elements); err != nil {
 		return ProximityPresented{}, err
@@ -428,6 +441,11 @@ func (p *ProximityPresentation) Respond(ctx context.Context, request int, creden
 		return ProximityPresented{}, err
 	}
 	send, err := p.respond(ctx, request, reserved[0], elements)
+	if err == nil && p.terminating.Load() {
+		// Terminate came while the holder key signed: the session is
+		// over, and the response is dropped.
+		err = ErrTerminated
+	}
 	if err != nil {
 		// Nothing left the wallet: the copy wasn't seen.
 		p.w.release(ctx, reserved, p.verifier)
@@ -519,8 +537,10 @@ const (
 
 // Terminate ends the session — the holder declined, cancelled or timed
 // out — and returns the message telling the reader so (status 20),
-// for the app to send if a reader is connected. Nothing is disclosed.
+// for the app to send if a reader is connected. Nothing is disclosed:
+// a Respond still running fails with ErrTerminated.
 func (p *ProximityPresentation) Terminate() []byte {
+	p.terminating.Store(true)
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.state = proximityEnded

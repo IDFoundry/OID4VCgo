@@ -20,6 +20,9 @@ var (
 	// a step already taken, one the offer's grant doesn't have, or any
 	// call after Close.
 	ErrWrongStep = errors.New("walletflow: not the session's next step")
+	// ErrTerminated is returned by ProximityPresentation.Respond when
+	// Terminate ended the session while it ran: nothing was sent.
+	ErrTerminated = errors.New("walletflow: the presentation was terminated")
 	// ErrCredentialDenied is returned for a deferred credential the
 	// issuer refused (OpenID4VCI 1.0 §9.3, credential_request_denied).
 	ErrCredentialDenied = errors.New("walletflow: the issuer denied the credential")

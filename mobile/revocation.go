@@ -142,6 +142,26 @@ const (
 // revocationRoles checks roles, the configuration key key's list of
 // revocation roles, names only roles in known, each once, and returns
 // whether each known role is named.
+// revocationChoice is the revocation check of role, whose roots are
+// configuration keys keys, set (inUse) or not: crls' checker when the
+// configuration's "revocation" names it (named), certrevocation.NoCheck
+// when its "no_revocation_check" does (declined), and otherwise nil, no
+// check, which is refused for a role in use when the configuration
+// requires the choice (when says when it does: "outside development").
+func revocationChoice(role, keys string, inUse bool, named, declined map[string]bool, when string, crls *crlSet) (certrevocation.Checker, error) {
+	switch {
+	case named[role] && declined[role]:
+		return nil, newError(CodeInvalidInput, fmt.Errorf("%q is named in both revocation and no_revocation_check", role))
+	case named[role]:
+		return crls.checker(), nil
+	case declined[role]:
+		return certrevocation.NoCheck{}, nil
+	case inUse && when != "":
+		return nil, newError(CodeInvalidInput, fmt.Errorf("%s is set: %s, name %q in revocation, checked against crls, or in no_revocation_check to decline", keys, when, role))
+	}
+	return nil, nil
+}
+
 func revocationRoles(key string, roles []string, known ...string) (map[string]bool, error) {
 	named := make(map[string]bool, len(roles))
 	for _, r := range roles {

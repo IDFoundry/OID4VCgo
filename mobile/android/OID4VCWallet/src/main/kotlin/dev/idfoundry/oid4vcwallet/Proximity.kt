@@ -346,6 +346,9 @@ public class ProximityPresentation internal constructor(
             _state.compareAndSet(State.Responding, request)
             throw e
         }
+        // Cancelled once Go's respond had returned (cancelled before, it
+        // gives nothing to send): the response stays here.
+        if (ending != null) throw WalletException(WalletException.Code.cancelled, null, "the session was cancelled")
         try {
             transport.send(answer.send)
         } catch (e: ProximityTransportException) {
@@ -576,6 +579,25 @@ public data class ProximityReaderConfiguration(
      * set with [requireMDLSignerEKU].
      */
     @SerialName("accept_mdl_signer_without_eku") val acceptMDLSignerWithoutEKU: Boolean = false,
+    /**
+     * The roles that decline checking revocation. With [production], each
+     * role must be in [revocation] or here; a role can't be in both.
+     */
+    @SerialName("no_revocation_check") val noRevocationCheck: List<RevocationRole> = emptyList(),
+    /**
+     * Declares that every IACA in [issuerRoots] may issue every document
+     * type the reader asks for. With [production], [issuerRoots] needs it;
+     * otherwise name each type's IACAs in [issuerRootsByDocType].
+     */
+    @SerialName("any_issuer_for_any_type") val anyIssuerForAnyType: Boolean = false,
+    /**
+     * Requires a production reader's decisions: each role in [revocation]
+     * or [noRevocationCheck], and [anyIssuerForAnyType] with
+     * [issuerRoots]. Without it, a role in neither checks no revocation,
+     * and any IACA in [issuerRoots] may issue any document type. Set it in
+     * every app that ships.
+     */
+    @SerialName("production") val production: Boolean = false,
 ) {
     /** A reader's trust role whose certificates can be checked for revocation. */
     @Serializable

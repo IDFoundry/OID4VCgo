@@ -65,6 +65,7 @@ func (e *TestEnv) ProximityReader(keys KeyStore) (string, error) {
 	}
 	cfg, _ := marshal(proximityReaderConfig{
 		IssuerRoots: pemOf(e.env.IssuerCA.Raw), ReaderKeyID: id, ReaderChain: pemOf(leafDER) + pemOf(caDER),
+		Production: true, AnyIssuerForAnyType: true, NoRevocationCheck: []string{revocationIssuer, revocationStatus},
 	})
 	return marshal(struct {
 		result

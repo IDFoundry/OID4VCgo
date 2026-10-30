@@ -1,6 +1,7 @@
 package proximity
 
 import (
+	"context"
 	"encoding/base64"
 	"errors"
 	"testing"
@@ -57,7 +58,7 @@ func FuzzNewReaderSession(f *testing.F) {
 	f.Add(holder.QRCode())
 	f.Add("mdoc:")
 	f.Fuzz(func(t *testing.T, qr string) {
-		r, err := NewReaderSession(qr)
+		r, err := NewReaderSession(qr, devReader()...)
 		if err == nil && len(r.ServiceUUID()) != 36 {
 			t.Fatalf("accepted an engagement without a 16-byte UUID: %q", r.ServiceUUID())
 		}
@@ -117,6 +118,6 @@ func FuzzReaderVerify(f *testing.F) {
 		if err != nil {
 			return
 		}
-		_, _ = s.reader.Verify(msg, fx.roots, time.Now())
+		_, _ = s.reader.Verify(context.Background(), msg, fx.roots, time.Now())
 	})
 }

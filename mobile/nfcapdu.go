@@ -1,6 +1,8 @@
 package mobile
 
 import (
+	"sync"
+
 	"github.com/idfoundry/oid4vcgo/proximity"
 	"github.com/idfoundry/oid4vcgo/proximity/nfcapdu"
 )
@@ -98,8 +100,13 @@ func nfcStep(s nfcapdu.Step) *NFCStep {
 
 // NFCExchange is a reader's sequence of command APDUs: send Command after
 // waiting WaitMillis, pass the response to Next, and repeat until
-// Command is nil; Result is then the outcome. Close it when abandoned.
+// Command is nil; Result is then the outcome. Its methods are safe to
+// call from any thread: each waits for one in progress, except Close,
+// which ends a Next waiting on the sequence. Until it's done, the
+// sequence holds a goroutine, so Close an exchange abandoned before
+// then: the tag lost, or the reader cancelled.
 type NFCExchange struct {
+	mu         sync.Mutex
 	e          *nfcapdu.Exchange
 	negotiated func() bool
 }
@@ -121,16 +128,30 @@ func NewNFCTransact(maxTransceive, maxCommand, maxResponse int, message []byte) 
 }
 
 // Done reports the exchange is over: Result holds its outcome.
-func (x *NFCExchange) Done() bool { return x.e.Command() == nil }
+func (x *NFCExchange) Done() bool {
+	x.mu.Lock()
+	defer x.mu.Unlock()
+	return x.e.Command() == nil
+}
 
 // Command is the next command APDU, or nil when the exchange is over.
-func (x *NFCExchange) Command() []byte { return x.e.Command() }
+func (x *NFCExchange) Command() []byte {
+	x.mu.Lock()
+	defer x.mu.Unlock()
+	return x.e.Command()
+}
 
 // WaitMillis is how long to wait before sending Command.
-func (x *NFCExchange) WaitMillis() int64 { return x.e.Wait().Milliseconds() }
+func (x *NFCExchange) WaitMillis() int64 {
+	x.mu.Lock()
+	defer x.mu.Unlock()
+	return x.e.Wait().Milliseconds()
+}
 
 // Next passes the response to Command.
 func (x *NFCExchange) Next(response []byte) error {
+	x.mu.Lock()
+	defer x.mu.Unlock()
 	if err := x.e.Next(response); err != nil {
 		return newError(CodeWrongStep, err)
 	}
@@ -140,6 +161,8 @@ func (x *NFCExchange) Next(response []byte) error {
 // Result is the outcome once Command is nil: the Handover Select read,
 // or the mdoc's answer.
 func (x *NFCExchange) Result() ([]byte, error) {
+	x.mu.Lock()
+	defer x.mu.Unlock()
 	b, err := x.e.Result()
 	if err != nil {
 		return nil, newError(CodeInvalidInput, err)
@@ -149,9 +172,14 @@ func (x *NFCExchange) Result() ([]byte, error) {
 
 // Negotiated reports, after NewNFCHandoverRead's exchange, that the mdoc
 // used TNEP negotiated handover: the reader session binds hr too.
-func (x *NFCExchange) Negotiated() bool { return x.negotiated != nil && x.negotiated() }
+func (x *NFCExchange) Negotiated() bool {
+	x.mu.Lock()
+	defer x.mu.Unlock()
+	return x.negotiated != nil && x.negotiated()
+}
 
-// Close abandons the exchange.
+// Close abandons the exchange, ending a Next in progress: it doesn't
+// wait for the lock the other methods take, which that Next holds.
 func (x *NFCExchange) Close() { x.e.Close() }
 
 // NFCSelectDataApplication is the command selecting an mdoc's NFC data

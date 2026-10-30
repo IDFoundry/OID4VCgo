@@ -1,6 +1,7 @@
 package proximity_test
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -12,8 +13,10 @@ import (
 	"time"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
+	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/proximity"
+	"github.com/idfoundry/oid4vcgo/verifier"
 )
 
 // A holder and a reader in one process: the holder shows a QR code, the
@@ -50,8 +53,19 @@ func ExampleNewDeviceSession() {
 	holder := must(proximity.NewDeviceSession(rand.Reader))
 	qr := holder.QRCode()
 
-	// Reader: scan the QR code and send a signed request.
+	// Reader: scan the QR code and send a signed request, with a
+	// production reader's decisions. Only this IACA may issue mDLs.
+	iacaRoots := x509.NewCertPool()
+	iacaRoots.AddCert(iaca)
 	reader := must(proximity.NewReaderSession(qr,
+		proximity.WithAssurance(verifier.AssuranceProduction),
+		proximity.WithIssuerRootsByDocType(map[string]*x509.CertPool{docType: iacaRoots}),
+		proximity.WithAnyIssuerForAnyType(),
+		// A real reader checks its IACAs' CRLs (certrevocation.CRLs from
+		// a certrevocation.Refresher), and the documents' status lists
+		// (WithStatus): this example has neither to fetch.
+		proximity.WithIssuerRevocation(certrevocation.NoCheck{}),
+		proximity.WithNoStatusCheck(),
 		proximity.WithReaderAuth(readerKey, []*x509.Certificate{readerCert, readerCA}),
 		proximity.WithMaxClockSkew(5*time.Minute),
 	))
@@ -72,10 +86,9 @@ func ExampleNewDeviceSession() {
 	response := must(proximity.BuildDeviceResponse(req, issuerSigned, deviceKey, holder.SessionTranscriptBytes(), req.Elements))
 	msg := must(holder.Encrypt(response, false))
 
-	// Reader: verify the answer against the IACAs it trusts.
-	iacaRoots := x509.NewCertPool()
-	iacaRoots.AddCert(iaca)
-	verified := must(reader.Verify(msg, iacaRoots, time.Time{}))
+	// Reader: verify the answer; its document type's IACAs are the
+	// ones WithIssuerRootsByDocType names.
+	verified := must(reader.Verify(context.Background(), msg, x509.NewCertPool(), time.Time{}))
 	fmt.Println("issuer:", verified.IssuerCN, "under", verified.TrustAnchorCN)
 	fmt.Println("age_over_18:", verified.Claims[ns]["age_over_18"])
 	// Output:

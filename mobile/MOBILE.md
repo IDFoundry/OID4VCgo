@@ -340,9 +340,13 @@ CRLs it holds, through `certrevocation.CRLs`.
   `NewWallet` used to take, like the `redirect_uri` forms it refuses,
   not a changed call or JSON shape, so `ABIVersion` stays 12; the
   wrappers ship with the Go library and gain `noRevocationCheck` with
-  it. A ProximityReader has no `development` setting to tell a
-  production reader by, so a role its `revocation` leaves out still
-  checks nothing there.
+  it. A ProximityReader runs at development assurance unless its
+  configuration sets `production`, added within ABI 12 as an opt-in so
+  existing reader configurations keep working: with it, each role must
+  be in `revocation` or `no_revocation_check`, and `issuer_roots` needs
+  `any_issuer_for_any_type` (`issuer_roots_by_doctype` decides which
+  IACAs issue which document type). Making production the default is a
+  change for the next ABI version.
 
 ## Phases
 
@@ -1257,7 +1261,11 @@ Decisions taken 2026-10-06 (tracked in [#482](https://github.com/IDFoundry/OID4V
 - **Responding ends the session:** the DeviceResponse goes out with
   status 20 in the same message, as one request per session allows. A
   failed `Respond` (the holder cancels the biometric prompt) sends
-  nothing, and the holder can try again.
+  nothing, and the holder can try again. The app cancelling while the
+  prompt is up used to wait for it and send the response all the same:
+  `Terminate` now marks the session before it waits, `Respond` then
+  fails as `cancelled`, and the Swift and Kotlin wrappers check their
+  own cancellation before sending.
 - **The test issuer's certificates named no country.** A proximity
   reader requires the IACA's and the document signer's countryName to
   match (§9.3.3), so `walletflowtest` now names one.

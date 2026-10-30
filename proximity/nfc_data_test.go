@@ -2,6 +2,7 @@ package proximity
 
 import (
 	"bytes"
+	"context"
 	"testing"
 	"time"
 )
@@ -46,9 +47,9 @@ func TestNFCDataPresentation(t *testing.T) {
 			}
 			var r *ReaderSession
 			if negotiated {
-				r, err = NewNFCNegotiatedDataReaderSession(hs, hr, WithReaderAuth(key, chain))
+				r, err = NewNFCNegotiatedDataReaderSession(hs, hr, devReader(WithReaderAuth(key, chain))...)
 			} else {
-				r, err = NewNFCDataReaderSession(hs, WithReaderAuth(key, chain))
+				r, err = NewNFCDataReaderSession(hs, devReader(WithReaderAuth(key, chain))...)
 			}
 			if err != nil {
 				t.Fatal(err)
@@ -72,7 +73,7 @@ func TestNFCDataPresentation(t *testing.T) {
 				t.Fatal("transcript mismatch")
 			}
 			f := flow{holder: h, reader: r, req: requests[0]}
-			v, err := r.Verify(f.respond(t, fx, requests[0].Elements), fx.roots, time.Now())
+			v, err := r.Verify(context.Background(), f.respond(t, fx, requests[0].Elements), fx.roots, time.Now())
 			if err != nil || v.Claims[mDLNS]["age_over_18"] != true {
 				t.Fatalf("verification: %+v %v", v, err)
 			}
@@ -104,7 +105,7 @@ func TestNFCDataInvalidLimits(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := NewNFCDataReaderSession(h.HandoverSelect()); err == nil {
+	if _, err := NewNFCDataReaderSession(h.HandoverSelect(), devReader()...); err == nil {
 		t.Fatal("BLE accepted as NFC data")
 	}
 }

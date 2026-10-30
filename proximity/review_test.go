@@ -1,6 +1,7 @@
 package proximity
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
@@ -46,7 +47,7 @@ func TestVerifiedCarriesStatus(t *testing.T) {
 	fx = issueWith(t, fx, dsKey, ds, ref)
 
 	f := establish(t, mDL, map[string][]string{mDLNS: {"age_over_18"}})
-	v, err := f.reader.Verify(f.respond(t, fx, f.req.Elements), fx.roots, time.Now())
+	v, err := f.reader.Verify(context.Background(), f.respond(t, fx, f.req.Elements), fx.roots, time.Now())
 	if err != nil {
 		t.Fatalf("Verify: %v", err)
 	}
@@ -102,11 +103,11 @@ func TestWithMaxClockSkew(t *testing.T) {
 	ageOnly := [][2]string{{mDLNS, "age_over_18"}}
 
 	f := establish(t, mDL, age)
-	if _, err := f.reader.Verify(f.respond(t, fx, ageOnly), fx.roots, time.Now()); err == nil {
+	if _, err := f.reader.Verify(context.Background(), f.respond(t, fx, ageOnly), fx.roots, time.Now()); err == nil {
 		t.Error("an MSO valid from 30s from now verified without a skew allowance")
 	}
 	f = establishReader(t, mDL, age, WithMaxClockSkew(time.Minute))
-	if _, err := f.reader.Verify(f.respond(t, fx, ageOnly), fx.roots, time.Now()); err != nil {
+	if _, err := f.reader.Verify(context.Background(), f.respond(t, fx, ageOnly), fx.roots, time.Now()); err != nil {
 		t.Errorf("with a minute's skew allowed: %v", err)
 	}
 }
@@ -138,7 +139,7 @@ func TestRequireMDLDocumentSignerEKU(t *testing.T) {
 			fx := issueWith(t, issueFixture(t, mDL), dsKey, ds, nil)
 			fx.roots = roots
 			f := establishReader(t, mDL, age, WithDocumentSignerPolicy(RequireMDLDocumentSignerEKU))
-			_, err := f.reader.Verify(f.respond(t, fx, ageOnly), fx.roots, time.Now())
+			_, err := f.reader.Verify(context.Background(), f.respond(t, fx, ageOnly), fx.roots, time.Now())
 			if tc.ok != (err == nil) {
 				t.Errorf("Verify = %v, want ok %v", err, tc.ok)
 			}
@@ -177,10 +178,10 @@ func TestMaxReaderClockSkew(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := NewReaderSession(holder.QRCode(), WithMaxClockSkew(MaxReaderClockSkew+time.Second)); err == nil {
+	if _, err := NewReaderSession(holder.QRCode(), devReader(WithMaxClockSkew(MaxReaderClockSkew+time.Second))...); err == nil {
 		t.Error("a skew allowance over the maximum was accepted")
 	}
-	if _, err := NewReaderSession(holder.QRCode(), WithMaxClockSkew(MaxReaderClockSkew)); err != nil {
+	if _, err := NewReaderSession(holder.QRCode(), devReader(WithMaxClockSkew(MaxReaderClockSkew))...); err != nil {
 		t.Errorf("the maximum: %v", err)
 	}
 }

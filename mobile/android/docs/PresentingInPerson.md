@@ -121,16 +121,26 @@ decide.
 A `ProximityReader` needs no `Wallet`: give it the IACAs whose mdocs it
 accepts, and, to sign its requests so holders see who is asking, a key
 in a `KeyStore` and its certificate chain, with the reader
-authentication extended key usage (`ProximityReaderConfiguration`).
-`start` takes the holder's QR code and what to ask for.
+authentication extended key usage (`ProximityReaderConfiguration`). Set
+`production`, so the reader refuses a configuration that leaves a
+decision open: which IACAs issue which document types
+(`anyIssuerForAnyType`, or `issuerRootsByDocType`), and each role's
+revocation (`revocation` with `crls`, or `noRevocationCheck` to
+decline). `start` takes the holder's QR code and what to ask for.
 
 ```kotlin
 /**
  * Reads an mDL's name and portrait from the holder whose QR code was scanned. Returns the verified
  * mdoc, or null if the holder declined or the mdoc isn't known to be unrevoked.
  */
-suspend fun readInPerson(context: Context, qrCode: String, issuerRoots: String): VerifiedMdoc? {
-    val reader = ProximityReader(ProximityReaderConfiguration(issuerRoots = issuerRoots))
+suspend fun readInPerson(context: Context, qrCode: String, issuerRoots: String, crls: String): VerifiedMdoc? {
+    val reader = ProximityReader(
+        ProximityReaderConfiguration(
+            issuerRoots = issuerRoots, crls = crls,
+            revocation = listOf(ProximityReaderConfiguration.RevocationRole.ISSUER, ProximityReaderConfiguration.RevocationRole.STATUS),
+            anyIssuerForAnyType = true, production = true,
+        ),
+    )
     val session = reader.start(
         context, qrCode, "org.iso.18013.5.1.mDL",
         mapOf("org.iso.18013.5.1" to listOf("given_name", "family_name", "portrait")),

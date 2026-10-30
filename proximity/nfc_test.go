@@ -2,6 +2,7 @@ package proximity
 
 import (
 	"bytes"
+	"context"
 	"crypto/x509"
 	"errors"
 	"testing"
@@ -27,7 +28,7 @@ func TestNFCStaticPresentation(t *testing.T) {
 			if _, exists := de[2]; exists {
 				t.Fatal("NFC engagement contains retrieval methods")
 			}
-			r, err := NewNFCReaderSession(hs, WithReaderAuth(key, chain))
+			r, err := NewNFCReaderSession(hs, devReader(WithReaderAuth(key, chain))...)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -62,7 +63,7 @@ func TestNFCStaticPresentation(t *testing.T) {
 				t.Fatal("transcript mismatch")
 			}
 			f := flow{holder: h, reader: r, req: reqs[0]}
-			v, err := r.Verify(f.respond(t, fx, reqs[0].Elements), fx.roots, time.Now())
+			v, err := r.Verify(context.Background(), f.respond(t, fx, reqs[0].Elements), fx.roots, time.Now())
 			if err != nil || v.Claims[mDLNS]["age_over_18"] != true {
 				t.Fatalf("credential verification: %+v, %v", v, err)
 			}
@@ -75,14 +76,14 @@ func TestNFCReaderPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := NewNFCReaderSession(h.HandoverSelect(), WithMaxClockSkew(2*time.Hour)); err == nil {
+	if _, err := NewNFCReaderSession(h.HandoverSelect(), devReader(WithMaxClockSkew(2*time.Hour))...); err == nil {
 		t.Fatal("accepted excessive clock skew")
 	}
-	if _, err := NewNFCReaderSession(h.HandoverSelect(), WithReaderAuth(nil, nil)); err == nil {
+	if _, err := NewNFCReaderSession(h.HandoverSelect(), devReader(WithReaderAuth(nil, nil))...); err == nil {
 		t.Fatal("accepted invalid reader signer")
 	}
 	denied := errors.New("test signer denied")
-	r, err := NewNFCReaderSession(h.HandoverSelect(), WithDocumentSignerPolicy(func(*x509.Certificate, [][]*x509.Certificate) error { return denied }))
+	r, err := NewNFCReaderSession(h.HandoverSelect(), devReader(WithDocumentSignerPolicy(func(*x509.Certificate, [][]*x509.Certificate) error { return denied }))...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +91,7 @@ func TestNFCReaderPolicy(t *testing.T) {
 		t.Fatal("NFC omitted custom signer policy")
 	}
 	pool := x509.NewCertPool()
-	r, err = NewNFCReaderSession(h.HandoverSelect(), WithIssuerRootsByDocType(map[string]*x509.CertPool{mDL: pool}))
+	r, err = NewNFCReaderSession(h.HandoverSelect(), devReader(WithIssuerRootsByDocType(map[string]*x509.CertPool{mDL: pool}))...)
 	if err != nil || r.rootsByDocType[mDL] != pool {
 		t.Fatal("NFC omitted document trust roots")
 	}
@@ -126,7 +127,7 @@ func TestNFCSelectRejectsAmbiguousCarriers(t *testing.T) {
 			if e != nil {
 				t.Fatal(e)
 			}
-			if _, e := NewNFCReaderSession(encoded); e == nil {
+			if _, e := NewNFCReaderSession(encoded, devReader()...); e == nil {
 				t.Fatal("accepted malformed handover")
 			}
 		})

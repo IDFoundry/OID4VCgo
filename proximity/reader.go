@@ -7,6 +7,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -19,6 +20,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/internal/certchain"
 	"github.com/idfoundry/oid4vcgo/internal/cose"
 	"github.com/idfoundry/oid4vcgo/internal/readerauth"
+	"github.com/idfoundry/oid4vcgo/verifier"
 )
 
 // ReaderSession is the mdoc reader (verifier) side of one proximity
@@ -36,6 +38,9 @@ type ReaderSession struct {
 	signerPolicy           func(leaf *x509.Certificate, chains [][]*x509.Certificate) error
 	issuerRevocation       certrevocation.Checker
 	rootsByDocType         map[string]*x509.CertPool
+	assurance              verifier.AssuranceLevel
+	issuerAuthorized       func(ctx context.Context, a verifier.IssuerAuthorization) error
+	status                 *verifier.StatusPolicy
 
 	docType   string
 	requested requestedSet
@@ -44,11 +49,16 @@ type ReaderSession struct {
 }
 
 type readerConfig struct {
-	readerAuth       *readerKey
-	maxClockSkew     time.Duration
-	signerPolicy     func(leaf *x509.Certificate, chains [][]*x509.Certificate) error
-	issuerRevocation certrevocation.Checker
-	rootsByDocType   map[string]*x509.CertPool
+	readerAuth          *readerKey
+	maxClockSkew        time.Duration
+	signerPolicy        func(leaf *x509.Certificate, chains [][]*x509.Certificate) error
+	issuerRevocation    certrevocation.Checker
+	rootsByDocType      map[string]*x509.CertPool
+	assurance           verifier.AssuranceLevel
+	issuerAuthorized    func(ctx context.Context, a verifier.IssuerAuthorization) error
+	anyIssuerForAnyType bool
+	status              *verifier.StatusPolicy
+	noStatusCheck       bool
 }
 
 // ReaderOption configures NewReaderSession.
@@ -94,14 +104,82 @@ func WithDocumentSignerPolicy(policy func(leaf *x509.Certificate, chains [][]*x5
 // for revocation with checker: Verify accepts the document only through
 // a verified path the document signer policy approves and checker
 // passes, and refuses one whose signer or intermediate is revoked with
-// an error wrapping certrevocation.ErrRevoked. Verify takes no context,
-// so checker is asked with context.Background(): a certrevocation.CRLs
-// should keep its lists in memory. Without it, or with nil, no
-// revocation is checked; see certrevocation. It's the document
-// signer's certificate; the document's own revocation is its status
-// list (Verified.Status).
+// an error wrapping certrevocation.ErrRevoked. checker is asked with
+// Verify's context. It's REQUIRED, as a verifier's issuer trust's
+// Revocation is: certrevocation.CRLs{...} (a certrevocation.Refresher's
+// Checker), a certrevocation.Checker of your own, or
+// certrevocation.NoCheck{} to decline checking explicitly; without it,
+// or with nil, NewReaderSession fails. It's the document signer's
+// certificate; the document's own revocation is its status list
+// (WithStatus).
 func WithIssuerRevocation(checker certrevocation.Checker) ReaderOption {
 	return func(c *readerConfig) { c.issuerRevocation = checker }
+}
+
+// WithAssurance sets the reader's assurance level, as
+// verifier.Config.Assurance does a Verifier's: REQUIRED,
+// verifier.AssuranceDevelopment or verifier.AssuranceProduction. Under
+// verifier.AssuranceProduction, NewReaderSession requires the decisions
+// a Verifier makes there, so none is left to a default that silently
+// accepts what it shouldn't:
+//
+//   - which issuers may issue which document types: WithIssuerAuthorization,
+//     or WithAnyIssuerForAnyType;
+//   - the documents' revocation status: WithStatus, or WithNoStatusCheck
+//     (verifier.CheckStatusDecision);
+//   - neither Verify's roots nor WithIssuerRootsByDocType's may be the
+//     system root pool, which anchors every public CA's certificates.
+//
+// The document signer's revocation (WithIssuerRevocation) is required
+// at either level.
+func WithAssurance(level verifier.AssuranceLevel) ReaderOption {
+	return func(c *readerConfig) { c.assurance = level }
+}
+
+// WithIssuerAuthorization decides whether a verified document's issuer
+// may issue its document type, as verifier.VerifyResponseRequest's
+// IssuerAuthorized does: Verify calls authorized with the document's
+// type (Type, RequestedTypes and MatchedTypes, all the requested
+// doctype), claims and issuer chain (Verified.Credential's), and an
+// error refuses the document. Decide on IssuerChain, never on the
+// common names a document signer chooses itself.
+func WithIssuerAuthorization(authorized func(ctx context.Context, a verifier.IssuerAuthorization) error) ReaderOption {
+	return func(c *readerConfig) { c.issuerAuthorized = authorized }
+}
+
+// WithAnyIssuerForAnyType declares that every issuer the reader's roots
+// trust may issue every document type it requests, so
+// WithIssuerAuthorization is deliberately left out
+// (verifier.VerifyResponseRequest.AnyIssuerForAnyType): where the roots
+// are one ecosystem's, or WithIssuerRootsByDocType gives each type its
+// own.
+func WithAnyIssuerForAnyType() ReaderOption {
+	return func(c *readerConfig) { c.anyIssuerForAnyType = true }
+}
+
+// WithStatus checks the verified document's revocation status with
+// policy, as mdocdcapi.VerifyParams.Status does: Verify refuses a
+// document that isn't valid on its status list, is on its identifier
+// list, or whose status can't be read, with the list's signer bound to
+// the document's issuer through Verified.Credential's IssuerChain
+// (ISO/IEC 18013-5 §12.3.6.2). The check fetches the list, with
+// Verify's context.
+func WithStatus(policy *verifier.StatusPolicy) ReaderOption {
+	return func(c *readerConfig) {
+		c.status = nil
+		if policy != nil {
+			p := *policy
+			c.status = &p
+		}
+	}
+}
+
+// WithNoStatusCheck declares that this reader deliberately checks no
+// revocation status, so WithStatus is left out
+// (verifier.CheckStatusDecision): a caller checking Verified.Status
+// itself, after Verify, sets it too.
+func WithNoStatusCheck() ReaderOption {
+	return func(c *readerConfig) { c.noStatusCheck = true }
 }
 
 // WithIssuerRootsByDocType holds each document type to its own trust
@@ -173,14 +251,17 @@ func NewReaderSession(qr string, opts ...ReaderOption) (*ReaderSession, error) {
 	return r, nil
 }
 
-// configureReader applies the same authentication and trust policy to
-// every engagement mechanism.
+// configureReader applies the same authentication, trust and policy
+// decisions to every engagement mechanism.
 func configureReader(r *ReaderSession, cfg readerConfig) error {
 	if cfg.maxClockSkew > MaxReaderClockSkew {
 		return fmt.Errorf("proximity: clock skew allowance %s is more than %s", cfg.maxClockSkew, MaxReaderClockSkew)
 	}
 	if cfg.signerPolicy == nil {
 		cfg.signerPolicy = DefaultDocumentSignerPolicy
+	}
+	if err := checkDecisions(cfg); err != nil {
+		return fmt.Errorf("proximity: %w", err)
 	}
 	if err := certchain.ValidateRevocation(cfg.issuerRevocation); err != nil {
 		return fmt.Errorf("proximity: issuer revocation: %w", err)
@@ -192,6 +273,37 @@ func configureReader(r *ReaderSession, cfg readerConfig) error {
 	}
 	r.readerAuth, r.maxClockSkew, r.signerPolicy = cfg.readerAuth, cfg.maxClockSkew, cfg.signerPolicy
 	r.rootsByDocType, r.issuerRevocation = cfg.rootsByDocType, cfg.issuerRevocation
+	r.assurance, r.issuerAuthorized, r.status = cfg.assurance, cfg.issuerAuthorized, cfg.status
+	return nil
+}
+
+// checkDecisions refuses a configuration without an assurance level or
+// a revocation choice for the document signer, and under
+// verifier.AssuranceProduction one that leaves a decision WithAssurance
+// lists undecided.
+func checkDecisions(cfg readerConfig) error {
+	switch cfg.assurance {
+	case verifier.AssuranceDevelopment, verifier.AssuranceProduction:
+	default:
+		return errors.New("an assurance level is required: WithAssurance(verifier.AssuranceDevelopment) or WithAssurance(verifier.AssuranceProduction)")
+	}
+	if cfg.issuerRevocation == nil {
+		return fmt.Errorf("WithIssuerRevocation is required: %s", certchain.RevocationChoices)
+	}
+	if err := verifier.CheckStatusDecision(cfg.assurance, cfg.status, cfg.noStatusCheck); err != nil {
+		return fmt.Errorf("status decision: %w", err)
+	}
+	if cfg.assurance != verifier.AssuranceProduction {
+		return nil
+	}
+	if cfg.issuerAuthorized == nil && !cfg.anyIssuerForAnyType {
+		return errors.New("under AssuranceProduction, set WithIssuerAuthorization (which issuers may issue which document types) or WithAnyIssuerForAnyType: without either, any trusted issuer is accepted for any document type")
+	}
+	for docType, roots := range cfg.rootsByDocType {
+		if certchain.IsSystemPool(roots) {
+			return fmt.Errorf("under AssuranceProduction, WithIssuerRootsByDocType's roots for %q are the system root pool: it anchors every public CA's certificates; trust the IACAs", docType)
+		}
+	}
 	return nil
 }
 
@@ -320,36 +432,61 @@ type Verified struct {
 	DeviceAuth mdoc.DeviceAuthType
 
 	// Status is the MSO's revocation reference (§12.3.6), nil when it
-	// has none. Verify doesn't check it: fetch and check the status
-	// list (package statuslist) before relying on the document, as
-	// §9.3.3's verification includes revocation.
+	// has none. WithStatus checks it in Verify, as §9.3.3's verification
+	// includes revocation; under WithNoStatusCheck, nothing has.
 	Status *mdoc.Status
+}
+
+// Credential is v as a verifier.VerifiedCredential — its Claims, Status
+// and IssuerChain — for what takes one, such as
+// verifier.StatusPolicy.Check or verifier.RequireValidStatus. Its
+// IssuerChain is v's as DER without the trust anchor, as a Verifier's
+// mdoc's is (the anchor stays when it's the only certificate); its
+// CredentialQueryID is "": an ISO/IEC 18013-5 request has no DCQL
+// query.
+func (v Verified) Credential() verifier.VerifiedCredential {
+	claims := make(map[string]any, len(v.Claims))
+	for ns, elements := range v.Claims {
+		claims[ns] = elements
+	}
+	path := v.IssuerChain
+	if len(path) > 1 {
+		path = path[:len(path)-1]
+	}
+	chain := make([][]byte, len(path))
+	for i, c := range path {
+		chain[i] = c.Raw
+	}
+	return verifier.VerifiedCredential{Claims: claims, MdocStatus: v.Status, IssuerChain: chain}
 }
 
 // Verify decrypts the mdoc's reply and verifies the DeviceResponse in
 // it, at now (zero means the current time):
 //
 //   - the issuer's certificate chain (IssuerAuth's x5chain) verifies to
-//     a root in roots;
+//     a root in roots, through a path the document signer policy
+//     approves and WithIssuerRevocation's checker passes;
 //   - the document's docType is the one requested, and the MSO's;
 //   - credential/mdoc.Verify passes: issuer signature, value digests,
 //     validity;
 //   - device authentication — signature or MAC — verifies against the
 //     MSO's device key over this session's transcript, and any
 //     device-signed elements are within the MSO's key authorizations;
-//   - every returned element was requested.
+//   - every returned element was requested;
+//   - WithIssuerAuthorization, if set, accepts the issuer for the
+//     document type;
+//   - WithStatus, if set, finds the document not revoked.
 //
-// It doesn't check the document's revocation: Verified.Status is the
-// reference to check. Its signer's certificates are checked only with
-// WithIssuerRevocation. Nor that the requested elements came back: the holder may
-// withhold any of them, and an empty Claims verifies. Check each
-// element you need is there.
+// It doesn't check that the requested elements came back: the holder
+// may withhold any of them, and an empty Claims verifies. Check each
+// element you need is there. ctx bounds the revocation and status
+// checks, which may fetch from the network.
 //
 // A reply carrying only status 20 is ErrDeclined; a DeviceResponse with
 // no documents is ErrNoDocument. Errors that wrap ErrSessionEncryption
 // or ErrCBORDecoding have a status reply (StatusFor). Any reply ends
 // the session, since this reader sends one request.
-func (r *ReaderSession) Verify(msg []byte, roots *x509.CertPool, now time.Time) (Verified, error) {
+func (r *ReaderSession) Verify(ctx context.Context, msg []byte, roots *x509.CertPool, now time.Time) (Verified, error) {
 	if r.closed {
 		return Verified{}, ErrSessionClosed
 	}
@@ -360,6 +497,9 @@ func (r *ReaderSession) Verify(msg []byte, roots *x509.CertPool, now time.Time) 
 	defer r.close()
 	if now.IsZero() {
 		now = time.Now()
+	}
+	if r.assurance == verifier.AssuranceProduction && certchain.IsSystemPool(roots) {
+		return Verified{}, errors.New("proximity: under AssuranceProduction, roots is the system root pool: it anchors every public CA's certificates; trust the IACAs")
 	}
 
 	data, status, err := receive(r.cipher, msg)
@@ -376,10 +516,37 @@ func (r *ReaderSession) Verify(msg []byte, roots *x509.CertPool, now time.Time) 
 	if err != nil {
 		return Verified{}, err
 	}
-	return r.verifyDocument(doc, roots, now)
+	v, err := r.verifyDocument(ctx, doc, roots, now)
+	if err != nil {
+		return Verified{}, err
+	}
+	if err := r.authorize(ctx, v); err != nil {
+		return Verified{}, err
+	}
+	return v, nil
 }
 
-func (r *ReaderSession) verifyDocument(doc responseDocument, roots *x509.CertPool, now time.Time) (Verified, error) {
+// authorize runs the reader's issuer authorization and status check on
+// v, a verified document.
+func (r *ReaderSession) authorize(ctx context.Context, v Verified) error {
+	credential := v.Credential()
+	if r.issuerAuthorized != nil {
+		if err := r.issuerAuthorized(ctx, verifier.IssuerAuthorization{
+			Format: mdoc.CredentialFormat, Type: v.DocType, RequestedTypes: []string{r.docType}, MatchedTypes: []string{v.DocType},
+			IssuerChain: credential.IssuerChain, Claims: credential.Claims,
+		}); err != nil {
+			return fmt.Errorf("proximity: issuer authorization: %w", err)
+		}
+	}
+	if r.status != nil {
+		if err := r.status.Check(ctx, credential); err != nil {
+			return fmt.Errorf("proximity: %w", err)
+		}
+	}
+	return nil
+}
+
+func (r *ReaderSession) verifyDocument(ctx context.Context, doc responseDocument, roots *x509.CertPool, now time.Time) (Verified, error) {
 	if doc.docType != r.docType {
 		return Verified{}, fmt.Errorf("proximity: document docType %q, requested %q", doc.docType, r.docType)
 	}
@@ -411,7 +578,7 @@ func (r *ReaderSession) verifyDocument(doc responseDocument, roots *x509.CertPoo
 	if chains, err = certchain.ApprovedChains(leaf, chains, r.signerPolicy); err != nil {
 		return Verified{}, fmt.Errorf("proximity: document signer certificate: %w", err)
 	}
-	if chains, err = certchain.NotRevokedChains(context.Background(), chains, r.issuerRevocation, now); err != nil {
+	if chains, err = certchain.NotRevokedChains(ctx, chains, r.issuerRevocation, now); err != nil {
 		return Verified{}, fmt.Errorf("proximity: document signer certificate: %w", err)
 	}
 	// The algorithm is the verified certificate's key's (ISO/IEC

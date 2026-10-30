@@ -1,6 +1,7 @@
 package proximity
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -62,7 +63,7 @@ func issueUnder(t *testing.T, iaca, ds pkix.Name, signed time.Time) fixture {
 func verifyFixture(t *testing.T, fx fixture) error {
 	t.Helper()
 	f := establish(t, mDL, map[string][]string{mDLNS: {"age_over_18"}})
-	_, err := f.reader.Verify(f.respond(t, fx, [][2]string{{mDLNS, "age_over_18"}}), fx.roots, time.Now())
+	_, err := f.reader.Verify(context.Background(), f.respond(t, fx, [][2]string{{mDLNS, "age_over_18"}}), fx.roots, time.Now())
 	return err
 }
 
@@ -133,7 +134,7 @@ func TestReaderPrefersCentralClient(t *testing.T) {
 		1: []any{1, cbor.RawMessage(keyBytes)},
 		2: []any{[]any{2, 1, map[int]any{0: true, 1: true, 10: peripheral, 11: central}}},
 	})
-	r, err := NewReaderSession("mdoc:" + base64.RawURLEncoding.EncodeToString(de))
+	r, err := NewReaderSession("mdoc:"+base64.RawURLEncoding.EncodeToString(de), devReader()...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,7 +153,7 @@ func TestIssuerRootsByDocType(t *testing.T) {
 	other := issueUnder(t, pkix.Name{CommonName: "PID IACA", Country: []string{"DE"}}, pkix.Name{CommonName: "PID DS", Country: []string{"DE"}}, signed)
 	verify := func(given *x509.CertPool, byType map[string]*x509.CertPool) error {
 		f := establishReader(t, mDL, map[string][]string{mDLNS: {"age_over_18"}}, WithIssuerRootsByDocType(byType))
-		_, err := f.reader.Verify(f.respond(t, fx, [][2]string{{mDLNS, "age_over_18"}}), given, time.Now())
+		_, err := f.reader.Verify(context.Background(), f.respond(t, fx, [][2]string{{mDLNS, "age_over_18"}}), given, time.Now())
 		return err
 	}
 	if err := verify(fx.roots, map[string]*x509.CertPool{mDL: other.roots}); err == nil {

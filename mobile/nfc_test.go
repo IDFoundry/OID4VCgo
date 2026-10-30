@@ -4,6 +4,7 @@ package mobile
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -22,7 +23,7 @@ func TestNFCMobilePresentation(t *testing.T) {
 		t.Fatal(err)
 	}
 	hs := p.HandoverSelect()
-	r, err := proximity.NewNFCReaderSession(hs)
+	r, err := proximity.NewNFCReaderSession(hs, devReader()...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +51,7 @@ func TestNFCMobilePresentation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = r.Verify(msg, nil, time.Time{})
+	_, err = r.Verify(context.Background(), msg, nil, time.Time{})
 	if !errors.Is(err, proximity.ErrDeclined) {
 		t.Fatalf("NFC termination: %v", err)
 	}

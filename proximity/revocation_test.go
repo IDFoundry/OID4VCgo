@@ -1,8 +1,10 @@
 package proximity
 
 import (
+	"context"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"strings"
 	"testing"
 	"time"
 
@@ -11,15 +13,23 @@ import (
 )
 
 // WithIssuerRevocation refuses a document whose document signer
-// certificate is revoked.
+// certificate is revoked, and is required: a nil checker is refused.
 func TestVerify_IssuerRevocation(t *testing.T) {
 	fx := issueFixture(t, mDL)
-	testcert.RunRevocationCases(t, fx.ca, fx.caKey, fx.signer, func(t *testing.T, revocation certrevocation.Checker) error {
-		f := establishReader(t, mDL, ageOver18, WithIssuerRevocation(revocation))
-		_, err := f.reader.Verify(f.respond(t, fx, f.req.Elements), fx.roots, time.Now())
-		return err
-	})
-	if _, err := NewReaderSession(mustQR(t), WithIssuerRevocation(certrevocation.CRLs{})); err == nil {
+	for _, c := range testcert.RevocationCases(t, fx.ca, fx.caKey, fx.signer) {
+		t.Run(c.Name, func(t *testing.T) {
+			if c.Checker == nil {
+				if _, err := NewReaderSession(mustQR(t), devReader(WithIssuerRevocation(nil))...); err == nil || !strings.Contains(err.Error(), "WithIssuerRevocation is required") {
+					t.Fatalf("no revocation choice: %v, want it refused", err)
+				}
+				return
+			}
+			f := establishReader(t, mDL, ageOver18, WithIssuerRevocation(c.Checker))
+			_, err := f.reader.Verify(context.Background(), f.respond(t, fx, f.req.Elements), fx.roots, time.Now())
+			c.Check(t, err)
+		})
+	}
+	if _, err := NewReaderSession(mustQR(t), devReader(WithIssuerRevocation(certrevocation.CRLs{}))...); err == nil {
 		t.Error("NewReaderSession accepted CRLs without Lists")
 	}
 }

@@ -26,7 +26,7 @@ import (
 // isn't nil.
 func proximityRequest(t *testing.T, p *walletflow.ProximityPresentation, reader *mdocReader) (*proximity.ReaderSession, []byte) {
 	t.Helper()
-	var opts []proximity.ReaderOption
+	opts := []proximity.ReaderOption{proximity.WithAssurance(verifier.AssuranceDevelopment), proximity.WithIssuerRevocation(certrevocation.NoCheck{})}
 	if reader != nil {
 		opts = append(opts, proximity.WithReaderAuth(reader.key.Signer, reader.key.Chain))
 	}
@@ -97,7 +97,7 @@ func TestProximityPresentation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	v, err := r.Verify(presented.Send, f.env.IssuerRoots, time.Now())
+	v, err := r.Verify(context.Background(), presented.Send, f.env.IssuerRoots, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +174,7 @@ func TestProximityPresentationReaderTrust(t *testing.T) {
 				if !ev.Ended || !errors.Is(ev.Err, walletflow.ErrUntrustedVerifier) || ev.Send == nil {
 					t.Fatalf("event %+v", ev)
 				}
-				if _, err := r.Verify(ev.Send, x509.NewCertPool(), time.Now()); !errors.Is(err, proximity.ErrDeclined) {
+				if _, err := r.Verify(context.Background(), ev.Send, x509.NewCertPool(), time.Now()); !errors.Is(err, proximity.ErrDeclined) {
 					t.Errorf("reader: %v, want declined", err)
 				}
 				return
@@ -212,7 +212,7 @@ func TestProximityPresentationEnds(t *testing.T) {
 
 	t.Run("declined", func(t *testing.T) {
 		p, r := start(t)
-		if _, err := r.Verify(p.Terminate(), f.env.IssuerRoots, time.Now()); !errors.Is(err, proximity.ErrDeclined) {
+		if _, err := r.Verify(context.Background(), p.Terminate(), f.env.IssuerRoots, time.Now()); !errors.Is(err, proximity.ErrDeclined) {
 			t.Errorf("reader: %v, want declined", err)
 		}
 		if _, err := p.Respond(ctx, 0, mdocID, familyName()); !errors.Is(err, walletflow.ErrWrongStep) {
@@ -339,7 +339,7 @@ func TestProximityPresentationDeviceAuth(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			v, err := r.Verify(presented.Send, f.env.IssuerRoots, time.Now())
+			v, err := r.Verify(context.Background(), presented.Send, f.env.IssuerRoots, time.Now())
 			if err != nil {
 				t.Fatal(err)
 			}

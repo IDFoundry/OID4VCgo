@@ -30,7 +30,9 @@ OID4VCWallet 0.7.0 (Swift); `StartDCAPIPresentation`, proximity
 revocation (`crls`, `revocation`, `SetCRLs` on a Wallet and a
 ProximityReader, later `crl_issuers` and a Wallet's
 `no_revocation_check`), and later `accept_mdl_signer_without_eku`
-on a Wallet and a ProximityReader. An older wrapper shows a
+on a Wallet and a ProximityReader, and later a ProximityReader's
+`production`, `no_revocation_check` and `any_issuer_for_any_type`. An
+older wrapper shows a
 code it doesn't know as it is. Check a library's release notes for the
 calls it has.
 
@@ -774,7 +776,7 @@ and cancellation.
 | `ClassifyNFCCommand(apdu)` | `NFCCommandOther`, `NFCCommandSelectNDEF`, `NFCCommandSelectData`, `NFCCommandSelectDataNoFCI` or `NFCCommandSelectOther`, for QR/NFC arbitration |
 | `NewNFCHandoverRead(maxTransceive, hr)` | Reader: an `NFCExchange` reading the Hs, negotiating with `hr` when the tag offers TNEP (refused when `hr` is nil). `Negotiated()` afterwards |
 | `NewNFCTransact(maxTransceive, maxCommand, maxResponse, message)` | Reader: an `NFCExchange` sending one session message to the NFC data application and reading the answer |
-| `NFCExchange.Done()`, `Command()`, `WaitMillis()`, `Next(response)`, `Result()`, `Close()` | Until `Done`: wait `WaitMillis` (TNEP's waiting time; native code sleeps, so cancellation can interrupt it), send `Command`, pass the response to `Next`. Then `Result` is the Hs or the answer (`invalid_input` on a protocol failure). `Close` an abandoned exchange |
+| `NFCExchange.Done()`, `Command()`, `WaitMillis()`, `Next(response)`, `Result()`, `Close()` | Until `Done`: wait `WaitMillis` (TNEP's waiting time; native code sleeps, so cancellation can interrupt it), send `Command`, pass the response to `Next`. Then `Result` is the Hs or the answer (`invalid_input` on a protocol failure). Safe from any thread: each call waits for one in progress, except `Close`, which ends a waiting `Next`. `Close` an abandoned exchange: until it's done, it holds a goroutine |
 | `NFCSelectDataApplication()`, `CheckNFCDataApplicationSelected(response)` | Reader: select the NFC data application and check its response |
 
 ### QR and BLE presentation
@@ -801,7 +803,7 @@ request per session. Every method is safe to call from any thread.
 | `HandleMessage(op, message)` | `{"event", "send", "reason", "error"}`. If `send` is present, it's the base64 message to send the reader. `event` is `request` (show `Request`), `ended` (send `send`, then disconnect) or `none`. `reason`, for `ended`, is `reader_ended` (the reader ended the session first) or `error`. `error` is then the failing call's text: `protocol` for a bad message, `untrusted_verifier` for a reader `require_trusted_mdoc_reader` refuses |
 | `Request()` | `{"reader": {"status", "name", "claimed_name", "chain", "error"}, "documents": [{"doctype", "elements": [{"namespace", "identifier", "retain"}], "credentials": [summary]}]}`, in the request's order. `reader.status` is `trusted` (its certificate chains to `mdoc_reader_roots` and passes `mdoc_reader_require_eku`), `untrusted` (signed by a certificate that doesn't), `unauthenticated` (not signed) or `invalid` (a signature that doesn't verify for this session). `name` is the reader's name, set only when `trusted`; for another signed request, `claimed_name` is the name its certificate gives itself, which anyone can claim, so never show it as the reader's. Both are the certificate's subject common name without control, line separator or invisible format characters (bidirectional ones among them). (Within ABI 12, `name` was the common name whatever the status, until this was found to let an untrusted reader pass for a trusted one in an app that didn't check `status`.) `chain` is the certificates, leaf first, as base64 DER, and `certificates` their fields, for an app that can't parse them (iOS): `{"subject", "issuer", "not_before", "not_after", "serial", "subject_alt_names", "extended_key_usages", "key_usages", "is_ca", "signature_algorithm", "extensions", "sha256"}`. `error` says why the reader isn't `trusted`. Each summary has `shown_to_verifier` (this reader, known by its certificate, was shown it before; never for an unsigned one) and `linkable_here` |
 | `Respond(op, document, credentialID, elementsJSON)` | `{"send", "linkable"}`: send `send`, the encrypted DeviceResponse, which ends the session, then disconnect. `linkable` is whether the copy presented had been seen by another Verifier. On an error, nothing is sent and the session goes on |
-| `Terminate()` | `{"send"}`: the holder declined, cancelled or timed out. Send `send` (status 20) if a reader is connected, then disconnect. Nothing is disclosed |
+| `Terminate()` | `{"send"}`: the holder declined, cancelled or timed out. Send `send` (status 20) if a reader is connected, then disconnect. Nothing is disclosed: a `Respond` still running (its holder key prompting) fails with `cancelled` and gives nothing to send. Once `Respond` has returned, don't send its `send` after calling `Terminate` |
 
 `elementsJSON` and `document` are as in MdocPresentation. The
 credential's next unused copy is presented, recorded as shown to the
@@ -836,7 +838,8 @@ can't use is `invalid_input`.
 The configuration is `{"issuer_roots", "issuer_roots_by_doctype",
 "reader_key_id", "reader_chain", "max_clock_skew_seconds",
 "require_mdl_signer_eku", "accept_mdl_signer_without_eku", "crls",
-"revocation", "crl_issuers"}`:
+"revocation", "crl_issuers", "no_revocation_check",
+"any_issuer_for_any_type", "production"}`:
 - `issuer_roots` (PEM) are the IACAs whose mdocs are accepted, of any
   document type `issuer_roots_by_doctype` doesn't name.
 - `issuer_roots_by_doctype` (an object of document type to PEM) are each
@@ -868,8 +871,23 @@ The configuration is `{"issuer_roots", "issuer_roots_by_doctype",
   `invalid_input`. An MSO's status list chaining to the certificate its
   status names needs that certificate's list too. `crl_issuers` are
   the CAs of certificates pinned in the roots, as a Wallet's. Additive
-  within ABI 12. A reader has no `development` setting, and no
-  `no_revocation_check`: a role it doesn't name checks no revocation.
+  within ABI 12.
+- `no_revocation_check` (roles, as `revocation`'s) declines checking a
+  role's revocation explicitly; a role can't be in both
+  (`invalid_input`). `any_issuer_for_any_type` declares that every IACA
+  in `issuer_roots` may issue every document type the reader asks for.
+- `production` makes the reader require a production reader's
+  decisions (`proximity.WithAssurance` at production): `NewProximityReader`
+  is `invalid_input` for a configuration whose `issuer` or `status` role
+  is in neither `revocation` nor `no_revocation_check`, or that sets
+  `issuer_roots` without `any_issuer_for_any_type` (name each document
+  type's IACAs in `issuer_roots_by_doctype` instead). Without it, a
+  role in neither list checks no revocation and any IACA in
+  `issuer_roots` may issue any document type, as before these keys
+  were added. Set it in every app that ships. `production`,
+  `no_revocation_check` and `any_issuer_for_any_type` are additive
+  within ABI 12. `HandleMessage` checks no document status in either
+  case: `CheckStatus` does.
 
 | Method | Result |
 |---|---|
