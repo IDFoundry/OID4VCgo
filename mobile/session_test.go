@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -16,56 +15,6 @@ import (
 	"github.com/idfoundry/oid4vcgo/walletflow"
 	"github.com/idfoundry/oid4vcgo/walletflow/walletflowtest"
 )
-
-// goCredentialStore is a CredentialStore in memory, as the app's would
-// be.
-type goCredentialStore struct {
-	mu        sync.Mutex
-	records   map[string][]byte
-	order     []string
-	ephemeral bool // says it isn't Durable
-}
-
-func newGoCredentialStore() *goCredentialStore {
-	return &goCredentialStore{records: map[string][]byte{}}
-}
-
-func (s *goCredentialStore) Durable() bool { return !s.ephemeral }
-
-func (s *goCredentialStore) Put(id string, record []byte) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if _, ok := s.records[id]; !ok {
-		s.order = append(s.order, id)
-	}
-	s.records[id] = record
-	return nil
-}
-
-func (s *goCredentialStore) Get(id string) ([]byte, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.records[id], nil
-}
-
-func (s *goCredentialStore) List() ([]byte, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	all := make([]json.RawMessage, 0, len(s.order))
-	for _, id := range s.order {
-		if r, ok := s.records[id]; ok {
-			all = append(all, r)
-		}
-	}
-	return json.Marshal(all)
-}
-
-func (s *goCredentialStore) Delete(id string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.records, id)
-	return nil
-}
 
 type harness struct {
 	env   *TestEnv

@@ -14,6 +14,9 @@
 // AuthorizationStore and a GrantStore, so deferred credentials, an
 // authorization in progress and refresh tokens survive a restart
 // (Wallet.Deferred, Wallet.ResumeIssuance, Wallet.RefreshCredential).
+// walletflow/storetest holds contract tests for an app's own stores; one
+// set of stores backs one Wallet, which serializes its own
+// read-modify-write of them.
 // At production assurance, receiving credentials needs a KeyStore
 // declaring durable custody, and the authorization code grant a Durable
 // AuthorizationStore. Config.RedirectURI is a private-use URI scheme in
