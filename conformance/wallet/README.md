@@ -14,6 +14,16 @@ any of three Credential Request proof strategies via `-proof-type`
 (`jwt`, `attestation`, or `jwt-key-attestation`; see "Status"). See
 "Scope" below for what isn't covered yet.
 
+## What not to copy
+
+This binary is a one-shot conformance-suite driver, not a wallet. It
+uses `wallet` and `fapigo/client` directly, under development assurance
+(`wallet.AssuranceDevelopment`, `client.AssuranceDevelopment`), with
+software keys held in memory, and skips TLS verification (below). A
+wallet app uses `walletflow` (or the mobile libraries over it), whose
+zero `Config` is production: durable stores, a revocation choice per
+trust role and a hardened HTTP client.
+
 ## TLS
 
 This binary skips TLS verification for every call it makes: it talks

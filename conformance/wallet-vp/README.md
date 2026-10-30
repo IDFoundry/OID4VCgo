@@ -11,6 +11,30 @@ offers (`sd_jwt_vc`, the original/default, or `iso_mdl` — see
 module lists (W3C Digital Credentials API), with `run-modules`
 standing in for the browser — see "dc_api.jwt" below.
 
+## What not to copy
+
+This binary is a conformance-suite harness, not a wallet:
+
+- **It fetches `request_uri` with its own HTTP client**, which skips TLS
+  verification (the suite serves throwaway certificates) and reads the
+  body without a size limit. The URL comes from the Authorization
+  Request before anything is verified. A wallet calls
+  `wallet.Wallet.FetchAuthorizationRequest` (or
+  `FetchAuthorizationRequestPost`), whose hardened `fapihttp` client
+  verifies TLS and bounds the body, the redirects and the addresses it
+  connects to.
+- **It follows the response's `redirect_uri` itself**, with that same
+  client. A wallet hands it to the user's browser, after checking it's
+  https.
+- **It presents fixture credentials it issues itself at startup**, held
+  in memory with their software keys.
+- **Verifier trust is optional.** Without `verifier_trust_anchors_pem`
+  it uses `wallet.NoVerifierTrust{}`, checking the request object's
+  signature and `x509_hash` but no certificate chain.
+
+A wallet app uses `walletflow` (`StartPresentation`,
+`StartDCAPIPresentation`), or the mobile libraries over it.
+
 ## How the interaction model was confirmed
 
 This took real digging into the suite's own source
