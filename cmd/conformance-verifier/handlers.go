@@ -216,6 +216,12 @@ func (s *server) handleResponse(w http.ResponseWriter, r *http.Request) {
 			IssuerKeys: s.issuerKeys, MdocIssuerKeys: s.mdocIssuerKeys,
 			ResponseEncryptionKey: matched.decryptionKey,
 			MaxKeyBindingAge:      maxKeyBindingAge,
+			// No status check, decided explicitly: the suite's test
+			// credentials' revocation isn't what it grades, and their
+			// issuer, generated per run, serves no status list a
+			// hardened fetcher could reach. A deployment sets Status
+			// (a verifier.StatusPolicy), which runs before any Accept.
+			NoStatusCheck: true,
 		})
 		if err != nil {
 			matched.failErr = err

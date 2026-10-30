@@ -331,7 +331,8 @@ type verifiedJSON struct {
 
 type statusRefJSON struct {
 	// Type is "status_list" or "identifier_list" (ISO/IEC 18013-5
-	// §12.3.6.2).
+	// §12.3.6.2), or "unknown" for a status naming neither: a
+	// mechanism this reader doesn't know, with no URI.
 	Type string `json:"type"`
 	URI  string `json:"uri"`
 	// Idx is a status list's index.
@@ -344,8 +345,9 @@ type statusRefJSON struct {
 }
 
 // statusRefOf is an MSO's status reference as JSON: either mechanism,
-// so a document revoked through an identifier list doesn't look like
-// one with no status at all.
+// or one it doesn't know, so a document revoked through an identifier
+// list, or through another mechanism, doesn't look like one with no
+// status at all.
 func statusRefOf(status *mdoc.Status) *statusRefJSON {
 	switch {
 	case status == nil:
@@ -362,7 +364,9 @@ func statusRefOf(status *mdoc.Status) *statusRefJSON {
 			Certificate: base64.StdEncoding.EncodeToString(status.IdentifierList.Certificate),
 		}
 	default:
-		return nil
+		// A status naming no mechanism this reader knows still isn't
+		// no status.
+		return &statusRefJSON{Type: walletflow.StatusUnknown}
 	}
 }
 
@@ -454,7 +458,8 @@ func verifiedOf(v proximity.Verified) *verifiedJSON {
 // the list defines as "0x" and its value, "none" (the MSO names no
 // revocation list) or "unknown" (it names an identifier list,
 // §12.3.6.3, which this reader can't check, and either no status list
-// or one on which it's valid): rely on the document only on "valid" or
+// or one on which it's valid; or it has a status naming no mechanism
+// this reader knows): rely on the document only on "valid" or
 // "none". The list covers many documents, so fetching it
 // doesn't tell its publisher which one is checked. It's fetched over
 // https from public addresses only. A failed fetch is network, a list
@@ -480,10 +485,12 @@ func (p *ProximityReaderSession) CheckStatus(op *Operation) (string, error) {
 // checkStatus is v's revocation status, as CheckStatus reports it.
 func (r *ProximityReader) checkStatus(ctx context.Context, v proximity.Verified) (string, error) {
 	switch {
-	case v.Status == nil || (v.Status.StatusList == nil && v.Status.IdentifierList == nil):
+	case v.Status == nil:
 		return "none", nil
 	case v.Status.StatusList == nil:
-		return "unknown", nil
+		// An identifier list, or a status naming no mechanism this
+		// reader knows (mdoc.Status): either may revoke the document.
+		return walletflow.StatusUnknown, nil
 	case len(v.IssuerChain) == 0:
 		return "", errors.New("no issuer chain to bind the status list's signer to")
 	}

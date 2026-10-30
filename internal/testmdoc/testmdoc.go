@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fxamacker/cbor/v2"
+
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/dcql"
 	"github.com/idfoundry/oid4vcgo/internal/cose"
@@ -78,6 +80,46 @@ func IssueWith(t testing.TB, mutate func(*mdoc.Claims)) Fixture {
 		t.Fatalf("testmdoc: mdoc.Issue: %v", err)
 	}
 	return Fixture{IssuerKey: issuerKey, DeviceKey: deviceKey, IssuerSigned: issuerSigned}
+}
+
+// WithMSOStatus is f with its MSO's "status" member replaced by status,
+// any CBOR value (one naming a mechanism mdoc.Status doesn't model, say),
+// and IssuerAuth signed again with f.IssuerKey, so it still verifies.
+func WithMSOStatus(t testing.TB, f Fixture, status any) Fixture {
+	t.Helper()
+	protected, unprotected, payload, err := cose.DecodeUnverified(f.IssuerSigned.IssuerAuth)
+	if err != nil {
+		t.Fatalf("testmdoc: decode IssuerAuth: %v", err)
+	}
+	var tag cbor.RawTag
+	var msoBytes []byte
+	if err := cbor.Unmarshal(payload, &tag); err != nil || tag.Number != 24 {
+		t.Fatalf("testmdoc: IssuerAuth payload isn't a tag 24: %v", err)
+	}
+	if err := cbor.Unmarshal(tag.Content, &msoBytes); err != nil {
+		t.Fatalf("testmdoc: IssuerAuth payload: %v", err)
+	}
+	var mso map[string]cbor.RawMessage
+	if err := cbor.Unmarshal(msoBytes, &mso); err != nil {
+		t.Fatalf("testmdoc: MSO: %v", err)
+	}
+	if mso["status"], err = cbor.Marshal(status); err != nil {
+		t.Fatalf("testmdoc: status: %v", err)
+	}
+	if msoBytes, err = cbor.Marshal(mso); err != nil {
+		t.Fatalf("testmdoc: MSO: %v", err)
+	}
+	content, err := cbor.Marshal(msoBytes)
+	if err != nil {
+		t.Fatalf("testmdoc: MSO: %v", err)
+	}
+	if payload, err = cbor.Marshal(cbor.RawTag{Number: 24, Content: content}); err != nil {
+		t.Fatalf("testmdoc: MSO: %v", err)
+	}
+	if f.IssuerSigned.IssuerAuth, err = cose.Sign(cose.ES256, f.IssuerKey, protected, unprotected, payload, []byte{}); err != nil {
+		t.Fatalf("testmdoc: sign IssuerAuth: %v", err)
+	}
+	return f
 }
 
 // Query builds the standard DCQL query every Fixture this package

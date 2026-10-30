@@ -49,7 +49,7 @@ type VerifyParams struct {
 	// issuer chains (a verifier.MdocIssuerChainResolver, as
 	// verifier.X5ChainIssuerKeyResolver is); IssuerAuthorized or
 	// AnyIssuerForAnyType must decide which issuers may issue the
-	// doctype; Accept or NoStatusCheck must decide revocation; Origins
+	// doctype; Status or NoStatusCheck must decide revocation; Origins
 	// must be set, with Pending.Origin https; and IssuerKeys' roots
 	// mustn't be the system root pool (one built from it by adding
 	// certificates is detected on Linux and the other Unix systems,
@@ -73,17 +73,22 @@ type VerifyParams struct {
 	// may issue the requested doctype, so IssuerAuthorized is
 	// deliberately unset (verifier.VerifyResponseRequest.AnyIssuerForAnyType).
 	AnyIssuerForAnyType bool
-	// Accept, if set, runs on the verified document before
-	// VerifyResponse returns it, as verifier.VerifyResponseRequest.Accept
-	// does, and its error refuses the response: result holds the one
-	// credential, Verified.Credential, and id is "".
-	// verifier.RequireValidStatus checks revocation, with the Status
-	// List Token's signer bound to the document's issuer through
-	// Verified.IssuerChain. Nothing else checks revocation.
-	Accept func(ctx context.Context, id string, result verifier.VerifyResponseResult) error
+	// Status, if set, checks the verified document's revocation status
+	// (verifier.StatusPolicy) before Accept, with its status list's or
+	// identifier list's signer bound to the document's issuer through
+	// Verified.IssuerChain; its error refuses the response. Nothing else
+	// checks revocation.
+	Status *verifier.StatusPolicy
 	// NoStatusCheck declares that this Verifier deliberately checks no
-	// revocation status, so Accept is unset.
+	// revocation status, so Status is unset (verifier.CheckStatusDecision).
+	// An Accept doesn't decide it.
 	NoStatusCheck bool
+	// Accept, if set, runs on the verified document after Status,
+	// before VerifyResponse returns it, as
+	// verifier.VerifyResponseRequest.Accept does, and its error refuses
+	// the response: result holds the one credential,
+	// Verified.Credential, and id is "".
+	Accept func(ctx context.Context, id string, result verifier.VerifyResponseResult) error
 }
 
 // Verified is a verified document.
@@ -107,13 +112,13 @@ type Verified struct {
 	// (verifier.CheckMdocIssuer).
 	IssuerChain [][]byte
 	// Status is the MSO's revocation reference, nil if it has none;
-	// VerifyParams.Accept checks it (verifier.RequireValidStatus).
+	// VerifyParams.Status checks it.
 	Status *mdoc.Status
 }
 
 // Credential is v as a verifier.VerifiedCredential — its NameSpaces as
 // Claims, its Status and IssuerChain — for what takes one, such as
-// verifier.RequireValidStatus. Its CredentialQueryID is "": an Annex C
+// verifier.StatusPolicy.Check. Its CredentialQueryID is "": an Annex C
 // request has no DCQL query.
 func (v Verified) Credential() verifier.VerifiedCredential {
 	claims := make(map[string]any, len(v.NameSpaces))
@@ -176,8 +181,14 @@ func VerifyResponse(ctx context.Context, p VerifyParams) (Verified, error) {
 	if err != nil {
 		return Verified{}, err
 	}
+	credential := verified.Credential()
+	if p.Status != nil {
+		if err := p.Status.Check(ctx, credential); err != nil {
+			return Verified{}, err
+		}
+	}
 	if p.Accept != nil {
-		if err := p.Accept(ctx, "", verifier.VerifyResponseResult{Credentials: []verifier.VerifiedCredential{verified.Credential()}}); err != nil {
+		if err := p.Accept(ctx, "", verifier.VerifyResponseResult{Credentials: []verifier.VerifiedCredential{credential}}); err != nil {
 			return Verified{}, err
 		}
 	}
@@ -190,11 +201,12 @@ func VerifyResponse(ctx context.Context, p VerifyParams) (Verified, error) {
 // accepts what it shouldn't.
 func checkAssurance(p VerifyParams) error {
 	switch p.Assurance {
-	case verifier.AssuranceDevelopment:
-		return nil
-	case verifier.AssuranceProduction:
+	case verifier.AssuranceDevelopment, verifier.AssuranceProduction:
 	default:
 		return errors.New("mdocdcapi: Assurance is required: verifier.AssuranceDevelopment or verifier.AssuranceProduction")
+	}
+	if p.Assurance == verifier.AssuranceDevelopment {
+		return checkStatusDecision(p)
 	}
 	if asserter, ok := p.IssuerKeys.(verifier.KeySourceAssurance); !ok || !asserter.Capabilities().LiveFetchHardened {
 		return errors.New("mdocdcapi: under AssuranceProduction, IssuerKeys must implement verifier.KeySourceAssurance and declare LiveFetchHardened")
@@ -210,11 +222,16 @@ func checkAssurance(p VerifyParams) error {
 	if p.IssuerAuthorized == nil && !p.AnyIssuerForAnyType {
 		return errors.New("mdocdcapi: under AssuranceProduction, set IssuerAuthorized (which issuers may issue which doctypes) or AnyIssuerForAnyType: without either, any trusted issuer is accepted for any doctype")
 	}
-	if p.Accept == nil && !p.NoStatusCheck {
-		return errors.New("mdocdcapi: under AssuranceProduction, set Accept (verifier.RequireValidStatus checks revocation) or NoStatusCheck: without either, a revoked document is accepted")
-	}
 	if len(p.Origins) == 0 {
 		return errors.New("mdocdcapi: under AssuranceProduction, set Origins: the origins of the pages that make Digital Credentials API requests")
+	}
+	return checkStatusDecision(p)
+}
+
+// checkStatusDecision is verifier.CheckStatusDecision for p.
+func checkStatusDecision(p VerifyParams) error {
+	if err := verifier.CheckStatusDecision(p.Assurance, p.Status, p.NoStatusCheck); err != nil {
+		return fmt.Errorf("mdocdcapi: %w", err)
 	}
 	return nil
 }

@@ -306,6 +306,8 @@ func (a *App) newTransactions(sc Scenario, sg signer, registrar signer) (*verifi
 		Origins:  []string{a.origin},
 		Lifetime: a.cfg.RequestLifetime,
 		Verify:   verify,
+		// Revocation first, then the scenario's own checks.
+		Status: a.statusPolicy(),
 		Accept: func(ctx context.Context, id string, result verifier.VerifyResponseResult) error {
 			return a.accept(ctx, sc, id, result)
 		},
@@ -590,10 +592,11 @@ func (a *App) LastError(id string) string {
 // accept is a scenario's Transactions' Accept: it runs on each answer
 // that verified, before its request completes, and may run for an answer
 // that then loses to a concurrent one, so what it records is looked up
-// by the committed Result (resultKey). It refuses an answer to a page
-// whose other request already completed, and one whose credential is
-// revoked or suspended; otherwise it records what the answer
-// established, and what the scenario decides from it.
+// by the committed Result (resultKey). It runs once Transactions'
+// Status has refused a revoked or suspended credential. It refuses an
+// answer to a page whose other request already completed; otherwise it
+// records what the answer established, and what the scenario decides
+// from it.
 func (a *App) accept(ctx context.Context, sc Scenario, txID string, result verifier.VerifyResponseResult) error {
 	a.mu.Lock()
 	s := a.sessions[a.byTx[txID]]
@@ -662,8 +665,9 @@ func (a *App) otherAnswered(ctx context.Context, s *session, txID string) bool {
 	return false
 }
 
-// people checks each presented credential: one person at most once,
-// not revoked, and, for a scenario re-verifying it, its passport file.
+// people checks each presented credential, its revocation status
+// already checked (statusPolicy): one person at most once, and, for a
+// scenario re-verifying it, its passport file.
 func (a *App) people(ctx context.Context, info ScenarioInfo, vcs []verifier.VerifiedCredential) ([]Person, error) {
 	seen := map[[sha256.Size]byte]bool{}
 	var out []Person
@@ -677,11 +681,7 @@ func (a *App) people(ctx context.Context, info ScenarioInfo, vcs []verifier.Veri
 			return nil, errors.New("the same passport was presented twice")
 		}
 		seen[sum] = true
-		status, err := a.checkStatus(ctx, vc)
-		if err != nil {
-			return nil, err
-		}
-		p := Person{Format: formatOf(vc.CredentialQueryID), Claims: claims, Status: status}
+		p := Person{Format: formatOf(vc.CredentialQueryID), Claims: claims, Status: statusOf(vc)}
 		if info.Evidence {
 			p.ICAO = a.checkICAO(claims)
 		}

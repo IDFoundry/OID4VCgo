@@ -20,4 +20,7 @@ func TestStatusRefOf(t *testing.T) {
 	if ids == nil || ids.Type != "identifier_list" || ids.URI != "https://status.example/ids" || ids.ID != "qw==" || ids.Certificate != "" {
 		t.Errorf("identifier list: %+v", ids)
 	}
+	if unknown := statusRefOf(&mdoc.Status{}); unknown == nil || unknown.Type != "unknown" {
+		t.Errorf("a status naming no known mechanism: %+v", unknown)
+	}
 }

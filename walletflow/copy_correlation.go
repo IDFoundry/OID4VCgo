@@ -91,12 +91,8 @@ func sdjwtvcMarks(credential string) copyMarks {
 	if err != nil {
 		return copyMarks{}
 	}
-	_, raw, err := jose.DecodeUnverified(pres.IssuerJWT)
+	payload, err := issuerJWTPayload(pres)
 	if err != nil {
-		return copyMarks{}
-	}
-	var payload map[string]any
-	if strictjson.Unmarshal(raw, &payload) != nil {
 		return copyMarks{}
 	}
 	m := copyMarks{times: map[string]int64{}}
@@ -111,6 +107,29 @@ func sdjwtvcMarks(credential string) copyMarks {
 		}
 	}
 	return m
+}
+
+// sdjwtvcPayload is the Issuer-signed JWT payload of credential, a
+// stored SD-JWT VC, unverified: the wallet verified it on receipt.
+func sdjwtvcPayload(credential string) (map[string]any, error) {
+	pres, err := sdjwtvc.Parse(credential)
+	if err != nil {
+		return nil, err
+	}
+	return issuerJWTPayload(pres)
+}
+
+// issuerJWTPayload is pres's Issuer-signed JWT payload, unverified.
+func issuerJWTPayload(pres sdjwtvc.Presentation) (map[string]any, error) {
+	_, raw, err := jose.DecodeUnverified(pres.IssuerJWT)
+	if err != nil {
+		return nil, err
+	}
+	var payload map[string]any
+	if err := strictjson.Unmarshal(raw, &payload); err != nil {
+		return nil, err
+	}
+	return payload, nil
 }
 
 // appendDigests appends to out the digests in v, a raw SD-JWT value:

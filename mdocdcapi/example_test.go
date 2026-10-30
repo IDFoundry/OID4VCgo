@@ -18,6 +18,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/mdocdcapi"
+	"github.com/idfoundry/oid4vcgo/statuslist"
 	"github.com/idfoundry/oid4vcgo/verifier"
 )
 
@@ -88,9 +89,14 @@ func ExampleBuildRequest() {
 		Pending:    req.Pending,
 		Response:   base64.RawURLEncoding.EncodeToString(encrypted),
 		IssuerKeys: verifier.X5ChainIssuerKeyResolver{Roots: iacaRoots, Revocation: certrevocation.NoCheck{}},
-		// Every issuer under the IACA may issue the doctype, and the
-		// example document carries no status reference.
-		Assurance: verifier.AssuranceProduction, AnyIssuerForAnyType: true, NoStatusCheck: true,
+		// Every issuer under the IACA may issue the doctype.
+		Assurance: verifier.AssuranceProduction, AnyIssuerForAnyType: true,
+		// Revocation, checked before any Accept: the document's status
+		// list, signed under the IACA (the example document carries no
+		// status reference, so there's nothing to fetch).
+		Status: &verifier.StatusPolicy{Checker: statuslist.Checker{
+			Roots: iacaRoots, Options: statuslist.VerifyOptions{Revocation: certrevocation.NoCheck{}},
+		}},
 		Origins: []string{origin},
 	}))
 	fmt.Println("docType:", verified.DocType)

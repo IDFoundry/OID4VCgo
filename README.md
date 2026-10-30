@@ -112,9 +112,11 @@ Where to start, by role:
   `response_code` bound to the browser), with its `RequestObjectHandler`
   and `ResponseHandler` as ready `http.Handler`s over a
   `verifier.TransactionStore` (`storage.NewVerifierTransactionStore`
-  for development). `verifier.RequireValidStatus` (a `statuslist.Checker`)
-  checks a credential's revocation, an mdoc's identifier list included;
-  the issuer key
+  for development). `TransactionsConfig.Status` (a `verifier.StatusPolicy`
+  over a `statuslist.Checker`) checks each credential's revocation, an
+  mdoc's identifier list included, before `Accept` runs the Verifier's
+  own checks (`verifier.Chain` composes several); production requires
+  it, or an explicit `NoStatusCheck`. The issuer key
   resolvers' required `Revocation` (`certrevocation.CRLs`) checks its
   issuer certificate's.
 - **Wallet** — `wallet.EncryptionFromMetadata` picks credential

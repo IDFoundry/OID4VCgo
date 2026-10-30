@@ -227,8 +227,9 @@ func (a *App) verifyDCAPI(r *http.Request, s *session, pending mdocdcapi.Pending
 		Origins:   []string{a.origin},
 		// The demo's one issuer issues every document it asks for.
 		AnyIssuerForAnyType: true,
-		// The scenario's checks, revocation among them (checkStatus,
-		// with the status list bound to the document's issuer chain).
+		// Revocation, with the status list bound to the document's
+		// issuer chain, then the scenario's checks.
+		Status: a.statusPolicy(),
 		Accept: func(ctx context.Context, _ string, result verifier.VerifyResponseResult) error {
 			vcs := result.Credentials
 			for i := range vcs {

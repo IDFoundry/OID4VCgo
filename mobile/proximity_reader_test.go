@@ -184,16 +184,18 @@ func TestSessions_ProximityReader(t *testing.T) {
 }
 
 // A document without a status list, or with an identifier list, which
-// the reader can't check, isn't fetched.
+// the reader can't check, isn't fetched. A status naming no mechanism
+// the reader knows (decoded with neither member) is unknown, not none:
+// it may revoke the document.
 func TestProximityReader_CheckStatusWithoutList(t *testing.T) {
 	r := &ProximityReader{clock: time.Now}
 	for name, tc := range map[string]struct {
 		status *mdoc.Status
 		want   string
 	}{
-		"no status":       {nil, "none"},
-		"empty status":    {&mdoc.Status{}, "none"},
-		"identifier list": {&mdoc.Status{IdentifierList: &mdoc.IdentifierListRef{ID: []byte{1}, URI: "https://status.example/ids"}}, "unknown"},
+		"no status":                        {nil, "none"},
+		"status naming no known mechanism": {&mdoc.Status{}, "unknown"},
+		"identifier list":                  {&mdoc.Status{IdentifierList: &mdoc.IdentifierListRef{ID: []byte{1}, URI: "https://status.example/ids"}}, "unknown"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			got, err := r.checkStatus(context.Background(), proximity.Verified{Status: tc.status})

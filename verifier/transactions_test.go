@@ -449,13 +449,17 @@ func TestNewTransactions_Validates(t *testing.T) {
 		t.Error("an in-memory store was accepted under AssuranceProduction")
 	}
 
-	// Under production, a status check (Accept) or an explicit
-	// NoStatusCheck: a Verifier that forgot Accept would take revoked
-	// credentials.
+	// Under production, a status check (Status) or an explicit
+	// NoStatusCheck: a Verifier that forgot Status would take revoked
+	// credentials, and an Accept checking business rules doesn't count.
 	assured := assuredTransactionStore{store}
 	verify := verifier.VerifyResponseRequest{IssuerKeys: verifier.X5CIssuerKeyResolver{Roots: x509.NewCertPool(), Revocation: certrevocation.NoCheck{}}}
-	if _, err := verifier.NewTransactions(prod, assured, verifier.TransactionsConfig{RequestURIBase: txBase, Verify: verify}); err == nil || !strings.Contains(err.Error(), "no_status_check") {
-		t.Errorf("no Accept and no NoStatusCheck under AssuranceProduction: %v", err)
+	if _, err := verifier.NewTransactions(prod, assured, verifier.TransactionsConfig{RequestURIBase: txBase, Verify: verify}); err == nil || !strings.Contains(err.Error(), "NoStatusCheck") {
+		t.Errorf("no Status and no NoStatusCheck under AssuranceProduction: %v", err)
+	}
+	businessOnly := func(context.Context, string, verifier.VerifyResponseResult) error { return nil }
+	if _, err := verifier.NewTransactions(prod, assured, verifier.TransactionsConfig{RequestURIBase: txBase, Verify: verify, Accept: businessOnly}); err == nil || !strings.Contains(err.Error(), "NoStatusCheck") {
+		t.Errorf("an Accept alone under AssuranceProduction: %v", err)
 	}
 	// And which issuers may issue which types (IssuerAuthorized), or an
 	// explicit AnyIssuerForAnyType: otherwise any trusted issuer would be
@@ -465,7 +469,7 @@ func TestNewTransactions_Validates(t *testing.T) {
 	}
 	verify.AnyIssuerForAnyType = true
 	for name, cfg := range map[string]verifier.TransactionsConfig{
-		"accept":          {RequestURIBase: txBase, Verify: verify, Accept: func(context.Context, string, verifier.VerifyResponseResult) error { return nil }},
+		"status":          {RequestURIBase: txBase, Verify: verify, Status: productionStatus(), Accept: businessOnly},
 		"no_status_check": {RequestURIBase: txBase, Verify: verify, NoStatusCheck: true},
 	} {
 		if _, err := verifier.NewTransactions(prod, assured, cfg); err != nil {

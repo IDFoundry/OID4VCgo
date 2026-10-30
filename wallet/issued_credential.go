@@ -117,6 +117,15 @@ type VerifiedIssuedCredential struct {
 	// StatusListCWT is whether that list is a CWT, as an mdoc's is.
 	StatusList    *statuslist.StatusListRef
 	StatusListCWT bool
+
+	// UnrecognizedStatus is whether the credential has a status naming
+	// no mechanism this package knows: an SD-JWT VC "status" claim
+	// that isn't an object or has no status_list, an MSO status with
+	// neither status_list nor identifier_list (a mechanism defined
+	// elsewhere, or a misspelt key). Its status is then unknown, not
+	// absent: that mechanism may revoke it, and nothing here can check
+	// it, so don't show it as having no status.
+	UnrecognizedStatus bool
 }
 
 // issuerClockSkew is how far the wallet's clock may be from the
@@ -235,18 +244,22 @@ func verifyIssuedSDJWTVC(ctx context.Context, p VerifyIssuedCredentialParams, no
 		return VerifiedIssuedCredential{}, errors.New("the credential is bound to a key (cnf), but the Wallet proved none")
 	}
 	verified := VerifiedIssuedCredential{IssuerCertificate: leaf, Claims: payload, ValidUntil: numericDate(payload["exp"])}
-	if status, ok := payload["status"].(map[string]any); ok {
+	if raw, present := payload["status"]; present {
 		// Another status mechanism may sit beside, or instead of, a
 		// status list (draft-ietf-oauth-status-list §6.1: "Other members
 		// of the status object may be defined by other specifications"):
-		// only status_list is read, and its absence isn't an error.
-		if _, hasList := status["status_list"]; hasList {
-			ref, err := statuslist.ParseStatusClaim(status)
-			if err != nil {
-				return VerifiedIssuedCredential{}, fmt.Errorf("status: %w", err)
-			}
-			verified.StatusList = &ref
+		// only status_list is read, and its absence isn't an error, but
+		// leaves the status unknown.
+		status, _ := raw.(map[string]any)
+		if _, hasList := status["status_list"]; !hasList {
+			verified.UnrecognizedStatus = true
+			return verified, nil
 		}
+		ref, err := statuslist.ParseStatusClaim(status)
+		if err != nil {
+			return VerifiedIssuedCredential{}, fmt.Errorf("status: %w", err)
+		}
+		verified.StatusList = &ref
 	}
 	return verified, nil
 }
@@ -326,6 +339,9 @@ func verifyIssuedMdoc(ctx context.Context, p VerifyIssuedCredentialParams, now t
 		claims[ns] = elements
 	}
 	verified := VerifiedIssuedCredential{IssuerCertificate: leaf, Claims: claims, ValidUntil: mso.ValidityInfo.ValidUntil.UTC()}
+	if mso.Status != nil && mso.Status.StatusList == nil && mso.Status.IdentifierList == nil {
+		verified.UnrecognizedStatus = true
+	}
 	if mso.Status != nil && mso.Status.StatusList != nil {
 		verified.StatusList = &statuslist.StatusListRef{Idx: mso.Status.StatusList.Idx, URI: mso.Status.StatusList.URI}
 		verified.StatusListCWT = true
