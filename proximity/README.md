@@ -132,9 +132,11 @@ notifications.
    for revocation with `WithIssuerRevocation(certrevocation.CRLs{...})`.
    A reader can pass `NewReaderSession`
    `WithMaxClockSkew` — so an mdoc issued by a clock a little ahead of
-   the reader's isn't refused as not yet valid — and
-   `WithDocumentSignerPolicy(RequireMDLDocumentSignerEKU)`, to accept
-   only document signer certificates issued for that purpose.
+   the reader's isn't refused as not yet valid. By default only document
+   signer certificates issued for that purpose, with the mDL document
+   signer extended key usage, are accepted;
+   `WithDocumentSignerPolicy(mdoc.LenientDocumentSignerPolicy)` also
+   accepts one without an extended key usage.
 7. **End.** Either side can end the session. Send a `Termination()`
    message (status 20), or write `0x02` (end) to State. Treat a `0x02`
    from the other side the same way. The GATT client then unsubscribes

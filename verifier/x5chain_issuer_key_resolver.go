@@ -51,8 +51,11 @@ type X5ChainIssuerKeyResolver struct {
 	// mdoc.DefaultDocumentSignerPolicy, which refuses the certificates
 	// an IACA issues for other jobs (an OCSP signer's, one whose key
 	// usage doesn't allow digital signatures, one whose extended key
-	// usage leaves out the mDL document signer's, such as a reader
-	// authentication certificate); a LeafPolicy that's set replaces it.
+	// usage leaves out the mDL document signer's or that has none, such
+	// as a reader authentication or revocation list signer
+	// certificate); a LeafPolicy that's set replaces it, and
+	// mdoc.LenientDocumentSignerPolicy also accepts a document signer
+	// without an extended key usage.
 	LeafPolicy func(leaf *x509.Certificate, chains [][]*x509.Certificate) error
 	// Revocation decides whether a certificate on a verified path — the
 	// document signer's, or an intermediate CA's — has been revoked,

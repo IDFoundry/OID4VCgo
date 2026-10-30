@@ -38,7 +38,9 @@ type X5CProofBindingKeyResolver struct {
 	// would otherwise be accepted too: prefer Roots that anchor only
 	// this role's certificates, and use LeafPolicy to require what
 	// distinguishes them (an extended key usage, a certificate policy)
-	// where the anchors are shared.
+	// where the anchors are shared. nil means
+	// DefaultAttestationLeafPolicy, as for X5CAttestationVerifier: a
+	// set LeafPolicy replaces it, and AnyAttestationLeaf opts out.
 	LeafPolicy func(leaf *x509.Certificate, chains [][]*x509.Certificate) error
 	// Revocation, if set, checks the proof's certificate chain for
 	// revocation: only a verified path LeafPolicy approves and
@@ -64,7 +66,7 @@ func (r X5CProofBindingKeyResolver) ResolveProofBindingKey(ctx context.Context, 
 	if !ok {
 		return nil, "", fmt.Errorf("issuer: proof x5c header is not an array")
 	}
-	leaf, _, err := resolveX5CLeaf(ctx, entries, r.Roots, r.LeafPolicy, r.Revocation)
+	leaf, _, err := resolveX5CLeaf(ctx, entries, r.Roots, attestationLeafPolicy(r.LeafPolicy), r.Revocation)
 	if err != nil {
 		return nil, "", err
 	}

@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/asn1"
 	"encoding/base64"
 	"math/big"
 	"strings"
@@ -38,7 +39,7 @@ func issueUnder(t *testing.T, iaca, ds pkix.Name, signed time.Time) fixture {
 	dsDER, err := x509.CreateCertificate(rand.Reader, &x509.Certificate{
 		SerialNumber: big.NewInt(2), Subject: ds,
 		NotBefore: now.Add(-time.Hour), NotAfter: now.Add(24 * time.Hour),
-		KeyUsage: x509.KeyUsageDigitalSignature,
+		KeyUsage: x509.KeyUsageDigitalSignature, UnknownExtKeyUsage: []asn1.ObjectIdentifier{MDLDocumentSignerEKU},
 	}, ca, &dsKey.PublicKey, caKey)
 	if err != nil {
 		t.Fatal(err)

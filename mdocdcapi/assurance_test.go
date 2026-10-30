@@ -40,7 +40,7 @@ func exchangeAt(t *testing.T, origin string) (mdocdcapi.VerifyParams, *x509.Cert
 		ns      = "org.iso.18013.5.1"
 	)
 	iaca, iacaKey := newCA("Test IACA")
-	ds, dsKey := newLeaf("Test Document Signer", iaca, iacaKey)
+	ds, dsKey := newLeaf("Test Document Signer", iaca, iacaKey, mdoc.MDLDocumentSignerEKU)
 	deviceKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatal(err)

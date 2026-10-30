@@ -1,6 +1,7 @@
 package wallet_test
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -13,6 +14,7 @@ import (
 
 	fapi "github.com/idfoundry/fapigo"
 
+	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/dcql"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/internal/jwe"
@@ -55,9 +57,9 @@ func TestVerifierInfo_RoundTrip(t *testing.T) {
 		if !ok {
 			t.Fatalf("%s: data isn't a string", name)
 		}
-		reg, err := registration.Verify(data, roots, req.ClientID, time.Now())
+		reg, err := registration.Registrars{Roots: roots, Revocation: certrevocation.NoCheck{}}.Verify(context.Background(), data, req.ClientID, time.Now())
 		if err != nil || reg.Name != "Test Shop" {
-			t.Errorf("%s: registration.Verify = %+v, %v", name, reg, err)
+			t.Errorf("%s: Registrars.Verify = %+v, %v", name, reg, err)
 		}
 	}
 

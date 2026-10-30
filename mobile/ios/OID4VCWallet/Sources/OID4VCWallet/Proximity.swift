@@ -535,6 +535,11 @@ public struct ProximityReaderConfiguration: Codable, Sendable {
     public var maxClockSkewSeconds: Int?
     /// Accepts only document signers with the mDL document signer extended key usage.
     public var requireMDLSignerEKU: Bool
+    /// Also accepts a document signer certificate with no extended key
+    /// usage, which is refused by default for lacking the mDL document
+    /// signer's, for issuers whose document signers have none. It can't
+    /// be set with `requireMDLSignerEKU`.
+    public var acceptMDLSignerWithoutEKU: Bool
     /// Each document type's own IACAs, as PEM certificates: a document of a
     /// type named here must chain to them, not to `issuerRoots`, so an
     /// issuer trusted for one document type can't sign another. With it,
@@ -567,7 +572,7 @@ public struct ProximityReaderConfiguration: Codable, Sendable {
     /// A configuration accepting mdocs under `issuerRoots`; with `readerKeyID`
     /// and `readerChain`, requests are signed.
     public init(issuerRoots: String, readerKeyID: String? = nil, readerChain: String? = nil,
-                maxClockSkewSeconds: Int? = nil, requireMDLSignerEKU: Bool = false,
+                maxClockSkewSeconds: Int? = nil, requireMDLSignerEKU: Bool = false, acceptMDLSignerWithoutEKU: Bool = false,
                 issuerRootsByDocType: [String: String] = [:], crls: String = "", revocation: [RevocationRole] = [],
                 crlIssuers: String = "") {
         self.issuerRoots = issuerRoots
@@ -575,6 +580,7 @@ public struct ProximityReaderConfiguration: Codable, Sendable {
         self.readerChain = readerChain
         self.maxClockSkewSeconds = maxClockSkewSeconds
         self.requireMDLSignerEKU = requireMDLSignerEKU
+        self.acceptMDLSignerWithoutEKU = acceptMDLSignerWithoutEKU
         self.issuerRootsByDocType = issuerRootsByDocType
         self.crls = crls
         self.revocation = revocation
@@ -584,6 +590,7 @@ public struct ProximityReaderConfiguration: Codable, Sendable {
     enum CodingKeys: String, CodingKey {
         case issuerRoots = "issuer_roots", readerKeyID = "reader_key_id", readerChain = "reader_chain"
         case maxClockSkewSeconds = "max_clock_skew_seconds", requireMDLSignerEKU = "require_mdl_signer_eku"
+        case acceptMDLSignerWithoutEKU = "accept_mdl_signer_without_eku"
         case issuerRootsByDocType = "issuer_roots_by_doctype"
         case crls, revocation, crlIssuers = "crl_issuers"
     }
@@ -596,6 +603,7 @@ public struct ProximityReaderConfiguration: Codable, Sendable {
         readerChain = try c.decodeIfPresent(String.self, forKey: .readerChain)
         maxClockSkewSeconds = try c.decodeIfPresent(Int.self, forKey: .maxClockSkewSeconds)
         requireMDLSignerEKU = try c.decodeIfPresent(Bool.self, forKey: .requireMDLSignerEKU) ?? false
+        acceptMDLSignerWithoutEKU = try c.decodeIfPresent(Bool.self, forKey: .acceptMDLSignerWithoutEKU) ?? false
         crls = try c.decodeIfPresent(String.self, forKey: .crls) ?? ""
         revocation = try c.decodeIfPresent([RevocationRole].self, forKey: .revocation) ?? []
         crlIssuers = try c.decodeIfPresent(String.self, forKey: .crlIssuers) ?? ""

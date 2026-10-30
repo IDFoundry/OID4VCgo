@@ -70,6 +70,14 @@ public struct WalletConfiguration: Codable, Sendable {
     /// 1.0.18013.5.1.2), in place of `issuerRequireEKU`, so a wallet
     /// receiving both formats can require each its own.
     public var mdocIssuerRequireEKU: String
+    /// Also accepts a document signer certificate with no extended key
+    /// usage, which is refused by default for lacking the mDL document
+    /// signer's (1.0.18013.5.1.2), for issuers whose document signers have
+    /// none. Any certificate without one under the same IACAs, such as a
+    /// revocation list signer's, can then sign mdocs the wallet accepts.
+    /// It can't be set with `mdocIssuerRequireEKU`, or with
+    /// `issuerRequireEKU` unless `mdocIssuerRoots` is set.
+    public var acceptMDLSignerWithoutEKU: Bool
     /// Relaxes what production requires, for a wallet talking to services
     /// on a development machine. Never ship an app with it set. It lets
     /// issuers, Authorization Servers, Verifiers and status lists be on
@@ -231,6 +239,7 @@ public struct WalletConfiguration: Codable, Sendable {
                 issuerMetadataRoots: String = "", requireSignedIssuerMetadata: Bool = false,
                 requireIssuerMetadataName: Bool = false, maxIssuerMetadataAgeSeconds: Int = 0, allowForeignIss: Bool = false,
                 mdocIssuerRoots: String = "", mdocIssuerRootsByDocType: [String: String] = [:], mdocIssuerRequireEKU: String = "",
+                acceptMDLSignerWithoutEKU: Bool = false,
                 crls: String = "", revocation: [RevocationRole] = [], crlIssuers: String = "",
                 noRevocationCheck: [RevocationRole] = []) {
         self.clientID = clientID
@@ -263,6 +272,7 @@ public struct WalletConfiguration: Codable, Sendable {
         self.mdocIssuerRoots = mdocIssuerRoots
         self.mdocIssuerRootsByDocType = mdocIssuerRootsByDocType
         self.mdocIssuerRequireEKU = mdocIssuerRequireEKU
+        self.acceptMDLSignerWithoutEKU = acceptMDLSignerWithoutEKU
         self.crls = crls
         self.revocation = revocation
         self.crlIssuers = crlIssuers
@@ -283,7 +293,7 @@ public struct WalletConfiguration: Codable, Sendable {
         case requireIssuerMetadataName = "require_issuer_metadata_name", maxIssuerMetadataAgeSeconds = "max_issuer_metadata_age_seconds"
         case allowForeignIss = "allow_foreign_iss"
         case mdocIssuerRoots = "mdoc_issuer_roots", mdocIssuerRootsByDocType = "mdoc_issuer_roots_by_doctype"
-        case mdocIssuerRequireEKU = "mdoc_issuer_require_eku"
+        case mdocIssuerRequireEKU = "mdoc_issuer_require_eku", acceptMDLSignerWithoutEKU = "accept_mdl_signer_without_eku"
         case crls, revocation, crlIssuers = "crl_issuers", noRevocationCheck = "no_revocation_check"
     }
 
@@ -326,6 +336,7 @@ public struct WalletConfiguration: Codable, Sendable {
                   mdocIssuerRoots: try c.decodeIfPresent(String.self, forKey: .mdocIssuerRoots) ?? "",
                   mdocIssuerRootsByDocType: try c.decodeIfPresent([String: String].self, forKey: .mdocIssuerRootsByDocType) ?? [:],
                   mdocIssuerRequireEKU: try c.decodeIfPresent(String.self, forKey: .mdocIssuerRequireEKU) ?? "",
+                  acceptMDLSignerWithoutEKU: try c.decodeIfPresent(Bool.self, forKey: .acceptMDLSignerWithoutEKU) ?? false,
                   crls: try c.decodeIfPresent(String.self, forKey: .crls) ?? "",
                   revocation: try c.decodeIfPresent([RevocationRole].self, forKey: .revocation) ?? [],
                   crlIssuers: try c.decodeIfPresent(String.self, forKey: .crlIssuers) ?? "",

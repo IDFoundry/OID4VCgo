@@ -22,7 +22,7 @@ func x5chainOf(certs ...*x509.Certificate) [][]byte {
 
 func TestX5ChainIssuerKeyResolver_AcceptsCASignedLeaf(t *testing.T) {
 	ca, caKey := verifiertest.ContractCA(t, "test-ca")
-	leaf, leafKey := verifiertest.ContractLeaf(t, "test-leaf", ca, caKey)
+	leaf, leafKey := verifiertest.ContractDocumentSignerLeaf(t, "test-leaf", ca, caKey)
 
 	roots := x509.NewCertPool()
 	roots.AddCert(ca)
@@ -62,7 +62,7 @@ func TestX5ChainIssuerKeyResolver_RejectsSelfSignedLeafEvenIfTrusted(t *testing.
 
 func TestX5ChainIssuerKeyResolver_RejectsUntrustedChain(t *testing.T) {
 	ca, caKey := verifiertest.ContractCA(t, "test-ca")
-	leaf, _ := verifiertest.ContractLeaf(t, "test-leaf", ca, caKey)
+	leaf, _ := verifiertest.ContractDocumentSignerLeaf(t, "test-leaf", ca, caKey)
 
 	resolver := verifier.X5ChainIssuerKeyResolver{Roots: x509.NewCertPool(), Revocation: certrevocation.NoCheck{}}
 	if _, _, err := resolver.ResolveMdocIssuerKey(context.Background(), x5chainOf(leaf), "org.iso.18013.5.1.mDL"); err == nil {
@@ -84,8 +84,8 @@ func TestX5ChainIssuerKeyResolver_RootsByDocType(t *testing.T) {
 	const mdl, pid, other = "org.iso.18013.5.1.mDL", "eu.europa.ec.eudi.pid.1", "org.example.other"
 	mdlCA, mdlCAKey := verifiertest.ContractCA(t, "mDL CA")
 	pidCA, pidCAKey := verifiertest.ContractCA(t, "PID CA")
-	mdlLeaf, _ := verifiertest.ContractLeaf(t, "mDL signer", mdlCA, mdlCAKey)
-	pidLeaf, _ := verifiertest.ContractLeaf(t, "PID signer", pidCA, pidCAKey)
+	mdlLeaf, _ := verifiertest.ContractDocumentSignerLeaf(t, "mDL signer", mdlCA, mdlCAKey)
+	pidLeaf, _ := verifiertest.ContractDocumentSignerLeaf(t, "PID signer", pidCA, pidCAKey)
 	pool := func(c *x509.Certificate) *x509.CertPool {
 		p := x509.NewCertPool()
 		p.AddCert(c)

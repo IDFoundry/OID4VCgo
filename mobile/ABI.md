@@ -19,7 +19,8 @@ OID4VCWallet 0.7.0 (Swift); `StartDCAPIPresentation`, proximity
 `CheckKeyAgreement`, `proximity_device_auth`), and then certificate
 revocation (`crls`, `revocation`, `SetCRLs` on a Wallet and a
 ProximityReader, later `crl_issuers` and a Wallet's
-`no_revocation_check`). An older wrapper shows a
+`no_revocation_check`), and later `accept_mdl_signer_without_eku`
+on a Wallet and a ProximityReader. An older wrapper shows a
 code it doesn't know as it is. Check a library's release notes for the
 calls it has.
 
@@ -220,6 +221,7 @@ library's an `IOException`.
  "mdoc_reader_roots": "<PEM>", "mdoc_reader_require_eku": false, "require_trusted_mdoc_reader": false,
  "verifier_require_eku": "", "registrar_require_eku": "", "issuer_require_eku": "", "issuer_metadata_require_eku": "",
  "mdoc_issuer_roots": "<PEM>", "mdoc_issuer_roots_by_doctype": {"org.iso.18013.5.1.mDL": "<PEM>"}, "mdoc_issuer_require_eku": "",
+ "accept_mdl_signer_without_eku": false,
  "require_signed_dcapi_requests": false,
  "development": false, "development_roots": "<PEM>", "locales": ["en-AU", "en"], "batch_size": 0,
  "request_refresh": false, "copy_policy": "per_presentation", "issuance_profile": "openid4vci",
@@ -298,13 +300,25 @@ or `issuer_roots`; a type named with an empty string is refused.
 document signer certificates with that extended key usage (the mDL's
 is 1.0.18013.5.1.2), in place of `issuer_require_eku`. Unset, an mdoc
 under `issuer_roots` gets `issuer_require_eku`, and one under the mdoc
-roots ISO/IEC 18013-5's default document signer check. With only
+roots ISO/IEC 18013-5's default document signer check, which requires
+the mDL document signer extended key usage. With only
 `issuer_roots` and none of these, both formats share them, as before.
 `issuer_roots` is then optional for a wallet receiving only mdocs. In
 the role check above, the issuers' roots of both formats are one role,
 and aren't checked against each other; the mdoc ones are checked
 against the other roles with `mdoc_issuer_require_eku`. Added within
 ABI version 12.
+
+`accept_mdl_signer_without_eku` (default false) also accepts a document
+signer certificate with no extended key usage extension, which the
+default check refuses, for issuers whose document signers have none.
+Any end-entity certificate without one under the same IACAs, such as a
+revocation list signer's, can then sign mdocs the wallet accepts. A
+certificate with an extended key usage must still list the mDL
+document signer's. It can't be set with `mdoc_issuer_require_eku`, or
+with `issuer_require_eku` unless `mdoc_issuer_roots` is set: either
+already decides which document signers are accepted, and the
+combination is `invalid_input`. Added within ABI version 12.
 
 `NewWallet`, and `NewProximityReader`, refuse a configuration with a key
 they don't know, one that matches a key only in case, or anything after
@@ -777,7 +791,8 @@ can't use is `invalid_input`.
 
 The configuration is `{"issuer_roots", "issuer_roots_by_doctype",
 "reader_key_id", "reader_chain", "max_clock_skew_seconds",
-"require_mdl_signer_eku", "crls", "revocation", "crl_issuers"}`:
+"require_mdl_signer_eku", "accept_mdl_signer_without_eku", "crls",
+"revocation", "crl_issuers"}`:
 - `issuer_roots` (PEM) are the IACAs whose mdocs are accepted, of any
   document type `issuer_roots_by_doctype` doesn't name.
 - `issuer_roots_by_doctype` (an object of document type to PEM) are each
@@ -793,7 +808,13 @@ The configuration is `{"issuer_roots", "issuer_roots_by_doctype",
 - `max_clock_skew_seconds` (at most 3600) tolerates an issuer's clock
   that far off.
 - `require_mdl_signer_eku` accepts only document signers with the mDL
-  document signer extended key usage.
+  document signer extended key usage. The default check requires it
+  too, so a document signer certificate without one is refused either
+  way.
+- `accept_mdl_signer_without_eku` also accepts a document signer
+  certificate with no extended key usage extension, as a Wallet's; it
+  can't be set with `require_mdl_signer_eku` (`invalid_input`). Added
+  within ABI version 12.
 - `crls` (PEM `X509 CRL` blocks) and `revocation` (roles: `issuer`, the
   document signer's chain, so a document whose signer or an IACA
   intermediate is revoked doesn't verify; `status`, a status list

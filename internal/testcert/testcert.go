@@ -13,6 +13,7 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/asn1"
 	"math/big"
 	"strings"
 	"testing"
@@ -172,6 +173,24 @@ func Issue(t testing.TB, tmpl *x509.Certificate, parent *x509.Certificate, paren
 		t.Fatalf("testcert: parse certificate: %v", err)
 	}
 	return cert, key
+}
+
+// mdlDocumentSignerEKU is ISO/IEC 18013-5's mDL document signer
+// extended key usage (Annex B.1.4: 1.0.18013.5.1.2). It's spelled out
+// here, not taken from internal/certchain, whose own tests import this
+// package.
+var mdlDocumentSignerEKU = asn1.ObjectIdentifier{1, 0, 18013, 5, 1, 2}
+
+// DocumentSigner issues an mdoc document signer certificate under
+// ca/caKey for a fresh EC P-256 key: Leaf's, for digital signatures,
+// with the mDL document signer's extended key usage, which
+// mdoc.DefaultDocumentSignerPolicy requires.
+func DocumentSigner(t testing.TB, commonName string, ca *x509.Certificate, caKey *ecdsa.PrivateKey) (*x509.Certificate, *ecdsa.PrivateKey) {
+	t.Helper()
+	return Issue(t, &x509.Certificate{
+		SerialNumber: big.NewInt(2), Subject: pkix.Name{CommonName: commonName},
+		KeyUsage: x509.KeyUsageDigitalSignature, UnknownExtKeyUsage: []asn1.ObjectIdentifier{mdlDocumentSignerEKU},
+	}, ca, caKey)
 }
 
 // CrossCertify issues a second CA certificate for ca's own subject and

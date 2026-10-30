@@ -4,11 +4,13 @@ import (
 	"context"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/asn1"
 	"net/http"
 	"strings"
 	"testing"
 
 	"github.com/idfoundry/oid4vcgo/certrevocation"
+	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/internal/testcert"
 	"github.com/idfoundry/oid4vcgo/issuer"
@@ -21,7 +23,8 @@ import (
 func TestVerifyIssuedCredential_IssuerRevocation(t *testing.T) {
 	ca, caKey := testcert.CAWithSubject(t, pkix.Name{CommonName: "revocation test CA", Country: []string{"SG"}})
 	leaf, leafKey := testcert.Issue(t, &x509.Certificate{
-		Subject: pkix.Name{CommonName: "revocation test issuer", Country: []string{"SG"}},
+		Subject:            pkix.Name{CommonName: "revocation test issuer", Country: []string{"SG"}},
+		UnknownExtKeyUsage: []asn1.ObjectIdentifier{mdoc.MDLDocumentSignerEKU},
 	}, ca, caKey)
 	roots := x509.NewCertPool()
 	roots.AddCert(ca)

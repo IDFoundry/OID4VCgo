@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/credential"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/statefile"
 )
@@ -44,10 +45,11 @@ func loadOrCreateIdentity(dir string, now time.Time) (issuerIdentity, error) {
 		if err != nil {
 			return issuerIdentity{}, fmt.Errorf("issuerapp: %s: %w", path, err)
 		}
-		// An identity from before the CA carried a countryName is made
-		// again: verifiers refuse its mdocs.
+		// An identity from before the CA carried a countryName, or the
+		// document signer the mDL document signer's extended key usage,
+		// is made again: verifiers refuse its mdocs.
 		if id.documentSignerCert.NotAfter.After(now.AddDate(1, 0, 0)) && len(id.caCert.Subject.Country) > 0 &&
-			!id.documentSignerCert.NotBefore.After(credential.ValidFrom(now)) {
+			!id.documentSignerCert.NotBefore.After(credential.ValidFrom(now)) && mdoc.DefaultDocumentSignerPolicy(id.documentSignerCert, nil) == nil {
 			return id, nil
 		}
 	case !errors.Is(err, fs.ErrNotExist):

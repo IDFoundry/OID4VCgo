@@ -8,6 +8,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/dcql"
 	"github.com/idfoundry/oid4vcgo/registration"
 	"github.com/idfoundry/oid4vcgo/wallet"
@@ -140,7 +141,12 @@ func (p *Presentation) verifyEntry(ctx context.Context, vi wallet.VerifierInfo, 
 	if !ok || !registration.Recognize(vi.Format, data) {
 		return registration.Registration{}, false, nil
 	}
-	registrars := registration.Registrars{Roots: p.w.cfg.RegistrarRoots, LeafPolicy: p.w.cfg.RegistrarLeafPolicy, Revocation: p.w.cfg.RegistrarRevocation}
+	revocation := p.w.cfg.RegistrarRevocation
+	if revocation == nil {
+		// Development only: New requires a choice otherwise.
+		revocation = certrevocation.NoCheck{}
+	}
+	registrars := registration.Registrars{Roots: p.w.cfg.RegistrarRoots, LeafPolicy: p.w.cfg.RegistrarLeafPolicy, Revocation: revocation}
 	reg, err = registrars.Verify(ctx, data, p.req.ClientID, now)
 	if err == nil && signedBySelf(reg, p.req.VerifierCertificate) {
 		err = errSelfRegistered

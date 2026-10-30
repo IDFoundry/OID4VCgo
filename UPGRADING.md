@@ -83,6 +83,73 @@ them.
   characters dropped, and is trimmed of surrounding space. A walletflow
   control character becomes a space instead of being dropped.
 
+### Credential Issuer (`issuer`)
+
+- **Key attestation signing certificates.** With `LeafPolicy` unset,
+  `X5CAttestationVerifier` and `X5CProofBindingKeyResolver` now apply
+  `issuer.DefaultAttestationLeafPolicy`. It refuses a signing certificate
+  whose key usage doesn't allow digital signatures, that is an OCSP
+  signer, or whose extended key usage lists any other role's purpose:
+  TLS server or client, code signing, email, time stamping, IPsec, the
+  mDL document signer's, or mdoc reader authentication. It also refuses
+  one reached only through an intermediate restricted to such purposes.
+  Give Wallet Providers their own certificates, or set `LeafPolicy`:
+  call `issuer.DefaultAttestationLeafPolicy` from yours to keep these
+  refusals, or set `issuer.AnyAttestationLeaf` to accept every
+  chain-verified leaf.
+- **Attestation issuer binding.** Under production, an
+  `X5CAttestationVerifier` left at `AttestationIssuerUnbound` is
+  refused. Set `IssuerBinding` to `AttestationIssuerBoundToAnchor` (with
+  `Anchors`) where the roots certify more than one Wallet Provider, or
+  to `AttestationIssuerInCertificate`. Where the roots certify a single
+  Wallet Provider, set `SingleWalletProvider: true`. `New` refuses
+  `SingleWalletProvider` together with any other binding.
+- **Attestation status lists.** Bind an `AttestationStatusChecker`'s
+  Status List Token signer by the attestation's key
+  (`Options.IssuerKey = a.SignerKey`), not by `a.Claims.Issuer`, as the
+  interface's doc comment now says.
+
+### mdoc document signers (`credential/mdoc`, `verifier`, `mdocdcapi`, `proximity`, `wallet`, `walletflow`, the mobile libraries)
+
+- **The mDL document signer extended key usage is required.**
+  `mdoc.DefaultDocumentSignerPolicy`, the default of
+  `X5ChainIssuerKeyResolver.LeafPolicy`, of a wallet receiving an mdoc
+  with no issuer leaf policy, and of the proximity reader, now refuses
+  a document signer certificate whose extended key usage doesn't list
+  `mdoc.MDLDocumentSignerEKU` (1.0.18013.5.1.2, ISO/IEC 18013-5 Annex
+  B.1.4), including one with no extended key usage at all. Before, such
+  a certificate was accepted, so a revocation list signer's certificate,
+  whose extended key usage Annex B.1.7 makes optional, could sign mdocs.
+  It also refuses one reached only through an intermediate whose
+  extended key usage excludes it. Ask your issuers for document signer
+  certificates with the extended key usage. To keep accepting document
+  signers without one, set the policy to
+  `mdoc.LenientDocumentSignerPolicy`: `X5ChainIssuerKeyResolver.LeafPolicy`,
+  `proximity.WithDocumentSignerPolicy`, or the wallet's issuer leaf
+  policy (`VerifyIssuedCredentialParams.IssuerLeafPolicy`,
+  `walletflow.Config.MdocIssuerLeafPolicy`). The mobile libraries have
+  no lenient option.
+
+### Registrations (`registration`, `walletflow`)
+
+- **`Registrars.Revocation` is required.** `Registrars.Verify` refuses
+  a nil `Revocation`: pass `certrevocation.CRLs{...}`, your own
+  `certrevocation.Checker`, or `certrevocation.NoCheck{}` to decline.
+  `walletflow` passes `NoCheck{}` itself in development when
+  `Config.RegistrarRevocation` is unset; outside development it was
+  already required.
+- **Registrar certificates.** With `LeafPolicy` unset,
+  `Registrars.Verify` now applies `registration.DefaultRegistrarLeafPolicy`,
+  which refuses the same certificates as
+  `issuer.DefaultAttestationLeafPolicy` above. Set `LeafPolicy` to your
+  ecosystem's own check, calling `DefaultRegistrarLeafPolicy` first, or
+  to `registration.AnyRegistrarLeaf` to accept every chain-verified
+  leaf. `walletflow.Config.RegistrarLeafPolicy` defaults the same way.
+- **`Verify` and `VerifyWithPolicy` are deprecated.** Use
+  `Registrars.Verify`, which takes a context and a revocation choice.
+  The deprecated functions check no revocation and apply
+  `DefaultRegistrarLeafPolicy` when no policy is given.
+
 ## v0.55.0 → v0.56.0
 
 This release pins FAPIgo v0.65.1, which carries the breaking changes of

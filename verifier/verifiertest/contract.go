@@ -54,6 +54,14 @@ func ContractLeaf(t *testing.T, commonName string, ca *x509.Certificate, caKey *
 	return testcert.Leaf(t, commonName, ca, caKey)
 }
 
+// ContractDocumentSignerLeaf is ContractLeaf for an mdoc document
+// signer: a leaf with the mDL document signer's extended key usage,
+// which mdoc.DefaultDocumentSignerPolicy, X5ChainIssuerKeyResolver's
+// default, requires. TestX5ChainTrustContract's leaves are these.
+func ContractDocumentSignerLeaf(t *testing.T, commonName string, ca *x509.Certificate, caKey *ecdsa.PrivateKey) (*x509.Certificate, *ecdsa.PrivateKey) {
+	return testcert.DocumentSigner(t, commonName, ca, caKey)
+}
+
 func ContractSelfSignedLeaf(t *testing.T, commonName string) (*x509.Certificate, *ecdsa.PrivateKey) {
 	return testcert.SelfSignedLeaf(t, commonName)
 }
@@ -64,7 +72,7 @@ func ContractSelfSignedLeaf(t *testing.T, commonName string) (*x509.Certificate,
 // and doesn't claim to cover.
 func TestX5CTrustContract(t *testing.T, factory func(roots *x509.CertPool) verifier.SDJWTVCIssuerKeyResolver) {
 	t.Helper()
-	testCertChainTrustContract(t, func(roots *x509.CertPool, certs ...*x509.Certificate) error {
+	testCertChainTrustContract(t, ContractLeaf, func(roots *x509.CertPool, certs ...*x509.Certificate) error {
 		entries := make([]any, len(certs))
 		for i, c := range certs {
 			entries[i] = base64.StdEncoding.EncodeToString(c.Raw)
@@ -79,7 +87,7 @@ func TestX5CTrustContract(t *testing.T, factory func(roots *x509.CertPool) verif
 // package-level note.
 func TestX5ChainTrustContract(t *testing.T, factory func(roots *x509.CertPool) verifier.MdocIssuerKeyResolver) {
 	t.Helper()
-	testCertChainTrustContract(t, func(roots *x509.CertPool, certs ...*x509.Certificate) error {
+	testCertChainTrustContract(t, ContractDocumentSignerLeaf, func(roots *x509.CertPool, certs ...*x509.Certificate) error {
 		chain := make([][]byte, len(certs))
 		for i, c := range certs {
 			chain[i] = c.Raw
@@ -95,12 +103,12 @@ func TestX5ChainTrustContract(t *testing.T, factory func(roots *x509.CertPool) v
 // with roots and report whatever error (if any) it returned —
 // hiding the one thing that differs between an x5c (JSON+base64
 // header member) and an x5chain (raw DER byte slices) resolver.
-func testCertChainTrustContract(t *testing.T, resolve func(roots *x509.CertPool, certs ...*x509.Certificate) error) {
+func testCertChainTrustContract(t *testing.T, contractLeaf func(*testing.T, string, *x509.Certificate, *ecdsa.PrivateKey) (*x509.Certificate, *ecdsa.PrivateKey), resolve func(roots *x509.CertPool, certs ...*x509.Certificate) error) {
 	t.Helper()
 
 	t.Run("AcceptsCASignedLeaf", func(t *testing.T) {
 		ca, caKey := ContractCA(t, "test-ca")
-		leaf, _ := ContractLeaf(t, contractLeafCommonName, ca, caKey)
+		leaf, _ := contractLeaf(t, contractLeafCommonName, ca, caKey)
 		roots := x509.NewCertPool()
 		roots.AddCert(ca)
 
@@ -121,7 +129,7 @@ func testCertChainTrustContract(t *testing.T, resolve func(roots *x509.CertPool,
 
 	t.Run("RejectsUntrustedChain", func(t *testing.T) {
 		ca, caKey := ContractCA(t, "test-ca")
-		leaf, _ := ContractLeaf(t, contractLeafCommonName, ca, caKey)
+		leaf, _ := contractLeaf(t, contractLeafCommonName, ca, caKey)
 		untrustedCA, _ := ContractCA(t, "untrusted-ca")
 		roots := x509.NewCertPool()
 		roots.AddCert(untrustedCA) // does not chain to the leaf's own issuer.

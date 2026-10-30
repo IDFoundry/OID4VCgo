@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/asn1"
 	"encoding/pem"
 	"fmt"
 	"net/http"
@@ -426,6 +427,12 @@ type issuerIdentity struct {
 // document signer certificate's validity. The CA's starts as early, so
 // the signer's doesn't start before its issuer's.
 func newIssuerIdentity(now time.Time) (issuerIdentity, error) {
+	return newIssuerIdentityWithSignerEKUs(now, mdoc.MDLDocumentSignerEKU)
+}
+
+// newIssuerIdentityWithSignerEKUs is newIssuerIdentity, its document
+// signer's extended key usages dsEKUs.
+func newIssuerIdentityWithSignerEKUs(now time.Time, dsEKUs ...asn1.ObjectIdentifier) (issuerIdentity, error) {
 	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return issuerIdentity{}, fmt.Errorf("issuerapp: CA key: %w", err)
@@ -439,7 +446,7 @@ func newIssuerIdentity(now time.Time) (issuerIdentity, error) {
 	if err != nil {
 		return issuerIdentity{}, fmt.Errorf("issuerapp: %w", err)
 	}
-	if id.documentSigner, id.documentSignerCert, err = issueSigner(now, "passport-vdc demo document signer", id.caCert, caKey); err != nil {
+	if id.documentSigner, id.documentSignerCert, err = issueSigner(now, "passport-vdc demo document signer", id.caCert, caKey, dsEKUs...); err != nil {
 		return issuerIdentity{}, err
 	}
 	if id.metadataSigner, id.metadataSignerCert, err = issueSigner(now, "passport-vdc demo metadata signer", id.caCert, caKey); err != nil {
@@ -459,8 +466,11 @@ const certificateBackdate = 25 * time.Hour
 // code: the demo issues for no real country.
 const demoCountry = "ZZ"
 
-// issueSigner generates a signing key and its certificate under ca.
-func issueSigner(now time.Time, name string, ca *x509.Certificate, caKey *ecdsa.PrivateKey) (*ecdsa.PrivateKey, *x509.Certificate, error) {
+// issueSigner generates a signing key and its certificate under ca,
+// with the extended key usages ekus, if any: the document signer's is
+// ISO/IEC 18013-5's mDL document signer's (Annex B.1.4), which
+// verifiers require of the certificate signing an mdoc.
+func issueSigner(now time.Time, name string, ca *x509.Certificate, caKey *ecdsa.PrivateKey, ekus ...asn1.ObjectIdentifier) (*ecdsa.PrivateKey, *x509.Certificate, error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return nil, nil, fmt.Errorf("issuerapp: %s key: %w", name, err)
@@ -468,7 +478,7 @@ func issueSigner(now time.Time, name string, ca *x509.Certificate, caKey *ecdsa.
 	cert, err := democert.Create(&x509.Certificate{
 		Subject:   pkix.Name{CommonName: name, Organization: []string{"IDFoundry demo"}, Country: []string{demoCountry}},
 		NotBefore: now.Add(-certificateBackdate), NotAfter: now.AddDate(2, 0, 0),
-		KeyUsage: x509.KeyUsageDigitalSignature,
+		KeyUsage: x509.KeyUsageDigitalSignature, UnknownExtKeyUsage: ekus,
 	}, ca, &key.PublicKey, caKey)
 	if err != nil {
 		return nil, nil, fmt.Errorf("issuerapp: %w", err)

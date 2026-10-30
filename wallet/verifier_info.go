@@ -15,7 +15,7 @@ import (
 // verifier_info (OpenID4VP 1.0 §5.1, §5.11), as received: its format,
 // its data, and the credential queries it applies to. Nothing in it is
 // verified here. A Wallet that uses one MUST validate its signature and
-// binding first; registration.Verify does for this library's own
+// binding first; registration.Registrars.Verify does for this library's own
 // registration format.
 type VerifierInfo struct {
 	Format string

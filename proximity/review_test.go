@@ -38,7 +38,7 @@ func issueWith(t *testing.T, fx fixture, dsKey *ecdsa.PrivateKey, ds *x509.Certi
 // check revocation with.
 func TestVerifiedCarriesStatus(t *testing.T) {
 	ca, caKey := testIACA(t)
-	ds, dsKey := testDocumentSigner(t, ca, caKey)
+	ds, dsKey := testDocumentSigner(t, ca, caKey, MDLDocumentSignerEKU)
 	fx := issueFixture(t, mDL)
 	fx.roots = x509.NewCertPool()
 	fx.roots.AddCert(ca)
@@ -78,7 +78,7 @@ func TestKeyAlg(t *testing.T) {
 func issueValidFrom(t *testing.T, fx fixture, from time.Time) fixture {
 	t.Helper()
 	ca, caKey := testIACA(t)
-	ds, dsKey := testDocumentSigner(t, ca, caKey)
+	ds, dsKey := testDocumentSigner(t, ca, caKey, MDLDocumentSignerEKU)
 	issuerSigned, err := mdoc.Issue(dsKey, cose.ES256, mdoc.Claims{
 		DocType:    fx.docType,
 		NameSpaces: map[string]map[string]interface{}{mDLNS: {"age_over_18": true}},
@@ -146,13 +146,18 @@ func TestRequireMDLDocumentSignerEKU(t *testing.T) {
 	}
 }
 
-// By default an OCSP signer, or a certificate whose key usage doesn't
-// allow digital signatures, doesn't sign mdocs; AnyDocumentSigner turns
-// the check off.
+// By default an OCSP signer, a certificate whose key usage doesn't
+// allow digital signatures, or one without the mDL document signer's
+// extended key usage doesn't sign mdocs; AnyDocumentSigner turns the
+// check off.
 func TestDefaultDocumentSignerPolicy(t *testing.T) {
 	ds := &x509.Certificate{}
+	if err := DefaultDocumentSignerPolicy(ds, nil); err == nil {
+		t.Error("a certificate without the mDL document signer's extended key usage was accepted")
+	}
+	ds = &x509.Certificate{KeyUsage: x509.KeyUsageDigitalSignature, UnknownExtKeyUsage: []asn1.ObjectIdentifier{MDLDocumentSignerEKU}}
 	if err := DefaultDocumentSignerPolicy(ds, nil); err != nil {
-		t.Errorf("no extensions: %v", err)
+		t.Errorf("an mDL document signer: %v", err)
 	}
 	ds = &x509.Certificate{KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageOCSPSigning}}
 	if err := DefaultDocumentSignerPolicy(ds, nil); err == nil {

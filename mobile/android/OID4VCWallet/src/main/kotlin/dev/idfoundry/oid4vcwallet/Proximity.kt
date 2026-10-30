@@ -569,6 +569,13 @@ public data class ProximityReaderConfiguration(
      * roots, for a role in [revocation], as [WalletConfiguration.crlIssuers].
      */
     @SerialName("crl_issuers") val crlIssuers: String = "",
+    /**
+     * Also accepts a document signer certificate with no extended key
+     * usage, which is refused by default for lacking the mDL document
+     * signer's, for issuers whose document signers have none. It can't be
+     * set with [requireMDLSignerEKU].
+     */
+    @SerialName("accept_mdl_signer_without_eku") val acceptMDLSignerWithoutEKU: Boolean = false,
 ) {
     /** A reader's trust role whose certificates can be checked for revocation. */
     @Serializable

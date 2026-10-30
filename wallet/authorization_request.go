@@ -117,7 +117,7 @@ type AuthorizationRequest struct {
 
 	// VerifierInfo are the request's attestations about the Verifier
 	// (verifier_info, OpenID4VP 1.0 §5.11), unverified: check one
-	// before relying on it (registration.Verify, for a registration).
+	// before relying on it (registration.Registrars.Verify, for a registration).
 	VerifierInfo []VerifierInfo
 
 	// VPFormats is the Verifier's client_metadata.vp_formats_supported,

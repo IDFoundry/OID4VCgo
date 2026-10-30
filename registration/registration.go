@@ -34,6 +34,7 @@ import (
 	"context"
 	"crypto/ecdsa"
 	"crypto/x509"
+	"encoding/asn1"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -201,52 +202,95 @@ func Recognize(format, data string) bool {
 	return typ == Type
 }
 
-// Verify checks token, a registration JWT, and returns what it attests:
-// its typ is Type, it's signed with ES256 by an end-entity certificate
-// chaining to roots (not self-signed, not a CA, for digital
-// signatures), its iss is one of that certificate's URI subject
-// alternative names, it's for clientID (sub), and it holds at now.
+// Verify checks token, a registration JWT, as Registrars.Verify does,
+// with roots, no revocation check (certrevocation.NoCheck) and
+// DefaultRegistrarLeafPolicy.
 //
-// roots must anchor only registrars: any end-entity certificate under
-// them can register any Verifier, so a root that also issues Verifiers'
-// or Issuers' certificates would let them register themselves.
-// VerifyWithPolicy narrows which certificates may sign, and Registrars
-// also checks their revocation.
+// Deprecated: use Registrars.Verify, which takes a context and needs a
+// decision on the registrars' certificates' revocation.
 func Verify(token string, roots *x509.CertPool, clientID string, now time.Time) (Registration, error) {
 	return VerifyWithPolicy(token, roots, clientID, now, nil)
 }
 
-// VerifyWithPolicy is Verify, with policy (if non-nil) deciding whether
-// the verified signing certificate may act as a registrar — an extended
-// key usage or certificate policy the ecosystem defines, say.
+// VerifyWithPolicy is Verify, with policy (if non-nil, in place of
+// DefaultRegistrarLeafPolicy) deciding whether the verified signing
+// certificate may act as a registrar.
+//
+// Deprecated: use Registrars.Verify, with LeafPolicy set to policy.
 func VerifyWithPolicy(token string, roots *x509.CertPool, clientID string, now time.Time, policy func(leaf *x509.Certificate, chains [][]*x509.Certificate) error) (Registration, error) {
-	return Registrars{Roots: roots, LeafPolicy: policy}.Verify(context.Background(), token, clientID, now)
+	return Registrars{Roots: roots, LeafPolicy: policy, Revocation: certrevocation.NoCheck{}}.Verify(context.Background(), token, clientID, now)
 }
 
-// Registrars are the registrars a Wallet recognizes: Verify's roots and
-// VerifyWithPolicy's policy, and the revocation check of their
-// certificates.
+// Registrars are the registrars a Wallet recognizes: their trust
+// anchors, which of the certificates under them may sign registrations,
+// and the revocation check of those certificates.
 type Registrars struct {
 	// Roots are the trust anchors a registrar's certificate must chain
-	// to. They must anchor only registrars (see Verify). REQUIRED.
+	// to. REQUIRED. They must anchor only registrars: any end-entity
+	// certificate under them that LeafPolicy accepts can register any
+	// Verifier, so a root that also issues Verifiers' or Issuers'
+	// certificates would let them register themselves.
 	Roots *x509.CertPool
 	// LeafPolicy, if set, decides whether the verified signing
-	// certificate may act as a registrar, as VerifyWithPolicy's policy.
+	// certificate may act as a registrar: an extended key usage or
+	// certificate policy the ecosystem defines for registrars, say. nil
+	// means DefaultRegistrarLeafPolicy. A LeafPolicy that's set replaces
+	// it: one adding a requirement calls DefaultRegistrarLeafPolicy
+	// first, so as not to drop its refusals, and AnyRegistrarLeaf opts
+	// out of them explicitly.
 	LeafPolicy func(leaf *x509.Certificate, chains [][]*x509.Certificate) error
-	// Revocation, if set, checks the registrar's certificate chain for
+	// Revocation checks the registrar's certificate chain for
 	// revocation: only a verified path LeafPolicy approves and
 	// Revocation passes is accepted, and a registration signed by a
 	// revoked certificate is refused with an error wrapping
-	// certrevocation.ErrRevoked. nil checks no revocation; see
-	// certrevocation.
+	// certrevocation.ErrRevoked. REQUIRED, with no default: pass
+	// certrevocation.CRLs{...} with your CAs' current lists, your own
+	// certrevocation.Checker, or certrevocation.NoCheck{} to decline.
 	Revocation certrevocation.Checker
 }
 
-// Verify is the package's Verify against r: token, a registration JWT,
-// for clientID, at now.
+// registrarRole is DefaultRegistrarLeafPolicy's role.
+var registrarRole = certchain.LeafRole{
+	Name:         "the registrar certificate",
+	OtherISOEKUs: []asn1.ObjectIdentifier{certchain.MDLDocumentSignerEKU, certchain.ReaderAuthenticationEKU},
+	Strict:       true,
+}
+
+// DefaultRegistrarLeafPolicy is the registrar certificate check
+// Registrars.Verify makes where no LeafPolicy is set. It refuses a
+// certificate whose key usage extension doesn't allow digital
+// signatures, that is an OCSP signer, whose extended key usage lists
+// any purpose that denotes another role — TLS server or client
+// authentication, code signing, email protection, time stamping,
+// IPsec, or ISO/IEC 18013-5's mDL document signer or mdoc reader
+// authentication (Annex B) — or every verified path in chains (leaf
+// first) of which has an intermediate CA whose extended key usage lists
+// only such purposes. It accepts a certificate without those
+// extensions, or whose extended key usage lists only
+// anyExtendedKeyUsage or purposes of its own. It can't tell a
+// registrar's certificate from a Verifier's that carries no extended
+// key usage: Roots must still anchor only registrars, or LeafPolicy
+// require the ecosystem's registrar purpose.
+func DefaultRegistrarLeafPolicy(leaf *x509.Certificate, chains [][]*x509.Certificate) error {
+	return registrarRole.Check(leaf, chains)
+}
+
+// AnyRegistrarLeaf is a LeafPolicy that accepts every chain-verified
+// leaf: the explicit opt-out of DefaultRegistrarLeafPolicy.
+func AnyRegistrarLeaf(*x509.Certificate, [][]*x509.Certificate) error { return nil }
+
+// Verify checks token, a registration JWT, and returns what it attests:
+// its typ is Type, it's signed with ES256 by an end-entity certificate
+// chaining to r.Roots (not self-signed, not a CA, for digital
+// signatures) that r.LeafPolicy accepts and r.Revocation passes, its
+// iss is one of that certificate's URI subject alternative names, it's
+// for clientID (sub), and it holds at now.
 func (r Registrars) Verify(ctx context.Context, token, clientID string, now time.Time) (Registration, error) {
 	if r.Roots == nil {
 		return Registration{}, errors.New("registration: no registrar roots")
+	}
+	if r.Revocation == nil {
+		return Registration{}, fmt.Errorf("registration: Registrars.Revocation is required: %s", certchain.RevocationChoices)
 	}
 	if err := certchain.ValidateRevocation(r.Revocation); err != nil {
 		return Registration{}, fmt.Errorf("registration: Revocation: %w", err)
@@ -270,7 +314,11 @@ func (r Registrars) Verify(ctx context.Context, token, clientID string, now time
 	if err != nil {
 		return Registration{}, fmt.Errorf("registration: %w", err)
 	}
-	leaf, _, err := certchain.VerifyTrustedChainsAt(ctx, ders, r.Roots, r.LeafPolicy, r.Revocation, now)
+	policy := r.LeafPolicy
+	if policy == nil {
+		policy = DefaultRegistrarLeafPolicy
+	}
+	leaf, _, err := certchain.VerifyTrustedChainsAt(ctx, ders, r.Roots, policy, r.Revocation, now)
 	if err != nil {
 		return Registration{}, fmt.Errorf("registration: registrar certificate: %w", err)
 	}
