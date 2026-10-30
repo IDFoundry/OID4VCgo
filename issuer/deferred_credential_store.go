@@ -108,6 +108,17 @@ type DeferredTransactionRecord struct {
 	// with no key attestation, has nothing to check again.
 	KeyAttestations []string
 
+	// ProofKeyHeaders, when the request's jwt proofs conveyed a binding
+	// key by "kid" or "x5c" (Dependencies.ProofBindingKeys resolved it),
+	// holds each such proof's JOSE header, in JSON, at its key's index
+	// in BindingKeys, and null for a key conveyed otherwise; nil when
+	// there was none. IssueDeferredCredential resolves each again with
+	// ProofBindingKeys, as of then, so a key whose certificate has been
+	// revoked, or is no longer trusted, while the transaction was pending
+	// stops the issuance. A store must persist it like any other field:
+	// a record without it has nothing to check again.
+	ProofKeyHeaders []json.RawMessage
+
 	// Reference is the deployment's own handle for the business
 	// process behind the transaction (Deferral.Reference).
 	Reference string

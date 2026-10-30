@@ -1,7 +1,9 @@
 package issuer
 
 import (
+	"bytes"
 	"context"
+	"crypto"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -14,7 +16,9 @@ import (
 	"github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
+	"github.com/idfoundry/oid4vcgo/internal/certchain"
 	"github.com/idfoundry/oid4vcgo/internal/jwk"
+	"github.com/idfoundry/oid4vcgo/internal/strictjson"
 )
 
 // transactionIDEntropyBytes sets how much randomness backs a
@@ -51,6 +55,22 @@ var ErrDeferredKeyAttestation = errors.New("issuer: a key attestation behind the
 // expires, or the attestation's exp, after which a re-check denies it.
 var ErrDeferredAttestationStatusUnknown = errors.New("issuer: a key attestation behind the deferred transaction has a status that can't be checked now")
 
+// ErrDeferredProofKey is returned, wrapped with the reason, by
+// IssueDeferredCredential when a binding key a jwt proof conveyed by
+// kid or x5c (DeferredTransactionRecord.ProofKeyHeaders) no longer
+// resolves through Dependencies.ProofBindingKeys: its certificate has
+// expired or been revoked, or is no longer trusted. The transaction is
+// denied instead of issued, as for ErrDeferredKeyAttestation.
+var ErrDeferredProofKey = errors.New("issuer: a proof key behind the deferred transaction is no longer trusted")
+
+// ErrDeferredProofKeyTrustUnknown is returned, wrapped with the reason,
+// by IssueDeferredCredential when whether a binding key a jwt proof
+// conveyed by kid or x5c is still trusted couldn't be decided now (its
+// certificate's revocation, say: see ProofBindingKeyResolver), and none
+// is known not to be. The transaction stays pending, as for
+// ErrDeferredAttestationStatusUnknown.
+var ErrDeferredProofKeyTrustUnknown = errors.New("issuer: the trust of a proof key behind the deferred transaction can't be decided now")
+
 // ErrDeferredTransactionResolved is returned by IssueDeferredCredential
 // and DenyDeferredCredential for a transaction that isn't pending any
 // more: already issued, denied or expired.
@@ -79,10 +99,17 @@ func (iss *Issuer) startDeferral(ctx context.Context, auth AuthorizedRequest, co
 	transactionID := base64.RawURLEncoding.EncodeToString(raw)
 	bindingKeys := make([]json.RawMessage, len(keys))
 	var keyAttestations []string
+	var proofKeyHeaders []json.RawMessage
 	for i, k := range keys {
 		bindingKeys[i] = k.JWKRaw
 		if k.KeyAttestation != "" && !slices.Contains(keyAttestations, k.KeyAttestation) {
 			keyAttestations = append(keyAttestations, k.KeyAttestation)
+		}
+		if k.ProofKeyHeader != nil {
+			if proofKeyHeaders == nil {
+				proofKeyHeaders = make([]json.RawMessage, len(keys))
+			}
+			proofKeyHeaders[i] = k.ProofKeyHeader
 		}
 	}
 	record := DeferredTransactionRecord{
@@ -90,7 +117,7 @@ func (iss *Issuer) startDeferral(ctx context.Context, auth AuthorizedRequest, co
 		ClientID: auth.ClientID(), Subject: auth.Subject, Status: DeferredTransactionPending,
 		CredentialConfigurationID: configID, BindingKeys: bindingKeys, Reference: d.Reference,
 		ExpiresAt:       iss.deps.Clock.Now().Add(iss.cfg.Limits.DeferredTransactionLifetime),
-		KeyAttestations: keyAttestations,
+		KeyAttestations: keyAttestations, ProofKeyHeaders: proofKeyHeaders,
 	}
 	if err := iss.deps.DeferredTransactions.Create(ctx, transactionID, record); err != nil {
 		return oid4vci.CredentialResponse{}, fmt.Errorf("issuer: request credential: save deferred transaction: %w", err)
@@ -142,6 +169,14 @@ type DeferredIssuance struct {
 // its keys expire too (Appendix D.1), so a Wallet Provider's must
 // outlast the time a deferred transaction waits for its decision.
 //
+// A binding key a jwt proof conveyed by kid or x5c
+// (DeferredTransactionRecord.ProofKeyHeaders) is resolved again with
+// Dependencies.ProofBindingKeys the same way: one that no longer
+// resolves to that key (its certificate expired, revoked or no longer
+// trusted) denies the transaction, with ErrDeferredProofKey, and one
+// whose trust can't be decided now leaves it pending, with
+// ErrDeferredProofKeyTrustUnknown, unless another check denies it.
+//
 // Concurrent calls for one transaction may each build Credentials, and
 // run content.PerCredential for them, but only the first to finish
 // saves them; the others return ErrDeferredTransactionResolved, and
@@ -169,14 +204,14 @@ func (iss *Issuer) issueDeferredCredential(ctx context.Context, transactionID st
 		}
 		keys[i] = resolvedKey{Public: pub, JWKRaw: raw}
 	}
-	if err := iss.recheckKeyAttestations(ctx, cc, record); err != nil {
-		if errors.Is(err, ErrDeferredAttestationStatusUnknown) {
+	if err := iss.recheckDeferredTrust(ctx, cc, record, keys); err != nil {
+		if !errors.Is(err, ErrDeferredKeyAttestation) && !errors.Is(err, ErrDeferredProofKey) {
 			return record.ClientID, fmt.Errorf("issuer: issue deferred credential: %w", err)
 		}
 		if _, denyErr := iss.denyPending(ctx, transactionID); denyErr != nil {
 			return record.ClientID, denyErr
 		}
-		return record.ClientID, fmt.Errorf("issuer: issue deferred credential: %w: %w", ErrDeferredKeyAttestation, err)
+		return record.ClientID, fmt.Errorf("issuer: issue deferred credential: %w", err)
 	}
 	credentials, err := iss.issueBatch(ctx, cc, CredentialRequest{
 		SDJWTClaims: content.SDJWTClaims, MdocClaims: content.MdocClaims, PerCredential: content.PerCredential,
@@ -231,6 +266,80 @@ func (iss *Issuer) denyPending(ctx context.Context, transactionID string) (strin
 		return nil
 	})
 	return clientID, err
+}
+
+// recheckDeferredTrust checks again, as of now, what record's binding
+// keys were trusted through: its key attestations
+// (recheckKeyAttestations) and the keys Dependencies.ProofBindingKeys
+// resolved (recheckProofKeys). keys are record's BindingKeys, parsed. A
+// key no longer trusted returns an error wrapping
+// ErrDeferredKeyAttestation or ErrDeferredProofKey, which denies the
+// transaction, even when another check couldn't be decided; only when
+// none is untrusted does one that couldn't be decided return an error
+// wrapping ErrDeferredAttestationStatusUnknown or
+// ErrDeferredProofKeyTrustUnknown, leaving the transaction pending.
+func (iss *Issuer) recheckDeferredTrust(ctx context.Context, cc CredentialConfiguration, record DeferredTransactionRecord, keys []resolvedKey) error {
+	attestations := iss.recheckKeyAttestations(ctx, cc, record)
+	if attestations != nil && !errors.Is(attestations, ErrDeferredAttestationStatusUnknown) {
+		return fmt.Errorf("%w: %w", ErrDeferredKeyAttestation, attestations)
+	}
+	proofKeys := iss.recheckProofKeys(ctx, record, keys)
+	if proofKeys != nil && !errors.Is(proofKeys, ErrDeferredProofKeyTrustUnknown) {
+		return proofKeys
+	}
+	return errors.Join(attestations, proofKeys)
+}
+
+// recheckProofKeys resolves again, as of now, each binding key a jwt
+// proof conveyed by kid or x5c (record.ProofKeyHeaders) with
+// Dependencies.ProofBindingKeys — an X5CProofBindingKeyResolver checks
+// the chain, its LeafPolicy and its Revocation again — and requires the
+// key it resolves to still be that binding key. A key that no longer
+// resolves returns an error wrapping ErrDeferredProofKey; one whose
+// trust can't be decided now (trustUndecided), and none no longer
+// resolving, one wrapping ErrDeferredProofKeyTrustUnknown.
+func (iss *Issuer) recheckProofKeys(ctx context.Context, record DeferredTransactionRecord, keys []resolvedKey) error {
+	if len(record.ProofKeyHeaders) == 0 {
+		return nil
+	}
+	if len(record.ProofKeyHeaders) != len(keys) {
+		return fmt.Errorf("%w: the transaction has %d proof key headers for %d binding keys", ErrDeferredProofKey, len(record.ProofKeyHeaders), len(keys))
+	}
+	if iss.deps.ProofBindingKeys == nil {
+		return fmt.Errorf("%w: this issuer has no Dependencies.ProofBindingKeys to resolve them with", ErrDeferredProofKey)
+	}
+	ctx = certchain.WithTime(ctx, iss.deps.Clock.Now())
+	var undecided error
+	for i, raw := range record.ProofKeyHeaders {
+		if len(raw) == 0 || string(raw) == "null" {
+			continue // a key conveyed by jwk, or attested
+		}
+		var header map[string]any
+		if err := strictjson.Unmarshal(raw, &header); err != nil || header == nil {
+			return fmt.Errorf("%w: binding key %d: proof key header isn't a JSON object: %w", ErrDeferredProofKey, i, err)
+		}
+		pub, _, err := iss.deps.ProofBindingKeys.ResolveProofBindingKey(ctx, header)
+		if err != nil && trustUndecided(err) {
+			if undecided == nil {
+				undecided = fmt.Errorf("%w: binding key %d: %w", ErrDeferredProofKeyTrustUnknown, i, err)
+			}
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("%w: binding key %d: %w", ErrDeferredProofKey, i, err)
+		}
+		if !sameKey(pub, keys[i].Public) {
+			return fmt.Errorf("%w: binding key %d: its proof's header now resolves to another key", ErrDeferredProofKey, i)
+		}
+	}
+	return undecided
+}
+
+// sameKey reports whether a and b are one public key, by their JWKs.
+func sameKey(a, b crypto.PublicKey) bool {
+	ja, errA := publicJWK(a)
+	jb, errB := publicJWK(b)
+	return errA == nil && errB == nil && bytes.Equal(ja, jb)
 }
 
 // recheckKeyAttestations verifies record's KeyAttestations again, as of

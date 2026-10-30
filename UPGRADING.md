@@ -278,6 +278,18 @@ them.
   reports every problem it finds rather than the first. Rather than
   calling it after `issuer.New`, set `Config.Profile:
   haip.IssuerProfile{}`, and `issuer.New` runs it with its own checks.
+- **Deferred transactions keep x5c- and kid-conveyed proof keys'
+  headers.** `DeferredTransactionRecord` gains `ProofKeyHeaders`: for a
+  binding key a jwt proof conveyed by `kid` or `x5c`, the proof's JOSE
+  header, which `IssueDeferredCredential` resolves again with
+  `Dependencies.ProofBindingKeys`. A certificate revoked or no longer
+  trusted while the transaction was pending now denies it
+  (`issuer.ErrDeferredProofKey`), and one whose revocation can't be
+  decided leaves it pending (`issuer.ErrDeferredProofKeyTrustUnknown`),
+  as for key attestations. A custom `DeferredTransactionStore` must
+  persist `ProofKeyHeaders` like any other field (the `issuertest`
+  contract checks it), and an issuer issuing such a transaction needs
+  the `ProofBindingKeys` that resolved it.
 
 ## v0.55.0 → v0.56.0
 

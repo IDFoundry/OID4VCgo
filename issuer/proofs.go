@@ -48,7 +48,11 @@ func (iss *Issuer) resolveJWTProofKeys(
 		if err := iss.checkProofNonce(ctx, "proof", i, nonce, &expectedNonce); err != nil {
 			return nil, err
 		}
-		keyAttestation, err := keyAttestationHeader(raw, i)
+		header, err := proofHeader(raw, i)
+		if err != nil {
+			return nil, err
+		}
+		keyAttestation, err := keyAttestationHeader(header, i)
 		if err != nil {
 			return nil, err
 		}
@@ -62,9 +66,13 @@ func (iss *Issuer) resolveJWTProofKeys(
 		case ptc.KeyAttestationsRequired != nil:
 			return nil, newError(ErrorInvalidProof, 400, fmt.Sprintf("proof %d: this credential_configuration_id requires a key_attestation header", i), nil)
 		default:
+			keyHeader, err := proofKeyHeader(header)
+			if err != nil {
+				return nil, err
+			}
 			// Not de-duplicated: checkDistinctKeys refuses one key proved
 			// twice.
-			keys = append(keys, resolvedKey{Public: pub, JWKRaw: jwkRaw})
+			keys = append(keys, resolvedKey{Public: pub, JWKRaw: jwkRaw, ProofKeyHeader: keyHeader})
 		}
 		// The running total, after every proof whatever its kind:
 		// checkBatchSize bounds the number of proofs, not the keys a
@@ -77,14 +85,36 @@ func (iss *Issuer) resolveJWTProofKeys(
 	return keys, nil
 }
 
-// keyAttestationHeader is the jwt proof raw's key_attestation header,
-// "" when it has none. raw's signature is already verified, so its
-// header is the Wallet's.
-func keyAttestationHeader(raw string, i int) (string, error) {
+// proofHeader is jwt proof i's JOSE header. raw's signature is already
+// verified, so its header is the Wallet's.
+func proofHeader(raw string, i int) (map[string]any, error) {
 	header, _, err := jose.DecodeUnverified(raw)
 	if err != nil {
-		return "", newError(ErrorInvalidProof, 400, fmt.Sprintf("proof %d is malformed", i), err)
+		return nil, newError(ErrorInvalidProof, 400, fmt.Sprintf("proof %d is malformed", i), err)
 	}
+	return header, nil
+}
+
+// proofKeyHeader is header, in JSON, when its proof conveys its key by
+// kid or x5c, which Dependencies.ProofBindingKeys resolves, so a
+// deferred issuance can resolve it again (resolvedKey.ProofKeyHeader);
+// nil for a jwk-conveyed key, which carries no trust to re-check.
+func proofKeyHeader(header map[string]any) (json.RawMessage, error) {
+	_, hasKID := header["kid"]
+	_, hasX5C := header["x5c"]
+	if !hasKID && !hasX5C {
+		return nil, nil
+	}
+	raw, err := json.Marshal(header)
+	if err != nil {
+		return nil, fmt.Errorf("issuer: proof key header: %w", err)
+	}
+	return raw, nil
+}
+
+// keyAttestationHeader is the key_attestation member of jwt proof i's
+// header, "" when it has none.
+func keyAttestationHeader(header map[string]any, i int) (string, error) {
 	value, present := header["key_attestation"]
 	if !present {
 		return "", nil
