@@ -114,6 +114,11 @@ func (r *IdentifierListRef) validate() error {
 // list's top-level certificate must instead be signed by whatever
 // certificate signed the MSO's own IssuerAuth x5chain certificate (the
 // IACA certificate, for an mDL).
+//
+// §12.3.6.5 requires the status list an mdoc references to use one bit
+// per status (bits = 1). Neither Issue, which sees only this reference,
+// nor statuslist enforces it, and a list with another bits value is
+// still read correctly.
 type StatusListRef struct {
 	Idx         uint64 `cbor:"idx"`
 	URI         string `cbor:"uri"`

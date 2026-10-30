@@ -59,7 +59,11 @@ type Publisher struct {
 	// fails, and ServeHTTP answers 500.
 	DefaultForm Form
 
-	// Bits is how many bits each status takes; zero means Bits1.
+	// Bits is how many bits each status takes; zero means Bits1. ISO/IEC
+	// 18013-5 §12.3.6.5 requires Bits1 for a list mdocs reference. The
+	// Publisher doesn't know which credentials reference it, so it
+	// doesn't enforce that, and a Checker reads a list of any valid
+	// Bits correctly.
 	Bits Bits
 
 	// Lifetime is how long a served token is valid (its exp); zero
