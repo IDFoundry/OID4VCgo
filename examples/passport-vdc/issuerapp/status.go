@@ -20,8 +20,17 @@ import (
 )
 
 // StatusListPath is where this issuer serves its one Token Status List,
-// which every credential it issues references for revocation.
+// which every credential it issues references for revocation: SD-JWT
+// VCs at StatusListPath, mdocs at MdocStatusListPath. Both serve the
+// same statuses; they differ only in the form a request naming none
+// gets (draft-14 §8.1), JWT here and CWT there, since an mdoc reader
+// may send no Accept header and expects a CWT.
 const StatusListPath = "/statuslists/1"
+
+// MdocStatusListPath is where mdocs reference the status list: the same
+// list as StatusListPath, served as a CWT when the request names no
+// form.
+const MdocStatusListPath = StatusListPath + "/cwt"
 
 // statusListSize is how many credentials the list can index. A
 // credential's index is drawn at random from the unused ones, so the
@@ -165,36 +174,45 @@ func (s *statusList) snapshot() ([]uint8, []IssuedStatus) {
 }
 
 // withStatus points one credential's claims at idx in this issuer's
-// status list.
+// status list: an SD-JWT VC at its JWT URI, an mdoc at its CWT one.
 func (a *App) withStatus(c *issuer.CredentialInstance, idx int) {
 	ref := statuslist.StatusListRef{Idx: uint64(idx), URI: a.statusListURI} // #nosec G115 -- idx is from allocate, in [0, statusListSize)
 	if c.SDJWTClaims != nil {
 		c.SDJWTClaims.Status = ref.Claim()
 	}
 	if c.MdocClaims != nil {
-		c.MdocClaims.Status = &mdoc.StatusListRef{Idx: ref.Idx, URI: ref.URI}
+		c.MdocClaims.Status = &mdoc.StatusListRef{Idx: ref.Idx, URI: a.mdocStatusListURI}
 	}
 }
 
-// statusPublisher serves the Status List Token, signed by the document
-// signer with its certificate in the token's x5c/x5chain (HAIP 1.0), in
-// the form the Accept header asks for: CWT for an mdoc's reference, JWT
-// otherwise (SD-JWT VC requires a JWT Status List Token).
-func (a *App) statusPublisher() *statuslist.Publisher {
-	a.publisher = &statuslist.Publisher{
-		URI: a.statusListURI, Signer: a.documentSigner, Chain: a.documentChain(),
-		Statuses: func(context.Context) ([]uint8, error) {
-			revoked, _ := a.statusList.snapshot()
-			return revoked, nil
-		},
-		Lifetime: statusTokenLifetime, TTL: statusTokenTTL * time.Second, Now: a.now,
+// statusPublishers serve the Status List Token at uri and mdocURI,
+// signed by the document signer with its certificate in the token's
+// x5c/x5chain (HAIP 1.0), in the form the Accept header asks for. When
+// it names neither, the first serves a JWT (SD-JWT VC requires a JWT
+// Status List Token) and the second a CWT (an mdoc's). A token's sub is
+// its URI, so each URI has its own Publisher.
+func (a *App) statusPublishers() (jwt, cwt *statuslist.Publisher) {
+	publisher := func(uri string, form statuslist.Form) *statuslist.Publisher {
+		return &statuslist.Publisher{
+			URI: uri, Signer: a.documentSigner, Chain: a.documentChain(),
+			Statuses: func(context.Context) ([]uint8, error) {
+				revoked, _ := a.statusList.snapshot()
+				return revoked, nil
+			},
+			DefaultForm: form,
+			Lifetime:    statusTokenLifetime, TTL: statusTokenTTL * time.Second, Now: a.now,
+		}
 	}
-	return a.publisher
+	a.publishers = []*statuslist.Publisher{
+		publisher(a.statusListURI, statuslist.FormJWT),
+		publisher(a.mdocStatusListURI, statuslist.FormCWT),
+	}
+	return a.publishers[0], a.publishers[1]
 }
 
 var statusTemplate = template.Must(template.New("status").Parse(pageHead + `
 <h1>Issued credentials</h1>
-<p>Every credential this issuer has issued references its status list at <code>{{.URI}}</code>. Revoking one flips its bit; a verifier checking the list then rejects it.</p>
+<p>Every credential this issuer has issued references its status list: an SD-JWT VC at <code>{{.URI}}</code>, an mdoc at <code>{{.URI}}/cwt</code>, the same list served as a CWT by default. Revoking one flips its bit; a verifier checking the list then rejects it.</p>
 {{if .Entries}}
 <table>
 <tr><th>Format</th><th>Issued</th><th>Status</th><th></th></tr>
@@ -250,8 +268,8 @@ func (a *App) handleRevoke(w http.ResponseWriter, r *http.Request) {
 		writeHTMLError(w, http.StatusBadRequest, "unknown credential")
 		return
 	}
-	if a.publisher != nil {
-		a.publisher.Invalidate() // serve the revocation at once
+	for _, p := range a.publishers {
+		p.Invalidate() // serve the revocation at once
 	}
 	http.Redirect(w, r, "/demo/status", http.StatusSeeOther)
 }

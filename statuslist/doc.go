@@ -26,9 +26,28 @@
 // Claims.Status expects for the JOSE form.
 //
 // Publisher serves a Status List Token over HTTP: an http.Handler that
-// signs a fresh token for each request, JWT or CWT by the Accept header
-// (its DefaultForm when it names neither), with the signer's
-// certificate chain.
+// serves a token signed from the current statuses (cached for
+// CacheFor), JWT or CWT by the Accept header (its DefaultForm when it
+// names neither), with the signer's certificate chain.
+//
+// # Lists both formats reference
+//
+// A Relying Party may send no Accept header when it knows which form
+// to expect (draft-14 §8.1): an SD-JWT VC's expects a JWT, and an
+// mdoc reader may expect a CWT. One URI has one DefaultForm, so a list
+// both formats reference is served from two Publishers at two URIs:
+// both take the same Statuses, one keeps DefaultForm's zero value
+// (FormJWT) and the other sets FormCWT, SD-JWT VCs name the first in
+// their status claim, and mdocs the second. A credential keeps one
+// index, read the same way in both lists; when a status changes, call
+// Invalidate on both, or one serves the old status for up to its
+// CacheFor longer. A token's sub is the URI it was fetched from, which
+// is why one Publisher can't serve both. A request naming a form still
+// gets it at either URI. Separate lists, each with its own Statuses
+// and indices, work too, but each is smaller, so a credential's index
+// hides among fewer. A list only one format references needs one
+// Publisher, with DefaultForm FormCWT if that format is mdoc. See
+// Publisher's bothFormats example.
 //
 // # Checking
 //
