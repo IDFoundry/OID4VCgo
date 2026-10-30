@@ -224,8 +224,9 @@ of which the wallet can produce itself:
 
 A real Wallet Provider attests only after checking platform evidence
 (App Attest on iOS, Key Attestation on Android). During development the
-SDK uses the passport-vdc demo's Wallet Provider service, which attests
-any key.
+SDK uses the passport-vdc demo's Wallet Provider service, which
+verifies the Android demo's key attestation chains (below) and attests
+a key sent without one unchecked.
 
 #### Platform evidence for keys
 
@@ -1444,9 +1445,13 @@ twice, or redeem one refresh token twice.
   that it's talking to the genuine app — App Attest on iOS; on Android,
   the Android Key Attestation chains the Kotlin library now hands it
   ([Platform evidence for keys](#platform-evidence-for-keys)) — and key
-  attestation formats. Both demos attest any key with the passport-vdc
-  demo's provider until then; it has no challenge endpoint, so the
-  Android demo makes its keys without attestation.
+  attestation formats. The passport-vdc demo's provider gives the
+  Android demo attestation challenges and verifies its keys' chains
+  (signatures, the key, the challenge), logging whether they're
+  hardware Google vouches for (an emulator's aren't) and refusing
+  them only with `-require-hardware-key-attestation`; it doesn't
+  read the chains' authorizations or the app that made the key. It
+  attests the iOS demo's keys, which come without evidence, unchecked.
 
 ## Combined engagement preview
 
