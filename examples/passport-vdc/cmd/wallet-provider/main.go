@@ -14,10 +14,15 @@
 // 127.0.0.1 and localhost and writes it to -tls-cert-out, for the
 // wallets to trust.
 //
-// It attests only -client-id, and any key a wallet sends it, without
-// checking who is asking: a real Wallet Provider would first check
-// platform evidence that the request comes from a genuine instance of
-// its wallet, holding its keys in secure hardware.
+// It attests only -client-id, without checking who is asking. It gives
+// the Android demo wallet attestation challenges (POST
+// /attestation-challenge) and verifies the Android Key Attestation
+// chains it sends with its keys: a bad signature, another key or an
+// unknown or used challenge is refused; a chain that isn't hardware
+// Google vouches for (an emulator's) is logged, and refused only with
+// -require-hardware-key-attestation. A key sent without a chain (iOS,
+// the CLI and web wallets) is attested as before, unverified: a real
+// Wallet Provider would first check platform evidence for every key.
 package main
 
 import (
@@ -40,6 +45,8 @@ func main() {
 	certFile := flag.String("tls-cert", "", "TLS certificate PEM (default: generate a self-signed one)")
 	keyFile := flag.String("tls-key", "", "TLS private key PEM (with -tls-cert)")
 	certOut := flag.String("tls-cert-out", "wallet-provider-tls.pem", "where to write a generated TLS certificate for the wallets to trust")
+	verifiedKeys := flag.String("verified-keys", "wallet-provider-keys.json", "file keeping the Android keys whose attestation chains were verified, so a restart still recognises them")
+	requireHardware := flag.Bool("require-hardware-key-attestation", false, "refuse an Android key whose attestation chain isn't from hardware Google vouches for (an emulator's, say), rather than only log it")
 	flag.Parse()
 
 	provider, created, err := walletprovider.LoadOrCreate(*providerIssuer, *keyPath)
@@ -60,7 +67,13 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	srv := demotls.Server(*addr, provider.Handler(*clientID), cert, 30*time.Second)
+	service, err := provider.NewService(walletprovider.ServiceConfig{
+		ClientID: *clientID, RequireHardwareKeyAttestation: *requireHardware, VerifiedKeysPath: *verifiedKeys,
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	srv := demotls.Server(*addr, service, cert, 30*time.Second)
 	log.Printf("passport-vdc Wallet Provider on https://%s", *addr)
 	log.Fatal(srv.ListenAndServeTLS("", ""))
 }

@@ -72,6 +72,7 @@ func main() {
 	issuerURL := flag.String("issuer-url", localIssuerURL, "the issuer's public https URL, when a tunnel forwards it to "+issuerAddr+" (for a phone)")
 	verifierURL := flag.String("verifier-url", localVerifierURL, "the verifier's public https URL, when a tunnel forwards it to "+verifierAddr)
 	providerURL := flag.String("provider-url", localProviderURL, "the Wallet Provider's public https URL, when a tunnel forwards it to "+providerAddr)
+	requireHardware := flag.Bool("require-hardware-key-attestation", false, "have the Wallet Provider refuse an Android key whose attestation chain isn't from hardware Google vouches for (an emulator's, say), rather than only log it")
 	flag.Parse()
 	urls := serviceURLs{issuer: *issuerURL, verifier: *verifierURL, provider: *providerURL}
 	if err := urls.check(); err != nil {
@@ -85,7 +86,7 @@ func main() {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if err := run(ctx, options{state: *state, open: *open, chrome: *chrome, urls: urls}); err != nil {
+	if err := run(ctx, options{state: *state, open: *open, chrome: *chrome, urls: urls, requireHardware: *requireHardware}); err != nil {
 		log.Fatal(err)
 	}
 }
@@ -131,6 +132,9 @@ type options struct {
 	open   bool   // open Chrome on the demo once it's listening
 	chrome string // Chrome's path, when not in the usual places
 	urls   serviceURLs
+	// requireHardware: the Wallet Provider refuses Android keys whose
+	// attestation isn't hardware Google vouches for.
+	requireHardware bool
 }
 
 // serviceURLs are the URLs the issuer, verifier and Wallet Provider are
@@ -179,6 +183,13 @@ func run(ctx context.Context, opts options) error {
 	csca, err := cms.DefaultMasterList()
 	if err != nil {
 		return fmt.Errorf("load CSCA master list: %w", err)
+	}
+	providerService, err := provider.NewService(walletprovider.ServiceConfig{
+		ClientID: walletClientID, RequireHardwareKeyAttestation: opts.requireHardware,
+		VerifiedKeysPath: filepath.Join(state, "wallet-provider-keys.json"),
+	})
+	if err != nil {
+		return err
 	}
 	httpClient := demotls.ClientTrusting(leaf)
 
@@ -233,7 +244,7 @@ func run(ctx context.Context, opts options) error {
 
 	servers := []*http.Server{
 		// The wallets ask it for attestations; they never hold its key.
-		demotls.Server(providerAddr, provider.Handler(walletClientID), cert, 30*time.Second),
+		demotls.Server(providerAddr, providerService, cert, 30*time.Second),
 		demotls.Server(issuerAddr, issuer, cert, 30*time.Second),
 		demotls.Server(verifierAddr, verifier, cert, 30*time.Second),
 		// Long enough for the callback to finish the token and
