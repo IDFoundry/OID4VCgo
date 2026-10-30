@@ -415,6 +415,23 @@ one Wallet. A store of your own implements the new methods:
   document type's IACAs in `issuer_roots_by_doctype`). Without it, a
   reader works as before. Set it in every app that ships.
 
+### Verifier (`verifier`)
+
+- **Transaction stores keep every field.** `Begin` and `BeginDCAPI`
+  read back the first transaction of each kind they create —
+  cross-device, same-device, Digital Credentials API — and refuse a
+  store that changed its `ID`, `KeyID`, `State`, `Nonce`,
+  `ResponseDecryptionKey`, `RequestObject`, `Origin`, `Owner`,
+  `BrowserBindingHash`, `SameDevice` or `Status`, or moved `ExpiresAt`
+  or `RetainUntil` by a second or more. Until now only `Owner` was
+  checked, and a store that dropped `SameDevice` answered a same-device
+  request as a cross-device one. `verifiertest.TestTransactionStoreContract`
+  now checks that `Create` and `Update` keep every field, including a
+  result's claims in the types their format decodes to (an mdoc's
+  integers and byte strings, not JSON's); a store that hand-encodes
+  `Transaction` may fail it. Encode transactions with
+  `verifier.TransactionCodec`, which keeps every field.
+
 ## v0.55.0 → v0.56.0
 
 This release pins FAPIgo v0.65.1, which carries the breaking changes of

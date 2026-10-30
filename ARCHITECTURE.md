@@ -1336,8 +1336,11 @@ changes whether *every* bullet below is `(done)`.
   process, and with a `TransactionSealer` (`AESGCMSealer`) seals the
   response decryption key and the holder's claims at rest;
   `ForgetResultOnRead` drops a result once it's been read.
-  `verifiertest` holds contract tests for a caller's own
-  certificate-chain issuer key resolver.
+  `Begin` and `BeginDCAPI` read a created transaction back and refuse a
+  store that lost a field, since losing `SameDevice` or `Owner` fails
+  open. `verifiertest` holds contract tests for a caller's own
+  certificate-chain issuer key resolver and `TransactionStore`, which
+  must give back every field as it was saved.
 - **`wallet`** (extended, done for `dc+sd-jwt`+`mso_mdoc`) — the naming
   question above is now resolved: OID4VP's Wallet role lives in the
   existing `wallet` package rather than a distinct one — "Wallet" is
