@@ -178,8 +178,9 @@ credential formats, a browser and a command-line wallet, and a verifier
 with revocation — see [`examples/passport-vdc`](examples/passport-vdc).
 It wires the production entry points above (`verifier.Transactions`,
 `issuer.New` with `haip.IssuerProfile`, `walletflow`), though under
-development assurance and with in-memory stores; its README lists those
-demo-only settings.
+development assurance and with in-memory stores by default (`-db` keeps
+the issuer's in SQLite, with both `sqlstore` modules); its README lists
+those demo-only settings.
 
 The four `cmd/conformance-*` binaries under `conformance/` are test
 harnesses for the OIDF conformance suite, not models for a deployment.

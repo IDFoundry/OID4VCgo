@@ -27,10 +27,13 @@
 package issuerapp
 
 import (
+	"database/sql"
 	"fmt"
 	"time"
 
 	"github.com/gmrtd/gmrtd/cms"
+
+	"github.com/idfoundry/oid4vcgo/sqlstore"
 )
 
 // Config configures an App.
@@ -72,6 +75,21 @@ type Config struct {
 	// issued keep verifying, and revocations hold, across restarts.
 	// Empty keeps everything in memory: a restart starts over.
 	StateDir string
+
+	// Database, if set, is a SQLite database (OpenDatabase) holding the
+	// Authorization Server's stores (fapigo/sqlstore) and the Credential
+	// Issuer's (oid4vcgo/sqlstore) in place of memory, side by side, as
+	// a deployment would: pushed requests, authorization codes and
+	// refresh tokens, replayed proofs, revocations, DPoP nonces,
+	// c_nonces, pre-authorized codes, deferred issuances and
+	// notifications. New migrates it. The passports themselves, and the
+	// Authorization Server's signing keys, stay in memory, so a restart
+	// still ends the offers and grants in progress.
+	Database *sql.DB
+
+	// DatabaseSealer seals Database's records, which carry passport
+	// data (a deferred issuance's credentials): required with Database.
+	DatabaseSealer sqlstore.Sealer
 }
 
 // WalletClient registers the demo Wallet: a client authenticated by
@@ -135,6 +153,8 @@ func (c Config) validate() error {
 		return fmt.Errorf("issuerapp: Wallet.ProviderIssuer is required")
 	case len(c.Wallet.ProviderCA) == 0:
 		return fmt.Errorf("issuerapp: Wallet.ProviderCA is required")
+	case c.Database != nil && c.DatabaseSealer == nil:
+		return fmt.Errorf("issuerapp: DatabaseSealer is required with Database")
 	}
 	return nil
 }

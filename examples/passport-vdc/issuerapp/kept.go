@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
+	"log"
 	"net/http"
 	"time"
 
@@ -125,12 +126,20 @@ func (a *App) handleForget(w http.ResponseWriter, r *http.Request) {
 
 // Sweep drops expired passport data — offers never redeemed, passports
 // kept for refresh past their deadline, reviews never decided — rather
-// than waiting for the next upload to. Run it periodically: SweepEvery.
+// than waiting for the next upload to, and Config.Database's expired
+// records. Run it periodically: SweepEvery.
 func (a *App) Sweep() {
 	a.transactions.mu.Lock()
 	a.transactions.prune()
 	a.transactions.mu.Unlock()
 	a.reviews.prune()
+	if a.stores.sweep != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := a.stores.sweep(ctx, a.now()); err != nil {
+			log.Printf("issuerapp: sweep the database: %v", err)
+		}
+	}
 }
 
 // SweepEvery runs Sweep every interval until ctx is done.

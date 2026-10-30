@@ -223,7 +223,16 @@ be decided again, under production assurance:
   (`storage.NewVerifierTransactionStore`), and the command-line wallet's
   credentials and software keys. Production stores are durable and
   atomic; run `issuer/issuertest`, `verifier/verifiertest` and
-  `walletflow/storetest` against them.
+  `walletflow/storetest` against them. With `-db` (`cmd/demo`: a SQLite
+  file in `.demo-state/issuer/stores.db`; `cmd/issuer -db FILE`) the
+  issuer's Authorization Server and Credential Issuer stores are
+  durable instead, as a deployment's would be: FAPIgo's
+  `fapigo/sqlstore` and this repository's `sqlstore` side by side in
+  one database, sealed under one key (`stores.key` beside it — a
+  deployment keeps the key in a secret manager or KMS). The passports
+  themselves and the Authorization Server's signing keys stay in
+  memory, so a restart still ends the offers and grants in progress
+  (`issuerapp.Config.Database`).
 - **No certificate revocation for the demo's own CAs.** The verifier
   declines it for the issuer's certificates (`certrevocation.NoCheck{}`,
   as `issuerRevocation`), and the Authorization Server for the Wallet
