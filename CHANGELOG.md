@@ -16,7 +16,7 @@
 * **issuer:** a custom issuer.DeferredTransactionStore must persist DeferredTransactionRecord.ProofKeyHeaders, and an issuer issuing a deferred transaction whose proof keys came through ProofBindingKeys needs ProofBindingKeys configured, or the transaction is denied.
 * **haip:** haip.ValidateIssuerConfig takes the issuer's Dependencies as a second argument, and refuses proof types without ES256 and a nil PreAuthorizedCodeClientAuthentication when deps.PreAuthorizedCodes is set. Prefer setting issuer.Config.Profile to haip.IssuerProfile{} over calling it.
 * **issuer:** under AssuranceProduction, issuer.New refuses a Dependencies.Clock other than nil or one declaring issuer.ClockAssurance; issuer.ClockFunc(time.Now) is refused there, so leave the Clock nil.
-* **issuer:** under AssuranceProduction, issuer.New refuses a Limits.MaxProofAge over 5 minutes when Endpoints.Nonce is unset, and a Limits.MaxDPoPProofAge over 5 minutes under anonymous pre-authorized code redemption.
+* **issuer:** under AssuranceProduction, issuer.New refuses a Limits.MaxProofAge over 5 minutes when Endpoints.Nonce is unset.
 * **verifier:** under AssuranceProduction, NewTransactions, VerifyResponse and mdocdcapi.VerifyResponse refuse a configuration whose status decision is only an Accept: set Status (a verifier.StatusPolicy) or NoStatusCheck. Status needs a HardenedForProduction Fetcher and Options.Revocation set there (certrevocation.NoCheck{} to decline), and Status with NoStatusCheck is refused at every level. Move RequireValidStatus(checker) out of Accept into Status: &verifier.StatusPolicy{Checker: checker}; see UPGRADING.md.
 * **verifier:** VerifiedCredential.StatusListRef returns an error for an mdoc status naming no known mechanism, so RequireValidStatus refuses such an mdoc, and RequireStatusReference refuses a credential in either format whose status names no known mechanism or is malformed. Accept credentials using a status mechanism this library doesn't know only with NoStatusCheck and a check of your own.
 * **issuer:** PreAuthorizedCodeRecord, DeferredTransactionRecord, NotificationRecord, NonceIssuance, NonceConsumption and NonceRecord gain Owner, which a custom store must persist; NonceStore.Consume retires only a nonce whose Owner matches the consumption's, returning issuer.ErrNonceUnknown for another's. Under production, records without an Owner, including those saved before the upgrade, are refused, and a store that drops Owner is refused when the record is saved. A deferred transaction a deployment creates in the store itself sets Owner to the serving issuer's Config.Issuer.
@@ -36,7 +36,6 @@
 * **haip:** run HAIP's issuer checks in issuer.New through Config.Profile ([4ce3a5f](https://github.com/IDFoundry/OID4VCgo/commit/4ce3a5f841bf11f7b4b8fb9d5766edd12ba2a0c7))
 * **issuer:** store pre-authorized codes and Transaction Codes as hashes ([41cfc56](https://github.com/IDFoundry/OID4VCgo/commit/41cfc56810385ce37088f51985782d0442db548f))
 * **mobile:** add CredentialStore.CompareAndSwap for cross-process atomicity (ABI 13) ([dce6f0d](https://github.com/IDFoundry/OID4VCgo/commit/dce6f0d0ea4794bcdaf414217adbc0177dd9b84c))
-* **mobile:** let a ProximityReader require a production reader's decisions ([f1f8759](https://github.com/IDFoundry/OID4VCgo/commit/f1f8759e602471e079ac3d695c4ce33fa30dfcb2))
 * **mobile:** make the proximity reader production by default ([7d5671e](https://github.com/IDFoundry/OID4VCgo/commit/7d5671ead0d008810d55c4770c83246ed797c8e8))
 * **oid4vci:** an openid_credential RAR definition refusing client-chosen credential_identifiers ([0d59c60](https://github.com/IDFoundry/OID4VCgo/commit/0d59c60c1f8054466b6920ddb48d8b6eba86a512))
 * **proximity:** give the reader a Verifier's production decisions ([1c3d65b](https://github.com/IDFoundry/OID4VCgo/commit/1c3d65b076ed4357899318f417217279a7472ec4))
@@ -52,15 +51,13 @@
 * **deps:** pin FAPIgo v0.66.0 ([f7073ef](https://github.com/IDFoundry/OID4VCgo/commit/f7073efacc29fb844ba5ea29e8b91216286dd488))
 * **deps:** pin FAPIgo v0.67.0 ([537ab6f](https://github.com/IDFoundry/OID4VCgo/commit/537ab6fef91755a61ba5b06cc405fb3add0c475a))
 * **issuer:** answer issuer store outages as server errors ([52b9ef5](https://github.com/IDFoundry/OID4VCgo/commit/52b9ef56fad608d1fd54554d1a9f8bb815997832))
-* **issuer:** bound key proof and DPoP proof ages under production ([e8708c3](https://github.com/IDFoundry/OID4VCgo/commit/e8708c31b08fc5bea8ddcecded7c70e3dfe7a5a1))
+* **issuer:** bound key proof ages under production ([e8708c3](https://github.com/IDFoundry/OID4VCgo/commit/e8708c31b08fc5bea8ddcecded7c70e3dfe7a5a1))
 * **issuer:** keep the records of issuers sharing a store apart ([2dcdbe3](https://github.com/IDFoundry/OID4VCgo/commit/2dcdbe320455ef33269f57be82b64256506092ab))
 * **issuer:** make the Clock optional and refuse a custom one under production ([bf681b8](https://github.com/IDFoundry/OID4VCgo/commit/bf681b8d0c098cdbd6d82c3bb22776f42ea7a11a))
-* **issuer:** persist a new DPoP nonce without holding the Issuer's lock ([fa32d50](https://github.com/IDFoundry/OID4VCgo/commit/fa32d50707a3e3b35bfc2fa0ef76418db618e8d3))
 * **issuer:** re-check x5c- and kid-conveyed proof keys at deferred issuance ([7991971](https://github.com/IDFoundry/OID4VCgo/commit/7991971b1612c48c6719fced268198e00afe1a5b))
 * **issuer:** refuse other roles' certificates as key attestation signers ([b8e060a](https://github.com/IDFoundry/OID4VCgo/commit/b8e060ac4b242c8c5fd13cc34d6666241c4fb389))
 * **issuer:** report every configuration problem from issuer.New ([befe7a2](https://github.com/IDFoundry/OID4VCgo/commit/befe7a23bd4ed1bd7c1578f93746e323663ce781))
 * **issuer:** verify anonymous pre-authorized DPoP proofs with fapigo/server ([0e2dc68](https://github.com/IDFoundry/OID4VCgo/commit/0e2dc68700ffa8f96e66a0ec69e12943b45852ca))
-* **issuer:** verify pre-authorized Token Request DPoP proofs as fapigo/server does ([dd6ecc2](https://github.com/IDFoundry/OID4VCgo/commit/dd6ecc27299cd21b434a241b5f3f52b5d7ff6139))
 * **jose:** refuse non-alphabet base64url bytes and non-UTF-8 JSON ([dc0994c](https://github.com/IDFoundry/OID4VCgo/commit/dc0994cc57f8d6daceb94e9b21cd8a883ddc5646))
 * **mdoc:** refuse incomplete validityInfo, oversized IssuerAuth and split COSE headers ([9f06d8d](https://github.com/IDFoundry/OID4VCgo/commit/9f06d8d00f810b72ae048063e6a1dd3d49fb2f2a))
 * **mdoc:** require the mDL document signer extended key usage ([f5a4087](https://github.com/IDFoundry/OID4VCgo/commit/f5a4087554e982fd43d4de6545a36f65ae4f63a5))
