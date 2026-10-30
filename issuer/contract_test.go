@@ -17,9 +17,7 @@ import (
 // via these same exported functions.
 func TestContractSuitesAgainstStorage(t *testing.T) {
 	issuertest.TestNonceStoreContract(t, func() issuer.NonceStore { return storage.NewNonceStore() })
-	issuertest.TestDPoPNonceStoreContract(t, func() issuer.DPoPNonceStore { return storage.NewDPoPNonceStore() })
 	issuertest.TestPreAuthorizedCodeStoreContract(t, func() issuer.PreAuthorizedCodeStore { return storage.NewPreAuthorizedCodeStore() })
-	issuertest.TestDPoPReplayCheckerContract(t, func() issuer.DPoPReplayChecker { return storage.NewDPoPReplayChecker() })
 	issuertest.TestCredentialOfferStoreContract(t, func() issuer.CredentialOfferStore { return storage.NewCredentialOfferStore() })
 	issuertest.TestNotificationStoreContract(t, func() issuer.NotificationStore { return storage.NewNotificationStore() })
 	issuertest.TestDeferredTransactionStoreContract(t, func(t *testing.T, transactionID string, record issuer.DeferredTransactionRecord) issuer.DeferredTransactionStore {
@@ -39,9 +37,7 @@ func TestContractSuitesAgainstStorage(t *testing.T) {
 // store interface's documented contract in their own right.
 func TestContractSuitesAgainstFakes(t *testing.T) {
 	issuertest.TestNonceStoreContract(t, func() issuer.NonceStore { return newFakeNonceStore() })
-	issuertest.TestDPoPNonceStoreContract(t, func() issuer.DPoPNonceStore { return newFakeDPoPNonceStore() })
 	issuertest.TestPreAuthorizedCodeStoreContract(t, func() issuer.PreAuthorizedCodeStore { return newFakePreAuthorizedCodeStore() })
-	issuertest.TestDPoPReplayCheckerContract(t, func() issuer.DPoPReplayChecker { return newFakeDPoPReplayChecker() })
 	issuertest.TestCredentialOfferStoreContract(t, func() issuer.CredentialOfferStore { return newFakeCredentialOfferStore() })
 	issuertest.TestNotificationStoreContract(t, func() issuer.NotificationStore { return newFakeNotificationStore() })
 	issuertest.TestDeferredTransactionStoreContract(t, func(t *testing.T, transactionID string, record issuer.DeferredTransactionRecord) issuer.DeferredTransactionStore {

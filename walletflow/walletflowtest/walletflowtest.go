@@ -296,7 +296,7 @@ func New(opts Options) (env *Env, err error) {
 	must(err)
 	var tokens issuer.AccessTokenVerifier = dpopTokens
 	if opts.Anonymous && (opts.BearerTokens || opts.AnonymousRefresh) {
-		e.public = &publicTokens{dpop: dpopTokens, bearer: opts.BearerTokens, replay: oid4vcgostorage.NewDPoPReplayChecker(), grants: map[string]publicGrant{}}
+		e.public = &publicTokens{dpop: dpopTokens, bearer: opts.BearerTokens, grants: map[string]publicGrant{}}
 		tokens = e.public
 	}
 
@@ -355,7 +355,7 @@ func New(opts Options) (env *Env, err error) {
 		Limits: issuer.Limits{
 			NonceLifetime: 5 * time.Minute, DeferredIssuancePollInterval: time.Second, DeferredTransactionLifetime: time.Hour,
 			AccessTokenLifetime: asCfg.Limits.AccessTokenLifetime, MaxTxCodeAttempts: 3,
-			MaxDPoPProofAge: time.Minute, MaxDPoPClockSkew: 30 * time.Second, MaxProofAge: time.Minute,
+			MaxProofAge: time.Minute,
 		},
 		PreAuthorizedCodeClientAuthentication: preAuthClientAuth,
 		Display:                               []oid4vci.Display{{Name: IssuerName, Locale: "en", Logo: logo}},
@@ -379,7 +379,7 @@ func New(opts Options) (env *Env, err error) {
 		CredentialDPoPNonces: resourceVerifier,
 		PreAuthorizedCodes:   e.preAuthCodes, AccessTokens: accessTokenAdapter{inner: e.accessTokens},
 		Notifications: oid4vcgostorage.NewNotificationStore(), NotificationHandler: notificationRecorder{e},
-		Clock: issuer.ClockFunc(time.Now), Random: rand.Reader, DPoPReplay: oid4vcgostorage.NewDPoPReplayChecker(),
+		Clock: issuer.ClockFunc(time.Now), Random: rand.Reader,
 		// The Wallet Provider CA may vouch for the Wallet Provider's Key
 		// Attestations alone, as for its Wallet Attestations.
 		AttestationVerifier: issuer.X5CAttestationVerifier{
@@ -892,7 +892,7 @@ func (e *Env) handleToken(w http.ResponseWriter, r *http.Request) {
 				server.WriteError(w, err)
 				return
 			}
-			e.public.refresh(w, r, e, params["refresh_token"])
+			e.public.refresh(w, r, e, req, params["refresh_token"])
 			return
 		}
 		result, err := e.srv.RefreshAccessToken(ctx, req.RefreshToken())
@@ -908,7 +908,7 @@ func (e *Env) handleToken(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if e.anonymous {
-			e.redeemAnonymously(w, r, params)
+			e.redeemAnonymously(w, r, req, params)
 			return
 		}
 		attested, err := e.srv.AuthenticateAttestedClient(ctx, req.AttestedClientAuthentication())
@@ -952,9 +952,19 @@ func (e *Env) handleToken(w http.ResponseWriter, r *http.Request) {
 }
 
 // redeemAnonymously redeems a pre-authorized code with no client
-// authentication, under Options.Anonymous: the issuer verifies the
-// request's DPoP proof itself, and no refresh token is issued.
-func (e *Env) redeemAnonymously(w http.ResponseWriter, r *http.Request, params map[string]string) {
+// authentication, under Options.Anonymous: the Authorization Server
+// verifies the request's DPoP proof without a client, and the issuer
+// issues the access token bound to its key. A request that
+// authenticates a client is refused: this grant expects none.
+func (e *Env) redeemAnonymously(w http.ResponseWriter, r *http.Request, req server.TokenEndpointRequest, params map[string]string) {
+	if refuseClientAuthentication(w, r, req) {
+		return
+	}
+	binding, err := e.srv.VerifyTokenRequestDPoP(r.Context(), req)
+	if err != nil {
+		server.WriteError(w, err)
+		return
+	}
 	details, err := issuer.ParseAuthorizationDetails(params["authorization_details"])
 	if err != nil {
 		w.Header().Set("Cache-Control", "no-store")
@@ -963,7 +973,7 @@ func (e *Env) redeemAnonymously(w http.ResponseWriter, r *http.Request, params m
 	}
 	result, err := e.iss.ExchangePreAuthorizedCode(r.Context(), issuer.ExchangePreAuthorizedCodeRequest{
 		PreAuthorizedCode: params["pre-authorized_code"], TxCode: params["tx_code"], AuthorizationDetails: details,
-		DPoPProof: r.Header.Get("DPoP"), TokenEndpoint: e.endpoint("/token"),
+		Verified: &issuer.VerifiedTokenRequest{DPoPThumbprint: binding.Thumbprint, NextDPoPNonce: binding.NextDPoPNonce},
 	})
 	w.Header().Set("Cache-Control", "no-store")
 	if err != nil {
@@ -971,10 +981,30 @@ func (e *Env) redeemAnonymously(w http.ResponseWriter, r *http.Request, params m
 		return
 	}
 	if e.public != nil {
-		e.public.issue(w, r, e, result)
+		e.public.issue(w, binding.Thumbprint, result)
 		return
 	}
 	result.WriteJSON(w)
+}
+
+// refuseClientAuthentication answers a token request that
+// authenticates a client, at a grant that takes none, with
+// invalid_request, and reports whether it did: a Client Attestation, a
+// client assertion or secret, or a TLS client certificate.
+func refuseClientAuthentication(w http.ResponseWriter, r *http.Request, req server.TokenEndpointRequest) bool {
+	params, err := req.Parameters()
+	if err != nil {
+		server.WriteError(w, err)
+		return true
+	}
+	auth := req.AttestedClientAuthentication()
+	if len(auth.ClientAttestations) == 0 && len(auth.ClientAttestationPoPs) == 0 &&
+		params["client_assertion"] == "" && params["client_assertion_type"] == "" && params["client_secret"] == "" &&
+		(r.TLS == nil || len(r.TLS.PeerCertificates) == 0) {
+		return false
+	}
+	server.NewError(server.ErrorInvalidRequest, http.StatusBadRequest, "this grant takes no client authentication").WriteJSON(w)
+	return true
 }
 
 // issuePreAuthorizedRefreshToken issues a refresh token for a redeemed

@@ -2,23 +2,18 @@ package issuer_test
 
 import (
 	"context"
-	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
 	"net/http/httptest"
 	"sync"
 	"testing"
 	"time"
 
 	fapi "github.com/idfoundry/fapigo"
-	"github.com/idfoundry/fapigo/fapihttp"
 
 	"github.com/idfoundry/oid4vcgo"
-	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/issuer"
-	"github.com/idfoundry/oid4vcgo/wallet"
 )
 
 // fakePreAuthorizedCodeStore is an in-memory issuer.PreAuthorizedCodeStore
@@ -87,63 +82,6 @@ func (f *fakePreAuthorizedCodeStore) Invalidate(_ context.Context, code string) 
 
 var errPreAuthorizedCodeNotFound = fmt.Errorf("fake: %w", issuer.ErrPreAuthorizedCodeUnknown)
 
-// fakeDPoPReplayChecker is an in-memory issuer.DPoPReplayChecker for
-// tests.
-type fakeDPoPReplayChecker struct {
-	mu   sync.Mutex
-	seen map[string]bool
-}
-
-func newFakeDPoPReplayChecker() *fakeDPoPReplayChecker {
-	return &fakeDPoPReplayChecker{seen: map[string]bool{}}
-}
-
-func (f *fakeDPoPReplayChecker) UseOnce(_ context.Context, jti string, _ time.Time) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.seen[jti] {
-		return fakeErr("jti already used")
-	}
-	f.seen[jti] = true
-	return nil
-}
-
-// fakeDPoPNonceStore is an in-memory issuer.DPoPNonceStore for tests.
-// Lookup leaves a nonce in place (a nonce is valid for a time window,
-// RFC 9449 §8); lookupErr, when set, is returned by every Lookup, as a
-// store that can't answer would. issues counts Issue calls.
-type fakeDPoPNonceStore struct {
-	mu        sync.Mutex
-	issued    map[string]time.Time
-	issues    int
-	lookupErr error
-}
-
-func newFakeDPoPNonceStore() *fakeDPoPNonceStore {
-	return &fakeDPoPNonceStore{issued: map[string]time.Time{}}
-}
-
-func (f *fakeDPoPNonceStore) Issue(_ context.Context, in issuer.DPoPNonceIssuance) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.issued[in.Nonce] = in.ExpiresAt
-	f.issues++
-	return nil
-}
-
-func (f *fakeDPoPNonceStore) Lookup(_ context.Context, l issuer.DPoPNonceLookup) (issuer.DPoPNonceRecord, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.lookupErr != nil {
-		return issuer.DPoPNonceRecord{}, f.lookupErr
-	}
-	exp, ok := f.issued[l.Nonce]
-	if !ok {
-		return issuer.DPoPNonceRecord{}, fmt.Errorf("fake: %w", issuer.ErrDPoPNonceUnknown)
-	}
-	return issuer.DPoPNonceRecord{ExpiresAt: exp}, nil
-}
-
 // fakeAccessTokenIssuer is an in-memory issuer.AccessTokenIssuer for
 // tests, recording the last AccessTokenParams it was called with.
 type fakeAccessTokenIssuer struct {
@@ -162,29 +100,12 @@ func (f *fakeAccessTokenIssuer) IssueAccessToken(_ context.Context, p issuer.Acc
 	return "fake-access-token", "fake-key", nil
 }
 
-func testTokenEndpointURL(t *testing.T) fapi.URL {
-	t.Helper()
-	return mustEndpointURL(t, "https://issuer.example.com/token")
-}
-
-// testWalletForDPoP builds a real *wallet.Wallet whose only job in
-// these tests is producing real DPoP proofs via GenerateDPoPProof —
-// exactly the reuse case that method's own doc comment names.
-func testWalletForDPoP(t *testing.T, now time.Time) *wallet.Wallet {
-	t.Helper()
-	w, err := wallet.New(wallet.Config{
-		Assurance:       wallet.AssuranceDevelopment,
-		ProofSigningAlg: jose.ES256,
-		Fetch:           fapihttp.Config{MaxResponseBytes: 1 << 20, RequestTimeout: 5 * time.Second},
-	}, wallet.Dependencies{
-		HTTP:   http.DefaultClient,
-		Clock:  wallet.ClockFunc(func() time.Time { return now }),
-		Random: rand.Reader,
-	})
-	if err != nil {
-		t.Fatalf("wallet.New: %v", err)
-	}
-	return w
+// anonymousTokenRequest is what the Authorization Server verified about
+// an anonymous pre-authorized_code Token Request
+// (fapigo/server.Server.VerifyTokenRequestDPoP): its DPoP key, with no
+// client.
+func anonymousTokenRequest() *issuer.VerifiedTokenRequest {
+	return &issuer.VerifiedTokenRequest{DPoPThumbprint: "test-dpop-jkt"}
 }
 
 // preAuthorizedCodeFixture is a real *issuer.Issuer configured for the
@@ -193,7 +114,6 @@ func testWalletForDPoP(t *testing.T, now time.Time) *wallet.Wallet {
 type preAuthorizedCodeFixture struct {
 	iss    *issuer.Issuer
 	codes  *fakePreAuthorizedCodeStore
-	replay *fakeDPoPReplayChecker
 	tokens *fakeAccessTokenIssuer
 	now    time.Time
 }
@@ -205,24 +125,21 @@ func newPreAuthorizedCodeFixture(t *testing.T) preAuthorizedCodeFixture {
 
 // newPreAuthorizedCodeFixtureWith is newPreAuthorizedCodeFixture's own
 // customization point: configure, if non-nil, can set additional
-// Config/Dependencies fields (e.g. DPoP nonce-challenge support) before
+// Config/Dependencies fields before
 // New is called.
 func newPreAuthorizedCodeFixtureWith(t *testing.T, configure func(cfg *issuer.Config, deps *issuer.Dependencies)) preAuthorizedCodeFixture {
 	t.Helper()
 	now := time.Now()
 	codes := newFakePreAuthorizedCodeStore()
-	replay := newFakeDPoPReplayChecker()
 	tokens := &fakeAccessTokenIssuer{}
 
 	cfg := validConfig(t)
 	cfg.Limits.AccessTokenLifetime = 5 * time.Minute
-	cfg.Limits.MaxDPoPProofAge = time.Minute
 	cfg.Limits.MaxTxCodeAttempts = 3
 
 	deps := validDependencies(t)
 	deps.Clock = fixedClock{now: now}
 	deps.PreAuthorizedCodes = codes
-	deps.DPoPReplay = replay
 	deps.AccessTokens = tokens
 
 	if configure != nil {
@@ -233,7 +150,7 @@ func newPreAuthorizedCodeFixtureWith(t *testing.T, configure func(cfg *issuer.Co
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	return preAuthorizedCodeFixture{iss: iss, codes: codes, replay: replay, tokens: tokens, now: now}
+	return preAuthorizedCodeFixture{iss: iss, codes: codes, tokens: tokens, now: now}
 }
 
 // issue persists record under code, failing the test on error — every
@@ -250,27 +167,6 @@ func (f preAuthorizedCodeFixture) issueWithTxCode(t *testing.T, code, txCode str
 	if err := f.iss.IssuePreAuthorizedCode(context.Background(), code, txCode, record); err != nil {
 		t.Fatalf("IssuePreAuthorizedCode: %v", err)
 	}
-}
-
-// validProof builds a real DPoP proof, targeting testTokenEndpointURL,
-// via a throwaway *wallet.Wallet — the same reuse GenerateDPoPProof's
-// own doc comment names.
-func (f preAuthorizedCodeFixture) validProof(t *testing.T) string {
-	t.Helper()
-	return f.validProofWithNonce(t, "")
-}
-
-// validProofWithNonce is validProof's own twin, setting the proof's own
-// "nonce" claim — what a Wallet does on retry after a DPoP
-// nonce-challenge (RFC 9449 §9's own client-side half).
-func (f preAuthorizedCodeFixture) validProofWithNonce(t *testing.T, nonce string) string {
-	t.Helper()
-	w := testWalletForDPoP(t, f.now)
-	proof, err := w.GenerateDPoPProof(testP256Key(t), "POST", testTokenEndpointURL(t).String(), nonce, "")
-	if err != nil {
-		t.Fatalf("GenerateDPoPProof: %v", err)
-	}
-	return proof
 }
 
 // requireIssuerErrorCode fails the test unless err is an *issuer.Error
@@ -291,10 +187,9 @@ func TestExchangePreAuthorizedCode_Success(t *testing.T) {
 	f.issue(t, "code-1", issuer.PreAuthorizedCodeRecord{
 		Scopes: []string{"identity_credential"}, ExpiresAt: f.now.Add(time.Minute),
 	})
-	proof := f.validProof(t)
 
 	result, err := f.iss.ExchangePreAuthorizedCode(context.Background(), issuer.ExchangePreAuthorizedCodeRequest{
-		PreAuthorizedCode: "code-1", DPoPProof: proof, TokenEndpoint: testTokenEndpointURL(t),
+		PreAuthorizedCode: "code-1", Verified: anonymousTokenRequest(),
 	})
 	if err != nil {
 		t.Fatalf("ExchangePreAuthorizedCode: %v", err)
@@ -320,7 +215,7 @@ func TestExchangePreAuthorizedCode_Success(t *testing.T) {
 
 	// Single-use: a second exchange with the same code fails.
 	if _, err := f.iss.ExchangePreAuthorizedCode(context.Background(), issuer.ExchangePreAuthorizedCodeRequest{
-		PreAuthorizedCode: "code-1", DPoPProof: proof, TokenEndpoint: testTokenEndpointURL(t),
+		PreAuthorizedCode: "code-1", Verified: anonymousTokenRequest(),
 	}); err == nil {
 		t.Fatalf("second ExchangePreAuthorizedCode = nil error, want error")
 	}
@@ -337,7 +232,7 @@ func TestExchangePreAuthorizedCode_PassesSubjectThrough(t *testing.T) {
 		Subject: "txn-8fd2",
 	})
 	result, err := f.iss.ExchangePreAuthorizedCode(context.Background(), issuer.ExchangePreAuthorizedCodeRequest{
-		PreAuthorizedCode: "code-1", DPoPProof: f.validProof(t), TokenEndpoint: testTokenEndpointURL(t),
+		PreAuthorizedCode: "code-1", Verified: anonymousTokenRequest(),
 	})
 	if err != nil {
 		t.Fatalf("ExchangePreAuthorizedCode: %v", err)
@@ -385,10 +280,9 @@ func TestExchangePreAuthorizedCode_MintsAuthorizationDetails(t *testing.T) {
 		Scopes: []string{"identity_credential"}, CredentialConfigurationIDs: []string{"IdentityCredential"},
 		ExpiresAt: f.now.Add(time.Minute),
 	})
-	proof := f.validProof(t)
 
 	result, err := f.iss.ExchangePreAuthorizedCode(context.Background(), issuer.ExchangePreAuthorizedCodeRequest{
-		PreAuthorizedCode: "code-1", DPoPProof: proof, TokenEndpoint: testTokenEndpointURL(t),
+		PreAuthorizedCode: "code-1", Verified: anonymousTokenRequest(),
 	})
 	if err != nil {
 		t.Fatalf("ExchangePreAuthorizedCode: %v", err)
@@ -432,7 +326,7 @@ func TestExchangePreAuthorizedCode_OmitsAuthorizationDetailsWhenUnconfigured(t *
 	})
 
 	result, err := f.iss.ExchangePreAuthorizedCode(context.Background(), issuer.ExchangePreAuthorizedCodeRequest{
-		PreAuthorizedCode: "code-1", DPoPProof: f.validProof(t), TokenEndpoint: testTokenEndpointURL(t),
+		PreAuthorizedCode: "code-1", Verified: anonymousTokenRequest(),
 	})
 	if err != nil {
 		t.Fatalf("ExchangePreAuthorizedCode: %v", err)
@@ -458,7 +352,7 @@ func TestExchangePreAuthorizedCode_RejectsUnsupportedCredentialConfigurationID(t
 	})
 
 	_, err := f.iss.ExchangePreAuthorizedCode(context.Background(), issuer.ExchangePreAuthorizedCodeRequest{
-		PreAuthorizedCode: "code-1", DPoPProof: f.validProof(t), TokenEndpoint: testTokenEndpointURL(t),
+		PreAuthorizedCode: "code-1", Verified: anonymousTokenRequest(),
 	})
 	if err == nil {
 		t.Fatalf("ExchangePreAuthorizedCode = nil error, want error")
@@ -499,7 +393,7 @@ func TestExchangePreAuthorizedCode_AcceptsMatchingTxCode(t *testing.T) {
 	})
 
 	if _, err := f.iss.ExchangePreAuthorizedCode(context.Background(), issuer.ExchangePreAuthorizedCodeRequest{
-		PreAuthorizedCode: "code-1", TxCode: "493536", DPoPProof: f.validProof(t), TokenEndpoint: testTokenEndpointURL(t),
+		PreAuthorizedCode: "code-1", TxCode: "493536", Verified: anonymousTokenRequest(),
 	}); err != nil {
 		t.Fatalf("ExchangePreAuthorizedCode: %v", err)
 	}
@@ -521,12 +415,12 @@ func TestExchangePreAuthorizedCode_WrongTxCodeThenSucceedsOnRetryWithoutLosingTh
 	})
 
 	_, err := f.iss.ExchangePreAuthorizedCode(context.Background(), issuer.ExchangePreAuthorizedCodeRequest{
-		PreAuthorizedCode: "code-1", TxCode: "wrong", DPoPProof: f.validProof(t), TokenEndpoint: testTokenEndpointURL(t),
+		PreAuthorizedCode: "code-1", TxCode: "wrong", Verified: anonymousTokenRequest(),
 	})
 	requireIssuerErrorCode(t, err, issuer.ErrorInvalidGrant)
 
 	if _, err := f.iss.ExchangePreAuthorizedCode(context.Background(), issuer.ExchangePreAuthorizedCodeRequest{
-		PreAuthorizedCode: "code-1", TxCode: "493536", DPoPProof: f.validProof(t), TokenEndpoint: testTokenEndpointURL(t),
+		PreAuthorizedCode: "code-1", TxCode: "493536", Verified: anonymousTokenRequest(),
 	}); err != nil {
 		t.Fatalf("retry ExchangePreAuthorizedCode with the correct tx_code: %v", err)
 	}
@@ -542,7 +436,7 @@ func submitWrongTxCodeAttempts(t *testing.T, f preAuthorizedCodeFixture, code st
 	var err error
 	for i := 0; i < n; i++ {
 		_, err = f.iss.ExchangePreAuthorizedCode(context.Background(), issuer.ExchangePreAuthorizedCodeRequest{
-			PreAuthorizedCode: code, TxCode: "wrong", DPoPProof: f.validProof(t), TokenEndpoint: testTokenEndpointURL(t),
+			PreAuthorizedCode: code, TxCode: "wrong", Verified: anonymousTokenRequest(),
 		})
 	}
 	return err
@@ -566,7 +460,7 @@ func TestExchangePreAuthorizedCode_TooManyWrongTxCodeAttemptsInvalidatesCode(t *
 	requireIssuerErrorCode(t, err, issuer.ErrorInvalidGrant)
 
 	if _, err := f.iss.ExchangePreAuthorizedCode(context.Background(), issuer.ExchangePreAuthorizedCodeRequest{
-		PreAuthorizedCode: "code-1", TxCode: "493536", DPoPProof: f.validProof(t), TokenEndpoint: testTokenEndpointURL(t),
+		PreAuthorizedCode: "code-1", TxCode: "493536", Verified: anonymousTokenRequest(),
 	}); err == nil {
 		t.Fatalf("ExchangePreAuthorizedCode with the correct tx_code after too many wrong attempts = nil error, want error (code should be invalidated)")
 	}
@@ -586,7 +480,7 @@ func TestExchangePreAuthorizedCode_StaysUnderTheAttemptLimitRemainsRetryable(t *
 	requireIssuerErrorCode(t, err, issuer.ErrorInvalidGrant)
 
 	if _, err := f.iss.ExchangePreAuthorizedCode(context.Background(), issuer.ExchangePreAuthorizedCodeRequest{
-		PreAuthorizedCode: "code-1", TxCode: "493536", DPoPProof: f.validProof(t), TokenEndpoint: testTokenEndpointURL(t),
+		PreAuthorizedCode: "code-1", TxCode: "493536", Verified: anonymousTokenRequest(),
 	}); err != nil {
 		t.Fatalf("ExchangePreAuthorizedCode with the correct tx_code after 2 wrong attempts (under the limit of 3): %v", err)
 	}
@@ -594,8 +488,7 @@ func TestExchangePreAuthorizedCode_StaysUnderTheAttemptLimitRemainsRetryable(t *
 
 // TestExchangePreAuthorizedCode_Rejects table-drives every rejection
 // path that surfaces as an *issuer.Error with a specific ErrorCode —
-// wrong tx_code, an expired or unknown code, and an invalid DPoP
-// proof.
+// wrong tx_code, and an expired or unknown code.
 func TestExchangePreAuthorizedCode_Rejects(t *testing.T) {
 	cases := map[string]struct {
 		setup    func(t *testing.T, f preAuthorizedCodeFixture) issuer.ExchangePreAuthorizedCodeRequest
@@ -608,7 +501,7 @@ func TestExchangePreAuthorizedCode_Rejects(t *testing.T) {
 					Scopes: []string{"identity_credential"}, ExpiresAt: f.now.Add(time.Minute),
 				})
 				return issuer.ExchangePreAuthorizedCodeRequest{
-					PreAuthorizedCode: "code-1", TxCode: "wrong", DPoPProof: f.validProof(t), TokenEndpoint: testTokenEndpointURL(t),
+					PreAuthorizedCode: "code-1", TxCode: "wrong", Verified: anonymousTokenRequest(),
 				}
 			},
 		},
@@ -619,7 +512,7 @@ func TestExchangePreAuthorizedCode_Rejects(t *testing.T) {
 					Scopes: []string{"identity_credential"}, ExpiresAt: f.now.Add(time.Minute),
 				})
 				return issuer.ExchangePreAuthorizedCodeRequest{
-					PreAuthorizedCode: "code-1", DPoPProof: f.validProof(t), TokenEndpoint: testTokenEndpointURL(t),
+					PreAuthorizedCode: "code-1", Verified: anonymousTokenRequest(),
 				}
 			},
 		},
@@ -630,7 +523,7 @@ func TestExchangePreAuthorizedCode_Rejects(t *testing.T) {
 					Scopes: []string{"identity_credential"}, ExpiresAt: f.now.Add(time.Minute),
 				})
 				return issuer.ExchangePreAuthorizedCodeRequest{
-					PreAuthorizedCode: "code-1", TxCode: "493536", DPoPProof: f.validProof(t), TokenEndpoint: testTokenEndpointURL(t),
+					PreAuthorizedCode: "code-1", TxCode: "493536", Verified: anonymousTokenRequest(),
 				}
 			},
 		},
@@ -641,7 +534,7 @@ func TestExchangePreAuthorizedCode_Rejects(t *testing.T) {
 					Scopes: []string{"identity_credential"}, ExpiresAt: f.now.Add(-time.Minute),
 				})
 				return issuer.ExchangePreAuthorizedCodeRequest{
-					PreAuthorizedCode: "code-1", DPoPProof: f.validProof(t), TokenEndpoint: testTokenEndpointURL(t),
+					PreAuthorizedCode: "code-1", Verified: anonymousTokenRequest(),
 				}
 			},
 		},
@@ -649,18 +542,7 @@ func TestExchangePreAuthorizedCode_Rejects(t *testing.T) {
 			wantCode: issuer.ErrorInvalidGrant,
 			setup: func(t *testing.T, f preAuthorizedCodeFixture) issuer.ExchangePreAuthorizedCodeRequest {
 				return issuer.ExchangePreAuthorizedCodeRequest{
-					PreAuthorizedCode: "unknown-code", DPoPProof: f.validProof(t), TokenEndpoint: testTokenEndpointURL(t),
-				}
-			},
-		},
-		"invalid DPoP proof": {
-			wantCode: issuer.ErrorInvalidDPoPProof,
-			setup: func(t *testing.T, f preAuthorizedCodeFixture) issuer.ExchangePreAuthorizedCodeRequest {
-				f.issue(t, "code-1", issuer.PreAuthorizedCodeRecord{
-					Scopes: []string{"identity_credential"}, ExpiresAt: f.now.Add(time.Minute),
-				})
-				return issuer.ExchangePreAuthorizedCodeRequest{
-					PreAuthorizedCode: "code-1", DPoPProof: "not-a-proof", TokenEndpoint: testTokenEndpointURL(t),
+					PreAuthorizedCode: "unknown-code", Verified: anonymousTokenRequest(),
 				}
 			},
 		},
@@ -683,21 +565,21 @@ func TestExchangePreAuthorizedCode_RejectsMissingFields(t *testing.T) {
 	cases := map[string]func(t *testing.T) (*issuer.Issuer, issuer.ExchangePreAuthorizedCodeRequest){
 		"missing pre-authorized_code": func(t *testing.T) (*issuer.Issuer, issuer.ExchangePreAuthorizedCodeRequest) {
 			f := newPreAuthorizedCodeFixture(t)
-			return f.iss, issuer.ExchangePreAuthorizedCodeRequest{DPoPProof: f.validProof(t), TokenEndpoint: testTokenEndpointURL(t)}
+			return f.iss, issuer.ExchangePreAuthorizedCodeRequest{Verified: anonymousTokenRequest()}
 		},
-		"missing DPoP proof": func(t *testing.T) (*issuer.Issuer, issuer.ExchangePreAuthorizedCodeRequest) {
+		"missing Verified": func(t *testing.T) (*issuer.Issuer, issuer.ExchangePreAuthorizedCodeRequest) {
 			f := newPreAuthorizedCodeFixture(t)
 			f.issue(t, "code-1", issuer.PreAuthorizedCodeRecord{
 				Scopes: []string{"identity_credential"}, ExpiresAt: f.now.Add(time.Minute),
 			})
-			return f.iss, issuer.ExchangePreAuthorizedCodeRequest{PreAuthorizedCode: "code-1", TokenEndpoint: testTokenEndpointURL(t)}
+			return f.iss, issuer.ExchangePreAuthorizedCodeRequest{PreAuthorizedCode: "code-1"}
 		},
 		"grant not configured": func(t *testing.T) (*issuer.Issuer, issuer.ExchangePreAuthorizedCodeRequest) {
 			iss, err := issuer.New(validConfig(t), validDependencies(t))
 			if err != nil {
 				t.Fatalf("New: %v", err)
 			}
-			return iss, issuer.ExchangePreAuthorizedCodeRequest{PreAuthorizedCode: "code-1", DPoPProof: "irrelevant", TokenEndpoint: testTokenEndpointURL(t)}
+			return iss, issuer.ExchangePreAuthorizedCodeRequest{PreAuthorizedCode: "code-1", Verified: anonymousTokenRequest()}
 		},
 	}
 	for name, setup := range cases {
@@ -713,34 +595,16 @@ func TestExchangePreAuthorizedCode_RejectsMissingFields(t *testing.T) {
 func TestNewRejectsInvalidPreAuthorizedCodeDependencies(t *testing.T) {
 	cases := map[string]func(*issuer.Config, *issuer.Dependencies){
 		"missing access_token_lifetime": func(cfg *issuer.Config, d *issuer.Dependencies) {
-			cfg.Limits.MaxDPoPProofAge, cfg.Limits.MaxTxCodeAttempts = time.Minute, 3
-			d.PreAuthorizedCodes, d.DPoPReplay, d.AccessTokens = newFakePreAuthorizedCodeStore(), newFakeDPoPReplayChecker(), &fakeAccessTokenIssuer{}
-		},
-		"missing max_dpop_proof_age": func(cfg *issuer.Config, d *issuer.Dependencies) {
-			cfg.Limits.AccessTokenLifetime, cfg.Limits.MaxTxCodeAttempts = 5*time.Minute, 3
-			d.PreAuthorizedCodes, d.DPoPReplay, d.AccessTokens = newFakePreAuthorizedCodeStore(), newFakeDPoPReplayChecker(), &fakeAccessTokenIssuer{}
-		},
-		"negative max_dpop_clock_skew": func(cfg *issuer.Config, d *issuer.Dependencies) {
-			cfg.Limits.AccessTokenLifetime, cfg.Limits.MaxDPoPProofAge, cfg.Limits.MaxTxCodeAttempts = 5*time.Minute, time.Minute, 3
-			cfg.Limits.MaxDPoPClockSkew = -time.Second
-			d.PreAuthorizedCodes, d.DPoPReplay, d.AccessTokens = newFakePreAuthorizedCodeStore(), newFakeDPoPReplayChecker(), &fakeAccessTokenIssuer{}
+			cfg.Limits.MaxTxCodeAttempts = 3
+			d.PreAuthorizedCodes, d.AccessTokens = newFakePreAuthorizedCodeStore(), &fakeAccessTokenIssuer{}
 		},
 		"missing max_tx_code_attempts": func(cfg *issuer.Config, d *issuer.Dependencies) {
-			cfg.Limits.AccessTokenLifetime, cfg.Limits.MaxDPoPProofAge = 5*time.Minute, time.Minute
-			d.PreAuthorizedCodes, d.DPoPReplay, d.AccessTokens = newFakePreAuthorizedCodeStore(), newFakeDPoPReplayChecker(), &fakeAccessTokenIssuer{}
-		},
-		"missing dpop_replay": func(cfg *issuer.Config, d *issuer.Dependencies) {
-			cfg.Limits.AccessTokenLifetime, cfg.Limits.MaxDPoPProofAge, cfg.Limits.MaxTxCodeAttempts = 5*time.Minute, time.Minute, 3
+			cfg.Limits.AccessTokenLifetime = 5 * time.Minute
 			d.PreAuthorizedCodes, d.AccessTokens = newFakePreAuthorizedCodeStore(), &fakeAccessTokenIssuer{}
 		},
 		"missing access_tokens": func(cfg *issuer.Config, d *issuer.Dependencies) {
-			cfg.Limits.AccessTokenLifetime, cfg.Limits.MaxDPoPProofAge, cfg.Limits.MaxTxCodeAttempts = 5*time.Minute, time.Minute, 3
-			d.PreAuthorizedCodes, d.DPoPReplay = newFakePreAuthorizedCodeStore(), newFakeDPoPReplayChecker()
-		},
-		"dpop nonces without lifetime": func(cfg *issuer.Config, d *issuer.Dependencies) {
-			cfg.Limits.AccessTokenLifetime, cfg.Limits.MaxDPoPProofAge, cfg.Limits.MaxTxCodeAttempts = 5*time.Minute, time.Minute, 3
-			d.PreAuthorizedCodes, d.DPoPReplay, d.AccessTokens = newFakePreAuthorizedCodeStore(), newFakeDPoPReplayChecker(), &fakeAccessTokenIssuer{}
-			d.DPoPNonces = newFakeDPoPNonceStore()
+			cfg.Limits.AccessTokenLifetime, cfg.Limits.MaxTxCodeAttempts = 5*time.Minute, 3
+			d.PreAuthorizedCodes = newFakePreAuthorizedCodeStore()
 		},
 	}
 	for name, mutate := range cases {
@@ -758,120 +622,19 @@ func TestNewRejectsInvalidPreAuthorizedCodeDependencies(t *testing.T) {
 func TestNewAcceptsValidPreAuthorizedCodeDependencies(t *testing.T) {
 	cfg := validConfig(t)
 	cfg.Limits.AccessTokenLifetime = 5 * time.Minute
-	cfg.Limits.MaxDPoPProofAge = time.Minute
 	cfg.Limits.MaxTxCodeAttempts = 3
 	deps := validDependencies(t)
 	deps.PreAuthorizedCodes = newFakePreAuthorizedCodeStore()
-	deps.DPoPReplay = newFakeDPoPReplayChecker()
 	deps.AccessTokens = &fakeAccessTokenIssuer{}
 	if _, err := issuer.New(cfg, deps); err != nil {
 		t.Fatalf("New: %v", err)
 	}
-}
-
-func TestNewAcceptsValidDPoPNonceDependencies(t *testing.T) {
-	cfg := validConfig(t)
-	cfg.Limits.AccessTokenLifetime = 5 * time.Minute
-	cfg.Limits.MaxDPoPProofAge = time.Minute
-	cfg.Limits.MaxTxCodeAttempts = 3
-	cfg.Limits.DPoPNonceLifetime = time.Minute
-	deps := validDependencies(t)
-	deps.PreAuthorizedCodes = newFakePreAuthorizedCodeStore()
-	deps.DPoPReplay = newFakeDPoPReplayChecker()
-	deps.AccessTokens = &fakeAccessTokenIssuer{}
-	deps.DPoPNonces = newFakeDPoPNonceStore()
-	if _, err := issuer.New(cfg, deps); err != nil {
-		t.Fatalf("New: %v", err)
-	}
-}
-
-// newPreAuthorizedCodeFixtureWithDPoPNonces is
-// newPreAuthorizedCodeFixtureWith's own DPoP-nonce-challenge preset —
-// every test below shares this setup.
-func newPreAuthorizedCodeFixtureWithDPoPNonces(t *testing.T) (preAuthorizedCodeFixture, *fakeDPoPNonceStore) {
-	t.Helper()
-	nonces := newFakeDPoPNonceStore()
-	f := newPreAuthorizedCodeFixtureWith(t, func(cfg *issuer.Config, deps *issuer.Dependencies) {
-		cfg.Limits.DPoPNonceLifetime = time.Minute
-		deps.DPoPNonces = nonces
-	})
-	return f, nonces
-}
-
-// TestExchangePreAuthorizedCode_ChallengesMissingNonceThenSucceedsOnRetryWithoutLosingTheCode
-// is the critical regression test for this feature: a first attempt
-// presenting no nonce at all must be challenged (RFC 9449 §8) without
-// ever consuming the single-use pre-authorized_code — otherwise the
-// Wallet's second, correctly-nonced attempt (it had no way to know the
-// nonce on the first try) would fail with "already used" instead of
-// succeeding.
-func TestExchangePreAuthorizedCode_ChallengesMissingNonceThenSucceedsOnRetryWithoutLosingTheCode(t *testing.T) {
-	f, _ := newPreAuthorizedCodeFixtureWithDPoPNonces(t)
-	f.issue(t, "code-1", issuer.PreAuthorizedCodeRecord{
-		Scopes: []string{"identity_credential"}, ExpiresAt: f.now.Add(time.Minute),
-	})
-
-	_, err := f.iss.ExchangePreAuthorizedCode(context.Background(), issuer.ExchangePreAuthorizedCodeRequest{
-		PreAuthorizedCode: "code-1", DPoPProof: f.validProof(t), TokenEndpoint: testTokenEndpointURL(t),
-	})
-	requireIssuerErrorCode(t, err, issuer.ErrorUseDPoPNonce)
-	var ierr *issuer.Error
-	if !errors.As(err, &ierr) || ierr.Nonce() == "" {
-		t.Fatalf("error = %v, want a non-empty Nonce()", err)
-	}
-	// The nonce is checked before the proof's jti is recorded, so a
-	// challenged proof leaves nothing in the replay record.
-	if n := len(f.replay.seen); n != 0 {
-		t.Fatalf("replay record holds %d entries after the nonce challenge, want 0", n)
-	}
-
-	result, err := f.iss.ExchangePreAuthorizedCode(context.Background(), issuer.ExchangePreAuthorizedCodeRequest{
-		PreAuthorizedCode: "code-1", DPoPProof: f.validProofWithNonce(t, ierr.Nonce()), TokenEndpoint: testTokenEndpointURL(t),
-	})
-	if err != nil {
-		t.Fatalf("retry ExchangePreAuthorizedCode: %v", err)
-	}
-	if result.AccessToken != "fake-access-token" {
-		t.Errorf("AccessToken = %q", result.AccessToken)
-	}
-	if result.NextDPoPNonce == "" {
-		t.Errorf("NextDPoPNonce is empty, want the current nonce")
-	}
-}
-
-func TestExchangePreAuthorizedCode_ChallengesUnknownNonce(t *testing.T) {
-	f, _ := newPreAuthorizedCodeFixtureWithDPoPNonces(t)
-	f.issue(t, "code-1", issuer.PreAuthorizedCodeRecord{
-		Scopes: []string{"identity_credential"}, ExpiresAt: f.now.Add(time.Minute),
-	})
-
-	_, err := f.iss.ExchangePreAuthorizedCode(context.Background(), issuer.ExchangePreAuthorizedCodeRequest{
-		PreAuthorizedCode: "code-1", DPoPProof: f.validProofWithNonce(t, "never-issued"), TokenEndpoint: testTokenEndpointURL(t),
-	})
-	requireIssuerErrorCode(t, err, issuer.ErrorUseDPoPNonce)
-}
-
-func TestExchangePreAuthorizedCode_ChallengesExpiredNonce(t *testing.T) {
-	f, nonces := newPreAuthorizedCodeFixtureWithDPoPNonces(t)
-	f.issue(t, "code-1", issuer.PreAuthorizedCodeRecord{
-		Scopes: []string{"identity_credential"}, ExpiresAt: f.now.Add(time.Minute),
-	})
-	if err := nonces.Issue(context.Background(), issuer.DPoPNonceIssuance{
-		Nonce: "expired-nonce", ExpiresAt: f.now.Add(-time.Second),
-	}); err != nil {
-		t.Fatalf("Issue: %v", err)
-	}
-
-	_, err := f.iss.ExchangePreAuthorizedCode(context.Background(), issuer.ExchangePreAuthorizedCodeRequest{
-		PreAuthorizedCode: "code-1", DPoPProof: f.validProofWithNonce(t, "expired-nonce"), TokenEndpoint: testTokenEndpointURL(t),
-	})
-	requireIssuerErrorCode(t, err, issuer.ErrorUseDPoPNonce)
 }
 
 // TestExchangePreAuthorizedCode_NextDPoPNonceEmptyWhenDisabled checks
-// that nonce-challenge support stays fully opt-in: with
-// Dependencies.DPoPNonces unset (the default fixture), a successful
-// exchange never sets NextDPoPNonce, and no nonce is required at all.
+// that an Authorization Server using no DPoP nonces (no
+// VerifiedTokenRequest.NextDPoPNonce) gets a Token Response without
+// one.
 func TestExchangePreAuthorizedCode_NextDPoPNonceEmptyWhenDisabled(t *testing.T) {
 	f := newPreAuthorizedCodeFixture(t)
 	f.issue(t, "code-1", issuer.PreAuthorizedCodeRecord{
@@ -879,7 +642,7 @@ func TestExchangePreAuthorizedCode_NextDPoPNonceEmptyWhenDisabled(t *testing.T) 
 	})
 
 	result, err := f.iss.ExchangePreAuthorizedCode(context.Background(), issuer.ExchangePreAuthorizedCodeRequest{
-		PreAuthorizedCode: "code-1", DPoPProof: f.validProof(t), TokenEndpoint: testTokenEndpointURL(t),
+		PreAuthorizedCode: "code-1", Verified: anonymousTokenRequest(),
 	})
 	if err != nil {
 		t.Fatalf("ExchangePreAuthorizedCode: %v", err)
@@ -899,34 +662,5 @@ func TestExchangePreAuthorizedCodeResult_WriteJSON_SetsDPoPNonceHeader(t *testin
 	}.WriteJSON(rec)
 	if got := rec.Header().Get("DPoP-Nonce"); got != "fresh-nonce" {
 		t.Errorf("DPoP-Nonce header = %q, want %q", got, "fresh-nonce")
-	}
-}
-
-// TestError_WriteJSON_SetsDPoPNonceHeaderForUseDPoPNonce checks that a
-// use_dpop_nonce challenge's own WriteJSON sets the DPoP-Nonce header
-// (RFC 9449 §8) — exercised indirectly through
-// ExchangePreAuthorizedCode's own error return, since *issuer.Error's
-// nonce field has no exported constructor.
-func TestError_WriteJSON_SetsDPoPNonceHeaderForUseDPoPNonce(t *testing.T) {
-	f, _ := newPreAuthorizedCodeFixtureWithDPoPNonces(t)
-	f.issue(t, "code-1", issuer.PreAuthorizedCodeRecord{
-		Scopes: []string{"identity_credential"}, ExpiresAt: f.now.Add(time.Minute),
-	})
-
-	_, err := f.iss.ExchangePreAuthorizedCode(context.Background(), issuer.ExchangePreAuthorizedCodeRequest{
-		PreAuthorizedCode: "code-1", DPoPProof: f.validProof(t), TokenEndpoint: testTokenEndpointURL(t),
-	})
-	var ierr *issuer.Error
-	if !errors.As(err, &ierr) {
-		t.Fatalf("error = %v, want *issuer.Error", err)
-	}
-
-	rec := httptest.NewRecorder()
-	ierr.WriteJSON(rec)
-	if got := rec.Header().Get("DPoP-Nonce"); got == "" || got != ierr.Nonce() {
-		t.Errorf("DPoP-Nonce header = %q, want %q", got, ierr.Nonce())
-	}
-	if rec.Code != 400 {
-		t.Errorf("status = %d, want 400", rec.Code)
 	}
 }

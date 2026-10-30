@@ -57,20 +57,6 @@ type assuredPreAuthorizedCodeStore struct {
 
 func (a assuredPreAuthorizedCodeStore) Capabilities() issuer.StoreCapabilities { return a.caps }
 
-type assuredDPoPReplayChecker struct {
-	issuer.DPoPReplayChecker
-	caps issuer.StoreCapabilities
-}
-
-func (a assuredDPoPReplayChecker) Capabilities() issuer.StoreCapabilities { return a.caps }
-
-type assuredDPoPNonceStore struct {
-	issuer.DPoPNonceStore
-	caps issuer.StoreCapabilities
-}
-
-func (a assuredDPoPNonceStore) Capabilities() issuer.StoreCapabilities { return a.caps }
-
 // assuredAttestationVerifier mirrors the assured* store wrappers
 // above, but for AttestationVerifier — pairing
 // fixedAttestationVerifier (already defined in
@@ -252,17 +238,16 @@ func TestNewRejectsMissingAtomicConsumeUnderProduction(t *testing.T) {
 }
 
 // TestNewRejectsPreAuthorizedCodeStoresUnderProduction covers the
-// pre-authorized_code flow's own three conditionally-required stores
-// (PreAuthorizedCodes/DPoPReplay, gated on Dependencies.PreAuthorizedCodes
-// being set at all) — a configuration validConfig/validDependencies
-// never wires in by default, so this builds its own minimal one.
+// pre-authorized_code flow's own conditionally-required store
+// (PreAuthorizedCodes, gated on it being set at all) — a configuration
+// validConfig/validDependencies never wires in by default, so this
+// builds its own minimal one.
 func TestNewRejectsPreAuthorizedCodeStoresUnderProduction(t *testing.T) {
 	cfg, deps := preAuthorizedCodeProductionConfig(t)
 	deps.PreAuthorizedCodes = newFakePreAuthorizedCodeStore()
-	deps.DPoPReplay = newFakeDPoPReplayChecker()
 
-	if _, err := issuer.New(cfg, deps); err == nil {
-		t.Fatal("New = nil error, want error (pre_authorized_codes/dpop_replay declare no StoreAssurance)")
+	if _, err := issuer.New(cfg, deps); err == nil || !strings.Contains(err.Error(), "pre_authorized_codes") {
+		t.Fatalf("New = %v, want error (pre_authorized_codes declares no StoreAssurance)", err)
 	}
 }
 
@@ -350,31 +335,6 @@ func TestNewRequiresPreAuthorizedCodeClientAuthenticationUnderProduction(t *test
 	}
 }
 
-// TestNewHoldsDPoPClockSkewToFAPIUnderProduction: where the issuer
-// verifies the token request's DPoP proof, a production issuer's skew
-// must be from 10 to 60 seconds, as FAPI 2.0 has it; development
-// assurance takes any non-negative skew.
-func TestNewHoldsDPoPClockSkewToFAPIUnderProduction(t *testing.T) {
-	cfg, deps := preAuthorizedCodeProductionConfig(t)
-	for _, skew := range []time.Duration{10 * time.Second, 60 * time.Second} {
-		cfg.Limits.MaxDPoPClockSkew = skew
-		if _, err := issuer.New(cfg, deps); err != nil {
-			t.Errorf("skew %s: %v", skew, err)
-		}
-	}
-	for _, skew := range []time.Duration{0, 9 * time.Second, 61 * time.Second} {
-		cfg.Limits.MaxDPoPClockSkew = skew
-		if _, err := issuer.New(cfg, deps); err == nil || !strings.Contains(err.Error(), "max_dpop_clock_skew") {
-			t.Errorf("skew %s: %v, want it refused", skew, err)
-		}
-	}
-	cfg.Limits.MaxDPoPClockSkew = 0
-	cfg.Assurance = issuer.AssuranceDevelopment
-	if _, err := issuer.New(cfg, deps); err != nil {
-		t.Errorf("skew 0 under AssuranceDevelopment: %v", err)
-	}
-}
-
 // TestNewCapsTxCodeAttemptsUnderProduction: a production issuer
 // tolerates at most MaxProductionTxCodeAttempts wrong Transaction Codes
 // per pre-authorized code, so a six-digit code stays hard to guess;
@@ -403,8 +363,6 @@ func preAuthorizedCodeProductionConfig(t *testing.T) (issuer.Config, issuer.Depe
 	cfg := validConfig(t)
 	cfg.Assurance = issuer.AssuranceProduction
 	cfg.Limits.AccessTokenLifetime = time.Hour
-	cfg.Limits.MaxDPoPProofAge = time.Minute
-	cfg.Limits.MaxDPoPClockSkew = 10 * time.Second
 	cfg.Limits.MaxTxCodeAttempts = 3
 	cfg.PreAuthorizedCodeClientAuthentication = issuer.AnonymousPreAuthorizedCode{}
 	deps := validDependencies(t)
@@ -413,91 +371,9 @@ func preAuthorizedCodeProductionConfig(t *testing.T) (issuer.Config, issuer.Depe
 	deps.DeferredTransactions = assuredDeferredTransactionStore{newFakeDeferredTransactionStore(), issuer.StoreCapabilities{Durable: true, AtomicConsume: true}}
 	deps.Notifications = assuredNotificationStore{newFakeNotificationStore(), issuer.StoreCapabilities{Durable: true}}
 	deps.PreAuthorizedCodes = assuredPreAuthorizedCodeStore{newFakePreAuthorizedCodeStore(), issuer.StoreCapabilities{Durable: true, AtomicConsume: true}}
-	deps.DPoPReplay = assuredDPoPReplayChecker{newFakeDPoPReplayChecker(), issuer.StoreCapabilities{Durable: true, AtomicConsume: true}}
 	deps.AccessTokens = &fakeAccessTokenIssuer{}
-	cfg.Limits.DPoPNonceLifetime = 5 * time.Minute
-	deps.DPoPNonces = assuredDPoPNonceStore{newFakeDPoPNonceStore(), issuer.StoreCapabilities{Durable: true}}
 	deps.Audit = newFakeAuditSink()
 	return cfg, deps
-}
-
-// TestNewRequiresDPoPNonceChoiceUnderProduction: where the issuer
-// verifies the token request's DPoP proof itself, a production issuer
-// takes a durable DPoPNonceStore (Lookup is a plain read, so no
-// AtomicConsume) or the explicit NoDPoPNonces{} decline, never nil;
-// development assurance still takes nil.
-func TestNewRequiresDPoPNonceChoiceUnderProduction(t *testing.T) {
-	cfg, deps := preAuthorizedCodeProductionConfig(t)
-	if _, err := issuer.New(cfg, deps); err != nil {
-		t.Fatalf("New with a durable DPoPNonceStore: %v", err)
-	}
-
-	deps.DPoPNonces = nil
-	if _, err := issuer.New(cfg, deps); err == nil || !strings.Contains(err.Error(), "dpop_nonces is required") {
-		t.Fatalf("New with nil DPoPNonces = %v, want it refused", err)
-	}
-
-	for name, declined := range map[string]issuer.DPoPNonceStore{"value": issuer.NoDPoPNonces{}, "pointer": &issuer.NoDPoPNonces{}} {
-		deps.DPoPNonces = declined
-		if _, err := issuer.New(cfg, deps); err != nil {
-			t.Errorf("New with NoDPoPNonces (%s): %v", name, err)
-		}
-	}
-
-	deps.DPoPNonces = newFakeDPoPNonceStore()
-	if _, err := issuer.New(cfg, deps); err == nil || !strings.Contains(err.Error(), "dpop_nonces must implement") {
-		t.Fatalf("New with an undeclared DPoPNonceStore = %v, want it refused", err)
-	}
-	deps.DPoPNonces = assuredDPoPNonceStore{newFakeDPoPNonceStore(), issuer.StoreCapabilities{}}
-	if _, err := issuer.New(cfg, deps); err == nil || !strings.Contains(err.Error(), "dpop_nonces must declare Durable") {
-		t.Fatalf("New with a non-durable DPoPNonceStore = %v, want it refused", err)
-	}
-
-	// The Authorization Server verifies the proof, and its own nonces
-	// apply.
-	verified := cfg
-	verified.PreAuthorizedCodeClientAuthentication = issuer.VerifiedPreAuthorizedCode{}
-	deps.DPoPNonces = nil
-	if _, err := issuer.New(verified, deps); err != nil {
-		t.Fatalf("New under VerifiedPreAuthorizedCode without DPoPNonces: %v", err)
-	}
-
-	cfg.Assurance = issuer.AssuranceDevelopment
-	if _, err := issuer.New(cfg, deps); err != nil {
-		t.Fatalf("New under AssuranceDevelopment without DPoPNonces: %v", err)
-	}
-}
-
-// TestNewCapsDPoPNonceLifetimeUnderProduction: a production issuer's
-// DPoP nonce is valid for at most 15 minutes, as fapigo/server requires
-// of its own; development assurance takes any positive lifetime, and a
-// decline needs none.
-func TestNewCapsDPoPNonceLifetimeUnderProduction(t *testing.T) {
-	cfg, deps := preAuthorizedCodeProductionConfig(t)
-	cfg.Limits.DPoPNonceLifetime = 15 * time.Minute
-	if _, err := issuer.New(cfg, deps); err != nil {
-		t.Fatalf("New with a 15-minute dpop_nonce_lifetime: %v", err)
-	}
-	cfg.Limits.DPoPNonceLifetime = 16 * time.Minute
-	if _, err := issuer.New(cfg, deps); err == nil || !strings.Contains(err.Error(), "dpop_nonce_lifetime") {
-		t.Fatalf("New with a 16-minute dpop_nonce_lifetime = %v, want it refused", err)
-	}
-
-	declined := deps
-	declined.DPoPNonces = issuer.NoDPoPNonces{}
-	if _, err := issuer.New(cfg, declined); err != nil {
-		t.Fatalf("New with NoDPoPNonces and a long dpop_nonce_lifetime: %v", err)
-	}
-	cfg.Limits.DPoPNonceLifetime = 0
-	if _, err := issuer.New(cfg, declined); err != nil {
-		t.Fatalf("New with NoDPoPNonces and no dpop_nonce_lifetime: %v", err)
-	}
-
-	cfg.Limits.DPoPNonceLifetime = time.Hour
-	cfg.Assurance = issuer.AssuranceDevelopment
-	if _, err := issuer.New(cfg, deps); err != nil {
-		t.Fatalf("New under AssuranceDevelopment with an hour's dpop_nonce_lifetime: %v", err)
-	}
 }
 
 // productionIssuer is a production configuration New accepts, as

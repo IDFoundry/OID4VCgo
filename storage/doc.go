@@ -1,7 +1,7 @@
 // Package storage provides in-memory implementations of every store
 // interface the issuer package defines (NonceStore, CredentialOfferStore,
-// DeferredTransactionStore, NotificationStore, PreAuthorizedCodeStore,
-// DPoPNonceStore, DPoPReplayChecker) and the verifier package's
+// DeferredTransactionStore, NotificationStore, PreAuthorizedCodeStore)
+// and the verifier package's
 // TransactionStore — for local development and testing only. Never
 // production.
 //

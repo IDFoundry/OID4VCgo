@@ -16,8 +16,6 @@ import (
 func TestCreatePreAuthorizedOffer(t *testing.T) {
 	f := newPreAuthorizedCodeFixtureWith(t, func(cfg *issuer.Config, deps *issuer.Dependencies) {
 		cfg.PreAuthorizedCodeClientAuthentication = issuer.VerifiedPreAuthorizedCode{}
-		cfg.Limits.MaxDPoPProofAge = 0
-		deps.DPoPReplay = nil
 	})
 	ctx := context.Background()
 	verified := &issuer.VerifiedTokenRequest{ClientID: "wallet-1", DPoPThumbprint: "jkt-1"}

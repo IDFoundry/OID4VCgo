@@ -59,39 +59,6 @@ func TestNewProductionCapsProofAgeWithoutNonceEndpoint(t *testing.T) {
 	}
 }
 
-// TestNewProductionCapsDPoPProofAge: where the issuer verifies the
-// Token Request's DPoP proof, a production issuer takes it for at most
-// MaxProductionDPoPProofAge, as fapigo/server does (the audit's
-// year-long MaxDPoPProofAge PoC, inverted). Development assurance is
-// unbounded, and under VerifiedPreAuthorizedCode the Authorization
-// Server's limit applies.
-func TestNewProductionCapsDPoPProofAge(t *testing.T) {
-	cfg, deps := preAuthorizedCodeProductionConfig(t)
-	deps.DPoPNonces = issuer.NoDPoPNonces{}
-	cfg.Limits.MaxDPoPProofAge = issuer.MaxProductionDPoPProofAge
-	if _, err := issuer.New(cfg, deps); err != nil {
-		t.Fatalf("New with max_dpop_proof_age %s: %v", cfg.Limits.MaxDPoPProofAge, err)
-	}
-	for _, age := range []time.Duration{issuer.MaxProductionDPoPProofAge + time.Second, 365 * 24 * time.Hour} {
-		cfg.Limits.MaxDPoPProofAge = age
-		if _, err := issuer.New(cfg, deps); err == nil || !strings.Contains(err.Error(), "max_dpop_proof_age") {
-			t.Errorf("New with max_dpop_proof_age %s = %v, want it refused", age, err)
-		}
-	}
-
-	dev := cfg
-	dev.Assurance = issuer.AssuranceDevelopment
-	if _, err := issuer.New(dev, deps); err != nil {
-		t.Errorf("New under AssuranceDevelopment with max_dpop_proof_age %s: %v", dev.Limits.MaxDPoPProofAge, err)
-	}
-
-	verified := cfg
-	verified.PreAuthorizedCodeClientAuthentication = issuer.VerifiedPreAuthorizedCode{}
-	if _, err := issuer.New(verified, deps); err != nil {
-		t.Errorf("New under VerifiedPreAuthorizedCode with max_dpop_proof_age %s: %v", verified.Limits.MaxDPoPProofAge, err)
-	}
-}
-
 // declaredClock is a Clock declaring issuer.ClockAssurance, as
 // fapigo/server.SystemClock does.
 type declaredClock struct{ reads bool }
@@ -126,28 +93,21 @@ func TestNewProductionRefusesCustomClock(t *testing.T) {
 	}
 }
 
-// TestNewProductionNeedsNoDPoPReplayUnderVerifiedPreAuthorizedCode:
-// under VerifiedPreAuthorizedCode the Authorization Server verifies the
-// DPoP proof and keeps its replay records, so a production issuer
-// doesn't ask for a DPoPReplay store it would never use, nor for one
-// declaring StoreAssurance. Where the issuer verifies the proof itself,
-// it still does.
-func TestNewProductionNeedsNoDPoPReplayUnderVerifiedPreAuthorizedCode(t *testing.T) {
+// TestNewAccessTokensOnlyForAnonymousPreAuthorizedCode: under
+// VerifiedPreAuthorizedCode the Authorization Server may issue the
+// access token itself (RedeemPreAuthorizedCode), so the issuer doesn't
+// ask for an AccessTokens issuer; an anonymous redemption's token is
+// the issuer's to issue, so it does.
+func TestNewAccessTokensOnlyForAnonymousPreAuthorizedCode(t *testing.T) {
 	cfg, deps := preAuthorizedCodeProductionConfig(t)
 	cfg.PreAuthorizedCodeClientAuthentication = issuer.VerifiedPreAuthorizedCode{}
-	deps.DPoPReplay = nil
 	deps.AccessTokens = nil
 	if _, err := issuer.New(cfg, deps); err != nil {
-		t.Fatalf("New under VerifiedPreAuthorizedCode without DPoPReplay: %v", err)
-	}
-	deps.DPoPReplay = newFakeDPoPReplayChecker()
-	if _, err := issuer.New(cfg, deps); err != nil {
-		t.Fatalf("New under VerifiedPreAuthorizedCode with an undeclared DPoPReplay: %v", err)
+		t.Fatalf("New under VerifiedPreAuthorizedCode without AccessTokens: %v", err)
 	}
 
 	cfg.PreAuthorizedCodeClientAuthentication = issuer.AnonymousPreAuthorizedCode{}
-	deps.AccessTokens = &fakeAccessTokenIssuer{}
-	if _, err := issuer.New(cfg, deps); err == nil || !strings.Contains(err.Error(), "dpop_replay") {
-		t.Fatalf("New under AnonymousPreAuthorizedCode with an undeclared DPoPReplay = %v, want it refused", err)
+	if _, err := issuer.New(cfg, deps); err == nil || !strings.Contains(err.Error(), "access_tokens") {
+		t.Fatalf("New under AnonymousPreAuthorizedCode without AccessTokens = %v, want it refused", err)
 	}
 }

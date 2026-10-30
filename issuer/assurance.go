@@ -2,7 +2,6 @@ package issuer
 
 import (
 	"crypto/rand"
-	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -30,23 +29,17 @@ const (
 	// AssuranceProduction rejects a configuration whose configured
 	// stores or key sources don't declare themselves adequate: every
 	// store Dependencies actually needs (Nonces, CredentialOffers,
-	// DeferredTransactions, Notifications, PreAuthorizedCodes,
-	// DPoPReplay, DPoPNonces — each checked only when its own feature
-	// is enabled, matching New's own existing conditional-required
-	// pattern) must implement StoreAssurance and assert at least
-	// Durable, plus AtomicConsume for whichever of those expose a
-	// Consume/UseOnce-style operation (Nonces, PreAuthorizedCodes,
-	// DPoPReplay), or an Update and Invalidate that must each happen at
-	// most once (DeferredTransactions) — CredentialOffers/Notifications
-	// are plain store/get operations, and DPoPNonces a plain lookup,
-	// with nothing to assert atomicity for). Where this issuer verifies
-	// the Token Request's DPoP proof itself (PreAuthorizedCodes set,
-	// PreAuthorizedCodeClientAuthentication not VerifiedPreAuthorizedCode),
-	// DPoPNonces is required, as a store or the explicit NoDPoPNonces{}
-	// decline, Limits.MaxDPoPProofAge must be at most
-	// MaxProductionDPoPProofAge, and a store's Limits.DPoPNonceLifetime
-	// must be at most 15 minutes; DPoPReplay is checked only there, since
-	// otherwise the Authorization Server keeps the replay records.
+	// DeferredTransactions, Notifications, PreAuthorizedCodes — each
+	// checked only when its own feature is enabled, matching New's own
+	// existing conditional-required pattern) must implement
+	// StoreAssurance and assert at least Durable, plus AtomicConsume for
+	// whichever of those expose a Consume-style operation (Nonces,
+	// PreAuthorizedCodes), or an Update and Invalidate that must each
+	// happen at most once (DeferredTransactions) —
+	// CredentialOffers/Notifications are plain store/get operations,
+	// with nothing to assert atomicity for). The Token Request's DPoP
+	// proof is the Authorization Server's to verify, under its own
+	// production bounds, replay record and nonces.
 	// Without a Nonce Endpoint, Limits.MaxProofAge must be at most
 	// MaxProductionProofAge; with one, Limits.NonceLifetime at most an
 	// hour. A store that doesn't implement
@@ -97,8 +90,7 @@ type StoreCapabilities struct {
 	Durable bool
 
 	// AtomicConsume means a consume-once-style operation (a
-	// NonceStore/PreAuthorizedCodeStore's own Consume, a
-	// DPoPReplayChecker's own UseOnce) is a single atomic
+	// NonceStore/PreAuthorizedCodeStore's own Consume) is a single atomic
 	// check-and-retire: two concurrent calls for the same key can
 	// never both succeed.
 	AtomicConsume bool
@@ -186,12 +178,10 @@ func checkProductionAttestationProofType(cfg Config) error {
 // against every store or key source New's own existing
 // conditional-required checks have already confirmed is actually
 // configured — called only once cfg.Assurance is known to be
-// AssuranceProduction. declinedDPoPNonces is whether
-// Dependencies.DPoPNonces was NoDPoPNonces{}, which New has already
-// turned into nil. It returns every problem it finds, for New to report
-// together. Split out of New purely to keep its own cognitive
+// AssuranceProduction. It returns every problem it finds, for New to
+// report together. Split out of New purely to keep its own cognitive
 // complexity manageable.
-func checkProductionAssurance(cfg Config, deps Dependencies, declinedDPoPNonces bool) []error {
+func checkProductionAssurance(cfg Config, deps Dependencies) []error {
 	var errs []error
 	// Nonces, transaction IDs, notification IDs, Credential Offer
 	// references and access tokens all come from it: a predictable
@@ -215,8 +205,6 @@ func checkProductionAssurance(cfg Config, deps Dependencies, declinedDPoPNonces 
 		checkProductionHTTPS(cfg),
 		checkProductionAttestationProofType(cfg),
 		checkProductionProofFreshness(cfg),
-		checkProductionDPoPProof(cfg, deps),
-		checkProductionDPoPNonces(cfg, deps, declinedDPoPNonces),
 		checkProductionX5CRevocation(deps),
 		checkProductionAttestationBinding(deps),
 	)
@@ -240,10 +228,6 @@ func checkProductionStores(cfg Config, deps Dependencies) []error {
 		{!cfg.Endpoints.DeferredCredential.IsZero(), "deferred_transactions", deps.DeferredTransactions, true},
 		{!cfg.Endpoints.Notification.IsZero(), "notifications", deps.Notifications, false},
 		{deps.PreAuthorizedCodes != nil, "pre_authorized_codes", deps.PreAuthorizedCodes, true},
-		// Under VerifiedPreAuthorizedCode the Authorization Server
-		// verifies the DPoP proof and keeps its replay records.
-		{verifiesDPoPProofs(cfg, deps), "dpop_replay", deps.DPoPReplay, true},
-		{deps.DPoPNonces != nil, "dpop_nonces", deps.DPoPNonces, false},
 	}
 	var errs []error
 	for _, st := range stores {
@@ -271,15 +255,6 @@ func checkProductionKeySources(cfg Config, deps Dependencies) []error {
 	return errs
 }
 
-// Production bounds on the skew this issuer allows a DPoP proof's iat
-// into the future: FAPI 2.0 has an authorization server accept a JWT up
-// to 10 seconds in the future and refuse one more than 60, the bounds
-// fapigo/server enforces under its own production assurance.
-const (
-	minProductionDPoPClockSkew = 10 * time.Second
-	maxProductionDPoPClockSkew = 60 * time.Second
-)
-
 // maxProductionNonceLifetime is the longest Limits.NonceLifetime
 // AssuranceProduction takes: a c_nonce is a proof's only freshness, so
 // one valid much longer lets a Wallet's proofs be made well before
@@ -294,12 +269,6 @@ const maxProductionNonceLifetime = time.Hour
 // A Nonce Endpoint (Endpoints.Nonce), which HAIP 1.0 §4.1 requires,
 // makes each proof single-use instead.
 const MaxProductionProofAge = 5 * time.Minute
-
-// MaxProductionDPoPProofAge is the longest Limits.MaxDPoPProofAge
-// AssuranceProduction takes where this issuer verifies the Token
-// Request's DPoP proof itself, the bound fapigo/server enforces on its
-// own: a proof is fresh (RFC 9449 §11.1) only while it's young.
-const MaxProductionDPoPProofAge = 5 * time.Minute
 
 // checkProductionProofFreshness bounds how long a key proof stays
 // usable: a c_nonce's lifetime with a Nonce Endpoint, and the proof's
@@ -317,58 +286,18 @@ func checkProductionProofFreshness(cfg Config) error {
 	return nil
 }
 
-// verifiesDPoPProofs reports whether this issuer verifies the Token
-// Request's DPoP proof itself: it redeems pre-authorized codes
-// (Dependencies.PreAuthorizedCodes), and the Authorization Server
-// hasn't verified the redemption (VerifiedPreAuthorizedCode).
-func verifiesDPoPProofs(cfg Config, deps Dependencies) bool {
+// issuesAnonymousAccessTokens reports whether this issuer issues the
+// access token for a redemption without client authentication: it
+// redeems pre-authorized codes (Dependencies.PreAuthorizedCodes), and
+// not only for clients the Authorization Server authenticated
+// (VerifiedPreAuthorizedCode), whose tokens it may issue itself
+// (RedeemPreAuthorizedCode).
+func issuesAnonymousAccessTokens(cfg Config, deps Dependencies) bool {
 	if deps.PreAuthorizedCodes == nil {
 		return false
 	}
 	_, verified := cfg.PreAuthorizedCodeClientAuthentication.(VerifiedPreAuthorizedCode)
 	return !verified
-}
-
-// maxProductionDPoPNonceLifetime is the longest Limits.DPoPNonceLifetime
-// AssuranceProduction takes, the bound fapigo/server enforces on its
-// own: a nonce is a DPoP proof's freshness, valid for any number of
-// proofs until it expires.
-const maxProductionDPoPNonceLifetime = 15 * time.Minute
-
-// errProductionDPoPNoncesRequired is AssuranceProduction's refusal of a
-// nil Dependencies.DPoPNonces where this issuer verifies the Token
-// Request's DPoP proof itself.
-var errProductionDPoPNoncesRequired = errors.New("dependencies.dpop_nonces is required under AssuranceProduction when dependencies.pre_authorized_codes is set and this issuer verifies the token request's DPoP proof (pass a durable issuer.DPoPNonceStore, with limits.dpop_nonce_lifetime, to challenge DPoP proofs for a nonce, or issuer.NoDPoPNonces{} to explicitly decline)")
-
-// checkProductionDPoPNonces requires a DPoP nonce choice where this
-// issuer verifies the Token Request's DPoP proof itself
-// (verifiesDPoPProofs). A configured store's lifetime is bounded
-// wherever it is used.
-func checkProductionDPoPNonces(cfg Config, deps Dependencies, declined bool) error {
-	if deps.DPoPNonces != nil && cfg.Limits.DPoPNonceLifetime > maxProductionDPoPNonceLifetime {
-		return fmt.Errorf("config: limits.dpop_nonce_lifetime is %s; under AssuranceProduction it must be at most %s", cfg.Limits.DPoPNonceLifetime, maxProductionDPoPNonceLifetime)
-	}
-	if deps.DPoPNonces != nil || declined || !verifiesDPoPProofs(cfg, deps) {
-		return nil
-	}
-	return errProductionDPoPNoncesRequired
-}
-
-// checkProductionDPoPProof holds Limits.MaxDPoPClockSkew to FAPI 2.0's
-// bounds, and Limits.MaxDPoPProofAge to MaxProductionDPoPProofAge,
-// where this issuer verifies the Token Request's DPoP proof itself
-// (verifiesDPoPProofs).
-func checkProductionDPoPProof(cfg Config, deps Dependencies) error {
-	if !verifiesDPoPProofs(cfg, deps) {
-		return nil
-	}
-	if skew := cfg.Limits.MaxDPoPClockSkew; skew < minProductionDPoPClockSkew || skew > maxProductionDPoPClockSkew {
-		return fmt.Errorf("config: limits.max_dpop_clock_skew is %s; under AssuranceProduction it must be from %s to %s (FAPI 2.0)", skew, minProductionDPoPClockSkew, maxProductionDPoPClockSkew)
-	}
-	if age := cfg.Limits.MaxDPoPProofAge; age > MaxProductionDPoPProofAge {
-		return fmt.Errorf("config: limits.max_dpop_proof_age is %s; under AssuranceProduction it must be at most %s (RFC 9449 §11.1)", age, MaxProductionDPoPProofAge)
-	}
-	return nil
 }
 
 // checkProductionHTTPS refuses, under AssuranceProduction, a published

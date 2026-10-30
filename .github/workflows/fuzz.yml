@@ -51,9 +51,6 @@ jobs:
           - id: jwe-decode-header
             pkg: ./internal/jwe
             name: FuzzDecodeHeader
-          - id: dpop-verify
-            pkg: ./internal/dpop
-            name: FuzzVerifyDPoPProof
           - id: cose-decode-unverified
             pkg: ./internal/cose
             name: FuzzDecodeUnverified

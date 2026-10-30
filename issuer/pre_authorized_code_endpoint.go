@@ -12,24 +12,8 @@ import (
 	fapi "github.com/idfoundry/fapigo"
 
 	"github.com/idfoundry/oid4vcgo"
-	"github.com/idfoundry/oid4vcgo/internal/dpop"
 	"github.com/idfoundry/oid4vcgo/internal/strictjson"
 )
-
-// DPoPReplayChecker detects DPoP proof replay by "jti" (RFC 9449
-// §11.1) for ExchangePreAuthorizedCode's own Token Request — the same
-// interface shape internal/dpop.ReplayChecker declares, restated here
-// so a caller can satisfy it without reaching past this package's own
-// public API into an internal one. The jti UseOnce receives is the
-// proof's own jti hashed (base64url SHA-256, 43 characters), so a
-// store holds a fixed-size key per proof whatever the client sent; a
-// jti over 256 bytes is refused before it gets here. expiresAt is the
-// proof's iat plus Limits.MaxDPoPProofAge plus twice
-// Limits.MaxDPoPClockSkew: keep the record until then, so an instance
-// whose clock runs behind can't take the proof again.
-type DPoPReplayChecker interface {
-	UseOnce(ctx context.Context, jti string, expiresAt time.Time) error
-}
 
 // ExchangePreAuthorizedCodeRequest is the Pre-Authorized Code Flow's
 // own Token Request (§6.1).
@@ -43,25 +27,12 @@ type ExchangePreAuthorizedCodeRequest struct {
 	// refused otherwise.
 	TxCode string
 
-	// DPoPProof is REQUIRED: the presented "DPoP" HTTP header value.
-	// HAIP 1.0 §4 makes DPoP mandatory for every grant, so this
-	// package doesn't support an unconstrained (bearer) token for this
-	// one either.
-	DPoPProof string
-
-	// TokenEndpoint is this Token Request's own target URL — needed to
-	// verify DPoPProof's own "htu" claim (RFC 9449 §4.3). This package
-	// has no Token Endpoint URL of its own to read this from: unlike
-	// the Credential/Nonce/Deferred Credential/Notification Endpoints,
-	// the Token Endpoint belongs to whichever Authorization Server this
-	// issuer is paired with (see authorization_server.go), so the
-	// caller — who already knows what URL the request arrived at —
-	// supplies it directly.
-	TokenEndpoint fapi.URL
-
-	// Verified is the request's client and DPoP proof, already verified
-	// by the Authorization Server. Required under VerifiedPreAuthorizedCode,
-	// which then needs no DPoPProof or TokenEndpoint; refused otherwise.
+	// Verified is the request's DPoP proof, and under
+	// VerifiedPreAuthorizedCode its client, already verified by the
+	// Authorization Server serving the Token Endpoint. REQUIRED: HAIP 1.0
+	// §4 makes DPoP mandatory for every grant, so this package doesn't
+	// support an unconstrained (bearer) token for this one either. Under
+	// AnonymousPreAuthorizedCode its ClientID must be "".
 	Verified *VerifiedTokenRequest
 
 	// AuthorizationDetails is the Token Request's authorization_details
@@ -105,17 +76,15 @@ type ExchangePreAuthorizedCodeResult struct {
 
 	ExpiresIn time.Duration
 
-	// NextDPoPNonce is the DPoP nonce this Issuer currently hands out,
+	// NextDPoPNonce is the DPoP nonce the Authorization Server currently
+	// hands out,
 	// for the caller to set as this response's own DPoP-Nonce header —
 	// WriteJSON already does this — so the Wallet's next Token Request
 	// already carries a valid one instead of needing its own
 	// challenge/retry round trip (RFC 9449 §8.2: the client uses a nonce
-	// "until the server supplies a new nonce"). It is the same value for
-	// every response until the Issuer rotates it, at half of
-	// Config.Limits.DPoPNonceLifetime (see DPoPNonceStore). Always ""
-	// when Dependencies.DPoPNonces is nil or NoDPoPNonces{}
-	// (nonce-challenge support disabled); otherwise always populated on
-	// success.
+	// "until the server supplies a new nonce"). It is
+	// VerifiedTokenRequest.NextDPoPNonce: the Authorization Server's,
+	// "" when it uses no DPoP nonces.
 	NextDPoPNonce string
 
 	// AuthorizationDetails is every "openid_credential"-typed entry
@@ -190,6 +159,50 @@ type PreAuthorizedCodeClientAuthentication interface {
 // trusts. OID4VCI §6.1 allows this; HAIP 1.0 §4.4.1 requires client
 // authentication at the Token Endpoint, so an issuer using it isn't
 // following HAIP for this grant.
+//
+// The Authorization Server serving the Token Endpoint verifies the DPoP
+// proof, under its own replay record and nonce policy, so the endpoint
+// has one of each whichever grant a request uses, and passes the key in
+// ExchangePreAuthorizedCodeRequest.Verified, with no ClientID.
+// ExchangePreAuthorizedCode then issues the access token through
+// Dependencies.AccessTokens, bound to that key. With fapigo/server
+// (Server.VerifyTokenRequestDPoP), the Token Endpoint handler refuses a
+// request that also authenticates a client, which this grant doesn't
+// expect, before verifying the proof:
+//
+//	tr, err := server.TokenEndpointRequestFromHTTP(r)
+//	if err != nil {
+//		return err // answer with the token error
+//	}
+//	params, err := tr.Parameters()
+//	if err != nil {
+//		return err
+//	}
+//	auth := tr.AttestedClientAuthentication()
+//	if len(auth.ClientAttestations) > 0 || len(auth.ClientAttestationPoPs) > 0 ||
+//		params["client_assertion"] != "" || params["client_assertion_type"] != "" ||
+//		params["client_secret"] != "" || (r.TLS != nil && len(r.TLS.PeerCertificates) > 0) {
+//		return server.NewError(server.ErrorInvalidRequest, http.StatusBadRequest,
+//			"this grant takes no client authentication")
+//	}
+//	// An *server.Error, use_dpop_nonce with the next nonce included:
+//	// server.WriteError answers it with its DPoP-Nonce header.
+//	b, err := srv.VerifyTokenRequestDPoP(ctx, tr)
+//	if err != nil {
+//		return err
+//	}
+//	details, err := issuer.ParseAuthorizationDetails(params["authorization_details"])
+//	if err != nil {
+//		return err
+//	}
+//	res, err := iss.ExchangePreAuthorizedCode(ctx, issuer.ExchangePreAuthorizedCodeRequest{
+//		PreAuthorizedCode: params["pre-authorized_code"], TxCode: params["tx_code"], AuthorizationDetails: details,
+//		Verified: &issuer.VerifiedTokenRequest{DPoPThumbprint: b.Thumbprint, NextDPoPNonce: b.NextDPoPNonce},
+//	})
+//
+// and lists the grant in fapigo/server's Config.AdditionalGrantTypes.
+// Behind a proxy that terminates TLS, test for the client certificate
+// the proxy forwards instead of r.TLS.
 type AnonymousPreAuthorizedCode struct{}
 
 func (AnonymousPreAuthorizedCode) isPreAuthorizedCodeClientAuthentication() {
@@ -277,10 +290,8 @@ type VerifiedTokenRequest struct {
 // comment for that boundary's client-side half, which this method is
 // the server-side counterpart to.
 //
-// It verifies req.DPoPProof via internal/dpop.Verify (using
-// Config.Limits' own MaxDPoPProofAge/MaxDPoPClockSkew and
-// Dependencies.DPoPReplay for jti-replay detection), and — only once
-// that succeeds — redeems req.PreAuthorizedCode via
+// It takes the Token Request's DPoP key from req.Verified, which the
+// Authorization Server verified, and redeems req.PreAuthorizedCode via
 // Dependencies.PreAuthorizedCodes (§6.1's own single-use nature),
 // checking the Transaction Code it was issued with (if any) matches
 // req.TxCode exactly, by its hash (PreAuthorizedCodeRecord.TxCodeHash),
@@ -292,9 +303,11 @@ type VerifiedTokenRequest struct {
 // Under VerifiedPreAuthorizedCode the Authorization Server has already
 // authenticated the client by its Wallet Attestation (HAIP 1.0 §4.4.1)
 // and verified the DPoP proof, and the token is bound to that client and
-// key; this method verifies neither. Under AnonymousPreAuthorizedCode
-// the client isn't authenticated, and this method verifies the DPoP
-// proof itself. Either way that happens before the code is consumed. Config.PreAuthorizedCodeClientAuthentication
+// key. Under AnonymousPreAuthorizedCode the client isn't authenticated,
+// and the token is bound to the key alone. Either way this method
+// verifies neither, and the Authorization Server's checks happen before
+// the code is consumed, so neither a DPoP nonce challenge nor an
+// unauthenticated client spends it. Config.PreAuthorizedCodeClientAuthentication
 // chooses; AssuranceProduction requires the choice to be explicit.
 //
 // A wrong TxCode doesn't invalidate the code (PreAuthorizedCodeStore.Consume's
@@ -307,19 +320,10 @@ type VerifiedTokenRequest struct {
 // would give an attacker against a low-entropy tx_code (found in a
 // repo-wide security review).
 //
-// When Dependencies.DPoPNonces is configured, the presented proof's own
-// "nonce" claim is checked between those two steps too (RFC 9449 §8):
-// a missing, unknown or expired nonce fails with ErrorUseDPoPNonce and
-// the current nonce — before PreAuthorizedCode is ever consumed, so a
-// Wallet's first, nonce-less attempt (it can't know the nonce in
-// advance) never burns the single-use code it will need again on
-// retry. A nonce is valid for any number of proofs until it expires, so
-// concurrent requests carrying one all pass this check; a DPoPNonceStore
-// that can't answer fails the request with a plain error (a 500 from
-// WriteError), not a challenge. A successful exchange returns the
-// current nonce too (ExchangePreAuthorizedCodeResult's own
-// NextDPoPNonce), so the Wallet never round-trips through a challenge
-// it can already avoid.
+// A successful exchange returns the Authorization Server's next DPoP
+// nonce, VerifiedTokenRequest.NextDPoPNonce, as
+// ExchangePreAuthorizedCodeResult.NextDPoPNonce, so the Wallet never
+// round-trips through a challenge it can already avoid.
 //
 // When the redeemed record's own CredentialConfigurationIDs is
 // non-empty, this also mints one credential_identifier per entry
@@ -374,16 +378,7 @@ func (iss *Issuer) exchangePreAuthorizedCode(ctx context.Context, req ExchangePr
 		AccessToken: accessToken, TokenType: "DPoP", ExpiresIn: iss.cfg.Limits.AccessTokenLifetime,
 		AuthorizationDetails: authDetails, Subject: record.Subject, Scope: record.Scopes,
 	}
-	switch {
-	case req.Verified != nil:
-		result.NextDPoPNonce = binding.NextDPoPNonce
-	case iss.deps.DPoPNonces != nil:
-		nextNonce, err := iss.currentDPoPNonce(ctx, now)
-		if err != nil {
-			return ExchangePreAuthorizedCodeResult{}, fmt.Errorf("issuer: exchange pre-authorized code: current dpop nonce: %w", err)
-		}
-		result.NextDPoPNonce = nextNonce
-	}
+	result.NextDPoPNonce = binding.NextDPoPNonce
 	return result, nil
 }
 
@@ -464,11 +459,9 @@ func (iss *Issuer) redeemPreAuthorizedCode(ctx context.Context, req ExchangePreA
 		return RedeemedPreAuthorizedCode{}, newError(ErrorInvalidTokenRequest, 400, "pre-authorized_code is required", nil)
 	}
 
-	// The client and DPoP proof: verified by the Authorization Server
-	// (VerifiedPreAuthorizedCode), or the DPoP proof here. Either way
-	// before the code is consumed, so neither a nonce challenge nor an
-	// unauthenticated client spends it.
-	binding, err := iss.preAuthorizedBinding(ctx, req, now)
+	// The client, under VerifiedPreAuthorizedCode, and the DPoP proof,
+	// verified by the Authorization Server before the code is consumed.
+	binding, err := iss.preAuthorizedBinding(req)
 	if err != nil {
 		return RedeemedPreAuthorizedCode{}, err
 	}
@@ -498,50 +491,24 @@ func (iss *Issuer) redeemPreAuthorizedCode(ctx context.Context, req ExchangePreA
 }
 
 // preAuthorizedBinding is a Token Request's client and DPoP key, for
-// the access token: req.Verified under VerifiedPreAuthorizedCode, or,
-// otherwise, no client and the key of the DPoP proof verified here
-// (with this issuer's own DPoP replay record and nonce policy).
-func (iss *Issuer) preAuthorizedBinding(ctx context.Context, req ExchangePreAuthorizedCodeRequest, now time.Time) (VerifiedTokenRequest, error) {
-	if _, ok := iss.cfg.PreAuthorizedCodeClientAuthentication.(VerifiedPreAuthorizedCode); ok {
-		v := req.Verified
-		if v == nil || v.ClientID == "" || v.DPoPThumbprint == "" {
-			return VerifiedTokenRequest{}, fmt.Errorf("issuer: exchange pre-authorized code: VerifiedPreAuthorizedCode needs Verified, with ClientID and DPoPThumbprint")
-		}
-		return *v, nil
+// the access token, from req.Verified: with a client under
+// VerifiedPreAuthorizedCode, and with none under
+// AnonymousPreAuthorizedCode, which refuses one the Authorization
+// Server authenticated: the embedder took a request this grant doesn't
+// expect.
+func (iss *Issuer) preAuthorizedBinding(req ExchangePreAuthorizedCodeRequest) (VerifiedTokenRequest, error) {
+	v := req.Verified
+	if v == nil || v.DPoPThumbprint == "" {
+		return VerifiedTokenRequest{}, fmt.Errorf("issuer: exchange pre-authorized code: needs Verified, with the DPoPThumbprint the Authorization Server verified")
 	}
-	if req.Verified != nil {
-		return VerifiedTokenRequest{}, fmt.Errorf("issuer: exchange pre-authorized code: Verified is set, but pre_authorized_code_client_authentication isn't VerifiedPreAuthorizedCode")
+	_, verified := iss.cfg.PreAuthorizedCodeClientAuthentication.(VerifiedPreAuthorizedCode)
+	switch {
+	case verified && v.ClientID == "":
+		return VerifiedTokenRequest{}, fmt.Errorf("issuer: exchange pre-authorized code: VerifiedPreAuthorizedCode needs Verified.ClientID")
+	case !verified && v.ClientID != "":
+		return VerifiedTokenRequest{}, fmt.Errorf("issuer: exchange pre-authorized code: Verified.ClientID is set, but pre_authorized_code_client_authentication is AnonymousPreAuthorizedCode, which authenticates no client")
 	}
-	if req.DPoPProof == "" {
-		return VerifiedTokenRequest{}, newError(ErrorInvalidTokenRequest, 400, "a DPoP proof is required", nil)
-	}
-	if req.TokenEndpoint.IsZero() {
-		return VerifiedTokenRequest{}, fmt.Errorf("issuer: exchange pre-authorized code: token_endpoint is required")
-	}
-	target := req.TokenEndpoint.URL()
-	verifyReq := dpop.VerifyRequest{
-		Proof: req.DPoPProof, Method: http.MethodPost, URL: target.String(),
-		Now: now, MaxProofAge: iss.cfg.Limits.MaxDPoPProofAge, MaxClockSkew: iss.cfg.Limits.MaxDPoPClockSkew,
-		Replay: iss.deps.DPoPReplay,
-	}
-	// The nonce is checked before the proof's jti is recorded, so a
-	// nonce-less first attempt (or any proof the nonce policy refuses)
-	// leaves no replay entry behind.
-	var nonceErr error
-	if iss.deps.DPoPNonces != nil {
-		verifyReq.CheckNonce = func(ctx context.Context, nonce string) error {
-			nonceErr = iss.checkDPoPNonce(ctx, nonce, now)
-			return nonceErr
-		}
-	}
-	verified, err := dpop.Verify(ctx, verifyReq)
-	if nonceErr != nil {
-		return VerifiedTokenRequest{}, nonceErr
-	}
-	if err != nil {
-		return VerifiedTokenRequest{}, newError(ErrorInvalidDPoPProof, 400, "invalid DPoP proof", err)
-	}
-	return VerifiedTokenRequest{DPoPThumbprint: verified.Thumbprint}, nil
+	return *v, nil
 }
 
 // consumePreAuthorizedCode redeems req's pre-authorized_code against

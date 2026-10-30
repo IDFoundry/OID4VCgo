@@ -32,32 +32,6 @@ func TestStoresPruneExpiredEntries(t *testing.T) {
 		t.Errorf("the live nonce: %v", err)
 	}
 
-	dpopNonces := NewDPoPNonceStore()
-	dpopNonces.prune.now = func() time.Time { return now }
-	for i := range n {
-		_ = dpopNonces.Issue(ctx, issuer.DPoPNonceIssuance{Nonce: fmt.Sprint("old-", i), ExpiresAt: past})
-	}
-	_ = dpopNonces.Issue(ctx, issuer.DPoPNonceIssuance{Nonce: "live", ExpiresAt: future})
-	if len(dpopNonces.issued) >= minPruneAt*2 {
-		t.Errorf("dpop nonce store holds %d after %d expired nonces", len(dpopNonces.issued), n)
-	}
-	if _, err := dpopNonces.Lookup(ctx, issuer.DPoPNonceLookup{Nonce: "live"}); err != nil {
-		t.Errorf("the live dpop nonce: %v", err)
-	}
-
-	replay := NewDPoPReplayChecker()
-	replay.prune.now = func() time.Time { return now }
-	_ = replay.UseOnce(ctx, "live", future)
-	for i := range n {
-		_ = replay.UseOnce(ctx, fmt.Sprint("old-", i), past)
-	}
-	if len(replay.seen) >= minPruneAt*2 {
-		t.Errorf("replay checker holds %d after %d expired proofs", len(replay.seen), n)
-	}
-	if err := replay.UseOnce(ctx, "live", future); err == nil {
-		t.Error("a live jti was forgotten: its replay was accepted")
-	}
-
 	txs := NewVerifierTransactionStore()
 	txs.prune.now = func() time.Time { return now }
 	_ = txs.Create(ctx, verifier.Transaction{ID: "live", KeyID: "k-live", ExpiresAt: past})
