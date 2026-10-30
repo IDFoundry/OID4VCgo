@@ -136,6 +136,9 @@ type dpopNonceRotator struct {
 	mu        sync.Mutex
 	current   string
 	expiresAt time.Time
+	// rotating counts the calls persisting a new nonce right now,
+	// without mu held.
+	rotating int
 }
 
 // currentDPoPNonce returns the nonce to hand out at now: the one it
@@ -145,24 +148,50 @@ type dpopNonceRotator struct {
 // using it until it expires, at least half the lifetime after the
 // switch, so its requests in flight across a rotation still succeed.
 // Only ever called once iss.deps.DPoPNonces is known to be non-nil.
+//
+// The store write happens without the rotator's lock held, so a slow
+// store stalls only the call rotating: while it does, other calls hand
+// out the previous nonce, still valid until it expires. Only with no
+// unexpired nonce at all does each call persist its own.
 func (iss *Issuer) currentDPoPNonce(ctx context.Context, now time.Time) (string, error) {
 	r := &iss.dpopNonces
 	lifetime := iss.cfg.Limits.DPoPNonceLifetime
 	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.current != "" && now.Before(r.expiresAt.Add(-lifetime/2)) {
-		return r.current, nil
+	fresh := r.current != "" && now.Before(r.expiresAt.Add(-lifetime/2))
+	stillValid := r.current != "" && r.rotating > 0 && now.Before(r.expiresAt)
+	if fresh || stillValid {
+		nonce := r.current
+		r.mu.Unlock()
+		return nonce, nil
 	}
+	r.rotating++
+	r.mu.Unlock()
+
+	nonce, expiresAt, err := iss.issueDPoPNonce(ctx, now.Add(lifetime))
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.rotating--
+	if err != nil {
+		return "", err
+	}
+	if expiresAt.After(r.expiresAt) {
+		r.current, r.expiresAt = nonce, expiresAt
+	}
+	return nonce, nil
+}
+
+// issueDPoPNonce generates a DPoP nonce and persists it in
+// iss.deps.DPoPNonces until expiresAt.
+func (iss *Issuer) issueDPoPNonce(ctx context.Context, expiresAt time.Time) (string, time.Time, error) {
 	nonce, err := randomID(iss.deps.Random, nonceEntropyBytes)
 	if err != nil {
-		return "", fmt.Errorf("issuer: generate dpop nonce: %w", err)
+		return "", time.Time{}, fmt.Errorf("issuer: generate dpop nonce: %w", err)
 	}
-	expiresAt := now.Add(lifetime)
 	if err := iss.deps.DPoPNonces.Issue(ctx, DPoPNonceIssuance{Nonce: nonce, ExpiresAt: expiresAt}); err != nil {
-		return "", fmt.Errorf("issuer: issue dpop nonce: %w", err)
+		return "", time.Time{}, fmt.Errorf("issuer: issue dpop nonce: %w", err)
 	}
-	r.current, r.expiresAt = nonce, expiresAt
-	return nonce, nil
+	return nonce, expiresAt, nil
 }
 
 // checkDPoPNonce enforces the nonce challenge (RFC 9449 §8) when
