@@ -18,11 +18,15 @@ import (
 // mdoc's MSO status. cwt reports which Status List Token form to fetch
 // for it — CWT for an mdoc, JWT for an SD-JWT VC — as
 // statuslist.Checker.Check takes it. ok is false when vc has no status
-// list reference; err is set when it has a malformed one, or when it's
-// an mdoc whose only status is an identifier list, which isn't a Token
-// Status List (identifierlist.Checker checks it, given the mdoc's
-// document signer path) — so a caller that checks status when ok
-// doesn't skip it.
+// list reference; err is set when it has a malformed one, when it has a
+// status naming no mechanism this package knows (an SD-JWT VC "status"
+// with no status_list, an MSO status with neither status_list nor
+// identifier_list: a misspelt key, or a mechanism defined elsewhere), or
+// when it's an mdoc whose only status is an identifier list, which isn't
+// a Token Status List (identifierlist.Checker checks it, given the
+// mdoc's document signer path) — so a caller that checks status when ok
+// doesn't skip it. A status that can't be read isn't "no status": read
+// as one, a credential revoked through it would pass.
 //
 //	ref, cwt, ok, err := vc.StatusListRef()
 //	if err == nil && ok {
@@ -43,7 +47,9 @@ func (vc VerifiedCredential) StatusListRef() (ref statuslist.StatusListRef, cwt,
 				// read as one, a revoked mdoc would pass.
 				return statuslist.StatusListRef{}, false, false, fmt.Errorf("verifier: the mdoc's status is an identifier list, not a status list: check it with RequireValidStatus, or with identifierlist.Checker given the mdoc's document signer path (its IssuerChain)")
 			}
-			return statuslist.StatusListRef{}, false, false, nil
+			// The MSO has a status, but neither member this package
+			// reads (mdoc.Status).
+			return statuslist.StatusListRef{}, false, false, errors.New("verifier: the mdoc's status names no status mechanism this package knows (neither status_list nor identifier_list)")
 		}
 		return statuslist.StatusListRef{Idx: sl.Idx, URI: sl.URI}, true, true, nil
 	}
@@ -66,8 +72,9 @@ func (vc VerifiedCredential) StatusListRef() (ref statuslist.StatusListRef, cwt,
 // status of every credential in an answer that carries a status
 // reference, with checker: an answer is refused when any of them isn't
 // VALID (statuslist.NotValidError), when an mdoc is on its identifier
-// list (identifierlist.ErrRevoked), when a status can't be read, or
-// when a reference is malformed. An mdoc's identifier list is checked
+// list (identifierlist.ErrRevoked), when a status can't be read, when a
+// reference is malformed, or when a credential's status names no
+// mechanism this package knows. An mdoc's identifier list is checked
 // with an identifierlist.Checker that has checker's Fetcher, Roots and
 // Options, so checker.Fetcher.MaxBytes caps an identifier list's size
 // too (zero there means identifierlist's own 4 MiB, not 1 MiB: a list
@@ -115,19 +122,31 @@ func RequireValidStatus(checker statuslist.Checker) func(ctx context.Context, id
 // key, say, could mint them until its certificate is revoked — and,
 // with an issuer key resolver whose Revocation is
 // certrevocation.NoCheck{}, until it expires. An mdoc identifier list
-// is a reference too.
+// is a reference too; a status naming no mechanism this package knows,
+// or a malformed one, isn't: nothing here could check it.
 func RequireStatusReference(accept func(ctx context.Context, id string, result VerifyResponseResult) error) func(ctx context.Context, id string, result VerifyResponseResult) error {
 	return func(ctx context.Context, id string, result VerifyResponseResult) error {
-		for _, vc := range result.Credentials {
-			if _, _, ok, err := vc.StatusListRef(); !ok && err == nil {
-				return fmt.Errorf("verifier: credential status: the credential for credential query %q carries no status reference", vc.CredentialQueryID)
-			}
+		if err := requireReferences(result.Credentials); err != nil {
+			return err
 		}
 		if accept == nil {
 			return nil
 		}
 		return accept(ctx, id, result)
 	}
+}
+
+// requireReferences refuses a credential among vcs with no status
+// reference this package can check: a Token Status List entry, or an
+// mdoc identifier list.
+func requireReferences(vcs []VerifiedCredential) error {
+	for _, vc := range vcs {
+		_, _, ok, _ := vc.StatusListRef()
+		if !ok && (vc.MdocStatus == nil || vc.MdocStatus.IdentifierList == nil) {
+			return fmt.Errorf("verifier: credential status: the credential for credential query %q carries no status reference this package can check", vc.CredentialQueryID)
+		}
+	}
+	return nil
 }
 
 // StatusIssuerPolicy decides whether leaf, the chain-verified

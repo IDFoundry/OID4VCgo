@@ -49,6 +49,12 @@ type MobileSecurityObject struct {
 // deployment this package has reason to expect picks one mechanism per
 // MSO); relax this if a real, spec-compliant deployment ever needs
 // both set at once.
+//
+// A decoded Status with neither member set is an MSO status naming only
+// mechanisms this package doesn't model (another one, or a misspelt
+// key): its members are ignored when decoding, but the Status itself is
+// kept, so the MSO's status reads as unknown, not absent. A reader
+// can't check it, and mustn't take the mdoc as having no status.
 type Status struct {
 	IdentifierList *IdentifierListRef `cbor:"identifier_list,omitempty"`
 	StatusList     *StatusListRef     `cbor:"status_list,omitempty"`

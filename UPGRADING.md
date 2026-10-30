@@ -200,6 +200,19 @@ them.
   offer made `ByReference` still holds its code in the
   `CredentialOfferStore` until it expires.
 
+### Verifier (`verifier`, `mdocdcapi`)
+
+- **A status naming no known mechanism is refused.** A credential whose
+  status names neither a Token Status List nor, for an mdoc, an
+  identifier list — another mechanism, or a misspelt key — was read as
+  having no status, so `RequireValidStatus` passed an mdoc revoked
+  through it. `VerifiedCredential.StatusListRef` now returns an error
+  for one, and `RequireValidStatus` and `RequireStatusReference` refuse
+  it, in both formats. A decoded `mdoc.Status` with neither member is
+  such a status, not "none". Nothing to change unless your issuers use
+  a status mechanism this library doesn't know: accept those
+  credentials only with `NoStatusCheck` and a check of your own.
+
 ## v0.55.0 → v0.56.0
 
 This release pins FAPIgo v0.65.1, which carries the breaking changes of
