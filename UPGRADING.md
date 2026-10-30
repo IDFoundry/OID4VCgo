@@ -67,6 +67,22 @@ them.
   in more than one namespace, or with SHA-512, now fails at issuance:
   lower the counts.
 
+### Wallet (`proximity`, `mdocdcapi`, `walletflow`, mobile)
+
+- **A requested identifier may not hold a line or paragraph separator
+  or a format character.** A proximity or Digital Credentials API mdoc
+  request naming a docType, namespace or data element with U+2028,
+  U+2029 or any Unicode format character (Cf: zero-width space, word
+  joiner, byte order mark, soft hyphen, tag characters, as well as the
+  bidirectional ones already refused) is refused as invalid, as one
+  with a control character already was.
+- **Error text is cleaned like display text.** Text from an issuer,
+  Authorization Server or Verifier that `walletflow` puts in an error
+  (`AuthorizationDeniedError`), and every mobile `Error.Message`, now
+  has line and paragraph separators made spaces and invisible format
+  characters dropped, and is trimmed of surrounding space. A walletflow
+  control character becomes a space instead of being dropped.
+
 ## v0.55.0 → v0.56.0
 
 This release pins FAPIgo v0.65.1, which carries the breaking changes of

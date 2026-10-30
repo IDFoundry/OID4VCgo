@@ -9,10 +9,10 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
-	"unicode"
 
 	"github.com/idfoundry/fapigo/client"
 
+	"github.com/idfoundry/oid4vcgo/internal/displaytext"
 	"github.com/idfoundry/oid4vcgo/wallet"
 	"github.com/idfoundry/oid4vcgo/walletflow"
 )
@@ -162,7 +162,9 @@ const maxMessage = 300
 var urlPattern = regexp.MustCompile(`[A-Za-z][A-Za-z0-9+.-]*://[^\s"'<>]*`)
 
 // cleanText is s fit for an app's logs: each URL cut to its scheme and
-// host, control characters made spaces, at most maxMessage runes.
+// host, then fit as displaytext.Shorten does to at most maxMessage
+// runes, control characters and line or paragraph separators made
+// spaces and invisible format characters dropped.
 func cleanText(s string) string {
 	s = urlPattern.ReplaceAllStringFunc(s, func(raw string) string {
 		u, err := url.Parse(raw)
@@ -171,16 +173,7 @@ func cleanText(s string) string {
 		}
 		return u.Scheme + "://" + u.Host
 	})
-	s = strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) {
-			return ' '
-		}
-		return r
-	}, s)
-	if r := []rune(s); len(r) > maxMessage {
-		s = string(r[:maxMessage]) + "…"
-	}
-	return s
+	return displaytext.Shorten(s, maxMessage)
 }
 
 // errorCode is code if it's a plausible OAuth error code (RFC 6749
