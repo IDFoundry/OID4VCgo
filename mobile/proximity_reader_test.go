@@ -21,7 +21,7 @@ import (
 // readerDecisions are the decisions a production reader's configuration
 // makes, as JSON object members: any IACA in issuer_roots for any
 // document type, and no revocation checks.
-const readerDecisions = `"production": true, "any_issuer_for_any_type": true, "no_revocation_check": ["issuer", "status"]`
+const readerDecisions = `"any_issuer_for_any_type": true, "no_revocation_check": ["issuer", "status"]`
 
 // readerConfig is a production ProximityReader's configuration
 // accepting h's issuer, signing as reader when it isn't nil, and the
@@ -29,7 +29,7 @@ const readerDecisions = `"production": true, "any_issuer_for_any_type": true, "n
 func readerConfig(t *testing.T, h harness, reader *testReader, extra map[string]any) (string, KeyStore) {
 	t.Helper()
 	cfg := map[string]any{
-		"issuer_roots": issuerRootsPEM(t, h), "production": true, "any_issuer_for_any_type": true, "no_revocation_check": []string{"issuer", "status"},
+		"issuer_roots": issuerRootsPEM(t, h), "any_issuer_for_any_type": true, "no_revocation_check": []string{"issuer", "status"},
 	}
 	var ks KeyStore
 	if reader != nil {
@@ -363,15 +363,16 @@ func TestNewProximityReader_Refuses(t *testing.T) {
 // types, so a production reader needs no any_issuer_for_any_type.
 func TestNewProximityReader_RootsByDocType(t *testing.T) {
 	h := newHarness(t, false)
-	cfg := `{"issuer_roots_by_doctype": {"org.example.test.1": ` + mustJSON(issuerRootsPEM(t, h)) + `}, "production": true, "no_revocation_check": ["issuer", "status"]}`
+	cfg := `{"issuer_roots_by_doctype": {"org.example.test.1": ` + mustJSON(issuerRootsPEM(t, h)) + `}, "no_revocation_check": ["issuer", "status"]}`
 	if _, err := NewProximityReader(cfg, nil); err != nil {
 		t.Errorf("NewProximityReader with issuer_roots_by_doctype only: %v", err)
 	}
 }
 
-// With production, a reader's configuration decides each role's
-// revocation and which IACAs issue which document types; without it, it
-// may leave them out, as before production was added.
+// Outside development, a reader's configuration decides each role's
+// revocation and which IACAs issue which document types; in
+// development, it may leave them out. "production", which opted in to
+// these checks within ABI 12, is gone: the checks are the default.
 func TestNewProximityReader_Decisions(t *testing.T) {
 	h := newHarness(t, false)
 	roots := `"issuer_roots": ` + mustJSON(issuerRootsPEM(t, h))
@@ -379,14 +380,18 @@ func TestNewProximityReader_Decisions(t *testing.T) {
 		cfg     string
 		refused string
 	}{
-		"undecided":                  {`{` + roots + `, "production": true}`, "any_issuer_for_any_type"},
-		"no issuer revocation":       {`{` + roots + `, "production": true, "any_issuer_for_any_type": true, "no_revocation_check": ["status"]}`, `"issuer"`},
-		"no status revocation":       {`{` + roots + `, "production": true, "any_issuer_for_any_type": true, "revocation": ["issuer"]}`, `"status"`},
-		"named and declined":         {`{` + roots + `, "any_issuer_for_any_type": true, "revocation": ["issuer", "status"], "no_revocation_check": ["issuer"]}`, "both"},
-		"an unknown role":            {`{` + roots + `, "any_issuer_for_any_type": true, "no_revocation_check": ["issuer", "status", "verifier"]}`, "verifier"},
-		"production, decided":        {`{` + roots + `, ` + readerDecisions + `}`, ""},
-		"without production":         {`{` + roots + `}`, ""},
-		"without production, partly": {`{` + roots + `, "revocation": ["issuer"]}`, ""},
+		"undecided":                       {`{` + roots + `}`, "any_issuer_for_any_type"},
+		"no issuer revocation":            {`{` + roots + `, "any_issuer_for_any_type": true, "no_revocation_check": ["status"]}`, `"issuer"`},
+		"no status revocation":            {`{` + roots + `, "any_issuer_for_any_type": true, "revocation": ["issuer"]}`, `"status"`},
+		"by doctype, no revocation":       {`{"issuer_roots_by_doctype": {"org.example.test.1": ` + mustJSON(issuerRootsPEM(t, h)) + `}}`, `"issuer"`},
+		"named and declined":              {`{` + roots + `, "any_issuer_for_any_type": true, "revocation": ["issuer", "status"], "no_revocation_check": ["issuer"]}`, "both"},
+		"an unknown role":                 {`{` + roots + `, "any_issuer_for_any_type": true, "no_revocation_check": ["issuer", "status", "verifier"]}`, "verifier"},
+		"the removed production":          {`{` + roots + `, ` + readerDecisions + `, "production": true}`, `"production"`},
+		"decided":                         {`{` + roots + `, ` + readerDecisions + `}`, ""},
+		"development, explicitly off":     {`{` + roots + `, ` + readerDecisions + `, "development": false}`, ""},
+		"development":                     {`{` + roots + `, "development": true}`, ""},
+		"development, partly":             {`{` + roots + `, "development": true, "revocation": ["issuer"]}`, ""},
+		"development, named and declined": {`{` + roots + `, "development": true, "revocation": ["issuer"], "no_revocation_check": ["issuer"]}`, "both"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := NewProximityReader(tc.cfg, nil)

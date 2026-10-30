@@ -345,8 +345,10 @@ CRLs it holds, through `certrevocation.CRLs`.
   existing reader configurations keep working: with it, each role must
   be in `revocation` or `no_revocation_check`, and `issuer_roots` needs
   `any_issuer_for_any_type` (`issuer_roots_by_doctype` decides which
-  IACAs issue which document type). Making production the default is a
-  change for the next ABI version.
+  IACAs issue which document type). ABI 13, already a breaking version
+  (CompareAndSwap), makes production the default, as a Wallet's: the
+  `production` key is gone, and `"development": true` opts out,
+  relaxing the same checks.
 
 ## Phases
 
