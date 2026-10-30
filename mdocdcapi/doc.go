@@ -28,11 +28,13 @@
 // the document: its issuer signature and digests (credential/mdoc), its
 // device signature over this request's session transcript, which binds
 // it to the origin and the encryption key, and that it disclosed only
-// what was asked. VerifyParams.Accept then runs the Verifier's own
-// checks on it — verifier.RequireValidStatus for revocation — and under
-// verifier.AssuranceProduction VerifyResponse refuses to run until the
-// configuration decides, as verifier.VerifyResponse requires, which
-// issuers may issue the doctype and whether revocation is checked.
+// what was asked. VerifyParams.Status then checks its revocation status
+// (a verifier.StatusPolicy), and VerifyParams.Accept runs the
+// Verifier's own checks on it; under verifier.AssuranceProduction
+// VerifyResponse refuses to run until the configuration decides, as
+// verifier.VerifyResponse requires, which issuers may issue the doctype
+// and whether revocation is checked (Status, or NoStatusCheck: an
+// Accept doesn't decide it).
 //
 // The origin is the Verifier's own, from its configuration: never one
 // the page reports, since the session transcript must be the one the

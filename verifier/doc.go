@@ -72,12 +72,17 @@
 // the mdoc SessionTranscript via oid4vpmdoc.BuildSessionTranscriptBytes
 // or BuildDCAPISessionTranscriptBytes to match. ResponseKeyID reads a
 // direct_post.jwt response's key ID, to find its request before
-// decrypting it. VerifyResponse doesn't check revocation: each
-// VerifiedCredential carries its status reference (Claims["status"], or
-// MdocStatus) for the caller to resolve with package statuslist, or
-// identifierlist for an mdoc's identifier list. RequireValidStatus does
-// both, as an Accept; it passes a credential with no status reference,
-// which RequireStatusReference refuses.
+// decrypting it. Each VerifiedCredential carries its status reference
+// (Claims["status"], or MdocStatus), which a StatusPolicy checks — its
+// Token Status List with package statuslist, an mdoc's identifier list
+// with identifierlist — as TransactionsConfig.Status or
+// VerifyResponseRequest.Status, before Accept, the Verifier's own
+// checks (Chain composes several). Under AssuranceProduction, Status or
+// an explicit NoStatusCheck is required: an Accept checking business
+// rules alone would otherwise accept revoked credentials. A policy
+// passes a credential with no status reference unless its
+// RequireReference is set. RequireValidStatus and
+// RequireStatusReference do the same as Accepts.
 //
 // Certificate revocation is checked for a credential's issuer:
 // X5CIssuerKeyResolver and X5ChainIssuerKeyResolver require a
@@ -87,8 +92,9 @@
 // the issuer CAs' current CRLs, or certrevocation.NoCheck{} to decline
 // explicitly. VerifyResponse and NewTransactions refuse either resolver
 // without one. A status list signer's certificate is checked when the
-// statuslist.Checker RequireValidStatus is given sets
-// Options.Revocation, and is otherwise trusted from its chain to the
+// StatusPolicy's statuslist.Checker sets Options.Revocation, which
+// AssuranceProduction requires (certrevocation.NoCheck{} declines it
+// explicitly), and is otherwise trusted from its chain to the
 // configured roots and its validity period alone. A credential's own
 // revocation is its status list's.
 //

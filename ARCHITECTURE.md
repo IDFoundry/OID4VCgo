@@ -406,9 +406,9 @@ changes whether *every* bullet below is `(done)`.
   `internal/cose` for the envelope, like `statuslist`'s. Verification
   accepts the typ without its `application/` prefix too, and
   `IssueOptions.Typ` issues that non-conformant form for Relying Parties
-  that require it. `verifier.RequireValidStatus` checks a presented
-  mdoc's identifier list with an `identifierlist.Checker` built from
-  its `statuslist.Checker`.
+  that require it. `verifier.StatusPolicy` (and `RequireValidStatus`)
+  checks a presented mdoc's identifier list with an
+  `identifierlist.Checker` built from its `statuslist.Checker`.
 - **`attestation`** (done) — OID4VCI Appendix D, Key Attestation: fully
   self-contained `Issue`/`Parse`/`Verify`, plus `VerifiedClaims.KeyAttested`
   implementing Appendix D.1's own MUST ("the Credential Issuer MUST
@@ -1284,10 +1284,18 @@ changes whether *every* bullet below is `(done)`.
   `Claims["status"]` for an SD-JWT VC, `MdocStatus` (the MSO's
   issuer-signed status) for an mdoc — and `StatusListRef` extracts it
   from either, for the caller to resolve with `statuslist.Checker`;
-  every time check,
+  a status naming no mechanism this library knows is an error, not "no
+  status". Every time check,
   mdoc validity included, uses `VerifyResponseRequest.Now`.
-  `RequireValidStatus` (an `Accept`) passes a credential with no status
-  reference; `RequireStatusReference` refuses one. Certificate
+  Revocation is a decision of its own, separate from `Accept` (the
+  Verifier's business checks, composed with `Chain`): a `StatusPolicy`,
+  as `TransactionsConfig.Status`, `VerifyResponseRequest.Status` or
+  `mdocdcapi.VerifyParams.Status`, runs before `Accept`, and
+  `AssuranceProduction` requires it, with a hardened fetcher and a
+  status-list signer revocation choice, or an explicit `NoStatusCheck`
+  (`CheckStatusDecision`). It passes a credential with no status
+  reference unless `RequireReference` is set; `RequireValidStatus` and
+  `RequireStatusReference` are the same checks as `Accept`s. Certificate
   revocation is checked for a credential's issuer: `X5CIssuerKeyResolver`
   and `X5ChainIssuerKeyResolver` require a `certrevocation.Checker`
   (`Revocation`, no default — `certrevocation.NoCheck{}` declines it
@@ -1297,7 +1305,8 @@ changes whether *every* bullet below is `(done)`.
   without one before any credential reaches it. The other certificate
   roles check revocation when given an optional `certrevocation.Checker`
   (a status list signer through `statuslist.VerifyOptions.Revocation`,
-  which `RequireValidStatus` passes on), and are otherwise trusted from
+  which a `StatusPolicy` passes on and `AssuranceProduction` requires
+  of it), and are otherwise trusted from
   their chain to the configured roots and their validity period alone; a
   credential itself is revoked only through its own status list.
   `Transactions` runs a whole presentation session over a

@@ -242,14 +242,20 @@ func TestVerifyResponse_ProductionDecisions(t *testing.T) {
 	}
 	accept := func(context.Context, string, verifier.VerifyResponseResult) error { return nil }
 	authorized := func(context.Context, verifier.IssuerAuthorization) error { return nil }
+	status := productionStatus()
 	for name, tc := range map[string]struct {
 		set    func(*verifier.VerifyResponseRequest)
 		refuse string
 	}{
-		"neither":                     {func(*verifier.VerifyResponseRequest) {}, "any_issuer_for_any_type"},
-		"issuers decided, no status":  {func(r *verifier.VerifyResponseRequest) { r.AnyIssuerForAnyType = true }, "no_status_check"},
-		"status decided, no issuers":  {func(r *verifier.VerifyResponseRequest) { r.NoStatusCheck = true }, "any_issuer_for_any_type"},
-		"IssuerAuthorized and Accept": {func(r *verifier.VerifyResponseRequest) { r.IssuerAuthorized, r.Accept = authorized, accept }, ""},
+		"neither":                    {func(*verifier.VerifyResponseRequest) {}, "any_issuer_for_any_type"},
+		"issuers decided, no status": {func(r *verifier.VerifyResponseRequest) { r.AnyIssuerForAnyType = true }, "NoStatusCheck"},
+		"status decided, no issuers": {func(r *verifier.VerifyResponseRequest) { r.NoStatusCheck = true }, "any_issuer_for_any_type"},
+		// A business-rules Accept doesn't decide revocation.
+		"IssuerAuthorized and Accept": {func(r *verifier.VerifyResponseRequest) { r.IssuerAuthorized, r.Accept = authorized, accept }, "NoStatusCheck"},
+		"IssuerAuthorized and Status": {func(r *verifier.VerifyResponseRequest) { r.IssuerAuthorized, r.Status = authorized, status }, ""},
+		"Status and NoStatusCheck": {func(r *verifier.VerifyResponseRequest) {
+			r.AnyIssuerForAnyType, r.Status, r.NoStatusCheck = true, status, true
+		}, "not both"},
 	} {
 		req := verifier.VerifyResponseRequest{
 			Query: testIdentityQuery(t), ExpectedNonce: "nonce", MaxKeyBindingAge: time.Hour,

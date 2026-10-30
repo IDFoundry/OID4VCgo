@@ -36,8 +36,8 @@ import (
 //		// refuse vc: revoked, suspended, or its status unreadable
 //	}
 //
-// RequireValidStatus does this for every credential in an answer, as a
-// TransactionsConfig.Accept.
+// A StatusPolicy (TransactionsConfig.Status) does this for every
+// credential in an answer.
 func (vc VerifiedCredential) StatusListRef() (ref statuslist.StatusListRef, cwt, ok bool, err error) {
 	if vc.MdocStatus != nil {
 		sl := vc.MdocStatus.StatusList
@@ -68,9 +68,12 @@ func (vc VerifiedCredential) StatusListRef() (ref statuslist.StatusListRef, cwt,
 	return ref, false, true, nil
 }
 
-// RequireValidStatus is a TransactionsConfig.Accept that checks the
-// status of every credential in an answer that carries a status
-// reference, with checker: an answer is refused when any of them isn't
+// RequireValidStatus is an Accept that checks the status of every
+// credential in an answer that carries a status reference, with
+// checker, as a StatusPolicy with that Checker does: prefer the policy,
+// as TransactionsConfig.Status, which runs before Accept and which
+// AssuranceProduction requires (or NoStatusCheck), and checks checker's
+// Fetcher and Options.Revocation there. An answer is refused when any of them isn't
 // VALID (statuslist.NotValidError), when an mdoc is on its identifier
 // list (identifierlist.ErrRevoked), when a status can't be read, when a
 // reference is malformed, or when a credential's status names no
@@ -106,16 +109,19 @@ func (vc VerifiedCredential) StatusListRef() (ref statuslist.StatusListRef, cwt,
 //
 // Under AssuranceProduction, checker.Fetcher must be one whose
 // HardenedForProduction is true: this function doesn't know the
-// Verifier's assurance level, so it can't refuse one that isn't.
+// Verifier's assurance level, so it can't refuse one that isn't; a
+// StatusPolicy can.
 func RequireValidStatus(checker statuslist.Checker) func(ctx context.Context, id string, result VerifyResponseResult) error {
 	return RequireValidStatusFrom(checker, nil)
 }
 
-// RequireStatusReference is a TransactionsConfig.Accept that refuses an
-// answer with a credential carrying no status reference (no SD-JWT VC
-// "status" claim, no mdoc MSO status), then runs accept, if set, on it:
+// RequireStatusReference is an Accept that refuses an answer with a
+// credential carrying no status reference (no SD-JWT VC "status"
+// claim, no mdoc MSO status), then runs accept, if set, on it:
 //
 //	Accept: verifier.RequireStatusReference(verifier.RequireValidStatus(checker)),
+//
+// StatusPolicy.RequireReference does the same before Accept.
 //
 // RequireValidStatus alone lets such a credential through, which an
 // issuer can't revoke afterwards: a stolen document signer's or issuer's
@@ -169,13 +175,9 @@ type StatusIssuerPolicy func(issuer string, leaf *x509.Certificate, chains [][]*
 // the signer only when the mdoc carries no issuer chain and its MSO
 // names no Certificate. A nil statusIssuers is RequireValidStatus.
 func RequireValidStatusFrom(checker statuslist.Checker, statusIssuers StatusIssuerPolicy) func(ctx context.Context, id string, result VerifyResponseResult) error {
+	policy := &StatusPolicy{Checker: checker, StatusIssuers: statusIssuers}
 	return func(ctx context.Context, _ string, result VerifyResponseResult) error {
-		for _, vc := range result.Credentials {
-			if err := requireValid(ctx, checker, statusIssuers, vc); err != nil {
-				return fmt.Errorf("verifier: credential status: %w", err)
-			}
-		}
-		return nil
+		return policy.Check(ctx, result.Credentials...)
 	}
 }
 

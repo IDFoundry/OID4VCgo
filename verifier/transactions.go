@@ -104,9 +104,9 @@ type Transaction struct {
 	//
 	// It never carries text the answer's sender chose: a refused answer
 	// is recorded as a fixed description of its Reason, and an error
-	// response as its error code alone. Only a TransactionsConfig.Accept
-	// refusal keeps its own text — Accept runs only on an answer that
-	// verified, holder binding included — kept short and printable. It
+	// response as its error code alone. Only a TransactionsConfig.Status
+	// or Accept refusal keeps its own text — they run only on an answer
+	// that verified, holder binding included — kept short and printable. It
 	// must still be escaped when displayed. The full error, for the
 	// Verifier's logs, is the one HandleResponse (or
 	// HandleDCAPIResponse) returns, which TransactionsConfig.OnRefused
@@ -204,16 +204,17 @@ type TransactionsConfig struct {
 	// Credentials API request (BeginDCAPI); leave them zero.
 	Verify VerifyResponseRequest
 
-	// Accept, if set, runs after an answer verifies and before the
-	// request completes — the Verifier's own checks, such as revocation
-	// (statuslist.Checker). An error refuses the answer like a failed
-	// verification: recorded as LastError, with the request left open
-	// for another answer.
-	//
-	// Nothing else checks revocation: without an Accept that does, a
-	// revoked credential is accepted. RequireValidStatus is one that
-	// checks each credential's status list reference, and refuses one
-	// whose status can't be read rather than taking it as valid.
+	// Status, if set, checks every credential's revocation status (see
+	// StatusPolicy) once an answer verifies, before Accept. Its error
+	// refuses the answer as Accept's does. Nothing else checks
+	// revocation: without Status, a revoked credential is accepted.
+	Status *StatusPolicy
+
+	// Accept, if set, runs after an answer verifies and Status passes
+	// it, before the request completes — the Verifier's own checks
+	// (Chain composes several). An error refuses the answer like a
+	// failed verification: recorded as LastError, with the request left
+	// open for another answer.
 	//
 	// Accept runs before the request completes atomically, so when two
 	// answers to one request arrive together, both can be accepted and
@@ -253,10 +254,12 @@ type TransactionsConfig struct {
 	Origins []string
 
 	// NoStatusCheck declares that this Verifier deliberately checks no
-	// credential's revocation status — its credentials carry none, say.
-	// Under AssuranceProduction, NewTransactions needs either an Accept
-	// (RequireValidStatus, or one of the Verifier's own) or this: a
-	// Verifier that simply forgot Accept would take revoked credentials.
+	// credential's revocation status — its credentials carry none, say,
+	// or it checks status its own way in Accept. Under
+	// AssuranceProduction, NewTransactions needs either Status or this
+	// (CheckStatusDecision): a Verifier that simply forgot Status would
+	// take revoked credentials, and an Accept, which may check business
+	// rules alone, doesn't count.
 	NoStatusCheck bool
 
 	// Scope names this Transactions among those sharing its
@@ -349,6 +352,9 @@ func NewTransactions(v *Verifier, store TransactionStore, cfg TransactionsConfig
 	}
 	if err := checkTransactionsVerify(cfg.Verify); err != nil {
 		return nil, err
+	}
+	if err := CheckStatusDecision(v.cfg.Assurance, cfg.Status, cfg.NoStatusCheck); err != nil {
+		return nil, fmt.Errorf("verifier: transactions: %w", err)
 	}
 	if v.cfg.Assurance == AssuranceProduction {
 		if err := checkProductionTransactions(store, cfg); err != nil {
@@ -447,8 +453,8 @@ func checkTransactionsVerify(verify VerifyResponseRequest) error {
 	if err := checkIssuerKeysValid(verify); err != nil {
 		return fmt.Errorf("verifier: transactions: verify: %w", err)
 	}
-	if verify.Accept != nil || verify.NoStatusCheck {
-		return errors.New("verifier: transactions: set accept and no_status_check on the transactions config, not on verify")
+	if verify.Accept != nil || verify.Status != nil || verify.NoStatusCheck {
+		return errors.New("verifier: transactions: set status, accept and no_status_check on the transactions config, not on verify")
 	}
 	return nil
 }
@@ -462,9 +468,6 @@ func checkProductionTransactions(store TransactionStore, cfg TransactionsConfig)
 	}
 	if err := checkProductionKeySources(cfg.Verify); err != nil {
 		return fmt.Errorf("verifier: transactions: %w", err)
-	}
-	if cfg.Accept == nil && !cfg.NoStatusCheck {
-		return errors.New("verifier: transactions: under AssuranceProduction, set accept (verifier.RequireValidStatus checks revocation) or no_status_check: without either, a revoked credential is accepted")
 	}
 	if cfg.Verify.IssuerAuthorized == nil && !cfg.Verify.AnyIssuerForAnyType {
 		return errors.New("verifier: transactions: under AssuranceProduction, set verify.issuer_authorized (which issuers may issue which types) or verify.any_issuer_for_any_type: without either, any trusted issuer is accepted for any type")
@@ -744,6 +747,11 @@ func (t *Transactions) verifyParsed(ctx context.Context, tx Transaction, parsed 
 	if err != nil {
 		return VerifyResponseResult{}, err
 	}
+	if t.cfg.Status != nil {
+		if err := t.cfg.Status.Check(ctx, result.Credentials...); err != nil {
+			return VerifyResponseResult{}, &acceptError{err}
+		}
+	}
 	if t.cfg.Accept != nil {
 		if err := t.cfg.Accept(ctx, tx.ID, result); err != nil {
 			return VerifyResponseResult{}, &acceptError{err}
@@ -752,8 +760,9 @@ func (t *Transactions) verifyParsed(ctx context.Context, tx Transaction, parsed 
 	return result, nil
 }
 
-// acceptError is TransactionsConfig.Accept's refusal of an answer that
-// verified: its text is the Verifier's own, so LastError keeps it.
+// acceptError is TransactionsConfig.Status's or Accept's refusal of an
+// answer that verified: its text is the Verifier's own, or describes
+// the credential's status, so LastError keeps it.
 type acceptError struct{ err error }
 
 func (e *acceptError) Error() string { return e.err.Error() }
@@ -816,8 +825,8 @@ const maxFailureText = 256
 // carry values from it — a JWE header, a claim, an error description
 // — so only fixed text is recorded for one: a Wallet's error response
 // is reduced to its error code when that's a plain token, and a failed
-// verification to a description of its Reason. An Accept refusal,
-// which only an answer that verified can reach, keeps its own text,
+// verification to a description of its Reason. A Status or Accept
+// refusal, which only an answer that verified can reach, keeps its own text,
 // cut to maxFailureText with anything unprintable replaced.
 //
 // Every refusal is recorded, whether or not the answer decrypted:

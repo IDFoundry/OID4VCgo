@@ -19,6 +19,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcgo/dcql"
+	"github.com/idfoundry/oid4vcgo/statuslist"
 	"github.com/idfoundry/oid4vcgo/storage"
 	"github.com/idfoundry/oid4vcgo/verifier"
 	"github.com/idfoundry/oid4vcgo/wallet"
@@ -48,8 +49,8 @@ func ExampleNewTransactions() {
 	}
 
 	// The issuers this deployment trusts, and what every answer gets
-	// checked with. A production deployment also sets Accept to check
-	// revocation (verifier.RequireValidStatus).
+	// checked with: its signature and type, then its revocation status
+	// (Status), then the deployment's own checks (Accept).
 	issuerRoots := x509.NewCertPool()
 	issuerRoots.AddCert(issuerCA)
 	txs, err := verifier.NewTransactions(v, storage.NewVerifierTransactionStore(), verifier.TransactionsConfig{
@@ -74,6 +75,13 @@ func ExampleNewTransactions() {
 				return nil
 			},
 		},
+		// Each credential's status list, signed by its issuer under
+		// issuerRoots (this example's credential carries none, so
+		// there's nothing to fetch). Under AssuranceProduction, Status
+		// or NoStatusCheck is required.
+		Status: &verifier.StatusPolicy{Checker: statuslist.Checker{
+			Roots: issuerRoots, Options: statuslist.VerifyOptions{Revocation: certrevocation.NoCheck{}},
+		}},
 	})
 	if err != nil {
 		panic(err)

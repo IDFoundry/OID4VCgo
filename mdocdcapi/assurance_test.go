@@ -11,6 +11,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -19,6 +20,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/mdocdcapi"
+	"github.com/idfoundry/oid4vcgo/statuslist"
 	"github.com/idfoundry/oid4vcgo/verifier"
 )
 
@@ -127,6 +129,21 @@ func TestVerifyResponse_ProductionDecisions(t *testing.T) {
 		"no status decision": {func(p *mdocdcapi.VerifyParams) {
 			p.Assurance, p.AnyIssuerForAnyType = verifier.AssuranceProduction, true
 		}, "NoStatusCheck"},
+		// An Accept may check business rules alone: it doesn't decide
+		// revocation.
+		"an Accept alone": {func(p *mdocdcapi.VerifyParams) {
+			p.Assurance, p.AnyIssuerForAnyType, p.Accept = verifier.AssuranceProduction, true, accept
+		}, "NoStatusCheck"},
+		"Status and NoStatusCheck": {func(p *mdocdcapi.VerifyParams) {
+			p.Assurance, p.AnyIssuerForAnyType, p.NoStatusCheck = verifier.AssuranceProduction, true, true
+			p.Status = &verifier.StatusPolicy{Checker: statuslist.Checker{Roots: x509.NewCertPool(), Options: statuslist.VerifyOptions{Revocation: certrevocation.NoCheck{}}}}
+		}, "not both"},
+		"an unhardened status fetcher": {func(p *mdocdcapi.VerifyParams) {
+			p.Assurance, p.AnyIssuerForAnyType = verifier.AssuranceProduction, true
+			p.Status = &verifier.StatusPolicy{Checker: statuslist.Checker{
+				Fetcher: statuslist.Fetcher{AllowPrivate: true}, Roots: x509.NewCertPool(), Options: statuslist.VerifyOptions{Revocation: certrevocation.NoCheck{}},
+			}}
+		}, "HardenedForProduction"},
 		"no chain": {func(p *mdocdcapi.VerifyParams) {
 			p.Assurance, p.AnyIssuerForAnyType, p.NoStatusCheck = verifier.AssuranceProduction, true, true
 			p.IssuerKeys = keyOnlyResolver{p.IssuerKeys.(verifier.X5ChainIssuerKeyResolver)}
@@ -282,11 +299,11 @@ func TestOriginsNormalized(t *testing.T) {
 
 // Accept sees the document as a verifier.VerifiedCredential, with its
 // status reference and the issuer chain its status list can be bound
-// to (verifier.RequireValidStatus), and its error refuses the response.
+// to (verifier.StatusPolicy), and its error refuses the response.
 func TestVerifyResponse_Accept(t *testing.T) {
 	ctx := context.Background()
 	p, _, ds := exchange(t)
-	p.Assurance, p.AnyIssuerForAnyType = verifier.AssuranceProduction, true
+	p.Assurance, p.AnyIssuerForAnyType, p.NoStatusCheck = verifier.AssuranceProduction, true, true
 	var seen verifier.VerifyResponseResult
 	p.Accept = func(_ context.Context, id string, result verifier.VerifyResponseResult) error {
 		seen = result
@@ -313,9 +330,34 @@ func TestVerifyResponse_Accept(t *testing.T) {
 
 	revoked := errors.New("revoked")
 	p, _, _ = exchange(t)
-	p.Assurance, p.AnyIssuerForAnyType = verifier.AssuranceProduction, true
+	p.Assurance, p.AnyIssuerForAnyType, p.NoStatusCheck = verifier.AssuranceProduction, true, true
 	p.Accept = func(context.Context, string, verifier.VerifyResponseResult) error { return revoked }
 	if _, err := mdocdcapi.VerifyResponse(ctx, p); !errors.Is(err, revoked) {
 		t.Errorf("Accept refusing: %v, want its error", err)
 	}
 }
+
+// Status checks the document's status before Accept runs: a status
+// list that can't be fetched refuses the response, and Accept never
+// sees it.
+func TestVerifyResponse_StatusBeforeAccept(t *testing.T) {
+	p, _, _ := exchange(t)
+	unreachable := errors.New("unreachable")
+	p.Assurance, p.AnyIssuerForAnyType = verifier.AssuranceDevelopment, true
+	p.Status = &verifier.StatusPolicy{Checker: statuslist.Checker{
+		Fetcher: statuslist.Fetcher{HTTP: &http.Client{Transport: failingTransport{unreachable}}}, Roots: x509.NewCertPool(),
+	}}
+	accepted := false
+	p.Accept = func(context.Context, string, verifier.VerifyResponseResult) error {
+		accepted = true
+		return nil
+	}
+	if _, err := mdocdcapi.VerifyResponse(context.Background(), p); err == nil || accepted {
+		t.Errorf("VerifyResponse = %v, Accept ran %v; want refused by Status before Accept", err, accepted)
+	}
+}
+
+// failingTransport fails every request with err.
+type failingTransport struct{ err error }
+
+func (f failingTransport) RoundTrip(*http.Request) (*http.Response, error) { return nil, f.err }

@@ -202,6 +202,40 @@ them.
 
 ### Verifier (`verifier`, `mdocdcapi`)
 
+- **Revocation is its own decision, `Status`, not `Accept`.** Under
+  `AssuranceProduction`, any `Accept` used to satisfy the status gate, so
+  an `Accept` checking business rules alone accepted revoked
+  credentials. `TransactionsConfig`, `VerifyResponseRequest` and
+  `mdocdcapi.VerifyParams` now take `Status`, a `verifier.StatusPolicy`
+  the library runs before `Accept`, and production requires `Status` or
+  `NoStatusCheck`; an `Accept` no longer counts. Under production,
+  `Status.Checker.Fetcher` must be `HardenedForProduction` and
+  `Status.Checker.Options.Revocation` set (`certrevocation.NoCheck{}` to
+  decline checking status list signers' certificates). Setting both
+  `Status` and `NoStatusCheck` is refused at every level. Move the
+  status check out of `Accept`:
+
+  ```go
+  // Before
+  Accept: func(ctx context.Context, id string, r verifier.VerifyResponseResult) error {
+  	if err := verifier.RequireValidStatus(checker)(ctx, id, r); err != nil {
+  		return err
+  	}
+  	return myChecks(ctx, id, r)
+  },
+
+  // After
+  Status: &verifier.StatusPolicy{Checker: checker},
+  Accept: myChecks, // verifier.Chain(a, b, …) composes several
+  ```
+
+  `RequireValidStatusFrom(checker, issuers)` becomes
+  `StatusPolicy{Checker: checker, StatusIssuers: issuers}`, and
+  `RequireStatusReference(…)` becomes `RequireReference: true`. The
+  old functions still work as `Accept`s, but don't satisfy the
+  production gate. A `Status` refusal is recorded as `LastError`, as an
+  `Accept` refusal is. A `statuslist.NotValidError` for INVALID now
+  says "(revoked)" in its text.
 - **A status naming no known mechanism is refused.** A credential whose
   status names neither a Token Status List nor, for an mdoc, an
   identifier list — another mechanism, or a misspelt key — was read as

@@ -91,8 +91,9 @@ from its chain and validity period alone:
 - a proximity reader's document signer
   (`proximity.WithIssuerRevocation`);
 - a status list signer (`statuslist.VerifyOptions.Revocation`,
-  `walletflow.Config.StatusRevocation`; `verifier.RequireValidStatus`
-  passes it on from the `statuslist.Checker` it's given);
+  `walletflow.Config.StatusRevocation`; `verifier.StatusPolicy`
+  passes it on from its `statuslist.Checker`, and requires it under
+  `verifier.AssuranceProduction`);
 - a key attestation's or jwt proof's certificate, at the issuer
   (`issuer.X5CAttestationVerifier.Revocation`,
   `issuer.X5CProofBindingKeyResolver.Revocation`), which

@@ -169,20 +169,26 @@ type VerifyResponseRequest struct {
 	// refused either way.
 	DistinctCredentials bool
 
-	// Accept, if set, runs on a response that verified, before
-	// VerifyResponse returns it, and its error is VerifyResponse's:
-	// RequireValidStatus (or RequireValidStatusFrom) checks revocation.
-	// id is "" here; Transactions passes its request's. Nothing else
-	// checks revocation.
-	Accept func(ctx context.Context, id string, result VerifyResponseResult) error
+	// Status, if set, checks every verified credential's revocation
+	// status (see StatusPolicy) before Accept runs, and its error is
+	// VerifyResponse's. Nothing else checks revocation.
+	Status *StatusPolicy
 	// NoStatusCheck declares that this Verifier deliberately checks no
-	// revocation status. Under AssuranceProduction, VerifyResponse needs
-	// Accept or this, so a Verifier that simply forgot Accept doesn't
-	// take revoked credentials.
+	// revocation status — its credentials carry none, say, or it checks
+	// status its own way in Accept. Under AssuranceProduction,
+	// VerifyResponse needs Status or this (CheckStatusDecision), so a
+	// Verifier that simply forgot Status doesn't take revoked
+	// credentials; an Accept doesn't count.
 	NoStatusCheck bool
 
+	// Accept, if set, runs on a response that verified, after Status,
+	// before VerifyResponse returns it, and its error is
+	// VerifyResponse's: the Verifier's own checks (Chain composes
+	// several). id is "" here; Transactions passes its request's.
+	Accept func(ctx context.Context, id string, result VerifyResponseResult) error
+
 	// statusByTransactions is set by Transactions, which runs its own
-	// Accept once the response is its request's.
+	// Status and Accept once the response is its request's.
 	statusByTransactions bool
 
 	// ResponseEncryptionKey is the same ephemeral private key a prior
@@ -338,10 +344,11 @@ type DiscardedPresentation struct {
 // Credential Query is then verified, and a failure fails
 // VerifyResponse.
 //
-// VerifyResponse doesn't check revocation: each VerifiedCredential
-// carries its status reference (see VerifiedCredential.StatusListRef)
-// for the caller to check, e.g. with statuslist.Checker. A caller that
-// doesn't accepts revoked credentials; see TransactionsConfig.Accept.
+// VerifyResponse checks revocation only with req.Status: each
+// VerifiedCredential carries its status reference (see
+// VerifiedCredential.StatusListRef), which a StatusPolicy checks. A
+// caller that sets neither Status nor a check of its own accepts
+// revoked credentials.
 //
 // A Credential Query's own TrustedAuthorities (§6.1.1), when
 // non-empty, is checked against the verified Presentation's own issuer
@@ -399,6 +406,11 @@ func (v *Verifier) VerifyResponse(ctx context.Context, req VerifyResponseRequest
 			return VerifyResponseResult{}, fmt.Errorf("verifier: verify response: %w", err)
 		}
 	}
+	if !req.statusByTransactions {
+		if err := CheckStatusDecision(v.cfg.Assurance, req.Status, req.NoStatusCheck); err != nil {
+			return VerifyResponseResult{}, fmt.Errorf("verifier: verify response: %w", err)
+		}
+	}
 
 	answered := make(map[string]bool, len(req.Response.VPToken))
 	for id := range req.Response.VPToken {
@@ -441,7 +453,15 @@ func (v *Verifier) VerifyResponse(ctx context.Context, req VerifyResponseRequest
 			return VerifyResponseResult{}, firstFailure
 		}
 	}
-	if req.Accept != nil && !req.statusByTransactions {
+	if req.statusByTransactions {
+		return result, nil
+	}
+	if req.Status != nil {
+		if err := req.Status.Check(ctx, result.Credentials...); err != nil {
+			return VerifyResponseResult{}, err
+		}
+	}
+	if req.Accept != nil {
 		if err := req.Accept(ctx, "", result); err != nil {
 			return VerifyResponseResult{}, err
 		}
@@ -473,15 +493,12 @@ func checkTimeBounds(req VerifyResponseRequest) error {
 
 // checkProductionDecisions refuses, under AssuranceProduction, a
 // request that hasn't decided which issuers may issue which types
-// (IssuerAuthorized, or AnyIssuerForAnyType) and whether revocation is
-// checked (Accept, or NoStatusCheck): left undecided, each silently
-// accepts what it shouldn't.
+// (IssuerAuthorized, or AnyIssuerForAnyType): left undecided, it
+// silently accepts what it shouldn't. Its status decision is
+// CheckStatusDecision's.
 func checkProductionDecisions(req VerifyResponseRequest) error {
 	if req.IssuerAuthorized == nil && !req.AnyIssuerForAnyType {
 		return errors.New("under AssuranceProduction, set issuer_authorized (which issuers may issue which types) or any_issuer_for_any_type: without either, any trusted issuer is accepted for any type")
-	}
-	if req.Accept == nil && !req.NoStatusCheck && !req.statusByTransactions {
-		return errors.New("under AssuranceProduction, set accept (verifier.RequireValidStatus checks revocation) or no_status_check: without either, a revoked credential is accepted")
 	}
 	return nil
 }
