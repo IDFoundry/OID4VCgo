@@ -7,9 +7,8 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"strings"
-	"unicode"
 
+	"github.com/idfoundry/oid4vcgo/internal/displaytext"
 	"github.com/idfoundry/oid4vcgo/wallet"
 )
 
@@ -121,23 +120,12 @@ func (e *AuthorizationDeniedError) Error() string {
 // callback that walletflow puts in an error.
 const maxErrorTextRunes = 256
 
-// cleanText drops control characters from untrusted text and cuts it to
-// maxErrorTextRunes, so it can't forge log lines or flood a screen.
+// cleanText fits untrusted text for an error as displaytext.Shorten
+// does, cut to maxErrorTextRunes: control characters and line or
+// paragraph separators become spaces and invisible format characters
+// go, so it can't forge log or screen lines, or flood a screen.
 func cleanText(text string) string {
-	var b strings.Builder
-	n := 0
-	for _, r := range text {
-		if unicode.IsControl(r) {
-			continue
-		}
-		if n == maxErrorTextRunes {
-			b.WriteString("…")
-			break
-		}
-		b.WriteRune(r)
-		n++
-	}
-	return b.String()
+	return displaytext.Shorten(text, maxErrorTextRunes)
 }
 
 // RequestRefusedError is an authentic request the wallet refused, and

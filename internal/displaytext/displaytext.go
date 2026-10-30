@@ -20,21 +20,38 @@ import (
 // need them to render right, and they join or part neighbouring
 // characters without hiding or reordering any.
 func Clean(s string, limit int) string {
+	text, _ := clean(s, limit)
+	return text
+}
+
+// Shorten is Clean, ending text it cut short with "…", for an error or
+// log line whose reader should know there was more.
+func Shorten(s string, limit int) string {
+	text, cut := clean(s, limit)
+	if cut {
+		return text + "…"
+	}
+	return text
+}
+
+// clean is Clean, also reporting whether it cut s short.
+func clean(s string, limit int) (text string, cut bool) {
 	var b strings.Builder
 	n := 0
 	for _, r := range s {
 		switch {
-		case n == limit:
-			return strings.TrimSpace(b.String())
 		case r == utf8.RuneError, isHiddenFormat(r):
 			continue
 		case unicode.IsControl(r), unicode.In(r, unicode.Zl, unicode.Zp):
 			r = ' '
 		}
+		if n == limit {
+			return strings.TrimSpace(b.String()), true
+		}
 		b.WriteRune(r)
 		n++
 	}
-	return strings.TrimSpace(b.String())
+	return strings.TrimSpace(b.String()), false
 }
 
 // isHiddenFormat reports whether r is a format character (Cf) other than

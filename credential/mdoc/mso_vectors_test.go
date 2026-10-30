@@ -49,6 +49,35 @@ func signMSOPayload(t *testing.T, f fixture, payload []byte, protected bool) Iss
 	return out
 }
 
+// withoutValidityMember is f's credential re-signed with member left out
+// of its MSO's validityInfo, as an issuer that never wrote it would.
+func withoutValidityMember(t *testing.T, f fixture, member string) IssuerSigned {
+	t.Helper()
+	_, _, payload, err := cose.DecodeUnverified(f.signed.IssuerAuth)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mso map[string]cbor.RawMessage
+	if err := unwrapTag24(payload, &mso); err != nil {
+		t.Fatal(err)
+	}
+	var validity map[string]cbor.RawMessage
+	if err := cbor.Unmarshal(mso["validityInfo"], &validity); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := validity[member]; !ok {
+		t.Fatalf("validityInfo has no %q to leave out", member)
+	}
+	delete(validity, member)
+	if mso["validityInfo"], err = cbor.Marshal(validity); err != nil {
+		t.Fatal(err)
+	}
+	if payload, err = wrapTag24(mso); err != nil {
+		t.Fatal(err)
+	}
+	return signMSOPayload(t, f, payload, false)
+}
+
 // firstItem is a namespace and digestID f discloses.
 func firstItem(f fixture) (string, uint64) {
 	for ns, items := range f.signed.NameSpaces {
@@ -114,6 +143,27 @@ func TestMSONegativeVectors(t *testing.T) {
 		{"mso-doctype-not-the-documents", "§12.3.4 (DocType identical to the response's)", "docType",
 			func() IssuerSigned {
 				return resign(t, f, func(m *MobileSecurityObject) { m.DocType = "org.example.other.1" }, false)
+			}},
+		{"validity-valid-from-missing", "§9.1.2.4, §12.3.4 (validFrom)", "validityInfo must have",
+			func() IssuerSigned { return withoutValidityMember(t, f, "validFrom") }},
+		{"validity-signed-missing", "§9.1.2.4, §12.3.4 (signed)", "validityInfo must have",
+			func() IssuerSigned { return withoutValidityMember(t, f, "signed") }},
+		{"validity-valid-until-missing", "§9.1.2.4, §12.3.4 (validUntil)", "validityInfo must have",
+			func() IssuerSigned { return withoutValidityMember(t, f, "validUntil") }},
+		{"validity-valid-from-zero", "§9.1.2.4, §12.3.4 (validFrom)", "validityInfo must have",
+			func() IssuerSigned {
+				return resign(t, f, func(m *MobileSecurityObject) { m.ValidityInfo.ValidFrom = time.Time{} }, false)
+			}},
+		{"validity-valid-until-not-after-valid-from", "§12.3.4 (validUntil later than validFrom)", "not later than validFrom",
+			func() IssuerSigned {
+				return resign(t, f, func(m *MobileSecurityObject) { m.ValidityInfo.ValidUntil = m.ValidityInfo.ValidFrom }, false)
+			}},
+		{"validity-misordered", "§12.3.4 (validUntil later than validFrom)", "not later than validFrom",
+			func() IssuerSigned {
+				return resign(t, f, func(m *MobileSecurityObject) {
+					v := &m.ValidityInfo
+					v.ValidFrom, v.ValidUntil = v.ValidUntil, v.ValidFrom
+				}, false)
 			}},
 	} {
 		t.Run(vec.id, func(t *testing.T) {

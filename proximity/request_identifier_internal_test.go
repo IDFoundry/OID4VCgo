@@ -31,9 +31,13 @@ func TestParseDeviceRequest_RefusesForgedIdentifiers(t *testing.T) {
 		t.Fatalf("a plain request: %v", err)
 	}
 	for name, b := range map[string][]byte{
-		"element with a newline":      request("org.iso.18013.5.1.mDL", "org.iso.18013.5.1", "age_over_18\nRetain: no"),
-		"namespace with an override":  request("org.iso.18013.5.1.mDL", "org.iso\u202e.18013.5.1", "age_over_18"),
-		"docType with a control char": request("org.iso.18013.5.1.mDL\x00", "org.iso.18013.5.1", "age_over_18"),
+		"element with a newline":        request("org.iso.18013.5.1.mDL", "org.iso.18013.5.1", "age_over_18\nRetain: no"),
+		"namespace with an override":    request("org.iso.18013.5.1.mDL", "org.iso\u202e.18013.5.1", "age_over_18"),
+		"docType with a control char":   request("org.iso.18013.5.1.mDL\x00", "org.iso.18013.5.1", "age_over_18"),
+		"element with a line separator": request("org.iso.18013.5.1.mDL", "org.iso.18013.5.1", "age_over_18\u2028Retain: no"),
+		"element with a para separator": request("org.iso.18013.5.1.mDL", "org.iso.18013.5.1", "age_over_18\u2029portrait: not shared"),
+		"element with a zero-width sp":  request("org.iso.18013.5.1.mDL", "org.iso.18013.5.1", "family\u200bname"),
+		"element with a tag character":  request("org.iso.18013.5.1.mDL", "org.iso.18013.5.1", "family_name\U000e0041"),
 	} {
 		if _, err := ParseDeviceRequest(b); !errors.Is(err, ErrCBORValidation) {
 			t.Errorf("%s: %v, want a validation error", name, err)

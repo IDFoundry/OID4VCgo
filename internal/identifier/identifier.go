@@ -13,11 +13,14 @@ import (
 const MaxLength = 256
 
 // Check refuses an identifier that's empty, too long, not UTF-8, or
-// carries a control or bidirectional formatting character: a request
-// naming "age_over_18\nRetain: no", or one reversed by U+202E, could
-// otherwise forge a line of the consent screen. A real identifier has
-// none, so refusing is safer than showing a cleaned copy that no longer
-// names what's sent.
+// carries a control character, a line or paragraph separator, or a
+// format character: a request naming "age_over_18\nRetain: no", one
+// broken by U+2028 (which SwiftUI and Compose show as a new line), or
+// one reversed by U+202E, could otherwise forge a line of the consent
+// screen, and an invisible one (a zero-width space, a word joiner, a
+// tag character) could make two identifiers look alike. A real
+// identifier has none, so refusing is safer than showing a cleaned copy
+// that no longer names what's sent.
 func Check(s string) error {
 	switch {
 	case s == "":
@@ -28,8 +31,9 @@ func Check(s string) error {
 		return fmt.Errorf("identifier %q isn't UTF-8", s)
 	}
 	for _, r := range s {
-		if unicode.IsControl(r) || unicode.Is(unicode.Bidi_Control, r) {
-			return fmt.Errorf("identifier %q has a control or bidirectional formatting character", s)
+		// Cf holds every bidirectional formatting character too.
+		if unicode.IsControl(r) || unicode.In(r, unicode.Zl, unicode.Zp, unicode.Cf) {
+			return fmt.Errorf("identifier %q has a control, separator or format character", s)
 		}
 	}
 	return nil

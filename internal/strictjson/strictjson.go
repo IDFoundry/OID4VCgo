@@ -11,13 +11,21 @@ package strictjson
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
+	"unicode/utf16"
+	"unicode/utf8"
 )
 
 // Unmarshal decodes data into v, refusing:
+//   - text that isn't UTF-8 (RFC 8259 §8.1), or a \u escape of a
+//     surrogate that isn't half of a pair (RFC 8259 §8.2; I-JSON, RFC
+//     7493 §2.1, MUST NOT): encoding/json reads either as U+FFFD, so
+//     two different documents would decode the same;
 //   - an object, at any depth, with two members of one name (RFC 8259
 //     §4: names "SHOULD be unique"; I-JSON, RFC 7493 §2.3, MUST);
 //   - a member whose name matches one of a struct's fields only
@@ -36,6 +44,9 @@ func Unmarshal(data []byte, v any) error {
 	if !json.Valid(data) {
 		return json.Unmarshal(data, v)
 	}
+	if err := checkText(data); err != nil {
+		return err
+	}
 	if err := checkDuplicates(data); err != nil {
 		return err
 	}
@@ -45,6 +56,44 @@ func Unmarshal(data []byte, v any) error {
 		}
 	}
 	return json.Unmarshal(data, v)
+}
+
+// checkText refuses data that isn't UTF-8, or that escapes a lone
+// surrogate. data is valid JSON, so a backslash is always inside a
+// string and "\u" is always followed by four hex digits.
+func checkText(data []byte) error {
+	if !utf8.Valid(data) {
+		return errors.New("json: text is not valid UTF-8")
+	}
+	for i := 0; i < len(data); i++ {
+		if data[i] != '\\' {
+			continue
+		}
+		i++ // the escaped character
+		if data[i] != 'u' {
+			continue
+		}
+		r := escapedUnit(data[i+1 : i+5])
+		i += 4
+		if !utf16.IsSurrogate(r) {
+			continue
+		}
+		// A high surrogate followed by an escaped low one is a pair.
+		if r < 0xdc00 && i+6 < len(data) && data[i+1] == '\\' && data[i+2] == 'u' {
+			if low := escapedUnit(data[i+3 : i+7]); low >= 0xdc00 && low <= 0xdfff {
+				i += 6
+				continue
+			}
+		}
+		return fmt.Errorf("json: \\u%s is a lone surrogate", data[i-3:i+1])
+	}
+	return nil
+}
+
+// escapedUnit is the UTF-16 code unit four hex digits name.
+func escapedUnit(hex []byte) rune {
+	n, _ := strconv.ParseUint(string(hex), 16, 16)
+	return rune(n)
 }
 
 // checkDuplicates refuses an object with two members of one name, at

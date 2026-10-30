@@ -168,6 +168,28 @@ func TestPublicKeyRejectsMalformedCoordinates(t *testing.T) {
 	}
 }
 
+// A coordinate broken across lines is refused (RFC 7515 §2), not read as
+// the same key under a second encoding.
+func TestPublicKeyRejectsLineBreakInCoordinate(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	j, err := Marshal(&key.PublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	x, y := j.X, j.Y
+	j.X = x[:5] + "\r\n" + x[5:]
+	if _, err := j.PublicKey(); err == nil {
+		t.Error("PublicKey accepted a line break in x")
+	}
+	j.X, j.Y = x, y+"\n"
+	if _, err := j.PublicKey(); err == nil {
+		t.Error("PublicKey accepted a line break in y")
+	}
+}
+
 func TestParsePublicKeyRejectsMalformedJSON(t *testing.T) {
 	if _, err := ParsePublicKey([]byte("not json")); err == nil {
 		t.Errorf("ParsePublicKey accepted malformed JSON")

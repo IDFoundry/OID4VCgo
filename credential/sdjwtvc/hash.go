@@ -3,14 +3,16 @@ package sdjwtvc
 import (
 	"crypto/sha256"
 	"crypto/sha512"
-	"encoding/base64"
 	"fmt"
 	"hash"
+
+	"github.com/idfoundry/oid4vcgo/internal/b64url"
 )
 
-// b64 decodes strictly: an encoding whose unused trailing bits aren't zero
-// (RFC 4648 §3.5) is refused, as every encoder emits zero bits.
-var b64 = base64.RawURLEncoding.Strict()
+// b64 is RFC 7515 §2 base64url: any byte outside its alphabet, line
+// breaks included, and non-zero trailing bits (RFC 4648 §3.5) are
+// refused, so one value has one encoding.
+var b64 b64url.Encoding
 
 // HashAlg identifies the hash algorithm used for Disclosure digests
 // (RFC 9901 §4.1.1). Values are the "Hash Name String" from the IANA

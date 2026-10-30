@@ -217,6 +217,36 @@ func TestVerifyRejectsNonCanonicalBase64(t *testing.T) {
 	}
 }
 
+// A line break in any segment is refused (RFC 7515 §2): encoding/base64
+// skips it, and the signing input doesn't cover the signature segment,
+// so it would give one JWS any number of serializations that verify.
+func TestVerifyRejectsLineBreakInSegment(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	compact, err := Sign(ES256, key, map[string]any{}, []byte(`{"a":1}`))
+	if err != nil {
+		t.Fatalf("Sign: %v", err)
+	}
+	parts := strings.Split(compact, ".")
+	for i := range parts {
+		for _, brk := range []string{"\r\n", "\n", "\r"} {
+			mutated := append([]string(nil), parts...)
+			mutated[i] = mutated[i][:4] + brk + mutated[i][4:]
+			variant := strings.Join(mutated, ".")
+			if _, _, err := Verify(ES256, &key.PublicKey, variant); err == nil {
+				t.Errorf("Verify accepted %q in segment %d", brk, i)
+			}
+			if i < 2 {
+				if _, _, err := DecodeUnverified(variant); err == nil {
+					t.Errorf("DecodeUnverified accepted %q in segment %d", brk, i)
+				}
+			}
+		}
+	}
+}
+
 // RFC 7515 §4.1.11: "Producers MUST NOT use the empty list".
 func TestVerifyRejectsEmptyCrit(t *testing.T) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)

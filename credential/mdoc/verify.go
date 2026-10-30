@@ -60,7 +60,9 @@ type VerifiedMSO struct {
 // disclosed IssuerSignedItem's digest against the MSO's valueDigests
 // (§12.3.5) — an item whose digest doesn't match, or isn't present in
 // valueDigests at all, is rejected — and checks ValidityInfo's
-// ValidFrom/ValidUntil against opts.Now (or time.Now if unset).
+// ValidFrom/ValidUntil against opts.Now (or time.Now if unset), refusing
+// a ValidityInfo without Signed, ValidFrom or ValidUntil, or whose
+// ValidUntil isn't later than its ValidFrom.
 // Resolving which key issuerPub is (the IssuerAuth x5chain and an
 // Issuer trust policy) is the caller's job — see the package doc
 // comment. VerifiedMSO.X5Chain is IssuerAuth's x5chain from either
@@ -88,6 +90,9 @@ func Verify(signed IssuerSigned, docType string, issuerPub crypto.PublicKey, alg
 	}
 	if mso.DocType != docType {
 		return VerifiedMSO{}, fmt.Errorf("mdoc: docType %q does not match the MSO's own docType %q", docType, mso.DocType)
+	}
+	if err := mso.ValidityInfo.check(); err != nil {
+		return VerifiedMSO{}, err
 	}
 
 	nameSpaces, err := checkDigests(signed, mso)

@@ -90,8 +90,9 @@ format or error code below changes incompatibly.
 An error's message is fit for an app's logs. It never carries a remote
 party's own description (`error_description`, an error body), a URL's
 path or query (which can carry a pre-authorized code, a `request_uri` or
-a `response_code`), credential claims, or control characters. It's at
-most 300 characters. The remote party's OAuth error code is the
+a `response_code`), credential claims, control characters, line or
+paragraph separators, or invisible format characters. It's at most 300
+characters. The remote party's OAuth error code is the
 `detail`.
 
 ## Callbacks the app implements

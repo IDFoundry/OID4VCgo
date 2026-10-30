@@ -41,6 +41,40 @@ func TestUnmarshal(t *testing.T) {
 	}
 }
 
+// Text that isn't UTF-8, and a lone surrogate escape, are refused (RFC
+// 8259 §8.1, §8.2; RFC 7493 §2.1) rather than read as U+FFFD; a
+// surrogate pair, escaped or not, decodes.
+func TestUnmarshalText(t *testing.T) {
+	for in, want := range map[string]string{
+		`"\ud83d\ude00"`:   "\U0001f600",
+		"\"\U0001f600\"":   "\U0001f600",
+		`"a\\ud800"`:       `a\ud800`,
+		`"\u00e9\n\u20ac"`: "\u00e9\n\u20ac",
+	} {
+		var s string
+		if err := Unmarshal([]byte(in), &s); err != nil || s != want {
+			t.Errorf("%s: %q, %v; want %q", in, s, err, want)
+		}
+	}
+	for _, in := range []string{
+		"\"\xff\"",
+		"\"\xed\xa0\x80\"", // a surrogate in UTF-8
+		"{\"n\xc3\":1}",
+		`"\ud800"`,
+		`"\udc00"`,
+		`"\ud800x"`,
+		`"\ud800\u0041"`,
+		`"\ude00\ud83d"`,
+		`{"\udfff":1}`,
+		`["\ud83d\ude00","\ud83d"]`,
+	} {
+		var v any
+		if err := Unmarshal([]byte(in), &v); err == nil {
+			t.Errorf("%q: accepted as %q", in, v)
+		}
+	}
+}
+
 type outer struct {
 	Claims  claims            `json:"claims"`
 	List    []claims          `json:"list"`

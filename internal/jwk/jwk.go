@@ -6,14 +6,15 @@ import (
 	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/sha256"
-	"encoding/base64"
 	"fmt"
+	"github.com/idfoundry/oid4vcgo/internal/b64url"
 	"github.com/idfoundry/oid4vcgo/internal/strictjson"
 )
 
-// b64 decodes strictly: an encoding whose unused trailing bits aren't zero
-// (RFC 4648 §3.5) is refused, so a key has one encoding of each member.
-var b64 = base64.RawURLEncoding.Strict()
+// b64 is RFC 7515 §2 base64url: any byte outside its alphabet, line
+// breaks included, and non-zero trailing bits (RFC 4648 §3.5) are
+// refused, so one value has one encoding.
+var b64 b64url.Encoding
 
 // JWK is the minimal JWK (RFC 7517) shape this package supports: P-256
 // EC keys ("kty":"EC") and Ed25519 OKP keys ("kty":"OKP"). D is only
@@ -193,10 +194,8 @@ func Matches(raw []byte, pub crypto.PublicKey) (bool, error) {
 // member-name order (§3.1) RFC 7638 §3.2/RFC 8037 §2 define per key
 // type — "crv","kty","x","y" for EC, "crv","kty","x" for OKP, already
 // alphabetical. The members are re-encoded from the parsed key, not
-// taken as k carries them: base64url decoding forgives line breaks
-// and stray trailing bits, so one key could otherwise have any number
-// of thumbprints, and a DPoP binding computed here wouldn't match one
-// computed from the key.
+// taken as k carries them, so a thumbprint computed here matches one
+// computed from the key itself.
 func (k JWK) Thumbprint() (string, error) {
 	if pub, err := k.PublicKey(); err == nil {
 		if canonical, err := Marshal(pub); err == nil {

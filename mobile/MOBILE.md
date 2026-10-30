@@ -687,9 +687,10 @@ the gomobile boundary is cleaned in one place, `classify`:
 - **URLs:** network errors drop their URL, which can carry a
   `request_uri`, a pre-authorized code or a `response_code`. Any other
   URL in a message is cut to its scheme and host.
-- **Control characters and length:** control characters become spaces,
-  so a message can't forge log lines, and it's capped at 300
-  characters.
+- **Control characters and length:** control characters and line and
+  paragraph separators become spaces and invisible format characters
+  are dropped, so a message can't forge log lines, and it's capped at
+  300 characters.
 - **Timeouts:** they're `network` (retryable), no longer `cancelled`.
   HTTP 5xx and 429 are `unavailable`, retryable later, and
   `invalid_nonce` is retryable too.

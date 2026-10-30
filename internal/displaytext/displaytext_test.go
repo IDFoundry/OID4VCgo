@@ -30,3 +30,17 @@ func TestClean(t *testing.T) {
 		t.Errorf("kept %d runes, want 200", utf8.RuneCountInString(got))
 	}
 }
+
+// Shorten cleans as Clean does, and marks text it cut short.
+func TestShorten(t *testing.T) {
+	for in, want := range map[string]string{
+		"denied\u2028INFO forged": "denied INF\u2026",
+		"short\u200b":             "short",
+		"exactly10!\u200b":        "exactly10!",
+		"eleven runes":            "eleven run\u2026",
+	} {
+		if got := Shorten(in, 10); got != want {
+			t.Errorf("Shorten(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

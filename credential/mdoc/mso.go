@@ -114,6 +114,11 @@ func (r *IdentifierListRef) validate() error {
 // list's top-level certificate must instead be signed by whatever
 // certificate signed the MSO's own IssuerAuth x5chain certificate (the
 // IACA certificate, for an mDL).
+//
+// §12.3.6.5 requires the status list an mdoc references to use one bit
+// per status (bits = 1). Neither Issue, which sees only this reference,
+// nor statuslist enforces it, and a list with another bits value is
+// still read correctly.
 type StatusListRef struct {
 	Idx         uint64 `cbor:"idx"`
 	URI         string `cbor:"uri"`
@@ -169,4 +174,18 @@ type ValidityInfo struct {
 	ValidFrom      time.Time  `cbor:"validFrom"`
 	ValidUntil     time.Time  `cbor:"validUntil"`
 	ExpectedUpdate *time.Time `cbor:"expectedUpdate,omitempty"`
+}
+
+// check refuses a ValidityInfo without signed, validFrom or validUntil,
+// all three required (§9.1.2.4, §12.3.4), or whose validUntil isn't
+// later than its validFrom: a missing timestamp decodes as the zero
+// time, which would otherwise read as valid since year 1.
+func (v ValidityInfo) check() error {
+	if v.Signed.IsZero() || v.ValidFrom.IsZero() || v.ValidUntil.IsZero() {
+		return fmt.Errorf("mdoc: MSO validityInfo must have signed, validFrom and validUntil")
+	}
+	if !v.ValidUntil.After(v.ValidFrom) {
+		return fmt.Errorf("mdoc: MSO validUntil %s is not later than validFrom %s", v.ValidUntil, v.ValidFrom)
+	}
+	return nil
 }

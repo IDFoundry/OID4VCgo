@@ -39,6 +39,21 @@ func TestParseDisclosure_RefusesNonCanonicalBase64(t *testing.T) {
 	}
 }
 
+// A Disclosure is base64url without line breaks (RFC 9901 §4.2.1, RFC
+// 7515 §2): one broken across lines is refused rather than read as the
+// same Disclosure.
+func TestParseDisclosure_RefusesLineBreaks(t *testing.T) {
+	const encoded = "WyJfMjZiYzRMVC1hYzZxMktJNmNCVzVlcyIsICJmYW1pbHlfbmFtZSIsICJNw7ZiaXVzIl0"
+	if _, err := ParseDisclosure(encoded); err != nil {
+		t.Fatalf("ParseDisclosure: %v", err)
+	}
+	for _, s := range []string{encoded[:10] + "\r\n" + encoded[10:], encoded + "\n"} {
+		if _, err := ParseDisclosure(s); err == nil {
+			t.Errorf("ParseDisclosure accepted %q", s)
+		}
+	}
+}
+
 func TestDisclosureDigest_RFC9901_ObjectProperty(t *testing.T) {
 	const encoded = "WyJfMjZiYzRMVC1hYzZxMktJNmNCVzVlcyIsICJmYW1pbHlfbmFtZSIsICJNw7ZiaXVzIl0"
 	const wantDigest = "X9yH0Ajrdm1Oij4tWso9UzzKJvPoDxwmuEcO3XAdRC0"

@@ -88,7 +88,11 @@ type Claims struct {
 	// decoy looks like the digest of an element left undisclosed. Each
 	// namespace named must be in NameSpaces; Issue rejects a count
 	// below 0 or above MaxDecoys, or one that takes a namespace's
-	// digests past MaxCBORContainerItems.
+	// digests past MaxCBORContainerItems. Each decoy adds about 40 bytes
+	// (SHA-256) to 72 bytes (SHA-512) to IssuerAuth, and Issue refuses
+	// an IssuerAuth larger than the 64 KiB Verify accepts: with SHA-256,
+	// all namespaces' decoys and data elements together come to at most
+	// about 1,500.
 	Decoys map[string]int
 }
 
@@ -289,6 +293,12 @@ func Issue(signer crypto.Signer, alg oid4vci.COSEAlg, claims Claims, opts IssueO
 	)
 	if err != nil {
 		return IssuerSigned{}, fmt.Errorf("mdoc: sign IssuerAuth: %w", err)
+	}
+	// Verify, and so every reader built on this package, refuses an
+	// IssuerAuth over cose.MaxBytes: an mdoc carrying one would be
+	// issued only to be refused wherever it's presented.
+	if len(issuerAuth) > cose.MaxBytes {
+		return IssuerSigned{}, fmt.Errorf("mdoc: IssuerAuth is %d bytes, more than the %d Verify accepts: issue fewer Claims.Decoys or data elements", len(issuerAuth), cose.MaxBytes)
 	}
 
 	return IssuerSigned{NameSpaces: nameSpaces, IssuerAuth: issuerAuth, rawItems: rawItems}, nil
