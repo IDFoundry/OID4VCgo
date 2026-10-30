@@ -102,7 +102,8 @@ storage and the UI:
 - **Keys:** `KeychainKeyStore` keeps them in the Secure Enclave. Holder
   keys can require Face ID to present.
 - **Storage:** `FileCredentialStore` uses complete file protection and
-  is excluded from backup.
+  is excluded from backup. Its writes lock a file in its directory, so
+  an app and its extension can share one in an App Group.
 - **Wallet Provider:** you implement `WalletProvider`, which attests the
   wallet, for issuers that ask for attestations, as HAIP issuers do; pass
   `nil` for issuers that don't. Issuance follows each issuer's metadata,

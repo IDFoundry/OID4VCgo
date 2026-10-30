@@ -1278,6 +1278,17 @@ public final class InMemoryCredentialStore: CredentialStore, @unchecked Sendable
     public func delete(id: String) throws {
         lock.withLock { stored.removeAll { $0.id == id } }
     }
+
+    /// Atomic within this process, which is all an in-memory store has.
+    public func compareAndSwap(id: String, expected: Data?, record: Data?) throws -> Data? {
+        lock.withLock {
+            let current = stored.first { $0.id == id }?.record
+            guard current == expected else { return current }
+            stored.removeAll { $0.id == id }
+            if let record { stored.append((id, record)) }
+            return current
+        }
+    }
 }
 
 // The Go objects are safe to use from any thread: gomobile's references

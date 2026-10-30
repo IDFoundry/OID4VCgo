@@ -117,7 +117,9 @@ is a complete, working app on this package to compare against.
   Mobile Document Provider capability and doctypes entitlement on both
   the app's and the extension's App IDs.
 - Credentials in an App Group both list
-  (``FileCredentialStore/inAppGroup(_:options:)``), holder keys in a
+  (``FileCredentialStore/inAppGroup(_:options:)``, whose
+  ``CredentialStore/compareAndSwap(id:expected:record:)`` locks a file
+  both processes see, so they never both use one copy), holder keys in a
   Keychain access group both list
   (``KeychainKeyStore/Options/holderAccessGroup``), and the
   configuration where the extension can read it. The extension opens
