@@ -2,11 +2,34 @@ package issuer_test
 
 import (
 	"context"
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/issuer"
 )
+
+// claimsProof is a DPoP proof for the token endpoint with typ and the
+// given extra claims, issued at the fixture's now.
+func (f preAuthorizedCodeFixture) claimsProof(t *testing.T, typ string, extra map[string]any) string {
+	t.Helper()
+	key := testP256Key(t)
+	claims := map[string]any{"jti": "vector", "htm": "POST", "htu": testTokenEndpointURL(t).String(), "iat": f.now.Unix()}
+	for k, v := range extra {
+		claims[k] = v
+	}
+	payload, err := json.Marshal(claims)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proof, err := jose.Sign(jose.ES256, key, map[string]any{"typ": typ, "jwk": jwkJSON(t, &key.PublicKey)}, payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return proof
+}
 
 // dpopProof is a DPoP proof for the token endpoint, as the wallet makes
 // one, with method, URL and clock as given.
@@ -65,6 +88,16 @@ func TestPreAuthorizedCodeNegativeVectors(t *testing.T) {
 			}},
 		{"dpop-iat-in-the-future", "RFC 9449 §4.3 (iat within an acceptable window)", issuer.ErrorInvalidDPoPProof,
 			func(f preAuthorizedCodeFixture) string { return f.dpopProof(t, "POST", endpoint, f.now.Add(time.Hour)) }},
+		{"dpop-exp-passed", "RFC 7519 §4.1.4 (exp)", issuer.ErrorInvalidDPoPProof,
+			func(f preAuthorizedCodeFixture) string {
+				return f.claimsProof(t, "dpop+jwt", map[string]any{"exp": f.now.Add(-time.Hour).Unix()})
+			}},
+		{"dpop-nbf-in-the-future", "RFC 7519 §4.1.5 (nbf)", issuer.ErrorInvalidDPoPProof,
+			func(f preAuthorizedCodeFixture) string {
+				return f.claimsProof(t, "dpop+jwt", map[string]any{"nbf": f.now.Add(time.Hour).Unix()})
+			}},
+		{"dpop-typ-not-dpop", "RFC 9449 §4.3 (typ)", issuer.ErrorInvalidDPoPProof,
+			func(f preAuthorizedCodeFixture) string { return f.claimsProof(t, "jwt", nil) }},
 		{"dpop-proof-replayed", "RFC 9449 §11.1 (jti replay)", issuer.ErrorInvalidDPoPProof,
 			func(f preAuthorizedCodeFixture) string {
 				proof := f.validProof(t)
@@ -85,5 +118,31 @@ func TestPreAuthorizedCodeNegativeVectors(t *testing.T) {
 			}
 			requireIssuerErrorCode(t, err, vec.code)
 		})
+	}
+}
+
+// TestPreAuthorizedCodeTakesConformantDPoPVariants: proofs other
+// conformant wallets send, which fapigo/server takes at the same Token
+// Endpoint, are taken here too: typ in another case (a media type,
+// RFC 7515 §4.1.9), a fractional iat (RFC 7519 §2) and an htu spelled
+// with another host case and the default port (RFC 9449 §4.3).
+func TestPreAuthorizedCodeTakesConformantDPoPVariants(t *testing.T) {
+	for name, proof := range map[string]func(f preAuthorizedCodeFixture) string{
+		"typ case": func(f preAuthorizedCodeFixture) string { return f.claimsProof(t, "DPoP+JWT", nil) },
+		"fractional iat": func(f preAuthorizedCodeFixture) string {
+			return f.claimsProof(t, "dpop+jwt", map[string]any{"iat": float64(f.now.Unix()) + 0.5})
+		},
+		"htu spelling": func(f preAuthorizedCodeFixture) string {
+			u := testTokenEndpointURL(t).URL()
+			return f.claimsProof(t, "dpop+jwt", map[string]any{"htu": "HTTPS://" + strings.ToUpper(u.Hostname()) + ":443" + u.EscapedPath() + "?"})
+		},
+	} {
+		f := newPreAuthorizedCodeFixture(t)
+		f.issue(t, "code-1", issuer.PreAuthorizedCodeRecord{Scopes: []string{"identity_credential"}, ExpiresAt: f.now.Add(time.Minute)})
+		if _, err := f.iss.ExchangePreAuthorizedCode(context.Background(), issuer.ExchangePreAuthorizedCodeRequest{
+			PreAuthorizedCode: "code-1", DPoPProof: proof(f), TokenEndpoint: testTokenEndpointURL(t),
+		}); err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
 	}
 }
