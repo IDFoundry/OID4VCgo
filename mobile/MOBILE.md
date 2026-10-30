@@ -1040,12 +1040,27 @@ encryption, readable from the first unlock after a boot. So
   Records were the Keystore key's whole ciphertext (version 1) until the
   store gave each its own key (version 2): the Keystore now never sees
   more than 32 bytes. Version 1 records are still read, in 4 KB pieces,
-  and written as version 2 when replaced. The store also opens each
-  record before writing it: one that doesn't come back as written fails
-  the write and leaves the record it would replace. A version 1 record
-  of up to 80 KB written on such a device reads back now; one over 80 KB
-  never can, and `unreadableRecordIDs` lists it for the app to delete
-  and receive again.
+  and written as version 2 when replaced; a library before version 2
+  (0.19.0 and earlier) can't read version 2 records. The store also
+  opens each record before writing it: one that doesn't come back as
+  written fails the write and leaves the record it would replace.
+- **Reading a record can fail three ways**, kept apart. A *damaged*
+  record (it doesn't decrypt, or is malformed) is
+  `UnreadableRecordException`, and `unreadableRecordIDs` lists it for
+  the app to delete and receive again. A record in a *newer format*
+  than the library reads is `UnsupportedRecordFormatException`: kept,
+  listed by `unsupportedRecordIDs`, never as damaged. And a Keystore
+  read that comes back shorter than its ciphertext says — the G6's
+  failure, which the GCM tag doesn't catch — is a plain
+  `StoreException`: the record may be intact, so it's kept and not
+  listed. A Keystore that refuses its key (the device locked) throws
+  its own exception, from `records` and both lists too. `records`
+  skips the first three, so one record never hides the rest.
+- **Recovering version 1 records** written on such a device: each is
+  read again, and one that authenticates and has the right length is
+  intact, whatever its size. On the G6, those up to 80 KB were; those
+  over 80 KB were written cut short and are listed as damaged. Other
+  devices with the bug may differ: no size is taken as proof.
 
 ### Phase 8 findings: the demo app
 

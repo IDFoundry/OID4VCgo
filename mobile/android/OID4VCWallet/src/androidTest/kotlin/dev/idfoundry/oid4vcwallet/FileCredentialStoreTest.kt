@@ -26,6 +26,7 @@ class FileCredentialStoreTest {
 
     @After
     fun cleanUp() {
+        FileCredentialStore.keystoreFault = null
         dirs.forEach { it.deleteRecursively() }
         java.security.KeyStore.getInstance("AndroidKeyStore").apply { load(null) }.deleteEntry(alias)
     }
@@ -134,17 +135,18 @@ class FileCredentialStoreTest {
     @Test
     fun largeRecords() {
         val s = store()
-        for (size in listOf(1024, 65536, 65537, 81921, 204800)) {
+        val sizes = listOf(1024, 65536, 65537, 81919, 81920, 81921, 204800)
+        for (size in sizes) {
             val record = ByteArray(size) { (it * 31 + size).toByte() }
             val id = "r$size"
             s.put(id, record)
             val file = File(s.directory, "$id.rec")
-            // Version, the wrapped key (IV, key, tag), the record's IV, the ciphertext and its tag.
+            // Version, the wrapped key (IV, key, tag), the record's IV, the ciphertext and its tag: 89 + n.
             assertEquals("record $size's file", 1 + 12 + 32 + 16 + 12 + size + 16, file.length().toInt())
             assertEquals("record $size's version", 2, file.readBytes()[0].toInt())
             assertArrayEquals("record $size", record, s.record(id))
         }
-        assertEquals(5, s.records().size)
+        assertEquals(sizes.size, s.records().size)
         assertTrue(s.unreadableRecordIDs().isEmpty())
     }
 
@@ -205,22 +207,132 @@ class FileCredentialStoreTest {
     @Test
     fun readsRecordsTheKeystoreKeyEncrypted() {
         val s = store()
-        s.put("k", "{}".toByteArray()) // makes the store's key
-        val key = java.security.KeyStore.getInstance("AndroidKeyStore").apply { load(null) }.getKey(alias, null) as javax.crypto.SecretKey
         val record = ByteArray(204800) { (it * 13).toByte() }
-        val cipher = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding")
-        cipher.init(javax.crypto.Cipher.ENCRYPT_MODE, key)
-        cipher.updateAAD("old".toByteArray())
-        val out = java.io.ByteArrayOutputStream()
-        for (at in 0 until record.size - 4096 step 4096) cipher.update(record, at, 4096)?.let(out::write)
-        out.write(cipher.doFinal(record, record.size - 4096, 4096))
-        val file = File(s.directory, "old.rec")
-        file.writeBytes(byteArrayOf(1) + cipher.iv + out.toByteArray())
+        val file = writeVersion1(s, "old", record)
 
         assertArrayEquals(record, s.record("old"))
         s.put("old", s.record("old")!!)
         assertEquals(2, file.readBytes()[0].toInt())
         assertArrayEquals(record, s.record("old"))
+    }
+
+    /**
+     * A record in a format newer than this library reads isn't damaged:
+     * it's kept and listed apart, never as one to delete. A malformed one
+     * of a known format is damaged.
+     */
+    @Test
+    fun keepsRecordsInNewerFormats() {
+        val s = store()
+        s.put("a", """{"id":"a"}""".toByteArray())
+        val newer = File(s.directory, "newer.rec").apply { writeBytes(byteArrayOf(3) + ByteArray(120) { it.toByte() }) }
+        val newerBytes = newer.readBytes()
+        File(s.directory, "short.rec").writeBytes(byteArrayOf(2, 1, 2, 3))
+
+        try {
+            s.record("newer")
+            fail("read a record in a newer format")
+        } catch (e: UnsupportedRecordFormatException) {
+            assertEquals("newer", e.id)
+            assertEquals(3, e.version)
+        }
+        assertEquals(listOf("""{"id":"a"}"""), s.records().map { it.decodeToString() })
+        assertEquals(listOf("newer"), s.unsupportedRecordIDs())
+        assertEquals(listOf("short"), s.unreadableRecordIDs())
+        assertArrayEquals("the newer record was changed", newerBytes, newer.readBytes())
+    }
+
+    /**
+     * A Keystore decryption that comes back too short — as the LG G6's
+     * returns 64 KB of an 80 KB record, its tag verified — is refused, not
+     * returned, and the record isn't reported as damaged: it may be intact.
+     */
+    @Test
+    fun refusesKeystoreReadsCutShort() {
+        val s = store()
+        val old = ByteArray(1024) { it.toByte() }
+        writeVersion1(s, "old", old)
+        s.put("new", """{"id":"new"}""".toByteArray())
+        val files = listOf("old", "new").associateWith { File(s.directory, "$it.rec").readBytes() }
+
+        FileCredentialStore.keystoreFault = { it.copyOf(it.size - 1) }
+        for (id in listOf("old", "new")) {
+            try {
+                s.record(id)
+                fail("returned a record $id cut short")
+            } catch (e: UnreadableRecordException) {
+                fail("reported record $id as damaged")
+            } catch (e: StoreException) {
+                // As expected.
+            }
+        }
+        assertTrue(s.records().isEmpty())
+        assertTrue(s.unreadableRecordIDs().isEmpty())
+
+        FileCredentialStore.keystoreFault = null
+        for ((id, bytes) in files) assertArrayEquals("record $id was changed", bytes, File(s.directory, "$id.rec").readBytes())
+        assertArrayEquals(old, s.record("old"))
+    }
+
+    /** A record the device can't read just now — its Keystore key refused, as while locked — isn't reported as damaged. */
+    @Test
+    fun aLockedKeystoreIsntDamage() {
+        val s = store()
+        s.put("a", """{"id":"a"}""".toByteArray())
+        FileCredentialStore.keystoreFault = { throw android.security.keystore.UserNotAuthenticatedException("locked") }
+        for (read in listOf<() -> Any?>({ s.record("a") }, { s.records() }, { s.unreadableRecordIDs() })) {
+            try {
+                read()
+                fail("read while the Keystore refused its key")
+            } catch (e: android.security.keystore.UserNotAuthenticatedException) {
+                // As expected: not a StoreException, so not a damaged record.
+            }
+        }
+        FileCredentialStore.keystoreFault = null
+        assertArrayEquals("""{"id":"a"}""".toByteArray(), s.record("a"))
+    }
+
+    /** A replacement that doesn't read back fails, and the record it would replace stays. */
+    @Test
+    fun aFailedReplacementKeepsTheRecord() {
+        val s = store()
+        val old = """{"id":"a","v":1}""".toByteArray()
+        val new = """{"id":"a","v":2}""".toByteArray()
+        s.put("a", old)
+        val file = File(s.directory, "a.rec")
+        val bytes = file.readBytes()
+
+        // The record's key, unwrapped wrong: the new record doesn't decrypt.
+        FileCredentialStore.keystoreFault = { it.copyOf().also { k -> k[0] = (k[0].toInt() xor 1).toByte() } }
+        for (replace in listOf({ s.put("a", new) }, { s.compareAndSwap("a", old, new) })) {
+            try {
+                replace()
+                fail("replaced a record with one that doesn't read back")
+            } catch (e: StoreException) {
+                // As expected.
+            }
+        }
+        FileCredentialStore.keystoreFault = null
+        assertArrayEquals(bytes, file.readBytes())
+        assertArrayEquals(old, s.record("a"))
+    }
+
+    /** A version 1 record: [record] encrypted by the store's Keystore key itself, in 4 KB pieces. */
+    private fun writeVersion1(s: FileCredentialStore, id: String, record: ByteArray): File {
+        s.put("k", "{}".toByteArray()) // makes the store's key
+        val key = java.security.KeyStore.getInstance("AndroidKeyStore").apply { load(null) }.getKey(alias, null) as javax.crypto.SecretKey
+        val cipher = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(javax.crypto.Cipher.ENCRYPT_MODE, key)
+        cipher.updateAAD(id.toByteArray())
+        val out = java.io.ByteArrayOutputStream()
+        var at = 0
+        while (record.size - at > 4096) {
+            cipher.update(record, at, 4096)?.let(out::write)
+            at += 4096
+        }
+        out.write(cipher.doFinal(record, at, record.size - at))
+        s.delete("k")
+        return File(s.directory, "$id.rec").apply { writeBytes(byteArrayOf(1) + cipher.iv + out.toByteArray()) }
     }
 
     /** Credentials survive a new Wallet over the same directory; another key store's wallet sees their keys gone. */

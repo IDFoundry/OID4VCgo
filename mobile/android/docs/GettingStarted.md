@@ -60,9 +60,11 @@ leave this device. Its writes lock a file in that directory, so
 processes of the app that share it — a credential provider service in
 its own process, say — never both use one copy. A `CredentialStore` of
 your own implements `compareAndSwap` atomically across them too. A
-record that's there but doesn't decrypt is left out of the wallet's
-credentials; `unreadableRecordIDs()` names each, so the app can delete
-it and have the holder receive that credential again.
+record the store can't read is left out of the wallet's credentials.
+`unreadableRecordIDs()` names the damaged ones, which can't be
+recovered: delete each and have the holder receive that credential
+again. `unsupportedRecordIDs()` names those a newer version of the app
+wrote: keep them, since an update reads them.
 
 ## Implement the Wallet Provider
 
