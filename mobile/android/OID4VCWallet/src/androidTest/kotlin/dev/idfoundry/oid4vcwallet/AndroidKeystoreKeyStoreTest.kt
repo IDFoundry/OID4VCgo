@@ -18,7 +18,10 @@ import org.junit.Assert.fail
 import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.io.ByteArrayInputStream
 import java.math.BigInteger
+import java.security.cert.CertificateFactory
+import java.security.cert.X509Certificate
 import java.security.KeyFactory
 import java.security.KeyPairGenerator
 import java.security.MessageDigest
@@ -68,6 +71,44 @@ class AndroidKeystoreKeyStoreTest {
         assertEquals(4.toByte(), pub[0])
         assertNull(keys.publicKey("no-such-key"))
     }
+
+    /**
+     * A key made with a challenge carries an Android Key Attestation
+     * chain: the leaf certifies the key, and its attestation extension
+     * holds the challenge. One made without has none.
+     */
+    @Test
+    fun keyMadeWithAChallengeIsAttested() {
+        val keys = store()
+        val challenge = "wallet-provider-challenge-${System.nanoTime()}".toByteArray()
+        for (purpose in KeyPurpose.entries) {
+            val id = keys.createKey(purpose, challenge)
+            val chain = keys.attestationChain(id)!!.map {
+                CertificateFactory.getInstance("X.509").generateCertificate(ByteArrayInputStream(it)) as X509Certificate
+            }
+            assertTrue("a chain to a root, not one certificate", chain.size > 1)
+            assertArrayEquals(spki(keys.publicKey(id)!!), chain[0].publicKey.encoded)
+            for (i in 0 until chain.size - 1) chain[i].verify(chain[i + 1].publicKey)
+            val extension = chain[0].getExtensionValue("1.3.6.1.4.1.11129.2.1.17")!!
+            assertTrue("the challenge is in the attestation", contains(extension, challenge))
+        }
+        assertNull("no challenge, no attestation", keys.attestationChain(keys.createKey(KeyPurpose.HOLDER)))
+        assertNull(keys.attestationChain("no-such-key"))
+        expectFailure("took a 129-byte challenge") { keys.createKey(KeyPurpose.HOLDER, ByteArray(129)) }
+        expectFailure("took an empty challenge") { keys.createKey(KeyPurpose.HOLDER, ByteArray(0)) }
+    }
+
+    /** The wallet finds a key by its public key, for the Wallet Provider's evidence. */
+    @Test
+    fun keyIDByPublicKey() {
+        val keys = store()
+        val id = keys.createKey(KeyPurpose.HOLDER)
+        assertEquals(id, keys.keyID(keys.publicKey(id)!!))
+        assertNull(keys.keyID(ByteArray(65).also { it[0] = 4 }))
+    }
+
+    private fun contains(haystack: ByteArray, needle: ByteArray): Boolean =
+        (0..haystack.size - needle.size).any { i -> needle.indices.all { haystack[i + it] == needle[it] } }
 
     /** StrongBox is required only where the device has it; elsewhere creating a key fails. */
     @Test

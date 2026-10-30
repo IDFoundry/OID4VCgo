@@ -129,6 +129,14 @@ Instance and DPoP keys sign protocol messages silently; holder keys sign
 only when presenting, and may require user presence. `CheckKeyStore`
 exercises an implementation as the wallet will.
 
+A `CreateKey` error whose message starts with `[network]` is reported as
+`network` (retryable), as a `WalletProvider`'s is; any other is
+`platform`. The Kotlin library's adapter asks the app's `WalletProvider`
+for an attestation challenge before it creates a key, and marks an
+`IOException` from it this way. That challenge, and the key's
+attestation chain, stay on the Kotlin side: the ABI's calls are
+unchanged.
+
 ### KeyAgreement
 
 Optional: ECDH with holder keys inside the platform key store, so an

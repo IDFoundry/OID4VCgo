@@ -66,20 +66,31 @@ your own implements `compareAndSwap` atomically across them too.
 Issuers following HAIP accept only a wallet its Wallet Provider has
 attested: a Wallet Attestation for the wallet's instance key, and a Key
 Attestation for the keys a credential will be bound to. Your backend
-issues them; the app passes the keys and returns its answers. A real
-Wallet Provider attests only after checking evidence — Android Key
-Attestation of the keys, or Play Integrity — that it's talking to your
-genuine app.
+issues them; the app passes the keys and returns its answers.
+
+A real Wallet Provider attests a key only after checking Android Key
+Attestation that it's in this device's secure hardware, made by your
+app. Before the wallet makes an instance or holder key, it asks
+`attestationChallenge` for a challenge from your backend;
+`AndroidKeystoreKeyStore` makes the key over it, and the key then
+reaches `walletAttestation` or `keyAttestation` as `KeyEvidence`, with
+its attestation certificate chain for your backend to verify.
+[Going to production](GoingToProduction.md) lists what it checks.
 
 ```kotlin
 import android.app.Activity
 import android.content.Context
 import android.os.Build
+import android.util.Base64
 import androidx.annotation.RequiresApi
 import dev.idfoundry.oid4vcwallet.AndroidKeystoreKeyStore
 import dev.idfoundry.oid4vcwallet.BiometricPromptAuthenticator
 import dev.idfoundry.oid4vcwallet.FileCredentialStore
+import dev.idfoundry.oid4vcwallet.KeyAttestationRequest
+import dev.idfoundry.oid4vcwallet.KeyEvidence
+import dev.idfoundry.oid4vcwallet.KeyPurpose
 import dev.idfoundry.oid4vcwallet.Wallet
+import dev.idfoundry.oid4vcwallet.WalletAttestationRequest
 import dev.idfoundry.oid4vcwallet.WalletConfiguration
 import dev.idfoundry.oid4vcwallet.WalletProvider
 import java.net.HttpURLConnection
@@ -90,19 +101,29 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * Asks the app's backend for attestations. The keys are public JWKs, as
- * JSON; the answers are compact JWTs.
+ * Asks the app's backend for attestations, sending each key's Android Key
+ * Attestation chain for it to verify. The keys are public JWKs, as JSON;
+ * the answers are compact JWTs, and the challenges base64.
  */
 class BackendWalletProvider(private val backend: String) : WalletProvider {
-    override suspend fun walletAttestation(clientID: String, instanceKey: ByteArray): String =
-        post("wallet-attestation", JSONObject()
-            .put("client_id", clientID)
-            .put("instance_key", JSONObject(instanceKey.decodeToString())))
+    // A challenge for each instance and holder key; DPoP keys aren't attested.
+    override suspend fun attestationChallenge(purpose: KeyPurpose): ByteArray? =
+        if (purpose == KeyPurpose.DPOP) null
+        else Base64.decode(post("challenge", JSONObject().put("purpose", purpose.rawValue)), Base64.NO_WRAP)
 
-    override suspend fun keyAttestation(keys: List<ByteArray>, nonce: String): String =
+    override suspend fun walletAttestation(request: WalletAttestationRequest): String =
+        post("wallet-attestation", JSONObject()
+            .put("client_id", request.clientID)
+            .put("instance_key", evidence(request.instanceKey)))
+
+    override suspend fun keyAttestation(request: KeyAttestationRequest): String =
         post("key-attestation", JSONObject()
-            .put("keys", JSONArray(keys.map { JSONObject(it.decodeToString()) }))
-            .put("nonce", nonce))
+            .put("keys", JSONArray(request.keys.map(::evidence)))
+            .put("nonce", request.nonce))
+
+    private fun evidence(key: KeyEvidence): JSONObject = JSONObject()
+        .put("jwk", JSONObject(key.jwk.decodeToString()))
+        .put("certificate_chain", JSONArray(key.certificateChain.map { Base64.encodeToString(it, Base64.NO_WRAP) }))
 
     private suspend fun post(path: String, body: JSONObject): String = withContext(Dispatchers.IO) {
         val connection = URL("$backend/$path").openConnection() as HttpURLConnection

@@ -26,6 +26,7 @@ The `Presentation` it returns says:
 ```kotlin
 import dev.idfoundry.oid4vcwallet.Presentation
 import dev.idfoundry.oid4vcwallet.Wallet
+import dev.idfoundry.oid4vcwallet.WalletException
 
 /**
  * Answers a request link: `confirm` shows the holder who is asking and
@@ -37,7 +38,14 @@ suspend fun present(
     wallet: Wallet,
     confirm: suspend (Presentation, List<Presentation.Disclosure>) -> Boolean,
 ): String? {
-    val presentation = wallet.startPresentation(requestLink)
+    val presentation = try {
+        wallet.startPresentation(requestLink)
+    } catch (e: WalletException) {
+        // A refused request: the Verifier was told, and may say where to
+        // take the holder next (OpenID4VP §8.2).
+        if (e.code == WalletException.Code.requestRefused) return wallet.takeRefusalRedirect()
+        throw e
+    }
     if (!presentation.isAnswerable) return presentation.decline().redirectURI
     val selection = presentation.defaultSelection()
     val disclosures = presentation.preview(selection)
@@ -59,6 +67,18 @@ anything: show that before the holder agrees.
 Open `Presented.redirectURI`, when the Verifier sends one, in the
 browser the request came from: it's how a same-device flow returns to
 the Verifier's page.
+
+## When the wallet refuses a request
+
+A request the wallet must not answer — one with `transaction_data` it
+doesn't support, or a parameter OpenID4VP forbids — makes
+`startPresentation` throw `WalletException.Code.requestRefused`, its
+`protocolError` the error code the wallet sent the Verifier, such as
+`invalid_transaction_data`. Nothing is shown to the holder, and nothing
+is presented. The Verifier may answer the refusal with a redirect:
+`Wallet.takeRefusalRedirect()` returns it, once, and you open it in the
+browser the request came from, as a `redirectURI`, so the holder isn't
+left stranded. Tell the holder the request wasn't answered.
 
 ## Show what's being asked beyond a registration
 

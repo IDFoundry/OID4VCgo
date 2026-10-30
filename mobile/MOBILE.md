@@ -225,7 +225,39 @@ of which the wallet can produce itself:
 A real Wallet Provider attests only after checking platform evidence
 (App Attest on iOS, Key Attestation on Android). During development the
 SDK uses the passport-vdc demo's Wallet Provider service, which attests
-any key; platform evidence is a later phase.
+any key.
+
+#### Platform evidence for keys
+
+**Android** carries the evidence a Key Attestation needs. Before the
+wallet makes an instance or holder key, the Kotlin library asks the
+app's `WalletProvider.attestationChallenge(purpose)` for a challenge
+from the provider's backend; `AndroidKeystoreKeyStore` makes the key
+over it (`setAttestationChallenge`), so Android Keystore certifies the
+key's public key, the challenge, its security level (StrongBox or the
+TEE), its authorizations, the device's boot state and the app that made
+it, in a chain to a Google root (`KeyStore.getCertificateChain`). The
+key then reaches the provider's attestation call as `KeyEvidence`: its
+JWK, its Keystore key ID and that chain. The provider's backend
+verifies the chain before attesting; the Kotlin guide's Going to
+production lists the checks. This all happens in Kotlin: Go's
+`KeyStore.CreateKey` and `WalletProvider` calls are unchanged, and the
+adapter matches the JWKs Go hands the provider to the keys it made.
+A challenge the provider can't be reached for fails key creation as
+`network`. A key is attested once, when it's made: a later attestation
+of the same key (the instance key, at a refresh) brings the same chain,
+and the provider recognises a key it verified before.
+
+**iOS** can't give that evidence. App Attest attests the app instance,
+with an App Attest key of its own that the app can't use for anything
+else: it says nothing about where the wallet's Secure Enclave keys
+live, and the Secure Enclave has no attestation of its own keys that a
+third party can verify. A Wallet Provider can tie an App Attest
+assertion to the keys it's asked to attest (by asserting over their
+JWKs), proving a genuine app sent them, but must take the app's word
+that they're in the Secure Enclave. So iOS's `key_storage` claims rest
+on the app's integrity, not on hardware evidence; the Swift guide says
+so.
 
 ## Credential storage
 
@@ -1410,10 +1442,11 @@ twice, or redeem one refresh token twice.
 - The Wallet Provider's production design, and whether it belongs in
   this repository. Before it attests, it should check platform evidence
   that it's talking to the genuine app — App Attest on iOS; on Android,
-  Android Key Attestation of the wallet's keys (StrongBox or TEE, the
-  app's signing certificate) or Play Integrity — and key attestation
-  formats. Both demos attest any key with the passport-vdc demo's
-  provider until then.
+  the Android Key Attestation chains the Kotlin library now hands it
+  ([Platform evidence for keys](#platform-evidence-for-keys)) — and key
+  attestation formats. Both demos attest any key with the passport-vdc
+  demo's provider until then; it has no challenge endpoint, so the
+  Android demo makes its keys without attestation.
 
 ## Combined engagement preview
 

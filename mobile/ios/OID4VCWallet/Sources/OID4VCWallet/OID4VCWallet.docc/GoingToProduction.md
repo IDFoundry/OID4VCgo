@@ -39,6 +39,16 @@ app on a genuine device, and should keep its own signing key in an
 HSM. The demo wallet's provider attests anything, and is for
 development only.
 
+App Attest attests your app, not where its keys live: it can't show
+that the wallet's keys are in the Secure Enclave, and iOS has no
+attestation of Secure Enclave keys a Wallet Provider can verify. Have
+the app assert with App Attest over the keys it asks to have attested,
+so the provider knows your genuine app sent them; their `key_storage`
+then rests on your app keeping them in the Secure Enclave, as
+``KeychainKeyStore`` does, not on hardware evidence. Android's library,
+by contrast, hands its provider each key's Android Key Attestation
+chain.
+
 ### Trust
 
 - Configure only your ecosystem's roots: ``WalletConfiguration/issuerRoots``
