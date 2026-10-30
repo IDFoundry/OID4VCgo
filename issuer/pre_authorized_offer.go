@@ -169,7 +169,7 @@ func (iss *Issuer) storePreAuthorizedCode(ctx context.Context, code, txCode stri
 			return errReadBack
 		})
 		if !errors.Is(err, errReadBack) {
-			return "", fmt.Errorf("Consume returned %v, not the refusal of its accept", err)
+			return "", fmt.Errorf("the store's Consume returned %v, not the refusal of its accept", err)
 		}
 		return owner, nil
 	})
