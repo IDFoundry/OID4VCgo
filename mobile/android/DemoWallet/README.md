@@ -97,6 +97,19 @@ wallet's own requests take it as `development_roots`, since Go reads only
 Android's system CA files. The launch extras `reset` (delete every
 credential first), `offer` and `request` (open a link) are for tests.
 
+`provider_url` is the Wallet Provider (`HTTPWalletProvider`). With the
+passport-vdc demo's, the wallet makes each instance and holder key over
+an attestation challenge from the provider's `/attestation-challenge`,
+so Android Keystore attests it, and sends the key's attestation chain
+with its attestation requests; the provider verifies the chain before
+attesting the key, and logs whether it's hardware Google vouches for.
+An emulator's attestation is software, which the provider accepts
+unless it runs with `-require-hardware-key-attestation`. A provider
+without that endpoint (mobile/cmd/testservices) gives no challenge,
+and the keys go without chains. See the passport-vdc README's
+"The stand-in Wallet Provider". The iOS demo app sends no such
+evidence: App Attest attests the app, not its Secure Enclave keys.
+
 The demo requires Android 11/API 30 and compileSdk 37. Install a matching
 debug APK with `adb -s <device> install -r <apk>` to preserve data when the
 installed signing key matches; do not uninstall or reset an existing wallet
