@@ -132,9 +132,14 @@ final class InPersonModel {
         do {
             if reader == nil {
                 guard let r = model.config?.reader else { return }
+                // A production reader's decisions: the demo's one IACA
+                // issues every type it reads, and the demo services
+                // publish no CRLs, so revocation is declined. A shipping
+                // reader checks it, with crls and revocation.
                 reader = try ProximityReader(
                     configuration: ProximityReaderConfiguration(issuerRoots: r.issuerRoots, readerKeyID: DemoReaderKeys.id,
-                                                                readerChain: r.readerChain, maxClockSkewSeconds: 300),
+                                                                readerChain: r.readerChain, maxClockSkewSeconds: 300,
+                                                                noRevocationCheck: [.issuer, .status], anyIssuerForAnyType: true),
                     keyStore: try DemoReaderKeys(r))
             }
             guard let reader else { return }

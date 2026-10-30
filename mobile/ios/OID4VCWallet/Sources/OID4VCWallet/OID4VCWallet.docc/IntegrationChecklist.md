@@ -157,7 +157,7 @@ is a complete, working app on this package to compare against.
   `issuerRoots`, plus a reader key and chain with the
   reader-authentication extended key usage if holders should see who's
   asking.
-- `production` set, with each role (`issuer`, `status`) in
+- `development` not set, with each role (`issuer`, `status`) in
   `revocation` (with `crls`, refreshed by `setCRLs`) or
   `noRevocationCheck`, and `anyIssuerForAnyType` or
   `issuerRootsByDocType` deciding which IACAs issue which document type.
@@ -173,6 +173,7 @@ is a complete, working app on this package to compare against.
 ### 7. Before shipping
 
 - <doc:GoingToProduction> is done: ``WalletConfiguration/development``
-  isn't set, and the Wallet Provider checks App Attest evidence.
+  isn't set, nor ``ProximityReaderConfiguration/development``, and the
+  Wallet Provider checks App Attest evidence.
 - Interop beyond your own app: test your holder against at least one
   independent reader, and your reader against an independent holder.
