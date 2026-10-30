@@ -121,34 +121,63 @@ struct RequestChanged: Error {}
 @available(iOS 26.0, *)
 struct ConsentView: View {
     let context: ISO18013MobileDocumentRequestContext
+    @State private var problem: String?
+
+    /// The request's first document as iOS parsed it: what the consent
+    /// screen shows the holder.
+    private var shown: (doctype: String, elements: [MdocPresentation.Element])? {
+        guard let document = context.request.presentmentRequests.first?.documentRequestSets.first?.requests.first else {
+            return nil
+        }
+        let elements = document.namespaces.flatMap { namespace, elements in
+            elements.map { MdocPresentation.Element(namespace: namespace, identifier: $0.key, retain: $0.value.isRetaining) }
+        }
+        return (document.documentType, elements)
+    }
 
     var body: some View {
-        Button("Share") { Task { try await share(credentialID: nil) } }
+        VStack {
+            if let problem { Text(problem) }
+            Button("Share") { Task { await share(credentialID: nil) } }
+            Button("Cancel") { context.cancel() }
+        }
     }
 
     /// Shares the held mdoc `credentialID` (the first candidate when
-    /// nil) for the request's first document.
-    func share(credentialID: String?) async throws {
-        guard let originURL = context.requestingWebsiteOrigin,
+    /// nil), for exactly the document and elements the holder was shown.
+    func share(credentialID: String?) async {
+        guard let shown, let originURL = context.requestingWebsiteOrigin,
               let origin = MdocPresentation.origin(of: originURL) else { return }
-        let wallet = try SharedWallet.open(provider: nil)
-        try await context.sendResponse { raw in
-            _ = try IdentityDocumentWebPresentmentRawRequestValidator()
-                .validateISO18013MobileDocumentRequest(raw.requestData, origin: originURL)
-            let presentation = try await wallet.startMdocPresentation(requestData: raw.requestData, origin: origin)
-            guard let document = presentation.request.documents.first,
-                  let chosen = credentialID ?? document.credentials.first?.id else { throw RequestChanged() }
-            // The holder key signs now: Face ID, if the key store asks.
-            let response = try await presentation.respond(document: 0, credentialID: chosen, elements: document.elements)
-            return ISO18013MobileDocumentResponse(responseData: response.response)
+        do {
+            let wallet = try SharedWallet.open(provider: nil)
+            try await context.sendResponse { raw in
+                _ = try IdentityDocumentWebPresentmentRawRequestValidator()
+                    .validateISO18013MobileDocumentRequest(raw.requestData, origin: originURL)
+                let presentation = try await wallet.startMdocPresentation(requestData: raw.requestData, origin: origin)
+                // Answer only what the holder was shown.
+                guard let index = presentation.request.documents.firstIndex(where: { $0.doctype == shown.doctype }),
+                      Set(presentation.request.documents[index].elements) == Set(shown.elements),
+                      let chosen = credentialID ?? presentation.request.documents[index].credentials.first?.id else {
+                    throw RequestChanged()
+                }
+                // The holder key signs now: Face ID, if the key store asks.
+                let response = try await presentation.respond(document: index, credentialID: chosen, elements: shown.elements)
+                return ISO18013MobileDocumentResponse(responseData: response.response)
+            }
+        } catch {
+            // Nothing was shared: say so, and let the holder cancel.
+            problem = "Not shared: \(error)"
         }
     }
 }
 ```
 
-A real consent screen compares the released request with what it
-showed — the same document, elements and reader — and refuses one that
-changed. The demo wallet's `DocumentProvider` target does this in full.
+The response answers the elements the holder was shown, not those the
+released request names, and a request that changed in between is
+refused. Where the consent screen names the reader (below), compare its
+certificate with ``MdocPresentation/Request/readerCertificate`` there
+too. The demo wallet's `DocumentProvider` target does all of this, with
+a choice of credential and a linkability warning.
 
 ### Name the reader
 
