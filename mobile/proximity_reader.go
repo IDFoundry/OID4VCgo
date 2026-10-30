@@ -78,6 +78,25 @@ type proximityReaderConfig struct {
 	// CRLIssuers are PEM certificates of the CAs that issued
 	// certificates pinned in the roots, as a Wallet's crl_issuers.
 	CRLIssuers string `json:"crl_issuers,omitempty"`
+	// NoRevocationCheck names the roles, of Revocation's, that decline
+	// checking revocation (certrevocation.NoCheck). With Production, each
+	// role must be named in one of the two; a role can't be in both.
+	// Without it, a role in neither checks no revocation.
+	NoRevocationCheck []string `json:"no_revocation_check,omitempty"`
+	// AnyIssuerForAnyType declares that every IACA in IssuerRoots may
+	// issue every document type the reader asks for
+	// (proximity.WithAnyIssuerForAnyType). With Production, IssuerRoots
+	// needs it: otherwise name each document type's IACAs in
+	// IssuerRootsByDocType.
+	AnyIssuerForAnyType bool `json:"any_issuer_for_any_type,omitempty"`
+	// Production requires the decisions a production reader makes
+	// (proximity.WithAssurance with verifier.AssuranceProduction): each
+	// role's revocation, and which IACAs issue which document types.
+	// Without it, the reader runs at development assurance, any IACA in
+	// IssuerRoots may issue any document type, and a role left out of
+	// Revocation and NoRevocationCheck checks no revocation, as before
+	// the field was added. Set it in every app that ships.
+	Production bool `json:"production,omitempty"`
 }
 
 // readerDocumentSignerPolicy is the document signer check cfg asks
@@ -97,10 +116,14 @@ func readerDocumentSignerPolicy(cfg proximityReaderConfig) (func(*x509.Certifica
 // NewProximityReader configures a reader from configJSON:
 // {"issuer_roots", "issuer_roots_by_doctype", "reader_key_id",
 // "reader_chain", "max_clock_skew_seconds", "require_mdl_signer_eku",
-// "accept_mdl_signer_without_eku", "crls", "crl_issuers", "revocation"},
+// "accept_mdl_signer_without_eku", "crls", "crl_issuers", "revocation",
+// "no_revocation_check", "any_issuer_for_any_type", "production"},
 // refusing any other key, so a misspelled option isn't silently left
-// at its default. keys holds the reader's key, reader_key_id; it may be
-// nil for a reader that doesn't sign.
+// at its default. With "production", it refuses a configuration that
+// leaves a production reader's decisions open: the revocation of each
+// role, and which IACAs may issue which document types. keys holds the
+// reader's key, reader_key_id; it may be nil for a reader that doesn't
+// sign.
 func NewProximityReader(configJSON string, keys KeyStore) (*ProximityReader, error) {
 	var cfg proximityReaderConfig
 	if err := decodeConfig(configJSON, &cfg); err != nil {
@@ -114,11 +137,9 @@ func NewProximityReader(configJSON string, keys KeyStore) (*ProximityReader, err
 		}
 	}
 	r := &ProximityReader{roots: roots, clock: time.Now}
-	// Development assurance, with any IACA in issuer_roots for any
-	// document type: issuer_roots_by_doctype decides which issue which.
-	// The documents' status is CheckStatus's, a call of its own:
-	// HandleMessage, which runs no network request, checks none.
-	r.opts = append(r.opts, proximity.WithAssurance(verifier.AssuranceDevelopment), proximity.WithAnyIssuerForAnyType(), proximity.WithNoStatusCheck())
+	if err := r.configureDecisions(cfg); err != nil {
+		return nil, err
+	}
 	if len(cfg.IssuerRootsByDocType) > 0 {
 		byType := make(map[string]*x509.CertPool, len(cfg.IssuerRootsByDocType))
 		for docType, pemText := range cfg.IssuerRootsByDocType {
@@ -171,25 +192,56 @@ func NewProximityReader(configJSON string, keys KeyStore) (*ProximityReader, err
 	return r, nil
 }
 
-// configureRevocation sets the revocation check of each role cfg's
-// "revocation" names, over cfg's "crls".
+// configureDecisions sets the reader's assurance and its issuer and
+// status decisions, refusing, with production, issuer_roots without
+// any_issuer_for_any_type. The documents' status is CheckStatus's, a
+// call of its own: HandleMessage, which runs no network request, checks
+// none (proximity.WithNoStatusCheck).
+func (r *ProximityReader) configureDecisions(cfg proximityReaderConfig) error {
+	assurance := verifier.AssuranceDevelopment
+	if cfg.Production {
+		assurance = verifier.AssuranceProduction
+		if cfg.IssuerRoots != "" && !cfg.AnyIssuerForAnyType {
+			return newError(CodeInvalidInput, errors.New("issuer_roots is set: with production, set any_issuer_for_any_type to accept its IACAs for every document type, or name each document type's IACAs in issuer_roots_by_doctype"))
+		}
+	}
+	// issuer_roots_by_doctype is the decision of which IACAs issue which
+	// type; issuer_roots, any_issuer_for_any_type's.
+	r.opts = append(r.opts, proximity.WithAssurance(assurance), proximity.WithAnyIssuerForAnyType(), proximity.WithNoStatusCheck())
+	return nil
+}
+
+// configureRevocation sets the revocation check of each role, as cfg's
+// "revocation" and "no_revocation_check" decide, over cfg's "crls".
 func (r *ProximityReader) configureRevocation(cfg proximityReaderConfig) error {
-	named, err := revocationRoles("revocation", cfg.Revocation, revocationIssuer, revocationStatus)
+	known := []string{revocationIssuer, revocationStatus}
+	named, err := revocationRoles("revocation", cfg.Revocation, known...)
+	if err != nil {
+		return err
+	}
+	declined, err := revocationRoles("no_revocation_check", cfg.NoRevocationCheck, known...)
 	if err != nil {
 		return err
 	}
 	if r.crls, err = newCRLSet(cfg.CRLs, cfg.CRLIssuers); err != nil {
 		return err
 	}
-	var issuer certrevocation.Checker = certrevocation.NoCheck{}
-	if named[revocationIssuer] {
-		issuer = r.crls.checker()
+	const roots = "issuer_roots or issuer_roots_by_doctype"
+	when := ""
+	if cfg.Production {
+		when = "with production"
+	}
+	issuer, err := revocationChoice(revocationIssuer, roots, true, named, declined, when, r.crls)
+	if err != nil {
+		return err
+	}
+	if issuer == nil {
+		// Without production, undecided: no check.
+		issuer = certrevocation.NoCheck{}
 	}
 	r.opts = append(r.opts, proximity.WithIssuerRevocation(issuer))
-	if named[revocationStatus] {
-		r.statusRevocation = r.crls.checker()
-	}
-	return nil
+	r.statusRevocation, err = revocationChoice(revocationStatus, roots, true, named, declined, when, r.crls)
+	return err
 }
 
 // SetCRLs replaces the Certificate Revocation Lists the configuration's

@@ -320,15 +320,16 @@ func walletRevocation(cfg config, wcfg *walletflow.Config) (*crlSet, error) {
 		{revocationMdocReader, "mdoc_reader_roots", wcfg.MdocReaderRoots != nil, &wcfg.MdocReaderRevocation},
 		{revocationVerifier, "verifier_roots", isX5C, &vt.Revocation},
 	} {
-		switch {
-		case named[r.role] && declined[r.role]:
-			return nil, newError(CodeInvalidInput, fmt.Errorf("%q is named in both revocation and no_revocation_check", r.role))
-		case named[r.role]:
-			*r.field = crls.checker()
-		case declined[r.role]:
-			*r.field = certrevocation.NoCheck{}
-		case r.inUse && !cfg.Development:
-			return nil, newError(CodeInvalidInput, fmt.Errorf("%s is set: outside development, name %q in revocation, checked against crls, or in no_revocation_check to decline", r.keys, r.role))
+		when := "outside development"
+		if cfg.Development {
+			when = ""
+		}
+		checker, err := revocationChoice(r.role, r.keys, r.inUse, named, declined, when, crls)
+		if err != nil {
+			return nil, err
+		}
+		if checker != nil {
+			*r.field = checker
 		}
 	}
 	if isX5C {

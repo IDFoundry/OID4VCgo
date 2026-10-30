@@ -18,12 +18,19 @@ import (
 	"github.com/idfoundry/oid4vcgo/proximity"
 )
 
-// readerConfig is a ProximityReader's configuration accepting h's
-// issuer, signing as reader when it isn't nil, and the KeyStore holding
-// its key.
+// readerDecisions are the decisions a production reader's configuration
+// makes, as JSON object members: any IACA in issuer_roots for any
+// document type, and no revocation checks.
+const readerDecisions = `"production": true, "any_issuer_for_any_type": true, "no_revocation_check": ["issuer", "status"]`
+
+// readerConfig is a production ProximityReader's configuration
+// accepting h's issuer, signing as reader when it isn't nil, and the
+// KeyStore holding its key.
 func readerConfig(t *testing.T, h harness, reader *testReader, extra map[string]any) (string, KeyStore) {
 	t.Helper()
-	cfg := map[string]any{"issuer_roots": issuerRootsPEM(t, h)}
+	cfg := map[string]any{
+		"issuer_roots": issuerRootsPEM(t, h), "production": true, "any_issuer_for_any_type": true, "no_revocation_check": []string{"issuer", "status"},
+	}
 	var ks KeyStore
 	if reader != nil {
 		keys := newGoKeyStore()
@@ -330,11 +337,11 @@ func TestNewProximityReader_Refuses(t *testing.T) {
 	}{
 		"not JSON":           {`{`, nil},
 		"no issuer roots":    {`{}`, nil},
-		"a key and no chain": {`{"issuer_roots": ` + mustJSON(issuerRootsPEM(t, h)) + `, "reader_key_id": "reader"}`, ks},
+		"a key and no chain": {`{"issuer_roots": ` + mustJSON(issuerRootsPEM(t, h)) + `, "reader_key_id": "reader", ` + readerDecisions + `}`, ks},
 		"no KeyStore":        {good, nil},
 		"another key":        {good, otherKS},
-		"skew over an hour":  {`{"issuer_roots": ` + mustJSON(issuerRootsPEM(t, h)) + `, "max_clock_skew_seconds": 7200}`, nil},
-		"bad by-doctype PEM": {`{"issuer_roots_by_doctype": {"org.example.test.1": "not PEM"}}`, nil},
+		"skew over an hour":  {`{"issuer_roots": ` + mustJSON(issuerRootsPEM(t, h)) + `, "max_clock_skew_seconds": 7200, ` + readerDecisions + `}`, nil},
+		"bad by-doctype PEM": {`{"issuer_roots_by_doctype": {"org.example.test.1": "not PEM"}, ` + readerDecisions + `}`, nil},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := NewProximityReader(tc.cfg, tc.ks); code(err) != CodeInvalidInput {
@@ -352,12 +359,44 @@ func TestNewProximityReader_Refuses(t *testing.T) {
 }
 
 // issuer_roots_by_doctype alone is a configuration: issuer_roots is
-// optional with it.
+// optional with it, and it decides which IACAs issue which document
+// types, so a production reader needs no any_issuer_for_any_type.
 func TestNewProximityReader_RootsByDocType(t *testing.T) {
 	h := newHarness(t, false)
-	cfg := `{"issuer_roots_by_doctype": {"org.example.test.1": ` + mustJSON(issuerRootsPEM(t, h)) + `}}`
+	cfg := `{"issuer_roots_by_doctype": {"org.example.test.1": ` + mustJSON(issuerRootsPEM(t, h)) + `}, "production": true, "no_revocation_check": ["issuer", "status"]}`
 	if _, err := NewProximityReader(cfg, nil); err != nil {
 		t.Errorf("NewProximityReader with issuer_roots_by_doctype only: %v", err)
+	}
+}
+
+// With production, a reader's configuration decides each role's
+// revocation and which IACAs issue which document types; without it, it
+// may leave them out, as before production was added.
+func TestNewProximityReader_Decisions(t *testing.T) {
+	h := newHarness(t, false)
+	roots := `"issuer_roots": ` + mustJSON(issuerRootsPEM(t, h))
+	for name, tc := range map[string]struct {
+		cfg     string
+		refused string
+	}{
+		"undecided":                  {`{` + roots + `, "production": true}`, "any_issuer_for_any_type"},
+		"no issuer revocation":       {`{` + roots + `, "production": true, "any_issuer_for_any_type": true, "no_revocation_check": ["status"]}`, `"issuer"`},
+		"no status revocation":       {`{` + roots + `, "production": true, "any_issuer_for_any_type": true, "revocation": ["issuer"]}`, `"status"`},
+		"named and declined":         {`{` + roots + `, "any_issuer_for_any_type": true, "revocation": ["issuer", "status"], "no_revocation_check": ["issuer"]}`, "both"},
+		"an unknown role":            {`{` + roots + `, "any_issuer_for_any_type": true, "no_revocation_check": ["issuer", "status", "verifier"]}`, "verifier"},
+		"production, decided":        {`{` + roots + `, ` + readerDecisions + `}`, ""},
+		"without production":         {`{` + roots + `}`, ""},
+		"without production, partly": {`{` + roots + `, "revocation": ["issuer"]}`, ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := NewProximityReader(tc.cfg, nil)
+			switch {
+			case tc.refused == "" && err != nil:
+				t.Errorf("NewProximityReader: %v", err)
+			case tc.refused != "" && (code(err) != CodeInvalidInput || !strings.Contains(err.Error(), tc.refused)):
+				t.Errorf("NewProximityReader: %v, want invalid_input naming %s", err, tc.refused)
+			}
+		})
 	}
 }
 

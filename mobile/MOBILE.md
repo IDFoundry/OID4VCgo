@@ -340,9 +340,13 @@ CRLs it holds, through `certrevocation.CRLs`.
   `NewWallet` used to take, like the `redirect_uri` forms it refuses,
   not a changed call or JSON shape, so `ABIVersion` stays 12; the
   wrappers ship with the Go library and gain `noRevocationCheck` with
-  it. A ProximityReader has no `development` setting to tell a
-  production reader by, so a role its `revocation` leaves out still
-  checks nothing there.
+  it. A ProximityReader runs at development assurance unless its
+  configuration sets `production`, added within ABI 12 as an opt-in so
+  existing reader configurations keep working: with it, each role must
+  be in `revocation` or `no_revocation_check`, and `issuer_roots` needs
+  `any_issuer_for_any_type` (`issuer_roots_by_doctype` decides which
+  IACAs issue which document type). Making production the default is a
+  change for the next ABI version.
 
 ## Phases
 

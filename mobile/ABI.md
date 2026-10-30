@@ -30,7 +30,9 @@ OID4VCWallet 0.7.0 (Swift); `StartDCAPIPresentation`, proximity
 revocation (`crls`, `revocation`, `SetCRLs` on a Wallet and a
 ProximityReader, later `crl_issuers` and a Wallet's
 `no_revocation_check`), and later `accept_mdl_signer_without_eku`
-on a Wallet and a ProximityReader. An older wrapper shows a
+on a Wallet and a ProximityReader, and later a ProximityReader's
+`production`, `no_revocation_check` and `any_issuer_for_any_type`. An
+older wrapper shows a
 code it doesn't know as it is. Check a library's release notes for the
 calls it has.
 
@@ -836,7 +838,8 @@ can't use is `invalid_input`.
 The configuration is `{"issuer_roots", "issuer_roots_by_doctype",
 "reader_key_id", "reader_chain", "max_clock_skew_seconds",
 "require_mdl_signer_eku", "accept_mdl_signer_without_eku", "crls",
-"revocation", "crl_issuers"}`:
+"revocation", "crl_issuers", "no_revocation_check",
+"any_issuer_for_any_type", "production"}`:
 - `issuer_roots` (PEM) are the IACAs whose mdocs are accepted, of any
   document type `issuer_roots_by_doctype` doesn't name.
 - `issuer_roots_by_doctype` (an object of document type to PEM) are each
@@ -868,8 +871,23 @@ The configuration is `{"issuer_roots", "issuer_roots_by_doctype",
   `invalid_input`. An MSO's status list chaining to the certificate its
   status names needs that certificate's list too. `crl_issuers` are
   the CAs of certificates pinned in the roots, as a Wallet's. Additive
-  within ABI 12. A reader has no `development` setting, and no
-  `no_revocation_check`: a role it doesn't name checks no revocation.
+  within ABI 12.
+- `no_revocation_check` (roles, as `revocation`'s) declines checking a
+  role's revocation explicitly; a role can't be in both
+  (`invalid_input`). `any_issuer_for_any_type` declares that every IACA
+  in `issuer_roots` may issue every document type the reader asks for.
+- `production` makes the reader require a production reader's
+  decisions (`proximity.WithAssurance` at production): `NewProximityReader`
+  is `invalid_input` for a configuration whose `issuer` or `status` role
+  is in neither `revocation` nor `no_revocation_check`, or that sets
+  `issuer_roots` without `any_issuer_for_any_type` (name each document
+  type's IACAs in `issuer_roots_by_doctype` instead). Without it, a
+  role in neither list checks no revocation and any IACA in
+  `issuer_roots` may issue any document type, as before these keys
+  were added. Set it in every app that ships. `production`,
+  `no_revocation_check` and `any_issuer_for_any_type` are additive
+  within ABI 12. `HandleMessage` checks no document status in either
+  case: `CheckStatus` does.
 
 | Method | Result |
 |---|---|
