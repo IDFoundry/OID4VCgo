@@ -1130,7 +1130,11 @@ public class Presentation internal constructor(private val handle: MobilePresent
          * disclosed as one, say). Nothing is refused for them: the holder decides.
          */
         val unregistered: List<List<PathElement>> = emptyList(),
-        /** Whether it asks for every claim, beyond a verified registration. */
+        /**
+         * Whether it names no claims, beyond a verified registration. Such a
+         * query is flagged in full, though OpenID4VP 1.0 §6.4.1 reads it as
+         * asking for no selectively disclosable claims.
+         */
         @SerialName("unregistered_all") val unregisteredAll: Boolean = false,
     )
 

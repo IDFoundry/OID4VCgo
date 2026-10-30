@@ -69,7 +69,10 @@ flow returns to the Verifier's page.
 For a Verifier with a verified registration, each query's
 ``Presentation/Query/unregistered`` lists the claims it asks for beyond
 what it's registered to request, and
-``Presentation/Query/unregisteredAll`` whether it asks for every claim.
+``Presentation/Query/unregisteredAll`` whether it names no claims at
+all. The library flags such a query in full, though OpenID4VP 1.0
+§6.4.1 reads it as asking for no selectively disclosable claims, so a
+presentation for it discloses only what the credential always shows.
 Nothing is refused for them: show them, and let the holder decide.
 
 ### Keep presentations unlinkable

@@ -1023,7 +1023,9 @@ public final class Presentation: @unchecked Sendable {
         /// disclose along with them beyond it (the rest of an array
         /// disclosed as one, say). Nothing is refused for them: the holder decides.
         public let unregistered: [[PathElement]]
-        /// Whether it asks for every claim, beyond a verified registration.
+        /// Whether it names no claims, beyond a verified registration. Such a
+        /// query is flagged in full, though OpenID4VP 1.0 §6.4.1 reads it as
+        /// asking for no selectively disclosable claims.
         public let unregisteredAll: Bool
         enum CodingKeys: String, CodingKey {
             case queryID = "query_id", multiple, credentials, unregistered, unregisteredAll = "unregistered_all"
