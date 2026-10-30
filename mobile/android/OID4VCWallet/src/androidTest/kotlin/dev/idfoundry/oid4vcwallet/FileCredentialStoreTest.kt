@@ -126,6 +126,103 @@ class FileCredentialStoreTest {
         assertEquals(listOf("""{"id":"c"}"""), s.records().map { it.decodeToString() })
     }
 
+    /**
+     * Records past 64 KB, as an mdoc with a portrait is, round-trip:
+     * API 28's Keymaster 3 (the LG G6's) gets a single AES-GCM operation
+     * of 80 KB wrong. Run on such a device as well as a recent one.
+     */
+    @Test
+    fun largeRecords() {
+        val s = store()
+        for (size in listOf(1024, 65536, 65537, 81921, 204800)) {
+            val record = ByteArray(size) { (it * 31 + size).toByte() }
+            val id = "r$size"
+            s.put(id, record)
+            val file = File(s.directory, "$id.rec")
+            // Version, the wrapped key (IV, key, tag), the record's IV, the ciphertext and its tag.
+            assertEquals("record $size's file", 1 + 12 + 32 + 16 + 12 + size + 16, file.length().toInt())
+            assertEquals("record $size's version", 2, file.readBytes()[0].toInt())
+            assertArrayEquals("record $size", record, s.record(id))
+        }
+        assertEquals(5, s.records().size)
+        assertTrue(s.unreadableRecordIDs().isEmpty())
+    }
+
+    /** A record that doesn't decrypt is reported by its ID, so the app can have its credential received again. */
+    @Test
+    fun reportsUnreadableRecords() {
+        val s = store()
+        s.put("a", """{"id":"a"}""".toByteArray())
+        s.put("b", """{"id":"b"}""".toByteArray())
+        val file = File(s.directory, "a.rec")
+        val bytes = file.readBytes()
+        bytes[bytes.size - 1] = (bytes[bytes.size - 1].toInt() xor 1).toByte()
+        file.writeBytes(bytes)
+
+        try {
+            s.record("a")
+            fail("read a record that isn't intact")
+        } catch (e: UnreadableRecordException) {
+            assertEquals("a", e.id)
+        }
+        assertEquals(listOf("a"), s.unreadableRecordIDs())
+        assertEquals(listOf("""{"id":"b"}"""), s.records().map { it.decodeToString() })
+        s.delete("a")
+        assertTrue(s.unreadableRecordIDs().isEmpty())
+    }
+
+    /**
+     * A record written as 0.19.0 wrote it, in a single doFinal, either
+     * reads back intact or is reported unreadable: never as other bytes.
+     */
+    @Test
+    fun recordsWrittenInOneOperation() {
+        val s = store()
+        s.put("k", "{}".toByteArray()) // makes the store's key
+        val key = java.security.KeyStore.getInstance("AndroidKeyStore").apply { load(null) }.getKey(alias, null) as javax.crypto.SecretKey
+        for (size in listOf(1024, 65536, 65537, 81920, 81921, 204800)) {
+            val record = ByteArray(size) { (it * 7 + size).toByte() }
+            val id = "old$size"
+            val cipher = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding")
+            cipher.init(javax.crypto.Cipher.ENCRYPT_MODE, key)
+            cipher.updateAAD(id.toByteArray())
+            File(s.directory, "$id.rec").writeBytes(byteArrayOf(1) + cipher.iv + cipher.doFinal(record))
+            val read = try {
+                s.record(id)
+            } catch (e: UnreadableRecordException) {
+                null
+            }
+            android.util.Log.i("FileCredentialStoreTest", "a $size-byte record written in one operation: ${if (read == null) "unreadable" else "readable"}")
+            if (read != null) assertArrayEquals("record $size", record, read)
+            assertEquals(read == null, id in s.unreadableRecordIDs())
+        }
+    }
+
+    /**
+     * A record the Keystore key encrypted itself, in pieces as the Keymaster
+     * gets right, reads back; replaced, it's written in the current form.
+     */
+    @Test
+    fun readsRecordsTheKeystoreKeyEncrypted() {
+        val s = store()
+        s.put("k", "{}".toByteArray()) // makes the store's key
+        val key = java.security.KeyStore.getInstance("AndroidKeyStore").apply { load(null) }.getKey(alias, null) as javax.crypto.SecretKey
+        val record = ByteArray(204800) { (it * 13).toByte() }
+        val cipher = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(javax.crypto.Cipher.ENCRYPT_MODE, key)
+        cipher.updateAAD("old".toByteArray())
+        val out = java.io.ByteArrayOutputStream()
+        for (at in 0 until record.size - 4096 step 4096) cipher.update(record, at, 4096)?.let(out::write)
+        out.write(cipher.doFinal(record, record.size - 4096, 4096))
+        val file = File(s.directory, "old.rec")
+        file.writeBytes(byteArrayOf(1) + cipher.iv + out.toByteArray())
+
+        assertArrayEquals(record, s.record("old"))
+        s.put("old", s.record("old")!!)
+        assertEquals(2, file.readBytes()[0].toInt())
+        assertArrayEquals(record, s.record("old"))
+    }
+
     /** Credentials survive a new Wallet over the same directory; another key store's wallet sees their keys gone. */
     @Test
     fun acrossWallets(): Unit = runBlocking {

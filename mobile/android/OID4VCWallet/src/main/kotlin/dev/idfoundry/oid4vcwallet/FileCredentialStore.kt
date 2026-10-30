@@ -5,6 +5,7 @@ import android.os.Build
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Log
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileNotFoundException
 import java.io.FileOutputStream
@@ -13,19 +14,23 @@ import java.io.RandomAccessFile
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.security.KeyStore as JavaKeyStore
+import java.security.MessageDigest
+import java.security.SecureRandom
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.locks.ReentrantLock
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
+import javax.crypto.spec.SecretKeySpec
 import kotlin.concurrent.withLock
 
 /**
  * A credential store of files: one per credential record, in a
  * directory of the app's (`noBackupFilesDir/credentials`, by default,
  * which no backup or device transfer copies). Each record is encrypted
- * (AES-256-GCM, its ID as associated data) under an Android Keystore key
+ * (AES-256-GCM, its ID as associated data) under a key of its own,
+ * wrapped by an Android Keystore key
  * that, by default, works only while the device is unlocked — iOS's
  * complete file protection. A credential is useless without its holder
  * key, which is in this device's Keystore and can't be restored
@@ -35,7 +40,8 @@ import kotlin.concurrent.withLock
  * (`noBackupFilesDir`, or excluded in the app's backup rules): a
  * restored record can't be read without the key, which isn't restored.
  * [records] skips a record that doesn't decrypt, logging its ID, rather
- * than make every other credential unreadable; [record] reports it.
+ * than make every other credential unreadable; [record] reports it as an
+ * [UnreadableRecordException], and [unreadableRecordIDs] lists them all.
  *
  * Every write takes an exclusive lock on a lock file in the directory —
  * a [java.nio.channels.FileChannel] lock, which excludes other
@@ -94,7 +100,7 @@ public class FileCredentialStore(
 
     override fun put(id: String, record: ByteArray) {
         val target = file(id)
-        val sealed = seal(id, record)
+        val sealed = sealChecked(id, record)
         withStoreLock { write(id, target, sealed) }
     }
 
@@ -103,19 +109,37 @@ public class FileCredentialStore(
         return open(id, sealed)
     }
 
-    override fun records(): List<ByteArray> {
-        val files = directory.listFiles { f -> f.isFile && f.name.endsWith(SUFFIX) && !f.name.startsWith(".") }.orEmpty()
-            .sortedBy { it.name }
-            .mapNotNull { f -> read(f)?.let { f.name.removeSuffix(SUFFIX) to it } } // one deleted meanwhile isn't listed
-        return files.mapNotNull { (id, sealed) ->
+    override fun records(): List<ByteArray> =
+        sealedRecords().mapNotNull { (id, sealed) ->
             try {
                 open(id, sealed)
-            } catch (e: StoreException) {
+            } catch (e: UnreadableRecordException) {
                 Log.w(TAG, "skipping credential record $id: ${e.message}")
                 null
             }
         }
-    }
+
+    /**
+     * The IDs of the records that are here but don't decrypt, which
+     * [records] skips: their credentials are lost. Delete each and
+     * receive its credential again. A record over 80 KB written by an
+     * earlier version on a device whose Keystore gets long AES-GCM
+     * operations wrong (API 28's Keymaster 3, as on the LG G6) is one.
+     */
+    public fun unreadableRecordIDs(): List<String> =
+        sealedRecords().mapNotNull { (id, sealed) ->
+            try {
+                open(id, sealed)
+                null
+            } catch (e: UnreadableRecordException) {
+                id
+            }
+        }
+
+    private fun sealedRecords(): List<Pair<String, ByteArray>> =
+        directory.listFiles { f -> f.isFile && f.name.endsWith(SUFFIX) && !f.name.startsWith(".") }.orEmpty()
+            .sortedBy { it.name }
+            .mapNotNull { f -> read(f)?.let { f.name.removeSuffix(SUFFIX) to it } } // one deleted meanwhile isn't listed
 
     override fun delete(id: String) {
         val f = file(id)
@@ -126,7 +150,7 @@ public class FileCredentialStore(
         val target = file(id)
         // Sealed, and the key made if need be, before the lock: making
         // the key takes it too.
-        val sealed = record?.let { seal(id, it) } ?: run { key(); null }
+        val sealed = record?.let { sealChecked(id, it) } ?: run { key(); null }
         return withStoreLock {
             val current = read(target)?.let { open(id, it) }
             if (current.contentEquals(expected)) {
@@ -202,24 +226,115 @@ public class FileCredentialStore(
         return File(directory, id + SUFFIX)
     }
 
-    /** version (1) || 12-byte IV || ciphertext and tag, the record's ID bound as associated data. */
+    /**
+     * version (2) || the record's key, wrapped (12-byte IV || 32-byte key
+     * and tag) || 12-byte IV || ciphertext and tag. Each record has an
+     * AES-256 key of its own, which the store's Keystore key wraps; the
+     * record is encrypted under it in the app. Both are AES-256-GCM with
+     * the record's ID as associated data. So the Keystore handles 32
+     * bytes, however long the record: its secure hardware is slow, and
+     * API 28's Keymaster 3 (the LG G6's) gets a single operation of 80 KB
+     * wrong, both ways. A record can still be read only while the
+     * Keystore key works: by default, while the device is unlocked.
+     */
     private fun seal(id: String, record: ByteArray): ByteArray {
-        val cipher = Cipher.getInstance(TRANSFORMATION)
-        cipher.init(Cipher.ENCRYPT_MODE, key())
-        cipher.updateAAD(id.toByteArray())
-        return byteArrayOf(VERSION) + cipher.iv + cipher.doFinal(record)
+        val recordKey = ByteArray(KEY_BYTES).also { random.nextBytes(it) }
+        try {
+            val wrap = Cipher.getInstance(TRANSFORMATION)
+            wrap.init(Cipher.ENCRYPT_MODE, key())
+            wrap.updateAAD(id.toByteArray())
+            val wrapped = wrap.iv + wrap.doFinal(recordKey)
+            val iv = ByteArray(IV_BYTES).also { random.nextBytes(it) }
+            val cipher = Cipher.getInstance(TRANSFORMATION)
+            cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(recordKey, "AES"), GCMParameterSpec(TAG_BYTES * 8, iv))
+            cipher.updateAAD(id.toByteArray())
+            return byteArrayOf(VERSION) + wrapped + iv + cipher.doFinal(record)
+        } finally {
+            recordKey.fill(0)
+        }
     }
 
-    private fun open(id: String, sealed: ByteArray): ByteArray {
-        if (sealed.size < 1 + IV_BYTES + TAG_BYTES || sealed[0] != VERSION) throw StoreException("credential record $id is malformed")
+    /**
+     * [record] sealed, and opened again to check it: a Keystore that
+     * encrypts it wrong fails the write, and the record it would replace
+     * stays.
+     */
+    private fun sealChecked(id: String, record: ByteArray): ByteArray {
+        val sealed = seal(id, record)
+        val opened = try {
+            open(id, sealed)
+        } catch (e: UnreadableRecordException) {
+            null
+        }
+        if (opened == null || !MessageDigest.isEqual(opened, record)) throw StoreException("credential record $id doesn't read back")
+        return sealed
+    }
+
+    private fun open(id: String, sealed: ByteArray): ByteArray = when (sealed.firstOrNull()) {
+        VERSION -> openWrapped(id, sealed)
+        VERSION_KEYSTORE -> openKeystore(id, sealed)
+        else -> throw UnreadableRecordException(id, "credential record $id is malformed")
+    }
+
+    private fun openWrapped(id: String, sealed: ByteArray): ByteArray {
+        val at = 1 + WRAPPED_BYTES
+        if (sealed.size < at + IV_BYTES + TAG_BYTES) throw UnreadableRecordException(id, "credential record $id is malformed")
+        val unwrap = Cipher.getInstance(TRANSFORMATION)
+        unwrap.init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(TAG_BYTES * 8, sealed, 1, IV_BYTES))
+        unwrap.updateAAD(id.toByteArray())
+        val recordKey = try {
+            unwrap.doFinal(sealed, 1 + IV_BYTES, KEY_BYTES + TAG_BYTES)
+        } catch (e: javax.crypto.AEADBadTagException) {
+            throw UnreadableRecordException(id, "credential record $id doesn't decrypt")
+        }
+        try {
+            val cipher = Cipher.getInstance(TRANSFORMATION)
+            cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(recordKey, "AES"), GCMParameterSpec(TAG_BYTES * 8, sealed, at, IV_BYTES))
+            cipher.updateAAD(id.toByteArray())
+            return try {
+                cipher.doFinal(sealed, at + IV_BYTES, sealed.size - at - IV_BYTES)
+            } catch (e: javax.crypto.AEADBadTagException) {
+                throw UnreadableRecordException(id, "credential record $id doesn't decrypt")
+            }
+        } finally {
+            recordKey.fill(0)
+        }
+    }
+
+    /**
+     * A record written before the store wrapped a key per record: version
+     * (1) || 12-byte IV || ciphertext and tag, encrypted by the Keystore
+     * key itself. Still read, so the records an earlier version wrote
+     * aren't lost; they're written again in the current form when replaced.
+     */
+    private fun openKeystore(id: String, sealed: ByteArray): ByteArray {
+        if (sealed.size < 1 + IV_BYTES + TAG_BYTES) throw UnreadableRecordException(id, "credential record $id is malformed")
         val cipher = Cipher.getInstance(TRANSFORMATION)
         cipher.init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(TAG_BYTES * 8, sealed, 1, IV_BYTES))
         cipher.updateAAD(id.toByteArray())
         return try {
-            cipher.doFinal(sealed, 1 + IV_BYTES, sealed.size - 1 - IV_BYTES)
+            cipher.inChunks(sealed, 1 + IV_BYTES, sealed.size - 1 - IV_BYTES)
         } catch (e: javax.crypto.AEADBadTagException) {
-            throw StoreException("credential record $id doesn't decrypt")
+            throw UnreadableRecordException(id, "credential record $id doesn't decrypt")
         }
+    }
+
+    /**
+     * [length] bytes of [input] through the cipher, [CHUNK_BYTES] per
+     * update: API 28's Keymaster 3 (the LG G6's) gets a single AES-GCM
+     * operation of 80 KB wrong, both ways, but not one fed in chunks.
+     * Decrypting, the Keystore may return nothing until doFinal.
+     */
+    private fun Cipher.inChunks(input: ByteArray, offset: Int, length: Int): ByteArray {
+        val out = ByteArrayOutputStream(length + TAG_BYTES)
+        var at = offset
+        val end = offset + length
+        while (end - at > CHUNK_BYTES) {
+            update(input, at, CHUNK_BYTES)?.let(out::write)
+            at += CHUNK_BYTES
+        }
+        out.write(doFinal(input, at, end - at))
+        return out.toByteArray()
     }
 
     /** The store's key, made on first use — by one process: made under the store's lock. */
@@ -258,9 +373,18 @@ public class FileCredentialStore(
 
         /** The file every write locks: hidden, so never a record. */
         private const val LOCK_FILE = ".lock"
-        private const val VERSION: Byte = 1
+        private const val VERSION: Byte = 2
+
+        /** Records encrypted by the Keystore key itself, before [VERSION] 2: read, never written. */
+        private const val VERSION_KEYSTORE: Byte = 1
         private const val IV_BYTES = 12
         private const val TAG_BYTES = 16
+        private const val KEY_BYTES = 32
+
+        /** A record's key as the Keystore key wraps it: IV, key, tag. */
+        private const val WRAPPED_BYTES = IV_BYTES + KEY_BYTES + TAG_BYTES
+        private val random = SecureRandom()
+        private const val CHUNK_BYTES = 4096
 
         /** Each directory's lock in this process, by canonical path: every store on it shares one. */
         private val directoryLocks = ConcurrentHashMap<String, ReentrantLock>()
@@ -270,3 +394,15 @@ public class FileCredentialStore(
             FileCredentialStore(File(context.noBackupFilesDir, "credentials"), options)
     }
 }
+
+/**
+ * A credential record that's there but doesn't decrypt: altered, moved
+ * to another ID, restored without the store's key, or written wrong by
+ * the device's Keystore (see [FileCredentialStore.unreadableRecordIDs]).
+ * It can't be recovered: delete it and receive the credential again.
+ */
+public class UnreadableRecordException(
+    /** The record's ID. */
+    public val id: String,
+    message: String,
+) : StoreException(message)
