@@ -15,6 +15,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/proximity"
 	"github.com/idfoundry/oid4vcgo/statuslist"
+	"github.com/idfoundry/oid4vcgo/verifier"
 	"github.com/idfoundry/oid4vcgo/walletflow"
 )
 
@@ -113,6 +114,11 @@ func NewProximityReader(configJSON string, keys KeyStore) (*ProximityReader, err
 		}
 	}
 	r := &ProximityReader{roots: roots, clock: time.Now}
+	// Development assurance, with any IACA in issuer_roots for any
+	// document type: issuer_roots_by_doctype decides which issue which.
+	// The documents' status is CheckStatus's, a call of its own:
+	// HandleMessage, which runs no network request, checks none.
+	r.opts = append(r.opts, proximity.WithAssurance(verifier.AssuranceDevelopment), proximity.WithAnyIssuerForAnyType(), proximity.WithNoStatusCheck())
 	if len(cfg.IssuerRootsByDocType) > 0 {
 		byType := make(map[string]*x509.CertPool, len(cfg.IssuerRootsByDocType))
 		for docType, pemText := range cfg.IssuerRootsByDocType {
@@ -175,9 +181,11 @@ func (r *ProximityReader) configureRevocation(cfg proximityReaderConfig) error {
 	if r.crls, err = newCRLSet(cfg.CRLs, cfg.CRLIssuers); err != nil {
 		return err
 	}
+	var issuer certrevocation.Checker = certrevocation.NoCheck{}
 	if named[revocationIssuer] {
-		r.opts = append(r.opts, proximity.WithIssuerRevocation(r.crls.checker()))
+		issuer = r.crls.checker()
 	}
+	r.opts = append(r.opts, proximity.WithIssuerRevocation(issuer))
 	if named[revocationStatus] {
 		r.statusRevocation = r.crls.checker()
 	}
@@ -404,7 +412,9 @@ func (p *ProximityReaderSession) HandleMessage(message []byte) string {
 		Error    string        `json:"error,omitempty"`
 	}{result: result{ABIVersion}, Event: "ended"}
 	p.stopped = true
-	v, err := p.s.Verify(message, p.r.roots, p.r.clock())
+	// No network request: the CRLs are in memory, and the status is
+	// CheckStatus's.
+	v, err := p.s.Verify(context.Background(), message, p.r.roots, p.r.clock())
 	switch {
 	case err == nil:
 		out.Event, out.Verified = "verified", verifiedOf(v)

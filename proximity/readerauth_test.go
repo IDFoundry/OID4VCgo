@@ -1,6 +1,7 @@
 package proximity
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -178,7 +179,7 @@ func TestWithReaderAuthRejects(t *testing.T) {
 		"unsupported key": WithReaderAuth(p384, []*x509.Certificate{testcert.SelfSigned(t, "p384", &p384.PublicKey, p384)}),
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, err := NewReaderSession(holder.QRCode(), opt); err == nil {
+			if _, err := NewReaderSession(holder.QRCode(), devReader(opt)...); err == nil {
 				t.Error("NewReaderSession accepted it")
 			}
 		})
@@ -277,7 +278,7 @@ func TestErrorResponse(t *testing.T) {
 		if _, err := f.holder.Encrypt([]byte{0xa0}, false); !errors.Is(err, ErrSessionClosed) {
 			t.Errorf("the holder's session is still open: %v", err)
 		}
-		_, err = f.reader.Verify(msg, x509.NewCertPool(), time.Now())
+		_, err = f.reader.Verify(context.Background(), msg, x509.NewCertPool(), time.Now())
 		var se *DeviceResponseStatusError
 		if !errors.As(err, &se) || se.Status != tc.want {
 			t.Errorf("Verify = %v, want status %d", err, tc.want)

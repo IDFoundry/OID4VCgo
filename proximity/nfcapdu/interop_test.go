@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"testing"
 
+	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/proximity"
+	"github.com/idfoundry/oid4vcgo/verifier"
 )
 
 // TestHandoverWithProximitySessions reads each kind of Handover Select
@@ -12,6 +14,7 @@ import (
 // what the reader read.
 func TestHandoverWithProximitySessions(t *testing.T) {
 	data := proximity.NFCDataParameters{MaxCommand: 255, MaxResponse: 256}
+	reader := []proximity.ReaderOption{proximity.WithAssurance(verifier.AssuranceDevelopment), proximity.WithIssuerRevocation(certrevocation.NoCheck{})}
 	for _, tc := range []struct {
 		name       string
 		holder     func() (*proximity.DeviceSession, error)
@@ -62,13 +65,13 @@ func TestHandoverWithProximitySessions(t *testing.T) {
 			}
 			switch {
 			case tc.negotiated && tc.data:
-				_, err = proximity.NewNFCNegotiatedDataReaderSession(hs, hr)
+				_, err = proximity.NewNFCNegotiatedDataReaderSession(hs, hr, reader...)
 			case tc.negotiated:
-				_, err = proximity.NewNFCNegotiatedReaderSession(hs, hr)
+				_, err = proximity.NewNFCNegotiatedReaderSession(hs, hr, reader...)
 			case tc.data:
-				_, err = proximity.NewNFCDataReaderSession(hs)
+				_, err = proximity.NewNFCDataReaderSession(hs, reader...)
 			default:
-				_, err = proximity.NewNFCReaderSession(hs)
+				_, err = proximity.NewNFCReaderSession(hs, reader...)
 			}
 			if err != nil {
 				t.Fatalf("reader session from the Hs read: %v", err)

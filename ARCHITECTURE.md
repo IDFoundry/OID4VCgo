@@ -1080,7 +1080,11 @@ changes whether *every* bullet below is `(done)`.
   the issuer chain at a caller-given time
   (`internal/certchain.VerifyChainsAt`, added for this), `mdoc.Verify`,
   the device signature or MAC over its own transcript, key
-  authorizations, and that only requested elements came back. A
+  authorizations, and that only requested elements came back; then the
+  reader's Verifier decisions (`WithAssurance`, `WithIssuerRevocation`,
+  `WithIssuerAuthorization`, `WithStatus` reusing `verifier.StatusPolicy`
+  through `Verified.Credential`), required under production as
+  `mdocdcapi` requires them. A
   declined or unmatched request is a status-20 termination, not
   `documentErrors`, following Multipaz. Tests reproduce ISO/IEC
   18013-5 Annex D byte for byte (hex from Multipaz's `TestVectors.kt`).

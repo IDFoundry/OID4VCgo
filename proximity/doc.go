@@ -23,7 +23,7 @@
 //	--------------------                        ----------------------
 //	NewDeviceSession
 //	  EDeviceKey, service UUID
-//	QRCode() ── "mdoc:" + DeviceEngagement ──▶  NewReaderSession(qr)
+//	QRCode() ── "mdoc:" + DeviceEngagement ──▶  NewReaderSession(qr, opts...)
 //	                                              EReaderKey, SKReader/SKDevice
 //	          ◀═════════ BLE connect to ServiceUUID ═════════▶
 //	                                            Establishment(docType, elements)
@@ -34,7 +34,7 @@
 //	VerifyReaderAuth → who is asking
 //	  (consent prompt)
 //	BuildDeviceResponse
-//	Encrypt(resp, false) ── SessionData ──────▶  Verify(msg, roots, now)
+//	Encrypt(resp, false) ── SessionData ──────▶  Verify(ctx, msg, roots, now)
 //	                        {data: E(DeviceResponse)}  → Verified
 //	Termination() ◀──── {status: 20}, either side ────▶ Termination()
 //
@@ -69,9 +69,11 @@
 //     certificate's validity, digests, docType and validity window,
 //     with the reader's clock allowed WithMaxClockSkew off the issuer's;
 //     and the document signer certificate's purpose, by
-//     DefaultDocumentSignerPolicy or WithDocumentSignerPolicy's. The
-//     MSO's status (Verified.Status) isn't checked: resolve it before
-//     relying on the document.
+//     DefaultDocumentSignerPolicy or WithDocumentSignerPolicy's. Then
+//     a Verifier's decisions: the document signer's revocation
+//     (WithIssuerRevocation), which issuers may issue the document type
+//     (WithIssuerAuthorization) and the MSO's status (WithStatus), with
+//     WithAssurance requiring each under verifier.AssuranceProduction.
 //   - Reader authentication (§9.1.4): WithReaderAuth signs each
 //     request's ItemsRequestBytes, with the SessionTranscript, by the
 //     reader's key, its certificate chain in x5chain; the holder's

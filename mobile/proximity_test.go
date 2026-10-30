@@ -3,16 +3,25 @@
 package mobile
 
 import (
+	"context"
 	"crypto/x509"
 	"encoding/base64"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/proximity"
+	"github.com/idfoundry/oid4vcgo/verifier"
 	"github.com/idfoundry/oid4vcgo/walletflow/walletflowtest"
 )
+
+// devReader is opts after the decisions every proximity reader makes,
+// at development assurance: no document signer revocation check.
+func devReader(opts ...proximity.ReaderOption) []proximity.ReaderOption {
+	return append([]proximity.ReaderOption{proximity.WithAssurance(verifier.AssuranceDevelopment), proximity.WithIssuerRevocation(certrevocation.NoCheck{})}, opts...)
+}
 
 // proximityEvent is HandleMessage's result.
 type proximityEvent struct {
@@ -45,7 +54,7 @@ func startProximity(t *testing.T, h harness, reader *testReader) (*ProximityPres
 	if reader != nil {
 		opts = append(opts, proximity.WithReaderAuth(reader.key.Signer, reader.key.Chain))
 	}
-	r, err := proximity.NewReaderSession(eng.QRCode, opts...)
+	r, err := proximity.NewReaderSession(eng.QRCode, devReader(opts...)...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +160,7 @@ func TestSessions_ProximityPresentation(t *testing.T) {
 	if !roots.AppendCertsFromPEM([]byte(issuerRootsPEM(t, h))) {
 		t.Fatal("no issuer roots")
 	}
-	v, err := r.Verify(sent(t, resp.Send), roots, time.Now())
+	v, err := r.Verify(context.Background(), sent(t, resp.Send), roots, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +183,7 @@ func TestSessions_ProximityPresentationEnds(t *testing.T) {
 		p, r, msg := startProximity(t, h, &reader)
 		decode[proximityEvent](t, p.HandleMessage(NewOperation(0), msg))
 		send := decode[struct{ Send string }](t, p.Terminate()).Send
-		if _, err := r.Verify(sent(t, send), x509.NewCertPool(), time.Now()); err != proximity.ErrDeclined {
+		if _, err := r.Verify(context.Background(), sent(t, send), x509.NewCertPool(), time.Now()); err != proximity.ErrDeclined {
 			t.Errorf("reader: %v, want declined", err)
 		}
 	})
@@ -232,7 +241,7 @@ func TestSessions_ProximityBothModes(t *testing.T) {
 		eng.BLEModes[0].ServiceUUID == eng.BLEModes[1].ServiceUUID || eng.ServiceUUID != eng.BLEModes[0].ServiceUUID || eng.BLEMode != "peripheral_server" {
 		t.Fatalf("Engagement = %s", p.Engagement())
 	}
-	r, err := proximity.NewReaderSession(eng.QRCode, proximity.WithReaderAuth(reader.key.Signer, reader.key.Chain))
+	r, err := proximity.NewReaderSession(eng.QRCode, devReader(proximity.WithReaderAuth(reader.key.Signer, reader.key.Chain))...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -320,7 +329,7 @@ func TestSessions_ProximityDeviceAuth(t *testing.T) {
 			if !roots.AppendCertsFromPEM([]byte(issuerRootsPEM(t, h))) {
 				t.Fatal("no issuer roots")
 			}
-			v, err := r.Verify(sent(t, decode[struct{ Send string }](t, out).Send), roots, time.Now())
+			v, err := r.Verify(context.Background(), sent(t, decode[struct{ Send string }](t, out).Send), roots, time.Now())
 			if err != nil {
 				t.Fatal(err)
 			}

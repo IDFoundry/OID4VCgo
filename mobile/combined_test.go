@@ -46,14 +46,14 @@ func TestCombinedNegotiationBeforeSelection(t *testing.T) {
 					eng := decode[struct {
 						QRCode string `json:"qr_code"`
 					}](t, before)
-					r, err = proximity.NewReaderSession(eng.QRCode)
+					r, err = proximity.NewReaderSession(eng.QRCode, devReader()...)
 					if _, rejected := p.HandleHandoverRequest(hr); rejected == nil {
 						t.Fatal("QR winner accepted NFC negotiation")
 					}
 				} else if data {
-					r, err = proximity.NewNFCNegotiatedDataReaderSession(hs, hr)
+					r, err = proximity.NewNFCNegotiatedDataReaderSession(hs, hr, devReader()...)
 				} else {
-					r, err = proximity.NewNFCNegotiatedReaderSession(hs, hr)
+					r, err = proximity.NewNFCNegotiatedReaderSession(hs, hr, devReader()...)
 				}
 				if err != nil {
 					t.Fatal(err)
@@ -96,7 +96,7 @@ func TestCombinedBindings(t *testing.T) {
 					}
 					var r *proximity.ReaderSession
 					if !nfc {
-						r, err = proximity.NewReaderSession(eng.QRCode)
+						r, err = proximity.NewReaderSession(eng.QRCode, devReader()...)
 					} else {
 						hs := p.HandoverSelect()
 						var hr []byte
@@ -116,13 +116,13 @@ func TestCombinedBindings(t *testing.T) {
 						}
 						switch {
 						case data && negotiated:
-							r, err = proximity.NewNFCNegotiatedDataReaderSession(hs, hr)
+							r, err = proximity.NewNFCNegotiatedDataReaderSession(hs, hr, devReader()...)
 						case data:
-							r, err = proximity.NewNFCDataReaderSession(hs)
+							r, err = proximity.NewNFCDataReaderSession(hs, devReader()...)
 						case negotiated:
-							r, err = proximity.NewNFCNegotiatedReaderSession(hs, hr)
+							r, err = proximity.NewNFCNegotiatedReaderSession(hs, hr, devReader()...)
 						default:
-							r, err = proximity.NewNFCReaderSession(hs)
+							r, err = proximity.NewNFCReaderSession(hs, devReader()...)
 						}
 					}
 					if err != nil {

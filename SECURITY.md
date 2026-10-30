@@ -89,7 +89,8 @@ from its chain and validity period alone:
   `mdocdcapi.ReaderTrust.Revocation`,
   `walletflow.Config.MdocReaderRevocation`);
 - a proximity reader's document signer
-  (`proximity.WithIssuerRevocation`);
+  (`proximity.WithIssuerRevocation`, required at every assurance
+  level);
 - a status list signer (`statuslist.VerifyOptions.Revocation`,
   `walletflow.Config.StatusRevocation`; `verifier.StatusPolicy`
   passes it on from its `statuslist.Checker`, and requires it under

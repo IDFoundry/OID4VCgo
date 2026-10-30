@@ -1,6 +1,7 @@
 package proximity
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -17,9 +18,17 @@ import (
 
 	"github.com/fxamacker/cbor/v2"
 
+	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/internal/cose"
+	"github.com/idfoundry/oid4vcgo/verifier"
 )
+
+// devReader is opts after the decisions every reader makes, at
+// development assurance: no document signer revocation check.
+func devReader(opts ...ReaderOption) []ReaderOption {
+	return append([]ReaderOption{WithAssurance(verifier.AssuranceDevelopment), WithIssuerRevocation(certrevocation.NoCheck{})}, opts...)
+}
 
 const (
 	mDL   = "org.iso.18013.5.1.mDL"
@@ -97,7 +106,7 @@ func establishWith(t testing.TB, docType string, elements map[string][]string, d
 	if err != nil {
 		t.Fatalf("NewDeviceSession: %v", err)
 	}
-	reader, err := NewReaderSession(holder.QRCode(), readerOpts...)
+	reader, err := NewReaderSession(holder.QRCode(), devReader(readerOpts...)...)
 	if err != nil {
 		t.Fatalf("NewReaderSession: %v", err)
 	}
@@ -148,7 +157,7 @@ func TestRoundTripAgeOver18(t *testing.T) {
 		t.Fatalf("holder saw %v, want %v", f.req.Elements, want)
 	}
 
-	v, err := f.reader.Verify(f.respond(t, fx, f.req.Elements), fx.roots, time.Now())
+	v, err := f.reader.Verify(context.Background(), f.respond(t, fx, f.req.Elements), fx.roots, time.Now())
 	if err != nil {
 		t.Fatalf("Verify: %v", err)
 	}
@@ -241,7 +250,7 @@ func TestRoundTripDeviceMAC(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Encrypt: %v", err)
 	}
-	v, err := f.reader.Verify(msg, fx.roots, time.Now())
+	v, err := f.reader.Verify(context.Background(), msg, fx.roots, time.Now())
 	if err != nil {
 		t.Fatalf("Verify: %v", err)
 	}
@@ -270,7 +279,7 @@ func TestDeviceMACWrongKeyRejected(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Encrypt: %v", err)
 	}
-	if _, err := f.reader.Verify(msg, fx.roots, time.Now()); err == nil {
+	if _, err := f.reader.Verify(context.Background(), msg, fx.roots, time.Now()); err == nil {
 		t.Error("Verify accepted a MAC agreed with the wrong device key")
 	}
 }
@@ -332,7 +341,7 @@ func TestRoundTripMultipleElements(t *testing.T) {
 	}
 
 	consented := [][2]string{{mDLNS, "given_name"}, {mDLNS, "family_name"}, {mDLNS, "age_over_21"}}
-	v, err := f.reader.Verify(f.respond(t, fx, consented), fx.roots, time.Now())
+	v, err := f.reader.Verify(context.Background(), f.respond(t, fx, consented), fx.roots, time.Now())
 	if err != nil {
 		t.Fatalf("Verify: %v", err)
 	}
@@ -340,7 +349,7 @@ func TestRoundTripMultipleElements(t *testing.T) {
 	if len(got) != 3 || got["given_name"] != "Alice" || got["family_name"] != "Doe" || got["age_over_21"] != false {
 		t.Errorf("Claims = %v", v.Claims)
 	}
-	if _, err := f.reader.Verify(nil, fx.roots, time.Now()); !errors.Is(err, ErrSessionClosed) {
+	if _, err := f.reader.Verify(context.Background(), nil, fx.roots, time.Now()); !errors.Is(err, ErrSessionClosed) {
 		t.Errorf("second Verify: %v, want ErrSessionClosed", err)
 	}
 }
@@ -348,7 +357,7 @@ func TestRoundTripMultipleElements(t *testing.T) {
 func TestDeclined(t *testing.T) {
 	fx := issueFixture(t, mDL)
 	f := establish(t, mDL, map[string][]string{mDLNS: {"age_over_18"}})
-	_, err := f.reader.Verify(f.holder.Termination(), fx.roots, time.Now())
+	_, err := f.reader.Verify(context.Background(), f.holder.Termination(), fx.roots, time.Now())
 	if !errors.Is(err, ErrDeclined) {
 		t.Errorf("Verify(termination) = %v, want ErrDeclined", err)
 	}
@@ -379,14 +388,14 @@ func TestClosedSessionsDropSecrets(t *testing.T) {
 		if r.eReaderKey != nil || r.cipher != nil || !r.closed {
 			t.Errorf("reader session keeps eReaderKey %v, cipher %v (closed %v)", r.eReaderKey != nil, r.cipher != nil, r.closed)
 		}
-		if _, err := r.Verify(nil, fx.roots, time.Now()); !errors.Is(err, ErrSessionClosed) {
+		if _, err := r.Verify(context.Background(), nil, fx.roots, time.Now()); !errors.Is(err, ErrSessionClosed) {
 			t.Errorf("reader Verify after close: %v, want ErrSessionClosed", err)
 		}
 	}
 
 	t.Run("response", func(t *testing.T) {
 		f := establish(t, mDL, requested)
-		if _, err := f.reader.Verify(f.respond(t, fx, [][2]string{{mDLNS, "age_over_18"}}), fx.roots, time.Now()); err != nil {
+		if _, err := f.reader.Verify(context.Background(), f.respond(t, fx, [][2]string{{mDLNS, "age_over_18"}}), fx.roots, time.Now()); err != nil {
 			t.Fatalf("Verify: %v", err)
 		}
 		readerCleared(t, f.reader)
@@ -399,7 +408,7 @@ func TestClosedSessionsDropSecrets(t *testing.T) {
 	})
 	t.Run("declined", func(t *testing.T) {
 		f := establish(t, mDL, requested)
-		if _, err := f.reader.Verify(f.holder.Termination(), fx.roots, time.Now()); !errors.Is(err, ErrDeclined) {
+		if _, err := f.reader.Verify(context.Background(), f.holder.Termination(), fx.roots, time.Now()); !errors.Is(err, ErrDeclined) {
 			t.Fatalf("Verify: %v, want ErrDeclined", err)
 		}
 		holderCleared(t, f.holder)
@@ -419,7 +428,7 @@ func TestClosedSessionsDropSecrets(t *testing.T) {
 			t.Fatal("HandleSessionData accepted a malformed message")
 		}
 		holderCleared(t, f.holder)
-		if _, err := f.reader.Verify([]byte{0x01}, fx.roots, time.Now()); err == nil {
+		if _, err := f.reader.Verify(context.Background(), []byte{0x01}, fx.roots, time.Now()); err == nil {
 			t.Fatal("Verify accepted a malformed message")
 		}
 		readerCleared(t, f.reader)
@@ -429,7 +438,7 @@ func TestClosedSessionsDropSecrets(t *testing.T) {
 func TestStatusReply(t *testing.T) {
 	fx := issueFixture(t, mDL)
 	f := establish(t, mDL, map[string][]string{mDLNS: {"age_over_18"}})
-	_, err := f.reader.Verify(StatusMessage(StatusCBORDecodingError), fx.roots, time.Now())
+	_, err := f.reader.Verify(context.Background(), StatusMessage(StatusCBORDecodingError), fx.roots, time.Now())
 	if err == nil || !strings.Contains(err.Error(), "status 11") {
 		t.Errorf("Verify(status 11) = %v", err)
 	}
@@ -449,25 +458,25 @@ func TestRejects(t *testing.T) {
 			fx := issueFixture(t, mDL)
 			other := issueFixture(t, mDL)
 			f := establish(t, mDL, age)
-			_, err := f.reader.Verify(f.respond(t, fx, ageOnly), other.roots, time.Now())
+			_, err := f.reader.Verify(context.Background(), f.respond(t, fx, ageOnly), other.roots, time.Now())
 			return err
 		}, "does not verify against a trusted root"},
 		{"expired MSO", func(t *testing.T) error {
 			fx := issueFixture(t, mDL)
 			f := establish(t, mDL, age)
-			_, err := f.reader.Verify(f.respond(t, fx, ageOnly), fx.roots, time.Now().Add(2*time.Hour))
+			_, err := f.reader.Verify(context.Background(), f.respond(t, fx, ageOnly), fx.roots, time.Now().Add(2*time.Hour))
 			return err
 		}, "MSO has expired"},
 		{"element not requested", func(t *testing.T) error {
 			fx := issueFixture(t, mDL)
 			f := establish(t, mDL, age)
-			_, err := f.reader.Verify(f.respond(t, fx, [][2]string{{mDLNS, "age_over_18"}, {mDLNS, "family_name"}}), fx.roots, time.Now())
+			_, err := f.reader.Verify(context.Background(), f.respond(t, fx, [][2]string{{mDLNS, "age_over_18"}, {mDLNS, "family_name"}}), fx.roots, time.Now())
 			return err
 		}, "unrequested elements [org.iso.18013.5.1/family_name]"},
 		{"docType mismatch", func(t *testing.T) error {
 			fx := issueFixture(t, "org.example.other")
 			f := establish(t, mDL, age)
-			_, err := f.reader.Verify(f.respond(t, fx, ageOnly), fx.roots, time.Now())
+			_, err := f.reader.Verify(context.Background(), f.respond(t, fx, ageOnly), fx.roots, time.Now())
 			return err
 		}, `docType "org.example.other", requested`},
 		{"device signature over another session's transcript", func(t *testing.T) error {
@@ -482,28 +491,28 @@ func TestRejects(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, err = f.reader.Verify(msg, fx.roots, time.Now())
+			_, err = f.reader.Verify(context.Background(), msg, fx.roots, time.Now())
 			return err
 		}, "DeviceSignature"},
 		{"device signature by a key not in the MSO", func(t *testing.T) error {
 			fx := issueFixture(t, mDL)
 			fx.deviceKey = issueFixture(t, mDL).deviceKey
 			f := establish(t, mDL, age)
-			_, err := f.reader.Verify(f.respond(t, fx, ageOnly), fx.roots, time.Now())
+			_, err := f.reader.Verify(context.Background(), f.respond(t, fx, ageOnly), fx.roots, time.Now())
 			return err
 		}, "DeviceSignature"},
 		{"tampered response ciphertext", func(t *testing.T) error {
 			fx := issueFixture(t, mDL)
 			f := establish(t, mDL, age)
 			msg := tamperData(t, f.respond(t, fx, ageOnly))
-			_, err := f.reader.Verify(msg, fx.roots, time.Now())
+			_, err := f.reader.Verify(context.Background(), msg, fx.roots, time.Now())
 			return wantStatus(t, err, StatusSessionEncryptionError)
 		}, "decrypt"},
 		{"reordered response", func(t *testing.T) error {
 			fx := issueFixture(t, mDL)
 			f := establish(t, mDL, age)
 			f.respond(t, fx, ageOnly) // message 1, never delivered
-			_, err := f.reader.Verify(f.respond(t, fx, ageOnly), fx.roots, time.Now())
+			_, err := f.reader.Verify(context.Background(), f.respond(t, fx, ageOnly), fx.roots, time.Now())
 			return wantStatus(t, err, StatusSessionEncryptionError)
 		}, "decrypt message 1"},
 		{"encrypted non-CBOR response", func(t *testing.T) error {
@@ -513,19 +522,19 @@ func TestRejects(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, err = f.reader.Verify(msg, fx.roots, time.Now())
+			_, err = f.reader.Verify(context.Background(), msg, fx.roots, time.Now())
 			return wantStatus(t, err, StatusCBORDecodingError)
 		}, "decode DeviceResponse"},
 		{"malformed SessionData", func(t *testing.T) error {
 			fx := issueFixture(t, mDL)
 			f := establish(t, mDL, age)
-			_, err := f.reader.Verify([]byte{0x83, 0x01}, fx.roots, time.Now())
+			_, err := f.reader.Verify(context.Background(), []byte{0x83, 0x01}, fx.roots, time.Now())
 			return wantStatus(t, err, StatusCBORDecodingError)
 		}, "decode SessionData"},
 		{"oversize SessionData", func(t *testing.T) error {
 			fx := issueFixture(t, mDL)
 			f := establish(t, mDL, age)
-			_, err := f.reader.Verify(make([]byte, MaxMessageBytes+1), fx.roots, time.Now())
+			_, err := f.reader.Verify(context.Background(), make([]byte, MaxMessageBytes+1), fx.roots, time.Now())
 			return wantStatus(t, err, StatusCBORDecodingError)
 		}, "over"},
 		{"no document", func(t *testing.T) error {
@@ -539,7 +548,7 @@ func TestRejects(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, err = f.reader.Verify(msg, fx.roots, time.Now())
+			_, err = f.reader.Verify(context.Background(), msg, fx.roots, time.Now())
 			if !errors.Is(err, ErrNoDocument) {
 				t.Errorf("err = %v, want ErrNoDocument", err)
 			}
@@ -564,7 +573,7 @@ func TestHolderRejects(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		reader, err := NewReaderSession(holder.QRCode())
+		reader, err := NewReaderSession(holder.QRCode(), devReader()...)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -735,14 +744,14 @@ func TestNewReaderSessionRejects(t *testing.T) {
 	}
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
-			_, err := NewReaderSession(tt.qr)
+			_, err := NewReaderSession(tt.qr, devReader()...)
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Errorf("err = %v, want one containing %q", err, tt.want)
 			}
 		})
 	}
 	t.Run("upper-case scheme", func(t *testing.T) {
-		if _, err := NewReaderSession("MDOC:" + strings.TrimPrefix(holder.QRCode(), "mdoc:")); err != nil {
+		if _, err := NewReaderSession("MDOC:"+strings.TrimPrefix(holder.QRCode(), "mdoc:"), devReader()...); err != nil {
 			t.Errorf("MDOC: scheme: %v", err)
 		}
 	})

@@ -359,6 +359,48 @@ one Wallet. A store of your own implements the new methods:
   `redemption_expires_at` on refresh grants. The Go side writes them; a
   store keeps them as it keeps the rest of a record.
 
+### Proximity reader (`proximity`, `walletflow`, mobile)
+
+- **A reader makes a Verifier's decisions.** `NewReaderSession` and the
+  NFC reader constructors now require `WithAssurance` (as
+  `verifier.Config.Assurance`) and `WithIssuerRevocation`, at every
+  level: pass `certrevocation.CRLs{...}`, your own
+  `certrevocation.Checker`, or `certrevocation.NoCheck{}` to decline.
+  A nil checker, which used to mean no check, is refused. Under
+  `verifier.AssuranceProduction` they also require which issuers may
+  issue which document types (`WithIssuerAuthorization`, or
+  `WithAnyIssuerForAnyType`) and the documents' status
+  (`WithStatus(&verifier.StatusPolicy{…})`, or `WithNoStatusCheck`,
+  checked with `verifier.CheckStatusDecision`), and refuse the system
+  root pool, in `WithIssuerRootsByDocType` or as `Verify`'s roots.
+
+  ```go
+  // Before
+  r, err := proximity.NewReaderSession(qr, proximity.WithReaderAuth(key, chain))
+  v, err := r.Verify(msg, iacas, time.Time{})
+  // then check v.Status yourself
+
+  // After
+  r, err := proximity.NewReaderSession(qr,
+  	proximity.WithAssurance(verifier.AssuranceProduction),
+  	proximity.WithIssuerRevocation(crls), // certrevocation.NoCheck{} to decline
+  	proximity.WithIssuerRootsByDocType(iacasByDocType),
+  	proximity.WithAnyIssuerForAnyType(),
+  	proximity.WithStatus(&verifier.StatusPolicy{Checker: statusChecker}),
+  	proximity.WithReaderAuth(key, chain))
+  v, err := r.Verify(ctx, msg, iacas, time.Time{})
+  ```
+
+- **`ReaderSession.Verify` takes a context**, its first argument. It
+  bounds the document signer's revocation check (which used
+  `context.Background()`) and the status check. `WithStatus` and
+  `WithIssuerAuthorization` run in `Verify`, after the document
+  verifies; their refusals are `Verify`'s errors.
+- **`Verified.Credential()`** gives the document as a
+  `verifier.VerifiedCredential`, for `verifier.StatusPolicy.Check` or
+  `verifier.RequireValidStatus` after `Verify`. Its `IssuerChain` leaves
+  out the trust anchor, as a Verifier's mdoc's does.
+
 ## v0.55.0 → v0.56.0
 
 This release pins FAPIgo v0.65.1, which carries the breaking changes of

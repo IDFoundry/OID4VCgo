@@ -95,7 +95,7 @@ notifications.
 ## Connection sequence
 
 1. **Engage.** The mdoc calls `NewDeviceSession`, then shows `QRCode()`.
-   The reader scans the QR code and calls `NewReaderSession(qr)`.
+   The reader scans the QR code and calls `NewReaderSession(qr, opts...)`, with the decisions step 6 lists.
 2. **Connect.** The GATT server advertises `ServiceUUID()`. The GATT
    client scans for it, connects, and negotiates the MTU.
 3. **Check Ident (central client mode only).** The reader serves
@@ -126,10 +126,18 @@ notifications.
    `Encrypt(BuildDeviceResponse(req, ...), false)`, disclosing only
    elements the request lists (any other is refused). If they decline, or
    nothing matches, the mdoc sends `Termination()` instead. The reader
-   passes either one to `Verify`. `Verify` doesn't check the document's
-   revocation: check `Verified.Status`, the MSO's status list reference,
-   before relying on the document. Its signer's certificates are checked
-   for revocation with `WithIssuerRevocation(certrevocation.CRLs{...})`.
+   passes either one to `Verify(ctx, msg, roots, now)`. A reader makes
+   a Verifier's decisions when it calls `NewReaderSession`: its
+   assurance (`WithAssurance`) and its document signers' revocation
+   (`WithIssuerRevocation(certrevocation.CRLs{...})`, or
+   `certrevocation.NoCheck{}` to decline) always, and under
+   `verifier.AssuranceProduction` which issuers may issue which
+   document types (`WithIssuerAuthorization` or
+   `WithAnyIssuerForAnyType`) and the documents' status
+   (`WithStatus(&verifier.StatusPolicy{...})`, checked in `Verify`
+   against the MSO's status list or identifier list, or
+   `WithNoStatusCheck`). `Verified.Credential()` is the document as a
+   `verifier.VerifiedCredential`, for checking its status after `Verify`.
    A reader can pass `NewReaderSession`
    `WithMaxClockSkew` — so an mdoc issued by a clock a little ahead of
    the reader's isn't refused as not yet valid. By default only document
