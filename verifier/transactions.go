@@ -284,6 +284,17 @@ type TransactionsConfig struct {
 	// explicit Scope, none does. Begin and BeginDCAPI refuse a store
 	// that doesn't keep a transaction's Owner.
 	Scope string
+
+	// ForgetResultOnRead releases each request's result once: the
+	// Lookup that first reports it completed, Redeem or
+	// HandleDCAPIResponse returns the result and, in the same Update,
+	// drops it from the store and closes the request, as Forget does —
+	// so the store holds the claims the holder disclosed only until the
+	// Verifier has them. A later Lookup reports TransactionClosed. Set
+	// it where the Verifier takes the result from its first read; a
+	// Verifier that loses it then (a crash before it's used) can't read
+	// it again, and the holder presents again.
+	ForgetResultOnRead bool
 }
 
 // Transactions tracks presentation requests from creation to a verified
@@ -916,7 +927,7 @@ func (t *Transactions) Redeem(ctx context.Context, responseCode, browserBinding 
 			return nil
 		}
 		cur.Status = TransactionDone
-		view = viewOf(*cur, cur.Status)
+		view = t.release(cur)
 		return nil
 	})
 	switch {
@@ -955,7 +966,8 @@ func (t *Transactions) expiry() (expiresAt, retainUntil time.Time) {
 // TransactionsConfig.Lifetime past the request's own expiry — enough
 // for the browser that asked to collect an answer that arrived just
 // before it — and after that as TransactionExpired, without it. Call
-// Forget once the result has been used to drop it sooner.
+// Forget once the result has been used to drop it sooner, or set
+// TransactionsConfig.ForgetResultOnRead to drop it as it's read.
 func (t *Transactions) Lookup(ctx context.Context, id, browserBinding string) (TransactionView, error) {
 	tx, err := t.get(ctx, id)
 	if err != nil {
@@ -971,7 +983,45 @@ func (t *Transactions) Lookup(ctx context.Context, id, browserBinding string) (T
 	case status == TransactionDone && !now.Before(tx.ExpiresAt.Add(t.cfg.Lifetime)):
 		status = TransactionExpired
 	}
+	if status == TransactionDone && t.cfg.ForgetResultOnRead {
+		return t.takeResult(ctx, id)
+	}
 	return viewOf(tx, status), nil
+}
+
+// takeResult is Lookup's view of the completed request id under
+// ForgetResultOnRead: its result, dropped from the store as it's read,
+// so of concurrent Lookups only one has it.
+func (t *Transactions) takeResult(ctx context.Context, id string) (TransactionView, error) {
+	var view TransactionView
+	err := t.update(ctx, id, func(cur *Transaction) error {
+		if cur.Status != TransactionDone {
+			view = viewOf(*cur, cur.Status)
+			return nil
+		}
+		view = t.release(cur)
+		return nil
+	})
+	if err != nil {
+		return TransactionView{}, err
+	}
+	return view, nil
+}
+
+// release is the view of cur, just completed or about to be read
+// completed, with its result; under ForgetResultOnRead, cur's result is
+// then dropped, as Forget does.
+func (t *Transactions) release(cur *Transaction) TransactionView {
+	view := viewOf(*cur, TransactionDone)
+	if t.cfg.ForgetResultOnRead {
+		forget(cur)
+	}
+	return view
+}
+
+// forget drops cur's result and closes it (Forget).
+func forget(cur *Transaction) {
+	cur.Status, cur.ResponseCodeHash, cur.Result, cur.LastError = TransactionClosed, "", nil, ""
 }
 
 // Close ends the request id without a result — for example the other
@@ -1001,7 +1051,7 @@ func (t *Transactions) Close(ctx context.Context, id string) error {
 // call it only from the Verifier's own logic.
 func (t *Transactions) Forget(ctx context.Context, id string) error {
 	return t.update(ctx, id, func(cur *Transaction) error {
-		cur.Status, cur.ResponseCodeHash, cur.Result, cur.LastError = TransactionClosed, "", nil, ""
+		forget(cur)
 		return nil
 	})
 }

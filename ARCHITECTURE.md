@@ -1331,8 +1331,13 @@ changes whether *every* bullet below is `(done)`.
   refused answer's `LastError` is kept short and printable, with a
   Wallet's own error response reduced to its error code. The store's capabilities
   (`Durable`, `AtomicUpdate`) are checked against the assurance level,
-  as for `issuer`'s stores. `verifiertest` holds contract tests for a
-  caller's own certificate-chain issuer key resolver.
+  as for `issuer`'s stores. `TransactionCodec` encodes a transaction,
+  every field with its types, for a store that keeps it outside the
+  process, and with a `TransactionSealer` (`AESGCMSealer`) seals the
+  response decryption key and the holder's claims at rest;
+  `ForgetResultOnRead` drops a result once it's been read.
+  `verifiertest` holds contract tests for a caller's own
+  certificate-chain issuer key resolver.
 - **`wallet`** (extended, done for `dc+sd-jwt`+`mso_mdoc`) — the naming
   question above is now resolved: OID4VP's Wallet role lives in the
   existing `wallet` package rather than a distinct one — "Wallet" is
