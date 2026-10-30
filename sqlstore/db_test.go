@@ -12,6 +12,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/issuer"
 	"github.com/idfoundry/oid4vcgo/sqlstore"
 	"github.com/idfoundry/oid4vcgo/verifier"
+	"github.com/idfoundry/oid4vcgo/walletflow"
 )
 
 func TestNewRefusesBadOptions(t *testing.T) {
@@ -138,10 +139,12 @@ func TestSweep(t *testing.T) {
 		mustDo(d.DeferredTransactions().Create(ctx, "old", issuer.DeferredTransactionRecord{ExpiresAt: past}))
 		mustDo(d.Transactions(verifier.TransactionCodec{}).Create(ctx, verifier.Transaction{ID: "kept", ExpiresAt: past, RetainUntil: future, Status: verifier.TransactionPending}))
 		mustDo(d.Transactions(verifier.TransactionCodec{}).Create(ctx, verifier.Transaction{ID: "gone", KeyID: "k", ExpiresAt: past, RetainUntil: past, Status: verifier.TransactionPending}))
+		mustDo(d.Authorizations().PutAuthorization(ctx, walletflow.PendingAuthorization{State: "old", ExpiresAt: past}))
+		mustDo(d.Credentials().Put(ctx, walletflow.StoredCredential{ID: "c"}))
 
 		n, err := d.Sweep(ctx, now)
-		if err != nil || n != 3 {
-			t.Errorf("Sweep = %d, %v; want 3 deleted", n, err)
+		if err != nil || n != 4 {
+			t.Errorf("Sweep = %d, %v; want 4 deleted", n, err)
 		}
 		if _, err := d.Nonces().Consume(ctx, issuer.NonceConsumption{Nonce: "old"}); !errors.Is(err, issuer.ErrNonceUnknown) {
 			t.Errorf("an expired nonce survived the sweep: %v", err)
@@ -157,6 +160,9 @@ func TestSweep(t *testing.T) {
 		}
 		if _, err := d.Transactions(verifier.TransactionCodec{}).IDByKeyID(ctx, "k"); !errors.Is(err, verifier.ErrTransactionUnknown) {
 			t.Errorf("a transaction past its retention survived the sweep: %v", err)
+		}
+		if _, err := d.Credentials().Get(ctx, "c"); err != nil {
+			t.Errorf("a credential was swept: %v", err)
 		}
 	})
 }
