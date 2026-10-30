@@ -82,24 +82,19 @@ final class WalletModel {
     init() {
         guard let config = DemoConfiguration.load() else { return }
         do {
-            // Secure Enclave keys, kept in the Keychain; holder keys need
-            // Face ID or the passcode to present. The Simulator can't make
-            // a Secure Enclave key requiring user presence (OSStatus
-            // -25293), so there they don't.
-            #if targetEnvironment(simulator)
-            let presence = false
-            #else
+            // Secure Enclave keys, kept in the Keychain. Presenting asks
+            // for Face ID or the passcode (SharedWallet.confirmHolder).
+            #if !targetEnvironment(simulator)
             // Without a passcode, holder keys would present with no one
             // there to agree: don't run.
             guard LAContext().canEvaluatePolicy(.deviceOwnerAuthentication, error: nil) else {
                 unavailable = "Set a device passcode to use this wallet: presenting a credential needs Face ID or the passcode."
                 return
             }
-            let presence = true
             #endif
             // Holder keys in the access group the document provider
             // extension shares, so it can present.
-            let keys = SharedWallet.keyStore(presence: presence)
+            let keys = SharedWallet.keyStore()
             self.keys = keys
             self.config = config
             // A reset (OID4VC_DEMO_RESET) starts from the configuration's
@@ -310,10 +305,17 @@ final class WalletModel {
         }
     }
 
-    /// Shares the selected credentials: holder keys sign now, so Face ID
-    /// or the passcode is asked for on a device.
+    /// Shares the selected credentials once the holder confirms with Face
+    /// ID or the passcode: holder keys sign now.
     func share() async {
         guard let presentation, canShare, let selection = previewed else { return }
+        do {
+            try await SharedWallet.confirmHolder(reason: "Share your credentials with \(presentation.verifier.name).")
+        } catch {
+            // A cancelled prompt leaves the request standing.
+            notice = Self.describe(error)
+            return
+        }
         requestPhase = .sharing
         do {
             let presented = try await presentation.respond(selection: selection)

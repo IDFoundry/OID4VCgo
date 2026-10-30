@@ -156,7 +156,13 @@ public class AndroidKeystoreKeyStore(
         val strongBox: StrongBox = StrongBox.PREFERRED,
         /**
          * Require the holder's biometrics or screen lock for each
-         * signature by a holder key — that is, to present a credential.
+         * signature by a holder key: to present a credential, and to
+         * sign each Credential Request's jwt proof, so receiving and
+         * refreshing credentials ask too, once per Credential Request,
+         * even when an app refreshes without the holder. Keystore
+         * enforces it. Off, an app wanting the holder to confirm only
+         * presentations asks for it itself (BiometricPrompt) before
+         * presenting: a check the app's own code keeps, not the key.
          * It needs a secure lock screen; without one, creating a holder
          * key fails. It needs API 30: below it the key store refuses it
          * at construction; set it false there, and authenticate the

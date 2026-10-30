@@ -131,10 +131,19 @@ so at any time), for 24 hours.
 
 ## On a device
 
-On a device, holder keys require Face ID or the passcode. They don't on
-the Simulator, which can't create a Secure Enclave key requiring user
-presence. Face ID needs the app's `NSFaceIDUsageDescription` (in
-`project.yml`): without it, iOS asks for the passcode instead.
+On a device, the app asks for Face ID or the passcode before each
+presentation, and nowhere else: receiving and refreshing credentials
+don't ask. The check is the app's, not the holder keys' own: a key
+requiring user presence would ask for every Credential Request's proof
+too, including those of the copies the app refreshes by itself
+(`KeychainKeyStore.Options.holderUserPresence` describes the trade-off).
+The Simulator doesn't ask. Face ID needs the app's
+`NSFaceIDUsageDescription` (in `project.yml`): without it, iOS asks for
+the passcode instead.
+
+Holder keys made before this change still require user presence, and
+ask whenever they sign: reset the app (`OID4VC_DEMO_RESET=1`) or receive
+the credentials again.
 
 The phone can't reach services on this Mac's loopback address, so the
 passport-vdc demo's issuer, verifier and Wallet Provider go on public

@@ -40,8 +40,8 @@ targets:
         NSCameraUsageDescription: Scans credential offer and presentation request QR codes.
         # Sharing in person, and reader mode (ISO/IEC 18013-5 over BLE).
         NSBluetoothAlwaysUsageDescription: Connects to the reader you show your QR code to, or to the phone you verify, to share credentials in person.
-        # Without it, iOS asks for the passcode instead of Face ID when a
-        # holder key (Secure Enclave, user presence) signs.
+        # Without it, iOS asks for the passcode instead of Face ID before
+        # the app presents.
         NSFaceIDUsageDescription: Confirms it's you before your credentials' keys sign a presentation.
         # The Keychain access group holder keys are made in, shared with
         # the document provider extension (Shared/SharedWallet.swift).

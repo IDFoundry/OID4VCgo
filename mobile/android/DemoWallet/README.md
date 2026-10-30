@@ -18,8 +18,15 @@ scanned), and presents them in answer to a presentation request link
   completes when the redirect arrives.
 - **Presenting:** who's asking (and its registration), the credentials
   that can answer each query, and exactly what sharing them discloses,
-  previewed as the selection changes. Sharing has the holder key sign,
-  which asks for the holder's fingerprint or screen lock.
+  previewed as the selection changes. Sharing asks for the holder's
+  fingerprint, face or screen lock first, and only sharing does:
+  receiving and refreshing credentials don't. The check is the app's,
+  not the holder keys' own: a key requiring the holder for each use
+  would ask for every Credential Request's proof too, including those
+  of copies refreshed in the background
+  (`AndroidKeystoreKeyStore.Options.holderUserAuthentication` describes
+  the trade-off). Holder keys made before this change still ask each
+  time they sign, until the credentials are received again.
 - **Holding:** cards in the issuer's colours grouped by whose they are,
   with claims and portraits; status checked at launch and on demand;
   copies, refreshed without the holder once used up.
@@ -219,7 +226,7 @@ reader that scans it, not for anything that can read the device's log.
 `../DemoWalletUITests` is a self-instrumenting test app driving the
 installed demo from outside, with UiAutomator, as the iOS demo's
 XCUITests do: it quits and relaunches the app, and answers the system's
-screen-lock prompt when a holder key signs. The script starts
+screen-lock prompt before the app shares. The script starts
 `mobile/cmd/testservices`, forwards their ports into the device, pushes
 their CA to the app and hands it to the tests, which reach the services'
 control endpoint over it. The tests cover both grants (the authorization
