@@ -12,7 +12,6 @@ import (
 	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/x509"
-	"encoding/asn1"
 	"errors"
 	"fmt"
 	"time"
@@ -24,7 +23,7 @@ import (
 
 // EKU is the extended key usage of an mdoc reader authentication
 // certificate (ISO/IEC 18013-5 Annex B.1.7: 1.0.18013.5.1.6).
-var EKU = asn1.ObjectIdentifier{1, 0, 18013, 5, 1, 6}
+var EKU = certchain.ReaderAuthenticationEKU
 
 // RequireEKU is a Trust.LeafPolicy refusing a reader certificate
 // without EKU, or whose every verified path has an intermediate CA
