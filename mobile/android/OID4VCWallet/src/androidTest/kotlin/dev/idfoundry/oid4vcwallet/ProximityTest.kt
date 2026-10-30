@@ -111,7 +111,7 @@ class ProximityTest {
         val reader = if (signed) {
             ProximityReader(readerConfig, keys)
         } else {
-            ProximityReader(ProximityReaderConfiguration(issuerRoots = readerConfig.issuerRoots))
+            ProximityReader(ProximityReaderConfiguration(issuerRoots = readerConfig.issuerRoots, development = true))
         }
         return Setup(wallet, reader, mdocID, env)
     }
@@ -133,6 +133,26 @@ class ProximityTest {
             } as? ProximityPresentation.State.RequestReceived
             ?: throw AssertionError("no request: ${holder.state.value}")
             ).request
+
+    /** A reader is a production one unless `development` is set: a configuration leaving its decisions open is `invalid_input`. */
+    @Test
+    fun readerIsProductionByDefault() {
+        val issuerRoots = TestEnv().also { envs += it }.configuration.issuerRoots
+        try {
+            ProximityReader(ProximityReaderConfiguration(issuerRoots = issuerRoots))
+            throw AssertionError("an undecided production reader was configured")
+        } catch (e: WalletException) {
+            assertEquals(WalletException.Code.invalidInput, e.code)
+        }
+        ProximityReader(ProximityReaderConfiguration(issuerRoots = issuerRoots, development = true))
+        ProximityReader(
+            ProximityReaderConfiguration(
+                issuerRoots = issuerRoots,
+                noRevocationCheck = listOf(ProximityReaderConfiguration.RevocationRole.ISSUER, ProximityReaderConfiguration.RevocationRole.STATUS),
+                anyIssuerForAnyType = true,
+            ),
+        )
+    }
 
     @Test
     fun presentAndVerify(): Unit = runBlocking {
