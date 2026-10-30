@@ -72,6 +72,20 @@ public protocol CredentialStore: Sendable {
     /// Deletes the record; deleting one that doesn't exist isn't an
     /// error.
     func delete(id: String) throws
+    /// Replaces the record under `id` with `record` — or deletes it, when
+    /// `record` is nil — only if what's stored there is, byte for byte,
+    /// `expected` (nil: no record), and returns what was stored before,
+    /// whether or not it replaced it.
+    ///
+    /// It must be atomic across every process sharing the store — an
+    /// app and its document provider extension: nothing may write the
+    /// record between its read and its write, so ``put(id:record:)`` and
+    /// ``delete(id:)`` take the same lock, one both processes see (a file
+    /// lock, not an `NSLock`). The wallet changes records only this way,
+    /// so two processes never both present one copy as unused, complete
+    /// one authorization, or redeem one refresh token.
+    /// ``FileCredentialStore`` locks a file in its directory.
+    func compareAndSwap(id: String, expected: Data?, record: Data?) throws -> Data?
     /// Whether records survive the app quitting. Receiving credentials
     /// needs a durable store unless the configuration is for development:
     /// it also keeps an authorization in progress while the holder is at
@@ -160,6 +174,12 @@ final class CredentialStoreAdapter: NSObject, MobileCredentialStoreProtocol, @un
     }
 
     func delete(_ id: String?) throws { try store.delete(id: id ?? "") }
+
+    // Go's empty record is no record, either way.
+    func compareAndSwap(_ id: String?, expected: Data?, record: Data?) throws -> Data {
+        let nonEmpty = { (d: Data?) -> Data? in d?.isEmpty == false ? d : nil }
+        return try store.compareAndSwap(id: id ?? "", expected: nonEmpty(expected), record: nonEmpty(record)) ?? Data()
+    }
 
     func durable() -> Bool { store.isDurable }
 }

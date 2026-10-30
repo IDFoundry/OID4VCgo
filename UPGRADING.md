@@ -291,6 +291,74 @@ them.
   contract checks it), and an issuer issuing such a transaction needs
   the `ProofBindingKeys` that resolved it.
 
+### Wallet stores (`walletflow`)
+
+Several Wallets — in separate processes, such as an app and its
+extension or a server's replicas — may now share one set of stores.
+Every read-modify-write of a stored record is one atomic store
+operation, where it used to be a read then a write under a lock inside
+one Wallet. A store of your own implements the new methods:
+
+- **`AuthorizationStore.ConsumeAuthorization(ctx, state)`** returns
+  the authorization and deletes it in one step. Of concurrent calls for
+  one state, exactly one gets it, and the others get an error wrapping
+  `ErrNotFound`. In SQL, use `DELETE … RETURNING`, or a `SELECT … FOR
+  UPDATE` and a `DELETE` in one transaction.
+- **`CredentialStore.Update(ctx, id, fn)`** and
+  **`GrantStore.UpdateGrant(ctx, id, fn)`** load the record, call `fn`
+  on it and store the result atomically, as the issuer's
+  `DeferredTransactionStore.Update` and the verifier's
+  `TransactionStore.Update` already do. An unknown record is
+  `ErrNotFound`. An error from `fn` stores nothing and is returned. A
+  store may call `fn` again on the current record after a conflicting
+  write, as an optimistic compare-and-swap does. In SQL, use a
+  transaction with `SELECT … FOR UPDATE`, or a conditional `UPDATE` on a
+  version column, retried.
+- **New fields to persist.** `CredentialCopy.Reservation` marks the
+  latest presentation that reserved the copy. A presentation that isn't
+  sent undoes only its own reservation, whichever Wallet made a later
+  one. `RefreshGrant.Redemption` and `RedemptionExpiresAt` claim a
+  grant while a refresh redeems its token. A store that drops them
+  loses that protection between Wallets.
+- **`ErrRefreshInProgress`.** `Wallet.RefreshCredential` returns an
+  error wrapping it when another Wallet sharing the `GrantStore` is
+  redeeming the same refresh grant. Before, both would have redeemed
+  the token, and an Authorization Server that rotates refresh tokens
+  takes that for a replay. Try again later. A claim lapses after two
+  minutes if its Wallet stopped mid-refresh. Refreshes within one
+  Wallet still wait for each other.
+- `walletflow/storetest` checks the new operations, including under
+  concurrency. Run `TestSharedCredentialStoreContract`,
+  `TestSharedAuthorizationStoreContract` and
+  `TestSharedGrantStoreContract` with a separate handle per goroutine
+  on one storage.
+- `KeysInUse` still knows only the issuances open in its own Wallet:
+  sweep keys only while no Wallet sharing the stores has an issuance or
+  refresh under way.
+
+### Mobile (ABI 13; the Swift and Kotlin libraries)
+
+- **`ABIVersion` is 13.** The Swift and Kotlin libraries refuse a
+  framework built for another version: upgrade them together.
+- **A `CredentialStore` of your own implements `compareAndSwap`.**
+  Swift: `compareAndSwap(id:expected:record:) throws -> Data?`. Kotlin:
+  `compareAndSwap(id, expected, record): ByteArray?`. Gomobile:
+  `CompareAndSwap(id, expected, record) → []byte`. Replace `id`'s
+  record with `record`, or delete it when `record` is nil or empty,
+  only if the stored record is byte for byte `expected`. Return what
+  was stored before. This must be atomic across every process that
+  shares the store. Take the same lock in `put` and `delete`, and
+  compare the plaintext if the store encrypts. `FileCredentialStore`
+  on both platforms now does this with a file lock in its directory,
+  so an iOS app and its extension can share one through
+  `FileCredentialStore.inAppGroup`.
+- `RefreshCredential` can now fail with `unavailable` and the detail
+  `refresh_in_progress` while another process sharing the store is
+  refreshing with the same grant. It is retryable.
+- Records gain `reservation` on each copy, and `redemption` and
+  `redemption_expires_at` on refresh grants. The Go side writes them; a
+  store keeps them as it keeps the rest of a record.
+
 ## v0.55.0 → v0.56.0
 
 This release pins FAPIgo v0.65.1, which carries the breaking changes of

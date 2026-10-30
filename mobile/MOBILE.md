@@ -1147,11 +1147,11 @@ document providers, so a page there reports the API unsupported.
 - **Linkability** (#459): `mdocCandidates` lists only mdocs that can be
   presented, each saying whether its every copy has been shown to
   another website, so the sheet can warn before the holder chooses.
-- **Open:** the app and the extension each write a credential's record
-  under a lock that only spans their own process, so a refresh in the
-  app can overwrite the extension marking a copy presented. A lock
-  across processes would get a suspended app terminated, so this needs
-  writes that check the record's version.
+- **Resolved in ABI 13:** the app and the extension each wrote a
+  credential's record under a lock that only spanned their own process,
+  so a refresh in the app could overwrite the extension marking a copy
+  presented. Every change is now a `CompareAndSwap` (see "Shared stores
+  across processes").
 
 ## Phase 10: Proximity
 
@@ -1374,6 +1374,36 @@ be received from at all. Issuance now follows the issuer's metadata
   `issuance_profile`, so its wallet follows the default and receives
   from issuers outside HAIP. An app that relied on the old strictness
   sets `"haip"`.
+
+## Shared stores across processes (ABI 13)
+
+The iOS app and its document provider extension open a `Wallet` each
+over one App Group store; an Android app may run a store's users in
+more than one process too. walletflow's locks were per Wallet, so two
+processes could present one copy as unused, complete one authorization
+twice, or redeem one refresh token twice.
+
+- **One atomic primitive:** the app's `CredentialStore` gains
+  `CompareAndSwap(id, expected, record)`, which replaces (or, with an
+  empty record, deletes) a record only if it's still what the wallet
+  read, and returns what was there. The Go adapters build walletflow's
+  atomic operations on it — `Update`, `UpdateGrant`,
+  `ConsumeAuthorization` — reading again when another process got in
+  first. A refresh claims its grant in the store while it redeems the
+  token; another process's refresh then fails as `unavailable` with
+  the detail `refresh_in_progress`.
+- **The file stores lock their directory:** `FileCredentialStore` takes
+  an exclusive lock on a lock file in its directory for every write and
+  swap — `flock` on iOS, a `FileChannel` lock (with a lock per
+  directory inside the process, which a `FileChannel` lock isn't) on
+  Android. Reads take no lock: each record is replaced by an atomic
+  rename, so a reader sees one whole record, and a listing skips a
+  record deleted under it.
+- **Suspension:** iOS terminates a suspended process that holds a file
+  lock in a shared container (0xdead10cc). The lock is held only across
+  one record's read, compare and write — never across a network request
+  or the holder — so the window is milliseconds, not the whole
+  presentation.
 
 ## Open questions
 

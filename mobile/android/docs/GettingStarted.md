@@ -56,7 +56,10 @@ secure lock screen.
 `FileCredentialStore` encrypts each credential under a Keystore key that
 works only while the device is unlocked, in a directory no backup
 copies: a credential is useless without its holder key, which can't
-leave this device.
+leave this device. Its writes lock a file in that directory, so
+processes of the app that share it — a credential provider service in
+its own process, say — never both use one copy. A `CredentialStore` of
+your own implements `compareAndSwap` atomically across them too.
 
 ## Implement the Wallet Provider
 

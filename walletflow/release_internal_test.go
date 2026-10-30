@@ -2,6 +2,7 @@ package walletflow
 
 import (
 	"context"
+	"crypto/rand"
 	"testing"
 	"time"
 )
@@ -9,22 +10,32 @@ import (
 // A presentation that isn't sent leaves its copy marked when another
 // presentation to the same Verifier reserved that copy after it: that
 // one may have been sent, and undoing what it recorded would hand the
-// copy to the next Verifier as one no Verifier has seen.
+// copy to the next Verifier as one no Verifier has seen — whether the
+// later one was reserved by the same Wallet or by another sharing the
+// store (another process).
 func TestRelease_KeepsALaterReservation(t *testing.T) {
 	never := func(string) bool { return false }
 	for name, tc := range map[string]struct {
-		policy CopyPolicy
-		cred   StoredCredential
+		policy      CopyPolicy
+		cred        StoredCredential
+		otherWallet bool
 	}{
-		"per Verifier, reusing the copy": {CopyPerVerifier, StoredCredential{ID: "pid", Copies: []CredentialCopy{
+		"per Verifier, reusing the copy": {policy: CopyPerVerifier, cred: StoredCredential{ID: "pid", Copies: []CredentialCopy{
 			{Credential: "copy0", HolderKeyID: "k0"}, {Credential: "copy1", HolderKeyID: "k1"},
 		}}},
-		"per presentation, one copy": {CopyPerPresentation, StoredCredential{ID: "pid", Credential: "only", HolderKeyID: "k0"}},
+		"per presentation, one copy": {policy: CopyPerPresentation, cred: StoredCredential{ID: "pid", Credential: "only", HolderKeyID: "k0"}},
+		"per presentation, one copy, another Wallet": {
+			policy: CopyPerPresentation, cred: StoredCredential{ID: "pid", Credential: "only", HolderKeyID: "k0"}, otherWallet: true,
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			ctx := context.Background()
 			store := NewMemoryCredentialStore()
-			w := &Wallet{cfg: Config{CopyPolicy: tc.policy}, deps: Dependencies{Credentials: store, Clock: time.Now}}
+			w := &Wallet{cfg: Config{CopyPolicy: tc.policy}, deps: Dependencies{Credentials: store, Clock: time.Now, Random: rand.Reader}}
+			other := w
+			if tc.otherWallet {
+				other = &Wallet{cfg: w.cfg, deps: w.deps}
+			}
 			if err := store.Put(ctx, tc.cred); err != nil {
 				t.Fatal(err)
 			}
@@ -34,7 +45,7 @@ func TestRelease_KeepsALaterReservation(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			b, err := w.reserve(ctx, Selection{"q": {"pid"}}, v, never, shown)
+			b, err := other.reserve(ctx, Selection{"q": {"pid"}}, v, never, shown)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -64,7 +75,7 @@ func TestRelease_KeepsALaterReservation(t *testing.T) {
 func TestRelease_UndoesTheLatestReservation(t *testing.T) {
 	ctx := context.Background()
 	store := NewMemoryCredentialStore()
-	w := &Wallet{deps: Dependencies{Credentials: store, Clock: time.Now}}
+	w := &Wallet{deps: Dependencies{Credentials: store, Clock: time.Now, Random: rand.Reader}}
 	c := StoredCredential{ID: "pid", Credential: "only", HolderKeyID: "k0"}
 	if err := store.Put(ctx, c); err != nil {
 		t.Fatal(err)

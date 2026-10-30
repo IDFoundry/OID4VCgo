@@ -372,20 +372,13 @@ type Wallet struct {
 	// use until the issuance closes, however many credentials are stored
 	// yet.
 	openGrants map[string]bool
-	authMu     sync.Mutex // serializes consuming authorizations
-	// credMu serializes reading, changing and writing back a stored
-	// credential: choosing and marking the copies a presentation uses,
-	// recording a status, replacing a refreshed one, deleting one. It's
-	// never held across a network request.
-	credMu sync.Mutex
-	// reservations are, by copy, the latest presentation reserving it
-	// (reservedCopy.seq), under credMu: a presentation that isn't sent
-	// undoes its reservation only when no other has reserved the copy
-	// since, as that one may have been sent.
-	reservations map[copyRef]uint64
-	reserveSeq   uint64
 	// grantMu serializes refreshes per refresh grant (grantLocks, by
-	// grant ID), held across the refresh's requests.
+	// grant ID), held across the refresh's requests, so one here waits
+	// for another rather than find the grant claimed
+	// (ErrRefreshInProgress), as one in another Wallet sharing the
+	// GrantStore does. The stores' own atomic operations — consuming an
+	// authorization, updating a credential or a grant — keep every other
+	// read-modify-write safe across Wallets.
 	grantMu    sync.Mutex
 	grantLocks map[string]*sync.Mutex
 }
@@ -830,10 +823,10 @@ func (w *Wallet) DeleteCredential(ctx context.Context, id string) error {
 }
 
 // deleteCredential deletes the credential id names and its copies'
-// keys, and returns it.
+// keys, and returns it. A copy a refresh in another Wallet sharing the
+// store gave it between the two leaves its key behind, for a key sweep
+// (KeysInUse).
 func (w *Wallet) deleteCredential(ctx context.Context, id string) (StoredCredential, error) {
-	w.credMu.Lock()
-	defer w.credMu.Unlock()
 	c, err := w.deps.Credentials.Get(ctx, id)
 	if err != nil {
 		return StoredCredential{}, fmt.Errorf("walletflow: delete credential: %w", err)

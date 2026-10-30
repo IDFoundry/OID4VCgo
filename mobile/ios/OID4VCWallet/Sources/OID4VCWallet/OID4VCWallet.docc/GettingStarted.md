@@ -48,7 +48,11 @@ data protection, out of backups: a credential is useless without its
 holder key, which can't leave this device. An app with a document
 provider extension keeps both in places the extension can read too; see
 ``FileCredentialStore/inAppGroup(_:options:)`` and
-``KeychainKeyStore/Options/holderAccessGroup``.
+``KeychainKeyStore/Options/holderAccessGroup``. The app and the
+extension then share one store: a store of your own implements
+``CredentialStore/compareAndSwap(id:expected:record:)`` atomically
+across both processes, as ``FileCredentialStore`` does with a file
+lock.
 
 ### Implement the Wallet Provider
 

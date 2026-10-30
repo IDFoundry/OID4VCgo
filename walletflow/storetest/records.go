@@ -13,58 +13,6 @@ import (
 	"github.com/idfoundry/oid4vcgo/walletflow"
 )
 
-// TestCredentialStoreContract exercises factory()'s stores against
-// walletflow.CredentialStore's guarantees (see the package doc).
-// factory must return a fresh, empty store each call.
-func TestCredentialStoreContract(t *testing.T, factory func() walletflow.CredentialStore) {
-	t.Helper()
-	runRecordContract(t, recordKind[walletflow.StoredCredential]{
-		id:      func(c walletflow.StoredCredential) string { return c.ID },
-		full:    fullCredential,
-		minimal: func(id string) walletflow.StoredCredential { return walletflow.StoredCredential{ID: id} },
-	}, func() recordStore[walletflow.StoredCredential] {
-		s := factory()
-		return recordStore[walletflow.StoredCredential]{put: s.Put, get: s.Get, list: s.List, del: s.Delete}
-	})
-}
-
-// TestAuthorizationStoreContract exercises factory()'s stores against
-// walletflow.AuthorizationStore's guarantees (see the package doc). An
-// authorization is keyed by its State. factory must return a fresh,
-// empty store each call.
-func TestAuthorizationStoreContract(t *testing.T, factory func() walletflow.AuthorizationStore) {
-	t.Helper()
-	runRecordContract(t, recordKind[walletflow.PendingAuthorization]{
-		id:   func(a walletflow.PendingAuthorization) string { return a.State },
-		full: fullAuthorization,
-		minimal: func(state string) walletflow.PendingAuthorization {
-			return walletflow.PendingAuthorization{State: state, Session: json.RawMessage(`{"s":"` + state + `"}`)}
-		},
-	}, func() recordStore[walletflow.PendingAuthorization] {
-		s := factory()
-		return recordStore[walletflow.PendingAuthorization]{
-			put: s.PutAuthorization, get: s.GetAuthorization, list: s.ListAuthorizations, del: s.DeleteAuthorization, durable: s.Durable,
-		}
-	})
-}
-
-// TestGrantStoreContract exercises factory()'s stores against
-// walletflow.GrantStore's guarantees (see the package doc). factory must
-// return a fresh, empty store each call.
-func TestGrantStoreContract(t *testing.T, factory func() walletflow.GrantStore) {
-	t.Helper()
-	runRecordContract(t, recordKind[walletflow.RefreshGrant]{
-		id:   func(g walletflow.RefreshGrant) string { return g.ID },
-		full: fullGrant,
-		minimal: func(id string) walletflow.RefreshGrant {
-			return walletflow.RefreshGrant{ID: id, RefreshToken: fapi.NewSecret("refresh-" + id)}
-		},
-	}, func() recordStore[walletflow.RefreshGrant] {
-		s := factory()
-		return recordStore[walletflow.RefreshGrant]{put: s.PutGrant, get: s.GetGrant, list: s.ListGrants, del: s.DeleteGrant, durable: s.Durable}
-	})
-}
-
 // TestDeferredStoreContract exercises factory()'s stores against
 // walletflow.DeferredStore's guarantees (see the package doc). With no
 // lookup by ID, a record is found by listing. factory must return a
@@ -99,7 +47,7 @@ func fullCredential(id string, v int) walletflow.StoredCredential {
 		return walletflow.CredentialCopy{
 			Credential: text(fmt.Sprintf("copy%d", n)), HolderKeyID: text(fmt.Sprintf("key%d", n)), Presented: true,
 			ShownTo:    []string{walletflow.VerifierHash(text("verifier-a")), walletflow.VerifierHash(text("verifier-b"))},
-			StatusList: statusList(n), ValidUntil: at(60+n, v),
+			StatusList: statusList(n), ValidUntil: at(60+n, v), Reservation: text(fmt.Sprintf("reservation%d", n)),
 		}
 	}
 	logo := func(field string) *walletflow.Logo {
@@ -153,6 +101,7 @@ func fullGrant(id string, v int) walletflow.RefreshGrant {
 		ID: id, CredentialIssuer: "https://issuer.example/" + text("issuer"), AuthorizationServer: "https://as.example/" + text("as"),
 		ConfigurationID: text("config"), RefreshToken: fapi.NewSecret(text("refresh")), InstanceKeyID: text("instance"),
 		CreatedAt: at(3, v), ClientAuth: walletflow.GrantAuthNone, DPoPKeyID: text("dpop"), TokenType: "Bearer",
+		Redemption: text("redemption"), RedemptionExpiresAt: at(5, v),
 	}
 }
 

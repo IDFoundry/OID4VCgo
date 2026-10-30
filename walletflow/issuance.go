@@ -1276,8 +1276,6 @@ func (w *Wallet) store(ctx context.Context, stored StoredCredential, c issued) e
 	if c.replace == "" {
 		return w.deps.Credentials.Put(ctx, stored)
 	}
-	w.credMu.Lock()
-	defer w.credMu.Unlock()
 	return w.replaceStored(ctx, stored, c.grantID)
 }
 

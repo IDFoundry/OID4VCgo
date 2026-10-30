@@ -1,6 +1,7 @@
 package mobile
 
 import (
+	"bytes"
 	"context"
 	"crypto"
 	"crypto/ecdsa"
@@ -36,6 +37,16 @@ type CredentialStore interface {
 	// Delete deletes id's record. Deleting one that doesn't exist isn't
 	// an error.
 	Delete(id string) error
+	// CompareAndSwap replaces id's record with record — deletes it, when
+	// record is empty — only if what's stored under id is, byte for
+	// byte, expected (empty: no record), and returns what was stored
+	// before, whether or not it replaced it. It's atomic across every
+	// process sharing the store (an app and its extension): nothing else
+	// writes id's record — no Put, Delete or other CompareAndSwap —
+	// between its read and its write. The wallet changes a record only
+	// this way, so two processes never both use one credential copy,
+	// complete one authorization, or redeem one refresh token.
+	CompareAndSwap(id string, expected, record []byte) ([]byte, error)
 	// Durable reports whether records survive the app quitting.
 	// Receiving credentials needs a durable CredentialStore unless the
 	// wallet is configured for development: it also keeps the
@@ -98,10 +109,13 @@ type copyJSON struct {
 	// written before they were kept.
 	StatusList *statusListJSON `json:"status_list,omitempty"`
 	ValidUntil *time.Time      `json:"valid_until,omitempty"`
+	// Reservation: the latest presentation reserving the copy, absent
+	// when none may still undo it.
+	Reservation string `json:"reservation,omitempty"`
 }
 
 func copyOf(cp walletflow.CredentialCopy) copyJSON {
-	r := copyJSON{Credential: cp.Credential, HolderKeyID: cp.HolderKeyID, Presented: cp.Presented, ShownTo: cp.ShownTo}
+	r := copyJSON{Credential: cp.Credential, HolderKeyID: cp.HolderKeyID, Presented: cp.Presented, ShownTo: cp.ShownTo, Reservation: cp.Reservation}
 	if cp.StatusList != nil {
 		r.StatusList = &statusListJSON{Idx: cp.StatusList.Idx, URI: cp.StatusList.URI}
 	}
@@ -112,7 +126,7 @@ func copyOf(cp walletflow.CredentialCopy) copyJSON {
 }
 
 func (r copyJSON) copy() walletflow.CredentialCopy {
-	cp := walletflow.CredentialCopy{Credential: r.Credential, HolderKeyID: r.HolderKeyID, Presented: r.Presented, ShownTo: r.ShownTo}
+	cp := walletflow.CredentialCopy{Credential: r.Credential, HolderKeyID: r.HolderKeyID, Presented: r.Presented, ShownTo: r.ShownTo, Reservation: r.Reservation}
 	if r.StatusList != nil {
 		cp.StatusList = &statuslist.StatusListRef{Idx: r.StatusList.Idx, URI: r.StatusList.URI}
 	}
@@ -316,13 +330,9 @@ type credentialStore struct{ cs CredentialStore }
 var _ walletflow.CredentialStore = credentialStore{}
 
 func (s credentialStore) Put(_ context.Context, c walletflow.StoredCredential) error {
-	r, err := recordOf(c)
+	raw, err := encodeCredential(c)
 	if err != nil {
-		return newError(CodeInternal, err)
-	}
-	raw, err := json.Marshal(r)
-	if err != nil {
-		return newError(CodeInternal, err)
+		return err
 	}
 	if err := s.cs.Put(c.ID, raw); err != nil {
 		return newError(CodePlatform, fmt.Errorf("store credential: %w", err))
@@ -335,6 +345,61 @@ func (s credentialStore) Get(_ context.Context, id string) (walletflow.StoredCre
 	if err != nil {
 		return walletflow.StoredCredential{}, newError(CodePlatform, fmt.Errorf("credential %q: %w", id, err))
 	}
+	return decodeCredential(id, raw)
+}
+
+// Update implements walletflow.CredentialStore with the app's
+// CompareAndSwap (swapRecord): fn may be called again when another
+// process changed the credential first.
+func (s credentialStore) Update(_ context.Context, id string, fn func(*walletflow.StoredCredential) error) error {
+	return updateRecord(s.cs, id, id, recordCodec[walletflow.StoredCredential]{
+		decode: decodeCredential, encode: encodeCredential, id: func(c walletflow.StoredCredential) string { return c.ID },
+	}, fn)
+}
+
+// recordCodec is how one kind of record is kept in the CredentialStore.
+type recordCodec[T any] struct {
+	// decode is the record id names from raw: walletflow.ErrNotFound
+	// when raw is empty.
+	decode func(id string, raw []byte) (T, error)
+	encode func(T) ([]byte, error)
+	id     func(T) string
+}
+
+// updateRecord is an Update of the record id names, kept under storeID
+// in cs, by swapRecord.
+func updateRecord[T any](cs CredentialStore, storeID, id string, codec recordCodec[T], fn func(*T) error) error {
+	return swapRecord(cs, storeID, func(raw []byte) ([]byte, error) {
+		r, err := codec.decode(id, raw)
+		if err != nil {
+			return nil, err
+		}
+		if err := fn(&r); err != nil {
+			return nil, err
+		}
+		if codec.id(r) != id {
+			return nil, newError(CodeInternal, fmt.Errorf("an update changed record %q's ID", id))
+		}
+		return codec.encode(r)
+	})
+}
+
+// encodeCredential is c as the CredentialStore keeps it.
+func encodeCredential(c walletflow.StoredCredential) ([]byte, error) {
+	r, err := recordOf(c)
+	if err != nil {
+		return nil, newError(CodeInternal, err)
+	}
+	raw, err := json.Marshal(r)
+	if err != nil {
+		return nil, newError(CodeInternal, err)
+	}
+	return raw, nil
+}
+
+// decodeCredential is credential id from raw, its record in the
+// CredentialStore: walletflow.ErrNotFound when there's none.
+func decodeCredential(id string, raw []byte) (walletflow.StoredCredential, error) {
 	if len(raw) == 0 {
 		return walletflow.StoredCredential{}, fmt.Errorf("mobile: credential %q: %w", id, walletflow.ErrNotFound)
 	}
@@ -393,6 +458,37 @@ func (s credentialStore) Delete(_ context.Context, id string) error {
 		return newError(CodePlatform, fmt.Errorf("delete credential %q: %w", id, err))
 	}
 	return nil
+}
+
+// maxSwapAttempts bounds swapRecord's attempts while other writers keep
+// changing the record first.
+const maxSwapAttempts = 32
+
+// swapRecord changes the record storeID in cs atomically, across every
+// process sharing the store: it reads it — empty when there's none —
+// has change make the record to store in its place, empty to delete it,
+// and swaps that in with cs.CompareAndSwap only if the record is still
+// what it read, reading again when another write got in first. change's
+// error aborts it, changing nothing.
+func swapRecord(cs CredentialStore, storeID string, change func(raw []byte) ([]byte, error)) error {
+	for range maxSwapAttempts {
+		raw, err := cs.Get(storeID)
+		if err != nil {
+			return newError(CodePlatform, fmt.Errorf("read a record: %w", err))
+		}
+		next, err := change(raw)
+		if err != nil {
+			return err
+		}
+		prev, err := cs.CompareAndSwap(storeID, raw, next)
+		if err != nil {
+			return newError(CodePlatform, fmt.Errorf("update a record: %w", err))
+		}
+		if bytes.Equal(prev, raw) {
+			return nil
+		}
+	}
+	return newError(CodePlatform, errors.New("a record kept changing while it was updated"))
 }
 
 // listRecords returns every record in cs.
@@ -575,6 +671,29 @@ func (s authorizationStore) GetAuthorization(_ context.Context, state string) (w
 	if err != nil {
 		return walletflow.PendingAuthorization{}, newError(CodePlatform, fmt.Errorf("authorization: %w", err))
 	}
+	return decodeAuthorization(state, raw)
+}
+
+// ConsumeAuthorization implements walletflow.AuthorizationStore,
+// deleting the record with the app's CompareAndSwap (swapRecord) only if
+// it's still the one read: of two processes consuming it, one gets it.
+func (s authorizationStore) ConsumeAuthorization(_ context.Context, state string) (walletflow.PendingAuthorization, error) {
+	var a walletflow.PendingAuthorization
+	err := swapRecord(s.cs, authorizationStoreID(state), func(raw []byte) ([]byte, error) {
+		var err error
+		a, err = decodeAuthorization(state, raw)
+		return nil, err
+	})
+	if err != nil {
+		return walletflow.PendingAuthorization{}, err
+	}
+	return a, nil
+}
+
+// decodeAuthorization is the authorization state names from raw, its
+// record in the CredentialStore: walletflow.ErrNotFound when there's
+// none.
+func decodeAuthorization(state string, raw []byte) (walletflow.PendingAuthorization, error) {
 	if len(raw) == 0 {
 		return walletflow.PendingAuthorization{}, fmt.Errorf("mobile: authorization: %w", walletflow.ErrNotFound)
 	}

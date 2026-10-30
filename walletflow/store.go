@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"slices"
 	"sort"
@@ -111,6 +112,14 @@ type CredentialCopy struct {
 	// they were kept has neither, the credential's own applying.
 	StatusList *statuslist.StatusListRef
 	ValidUntil time.Time
+
+	// Reservation identifies the latest presentation that reserved this
+	// copy and may still undo it: one that isn't sent undoes its
+	// reservation only while it's still the latest, so what a later one
+	// recorded, sent or not, stands — whichever Wallet sharing the store
+	// made it. It's random, walletflow's own, and "" once undone, or for
+	// a copy no presentation has reserved since it was kept.
+	Reservation string
 }
 
 // VerifierHash is how a CredentialCopy's ShownTo records the Verifier
@@ -241,6 +250,11 @@ func (c StoredCredential) nextCopy(verifierHash string, now time.Time) (int, Cre
 
 // CredentialStore holds the wallet's credentials. They carry personal
 // data: on a phone, keep them under the platform's data protection.
+//
+// Several Wallets — in several processes: an app and its extension, or
+// a server's replicas — may share one store. walletflow changes a stored
+// credential only through Update, which the store makes atomic across
+// all of them.
 type CredentialStore interface {
 	// Put stores c, replacing any credential with the same ID.
 	Put(ctx context.Context, c StoredCredential) error
@@ -249,6 +263,17 @@ type CredentialStore interface {
 	Get(ctx context.Context, id string) (StoredCredential, error)
 	// List returns every stored credential.
 	List(ctx context.Context) ([]StoredCredential, error)
+	// Update loads the credential id names, calls fn on it, and stores
+	// the result, atomically: across every Wallet sharing the store,
+	// concurrent Updates of one credential take effect one after
+	// another, and none is lost to a Put or Delete in between — a
+	// database transaction reading it FOR UPDATE, say, or a conditional
+	// UPDATE. It returns an error wrapping ErrNotFound for a credential
+	// the store doesn't hold. fn's error aborts the update, storing
+	// nothing, and is returned. A store may call fn more than once, each
+	// time on the credential as it is then, when another update got in
+	// first: fn changes only the record it's given, and never its ID.
+	Update(ctx context.Context, id string, fn func(*StoredCredential) error) error
 	// Delete deletes the credential id names. Deleting one that doesn't
 	// exist isn't an error.
 	Delete(ctx context.Context, id string) error
@@ -270,7 +295,7 @@ func NewMemoryCredentialStore() *MemoryCredentialStore {
 func (s *MemoryCredentialStore) Put(_ context.Context, c StoredCredential) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.credentials[c.ID] = c
+	s.credentials[c.ID] = cloneCredential(c)
 	return nil
 }
 
@@ -282,7 +307,14 @@ func (s *MemoryCredentialStore) Get(_ context.Context, id string) (StoredCredent
 	if !ok {
 		return StoredCredential{}, fmt.Errorf("walletflow: credential %q: %w", id, ErrNotFound)
 	}
-	return c, nil
+	return cloneCredential(c), nil
+}
+
+// Update implements CredentialStore, calling fn once.
+func (s *MemoryCredentialStore) Update(_ context.Context, id string, fn func(*StoredCredential) error) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return updateRecord(s.credentials, id, "credential", cloneCredential, func(c StoredCredential) string { return c.ID }, fn)
 }
 
 // List implements CredentialStore, oldest first.
@@ -291,7 +323,7 @@ func (s *MemoryCredentialStore) List(context.Context) ([]StoredCredential, error
 	defer s.mu.Unlock()
 	out := make([]StoredCredential, 0, len(s.credentials))
 	for _, c := range s.credentials {
-		out = append(out, c)
+		out = append(out, cloneCredential(c))
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if !out[i].ReceivedAt.Equal(out[j].ReceivedAt) {
@@ -307,5 +339,41 @@ func (s *MemoryCredentialStore) Delete(_ context.Context, id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.credentials, id)
+	return nil
+}
+
+// errUnchanged aborts an Update that finds nothing to change.
+var errUnchanged = errors.New("walletflow: nothing to change")
+
+// cloneCredential is c sharing no copy with it, so neither a caller's
+// changes nor an aborted Update reach what a MemoryCredentialStore
+// holds. Claims, which walletflow never changes, are shared.
+func cloneCredential(c StoredCredential) StoredCredential {
+	if c.Copies != nil {
+		c.Copies = slices.Clone(c.Copies)
+		for i := range c.Copies {
+			c.Copies[i].ShownTo = slices.Clone(c.Copies[i].ShownTo)
+		}
+	}
+	return c
+}
+
+// updateRecord is a memory store's Update of the record id names in
+// records, called with the store's lock held: fn changes a clone, which
+// is stored only when fn succeeds and leaves its ID as it was. what
+// names the kind of record in errors.
+func updateRecord[T any](records map[string]T, id, what string, clone func(T) T, idOf func(T) string, fn func(*T) error) error {
+	cur, ok := records[id]
+	if !ok {
+		return fmt.Errorf("walletflow: %s %q: %w", what, id, ErrNotFound)
+	}
+	next := clone(cur)
+	if err := fn(&next); err != nil {
+		return err
+	}
+	if idOf(next) != id {
+		return fmt.Errorf("walletflow: an update changed %s %q's ID", what, id)
+	}
+	records[id] = clone(next)
 	return nil
 }

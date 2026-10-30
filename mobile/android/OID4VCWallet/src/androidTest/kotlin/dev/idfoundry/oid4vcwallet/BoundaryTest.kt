@@ -166,4 +166,12 @@ class MemoryCredentialStore : CredentialStore {
     override fun record(id: String): ByteArray? = records[id]
     override fun records(): List<ByteArray> = records.values.toList()
     override fun delete(id: String) { records.remove(id) }
+
+    @Synchronized override fun compareAndSwap(id: String, expected: ByteArray?, record: ByteArray?): ByteArray? {
+        val current = records[id]
+        if (current.contentEquals(expected)) {
+            if (record == null) records.remove(id) else records[id] = record
+        }
+        return current
+    }
 }

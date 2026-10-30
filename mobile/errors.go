@@ -69,6 +69,10 @@ func classify(err error) error {
 		return newError(CodeInvalidSelection, walletflow.ErrCredentialChanged)
 	case errors.Is(err, walletflow.ErrReissueRequired):
 		return newError(CodeReissueRequired, err)
+	case errors.Is(err, walletflow.ErrRefreshInProgress):
+		// The app's other process is refreshing with the grant: retry
+		// once it's done.
+		return &Error{Code: CodeUnavailable, Detail: DetailRefreshInProgress, Message: "another process is refreshing with this refresh grant"}
 	case errors.Is(err, walletflow.ErrDeliveryUnknown):
 		// Before network: sending again could present twice.
 		return newError(CodeDeliveryUnknown, walletflow.ErrDeliveryUnknown)
@@ -121,6 +125,13 @@ func classify(err error) error {
 // rather than for a malformed argument: the integration to fix, not
 // the holder's input.
 const DetailNotConfigured = "not_configured"
+
+// DetailRefreshInProgress is the detail of an unavailable error from
+// RefreshCredential while another process sharing the CredentialStore —
+// the app's extension, say — is redeeming the same refresh grant: the
+// refresh token is never redeemed twice at once. Try again once that
+// refresh is done.
+const DetailRefreshInProgress = "refresh_in_progress"
 
 // configNames are walletflow's names for what a wallet is configured
 // with, and NewWallet's for them.

@@ -1,12 +1,22 @@
 # OID4VCgo mobile ABI
 
 The API the Go `mobile` package exposes through gomobile: version
-**12** (`ABIVersion`). The Swift package `ios/OID4VCWallet` wraps it in
+**13** (`ABIVersion`). The Swift package `ios/OID4VCWallet` wraps it in
 typed Swift (`Wallet`, `Issuance`, `Presentation`, `WalletError`), and
 the Kotlin library `android/OID4VCWallet` in Kotlin (the same types,
 with suspend functions, `WalletException` and `StateFlow`s); this
 document is the contract underneath, for those wrappers or an app
 calling the framework directly.
+
+Version 13 adds `CompareAndSwap` to the `CredentialStore` the app
+implements (see CredentialStore), which the wallet now changes every
+record through, so that processes sharing one store (an app and its
+extension) never both use one credential copy, complete one
+authorization or redeem one refresh token. A version-12 store has no
+such call, and the wrappers refuse a framework of another version. It
+also adds the `unavailable` error's `refresh_in_progress` detail, and
+the records' `reservation`, `redemption` and `redemption_expires_at`
+fields.
 
 Some additions came within version 12 without bumping it: they add
 calls and optional JSON fields, so an older wrapper is unaffected, but
@@ -69,7 +79,7 @@ format or error code below changes incompatibly.
 | `invalid_input` | an argument or the configuration is malformed, or, with the detail `not_configured`, the configuration lacks what the call needs (`verifier_roots` to present, say): the message names the key |
 | `platform` | a callback into the app failed (its message follows) |
 | `network` | a request couldn't be made, got no answer, or timed out; retryable |
-| `unavailable` | the service answered with HTTP 5xx or 429; retryable later |
+| `unavailable` | the service answered with HTTP 5xx or 429; or, with the detail `refresh_in_progress` (ABI 13), another process sharing the CredentialStore is refreshing with the same refresh grant; retryable later |
 | `cancelled` | the Operation was cancelled |
 | `not_found` | no key, credential or deferred credential with that ID |
 | `wrong_step` | a session method called out of turn, or after Close |
@@ -149,7 +159,24 @@ Opaque records kept by ID, under the platform's data protection.
 | `Get(id) → []byte` | empty if there's none |
 | `List() → []byte` | a JSON array of every record |
 | `Delete(id)` | no error if absent |
+| `CompareAndSwap(id, expected, record) → []byte` | atomically: replaces `id`'s record with `record`, or deletes it when `record` is empty, only if what's stored is byte for byte `expected` (empty: no record); returns what was stored before, either way (added in ABI 13) |
 | `Durable() → bool` | whether records survive the app quitting (below) |
+
+`CompareAndSwap` is the one call that must be atomic **across
+processes**: between its read and its write, no `Put`, `Delete` or
+other `CompareAndSwap` from any process sharing the store may write that
+record. The wallet reads a record, changes it and swaps it in with
+`CompareAndSwap`, reading again when another write got in first: that
+is how it reserves a credential's copy for a presentation, consumes an
+authorization (swapping in nothing), records a status or a refresh, and
+claims a refresh grant while it redeems the token. `Put` and `Delete`
+must hold the same exclusion, so a swap never overwrites a write made
+after its read. A store shared with an extension (an app group on iOS)
+needs a lock both processes take — a file lock — not one inside each.
+Compare the record as stored, after decrypting it if the store encrypts
+it: the wallet compares what `Get` returned. A store that doesn't
+compare loses the guarantee: two processes may then present one copy
+as unused, or redeem one refresh token twice.
 
 A record is JSON the app needn't read: `id`, `credential_issuer`,
 `configuration_id`, `format`, `vct`, `doctype`, `credential`,
@@ -159,8 +186,9 @@ A record is JSON the app needn't read: `id`, `credential_issuer`,
 `copies_correlated` (the issuer gave two copies the same `jti`, `sub`,
 status list or identifier list entry, disclosure digest, or validity timestamp not rounded
 to the day; absent when not), and `copies` (each copy's `credential`, `holder_key_id`, `presented`,
-`shown_to`, and its own `status_list` and `valid_until`). A record
-written before a field was kept lacks it.
+`shown_to`, its own `status_list` and `valid_until`, and `reservation`,
+the latest presentation that reserved it and may still undo that). A
+record written before a field was kept lacks it.
 
 The store also keeps each **pending deferred credential**, under the ID
 `deferred-<id>`, as a record with `"kind": "deferred"`. The record holds
@@ -189,7 +217,11 @@ The Swift package's `FileCredentialStore` keeps records as files with
 complete data protection, excluded from backups. The Kotlin library's
 keeps each as a file in `noBackupFilesDir`, encrypted with AES-256-GCM
 under an Android Keystore key that works only while the device is
-unlocked. Both are durable.
+unlocked. Both are durable, and both take an exclusive lock on a file
+in their directory (`flock` on iOS, a `FileChannel` lock on Android) for
+every write, so their `CompareAndSwap` is atomic across processes using
+the directory — on iOS, an app and its extensions sharing an app
+group's.
 
 ### WalletProvider
 
@@ -398,7 +430,11 @@ refresh must authenticate with again — or, for a grant that
 authenticated no client (`"client_auth": "none"`), the `dpop_key_id`
 its refresh token is bound to, whether its access tokens are DPoP or
 Bearer (`"token_type": "Bearer"`). A record without `client_auth` is a
-Wallet Attestation's. `copy_policy` is which copy of a
+Wallet Attestation's. While a refresh redeems the token, the record
+holds its claim (`redemption`, until `redemption_expires_at`, two
+minutes on): a refresh from another process sharing the store then
+fails as `unavailable`, with the detail `refresh_in_progress`, rather
+than redeem the token twice. `copy_policy` is which copy of a
 credential a presentation uses (OpenID4VCI 1.0: "a unique Credential
 per presentation or per Verifier"). With `"per_presentation"`, the
 default, every presentation uses a copy no Verifier has seen, so not

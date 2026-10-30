@@ -53,6 +53,14 @@ type RefreshGrant struct {
 	// TokenType is the access tokens' type: "" for DPoP (and every grant
 	// stored before it was kept), or "Bearer" (wallet.TokenTypeBearer).
 	TokenType string
+
+	// Redemption identifies the refresh redeeming RefreshToken, and
+	// RedemptionExpiresAt when its claim lapses: while one is under way,
+	// no other Wallet sharing the GrantStore redeems the token, which an
+	// Authorization Server that rotates refresh tokens would take for a
+	// replay. "" and zero when none is. They're walletflow's own.
+	Redemption          string
+	RedemptionExpiresAt time.Time
 }
 
 // GrantAuth is how a refresh grant's refreshes authenticate.
@@ -75,13 +83,22 @@ func (g RefreshGrant) keyIDs() []string {
 	return []string{g.InstanceKeyID}
 }
 
-// GrantStore keeps refresh grants.
+// GrantStore keeps refresh grants. Several Wallets — in several
+// processes — may share one: walletflow changes a stored grant only
+// through UpdateGrant, which the store makes atomic across all of them,
+// so a refresh token is never redeemed twice.
 type GrantStore interface {
 	// PutGrant stores g, replacing any with its ID.
 	PutGrant(ctx context.Context, g RefreshGrant) error
 	// GetGrant returns the one id names, or an error wrapping
 	// ErrNotFound.
 	GetGrant(ctx context.Context, id string) (RefreshGrant, error)
+	// UpdateGrant loads the one id names, calls fn on it, and stores the
+	// result, atomically, as CredentialStore.Update does a credential:
+	// an error wrapping ErrNotFound for one the store doesn't hold; fn's
+	// error aborts, storing nothing, and is returned; fn may be called
+	// again on the grant as it is then, and never changes its ID.
+	UpdateGrant(ctx context.Context, id string, fn func(*RefreshGrant) error) error
 	// ListGrants returns every one.
 	ListGrants(ctx context.Context) ([]RefreshGrant, error)
 	// DeleteGrant deletes the one id names; deleting one that doesn't
@@ -120,6 +137,13 @@ func (s *MemoryGrantStore) GetGrant(_ context.Context, id string) (RefreshGrant,
 		return RefreshGrant{}, fmt.Errorf("walletflow: refresh grant %q: %w", id, ErrNotFound)
 	}
 	return g, nil
+}
+
+// UpdateGrant implements GrantStore, calling fn once.
+func (s *MemoryGrantStore) UpdateGrant(_ context.Context, id string, fn func(*RefreshGrant) error) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return updateRecord(s.grants, id, "refresh grant", func(g RefreshGrant) RefreshGrant { return g }, func(g RefreshGrant) string { return g.ID }, fn)
 }
 
 // ListGrants implements GrantStore.
@@ -242,11 +266,14 @@ func (w *Wallet) RefreshCredential(ctx context.Context, id string) (StoredCreden
 	}
 	// One refresh with a grant at a time: an Authorization Server that
 	// rotates refresh tokens refuses the old one once the new is issued.
+	// Here they wait their turn; in another Wallet sharing the
+	// GrantStore, they find the grant claimed (ErrRefreshInProgress).
 	defer w.lockGrant(old.GrantID)()
 	g, grantKey, err := w.loadGrant(ctx, old)
 	if err != nil {
 		return StoredCredential{}, nil, err
 	}
+	defer w.releaseGrant(context.WithoutCancel(ctx), g)
 	metadata, err := w.planGrant(ctx, g, old.ConfigurationID)
 	if err != nil {
 		return StoredCredential{}, nil, err
@@ -346,34 +373,106 @@ func (w *Wallet) sharesGrant(ctx context.Context, c StoredCredential) (bool, err
 // refreshes need — its instance key, or for a GrantAuthNone grant its
 // DPoP key, nil for a Bearer one: ErrReissueRequired when either is
 // gone, or the grant is another issuer's, and ErrProfileViolation for
-// one ProfileHAIP doesn't allow. Called with the grant's lock held.
+// one ProfileHAIP doesn't allow. It returns the grant claimed for this
+// refresh (claimGrant), to release once done (releaseGrant). Called with
+// the grant's lock held.
 func (w *Wallet) loadGrant(ctx context.Context, c StoredCredential) (RefreshGrant, Key, error) {
-	g, err := w.deps.Grants.GetGrant(ctx, c.GrantID)
+	g, err := w.claimGrant(ctx, c.GrantID)
 	if errors.Is(err, ErrNotFound) {
 		return RefreshGrant{}, nil, fmt.Errorf("walletflow: refresh credential: its refresh grant is gone: %w", ErrReissueRequired)
 	}
 	if err != nil {
 		return RefreshGrant{}, nil, fmt.Errorf("walletflow: refresh credential: %w", err)
 	}
+	key, err := w.checkGrant(ctx, c, g)
+	if err != nil {
+		w.releaseGrant(context.WithoutCancel(ctx), g)
+		return RefreshGrant{}, nil, err
+	}
+	return g, key, nil
+}
+
+// checkGrant checks g, credential c's refresh grant, as loadGrant
+// does, and returns the key its refreshes need.
+func (w *Wallet) checkGrant(ctx context.Context, c StoredCredential, g RefreshGrant) (Key, error) {
 	if g.CredentialIssuer != c.CredentialIssuer {
-		return RefreshGrant{}, nil, fmt.Errorf("walletflow: refresh credential: its refresh grant is another issuer's: %w", ErrReissueRequired)
+		return nil, fmt.Errorf("walletflow: refresh credential: its refresh grant is another issuer's: %w", ErrReissueRequired)
 	}
 	if w.cfg.IssuanceProfile == ProfileHAIP && (g.ClientAuth == GrantAuthNone || g.TokenType == wallet.TokenTypeBearer) {
-		return RefreshGrant{}, nil, fmt.Errorf("walletflow: refresh credential: %w: its grant authenticates no client, or isn't DPoP-bound", ErrProfileViolation)
+		return nil, fmt.Errorf("walletflow: refresh credential: %w: its grant authenticates no client, or isn't DPoP-bound", ErrProfileViolation)
 	}
 	keyID := g.keyIDs()[0]
 	if keyID == "" {
-		return g, nil, nil
+		return nil, nil
 	}
 	key, err := w.deps.Keys.Key(ctx, keyID)
 	if errors.Is(err, ErrNotFound) {
 		w.forgetGrant(context.WithoutCancel(ctx), g)
-		return RefreshGrant{}, nil, fmt.Errorf("walletflow: refresh credential: its key is gone: %w", ErrReissueRequired)
+		return nil, fmt.Errorf("walletflow: refresh credential: its key is gone: %w", ErrReissueRequired)
 	}
 	if err != nil {
-		return RefreshGrant{}, nil, fmt.Errorf("walletflow: refresh credential: %w", err)
+		return nil, fmt.Errorf("walletflow: refresh credential: %w", err)
 	}
-	return g, key, nil
+	return key, nil
+}
+
+// redemptionLease is how long a refresh's claim on its grant lasts
+// (RefreshGrant.Redemption). The token request is cancelled
+// redemptionMargin before it lapses, so another Wallet can't redeem the
+// token while it's still being redeemed — only after a Wallet that
+// claimed it stopped before releasing it.
+const (
+	redemptionLease  = 2 * time.Minute
+	redemptionMargin = 15 * time.Second
+)
+
+// claimGrant claims the refresh grant id names for one refresh's
+// redemption of its token, in the GrantStore, and returns it as stored
+// then, claimed: an error wrapping ErrRefreshInProgress while another
+// refresh's claim holds, and ErrNotFound when it's gone.
+func (w *Wallet) claimGrant(ctx context.Context, id string) (RefreshGrant, error) {
+	claim, err := randomID(w.deps.Random)
+	if err != nil {
+		return RefreshGrant{}, err
+	}
+	now := w.deps.Clock()
+	var claimed RefreshGrant
+	err = w.deps.Grants.UpdateGrant(ctx, id, func(g *RefreshGrant) error {
+		if g.Redemption != "" && now.Before(g.RedemptionExpiresAt) {
+			return fmt.Errorf("walletflow: refresh grant %q: %w", id, ErrRefreshInProgress)
+		}
+		g.Redemption, g.RedemptionExpiresAt = claim, now.Add(redemptionLease).UTC()
+		claimed = *g
+		return nil
+	})
+	return claimed, err
+}
+
+// settleGrant ends claimed's redemption, storing rotated as its refresh
+// token unless that's nil — so long as the claim is still claimed's: a
+// claim that lapsed meanwhile isn't this refresh's to settle, and the
+// token it obtained isn't kept.
+func (w *Wallet) settleGrant(ctx context.Context, claimed RefreshGrant, rotated *fapi.Secret) error {
+	if claimed.Redemption == "" {
+		return nil
+	}
+	return w.deps.Grants.UpdateGrant(ctx, claimed.ID, func(g *RefreshGrant) error {
+		if g.Redemption != claimed.Redemption {
+			return fmt.Errorf("walletflow: refresh grant %q: the refresh's claim on it lapsed", claimed.ID)
+		}
+		if rotated != nil {
+			g.RefreshToken = *rotated
+		}
+		g.Redemption, g.RedemptionExpiresAt = "", time.Time{}
+		return nil
+	})
+}
+
+// releaseGrant ends claimed's redemption without changing its token,
+// best effort: once settled, or with the grant gone, there's nothing to
+// release.
+func (w *Wallet) releaseGrant(ctx context.Context, claimed RefreshGrant) {
+	_ = w.settleGrant(ctx, claimed, nil)
 }
 
 // planGrant fetches g's issuer's metadata, and checks the issuer still
@@ -403,23 +502,10 @@ func (w *Wallet) planGrant(ctx context.Context, g RefreshGrant, configID string)
 // grant is refused, ErrReissueRequired, where its Authorization Server
 // no longer takes how it authenticates, or the wallet can no longer
 // give a Wallet Attestation; and where the server refuses the refresh
-// token, when it's forgotten too.
+// token, when it's forgotten too. g is claimed for the refresh
+// (claimGrant), and its claim ends once the token response is in.
 func (s *Issuance) redeemGrant(ctx context.Context, g RefreshGrant) error {
-	asMeta, err := s.w.core.FetchAuthorizationServerMetadata(ctx, g.AuthorizationServer)
-	if err != nil {
-		return fmt.Errorf("walletflow: authorization server metadata: %w", err)
-	}
-	if g.ClientAuth != GrantAuthNone && !takesAttestation(asMeta) {
-		// Never a silent switch to no client authentication.
-		return fmt.Errorf("walletflow: refresh credential: the authorization server no longer takes a Wallet Attestation: %w", ErrReissueRequired)
-	}
-	s.asMeta = asMeta
-	var res refreshResult
-	if g.ClientAuth == GrantAuthNone {
-		res, err = s.refreshAsPublicClient(ctx, g, asMeta)
-	} else {
-		res, err = s.refreshWithAttestation(ctx, g)
-	}
+	res, err := s.redeem(ctx, g)
 	if err != nil {
 		return err
 	}
@@ -448,14 +534,34 @@ func (s *Issuance) redeemGrant(ctx context.Context, g RefreshGrant) error {
 	return nil
 }
 
-// keepRotatedRefreshToken stores the refresh token res rotated g's to,
-// if it did.
-func (s *Issuance) keepRotatedRefreshToken(ctx context.Context, g RefreshGrant, res refreshResult) error {
-	if !res.hasRefreshToken || res.refreshToken.Reveal() == g.RefreshToken.Reveal() {
-		return nil
+// redeem sends g's token request, within its claim: cancelled
+// redemptionMargin before the claim lapses.
+func (s *Issuance) redeem(ctx context.Context, g RefreshGrant) (refreshResult, error) {
+	ctx, cancel := context.WithTimeout(ctx, redemptionLease-redemptionMargin)
+	defer cancel()
+	asMeta, err := s.w.core.FetchAuthorizationServerMetadata(ctx, g.AuthorizationServer)
+	if err != nil {
+		return refreshResult{}, fmt.Errorf("walletflow: authorization server metadata: %w", err)
 	}
-	g.RefreshToken = res.refreshToken
-	if err := s.w.deps.Grants.PutGrant(ctx, g); err != nil {
+	if g.ClientAuth != GrantAuthNone && !takesAttestation(asMeta) {
+		// Never a silent switch to no client authentication.
+		return refreshResult{}, fmt.Errorf("walletflow: refresh credential: the authorization server no longer takes a Wallet Attestation: %w", ErrReissueRequired)
+	}
+	s.asMeta = asMeta
+	if g.ClientAuth == GrantAuthNone {
+		return s.refreshAsPublicClient(ctx, g, asMeta)
+	}
+	return s.refreshWithAttestation(ctx, g)
+}
+
+// keepRotatedRefreshToken ends g's claim, storing the refresh token res
+// rotated g's to, if it did.
+func (s *Issuance) keepRotatedRefreshToken(ctx context.Context, g RefreshGrant, res refreshResult) error {
+	var rotated *fapi.Secret
+	if res.hasRefreshToken && res.refreshToken.Reveal() != g.RefreshToken.Reveal() {
+		rotated = &res.refreshToken
+	}
+	if err := s.w.settleGrant(ctx, g, rotated); err != nil {
 		return fmt.Errorf("walletflow: store refresh grant: %w", err)
 	}
 	return nil
@@ -544,13 +650,20 @@ func (s *Issuance) refreshFailed(ctx context.Context, g RefreshGrant, err error)
 // replaceStored stores stored in place of the credential it replaces,
 // if that still exists and still uses grantID — it may have been
 // deleted while it was refreshed — and deletes the replaced copies'
-// holder keys. It's called with credMu held.
+// holder keys.
 func (w *Wallet) replaceStored(ctx context.Context, stored StoredCredential, grantID string) error {
-	cur, err := w.deps.Credentials.Get(ctx, stored.ID)
-	if err != nil || cur.GrantID != grantID {
+	var cur StoredCredential
+	err := w.deps.Credentials.Update(ctx, stored.ID, func(c *StoredCredential) error {
+		if c.GrantID != grantID {
+			return ErrNotFound // replaced by another credential since
+		}
+		cur, *c = *c, stored
+		return nil
+	})
+	if errors.Is(err, ErrNotFound) {
 		return fmt.Errorf("walletflow: credential %q is gone: %w", stored.ID, ErrNotFound)
 	}
-	if err := w.deps.Credentials.Put(ctx, stored); err != nil {
+	if err != nil {
 		return err
 	}
 	kept := map[string]bool{}
@@ -655,23 +768,33 @@ func (w *Wallet) unusedGrant(ctx context.Context, id string) (*RefreshGrant, err
 // releaseUnusedGrant ends the grant grantID names once nothing uses it
 // — no stored or pending deferred credential, and no open issuance: it
 // revokes the refresh token (revokeGrant), then deletes the grant and
-// its instance key. It decides holding the grant's lock, on the grant as
-// it is then, so a refresh can't change it in between. configID is a
-// configuration the grant was for.
+// its instance key. It decides holding the grant's lock, and its claim
+// (claimGrant), on the grant as it is then, so no refresh — here or in
+// another Wallet sharing the GrantStore — changes it in between; one
+// under way elsewhere leaves it be. configID is a configuration the
+// grant was for.
 func (w *Wallet) releaseUnusedGrant(ctx context.Context, grantID, configID string) error {
 	if grantID == "" {
 		return nil
 	}
 	defer w.lockGrant(grantID)()
-	g, err := w.unusedGrant(ctx, grantID)
-	if err != nil || g == nil {
+	unused, err := w.unusedGrant(ctx, grantID)
+	if err != nil || unused == nil {
 		return err
 	}
-	w.revokeGrant(ctx, *g, configID)
+	g, err := w.claimGrant(ctx, grantID)
+	if errors.Is(err, ErrNotFound) || errors.Is(err, ErrRefreshInProgress) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	w.revokeGrant(ctx, g, configID)
 	if err := w.deps.Grants.DeleteGrant(ctx, g.ID); err != nil {
+		w.releaseGrant(context.WithoutCancel(ctx), g)
 		return err
 	}
-	w.deleteGrantKeys(ctx, *g)
+	w.deleteGrantKeys(ctx, g)
 	return nil
 }
 

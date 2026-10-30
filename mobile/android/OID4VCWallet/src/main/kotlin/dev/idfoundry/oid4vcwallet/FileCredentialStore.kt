@@ -6,11 +6,14 @@ import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Log
 import java.io.File
+import java.io.FileNotFoundException
 import java.io.FileOutputStream
 import java.io.IOException
+import java.io.RandomAccessFile
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.security.KeyStore as JavaKeyStore
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.locks.ReentrantLock
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
@@ -33,6 +36,14 @@ import kotlin.concurrent.withLock
  * restored record can't be read without the key, which isn't restored.
  * [records] skips a record that doesn't decrypt, logging its ID, rather
  * than make every other credential unreadable; [record] reports it.
+ *
+ * Every write takes an exclusive lock on a lock file in the directory —
+ * a [java.nio.channels.FileChannel] lock, which excludes other
+ * processes, inside a lock per directory, which excludes this one's
+ * other threads and stores — so [compareAndSwap] is atomic across every
+ * process and store using the directory. Reads take none: each record
+ * is written whole and moved into place, so a reader never sees part of
+ * one.
  */
 public class FileCredentialStore(
     /** The directory the records are kept in. */
@@ -70,10 +81,12 @@ public class FileCredentialStore(
         val keyAlias: String = FileCredentialStore.DEFAULT_KEY_ALIAS,
     )
 
-    private val lock = ReentrantLock()
+    /** This process's lock on the directory, shared by every store on it. */
+    private val directoryLock: ReentrantLock
 
     init {
         if (!directory.isDirectory && !directory.mkdirs()) throw StoreException("can't create the store's directory")
+        directoryLock = directoryLocks.computeIfAbsent(directory.canonicalPath) { ReentrantLock() }
     }
 
     /** Records are files: they survive the app quitting. */
@@ -82,37 +95,18 @@ public class FileCredentialStore(
     override fun put(id: String, record: ByteArray) {
         val target = file(id)
         val sealed = seal(id, record)
-        lock.withLock {
-            // Written whole, then moved over the old one: a reader never
-            // sees half a record.
-            val temp = File(directory, ".$id.tmp")
-            try {
-                // Synced before the move, so a crash can't leave a
-                // renamed but empty record.
-                FileOutputStream(temp).use { out ->
-                    out.write(sealed)
-                    out.fd.sync()
-                }
-                Files.move(temp.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
-            } catch (e: IOException) {
-                Files.deleteIfExists(temp.toPath())
-                throw StoreException("can't write credential record $id")
-            }
-        }
+        withStoreLock { write(id, target, sealed) }
     }
 
     override fun record(id: String): ByteArray? {
-        val f = file(id)
-        val sealed = lock.withLock { if (f.isFile) f.readBytes() else null } ?: return null
+        val sealed = read(file(id)) ?: return null
         return open(id, sealed)
     }
 
     override fun records(): List<ByteArray> {
-        val files = lock.withLock {
-            directory.listFiles { f -> f.isFile && f.name.endsWith(SUFFIX) && !f.name.startsWith(".") }.orEmpty()
-                .sortedBy { it.name }
-                .map { it.name.removeSuffix(SUFFIX) to it.readBytes() }
-        }
+        val files = directory.listFiles { f -> f.isFile && f.name.endsWith(SUFFIX) && !f.name.startsWith(".") }.orEmpty()
+            .sortedBy { it.name }
+            .mapNotNull { f -> read(f)?.let { f.name.removeSuffix(SUFFIX) to it } } // one deleted meanwhile isn't listed
         return files.mapNotNull { (id, sealed) ->
             try {
                 open(id, sealed)
@@ -125,11 +119,80 @@ public class FileCredentialStore(
 
     override fun delete(id: String) {
         val f = file(id)
+        withStoreLock { remove(id, f) }
+    }
+
+    override fun compareAndSwap(id: String, expected: ByteArray?, record: ByteArray?): ByteArray? {
+        val target = file(id)
+        // Sealed, and the key made if need be, before the lock: making
+        // the key takes it too.
+        val sealed = record?.let { seal(id, it) } ?: run { key(); null }
+        return withStoreLock {
+            val current = read(target)?.let { open(id, it) }
+            if (current.contentEquals(expected)) {
+                if (sealed == null) remove(id, target) else write(id, target, sealed)
+            }
+            current
+        }
+    }
+
+    /**
+     * Runs [body] holding the store's exclusive lock: this process's lock
+     * on the directory, then a [java.nio.channels.FileChannel] lock on its
+     * lock file, which other processes take too. (A FileChannel lock is
+     * held per process, so it can't exclude this one's other threads.)
+     */
+    private fun <T> withStoreLock(body: () -> T): T = directoryLock.withLock {
+        val file = try {
+            RandomAccessFile(File(directory, LOCK_FILE), "rw")
+        } catch (e: IOException) {
+            throw StoreException("can't open the credential store's lock file")
+        }
+        file.use {
+            val held = try {
+                it.channel.lock()
+            } catch (e: IOException) {
+                throw StoreException("can't lock the credential store")
+            }
+            try {
+                body()
+            } finally {
+                held.release()
+            }
+        }
+    }
+
+    /** Writes [sealed] whole to a new file, then moves it over [target]: a reader never sees half a record. */
+    private fun write(id: String, target: File, sealed: ByteArray) {
+        var temp: File? = null
         try {
-            lock.withLock { Files.deleteIfExists(f.toPath()) }
+            temp = File.createTempFile(".$id.", ".tmp", directory)
+            // Synced before the move, so a crash can't leave a renamed
+            // but empty record.
+            FileOutputStream(temp).use { out ->
+                out.write(sealed)
+                out.fd.sync()
+            }
+            Files.move(temp.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+        } catch (e: IOException) {
+            temp?.let { Files.deleteIfExists(it.toPath()) }
+            throw StoreException("can't write credential record $id")
+        }
+    }
+
+    private fun remove(id: String, f: File) {
+        try {
+            Files.deleteIfExists(f.toPath())
         } catch (e: IOException) {
             throw StoreException("can't delete credential record $id")
         }
+    }
+
+    /** [f]'s contents, or null when there's no such file. */
+    private fun read(f: File): ByteArray? = try {
+        f.readBytes()
+    } catch (e: FileNotFoundException) {
+        null
     }
 
     private fun file(id: String): File {
@@ -159,26 +222,28 @@ public class FileCredentialStore(
         }
     }
 
-    /** The store's key, made on first use. */
-    private fun key(): SecretKey = lock.withLock {
-        val keystore = JavaKeyStore.getInstance(PROVIDER).apply { load(null) }
-        (keystore.getKey(options.keyAlias, null) as? SecretKey) ?: run {
-            if (directory.listFiles { f -> f.name.endsWith(SUFFIX) }.orEmpty().isNotEmpty()) {
-                // Restored files, or a deleted key: they're unreadable now.
-                Log.w(TAG, "the store's key is missing: making a new one, so its existing records can't be read")
-            }
-            val spec = KeyGenParameterSpec.Builder(options.keyAlias, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
-                .setKeySize(256)
-                .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
-                .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
-                // API 28's: below it, WHEN_UNLOCKED holds only until the
-                // first unlock since boot, as AFTER_FIRST_UNLOCK does.
-                .apply { if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) setUnlockedDeviceRequired(options.protection == Protection.WHEN_UNLOCKED) }
-                .build()
-            KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, PROVIDER).run {
-                init(spec)
-                generateKey()
-            }
+    /** The store's key, made on first use — by one process: made under the store's lock. */
+    private fun key(): SecretKey = existingKey() ?: withStoreLock { existingKey() ?: newKey() }
+
+    private fun existingKey(): SecretKey? =
+        JavaKeyStore.getInstance(PROVIDER).apply { load(null) }.getKey(options.keyAlias, null) as? SecretKey
+
+    private fun newKey(): SecretKey {
+        if (directory.listFiles { f -> f.name.endsWith(SUFFIX) }.orEmpty().isNotEmpty()) {
+            // Restored files, or a deleted key: they're unreadable now.
+            Log.w(TAG, "the store's key is missing: making a new one, so its existing records can't be read")
+        }
+        val spec = KeyGenParameterSpec.Builder(options.keyAlias, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
+            .setKeySize(256)
+            .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+            .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+            // API 28's: below it, WHEN_UNLOCKED holds only until the
+            // first unlock since boot, as AFTER_FIRST_UNLOCK does.
+            .apply { if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) setUnlockedDeviceRequired(options.protection == Protection.WHEN_UNLOCKED) }
+            .build()
+        return KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, PROVIDER).run {
+            init(spec)
+            generateKey()
         }
     }
 
@@ -190,9 +255,15 @@ public class FileCredentialStore(
         private const val PROVIDER = "AndroidKeyStore"
         private const val TRANSFORMATION = "AES/GCM/NoPadding"
         private const val SUFFIX = ".rec"
+
+        /** The file every write locks: hidden, so never a record. */
+        private const val LOCK_FILE = ".lock"
         private const val VERSION: Byte = 1
         private const val IV_BYTES = 12
         private const val TAG_BYTES = 16
+
+        /** Each directory's lock in this process, by canonical path: every store on it shares one. */
+        private val directoryLocks = ConcurrentHashMap<String, ReentrantLock>()
 
         /** A store in `noBackupFilesDir/credentials`, which no backup or device transfer copies. */
         public fun standard(context: Context, options: Options = Options()): FileCredentialStore =
