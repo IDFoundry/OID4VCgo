@@ -94,7 +94,7 @@ func AESGCMSealer(key []byte) (TransactionSealer, error) {
 type gcmSealer struct{ aead cipher.AEAD }
 
 func (s gcmSealer) Seal(plaintext, additionalData []byte) ([]byte, error) {
-	nonce := make([]byte, s.aead.NonceSize(), s.aead.NonceSize()+len(plaintext)+s.aead.Overhead())
+	nonce := make([]byte, s.aead.NonceSize())
 	if _, err := rand.Read(nonce); err != nil {
 		return nil, err
 	}
