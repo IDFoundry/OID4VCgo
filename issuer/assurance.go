@@ -188,39 +188,45 @@ func checkProductionAttestationProofType(cfg Config) error {
 // configured — called only once cfg.Assurance is known to be
 // AssuranceProduction. declinedDPoPNonces is whether
 // Dependencies.DPoPNonces was NoDPoPNonces{}, which New has already
-// turned into nil. Split out of New purely to keep its own cognitive
+// turned into nil. It returns every problem it finds, for New to report
+// together. Split out of New purely to keep its own cognitive
 // complexity manageable.
-func checkProductionAssurance(cfg Config, deps Dependencies, declinedDPoPNonces bool) error {
+func checkProductionAssurance(cfg Config, deps Dependencies, declinedDPoPNonces bool) []error {
+	var errs []error
 	// Nonces, transaction IDs, notification IDs, Credential Offer
 	// references and access tokens all come from it: a predictable
 	// source makes them guessable.
 	if deps.Random != rand.Reader {
-		return fmt.Errorf("dependencies.random must be crypto/rand.Reader under AssuranceProduction")
+		errs = append(errs, fmt.Errorf("dependencies.random must be crypto/rand.Reader under AssuranceProduction"))
 	}
 	if !readsSystemTime(deps.Clock) {
-		return fmt.Errorf("dependencies.clock must be nil, the system clock, or declare issuer.ClockAssurance under AssuranceProduction")
-	}
-	if err := checkProductionHTTPS(cfg); err != nil {
-		return err
-	}
-	if err := checkProductionAttestationProofType(cfg); err != nil {
-		return err
-	}
-	if err := checkProductionProofFreshness(cfg); err != nil {
-		return err
+		errs = append(errs, fmt.Errorf("dependencies.clock must be nil, the system clock, or declare issuer.ClockAssurance under AssuranceProduction"))
 	}
 	if deps.PreAuthorizedCodes != nil && cfg.PreAuthorizedCodeClientAuthentication == nil {
-		return fmt.Errorf("config.pre_authorized_code_client_authentication is required under AssuranceProduction when dependencies.pre_authorized_codes is set (issuer.AnonymousPreAuthorizedCode{} accepts the redemption without client authentication, which HAIP 1.0 §4.4.1 doesn't allow)")
-	}
-	if err := checkProductionDPoPProof(cfg, deps); err != nil {
-		return err
-	}
-	if err := checkProductionDPoPNonces(cfg, deps, declinedDPoPNonces); err != nil {
-		return err
+		errs = append(errs, fmt.Errorf("config.pre_authorized_code_client_authentication is required under AssuranceProduction when dependencies.pre_authorized_codes is set (issuer.AnonymousPreAuthorizedCode{} accepts the redemption without client authentication, which HAIP 1.0 §4.4.1 doesn't allow)"))
 	}
 	if deps.PreAuthorizedCodes != nil && cfg.Limits.MaxTxCodeAttempts > MaxProductionTxCodeAttempts {
-		return fmt.Errorf("config: limits.max_tx_code_attempts is %d; under AssuranceProduction it must be at most %d", cfg.Limits.MaxTxCodeAttempts, MaxProductionTxCodeAttempts)
+		errs = append(errs, fmt.Errorf("config: limits.max_tx_code_attempts is %d; under AssuranceProduction it must be at most %d", cfg.Limits.MaxTxCodeAttempts, MaxProductionTxCodeAttempts))
 	}
+	if deps.Audit == nil {
+		errs = append(errs, fmt.Errorf("dependencies.audit is required under AssuranceProduction"))
+	}
+	errs = append(errs,
+		checkProductionHTTPS(cfg),
+		checkProductionAttestationProofType(cfg),
+		checkProductionProofFreshness(cfg),
+		checkProductionDPoPProof(cfg, deps),
+		checkProductionDPoPNonces(cfg, deps, declinedDPoPNonces),
+		checkProductionX5CRevocation(deps),
+		checkProductionAttestationBinding(deps),
+	)
+	errs = append(errs, checkProductionKeySources(cfg, deps)...)
+	return append(errs, checkProductionStores(cfg, deps)...)
+}
+
+// checkProductionStores runs checkStoreAssurance on each store a
+// configured feature uses.
+func checkProductionStores(cfg Config, deps Dependencies) []error {
 	// Each store a configured feature uses, and whether consuming from
 	// it must be atomic.
 	stores := []struct {
@@ -239,37 +245,30 @@ func checkProductionAssurance(cfg Config, deps Dependencies, declinedDPoPNonces 
 		{verifiesDPoPProofs(cfg, deps), "dpop_replay", deps.DPoPReplay, true},
 		{deps.DPoPNonces != nil, "dpop_nonces", deps.DPoPNonces, false},
 	}
+	var errs []error
 	for _, st := range stores {
-		if !st.used {
-			continue
-		}
-		if err := checkStoreAssurance(st.name, st.store, st.atomicConsume); err != nil {
-			return err
+		if st.used {
+			errs = append(errs, checkStoreAssurance(st.name, st.store, st.atomicConsume))
 		}
 	}
+	return errs
+}
+
+// checkProductionKeySources runs checkKeySourceAssurance on the
+// configured AttestationVerifier and ProofBindingKeys, and requires a
+// key attestation status decision with the former.
+func checkProductionKeySources(cfg Config, deps Dependencies) []error {
+	var errs []error
 	if deps.AttestationVerifier != nil {
-		if err := checkKeySourceAssurance("attestation_verifier", deps.AttestationVerifier); err != nil {
-			return err
-		}
+		errs = append(errs, checkKeySourceAssurance("attestation_verifier", deps.AttestationVerifier))
 		if deps.AttestationStatus == nil && !cfg.NoAttestationStatusCheck {
-			return fmt.Errorf("dependencies.attestation_status is required under AssuranceProduction when dependencies.attestation_verifier is set, unless config.no_attestation_status_check: without it, a revoked key attestation is accepted until it expires")
+			errs = append(errs, fmt.Errorf("dependencies.attestation_status is required under AssuranceProduction when dependencies.attestation_verifier is set, unless config.no_attestation_status_check: without it, a revoked key attestation is accepted until it expires"))
 		}
 	}
 	if deps.ProofBindingKeys != nil {
-		if err := checkKeySourceAssurance("proof_binding_keys", deps.ProofBindingKeys); err != nil {
-			return err
-		}
+		errs = append(errs, checkKeySourceAssurance("proof_binding_keys", deps.ProofBindingKeys))
 	}
-	if err := checkProductionX5CRevocation(deps); err != nil {
-		return err
-	}
-	if err := checkProductionAttestationBinding(deps); err != nil {
-		return err
-	}
-	if deps.Audit == nil {
-		return fmt.Errorf("dependencies.audit is required under AssuranceProduction")
-	}
-	return nil
+	return errs
 }
 
 // Production bounds on the skew this issuer allows a DPoP proof's iat

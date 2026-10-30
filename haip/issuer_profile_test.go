@@ -120,3 +120,31 @@ func TestIssuerProfileRunsInNew(t *testing.T) {
 		}
 	}
 }
+
+// TestIssuerProfileReportsEachProblemInNew: issuer.New reports each
+// problem HAIP finds on a line of its own, as it does its own.
+func TestIssuerProfileReportsEachProblemInNew(t *testing.T) {
+	cfg, deps := recommendedIssuer(t)
+	cfg = withConfiguration(cfg, func(c *issuer.CredentialConfiguration) {
+		c.Scope = ""
+		ptc := c.ProofTypesSupported[oid4vci.ProofTypeJWT]
+		ptc.ProofSigningAlgValuesSupported = []string{"EdDSA", "ES256"}
+		c.ProofTypesSupported = map[string]oid4vci.ProofTypeConfiguration{oid4vci.ProofTypeJWT: ptc}
+	})
+	cfg.Endpoints.Nonce, cfg.Limits.MaxProofAge = fapi.URL{}, issuer.MaxProductionProofAge
+	deps.Nonces = nil
+	cfg.Profile = haip.IssuerProfile{}
+	_, err := issuer.New(cfg, deps)
+	if err == nil {
+		t.Fatal("issuer.New = nil error")
+	}
+	lines := strings.Split(err.Error(), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("issuer.New reported %d problems, want 2 (scope, Nonce Endpoint):\n%v", len(lines), err)
+	}
+	for _, line := range lines {
+		if !strings.HasPrefix(line, "issuer: profile: haip: ") {
+			t.Errorf("line %q doesn't start with %q", line, "issuer: profile: haip: ")
+		}
+	}
+}
