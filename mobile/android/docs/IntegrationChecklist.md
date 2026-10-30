@@ -25,6 +25,17 @@ is a complete, working app on this library to compare against.
   `FileCredentialStore`, and the app implements `WalletProvider` (or
   passes `null` for issuers that don't ask for attestations).
   ([Getting started](GettingStarted.md))
+- [ ] The `WalletProvider` gives a fresh challenge from your backend in
+  `attestationChallenge` for instance and holder keys, implements the
+  `WalletAttestationRequest` and `KeyAttestationRequest` versions of
+  its attestations, and sends each key's `KeyEvidence.certificateChain`
+  to the backend, which verifies it as
+  [Going to production](GoingToProduction.md) lists before attesting,
+  and refuses a key without one. *Check:* the backend refuses a key
+  made without its challenge, a key from an emulator, and a key from a
+  build signed with another certificate.
+- [ ] Each setting in [Going to production](GoingToProduction.md)'s
+  "Settings to decide" is decided and recorded.
 - [ ] Trust roots are PEM in `WalletConfiguration`, each in its own
   role: `issuerRoots`, `verifierRoots`, `mdocReaderRoots` and the rest.
   Outside development, two roles whose roots may vouch for the same
@@ -82,8 +93,14 @@ is a complete, working app on this library to compare against.
   query's claims and any `unregistered` ones, and what `preview` says
   would be disclosed, before the holder agrees. Then `respond`, or
   `decline`.
+- [ ] Respond with the selection whose `preview` the holder saw: a
+  changed selection is previewed and shown again first.
 - [ ] Open `redirectURI`, when there is one, in the browser the request
   came from.
+- [ ] `requestRefused` from `startPresentation`: open
+  `Wallet.takeRefusalRedirect()` when it returns a URL, and tell the
+  holder the request wasn't answered. Over the DC API, return a failure
+  to the page. ([Handling errors](HandlingErrors.md))
 - [ ] `deliveryUnknown` isn't retried: tell the holder to check with the
   Verifier.
 - [ ] *Check:* a Verifier outside `verifierRoots` is refused before

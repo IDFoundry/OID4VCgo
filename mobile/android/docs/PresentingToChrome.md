@@ -47,6 +47,7 @@ import android.util.Log
 import dev.idfoundry.oid4vcwallet.DigitalCredentials
 import dev.idfoundry.oid4vcwallet.Presentation
 import dev.idfoundry.oid4vcwallet.Wallet
+import dev.idfoundry.oid4vcwallet.WalletException
 
 /** Registers the wallet's credentials: call it whenever they change. */
 suspend fun registerForChrome(context: Context, wallet: Wallet) {
@@ -101,22 +102,34 @@ be established, and for a request in no protocol the wallet answers.
 ```kotlin
 /**
  * Answers the request a provider activity was started with: `activity`
- * is the provider activity, and `askTheHolder` shows the holder the Verifier
- * and the claims asked for, and returns whether they agree. Returns the
- * intent to set as the activity's result.
+ * is the provider activity, and `askTheHolder` shows the holder the
+ * page's origin, the Verifier and what sharing would disclose, and
+ * returns whether they agree. Returns the intent to set as the
+ * activity's result.
  */
 suspend fun answerFromChrome(
     activity: Activity,
     wallet: Wallet,
     privilegedBrowsers: String,
-    askTheHolder: suspend (Presentation) -> Boolean,
+    askTheHolder: suspend (origin: String, Presentation, List<Presentation.Disclosure>) -> Boolean,
 ): Intent {
     val request = DigitalCredentials.request(activity, privilegedBrowsers) ?: return DigitalCredentials.failure()
     // org-iso-mdoc is Safari's route: Chrome asks over OpenID4VP.
     if (request.isMdoc) return DigitalCredentials.failure()
-    val presentation = request.startPresentation(wallet)
-    val presented = if (presentation.isAnswerable && askTheHolder(presentation)) {
-        presentation.respond(presentation.defaultSelection())
+    val presentation = try {
+        request.startPresentation(wallet)
+    } catch (e: WalletException) {
+        // untrustedVerifier, or requestRefused: the wallet refused the
+        // request, and the page gets the failure.
+        return DigitalCredentials.failure(e.message ?: "the wallet refused the request")
+    }
+    if (!presentation.isAnswerable) return presentation.decline().dcapiResponse
+        ?.let { DigitalCredentials.response(request, it) } ?: DigitalCredentials.failure()
+    // The holder agrees to exactly this selection, and it's what is sent.
+    val selection = presentation.defaultSelection()
+    val disclosures = presentation.preview(selection)
+    val presented = if (askTheHolder(request.origin, presentation, disclosures)) {
+        presentation.respond(selection)
     } else {
         presentation.decline()
     }
@@ -126,6 +139,20 @@ suspend fun answerFromChrome(
 
 The activity sets the returned intent with `setResult(RESULT_OK, …)` and
 finishes.
+
+Show the holder what `preview` returned for the selection you then
+`respond` with: if the holder changes the selection on the consent
+screen, preview the new one, show that, and respond with it. Never
+respond with a selection the holder didn't see. Show `request.origin`
+alongside the Verifier: for an unsigned request it's the only identity
+there is.
+
+When `startPresentation` throws `requestRefused`, the wallet refused an
+authentic request it must not answer — `transaction_data` it doesn't
+support, say — and has already told the Verifier, as OpenID4VP requires:
+return a failure to the page, and tell the holder the request wasn't
+answered. Over the DC API there's no redirect to open:
+`Wallet.takeRefusalRedirect` is for requests from links.
 
 `request.selectedCredentialID` is the credential the holder picked in
 the system's chooser: start the consent screen from it. The demo's

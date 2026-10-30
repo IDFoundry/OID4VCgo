@@ -136,7 +136,13 @@ library. Your app owns the keys, the storage and the UI:
   one.
 - **Wallet Provider:** you implement \`WalletProvider\`, which attests the
   wallet, for issuers that ask for attestations, as HAIP issuers do; pass
-  \`null\` for issuers that don't. Issuance follows each issuer's
+  \`null\` for issuers that don't. It gives a challenge for each key the
+  wallet makes (\`attestationChallenge\`), and receives each key with its
+  Android Key Attestation chain (\`KeyEvidence\`): your backend verifies
+  the chain — Google's root, your challenge, StrongBox or the TEE, your
+  app's package and signing certificate — before attesting the key, as
+  [Going to production](docs/GoingToProduction.md#the-wallet-provider)
+  says. Issuance follows each issuer's
   metadata, or with \`issuanceProfile = IssuanceProfile.HAIP\` refuses
   issuers outside HAIP.
 

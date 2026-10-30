@@ -31,13 +31,63 @@ services on loopback addresses are refused. The rest is the app's.
 
 ## The Wallet Provider
 
-Issuers trust the wallet because its Wallet Provider attests it. A
-production Wallet Provider should attest a wallet and its keys only
-after checking evidence that it's talking to your genuine app on a
-genuine device — Android Key Attestation of the keys (that they're in
-StrongBox or the TEE, for your app's signing certificate), or Play
-Integrity — and should keep its own signing key in an HSM. The demo
-wallet's provider attests anything, and is for development only.
+Issuers trust the wallet because its Wallet Provider attests it: a Key
+Attestation's `key_storage` and `user_authentication` tell an issuer
+the holder keys can't be copied off the device, and it binds
+credentials to them on that word. A provider that attests whatever keys
+it's sent lets a modified app, or an emulator, get credentials bound to
+software keys anyone can copy. Play Integrity attests the app, not where
+its keys live: it doesn't stand in for Key Attestation.
+
+So the provider checks Android Key Attestation of each key before
+attesting it:
+
+1. **Give a challenge.** Implement `WalletProvider.attestationChallenge`:
+   for `KeyPurpose.INSTANCE` and `KeyPurpose.HOLDER`, fetch a fresh,
+   random, single-use challenge (16 to 128 bytes) from your backend,
+   which remembers it with an expiry; for `KeyPurpose.DPOP`, return
+   null. `AndroidKeystoreKeyStore` makes each key over its challenge,
+   so Android Keystore certifies the key, the challenge and the app
+   that made it.
+2. **Receive the evidence.** Implement the `WalletAttestationRequest`
+   and `KeyAttestationRequest` versions of `walletAttestation` and
+   `keyAttestation`, and send each key's `KeyEvidence` —
+   `certificateChain`, DER, the key's certificate first — to your
+   backend with its JWK.
+3. **Verify the chain, on the backend.** Refuse a key whose chain is
+   empty. Otherwise:
+   - each certificate is signed by the next, all are within their
+     validity, and the last is one of Google's hardware attestation
+     roots;
+   - no certificate in it is revoked or suspended in Google's
+     attestation status list;
+   - the first certificate's public key is the JWK being attested;
+   - its key description extension (OID 1.3.6.1.4.1.11129.2.1.17)
+     has the challenge you issued for this key, unused and unexpired,
+     which you then consume;
+   - its attestation and KeyMint security levels are
+     `TrustedEnvironment` or `StrongBox`, never `Software`;
+   - its hardware-enforced list has origin `GENERATED`, an EC P-256 key
+     for signing, and a root of trust with `verifiedBootState`
+     `Verified` and `deviceLocked` true;
+   - its `attestationApplicationId` names your app's package and
+     signing certificate digest.
+4. **Attest only what you verified.** Claim `key_storage` and
+   `user_authentication` levels the attestation supports — StrongBox
+   or the TEE; user authentication only for a holder key whose
+   hardware-enforced list requires it (`AndroidKeystoreKeyStore`'s
+   `holderUserAuthentication`) — and never more.
+5. **Keep your own signing key in an HSM.**
+
+A key is attested once, when it's made, over that moment's challenge. A
+key attested again later — the instance key, when a refresh needs a new
+Wallet Attestation — brings the same chain: recognise a key you verified
+before (by its JWK thumbprint) rather than asking for a fresh challenge.
+
+A custom `KeyStore` gives the provider no evidence unless it implements
+`createKey(purpose, attestationChallenge)` and `attestationChain(id)`:
+keep `AndroidKeystoreKeyStore`. The demo wallet's provider attests
+anything, and is for development only.
 
 ## Trust
 
@@ -74,6 +124,42 @@ wallet's provider attests anything, and is for development only.
   signers and status lists.
 - As a Credential Manager provider, see the open caveat in
   [Presenting to Chrome](PresentingToChrome.md).
+
+### Settings to decide
+
+Each of these is off or open by default. Decide each for your
+ecosystem, and record why:
+
+- `issuanceProfile`: `IssuanceProfile.HAIP` refuses issuers that don't
+  follow HAIP 1.0 (`profileViolation`); it needs a `WalletProvider` and
+  `clientID`. Set it where every issuer should be a HAIP one.
+- Signed issuer metadata: `issuerMetadataRoots` asks for and verifies
+  it; `requireSignedIssuerMetadata` refuses an issuer without it before
+  the holder signs in or enters a code; `requireIssuerMetadataName`
+  refuses metadata whose certificate doesn't name the issuer;
+  `maxIssuerMetadataAgeSeconds` bounds its age; and
+  `issuerMetadataRequireEKU` its signer's extended key usage. Set them
+  together where your issuers sign their metadata.
+- `requireIssuerName`: refuses an SD-JWT VC whose `iss` its signing
+  certificate doesn't name. Set it where `issuerRoots` certify several
+  issuers, so one can't issue in another's name.
+- `allowForeignIss`: receives an SD-JWT VC whose `iss` isn't the issuer
+  it came from. Leave it off unless an issuer names itself differently,
+  and `issuerRoots` certify it alone.
+- `statusIssuers`: the Status Issuers that may sign an issuer's status
+  lists for it. Without it, only the issuer's own lists are accepted:
+  add only delegations your ecosystem publishes.
+- `mdocIssuerRoots` and `mdocIssuerRootsByDocType`: the IACAs mdocs, or
+  each document type, must chain to, instead of `issuerRoots`, so an
+  SD-JWT VC issuer's CA can't sign an mDL. `mdocIssuerRequireEKU`
+  requires document signers' extended key usage (the mDL's is
+  1.0.18013.5.1.2).
+- `proximityDeviceAuth`: `MAC_PREFERRED` answers readers with deviceMac,
+  which the reader can't show anyone else; it needs
+  `holderKeyAgreement`. `SIGNATURE`, the default, signs.
+- For a `ProximityReader`: `issuerRootsByDocType` confines each document
+  type to its own IACAs, and `requireMDLSignerEKU` accepts only document
+  signers with the mDL document signer extended key usage.
 
 ## Privacy
 
