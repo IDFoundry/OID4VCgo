@@ -163,7 +163,9 @@ func (a *App) routes(credentialHandler, deferredHandler, notificationHandler htt
 	mux.HandleFunc("GET /demo/kept", a.handleKeptPage)
 	mux.HandleFunc("POST /demo/kept/forget", a.handleForget)
 
-	mux.Handle("GET "+StatusListPath, a.statusPublisher())
+	jwtList, cwtList := a.statusPublishers()
+	mux.Handle("GET "+StatusListPath, jwtList)
+	mux.Handle("GET "+MdocStatusListPath, cwtList)
 	mux.HandleFunc("GET /demo/status", a.handleStatusPage)
 	mux.HandleFunc("POST /demo/status/revoke", a.handleRevoke)
 	return mux

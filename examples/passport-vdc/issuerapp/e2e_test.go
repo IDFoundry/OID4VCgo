@@ -24,6 +24,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/walletapp"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/walletprovider"
 	"github.com/idfoundry/oid4vcgo/haip"
+	"github.com/idfoundry/oid4vcgo/statuslist"
 )
 
 // TestEndToEnd_PerFlowLoopbackPort receives with the CLI wallet's
@@ -130,6 +131,9 @@ func TestEndToEnd_IssuesBothFormats(t *testing.T) {
 	if !mdocCred.HolderKey.PublicKey.Equal(verified.DeviceKey) {
 		t.Error("mdoc DeviceKey isn't the holder key the wallet proved")
 	}
+	if verified.Status == nil || verified.Status.StatusList == nil || verified.Status.StatusList.URI != env.IssuerURL+issuerapp.MdocStatusListPath {
+		t.Errorf("mdoc status = %+v, want its status list at %s", verified.Status, issuerapp.MdocStatusListPath)
+	}
 
 	payload, _, err := sdjwtvc.Verify(byConfig[issuerapp.SDJWTConfigurationID].Credential, issuerPub, oid4vci.ES256,
 		sdjwtvc.VerifyOptions{RequireKeyBinding: sdjwtvc.KeyBindingNotRequired})
@@ -141,6 +145,39 @@ func TestEndToEnd_IssuesBothFormats(t *testing.T) {
 	}
 	if exp, _ := payload["exp"].(float64); int64(exp)%(24*60*60) != 0 {
 		t.Errorf("sd-jwt exp = %v, want the start of a UTC day", payload["exp"])
+	}
+	status, _ := payload["status"].(map[string]any)
+	if ref, err := statuslist.ParseStatusClaim(status); err != nil || ref.URI != env.IssuerURL+issuerapp.StatusListPath {
+		t.Errorf("sd-jwt status = %v (%v), want its status list at %s", status, err, issuerapp.StatusListPath)
+	}
+}
+
+// TestStatusList_DefaultFormPerURI: with no Accept header, the SD-JWT
+// VCs' status list URI serves a JWT and the mdocs' a CWT; a request
+// naming a form gets it at either.
+func TestStatusList_DefaultFormPerURI(t *testing.T) {
+	env := demotest.New(t, nil)
+	for _, tc := range []struct{ path, accept, want string }{
+		{issuerapp.StatusListPath, "", statuslist.TokenMediaType},
+		{issuerapp.MdocStatusListPath, "", statuslist.CWTTokenMediaType},
+		{issuerapp.StatusListPath, statuslist.CWTTokenMediaType, statuslist.CWTTokenMediaType},
+		{issuerapp.MdocStatusListPath, statuslist.TokenMediaType, statuslist.TokenMediaType},
+	} {
+		req, err := http.NewRequest(http.MethodGet, env.IssuerURL+tc.path, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if tc.accept != "" {
+			req.Header.Set("Accept", tc.accept)
+		}
+		resp, err := env.HTTP.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		if got := resp.Header.Get("Content-Type"); resp.StatusCode != http.StatusOK || got != tc.want {
+			t.Errorf("GET %s, Accept %q: %d %q, want 200 %q", tc.path, tc.accept, resp.StatusCode, got, tc.want)
+		}
 	}
 }
 

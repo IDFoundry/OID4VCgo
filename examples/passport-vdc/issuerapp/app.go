@@ -48,31 +48,32 @@ const VCTPath = "/vct/passport/1"
 
 // App is a running passport-vdc issuer.
 type App struct {
-	cfg              Config
-	issuerURL        fapi.URL
-	vct              string
-	credentialURL    url.URL
-	deferredURL      url.URL
-	notificationURL  url.URL
-	preAuthCodes     issuer.PreAuthorizedCodeStore
-	tokenLifetime    time.Duration  // the Authorization Server's access token lifetime
-	reviews          *reviews       // deferred issuances awaiting a decision
-	notifications    *notifications // what the wallets have reported
-	now              func() time.Time
-	server           *server.Server
-	issuer           *issuer.Issuer
-	resourceVerifier *fapires.Verifier
-	transactions     *transactions
-	consent          *interactioncookie.Cookie    // the approval step's state, sealed in the browser
-	metadataHandler  http.Handler                 // the Credential Issuer Metadata, signed by the metadata signer
-	providerAnchors  server.StaticAttesterAnchors // the Wallet Provider CA, bound to Wallet.ProviderIssuer
-	documentSigner   *ecdsa.PrivateKey            // signs credentials and the status list
-	documentCert     *x509.Certificate
-	caCert           *x509.Certificate
-	statusList       *statusList
-	statusListURI    string
-	publisher        *statuslist.Publisher // serves the status list; set by statusPublisher
-	handler          http.Handler
+	cfg               Config
+	issuerURL         fapi.URL
+	vct               string
+	credentialURL     url.URL
+	deferredURL       url.URL
+	notificationURL   url.URL
+	preAuthCodes      issuer.PreAuthorizedCodeStore
+	tokenLifetime     time.Duration  // the Authorization Server's access token lifetime
+	reviews           *reviews       // deferred issuances awaiting a decision
+	notifications     *notifications // what the wallets have reported
+	now               func() time.Time
+	server            *server.Server
+	issuer            *issuer.Issuer
+	resourceVerifier  *fapires.Verifier
+	transactions      *transactions
+	consent           *interactioncookie.Cookie    // the approval step's state, sealed in the browser
+	metadataHandler   http.Handler                 // the Credential Issuer Metadata, signed by the metadata signer
+	providerAnchors   server.StaticAttesterAnchors // the Wallet Provider CA, bound to Wallet.ProviderIssuer
+	documentSigner    *ecdsa.PrivateKey            // signs credentials and the status list
+	documentCert      *x509.Certificate
+	caCert            *x509.Certificate
+	statusList        *statusList
+	statusListURI     string
+	mdocStatusListURI string
+	publishers        []*statuslist.Publisher // serve the status list; set by statusPublishers
+	handler           http.Handler
 }
 
 // New wires an App from cfg. Signing keys are generated per process —
@@ -90,6 +91,7 @@ func New(cfg Config) (*App, error) {
 	a.vct = cfg.IssuerURL + VCTPath
 	a.transactions = newTransactions(a.now, cfg.transactionLifetime(), KeepForRefresh, cfg.maxTransactions())
 	a.statusListURI = cfg.IssuerURL + StatusListPath
+	a.mdocStatusListURI = cfg.IssuerURL + MdocStatusListPath
 	if a.statusList, err = a.loadStatusList(); err != nil {
 		return nil, err
 	}

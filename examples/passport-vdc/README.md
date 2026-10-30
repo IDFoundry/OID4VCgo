@@ -487,7 +487,8 @@ demo verifier's `response_uri`, though, must be `https`.
 Also served: `/.well-known/openid-credential-issuer` (signed metadata),
 `/.well-known/oauth-authorization-server`, `/jwks`, the SD-JWT VC
 type metadata at the `vct` URL (`/vct/passport/1`), and the Token
-Status List every credential references (`/statuslists/1`).
+Status List every credential references (`/statuslists/1`, and for
+mdocs `/statuslists/1/cwt`).
 
 ### The pre-authorized code flow
 
@@ -531,9 +532,12 @@ wallet restart.
 Each credential carries a reference to the issuer's Token Status List
 (draft-14): an SD-JWT VC in its `status` claim, an mdoc in its MSO's
 `status`. Every credential gets its own random, unused index (HAIP 1.0
-§6.1). The issuer serves the list at `/statuslists/1` as a JWT, or as a
-CWT when the request's `Accept` asks for `application/statuslist+cwt`
-(what an mdoc's reference uses), signed by the document signer with its
+§6.1). SD-JWT VCs reference the list at `/statuslists/1`, mdocs the
+same list at `/statuslists/1/cwt`. Each URI serves the form the
+request's `Accept` asks for (`application/statuslist+jwt` or
+`application/statuslist+cwt`), and, when it names neither, a JWT at the
+first and a CWT at the second: an mdoc reader may send no `Accept`
+(draft-14 §8.1). Both are signed by the document signer with its
 certificate in `x5c` / `x5chain` (HAIP 1.0 §6.1).
 
 The issuer's **Issued credentials** page (`/status`, linked from its
