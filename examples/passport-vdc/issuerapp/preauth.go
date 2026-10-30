@@ -53,13 +53,12 @@ const (
 // redeemed: without this, such a request spent the code and got an
 // error. PAR still refuses authorization_details — no
 // AuthorizationCodeRARPolicy is set — so the authorization code flow
-// stays scope-based.
+// stays scope-based; were it set, oid4vci.AuthorizationDetailRARDefinition
+// already refuses a wallet's own credential_identifiers there, and lets
+// the consent add the ones it mints.
 func credentialAuthorizationDetails() (*extension.RARRegistry, error) {
-	return extension.NewRARRegistry(maxAuthorizationDetailsBytes, maxAuthorizationDetailsDepth, extension.RARDefinition[oid4vci.AuthorizationDetail]{
-		Type:              oid4vci.AuthorizationDetailsTypeOpenIDCredential,
-		MaxObjects:        maxCredentialAuthorizationDetails,
-		MaxBytesPerObject: maxAuthorizationDetailBytes,
-	})
+	return extension.NewRARRegistry(maxAuthorizationDetailsBytes, maxAuthorizationDetailsDepth,
+		oid4vci.AuthorizationDetailRARDefinition(maxCredentialAuthorizationDetails, maxAuthorizationDetailBytes))
 }
 
 // preAuthorizedOffer records a claimed transaction's pre-authorized code,

@@ -55,7 +55,9 @@ func (f fakeASClientKeySource) ResolveVerificationKeys(context.Context, keys.Cli
 // one registered private_key_jwt client, using extensions as its own
 // Config.Extensions (nil defaults to an empty registry, in which no
 // extension parameter — including issuer_state — is registered).
-func newTestAuthorizationServer(t *testing.T, extensions *extension.Registry) (srv *server.Server, clientKey *ecdsa.PrivateKey, now time.Time) {
+// configure, if any, adjusts the server's configuration and the
+// client's registration before they're built.
+func newTestAuthorizationServer(t *testing.T, extensions *extension.Registry, configure ...func(*server.Config, *server.Dependencies, *storage.RegisteredClientConfig)) (srv *server.Server, clientKey *ecdsa.PrivateKey, now time.Time) {
 	t.Helper()
 	now = time.Now()
 	clientKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -63,14 +65,11 @@ func newTestAuthorizationServer(t *testing.T, extensions *extension.Registry) (s
 		t.Fatalf("generate client key: %v", err)
 	}
 
-	client, err := storage.NewRegisteredClient(storage.RegisteredClientConfig{
+	clientCfg := storage.RegisteredClientConfig{
 		ID:                       testASClientID,
 		RedirectURIs:             []fapi.RegisteredRedirectURI{testASRedirectURI},
 		ClientAssertionAlgorithm: fapi.ES256,
 		AllowedScopes:            []string{"identity_credential"},
-	})
-	if err != nil {
-		t.Fatalf("NewRegisteredClient: %v", err)
 	}
 
 	issuerURL, err := fapi.ParseIssuerURL(testASIssuer)
@@ -133,7 +132,6 @@ func newTestAuthorizationServer(t *testing.T, extensions *extension.Registry) (s
 		Extensions: extensions,
 	}
 	deps := server.Dependencies{
-		Clients:                memstore.NewClientRepository([]storage.RegisteredClient{client}),
 		Transactions:           memstore.NewTransactionStore(),
 		Grants:                 memstore.NewGrantStore(),
 		Replay:                 memstore.NewReplayStore(),
@@ -145,6 +143,14 @@ func newTestAuthorizationServer(t *testing.T, extensions *extension.Registry) (s
 		Random:                 rand.Reader,
 		ClientCertificateTrust: server.NoPKIClientAuthentication{},
 	}
+	for _, c := range configure {
+		c(&cfg, &deps, &clientCfg)
+	}
+	client, err := storage.NewRegisteredClient(clientCfg)
+	if err != nil {
+		t.Fatalf("NewRegisteredClient: %v", err)
+	}
+	deps.Clients = memstore.NewClientRepository([]storage.RegisteredClient{client})
 	srv, err = server.New(cfg, deps)
 	if err != nil {
 		t.Fatalf("server.New: %v", err)

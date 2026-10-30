@@ -43,6 +43,7 @@ import (
 	"time"
 
 	fapi "github.com/idfoundry/fapigo"
+	"github.com/idfoundry/fapigo/extension"
 	"github.com/idfoundry/fapigo/keys"
 	"github.com/idfoundry/fapigo/keys/ephemeral"
 	"github.com/idfoundry/fapigo/server"
@@ -135,7 +136,8 @@ type Options struct {
 	// allows: it serves only the pre-authorized code grant
 	// (PreAuthorizedCodeOnly), redeemed with no client authentication
 	// (pre-authorized_grant_anonymous_access_supported, §12.3; the
-	// token request's DPoP proof checked by the issuer itself), and
+	// token request's DPoP proof checked by the Authorization Server
+	// without a client, VerifyTokenRequestDPoP), and
 	// takes jwt proofs (Appendix F.1) with no key attestation. An
 	// authorization code offer can't be redeemed at it.
 	Anonymous bool
@@ -170,6 +172,13 @@ type Options struct {
 	// offers, refresh and revocation then work from the token and
 	// revocation endpoints alone.
 	PreAuthorizedCodeOnly bool
+	// CredentialAuthorizationDetails has the Authorization Server take
+	// openid_credential authorization_details at its pushed
+	// authorization request (oid4vci.AuthorizationDetailRARDefinition),
+	// and its consent grant each one requested with a
+	// credential_identifier it mints (OpenID4VCI 1.0 §6.2). With
+	// MdocUnscoped, a wallet requests the mdoc configuration that way.
+	CredentialAuthorizationDetails bool
 }
 
 // Env is a running issuer and Wallet Provider.
@@ -213,6 +222,11 @@ type Env struct {
 	deferAll      bool
 	decision      *bool
 	notifications []oid4vci.NotificationEvent
+	// minted are the credential_identifiers the consent minted, by
+	// subject, and presented those Credential Requests named, under
+	// Options.CredentialAuthorizationDetails.
+	minted    map[string][]string
+	presented []string
 
 	// Set once in New, before the server starts, and only read after:
 	// mu guards challenges' entries, not the map itself.
@@ -267,6 +281,13 @@ func New(opts Options) (env *Env, err error) {
 		clientCfg.RedirectURIs = append(clientCfg.RedirectURIs, fapi.RegisteredRedirectURI(u))
 	}
 	clientCfg.AllowedScopes = []string{SDJWTConfigurationID, MdocConfigurationID, "offline_access"}
+	if opts.CredentialAuthorizationDetails {
+		asCfg.RAR, err = extension.NewRARRegistry(credentialAuthorizationDetailsBytes, credentialAuthorizationDetailsDepth,
+			credentialAuthorizationDetail)
+		must(err)
+		clientCfg.AuthorizationDetailsTypes = []string{oid4vci.AuthorizationDetailsTypeOpenIDCredential}
+		e.minted = map[string][]string{}
+	}
 	client, err := storage.NewRegisteredClient(clientCfg)
 	must(err)
 	clientKeys, err := ephemeral.NewClientKeySource(nil, nil)
@@ -283,6 +304,9 @@ func New(opts Options) (env *Env, err error) {
 			IssuerBinding: server.AttesterIssuerBoundToAnchor,
 			Revocation:    server.NoClientCertificateRevocationCheck{},
 		},
+	}
+	if opts.CredentialAuthorizationDetails {
+		deps.AuthorizationCodeRARPolicy = server.AllowRequestedAuthorizationDetails{}
 	}
 	e.srv, err = server.New(asCfg, deps)
 	must(err)
@@ -394,7 +418,10 @@ func New(opts Options) (env *Env, err error) {
 	credentialURL, deferredURL, notificationURL := e.endpoint("/credential").URL(), e.endpoint("/deferred_credential").URL(), e.endpoint("/notification").URL()
 	credentialHandler, err := e.iss.CredentialHandler(issuer.CredentialHandlerConfig{
 		URL: &credentialURL, Tokens: tokens,
-		Prepare: func(_ context.Context, _ issuer.Grant, req *issuer.CredentialRequest) (func(bool), error) {
+		Prepare: func(_ context.Context, grant issuer.Grant, req *issuer.CredentialRequest) (func(bool), error) {
+			if err := e.checkCredentialIdentifier(grant, req); err != nil {
+				return nil, err
+			}
 			if e.deferring() {
 				req.Defer = &issuer.Deferral{}
 				return nil, nil
@@ -852,9 +879,16 @@ func (e *Env) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 	e.mu.Lock()
 	e.grantIDs = append(e.grantIDs, grantID)
 	e.mu.Unlock()
+	details, err := e.grantCredentialAuthorizationDetails(interaction.Interaction, "holder")
+	if err != nil {
+		http.Error(w, "invalid authorization_details", http.StatusBadRequest)
+		return
+	}
 	done, err := e.srv.CompleteAuthorization(r.Context(), server.CompleteAuthorizationRequest{
 		Handle: interaction.Handle,
-		Result: server.Authorize(subject, authCtx, server.GrantedAuthorization{Scope: interaction.Interaction.Scope, GrantID: grantID}),
+		Result: server.Authorize(subject, authCtx, server.GrantedAuthorization{
+			Scope: interaction.Interaction.Scope, GrantID: grantID, AuthorizationDetails: details,
+		}),
 	})
 	if err != nil {
 		http.Error(w, "failed to complete authorization", http.StatusInternalServerError)
@@ -1254,6 +1288,78 @@ func batchIssuance(size int) *oid4vci.BatchCredentialIssuance {
 		return nil
 	}
 	return &oid4vci.BatchCredentialIssuance{BatchSize: size}
+}
+
+// Bounds on the openid_credential authorization_details the
+// Authorization Server takes under Options.CredentialAuthorizationDetails.
+const (
+	credentialAuthorizationDetailsBytes = 8 << 10
+	credentialAuthorizationDetailsDepth = 6
+)
+
+// credentialAuthorizationDetail is the openid_credential type, under
+// Options.CredentialAuthorizationDetails.
+var credentialAuthorizationDetail = oid4vci.AuthorizationDetailRARDefinition(2, 4<<10)
+
+// grantCredentialAuthorizationDetails grants each openid_credential
+// object the interaction requested, with a credential_identifier minted
+// for it and recorded for subject — the consent's own addition, which
+// the type's ValidateGrant allows and its ValidateRequest refuses from
+// the wallet. None without Options.CredentialAuthorizationDetails.
+func (e *Env) grantCredentialAuthorizationDetails(interaction server.InteractionRequest, subject string) ([]json.RawMessage, error) {
+	if e.minted == nil {
+		return nil, nil
+	}
+	requested, err := extension.RARGet(interaction.AuthorizationDetails, credentialAuthorizationDetail)
+	if err != nil {
+		return nil, err
+	}
+	granted := make([]json.RawMessage, 0, len(requested))
+	for _, d := range requested {
+		detail := d.Fields
+		detail.Type = oid4vci.AuthorizationDetailsTypeOpenIDCredential
+		detail.CredentialIdentifiers = []string{rand.Text()}
+		raw, err := json.Marshal(detail)
+		if err != nil {
+			return nil, err
+		}
+		e.mu.Lock()
+		e.minted[subject] = append(e.minted[subject], detail.CredentialIdentifiers...)
+		e.mu.Unlock()
+		granted = append(granted, raw)
+	}
+	return granted, nil
+}
+
+// checkCredentialIdentifier applies the binding rule
+// oid4vci.AuthorizationDetailRARDefinition documents for Prepare: a
+// credential_identifier names a dataset only together with the grant's
+// subject, among those minted for it. It records each one presented.
+// Only under Options.CredentialAuthorizationDetails: the identifiers a
+// pre-authorized code's redemption mints map to a configuration alone.
+func (e *Env) checkCredentialIdentifier(grant issuer.Grant, req *issuer.CredentialRequest) error {
+	if e.minted == nil || req.CredentialIdentifier == "" {
+		return nil
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.presented = append(e.presented, req.CredentialIdentifier)
+	if !slices.Contains(e.minted[grant.Subject], req.CredentialIdentifier) {
+		return issuer.NewError(issuer.ErrorCredentialRequestDenied, "the credential_identifier wasn't minted for this holder")
+	}
+	return nil
+}
+
+// CredentialIdentifiers returns the credential_identifiers the
+// Authorization Server minted at consent, and those Credential Requests
+// presented, under Options.CredentialAuthorizationDetails.
+func (e *Env) CredentialIdentifiers() (minted, presented []string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for _, ids := range e.minted {
+		minted = append(minted, ids...)
+	}
+	return minted, slices.Clone(e.presented)
 }
 
 func mdocScope(opts Options) string {
