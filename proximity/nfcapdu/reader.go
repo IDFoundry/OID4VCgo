@@ -16,7 +16,10 @@ var errExchangeClosed = errors.New("nfcapdu: exchange closed")
 // An Exchange is a sequence of command APDUs to send to the tag, each
 // depending on the responses before it. Send Command, after waiting
 // Wait, pass its response to Next, and repeat until Command is nil; then
-// Result holds the outcome. Close an Exchange abandoned before then.
+// Result holds the outcome. Close an Exchange abandoned before then:
+// until its sequence is over, it holds a goroutine. An Exchange isn't
+// safe for concurrent use, except that Close may be called from any
+// goroutine, ending a Next waiting on the sequence.
 type Exchange struct {
 	steps     chan exchangeStep
 	responses chan []byte
