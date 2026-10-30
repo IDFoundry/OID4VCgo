@@ -31,37 +31,55 @@ import AuthenticationServices
 import Foundation
 import OID4VCWallet
 
-/// Receives the credentials an offer link offers. `askPIN` asks the
-/// holder for the PIN the issuer sent, or returns nil if they cancel;
-/// `signIn` opens the issuer's page and returns the redirect back.
+/// Receives the credentials an offer link offers. `confirm` shows the
+/// holder who is offering what, and returns whether they want it;
+/// `askPIN` asks for the PIN the issuer sent, or returns nil if they
+/// cancel; `signIn` opens the issuer's page and returns the redirect
+/// back.
 func receive(offerLink: String, wallet: Wallet,
+             confirm: (Offer) async -> Bool,
              askPIN: (Offer.TxCode?) async -> String?,
              signIn: (URL) async throws -> URL) async throws -> Issuance.Result? {
     let issuance = try await wallet.startIssuance(offer: offerLink)
-    switch issuance.offer.grant {
-    case .preAuthorizedCode:
-        while true {
-            guard let pin = await askPIN(issuance.offer.txCode) else {
-                try await issuance.close()
-                return nil
-            }
-            do {
-                try await issuance.redeemPreAuthorizedCode(pin: pin)
-                break
-            } catch let error as WalletError where error.isRetryable {
-                continue // A wrong PIN (invalid_grant): ask again.
-            }
+    do {
+        guard await confirm(issuance.offer) else {
+            try await issuance.close()
+            return nil
         }
-    case .authorizationCode:
-        let url = try await issuance.beginAuthorization()
-        let redirect = try await signIn(url)
-        try await issuance.completeAuthorization(redirect: redirect)
+        switch issuance.offer.grant {
+        case .preAuthorizedCode:
+            while true {
+                guard let pin = await askPIN(issuance.offer.txCode) else {
+                    try await issuance.close()
+                    return nil
+                }
+                do {
+                    try await issuance.redeemPreAuthorizedCode(pin: pin)
+                    break
+                } catch let error as WalletError where error.isRetryable {
+                    continue // A wrong PIN (invalid_grant): ask again.
+                }
+            }
+        case .authorizationCode:
+            let url = try await issuance.beginAuthorization()
+            let redirect = try await signIn(url)
+            try await issuance.completeAuthorization(redirect: redirect)
+        }
+        let result = try await issuance.requestCredentials()
+        try await issuance.close()
+        return result
+    } catch {
+        // End the issuance whatever failed, deleting its keys.
+        try? await issuance.close()
+        throw error
     }
-    let result = try await issuance.requestCredentials()
-    try await issuance.close()
-    return result
 }
 ```
+
+Show the offer before anything is redeemed: the issuer's name and the
+credentials it offers, so the holder can turn down an offer they didn't
+expect. Close the issuance on every path, as here: its keys are
+deleted then, but for those a deferred credential still needs.
 
 ``Issuance/Result`` lists what arrived, what the issuer deferred, and
 what failed: one credential the issuer refused doesn't hold up the

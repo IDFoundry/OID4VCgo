@@ -41,18 +41,22 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
 
 /**
- * Receives the credentials an offer link offers. `askPIN` asks the
- * holder for the PIN the issuer sent, or returns null if they cancel;
- * `signIn` opens the issuer's page and returns the redirect back.
+ * Receives the credentials an offer link offers. `confirm` shows the
+ * holder who is offering what, and returns whether they want it;
+ * `askPIN` asks for the PIN the issuer sent, or returns null if they
+ * cancel; `signIn` opens the issuer's page and returns the redirect
+ * back.
  */
 suspend fun receive(
     offerLink: String,
     wallet: Wallet,
+    confirm: suspend (Offer) -> Boolean,
     askPIN: suspend (Offer.TxCode?) -> String?,
     signIn: suspend (String) -> String,
 ): Issuance.Result? {
     val issuance = wallet.startIssuance(offerLink)
     try {
+        if (!confirm(issuance.offer)) return null
         when (issuance.offer.grant) {
             Offer.Grant.PRE_AUTHORIZED_CODE -> while (true) {
                 val pin = askPIN(issuance.offer.txCode) ?: return null
@@ -74,6 +78,11 @@ suspend fun receive(
     }
 }
 ```
+
+Show the offer before anything is redeemed: the issuer's name and the
+credentials it offers, so the holder can turn down an offer they didn't
+expect. Close the issuance on every path, as here: its keys are
+deleted then, but for those a deferred credential still needs.
 
 `Issuance.Result` lists what arrived, what the issuer deferred, and what
 failed: one credential the issuer refused doesn't hold up the rest.
