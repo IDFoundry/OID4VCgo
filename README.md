@@ -161,8 +161,9 @@ Where to start, by role:
   library), each with its documentation: [Swift](https://idfoundry.github.io/OID4VCgo-wallet-swift/latest/documentation/oid4vcwallet/) and
   [Kotlin](https://idfoundry.github.io/OID4VCgo-wallet-kotlin/latest/) ([guides](https://github.com/IDFoundry/OID4VCgo-wallet-kotlin/tree/main/docs)). See also
   [mobile/MOBILE.md](mobile/MOBILE.md) and [`mobile/`](mobile).
-- **Your own stores and resolvers** — `issuer/issuertest` and
-  `verifier/verifiertest` hold contract tests to run against them.
+- **Your own stores and resolvers** — `issuer/issuertest`,
+  `verifier/verifiertest` and `walletflow/storetest` hold contract tests
+  to run against them.
 
 For a complete, real integration, see the four `cmd/conformance-*`
 binaries under `conformance/`: each pairs this library's own role
