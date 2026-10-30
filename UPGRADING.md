@@ -400,6 +400,12 @@ one Wallet. A store of your own implements the new methods:
   `verifier.VerifiedCredential`, for `verifier.StatusPolicy.Check` or
   `verifier.RequireValidStatus` after `Verify`. Its `IssuerChain` leaves
   out the trust anchor, as a Verifier's mdoc's does.
+- **Respond after Terminate.** `walletflow.ProximityPresentation.Respond`
+  fails with the new `walletflow.ErrTerminated`, sending nothing, when
+  `Terminate` is called while it runs (the holder key's prompt is up,
+  say); it used to return a response the app could still send. The
+  mobile code is `cancelled`. The Swift and Kotlin libraries also check
+  that the app hasn't cancelled before they send a response.
 
 ## v0.55.0 → v0.56.0
 
