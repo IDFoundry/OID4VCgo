@@ -853,9 +853,12 @@ signer under a trusted root can choose, so they're for display only.
 `HandleMessage` doesn't check: call `CheckStatus` before relying on the
 document. It's `{"type": "status_list", "uri", "idx"}` or `{"type":
 "identifier_list", "uri", "id"}` (`id` as base64), with `certificate`
-(base64 DER), the list signer's trust anchor, when the MSO names one.
-`type` and the identifier list were added within ABI version 12; before,
-an identifier list gave no `status`.
+(base64 DER), the list signer's trust anchor, when the MSO names one,
+or `{"type": "unknown", "uri": ""}` for an MSO status naming neither (a
+mechanism the reader doesn't know, or a misspelt one), which may still
+revoke the document. `type` and the identifier list were added within
+ABI version 12; before, an identifier list gave no `status`. `unknown`
+was added within ABI version 12 too; before, such a status gave none.
 
 ```json
 {"abi": 12, "event": "verified", "verified": {
@@ -879,7 +882,8 @@ the list defines (`0x` and its value), `none` (the MSO names no
 revocation list) or `unknown` (an identifier list, §12.3.6.3, which this
 reader can't check, and no status list or one on which the document is
 valid; within ABI 12, an MSO naming both was reported by its status
-list alone). Rely on the document only on `valid` or `none`. A
+list alone; or a status naming no mechanism the reader knows, which
+within ABI 12 was reported as `none`). Rely on the document only on `valid` or `none`. A
 failed fetch is `network`, a list that doesn't verify `protocol`, and
 cancelling `op` makes it `cancelled`. The list covers many documents, so
 fetching it doesn't tell its publisher which one was presented; it can
