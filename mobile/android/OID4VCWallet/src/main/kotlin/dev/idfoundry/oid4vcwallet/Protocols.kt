@@ -53,9 +53,11 @@ public interface KeyStore {
      * attest its keys makes the platform attest this one over it, so
      * [attestationChain] returns its chain. The wallet calls this one,
      * with the challenge its [WalletProvider.attestationChallenge] gave
-     * for [purpose] (null when it gave none). The default ignores the
-     * challenge and calls [createKey]: a store that can't attest keys
-     * needn't implement it.
+     * for [purpose], and only when it gave one: without a challenge it
+     * calls [createKey]. The default ignores the challenge and calls
+     * [createKey]: a store that can't attest keys needn't implement it.
+     * A store delegating to another (`KeyStore by …`) that overrides
+     * [createKey] should override this one too, since delegation forwards it.
      */
     public fun createKey(purpose: KeyPurpose, attestationChallenge: ByteArray?): String = createKey(purpose)
 
@@ -304,7 +306,11 @@ internal class KeyStoreAdapter(
         if (challenge != null && (challenge.isEmpty() || challenge.size > MAX_ATTESTATION_CHALLENGE)) {
             throw StoreException("the Wallet Provider's attestation challenge must be 1 to $MAX_ATTESTATION_CHALLENGE bytes, not ${challenge.size}")
         }
-        val id = store.createKey(p, challenge)
+        // Without a challenge, the one-argument createKey, as before: a
+        // store delegating to another (`KeyStore by …`) that overrides only
+        // it would otherwise be bypassed, since delegation forwards this
+        // overload too.
+        val id = if (challenge == null) store.createKey(p) else store.createKey(p, challenge)
         if (created != null) store.publicKey(id)?.let { created.add(it, id) }
         return id
     }
