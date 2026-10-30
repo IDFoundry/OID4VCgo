@@ -11,9 +11,9 @@ import (
 	"github.com/idfoundry/oid4vcgo/internal/jwk"
 )
 
-// One key has one thumbprint, however its members are written:
-// base64url decoding forgives a line break. Stray trailing bits are
-// refused instead (RFC 4648 §3.5).
+// One key has one encoding of each member: a line break (RFC 7515 §2)
+// and stray trailing bits (RFC 4648 §3.5) are refused, so neither can
+// give one key a second thumbprint or a second matching JWK.
 func TestThumbprint_NonCanonicalEncodings(t *testing.T) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -29,25 +29,22 @@ func TestThumbprint_NonCanonicalEncodings(t *testing.T) {
 	}
 	// 32 bytes is 43 base64url characters, the last carrying 2 unused
 	// bits: flip one.
-	last := strings.Index("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_", canonical.X[42:])
-	alphabet := "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
-	trailing := jwk.JWK{Kty: "EC", Crv: "P-256", X: canonical.X[:42] + string(alphabet[last^1]), Y: canonical.Y}
-	if _, err := trailing.PublicKey(); err == nil {
-		t.Error("trailing bits: PublicKey accepted a non-canonical x encoding")
-	}
+	const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+	last := strings.Index(alphabet, canonical.X[42:])
 	variants := map[string]jwk.JWK{
-		"a line break": {Kty: "EC", Crv: "P-256", X: canonical.X[:20] + "\n" + canonical.X[20:], Y: canonical.Y},
+		"trailing bits": {Kty: "EC", Crv: "P-256", X: canonical.X[:42] + string(alphabet[last^1]), Y: canonical.Y},
+		"a line break":  {Kty: "EC", Crv: "P-256", X: canonical.X[:20] + "\n" + canonical.X[20:], Y: canonical.Y},
 	}
 	for name, v := range variants {
-		if _, err := v.PublicKey(); err != nil {
-			t.Fatalf("%s: test setup: doesn't decode: %v", name, err)
+		if _, err := v.PublicKey(); err == nil {
+			t.Errorf("%s: PublicKey accepted a non-canonical x encoding", name)
 		}
-		if got, err := v.Thumbprint(); err != nil || got != want {
-			t.Errorf("%s: thumbprint %s, %v; want %s", name, got, err, want)
+		if got, _ := v.Thumbprint(); got == want {
+			t.Errorf("%s: thumbprint is the key's own", name)
 		}
 		raw, _ := json.Marshal(v)
-		if ok, err := jwk.Matches(raw, &key.PublicKey); err != nil || !ok {
-			t.Errorf("%s: Matches = %v, %v; want the same key", name, ok, err)
+		if ok, _ := jwk.Matches(raw, &key.PublicKey); ok {
+			t.Errorf("%s: Matches accepted it as the key", name)
 		}
 	}
 }

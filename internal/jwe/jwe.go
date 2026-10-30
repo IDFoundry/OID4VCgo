@@ -8,10 +8,10 @@ import (
 	"crypto/ecdh"
 	"crypto/ecdsa"
 	"crypto/rand"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/idfoundry/oid4vcgo/internal/b64url"
 	"github.com/idfoundry/oid4vcgo/internal/strictjson"
 	"io"
 	"strings"
@@ -44,9 +44,10 @@ type Zip string
 // only registered "zip" value.
 const DEF Zip = "DEF"
 
-// b64 decodes strictly: an encoding whose unused trailing bits aren't zero
-// (RFC 4648 §3.5) is refused, as every encoder emits zero bits.
-var b64 = base64.RawURLEncoding.Strict()
+// b64 is RFC 7515 §2 base64url: any byte outside its alphabet, line
+// breaks included, and non-zero trailing bits (RFC 4648 §3.5) are
+// refused, so one value has one encoding.
+var b64 b64url.Encoding
 
 // MaxCompactBytes bounds how large a compact JWE Decrypt/DecodeHeader
 // will attempt to parse, to avoid doing unbounded base64url-decode and

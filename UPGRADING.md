@@ -36,6 +36,20 @@ them.
   `OnAccept` need no change: each is matched to the issuer whose key
   verifies it.
 
+### Parsing
+
+- **base64url is the RFC 7515 §2 alphabet only.** Every JWS, JWE and
+  JWK segment and member, and every SD-JWT Disclosure, is refused if it
+  holds a byte outside `A–Z a–z 0–9 - _`. A token that a producer broke
+  across lines (`\r`, `\n`) or padded with `=` used to be read as the
+  unbroken one; it is now refused. Producers that follow the RFCs never
+  emit either.
+- **JSON must be UTF-8.** Every JSON object this module parses (JOSE
+  headers and claims, metadata, requests and responses) is refused if
+  it holds bytes that aren't UTF-8 or a `\u` escape of an unpaired
+  surrogate (RFC 8259 §8.1–§8.2, RFC 7493 §2.1), instead of reading
+  either as U+FFFD.
+
 ## v0.55.0 → v0.56.0
 
 This release pins FAPIgo v0.65.1, which carries the breaking changes of
