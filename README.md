@@ -166,7 +166,9 @@ Where to start, by role:
   the issuer's, the verifier's and walletflow's stores in PostgreSQL or
   SQLite through `database/sql`: versioned migrations, atomic consumes
   and updates across processes, records optionally sealed, and a
-  `Sweep` for expired ones.
+  `Sweep` for expired ones. For a whole issuer deployment it shares one
+  database with FAPIgo's [`fapigo/sqlstore`](https://pkg.go.dev/github.com/idfoundry/fapigo/sqlstore),
+  which keeps the Authorization Server's stores.
 - **Your own stores and resolvers** — `issuer/issuertest`,
   `verifier/verifiertest` and `walletflow/storetest` hold contract tests
   to run against them.
