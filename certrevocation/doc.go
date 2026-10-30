@@ -42,8 +42,11 @@
 // public addresses only by default, keeps the last good list from each
 // and replaces it only with one a configured CA signed that isn't
 // older, so a failed or replayed fetch can't evict or roll back a good
-// list. URLIssuers binds each URL to its CA, Floors and OnAccept carry
-// the rollback floor across a restart, and RequireHTTPS refuses plain
+// list. That rollback floor is kept per CA, by its name and the key
+// that signs its lists, and two configured CAs by one name with
+// different keys are refused unless AllowSameNameIssuers is set.
+// URLIssuers binds each URL to its CA, Floors and OnAccept carry the
+// rollback floor across a restart, and RequireHTTPS refuses plain
 // http distribution points. Its Run loop refreshes each list well before its nextUpdate,
 // in a goroutine the caller starts; Refresher.Checker is the CRLs to
 // check against. On a phone, the operating system's background

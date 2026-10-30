@@ -291,6 +291,73 @@ func TestRefresher_Floors(t *testing.T) {
 	}
 }
 
+// The rollback floor is an issuer's by name and key. Two configured CAs
+// by one name, allowed with AllowSameNameIssuers, keep their own: the
+// one's list with a huge CRL number neither refuses the other's next
+// genuine list, the one revoking a certificate, as a rollback, nor —
+// persisted and passed back as a floor — does so after a restart. A
+// re-keyed CA restarting its numbering is the benign case of the same.
+func TestRefresher_FloorsPerIssuerKey(t *testing.T) {
+	subject := pkix.Name{CommonName: "Utopia IACA", Country: []string{"UT"}}
+	caA, keyA := testcert.CAWithSubject(t, subject)
+	caM, keyM := testcert.CAWithSubject(t, subject) // the same name, another key
+	leafA, _ := testcert.Leaf(t, "Utopia DS", caA, keyA)
+	issuers := []*x509.Certificate{caA, caM}
+
+	srv := newCRLServer(t)
+	urlA, urlM := srv.URL+"/a.crl", srv.URL+"/m.crl"
+	srv.serveCRL("/a.crl", numbered(t, caA, keyA, 10, -time.Hour))
+	huge := testcert.CRLFromTemplate(t, &x509.RevocationList{Number: new(big.Int).Lsh(big.NewInt(1), 150)}, caM, keyM)
+	srv.serveCRL("/m.crl", huge)
+
+	var persisted []*x509.RevocationList
+	r := newRefresher(t, certrevocation.RefresherConfig{
+		URLs: []string{urlA, urlM}, Issuers: issuers, AllowSameNameIssuers: true,
+		URLIssuers: map[string]*x509.Certificate{urlA: caA, urlM: caM},
+		OnAccept:   func(_ string, list *x509.RevocationList) { persisted = append(persisted, list) },
+	})
+	if err := r.Refresh(context.Background()); err != nil {
+		t.Fatalf("first Refresh: %v", err)
+	}
+
+	// A's next list, revoking the leaf, numbered far below M's.
+	srv.serveCRL("/a.crl", numbered(t, caA, keyA, 11, -time.Minute, leafA.SerialNumber))
+	if err := r.Refresh(context.Background()); err != nil {
+		t.Fatalf("Refresh, A's next list: %v", err)
+	}
+	chain := []*x509.Certificate{leafA, caA}
+	if err := r.Checker().CheckRevocation(context.Background(), certrevocation.Check{Chain: chain}); !errors.Is(err, certrevocation.ErrRevoked) {
+		t.Errorf("leaf A revoked: %v, want ErrRevoked", err)
+	}
+
+	// A restart with every accepted list, M's huge one too, as Floors:
+	// only A's own bound A's lists.
+	restarted := newRefresher(t, certrevocation.RefresherConfig{
+		URLs: []string{urlA}, Issuers: issuers, AllowSameNameIssuers: true, Floors: persisted,
+		URLIssuers: map[string]*x509.Certificate{urlA: caA},
+	})
+	if err := restarted.Refresh(context.Background()); err != nil {
+		t.Fatalf("Refresh after a restart: %v", err)
+	}
+	if err := restarted.Checker().CheckRevocation(context.Background(), certrevocation.Check{Chain: chain}); !errors.Is(err, certrevocation.ErrRevoked) {
+		t.Errorf("leaf A revoked, after a restart: %v, want ErrRevoked", err)
+	}
+	// A's own floor still holds: its older list is refused.
+	srv.serveCRL("/a.crl", numbered(t, caA, keyA, 10, -time.Hour))
+	if err := restarted.Refresh(context.Background()); err == nil || !strings.Contains(err.Error(), "newest list accepted from its issuer") {
+		t.Errorf("Refresh, A's older list after a restart = %v, want it refused", err)
+	}
+
+	// Without the opt-in, two keys under one name are refused outright;
+	// one certificate given twice isn't.
+	if _, err := certrevocation.NewRefresher(certrevocation.RefresherConfig{URLs: []string{urlA}, Issuers: issuers}); err == nil || !strings.Contains(err.Error(), "AllowSameNameIssuers") {
+		t.Errorf("NewRefresher, two keys under one name = %v, want it refused", err)
+	}
+	if _, err := certrevocation.NewRefresher(certrevocation.RefresherConfig{URLs: []string{urlA}, Issuers: []*x509.Certificate{caA, caA}}); err != nil {
+		t.Errorf("NewRefresher, one issuer twice: %v", err)
+	}
+}
+
 func TestRefresher_FetchesDERAndPEM(t *testing.T) {
 	p := newPKI(t)
 	srv := newCRLServer(t)

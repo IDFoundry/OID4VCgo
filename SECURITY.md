@@ -53,7 +53,11 @@ its CA's CRL too, so that CA's certificate must be in `CRLs.Issuers`
 (`r.Checker()` sets the Refresher's own `Issuers` there), or the
 anchor is refused. Where revocation is checked, put only self-signed
 roots in the trust anchors, not a CA's whole chain: an intermediate
-there needs its own CA's CRL.
+there needs its own CA's CRL. The Refresher's rollback floor is kept
+per CA, by name and key, so one CA can't raise another's by using its
+name; `NewRefresher` refuses two `Issuers` by one name with different
+keys unless `AllowSameNameIssuers` is set, as for a CA that re-keyed
+under its name.
 `certrevocation.NoCheck{}` declines the check explicitly, for
 short-lived certificates or a trust framework that removes compromised
 issuers from the anchor set itself.

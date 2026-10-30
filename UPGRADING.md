@@ -24,6 +24,17 @@ them.
   an intermediate must stay among them, add its CA's certificate to
   `Issuers` and that CA's CRL distribution point to the Refresher. On
   mobile, that CA's certificate goes in `crl_issuers`.
+- **Two Refresher issuers by one name.** `certrevocation.NewRefresher`
+  refuses `Issuers` holding two certificates with the same subject name
+  but different keys, unless `RefresherConfig.AllowSameNameIssuers` is
+  set. The rollback floor is now kept per issuer name and key, so one
+  such CA's lists no longer raise, or are refused by, the other's; a
+  CA that re-keyed under its name may restart its CRL numbering. Set
+  the option for a CA that re-keyed and still publishes CRLs under its
+  old key too, and bind each of their URLs with `URLIssuers`; otherwise
+  remove the certificate that doesn't belong. Floors persisted from
+  `OnAccept` need no change: each is matched to the issuer whose key
+  verifies it.
 
 ## v0.55.0 → v0.56.0
 
