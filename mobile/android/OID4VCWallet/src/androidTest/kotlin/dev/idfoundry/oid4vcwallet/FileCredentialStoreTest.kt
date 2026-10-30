@@ -45,6 +45,51 @@ class FileCredentialStoreTest {
         assertNull(s.record("a"))
     }
 
+    @Test
+    fun compareAndSwap() {
+        val s = store()
+        val a = """{"id":"a"}""".toByteArray()
+        val b = """{"id":"a","v":2}""".toByteArray()
+        assertNull("swapped into nothing", s.compareAndSwap("a", a, b))
+        assertNull(s.record("a"))
+        assertNull(s.compareAndSwap("a", null, a))
+        assertArrayEquals(a, s.record("a"))
+        assertArrayEquals("swapped over another record", a, s.compareAndSwap("a", b, "{}".toByteArray()))
+        assertArrayEquals(a, s.record("a"))
+        assertArrayEquals(a, s.compareAndSwap("a", a, b))
+        assertArrayEquals(b, s.record("a"))
+        assertArrayEquals(b, s.compareAndSwap("a", b, null))
+        assertNull(s.record("a"))
+        assertTrue(s.records().isEmpty())
+    }
+
+    /**
+     * Stores open on one directory swap atomically between them: of
+     * concurrent read-and-swap loops, none loses another's write.
+     */
+    @Test
+    fun compareAndSwapAcrossStores() {
+        val dir = File(context.cacheDir, "store-${UUID.randomUUID()}").also { dirs += it }
+        val stores = List(4) { store(dir) }
+        stores[0].put("counter", "0".toByteArray())
+        val rounds = 25
+        val threads = List(stores.size * 2) { i ->
+            Thread {
+                val s = stores[i % stores.size]
+                repeat(rounds) {
+                    while (true) {
+                        val current = s.record("counter")!!
+                        val next = (current.decodeToString().toInt() + 1).toString().toByteArray()
+                        if (s.compareAndSwap("counter", current, next).contentEquals(current)) break
+                    }
+                }
+            }.apply { start() }
+        }
+        threads.forEach { it.join() }
+        assertEquals((threads.size * rounds).toString(), stores[1].record("counter")!!.decodeToString())
+        assertEquals("only the record is listed, not the lock file", 1, stores[1].records().size)
+    }
+
     /** IDs name files: anything that could leave the directory is refused. */
     @Test
     fun refusesMalformedIDs() {

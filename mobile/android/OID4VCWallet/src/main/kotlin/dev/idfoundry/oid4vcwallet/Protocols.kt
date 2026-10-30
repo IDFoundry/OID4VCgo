@@ -103,6 +103,23 @@ public interface CredentialStore {
     public fun delete(id: String)
 
     /**
+     * Replaces the record under [id] with [record] — or deletes it, when
+     * [record] is null — only if what's stored there is, byte for byte,
+     * [expected] (null: no record), and returns what was stored before,
+     * whether or not it replaced it.
+     *
+     * It must be atomic across every process sharing the store: nothing
+     * may write the record between its read and its write, so [put] and
+     * [delete] take the same lock, one every process sees (a file lock,
+     * not only a JVM lock). The wallet changes records only this way, so
+     * two processes never both present one copy as unused, complete one
+     * authorization, or redeem one refresh token. [FileCredentialStore]
+     * locks a file in its directory. Compare the record as [record]
+     * returns it: decrypted, if the store encrypts.
+     */
+    public fun compareAndSwap(id: String, expected: ByteArray?, record: ByteArray?): ByteArray?
+
+    /**
      * Whether records survive the app quitting. Receiving credentials
      * needs a durable store unless the configuration is for development:
      * it also keeps an authorization in progress while the holder is at
@@ -174,6 +191,10 @@ internal class CredentialStoreAdapter(private val store: CredentialStore) : Mobi
     }
 
     override fun delete(id: String) = store.delete(id)
+
+    // Go's empty record is no record, either way.
+    override fun compareAndSwap(id: String, expected: ByteArray?, record: ByteArray?): ByteArray =
+        store.compareAndSwap(id, expected?.takeIf { it.isNotEmpty() }, record?.takeIf { it.isNotEmpty() }) ?: ByteArray(0)
 
     override fun durable(): Boolean = store.isDurable
 }

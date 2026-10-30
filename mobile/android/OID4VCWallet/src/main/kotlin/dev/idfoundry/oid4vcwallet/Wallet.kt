@@ -1348,6 +1348,14 @@ public class InMemoryCredentialStore : CredentialStore {
     @Synchronized override fun delete(id: String) {
         stored.remove(id)
     }
+
+    /** Atomic within this process, which is all an in-memory store has. */
+    @Synchronized override fun compareAndSwap(id: String, expected: ByteArray?, record: ByteArray?): ByteArray? {
+        val current = stored[id]
+        if (!current.contentEquals(expected)) return current
+        if (record == null) stored.remove(id) else put(id, record)
+        return current
+    }
 }
 
 // The Go side's JSON results' envelopes.
