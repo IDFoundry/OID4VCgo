@@ -43,7 +43,7 @@ func (s *NonceStore) Consume(_ context.Context, consumption issuer.NonceConsumpt
 	record, ok := s.issued[consumption.Nonce]
 	delete(s.issued, consumption.Nonce)
 	if !ok {
-		return issuer.NonceRecord{}, fmt.Errorf("storage: unknown or already-consumed nonce")
+		return issuer.NonceRecord{}, fmt.Errorf("storage: %w", issuer.ErrNonceUnknown)
 	}
 	return record, nil
 }

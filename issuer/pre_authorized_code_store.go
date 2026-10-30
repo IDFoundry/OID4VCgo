@@ -6,6 +6,18 @@ import (
 	"time"
 )
 
+// ErrPreAuthorizedCodeUnknown is what a PreAuthorizedCodeStore's Consume
+// returns, or wraps, for a code it holds no record of: one never
+// issued, already consumed or invalidated, or dropped after its
+// ExpiresAt. ExchangePreAuthorizedCode answers it invalid_grant. Any
+// other Consume error that isn't one of the tx_code errors below, or
+// accept's own, means the store couldn't answer (its backend
+// unreachable, a timeout, context.Canceled or
+// context.DeadlineExceeded), and fails the request as a plain error, a
+// 500 from WriteError: the Wallet isn't told its code, or its holder's
+// Transaction Code, is wrong when it may not be.
+var ErrPreAuthorizedCodeUnknown = errors.New("issuer: unknown or already used pre-authorized_code")
+
 // ErrWrongTxCode is what Consume returns when code is known and
 // unexpired but wantTxCode doesn't match the record's own TxCode —
 // distinguishing this from "code is unknown or already consumed" lets
@@ -111,8 +123,9 @@ type PreAuthorizedCodeStore interface {
 	// code with no retry path (a real denial-of-service against the
 	// code's own legitimate holder; found in a repo-wide security
 	// review of an earlier implementation that consumed unconditionally
-	// before checking TxCode). Returns a different (non-ErrWrongTxCode)
-	// error if code is unknown or already consumed — expiry
+	// before checking TxCode). Returns an error wrapping
+	// ErrPreAuthorizedCodeUnknown if code is unknown or already
+	// consumed, and any other error only when it couldn't answer — expiry
 	// (PreAuthorizedCodeRecord.ExpiresAt) is checked by
 	// ExchangePreAuthorizedCode, in accept, not by Consume itself.
 	//

@@ -150,6 +150,22 @@ them.
   The deprecated functions check no revocation and apply
   `DefaultRegistrarLeafPolicy` when no policy is given.
 
+### Credential Issuer (`issuer`) stores
+
+- **Store errors: unknown versus unavailable.** Each issuer store now
+  has a sentinel for a record it doesn't hold:
+  `issuer.ErrNonceUnknown` (`NonceStore.Consume`),
+  `issuer.ErrPreAuthorizedCodeUnknown` (`PreAuthorizedCodeStore.Consume`),
+  `issuer.ErrDeferredTransactionUnknown` (`DeferredTransactionStore`'s
+  `Get`, `Invalidate` and `Update`) and `issuer.ErrNotificationIDUnknown`
+  (`NotificationStore.Get`). A custom store returns an error wrapping it
+  for a record it never had, or one already consumed or invalidated
+  (`sql.ErrNoRows`, say). Any other error, including the context's,
+  now fails the request with a 500 instead of `invalid_nonce`,
+  `invalid_grant`, `invalid_transaction_id` or
+  `invalid_notification_id`, so an outage no longer tells a holder their
+  PIN is wrong. Run the `issuertest` contracts against your stores.
+
 ## v0.55.0 → v0.56.0
 
 This release pins FAPIgo v0.65.1, which carries the breaking changes of

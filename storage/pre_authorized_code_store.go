@@ -65,7 +65,7 @@ func (s *PreAuthorizedCodeStore) Consume(_ context.Context, code, wantTxCode str
 	defer s.mu.Unlock()
 	record, ok := s.issued[code]
 	if !ok {
-		return issuer.PreAuthorizedCodeRecord{}, 0, fmt.Errorf("storage: unknown or already-consumed pre-authorized_code")
+		return issuer.PreAuthorizedCodeRecord{}, 0, fmt.Errorf("storage: %w", issuer.ErrPreAuthorizedCodeUnknown)
 	}
 	switch {
 	case record.TxCode == "" && wantTxCode != "":

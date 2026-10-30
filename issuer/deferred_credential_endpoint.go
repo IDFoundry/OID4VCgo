@@ -140,7 +140,7 @@ func (iss *Issuer) requestDeferredCredential(ctx context.Context, auth Authorize
 
 	record, err := iss.deps.DeferredTransactions.Get(ctx, req.TransactionID)
 	if err != nil {
-		return DeferredCredentialResult{}, newError(ErrorInvalidTransactionID, 400, unknownTransactionID, err)
+		return DeferredCredentialResult{}, deferredStoreError(err)
 	}
 	if iss.deferredExpired(record) {
 		return DeferredCredentialResult{}, newError(ErrorInvalidTransactionID, 400, unknownTransactionID, nil)
@@ -168,10 +168,21 @@ func (iss *Issuer) requestDeferredCredential(ctx context.Context, auth Authorize
 		// Invalidate is the single-use gate: only the request whose
 		// Invalidate succeeds gets the Credentials.
 		if err := iss.deps.DeferredTransactions.Invalidate(ctx, req.TransactionID); err != nil {
-			return DeferredCredentialResult{}, newError(ErrorInvalidTransactionID, 400, unknownTransactionID, err)
+			return DeferredCredentialResult{}, deferredStoreError(err)
 		}
 		return DeferredCredentialResult{Credentials: record.Credentials, NotificationID: record.NotificationID}, nil
 	default:
 		return DeferredCredentialResult{}, fmt.Errorf("issuer: request deferred credential: unknown transaction status %v", record.Status)
 	}
+}
+
+// deferredStoreError answers a DeferredTransactionStore error at the
+// Deferred Credential Endpoint: invalid_transaction_id for an unknown
+// or invalidated transaction (ErrDeferredTransactionUnknown), and a
+// plain error, a 500, for a store that couldn't answer.
+func deferredStoreError(err error) error {
+	if errors.Is(err, ErrDeferredTransactionUnknown) {
+		return newError(ErrorInvalidTransactionID, 400, unknownTransactionID, err)
+	}
+	return fmt.Errorf("issuer: request deferred credential: dependencies.deferred_transactions: %w", err)
 }

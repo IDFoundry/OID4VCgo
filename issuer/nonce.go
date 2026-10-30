@@ -2,8 +2,19 @@ package issuer
 
 import (
 	"context"
+	"errors"
 	"time"
 )
+
+// ErrNonceUnknown is what a NonceStore's Consume returns, or wraps, for
+// a c_nonce it holds no record of: one it never issued, one already
+// consumed, or one it dropped after its ExpiresAt. A Credential Request
+// carrying it is answered invalid_nonce (§8.3.1.2). Any other Consume
+// error means the store couldn't answer (its backend unreachable, a
+// timeout, context.Canceled or context.DeadlineExceeded), and fails the
+// request as a plain error, a 500 from WriteError, rather than telling
+// the Wallet its proof is stale.
+var ErrNonceUnknown = errors.New("issuer: unknown or already consumed c_nonce")
 
 // NonceIssuance is what NonceStore.Issue persists for one c_nonce this
 // issuer has handed out via the Nonce Endpoint (§7).
@@ -41,8 +52,9 @@ type NonceStore interface {
 	Issue(ctx context.Context, issuance NonceIssuance) error
 
 	// Consume atomically retrieves and retires the nonce identified by
-	// consumption.Nonce. It returns an error if the nonce is unknown or
-	// already consumed; the caller checks the returned record's own
-	// ExpiresAt against the time it's verifying at.
+	// consumption.Nonce. It returns an error wrapping ErrNonceUnknown if
+	// the nonce is unknown or already consumed, and any other error only
+	// when it couldn't answer; the caller checks the returned record's
+	// own ExpiresAt against the time it's verifying at.
 	Consume(ctx context.Context, consumption NonceConsumption) (NonceRecord, error)
 }

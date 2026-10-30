@@ -123,8 +123,11 @@ func (iss *Issuer) RequestNotification(ctx context.Context, auth AuthorizedReque
 	}
 
 	record, err := iss.deps.Notifications.Get(ctx, req.NotificationID)
-	if err != nil {
+	if errors.Is(err, ErrNotificationIDUnknown) {
 		return newError(ErrorInvalidNotificationID, 400, unknownNotificationID, err)
+	}
+	if err != nil {
+		return fmt.Errorf("issuer: request notification: dependencies.notifications: %w", err)
 	}
 	if !record.ExpiresAt.IsZero() && !iss.deps.Clock.Now().Before(record.ExpiresAt) {
 		return newError(ErrorInvalidNotificationID, 400, unknownNotificationID, errors.New("notification_id has expired"))

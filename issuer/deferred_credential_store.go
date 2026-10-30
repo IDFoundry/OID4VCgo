@@ -3,10 +3,22 @@ package issuer
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/idfoundry/oid4vcgo"
 )
+
+// ErrDeferredTransactionUnknown is what a DeferredTransactionStore's
+// Get, Invalidate and Update return, or wrap, for a transaction_id it
+// holds no record of, or one already invalidated.
+// RequestDeferredCredential answers it invalid_transaction_id, and
+// IssueDeferredCredential and DenyDeferredCredential return it wrapped.
+// Any other store error means the store couldn't answer (its backend
+// unreachable, a timeout, context.Canceled or
+// context.DeadlineExceeded), and fails a Deferred Credential Request as
+// a plain error, a 500 from WriteError.
+var ErrDeferredTransactionUnknown = errors.New("issuer: unknown or invalidated transaction_id")
 
 // DeferredTransactionStatus is a Deferred Issuance transaction's
 // current state.
@@ -98,7 +110,9 @@ type DeferredTransactionRecord struct {
 // Invalidate and Update.
 type DeferredTransactionStore interface {
 	// Get retrieves the record identified by transactionID. It returns
-	// an error if transactionID is unknown.
+	// an error wrapping ErrDeferredTransactionUnknown if transactionID
+	// is unknown or invalidated, and any other error only when it
+	// couldn't answer.
 	Get(ctx context.Context, transactionID string) (DeferredTransactionRecord, error)
 
 	// Invalidate retires transactionID as its Credentials are returned
@@ -106,8 +120,9 @@ type DeferredTransactionStore interface {
 	// transaction_id after the Credential for which it was meant has
 	// been obtained by the Wallet"). Called only for a
 	// DeferredTransactionIssued record, and the Credentials are served
-	// only if it succeeds — so it MUST be atomic and MUST fail if
-	// transactionID is unknown or already invalidated: of concurrent
+	// only if it succeeds — so it MUST be atomic and MUST fail, with an
+	// error wrapping ErrDeferredTransactionUnknown, if transactionID is
+	// unknown or already invalidated: of concurrent
 	// requests for one transaction_id, exactly one gets the Credentials.
 	// RequestDeferredCredential already holds them from Get by then, so
 	// Invalidate MUST drop the stored Credentials: the Wallet has them,
@@ -121,6 +136,6 @@ type DeferredTransactionStore interface {
 	// the result, atomically: concurrent Updates of one transaction run
 	// one after another. fn's error aborts the update, saving nothing,
 	// and is returned. It fails for an unknown or invalidated
-	// transaction.
+	// transaction with an error wrapping ErrDeferredTransactionUnknown.
 	Update(ctx context.Context, transactionID string, fn func(*DeferredTransactionRecord) error) error
 }

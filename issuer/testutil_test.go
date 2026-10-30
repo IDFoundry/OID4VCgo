@@ -3,6 +3,7 @@ package issuer_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -226,10 +227,13 @@ type fakeErr string
 
 func (e fakeErr) Error() string { return string(e) }
 
-const errNonceNotFound = fakeErr("nonce not found or already consumed")
 const errCredentialOfferNotFound = fakeErr("credential offer not found")
-const errDeferredTransactionNotFound = fakeErr("deferred transaction not found")
-const errNotificationNotFound = fakeErr("notification not found")
+
+var (
+	errNonceNotFound               = fmt.Errorf("fake: %w", issuer.ErrNonceUnknown)
+	errDeferredTransactionNotFound = fmt.Errorf("fake: %w", issuer.ErrDeferredTransactionUnknown)
+	errNotificationNotFound        = fmt.Errorf("fake: %w", issuer.ErrNotificationIDUnknown)
+)
 
 type fixedClock struct{ now time.Time }
 

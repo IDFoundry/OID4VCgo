@@ -542,7 +542,9 @@ func (iss *Issuer) preAuthorizedBinding(ctx context.Context, req ExchangePreAuth
 // consumePreAuthorizedCode redeems req's pre-authorized_code against
 // PreAuthorizedCodes, with accept checking its record before it's
 // consumed, turning a wrong tx_code, too many wrong tx_code attempts,
-// or an unknown/used code into the right Token Error — split out of
+// or an unknown/used code (ErrPreAuthorizedCodeUnknown) into the right
+// Token Error, and any other store error into a plain one (a 500) —
+// split out of
 // exchangePreAuthorizedCode purely to keep its cognitive complexity
 // manageable. accept's own error is returned as it is. A store that
 // reports success without accept having accepted the record is refused
@@ -591,7 +593,10 @@ func (iss *Issuer) consumePreAuthorizedCode(ctx context.Context, req ExchangePre
 			}
 			return PreAuthorizedCodeRecord{}, newError(ErrorInvalidGrant, 400, "tx_code does not match", err)
 		}
-		return PreAuthorizedCodeRecord{}, newError(ErrorInvalidGrant, 400, "pre-authorized_code is unknown or already used", err)
+		if errors.Is(err, ErrPreAuthorizedCodeUnknown) {
+			return PreAuthorizedCodeRecord{}, newError(ErrorInvalidGrant, 400, "pre-authorized_code is unknown or already used", err)
+		}
+		return PreAuthorizedCodeRecord{}, fmt.Errorf("issuer: exchange pre-authorized code: dependencies.pre_authorized_codes: %w", err)
 	}
 	return record, nil
 }

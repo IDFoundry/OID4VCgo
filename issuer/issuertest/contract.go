@@ -50,6 +50,26 @@ const (
 	contractClientID     = "client-1"
 )
 
+// canceledContext is a context already canceled, for the
+// CanceledContextIsNotUnknown checks.
+func canceledContext() context.Context {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	return ctx
+}
+
+// requireNotUnknown fails the test if err, from a store asked about a
+// record it holds with a canceled context, wraps unknown: a store may
+// still answer, or fail with the context's error, but mustn't report a
+// record it holds as unknown — the issuer answers that as the Wallet's
+// error, where a store that couldn't answer is a 500.
+func requireNotUnknown(t *testing.T, err, unknown error) {
+	t.Helper()
+	if errors.Is(err, unknown) {
+		t.Errorf("with a canceled context: %v, want a result or another error (the record exists; %v is for one that doesn't)", err, unknown)
+	}
+}
+
 // runConcurrently calls fn attempts times in parallel and returns how
 // many calls returned true.
 func runConcurrently(attempts int, fn func() bool) int {
@@ -79,6 +99,14 @@ func runConcurrently(attempts int, fn func() bool) int {
 // call — its subtests share nothing between them.
 func TestNonceStoreContract(t *testing.T, factory func() issuer.NonceStore) {
 	t.Helper()
+	t.Run("CanceledContextIsNotUnknown", func(t *testing.T) {
+		store := factory()
+		if err := store.Issue(context.Background(), issuer.NonceIssuance{Nonce: "n1", ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
+			t.Fatalf(msgIssueFailed, err)
+		}
+		_, err := store.Consume(canceledContext(), issuer.NonceConsumption{Nonce: "n1"})
+		requireNotUnknown(t, err, issuer.ErrNonceUnknown)
+	})
 	testAtomicNonceContract(t, func() (issue func(nonce string, expiresAt time.Time) error, consume func(nonce string) (time.Time, error)) {
 		store := factory()
 		ctx := context.Background()
@@ -221,15 +249,15 @@ func testAtomicNonceContract(t *testing.T, newAdapter func() (issue func(nonce s
 		if _, err := consume("n1"); err != nil {
 			t.Fatalf("first Consume: %v", err)
 		}
-		if _, err := consume("n1"); err == nil {
-			t.Error("second Consume = nil error, want error (nonce already consumed)")
+		if _, err := consume("n1"); !errors.Is(err, issuer.ErrNonceUnknown) {
+			t.Errorf("second Consume = %v, want issuer.ErrNonceUnknown (nonce already consumed)", err)
 		}
 	})
 
 	t.Run("ConsumeUnknownFails", func(t *testing.T) {
 		_, consume := newAdapter()
-		if _, err := consume(nonceNeverIssued); err == nil {
-			t.Error("Consume = nil error, want error (unknown nonce)")
+		if _, err := consume(nonceNeverIssued); !errors.Is(err, issuer.ErrNonceUnknown) {
+			t.Errorf("Consume = %v, want issuer.ErrNonceUnknown (unknown nonce)", err)
 		}
 	})
 
@@ -263,6 +291,7 @@ func TestPreAuthorizedCodeStoreContract(t *testing.T, factory func() issuer.PreA
 	t.Run("IssueAndConsumeNoTxCode", func(t *testing.T) { testPACIssueAndConsumeNoTxCode(t, factory) })
 	t.Run("ConsumeIsSingleUse", func(t *testing.T) { testPACConsumeIsSingleUse(t, factory) })
 	t.Run("ConsumeUnknownFails", func(t *testing.T) { testPACConsumeUnknownFails(t, factory) })
+	t.Run("CanceledContextIsNotUnknown", func(t *testing.T) { testPACCanceledContextIsNotUnknown(t, factory) })
 	t.Run("WrongTxCodeLeavesCodeConsumable", func(t *testing.T) { testPACWrongTxCodeLeavesCodeConsumable(t, factory) })
 	t.Run("CorrectTxCodeConsumes", func(t *testing.T) { testPACCorrectTxCodeConsumes(t, factory) })
 	t.Run("WrongTxCodeIncrementsAttempts", func(t *testing.T) { testPACWrongTxCodeIncrementsAttempts(t, factory) })
@@ -481,17 +510,27 @@ func testPACConsumeIsSingleUse(t *testing.T, factory func() issuer.PreAuthorized
 	if _, _, err := store.Consume(ctx, "code1", "", 0, nil); err != nil {
 		t.Fatalf("first Consume: %v", err)
 	}
-	if _, _, err := store.Consume(ctx, "code1", "", 0, nil); err == nil {
-		t.Error("second Consume = nil error, want error (code already consumed)")
+	if _, _, err := store.Consume(ctx, "code1", "", 0, nil); !errors.Is(err, issuer.ErrPreAuthorizedCodeUnknown) {
+		t.Errorf("second Consume = %v, want issuer.ErrPreAuthorizedCodeUnknown (code already consumed)", err)
 	}
 }
 
 func testPACConsumeUnknownFails(t *testing.T, factory func() issuer.PreAuthorizedCodeStore) {
 	t.Helper()
 	store := factory()
-	if _, _, err := store.Consume(context.Background(), nonceNeverIssued, "", 0, nil); err == nil {
-		t.Error("Consume = nil error, want error (unknown code)")
+	if _, _, err := store.Consume(context.Background(), nonceNeverIssued, "", 0, nil); !errors.Is(err, issuer.ErrPreAuthorizedCodeUnknown) {
+		t.Errorf("Consume = %v, want issuer.ErrPreAuthorizedCodeUnknown (unknown code)", err)
 	}
+}
+
+func testPACCanceledContextIsNotUnknown(t *testing.T, factory func() issuer.PreAuthorizedCodeStore) {
+	t.Helper()
+	store := factory()
+	if err := store.Issue(context.Background(), "code1", issuer.PreAuthorizedCodeRecord{ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
+		t.Fatalf(msgIssueFailed, err)
+	}
+	_, _, err := store.Consume(canceledContext(), "code1", "", 0, nil)
+	requireNotUnknown(t, err, issuer.ErrPreAuthorizedCodeUnknown)
 }
 
 func testPACWrongTxCodeLeavesCodeConsumable(t *testing.T, factory func() issuer.PreAuthorizedCodeStore) {
@@ -585,8 +624,8 @@ func testPACInvalidateThenConsumeFails(t *testing.T, factory func() issuer.PreAu
 	if err := store.Invalidate(ctx, "code1"); err != nil {
 		t.Fatalf("Invalidate: %v", err)
 	}
-	if _, _, err := store.Consume(ctx, "code1", "", 0, nil); err == nil {
-		t.Error("Consume after Invalidate = nil error, want error")
+	if _, _, err := store.Consume(ctx, "code1", "", 0, nil); !errors.Is(err, issuer.ErrPreAuthorizedCodeUnknown) {
+		t.Errorf("Consume after Invalidate = %v, want issuer.ErrPreAuthorizedCodeUnknown", err)
 	}
 }
 
@@ -747,11 +786,16 @@ func testGetIsRepeatable(t *testing.T, seed func() error, get func() error, why 
 }
 
 // testGetUnknownFails runs the shared "Get an unseeded key fails"
-// check several contract tests in this file need.
-func testGetUnknownFails(t *testing.T, get func() error, why string) {
+// check several contract tests in this file need: with an error
+// wrapping unknown, when the store's interface defines one.
+func testGetUnknownFails(t *testing.T, get func() error, unknown error, why string) {
 	t.Helper()
-	if err := get(); err == nil {
+	err := get()
+	switch {
+	case err == nil:
 		t.Errorf("Get = nil error, want error (%s)", why)
+	case unknown != nil && !errors.Is(err, unknown):
+		t.Errorf("Get = %v, want %v (%s)", err, unknown, why)
 	}
 }
 
@@ -799,7 +843,7 @@ func TestCredentialOfferStoreContract(t *testing.T, factory func() issuer.Creden
 
 	t.Run("GetUnknownFails", func(t *testing.T) {
 		store := factory()
-		testGetUnknownFails(t, func() error { _, err := store.Get(context.Background(), "never-stored"); return err }, "unknown reference")
+		testGetUnknownFails(t, func() error { _, err := store.Get(context.Background(), "never-stored"); return err }, nil, "unknown reference")
 	})
 }
 
@@ -839,7 +883,16 @@ func TestNotificationStoreContract(t *testing.T, factory func() issuer.Notificat
 
 	t.Run("GetUnknownFails", func(t *testing.T) {
 		store := factory()
-		testGetUnknownFails(t, func() error { _, err := store.Get(context.Background(), nonceNeverIssued); return err }, "unknown notification_id")
+		testGetUnknownFails(t, func() error { _, err := store.Get(context.Background(), nonceNeverIssued); return err }, issuer.ErrNotificationIDUnknown, "unknown notification_id")
+	})
+
+	t.Run("CanceledContextIsNotUnknown", func(t *testing.T) {
+		store := factory()
+		if err := store.Issue(context.Background(), "notif1", issuer.NotificationRecord{ClientID: contractClientID}); err != nil {
+			t.Fatalf(msgIssueFailed, err)
+		}
+		_, err := store.Get(canceledContext(), "notif1")
+		requireNotUnknown(t, err, issuer.ErrNotificationIDUnknown)
 	})
 }
 
@@ -876,7 +929,15 @@ func TestDeferredTransactionStoreContract(t *testing.T, seed func(t *testing.T, 
 
 	t.Run("GetUnknownFails", func(t *testing.T) {
 		store := seed(t, "txn1", issuer.DeferredTransactionRecord{})
-		testGetUnknownFails(t, func() error { _, err := store.Get(context.Background(), "never-seeded"); return err }, "unknown transaction_id")
+		testGetUnknownFails(t, func() error { _, err := store.Get(context.Background(), "never-seeded"); return err }, issuer.ErrDeferredTransactionUnknown, "unknown transaction_id")
+	})
+
+	t.Run("CanceledContextIsNotUnknown", func(t *testing.T) {
+		store := seed(t, "txn1", issuer.DeferredTransactionRecord{Status: issuer.DeferredTransactionPending})
+		_, err := store.Get(canceledContext(), "txn1")
+		requireNotUnknown(t, err, issuer.ErrDeferredTransactionUnknown)
+		err = store.Update(canceledContext(), "txn1", func(*issuer.DeferredTransactionRecord) error { return nil })
+		requireNotUnknown(t, err, issuer.ErrDeferredTransactionUnknown)
 	})
 
 	t.Run("InvalidateThenGetFails", func(t *testing.T) {
@@ -885,17 +946,17 @@ func TestDeferredTransactionStoreContract(t *testing.T, seed func(t *testing.T, 
 		if err := store.Invalidate(ctx, "txn1"); err != nil {
 			t.Fatalf("Invalidate: %v", err)
 		}
-		if _, err := store.Get(ctx, "txn1"); err == nil {
-			t.Error("Get after Invalidate = nil error, want error (transaction_id no longer valid)")
+		if _, err := store.Get(ctx, "txn1"); !errors.Is(err, issuer.ErrDeferredTransactionUnknown) {
+			t.Errorf("Get after Invalidate = %v, want issuer.ErrDeferredTransactionUnknown (transaction_id no longer valid)", err)
 		}
-		if err := store.Update(ctx, "txn1", func(*issuer.DeferredTransactionRecord) error { return nil }); err == nil {
-			t.Error("Update after Invalidate = nil error, want error")
+		if err := store.Update(ctx, "txn1", func(*issuer.DeferredTransactionRecord) error { return nil }); !errors.Is(err, issuer.ErrDeferredTransactionUnknown) {
+			t.Errorf("Update after Invalidate = %v, want issuer.ErrDeferredTransactionUnknown", err)
 		}
-		if err := store.Invalidate(ctx, "txn1"); err == nil {
-			t.Error("second Invalidate = nil error, want error (only one request may get the Credentials)")
+		if err := store.Invalidate(ctx, "txn1"); !errors.Is(err, issuer.ErrDeferredTransactionUnknown) {
+			t.Errorf("second Invalidate = %v, want issuer.ErrDeferredTransactionUnknown (only one request may get the Credentials)", err)
 		}
-		if err := store.Invalidate(ctx, "never-seeded"); err == nil {
-			t.Error("Invalidate of an unknown transaction = nil error, want error")
+		if err := store.Invalidate(ctx, "never-seeded"); !errors.Is(err, issuer.ErrDeferredTransactionUnknown) {
+			t.Errorf("Invalidate of an unknown transaction = %v, want issuer.ErrDeferredTransactionUnknown", err)
 		}
 	})
 
@@ -959,8 +1020,8 @@ func TestDeferredTransactionStoreContract(t *testing.T, seed func(t *testing.T, 
 		if got, err := store.Get(ctx, "txn1"); err != nil || got.Status != issuer.DeferredTransactionDenied {
 			t.Errorf("after Updates: %+v, %v; want Denied (the failed Update saved nothing)", got, err)
 		}
-		if err := store.Update(ctx, "never-seeded", func(*issuer.DeferredTransactionRecord) error { return nil }); err == nil {
-			t.Error("Update of an unknown transaction = nil error")
+		if err := store.Update(ctx, "never-seeded", func(*issuer.DeferredTransactionRecord) error { return nil }); !errors.Is(err, issuer.ErrDeferredTransactionUnknown) {
+			t.Errorf("Update of an unknown transaction = %v, want issuer.ErrDeferredTransactionUnknown", err)
 		}
 	})
 

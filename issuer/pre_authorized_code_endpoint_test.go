@@ -85,7 +85,7 @@ func (f *fakePreAuthorizedCodeStore) Invalidate(_ context.Context, code string) 
 	return nil
 }
 
-const errPreAuthorizedCodeNotFound = fakeErr("unknown or already-consumed pre-authorized_code")
+var errPreAuthorizedCodeNotFound = fmt.Errorf("fake: %w", issuer.ErrPreAuthorizedCodeUnknown)
 
 // fakeDPoPReplayChecker is an in-memory issuer.DPoPReplayChecker for
 // tests.
