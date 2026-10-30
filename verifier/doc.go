@@ -36,6 +36,13 @@
 // Verify or Accept policies — RequestURIBase unset in each — derives
 // the same scope for all of them, so give each its own explicit Scope.
 //
+// A production TransactionStore keeps transactions outside the process:
+// TransactionCodec encodes one, and with a TransactionSealer
+// (AESGCMSealer) seals what it holds of the holder's — the response
+// decryption key and the disclosed claims — so the store's copy reveals
+// neither. TransactionsConfig.ForgetResultOnRead drops the claims as
+// soon as they've been read.
+//
 // Transactions checks a Digital Credentials API request's origin
 // against TransactionsConfig.Origins, its allow-list, normalized as the
 // browser serializes an origin. The lower-level VerifyResponse has no

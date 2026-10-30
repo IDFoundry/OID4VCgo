@@ -48,6 +48,10 @@ const (
 	// JWT or mdoc device authentication, its key, audience, nonce or
 	// age.
 	ReasonHolderBinding Reason = "holder_binding"
+	// ReasonUnrequestedClaims: a presentation discloses claims its
+	// Credential Query didn't ask for (see
+	// VerifyResponseRequest.AllowUnrequestedClaims).
+	ReasonUnrequestedClaims Reason = "unrequested_claims"
 )
 
 // description is a fixed description of r, for a display that mustn't
@@ -66,6 +70,8 @@ func (r Reason) description() string {
 		return "a credential's signature or validity failed (invalid_credential)"
 	case ReasonHolderBinding:
 		return "a credential's holder binding failed (holder_binding)"
+	case ReasonUnrequestedClaims:
+		return "a credential discloses claims the request didn't ask for (unrequested_claims)"
 	}
 	return "it failed verification"
 }

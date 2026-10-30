@@ -98,6 +98,17 @@ func newTxFixture(t *testing.T, tweak func(*verifier.TransactionsConfig)) *txFix
 // altered before it's encrypted.
 func (f *txFixture) answer(begun verifier.Begun, alter func(*wallet.AuthorizationRequest)) string {
 	f.t.Helper()
+	return f.answerWith(begun, alter, func(req wallet.AuthorizationRequest) (map[string][]string, error) {
+		return wallet.PresentCredentials(context.Background(), wallet.PresentationRequest{
+			Query: req.Query, Credentials: []wallet.HeldCredential{f.held}, Audience: req.ClientID, Nonce: req.Nonce,
+		})
+	})
+}
+
+// answerWith is answer, with the VP Token present makes for the
+// request.
+func (f *txFixture) answerWith(begun verifier.Begun, alter func(*wallet.AuthorizationRequest), present func(wallet.AuthorizationRequest) (map[string][]string, error)) string {
+	f.t.Helper()
 	object, err := f.txs.RequestObject(context.Background(), begun.ID)
 	if err != nil {
 		f.t.Fatalf("RequestObject: %v", err)
@@ -118,11 +129,9 @@ func (f *txFixture) answer(begun verifier.Begun, alter func(*wallet.Authorizatio
 	if alter != nil {
 		alter(&req)
 	}
-	vpToken, err := wallet.PresentCredentials(context.Background(), wallet.PresentationRequest{
-		Query: req.Query, Credentials: []wallet.HeldCredential{f.held}, Audience: req.ClientID, Nonce: req.Nonce,
-	})
+	vpToken, err := present(req)
 	if err != nil {
-		f.t.Fatalf("PresentCredentials: %v", err)
+		f.t.Fatalf("present: %v", err)
 	}
 	jwe, err := wallet.BuildDirectPostResponse(wallet.BuildDirectPostResponseParams{
 		VPToken: vpToken, State: req.State, EncryptionKey: req.ResponseEncryptionKey,

@@ -415,6 +415,36 @@ one Wallet. A store of your own implements the new methods:
   document type's IACAs in `issuer_roots_by_doctype`). Without it, a
   reader works as before. Set it in every app that ships.
 
+### Verifier (`verifier`)
+
+- **Transaction stores keep every field.** `Begin` and `BeginDCAPI`
+  read back the first transaction of each kind they create —
+  cross-device, same-device, Digital Credentials API — and refuse a
+  store that changed its `ID`, `KeyID`, `State`, `Nonce`,
+  `ResponseDecryptionKey`, `RequestObject`, `Origin`, `Owner`,
+  `BrowserBindingHash`, `SameDevice` or `Status`, or moved `ExpiresAt`
+  or `RetainUntil` by a second or more. Until now only `Owner` was
+  checked, and a store that dropped `SameDevice` answered a same-device
+  request as a cross-device one. `verifiertest.TestTransactionStoreContract`
+  now checks that `Create` and `Update` keep every field, including a
+  result's claims in the types their format decodes to (an mdoc's
+  integers and byte strings, not JSON's); a store that hand-encodes
+  `Transaction` may fail it. Encode transactions with
+  `verifier.TransactionCodec`, which keeps every field.
+- **Unrequested claims are refused.** `VerifyResponse`, and so
+  `Transactions`, discards a presentation that discloses a selectively
+  disclosable SD-JWT VC claim, or an mdoc data element, its Credential
+  Query doesn't name — every claims path of the query counts, whichever
+  `claim_sets` option was chosen, and none when the query lists no
+  claims — as `ReasonUnrequestedClaims`, as `mdocdcapi` already refused
+  an mdoc. A Wallet that minimises its disclosures, as OpenID4VP §6.4.1
+  requires (`wallet.PresentCredentials`, the OpenID Foundation
+  conformance suite), is unaffected; one that presents every claim
+  (`wallet.PresentSDJWTVC`, `wallet.PresentMdoc`) is refused. Set
+  `VerifyResponseRequest.AllowUnrequestedClaims` (in
+  `TransactionsConfig.Verify` for `Transactions`) to accept it as
+  before.
+
 ## v0.55.0 → v0.56.0
 
 This release pins FAPIgo v0.65.1, which carries the breaking changes of

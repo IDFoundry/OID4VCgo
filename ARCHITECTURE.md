@@ -1269,7 +1269,14 @@ changes whether *every* bullet below is `(done)`.
   references, once it's present). When `req.Query.CredentialSets` is
   empty, behavior is unchanged: every Credential Query in
   `req.Query.Credentials` is required. `claim_sets` (§6.4.1): see the
-  `dcql` bullet's own `claimsSatisfiedBy`. `VerifyResponse` now
+  `dcql` bullet's own `claimsSatisfiedBy`. A presentation disclosing a
+  claim its Credential Query doesn't name — a selectively disclosable
+  SD-JWT VC claim (the disclosures `sdjwtvc.SelectDisclosuresAt` would
+  pick for the query's paths, the wallet's own selection) or an mdoc
+  element — is discarded as `ReasonUnrequestedClaims`, as
+  `mdocdcapi` refuses one (§6.4.1: "the Wallet MUST NOT send
+  selectively disclosable claims that have not been selected"), unless
+  `AllowUnrequestedClaims` is set. `VerifyResponse` now
   verifies either flow: a new `VerifyResponseRequest.Origin` (empty
   for the redirect flow, set for the DC API flow, with
   `ExpectedOrigins` — the request's, from
@@ -1331,8 +1338,16 @@ changes whether *every* bullet below is `(done)`.
   refused answer's `LastError` is kept short and printable, with a
   Wallet's own error response reduced to its error code. The store's capabilities
   (`Durable`, `AtomicUpdate`) are checked against the assurance level,
-  as for `issuer`'s stores. `verifiertest` holds contract tests for a
-  caller's own certificate-chain issuer key resolver.
+  as for `issuer`'s stores. `TransactionCodec` encodes a transaction,
+  every field with its types, for a store that keeps it outside the
+  process, and with a `TransactionSealer` (`AESGCMSealer`) seals the
+  response decryption key and the holder's claims at rest;
+  `ForgetResultOnRead` drops a result once it's been read.
+  `Begin` and `BeginDCAPI` read a created transaction back and refuse a
+  store that lost a field, since losing `SameDevice` or `Owner` fails
+  open. `verifiertest` holds contract tests for a caller's own
+  certificate-chain issuer key resolver and `TransactionStore`, which
+  must give back every field as it was saved.
 - **`wallet`** (extended, done for `dc+sd-jwt`+`mso_mdoc`) — the naming
   question above is now resolved: OID4VP's Wallet role lives in the
   existing `wallet` package rather than a distinct one — "Wallet" is

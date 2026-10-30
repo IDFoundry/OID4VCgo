@@ -136,6 +136,17 @@ func Query(t *testing.T) dcql.Query {
 	}}}
 }
 
+// FullQuery is Query, asking for every element Issue's Fixture carries
+// — given_name and family_name — so a Verifier that refuses
+// unrequested elements accepts Present's full disclosure.
+func FullQuery(t *testing.T) dcql.Query {
+	t.Helper()
+	query := Query(t)
+	query.Credentials[0].Claims = append(query.Credentials[0].Claims,
+		dcql.ClaimsQuery{Path: dcql.Path{dcql.PathKey("org.iso.18013.5.1"), dcql.PathKey("family_name")}})
+	return query
+}
+
 // Present builds a base64url-encoded DeviceResponse from f (Appendix
 // B.2.5's own VP Token entry shape): a fresh DeviceSigned — ECDSA
 // device signature — over SessionTranscriptBytes built from params

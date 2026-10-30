@@ -158,7 +158,7 @@ func (t *Transactions) HandleDCAPIResponse(ctx context.Context, id, browserBindi
 			return err
 		}
 		cur.Result, cur.LastError, cur.Status = &result, "", TransactionDone
-		view = viewOf(*cur, cur.Status)
+		view = t.release(cur)
 		return nil
 	})
 	if err != nil {

@@ -13,10 +13,13 @@ import (
 // This file is a reusable contract test for verifier.TransactionStore,
 // the issuertest store contracts' twin: it checks what
 // verifier.NewTransactions can't observe of a store it's given — that
-// Update is atomic per transaction, which is what lets a transaction
-// complete at most once and a response_code be redeemed at most once,
-// and that the KeyID and ResponseCodeHash lookups follow the latest
-// saved transaction. Like those, it doesn't check a real backend's
+// it gives back every Transaction field as it was saved, through
+// Create and Update alike (a store that loses SameDevice, say, turns a
+// same-device request into a cross-device one); that Update is atomic
+// per transaction, which is what lets a transaction complete at most
+// once and a response_code be redeemed at most once; and that the
+// KeyID and ResponseCodeHash lookups follow the latest saved
+// transaction. Like those, it doesn't check a real backend's
 // durability, or that Update is atomic across instances sharing the
 // store (StoreCapabilities.AtomicUpdate): only within this process.
 
@@ -30,6 +33,8 @@ const contractConcurrentUpdates = 20
 func TestTransactionStoreContract(t *testing.T, factory func() verifier.TransactionStore) {
 	t.Helper()
 	t.Run("CreateAndGet", func(t *testing.T) { testTxStoreCreateAndGet(t, factory()) })
+	t.Run("CreateKeepsEveryField", func(t *testing.T) { testTxStoreCreateKeepsEveryField(t, factory()) })
+	t.Run("UpdateKeepsEveryField", func(t *testing.T) { testTxStoreUpdateKeepsEveryField(t, factory()) })
 	t.Run("CreateRefusesUsedID", func(t *testing.T) { testTxStoreCreateRefusesUsedID(t, factory()) })
 	t.Run("UnknownIDIsErrTransactionUnknown", func(t *testing.T) { testTxStoreUnknown(t, factory()) })
 	t.Run("UpdateErrorSavesNothing", func(t *testing.T) { testTxStoreUpdateErrorSavesNothing(t, factory()) })

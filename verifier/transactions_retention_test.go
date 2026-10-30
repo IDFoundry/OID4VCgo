@@ -80,3 +80,54 @@ func TestTransactions_ForgetSameDevice(t *testing.T) {
 		t.Errorf("Redeem after Forget: %v, want ErrTransactionUnknown", err)
 	}
 }
+
+// TestTransactions_ForgetResultOnRead: under ForgetResultOnRead, the
+// first read of a completed request — Lookup, Redeem or
+// HandleDCAPIResponse — has its result, the store no longer does, and
+// a later Lookup reports the request closed.
+func TestTransactions_ForgetResultOnRead(t *testing.T) {
+	ctx := context.Background()
+	forgetting := func(c *verifier.TransactionsConfig) { c.ForgetResultOnRead = true }
+	readOnce := func(t *testing.T, f *txFixture, id, binding string, first verifier.TransactionView, err error) {
+		t.Helper()
+		if err != nil || first.Status != verifier.TransactionDone || first.Result == nil {
+			t.Fatalf("first read = %+v, %v; want the result", first, err)
+		}
+		if stored, _ := f.store.Get(ctx, id); stored.Result != nil || stored.Status != verifier.TransactionClosed {
+			t.Errorf("stored after the first read: status %v, result %v; want closed, no result", stored.Status, stored.Result)
+		}
+		if view, err := f.txs.Lookup(ctx, id, binding); err != nil || view.Status != verifier.TransactionClosed || view.Result != nil {
+			t.Errorf("Lookup after the first read = %+v, %v; want closed, no result", view, err)
+		}
+	}
+
+	t.Run("cross-device", func(t *testing.T) {
+		f := newTxFixture(t, forgetting)
+		begun := f.begin("browser-binding-A", false)
+		if _, err := f.txs.HandleResponse(ctx, f.answer(begun, nil)); err != nil {
+			t.Fatal(err)
+		}
+		view, err := f.txs.Lookup(ctx, begun.ID, "browser-binding-A")
+		readOnce(t, f, begun.ID, "browser-binding-A", view, err)
+	})
+	t.Run("same-device", func(t *testing.T) {
+		f := newTxFixture(t, forgetting)
+		begun := f.begin("browser-binding-A", true)
+		answered, err := f.txs.HandleResponse(ctx, f.answer(begun, nil))
+		if err != nil {
+			t.Fatal(err)
+		}
+		redirect, err := url.Parse(answered.RedirectURI)
+		if err != nil {
+			t.Fatal(err)
+		}
+		view, err := f.txs.Redeem(ctx, redirect.Query().Get("response_code"), "browser-binding-A")
+		readOnce(t, f, begun.ID, "browser-binding-A", view, err)
+	})
+	t.Run("Digital Credentials API", func(t *testing.T) {
+		f := newTxFixture(t, forgetting)
+		begun := f.beginDCAPI(testBinding)
+		view, err := f.txs.HandleDCAPIResponse(ctx, begun.ID, testBinding, f.dcapiAnswer(begun, dcapiOrigin))
+		readOnce(t, f, begun.ID, testBinding, view, err)
+	})
+}

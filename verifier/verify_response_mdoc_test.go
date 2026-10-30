@@ -59,7 +59,7 @@ func newMdocVerifyFixture(t *testing.T) mdocVerifyFixture {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	query := testmdoc.Query(t)
+	query := testmdoc.FullQuery(t)
 	built, err := v.BuildAuthorizationRequest(verifier.BuildAuthorizationRequestRequest{Query: query})
 	if err != nil {
 		t.Fatalf("BuildAuthorizationRequest: %v", err)
@@ -72,7 +72,7 @@ func newMdocVerifyFixture(t *testing.T) mdocVerifyFixture {
 func newMdocDCAPIVerifyFixture(t *testing.T) mdocVerifyFixture {
 	t.Helper()
 	v := newTestVerifier(t)
-	query := testmdoc.Query(t)
+	query := testmdoc.FullQuery(t)
 	origin := "https://verifier.example.com"
 	built, err := v.BuildDCAPIAuthorizationRequest(verifier.BuildDCAPIAuthorizationRequestRequest{
 		Query: query, ExpectedOrigins: []string{origin},
@@ -184,7 +184,7 @@ func TestVerifyMdocResponseDCAPIRejectsWrongNonce(t *testing.T) {
 func rejectCaseMdocMissingDependency(t *testing.T, v *verifier.Verifier, nonce string, missingResponseEncryptionKey bool) verifier.VerifyResponseRequest {
 	t.Helper()
 	req := verifier.VerifyResponseRequest{
-		Query: testmdoc.Query(t), ExpectedNonce: nonce,
+		Query: testmdoc.FullQuery(t), ExpectedNonce: nonce,
 		Response: verifier.ParsedResponse{VPToken: map[string][]string{"mdl": {"irrelevant"}}},
 	}
 	if missingResponseEncryptionKey {
@@ -272,7 +272,7 @@ func TestVerifyMdocResponseRejects(t *testing.T) {
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
 			mf := newMdocVerifyFixture(t)
-			mf.query = testmdoc.Query(t)
+			mf.query = testmdoc.FullQuery(t)
 			if _, err := mf.verifyWith(t, mf.nonce, mutate); err == nil {
 				t.Fatalf("VerifyResponse(%s) = nil error, want error", name)
 			}

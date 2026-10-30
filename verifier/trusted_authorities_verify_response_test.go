@@ -154,7 +154,7 @@ func TestVerifyResponse_RejectsMissingTrustedAuthoritiesDependency(t *testing.T)
 // for the "mso_mdoc" call path (verifyMdocPresentation's own separate
 // TrustedAuthorities check) — same fail-closed gate, different format.
 func TestVerifyMdocResponse_RejectsMissingTrustedAuthoritiesDependency(t *testing.T) {
-	query := testmdoc.Query(t)
+	query := testmdoc.FullQuery(t)
 	query.Credentials[0].TrustedAuthorities = []dcql.TrustedAuthoritiesQuery{
 		{Type: dcql.TrustedAuthorityAKI, Values: []string{"anything"}},
 	}

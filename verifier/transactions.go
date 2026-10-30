@@ -1,6 +1,7 @@
 package verifier
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/sha256"
@@ -124,10 +125,18 @@ type Transaction struct {
 // One store may be shared by several Transactions — instances of one
 // deployment, or the use cases of one relying party: each reads only
 // the transactions it created (TransactionsConfig.Scope), so none can
-// complete another's request under its own verification and policy. A
-// store must persist each Transaction's Owner for that to hold: Begin
-// and BeginDCAPI read the first transaction a Transactions creates back,
-// and refuse a store that dropped it.
+// complete another's request under its own verification and policy.
+//
+// A store must persist every Transaction field, as it was given: some
+// fail open when lost — without Owner, scopes no longer keep apart the
+// Transactions sharing a store; without SameDevice, a same-device
+// request is answered as a cross-device one, its result released to
+// whichever browser asks. Begin and BeginDCAPI read back the first
+// transaction of each kind they create — cross-device, same-device, DC
+// API — and refuse a store that changed it.
+// verifiertest.TestTransactionStoreContract checks a store round-trips
+// every field, and TransactionCodec encodes them all for a store that
+// keeps transactions outside the process.
 //
 // A completed transaction's Result holds the claims the holder
 // disclosed. Transactions never reports it past ExpiresAt plus
@@ -284,6 +293,17 @@ type TransactionsConfig struct {
 	// explicit Scope, none does. Begin and BeginDCAPI refuse a store
 	// that doesn't keep a transaction's Owner.
 	Scope string
+
+	// ForgetResultOnRead releases each request's result once: the
+	// Lookup that first reports it completed, Redeem or
+	// HandleDCAPIResponse returns the result and, in the same Update,
+	// drops it from the store and closes the request, as Forget does —
+	// so the store holds the claims the holder disclosed only until the
+	// Verifier has them. A later Lookup reports TransactionClosed. Set
+	// it where the Verifier takes the result from its first read; a
+	// Verifier that loses it then (a crash before it's used) can't read
+	// it again, and the holder presents again.
+	ForgetResultOnRead bool
 }
 
 // Transactions tracks presentation requests from creation to a verified
@@ -316,9 +336,9 @@ type Transactions struct {
 	owner   string
 	derived bool
 
-	// ownerKept is set once the store has been seen to keep a created
-	// transaction's Owner (create).
-	ownerKept atomic.Bool
+	// kept has a bit set for each kind of transaction (flowOf) the
+	// store has been seen to keep every field of that create checks.
+	kept atomic.Uint32
 }
 
 // NewTransactions builds Transactions for v, keeping state in store.
@@ -391,30 +411,91 @@ func (t *Transactions) owns(tx Transaction) bool {
 	return subtle.ConstantTimeCompare([]byte(tx.Owner), []byte(t.owner)) == 1
 }
 
-// create saves the new transaction tx. Until the store has once given
-// back a created transaction with its Owner, it reads tx back and
-// refuses a store that dropped it: scopes (TransactionsConfig.Scope)
-// keep Transactions sharing a store apart only if the store persists
-// Owner, and one that doesn't would silently let any derived scope
-// read the others' transactions. The check repeats until it passes,
-// so a store that drops Owner is refused on every Begin, not just the
-// first.
+// create saves the new transaction tx, and reads it back to refuse a
+// store that didn't keep it: a TransactionStore must persist every
+// Transaction field, and losing some fails open rather than closed.
+// Without Owner, scopes (TransactionsConfig.Scope) no longer keep the
+// Transactions sharing a store apart; without SameDevice, a same-device
+// request is answered as a cross-device one, with no redirect_uri, so
+// its result goes to whichever browser polls for it (OpenID4VP §14.2,
+// HAIP 1.0 §5.1); without Origin, a Digital Credentials API request is
+// taken for a redirect-flow one. Each kind of request — cross-device,
+// same-device, DC API — is read back until the store has once given
+// one of that kind back intact, since a field the store drops only
+// shows when it's set: a store that loses one is refused on every
+// Begin of that kind, not just the first.
 func (t *Transactions) create(ctx context.Context, tx Transaction) error {
 	if err := t.store.Create(ctx, tx); err != nil {
 		return fmt.Errorf("verifier: transactions: store: %w", err)
 	}
-	if t.ownerKept.Load() {
+	flow := flowOf(tx)
+	if t.kept.Load()&flow != 0 {
 		return nil
 	}
 	saved, err := t.store.Get(ctx, tx.ID)
 	if err != nil {
 		return fmt.Errorf("verifier: transactions: store: reading back a created transaction: %w", err)
 	}
-	if saved.Owner != tx.Owner {
-		return fmt.Errorf("verifier: transactions: the store (%T) didn't keep the transaction's Owner: a TransactionStore must persist every Transaction field, or TransactionsConfig.Scope can't keep the Transactions sharing it apart", t.store)
+	if lost := lostFields(tx, saved); len(lost) > 0 {
+		return fmt.Errorf("verifier: transactions: the store (%T) didn't keep the transaction's %s: a TransactionStore must persist every Transaction field (verifiertest.TestTransactionStoreContract checks; verifier.TransactionCodec encodes them all)", t.store, strings.Join(lost, ", "))
 	}
-	t.ownerKept.Store(true)
+	t.kept.Or(flow)
 	return nil
+}
+
+// flowOf is the kind of request tx is, as a bit of Transactions.kept.
+func flowOf(tx Transaction) uint32 {
+	switch {
+	case tx.Origin != "":
+		return 1 << 2
+	case tx.SameDevice:
+		return 1 << 1
+	}
+	return 1
+}
+
+// maxStoredTimeDrift is how far a store may round a transaction's times
+// (a database column with second precision, say) before create takes
+// one as lost.
+const maxStoredTimeDrift = time.Second
+
+// lostFields names the fields of tx, just created, that saved — the
+// store's copy — doesn't have as tx does. Query, which a store may
+// re-encode, and the fields that are still unset on a new transaction
+// aren't compared; losing any of them fails closed.
+func lostFields(tx, saved Transaction) []string {
+	var lost []string
+	check := func(name string, same bool) {
+		if !same {
+			lost = append(lost, name)
+		}
+	}
+	check("ID", saved.ID == tx.ID)
+	check("KeyID", saved.KeyID == tx.KeyID)
+	check("State", saved.State == tx.State)
+	check("Nonce", saved.Nonce == tx.Nonce)
+	check("ResponseDecryptionKey", sameKey(tx.ResponseDecryptionKey, saved.ResponseDecryptionKey))
+	check("RequestObject", saved.RequestObject == tx.RequestObject)
+	check("Origin", saved.Origin == tx.Origin)
+	check("Owner", saved.Owner == tx.Owner)
+	check("BrowserBindingHash", bytes.Equal(saved.BrowserBindingHash, tx.BrowserBindingHash))
+	check("SameDevice", saved.SameDevice == tx.SameDevice)
+	check("ExpiresAt", closeTimes(saved.ExpiresAt, tx.ExpiresAt))
+	check("RetainUntil", closeTimes(saved.RetainUntil, tx.RetainUntil))
+	check("Status", saved.Status == tx.Status)
+	return lost
+}
+
+func sameKey(a, b *ecdsa.PrivateKey) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return a.Equal(b)
+}
+
+func closeTimes(a, b time.Time) bool {
+	d := a.Sub(b)
+	return d > -maxStoredTimeDrift && d < maxStoredTimeDrift
 }
 
 // get is the store's transaction id, ErrTransactionUnknown when it's
@@ -916,7 +997,7 @@ func (t *Transactions) Redeem(ctx context.Context, responseCode, browserBinding 
 			return nil
 		}
 		cur.Status = TransactionDone
-		view = viewOf(*cur, cur.Status)
+		view = t.release(cur)
 		return nil
 	})
 	switch {
@@ -955,7 +1036,8 @@ func (t *Transactions) expiry() (expiresAt, retainUntil time.Time) {
 // TransactionsConfig.Lifetime past the request's own expiry — enough
 // for the browser that asked to collect an answer that arrived just
 // before it — and after that as TransactionExpired, without it. Call
-// Forget once the result has been used to drop it sooner.
+// Forget once the result has been used to drop it sooner, or set
+// TransactionsConfig.ForgetResultOnRead to drop it as it's read.
 func (t *Transactions) Lookup(ctx context.Context, id, browserBinding string) (TransactionView, error) {
 	tx, err := t.get(ctx, id)
 	if err != nil {
@@ -971,7 +1053,45 @@ func (t *Transactions) Lookup(ctx context.Context, id, browserBinding string) (T
 	case status == TransactionDone && !now.Before(tx.ExpiresAt.Add(t.cfg.Lifetime)):
 		status = TransactionExpired
 	}
+	if status == TransactionDone && t.cfg.ForgetResultOnRead {
+		return t.takeResult(ctx, id)
+	}
 	return viewOf(tx, status), nil
+}
+
+// takeResult is Lookup's view of the completed request id under
+// ForgetResultOnRead: its result, dropped from the store as it's read,
+// so of concurrent Lookups only one has it.
+func (t *Transactions) takeResult(ctx context.Context, id string) (TransactionView, error) {
+	var view TransactionView
+	err := t.update(ctx, id, func(cur *Transaction) error {
+		if cur.Status != TransactionDone {
+			view = viewOf(*cur, cur.Status)
+			return nil
+		}
+		view = t.release(cur)
+		return nil
+	})
+	if err != nil {
+		return TransactionView{}, err
+	}
+	return view, nil
+}
+
+// release is the view of cur, just completed or about to be read
+// completed, with its result; under ForgetResultOnRead, cur's result is
+// then dropped, as Forget does.
+func (t *Transactions) release(cur *Transaction) TransactionView {
+	view := viewOf(*cur, TransactionDone)
+	if t.cfg.ForgetResultOnRead {
+		forget(cur)
+	}
+	return view
+}
+
+// forget drops cur's result and closes it (Forget).
+func forget(cur *Transaction) {
+	cur.Status, cur.ResponseCodeHash, cur.Result, cur.LastError = TransactionClosed, "", nil, ""
 }
 
 // Close ends the request id without a result — for example the other
@@ -1001,7 +1121,7 @@ func (t *Transactions) Close(ctx context.Context, id string) error {
 // call it only from the Verifier's own logic.
 func (t *Transactions) Forget(ctx context.Context, id string) error {
 	return t.update(ctx, id, func(cur *Transaction) error {
-		cur.Status, cur.ResponseCodeHash, cur.Result, cur.LastError = TransactionClosed, "", nil, ""
+		forget(cur)
 		return nil
 	})
 }
