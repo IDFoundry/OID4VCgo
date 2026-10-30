@@ -347,6 +347,11 @@ func polarisMdocJudge(t *testing.T, name string, v polarisMdocVector, in polaris
 		// production decisions are declared, not made.
 		AnyIssuerForAnyType: true,
 		NoStatusCheck:       true,
+		// The vectors' requests name no claims, yet their presentations
+		// disclose some (OpenID4VP 1.0 §6.4.1 would have a Wallet disclose
+		// none): they test the presentation's verification, not its fit
+		// to the query, so unrequested claims are let through.
+		AllowUnrequestedClaims: true,
 	})
 	if err != nil {
 		var refused *Error
