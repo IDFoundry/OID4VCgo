@@ -172,7 +172,7 @@ func buildClientAssertion(t *testing.T, signer *ecdsa.PrivateKey, now time.Time)
 		"iss": string(testASClientID),
 		"sub": string(testASClientID),
 		"aud": testASIssuer,
-		"jti": "test-assertion-jti-1",
+		"jti": rand.Text(),
 		"iat": now.Unix(),
 		"exp": now.Add(time.Minute).Unix(),
 	})

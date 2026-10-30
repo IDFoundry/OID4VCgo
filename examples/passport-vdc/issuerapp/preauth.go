@@ -54,8 +54,8 @@ const (
 // error. PAR still refuses authorization_details — no
 // AuthorizationCodeRARPolicy is set — so the authorization code flow
 // stays scope-based; were it set, oid4vci.AuthorizationDetailRARDefinition
-// already refuses a wallet's own credential_identifiers there, and lets
-// the consent add the ones it mints.
+// already refuses a wallet's own credential_identifiers there and at
+// the token endpoint, and lets the consent add the ones it mints.
 func credentialAuthorizationDetails() (*extension.RARRegistry, error) {
 	return extension.NewRARRegistry(maxAuthorizationDetailsBytes, maxAuthorizationDetailsDepth,
 		oid4vci.AuthorizationDetailRARDefinition(maxCredentialAuthorizationDetails, maxAuthorizationDetailBytes))
