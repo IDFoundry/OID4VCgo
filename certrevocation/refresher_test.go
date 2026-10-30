@@ -511,7 +511,9 @@ func TestRefresher_ConcurrentLists(t *testing.T) {
 		t.Fatal(err)
 	}
 	checker := r.Checker()
-	check := certrevocation.Check{Chain: []*x509.Certificate{p.leaf, p.inter}}
+	// The leaf pinned: checked against the intermediate's list alone,
+	// with the intermediate from the Checker's Issuers.
+	check := certrevocation.Check{Chain: []*x509.Certificate{p.leaf}}
 	var wg sync.WaitGroup
 	for range 4 {
 		wg.Go(func() {

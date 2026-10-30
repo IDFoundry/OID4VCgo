@@ -18,11 +18,15 @@
 // Checker is the one interface: given a verified chain, leaf first and
 // ending at the trust anchor, and the instant of the verification, it
 // returns nil when no certificate below the anchor has been revoked.
-// The anchor itself is never checked: a relying party distrusts an
-// anchor by removing it from its trust anchor set, not by asking it.
-// The exception is a leaf pinned as an anchor, verified as a path of
-// itself alone: CRLs checks it against its CA's CRL, which needs that
-// CA's certificate in CRLs.Issuers.
+// A self-signed anchor, a root, is never checked: a relying party
+// distrusts a root by removing it from its trust anchor set, not by
+// asking it. An anchor that isn't self-signed — a leaf pinned as an
+// anchor, or an intermediate CA placed among the roots — is checked
+// against its CA's CRL, which needs that CA's certificate in
+// CRLs.Issuers. Where revocation is checked, keep intermediates out of
+// the trust anchors: one there beside its root yields a path ending at
+// the intermediate, which without that check would never ask the root
+// whether it revoked it.
 //
 // CRLs implements Checker with Certificate Revocation Lists (RFC 5280
 // §5) the caller supplies. It does no fetching of its own: a

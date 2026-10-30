@@ -173,3 +173,38 @@ func TestNotRevokedChains_RevokedOnlyWhenEveryPathIs(t *testing.T) {
 		t.Errorf("no paths: %v, want a plain error", err)
 	}
 }
+
+// A pool holding an intermediate beside its root (a whole chain bundle
+// loaded as the roots) verifies two paths, [leaf, intermediate, root]
+// and [leaf, intermediate]. The root's revocation of the intermediate
+// refuses the first; the second is refused too, since its anchor isn't
+// self-signed and is checked against the root's CRL, rather than
+// keeping a leaf the revoked CA issued.
+func TestVerifyTrustedChainsAt_RevokedIntermediateInRoots(t *testing.T) {
+	root, rootKey := testcert.CA(t, "root")
+	inter, interKey := testcert.Intermediate(t, "issuing CA", root, rootKey)
+	leaf, _ := testcert.Leaf(t, "leaf", inter, interKey)
+	roots := x509.NewCertPool()
+	roots.AddCert(root)
+	roots.AddCert(inter)
+	ders := [][]byte{leaf.Raw, inter.Raw}
+	withRoot := func(lists ...*x509.RevocationList) certrevocation.CRLs {
+		c := crls(lists...)
+		c.Issuers = []*x509.Certificate{root}
+		return c
+	}
+	interCRL := testcert.CRL(t, inter, interKey)
+	revoking := testcert.CRL(t, root, rootKey, inter.SerialNumber)
+	ctx := context.Background()
+
+	if _, _, err := VerifyTrustedChainsAt(ctx, ders, roots, nil, withRoot(interCRL, revoking), time.Time{}); !errors.Is(err, certrevocation.ErrRevoked) {
+		t.Errorf("intermediate revoked, root among Issuers: %v, want ErrRevoked", err)
+	}
+	if _, _, err := VerifyTrustedChainsAt(ctx, ders, roots, nil, crls(interCRL, revoking), time.Time{}); err == nil {
+		t.Error("intermediate revoked, root not among Issuers: accepted")
+	}
+	_, chains, err := VerifyTrustedChainsAt(ctx, ders, roots, nil, withRoot(interCRL, testcert.CRL(t, root, rootKey)), time.Time{})
+	if err != nil || len(chains) != 2 {
+		t.Errorf("clean CRLs: %d paths, %v; want both", len(chains), err)
+	}
+}

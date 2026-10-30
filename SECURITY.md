@@ -47,10 +47,13 @@ from that CA, so an unreachable or tampered-with distribution point
 (CRLs are often served over plain http) can't evict or roll back a good
 list. Bind each URL to its CA with `URLIssuers`, and persist what
 `OnAccept` hands over to pass back as `Floors` on restart. A missing or
-stale CRL fails closed. A leaf pinned as a trust anchor is checked
-against its CA's CRL too, so that CA's certificate must be in
-`CRLs.Issuers` (`r.Checker()` sets the Refresher's own `Issuers`
-there), or the pinned leaf is refused.
+stale CRL fails closed. A trust anchor that isn't self-signed, a
+pinned leaf or an intermediate CA among the roots, is checked against
+its CA's CRL too, so that CA's certificate must be in `CRLs.Issuers`
+(`r.Checker()` sets the Refresher's own `Issuers` there), or the
+anchor is refused. Where revocation is checked, put only self-signed
+roots in the trust anchors, not a CA's whole chain: an intermediate
+there needs its own CA's CRL.
 `certrevocation.NoCheck{}` declines the check explicitly, for
 short-lived certificates or a trust framework that removes compromised
 issuers from the anchor set itself.

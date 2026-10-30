@@ -6,6 +6,25 @@ everything else. A release that pins a new FAPIgo release passes on
 that release's own breaking changes: see FAPIgo's UPGRADING.md for
 them.
 
+## v0.56.0 → next
+
+### Certificate revocation (`certrevocation`)
+
+- **A trust anchor that isn't self-signed is checked.**
+  `certrevocation.CRLs` now checks the last certificate of a verified
+  path against its CA's CRL whenever it isn't self-signed, not only
+  when it's a pinned leaf alone. An intermediate CA among the roots, as
+  when a CA's whole chain is loaded as the trust anchors, was never
+  checked: beside its root it gave a path ending at itself, which
+  passed after the root had revoked it. Such a path now needs the
+  intermediate's own CA certificate in `CRLs.Issuers`
+  (`Refresher.Checker()` sets the Refresher's `Issuers`) and a current
+  CRL from that CA, or it's refused with `ErrNoCurrentCRL`. Load only
+  self-signed roots as trust anchors where revocation is checked; where
+  an intermediate must stay among them, add its CA's certificate to
+  `Issuers` and that CA's CRL distribution point to the Refresher. On
+  mobile, that CA's certificate goes in `crl_issuers`.
+
 ## v0.55.0 → v0.56.0
 
 This release pins FAPIgo v0.65.1, which carries the breaking changes of

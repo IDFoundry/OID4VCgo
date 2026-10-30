@@ -127,3 +127,27 @@ func TestRevocationRequiredAtConfiguration(t *testing.T) {
 		}
 	}
 }
+
+// An issuing CA placed in the roots beside the root that revoked it is
+// still refused: the path ending at it is checked against the root's
+// CRL, the root's certificate coming from CRLs.Issuers.
+func TestX5CResolvers_RevokedIntermediateInRoots(t *testing.T) {
+	root, rootKey := testcert.CA(t, "root")
+	var f revocationFixture
+	f.ca, f.caKey = testcert.Intermediate(t, "issuer CA", root, rootKey)
+	f.leaf, _ = testcert.Leaf(t, "issuer", f.ca, f.caKey)
+	f.roots = x509.NewCertPool()
+	f.roots.AddCert(root)
+	f.roots.AddCert(f.ca)
+	lists := []*x509.RevocationList{testcert.CRL(t, f.ca, f.caKey), testcert.CRL(t, root, rootKey, f.ca.SerialNumber)}
+	revocation := certrevocation.CRLs{
+		Lists:   func(context.Context) ([]*x509.RevocationList, error) { return lists, nil },
+		Issuers: []*x509.Certificate{root},
+	}
+	for _, kind := range []string{"x5c", "x5chain"} {
+		keyErr, chainErr := resolveBoth(f, kind, revocation)
+		if !errors.Is(keyErr, certrevocation.ErrRevoked) || !errors.Is(chainErr, certrevocation.ErrRevoked) {
+			t.Errorf("%s: %v, %v; want ErrRevoked", kind, keyErr, chainErr)
+		}
+	}
+}
