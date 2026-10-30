@@ -38,6 +38,19 @@ type table[T any] struct {
 	rowOf func(v T) row
 }
 
+// Statement templates for any table: {T} is the table's name.
+const (
+	sqlByID         = " WHERE id = ?"
+	sqlSelectRecord = "SELECT record FROM {T}" + sqlByID
+	sqlSelectAll    = "SELECT id, record FROM {T} ORDER BY id"
+	sqlDeleteByID   = "DELETE FROM {T}" + sqlByID
+)
+
+// stmt is template as the dialect's statement on t's table.
+func (t *table[T]) stmt(template string) string {
+	return t.d.q(strings.ReplaceAll(template, "{T}", "{"+t.name+"}"))
+}
+
 func (t *table[T]) encodeOf(id string, v T) ([]byte, error) {
 	if t.encode != nil {
 		return t.encode(id, v)
@@ -117,12 +130,12 @@ func (t *table[T]) get(ctx context.Context, id string) (T, error) {
 // getOn is get on q, locking the row for q's transaction when lock is
 // set.
 func (t *table[T]) getOn(ctx context.Context, q querier, id string, lock bool) (T, error) {
-	query := "SELECT record FROM {" + t.name + "} WHERE id = ?"
+	query := t.stmt(sqlSelectRecord)
 	if lock {
 		query += t.d.forUpdate()
 	}
 	var data []byte
-	if err := q.QueryRowContext(ctx, t.d.q(query), id).Scan(&data); err != nil {
+	if err := q.QueryRowContext(ctx, query, id).Scan(&data); err != nil {
 		var zero T
 		if errors.Is(err, sql.ErrNoRows) {
 			return zero, errNoRow
@@ -134,7 +147,7 @@ func (t *table[T]) getOn(ctx context.Context, q querier, id string, lock bool) (
 
 // list returns every record, ordered by id.
 func (t *table[T]) list(ctx context.Context) ([]T, error) {
-	rows, err := t.d.db.QueryContext(ctx, t.d.q("SELECT id, record FROM {"+t.name+"} ORDER BY id"))
+	rows, err := t.d.db.QueryContext(ctx, t.stmt(sqlSelectAll))
 	if err != nil {
 		return nil, err
 	}
@@ -159,7 +172,7 @@ func (t *table[T]) list(ctx context.Context) ([]T, error) {
 func (t *table[T]) remove(ctx context.Context, id string) (bool, error) {
 	var n int64
 	err := t.d.writeOne(ctx, func(q querier) error {
-		res, err := q.ExecContext(ctx, t.d.q("DELETE FROM {"+t.name+"} WHERE id = ?"), id)
+		res, err := q.ExecContext(ctx, t.stmt(sqlDeleteByID), id)
 		if err != nil {
 			return err
 		}
@@ -173,7 +186,7 @@ func (t *table[T]) remove(ctx context.Context, id string) (bool, error) {
 // returning its record: of concurrent calls, one gets it, and the
 // others errNoRow.
 func (t *table[T]) consume(ctx context.Context, id string, ownerMatch bool, owner string) (T, error) {
-	query := "DELETE FROM {" + t.name + "} WHERE id = ?"
+	query := sqlDeleteByID
 	args := []any{id}
 	if ownerMatch {
 		query += " AND owner = ?"
@@ -181,7 +194,7 @@ func (t *table[T]) consume(ctx context.Context, id string, ownerMatch bool, owne
 	}
 	var data []byte
 	err := t.d.writeOne(ctx, func(q querier) error {
-		return q.QueryRowContext(ctx, t.d.q(query+" RETURNING record"), args...).Scan(&data)
+		return q.QueryRowContext(ctx, t.stmt(query+" RETURNING record"), args...).Scan(&data)
 	})
 	if err != nil {
 		var zero T
@@ -224,6 +237,6 @@ func (t *table[T]) replaceOn(ctx context.Context, q querier, id string, v T) err
 	for i, c := range cols {
 		sets[i] = c + " = ?"
 	}
-	_, err = q.ExecContext(ctx, t.d.q("UPDATE {"+t.name+"} SET "+strings.Join(sets, ", ")+" WHERE id = ?"), append(vals, id)...)
+	_, err = q.ExecContext(ctx, t.stmt("UPDATE {T} SET "+strings.Join(sets, ", ")+sqlByID), append(vals, id)...)
 	return err
 }

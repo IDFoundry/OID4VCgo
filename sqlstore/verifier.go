@@ -82,20 +82,26 @@ func (s *TransactionStore) Update(ctx context.Context, id string, fn func(*verif
 
 // IDByKeyID implements verifier.TransactionStore.
 func (s *TransactionStore) IDByKeyID(ctx context.Context, kid string) (string, error) {
-	return s.idBy(ctx, "key_id", kid)
+	return s.idBy(ctx, sqlTransactionByKeyID, kid)
 }
 
 // IDByResponseCode implements verifier.TransactionStore.
 func (s *TransactionStore) IDByResponseCode(ctx context.Context, codeHash string) (string, error) {
-	return s.idBy(ctx, "response_code_hash", codeHash)
+	return s.idBy(ctx, sqlTransactionByResponseCode, codeHash)
 }
 
-func (s *TransactionStore) idBy(ctx context.Context, column, value string) (string, error) {
+// The statements idBy finds a transaction's id with.
+const (
+	sqlTransactionByKeyID        = "SELECT id FROM {verifier_transactions} WHERE key_id = ?"
+	sqlTransactionByResponseCode = "SELECT id FROM {verifier_transactions} WHERE response_code_hash = ?"
+)
+
+func (s *TransactionStore) idBy(ctx context.Context, statement, value string) (string, error) {
 	if value == "" {
 		return "", txUnknown("find", errNoRow)
 	}
 	var id string
-	err := s.t.d.db.QueryRowContext(ctx, s.t.d.q("SELECT id FROM {verifier_transactions} WHERE "+column+" = ?"), value).Scan(&id)
+	err := s.t.d.db.QueryRowContext(ctx, s.t.d.q(statement), value).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		err = errNoRow
 	}

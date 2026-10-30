@@ -79,6 +79,8 @@ type DB struct {
 	prefix  string
 	sealer  Sealer
 	busy    time.Duration
+	// busyPragma sets busy on a SQLite connection.
+	busyPragma string
 
 	// sqliteWrites serializes this DB's own SQLite transactions, which
 	// would otherwise only wait on SQLite's busy handler for each other.
@@ -116,7 +118,8 @@ func New(db *sql.DB, dialect Dialect, opts Options) (*DB, error) {
 	if busy < 0 {
 		return nil, errors.New("sqlstore: negative SQLiteBusyTimeout")
 	}
-	return &DB{db: db, dialect: dialect, prefix: prefix, sealer: opts.Sealer, busy: busy}, nil
+	return &DB{db: db, dialect: dialect, prefix: prefix, sealer: opts.Sealer, busy: busy,
+		busyPragma: "PRAGMA busy_timeout = " + strconv.FormatInt(busy.Milliseconds(), 10)}, nil
 }
 
 // Dialect is the database's dialect.
@@ -216,7 +219,7 @@ func (d *DB) sqliteWrite(ctx context.Context, fn func(q querier) error) (err err
 		}
 		_ = conn.Close()
 	}()
-	if _, err := conn.ExecContext(ctx, "PRAGMA busy_timeout = "+strconv.FormatInt(d.busy.Milliseconds(), 10)); err != nil {
+	if _, err := conn.ExecContext(ctx, d.busyPragma); err != nil {
 		return err
 	}
 	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
