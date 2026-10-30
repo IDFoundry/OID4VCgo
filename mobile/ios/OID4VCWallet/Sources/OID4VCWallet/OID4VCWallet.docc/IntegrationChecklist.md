@@ -157,6 +157,10 @@ is a complete, working app on this package to compare against.
   `issuerRoots`, plus a reader key and chain with the
   reader-authentication extended key usage if holders should see who's
   asking.
+- `production` set, with each role (`issuer`, `status`) in
+  `revocation` (with `crls`, refreshed by `setCRLs`) or
+  `noRevocationCheck`, and `anyIssuerForAnyType` or
+  `issuerRootsByDocType` deciding which IACAs issue which document type.
 - ``ProximityReader/start(qrCode:docType:elements:timeouts:)`` with the
   scanned code, following the session's states.
 - Call ``ProximityReaderSession/checkStatus()`` once the session is

@@ -563,6 +563,19 @@ public struct ProximityReaderConfiguration: Codable, Sendable {
     /// roots, for a role in `revocation`, as
     /// `WalletConfiguration.crlIssuers`.
     public var crlIssuers: String
+    /// The roles that decline checking revocation. With `production`,
+    /// each role must be in `revocation` or here; a role can't be in both.
+    public var noRevocationCheck: [RevocationRole]
+    /// Declares that every IACA in `issuerRoots` may issue every document
+    /// type the reader asks for. With `production`, `issuerRoots` needs
+    /// it; otherwise name each type's IACAs in `issuerRootsByDocType`.
+    public var anyIssuerForAnyType: Bool
+    /// Requires a production reader's decisions: each role in
+    /// `revocation` or `noRevocationCheck`, and `anyIssuerForAnyType`
+    /// with `issuerRoots`. Without it, a role in neither checks no
+    /// revocation, and any IACA in `issuerRoots` may issue any document
+    /// type. Set it in every app that ships.
+    public var production: Bool
 
     /// A reader's trust role whose certificates can be checked for
     /// revocation.
@@ -579,7 +592,8 @@ public struct ProximityReaderConfiguration: Codable, Sendable {
     public init(issuerRoots: String, readerKeyID: String? = nil, readerChain: String? = nil,
                 maxClockSkewSeconds: Int? = nil, requireMDLSignerEKU: Bool = false, acceptMDLSignerWithoutEKU: Bool = false,
                 issuerRootsByDocType: [String: String] = [:], crls: String = "", revocation: [RevocationRole] = [],
-                crlIssuers: String = "") {
+                crlIssuers: String = "", noRevocationCheck: [RevocationRole] = [], anyIssuerForAnyType: Bool = false,
+                production: Bool = false) {
         self.issuerRoots = issuerRoots
         self.readerKeyID = readerKeyID
         self.readerChain = readerChain
@@ -590,6 +604,9 @@ public struct ProximityReaderConfiguration: Codable, Sendable {
         self.crls = crls
         self.revocation = revocation
         self.crlIssuers = crlIssuers
+        self.noRevocationCheck = noRevocationCheck
+        self.anyIssuerForAnyType = anyIssuerForAnyType
+        self.production = production
     }
 
     enum CodingKeys: String, CodingKey {
@@ -598,6 +615,7 @@ public struct ProximityReaderConfiguration: Codable, Sendable {
         case acceptMDLSignerWithoutEKU = "accept_mdl_signer_without_eku"
         case issuerRootsByDocType = "issuer_roots_by_doctype"
         case crls, revocation, crlIssuers = "crl_issuers"
+        case noRevocationCheck = "no_revocation_check", anyIssuerForAnyType = "any_issuer_for_any_type", production
     }
 
     public init(from decoder: any Decoder) throws {
@@ -612,6 +630,9 @@ public struct ProximityReaderConfiguration: Codable, Sendable {
         crls = try c.decodeIfPresent(String.self, forKey: .crls) ?? ""
         revocation = try c.decodeIfPresent([RevocationRole].self, forKey: .revocation) ?? []
         crlIssuers = try c.decodeIfPresent(String.self, forKey: .crlIssuers) ?? ""
+        noRevocationCheck = try c.decodeIfPresent([RevocationRole].self, forKey: .noRevocationCheck) ?? []
+        anyIssuerForAnyType = try c.decodeIfPresent(Bool.self, forKey: .anyIssuerForAnyType) ?? false
+        production = try c.decodeIfPresent(Bool.self, forKey: .production) ?? false
     }
 }
 
