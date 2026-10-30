@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/idfoundry/oid4vcgo/certrevocation"
+	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/mdocdcapi"
 	"github.com/idfoundry/oid4vcgo/wallet"
 	"github.com/idfoundry/oid4vcgo/walletflow"
@@ -67,6 +68,14 @@ type config struct {
 	MdocIssuerRoots          string            `json:"mdoc_issuer_roots,omitempty"`
 	MdocIssuerRootsByDocType map[string]string `json:"mdoc_issuer_roots_by_doctype,omitempty"`
 	MdocIssuerRequireEKU     string            `json:"mdoc_issuer_require_eku,omitempty"`
+	// AcceptMDLSignerWithoutEKU also accepts a document signer
+	// certificate with no extended key usage extension, which the
+	// default check refuses for lacking the mDL document signer's
+	// (mdoc.LenientDocumentSignerPolicy), for issuers whose document
+	// signers have none. It can't be set with MdocIssuerRequireEKU, or
+	// with IssuerRequireEKU unless MdocIssuerRoots is set, as either
+	// already decides which document signers are accepted.
+	AcceptMDLSignerWithoutEKU bool `json:"accept_mdl_signer_without_eku,omitempty"`
 	// IssuerMetadataRequireEKU recognizes only issuer metadata signed
 	// by a certificate under IssuerMetadataRoots with this extended key
 	// usage (walletflow.Config.IssuerMetadataLeafPolicy).
@@ -439,8 +448,20 @@ func mdocIssuerTrust(cfg config, wcfg *walletflow.Config) error {
 			wcfg.MdocIssuerRootsByDocType[docType] = pool
 		}
 	}
-	wcfg.MdocIssuerLeafPolicy, err = roleEKU("mdoc_issuer_require_eku", cfg.MdocIssuerRequireEKU)
-	return err
+	if !cfg.AcceptMDLSignerWithoutEKU {
+		wcfg.MdocIssuerLeafPolicy, err = roleEKU("mdoc_issuer_require_eku", cfg.MdocIssuerRequireEKU)
+		return err
+	}
+	switch {
+	case cfg.MdocIssuerRequireEKU != "":
+		return newError(CodeInvalidInput, errors.New("accept_mdl_signer_without_eku can't be set with mdoc_issuer_require_eku, which already decides which document signers are accepted"))
+	case cfg.IssuerRequireEKU != "" && cfg.MdocIssuerRoots == "":
+		// Some mdocs would then chain to issuer_roots, held to
+		// issuer_require_eku, which the lenient check would replace.
+		return newError(CodeInvalidInput, errors.New("accept_mdl_signer_without_eku needs mdoc_issuer_roots when issuer_require_eku is set"))
+	}
+	wcfg.MdocIssuerLeafPolicy = mdoc.LenientDocumentSignerPolicy
+	return nil
 }
 
 // optionalCertPool is the PEM certificates of the config key name as a

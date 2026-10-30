@@ -253,6 +253,16 @@ public data class WalletConfiguration(
      * in both this and [revocation].
      */
     @SerialName("no_revocation_check") val noRevocationCheck: List<RevocationRole> = emptyList(),
+    /**
+     * Also accepts a document signer certificate with no extended key
+     * usage, which is refused by default for lacking the mDL document
+     * signer's (1.0.18013.5.1.2), for issuers whose document signers have
+     * none. Any certificate without one under the same IACAs, such as a
+     * revocation list signer's, can then sign mdocs the wallet accepts.
+     * It can't be set with [mdocIssuerRequireEKU], or with
+     * [issuerRequireEKU] unless [mdocIssuerRoots] is set.
+     */
+    @SerialName("accept_mdl_signer_without_eku") val acceptMDLSignerWithoutEKU: Boolean = false,
 ) {
     /** A trust role whose certificates can be checked for revocation. */
     @Serializable

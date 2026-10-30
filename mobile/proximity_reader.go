@@ -60,6 +60,12 @@ type proximityReaderConfig struct {
 	// with the mDL document signer extended key usage. The default
 	// check (proximity.DefaultDocumentSignerPolicy) requires it too.
 	RequireMDLSignerEKU bool `json:"require_mdl_signer_eku,omitempty"`
+	// AcceptMDLSignerWithoutEKU also accepts a document signer
+	// certificate with no extended key usage extension, which the
+	// default check refuses for lacking the mDL document signer's
+	// (mdoc.LenientDocumentSignerPolicy), for issuers whose document
+	// signers have none. It can't be set with RequireMDLSignerEKU.
+	AcceptMDLSignerWithoutEKU bool `json:"accept_mdl_signer_without_eku,omitempty"`
 	// CRLs are PEM "X509 CRL" blocks, replaced later by SetCRLs, and
 	// Revocation the roles whose certificate chains must pass a CRL
 	// check: "issuer", the document signer's
@@ -73,10 +79,24 @@ type proximityReaderConfig struct {
 	CRLIssuers string `json:"crl_issuers,omitempty"`
 }
 
+// readerDocumentSignerPolicy is the document signer check cfg asks
+// for, or nil for proximity's default.
+func readerDocumentSignerPolicy(cfg proximityReaderConfig) (func(*x509.Certificate, [][]*x509.Certificate) error, error) {
+	switch {
+	case cfg.RequireMDLSignerEKU && cfg.AcceptMDLSignerWithoutEKU:
+		return nil, newError(CodeInvalidInput, errors.New("require_mdl_signer_eku and accept_mdl_signer_without_eku can't both be set"))
+	case cfg.RequireMDLSignerEKU:
+		return proximity.RequireMDLDocumentSignerEKU, nil
+	case cfg.AcceptMDLSignerWithoutEKU:
+		return mdoc.LenientDocumentSignerPolicy, nil
+	}
+	return nil, nil
+}
+
 // NewProximityReader configures a reader from configJSON:
 // {"issuer_roots", "issuer_roots_by_doctype", "reader_key_id",
 // "reader_chain", "max_clock_skew_seconds", "require_mdl_signer_eku",
-// "crls", "crl_issuers", "revocation"},
+// "accept_mdl_signer_without_eku", "crls", "crl_issuers", "revocation"},
 // refusing any other key, so a misspelled option isn't silently left
 // at its default. keys holds the reader's key, reader_key_id; it may be
 // nil for a reader that doesn't sign.
@@ -107,8 +127,12 @@ func NewProximityReader(configJSON string, keys KeyStore) (*ProximityReader, err
 	if cfg.MaxClockSkewSeconds != 0 {
 		r.opts = append(r.opts, proximity.WithMaxClockSkew(time.Duration(cfg.MaxClockSkewSeconds)*time.Second))
 	}
-	if cfg.RequireMDLSignerEKU {
-		r.opts = append(r.opts, proximity.WithDocumentSignerPolicy(proximity.RequireMDLDocumentSignerEKU))
+	policy, err := readerDocumentSignerPolicy(cfg)
+	if err != nil {
+		return nil, err
+	}
+	if policy != nil {
+		r.opts = append(r.opts, proximity.WithDocumentSignerPolicy(policy))
 	}
 	if err := r.configureRevocation(cfg); err != nil {
 		return nil, err
