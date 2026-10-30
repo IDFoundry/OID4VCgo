@@ -266,15 +266,25 @@ type VerifiedCredential struct {
 
 	// IssuerChain is the credential's issuer certificate chain (DER,
 	// leaf first) when its leaf's key is the one the credential verified
-	// with, and nil otherwise. For an SD-JWT VC it's the signed x5c
-	// header. For an mdoc it's the path MdocIssuerKeys (an
-	// MdocIssuerChainResolver) verified, without the trust anchor: the
-	// IssuerAuth x5chain is unprotected, so the holder could edit it; a
-	// resolver that verifies no chain gives none. The issuer is that
-	// leaf's subject. An SD-JWT VC's "iss" in Claims is the issuer's
-	// claim, not checked against the leaf unless
-	// X5CIssuerKeyResolver.RequireIssuerName is set (SD-JWT VC §2.5
-	// doesn't require them to correspond): don't rely on it as
+	// with, and nil otherwise. Where the issuer key resolver verifies a
+	// chain — IssuerKeys an SDJWTVCIssuerChainResolver (as
+	// X5CIssuerKeyResolver is; a resolver wrapping one isn't unless it
+	// implements ResolveIssuerChains too), MdocIssuerKeys an
+	// MdocIssuerChainResolver (as X5ChainIssuerKeyResolver is, or one
+	// reached through Unwrap) — it's the path the resolver verified,
+	// without the trust anchor: its last certificate is the one an anchor
+	// signed. Otherwise an SD-JWT VC's is its signed x5c header, which no
+	// one has checked against a trust anchor, and an mdoc's is nil (the
+	// IssuerAuth x5chain is unprotected, so the holder could edit it).
+	//
+	// The leaf's subject is not the issuer's identity: any CA under the
+	// same roots can certify a leaf with that subject. Decide which issuer
+	// this is by the CA the path leads up to (the last certificate's
+	// issuer and authority key identifier, against the anchors you assign
+	// to that issuer), or give each issuer its own roots. An SD-JWT VC's
+	// "iss" in Claims is the issuer's claim, not checked against the leaf
+	// unless X5CIssuerKeyResolver.RequireIssuerName is set (SD-JWT VC
+	// §2.5 doesn't require them to correspond): don't rely on it as
 	// authenticated otherwise.
 	IssuerChain [][]byte
 }
