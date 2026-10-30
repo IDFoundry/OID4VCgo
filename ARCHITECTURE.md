@@ -1269,7 +1269,14 @@ changes whether *every* bullet below is `(done)`.
   references, once it's present). When `req.Query.CredentialSets` is
   empty, behavior is unchanged: every Credential Query in
   `req.Query.Credentials` is required. `claim_sets` (§6.4.1): see the
-  `dcql` bullet's own `claimsSatisfiedBy`. `VerifyResponse` now
+  `dcql` bullet's own `claimsSatisfiedBy`. A presentation disclosing a
+  claim its Credential Query doesn't name — a selectively disclosable
+  SD-JWT VC claim (the disclosures `sdjwtvc.SelectDisclosuresAt` would
+  pick for the query's paths, the wallet's own selection) or an mdoc
+  element — is discarded as `ReasonUnrequestedClaims`, as
+  `mdocdcapi` refuses one (§6.4.1: "the Wallet MUST NOT send
+  selectively disclosable claims that have not been selected"), unless
+  `AllowUnrequestedClaims` is set. `VerifyResponse` now
   verifies either flow: a new `VerifyResponseRequest.Origin` (empty
   for the redirect flow, set for the DC API flow, with
   `ExpectedOrigins` — the request's, from

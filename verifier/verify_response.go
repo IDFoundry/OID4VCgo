@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -173,6 +174,23 @@ type VerifyResponseRequest struct {
 	// status (see StatusPolicy) before Accept runs, and its error is
 	// VerifyResponse's. Nothing else checks revocation.
 	Status *StatusPolicy
+
+	// AllowUnrequestedClaims accepts a presentation that discloses
+	// claims its Credential Query didn't ask for. Without it, such a
+	// presentation is discarded as ReasonUnrequestedClaims, as
+	// mdocdcapi refuses one: OpenID4VP 1.0 §6.4.1 says "the Wallet MUST
+	// NOT send selectively disclosable claims that have not been
+	// selected", and a Verifier that took them would hold, pass to
+	// Accept and keep in its result personal data it never asked for.
+	// What counts as asked for is every claims path of the Credential
+	// Query, whichever of its claim_sets the Wallet chose, and none when
+	// it lists no claims (§6.4.1: then only the claims that aren't
+	// selectively disclosable are presented); an SD-JWT VC's claims that
+	// aren't selectively disclosable are always accepted, and so is a
+	// disclosure an array index selects anywhere in that array, since a
+	// presentation's indices count only the elements it discloses.
+	AllowUnrequestedClaims bool
+
 	// NoStatusCheck declares that this Verifier deliberately checks no
 	// revocation status — its credentials carry none, say, or it checks
 	// status its own way in Accept. Under AssuranceProduction,
@@ -725,6 +743,11 @@ func (v *Verifier) verifySDJWTVCPresentation(ctx context.Context, cq dcql.Creden
 	if err := cq.SatisfiedBySDJWTVCClaims(claims); err != nil {
 		return nil, nil, newError(ReasonNotAnswered, "satisfied by sdjwtvc claims", err)
 	}
+	if !req.AllowUnrequestedClaims {
+		if err := checkRequestedDisclosures(cq, payload, pres.Disclosures); err != nil {
+			return nil, nil, err
+		}
+	}
 
 	// The resolver's verified path, where it gives one: the header's x5c
 	// can carry certificates that aren't on it. Otherwise the header's
@@ -747,6 +770,83 @@ func (v *Verifier) verifySDJWTVCPresentation(ctx context.Context, cq dcql.Creden
 		}
 	}
 	return claims, chain, nil
+}
+
+// checkRequestedDisclosures refuses an SD-JWT VC presentation of
+// payload (its Issuer-signed JWT's, before disclosures are resolved)
+// with any of disclosures that cq's claims paths don't select — the
+// ones the Wallet would have sent (sdjwtvc.SelectDisclosuresAt) — but
+// with an array index widened to every element: the presentation's
+// indices count only the elements it discloses (see
+// AllowUnrequestedClaims).
+func checkRequestedDisclosures(cq dcql.CredentialQuery, payload map[string]any, disclosures []sdjwtvc.Disclosure) error {
+	hashAlg, err := sdjwtvc.PayloadHashAlg(payload, sdjwtvc.DefaultHashAlg)
+	if err != nil {
+		return newError(ReasonInvalidCredential, "hash algorithm", err)
+	}
+	paths := make([][]any, len(cq.Claims))
+	for i, claim := range cq.Claims {
+		paths[i] = make([]any, len(claim.Path))
+		for j, elem := range claim.Path {
+			if elem.IsKey() {
+				paths[i][j] = elem.Key()
+			}
+		}
+	}
+	selected, err := sdjwtvc.SelectDisclosuresAt(payload, hashAlg, disclosures, paths)
+	if err != nil {
+		return newError(ReasonNotAnswered, "select requested disclosures", err)
+	}
+	requested := make(map[string]bool, len(selected))
+	for _, d := range selected {
+		digest, err := d.Digest(hashAlg)
+		if err != nil {
+			return newError(ReasonMalformed, "disclosure digest", err)
+		}
+		requested[digest] = true
+	}
+	var unrequested []string
+	for _, d := range disclosures {
+		digest, err := d.Digest(hashAlg)
+		if err != nil {
+			return newError(ReasonMalformed, "disclosure digest", err)
+		}
+		if !requested[digest] {
+			name := strconv.Quote(d.Name)
+			if d.IsArrayElement() {
+				name = "an array element"
+			}
+			unrequested = append(unrequested, name)
+		}
+	}
+	if len(unrequested) > 0 {
+		return newError(ReasonUnrequestedClaims, fmt.Sprintf("the presentation discloses claims the query didn't ask for: %s", strings.Join(unrequested, ", ")), nil)
+	}
+	return nil
+}
+
+// checkRequestedElements refuses an mdoc presentation disclosing a data
+// element cq's claims paths don't name.
+func checkRequestedElements(cq dcql.CredentialQuery, disclosed map[string]map[string]any) error {
+	requested := make(map[[2]string]bool, len(cq.Claims))
+	for _, claim := range cq.Claims {
+		if namespace, element, ok := claim.Path.MdocNamespaceAndElement(); ok {
+			requested[[2]string{namespace, element}] = true
+		}
+	}
+	var unrequested []string
+	for namespace, elements := range disclosed {
+		for element := range elements {
+			if !requested[[2]string{namespace, element}] {
+				unrequested = append(unrequested, strconv.Quote(namespace+"/"+element))
+			}
+		}
+	}
+	if len(unrequested) > 0 {
+		slices.Sort(unrequested)
+		return newError(ReasonUnrequestedClaims, fmt.Sprintf("the presentation discloses data elements the query didn't ask for: %s", strings.Join(unrequested, ", ")), nil)
+	}
+	return nil
 }
 
 // expectedAudience returns the audience a Presentation's own Holder
@@ -852,6 +952,11 @@ func (v *Verifier) verifyMdocPresentation(ctx context.Context, cq dcql.Credentia
 
 	if err := cq.SatisfiedByMdocClaims(verified.DocType, verified.NameSpaces); err != nil {
 		return nil, nil, nil, nil, newError(ReasonNotAnswered, "satisfied by mdoc claims", err)
+	}
+	if !req.AllowUnrequestedClaims {
+		if err := checkRequestedElements(cq, verified.NameSpaces); err != nil {
+			return nil, nil, nil, nil, err
+		}
 	}
 
 	if len(cq.TrustedAuthorities) > 0 {

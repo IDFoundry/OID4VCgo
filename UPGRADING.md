@@ -431,6 +431,19 @@ one Wallet. A store of your own implements the new methods:
   integers and byte strings, not JSON's); a store that hand-encodes
   `Transaction` may fail it. Encode transactions with
   `verifier.TransactionCodec`, which keeps every field.
+- **Unrequested claims are refused.** `VerifyResponse`, and so
+  `Transactions`, discards a presentation that discloses a selectively
+  disclosable SD-JWT VC claim, or an mdoc data element, its Credential
+  Query doesn't name — every claims path of the query counts, whichever
+  `claim_sets` option was chosen, and none when the query lists no
+  claims — as `ReasonUnrequestedClaims`, as `mdocdcapi` already refused
+  an mdoc. A Wallet that minimises its disclosures, as OpenID4VP §6.4.1
+  requires (`wallet.PresentCredentials`, the OpenID Foundation
+  conformance suite), is unaffected; one that presents every claim
+  (`wallet.PresentSDJWTVC`, `wallet.PresentMdoc`) is refused. Set
+  `VerifyResponseRequest.AllowUnrequestedClaims` (in
+  `TransactionsConfig.Verify` for `Transactions`) to accept it as
+  before.
 
 ## v0.55.0 → v0.56.0
 

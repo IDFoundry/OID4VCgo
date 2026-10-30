@@ -291,7 +291,7 @@ func TestTransactionCodec_MdocClaimsKeepTheirTypes(t *testing.T) {
 		}
 		c.Status = &mdoc.StatusListRef{Idx: 7, URI: "https://issuer.example.com/sl"}
 	})
-	for _, name := range []string{"family_name", "age_in_years", "portrait", "birth_date", "driving_privileges"} {
+	for _, name := range []string{"age_in_years", "portrait", "birth_date", "driving_privileges"} {
 		mf.query.Credentials[0].Claims = append(mf.query.Credentials[0].Claims, dcql.ClaimsQuery{Path: dcql.Path{dcql.PathKey("org.iso.18013.5.1"), dcql.PathKey(name)}})
 	}
 	result, err := mf.verify(t, mf.nonce)

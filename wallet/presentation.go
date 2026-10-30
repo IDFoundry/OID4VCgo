@@ -440,7 +440,10 @@ func (m *matcher) mdocSatisfies(ctx context.Context, cq dcql.CredentialQuery, ca
 // disclosable claim the credential has, not just the ones the
 // Verifier asked for — call this only when there genuinely is no DCQL
 // query to trim against. RFC 9901 §7.2 lets a Holder present a subset
-// instead — see PresentSDJWTVCSelective for that.
+// instead — see PresentSDJWTVCSelective for that. A Verifier that
+// refuses unrequested claims, as package verifier does unless told
+// otherwise (VerifyResponseRequest.AllowUnrequestedClaims), refuses
+// the over-sharing presentation.
 func PresentSDJWTVC(held HeldCredential, aud, nonce string) (string, error) {
 	if held.Format != sdjwtvc.CredentialFormat {
 		return "", fmt.Errorf("wallet: present sd-jwt vc: held credential format is %q, want %q", held.Format, sdjwtvc.CredentialFormat)
@@ -709,7 +712,9 @@ func buildMdocSessionTranscriptBytes(params PresentMdocParams) ([]byte, error) {
 // over-shares every element the credential has, not just the ones the
 // Verifier asked for — call this only when there genuinely is no DCQL
 // query to trim against. See PresentMdocSelective for a caller with
-// DCQL query context to trim against.
+// DCQL query context to trim against. A Verifier that refuses
+// unrequested elements, as package verifier and mdocdcapi do, refuses
+// the over-sharing presentation.
 func PresentMdoc(held HeldCredential, params PresentMdocParams) (string, error) {
 	issuerSigned, err := decodeHeldMdoc(held)
 	if err != nil {
