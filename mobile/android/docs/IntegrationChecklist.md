@@ -188,6 +188,10 @@ is a complete, working app on this library to compare against.
 - [ ] `ProximityReader(ProximityReaderConfiguration(issuerRoots = …))`,
   plus a reader key and chain with the reader-authentication EKU if
   holders should see who's asking.
+- [ ] `production = true`, with each role (`ISSUER`, `STATUS`) in
+  `revocation` (with `crls`, refreshed by `setCRLs`) or
+  `noRevocationCheck`, and `anyIssuerForAnyType` or
+  `issuerRootsByDocType` deciding which IACAs issue which document type.
 - [ ] QR: `reader.start(context, qrCode, docType, elements)` after
   `ProximityPermissions.reader` is granted.
 - [ ] NFC: reader mode on the resumed reader screen with
