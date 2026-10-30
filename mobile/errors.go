@@ -51,6 +51,10 @@ func classify(err error) error {
 		return newError(mobileErr.Code, err)
 	case errors.Is(err, walletflow.ErrWrongStep):
 		return newError(CodeWrongStep, err)
+	case errors.Is(err, walletflow.ErrTerminated):
+		// The app ended the session while the holder key was signing:
+		// nothing is sent.
+		return newError(CodeCancelled, err)
 	case errors.As(err, &denied):
 		return &Error{Code: CodeAuthorizationDenied, Detail: errorCode(denied.Code), Message: "the authorization server didn't authorize the request"}
 	case errors.Is(err, walletflow.ErrCredentialDenied):

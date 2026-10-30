@@ -1257,7 +1257,11 @@ Decisions taken 2026-10-06 (tracked in [#482](https://github.com/IDFoundry/OID4V
 - **Responding ends the session:** the DeviceResponse goes out with
   status 20 in the same message, as one request per session allows. A
   failed `Respond` (the holder cancels the biometric prompt) sends
-  nothing, and the holder can try again.
+  nothing, and the holder can try again. The app cancelling while the
+  prompt is up used to wait for it and send the response all the same:
+  `Terminate` now marks the session before it waits, `Respond` then
+  fails as `cancelled`, and the Swift and Kotlin wrappers check their
+  own cancellation before sending.
 - **The test issuer's certificates named no country.** A proximity
   reader requires the IACA's and the document signer's countryName to
   match (§9.3.3), so `walletflowtest` now names one.
