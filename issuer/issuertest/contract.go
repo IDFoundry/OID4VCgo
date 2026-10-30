@@ -279,7 +279,7 @@ func testAtomicNonceContract(t *testing.T, newAdapter func() (issue func(nonce s
 // TestPreAuthorizedCodeStoreContract exercises factory()'s behavior
 // against PreAuthorizedCodeStore's own documented guarantees —
 // including the one genuinely security-relevant rule beyond plain
-// atomicity: a wrong TxCode must leave the code consumable (not
+// atomicity: a wrong TxCodeHash must leave the code consumable (not
 // invalidate it), so a mistyped PIN doesn't permanently destroy a
 // legitimate holder's only redemption path (see Consume's own doc
 // comment; this was a real finding in a past security review of an
@@ -323,7 +323,7 @@ func testPACAcceptSeesTheRecord(t *testing.T, factory func() issuer.PreAuthorize
 	store := factory()
 	ctx := context.Background()
 	want := issuer.PreAuthorizedCodeRecord{
-		TxCode: "1234", Scopes: []string{"identity_credential"}, CredentialConfigurationIDs: []string{"cfg1"},
+		TxCodeHash: "1234", Scopes: []string{"identity_credential"}, CredentialConfigurationIDs: []string{"cfg1"},
 		ExpiresAt: time.Now().Add(time.Minute).Truncate(time.Second), Subject: "subject-1",
 	}
 	if err := store.Issue(ctx, "code1", want); err != nil {
@@ -355,7 +355,7 @@ func testPACAcceptRefusalLeavesCodeConsumable(t *testing.T, factory func() issue
 	t.Helper()
 	store := factory()
 	ctx := context.Background()
-	if err := store.Issue(ctx, "code1", issuer.PreAuthorizedCodeRecord{TxCode: "1234", ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
+	if err := store.Issue(ctx, "code1", issuer.PreAuthorizedCodeRecord{TxCodeHash: "1234", ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
 		t.Fatalf(msgIssueFailed, err)
 	}
 	for range 3 {
@@ -380,7 +380,7 @@ func testPACAcceptRunsOnlyAfterTxCodeCheck(t *testing.T, factory func() issuer.P
 	store := factory()
 	ctx := context.Background()
 	exp := time.Now().Add(time.Minute)
-	if err := store.Issue(ctx, "with-tx", issuer.PreAuthorizedCodeRecord{TxCode: "1234", ExpiresAt: exp}); err != nil {
+	if err := store.Issue(ctx, "with-tx", issuer.PreAuthorizedCodeRecord{TxCodeHash: "1234", ExpiresAt: exp}); err != nil {
 		t.Fatalf(msgIssueFailed, err)
 	}
 	if err := store.Issue(ctx, "without-tx", issuer.PreAuthorizedCodeRecord{ExpiresAt: exp}); err != nil {
@@ -537,13 +537,13 @@ func testPACWrongTxCodeLeavesCodeConsumable(t *testing.T, factory func() issuer.
 	t.Helper()
 	store := factory()
 	ctx := context.Background()
-	if err := store.Issue(ctx, "code1", issuer.PreAuthorizedCodeRecord{TxCode: "1234", ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
+	if err := store.Issue(ctx, "code1", issuer.PreAuthorizedCodeRecord{TxCodeHash: "1234", ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
 		t.Fatalf(msgIssueFailed, err)
 	}
 	if _, _, err := store.Consume(ctx, "code1", "0000", 0, nil); !errors.Is(err, issuer.ErrWrongTxCode) {
 		t.Fatalf("Consume with wrong tx_code: err = %v, want ErrWrongTxCode", err)
 	}
-	// The code must still be redeemable with the correct TxCode — a
+	// The code must still be redeemable with the correct TxCodeHash — a
 	// wrong guess must not have invalidated it.
 	if _, _, err := store.Consume(ctx, "code1", "1234", 0, nil); err != nil {
 		t.Fatalf("Consume with correct tx_code after a wrong guess: %v", err)
@@ -554,7 +554,7 @@ func testPACMissingTxCodeIsNotAGuess(t *testing.T, factory func() issuer.PreAuth
 	t.Helper()
 	store := factory()
 	ctx := context.Background()
-	if err := store.Issue(ctx, "code1", issuer.PreAuthorizedCodeRecord{TxCode: "1234", ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
+	if err := store.Issue(ctx, "code1", issuer.PreAuthorizedCodeRecord{TxCodeHash: "1234", ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
 		t.Fatalf(msgIssueFailed, err)
 	}
 	for range 3 {
@@ -588,7 +588,7 @@ func testPACCorrectTxCodeConsumes(t *testing.T, factory func() issuer.PreAuthori
 	t.Helper()
 	store := factory()
 	ctx := context.Background()
-	if err := store.Issue(ctx, "code1", issuer.PreAuthorizedCodeRecord{TxCode: "1234", ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
+	if err := store.Issue(ctx, "code1", issuer.PreAuthorizedCodeRecord{TxCodeHash: "1234", ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
 		t.Fatalf(msgIssueFailed, err)
 	}
 	if _, _, err := store.Consume(ctx, "code1", "1234", 0, nil); err != nil {
@@ -600,7 +600,7 @@ func testPACWrongTxCodeIncrementsAttempts(t *testing.T, factory func() issuer.Pr
 	t.Helper()
 	store := factory()
 	ctx := context.Background()
-	if err := store.Issue(ctx, "code1", issuer.PreAuthorizedCodeRecord{TxCode: "1234", ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
+	if err := store.Issue(ctx, "code1", issuer.PreAuthorizedCodeRecord{TxCodeHash: "1234", ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
 		t.Fatalf(msgIssueFailed, err)
 	}
 	for want := 1; want <= 3; want++ {
@@ -641,7 +641,7 @@ func testPACConcurrentWrongAttemptsAreCountedExactly(t *testing.T, factory func(
 	t.Helper()
 	store := factory()
 	ctx := context.Background()
-	if err := store.Issue(ctx, "code1", issuer.PreAuthorizedCodeRecord{TxCode: "1234", ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
+	if err := store.Issue(ctx, "code1", issuer.PreAuthorizedCodeRecord{TxCodeHash: "1234", ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
 		t.Fatalf(msgIssueFailed, err)
 	}
 	var mu sync.Mutex
@@ -678,7 +678,7 @@ func testPACConcurrentGuessesAreBounded(t *testing.T, factory func() issuer.PreA
 	const maxAttempts = 3
 	store := factory()
 	ctx := context.Background()
-	if err := store.Issue(ctx, "code1", issuer.PreAuthorizedCodeRecord{TxCode: "1234", ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
+	if err := store.Issue(ctx, "code1", issuer.PreAuthorizedCodeRecord{TxCodeHash: "1234", ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
 		t.Fatalf(msgIssueFailed, err)
 	}
 	var mu sync.Mutex

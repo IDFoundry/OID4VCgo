@@ -43,7 +43,7 @@ func (f *fakePreAuthorizedCodeStore) Issue(_ context.Context, code string, recor
 	return nil
 }
 
-func (f *fakePreAuthorizedCodeStore) Consume(_ context.Context, code, wantTxCode string, maxAttempts int, accept func(issuer.PreAuthorizedCodeRecord) error) (issuer.PreAuthorizedCodeRecord, int, error) {
+func (f *fakePreAuthorizedCodeStore) Consume(_ context.Context, code, wantTxCodeHash string, maxAttempts int, accept func(issuer.PreAuthorizedCodeRecord) error) (issuer.PreAuthorizedCodeRecord, int, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	record, ok := f.issued[code]
@@ -51,16 +51,16 @@ func (f *fakePreAuthorizedCodeStore) Consume(_ context.Context, code, wantTxCode
 		return issuer.PreAuthorizedCodeRecord{}, 0, errPreAuthorizedCodeNotFound
 	}
 	switch {
-	case record.TxCode == "" && wantTxCode != "":
+	case record.TxCodeHash == "" && wantTxCodeHash != "":
 		return issuer.PreAuthorizedCodeRecord{}, 0, issuer.ErrTxCodeUnexpected
-	case record.TxCode != "" && wantTxCode == "" && (maxAttempts <= 0 || f.attempts[code] < maxAttempts):
+	case record.TxCodeHash != "" && wantTxCodeHash == "" && (maxAttempts <= 0 || f.attempts[code] < maxAttempts):
 		return issuer.PreAuthorizedCodeRecord{}, 0, issuer.ErrTxCodeRequired
 	}
-	if record.TxCode != "" && maxAttempts > 0 && f.attempts[code] >= maxAttempts {
+	if record.TxCodeHash != "" && maxAttempts > 0 && f.attempts[code] >= maxAttempts {
 		delete(f.issued, code)
 		return issuer.PreAuthorizedCodeRecord{}, 0, issuer.ErrTooManyTxCodeAttempts
 	}
-	if record.TxCode != "" && wantTxCode != record.TxCode {
+	if record.TxCodeHash != "" && wantTxCodeHash != record.TxCodeHash {
 		f.attempts[code]++
 		if maxAttempts > 0 && f.attempts[code] >= maxAttempts {
 			delete(f.issued, code)
@@ -241,8 +241,14 @@ func newPreAuthorizedCodeFixtureWith(t *testing.T, configure func(cfg *issuer.Co
 // skips this call to exercise the unknown-code path).
 func (f preAuthorizedCodeFixture) issue(t *testing.T, code string, record issuer.PreAuthorizedCodeRecord) {
 	t.Helper()
-	if err := f.codes.Issue(context.Background(), code, record); err != nil {
-		t.Fatalf("Issue: %v", err)
+	f.issueWithTxCode(t, code, "", record)
+}
+
+// issueWithTxCode is issue for a code whose holder must enter txCode.
+func (f preAuthorizedCodeFixture) issueWithTxCode(t *testing.T, code, txCode string, record issuer.PreAuthorizedCodeRecord) {
+	t.Helper()
+	if err := f.iss.IssuePreAuthorizedCode(context.Background(), code, txCode, record); err != nil {
+		t.Fatalf("IssuePreAuthorizedCode: %v", err)
 	}
 }
 
@@ -488,8 +494,8 @@ func TestExchangePreAuthorizedCodeResult_WriteJSON_IncludesAuthorizationDetails(
 
 func TestExchangePreAuthorizedCode_AcceptsMatchingTxCode(t *testing.T) {
 	f := newPreAuthorizedCodeFixture(t)
-	f.issue(t, "code-1", issuer.PreAuthorizedCodeRecord{
-		Scopes: []string{"identity_credential"}, TxCode: "493536", ExpiresAt: f.now.Add(time.Minute),
+	f.issueWithTxCode(t, "code-1", "493536", issuer.PreAuthorizedCodeRecord{
+		Scopes: []string{"identity_credential"}, ExpiresAt: f.now.Add(time.Minute),
 	})
 
 	if _, err := f.iss.ExchangePreAuthorizedCode(context.Background(), issuer.ExchangePreAuthorizedCodeRequest{
@@ -510,8 +516,8 @@ func TestExchangePreAuthorizedCode_AcceptsMatchingTxCode(t *testing.T) {
 // retry.
 func TestExchangePreAuthorizedCode_WrongTxCodeThenSucceedsOnRetryWithoutLosingTheCode(t *testing.T) {
 	f := newPreAuthorizedCodeFixture(t)
-	f.issue(t, "code-1", issuer.PreAuthorizedCodeRecord{
-		Scopes: []string{"identity_credential"}, TxCode: "493536", ExpiresAt: f.now.Add(time.Minute),
+	f.issueWithTxCode(t, "code-1", "493536", issuer.PreAuthorizedCodeRecord{
+		Scopes: []string{"identity_credential"}, ExpiresAt: f.now.Add(time.Minute),
 	})
 
 	_, err := f.iss.ExchangePreAuthorizedCode(context.Background(), issuer.ExchangePreAuthorizedCodeRequest{
@@ -553,8 +559,8 @@ func submitWrongTxCodeAttempts(t *testing.T, f preAuthorizedCodeFixture, code st
 // permanently invalidated — even a subsequent correct guess fails.
 func TestExchangePreAuthorizedCode_TooManyWrongTxCodeAttemptsInvalidatesCode(t *testing.T) {
 	f := newPreAuthorizedCodeFixture(t)
-	f.issue(t, "code-1", issuer.PreAuthorizedCodeRecord{
-		Scopes: []string{"identity_credential"}, TxCode: "493536", ExpiresAt: f.now.Add(time.Minute),
+	f.issueWithTxCode(t, "code-1", "493536", issuer.PreAuthorizedCodeRecord{
+		Scopes: []string{"identity_credential"}, ExpiresAt: f.now.Add(time.Minute),
 	})
 	err := submitWrongTxCodeAttempts(t, f, "code-1", 3)
 	requireIssuerErrorCode(t, err, issuer.ErrorInvalidGrant)
@@ -573,8 +579,8 @@ func TestExchangePreAuthorizedCode_TooManyWrongTxCodeAttemptsInvalidatesCode(t *
 // above).
 func TestExchangePreAuthorizedCode_StaysUnderTheAttemptLimitRemainsRetryable(t *testing.T) {
 	f := newPreAuthorizedCodeFixture(t)
-	f.issue(t, "code-1", issuer.PreAuthorizedCodeRecord{
-		Scopes: []string{"identity_credential"}, TxCode: "493536", ExpiresAt: f.now.Add(time.Minute),
+	f.issueWithTxCode(t, "code-1", "493536", issuer.PreAuthorizedCodeRecord{
+		Scopes: []string{"identity_credential"}, ExpiresAt: f.now.Add(time.Minute),
 	})
 	err := submitWrongTxCodeAttempts(t, f, "code-1", 2)
 	requireIssuerErrorCode(t, err, issuer.ErrorInvalidGrant)
@@ -598,8 +604,8 @@ func TestExchangePreAuthorizedCode_Rejects(t *testing.T) {
 		"wrong tx_code": {
 			wantCode: issuer.ErrorInvalidGrant,
 			setup: func(t *testing.T, f preAuthorizedCodeFixture) issuer.ExchangePreAuthorizedCodeRequest {
-				f.issue(t, "code-1", issuer.PreAuthorizedCodeRecord{
-					Scopes: []string{"identity_credential"}, TxCode: "493536", ExpiresAt: f.now.Add(time.Minute),
+				f.issueWithTxCode(t, "code-1", "493536", issuer.PreAuthorizedCodeRecord{
+					Scopes: []string{"identity_credential"}, ExpiresAt: f.now.Add(time.Minute),
 				})
 				return issuer.ExchangePreAuthorizedCodeRequest{
 					PreAuthorizedCode: "code-1", TxCode: "wrong", DPoPProof: f.validProof(t), TokenEndpoint: testTokenEndpointURL(t),
@@ -609,8 +615,8 @@ func TestExchangePreAuthorizedCode_Rejects(t *testing.T) {
 		"missing tx_code": {
 			wantCode: issuer.ErrorInvalidTokenRequest,
 			setup: func(t *testing.T, f preAuthorizedCodeFixture) issuer.ExchangePreAuthorizedCodeRequest {
-				f.issue(t, "code-1", issuer.PreAuthorizedCodeRecord{
-					Scopes: []string{"identity_credential"}, TxCode: "493536", ExpiresAt: f.now.Add(time.Minute),
+				f.issueWithTxCode(t, "code-1", "493536", issuer.PreAuthorizedCodeRecord{
+					Scopes: []string{"identity_credential"}, ExpiresAt: f.now.Add(time.Minute),
 				})
 				return issuer.ExchangePreAuthorizedCodeRequest{
 					PreAuthorizedCode: "code-1", DPoPProof: f.validProof(t), TokenEndpoint: testTokenEndpointURL(t),

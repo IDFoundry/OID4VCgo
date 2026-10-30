@@ -165,6 +165,19 @@ them.
   `invalid_grant`, `invalid_transaction_id` or
   `invalid_notification_id`, so an outage no longer tells a holder their
   PIN is wrong. Run the `issuertest` contracts against your stores.
+- **Pre-authorized codes and Transaction Codes are stored as hashes.**
+  `PreAuthorizedCodeStore` is keyed by a SHA-256 hash of the code, and
+  `PreAuthorizedCodeRecord.TxCode` is now `TxCodeHash`, an HMAC of the
+  Transaction Code keyed by the code; `Consume` compares the hash it's
+  given with it (in constant time). A store keeps both as opaque
+  strings. Codes outstanding at the upgrade, stored under the code
+  itself, stop working: let them expire, or issue new offers. A caller
+  that called `PreAuthorizedCodeStore.Issue` itself calls
+  `Issuer.IssuePreAuthorizedCode(ctx, code, txCode, record)` instead,
+  which is refused under production, as `CreateCredentialOffer` with a
+  pre-authorized grant is: use `CreatePreAuthorizedOffer` there. An
+  offer made `ByReference` still holds its code in the
+  `CredentialOfferStore` until it expires.
 
 ## v0.55.0 → v0.56.0
 

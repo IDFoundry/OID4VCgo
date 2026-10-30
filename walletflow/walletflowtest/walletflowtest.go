@@ -518,8 +518,8 @@ func (e *Env) PreAuthorizedOffer(pin string, configIDs ...string) (uri string, e
 	var b [32]byte
 	_, _ = rand.Read(b[:])
 	code := base64.RawURLEncoding.EncodeToString(b[:])
-	must(e.preAuthCodes.Issue(context.Background(), code, issuer.PreAuthorizedCodeRecord{
-		TxCode: pin, Scopes: configIDs, CredentialConfigurationIDs: configIDs, ExpiresAt: time.Now().Add(time.Hour), Subject: "holder",
+	must(e.iss.IssuePreAuthorizedCode(context.Background(), code, pin, issuer.PreAuthorizedCodeRecord{
+		Scopes: configIDs, CredentialConfigurationIDs: configIDs, ExpiresAt: time.Now().Add(time.Hour), Subject: "holder",
 	}))
 	grant := &oid4vci.GrantPreAuthorizedCode{PreAuthorizedCode: code}
 	if pin != "" {

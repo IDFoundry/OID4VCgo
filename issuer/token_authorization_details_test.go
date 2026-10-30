@@ -141,7 +141,7 @@ func redeemVerified(f preAuthorizedCodeFixture, code, txCode string, details []o
 // refused without spending the code or counting an attempt.
 func TestRedeemPreAuthorizedCode_TxCodeBeforeAuthorizationDetails(t *testing.T) {
 	f := newVerifiedPreAuthorizedCodeFixture(t, nil)
-	f.issue(t, "code-1", issuer.PreAuthorizedCodeRecord{TxCode: "493536", Scopes: []string{"another_scope"}, ExpiresAt: f.now.Add(time.Minute)})
+	f.issueWithTxCode(t, "code-1", "493536", issuer.PreAuthorizedCodeRecord{Scopes: []string{"another_scope"}, ExpiresAt: f.now.Add(time.Minute)})
 	ungranted := []oid4vci.AuthorizationDetail{{Type: oid4vci.AuthorizationDetailsTypeOpenIDCredential, CredentialConfigurationID: "IdentityCredential"}}
 	// Two wrong guesses of the three allowed, one carrying details the
 	// code doesn't grant; refusals of those details with the right

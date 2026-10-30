@@ -55,6 +55,9 @@ type CreatePreAuthorizedOfferRequest struct {
 
 	// ByReference publishes the offer at the Credential Offer Endpoint
 	// rather than in the URI itself (CreateCredentialOfferRequest).
+	// Dependencies.CredentialOffers then holds the offer, the code in
+	// it included, until Limits.CredentialOfferLifetime passes: unlike
+	// Dependencies.PreAuthorizedCodes, which holds only its hash.
 	ByReference bool
 }
 
@@ -105,16 +108,51 @@ func (iss *Issuer) CreatePreAuthorizedOffer(ctx context.Context, req CreatePreAu
 		return CredentialOfferResult{}, fmt.Errorf("issuer: create pre-authorized offer: %w", err)
 	}
 	record := PreAuthorizedCodeRecord{
-		TxCode: req.TxCode, Scopes: req.Scopes, Subject: req.Subject,
+		Scopes: req.Scopes, Subject: req.Subject,
 		ExpiresAt: iss.deps.Clock.Now().Add(req.Lifetime),
 	}
 	if req.CredentialIdentifiers {
 		record.CredentialConfigurationIDs = req.CredentialConfigurationIDs
 	}
-	if err := iss.deps.PreAuthorizedCodes.Issue(ctx, code, record); err != nil {
+	if err := iss.storePreAuthorizedCode(ctx, code, req.TxCode, record); err != nil {
 		return CredentialOfferResult{}, fmt.Errorf("issuer: create pre-authorized offer: store code: %w", err)
 	}
 	return iss.createCredentialOffer(ctx, offerReq)
+}
+
+// IssuePreAuthorizedCode stores record for a pre-authorized_code the
+// caller generated itself, with txCode, when set, as the Transaction
+// Code the holder must enter to redeem it. The store receives a hash of
+// code and record.TxCodeHash set from txCode, never either value; leave
+// TxCodeHash empty. The caller builds the Credential Offer carrying
+// code with CreateCredentialOffer, its tx_code object matching txCode.
+//
+// It's for development and tests, where a fixed code is convenient:
+// under AssuranceProduction it's refused, as CreateCredentialOffer
+// refuses a pre-authorized grant there, so that a code's offer and
+// record can't disagree. Use CreatePreAuthorizedOffer.
+func (iss *Issuer) IssuePreAuthorizedCode(ctx context.Context, code, txCode string, record PreAuthorizedCodeRecord) error {
+	switch {
+	case iss.cfg.Assurance == AssuranceProduction:
+		return errors.New("issuer: issue pre-authorized code: refused under AssuranceProduction: use CreatePreAuthorizedOffer")
+	case iss.deps.PreAuthorizedCodes == nil:
+		return errors.New("issuer: issue pre-authorized code: dependencies.pre_authorized_codes is not set")
+	case code == "":
+		return errors.New("issuer: issue pre-authorized code: code is required")
+	case record.TxCodeHash != "":
+		return errors.New("issuer: issue pre-authorized code: pass the Transaction Code as txCode, not record.TxCodeHash")
+	}
+	if err := iss.storePreAuthorizedCode(ctx, code, txCode, record); err != nil {
+		return fmt.Errorf("issuer: issue pre-authorized code: %w", err)
+	}
+	return nil
+}
+
+// storePreAuthorizedCode stores record under code's hash, with txCode's
+// hash as its TxCodeHash.
+func (iss *Issuer) storePreAuthorizedCode(ctx context.Context, code, txCode string, record PreAuthorizedCodeRecord) error {
+	record.TxCodeHash = txCodeHash(code, txCode)
+	return iss.deps.PreAuthorizedCodes.Issue(ctx, preAuthorizedCodeKey(code), record)
 }
 
 // txCodeFor is the offer's tx_code object for txCode: numeric input

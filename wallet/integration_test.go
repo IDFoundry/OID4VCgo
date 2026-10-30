@@ -313,7 +313,7 @@ func newPreAuthorizedRoundTripFixture(t *testing.T, configure func(cfg *issuer.C
 	if err != nil {
 		t.Fatalf("issuer.New: %v", err)
 	}
-	if err := preAuthorizedCodes.Issue(context.Background(), "oaKazRN8I0IbtZ0C7JuMn5", issuer.PreAuthorizedCodeRecord{
+	if err := iss.IssuePreAuthorizedCode(context.Background(), "oaKazRN8I0IbtZ0C7JuMn5", "", issuer.PreAuthorizedCodeRecord{
 		Scopes: []string{"identity_credential"}, ExpiresAt: time.Now().Add(time.Minute),
 	}); err != nil {
 		t.Fatalf("Issue pre-authorized_code: %v", err)
@@ -420,7 +420,7 @@ func presentAndVerifyIdentityCredential(
 // tests.
 func TestWalletPreAuthorizedCodeRoundTrip_WithCredentialIdentifier(t *testing.T) {
 	f := newPreAuthorizedRoundTripFixture(t, nil)
-	if err := f.preAuthorizedCodes.Issue(context.Background(), "code-with-identifier", issuer.PreAuthorizedCodeRecord{
+	if err := f.iss.IssuePreAuthorizedCode(context.Background(), "code-with-identifier", "", issuer.PreAuthorizedCodeRecord{
 		Scopes: []string{"identity_credential"}, CredentialConfigurationIDs: []string{"IdentityCredential"},
 		ExpiresAt: time.Now().Add(time.Minute),
 	}); err != nil {

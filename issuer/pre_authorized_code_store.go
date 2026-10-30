@@ -19,7 +19,8 @@ import (
 var ErrPreAuthorizedCodeUnknown = errors.New("issuer: unknown or already used pre-authorized_code")
 
 // ErrWrongTxCode is what Consume returns when code is known and
-// unexpired but wantTxCode doesn't match the record's own TxCode —
+// unexpired but wantTxCodeHash doesn't match the record's own
+// TxCodeHash —
 // distinguishing this from "code is unknown or already consumed" lets
 // a caller (ExchangePreAuthorizedCode) report the right error, and
 // tells a PreAuthorizedCodeStore implementation which case must NOT
@@ -34,32 +35,37 @@ var ErrWrongTxCode = errors.New("issuer: tx_code does not match")
 var ErrTooManyTxCodeAttempts = errors.New("issuer: too many incorrect tx_code attempts")
 
 // ErrTxCodeRequired is what Consume returns when code's record has a
-// TxCode and the request sent none: an invalid_request (§6.3), not a
+// TxCodeHash and the request sent no tx_code: an invalid_request (§6.3), not a
 // wrong guess, so it neither counts as an attempt nor invalidates code.
 var ErrTxCodeRequired = errors.New("issuer: tx_code is required")
 
 // ErrTxCodeUnexpected is what Consume returns when code's record has no
-// TxCode and the request sent one: an invalid_request (§6.3). code is
+// TxCodeHash and the request sent a tx_code: an invalid_request (§6.3). code is
 // left in place.
 var ErrTxCodeUnexpected = errors.New("issuer: tx_code was not expected")
 
-// PreAuthorizedCodeRecord is what a caller stores when it issues a
+// PreAuthorizedCodeRecord is what the issuer stores when it issues a
 // pre-authorized_code — as part of a Credential Offer's own
 // Grants.PreAuthorizedCode (§4.1.1) — everything ExchangePreAuthorizedCode
 // needs to validate a Token Request presenting it and decide what
 // access to grant. CreatePreAuthorizedOffer generates the code,
 // stores this record and builds the offer in one step, its tx_code
-// derived from TxCode; a caller issuing a code itself must keep the
-// two consistent.
+// derived from the Transaction Code; IssuePreAuthorizedCode stores one
+// for a code the caller made itself, in development.
+//
+// Neither the code nor its Transaction Code reaches the store: the
+// store's key is a hash of the code, and TxCodeHash a hash of the
+// Transaction Code keyed by the code, so a read of the store, or a
+// leak of it, yields neither a redeemable code nor a PIN.
 type PreAuthorizedCodeRecord struct {
-	// TxCode is REQUIRED whenever the original Credential Offer's own
+	// TxCodeHash is set whenever the original Credential Offer's own
 	// Grants.PreAuthorizedCode.TxCode was non-nil — the Wallet must
 	// present the exact End-User Transaction Code value entered
-	// (§6.1's own MUST), matched against this record's own value.
+	// (§6.1's own MUST), and the store compares its hash with this.
 	// Empty when the offer carried no TxCode object at all, in which
-	// case ExchangePreAuthorizedCode never checks
-	// ExchangePreAuthorizedCodeRequest.TxCode.
-	TxCode string
+	// case a request carrying a tx_code is refused. The issuer sets it;
+	// a store keeps it as it is, an opaque string.
+	TxCodeHash string
 
 	// Scopes is what access this pre-authorized_code entitles the
 	// resulting access token to.
@@ -102,29 +108,37 @@ type PreAuthorizedCodeRecord struct {
 // once — a pre-authorized_code, like an authorization code, is a
 // one-time credential — the same consume-once shape NonceStore
 // already establishes for c_nonce.
+//
+// The issuer hands the store hashes, never the code or Transaction Code
+// themselves (see PreAuthorizedCodeRecord): codeHash, the key, and
+// wantTxCodeHash, compared with the record's TxCodeHash. Both are
+// opaque base64url strings of at most 43 characters to the store,
+// which compares the two Transaction Code hashes in constant time
+// (crypto/subtle) and otherwise treats them as any other key and value.
 type PreAuthorizedCodeStore interface {
-	// Issue persists record under code, matching NonceStore.Issue's own
-	// contract: implementations aren't required to reject a duplicate
-	// code, since callers are expected to generate one with enough
-	// entropy that a collision is negligible.
-	Issue(ctx context.Context, code string, record PreAuthorizedCodeRecord) error
+	// Issue persists record under codeHash, matching NonceStore.Issue's
+	// own contract: implementations aren't required to reject a
+	// duplicate key, since codes are generated with enough entropy that
+	// a collision is negligible.
+	Issue(ctx context.Context, codeHash string, record PreAuthorizedCodeRecord) error
 
-	// Consume retrieves code and checks it against wantTxCode
-	// (ExchangePreAuthorizedCodeRequest.TxCode) in one atomic step —
-	// but must invalidate code only when the check actually succeeds
-	// (and accept, below, accepts the record). A record whose own
-	// TxCode is empty passes the check when wantTxCode is empty too; a non-empty wantTxCode is
-	// refused with ErrTxCodeUnexpected and code left in place. A record
-	// whose own TxCode is non-empty and an empty wantTxCode returns
-	// ErrTxCodeRequired, counting no attempt and leaving code in place.
-	// A record whose own TxCode is non-empty and doesn't match
-	// wantTxCode MUST be left in place and return ErrWrongTxCode — not
-	// invalidated — so a mistyped PIN doesn't permanently destroy the
+	// Consume retrieves codeHash's record and checks it against
+	// wantTxCodeHash (the hash of ExchangePreAuthorizedCodeRequest.TxCode)
+	// in one atomic step — but must invalidate the code only when the
+	// check actually succeeds (and accept, below, accepts the record). A
+	// record whose own TxCodeHash is empty passes the check when
+	// wantTxCodeHash is empty too; a non-empty wantTxCodeHash is refused
+	// with ErrTxCodeUnexpected and the code left in place. A record
+	// whose own TxCodeHash is non-empty and an empty wantTxCodeHash
+	// returns ErrTxCodeRequired, counting no attempt and leaving the
+	// code in place. A record whose own TxCodeHash is non-empty and
+	// doesn't match wantTxCodeHash MUST be left in place and return
+	// ErrWrongTxCode — not invalidated — so a mistyped PIN doesn't permanently destroy the
 	// code with no retry path (a real denial-of-service against the
 	// code's own legitimate holder; found in a repo-wide security
 	// review of an earlier implementation that consumed unconditionally
-	// before checking TxCode). Returns an error wrapping
-	// ErrPreAuthorizedCodeUnknown if code is unknown or already
+	// before checking the Transaction Code). Returns an error wrapping
+	// ErrPreAuthorizedCodeUnknown if the code is unknown or already
 	// consumed, and any other error only when it couldn't answer — expiry
 	// (PreAuthorizedCodeRecord.ExpiresAt) is checked by
 	// ExchangePreAuthorizedCode, in accept, not by Consume itself.
@@ -154,7 +168,7 @@ type PreAuthorizedCodeStore interface {
 	// Config.Limits.MaxTxCodeAttempts; 0 or less means no limit) bounds
 	// the guesses, in the same atomic step as the comparison: once code
 	// has maxAttempts wrong guesses, Consume MUST invalidate it and
-	// return ErrTooManyTxCodeAttempts without comparing wantTxCode —
+	// return ErrTooManyTxCodeAttempts without comparing wantTxCodeHash —
 	// and a wrong guess that reaches maxAttempts invalidates it too.
 	// Left to a separate Invalidate call after the comparison,
 	// concurrent requests could each have a guess compared before any
@@ -163,7 +177,7 @@ type PreAuthorizedCodeStore interface {
 	// Concurrent guesses against one code must each observe a distinct,
 	// correctly incrementing count, and at most maxAttempts of them may
 	// be compared.
-	Consume(ctx context.Context, code, wantTxCode string, maxAttempts int, accept func(PreAuthorizedCodeRecord) error) (record PreAuthorizedCodeRecord, wrongAttempts int, err error)
+	Consume(ctx context.Context, codeHash, wantTxCodeHash string, maxAttempts int, accept func(PreAuthorizedCodeRecord) error) (record PreAuthorizedCodeRecord, wrongAttempts int, err error)
 
 	// Invalidate permanently invalidates code, the same way a
 	// successful Consume already does. ExchangePreAuthorizedCode also
@@ -174,5 +188,5 @@ type PreAuthorizedCodeStore interface {
 	// invalidated) or was never issued — Invalidate's own caller has
 	// already decided code should stop existing, so there is nothing
 	// further for it to report either way.
-	Invalidate(ctx context.Context, code string) error
+	Invalidate(ctx context.Context, codeHash string) error
 }
