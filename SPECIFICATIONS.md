@@ -80,7 +80,11 @@ attestation-based-client-auth draft, plus OID4VCI-specific claims (Appendix
 E). This is the client authentication mechanism HAIP requires in place of
 FAPI 2.0's normal `private_key_jwt`/mTLS — implemented by FAPIgo's
 `server` and `client` (`storage.ClientAuthMethodAttestation`); see
-AGENTS.md's "Relationship to FAPIgo".
+AGENTS.md's "Relationship to FAPIgo". Since FAPIgo v0.66.0,
+`server.X5CAttesterChain` refuses a Wallet Attestation whose `x5c`
+carries the trust anchor (HAIP 1.0) or whose signer certificate was
+issued for another role, and production holds a Client Attestation
+PoP's age to 5 minutes.
 
 ## Status
 

@@ -18,7 +18,7 @@ func TestExchangePreAuthorizedCode_PointerToVerified(t *testing.T) {
 	})
 	f.issue(t, "code-1", issuer.PreAuthorizedCodeRecord{Subject: "alice", ExpiresAt: f.now.Add(1e12)})
 	res, err := f.iss.ExchangePreAuthorizedCode(context.Background(), issuer.ExchangePreAuthorizedCodeRequest{
-		PreAuthorizedCode: "code-1", DPoPProof: f.validProof(t), TokenEndpoint: testTokenEndpointURL(t),
+		PreAuthorizedCode: "code-1", Verified: anonymousTokenRequest(),
 	})
 	if err == nil || res.AccessToken != "" {
 		t.Errorf("an unverified redemption under &VerifiedPreAuthorizedCode{}: token issued %v, err %v; want refused", res.AccessToken != "", err)

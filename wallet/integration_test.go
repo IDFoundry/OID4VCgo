@@ -9,17 +9,19 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
-	"sync"
 	"testing"
 	"time"
 
 	fapi "github.com/idfoundry/fapigo"
 	"github.com/idfoundry/fapigo/fapihttp"
+	"github.com/idfoundry/fapigo/keys"
+	"github.com/idfoundry/fapigo/keys/ephemeral"
+	"github.com/idfoundry/fapigo/server"
+	fapistorage "github.com/idfoundry/fapigo/storage"
+	"github.com/idfoundry/fapigo/storage/memstore"
 
 	"github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/attestation"
@@ -132,62 +134,114 @@ type issuerWireResponseEncryptionRequest struct {
 }
 
 // issuerTokenFake plays the role of the network for wallet's own
-// pre-authorized_code Token Request, routing it to a real
-// issuer.Issuer's own ExchangePreAuthorizedCode — no HTTP server, but
-// genuinely the production code on both sides, the same pattern
+// pre-authorized_code Token Request, routing it to a real fapigo/server
+// verifying its DPoP proof without a client (VerifyTokenRequestDPoP)
+// and a real issuer.Issuer's own ExchangePreAuthorizedCode under
+// AnonymousPreAuthorizedCode — no HTTP server, but genuinely the
+// production code on both sides, the same pattern
 // issuerNonceFake/issuerCredentialFake already establish.
 type issuerTokenFake struct {
-	iss           *issuer.Issuer
-	tokenEndpoint fapi.URL
+	srv *server.Server
+	iss *issuer.Issuer
 }
 
 func (f issuerTokenFake) Do(req *http.Request) (*http.Response, error) {
-	raw, err := io.ReadAll(req.Body)
+	tr, err := server.TokenEndpointRequestFromHTTP(req)
 	if err != nil {
 		return nil, err
 	}
-	form, err := url.ParseQuery(string(raw))
+	params, err := tr.Parameters()
 	if err != nil {
 		return nil, err
+	}
+	rec := httptest.NewRecorder()
+	binding, err := f.srv.VerifyTokenRequestDPoP(req.Context(), tr)
+	if err != nil {
+		// use_dpop_nonce, with the nonce in its DPoP-Nonce header.
+		server.WriteError(rec, err)
+		return recorded(rec), nil
 	}
 	result, reqErr := f.iss.ExchangePreAuthorizedCode(req.Context(), issuer.ExchangePreAuthorizedCodeRequest{
-		PreAuthorizedCode: form.Get("pre-authorized_code"),
-		TxCode:            form.Get("tx_code"),
-		DPoPProof:         req.Header.Get("DPoP"),
-		TokenEndpoint:     f.tokenEndpoint,
+		PreAuthorizedCode: params["pre-authorized_code"],
+		TxCode:            params["tx_code"],
+		Verified:          &issuer.VerifiedTokenRequest{DPoPThumbprint: binding.Thumbprint, NextDPoPNonce: binding.NextDPoPNonce},
 	})
 	if reqErr != nil {
 		return issuerErrorResponse(reqErr)
 	}
-	rec := httptest.NewRecorder()
 	result.WriteJSON(rec)
+	return recorded(rec), nil
+}
+
+// recorded is rec's response.
+func recorded(rec *httptest.ResponseRecorder) *http.Response {
 	return &http.Response{
 		StatusCode: rec.Code,
 		Body:       io.NopCloser(bytes.NewReader(rec.Body.Bytes())),
 		Header:     rec.Header(),
-	}, nil
+	}
 }
 
-// fakeTokenDPoPReplayChecker is a minimal in-memory
-// issuer.DPoPReplayChecker for TestWalletPreAuthorizedCodeRoundTrip —
-// this repo has no reference storage implementation for it, the same
-// gap issuer.Config's own doc comment on Limits.MaxDPoPProofAge notes.
-type fakeTokenDPoPReplayChecker struct {
-	mu   sync.Mutex
-	seen map[string]bool
-}
-
-func (f *fakeTokenDPoPReplayChecker) UseOnce(_ context.Context, jti string, _ time.Time) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.seen == nil {
-		f.seen = map[string]bool{}
+// newTokenDPoPServer builds a fapigo/server for issuerURL whose token
+// endpoint is tokenEndpoint, only to verify the pre-authorized_code
+// Token Request's DPoP proof (Server.VerifyTokenRequestDPoP): it has no
+// clients. With dpopNonces, it challenges a proof without a current
+// nonce (RFC 9449 §8).
+func newTokenDPoPServer(t *testing.T, issuerURL, tokenEndpoint fapi.URL, dpopNonces bool) *server.Server {
+	t.Helper()
+	endpoint := func(path string) fapi.URL {
+		u, err := fapi.ParseEndpointURL(issuerURL.String()+path, fapi.AllowLoopbackHTTP())
+		if err != nil {
+			t.Fatalf("ParseEndpointURL(%s): %v", path, err)
+		}
+		return u
 	}
-	if f.seen[jti] {
-		return fmt.Errorf("jti already used")
+	keyManager, err := ephemeral.NewKeyManager(map[keys.SigningPurpose]fapi.SignatureAlgorithm{
+		keys.AccessTokenSigning: fapi.ES256, keys.IDTokenSigning: fapi.ES256,
+	})
+	if err != nil {
+		t.Fatalf("ephemeral.NewKeyManager: %v", err)
 	}
-	f.seen[jti] = true
-	return nil
+	clientKeys, err := ephemeral.NewClientKeySource(nil, nil)
+	if err != nil {
+		t.Fatalf("ephemeral.NewClientKeySource: %v", err)
+	}
+	cfg := server.Config{
+		Issuer: issuerURL,
+		Endpoints: server.Endpoints{
+			Authorization: endpoint("/authorize"), Token: tokenEndpoint,
+			PushedAuthorizationRequest: endpoint("/par"), JWKS: endpoint("/jwks"),
+		},
+		Profile:  server.ProfileFAPISecurity,
+		Subjects: server.PublicSubjects(),
+		Algorithms: server.AlgorithmPolicy{
+			ClientAssertion: server.AlgorithmSet{fapi.ES256}, RequestObject: server.AlgorithmSet{fapi.ES256}, IDToken: fapi.ES256,
+		},
+		Limits: server.Limits{
+			PushedRequestLifetime: 90 * time.Second, MaxClientAssertionLifetime: time.Minute, MaxRequestObjectLifetime: time.Minute,
+			InteractionLifetime: 5 * time.Minute, AuthorizationCodeLifetime: time.Minute, AccessTokenLifetime: 5 * time.Minute,
+			IDTokenLifetime: 5 * time.Minute, RefreshTokenLifetime: 5 * time.Minute, MaxDPoPProofAge: time.Minute,
+			MaxClockSkew: 10 * time.Second, MaxIDTokenClaimsBytes: 4096, MaxAccessTokenClaimsBytes: 6144,
+		},
+		AdditionalGrantTypes: []string{"urn:ietf:params:oauth:grant-type:pre-authorized_code"},
+		Assurance:            server.AssuranceDevelopment,
+	}
+	deps := server.Dependencies{
+		Clients: memstore.NewClientRepository([]fapistorage.RegisteredClient{}), Transactions: memstore.NewTransactionStore(),
+		Grants: memstore.NewGrantStore(), Replay: memstore.NewReplayStore(), Keys: keyManager, ClientKeys: clientKeys,
+		AccessTokens: server.JWTAccessTokens{Keys: keyManager, Algorithm: fapi.ES256},
+		Revocation:   server.NoRevocation{}, Clock: server.SystemClock{}, Random: rand.Reader,
+		ClientCertificateTrust: server.NoPKIClientAuthentication{},
+	}
+	if dpopNonces {
+		cfg.Limits.DPoPNonceLifetime = time.Minute
+		deps.Nonces = memstore.NewNonceStore()
+	}
+	srv, err := server.New(cfg, deps)
+	if err != nil {
+		t.Fatalf("server.New: %v", err)
+	}
+	return srv
 }
 
 // fakeTokenAccessTokenIssuer is a minimal issuer.AccessTokenIssuer for
@@ -254,12 +308,13 @@ type preAuthorizedRoundTripFixture struct {
 	w                  *wallet.Wallet
 }
 
-// newPreAuthorizedRoundTripFixture builds the fixture and issues one
+// newPreAuthorizedRoundTripFixture builds the fixture, with a token
+// endpoint challenging DPoP proofs for a nonce when dpopNonces, and issues one
 // pre-authorized_code ("oaKazRN8I0IbtZ0C7JuMn5", scope
 // identity_credential) ready to redeem. configure, if non-nil, can set
 // additional Config/Dependencies fields (e.g. DPoP nonce-challenge
 // support) before issuer.New is called.
-func newPreAuthorizedRoundTripFixture(t *testing.T, configure func(cfg *issuer.Config, deps *issuer.Dependencies)) preAuthorizedRoundTripFixture {
+func newPreAuthorizedRoundTripFixture(t *testing.T, dpopNonces bool, configure func(cfg *issuer.Config, deps *issuer.Dependencies)) preAuthorizedRoundTripFixture {
 	t.Helper()
 	issuerURL, err := fapi.ParseIssuerURL("http://localhost", fapi.AllowLoopbackHTTP())
 	if err != nil {
@@ -284,7 +339,7 @@ func newPreAuthorizedRoundTripFixture(t *testing.T, configure func(cfg *issuer.C
 		Assurance: issuer.AssuranceDevelopment,
 		Issuer:    issuerURL,
 		Endpoints: issuer.Endpoints{Credential: credentialEndpoint},
-		Limits:    issuer.Limits{AccessTokenLifetime: 5 * time.Minute, MaxDPoPProofAge: time.Minute, MaxTxCodeAttempts: 3, MaxProofAge: time.Minute},
+		Limits:    issuer.Limits{AccessTokenLifetime: 5 * time.Minute, MaxTxCodeAttempts: 3, MaxProofAge: time.Minute},
 		CredentialConfigurationsSupported: map[string]issuer.CredentialConfiguration{
 			"IdentityCredential": {
 				Format:                               sdjwtvc.CredentialFormat,
@@ -302,7 +357,6 @@ func newPreAuthorizedRoundTripFixture(t *testing.T, configure func(cfg *issuer.C
 		Random:             rand.Reader,
 		SDJWTSigner:        &issuer.SDJWTSigner{Signer: issuerSigner, Alg: jose.ES256},
 		PreAuthorizedCodes: preAuthorizedCodes,
-		DPoPReplay:         &fakeTokenDPoPReplayChecker{},
 		AccessTokens:       fakeTokenAccessTokenIssuer{},
 	}
 	if configure != nil {
@@ -324,7 +378,7 @@ func newPreAuthorizedRoundTripFixture(t *testing.T, configure func(cfg *issuer.C
 		ProofSigningAlg: jose.ES256,
 		Fetch:           fapihttp.Config{MaxResponseBytes: 1 << 20, RequestTimeout: 5 * time.Second, AllowLoopbackHTTP: true},
 	}, wallet.Dependencies{
-		HTTP:   issuerTokenFake{iss: iss, tokenEndpoint: tokenEndpoint},
+		HTTP:   issuerTokenFake{srv: newTokenDPoPServer(t, issuerURL, tokenEndpoint, dpopNonces), iss: iss},
 		Clock:  wallet.ClockFunc(time.Now),
 		Random: rand.Reader,
 	})
@@ -348,7 +402,7 @@ func newPreAuthorizedRoundTripFixture(t *testing.T, configure func(cfg *issuer.C
 // proving the two halves this package deliberately keeps separate
 // (acquiring the token, and presenting it) compose correctly.
 func TestWalletPreAuthorizedCodeRoundTrip(t *testing.T) {
-	f := newPreAuthorizedRoundTripFixture(t, nil)
+	f := newPreAuthorizedRoundTripFixture(t, false, nil)
 
 	dpopKey := testP256Key(t)
 	tokenResult, err := f.w.RequestPreAuthorizedCodeToken(context.Background(), f.tokenEndpoint, wallet.PreAuthorizedCodeTokenRequest{
@@ -419,7 +473,7 @@ func presentAndVerifyIdentityCredential(
 // independently actually interoperate, not just each side's own unit
 // tests.
 func TestWalletPreAuthorizedCodeRoundTrip_WithCredentialIdentifier(t *testing.T) {
-	f := newPreAuthorizedRoundTripFixture(t, nil)
+	f := newPreAuthorizedRoundTripFixture(t, false, nil)
 	if err := f.iss.IssuePreAuthorizedCode(context.Background(), "code-with-identifier", "", issuer.PreAuthorizedCodeRecord{
 		Scopes: []string{"identity_credential"}, CredentialConfigurationIDs: []string{"IdentityCredential"},
 		ExpiresAt: time.Now().Add(time.Minute),
@@ -451,20 +505,17 @@ func TestWalletPreAuthorizedCodeRoundTrip_WithCredentialIdentifier(t *testing.T)
 }
 
 // TestWalletPreAuthorizedCodeRoundTrip_WithDPoPNonceChallenge is
-// TestWalletPreAuthorizedCodeRoundTrip's own twin with
-// Dependencies.DPoPNonces configured on the issuer side: it proves the
-// real wire interop RFC 9449 §8's nonce-challenge flow depends on —
-// wallet.RequestPreAuthorizedCodeToken's own retry logic (dpopNonceChallenge)
-// correctly recognizes the exact HTTP response issuer.Error.WriteJSON
-// actually produces for ErrorUseDPoPNonce (a JSON body, not a
-// WWW-Authenticate header — see dpopNonceChallenge's own doc comment),
-// and that the pre-authorized_code itself survives the first,
+// TestWalletPreAuthorizedCodeRoundTrip's own twin with DPoP nonces
+// configured on the Authorization Server verifying the Token Request's
+// DPoP proof: it proves the real wire interop RFC 9449 §8's
+// nonce-challenge flow depends on — wallet.RequestPreAuthorizedCodeToken's
+// own retry logic (dpopNonceChallenge) correctly recognizes the exact
+// HTTP response fapigo/server writes for use_dpop_nonce (a JSON body,
+// not a WWW-Authenticate header — see dpopNonceChallenge's own doc
+// comment), and that the pre-authorized_code itself survives the first,
 // necessarily nonce-less attempt to be redeemed on the retry.
 func TestWalletPreAuthorizedCodeRoundTrip_WithDPoPNonceChallenge(t *testing.T) {
-	f := newPreAuthorizedRoundTripFixture(t, func(cfg *issuer.Config, deps *issuer.Dependencies) {
-		cfg.Limits.DPoPNonceLifetime = time.Minute
-		deps.DPoPNonces = storage.NewDPoPNonceStore()
-	})
+	f := newPreAuthorizedRoundTripFixture(t, true, nil)
 
 	tokenResult, err := f.w.RequestPreAuthorizedCodeToken(context.Background(), f.tokenEndpoint, wallet.PreAuthorizedCodeTokenRequest{
 		PreAuthorizedCode: "oaKazRN8I0IbtZ0C7JuMn5",

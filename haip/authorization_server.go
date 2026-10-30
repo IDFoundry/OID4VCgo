@@ -31,8 +31,11 @@ const RecommendedClientAttestationAlgorithm = fapi.ES256
 //   - Extensions registering oid4vci.IssuerStateExtension: without it,
 //     the issuer_state an issuer-initiated flow's Credential Offer
 //     carries (OID4VCI 1.0 §4.1.1) is dropped at PAR.
-//   - Limits.MaxClientAttestationPoPAge set to MaxDPoPProofAge: a PoP,
-//     like a DPoP proof, is created fresh for each request.
+//   - Limits.MaxClientAttestationPoPAge set to MaxDPoPProofAge (60
+//     seconds): a PoP, like a DPoP proof, is created fresh for each
+//     request. Under server.AssuranceProduction, server.New refuses one
+//     above 5 minutes, since without a challenge a PoP's iat is its
+//     only freshness.
 //
 // The caller sets the rest: Issuer, Endpoints and Assurance, under
 // server.AssuranceProduction Deployment (single instance or
@@ -48,6 +51,16 @@ const RecommendedClientAttestationAlgorithm = fapi.ES256
 // wallets even under a shared trust list. Under production assurance,
 // server.New takes only an anchor source declaring itself hardened for
 // live fetches, as server.StaticAttesterAnchors does.
+// X5CAttesterChain.LeafPolicy, left nil, is
+// server.DefaultAttesterLeafPolicy{}: it refuses an attestation signed
+// by a certificate (or reached through a CA) issued for another role —
+// TLS, OCSP or code signing, or the ISO/IEC 18013-5 mdoc reader or
+// document signer — so give each Wallet Provider a dedicated
+// attestation signing certificate; wrap the default in a
+// server.AttesterLeafPolicyFunc to require a Wallet Provider purpose
+// too. A Wallet Attestation's x5c is its signing certificate and
+// intermediates only: X5CAttesterChain refuses one carrying the trust
+// anchor (HAIP 1.0).
 // X5CAttesterChain.Revocation is required at every assurance level:
 // server.ClientCertificateCRLs for the Wallet Provider CAs' CRLs, or
 // server.NoClientCertificateRevocationCheck{} to explicitly decline.
@@ -55,7 +68,9 @@ const RecommendedClientAttestationAlgorithm = fapi.ES256
 // Dependencies.ClientAttestationStatus, which checks a Wallet
 // Attestation's status claim (OID4VCI 1.0 Appendix E): a checker, or
 // server.NoClientAttestationStatusCheck{} when the Wallet Providers
-// publish no status.
+// publish no status. To take openid_credential authorization_details,
+// register oid4vci.AuthorizationDetailRARDefinition in Config.RAR: it
+// refuses a Wallet's own credential_identifiers.
 func RecommendedAuthorizationServerConfig() (server.Config, error) {
 	extensions, err := extension.NewRegistry(oid4vci.IssuerStateExtension)
 	if err != nil {

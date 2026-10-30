@@ -120,10 +120,9 @@ func TestAudit_ExchangePreAuthorizedCode(t *testing.T) {
 	f.issue(t, "code-1", issuer.PreAuthorizedCodeRecord{
 		Scopes: []string{"identity_credential"}, ExpiresAt: f.now.Add(time.Minute),
 	})
-	proof := f.validProof(t)
 
 	if _, err := f.iss.ExchangePreAuthorizedCode(context.Background(), issuer.ExchangePreAuthorizedCodeRequest{
-		PreAuthorizedCode: "code-1", DPoPProof: proof, TokenEndpoint: testTokenEndpointURL(t),
+		PreAuthorizedCode: "code-1", Verified: anonymousTokenRequest(),
 	}); err != nil {
 		t.Fatalf("ExchangePreAuthorizedCode: %v", err)
 	}
@@ -145,7 +144,7 @@ func TestAudit_ExchangePreAuthorizedCode(t *testing.T) {
 	// Re-using the now-consumed code must still record exactly one
 	// more event, this time a failure.
 	if _, err := f.iss.ExchangePreAuthorizedCode(context.Background(), issuer.ExchangePreAuthorizedCodeRequest{
-		PreAuthorizedCode: "code-1", DPoPProof: f.validProof(t), TokenEndpoint: testTokenEndpointURL(t),
+		PreAuthorizedCode: "code-1", Verified: anonymousTokenRequest(),
 	}); err == nil {
 		t.Fatal("second ExchangePreAuthorizedCode = nil error, want error (code already consumed)")
 	}

@@ -78,6 +78,16 @@ type CredentialHandlerConfig struct {
 	// with that error; any other error is a 500 whose detail the Wallet
 	// never sees. REQUIRED.
 	//
+	// Look up what to issue by grant.Subject. req.CredentialIdentifier,
+	// when set, has been found among the access token's
+	// authorization_details, which only says the Authorization Server
+	// granted it: if it names a dataset beyond its configuration, look
+	// that up among the identifiers minted for grant.Subject, never by
+	// the identifier alone. With fapigo/server, register
+	// oid4vci.AuthorizationDetailRARDefinition, which refuses a Wallet's
+	// own credential_identifiers, so each is one the Authorization
+	// Server minted.
+	//
 	// The handler calls Prepare only for a request the access token
 	// authorizes, once its proofs are verified and its c_nonce
 	// consumed. The request can still fail after it — issuing fails, or

@@ -254,14 +254,6 @@ them.
   minutes): a jwt proof's `iat` is then its only freshness, and one
   proof is good for any number of Credentials. Set `Endpoints.Nonce`
   (HAIP 1.0 §4.1 requires it) to make each proof single-use instead.
-  Where the issuer verifies the Token Request's DPoP proof itself
-  (anonymous pre-authorized code redemption), `Limits.MaxDPoPProofAge`
-  may be at most `issuer.MaxProductionDPoPProofAge` (5 minutes), as
-  fapigo/server requires.
-- **No DPoP replay store under `VerifiedPreAuthorizedCode`.** The
-  Authorization Server verifies the DPoP proof there, so production no
-  longer checks `Dependencies.DPoPReplay`'s `StoreAssurance`; leave it
-  nil.
 - **The system clock.** `Dependencies.Clock` is optional: nil is the
   system clock. Under production `issuer.New` refuses any other `Clock`
   unless it declares `issuer.ClockAssurance` (`ReadsSystemTime() bool`,
@@ -290,6 +282,85 @@ them.
   persist `ProofKeyHeaders` like any other field (the `issuertest`
   contract checks it), and an issuer issuing such a transaction needs
   the `ProofBindingKeys` that resolved it.
+
+### FAPIgo v0.66.0 (`issuer`, `storage`, `haip`, `oid4vci`)
+
+OID4VCgo pins FAPIgo v0.66.0. See FAPIgo's UPGRADING.md, `## v0.66.0`,
+for its own changes; these are the ones that reach you.
+
+- **The Authorization Server verifies every pre-authorized code
+  redemption's DPoP proof.** Under `AnonymousPreAuthorizedCode` the
+  issuer verified the Token Request's DPoP proof itself, with its own
+  replay record and nonces, so a proof used at the authorization code
+  grant could be used again at the pre-authorized code grant.
+  `ExchangePreAuthorizedCodeRequest` loses `DPoPProof` and
+  `TokenEndpoint`. In the Token Endpoint handler, refuse a request that
+  authenticates a client (a Client Attestation, a `client_assertion`
+  or `client_secret`, a TLS client certificate), call
+  `srv.VerifyTokenRequestDPoP(ctx, tr)` on your `fapigo/server.Server`,
+  and pass what it verified, with no `ClientID`:
+
+  ```go
+  b, err := srv.VerifyTokenRequestDPoP(ctx, tr)
+  if err != nil {
+  	server.WriteError(w, err) // use_dpop_nonce carries its DPoP-Nonce header
+  	return
+  }
+  res, err := iss.ExchangePreAuthorizedCode(ctx, issuer.ExchangePreAuthorizedCodeRequest{
+  	PreAuthorizedCode: params["pre-authorized_code"], TxCode: params["tx_code"],
+  	Verified: &issuer.VerifiedTokenRequest{DPoPThumbprint: b.Thumbprint, NextDPoPNonce: b.NextDPoPNonce},
+  })
+  ```
+
+  `AnonymousPreAuthorizedCode`'s doc comment has the whole handler.
+  `ExchangePreAuthorizedCode` refuses a `Verified` naming a client under
+  `AnonymousPreAuthorizedCode`, and a request without `Verified` under
+  either choice.
+- **Removed with it.** `issuer.Dependencies.DPoPReplay` and
+  `DPoPNonces`; `issuer.Limits.MaxDPoPProofAge`, `MaxDPoPClockSkew` and
+  `DPoPNonceLifetime`; `issuer.MaxProductionDPoPProofAge`;
+  `issuer.DPoPReplayChecker`, `DPoPNonceStore`, `DPoPNonceIssuance`,
+  `DPoPNonceLookup`, `DPoPNonceRecord`, `NoDPoPNonces` and
+  `ErrDPoPNonceUnknown`; `issuer.ErrorUseDPoPNonce`,
+  `ErrorInvalidDPoPProof` and `(*issuer.Error).Nonce`, which no issuer
+  call returns any more; `storage.DPoPReplayChecker` and
+  `storage.DPoPNonceStore`; `issuertest.TestDPoPNonceStoreContract` and
+  `TestDPoPReplayCheckerContract`. Delete them from your configuration:
+  the proof's age, clock skew, replay record and nonces are
+  `fapigo/server`'s (`Limits.MaxDPoPProofAge`, `MaxClockSkew`,
+  `Dependencies.Replay`, `Dependencies.Nonces`), under its own
+  production bounds. A DPoP nonce store of your own for the issuer has
+  no use any more.
+- **Wallet Attestation signing certificates.** `server.X5CAttesterChain`
+  now applies `server.DefaultAttesterLeafPolicy{}` when `LeafPolicy` is
+  nil: an attestation signed by a certificate whose extended key usage
+  names another role (TLS server or client, OCSP or code signing, the
+  ISO/IEC 18013-5 mdoc reader or document signer), or reached only
+  through a CA restricted to such roles, is refused with
+  `invalid_client`. Give Wallet Providers dedicated attestation signing
+  certificates, or set `LeafPolicy` (`server.AnyAttesterLeaf{}` to opt
+  out, a `server.AttesterLeafPolicyFunc` to add your own requirement).
+- **No trust anchor in a Wallet Attestation's `x5c`.**
+  `server.X5CAttesterChain` refuses an attestation whose `x5c` carries
+  the trust anchor, or another self-signed certificate, below the
+  signing certificate (HAIP 1.0). A Wallet Provider sends the signing
+  certificate and its intermediates only.
+- **Client Attestation PoP age under production.** With
+  attestation-based client authentication, `server.New` under
+  `server.AssuranceProduction` refuses a
+  `Limits.MaxClientAttestationPoPAge` above 5 minutes.
+  `haip.RecommendedAuthorizationServerConfig` sets 60 seconds.
+- **`openid_credential` authorization_details.** Register
+  `oid4vci.AuthorizationDetailRARDefinition(maxObjects, maxBytesPerObject)`
+  in `server.Config.RAR` in place of a hand-built
+  `extension.RARDefinition[oid4vci.AuthorizationDetail]`. It refuses a
+  Wallet's own `credential_identifiers` at the pushed authorization
+  request (`invalid_authorization_details`), lets the consent add the
+  ones it mints, and requires `credential_configuration_id`, which a
+  definition without `Validate` didn't. A Credential Endpoint's
+  `Prepare` that maps a `credential_identifier` to a dataset looks it up
+  among those minted for `grant.Subject`, never by the identifier
+  alone.
 
 ### Wallet stores (`walletflow`)
 

@@ -112,7 +112,10 @@ FAPIgo's server (`server.X5CAttesterChain`), whose `Revocation`
 `server.NoClientCertificateRevocationCheck{}` to decline) is required
 since FAPIgo v0.62.0; the attestation's own status claim is checked by
 `server.Dependencies.ClientAttestationStatus`, which production
-requires (`server.NoClientAttestationStatusCheck{}` to decline).
+requires (`server.NoClientAttestationStatusCheck{}` to decline). Since
+FAPIgo v0.66.0 it also refuses a signer certificate issued for another
+role (`server.DefaultAttesterLeafPolicy`) and an `x5c` carrying the
+trust anchor.
 
 ## Known limitations
 

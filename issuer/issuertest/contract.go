@@ -21,15 +21,14 @@ import (
 // just the interface" pattern FAPIgo's own storage.TestGrantStoreContract
 // establishes (storage/contract.go there), extended here since this
 // package's own store interfaces (NonceStore, PreAuthorizedCodeStore,
-// DPoPReplayChecker, CredentialOfferStore, DeferredTransactionStore,
-// NotificationStore, DPoPNonceStore) have no FAPIgo equivalent to
-// reuse. This does not verify a real backend's actual durability —
-// storage.DPoPReplayChecker and friends pass every check here despite
+// CredentialOfferStore, DeferredTransactionStore, NotificationStore)
+// have no FAPIgo equivalent to reuse. This does not verify a real
+// backend's actual durability — storage.NonceStore and friends pass
+// every check here despite
 // being explicitly documented as development/testing only (see
 // storage/doc.go) — only the in-process behavior New's own
 // AssuranceProduction check can't itself observe: atomicity,
-// single-use semantics (or, for DPoPNonceStore, repeatable lookups),
-// and faithful field round-tripping, the Owner that keeps the records
+// single-use semantics, and faithful field round-tripping, the Owner that keeps the records
 // of Credential Issuers sharing a store apart included.
 
 // contractConcurrentAttempts bounds how many concurrent calls the
@@ -146,107 +145,6 @@ func TestNonceStoreContract(t *testing.T, factory func() issuer.NonceStore) {
 				r, err := store.Consume(ctx, issuer.NonceConsumption{Nonce: nonce})
 				return r.ExpiresAt, err
 			}
-	})
-}
-
-// TestDPoPNonceStoreContract exercises factory()'s behavior against
-// DPoPNonceStore's own documented guarantees. Unlike NonceStore's
-// c_nonce, a DPoP nonce is valid for a time window, not for one use
-// (RFC 9449 §8): Lookup returns the record Issue persisted and leaves
-// it in place, so repeated and concurrent Lookups of one nonce all
-// succeed; several issued nonces are valid side by side (the current
-// one and the previous, during a rotation); and an unknown nonce is
-// ErrDPoPNonceUnknown, which the issuer answers with a use_dpop_nonce
-// challenge rather than a 500. factory must return a fresh, empty
-// DPoPNonceStore each call.
-func TestDPoPNonceStoreContract(t *testing.T, factory func() issuer.DPoPNonceStore) {
-	t.Helper()
-	ctx := context.Background()
-
-	t.Run("IssueAndLookup", func(t *testing.T) {
-		store := factory()
-		exp := time.Now().Add(time.Minute).Truncate(time.Second)
-		if err := store.Issue(ctx, issuer.DPoPNonceIssuance{Nonce: "n1", ExpiresAt: exp}); err != nil {
-			t.Fatalf(msgIssueFailed, err)
-		}
-		got, err := store.Lookup(ctx, issuer.DPoPNonceLookup{Nonce: "n1"})
-		if err != nil {
-			t.Fatalf(msgLookupFailed, err)
-		}
-		if !got.ExpiresAt.Equal(exp) {
-			t.Errorf(msgExpiresAtMismatch, got.ExpiresAt, exp)
-		}
-	})
-
-	t.Run("LookupIsRepeatable", func(t *testing.T) {
-		store := factory()
-		if err := store.Issue(ctx, issuer.DPoPNonceIssuance{Nonce: "n1", ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
-			t.Fatalf(msgIssueFailed, err)
-		}
-		for i := range 3 {
-			if _, err := store.Lookup(ctx, issuer.DPoPNonceLookup{Nonce: "n1"}); err != nil {
-				t.Fatalf("Lookup %d: %v", i+1, err)
-			}
-		}
-	})
-
-	t.Run("ConcurrentLookupsAllSucceed", func(t *testing.T) {
-		store := factory()
-		if err := store.Issue(ctx, issuer.DPoPNonceIssuance{Nonce: "n1", ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
-			t.Fatalf(msgIssueFailed, err)
-		}
-		wins := runConcurrently(contractConcurrentAttempts, func() bool {
-			_, err := store.Lookup(ctx, issuer.DPoPNonceLookup{Nonce: "n1"})
-			return err == nil
-		})
-		if wins != contractConcurrentAttempts {
-			t.Errorf("concurrent Lookup: %d of %d succeeded, want all", wins, contractConcurrentAttempts)
-		}
-	})
-
-	t.Run("SeveralNoncesAreValidTogether", func(t *testing.T) {
-		store := factory()
-		previous, current := time.Now().Add(time.Minute).Truncate(time.Second), time.Now().Add(2*time.Minute).Truncate(time.Second)
-		if err := store.Issue(ctx, issuer.DPoPNonceIssuance{Nonce: "previous", ExpiresAt: previous}); err != nil {
-			t.Fatalf(msgIssueFailed, err)
-		}
-		if err := store.Issue(ctx, issuer.DPoPNonceIssuance{Nonce: "current", ExpiresAt: current}); err != nil {
-			t.Fatalf(msgIssueFailed, err)
-		}
-		for nonce, want := range map[string]time.Time{"previous": previous, "current": current} {
-			got, err := store.Lookup(ctx, issuer.DPoPNonceLookup{Nonce: nonce})
-			if err != nil {
-				t.Fatalf("Lookup %s: %v", nonce, err)
-			}
-			if !got.ExpiresAt.Equal(want) {
-				t.Errorf(msgExpiresAtMismatch, got.ExpiresAt, want)
-			}
-		}
-	})
-
-	t.Run("LookupUnknownIsErrDPoPNonceUnknown", func(t *testing.T) {
-		store := factory()
-		if _, err := store.Lookup(ctx, issuer.DPoPNonceLookup{Nonce: nonceNeverIssued}); !errors.Is(err, issuer.ErrDPoPNonceUnknown) {
-			t.Errorf("Lookup = %v, want an error wrapping issuer.ErrDPoPNonceUnknown", err)
-		}
-	})
-
-	// A store may drop a record after its ExpiresAt, so a Lookup of an
-	// expired nonce either finds it (the caller then refuses it by its
-	// ExpiresAt) or reports it unknown — never a store failure.
-	t.Run("LookupExpiredIsFoundOrUnknown", func(t *testing.T) {
-		store := factory()
-		exp := time.Now().Add(-time.Minute).Truncate(time.Second)
-		if err := store.Issue(ctx, issuer.DPoPNonceIssuance{Nonce: "n1", ExpiresAt: exp}); err != nil {
-			t.Fatalf(msgIssueFailed, err)
-		}
-		got, err := store.Lookup(ctx, issuer.DPoPNonceLookup{Nonce: "n1"})
-		switch {
-		case err == nil && !got.ExpiresAt.Equal(exp):
-			t.Errorf(msgExpiresAtMismatch, got.ExpiresAt, exp)
-		case err != nil && !errors.Is(err, issuer.ErrDPoPNonceUnknown):
-			t.Errorf("Lookup of an expired nonce = %v, want its record or issuer.ErrDPoPNonceUnknown", err)
-		}
 	})
 }
 
@@ -747,58 +645,6 @@ func testPACConcurrentConsumeHasExactlyOneWinner(t *testing.T, factory func() is
 	if wins != 1 {
 		t.Errorf("concurrent Consume: %d winners, want exactly 1", wins)
 	}
-}
-
-// TestDPoPReplayCheckerContract exercises factory()'s behavior against
-// DPoPReplayChecker's own documented guarantee (RFC 9449 §11.1): a
-// "jti" is accepted the first time UseOnce sees it and rejected every
-// time after, with exactly one winner under concurrent use of the same
-// jti. factory must return a fresh, empty DPoPReplayChecker each call.
-func TestDPoPReplayCheckerContract(t *testing.T, factory func() issuer.DPoPReplayChecker) {
-	t.Helper()
-
-	t.Run("FirstUseSucceeds", func(t *testing.T) {
-		store := factory()
-		if err := store.UseOnce(context.Background(), "jti1", time.Now().Add(time.Minute)); err != nil {
-			t.Fatalf("UseOnce: %v", err)
-		}
-	})
-
-	t.Run("SecondUseFails", func(t *testing.T) {
-		store := factory()
-		ctx := context.Background()
-		exp := time.Now().Add(time.Minute)
-		if err := store.UseOnce(ctx, "jti1", exp); err != nil {
-			t.Fatalf("first UseOnce: %v", err)
-		}
-		if err := store.UseOnce(ctx, "jti1", exp); err == nil {
-			t.Error("second UseOnce = nil error, want error (jti already used)")
-		}
-	})
-
-	t.Run("DifferentJTIsAreIndependent", func(t *testing.T) {
-		store := factory()
-		ctx := context.Background()
-		exp := time.Now().Add(time.Minute)
-		if err := store.UseOnce(ctx, "jti1", exp); err != nil {
-			t.Fatalf("UseOnce(jti1): %v", err)
-		}
-		if err := store.UseOnce(ctx, "jti2", exp); err != nil {
-			t.Fatalf("UseOnce(jti2): %v", err)
-		}
-	})
-
-	t.Run("ConcurrentUseOnceHasExactlyOneWinner", func(t *testing.T) {
-		store := factory()
-		ctx := context.Background()
-		exp := time.Now().Add(time.Minute)
-		wins := runConcurrently(contractConcurrentAttempts, func() bool {
-			return store.UseOnce(ctx, "jti1", exp) == nil
-		})
-		if wins != 1 {
-			t.Errorf("concurrent UseOnce: %d winners, want exactly 1", wins)
-		}
-	})
 }
 
 // testGetIsRepeatable runs the shared "seed a record, then Get it

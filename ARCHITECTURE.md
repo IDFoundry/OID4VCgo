@@ -223,27 +223,6 @@ changes whether *every* bullet below is `(done)`.
   discipline `internal/jwe`'s own ECDH-ES tests already apply, since
   this is exactly the same kind of precisely-specified-but-easy-to-get-
   subtly-wrong construction.
-- **`internal/dpop`** (done) — a small, self-contained RFC 9449 DPoP
-  proof *verifier* — the server-side counterpart to `wallet`'s own
-  `GenerateDPoPProof`, wired into `issuer.ExchangePreAuthorizedCode`
-  (§6.1), the one grant type entirely outside `fapigo/server`'s scope,
-  the same way it's outside `fapigo/client`'s (see
-  `wallet.RequestPreAuthorizedCodeToken`'s own doc comment for that
-  boundary's client-side half).
-  `fapigo`'s own equivalent (`internal/dpop`, a different module's
-  `internal/` package) isn't reusable here either — this package's own
-  `Verify` mirrors its design (read-only reference, not an import) but
-  is built on this repo's own `internal/jose`/`internal/jwk` rather than
-  `fapigo/internal/jose`. Scope matches `GenerateDPoPProof`'s own: no
-  `ath` (access token hash) checking, since a Token Request's own DPoP
-  proof is presented before any access token exists to hash. `Verify`
-  requires a `ReplayChecker` (RFC 9449 §11.1's own jti-replay MUST) —
-  no implicit default, matching every other "no implicit defaults"
-  dependency in this repo. `TestVerifyAcceptsWalletGeneratedProof`
-  drives a real round trip against `wallet.GenerateDPoPProof` (not a
-  simulation of one), the same "real round trip, not just our own
-  assumption" discipline every other cross-package wire-format claim
-  here is held to.
 - **`internal/certchain`** (done) — the one certificate-chain primitive
   every X5C-shaped resolver shares: parse a leaf-first chain and verify
   it against trust anchors (at a caller-given time, `VerifyChainsAt`),
@@ -716,41 +695,31 @@ changes whether *every* bullet below is `(done)`.
   a `tx_code` match, then expiry and the requested
   `authorization_details` in `Consume`'s `accept` callback — in the
   store's own atomic step, before the code is consumed, so a request
-  the code doesn't allow leaves it redeemable — verifies the presented DPoP proof via
-  `internal/dpop.Verify` (`Config.Limits.MaxDPoPProofAge`/
-  `MaxDPoPClockSkew`, a new `Dependencies.DPoPReplay` for jti-replay
-  detection), and mints an access token via a new
-  `Dependencies.AccessTokens` (`AccessTokenIssuer`) bound to the proof's
-  own key by its RFC 7638 thumbprint. `AccessTokenIssuer` is this
-  package's own independent interface rather than a reuse of
-  `fapigo/server.AccessTokenIssuer` directly — Go interface satisfaction
-  needs an exact parameter-type match, so a deployment already using
-  `server.JWTAccessTokens` for its paired Authorization Server writes a
-  thin adapter (shown in `AccessTokenIssuer`'s own doc comment) rather
-  than this package importing `fapigo/server`. DPoP nonce-challenge
-  support (RFC 9449 §8, an optional hardening — `ExchangePreAuthorizedCode`
-  is an Authorization Server's own Token Endpoint, so §8 applies here,
-  not §9's resource-server-only `WWW-Authenticate` variant) is done: a
-  new `Dependencies.DPoPNonces` (`DPoPNonceStore`, optional — nil
-  disables it entirely, mirroring `fapigo/server.Dependencies.Nonces`'s
-  own opt-in shape) plus `Config.Limits.DPoPNonceLifetime`. The check
-  happens *before* `PreAuthorizedCodes.Consume` — a Wallet's first
-  attempt necessarily carries no nonce, so consuming the single-use
-  code first would burn it before the Wallet could ever retry — the
-  same ordering `fapigo/server.ExchangeAuthorizationCode` itself takes
-  (confirmed by reading its own `TestExchangeAuthorizationCodeNonceCheckedBeforeCodeRedemption`).
-  A successful exchange also returns the current nonce
-  (`ExchangePreAuthorizedCodeResult.NextDPoPNonce`), the same RFC 9449
-  §8 recommendation `fapigo/server.TokenResult.NextDPoPNonce` already
-  follows. As in `fapigo/server` (v0.65.0), a nonce is valid for a time
-  window, not one use: `DPoPNonceStore.Lookup` leaves the record in
-  place, and the `Issuer` hands out one current nonce, issuing the next
-  once half of `DPoPNonceLifetime` has passed — RFC 9449 §8's "servers
-  need to keep a window of recent nonces" — so concurrent requests
-  carrying one nonce all succeed; a proof's `jti` is what refuses a
-  replay. Under `AssuranceProduction`, where the issuer verifies the
-  proof itself, `DPoPNonces` is required as a store or the explicit
-  `issuer.NoDPoPNonces{}` decline. Fixing this surfaced a real wire-format bug in
+  the code doesn't allow leaves it redeemable — and mints an access
+  token via a new `Dependencies.AccessTokens` (`AccessTokenIssuer`)
+  bound to the request's DPoP key by its RFC 7638 thumbprint.
+  `AccessTokenIssuer` is this package's own independent interface
+  rather than a reuse of `fapigo/server.AccessTokenIssuer` directly —
+  Go interface satisfaction needs an exact parameter-type match, so a
+  deployment already using `server.JWTAccessTokens` for its paired
+  Authorization Server writes a thin adapter (shown in
+  `AccessTokenIssuer`'s own doc comment) rather than this package
+  importing `fapigo/server`. The Token Request's DPoP proof is the
+  Authorization Server's to verify, before the code is consumed, and
+  arrives as `ExchangePreAuthorizedCodeRequest.Verified`: with
+  `VerifiedPreAuthorizedCode`, `fapigo/server`'s
+  `AuthenticateAttestedClient` and `VerifyTokenRequestBinding` verify
+  the client and the proof; with `AnonymousPreAuthorizedCode`,
+  `fapigo/server.Server.VerifyTokenRequestDPoP` (FAPIgo v0.66.0)
+  verifies the proof without a client, after the embedder has refused
+  a request that authenticates one. Either way the Token Endpoint has
+  one DPoP replay record and one nonce policy (RFC 9449 §8, §11.1), so
+  a proof accepted at one grant is refused at the other, and its
+  `use_dpop_nonce` challenge is `fapigo/server`'s. Up to v0.56.0 the
+  issuer verified an anonymous redemption's proof itself
+  (`internal/dpop`, with its own `DPoPReplay` and `DPoPNonces`); that
+  separate record let one proof be used at both grants. The DPoP nonce
+  challenge surfaced a real wire-format bug in
   `wallet.RequestPreAuthorizedCodeToken`'s own retry logic — see the
   `wallet` bullet below.
   `NewError` builds an `*Error` for a caller's own handler to return
@@ -1563,8 +1532,7 @@ changes whether *every* bullet below is `(done)`.
   returns the matching `storage.RegisteredClientConfig`.
 - **`storage`** (done) — in-memory implementations of every store `issuer`
   defines (`NonceStore`, `CredentialOfferStore`, `DeferredTransactionStore`,
-  `NotificationStore`, `PreAuthorizedCodeStore`, `DPoPNonceStore`,
-  `DPoPReplayChecker`) and `verifier` defines (`TransactionStore`, via
+  `NotificationStore`, `PreAuthorizedCodeStore`) and `verifier` defines (`TransactionStore`, via
   `NewVerifierTransactionStore`), for local dev/testing only — never production;
   mirrors FAPIgo's `storage/memstore` down to the same non-durable,
   no-garbage-collection caveats and the same M-5 no-aliasing discipline
@@ -1575,14 +1543,7 @@ changes whether *every* bullet below is `(done)`.
   creates or resolves a Deferred Issuance transaction on its own (see
   `issuer.DeferredTransactionRecord`'s own doc comment), this package's
   reference store needs some way for a caller to actually create one
-  and later mark it Issued/Denied. `DPoPNonceStore` keeps
-  `issuer.DPoPNonceStore`'s Issue/Lookup window shape: `Lookup` leaves a
-  nonce in place until it expires, for the distinct RFC 9449 §8 nonce. `DPoPReplayChecker`
-  is `issuer.DPoPReplayChecker`'s own reference implementation — every
-  "jti" `UseOnce` sees is remembered forever (never evicted, even past
-  its own `expiresAt`), the simplest reading of RFC 9449 §11.1's literal
-  "MUST reject any DPoP proof in which the jti has been seen before",
-  and consistent with this package's own no-garbage-collection caveat.
+  and later mark it Issued/Denied.
   The issuer store contracts are shaped for a durable store, such as a
   SQL table per store: every record carries its `Owner` (the
   `Config.Issuer` that saved it, so Credential Issuers sharing a backend

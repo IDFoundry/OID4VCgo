@@ -26,8 +26,6 @@ func TestRedeemPreAuthorizedCode_AuthorizationDetails(t *testing.T) {
 	newFixture := func(t *testing.T, authorizationServers bool) preAuthorizedCodeFixture {
 		return newPreAuthorizedCodeFixtureWith(t, func(cfg *issuer.Config, deps *issuer.Dependencies) {
 			cfg.PreAuthorizedCodeClientAuthentication = issuer.VerifiedPreAuthorizedCode{}
-			cfg.Limits.MaxDPoPProofAge = 0
-			deps.DPoPReplay = nil
 			if authorizationServers {
 				cfg.AuthorizationServers = []fapi.URL{mustEndpointURL(t, "https://as.example.com")}
 			}
@@ -118,8 +116,6 @@ func newVerifiedPreAuthorizedCodeFixture(t *testing.T, wrap func(*fakePreAuthori
 	t.Helper()
 	return newPreAuthorizedCodeFixtureWith(t, func(cfg *issuer.Config, deps *issuer.Dependencies) {
 		cfg.PreAuthorizedCodeClientAuthentication = issuer.VerifiedPreAuthorizedCode{}
-		cfg.Limits.MaxDPoPProofAge = 0
-		deps.DPoPReplay = nil
 		if wrap != nil {
 			deps.PreAuthorizedCodes = wrap(deps.PreAuthorizedCodes.(*fakePreAuthorizedCodeStore))
 		}

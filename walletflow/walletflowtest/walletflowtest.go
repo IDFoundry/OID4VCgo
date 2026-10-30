@@ -43,6 +43,7 @@ import (
 	"time"
 
 	fapi "github.com/idfoundry/fapigo"
+	"github.com/idfoundry/fapigo/extension"
 	"github.com/idfoundry/fapigo/keys"
 	"github.com/idfoundry/fapigo/keys/ephemeral"
 	"github.com/idfoundry/fapigo/server"
@@ -135,7 +136,8 @@ type Options struct {
 	// allows: it serves only the pre-authorized code grant
 	// (PreAuthorizedCodeOnly), redeemed with no client authentication
 	// (pre-authorized_grant_anonymous_access_supported, §12.3; the
-	// token request's DPoP proof checked by the issuer itself), and
+	// token request's DPoP proof checked by the Authorization Server
+	// without a client, VerifyTokenRequestDPoP), and
 	// takes jwt proofs (Appendix F.1) with no key attestation. An
 	// authorization code offer can't be redeemed at it.
 	Anonymous bool
@@ -170,6 +172,13 @@ type Options struct {
 	// offers, refresh and revocation then work from the token and
 	// revocation endpoints alone.
 	PreAuthorizedCodeOnly bool
+	// CredentialAuthorizationDetails has the Authorization Server take
+	// openid_credential authorization_details at its pushed
+	// authorization request (oid4vci.AuthorizationDetailRARDefinition),
+	// and its consent grant each one requested with a
+	// credential_identifier it mints (OpenID4VCI 1.0 §6.2). With
+	// MdocUnscoped, a wallet requests the mdoc configuration that way.
+	CredentialAuthorizationDetails bool
 }
 
 // Env is a running issuer and Wallet Provider.
@@ -213,6 +222,11 @@ type Env struct {
 	deferAll      bool
 	decision      *bool
 	notifications []oid4vci.NotificationEvent
+	// minted are the credential_identifiers the consent minted, by
+	// subject, and presented those Credential Requests named, under
+	// Options.CredentialAuthorizationDetails.
+	minted    map[string][]string
+	presented []string
 
 	// Set once in New, before the server starts, and only read after:
 	// mu guards challenges' entries, not the map itself.
@@ -267,6 +281,13 @@ func New(opts Options) (env *Env, err error) {
 		clientCfg.RedirectURIs = append(clientCfg.RedirectURIs, fapi.RegisteredRedirectURI(u))
 	}
 	clientCfg.AllowedScopes = []string{SDJWTConfigurationID, MdocConfigurationID, "offline_access"}
+	if opts.CredentialAuthorizationDetails {
+		asCfg.RAR, err = extension.NewRARRegistry(credentialAuthorizationDetailsBytes, credentialAuthorizationDetailsDepth,
+			credentialAuthorizationDetail)
+		must(err)
+		clientCfg.AuthorizationDetailsTypes = []string{oid4vci.AuthorizationDetailsTypeOpenIDCredential}
+		e.minted = map[string][]string{}
+	}
 	client, err := storage.NewRegisteredClient(clientCfg)
 	must(err)
 	clientKeys, err := ephemeral.NewClientKeySource(nil, nil)
@@ -284,6 +305,9 @@ func New(opts Options) (env *Env, err error) {
 			Revocation:    server.NoClientCertificateRevocationCheck{},
 		},
 	}
+	if opts.CredentialAuthorizationDetails {
+		deps.AuthorizationCodeRARPolicy = server.AllowRequestedAuthorizationDetails{}
+	}
 	e.srv, err = server.New(asCfg, deps)
 	must(err)
 	resourceVerifier, err := serverresource.NewVerifier(asCfg, deps, serverresource.Options{
@@ -296,7 +320,7 @@ func New(opts Options) (env *Env, err error) {
 	must(err)
 	var tokens issuer.AccessTokenVerifier = dpopTokens
 	if opts.Anonymous && (opts.BearerTokens || opts.AnonymousRefresh) {
-		e.public = &publicTokens{dpop: dpopTokens, bearer: opts.BearerTokens, replay: oid4vcgostorage.NewDPoPReplayChecker(), grants: map[string]publicGrant{}}
+		e.public = &publicTokens{dpop: dpopTokens, bearer: opts.BearerTokens, grants: map[string]publicGrant{}}
 		tokens = e.public
 	}
 
@@ -355,7 +379,7 @@ func New(opts Options) (env *Env, err error) {
 		Limits: issuer.Limits{
 			NonceLifetime: 5 * time.Minute, DeferredIssuancePollInterval: time.Second, DeferredTransactionLifetime: time.Hour,
 			AccessTokenLifetime: asCfg.Limits.AccessTokenLifetime, MaxTxCodeAttempts: 3,
-			MaxDPoPProofAge: time.Minute, MaxDPoPClockSkew: 30 * time.Second, MaxProofAge: time.Minute,
+			MaxProofAge: time.Minute,
 		},
 		PreAuthorizedCodeClientAuthentication: preAuthClientAuth,
 		Display:                               []oid4vci.Display{{Name: IssuerName, Locale: "en", Logo: logo}},
@@ -379,7 +403,7 @@ func New(opts Options) (env *Env, err error) {
 		CredentialDPoPNonces: resourceVerifier,
 		PreAuthorizedCodes:   e.preAuthCodes, AccessTokens: accessTokenAdapter{inner: e.accessTokens},
 		Notifications: oid4vcgostorage.NewNotificationStore(), NotificationHandler: notificationRecorder{e},
-		Clock: issuer.ClockFunc(time.Now), Random: rand.Reader, DPoPReplay: oid4vcgostorage.NewDPoPReplayChecker(),
+		Clock: issuer.ClockFunc(time.Now), Random: rand.Reader,
 		// The Wallet Provider CA may vouch for the Wallet Provider's Key
 		// Attestations alone, as for its Wallet Attestations.
 		AttestationVerifier: issuer.X5CAttestationVerifier{
@@ -394,7 +418,10 @@ func New(opts Options) (env *Env, err error) {
 	credentialURL, deferredURL, notificationURL := e.endpoint("/credential").URL(), e.endpoint("/deferred_credential").URL(), e.endpoint("/notification").URL()
 	credentialHandler, err := e.iss.CredentialHandler(issuer.CredentialHandlerConfig{
 		URL: &credentialURL, Tokens: tokens,
-		Prepare: func(_ context.Context, _ issuer.Grant, req *issuer.CredentialRequest) (func(bool), error) {
+		Prepare: func(_ context.Context, grant issuer.Grant, req *issuer.CredentialRequest) (func(bool), error) {
+			if err := e.checkCredentialIdentifier(grant, req); err != nil {
+				return nil, err
+			}
 			if e.deferring() {
 				req.Defer = &issuer.Deferral{}
 				return nil, nil
@@ -852,9 +879,16 @@ func (e *Env) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 	e.mu.Lock()
 	e.grantIDs = append(e.grantIDs, grantID)
 	e.mu.Unlock()
+	details, err := e.grantCredentialAuthorizationDetails(interaction.Interaction, "holder")
+	if err != nil {
+		http.Error(w, "invalid authorization_details", http.StatusBadRequest)
+		return
+	}
 	done, err := e.srv.CompleteAuthorization(r.Context(), server.CompleteAuthorizationRequest{
 		Handle: interaction.Handle,
-		Result: server.Authorize(subject, authCtx, server.GrantedAuthorization{Scope: interaction.Interaction.Scope, GrantID: grantID}),
+		Result: server.Authorize(subject, authCtx, server.GrantedAuthorization{
+			Scope: interaction.Interaction.Scope, GrantID: grantID, AuthorizationDetails: details,
+		}),
 	})
 	if err != nil {
 		http.Error(w, "failed to complete authorization", http.StatusInternalServerError)
@@ -892,7 +926,7 @@ func (e *Env) handleToken(w http.ResponseWriter, r *http.Request) {
 				server.WriteError(w, err)
 				return
 			}
-			e.public.refresh(w, r, e, params["refresh_token"])
+			e.public.refresh(w, r, e, req, params["refresh_token"])
 			return
 		}
 		result, err := e.srv.RefreshAccessToken(ctx, req.RefreshToken())
@@ -908,7 +942,7 @@ func (e *Env) handleToken(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if e.anonymous {
-			e.redeemAnonymously(w, r, params)
+			e.redeemAnonymously(w, r, req, params)
 			return
 		}
 		attested, err := e.srv.AuthenticateAttestedClient(ctx, req.AttestedClientAuthentication())
@@ -952,9 +986,19 @@ func (e *Env) handleToken(w http.ResponseWriter, r *http.Request) {
 }
 
 // redeemAnonymously redeems a pre-authorized code with no client
-// authentication, under Options.Anonymous: the issuer verifies the
-// request's DPoP proof itself, and no refresh token is issued.
-func (e *Env) redeemAnonymously(w http.ResponseWriter, r *http.Request, params map[string]string) {
+// authentication, under Options.Anonymous: the Authorization Server
+// verifies the request's DPoP proof without a client, and the issuer
+// issues the access token bound to its key. A request that
+// authenticates a client is refused: this grant expects none.
+func (e *Env) redeemAnonymously(w http.ResponseWriter, r *http.Request, req server.TokenEndpointRequest, params map[string]string) {
+	if refuseClientAuthentication(w, r, req) {
+		return
+	}
+	binding, err := e.srv.VerifyTokenRequestDPoP(r.Context(), req)
+	if err != nil {
+		server.WriteError(w, err)
+		return
+	}
 	details, err := issuer.ParseAuthorizationDetails(params["authorization_details"])
 	if err != nil {
 		w.Header().Set("Cache-Control", "no-store")
@@ -963,7 +1007,7 @@ func (e *Env) redeemAnonymously(w http.ResponseWriter, r *http.Request, params m
 	}
 	result, err := e.iss.ExchangePreAuthorizedCode(r.Context(), issuer.ExchangePreAuthorizedCodeRequest{
 		PreAuthorizedCode: params["pre-authorized_code"], TxCode: params["tx_code"], AuthorizationDetails: details,
-		DPoPProof: r.Header.Get("DPoP"), TokenEndpoint: e.endpoint("/token"),
+		Verified: &issuer.VerifiedTokenRequest{DPoPThumbprint: binding.Thumbprint, NextDPoPNonce: binding.NextDPoPNonce},
 	})
 	w.Header().Set("Cache-Control", "no-store")
 	if err != nil {
@@ -971,10 +1015,30 @@ func (e *Env) redeemAnonymously(w http.ResponseWriter, r *http.Request, params m
 		return
 	}
 	if e.public != nil {
-		e.public.issue(w, r, e, result)
+		e.public.issue(w, binding.Thumbprint, result)
 		return
 	}
 	result.WriteJSON(w)
+}
+
+// refuseClientAuthentication answers a token request that
+// authenticates a client, at a grant that takes none, with
+// invalid_request, and reports whether it did: a Client Attestation, a
+// client assertion or secret, or a TLS client certificate.
+func refuseClientAuthentication(w http.ResponseWriter, r *http.Request, req server.TokenEndpointRequest) bool {
+	params, err := req.Parameters()
+	if err != nil {
+		server.WriteError(w, err)
+		return true
+	}
+	auth := req.AttestedClientAuthentication()
+	if len(auth.ClientAttestations) == 0 && len(auth.ClientAttestationPoPs) == 0 &&
+		params["client_assertion"] == "" && params["client_assertion_type"] == "" && params["client_secret"] == "" &&
+		(r.TLS == nil || len(r.TLS.PeerCertificates) == 0) {
+		return false
+	}
+	server.NewError(server.ErrorInvalidRequest, http.StatusBadRequest, "this grant takes no client authentication").WriteJSON(w)
+	return true
 }
 
 // issuePreAuthorizedRefreshToken issues a refresh token for a redeemed
@@ -1224,6 +1288,78 @@ func batchIssuance(size int) *oid4vci.BatchCredentialIssuance {
 		return nil
 	}
 	return &oid4vci.BatchCredentialIssuance{BatchSize: size}
+}
+
+// Bounds on the openid_credential authorization_details the
+// Authorization Server takes under Options.CredentialAuthorizationDetails.
+const (
+	credentialAuthorizationDetailsBytes = 8 << 10
+	credentialAuthorizationDetailsDepth = 6
+)
+
+// credentialAuthorizationDetail is the openid_credential type, under
+// Options.CredentialAuthorizationDetails.
+var credentialAuthorizationDetail = oid4vci.AuthorizationDetailRARDefinition(2, 4<<10)
+
+// grantCredentialAuthorizationDetails grants each openid_credential
+// object the interaction requested, with a credential_identifier minted
+// for it and recorded for subject — the consent's own addition, which
+// the type's ValidateGrant allows and its ValidateRequest refuses from
+// the wallet. None without Options.CredentialAuthorizationDetails.
+func (e *Env) grantCredentialAuthorizationDetails(interaction server.InteractionRequest, subject string) ([]json.RawMessage, error) {
+	if e.minted == nil {
+		return nil, nil
+	}
+	requested, err := extension.RARGet(interaction.AuthorizationDetails, credentialAuthorizationDetail)
+	if err != nil {
+		return nil, err
+	}
+	granted := make([]json.RawMessage, 0, len(requested))
+	for _, d := range requested {
+		detail := d.Fields
+		detail.Type = oid4vci.AuthorizationDetailsTypeOpenIDCredential
+		detail.CredentialIdentifiers = []string{rand.Text()}
+		raw, err := json.Marshal(detail)
+		if err != nil {
+			return nil, err
+		}
+		e.mu.Lock()
+		e.minted[subject] = append(e.minted[subject], detail.CredentialIdentifiers...)
+		e.mu.Unlock()
+		granted = append(granted, raw)
+	}
+	return granted, nil
+}
+
+// checkCredentialIdentifier applies the binding rule
+// oid4vci.AuthorizationDetailRARDefinition documents for Prepare: a
+// credential_identifier names a dataset only together with the grant's
+// subject, among those minted for it. It records each one presented.
+// Only under Options.CredentialAuthorizationDetails: the identifiers a
+// pre-authorized code's redemption mints map to a configuration alone.
+func (e *Env) checkCredentialIdentifier(grant issuer.Grant, req *issuer.CredentialRequest) error {
+	if e.minted == nil || req.CredentialIdentifier == "" {
+		return nil
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.presented = append(e.presented, req.CredentialIdentifier)
+	if !slices.Contains(e.minted[grant.Subject], req.CredentialIdentifier) {
+		return issuer.NewError(issuer.ErrorCredentialRequestDenied, "the credential_identifier wasn't minted for this holder")
+	}
+	return nil
+}
+
+// CredentialIdentifiers returns the credential_identifiers the
+// Authorization Server minted at consent, and those Credential Requests
+// presented, under Options.CredentialAuthorizationDetails.
+func (e *Env) CredentialIdentifiers() (minted, presented []string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for _, ids := range e.minted {
+		minted = append(minted, ids...)
+	}
+	return minted, slices.Clone(e.presented)
 }
 
 func mdocScope(opts Options) string {

@@ -15,8 +15,6 @@ import (
 func TestExchangePreAuthorizedCode_Verified(t *testing.T) {
 	f := newPreAuthorizedCodeFixtureWith(t, func(cfg *issuer.Config, deps *issuer.Dependencies) {
 		cfg.PreAuthorizedCodeClientAuthentication = issuer.VerifiedPreAuthorizedCode{}
-		cfg.Limits.MaxDPoPProofAge = 0 // the Authorization Server's to check
-		deps.DPoPReplay = nil
 	})
 	f.issue(t, "code-1", issuer.PreAuthorizedCodeRecord{Scopes: []string{"identity_credential"}, ExpiresAt: f.now.Add(time.Minute)})
 
@@ -41,31 +39,44 @@ func TestExchangePreAuthorizedCode_Verified(t *testing.T) {
 
 	f.issue(t, "code-2", issuer.PreAuthorizedCodeRecord{Scopes: []string{"identity_credential"}, ExpiresAt: f.now.Add(time.Minute)})
 	if _, err := f.iss.ExchangePreAuthorizedCode(context.Background(), issuer.ExchangePreAuthorizedCodeRequest{
-		PreAuthorizedCode: "code-2", DPoPProof: f.validProof(t), TokenEndpoint: testTokenEndpointURL(t),
+		PreAuthorizedCode: "code-2", Verified: anonymousTokenRequest(),
 	}); err == nil {
 		t.Error("a request without Verified was accepted under VerifiedPreAuthorizedCode")
 	}
 }
 
-// TestExchangePreAuthorizedCode_AnonymousRefusesVerified: Verified means
-// nothing without VerifiedPreAuthorizedCode, so it's refused rather than
-// trusted, and an anonymous token names no client.
-func TestExchangePreAuthorizedCode_AnonymousRefusesVerified(t *testing.T) {
+// TestExchangePreAuthorizedCode_AnonymousRefusesAClient: under
+// AnonymousPreAuthorizedCode a Verified request naming a client is
+// refused, without spending the code — the grant authenticates none, so
+// the embedder took a request it doesn't expect — and one without a
+// DPoP key is refused too. The anonymous token is bound to the verified
+// key, names no client, and the response carries the Authorization
+// Server's next DPoP nonce.
+func TestExchangePreAuthorizedCode_AnonymousRefusesAClient(t *testing.T) {
 	f := newPreAuthorizedCodeFixture(t)
 	f.issue(t, "code-1", issuer.PreAuthorizedCodeRecord{Scopes: []string{"identity_credential"}, ExpiresAt: f.now.Add(time.Minute)})
-	if _, err := f.iss.ExchangePreAuthorizedCode(context.Background(), issuer.ExchangePreAuthorizedCodeRequest{
-		PreAuthorizedCode: "code-1", DPoPProof: f.validProof(t), TokenEndpoint: testTokenEndpointURL(t),
-		Verified: &issuer.VerifiedTokenRequest{ClientID: "wallet-1", DPoPThumbprint: "jkt-1"},
-	}); err == nil {
-		t.Fatal("Verified was trusted without VerifiedPreAuthorizedCode")
+	for name, v := range map[string]*issuer.VerifiedTokenRequest{
+		"a client":    {ClientID: "wallet-1", DPoPThumbprint: "jkt-1"},
+		"no DPoP key": {},
+		"no Verified": nil,
+	} {
+		if _, err := f.iss.ExchangePreAuthorizedCode(context.Background(), issuer.ExchangePreAuthorizedCodeRequest{
+			PreAuthorizedCode: "code-1", Verified: v,
+		}); err == nil {
+			t.Fatalf("%s: accepted under AnonymousPreAuthorizedCode", name)
+		}
 	}
-	if _, err := f.iss.ExchangePreAuthorizedCode(context.Background(), issuer.ExchangePreAuthorizedCodeRequest{
-		PreAuthorizedCode: "code-1", DPoPProof: f.validProof(t), TokenEndpoint: testTokenEndpointURL(t),
-	}); err != nil {
+	result, err := f.iss.ExchangePreAuthorizedCode(context.Background(), issuer.ExchangePreAuthorizedCodeRequest{
+		PreAuthorizedCode: "code-1", Verified: &issuer.VerifiedTokenRequest{DPoPThumbprint: "jkt-1", NextDPoPNonce: "n-1"},
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
-	if f.tokens.lastParams.ClientID != "" {
-		t.Errorf("AccessTokenParams.ClientID = %q, want none", f.tokens.lastParams.ClientID)
+	if p := f.tokens.lastParams; p.ClientID != "" || p.Thumbprint != "jkt-1" {
+		t.Errorf("AccessTokenParams client %q, thumbprint %q; want none and the verified key", p.ClientID, p.Thumbprint)
+	}
+	if result.NextDPoPNonce != "n-1" {
+		t.Errorf("NextDPoPNonce = %q, want the Authorization Server's", result.NextDPoPNonce)
 	}
 }
 
@@ -76,8 +87,6 @@ func TestExchangePreAuthorizedCode_AnonymousRefusesVerified(t *testing.T) {
 func TestRedeemPreAuthorizedCode(t *testing.T) {
 	f := newPreAuthorizedCodeFixtureWith(t, func(cfg *issuer.Config, deps *issuer.Dependencies) {
 		cfg.PreAuthorizedCodeClientAuthentication = issuer.VerifiedPreAuthorizedCode{}
-		cfg.Limits.MaxDPoPProofAge = 0
-		deps.DPoPReplay = nil
 		deps.AccessTokens = nil
 	})
 	ctx := context.Background()
@@ -126,12 +135,12 @@ func TestRedeemPreAuthorizedCode_NeedsVerified(t *testing.T) {
 	f := newPreAuthorizedCodeFixture(t)
 	f.issue(t, "code-1", issuer.PreAuthorizedCodeRecord{Scopes: []string{"identity_credential"}, ExpiresAt: f.now.Add(time.Minute)})
 	if _, err := f.iss.RedeemPreAuthorizedCode(context.Background(), issuer.ExchangePreAuthorizedCodeRequest{
-		PreAuthorizedCode: "code-1", DPoPProof: f.validProof(t), TokenEndpoint: testTokenEndpointURL(t),
+		PreAuthorizedCode: "code-1", Verified: anonymousTokenRequest(),
 	}); err == nil {
 		t.Fatal("RedeemPreAuthorizedCode worked under AnonymousPreAuthorizedCode")
 	}
 	if _, err := f.iss.ExchangePreAuthorizedCode(context.Background(), issuer.ExchangePreAuthorizedCodeRequest{
-		PreAuthorizedCode: "code-1", DPoPProof: f.validProof(t), TokenEndpoint: testTokenEndpointURL(t),
+		PreAuthorizedCode: "code-1", Verified: anonymousTokenRequest(),
 	}); err != nil {
 		t.Errorf("the refused redemption spent the code: %v", err)
 	}

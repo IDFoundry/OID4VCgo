@@ -10,7 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/idfoundry/oid4vcgo/internal/dpop"
+	"github.com/idfoundry/fapigo/server"
+
 	"github.com/idfoundry/oid4vcgo/issuer"
 	"github.com/idfoundry/oid4vcgo/wallet"
 )
@@ -25,7 +26,6 @@ import (
 type publicTokens struct {
 	dpop   issuer.AccessTokenVerifier
 	bearer bool
-	replay issuer.DPoPReplayChecker
 
 	mu     sync.Mutex
 	grants map[string]publicGrant // by refresh token
@@ -40,16 +40,11 @@ type publicGrant struct {
 }
 
 // issue answers an anonymous redemption with result: its access token,
-// a Bearer one under Options.BearerTokens, and a refresh token.
-func (p *publicTokens) issue(w http.ResponseWriter, r *http.Request, e *Env, result issuer.ExchangePreAuthorizedCodeResult) {
-	// The refresh token is bound to the request's DPoP key whatever the
-	// access token's type (RFC 9449 §5): a public client's refresh token
-	// is.
-	thumbprint, err := p.dpopKey(r, e)
-	if err != nil {
-		issuer.NewError(issuer.ErrorInvalidTokenRequest, err.Error()).WriteJSON(w)
-		return
-	}
+// a Bearer one under Options.BearerTokens, and a refresh token. The
+// refresh token is bound to thumbprint, the request's verified DPoP key,
+// whatever the access token's type (RFC 9449 §5): a public client's
+// refresh token is.
+func (p *publicTokens) issue(w http.ResponseWriter, thumbprint string, result issuer.ExchangePreAuthorizedCodeResult) {
 	refresh := rand.Text()
 	p.mu.Lock()
 	p.grants[refresh] = publicGrant{result: result, thumbprint: thumbprint}
@@ -58,8 +53,9 @@ func (p *publicTokens) issue(w http.ResponseWriter, r *http.Request, e *Env, res
 }
 
 // refresh redeems a refresh token: one bound to a DPoP key needs a
-// proof from it (RFC 9449 §5). Each refresh rotates the refresh token.
-func (p *publicTokens) refresh(w http.ResponseWriter, r *http.Request, e *Env, refresh string) {
+// proof from it (RFC 9449 §5), which the Authorization Server verifies
+// without a client. Each refresh rotates the refresh token.
+func (p *publicTokens) refresh(w http.ResponseWriter, r *http.Request, e *Env, req server.TokenEndpointRequest, refresh string) {
 	p.mu.Lock()
 	g, ok := p.grants[refresh]
 	p.mu.Unlock()
@@ -68,8 +64,15 @@ func (p *publicTokens) refresh(w http.ResponseWriter, r *http.Request, e *Env, r
 		return
 	}
 	if g.thumbprint != "" {
-		thumbprint, err := p.dpopKey(r, e)
-		if err != nil || thumbprint != g.thumbprint {
+		if refuseClientAuthentication(w, r, req) {
+			return
+		}
+		b, err := e.srv.VerifyTokenRequestDPoP(r.Context(), req)
+		if err != nil {
+			server.WriteError(w, err)
+			return
+		}
+		if b.Thumbprint != g.thumbprint {
 			issuer.NewError(issuer.ErrorInvalidGrant, "the refresh token is bound to another DPoP key").WriteJSON(w)
 			return
 		}
@@ -163,12 +166,6 @@ func (p *publicTokens) WriteError(w http.ResponseWriter, err error) {
 
 var errUnknownBearer = errors.New("walletflowtest: unknown Bearer access token")
 
-// dpopKey is the thumbprint of the key r's DPoP proof was signed with,
-// for the token endpoint.
-func (p *publicTokens) dpopKey(r *http.Request, e *Env) (string, error) {
-	return e.verifyTokenEndpointDPoP(r, p.replay)
-}
-
 // accessTokenParams are the parameters to mint result's access token
 // again, bound to thumbprint.
 func accessTokenParams(e *Env, result issuer.ExchangePreAuthorizedCodeResult, thumbprint string) issuer.AccessTokenParams {
@@ -181,19 +178,6 @@ func accessTokenParams(e *Env, result issuer.ExchangePreAuthorizedCodeResult, th
 		params.Claims = map[string]json.RawMessage{"authorization_details": raw}
 	}
 	return params
-}
-
-// verifyTokenEndpointDPoP verifies r's DPoP proof for the token endpoint,
-// and returns its key's RFC 7638 thumbprint.
-func (e *Env) verifyTokenEndpointDPoP(r *http.Request, replay issuer.DPoPReplayChecker) (string, error) {
-	verified, err := dpop.Verify(r.Context(), dpop.VerifyRequest{
-		Proof: r.Header.Get("DPoP"), Method: http.MethodPost, URL: e.endpoint("/token").String(),
-		Now: time.Now(), MaxProofAge: time.Minute, MaxClockSkew: 30 * time.Second, Replay: replay,
-	})
-	if err != nil {
-		return "", err
-	}
-	return verified.Thumbprint, nil
 }
 
 // revokeAll revokes every public client's refresh token.

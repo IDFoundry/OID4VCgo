@@ -83,15 +83,6 @@ type Limits struct {
 	// when Dependencies.PreAuthorizedCodes is set.
 	AccessTokenLifetime time.Duration
 
-	// MaxDPoPProofAge bounds how old (relative to Now) a DPoP proof's
-	// own "iat" may be before ExchangePreAuthorizedCode rejects it
-	// (RFC 9449 §4.3). Required only where this issuer verifies the
-	// Token Request's DPoP proof itself: Dependencies.PreAuthorizedCodes
-	// is set, and PreAuthorizedCodeClientAuthentication isn't
-	// VerifiedPreAuthorizedCode. At most MaxProductionDPoPProofAge (5
-	// minutes) there under AssuranceProduction.
-	MaxDPoPProofAge time.Duration
-
 	// MaxTxCodeAttempts bounds how many consecutive incorrect tx_code
 	// guesses ExchangePreAuthorizedCode tolerates against one
 	// pre-authorized_code before permanently invalidating it (via
@@ -107,16 +98,6 @@ type Limits struct {
 	// guess while the number of guesses is small too.
 	MaxTxCodeAttempts int
 
-	// MaxDPoPClockSkew bounds how far in the future (relative to Now) a
-	// DPoP proof's own "iat" may be before ExchangePreAuthorizedCode
-	// rejects it. Zero means no tolerance for a future-dated proof —
-	// matching internal/dpop.VerifyRequest's own zero-value meaning, no
-	// separate "required" check. Under AssuranceProduction, where this
-	// issuer verifies the proof itself, it must be from 10 to 60 seconds:
-	// FAPI 2.0 has a token endpoint accept a JWT up to 10 seconds in the
-	// future, and refuse one more than 60.
-	MaxDPoPClockSkew time.Duration
-
 	// MaxProofAge bounds how far a jwt proof's "iat" may be from Now,
 	// in either direction, when there is no Nonce Endpoint to date the
 	// proof instead (OID4VCI 1.0 Appendix F.4: the key proof's creation
@@ -129,17 +110,6 @@ type Limits struct {
 	// AssuranceProduction it must be at most MaxProductionProofAge (5
 	// minutes).
 	MaxProofAge time.Duration
-
-	// DPoPNonceLifetime bounds how long a DPoP nonce
-	// ExchangePreAuthorizedCode issues (RFC 9449 §8) remains valid, for
-	// any number of proofs. The Issuer hands out one current nonce and
-	// replaces it once half this lifetime has passed, so a Wallet's
-	// nonce is valid for at least half of it after the Wallet last
-	// received it. Required only when Dependencies.DPoPNonces is a store
-	// (not nil or NoDPoPNonces{}); under AssuranceProduction it must
-	// then be at most 15 minutes, as fapigo/server requires of its own.
-	// Five minutes suits most deployments.
-	DPoPNonceLifetime time.Duration
 
 	// NotificationLifetime, if positive, bounds how long a
 	// notification_id IssueNotificationID hands out is accepted by
@@ -588,10 +558,9 @@ type CredentialDPoPNonceIssuer interface {
 // there carries its Config.Issuer as its Owner, and each honours only
 // its own, so none redeems another's pre-authorized code or c_nonce, or
 // answers another's transaction_id or notification_id. A store must
-// persist Owner for that to hold. CredentialOffers, DPoPNonces and
-// DPoPReplay records aren't scoped that way: an offer's reference is an
-// unguessable lookup key whose offer names its Credential Issuer, and
-// DPoP nonces and jti records are shared freshness state.
+// persist Owner for that to hold. CredentialOffers aren't scoped that
+// way: an offer's reference is an unguessable lookup key whose offer
+// names its Credential Issuer.
 type Dependencies struct {
 	// Nonces persists issued c_nonce values. Required when
 	// Config.Endpoints.Nonce is set.
@@ -603,9 +572,7 @@ type Dependencies struct {
 	// which the Wallet then uses at the Credential Endpoint. Pass the
 	// Credential Endpoint's own fapigo/resource.Verifier: the nonce has
 	// to come from the store that Verifier checks, or the Credential
-	// Request carrying it is challenged anyway. Not DPoPNonces, which is
-	// the Token Endpoint's, for ExchangePreAuthorizedCode. Nil sends no
-	// DPoP nonce.
+	// Request carrying it is challenged anyway. Nil sends no DPoP nonce.
 	CredentialDPoPNonces CredentialDPoPNonceIssuer
 
 	// Clock supplies the current time. nil is the system clock, the
@@ -695,19 +662,13 @@ type Dependencies struct {
 	// since (unlike the Credential/Nonce/Deferred Credential/Notification
 	// Endpoints) the Token Endpoint itself belongs to whichever
 	// Authorization Server this issuer is paired with, not to this
-	// package. Required, along with DPoPReplay and AccessTokens below
-	// unless the Authorization Server verifies the redemption
-	// (VerifiedPreAuthorizedCode), exactly when a caller wants to
-	// redeem pre-authorized codes.
+	// package. Required, along with AccessTokens below unless the
+	// Authorization Server issues the access token
+	// (RedeemPreAuthorizedCode), exactly when a caller wants to redeem
+	// pre-authorized codes. The Authorization Server serving the Token
+	// Endpoint verifies the Token Request's DPoP proof either way
+	// (ExchangePreAuthorizedCodeRequest.Verified).
 	PreAuthorizedCodes PreAuthorizedCodeStore
-
-	// DPoPReplay detects DPoP proof replay by "jti" for
-	// ExchangePreAuthorizedCode's own Token Request (RFC 9449 §11.1).
-	// Required when PreAuthorizedCodes is set, unless
-	// PreAuthorizedCodeClientAuthentication is VerifiedPreAuthorizedCode:
-	// the Authorization Server verifies the DPoP proof then, and this
-	// issuer never uses it.
-	DPoPReplay DPoPReplayChecker
 
 	// AccessTokens mints the access token ExchangePreAuthorizedCode
 	// returns on success. Required when PreAuthorizedCodes is set,
@@ -715,23 +676,6 @@ type Dependencies struct {
 	// VerifiedPreAuthorizedCode: an Authorization Server that issues the
 	// token itself redeems codes with RedeemPreAuthorizedCode instead.
 	AccessTokens AccessTokenIssuer
-
-	// DPoPNonces enables RFC 9449 §8's own DPoP nonce-challenge flow for
-	// ExchangePreAuthorizedCode — see DPoPNonceStore's own doc comment.
-	// Config.Limits.DPoPNonceLifetime is required whenever this is a
-	// store. NoDPoPNonces{} declines nonces, as nil does.
-	//
-	// Under AssuranceDevelopment, nil disables nonces entirely. Under
-	// AssuranceProduction, New refuses nil when PreAuthorizedCodes is
-	// set and PreAuthorizedCodeClientAuthentication isn't
-	// VerifiedPreAuthorizedCode, where this issuer verifies the Token
-	// Request's DPoP proof and issues the access token itself: pass a
-	// durable store that declares StoreAssurance (Durable; Lookup is a
-	// plain read, so AtomicConsume isn't needed) and passes
-	// issuertest.TestDPoPNonceStoreContract, or NoDPoPNonces{} to
-	// decline. Under VerifiedPreAuthorizedCode the Authorization Server
-	// verifies the proof, and its own nonces apply.
-	DPoPNonces DPoPNonceStore
 
 	// Audit records the outcome of every ExchangePreAuthorizedCode/
 	// RequestCredential/RequestDeferredCredential call — see
@@ -748,10 +692,6 @@ type Issuer struct {
 	cfg  Config
 	deps Dependencies
 
-	// dpopNonces is the DPoP nonce this Issuer currently hands out (see
-	// currentDPoPNonce).
-	dpopNonces dpopNonceRotator
-
 	// preAuthorizedOwner, deferredOwner and notificationOwner record
 	// whether each store has kept a saved record's Owner
 	// (checkOwnerKept).
@@ -767,13 +707,6 @@ func New(cfg Config, deps Dependencies) (*Issuer, error) {
 	var err error
 	cfg.PreAuthorizedCodeClientAuthentication, err = normalizeClientAuthentication(cfg.PreAuthorizedCodeClientAuthentication)
 	errs = append(errs, err)
-	// declinedDPoPNonces is kept for checkProductionAssurance, which
-	// tells a decline apart from nil; every other nonce check tests
-	// deps.DPoPNonces against nil.
-	declinedDPoPNonces := dpopNoncesDeclined(deps.DPoPNonces)
-	if declinedDPoPNonces {
-		deps.DPoPNonces = nil
-	}
 	if deps.Clock == nil {
 		deps.Clock = systemClock{}
 	}
@@ -786,14 +719,11 @@ func New(cfg Config, deps Dependencies) (*Issuer, error) {
 		prefixError("issuer: dependencies: ", validateAttestationVerifier(deps.AttestationVerifier)),
 		prefixError("issuer: dependencies: ", validateProofBindingKeys(deps.ProofBindingKeys)),
 	)
-	if deps.DPoPNonces != nil && cfg.Limits.DPoPNonceLifetime <= 0 {
-		errs = append(errs, fmt.Errorf("issuer: config: limits.dpop_nonce_lifetime must be positive when dependencies.dpop_nonces is set"))
-	}
 	if deps.Random == nil {
 		errs = append(errs, fmt.Errorf("issuer: dependencies: random is required"))
 	}
 	if cfg.Assurance == AssuranceProduction {
-		for _, err := range checkProductionAssurance(cfg, deps, declinedDPoPNonces) {
+		for _, err := range checkProductionAssurance(cfg, deps) {
 			errs = append(errs, prefixError("issuer: ", err))
 		}
 	}
@@ -956,35 +886,11 @@ func validatePreAuthorizedCodeDependencies(cfg Config, deps Dependencies) error 
 	if cfg.Limits.MaxTxCodeAttempts <= 0 {
 		errs = append(errs, fmt.Errorf("issuer: config: limits.max_tx_code_attempts must be positive when dependencies.pre_authorized_codes is set"))
 	}
-	// The DPoP proof is the Authorization Server's to verify under
-	// VerifiedPreAuthorizedCode, and this issuer's otherwise; so is the
-	// access token, if it issues it (RedeemPreAuthorizedCode).
-	if !verifiesDPoPProofs(cfg, deps) {
-		return errors.Join(errs...)
-	}
-	if deps.AccessTokens == nil {
+	// Under VerifiedPreAuthorizedCode the Authorization Server may issue
+	// the access token itself (RedeemPreAuthorizedCode); an anonymous
+	// redemption's is this issuer's to issue.
+	if issuesAnonymousAccessTokens(cfg, deps) && deps.AccessTokens == nil {
 		errs = append(errs, fmt.Errorf("issuer: dependencies: access_tokens is required when dependencies.pre_authorized_codes is set"))
-	}
-	if cfg.Limits.MaxDPoPProofAge <= 0 {
-		errs = append(errs, fmt.Errorf("issuer: config: limits.max_dpop_proof_age must be positive when dependencies.pre_authorized_codes is set"))
-	}
-	// Unlike MaxDPoPProofAge, zero is MaxDPoPClockSkew's own legitimate
-	// strictest value (see its own doc comment) — but a negative one
-	// isn't just meaningless, it's actively destructive:
-	// internal/dpop.Verify checks iat.After(Now.Add(MaxClockSkew)), so
-	// a negative skew moves that threshold into the past and rejects
-	// every fresh proof (iat ≈ Now) as "in the future," a near-total
-	// denial of service on ExchangePreAuthorizedCode — found in a
-	// repo-wide integrator-misconfiguration scan, confirmed with a
-	// runnable check. Every sibling freshness-bound duration in this
-	// repo (MaxDPoPProofAge above, sdjwtvc.KeyBindingCheck.MaxAge)
-	// already rejects a non-positive value outright; this is the one
-	// exception, because unlike those, zero itself is meaningful here.
-	if cfg.Limits.MaxDPoPClockSkew < 0 {
-		errs = append(errs, fmt.Errorf("issuer: config: limits.max_dpop_clock_skew must not be negative when dependencies.pre_authorized_codes is set"))
-	}
-	if deps.DPoPReplay == nil {
-		errs = append(errs, fmt.Errorf("issuer: dependencies: dpop_replay is required when dependencies.pre_authorized_codes is set"))
 	}
 	return errors.Join(errs...)
 }
