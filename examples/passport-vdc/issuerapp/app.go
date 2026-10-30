@@ -315,7 +315,12 @@ func (a *App) buildIssuer() error {
 	}
 	a.issuer, err = issuer.New(issuer.Config{
 		Assurance: issuer.AssuranceDevelopment,
-		Issuer:    a.issuerURL,
+		// HAIP 1.0: issuer.New refuses what HAIP doesn't allow (a
+		// configuration without a scope, key binding without the Nonce
+		// Endpoint, proofs without ES256, pre-authorized codes redeemed
+		// without client authentication).
+		Profile: haip.IssuerProfile{},
+		Issuer:  a.issuerURL,
 		Endpoints: issuer.Endpoints{
 			Credential: credentialURL, Nonce: nonceURL, DeferredCredential: deferredURL, Notification: notificationURL,
 		},

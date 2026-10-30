@@ -269,6 +269,15 @@ them.
   `server.SystemClock` declares it): a fixed or offset test clock would
   stop every lifetime the issuer enforces. Replace
   `Clock: issuer.ClockFunc(time.Now)` with nothing.
+- **HAIP as a profile (`haip`).** `haip.ValidateIssuerConfig` takes the
+  `Dependencies` too: `haip.ValidateIssuerConfig(cfg, deps)`. It now
+  also refuses a proof type whose `ProofSigningAlgValuesSupported`
+  lacks ES256 (HAIP 1.0 §7), and a nil
+  `PreAuthorizedCodeClientAuthentication` when `deps.PreAuthorizedCodes`
+  is set (anonymous redemption under development assurance), and it
+  reports every problem it finds rather than the first. Rather than
+  calling it after `issuer.New`, set `Config.Profile:
+  haip.IssuerProfile{}`, and `issuer.New` runs it with its own checks.
 
 ## v0.55.0 → v0.56.0
 

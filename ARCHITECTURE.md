@@ -25,7 +25,8 @@ HAIP is opted into rather than unconditional. Production assurance
 the HAIP requirements that bind any deployment; package `haip` gives
 HAIP's configuration (its `Recommended*` functions) and checks an
 issuer's HAIP-specific profiling (`haip.ValidateIssuerConfig`, which
-`issuer.New` doesn't run itself); and `walletflow.ProfileHAIP` holds a
+`issuer.New` runs when `issuer.Config.Profile` is
+`haip.IssuerProfile{}`); and `walletflow.ProfileHAIP` holds a
 wallet to HAIP issuers. See "Relationship to FAPIgo" below for HAIP's
 overrides of FAPI 2.0.
 
@@ -1492,13 +1493,18 @@ changes whether *every* bullet below is `(done)`.
   `issuer.Limits` duration are all deployment-specific values neither
   OID4VCI nor HAIP number, so padding them with an unlabeled guess
   would violate this package's own "every value traceable" rule.
-  `ValidateIssuerConfig(cfg)` separately checks `issuer.Config` against
-  §4.1's own two additional MUSTs on top of plain OID4VCI (a `Scope` on
-  every Credential Configuration; `Endpoints.Nonce` configured whenever
-  any Credential Configuration requires cryptographic key binding) —
-  `issuer.New` never runs these itself, since they're HAIP-specific
-  profiling, not something the protocol-generic `issuer` package can
-  assume every deployment wants. `RecommendedWalletConfig()` bundles
+  `ValidateIssuerConfig(cfg, deps)` separately checks an issuer's
+  `Config` and `Dependencies` against HAIP's own additional MUSTs on
+  top of plain OID4VCI (a `Scope` on every Credential Configuration,
+  mapping to one Credential Type; `Endpoints.Nonce` configured whenever
+  any Credential Configuration requires cryptographic key binding;
+  ES256 accepted by every proof type; client authentication for
+  pre-authorized codes). They're HAIP-specific profiling, not something
+  the protocol-generic `issuer` package can assume every deployment
+  wants, so `issuer.New` runs them only when `issuer.Config.Profile` is
+  `haip.IssuerProfile{}`: `issuer.Profile` is an interface `issuer`
+  defines and `haip` implements, since `haip` imports `issuer` and not
+  the other way round. `RecommendedWalletConfig()` bundles
   the one part of a `wallet.Config` HAIP actually grounds a value for —
   `ProofSigningAlg`, the same §7 ES256 minimum — into a
   `WalletRecommendations`; `wallet.Config`'s other field, `Fetch`

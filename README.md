@@ -41,7 +41,8 @@ HAIP's configuration (`RecommendedIssuerConfig`,
 `RecommendedVerifierConfig`, `RecommendedWalletConfig`,
 `RecommendedAuthorizationServerConfig`) and checks an issuer's
 HAIP-specific profiling (`haip.ValidateIssuerConfig`, which `issuer.New`
-doesn't run). `walletflow.ProfileHAIP` holds a wallet to HAIP issuers.
+runs when `issuer.Config.Profile` is `haip.IssuerProfile{}`).
+`walletflow.ProfileHAIP` holds a wallet to HAIP issuers.
 See ARCHITECTURE.md's "Relationship to FAPIgo" section for HAIP's
 overrides of FAPI 2.0.
 

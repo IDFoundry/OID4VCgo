@@ -43,6 +43,20 @@ func (v fixedAttestationVerifier) ResolveAttestationKey(context.Context, attesta
 // purpose, and the simplest way to keep its recommendations from
 // silently drifting out of sync with what issuer actually accepts.
 func TestRecommendedIssuerConfigWorksWithIssuerNew(t *testing.T) {
+	cfg, deps := recommendedIssuer(t)
+	if err := haip.ValidateIssuerConfig(cfg, deps); err != nil {
+		t.Fatalf("ValidateIssuerConfig: %v", err)
+	}
+	cfg.Profile = haip.IssuerProfile{}
+	if _, err := issuer.New(cfg, deps); err != nil {
+		t.Fatalf("issuer.New with haip.IssuerProfile: %v", err)
+	}
+}
+
+// recommendedIssuer is a development issuer built from
+// RecommendedIssuerConfig, which meets HAIP.
+func recommendedIssuer(t *testing.T) (issuer.Config, issuer.Dependencies) {
+	t.Helper()
 	issuerURL, err := fapi.ParseIssuerURL("https://issuer.example.com")
 	if err != nil {
 		t.Fatalf("ParseIssuerURL: %v", err)
@@ -81,20 +95,15 @@ func TestRecommendedIssuerConfigWorksWithIssuerNew(t *testing.T) {
 		},
 	}
 
-	if err := haip.ValidateIssuerConfig(cfg); err != nil {
-		t.Fatalf("ValidateIssuerConfig: %v", err)
-	}
-	if _, err := issuer.New(cfg, issuer.Dependencies{
+	deps := issuer.Dependencies{
 		Nonces:      storage.NewNonceStore(),
-		Clock:       issuer.ClockFunc(time.Now),
 		Random:      rand.Reader,
 		SDJWTSigner: &issuer.SDJWTSigner{Signer: signer, Alg: haip.RecommendedJOSEAlgorithm},
 		AttestationVerifier: fixedAttestationVerifier{
 			pub: &signer.PublicKey, alg: haip.RecommendedJOSEAlgorithm,
 		},
-	}); err != nil {
-		t.Fatalf("issuer.New: %v", err)
 	}
+	return cfg, deps
 }
 
 // TestRecommendedWalletConfigWorksWithWalletNew wires

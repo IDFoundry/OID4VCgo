@@ -161,6 +161,15 @@ type Config struct {
 	// checks by omission.
 	Assurance AssuranceLevel
 
+	// Profile, if set, holds this issuer to a profile of OpenID4VCI,
+	// whose requirements New checks along with its own:
+	// haip.IssuerProfile{} for HAIP 1.0. Nil is plain OpenID4VCI.
+	// Production assurance enforces what binds every deployment; a
+	// profile adds what binds only the deployments that adopt it (HAIP's
+	// Nonce Endpoint, scopes, client authentication at the Token
+	// Endpoint and ES256 proofs, say), under either assurance level.
+	Profile Profile
+
 	// PreAuthorizedCodeClientAuthentication is how ExchangePreAuthorizedCode
 	// authenticates the client redeeming a pre-authorized_code:
 	// VerifiedPreAuthorizedCode, by its Wallet Attestation, verified with
@@ -258,6 +267,17 @@ type Config struct {
 	// setting this does and doesn't change. Nil means Metadata omits
 	// batch_credential_issuance entirely.
 	BatchCredentialIssuance *oid4vci.BatchCredentialIssuance
+}
+
+// Profile is a profile of OpenID4VCI an issuer is held to
+// (Config.Profile). haip.IssuerProfile is HAIP 1.0's.
+type Profile interface {
+	// CheckIssuer reports every way cfg and deps fall short of the
+	// profile, nil if none. New calls it with cfg and deps as the Issuer
+	// will use them: a pointer PreAuthorizedCodeClientAuthentication
+	// taken as its value, and a nil Dependencies.Clock as the system
+	// clock.
+	CheckIssuer(cfg Config, deps Dependencies) error
 }
 
 // Clock supplies the current time — a plain function value satisfies
@@ -795,6 +815,11 @@ func New(cfg Config, deps Dependencies) (*Issuer, error) {
 	if cfg.Assurance == AssuranceProduction {
 		if err := checkProductionAssurance(cfg, deps, declinedDPoPNonces); err != nil {
 			return nil, fmt.Errorf("issuer: %w", err)
+		}
+	}
+	if cfg.Profile != nil {
+		if err := cfg.Profile.CheckIssuer(cfg, deps); err != nil {
+			return nil, fmt.Errorf("issuer: profile: %w", err)
 		}
 	}
 
