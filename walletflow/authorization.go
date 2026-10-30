@@ -65,6 +65,12 @@ type AuthorizationStore interface {
 	// GetAuthorization returns the one state names, or an error wrapping
 	// ErrNotFound.
 	GetAuthorization(ctx context.Context, state string) (PendingAuthorization, error)
+	// ConsumeAuthorization returns the one state names and deletes it,
+	// atomically: of concurrent calls for one state — from every Wallet
+	// sharing the store — exactly one gets it, and the others an error
+	// wrapping ErrNotFound, as does a call for one the store doesn't
+	// hold. A database's DELETE … RETURNING, say.
+	ConsumeAuthorization(ctx context.Context, state string) (PendingAuthorization, error)
 	// ListAuthorizations returns every one.
 	ListAuthorizations(ctx context.Context) ([]PendingAuthorization, error)
 	// DeleteAuthorization deletes the one state names; deleting one that
@@ -102,6 +108,18 @@ func (s *MemoryAuthorizationStore) GetAuthorization(_ context.Context, state str
 	if !ok {
 		return PendingAuthorization{}, fmt.Errorf("walletflow: authorization: %w", ErrNotFound)
 	}
+	return a, nil
+}
+
+// ConsumeAuthorization implements AuthorizationStore.
+func (s *MemoryAuthorizationStore) ConsumeAuthorization(_ context.Context, state string) (PendingAuthorization, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a, ok := s.auth[state]
+	if !ok {
+		return PendingAuthorization{}, fmt.Errorf("walletflow: authorization: %w", ErrNotFound)
+	}
+	delete(s.auth, state)
 	return a, nil
 }
 
@@ -152,9 +170,7 @@ func (s *sessionStore) Create(ctx context.Context, n storage.NewSession) error {
 		// An authorization begun again replaces the earlier one: its
 		// redirect must not complete it, by ResumeIssuance or otherwise.
 		// Only its record goes — the new one uses the same keys.
-		s.w.authMu.Lock()
 		err := s.w.deps.Authorizations.DeleteAuthorization(ctx, s.state)
-		s.w.authMu.Unlock()
 		if err != nil && !errors.Is(err, ErrNotFound) {
 			return fmt.Errorf("walletflow: forget the earlier authorization: %w", err)
 		}
@@ -168,23 +184,18 @@ func (s *sessionStore) Create(ctx context.Context, n storage.NewSession) error {
 }
 
 func (s *sessionStore) Consume(ctx context.Context, c storage.SessionConsumption) (storage.ConsumedSession, error) {
-	// One consume at a time, so two callbacks for one state can't both
-	// retrieve it: the wallet is one process over its own store.
-	s.w.authMu.Lock()
-	defer s.w.authMu.Unlock()
-	a, err := s.w.deps.Authorizations.GetAuthorization(ctx, c.State)
+	// The store consumes it atomically, so two callbacks for one state —
+	// even to two Wallets sharing it — can't both retrieve it.
+	a, err := s.w.deps.Authorizations.ConsumeAuthorization(ctx, c.State)
 	if err != nil {
-		return storage.ConsumedSession{}, err
-	}
-	if err := s.w.deps.Authorizations.DeleteAuthorization(ctx, c.State); err != nil {
 		return storage.ConsumedSession{}, err
 	}
 	return storage.ConsumedSession{Record: a.Session, ExpiresAt: a.ExpiresAt}, nil
 }
 
 // Capabilities implements storage.StoreAssurance: Durable as the
-// AuthorizationStore is, and Consume is atomic within the wallet's one
-// process.
+// AuthorizationStore is, and Consume is atomic, as
+// AuthorizationStore.ConsumeAuthorization is.
 func (s *sessionStore) Capabilities() storage.Capabilities {
 	return storage.Capabilities{Durable: s.w.deps.Authorizations.Durable(), AtomicConsume: true}
 }

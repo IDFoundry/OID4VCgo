@@ -57,7 +57,7 @@ func TestDiff(t *testing.T) {
 		t.Errorf("diff of different JSON = %v", d)
 	}
 	g, w := fullGrant("id", 1), fullGrant("id", 2)
-	if d := diff(g, w); len(d) != 7 {
-		t.Errorf("diff of grants differing in every field but ID, ClientAuth and TokenType = %d differences, want 7: %v", len(d), d)
+	if d := diff(g, w); len(d) != 9 {
+		t.Errorf("diff of grants differing in every field but ID, ClientAuth and TokenType = %d differences, want 9: %v", len(d), d)
 	}
 }

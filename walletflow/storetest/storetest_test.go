@@ -26,3 +26,27 @@ func TestMemoryDeferredStore(t *testing.T) {
 func TestMemoryKeyStore(t *testing.T) {
 	storetest.TestKeyStoreContract(t, func() walletflow.KeyStore { return walletflow.NewMemoryKeyStore() })
 }
+
+// A memory store's handles are the store itself: every Wallet sharing
+// it is in one process.
+
+func TestSharedMemoryCredentialStore(t *testing.T) {
+	storetest.TestSharedCredentialStoreContract(t, func() func() walletflow.CredentialStore {
+		s := walletflow.NewMemoryCredentialStore()
+		return func() walletflow.CredentialStore { return s }
+	})
+}
+
+func TestSharedMemoryAuthorizationStore(t *testing.T) {
+	storetest.TestSharedAuthorizationStoreContract(t, func() func() walletflow.AuthorizationStore {
+		s := walletflow.NewMemoryAuthorizationStore()
+		return func() walletflow.AuthorizationStore { return s }
+	})
+}
+
+func TestSharedMemoryGrantStore(t *testing.T) {
+	storetest.TestSharedGrantStoreContract(t, func() func() walletflow.GrantStore {
+		s := walletflow.NewMemoryGrantStore()
+		return func() walletflow.GrantStore { return s }
+	})
+}

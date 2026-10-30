@@ -564,18 +564,15 @@ type reservedCopy struct {
 	wasPresented, wasShown bool
 	// linkable is a copy another Verifier has seen.
 	linkable bool
-	// seq orders reservations of one copy (Wallet.reservations).
-	seq uint64
+	// reservation is the presentation's mark on the copy
+	// (CredentialCopy.Reservation).
+	reservation string
 }
-
-// copyRef names one copy of a stored credential: its ID and the copy's
-// holder key.
-type copyRef struct{ id, keyID string }
 
 // reserve picks each selected credential's copy from the store, as it is
 // now, by Config.CopyPolicy, and marks it presented to this Verifier
 // there before anything is sent, so a presentation answered at the same
-// time picks another.
+// time — by this Wallet or another sharing the store — picks another.
 // Credentials deleted since the request arrived are an invalid
 // selection.
 func (p *Presentation) reserve(ctx context.Context, sel Selection) ([]reservedCopy, error) {
@@ -585,36 +582,24 @@ func (p *Presentation) reserve(ctx context.Context, sel Selection) ([]reservedCo
 	return p.w.reserve(ctx, sel, p.verifier(), p.Linkable, p.byID)
 }
 
-// loadAsShown is the stored credential id, as it was when shown to the
-// holder: ErrCredentialChanged if it's been refreshed since, as its
-// claims, or which of them are always disclosed, may not be what the
-// holder saw.
-func (w *Wallet) loadAsShown(ctx context.Context, id string, shown map[string]StoredCredential) (StoredCredential, error) {
-	c, err := w.loadForReserve(ctx, id)
-	if err != nil {
-		return StoredCredential{}, err
-	}
-	if was, ok := shown[id]; ok && !was.ReceivedAt.Equal(c.ReceivedAt) {
-		return StoredCredential{}, fmt.Errorf("walletflow: credential %q: %w", id, ErrCredentialChanged)
-	}
-	return c, nil
-}
-
 // reserve is Presentation.reserve for the Verifier whose VerifierHash is
 // verifier; linkable is what the holder was told about each credential
 // (Presentation.Linkable), which a reserved copy must agree with, and
 // shown the credentials as the holder was shown them, which the stored
-// ones must still be.
+// ones must still be. Each credential's copy is reserved in one
+// CredentialStore.Update; when one can't be, those already reserved are
+// released.
 func (w *Wallet) reserve(ctx context.Context, sel Selection, verifier string, linkable func(id string) bool, shown map[string]StoredCredential) ([]reservedCopy, error) {
-	w.credMu.Lock()
-	defer w.credMu.Unlock()
-	current := map[string]StoredCredential{}
+	mark, err := randomID(w.deps.Random)
+	if err != nil {
+		return nil, err
+	}
 	// One credential selected for several queries is presented with one
 	// copy throughout the response, as Preview showed: two copies would
 	// give the Verifier two holder keys and status entries of one
 	// credential, burning a copy and linking the two to one holder.
 	chosen := map[string]reservedCopy{}
-	var out []reservedCopy
+	var out, done []reservedCopy
 	for _, q := range sortedQueries(sel) {
 		for _, id := range sel[q] {
 			if prev, ok := chosen[id]; ok {
@@ -624,66 +609,77 @@ func (w *Wallet) reserve(ctx context.Context, sel Selection, verifier string, li
 				out = append(out, again)
 				continue
 			}
-			c, ok := current[id]
-			if !ok {
-				var err error
-				if c, err = w.loadAsShown(ctx, id, shown); err != nil {
-					return nil, err
-				}
-			}
-			r, err := w.reserveCopy(&c, q, id, verifier, linkable(id))
+			was, wasShown := shown[id]
+			r, err := w.reserveOne(ctx, reserveRequest{id: id, query: q, mark: mark, verifier: verifier, toldLinkable: linkable(id)}, was, wasShown)
 			if err != nil {
+				w.release(ctx, done, verifier)
 				return nil, err
 			}
-			current[id] = c
 			chosen[id] = r
+			done = append(done, r)
 			out = append(out, r)
-		}
-	}
-	for id, c := range current {
-		if err := w.deps.Credentials.Put(ctx, c); err != nil {
-			return nil, fmt.Errorf("walletflow: store credential %q: %w", id, err)
 		}
 	}
 	return out, nil
 }
 
-// loadForReserve reads credential id for reserve, with its copies its
-// own to change.
-func (w *Wallet) loadForReserve(ctx context.Context, id string) (StoredCredential, error) {
-	c, err := w.deps.Credentials.Get(ctx, id)
-	if errors.Is(err, ErrNotFound) {
-		return StoredCredential{}, fmt.Errorf("walletflow: %w: no credential %q", ErrInvalidSelection, id)
-	}
-	if err != nil {
-		return StoredCredential{}, fmt.Errorf("walletflow: credential %q: %w", id, err)
-	}
-	c.Copies = slices.Clone(c.AllCopies())
-	return c, nil
+// reserveRequest is what reserveOne reserves: credential id's copy to
+// answer query with, for verifier, marked mark (CredentialCopy.
+// Reservation); toldLinkable is whether the holder was told presenting
+// it would be linkable.
+type reserveRequest struct {
+	id, query, mark, verifier string
+	toldLinkable              bool
 }
 
-// reserveCopy picks c's copy to answer query q with, by
-// Config.CopyPolicy, and marks it presented to verifier in c, with
-// credMu held. toldLinkable is whether the holder was told presenting it
-// would be linkable.
-func (w *Wallet) reserveCopy(c *StoredCredential, q, id, verifier string, toldLinkable bool) (reservedCopy, error) {
-	i, cp, reused := c.copyFor(w.cfg.CopyPolicy, verifier, w.deps.Clock())
-	linkable := c.linkableTo(cp, verifier)
-	if linkable && !toldLinkable {
+// reserveOne reserves req's copy in one CredentialStore.Update:
+// ErrCredentialChanged when, shown to the holder as was, it's been
+// refreshed since, as its claims, or which of them are always disclosed,
+// may not be what the holder saw; an invalid selection when it's been
+// deleted.
+func (w *Wallet) reserveOne(ctx context.Context, req reserveRequest, was StoredCredential, shown bool) (reservedCopy, error) {
+	var r reservedCopy
+	var refused error
+	err := w.deps.Credentials.Update(ctx, req.id, func(c *StoredCredential) error {
+		if shown && !was.ReceivedAt.Equal(c.ReceivedAt) {
+			refused = fmt.Errorf("walletflow: credential %q: %w", req.id, ErrCredentialChanged)
+			return refused
+		}
+		var err error
+		r, err = w.reserveCopy(c, req)
+		refused = err
+		return err
+	})
+	switch {
+	case err == nil:
+		return r, nil
+	case refused != nil && errors.Is(err, refused):
+		return reservedCopy{}, err
+	case errors.Is(err, ErrNotFound):
+		return reservedCopy{}, fmt.Errorf("walletflow: %w: no credential %q", ErrInvalidSelection, req.id)
+	}
+	return reservedCopy{}, fmt.Errorf("walletflow: store credential %q: %w", req.id, err)
+}
+
+// reserveCopy picks c's copy to answer req.query with, by
+// Config.CopyPolicy, and marks it in c presented to req.verifier, with
+// req.mark its latest reservation.
+func (w *Wallet) reserveCopy(c *StoredCredential, req reserveRequest) (reservedCopy, error) {
+	c.Copies = slices.Clone(c.AllCopies())
+	i, cp, reused := c.copyFor(w.cfg.CopyPolicy, req.verifier, w.deps.Clock())
+	linkable := c.linkableTo(cp, req.verifier)
+	if linkable && !req.toldLinkable {
 		// What the holder saw said otherwise: don't send it.
-		return reservedCopy{}, fmt.Errorf("walletflow: credential %q: %w", id, ErrLinkable)
+		return reservedCopy{}, fmt.Errorf("walletflow: credential %q: %w", req.id, ErrLinkable)
 	}
-	r := reservedCopy{query: q, id: id, index: i, keyID: cp.HolderKeyID, reused: reused,
-		wasPresented: cp.Presented, wasShown: slices.Contains(cp.ShownTo, verifier), linkable: linkable}
-	if w.reservations == nil {
-		w.reservations = map[copyRef]uint64{}
-	}
-	w.reserveSeq++
-	r.seq = w.reserveSeq
-	w.reservations[copyRef{id, cp.HolderKeyID}] = r.seq
+	r := reservedCopy{query: req.query, id: req.id, index: i, keyID: cp.HolderKeyID, reused: reused,
+		wasPresented: cp.Presented, wasShown: slices.Contains(cp.ShownTo, req.verifier), linkable: linkable, reservation: req.mark}
+	// Marked even when reused: an earlier presentation that reserved it
+	// for this Verifier, and isn't sent, mustn't undo what this one sends.
+	c.Copies[i].Reservation = req.mark
 	c.Copies[i].Presented = true
 	if !r.wasShown {
-		c.Copies[i].ShownTo = append(slices.Clone(cp.ShownTo), verifier)
+		c.Copies[i].ShownTo = append(slices.Clone(cp.ShownTo), req.verifier)
 	}
 	r.c = *c
 	r.c.Credential = cp.Credential
@@ -692,10 +688,11 @@ func (w *Wallet) reserveCopy(c *StoredCredential, q, id, verifier string, toldLi
 
 // release undoes what reserve recorded for a response that wasn't
 // sent, unless the credential has changed since or another presentation
-// has reserved the copy since: what that one recorded, which release's
-// snapshot would undo, stands whether or not it was sent. It's best
-// effort: a copy left marked is one fewer to use, never one presented
-// twice.
+// — in this Wallet or another sharing the store — has reserved the copy
+// since (CredentialCopy.Reservation): what that one recorded, which
+// release's snapshot would undo, stands whether or not it was sent. It's
+// best effort: a copy left marked is one fewer to use, never one
+// presented twice.
 func (p *Presentation) release(ctx context.Context, reserved []reservedCopy) {
 	p.w.release(ctx, reserved, p.verifier())
 }
@@ -704,37 +701,25 @@ func (p *Presentation) release(ctx context.Context, reserved []reservedCopy) {
 // is verifier.
 func (w *Wallet) release(ctx context.Context, reserved []reservedCopy, verifier string) {
 	ctx = context.WithoutCancel(ctx)
-	w.credMu.Lock()
-	defer w.credMu.Unlock()
-	changed := map[string]StoredCredential{}
 	for _, r := range reserved {
 		if r.reused {
 			continue
 		}
-		ref := copyRef{r.id, r.keyID}
-		if w.reservations[ref] != r.seq {
-			continue
-		}
-		delete(w.reservations, ref)
-		c, ok := changed[r.id]
-		if !ok {
-			var err error
-			if c, err = w.deps.Credentials.Get(ctx, r.id); err != nil {
-				continue
+		// One credential's copy per reservation (reserve): one Update each.
+		_ = w.deps.Credentials.Update(ctx, r.id, func(c *StoredCredential) error {
+			if r.index >= len(c.Copies) {
+				return errUnchanged
 			}
-			c.Copies = slices.Clone(c.AllCopies())
-		}
-		if r.index < len(c.Copies) && c.Copies[r.index].HolderKeyID == r.keyID {
 			cp := &c.Copies[r.index]
-			cp.Presented = r.wasPresented
+			if cp.HolderKeyID != r.keyID || cp.Reservation != r.reservation {
+				return errUnchanged
+			}
+			cp.Presented, cp.Reservation = r.wasPresented, ""
 			if !r.wasShown {
 				cp.ShownTo = slices.DeleteFunc(slices.Clone(cp.ShownTo), func(h string) bool { return h == verifier })
 			}
-			changed[r.id] = c
-		}
-	}
-	for _, c := range changed {
-		_ = w.deps.Credentials.Put(ctx, c)
+			return nil
+		})
 	}
 }
 

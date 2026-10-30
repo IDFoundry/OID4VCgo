@@ -31,6 +31,11 @@ var (
 	// the Authorization Server no longer accepts it. Receive it again
 	// from a new Credential Offer.
 	ErrReissueRequired = errors.New("walletflow: the credential can't be refreshed: receive it again")
+	// ErrRefreshInProgress is wrapped by Wallet.RefreshCredential when
+	// another Wallet sharing the GrantStore — another process — is
+	// redeeming the credential's refresh grant: a refresh token is never
+	// redeemed twice at once. Try again once that refresh is done.
+	ErrRefreshInProgress = errors.New("walletflow: another wallet is refreshing with this refresh grant")
 	// ErrDeliveryUnknown is wrapped by Presentation.Respond when sending
 	// the response failed in a way that leaves it unknown whether the
 	// Verifier received it — the connection failed or timed out, or the

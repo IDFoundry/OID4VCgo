@@ -14,9 +14,17 @@
 // AuthorizationStore and a GrantStore, so deferred credentials, an
 // authorization in progress and refresh tokens survive a restart
 // (Wallet.Deferred, Wallet.ResumeIssuance, Wallet.RefreshCredential).
-// walletflow/storetest holds contract tests for an app's own stores; one
-// set of stores backs one Wallet, which serializes its own
-// read-modify-write of them.
+// walletflow/storetest holds contract tests for an app's own stores.
+// Several Wallets may share one set of stores — an app and its
+// extension, or a server's replicas, each in its own process: every
+// read-modify-write of a stored record is one atomic store operation
+// (AuthorizationStore.ConsumeAuthorization, CredentialStore.Update,
+// GrantStore.UpdateGrant), so no two of them complete one
+// authorization, present one copy as unused, or redeem one refresh token
+// at once (ErrRefreshInProgress). What a Wallet knows only in memory —
+// the keys and grants its open issuances hold — isn't shared: sweep
+// keys (KeysInUse) only while no Wallet sharing the stores has an
+// issuance or refresh under way.
 // At production assurance, receiving credentials needs a KeyStore
 // declaring durable custody, and the authorization code grant a Durable
 // AuthorizationStore. Config.RedirectURI is a private-use URI scheme in

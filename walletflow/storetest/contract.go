@@ -16,14 +16,22 @@
 // given a cancelled context, either completes the call or fails it
 // with the context's error and no change.
 //
+// It checks the atomic operations walletflow's read-modify-write rests
+// on, which make one store safe to share between Wallets in several
+// processes — an app and its extension, a server's replicas: of
+// concurrent ConsumeAuthorization calls for one authorization exactly
+// one gets it; concurrent Update (UpdateGrant) calls of one record lose
+// none of their changes, and racing ones claiming what a record gives
+// out once — a credential's unused copy, a grant's one redemption —
+// never give one thing to two; an aborted update stores nothing. The
+// TestSharedXContract functions run those checks with every goroutine on
+// its own handle on one storage, as separate processes have; run them
+// too where a store can open more than one (a database, a directory).
+//
 // What it doesn't check: that a store is durable (Durable, or
 // keys.KeyCustodyAssurance), only that it says so consistently; and
-// any atomicity beyond a single call. walletflow needs none: it
-// serializes its own read-modify-write sequences — consuming an
-// authorization (Get then Delete), reserving a credential's copy (Get
-// then Put), refreshing with a grant — with locks inside the Wallet.
-// Those locks are per Wallet, so one store must back one Wallet in one
-// process.
+// that its handles in separate processes exclude each other, which a
+// test in one process can only approach with separate handles.
 //
 // Times are compared with time.Time.Equal, to millisecond precision:
 // walletflow writes UTC times, and a store may return them in another
@@ -68,6 +76,16 @@ type recordStore[T any] struct {
 	del  func(context.Context, string) error
 	// durable is nil for a store that doesn't declare it.
 	durable func() bool
+	// update is nil for a store with no atomic update.
+	update func(context.Context, string, func(*T) error) error
+	// consume is nil for a store with no atomic consume.
+	consume func(context.Context, string) (T, error)
+}
+
+// sameHandle opens s each time: for a factory giving one handle on each
+// storage.
+func sameHandle[T any](s recordStore[T]) func() recordStore[T] {
+	return func() recordStore[T] { return s }
 }
 
 // recordKind is a record type, as the contract builds and identifies

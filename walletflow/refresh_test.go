@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -137,22 +138,19 @@ func TestRefreshCredential_ReissueRequired(t *testing.T) {
 	})
 }
 
-// deletingStore deletes the credential victim the second time it's read,
+// deletingStore deletes the credential victim just before it's updated,
 // as the holder deleting it while it's refreshed: the refresh reads it
-// when it starts, then again to replace it.
+// when it starts, then updates it to replace it.
 type deletingStore struct {
 	*walletflow.MemoryCredentialStore
 	victim string
-	reads  int
 }
 
-func (s *deletingStore) Get(ctx context.Context, id string) (walletflow.StoredCredential, error) {
+func (s *deletingStore) Update(ctx context.Context, id string, fn func(*walletflow.StoredCredential) error) error {
 	if id == s.victim {
-		if s.reads++; s.reads == 2 {
-			_ = s.Delete(ctx, id)
-		}
+		_ = s.Delete(ctx, id)
 	}
-	return s.MemoryCredentialStore.Get(ctx, id)
+	return s.MemoryCredentialStore.Update(ctx, id, fn)
 }
 
 // A credential deleted while it's refreshed stays deleted: the new
@@ -578,5 +576,66 @@ func TestKeysInUse_RevokesAnOrphanedGrant(t *testing.T) {
 	}
 	if g, _ := grants.ListGrants(ctx); len(g) != 0 || f.env.Revocations() != 1 {
 		t.Errorf("after the sweep: %d grants, %d revocations; want none, 1", len(g), f.env.Revocations())
+	}
+}
+
+// Two Wallets sharing their stores — two processes — never redeem one
+// refresh token at once: while one has the grant claimed, the other's
+// refresh is ErrRefreshInProgress and sends nothing; once the claim
+// lapses, it refreshes. Racing refreshes each succeed or find the grant
+// claimed, and the grant survives them all.
+func TestRefreshCredential_AnotherWalletRedeeming(t *testing.T) {
+	f := newFixture(t, walletflowtest.Options{BatchSize: 1})
+	grants := walletflow.NewMemoryGrantStore()
+	w := f.newRefreshingWallet(t, nil, grants)
+	other := f.newRefreshingWallet(t, nil, grants)
+	ctx := context.Background()
+	c := receive(t, f, w, walletflowtest.SDJWTConfigurationID)[0]
+	claim := func(until time.Time) {
+		t.Helper()
+		if err := grants.UpdateGrant(ctx, c.GrantID, func(g *walletflow.RefreshGrant) error {
+			g.Redemption, g.RedemptionExpiresAt = "another wallet's", until
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	before, _ := grants.GetGrant(ctx, c.GrantID)
+	claim(time.Now().Add(time.Minute))
+	if _, _, err := other.RefreshCredential(ctx, c.ID); !errors.Is(err, walletflow.ErrRefreshInProgress) {
+		t.Fatalf("RefreshCredential while another wallet redeems = %v, want ErrRefreshInProgress", err)
+	}
+	if g, _ := grants.GetGrant(ctx, c.GrantID); g.RefreshToken.Reveal() != before.RefreshToken.Reveal() || g.Redemption != "another wallet's" {
+		t.Fatal("a refresh that found the grant claimed changed it")
+	}
+	claim(time.Now().Add(-time.Second))
+	if _, _, err := other.RefreshCredential(ctx, c.ID); err != nil {
+		t.Fatalf("RefreshCredential once the claim lapsed = %v", err)
+	}
+	if g, _ := grants.GetGrant(ctx, c.GrantID); g.Redemption != "" || !g.RedemptionExpiresAt.IsZero() {
+		t.Errorf("after a refresh the grant is still claimed: %q until %v", g.Redemption, g.RedemptionExpiresAt)
+	}
+
+	errs := make(chan error, 6)
+	var wg sync.WaitGroup
+	for i := range cap(errs) {
+		wg.Go(func() {
+			by := w
+			if i%2 == 1 {
+				by = other
+			}
+			_, _, err := by.RefreshCredential(ctx, c.ID)
+			errs <- err
+		})
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil && !errors.Is(err, walletflow.ErrRefreshInProgress) {
+			t.Errorf("racing RefreshCredential = %v; want success or ErrRefreshInProgress", err)
+		}
+	}
+	if _, _, err := w.RefreshCredential(ctx, c.ID); err != nil {
+		t.Errorf("RefreshCredential after the race = %v: the grant should still work", err)
 	}
 }

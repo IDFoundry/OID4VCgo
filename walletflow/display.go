@@ -5,6 +5,7 @@ import (
 	"crypto"
 	"crypto/x509"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
@@ -242,17 +243,17 @@ func (w *Wallet) CheckStatus(ctx context.Context, id string) (StoredCredential, 
 	// Recorded on the credential as it is now: a presentation or a
 	// refresh may have changed it meanwhile. A refreshed one references
 	// another status list entry, which this didn't check.
-	w.credMu.Lock()
-	defer w.credMu.Unlock()
-	cur, err := w.deps.Credentials.Get(ctx, id)
-	if err != nil {
-		return StoredCredential{}, fmt.Errorf("walletflow: credential: %w", err)
-	}
-	if !slices.Equal(statusRefs(cur), statusRefs(c)) || uncheckedStatus(cur, now) != listed {
-		return cur, nil
-	}
-	cur.Status = CredentialStatus{Value: value, CheckedAt: now.UTC()}
-	if err := w.deps.Credentials.Put(ctx, cur); err != nil {
+	var cur StoredCredential
+	err = w.deps.Credentials.Update(ctx, id, func(u *StoredCredential) error {
+		if !slices.Equal(statusRefs(*u), statusRefs(c)) || uncheckedStatus(*u, now) != listed {
+			cur = *u
+			return errUnchanged
+		}
+		u.Status = CredentialStatus{Value: value, CheckedAt: now.UTC()}
+		cur = *u
+		return nil
+	})
+	if err != nil && !errors.Is(err, errUnchanged) {
 		return StoredCredential{}, fmt.Errorf("walletflow: store credential %q's status: %w", id, err)
 	}
 	return cur, nil
