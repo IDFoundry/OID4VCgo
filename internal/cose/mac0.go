@@ -101,20 +101,12 @@ func VerifyMACMax(key []byte, mac0, detachedPayload, externalAAD []byte, maxByte
 		return Headers{}, Headers{}, errors.New("cose: COSE_Mac0 has an embedded payload, which this package never produces")
 	}
 
-	var protectedMap map[int]interface{}
-	if unmarshalErr := decMode.Unmarshal(raw.Protected, &protectedMap); unmarshalErr != nil {
-		return Headers{}, Headers{}, fmt.Errorf("cose: unmarshal protected headers: %w", unmarshalErr)
-	}
-	protected, err = headersFromMap(protectedMap)
+	protected, unprotected, err = decodeHeaders(raw.Protected, raw.Unprotected)
 	if err != nil {
 		return Headers{}, Headers{}, err
 	}
 	if protected.Alg != HMAC256 {
 		return Headers{}, Headers{}, fmt.Errorf("cose: protected alg %d does not match expected %d", protected.Alg, HMAC256)
-	}
-	unprotected, err = headersFromMap(raw.Unprotected)
-	if err != nil {
-		return Headers{}, Headers{}, err
 	}
 
 	toMAC, err := encMode.Marshal(macStructure{

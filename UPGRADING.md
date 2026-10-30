@@ -49,6 +49,23 @@ them.
   it holds bytes that aren't UTF-8 or a `\u` escape of an unpaired
   surrogate (RFC 8259 §8.1–§8.2, RFC 7493 §2.1), instead of reading
   either as U+FFFD.
+- **A COSE header label may be in only one bucket.** A COSE_Sign1 or
+  COSE_Mac0 (an mdoc's IssuerAuth, DeviceAuth, a CWT Status List
+  Token) naming one header label in both its protected and unprotected
+  headers is refused (RFC 9052 §3).
+
+### mdoc (`credential/mdoc`)
+
+- **`mdoc.Verify` refuses an MSO without `signed`, `validFrom` or
+  `validUntil`**, or whose `validUntil` isn't later than its
+  `validFrom` (ISO/IEC 18013-5 §9.1.2.4, §12.3.4). A missing timestamp
+  used to read as the zero time, which `validFrom` passed.
+- **`mdoc.Issue` refuses an IssuerAuth over 64 KiB**, the most
+  `mdoc.Verify` accepts, instead of issuing an mdoc no reader built on
+  this module would take. Each `Claims.Decoys` digest adds about 40
+  (SHA-256) to 72 (SHA-512) bytes, so a configuration near `MaxDecoys`
+  in more than one namespace, or with SHA-512, now fails at issuance:
+  lower the counts.
 
 ## v0.55.0 → v0.56.0
 

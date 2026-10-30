@@ -170,3 +170,17 @@ type ValidityInfo struct {
 	ValidUntil     time.Time  `cbor:"validUntil"`
 	ExpectedUpdate *time.Time `cbor:"expectedUpdate,omitempty"`
 }
+
+// check refuses a ValidityInfo without signed, validFrom or validUntil,
+// all three required (§9.1.2.4, §12.3.4), or whose validUntil isn't
+// later than its validFrom: a missing timestamp decodes as the zero
+// time, which would otherwise read as valid since year 1.
+func (v ValidityInfo) check() error {
+	if v.Signed.IsZero() || v.ValidFrom.IsZero() || v.ValidUntil.IsZero() {
+		return fmt.Errorf("mdoc: MSO validityInfo must have signed, validFrom and validUntil")
+	}
+	if !v.ValidUntil.After(v.ValidFrom) {
+		return fmt.Errorf("mdoc: MSO validUntil %s is not later than validFrom %s", v.ValidUntil, v.ValidFrom)
+	}
+	return nil
+}

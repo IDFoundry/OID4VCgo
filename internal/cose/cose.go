@@ -515,16 +515,27 @@ func stripSign1Tag(sign1 []byte, maxBytes int) ([]byte, error) {
 }
 
 func (raw rawSign1) headers() (protected, unprotected Headers, err error) {
+	return decodeHeaders(raw.Protected, raw.Unprotected)
+}
+
+// decodeHeaders decodes a message's protected bucket, a serialized
+// header map, and its unprotected one. A label in both buckets is
+// refused (RFC 9052 §3): which of its two values applies would be up to
+// the reader, and only one of them is integrity protected.
+func decodeHeaders(protectedBytes []byte, unprotectedMap map[int]interface{}) (protected, unprotected Headers, err error) {
 	var protectedMap map[int]interface{}
-	if err := decMode.Unmarshal(raw.Protected, &protectedMap); err != nil {
+	if err := decMode.Unmarshal(protectedBytes, &protectedMap); err != nil {
 		return Headers{}, Headers{}, fmt.Errorf("cose: unmarshal protected headers: %w", err)
 	}
-	protected, err = headersFromMap(protectedMap)
-	if err != nil {
+	for label := range unprotectedMap {
+		if _, ok := protectedMap[label]; ok {
+			return Headers{}, Headers{}, fmt.Errorf("cose: header label %d is in both the protected and unprotected buckets", label)
+		}
+	}
+	if protected, err = headersFromMap(protectedMap); err != nil {
 		return Headers{}, Headers{}, err
 	}
-	unprotected, err = headersFromMap(raw.Unprotected)
-	if err != nil {
+	if unprotected, err = headersFromMap(unprotectedMap); err != nil {
 		return Headers{}, Headers{}, err
 	}
 	return protected, unprotected, nil

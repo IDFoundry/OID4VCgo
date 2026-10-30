@@ -102,7 +102,8 @@ func TestIssue_DecoyDigestsAreRandom(t *testing.T) {
 
 // Issue refuses decoys it can't honor: for a namespace the claims
 // haven't, a count outside 0..MaxDecoys, or one that takes the
-// namespace's valueDigests past what this package decodes.
+// namespace's valueDigests past what this package decodes, or an
+// IssuerAuth past the size Verify accepts.
 func TestIssue_RejectsInvalidDecoys(t *testing.T) {
 	f := newFixture(t)
 	many := make(map[string]interface{}, MaxCBORContainerItems)
@@ -123,6 +124,16 @@ func TestIssue_RejectsInvalidDecoys(t *testing.T) {
 				c.NameSpaces = map[string]map[string]interface{}{"org.example.big": many}
 			},
 			want: "digests",
+		},
+		"past what Verify accepts": {
+			decoys: map[string]int{decoyTestNamespace: MaxDecoys, "org.example.second": MaxDecoys},
+			mutate: func(c *Claims) {
+				c.NameSpaces = map[string]map[string]interface{}{
+					decoyTestNamespace:   c.NameSpaces[decoyTestNamespace],
+					"org.example.second": {"x": 1},
+				}
+			},
+			want: "Verify accepts",
 		},
 	} {
 		claims := f.claims
