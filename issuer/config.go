@@ -261,9 +261,24 @@ type Config struct {
 }
 
 // Clock supplies the current time — a plain function value satisfies
-// it (e.g. Clock(time.Now)), or a fixed-time fake in tests.
+// it (e.g. ClockFunc(time.Now)), or a fixed-time fake in tests.
+// Dependencies.Clock left nil is the system clock.
 type Clock interface {
 	Now() time.Time
+}
+
+// ClockAssurance is implemented by a Clock to declare, under
+// AssuranceProduction, that Now reads the system's current time: every
+// c_nonce, code, token, transaction and proof window this issuer
+// enforces is only as sound as that reading, and a fixed or offset
+// clock meant for tests would stop them from expiring. New refuses any
+// other Clock under AssuranceProduction. A nil Dependencies.Clock is the
+// system clock and needs no declaration; fapigo/server.SystemClock
+// declares it, as fapigo/server.ClockAssurance is the same method. A
+// clock of the application's own (one adding tracing, say) declares it
+// only if Now does return the current time.
+type ClockAssurance interface {
+	ReadsSystemTime() bool
 }
 
 // ClockFunc adapts a function to Clock.
@@ -271,6 +286,20 @@ type ClockFunc func() time.Time
 
 // Now implements Clock.
 func (f ClockFunc) Now() time.Time { return f() }
+
+// systemClock is the Clock a nil Dependencies.Clock means.
+type systemClock struct{}
+
+func (systemClock) Now() time.Time { return time.Now() }
+
+// ReadsSystemTime implements ClockAssurance.
+func (systemClock) ReadsSystemTime() bool { return true }
+
+// readsSystemTime reports whether clock declares ClockAssurance.
+func readsSystemTime(clock Clock) bool {
+	declared, ok := clock.(ClockAssurance)
+	return ok && declared.ReadsSystemTime()
+}
 
 // SDJWTSigner configures how this issuer signs
 // credential/sdjwtvc.CredentialFormat ("dc+sd-jwt") credentials.
@@ -558,7 +587,10 @@ type Dependencies struct {
 	// DPoP nonce.
 	CredentialDPoPNonces CredentialDPoPNonceIssuer
 
-	// Clock supplies the current time.
+	// Clock supplies the current time. nil is the system clock, the
+	// only one AssuranceProduction takes besides a Clock declaring
+	// ClockAssurance: a fixed or offset test clock left in production
+	// would stop every lifetime this issuer enforces from running.
 	Clock Clock
 
 	// Random is the source of cryptographically secure randomness for
@@ -731,7 +763,7 @@ func New(cfg Config, deps Dependencies) (*Issuer, error) {
 		return nil, fmt.Errorf("issuer: config: limits.dpop_nonce_lifetime must be positive when dependencies.dpop_nonces is set")
 	}
 	if deps.Clock == nil {
-		return nil, fmt.Errorf("issuer: dependencies: clock is required")
+		deps.Clock = systemClock{}
 	}
 	if deps.Random == nil {
 		return nil, fmt.Errorf("issuer: dependencies: random is required")

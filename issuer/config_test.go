@@ -104,7 +104,6 @@ func validDependencies(t testing.TB) issuer.Dependencies {
 	t.Helper()
 	return issuer.Dependencies{
 		Nonces:               newFakeNonceStore(),
-		Clock:                issuer.ClockFunc(time.Now),
 		Random:               rand.Reader,
 		SDJWTSigner:          testSDJWTSigner(t),
 		CredentialOffers:     newFakeCredentialOfferStore(),
@@ -322,7 +321,6 @@ func TestNewRejectsMissingDependencies(t *testing.T) {
 	cfg := validConfig(t)
 	cases := map[string]func(*issuer.Dependencies){
 		"nil nonces (nonce endpoint configured)": func(d *issuer.Dependencies) { d.Nonces = nil },
-		"nil clock":                              func(d *issuer.Dependencies) { d.Clock = nil },
 		"nil random":                             func(d *issuer.Dependencies) { d.Random = nil },
 	}
 	for name, mutate := range cases {

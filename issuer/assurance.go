@@ -75,7 +75,8 @@ const (
 	//
 	// Also requires Dependencies.Audit to be configured — the same
 	// requirement FAPIgo's own server.AssuranceProduction places on
-	// server.Dependencies.Audit.
+	// server.Dependencies.Audit — and Dependencies.Clock to be nil, the
+	// system clock, or a Clock declaring ClockAssurance.
 	AssuranceProduction
 )
 
@@ -195,6 +196,9 @@ func checkProductionAssurance(cfg Config, deps Dependencies, declinedDPoPNonces 
 	// source makes them guessable.
 	if deps.Random != rand.Reader {
 		return fmt.Errorf("dependencies.random must be crypto/rand.Reader under AssuranceProduction")
+	}
+	if !readsSystemTime(deps.Clock) {
+		return fmt.Errorf("dependencies.clock must be nil, the system clock, or declare issuer.ClockAssurance under AssuranceProduction")
 	}
 	if err := checkProductionHTTPS(cfg); err != nil {
 		return err

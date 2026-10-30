@@ -92,6 +92,40 @@ func TestNewProductionCapsDPoPProofAge(t *testing.T) {
 	}
 }
 
+// declaredClock is a Clock declaring issuer.ClockAssurance, as
+// fapigo/server.SystemClock does.
+type declaredClock struct{ reads bool }
+
+func (declaredClock) Now() time.Time          { return time.Now() }
+func (c declaredClock) ReadsSystemTime() bool { return c.reads }
+
+// TestNewProductionRefusesCustomClock: a nil Clock is the system clock;
+// a production issuer takes no other, unless it declares
+// issuer.ClockAssurance, so a fixed test clock can't ship. Development
+// assurance takes any clock.
+func TestNewProductionRefusesCustomClock(t *testing.T) {
+	cfg, deps := productionIssuer(t)
+	for name, clock := range map[string]issuer.Clock{"nil": nil, "declared": declaredClock{reads: true}} {
+		deps.Clock = clock
+		if _, err := issuer.New(cfg, deps); err != nil {
+			t.Errorf("New with a %s clock: %v", name, err)
+		}
+	}
+	// Offset by a minute, so the signer's certificate is still valid.
+	offset := issuer.ClockFunc(func() time.Time { return time.Now().Add(time.Minute) })
+	for name, clock := range map[string]issuer.Clock{"offset": offset, "time.Now": issuer.ClockFunc(time.Now), "declining": declaredClock{reads: false}} {
+		deps.Clock = clock
+		if _, err := issuer.New(cfg, deps); err == nil || !strings.Contains(err.Error(), "dependencies.clock") {
+			t.Errorf("New with a %s clock = %v, want it refused", name, err)
+		}
+	}
+	cfg.Assurance = issuer.AssuranceDevelopment
+	deps.Clock = offset
+	if _, err := issuer.New(cfg, deps); err != nil {
+		t.Errorf("New under AssuranceDevelopment with an offset clock: %v", err)
+	}
+}
+
 // TestNewProductionNeedsNoDPoPReplayUnderVerifiedPreAuthorizedCode:
 // under VerifiedPreAuthorizedCode the Authorization Server verifies the
 // DPoP proof and keeps its replay records, so a production issuer

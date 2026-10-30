@@ -262,6 +262,13 @@ them.
   Authorization Server verifies the DPoP proof there, so production no
   longer checks `Dependencies.DPoPReplay`'s `StoreAssurance`; leave it
   nil.
+- **The system clock.** `Dependencies.Clock` is optional: nil is the
+  system clock. Under production `issuer.New` refuses any other `Clock`
+  unless it declares `issuer.ClockAssurance` (`ReadsSystemTime() bool`,
+  the same method as `fapigo/server.ClockAssurance`, so
+  `server.SystemClock` declares it): a fixed or offset test clock would
+  stop every lifetime the issuer enforces. Replace
+  `Clock: issuer.ClockFunc(time.Now)` with nothing.
 
 ## v0.55.0 → v0.56.0
 
