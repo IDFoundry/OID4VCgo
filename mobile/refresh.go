@@ -34,6 +34,10 @@ type grantRecord struct {
 	ClientAuth string `json:"client_auth,omitempty"`
 	DPoPKeyID  string `json:"dpop_key_id,omitempty"`
 	TokenType  string `json:"token_type,omitempty"`
+	// Redemption and RedemptionExpiresAt: a refresh's claim on the grant
+	// while it redeems the token, absent when none holds it.
+	Redemption          string     `json:"redemption,omitempty"`
+	RedemptionExpiresAt *time.Time `json:"redemption_expires_at,omitempty"`
 }
 
 func grantStoreID(id string) string { return "grant-" + id }
@@ -44,18 +48,9 @@ type grantStore struct{ cs CredentialStore }
 var _ walletflow.GrantStore = grantStore{}
 
 func (s grantStore) PutGrant(_ context.Context, g walletflow.RefreshGrant) error {
-	// The refresh token is kept deliberately, beside the credentials it
-	// refreshes: redeeming it needs the wallet instance key, or the DPoP
-	// key it's bound to, which never leave the KeyStore — a Bearer
-	// grant's needs neither, which is why the record is under the
-	// platform's data protection.
-	raw, err := json.Marshal(grantRecord{ //nolint:gosec // G117: see above
-		Kind: grantKind, ID: g.ID, CredentialIssuer: g.CredentialIssuer, AuthorizationServer: g.AuthorizationServer,
-		ConfigurationID: g.ConfigurationID, RefreshToken: g.RefreshToken.Reveal(), InstanceKeyID: g.InstanceKeyID, CreatedAt: g.CreatedAt,
-		ClientAuth: string(g.ClientAuth), DPoPKeyID: g.DPoPKeyID, TokenType: g.TokenType,
-	})
+	raw, err := encodeGrant(g)
 	if err != nil {
-		return newError(CodeInternal, err)
+		return err
 	}
 	if err := s.cs.Put(grantStoreID(g.ID), raw); err != nil {
 		return newError(CodePlatform, fmt.Errorf("store refresh grant: %w", err))
@@ -68,6 +63,42 @@ func (s grantStore) GetGrant(_ context.Context, id string) (walletflow.RefreshGr
 	if err != nil {
 		return walletflow.RefreshGrant{}, newError(CodePlatform, fmt.Errorf("refresh grant: %w", err))
 	}
+	return decodeGrant(id, raw)
+}
+
+// UpdateGrant implements walletflow.GrantStore with the app's
+// CompareAndSwap, as credentialStore.Update does.
+func (s grantStore) UpdateGrant(_ context.Context, id string, fn func(*walletflow.RefreshGrant) error) error {
+	return updateRecord(s.cs, grantStoreID(id), id, recordCodec[walletflow.RefreshGrant]{
+		decode: decodeGrant, encode: encodeGrant, id: func(g walletflow.RefreshGrant) string { return g.ID },
+	}, fn)
+}
+
+// encodeGrant is g as the CredentialStore keeps it.
+func encodeGrant(g walletflow.RefreshGrant) ([]byte, error) {
+	r := grantRecord{
+		Kind: grantKind, ID: g.ID, CredentialIssuer: g.CredentialIssuer, AuthorizationServer: g.AuthorizationServer,
+		ConfigurationID: g.ConfigurationID, RefreshToken: g.RefreshToken.Reveal(), InstanceKeyID: g.InstanceKeyID, CreatedAt: g.CreatedAt,
+		ClientAuth: string(g.ClientAuth), DPoPKeyID: g.DPoPKeyID, TokenType: g.TokenType, Redemption: g.Redemption,
+	}
+	if !g.RedemptionExpiresAt.IsZero() {
+		r.RedemptionExpiresAt = &g.RedemptionExpiresAt
+	}
+	// The refresh token is kept deliberately, beside the credentials it
+	// refreshes: redeeming it needs the wallet instance key, or the DPoP
+	// key it's bound to, which never leave the KeyStore — a Bearer
+	// grant's needs neither, which is why the record is under the
+	// platform's data protection.
+	raw, err := json.Marshal(r) //nolint:gosec // G117: see above
+	if err != nil {
+		return nil, newError(CodeInternal, err)
+	}
+	return raw, nil
+}
+
+// decodeGrant is grant id from raw, its record in the CredentialStore:
+// walletflow.ErrNotFound when there's none.
+func decodeGrant(id string, raw []byte) (walletflow.RefreshGrant, error) {
 	if len(raw) == 0 {
 		return walletflow.RefreshGrant{}, fmt.Errorf("mobile: refresh grant: %w", walletflow.ErrNotFound)
 	}
@@ -111,11 +142,15 @@ func refreshGrant(raw []byte) (walletflow.RefreshGrant, error) {
 	if err := json.Unmarshal(raw, &r); err != nil || r.ID == "" || r.RefreshToken == "" {
 		return walletflow.RefreshGrant{}, errors.New("malformed")
 	}
-	return walletflow.RefreshGrant{
+	g := walletflow.RefreshGrant{
 		ID: r.ID, CredentialIssuer: r.CredentialIssuer, AuthorizationServer: r.AuthorizationServer,
 		ConfigurationID: r.ConfigurationID, RefreshToken: fapi.NewSecret(r.RefreshToken), InstanceKeyID: r.InstanceKeyID, CreatedAt: r.CreatedAt,
-		ClientAuth: walletflow.GrantAuth(r.ClientAuth), DPoPKeyID: r.DPoPKeyID, TokenType: r.TokenType,
-	}, nil
+		ClientAuth: walletflow.GrantAuth(r.ClientAuth), DPoPKeyID: r.DPoPKeyID, TokenType: r.TokenType, Redemption: r.Redemption,
+	}
+	if r.RedemptionExpiresAt != nil {
+		g.RedemptionExpiresAt = *r.RedemptionExpiresAt
+	}
+	return g, nil
 }
 
 // RefreshCredential replaces the copies of the credential credentialID

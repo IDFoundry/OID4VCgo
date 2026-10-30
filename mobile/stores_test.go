@@ -1,6 +1,7 @@
 package mobile
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -153,6 +154,17 @@ func (m memStore) Put(id string, r []byte) error { m.records[id] = r; return nil
 func (m memStore) Get(id string) ([]byte, error) { return m.records[id], nil }
 func (m memStore) Durable() bool                 { return false }
 func (m memStore) Delete(id string) error        { delete(m.records, id); return nil }
+func (m memStore) CompareAndSwap(id string, expected, record []byte) ([]byte, error) {
+	prev := m.records[id]
+	switch {
+	case !bytes.Equal(prev, expected):
+	case len(record) == 0:
+		delete(m.records, id)
+	default:
+		m.records[id] = record
+	}
+	return prev, nil
+}
 func (m memStore) List() ([]byte, error) {
 	all := make([]json.RawMessage, 0, len(m.records))
 	for _, r := range m.records {

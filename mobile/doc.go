@@ -19,7 +19,7 @@
 //   - A callback that can fail returns []byte or nothing besides its
 //     error: one returning a string isn't a throwing Swift method.
 //
-// The API, ABIVersion 12, is documented call by call in ABI.md. NewWallet
+// The API, ABIVersion 13, is documented call by call in ABI.md. NewWallet
 // takes a JSON configuration and the app's KeyStore, CredentialStore and
 // WalletProvider; StartIssuance and StartPresentation return the
 // walletflow sessions, step by step, each step taking an Operation.

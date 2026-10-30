@@ -115,6 +115,16 @@ func TestCleanText(t *testing.T) {
 	}
 }
 
+// A refresh another process is making with the grant is unavailable,
+// retryable, with its own detail.
+func TestClassify_RefreshInProgress(t *testing.T) {
+	var e *Error
+	if !errors.As(classify(fmt.Errorf("walletflow: refresh credential: %w", walletflow.ErrRefreshInProgress)), &e) ||
+		e.Code != CodeUnavailable || e.Detail != DetailRefreshInProgress {
+		t.Errorf("classify = %#v, want [unavailable:refresh_in_progress]", e)
+	}
+}
+
 func TestClassify_DeliveryUnknown(t *testing.T) {
 	err := fmt.Errorf("walletflow: respond: %w: %w", walletflow.ErrDeliveryUnknown, &url.Error{Op: "Post", URL: "https://verifier.example/r", Err: errors.New("reset")})
 	if code(classify(err)) != CodeDeliveryUnknown {

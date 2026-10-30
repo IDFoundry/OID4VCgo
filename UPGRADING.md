@@ -336,6 +336,29 @@ one Wallet. A store of your own implements the new methods:
   sweep keys only while no Wallet sharing the stores has an issuance or
   refresh under way.
 
+### Mobile (ABI 13; the Swift and Kotlin libraries)
+
+- **`ABIVersion` is 13.** The Swift and Kotlin libraries refuse a
+  framework built for another version: upgrade them together.
+- **A `CredentialStore` of your own implements `compareAndSwap`.**
+  Swift: `compareAndSwap(id:expected:record:) throws -> Data?`. Kotlin:
+  `compareAndSwap(id, expected, record): ByteArray?`. Gomobile:
+  `CompareAndSwap(id, expected, record) → []byte`. Replace `id`'s
+  record with `record`, or delete it when `record` is nil or empty,
+  only if the stored record is byte for byte `expected`. Return what
+  was stored before. This must be atomic across every process that
+  shares the store. Take the same lock in `put` and `delete`, and
+  compare the plaintext if the store encrypts. `FileCredentialStore`
+  on both platforms now does this with a file lock in its directory,
+  so an iOS app and its extension can share one through
+  `FileCredentialStore.inAppGroup`.
+- `RefreshCredential` can now fail with `unavailable` and the detail
+  `refresh_in_progress` while another process sharing the store is
+  refreshing with the same grant. It is retryable.
+- Records gain `reservation` on each copy, and `redemption` and
+  `redemption_expires_at` on refresh grants. The Go side writes them; a
+  store keeps them as it keeps the rest of a record.
+
 ## v0.55.0 → v0.56.0
 
 This release pins FAPIgo v0.65.1, which carries the breaking changes of

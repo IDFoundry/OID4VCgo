@@ -192,7 +192,7 @@ public enum OID4VC {
     /// isn't made on a framework of another — a stale build, or the Go
     /// side changed without these sources — rather than misreading its
     /// JSON. The Go tests keep it equal to the mobile package's.
-    public static let expectedABIVersion = 12
+    public static let expectedABIVersion = 13
 
     /// Whether the linked framework is the test build, carrying an
     /// in-process test issuer and Verifier (`-tags mobiletest`): an app
