@@ -79,24 +79,26 @@ type proximityReaderConfig struct {
 	// certificates pinned in the roots, as a Wallet's crl_issuers.
 	CRLIssuers string `json:"crl_issuers,omitempty"`
 	// NoRevocationCheck names the roles, of Revocation's, that decline
-	// checking revocation (certrevocation.NoCheck). With Production, each
-	// role must be named in one of the two; a role can't be in both.
-	// Without it, a role in neither checks no revocation.
+	// checking revocation (certrevocation.NoCheck). Outside Development,
+	// each role must be named in one of the two; a role can't be in
+	// both. In development, a role in neither checks no revocation.
 	NoRevocationCheck []string `json:"no_revocation_check,omitempty"`
 	// AnyIssuerForAnyType declares that every IACA in IssuerRoots may
 	// issue every document type the reader asks for
-	// (proximity.WithAnyIssuerForAnyType). With Production, IssuerRoots
-	// needs it: otherwise name each document type's IACAs in
+	// (proximity.WithAnyIssuerForAnyType). Outside Development,
+	// IssuerRoots needs it: otherwise name each document type's IACAs in
 	// IssuerRootsByDocType.
 	AnyIssuerForAnyType bool `json:"any_issuer_for_any_type,omitempty"`
-	// Production requires the decisions a production reader makes
-	// (proximity.WithAssurance with verifier.AssuranceProduction): each
-	// role's revocation, and which IACAs issue which document types.
-	// Without it, the reader runs at development assurance, any IACA in
-	// IssuerRoots may issue any document type, and a role left out of
-	// Revocation and NoRevocationCheck checks no revocation, as before
-	// the field was added. Set it in every app that ships.
-	Production bool `json:"production,omitempty"`
+	// Development relaxes what production requires, for a reader trying
+	// out a development issuer's documents. Never ship an app with it
+	// set. Without it, the reader runs at production assurance
+	// (proximity.WithAssurance with verifier.AssuranceProduction) and
+	// requires a production reader's decisions: each role's revocation,
+	// and which IACAs issue which document types. With it, the reader
+	// runs at development assurance, any IACA in IssuerRoots may issue
+	// any document type, and a role left out of Revocation and
+	// NoRevocationCheck checks no revocation.
+	Development bool `json:"development"`
 }
 
 // readerDocumentSignerPolicy is the document signer check cfg asks
@@ -117,11 +119,11 @@ func readerDocumentSignerPolicy(cfg proximityReaderConfig) (func(*x509.Certifica
 // {"issuer_roots", "issuer_roots_by_doctype", "reader_key_id",
 // "reader_chain", "max_clock_skew_seconds", "require_mdl_signer_eku",
 // "accept_mdl_signer_without_eku", "crls", "crl_issuers", "revocation",
-// "no_revocation_check", "any_issuer_for_any_type", "production"},
+// "no_revocation_check", "any_issuer_for_any_type", "development"},
 // refusing any other key, so a misspelled option isn't silently left
-// at its default. With "production", it refuses a configuration that
-// leaves a production reader's decisions open: the revocation of each
-// role, and which IACAs may issue which document types. keys holds the
+// at its default. Outside "development", it refuses a configuration
+// that leaves a production reader's decisions open: the revocation of
+// each role, and which IACAs may issue which document types. keys holds the
 // reader's key, reader_key_id; it may be nil for a reader that doesn't
 // sign.
 func NewProximityReader(configJSON string, keys KeyStore) (*ProximityReader, error) {
@@ -193,16 +195,16 @@ func NewProximityReader(configJSON string, keys KeyStore) (*ProximityReader, err
 }
 
 // configureDecisions sets the reader's assurance and its issuer and
-// status decisions, refusing, with production, issuer_roots without
+// status decisions, refusing, outside development, issuer_roots without
 // any_issuer_for_any_type. The documents' status is CheckStatus's, a
 // call of its own: HandleMessage, which runs no network request, checks
 // none (proximity.WithNoStatusCheck).
 func (r *ProximityReader) configureDecisions(cfg proximityReaderConfig) error {
 	assurance := verifier.AssuranceDevelopment
-	if cfg.Production {
+	if !cfg.Development {
 		assurance = verifier.AssuranceProduction
 		if cfg.IssuerRoots != "" && !cfg.AnyIssuerForAnyType {
-			return newError(CodeInvalidInput, errors.New("issuer_roots is set: with production, set any_issuer_for_any_type to accept its IACAs for every document type, or name each document type's IACAs in issuer_roots_by_doctype"))
+			return newError(CodeInvalidInput, errors.New("issuer_roots is set: outside development, set any_issuer_for_any_type to accept its IACAs for every document type, or name each document type's IACAs in issuer_roots_by_doctype"))
 		}
 	}
 	// issuer_roots_by_doctype is the decision of which IACAs issue which
@@ -227,16 +229,16 @@ func (r *ProximityReader) configureRevocation(cfg proximityReaderConfig) error {
 		return err
 	}
 	const roots = "issuer_roots or issuer_roots_by_doctype"
-	when := ""
-	if cfg.Production {
-		when = "with production"
+	when := "outside development"
+	if cfg.Development {
+		when = ""
 	}
 	issuer, err := revocationChoice(revocationIssuer, roots, true, named, declined, when, r.crls)
 	if err != nil {
 		return err
 	}
 	if issuer == nil {
-		// Without production, undecided: no check.
+		// In development, undecided: no check.
 		issuer = certrevocation.NoCheck{}
 	}
 	r.opts = append(r.opts, proximity.WithIssuerRevocation(issuer))

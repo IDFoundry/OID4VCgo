@@ -358,6 +358,19 @@ one Wallet. A store of your own implements the new methods:
 - Records gain `reservation` on each copy, and `redemption` and
   `redemption_expires_at` on refresh grants. The Go side writes them; a
   store keeps them as it keeps the rest of a record.
+- **Mobile readers are production by default (ABI 13).** A
+  `ProximityReader`'s configuration takes `no_revocation_check`,
+  `any_issuer_for_any_type` and `development`, as a Wallet's.
+  `NewProximityReader` refuses (`invalid_input`) a configuration that
+  leaves a role's revocation (`issuer`, `status`) out of both
+  `revocation` and `no_revocation_check`, or sets `issuer_roots`
+  without `any_issuer_for_any_type` (otherwise name each document
+  type's IACAs in `issuer_roots_by_doctype`), unless it sets
+  `"development": true`, which never ships. Make those decisions in a
+  reader configuration that didn't; a development or test reader can
+  set `development` instead. In Swift and Kotlin,
+  `ProximityReaderConfiguration` has `noRevocationCheck`,
+  `anyIssuerForAnyType` and `development` (default `false`).
 
 ### Proximity reader (`proximity`, `walletflow`, mobile)
 
@@ -406,14 +419,6 @@ one Wallet. A store of your own implements the new methods:
   say); it used to return a response the app could still send. The
   mobile code is `cancelled`. The Swift and Kotlin libraries also check
   that the app hasn't cancelled before they send a response.
-- **Mobile reader decisions (additive).** A `ProximityReader`'s
-  configuration takes `production`, `no_revocation_check` and
-  `any_issuer_for_any_type`. With `"production": true` it refuses a
-  configuration that leaves a role's revocation (`issuer`, `status`)
-  out of both `revocation` and `no_revocation_check`, or sets
-  `issuer_roots` without `any_issuer_for_any_type` (otherwise name each
-  document type's IACAs in `issuer_roots_by_doctype`). Without it, a
-  reader works as before. Set it in every app that ships.
 
 ### Verifier (`verifier`)
 

@@ -86,7 +86,7 @@ final class ProximityTests: XCTestCase {
         let readerConfig = try JSONDecoder().decode(ProximityReaderConfiguration.self, from: Data(readerSetup.readerConfig.utf8))
         let reader = signed
             ? try ProximityReader(configuration: readerConfig, keys: adapter)
-            : try ProximityReader(configuration: ProximityReaderConfiguration(issuerRoots: readerConfig.issuerRoots), keys: nil)
+            : try ProximityReader(configuration: ProximityReaderConfiguration(issuerRoots: readerConfig.issuerRoots, development: true), keys: nil)
         return Setup(env: env, wallet: wallet, reader: reader, mdocID: mdocID)
     }
 
@@ -112,6 +112,18 @@ final class ProximityTests: XCTestCase {
             if s.isFinal { XCTFail("no request: \(s)"); break }
         }
         throw WalletError(code: .internalError, message: "no request")
+    }
+
+    /// A reader is a production one unless `development` is set: a
+    /// configuration leaving its decisions open is `invalidInput`.
+    func testReaderIsProductionByDefault() throws {
+        let issuerRoots = try TestEnv().configuration.issuerRoots
+        XCTAssertThrowsError(try ProximityReader(configuration: ProximityReaderConfiguration(issuerRoots: issuerRoots), keys: nil)) {
+            XCTAssertEqual(($0 as? WalletError)?.code, .invalidInput)
+        }
+        XCTAssertNoThrow(try ProximityReader(configuration: ProximityReaderConfiguration(issuerRoots: issuerRoots, development: true), keys: nil))
+        XCTAssertNoThrow(try ProximityReader(configuration: ProximityReaderConfiguration(
+            issuerRoots: issuerRoots, noRevocationCheck: [.issuer, .status], anyIssuerForAnyType: true), keys: nil))
     }
 
     func testPresentAndVerify() async throws {

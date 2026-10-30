@@ -121,12 +121,13 @@ decide.
 A `ProximityReader` needs no `Wallet`: give it the IACAs whose mdocs it
 accepts, and, to sign its requests so holders see who is asking, a key
 in a `KeyStore` and its certificate chain, with the reader
-authentication extended key usage (`ProximityReaderConfiguration`). Set
-`production`, so the reader refuses a configuration that leaves a
-decision open: which IACAs issue which document types
-(`anyIssuerForAnyType`, or `issuerRootsByDocType`), and each role's
-revocation (`revocation` with `crls`, or `noRevocationCheck` to
-decline). `start` takes the holder's QR code and what to ask for.
+authentication extended key usage (`ProximityReaderConfiguration`). The
+reader is a production one: it refuses (`invalid_input`) a
+configuration that leaves a decision open: which IACAs issue which
+document types (`anyIssuerForAnyType`, or `issuerRootsByDocType`), and
+each role's revocation (`revocation` with `crls`, or
+`noRevocationCheck` to decline). `development` relaxes this, for trying
+out a development issuer's documents; never ship an app with it set. `start` takes the holder's QR code and what to ask for.
 
 ```kotlin
 /**
@@ -138,7 +139,7 @@ suspend fun readInPerson(context: Context, qrCode: String, issuerRoots: String, 
         ProximityReaderConfiguration(
             issuerRoots = issuerRoots, crls = crls,
             revocation = listOf(ProximityReaderConfiguration.RevocationRole.ISSUER, ProximityReaderConfiguration.RevocationRole.STATUS),
-            anyIssuerForAnyType = true, production = true,
+            anyIssuerForAnyType = true,
         ),
     )
     val session = reader.start(

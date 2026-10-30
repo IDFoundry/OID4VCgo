@@ -1019,9 +1019,15 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
     private val reader: ProximityReader? by lazy {
         val r = config?.reader ?: return@lazy null
         runCatching {
+            // A production reader's decisions: the demo's one IACA issues
+            // every type it reads, and the demo services publish no CRLs, so
+            // revocation is declined. A shipping reader checks it, with crls
+            // and revocation.
             ProximityReader(
                 ProximityReaderConfiguration(
                     issuerRoots = r.issuerRoots, readerKeyID = DemoReaderKeys.ID, readerChain = r.readerChain, maxClockSkewSeconds = 300,
+                    noRevocationCheck = listOf(ProximityReaderConfiguration.RevocationRole.ISSUER, ProximityReaderConfiguration.RevocationRole.STATUS),
+                    anyIssuerForAnyType = true,
                 ),
                 DemoReaderKeys(r),
             )

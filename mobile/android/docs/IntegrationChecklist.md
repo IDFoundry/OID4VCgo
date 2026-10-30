@@ -188,7 +188,7 @@ is a complete, working app on this library to compare against.
 - [ ] `ProximityReader(ProximityReaderConfiguration(issuerRoots = …))`,
   plus a reader key and chain with the reader-authentication EKU if
   holders should see who's asking.
-- [ ] `production = true`, with each role (`ISSUER`, `STATUS`) in
+- [ ] `development` not set, with each role (`ISSUER`, `STATUS`) in
   `revocation` (with `crls`, refreshed by `setCRLs`) or
   `noRevocationCheck`, and `anyIssuerForAnyType` or
   `issuerRootsByDocType` deciding which IACAs issue which document type.
@@ -210,7 +210,8 @@ is a complete, working app on this library to compare against.
 
 ## 7. Before shipping
 
-- [ ] [Going to production](GoingToProduction.md) is done.
+- [ ] [Going to production](GoingToProduction.md) is done, and no
+  `ProximityReaderConfiguration` sets `development`.
 - [ ] Interop beyond your own app: test your holder against at least
   one independent reader, and your reader against an independent holder.
   The library is tested against the Multipaz test app; a reader that
