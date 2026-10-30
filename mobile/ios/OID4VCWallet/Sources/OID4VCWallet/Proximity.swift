@@ -345,6 +345,11 @@ public final class ProximityPresentation: @unchecked Sendable {
             broadcast.update(.requestReceived(request)) { if case .responding = $0 { true } else { false } }
             throw error
         }
+        // Cancelled once Go's Respond had returned (cancelled before, it
+        // gives nothing to send): the response stays here.
+        if ending.withLock({ $0 }) != nil {
+            throw WalletError(code: .cancelled, message: "the session was cancelled")
+        }
         do {
             try await transport.send(answer.send)
         } catch let e as ProximityTransportError {
