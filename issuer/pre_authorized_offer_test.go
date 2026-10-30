@@ -125,4 +125,51 @@ func TestCreateCredentialOffer_ProductionRefusesPreAuthorizedGrant(t *testing.T)
 	if _, err := iss.CreateCredentialOffer(ctx, issuer.CreateCredentialOfferRequest{CredentialConfigurationIDs: []string{"IdentityCredential"}}); err != nil {
 		t.Errorf("CreateCredentialOffer without a pre-authorized grant: %v", err)
 	}
+	// IssuePreAuthorizedCode, for a code the caller made itself, is
+	// refused likewise.
+	err = iss.IssuePreAuthorizedCode(ctx, "caller-code", "482193", issuer.PreAuthorizedCodeRecord{ExpiresAt: time.Now().Add(time.Minute)})
+	if err == nil || !strings.Contains(err.Error(), "CreatePreAuthorizedOffer") {
+		t.Errorf("IssuePreAuthorizedCode under production: %v, want refused", err)
+	}
+}
+
+// The store holds neither a code nor its Transaction Code, only their
+// hashes: what it holds redeems nothing, and the code still redeems
+// with its PIN.
+func TestPreAuthorizedCodeStoreHoldsHashesOnly(t *testing.T) {
+	f := newVerifiedPreAuthorizedCodeFixture(t, nil)
+	result, err := f.iss.CreatePreAuthorizedOffer(context.Background(), issuer.CreatePreAuthorizedOfferRequest{
+		CredentialConfigurationIDs: []string{"IdentityCredential"}, Scopes: []string{"identity_credential"},
+		Subject: "holder-1", TxCode: "482193", Lifetime: time.Minute,
+	})
+	if err != nil {
+		t.Fatalf("CreatePreAuthorizedOffer: %v", err)
+	}
+	code := result.Offer.Grants.PreAuthorizedCode.PreAuthorizedCode
+
+	f.codes.mu.Lock()
+	var key string
+	for k, record := range f.codes.issued {
+		key = k
+		if strings.Contains(k, code) {
+			t.Errorf("store key %q holds the code", k)
+		}
+		if record.TxCodeHash == "" || strings.Contains(record.TxCodeHash, "482193") {
+			t.Errorf("TxCodeHash = %q, want a hash of the Transaction Code", record.TxCodeHash)
+		}
+	}
+	f.codes.mu.Unlock()
+	if key == "" {
+		t.Fatal("nothing stored")
+	}
+
+	if _, err := redeemVerified(f, key, "482193", nil); err == nil {
+		t.Error("the store's key redeemed the code")
+	}
+	if _, err := redeemVerified(f, code, "000000", nil); err == nil {
+		t.Error("a wrong Transaction Code redeemed the code")
+	}
+	if _, err := redeemVerified(f, code, "482193", nil); err != nil {
+		t.Errorf("redeem with the Transaction Code: %v", err)
+	}
 }

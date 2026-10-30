@@ -41,7 +41,7 @@ func (s *NotificationStore) Get(_ context.Context, notificationID string) (issue
 	defer s.mu.Unlock()
 	record, ok := s.records[notificationID]
 	if !ok {
-		return issuer.NotificationRecord{}, fmt.Errorf("storage: unknown notification_id")
+		return issuer.NotificationRecord{}, fmt.Errorf("storage: %w", issuer.ErrNotificationIDUnknown)
 	}
 	return record, nil
 }

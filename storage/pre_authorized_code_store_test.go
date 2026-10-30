@@ -16,7 +16,7 @@ func TestPreAuthorizedCodeStore_IssueThenConsume(t *testing.T) {
 	expires := time.Now().Add(time.Minute)
 
 	if err := s.Issue(ctx, "code-1", issuer.PreAuthorizedCodeRecord{
-		TxCode: "493536", Scopes: []string{"identity_credential"}, ExpiresAt: expires,
+		TxCodeHash: "493536", Scopes: []string{"identity_credential"}, ExpiresAt: expires,
 	}); err != nil {
 		t.Fatalf("Issue: %v", err)
 	}
@@ -25,8 +25,8 @@ func TestPreAuthorizedCodeStore_IssueThenConsume(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Consume: %v", err)
 	}
-	if record.TxCode != "493536" {
-		t.Errorf("TxCode = %q, want %q", record.TxCode, "493536")
+	if record.TxCodeHash != "493536" {
+		t.Errorf("TxCodeHash = %q, want %q", record.TxCodeHash, "493536")
 	}
 	if len(record.Scopes) != 1 || record.Scopes[0] != "identity_credential" {
 		t.Errorf("Scopes = %v", record.Scopes)
@@ -69,7 +69,7 @@ func TestPreAuthorizedCodeStore_WrongTxCodeDoesNotConsume(t *testing.T) {
 	s := storage.NewPreAuthorizedCodeStore()
 	ctx := context.Background()
 	if err := s.Issue(ctx, "code-1", issuer.PreAuthorizedCodeRecord{
-		TxCode: "493536", ExpiresAt: time.Now().Add(time.Minute),
+		TxCodeHash: "493536", ExpiresAt: time.Now().Add(time.Minute),
 	}); err != nil {
 		t.Fatalf("Issue: %v", err)
 	}
@@ -83,8 +83,8 @@ func TestPreAuthorizedCodeStore_WrongTxCodeDoesNotConsume(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Consume (correct pin, after a wrong guess): %v", err)
 	}
-	if record.TxCode != "493536" {
-		t.Errorf("TxCode = %q, want %q", record.TxCode, "493536")
+	if record.TxCodeHash != "493536" {
+		t.Errorf("TxCodeHash = %q, want %q", record.TxCodeHash, "493536")
 	}
 
 	// Now it really is consumed.

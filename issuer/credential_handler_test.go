@@ -137,7 +137,7 @@ func TestHandlers_RefuseInconsistentGrantSubjects(t *testing.T) {
 			if w := postCredentialRequest(t, h, sdjwtCredentialRequestBody(t, f.credentialEndpointFixture)); w.Code != http.StatusInternalServerError || run.prepared != nil {
 				t.Errorf("credential endpoint = %d, Prepare called: %v; want 500 without Prepare", w.Code, run.prepared != nil)
 			}
-			if _, err := f.nonces.Consume(context.Background(), issuer.NonceConsumption{Nonce: "test-nonce"}); err != nil {
+			if _, err := f.nonces.Consume(context.Background(), issuer.NonceConsumption{Owner: testIssuer, Nonce: "test-nonce"}); err != nil {
 				t.Errorf("the refused request consumed the nonce: %v", err)
 			}
 			tokens := &fakeTokens{grant: grant}

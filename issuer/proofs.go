@@ -569,12 +569,23 @@ func trustUndecided(err error) bool {
 }
 
 // consumeNonce consumes nonce via NonceStore and checks it hasn't
-// expired, translating both failure modes into the invalid_nonce error
-// code §8.3.1.2 defines.
+// expired, translating an unknown or used nonce (ErrNonceUnknown) and
+// an expired one into the invalid_nonce error code §8.3.1.2 defines,
+// as it does a nonce another Credential Issuer sharing the store issued
+// (NonceConsumption.Owner).
+// Any other store error is the store's, not the Wallet's: a plain
+// error, a 500.
 func (iss *Issuer) consumeNonce(ctx context.Context, nonce string) error {
-	record, err := iss.deps.Nonces.Consume(ctx, NonceConsumption{Nonce: nonce})
-	if err != nil {
+	record, err := iss.deps.Nonces.Consume(ctx, NonceConsumption{Nonce: nonce, Owner: iss.storeOwner()})
+	if errors.Is(err, ErrNonceUnknown) {
 		return newError(ErrorInvalidNonce, 400, "nonce is unknown or already used", err)
+	}
+	if err != nil {
+		return fmt.Errorf("issuer: consume c_nonce: %w", err)
+	}
+	if !iss.owns(record.Owner) {
+		// A store that ignored consumption.Owner, or dropped Owner.
+		return newError(ErrorInvalidNonce, 400, "nonce is unknown or already used", errors.New("the c_nonce isn't this Credential Issuer's"))
 	}
 	if iss.deps.Clock.Now().After(record.ExpiresAt) {
 		return newError(ErrorInvalidNonce, 400, "nonce has expired", nil)

@@ -30,20 +30,20 @@ func (s *NonceStore) Issue(_ context.Context, issuance issuer.NonceIssuance) err
 		pruneMap(s.issued, now, func(r issuer.NonceRecord) time.Time { return r.ExpiresAt })
 		s.prune.pruned(len(s.issued))
 	}
-	s.issued[issuance.Nonce] = issuer.NonceRecord{ExpiresAt: issuance.ExpiresAt}
+	s.issued[issuance.Nonce] = issuer.NonceRecord{Owner: issuance.Owner, ExpiresAt: issuance.ExpiresAt}
 	return nil
 }
 
-// Consume implements issuer.NonceStore. Deleting the map entry on
-// every call — whether or not it was present — is what makes this
-// single-use: a second Consume of the same nonce always finds nothing.
+// Consume implements issuer.NonceStore. Deleting the map entry it
+// returns is what makes this single-use: a second Consume of the same
+// nonce finds nothing. A nonce issued to another Owner is left in place.
 func (s *NonceStore) Consume(_ context.Context, consumption issuer.NonceConsumption) (issuer.NonceRecord, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	record, ok := s.issued[consumption.Nonce]
-	delete(s.issued, consumption.Nonce)
-	if !ok {
-		return issuer.NonceRecord{}, fmt.Errorf("storage: unknown or already-consumed nonce")
+	if !ok || record.Owner != consumption.Owner {
+		return issuer.NonceRecord{}, fmt.Errorf("storage: %w", issuer.ErrNonceUnknown)
 	}
+	delete(s.issued, consumption.Nonce)
 	return record, nil
 }

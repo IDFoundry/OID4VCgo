@@ -150,6 +150,56 @@ them.
   The deprecated functions check no revocation and apply
   `DefaultRegistrarLeafPolicy` when no policy is given.
 
+### Credential Issuer (`issuer`) stores
+
+- **Records name the Credential Issuer that created them.**
+  `PreAuthorizedCodeRecord`, `DeferredTransactionRecord`,
+  `NotificationRecord`, `NonceIssuance`, `NonceConsumption` and
+  `NonceRecord` gain `Owner`, set to `Config.Issuer`, and an `Issuer`
+  honours only its own records: Credential Issuers sharing a store, such
+  as the tenants of one deployment, no longer redeem each other's
+  pre-authorized codes, c_nonces, transaction_ids or notification_ids.
+  A custom store must persist `Owner` like any other field. Under
+  production a record without one is refused, and the issuer reads its
+  first pre-authorized code, deferred transaction and notification_id
+  back and refuses a store that dropped it. `NonceStore.Consume`
+  retires only a nonce issued with `NonceConsumption.Owner`, leaving
+  another Owner's in place (`issuer.ErrNonceUnknown`), and returns its
+  `Owner` in the record. A deferred transaction your own business
+  process creates in the store sets `Owner` to the `Config.Issuer` of
+  the issuer that will serve it. Records saved before the upgrade have
+  no `Owner`: under production, let pending c_nonces, deferred
+  transactions and notification_ids expire, or set their `Owner`,
+  before upgrading. Pre-authorized codes are also keyed by the `Owner`
+  (below).
+- **Store errors: unknown versus unavailable.** Each issuer store now
+  has a sentinel for a record it doesn't hold:
+  `issuer.ErrNonceUnknown` (`NonceStore.Consume`),
+  `issuer.ErrPreAuthorizedCodeUnknown` (`PreAuthorizedCodeStore.Consume`),
+  `issuer.ErrDeferredTransactionUnknown` (`DeferredTransactionStore`'s
+  `Get`, `Invalidate` and `Update`) and `issuer.ErrNotificationIDUnknown`
+  (`NotificationStore.Get`). A custom store returns an error wrapping it
+  for a record it never had, or one already consumed or invalidated
+  (`sql.ErrNoRows`, say). Any other error, including the context's,
+  now fails the request with a 500 instead of `invalid_nonce`,
+  `invalid_grant`, `invalid_transaction_id` or
+  `invalid_notification_id`, so an outage no longer tells a holder their
+  PIN is wrong. Run the `issuertest` contracts against your stores.
+- **Pre-authorized codes and Transaction Codes are stored as hashes.**
+  `PreAuthorizedCodeStore` is keyed by a SHA-256 hash of the code and
+  the issuing Credential Issuer, and
+  `PreAuthorizedCodeRecord.TxCode` is now `TxCodeHash`, an HMAC of the
+  Transaction Code keyed by the code; `Consume` compares the hash it's
+  given with it (in constant time). A store keeps both as opaque
+  strings. Codes outstanding at the upgrade, stored under the code
+  itself, stop working: let them expire, or issue new offers. A caller
+  that called `PreAuthorizedCodeStore.Issue` itself calls
+  `Issuer.IssuePreAuthorizedCode(ctx, code, txCode, record)` instead,
+  which is refused under production, as `CreateCredentialOffer` with a
+  pre-authorized grant is: use `CreatePreAuthorizedOffer` there. An
+  offer made `ByReference` still holds its code in the
+  `CredentialOfferStore` until it expires.
+
 ## v0.55.0 → v0.56.0
 
 This release pins FAPIgo v0.65.1, which carries the breaking changes of

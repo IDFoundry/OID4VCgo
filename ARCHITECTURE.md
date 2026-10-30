@@ -1549,6 +1549,16 @@ changes whether *every* bullet below is `(done)`.
   its own `expiresAt`), the simplest reading of RFC 9449 §11.1's literal
   "MUST reject any DPoP proof in which the jti has been seen before",
   and consistent with this package's own no-garbage-collection caveat.
+  The issuer store contracts are shaped for a durable store, such as a
+  SQL table per store: every record carries its `Owner` (the
+  `Config.Issuer` that saved it, so Credential Issuers sharing a backend
+  each honour only their own records, as the verifier's
+  `Transaction.Owner` does), pre-authorized codes and Transaction Codes
+  arrive only as hashes (the key and `TxCodeHash`), consumption is one
+  explicit atomic call, and a per-store sentinel
+  (`issuer.ErrNonceUnknown` and its siblings) tells an unknown record,
+  the Wallet's error, from a store that couldn't answer, a 500.
+  `issuer/issuertest` checks each of these.
 - **`registration`** (done) — this library's verifier registration
   attestation: a JWT a registrar issues for a relying party (who it is,
   why it asks, which claims it may request), carried in a request's

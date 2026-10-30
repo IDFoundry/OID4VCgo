@@ -33,7 +33,7 @@ func TestRequestNonce(t *testing.T) {
 	}
 
 	// Consuming the returned nonce must succeed exactly once.
-	record, err := nonces.Consume(context.Background(), issuer.NonceConsumption{Nonce: result.CNonce})
+	record, err := nonces.Consume(context.Background(), issuer.NonceConsumption{Owner: testIssuer, Nonce: result.CNonce})
 	if err != nil {
 		t.Fatalf("Consume: %v", err)
 	}
@@ -41,7 +41,10 @@ func TestRequestNonce(t *testing.T) {
 	if !record.ExpiresAt.Equal(wantExpiry) {
 		t.Errorf("ExpiresAt = %v, want %v", record.ExpiresAt, wantExpiry)
 	}
-	if _, err := nonces.Consume(context.Background(), issuer.NonceConsumption{Nonce: result.CNonce}); err == nil {
+	if record.Owner != testIssuer {
+		t.Errorf("Owner = %q, want the Credential Issuer, %q", record.Owner, testIssuer)
+	}
+	if _, err := nonces.Consume(context.Background(), issuer.NonceConsumption{Owner: testIssuer, Nonce: result.CNonce}); err == nil {
 		t.Errorf("Consume accepted the same nonce twice")
 	}
 }

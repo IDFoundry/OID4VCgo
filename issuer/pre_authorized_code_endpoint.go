@@ -35,8 +35,9 @@ type ExchangePreAuthorizedCodeRequest struct {
 	PreAuthorizedCode string
 
 	// TxCode is the End-User's own Transaction Code value — REQUIRED
-	// exactly when the matching PreAuthorizedCodeRecord's own TxCode is
-	// non-empty (§6.1's own MUST); ignored otherwise.
+	// exactly when the code was issued with one (its
+	// PreAuthorizedCodeRecord has a TxCodeHash; §6.1's own MUST), and
+	// refused otherwise.
 	TxCode string
 
 	// DPoPProof is REQUIRED: the presented "DPoP" HTTP header value.
@@ -278,7 +279,8 @@ type VerifiedTokenRequest struct {
 // Dependencies.DPoPReplay for jti-replay detection), and — only once
 // that succeeds — redeems req.PreAuthorizedCode via
 // Dependencies.PreAuthorizedCodes (§6.1's own single-use nature),
-// checking its record's own TxCode (if any) matches req.TxCode exactly,
+// checking the Transaction Code it was issued with (if any) matches
+// req.TxCode exactly, by its hash (PreAuthorizedCodeRecord.TxCodeHash),
 // and that the record hasn't expired and grants any requested
 // authorization_details, before the code is consumed, and mints an access token via
 // Dependencies.AccessTokens bound to the proof's own key by its RFC
@@ -542,15 +544,27 @@ func (iss *Issuer) preAuthorizedBinding(ctx context.Context, req ExchangePreAuth
 // consumePreAuthorizedCode redeems req's pre-authorized_code against
 // PreAuthorizedCodes, with accept checking its record before it's
 // consumed, turning a wrong tx_code, too many wrong tx_code attempts,
-// or an unknown/used code into the right Token Error — split out of
+// or an unknown/used code (ErrPreAuthorizedCodeUnknown) into the right
+// Token Error, and any other store error into a plain one (a 500) —
+// split out of
 // exchangePreAuthorizedCode purely to keep its cognitive complexity
-// manageable. accept's own error is returned as it is. A store that
+// manageable. The code is looked up under this Issuer's own key, and a
+// record another Credential Issuer owns, or one with no Owner under
+// AssuranceProduction, is refused before accept, as an unknown code.
+// accept's own error is returned as it is. A store that
 // reports success without accept having accepted the record is refused
 // too, though the code is then spent: none of accept's checks ran.
 func (iss *Issuer) consumePreAuthorizedCode(ctx context.Context, req ExchangePreAuthorizedCodeRequest, accept func(PreAuthorizedCodeRecord) error) (PreAuthorizedCodeRecord, error) {
 	var refused error
 	accepted := false
-	record, wrongAttempts, err := iss.deps.PreAuthorizedCodes.Consume(ctx, req.PreAuthorizedCode, req.TxCode, iss.cfg.Limits.MaxTxCodeAttempts, func(r PreAuthorizedCodeRecord) error {
+	key := preAuthorizedCodeKey(iss.storeOwner(), req.PreAuthorizedCode)
+	record, wrongAttempts, err := iss.deps.PreAuthorizedCodes.Consume(ctx, key, txCodeHash(req.PreAuthorizedCode, req.TxCode), iss.cfg.Limits.MaxTxCodeAttempts, func(r PreAuthorizedCodeRecord) error {
+		if !iss.owns(r.Owner) {
+			// The key is bound to this Issuer, so only a store that
+			// changed or dropped Owner gets here.
+			refused = newError(ErrorInvalidGrant, 400, "pre-authorized_code is unknown or already used", errors.New("the code's record isn't this Credential Issuer's"))
+			return refused
+		}
 		refused = accept(r)
 		accepted = refused == nil
 		return refused
@@ -576,7 +590,7 @@ func (iss *Issuer) consumePreAuthorizedCode(ctx context.Context, req ExchangePre
 				// Too many wrong guesses against this one code — close
 				// the guessing window rather than leaving it retryable
 				// forever (see ExchangePreAuthorizedCode's own doc comment).
-				if invalidateErr := iss.deps.PreAuthorizedCodes.Invalidate(ctx, req.PreAuthorizedCode); invalidateErr != nil {
+				if invalidateErr := iss.deps.PreAuthorizedCodes.Invalidate(ctx, key); invalidateErr != nil {
 					return PreAuthorizedCodeRecord{}, fmt.Errorf("issuer: exchange pre-authorized code: invalidate after too many tx_code attempts: %w", invalidateErr)
 				}
 				return PreAuthorizedCodeRecord{}, newError(ErrorInvalidGrant, 400, "too many incorrect tx_code attempts; pre-authorized_code is no longer valid", err)
@@ -591,7 +605,10 @@ func (iss *Issuer) consumePreAuthorizedCode(ctx context.Context, req ExchangePre
 			}
 			return PreAuthorizedCodeRecord{}, newError(ErrorInvalidGrant, 400, "tx_code does not match", err)
 		}
-		return PreAuthorizedCodeRecord{}, newError(ErrorInvalidGrant, 400, "pre-authorized_code is unknown or already used", err)
+		if errors.Is(err, ErrPreAuthorizedCodeUnknown) {
+			return PreAuthorizedCodeRecord{}, newError(ErrorInvalidGrant, 400, "pre-authorized_code is unknown or already used", err)
+		}
+		return PreAuthorizedCodeRecord{}, fmt.Errorf("issuer: exchange pre-authorized code: dependencies.pre_authorized_codes: %w", err)
 	}
 	return record, nil
 }

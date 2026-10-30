@@ -82,9 +82,9 @@ func TestRedeemPreAuthorizedCode(t *testing.T) {
 	})
 	ctx := context.Background()
 	verified := &issuer.VerifiedTokenRequest{ClientID: "wallet-1", DPoPThumbprint: "jkt-1"}
-	f.issue(t, "code-1", issuer.PreAuthorizedCodeRecord{
+	f.issueWithTxCode(t, "code-1", "1234", issuer.PreAuthorizedCodeRecord{
 		Subject: "holder-1", Scopes: []string{"identity_credential"}, CredentialConfigurationIDs: []string{"IdentityCredential"},
-		TxCode: "1234", ExpiresAt: f.now.Add(time.Minute),
+		ExpiresAt: f.now.Add(time.Minute),
 	})
 
 	if _, err := f.iss.RedeemPreAuthorizedCode(ctx, issuer.ExchangePreAuthorizedCodeRequest{PreAuthorizedCode: "code-1", TxCode: "0000", Verified: verified}); err == nil {

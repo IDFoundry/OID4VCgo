@@ -3,6 +3,7 @@ package issuer_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -13,14 +14,14 @@ import (
 // fakeNonceStore is an in-memory issuer.NonceStore for tests.
 type fakeNonceStore struct {
 	mu         sync.Mutex
-	issued     map[string]time.Time
+	issued     map[string]issuer.NonceRecord
 	consumed   map[string]bool
 	issueErr   error
 	consumeErr error
 }
 
 func newFakeNonceStore() *fakeNonceStore {
-	return &fakeNonceStore{issued: make(map[string]time.Time), consumed: make(map[string]bool)}
+	return &fakeNonceStore{issued: make(map[string]issuer.NonceRecord), consumed: make(map[string]bool)}
 }
 
 func (f *fakeNonceStore) Issue(_ context.Context, in issuer.NonceIssuance) error {
@@ -29,7 +30,7 @@ func (f *fakeNonceStore) Issue(_ context.Context, in issuer.NonceIssuance) error
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.issued[in.Nonce] = in.ExpiresAt
+	f.issued[in.Nonce] = issuer.NonceRecord{Owner: in.Owner, ExpiresAt: in.ExpiresAt}
 	return nil
 }
 
@@ -39,12 +40,12 @@ func (f *fakeNonceStore) Consume(_ context.Context, c issuer.NonceConsumption) (
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	exp, ok := f.issued[c.Nonce]
-	if !ok || f.consumed[c.Nonce] {
+	record, ok := f.issued[c.Nonce]
+	if !ok || f.consumed[c.Nonce] || record.Owner != c.Owner {
 		return issuer.NonceRecord{}, errNonceNotFound
 	}
 	f.consumed[c.Nonce] = true
-	return issuer.NonceRecord{ExpiresAt: exp}, nil
+	return record, nil
 }
 
 // fakeCredentialOfferStore is an in-memory issuer.CredentialOfferStore
@@ -226,10 +227,13 @@ type fakeErr string
 
 func (e fakeErr) Error() string { return string(e) }
 
-const errNonceNotFound = fakeErr("nonce not found or already consumed")
 const errCredentialOfferNotFound = fakeErr("credential offer not found")
-const errDeferredTransactionNotFound = fakeErr("deferred transaction not found")
-const errNotificationNotFound = fakeErr("notification not found")
+
+var (
+	errNonceNotFound               = fmt.Errorf("fake: %w", issuer.ErrNonceUnknown)
+	errDeferredTransactionNotFound = fmt.Errorf("fake: %w", issuer.ErrDeferredTransactionUnknown)
+	errNotificationNotFound        = fmt.Errorf("fake: %w", issuer.ErrNotificationIDUnknown)
+)
 
 type fixedClock struct{ now time.Time }
 

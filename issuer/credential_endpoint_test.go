@@ -171,7 +171,7 @@ func tryCredentialEndpointFixture(t testing.TB, mutate ...func(cfg *issuer.Confi
 func (f credentialEndpointFixture) issueNonce(t *testing.T) string {
 	t.Helper()
 	if err := f.nonces.Issue(context.Background(), issuer.NonceIssuance{
-		Nonce: "test-nonce", ExpiresAt: f.now.Add(time.Minute),
+		Owner: testIssuer, Nonce: "test-nonce", ExpiresAt: f.now.Add(time.Minute),
 	}); err != nil {
 		t.Fatalf("Issue nonce: %v", err)
 	}
@@ -753,7 +753,7 @@ func TestRequestCredential_RejectsReusedNonce(t *testing.T) {
 func TestRequestCredential_RejectsMismatchedNonceAcrossBatch(t *testing.T) {
 	f := newCredentialEndpointFixture(t)
 	nonce := f.issueNonce(t)
-	if err := f.nonces.Issue(context.Background(), issuer.NonceIssuance{Nonce: "other-nonce", ExpiresAt: f.now.Add(time.Minute)}); err != nil {
+	if err := f.nonces.Issue(context.Background(), issuer.NonceIssuance{Owner: testIssuer, Nonce: "other-nonce", ExpiresAt: f.now.Add(time.Minute)}); err != nil {
 		t.Fatalf("Issue nonce: %v", err)
 	}
 	proof1 := buildJWTProof(t, testP256Key(t), testIssuer, nonce)
@@ -1020,7 +1020,7 @@ func TestRequestCredential_RejectsMissingJWKHeader(t *testing.T) {
 func TestRequestCredential_RejectsExpiredNonce(t *testing.T) {
 	f := newCredentialEndpointFixture(t)
 	if err := f.nonces.Issue(context.Background(), issuer.NonceIssuance{
-		Nonce: "expiring-nonce", ExpiresAt: f.now.Add(-time.Minute),
+		Owner: testIssuer, Nonce: "expiring-nonce", ExpiresAt: f.now.Add(-time.Minute),
 	}); err != nil {
 		t.Fatalf("Issue nonce: %v", err)
 	}

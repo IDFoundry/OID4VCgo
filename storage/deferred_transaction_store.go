@@ -67,11 +67,11 @@ func (s *DeferredTransactionStore) Get(_ context.Context, transactionID string) 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.invalidated[transactionID] {
-		return issuer.DeferredTransactionRecord{}, fmt.Errorf("storage: unknown or invalidated transaction_id")
+		return issuer.DeferredTransactionRecord{}, fmt.Errorf("storage: %w", issuer.ErrDeferredTransactionUnknown)
 	}
 	record, ok := s.records[transactionID]
 	if !ok {
-		return issuer.DeferredTransactionRecord{}, fmt.Errorf("storage: unknown or invalidated transaction_id")
+		return issuer.DeferredTransactionRecord{}, fmt.Errorf("storage: %w", issuer.ErrDeferredTransactionUnknown)
 	}
 	return cloneDeferredRecord(record), nil
 }
@@ -97,7 +97,7 @@ func (s *DeferredTransactionStore) Update(_ context.Context, transactionID strin
 	defer s.mu.Unlock()
 	stored, ok := s.records[transactionID]
 	if !ok || s.invalidated[transactionID] {
-		return fmt.Errorf("storage: unknown or invalidated transaction_id")
+		return fmt.Errorf("storage: %w", issuer.ErrDeferredTransactionUnknown)
 	}
 	record := cloneDeferredRecord(stored)
 	if err := fn(&record); err != nil {
@@ -130,7 +130,7 @@ func (s *DeferredTransactionStore) Invalidate(_ context.Context, transactionID s
 	defer s.mu.Unlock()
 	record, ok := s.records[transactionID]
 	if !ok || s.invalidated[transactionID] {
-		return fmt.Errorf("storage: unknown or already-invalidated transaction_id")
+		return fmt.Errorf("storage: %w", issuer.ErrDeferredTransactionUnknown)
 	}
 	record.Credentials = nil
 	s.records[transactionID] = record

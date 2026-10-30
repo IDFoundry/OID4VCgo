@@ -86,12 +86,21 @@ func (iss *Issuer) startDeferral(ctx context.Context, auth AuthorizedRequest, co
 		}
 	}
 	record := DeferredTransactionRecord{
+		Owner:    iss.storeOwner(),
 		ClientID: auth.ClientID(), Subject: auth.Subject, Status: DeferredTransactionPending,
 		CredentialConfigurationID: configID, BindingKeys: bindingKeys, Reference: d.Reference,
 		ExpiresAt:       iss.deps.Clock.Now().Add(iss.cfg.Limits.DeferredTransactionLifetime),
 		KeyAttestations: keyAttestations,
 	}
 	if err := iss.deps.DeferredTransactions.Create(ctx, transactionID, record); err != nil {
+		return oid4vci.CredentialResponse{}, fmt.Errorf("issuer: request credential: save deferred transaction: %w", err)
+	}
+	if err := iss.checkOwnerKept(&iss.deferredOwner, iss.deps.DeferredTransactions, func() (string, error) {
+		saved, err := iss.deps.DeferredTransactions.Get(ctx, transactionID)
+		return saved.Owner, err
+	}); err != nil {
+		// Without its Owner the record is unknown to every Issuer
+		// under AssuranceProduction, and lapses unanswered.
 		return oid4vci.CredentialResponse{}, fmt.Errorf("issuer: request credential: save deferred transaction: %w", err)
 	}
 	return oid4vci.CredentialResponse{
@@ -116,7 +125,9 @@ type DeferredIssuance struct {
 // bound to the transaction's client when Endpoints.Notification is set.
 // The Wallet's next poll of the Deferred Credential Endpoint receives
 // them. It returns ErrDeferredTransactionResolved for a transaction
-// that isn't pending, and an error for an unknown one.
+// that isn't pending, and an error wrapping ErrDeferredTransactionUnknown
+// for an unknown one, or one another Credential Issuer sharing the
+// store created (DeferredTransactionRecord.Owner).
 //
 // The key attestations the transaction's request carried
 // (DeferredTransactionRecord.KeyAttestations) are verified again first,
@@ -269,7 +280,7 @@ func (iss *Issuer) recheckKeyAttestations(ctx context.Context, cc CredentialConf
 // it. It's best effort: a store error leaves the transaction to expire.
 func (iss *Issuer) abandonDeferral(ctx context.Context, transactionID string) {
 	_ = iss.deps.DeferredTransactions.Update(ctx, transactionID, func(cur *DeferredTransactionRecord) error {
-		if cur.Status == DeferredTransactionPending {
+		if cur.Status == DeferredTransactionPending && iss.owns(cur.Owner) {
 			cur.Status = DeferredTransactionDenied
 		}
 		return nil
@@ -299,8 +310,13 @@ func (iss *Issuer) requireDeferredStore() error {
 	return nil
 }
 
-// checkPending refuses a record that's resolved or past its ExpiresAt.
+// checkPending refuses a record that's resolved or past its ExpiresAt,
+// and, as unknown (ErrDeferredTransactionUnknown), one that isn't this
+// Issuer's.
 func (iss *Issuer) checkPending(record DeferredTransactionRecord) error {
+	if !iss.owns(record.Owner) {
+		return fmt.Errorf("issuer: deferred transaction: %w", ErrDeferredTransactionUnknown)
+	}
 	if record.Status != DeferredTransactionPending || iss.deferredExpired(record) {
 		return ErrDeferredTransactionResolved
 	}

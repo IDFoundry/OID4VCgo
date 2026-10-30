@@ -2,13 +2,30 @@ package issuer
 
 import (
 	"context"
+	"errors"
 	"time"
 )
+
+// ErrNotificationIDUnknown is what a NotificationStore's Get returns,
+// or wraps, for a notification_id it holds no record of: one never
+// issued, or one dropped after its ExpiresAt. RequestNotification
+// answers it invalid_notification_id. Any other Get error means the
+// store couldn't answer (its backend unreachable, a timeout,
+// context.Canceled or context.DeadlineExceeded), and fails the request
+// as a plain error, a 500 from WriteError.
+var ErrNotificationIDUnknown = errors.New("issuer: unknown notification_id")
 
 // NotificationRecord is what NotificationStore.Get returns for one
 // notification_id — see IssueNotificationID's own doc comment for how
 // one comes to exist.
 type NotificationRecord struct {
+	// Owner is the Credential Issuer that issued the notification_id,
+	// its Config.Issuer: only that Issuer accepts it, so Credential
+	// Issuers sharing a store each receive only their own
+	// notifications. IssueNotificationID sets it. One with none is
+	// accepted only under AssuranceDevelopment.
+	Owner string
+
 	// ClientID binds this notification_id to the client the
 	// Credential(s) it identifies were issued to.
 	// When set, RequestNotification rejects a request whose
@@ -42,6 +59,8 @@ type NotificationStore interface {
 	Issue(ctx context.Context, notificationID string, record NotificationRecord) error
 
 	// Get retrieves the record identified by notificationID. It
-	// returns an error if notificationID is unknown.
+	// returns an error wrapping ErrNotificationIDUnknown if
+	// notificationID is unknown, and any other error only when it
+	// couldn't answer.
 	Get(ctx context.Context, notificationID string) (NotificationRecord, error)
 }
