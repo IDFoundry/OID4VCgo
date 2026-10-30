@@ -28,9 +28,8 @@ var ErrNoCurrentCRL = errors.New("certrevocation: no current CRL from the certif
 type Checker interface {
 	// CheckRevocation returns nil when no certificate in check.Chain
 	// below its last, the trust anchor, is revoked at check.Now (nor,
-	// in a chain of one certificate that isn't self-signed, that one:
-	// see Check.Chain). An
-	// error refuses the chain: one that wraps ErrRevoked when a
+	// when the anchor isn't self-signed, the anchor: see Check.Chain).
+	// An error refuses the chain: one that wraps ErrRevoked when a
 	// certificate is revoked; any other when revocation can't be
 	// decided, which a Checker should treat as a refusal too rather
 	// than accept the certificate unchecked.
@@ -42,11 +41,14 @@ type Check struct {
 	// Chain is a verified certificate path, leaf first, ending at the
 	// trust anchor it was verified against. Every certificate below the
 	// anchor is checked against its issuer's — the next certificate's —
-	// revocation information; the anchor itself never is, with one
-	// exception: a path of one certificate that isn't self-signed, a
-	// leaf pinned as a trust anchor, is checked against the revocation
-	// information of the CA it names as its issuer. Otherwise pinning a
-	// leaf would exempt it from revocation altogether.
+	// revocation information. A self-signed anchor, a root, never is.
+	// An anchor that isn't self-signed — a leaf pinned as a trust
+	// anchor, or an intermediate CA certificate placed among the roots —
+	// is checked against the revocation information of the CA it names
+	// as its issuer. Otherwise pinning a certificate would exempt it
+	// from revocation altogether, and a pool holding a revoked
+	// intermediate beside its root would verify the path ending at the
+	// intermediate, on which the root's revocation of it is never asked.
 	Chain []*x509.Certificate
 	// Now is the instant the chain was verified at, at which a CRL must
 	// be current; CRLs takes a zero Now as the current time.
@@ -76,13 +78,19 @@ type Check struct {
 // list at all — a missing or stale CRL fails closed rather than letting
 // a revoked certificate through.
 //
-// A chain of one certificate that isn't self-signed — a leaf pinned in
-// the roots, which x509 verifies as the path [leaf] — is checked
-// against a CRL from the CA it names as its issuer. That CA isn't on
-// the path, so its certificate, needed to verify the CRL's signature,
-// comes from Issuers: without it there, the pinned certificate is
-// refused with ErrNoCurrentCRL. A self-signed one, a root used
-// directly, has no issuer to ask and passes.
+// A chain ending at a certificate that isn't self-signed is checked
+// against a CRL from the CA that certificate names as its issuer too: a
+// leaf pinned in the roots, which x509 verifies as the path [leaf], or
+// an intermediate CA certificate among the roots, which x509 verifies
+// as a path ending at it — beside the path through its root, when the
+// root is in the pool as well. That CA isn't on the path, so its
+// certificate, needed to verify the CRL's signature, comes from
+// Issuers: without it there, the chain is refused with ErrNoCurrentCRL.
+// A self-signed anchor, a root, has no issuer to ask and isn't checked.
+// Where revocation is checked, put only self-signed roots in the trust
+// anchors: an intermediate there (a "whole chain" bundle loaded as the
+// roots, say) needs its own CA's certificate in Issuers and a current
+// CRL from it, or every path ending at it is refused.
 type CRLs struct {
 	// Lists returns the current CRLs: at least one from each CA that
 	// issues a certificate in a chain checked — the CA issuing leaf
@@ -95,13 +103,13 @@ type CRLs struct {
 	// error refuses the chain, wrapped. Required.
 	Lists func(ctx context.Context) ([]*x509.RevocationList, error)
 
-	// Issuers are the certificates of CAs that issued certificates
-	// pinned as trust anchors, used only to check such a pinned
-	// certificate: the one whose name and key issued it is the issuer
-	// its CRL must come from and be verified against. They're neither
-	// trust anchors nor checked for revocation themselves. Needed only
-	// where a leaf, rather than a CA, is pinned; Refresher.Checker sets
-	// its configured issuers here.
+	// Issuers are the certificates of CAs that issued trust anchors
+	// that aren't self-signed, used only to check such an anchor: the
+	// one whose name and key issued it is the issuer its CRL must come
+	// from and be verified against. They're neither trust anchors nor
+	// checked for revocation themselves. Needed only where a leaf or an
+	// intermediate CA, rather than a root, is among the trust anchors;
+	// Refresher.Checker sets its configured issuers here.
 	Issuers []*x509.Certificate
 }
 
@@ -148,26 +156,29 @@ func (c CRLs) CheckRevocation(ctx context.Context, check Check) error {
 	if now.IsZero() {
 		now = time.Now()
 	}
-	if len(check.Chain) == 1 && !selfSigned(check.Chain[0]) {
-		return c.checkPinned(check.Chain[0], lists, now)
-	}
 	for i := 0; i+1 < len(check.Chain); i++ {
 		if err := checkAgainstCRLs(check.Chain[i], check.Chain[i+1], lists, now); err != nil {
 			return err
 		}
 	}
+	if len(check.Chain) == 0 {
+		return nil
+	}
+	if anchor := check.Chain[len(check.Chain)-1]; !selfSigned(anchor) {
+		return c.checkAnchor(anchor, lists, now)
+	}
 	return nil
 }
 
-// checkPinned checks cert, a pinned certificate that isn't self-signed,
+// checkAnchor checks cert, a trust anchor that isn't self-signed,
 // against a CRL from the one of c.Issuers that issued it.
-func (c CRLs) checkPinned(cert *x509.Certificate, lists []*x509.RevocationList, now time.Time) error {
+func (c CRLs) checkAnchor(cert *x509.Certificate, lists []*x509.RevocationList, now time.Time) error {
 	for _, issuer := range c.Issuers {
 		if issuer != nil && bytes.Equal(cert.RawIssuer, issuer.RawSubject) && cert.CheckSignatureFrom(issuer) == nil {
 			return checkAgainstCRLs(cert, issuer, lists, now)
 		}
 	}
-	return fmt.Errorf("%w: %q is pinned, and the certificate of its issuer %q, to verify a CRL against, isn't among CRLs.Issuers", ErrNoCurrentCRL, cert.Subject, cert.Issuer)
+	return fmt.Errorf("%w: %q is a trust anchor that isn't self-signed, and the certificate of its issuer %q, to verify a CRL against, isn't among CRLs.Issuers", ErrNoCurrentCRL, cert.Subject, cert.Issuer)
 }
 
 // selfSigned reports whether cert names itself as its issuer and its

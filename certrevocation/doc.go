@@ -18,11 +18,15 @@
 // Checker is the one interface: given a verified chain, leaf first and
 // ending at the trust anchor, and the instant of the verification, it
 // returns nil when no certificate below the anchor has been revoked.
-// The anchor itself is never checked: a relying party distrusts an
-// anchor by removing it from its trust anchor set, not by asking it.
-// The exception is a leaf pinned as an anchor, verified as a path of
-// itself alone: CRLs checks it against its CA's CRL, which needs that
-// CA's certificate in CRLs.Issuers.
+// A self-signed anchor, a root, is never checked: a relying party
+// distrusts a root by removing it from its trust anchor set, not by
+// asking it. An anchor that isn't self-signed — a leaf pinned as an
+// anchor, or an intermediate CA placed among the roots — is checked
+// against its CA's CRL, which needs that CA's certificate in
+// CRLs.Issuers. Where revocation is checked, keep intermediates out of
+// the trust anchors: one there beside its root yields a path ending at
+// the intermediate, which without that check would never ask the root
+// whether it revoked it.
 //
 // CRLs implements Checker with Certificate Revocation Lists (RFC 5280
 // §5) the caller supplies. It does no fetching of its own: a
@@ -38,8 +42,11 @@
 // public addresses only by default, keeps the last good list from each
 // and replaces it only with one a configured CA signed that isn't
 // older, so a failed or replayed fetch can't evict or roll back a good
-// list. URLIssuers binds each URL to its CA, Floors and OnAccept carry
-// the rollback floor across a restart, and RequireHTTPS refuses plain
+// list. That rollback floor is kept per CA, by its name and the key
+// that signs its lists, and two configured CAs by one name with
+// different keys are refused unless AllowSameNameIssuers is set.
+// URLIssuers binds each URL to its CA, Floors and OnAccept carry the
+// rollback floor across a restart, and RequireHTTPS refuses plain
 // http distribution points. Its Run loop refreshes each list well before its nextUpdate,
 // in a goroutine the caller starts; Refresher.Checker is the CRLs to
 // check against. On a phone, the operating system's background

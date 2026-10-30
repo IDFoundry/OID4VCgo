@@ -69,8 +69,26 @@ type RefresherConfig struct {
 	// check; checking it on fetch too keeps a forged or corrupted
 	// response from evicting a good list, and makes the rollback checks
 	// (see Refresh) compare signed values rather than whatever a plain
-	// http response carried. Required.
+	// http response carried. Two of them with the same subject name but
+	// different keys are refused unless AllowSameNameIssuers is set.
+	// Required.
 	Issuers []*x509.Certificate
+
+	// AllowSameNameIssuers lets Issuers hold two or more certificates
+	// with the same subject name but different public keys: a CA that
+	// re-keyed under its name and still issues CRLs under its old key
+	// too, or two CAs that chose the same name, as nothing stops a
+	// self-signed IACA from doing. The rollback floor (see Refresh) is
+	// kept per issuer name and key either way, so one key's lists never
+	// raise, or are refused by, the floor of another's, and a re-keyed
+	// CA may restart its CRL numbering. It's an explicit choice because
+	// X.509 names aren't unique across CAs (RFC 5280 §4.1.2.6 requires
+	// a name to be unique only among the subjects one CA certifies, and
+	// a self-signed root names itself), and such issuers are usually a
+	// mistake: bind each of their URLs with URLIssuers, since an
+	// unbound URL accepts a current list under either key in place of
+	// the other's.
+	AllowSameNameIssuers bool
 
 	// URLIssuers binds a URL to the one of Issuers whose CRL it serves:
 	// a list fetched from it is accepted only when that issuer signed
@@ -97,9 +115,12 @@ type RefresherConfig struct {
 	// and pass it back here on restart, so a restart doesn't reopen the
 	// rollback a running Refresher refuses. Only their signed issuer,
 	// thisUpdate and CRL number are used, so an expired list does as
-	// well as a current one; a list none of Issuers signed is ignored,
-	// so lists persisted from an issuer since removed from Issuers
-	// don't stop a Refresher being built. They aren't held or served.
+	// well as a current one. Each is a floor for the one of Issuers
+	// whose key verifies its signature, by that issuer's name and key,
+	// never for another by the same name. A list none of Issuers signed
+	// is ignored, so lists persisted from an issuer since removed from
+	// Issuers don't stop a Refresher being built. They aren't held or
+	// served.
 	Floors []*x509.RevocationList
 
 	// OnAccept, if set, is called with every list a fetch accepted, and
@@ -194,9 +215,26 @@ type Refresher struct {
 
 	mu   sync.RWMutex
 	held map[string]heldCRL
-	// floors is, by issuer name (a list's RawIssuer), the newest
-	// thisUpdate and highest CRL number accepted from it or in Floors.
-	floors map[string]crlFloor
+	// floors is, by issuer — its name and the key that signed its lists
+	// — the newest thisUpdate and highest CRL number accepted from it or
+	// in Floors.
+	floors map[floorKey]crlFloor
+}
+
+// floorKey identifies an issuer for its rollback floor: its name (a
+// list's RawIssuer) and the SubjectPublicKeyInfo of the configured
+// issuer certificate that verified the list's signature. A name alone
+// isn't unique: keyed by it, another configured CA by the same name
+// could raise this one's floor with a list of its own carrying a huge
+// CRL number, and so have the CA's next genuine list, the one revoking
+// a certificate, refused as a rollback.
+type floorKey struct {
+	name, key string
+}
+
+// floorKeyOf is the floorKey of the lists issuer signs.
+func floorKeyOf(issuer *x509.Certificate) floorKey {
+	return floorKey{name: string(issuer.RawSubject), key: string(issuer.RawSubjectPublicKeyInfo)}
 }
 
 // heldCRL is the last good list from one URL, and when it was fetched.
@@ -236,6 +274,9 @@ func NewRefresher(cfg RefresherConfig) (*Refresher, error) {
 	if err := validateURLIssuers(cfg); err != nil {
 		return nil, err
 	}
+	if err := validateIssuerNames(cfg); err != nil {
+		return nil, err
+	}
 	if slices.Contains(cfg.Floors, nil) {
 		return nil, errors.New("certrevocation: RefresherConfig.Floors has a nil list")
 	}
@@ -259,17 +300,22 @@ func NewRefresher(cfg RefresherConfig) (*Refresher, error) {
 		wait:        sleep,
 		jitter:      func(n time.Duration) time.Duration { return rand.N(n) }, //nolint:gosec // retry jitter, not a secret
 		held:        make(map[string]heldCRL, len(cfg.URLs)),
-		floors:      make(map[string]crlFloor, len(cfg.Issuers)),
+		floors:      make(map[floorKey]crlFloor, len(cfg.Issuers)),
 	}
 	if r.now == nil {
 		r.now = time.Now
 	}
 	for _, list := range cfg.Floors {
-		if signedByAny(list, r.issuers) {
-			r.floors[string(list.RawIssuer)] = r.floors[string(list.RawIssuer)].raise(list)
+		if signer := signerOf(list, r.issuers); signer != nil {
+			r.raiseFloor(floorKeyOf(signer), list)
 		}
 	}
 	return r, nil
+}
+
+// raiseFloor raises the floor of the issuer k to list.
+func (r *Refresher) raiseFloor(k floorKey, list *x509.RevocationList) {
+	r.floors[k] = r.floors[k].raise(list)
 }
 
 // validateURLs refuses cfg.URLs when empty, repeating a URL, or holding
@@ -302,6 +348,22 @@ func validateURLIssuers(cfg RefresherConfig) error {
 			return fmt.Errorf("certrevocation: RefresherConfig.URLIssuers binds %s, which isn't one of URLs", redacted(u))
 		case issuer == nil || !slices.ContainsFunc(cfg.Issuers, issuer.Equal):
 			return fmt.Errorf("certrevocation: RefresherConfig.URLIssuers binds %s to a certificate that isn't one of Issuers", redacted(u))
+		}
+	}
+	return nil
+}
+
+// validateIssuerNames refuses two cfg.Issuers by the same name with
+// different keys, unless cfg.AllowSameNameIssuers is set.
+func validateIssuerNames(cfg RefresherConfig) error {
+	if cfg.AllowSameNameIssuers {
+		return nil
+	}
+	for i, issuer := range cfg.Issuers {
+		for _, earlier := range cfg.Issuers[:i] {
+			if bytes.Equal(issuer.RawSubject, earlier.RawSubject) && !bytes.Equal(issuer.RawSubjectPublicKeyInfo, earlier.RawSubjectPublicKeyInfo) {
+				return fmt.Errorf("certrevocation: RefresherConfig.Issuers[%d] has the name of an earlier issuer, %q, with another key; set AllowSameNameIssuers if that's intended", i, issuer.Subject)
+			}
 		}
 	}
 	return nil
@@ -387,9 +449,9 @@ func (r *Refresher) Checker() CRLs {
 // CRLClockSkew), and was issued by the issuer URLIssuers binds the URL
 // to or, for an unbound URL, by one of Issuers, naming the same issuer
 // as the held list while that one is current. It must also not be
-// older than any list accepted from its issuer, from any URL, or in
-// Floors: its thisUpdate isn't before theirs, and when both carry a CRL
-// number, its number isn't lower. That last check stops a replayed old
+// older than any list accepted from its issuer — the same name and
+// key — from any URL, or in Floors: its thisUpdate isn't before
+// theirs, and when both carry a CRL number, its number isn't lower. That last check stops a replayed old
 // list, one still inside its validity, from bringing back a
 // certificate revoked since. Any failure keeps the held list, and a
 // URL whose held list has passed its nextUpdate is a failure too,
@@ -437,9 +499,10 @@ func (r *Refresher) keep(u string, fetched *x509.RevocationList, fetchErr error)
 	held, holding := r.held[u]
 	now := r.now()
 	if fetchErr == nil {
-		if fetchErr = r.acceptable(u, fetched, held.list, now); fetchErr == nil {
+		var k floorKey
+		if k, fetchErr = r.acceptable(u, fetched, held.list, now); fetchErr == nil {
 			r.held[u] = heldCRL{list: fetched, fetchedAt: now}
-			r.floors[string(fetched.RawIssuer)] = r.floors[string(fetched.RawIssuer)].raise(fetched)
+			r.raiseFloor(k, fetched)
 			return nil
 		}
 	}
@@ -450,19 +513,19 @@ func (r *Refresher) keep(u string, fetched *x509.RevocationList, fetchErr error)
 }
 
 // acceptable refuses list from u in place of held (nil when nothing is
-// held yet) at now.
-func (r *Refresher) acceptable(u string, list, held *x509.RevocationList, now time.Time) error {
+// held yet) at now, and otherwise returns the floorKey of its issuer.
+func (r *Refresher) acceptable(u string, list, held *x509.RevocationList, now time.Time) (floorKey, error) {
 	switch {
 	case !completeAndDirect(list):
-		return errors.New("a delta or scoped CRL (issuing distribution point), not a complete one")
+		return floorKey{}, errors.New("a delta or scoped CRL (issuing distribution point), not a complete one")
 	case !criticalUnderstood(list):
-		return errors.New("the CRL carries a critical extension this package doesn't process")
+		return floorKey{}, errors.New("the CRL carries a critical extension this package doesn't process")
 	case list.NextUpdate.IsZero():
-		return errors.New("the CRL has no nextUpdate")
+		return floorKey{}, errors.New("the CRL has no nextUpdate")
 	case notYetValid(list, now):
-		return fmt.Errorf("the CRL isn't valid until %s", list.ThisUpdate.UTC().Format(time.RFC3339))
+		return floorKey{}, fmt.Errorf("the CRL isn't valid until %s", list.ThisUpdate.UTC().Format(time.RFC3339))
 	case !now.Before(list.NextUpdate):
-		return fmt.Errorf("the CRL expired at %s", list.NextUpdate.UTC().Format(time.RFC3339))
+		return floorKey{}, fmt.Errorf("the CRL expired at %s", list.NextUpdate.UTC().Format(time.RFC3339))
 	}
 	return r.fromRightIssuer(u, list, held, now)
 }
@@ -470,36 +533,42 @@ func (r *Refresher) acceptable(u string, list, held *x509.RevocationList, now ti
 // fromRightIssuer refuses list, at now, unless the issuer u is bound to
 // signed it — or, for an unbound u, one of r's issuers did and held,
 // if current, names the same — and it isn't older than r's floor for
-// that issuer.
-func (r *Refresher) fromRightIssuer(u string, list, held *x509.RevocationList, now time.Time) error {
+// that issuer, by name and key. It returns that issuer's floorKey.
+func (r *Refresher) fromRightIssuer(u string, list, held *x509.RevocationList, now time.Time) (floorKey, error) {
 	bound := r.bound[u]
-	switch {
-	case bound != nil && !signedByAny(list, []*x509.Certificate{bound}):
-		return errors.New("the CRL isn't signed by the issuer RefresherConfig.URLIssuers binds this URL to")
-	case bound == nil && !signedByAny(list, r.issuers):
-		return errors.New("the CRL isn't signed by any of the configured issuers")
-	case bound == nil && held != nil && now.Before(held.NextUpdate) && !bytes.Equal(list.RawIssuer, held.RawIssuer):
-		return fmt.Errorf("the CRL names another issuer than the held one, current until %s", held.NextUpdate.UTC().Format(time.RFC3339))
+	candidates := r.issuers
+	if bound != nil {
+		candidates = []*x509.Certificate{bound}
 	}
-	floor := r.floors[string(list.RawIssuer)]
+	signer := signerOf(list, candidates)
+	switch {
+	case bound != nil && signer == nil:
+		return floorKey{}, errors.New("the CRL isn't signed by the issuer RefresherConfig.URLIssuers binds this URL to")
+	case signer == nil:
+		return floorKey{}, errors.New("the CRL isn't signed by any of the configured issuers")
+	case bound == nil && held != nil && now.Before(held.NextUpdate) && !bytes.Equal(list.RawIssuer, held.RawIssuer):
+		return floorKey{}, fmt.Errorf("the CRL names another issuer than the held one, current until %s", held.NextUpdate.UTC().Format(time.RFC3339))
+	}
+	k := floorKeyOf(signer)
+	floor := r.floors[k]
 	switch {
 	case list.ThisUpdate.Before(floor.thisUpdate):
-		return fmt.Errorf("the CRL's thisUpdate %s is before that of the newest list accepted from its issuer", list.ThisUpdate.UTC().Format(time.RFC3339))
+		return floorKey{}, fmt.Errorf("the CRL's thisUpdate %s is before that of the newest list accepted from its issuer", list.ThisUpdate.UTC().Format(time.RFC3339))
 	case list.Number != nil && floor.number != nil && list.Number.Cmp(floor.number) < 0:
-		return fmt.Errorf("the CRL number %s is lower than that of the newest list accepted from its issuer, %s", list.Number, floor.number)
+		return floorKey{}, fmt.Errorf("the CRL number %s is lower than that of the newest list accepted from its issuer, %s", list.Number, floor.number)
 	}
-	return nil
+	return k, nil
 }
 
-// signedByAny reports whether one of issuers, by name and signature,
-// issued list.
-func signedByAny(list *x509.RevocationList, issuers []*x509.Certificate) bool {
+// signerOf is the one of issuers that, by name and signature, issued
+// list, or nil when none did.
+func signerOf(list *x509.RevocationList, issuers []*x509.Certificate) *x509.Certificate {
 	for _, issuer := range issuers {
 		if bytes.Equal(list.RawIssuer, issuer.RawSubject) && list.CheckSignatureFrom(issuer) == nil {
-			return true
+			return issuer
 		}
 	}
-	return false
+	return nil
 }
 
 // fetch GETs u and parses the CRL it answers with.

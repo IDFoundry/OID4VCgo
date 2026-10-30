@@ -432,14 +432,17 @@ ABI 12: before them, a role not named checked no revocation in
 production too. A role named in `revocation` accepts a certificate only through a verified path on which
 each certificate below the trust anchor has a current CRL (its
 nextUpdate not passed) from its issuer that doesn't list it; the trust
-anchor itself isn't checked, unless it's a certificate pinned in the
+anchor itself isn't checked, unless it's a certificate in the
 roots that isn't self-signed (a Verifier's leaf in `verifier_roots`,
-say), which is checked against a CRL from the CA that issued it. That
+say, or an intermediate CA), which is checked against a CRL from the
+CA that issued it. That
 CA isn't on the path, so its certificate, to verify the CRL with, comes
 from `crl_issuers` (PEM CA certificates, used for nothing else: they
-aren't trust anchors). A certificate a list names is refused, and so,
-failing closed, is one whose issuer has no current list, or a pinned
-one whose CA isn't in `crl_issuers` — with lists for issuers but not
+aren't trust anchors). Checking an intermediate CA in the roots was
+added within ABI 12: before it, one was never checked, so a path
+ending at it passed whatever its own CA's CRL said. A certificate a
+list names is refused, and so, failing closed, is one whose issuer has
+no current list, or a pinned one whose CA isn't in `crl_issuers` — with lists for issuers but not
 for Verifiers, name `issuer` alone. `crl_issuers` holding anything but
 CA certificates is `invalid_input`; it was added within ABI 12, and
 before it a pinned certificate that isn't self-signed was always

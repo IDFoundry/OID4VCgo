@@ -6,6 +6,36 @@ everything else. A release that pins a new FAPIgo release passes on
 that release's own breaking changes: see FAPIgo's UPGRADING.md for
 them.
 
+## v0.56.0 → next
+
+### Certificate revocation (`certrevocation`)
+
+- **A trust anchor that isn't self-signed is checked.**
+  `certrevocation.CRLs` now checks the last certificate of a verified
+  path against its CA's CRL whenever it isn't self-signed, not only
+  when it's a pinned leaf alone. An intermediate CA among the roots, as
+  when a CA's whole chain is loaded as the trust anchors, was never
+  checked: beside its root it gave a path ending at itself, which
+  passed after the root had revoked it. Such a path now needs the
+  intermediate's own CA certificate in `CRLs.Issuers`
+  (`Refresher.Checker()` sets the Refresher's `Issuers`) and a current
+  CRL from that CA, or it's refused with `ErrNoCurrentCRL`. Load only
+  self-signed roots as trust anchors where revocation is checked; where
+  an intermediate must stay among them, add its CA's certificate to
+  `Issuers` and that CA's CRL distribution point to the Refresher. On
+  mobile, that CA's certificate goes in `crl_issuers`.
+- **Two Refresher issuers by one name.** `certrevocation.NewRefresher`
+  refuses `Issuers` holding two certificates with the same subject name
+  but different keys, unless `RefresherConfig.AllowSameNameIssuers` is
+  set. The rollback floor is now kept per issuer name and key, so one
+  such CA's lists no longer raise, or are refused by, the other's; a
+  CA that re-keyed under its name may restart its CRL numbering. Set
+  the option for a CA that re-keyed and still publishes CRLs under its
+  old key too, and bind each of their URLs with `URLIssuers`; otherwise
+  remove the certificate that doesn't belong. Floors persisted from
+  `OnAccept` need no change: each is matched to the issuer whose key
+  verifies it.
+
 ## v0.55.0 → v0.56.0
 
 This release pins FAPIgo v0.65.1, which carries the breaking changes of

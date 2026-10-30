@@ -161,12 +161,17 @@ func TestNoCheck(t *testing.T) {
 	}
 }
 
-// A chain of one certificate that isn't self-signed, a pinned leaf, is
-// checked against its CA's CRL, verified with the CA's certificate from
-// Issuers; a self-signed one alone has nothing to check.
-func TestCRLs_PinnedLeaf(t *testing.T) {
+// A chain ending at a certificate that isn't self-signed — a pinned
+// leaf, or an intermediate among the roots — is checked against its
+// CA's CRL too, verified with the CA's certificate from Issuers; a
+// self-signed anchor has nothing to check. Otherwise a root's
+// revocation of an intermediate placed in the roots beside it would
+// never be asked: x509 verifies the path ending at the intermediate.
+func TestCRLs_AnchorNotSelfSigned(t *testing.T) {
 	p := newPKI(t)
 	pinned := []*x509.Certificate{p.leaf}
+	toInter := []*x509.Certificate{p.leaf, p.inter}
+	interCRL := testcert.CRL(t, p.inter, p.interKey)
 	tests := map[string]struct {
 		lists   []*x509.RevocationList
 		issuers []*x509.Certificate
@@ -179,6 +184,15 @@ func TestCRLs_PinnedLeaf(t *testing.T) {
 		"no issuers":    {[]*x509.RevocationList{testcert.CRL(t, p.inter, p.interKey)}, nil, pinned, certrevocation.ErrNoCurrentCRL},
 		"forged issuer": {[]*x509.RevocationList{testcert.CRL(t, p.fakeInter, p.fakeKey)}, []*x509.Certificate{nil, p.fakeInter}, pinned, certrevocation.ErrNoCurrentCRL},
 		"self-signed":   {nil, nil, []*x509.Certificate{p.root}, nil},
+
+		// An intermediate among the roots, the anchor of [leaf, inter].
+		"intermediate anchor, clean":               {[]*x509.RevocationList{interCRL, testcert.CRL(t, p.root, p.rootKey)}, []*x509.Certificate{p.root}, toInter, nil},
+		"intermediate anchor, revoked by its root": {[]*x509.RevocationList{interCRL, testcert.CRL(t, p.root, p.rootKey, p.inter.SerialNumber)}, []*x509.Certificate{p.root}, toInter, certrevocation.ErrRevoked},
+		"intermediate anchor, no root CRL":         {[]*x509.RevocationList{interCRL}, []*x509.Certificate{p.root}, toInter, certrevocation.ErrNoCurrentCRL},
+		"intermediate anchor, root not given":      {[]*x509.RevocationList{interCRL, testcert.CRL(t, p.root, p.rootKey)}, nil, toInter, certrevocation.ErrNoCurrentCRL},
+		// The leaf is still checked first: its revocation is reported
+		// as such, whatever the anchor's.
+		"intermediate anchor, revoked leaf": {[]*x509.RevocationList{testcert.CRL(t, p.inter, p.interKey, p.leaf.SerialNumber)}, nil, toInter, certrevocation.ErrRevoked},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
