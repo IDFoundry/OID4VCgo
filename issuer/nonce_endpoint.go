@@ -57,6 +57,7 @@ func (iss *Issuer) RequestNonce(ctx context.Context) (NonceResult, error) {
 	now := iss.deps.Clock.Now()
 	if err := iss.deps.Nonces.Issue(ctx, NonceIssuance{
 		Nonce:     nonce,
+		Owner:     iss.storeOwner(),
 		ExpiresAt: now.Add(iss.cfg.Limits.NonceLifetime),
 	}); err != nil {
 		return NonceResult{}, fmt.Errorf("issuer: persist nonce: %w", err)

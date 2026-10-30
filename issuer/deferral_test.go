@@ -77,7 +77,7 @@ func TestDeferral_IssueLater(t *testing.T) {
 		record.CredentialConfigurationID != testSDJWTConfigID || len(record.BindingKeys) != 1 || !record.ExpiresAt.Equal(f.clock.now.Add(time.Hour)) {
 		t.Fatalf("record = %+v", record)
 	}
-	if _, err := f.nonces.Consume(ctx, issuer.NonceConsumption{Nonce: "test-nonce"}); err == nil {
+	if _, err := f.nonces.Consume(ctx, issuer.NonceConsumption{Owner: testIssuer, Nonce: "test-nonce"}); err == nil {
 		t.Error("the proof's nonce wasn't consumed when the request was deferred")
 	}
 
@@ -252,7 +252,7 @@ func TestDeferral_NeedsADeferredEndpoint(t *testing.T) {
 	if err == nil {
 		t.Fatal("an issuer without a Deferred Credential Endpoint deferred a request")
 	}
-	if _, err := f.nonces.Consume(context.Background(), issuer.NonceConsumption{Nonce: "test-nonce"}); err != nil {
+	if _, err := f.nonces.Consume(context.Background(), issuer.NonceConsumption{Owner: testIssuer, Nonce: "test-nonce"}); err != nil {
 		t.Errorf("the nonce was consumed by a request that couldn't be deferred: %v", err)
 	}
 	if err := f.iss.DenyDeferredCredential(context.Background(), "x"); err == nil {
@@ -374,7 +374,7 @@ func TestDeferral_BindsSubject(t *testing.T) {
 	}); err == nil {
 		t.Fatal("a request without a Subject was deferred")
 	}
-	if _, err := f.nonces.Consume(ctx, issuer.NonceConsumption{Nonce: "test-nonce"}); err != nil {
+	if _, err := f.nonces.Consume(ctx, issuer.NonceConsumption{Owner: testIssuer, Nonce: "test-nonce"}); err != nil {
 		t.Errorf("the nonce was consumed by a request that couldn't be deferred: %v", err)
 	}
 }

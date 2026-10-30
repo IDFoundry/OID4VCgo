@@ -148,12 +148,41 @@ func (iss *Issuer) IssuePreAuthorizedCode(ctx context.Context, code, txCode stri
 	return nil
 }
 
-// storePreAuthorizedCode stores record under code's hash, with txCode's
-// hash as its TxCodeHash.
+// storePreAuthorizedCode stores record, owned by this Issuer, under
+// code's key, with txCode's hash as its TxCodeHash. Under
+// AssuranceProduction it reads the record back, until the store has
+// once kept its Owner, and invalidates a code whose Owner it lost.
 func (iss *Issuer) storePreAuthorizedCode(ctx context.Context, code, txCode string, record PreAuthorizedCodeRecord) error {
+	record.Owner = iss.storeOwner()
 	record.TxCodeHash = txCodeHash(code, txCode)
-	return iss.deps.PreAuthorizedCodes.Issue(ctx, preAuthorizedCodeKey(code), record)
+	key := preAuthorizedCodeKey(record.Owner, code)
+	store := iss.deps.PreAuthorizedCodes
+	if err := store.Issue(ctx, key, record); err != nil {
+		return err
+	}
+	err := iss.checkOwnerKept(&iss.preAuthorizedOwner, store, func() (string, error) {
+		// Consume with an accept that refuses reads the record and
+		// leaves the code as it was, no attempt counted.
+		var owner string
+		_, _, err := store.Consume(ctx, key, record.TxCodeHash, 0, func(r PreAuthorizedCodeRecord) error {
+			owner = r.Owner
+			return errReadBack
+		})
+		if !errors.Is(err, errReadBack) {
+			return "", fmt.Errorf("Consume returned %v, not the refusal of its accept", err)
+		}
+		return owner, nil
+	})
+	if err != nil {
+		_ = store.Invalidate(ctx, key) // best effort: the code was never handed out
+		return err
+	}
+	return nil
 }
+
+// errReadBack is what storePreAuthorizedCode's read-back refuses the
+// record with, so Consume leaves it in place.
+var errReadBack = errors.New("issuer: reading the record back")
 
 // txCodeFor is the offer's tx_code object for txCode: numeric input
 // when it's all digits, and its length in characters.

@@ -58,6 +58,13 @@ var ErrTxCodeUnexpected = errors.New("issuer: tx_code was not expected")
 // Transaction Code keyed by the code, so a read of the store, or a
 // leak of it, yields neither a redeemable code nor a PIN.
 type PreAuthorizedCodeRecord struct {
+	// Owner is the Credential Issuer that issued the code, its
+	// Config.Issuer: only that Issuer redeems it, so Credential Issuers
+	// sharing a store each redeem only their own codes. The issuer sets
+	// it, and binds it into the store's key too; a store keeps it as it
+	// is.
+	Owner string
+
 	// TxCodeHash is set whenever the original Credential Offer's own
 	// Grants.PreAuthorizedCode.TxCode was non-nil — the Wallet must
 	// present the exact End-User Transaction Code value entered
@@ -110,7 +117,8 @@ type PreAuthorizedCodeRecord struct {
 // already establishes for c_nonce.
 //
 // The issuer hands the store hashes, never the code or Transaction Code
-// themselves (see PreAuthorizedCodeRecord): codeHash, the key, and
+// themselves (see PreAuthorizedCodeRecord): codeHash, the key, which
+// is bound to the record's Owner as well as the code, and
 // wantTxCodeHash, compared with the record's TxCodeHash. Both are
 // opaque base64url strings of at most 43 characters to the store,
 // which compares the two Transaction Code hashes in constant time

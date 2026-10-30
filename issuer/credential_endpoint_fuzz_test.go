@@ -26,7 +26,7 @@ var fuzzNonceCounter atomic.Uint64
 func issueFuzzNonce(t *testing.T, f credentialEndpointFixture) string {
 	nonce := "fuzz-nonce-" + strconv.FormatUint(fuzzNonceCounter.Add(1), 10)
 	if err := f.nonces.Issue(context.Background(), issuer.NonceIssuance{
-		Nonce: nonce, ExpiresAt: f.now.Add(time.Minute),
+		Owner: testIssuer, Nonce: nonce, ExpiresAt: f.now.Add(time.Minute),
 	}); err != nil {
 		t.Fatalf("Issue nonce: %v", err)
 	}

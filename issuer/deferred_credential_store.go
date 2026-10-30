@@ -48,6 +48,15 @@ const (
 // deployment may also create and resolve records itself through the
 // store.
 type DeferredTransactionRecord struct {
+	// Owner is the Credential Issuer that created the transaction, its
+	// Config.Issuer: only that Issuer answers, issues or denies it, so
+	// Credential Issuers sharing a store each see only their own
+	// transactions, and another's transaction_id is unknown to them.
+	// RequestCredential sets it; a record a deployment creates itself
+	// must set it too. One with none is honoured only under
+	// AssuranceDevelopment.
+	Owner string
+
 	// ClientID binds this transaction to the client that originally
 	// requested it. When set, RequestDeferredCredential rejects a
 	// request whose AuthorizedRequest.ClientIdentity isn't that client —

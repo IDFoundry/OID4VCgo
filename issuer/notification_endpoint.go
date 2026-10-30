@@ -78,11 +78,17 @@ func (iss *Issuer) IssueNotificationID(ctx context.Context, auth AuthorizedReque
 		return "", fmt.Errorf("issuer: issue notification id: %w", err)
 	}
 	id := base64.RawURLEncoding.EncodeToString(raw)
-	record := NotificationRecord{ClientID: auth.ClientID(), Subject: auth.Subject}
+	record := NotificationRecord{Owner: iss.storeOwner(), ClientID: auth.ClientID(), Subject: auth.Subject}
 	if lifetime := iss.cfg.Limits.NotificationLifetime; lifetime > 0 {
 		record.ExpiresAt = iss.deps.Clock.Now().Add(lifetime)
 	}
 	if err := iss.deps.Notifications.Issue(ctx, id, record); err != nil {
+		return "", fmt.Errorf("issuer: issue notification id: %w", err)
+	}
+	if err := iss.checkOwnerKept(&iss.notificationOwner, iss.deps.Notifications, func() (string, error) {
+		saved, err := iss.deps.Notifications.Get(ctx, id)
+		return saved.Owner, err
+	}); err != nil {
 		return "", fmt.Errorf("issuer: issue notification id: %w", err)
 	}
 	return id, nil
@@ -128,6 +134,11 @@ func (iss *Issuer) RequestNotification(ctx context.Context, auth AuthorizedReque
 	}
 	if err != nil {
 		return fmt.Errorf("issuer: request notification: dependencies.notifications: %w", err)
+	}
+	if !iss.owns(record.Owner) {
+		// Another Credential Issuer's notification_id, in a shared
+		// store.
+		return newError(ErrorInvalidNotificationID, 400, unknownNotificationID, errors.New("notification_id isn't this Credential Issuer's"))
 	}
 	if !record.ExpiresAt.IsZero() && !iss.deps.Clock.Now().Before(record.ExpiresAt) {
 		return newError(ErrorInvalidNotificationID, 400, unknownNotificationID, errors.New("notification_id has expired"))

@@ -152,6 +152,26 @@ them.
 
 ### Credential Issuer (`issuer`) stores
 
+- **Records name the Credential Issuer that created them.**
+  `PreAuthorizedCodeRecord`, `DeferredTransactionRecord`,
+  `NotificationRecord`, `NonceIssuance`, `NonceConsumption` and
+  `NonceRecord` gain `Owner`, set to `Config.Issuer`, and an `Issuer`
+  honours only its own records: Credential Issuers sharing a store, such
+  as the tenants of one deployment, no longer redeem each other's
+  pre-authorized codes, c_nonces, transaction_ids or notification_ids.
+  A custom store must persist `Owner` like any other field. Under
+  production a record without one is refused, and the issuer reads its
+  first pre-authorized code, deferred transaction and notification_id
+  back and refuses a store that dropped it. `NonceStore.Consume`
+  retires only a nonce issued with `NonceConsumption.Owner`, leaving
+  another Owner's in place (`issuer.ErrNonceUnknown`), and returns its
+  `Owner` in the record. A deferred transaction your own business
+  process creates in the store sets `Owner` to the `Config.Issuer` of
+  the issuer that will serve it. Records saved before the upgrade have
+  no `Owner`: under production, let pending c_nonces, deferred
+  transactions and notification_ids expire, or set their `Owner`,
+  before upgrading. Pre-authorized codes are also keyed by the `Owner`
+  (below).
 - **Store errors: unknown versus unavailable.** Each issuer store now
   has a sentinel for a record it doesn't hold:
   `issuer.ErrNonceUnknown` (`NonceStore.Consume`),
@@ -166,7 +186,8 @@ them.
   `invalid_notification_id`, so an outage no longer tells a holder their
   PIN is wrong. Run the `issuertest` contracts against your stores.
 - **Pre-authorized codes and Transaction Codes are stored as hashes.**
-  `PreAuthorizedCodeStore` is keyed by a SHA-256 hash of the code, and
+  `PreAuthorizedCodeStore` is keyed by a SHA-256 hash of the code and
+  the issuing Credential Issuer, and
   `PreAuthorizedCodeRecord.TxCode` is now `TxCodeHash`, an HMAC of the
   Transaction Code keyed by the code; `Consume` compares the hash it's
   given with it (in constant time). A store keeps both as opaque

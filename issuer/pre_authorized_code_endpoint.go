@@ -548,14 +548,23 @@ func (iss *Issuer) preAuthorizedBinding(ctx context.Context, req ExchangePreAuth
 // Token Error, and any other store error into a plain one (a 500) —
 // split out of
 // exchangePreAuthorizedCode purely to keep its cognitive complexity
-// manageable. accept's own error is returned as it is. A store that
+// manageable. The code is looked up under this Issuer's own key, and a
+// record another Credential Issuer owns, or one with no Owner under
+// AssuranceProduction, is refused before accept, as an unknown code.
+// accept's own error is returned as it is. A store that
 // reports success without accept having accepted the record is refused
 // too, though the code is then spent: none of accept's checks ran.
 func (iss *Issuer) consumePreAuthorizedCode(ctx context.Context, req ExchangePreAuthorizedCodeRequest, accept func(PreAuthorizedCodeRecord) error) (PreAuthorizedCodeRecord, error) {
 	var refused error
 	accepted := false
-	key := preAuthorizedCodeKey(req.PreAuthorizedCode)
+	key := preAuthorizedCodeKey(iss.storeOwner(), req.PreAuthorizedCode)
 	record, wrongAttempts, err := iss.deps.PreAuthorizedCodes.Consume(ctx, key, txCodeHash(req.PreAuthorizedCode, req.TxCode), iss.cfg.Limits.MaxTxCodeAttempts, func(r PreAuthorizedCodeRecord) error {
+		if !iss.owns(r.Owner) {
+			// The key is bound to this Issuer, so only a store that
+			// changed or dropped Owner gets here.
+			refused = newError(ErrorInvalidGrant, 400, "pre-authorized_code is unknown or already used", errors.New("the code's record isn't this Credential Issuer's"))
+			return refused
+		}
 		refused = accept(r)
 		accepted = refused == nil
 		return refused

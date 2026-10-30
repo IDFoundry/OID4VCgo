@@ -19,6 +19,13 @@ var ErrNotificationIDUnknown = errors.New("issuer: unknown notification_id")
 // notification_id — see IssueNotificationID's own doc comment for how
 // one comes to exist.
 type NotificationRecord struct {
+	// Owner is the Credential Issuer that issued the notification_id,
+	// its Config.Issuer: only that Issuer accepts it, so Credential
+	// Issuers sharing a store each receive only their own
+	// notifications. IssueNotificationID sets it. One with none is
+	// accepted only under AssuranceDevelopment.
+	Owner string
+
 	// ClientID binds this notification_id to the client the
 	// Credential(s) it identifies were issued to.
 	// When set, RequestNotification rejects a request whose

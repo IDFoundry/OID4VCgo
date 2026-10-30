@@ -142,6 +142,11 @@ func (iss *Issuer) requestDeferredCredential(ctx context.Context, auth Authorize
 	if err != nil {
 		return DeferredCredentialResult{}, deferredStoreError(err)
 	}
+	if !iss.owns(record.Owner) {
+		// Another Credential Issuer's transaction, in a shared store.
+		return DeferredCredentialResult{}, newError(ErrorInvalidTransactionID, 400, unknownTransactionID,
+			errors.New("transaction_id isn't this Credential Issuer's"))
+	}
 	if iss.deferredExpired(record) {
 		return DeferredCredentialResult{}, newError(ErrorInvalidTransactionID, 400, unknownTransactionID, nil)
 	}

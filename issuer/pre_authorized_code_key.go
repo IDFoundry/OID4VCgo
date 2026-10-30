@@ -4,16 +4,24 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
+	"fmt"
 )
 
 // preAuthorizedCodeKey is what Dependencies.PreAuthorizedCodes keeps
-// code under: SHA-256 of the code, base64url-encoded. The code is a
-// bearer credential, so a store, or a leak of it, never holds one a
-// Wallet could redeem; a lookup by the code's hash finds the record as
-// the code itself would.
-func preAuthorizedCodeKey(code string) string {
-	sum := sha256.Sum256([]byte(code))
-	return base64.RawURLEncoding.EncodeToString(sum[:])
+// code under for the Credential Issuer owner: SHA-256 of the two,
+// base64url-encoded. The code is a bearer credential, so a store, or a
+// leak of it, never holds one a Wallet could redeem; a lookup by the
+// key finds the record as the code itself would. Bound to owner too, a
+// code one Credential Issuer issued is unknown to every other sharing
+// its store, before any of its record is read: no other Issuer can
+// spend it, or count a wrong tx_code against it.
+func preAuthorizedCodeKey(owner, code string) string {
+	h := sha256.New()
+	for _, part := range []string{owner, code} {
+		// Length-prefixed, so no two pairs hash alike.
+		_, _ = fmt.Fprintf(h, "%d:%s", len(part), part) // a hash.Hash never fails to write
+	}
+	return base64.RawURLEncoding.EncodeToString(h.Sum(nil))
 }
 
 // txCodeHash is what a PreAuthorizedCodeRecord keeps of code's

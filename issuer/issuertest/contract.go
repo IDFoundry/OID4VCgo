@@ -29,7 +29,8 @@ import (
 // storage/doc.go) — only the in-process behavior New's own
 // AssuranceProduction check can't itself observe: atomicity,
 // single-use semantics (or, for DPoPNonceStore, repeatable lookups),
-// and faithful field round-tripping.
+// and faithful field round-tripping, the Owner that keeps the records
+// of Credential Issuers sharing a store apart included.
 
 // contractConcurrentAttempts bounds how many concurrent calls the
 // *IsSingleUse/*HasExactlyOneWinner checks below fan out — enough to
@@ -48,6 +49,8 @@ const (
 	msgExpiresAtMismatch = "ExpiresAt = %v, want %v"
 	nonceNeverIssued     = "never-issued"
 	contractClientID     = "client-1"
+	contractOwner        = "https://issuer-a.example.com"
+	msgOwnerMismatch     = "Owner = %q, want %q: the store must keep every record field, or Credential Issuers sharing it can't be kept apart"
 )
 
 // canceledContext is a context already canceled, for the
@@ -106,6 +109,33 @@ func TestNonceStoreContract(t *testing.T, factory func() issuer.NonceStore) {
 		}
 		_, err := store.Consume(canceledContext(), issuer.NonceConsumption{Nonce: "n1"})
 		requireNotUnknown(t, err, issuer.ErrNonceUnknown)
+	})
+	t.Run("OwnerRoundTrips", func(t *testing.T) {
+		store := factory()
+		ctx := context.Background()
+		if err := store.Issue(ctx, issuer.NonceIssuance{Nonce: "n1", Owner: contractOwner, ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
+			t.Fatalf(msgIssueFailed, err)
+		}
+		got, err := store.Consume(ctx, issuer.NonceConsumption{Nonce: "n1", Owner: contractOwner})
+		if err != nil {
+			t.Fatalf(msgConsumeFailed, err)
+		}
+		if got.Owner != contractOwner {
+			t.Errorf(msgOwnerMismatch, got.Owner, contractOwner)
+		}
+	})
+	t.Run("AnotherOwnerCantConsume", func(t *testing.T) {
+		store := factory()
+		ctx := context.Background()
+		if err := store.Issue(ctx, issuer.NonceIssuance{Nonce: "n1", Owner: contractOwner, ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
+			t.Fatalf(msgIssueFailed, err)
+		}
+		if _, err := store.Consume(ctx, issuer.NonceConsumption{Nonce: "n1", Owner: "https://issuer-b.example.com"}); !errors.Is(err, issuer.ErrNonceUnknown) {
+			t.Errorf("Consume by another Owner = %v, want issuer.ErrNonceUnknown", err)
+		}
+		if _, err := store.Consume(ctx, issuer.NonceConsumption{Nonce: "n1", Owner: contractOwner}); err != nil {
+			t.Errorf("Consume by its Owner after another's attempt: %v, want the nonce left in place", err)
+		}
 	})
 	testAtomicNonceContract(t, func() (issue func(nonce string, expiresAt time.Time) error, consume func(nonce string) (time.Time, error)) {
 		store := factory()
@@ -323,7 +353,7 @@ func testPACAcceptSeesTheRecord(t *testing.T, factory func() issuer.PreAuthorize
 	store := factory()
 	ctx := context.Background()
 	want := issuer.PreAuthorizedCodeRecord{
-		TxCodeHash: "1234", Scopes: []string{"identity_credential"}, CredentialConfigurationIDs: []string{"cfg1"},
+		Owner: contractOwner, TxCodeHash: "1234", Scopes: []string{"identity_credential"}, CredentialConfigurationIDs: []string{"cfg1"},
 		ExpiresAt: time.Now().Add(time.Minute).Truncate(time.Second), Subject: "subject-1",
 	}
 	if err := store.Issue(ctx, "code1", want); err != nil {
@@ -341,6 +371,9 @@ func testPACAcceptSeesTheRecord(t *testing.T, factory func() issuer.PreAuthorize
 		t.Fatal("Consume succeeded without calling accept")
 	}
 	for _, r := range append(seen, got) {
+		if r.Owner != want.Owner {
+			t.Errorf(msgOwnerMismatch, r.Owner, want.Owner)
+		}
 		if r.Subject != want.Subject || len(r.Scopes) != 1 || r.Scopes[0] != "identity_credential" ||
 			len(r.CredentialConfigurationIDs) != 1 || r.CredentialConfigurationIDs[0] != "cfg1" || !r.ExpiresAt.Equal(want.ExpiresAt) {
 			t.Errorf("record = %+v, want %+v", r, want)
@@ -860,7 +893,7 @@ func TestNotificationStoreContract(t *testing.T, factory func() issuer.Notificat
 	t.Run("IssueAndGet", func(t *testing.T) {
 		store := factory()
 		ctx := context.Background()
-		if err := store.Issue(ctx, "notif1", issuer.NotificationRecord{ClientID: contractClientID}); err != nil {
+		if err := store.Issue(ctx, "notif1", issuer.NotificationRecord{Owner: contractOwner, ClientID: contractClientID}); err != nil {
 			t.Fatalf(msgIssueFailed, err)
 		}
 		got, err := store.Get(ctx, "notif1")
@@ -869,6 +902,9 @@ func TestNotificationStoreContract(t *testing.T, factory func() issuer.Notificat
 		}
 		if got.ClientID != contractClientID {
 			t.Errorf("ClientID = %q, want client-1", got.ClientID)
+		}
+		if got.Owner != contractOwner {
+			t.Errorf(msgOwnerMismatch, got.Owner, contractOwner)
 		}
 	})
 
@@ -910,7 +946,7 @@ func TestDeferredTransactionStoreContract(t *testing.T, seed func(t *testing.T, 
 	t.Helper()
 
 	t.Run("Get", func(t *testing.T) {
-		want := issuer.DeferredTransactionRecord{ClientID: contractClientID, Subject: "holder-1", Status: issuer.DeferredTransactionPending}
+		want := issuer.DeferredTransactionRecord{Owner: contractOwner, ClientID: contractClientID, Subject: "holder-1", Status: issuer.DeferredTransactionPending}
 		store := seed(t, "txn1", want)
 		got, err := store.Get(context.Background(), "txn1")
 		if err != nil {
@@ -924,6 +960,9 @@ func TestDeferredTransactionStoreContract(t *testing.T, seed func(t *testing.T, 
 		}
 		if got.Status != want.Status {
 			t.Errorf("Status = %v, want %v", got.Status, want.Status)
+		}
+		if got.Owner != want.Owner {
+			t.Errorf(msgOwnerMismatch, got.Owner, want.Owner)
 		}
 	})
 
@@ -981,7 +1020,7 @@ func TestDeferredTransactionStoreContract(t *testing.T, seed func(t *testing.T, 
 		store := seed(t, "txn1", issuer.DeferredTransactionRecord{})
 		ctx := context.Background()
 		want := issuer.DeferredTransactionRecord{
-			ClientID: contractClientID, Status: issuer.DeferredTransactionPending, CredentialConfigurationID: "pid",
+			Owner: contractOwner, ClientID: contractClientID, Status: issuer.DeferredTransactionPending, CredentialConfigurationID: "pid",
 			BindingKeys: []json.RawMessage{json.RawMessage(`{"kty":"EC"}`)}, Reference: "ref-1",
 			KeyAttestations: []string{"key-attestation-1"},
 		}
@@ -995,6 +1034,9 @@ func TestDeferredTransactionStoreContract(t *testing.T, seed func(t *testing.T, 
 		if got.CredentialConfigurationID != "pid" || got.Reference != "ref-1" || len(got.BindingKeys) != 1 || string(got.BindingKeys[0]) != `{"kty":"EC"}` ||
 			len(got.KeyAttestations) != 1 || got.KeyAttestations[0] != "key-attestation-1" {
 			t.Errorf("Get after Create = %+v, want %+v", got, want)
+		}
+		if got.Owner != want.Owner {
+			t.Errorf(msgOwnerMismatch, got.Owner, want.Owner)
 		}
 		if err := store.Create(ctx, "txn2", want); err == nil {
 			t.Error("Create reused a transaction_id")

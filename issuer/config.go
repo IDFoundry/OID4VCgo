@@ -525,6 +525,16 @@ type CredentialDPoPNonceIssuer interface {
 }
 
 // Dependencies are this issuer's external collaborators.
+//
+// Credential Issuers may share a backend for Nonces, PreAuthorizedCodes,
+// DeferredTransactions and Notifications: every record an Issuer saves
+// there carries its Config.Issuer as its Owner, and each honours only
+// its own, so none redeems another's pre-authorized code or c_nonce, or
+// answers another's transaction_id or notification_id. A store must
+// persist Owner for that to hold. CredentialOffers, DPoPNonces and
+// DPoPReplay records aren't scoped that way: an offer's reference is an
+// unguessable lookup key whose offer names its Credential Issuer, and
+// DPoP nonces and jti records are shared freshness state.
 type Dependencies struct {
 	// Nonces persists issued c_nonce values. Required when
 	// Config.Endpoints.Nonce is set.
@@ -676,6 +686,11 @@ type Issuer struct {
 	// dpopNonces is the DPoP nonce this Issuer currently hands out (see
 	// currentDPoPNonce).
 	dpopNonces dpopNonceRotator
+
+	// preAuthorizedOwner, deferredOwner and notificationOwner record
+	// whether each store has kept a saved record's Owner
+	// (checkOwnerKept).
+	preAuthorizedOwner, deferredOwner, notificationOwner ownerReadBack
 }
 
 // New validates cfg and deps and returns a ready-to-use Issuer.

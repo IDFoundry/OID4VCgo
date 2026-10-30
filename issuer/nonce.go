@@ -19,7 +19,12 @@ var ErrNonceUnknown = errors.New("issuer: unknown or already consumed c_nonce")
 // NonceIssuance is what NonceStore.Issue persists for one c_nonce this
 // issuer has handed out via the Nonce Endpoint (§7).
 type NonceIssuance struct {
-	Nonce     string
+	Nonce string
+
+	// Owner is the Credential Issuer that issued the nonce, its
+	// Config.Issuer: only that Issuer consumes it (NonceConsumption).
+	Owner string
+
 	ExpiresAt time.Time
 }
 
@@ -28,6 +33,10 @@ type NonceConsumption struct {
 	// Nonce is the value a Credential Request's key proof carried in
 	// its own "nonce" claim (§8.2) — the lookup key.
 	Nonce string
+
+	// Owner is the Credential Issuer consuming it, its Config.Issuer:
+	// Consume retires only a nonce issued with this Owner.
+	Owner string
 }
 
 // NonceRecord is what Consume returns for a successfully consumed
@@ -35,6 +44,9 @@ type NonceConsumption struct {
 // against the time it's verifying at. The store itself never judges
 // expiry, mirroring FAPIgo's storage.NonceStore precisely.
 type NonceRecord struct {
+	// Owner is the NonceIssuance's Owner, which the issuer checks too.
+	Owner string
+
 	ExpiresAt time.Time
 }
 
@@ -52,9 +64,12 @@ type NonceStore interface {
 	Issue(ctx context.Context, issuance NonceIssuance) error
 
 	// Consume atomically retrieves and retires the nonce identified by
-	// consumption.Nonce. It returns an error wrapping ErrNonceUnknown if
-	// the nonce is unknown or already consumed, and any other error only
-	// when it couldn't answer; the caller checks the returned record's
-	// own ExpiresAt against the time it's verifying at.
+	// consumption.Nonce, if it was issued with consumption.Owner. It
+	// returns an error wrapping ErrNonceUnknown if the nonce is unknown,
+	// already consumed or another Owner's — leaving another Owner's in
+	// place, so Credential Issuers sharing a store can't spend each
+	// other's nonces — and any other error only when it couldn't
+	// answer. The caller checks the returned record's own ExpiresAt
+	// against the time it's verifying at, and its Owner.
 	Consume(ctx context.Context, consumption NonceConsumption) (NonceRecord, error)
 }
