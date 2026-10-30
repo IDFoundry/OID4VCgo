@@ -14,12 +14,13 @@ var sweptTables = []string{
 	"issuer_deferred_transactions", // DeferredTransactionRecord.ExpiresAt; never when zero
 	"issuer_notifications",         // NotificationRecord.ExpiresAt; never when zero
 	"issuer_credential_offers",     // CredentialOfferRecord.ExpiresAt
+	"verifier_transactions",        // Transaction.RetainUntil; never when zero
 }
 
 // Sweep deletes every record that expired before now, from every table
 // that has them, and returns how many it deleted. The stores never
 // delete an expired record themselves — each is answered as unknown, or
-// refused, by the issuer once it has expired — so
+// refused, by the issuer or verifier once it has expired — so
 // run Sweep periodically (every few minutes, say) to keep the tables,
 // and the personal data in them, from growing without bound.
 //
@@ -27,7 +28,9 @@ var sweptTables = []string{
 //   - a c_nonce, pre-authorized code or Credential Offer: its ExpiresAt;
 //   - a deferred transaction or notification_id: its ExpiresAt, and
 //     never when that's zero. To give a Wallet longer to collect a
-//     deferred credential after it lapses, pass an earlier now.
+//     deferred credential after it lapses, pass an earlier now;
+//   - a verifier transaction: its RetainUntil, the earliest a store may
+//     delete it, and never when that's zero.
 func (d *DB) Sweep(ctx context.Context, now time.Time) (int64, error) {
 	var total int64
 	for _, name := range sweptTables {
