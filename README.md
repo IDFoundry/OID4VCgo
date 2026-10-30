@@ -162,6 +162,11 @@ Where to start, by role:
   library), each with its documentation: [Swift](https://idfoundry.github.io/OID4VCgo-wallet-swift/latest/documentation/oid4vcwallet/) and
   [Kotlin](https://idfoundry.github.io/OID4VCgo-wallet-kotlin/latest/) ([guides](https://github.com/IDFoundry/OID4VCgo-wallet-kotlin/tree/main/docs)). See also
   [mobile/MOBILE.md](mobile/MOBILE.md) and [`mobile/`](mobile).
+- **Durable stores** — the separate [`sqlstore`](sqlstore) module keeps
+  the issuer's, the verifier's and walletflow's stores in PostgreSQL or
+  SQLite through `database/sql`: versioned migrations, atomic consumes
+  and updates across processes, records optionally sealed, and a
+  `Sweep` for expired ones.
 - **Your own stores and resolvers** — `issuer/issuertest`,
   `verifier/verifiertest` and `walletflow/storetest` hold contract tests
   to run against them.

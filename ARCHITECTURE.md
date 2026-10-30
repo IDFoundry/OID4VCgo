@@ -1554,6 +1554,31 @@ changes whether *every* bullet below is `(done)`.
   (`issuer.ErrNonceUnknown` and its siblings) tells an unknown record,
   the Wallet's error, from a store that couldn't answer, a 500.
   `issuer/issuertest` checks each of these.
+- **`sqlstore`** (separate module, `github.com/idfoundry/oid4vcgo/sqlstore`)
+  — durable reference implementations of the issuer's stores
+  (`NonceStore`, `PreAuthorizedCodeStore`, `DeferredTransactionStore`,
+  `NotificationStore`, `CredentialOfferStore`), the verifier's
+  `TransactionStore` and walletflow's five, over `database/sql` for
+  PostgreSQL and SQLite. A module of its own so the library takes no
+  driver; its tests bring `pgx` and `modernc.org/sqlite` (pure Go, so
+  no cgo). One `DB` wraps a `*sql.DB`, a `Dialect` and a table prefix,
+  and hands out each store; the dialects differ only in column types,
+  placeholders and how a transaction locks (`SELECT … FOR UPDATE` on
+  Postgres, `BEGIN IMMEDIATE` on SQLite), so every store's SQL is
+  written once. Each table has the same four columns — `id`, `owner`,
+  `sweep_after`, `record` — plus the few a store looks rows up by (a
+  pre-authorized code's `tx_code_hash` and `wrong_attempts`, a
+  transaction's `key_id` and `response_code_hash`); `record` is the
+  record as JSON, sealed with an optional `Sealer` (the
+  `verifier.TransactionSealer` interface) bound to its table and key,
+  or for the verifier `TransactionCodec`'s own encoding. Consumes are
+  one `DELETE … RETURNING`, and every read-modify-write one transaction
+  holding the row, so the contracts' atomicity holds across processes:
+  the tests run every `issuertest`, `verifiertest` and `storetest`
+  contract against both databases, `storetest`'s shared-store ones with
+  a `*sql.DB` per goroutine. Migrations are embedded, versioned and run
+  only by an explicit `Migrate`; `Sweep` deletes what has expired, which
+  no store does on its own.
 - **`registration`** (done) — this library's verifier registration
   attestation: a JWT a registrar issues for a relying party (who it is,
   why it asks, which claims it may request), carried in a request's

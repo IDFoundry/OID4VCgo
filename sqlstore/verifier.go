@@ -9,8 +9,8 @@ import (
 	"github.com/idfoundry/oid4vcgo/verifier"
 )
 
-// TransactionStore is a verifier.TransactionStore:
-// TransactionsConfig's Store. Each transaction is kept as its
+// TransactionStore is a verifier.TransactionStore, for
+// verifier.NewTransactions. Each transaction is kept as its
 // TransactionCodec encodes it — sealed by the codec's Sealer, if it has
 // one — beside the columns its lookups and Sweep go by: KeyID,
 // ResponseCodeHash, Owner and RetainUntil.
