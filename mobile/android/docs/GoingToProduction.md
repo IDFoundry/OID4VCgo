@@ -86,8 +86,11 @@ before (by its JWK thumbprint) rather than asking for a fresh challenge.
 
 A custom `KeyStore` gives the provider no evidence unless it implements
 `createKey(purpose, attestationChallenge)` and `attestationChain(id)`:
-keep `AndroidKeystoreKeyStore`. The demo wallet's provider attests
-anything, and is for development only.
+keep `AndroidKeystoreKeyStore`. The demo wallet's provider (the
+passport-vdc demo's) checks a chain's signatures, key and challenge,
+but accepts an emulator's software attestation unless told not to,
+attests a key sent without a chain, and reads none of the key's
+authorizations: it is for development only.
 
 ## Trust
 

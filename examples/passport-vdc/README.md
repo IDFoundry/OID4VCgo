@@ -453,13 +453,50 @@ The wallets never hold the provider's key. They ask its service
   for a Wallet Attestation.
 - `POST /key-attestation` with fresh holder keys and the issuer's
   `c_nonce`, for a Key Attestation over them.
+- `POST /attestation-challenge` with `{"purpose": "instance"}` or
+  `{"purpose": "holder"}`, for `{"challenge": "<base64url>",
+  "expires_in": 300}`: 32 random bytes, usable once, for 5 minutes, for
+  a key of that purpose.
 
-It attests only the demo wallet's `client_id`, and, unlike a real
-Wallet Provider, any key it's sent without checking who's asking: a
-real one would first check platform evidence (app integrity, keys in
-secure hardware) that the request comes from a genuine instance of its
-wallet. The provider files, the TLS certificates and the wallet store
-are all git-ignored; the store keeps holder keys unencrypted.
+**Android Key Attestation.** The Android demo wallet makes its instance
+and holder keys over such a challenge, so Android Keystore certifies
+each key, the challenge and where the key lives in a certificate chain,
+and sends the chain with the key: `instance_key_certificate_chain` on
+`/wallet-attestation`, `certificate_chains` (one per key, in the order
+of `keys`) on `/key-attestation`, each certificate base64 DER, the
+key's own first, as in `x5c`. The provider (`internal/androidattest`)
+then checks that each certificate is signed by the next, that the
+leaf's key is the JWK being attested, and that the leaf's key
+description extension (OID 1.3.6.1.4.1.11129.2.1.17) carries a
+challenge it issued for that purpose, unused and unexpired, which it
+uses up. A chain failing any of these is refused (403). A key it
+verified is remembered, by JWK thumbprint, for 30 days in
+`wallet-provider-keys.json` (in `.demo-state/` under `cmd/demo`), so
+its later attestations with the same chain (the instance key, for a
+refresh) are accepted after the challenge is used, and after a restart.
+
+Whether a verified chain is hardware Google vouches for — it ends at
+one of Google's hardware attestation roots (embedded; see
+`internal/androidattest/chain.go`), every certificate is within its
+validity, and both its security levels are `TrustedEnvironment` or
+`StrongBox` — is logged with each attestation. An emulator's software
+attestation isn't, and is attested anyway, as is an unknown root:
+`-require-hardware-key-attestation` (on `cmd/demo` and
+`cmd/wallet-provider`) refuses them instead. A key sent without a chain
+(the iOS demo app, which App Attest can't give such evidence for, the
+CLI and web wallets, or an older Android build) is attested as before,
+unverified, and logged so: the flag doesn't change that. The provider
+reads only the security levels and the challenge, not the key's
+authorizations, boot state or the app that made it, and doesn't check
+Google's revocation list: the Kotlin library's
+[Going to production](../../mobile/android/docs/GoingToProduction.md)
+guide lists what a real Wallet Provider checks.
+
+It attests only the demo wallet's `client_id`, without checking who's
+asking: a real Wallet Provider would check platform evidence (app
+integrity, keys in secure hardware) for every request. The provider
+files, the TLS certificates and the wallet store are all git-ignored;
+the store keeps holder keys unencrypted.
 
 Run separately, the servers each generate a self-signed certificate
 for `127.0.0.1` and `localhost`, and the wallets trust all of them, so
@@ -678,7 +715,8 @@ generator, planned for gmrtd itself).
 | `passport` | gmrtd → verified `Evidence` (the issuer's upload check, and the verifier's ICAO check of a disclosed file); the birth-date rule; the portrait |
 | `credential` | `Evidence` → `mdoc.Claims` / `sdjwtvc.Claims`; validity and age claims |
 | `issuerapp` | the OID4VCI issuer: fapigo Authorization Server + oid4vcgo Issuer + upload page |
-| `walletprovider` | the stand-in Wallet Provider: signs Wallet Attestations and Key Attestations, as an HTTPS service (`Handler`) the wallets call (`Client`) |
+| `walletprovider` | the stand-in Wallet Provider: signs Wallet Attestations and Key Attestations, as an HTTPS service (`NewService`) the wallets call (`Client`); issues attestation challenges and checks Android Key Attestation chains |
+| `internal/androidattest` | verifies an Android Key Attestation chain (signatures, the key description's security levels and challenge) and whether it ends at Google's hardware attestation roots |
 | `walletapp` | the wallet, on oid4vcgo's `walletflow` sessions: receive (offer → discovery → HAIP Authorization Code flow or pre-authorized code → credentials) and present (OpenID4VP, selective disclosure); credential store |
 | `verifierapp` | the OpenID4VP verifier: either-format requests, both trust paths, revocation checks |
 | `webwallet` | the browser wallet: credential cards, receive via the issuer's approval page, consent before presenting |
