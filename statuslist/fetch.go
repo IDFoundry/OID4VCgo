@@ -209,8 +209,14 @@ type NotValidError struct {
 	Status StatusType
 }
 
+// Error names the status, and says INVALID means revoked: the text may
+// be shown to the holder (a verifier's LastError).
 func (e *NotValidError) Error() string {
-	return "statuslist: the referenced token's status is " + e.Status.String()
+	text := "statuslist: the referenced token's status is " + e.Status.String()
+	if e.Status == StatusInvalid {
+		text += " (revoked)"
+	}
+	return text
 }
 
 // RequireValid checks ref as Check does, and returns nil only when the
