@@ -197,7 +197,11 @@ func TestTransactionCodec_Sealed(t *testing.T) {
 		t.Fatal(err)
 	}
 	encodedDER, _ := json.Marshal(der)
-	for _, secret := range [][]byte{tx.ResponseDecryptionKey.D.Bytes(), der, bytes.Trim(encodedDER, `"`), []byte("Jean")} {
+	raw, err := tx.ResponseDecryptionKey.Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range [][]byte{raw, der, bytes.Trim(encodedDER, `"`), []byte("Jean")} {
 		if bytes.Contains(row, secret) {
 			t.Errorf("the sealed record carries %q", secret)
 		}
