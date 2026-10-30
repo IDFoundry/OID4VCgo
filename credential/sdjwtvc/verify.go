@@ -71,12 +71,26 @@ type VerifyOptions struct {
 	MaxClockSkew time.Duration
 }
 
-// Verify fully validates a presented SD-JWT or SD-JWT+KB against the
-// Issuer's already-resolved public key and returns the Processed SD-JWT
-// Payload (RFC 9901 §7.1's term) plus the Issuer-signed JWT's raw JOSE
-// header. Resolving *which* key issuerPub is — draft-13 §3.5's JWT VC
-// Issuer Metadata or X.509 Issuer Signature Mechanisms — is the
-// caller's job; see the package doc comment.
+// Verify checks a presented SD-JWT or SD-JWT+KB against the Issuer's
+// already-resolved public key — the Issuer-signed JWT's signature,
+// typ, vct and validity, each Disclosure's digest, and, when
+// RequireKeyBinding is KeyBindingRequired, the Key Binding JWT against
+// HolderPublicKey — and returns the Processed SD-JWT Payload (RFC 9901
+// §7.1's term) plus the Issuer-signed JWT's raw JOSE header.
+//
+// It is one step of verifying a presentation, not all of it. The caller
+// still:
+//   - resolves which key issuerPub is and whether to trust it —
+//     draft-13 §3.5's JWT VC Issuer Metadata or X.509 Issuer Signature
+//     Mechanisms (see the package doc comment), with revocation of its
+//     certificate;
+//   - passes as HolderPublicKey the key the credential's own cnf claim
+//     names (RFC 7800, RFC 9901 §7.3): Verify checks the Key Binding
+//     JWT against the key it's given, not against cnf;
+//   - checks the credential's status.
+//
+// verifier.Verifier.VerifyResponse does all of these, status through
+// its Status policy.
 func Verify(s string, issuerPub crypto.PublicKey, issuerAlg oid4vci.JOSEAlg, opts VerifyOptions) (payload map[string]any, header map[string]any, err error) {
 	if opts.RequireKeyBinding != KeyBindingRequired && opts.RequireKeyBinding != KeyBindingNotRequired {
 		return nil, nil, fmt.Errorf("sdjwtvc: VerifyOptions.RequireKeyBinding is required")

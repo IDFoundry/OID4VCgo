@@ -28,8 +28,9 @@
 // Verify expects the Issuer's already-resolved public key: determining
 // *which* key that is — draft-13 §3.5's JWT VC Issuer Metadata or X.509
 // mechanisms — is out of scope here and belongs to a caller that has
-// network access and issuer trust policy (the future issuer/wallet
-// packages), consistent with the base spec's own separation between
+// network access and issuer trust policy (verifier.X5CIssuerKeyResolver
+// for a Verifier, package wallet for a Wallet receiving a credential),
+// consistent with the base spec's own separation between
 // disclosure processing (RFC 9901 §7.1, which needs no key at all) and
 // signature verification (§7.1 step 2, which does).
 package sdjwtvc

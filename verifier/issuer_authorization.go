@@ -63,7 +63,8 @@ type IssuerAuthorization struct {
 	MatchedTypes []string
 
 	// IssuerChain is the issuer certificate chain the credential was
-	// verified with, as VerifiedCredential.IssuerChain.
+	// verified with, as VerifiedCredential.IssuerChain, whose doc says
+	// how to tell issuers apart by it: not by the leaf's subject.
 	IssuerChain [][]byte
 
 	// Claims are the presentation's disclosed claims, as

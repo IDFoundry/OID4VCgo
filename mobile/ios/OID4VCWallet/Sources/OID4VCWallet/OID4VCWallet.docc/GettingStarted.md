@@ -13,10 +13,11 @@ stores for the first two; the Wallet Provider is your backend.
 ### Add the package
 
 Add OID4VCWallet to your app with Swift Package Manager, from
-`https://github.com/IDFoundry/OID4VCgo-wallet-swift`. In `Package.swift`:
+`https://github.com/IDFoundry/OID4VCgo-wallet-swift`, at the release
+whose documentation you're reading. In `Package.swift`:
 
 ```
-.package(url: "https://github.com/IDFoundry/OID4VCgo-wallet-swift", from: "0.9.0")
+.package(url: "https://github.com/IDFoundry/OID4VCgo-wallet-swift", from: "<version>")
 ```
 
 The package links a binary framework, `Mobile`, which SwiftPM checks

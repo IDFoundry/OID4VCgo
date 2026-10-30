@@ -205,6 +205,39 @@ What the second path does and doesn't give you:
   SD-JWT VC's claim names (in `credential/names.go`) remain the demo's
   own.
 
+### Demo-only settings
+
+The demo wires the library's production entry points, but runs them
+with settings a deployment must change. Each would be refused, or must
+be decided again, under production assurance:
+
+- **Development assurance everywhere.** The Authorization Server
+  (`server.AssuranceDevelopment`) and the Credential Issuer
+  (`issuer.AssuranceDevelopment`) in `issuerapp/app.go`, both Verifiers
+  (`verifier.AssuranceDevelopment` in `verifierapp/app.go` and
+  `verifierapp/dcapi.go`), and both command-line wallets
+  (`walletflow.Config.Development` in `walletapp`).
+- **In-memory stores.** The Authorization Server's stores (FAPIgo's
+  `memstore`), the issuer's pre-authorized code, nonce, deferred
+  transaction and notification stores, the Verifier's transaction store
+  (`storage.NewVerifierTransactionStore`), and the command-line wallet's
+  credentials and software keys. Production stores are durable and
+  atomic; run `issuer/issuertest`, `verifier/verifiertest` and
+  `walletflow/storetest` against them.
+- **No certificate revocation for the demo's own CAs.** The verifier
+  declines it for the issuer's certificates (`certrevocation.NoCheck{}`,
+  as `issuerRevocation`), and the Authorization Server for the Wallet
+  Provider's (`server.NoClientCertificateRevocationCheck{}`): neither
+  demo CA publishes a CRL. Credentials' own revocation is still checked,
+  through their status lists.
+- **One issuer for every document type.** The Digital Credentials API
+  verifier sets `AnyIssuerForAnyType`, since the demo has one issuer. A
+  Verifier that trusts several says which may issue which type
+  (`IssuerAuthorized`).
+- **A 24-hour Wallet Attestation lifetime** on the Authorization Server,
+  and the stand-in Wallet Provider below, which isn't a Wallet Provider
+  a production issuer should trust.
+
 ## Running the demo
 
 From this directory (`examples/passport-vdc`), one command starts the

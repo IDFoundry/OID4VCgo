@@ -29,6 +29,14 @@ import (
 // smoke-testing (see conformance/wallet-vp/README.md) — without this,
 // Go's own default TLS verification rejects the paired
 // cmd/conformance-verifier's self-signed cert outright.
+//
+// Not a model for a wallet: the URLs it fetches (request_uri, the
+// response's redirect_uri) come from the Authorization Request and the
+// Verifier's reply, unverified when fetched, and the bodies are read
+// without a size limit. A wallet fetches request_uri through
+// wallet.Wallet.FetchAuthorizationRequest, whose hardened client
+// verifies TLS and bounds the body, the redirects and the addresses it
+// connects to, and hands redirect_uri to the user's browser.
 var httpClient = &http.Client{
 	Timeout:   30 * time.Second,
 	Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}, //nolint:gosec // deliberate — see this var's own doc comment
@@ -37,7 +45,7 @@ var httpClient = &http.Client{
 const contentTypeHeader = "Content-Type"
 
 func httpGetString(rawURL string) (string, error) {
-	resp, err := httpClient.Get(rawURL) //nolint:gosec,noctx // rawURL is the Verifier's own request_uri from a request this binary just verified, not attacker-controlled input reaching this call untrusted
+	resp, err := httpClient.Get(rawURL) //nolint:gosec,noctx // conformance harness only: rawURL is an unverified request_uri or redirect_uri from the suite (see httpClient)
 	if err != nil {
 		return "", err
 	}
@@ -58,13 +66,13 @@ func httpGetString(rawURL string) (string, error) {
 // (as opposed to postDirectPostResponse's own POST, a different
 // endpoint/content type entirely).
 func httpPostFormString(rawURL string, form url.Values) (string, error) {
-	req, err := http.NewRequest(http.MethodPost, rawURL, strings.NewReader(form.Encode())) //nolint:gosec,noctx // rawURL is the Verifier's own request_uri from a request this binary just verified, not attacker-controlled
+	req, err := http.NewRequest(http.MethodPost, rawURL, strings.NewReader(form.Encode())) //nolint:gosec,noctx // conformance harness only: rawURL is an unverified request_uri from the suite (see httpClient)
 	if err != nil {
 		return "", err
 	}
 	req.Header.Set(contentTypeHeader, "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/oauth-authz-req+jwt")
-	resp, err := httpClient.Do(req) //nolint:gosec // same rawURL as above, already validated/verified before this call is reached
+	resp, err := httpClient.Do(req) //nolint:gosec // conformance harness only: the same unverified rawURL as above
 	if err != nil {
 		return "", err
 	}

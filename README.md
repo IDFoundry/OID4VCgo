@@ -166,19 +166,24 @@ Where to start, by role:
   `verifier/verifiertest` and `walletflow/storetest` hold contract tests
   to run against them.
 
-For a complete, real integration, see the four `cmd/conformance-*`
-binaries under `conformance/`: each pairs this library's own role
-package (`issuer`, `wallet`, `verifier`) with real HTTP and, where
-applicable, a real `fapigo/server`/`fapigo/client`, and each is the
-binary that produced its role's OIDF certification results (see
-[ARCHITECTURE.md](ARCHITECTURE.md) and each binary's own
-`conformance/<role>/README.md` for what was verified). They're a
-better model for a real deployment's wiring than the package tests
-alone, which exercise each function in isolation rather than a full
-request/response cycle over the network. For an end-to-end application
-— a gmrtd passport turned into both credential formats, a browser and a
-command-line wallet, and a verifier with revocation — see
-[`examples/passport-vdc`](examples/passport-vdc).
+For an end-to-end application — a gmrtd passport turned into both
+credential formats, a browser and a command-line wallet, and a verifier
+with revocation — see [`examples/passport-vdc`](examples/passport-vdc).
+It wires the production entry points above (`verifier.Transactions`,
+`issuer.New` with `haip.IssuerProfile`, `walletflow`), though under
+development assurance and with in-memory stores; its README lists those
+demo-only settings.
+
+The four `cmd/conformance-*` binaries under `conformance/` are test
+harnesses for the OIDF conformance suite, not models for a deployment.
+They produced each role's certification results, but they run under
+development assurance with in-memory stores, trust the suite's
+throwaway certificates, and drive the lower-level APIs the suite
+exercises rather than the session-bound ones: the conformance verifier
+keeps its own session map instead of `verifier.Transactions`, so it has
+no same-device `response_code` bound to the browser, and the conformance
+wallets skip `walletflow`. Each `conformance/<role>/README.md` says what
+not to copy from its binary.
 
 [pkgdev]: https://pkg.go.dev/github.com/idfoundry/oid4vcgo
 

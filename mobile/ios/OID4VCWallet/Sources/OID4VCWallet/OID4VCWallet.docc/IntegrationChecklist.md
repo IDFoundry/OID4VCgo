@@ -35,6 +35,8 @@ is a complete, working app on this package to compare against.
   (<doc:GettingStarted>)
 - One ``Wallet``, created at launch and kept for the app's life, with
   ``Wallet/sweepOrphanedKeys(in:)`` run before any issuance.
+- Each setting in <doc:GoingToProduction>'s "Settings to decide" is
+  decided and recorded.
 - Trust roots are PEM in ``WalletConfiguration``, each in its own role:
   ``WalletConfiguration/issuerRoots``, ``WalletConfiguration/verifierRoots``,
   ``WalletConfiguration/mdocReaderRoots`` and the rest. Outside
@@ -102,8 +104,14 @@ is a complete, working app on this package to compare against.
   ``Presentation/preview(selection:)`` says would be disclosed, before
   the holder agrees. Then ``Presentation/respond(selection:)``, or
   ``Presentation/decline()``.
+- Respond with the selection whose preview the holder saw: a changed
+  selection is previewed and shown again first.
 - Open ``Presentation/Presented/redirectURI``, when there is one, in the
   browser the request came from.
+- ``WalletError/Code/requestRefused`` from
+  ``Wallet/startPresentation(request:)``: open
+  ``Wallet/takeRefusalRedirect()`` when it returns a URL, and tell the
+  holder the request wasn't answered. (<doc:HandlingErrors>)
 - ``WalletError/Code/deliveryUnknown`` isn't retried: tell the holder to
   check with the Verifier.
 - *Check:* a Verifier outside ``WalletConfiguration/verifierRoots`` is

@@ -9,6 +9,28 @@ issuer", confirmed against the suite's own source at
 `gitlab.com/openid/conformance-suite`,
 `VCIIssuerTestPlanHaip.java`).
 
+## What not to copy
+
+This binary is a conformance-suite harness. It runs `fapigo/server` and
+`issuer` under development assurance with in-memory stores, and some of
+its settings exist only for the suite:
+
+- **Credentials without status, valid for a year.** It issues each
+  credential with a 365-day `exp` and no `status` claim, so nothing can
+  revoke one. A Credential Issuer sets a status reference
+  (`statuslist`, `identifierlist`) and an `exp` matching its own
+  policy.
+- **In-memory stores**, refused under `issuer.AssuranceProduction`
+  (see `issuer/issuertest` for the contracts a durable store passes).
+- **No certificate revocation** for Wallet Attestation signers
+  (`server.NoClientCertificateRevocationCheck{}`), and a 24-hour
+  Wallet Attestation lifetime to suit the suite's fixtures.
+- **No HAIP profile check in `issuer.New`**: it doesn't set
+  `Config.Profile: haip.IssuerProfile{}`.
+
+`examples/passport-vdc`'s issuer shows the HAIP profile, status lists
+and deferred issuance together.
+
 ## Why this is a full FAPI 2.0 AS, not just OID4VCI endpoints
 
 Unlike the OID4VP Verifier/Wallet plans (Phase 1), the Issuer-role

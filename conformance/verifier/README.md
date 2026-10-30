@@ -15,6 +15,34 @@ credentials of its own, only a DCQL query and a trusted issuer key
 (`Config.CredentialIssuerJWK`) matching what the suite's own
 "Credential Issuer" > "Signing JWK" test configuration will sign with.
 
+## What not to copy
+
+This binary is a conformance-suite harness. It drives `verifier`'s
+lower-level API (`BuildAuthorizationRequest`,
+`ParseDirectPostJWTResponse`, `VerifyResponse`) because those are what
+the suite grades, and it skips everything a deployment needs around
+them:
+
+- **No session binding.** It keeps its own in-memory session map rather
+  than a `verifier.Transactions`. The `redirect_uri` it returns names
+  `/result/{id}`, which shows the verified claims to anyone who has the
+  id, and the id is also in the public `request_uri`. There is no
+  single-use `response_code` bound to the browser that started the
+  request (OpenID4VP §8.2, HAIP 1.0 §5.1).
+- **No atomic completion.** A session's `done` flag is checked and set
+  by the handler under a per-session lock, not by a store's atomic
+  update, and only one process's memory holds it.
+- **Development assurance, no status check, no revocation.** It runs
+  under `verifier.AssuranceDevelopment`, sets `NoStatusCheck`, and
+  declines certificate revocation (`certrevocation.NoCheck{}`) for the
+  suite's per-run issuers.
+
+A Verifier uses `verifier.Transactions` with a durable
+`verifier.TransactionStore` (encoded with `verifier.TransactionCodec`),
+`TransactionsConfig.Status`, and issuer key resolvers with a
+`Revocation`, under `verifier.AssuranceProduction`.
+`examples/passport-vdc`'s verifier is wired that way.
+
 ## Endpoints
 
 - `GET /authorize` — creates a session (the DCQL query to ask for) and

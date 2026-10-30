@@ -40,7 +40,9 @@ type Registration struct {
 	registration.Registration
 	// Unregistered is, for each Credential Query ID, the claims the
 	// request asks for beyond what this Verifier is registered for — a
-	// nil path is every claim of the credential — then those answering
+	// nil path is a query naming no claims, flagged in full (see
+	// registration.Registration.Unregistered: OpenID4VP 1.0 §6.4.1 reads
+	// it as asking for no selectively disclosable claims) — then those answering
 	// it with a held credential would disclose along with what it asks
 	// for, beyond the registration: the plaintext members of a disclosed
 	// object or array element, the other elements of an array disclosed

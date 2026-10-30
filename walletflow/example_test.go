@@ -25,8 +25,14 @@ func ExampleNew() {
 		credentials                walletflow.CredentialStore    // durable, under the platform's data protection
 		authorizations             walletflow.AuthorizationStore // durable, so an authorization survives a suspension
 		provider                   walletflow.WalletProvider     // attests the wallet and its keys, for issuers that require it
-		issuerCRLs, verifierCRLs   *certrevocation.Refresher     // each role's CAs' CRLs, refreshed in the background
+		issuerCRLs, verifierCRLs   *certrevocation.Refresher     // each role's CAs' CRLs (certrevocation.NewRefresher)
 	)
+	// A Refresher fetches only when Refresh or Run is called, and a
+	// role whose CRLs it doesn't hold fails closed: run each in the
+	// background for as long as the wallet lives.
+	ctx := context.Background()
+	go issuerCRLs.Run(ctx)
+	go verifierCRLs.Run(ctx)
 	w, err := walletflow.New(walletflow.Config{
 		ClientID: "https://wallet.example.com", RedirectURI: "com.example.wallet:/callback",
 		IssuerRoots: issuerRoots, IssuerRevocation: issuerCRLs.Checker(), StatusRevocation: issuerCRLs.Checker(),

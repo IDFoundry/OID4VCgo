@@ -120,7 +120,8 @@ type queryJSON struct {
 	Multiple    bool                `json:"multiple"`
 	Credentials []credentialSummary `json:"credentials"`
 	// Unregistered are the claims it asks for beyond the Verifier's
-	// registration, and UnregisteredAll whether it asks for every claim.
+	// registration, and UnregisteredAll whether it names no claims,
+	// flagged in full (registration.Registration.Unregistered).
 	Unregistered    []dcql.Path `json:"unregistered"`
 	UnregisteredAll bool        `json:"unregistered_all"`
 }
@@ -139,8 +140,10 @@ type credentialSetJSON struct {
 // than one. For a Verifier with a verified registration, unregistered
 // are the claims paths the query asks for beyond it, then those its
 // credentials would disclose along with them beyond it (the rest of an
-// array disclosed as one, say), and unregistered_all whether it asks for every claim, which no
-// registration covers; nothing is refused for them. credential_sets are its sets of
+// array disclosed as one, say), and unregistered_all whether it names no
+// claims, which this library flags in full though OpenID4VP 1.0 §6.4.1
+// reads it as asking for no selectively disclosable claims; nothing is
+// refused for them. credential_sets are its sets of
 // alternatives, each option the query IDs that together answer it, most
 // preferred first; none means every query must be answered.
 func (p *Presentation) Queries() string {

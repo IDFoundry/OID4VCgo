@@ -69,6 +69,14 @@ type VerifiedMSO struct {
 // header (§12.3.4 puts it in the unprotected one, and a reader should
 // accept it in the protected one).
 //
+// Verify checks the issuer's data only. The caller still checks the
+// document signer certificate against its trust anchors
+// (CheckDocumentSigner on the verified paths), the holder's device
+// authentication over the session transcript (VerifyDeviceSignature or
+// VerifyDeviceMAC, and CheckKeyAuthorizations), and the document's
+// status. verifier.Verifier.VerifyResponse, mdocdcapi and the proximity
+// reader do all of these, status through their Status policy.
+//
 // Two of §12.3.4/§12.3.5's rules for the issuer aren't checked here:
 // each IssuerSignedItem's random is at least 16 bytes, and validFrom is
 // no earlier than signed. They protect the holder's privacy and keep

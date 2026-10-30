@@ -47,8 +47,14 @@ suspend fun present(
         throw e
     }
     if (!presentation.isAnswerable) return presentation.decline().redirectURI
-    val selection = presentation.defaultSelection()
-    val disclosures = presentation.preview(selection)
+    val (selection, disclosures) = try {
+        val chosen = presentation.defaultSelection()
+        chosen to presentation.preview(chosen)
+    } catch (e: WalletException) {
+        // Nothing can be shown: decline, so the Verifier isn't left waiting.
+        runCatching { presentation.decline() }
+        throw e
+    }
     if (!confirm(presentation, disclosures)) return presentation.decline().redirectURI
     // The holder key signs now: the fingerprint or screen lock, if the key store asks.
     return presentation.respond(selection).redirectURI
@@ -66,7 +72,12 @@ anything: show that before the holder agrees.
 
 Open `Presented.redirectURI`, when the Verifier sends one, in the
 browser the request came from: it's how a same-device flow returns to
-the Verifier's page.
+the Verifier's page. The library refuses http and schemes that run code
+or read local data, but lets through a scheme the Verifier's own app
+may have registered: open an https URL in the browser, any other only
+through an `ACTION_VIEW` intent, never in a WebView, and never one in
+the wallet's own schemes (`openid4vp`, `openid-credential-offer`, its
+redirect URI's), which would start another flow in the wallet.
 
 ## When the wallet refuses a request
 
@@ -84,7 +95,10 @@ left stranded. Tell the holder the request wasn't answered.
 
 For a Verifier with a verified registration, each query's
 `unregistered` lists the claims it asks for beyond what it's registered
-to request, and `unregisteredAll` whether it asks for every claim.
+to request, and `unregisteredAll` whether it names no claims at all.
+The library flags such a query in full, though OpenID4VP 1.0 §6.4.1
+reads it as asking for no selectively disclosable claims, so a
+presentation for it discloses only what the credential always shows.
 Nothing is refused for them: show them, and let the holder decide.
 
 ## Keep presentations unlinkable

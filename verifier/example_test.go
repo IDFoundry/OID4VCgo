@@ -80,6 +80,12 @@ func exampleLeaf(commonName string, ca *x509.Certificate, caKey *ecdsa.PrivateKe
 // A deployment with a different trust policy (DID resolution, VCT
 // metadata lookup) implements SDJWTVCIssuerKeyResolver itself instead
 // (see TestX5CTrustContract for a contract test to run against it).
+//
+// It shows the lower-level API under AssuranceDevelopment, with no
+// status check. A deployment uses Transactions (ExampleNewTransactions)
+// instead, which binds each answer to its request and, same-device, to
+// the browser that started it, and runs under AssuranceProduction with
+// a Status decision and certificate revocation.
 func ExampleVerifier_VerifyResponse() {
 	// --- Issuer setup: a real (non-self-signed — HAIP §5.3's own MUST)
 	// credential issuer certificate, chained to a CA this example will

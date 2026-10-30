@@ -119,6 +119,13 @@ func (iss *Issuer) checkDeferredCredentialRequest(auth AuthorizedRequest, req De
 // hint, or reports this issuer can no longer issue it
 // (credential_request_denied, §9.3).
 //
+// The transaction is invalidated before the Credentials are returned,
+// so a response lost on its way to the Wallet loses them: a second
+// request with the transaction_id gets invalid_transaction_id. The
+// issuer can't tell a lost response from a delivered one: where the
+// holder reports the credential missing, issue it again with a new
+// offer.
+//
 // It answers only the client and access token Subject the transaction
 // was created for (DeferredTransactionRecord's ClientID and Subject);
 // anyone else gets invalid_transaction_id, as for an unknown one.

@@ -9,7 +9,10 @@ Every failure from the wallet is a `WalletException`:
 - `protocolError`: the issuer's, Authorization Server's or Verifier's
   own OAuth error code, when it gave one, such as `invalid_grant` for a
   wrong PIN;
-- `isRetryable`: whether trying the same step again may succeed;
+- `isRetryable`: whether trying the same step again may succeed. Not
+  with input the step used up: a redirect given to
+  `completeAuthorization` is spent whatever happened, so begin the
+  authorization again;
 - `description`: a sentence fit to show the holder;
 - `message`: detail for logs. It never carries personal data, a remote
   party's own description, or a URL's path or query, so it's safe to

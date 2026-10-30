@@ -12,7 +12,9 @@ Every failure from the wallet is a ``WalletError``:
   Verifier's own OAuth error code, when it gave one, such as
   `invalid_grant` for a wrong PIN;
 - ``WalletError/isRetryable``: whether trying the same step again may
-  succeed;
+  succeed. Not with input the step used up: a redirect given to
+  ``Issuance/completeAuthorization(redirect:)`` is spent whatever
+  happened, so begin the authorization again;
 - `localizedDescription`: a sentence fit to show the holder;
 - ``WalletError/message``: detail for logs. It never carries personal
   data, a remote party's own description, or a URL's path or query, so
@@ -46,8 +48,9 @@ func describe(_ error: Error) -> (message: String, canRetry: Bool) {
 | ``WalletError/Code/network``, ``WalletError/Code/unavailable`` | A service couldn't be reached, or was unavailable | Offer to try again |
 | ``WalletError/Code/protocolError`` | A service refused the request; ``WalletError/protocolError`` says why | Retry when ``WalletError/isRetryable`` (a wrong PIN, a stale nonce) |
 | ``WalletError/Code/authorizationDenied`` | The holder or the issuer refused the authorization | Start again from the offer |
-| ``WalletError/Code/credentialDenied`` | The issuer refused to issue a credential | Tell the holder |
+| ``WalletError/Code/credentialDenied`` | The issuer refused a deferred credential | Tell the holder |
 | ``WalletError/Code/untrustedVerifier`` | The Verifier or reader isn't one the wallet trusts: nothing was shown | Tell the holder |
+| ``WalletError/Code/requestRefused`` | The wallet refused a Verifier's request it must not answer (`transaction_data` it doesn't support, say) and told the Verifier; ``WalletError/protocolError`` is the code it sent. Nothing was shown | Open ``Wallet/takeRefusalRedirect()`` if it returns a URL; tell the holder the request wasn't answered |
 | ``WalletError/Code/tlsPin`` | A pinned host's certificate matched none of its ``WalletConfiguration/tlsPins``: an interception, or keys changed beyond the pins. Nothing was sent | Don't retry; tell the holder to try another network, or ship new pins |
 | ``WalletError/Code/noMatchingCredential`` | No held credential answers the request | Decline |
 | ``WalletError/Code/invalidSelection`` | The selection doesn't answer the request | Choose again |

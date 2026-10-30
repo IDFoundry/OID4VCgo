@@ -201,9 +201,11 @@ type TransactionsConfig struct {
 	// request_uri.
 	RequestURIBase string
 
-	// Lifetime bounds how long a request stays answerable, and how long
-	// a same-device response_code stays redeemable. Zero means 10
-	// minutes.
+	// Lifetime bounds how long a request stays answerable, from Begin.
+	// A same-device response_code expires with its request, not
+	// Lifetime after the answer: one answered just before the request
+	// expires leaves the browser little time to redeem it. Zero means
+	// 10 minutes.
 	Lifetime time.Duration
 
 	// Verify is the verification every answer gets: its IssuerKeys,

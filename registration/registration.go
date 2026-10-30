@@ -421,9 +421,16 @@ func (r Registration) UnregisteredRevealed(cq dcql.CredentialQuery, revealed []d
 
 // Unregistered is what q requests beyond r, by credential query ID: each
 // claims path r doesn't register for that query's type of credential
-// (PermitsFor), in query order. A credential query
-// requesting no claims in particular asks for every claim (OpenID4VP 1.0
-// §6.1), which no registration covers: it's listed with a nil path.
+// (PermitsFor), in query order.
+//
+// A credential query naming no claims is listed with a nil path, as
+// unregistered in full. That is this function's convention, not the
+// query's meaning: OpenID4VP 1.0 §6.4.1 reads a query without claims as
+// asking for no selectively disclosable claims, so a Wallet answering it
+// discloses only what the credential always shows. A holder shown the
+// nil path is warned of more than the request asks for; what a
+// presentation for the query actually reveals beyond r is
+// UnregisteredRevealed's to judge.
 func (r Registration) Unregistered(q dcql.Query) map[string][]dcql.Path {
 	out := map[string][]dcql.Path{}
 	for _, cq := range q.Credentials {

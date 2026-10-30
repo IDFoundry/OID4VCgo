@@ -62,10 +62,12 @@ const maxResponseBodyBytes = 2*jwe.MaxCompactBytes + 4096
 // the answer was refused: why is recorded as the request's LastError,
 // for the Verifier's own display, not told to whoever sent it. That
 // 400 is the same whether the request is unknown, already answered,
-// closed or expired, or the answer failed verification, so it doesn't
-// tell anyone holding the request's QR code whether the holder has
-// presented; a Wallet resending an answer that already completed the
-// request gets it too. A
+// closed or expired, or the answer failed verification, so its content
+// doesn't tell anyone holding the request's QR code whether the holder
+// has presented; a Wallet resending an answer that already completed
+// the request gets it too. Its timing can: a refused answer to a
+// pending request is recorded (a store write), one to a request no
+// longer pending isn't (see SECURITY.md's known limitations). A
 // failure of the Verifier's own, such as its TransactionStore's, is a
 // 500 server_error instead, so the Wallet isn't told its answer was
 // refused. A
@@ -112,8 +114,10 @@ func (t *Transactions) ResponseHandler() http.Handler {
 			// The same reply whether the request is unknown, answered,
 			// closed or expired, or the answer failed: anyone holding the
 			// request's QR code can post to its key, and mustn't learn
-			// whether the holder has presented. A Wallet that resends an
-			// answer that was delivered gets this too.
+			// from it whether the holder has presented (though only a
+			// pending request's refusal is recorded, so the time taken
+			// differs). A Wallet that resends an answer that was
+			// delivered gets this too.
 			writeResponseError(w, "the response was not accepted")
 			return
 		}
