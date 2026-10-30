@@ -88,6 +88,11 @@ func checkCredentialSets(query dcql.Query, selection map[string][]HeldCredential
 // each query, even one whose multiple is true: multiple lets the holder
 // present several, it doesn't ask for every match. An application with
 // no policy of its own can present it, or start from it.
+//
+// "First" is candidates' order: a credential that matches only through
+// its aka_vcts (another type it says it is of) isn't ranked below one
+// whose own vct was requested. Order candidates, or choose among
+// MatchDCQLQuery's matches yourself, where that matters.
 func DefaultSelection(ctx context.Context, query dcql.Query, candidates []HeldCredential, trustedAuthorities dcql.TrustedAuthoritiesChecker) (map[string][]HeldCredential, error) {
 	matches, err := MatchDCQLQuery(ctx, query, candidates, trustedAuthorities)
 	if err != nil {
