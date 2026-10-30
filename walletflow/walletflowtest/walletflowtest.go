@@ -24,6 +24,7 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/asn1"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -300,7 +301,7 @@ func New(opts Options) (env *Env, err error) {
 	}
 
 	caCert, caKey := newCA("walletflowtest issuer CA")
-	signerCert, signerKey := newLeaf("walletflowtest document signer", caCert, caKey)
+	signerCert, signerKey := newLeaf("walletflowtest document signer", caCert, caKey, mdoc.MDLDocumentSignerEKU)
 	e.IssuerCA, e.IssuerRoots = caCert, x509.NewCertPool()
 	e.issuerCAKey, e.issuerSigner = caKey, signerCert
 	e.IssuerRoots.AddCert(caCert)
@@ -1163,15 +1164,15 @@ func (e *Env) IssuerCRL(revokeSigner bool) (*x509.RevocationList, error) {
 }
 
 // newLeaf returns a P-256 certificate and key issued by ca, valid from
-// an hour ago for a day.
-func newLeaf(commonName string, ca *x509.Certificate, caKey *ecdsa.PrivateKey) (*x509.Certificate, *ecdsa.PrivateKey) {
+// an hour ago for a day, with the extended key usages ekus, if any.
+func newLeaf(commonName string, ca *x509.Certificate, caKey *ecdsa.PrivateKey, ekus ...asn1.ObjectIdentifier) (*x509.Certificate, *ecdsa.PrivateKey) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	must(err)
 	now := time.Now()
 	return newCertificate(&x509.Certificate{
 		SerialNumber: big.NewInt(2), Subject: pkix.Name{CommonName: commonName, Country: []string{"US"}},
 		NotBefore: now.Add(-25 * time.Hour), NotAfter: now.Add(72 * time.Hour),
-		KeyUsage: x509.KeyUsageDigitalSignature,
+		KeyUsage: x509.KeyUsageDigitalSignature, UnknownExtKeyUsage: ekus,
 	}, ca, &key.PublicKey, caKey), key
 }
 

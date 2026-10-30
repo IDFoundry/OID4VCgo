@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/credential"
 )
 
@@ -75,6 +76,35 @@ func TestIdentity_ValidFromBeforeToday(t *testing.T) {
 	}
 	if renewed.documentSignerCert.Equal(late.documentSignerCert) {
 		t.Error("an identity not yet valid at the start of today was reused")
+	}
+}
+
+// TestIdentity_RenewsDocumentSignerWithoutEKU: a saved identity from
+// before the document signer carried the mDL document signer's extended
+// key usage, which verifiers now require, is replaced.
+func TestIdentity_RenewsDocumentSignerWithoutEKU(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Now()
+	old, err := newIssuerIdentityWithSignerEKUs(now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := encodeIdentity(old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFileAtomic(filepath.Join(dir, identityFile), encoded); err != nil {
+		t.Fatal(err)
+	}
+	renewed, err := loadOrCreateIdentity(dir, now)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if renewed.documentSignerCert.Equal(old.documentSignerCert) {
+		t.Error("a document signer without the mDL document signer's extended key usage was reused")
+	}
+	if err := mdoc.DefaultDocumentSignerPolicy(renewed.documentSignerCert, nil); err != nil {
+		t.Errorf("renewed document signer: %v", err)
 	}
 }
 

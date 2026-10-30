@@ -37,7 +37,7 @@ func ExampleBuildRequest() {
 	// An issuer (IACA → document signer) and the mDL it issued to a
 	// holder's device key.
 	iaca, iacaKey := newCA("Example IACA")
-	ds, dsKey := newLeaf("Example Document Signer", iaca, iacaKey)
+	ds, dsKey := newLeaf("Example Document Signer", iaca, iacaKey, mdoc.MDLDocumentSignerEKU)
 	deviceKey := must(ecdsa.GenerateKey(elliptic.P256(), rand.Reader))
 	now := time.Now()
 	issuerSigned := must(mdoc.Issue(dsKey, oid4vci.COSEES256, mdoc.Claims{

@@ -31,7 +31,7 @@ func ExampleNewDeviceSession() {
 	// An issuer (IACA → document signer, same country) and the mDL it
 	// issued to the holder's device key.
 	iaca, iacaKey := newCert(pkix.Name{CommonName: "Example IACA", Country: []string{"SG"}}, nil, nil)
-	ds, dsKey := newCert(pkix.Name{CommonName: "Example Document Signer", Country: []string{"SG"}}, iaca, iacaKey)
+	ds, dsKey := newCert(pkix.Name{CommonName: "Example Document Signer", Country: []string{"SG"}}, iaca, iacaKey, proximity.MDLDocumentSignerEKU)
 	deviceKey := must(ecdsa.GenerateKey(elliptic.P256(), rand.Reader))
 	signed := time.Now()
 	issuerSigned := must(mdoc.Issue(dsKey, oid4vci.COSEES256, mdoc.Claims{

@@ -58,8 +58,9 @@ type VerifyIssuedCredentialParams struct {
 	// with, so a certificate issued under the same roots for another
 	// role, such as a Verifier's, isn't taken for an issuer's. For an
 	// mdoc, nil means mdoc.DefaultDocumentSignerPolicy, which refuses
-	// the certificates an IACA issues for other jobs; a policy that's
-	// set replaces it.
+	// the certificates an IACA issues for other jobs and requires the
+	// mDL document signer's extended key usage; a policy that's set
+	// replaces it.
 	IssuerLeafPolicy func(leaf *x509.Certificate, chains [][]*x509.Certificate) error
 
 	// IssuerRevocation, if set, checks the credential's issuer

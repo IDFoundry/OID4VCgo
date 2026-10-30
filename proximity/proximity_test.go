@@ -42,7 +42,7 @@ type fixture struct {
 func issueFixture(t testing.TB, docType string) fixture {
 	t.Helper()
 	ca, caKey := testIACA(t)
-	ds, dsKey := testDocumentSigner(t, ca, caKey)
+	ds, dsKey := testDocumentSigner(t, ca, caKey, MDLDocumentSignerEKU)
 	deviceKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatal(err)

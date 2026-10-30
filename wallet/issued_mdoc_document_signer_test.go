@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/asn1"
 	"encoding/base64"
 	"strings"
 	"testing"
@@ -34,7 +35,8 @@ func TestVerifyIssuedCredential_MdocDocumentSignerChecks(t *testing.T) {
 	conf := oid4vci.CredentialConfigurationMetadata{Format: mdoc.CredentialFormat, DocType: issuedDocType, CryptographicBindingMethodsSupported: []string{"cose_key"}}
 	issue := func(dsCountry, issuingCountry string) string {
 		ds, dsKey := testcert.Issue(t, &x509.Certificate{
-			Subject: pkix.Name{CommonName: "document signer", Country: []string{dsCountry}},
+			Subject:            pkix.Name{CommonName: "document signer", Country: []string{dsCountry}},
+			UnknownExtKeyUsage: []asn1.ObjectIdentifier{mdoc.MDLDocumentSignerEKU},
 		}, iaca, iacaKey)
 		now := time.Now()
 		signed, err := mdoc.Issue(dsKey, cose.ES256, mdoc.Claims{

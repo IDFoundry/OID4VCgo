@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/asn1"
 	"encoding/base64"
 	"strings"
 	"testing"
@@ -85,6 +86,8 @@ func caIssuedFixture(t testing.TB) issuedFixture {
 	ca, caKey := testcert.CAWithSubject(t, pkix.Name{CommonName: "issued credential test CA", Country: []string{"SG"}})
 	leaf, leafKey := testcert.Issue(t, &x509.Certificate{
 		Subject: pkix.Name{CommonName: "issued credential test issuer", Country: []string{"SG"}},
+		// The mdoc's document signer signs the SD-JWT VC too.
+		UnknownExtKeyUsage: []asn1.ObjectIdentifier{mdoc.MDLDocumentSignerEKU},
 	}, ca, caKey)
 	roots := x509.NewCertPool()
 	roots.AddCert(ca)

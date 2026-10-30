@@ -109,6 +109,27 @@ them.
   (`Options.IssuerKey = a.SignerKey`), not by `a.Claims.Issuer`, as the
   interface's doc comment now says.
 
+### mdoc document signers (`credential/mdoc`, `verifier`, `mdocdcapi`, `proximity`, `wallet`, `walletflow`, the mobile libraries)
+
+- **The mDL document signer extended key usage is required.**
+  `mdoc.DefaultDocumentSignerPolicy`, the default of
+  `X5ChainIssuerKeyResolver.LeafPolicy`, of a wallet receiving an mdoc
+  with no issuer leaf policy, and of the proximity reader, now refuses
+  a document signer certificate whose extended key usage doesn't list
+  `mdoc.MDLDocumentSignerEKU` (1.0.18013.5.1.2, ISO/IEC 18013-5 Annex
+  B.1.4), including one with no extended key usage at all. Before, such
+  a certificate was accepted, so a revocation list signer's certificate,
+  whose extended key usage Annex B.1.7 makes optional, could sign mdocs.
+  It also refuses one reached only through an intermediate whose
+  extended key usage excludes it. Ask your issuers for document signer
+  certificates with the extended key usage. To keep accepting document
+  signers without one, set the policy to
+  `mdoc.LenientDocumentSignerPolicy`: `X5ChainIssuerKeyResolver.LeafPolicy`,
+  `proximity.WithDocumentSignerPolicy`, or the wallet's issuer leaf
+  policy (`VerifyIssuedCredentialParams.IssuerLeafPolicy`,
+  `walletflow.Config.MdocIssuerLeafPolicy`). The mobile libraries have
+  no lenient option.
+
 ## v0.55.0 → v0.56.0
 
 This release pins FAPIgo v0.65.1, which carries the breaking changes of

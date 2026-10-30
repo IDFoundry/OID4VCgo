@@ -80,11 +80,12 @@ func WithMaxClockSkew(d time.Duration) ReaderOption {
 // signer certificate and its verified paths, in place of
 // DefaultDocumentSignerPolicy, and Verify refuses the document when it
 // fails. Chain validation accepts a leaf with any key usage; the
-// default refuses only certificates an IACA issues for other jobs.
-// The default accepts a certificate with no extended key usage
-// extension; RequireMDLDocumentSignerEKU requires the one ISO/IEC
-// 18013-5 Annex B profiles an mDL document signer with, through every
-// intermediate, and AnyDocumentSigner checks nothing.
+// default refuses the certificates an IACA issues for other jobs,
+// requiring the extended key usage ISO/IEC 18013-5 Annex B.1.4
+// profiles an mDL document signer with, as RequireMDLDocumentSignerEKU
+// does. mdoc.LenientDocumentSignerPolicy also accepts a certificate
+// with no extended key usage extension, and AnyDocumentSigner checks
+// nothing.
 func WithDocumentSignerPolicy(policy func(leaf *x509.Certificate, chains [][]*x509.Certificate) error) ReaderOption {
 	return func(c *readerConfig) { c.signerPolicy = policy }
 }
@@ -116,7 +117,7 @@ func WithIssuerRootsByDocType(roots map[string]*x509.CertPool) ReaderOption {
 // DefaultDocumentSignerPolicy is the document signer check Verify makes
 // unless WithDocumentSignerPolicy replaces it: mdoc.DefaultDocumentSignerPolicy,
 // which refuses the end-entity certificates an IACA issues for other
-// jobs.
+// jobs, and requires MDLDocumentSignerEKU.
 func DefaultDocumentSignerPolicy(leaf *x509.Certificate, chains [][]*x509.Certificate) error {
 	return mdoc.DefaultDocumentSignerPolicy(leaf, chains)
 }
@@ -133,7 +134,9 @@ var MDLDocumentSignerEKU = mdoc.MDLDocumentSignerEKU
 // RequireMDLDocumentSignerEKU is a WithDocumentSignerPolicy policy
 // refusing a document signer certificate without MDLDocumentSignerEKU,
 // or whose every verified path has an intermediate CA whose own
-// extended key usage excludes it.
+// extended key usage excludes it. DefaultDocumentSignerPolicy requires
+// it too, and refuses an OCSP signer's certificate or one whose key
+// usage doesn't allow digital signatures besides.
 func RequireMDLDocumentSignerEKU(leaf *x509.Certificate, chains [][]*x509.Certificate) error {
 	if err := certchain.EKUInPath(leaf, chains, MDLDocumentSignerEKU); err != nil {
 		return fmt.Errorf("the document signer certificate isn't an mDL document signer's (1.0.18013.5.1.2): %w", err)

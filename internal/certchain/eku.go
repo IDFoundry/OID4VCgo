@@ -49,6 +49,14 @@ func EKUInPath(leaf *x509.Certificate, chains [][]*x509.Certificate, oid asn1.Ob
 	if !slices.ContainsFunc(usages, oid.Equal) {
 		return fmt.Errorf("certchain: the certificate's extended key usage doesn't include %s", oid)
 	}
+	return EKUInIntermediates(chains, oid)
+}
+
+// EKUInIntermediates is EKUInPath's check of chains' intermediates
+// alone, for a caller that has checked the leaf: nil when chains is
+// empty, or when one of them has every intermediate that carries an
+// extended key usage extension list oid or anyExtendedKeyUsage.
+func EKUInIntermediates(chains [][]*x509.Certificate, oid asn1.ObjectIdentifier) error {
 	if len(chains) == 0 {
 		return nil
 	}

@@ -57,7 +57,8 @@ type proximityReaderConfig struct {
 	// off the reader's (at most an hour).
 	MaxClockSkewSeconds int64 `json:"max_clock_skew_seconds,omitempty"`
 	// RequireMDLSignerEKU accepts only document signer certificates
-	// with the mDL document signer extended key usage.
+	// with the mDL document signer extended key usage. The default
+	// check (proximity.DefaultDocumentSignerPolicy) requires it too.
 	RequireMDLSignerEKU bool `json:"require_mdl_signer_eku,omitempty"`
 	// CRLs are PEM "X509 CRL" blocks, replaced later by SetCRLs, and
 	// Revocation the roles whose certificate chains must pass a CRL

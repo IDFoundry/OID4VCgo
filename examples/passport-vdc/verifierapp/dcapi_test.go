@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/asn1"
 	"encoding/base64"
 	"encoding/json"
 	"io"
@@ -61,7 +62,7 @@ func newDCAPIIssuer(t *testing.T) dcapiIssuer {
 	signer, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	der, err := x509.CreateCertificate(rand.Reader, &x509.Certificate{
 		SerialNumber: big.NewInt(2), Subject: pkix.Name{CommonName: "dcapi test document signer", Country: []string{"ZZ"}},
-		NotBefore: now.Add(-time.Hour), NotAfter: now.Add(24 * time.Hour), KeyUsage: x509.KeyUsageDigitalSignature,
+		NotBefore: now.Add(-time.Hour), NotAfter: now.Add(24 * time.Hour), KeyUsage: x509.KeyUsageDigitalSignature, UnknownExtKeyUsage: []asn1.ObjectIdentifier{mdoc.MDLDocumentSignerEKU},
 	}, ca, &signer.PublicKey, caKey)
 	if err != nil {
 		t.Fatal(err)
