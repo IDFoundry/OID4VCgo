@@ -66,6 +66,7 @@ details.raw{margin-top:1rem}
 .asked .missing{background:var(--warn-bg);color:var(--text)}
 details.raw summary{cursor:pointer;color:var(--muted)}details.raw td{word-break:break-all}
 .actions{display:flex;flex-wrap:wrap;gap:.5rem;align-items:center;margin:1.25rem 0}.actions form{margin:0}
+[hidden]{display:none!important}
 .visually-hidden{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 .choices{display:flex;flex-direction:column;gap:.6rem;border:0;padding:0;margin:1rem 0}.choices legend{font-weight:700;margin-bottom:.4rem;padding:0}
 .choice{display:flex;gap:.75rem;align-items:flex-start;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:.75rem 1rem;cursor:pointer}
@@ -107,4 +108,16 @@ details.confirm .when-open,details.confirm[open] .when-closed{display:none}detai
 .timeline time{color:var(--muted);font-size:.9em;margin-right:.5rem}
 .empty{text-align:center;color:var(--muted);padding:1.5rem 1rem}
 .progress-frame{width:100%;height:9rem;border:0}.progress-summary{font-weight:600;margin:.25rem 0}
+.chips .chip{background:var(--chip-bg);border-radius:999px;padding:.1rem .7rem;font-size:.9em}
+.fmt{display:inline-block;border-radius:999px;padding:0 .55rem;font-size:.85em;font-weight:600;border:1px solid var(--border);background:var(--chip-bg)}
+.choice.block{display:block}.choice.block strong{display:inline}.choice.block>input{margin:0 .5rem 0 0;vertical-align:-.15em}
+.choice-portrait{float:right;width:4.5rem;height:auto;margin:0 0 .5rem .75rem;border-radius:6px;border:1px solid var(--border)}
+.choice-detail{display:block;margin-top:.5rem}.choice-detail .chips{margin:.3rem 0}.claim-paths{display:block}.claim-paths code{font-size:.85em}
+input[type=text]{font:inherit;padding:.5rem .65rem;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text)}
+.paste-row{display:flex;gap:.5rem;margin:.25rem 0}.paste-row input{flex:1;min-width:0}
+.entries.wide{grid-template-columns:repeat(auto-fill,minmax(min(100%,21rem),1fr))}
+.wallet-card-head{display:flex;gap:1rem;align-items:center;margin-bottom:.5rem}.wallet-card-head p{margin:.1rem 0}
+.wc-portrait{width:4.5rem;height:auto;border-radius:8px;border:1px solid var(--border)}.wc-name{font-weight:700;font-size:1.15rem}
+.wallet-card .claims th{padding-right:1rem}
+.decision .btn{min-width:8rem;text-align:center}
 `
