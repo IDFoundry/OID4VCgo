@@ -155,6 +155,7 @@ func (a *App) handlePreAuthorizedToken(w http.ResponseWriter, r *http.Request, r
 		issuerError(w, err)
 		return
 	}
+	a.progress.update(redeemed.Subject, func(p *offerProgress) { p.authorized = true })
 	// The access token, and a refresh token when there is one, belong to
 	// one grant, named by the transaction ID: revoking it (RevokeGrant,
 	// or the wallet revoking its refresh token) ends both.

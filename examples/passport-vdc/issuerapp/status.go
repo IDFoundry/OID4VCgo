@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
-	"html/template"
 	"log"
 	"math/big"
 	"net/http"
@@ -15,6 +14,7 @@ import (
 
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
+	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/demoui"
 	"github.com/idfoundry/oid4vcgo/issuer"
 	"github.com/idfoundry/oid4vcgo/statuslist"
 )
@@ -210,36 +210,45 @@ func (a *App) statusPublishers() (jwt, cwt *statuslist.Publisher) {
 	return a.publishers[0], a.publishers[1]
 }
 
-var statusTemplate = template.Must(template.New("status").Parse(pageHead + `
+type statusPage struct {
+	Header        demoui.Header
+	URI           string
+	Entries       []IssuedStatus
+	Notifications []NotificationEvent
+}
+
+var statusTemplate = parsePage("status", pageHead+`</head><body>
+{{template "site-header" .Header}}
+<main>
 <h1>Issued credentials</h1>
 <p>Every credential this issuer has issued references its status list: an SD-JWT VC at <code>{{.URI}}</code>, an mdoc at <code>{{.URI}}/cwt</code>, the same list served as a CWT by default. Revoking one flips its bit; a verifier checking the list then rejects it.</p>
 {{if .Entries}}
-<table>
-<tr><th>Format</th><th>Issued</th><th>Status</th><th></th></tr>
-{{range .Entries}}
-<tr><td><code>{{.Format}}</code>{{if .Unchecked}} <span class="warn">— issued without Passive Authentication (gmrtd's sample)</span>{{end}}</td><td>{{.IssuedAt.UTC.Format "2006-01-02"}}</td>
-<td>{{if .Revoked}}<span class="warn">revoked</span>{{else}}<span class="ok">valid</span>{{end}}</td>
-<td>{{if not .Revoked}}<form method="post" action="/demo/status/revoke"><input type="hidden" name="handle" value="{{.Handle}}"><button>Revoke</button></form>{{end}}</td></tr>
-{{end}}
-</table>
+<ul class="entries">
+{{range .Entries}}<li class="card entry">
+<p class="badges"><span class="badge">{{formatName .Format}}</span> {{if .Revoked}}<span class="badge bad">✗ Revoked</span>{{else}}<span class="badge ok">✓ Valid</span>{{end}}{{if .Unchecked}} <span class="badge warn">⚠ Sample — issued without Passive Authentication</span>{{end}}</p>
+<dl class="facts"><dt>Issued</dt><dd><time datetime="{{.IssuedAt.UTC.Format "2006-01-02"}}">{{.IssuedAt.UTC.Format "2006-01-02"}}</time></dd></dl>
+{{if not .Revoked}}<details class="confirm"><summary class="btn secondary danger"><span class="when-closed">Revoke…</span><span class="when-open">Cancel</span></summary>
+<form method="post" action="/demo/status/revoke"><input type="hidden" name="handle" value="{{.Handle}}">
+<p class="note">Revoking can't be undone: every verifier checking the status list rejects this credential from then on.</p>
+<button class="btn danger">Confirm revoke</button></form>
+</details>{{end}}
+</li>
+{{end}}</ul>
 {{else}}
-<p>None yet.</p>
+<p class="card empty">None yet.</p>
 {{end}}
 <h2>What the wallets reported</h2>
 <p>After receiving a credential, the wallet tells this issuer whether it kept it (OID4VCI 1.0 §11, the Notification Endpoint).</p>
 {{if .Notifications}}
-<table>
-<tr><th>Received</th><th>Event</th><th>Description</th></tr>
-{{range .Notifications}}
-<tr><td>{{.At.Format "15:04:05"}}</td><td><code>{{.Event}}</code></td><td>{{.Description}}</td></tr>
-{{end}}
-</table>
+<ol class="timeline">
+{{range .Notifications}}<li><time datetime="{{.At.Format "2006-01-02T15:04:05Z07:00"}}">{{.At.Format "15:04:05"}}</time> {{eventBadge .Event}} <code>{{.Event}}</code>{{with .Description}} <span class="note">— {{.}}</span>{{end}}</li>
+{{end}}</ol>
 {{else}}
-<p>None yet.</p>
+<p class="card empty">None yet.</p>
 {{end}}
 <p class="note">Demo only: anyone who can reach this page can revoke. Entries record no passport data, and don't show the credentials' status list indices. They're kept across restarts only under <code>cmd/demo</code>.</p>
-<p><a href="/demo/">Issue another</a> · <a href="/demo/review">Issuances awaiting review</a></p>
-` + pageFoot))
+</main>
+`+pageFoot)
 
 // IssuedStatuses lists every credential this issuer has issued, newest
 // first, with its status list index and whether it's revoked.
@@ -249,23 +258,20 @@ func (a *App) IssuedStatuses() []IssuedStatus {
 }
 
 func (a *App) handleStatusPage(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set(headerContentType, contentTypeHTML)
-	_ = statusTemplate.Execute(w, struct {
-		URI           string
-		Entries       []IssuedStatus
-		Notifications []NotificationEvent
-	}{a.statusListURI, a.IssuedStatuses(), a.Notifications()})
+	renderPage(w, http.StatusOK, statusTemplate, statusPage{
+		Header: a.header(pathStatus), URI: a.statusListURI, Entries: a.IssuedStatuses(), Notifications: a.Notifications(),
+	}, true)
 }
 
 // handleRevoke revokes one credential. A cross-origin form post is
 // refused, so another site can't revoke through a visitor's browser.
 func (a *App) handleRevoke(w http.ResponseWriter, r *http.Request) {
 	if origin := r.Header.Get("Origin"); origin != "" && origin != a.cfg.IssuerURL {
-		writeHTMLError(w, http.StatusForbidden, "cross-origin revocation refused")
+		a.writeHTMLError(w, http.StatusForbidden, "cross-origin revocation refused")
 		return
 	}
 	if !a.statusList.revokeHandle(r.FormValue("handle")) {
-		writeHTMLError(w, http.StatusBadRequest, "unknown credential")
+		a.writeHTMLError(w, http.StatusBadRequest, "unknown credential")
 		return
 	}
 	for _, p := range a.publishers {

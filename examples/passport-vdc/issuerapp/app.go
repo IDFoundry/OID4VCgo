@@ -58,6 +58,7 @@ type App struct {
 	stores            stores
 	tokenLifetime     time.Duration  // the Authorization Server's access token lifetime
 	reviews           *reviews       // deferred issuances awaiting a decision
+	progress          *progressBoard // each offer's progress, for its page
 	notifications     *notifications // what the wallets have reported
 	now               func() time.Time
 	server            *server.Server
@@ -97,6 +98,7 @@ func New(cfg Config) (*App, error) {
 		return nil, err
 	}
 	a.reviews = newReviews(a.now)
+	a.progress = newProgressBoard()
 	a.stores = memoryStores()
 	if cfg.Database != nil {
 		if a.stores, err = databaseStores(context.Background(), cfg.Database, cfg.DatabaseSealer); err != nil {

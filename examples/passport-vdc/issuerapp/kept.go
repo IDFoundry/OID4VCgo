@@ -4,12 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"html/template"
 	"log"
 	"net/http"
 	"time"
 
 	"github.com/idfoundry/fapigo/server"
+
+	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/demoui"
 )
 
 // Passports kept for refresh (OfferOptions.KeepForRefresh) are dropped
@@ -82,43 +83,55 @@ func (a *App) Forget(ctx context.Context, ref string) error {
 	return errNotKept
 }
 
-var keptTemplate = template.Must(template.New("kept").Parse(pageHead + `
+type keptPage struct {
+	Header  demoui.Header
+	Entries []KeptEntry
+}
+
+var keptTemplate = parsePage("kept", pageHead+`</head><body>
+{{template "site-header" .Header}}
+<main>
 <h1>Passports kept for refresh</h1>
 <p>A passport uploaded with "Keep for refresh" is kept for 24 hours after its first credential is issued, so the wallet can get fresh copies with its refresh token. It's deleted then, when the wallet deletes the credentials, or when you forget it here.</p>
-{{if .}}
-<table>
-<tr><th>Uploaded</th><th>Kept until</th><th>Credentials issued</th><th></th></tr>
-{{range .}}
-<tr><td>{{.Uploaded.Format "2006-01-02 15:04:05"}}</td><td>{{.Until.Format "2006-01-02 15:04:05"}}</td><td>{{.Issued}}</td>
-<td><form method="post" action="/demo/kept/forget"><input type="hidden" name="ref" value="{{.Ref}}"><button>Forget now</button></form></td></tr>
-{{end}}
-</table>
+{{if .Entries}}
+<ul class="entries">
+{{range .Entries}}<li class="card entry">
+<p class="badges"><span class="badge ok">Kept</span> <span class="badge">{{.Issued}} issued</span></p>
+<dl class="facts">
+<dt>Uploaded</dt><dd>{{words .Uploaded}}, {{.Uploaded.Format "15:04:05"}}</dd>
+<dt>Kept until</dt><dd>{{words .Until}}, {{.Until.Format "15:04:05"}}</dd>
+</dl>
+<details class="confirm"><summary class="btn secondary danger"><span class="when-closed">Forget now…</span><span class="when-open">Cancel</span></summary>
+<form method="post" action="/demo/kept/forget"><input type="hidden" name="ref" value="{{.Ref}}">
+<p class="note">The issuer deletes the passport and revokes its refresh token: the wallet can't get fresh copies any more.</p>
+<button class="btn danger">Confirm forget</button></form>
+</details>
+</li>
+{{end}}</ul>
 {{else}}
-<p>No passport is kept for refresh.</p>
+<p class="card empty">No passport is kept for refresh.</p>
 {{end}}
 <p class="note">Demo only: anyone who can reach this page can forget a passport. It shows no names or document numbers.</p>
-<p><a href="/demo/">Issue another</a> · <a href="/demo/status">Issued credentials</a></p>
-` + pageFoot))
+</main>
+`+pageFoot)
 
 func (a *App) handleKeptPage(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set(headerContentType, contentTypeHTML)
-	w.Header().Set("Cache-Control", "no-store")
-	_ = keptTemplate.Execute(w, a.Kept())
+	renderPage(w, http.StatusOK, keptTemplate, keptPage{Header: a.header(pathKept), Entries: a.Kept()}, true)
 }
 
 // handleForget forgets a kept passport. A cross-origin form post is
 // refused, so another site can't forget one through a visitor's browser.
 func (a *App) handleForget(w http.ResponseWriter, r *http.Request) {
 	if origin := r.Header.Get("Origin"); origin != "" && origin != a.cfg.IssuerURL {
-		writeHTMLError(w, http.StatusForbidden, "cross-origin request refused")
+		a.writeHTMLError(w, http.StatusForbidden, "cross-origin request refused")
 		return
 	}
 	switch err := a.Forget(r.Context(), r.FormValue("ref")); {
 	case errors.Is(err, errNotKept):
-		writeHTMLError(w, http.StatusBadRequest, "that passport isn't kept any more")
+		a.writeHTMLError(w, http.StatusBadRequest, "that passport isn't kept any more")
 		return
 	case err != nil:
-		writeHTMLError(w, http.StatusInternalServerError, "the passport is forgotten, but revoking its refresh token failed")
+		a.writeHTMLError(w, http.StatusInternalServerError, "the passport is forgotten, but revoking its refresh token failed")
 		return
 	}
 	http.Redirect(w, r, "/demo/kept", http.StatusSeeOther)

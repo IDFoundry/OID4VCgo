@@ -73,4 +73,38 @@ details.raw summary{cursor:pointer;color:var(--muted)}details.raw td{word-break:
 .choice:has(input:disabled){opacity:.6;cursor:not-allowed}
 .choice input{width:1.15rem;height:1.15rem;margin:.2rem 0 0;flex:none;accent-color:var(--btn-bg)}
 .choice strong{display:block}.choice .note{display:block}
+.lead{font-size:1.1rem}.card:not(.scenario) h2{margin-top:0;font-size:1.2rem}
+.dropzone{position:relative;display:flex;flex-direction:column;align-items:center;gap:.2rem;text-align:center;padding:1.5rem 1rem;border:2px dashed var(--border);border-radius:12px;background:var(--bg);cursor:pointer}
+.dropzone:hover,.dropzone.dragover{border-color:var(--link);background:var(--chip-bg)}
+.dropzone:has(input:focus-visible){outline:3px solid var(--focus);outline-offset:2px}
+.dropzone .icon{font-size:2.2rem;line-height:1}.dropzone .file-name{font-weight:600;word-break:break-all}
+.dropzone input{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer}
+details.reveal>summary{list-style:none;display:inline-block}details.reveal>summary::-webkit-details-marker{display:none}
+details.reveal[open]>summary{display:none}
+.code-display{font:700 2.2rem/1.2 ui-monospace,monospace;letter-spacing:.25em;margin:.25rem 0}
+.code-field{--cell:2.6rem;display:inline-block;overflow:hidden;width:calc(6 * var(--cell) + 4px);border:2px solid var(--muted);border-radius:8px;background:var(--surface);vertical-align:middle}
+.code-field:focus-within{outline:3px solid var(--focus);outline-offset:2px;border-color:var(--focus)}
+.code-field input{display:block;width:calc(7 * var(--cell));margin:0;border:0;outline:none;padding:.35rem 0 .35rem calc((var(--cell) - 1ch) / 2);
+font:700 1.75rem/1.3 ui-monospace,monospace;letter-spacing:calc(var(--cell) - 1ch);color:var(--text);
+background:repeating-linear-gradient(90deg,transparent 0 calc(var(--cell) - 1px),var(--border) calc(var(--cell) - 1px) var(--cell))}
+.code-label{display:block;font-weight:600;margin-bottom:.4rem}
+.steps{list-style:none;padding:0;margin:.5rem 0;display:flex;flex-direction:column;gap:.4rem}
+.steps li{display:flex;gap:.6rem;align-items:center;color:var(--muted)}
+.steps li::before{content:"";display:inline-grid;place-items:center;flex:none;width:1.3rem;height:1.3rem;border-radius:50%;border:2px solid var(--border);font-size:.8rem;font-weight:700}
+.steps li[data-state=done],.steps li[data-state=current],.steps li[data-state=failed]{color:var(--text)}
+.steps li[data-state=done]::before{content:"✓";background:var(--ok);border-color:var(--ok);color:#fff}
+.steps li[data-state=failed]::before{content:"✗";background:var(--bad);border-color:var(--bad);color:#fff}
+.steps li[data-state=current]::before{border-top-color:var(--link);animation:spin 1s linear infinite}
+@media (prefers-reduced-motion:reduce){.steps li[data-state=current]::before{animation-duration:3s}}
+.entries{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,18rem),1fr));gap:1rem;padding:0;margin:1rem 0;list-style:none}
+.entry{margin:0;display:flex;flex-direction:column;gap:.25rem}.entry .actions{margin:.5rem 0 0}
+.facts{display:grid;grid-template-columns:auto 1fr;gap:.15rem .75rem;margin:.25rem 0}.facts dt{color:var(--muted)}.facts dd{margin:0}
+details.confirm>summary{list-style:none;display:inline-block}details.confirm>summary::-webkit-details-marker{display:none}
+details.confirm .when-open,details.confirm[open] .when-closed{display:none}details.confirm[open] .when-open{display:inline}details.confirm form{margin:.5rem 0 0}
+.timeline{list-style:none;padding:0 0 0 1rem;margin:.5rem 0;border-left:2px solid var(--border)}
+.timeline li{position:relative;padding:.2rem 0 .6rem .75rem}
+.timeline li::before{content:"";position:absolute;left:calc(-1rem - 7px);top:.65rem;width:12px;height:12px;border-radius:50%;background:var(--link);border:2px solid var(--bg)}
+.timeline time{color:var(--muted);font-size:.9em;margin-right:.5rem}
+.empty{text-align:center;color:var(--muted);padding:1.5rem 1rem}
+.progress-frame{width:100%;height:9rem;border:0}.progress-summary{font-weight:600;margin:.25rem 0}
 `

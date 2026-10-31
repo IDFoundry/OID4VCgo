@@ -11,15 +11,13 @@ import (
 	"time"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
+	"github.com/idfoundry/oid4vcgo/credential/mdoc"
+	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
+	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/credential"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/demoqr"
+	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/demoui"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/passport"
 	"github.com/idfoundry/oid4vcgo/issuer"
-)
-
-// HTTP header names and values the pages use.
-const (
-	headerContentType = "Content-Type"
-	contentTypeHTML   = "text/html; charset=utf-8"
 )
 
 // maxUploadBytes bounds an uploaded passport file — a gmrtd portable
@@ -139,6 +137,8 @@ func (a *App) routes(credentialHandler, deferredHandler, notificationHandler htt
 	mux.HandleFunc("GET /{$}", redirectToDemo)
 	mux.HandleFunc("GET /demo/{$}", a.handleUploadPage)
 	mux.HandleFunc("POST /demo/passport", a.handleUpload)
+	mux.HandleFunc("GET /demo/offers/{id}/status", a.handleOfferStatus)
+	mux.HandleFunc("GET /demo/offers/{id}/progress", a.handleOfferProgress)
 	if a.cfg.AllowSampleDocument {
 		mux.HandleFunc("POST /demo/sample", a.handleSample)
 	}
@@ -167,6 +167,7 @@ func (a *App) routes(credentialHandler, deferredHandler, notificationHandler htt
 	mux.Handle("POST /deferred_credential", deferredHandler)
 	mux.Handle("POST /notification", notificationHandler)
 	mux.HandleFunc("GET /demo/review", a.handleReviewPage)
+	mux.HandleFunc("GET /demo/review/status", a.handleReviewStatus)
 	mux.HandleFunc("POST /demo/review/decision", a.handleReviewDecision)
 	mux.HandleFunc("GET /demo/kept", a.handleKeptPage)
 	mux.HandleFunc("POST /demo/kept/forget", a.handleForget)
@@ -191,47 +192,106 @@ func redirectTo(page string) http.HandlerFunc {
 	}
 }
 
-const pageHead = `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Passport → Digital Credential (demo)</title>
-<style>
-body{font-family:system-ui,sans-serif;max-width:40rem;margin:2rem auto;padding:0 1rem;line-height:1.5}
-table{border-collapse:collapse}th,td{text-align:left;padding:.25rem .75rem .25rem 0;vertical-align:top}
-details.reveal summary{cursor:pointer;font-weight:600}code{word-break:break-all}.ok{color:#1a7f37}.warn{color:#9a6700}.note{color:#57606a;font-size:.9em}
-input.code{display:block;margin-top:.4em;font:1.8em ui-monospace,monospace;letter-spacing:.35em;width:calc(6ch + 2.5em);box-sizing:content-box;padding:.3em .5em;border:2px solid #57606a;border-radius:6px}
-button{font-size:1.05em;padding:.5em 1.1em;margin:.2em .4em .2em 0}
-</style>
-</head>
-<body>
-`
+// pageFuncs are the functions the issuer's pages use.
+var pageFuncs = template.FuncMap{
+	"birthDate": func(e passport.Evidence) string {
+		if !e.Identity.BirthDate.Known() {
+			return "not asserted (the MRZ birth year is ambiguous)"
+		}
+		return e.Identity.BirthDate.Date.Format(demoui.DateLayout)
+	},
+	"words":      func(t time.Time) string { return t.Format(demoui.DateLayout) },
+	"formatName": formatName,
+	"dateWords": func(s string) string {
+		if d, ok := demoui.FormatDate(s); ok {
+			return d
+		}
+		return s
+	},
+	"eventBadge": eventBadge,
+}
 
-const pageFoot = `
-</body>
-</html>
-`
+// eventBadge is a wallet's notification event as a badge.
+func eventBadge(e oid4vci.NotificationEvent) template.HTML {
+	switch e {
+	case oid4vci.NotificationEventCredentialAccepted:
+		return `<span class="badge ok">✓ Kept</span>`
+	case oid4vci.NotificationEventCredentialDeleted:
+		return `<span class="badge">Deleted</span>`
+	}
+	return `<span class="badge bad">✗ Failed</span>`
+}
 
-var uploadTemplate = template.Must(template.New("upload").Parse(pageHead + `
-<h1>Passport → Digital Credential</h1>
-<p>Upload a gmrtd portable passport file. It's verified against the issuing country's signatures, then offered to your wallet as both an <code>mso_mdoc</code> and a <code>dc+sd-jwt</code> credential.</p>
-<form method="post" action="/demo/passport" enctype="multipart/form-data">
-<input type="file" name="passport" accept=".gmrtd" required>
-<p><label><input type="checkbox" name="counter" value="1"> Issue at the counter — a pre-authorized code with a PIN, no approval in the browser (OID4VCI's other grant)</label></p>
-<p><label><input type="checkbox" name="review" value="1"> Hold for an operator's review — the wallet waits, and polls, until you decide on the <a href="/demo/review">review page</a></label></p>
-<p><label><input type="checkbox" name="keep" value="1"> Keep for refresh (24 hours) — your wallet can get fresh copies of the credentials without you until then. The issuer keeps this passport's data until it expires, or until your wallet deletes the credentials (<a href="/demo/kept">kept passports</a>)</label></p>
-<button>Verify passport</button>
-{{if .AllowSample}}<button formaction="/demo/sample" formnovalidate>Issue gmrtd's sample passport without checking it</button>{{end}}
+// formatName is a credential format as people read it.
+func formatName(format string) string {
+	switch format {
+	case mdoc.CredentialFormat:
+		return "mdoc"
+	case sdjwtvc.CredentialFormat:
+		return "SD-JWT VC"
+	}
+	return format
+}
+
+type uploadPage struct {
+	Header      demoui.Header
+	AllowSample bool
+}
+
+var uploadTemplate = parsePage("upload", pageHead+`</head><body>
+{{template "site-header" .Header}}
+<main>
+<h1>Turn your passport into a digital credential</h1>
+<p class="lead">Upload the file your passport reader saved from the chip. The issuer checks the issuing country's signatures on it, then offers it to your wallet as two credentials: an ISO mdoc and an SD-JWT VC.</p>
+<form id="upload" method="post" action="/demo/passport" enctype="multipart/form-data" class="card">
+<label class="dropzone" id="dropzone"><span class="icon" aria-hidden="true">📄</span>
+<strong>Choose your passport file</strong>
+<span class="note">or drop it here — a gmrtd portable passport file (<code>.gmrtd</code>), up to 2 MiB</span>
+<span class="file-name" id="file-name" aria-live="polite"></span>
+<input type="file" name="passport" accept=".gmrtd" required aria-describedby="file-name">
+</label>
+<fieldset class="choices">
+<legend>How to issue it</legend>
+<label class="choice"><input type="checkbox" name="counter" value="1"><span><strong>Issue at the counter</strong><span class="note">Your wallet gets a PIN instead of you approving in the browser — OID4VCI's pre-authorized code.</span></span></label>
+<label class="choice"><input type="checkbox" name="review" value="1" data-excludes="keep"><span><strong>Hold for an operator's review</strong><span class="note">The wallet waits, and checks back, until someone decides on the <a href="/demo/review">review page</a>.</span></span></label>
+<label class="choice"><input type="checkbox" name="keep" value="1" data-excludes="review"><span><strong>Keep for refresh (24 hours)</strong><span class="note">Your wallet can fetch fresh copies without you until then; the issuer keeps the passport data that long, or until your wallet deletes the credentials (<a href="/demo/kept">kept passports</a>).</span></span></label>
+<p class="note" id="exclusive-note">A passport held for review can't also be kept for refresh: choose one.</p>
+</fieldset>
+<button class="btn">Verify passport</button>
 </form>
-{{if .AllowSample}}<p class="note">No passport to hand? The second button simulates an issuer that skipped Passive Authentication: it issues gmrtd's sample passport — ICAO worked-example data no country signed — as an ordinary passport credential. A verifier trusting this issuer accepts it; one that re-verifies the passport file doesn't.</p>{{end}}
+{{if .AllowSample}}<section class="card" aria-labelledby="sample-heading">
+<h2 id="sample-heading"><span aria-hidden="true">🧪</span> No passport to hand?</h2>
+<p>Issue gmrtd's sample passport — ICAO worked-example data no country signed — with the options above. It simulates an issuer that skipped Passive Authentication: a verifier trusting this issuer accepts the credentials; one that re-verifies the passport file doesn't.</p>
+<button form="upload" formaction="/demo/sample" formnovalidate class="btn secondary">Issue the sample passport without checking it</button>
+</section>{{end}}
 <p class="note">Demo only. The passport is held in memory until the offer expires, or kept for refresh, and is never stored.</p>
-<p><a href="/demo/status">Issued credentials and revocation</a></p>
-` + pageFoot))
+</main>
+<script>
+(function () {
+	var zone = document.getElementById("dropzone"), input = zone.querySelector("input"), name = document.getElementById("file-name");
+	function show() { name.textContent = input.files.length ? "Selected: " + input.files[0].name : ""; }
+	input.addEventListener("change", show);
+	["dragenter", "dragover"].forEach(function (t) { zone.addEventListener(t, function () { zone.classList.add("dragover"); }); });
+	["dragleave", "drop"].forEach(function (t) { zone.addEventListener(t, function () { zone.classList.remove("dragover"); }); });
+	zone.addEventListener("drop", function () { setTimeout(show, 0); });
+	// Review and keep for refresh exclude each other.
+	var form = document.getElementById("upload");
+	form.querySelectorAll("input[data-excludes]").forEach(function (box) {
+		var other = form.querySelector("input[name=" + box.getAttribute("data-excludes") + "]");
+		box.addEventListener("change", function () {
+			if (box.checked) other.checked = false;
+			other.disabled = box.checked;
+		});
+	});
+})();
+</script>
+`+pageFoot)
 
 type offerPage struct {
+	Header        demoui.Header
 	Evidence      passport.Evidence
 	Expired       bool // the passport is past its expiry date
+	Portrait      template.URL
 	Offer         Offer
 	QR            template.URL
 	WebWalletLink string
@@ -239,45 +299,94 @@ type offerPage struct {
 	// its openid-credential-offer: URL, which html/template won't put in
 	// an href by itself.
 	AppLink template.URL
+	// ProgressID names the offer's progress (handleOfferStatus), and
+	// Progress is where it stands now.
+	ProgressID string
+	Progress   offerStatus
 }
 
-var offerTemplate = template.Must(template.New("offer").Funcs(template.FuncMap{
-	"date": func(e passport.Evidence) string {
-		if !e.Identity.BirthDate.Known() {
-			return "not asserted (the MRZ birth year is ambiguous)"
-		}
-		return e.Identity.BirthDate.Date.Format("2006-01-02")
-	},
-}).Parse(pageHead + `
-{{if .Evidence.Checks.PassiveAuthentication}}<h1>Passport verified</h1>
-<ul>
-<li class="ok">✓ Passive Authentication — issuing country's signature and data-group hashes</li>{{else}}<h1>Sample passport — issued without checking</h1>
-<ul>
-<li class="warn">✗ Passive Authentication skipped — this simulates an issuer that didn't check. It's gmrtd's sample document: ICAO worked-example data no country signed (issuing country "UTO"). Its credentials look like any passport's: a verifier trusting this issuer accepts them, and only re-verifying the passport file shows the country never signed the data.</li>{{end}}
-<li>Chip authentication evidence in the file: {{.Evidence.Checks.ChipAuthenticity}} <span class="note">— recorded when the chip was read, so it can be replayed: it doesn't show that you hold the passport</span></li>
-</ul>
-<table>
-<tr><th>Name</th><td>{{.Evidence.Identity.FamilyName}}, {{.Evidence.Identity.GivenNames}}{{if .Evidence.Identity.NamesFromMRZ}} <span class="note">(from MRZ)</span>{{end}}</td></tr>
-<tr><th>Date of birth</th><td>{{date .Evidence}}</td></tr>
-<tr><th>Nationality</th><td>{{.Evidence.Identity.Nationality}}</td></tr>
-<tr><th>Issuing country</th><td>{{.Evidence.Identity.IssuingCountry}}</td></tr>
-<tr><th>Expires</th><td>{{.Evidence.Identity.ExpiryDate.Format "2006-01-02"}}{{if .Expired}} <span class="note">— expired: the data is still country-signed, and the credential says when it expired</span>{{end}}</td></tr>
+var offerTemplate = parsePage("offer", stepsPart+pageHead+`</head><body>
+{{template "site-header" .Header}}
+<main>
+{{if .Evidence.Checks.PassiveAuthentication}}<section class="verdict approved">
+<p class="mark" aria-hidden="true">✓</p>
+<div><h1 id="verdict" tabindex="-1">Passport verified</h1>
+<p class="badges"><span class="badge ok">✓ Country-signed</span> <span class="badge">Chip authentication: {{.Evidence.Checks.ChipAuthenticity}}</span></p>
+<p>Passive Authentication passed: the issuing country's signature and every data group's hash.</p></div>
+</section>{{else}}<section class="verdict caution">
+<p class="mark" aria-hidden="true">⚠</p>
+<div><h1 id="verdict" tabindex="-1">Sample passport — issued without checking</h1>
+<p class="badges"><span class="badge warn">⚠ Sample — not checked</span> <span class="badge">Chip authentication: {{.Evidence.Checks.ChipAuthenticity}}</span></p>
+<p>Passive Authentication was skipped, to simulate an issuer that didn't check. This is gmrtd's sample document: ICAO worked-example data no country signed (issuing country "UTO"). Its credentials look like any passport's: a verifier trusting this issuer accepts them, and only re-verifying the passport file shows the country never signed the data.</p></div>
+</section>{{end}}
+<p class="note">Chip authentication evidence is recorded when the chip is read, so it can be replayed: it doesn't show that you hold the passport.</p>
+<section class="card person" aria-labelledby="identity-heading">
+<h2 id="identity-heading">{{.Evidence.Identity.GivenNames}} {{.Evidence.Identity.FamilyName}}</h2>
+<div class="person-body">
+{{if .Portrait}}<img src="{{.Portrait}}" alt="Portrait from the passport's chip" class="portrait">{{end}}
+<table class="claims">
+<tr><th scope="row">Family name</th><td>{{.Evidence.Identity.FamilyName}}</td></tr>
+<tr><th scope="row">Given names</th><td>{{.Evidence.Identity.GivenNames}}{{if .Evidence.Identity.NamesFromMRZ}} <span class="note">(from the MRZ)</span>{{end}}</td></tr>
+<tr><th scope="row">Date of birth</th><td>{{birthDate .Evidence}}</td></tr>
+<tr><th scope="row">Nationality</th><td>{{.Evidence.Identity.Nationality}}</td></tr>
+<tr><th scope="row">Issuing country</th><td>{{.Evidence.Identity.IssuingCountry}}</td></tr>
+<tr><th scope="row">Passport expiry</th><td>{{words .Evidence.Identity.ExpiryDate}}{{if .Expired}} <span class="badge bad">Expired</span>{{end}}</td></tr>
 </table>
-<h2>Credential offer</h2>
-{{if .Offer.PreAuthorized}}<details class="reveal"><summary>Show the PIN</summary><p>PIN: <strong style="font-size:1.4em;letter-spacing:.15em">{{.Offer.ConfirmationCode}}</strong></p></details><p class="note">Give it to the holder separately from the offer, once their wallet has scanned it: their wallet sends it with the offer's pre-authorized code. There's no approval step, so anyone who sees both the offer and the PIN can redeem it — once, with one wallet.</p>
-{{else}}<details class="reveal"><summary>Show the confirmation code</summary><p>Confirmation code: <strong style="font-size:1.4em;letter-spacing:.15em">{{.Offer.ConfirmationCode}}</strong></p></details><p class="note">Show it once the wallet has scanned the offer, and enter it when the issuer asks you to approve. Anyone who sees both the offer and the code can redeem it — once, with one wallet.</p>{{end}}
+</div>
+{{if .Expired}}<p class="note">The passport has expired. Its data is still country-signed, and the credential says when it expired.</p>{{end}}
+</section>
+<section class="card respond" aria-labelledby="send-heading">
+<h2 id="send-heading">Send to your wallet</h2>
+<div class="options">
+{{if .QR}}<section class="option opt-qr" aria-labelledby="opt-qr">
+<h3 id="opt-qr"><span aria-hidden="true">📷</span> Scan with a phone</h3>
+<img src="{{.QR}}" alt="QR code of the credential offer, for a wallet on another device" class="qr" width="296" height="296">
+<p class="note">Scan it with your wallet app, or the phone's camera.</p>
+</section>{{end}}
+{{if or .AppLink .WebWalletLink}}<section class="option opt-device" aria-labelledby="opt-device">
+<h3 id="opt-device"><span aria-hidden="true">📲</span> Use a wallet on this device</h3>
+<p class="actions">{{if .AppLink}}<a href="{{.AppLink}}" class="btn">Open in wallet app</a>{{end}}
+{{if .WebWalletLink}}<a href="{{.WebWalletLink}}" target="_blank" class="btn secondary">Open in web wallet</a>{{end}}</p>
+</section>{{end}}
+</div>
+<details class="cli">
+<summary>For the demo CLI wallet</summary>
+<p>Give it this offer, as <code>go run ./cmd/wallet receive -state .demo-state '…'</code>:</p>
+<p><code id="offer-link">{{.Offer.URI}}</code></p>
+<p><button type="button" class="btn secondary" data-copy="offer-link" data-copy-status="offer-link-status" hidden>Copy offer</button> <span id="offer-link-status" class="note" role="status"></span></p>
+</details>
+</section>
+<section class="card" aria-labelledby="code-heading">
+{{if .Offer.PreAuthorized}}<h2 id="code-heading">PIN</h2>
+<p>Your wallet asks for this PIN once it has the offer, and sends it with the offer's pre-authorized code. There's no approval step.</p>
+<details class="reveal"><summary class="btn secondary">Show the PIN</summary>
+<p class="code-display"><span class="visually-hidden">PIN: </span><span id="offer-code">{{.Offer.ConfirmationCode}}</span></p>
+<p><button type="button" class="btn secondary" data-copy="offer-code" data-copy-status="offer-code-status" hidden>Copy PIN</button> <span id="offer-code-status" class="note" role="status"></span></p>
+</details>
+<p class="note">Give it to the holder separately from the offer. Anyone who sees both the offer and the PIN can redeem it — once, with one wallet.</p>
+{{else}}<h2 id="code-heading">Confirmation code</h2>
+<p>Enter it when the issuer asks you to approve, once your wallet has the offer.</p>
+<details class="reveal"><summary class="btn secondary">Show the confirmation code</summary>
+<p class="code-display"><span class="visually-hidden">Confirmation code: </span><span id="offer-code">{{.Offer.ConfirmationCode}}</span></p>
+<p><button type="button" class="btn secondary" data-copy="offer-code" data-copy-status="offer-code-status" hidden>Copy code</button> <span id="offer-code-status" class="note" role="status"></span></p>
+</details>
+<p class="note">Keep it separate from the offer: anyone who sees both can redeem it — once, with one wallet.</p>{{end}}
+</section>
+<section class="card progress" id="offer-progress" data-status="/demo/offers/{{.ProgressID}}/status" aria-labelledby="progress-heading">
+<h2 id="progress-heading">Progress</h2>
+<noscript><style>#offer-static{display:none}</style><iframe src="/demo/offers/{{.ProgressID}}/progress" title="Issuance progress" class="progress-frame"></iframe></noscript>
+<div id="offer-static">{{template "steps" .Progress}}</div>
+</section>
 {{if .Offer.KeptForRefresh}}<p class="note">Kept for refresh: the issuer keeps this passport's data for 24 hours after it first issues a credential, so your wallet can get fresh copies, then deletes it. Deleting the credentials in your wallet, or <a href="/demo/kept">forgetting it</a>, deletes it sooner.</p>{{end}}
-{{if .WebWalletLink}}<p><a href="{{.WebWalletLink}}"><strong>Open in web wallet</strong></a></p>{{end}}
-{{if .AppLink}}<p><a href="{{.AppLink}}">Open in wallet app</a> (on this device)</p>{{end}}
-{{if .QR}}<p>Or scan with a wallet on another device:<br><img src="{{.QR}}" alt="QR code of the credential offer" width="296"></p>{{end}}
-<p class="note">Or pass this offer to the demo CLI wallet:</p>
-<p><code>{{.Offer.URI}}</code></p>
-{{if .Evidence.Checks.PassiveAuthentication}}<p class="warn">This proves the passport data is authentic, not that you hold the passport — see the demo README.</p>{{end}}
-` + pageFoot))
+{{if .Evidence.Checks.PassiveAuthentication}}<p class="note">This proves the passport data is authentic, not that you hold the passport — see the demo README.</p>{{end}}
+<p><a href="/demo/">Upload another passport</a></p>
+</main>
+`+demoui.CopyScript+progressScript+`
+<script>document.getElementById("verdict").focus();</script>
+`+pageFoot)
 
 func (a *App) handleUploadPage(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set(headerContentType, contentTypeHTML)
-	_ = uploadTemplate.Execute(w, struct{ AllowSample bool }{a.cfg.AllowSampleDocument})
+	renderPage(w, http.StatusOK, uploadTemplate, uploadPage{Header: a.header(pathUpload), AllowSample: a.cfg.AllowSampleDocument}, false)
 }
 
 // handleSample offers gmrtd's sample passport (Config.AllowSampleDocument)
@@ -286,7 +395,7 @@ func (a *App) handleSample(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxUploadBytes)
 	e, err := passport.SampleDocument(a.now())
 	if err != nil {
-		writeHTMLError(w, http.StatusInternalServerError, "couldn't load gmrtd's sample passport")
+		a.writeHTMLError(w, http.StatusInternalServerError, "couldn't load gmrtd's sample passport")
 		return
 	}
 	a.offer(w, r, e)
@@ -296,23 +405,23 @@ func (a *App) handleUpload(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxUploadBytes)
 	file, _, err := r.FormFile("passport")
 	if err != nil {
-		writeHTMLError(w, http.StatusBadRequest, "no passport file uploaded, or it's larger than 2 MiB")
+		a.writeHTMLError(w, http.StatusBadRequest, "no passport file uploaded, or it's larger than 2 MiB")
 		return
 	}
 	defer func() { _ = file.Close() }()
 	data, err := io.ReadAll(file)
 	if err != nil {
-		writeHTMLError(w, http.StatusBadRequest, "couldn't read the uploaded file")
+		a.writeHTMLError(w, http.StatusBadRequest, "couldn't read the uploaded file")
 		return
 	}
 
 	e, err := passport.Verify(data, a.cfg.CSCAPool, a.now())
 	switch {
 	case errors.Is(err, passport.ErrNotTrusted):
-		writeHTMLError(w, http.StatusUnprocessableEntity, "the passport's signatures didn't verify against the trusted CSCA certificates")
+		a.writeHTMLError(w, http.StatusUnprocessableEntity, "the passport's signatures didn't verify against the trusted CSCA certificates")
 		return
 	case err != nil:
-		writeHTMLError(w, http.StatusBadRequest, "not a readable gmrtd portable passport file")
+		a.writeHTMLError(w, http.StatusBadRequest, "not a readable gmrtd portable passport file")
 		return
 	}
 
@@ -327,18 +436,32 @@ func (a *App) offer(w http.ResponseWriter, r *http.Request, e passport.Evidence)
 	})
 	switch {
 	case errors.Is(err, errReviewAndKeep):
-		writeHTMLError(w, http.StatusBadRequest, "a passport held for review can't also be kept for refresh — choose one")
+		a.writeHTMLError(w, http.StatusBadRequest, "a passport held for review can't also be kept for refresh — choose one")
 		return
 	case errors.Is(err, errTooManyTransactions):
-		writeHTMLError(w, http.StatusServiceUnavailable, "too many passports are awaiting issuance — try again in a few minutes")
+		a.writeHTMLError(w, http.StatusServiceUnavailable, "too many passports are awaiting issuance — try again in a few minutes")
 		return
 	case err != nil:
-		writeHTMLError(w, http.StatusInternalServerError, "couldn't create a credential offer")
+		a.writeHTMLError(w, http.StatusInternalServerError, "couldn't create a credential offer")
 		return
 	}
-	w.Header().Set(headerContentType, contentTypeHTML)
-	w.Header().Set("Cache-Control", "no-store") // the offer is a bearer secret, next to the passport's identity
-	page := offerPage{Evidence: e, Offer: offer, Expired: e.Identity.ExpiredAt(a.now())}
+	// Only this browser can follow the offer's progress.
+	browser, err := ensureBrowserID(w, r)
+	if err == nil {
+		configIDs := []string{MdocConfigurationID, SDJWTConfigurationID}
+		_, err = a.progress.add(a.now(), offer.IssuerState, browser, offer.PreAuthorized, configIDs, a.now().Add(a.cfg.transactionLifetime()))
+	}
+	if err != nil {
+		a.writeHTMLError(w, http.StatusInternalServerError, "couldn't create a credential offer")
+		return
+	}
+	page := offerPage{Header: a.header(""), Evidence: e, Offer: offer, Expired: e.Identity.ExpiredAt(a.now())}
+	if p, ok := a.progress.snapshot(a.now(), a.progress.idOf(offer.IssuerState), browser); ok {
+		page.ProgressID, page.Progress = p.id, p.status(a.now(), true)
+	}
+	if uri, ok := credential.PortraitDataURI(map[string]any{credential.Portrait: e.Portrait}); ok {
+		page.Portrait = template.URL(uri) // #nosec G203 -- built by PortraitDataURI from decoded JPEG bytes
+	}
 	if qr, err := demoqr.DataURI(offer.URI); err == nil {
 		page.QR = qr
 	}
@@ -346,19 +469,34 @@ func (a *App) offer(w http.ResponseWriter, r *http.Request, e passport.Evidence)
 	if a.cfg.WebWalletURL != "" {
 		page.WebWalletLink = a.cfg.WebWalletURL + "/receive?offer=" + url.QueryEscape(offer.URI)
 	}
-	_ = offerTemplate.Execute(w, page)
+	// The offer is a bearer secret, next to the passport's identity.
+	renderPage(w, http.StatusOK, offerTemplate, page, true)
 }
 
-var errorTemplate = template.Must(template.New("error").Parse(pageHead + `
-<h1>Something went wrong</h1>
-<p>{{.}}</p>
-<p><a href="/demo/">Start again</a></p>
-` + pageFoot))
+type errorPage struct {
+	Header  demoui.Header
+	Message string
+}
 
-func writeHTMLError(w http.ResponseWriter, status int, message string) {
-	w.Header().Set(headerContentType, contentTypeHTML)
-	w.WriteHeader(status)
-	_ = errorTemplate.Execute(w, message)
+var errorTemplate = parsePage("error", pageHead+`</head><body>
+{{template "site-header" .Header}}
+<main>
+<section class="verdict refused">
+<p class="mark" aria-hidden="true">✗</p>
+<div><h1>Something went wrong</h1>
+<p>{{.Message}}</p></div>
+</section>
+<p class="actions"><a href="/demo/" class="btn">Start again</a></p>
+</main>
+`+pageFoot)
+
+// writeHTMLError shows message on an error page. It names no page under
+// /demo/ as current, and counts nothing: holders see it too, from the
+// approval step.
+func (a *App) writeHTMLError(w http.ResponseWriter, status int, message string) {
+	h := siteHeader()
+	h.Nav = []demoui.Link{{Href: pathUpload, Label: "Upload a passport"}}
+	renderPage(w, status, errorTemplate, errorPage{Header: h, Message: message}, true)
 }
 
 // appLink is uri as an href, when it's a Credential Offer link
