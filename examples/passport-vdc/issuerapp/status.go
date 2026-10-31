@@ -210,7 +210,7 @@ func (a *App) statusPublishers() (jwt, cwt *statuslist.Publisher) {
 	return a.publishers[0], a.publishers[1]
 }
 
-var statusTemplate = template.Must(template.New("status").Parse(pageHead + `
+var statusTemplate = template.Must(template.New("status").Parse(pageHead + "</head><body>\n" + `
 <h1>Issued credentials</h1>
 <p>Every credential this issuer has issued references its status list: an SD-JWT VC at <code>{{.URI}}</code>, an mdoc at <code>{{.URI}}/cwt</code>, the same list served as a CWT by default. Revoking one flips its bit; a verifier checking the list then rejects it.</p>
 {{if .Entries}}
@@ -261,11 +261,11 @@ func (a *App) handleStatusPage(w http.ResponseWriter, _ *http.Request) {
 // refused, so another site can't revoke through a visitor's browser.
 func (a *App) handleRevoke(w http.ResponseWriter, r *http.Request) {
 	if origin := r.Header.Get("Origin"); origin != "" && origin != a.cfg.IssuerURL {
-		writeHTMLError(w, http.StatusForbidden, "cross-origin revocation refused")
+		a.writeHTMLError(w, http.StatusForbidden, "cross-origin revocation refused")
 		return
 	}
 	if !a.statusList.revokeHandle(r.FormValue("handle")) {
-		writeHTMLError(w, http.StatusBadRequest, "unknown credential")
+		a.writeHTMLError(w, http.StatusBadRequest, "unknown credential")
 		return
 	}
 	for _, p := range a.publishers {

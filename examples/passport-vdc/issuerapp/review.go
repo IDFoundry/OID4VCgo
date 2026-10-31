@@ -175,6 +175,19 @@ func (a *App) Reviews() []ReviewEntry {
 	return out
 }
 
+// pendingReviews counts the deferred issuances awaiting a decision.
+func (a *App) pendingReviews() int {
+	a.reviews.mu.Lock()
+	defer a.reviews.mu.Unlock()
+	now, n := a.now(), 0
+	for _, v := range a.reviews.items {
+		if v.decision == reviewPending && now.Sub(v.createdAt) < reviewLifetime {
+			n++
+		}
+	}
+	return n
+}
+
 // Review records the operator's decision on the deferred issuance ref;
 // the wallet's next poll carries it out.
 func (a *App) Review(ref string, approve bool) error { return a.reviews.decide(ref, approve) }
@@ -224,7 +237,7 @@ func (a *App) resolveDeferred(ctx context.Context, _ issuer.Grant, transactionID
 	return nil
 }
 
-var reviewTemplate = template.Must(template.New("review").Parse(pageHead + `
+var reviewTemplate = template.Must(template.New("review").Parse(pageHead + "</head><body>\n" + `
 <h1>Issuances awaiting review</h1>
 <p>A passport uploaded for review isn't issued at once: the wallet is told to wait, and polls until an operator decides here. Its next poll then gets the credential, or a refusal.</p>
 {{if .}}
@@ -255,11 +268,11 @@ func (a *App) handleReviewPage(w http.ResponseWriter, _ *http.Request) {
 // refused, so another site can't decide through a visitor's browser.
 func (a *App) handleReviewDecision(w http.ResponseWriter, r *http.Request) {
 	if origin := r.Header.Get("Origin"); origin != "" && origin != a.cfg.IssuerURL {
-		writeHTMLError(w, http.StatusForbidden, "cross-origin decision refused")
+		a.writeHTMLError(w, http.StatusForbidden, "cross-origin decision refused")
 		return
 	}
 	if err := a.Review(r.FormValue("ref"), r.FormValue("decision") == "approve"); err != nil {
-		writeHTMLError(w, http.StatusBadRequest, "unknown or already-decided review")
+		a.writeHTMLError(w, http.StatusBadRequest, "unknown or already-decided review")
 		return
 	}
 	http.Redirect(w, r, "/demo/review", http.StatusSeeOther)

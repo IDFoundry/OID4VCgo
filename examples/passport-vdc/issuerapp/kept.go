@@ -82,7 +82,7 @@ func (a *App) Forget(ctx context.Context, ref string) error {
 	return errNotKept
 }
 
-var keptTemplate = template.Must(template.New("kept").Parse(pageHead + `
+var keptTemplate = template.Must(template.New("kept").Parse(pageHead + "</head><body>\n" + `
 <h1>Passports kept for refresh</h1>
 <p>A passport uploaded with "Keep for refresh" is kept for 24 hours after its first credential is issued, so the wallet can get fresh copies with its refresh token. It's deleted then, when the wallet deletes the credentials, or when you forget it here.</p>
 {{if .}}
@@ -110,15 +110,15 @@ func (a *App) handleKeptPage(w http.ResponseWriter, _ *http.Request) {
 // refused, so another site can't forget one through a visitor's browser.
 func (a *App) handleForget(w http.ResponseWriter, r *http.Request) {
 	if origin := r.Header.Get("Origin"); origin != "" && origin != a.cfg.IssuerURL {
-		writeHTMLError(w, http.StatusForbidden, "cross-origin request refused")
+		a.writeHTMLError(w, http.StatusForbidden, "cross-origin request refused")
 		return
 	}
 	switch err := a.Forget(r.Context(), r.FormValue("ref")); {
 	case errors.Is(err, errNotKept):
-		writeHTMLError(w, http.StatusBadRequest, "that passport isn't kept any more")
+		a.writeHTMLError(w, http.StatusBadRequest, "that passport isn't kept any more")
 		return
 	case err != nil:
-		writeHTMLError(w, http.StatusInternalServerError, "the passport is forgotten, but revoking its refresh token failed")
+		a.writeHTMLError(w, http.StatusInternalServerError, "the passport is forgotten, but revoking its refresh token failed")
 		return
 	}
 	http.Redirect(w, r, "/demo/kept", http.StatusSeeOther)

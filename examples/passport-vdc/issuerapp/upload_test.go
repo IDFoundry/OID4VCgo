@@ -133,3 +133,64 @@ func TestSampleDocument(t *testing.T) {
 		t.Error("the offer page doesn't link the wallet app to the offer")
 	}
 }
+
+// TestUploadPage_Options: the upload page offers the file as a drop
+// zone around a real file input, each option as a labelled card, and
+// the sample passport apart from the main action; review and keep for
+// refresh exclude each other there, and the server refuses both.
+func TestUploadPage_Options(t *testing.T) {
+	env := demotest.New(t, nil)
+	home := get(t, env, "/demo/")
+	for _, want := range []string{
+		`class="dropzone"`, `<input type="file" name="passport" accept=".gmrtd" required`,
+		`name="counter"`, `name="review" value="1" data-excludes="keep"`, `name="keep" value="1" data-excludes="review"`,
+		"No passport to hand?", `form="upload" formaction="/demo/sample"`,
+		`<nav class="site-nav"`, `href="/demo/review"`, `href="/demo/kept"`, `href="/demo/status"`, `aria-current="page"`,
+	} {
+		if !strings.Contains(home, want) {
+			t.Errorf("the upload page lacks %q", want)
+		}
+	}
+	resp, err := env.HTTP.PostForm(env.IssuerURL+"/demo/sample", url.Values{"review": {"1"}, "keep": {"1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest || strings.Contains(string(page), "openid-credential-offer") {
+		t.Errorf("review and keep together: status %d, want 400 and no offer", resp.StatusCode)
+	}
+}
+
+// TestOfferPage: the offer page says how the passport was checked,
+// shows the holder's identity, the ways to send the offer to a wallet
+// and the code to reveal, and is never cached.
+func TestOfferPage(t *testing.T) {
+	env := demotest.New(t, nil)
+	for _, tc := range []struct {
+		form url.Values
+		want []string
+	}{
+		{url.Values{}, []string{"Confirmation code", "Show the confirmation code"}},
+		{url.Values{"counter": {"1"}}, []string{"PIN:", "Show the PIN", "Give it to the holder separately"}},
+	} {
+		resp, err := env.HTTP.PostForm(env.IssuerURL+"/demo/sample", tc.form)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		page := html.UnescapeString(string(body))
+		if resp.Header.Get("Cache-Control") != "no-store" {
+			t.Errorf("offer page Cache-Control = %q, want no-store", resp.Header.Get("Cache-Control"))
+		}
+		for _, want := range append(tc.want,
+			`class="verdict caution"`, "⚠ Sample — not checked", "Chip authentication:", "Passport expiry",
+			"Send to your wallet", "Scan with a phone", `id="offer-link"`, `data-copy="offer-code"`, `id="offer-code"`,
+		) {
+			if !strings.Contains(page, want) {
+				t.Errorf("the offer page (%v) lacks %q", tc.form, want)
+			}
+		}
+	}
+}

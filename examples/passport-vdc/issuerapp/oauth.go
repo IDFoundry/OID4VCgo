@@ -70,7 +70,7 @@ type approvalPage struct {
 	Error    string
 }
 
-var approvalTemplate = template.Must(template.New("approval").Parse(pageHead + `
+var approvalTemplate = template.Must(template.New("approval").Parse(pageHead + "</head><body>\n" + `
 <h1>Issue passport credential?</h1>
 <p>Wallet <code>{{.ClientID}}</code> is requesting credentials for the passport uploaded on the offer page.</p>
 <p>Formats requested: {{range .Scopes}}<code>{{.}}</code> {{end}}</p>
@@ -91,12 +91,12 @@ func (a *App) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 	// rendered here: no redirect for a request not yet tied to a client.
 	req, err := server.BeginAuthorizationRequestFromHTTP(r)
 	if err != nil {
-		writeHTMLError(w, http.StatusBadRequest, "malformed authorization request")
+		a.writeHTMLError(w, http.StatusBadRequest, "malformed authorization request")
 		return
 	}
 	action, err := a.server.BeginAuthorization(r.Context(), req)
 	if err != nil {
-		writeHTMLError(w, http.StatusInternalServerError, "failed to begin authorization")
+		a.writeHTMLError(w, http.StatusInternalServerError, "failed to begin authorization")
 		return
 	}
 	switch action := action.(type) {
@@ -105,18 +105,18 @@ func (a *App) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 		// ID — in its pushed request.
 		txID, ok := extension.Get(action.Interaction.Extensions, oid4vci.IssuerStateExtension)
 		if !ok {
-			writeHTMLError(w, http.StatusBadRequest, "this authorization request isn't linked to a verified passport — start from a credential offer")
+			a.writeHTMLError(w, http.StatusBadRequest, "this authorization request isn't linked to a verified passport — start from a credential offer")
 			return
 		}
 		if _, err := a.transactions.unclaimed(txID); err != nil {
-			writeHTMLError(w, http.StatusBadRequest, transactionErrorMessage(err))
+			a.writeHTMLError(w, http.StatusBadRequest, transactionErrorMessage(err))
 			return
 		}
 		// The interaction travels with this browser, sealed: the approval
 		// can only be submitted from it, and nothing is kept here.
 		tag, err := a.consent.Set(w, action, a.now())
 		if err != nil {
-			writeHTMLError(w, http.StatusInternalServerError, "failed to begin authorization")
+			a.writeHTMLError(w, http.StatusInternalServerError, "failed to begin authorization")
 			return
 		}
 		pending := pendingInteraction{handle: action.Handle, tag: tag, txID: txID, scopes: action.Interaction.Scope}
@@ -124,9 +124,9 @@ func (a *App) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 	case server.RedirectResponse:
 		http.Redirect(w, r, action.Destination.String(), http.StatusFound)
 	case server.LocalErrorResponse:
-		writeHTMLError(w, action.Error.HTTPStatus(), action.Error.PublicDescription())
+		a.writeHTMLError(w, action.Error.HTTPStatus(), action.Error.PublicDescription())
 	default:
-		writeHTMLError(w, http.StatusInternalServerError, "unrecognized authorization action")
+		a.writeHTMLError(w, http.StatusInternalServerError, "unrecognized authorization action")
 	}
 }
 
@@ -138,16 +138,16 @@ func (a *App) handleDecision(w http.ResponseWriter, r *http.Request) {
 	// form another site posts (SameSite=Lax keeps the cookie off
 	// cross-site POSTs too).
 	if origin := r.Header.Get("Origin"); origin != "" && origin != a.cfg.IssuerURL {
-		writeHTMLError(w, http.StatusForbidden, "cross-origin approval refused")
+		a.writeHTMLError(w, http.StatusForbidden, "cross-origin approval refused")
 		return
 	}
 	if err := r.ParseForm(); err != nil {
-		writeHTMLError(w, http.StatusBadRequest, "malformed form")
+		a.writeHTMLError(w, http.StatusBadRequest, "malformed form")
 		return
 	}
 	pending, err := a.interactionFromCookie(r)
 	if err != nil {
-		writeHTMLError(w, http.StatusBadRequest, "no approval is in progress in this browser for this page — it expired, was already used, began in another browser, or another tab started a new one")
+		a.writeHTMLError(w, http.StatusBadRequest, "no approval is in progress in this browser for this page — it expired, was already used, began in another browser, or another tab started a new one")
 		return
 	}
 	txID := pending.txID
@@ -160,12 +160,12 @@ func (a *App) handleDecision(w http.ResponseWriter, r *http.Request) {
 		}
 		subjectID, err := server.NewSubjectID(txID)
 		if err != nil {
-			writeHTMLError(w, http.StatusInternalServerError, "invalid subject")
+			a.writeHTMLError(w, http.StatusInternalServerError, "invalid subject")
 			return
 		}
 		subject, err := server.NewAuthenticatedSubject(subjectID)
 		if err != nil {
-			writeHTMLError(w, http.StatusInternalServerError, "invalid subject")
+			a.writeHTMLError(w, http.StatusInternalServerError, "invalid subject")
 			return
 		}
 		// No holder authentication happens in this demo, so the
@@ -173,14 +173,14 @@ func (a *App) handleDecision(w http.ResponseWriter, r *http.Request) {
 		// authentication method (amr).
 		authCtx, err := server.NewAuthenticationContext(a.now(), "urn:idfoundry:passport-vdc:demo", nil)
 		if err != nil {
-			writeHTMLError(w, http.StatusInternalServerError, "invalid authentication context")
+			a.writeHTMLError(w, http.StatusInternalServerError, "invalid authentication context")
 			return
 		}
 		result = server.Authorize(subject, authCtx, a.grantFor(pending))
 	case "deny":
 		result = server.Deny("the holder declined")
 	default:
-		writeHTMLError(w, http.StatusBadRequest, "decision must be approve or deny")
+		a.writeHTMLError(w, http.StatusBadRequest, "decision must be approve or deny")
 		return
 	}
 
@@ -188,7 +188,7 @@ func (a *App) handleDecision(w http.ResponseWriter, r *http.Request) {
 	a.consent.Clear(w)
 	done, err := a.server.CompleteAuthorization(r.Context(), server.CompleteAuthorizationRequest{Handle: pending.handle, Result: result})
 	if err != nil {
-		writeHTMLError(w, http.StatusInternalServerError, "failed to complete authorization")
+		a.writeHTMLError(w, http.StatusInternalServerError, "failed to complete authorization")
 		return
 	}
 	switch v := done.(type) {
@@ -196,9 +196,9 @@ func (a *App) handleDecision(w http.ResponseWriter, r *http.Request) {
 		// 303, not 302 or 307, after the consent form's POST (RFC 9700 §4.12).
 		http.Redirect(w, r, v.Destination().String(), http.StatusSeeOther)
 	case server.AuthorizationLocalError:
-		writeHTMLError(w, v.Error.HTTPStatus(), v.Error.PublicDescription())
+		a.writeHTMLError(w, v.Error.HTTPStatus(), v.Error.PublicDescription())
 	default:
-		writeHTMLError(w, http.StatusInternalServerError, "unrecognized authorization result")
+		a.writeHTMLError(w, http.StatusInternalServerError, "unrecognized authorization result")
 	}
 }
 
@@ -240,7 +240,7 @@ func (a *App) claimTransaction(w http.ResponseWriter, pending pendingInteraction
 			return false
 		}
 	}
-	writeHTMLError(w, http.StatusBadRequest, transactionErrorMessage(err))
+	a.writeHTMLError(w, http.StatusBadRequest, transactionErrorMessage(err))
 	return false
 }
 
