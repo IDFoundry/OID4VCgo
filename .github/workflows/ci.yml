@@ -135,6 +135,11 @@ jobs:
         with:
           version: v2.12
 
+      # fuzz.yml never runs on a PR, so a fuzz target added without a
+      # matrix entry (in any module) would only ever run its seeds.
+      - name: Fuzz matrix lists every fuzz target
+        run: .github/scripts/check-fuzz-matrix.sh
+
   # examples/passport-vdc is its own Go module (it depends on gmrtd,
   # which the library must not), so the root jobs' ./... never reaches
   # it — without this job the demo would silently stop building. Its

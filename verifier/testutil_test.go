@@ -22,7 +22,7 @@ import (
 // own x509_hash/x5c mechanics. (HAIP's own "MUST NOT be self-signed"
 // is a Wallet-side validation rule this package doesn't implement yet
 // — see the package doc comment — so a self-signed cert is fine here.)
-func testSignerAndCert(t *testing.T) (*ecdsa.PrivateKey, *x509.Certificate) {
+func testSignerAndCert(t testing.TB) (*ecdsa.PrivateKey, *x509.Certificate) {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -45,7 +45,7 @@ func testSignerAndCert(t *testing.T) (*ecdsa.PrivateKey, *x509.Certificate) {
 	return key, cert
 }
 
-func testP256Key(t *testing.T) *ecdsa.PrivateKey {
+func testP256Key(t testing.TB) *ecdsa.PrivateKey {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -54,7 +54,7 @@ func testP256Key(t *testing.T) *ecdsa.PrivateKey {
 	return key
 }
 
-func testResponseURI(t *testing.T) fapi.URL {
+func testResponseURI(t testing.TB) fapi.URL {
 	t.Helper()
 	u, err := fapi.ParseEndpointURL("https://verifier.example.com/response")
 	if err != nil {
@@ -63,7 +63,7 @@ func testResponseURI(t *testing.T) fapi.URL {
 	return u
 }
 
-func validConfig(t *testing.T) (verifier.Config, verifier.Dependencies) {
+func validConfig(t testing.TB) (verifier.Config, verifier.Dependencies) {
 	t.Helper()
 	key, cert := testSignerAndCert(t)
 	return verifier.Config{
@@ -83,7 +83,7 @@ func validConfig(t *testing.T) (verifier.Config, verifier.Dependencies) {
 // validConfig, returning cfg/deps alongside it for tests that also
 // need to inspect the Config/Dependencies used to build it (e.g.
 // verifying the resulting Request Object's own signature).
-func newTestVerifierWithConfig(t *testing.T) (verifier.Config, verifier.Dependencies, *verifier.Verifier) {
+func newTestVerifierWithConfig(t testing.TB) (verifier.Config, verifier.Dependencies, *verifier.Verifier) {
 	t.Helper()
 	cfg, deps := validConfig(t)
 	v, err := verifier.New(cfg, deps)

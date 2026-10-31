@@ -19,6 +19,18 @@ name: Fuzz
 # down, inspect, and — once satisfied it's a real bug fixed or worth
 # tracking — commit into the repo as a permanent regression corpus
 # entry; this workflow never commits back on its own.
+#
+# So that a red run gets noticed, the alert job (at the end, via
+# .github/scripts/scheduled-alert.sh) opens an issue labelled "fuzz"
+# when a default-branch run fails, listing the failing targets and how
+# to replay each one's artifact, or comments on the open one; the next
+# passing run closes it. The failing input goes into the fix's commit as
+# a seed under <module>/<pkg>/testdata/fuzz/<FuzzName>/, so plain go
+# test replays it from then on.
+#
+# Every fuzz target in every module is in the matrix below: ci.yml runs
+# .github/scripts/check-fuzz-matrix.sh, which refuses a target missing
+# from it, an entry with no target, and an id or target listed twice.
 
 on:
   schedule:
@@ -30,8 +42,16 @@ permissions:
 
 jobs:
   fuzz:
+    # The alert job reads a failing target from this name.
+    name: fuzz (${{ matrix.target.id }}, ${{ matrix.target.module || '.' }}, ${{ matrix.target.pkg }}, ${{ matrix.target.name }})
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # A target in a Go module other than the root one (mobile/,
+    # examples/passport-vdc/) names it in module, and its pkg is relative
+    # to that module's directory, where every go command then runs.
+    defaults:
+      run:
+        working-directory: ${{ matrix.target.module || '.' }}
     strategy:
       fail-fast: false
       matrix:
@@ -39,6 +59,8 @@ jobs:
           # id is a short, artifact-name-safe identifier — FuzzDecodeUnverified
           # names both internal/jose's and internal/cose's own target,
           # so name alone can't be used as the upload-artifact name below.
+          # module, set only outside the root module, is the module's
+          # directory; pkg is then relative to it.
           - id: jose-decode-unverified
             pkg: ./internal/jose
             name: FuzzDecodeUnverified
@@ -243,14 +265,101 @@ jobs:
           - id: wallet-decode-metadata
             pkg: ./wallet
             name: FuzzDecodeMetadata
+          - id: walletflow-copy-marks
+            pkg: ./walletflow
+            name: FuzzCopyMarks
+          - id: walletflow-native-redirect
+            pkg: ./walletflow
+            name: FuzzNativeRedirect
+          - id: certrevocation-crl-acceptance
+            pkg: ./certrevocation
+            name: FuzzCRLAcceptance
+          - id: verifier-default-sdjwt-issuer-leaf-policy
+            pkg: ./verifier
+            name: FuzzDefaultSDJWTIssuerLeafPolicy
+          - id: mdoc-issuer-auth-status
+            pkg: ./credential/mdoc
+            name: FuzzIssuerAuthStatus
+          - id: sdjwtvc-issue-reserved-names
+            pkg: ./credential/sdjwtvc
+            name: FuzzIssueReservedNames
+          - id: weborigin-normalize
+            pkg: ./internal/weborigin
+            name: FuzzNormalize
+          - id: mdocdcapi-origin-checks
+            pkg: ./mdocdcapi
+            name: FuzzOriginChecks
+          - id: identifierlist-parse-claims
+            pkg: ./identifierlist
+            name: FuzzParseClaims
+          - id: identifierlist-verify-token
+            pkg: ./identifierlist
+            name: FuzzVerifyToken
+          - id: statuslist-parse-cwt-claims
+            pkg: ./statuslist
+            name: FuzzParseCWTClaims
+          - id: strictjson-unmarshal
+            pkg: ./internal/strictjson
+            name: FuzzUnmarshal
+          - id: b64url-decode-string
+            pkg: ./internal/b64url
+            name: FuzzDecodeString
+          - id: displaytext-clean
+            pkg: ./internal/displaytext
+            name: FuzzClean
+          - id: oid4vci-authorization-detail-rar
+            pkg: .
+            name: FuzzAuthorizationDetailRARDefinition
+          - id: verifier-transaction-codec-unmarshal
+            pkg: ./verifier
+            name: FuzzTransactionCodecUnmarshal
+          - id: verifier-status-reference
+            pkg: ./verifier
+            name: FuzzStatusReference
+          - id: verifier-unrequested-sdjwtvc-claims
+            pkg: ./verifier
+            name: FuzzVerifyResponseUnrequestedSDJWTVCClaims
+          - id: verifier-unrequested-mdoc-elements
+            pkg: ./verifier
+            name: FuzzVerifyResponseUnrequestedMdocElements
+          - id: issuer-pre-authorized-refusal-keeps-code
+            pkg: ./issuer
+            name: FuzzPreAuthorizedCodeRefusalKeepsCode
+          - id: proximity-device-request-disclosure
+            pkg: ./proximity
+            name: FuzzDeviceRequestDisclosure
+          - id: nfcapdu-holder-static-handover
+            pkg: ./proximity/nfcapdu
+            name: FuzzHolderStaticHandover
+          # Other modules: pkg is relative to module's directory.
+          - id: androidattest-parse-key-description
+            module: examples/passport-vdc
+            pkg: ./internal/androidattest
+            name: FuzzParseKeyDescription
+          - id: mobile-new-wallet-config
+            module: mobile
+            pkg: .
+            name: FuzzNewWalletConfig
+          - id: mobile-new-proximity-reader-config
+            module: mobile
+            pkg: .
+            name: FuzzNewProximityReaderConfig
+          - id: mobile-stored-records
+            module: mobile
+            pkg: .
+            name: FuzzStoredRecords
+          - id: mobile-proximity-holder
+            module: mobile
+            pkg: .
+            name: FuzzProximityHolder
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: go.mod
+          go-version-file: ${{ matrix.target.module && format('{0}/go.mod', matrix.target.module) || 'go.mod' }}
           check-latest: true
-          cache-dependency-path: go.mod
+          cache-dependency-path: ${{ matrix.target.module && format('{0}/go.sum', matrix.target.module) || 'go.mod' }}
 
       # Go keeps each target's generated corpus (every input that found
       # new coverage) under $GOCACHE/fuzz/<import path>/<FuzzName>.
@@ -263,17 +372,29 @@ jobs:
       # changed fuzz function signature starts from scratch rather than
       # tripping over corpus entries of the old shape. setup-go's own
       # GOCACHE cache also contains a fuzz directory, but keyed only on
-      # go.mod it never updates — this restore replaces it.
+      # go.mod it never updates — this restore replaces it. src is the
+      # package's directory from the repository root, for hashFiles
+      # (which always resolves from there): ./<pkg> in the root module,
+      # as before, and ./<module>/<pkg> in another.
       - name: Locate fuzz corpus cache
         id: corpus
-        run: echo "dir=$(go env GOCACHE)/fuzz/$(go list ${{ matrix.target.pkg }})/${{ matrix.target.name }}" >> "$GITHUB_OUTPUT"
+        env:
+          MODULE: ${{ matrix.target.module }}
+          PKG: ${{ matrix.target.pkg }}
+          NAME: ${{ matrix.target.name }}
+        run: |
+          echo "dir=$(go env GOCACHE)/fuzz/$(go list "$PKG")/$NAME" >> "$GITHUB_OUTPUT"
+          rel=${PKG#./}
+          [ "$rel" != . ] || rel=
+          src=./${MODULE:+$MODULE/}$rel
+          echo "src=${src%/}" >> "$GITHUB_OUTPUT"
 
       - name: Restore fuzz corpus
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ steps.corpus.outputs.dir }}
-          key: fuzz-corpus-${{ matrix.target.id }}-${{ hashFiles(format('{0}/*_fuzz_test.go', matrix.target.pkg)) }}-${{ github.run_id }}
-          restore-keys: fuzz-corpus-${{ matrix.target.id }}-${{ hashFiles(format('{0}/*_fuzz_test.go', matrix.target.pkg)) }}-
+          key: fuzz-corpus-${{ matrix.target.id }}-${{ hashFiles(format('{0}/*_fuzz_test.go', steps.corpus.outputs.src)) }}-${{ github.run_id }}
+          restore-keys: fuzz-corpus-${{ matrix.target.id }}-${{ hashFiles(format('{0}/*_fuzz_test.go', steps.corpus.outputs.src)) }}-
 
       - name: go test -fuzz=${{ matrix.target.name }}
         # -fuzzminimizetime caps how long each newly interesting input
@@ -321,7 +442,7 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ steps.corpus.outputs.dir }}
-          key: fuzz-corpus-${{ matrix.target.id }}-${{ hashFiles(format('{0}/*_fuzz_test.go', matrix.target.pkg)) }}-${{ github.run_id }}
+          key: fuzz-corpus-${{ matrix.target.id }}-${{ hashFiles(format('{0}/*_fuzz_test.go', steps.corpus.outputs.src)) }}-${{ github.run_id }}
 
       - name: Upload failing input
         if: failure()
@@ -330,3 +451,22 @@ jobs:
           name: fuzz-failure-${{ matrix.target.id }}
           path: '**/testdata/fuzz/${{ matrix.target.name }}/'
           retention-days: 30
+
+  # Nothing else alerts on a red nightly run, and it never runs against a
+  # PR, so report each default-branch run on an issue labelled "fuzz":
+  # open one (or comment on the open one) naming the failing targets and
+  # how to reproduce them, and close it on the next run that passes. Runs
+  # dispatched on other branches report nothing.
+  alert:
+    needs: fuzz
+    if: always() && github.ref_name == github.event.repository.default_branch
+    permissions:
+      contents: read
+      issues: write
+      actions: read
+    uses: ./.github/workflows/scheduled-alert.yml
+    with:
+      result: ${{ needs.fuzz.result }}
+      label: fuzz
+      title: Nightly fuzz failure
+      kind: fuzz

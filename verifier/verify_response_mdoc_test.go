@@ -52,7 +52,7 @@ type mdocVerifyFixture struct {
 	origin                string
 }
 
-func newMdocVerifyFixture(t *testing.T) mdocVerifyFixture {
+func newMdocVerifyFixture(t testing.TB) mdocVerifyFixture {
 	t.Helper()
 	cfg, deps := validConfig(t)
 	v, err := verifier.New(cfg, deps)
@@ -83,7 +83,7 @@ func newMdocDCAPIVerifyFixture(t *testing.T) mdocVerifyFixture {
 	return newMdocVerifyFixtureFromKey(t, v, verifier.Config{}, query, built.Nonce, built.ResponseDecryptionKey, origin)
 }
 
-func newMdocVerifyFixtureFromKey(t *testing.T, v *verifier.Verifier, cfg verifier.Config, query dcql.Query, nonce string, responseDecryptionKey *ecdsa.PrivateKey, origin string) mdocVerifyFixture {
+func newMdocVerifyFixtureFromKey(t testing.TB, v *verifier.Verifier, cfg verifier.Config, query dcql.Query, nonce string, responseDecryptionKey *ecdsa.PrivateKey, origin string) mdocVerifyFixture {
 	t.Helper()
 	thumbprint := testmdoc.ResponseEncryptionThumbprint(t, responseDecryptionKey)
 	f := testmdoc.Issue(t)

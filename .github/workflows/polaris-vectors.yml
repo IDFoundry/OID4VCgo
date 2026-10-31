@@ -121,3 +121,20 @@ jobs:
           name: polaris-mdoc-vectors
           path: ${{ runner.temp }}/polaris-mdoc-vectors.log
           retention-days: 14
+
+  # Report each push to (or dispatched run on) the default branch on an
+  # issue labelled "polaris-vectors", opened when the run fails and
+  # closed when one passes (.github/scripts/scheduled-alert.sh); a PR's
+  # run shows on the PR instead.
+  alert:
+    needs: [vectors, mdoc-vectors]
+    if: always() && github.ref_name == github.event.repository.default_branch && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    permissions:
+      contents: read
+      issues: write
+      actions: read
+    uses: ./.github/workflows/scheduled-alert.yml
+    with:
+      result: ${{ contains(needs.*.result, 'failure') && 'failure' || (contains(needs.*.result, 'cancelled') && 'cancelled' || 'success') }}
+      label: polaris-vectors
+      title: Polaris vectors failure on main
