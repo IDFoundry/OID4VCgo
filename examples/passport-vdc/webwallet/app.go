@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -129,6 +130,11 @@ func (a *App) routes() http.Handler {
 	mux.HandleFunc("POST /present", a.sameOrigin(a.handlePresentConsent))
 	mux.HandleFunc("POST /present/{id}", a.sameOrigin(a.handlePresentDecision))
 	mux.HandleFunc("POST /deferred/{id}", a.sameOrigin(a.handleCheckDeferred))
+	mux.HandleFunc("POST /link", a.sameOrigin(a.handleLink))
+	// A GET to the paste box's target goes back to its page.
+	mux.HandleFunc("GET /link", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+	})
 	return mux
 }
 
@@ -164,8 +170,44 @@ func (w webApprover) Approve(ctx context.Context, authorizationURL string) (wall
 
 func (a *App) handleReceiveConfirm(w http.ResponseWriter, r *http.Request) {
 	offer := r.URL.Query().Get("offer")
-	issuer, preAuthorized := offerIssuer(offer)
-	render(w, http.StatusOK, confirmReceiveTemplate, map[string]any{"Offer": offer, "Issuer": issuer, "PreAuthorized": preAuthorized})
+	render(w, http.StatusOK, confirmReceiveTemplate, readOffer(offer))
+}
+
+// Kinds of link the paste box takes.
+const (
+	linkOffer   = "offer"   // a Credential Offer: openid-credential-offer://
+	linkRequest = "request" // a presentation request: openid4vp://
+)
+
+// classifyLink says what kind of link the holder pasted, if it's one
+// this wallet takes: the prefixes /receive and /present accept.
+func classifyLink(link string) string {
+	switch {
+	case strings.HasPrefix(link, "openid-credential-offer://"):
+		return linkOffer
+	case strings.HasPrefix(link, "openid4vp://"):
+		return linkRequest
+	}
+	return ""
+}
+
+// handleLink takes the home page's paste box: an offer goes to the
+// receive confirmation page, which fetches nothing; a request is fetched
+// and shown for consent, as POST /present does.
+func (a *App) handleLink(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		renderError(w, http.StatusBadRequest, errMalformedForm)
+		return
+	}
+	link := strings.TrimSpace(r.PostForm.Get("link"))
+	switch classifyLink(link) {
+	case linkOffer:
+		http.Redirect(w, r, "/receive?offer="+url.QueryEscape(link), http.StatusSeeOther)
+	case linkRequest:
+		a.presentConsent(w, r, link)
+	default:
+		renderError(w, http.StatusBadRequest, "that isn't a link this wallet recognises — paste a credential offer (openid-credential-offer://…) or a presentation request (openid4vp://…)")
+	}
 }
 
 // handleReceive starts receiving from an offer and sends the browser to
@@ -387,10 +429,16 @@ func (a *App) handlePresentConsent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	link := strings.TrimSpace(r.PostForm.Get("request"))
-	if !strings.HasPrefix(link, "openid4vp://") {
+	if classifyLink(link) != linkRequest {
 		renderError(w, http.StatusBadRequest, "that isn't a presentation request link (openid4vp://…)")
 		return
 	}
+	a.presentConsent(w, r, link)
+}
+
+// presentConsent verifies the presentation request link and shows what
+// it asks for.
+func (a *App) presentConsent(w http.ResponseWriter, r *http.Request, link string) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 	prepared, err := walletapp.Prepare(ctx, link, a.cfg.Store, a.cfg.Wallet.HTTP, a.cfg.VerifierTrust)
@@ -416,8 +464,10 @@ func (a *App) handlePresentConsent(w http.ResponseWriter, r *http.Request) {
 	if u, err := url.Parse(prepared.ResponseURI); err == nil {
 		responseHost = u.Host
 	}
+	stored, _ := a.cfg.Store.List() // only for the holders' portraits
 	render(w, http.StatusOK, consentTemplate, consentPage{
-		ID: id, VerifierName: prepared.VerifierName, VerifierID: prepared.VerifierClientID, ResponseHost: responseHost, Options: prepared.Options, Several: prepared.Several,
+		ID: id, VerifierName: prepared.VerifierName, VerifierID: prepared.VerifierClientID, ResponseHost: responseHost,
+		Options: optionsFor(prepared.Options, stored), Several: prepared.Several,
 	})
 }
 
@@ -436,7 +486,7 @@ func (a *App) handlePresentDecision(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.PostForm.Get("decision") != "share" {
-		render(w, http.StatusOK, doneTemplate, map[string]string{"Message": "Declined — nothing was shared."})
+		render(w, http.StatusOK, doneTemplate, donePage{Message: "Declined — nothing was shared."})
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
@@ -451,8 +501,8 @@ func (a *App) handlePresentDecision(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, presented.RedirectURI, http.StatusSeeOther) // #nosec G710 -- the verifier's redirect_uri, from its authenticated response; https checked in walletapp
 		return
 	}
-	render(w, http.StatusOK, doneTemplate, map[string]string{
-		"Message": "Shared " + strings.Join(presented.Credentials, ", ") + " with the verifier.",
+	render(w, http.StatusOK, doneTemplate, donePage{
+		Shared: true, Message: "Shared " + strings.Join(presented.Credentials, ", ") + " with the verifier.",
 	})
 }
 
@@ -467,8 +517,10 @@ func (a *App) handleHome(w http.ResponseWriter, r *http.Request) {
 		cards = append(cards, cardFor(stored[i]))
 	}
 	q := r.URL.Query()
+	received, _ := strconv.Atoi(q.Get("received"))
+	deferredNow, _ := strconv.Atoi(q.Get("deferred"))
 	render(w, http.StatusOK, homeTemplate, homePage{
-		Cards: cards, Received: q.Get("received"), Deferred: a.deferredCards(),
+		Cards: cards, Received: received, DeferredNow: deferredNow, Deferred: a.deferredCards(),
 		Waiting: q.Get("waiting") != "", Denied: q.Get("denied") != "",
 	})
 }
@@ -487,21 +539,26 @@ func requestHost(link string) string {
 	return ru.Host
 }
 
-// offerIssuer reads the credential_issuer from a by-value offer link,
-// for the confirmation page ("" if it can't).
-// offerIssuer reads a by-value offer link's issuer, and whether it's a
-// pre-authorized code offer — "" and false for anything else, including
-// a by-reference offer this page doesn't fetch.
-func offerIssuer(link string) (issuer string, preAuthorized bool) {
+// readOffer reads what the receive confirmation page shows of a
+// by-value offer link: its issuer, the credentials it offers, and
+// whether it's a pre-authorized code offer. A by-reference offer, which
+// this page doesn't fetch, shows none of them.
+func readOffer(link string) receivePage {
+	page := receivePage{Offer: link}
 	u, err := url.Parse(link)
 	if err != nil {
-		return "", false
+		return page
 	}
 	var offer oid4vci.CredentialOffer
 	if json.Unmarshal([]byte(u.Query().Get("credential_offer")), &offer) != nil {
-		return "", false
+		return page
 	}
-	return offer.CredentialIssuer, offer.Grants != nil && offer.Grants.PreAuthorizedCode != nil
+	page.Issuer, page.Offered = offer.CredentialIssuer, offer.CredentialConfigurationIDs
+	if iu, err := url.Parse(offer.CredentialIssuer); err == nil {
+		page.Host = iu.Host
+	}
+	page.PreAuthorized = offer.Grants != nil && offer.Grants.PreAuthorizedCode != nil
+	return page
 }
 
 func randomID() (string, error) {
