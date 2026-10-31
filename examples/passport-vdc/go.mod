@@ -5,7 +5,7 @@ go 1.26.10
 require (
 	github.com/fxamacker/cbor/v2 v2.9.6
 	github.com/gmrtd/gmrtd v1.6.0
-	github.com/idfoundry/fapigo v0.67.0
+	github.com/idfoundry/fapigo v0.67.2
 	github.com/idfoundry/fapigo/sqlstore v0.2.0
 	github.com/idfoundry/oid4vcgo v0.57.0
 	github.com/idfoundry/oid4vcgo/sqlstore v0.0.0-00010101000000-000000000000
