@@ -167,6 +167,7 @@ func (a *App) routes(credentialHandler, deferredHandler, notificationHandler htt
 	mux.Handle("POST /deferred_credential", deferredHandler)
 	mux.Handle("POST /notification", notificationHandler)
 	mux.HandleFunc("GET /demo/review", a.handleReviewPage)
+	mux.HandleFunc("GET /demo/review/status", a.handleReviewStatus)
 	mux.HandleFunc("POST /demo/review/decision", a.handleReviewDecision)
 	mux.HandleFunc("GET /demo/kept", a.handleKeptPage)
 	mux.HandleFunc("POST /demo/kept/forget", a.handleForget)
@@ -201,6 +202,24 @@ var pageFuncs = template.FuncMap{
 	},
 	"words":      func(t time.Time) string { return t.Format(demoui.DateLayout) },
 	"formatName": formatName,
+	"dateWords": func(s string) string {
+		if d, ok := demoui.FormatDate(s); ok {
+			return d
+		}
+		return s
+	},
+	"eventBadge": eventBadge,
+}
+
+// eventBadge is a wallet's notification event as a badge.
+func eventBadge(e oid4vci.NotificationEvent) template.HTML {
+	switch e {
+	case oid4vci.NotificationEventCredentialAccepted:
+		return `<span class="badge ok">✓ Kept</span>`
+	case oid4vci.NotificationEventCredentialDeleted:
+		return `<span class="badge">Deleted</span>`
+	}
+	return `<span class="badge bad">✗ Failed</span>`
 }
 
 // formatName is a credential format as people read it.

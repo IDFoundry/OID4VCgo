@@ -100,7 +100,7 @@ background:repeating-linear-gradient(90deg,transparent 0 calc(var(--cell) - 1px)
 .entry{margin:0;display:flex;flex-direction:column;gap:.25rem}.entry .actions{margin:.5rem 0 0}
 .facts{display:grid;grid-template-columns:auto 1fr;gap:.15rem .75rem;margin:.25rem 0}.facts dt{color:var(--muted)}.facts dd{margin:0}
 details.confirm>summary{list-style:none;display:inline-block}details.confirm>summary::-webkit-details-marker{display:none}
-details.confirm[open]>summary{display:none}details.confirm form{margin:0}
+details.confirm .when-open,details.confirm[open] .when-closed{display:none}details.confirm[open] .when-open{display:inline}details.confirm form{margin:.5rem 0 0}
 .timeline{list-style:none;padding:0 0 0 1rem;margin:.5rem 0;border-left:2px solid var(--border)}
 .timeline li{position:relative;padding:.2rem 0 .6rem .75rem}
 .timeline li::before{content:"";position:absolute;left:calc(-1rem - 7px);top:.65rem;width:12px;height:12px;border-radius:50%;background:var(--link);border:2px solid var(--bg)}
