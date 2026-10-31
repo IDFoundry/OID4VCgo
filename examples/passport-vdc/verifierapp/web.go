@@ -60,32 +60,68 @@ const pageHead = `<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Passport credential verifier (demo)</title>
 <style>
-body{font-family:system-ui,sans-serif;max-width:42rem;margin:2rem auto;padding:0 1rem;line-height:1.5}
-table{border-collapse:collapse}th,td{text-align:left;padding:.25rem .75rem .25rem 0;vertical-align:top}
-code{word-break:break-all}.ok{color:#1a7f37}.bad{color:#cf222e}.note{color:#57606a;font-size:.9em}
-.card{border:1px solid #d0d7de;border-radius:6px;padding:1rem;margin:1rem 0}
-.portrait{max-width:10rem;border-radius:4px}
-.scenario h2{margin:.2rem 0}.who{color:#57606a}.decision{font-size:1.4em}
-.warn{border-color:#bf8700;background:#fff8c5}
+:root{--bg:#f6f8fa;--surface:#fff;--text:#1f2328;--muted:#57606a;--border:#d0d7de;--link:#0969da;
+--btn-bg:#0969da;--btn-text:#fff;--focus:#0969da;--chip-bg:#eaeef2;--code-bg:#eaeef2;
+--ok:#1a7f37;--ok-bg:#dafbe1;--bad:#cf222e;--bad-bg:#ffebe9;--warn-border:#9a6700;--warn-bg:#fff8c5}
+*{box-sizing:border-box}
+body{font-family:system-ui,sans-serif;max-width:48rem;margin:0 auto;padding:0 1rem 2rem;line-height:1.5;background:var(--bg);color:var(--text)}
+a{color:var(--link)}h1{line-height:1.25}
+table{border-collapse:collapse}th,td{text-align:left;padding:.3rem .75rem .3rem 0;vertical-align:top}
+code{word-break:break-all;background:var(--code-bg);padding:0 .2em;border-radius:4px}
+.ok{color:var(--ok)}.bad{color:var(--bad)}.note{color:var(--muted);font-size:.9em}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:1rem 1.25rem;margin:1rem 0}
+.warn{border-color:var(--warn-border);background:var(--warn-bg)}
+.site{display:flex;align-items:center;gap:.75rem;padding:1rem 0;margin-bottom:.5rem;border-bottom:1px solid var(--border)}
+.site .rp-icon{font-size:2rem;line-height:1}.site p{margin:0}.site .rp-name{font-weight:700;font-size:1.1rem}
+.site .rp-sub{color:var(--muted);font-size:.9em}.site .home-link{margin-left:auto;font-size:.9em;white-space:nowrap}
+.badge{display:inline-block;border-radius:999px;padding:.05rem .6rem;font-size:.85em;font-weight:600;border:1px solid var(--border);background:var(--chip-bg);color:var(--text)}
+.badge.ok{background:var(--ok-bg);color:var(--ok);border-color:transparent}.badge.bad{background:var(--bad-bg);color:var(--bad);border-color:transparent}
+.chips{display:flex;flex-wrap:wrap;gap:.4rem;padding:0;margin:.5rem 0;list-style:none}
+.chips li{background:var(--chip-bg);border-radius:999px;padding:.1rem .7rem;font-size:.9em}
+.btn{display:inline-block;background:var(--btn-bg);color:var(--btn-text);border:1px solid var(--btn-bg);border-radius:8px;padding:.5rem 1rem;font:inherit;font-weight:600;text-decoration:none;cursor:pointer}
+.btn.secondary{background:transparent;color:var(--link);border-color:var(--border)}
+.btn:disabled{opacity:.55;cursor:not-allowed}
+.scenarios{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,20rem),1fr));gap:1rem}
+.scenario{display:flex;flex-direction:column;margin:0}.scenario h2{margin:.1rem 0;font-size:1.2rem}
+.scenario .who{margin:.2rem 0}.scenario .shows{flex:1}.scenario .btn{align-self:flex-start}
 </style>
 `
+
+// pageParts are the templates every page shares: the header naming the
+// scenario's relying party (or, given nil, the demo), and its trust
+// badge.
+const pageParts = `{{define "header"}}<header class="site">
+{{if .}}<span class="rp-icon" aria-hidden="true">{{.Icon}}</span>
+<div><p class="rp-name">{{.Verifier}}</p><p class="rp-sub">{{.Title}} · {{template "trust" .}}</p></div>
+{{else}}<span class="rp-icon" aria-hidden="true">🛂</span>
+<div><p class="rp-name">Passport credential verifier</p><p class="rp-sub">An OID4VCgo demo</p></div>{{end}}
+<a class="home-link" href="/demo/">All scenarios</a>
+</header>{{end}}
+{{define "trust"}}{{if .Trusted}}<span class="badge ok">✓ Trusted verifier</span>{{else}}<span class="badge bad">✗ Untrusted — the wallet will refuse</span>{{end}}{{end}}`
 
 const pageFoot = `
 </body>
 </html>
 `
 
-var homeTemplate = template.Must(template.New("home").Parse(pageHead + `</head><body>
+var homeTemplate = template.Must(template.New("home").Parse(pageParts + pageHead + `</head><body>
+{{template "header"}}
+<main>
 <h1>Who's asking for your passport?</h1>
-<p>Each card is a relying party asking a wallet for its passport-derived credential — as an <code>mso_mdoc</code> or a <code>dc+sd-jwt</code>, whichever it holds — for its own purpose. In order, they show what a verifier needs growing from one fact to the passport itself, and who is asking: a verifier the wallet trusts, or one it refuses outright.</p>
+<p>Pick a business below. Each asks your wallet for something from your passport — from a single fact up to the whole passport — and decides what to do with the answer. Your wallet shows who's asking before you share anything.</p>
+<div class="scenarios">
 {{range .}}
 <form method="post" action="/demo/requests" class="card scenario">
-<h2>{{.Icon}} {{.Title}}</h2>
-<p class="who">{{.Verifier}} asks for {{.Asks}}.</p>
-<p>{{.Shows}}</p>
-<button name="scenario" value="{{.Scenario}}">Request</button>
+<h2><span aria-hidden="true">{{.Icon}}</span> {{.Title}}</h2>
+<p class="who"><strong>{{.Verifier}}</strong> {{template "trust" .}}</p>
+<ul class="chips" aria-label="What it asks for">{{range .Chips}}<li>{{.}}</li>{{end}}</ul>
+<p class="shows">{{.Shows}}</p>
+<button class="btn" name="scenario" value="{{.Scenario}}">Ask for this</button>
 </form>
 {{end}}
+</div>
+<p class="note">The wallet answers with its passport credential in whichever format it holds: <code>mso_mdoc</code> (an ISO mdoc Photo ID) or <code>dc+sd-jwt</code> (an SD-JWT VC). Each request accepts either.</p>
+</main>
 ` + pageFoot))
 
 type requestPage struct {
