@@ -158,3 +158,20 @@ jobs:
           (docker compose -f conformance/verifier/docker-compose.yml down) || true
           (docker compose -f conformance/wallet-vp/docker-compose.yml down) || true
           (cd /tmp/conformance-suite && docker compose -f docker-compose-prebuilt.yml down -v) || true
+
+  # Report each scheduled (or dispatched) default-branch run on an
+  # issue labelled "conformance-oid4vp", opened when the run fails and
+  # closed when one passes (.github/scripts/scheduled-alert.sh):
+  # nothing else alerts on it.
+  alert:
+    needs: conformance
+    if: always() && github.ref_name == github.event.repository.default_branch && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    permissions:
+      contents: read
+      issues: write
+      actions: read
+    uses: ./.github/workflows/scheduled-alert.yml
+    with:
+      result: ${{ needs.conformance.result }}
+      label: conformance-oid4vp
+      title: Nightly OID4VP conformance failure

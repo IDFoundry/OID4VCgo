@@ -1,0 +1,62 @@
+name: Scheduled run alert
+
+# Called by the workflows that run unattended (fuzz, conformance,
+# Polaris interop and vectors) as their last job, to report the run on
+# an issue carrying the caller's own label: opened (or commented on) when
+# the run fails, closed when it passes, left alone when it's cancelled.
+# See .github/scripts/scheduled-alert.sh. The caller decides which runs
+# are reported (its default branch's, not a PR's) and grants this job
+# issues: write and actions: read; its own top-level permissions stay
+# as they are.
+
+on:
+  workflow_call:
+    inputs:
+      result:
+        description: The result of the jobs the caller's alert job needs (success, failure, cancelled, skipped)
+        required: true
+        type: string
+      label:
+        description: The issue label, one per calling workflow
+        required: true
+        type: string
+      title:
+        description: The title of an issue it opens
+        required: true
+        type: string
+      kind:
+        description: '"fuzz" for fuzz.yml, whose issue lists failing targets and how to replay them'
+        required: false
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read # to check out the script below
+      issues: write
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: .github/scripts
+          persist-credentials: false
+
+      - name: Report on the ${{ inputs.label }} issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_NUMBER: ${{ github.run_number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          WORKFLOW: ${{ github.workflow }}
+          RESULT: ${{ inputs.result }}
+          LABEL: ${{ inputs.label }}
+          TITLE: ${{ inputs.title }}
+          KIND: ${{ inputs.kind }}
+        run: .github/scripts/scheduled-alert.sh "$RESULT" "$LABEL" "$TITLE" "$KIND"

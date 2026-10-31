@@ -77,3 +77,20 @@ jobs:
             ${{ runner.temp }}/polaris-work/*.log
             ${{ runner.temp }}/polaris-work/*.html
           retention-days: 14
+
+  # Report each scheduled (or dispatched) default-branch run on an
+  # issue labelled "interop-polaris", opened when the run fails and
+  # closed when one passes (.github/scripts/scheduled-alert.sh):
+  # nothing else alerts on it.
+  alert:
+    needs: interop
+    if: always() && github.ref_name == github.event.repository.default_branch && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    permissions:
+      contents: read
+      issues: write
+      actions: read
+    uses: ./.github/workflows/scheduled-alert.yml
+    with:
+      result: ${{ needs.interop.result }}
+      label: interop-polaris
+      title: Nightly Polaris interop failure
