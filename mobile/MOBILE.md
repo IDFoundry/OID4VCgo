@@ -1009,10 +1009,13 @@ protection class like iOS's complete protection, only file-based
 encryption, readable from the first unlock after a boot. So
 `FileCredentialStore` encrypts each record itself:
 
-- **Encryption:** AES-256-GCM under an Android Keystore key, the
-  record's ID as associated data, so a record copied under another ID,
-  or altered, doesn't decrypt. Its file is a version byte, the IV and
-  the ciphertext.
+- **Encryption:** AES-256-GCM under a key of the record's own, which an
+  Android Keystore key wraps (AES-256-GCM too), the record's ID as
+  associated data in both, so a record copied under another ID, or
+  altered, doesn't decrypt. Its file is a version byte (2), the wrapped
+  key with its IV, the record's IV and the ciphertext. The Keystore
+  handles 32 bytes per record, however long the record: its secure
+  hardware is slow, and buggy with long data on some devices (below).
 - **Protection:** by default the key works only while the device is
   unlocked (`setUnlockedDeviceRequired`). On the emulator, with the
   screen locked, a record neither reads nor writes; unlocked, it does —
@@ -1025,6 +1028,39 @@ encryption, readable from the first unlock after a boot. So
   and its holder key doesn't move either.
 - **Writes** go to a temporary file renamed over the record, so a
   reader never sees half of one.
+- **Long records:** on an LG G6 (API 28, Keymaster 3.0), a single
+  AES-GCM `doFinal` of about 80 KB — an mdoc with a portrait — goes
+  wrong both ways. 72 KB round-trips. Decrypting 80 KB (81,919 or 81,920
+  bytes) returns only the first 64 KB, without an error. Encrypting more
+  returns too little ciphertext (65,566 bytes for 81,921). The same data
+  fed through `update` in 4 KB pieces round-trips, to 200 KB at least;
+  AAD, offsets, the key's unlock requirement and its lookup make no
+  difference. Google's Identity Credential library (now Multipaz)
+  met the same bug (b/234563696) and encrypts in separate 16 KB pieces.
+  Records were the Keystore key's whole ciphertext (version 1) until the
+  store gave each its own key (version 2): the Keystore now never sees
+  more than 32 bytes. Version 1 records are still read, in 4 KB pieces,
+  and written as version 2 when replaced; a library before version 2
+  (0.19.0 and earlier) can't read version 2 records. The store also
+  opens each record before writing it: one that doesn't come back as
+  written fails the write and leaves the record it would replace.
+- **Reading a record can fail three ways**, kept apart. A *damaged*
+  record (it doesn't decrypt, or is malformed) is
+  `UnreadableRecordException`, and `unreadableRecordIDs` lists it for
+  the app to delete and receive again. A record in a *newer format*
+  than the library reads is `UnsupportedRecordFormatException`: kept,
+  listed by `unsupportedRecordIDs`, never as damaged. And a Keystore
+  read that comes back shorter than its ciphertext says — the G6's
+  failure, which the GCM tag doesn't catch — is a plain
+  `StoreException`: the record may be intact, so it's kept and not
+  listed. A Keystore that refuses its key (the device locked) throws
+  its own exception, from `records` and both lists too. `records`
+  skips the first three, so one record never hides the rest.
+- **Recovering version 1 records** written on such a device: each is
+  read again, and one that authenticates and has the right length is
+  intact, whatever its size. On the G6, those up to 80 KB were; those
+  over 80 KB were written cut short and are listed as damaged. Other
+  devices with the bug may differ: no size is taken as proof.
 
 ### Phase 8 findings: the demo app
 

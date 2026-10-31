@@ -435,4 +435,4 @@ internal fun <T> waitForProvider(body: suspend () -> T): T =
     }
 
 /** A store's or provider's own failure. */
-public class StoreException(message: String) : Exception(message)
+public open class StoreException(message: String) : Exception(message)
