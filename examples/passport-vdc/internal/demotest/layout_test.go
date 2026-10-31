@@ -59,3 +59,32 @@ func TestPagesUnderDemo(t *testing.T) {
 		}
 	}
 }
+
+// TestFormTargetsRedirectOnGet: a GET to the target of a form under
+// /demo/ — what Cloudflare Access sends after a login interrupted a form
+// post — redirects to the form's page rather than answering 405.
+func TestFormTargetsRedirectOnGet(t *testing.T) {
+	env := demotest.New(t, nil)
+	env.StartVerifier(t, nil)
+	client := *env.HTTP
+	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	for _, tc := range []struct{ url, want string }{
+		{env.IssuerURL + "/demo/passport", "/demo/"},
+		{env.IssuerURL + "/demo/sample", "/demo/"},
+		{env.IssuerURL + "/demo/review/decision", "/demo/review"},
+		{env.IssuerURL + "/demo/kept/forget", "/demo/kept"},
+		{env.IssuerURL + "/demo/status/revoke", "/demo/status"},
+		{env.VerifierURL + "/demo/requests", "/demo/"},
+		{env.VerifierURL + "/demo/requests/abc/dcapi", "/demo/requests/abc"},
+		{env.VerifierURL + "/demo/requests/abc/dcapi/response", "/demo/requests/abc"},
+	} {
+		resp, err := client.Get(tc.url)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != tc.want {
+			t.Errorf("GET %s = %d to %q, want %d to %q", tc.url, resp.StatusCode, resp.Header.Get("Location"), http.StatusSeeOther, tc.want)
+		}
+	}
+}

@@ -142,6 +142,14 @@ func (a *App) routes(credentialHandler, deferredHandler, notificationHandler htt
 	if a.cfg.AllowSampleDocument {
 		mux.HandleFunc("POST /demo/sample", a.handleSample)
 	}
+	// A browser can land on a form's target with a GET: Cloudflare
+	// Access, after a login, sends the visitor back to the URL it
+	// interrupted, a form post's included. Each goes to its form's page.
+	mux.HandleFunc("GET /demo/passport", redirectTo("/demo/"))
+	mux.HandleFunc("GET /demo/sample", redirectTo("/demo/"))
+	mux.HandleFunc("GET /demo/review/decision", redirectTo("/demo/review"))
+	mux.HandleFunc("GET /demo/kept/forget", redirectTo("/demo/kept"))
+	mux.HandleFunc("GET /demo/status/revoke", redirectTo("/demo/status"))
 
 	mux.HandleFunc("GET /.well-known/oauth-authorization-server", a.handleASMetadata)
 	mux.HandleFunc("GET /.well-known/openid-configuration", a.handleASMetadata)
@@ -174,6 +182,13 @@ func (a *App) routes(credentialHandler, deferredHandler, notificationHandler htt
 // redirectToDemo sends a visitor to the pages under /demo/.
 func redirectToDemo(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/demo/", http.StatusSeeOther)
+}
+
+// redirectTo sends a visitor to page.
+func redirectTo(page string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, page, http.StatusSeeOther)
+	}
 }
 
 const pageHead = `<!doctype html>
