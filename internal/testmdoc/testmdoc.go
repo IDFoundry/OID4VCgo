@@ -124,7 +124,7 @@ func WithMSOStatus(t testing.TB, f Fixture, status any) Fixture {
 
 // Query builds the standard DCQL query every Fixture this package
 // issues satisfies: DocType, requesting its own given_name element.
-func Query(t *testing.T) dcql.Query {
+func Query(t testing.TB) dcql.Query {
 	t.Helper()
 	meta, err := dcql.NewMdocMeta(dcql.MdocMeta{DoctypeValue: DocType})
 	if err != nil {
@@ -139,7 +139,7 @@ func Query(t *testing.T) dcql.Query {
 // FullQuery is Query, asking for every element Issue's Fixture carries
 // — given_name and family_name — so a Verifier that refuses
 // unrequested elements accepts Present's full disclosure.
-func FullQuery(t *testing.T) dcql.Query {
+func FullQuery(t testing.TB) dcql.Query {
 	t.Helper()
 	query := Query(t)
 	query.Credentials[0].Claims = append(query.Credentials[0].Claims,
@@ -156,7 +156,7 @@ func FullQuery(t *testing.T) dcql.Query {
 // here rather than calling that package directly so this shared
 // test-support package doesn't need a dependency on any one role
 // package.
-func Present(t *testing.T, f Fixture, params oid4vpmdoc.HandoverParams) string {
+func Present(t testing.TB, f Fixture, params oid4vpmdoc.HandoverParams) string {
 	t.Helper()
 	sessionTranscriptBytes, err := oid4vpmdoc.BuildSessionTranscriptBytes(params)
 	if err != nil {
@@ -169,7 +169,7 @@ func Present(t *testing.T, f Fixture, params oid4vpmdoc.HandoverParams) string {
 // built via oid4vpmdoc.BuildDCAPISessionTranscriptBytes (Appendix
 // B.2.6.2) instead of BuildSessionTranscriptBytes (Appendix B.2.6.1) —
 // everything else about the resulting DeviceResponse is identical.
-func PresentDCAPI(t *testing.T, f Fixture, params oid4vpmdoc.DCAPIHandoverParams) string {
+func PresentDCAPI(t testing.TB, f Fixture, params oid4vpmdoc.DCAPIHandoverParams) string {
 	t.Helper()
 	sessionTranscriptBytes, err := oid4vpmdoc.BuildDCAPISessionTranscriptBytes(params)
 	if err != nil {
@@ -182,7 +182,7 @@ func PresentDCAPI(t *testing.T, f Fixture, params oid4vpmdoc.DCAPIHandoverParams
 // tail: sign DeviceSigned over sessionTranscriptBytes and marshal the
 // resulting DeviceResponse — the only piece that doesn't depend on
 // which flow's own Handover built those bytes.
-func presentWithSessionTranscript(t *testing.T, f Fixture, sessionTranscriptBytes []byte) string {
+func presentWithSessionTranscript(t testing.TB, f Fixture, sessionTranscriptBytes []byte) string {
 	t.Helper()
 	deviceSigned, err := mdoc.SignDeviceSignature(f.DeviceKey, cose.ES256, sessionTranscriptBytes, DocType, map[string]map[string]interface{}{})
 	if err != nil {
@@ -203,7 +203,7 @@ func presentWithSessionTranscript(t *testing.T, f Fixture, sessionTranscriptByte
 // shape, and exactly what a real Verifier/Wallet each independently
 // derive from the same key to reconstruct identical
 // SessionTranscriptBytes.
-func ResponseEncryptionThumbprint(t *testing.T, key *ecdsa.PrivateKey) []byte {
+func ResponseEncryptionThumbprint(t testing.TB, key *ecdsa.PrivateKey) []byte {
 	t.Helper()
 	raw, err := jwk.Thumbprint(&key.PublicKey)
 	if err != nil {
