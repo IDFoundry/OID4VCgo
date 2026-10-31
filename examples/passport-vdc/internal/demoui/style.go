@@ -73,7 +73,7 @@ details.raw summary{cursor:pointer;color:var(--muted)}details.raw td{word-break:
 .choice:has(input:disabled){opacity:.6;cursor:not-allowed}
 .choice input{width:1.15rem;height:1.15rem;margin:.2rem 0 0;flex:none;accent-color:var(--btn-bg)}
 .choice strong{display:block}.choice .note{display:block}
-.lead{font-size:1.1rem}.card h2{margin-top:0;font-size:1.2rem}
+.lead{font-size:1.1rem}.card:not(.scenario) h2{margin-top:0;font-size:1.2rem}
 .dropzone{position:relative;display:flex;flex-direction:column;align-items:center;gap:.2rem;text-align:center;padding:1.5rem 1rem;border:2px dashed var(--border);border-radius:12px;background:var(--bg);cursor:pointer}
 .dropzone:hover,.dropzone.dragover{border-color:var(--link);background:var(--chip-bg)}
 .dropzone:has(input:focus-visible){outline:3px solid var(--focus);outline-offset:2px}
