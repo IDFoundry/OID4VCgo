@@ -63,6 +63,9 @@ type ScenarioInfo struct {
 	Verifier string
 	// Asks is what it requests, in words; Shows, what it demonstrates.
 	Asks, Shows string
+	// Chips are what it requests, as short tags on its home page card
+	// (its query, buildQuery, is what's actually asked).
+	Chips []string
 	// Evidence: it requests the passport file and re-verifies it
 	// (trusting the issuing country), rather than identity claims.
 	Evidence bool
@@ -82,31 +85,37 @@ var scenarioInfo = map[Scenario]ScenarioInfo{
 		Icon: "🔞", Title: "Age assurance", Verifier: "Corner Bottle Shop", Trusted: true,
 		Asks:  "whether you're over 18 — nothing else",
 		Shows: "Minimal disclosure: one derived fact, not who you are.",
+		Chips: []string{"Over 18"},
 	},
 	ScenarioSignup: {
 		Icon: "👤", Title: "Low-risk sign-up", Verifier: "Chirp Social", Trusted: true,
 		Asks:  "your name, an over-18 check and, if your passport has one, a photo",
 		Shows: "Selective disclosure: just enough identity, trusting the issuer.",
+		Chips: []string{"Name", "Over 18", "Photo, if any"},
 	},
 	ScenarioBank: {
 		Icon: "🏦", Title: "Bank KYC", Verifier: "Harbour Bank", Trusted: true, Evidence: true,
 		Asks:  "your passport file, read from the chip",
 		Shows: "High assurance: the bank re-verifies the passport with its issuing country, so the demo issuer can't have altered it.",
+		Chips: []string{"Full passport"},
 	},
 	ScenarioUnknown: {
 		Icon: "❓", Title: "Unknown verifier", Verifier: "CheapFlights", Evidence: true,
 		Asks:  "your passport file — the same as the bank",
 		Shows: "Verifier trust: a valid request from a verifier your wallet doesn't trust is refused unopened. Nothing is shared.",
+		Chips: []string{"Full passport"},
 	},
 	ScenarioHotel: {
 		Icon: "🏨", Title: "Family hotel check-in", Verifier: "Grand Hotel", Trusted: true, Evidence: true, Multiple: true,
 		Asks:  "the passport file of each guest",
 		Shows: "Several credentials in one presentation, each passport re-verified — as hotels scan passports today.",
+		Chips: []string{"Full passport", "Every guest"},
 	},
 	ScenarioOverAsking: {
 		Icon: "⚠️", Title: "Over-asking shop", Verifier: "Late Night Liquor", Trusted: true, RegisteredAs: ScenarioAge,
 		Asks:  "whether you're over 18 — and your name, which it isn't registered to ask for",
 		Shows: "Verifier registration: the shop is registered to ask only whether you're over 18, so your wallet warns that it asks for more. Trust alone isn't entitlement.",
+		Chips: []string{"Over 18", "Name — not registered"},
 	},
 }
 

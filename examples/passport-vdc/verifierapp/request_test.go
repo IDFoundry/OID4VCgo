@@ -260,3 +260,88 @@ func TestHome_ListsScenarios(t *testing.T) {
 		last = at
 	}
 }
+
+// TestResultPage: the result page leads with the decision, shows the
+// claims by their labels beside what the scenario asked for, and offers
+// asking again for the same scenario.
+func TestResultPage(t *testing.T) {
+	env := demotest.New(t, nil)
+	env.StartVerifier(t, nil)
+	store := receiveInto(t, env, demotest.SyntheticEvidence())
+	for _, format := range []string{"mso_mdoc", "dc+sd-jwt"} {
+		t.Run(format, func(t *testing.T) {
+			id, link, err := env.Verifier.CreateRequest(verifierapp.ScenarioSignup)
+			if err != nil {
+				t.Fatal(err)
+			}
+			presentTo(t, env, store, link, format)
+			resp, err := env.HTTP.Get(env.VerifierURL + "/demo/requests/" + id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			body, _ := io.ReadAll(resp.Body)
+			_ = resp.Body.Close()
+			page := string(body)
+			if resp.Header.Get("Cache-Control") != "no-store" {
+				t.Error("the result page may be cached")
+			}
+			for _, want := range []string{
+				`<h1 id="verdict" tabindex="-1">`, "Account created for JANE DOE", `class="verdict approved"`, "✓ Not revoked",
+				"<h3>Asked for</h3>", "<li>✓ Family name</li>", "<li>✓ Over 18</li>", "<h3>Received</h3>",
+				`<th scope="row">Family name</th><td>DOE</td>`, "✓ Over 18</td>", `alt="Portrait of the credential holder"`,
+				`<form method="post" action="/demo/requests"><button class="btn" name="scenario" value="signup">Try again</button></form>`,
+				`href="/demo/" class="btn secondary">New request</a>`,
+			} {
+				if !strings.Contains(page, want) {
+					t.Errorf("the result page lacks %q", want)
+				}
+			}
+			for _, unwanted := range []string{">family_name<", "Also received, without asking", `name="refresh"`, `"/status"`} {
+				if strings.Contains(page, unwanted) {
+					t.Errorf("the result page has %q", unwanted)
+				}
+			}
+		})
+	}
+}
+
+// TestHome_ChipsAndTrust:each scenario's card tags what it asks for
+// and says whether a wallet trusts its relying party.
+func TestHome_ChipsAndTrust(t *testing.T) {
+	env := demotest.New(t, nil)
+	env.StartVerifier(t, nil)
+	resp, err := env.HTTP.Get(env.VerifierURL + "/demo/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	page := string(body)
+	for _, info := range verifierapp.ScenarioInfos() {
+		start := strings.Index(page, "<h2>")
+		end := strings.Index(page, `value="`+string(info.Scenario)+`"`)
+		if start < 0 || end < start {
+			t.Fatalf("no card for %s", info.Scenario)
+		}
+		card := page[start:end]
+		page = page[end:]
+		if len(info.Chips) == 0 {
+			t.Errorf("%s has no chips", info.Scenario)
+		}
+		for _, chip := range info.Chips {
+			if !strings.Contains(card, "<li>"+chip+"</li>") {
+				t.Errorf("%s's card lacks the chip %q", info.Scenario, chip)
+			}
+		}
+		trusted, untrusted := strings.Contains(card, "Trusted verifier"), strings.Contains(card, "Untrusted")
+		if trusted != info.Trusted || untrusted == info.Trusted {
+			t.Errorf("%s's card: trusted badge %v, untrusted badge %v; want trusted = %v", info.Scenario, trusted, untrusted, info.Trusted)
+		}
+		if !strings.Contains(card, info.Verifier) {
+			t.Errorf("%s's card doesn't name %s", info.Scenario, info.Verifier)
+		}
+	}
+	if !strings.Contains(string(body), ">Ask for this</button>") {
+		t.Error("the scenario buttons aren't labelled")
+	}
+}

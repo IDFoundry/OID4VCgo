@@ -424,7 +424,7 @@ func TestEndToEnd_SeveralPassports(t *testing.T) {
 	}
 	page, _ := io.ReadAll(resp.Body)
 	_ = resp.Body.Close()
-	for _, want := range []string{"presented 2 credentials", "Grand Hotel", "Check-in refused", `class="card person"`} {
+	for _, want := range []string{"presented 2 credentials", "Grand Hotel", "Check-in refused", `class="card person"`, ">Person 1</h2>", ">Person 2</h2>"} {
 		if !strings.Contains(string(page), want) {
 			t.Errorf("the result page lacks %q", want)
 		}
