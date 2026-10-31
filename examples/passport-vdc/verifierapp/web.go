@@ -32,6 +32,17 @@ func (a *App) routes() http.Handler {
 	mux.HandleFunc("GET /demo/requests/{id}", a.handleRequestPage)
 	mux.HandleFunc("POST /demo/requests/{id}/dcapi", a.handleDCAPIRequest)
 	mux.HandleFunc("POST /demo/requests/{id}/dcapi/response", a.handleDCAPIResponse)
+	// A browser can land on a form's or a page script's target with a
+	// GET: Cloudflare Access, after a login, sends the visitor back to the
+	// URL it interrupted. Each goes to the page it belongs to.
+	mux.HandleFunc("GET /demo/requests", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/demo/", http.StatusSeeOther)
+	})
+	toRequest := func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/demo/requests/"+url.PathEscape(r.PathValue("id")), http.StatusSeeOther)
+	}
+	mux.HandleFunc("GET /demo/requests/{id}/dcapi", toRequest)
+	mux.HandleFunc("GET /demo/requests/{id}/dcapi/response", toRequest)
 	// Each scenario's relying party has its own OpenID4VP endpoints.
 	for sc, txs := range a.txs {
 		base := "/s/" + string(sc)
