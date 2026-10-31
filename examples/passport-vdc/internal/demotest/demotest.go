@@ -57,8 +57,9 @@ type Env struct {
 }
 
 // New starts an issuer (trusting cscaPool for uploads; nil means an
-// empty pool) and returns the Env.
-func New(t *testing.T, cscaPool cms.CertPool) *Env {
+// empty pool) and returns the Env; opts can adjust the issuer's Config
+// before it starts.
+func New(t *testing.T, cscaPool cms.CertPool, opts ...func(*issuerapp.Config)) *Env {
 	t.Helper()
 	if cscaPool == nil {
 		cscaPool = &cms.GenericCertPool{}
@@ -81,13 +82,17 @@ func New(t *testing.T, cscaPool cms.CertPool) *Env {
 
 	srv := httptest.NewUnstartedServer(nil)
 	e.IssuerURL = httpsURL + srv.Listener.Addr().String()
-	e.Issuer, err = issuerapp.New(issuerapp.Config{
+	cfg := issuerapp.Config{
 		IssuerURL: e.IssuerURL, CSCAPool: cscaPool, AllowSampleDocument: true,
 		Wallet: issuerapp.WalletClient{
 			ClientID: WalletClientID, RedirectURIs: []string{RedirectURI, e.WebWalletURL + "/callback"},
 			ProviderIssuer: ProviderIssuer, ProviderCA: provider.CACertificatePEM(),
 		},
-	})
+	}
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+	e.Issuer, err = issuerapp.New(cfg)
 	if err != nil {
 		t.Fatalf("issuerapp.New: %v", err)
 	}

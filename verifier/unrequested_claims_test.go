@@ -28,7 +28,7 @@ type overDisclosureFixture struct {
 	nonce    string
 }
 
-func newOverDisclosureFixture(t *testing.T) overDisclosureFixture {
+func newOverDisclosureFixture(t testing.TB) overDisclosureFixture {
 	t.Helper()
 	_, _, v := newTestVerifierWithConfig(t)
 	issuerKey, holderKey := testP256Key(t), testP256Key(t)

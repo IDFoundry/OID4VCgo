@@ -70,7 +70,8 @@ const RecommendedClientAttestationAlgorithm = fapi.ES256
 // server.NoClientAttestationStatusCheck{} when the Wallet Providers
 // publish no status. To take openid_credential authorization_details,
 // register oid4vci.AuthorizationDetailRARDefinition in Config.RAR: it
-// refuses a Wallet's own credential_identifiers.
+// refuses a Wallet's own credential_identifiers, at the pushed
+// authorization request and at the token endpoint alike.
 func RecommendedAuthorizationServerConfig() (server.Config, error) {
 	extensions, err := extension.NewRegistry(oid4vci.IssuerStateExtension)
 	if err != nil {

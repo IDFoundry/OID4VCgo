@@ -7,7 +7,10 @@
 // Without -tls-cert/-tls-key it generates a self-signed certificate for
 // 127.0.0.1 and localhost and writes it to -tls-cert-out, for the demo
 // wallet (and your browser) to trust. Passports are verified against
-// gmrtd's built-in ICAO CSCA master list.
+// gmrtd's built-in ICAO CSCA master list. With -db it keeps its
+// Authorization Server's and Credential Issuer's stores in a SQLite
+// file, sealed under a key in the file beside it (FILE.key), rather
+// than in memory.
 package main
 
 import (
@@ -38,6 +41,7 @@ func main() {
 	redirectURIs := flag.String("wallet-redirect-uris", "http://127.0.0.1/callback,https://127.0.0.1:7443/callback", "the demo wallets' redirect URIs, comma-separated (CLI wallet, web wallet)")
 	allowSample := flag.Bool("allow-sample-document", false, "offer to issue gmrtd's sample passport without checking it, simulating an issuer that skipped Passive Authentication (demo only)")
 	webWallet := flag.String("web-wallet", "https://127.0.0.1:7443", "the demo web wallet's URL, for the offer page's \"Open in web wallet\" button (empty to hide it)")
+	dbPath := flag.String("db", "", "keep the stores in this SQLite file, sealed under a key in FILE.key (default: in memory)")
 	flag.Parse()
 
 	providerCA, err := os.ReadFile(*providerCAPath) // #nosec G304 -- operator-supplied path
@@ -48,7 +52,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("load CSCA master list: %v", err)
 	}
-	app, err := issuerapp.New(issuerapp.Config{
+	cfg := issuerapp.Config{
 		IssuerURL:           *issuerURL,
 		CSCAPool:            pool,
 		AllowSampleDocument: *allowSample,
@@ -57,7 +61,13 @@ func main() {
 			ProviderIssuer: *providerIssuer, ProviderCA: providerCA,
 		},
 		WebWalletURL: *webWallet,
-	})
+	}
+	if *dbPath != "" {
+		if cfg.Database, cfg.DatabaseSealer, err = issuerapp.OpenDatabase(*dbPath, *dbPath+".key"); err != nil {
+			log.Fatal(err)
+		}
+	}
+	app, err := issuerapp.New(cfg)
 	if err != nil {
 		log.Fatal(err)
 	}

@@ -85,8 +85,9 @@ type CredentialHandlerConfig struct {
 	// that up among the identifiers minted for grant.Subject, never by
 	// the identifier alone. With fapigo/server, register
 	// oid4vci.AuthorizationDetailRARDefinition, which refuses a Wallet's
-	// own credential_identifiers, so each is one the Authorization
-	// Server minted.
+	// own credential_identifiers when it starts a grant and lets its
+	// token requests only keep or drop the grant's, so each is one the
+	// Authorization Server minted for this grant.
 	//
 	// The handler calls Prepare only for a request the access token
 	// authorizes, once its proofs are verified and its c_nonce

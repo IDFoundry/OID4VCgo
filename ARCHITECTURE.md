@@ -1581,7 +1581,14 @@ changes whether *every* bullet below is `(done)`.
   contract against both databases, `storetest`'s shared-store ones with
   a `*sql.DB` per goroutine. Migrations are embedded, versioned and run
   only by an explicit `Migrate`; `Sweep` deletes what has expired, which
-  no store does on its own.
+  no store does on its own. The Authorization Server's stores, and the
+  Credential Endpoint's DPoP replay and nonce stores, are FAPIgo's
+  interfaces, kept by FAPIgo's own `fapigo/sqlstore` module: a whole
+  issuer deployment runs both over one `*sql.DB` and one `Sealer`
+  (FAPIgo's tables carry its `TablePrefix`, `fapigo_` by default, and
+  a second prefix for the resource server's DPoP nonces; each module
+  migrates and seals its own records), which a test in `sqlstore`
+  runs on both databases.
 - **`registration`** (done) — this library's verifier registration
   attestation: a JWT a registrar issues for a relying party (who it is,
   why it asks, which claims it may request), carried in a request's

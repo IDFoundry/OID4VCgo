@@ -356,7 +356,11 @@ for its own changes; these are the ones that reach you.
   `extension.RARDefinition[oid4vci.AuthorizationDetail]`. It refuses a
   Wallet's own `credential_identifiers` at the pushed authorization
   request (`invalid_authorization_details`), lets the consent add the
-  ones it mints, and requires `credential_configuration_id`, which a
+  ones it mints, lets a token request (code exchange, CIBA, refresh)
+  only keep or drop the identifiers its grant holds — never add one,
+  even to a grant that holds none (FAPIgo v0.67.0's
+  `RARDefinition.ValidateNarrowing`) — and requires
+  `credential_configuration_id`, which a
   definition without `Validate` didn't. A Credential Endpoint's
   `Prepare` that maps a `credential_identifier` to a dataset looks it up
   among those minted for `grant.Subject`, never by the identifier

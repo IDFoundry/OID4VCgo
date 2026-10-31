@@ -147,26 +147,11 @@ func (e *env) closeAll() {
 func (e *env) storage() func() *sqlstore.DB {
 	e.t.Helper()
 	e.closeAll()
-	driver, dsn := "sqlite", "file:"+filepath.Join(e.t.TempDir(), "store.db")+"?_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)"
-	if e.dialect == sqlstore.Postgres {
-		driver, dsn = "pgx", newPostgresSchema(e.t)
-	}
+	handle := e.location()
 	opts := e.opts
 	open := func() *sqlstore.DB {
 		e.t.Helper()
-		db, err := sql.Open(driver, dsn)
-		if err != nil {
-			e.t.Fatalf("open %s: %v", e.dialect, err)
-		}
-		// No idle connections kept: the contracts open many handles.
-		db.SetMaxIdleConns(0)
-		if e.dialect == sqlstore.Postgres {
-			db.SetMaxOpenConns(4)
-		}
-		e.mu.Lock()
-		e.open = append(e.open, db)
-		e.mu.Unlock()
-		d, err := sqlstore.New(db, e.dialect, opts)
+		d, err := sqlstore.New(handle(), e.dialect, opts)
 		if err != nil {
 			e.t.Fatalf("sqlstore.New: %v", err)
 		}
@@ -186,6 +171,33 @@ func (e *env) storage() func() *sqlstore.DB {
 			return d
 		}
 		return open()
+	}
+}
+
+// location makes a fresh, empty storage — a SQLite file, or a Postgres
+// schema — and returns an opener of handles on it: each call opens a
+// new *sql.DB, as another process would, which e closes.
+func (e *env) location() func() *sql.DB {
+	e.t.Helper()
+	driver, dsn := "sqlite", "file:"+filepath.Join(e.t.TempDir(), "store.db")+"?_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)"
+	if e.dialect == sqlstore.Postgres {
+		driver, dsn = "pgx", newPostgresSchema(e.t)
+	}
+	return func() *sql.DB {
+		e.t.Helper()
+		db, err := sql.Open(driver, dsn)
+		if err != nil {
+			e.t.Fatalf("open %s: %v", e.dialect, err)
+		}
+		// No idle connections kept: the contracts open many handles.
+		db.SetMaxIdleConns(0)
+		if e.dialect == sqlstore.Postgres {
+			db.SetMaxOpenConns(4)
+		}
+		e.mu.Lock()
+		e.open = append(e.open, db)
+		e.mu.Unlock()
+		return db
 	}
 }
 

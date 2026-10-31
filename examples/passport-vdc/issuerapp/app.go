@@ -1,6 +1,7 @@
 package issuerapp
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -32,7 +33,6 @@ import (
 	"github.com/idfoundry/oid4vcgo/haip"
 	"github.com/idfoundry/oid4vcgo/issuer"
 	"github.com/idfoundry/oid4vcgo/statuslist"
-	oid4vcgostorage "github.com/idfoundry/oid4vcgo/storage"
 )
 
 // Credential configuration IDs and the scopes that request them.
@@ -55,7 +55,7 @@ type App struct {
 	credentialURL     url.URL
 	deferredURL       url.URL
 	notificationURL   url.URL
-	preAuthCodes      issuer.PreAuthorizedCodeStore
+	stores            stores
 	tokenLifetime     time.Duration  // the Authorization Server's access token lifetime
 	reviews           *reviews       // deferred issuances awaiting a decision
 	notifications     *notifications // what the wallets have reported
@@ -97,7 +97,12 @@ func New(cfg Config) (*App, error) {
 		return nil, err
 	}
 	a.reviews = newReviews(a.now)
-	a.preAuthCodes = oid4vcgostorage.NewPreAuthorizedCodeStore()
+	a.stores = memoryStores()
+	if cfg.Database != nil {
+		if a.stores, err = databaseStores(context.Background(), cfg.Database, cfg.DatabaseSealer); err != nil {
+			return nil, err
+		}
+	}
 	a.notifications = &notifications{now: a.now}
 	if a.providerAnchors, err = attesterAnchors(cfg.Wallet.ProviderCA, cfg.Wallet.ProviderIssuer); err != nil {
 		return nil, err
@@ -206,9 +211,9 @@ func (a *App) buildAuthorizationServer() error {
 	}
 
 	deps := server.Dependencies{
-		Clients: clients, Transactions: memstore.NewTransactionStore(), Grants: memstore.NewGrantStore(),
-		Replay: memstore.NewReplayStore(), ClientKeys: clientKeys, Keys: keyManager, AccessTokens: accessTokens,
-		Revocation: memstore.NewRevocationStore(), Clock: server.SystemClock{}, Random: rand.Reader,
+		Clients: clients, Transactions: a.stores.transactions, Grants: a.stores.grants,
+		Replay: a.stores.replay, ClientKeys: clientKeys, Keys: keyManager, AccessTokens: accessTokens,
+		Revocation: a.stores.revocation, Clock: server.SystemClock{}, Random: rand.Reader,
 		ClientCertificateTrust: server.NoPKIClientAuthentication{},
 		// Wallet Attestations are trusted by their x5c chain to the
 		// Wallet Provider CA (HAIP 1.0 §4.4.1), not by registered keys,
@@ -236,7 +241,7 @@ func (a *App) buildAuthorizationServer() error {
 	if a.resourceVerifier, err = serverresource.NewVerifier(cfg, deps, serverresource.Options{
 		// The Credential Endpoint and the rest are under the issuer.
 		ResourceURLs: []fapi.URL{cfg.Issuer},
-		Nonces:       memstore.NewNonceStore(), NonceLifetime: 5 * time.Minute,
+		Nonces:       a.stores.dpopNonces, NonceLifetime: 5 * time.Minute,
 	}); err != nil {
 		return fmt.Errorf("issuerapp: resource verifier: %w", err)
 	}
@@ -366,8 +371,8 @@ func (a *App) buildIssuer() error {
 		// present a fresh one each time (HAIP 1.0's unlinkability).
 		BatchCredentialIssuance: &oid4vci.BatchCredentialIssuance{BatchSize: 3},
 	}, issuer.Dependencies{
-		Nonces:               oid4vcgostorage.NewNonceStore(),
-		DeferredTransactions: oid4vcgostorage.NewDeferredTransactionStore(),
+		Nonces:               a.stores.nonces,
+		DeferredTransactions: a.stores.deferred,
 		// The Nonce Response carries a DPoP nonce for the Credential
 		// Endpoint (OpenID4VCI §7.2), from the verifier that checks it, so
 		// the wallet's first Credential Request isn't challenged.
@@ -375,8 +380,8 @@ func (a *App) buildIssuer() error {
 		// The pre-authorized code grant (preauth.go): tokens signed with
 		// the Authorization Server's keys, for a Wallet Attestation the
 		// Authorization Server authenticates.
-		PreAuthorizedCodes:  a.preAuthCodes,
-		Notifications:       oid4vcgostorage.NewNotificationStore(),
+		PreAuthorizedCodes:  a.stores.preAuthCodes,
+		Notifications:       a.stores.notifications,
 		NotificationHandler: a.notifications,
 		Clock:               issuer.ClockFunc(a.now),
 		Random:              rand.Reader,
