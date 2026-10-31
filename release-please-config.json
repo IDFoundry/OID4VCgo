@@ -7,7 +7,19 @@
       "include-component-in-tag": false,
       "bump-minor-pre-major": true,
       "bump-patch-for-minor-pre-major": false,
-      "exclude-paths": ["examples", "mobile", "sqlstore"]
+      "exclude-paths": [
+        "examples",
+        "mobile",
+        "sqlstore"
+      ]
+    },
+    "sqlstore": {
+      "release-type": "go",
+      "component": "sqlstore",
+      "include-component-in-tag": true,
+      "tag-separator": "/",
+      "bump-minor-pre-major": true,
+      "bump-patch-for-minor-pre-major": false
     }
   }
 }
