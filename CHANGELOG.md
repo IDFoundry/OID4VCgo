@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.57.1](https://github.com/IDFoundry/OID4VCgo/compare/v0.57.0...v0.57.1) (2026-10-31)
+
+
+### Bug Fixes
+
+* **deps:** pin FAPIgo v0.67.2 ([ab6edc0](https://github.com/IDFoundry/OID4VCgo/commit/ab6edc09a9b7278d35d44d3ec679373c24b2e704))
+
 ## [0.57.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.56.0...v0.57.0) (2026-10-30)
 
 
