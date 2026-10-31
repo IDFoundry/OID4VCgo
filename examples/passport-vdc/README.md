@@ -304,15 +304,25 @@ issuer's redirect back is bound to the browser that started receiving
 
 **3. Verify.**
 
-1. Open https://127.0.0.1:9443, choose a scenario, click
-   **Open in web wallet**, then **Review the request**. (The wallet
+1. Open https://127.0.0.1:9443, click **Ask for this** on a scenario,
+   then, under **Choose how to respond**, **Open in web wallet**, then
+   **Review the request**. (The wallet
    fetches a request only when you ask it to, so another site linking
    to it can't make it contact anything.)
 2. The wallet shows who's asking and exactly which claims each format
    would disclose; choose a format and **Share** (or **Decline**).
 3. The wallet brings you back to the verifier's page, which shows the
-   verified claims, "Revocation status: valid" and, for the country
-   trust path, the ICAO Passive Authentication result.
+   relying party's decision, the verified claims beside what the
+   scenario asked for, "Not revoked" and, for the country trust path,
+   the ICAO Passive Authentication result. **Try again** asks again for
+   the same scenario.
+
+While it waits, the request page polls
+`GET /demo/requests/{id}/status` — bound to the page's browser session
+like the page itself, never cached, and carrying only the request's
+state (`waiting`, `awaiting`, `answered`, `closed`, or `ended` with a
+404), whether a response was rejected, and its expiry — and reloads
+when that changes; without JavaScript it refreshes every two seconds.
 
 **No passport? Issue gmrtd's sample passport, unchecked.** Click
 **Issue gmrtd's sample passport without checking it** on the upload page

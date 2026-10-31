@@ -66,8 +66,13 @@ const pageHead = `<!doctype html>
 <style>
 :root{--bg:#f6f8fa;--surface:#fff;--text:#1f2328;--muted:#57606a;--border:#d0d7de;--link:#0969da;
 --btn-bg:#0969da;--btn-text:#fff;--focus:#0969da;--chip-bg:#eaeef2;--code-bg:#eaeef2;
---ok:#1a7f37;--ok-bg:#dafbe1;--bad:#cf222e;--bad-bg:#ffebe9;--warn-border:#9a6700;--warn-bg:#fff8c5}
+--ok:#1a7f37;--ok-bg:#dafbe1;--bad:#cf222e;--bad-bg:#ffebe9;--warn-border:#9a6700;--warn-bg:#fff8c5;color-scheme:light dark}
+@media (prefers-color-scheme:dark){:root{--bg:#0d1117;--surface:#161b22;--text:#e6edf3;--muted:#9da7b3;--border:#3d444d;--link:#58a6ff;
+--btn-bg:#1f6feb;--btn-text:#fff;--focus:#58a6ff;--chip-bg:#262c36;--code-bg:#262c36;
+--ok:#3fb950;--ok-bg:#0f2a1a;--bad:#ff7b72;--bad-bg:#3a1418;--warn-border:#d29922;--warn-bg:#2e2410}}
 *{box-sizing:border-box}
+:focus-visible{outline:3px solid var(--focus);outline-offset:2px}
+.btn:hover{filter:brightness(1.1)}.btn.secondary:hover{background:var(--chip-bg)}
 body{font-family:system-ui,sans-serif;max-width:48rem;margin:0 auto;padding:0 1rem 2rem;line-height:1.5;background:var(--bg);color:var(--text)}
 a{color:var(--link)}h1{line-height:1.25}
 table{border-collapse:collapse}th,td{text-align:left;padding:.3rem .75rem .3rem 0;vertical-align:top}
@@ -106,7 +111,9 @@ details.cli summary{cursor:pointer;font-weight:600}
 .person h2{margin-top:0;font-size:1.2rem}.person h3{font-size:1rem;margin:1rem 0 .4rem}
 .person-body{display:flex;flex-wrap:wrap;gap:1rem;align-items:flex-start}
 .portrait{width:9rem;max-width:100%;height:auto;border-radius:8px;border:1px solid var(--border)}
-.claims{flex:1 1 16rem}.claims th{color:var(--muted);font-weight:600;white-space:nowrap}
+.claims{flex:0 1 auto}.claims th{color:var(--muted);font-weight:600;padding-right:1.5rem}
+details.raw{margin-top:1rem}
+@media (max-width:30rem){.verdict{gap:.75rem;padding:.75rem 1rem}.verdict .mark{font-size:2rem}.verdict h1{font-size:1.25rem}}
 .asked{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,14rem),1fr));gap:0 1rem}
 .asked .missing{background:var(--warn-bg);color:var(--text)}
 details.raw summary{cursor:pointer;color:var(--muted)}details.raw td{word-break:break-all}
@@ -326,7 +333,7 @@ const copyScript = `<script>
 })();
 </script>`
 
-var requestTemplate = template.Must(template.New("request").Parse(pageParts + progressPart + pageHead +`{{if .Polling}}<noscript><meta http-equiv="refresh" content="2"></noscript>{{end}}
+var requestTemplate = template.Must(template.New("request").Parse(pageParts + progressPart + pageHead + `{{if .Polling}}<noscript><meta http-equiv="refresh" content="2"></noscript>{{end}}
 </head><body>
 {{template "header" .Scenario}}
 <main>
@@ -643,17 +650,23 @@ func personHeading(i int, p Person) string {
 	return heading
 }
 
-var errorTemplate = template.Must(template.New("error").Parse(pageHead + `</head><body>
+var errorTemplate = template.Must(template.New("error").Parse(pageParts + pageHead + `</head><body>
+{{template "header"}}
+<main>
 <h1 class="bad">{{.}}</h1>
-<p><a href="/demo/">New request</a></p>
+<p><a href="/demo/" class="btn">New request</a></p>
+</main>
 ` + pageFoot))
 
 // requestEndedTemplate answers a request page that's gone, and returns
 // to the home page after a few seconds.
-var requestEndedTemplate = template.Must(template.New("ended").Parse(pageHead + `<meta http-equiv="refresh" content="5; url=/demo/"></head><body>
+var requestEndedTemplate = template.Must(template.New("ended").Parse(pageParts + pageHead + `<meta http-equiv="refresh" content="5; url=/demo/"></head><body>
+{{template "header"}}
+<main>
 <h1>This request has ended</h1>
 <p>It expired, or was opened in another browser. Start a new one from the verifier's home page.</p>
-<p><a href="/demo/">Back to the verifier</a> (you'll be taken there in a few seconds)</p>
+<p><a href="/demo/" class="btn">Back to the verifier</a> <span class="note">(you'll be taken there in a few seconds)</span></p>
+</main>
 ` + pageFoot))
 
 func writeRequestEnded(w http.ResponseWriter) {
