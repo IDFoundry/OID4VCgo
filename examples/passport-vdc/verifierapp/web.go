@@ -9,7 +9,8 @@ import (
 	"math"
 	"net/http"
 	"net/url"
-	"sort"
+	"slices"
+	"strings"
 
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/credential"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/demoqr"
@@ -97,6 +98,20 @@ code{word-break:break-all;background:var(--code-bg);padding:0 .2em;border-radius
 @keyframes spin{to{transform:rotate(360deg)}}
 @media (prefers-reduced-motion:reduce){.spinner{animation-duration:3s}}
 details.cli summary{cursor:pointer;font-weight:600}
+.verdict{display:flex;align-items:center;gap:1rem;border-radius:12px;padding:1rem 1.25rem;margin:1rem 0;border:2px solid}
+.verdict.approved{background:var(--ok-bg);border-color:var(--ok)}.verdict.refused{background:var(--bad-bg);border-color:var(--bad)}
+.verdict .mark{font-size:3rem;line-height:1;margin:0;font-weight:700}.verdict.approved .mark{color:var(--ok)}.verdict.refused .mark{color:var(--bad)}
+.verdict h1{margin:0 0 .4rem;font-size:1.5rem}.verdict h1:focus{outline:none}.verdict h1:focus-visible{outline:3px solid var(--focus);outline-offset:4px}
+.badges{display:flex;flex-wrap:wrap;gap:.4rem;margin:.25rem 0}
+.person h2{margin-top:0;font-size:1.2rem}.person h3{font-size:1rem;margin:1rem 0 .4rem}
+.person-body{display:flex;flex-wrap:wrap;gap:1rem;align-items:flex-start}
+.portrait{width:9rem;max-width:100%;height:auto;border-radius:8px;border:1px solid var(--border)}
+.claims{flex:1 1 16rem}.claims th{color:var(--muted);font-weight:600;white-space:nowrap}
+.asked{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,14rem),1fr));gap:0 1rem}
+.asked .missing{background:var(--warn-bg);color:var(--text)}
+details.raw summary{cursor:pointer;color:var(--muted)}details.raw td{word-break:break-all}
+.actions{display:flex;flex-wrap:wrap;gap:.5rem;align-items:center;margin:1.25rem 0}.actions form{margin:0}
+.visually-hidden{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 </style>
 `
 
@@ -164,15 +179,33 @@ type requestPage struct {
 	// ExpiresIn is how long until the request expires, in seconds, and
 	// ExpiresInMinutes the same rounded up.
 	ExpiresIn, ExpiresInMinutes int
+
+	// Formats are the formats presented, each once; AllValid is whether
+	// every credential's revocation status is "valid", and
+	// StatusSummary the statuses otherwise.
+	Formats       []string
+	AllValid      bool
+	StatusSummary string
 }
 
 // personView is one presented credential, as the request page shows it.
 type personView struct {
+	// Heading names the credential: for a scenario taking several,
+	// "Person N" and, where it's known, the name.
+	Heading        string
 	Format, Status string
-	Rows           [][2]string
-	Portrait       template.URL // the disclosed portrait as a data: URL, if any
-	ICAO           *ICAOResult
-	ICAOPortrait   template.URL // the photo from the re-verified passport file, if any
+	// Rows are the holder's disclosed claims, and Raw the credential's
+	// own and the raw ones, which the page collapses (displayRows).
+	Rows, Raw []claimRow
+	// Asked is what the scenario asked of this credential's format;
+	// Received, what it disclosed; Unasked, what it disclosed unasked
+	// (none: the verifier refuses an answer disclosing unrequested
+	// claims).
+	Asked             []requested
+	Received, Unasked []string
+	Portrait          template.URL // the disclosed portrait as a data: URL, if any
+	ICAO              *ICAOResult
+	ICAOPortrait      template.URL // the photo from the re-verified passport file, if any
 }
 
 // waitingScript polls the page's status (handleRequestStatus) every two
@@ -341,36 +374,60 @@ var requestTemplate = template.Must(template.New("request").Parse(pageParts + pr
 {{if .DCAPI}}` + dcapiScript + `{{end}}
 ` + copyScript + `
 {{else}}
-<h1 class="decision {{if .Outcome.Decision.Approved}}ok{{else}}bad{{end}}">{{if .Outcome.Decision.Approved}}✓{{else}}✗{{end}} {{.Outcome.Decision.Text}}</h1>
-<p>The wallet presented {{len .People}} {{if eq (len .People) 1}}credential{{else}}credentials{{end}}. Each issuer signature chains to the demo issuer's CA, and the holder proved possession of each credential's key.</p>
-{{range .People}}
-<div class="card person">
-<p>As <code>{{.Format}}</code> · revocation status: {{if eq .Status "valid"}}<span class="ok">✓ valid</span> — checked against the issuer's status list{{else}}{{.Status}}{{end}}</p>
+<section class="verdict {{if .Outcome.Decision.Approved}}approved{{else}}refused{{end}}">
+<p class="mark" aria-hidden="true">{{if .Outcome.Decision.Approved}}✓{{else}}✗{{end}}</p>
+<div>
+<h1 id="verdict" tabindex="-1"><span class="visually-hidden">{{if .Outcome.Decision.Approved}}Approved: {{else}}Refused: {{end}}</span>{{.Outcome.Decision.Text}}</h1>
+<p class="badges">{{range .Formats}}<span class="badge">{{.}}</span> {{end}}{{if .AllValid}}<span class="badge ok">✓ Not revoked</span>{{else}}<span class="badge">Revocation: {{.StatusSummary}}</span>{{end}} <span class="badge"><span aria-hidden="true">{{.Scenario.Icon}}</span> {{.Scenario.Verifier}}</span></p>
+</div>
+</section>
+<p>The wallet presented {{len .People}} {{if eq (len .People) 1}}credential{{else}}credentials{{end}}. Each issuer signature chains to the demo issuer's CA, and the holder proved possession of each credential's key.{{if .AllValid}} None is revoked: each was checked against the issuer's status list.{{end}}</p>
+{{range $i, $p := .People}}
+<section class="card person" aria-labelledby="person-{{$i}}">
+<h2 id="person-{{$i}}">{{.Heading}}</h2>
+<p class="badges"><span class="badge">{{.Format}}</span> {{if eq .Status "valid"}}<span class="badge ok">✓ Not revoked</span>{{else}}<span class="badge">Revocation: {{.Status}}</span>{{end}}</p>
 {{if .ICAO}}
-<h2>Passport file re-verified</h2>
+<h3>Passport file re-verified</h3>
 {{if .ICAO.Verified}}
 <p class="ok">✓ gmrtd trusts the data: the SOD is signed by a Document Signer chaining to the issuing country's CSCA, and every data group matches its hash. The demo issuer can't have altered it.</p>
-{{if .ICAOPortrait}}<p><img src="{{.ICAOPortrait}}" alt="Portrait from the passport's DG2" class="portrait"></p>{{end}}
-<table>
-<tr><th>Name</th><td>{{.ICAO.Identity.FamilyName}}, {{.ICAO.Identity.GivenNames}}</td></tr>
-<tr><th>Nationality</th><td>{{.ICAO.Identity.Nationality}}</td></tr>
-<tr><th>Issuing country</th><td>{{.ICAO.Identity.IssuingCountry}}</td></tr>
-<tr><th>Passport expiry</th><td>{{.ICAO.Identity.ExpiryDate.Format "2006-01-02"}}{{if .ICAO.Expired}} <span class="bad">— expired</span>{{end}}</td></tr>
-<tr><th>Chip authenticity</th><td>{{.ICAO.ChipAuthenticity}}</td></tr>
+<div class="person-body">
+{{if .ICAOPortrait}}<img src="{{.ICAOPortrait}}" alt="Portrait from the passport's chip (DG2)" class="portrait">{{end}}
+<table class="claims">
+<tr><th scope="row">Name</th><td>{{.ICAO.Identity.FamilyName}}, {{.ICAO.Identity.GivenNames}}</td></tr>
+<tr><th scope="row">Nationality</th><td>{{.ICAO.Identity.Nationality}}</td></tr>
+<tr><th scope="row">Issuing country</th><td>{{.ICAO.Identity.IssuingCountry}}</td></tr>
+<tr><th scope="row">Passport expiry</th><td>{{.ICAO.Identity.ExpiryDate.Format "2 January 2006"}}{{if .ICAO.Expired}} <span class="bad">— expired</span>{{end}}</td></tr>
+<tr><th scope="row">Chip authenticity</th><td>{{.ICAO.ChipAuthenticity}}</td></tr>
 </table>
+</div>
 {{else}}
 <p class="bad">✗ {{.ICAO.Error}}</p>
 {{end}}
-{{else}}
-<h2>Disclosed claims</h2>
-{{if .Portrait}}<p><img src="{{.Portrait}}" alt="Portrait of the credential holder" class="portrait"></p>{{end}}
-<table>{{range .Rows}}<tr><th>{{index . 0}}</th><td>{{index . 1}}</td></tr>{{end}}</table>
 {{end}}
+{{if .Asked}}<div class="asked">
+<div><h3>Asked for</h3><ul class="chips">{{range .Asked}}<li{{if not .Received}} class="missing"{{end}}>{{if .Received}}✓{{else}}✗{{end}} {{.Label}}{{if not .Received}} — not shared{{end}}</li>{{end}}</ul></div>
+<div><h3>Received</h3><ul class="chips">{{range .Received}}<li>{{.}}</li>{{else}}<li>Nothing</li>{{end}}</ul>
+{{if .Unasked}}<p class="bad">✗ Also received, without asking: {{range $j, $l := .Unasked}}{{if $j}}, {{end}}{{$l}}{{end}}.</p>{{end}}</div>
+</div>{{end}}
+{{if or .Rows .Portrait}}
+<h3>Disclosed claims</h3>
+<div class="person-body">
+{{if .Portrait}}<img src="{{.Portrait}}" alt="Portrait of the credential holder" class="portrait">{{end}}
+<table class="claims">{{range .Rows}}<tr><th scope="row">{{.Label}}</th><td>{{.Value}}</td></tr>{{end}}</table>
 </div>
 {{end}}
-{{if .Scenario.Evidence}}<p class="note">Re-verifying proves the passport data is authentic, not that the presenter holds the passport. Chip authenticity replays evidence recorded when the chip was read: a genuine chip answered then, not necessarily now. Tying the data to the presenter still relies on the issuer: it bound each credential's device key to its passport.</p>{{end}}
+{{if .Raw}}<details class="raw"><summary>Credential details and raw data</summary>
+<table class="claims">{{range .Raw}}<tr><th scope="row">{{.Label}}</th><td>{{.Value}}</td></tr>{{end}}</table>
+</details>{{end}}
+</section>
 {{end}}
-<p><a href="/demo/">New request</a></p>
+{{if .Scenario.Evidence}}<p class="note">Re-verifying proves the passport data is authentic, not that the presenter holds the passport. Chip authenticity replays evidence recorded when the chip was read: a genuine chip answered then, not necessarily now. Tying the data to the presenter still relies on the issuer: it bound each credential's device key to its passport.</p>{{end}}
+<script>document.getElementById("verdict").focus();</script>
+{{end}}
+{{if or .Outcome .Closed}}<div class="actions">
+<form method="post" action="/demo/requests"><button class="btn" name="scenario" value="{{.Scenario.Scenario}}">Try again</button></form>
+<a href="/demo/" class="btn secondary">New request</a>
+</div>{{else}}<p><a href="/demo/">New request</a></p>{{end}}
 </main>
 {{if .Polling}}` + waitingScript + `{{end}}
 ` + pageFoot))
@@ -488,37 +545,6 @@ func (a *App) handleRequestStatus(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(requestStatus{State: st.coarse(), Rejected: st.lastError != "", ExpiresIn: a.expiresIn(s)})
 }
 
-// displayRows renders claims for the result page: raw byte values (the
-// ICAO data groups) as their size, everything else as-is. The portrait
-// is shown as an image instead (see requestPageFor).
-func displayRows(claims map[string]any) [][2]string {
-	keys := make([]string, 0, len(claims))
-	for k := range claims {
-		if k == credential.Portrait || k == credential.SDJWTPicture {
-			continue
-		}
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	rows := make([][2]string, 0, len(keys))
-	for _, k := range keys {
-		v := claims[k]
-		switch x := v.(type) {
-		case []byte:
-			rows = append(rows, [2]string{k, fmt.Sprintf("%d bytes (raw)", len(x))})
-		case string:
-			if len(x) > 200 {
-				rows = append(rows, [2]string{k, fmt.Sprintf("%d characters (raw, base64url)", len(x))})
-				continue
-			}
-			rows = append(rows, [2]string{k, x})
-		default:
-			rows = append(rows, [2]string{k, fmt.Sprint(x)})
-		}
-	}
-	return rows
-}
-
 // sameBrowser reports whether r comes from the browser that created s,
 // when a browser did: the result is shown only there.
 func sameBrowser(r *http.Request, s *session) bool {
@@ -557,8 +583,33 @@ func (a *App) requestPageFor(ctx context.Context, s *session) requestPage {
 	if len(people) == 0 {
 		people = []Person{{Format: page.Outcome.Format, Claims: page.Outcome.Claims, Status: page.Outcome.Status, ICAO: page.Outcome.ICAO}}
 	}
-	for _, p := range people {
-		v := personView{Format: p.Format, Status: p.Status, Rows: displayRows(p.Claims), ICAO: p.ICAO}
+	query, queryErr := a.query(s.scenario)
+	page.AllValid = true
+	var statuses []string
+	for i, p := range people {
+		v := personView{Heading: "Disclosed by the wallet", Format: p.Format, Status: p.Status, ICAO: p.ICAO}
+		if info.Multiple {
+			v.Heading = personHeading(i, p)
+		}
+		v.Rows, v.Raw = displayRows(p.Format, p.Claims)
+		if queryErr == nil {
+			v.Asked = askedFor(query, p.Format, p.Claims)
+		}
+		v.Received = received(p.Format, p.Claims)
+		for _, l := range v.Received {
+			if !slices.ContainsFunc(v.Asked, func(r requested) bool { return r.Label == l }) {
+				v.Unasked = append(v.Unasked, l)
+			}
+		}
+		if !slices.Contains(page.Formats, p.Format) {
+			page.Formats = append(page.Formats, p.Format)
+		}
+		if p.Status != "valid" {
+			page.AllValid = false
+		}
+		if !slices.Contains(statuses, p.Status) {
+			statuses = append(statuses, p.Status)
+		}
 		if uri, ok := credential.PortraitDataURI(p.Claims); ok {
 			v.Portrait = template.URL(uri) // #nosec G203 -- built by PortraitDataURI from decoded JPEG bytes
 		}
@@ -569,7 +620,27 @@ func (a *App) requestPageFor(ctx context.Context, s *session) requestPage {
 		}
 		page.People = append(page.People, v)
 	}
+	page.StatusSummary = strings.Join(statuses, ", ")
 	return page
+}
+
+// personHeading heads the i'th credential of a presentation taking
+// several: "Person N", and the name it discloses or, failing that, its
+// re-verified passport's.
+func personHeading(i int, p Person) string {
+	heading := fmt.Sprintf("Person %d", i+1)
+	family, _ := p.Claims[credential.FamilyName].(string)
+	given, _ := p.Claims[credential.GivenName].(string)
+	if family == "" && given == "" && p.ICAO != nil && p.ICAO.Verified {
+		family, given = p.ICAO.Identity.FamilyName, p.ICAO.Identity.GivenNames
+	}
+	switch {
+	case family != "" && given != "":
+		return heading + " — " + family + ", " + given
+	case family != "" || given != "":
+		return heading + " — " + family + given
+	}
+	return heading
 }
 
 var errorTemplate = template.Must(template.New("error").Parse(pageHead + `</head><body>

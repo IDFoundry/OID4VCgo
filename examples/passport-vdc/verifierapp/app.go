@@ -435,11 +435,7 @@ func (a *App) createSession(ctx context.Context, sc Scenario, browserToken strin
 	if !ok {
 		return "", fmt.Errorf("verifierapp: unknown scenario %q", sc)
 	}
-	build := buildQuery
-	if a.cfg.Query != nil {
-		build = a.cfg.Query
-	}
-	query, err := build(sc, a.cfg.IssuerVCT, a.issuerTrusted)
+	query, err := a.query(sc)
 	if err != nil {
 		return "", err
 	}
@@ -473,6 +469,15 @@ func (a *App) createSession(ctx context.Context, sc Scenario, browserToken strin
 		}
 	}
 	return id, nil
+}
+
+// query is scenario sc's DCQL query: Config.Query's, if set, or its own.
+func (a *App) query(sc Scenario) (dcql.Query, error) {
+	build := buildQuery
+	if a.cfg.Query != nil {
+		build = a.cfg.Query
+	}
+	return build(sc, a.cfg.IssuerVCT, a.issuerTrusted)
 }
 
 // dropExpired forgets expired pages. Called with a.mu held.
