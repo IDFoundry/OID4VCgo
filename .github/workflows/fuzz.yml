@@ -19,6 +19,10 @@ name: Fuzz
 # down, inspect, and — once satisfied it's a real bug fixed or worth
 # tracking — commit into the repo as a permanent regression corpus
 # entry; this workflow never commits back on its own.
+#
+# Every fuzz target in every module is in the matrix below: ci.yml runs
+# .github/scripts/check-fuzz-matrix.sh, which refuses a target missing
+# from it, an entry with no target, and an id or target listed twice.
 
 on:
   schedule:
