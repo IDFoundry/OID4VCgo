@@ -137,6 +137,8 @@ func (a *App) routes(credentialHandler, deferredHandler, notificationHandler htt
 	mux.HandleFunc("GET /{$}", redirectToDemo)
 	mux.HandleFunc("GET /demo/{$}", a.handleUploadPage)
 	mux.HandleFunc("POST /demo/passport", a.handleUpload)
+	mux.HandleFunc("GET /demo/offers/{id}/status", a.handleOfferStatus)
+	mux.HandleFunc("GET /demo/offers/{id}/progress", a.handleOfferProgress)
 	if a.cfg.AllowSampleDocument {
 		mux.HandleFunc("POST /demo/sample", a.handleSample)
 	}
@@ -278,9 +280,13 @@ type offerPage struct {
 	// its openid-credential-offer: URL, which html/template won't put in
 	// an href by itself.
 	AppLink template.URL
+	// ProgressID names the offer's progress (handleOfferStatus), and
+	// Progress is where it stands now.
+	ProgressID string
+	Progress   offerStatus
 }
 
-var offerTemplate = parsePage("offer", pageHead+`</head><body>
+var offerTemplate = parsePage("offer", stepsPart+pageHead+`</head><body>
 {{template "site-header" .Header}}
 <main>
 {{if .Evidence.Checks.PassiveAuthentication}}<section class="verdict approved">
@@ -347,11 +353,16 @@ var offerTemplate = parsePage("offer", pageHead+`</head><body>
 </details>
 <p class="note">Keep it separate from the offer: anyone who sees both can redeem it — once, with one wallet.</p>{{end}}
 </section>
+<section class="card progress" id="offer-progress" data-status="/demo/offers/{{.ProgressID}}/status" aria-labelledby="progress-heading">
+<h2 id="progress-heading">Progress</h2>
+<noscript><style>#offer-static{display:none}</style><iframe src="/demo/offers/{{.ProgressID}}/progress" title="Issuance progress" class="progress-frame"></iframe></noscript>
+<div id="offer-static">{{template "steps" .Progress}}</div>
+</section>
 {{if .Offer.KeptForRefresh}}<p class="note">Kept for refresh: the issuer keeps this passport's data for 24 hours after it first issues a credential, so your wallet can get fresh copies, then deletes it. Deleting the credentials in your wallet, or <a href="/demo/kept">forgetting it</a>, deletes it sooner.</p>{{end}}
 {{if .Evidence.Checks.PassiveAuthentication}}<p class="note">This proves the passport data is authentic, not that you hold the passport — see the demo README.</p>{{end}}
 <p><a href="/demo/">Upload another passport</a></p>
 </main>
-`+demoui.CopyScript+`
+`+demoui.CopyScript+progressScript+`
 <script>document.getElementById("verdict").focus();</script>
 `+pageFoot)
 
@@ -415,7 +426,20 @@ func (a *App) offer(w http.ResponseWriter, r *http.Request, e passport.Evidence)
 		a.writeHTMLError(w, http.StatusInternalServerError, "couldn't create a credential offer")
 		return
 	}
+	// Only this browser can follow the offer's progress.
+	browser, err := ensureBrowserID(w, r)
+	if err == nil {
+		configIDs := []string{MdocConfigurationID, SDJWTConfigurationID}
+		_, err = a.progress.add(a.now(), offer.IssuerState, browser, offer.PreAuthorized, configIDs, a.now().Add(a.cfg.transactionLifetime()))
+	}
+	if err != nil {
+		a.writeHTMLError(w, http.StatusInternalServerError, "couldn't create a credential offer")
+		return
+	}
 	page := offerPage{Header: a.header(""), Evidence: e, Offer: offer, Expired: e.Identity.ExpiredAt(a.now())}
+	if p, ok := a.progress.snapshot(a.now(), a.progress.idOf(offer.IssuerState), browser); ok {
+		page.ProgressID, page.Progress = p.id, p.status(a.now(), true)
+	}
 	if uri, ok := credential.PortraitDataURI(map[string]any{credential.Portrait: e.Portrait}); ok {
 		page.Portrait = template.URL(uri) // #nosec G203 -- built by PortraitDataURI from decoded JPEG bytes
 	}

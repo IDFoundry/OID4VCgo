@@ -106,5 +106,5 @@ details.confirm[open]>summary{display:none}details.confirm form{margin:0}
 .timeline li::before{content:"";position:absolute;left:calc(-1rem - 7px);top:.65rem;width:12px;height:12px;border-radius:50%;background:var(--link);border:2px solid var(--bg)}
 .timeline time{color:var(--muted);font-size:.9em;margin-right:.5rem}
 .empty{text-align:center;color:var(--muted);padding:1.5rem 1rem}
-.progress-frame{width:100%;height:9rem;border:0}
+.progress-frame{width:100%;height:9rem;border:0}.progress-summary{font-weight:600;margin:.25rem 0}
 `

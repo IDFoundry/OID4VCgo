@@ -49,6 +49,7 @@ const (
 type review struct {
 	evidence  passport.Evidence
 	configID  string
+	txID      string // the transaction it's from, whose offer page follows it
 	createdAt time.Time
 	decision  reviewDecision
 }
@@ -70,8 +71,9 @@ func newReviews(now func() time.Time) *reviews {
 	return &reviews{now: now, items: make(map[string]*review)}
 }
 
-// add holds e for configID until a decision, returning its reference.
-func (r *reviews) add(e passport.Evidence, configID string) (string, error) {
+// add holds e for configID, from transaction txID, until a decision,
+// returning its reference.
+func (r *reviews) add(e passport.Evidence, configID, txID string) (string, error) {
 	var b [32]byte
 	if _, err := rand.Read(b[:]); err != nil {
 		return "", fmt.Errorf("issuerapp: review reference: %w", err)
@@ -84,7 +86,7 @@ func (r *reviews) add(e passport.Evidence, configID string) (string, error) {
 	if len(r.items) >= maxReviews {
 		return "", errTooManyReviews
 	}
-	r.items[ref] = &review{evidence: e, configID: configID, createdAt: now}
+	r.items[ref] = &review{evidence: e, configID: configID, txID: txID, createdAt: now}
 	return ref, nil
 }
 
@@ -114,19 +116,20 @@ func (r *reviews) get(ref string) (review, bool) {
 	return *v, true
 }
 
-// decide records an operator's decision on a pending review.
-func (r *reviews) decide(ref string, approve bool) error {
+// decide records an operator's decision on a pending review, returning
+// the review.
+func (r *reviews) decide(ref string, approve bool) (review, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	v, ok := r.items[ref]
 	if !ok || v.decision != reviewPending || r.now().Sub(v.createdAt) >= reviewLifetime {
-		return errUnknownReview
+		return review{}, errUnknownReview
 	}
 	v.decision = reviewDenied
 	if approve {
 		v.decision = reviewApproved
 	}
-	return nil
+	return *v, nil
 }
 
 // remove drops the review under ref, and its passport data.
@@ -190,7 +193,18 @@ func (a *App) pendingReviews() int {
 
 // Review records the operator's decision on the deferred issuance ref;
 // the wallet's next poll carries it out.
-func (a *App) Review(ref string, approve bool) error { return a.reviews.decide(ref, approve) }
+func (a *App) Review(ref string, approve bool) error {
+	rv, err := a.reviews.decide(ref, approve)
+	if err != nil {
+		return err
+	}
+	state := credentialRefused
+	if approve {
+		state = credentialApproved
+	}
+	a.progress.setCredential(rv.txID, credentialFormat(rv.configID), state)
+	return nil
+}
 
 // resolveDeferred is the Deferred Credential Endpoint's Resolve: on each
 // poll it carries out the operator's decision on the transaction's
@@ -201,6 +215,9 @@ func (a *App) resolveDeferred(ctx context.Context, _ issuer.Grant, transactionID
 	switch {
 	case !ok, rv.decision == reviewDenied:
 		a.reviews.remove(tx.Reference)
+		if ok {
+			a.progress.setCredential(rv.txID, credentialFormat(rv.configID), credentialRefused)
+		}
 		return a.issuer.DenyDeferredCredential(ctx, transactionID)
 	case rv.decision == reviewPending:
 		return nil
@@ -234,6 +251,7 @@ func (a *App) resolveDeferred(ctx context.Context, _ issuer.Grant, transactionID
 		return err
 	}
 	a.reviews.remove(tx.Reference)
+	a.progress.setCredential(rv.txID, credentialFormat(rv.configID), credentialIssued)
 	return nil
 }
 

@@ -158,6 +158,7 @@ func (a *App) handleDecision(w http.ResponseWriter, r *http.Request) {
 		if !a.claimTransaction(w, pending, r.FormValue("code")) {
 			return
 		}
+		a.progress.update(txID, func(p *offerProgress) { p.authorized = true })
 		subjectID, err := server.NewSubjectID(txID)
 		if err != nil {
 			a.writeHTMLError(w, http.StatusInternalServerError, "invalid subject")
@@ -179,6 +180,7 @@ func (a *App) handleDecision(w http.ResponseWriter, r *http.Request) {
 		result = server.Authorize(subject, authCtx, a.grantFor(pending))
 	case "deny":
 		result = server.Deny("the holder declined")
+		a.progress.update(txID, func(p *offerProgress) { p.declined = true })
 	default:
 		a.writeHTMLError(w, http.StatusBadRequest, "decision must be approve or deny")
 		return

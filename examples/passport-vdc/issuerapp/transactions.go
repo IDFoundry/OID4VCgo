@@ -154,6 +154,15 @@ func (t *transactions) keeps(id string) bool {
 	return ok && v.keep
 }
 
+// held reports whether the transaction under id is still held: not
+// yet issued, expired, voided or forgotten.
+func (t *transactions) held(id string) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	_, ok := t.lookup(id)
+	return ok
+}
+
 // dontKeep stops keeping the transaction under id for refresh, for an
 // authorization that asked for no refresh token: its credentials are
 // then issued once, as without keep.

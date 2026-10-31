@@ -99,6 +99,11 @@ func (a *App) prepareCredential(_ context.Context, grant issuer.Grant, req *issu
 	done := func(issued bool) {
 		if issued {
 			a.transactions.done(grant.Subject)
+			state := credentialIssued
+			if review {
+				state = credentialDeferred
+			}
+			a.progress.setCredential(grant.Subject, credentialFormat(configID), state)
 			return
 		}
 		a.transactions.release(grant.Subject, configID)
@@ -114,7 +119,7 @@ func (a *App) prepareCredential(_ context.Context, grant issuer.Grant, req *issu
 	// transaction_id to poll, and the review keeps its own copy of the
 	// Evidence until an operator decides (resolveDeferred).
 	if review {
-		if reviewRef, err = a.reviews.add(e, configID); err != nil {
+		if reviewRef, err = a.reviews.add(e, configID, grant.Subject); err != nil {
 			a.transactions.release(grant.Subject, configID)
 			return nil, issuer.NewError(issuer.ErrorCredentialRequestDenied, "too many issuances are awaiting review — try again later")
 		}
