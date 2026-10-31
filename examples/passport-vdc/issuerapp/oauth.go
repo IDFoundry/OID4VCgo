@@ -3,7 +3,6 @@ package issuerapp
 import (
 	"encoding/json"
 	"errors"
-	"html/template"
 	"net/http"
 	"slices"
 
@@ -12,6 +11,7 @@ import (
 	"github.com/idfoundry/fapigo/server/interactioncookie"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
+	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/demoui"
 )
 
 // pendingInteraction links an approval page back to its fapigo
@@ -64,25 +64,57 @@ func (a *App) handlePAR(w http.ResponseWriter, r *http.Request) {
 // the offer link and an attested wallet, before the confirmation code
 // is checked. Whoever approves saw the passport on the offer page.
 type approvalPage struct {
+	Header   demoui.Header
 	Tag      string // the interaction's tag (interactioncookie.FormField)
 	ClientID string
-	Scopes   []string
-	Error    string
+	// Wallet names the wallet in words, and Requested what it asks for.
+	Wallet    string
+	Requested []demoui.Badge
+	Error     string
 }
 
-var approvalTemplate = template.Must(template.New("approval").Parse(pageHead + "</head><body>\n" + `
-<h1>Issue passport credential?</h1>
-<p>Wallet <code>{{.ClientID}}</code> is requesting credentials for the passport uploaded on the offer page.</p>
-<p>Formats requested: {{range .Scopes}}<code>{{.}}</code> {{end}}</p>
-{{if .Error}}<p class="warn">{{.Error}}</p>{{end}}
-<form method="post" action="/authorize/decision">
+var approvalTemplate = parsePage("approval", pageHead+`</head><body>
+{{template "site-header" .Header}}
+<main>
+<h1>Issue your passport credentials?</h1>
+<section class="card" aria-labelledby="wallet-heading">
+<h2 id="wallet-heading"><span aria-hidden="true">👛</span> {{.Wallet}} is asking</h2>
+<p>It wants credentials for the passport you uploaded on the offer page.</p>
+<p class="badges" aria-label="Requested">{{range .Requested}}<span class="badge{{with .Class}} {{.}}{{end}}">{{.Text}}</span> {{end}}</p>
+<p class="note">Wallet identifier: <code>{{.ClientID}}</code></p>
+</section>
+{{if .Error}}<div class="card warn" role="alert"><p><strong>{{.Error}}</strong></p></div>{{end}}
+<form method="post" action="/authorize/decision" class="card">
 <input type="hidden" name="interaction" value="{{.Tag}}">
-<p><label>Confirmation code shown with the offer:<input class="code" name="code" inputmode="numeric" pattern="[0-9]*" autocomplete="off" maxlength="6" required autofocus></label></p>
-<button name="decision" value="approve">Approve</button>
-<button name="decision" value="deny" formnovalidate>Deny</button>
+<label for="code" class="code-label">Confirmation code shown with the offer</label>
+<span class="code-field"><input id="code" name="code" inputmode="numeric" pattern="[0-9]*" autocomplete="one-time-code" maxlength="6" required autofocus aria-describedby="code-help"></span>
+<p id="code-help" class="note">Six digits. Approving with it shows you saw the offer page.</p>
+<div class="actions">
+<button class="btn" name="decision" value="approve">Approve</button>
+<button class="btn secondary" name="decision" value="deny" formnovalidate>Deny</button>
+</div>
 </form>
 <p class="note">Demo only: the holder is not authenticated here. The code only shows whoever approves saw the offer page.</p>
-` + pageFoot))
+</main>
+`+pageFoot)
+
+// requestedBadges words the scopes a wallet requested.
+func requestedBadges(scopes []string) []demoui.Badge {
+	out := make([]demoui.Badge, 0, len(scopes))
+	for _, s := range scopes {
+		switch s {
+		case MdocScope:
+			out = append(out, demoui.Badge{Text: "Passport as an mdoc"})
+		case SDJWTScope:
+			out = append(out, demoui.Badge{Text: "Passport as an SD-JWT VC"})
+		case offlineAccessScope:
+			out = append(out, demoui.Badge{Text: "Fresh copies for 24 hours", Class: "warn"})
+		default:
+			out = append(out, demoui.Badge{Text: s})
+		}
+	}
+	return out
+}
 
 // handleAuthorize begins authorization for a pushed request and, if
 // it maps to a live transaction, shows the approval page.
@@ -247,11 +279,14 @@ func (a *App) claimTransaction(w http.ResponseWriter, pending pendingInteraction
 }
 
 func (a *App) renderApproval(w http.ResponseWriter, pending pendingInteraction, clientID string, message string) {
-	w.Header().Set(headerContentType, contentTypeHTML)
-	w.Header().Set("Cache-Control", "no-store")
-	_ = approvalTemplate.Execute(w, approvalPage{
-		Tag: pending.tag, ClientID: clientID, Scopes: pending.scopes, Error: message,
-	})
+	wallet := "A wallet"
+	if clientID == a.cfg.Wallet.ClientID {
+		wallet = "The passport demo wallet"
+	}
+	renderPage(w, http.StatusOK, approvalTemplate, approvalPage{
+		Header: siteHeader(), Tag: pending.tag, ClientID: clientID, Wallet: wallet,
+		Requested: requestedBadges(pending.scopes), Error: message,
+	}, true)
 }
 
 // transactionErrorMessage words a transactions error for the holder.
