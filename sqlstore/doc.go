@@ -102,8 +102,7 @@
 //     data of its own, so a record one sealed never opens as the
 //     other's. AES-GCM with random nonces allows about 2^32 seals per
 //     key, which a busy issuer reaches in weeks: rotate before then
-//     with fapigo/sqlstore's RotatingSealer, which takes this
-//     package's Sealer too.
+//     with fapigo/sqlstore's RotatingSealer (see Secrets at rest).
 //   - The Credential Endpoint, run apart from the Authorization
 //     Server, gets a database role of its own: SELECT on FAPIgo's
 //     access_tokens, revocations and schema_migrations, SELECT and
@@ -129,16 +128,23 @@
 // c_nonce, an authorization in progress and a deferred transaction's
 // Invalidate are one DELETE (… RETURNING); a pre-authorized code's
 // Consume, and every Update, reads the row with SELECT … FOR UPDATE on
-// Postgres, or after BEGIN IMMEDIATE on SQLite, and writes it in the
-// same transaction. So the guarantees hold across every process sharing
-// the database, not just within one. Update callbacks are called once.
+// Postgres, in a READ COMMITTED transaction whatever the server's
+// default isolation, or after BEGIN IMMEDIATE on SQLite, and writes it
+// in the same transaction. So the guarantees hold across every process
+// sharing the database, not just within one. Update callbacks are
+// called once.
 // A store that couldn't answer (the database unreachable, a timeout, a
 // cancelled context) returns that error, never the interface's
 // not-found error, which the issuer and verifier answer as the
 // Wallet's fault.
 //
 // IDs are case-sensitive: Postgres compares them with the "C"
-// collation, SQLite bytewise.
+// collation, SQLite bytewise. An ID that isn't valid UTF-8, or holds a
+// NUL byte, which PostgreSQL's text columns can't hold, is never
+// stored, on either dialect: a lookup, consume or delete by one finds
+// nothing, as for any unknown ID, and a write refuses it. A Wallet's
+// JWE kid, request_uri or c_nonce is the Wallet's to choose, so this
+// keeps such a value an unknown one rather than the store's failure.
 //
 // # Secrets at rest
 //
@@ -159,25 +165,44 @@
 // unprotected, so the database must be trusted for their integrity.
 // KeyStore refuses to work without a Sealer.
 //
+// Sealing keeps a record's contents from whoever can read the
+// database, and makes one altered, or moved to another row or table,
+// unreadable (ErrRecordFormat). It doesn't stop whoever can write the
+// database from deleting a record, or putting back an older copy of
+// one sealed under the same key. The readable columns aren't sealed: a
+// pre-authorized code's Transaction Code hash column is checked
+// against its sealed record before the code is accepted, refused as
+// ErrRecordFormat if they differ, but its count of wrong Transaction
+// Codes isn't sealed, so a database writer can reset it.
+//
 // A DB reads only records written as it would write them, sealed under
 // its key or not sealed at all (ErrRecordFormat otherwise): to start
-// sealing, or change the key, start from empty tables, or keep the old
-// DB for reading until its records have expired. Changing the key
-// makes every record sealed under the old one unreadable, a wallet's
-// keys and credentials included.
+// sealing, start from empty tables. To change the key, wrap the new
+// Sealer and the previous one with fapigo/sqlstore's RotatingSealer,
+// which takes this package's Sealer: it seals with the new key and
+// opens with either. There is no pass here that re-seals records under
+// the new key, so keep the previous one for as long as records it
+// sealed exist. Issuer records expire and are swept, but a wallet's
+// credentials, refresh grants and keys never expire: while a wallet
+// keeps any sealed under the previous key, dropping that key makes
+// them unreadable, the keys and credentials lost.
 //
 // # Sweeping
 //
-// The stores never delete an expired record themselves: the issuer,
-// verifier and wallet answer one as unknown once it has expired. Call
-// Sweep periodically to delete them, so the tables, and the personal
-// data in them, don't grow without bound.
+// The stores never delete an expired record themselves: the issuer and
+// verifier answer one as unknown once it has expired. Call Sweep
+// periodically to delete them, so the tables, and the personal data in
+// them, don't grow without bound. Sweep leaves the wallet's tables
+// alone: walletflow forgets an expired authorization in progress
+// itself, deleting the keys it names with it, which Sweep couldn't.
 //
 // # Production
 //
 //   - Use one schema (PostgreSQL) or file (SQLite) per deployment, and
 //     the same one in every process that shares its records. Credential
-//     Issuers may share the issuer tables: every record keeps its Owner.
+//     Issuers may share the issuer tables: every record keeps its Owner
+//     but a Credential Offer, which has none and is found by its
+//     reference alone.
 //   - Don't share a wallet's tables between users: walletflow's
 //     ResumeIssuance finds an authorization by its state alone.
 //   - Back up the database with the Sealer's key kept apart from it.

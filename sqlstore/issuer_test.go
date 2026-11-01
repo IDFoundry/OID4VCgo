@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -154,5 +155,41 @@ func requireOutage(t *testing.T, call string, err, unknown error) {
 	t.Helper()
 	if err == nil || errors.Is(err, unknown) {
 		t.Errorf("%s on a closed database = %v, want an error other than %v", call, err, unknown)
+	}
+}
+
+// A pre-authorized code's tx_code_hash column, which a Sealer leaves
+// readable, must be its sealed record's: one changed in the database is
+// refused as an unreadable record, never accepted or counted as a wrong
+// guess, and the code survives the refusal.
+func TestPreAuthorizedCodeTxCodeColumnMustMatchRecord(t *testing.T) {
+	ctx := context.Background()
+	d, db := openSQLite(t, filepath.Join(t.TempDir(), "store.db"), sqlstore.Options{Sealer: testSealer(t)})
+	if err := d.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	codes := d.PreAuthorizedCodes()
+	for name, column := range map[string]string{"cleared": "", "replaced": "forged"} {
+		t.Run(name, func(t *testing.T) {
+			code := "code-" + name
+			if err := codes.Issue(ctx, code, issuer.PreAuthorizedCodeRecord{TxCodeHash: "hash", ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := db.ExecContext(ctx, "UPDATE oid4vc_issuer_pre_authorized_codes SET tx_code_hash = ? WHERE id = ?", column, code); err != nil {
+				t.Fatal(err)
+			}
+			_, _, err := codes.Consume(ctx, code, column, 0, func(issuer.PreAuthorizedCodeRecord) error {
+				t.Error("accept was called for an altered code")
+				return nil
+			})
+			if !errors.Is(err, sqlstore.ErrRecordFormat) {
+				t.Errorf("Consume of an altered code = %v, want ErrRecordFormat", err)
+			}
+			// Still there: the refusal rolled back.
+			_, _, err = codes.Consume(ctx, code, column, 0, nil)
+			if !errors.Is(err, sqlstore.ErrRecordFormat) {
+				t.Errorf("second Consume = %v, want ErrRecordFormat", err)
+			}
+		})
 	}
 }

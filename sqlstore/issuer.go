@@ -86,6 +86,9 @@ func (s *PreAuthorizedCodeStore) Issue(ctx context.Context, codeHash string, rec
 // accept and the consumption happen together, so concurrent requests
 // for one code each see the one before. accept is called once.
 func (s *PreAuthorizedCodeStore) Consume(ctx context.Context, codeHash, wantTxCodeHash string, maxAttempts int, accept func(issuer.PreAuthorizedCodeRecord) error) (issuer.PreAuthorizedCodeRecord, int, error) {
+	if !storableKeys(codeHash) {
+		return issuer.PreAuthorizedCodeRecord{}, 0, fmt.Errorf("sqlstore: %w", issuer.ErrPreAuthorizedCodeUnknown)
+	}
 	var record issuer.PreAuthorizedCodeRecord
 	var wrongAttempts int
 	// outcome is a refusal the transaction commits (a counted wrong
@@ -151,6 +154,14 @@ func (s *PreAuthorizedCodeStore) consumeOn(ctx context.Context, q querier, codeH
 	}
 	if record, err = s.t.decodeOf(codeHash, data); err != nil {
 		return record, 0, nil, err
+	}
+	// The checks above go by the tx_code_hash column, which a Sealer
+	// leaves readable: refuse the code if it isn't the sealed record's
+	// own, as a record altered in the database, not as a wrong guess.
+	// wrong_attempts isn't sealed either, and the record doesn't hold
+	// it: whoever can write the table can reset the count.
+	if subtle.ConstantTimeCompare([]byte(txCodeHash), []byte(record.TxCodeHash)) != 1 {
+		return issuer.PreAuthorizedCodeRecord{}, 0, nil, fmt.Errorf("%w: pre-authorized code's tx_code_hash column isn't its record's", ErrRecordFormat)
 	}
 	if accept != nil {
 		if err := accept(record); err != nil {

@@ -84,7 +84,9 @@ binding its records to additional data of its own. Sweep each. See
   `search_path` (`postgres://…/db?search_path=tenant_a` with pgx);
   on SQLite, a file each.
 - **Sweeping**: stores never delete expired records. Call
-  `db.Sweep(ctx, time.Now())` every few minutes.
+  `db.Sweep(ctx, time.Now())` every few minutes. It sweeps the issuer
+  and verifier tables; walletflow forgets expired authorizations, with
+  their keys, itself.
 - **Sealing**: with `Options.Sealer` every issuer and walletflow record
   is sealed, bound to its table and key. Keys, Owners, hashes and expiry
   times stay readable, for lookups and sweeping. A verifier transaction
@@ -92,9 +94,12 @@ binding its records to additional data of its own. Sweep each. See
   decryption key and the verified claims, and leaves the other fields
   (status, owner, same-device flag, browser binding hash, query)
   readable and unprotected, so the database must be trusted for their
-  integrity. Changing the key makes existing records unreadable.
+  integrity. To change the key, use fapigo/sqlstore's `RotatingSealer`,
+  and keep the previous key while records it sealed exist: a wallet's
+  credentials and keys never expire.
 - **Sharing**: Credential Issuers may share the issuer tables (every
-  record keeps its Owner). A wallet's tables belong to one user.
+  record but a Credential Offer, found by its reference alone, keeps
+  its Owner). A wallet's tables belong to one user.
 
 ## Tests
 

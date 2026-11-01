@@ -40,7 +40,6 @@ var postgresQueries = queries{ //nolint:gosec // G101: field names such as keyGe
 	authorizationConsume:   "DELETE FROM oid4vc_wallet_authorizations WHERE id = $1 RETURNING record",
 	authorizationList:      "SELECT id, record FROM oid4vc_wallet_authorizations ORDER BY id",
 	authorizationDelete:    "DELETE FROM oid4vc_wallet_authorizations WHERE id = $1",
-	authorizationSweep:     "DELETE FROM oid4vc_wallet_authorizations WHERE sweep_after < $1",
 	grantUpsert:            "INSERT INTO oid4vc_wallet_grants (id, owner, sweep_after, record) VALUES ($1, $2, $3, $4) ON CONFLICT (id) DO UPDATE SET owner = excluded.owner, sweep_after = excluded.sweep_after, record = excluded.record",
 	grantGet:               "SELECT record FROM oid4vc_wallet_grants WHERE id = $1",
 	grantGetForUpdate:      "SELECT record FROM oid4vc_wallet_grants WHERE id = $1 FOR UPDATE",
