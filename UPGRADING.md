@@ -6,7 +6,35 @@ everything else. A release that pins a new FAPIgo release passes on
 that release's own breaking changes: see FAPIgo's UPGRADING.md for
 them.
 
-## v0.56.0 → next
+## v0.57.1 → next
+
+### FAPIgo v0.68.0 (`issuer`)
+
+OID4VCgo pins FAPIgo v0.68.0. See FAPIgo's UPGRADING.md, `## v0.68.0`,
+for its own changes; these are the ones that reach you.
+
+- **More attester certificates are refused.** An issuer whose
+  Authorization Server verifies Wallet Attestations with
+  `server.X5CAttesterChain` and the default leaf policy now refuses,
+  with `invalid_client`, an attestation signed by a certificate that
+  lists, or chains only through a CA restricted to, the ISO/IEC
+  18013-5 mDL JWS or VICAL signer, the ISO/IEC TS 23220-4 mdoc document
+  signer or reader, RFC 9336 document signing, or an RFC 6187 SSH
+  extended key usage. Issue attesters a dedicated certificate; a
+  Wallet Provider purpose of your own is still accepted.
+- **No copy of a trust anchor in `x5c`.** An attestation whose `x5c`
+  carries a certificate with the same subject and public key as a
+  trust anchor, such as a re-issued or cross-signed copy, is refused.
+  Send the signing certificate and its intermediates only.
+
+### fapigo/sqlstore v0.3.0
+
+passport-vdc and `sqlstore`'s tests pin fapigo/sqlstore v0.3.0. If you
+run v0.2.0 with a `Sealer`, upgrade every instance sharing the database
+at once, since a v0.2.0 instance can't open records v0.3.0 seals, then
+run `SealRecords` once to re-seal the older records.
+
+## v0.56.0 → v0.57.0
 
 ### Certificate revocation (`certrevocation`)
 
