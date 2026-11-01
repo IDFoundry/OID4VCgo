@@ -133,3 +133,27 @@ func TestPreAuthorizedCodeStoreDoesNotAliasCallerOrInternalState(t *testing.T) {
 		t.Fatalf("Scopes[0] = %q, want %q (Consume returned an aliased slice)", second.Scopes[0], "identity_credential")
 	}
 }
+
+// TestPreAuthorizedCodeStoreDoesNotAliasCallerConfigurationIDs:
+// mutating the caller's CredentialConfigurationIDs slice after Issue
+// doesn't reach the stored grant.
+func TestPreAuthorizedCodeStoreDoesNotAliasCallerConfigurationIDs(t *testing.T) {
+	s := storage.NewPreAuthorizedCodeStore()
+	ctx := context.Background()
+
+	ids := []string{"identity_credential_sd_jwt"}
+	if err := s.Issue(ctx, "code-1", issuer.PreAuthorizedCodeRecord{
+		CredentialConfigurationIDs: ids, ExpiresAt: time.Now().Add(time.Minute),
+	}); err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+	ids[0] = "tampered-by-caller-after-issue"
+
+	record, _, err := s.Consume(ctx, "code-1", "", 0, nil)
+	if err != nil {
+		t.Fatalf("Consume: %v", err)
+	}
+	if len(record.CredentialConfigurationIDs) != 1 || record.CredentialConfigurationIDs[0] != "identity_credential_sd_jwt" {
+		t.Fatalf("CredentialConfigurationIDs = %q, want [identity_credential_sd_jwt] (Issue aliased the caller's slice)", record.CredentialConfigurationIDs)
+	}
+}

@@ -33,6 +33,7 @@ func NewPreAuthorizedCodeStore() *PreAuthorizedCodeStore {
 // Issue implements issuer.PreAuthorizedCodeStore.
 func (s *PreAuthorizedCodeStore) Issue(_ context.Context, code string, record issuer.PreAuthorizedCodeRecord) error {
 	record.Scopes = cloneStrings(record.Scopes)
+	record.CredentialConfigurationIDs = cloneStrings(record.CredentialConfigurationIDs)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if now, ok := s.prune.due(len(s.issued)); ok {
