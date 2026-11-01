@@ -1,7 +1,7 @@
 # Builds cmd/conformance-wallet-vp for the docker-compose setup in
 # this directory. Build context is the repo root (../.. from here) —
 # mirrors conformance/verifier/Dockerfile exactly.
-FROM golang:1.26@sha256:672c944cfd07599b5f1bb179869270cdc94c6254e41db4d431259693cb286b82 AS build
+FROM golang:1.26@sha256:670bb5aa5349ae03b8516764718486f4f16399134bdc9acd0c46a23f043ab05c AS build
 WORKDIR /src
 COPY . .
 RUN CGO_ENABLED=0 go build -o /out/conformance-wallet-vp ./cmd/conformance-wallet-vp
