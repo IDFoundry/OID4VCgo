@@ -42,6 +42,17 @@ for its own changes; these are the ones that reach you.
   trust anchor, such as a re-issued or cross-signed copy, is refused.
   Send the signing certificate and its intermediates only.
 
+### Credential Issuer (`issuer`)
+
+- **A proof key's trust can be undecided.** A custom
+  `ProofBindingKeyResolver` that can't decide a key's trust now (a DID
+  Document's host answering 503, say) can wrap
+  `issuer.ErrProofKeyTrustUndecided` in its error. The Credential
+  Request is then answered with a server error rather than
+  `invalid_proof`, and a deferred transaction stays pending
+  (`ErrDeferredProofKeyTrustUnknown`) instead of being denied. Any
+  other error still refuses the key.
+
 ### fapigo/sqlstore v0.3.0
 
 passport-vdc and `sqlstore`'s tests pin fapigo/sqlstore v0.3.0. If you

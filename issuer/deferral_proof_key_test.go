@@ -2,6 +2,7 @@ package issuer_test
 
 import (
 	"context"
+	"crypto"
 	"crypto/x509"
 	"encoding/base64"
 	"errors"
@@ -127,6 +128,59 @@ func TestDeferral_RechecksX5CProofKey(t *testing.T) {
 				if err := f.iss.IssueDeferredCredential(ctx, txID, issuer.DeferredIssuance{SDJWTClaims: testSDJWTClaims()}); err != nil {
 					t.Fatalf("IssueDeferredCredential once revocation can be checked: %v", err)
 				}
+			}
+		})
+	}
+}
+
+// failingProofKeys is a ProofBindingKeyResolver that resolves through
+// next until fail is set, then returns fail.
+type failingProofKeys struct {
+	next issuer.ProofBindingKeyResolver
+	fail *error
+}
+
+func (r failingProofKeys) ResolveProofBindingKey(ctx context.Context, header map[string]any) (crypto.PublicKey, oid4vci.JOSEAlg, error) {
+	if *r.fail != nil {
+		return nil, "", *r.fail
+	}
+	return r.next.ResolveProofBindingKey(ctx, header)
+}
+
+// TestDeferral_ResolverTrustUndecided: a custom ProofBindingKeyResolver
+// whose error wraps ErrProofKeyTrustUndecided leaves the deferred
+// transaction pending, to issue once it can decide; any other error
+// denies it.
+func TestDeferral_ResolverTrustUndecided(t *testing.T) {
+	for name, fail := range map[string]error{
+		"undecided": fmt.Errorf("did:web host answered 503: %w", issuer.ErrProofKeyTrustUndecided),
+		"refused":   errors.New("key not in the DID Document"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			a := newAttesterCRLs(t)
+			var failure error
+			f := newDeferralFixture(t, proofKeysUnder(a), func(_ *issuer.Config, deps *issuer.Dependencies) {
+				deps.ProofBindingKeys = failingProofKeys{next: deps.ProofBindingKeys, fail: &failure}
+			})
+			ctx := context.Background()
+			txID := deferX5CProof(t, f, a)
+
+			failure = fail
+			err := f.iss.IssueDeferredCredential(ctx, txID, issuer.DeferredIssuance{SDJWTClaims: testSDJWTClaims()})
+			if name == "refused" {
+				if !errors.Is(err, issuer.ErrDeferredProofKey) {
+					t.Fatalf("IssueDeferredCredential = %v, want ErrDeferredProofKey", err)
+				}
+				_, pollErr := f.iss.RequestDeferredCredential(ctx, deferralAuth, issuer.DeferredCredentialRequest{TransactionID: txID})
+				assertIssuerError(t, pollErr, issuer.ErrorCredentialRequestDenied)
+				return
+			}
+			if !errors.Is(err, issuer.ErrDeferredProofKeyTrustUnknown) || errors.Is(err, issuer.ErrDeferredProofKey) {
+				t.Fatalf("IssueDeferredCredential = %v, want ErrDeferredProofKeyTrustUnknown, the transaction kept", err)
+			}
+			failure = nil
+			if err := f.iss.IssueDeferredCredential(ctx, txID, issuer.DeferredIssuance{SDJWTClaims: testSDJWTClaims()}); err != nil {
+				t.Fatalf("IssueDeferredCredential once the resolver decides: %v", err)
 			}
 		})
 	}
