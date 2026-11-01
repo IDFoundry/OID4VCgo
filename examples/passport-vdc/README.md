@@ -526,6 +526,12 @@ verified is remembered, by JWK thumbprint, for 30 days in
 `wallet-provider-keys.json` (in `.demo-state/` under `cmd/demo`), so
 its later attestations with the same chain (the instance key, for a
 refresh) are accepted after the challenge is used, and after a restart.
+Keys whose chains end at a root other than Google's (an emulator's, or
+one anyone could make) are kept apart, at most 1,000 of them, and never
+displace a key Google's roots vouch for. `/attestation-challenge`
+answers each client address 20 requests at once, then one a second
+(429 past that), so one client can't use up the challenges every other
+one needs.
 
 Whether a verified chain is hardware Google vouches for — it ends at
 one of Google's hardware attestation roots (embedded; see

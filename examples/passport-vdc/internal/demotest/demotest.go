@@ -17,6 +17,7 @@ import (
 
 	"github.com/gmrtd/gmrtd/cms"
 
+	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/demotls"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/issuerapp"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/passport"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/verifierapp"
@@ -149,7 +150,7 @@ func (e *Env) StartWebWallet(t *testing.T, store walletapp.Store) {
 
 func (e *Env) start(t *testing.T, srv *httptest.Server, h http.Handler) {
 	t.Helper()
-	srv.Config.Handler = h
+	srv.Config.Handler = demotls.FrameGuard(h) // as demotls.Server does
 	srv.StartTLS()
 	t.Cleanup(srv.Close)
 	e.roots.AddCert(srv.Certificate())

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -188,6 +189,12 @@ func TestEvidence_VerifiesChains(t *testing.T) {
 		}
 		f.now = f.now.Add(-tc.later)
 	}
+	// The refusal says what to do, not that the chain is forged.
+	for name, c := range map[string][][]byte{"a used challenge": reused, "an unknown challenge": unknown} {
+		if _, body := f.walletAttestation(other, c); !strings.Contains(body, "the attestation challenge is unknown, used or expired; request a new challenge") {
+			t.Errorf("%s: body %s, want it to ask for a new challenge", name, body)
+		}
+	}
 
 	// A Key Attestation checks each key's chain against a holder
 	// challenge.
@@ -312,6 +319,107 @@ func TestEvidence_RemembersAcrossRestarts(t *testing.T) {
 	}
 	if _, err := p.NewService(ServiceConfig{ClientID: "wallet-1", VerifiedKeysPath: path}); err == nil {
 		t.Error("NewService accepted a corrupt verified keys file")
+	}
+}
+
+// TestEvidence_LimitsChallengesPerClient: one client address gets a
+// burst of challenges, then one a second; another address isn't held
+// back by it.
+func TestEvidence_LimitsChallengesPerClient(t *testing.T) {
+	f := newEvidenceFixture(t, ServiceConfig{})
+	ask := func(ip net.IP) int {
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, ChallengePath, strings.NewReader(`{"purpose":"holder"}`))
+		req.RemoteAddr = net.JoinHostPort(ip.String(), "4433")
+		f.s.challenge(w, req)
+		return w.Code
+	}
+	a, b := net.IPv4(198, 51, 100, 7), net.IPv4(198, 51, 100, 8)
+	for i := 0; i < challengeBurst; i++ {
+		if code := ask(a); code != http.StatusOK {
+			t.Fatalf("challenge %d: status %d, want 200", i, code)
+		}
+	}
+	if code := ask(a); code != http.StatusTooManyRequests {
+		t.Errorf("past the burst: status %d, want 429", code)
+	}
+	if code := ask(b); code != http.StatusOK {
+		t.Errorf("another address: status %d, want 200", code)
+	}
+	f.now = f.now.Add(time.Second)
+	if code := ask(a); code != http.StatusOK {
+		t.Errorf("a second later: status %d, want 200", code)
+	}
+	if code := ask(a); code != http.StatusTooManyRequests {
+		t.Errorf("again at once: status %d, want 429", code)
+	}
+}
+
+// TestEvidence_UnanchoredKeysDontDisplace: a key whose chain ends at a
+// root of its sender's making is remembered, so it can be re-attested,
+// but can't evict, or overwrite, a key a trusted root vouches for, and
+// such keys are bounded on their own.
+func TestEvidence_UnanchoredKeysDontDisplace(t *testing.T) {
+	// own attests key under a root of its own, over a fresh challenge.
+	own := func(f *evidenceFixture, key *ecdsa.PublicKey) [][]byte {
+		return attesttest.New(t, key, attesttest.Options{Level: androidattest.StrongBox, Challenge: f.challenge(PurposeInstance)}).DER
+	}
+	thumbprintOf := func(key *ecdsa.PublicKey) string {
+		_, tp, err := parseP256Key(jwkOf(t, key))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return tp
+	}
+	trusted := &p256(t).PublicKey
+	realTP := thumbprintOf(trusted)
+	fill := func(f *evidenceFixture, n int, unanchored bool) {
+		for i := 0; i < n; i++ {
+			f.s.ev.verified[fmt.Sprint(unanchored, i)] = verifiedKey{Leaf: "l", Purpose: PurposeInstance, VerifiedAt: f.now.Add(-time.Minute), Unanchored: unanchored}
+		}
+		f.s.ev.verified[realTP] = verifiedKey{Leaf: "real", Purpose: PurposeInstance, VerifiedAt: f.now.Add(-time.Hour)}
+	}
+
+	// Re-attested like any other.
+	f := newEvidenceFixture(t, ServiceConfig{})
+	emulator := &p256(t).PublicKey
+	chain := own(f, emulator)
+	for i, want := range []string{"not a Google hardware attestation root", "verified before"} {
+		if code, body := f.walletAttestation(emulator, chain); code != http.StatusOK || !strings.Contains(f.lastLog(), want) {
+			t.Errorf("attestation %d under its own root: %d %s, log %q", i, code, body, f.lastLog())
+		}
+	}
+
+	// A full table: the oldest key, a trusted one, stays.
+	f = newEvidenceFixture(t, ServiceConfig{})
+	fill(f, maxVerifiedKeys-1, false)
+	attacker := &p256(t).PublicKey
+	if code, body := f.walletAttestation(attacker, own(f, attacker)); code != http.StatusOK {
+		t.Fatalf("under its own root: %d %s", code, body)
+	}
+	if _, ok := f.s.ev.verified[realTP]; !ok || len(f.s.ev.verified) != maxVerifiedKeys {
+		t.Errorf("a full table: trusted key kept %v, %d keys; want it kept, %d", ok, len(f.s.ev.verified), maxVerifiedKeys)
+	}
+	// The trusted key's own public key, under another root, doesn't
+	// overwrite its record.
+	if code, body := f.walletAttestation(trusted, own(f, trusted)); code != http.StatusOK {
+		t.Fatalf("the trusted key under another root: %d %s", code, body)
+	}
+	if got := f.s.ev.verified[realTP].Leaf; got != "real" {
+		t.Errorf("the trusted key's record now has leaf %q", got)
+	}
+
+	// Unanchored keys are bounded on their own.
+	f = newEvidenceFixture(t, ServiceConfig{})
+	fill(f, maxUnanchoredKeys, true)
+	if code, body := f.walletAttestation(attacker, own(f, attacker)); code != http.StatusOK {
+		t.Fatalf("under its own root: %d %s", code, body)
+	}
+	if _, ok := f.s.ev.verified[realTP]; !ok || len(f.s.ev.verified) != maxUnanchoredKeys+1 {
+		t.Errorf("unanchored keys past their bound: trusted key kept %v, %d keys; want it kept, %d", ok, len(f.s.ev.verified), maxUnanchoredKeys+1)
+	}
+	if _, ok := f.s.ev.verified[thumbprintOf(attacker)]; !ok {
+		t.Error("the newest unanchored key was dropped rather than the oldest")
 	}
 }
 

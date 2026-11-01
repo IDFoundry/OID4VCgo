@@ -46,7 +46,7 @@ func main() {
 	keyFile := flag.String("tls-key", "", "TLS private key PEM (with -tls-cert)")
 	certOut := flag.String("tls-cert-out", "wallet-provider-tls.pem", "where to write a generated TLS certificate for the wallets to trust")
 	verifiedKeys := flag.String("verified-keys", "wallet-provider-keys.json", "file keeping the Android keys whose attestation chains were verified, so a restart still recognises them")
-	requireHardware := flag.Bool("require-hardware-key-attestation", false, "refuse an Android key whose attestation chain isn't from hardware Google vouches for (an emulator's, say), rather than only log it")
+	requireHardware := flag.Bool("require-hardware-key-attestation", false, "refuse an Android key whose attestation chain isn't from hardware Google vouches for (an emulator's, say), rather than only log it; a key sent without a chain (iOS, the CLI and web wallets) is still attested")
 	flag.Parse()
 
 	provider, created, err := walletprovider.LoadOrCreate(*providerIssuer, *keyPath)

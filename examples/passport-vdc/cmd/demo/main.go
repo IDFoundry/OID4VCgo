@@ -78,7 +78,7 @@ func main() {
 	verifierURL := flag.String("verifier-url", localVerifierURL, "the verifier's public https URL, when a tunnel forwards it to "+verifierAddr)
 	providerURL := flag.String("provider-url", localProviderURL, "the Wallet Provider's public https URL, when a tunnel forwards it to "+providerAddr)
 	db := flag.Bool("db", false, "keep the issuer's stores in a SQLite database in the state directory (issuer/stores.db) rather than in memory")
-	requireHardware := flag.Bool("require-hardware-key-attestation", false, "have the Wallet Provider refuse an Android key whose attestation chain isn't from hardware Google vouches for (an emulator's, say), rather than only log it")
+	requireHardware := flag.Bool("require-hardware-key-attestation", false, "have the Wallet Provider refuse an Android key whose attestation chain isn't from hardware Google vouches for (an emulator's, say), rather than only log it; a key sent without a chain (iOS, the CLI and web wallets) is still attested")
 	flag.Parse()
 	urls := serviceURLs{issuer: *issuerURL, verifier: *verifierURL, provider: *providerURL}
 	if err := urls.check(); err != nil {
