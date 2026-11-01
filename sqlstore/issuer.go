@@ -155,6 +155,14 @@ func (s *PreAuthorizedCodeStore) consumeOn(ctx context.Context, q querier, codeH
 	if record, err = s.t.decodeOf(codeHash, data); err != nil {
 		return record, 0, nil, err
 	}
+	// The checks above go by the tx_code_hash column, which a Sealer
+	// leaves readable: refuse the code if it isn't the sealed record's
+	// own, as a record altered in the database, not as a wrong guess.
+	// wrong_attempts isn't sealed either, and the record doesn't hold
+	// it: whoever can write the table can reset the count.
+	if subtle.ConstantTimeCompare([]byte(txCodeHash), []byte(record.TxCodeHash)) != 1 {
+		return issuer.PreAuthorizedCodeRecord{}, 0, nil, fmt.Errorf("%w: pre-authorized code's tx_code_hash column isn't its record's", ErrRecordFormat)
+	}
 	if accept != nil {
 		if err := accept(record); err != nil {
 			return issuer.PreAuthorizedCodeRecord{}, 0, nil, err

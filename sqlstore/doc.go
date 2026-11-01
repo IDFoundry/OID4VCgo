@@ -166,6 +166,16 @@
 // unprotected, so the database must be trusted for their integrity.
 // KeyStore refuses to work without a Sealer.
 //
+// Sealing keeps a record's contents from whoever can read the
+// database, and makes one altered, or moved to another row or table,
+// unreadable (ErrRecordFormat). It doesn't stop whoever can write the
+// database from deleting a record, or putting back an older copy of
+// one sealed under the same key. The readable columns aren't sealed: a
+// pre-authorized code's Transaction Code hash column is checked
+// against its sealed record before the code is accepted, refused as
+// ErrRecordFormat if they differ, but its count of wrong Transaction
+// Codes isn't sealed, so a database writer can reset it.
+//
 // A DB reads only records written as it would write them, sealed under
 // its key or not sealed at all (ErrRecordFormat otherwise): to start
 // sealing, or change the key, start from empty tables, or keep the old
