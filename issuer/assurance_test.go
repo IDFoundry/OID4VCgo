@@ -319,8 +319,8 @@ func TestNewRequiresNonceEndpointForAttestationProofsUnderProduction(t *testing.
 func TestNewRequiresPreAuthorizedCodeClientAuthenticationUnderProduction(t *testing.T) {
 	cfg, deps := preAuthorizedCodeProductionConfig(t)
 	cfg.PreAuthorizedCodeClientAuthentication = nil
-	if _, err := issuer.New(cfg, deps); err == nil {
-		t.Fatal("New = nil error, want error (no explicit pre-authorized_code client authentication choice)")
+	if _, err := issuer.New(cfg, deps); err == nil || !strings.Contains(err.Error(), "issuer.VerifiedPreAuthorizedCode{}") {
+		t.Fatalf("New = %v, want an error naming issuer.VerifiedPreAuthorizedCode{} (no explicit pre-authorized_code client authentication choice)", err)
 	}
 
 	cfg.PreAuthorizedCodeClientAuthentication = issuer.AnonymousPreAuthorizedCode{}

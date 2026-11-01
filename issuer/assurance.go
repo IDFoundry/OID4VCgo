@@ -193,7 +193,7 @@ func checkProductionAssurance(cfg Config, deps Dependencies) []error {
 		errs = append(errs, fmt.Errorf("dependencies.clock must be nil, the system clock, or declare issuer.ClockAssurance under AssuranceProduction"))
 	}
 	if deps.PreAuthorizedCodes != nil && cfg.PreAuthorizedCodeClientAuthentication == nil {
-		errs = append(errs, fmt.Errorf("config.pre_authorized_code_client_authentication is required under AssuranceProduction when dependencies.pre_authorized_codes is set (issuer.AnonymousPreAuthorizedCode{} accepts the redemption without client authentication, which HAIP 1.0 §4.4.1 doesn't allow)"))
+		errs = append(errs, fmt.Errorf("config.pre_authorized_code_client_authentication is required under AssuranceProduction when dependencies.pre_authorized_codes is set (set issuer.VerifiedPreAuthorizedCode{} to have the Authorization Server authenticate the client, as HAIP 1.0 §4.4.1 requires, or issuer.AnonymousPreAuthorizedCode{} to redeem without client authentication)"))
 	}
 	if deps.PreAuthorizedCodes != nil && cfg.Limits.MaxTxCodeAttempts > MaxProductionTxCodeAttempts {
 		errs = append(errs, fmt.Errorf("config: limits.max_tx_code_attempts is %d; under AssuranceProduction it must be at most %d", cfg.Limits.MaxTxCodeAttempts, MaxProductionTxCodeAttempts))
