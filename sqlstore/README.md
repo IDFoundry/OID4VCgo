@@ -84,7 +84,9 @@ binding its records to additional data of its own. Sweep each. See
   `search_path` (`postgres://…/db?search_path=tenant_a` with pgx);
   on SQLite, a file each.
 - **Sweeping**: stores never delete expired records. Call
-  `db.Sweep(ctx, time.Now())` every few minutes.
+  `db.Sweep(ctx, time.Now())` every few minutes. It sweeps the issuer
+  and verifier tables; walletflow forgets expired authorizations, with
+  their keys, itself.
 - **Sealing**: with `Options.Sealer` every issuer and walletflow record
   is sealed, bound to its table and key. Keys, Owners, hashes and expiry
   times stay readable, for lookups and sweeping. A verifier transaction

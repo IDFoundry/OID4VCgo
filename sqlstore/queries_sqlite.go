@@ -42,7 +42,6 @@ var sqliteQueries = queries{ //nolint:gosec // G101: field names such as keyGet 
 	authorizationConsume:   "DELETE FROM oid4vc_wallet_authorizations WHERE id = ? RETURNING record",
 	authorizationList:      "SELECT id, record FROM oid4vc_wallet_authorizations ORDER BY id",
 	authorizationDelete:    "DELETE FROM oid4vc_wallet_authorizations WHERE id = ?",
-	authorizationSweep:     "DELETE FROM oid4vc_wallet_authorizations WHERE sweep_after < ?",
 	grantUpsert:            "INSERT INTO oid4vc_wallet_grants (id, owner, sweep_after, record) VALUES (?, ?, ?, ?) ON CONFLICT (id) DO UPDATE SET owner = excluded.owner, sweep_after = excluded.sweep_after, record = excluded.record",
 	grantGet:               "SELECT record FROM oid4vc_wallet_grants WHERE id = ?",
 	grantGetForUpdate:      "SELECT record FROM oid4vc_wallet_grants WHERE id = ?",

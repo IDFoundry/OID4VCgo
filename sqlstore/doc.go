@@ -185,10 +185,12 @@
 //
 // # Sweeping
 //
-// The stores never delete an expired record themselves: the issuer,
-// verifier and wallet answer one as unknown once it has expired. Call
-// Sweep periodically to delete them, so the tables, and the personal
-// data in them, don't grow without bound.
+// The stores never delete an expired record themselves: the issuer and
+// verifier answer one as unknown once it has expired. Call Sweep
+// periodically to delete them, so the tables, and the personal data in
+// them, don't grow without bound. Sweep leaves the wallet's tables
+// alone: walletflow forgets an expired authorization in progress
+// itself, deleting the keys it names with it, which Sweep couldn't.
 //
 // # Production
 //

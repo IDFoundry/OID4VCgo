@@ -55,6 +55,14 @@ for its own changes; these are the ones that reach you.
 
 ### sqlstore
 
+- **`Sweep` no longer deletes wallet authorizations.** An expired
+  authorization in progress names the instance and DPoP keys it was
+  started with, which only walletflow deletes, with the authorization,
+  when it next lists them: deleted by `Sweep`, the authorization left
+  its keys in the `KeyStore` for good. walletflow still forgets expired
+  authorizations itself, so there's nothing to change unless you
+  counted on `Sweep` emptying `oid4vc_wallet_authorizations`; its count
+  no longer includes them.
 - **A pre-authorized code whose Transaction Code column was changed is
   refused.** `PreAuthorizedCodeStore.Consume` now checks the readable
   `tx_code_hash` column against the code's sealed record before

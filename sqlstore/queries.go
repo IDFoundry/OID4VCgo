@@ -33,7 +33,7 @@ type queries struct {
 	credentialUpsert, credentialGet, credentialGetForUpdate, credentialUpdate, credentialList, credentialDelete string
 
 	// oid4vc_wallet_authorizations: walletflow.AuthorizationStore.
-	authorizationUpsert, authorizationGet, authorizationConsume, authorizationList, authorizationDelete, authorizationSweep string
+	authorizationUpsert, authorizationGet, authorizationConsume, authorizationList, authorizationDelete string
 
 	// oid4vc_wallet_grants: walletflow.GrantStore.
 	grantUpsert, grantGet, grantGetForUpdate, grantUpdate, grantList, grantDelete string
