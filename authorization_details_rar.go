@@ -31,17 +31,21 @@ import (
 //     Request presents is always one the Authorization Server minted.
 //   - ValidateGrant, on a granted object against the requested one it
 //     narrows: the same credential_configuration_id; locations and
-//     claims no wider than requested (a subset of the requested ones,
-//     none where none were requested); and credential_identifiers that
+//     claims no wider than requested (a non-empty subset of the
+//     requested ones, none where none were requested — an object
+//     without locations is good at any Credential Issuer, and one
+//     without claims asks for every claim, so leaving out the
+//     requested ones would widen it); and credential_identifiers that
 //     the granted object may add where the requested one has none —
 //     the Authorization Server minting them at consent — and otherwise
 //     may only narrow.
 //   - ValidateNarrowing, on the object a token request asks for
 //     (exchanging a code or a CIBA auth_req_id, or refreshing) against
-//     the granted one it narrows: the same checks, except that it may
-//     never add credential_identifiers. It keeps some or all of the
-//     grant's identifiers, or drops them, and a grant that holds none
-//     admits none. A token request naming an identifier the grant
+//     the granted one it narrows: the same checks — so it keeps some
+//     or all of the grant's locations and claims, never none of them —
+//     except that it may never add credential_identifiers. It keeps
+//     some or all of the grant's identifiers, or drops them, and a
+//     grant that holds none admits none. A token request naming an identifier the grant
 //     doesn't hold is refused with invalid_authorization_details.
 //
 // The binding rule for the Credential Issuer: a credential_identifier
@@ -104,7 +108,11 @@ func validateNarrowedAuthorizationDetail(granted, narrowed AuthorizationDetail) 
 
 // validateNarrowerAuthorizationDetail reports whether narrower is no
 // wider than wider: the same credential_configuration_id, and
-// locations, claims and credential_identifiers among wider's. With
+// locations, claims and credential_identifiers among wider's. Where
+// wider has locations or claims, narrower must keep at least one of
+// them: without locations an object is good at any Credential Issuer,
+// and without claims it asks for every claim. credential_identifiers
+// may all be dropped, since the grant's identifiers are optional. With
 // mayAddIdentifiers, narrower's credential_identifiers aren't checked.
 // narrowerName and widerName name the two sides in the error.
 func validateNarrowerAuthorizationDetail(wider, narrower AuthorizationDetail, mayAddIdentifiers bool, narrowerName, widerName string) error {
@@ -112,6 +120,10 @@ func validateNarrowerAuthorizationDetail(wider, narrower AuthorizationDetail, ma
 	switch {
 	case narrower.CredentialConfigurationID != wider.CredentialConfigurationID:
 		return fmt.Errorf("oid4vci: openid_credential authorization_details: the %s credential_configuration_id isn't the %s one", narrowerName, widerName)
+	case len(wider.Locations) > 0 && len(narrower.Locations) == 0:
+		return fmt.Errorf("oid4vci: openid_credential authorization_details: the %s object leaves out the %s locations", narrowerName, widerName)
+	case len(wider.Claims) > 0 && len(narrower.Claims) == 0:
+		return fmt.Errorf("oid4vci: openid_credential authorization_details: the %s object leaves out the %s claims", narrowerName, widerName)
 	case !subsetOf(narrower.Locations, wider.Locations, func(a, b string) bool { return a == b }):
 		member = "locations"
 	case !subsetOf(narrower.Claims, wider.Claims, func(a, b ClaimsDescription) bool { return reflect.DeepEqual(a, b) }):

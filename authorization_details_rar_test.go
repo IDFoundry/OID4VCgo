@@ -57,7 +57,9 @@ func parseCredentialDetails(t *testing.T, registry *extension.RARRegistry, raw s
 }
 
 // A grant may add credential_identifiers to what was requested, and
-// otherwise only narrow it.
+// otherwise only narrow it: it keeps some of the requested locations
+// and claims, never none of them, since an object without them is good
+// at any Credential Issuer and for every claim.
 func TestAuthorizationDetailRARDefinition_ValidateGrant(t *testing.T) {
 	registry := credentialRARRegistry(t)
 	parse := func(raw string) extension.RARValues { t.Helper(); return parseCredentialDetails(t, registry, raw) }
@@ -76,11 +78,20 @@ func TestAuthorizationDetailRARDefinition_ValidateGrant(t *testing.T) {
 			`"credential_identifiers":["b"],"locations":["https://issuer.example"],"claims":[{"path":["given_name"]}]}]`, true},
 		"another configuration": {requested, `[{"type":"openid_credential","credential_configuration_id":"mdl"}]`, false},
 		"another location": {requested, `[{"type":"openid_credential","credential_configuration_id":"pid",` +
-			`"locations":["https://other.example"]}]`, false},
+			`"locations":["https://other.example"],"claims":[{"path":["given_name"]}]}]`, false},
 		"another claim": {requested, `[{"type":"openid_credential","credential_configuration_id":"pid",` +
-			`"claims":[{"path":["birth_date"]}]}]`, false},
+			`"locations":["https://issuer.example"],"claims":[{"path":["birth_date"]}]}]`, false},
 		"claims where none were requested": {`[{"type":"openid_credential","credential_configuration_id":"pid"}]`,
 			`[{"type":"openid_credential","credential_configuration_id":"pid","claims":[{"path":["given_name"]}]}]`, false},
+		"locations dropped": {requested, `[{"type":"openid_credential","credential_configuration_id":"pid",` +
+			`"claims":[{"path":["given_name"]}]}]`, false},
+		"claims dropped": {requested, `[{"type":"openid_credential","credential_configuration_id":"pid",` +
+			`"locations":["https://issuer.example"]}]`, false},
+		"locations kept in part": {`[{"type":"openid_credential","credential_configuration_id":"pid",` +
+			`"locations":["https://issuer.example","https://other.example"]}]`,
+			`[{"type":"openid_credential","credential_configuration_id":"pid","locations":["https://other.example"]}]`, true},
+		"no locations or claims": {`[{"type":"openid_credential","credential_configuration_id":"pid"}]`,
+			`[{"type":"openid_credential","credential_configuration_id":"pid","credential_identifiers":["a"]}]`, true},
 		"an identifier the grant doesn't hold": {minted, `[{"type":"openid_credential","credential_configuration_id":"pid",` +
 			`"credential_identifiers":["victim-dataset"]}]`, false},
 	} {
@@ -92,9 +103,10 @@ func TestAuthorizationDetailRARDefinition_ValidateGrant(t *testing.T) {
 }
 
 // A token request narrowing its grant (S-31) may keep or drop the
-// grant's credential_identifiers, and otherwise only narrow it, but may
-// add neither an identifier nor any member the grant lacks — even where
-// the grant holds no identifiers, which consent may add to.
+// grant's credential_identifiers, and otherwise only narrow it, keeping
+// some of the grant's locations and claims, but may add neither an
+// identifier nor any member the grant lacks — even where the grant
+// holds no identifiers, which consent may add to.
 func TestAuthorizationDetailRARDefinition_ValidateNarrowing(t *testing.T) {
 	registry := credentialRARRegistry(t)
 	const (
@@ -106,18 +118,29 @@ func TestAuthorizationDetailRARDefinition_ValidateNarrowing(t *testing.T) {
 		granted, narrowed string
 		ok                bool
 	}{
-		"unchanged":                   {minted, minted, true},
-		"bare unchanged":              {bare, bare, true},
-		"identifiers kept in part":    {minted, `[{"type":"openid_credential","credential_configuration_id":"pid","credential_identifiers":["b"]}]`, true},
-		"identifiers dropped":         {minted, `[{"type":"openid_credential","credential_configuration_id":"pid","claims":[{"path":["given_name"]}]}]`, true},
+		"unchanged":      {minted, minted, true},
+		"bare unchanged": {bare, bare, true},
+		"identifiers kept in part": {minted, `[{"type":"openid_credential","credential_configuration_id":"pid","credential_identifiers":["b"],` +
+			`"locations":["https://issuer.example"],"claims":[{"path":["given_name"]},{"path":["family_name"]}]}]`, true},
+		"identifiers dropped": {minted, `[{"type":"openid_credential","credential_configuration_id":"pid",` +
+			`"locations":["https://issuer.example"],"claims":[{"path":["given_name"]}]}]`, true},
 		"identifiers added to a bare": {bare, `[{"type":"openid_credential","credential_configuration_id":"pid","credential_identifiers":["victim-dataset"]}]`, false},
 		"an identifier the grant doesn't hold": {minted, `[{"type":"openid_credential","credential_configuration_id":"pid",` +
 			`"credential_identifiers":["a","victim-dataset"]}]`, false},
 		"claims added to a bare":    {bare, `[{"type":"openid_credential","credential_configuration_id":"pid","claims":[{"path":["given_name"]}]}]`, false},
 		"locations added to a bare": {bare, `[{"type":"openid_credential","credential_configuration_id":"pid","locations":["https://issuer.example"]}]`, false},
 		"another claim": {minted, `[{"type":"openid_credential","credential_configuration_id":"pid",` +
-			`"claims":[{"path":["birth_date"]}]}]`, false},
+			`"locations":["https://issuer.example"],"claims":[{"path":["birth_date"]}]}]`, false},
 		"another configuration": {minted, `[{"type":"openid_credential","credential_configuration_id":"mdl"}]`, false},
+		"locations dropped": {minted, `[{"type":"openid_credential","credential_configuration_id":"pid","credential_identifiers":["a"],` +
+			`"claims":[{"path":["given_name"]}]}]`, false},
+		"claims dropped": {minted, `[{"type":"openid_credential","credential_configuration_id":"pid","credential_identifiers":["a"],` +
+			`"locations":["https://issuer.example"]}]`, false},
+		"locations kept in part": {`[{"type":"openid_credential","credential_configuration_id":"pid",` +
+			`"locations":["https://issuer.example","https://other.example"]}]`,
+			`[{"type":"openid_credential","credential_configuration_id":"pid","locations":["https://other.example"]}]`, true},
+		"another location": {minted, `[{"type":"openid_credential","credential_configuration_id":"pid",` +
+			`"locations":["https://other.example"],"claims":[{"path":["given_name"]}]}]`, false},
 	} {
 		err := registry.ValidateNarrowing(parseCredentialDetails(t, registry, tc.granted), parseCredentialDetails(t, registry, tc.narrowed))
 		if (err == nil) != tc.ok {

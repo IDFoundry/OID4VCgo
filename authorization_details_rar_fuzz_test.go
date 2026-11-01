@@ -15,9 +15,10 @@ import (
 // authorization_details objects: a requested, a granted and a narrowed
 // one. Besides never panicking: a request (ParseRequest) never carries
 // credential_identifiers; a narrowing (ValidateNarrowing) never names
-// an identifier the grant doesn't hold for that configuration; a grant
-// adds identifiers only where the request had none, and otherwise only
-// keeps them; and a grant that parses narrows to itself.
+// an identifier the grant doesn't hold for that configuration, nor
+// leaves out locations or claims every granted object for it carries;
+// a grant adds identifiers only where the request had none, and
+// otherwise only keeps them; and a grant that parses narrows to itself.
 func FuzzAuthorizationDetailRARDefinition(f *testing.F) {
 	def := oid4vci.AuthorizationDetailRARDefinition(2, 4<<10)
 	registry, err := extension.NewRARRegistry(8<<10, 6, def)
@@ -37,6 +38,9 @@ func FuzzAuthorizationDetailRARDefinition(f *testing.F) {
 	f.Add(minted, minted, minted)
 	f.Add(bare, minted, `{"type":"openid_credential","credential_configuration_id":"pid","credential_identifiers":["victim"]}`)
 	f.Add(bare+","+other, minted+","+other, other)
+	f.Add(bare, minted, `{"type":"openid_credential","credential_configuration_id":"pid","claims":[{"path":["given_name"]}]}`)
+	f.Add(bare, minted, `{"type":"openid_credential","credential_configuration_id":"pid","locations":["https://issuer.example"]}`)
+	f.Add(minted, `{"type":"openid_credential","credential_configuration_id":"pid","credential_identifiers":["a"]}`, bare)
 	f.Add(`{"type":"openid_credential"}`, `{"type":"x"}`, `{}`)
 	f.Add(`{"type":"openid_credential","credential_configuration_id":"pid","credential_identifiers":["a","a"]}`, `null`, `1`)
 	f.Fuzz(func(t *testing.T, requestedObjs, grantedObjs, narrowedObjs string) {
@@ -63,6 +67,12 @@ func FuzzAuthorizationDetailRARDefinition(f *testing.F) {
 				if held := rarIdentifiersFor(grantDetails, d.CredentialConfigurationID); !rarSubset(d.CredentialIdentifiers, held) {
 					t.Fatalf("narrowing accepted identifiers %q for %q, the grant holds %q",
 						d.CredentialIdentifiers, d.CredentialConfigurationID, held)
+				}
+				if len(d.Locations) == 0 && rarAllCarry(grantDetails, d.CredentialConfigurationID, func(g oid4vci.AuthorizationDetail) bool { return len(g.Locations) > 0 }) {
+					t.Fatalf("narrowing accepted %q without the grant's locations", d.CredentialConfigurationID)
+				}
+				if len(d.Claims) == 0 && rarAllCarry(grantDetails, d.CredentialConfigurationID, func(g oid4vci.AuthorizationDetail) bool { return len(g.Claims) > 0 }) {
+					t.Fatalf("narrowing accepted %q without the grant's claims", d.CredentialConfigurationID)
 				}
 			}
 		}
@@ -103,6 +113,21 @@ func rarIdentifiersFor(ds []oid4vci.AuthorizationDetail, id string) []string {
 		}
 	}
 	return out
+}
+
+// rarAllCarry reports whether ds hold an object for the configuration
+// id and every such object satisfies carries.
+func rarAllCarry(ds []oid4vci.AuthorizationDetail, id string, carries func(oid4vci.AuthorizationDetail) bool) bool {
+	found := false
+	for _, d := range ds {
+		if d.CredentialConfigurationID == id {
+			if !carries(d) {
+				return false
+			}
+			found = true
+		}
+	}
+	return found
 }
 
 func rarSubset(sub, super []string) bool {
