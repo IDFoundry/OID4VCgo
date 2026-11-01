@@ -267,9 +267,12 @@ func (VerifiedPreAuthorizedCode) isPreAuthorizedCodeClientAuthentication() {
 }
 
 // VerifiedTokenRequest is what the Authorization Server verified about a
-// Token Request, for VerifiedPreAuthorizedCode.
+// Token Request, under either PreAuthorizedCodeClientAuthentication:
+// VerifiedPreAuthorizedCode or AnonymousPreAuthorizedCode.
 type VerifiedTokenRequest struct {
-	// ClientID is the authenticated client. REQUIRED.
+	// ClientID is the authenticated client. REQUIRED under
+	// VerifiedPreAuthorizedCode; under AnonymousPreAuthorizedCode, which
+	// authenticates no client, it must be "".
 	ClientID string
 
 	// DPoPThumbprint is the RFC 7638 thumbprint of the key the request's
