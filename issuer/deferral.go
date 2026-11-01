@@ -66,9 +66,9 @@ var ErrDeferredProofKey = errors.New("issuer: a proof key behind the deferred tr
 // ErrDeferredProofKeyTrustUnknown is returned, wrapped with the reason,
 // by IssueDeferredCredential when whether a binding key a jwt proof
 // conveyed by kid or x5c is still trusted couldn't be decided now (its
-// certificate's revocation, say: see ProofBindingKeyResolver), and none
-// is known not to be. The transaction stays pending, as for
-// ErrDeferredAttestationStatusUnknown.
+// certificate's revocation, or a resolver's ErrProofKeyTrustUndecided:
+// see ProofBindingKeyResolver), and none is known not to be. The
+// transaction stays pending, as for ErrDeferredAttestationStatusUnknown.
 var ErrDeferredProofKeyTrustUnknown = errors.New("issuer: the trust of a proof key behind the deferred transaction can't be decided now")
 
 // ErrDeferredTransactionResolved is returned by IssueDeferredCredential

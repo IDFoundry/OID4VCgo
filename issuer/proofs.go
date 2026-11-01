@@ -583,18 +583,21 @@ func (iss *Issuer) requestAttestationStatus(ctx context.Context, verified Verifi
 	}
 }
 
-// trustUndecided reports whether err, from Dependencies.AttestationVerifier,
-// says a key attestation's signer couldn't be judged now, rather than
-// that it isn't trusted: a revocation check that couldn't decide
+// trustUndecided reports whether err, from Dependencies.AttestationVerifier
+// or Dependencies.ProofBindingKeys, says a key attestation's signer or
+// a proof key couldn't be judged now, rather than that it isn't
+// trusted: a revocation check that couldn't decide
 // (certrevocation.ErrNoCurrentCRL, or any error but
-// certrevocation.ErrRevoked from an X5CAttestationVerifier's
-// Revocation) or a context that ended. A revoked certificate, an
-// untrusted chain or anything else is a refusal.
+// certrevocation.ErrRevoked from an X5C verifier's Revocation), a
+// resolver's ErrProofKeyTrustUndecided or a context that ended. A
+// revoked certificate, an untrusted chain or anything else is a
+// refusal.
 func trustUndecided(err error) bool {
 	if errors.Is(err, certrevocation.ErrRevoked) {
 		return false
 	}
 	return errors.Is(err, certchain.ErrRevocationUndecided) || errors.Is(err, certrevocation.ErrNoCurrentCRL) ||
+		errors.Is(err, ErrProofKeyTrustUndecided) ||
 		errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 

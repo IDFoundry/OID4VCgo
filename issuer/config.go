@@ -539,9 +539,23 @@ type AttestationVerifier interface {
 // today only because internal/jose's own type-safe per-algorithm
 // dispatch happens to reject any key whose type doesn't match the
 // claimed algorithm, not because the resolver contract made it safe.
+//
+// An error refuses the key as untrusted (invalid_proof, and a deferred
+// transaction's re-check denies the transaction, ErrDeferredProofKey),
+// unless it says trust couldn't be decided now: it wraps
+// ErrProofKeyTrustUndecided (a DID Document's host answering 503, say),
+// certrevocation.ErrNoCurrentCRL, or context.Canceled or
+// context.DeadlineExceeded, and not certrevocation.ErrRevoked. That is
+// answered with a server error (500) instead, and leaves a deferred
+// transaction pending (ErrDeferredProofKeyTrustUnknown).
 type ProofBindingKeyResolver interface {
 	ResolveProofBindingKey(ctx context.Context, header map[string]any) (crypto.PublicKey, oid4vci.JOSEAlg, error)
 }
+
+// ErrProofKeyTrustUndecided is wrapped by a ProofBindingKeyResolver's
+// error to say a proof key's trust couldn't be decided now, rather than
+// that it isn't trusted: see ProofBindingKeyResolver.
+var ErrProofKeyTrustUndecided = errors.New("issuer: the proof key's trust can't be decided now")
 
 // CredentialDPoPNonceIssuer issues a DPoP nonce the Credential Endpoint
 // will accept. fapigo/resource's *Verifier implements it
