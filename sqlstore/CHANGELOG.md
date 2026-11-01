@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.2.1](https://github.com/IDFoundry/OID4VCgo/compare/sqlstore/v0.2.0...sqlstore/v0.2.1) (2026-11-01)
+
+
+### Bug Fixes
+
+* **sqlstore:** answer an ID Postgres can't hold as not found ([9207ea4](https://github.com/IDFoundry/OID4VCgo/commit/9207ea46a29ba1814bf50332d5a9a5cc09172e80))
+* **sqlstore:** check a pre-authorized code's tx_code_hash column against its sealed record ([65e68e0](https://github.com/IDFoundry/OID4VCgo/commit/65e68e07ed410ffbdbc3dc7df17ca296eb60c4f6))
+* **sqlstore:** document RotatingSealer as the way to change the sealing key ([738bdde](https://github.com/IDFoundry/OID4VCgo/commit/738bddeaa33fa7f2b6a2ba60c92917fa39e20cd1))
+* **sqlstore:** leave expired wallet authorizations to walletflow in Sweep ([f4afca7](https://github.com/IDFoundry/OID4VCgo/commit/f4afca70f94cd664eabc5cfeab18055fb3d93cbd))
+* **sqlstore:** pin Postgres writes to READ COMMITTED; honour ctx waiting for SQLite writes ([e4184a3](https://github.com/IDFoundry/OID4VCgo/commit/e4184a326ccb4772d4891a1e4dd7c71f3cd354fc))
+
 ## [0.2.0](https://github.com/IDFoundry/OID4VCgo/compare/sqlstore/v0.1.0...sqlstore/v0.2.0) (2026-11-01)
 
 
