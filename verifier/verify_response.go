@@ -262,10 +262,11 @@ type VerifiedCredential struct {
 	// MdocStatus is an "mso_mdoc" credential's revocation reference,
 	// from its issuer-signed MSO (ISO/IEC 18013-5 §12.3.6) — nil for
 	// "dc+sd-jwt", whose reference is Claims["status"], and for an mdoc
-	// without one. VerifyResponse doesn't check revocation itself:
-	// StatusListRef reads this (or Claims["status"]) as one reference,
-	// and statuslist.Checker fetches and checks it; an identifier list
-	// is identifierlist.Checker's (RequireValidStatus does both).
+	// without one. VerifyResponse checks it only with a StatusPolicy
+	// (VerifyResponseRequest.Status, TransactionsConfig.Status), which
+	// checks a status list with statuslist.Checker and an identifier
+	// list with identifierlist.Checker; StatusListRef reads this (or
+	// Claims["status"]) as one reference.
 	MdocStatus *mdoc.Status
 
 	// IssuerChain is the credential's issuer certificate chain (DER,

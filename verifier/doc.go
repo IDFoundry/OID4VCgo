@@ -48,8 +48,10 @@
 // TransactionCodec encodes one, and with a TransactionSealer
 // (AESGCMSealer) seals what it holds of the holder's — the response
 // decryption key and the disclosed claims — so the store's copy reveals
-// neither. TransactionsConfig.ForgetResultOnRead drops the claims as
-// soon as they've been read.
+// neither. The record's other fields stay readable and unprotected:
+// the store is trusted for their integrity.
+// TransactionsConfig.ForgetResultOnRead drops the claims as soon as
+// they've been read.
 //
 // Transactions checks a Digital Credentials API request's origin
 // against TransactionsConfig.Origins, its allow-list, normalized as the

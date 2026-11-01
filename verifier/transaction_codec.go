@@ -50,13 +50,21 @@ const TransactionCodecVersion = 1
 // claims once they've been read, so the store holds them for as little
 // time as possible.
 //
+// Sealing gives the response decryption key and Result confidentiality
+// and binds each to its transaction; it doesn't protect the readable
+// fields. Someone who can write to the store but hasn't the key can't
+// read or forge a sealed field, but can change a record's status,
+// owner, same_device, browser binding hash or query, so the store must
+// still be trusted for those fields' integrity.
+//
 // The zero TransactionCodec seals nothing.
 type TransactionCodec struct {
 	// Sealer, if set, seals the response decryption key and Result.
-	// Unmarshal then refuses a record whose fields aren't sealed, and a
-	// codec without one refuses a record whose are: a store that starts
-	// sealing doesn't read the records it wrote before — at most
-	// TransactionsConfig.Lifetime's worth, twice over.
+	// Unmarshal then refuses a record whose fields aren't sealed, a
+	// plaintext result among them, and a codec without one refuses a
+	// record whose are: a store that starts sealing doesn't read the
+	// records it wrote before — at most TransactionsConfig.Lifetime's
+	// worth, twice over.
 	Sealer TransactionSealer
 }
 
@@ -64,7 +72,8 @@ type TransactionCodec struct {
 // TransactionCodec — an AEAD, such as AESGCMSealer, or a call to a key
 // management service. Open must refuse sealed data altered in any way,
 // or sealed with other additionalData: that's what binds each sealed
-// field to its transaction.
+// field to its transaction. It protects only those fields: the
+// record's other fields stay as the store keeps them.
 type TransactionSealer interface {
 	Seal(plaintext, additionalData []byte) ([]byte, error)
 	Open(sealed, additionalData []byte) ([]byte, error)
@@ -205,6 +214,12 @@ func (c TransactionCodec) Unmarshal(data []byte) (Transaction, error) {
 		return Transaction{}, fmt.Errorf("verifier: unmarshal transaction: status %d isn't one a store holds", w.Status)
 	case w.Sealed != (c.Sealer != nil):
 		return Transaction{}, fmt.Errorf("verifier: unmarshal transaction: the record is sealed: %t, and the codec has a sealer: %t", w.Sealed, c.Sealer != nil)
+	case c.Sealer != nil && len(w.Result) != 0:
+		// A plaintext result in a sealed record wasn't written with the
+		// key: claims anyone who can write to the store could make up.
+		return Transaction{}, errors.New("verifier: unmarshal transaction: the record is sealed but its result isn't")
+	case c.Sealer == nil && w.SealedResult != nil:
+		return Transaction{}, errors.New("verifier: unmarshal transaction: the record isn't sealed but its result is")
 	}
 	tx := Transaction{
 		ID: w.ID, KeyID: w.KeyID, State: w.State, Nonce: w.Nonce, Query: w.Query, RequestObject: w.RequestObject,

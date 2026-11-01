@@ -235,6 +235,34 @@ func TestTransactionCodec_Sealed(t *testing.T) {
 	if _, err := sealing.Unmarshal(plainRow); err == nil {
 		t.Error("a sealing codec read an unsealed record")
 	}
+
+	// A sealed record's result can't be replaced by a plaintext one,
+	// written without the key, nor an unsealed record given a sealed one.
+	var plain map[string]any
+	if err := json.Unmarshal(plainRow, &plain); err != nil {
+		t.Fatal(err)
+	}
+	for name, change := range map[string]struct {
+		codec     verifier.TransactionCodec
+		record    map[string]any
+		drop, add string
+		value     any
+	}{
+		"plaintext result for a sealed one":    {sealing, a, "sealed_result", "result", plain["result"]},
+		"plaintext result beside a sealed one": {sealing, a, "", "result", plain["result"]},
+		"sealed result in an unsealed record":  {verifier.TransactionCodec{}, plain, "result", "sealed_result", a["sealed_result"]},
+	} {
+		changed := map[string]any{}
+		for k, v := range change.record {
+			changed[k] = v
+		}
+		delete(changed, change.drop)
+		changed[change.add] = change.value
+		changedRow, _ := json.Marshal(changed)
+		if _, err := change.codec.Unmarshal(changedRow); err == nil {
+			t.Errorf("%s: Unmarshal accepted it", name)
+		}
+	}
 	if _, err := (verifier.TransactionCodec{}).Unmarshal(row); err == nil {
 		t.Error("a codec without a sealer read a sealed record")
 	}

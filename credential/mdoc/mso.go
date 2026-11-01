@@ -77,7 +77,8 @@ type Status struct {
 // fetching the identifier list and checking ID's membership — is the
 // caller's, with package identifierlist (identifierlist.Ref converts
 // from this type, and IdentifierListTrust binds the list's signer), or
-// verifier.RequireValidStatus for a presented mdoc.
+// for a presented mdoc a verifier.StatusPolicy (TransactionsConfig.Status,
+// mdocdcapi.VerifyParams.Status, proximity.WithStatus).
 //
 // Issue refuses a reference with no ID or URI, or whose Certificate
 // isn't an X.509 certificate (see validate).
