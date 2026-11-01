@@ -25,10 +25,15 @@ const (
 	// KeyPurposeDPoP signs DPoP proofs; the access token is bound to
 	// it. One per issuance.
 	KeyPurposeDPoP KeyPurpose = "dpop"
-	// KeyPurposeHolder is the key a credential is bound to: it signs
-	// the Key Binding JWT or mdoc DeviceAuth when presenting. One per
-	// credential. A KeyStore may require user presence to sign with it;
-	// walletflow signs with a holder key only when presenting.
+	// KeyPurposeHolder is the key a credential copy is bound to. One
+	// per copy. It signs the Key Binding JWT or mdoc DeviceAuth when
+	// presenting, and when receiving or refreshing a credential, the
+	// Credential Request's proof: each copy's key signs its own jwt
+	// proof, or, when the jwt proof carries a key attestation, the
+	// first copy's key signs the one proof. With the attestation proof
+	// type, no holder key signs at issuance. A KeyStore may require
+	// user presence to sign with it: a refresh then needs the holder
+	// too.
 	KeyPurposeHolder KeyPurpose = "holder"
 )
 

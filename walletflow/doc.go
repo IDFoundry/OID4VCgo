@@ -195,7 +195,8 @@
 // link. With Config.RequestRefresh, the authorization code
 // grant asks for a refresh token (offline_access), kept in a GrantStore,
 // and w.RefreshCredential(ctx, id) replaces a credential's copies with a
-// fresh batch without the holder (OpenID4VCI 1.0 §13.5); when it can't
+// fresh batch without the holder signing in (OpenID4VCI 1.0 §13.5),
+// though new holder keys sign its proofs; when it can't
 // (ErrReissueRequired), receive the credential again from a new offer.
 //
 // Every key walletflow creates is P-256 (ES256). Each issuance uses a

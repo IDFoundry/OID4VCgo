@@ -9,8 +9,9 @@ public enum KeyPurpose: String, Sendable, CaseIterable {
     /// The key access tokens are bound to; it signs silently, on every
     /// request to the issuer.
     case dpop
-    /// The key a credential is bound to; it signs only when presenting,
-    /// and may require user presence.
+    /// The key a credential copy is bound to; it signs when presenting,
+    /// and the Credential Request's jwt proof when receiving or
+    /// refreshing, and may require user presence.
     case holder
 }
 

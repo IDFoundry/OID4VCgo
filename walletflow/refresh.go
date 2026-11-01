@@ -17,13 +17,14 @@ import (
 )
 
 // RefreshGrant is what an issuance keeps to refresh its credentials
-// later without the holder (OpenID4VCI 1.0 §14.5): the refresh token the
-// Authorization Server issued, and how the wallet authenticated when it
-// did, which every refresh must do again. With a Wallet Attestation
-// that's the wallet instance key the attestation was bound to
-// (draft-ietf-oauth-attestation-based-client-auth-07 §10.3); with no
-// client authentication, a public client's refresh token is bound to
-// the DPoP key instead (RFC 9449 §5). It's a secret, like a credential.
+// later without the holder signing in (OpenID4VCI 1.0 §14.5): the
+// refresh token the Authorization Server issued, and how the wallet
+// authenticated when it did, which every refresh must do again. With a
+// Wallet Attestation that's the wallet instance key the attestation was
+// bound to (draft-ietf-oauth-attestation-based-client-auth-07 §10.3);
+// with no client authentication, a public client's refresh token is
+// bound to the DPoP key instead (RFC 9449 §5). It's a secret, like a
+// credential.
 type RefreshGrant struct {
 	ID string
 	// CredentialIssuer and AuthorizationServer are where the credentials
@@ -233,10 +234,11 @@ func (w *Wallet) lockGrant(id string) func() {
 }
 
 // RefreshCredential replaces the copies of the credential id names with
-// a fresh batch, without the holder (OpenID4VCI 1.0 §13.5): it redeems
-// the refresh token its issuance kept (Config.RequestRefresh), with the
-// same wallet instance key, and requests the credential again, each
-// copy bound to a new holder key the Wallet Provider attests. The
+// a fresh batch, without the holder signing in (OpenID4VCI 1.0 §13.5):
+// it redeems the refresh token its issuance kept (Config.RequestRefresh),
+// with the same wallet instance key, and requests the credential again,
+// each copy bound to a new holder key, proved as at issuance: a KeyStore
+// requiring user presence for holder keys asks the holder then. The
 // credential keeps its ID; the old copies, and their holder keys, are
 // gone. Use it when CopiesLeft runs low, so each presentation can still
 // use a copy no Verifier has seen.

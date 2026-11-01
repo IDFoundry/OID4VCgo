@@ -139,9 +139,6 @@ const (
 	revocationStatus         = "status"
 )
 
-// revocationRoles checks roles, the configuration key key's list of
-// revocation roles, names only roles in known, each once, and returns
-// whether each known role is named.
 // revocationChoice is the revocation check of role, whose roots are
 // configuration keys keys, set (inUse) or not: crls' checker when the
 // configuration's "revocation" names it (named), certrevocation.NoCheck
@@ -162,6 +159,9 @@ func revocationChoice(role, keys string, inUse bool, named, declined map[string]
 	return nil, nil
 }
 
+// revocationRoles checks roles, the configuration key key's list of
+// revocation roles, names only roles in known, each once, and returns
+// whether each known role is named.
 func revocationRoles(key string, roles []string, known ...string) (map[string]bool, error) {
 	named := make(map[string]bool, len(roles))
 	for _, r := range roles {

@@ -161,16 +161,19 @@ public class AndroidKeystoreKeyStore(
         /**
          * Require the holder's biometrics or screen lock for each
          * signature by a holder key: to present a credential, and to
-         * sign each Credential Request's jwt proof, so receiving and
-         * refreshing credentials ask too, once per Credential Request,
-         * even when an app refreshes without the holder. Keystore
-         * enforces it. Off, an app wanting the holder to confirm only
-         * presentations asks for it itself (BiometricPrompt) before
-         * presenting: a check the app's own code keeps, not the key.
-         * It needs a secure lock screen; without one, creating a holder
-         * key fails. It needs API 30: below it the key store refuses it
-         * at construction; set it false there, and authenticate the
-         * holder in the app before presenting.
+         * sign the Credential Request's jwt proofs, so receiving and
+         * refreshing credentials ask too — once per copy
+         * ([WalletConfiguration.batchSize]), or once per Credential
+         * Request when its jwt proof carries a key attestation — and a
+         * refresh can't run without the holder. Keystore enforces it.
+         * Off, the app asks for it itself (BiometricPrompt) before every
+         * presentation — in the app, from a link, through Credential
+         * Manager, and in person over QR, BLE or NFC — a check the app's
+         * own code keeps, not the key. It needs a secure lock screen;
+         * without one, creating a holder key fails. It needs API 30:
+         * below it the key store refuses it at construction; set it
+         * false there, and authenticate the holder in the app before
+         * every presentation.
          */
         val holderUserAuthentication: Boolean = true,
         /**
