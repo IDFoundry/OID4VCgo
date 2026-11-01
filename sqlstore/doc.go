@@ -129,9 +129,11 @@
 // c_nonce, an authorization in progress and a deferred transaction's
 // Invalidate are one DELETE (… RETURNING); a pre-authorized code's
 // Consume, and every Update, reads the row with SELECT … FOR UPDATE on
-// Postgres, or after BEGIN IMMEDIATE on SQLite, and writes it in the
-// same transaction. So the guarantees hold across every process sharing
-// the database, not just within one. Update callbacks are called once.
+// Postgres, in a READ COMMITTED transaction whatever the server's
+// default isolation, or after BEGIN IMMEDIATE on SQLite, and writes it
+// in the same transaction. So the guarantees hold across every process
+// sharing the database, not just within one. Update callbacks are
+// called once.
 // A store that couldn't answer (the database unreachable, a timeout, a
 // cancelled context) returns that error, never the interface's
 // not-found error, which the issuer and verifier answer as the

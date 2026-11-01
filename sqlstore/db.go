@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -19,8 +18,9 @@ const (
 	_ Dialect = iota
 
 	// Postgres is PostgreSQL, 13 or later, through any database/sql
-	// driver (github.com/jackc/pgx/v5/stdlib, say). A transaction locks
-	// the rows it changes with SELECT … FOR UPDATE.
+	// driver (github.com/jackc/pgx/v5/stdlib, say). A transaction runs
+	// at READ COMMITTED, whatever the server's default, and locks the
+	// rows it changes with SELECT … FOR UPDATE.
 	Postgres
 
 	// SQLite is SQLite, 3.35 or later, through any database/sql driver
@@ -69,9 +69,10 @@ type DB struct {
 	sealer Sealer
 
 	// sqliteWrites serializes this DB's own SQLite transactions, which
-	// would otherwise only wait on SQLite's busy handler for each other.
-	// Other processes, and other DBs on the same file, still do.
-	sqliteWrites sync.Mutex
+	// would otherwise only wait on SQLite's busy handler for each other:
+	// a write holds its one slot. Other processes, and other DBs on the
+	// same file, still wait on the busy handler.
+	sqliteWrites chan struct{}
 }
 
 // New returns a DB using db, a database of dialect. It doesn't touch the
@@ -88,7 +89,7 @@ func New(db *sql.DB, dialect Dialect, opts Options) (*DB, error) {
 	if dialect == SQLite {
 		q = &sqliteQueries
 	}
-	return &DB{db: db, dialect: dialect, sql: q, sealer: opts.Sealer}, nil
+	return &DB{db: db, dialect: dialect, sql: q, sealer: opts.Sealer, sqliteWrites: make(chan struct{}, 1)}, nil
 }
 
 // Dialect is the database's dialect.
@@ -102,6 +103,14 @@ type querier interface {
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
+// postgresTx is a Postgres write's transaction: READ COMMITTED, as the
+// stores' locking assumes, whatever the server's
+// default_transaction_isolation says. The SELECT … FOR UPDATE each
+// takes makes a row's concurrent writers run one after another; at a
+// stricter level, the later one would fail with a serialization error
+// instead of seeing the earlier one's change.
+var postgresTx = &sql.TxOptions{Isolation: sql.LevelReadCommitted}
+
 // write runs fn in a transaction that holds the write lock on whatever
 // rows fn locks (Postgres) or on the database (SQLite), committing it
 // if fn returns nil and rolling it back otherwise.
@@ -109,7 +118,7 @@ func (d *DB) write(ctx context.Context, fn func(q querier) error) error {
 	if d.dialect == SQLite {
 		return d.sqliteWrite(ctx, fn)
 	}
-	tx, err := d.db.BeginTx(ctx, nil)
+	tx, err := d.db.BeginTx(ctx, postgresTx)
 	if err != nil {
 		return err
 	}
@@ -135,8 +144,12 @@ func (d *DB) writeOne(ctx context.Context, fn func(q querier) error) error {
 // BEGIN IMMEDIATE, so this takes a connection and issues the
 // transaction's statements itself.
 func (d *DB) sqliteWrite(ctx context.Context, fn func(q querier) error) (err error) {
-	d.sqliteWrites.Lock()
-	defer d.sqliteWrites.Unlock()
+	select {
+	case d.sqliteWrites <- struct{}{}:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	defer func() { <-d.sqliteWrites }()
 	conn, err := d.db.Conn(ctx)
 	if err != nil {
 		return err
