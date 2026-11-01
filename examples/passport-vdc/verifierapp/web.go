@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/idfoundry/oid4vcgo/dcql"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/credential"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/demoqr"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/demoui"
@@ -19,8 +20,10 @@ import (
 
 // HTTP header names and values the pages use.
 const (
-	headerContentType = "Content-Type"
-	contentTypeHTML   = "text/html; charset=utf-8"
+	headerContentType  = "Content-Type"
+	contentTypeHTML    = "text/html; charset=utf-8"
+	headerCacheControl = "Cache-Control"
+	noStore            = "no-store"
 )
 
 func (a *App) routes() http.Handler {
@@ -428,7 +431,7 @@ func (a *App) handleRequestPage(w http.ResponseWriter, r *http.Request) {
 	}
 	page := a.requestPageFor(r.Context(), s)
 	// The page carries the verified claims; keep it out of caches.
-	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set(headerCacheControl, noStore)
 	w.Header().Set(headerContentType, contentTypeHTML)
 	_ = requestTemplate.Execute(w, page)
 }
@@ -474,7 +477,7 @@ type requestStatus struct {
 // same session binding as the page: another browser's, an expired or
 // an unknown request is "ended", with a 404, as the page itself is.
 func (a *App) handleRequestStatus(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set(headerCacheControl, noStore)
 	w.Header().Set(headerContentType, "application/json")
 	s, ok := a.session(r.PathValue("id"))
 	if !ok || !sameBrowser(r, s) {
@@ -507,13 +510,7 @@ func (a *App) requestPageFor(ctx context.Context, s *session) requestPage {
 	}
 	page.Polling = page.State == stateWaiting || page.State == stateAwaiting
 	page.ExpiresInMinutes = (page.ExpiresIn + 59) / 60
-	if a.cfg.WebWalletURL != "" {
-		sameDevice := s.cross.link
-		if s.same.id != "" {
-			sameDevice = s.same.link
-		}
-		page.WebWalletLink = a.cfg.WebWalletURL + "/present?request=" + url.QueryEscape(sameDevice)
-	}
+	page.WebWalletLink = a.webWalletLink(s)
 	if page.Outcome == nil {
 		if qr, err := demoqr.DataURI(s.cross.link); err == nil {
 			page.QR = qr
@@ -524,23 +521,16 @@ func (a *App) requestPageFor(ctx context.Context, s *session) requestPage {
 	if len(people) == 0 {
 		people = []Person{{Format: page.Outcome.Format, Claims: page.Outcome.Claims, Status: page.Outcome.Status, ICAO: page.Outcome.ICAO}}
 	}
-	query, queryErr := a.query(s.scenario)
+	var query *dcql.Query
+	if q, err := a.query(s.scenario); err == nil {
+		query = &q
+	}
 	page.AllValid = true
 	var statuses []string
 	for i, p := range people {
-		v := personView{Heading: "Disclosed by the wallet", Format: p.Format, Status: p.Status, ICAO: p.ICAO}
+		v := personViewFor(query, p)
 		if info.Multiple {
 			v.Heading = personHeading(i, p)
-		}
-		v.Rows, v.Raw = demoui.DisplayRows(p.Format, p.Claims)
-		if queryErr == nil {
-			v.Asked = askedFor(query, p.Format, p.Claims)
-		}
-		v.Received = demoui.DisclosedLabels(p.Format, p.Claims)
-		for _, l := range v.Received {
-			if !slices.ContainsFunc(v.Asked, func(r requested) bool { return r.Label == l }) {
-				v.Unasked = append(v.Unasked, l)
-			}
 		}
 		if !slices.Contains(page.Formats, p.Format) {
 			page.Formats = append(page.Formats, p.Format)
@@ -551,18 +541,49 @@ func (a *App) requestPageFor(ctx context.Context, s *session) requestPage {
 		if !slices.Contains(statuses, p.Status) {
 			statuses = append(statuses, p.Status)
 		}
-		if uri, ok := credential.PortraitDataURI(p.Claims); ok {
-			v.Portrait = template.URL(uri) // #nosec G203 -- built by PortraitDataURI from decoded JPEG bytes
-		}
-		if p.ICAO != nil && p.ICAO.Verified {
-			if uri, ok := credential.PortraitDataURI(map[string]any{credential.Portrait: p.ICAO.Portrait}); ok {
-				v.ICAOPortrait = template.URL(uri) // #nosec G203 -- built by PortraitDataURI from decoded JPEG bytes
-			}
-		}
 		page.People = append(page.People, v)
 	}
 	page.StatusSummary = strings.Join(statuses, ", ")
 	return page
+}
+
+// webWalletLink opens s's request in the web wallet, if there's one:
+// its same-device request when it has one.
+func (a *App) webWalletLink(s *session) string {
+	if a.cfg.WebWalletURL == "" {
+		return ""
+	}
+	sameDevice := s.cross.link
+	if s.same.id != "" {
+		sameDevice = s.same.link
+	}
+	return a.cfg.WebWalletURL + "/present?request=" + url.QueryEscape(sameDevice)
+}
+
+// personViewFor is how the result page shows p, one credential
+// presented: what query, the scenario's request (nil if unknown), asked
+// for, what p disclosed, and its portraits.
+func personViewFor(query *dcql.Query, p Person) personView {
+	v := personView{Heading: "Disclosed by the wallet", Format: p.Format, Status: p.Status, ICAO: p.ICAO}
+	v.Rows, v.Raw = demoui.DisplayRows(p.Format, p.Claims)
+	if query != nil {
+		v.Asked = askedFor(*query, p.Format, p.Claims)
+	}
+	v.Received = demoui.DisclosedLabels(p.Format, p.Claims)
+	for _, l := range v.Received {
+		if !slices.ContainsFunc(v.Asked, func(r requested) bool { return r.Label == l }) {
+			v.Unasked = append(v.Unasked, l)
+		}
+	}
+	if uri, ok := credential.PortraitDataURI(p.Claims); ok {
+		v.Portrait = template.URL(uri) // #nosec G203 -- built by PortraitDataURI from decoded JPEG bytes
+	}
+	if p.ICAO != nil && p.ICAO.Verified {
+		if uri, ok := credential.PortraitDataURI(map[string]any{credential.Portrait: p.ICAO.Portrait}); ok {
+			v.ICAOPortrait = template.URL(uri) // #nosec G203 -- built by PortraitDataURI from decoded JPEG bytes
+		}
+	}
+	return v
 }
 
 // personHeading heads the i'th credential of a presentation taking
@@ -605,7 +626,7 @@ var requestEndedTemplate = demoui.Parse("ended", pageFuncs, pageParts+pageHead+`
 
 func writeRequestEnded(w http.ResponseWriter) {
 	w.Header().Set(headerContentType, contentTypeHTML)
-	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set(headerCacheControl, noStore)
 	w.WriteHeader(http.StatusNotFound)
 	_ = requestEndedTemplate.Execute(w, nil)
 }

@@ -715,9 +715,9 @@ func New(cfg Config, deps Dependencies) (*Issuer, error) {
 		validateOptionalEndpointDependencies(cfg, deps),
 		validatePreAuthorizedCodeDependencies(cfg, deps),
 		validateEncryption(cfg),
-		prefixError("issuer: dependencies: ", validateSignerDependencies(cfg, deps)),
-		prefixError("issuer: dependencies: ", validateAttestationVerifier(deps.AttestationVerifier)),
-		prefixError("issuer: dependencies: ", validateProofBindingKeys(deps.ProofBindingKeys)),
+		prefixError(dependenciesPrefix, validateSignerDependencies(cfg, deps)),
+		prefixError(dependenciesPrefix, validateAttestationVerifier(deps.AttestationVerifier)),
+		prefixError(dependenciesPrefix, validateProofBindingKeys(deps.ProofBindingKeys)),
 	)
 	if deps.Random == nil {
 		errs = append(errs, fmt.Errorf("issuer: dependencies: random is required"))
@@ -802,6 +802,9 @@ func validateConfig(cfg Config) []error {
 	}
 	return errs
 }
+
+// dependenciesPrefix starts each error about Dependencies.
+const dependenciesPrefix = "issuer: dependencies: "
 
 // validateOptionalEndpointDependencies checks that Dependencies carries
 // whichever store each optional endpoint (Nonce/CredentialOffer/
