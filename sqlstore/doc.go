@@ -102,8 +102,7 @@
 //     data of its own, so a record one sealed never opens as the
 //     other's. AES-GCM with random nonces allows about 2^32 seals per
 //     key, which a busy issuer reaches in weeks: rotate before then
-//     with fapigo/sqlstore's RotatingSealer, which takes this
-//     package's Sealer too.
+//     with fapigo/sqlstore's RotatingSealer (see Secrets at rest).
 //   - The Credential Endpoint, run apart from the Authorization
 //     Server, gets a database role of its own: SELECT on FAPIgo's
 //     access_tokens, revocations and schema_migrations, SELECT and
@@ -178,10 +177,15 @@
 //
 // A DB reads only records written as it would write them, sealed under
 // its key or not sealed at all (ErrRecordFormat otherwise): to start
-// sealing, or change the key, start from empty tables, or keep the old
-// DB for reading until its records have expired. Changing the key
-// makes every record sealed under the old one unreadable, a wallet's
-// keys and credentials included.
+// sealing, start from empty tables. To change the key, wrap the new
+// Sealer and the previous one with fapigo/sqlstore's RotatingSealer,
+// which takes this package's Sealer: it seals with the new key and
+// opens with either. There is no pass here that re-seals records under
+// the new key, so keep the previous one for as long as records it
+// sealed exist. Issuer records expire and are swept, but a wallet's
+// credentials, refresh grants and keys never expire: while a wallet
+// keeps any sealed under the previous key, dropping that key makes
+// them unreadable, the keys and credentials lost.
 //
 // # Sweeping
 //
@@ -196,7 +200,9 @@
 //
 //   - Use one schema (PostgreSQL) or file (SQLite) per deployment, and
 //     the same one in every process that shares its records. Credential
-//     Issuers may share the issuer tables: every record keeps its Owner.
+//     Issuers may share the issuer tables: every record keeps its Owner
+//     but a Credential Offer, which has none and is found by its
+//     reference alone.
 //   - Don't share a wallet's tables between users: walletflow's
 //     ResumeIssuance finds an authorization by its state alone.
 //   - Back up the database with the Sealer's key kept apart from it.

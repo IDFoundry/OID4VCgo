@@ -94,9 +94,12 @@ binding its records to additional data of its own. Sweep each. See
   decryption key and the verified claims, and leaves the other fields
   (status, owner, same-device flag, browser binding hash, query)
   readable and unprotected, so the database must be trusted for their
-  integrity. Changing the key makes existing records unreadable.
+  integrity. To change the key, use fapigo/sqlstore's `RotatingSealer`,
+  and keep the previous key while records it sealed exist: a wallet's
+  credentials and keys never expire.
 - **Sharing**: Credential Issuers may share the issuer tables (every
-  record keeps its Owner). A wallet's tables belong to one user.
+  record but a Credential Offer, found by its reference alone, keeps
+  its Owner). A wallet's tables belong to one user.
 
 ## Tests
 
