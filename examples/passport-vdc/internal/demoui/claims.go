@@ -103,19 +103,11 @@ func DisplayRows(format string, claims map[string]any) (rows, raw []ClaimRow) {
 	}
 	SortClaims(format, keys)
 	for _, k := range keys {
+		if age, ok := ageClaimRows(k, claims[k]); ok {
+			rows = append(rows, age...)
+			continue
+		}
 		label := ClaimLabel(format, k)
-		if k == credential.SDJWTAgeEqualOrOver {
-			if ages, ok := claims[k].(map[string]any); ok {
-				rows = append(rows, ageRows(ages)...)
-				continue
-			}
-		}
-		if n, ok := strings.CutPrefix(k, ageOverPrefix); ok {
-			if over, isBool := claims[k].(bool); isBool {
-				rows = append(rows, ClaimRow{"Age", ageValue(n, over)})
-				continue
-			}
-		}
 		value, isRaw := FormatClaim(format, k, claims[k])
 		if isRaw || IsCredentialClaim(format, k) {
 			raw = append(raw, ClaimRow{label, value})
@@ -143,6 +135,21 @@ func SortClaims(format string, keys []string) {
 		}
 		return strings.Compare(ClaimLabel(format, a), ClaimLabel(format, b))
 	})
+}
+
+// ageClaimRows are the rows for claim k, value v, if it's an age claim:
+// an SD-JWT VC's age_equal_or_over or an mdoc's age_over_NN.
+func ageClaimRows(k string, v any) ([]ClaimRow, bool) {
+	if k == credential.SDJWTAgeEqualOrOver {
+		ages, ok := v.(map[string]any)
+		return ageRows(ages), ok
+	}
+	if n, ok := strings.CutPrefix(k, ageOverPrefix); ok {
+		if over, isBool := v.(bool); isBool {
+			return []ClaimRow{{"Age", ageValue(n, over)}}, true
+		}
+	}
+	return nil, false
 }
 
 // ageRows are an SD-JWT VC's age_equal_or_over claims, youngest first.
@@ -202,52 +209,63 @@ func FormatClaim(format, key string, v any) (string, bool) {
 	case []byte:
 		return fmt.Sprintf("%d bytes", len(x)), true
 	case string:
-		if len(x) > MaxShown {
-			return fmt.Sprintf("%d characters (base64url)", len(x)), true
-		}
-		if d, ok := FormatDate(x); ok {
-			return d, false
-		}
-		return x, false
+		return formatText(x)
 	case cbor.Tag:
 		if s, ok := x.Content.(string); ok {
-			if d, ok := FormatDate(s); ok {
-				return d, false
-			}
-			return s, false
+			return formatText(s)
 		}
 	case time.Time:
 		return x.UTC().Format(DateLayout), false
 	case []any:
-		parts := make([]string, 0, len(x))
-		for _, e := range x {
-			s, raw := FormatClaim(format, "", e)
-			if raw {
-				return encoded(v), true
-			}
-			parts = append(parts, s)
-		}
-		return strings.Join(parts, ", "), false
+		return formatList(format, x)
 	case map[string]any:
-		// ISO/IEC TS 23220-2's birth_date: the date, and which of its
-		// digits aren't known.
 		if d, ok := x[credential.BirthDate]; ok && key == credential.BirthDate {
-			s, _ := FormatClaim(format, "", d)
-			if _, approximate := x["approximate_mask"]; approximate {
-				s += " (approximate)"
-			}
-			return s, false
+			_, approximate := x["approximate_mask"]
+			return formatBirthDate(format, d, approximate), false
 		}
 	case map[any]any:
 		if d, ok := x[credential.BirthDate]; ok && key == credential.BirthDate {
-			s, _ := FormatClaim(format, "", d)
-			if _, approximate := x["approximate_mask"]; approximate {
-				s += " (approximate)"
-			}
-			return s, false
+			_, approximate := x["approximate_mask"]
+			return formatBirthDate(format, d, approximate), false
 		}
 	}
 	return encoded(v), true
+}
+
+// formatText is a text value, as a date if it's one, and whether it's
+// raw: encoded data too long to show.
+func formatText(s string) (string, bool) {
+	if len(s) > MaxShown {
+		return fmt.Sprintf("%d characters (base64url)", len(s)), true
+	}
+	if d, ok := FormatDate(s); ok {
+		return d, false
+	}
+	return s, false
+}
+
+// formatList is a list's elements, comma separated, unless one is raw:
+// then the whole list is.
+func formatList(format string, list []any) (string, bool) {
+	parts := make([]string, 0, len(list))
+	for _, e := range list {
+		s, raw := FormatClaim(format, "", e)
+		if raw {
+			return encoded(list), true
+		}
+		parts = append(parts, s)
+	}
+	return strings.Join(parts, ", "), false
+}
+
+// formatBirthDate is ISO/IEC TS 23220-2's birth_date: the date d, and
+// whether some of its digits aren't known.
+func formatBirthDate(format string, d any, approximate bool) string {
+	s, _ := FormatClaim(format, "", d)
+	if approximate {
+		s += " (approximate)"
+	}
+	return s
 }
 
 // encoded is a structured value as JSON, or its size when that's long.

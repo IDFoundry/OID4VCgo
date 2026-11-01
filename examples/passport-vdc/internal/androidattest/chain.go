@@ -3,7 +3,7 @@ package androidattest
 import (
 	"bytes"
 	"crypto/x509"
-	_ "embed"
+	_ "embed" // for the //go:embed root certificates below
 	"encoding/pem"
 	"errors"
 	"fmt"

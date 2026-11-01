@@ -191,7 +191,7 @@ func (v offerProgress) status(now time.Time, held bool) offerStatus {
 	if v.preAuthorized {
 		approve = "PIN accepted"
 	}
-	step := func(label string, state string) { st.Steps = append(st.Steps, progressStep{label, state}) }
+	step := func(label, state string) { st.Steps = append(st.Steps, progressStep{label, state}) }
 	switch st.State {
 	case offerWaiting:
 		step("Waiting for the wallet", "current")

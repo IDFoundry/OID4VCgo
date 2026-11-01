@@ -15,6 +15,10 @@ import org.junit.runner.RunWith
 import java.io.File
 import java.util.UUID
 
+private const val RECORD_A = """{"id":"a"}"""
+private const val RECORD_A2 = """{"id":"a","v":2}"""
+private const val RECORD_B = """{"id":"b"}"""
+
 @RunWith(AndroidJUnit4::class)
 class FileCredentialStoreTest {
     private val context = InstrumentationRegistry.getInstrumentation().targetContext
@@ -36,10 +40,10 @@ class FileCredentialStoreTest {
         val s = store()
         assertTrue(s.records().isEmpty())
         assertNull(s.record("a"))
-        s.put("a", """{"id":"a"}""".toByteArray())
-        s.put("b-2_c", """{"id":"b"}""".toByteArray())
-        s.put("a", """{"id":"a","v":2}""".toByteArray())
-        assertArrayEquals("""{"id":"a","v":2}""".toByteArray(), s.record("a"))
+        s.put("a", RECORD_A.toByteArray())
+        s.put("b-2_c", RECORD_B.toByteArray())
+        s.put("a", RECORD_A2.toByteArray())
+        assertArrayEquals(RECORD_A2.toByteArray(), s.record("a"))
         assertEquals(2, s.records().size)
         s.delete("a")
         s.delete("a")
@@ -49,8 +53,8 @@ class FileCredentialStoreTest {
     @Test
     fun compareAndSwap() {
         val s = store()
-        val a = """{"id":"a"}""".toByteArray()
-        val b = """{"id":"a","v":2}""".toByteArray()
+        val a = RECORD_A.toByteArray()
+        val b = RECORD_A2.toByteArray()
         assertNull("swapped into nothing", s.compareAndSwap("a", a, b))
         assertNull(s.record("a"))
         assertNull(s.compareAndSwap("a", null, a))
@@ -154,8 +158,8 @@ class FileCredentialStoreTest {
     @Test
     fun reportsUnreadableRecords() {
         val s = store()
-        s.put("a", """{"id":"a"}""".toByteArray())
-        s.put("b", """{"id":"b"}""".toByteArray())
+        s.put("a", RECORD_A.toByteArray())
+        s.put("b", RECORD_B.toByteArray())
         val file = File(s.directory, "a.rec")
         val bytes = file.readBytes()
         bytes[bytes.size - 1] = (bytes[bytes.size - 1].toInt() xor 1).toByte()
@@ -168,7 +172,7 @@ class FileCredentialStoreTest {
             assertEquals("a", e.id)
         }
         assertEquals(listOf("a"), s.unreadableRecordIDs())
-        assertEquals(listOf("""{"id":"b"}"""), s.records().map { it.decodeToString() })
+        assertEquals(listOf(RECORD_B), s.records().map { it.decodeToString() })
         s.delete("a")
         assertTrue(s.unreadableRecordIDs().isEmpty())
     }
@@ -224,7 +228,7 @@ class FileCredentialStoreTest {
     @Test
     fun keepsRecordsInNewerFormats() {
         val s = store()
-        s.put("a", """{"id":"a"}""".toByteArray())
+        s.put("a", RECORD_A.toByteArray())
         val newer = File(s.directory, "newer.rec").apply { writeBytes(byteArrayOf(3) + ByteArray(120) { it.toByte() }) }
         val newerBytes = newer.readBytes()
         File(s.directory, "short.rec").writeBytes(byteArrayOf(2, 1, 2, 3))
@@ -236,7 +240,7 @@ class FileCredentialStoreTest {
             assertEquals("newer", e.id)
             assertEquals(3, e.version)
         }
-        assertEquals(listOf("""{"id":"a"}"""), s.records().map { it.decodeToString() })
+        assertEquals(listOf(RECORD_A), s.records().map { it.decodeToString() })
         assertEquals(listOf("newer"), s.unsupportedRecordIDs())
         assertEquals(listOf("short"), s.unreadableRecordIDs())
         assertArrayEquals("the newer record was changed", newerBytes, newer.readBytes())
@@ -278,7 +282,7 @@ class FileCredentialStoreTest {
     @Test
     fun aLockedKeystoreIsntDamage() {
         val s = store()
-        s.put("a", """{"id":"a"}""".toByteArray())
+        s.put("a", RECORD_A.toByteArray())
         FileCredentialStore.keystoreFault = { throw android.security.keystore.UserNotAuthenticatedException("locked") }
         for (read in listOf<() -> Any?>({ s.record("a") }, { s.records() }, { s.unreadableRecordIDs() })) {
             try {
@@ -289,7 +293,7 @@ class FileCredentialStoreTest {
             }
         }
         FileCredentialStore.keystoreFault = null
-        assertArrayEquals("""{"id":"a"}""".toByteArray(), s.record("a"))
+        assertArrayEquals(RECORD_A.toByteArray(), s.record("a"))
     }
 
     /** A replacement that doesn't read back fails, and the record it would replace stays. */
@@ -297,7 +301,7 @@ class FileCredentialStoreTest {
     fun aFailedReplacementKeepsTheRecord() {
         val s = store()
         val old = """{"id":"a","v":1}""".toByteArray()
-        val new = """{"id":"a","v":2}""".toByteArray()
+        val new = RECORD_A2.toByteArray()
         s.put("a", old)
         val file = File(s.directory, "a.rec")
         val bytes = file.readBytes()

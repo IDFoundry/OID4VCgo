@@ -129,7 +129,7 @@ func (a *App) handleDCAPIRequest(w http.ResponseWriter, r *http.Request) {
 	if previous != "" {
 		_ = txs.Close(r.Context(), previous)
 	}
-	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set(headerCacheControl, noStore)
 	w.Header().Set(headerContentType, "application/json")
 	_ = json.NewEncoder(w).Encode(struct {
 		Requests []dcapiRequest `json:"requests"`

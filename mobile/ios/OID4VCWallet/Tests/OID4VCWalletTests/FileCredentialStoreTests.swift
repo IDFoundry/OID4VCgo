@@ -25,7 +25,8 @@ final class FileCredentialStoreTests: XCTestCase {
 
     func testCompareAndSwap() throws {
         let s = try store()
-        let a = Data(#"{"id":"a"}"#.utf8), b = Data(#"{"id":"a","v":2}"#.utf8)
+        let a = Data(#"{"id":"a"}"#.utf8)
+        let b = Data(#"{"id":"a","v":2}"#.utf8)
         XCTAssertNil(try s.compareAndSwap(id: "a", expected: a, record: b), "swapped into nothing")
         XCTAssertNil(try s.record(id: "a"))
         XCTAssertNil(try s.compareAndSwap(id: "a", expected: nil, record: a))
@@ -50,12 +51,16 @@ final class FileCredentialStoreTests: XCTestCase {
         let rounds = 50
         DispatchQueue.concurrentPerform(iterations: stores.count * 2) { i in
             let s = stores[i % stores.count]
-            for _ in 0..<rounds {
-                while true {
-                    let current = try! s.record(id: "counter")!
-                    let next = Data(String(Int(String(decoding: current, as: UTF8.self))! + 1).utf8)
-                    if try! s.compareAndSwap(id: "counter", expected: current, record: next) == current { break }
+            do {
+                for _ in 0..<rounds {
+                    while true {
+                        guard let current = try s.record(id: "counter") else { return XCTFail("counter gone") }
+                        let next = Data(String(Int(String(decoding: current, as: UTF8.self))! + 1).utf8)
+                        if try s.compareAndSwap(id: "counter", expected: current, record: next) == current { break }
+                    }
                 }
+            } catch {
+                XCTFail("\(error)")
             }
         }
         XCTAssertEqual(try stores[1].record(id: "counter"), Data(String(stores.count * 2 * rounds).utf8))

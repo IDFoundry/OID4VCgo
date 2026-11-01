@@ -52,7 +52,7 @@ func ExamplePublisher_bothFormats() {
 	fmt.Println("SD-JWT VC references", sdjwtStatus.URI)
 	fmt.Println("mdoc references", mdocStatus.URI)
 
-	served := func(path string, accept string) string {
+	served := func(path, accept string) string {
 		r := httptest.NewRequest(http.MethodGet, path, nil)
 		if accept != "" {
 			r.Header.Set("Accept", accept)

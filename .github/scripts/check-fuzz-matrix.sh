@@ -67,11 +67,11 @@ incomplete=$(echo "$entries" | awk 'NF != 4')
 
 status=0
 report() {
-	echo "$1"
-	local line
+	local heading="$1" lines="$2" line
+	echo "$heading"
 	while IFS= read -r line; do
 		echo "  $line"
-	done <<<"$2"
+	done <<<"$lines"
 	status=1
 }
 [[ -z "$missing" ]] || report "Fuzz targets missing from $workflow's matrix (module pkg name):" "$missing"

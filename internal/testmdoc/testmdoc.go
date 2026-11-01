@@ -28,6 +28,12 @@ import (
 // issues carries.
 const DocType = "org.iso.18013.5.1.mDL"
 
+// Namespace is the namespace holding every Fixture's claims.
+const Namespace = "org.iso.18013.5.1"
+
+// msoError is how a Fixture reports a failure to rebuild its MSO.
+const msoError = "testmdoc: MSO: %v"
+
 // Fixture is a real, freshly issued "mso_mdoc" credential (an mDL
 // carrying given_name/family_name in its own org.iso.18013.5.1
 // namespace) plus the keys behind it.
@@ -63,7 +69,7 @@ func IssueWith(t testing.TB, mutate func(*mdoc.Claims)) Fixture {
 	claims := mdoc.Claims{
 		DocType: DocType,
 		NameSpaces: map[string]map[string]interface{}{
-			"org.iso.18013.5.1": {"given_name": "Alice", "family_name": "Doe"},
+			Namespace: {"given_name": "Alice", "family_name": "Doe"},
 		},
 		DeviceKey: &deviceKey.PublicKey,
 		Signed:    signed,
@@ -101,20 +107,20 @@ func WithMSOStatus(t testing.TB, f Fixture, status any) Fixture {
 	}
 	var mso map[string]cbor.RawMessage
 	if err := cbor.Unmarshal(msoBytes, &mso); err != nil {
-		t.Fatalf("testmdoc: MSO: %v", err)
+		t.Fatalf(msoError, err)
 	}
 	if mso["status"], err = cbor.Marshal(status); err != nil {
 		t.Fatalf("testmdoc: status: %v", err)
 	}
 	if msoBytes, err = cbor.Marshal(mso); err != nil {
-		t.Fatalf("testmdoc: MSO: %v", err)
+		t.Fatalf(msoError, err)
 	}
 	content, err := cbor.Marshal(msoBytes)
 	if err != nil {
-		t.Fatalf("testmdoc: MSO: %v", err)
+		t.Fatalf(msoError, err)
 	}
 	if payload, err = cbor.Marshal(cbor.RawTag{Number: 24, Content: content}); err != nil {
-		t.Fatalf("testmdoc: MSO: %v", err)
+		t.Fatalf(msoError, err)
 	}
 	if f.IssuerSigned.IssuerAuth, err = cose.Sign(cose.ES256, f.IssuerKey, protected, unprotected, payload, []byte{}); err != nil {
 		t.Fatalf("testmdoc: sign IssuerAuth: %v", err)
@@ -132,7 +138,7 @@ func Query(t testing.TB) dcql.Query {
 	}
 	return dcql.Query{Credentials: []dcql.CredentialQuery{{
 		ID: "mdl", Format: mdoc.CredentialFormat, Meta: meta,
-		Claims: []dcql.ClaimsQuery{{Path: dcql.Path{dcql.PathKey("org.iso.18013.5.1"), dcql.PathKey("given_name")}}},
+		Claims: []dcql.ClaimsQuery{{Path: dcql.Path{dcql.PathKey(Namespace), dcql.PathKey("given_name")}}},
 	}}}
 }
 
@@ -143,7 +149,7 @@ func FullQuery(t testing.TB) dcql.Query {
 	t.Helper()
 	query := Query(t)
 	query.Credentials[0].Claims = append(query.Credentials[0].Claims,
-		dcql.ClaimsQuery{Path: dcql.Path{dcql.PathKey("org.iso.18013.5.1"), dcql.PathKey("family_name")}})
+		dcql.ClaimsQuery{Path: dcql.Path{dcql.PathKey(Namespace), dcql.PathKey("family_name")}})
 	return query
 }
 
