@@ -35,6 +35,14 @@ const (
 
 	maxOutstandingChallenges = 10000
 	maxVerifiedKeys          = 10000
+	// maxUnanchoredKeys bounds the verified keys whose chains end at a
+	// root that isn't trusted (an emulator's), kept so their
+	// re-attestations work too; see record.
+	maxUnanchoredKeys = 1000
+	// verifiedKeysSaveInterval is the least time between writes of the
+	// verified keys' file; a stop within it loses only the keys
+	// recorded since the last write, which then need a new challenge.
+	verifiedKeysSaveInterval = 10 * time.Second
 )
 
 // The key purposes a challenge is for, as the Kotlin library names
@@ -101,6 +109,8 @@ type evidence struct {
 	mu          sync.Mutex
 	outstanding map[string]challenge   // by the challenge's bytes
 	verified    map[string]verifiedKey // by the key's JWK thumbprint
+	lastSave    time.Time              // wall clock, of verified's last write to path
+	saveTimer   *time.Timer            // a pending write of verified, if any
 }
 
 type challenge struct {
@@ -109,11 +119,14 @@ type challenge struct {
 }
 
 // verifiedKey is a key whose chain the service verified: its leaf
-// certificate's SHA-256 and its purpose.
+// certificate's SHA-256 and its purpose. Unanchored: the chain ends at
+// a root that isn't a trusted one, such as an emulator's — or one its
+// sender made.
 type verifiedKey struct {
 	Leaf       string    `json:"leaf_sha256"`
 	Purpose    string    `json:"purpose"`
 	VerifiedAt time.Time `json:"verified_at"`
+	Unanchored bool      `json:"unanchored,omitempty"`
 }
 
 // newEvidence makes the checker, loading the keys verified before from
@@ -201,15 +214,16 @@ func (e *evidence) check(purpose string, key *ecdsa.PublicKey, thumbprint string
 		out.Issues = append(out.Issues, fmt.Sprintf("certificates %v outside their validity", a.OutOfValidity))
 	}
 	leaf := sha256.Sum256(a.Leaf.Raw)
-	out.Reattested, err = e.consume(purpose, thumbprint, a.AttestationChallenge, hex.EncodeToString(leaf[:]), now)
+	out.Reattested, err = e.consume(purpose, thumbprint, a.AttestationChallenge, hex.EncodeToString(leaf[:]), a.Anchored, now)
 	return out, err
 }
 
 // consume uses chal for the key with thumbprint and leaf hash leaf:
-// an outstanding challenge for purpose is used up and the key recorded;
-// otherwise the key must be one recorded before with the same leaf
-// (reattested). Anything else is refused.
-func (e *evidence) consume(purpose, thumbprint string, chal []byte, leaf string, now time.Time) (reattested bool, err error) {
+// an outstanding challenge for purpose is used up and the key recorded
+// (anchored: whether its chain ends at a trusted root); otherwise the
+// key must be one recorded before with the same leaf (reattested).
+// Anything else is refused.
+func (e *evidence) consume(purpose, thumbprint string, chal []byte, leaf string, anchored bool, now time.Time) (reattested bool, err error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if c, ok := e.outstanding[string(chal)]; ok {
@@ -220,7 +234,7 @@ func (e *evidence) consume(purpose, thumbprint string, chal []byte, leaf string,
 		case c.purpose != purpose:
 			return false, fmt.Errorf("the attestation challenge was for a %s key", c.purpose)
 		}
-		e.record(thumbprint, verifiedKey{Leaf: leaf, Purpose: purpose, VerifiedAt: now})
+		e.record(thumbprint, verifiedKey{Leaf: leaf, Purpose: purpose, VerifiedAt: now, Unanchored: !anchored})
 		return false, nil
 	}
 	v, ok := e.verified[thumbprint]
@@ -228,29 +242,70 @@ func (e *evidence) consume(purpose, thumbprint string, chal []byte, leaf string,
 		subtle.ConstantTimeCompare([]byte(v.Leaf), []byte(leaf)) == 1 {
 		return true, nil
 	}
-	return false, errors.New("the attestation challenge isn't one this Wallet Provider issued, or it was used")
+	return false, errors.New("the attestation challenge is unknown, used or expired; request a new challenge")
 }
 
-// record remembers a verified key, forgetting expired ones (and, past
-// maxVerifiedKeys, the oldest), and saves them when there's a path; a
-// failure to save is logged, costing only a restart's memory of them.
+// record remembers a verified key, forgetting expired ones, and saves
+// them when there's a path. Anyone can make an unanchored chain — for
+// any public key, under a root of their own — so those keys can't
+// displace the others: an unanchored key never replaces an anchored
+// one's record, unanchored keys are kept to maxUnanchoredKeys, and past
+// maxVerifiedKeys the oldest unanchored key goes first, an anchored one
+// only when none is left (which an unanchored record can't cause).
 // Callers hold e.mu.
 func (e *evidence) record(thumbprint string, v verifiedKey) {
+	if old, ok := e.verified[thumbprint]; ok && v.Unanchored && !old.Unanchored {
+		return
+	}
 	e.verified[thumbprint] = v
-	var oldest string
+	var oldest, oldestUnanchored string
+	unanchored := 0
 	for k, old := range e.verified {
-		if v.VerifiedAt.Sub(old.VerifiedAt) >= VerifiedKeyLifetime {
+		switch {
+		case v.VerifiedAt.Sub(old.VerifiedAt) >= VerifiedKeyLifetime:
 			delete(e.verified, k)
-		} else if oldest == "" || old.VerifiedAt.Before(e.verified[oldest].VerifiedAt) {
+		case old.Unanchored:
+			unanchored++
+			if oldestUnanchored == "" || old.VerifiedAt.Before(e.verified[oldestUnanchored].VerifiedAt) {
+				oldestUnanchored = k
+			}
+		case oldest == "" || old.VerifiedAt.Before(e.verified[oldest].VerifiedAt):
 			oldest = k
 		}
 	}
-	if len(e.verified) > maxVerifiedKeys {
+	switch {
+	case oldestUnanchored != "" && (unanchored > maxUnanchoredKeys || len(e.verified) > maxVerifiedKeys):
+		delete(e.verified, oldestUnanchored)
+	case len(e.verified) > maxVerifiedKeys:
 		delete(e.verified, oldest)
 	}
-	if e.path == "" {
+	e.save()
+}
+
+// save writes the verified keys to the file at path, at most once per
+// verifiedKeysSaveInterval: a record soon after a write is saved, with
+// any that follow it, when the interval is up, so a burst of
+// attestations doesn't rewrite the file for each. Callers hold e.mu.
+func (e *evidence) save() {
+	if e.path == "" || e.saveTimer != nil { // a scheduled save will write it
 		return
 	}
+	if wait := verifiedKeysSaveInterval - time.Since(e.lastSave); wait > 0 {
+		e.saveTimer = time.AfterFunc(wait, func() {
+			e.mu.Lock()
+			defer e.mu.Unlock()
+			e.saveTimer = nil
+			e.write()
+		})
+		return
+	}
+	e.write()
+}
+
+// write saves the verified keys now; a failure is logged, costing only
+// a restart's memory of them. Callers hold e.mu.
+func (e *evidence) write() {
+	e.lastSave = time.Now()
 	data, err := json.Marshal(e.verified)
 	if err == nil {
 		err = statefile.WriteAtomic(e.path, data)

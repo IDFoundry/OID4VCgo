@@ -142,7 +142,9 @@ func (p *Provider) Handler(clientID string) http.Handler {
 // Google vouches for is logged, and required with
 // cfg.RequireHardwareKeyAttestation. A key sent without a chain is
 // attested as before, and logged as such. It doesn't authenticate the
-// wallet asking.
+// wallet asking; ChallengePath answers each client address a limited
+// number of times a second (429 past it), so one client can't use up
+// the challenges every other one needs.
 func (p *Provider) NewService(cfg ServiceConfig) (http.Handler, error) {
 	s, err := p.newService(cfg)
 	if err != nil {
@@ -169,16 +171,21 @@ func (p *Provider) newService(cfg ServiceConfig) (*service, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &service{p: p, cfg: cfg, ev: ev}, nil
+	return &service{p: p, cfg: cfg, ev: ev, challenges: newClientLimiter(challengeRate, challengeBurst)}, nil
 }
 
 type service struct {
-	p   *Provider
-	cfg ServiceConfig
-	ev  *evidence
+	p          *Provider
+	cfg        ServiceConfig
+	ev         *evidence
+	challenges *clientLimiter
 }
 
 func (s *service) challenge(w http.ResponseWriter, r *http.Request) {
+	if !s.challenges.allow(clientAddress(r), s.cfg.Now()) {
+		writeError(w, http.StatusTooManyRequests, "too many attestation challenges from this address; try again shortly")
+		return
+	}
 	var req ChallengeRequest
 	if !decodeRequest(w, r, &req) {
 		return
