@@ -496,6 +496,38 @@ func TestRevoke_Refuses(t *testing.T) {
 	}
 }
 
+// TestOfferForms_RefuseCrossOrigin checks the upload and sample forms
+// refuse a cross-origin post (another site starting an offer through a
+// visitor's browser) and accept a same-origin one.
+func TestOfferForms_RefuseCrossOrigin(t *testing.T) {
+	env := demotest.New(t, nil)
+	post := func(path, origin string) int {
+		req, err := http.NewRequest(http.MethodPost, env.IssuerURL+path, strings.NewReader(""))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("Origin", origin)
+		resp, err := env.HTTP.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		return resp.StatusCode
+	}
+	for _, path := range []string{"/demo/passport", "/demo/sample"} {
+		if got := post(path, "https://attacker.example"); got != http.StatusForbidden {
+			t.Errorf("cross-origin POST %s: status %d, want 403", path, got)
+		}
+	}
+	if got := post("/demo/sample", env.IssuerURL); got != http.StatusOK {
+		t.Errorf("same-origin POST /demo/sample: status %d, want 200", got)
+	}
+	if got := post("/demo/passport", env.IssuerURL); got != http.StatusBadRequest {
+		t.Errorf("same-origin POST /demo/passport with no file: status %d, want 400", got)
+	}
+}
+
 // foreignStateApprover approves like HeadlessApprover, then swaps the
 // callback's state for one from a flow this wallet never began — a
 // callback URL someone else delivered.

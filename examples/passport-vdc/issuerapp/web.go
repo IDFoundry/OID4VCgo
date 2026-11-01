@@ -390,8 +390,14 @@ func (a *App) handleUploadPage(w http.ResponseWriter, _ *http.Request) {
 }
 
 // handleSample offers gmrtd's sample passport (Config.AllowSampleDocument)
-// with the upload form's options, without checking it.
+// with the upload form's options, without checking it. A cross-origin
+// form post is refused, so another site can't start an offer through a
+// visitor's browser.
 func (a *App) handleSample(w http.ResponseWriter, r *http.Request) {
+	if origin := r.Header.Get("Origin"); origin != "" && origin != a.cfg.IssuerURL {
+		a.writeHTMLError(w, http.StatusForbidden, "cross-origin request refused")
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxUploadBytes)
 	e, err := passport.SampleDocument(a.now())
 	if err != nil {
@@ -401,7 +407,13 @@ func (a *App) handleSample(w http.ResponseWriter, r *http.Request) {
 	a.offer(w, r, e)
 }
 
+// handleUpload offers the uploaded passport once it verifies. A
+// cross-origin form post is refused, as handleSample's is.
 func (a *App) handleUpload(w http.ResponseWriter, r *http.Request) {
+	if origin := r.Header.Get("Origin"); origin != "" && origin != a.cfg.IssuerURL {
+		a.writeHTMLError(w, http.StatusForbidden, "cross-origin request refused")
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxUploadBytes)
 	file, _, err := r.FormFile("passport")
 	if err != nil {
