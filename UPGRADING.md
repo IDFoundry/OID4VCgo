@@ -8,6 +8,21 @@ them.
 
 ## v0.57.1 → next
 
+### Authorization details (`oid4vci`)
+
+- **Dropping locations or claims is refused.**
+  `AuthorizationDetailRARDefinition`'s `ValidateNarrowing` (a token
+  request exchanging a code or a CIBA `auth_req_id`, or refreshing)
+  and `ValidateGrant` (consent) used to accept an `openid_credential`
+  object with no `locations` or no `claims` where the wider one had
+  them. Without `locations` the access token was good at any Credential
+  Issuer sharing the Authorization Server, and without `claims` the
+  claims limit was gone. Such a token request is now refused with
+  `invalid_authorization_details`, and such a grant fails consent:
+  keep a non-empty subset of the granted (or requested) `locations`
+  and `claims`. Dropping every `credential_identifiers` entry is still
+  accepted.
+
 ### FAPIgo v0.68.0 (`issuer`)
 
 OID4VCgo pins FAPIgo v0.68.0. See FAPIgo's UPGRADING.md, `## v0.68.0`,
