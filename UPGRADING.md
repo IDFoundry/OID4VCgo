@@ -60,6 +60,14 @@ run v0.2.0 with a `Sealer`, upgrade every instance sharing the database
 at once, since a v0.2.0 instance can't open records v0.3.0 seals, then
 run `SealRecords` once to re-seal the older records.
 
+### Verifier (`verifier`)
+
+- **A sealed record's result must stay sealed.** With a `Sealer`,
+  `TransactionCodec.Unmarshal` now refuses a record carrying a
+  plaintext `result`, and without one a record carrying a
+  `sealed_result`. A custom store that rewrites records must keep the
+  sealed fields as `Marshal` wrote them.
+
 ## v0.56.0 → v0.57.0
 
 ### Certificate revocation (`certrevocation`)
