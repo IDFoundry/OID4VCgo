@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.59.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.58.0...v0.59.0) (2026-11-01)
+
+
+### Features
+
+* **issuer:** let a ProofBindingKeyResolver say a key's trust is undecided ([068f51c](https://github.com/IDFoundry/OID4VCgo/commit/068f51ca5b41e81e8594f5f2640ce1767a70114a))
+
+
+### Bug Fixes
+
+* **issuer:** name VerifiedPreAuthorizedCode in the production pre-authorized code error ([2ca4819](https://github.com/IDFoundry/OID4VCgo/commit/2ca4819b9b094c599ab7adddcd4101157a48ac42))
+* **oid4vci:** refuse narrowing that drops locations or claims ([835fb89](https://github.com/IDFoundry/OID4VCgo/commit/835fb893fc1907abd9c235f898001508a89cfe61))
+* **sqlstore:** check a pre-authorized code's tx_code_hash column against its sealed record ([65e68e0](https://github.com/IDFoundry/OID4VCgo/commit/65e68e07ed410ffbdbc3dc7df17ca296eb60c4f6))
+* **sqlstore:** leave expired wallet authorizations to walletflow in Sweep ([f4afca7](https://github.com/IDFoundry/OID4VCgo/commit/f4afca70f94cd664eabc5cfeab18055fb3d93cbd))
+* **storage:** copy a pre-authorized code's configuration IDs on Issue ([4424cf5](https://github.com/IDFoundry/OID4VCgo/commit/4424cf5173b3362bab85959f39a3b09cdb12fb5f))
+* **verifier:** refuse a plaintext result in a sealed transaction record ([a5506c4](https://github.com/IDFoundry/OID4VCgo/commit/a5506c42e64e516e0c0f0ad29ab8123da0b8450e))
+
 ## [0.58.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.57.1...v0.58.0) (2026-11-01)
 
 
