@@ -100,9 +100,18 @@
 //     so one sealer value serves both, and the verifier's
 //     TransactionCodec too. Each module binds its records to additional
 //     data of its own, so a record one sealed never opens as the
-//     other's.
+//     other's. AES-GCM with random nonces allows about 2^32 seals per
+//     key, which a busy issuer reaches in weeks: rotate before then
+//     with fapigo/sqlstore's RotatingSealer, which takes this
+//     package's Sealer too.
+//   - The Credential Endpoint, run apart from the Authorization
+//     Server, gets a database role of its own: SELECT on FAPIgo's
+//     access_tokens, revocations and schema_migrations, SELECT and
+//     INSERT on replay, and full access to its own prefix's tables.
 //
-// Sweep each DB: neither sweeps the other's tables.
+// Sweep each DB: neither sweeps the other's tables. Only the
+// Authorization Server's DB sweeps the tables it shares with the
+// Credential Endpoint.
 //
 // # Migrations
 //
