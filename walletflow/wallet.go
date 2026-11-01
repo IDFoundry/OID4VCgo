@@ -256,8 +256,8 @@ type Config struct {
 	// RequestRefresh asks the Authorization Server, in the authorization
 	// code flow, for a refresh token (the offline_access scope), so
 	// Wallet.RefreshCredential can later replace a credential's copies
-	// without the holder (OpenID4VCI 1.0 §13.5). The server must allow
-	// the wallet that scope, or the authorization fails with
+	// without the holder signing in (OpenID4VCI 1.0 §13.5). The server
+	// must allow the wallet that scope, or the authorization fails with
 	// invalid_scope. In the pre-authorized code flow there's no scope to
 	// ask with: a refresh token the server issues anyway is kept. The
 	// refresh token and the wallet instance key are then kept in

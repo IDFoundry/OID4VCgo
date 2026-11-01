@@ -199,7 +199,7 @@ PlatformKeys (implemented in Swift)
 |---|---|---|---|
 | Wallet instance key: the Wallet Attestation's `cnf`, signs PoPs at PAR and the token endpoint | per issuance | Secure Enclave | none |
 | DPoP key | per issuance | Secure Enclave | none |
-| Holder binding keys: a credential's `cnf` / mdoc `DeviceKey`, signing the Key Binding JWT or DeviceAuth when presenting | per credential copy | Secure Enclave | when presenting |
+| Holder binding keys: a credential's `cnf` / mdoc `DeviceKey`, signing the Key Binding JWT or DeviceAuth when presenting, and the Credential Request's jwt proof when receiving or refreshing | per credential copy | Secure Enclave | by default for every signature; the demos ask in the app before each presentation instead |
 | Credential response decryption key | per request | Go, ephemeral | — |
 | OID4VP response encryption (ECDH-ES to the verifier) | per response | Go, ephemeral | — |
 | Verification, hashing, JOSE/COSE, DCQL, mdoc transcripts | — | Go | — |
@@ -208,9 +208,14 @@ The instance key, with its Wallet Attestation, and the DPoP key are new
 for each issuance and deleted when it ends, so issuers can't link one
 holder's issuances by them. The exception is a DPoP key that a pending
 deferred credential polls with: it's kept until the last such credential
-from its issuance is settled. Holder keys need biometrics only when presenting, never at
-issuance: a batch of credentials means a batch of keys, and prompting
-for each would be unusable.
+from its issuance is settled. Holder keys sign at issuance too: each
+copy's key signs its own jwt proof, or the first copy's key signs one
+jwt proof carrying a key attestation of them all; with the
+`attestation` proof type none signs. A holder key requiring user
+presence therefore asks at issuance and at every refresh, once per
+copy with plain jwt proofs, which is why the demos turn it off and ask
+the holder themselves before each presentation (see the Phase 4
+findings and Phase 8's Android Keystore key store findings).
 
 ### Attestations
 

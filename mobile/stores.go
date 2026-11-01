@@ -279,8 +279,8 @@ type credentialSummary struct {
 	CopiesLeft int `json:"copies_left"`
 	// Refreshable is whether its issuance kept a refresh token
 	// ("request_refresh"), so Wallet.RefreshCredential can replace its
-	// copies without the holder. The Authorization Server may still
-	// refuse it (reissue_required).
+	// copies without the holder signing in. The Authorization Server may
+	// still refuse it (reissue_required).
 	Refreshable bool `json:"refreshable"`
 	// Linkable is whether a copy has been presented to more than one
 	// Verifier, or copies the issuer correlated to more than one between

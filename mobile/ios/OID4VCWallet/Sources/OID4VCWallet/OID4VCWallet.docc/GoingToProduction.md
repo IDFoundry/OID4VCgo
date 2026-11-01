@@ -15,17 +15,35 @@ loopback addresses are refused. The rest is the app's.
 
 - Keep ``KeychainKeyStore``'s defaults: keys in the Secure Enclave,
   persistent, and holder keys asking for Face ID, Touch ID or the
-  passcode before each presentation. Add `NSFaceIDUsageDescription` to
-  the Info.plist.
+  passcode each time they sign. Add `NSFaceIDUsageDescription` to the
+  Info.plist.
+- Decide where the holder is asked. A holder key signs when presenting,
+  and the Credential Request's jwt proof when receiving or refreshing.
+  With ``KeychainKeyStore/Options/holderUserPresence`` on, the default,
+  the Secure Enclave enforces the check, but receiving a credential asks
+  once per copy (``WalletConfiguration/batchSize``), or once when the
+  jwt proof carries a key attestation, and a refresh asks too, so it
+  can't run in the background. Turned off, as the demo app does, holder
+  keys sign without asking, and the app must ask the holder itself
+  (`LAContext.evaluatePolicy`) before every presentation: in the app
+  and from a link, in the document provider extension, and in person.
+  A path that doesn't ask presents without the holder: the check is the
+  app's code, not the key.
 - Use ``FileCredentialStore``: complete data protection, out of backups.
   ``InMemoryCredentialStore`` is for tests.
 - Call ``Wallet/sweepOrphanedKeys(in:)`` at launch, before any issuance,
   so keys an interrupted issuance left don't accumulate.
-- Make one ``Wallet`` per key store and credential store, and share it
-  for the app's life. Two over the same stores don't coordinate: both
-  could present the same copy of a credential, so Verifiers could link
-  the presentations, or redeem the same refresh token, so the
-  authorization server revokes the grant.
+- Make one ``Wallet`` per key store and credential store in each
+  process, and share it for the app's life. Wallets in other processes
+  over the same stores, such as the app's and its extension's,
+  coordinate through ``CredentialStore/compareAndSwap(id:expected:record:)``:
+  no two present the same copy as unused, complete the same
+  authorization, or redeem the same refresh token. A refresh while
+  another process refreshes with the same refresh token throws
+  ``WalletError/Code/unavailable`` with the detail `refresh_in_progress`:
+  try again later. The keys an issuance or refresh in progress holds
+  are known only to its own Wallet, so sweep orphaned keys only while
+  no other Wallet over the stores is receiving or refreshing.
 - A device restored from a backup has no holder keys: its credentials
   show ``CredentialSummary/holderKeyPresent`` as false and can't be
   presented. Delete them, and receive them again.

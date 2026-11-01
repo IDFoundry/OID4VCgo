@@ -27,8 +27,9 @@ public enum class KeyPurpose(public val rawValue: String) {
     DPOP("dpop"),
 
     /**
-     * The key a credential is bound to; it signs only when presenting,
-     * and may require user authentication.
+     * The key a credential copy is bound to; it signs when presenting,
+     * and the Credential Request's jwt proof when receiving or
+     * refreshing, and may require user authentication.
      */
     HOLDER("holder");
 

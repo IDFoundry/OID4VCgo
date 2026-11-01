@@ -127,7 +127,7 @@ library. Your app owns the keys, the storage and the UI:
 
 - **Keys:** \`AndroidKeystoreKeyStore\` keeps them in StrongBox where the
   device has it, else the TEE. Holder keys ask for the holder's
-  fingerprint or screen lock to present (\`BiometricPromptAuthenticator\`),
+  fingerprint or screen lock for each use (\`BiometricPromptAuthenticator\`),
   from Android 11 (API 30); below it, the app authenticates the holder
   itself. [What each API level guarantees](https://github.com/IDFoundry/OID4VCgo/blob/main/mobile/README.md#what-each-platform-supports).
 - **Storage:** \`FileCredentialStore\` encrypts each record under a key

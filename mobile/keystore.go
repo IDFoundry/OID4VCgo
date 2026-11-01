@@ -35,8 +35,10 @@ const (
 	PurposeInstance = string(walletflow.KeyPurposeInstance)
 	// PurposeDPoP: the key access tokens are bound to.
 	PurposeDPoP = string(walletflow.KeyPurposeDPoP)
-	// PurposeHolder: the key a credential is bound to, used only when
-	// presenting it — the one to protect with user presence.
+	// PurposeHolder: the key a credential copy is bound to — the one to
+	// protect with user presence. It signs when presenting, and the
+	// Credential Request's jwt proof when receiving or refreshing
+	// (walletflow.KeyPurposeHolder).
 	PurposeHolder = string(walletflow.KeyPurposeHolder)
 )
 

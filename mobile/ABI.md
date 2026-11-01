@@ -137,8 +137,12 @@ Android Keystore (StrongBox, else the TEE) on Android.
 | `DeleteKey(id)` | no error if absent |
 | `Durable() → bool` | whether keys survive the app quitting (the Keychain): receiving credentials without `development` needs it |
 
-Instance and DPoP keys sign protocol messages silently; holder keys sign
-only when presenting, and may require user presence. `CheckKeyStore`
+Instance and DPoP keys sign protocol messages silently. Holder keys
+sign the Key Binding JWT or DeviceAuth when presenting, and the
+Credential Request's jwt proof when receiving or refreshing: one proof
+per copy, or one per Credential Request when it carries a key
+attestation (none with the `attestation` proof type). They may require
+user presence, which then asks at those times too. `CheckKeyStore`
 exercises an implementation as the wallet will.
 
 A `CreateKey` error whose message starts with `[network]` is reported as
@@ -440,7 +444,8 @@ request when an issuer offers batches: 0 means 5, and it's capped at
 the issuer's `batch_size`. `request_refresh` asks Authorization Servers,
 in the authorization code grant, for a refresh token (the
 `offline_access` scope), so `RefreshCredential` can later replace a
-credential's copies without the holder (OpenID4VCI 1.0 §13.5). The
+credential's copies without the holder signing in (OpenID4VCI 1.0
+§13.5). The
 server must allow the wallet that scope, or the authorization fails. In
 the pre-authorized code grant there's no scope to ask with: a refresh
 token the server issues anyway is kept.
@@ -537,7 +542,7 @@ then. Added within ABI version 12.
 | `AbandonDeferred(deferredID)` | deletes a pending one and its keys, for example after its access token has expired, and its refresh grant once nothing else uses it, revoking the refresh token at the Authorization Server, best effort: a network request |
 | `Credential(id)` | summary with `"claims"`: an SD-JWT VC's claims, or an mdoc's namespace → element → value, byte strings in base64 |
 | `DeleteCredential(id)` | deletes it and its holder keys, and its refresh grant with the grant's instance key once no other credential uses it. The refresh token is first revoked at the Authorization Server (RFC 7009), best effort, when it has a revocation endpoint: a network request, so call it off the main thread |
-| `RefreshCredential(op, credentialID)` | `{"credential": summary, "deferred": pending or null}`: replaces a `refreshable` credential's copies with a fresh batch, each bound to a new attested key, under the same ID, without the holder. If the issuer defers it, the credential is returned as it was, with the deferred one to poll, which settles as a new credential. One that can't be refreshed (no refresh token was kept, the Authorization Server no longer accepts it, or its grant issued several datasets of its configuration and the wallet can't ask for the one it holds again) is `reissue_required`: receive it again from a new offer |
+| `RefreshCredential(op, credentialID)` | `{"credential": summary, "deferred": pending or null}`: replaces a `refreshable` credential's copies with a fresh batch, each bound to a new holder key, under the same ID, without the holder signing in; the new holder keys sign the Credential Request's proof, so a KeyStore requiring user presence asks then. If the issuer defers it, the credential is returned as it was, with the deferred one to poll, which settles as a new credential. One that can't be refreshed (no refresh token was kept, the Authorization Server no longer accepts it, or its grant issued several datasets of its configuration and the wallet can't ask for the one it holds again) is `reissue_required`: receive it again from a new offer |
 | `CheckStatus(op, credentialID)` | the summary, with `"status"` checked now. It fetches the issuer's status list and checks the list's signature against `issuer_roots` (an mdoc's, against the mdoc roots it was received under). The list covers many credentials, so fetching it doesn't tell the issuer which one is checked. A credential without a status list is returned as it is, as is an expired one: it isn't valid whatever its status, so its status list isn't fetched (draft-ietf-oauth-status-list §8.3) |
 | `StartIssuance(op, offerURI)` | an `Issuance` |
 | `ResumeIssuance(op, redirect)` | an `Issuance` ready for `RequestCredentials`: completes the authorization in progress that the redirect's `state` names, after the app was killed during the browser step. One that matches nothing, has already been used, or has expired is `not_found` |

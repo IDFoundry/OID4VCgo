@@ -47,11 +47,13 @@ because it sent the offer.
 
 `AndroidKeystoreKeyStore` keeps every key in Android Keystore: in
 StrongBox where the device has it, else the TEE. A holder key — the one
-a credential is bound to — signs only when presenting, and by default
-asks for the holder's fingerprint or screen lock first, through a
+a credential copy is bound to — signs when presenting, and the
+Credential Request's proof when receiving or refreshing. By default it
+asks for the holder's fingerprint or screen lock each time, through a
 `HolderAuthenticator`: `BiometricPromptAuthenticator` shows the
 system's prompt over the activity you give it. The device needs a
-secure lock screen.
+secure lock screen. [Going to production](GoingToProduction.md)
+describes the trade-off.
 
 `FileCredentialStore` encrypts each credential under a Keystore key that
 works only while the device is unlocked, in a directory no backup

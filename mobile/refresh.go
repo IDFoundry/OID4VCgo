@@ -154,7 +154,7 @@ func refreshGrant(raw []byte) (walletflow.RefreshGrant, error) {
 }
 
 // RefreshCredential replaces the copies of the credential credentialID
-// names with a fresh batch, without the holder
+// names with a fresh batch, without the holder signing in
 // (walletflow.Wallet.RefreshCredential): with "request_refresh" set, the
 // issuance kept a refresh token for it ("refreshable" in its summary). It returns {"abi", "credential":
 // summary, "deferred": deferred credential or null}: the credential, its

@@ -39,10 +39,11 @@ because it sent the offer.
 ### Provide the keys and the storage
 
 ``KeychainKeyStore`` keeps every key in the Secure Enclave. A holder
-key — the one a credential is bound to — signs only when presenting, and
-by default asks for Face ID, Touch ID or the passcode first: add an
+key — the one a credential copy is bound to — signs when presenting, and
+the Credential Request's proof when receiving or refreshing. By default
+it asks for Face ID, Touch ID or the passcode each time: add an
 `NSFaceIDUsageDescription` to the app's Info.plist, or iOS asks for the
-passcode instead.
+passcode instead. <doc:GoingToProduction> describes the trade-off.
 
 ``FileCredentialStore`` keeps each credential as a file with complete
 data protection, out of backups: a credential is useless without its

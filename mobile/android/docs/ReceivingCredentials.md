@@ -208,8 +208,12 @@ access token has expired, say.
 - Each credential arrives as a batch of copies, each bound to its own
   key (`WalletConfiguration.batchSize`), so presentations can't be
   linked by the credential. When a summary's `copiesLeft` reaches zero,
-  `Wallet.refreshCredential(id)` replaces them without the holder, if
-  the issuance kept a refresh token (`WalletConfiguration.requestRefresh`).
-  Otherwise it throws `reissueRequired`: receive the credential again.
+  `Wallet.refreshCredential(id)` replaces them, if the issuance kept a
+  refresh token (`WalletConfiguration.requestRefresh`). Otherwise it
+  throws `reissueRequired`: receive the credential again. A refresh
+  needs no sign-in, but the new copies' holder keys sign the Credential
+  Request's proof, so with
+  `AndroidKeystoreKeyStore.Options.holderUserAuthentication` on it asks
+  the holder too.
 - `Wallet.deleteCredential(id)` deletes a credential and its keys,
   revoking its refresh token at the issuer.

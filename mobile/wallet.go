@@ -140,7 +140,7 @@ type config struct {
 	BatchSize int `json:"batch_size,omitempty"`
 	// RequestRefresh asks Authorization Servers for a refresh token
 	// (walletflow.Config.RequestRefresh), so RefreshCredential can
-	// replace a credential's copies later without the holder.
+	// replace a credential's copies later without the holder signing in.
 	RequestRefresh bool `json:"request_refresh,omitempty"`
 	// CopyPolicy is which copy of a credential a presentation uses:
 	// "per_presentation" (the default) or "per_verifier"

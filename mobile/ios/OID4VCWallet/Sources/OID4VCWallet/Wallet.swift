@@ -101,8 +101,8 @@ public struct WalletConfiguration: Codable, Sendable {
     public var batchSize: Int
     /// Asks Authorization Servers for a refresh token, so
     /// `Wallet.refreshCredential(id:)` can later replace a credential's
-    /// copies without the holder. The server must allow the wallet the
-    /// `offline_access` scope, or the authorization fails.
+    /// copies without the holder signing in. The server must allow the
+    /// wallet the `offline_access` scope, or the authorization fails.
     public var requestRefresh: Bool
     /// Which copy of a credential a presentation uses.
     public var copyPolicy: CopyPolicy
@@ -652,8 +652,10 @@ public final class Wallet: @unchecked Sendable {
     }
 
     /// Replaces a `refreshable` credential's copies with a fresh batch,
-    /// each bound to a new attested key, without the holder (OpenID4VCI
-    /// 1.0 §13.5). Use it when `copiesLeft` runs low. Throws
+    /// each bound to a new holder key, without the holder signing in
+    /// (OpenID4VCI 1.0 §13.5). The new holder keys sign the Credential
+    /// Request's proof, so with `KeychainKeyStore.Options.holderUserPresence`
+    /// on it asks the holder. Use it when `copiesLeft` runs low. Throws
     /// `WalletError.Code.reissueRequired` when it can't be refreshed:
     /// receive it again from a new offer.
     public func refreshCredential(id: String) async throws -> Refreshed {

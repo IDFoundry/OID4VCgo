@@ -13,18 +13,36 @@ services on loopback addresses are refused. The rest is the app's.
 - Keep `AndroidKeystoreKeyStore`'s defaults: keys in StrongBox where the
   device has it, else the TEE, usable only while the device is unlocked,
   and holder keys asking for the holder's fingerprint or screen lock
-  before each presentation, through `BiometricPromptAuthenticator`.
-  That needs Android 11 (API 30) and a secure lock screen.
+  each time they sign, through `BiometricPromptAuthenticator`. That
+  needs Android 11 (API 30) and a secure lock screen.
+- Decide where the holder is asked. A holder key signs when presenting,
+  and the Credential Request's jwt proof when receiving or refreshing.
+  With `AndroidKeystoreKeyStore.Options.holderUserAuthentication` on,
+  the default, Keystore enforces the check, but receiving a credential
+  asks once per copy (`WalletConfiguration.batchSize`), or once when the
+  jwt proof carries a key attestation, and a refresh asks too, so it
+  can't run in the background. Turned off, as the demo app does (and
+  as below API 30 it must be), holder keys sign without asking, and the
+  app must ask the holder itself (`BiometricPrompt`) before every
+  presentation: in the app and from a link, through Credential Manager
+  (the Digital Credentials API), and in person, by QR code or NFC. A
+  path that doesn't ask presents without the holder: the check is the
+  app's code, not the key.
 - Use `FileCredentialStore`: each record encrypted under a Keystore key
   that works only while the device is unlocked, out of backups.
   `InMemoryCredentialStore` is for tests.
 - Call `Wallet.sweepOrphanedKeys` at launch, before any issuance, so keys
   an interrupted issuance left don't accumulate.
-- Make one `Wallet` per key store and credential store, and share it
-  for the app's life. Two over the same stores don't coordinate: both
-  could present the same copy of a credential, so Verifiers could link
-  the presentations, or redeem the same refresh token, so the
-  authorization server revokes the grant.
+- Make one `Wallet` per key store and credential store in each process,
+  and share it for the app's life. Wallets in other processes over the
+  same stores coordinate through `CredentialStore.compareAndSwap`: no
+  two present the same copy as unused, complete the same authorization,
+  or redeem the same refresh token. A refresh while another process
+  refreshes with the same refresh token throws `unavailable` with the
+  detail `refresh_in_progress`: try again later. The keys an issuance or
+  refresh in progress holds are known only to its own Wallet, so sweep
+  orphaned keys only while no other Wallet over the stores is receiving
+  or refreshing.
 - A device restored from a backup, or a new one the app moved to, has no
   holder keys: its credentials show `holderKeyPresent` as false and
   can't be presented. Delete them, and receive them again.
@@ -44,9 +62,10 @@ attesting it:
 
 1. **Give a challenge.** Implement `WalletProvider.attestationChallenge`:
    for `KeyPurpose.INSTANCE` and `KeyPurpose.HOLDER`, fetch a fresh,
-   random, single-use challenge (16 to 128 bytes) from your backend,
-   which remembers it with an expiry; for `KeyPurpose.DPOP`, return
-   null. `AndroidKeystoreKeyStore` makes each key over its challenge,
+   random, single-use challenge from your backend, which remembers it
+   with an expiry: at least 16 random bytes (the library takes 1 to
+   128). For `KeyPurpose.DPOP`, return null.
+   `AndroidKeystoreKeyStore` makes each key over its challenge,
    so Android Keystore certifies the key, the challenge and the app
    that made it.
 2. **Receive the evidence.** Implement the `WalletAttestationRequest`
