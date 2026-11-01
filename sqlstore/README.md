@@ -86,10 +86,13 @@ binding its records to additional data of its own. Sweep each. See
 - **Sweeping**: stores never delete expired records. Call
   `db.Sweep(ctx, time.Now())` every few minutes.
 - **Sealing**: with `Options.Sealer` every issuer and walletflow record
-  is sealed, bound to its table and key; the verifier's transactions are
-  sealed by their `TransactionCodec`. Keys, Owners, hashes and expiry
-  times stay readable, for lookups and sweeping. Changing the key makes
-  existing records unreadable.
+  is sealed, bound to its table and key. Keys, Owners, hashes and expiry
+  times stay readable, for lookups and sweeping. A verifier transaction
+  isn't sealed whole: its `TransactionCodec` seals only the response
+  decryption key and the verified claims, and leaves the other fields
+  (status, owner, same-device flag, browser binding hash, query)
+  readable and unprotected, so the database must be trusted for their
+  integrity. Changing the key makes existing records unreadable.
 - **Sharing**: Credential Issuers may share the issuer tables (every
   record keeps its Owner). A wallet's tables belong to one user.
 

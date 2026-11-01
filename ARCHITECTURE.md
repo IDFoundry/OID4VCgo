@@ -1310,8 +1310,10 @@ changes whether *every* bullet below is `(done)`.
   as for `issuer`'s stores. `TransactionCodec` encodes a transaction,
   every field with its types, for a store that keeps it outside the
   process, and with a `TransactionSealer` (`AESGCMSealer`) seals the
-  response decryption key and the holder's claims at rest;
-  `ForgetResultOnRead` drops a result once it's been read.
+  response decryption key and the holder's claims at rest, each bound
+  to its transaction (the other fields — status, owner, browser
+  binding, query — aren't integrity-protected: the store is trusted
+  for them); `ForgetResultOnRead` drops a result once it's been read.
   `Begin` and `BeginDCAPI` read a created transaction back and refuse a
   store that lost a field, since losing `SameDevice` or `Owner` fails
   open. `verifiertest` holds contract tests for a caller's own
