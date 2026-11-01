@@ -155,9 +155,11 @@ func (f Fetcher) Fetch(ctx context.Context, uri, mediaType string) ([]byte, erro
 // roots shared by several issuers, any of them could sign a list that
 // decides another's credential's status. Bind the signer to the
 // credential's issuer with Options.Issuer, IssuerKey or LeafPolicy —
-// verifier.RequireValidStatus sets them from a verified credential,
-// for an SD-JWT VC and for an mdoc (ISO/IEC 18013-5 §12.3.6), and is
-// what a Verifier normally uses instead of calling Check directly.
+// a verifier.StatusPolicy sets them from a verified credential, for an
+// SD-JWT VC and for an mdoc (ISO/IEC 18013-5 §12.3.6), and is what a
+// Verifier normally uses instead of calling Check directly
+// (verifier.TransactionsConfig.Status, mdocdcapi.VerifyParams.Status,
+// proximity.WithStatus).
 type Checker struct {
 	Fetcher Fetcher
 

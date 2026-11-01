@@ -45,7 +45,7 @@ func (vc VerifiedCredential) StatusListRef() (ref statuslist.StatusListRef, cwt,
 			if vc.MdocStatus.IdentifierList != nil {
 				// A status this package can't check isn't "no status":
 				// read as one, a revoked mdoc would pass.
-				return statuslist.StatusListRef{}, false, false, fmt.Errorf("verifier: the mdoc's status is an identifier list, not a status list: check it with RequireValidStatus, or with identifierlist.Checker given the mdoc's document signer path (its IssuerChain)")
+				return statuslist.StatusListRef{}, false, false, fmt.Errorf("verifier: the mdoc's status is an identifier list, not a status list: check it with a StatusPolicy, or with identifierlist.Checker given the mdoc's document signer path (its IssuerChain)")
 			}
 			// The MSO has a status, but neither member this package
 			// reads (mdoc.Status).

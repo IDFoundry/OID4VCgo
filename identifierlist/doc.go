@@ -11,6 +11,7 @@
 // hosted as a static file must be served with
 // "Content-Type: application/identifierlist+cwt" (MediaType), or
 // Checker refuses it. Check and Checker verify a list and report
-// whether an identifier is on it; verifier.RequireValidStatus checks a
-// presented mdoc's identifier list.
+// whether an identifier is on it; a verifier.StatusPolicy
+// (verifier.TransactionsConfig.Status, mdocdcapi.VerifyParams.Status,
+// proximity.WithStatus) checks a presented mdoc's identifier list.
 package identifierlist
