@@ -72,10 +72,13 @@ type TransactionSealer interface {
 
 // AESGCMSealer is a TransactionSealer that seals with AES-256-GCM
 // under key (32 bytes, from a cryptographically secure source, kept
-// outside the store), with a random nonce for each seal. Changing the
-// key makes the records sealed under the previous one unreadable; to
-// rotate it, open with both until those records expire, with a
-// TransactionSealer of your own.
+// outside the store), with a random nonce for each seal. Random
+// nonces allow about 2^32 seals per key, so rotate the key before
+// then. Changing the key makes the records sealed under the previous
+// one unreadable; to rotate it, open with both until those records
+// expire, with a TransactionSealer of your own or
+// github.com/idfoundry/fapigo/sqlstore's RotatingSealer, which seals
+// with the first sealer it's given and opens with any of them.
 func AESGCMSealer(key []byte) (TransactionSealer, error) {
 	if len(key) != 32 {
 		return nil, fmt.Errorf("verifier: transaction sealer: key is %d bytes, want 32 (AES-256)", len(key))
