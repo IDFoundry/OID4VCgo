@@ -5,12 +5,47 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // errNoRow is what a table's methods return, wrapped, for a key with no
 // row: each store turns it into its interface's own not-found error.
 var errNoRow = errors.New("no such record")
+
+// errUnstorableKey is what a table's insert and put return for a key
+// storableKeys refuses.
+var errUnstorableKey = errors.New("sqlstore: a key must be valid UTF-8 with no NUL byte")
+
+// storableKeys reports whether a key column can hold each of keys:
+// PostgreSQL's text columns refuse invalid UTF-8 and NUL bytes, failing
+// the statement (SQLSTATE 22021). The keys a Wallet or Verifier sends
+// — a JWE kid, a request_uri or Credential Offer reference, a c_nonce —
+// are the sender's to choose, so a table answers a lookup by such a key
+// as no row before it reaches the database, rather than as the
+// database's error, which the issuer and verifier answer as their own
+// fault. It does so on SQLite too, which would store such keys, so the
+// two dialects hold, and find, the same keys.
+func storableKeys(keys ...string) bool {
+	for _, k := range keys {
+		if !utf8.ValidString(k) || strings.IndexByte(k, 0) >= 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// storableArgs is storableKeys for a statement's arguments: each string
+// among them.
+func storableArgs(args []any) bool {
+	for _, a := range args {
+		if s, ok := a.(string); ok && !storableKeys(s) {
+			return false
+		}
+	}
+	return true
+}
 
 // row is what a table keeps of a record beside its encoding: the
 // columns a store looks it up or sweeps it by.
@@ -80,6 +115,9 @@ func (t *table[T]) values(id string, v T) ([]any, error) {
 
 // insert saves v under id, which must be unused.
 func (t *table[T]) insert(ctx context.Context, id string, v T) error {
+	if !storableKeys(id) {
+		return errUnstorableKey
+	}
 	vals, err := t.values(id, v)
 	if err != nil {
 		return err
@@ -92,6 +130,9 @@ func (t *table[T]) insert(ctx context.Context, id string, v T) error {
 
 // put saves v under id, replacing any row there.
 func (t *table[T]) put(ctx context.Context, id string, v T) error {
+	if !storableKeys(id) {
+		return errUnstorableKey
+	}
 	vals, err := t.values(id, v)
 	if err != nil {
 		return err
@@ -104,6 +145,10 @@ func (t *table[T]) put(ctx context.Context, id string, v T) error {
 
 // get returns the record keyed by id, or errNoRow.
 func (t *table[T]) get(ctx context.Context, id string) (T, error) {
+	if !storableKeys(id) {
+		var zero T
+		return zero, errNoRow
+	}
 	return t.scanRecord(id, t.d.db.QueryRowContext(ctx, t.sql.get, id))
 }
 
@@ -146,6 +191,9 @@ func (t *table[T]) list(ctx context.Context) ([]T, error) {
 
 // remove deletes the row keyed by id, reporting whether there was one.
 func (t *table[T]) remove(ctx context.Context, id string) (bool, error) {
+	if !storableKeys(id) {
+		return false, nil
+	}
 	var n int64
 	err := t.d.writeOne(ctx, func(q querier) error {
 		res, err := q.ExecContext(ctx, t.sql.delete, id)
@@ -163,6 +211,9 @@ func (t *table[T]) remove(ctx context.Context, id string) (bool, error) {
 // calls, one gets it, and the others errNoRow.
 func (t *table[T]) consume(ctx context.Context, id string, more ...any) (T, error) {
 	var v T
+	if !storableKeys(id) || !storableArgs(more) {
+		return v, errNoRow
+	}
 	err := t.d.writeOne(ctx, func(q querier) error {
 		var err error
 		v, err = t.scanRecord(id, q.QueryRowContext(ctx, t.sql.consume, append([]any{id}, more...)...))
@@ -176,6 +227,9 @@ func (t *table[T]) consume(ctx context.Context, id string, more ...any) (T, erro
 // one after another. fn's error aborts it, saving nothing. idOf, if
 // set, is the record's own ID, which fn mustn't change.
 func (t *table[T]) update(ctx context.Context, id string, fn func(*T) error, idOf func(T) string) error {
+	if !storableKeys(id) {
+		return errNoRow
+	}
 	return t.d.write(ctx, func(q querier) error {
 		cur, err := t.scanRecord(id, q.QueryRowContext(ctx, t.sql.getForUpdate, id))
 		if err != nil {

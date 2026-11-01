@@ -86,6 +86,9 @@ func (s *PreAuthorizedCodeStore) Issue(ctx context.Context, codeHash string, rec
 // accept and the consumption happen together, so concurrent requests
 // for one code each see the one before. accept is called once.
 func (s *PreAuthorizedCodeStore) Consume(ctx context.Context, codeHash, wantTxCodeHash string, maxAttempts int, accept func(issuer.PreAuthorizedCodeRecord) error) (issuer.PreAuthorizedCodeRecord, int, error) {
+	if !storableKeys(codeHash) {
+		return issuer.PreAuthorizedCodeRecord{}, 0, fmt.Errorf("sqlstore: %w", issuer.ErrPreAuthorizedCodeUnknown)
+	}
 	var record issuer.PreAuthorizedCodeRecord
 	var wrongAttempts int
 	// outcome is a refusal the transaction commits (a counted wrong

@@ -84,7 +84,7 @@ func (s *TransactionStore) Update(ctx context.Context, id string, fn func(*verif
 
 // IDByKeyID implements verifier.TransactionStore.
 func (s *TransactionStore) IDByKeyID(ctx context.Context, kid string) (string, error) {
-	if kid == "" {
+	if kid == "" || !storableKeys(kid) {
 		return "", txUnknown("find", errNoRow)
 	}
 	return s.scanID(s.t.d.db.QueryRowContext(ctx, s.t.d.sql.txIDByKeyID, kid))
@@ -92,7 +92,7 @@ func (s *TransactionStore) IDByKeyID(ctx context.Context, kid string) (string, e
 
 // IDByResponseCode implements verifier.TransactionStore.
 func (s *TransactionStore) IDByResponseCode(ctx context.Context, codeHash string) (string, error) {
-	if codeHash == "" {
+	if codeHash == "" || !storableKeys(codeHash) {
 		return "", txUnknown("find", errNoRow)
 	}
 	return s.scanID(s.t.d.db.QueryRowContext(ctx, s.t.d.sql.txIDByResponseCode, codeHash))

@@ -138,7 +138,12 @@
 // Wallet's fault.
 //
 // IDs are case-sensitive: Postgres compares them with the "C"
-// collation, SQLite bytewise.
+// collation, SQLite bytewise. An ID that isn't valid UTF-8, or holds a
+// NUL byte, which PostgreSQL's text columns can't hold, is never
+// stored, on either dialect: a lookup, consume or delete by one finds
+// nothing, as for any unknown ID, and a write refuses it. A Wallet's
+// JWE kid, request_uri or c_nonce is the Wallet's to choose, so this
+// keeps such a value an unknown one rather than the store's failure.
 //
 // # Secrets at rest
 //
