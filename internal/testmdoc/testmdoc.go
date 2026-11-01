@@ -31,9 +31,6 @@ const DocType = "org.iso.18013.5.1.mDL"
 // Namespace is the namespace holding every Fixture's claims.
 const Namespace = "org.iso.18013.5.1"
 
-// msoError is how a Fixture reports a failure to rebuild its MSO.
-const msoError = "testmdoc: MSO: %v"
-
 // Fixture is a real, freshly issued "mso_mdoc" credential (an mDL
 // carrying given_name/family_name in its own org.iso.18013.5.1
 // namespace) plus the keys behind it.
@@ -107,20 +104,20 @@ func WithMSOStatus(t testing.TB, f Fixture, status any) Fixture {
 	}
 	var mso map[string]cbor.RawMessage
 	if err := cbor.Unmarshal(msoBytes, &mso); err != nil {
-		t.Fatalf(msoError, err)
+		t.Fatalf("testmdoc: MSO: %v", err)
 	}
 	if mso["status"], err = cbor.Marshal(status); err != nil {
 		t.Fatalf("testmdoc: status: %v", err)
 	}
 	if msoBytes, err = cbor.Marshal(mso); err != nil {
-		t.Fatalf(msoError, err)
+		t.Fatalf("testmdoc: MSO: %v", err)
 	}
 	content, err := cbor.Marshal(msoBytes)
 	if err != nil {
-		t.Fatalf(msoError, err)
+		t.Fatalf("testmdoc: MSO: %v", err)
 	}
 	if payload, err = cbor.Marshal(cbor.RawTag{Number: 24, Content: content}); err != nil {
-		t.Fatalf(msoError, err)
+		t.Fatalf("testmdoc: MSO: %v", err)
 	}
 	if f.IssuerSigned.IssuerAuth, err = cose.Sign(cose.ES256, f.IssuerKey, protected, unprotected, payload, []byte{}); err != nil {
 		t.Fatalf("testmdoc: sign IssuerAuth: %v", err)
