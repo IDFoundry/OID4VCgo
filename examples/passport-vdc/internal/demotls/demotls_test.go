@@ -2,9 +2,33 @@ package demotls
 
 import (
 	"bytes"
+	"crypto/tls"
 	"net/http"
+	"net/http/httptest"
 	"testing"
+	"time"
 )
+
+// TestServerGuardsFraming: Server's handler forbids framing by another
+// origin, and a handler's own Content-Security-Policy still wins.
+func TestServerGuardsFraming(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/doc" {
+			w.Header().Set("Content-Security-Policy", "default-src 'none'")
+		}
+	})
+	srv := Server("127.0.0.1:0", handler, tls.Certificate{}, time.Second)
+	for path, wantCSP := range map[string]string{"/": "frame-ancestors 'self'", "/doc": "default-src 'none'"} {
+		rec := httptest.NewRecorder()
+		srv.Handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if got := rec.Header().Get("Content-Security-Policy"); got != wantCSP {
+			t.Errorf("%s: Content-Security-Policy = %q, want %q", path, got, wantCSP)
+		}
+		if got := rec.Header().Get("X-Frame-Options"); got != "SAMEORIGIN" {
+			t.Errorf("%s: X-Frame-Options = %q, want SAMEORIGIN", path, got)
+		}
+	}
+}
 
 // TestAbandonedHandshakeFilter checks the servers' error log drops only
 // a browser's abandoned TLS handshake (EOF), keeping real handshake

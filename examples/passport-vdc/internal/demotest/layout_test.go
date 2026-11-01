@@ -5,7 +5,37 @@ import (
 	"testing"
 
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/demotest"
+	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/walletapp"
 )
+
+// TestPagesRefuseCrossOriginFraming: every page — the operator pages
+// whose forms revoke, approve and forget, the verifier's and the web
+// wallet's — forbids framing by another origin, so a page that frames
+// them can't clickjack their forms; same-origin frames still load.
+func TestPagesRefuseCrossOriginFraming(t *testing.T) {
+	env := demotest.New(t, nil)
+	env.StartVerifier(t, nil)
+	env.StartWebWallet(t, walletapp.Store{Dir: t.TempDir()})
+	for _, url := range []string{
+		env.IssuerURL + "/demo/", env.IssuerURL + "/demo/status", env.IssuerURL + "/demo/review", env.IssuerURL + "/demo/kept",
+		env.VerifierURL + "/demo/", env.WebWalletURL + "/",
+	} {
+		resp, err := env.HTTP.Get(url)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("GET %s = %d", url, resp.StatusCode)
+		}
+		if got := resp.Header.Get("Content-Security-Policy"); got != "frame-ancestors 'self'" {
+			t.Errorf("GET %s: Content-Security-Policy = %q, want frame-ancestors 'self'", url, got)
+		}
+		if got := resp.Header.Get("X-Frame-Options"); got != "SAMEORIGIN" {
+			t.Errorf("GET %s: X-Frame-Options = %q, want SAMEORIGIN", url, got)
+		}
+	}
+}
 
 // TestPagesUnderDemo: the pages people use are all under /demo/ on the
 // issuer and the verifier, so one access rule on that path guards them,

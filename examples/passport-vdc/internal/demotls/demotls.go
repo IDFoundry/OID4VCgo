@@ -171,13 +171,29 @@ func (f abandonedHandshakeFilter) Write(p []byte) (int, error) {
 	return f.w.Write(p)
 }
 
+// FrameGuard has every response forbid framing by another origin
+// (Content-Security-Policy frame-ancestors 'self', and X-Frame-Options
+// SAMEORIGIN for browsers without CSP 2), so the operator pages' forms —
+// revoke, approve, forget — can't be clickjacked from a page that frames
+// them: their Origin checks pass inside a frame. Same-origin frames,
+// such as the issuer's progress iframe, still load. A handler that sets
+// a Content-Security-Policy of its own replaces this one.
+func FrameGuard(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Security-Policy", "frame-ancestors 'self'")
+		w.Header().Set("X-Frame-Options", "SAMEORIGIN")
+		next.ServeHTTP(w, r)
+	})
+}
+
 // Server is the demo servers' shared http.Server: TLS 1.3 only (FAPI 2.0
 // allows TLS 1.2 with just a few AES-GCM suites), the usual timeouts,
-// and ServerErrorLog. writeTimeout bounds a response; a handler that
-// makes outbound calls of its own before replying needs a longer one.
+// ServerErrorLog, and FrameGuard around handler. writeTimeout bounds a
+// response; a handler that makes outbound calls of its own before
+// replying needs a longer one.
 func Server(addr string, handler http.Handler, cert tls.Certificate, writeTimeout time.Duration) *http.Server {
 	return &http.Server{
-		Addr: addr, Handler: handler, ErrorLog: ServerErrorLog(),
+		Addr: addr, Handler: FrameGuard(handler), ErrorLog: ServerErrorLog(),
 		TLSConfig:         &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS13},
 		ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second,
 		WriteTimeout: writeTimeout, IdleTimeout: 60 * time.Second,
