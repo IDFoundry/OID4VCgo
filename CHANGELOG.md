@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.58.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.57.1...v0.58.0) (2026-11-01)
+
+
+### ⚠ BREAKING CHANGES
+
+* **deps:** an issuer whose Authorization Server verifies Wallet Attestations with server.X5CAttesterChain now refuses, with invalid_client, an attestation signed by a certificate listing (or chaining only through a CA restricted to) the ISO/IEC 18013-5 mDL JWS or VICAL signer, ISO/IEC TS 23220-4 mdoc document signer or reader, RFC 9336 document signing, or RFC 6187 SSH extended key usage; issue attesters a dedicated certificate. It also refuses an x5c carrying a re-issued or cross-signed copy of a trust anchor (same subject and public key): send the signing certificate and its intermediates only. A deployment running fapigo/sqlstore v0.2.0 with a Sealer upgrades every instance at once, since v0.2.0 can't open records v0.3.0 seals, then runs SealRecords once.
+
+### Bug Fixes
+
+* **deps:** pin FAPIgo v0.68.0 and fapigo/sqlstore v0.3.0 ([de45f51](https://github.com/IDFoundry/OID4VCgo/commit/de45f51555d997be0d9980772b101588d358cf50))
+
 ## [0.57.1](https://github.com/IDFoundry/OID4VCgo/compare/v0.57.0...v0.57.1) (2026-10-31)
 
 
