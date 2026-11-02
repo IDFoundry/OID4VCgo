@@ -505,8 +505,10 @@ func (s *MdocSigner) validate(assurance AssuranceLevel) error {
 // An error refuses the attestation as untrusted (invalid_proof, and a
 // deferred transaction's re-check denies the transaction), unless it
 // says trust couldn't be decided now: it wraps
-// certrevocation.ErrNoCurrentCRL, or context.Canceled or
-// context.DeadlineExceeded, and not certrevocation.ErrRevoked. That
+// certrevocation.ErrNoCurrentCRL, ErrProofKeyTrustUndecided (for a
+// verifier of your own whose trust source is unreachable), or
+// context.Canceled or context.DeadlineExceeded, and not
+// certrevocation.ErrRevoked. That
 // is answered with a server error (500) instead, and leaves a deferred
 // transaction pending (ErrDeferredAttestationStatusUnknown).
 // X5CAttestationVerifier reports any error from its Revocation other
@@ -553,8 +555,9 @@ type ProofBindingKeyResolver interface {
 }
 
 // ErrProofKeyTrustUndecided is wrapped by a ProofBindingKeyResolver's
-// error to say a proof key's trust couldn't be decided now, rather than
-// that it isn't trusted: see ProofBindingKeyResolver.
+// or an AttestationVerifier's error to say a key's trust couldn't be
+// decided now, rather than that it isn't trusted: see
+// ProofBindingKeyResolver and AttestationVerifier.
 var ErrProofKeyTrustUndecided = errors.New("issuer: the proof key's trust can't be decided now")
 
 // CredentialDPoPNonceIssuer issues a DPoP nonce the Credential Endpoint
