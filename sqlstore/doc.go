@@ -82,6 +82,11 @@
 //		// ...
 //	}
 //
+// A Credential Endpoint that runs apart from the Authorization Server
+// can't use the server's Dependencies: it takes its stores from
+// fapisqlstore.ResourceServer(asDB, rsDB), which gives it the server's
+// revocations and its own DPoP nonces.
+//
 // They keep apart:
 //
 //   - Tables: this package's all start oid4vc_, FAPIgo's with its
