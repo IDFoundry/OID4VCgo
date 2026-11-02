@@ -912,6 +912,11 @@ public struct VerifiedMdoc: Sendable {
     /// `ProximityReaderSession.checkStatus()` before relying on the
     /// document.
     public let statusList: StatusListReference?
+    /// The MSO's identifier list reference (ISO/IEC 18013-5 §12.3.6.4),
+    /// unchecked, beside or instead of `statusList`: either may revoke
+    /// the document, and `ProximityReaderSession.checkStatus()` checks
+    /// both.
+    public let identifierList: IdentifierListReference?
     /// The document signer's verified certificate path, leaf first,
     /// ending at the IACA in `ProximityReaderConfiguration.issuerRoots`
     /// it chains to: decide which issuers to accept on it.
@@ -924,6 +929,15 @@ public struct VerifiedMdoc: Sendable {
         public let uri: String
         /// The mdoc's index in the list.
         public let index: Int
+    }
+
+    /// Where the mdoc's revocation is published: an identifier list, and
+    /// the mdoc's identifier, which the list names if it's revoked.
+    public struct IdentifierListReference: Sendable {
+        /// The identifier list's URL.
+        public let uri: String
+        /// The mdoc's identifier, as base64.
+        public let id: String
     }
 }
 
@@ -947,8 +961,19 @@ struct VerifiedJSON: Decodable {
     let status: Status?
     let issuerChain: [Data]?
 
-    /// `idx` is left out when 0, and an identifier list has none.
-    struct Status: Decodable { let type: String?; let uri: String; let idx: Int? }
+    /// `idx` is left out when 0, and an identifier list has none; a
+    /// status list's carries the identifier list the MSO names too.
+    struct Status: Decodable {
+        let type: String?; let uri: String; let idx: Int?; let id: String?
+        let identifierList: IdentifierList?
+
+        struct IdentifierList: Decodable { let uri: String; let id: String }
+
+        enum CodingKeys: String, CodingKey {
+            case type, uri, idx, id
+            case identifierList = "identifier_list"
+        }
+    }
 
     enum CodingKeys: String, CodingKey {
         case doctype, claims, issuer, status
@@ -959,9 +984,14 @@ struct VerifiedJSON: Decodable {
 
     var mdoc: VerifiedMdoc {
         let list = status.flatMap { $0.type == nil || $0.type == "status_list" ? $0 : nil }
+        let identifiers = status.flatMap { s -> VerifiedMdoc.IdentifierListReference? in
+            if s.type == "identifier_list", let id = s.id { return .init(uri: s.uri, id: id) }
+            return s.identifierList.map { .init(uri: $0.uri, id: $0.id) }
+        }
         return VerifiedMdoc(doctype: doctype, claims: claims, deviceSignedClaims: deviceSignedClaims, issuer: issuer,
                             trustAnchor: trustAnchor, validFrom: validFrom, validUntil: validUntil, deviceAuth: deviceAuth,
                             statusList: list.map { VerifiedMdoc.StatusListReference(uri: $0.uri, index: $0.idx ?? 0) },
+                            identifierList: identifiers,
                             issuerChain: (issuerChain ?? []).compactMap { SecCertificateCreateWithData(nil, $0 as CFData) })
     }
 }

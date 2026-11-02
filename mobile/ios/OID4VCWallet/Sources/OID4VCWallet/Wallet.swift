@@ -631,11 +631,14 @@ public final class Wallet: @unchecked Sendable {
         return try decode(CredentialDetail.self, json)
     }
 
-    /// Fetches the issuer's status list for a credential, checks its
-    /// signature, and returns the credential with its revocation status
-    /// recorded. The list covers many credentials, so fetching it
-    /// doesn't tell the issuer which one is checked. A credential without
-    /// a status list is returned as it is.
+    /// Fetches the issuer's status list for a credential, and an mdoc's
+    /// identifier list, checks their signatures, and returns the
+    /// credential with its revocation status recorded. Each list covers
+    /// many credentials, so fetching it doesn't tell the issuer which
+    /// one is checked. A credential without a status or identifier list
+    /// is returned as it is. Revocation is final: a credential found
+    /// revoked stays so, its lists not fetched again, until the revoked
+    /// copy expires or the credential is refreshed.
     public func checkStatus(id: String) async throws -> CredentialSummary {
         let wallet = handle
         let json = try await OID4VC.cancellable { op in try OID4VC.call { wallet.checkStatus(op, credentialID: id, error: $0) } }

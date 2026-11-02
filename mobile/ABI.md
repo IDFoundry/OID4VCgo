@@ -141,8 +141,9 @@ Instance and DPoP keys sign protocol messages silently. Holder keys
 sign the Key Binding JWT or DeviceAuth when presenting, and the
 Credential Request's jwt proof when receiving or refreshing: one proof
 per copy, or one per Credential Request when it carries a key
-attestation (none with the `attestation` proof type). They may require
-user presence, which then asks at those times too. `CheckKeyStore`
+attestation (none with the `attestation` proof type), and again, with
+new holder keys, if the issuer refuses the request's nonce. They may
+require user presence, which then asks at those times too. `CheckKeyStore`
 exercises an implementation as the wallet will.
 
 A `CreateKey` error whose message starts with `[network]` is reported as
@@ -210,7 +211,8 @@ A record is JSON the app needn't read: `id`, `credential_issuer`,
 `copies_correlated` (the issuer gave two copies the same `jti`, `sub`,
 status list or identifier list entry, disclosure digest, or validity timestamp not rounded
 to the day; absent when not), and `copies` (each copy's `credential`, `holder_key_id`, `presented`,
-`shown_to`, its own `status_list` and `valid_until`, and `reservation`,
+`shown_to`, its own `status_list` and `valid_until`, `revoked` (found
+revoked by `CheckStatus`; absent when not), and `reservation`,
 the latest presentation that reserved it and may still undo that). A
 record written before a field was kept lacks it.
 
@@ -543,7 +545,7 @@ then. Added within ABI version 12.
 | `Credential(id)` | summary with `"claims"`: an SD-JWT VC's claims, or an mdoc's namespace → element → value, byte strings in base64 |
 | `DeleteCredential(id)` | deletes it and its holder keys, and its refresh grant with the grant's instance key once no other credential uses it. The refresh token is first revoked at the Authorization Server (RFC 7009), best effort, when it has a revocation endpoint: a network request, so call it off the main thread |
 | `RefreshCredential(op, credentialID)` | `{"credential": summary, "deferred": pending or null}`: replaces a `refreshable` credential's copies with a fresh batch, each bound to a new holder key, under the same ID, without the holder signing in; the new holder keys sign the Credential Request's proof, so a KeyStore requiring user presence asks then. If the issuer defers it, the credential is returned as it was, with the deferred one to poll, which settles as a new credential. One that can't be refreshed (no refresh token was kept, the Authorization Server no longer accepts it, or its grant issued several datasets of its configuration and the wallet can't ask for the one it holds again) is `reissue_required`: receive it again from a new offer |
-| `CheckStatus(op, credentialID)` | the summary, with `"status"` checked now. It fetches the issuer's status list, and an mdoc's identifier list, and checks each list's signature against `issuer_roots` (an mdoc's, against the mdoc roots it was received under, bound to its document signer's CA as ISO/IEC 18013-5 §12.3.6.2 requires). Each list covers many credentials, so fetching it doesn't tell the issuer which one is checked. A credential without a status list is returned as it is, as is an expired one: it isn't valid whatever its status, so its status list isn't fetched (draft-ietf-oauth-status-list §8.3) |
+| `CheckStatus(op, credentialID)` | the summary, with `"status"` checked now. It fetches the issuer's status list, and an mdoc's identifier list, and checks each list's signature against the roots configured now: `issuer_roots`, or for an mdoc the `certificate` its MSO names, if any, and otherwise the mdoc roots for its doctype, through its document signer's CA as ISO/IEC 18013-5 §12.3.6.2 requires. A list signed other than with ES256 or EdDSA (Ed25519) is a `protocol` error. Each list covers many credentials, so fetching it doesn't tell the issuer which one is checked. A credential without a status or identifier list is returned as it is, as is an expired one: it isn't valid whatever its status, so its lists aren't fetched (draft-ietf-oauth-status-list §8.3). Revocation is final (§12.3.6.1): a copy found revoked is marked so, and while it hasn't expired the credential stays `invalid` without its lists fetched again, so an older list can't make it valid; a refresh replaces it. (Before OID4VCWallet 0.24.0, a later check could record it valid again.) |
 | `StartIssuance(op, offerURI)` | an `Issuance` |
 | `ResumeIssuance(op, redirect)` | an `Issuance` ready for `RequestCredentials`: completes the authorization in progress that the redirect's `state` names, after the app was killed during the browser step. One that matches nothing, has already been used, or has expired is `not_found` |
 | `StartPresentation(op, requestLink)` | a `Presentation`. The `request_uri` is fetched by GET, or, for a link with `request_uri_method=post`, by POST with a fresh `wallet_nonce` and the wallet's metadata (OpenID4VP 1.0 §5.10), the Request Object then having to carry that `wallet_nonce` |
@@ -944,9 +946,14 @@ document. It's `{"type": "status_list", "uri", "idx"}` or `{"type":
 (base64 DER), the list signer's trust anchor, when the MSO names one,
 or `{"type": "unknown", "uri": ""}` for an MSO status naming neither (a
 mechanism the reader doesn't know, or a misspelt one), which may still
-revoke the document. `type` and the identifier list were added within
-ABI version 12; before, an identifier list gave no `status`. `unknown`
-was added within ABI version 12 too; before, such a status gave none.
+revoke the document. An MSO naming both lists gives the status list's,
+with the identifier list's in its `identifier_list` member, as
+`CheckStatus` checks both: either may revoke the document. `type` and
+the identifier list were added within ABI version 12; before, an
+identifier list gave no `status`. `unknown` was added within ABI
+version 12 too; before, such a status gave none. `identifier_list` was
+added within ABI version 13, in OID4VCWallet 0.24.0; before, an MSO
+naming both gave the status list's alone.
 
 ```json
 {"abi": 12, "event": "verified", "verified": {

@@ -20,12 +20,13 @@ services on loopback addresses are refused. The rest is the app's.
   With `AndroidKeystoreKeyStore.Options.holderUserAuthentication` on,
   the default, Keystore enforces the check, but receiving a credential
   asks once per copy (`WalletConfiguration.batchSize`), or once when the
-  jwt proof carries a key attestation, and a refresh asks too, so it
+  jwt proof carries a key attestation (again if the issuer refuses the
+  nonce), and a refresh asks too, so it
   can't run in the background. Turned off, as the demo app does (and
   as below API 30 it must be), holder keys sign without asking, and the
   app must ask the holder itself (`BiometricPrompt`) before every
   presentation: in the app and from a link, through Credential Manager
-  (the Digital Credentials API), and in person, by QR code or NFC. A
+  (the Digital Credentials API), and in person over QR, BLE or NFC. A
   path that doesn't ask presents without the holder: the check is the
   app's code, not the key.
 - Use `FileCredentialStore`: each record encrypted under a Keystore key

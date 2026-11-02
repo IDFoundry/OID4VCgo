@@ -55,23 +55,35 @@ func identifierLists(c StoredCredential, keep func(CredentialCopy) bool) ([]iden
 		if !keep(cp) {
 			continue
 		}
-		issuerSigned, err := storedIssuerSigned(cp.Credential)
+		e, err := copyIdentifierList(c, cp)
 		if err != nil {
 			return nil, err
 		}
-		status, path, err := mdoc.IssuerAuthStatus(issuerSigned)
-		if err != nil {
-			return nil, err
-		}
-		if status == nil || status.IdentifierList == nil {
-			continue
-		}
-		e := identifierListEntry{ref: identifierlist.Ref(*status.IdentifierList), path: path}
-		if !slices.ContainsFunc(lists, e.same) {
-			lists = append(lists, e)
+		if e != nil && !slices.ContainsFunc(lists, e.same) {
+			lists = append(lists, *e)
 		}
 	}
 	return lists, nil
+}
+
+// copyIdentifierList is the identifier list entry copy cp of c names,
+// nil for none.
+func copyIdentifierList(c StoredCredential, cp CredentialCopy) (*identifierListEntry, error) {
+	if c.Format != mdoc.CredentialFormat {
+		return nil, nil
+	}
+	issuerSigned, err := storedIssuerSigned(cp.Credential)
+	if err != nil {
+		return nil, err
+	}
+	status, path, err := mdoc.IssuerAuthStatus(issuerSigned)
+	if err != nil {
+		return nil, err
+	}
+	if status == nil || status.IdentifierList == nil {
+		return nil, nil
+	}
+	return &identifierListEntry{ref: identifierlist.Ref(*status.IdentifierList), path: path}, nil
 }
 
 // liveIdentifierLists are identifierLists of c's copies not yet expired
@@ -89,20 +101,20 @@ func sameIdentifierLists(a, b StoredCredential) bool {
 	return errA == nil && errB == nil && slices.EqualFunc(la, lb, identifierListEntry.same)
 }
 
-// checkIdentifierLists is the status of c's copies on the identifier
-// lists entries name: StatusInvalid when any copy's identifier is on
-// its list, StatusValid otherwise. Each list's signer must chain to
-// the roots the credential was received under, through the CA that
-// signed its document signer, or to the Certificate its MSO names
-// (identifierlist.Check). A list several copies share is fetched and
-// verified once.
-func (w *Wallet) checkIdentifierLists(ctx context.Context, c StoredCredential, entries []identifierListEntry) (statuslist.StatusType, error) {
+// checkIdentifierLists is the entries among entries, c's copies', that
+// are on their identifier lists: revoked. Each list's signer must
+// chain to the Certificate its MSO names, or, naming none, to the mdoc
+// roots configured for c's doctype, through the CA that signed its
+// document signer (identifierlist.Check). A list several copies share
+// is fetched and verified once.
+func (w *Wallet) checkIdentifierLists(ctx context.Context, c StoredCredential, entries []identifierListEntry) ([]identifierListEntry, error) {
 	roots, _ := w.cfg.issuerTrust(c.Format, c.DocType)
 	checker := identifierlist.Checker{
 		Fetcher: statuslist.Fetcher{HTTP: w.deps.HTTP, AllowLoopback: w.cfg.Development},
 		Roots:   roots,
 		Options: identifierlist.VerifyOptions{Now: w.deps.Clock, Revocation: w.cfg.StatusRevocation},
 	}
+	var listed []identifierListEntry
 	lists := map[string]identifierlist.TokenClaims{}
 	for _, e := range entries {
 		key := e.listKey()
@@ -110,13 +122,13 @@ func (w *Wallet) checkIdentifierLists(ctx context.Context, c StoredCredential, e
 		if !ok {
 			var err error
 			if _, claims, err = checker.Check(ctx, e.ref, e.path); err != nil {
-				return 0, fmt.Errorf("identifier list: %w", err)
+				return nil, fmt.Errorf("identifier list: %w", err)
 			}
 			lists[key] = claims
 		}
 		if claims.Contains(e.ref.ID) {
-			return statuslist.StatusInvalid, nil
+			listed = append(listed, e)
 		}
 	}
-	return statuslist.StatusValid, nil
+	return listed, nil
 }

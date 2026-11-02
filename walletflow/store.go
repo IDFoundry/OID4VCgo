@@ -112,6 +112,11 @@ type CredentialCopy struct {
 	// they were kept has neither, the credential's own applying.
 	StatusList *statuslist.StatusListRef
 	ValidUntil time.Time
+	// Revoked is whether Wallet.CheckStatus has found this copy revoked,
+	// on its status list or identifier list. Revocation is final, so
+	// while the copy hasn't expired its lists aren't fetched again: an
+	// older list served later can't make it valid.
+	Revoked bool
 
 	// Reservation identifies the latest presentation that reserved this
 	// copy and may still undo it: one that isn't sent undoes its

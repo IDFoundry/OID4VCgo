@@ -405,27 +405,35 @@ type statusRefJSON struct {
 	// Certificate is the list signer's trust anchor, when the MSO names
 	// one, as base64 DER.
 	Certificate string `json:"certificate,omitempty"`
+	// IdentifierList is, on a status list's reference, the identifier
+	// list the MSO names too, which CheckStatus checks as well.
+	IdentifierList *statusRefJSON `json:"identifier_list,omitempty"`
 }
 
 // statusRefOf is an MSO's status reference as JSON: either mechanism,
-// or one it doesn't know, so a document revoked through an identifier
-// list, or through another mechanism, doesn't look like one with no
-// status at all.
+// or both, or one it doesn't know, so a document revoked through an
+// identifier list, or through another mechanism, doesn't look like one
+// with no status at all.
 func statusRefOf(status *mdoc.Status) *statusRefJSON {
+	var identifiers *statusRefJSON
+	if status != nil && status.IdentifierList != nil {
+		identifiers = &statusRefJSON{
+			Type: "identifier_list", URI: status.IdentifierList.URI,
+			ID:          base64.StdEncoding.EncodeToString(status.IdentifierList.ID),
+			Certificate: base64.StdEncoding.EncodeToString(status.IdentifierList.Certificate),
+		}
+	}
 	switch {
 	case status == nil:
 		return nil
 	case status.StatusList != nil:
 		return &statusRefJSON{
 			Type: "status_list", URI: status.StatusList.URI, Idx: status.StatusList.Idx,
-			Certificate: base64.StdEncoding.EncodeToString(status.StatusList.Certificate),
+			Certificate:    base64.StdEncoding.EncodeToString(status.StatusList.Certificate),
+			IdentifierList: identifiers,
 		}
-	case status.IdentifierList != nil:
-		return &statusRefJSON{
-			Type: "identifier_list", URI: status.IdentifierList.URI,
-			ID:          base64.StdEncoding.EncodeToString(status.IdentifierList.ID),
-			Certificate: base64.StdEncoding.EncodeToString(status.IdentifierList.Certificate),
-		}
+	case identifiers != nil:
+		return identifiers
 	default:
 		// A status naming no mechanism this reader knows still isn't
 		// no status.

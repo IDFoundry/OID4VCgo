@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
+	"github.com/idfoundry/oid4vcgo/internal/testcert"
 	"github.com/idfoundry/oid4vcgo/internal/teststatuslist"
 	"github.com/idfoundry/oid4vcgo/proximity"
 )
@@ -259,6 +260,53 @@ func TestProximityReader_CheckStatusListForm(t *testing.T) {
 				status.IdentifierList = &mdoc.IdentifierListRef{ID: tc.id, URI: idsURI, Certificate: tc.pin.CA.Raw}
 			}
 			got, err := r.checkStatus(context.Background(), proximity.Verified{Status: status, IssuerChain: signer.Chain})
+			switch {
+			case tc.want == "" && err == nil:
+				t.Errorf("checkStatus = %q, want it refused", got)
+			case tc.want != "" && (err != nil || got != tc.want):
+				t.Errorf("checkStatus = %q, %v; want %q", got, err, tc.want)
+			}
+		})
+	}
+}
+
+// Naming no Certificate, either list's signer must be under the CA that
+// signed the document signer, the root the document chained to
+// (ISO/IEC 18013-5 §12.3.6.2): not under another CA.
+func TestProximityReader_CheckStatusUnderIssuerCA(t *testing.T) {
+	iaca, iacaKey := testcert.CA(t, "IACA")
+	otherCA, otherKey := testcert.CA(t, "Other IACA")
+	ds, _ := testcert.Leaf(t, "Document signer", iaca, iacaKey)
+	saved := testHTTP.Load()
+	defer testHTTP.Store(saved)
+	r := &ProximityReader{clock: time.Now}
+	for name, tc := range map[string]struct {
+		ca         *x509.Certificate
+		key        *ecdsa.PrivateKey
+		statusList bool
+		id         []byte // nil for no identifier list
+		want       string // "" for refused
+	}{
+		"status list, same IACA":                  {iaca, iacaKey, true, nil, "valid"},
+		"status list, another CA":                 {otherCA, otherKey, true, nil, ""},
+		"identifier list, same IACA, not listed":  {iaca, iacaKey, false, []byte{2}, "valid"},
+		"identifier list, same IACA, listed":      {iaca, iacaKey, false, []byte{7}, "invalid"},
+		"identifier list, another CA, not listed": {otherCA, otherKey, false, []byte{2}, ""},
+		"both, same IACA, listed":                 {iaca, iacaKey, true, []byte{7}, "invalid"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			leaf, leafKey := testcert.Leaf(t, "List signer", tc.ca, tc.key)
+			signer := teststatuslist.Signer{CA: tc.ca, Key: leafKey, Chain: []*x509.Certificate{leaf}}
+			statusURI, idsURI, client := signer.ServeLists(t, teststatuslist.WellFormed, []byte{7})
+			testHTTP.Store(client)
+			status := &mdoc.Status{}
+			if tc.statusList {
+				status.StatusList = &mdoc.StatusListRef{Idx: 3, URI: statusURI}
+			}
+			if tc.id != nil {
+				status.IdentifierList = &mdoc.IdentifierListRef{ID: tc.id, URI: idsURI}
+			}
+			got, err := r.checkStatus(context.Background(), proximity.Verified{Status: status, IssuerChain: []*x509.Certificate{ds, iaca}})
 			switch {
 			case tc.want == "" && err == nil:
 				t.Errorf("checkStatus = %q, want it refused", got)

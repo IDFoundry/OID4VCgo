@@ -213,7 +213,8 @@ copy's key signs its own jwt proof, or the first copy's key signs one
 jwt proof carrying a key attestation of them all; with the
 `attestation` proof type none signs. A holder key requiring user
 presence therefore asks at issuance and at every refresh, once per
-copy with plain jwt proofs, which is why the demos turn it off and ask
+copy with plain jwt proofs (again if the issuer refuses the nonce: the
+retry uses new holder keys), which is why the demos turn it off and ask
 the holder themselves before each presentation (see the Phase 4
 findings and Phase 8's Android Keystore key store findings).
 
