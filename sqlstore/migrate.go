@@ -89,8 +89,13 @@ func SchemaVersion() int { return len(migrations) }
 // Nothing migrates implicitly: run it from a deployment step, or at
 // startup before serving, as the database's schema owner. On
 // PostgreSQL the tables are created in the connection's current schema
-// (the first in its search_path).
+// (the first in its search_path). On SQLite, it refuses a database
+// that isn't in WAL mode, as CheckSchema does: open it with
+// journal_mode(WAL) in its DSN (see the package documentation).
 func (d *DB) Migrate(ctx context.Context) error {
+	if err := d.checkJournalMode(ctx); err != nil {
+		return fmt.Errorf("sqlstore: migrate: %w", err)
+	}
 	for _, m := range migrations {
 		if err := d.write(ctx, func(q querier) error { return d.migrate(ctx, q, m) }); err != nil {
 			return fmt.Errorf("sqlstore: migrate: %w", err)
@@ -126,10 +131,34 @@ func (d *DB) migrate(ctx context.Context, q querier, m migration) error {
 	return err
 }
 
+// checkJournalMode refuses a SQLite database that isn't in WAL mode, as
+// fapigo/sqlstore does. Without it, a read made while a write commits
+// fails at once with SQLITE_BUSY unless its connection has a busy
+// timeout, which only the DSN gives the connections reads use: under
+// concurrent requests, most of them fail. WAL mode is a property of the
+// file, which every connection then reports. Postgres needs no check.
+func (d *DB) checkJournalMode(ctx context.Context) error {
+	if d.dialect != SQLite {
+		return nil
+	}
+	var mode string
+	if err := d.db.QueryRowContext(ctx, "PRAGMA journal_mode").Scan(&mode); err != nil {
+		return fmt.Errorf("read the SQLite journal mode: %w", err)
+	}
+	if !strings.EqualFold(mode, "wal") {
+		return fmt.Errorf("the SQLite database's journal mode is %q, not WAL, so a read made while a write commits fails rather than waits: open it with both pragmas in its DSN, busy_timeout first, such as file:oid4vc.db?_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)", mode)
+	}
+	return nil
+}
+
 // CheckSchema returns an error unless every migration this package's
-// stores need has been applied: call it at startup, where Migrate is
-// run separately, to fail fast rather than on the first request.
+// stores need has been applied, and, on SQLite, the database is in WAL
+// mode: call it at startup, where Migrate is run separately, to fail
+// fast rather than on the first request.
 func (d *DB) CheckSchema(ctx context.Context) error {
+	if err := d.checkJournalMode(ctx); err != nil {
+		return fmt.Errorf("sqlstore: check schema: %w", err)
+	}
 	rows, err := d.db.QueryContext(ctx, d.sql.migrationVersions)
 	if err != nil {
 		return fmt.Errorf("sqlstore: check schema (has Migrate run?): %w", err)

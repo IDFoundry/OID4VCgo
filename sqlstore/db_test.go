@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -181,4 +182,34 @@ func TestSweep(t *testing.T) {
 			t.Errorf("an expired authorization was swept: %v", err)
 		}
 	})
+}
+
+// A SQLite database not in WAL mode is refused by Migrate and
+// CheckSchema; the same file switched to WAL is migrated.
+func TestMigrateRefusesSQLiteWithoutWAL(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "store.db")
+	db, err := sql.Open("sqlite", "file:"+path+"?_pragma=busy_timeout(10000)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	d, err := sqlstore.New(db, sqlstore.SQLite, sqlstore.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, run := range map[string]func(context.Context) error{"Migrate": d.Migrate, "CheckSchema": d.CheckSchema} {
+		if err := run(ctx); err == nil || !strings.Contains(err.Error(), "not WAL") {
+			t.Errorf("%s without WAL = %v, want it refused", name, err)
+		}
+	}
+	if _, err := db.ExecContext(ctx, "PRAGMA journal_mode = WAL"); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.Migrate(ctx); err != nil {
+		t.Errorf("Migrate in WAL mode: %v", err)
+	}
+	if err := d.CheckSchema(ctx); err != nil {
+		t.Errorf("CheckSchema in WAL mode: %v", err)
+	}
 }
