@@ -231,6 +231,38 @@ func TestTransactionCodec_Sealed(t *testing.T) {
 		}
 	}
 
+	// Nor does a record whose fields saying who may read it, or what it
+	// asked for, were changed: the result would go to someone else.
+	for name, change := range map[string]func(m map[string]any){
+		"browser binding hash": func(m map[string]any) { m["browser_binding_hash"] = bytes.Repeat([]byte{1}, 32) },
+		"owner":                func(m map[string]any) { m["owner"] = "another-verifier" },
+		"same device":          func(m map[string]any) { m["same_device"] = true },
+		"origin":               func(m map[string]any) { m["origin"] = "https://attacker.example" },
+		"query": func(m map[string]any) {
+			m["query"].(map[string]any)["credentials"].([]any)[0].(map[string]any)["id"] = "other"
+		},
+	} {
+		var changed map[string]any
+		if err := json.Unmarshal(row, &changed); err != nil {
+			t.Fatal(err)
+		}
+		change(changed)
+		changedRow, _ := json.Marshal(changed)
+		if _, err := sealing.Unmarshal(changedRow); err == nil || !strings.Contains(err.Error(), "open response_decryption_key") {
+			t.Errorf("%s changed: Unmarshal = %v, want the sealed fields not to open", name, err)
+		}
+	}
+
+	// The record reformatted, as a store keeping it as JSON may, still
+	// opens.
+	var reformatted bytes.Buffer
+	if err := json.Indent(&reformatted, []byte(strings.Replace(string(row), `{"credentials":`, `{ "credentials" :`, 1)), "", "  "); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sealing.Unmarshal(reformatted.Bytes()); err != nil {
+		t.Errorf("a reformatted sealed record: %v", err)
+	}
+
 	plainRow, _ := marshalTestTransaction(t, verifier.TransactionCodec{}, "tx-c")
 	if _, err := sealing.Unmarshal(plainRow); err == nil {
 		t.Error("a sealing codec read an unsealed record")

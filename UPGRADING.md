@@ -34,6 +34,21 @@ them.
   non-negative integer; `CredentialMetadata.Validate` refused every
   one before.
 
+### Verifier (`verifier`)
+
+- **Sealed fields are bound to who may read the result.**
+  `TransactionCodec` with a `Sealer` now binds the response decryption
+  key and the result to the transaction's owner, browser binding hash,
+  `same_device`, origin and query, not just its ID: someone who could
+  write to the store but hadn't the key could rewrite the browser
+  binding hash or owner and have `Lookup` hand them the result. A
+  sealed record written by v0.61.0 or earlier no longer opens
+  (`sqlstore.ErrRecordFormat` from `sqlstore`'s store): a request in
+  flight when you upgrade fails, and a completed one's result is lost —
+  at most `TransactionsConfig.Lifetime`'s worth, twice over. Upgrade
+  when no request is in flight, or accept those failing. Records
+  written without a `Sealer` are unaffected.
+
 ## v0.60.0 → v0.61.0
 
 ### FAPIgo v0.69.0 (`issuer`)

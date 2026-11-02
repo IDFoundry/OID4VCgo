@@ -6,6 +6,7 @@ import (
 	"crypto/cipher"
 	"crypto/ecdsa"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/x509"
 	"encoding/json"
 	"errors"
@@ -39,9 +40,9 @@ const TransactionCodecVersion = 1
 // A transaction holds two things worth protecting where it's stored:
 // the response decryption key, which opens the holder's answer, and,
 // once the request completes, the claims the holder disclosed (Result).
-// With Sealer set, both are sealed, each bound to the transaction's ID,
-// so a copy of the store reveals neither and one transaction's sealed
-// fields can't be moved to another's. Set it wherever the store is
+// With Sealer set, both are sealed, each bound to the transaction and
+// to who may read it, so a copy of the store reveals neither and one
+// transaction's sealed fields can't be moved to another's. Set it wherever the store is
 // shared, backed up or readable by more than the Verifier: AESGCMSealer
 // is one, with a key the Verifier keeps outside the store. The rest of
 // the record — the request's nonce and state, which its public Request
@@ -51,12 +52,15 @@ const TransactionCodecVersion = 1
 // claims once they've been read, so the store holds them for as little
 // time as possible.
 //
-// Sealing gives the response decryption key and Result confidentiality
-// and binds each to its transaction; it doesn't protect the readable
-// fields. Someone who can write to the store but hasn't the key can't
-// read or forge a sealed field, but can change a record's status,
-// owner, same_device, browser binding hash or query, so the store must
-// still be trusted for those fields' integrity.
+// Each sealed field is bound to its transaction's ID and to the fields,
+// fixed when the request began, that say who may read its result and
+// what it asked for: its owner, browser binding hash, same_device,
+// origin and query. Someone who can write to the store but hasn't the
+// key can't read or forge a sealed field, nor change any of those
+// fields to have the Verifier hand the result to someone else: the
+// record no longer opens. They can still change its status,
+// response_code hash, expiry, last error, nonce or state, delete it, or
+// put back an older copy, so the store must still be trusted for those.
 //
 // The zero TransactionCodec seals nothing.
 type TransactionCodec struct {
@@ -65,7 +69,8 @@ type TransactionCodec struct {
 	// plaintext result among them, and a codec without one refuses a
 	// record whose are: a store that starts sealing doesn't read the
 	// records it wrote before — at most TransactionsConfig.Lifetime's
-	// worth, twice over.
+	// worth, twice over. Nor does it open fields sealed by OID4VCgo
+	// v0.61.0 or earlier, which bound them to the transaction's ID alone.
 	Sealer TransactionSealer
 }
 
@@ -89,6 +94,11 @@ type TransactionSealer interface {
 // expire, with a TransactionSealer of your own or
 // github.com/idfoundry/fapigo/sqlstore's RotatingSealer, which seals
 // with the first sealer it's given and opens with any of them.
+//
+// Each value it seals is the 12-byte random nonce followed by the
+// AES-GCM ciphertext and its 16-byte tag, sealed with the
+// additionalData Seal is given: a TransactionSealer of your own can
+// open it, with crypto/cipher's NewGCM, under a key this one refuses.
 //
 // It refuses a key that's one byte repeated (all zeros, say: a
 // placeholder), or all printable text (a passphrase, or a hex or base64
@@ -182,12 +192,22 @@ func (c TransactionCodec) Marshal(tx Transaction) ([]byte, error) {
 		BrowserBindingHash: tx.BrowserBindingHash, SameDevice: tx.SameDevice, ExpiresAt: tx.ExpiresAt, RetainUntil: tx.RetainUntil,
 		Status: tx.Status, ResponseCodeHash: tx.ResponseCodeHash, LastError: tx.LastError,
 	}
+	var bound []byte
+	if c.Sealer != nil {
+		query, err := json.Marshal(tx.Query)
+		if err != nil {
+			return nil, fmt.Errorf("verifier: marshal transaction: query: %w", err)
+		}
+		if bound, err = sealBinding(&w, query); err != nil {
+			return nil, fmt.Errorf("verifier: marshal transaction: %w", err)
+		}
+	}
 	if tx.ResponseDecryptionKey != nil {
 		der, err := x509.MarshalPKCS8PrivateKey(tx.ResponseDecryptionKey)
 		if err != nil {
 			return nil, fmt.Errorf("verifier: marshal transaction: response decryption key: %w", err)
 		}
-		if w.DecryptionKey, err = c.seal(der, "response_decryption_key", tx.ID); err != nil {
+		if w.DecryptionKey, err = c.seal(der, "response_decryption_key", bound); err != nil {
 			return nil, err
 		}
 	}
@@ -198,7 +218,7 @@ func (c TransactionCodec) Marshal(tx Transaction) ([]byte, error) {
 		}
 		if c.Sealer == nil {
 			w.Result = result
-		} else if w.SealedResult, err = c.seal(result, "result", tx.ID); err != nil {
+		} else if w.SealedResult, err = c.seal(result, "result", bound); err != nil {
 			return nil, err
 		}
 	}
@@ -238,8 +258,23 @@ func (c TransactionCodec) Unmarshal(data []byte) (Transaction, error) {
 		Origin: w.Origin, Owner: w.Owner, BrowserBindingHash: w.BrowserBindingHash, SameDevice: w.SameDevice,
 		ExpiresAt: w.ExpiresAt, RetainUntil: w.RetainUntil, Status: w.Status, ResponseCodeHash: w.ResponseCodeHash, LastError: w.LastError,
 	}
+	var bound []byte
+	if c.Sealer != nil {
+		// The query as the record holds it, not as dcql.Query decodes
+		// it: a number among a claim's values needn't survive float64.
+		var raw struct {
+			Query json.RawMessage `json:"query"`
+		}
+		if err := json.Unmarshal(data, &raw); err != nil {
+			return Transaction{}, fmt.Errorf("verifier: unmarshal transaction: %w", err)
+		}
+		var err error
+		if bound, err = sealBinding(&w, raw.Query); err != nil {
+			return Transaction{}, fmt.Errorf("verifier: unmarshal transaction: %w", err)
+		}
+	}
 	if w.DecryptionKey != nil {
-		der, err := c.open(w.DecryptionKey, "response_decryption_key", w.ID)
+		der, err := c.open(w.DecryptionKey, "response_decryption_key", bound)
 		if err != nil {
 			return Transaction{}, err
 		}
@@ -255,7 +290,7 @@ func (c TransactionCodec) Unmarshal(data []byte) (Transaction, error) {
 	}
 	result := []byte(w.Result)
 	if w.SealedResult != nil {
-		opened, err := c.open(w.SealedResult, "result", w.ID)
+		opened, err := c.open(w.SealedResult, "result", bound)
 		if err != nil {
 			return Transaction{}, err
 		}
@@ -271,27 +306,52 @@ func (c TransactionCodec) Unmarshal(data []byte) (Transaction, error) {
 	return tx, nil
 }
 
-// sealAD binds a sealed field to its name and its transaction's ID.
-func sealAD(field, id string) []byte {
-	return []byte("oid4vcgo verifier transaction v1\x00" + field + "\x00" + id)
+// sealBinding is what each of w's sealed fields is bound to besides its
+// name: its ID, and the fields set when the request began that say who
+// may read it (Owner, BrowserBindingHash, SameDevice, Origin) and what
+// it asked for (a hash of query, the record's JSON of it). None of them
+// changes after Begin. query is hashed in a canonical form — decoded,
+// numbers kept as written, and encoded again with its object members
+// sorted — so a store that keeps the record as JSON it reformats still
+// reads it.
+func sealBinding(w *wireTransaction, query []byte) ([]byte, error) {
+	dec := json.NewDecoder(bytes.NewReader(query))
+	dec.UseNumber()
+	var v any
+	if err := dec.Decode(&v); err != nil {
+		return nil, fmt.Errorf("query: %w", err)
+	}
+	canonical, err := json.Marshal(v)
+	if err != nil {
+		return nil, fmt.Errorf("query: %w", err)
+	}
+	queryHash := sha256.Sum256(canonical)
+	return json.Marshal([]any{w.ID, w.Owner, w.BrowserBindingHash, w.SameDevice, w.Origin, queryHash[:]})
 }
 
-func (c TransactionCodec) seal(plaintext []byte, field, id string) ([]byte, error) {
+// sealAD binds a sealed field to its name and to bound (sealBinding).
+// Version 1 bound it to the transaction's ID alone, so a record sealed
+// under it no longer opens.
+func sealAD(field string, bound []byte) []byte {
+	return append([]byte("oid4vcgo verifier transaction v2\x00"+field+"\x00"), bound...)
+}
+
+func (c TransactionCodec) seal(plaintext []byte, field string, bound []byte) ([]byte, error) {
 	if c.Sealer == nil {
 		return plaintext, nil
 	}
-	sealed, err := c.Sealer.Seal(plaintext, sealAD(field, id))
+	sealed, err := c.Sealer.Seal(plaintext, sealAD(field, bound))
 	if err != nil {
 		return nil, fmt.Errorf("verifier: marshal transaction: seal %s: %w", field, err)
 	}
 	return sealed, nil
 }
 
-func (c TransactionCodec) open(sealed []byte, field, id string) ([]byte, error) {
+func (c TransactionCodec) open(sealed []byte, field string, bound []byte) ([]byte, error) {
 	if c.Sealer == nil {
 		return sealed, nil
 	}
-	plaintext, err := c.Sealer.Open(sealed, sealAD(field, id))
+	plaintext, err := c.Sealer.Open(sealed, sealAD(field, bound))
 	if err != nil {
 		return nil, fmt.Errorf("verifier: unmarshal transaction: open %s: %w", field, err)
 	}
