@@ -38,7 +38,8 @@
 // The stores set a 10-second busy timeout themselves on each connection
 // they write on (PRAGMA busy_timeout = 10000), so the DSN's matters for
 // reads. Migrate and CheckSchema refuse a database that isn't in WAL
-// mode: without it, most reads made under concurrent requests fail.
+// mode: without it, most reads made under concurrent requests fail. An
+// in-memory database can't be, so in tests use a file under t.TempDir().
 //
 // # Tables and isolation
 //
@@ -86,7 +87,8 @@
 // A Credential Endpoint that runs apart from the Authorization Server
 // can't use the server's Dependencies: it takes its stores from
 // fapisqlstore.ResourceServer(asDB, rsDB), which gives it the server's
-// revocations and its own DPoP nonces.
+// revocations, replay records and access tokens, and its own DPoP
+// nonces.
 //
 // They keep apart:
 //
@@ -199,8 +201,11 @@
 // verifier answer one as unknown once it has expired. Call Sweep
 // periodically to delete them, so the tables, and the personal data in
 // them, don't grow without bound. Sweep leaves the wallet's tables
-// alone: walletflow forgets an expired authorization in progress
-// itself, deleting the keys it names with it, which Sweep couldn't.
+// alone: walletflow forgets an expired authorization in progress,
+// deleting the keys it names with it, which Sweep couldn't — but only
+// when Wallet.KeysInUse lists the authorizations, or ResumeIssuance is
+// called for that one. A wallet should call KeysInUse periodically, or
+// the authorizations it abandoned, and their keys, stay.
 //
 // # Production
 //

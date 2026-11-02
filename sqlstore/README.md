@@ -49,6 +49,9 @@ pure Go, no cgo) needs WAL mode and a busy timeout:
 sql.Open("sqlite", "file:store.db?_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)")
 ```
 
+`Migrate` and `CheckSchema` refuse a database not in WAL mode, an
+in-memory one among them: in tests, use a file under `t.TempDir()`.
+
 ## A whole issuer deployment
 
 A Credential Issuer also runs a `fapigo/server` Authorization Server and
@@ -68,7 +71,7 @@ rsDB, err := fapisqlstore.New(sqlDB, fapisqlstore.Postgres, fapisqlstore.Options
 
 A Credential Endpoint running apart from the Authorization Server takes
 its stores from `fapisqlstore.ResourceServer(asDB, rsDB)`: the server's
-revocations, and its own DPoP nonces.
+revocations, replay records and access tokens, and its own DPoP nonces.
 
 Their tables don't collide (`oid4vc_…` here, FAPIgo's `TablePrefix`,
 `fapigo_` by default — never one starting `oid4vc_`), each migrates its
@@ -89,8 +92,10 @@ binding its records to additional data of its own. Sweep each. See
   on SQLite, a file each.
 - **Sweeping**: stores never delete expired records. Call
   `db.Sweep(ctx, time.Now())` every few minutes. It sweeps the issuer
-  and verifier tables; walletflow forgets expired authorizations, with
-  their keys, itself.
+  and verifier tables, never the wallet's. walletflow forgets an expired
+  authorization, with its keys, when `Wallet.KeysInUse` lists the
+  authorizations or `ResumeIssuance` is called for it: a wallet should
+  call `KeysInUse` periodically, or abandoned authorizations stay.
 - **Sealing**: with `Options.Sealer` every issuer and walletflow record
   is sealed, bound to its table and key. Keys, Owners, hashes and expiry
   times stay readable, for lookups and sweeping. A verifier transaction

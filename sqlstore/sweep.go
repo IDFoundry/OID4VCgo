@@ -23,7 +23,8 @@ import (
 //
 // Sweep leaves the wallet's tables alone. An expired authorization in
 // progress names the instance and DPoP keys it was started with, which
-// walletflow deletes with it when it next lists the authorizations:
+// walletflow deletes with it when it next lists the authorizations
+// (Wallet.KeysInUse, which a wallet should call periodically):
 // deleting the authorization here would orphan its keys in the
 // KeyStore, which can't list them. A wallet's credentials, refresh
 // grants, pending deferred credentials and keys have no expiry here
