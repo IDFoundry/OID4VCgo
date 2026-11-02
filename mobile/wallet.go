@@ -657,11 +657,12 @@ func (w *Wallet) HolderKeyIDs() (string, error) {
 // status, and returns the credential's summary with it ("status":
 // {"value": "valid" | "invalid" | "suspended" | "0x…" | "unknown",
 // "checked_at"}). A credential without a status list is returned as it
-// is, as is an expired one, whose status list isn't fetched; an mdoc
-// naming an identifier list, which isn't checked, is "unknown" unless a
-// status list it names too says otherwise than valid. The list
-// covers many credentials, so fetching it doesn't tell the issuer which
-// one is checked.
+// is, as is an expired one, whose status list isn't fetched. An mdoc's
+// identifier list (ISO/IEC 18013-5 §12.3.6.4) is checked too: on it,
+// the mdoc is "invalid". A status naming no mechanism the wallet knows
+// is "unknown" unless a list it names too says otherwise than valid.
+// Each list covers many credentials, so fetching it doesn't tell the
+// issuer which one is checked.
 func (w *Wallet) CheckStatus(op *Operation, credentialID string) (string, error) {
 	c, err := w.w.CheckStatus(op.context(), credentialID)
 	if err != nil {

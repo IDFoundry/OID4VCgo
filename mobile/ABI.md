@@ -543,7 +543,7 @@ then. Added within ABI version 12.
 | `Credential(id)` | summary with `"claims"`: an SD-JWT VC's claims, or an mdoc's namespace → element → value, byte strings in base64 |
 | `DeleteCredential(id)` | deletes it and its holder keys, and its refresh grant with the grant's instance key once no other credential uses it. The refresh token is first revoked at the Authorization Server (RFC 7009), best effort, when it has a revocation endpoint: a network request, so call it off the main thread |
 | `RefreshCredential(op, credentialID)` | `{"credential": summary, "deferred": pending or null}`: replaces a `refreshable` credential's copies with a fresh batch, each bound to a new holder key, under the same ID, without the holder signing in; the new holder keys sign the Credential Request's proof, so a KeyStore requiring user presence asks then. If the issuer defers it, the credential is returned as it was, with the deferred one to poll, which settles as a new credential. One that can't be refreshed (no refresh token was kept, the Authorization Server no longer accepts it, or its grant issued several datasets of its configuration and the wallet can't ask for the one it holds again) is `reissue_required`: receive it again from a new offer |
-| `CheckStatus(op, credentialID)` | the summary, with `"status"` checked now. It fetches the issuer's status list and checks the list's signature against `issuer_roots` (an mdoc's, against the mdoc roots it was received under). The list covers many credentials, so fetching it doesn't tell the issuer which one is checked. A credential without a status list is returned as it is, as is an expired one: it isn't valid whatever its status, so its status list isn't fetched (draft-ietf-oauth-status-list §8.3) |
+| `CheckStatus(op, credentialID)` | the summary, with `"status"` checked now. It fetches the issuer's status list, and an mdoc's identifier list, and checks each list's signature against `issuer_roots` (an mdoc's, against the mdoc roots it was received under, bound to its document signer's CA as ISO/IEC 18013-5 §12.3.6.2 requires). Each list covers many credentials, so fetching it doesn't tell the issuer which one is checked. A credential without a status list is returned as it is, as is an expired one: it isn't valid whatever its status, so its status list isn't fetched (draft-ietf-oauth-status-list §8.3) |
 | `StartIssuance(op, offerURI)` | an `Issuance` |
 | `ResumeIssuance(op, redirect)` | an `Issuance` ready for `RequestCredentials`: completes the authorization in progress that the redirect's `state` names, after the app was killed during the browser step. One that matches nothing, has already been used, or has expired is `not_found` |
 | `StartPresentation(op, requestLink)` | a `Presentation`. The `request_uri` is fetched by GET, or, for a link with `request_uri_method=post`, by POST with a fresh `wallet_nonce` and the wallet's metadata (OpenID4VP 1.0 §5.10), the Request Object then having to carry that `wallet_nonce` |
@@ -586,10 +586,12 @@ presentation's candidates `"shown_to_verifier"` and `"linkable_here"`.
   The Authorization Server may still refuse it (`reissue_required`).
 - `status` is its revocation status as last checked: `{"value": "valid"
   | "invalid" | "suspended" | "0x…" | "unknown", "checked_at"}`.
-  `unknown` is an mdoc whose MSO names an identifier list (ISO/IEC
-  18013-5 §12.3.6.4), which the wallet can't check, and no status list
-  on which it's anything but valid (added within ABI 12: before, such an
-  mdoc was returned with no `status`).
+  An mdoc's identifier list (ISO/IEC 18013-5 §12.3.6.4) is checked as
+  its status list is: on it, the mdoc is `invalid`. `unknown` is a
+  status naming no mechanism the wallet knows, and no list on which
+  it's anything but valid. Within ABI 13, until OID4VCWallet 0.22.0, an
+  identifier list wasn't checked and gave `unknown` (and within ABI 12,
+  before `unknown` was added, no `status`).
 
 `display`, `valid_until` and `status` are absent when unknown.
 
@@ -958,20 +960,22 @@ was added within ABI version 12 too; before, such a status gave none.
 ```
 
 `CheckStatus(op)` fetches the Token Status List `status` names, as a
-CWT, over https from public addresses only, and verifies it as ISO/IEC
-18013-5 §12.3.6 requires: signed under `status`'s `certificate` when
+CWT, and the identifier list it names (§12.3.6.4), over https from
+public addresses only, and verifies each as ISO/IEC 18013-5 §12.3.6
+requires: signed under `status`'s `certificate` when
 there is one, or else under the CA that signed the document signer,
 chaining to the same root in `issuer_roots` as the document, not to
 another IACA the reader trusts. It returns `{"abi", "status"}`, where
-`status` is `valid`, `invalid` (revoked), `suspended`, another status
-the list defines (`0x` and its value), `none` (the MSO names no
-revocation list) or `unknown` (an identifier list, §12.3.6.3, which this
-reader can't check, and no status list or one on which the document is
-valid; within ABI 12, an MSO naming both was reported by its status
-list alone; or a status naming no mechanism the reader knows, which
-within ABI 12 was reported as `none`). Rely on the document only on `valid` or `none`. A
+`status` is `valid`, `invalid` (revoked, on either list), `suspended`,
+another status the status list defines (`0x` and its value), `none`
+(the MSO names no revocation list) or `unknown` (a status naming no
+mechanism the reader knows, which within ABI 12 was reported as
+`none`). Within ABI 13, until OID4VCWallet 0.22.0, an identifier list
+wasn't checked and gave `unknown` unless its status list said otherwise
+than valid (and within ABI 12, an MSO naming both was reported by its
+status list alone). Rely on the document only on `valid` or `none`. A
 failed fetch is `network`, a list that doesn't verify `protocol`, and
-cancelling `op` makes it `cancelled`. The list covers many documents, so
+cancelling `op` makes it `cancelled`. Each list covers many documents, so
 fetching it doesn't tell its publisher which one was presented; it can
 be called after the BLE session has ended.
 
