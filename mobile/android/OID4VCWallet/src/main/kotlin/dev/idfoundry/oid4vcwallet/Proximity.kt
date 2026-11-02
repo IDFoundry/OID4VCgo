@@ -488,9 +488,12 @@ internal class HolderEngagement(val modes: List<Pair<ProximityBLEMode, UUID>>, v
 
 /** A transport failure as the app sees it. */
 internal fun transportFailure(e: ProximityTransportException): ProximityException {
-    val reason = when (e.message) {
-        "Bluetooth is off", "this device has no Bluetooth", "this device can't advertise over BLE" -> ProximityException.Reason.BluetoothUnavailable
-        else -> ProximityException.Reason.ConnectionLost
+    val reason = when {
+        e.bluetoothUnavailable -> ProximityException.Reason.BluetoothUnavailable
+        else -> when (e.message) {
+            BLUETOOTH_OFF, "this device has no Bluetooth", "this device can't advertise over BLE" -> ProximityException.Reason.BluetoothUnavailable
+            else -> ProximityException.Reason.ConnectionLost
+        }
     }
     return ProximityException(reason, e.message ?: "", e)
 }

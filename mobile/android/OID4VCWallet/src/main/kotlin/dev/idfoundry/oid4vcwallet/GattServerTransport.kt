@@ -61,6 +61,9 @@ internal class GattServerTransport(
     @Volatile private var mtu = BleChunks.DEFAULT_MTU
     @Volatile private var closed = false
     @Volatile private var sessionStarted = false
+    /** Why the session failed, once it has. */
+    @Volatile private var failure: ProximityTransportException? = null
+    private val bluetoothOff = BluetoothOffWatch { fail(it) }
 
     private val advertiseCallback = object : AdvertiseCallback() {
         override fun onStartSuccess(settingsInEffect: AdvertiseSettings) {
@@ -94,7 +97,7 @@ internal class GattServerTransport(
                 }
                 BluetoothProfile.STATE_DISCONNECTED -> {
                     mtus.remove(device)
-                    if (device == peer) fail(ProximityTransportException("the other device disconnected"))
+                    if (device == peer) fail(disconnectionFailure(manager))
                 }
             }
         }
@@ -161,8 +164,11 @@ internal class GattServerTransport(
     }
 
     override suspend fun connect() {
+        // Watching first: Bluetooth turning off just after the check
+        // below is caught too.
+        bluetoothOff.start(context)
         val adapter = manager.adapter
-        if (adapter == null || !adapter.isEnabled) throw ProximityTransportException("Bluetooth is off")
+        if (adapter == null || !adapter.isEnabled) throw ProximityTransportException(BLUETOOTH_OFF, bluetoothUnavailable = true)
         val advertiser = adapter.bluetoothLeAdvertiser ?: throw ProximityTransportException("this device can't advertise over BLE")
         synchronized(this) {
             if (closed) throw ProximityTransportException("the session ended")
@@ -229,6 +235,7 @@ internal class GattServerTransport(
 
     /** Notifies [value] on [characteristic] and waits until it's sent. */
     private suspend fun notify(characteristic: BluetoothGattCharacteristic, value: ByteArray) {
+        failure?.takeIf { it.bluetoothUnavailable }?.let { throw it }
         val device = peer ?: throw ProximityTransportException("no device connected")
         val s = server ?: throw ProximityTransportException("the session ended")
         while (notified.tryReceive().isSuccess) Unit // a stale one
@@ -254,8 +261,20 @@ internal class GattServerTransport(
             throw ProximityTransportException("the session ended", peerEnded = true, cause = e)
         }
 
+    /**
+     * Ends the session with [e], once: [connect] and [receive] throw it,
+     * and [send] too when Bluetooth is off, so a response being sent then
+     * fails as that rather than as a lost connection.
+     */
     private fun fail(e: ProximityTransportException) {
+        synchronized(this) {
+            if (closed || failure != null) return
+            failure = e
+        }
         incoming.close(e)
+        if (e.bluetoothUnavailable) notified.close(e)
+        serviceAdded.completeExceptionally(e)
+        advertising.completeExceptionally(e)
         started.completeExceptionally(e)
     }
 
@@ -266,6 +285,7 @@ internal class GattServerTransport(
     @Synchronized override fun close() {
         if (closed) return
         closed = true
+        bluetoothOff.stop()
         stopAdvertising()
         val s = server
         val device = peer
