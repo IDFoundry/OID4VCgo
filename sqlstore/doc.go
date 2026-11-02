@@ -37,7 +37,8 @@
 //
 // The stores set a 10-second busy timeout themselves on each connection
 // they write on (PRAGMA busy_timeout = 10000), so the DSN's matters for
-// reads.
+// reads. Migrate and CheckSchema refuse a database that isn't in WAL
+// mode: without it, most reads made under concurrent requests fail.
 //
 // # Tables and isolation
 //

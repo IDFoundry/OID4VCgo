@@ -40,8 +40,8 @@ passport-vdc and `sqlstore`'s tests pin fapigo/sqlstore v0.4.0. Its
 `Migrate` and `CheckSchema` refuse a SQLite file not in WAL mode: open
 it with `?_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)`, as
 `sqlstore`'s docs already say. Its own `AESGCMSealer` refuses a weak
-key; `verifier.AESGCMSealer`, which passport-vdc and `sqlstore`'s
-docs use, is unchanged. A Credential Endpoint running in the
+key, as `verifier.AESGCMSealer`, which passport-vdc and `sqlstore`'s
+docs use, now does too (see Verifier below). A Credential Endpoint running in the
 Authorization Server's process keeps using `serverresource.NewVerifier`
 with the server's `Dependencies`; one running apart takes its stores
 from fapigo/sqlstore's new `ResourceServer`.
@@ -56,6 +56,25 @@ from fapigo/sqlstore's new `ResourceServer`.
   key cost milliseconds each, and path building tries many. Use
   2048–4096-bit RSA with e = 65537, or EC. Trust anchors you configure
   aren't checked.
+
+### Verifier (`verifier`)
+
+- **`AESGCMSealer` refuses weak keys.** A key that's one byte repeated
+  (all zeros, say), or all printable text — a passphrase, or a hex or
+  base64 key not yet decoded — is refused, as fapigo/sqlstore's
+  `AESGCMSealer` now refuses one. Generate 32 bytes with `crypto/rand`
+  and decode an encoded key before passing it. Records sealed under
+  such a key open only with a `TransactionSealer` of your own over it,
+  beside the new one (fapigo/sqlstore's `RotatingSealer` takes both),
+  until they expire.
+
+### sqlstore
+
+- **SQLite must be in WAL mode.** `Migrate` and `CheckSchema` refuse a
+  SQLite database whose `journal_mode` isn't `wal`: without it, most
+  reads made under concurrent requests failed. Open it with
+  `?_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)`, as the
+  package documentation already said.
 
 ## v0.57.1 → v0.60.0
 
