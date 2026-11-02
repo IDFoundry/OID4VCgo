@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.60.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.59.0...v0.60.0) (2026-11-02)
+
+
+### Features
+
+* **walletflow:** check an mdoc's identifier list in CheckStatus ([24f61ff](https://github.com/IDFoundry/OID4VCgo/commit/24f61ff687643c3dacb5e307b42152836194545d))
+
 ## [0.59.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.58.0...v0.59.0) (2026-11-01)
 
 
