@@ -36,7 +36,8 @@ jobs:
       # GitHub marks the newest release Latest, so a sqlstore release —
       # alone, or created after the library's when both release
       # together — would take it: keep the library's newest release
-      # (a vX.Y.Z tag, no component prefix) Latest. releases_created is
+      # (a vX.Y.Z tag, no component prefix, the highest version, not the
+      # most recently created) Latest. releases_created is
       # always set, to "true" or "false", hence the comparison.
       - name: Mark the library's release Latest
         if: ${{ steps.release.outputs.releases_created == 'true' }}
@@ -50,7 +51,8 @@ jobs:
             tag=$ROOT_TAG
           else
             tag=$(gh release list --exclude-drafts --limit 100 --json tagName,isPrerelease \
-              --jq '[.[] | select((.isPrerelease | not) and (.tagName | test("^v[0-9]+\\.[0-9]+\\.[0-9]+$")))][0].tagName // empty')
+              --jq '[.[] | select((.isPrerelease | not) and (.tagName | test("^v[0-9]+\\.[0-9]+\\.[0-9]+$")))]
+                | sort_by(.tagName | ltrimstr("v") | split(".") | map(tonumber)) | last | .tagName // empty')
           fi
           if [ -z "$tag" ]; then
             echo "No release of the library to mark Latest."

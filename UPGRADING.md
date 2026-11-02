@@ -70,8 +70,9 @@ for its own changes; these are the ones that reach an issuer running
   `IssueRefreshToken` refuse, with a `server_error`, a `TokenBinding`
   or `AttestedClient` changed after `VerifyTokenRequestBinding` or
   `AuthenticateAttestedClient` returned it. Pass both as returned, for
-  the current request, as `issuer.VerifiedPreAuthorizedCode`'s example
-  does.
+  the current request, as the passport-vdc demo's pre-authorized code
+  Token Endpoint does
+  ([`issuerapp/preauth.go`](examples/passport-vdc/issuerapp/preauth.go)).
 - **Pushed request parameters are bounded.** `state`, `nonce`, `scope`,
   `login_hint` and `acr_values` over 4 KiB, `id_token_hint` over 16
   KiB, and `code_challenge` or `dpop_jkt` over 128 bytes are refused
