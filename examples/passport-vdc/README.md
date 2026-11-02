@@ -529,9 +529,11 @@ refresh) are accepted after the challenge is used, and after a restart.
 Keys whose chains end at a root other than Google's (an emulator's, or
 one anyone could make) are kept apart, at most 1,000 of them, and never
 displace a key Google's roots vouch for. `/attestation-challenge`
-answers each client address 20 requests at once, then one a second
-(429 past that), so one client can't use up the challenges every other
-one needs.
+answers each client address (an IPv6 one's /64) 20 requests at once,
+then one a second (429 past that), so one client can't use up the
+challenges every other one needs. It reads no forwarded-address header,
+so behind a tunnel every client shares the tunnel's address, and the
+limit applies to them all together.
 
 Whether a verified chain is hardware Google vouches for — it ends at
 one of Google's hardware attestation roots (embedded; see
