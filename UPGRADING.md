@@ -46,6 +46,17 @@ Authorization Server's process keeps using `serverresource.NewVerifier`
 with the server's `Dependencies`; one running apart takes its stores
 from fapigo/sqlstore's new `ResourceServer`.
 
+### Certificate chains (all roles)
+
+- **Large RSA keys are refused.** Every certificate chain OID4VCgo
+  verifies — `x5c` and `x5chain` from issuers, wallets, verifiers,
+  attesters and mdoc readers — now refuses a certificate whose RSA key
+  is over 4096 bits or has an exponent other than 65537, before any
+  signature is checked with it. Checking a signature with an unbounded
+  key cost milliseconds each, and path building tries many. Use
+  2048–4096-bit RSA with e = 65537, or EC. Trust anchors you configure
+  aren't checked.
+
 ## v0.57.1 → v0.60.0
 
 ### Authorization details (`oid4vci`)

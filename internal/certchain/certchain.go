@@ -15,6 +15,7 @@ import (
 	"context"
 	"crypto"
 	"crypto/ed25519"
+	"crypto/rsa"
 	"crypto/x509"
 	"encoding/base64"
 	"errors"
@@ -33,6 +34,30 @@ import (
 // chain an attacker sends from costing a parse (and, in CheckNoAnchor
 // and path building, more) per entry without limit.
 const MaxChainLength = 8
+
+// MaxRSABits is the largest RSA modulus a presented certificate may
+// carry. Checking a signature costs about the square of the modulus
+// size, so an unbounded one lets a chain an attacker sends cost
+// milliseconds per check (a 65536-bit key, about 25 ms), and path
+// building tries up to a hundred: real certificates use 2048 to 4096
+// bits, as FAPIgo's attestation chains are bounded.
+const MaxRSABits = 4096
+
+// CheckKeySize refuses a presented certificate whose RSA key is over
+// MaxRSABits or has an exponent other than 65537, the only one in real
+// use; other keys pass. Its error is for the caller to prefix.
+func CheckKeySize(cert *x509.Certificate) error {
+	pub, ok := cert.PublicKey.(*rsa.PublicKey)
+	switch {
+	case !ok:
+		return nil
+	case pub.N.BitLen() > MaxRSABits:
+		return fmt.Errorf("an RSA key of %d bits, over the %d allowed", pub.N.BitLen(), MaxRSABits)
+	case pub.E != 65537:
+		return fmt.Errorf("an RSA key with exponent %d, not 65537", pub.E)
+	}
+	return nil
+}
 
 // X5CDERsFromHeader extracts header's own "x5c" member (RFC 7515
 // §4.1.6: a JSON array of standard-base64-encoded DER certificates,
@@ -244,6 +269,9 @@ func VerifyChainsAt(ders [][]byte, roots *x509.CertPool, now time.Time) (*x509.C
 		if err != nil {
 			return nil, nil, fmt.Errorf("certchain: parse certificate chain entry %d: %w", i, err)
 		}
+		if err := CheckKeySize(cert); err != nil {
+			return nil, nil, fmt.Errorf("certchain: certificate chain entry %d: %w", i, err)
+		}
 		certs = append(certs, cert)
 	}
 	leaf := certs[0]
@@ -326,6 +354,9 @@ func CheckPresentedChain(leaf *x509.Certificate, intermediates []*x509.Certifica
 	if leaf == nil {
 		return errors.New("certchain: no leaf certificate")
 	}
+	if err := CheckKeySize(leaf); err != nil {
+		return fmt.Errorf("certchain: the leaf certificate: %w", err)
+	}
 	if IsSelfSigned(leaf) {
 		return errors.New("certchain: the leaf certificate is self-signed; it must be issued by a CA")
 	}
@@ -333,6 +364,9 @@ func CheckPresentedChain(leaf *x509.Certificate, intermediates []*x509.Certifica
 	for i, parent := range intermediates {
 		if parent == nil {
 			return fmt.Errorf("certchain: intermediate %d is nil", i)
+		}
+		if err := CheckKeySize(parent); err != nil {
+			return fmt.Errorf("certchain: intermediate %d: %w", i, err)
 		}
 		if err := child.CheckSignatureFrom(parent); err != nil {
 			return fmt.Errorf("certchain: intermediate %d didn't sign the certificate before it: %w", i, err)

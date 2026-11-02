@@ -4,10 +4,12 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/hex"
 	"encoding/pem"
+	"math/big"
 	"os"
 	"slices"
 	"strings"
@@ -128,6 +130,11 @@ func TestVerify_Refuses(t *testing.T) {
 	noExt := attesttest.Leaf(t, mustParse(t, good.DER[1]), good.IntermediateKey, &key.PublicKey, nil)
 	tampered := slices.Clone(good.DER[0])
 	tampered[len(tampered)-1] ^= 1
+	// An RSA key over 4096 bits, refused before any signature is
+	// checked with it.
+	modulus := new(big.Int).Lsh(big.NewInt(1), 8192)
+	modulus.SetBit(modulus, 0, 1)
+	bigRSA := attesttest.Leaf(t, mustParse(t, good.DER[1]), good.IntermediateKey, &rsa.PublicKey{N: modulus, E: 65537}, attesttest.KeyDescription(t, opts))
 
 	for name, chain := range map[string][][]byte{
 		"empty":                     nil,
@@ -138,11 +145,14 @@ func TestVerify_Refuses(t *testing.T) {
 		"no extension":              {noExt.Raw, good.DER[1], good.DER[2]},
 		"extension below the leaf":  {forged.Raw, good.DER[0], good.DER[1], good.DER[2]},
 		"intermediate out of order": {good.DER[0], good.DER[2], good.DER[1]},
+		"oversized RSA key":         {bigRSA.Raw, good.DER[1], good.DER[2]},
 	} {
 		if a, err := androidattest.Verify(chain, roots, time.Now()); err == nil {
 			t.Errorf("%s: verified, %+v", name, a)
 		} else if name == "extension below the leaf" && !strings.Contains(err.Error(), "not the leaf") {
 			t.Errorf("%s: %v, want it refused for the extension", name, err)
+		} else if name == "oversized RSA key" && !strings.Contains(err.Error(), "RSA key of 8193 bits") {
+			t.Errorf("%s: %v, want it refused for the key", name, err)
 		}
 	}
 }

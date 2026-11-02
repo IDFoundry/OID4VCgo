@@ -2,6 +2,7 @@ package androidattest
 
 import (
 	"bytes"
+	"crypto/rsa"
 	"crypto/x509"
 	_ "embed" // for the //go:embed root certificates below
 	"encoding/pem"
@@ -40,6 +41,9 @@ func (a *Attestation) Hardware() bool {
 		a.AttestationSecurityLevel.Hardware() && a.KeyMintSecurityLevel.Hardware()
 }
 
+// maxRSABits is the largest RSA key Verify accepts in a chain.
+const maxRSABits = 4096
+
 // Verify checks chain, DER certificates with the attested key's first,
 // as Android Keystore's getCertificateChain gives it: each certificate
 // is signed by the next, the leaf has the attestation extension and no
@@ -57,6 +61,11 @@ func Verify(chain [][]byte, roots []*x509.Certificate, now time.Time) (*Attestat
 		c, err := x509.ParseCertificate(der)
 		if err != nil {
 			return nil, fmt.Errorf("androidattest: certificate %d: %w", i, err)
+		}
+		// Bounded before any signature is checked with it: a larger RSA
+		// key costs a check far more, and Android's keys stay within it.
+		if pub, ok := c.PublicKey.(*rsa.PublicKey); ok && (pub.N.BitLen() > maxRSABits || pub.E != 65537) {
+			return nil, fmt.Errorf("androidattest: certificate %d has an RSA key of %d bits with exponent %d; want at most %d bits, and 65537", i, pub.N.BitLen(), pub.E, maxRSABits)
 		}
 		certs[i] = c
 	}
