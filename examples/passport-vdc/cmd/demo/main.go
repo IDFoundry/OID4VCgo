@@ -154,7 +154,7 @@ type serviceURLs struct{ issuer, verifier, provider string }
 func (u serviceURLs) check() error {
 	for name, raw := range map[string]string{"-issuer-url": u.issuer, "-verifier-url": u.verifier, "-provider-url": u.provider} {
 		parsed, err := url.Parse(raw)
-		if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.RawQuery != "" || parsed.Fragment != "" || strings.TrimSuffix(parsed.Path, "/") != "" {
+		if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.RawQuery != "" || parsed.ForceQuery || strings.Contains(raw, "#") || strings.TrimSuffix(parsed.Path, "/") != "" {
 			return fmt.Errorf("%s %q: want an https origin, such as https://issuer.example.com", name, raw)
 		}
 	}

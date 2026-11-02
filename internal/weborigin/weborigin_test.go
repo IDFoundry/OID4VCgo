@@ -13,22 +13,23 @@ func TestCheck(t *testing.T) {
 		}
 	}
 	for name, origin := range map[string]string{
-		"empty":            "",
-		"no scheme":        "verifier.example",
-		"a trailing slash": "https://verifier.example/",
-		"a path":           "https://verifier.example/app",
-		"a query":          "https://verifier.example?x=1",
-		"an empty query":   "https://verifier.example?",
-		"a fragment":       "https://verifier.example#x",
-		"userinfo":         "https://u@verifier.example",
-		"opaque":           "https:verifier.example",
-		"uppercase scheme": "HTTPS://verifier.example",
-		"uppercase host":   "https://Verifier.example",
-		"a Unicode host":   "https://bücher.example",
-		"an empty port":    "https://verifier.example:",
-		"a padded port":    "https://verifier.example:08443",
-		"a default port":   "https://verifier.example:443",
-		"not a URL":        "https://verifier.example:port",
+		"empty":             "",
+		"no scheme":         "verifier.example",
+		"a trailing slash":  "https://verifier.example/",
+		"a path":            "https://verifier.example/app",
+		"a query":           "https://verifier.example?x=1",
+		"an empty query":    "https://verifier.example?",
+		"a fragment":        "https://verifier.example#x",
+		"an empty fragment": "https://verifier.example#",
+		"userinfo":          "https://u@verifier.example",
+		"opaque":            "https:verifier.example",
+		"uppercase scheme":  "HTTPS://verifier.example",
+		"uppercase host":    "https://Verifier.example",
+		"a Unicode host":    "https://bücher.example",
+		"an empty port":     "https://verifier.example:",
+		"a padded port":     "https://verifier.example:08443",
+		"a default port":    "https://verifier.example:443",
+		"not a URL":         "https://verifier.example:port",
 	} {
 		if err := Check(origin); err == nil {
 			t.Errorf("%s (%q): accepted", name, origin)
@@ -43,6 +44,8 @@ func TestNormalize(t *testing.T) {
 		"https://verifier.example:8443": "https://verifier.example:8443",
 		"https://verifier.example/app":  "https://verifier.example/app",
 		"verifier.example":              "verifier.example",
+		"https://verifier.example#":     "https://verifier.example#",
+		"https://verifier.example?":     "https://verifier.example?",
 	} {
 		if got := Normalize(in); got != want {
 			t.Errorf("Normalize(%q) = %q, want %q", in, got, want)

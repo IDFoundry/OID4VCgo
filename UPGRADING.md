@@ -76,6 +76,18 @@ from fapigo/sqlstore's new `ResourceServer`.
   `?_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)`, as the
   package documentation already said.
 
+### URLs (`verifier`, `mdocdcapi`)
+
+- **No query or fragment where a URL is extended or compared.**
+  `TransactionsConfig.RequestURIBase` with a query or a fragment, even
+  a bare `?` or `#`, is refused: each request's `request_uri` is it
+  with `/` and the request's ID appended, which landed in the query or
+  fragment instead of the path. `RedirectURI` with a fragment is
+  refused (RFC 6749 §3.1.2); a query is still allowed. An origin
+  (`Origins`, and the origin a wallet's platform reports to
+  `mdocdcapi`) ending in a bare `?` or `#` is refused, as one with a
+  query or fragment already was: no browser serializes an origin so.
+
 ## v0.57.1 → v0.60.0
 
 ### Authorization details (`oid4vci`)
