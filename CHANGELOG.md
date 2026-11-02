@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.61.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.60.0...v0.61.0) (2026-11-02)
+
+
+### ⚠ BREAKING CHANGES
+
+* TransactionsConfig.RequestURIBase with a query or a fragment, RedirectURI with a fragment, and an origin ending in a bare '?' or '#' are refused.
+* **verifier:** verifier.AESGCMSealer refuses a key that's one byte repeated or all printable text. Generate 32 bytes with crypto/rand and decode an encoded key before passing it.
+* **certchain:** a presented certificate chain (x5c or x5chain, from an issuer, wallet, verifier, attester or mdoc reader) with an RSA key over 4096 bits, or with an exponent other than 65537, is refused. Configured trust anchors aren't checked.
+* **deps:** an issuer running fapigo/server beside issuer gets FAPIgo v0.69.0's behavioural changes: Wallet Attestation x5c RSA keys over 4096 bits or with e != 65537 are refused; IssueAccessToken and IssueRefreshToken refuse a TokenBinding or AttestedClient changed after the server returned it; pushed request parameters are bounded; a request_uri allows at most eight BeginAuthorization calls; a query or bare '#' in the issuer, endpoint or redirect URIs is refused; and fapigo/sqlstore refuses a SQLite file not in WAL mode. See UPGRADING.md.
+
+### Bug Fixes
+
+* **certchain:** refuse RSA keys over 4096 bits or with e != 65537 ([61fdd1e](https://github.com/IDFoundry/OID4VCgo/commit/61fdd1e68b8ecc0db2066b0c8838f874b2abea9a))
+* **deps:** pin FAPIgo v0.69.0 and fapigo/sqlstore v0.4.0 ([ce226cf](https://github.com/IDFoundry/OID4VCgo/commit/ce226cfe67fefe23904e14e822349208de618a1e))
+* refuse a bare '?' or '#' in origins and the verifier's URLs ([d20c9dc](https://github.com/IDFoundry/OID4VCgo/commit/d20c9dc6e9ca0843becec899f622b1f8617ee44b))
+* **verifier:** refuse a weak AESGCMSealer key ([8ece9cd](https://github.com/IDFoundry/OID4VCgo/commit/8ece9cd5e048e531bb2d8bbcd9d22ddd191412b5))
+
 ## [0.60.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.59.0...v0.60.0) (2026-11-02)
 
 
