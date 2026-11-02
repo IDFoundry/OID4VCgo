@@ -22,7 +22,8 @@ loopback addresses are refused. The rest is the app's.
   With ``KeychainKeyStore/Options/holderUserPresence`` on, the default,
   the Secure Enclave enforces the check, but receiving a credential asks
   once per copy (``WalletConfiguration/batchSize``), or once when the
-  jwt proof carries a key attestation, and a refresh asks too, so it
+  jwt proof carries a key attestation (again if the issuer refuses the
+  nonce), and a refresh asks too, so it
   can't run in the background. Turned off, as the demo app does, holder
   keys sign without asking, and the app must ask the holder itself
   (`LAContext.evaluatePolicy`) before every presentation: in the app

@@ -141,8 +141,9 @@ Instance and DPoP keys sign protocol messages silently. Holder keys
 sign the Key Binding JWT or DeviceAuth when presenting, and the
 Credential Request's jwt proof when receiving or refreshing: one proof
 per copy, or one per Credential Request when it carries a key
-attestation (none with the `attestation` proof type). They may require
-user presence, which then asks at those times too. `CheckKeyStore`
+attestation (none with the `attestation` proof type), and again, with
+new holder keys, if the issuer refuses the request's nonce. They may
+require user presence, which then asks at those times too. `CheckKeyStore`
 exercises an implementation as the wallet will.
 
 A `CreateKey` error whose message starts with `[network]` is reported as

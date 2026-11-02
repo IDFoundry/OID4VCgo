@@ -31,9 +31,10 @@ const (
 	// Credential Request's proof: each copy's key signs its own jwt
 	// proof, or, when the jwt proof carries a key attestation, the
 	// first copy's key signs the one proof. With the attestation proof
-	// type, no holder key signs at issuance. A KeyStore may require
-	// user presence to sign with it: a refresh then needs the holder
-	// too.
+	// type, no holder key signs at issuance. A Credential Request the
+	// issuer refuses for its nonce is sent again with new holder keys,
+	// which sign again. A KeyStore may require user presence to sign
+	// with it: a refresh then needs the holder too.
 	KeyPurposeHolder KeyPurpose = "holder"
 )
 
