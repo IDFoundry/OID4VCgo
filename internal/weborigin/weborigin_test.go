@@ -37,6 +37,24 @@ func TestCheck(t *testing.T) {
 	}
 }
 
+// TestCheck_NamesWhatsExtra: the error says what the origin carries
+// beyond a scheme, host and port.
+func TestCheck_NamesWhatsExtra(t *testing.T) {
+	for origin, want := range map[string]string{
+		"https://verifier.example/":       "has a trailing slash",
+		"https://verifier.example/app":    "has a path",
+		"https://verifier.example?":       "has a query",
+		"https://verifier.example?x=1#":   "has a fragment",
+		"https://verifier.example#":       "has a fragment",
+		"https://u:p@verifier.example":    "has user info",
+		"https://@verifier.example/app?x": "has user info",
+	} {
+		if err := Check(origin); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("Check(%q) = %v, want %q", origin, err, want)
+		}
+	}
+}
+
 func TestNormalize(t *testing.T) {
 	for in, want := range map[string]string{
 		"HTTPS://Verifier.Example:443/": "https://verifier.example",

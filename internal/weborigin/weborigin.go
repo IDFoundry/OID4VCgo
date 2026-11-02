@@ -25,13 +25,33 @@ func Check(origin string) error {
 		return fmt.Errorf("origin %q isn't a URL: %w", origin, err)
 	case u.Scheme == "" || u.Host == "":
 		return fmt.Errorf("origin %q needs a scheme and a host", origin)
-	// A bare "#" leaves Fragment empty, as a bare "?" leaves RawQuery.
-	case u.Path != "" || u.RawQuery != "" || u.ForceQuery || strings.Contains(origin, "#") || u.User != nil || u.Opaque != "":
-		return fmt.Errorf("origin %q must be a scheme, host and optional port only (no trailing slash)", origin)
+	case Extra(origin, u) != "":
+		return fmt.Errorf("origin %q has %s: an origin is a scheme, host and optional port only", origin, Extra(origin, u))
 	case !isCanonical(origin, u):
 		return fmt.Errorf("origin %q isn't serialized as a browser gives it: a lowercase scheme and ASCII host, and a port only when it isn't the scheme's default", origin)
 	}
 	return nil
+}
+
+// Extra names what origin, parsed as u, carries beyond a scheme, host
+// and port — "a fragment", "user info", "a query", "a path" or "a
+// trailing slash" — or is "" if nothing. A bare "#" leaves Fragment
+// empty, as a bare "?" leaves RawQuery, so both are looked for in
+// origin itself.
+func Extra(origin string, u *url.URL) string {
+	switch {
+	case strings.Contains(origin, "#"):
+		return "a fragment"
+	case u.User != nil:
+		return "user info"
+	case u.RawQuery != "" || u.ForceQuery:
+		return "a query"
+	case u.Path == "/":
+		return "a trailing slash"
+	case u.Path != "" || u.Opaque != "":
+		return "a path"
+	}
+	return ""
 }
 
 // isCanonical reports whether origin, parsed as u, is spelled as the
@@ -69,8 +89,7 @@ func isCanonical(origin string, u *url.URL) bool {
 // Anything else it carries is kept, for Check to refuse.
 func Normalize(origin string) string {
 	u, err := url.Parse(origin)
-	if err != nil || u.Scheme == "" || u.Host == "" || (u.Path != "" && u.Path != "/") ||
-		u.RawQuery != "" || u.ForceQuery || strings.Contains(origin, "#") || u.User != nil || u.Opaque != "" {
+	if err != nil || u.Scheme == "" || u.Host == "" || (Extra(origin, u) != "" && Extra(origin, u) != "a trailing slash") {
 		return origin
 	}
 	host := strings.ToLower(u.Host)

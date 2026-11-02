@@ -16,6 +16,8 @@ import (
 	"time"
 	"unicode"
 
+	fapi "github.com/idfoundry/fapigo"
+
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcgo/dcql"
@@ -563,29 +565,31 @@ func checkProductionTransactions(store TransactionStore, cfg TransactionsConfig)
 	return nil
 }
 
-// checkAbsoluteURL checks raw, the setting name, is an absolute https
-// URL (or, under AssuranceDevelopment, a loopback http one) without a
-// fragment, not even a bare "#" (a redirect URI has none, RFC 6749
-// §3.1.2), and, unless query, without a query: request_uri_base has a
-// path segment appended to it, which would land in either.
+// checkAbsoluteURL checks raw, the setting name, is a URL
+// fapi.ParseEndpointURL accepts — absolute https (or, under
+// AssuranceDevelopment, loopback http), an ASCII host, no userinfo, no
+// fragment, not even a bare "#" — and, unless query, without a query:
+// request_uri_base has a path segment appended to it, which would land
+// in either. A fragment is this library's choice for redirect_uri
+// too: the Wallet sends the browser there with the response_code in
+// the query (OpenID4VP 1.0 §8.2), and a fragment (RFC 3986 §3.5) would
+// only be dropped or mistaken for part of it.
 func checkAbsoluteURL(name, raw string, assurance AssuranceLevel, query bool) error {
-	u, err := url.Parse(raw)
-	switch {
-	case raw == "":
+	if raw == "" {
 		return fmt.Errorf("verifier: transactions: %s is required", name)
-	case err != nil || !u.IsAbs() || u.Host == "":
-		return fmt.Errorf("verifier: transactions: %s %q isn't an absolute URL", name, raw)
-	case strings.Contains(raw, "#"):
-		return fmt.Errorf("verifier: transactions: %s %q has a fragment", name, raw)
-	case !query && (u.RawQuery != "" || u.ForceQuery):
-		return fmt.Errorf("verifier: transactions: %s %q has a query", name, raw)
-	case u.Scheme == "https":
-		return nil
-	case u.Scheme == "http" && assurance == AssuranceDevelopment && isLoopback(u.Hostname()):
-		return nil
-	default:
-		return fmt.Errorf("verifier: transactions: %s %q must be https", name, raw)
 	}
+	var opts []fapi.URLOption
+	if assurance == AssuranceDevelopment {
+		opts = append(opts, fapi.AllowLoopbackHTTP())
+	}
+	u, err := fapi.ParseEndpointURL(raw, opts...)
+	if err != nil {
+		return fmt.Errorf("verifier: transactions: %s %q: %w", name, raw, err)
+	}
+	if parsed := u.URL(); !query && (parsed.RawQuery != "" || parsed.ForceQuery) {
+		return fmt.Errorf("verifier: transactions: %s %q has a query", name, raw)
+	}
+	return nil
 }
 
 // Begun is a newly created presentation request.
@@ -1197,8 +1201,6 @@ func withQuery(raw, key, value string) string {
 	u.RawQuery = q.Encode()
 	return u.String()
 }
-
-func isLoopback(host string) bool { return weborigin.IsLoopback(host) }
 
 // checkVerifies refuses a query the Verify configuration can't verify
 // an answer to, so the mistake shows when the request is made, not as
