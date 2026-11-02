@@ -16,7 +16,8 @@ import (
 // one. Besides never panicking: a request (ParseRequest) never carries
 // credential_identifiers; a narrowing (ValidateNarrowing) never names
 // an identifier the grant doesn't hold for that configuration, nor
-// leaves out locations or claims every granted object for it carries;
+// leaves out identifiers, locations or claims every granted object for
+// it carries;
 // a grant adds identifiers only where the request had none, and
 // otherwise only keeps them; and a grant that parses narrows to itself.
 func FuzzAuthorizationDetailRARDefinition(f *testing.F) {
@@ -67,6 +68,9 @@ func FuzzAuthorizationDetailRARDefinition(f *testing.F) {
 				if held := rarIdentifiersFor(grantDetails, d.CredentialConfigurationID); !rarSubset(d.CredentialIdentifiers, held) {
 					t.Fatalf("narrowing accepted identifiers %q for %q, the grant holds %q",
 						d.CredentialIdentifiers, d.CredentialConfigurationID, held)
+				}
+				if len(d.CredentialIdentifiers) == 0 && rarAllCarry(grantDetails, d.CredentialConfigurationID, func(g oid4vci.AuthorizationDetail) bool { return len(g.CredentialIdentifiers) > 0 }) {
+					t.Fatalf("narrowing accepted %q without the grant's credential_identifiers", d.CredentialConfigurationID)
 				}
 				if len(d.Locations) == 0 && rarAllCarry(grantDetails, d.CredentialConfigurationID, func(g oid4vci.AuthorizationDetail) bool { return len(g.Locations) > 0 }) {
 					t.Fatalf("narrowing accepted %q without the grant's locations", d.CredentialConfigurationID)

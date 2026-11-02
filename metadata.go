@@ -3,6 +3,7 @@ package oid4vci
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
 
 	fapi "github.com/idfoundry/fapigo"
@@ -200,9 +201,34 @@ func (c ClaimsDescription) Validate() error {
 			if v < 0 {
 				return fmt.Errorf("path[%d]: negative integer not allowed", i)
 			}
+		case float64: // a path decoded from JSON
+			if v < 0 || v != math.Trunc(v) || v > 1<<53 {
+				return fmt.Errorf("path[%d]: must be a non-negative integer, got %v", i, v)
+			}
 		default:
 			return fmt.Errorf("path[%d]: must be a string, null, or non-negative integer, got %T", i, elem)
 		}
+	}
+	return nil
+}
+
+// validateClaimsDescriptions checks each of claims, and that no path is
+// described twice (Appendix B.3: "When a repeated or contradictory
+// claim description is provided, the processing MUST be aborted").
+func validateClaimsDescriptions(claims []ClaimsDescription) error {
+	paths := map[string]bool{}
+	for i, c := range claims {
+		if err := c.Validate(); err != nil {
+			return fmt.Errorf("claims[%d]: %w", i, err)
+		}
+		key, err := json.Marshal(c.Path)
+		if err != nil {
+			return fmt.Errorf("claims[%d]: path: %w", i, err)
+		}
+		if paths[string(key)] {
+			return fmt.Errorf("claims[%d]: path %s is described twice (Appendix B.3)", i, key)
+		}
+		paths[string(key)] = true
 	}
 	return nil
 }
@@ -233,22 +259,13 @@ func (cm CredentialMetadata) Validate() error {
 	if err := uniqueLocales(cm.Display, func(d CredentialDisplay) string { return d.Locale }); err != nil {
 		return fmt.Errorf("display: %w", err)
 	}
-	paths := map[string]bool{}
+	if err := validateClaimsDescriptions(cm.Claims); err != nil {
+		return err
+	}
 	for i, c := range cm.Claims {
-		if err := c.Validate(); err != nil {
-			return fmt.Errorf("claims[%d]: %w", i, err)
-		}
 		if err := uniqueLocales(c.Display, func(d ClaimDisplay) string { return d.Locale }); err != nil {
 			return fmt.Errorf("claims[%d].display: %w", i, err)
 		}
-		key, err := json.Marshal(c.Path)
-		if err != nil {
-			return fmt.Errorf("claims[%d]: path: %w", i, err)
-		}
-		if paths[string(key)] {
-			return fmt.Errorf("claims[%d]: path %s is described twice (Appendix B.3)", i, key)
-		}
-		paths[string(key)] = true
 	}
 	return nil
 }

@@ -70,3 +70,16 @@ func TestMetadataRefusesDuplicates(t *testing.T) {
 		t.Errorf("distinct paths: %v", err)
 	}
 }
+
+// A path decoded from JSON holds its indices as float64: an integral,
+// non-negative one is an index, any other number isn't.
+func TestClaimsDescriptionValidate_DecodedIndex(t *testing.T) {
+	if err := (oid4vci.ClaimsDescription{Path: []any{"nationalities", float64(0)}}).Validate(); err != nil {
+		t.Errorf("decoded index 0: %v", err)
+	}
+	for _, v := range []float64{-1, 1.5, 1 << 60} {
+		if err := (oid4vci.ClaimsDescription{Path: []any{"nationalities", v}}).Validate(); err == nil {
+			t.Errorf("decoded %v: accepted", v)
+		}
+	}
+}

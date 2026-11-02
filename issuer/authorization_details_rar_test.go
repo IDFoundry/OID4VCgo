@@ -208,15 +208,15 @@ func TestAuthorizationServerRefusesTokenRequestCredentialIdentifiers(t *testing.
 	}
 }
 
-// A token request may keep some of the identifiers its grant holds, or
-// drop them, but not name one the grant doesn't hold.
+// A token request may keep some of the identifiers its grant holds, but
+// neither drop them all nor name one the grant doesn't hold.
 func TestAuthorizationServerNarrowsGrantedCredentialIdentifiers(t *testing.T) {
 	for name, tc := range map[string]struct {
 		details string
 		ok      bool
 	}{
 		"kept in part":  {`[{"type":"openid_credential","credential_configuration_id":"IdentityCredential","credential_identifiers":["minted-2"]}]`, true},
-		"dropped":       {`[{"type":"openid_credential","credential_configuration_id":"IdentityCredential"}]`, true},
+		"dropped":       {`[{"type":"openid_credential","credential_configuration_id":"IdentityCredential"}]`, false},
 		"none narrowed": {"", true},
 		"another added": {`[{"type":"openid_credential","credential_configuration_id":"IdentityCredential","credential_identifiers":["minted-1","victim-dataset"]}]`, false},
 	} {
