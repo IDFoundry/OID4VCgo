@@ -25,7 +25,8 @@ func Check(origin string) error {
 		return fmt.Errorf("origin %q isn't a URL: %w", origin, err)
 	case u.Scheme == "" || u.Host == "":
 		return fmt.Errorf("origin %q needs a scheme and a host", origin)
-	case u.Path != "" || u.RawQuery != "" || u.Fragment != "" || u.User != nil || u.Opaque != "" || u.ForceQuery:
+	// A bare "#" leaves Fragment empty, as a bare "?" leaves RawQuery.
+	case u.Path != "" || u.RawQuery != "" || u.ForceQuery || strings.Contains(origin, "#") || u.User != nil || u.Opaque != "":
 		return fmt.Errorf("origin %q must be a scheme, host and optional port only (no trailing slash)", origin)
 	case !isCanonical(origin, u):
 		return fmt.Errorf("origin %q isn't serialized as a browser gives it: a lowercase scheme and ASCII host, and a port only when it isn't the scheme's default", origin)
@@ -69,7 +70,7 @@ func isCanonical(origin string, u *url.URL) bool {
 func Normalize(origin string) string {
 	u, err := url.Parse(origin)
 	if err != nil || u.Scheme == "" || u.Host == "" || (u.Path != "" && u.Path != "/") ||
-		u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.User != nil || u.Opaque != "" {
+		u.RawQuery != "" || u.ForceQuery || strings.Contains(origin, "#") || u.User != nil || u.Opaque != "" {
 		return origin
 	}
 	host := strings.ToLower(u.Host)

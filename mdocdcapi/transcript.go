@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"net/url"
+	"strings"
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/idfoundry/oid4vcgo/internal/strictcbor"
@@ -88,7 +89,8 @@ func checkOrigin(origin string) error {
 		return fmt.Errorf("mdocdcapi: origin %q isn't a URL: %w", origin, err)
 	case u.Scheme == "" || u.Host == "":
 		return fmt.Errorf("mdocdcapi: origin %q needs a scheme and a host", origin)
-	case u.Path != "" || u.RawQuery != "" || u.Fragment != "" || u.User != nil || u.Opaque != "":
+	// A bare "?" or "#" leaves RawQuery or Fragment empty.
+	case u.Path != "" || u.RawQuery != "" || u.ForceQuery || strings.Contains(origin, "#") || u.User != nil || u.Opaque != "":
 		return fmt.Errorf("mdocdcapi: origin %q must be a scheme, host and optional port only (no trailing slash)", origin)
 	}
 	return nil

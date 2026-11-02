@@ -352,12 +352,12 @@ func NewTransactions(v *Verifier, store TransactionStore, cfg TransactionsConfig
 		return nil, errors.New("verifier: transactions: a TransactionStore is required")
 	}
 	if cfg.RequestURIBase != "" {
-		if err := checkAbsoluteURL("request_uri_base", cfg.RequestURIBase, v.cfg.Assurance); err != nil {
+		if err := checkAbsoluteURL("request_uri_base", cfg.RequestURIBase, v.cfg.Assurance, false); err != nil {
 			return nil, err
 		}
 	}
 	if cfg.RedirectURI != "" {
-		if err := checkAbsoluteURL("redirect_uri", cfg.RedirectURI, v.cfg.Assurance); err != nil {
+		if err := checkAbsoluteURL("redirect_uri", cfg.RedirectURI, v.cfg.Assurance, true); err != nil {
 			return nil, err
 		}
 	}
@@ -563,13 +563,22 @@ func checkProductionTransactions(store TransactionStore, cfg TransactionsConfig)
 	return nil
 }
 
-func checkAbsoluteURL(name, raw string, assurance AssuranceLevel) error {
+// checkAbsoluteURL checks raw, the setting name, is an absolute https
+// URL (or, under AssuranceDevelopment, a loopback http one) without a
+// fragment, not even a bare "#" (a redirect URI has none, RFC 6749
+// §3.1.2), and, unless query, without a query: request_uri_base has a
+// path segment appended to it, which would land in either.
+func checkAbsoluteURL(name, raw string, assurance AssuranceLevel, query bool) error {
 	u, err := url.Parse(raw)
 	switch {
 	case raw == "":
 		return fmt.Errorf("verifier: transactions: %s is required", name)
 	case err != nil || !u.IsAbs() || u.Host == "":
 		return fmt.Errorf("verifier: transactions: %s %q isn't an absolute URL", name, raw)
+	case strings.Contains(raw, "#"):
+		return fmt.Errorf("verifier: transactions: %s %q has a fragment", name, raw)
+	case !query && (u.RawQuery != "" || u.ForceQuery):
+		return fmt.Errorf("verifier: transactions: %s %q has a query", name, raw)
 	case u.Scheme == "https":
 		return nil
 	case u.Scheme == "http" && assurance == AssuranceDevelopment && isLoopback(u.Hostname()):
