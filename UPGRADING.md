@@ -103,7 +103,16 @@ from fapigo/sqlstore's new `ResourceServer`.
   signature is checked with it. Checking a signature with an unbounded
   key cost milliseconds each, and path building tries many. Use
   2048–4096-bit RSA with e = 65537, or EC. Trust anchors you configure
-  aren't checked.
+  aren't checked, unless a chain sent to you carries one too.
+- **Your own signing chains are checked too.** The chains you
+  configure to sign with are checked when they're set up or used, so
+  one carrying such a key now fails there: `verifier.Config`'s
+  `ClientCertificate` and `ClientCertificateChain` (`verifier.New`),
+  an issuer's signers' certificates and intermediates (`issuer.New`),
+  `issuer.SignMetadataJWS`'s, `sdjwtvc.IssueOptions`'
+  `IssuerCertificate` and `IssuerIntermediates`, a Key Attestation's
+  `x5c` (`attestation`), and a status list's or identifier list's
+  signer chain (`statuslist`, `identifierlist`).
 
 ### Verifier (`verifier`)
 
@@ -114,7 +123,8 @@ from fapigo/sqlstore's new `ResourceServer`.
   and decode an encoded key before passing it. Records sealed under
   such a key open only with a `TransactionSealer` of your own over it,
   beside the new one (fapigo/sqlstore's `RotatingSealer` takes both),
-  until they expire.
+  until they expire: `AESGCMSealer`'s doc gives the layout it must
+  read.
 
 ### sqlstore
 
