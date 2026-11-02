@@ -934,6 +934,12 @@ public data class VerifiedMdoc(
      * it.
      */
     val issuerChain: List<X509Certificate> = emptyList(),
+    /**
+     * The MSO's identifier list reference (ISO/IEC 18013-5 §12.3.6.4), unchecked, beside or
+     * instead of [statusList]: either may revoke the document, and
+     * [ProximityReaderSession.checkStatus] checks both.
+     */
+    val identifierList: IdentifierListReference? = null,
 ) {
     /**
      * Where the mdoc's status is published: a Token Status List at [uri], and the mdoc's [index]
@@ -943,6 +949,15 @@ public data class VerifiedMdoc(
      * @property index The mdoc's index in the list.
      */
     public data class StatusListReference(val uri: String, val index: Long)
+
+    /**
+     * Where the mdoc's revocation is published: an identifier list at [uri], which names the
+     * mdoc's [id] if it's revoked.
+     *
+     * @property uri The identifier list's URL.
+     * @property id The mdoc's identifier, as base64.
+     */
+    public data class IdentifierListReference(val uri: String, val id: String)
 }
 
 @Serializable
@@ -975,9 +990,21 @@ internal data class VerifiedJSON(
     val status: StatusJSON? = null,
     @SerialName("issuer_chain") val issuerChain: List<String> = emptyList(),
 ) {
-    /** [idx] is left out when 0, and an identifier list has none. */
+    /**
+     * [idx] is left out when 0, and an identifier list has none; a status list's carries the
+     * identifier list the MSO names too.
+     */
     @Serializable
-    data class StatusJSON(val type: String? = null, val uri: String, val idx: Long = 0)
+    data class StatusJSON(
+        val type: String? = null,
+        val uri: String,
+        val idx: Long = 0,
+        val id: String? = null,
+        @SerialName("identifier_list") val identifierList: IdentifierListJSON? = null,
+    )
+
+    @Serializable
+    data class IdentifierListJSON(val uri: String, val id: String)
 
     fun toVerified(): VerifiedMdoc {
         val factory = CertificateFactory.getInstance("X.509")
@@ -988,6 +1015,13 @@ internal data class VerifiedJSON(
             doctype, claims, deviceSignedClaims, issuer, trustAnchor, validFrom, validUntil, deviceAuth,
             status?.takeIf { it.type == null || it.type == "status_list" }?.let { VerifiedMdoc.StatusListReference(it.uri, it.idx) },
             chain,
+            status?.let { s ->
+                if (s.type == "identifier_list" && s.id != null) {
+                    VerifiedMdoc.IdentifierListReference(s.uri, s.id)
+                } else {
+                    s.identifierList?.let { VerifiedMdoc.IdentifierListReference(it.uri, it.id) }
+                }
+            },
         )
     }
 }

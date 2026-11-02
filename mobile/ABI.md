@@ -945,9 +945,14 @@ document. It's `{"type": "status_list", "uri", "idx"}` or `{"type":
 (base64 DER), the list signer's trust anchor, when the MSO names one,
 or `{"type": "unknown", "uri": ""}` for an MSO status naming neither (a
 mechanism the reader doesn't know, or a misspelt one), which may still
-revoke the document. `type` and the identifier list were added within
-ABI version 12; before, an identifier list gave no `status`. `unknown`
-was added within ABI version 12 too; before, such a status gave none.
+revoke the document. An MSO naming both lists gives the status list's,
+with the identifier list's in its `identifier_list` member, as
+`CheckStatus` checks both: either may revoke the document. `type` and
+the identifier list were added within ABI version 12; before, an
+identifier list gave no `status`. `unknown` was added within ABI
+version 12 too; before, such a status gave none. `identifier_list` was
+added within ABI version 13, in OID4VCWallet 0.24.0; before, an MSO
+naming both gave the status list's alone.
 
 ```json
 {"abi": 12, "event": "verified", "verified": {

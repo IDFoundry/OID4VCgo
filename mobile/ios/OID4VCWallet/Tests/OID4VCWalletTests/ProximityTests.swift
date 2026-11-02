@@ -317,6 +317,29 @@ final class ProximityTests: XCTestCase {
         XCTAssertThrowsError(try r.add(Data([0x02, 0x41])))
         XCTAssertEqual(try r.add(Data([0x00, 0x42])), Data([0x42]))
     }
+
+    /// An MSO naming both lists shows both: the identifier list may revoke
+    /// the document while the status list says valid.
+    func testVerifiedStatusReferences() throws {
+        func verified(_ status: String) throws -> VerifiedMdoc {
+            try decode(VerifiedJSON.self, """
+                {"doctype": "org.iso.18013.5.1.mDL", "claims": {}, "issuer": "", "trust_anchor": "",
+                 "valid_from": "2026-10-01T00:00:00Z", "valid_until": "2027-10-01T00:00:00Z",
+                 "device_auth": "signature", "status": \(status)}
+                """).mdoc
+        }
+        let both = try verified("""
+            {"type": "status_list", "uri": "https://status.example/1", "idx": 412,
+             "identifier_list": {"type": "identifier_list", "uri": "https://status.example/ids", "id": "qw=="}}
+            """)
+        XCTAssertEqual(both.statusList?.index, 412)
+        XCTAssertEqual(both.identifierList?.uri, "https://status.example/ids")
+        XCTAssertEqual(both.identifierList?.id, "qw==")
+        let alone = try verified(#"{"type": "identifier_list", "uri": "https://status.example/ids", "id": "qw=="}"#)
+        XCTAssertNil(alone.statusList)
+        XCTAssertEqual(alone.identifierList?.id, "qw==")
+        XCTAssertNil(try verified(#"{"type": "status_list", "uri": "https://status.example/1", "idx": 3}"#).identifierList)
+    }
 }
 
 /// A holder offering both BLE modes: the first transport to connect is
