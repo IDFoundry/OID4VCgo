@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.62.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.61.0...v0.62.0) (2026-11-02)
+
+
+### ⚠ BREAKING CHANGES
+
+* **verifier:** TransactionsConfig.RequestURIBase or RedirectURI with userinfo (even a bare "@") or a non-ASCII host is refused by NewTransactions. Give an internationalized domain name as its xn-- A-label.
+* **verifier:** a sealed verifier transaction record written by v0.61.0 or earlier no longer opens (sqlstore.ErrRecordFormat): a request in flight at the upgrade fails, and a completed one's result is lost. Upgrade with no request in flight, or accept those failing. Unsealed records are unaffected.
+* **oid4vci:** a token request (code exchange, CIBA or refresh) whose authorization_details drop all of the grant's credential_identifiers is refused with invalid_authorization_details; keep some, or send no authorization_details. An openid_credential object with an empty credential_identifiers, locations or claims array, an empty location, a malformed claims path or a repeated claims path is refused.
+
+### Bug Fixes
+
+* name what an origin carries beyond its scheme, host and port ([80fd636](https://github.com/IDFoundry/OID4VCgo/commit/80fd63632708645f807b7a7290f36b0463ccaa9b))
+* **oid4vci:** refuse narrowing that drops credential_identifiers, and malformed objects ([1790fe1](https://github.com/IDFoundry/OID4VCgo/commit/1790fe1cedd29a39727cfa2e35bc1bb67994a767))
+* **verifier:** bind sealed transaction fields to who may read the result ([53c9dd2](https://github.com/IDFoundry/OID4VCgo/commit/53c9dd289bc392976fbfd1acb173d9270704e764))
+* **verifier:** check request_uri_base and redirect_uri as endpoint URLs ([585c081](https://github.com/IDFoundry/OID4VCgo/commit/585c081833b307732bc84bf568ce8c56918b9a71))
+* **walletflow:** make a revocation CheckStatus finds final ([97bd6e4](https://github.com/IDFoundry/OID4VCgo/commit/97bd6e4c0b887281f229aeba18f71ef306660049))
+
 ## [0.61.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.60.0...v0.61.0) (2026-11-02)
 
 
