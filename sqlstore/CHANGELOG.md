@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.3.0](https://github.com/IDFoundry/OID4VCgo/compare/sqlstore/v0.2.1...sqlstore/v0.3.0) (2026-11-02)
+
+
+### ⚠ BREAKING CHANGES
+
+* **sqlstore:** Migrate and CheckSchema refuse a SQLite database not in WAL mode. Open it with ?_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL).
+* **deps:** an issuer running fapigo/server beside issuer gets FAPIgo v0.69.0's behavioural changes: Wallet Attestation x5c RSA keys over 4096 bits or with e != 65537 are refused; IssueAccessToken and IssueRefreshToken refuse a TokenBinding or AttestedClient changed after the server returned it; pushed request parameters are bounded; a request_uri allows at most eight BeginAuthorization calls; a query or bare '#' in the issuer, endpoint or redirect URIs is refused; and fapigo/sqlstore refuses a SQLite file not in WAL mode. See UPGRADING.md.
+
+### Bug Fixes
+
+* **deps:** pin FAPIgo v0.69.0 and fapigo/sqlstore v0.4.0 ([ce226cf](https://github.com/IDFoundry/OID4VCgo/commit/ce226cfe67fefe23904e14e822349208de618a1e))
+* **sqlstore:** refuse a SQLite database not in WAL mode ([220a6ac](https://github.com/IDFoundry/OID4VCgo/commit/220a6ac09065264bcb7794355170578a4200e550))
+
 ## [0.2.1](https://github.com/IDFoundry/OID4VCgo/compare/sqlstore/v0.2.0...sqlstore/v0.2.1) (2026-11-01)
 
 
