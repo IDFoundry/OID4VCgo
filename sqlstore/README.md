@@ -66,6 +66,10 @@ rsDB, err := fapisqlstore.New(sqlDB, fapisqlstore.Postgres, fapisqlstore.Options
 // serverresource.Options.Nonces from rsDB, issuer.Dependencies' from issuerDB.
 ```
 
+A Credential Endpoint running apart from the Authorization Server takes
+its stores from `fapisqlstore.ResourceServer(asDB, rsDB)`: the server's
+revocations, and its own DPoP nonces.
+
 Their tables don't collide (`oid4vc_…` here, FAPIgo's `TablePrefix`,
 `fapigo_` by default — never one starting `oid4vc_`), each migrates its
 own tables under its own version table and Postgres advisory lock, one

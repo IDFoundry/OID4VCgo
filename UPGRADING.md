@@ -6,7 +6,47 @@ everything else. A release that pins a new FAPIgo release passes on
 that release's own breaking changes: see FAPIgo's UPGRADING.md for
 them.
 
-## v0.57.1 → next
+## v0.60.0 → next
+
+### FAPIgo v0.69.0 (`issuer`)
+
+OID4VCgo pins FAPIgo v0.69.0. See FAPIgo's UPGRADING.md, `## v0.69.0`,
+for its own changes; these are the ones that reach an issuer running
+`fapigo/server` beside `issuer`.
+
+- **Attester certificates with large RSA keys are refused.** A Wallet
+  Attestation whose `x5c` carries an RSA key over 4096 bits, or with an
+  exponent other than 65537, is refused with `invalid_client`. Use
+  2048–4096-bit RSA with e = 65537, or EC.
+- **Token bindings must be passed unchanged.** `IssueAccessToken` and
+  `IssueRefreshToken` refuse, with a `server_error`, a `TokenBinding`
+  or `AttestedClient` changed after `VerifyTokenRequestBinding` or
+  `AuthenticateAttestedClient` returned it. Pass both as returned, for
+  the current request, as `issuer.VerifiedPreAuthorizedCode`'s example
+  does.
+- **Pushed request parameters are bounded.** `state`, `nonce`, `scope`,
+  `login_hint` and `acr_values` over 4 KiB, `id_token_hint` over 16
+  KiB, and `code_challenge` or `dpop_jkt` over 128 bytes are refused
+  with `invalid_request`.
+- **At most eight `BeginAuthorization` calls per `request_uri`.** The
+  ninth returns a `LocalErrorResponse` with `invalid_request_uri`. Call
+  it once per visit and keep the `InteractionHandle`.
+- **No query or bare `#` in URLs.** `Config.Issuer` with a query, and an
+  issuer, endpoint or redirect URI ending in a bare `#`, are refused.
+
+### fapigo/sqlstore v0.4.0
+
+passport-vdc and `sqlstore`'s tests pin fapigo/sqlstore v0.4.0. Its
+`Migrate` and `CheckSchema` refuse a SQLite file not in WAL mode: open
+it with `?_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)`, as
+`sqlstore`'s docs already say. Its own `AESGCMSealer` refuses a weak
+key; `verifier.AESGCMSealer`, which passport-vdc and `sqlstore`'s
+docs use, is unchanged. A Credential Endpoint running in the
+Authorization Server's process keeps using `serverresource.NewVerifier`
+with the server's `Dependencies`; one running apart takes its stores
+from fapigo/sqlstore's new `ResourceServer`.
+
+## v0.57.1 → v0.60.0
 
 ### Authorization details (`oid4vci`)
 
