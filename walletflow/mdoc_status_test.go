@@ -2,6 +2,7 @@ package walletflow_test
 
 import (
 	"context"
+	"crypto/x509"
 	"encoding/base64"
 	"net/http"
 	"testing"
@@ -83,24 +84,59 @@ func TestCheckStatus_MdocStatusListForm(t *testing.T) {
 	}
 }
 
-// An mdoc naming an identifier list, which the wallet can't check, is
-// StatusUnknown, not left with no status as if it had none to check;
-// an expired one is left as it is.
-func TestCheckStatus_IdentifierListIsUnknown(t *testing.T) {
+// An mdoc's identifier list is checked, its signer bound to the mdoc's
+// issuer: on it, the mdoc is revoked; off it, valid. Revoked on either
+// of a status list and an identifier list it names, it's revoked. An
+// expired mdoc is left as it is, and one with no status has nothing to
+// check.
+func TestCheckStatus_IdentifierList(t *testing.T) {
+	signer := teststatuslist.NewSigner(t)
+	other := teststatuslist.NewSigner(t)
+	ctx := context.Background()
+	for name, tc := range map[string]struct {
+		id         byte
+		statusList bool
+		pin        *x509.Certificate
+		want       string // "" for refused
+	}{
+		"not listed":                     {id: 2, pin: signer.CA, want: walletflow.StatusValid},
+		"listed":                         {id: 7, pin: signer.CA, want: walletflow.StatusInvalid},
+		"listed, valid on status list":   {id: 7, statusList: true, pin: signer.CA, want: walletflow.StatusInvalid},
+		"not listed, with status list":   {id: 2, statusList: true, pin: signer.CA, want: walletflow.StatusValid},
+		"signer under another CA":        {id: 2, pin: other.CA},
+		"signer not bound to the issuer": {id: 2},
+	} {
+		t.Run(name, func(t *testing.T) {
+			statusURI, idsURI, client := signer.ServeLists(t, teststatuslist.WellFormed, []byte{7})
+			var pin []byte
+			if tc.pin != nil {
+				pin = tc.pin.Raw
+			}
+			status := mdoc.Status{IdentifierList: &mdoc.IdentifierListRef{ID: []byte{tc.id}, URI: idsURI, Certificate: pin}}
+			if tc.statusList {
+				// mdoc.Issue names one mechanism; an MSO may name both.
+				status.StatusList = &mdoc.StatusListRef{Idx: 3, URI: statusURI, Certificate: signer.CA.Raw}
+			}
+			w, id := storedFixture(t, client, time.Now().Add(time.Hour), testmdoc.WithMSOStatus(t, testmdoc.Issue(t), status))
+			checked, err := w.CheckStatus(ctx, id)
+			switch {
+			case tc.want == "" && err == nil:
+				t.Errorf("CheckStatus = %+v, want it refused", checked.Status)
+			case tc.want != "" && (err != nil || checked.Status.Value != tc.want || checked.Status.CheckedAt.IsZero()):
+				t.Errorf("CheckStatus = %+v, %v, want %s", checked.Status, err, tc.want)
+			}
+		})
+	}
+
 	listed := func(c *mdoc.Claims) {
 		c.IdentifierList = &mdoc.IdentifierListRef{ID: []byte{7}, URI: "https://status.example/ids"}
 	}
-	w, id := storedMdoc(t, http.DefaultClient, time.Now().Add(time.Hour), listed)
-	checked, err := w.CheckStatus(context.Background(), id)
-	if err != nil || checked.Status.Value != walletflow.StatusUnknown || checked.Status.CheckedAt.IsZero() {
-		t.Errorf("CheckStatus = %+v, %v, want unknown", checked.Status, err)
-	}
-	w, id = storedMdoc(t, http.DefaultClient, time.Now().Add(-time.Minute), listed)
-	if checked, err := w.CheckStatus(context.Background(), id); err != nil || checked.Status.Value != "" {
+	w, id := storedMdoc(t, http.DefaultClient, time.Now().Add(-time.Minute), listed)
+	if checked, err := w.CheckStatus(ctx, id); err != nil || checked.Status.Value != "" {
 		t.Errorf("expired: CheckStatus = %+v, %v, want no status", checked.Status, err)
 	}
 	w, id = storedMdoc(t, http.DefaultClient, time.Now().Add(time.Hour), func(*mdoc.Claims) {})
-	if checked, err := w.CheckStatus(context.Background(), id); err != nil || checked.Status.Value != "" {
+	if checked, err := w.CheckStatus(ctx, id); err != nil || checked.Status.Value != "" {
 		t.Errorf("no status: CheckStatus = %+v, %v, want none", checked.Status, err)
 	}
 }

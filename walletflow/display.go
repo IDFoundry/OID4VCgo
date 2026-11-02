@@ -184,13 +184,11 @@ const (
 	StatusValid     = "valid"
 	StatusInvalid   = "invalid"
 	StatusSuspended = "suspended"
-	// StatusUnknown is an mdoc whose MSO names an identifier list
-	// (ISO/IEC 18013-5 §12.3.6.4), which the wallet can't check, or a
-	// credential whose status names no mechanism the wallet knows (an
-	// SD-JWT VC status claim with no status_list, an MSO status with
-	// neither status_list nor identifier_list), and either no status
-	// list or one on which it's valid: that mechanism may still revoke
-	// it.
+	// StatusUnknown is a credential whose status names no mechanism
+	// the wallet knows (an SD-JWT VC status claim with no status_list,
+	// an MSO status with neither status_list nor identifier_list), and
+	// no list it names too on which it's anything but valid: that
+	// mechanism may still revoke it.
 	StatusUnknown = "unknown"
 )
 
@@ -212,13 +210,14 @@ type CredentialStatus struct {
 // nothing to check, and is returned as it is, as is an expired one: it
 // isn't valid whatever its status, so its status list isn't fetched
 // (draft-ietf-oauth-status-list §8.3). An mdoc naming an identifier
-// list (ISO/IEC 18013-5 §12.3.6.4), which the wallet can't check, is
-// StatusUnknown, unless a status list it names too says it's revoked,
-// suspended or another status than valid; so is a credential whose
-// status names no mechanism the wallet knows, rather than one with
-// nothing to check. The status list tells the
-// issuer nothing about which credential is checked: it's one list for
-// many credentials (the Token Status List's herd privacy).
+// list (ISO/IEC 18013-5 §12.3.6.4) has it fetched and checked too, its
+// signer bound to the mdoc's issuer as §12.3.6.2 requires: on it, the
+// mdoc is StatusInvalid (revoked). A credential whose status names no
+// mechanism the wallet knows is StatusUnknown, not one with nothing to
+// check, unless a list it names too says it's revoked, suspended or
+// another status than valid. Neither kind of list tells the
+// issuer which credential is checked: each is one list for many
+// credentials (the Token Status List's herd privacy).
 func (w *Wallet) CheckStatus(ctx context.Context, id string) (StoredCredential, error) {
 	c, err := w.deps.Credentials.Get(ctx, id)
 	if err != nil {
@@ -226,14 +225,29 @@ func (w *Wallet) CheckStatus(ctx context.Context, id string) (StoredCredential, 
 	}
 	now := w.deps.Clock()
 	live := liveStatusRefs(c, now)
+	identified, err := liveIdentifierLists(c, now)
+	if err != nil {
+		return StoredCredential{}, fmt.Errorf("walletflow: credential %q's status: %w", id, err)
+	}
 	listed := uncheckedStatus(c, now)
-	if len(live) == 0 && !listed {
+	if len(live) == 0 && len(identified) == 0 && !listed {
 		return c, nil
 	}
 	status := statuslist.StatusValid
 	if len(live) > 0 {
 		if status, err = w.checkStatusLists(ctx, c, live); err != nil {
 			return StoredCredential{}, fmt.Errorf("walletflow: credential %q's status: %w", id, err)
+		}
+	}
+	// Revoked on a status list, it can't be more so on an identifier
+	// list.
+	if len(identified) > 0 && status != statuslist.StatusInvalid {
+		revoked, err := w.checkIdentifierLists(ctx, c, identified)
+		if err != nil {
+			return StoredCredential{}, fmt.Errorf("walletflow: credential %q's status: %w", id, err)
+		}
+		if severity(revoked) > severity(status) {
+			status = revoked
 		}
 	}
 	value := statusValue(status)
@@ -245,7 +259,7 @@ func (w *Wallet) CheckStatus(ctx context.Context, id string) (StoredCredential, 
 	// another status list entry, which this didn't check.
 	var cur StoredCredential
 	err = w.deps.Credentials.Update(ctx, id, func(u *StoredCredential) error {
-		if !slices.Equal(statusRefs(*u), statusRefs(c)) || uncheckedStatus(*u, now) != listed {
+		if !slices.Equal(statusRefs(*u), statusRefs(c)) || !sameIdentifierLists(*u, c) || uncheckedStatus(*u, now) != listed {
 			cur = *u
 			return errUnchanged
 		}
@@ -284,10 +298,9 @@ func (w *Wallet) checkStatusLists(ctx context.Context, c StoredCredential, live 
 }
 
 // uncheckedStatus reports whether a copy of c not yet expired at now
-// has a status the wallet can't check: an mdoc's identifier list
-// (mdocStatus), or a status naming no mechanism the wallet knows — an
-// MSO status with neither member, an SD-JWT VC status claim with no
-// status_list. Either may still revoke it.
+// has a status the wallet can't check: one naming no mechanism the
+// wallet knows — an MSO status with neither member, an SD-JWT VC
+// status claim with no status_list. It may still revoke it.
 func uncheckedStatus(c StoredCredential, now time.Time) bool {
 	for _, cp := range c.AllCopies() {
 		if copyLive(c, cp, now) && copyStatusUnchecked(c.Format, cp.Credential) {
@@ -304,7 +317,7 @@ func copyStatusUnchecked(format, credential string) bool {
 	switch format {
 	case mdoc.CredentialFormat:
 		status, err := mdocStatus(credential)
-		return err == nil && status != nil && (status.IdentifierList != nil || status.StatusList == nil)
+		return err == nil && status != nil && status.IdentifierList == nil && status.StatusList == nil
 	case sdjwtvc.CredentialFormat:
 		payload, err := sdjwtvcPayload(credential)
 		if err != nil {
