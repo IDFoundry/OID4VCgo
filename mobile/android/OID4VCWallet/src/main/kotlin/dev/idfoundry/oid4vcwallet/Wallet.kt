@@ -400,8 +400,8 @@ public data class CredentialDisplay(
 public data class CredentialStatus(
     /**
      * The status as the issuer's list names it: `valid`, `invalid`, `suspended`, or "0x" and a
-     * value of the list's own; or `unknown`, for an mdoc naming an identifier list, which isn't
-     * checked. [value] reads it.
+     * value of the list's own; or `unknown`, for a status naming no mechanism the wallet knows.
+     * [value] reads it.
      */
     @SerialName("value") val rawValue: String,
     /** When it was checked. */
@@ -424,8 +424,9 @@ public data class CredentialStatus(
         public data class Other(val value: String) : Value
 
         /**
-         * An mdoc naming an identifier list (ISO/IEC 18013-5 §12.3.6.4), which isn't checked,
-         * and no status list saying otherwise than valid: the status isn't known.
+         * A status naming no mechanism the wallet knows, and no list saying otherwise than
+         * valid: the status isn't known. Before OID4VCWallet 0.22.0, also an mdoc naming an
+         * identifier list (ISO/IEC 18013-5 §12.3.6.4), which is now checked.
          */
         public data object Unknown : Value
     }

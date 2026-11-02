@@ -190,10 +190,9 @@ func TestSessions_ProximityReader(t *testing.T) {
 	}
 }
 
-// A document without a status list, or with an identifier list, which
-// the reader can't check, isn't fetched. A status naming no mechanism
-// the reader knows (decoded with neither member) is unknown, not none:
-// it may revoke the document.
+// A document without a revocation list has nothing to fetch. A status
+// naming no mechanism the reader knows (decoded with neither member) is
+// unknown, not none: it may revoke the document.
 func TestProximityReader_CheckStatusWithoutList(t *testing.T) {
 	r := &ProximityReader{clock: time.Now}
 	for name, tc := range map[string]struct {
@@ -202,7 +201,6 @@ func TestProximityReader_CheckStatusWithoutList(t *testing.T) {
 	}{
 		"no status":                        {nil, "none"},
 		"status naming no known mechanism": {&mdoc.Status{}, "unknown"},
-		"identifier list":                  {&mdoc.Status{IdentifierList: &mdoc.IdentifierListRef{ID: []byte{1}, URI: "https://status.example/ids"}}, "unknown"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			got, err := r.checkStatus(context.Background(), proximity.Verified{Status: tc.status})
@@ -211,41 +209,56 @@ func TestProximityReader_CheckStatusWithoutList(t *testing.T) {
 			}
 		})
 	}
-	// A status list with no issuer chain to bind its signer to fails
-	// rather than trusting any signer.
-	ref := &mdoc.Status{StatusList: &mdoc.StatusListRef{URI: "https://status.example/list", Idx: 1}}
-	if _, err := r.checkStatus(context.Background(), proximity.Verified{Status: ref}); err == nil {
-		t.Error("checkStatus without an issuer chain succeeded")
+	// A list with no issuer chain to bind its signer to fails rather
+	// than trusting any signer.
+	for _, status := range []*mdoc.Status{
+		{StatusList: &mdoc.StatusListRef{URI: "https://status.example/list", Idx: 1}},
+		{IdentifierList: &mdoc.IdentifierListRef{ID: []byte{1}, URI: "https://status.example/ids"}},
+	} {
+		if _, err := r.checkStatus(context.Background(), proximity.Verified{Status: status}); err == nil {
+			t.Errorf("checkStatus(%+v) without an issuer chain succeeded", status)
+		}
 	}
 }
 
 // A status list is read as ISO/IEC 18013-5 §12.3.6.3 has it: a token
 // without exp, or with its x5chain outside the protected header, is
-// refused. One on which the document is valid, beside an identifier
-// list the reader can't check, leaves it unknown.
+// refused. An identifier list the MSO names is checked too, alone or
+// beside a status list: on it, the document is revoked. Either list's
+// signer must be under the Certificate the MSO names.
 func TestProximityReader_CheckStatusListForm(t *testing.T) {
 	signer := teststatuslist.NewSigner(t)
+	other := teststatuslist.NewSigner(t)
 	saved := testHTTP.Load()
 	defer testHTTP.Store(saved)
 	r := &ProximityReader{clock: time.Now}
-	ids := &mdoc.IdentifierListRef{ID: []byte{1}, URI: "https://status.example/ids"}
 	for name, tc := range map[string]struct {
-		variant teststatuslist.Variant
-		ids     *mdoc.IdentifierListRef
-		want    string // "" for refused
+		variant    teststatuslist.Variant
+		statusList bool
+		id         []byte // nil for no identifier list
+		pin        teststatuslist.Signer
+		want       string // "" for refused
 	}{
-		"well-formed":          {teststatuslist.WellFormed, nil, "valid"},
-		"no exp":               {teststatuslist.NoExp, nil, ""},
-		"unprotected x5chain":  {teststatuslist.UnprotectedX5Chain, nil, ""},
-		"with identifier list": {teststatuslist.WellFormed, ids, "unknown"},
+		"well-formed":                       {teststatuslist.WellFormed, true, nil, signer, "valid"},
+		"no exp":                            {teststatuslist.NoExp, true, nil, signer, ""},
+		"unprotected x5chain":               {teststatuslist.UnprotectedX5Chain, true, nil, signer, ""},
+		"identifier list, not listed":       {teststatuslist.WellFormed, false, []byte{2}, signer, "valid"},
+		"identifier list, listed":           {teststatuslist.WellFormed, false, []byte{7}, signer, "invalid"},
+		"both, valid and not listed":        {teststatuslist.WellFormed, true, []byte{2}, signer, "valid"},
+		"both, valid but listed":            {teststatuslist.WellFormed, true, []byte{7}, signer, "invalid"},
+		"identifier list, another CA's pin": {teststatuslist.WellFormed, false, []byte{2}, other, ""},
 	} {
 		t.Run(name, func(t *testing.T) {
-			uri, client := signer.Serve(t, tc.variant)
+			statusURI, idsURI, client := signer.ServeLists(t, tc.variant, []byte{7})
 			testHTTP.Store(client)
-			got, err := r.checkStatus(context.Background(), proximity.Verified{
-				Status:      &mdoc.Status{StatusList: &mdoc.StatusListRef{Idx: 3, URI: uri, Certificate: signer.CA.Raw}, IdentifierList: tc.ids},
-				IssuerChain: signer.Chain,
-			})
+			status := &mdoc.Status{}
+			if tc.statusList {
+				status.StatusList = &mdoc.StatusListRef{Idx: 3, URI: statusURI, Certificate: tc.pin.CA.Raw}
+			}
+			if tc.id != nil {
+				status.IdentifierList = &mdoc.IdentifierListRef{ID: tc.id, URI: idsURI, Certificate: tc.pin.CA.Raw}
+			}
+			got, err := r.checkStatus(context.Background(), proximity.Verified{Status: status, IssuerChain: signer.Chain})
 			switch {
 			case tc.want == "" && err == nil:
 				t.Errorf("checkStatus = %q, want it refused", got)

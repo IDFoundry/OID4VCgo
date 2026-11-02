@@ -1334,7 +1334,11 @@ Decisions taken 2026-10-06 (tracked in [#482](https://github.com/IDFoundry/OID4V
   fetches and verifies the list (`statuslist.Checker` with
   `mdoc.StatusTrust`, under the root the document chained to, public
   addresses only), reporting `valid`, `invalid`, `suspended`, `none` or
-  `unknown` (an identifier list, which isn't checked).
+  `unknown` (an identifier list, which isn't checked). From OID4VCWallet
+  0.22.0 the reader, like the wallet's `CheckStatus`, checks an
+  identifier list too (`identifierlist.Checker`, its signer bound the
+  same way), and `unknown` is left for a status naming no mechanism it
+  knows.
 
 ### Phase 10 findings: the Android SDK
 

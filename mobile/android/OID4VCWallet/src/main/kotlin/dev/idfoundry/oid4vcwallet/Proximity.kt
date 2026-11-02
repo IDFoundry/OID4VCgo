@@ -1014,8 +1014,9 @@ public sealed interface MdocStatus {
     public data object NoStatus : MdocStatus
 
     /**
-     * The MSO names an identifier list (ISO/IEC 18013-5 §12.3.6.3), which isn't checked, and no
-     * status list saying otherwise than valid: the status isn't known.
+     * The MSO's status names no mechanism the reader knows, and no list says otherwise than
+     * valid: the status isn't known. Before OID4VCWallet 0.22.0, also an MSO naming an
+     * identifier list (ISO/IEC 18013-5 §12.3.6.4), which is now checked.
      */
     public data object Unknown : MdocStatus
 }

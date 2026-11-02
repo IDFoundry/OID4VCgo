@@ -13,6 +13,7 @@ import (
 
 	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
+	"github.com/idfoundry/oid4vcgo/identifierlist"
 	"github.com/idfoundry/oid4vcgo/proximity"
 	"github.com/idfoundry/oid4vcgo/statuslist"
 	"github.com/idfoundry/oid4vcgo/verifier"
@@ -514,18 +515,17 @@ func verifiedOf(v proximity.Verified) *verifiedJSON {
 
 // CheckStatus checks the revocation status of the mdoc HandleMessage
 // verified, and returns {"abi", "status"}. It fetches the Token Status
-// List the MSO names, as a CWT, and verifies it as ISO/IEC 18013-5
-// §12.3.6 says: signed under the Certificate the MSO's status names,
-// or else under the CA that signed the document signer, chaining to
-// the root the document did rather than to any IACA the reader trusts.
-// status is "valid", "invalid" (revoked), "suspended", another status
-// the list defines as "0x" and its value, "none" (the MSO names no
-// revocation list) or "unknown" (it names an identifier list,
-// §12.3.6.3, which this reader can't check, and either no status list
-// or one on which it's valid; or it has a status naming no mechanism
-// this reader knows): rely on the document only on "valid" or
-// "none". The list covers many documents, so fetching it
-// doesn't tell its publisher which one is checked. It's fetched over
+// List the MSO names, as a CWT, and the identifier list it names
+// (§12.3.6.4), and verifies each as ISO/IEC 18013-5 §12.3.6 says:
+// signed under the Certificate the MSO's reference names, or else under
+// the CA that signed the document signer, chaining to the root the
+// document did rather than to any IACA the reader trusts. status is
+// "valid", "invalid" (revoked, on either list), "suspended", another
+// status the status list defines as "0x" and its value, "none" (the
+// MSO names no revocation list) or "unknown" (it has a status naming no
+// mechanism this reader knows): rely on the document only on "valid"
+// or "none". Each list covers many documents, so fetching it doesn't
+// tell its publisher which one is checked. It's fetched over
 // https from public addresses only. A failed fetch is network, a list
 // that doesn't verify protocol, and before a verified mdoc it's
 // wrong_step. Cancelling op cancels it.
@@ -551,22 +551,54 @@ func (r *ProximityReader) checkStatus(ctx context.Context, v proximity.Verified)
 	switch {
 	case v.Status == nil:
 		return "none", nil
-	case v.Status.StatusList == nil:
-		// An identifier list, or a status naming no mechanism this
-		// reader knows (mdoc.Status): either may revoke the document.
+	case v.Status.StatusList == nil && v.Status.IdentifierList == nil:
+		// A status naming no mechanism this reader knows (mdoc.Status):
+		// it may still revoke the document.
 		return walletflow.StatusUnknown, nil
 	case len(v.IssuerChain) == 0:
-		return "", errors.New("no issuer chain to bind the status list's signer to")
+		return "", errors.New("no issuer chain to bind the revocation list's signer to")
 	}
-	ref := v.Status.StatusList
-	trust, err := mdoc.StatusTrust(ref, v.IssuerChain)
+	// The root the document chained to, which a list's signer must
+	// chain to too unless the MSO names a Certificate.
+	anchor := x509.NewCertPool()
+	anchor.AddCert(v.IssuerChain[len(v.IssuerChain)-1])
+	status := statuslist.StatusValid
+	if ref := v.Status.StatusList; ref != nil {
+		var err error
+		if status, err = r.checkStatusList(ctx, ref, v.IssuerChain, anchor); err != nil {
+			return "", err
+		}
+	}
+	// Revoked on its status list, it can't be more so on an identifier
+	// list.
+	if ref := v.Status.IdentifierList; ref != nil && status != statuslist.StatusInvalid {
+		checker := identifierlist.Checker{
+			Fetcher: statusFetcher(),
+			Roots:   anchor,
+			Options: identifierlist.VerifyOptions{Now: r.clock, Revocation: r.statusRevocation},
+		}
+		revoked, _, err := checker.Check(ctx, identifierlist.Ref(*ref), v.IssuerChain)
+		if err != nil {
+			return "", err
+		}
+		if revoked {
+			status = statuslist.StatusInvalid
+		}
+	}
+	return statusValue(status), nil
+}
+
+// checkStatusList is the document's status on the Token Status List
+// ref names, its signer bound to the document's issuer (mdoc.StatusTrust)
+// under anchor.
+func (r *ProximityReader) checkStatusList(ctx context.Context, ref *mdoc.StatusListRef, issuerChain []*x509.Certificate, anchor *x509.CertPool) (statuslist.StatusType, error) {
+	trust, err := mdoc.StatusTrust(ref, issuerChain)
 	if err != nil {
-		return "", err
+		return 0, err
 	}
 	roots := trust.Roots
 	if roots == nil {
-		roots = x509.NewCertPool()
-		roots.AddCert(v.IssuerChain[len(v.IssuerChain)-1])
+		roots = anchor
 	}
 	checker := statuslist.Checker{
 		Fetcher: statusFetcher(),
@@ -577,15 +609,7 @@ func (r *ProximityReader) checkStatus(ctx context.Context, v proximity.Verified)
 		},
 	}
 	status, _, err := checker.Check(ctx, statuslist.StatusListRef{Idx: ref.Idx, URI: ref.URI}, true)
-	if err != nil {
-		return "", err
-	}
-	if status == statuslist.StatusValid && v.Status.IdentifierList != nil {
-		// Valid on the status list, but the identifier list the MSO
-		// names too, which this reader can't check, may still revoke it.
-		return walletflow.StatusUnknown, nil
-	}
-	return statusValue(status), nil
+	return status, err
 }
 
 // statusFetcher is the reader's status list fetcher: public addresses

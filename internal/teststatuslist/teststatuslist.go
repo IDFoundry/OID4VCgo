@@ -1,8 +1,9 @@
 // Package teststatuslist issues CWT Status List Tokens for tests, the
 // well-formed one an mdoc's status names and the variants ISO/IEC
-// 18013-5 §12.3.6.3 has a relying party refuse — never for production
-// use. A regular (not _test.go) package so more than one package's own
-// tests can share it, as internal/testcert is.
+// 18013-5 §12.3.6.3 has a relying party refuse, and identifier lists
+// (§12.3.6.4) — never for production use. A regular (not _test.go)
+// package so more than one package's own tests can share it, as
+// internal/testcert is.
 package teststatuslist
 
 import (
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
+	"github.com/idfoundry/oid4vcgo/identifierlist"
 	"github.com/idfoundry/oid4vcgo/internal/cose"
 	"github.com/idfoundry/oid4vcgo/internal/testcert"
 	"github.com/idfoundry/oid4vcgo/statuslist"
@@ -91,14 +93,45 @@ func (s Signer) Token(t testing.TB, uri string, v Variant) []byte {
 // its URI and a client trusting the server.
 func (s Signer) Serve(t testing.TB, v Variant) (uri string, client *http.Client) {
 	t.Helper()
-	var token atomic.Pointer[[]byte]
-	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	uri, _, client = s.ServeLists(t, v)
+	return uri, client
+}
+
+// IdentifierList is an identifier list (ISO/IEC 18013-5 §12.3.6.4)
+// served at uri, signed by s, revoking the MSOs whose identifiers are
+// revoked.
+func (s Signer) IdentifierList(t testing.TB, uri string, revoked ...[]byte) []byte {
+	t.Helper()
+	now := time.Now()
+	exp := now.Add(time.Hour).Unix()
+	claims := identifierlist.TokenClaims{Sub: uri, Iat: now.Add(-time.Minute).Unix(), Exp: &exp, Identifiers: revoked}
+	token, err := identifierlist.IssueToken(s.Key, oid4vci.COSEES256, claims, s.Chain, identifierlist.IssueOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return token
+}
+
+// ServeLists serves, from one server over TLS until t ends, s's status
+// list token in form v and its identifier list revoking revoked, and
+// returns their URIs and a client trusting the server.
+func (s Signer) ServeLists(t testing.TB, v Variant, revoked ...[]byte) (statusURI, identifierListURI string, client *http.Client) {
+	t.Helper()
+	var status, identifiers atomic.Pointer[[]byte]
+	mux := http.NewServeMux()
+	mux.HandleFunc("/statuslists/1", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", statuslist.CWTTokenMediaType)
-		_, _ = w.Write(*token.Load())
-	}))
+		_, _ = w.Write(*status.Load())
+	})
+	mux.HandleFunc("/identifierlists/1", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", identifierlist.MediaType)
+		_, _ = w.Write(*identifiers.Load())
+	})
+	srv := httptest.NewTLSServer(mux)
 	t.Cleanup(srv.Close)
-	uri = srv.URL + "/statuslists/1"
-	signed := s.Token(t, uri, v)
-	token.Store(&signed)
-	return uri, srv.Client()
+	statusURI, identifierListURI = srv.URL+"/statuslists/1", srv.URL+"/identifierlists/1"
+	signedStatus, signedIdentifiers := s.Token(t, statusURI, v), s.IdentifierList(t, identifierListURI, revoked...)
+	status.Store(&signedStatus)
+	identifiers.Store(&signedIdentifiers)
+	return statusURI, identifierListURI, srv.Client()
 }
