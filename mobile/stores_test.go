@@ -108,13 +108,13 @@ func TestRecordCopiesCorrelated(t *testing.T) {
 	}
 }
 
-// TestRecordCopyStatus: each copy's own status list entry and expiry
-// survive a record round trip.
+// TestRecordCopyStatus: each copy's own status list entry, expiry and
+// revocation survive a record round trip.
 func TestRecordCopyStatus(t *testing.T) {
 	until := time.Date(2027, 1, 2, 3, 4, 5, 0, time.UTC)
 	c := walletflow.StoredCredential{ID: "a", Format: "dc+sd-jwt", Copies: []walletflow.CredentialCopy{
 		{Credential: "x", HolderKeyID: "k1", StatusList: &statuslist.StatusListRef{Idx: 7, URI: "https://status.example/1"}, ValidUntil: until},
-		{Credential: "y", HolderKeyID: "k2"},
+		{Credential: "y", HolderKeyID: "k2", Revoked: true},
 	}}
 	r, err := recordOf(c)
 	if err != nil {

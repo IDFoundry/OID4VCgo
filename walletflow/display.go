@@ -204,15 +204,26 @@ type CredentialStatus struct {
 
 // CheckStatus fetches the issuer's status list for the credential id
 // names, checks it's signed by a certificate chaining to the issuer
-// roots the credential was received under (IssuerRoots, or an mdoc's),
-// and records the credential's status in it: the stored credential is
-// returned with its Status. A credential without a status has
-// nothing to check, and is returned as it is, as is an expired one: it
-// isn't valid whatever its status, so its status list isn't fetched
-// (draft-ietf-oauth-status-list §8.3). An mdoc naming an identifier
-// list (ISO/IEC 18013-5 §12.3.6.4) has it fetched and checked too, its
-// signer bound to the mdoc's issuer as §12.3.6.2 requires: on it, the
-// mdoc is StatusInvalid (revoked). A credential whose status names no
+// roots configured for it now (IssuerRoots, or the mdoc roots for its
+// doctype), and records the credential's status in it: the stored
+// credential is returned with its Status. A credential without a
+// status or identifier list has nothing to check, and is returned as
+// it is, as is an expired one: it isn't valid whatever its status, so
+// its status list isn't fetched (draft-ietf-oauth-status-list §8.3).
+// An mdoc naming an identifier list (ISO/IEC 18013-5 §12.3.6.4) has it
+// fetched and checked too, its signer bound to the mdoc's issuer as
+// §12.3.6.2 requires: under the Certificate its MSO names, if any, and
+// otherwise through the CA that signed its document signer. On it, the
+// mdoc is StatusInvalid (revoked). A list signed other than with ES256
+// or EdDSA (Ed25519) doesn't verify: an error, not a status.
+//
+// Revocation is final: an MSO revoked stays so (§12.3.6.1), and a
+// Token Status List's INVALID, unlike SUSPENDED, isn't temporary
+// (draft-ietf-oauth-status-list §7). A copy found revoked is marked
+// so (CredentialCopy.Revoked), and while it hasn't expired the
+// credential is returned as it is, StatusInvalid, no list fetched
+// again: an older list served later can't make it valid. Refreshing it
+// replaces it, and its status with it. A credential whose status names no
 // mechanism the wallet knows is StatusUnknown, not one with nothing to
 // check, unless a list it names too says it's revoked, suspended or
 // another status than valid. Neither kind of list tells the
@@ -224,6 +235,9 @@ func (w *Wallet) CheckStatus(ctx context.Context, id string) (StoredCredential, 
 		return StoredCredential{}, fmt.Errorf("walletflow: credential: %w", err)
 	}
 	now := w.deps.Clock()
+	if revokedNow(c, now) {
+		return c, nil
+	}
 	live := liveStatusRefs(c, now)
 	identified, err := liveIdentifierLists(c, now)
 	if err != nil {
@@ -234,21 +248,26 @@ func (w *Wallet) CheckStatus(ctx context.Context, id string) (StoredCredential, 
 		return c, nil
 	}
 	status := statuslist.StatusValid
+	var revokedRefs []statuslist.StatusListRef
 	if len(live) > 0 {
-		if status, err = w.checkStatusLists(ctx, c, live); err != nil {
+		if status, revokedRefs, err = w.checkStatusLists(ctx, c, live); err != nil {
 			return StoredCredential{}, fmt.Errorf("walletflow: credential %q's status: %w", id, err)
 		}
 	}
-	// Revoked on a status list, it can't be more so on an identifier
-	// list.
-	if len(identified) > 0 && status != statuslist.StatusInvalid {
-		revoked, err := w.checkIdentifierLists(ctx, c, identified)
-		if err != nil {
+	// Checked even when a status list revokes a copy, as it may revoke
+	// another.
+	var listedEntries []identifierListEntry
+	if len(identified) > 0 {
+		if listedEntries, err = w.checkIdentifierLists(ctx, c, identified); err != nil {
 			return StoredCredential{}, fmt.Errorf("walletflow: credential %q's status: %w", id, err)
 		}
-		if severity(revoked) > severity(status) {
-			status = revoked
+		if len(listedEntries) > 0 {
+			status = statuslist.StatusInvalid
 		}
+	}
+	revoked, err := revokedCopies(c, now, revokedRefs, listedEntries)
+	if err != nil {
+		return StoredCredential{}, fmt.Errorf("walletflow: credential %q's status: %w", id, err)
 	}
 	value := statusValue(status)
 	if listed && status == statuslist.StatusValid {
@@ -256,14 +275,20 @@ func (w *Wallet) CheckStatus(ctx context.Context, id string) (StoredCredential, 
 	}
 	// Recorded on the credential as it is now: a presentation or a
 	// refresh may have changed it meanwhile. A refreshed one references
-	// another status list entry, which this didn't check.
+	// another status list entry, which this didn't check, and a check
+	// meanwhile may have found it revoked, which stays.
 	var cur StoredCredential
 	err = w.deps.Credentials.Update(ctx, id, func(u *StoredCredential) error {
-		if !slices.Equal(statusRefs(*u), statusRefs(c)) || !sameIdentifierLists(*u, c) || uncheckedStatus(*u, now) != listed {
+		if revokedNow(*u, now) || !slices.Equal(statusRefs(*u), statusRefs(c)) || !sameIdentifierLists(*u, c) || uncheckedStatus(*u, now) != listed {
 			cur = *u
 			return errUnchanged
 		}
 		u.Status = CredentialStatus{Value: value, CheckedAt: now.UTC()}
+		for i := range u.Copies {
+			if revoked[u.Copies[i].Credential] {
+				u.Copies[i].Revoked = true
+			}
+		}
 		cur = *u
 		return nil
 	})
@@ -273,10 +298,49 @@ func (w *Wallet) CheckStatus(ctx context.Context, id string) (StoredCredential, 
 	return cur, nil
 }
 
+// revokedNow reports whether a copy of c live at now has been found
+// revoked (CredentialCopy.Revoked): revocation is final, so c is
+// StatusInvalid without a list fetched again. A credential stored
+// before copies were kept has its one copy's in its Status.
+func revokedNow(c StoredCredential, now time.Time) bool {
+	if len(c.Copies) == 0 {
+		return c.Status.Value == StatusInvalid
+	}
+	return slices.ContainsFunc(c.Copies, func(cp CredentialCopy) bool { return cp.Revoked && copyLive(c, cp, now) })
+}
+
+// revokedCopies are the copies of c live at now that a status list
+// entry among refs or an identifier list entry among entries revokes,
+// by their Credential.
+func revokedCopies(c StoredCredential, now time.Time, refs []statuslist.StatusListRef, entries []identifierListEntry) (map[string]bool, error) {
+	revoked := map[string]bool{}
+	for _, cp := range c.AllCopies() {
+		if !copyLive(c, cp, now) {
+			continue
+		}
+		if ref := statusRef(c, cp); ref != nil && slices.Contains(refs, *ref) {
+			revoked[cp.Credential] = true
+			continue
+		}
+		if len(entries) == 0 {
+			continue
+		}
+		e, err := copyIdentifierList(c, cp)
+		if err != nil {
+			return nil, err
+		}
+		if e != nil && slices.ContainsFunc(entries, e.same) {
+			revoked[cp.Credential] = true
+		}
+	}
+	return revoked, nil
+}
+
 // checkStatusLists is the status of c's copies on the status list
-// entries live, their issuer's.
-func (w *Wallet) checkStatusLists(ctx context.Context, c StoredCredential, live []statuslist.StatusListRef) (statuslist.StatusType, error) {
-	// The roots the credential itself was checked against on receipt.
+// entries live, their issuer's, and the entries that revoke theirs.
+func (w *Wallet) checkStatusLists(ctx context.Context, c StoredCredential, live []statuslist.StatusListRef) (statuslist.StatusType, []statuslist.StatusListRef, error) {
+	// The roots configured for the credential, which it was checked
+	// against on receipt unless they've changed since.
 	roots, _ := w.cfg.issuerTrust(c.Format, c.DocType)
 	checker := statuslist.Checker{
 		Fetcher: statuslist.Fetcher{HTTP: w.deps.HTTP, AllowLoopback: w.cfg.Development},
@@ -288,7 +352,7 @@ func (w *Wallet) checkStatusLists(ctx context.Context, c StoredCredential, live 
 	if c.StatusListCWT {
 		var err error
 		if checker, err = mdocStatusChecker(checker, c.Credential); err != nil {
-			return 0, err
+			return 0, nil, err
 		}
 	} else {
 		iss, _ := c.Claims["iss"].(string)
@@ -377,34 +441,38 @@ func liveStatusRefs(c StoredCredential, now time.Time) []statuslist.StatusListRe
 
 // checkCopies is the status of the copies whose entries are refs: the
 // most severe among them, as the holder would want to know a copy was
-// revoked even while the others aren't. A list several copies share is
-// fetched and verified once.
-func checkCopies(ctx context.Context, checker statuslist.Checker, refs []statuslist.StatusListRef, cwt bool) (statuslist.StatusType, error) {
+// revoked even while the others aren't, and the entries that revoke
+// theirs. A list several copies share is fetched and verified once.
+func checkCopies(ctx context.Context, checker statuslist.Checker, refs []statuslist.StatusListRef, cwt bool) (statuslist.StatusType, []statuslist.StatusListRef, error) {
 	worst := statuslist.StatusValid
+	var revoked []statuslist.StatusListRef
 	lists := map[string]statuslist.StatusList{}
 	for _, ref := range refs {
 		var status statuslist.StatusType
 		if list, ok := lists[ref.URI]; ok {
 			if ref.Idx > math.MaxInt {
-				return 0, fmt.Errorf("statuslist: index %d is out of bounds", ref.Idx)
+				return 0, nil, fmt.Errorf("statuslist: index %d is out of bounds", ref.Idx)
 			}
 			v, err := list.Status(int(ref.Idx))
 			if err != nil {
-				return 0, err
+				return 0, nil, err
 			}
 			status = statuslist.StatusType(v)
 		} else {
 			s, claims, err := checker.Check(ctx, ref, cwt)
 			if err != nil {
-				return 0, err
+				return 0, nil, err
 			}
 			status, lists[ref.URI] = s, claims.StatusList
+		}
+		if status == statuslist.StatusInvalid {
+			revoked = append(revoked, ref)
 		}
 		if severity(status) > severity(worst) {
 			worst = status
 		}
 	}
-	return worst, nil
+	return worst, revoked, nil
 }
 
 // severity orders statuses by how much they matter to the holder:

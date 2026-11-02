@@ -47,7 +47,7 @@ func fullCredential(id string, v int) walletflow.StoredCredential {
 		return walletflow.CredentialCopy{
 			Credential: text(fmt.Sprintf("copy%d", n)), HolderKeyID: text(fmt.Sprintf("key%d", n)), Presented: true,
 			ShownTo:    []string{walletflow.VerifierHash(text("verifier-a")), walletflow.VerifierHash(text("verifier-b"))},
-			StatusList: statusList(n), ValidUntil: at(60+n, v), Reservation: text(fmt.Sprintf("reservation%d", n)),
+			StatusList: statusList(n), ValidUntil: at(60+n, v), Revoked: true, Reservation: text(fmt.Sprintf("reservation%d", n)),
 		}
 	}
 	logo := func(field string) *walletflow.Logo {

@@ -656,13 +656,16 @@ func (w *Wallet) HolderKeyIDs() (string, error) {
 // credentialID names, checks its signature, records the credential's revocation
 // status, and returns the credential's summary with it ("status":
 // {"value": "valid" | "invalid" | "suspended" | "0x…" | "unknown",
-// "checked_at"}). A credential without a status list is returned as it
-// is, as is an expired one, whose status list isn't fetched. An mdoc's
-// identifier list (ISO/IEC 18013-5 §12.3.6.4) is checked too: on it,
-// the mdoc is "invalid". A status naming no mechanism the wallet knows
-// is "unknown" unless a list it names too says otherwise than valid.
-// Each list covers many credentials, so fetching it doesn't tell the
-// issuer which one is checked.
+// "checked_at"}). A credential without a status or identifier list is
+// returned as it is, as is an expired one, whose lists aren't fetched.
+// An mdoc's identifier list (ISO/IEC 18013-5 §12.3.6.4) is checked
+// too, under the certificate its MSO names, if any, and otherwise the
+// configured mdoc roots: on it, the mdoc is "invalid". Revocation is
+// final: a copy found revoked keeps the credential "invalid" until it
+// expires, its lists not fetched again. A status naming no mechanism
+// the wallet knows is "unknown" unless a list it names too says
+// otherwise than valid. Each list covers many credentials, so fetching
+// it doesn't tell the issuer which one is checked.
 func (w *Wallet) CheckStatus(op *Operation, credentialID string) (string, error) {
 	c, err := w.w.CheckStatus(op.context(), credentialID)
 	if err != nil {

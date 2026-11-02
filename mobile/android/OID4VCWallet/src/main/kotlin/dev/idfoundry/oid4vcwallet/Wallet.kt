@@ -646,11 +646,14 @@ public class Wallet(
     }
 
     /**
-     * Fetches the issuer's status list for a credential, checks its
-     * signature, and returns the credential with its revocation status
-     * recorded. The list covers many credentials, so fetching it
-     * doesn't tell the issuer which one is checked. A credential without
-     * a status list is returned as it is.
+     * Fetches the issuer's status list for a credential, and an mdoc's
+     * identifier list, checks their signatures, and returns the
+     * credential with its revocation status recorded. Each list covers
+     * many credentials, so fetching it doesn't tell the issuer which
+     * one is checked. A credential without a status or identifier list
+     * is returned as it is. Revocation is final: a credential found
+     * revoked stays so, its lists not fetched again, until the revoked
+     * copy expires or the credential is refreshed.
      */
     public suspend fun checkStatus(id: String): CredentialSummary =
         decode(OID4VC.cancellable { op -> handle.checkStatus(op, id) })

@@ -109,13 +109,16 @@ type copyJSON struct {
 	// written before they were kept.
 	StatusList *statusListJSON `json:"status_list,omitempty"`
 	ValidUntil *time.Time      `json:"valid_until,omitempty"`
+	// Revoked: absent when the copy hasn't been found revoked, and from a
+	// record written before it was kept.
+	Revoked bool `json:"revoked,omitempty"`
 	// Reservation: the latest presentation reserving the copy, absent
 	// when none may still undo it.
 	Reservation string `json:"reservation,omitempty"`
 }
 
 func copyOf(cp walletflow.CredentialCopy) copyJSON {
-	r := copyJSON{Credential: cp.Credential, HolderKeyID: cp.HolderKeyID, Presented: cp.Presented, ShownTo: cp.ShownTo, Reservation: cp.Reservation}
+	r := copyJSON{Credential: cp.Credential, HolderKeyID: cp.HolderKeyID, Presented: cp.Presented, ShownTo: cp.ShownTo, Revoked: cp.Revoked, Reservation: cp.Reservation}
 	if cp.StatusList != nil {
 		r.StatusList = &statusListJSON{Idx: cp.StatusList.Idx, URI: cp.StatusList.URI}
 	}
@@ -126,7 +129,7 @@ func copyOf(cp walletflow.CredentialCopy) copyJSON {
 }
 
 func (r copyJSON) copy() walletflow.CredentialCopy {
-	cp := walletflow.CredentialCopy{Credential: r.Credential, HolderKeyID: r.HolderKeyID, Presented: r.Presented, ShownTo: r.ShownTo, Reservation: r.Reservation}
+	cp := walletflow.CredentialCopy{Credential: r.Credential, HolderKeyID: r.HolderKeyID, Presented: r.Presented, ShownTo: r.ShownTo, Revoked: r.Revoked, Reservation: r.Reservation}
 	if r.StatusList != nil {
 		cp.StatusList = &statuslist.StatusListRef{Idx: r.StatusList.Idx, URI: r.StatusList.URI}
 	}
