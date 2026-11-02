@@ -22,8 +22,13 @@ import (
 // credential_identifiers are the Authorization Server's to issue
 // (§6.2), so the definition's checks are:
 //
-//   - Validate, on every object: a credential_configuration_id, and
-//     credential_identifiers, if any, each non-empty and listed once.
+//   - Validate, on every object: a credential_configuration_id;
+//     credential_identifiers, if present, a non-empty array of
+//     non-empty identifiers, each listed once; locations, if present,
+//     a non-empty array of non-empty strings; and claims, if present,
+//     a non-empty array of claims description objects (Appendix B.1),
+//     each path a valid Claims Path Pointer and none described twice
+//     (Appendix B.3).
 //   - ValidateRequest, on the objects a client sends to start a grant
 //     (a pushed authorization request, say): no credential_identifiers.
 //     A client choosing them is refused with
@@ -44,9 +49,14 @@ import (
 //     the granted one it narrows: the same checks — so it keeps some
 //     or all of the grant's locations and claims, never none of them —
 //     except that it may never add credential_identifiers. It keeps
-//     some or all of the grant's identifiers, or drops them, and a
-//     grant that holds none admits none. A token request naming an identifier the grant
-//     doesn't hold is refused with invalid_authorization_details.
+//     some or all of the grant's identifiers, never none of them: a
+//     Token Response's object carries them (§6.2), and a token without
+//     them would let the Wallet ask for the configuration's Credential
+//     by credential_configuration_id, for whatever dataset the
+//     Credential Endpoint picks. A grant that holds none admits none. A
+//     token request naming an identifier the grant doesn't hold, or
+//     leaving out all of the grant's, is refused with
+//     invalid_authorization_details.
 //
 // The binding rule for the Credential Issuer: a credential_identifier
 // is a handle the Authorization Server minted for one grant, not an
@@ -75,6 +85,24 @@ func validateAuthorizationDetail(d AuthorizationDetail) error {
 	if d.CredentialConfigurationID == "" {
 		return errors.New("oid4vci: openid_credential authorization_details: credential_configuration_id is required (OpenID4VCI 1.0 §5.1.1)")
 	}
+	// An empty array is present but names nothing: refused, rather than
+	// read as absent, which for locations and claims means every one.
+	switch {
+	case d.CredentialIdentifiers != nil && len(d.CredentialIdentifiers) == 0:
+		return errors.New("oid4vci: openid_credential authorization_details: credential_identifiers, when present, must be non-empty (OpenID4VCI 1.0 §6.2)")
+	case d.Locations != nil && len(d.Locations) == 0:
+		return errors.New("oid4vci: openid_credential authorization_details: locations, when present, must be non-empty")
+	case d.Claims != nil && len(d.Claims) == 0:
+		return errors.New("oid4vci: openid_credential authorization_details: claims, when present, must be non-empty (OpenID4VCI 1.0 §5.1.1)")
+	}
+	for i, l := range d.Locations {
+		if l == "" {
+			return fmt.Errorf("oid4vci: openid_credential authorization_details: locations[%d] is empty", i)
+		}
+	}
+	if err := validateClaimsDescriptions(d.Claims); err != nil {
+		return fmt.Errorf("oid4vci: openid_credential authorization_details: %w", err)
+	}
 	for i, id := range d.CredentialIdentifiers {
 		if id == "" {
 			return fmt.Errorf("oid4vci: openid_credential authorization_details: credential_identifiers[%d] is empty", i)
@@ -100,8 +128,8 @@ func validateGrantedAuthorizationDetail(requested, granted AuthorizationDetail) 
 }
 
 // validateNarrowedAuthorizationDetail judges a token request's
-// narrowing of its grant: narrowed may only keep or drop the grant's
-// credential_identifiers, never add one.
+// narrowing of its grant: narrowed keeps some or all of the grant's
+// credential_identifiers, never adds one.
 func validateNarrowedAuthorizationDetail(granted, narrowed AuthorizationDetail) error {
 	return validateNarrowerAuthorizationDetail(granted, narrowed, false, "token request's", "granted")
 }
@@ -111,9 +139,11 @@ func validateNarrowedAuthorizationDetail(granted, narrowed AuthorizationDetail) 
 // locations, claims and credential_identifiers among wider's. Where
 // wider has locations or claims, narrower must keep at least one of
 // them: without locations an object is good at any Credential Issuer,
-// and without claims it asks for every claim. credential_identifiers
-// may all be dropped, since the grant's identifiers are optional. With
-// mayAddIdentifiers, narrower's credential_identifiers aren't checked.
+// and without claims it asks for every claim. Unless mayAddIdentifiers,
+// the same holds for credential_identifiers: an object without them
+// lets the Wallet name the configuration itself (§8.2), for any of its
+// datasets. With mayAddIdentifiers, narrower's credential_identifiers
+// aren't checked.
 // narrowerName and widerName name the two sides in the error.
 func validateNarrowerAuthorizationDetail(wider, narrower AuthorizationDetail, mayAddIdentifiers bool, narrowerName, widerName string) error {
 	var member string
@@ -124,6 +154,8 @@ func validateNarrowerAuthorizationDetail(wider, narrower AuthorizationDetail, ma
 		return fmt.Errorf("oid4vci: openid_credential authorization_details: the %s object leaves out the %s locations", narrowerName, widerName)
 	case len(wider.Claims) > 0 && len(narrower.Claims) == 0:
 		return fmt.Errorf("oid4vci: openid_credential authorization_details: the %s object leaves out the %s claims", narrowerName, widerName)
+	case !mayAddIdentifiers && len(wider.CredentialIdentifiers) > 0 && len(narrower.CredentialIdentifiers) == 0:
+		return fmt.Errorf("oid4vci: openid_credential authorization_details: the %s object leaves out the %s credential_identifiers", narrowerName, widerName)
 	case !subsetOf(narrower.Locations, wider.Locations, func(a, b string) bool { return a == b }):
 		member = "locations"
 	case !subsetOf(narrower.Claims, wider.Claims, func(a, b ClaimsDescription) bool { return reflect.DeepEqual(a, b) }):

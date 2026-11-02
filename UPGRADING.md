@@ -6,6 +6,34 @@ everything else. A release that pins a new FAPIgo release passes on
 that release's own breaking changes: see FAPIgo's UPGRADING.md for
 them.
 
+## v0.61.0 → next
+
+### Authorization details (`oid4vci`)
+
+- **Dropping every `credential_identifiers` entry is refused.**
+  `AuthorizationDetailRARDefinition`'s `ValidateNarrowing` used to
+  accept a token request (exchanging a code or a CIBA `auth_req_id`,
+  or refreshing) whose `openid_credential` object left out all the
+  identifiers its grant held. The access token then carried none, so
+  the Wallet could ask for the configuration by
+  `credential_configuration_id`, for whatever dataset the Credential
+  Endpoint's `Prepare` picks rather than the one consented to, and the
+  Token Response broke OpenID4VCI 1.0 §6.2, which requires them. Such
+  a token request is now refused with `invalid_authorization_details`:
+  keep a non-empty subset of the grant's identifiers, or send no
+  `authorization_details` to keep the grant as it is.
+- **Malformed objects are refused.** Every `openid_credential` object
+  (`Validate`) is refused, with `invalid_authorization_details`, when
+  `credential_identifiers`, `locations` or `claims` is an empty array,
+  a location is empty, a claims `path` isn't a non-empty array of
+  strings, nulls and non-negative integers (Appendix B.1), or two
+  claims share a path (Appendix B.3). Leave a member out rather than
+  sending it empty.
+- **`ClaimsDescription.Validate` accepts decoded indices.** A path
+  index decoded from JSON (a `float64`) is accepted when it's a
+  non-negative integer; `CredentialMetadata.Validate` refused every
+  one before.
+
 ## v0.60.0 → v0.61.0
 
 ### FAPIgo v0.69.0 (`issuer`)
