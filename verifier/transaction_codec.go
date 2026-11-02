@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/fxamacker/cbor/v2"
@@ -88,9 +89,20 @@ type TransactionSealer interface {
 // expire, with a TransactionSealer of your own or
 // github.com/idfoundry/fapigo/sqlstore's RotatingSealer, which seals
 // with the first sealer it's given and opens with any of them.
+//
+// It refuses a key that's one byte repeated (all zeros, say: a
+// placeholder), or all printable text (a passphrase, or a hex or base64
+// key not yet decoded), as fapigo/sqlstore's AESGCMSealer does: neither
+// is random, and 32 random bytes are all printable with probability
+// about 4e-14.
 func AESGCMSealer(key []byte) (TransactionSealer, error) {
-	if len(key) != 32 {
+	switch {
+	case len(key) != 32:
 		return nil, fmt.Errorf("verifier: transaction sealer: key is %d bytes, want 32 (AES-256)", len(key))
+	case bytes.Count(key, key[:1]) == len(key):
+		return nil, errors.New("verifier: transaction sealer: key is one byte repeated, not a random key")
+	case !slices.ContainsFunc(key, func(c byte) bool { return (c < 0x20 || c > 0x7e) && c != '\t' && c != '\n' && c != '\r' }):
+		return nil, errors.New("verifier: transaction sealer: key is all printable text (a passphrase, or a hex or base64 key not yet decoded), not 32 random bytes: generate it with crypto/rand, and decode an encoded key before passing it")
 	}
 	block, err := aes.NewCipher(key)
 	if err != nil {

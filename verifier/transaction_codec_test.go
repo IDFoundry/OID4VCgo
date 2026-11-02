@@ -274,6 +274,39 @@ func TestTransactionCodec_Sealed(t *testing.T) {
 	}
 }
 
+// TestAESGCMSealer_RefusesWeakKeys: a key of the wrong length, one byte
+// repeated, or all printable text (a passphrase, or an encoded key not
+// yet decoded) is refused; random bytes, and text with one byte that
+// isn't printable, are taken.
+func TestAESGCMSealer_RefusesWeakKeys(t *testing.T) {
+	printable := bytes.Repeat([]byte("ab"), 16)
+	printable[31] = '\n' // whitespace is text too
+	nearlyText := bytes.Clone(printable)
+	nearlyText[0] = 0x80
+	random := make([]byte, 32)
+	if _, err := rand.Read(random); err != nil {
+		t.Fatal(err)
+	}
+	for name, tc := range map[string]struct {
+		key  []byte
+		want string // "" for taken
+	}{
+		"random":         {random, ""},
+		"one byte isn't": {nearlyText, ""},
+		"16 bytes":       {random[:16], "want 32"},
+		"zeros":          {make([]byte, 32), "one byte repeated"},
+		"repeated 0x41":  {bytes.Repeat([]byte{0x41}, 32), "one byte repeated"},
+		"passphrase":     {[]byte("correct horse battery staple!!!!"), "printable text"},
+		"hex":            {[]byte("00112233445566778899aabbccddeeff"), "printable text"},
+		"text":           {printable, "printable text"},
+	} {
+		_, err := verifier.AESGCMSealer(tc.key)
+		if tc.want == "" && err != nil || tc.want != "" && (err == nil || !strings.Contains(err.Error(), tc.want)) {
+			t.Errorf("%s: AESGCMSealer = %v, want %q", name, err, tc.want)
+		}
+	}
+}
+
 // TestTransactionCodec_RefusesWhatItDidntWrite: another version, an
 // unknown field, a status a store never holds, no ID.
 func TestTransactionCodec_RefusesWhatItDidntWrite(t *testing.T) {
