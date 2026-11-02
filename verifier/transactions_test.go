@@ -441,6 +441,11 @@ func TestNewTransactions_Validates(t *testing.T) {
 		"request_uri base fragment": {RequestURIBase: txBase + "#"},
 		"redirect_uri fragment":     {RequestURIBase: txBase, RedirectURI: "https://verifier.example.com/c#done"},
 		"redirect_uri empty #":      {RequestURIBase: txBase, RedirectURI: "https://verifier.example.com/c#"},
+		"request_uri base userinfo": {RequestURIBase: "https://user:pw@verifier.example.com/r"},
+		"request_uri base empty @":  {RequestURIBase: "https://@verifier.example.com/r"},
+		"request_uri base IDN host": {RequestURIBase: "https://vérifier.example/r"},
+		"redirect_uri userinfo":     {RequestURIBase: txBase, RedirectURI: "https://user@verifier.example.com/c"},
+		"redirect_uri IDN host":     {RequestURIBase: txBase, RedirectURI: "https://vérifier.example/c"},
 		"negative lifetime":         {RequestURIBase: txBase, Lifetime: -time.Second},
 		"per-request fields set":    {RequestURIBase: txBase, Verify: verifier.VerifyResponseRequest{ExpectedNonce: "n"}},
 	} {

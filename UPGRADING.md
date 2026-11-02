@@ -48,6 +48,11 @@ them.
   at most `TransactionsConfig.Lifetime`'s worth, twice over. Upgrade
   when no request is in flight, or accept those failing. Records
   written without a `Sealer` are unaffected.
+- **`RequestURIBase` and `RedirectURI` are checked as endpoint URLs.**
+  `NewTransactions` checks both with `fapi.ParseEndpointURL`, as
+  `Config.ResponseURI` already was: one with userinfo
+  (`https://user:pw@…`, even a bare `@`) or a host that isn't ASCII is
+  refused. Give an internationalized domain name as its `xn--` A-label.
 
 ## v0.60.0 → v0.61.0
 
@@ -126,7 +131,8 @@ from fapigo/sqlstore's new `ResourceServer`.
   a bare `?` or `#`, is refused: each request's `request_uri` is it
   with `/` and the request's ID appended, which landed in the query or
   fragment instead of the path. `RedirectURI` with a fragment is
-  refused (RFC 6749 §3.1.2); a query is still allowed. An origin
+  refused: the Wallet sends the browser there with the
+  `response_code` in the query; a query is still allowed. An origin
   (`Origins`, and the origin a wallet's platform reports to
   `mdocdcapi`) ending in a bare `?` or `#` is refused, as one with a
   query or fragment already was: no browser serializes an origin so.
