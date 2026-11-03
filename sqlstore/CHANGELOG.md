@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.4.0](https://github.com/IDFoundry/OID4VCgo/compare/sqlstore/v0.3.0...sqlstore/v0.4.0) (2026-11-03)
+
+
+### ⚠ BREAKING CHANGES
+
+* **sqlstore:** on a DB with a Sealer, DB.Transactions(TransactionCodec{}) now seals transactions, and no longer reads the unsealed ones it wrote
+
+### Bug Fixes
+
+* **sqlstore:** seal verifier transactions with the DB's Sealer by default ([0dd269f](https://github.com/IDFoundry/OID4VCgo/commit/0dd269f5a7476dc9e34952203d390a00000d22b1))
+
 ## [0.3.0](https://github.com/IDFoundry/OID4VCgo/compare/sqlstore/v0.2.1...sqlstore/v0.3.0) (2026-11-02)
 
 
