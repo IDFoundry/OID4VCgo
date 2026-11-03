@@ -47,7 +47,7 @@ func TestX5C_SignerCertificateCheckedAtNow(t *testing.T) {
 	}
 	claims := TokenClaims{Sub: x5cTestURI, Iat: then.Unix(), StatusList: sl}
 	ref := StatusListRef{Idx: 0, URI: x5cTestURI}
-	atThen := VerifyOptions{Now: func() time.Time { return then }}
+	atThen := VerifyOptions{UnboundSigner: AnyListSigner, Now: func() time.Time { return then }}
 
 	jwt, err := IssueTokenX5C(key, jose.ES256, claims, []*x509.Certificate{leaf})
 	if err != nil {
@@ -56,7 +56,7 @@ func TestX5C_SignerCertificateCheckedAtNow(t *testing.T) {
 	if _, _, err := CheckX5C(jwt, roots, ref, atThen); err != nil {
 		t.Errorf("JWT, at a time inside the certificate's validity: %v", err)
 	}
-	if _, _, err := CheckX5C(jwt, roots, ref, VerifyOptions{}); err == nil {
+	if _, _, err := CheckX5C(jwt, roots, ref, VerifyOptions{UnboundSigner: AnyListSigner}); err == nil {
 		t.Error("JWT, at the current time: accepted a list whose signer's certificate has expired")
 	}
 
@@ -67,7 +67,7 @@ func TestX5C_SignerCertificateCheckedAtNow(t *testing.T) {
 	if _, _, err := CheckCWTX5Chain(cwt, roots, ref, atThen); err != nil {
 		t.Errorf("CWT, at a time inside the certificate's validity: %v", err)
 	}
-	if _, _, err := CheckCWTX5Chain(cwt, roots, ref, VerifyOptions{}); err == nil {
+	if _, _, err := CheckCWTX5Chain(cwt, roots, ref, VerifyOptions{UnboundSigner: AnyListSigner}); err == nil {
 		t.Error("CWT, at the current time: accepted a list whose signer's certificate has expired")
 	}
 }

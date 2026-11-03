@@ -604,15 +604,17 @@ func (r *ProximityReader) checkStatusList(ctx context.Context, ref *mdoc.StatusL
 	if err != nil {
 		return 0, err
 	}
-	roots := trust.Roots
+	// The certificate the MSO names is the only root, or the signer
+	// is bound to the document's issuer through trust.LeafPolicy.
+	roots, signer := trust.Roots, statuslist.AnyListSigner
 	if roots == nil {
-		roots = anchor
+		roots, signer = anchor, trust.LeafPolicy
 	}
 	checker := statuslist.Checker{
 		Fetcher: statusFetcher(),
 		Roots:   roots,
 		Options: statuslist.VerifyOptions{
-			Now: r.clock, LeafPolicy: trust.LeafPolicy, Revocation: r.statusRevocation,
+			Now: r.clock, UnboundSigner: signer, Revocation: r.statusRevocation,
 			RequireExp: true, X5ChainProtectedOnly: true,
 		},
 	}

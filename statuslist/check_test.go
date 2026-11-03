@@ -25,7 +25,7 @@ func TestCheck_FullFlow(t *testing.T) {
 	}
 
 	ref := StatusListRef{Idx: 2, URI: uri}
-	status, claims, err := Check(token, &key.PublicKey, jose.ES256, ref, VerifyOptions{})
+	status, claims, err := Check(token, &key.PublicKey, jose.ES256, ref, VerifyOptions{UnboundSigner: AnyListSigner})
 	if err != nil {
 		t.Fatalf("Check: %v", err)
 	}
@@ -53,7 +53,7 @@ func TestCheck_RejectsMismatchedURI(t *testing.T) {
 	}
 
 	ref := StatusListRef{Idx: 0, URI: "https://example.com/statuslists/OTHER"}
-	if _, _, err := Check(token, &key.PublicKey, jose.ES256, ref, VerifyOptions{}); err == nil {
+	if _, _, err := Check(token, &key.PublicKey, jose.ES256, ref, VerifyOptions{UnboundSigner: AnyListSigner}); err == nil {
 		t.Errorf("Check accepted a token whose sub doesn't match the Referenced Token's uri")
 	}
 }
@@ -76,7 +76,7 @@ func TestCheck_RejectsOutOfBoundsIndex(t *testing.T) {
 
 	for _, idx := range []uint64{1000, math.MaxUint64} {
 		ref := StatusListRef{Idx: idx, URI: uri}
-		if _, _, err := Check(token, &key.PublicKey, jose.ES256, ref, VerifyOptions{}); err == nil {
+		if _, _, err := Check(token, &key.PublicKey, jose.ES256, ref, VerifyOptions{UnboundSigner: AnyListSigner}); err == nil {
 			t.Errorf("Check accepted out-of-bounds index %d", idx)
 		}
 	}

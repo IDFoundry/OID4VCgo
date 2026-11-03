@@ -61,8 +61,8 @@ func TestStatusOptionsFor(t *testing.T) {
 	otherKeyNoName := namedCertNoURI(t, ca, caKey)
 
 	// Without Status Issuers, the token must be the issuer's.
-	if opts := statusOptionsFor(statuslist.VerifyOptions{}, issuerA, credentialKey, nil); opts.Issuer != issuerA || opts.IssuerKey != credentialKey || opts.LeafPolicy != nil {
-		t.Errorf("no Status Issuers: %+v, want Issuer and IssuerKey set and no LeafPolicy", opts)
+	if opts := statusOptionsFor(statuslist.VerifyOptions{}, issuerA, credentialKey, nil); opts.Issuer != issuerA || opts.IssuerKey != credentialKey || opts.UnboundSigner != nil {
+		t.Errorf("no Status Issuers: %+v, want Issuer and IssuerKey set and no UnboundSigner", opts)
 	}
 	opts := statusOptionsFor(statuslist.VerifyOptions{}, issuerA, credentialKey, []string{statusIssuer})
 	for name, tc := range map[string]struct {
@@ -75,7 +75,7 @@ func TestStatusOptionsFor(t *testing.T) {
 		"another issuer":                      {namedCert(t, ca, caKey, "https://issuer-c.example"), false},
 		"another key, naming no one":          {otherKeyNoName, false},
 	} {
-		if err := opts.LeafPolicy(tc.leaf, nil); (err == nil) != tc.ok {
+		if err := opts.UnboundSigner(tc.leaf, nil); (err == nil) != tc.ok {
 			t.Errorf("%s: %v, want ok = %v", name, err, tc.ok)
 		}
 	}

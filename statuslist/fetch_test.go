@@ -60,7 +60,7 @@ func statusServer(t *testing.T) (*httptest.Server, *x509.CertPool) {
 
 func TestChecker_BothForms(t *testing.T) {
 	srv, roots := statusServer(t)
-	c := Checker{Fetcher: Fetcher{HTTP: srv.Client(), AllowLoopback: true}, Roots: roots}
+	c := Checker{Fetcher: Fetcher{HTTP: srv.Client(), AllowLoopback: true}, Roots: roots, Options: VerifyOptions{UnboundSigner: AnyListSigner}}
 	for _, cwt := range []bool{false, true} {
 		for idx, want := range map[uint64]StatusType{0: StatusValid, 1: StatusInvalid} {
 			got, _, err := c.Check(context.Background(), StatusListRef{Idx: idx, URI: srv.URL + "/statuslists/1"}, cwt)
@@ -69,13 +69,13 @@ func TestChecker_BothForms(t *testing.T) {
 			}
 		}
 	}
-	if _, _, err := (Checker{Fetcher: c.Fetcher}).Check(context.Background(), StatusListRef{URI: srv.URL}, false); err == nil {
+	if _, _, err := (Checker{Fetcher: c.Fetcher, Options: VerifyOptions{UnboundSigner: AnyListSigner}}).Check(context.Background(), StatusListRef{URI: srv.URL}, false); err == nil {
 		t.Error("a Checker without Roots checked a token")
 	}
 	other := x509.NewCertPool()
 	otherCA, _ := testcert.CA(t, "unrelated CA")
 	other.AddCert(otherCA)
-	if _, _, err := (Checker{Fetcher: c.Fetcher, Roots: other}).Check(context.Background(), StatusListRef{URI: srv.URL + "/statuslists/1"}, false); err == nil {
+	if _, _, err := (Checker{Fetcher: c.Fetcher, Roots: other, Options: VerifyOptions{UnboundSigner: AnyListSigner}}).Check(context.Background(), StatusListRef{URI: srv.URL + "/statuslists/1"}, false); err == nil {
 		t.Error("a token whose signer doesn't chain to Roots was accepted")
 	}
 }
@@ -287,26 +287,26 @@ func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { retu
 // the error still refuses. RequireValid returns nil only for VALID.
 func TestChecker_FailsClosed(t *testing.T) {
 	srv, roots := statusServer(t)
-	c := Checker{Fetcher: Fetcher{HTTP: srv.Client(), AllowLoopback: true}, Roots: roots}
+	c := Checker{Fetcher: Fetcher{HTTP: srv.Client(), AllowLoopback: true}, Roots: roots, Options: VerifyOptions{UnboundSigner: AnyListSigner}}
 	ctx := context.Background()
 	other := x509.NewCertPool()
 	otherCA, _ := testcert.CA(t, "unrelated CA")
 	other.AddCert(otherCA)
 	for name, check := range map[string]func() (StatusType, TokenClaims, error){
 		"no roots": func() (StatusType, TokenClaims, error) {
-			return Checker{Fetcher: c.Fetcher}.Check(ctx, StatusListRef{URI: srv.URL}, false)
+			return Checker{Fetcher: c.Fetcher, Options: VerifyOptions{UnboundSigner: AnyListSigner}}.Check(ctx, StatusListRef{URI: srv.URL}, false)
 		},
 		"unknown list": func() (StatusType, TokenClaims, error) {
 			return c.Check(ctx, StatusListRef{URI: srv.URL + "/statuslists/missing"}, false)
 		},
 		"untrusted": func() (StatusType, TokenClaims, error) {
-			return Checker{Fetcher: c.Fetcher, Roots: other}.Check(ctx, StatusListRef{URI: srv.URL + "/statuslists/1"}, true)
+			return Checker{Fetcher: c.Fetcher, Roots: other, Options: VerifyOptions{UnboundSigner: AnyListSigner}}.Check(ctx, StatusListRef{URI: srv.URL + "/statuslists/1"}, true)
 		},
 		"x5c garbage": func() (StatusType, TokenClaims, error) {
-			return CheckX5C("not.a.token", roots, StatusListRef{URI: srv.URL}, VerifyOptions{})
+			return CheckX5C("not.a.token", roots, StatusListRef{URI: srv.URL}, VerifyOptions{UnboundSigner: AnyListSigner})
 		},
 		"cwt garbage": func() (StatusType, TokenClaims, error) {
-			return CheckCWTX5Chain([]byte{0xff}, roots, StatusListRef{URI: srv.URL}, VerifyOptions{})
+			return CheckCWTX5Chain([]byte{0xff}, roots, StatusListRef{URI: srv.URL}, VerifyOptions{UnboundSigner: AnyListSigner})
 		},
 	} {
 		status, _, err := check()

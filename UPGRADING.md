@@ -98,6 +98,56 @@ earlier, are now accepted, as OpenID4VCI 1.0 Appendix F.1 allows.
   after it (`ErrRequestExpired`), or a `Pending` without one. Keep the
   `Pending` whole, and server-side.
 
+### Status lists (`statuslist`)
+
+- **A status check must bind the list's signer.** `Checker`,
+  `CheckX5C` and `CheckCWTX5Chain` used to accept any Status List
+  Token signer under their roots when `VerifyOptions` set neither
+  `Issuer` nor `IssuerKey`: under roots several issuers share, any of
+  them could sign a list deciding another's credential's status.
+  They now refuse such a check unless the new
+  `VerifyOptions.UnboundSigner` decides the signer, as
+  `identifierlist`'s already did. Set `Issuer` or `IssuerKey` from
+  the credential, or `UnboundSigner` to a policy of your own, or to
+  `statuslist.AnyListSigner` where every signer under the roots may
+  decide every credential's status (roots of one issuer alone). A
+  `verifier.StatusPolicy`, `walletflow` and the mobile reader already
+  bind the signer and need no change.
+- **Token size follows `MaxTokenBytes`.** Tokens were capped at 1 MiB
+  whatever `Fetcher.MaxBytes` said. `VerifyOptions.MaxTokenBytes`
+  (default `DefaultMaxTokenBytes`, 1 MiB, at most
+  `MaxTokenBytesLimit`) now sets the cap, and a `Checker` takes its
+  `Fetcher.MaxBytes` when it's unset. `Publisher.Token` refuses a
+  token over its own `MaxTokenBytes` (same default) instead of serving
+  one Relying Parties refuse: a one-bit list of 16 million entries,
+  say, needs both raised.
+- **`Publisher` checks its times.** A `TTL` or `Lifetime` under a
+  second, or a `TTL` longer than the `Lifetime`, now fails `Token`
+  (and `ServeHTTP` with a 500) at once; it made every request fail
+  before. `ServeHTTP` now serves the form an `Accept` header prefers
+  by q, and never one it excludes with `q=0`.
+
+### JOSE and COSE (all roles)
+
+- **Small-order Ed25519 keys are refused when verifying.** A key of
+  small order verifies a forged signature over any message. Parsing a
+  JWK or COSE_Key, and a certificate's leaf, refused one; a key your
+  own resolver returns (a `ProofBindingKeyResolver`,
+  `SDJWTVCIssuerKeyResolver`, `AttestationVerifier`,
+  `statuslist.VerifyOptions.IssuerKey`) now is too.
+- **`typ` is compared as a media type everywhere.** `application/`
+  forms and other cases (`application/kb+jwt`, `DC+SD-JWT`) are
+  accepted for the SD-JWT VC, Key Binding JWT, jwt proof, Key and
+  Wallet Attestation, Request Object, signed metadata and
+  registration checks (RFC 7515 §4.1.9), as for status lists.
+- **Out-of-range times are refused.** A Request Object's `exp` or
+  `nbf`, or signed metadata's `iat`, `exp` or `nbf`, before 1970 or
+  past year 9999 is refused rather than wrapped. A Key Attestation's
+  `iat` and `exp` may be fractional.
+- **`_sd_alg` only at the top level.** An SD-JWT with `_sd_alg` in a
+  nested object, or a Disclosure named `_sd_alg`, is refused (RFC 9901
+  §4.1.1).
+
 ## v0.61.0 → v0.62.0
 
 ### Authorization details (`oid4vci`)

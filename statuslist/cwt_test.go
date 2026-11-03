@@ -31,7 +31,7 @@ func TestIssueVerifyTokenCWT(t *testing.T) {
 		t.Fatalf("IssueTokenCWT: %v", err)
 	}
 
-	got, err := VerifyTokenCWT(token, &key.PublicKey, cose.ES256, VerifyOptions{})
+	got, err := VerifyTokenCWT(token, &key.PublicKey, cose.ES256, VerifyOptions{UnboundSigner: AnyListSigner})
 	if err != nil {
 		t.Fatalf("VerifyTokenCWT: %v", err)
 	}
@@ -69,7 +69,7 @@ func TestVerifyTokenCWTRejectsExpired(t *testing.T) {
 	if err != nil {
 		t.Fatalf("IssueTokenCWT: %v", err)
 	}
-	if _, err := VerifyTokenCWT(token, &key.PublicKey, cose.ES256, VerifyOptions{}); err == nil {
+	if _, err := VerifyTokenCWT(token, &key.PublicKey, cose.ES256, VerifyOptions{UnboundSigner: AnyListSigner}); err == nil {
 		t.Errorf("VerifyTokenCWT accepted an expired token")
 	}
 }
@@ -110,7 +110,7 @@ func TestVerifyTokenCWT_TypAndTTL(t *testing.T) {
 		"another typ":         {sign("not-a-statuslist+cwt", nil), false},
 		"ttl 0":               {sign(CWTTokenMediaType, 0), false},
 	} {
-		if _, err := VerifyTokenCWT(tc.token, &key.PublicKey, cose.ES256, VerifyOptions{}); (err == nil) != tc.ok {
+		if _, err := VerifyTokenCWT(tc.token, &key.PublicKey, cose.ES256, VerifyOptions{UnboundSigner: AnyListSigner}); (err == nil) != tc.ok {
 			t.Errorf("%s: %v", name, err)
 		}
 	}
@@ -129,7 +129,7 @@ func TestIssueTokenCWTRequiresSub(t *testing.T) {
 
 func TestVerifyTokenCWTRejectsMalformedInput(t *testing.T) {
 	key := testKey(t)
-	if _, err := VerifyTokenCWT([]byte("not cbor"), &key.PublicKey, cose.ES256, VerifyOptions{}); err == nil {
+	if _, err := VerifyTokenCWT([]byte("not cbor"), &key.PublicKey, cose.ES256, VerifyOptions{UnboundSigner: AnyListSigner}); err == nil {
 		t.Errorf("VerifyTokenCWT accepted malformed input")
 	}
 }
@@ -239,7 +239,7 @@ func TestVerifyTokenCWTAcceptsUntagged(t *testing.T) {
 		t.Fatalf("issued token doesn't start with tag 18 (0xd2): %x", tagged[:1])
 	}
 	for name, token := range map[string][]byte{"tagged": tagged, "untagged": tagged[1:]} {
-		if _, err := VerifyTokenCWT(token, &key.PublicKey, cose.ES256, VerifyOptions{}); err != nil {
+		if _, err := VerifyTokenCWT(token, &key.PublicKey, cose.ES256, VerifyOptions{UnboundSigner: AnyListSigner}); err != nil {
 			t.Errorf("VerifyTokenCWT(%s): %v", name, err)
 		}
 	}
@@ -302,7 +302,7 @@ func TestCheckCWT_FullFlow(t *testing.T) {
 	}
 
 	ref := StatusListRef{Idx: 2, URI: uri}
-	status, claims, err := CheckCWT(token, &key.PublicKey, cose.ES256, ref, VerifyOptions{})
+	status, claims, err := CheckCWT(token, &key.PublicKey, cose.ES256, ref, VerifyOptions{UnboundSigner: AnyListSigner})
 	if err != nil {
 		t.Fatalf("CheckCWT: %v", err)
 	}
@@ -330,7 +330,7 @@ func TestCheckCWT_RejectsMismatchedURI(t *testing.T) {
 	}
 
 	ref := StatusListRef{Idx: 0, URI: "https://example.com/statuslists/OTHER"}
-	if _, _, err := CheckCWT(token, &key.PublicKey, cose.ES256, ref, VerifyOptions{}); err == nil {
+	if _, _, err := CheckCWT(token, &key.PublicKey, cose.ES256, ref, VerifyOptions{UnboundSigner: AnyListSigner}); err == nil {
 		t.Errorf("CheckCWT accepted a token whose sub doesn't match the Referenced Token's uri")
 	}
 }
@@ -424,7 +424,7 @@ func TestVerifyTokenCWTLargeList(t *testing.T) {
 	if len(token) <= 1<<16 {
 		t.Fatalf("token is %d bytes; the test needs one past 64 KiB", len(token))
 	}
-	if _, err := VerifyTokenCWT(token, &key.PublicKey, cose.ES256, VerifyOptions{}); err != nil {
+	if _, err := VerifyTokenCWT(token, &key.PublicKey, cose.ES256, VerifyOptions{UnboundSigner: AnyListSigner}); err != nil {
 		t.Errorf("VerifyTokenCWT of a %d-byte token: %v", len(token), err)
 	}
 }

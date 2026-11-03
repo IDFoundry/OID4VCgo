@@ -14,6 +14,7 @@ import (
 
 	"github.com/idfoundry/oid4vcgo/internal/b64url"
 	"github.com/idfoundry/oid4vcgo/internal/ecdsafixed"
+	"github.com/idfoundry/oid4vcgo/internal/jwk"
 	"github.com/idfoundry/oid4vcgo/internal/strictjson"
 )
 
@@ -272,6 +273,12 @@ func verifyBytes(alg Alg, pub crypto.PublicKey, signingInput, sig []byte) error 
 		// caller's own key resolver could return.
 		if !ok || len(edPub) != ed25519.PublicKeySize {
 			return fmt.Errorf("jose: EdDSA requires a %d-byte Ed25519 public key", ed25519.PublicKeySize)
+		}
+		// A small-order key verifies a forged signature over any message:
+		// jwk parsing refuses one, and so must a key a caller's own
+		// resolver returns.
+		if jwk.IsSmallOrderEd25519(edPub) {
+			return errors.New("jose: EdDSA public key is a point of small order")
 		}
 		if !ed25519.Verify(edPub, signingInput, sig) {
 			return errors.New("jose: EdDSA signature verification failed")

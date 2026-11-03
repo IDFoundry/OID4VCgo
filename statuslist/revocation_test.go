@@ -34,7 +34,7 @@ func TestX5C_Revocation(t *testing.T) {
 	}
 	ref := StatusListRef{Idx: 0, URI: x5cTestURI}
 	testcert.RunRevocationCases(t, ca, caKey, leaf, func(t *testing.T, revocation certrevocation.Checker) error {
-		opts := VerifyOptions{Revocation: revocation}
+		opts := VerifyOptions{UnboundSigner: AnyListSigner, Revocation: revocation}
 		if _, _, err := CheckX5C(jwt, roots, ref, opts); err != nil {
 			return err
 		}
@@ -61,7 +61,7 @@ func TestChecker_RevocationContext(t *testing.T) {
 	var got context.Context
 	c := Checker{
 		Fetcher: Fetcher{HTTP: srv.Client(), AllowLoopback: true}, Roots: roots,
-		Options: VerifyOptions{Revocation: recordingChecker{&got}},
+		Options: VerifyOptions{UnboundSigner: AnyListSigner, Revocation: recordingChecker{&got}},
 	}
 	ctx := context.WithValue(context.Background(), revocationCtxKey{}, "request")
 	for _, cwt := range []bool{false, true} {

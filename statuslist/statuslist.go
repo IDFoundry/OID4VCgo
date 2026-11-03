@@ -3,6 +3,8 @@ package statuslist
 import (
 	"encoding/base64"
 	"fmt"
+
+	"github.com/idfoundry/oid4vcgo/internal/b64url"
 )
 
 // StatusList is the JSON-encoded Status List structure (draft-14
@@ -49,7 +51,7 @@ func (sl StatusList) Decode() (Decoded, error) {
 	if !sl.Bits.valid() {
 		return Decoded{}, fmt.Errorf("statuslist: invalid bits value %d (must be 1, 2, 4 or 8)", sl.Bits)
 	}
-	raw, err := base64.RawURLEncoding.DecodeString(sl.Lst)
+	raw, err := b64url.Encoding{}.DecodeString(sl.Lst)
 	if err != nil {
 		return Decoded{}, fmt.Errorf("statuslist: decode lst: %w", err)
 	}
@@ -84,7 +86,7 @@ func (sl StatusList) Status(idx int) (uint8, error) {
 	if byteIdx >= maxDecompressedSize {
 		return 0, fmt.Errorf("statuslist: index %d is out of bounds", idx)
 	}
-	raw, err := base64.RawURLEncoding.DecodeString(sl.Lst)
+	raw, err := b64url.Encoding{}.DecodeString(sl.Lst)
 	if err != nil {
 		return 0, fmt.Errorf("statuslist: decode lst: %w", err)
 	}

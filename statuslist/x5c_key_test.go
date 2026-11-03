@@ -50,7 +50,7 @@ func TestCheckX5C_UnsupportedSignerKey(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, _, err = CheckX5C(token, roots, StatusListRef{URI: x5cTestURI}, VerifyOptions{})
+		_, _, err = CheckX5C(token, roots, StatusListRef{URI: x5cTestURI}, VerifyOptions{UnboundSigner: AnyListSigner})
 		if err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%s: %v, want an error containing %q", name, err, tc.want)
 		}

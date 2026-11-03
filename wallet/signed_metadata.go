@@ -10,6 +10,7 @@ import (
 
 	"github.com/idfoundry/oid4vcgo/internal/certchain"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
+	"github.com/idfoundry/oid4vcgo/internal/jwtdate"
 	"github.com/idfoundry/oid4vcgo/internal/strictjson"
 )
 
@@ -59,7 +60,7 @@ func (w *Wallet) verifySignedMetadata(ctx context.Context, token, issuerURL stri
 	if err != nil {
 		return nil, fmt.Errorf("signed metadata: %w", err)
 	}
-	if typ, _ := header["typ"].(string); typ != signedMetadataTyp {
+	if typ, _ := header["typ"].(string); !jose.TypeIs(typ, signedMetadataTyp) {
 		return nil, fmt.Errorf("signed metadata: typ %q, want %q", header["typ"], signedMetadataTyp)
 	}
 	x5c, err := certchain.X5CDERsFromHeader(header)
@@ -116,7 +117,10 @@ func (w *Wallet) checkSignedMetadataClaims(claims map[string]json.RawMessage, is
 	if err := strictjson.Unmarshal(claims["iat"], &iatValue); err != nil {
 		return errors.New("iat is missing or not a number")
 	}
-	iat := numericDateTime(iatValue)
+	iat, err := jwtdate.FromFloat(iatValue)
+	if err != nil {
+		return fmt.Errorf("iat: %w", err)
+	}
 	if iat.After(now.Add(maxSignedMetadataClockSkew)) {
 		return errors.New("iat is in the future")
 	}
@@ -126,14 +130,28 @@ func (w *Wallet) checkSignedMetadataClaims(claims map[string]json.RawMessage, is
 	if raw, present := claims["exp"]; present {
 		var exp float64
 		// RFC 7519 §4.1.4: not accepted on or after exp.
-		if err := strictjson.Unmarshal(raw, &exp); err != nil || !now.Before(numericDateTime(exp)) {
+		if err := strictjson.Unmarshal(raw, &exp); err != nil {
+			return errors.New("exp isn't a number")
+		}
+		at, err := jwtdate.FromFloat(exp)
+		if err != nil {
+			return fmt.Errorf("exp: %w", err)
+		}
+		if !now.Before(at) {
 			return errors.New("expired")
 		}
 	}
 	if raw, present := claims["nbf"]; present {
 		var nbf float64
 		// RFC 7519 §4.1.5: not accepted before nbf.
-		if err := strictjson.Unmarshal(raw, &nbf); err != nil || now.Add(maxSignedMetadataClockSkew).Before(numericDateTime(nbf)) {
+		if err := strictjson.Unmarshal(raw, &nbf); err != nil {
+			return errors.New("nbf isn't a number")
+		}
+		at, err := jwtdate.FromFloat(nbf)
+		if err != nil {
+			return fmt.Errorf("nbf: %w", err)
+		}
+		if now.Add(maxSignedMetadataClockSkew).Before(at) {
 			return errors.New("not valid yet (nbf)")
 		}
 	}

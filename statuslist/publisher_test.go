@@ -66,7 +66,7 @@ func TestPublisher_CheckerRoundTrip(t *testing.T) {
 			}))
 			defer srv.Close()
 			uri = srv.URL + "/statuslists/1"
-			c := Checker{Fetcher: Fetcher{HTTP: srv.Client(), AllowLoopback: true}, Roots: roots}
+			c := Checker{Fetcher: Fetcher{HTTP: srv.Client(), AllowLoopback: true}, Roots: roots, Options: VerifyOptions{UnboundSigner: AnyListSigner}}
 			for _, cwt := range []bool{false, true} {
 				for idx, want := range map[uint64]StatusType{0: StatusValid, 1: StatusInvalid, 2: StatusValid} {
 					got, claims, err := c.Check(context.Background(), StatusListRef{Idx: idx, URI: uri}, cwt)

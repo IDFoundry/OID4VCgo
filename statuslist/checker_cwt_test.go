@@ -57,7 +57,7 @@ func TestChecker_CWTIsAnMdocRevocationList(t *testing.T) {
 	}))
 	defer srv.Close()
 	base = srv.URL
-	c := Checker{Fetcher: Fetcher{HTTP: srv.Client(), AllowLoopback: true}, Roots: roots}
+	c := Checker{Fetcher: Fetcher{HTTP: srv.Client(), AllowLoopback: true}, Roots: roots, Options: VerifyOptions{UnboundSigner: AnyListSigner}}
 
 	if err := c.RequireValid(context.Background(), StatusListRef{URI: base + "/ok"}, true); err != nil {
 		t.Errorf("a conformant list: %v", err)

@@ -107,7 +107,7 @@ func Verify(s string, issuerPub crypto.PublicKey, issuerAlg oid4vci.JOSEAlg, opt
 	if err != nil {
 		return nil, nil, fmt.Errorf("sdjwtvc: verify issuer JWT: %w", err)
 	}
-	if typ, _ := header["typ"].(string); typ != TypHeader {
+	if typ, _ := header["typ"].(string); !jose.TypeIs(typ, TypHeader) {
 		return nil, nil, fmt.Errorf("sdjwtvc: issuer JWT typ is %q, want %q", typ, TypHeader)
 	}
 
