@@ -37,6 +37,12 @@ func classify(err error) error {
 	var urlErr *url.Error
 	var netErr net.Error
 	switch {
+	case errors.Is(err, walletflow.ErrDeliveryUnknown):
+		// Before cancellation and network errors, which it wraps: the
+		// Verifier may have the presentation even when the app cancelled
+		// it as it was sent, so it's never reported as nothing sent, and
+		// sending again could present twice.
+		return newError(CodeDeliveryUnknown, walletflow.ErrDeliveryUnknown)
 	case errors.Is(err, context.Canceled):
 		return newError(CodeCancelled, errors.New("cancelled"))
 	case errors.Is(err, context.DeadlineExceeded):
@@ -77,9 +83,6 @@ func classify(err error) error {
 		// The app's other process is refreshing with the grant: retry
 		// once it's done.
 		return &Error{Code: CodeUnavailable, Detail: DetailRefreshInProgress, Message: "another process is refreshing with this refresh grant"}
-	case errors.Is(err, walletflow.ErrDeliveryUnknown):
-		// Before network: sending again could present twice.
-		return newError(CodeDeliveryUnknown, walletflow.ErrDeliveryUnknown)
 	case errors.Is(err, wallet.ErrUntrustedVerifier):
 		return newError(CodeUntrustedVerifier, wallet.ErrUntrustedVerifier)
 	case errors.As(err, &refusedRequest):
