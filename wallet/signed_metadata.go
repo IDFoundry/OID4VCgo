@@ -59,7 +59,7 @@ func (w *Wallet) verifySignedMetadata(ctx context.Context, token, issuerURL stri
 	if err != nil {
 		return nil, fmt.Errorf("signed metadata: %w", err)
 	}
-	if typ, _ := header["typ"].(string); typ != signedMetadataTyp {
+	if typ, _ := header["typ"].(string); !jose.TypeIs(typ, signedMetadataTyp) {
 		return nil, fmt.Errorf("signed metadata: typ %q, want %q", header["typ"], signedMetadataTyp)
 	}
 	x5c, err := certchain.X5CDERsFromHeader(header)

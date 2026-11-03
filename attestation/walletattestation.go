@@ -54,7 +54,7 @@ func ParseWalletAttestationClaims(compact string) (WalletAttestationExtraClaims,
 	if err != nil {
 		return WalletAttestationExtraClaims{}, fmt.Errorf("attestation: %w", err)
 	}
-	if typ, _ := header["typ"].(string); typ != WalletAttestationTypHeader {
+	if typ, _ := header["typ"].(string); !jose.TypeIs(typ, WalletAttestationTypHeader) {
 		return WalletAttestationExtraClaims{}, fmt.Errorf("attestation: typ is %q, want %q", typ, WalletAttestationTypHeader)
 	}
 

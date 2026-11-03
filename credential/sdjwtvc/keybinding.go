@@ -104,7 +104,7 @@ func VerifyKeyBindingJWT(kbJWT string, holderPub crypto.PublicKey, alg oid4vci.J
 	if err != nil {
 		return nil, fmt.Errorf("sdjwtvc: verify key binding JWT signature: %w", err)
 	}
-	if typ, _ := header["typ"].(string); typ != KeyBindingTyp {
+	if typ, _ := header["typ"].(string); !jose.TypeIs(typ, KeyBindingTyp) {
 		return nil, fmt.Errorf("sdjwtvc: key binding JWT typ is %q, want %q", typ, KeyBindingTyp)
 	}
 

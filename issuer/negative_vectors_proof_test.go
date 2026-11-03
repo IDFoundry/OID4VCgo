@@ -237,6 +237,12 @@ func TestProofNegativeVectors(t *testing.T) {
 	if err := request(control, "", jwtProofs(proofWith(t, newP256(t), nil, control.issueNonce(t), nil, nil))); err != nil {
 		t.Fatalf("the jwt control is refused, so no refusal below means anything: %v", err)
 	}
+	// typ is a media type (RFC 7515 §4.1.9): its application/ form, in
+	// any case, names the same one.
+	control = newCredentialEndpointFixture(t)
+	if err := request(control, "", jwtProofs(proofWith(t, newP256(t), nil, control.issueNonce(t), func(h map[string]any) { h["typ"] = "Application/OpenID4VCI-Proof+JWT" }, nil))); err != nil {
+		t.Fatalf("a jwt proof whose typ is in its application/ form is refused: %v", err)
+	}
 	control = newCredentialEndpointFixture(t)
 	n := control.issueNonce(t)
 	if err := request(control, "", map[string][]string{oid4vci.ProofTypeAttestation: {buildAttestation(t, control.attestationSigner, n, &newP256(t).PublicKey)}}); err != nil {

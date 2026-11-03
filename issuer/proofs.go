@@ -235,7 +235,7 @@ func (iss *Issuer) verifyJWTProof(ctx context.Context, auth AuthorizedRequest, r
 	if err != nil {
 		return nil, nil, "", newError(ErrorInvalidProof, 400, fmt.Sprintf("proof %d is malformed", i), err)
 	}
-	if typ, _ := header["typ"].(string); typ != jwtProofTyp {
+	if typ, _ := header["typ"].(string); !jose.TypeIs(typ, jwtProofTyp) {
 		return nil, nil, "", newError(ErrorInvalidProof, 400, fmt.Sprintf("proof %d has typ %q, want %q", i, typ, jwtProofTyp), nil)
 	}
 	algStr, _ := header["alg"].(string)

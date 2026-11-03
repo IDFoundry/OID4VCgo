@@ -199,7 +199,7 @@ func Recognize(format, data string) bool {
 		return false
 	}
 	typ, _ := header["typ"].(string)
-	return typ == Type
+	return jose.TypeIs(typ, Type)
 }
 
 // Verify checks token, a registration JWT, as Registrars.Verify does,
@@ -304,7 +304,7 @@ func (r Registrars) Verify(ctx context.Context, token, clientID string, now time
 	if err != nil {
 		return Registration{}, fmt.Errorf("registration: %w", err)
 	}
-	if typ, _ := header["typ"].(string); typ != Type {
+	if typ, _ := header["typ"].(string); !jose.TypeIs(typ, Type) {
 		return Registration{}, fmt.Errorf("registration: typ %q, want %q", typ, Type)
 	}
 	if alg, _ := header["alg"].(string); alg != string(jose.ES256) {

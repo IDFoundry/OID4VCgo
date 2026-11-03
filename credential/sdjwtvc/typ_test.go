@@ -9,14 +9,19 @@ import (
 )
 
 // Verify accepts only the dc+sd-jwt typ (SD-JWT VC draft-19 §2.2.1):
-// draft-13's transitional vc+sd-jwt is refused, as is none.
+// draft-13's transitional vc+sd-jwt is refused, as is none. typ is a
+// media type (RFC 7515 §4.1.9), so its application/ form and any case
+// name it too.
 func TestVerify_TypMustBeDCSDJWT(t *testing.T) {
 	key := testKey(t)
 	raw, err := json.Marshal(map[string]any{"vct": "urn:example:1"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	for typ, accepted := range map[string]bool{"dc+sd-jwt": true, "vc+sd-jwt": false, "JWT": false, "": false} {
+	for typ, accepted := range map[string]bool{
+		"dc+sd-jwt": true, "application/dc+sd-jwt": true, "DC+SD-JWT": true,
+		"vc+sd-jwt": false, "JWT": false, "": false,
+	} {
 		header := map[string]any{"alg": "ES256"}
 		if typ != "" {
 			header["typ"] = typ

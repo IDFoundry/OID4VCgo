@@ -391,7 +391,7 @@ func verifyRequestObject(requestObject string, trust VerifierTrust) (*x509.Certi
 	if err != nil {
 		return nil, "", nil, fmt.Errorf("decode: %w", err)
 	}
-	if typ, _ := header["typ"].(string); typ != requestObjectTyp {
+	if typ, _ := header["typ"].(string); !jose.TypeIs(typ, requestObjectTyp) {
 		return nil, "", nil, fmt.Errorf("typ = %q, want %q", typ, requestObjectTyp)
 	}
 	if trust == nil {

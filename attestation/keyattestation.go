@@ -292,7 +292,7 @@ func (v VerifiedClaims) KeyAttested(pub crypto.PublicKey) (bool, error) {
 
 // Verify checks a's signature against pub and its claims against opts.
 func (a KeyAttestation) Verify(pub crypto.PublicKey, alg oid4vci.JOSEAlg, opts VerifyOptions) (VerifiedClaims, error) {
-	if typ, _ := a.header["typ"].(string); typ != TypHeader {
+	if typ, _ := a.header["typ"].(string); !jose.TypeIs(typ, TypHeader) {
 		return VerifiedClaims{}, fmt.Errorf("attestation: typ is %q, want %q", typ, TypHeader)
 	}
 	if _, _, err := jose.Verify(alg, pub, a.compact); err != nil {
