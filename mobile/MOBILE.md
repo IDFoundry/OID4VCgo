@@ -1370,6 +1370,14 @@ Decisions taken 2026-10-06 (tracked in [#482](https://github.com/IDFoundry/OID4V
   `none`, failing it with `document_not_valid` otherwise. The check
   stays out of `HandleMessage`, which runs on the BLE path; the
   wrappers learn the decision from `Engagement()`'s `check_status`.
+- **`development` needs the app's consent:** `development` is a field
+  of a serialized configuration (Codable, `@Serializable`), so a staging
+  configuration from shared defaults or remote config could ship with it
+  set, and nothing refused it. The Swift wrapper now refuses it in a
+  release build unless the app calls `OID4VC.allowDevelopmentInRelease()`;
+  the Kotlin library, which can't see the app's build type, refuses it
+  unless the app calls `OID4VC.allowDevelopment()`, from a debuggable
+  build. The test frameworks need neither.
 
 ### Phase 10 findings: the Android SDK
 

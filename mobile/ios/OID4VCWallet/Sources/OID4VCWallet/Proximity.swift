@@ -586,7 +586,9 @@ public struct ProximityReaderConfiguration: Codable, Sendable {
     /// role in `revocation` or `noRevocationCheck`, and
     /// `anyIssuerForAnyType` with `issuerRoots`. With it, a role in
     /// neither checks no revocation, and any IACA in `issuerRoots` may
-    /// issue any document type.
+    /// issue any document type. A release build refuses it
+    /// (`invalidInput`) unless the app called
+    /// `OID4VC.allowDevelopmentInRelease()`.
     public var development: Bool
 
     /// A reader's trust role whose certificates can be checked for
@@ -676,6 +678,7 @@ public final class ProximityReader: @unchecked Sendable {
     }
 
     init(configuration: ProximityReaderConfiguration, keys: KeyStoreAdapter?) throws {
+        try OID4VC.checkDevelopment(configuration.development)
         let json = String(decoding: try JSONEncoder().encode(configuration), as: UTF8.self)
         adapter = keys
         handle = try OID4VC.call { MobileNewProximityReader(json, keys, $0) }!

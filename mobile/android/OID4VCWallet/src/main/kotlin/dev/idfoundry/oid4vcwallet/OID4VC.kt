@@ -254,6 +254,31 @@ public object OID4VC {
      */
     public val isTestBuild: Boolean = Mobile.isTestBuild()
 
+    @Volatile
+    private var developmentAllowed = false
+
+    /**
+     * Lets this process make a [Wallet] or [ProximityReader] from a configuration with
+     * `development` set, which it otherwise refuses (`invalid_input`): `development` relaxes what
+     * production requires, so a staging configuration shipped by mistake must not take effect.
+     * The library can't see the app's build type: call it from a debuggable build only, e.g.
+     * `if (BuildConfig.DEBUG) OID4VC.allowDevelopment()`. The test build ([isTestBuild]) needs no
+     * call.
+     */
+    public fun allowDevelopment() {
+        developmentAllowed = true
+    }
+
+    /** Refuses a configuration with `development` set unless [allowDevelopment] was called. */
+    internal fun checkDevelopment(development: Boolean) {
+        if (development && !developmentAllowed && !isTestBuild) {
+            throw WalletException(
+                WalletException.Code.invalidInput, null,
+                "development is set, but OID4VC.allowDevelopment() wasn't called: never ship a development configuration",
+            )
+        }
+    }
+
     /**
      * Parses an OpenID4VP request link (`openid4vp://…`) into its parts, without fetching
      * anything. [Wallet.startPresentation] does this itself.

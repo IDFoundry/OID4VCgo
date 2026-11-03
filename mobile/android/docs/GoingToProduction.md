@@ -125,7 +125,13 @@ authorizations: it is for development only.
   which could then register themselves.
 - For readers, `mdocReaderRoots` with `mdocReaderRequireEKU`, and
   `requireTrustedMdocReader` where every reader must be a known one.
-- Never ship with `development` set, or `developmentRoots`.
+- Never ship with `development` set, or `developmentRoots`. A `Wallet`
+  or `ProximityReader` refuses a `development` configuration
+  (`invalid_input`) unless the app called `OID4VC.allowDevelopment()`:
+  call it only from a debuggable build
+  (`if (BuildConfig.DEBUG) OID4VC.allowDevelopment()`), so a staging
+  configuration shipped by mistake fails instead of relaxing
+  production's checks.
 - To pin your services' certificates, set `tlsPins`: host → base64
   SHA-256 digests of a certificate's SubjectPublicKeyInfo. Pin a CA's
   key, so a leaf renewal doesn't break the app, and keep a backup pin:

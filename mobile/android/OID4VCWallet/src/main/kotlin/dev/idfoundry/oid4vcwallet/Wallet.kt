@@ -88,7 +88,9 @@ public data class WalletConfiguration(
      * neither [revocation] nor [noRevocationCheck] is checked for nothing;
      * skips the check that different roles' roots share no anchor; and
      * skips the production checks on receiving credentials: durable
-     * stores and keys, and the random source.
+     * stores and keys, and the random source. Refused (`invalid_input`)
+     * unless the app called [OID4VC.allowDevelopment], from a debuggable
+     * build only.
      */
     val development: Boolean = false,
     /**
@@ -614,6 +616,7 @@ public class Wallet(
                 "the linked Go library has ABI ${OID4VC.abiVersion}, these sources ABI ${OID4VC.expectedABIVersion}: rebuild it",
             )
         }
+        OID4VC.checkDevelopment(configuration.development)
         // Keys are made over the provider's attestation challenges, and
         // reach it with their attestation chains.
         val created = CreatedKeys()

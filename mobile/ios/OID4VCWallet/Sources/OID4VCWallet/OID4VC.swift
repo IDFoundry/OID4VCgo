@@ -1,5 +1,6 @@
 import Foundation
 import Mobile
+import os
 
 /// An error from OID4VCgo: a stable `code`, the issuer's, Authorization
 /// Server's or Verifier's own error code when it gave one
@@ -205,6 +206,32 @@ public enum OID4VC {
     /// in-process test issuer and Verifier (`-tags mobiletest`): an app
     /// should refuse to run on it.
     public static let isTestBuild = MobileIsTestBuild()
+
+    /// Lets a release build make a `Wallet` or `ProximityReader` from a
+    /// configuration with `development` set, which it otherwise refuses
+    /// (`invalidInput`): `development` relaxes what production requires,
+    /// so a staging configuration shipped by mistake must not take
+    /// effect. A debug build (`DEBUG`), or one on the test framework,
+    /// needs no call. Call it only for an internal build that must run a
+    /// development configuration.
+    public static func allowDevelopmentInRelease() {
+        developmentInRelease.withLock { $0 = true }
+    }
+
+    private static let developmentInRelease = OSAllocatedUnfairLock(initialState: false)
+
+    /// Refuses a configuration with `development` set in a release build
+    /// that hasn't called `allowDevelopmentInRelease()`.
+    static func checkDevelopment(_ development: Bool) throws {
+        #if DEBUG
+        let release = false
+        #else
+        let release = true
+        #endif
+        guard development, release, !isTestBuild, !developmentInRelease.withLock({ $0 }) else { return }
+        throw WalletError(code: .invalidInput,
+                          message: "development is set in a release build: never ship a development configuration (OID4VC.allowDevelopmentInRelease() allows one in an internal build)")
+    }
 
     /// Parses an OpenID4VP request link (`openid4vp://…`) into its parts,
     /// without fetching anything. `Wallet.startPresentation(request:)` does

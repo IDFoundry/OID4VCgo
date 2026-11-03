@@ -609,7 +609,8 @@ public data class ProximityReaderConfiguration(
      * decisions, throwing `invalid_input` otherwise: each role in
      * [revocation] or [noRevocationCheck], and [anyIssuerForAnyType] with
      * [issuerRoots]. With it, a role in neither checks no revocation, and
-     * any IACA in [issuerRoots] may issue any document type.
+     * any IACA in [issuerRoots] may issue any document type. Refused
+     * (`invalid_input`) unless the app called [OID4VC.allowDevelopment].
      */
     @SerialName("development") val development: Boolean = false,
 ) {
@@ -643,6 +644,7 @@ public data class ProximityReaderConfiguration(
 public class ProximityReader(configuration: ProximityReaderConfiguration, keyStore: KeyStore? = null) {
     private val adapter = keyStore?.let(::KeyStoreAdapter)
     private val handle: MobileProximityReader = OID4VC.wrap {
+        OID4VC.checkDevelopment(configuration.development)
         Mobile.newProximityReader(json.encodeToString(ProximityReaderConfiguration.serializer(), configuration), adapter)
     }
 

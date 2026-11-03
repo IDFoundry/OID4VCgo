@@ -88,7 +88,8 @@ public struct WalletConfiguration: Codable, Sendable {
     /// `noRevocationCheck` is checked for nothing; skips the check that
     /// different roles' roots share no anchor; and skips the production
     /// checks on receiving credentials: durable stores and keys, and the
-    /// random source.
+    /// random source. A release build refuses it (`invalidInput`) unless
+    /// the app called `OID4VC.allowDevelopmentInRelease()`.
     public var development: Bool
     /// The holder's preferred languages (BCP 47, most preferred first),
     /// for issuers' display metadata. `Locale.preferredLanguages` is the
@@ -596,6 +597,7 @@ public final class Wallet: @unchecked Sendable {
             throw WalletError(code: .internalError,
                               message: "the linked framework has ABI \(OID4VC.abiVersion), these sources ABI \(OID4VC.expectedABIVersion): rebuild it")
         }
+        try OID4VC.checkDevelopment(configuration.development)
         let json = String(decoding: try JSONEncoder().encode(configuration), as: UTF8.self)
         handle = try OID4VC.call { MobileNewWallet(json, keys, credentials, provider, $0) }!
         // A key store that also agrees keys answers in person with deviceMac

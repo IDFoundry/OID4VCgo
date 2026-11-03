@@ -3,6 +3,7 @@ package dev.idfoundry.oid4vcgo.demowallet
 import android.app.Activity
 import android.app.Application
 import android.app.KeyguardManager
+import android.content.pm.ApplicationInfo
 import android.content.Context
 import android.content.Intent
 import android.hardware.biometrics.BiometricManager.Authenticators
@@ -102,6 +103,9 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
     private val prefs = application.getSharedPreferences("demo", Context.MODE_PRIVATE)
 
     init {
+        // The demo runs development configurations (a loopback or tunnelled
+        // issuer); only a debuggable build may.
+        if (application.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) OID4VC.allowDevelopment()
         prefs.getStringSet(BLE_MODES, null)?.let { saved ->
             ProximityBLEMode.entries.filter { it.name in saved }.toSet().takeIf { it.isNotEmpty() }?.let { bleModes = it }
         }
