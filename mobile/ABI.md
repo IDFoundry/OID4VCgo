@@ -751,12 +751,12 @@ been published in a release.
 |---|---|
 | `Wallet.StartNFCProximityPresentationWithModes(modesJSON)` | Static NFC handover to BLE; modes use the existing JSON string array |
 | `Wallet.StartNFCNegotiatedProximityPresentationWithModes(modesJSON)` | Prepare negotiated handover; finish it before starting the selected BLE transport |
-| `Wallet.StartNFCDataProximityPresentation(maxCommand, maxResponse)` | Static NFC-only engagement; APDU data-field limits 1–65535 and 1–65536, excluding headers/status |
-| `Wallet.StartNFCNegotiatedDataProximityPresentation(maxCommand, maxResponse)` | Negotiated NFC-only engagement; complete Hr/Hs before retrieval |
+| `Wallet.StartNFCDataProximityPresentation(maxCommand, maxResponse)` | Static NFC-only engagement; APDU data-field limits 255–65535 and 256–65536 (ISO/IEC 18013-5 §11.2), excluding headers/status |
+| `Wallet.StartNFCNegotiatedDataProximityPresentation(maxCommand, maxResponse)` | Negotiated NFC-only engagement; complete Hr/Hs before retrieval. The Hs carries these limits whatever the reader's Hr holds |
 | `ProximityPresentation.HandoverSelect()` | Copy of NDEF Hs without NLEN; nil for QR or before negotiated selection |
 | `ProximityPresentation.HandleHandoverRequest(hr)` | Complete NDEF Hr to Hs; freezes the accepted selection; repeated identical Hr is idempotent before establishment |
 | `NewNFCHandoverRequest(modesJSON)` | Reader's Hr for supported mdoc BLE modes; retain exact returned bytes |
-| `NewNFCHandoverRequestWithNFCData(modesJSON, maxCommand, maxResponse)` | Offer BLE plus classic NFC; retain exact Hr |
+| `NewNFCHandoverRequestWithNFCData(modesJSON, maxCommand, maxResponse)` | Offer BLE plus classic NFC; retain exact Hr. The limits are checked but not sent: the carrier holds its version alone (ISO/IEC 18013-5 §9.2.2), and the reader keeps to the mdoc's limits from the Hs |
 | `ProximityReader.StartFromHandover(hs)` | Start a reader from a static NDEF Hs |
 | `ProximityReader.StartFromNegotiatedHandover(hs, hr)` | Start from the exact negotiated NDEF messages |
 | `ProximityReader.StartFromNFCDataHandover(hs)` | Classic NFC-only reader with the same authentication and issuer policy |
