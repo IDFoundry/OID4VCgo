@@ -294,35 +294,27 @@ func (v X5CAttestationVerifier) validate() error {
 	return nil
 }
 
-// validateAttestationVerifier runs X5CAttestationVerifier's own
-// configuration check when av is one, so New refuses a misconfigured
-// binding rather than every key attestation afterwards.
-func validateAttestationVerifier(av AttestationVerifier) error {
-	if t, ok := av.(*X5CAttestationVerifier); ok && t == nil {
-		return errors.New("attestation_verifier is a nil *X5CAttestationVerifier")
+// CheckConfiguration implements ConfigurationCheck: New refuses a
+// misconfigured binding rather than every key attestation afterwards.
+// Under AssuranceProduction it also refuses a nil Revocation (see
+// X5CProofBindingKeyResolver.CheckConfiguration), and
+// AttestationIssuerUnbound without SingleWalletProvider: under roots
+// that certify several Wallet Providers, any of them could sign a key
+// attestation in another's name.
+func (v X5CAttestationVerifier) CheckConfiguration(assurance AssuranceLevel) error {
+	if err := v.validate(); err != nil {
+		return err
 	}
-	v, ok := asX5CAttestationVerifier(av)
-	if !ok {
+	if assurance != AssuranceProduction {
 		return nil
 	}
-	if err := v.validate(); err != nil {
-		return fmt.Errorf("attestation_verifier: %w", err)
+	if v.Revocation == nil {
+		return fmt.Errorf("X5CAttestationVerifier.Revocation is required under AssuranceProduction: %s", revocationChoices)
+	}
+	if v.IssuerBinding == AttestationIssuerUnbound && !v.SingleWalletProvider {
+		return errors.New("X5CAttestationVerifier needs an explicit IssuerBinding under AssuranceProduction: AttestationIssuerBoundToAnchor (with Anchors) where its roots certify more than one Wallet Provider, AttestationIssuerInCertificate, or SingleWalletProvider to declare that its Roots certify one Wallet Provider alone")
 	}
 	return nil
-}
-
-// asX5CAttestationVerifier is av as an X5CAttestationVerifier, by value
-// or by non-nil pointer, if it is one.
-func asX5CAttestationVerifier(av AttestationVerifier) (X5CAttestationVerifier, bool) {
-	switch t := av.(type) {
-	case X5CAttestationVerifier:
-		return t, true
-	case *X5CAttestationVerifier:
-		if t != nil {
-			return *t, true
-		}
-	}
-	return X5CAttestationVerifier{}, false
 }
 
 // ResolveAttestationKey implements AttestationVerifier.
@@ -447,19 +439,6 @@ func attestationLeafPolicy(policy func(*x509.Certificate, [][]*x509.Certificate)
 		return policy
 	}
 	return DefaultAttestationLeafPolicy
-}
-
-// checkProductionAttestationBinding refuses, under AssuranceProduction,
-// an X5CAttestationVerifier left at AttestationIssuerUnbound without
-// SingleWalletProvider: under roots that certify several Wallet
-// Providers, any of them could sign a key attestation in another's
-// name.
-func checkProductionAttestationBinding(deps Dependencies) error {
-	v, ok := asX5CAttestationVerifier(deps.AttestationVerifier)
-	if !ok || v.IssuerBinding != AttestationIssuerUnbound || v.SingleWalletProvider {
-		return nil
-	}
-	return errors.New("dependencies.attestation_verifier: X5CAttestationVerifier needs an explicit IssuerBinding under AssuranceProduction: AttestationIssuerBoundToAnchor (with Anchors) where its roots certify more than one Wallet Provider, AttestationIssuerInCertificate, or SingleWalletProvider to declare that its Roots certify one Wallet Provider alone")
 }
 
 // Capabilities implements KeySourceAssurance: validating an

@@ -10,6 +10,7 @@ import (
 	"io"
 	"maps"
 	"math/big"
+	"reflect"
 	"slices"
 	"strings"
 	"time"
@@ -560,6 +561,31 @@ type ProofBindingKeyResolver interface {
 // ProofBindingKeyResolver and AttestationVerifier.
 var ErrProofKeyTrustUndecided = errors.New("issuer: the proof key's trust can't be decided now")
 
+// ConfigurationCheck is implemented by a dependency that checks its own
+// configuration, as X5CAttestationVerifier and
+// X5CProofBindingKeyResolver do. New calls CheckConfiguration, with the
+// issuer's assurance level, on Dependencies.AttestationVerifier and
+// Dependencies.ProofBindingKeys when they implement it, and refuses
+// what it reports. A type of your own that embeds one of them (to count
+// its calls, say) has its method promoted, so it keeps its checks; one
+// that holds it in a named field implements CheckConfiguration by
+// calling the field's.
+type ConfigurationCheck interface {
+	CheckConfiguration(assurance AssuranceLevel) error
+}
+
+// checkConfiguration runs dep's ConfigurationCheck, if it has one.
+func checkConfiguration(dep any, assurance AssuranceLevel) error {
+	checked, ok := dep.(ConfigurationCheck)
+	if !ok {
+		return nil
+	}
+	if v := reflect.ValueOf(dep); v.Kind() == reflect.Pointer && v.IsNil() {
+		return fmt.Errorf("is a nil %T", dep)
+	}
+	return checked.CheckConfiguration(assurance)
+}
+
 // CredentialDPoPNonceIssuer issues a DPoP nonce the Credential Endpoint
 // will accept. fapigo/resource's *Verifier implements it
 // (IssueDPoPNonce, FAPIgo v0.60.0 or later), returning "" when it
@@ -736,8 +762,8 @@ func New(cfg Config, deps Dependencies) (*Issuer, error) {
 		validatePreAuthorizedCodeDependencies(cfg, deps),
 		validateEncryption(cfg),
 		prefixError(dependenciesPrefix, validateSignerDependencies(cfg, deps)),
-		prefixError(dependenciesPrefix, validateAttestationVerifier(deps.AttestationVerifier)),
-		prefixError(dependenciesPrefix, validateProofBindingKeys(deps.ProofBindingKeys)),
+		prefixError(dependenciesPrefix+"attestation_verifier: ", checkConfiguration(deps.AttestationVerifier, cfg.Assurance)),
+		prefixError(dependenciesPrefix+"proof_binding_keys: ", checkConfiguration(deps.ProofBindingKeys, cfg.Assurance)),
 	)
 	if deps.Random == nil {
 		errs = append(errs, fmt.Errorf("issuer: dependencies: random is required"))

@@ -205,8 +205,6 @@ func checkProductionAssurance(cfg Config, deps Dependencies) []error {
 		checkProductionHTTPS(cfg),
 		checkProductionAttestationProofType(cfg),
 		checkProductionProofFreshness(cfg),
-		checkProductionX5CRevocation(deps),
-		checkProductionAttestationBinding(deps),
 	)
 	errs = append(errs, checkProductionKeySources(cfg, deps)...)
 	return append(errs, checkProductionStores(cfg, deps)...)

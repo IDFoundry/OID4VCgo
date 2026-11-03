@@ -462,6 +462,13 @@ func TestNewProductionRequiresX5CRevocation(t *testing.T) {
 		"proof binding keys, by pointer": {func(deps *issuer.Dependencies, revocation certrevocation.Checker) {
 			deps.ProofBindingKeys = &issuer.X5CProofBindingKeyResolver{Roots: roots, Revocation: revocation}
 		}, "X5CProofBindingKeyResolver.Revocation"},
+		// A wrapper embedding one keeps its checks.
+		"attestation verifier, wrapped": {func(deps *issuer.Dependencies, revocation certrevocation.Checker) {
+			deps.AttestationVerifier = meteredAttestationVerifier{issuer.X5CAttestationVerifier{Roots: roots, Revocation: revocation, SingleWalletProvider: true}}
+		}, "X5CAttestationVerifier.Revocation"},
+		"proof binding keys, wrapped": {func(deps *issuer.Dependencies, revocation certrevocation.Checker) {
+			deps.ProofBindingKeys = &meteredProofBindingKeys{issuer.X5CProofBindingKeyResolver{Roots: roots, Revocation: revocation}}
+		}, "X5CProofBindingKeyResolver.Revocation"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			cfg, deps := productionIssuer(t)
@@ -479,5 +486,25 @@ func TestNewProductionRequiresX5CRevocation(t *testing.T) {
 				t.Errorf("New under AssuranceDevelopment with a nil Revocation: %v", err)
 			}
 		})
+	}
+}
+
+// meteredAttestationVerifier and meteredProofBindingKeys wrap the X5C
+// verifier and resolver, as one counting their calls would.
+type meteredAttestationVerifier struct{ issuer.X5CAttestationVerifier }
+
+type meteredProofBindingKeys struct {
+	issuer.X5CProofBindingKeyResolver
+}
+
+// TestNewProductionChecksWrappedAttestationBinding: an
+// X5CAttestationVerifier embedded in a type of the caller's own is
+// still held to an explicit IssuerBinding under AssuranceProduction.
+func TestNewProductionChecksWrappedAttestationBinding(t *testing.T) {
+	cfg, deps := productionAssuredConfigAndDeps(t)
+	cfg.NoAttestationStatusCheck = true
+	deps.AttestationVerifier = meteredAttestationVerifier{issuer.X5CAttestationVerifier{Roots: x509.NewCertPool(), Revocation: certrevocation.NoCheck{}}}
+	if _, err := issuer.New(cfg, deps); err == nil || !strings.Contains(err.Error(), "explicit IssuerBinding") {
+		t.Fatalf("New with a wrapped, unbound X5CAttestationVerifier = %v, want an IssuerBinding error", err)
 	}
 }
