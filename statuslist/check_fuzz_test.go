@@ -54,7 +54,7 @@ func FuzzCheckSigned(f *testing.F) {
 			if err != nil {
 				return
 			}
-			if status, _, err = CheckCWT(token, &key.PublicKey, cose.ES256, ref, VerifyOptions{}); err != nil {
+			if status, _, err = CheckCWT(token, &key.PublicKey, cose.ES256, ref, VerifyOptions{UnboundSigner: AnyListSigner}); err != nil {
 				return
 			}
 		} else {
@@ -62,7 +62,7 @@ func FuzzCheckSigned(f *testing.F) {
 			if err != nil {
 				return
 			}
-			if status, _, err = Check(token, &key.PublicKey, jose.ES256, ref, VerifyOptions{}); err != nil {
+			if status, _, err = Check(token, &key.PublicKey, jose.ES256, ref, VerifyOptions{UnboundSigner: AnyListSigner}); err != nil {
 				return
 			}
 		}

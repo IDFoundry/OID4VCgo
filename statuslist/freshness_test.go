@@ -33,16 +33,16 @@ func TestVerifyToken_Freshness(t *testing.T) {
 		token string
 		opts  VerifyOptions
 	}{
-		"no iat":               {issue(0, nil, nil), VerifyOptions{}},
-		"iat out of range":     {issue(outOfRange, nil, nil), VerifyOptions{}},
-		"exp out of range":     {issue(now.Unix(), &outOfRange, nil), VerifyOptions{}},
-		"older than MaxAge":    {issue(now.Add(-2*time.Hour).Unix(), nil, nil), VerifyOptions{MaxAge: time.Hour}},
-		"negative MaxAge":      {issue(now.Unix(), nil, nil), VerifyOptions{MaxAge: -time.Second}},
-		"beyond a stated skew": {issue(now.Add(10*time.Second).Unix(), nil, nil), VerifyOptions{MaxClockSkew: time.Second}},
-		"no exp, RequireExp":   {issue(now.Unix(), nil, nil), VerifyOptions{RequireExp: true}},
-		"ttl 0":                {issue(now.Unix(), nil, &zero), VerifyOptions{}},
-		"ttl negative":         {issue(now.Unix(), nil, &negative), VerifyOptions{}},
-		"exp at iat":           {issue(iatNow, &iatNow, nil), VerifyOptions{Now: func() time.Time { return now.Add(-30 * time.Second) }}},
+		"no iat":               {issue(0, nil, nil), VerifyOptions{UnboundSigner: AnyListSigner}},
+		"iat out of range":     {issue(outOfRange, nil, nil), VerifyOptions{UnboundSigner: AnyListSigner}},
+		"exp out of range":     {issue(now.Unix(), &outOfRange, nil), VerifyOptions{UnboundSigner: AnyListSigner}},
+		"older than MaxAge":    {issue(now.Add(-2*time.Hour).Unix(), nil, nil), VerifyOptions{UnboundSigner: AnyListSigner, MaxAge: time.Hour}},
+		"negative MaxAge":      {issue(now.Unix(), nil, nil), VerifyOptions{UnboundSigner: AnyListSigner, MaxAge: -time.Second}},
+		"beyond a stated skew": {issue(now.Add(10*time.Second).Unix(), nil, nil), VerifyOptions{UnboundSigner: AnyListSigner, MaxClockSkew: time.Second}},
+		"no exp, RequireExp":   {issue(now.Unix(), nil, nil), VerifyOptions{UnboundSigner: AnyListSigner, RequireExp: true}},
+		"ttl 0":                {issue(now.Unix(), nil, &zero), VerifyOptions{UnboundSigner: AnyListSigner}},
+		"ttl negative":         {issue(now.Unix(), nil, &negative), VerifyOptions{UnboundSigner: AnyListSigner}},
+		"exp at iat":           {issue(iatNow, &iatNow, nil), VerifyOptions{UnboundSigner: AnyListSigner, Now: func() time.Time { return now.Add(-30 * time.Second) }}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := VerifyToken(tc.token, &key.PublicKey, jose.ES256, tc.opts); err == nil {
@@ -50,7 +50,7 @@ func TestVerifyToken_Freshness(t *testing.T) {
 			}
 		})
 	}
-	if _, err := VerifyToken(issue(now.Unix(), nil, nil), &key.PublicKey, jose.ES256, VerifyOptions{}); err != nil {
+	if _, err := VerifyToken(issue(now.Unix(), nil, nil), &key.PublicKey, jose.ES256, VerifyOptions{UnboundSigner: AnyListSigner}); err != nil {
 		t.Errorf("fresh, no exp: refused: %v", err)
 	}
 }

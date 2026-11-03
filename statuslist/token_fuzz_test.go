@@ -36,6 +36,6 @@ func FuzzVerifyToken(f *testing.F) {
 	f.Add("a.b.c")
 
 	f.Fuzz(func(t *testing.T, token string) {
-		_, _ = VerifyToken(token, &key.PublicKey, jose.ES256, VerifyOptions{})
+		_, _ = VerifyToken(token, &key.PublicKey, jose.ES256, VerifyOptions{UnboundSigner: AnyListSigner})
 	})
 }

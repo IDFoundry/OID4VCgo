@@ -26,7 +26,7 @@ func TestVerifyTokenCWTRefusesCWTTag(t *testing.T) {
 		"CWT tag around COSE_Sign1_Tagged": append(append([]byte{}, cwtTag...), tagged...),
 		"CWT tag around COSE_Sign1":        append(append([]byte{}, cwtTag...), tagged[1:]...),
 	} {
-		if _, err := VerifyTokenCWT(token, &key.PublicKey, cose.ES256, VerifyOptions{}); err == nil {
+		if _, err := VerifyTokenCWT(token, &key.PublicKey, cose.ES256, VerifyOptions{UnboundSigner: AnyListSigner}); err == nil {
 			t.Errorf("%s: VerifyTokenCWT accepted it", name)
 		}
 	}

@@ -40,7 +40,7 @@ func TestIssueVerifyToken(t *testing.T) {
 		t.Fatalf("IssueToken: %v", err)
 	}
 
-	got, err := VerifyToken(token, &key.PublicKey, jose.ES256, VerifyOptions{})
+	got, err := VerifyToken(token, &key.PublicKey, jose.ES256, VerifyOptions{UnboundSigner: AnyListSigner})
 	if err != nil {
 		t.Fatalf("VerifyToken: %v", err)
 	}
@@ -86,7 +86,7 @@ func TestVerifyToken_AcceptsLargerThanJoseDefault(t *testing.T) {
 		t.Fatalf("token is %d bytes, want > jose.MaxCompactBytes (%d)", len(token), jose.MaxCompactBytes)
 	}
 
-	if _, err := VerifyToken(token, &key.PublicKey, jose.ES256, VerifyOptions{}); err != nil {
+	if _, err := VerifyToken(token, &key.PublicKey, jose.ES256, VerifyOptions{UnboundSigner: AnyListSigner}); err != nil {
 		t.Errorf("VerifyToken: %v", err)
 	}
 }
@@ -107,7 +107,7 @@ func TestVerifyToken_RejectsExpired(t *testing.T) {
 	if err != nil {
 		t.Fatalf("IssueToken: %v", err)
 	}
-	if _, err := VerifyToken(token, &key.PublicKey, jose.ES256, VerifyOptions{}); err == nil {
+	if _, err := VerifyToken(token, &key.PublicKey, jose.ES256, VerifyOptions{UnboundSigner: AnyListSigner}); err == nil {
 		t.Errorf("VerifyToken accepted an expired token")
 	}
 }
@@ -138,7 +138,7 @@ func TestVerifyToken_RejectsWrongTyp(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Sign: %v", err)
 		}
-		if _, err := VerifyToken(compact, &key.PublicKey, jose.ES256, VerifyOptions{}); (err == nil) != ok {
+		if _, err := VerifyToken(compact, &key.PublicKey, jose.ES256, VerifyOptions{UnboundSigner: AnyListSigner}); (err == nil) != ok {
 			t.Errorf("typ %q: %v", typ, err)
 		}
 	}

@@ -71,8 +71,17 @@ type Publisher struct {
 	Lifetime time.Duration
 
 	// TTL, if positive, is how long a Relying Party may cache a token:
-	// its ttl claim, and the response's Cache-Control max-age.
+	// its ttl claim, and the response's Cache-Control max-age. It must
+	// be at least a second, which is what a ttl claim counts in, and no
+	// longer than Lifetime.
 	TTL time.Duration
+
+	// MaxTokenBytes is the largest token Token signs; zero means
+	// DefaultMaxTokenBytes, the largest a Checker reads by default. A
+	// list that grows past it fails to publish rather than being served
+	// to Relying Parties that refuse it: raise it, with theirs, for a
+	// very large list.
+	MaxTokenBytes int
 
 	// CacheFor is how long ServeHTTP serves a token before signing a
 	// new one. Zero means TTL when TTL is set, and 30 seconds
@@ -158,17 +167,37 @@ func (f Form) String() string {
 	return "Form(" + strconv.Itoa(int(f)) + ")"
 }
 
-// servesCWT reports whether accept asks for the CWT form: CWT when it
-// names CWTTokenMediaType, JWT when it names only TokenMediaType, and
-// DefaultForm when it names neither.
+// servesCWT reports whether accept asks for the CWT form: the form
+// whose media type it gives the higher q (CWT on a tie), ignoring one
+// it gives q=0 (RFC 9110 §12.5.1), and DefaultForm when it names
+// neither with a q above zero.
 func (p *Publisher) servesCWT(accept string) bool {
-	if strings.Contains(accept, CWTTokenMediaType) {
-		return true
+	jwtQ, cwtQ := 0.0, 0.0
+	for _, part := range strings.Split(accept, ",") {
+		mediaType, params, _ := strings.Cut(strings.TrimSpace(part), ";")
+		q := 1.0
+		for _, param := range strings.Split(params, ";") {
+			name, value, ok := strings.Cut(strings.TrimSpace(param), "=")
+			if !ok || !strings.EqualFold(strings.TrimSpace(name), "q") {
+				continue
+			}
+			v, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
+			if err != nil || v < 0 || v > 1 {
+				v = 0
+			}
+			q = v
+		}
+		switch mediaType = strings.TrimSpace(mediaType); {
+		case strings.EqualFold(mediaType, CWTTokenMediaType):
+			cwtQ = max(cwtQ, q)
+		case strings.EqualFold(mediaType, TokenMediaType):
+			jwtQ = max(jwtQ, q)
+		}
 	}
-	if strings.Contains(accept, TokenMediaType) {
-		return false
+	if cwtQ == 0 && jwtQ == 0 {
+		return p.DefaultForm == FormCWT
 	}
-	return p.DefaultForm == FormCWT
+	return cwtQ >= jwtQ
 }
 
 // cachedTokenFor returns the form's cached token, signing a new one
@@ -289,9 +318,40 @@ func (p *Publisher) Token(ctx context.Context, cwt bool) ([]byte, error) {
 	if p.URI == "" || p.Signer == nil || len(p.Chain) == 0 || p.Statuses == nil {
 		return nil, errors.New("statuslist: Publisher.URI, Signer, Chain and Statuses are required")
 	}
-	if p.DefaultForm != FormJWT && p.DefaultForm != FormCWT {
-		return nil, fmt.Errorf("statuslist: Publisher.DefaultForm is %v, not FormJWT or FormCWT", p.DefaultForm)
+	if err := p.validate(); err != nil {
+		return nil, err
 	}
+	limit, err := VerifyOptions{MaxTokenBytes: p.MaxTokenBytes}.maxTokenBytes()
+	if err != nil {
+		return nil, fmt.Errorf("statuslist: Publisher.MaxTokenBytes: %w", err)
+	}
+	token, err := p.sign(ctx, cwt)
+	if err != nil {
+		return nil, err
+	}
+	if len(token) > limit {
+		return nil, fmt.Errorf("statuslist: the token is %d bytes, over the %d a Relying Party reads (Publisher.MaxTokenBytes)", len(token), limit)
+	}
+	return token, nil
+}
+
+// validate checks p's settings.
+func (p *Publisher) validate() error {
+	switch {
+	case p.DefaultForm != FormJWT && p.DefaultForm != FormCWT:
+		return fmt.Errorf("statuslist: Publisher.DefaultForm is %v, not FormJWT or FormCWT", p.DefaultForm)
+	case p.Lifetime > 0 && p.Lifetime < time.Second:
+		return fmt.Errorf("statuslist: Publisher.Lifetime is %s, under the one second a token's exp can express", p.Lifetime)
+	case p.TTL > 0 && p.TTL < time.Second:
+		return fmt.Errorf("statuslist: Publisher.TTL is %s, under the one second a ttl claim can express", p.TTL)
+	case p.TTL > p.lifetime():
+		return fmt.Errorf("statuslist: Publisher.TTL (%s) is longer than its Lifetime (%s)", p.TTL, p.lifetime())
+	}
+	return nil
+}
+
+// sign is Token, before its size check.
+func (p *Publisher) sign(ctx context.Context, cwt bool) ([]byte, error) {
 	statuses, err := p.Statuses(ctx)
 	if err != nil {
 		return nil, err

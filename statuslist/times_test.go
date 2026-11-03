@@ -54,19 +54,19 @@ func TestVerifyToken_NbfAndFractionalDates(t *testing.T) {
 	fractional := float64(now.UnixMilli()) / 1000
 	later := now.Add(time.Hour).Unix()
 
-	if _, err := VerifyToken(jwt(map[string]any{"iat": fractional, "exp": fractional + 3600}), &key.PublicKey, "ES256", VerifyOptions{}); err != nil {
+	if _, err := VerifyToken(jwt(map[string]any{"iat": fractional, "exp": fractional + 3600}), &key.PublicKey, "ES256", VerifyOptions{UnboundSigner: AnyListSigner}); err != nil {
 		t.Errorf("JWT with fractional dates: %v", err)
 	}
-	if _, err := VerifyToken(jwt(map[string]any{"iat": now.Unix(), "nbf": now.Add(-time.Minute).Unix()}), &key.PublicKey, "ES256", VerifyOptions{}); err != nil {
+	if _, err := VerifyToken(jwt(map[string]any{"iat": now.Unix(), "nbf": now.Add(-time.Minute).Unix()}), &key.PublicKey, "ES256", VerifyOptions{UnboundSigner: AnyListSigner}); err != nil {
 		t.Errorf("JWT with a past nbf: %v", err)
 	}
-	if _, err := VerifyToken(jwt(map[string]any{"iat": now.Unix(), "nbf": later}), &key.PublicKey, "ES256", VerifyOptions{}); err == nil {
+	if _, err := VerifyToken(jwt(map[string]any{"iat": now.Unix(), "nbf": later}), &key.PublicKey, "ES256", VerifyOptions{UnboundSigner: AnyListSigner}); err == nil {
 		t.Error("JWT not valid for an hour was accepted")
 	}
-	if _, err := VerifyTokenCWT(cwt(map[int]any{cwtClaimIat: fractional}), &key.PublicKey, cose.ES256, VerifyOptions{}); err != nil {
+	if _, err := VerifyTokenCWT(cwt(map[int]any{cwtClaimIat: fractional}), &key.PublicKey, cose.ES256, VerifyOptions{UnboundSigner: AnyListSigner}); err != nil {
 		t.Errorf("CWT with a fractional iat: %v", err)
 	}
-	if _, err := VerifyTokenCWT(cwt(map[int]any{cwtClaimIat: now.Unix(), cwtClaimNbf: later}), &key.PublicKey, cose.ES256, VerifyOptions{}); err == nil {
+	if _, err := VerifyTokenCWT(cwt(map[int]any{cwtClaimIat: now.Unix(), cwtClaimNbf: later}), &key.PublicKey, cose.ES256, VerifyOptions{UnboundSigner: AnyListSigner}); err == nil {
 		t.Error("CWT not valid for an hour was accepted")
 	}
 }

@@ -45,13 +45,13 @@ func TestX5C_RoundTrips(t *testing.T) {
 	}
 	for idx, want := range map[uint64]StatusType{0: StatusValid, 1: StatusInvalid} {
 		ref := StatusListRef{Idx: idx, URI: x5cTestURI}
-		if got, _, err := CheckX5C(jwt, roots, ref, VerifyOptions{}); err != nil || got != want {
+		if got, _, err := CheckX5C(jwt, roots, ref, VerifyOptions{UnboundSigner: AnyListSigner}); err != nil || got != want {
 			t.Errorf("CheckX5C(idx %d) = %v, %v; want %v", idx, got, err, want)
 		}
-		if got, _, err := CheckCWTX5Chain(cwt, roots, ref, VerifyOptions{}); err != nil || got != want {
+		if got, _, err := CheckCWTX5Chain(cwt, roots, ref, VerifyOptions{UnboundSigner: AnyListSigner}); err != nil || got != want {
 			t.Errorf("CheckCWTX5Chain(idx %d) = %v, %v; want %v", idx, got, err, want)
 		}
-		if got, _, err := CheckCWTX5Chain(cwt[1:], roots, ref, VerifyOptions{}); err != nil || got != want {
+		if got, _, err := CheckCWTX5Chain(cwt[1:], roots, ref, VerifyOptions{UnboundSigner: AnyListSigner}); err != nil || got != want {
 			t.Errorf("CheckCWTX5Chain(untagged, idx %d) = %v, %v; want %v", idx, got, err, want)
 		}
 	}
@@ -94,17 +94,17 @@ func TestX5C_Rejects(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := CheckX5C(jwt, untrusted, ref, VerifyOptions{}); err == nil {
+	if _, _, err := CheckX5C(jwt, untrusted, ref, VerifyOptions{UnboundSigner: AnyListSigner}); err == nil {
 		t.Error("CheckX5C accepted a chain that doesn't verify to roots")
 	}
-	if _, _, err := CheckCWTX5Chain(cwt, untrusted, ref, VerifyOptions{}); err == nil {
+	if _, _, err := CheckCWTX5Chain(cwt, untrusted, ref, VerifyOptions{UnboundSigner: AnyListSigner}); err == nil {
 		t.Error("CheckCWTX5Chain accepted a chain that doesn't verify to roots")
 	}
-	if _, _, err := CheckX5C(selfJWT, selfRoots, ref, VerifyOptions{}); err == nil {
+	if _, _, err := CheckX5C(selfJWT, selfRoots, ref, VerifyOptions{UnboundSigner: AnyListSigner}); err == nil {
 		t.Error("CheckX5C accepted a self-signed signer")
 	}
 	other := StatusListRef{Idx: 0, URI: "https://issuer.example.com/statuslists/2"}
-	if _, _, err := CheckX5C(jwt, roots, other, VerifyOptions{}); err == nil {
+	if _, _, err := CheckX5C(jwt, roots, other, VerifyOptions{UnboundSigner: AnyListSigner}); err == nil {
 		t.Error("CheckX5C accepted another list's token")
 	}
 	if _, err := IssueTokenX5C(selfSignedKey, jose.ES256, claims, []*x509.Certificate{leaf}); err == nil {
@@ -113,7 +113,7 @@ func TestX5C_Rejects(t *testing.T) {
 	if _, err := IssueTokenCWTX5Chain(leafKey, cose.ES256, claims, nil); err == nil {
 		t.Error("IssueTokenCWTX5Chain accepted an empty chain")
 	}
-	refuse := VerifyOptions{LeafPolicy: func(*x509.Certificate, [][]*x509.Certificate) error {
+	refuse := VerifyOptions{UnboundSigner: AnyListSigner, LeafPolicy: func(*x509.Certificate, [][]*x509.Certificate) error {
 		return errors.New("not this credential's issuer")
 	}}
 	if _, _, err := CheckX5C(jwt, roots, ref, refuse); err == nil {
@@ -122,10 +122,10 @@ func TestX5C_Rejects(t *testing.T) {
 	if _, _, err := CheckCWTX5Chain(cwt, roots, ref, refuse); err == nil {
 		t.Error("CheckCWTX5Chain accepted a signer its LeafPolicy refused")
 	}
-	if _, _, err := CheckX5C("not.a.token", roots, ref, VerifyOptions{}); err == nil {
+	if _, _, err := CheckX5C("not.a.token", roots, ref, VerifyOptions{UnboundSigner: AnyListSigner}); err == nil {
 		t.Error("CheckX5C accepted a malformed token")
 	}
-	if _, _, err := CheckCWTX5Chain([]byte("not cbor"), roots, ref, VerifyOptions{}); err == nil {
+	if _, _, err := CheckCWTX5Chain([]byte("not cbor"), roots, ref, VerifyOptions{UnboundSigner: AnyListSigner}); err == nil {
 		t.Error("CheckCWTX5Chain accepted a malformed token")
 	}
 }
@@ -180,7 +180,7 @@ func TestX5C_SignerIsTheIssuer(t *testing.T) {
 		}
 		return jwt
 	}
-	opts := VerifyOptions{Issuer: issuerA}
+	opts := VerifyOptions{UnboundSigner: AnyListSigner, Issuer: issuerA}
 	if _, _, err := CheckX5C(token(issuerA, issuerA), roots, ref, opts); err != nil {
 		t.Errorf("issuer A's own list: %v", err)
 	}
@@ -190,7 +190,7 @@ func TestX5C_SignerIsTheIssuer(t *testing.T) {
 	if _, _, err := CheckX5C(token(issuerA, issuerB), roots, ref, opts); err == nil {
 		t.Error("accepted a list whose iss is another issuer's")
 	}
-	if _, _, err := CheckX5C(token(issuerB, ""), roots, ref, VerifyOptions{}); err != nil {
+	if _, _, err := CheckX5C(token(issuerB, ""), roots, ref, VerifyOptions{UnboundSigner: AnyListSigner}); err != nil {
 		t.Errorf("without Issuer, the signer isn't bound: %v", err)
 	}
 }
@@ -231,7 +231,7 @@ func TestX5C_SignerHoldsTheIssuersKey(t *testing.T) {
 		return jwt
 	}
 	credentialKey, otherKey := testKey(t), testKey(t)
-	opts := VerifyOptions{Issuer: "https://backend.issuer.example", IssuerKey: &credentialKey.PublicKey}
+	opts := VerifyOptions{UnboundSigner: AnyListSigner, Issuer: "https://backend.issuer.example", IssuerKey: &credentialKey.PublicKey}
 	if _, _, err := CheckX5C(token(credentialKey), roots, ref, opts); err != nil {
 		t.Errorf("signed with the credential's own key: %v", err)
 	}
@@ -279,10 +279,10 @@ func TestCheckCWTX5Chain_HonorsIssuerKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	ref := StatusListRef{URI: x5cTestURI}
-	if _, _, err := CheckCWTX5Chain(cwt, roots, ref, VerifyOptions{IssuerKey: &leafKey.PublicKey}); err != nil {
+	if _, _, err := CheckCWTX5Chain(cwt, roots, ref, VerifyOptions{UnboundSigner: AnyListSigner, IssuerKey: &leafKey.PublicKey}); err != nil {
 		t.Errorf("signed by the issuer's key: %v", err)
 	}
-	if _, _, err := CheckCWTX5Chain(cwt, roots, ref, VerifyOptions{IssuerKey: &otherKey.PublicKey}); err == nil {
+	if _, _, err := CheckCWTX5Chain(cwt, roots, ref, VerifyOptions{UnboundSigner: AnyListSigner, IssuerKey: &otherKey.PublicKey}); err == nil {
 		t.Error("a list another key signed was accepted for this issuer")
 	}
 }
@@ -311,10 +311,10 @@ func TestCheckCWTX5Chain_X5ChainProtectedOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	ref := StatusListRef{URI: x5cTestURI}
-	if _, _, err := CheckCWTX5Chain(token, roots, ref, VerifyOptions{}); err != nil {
+	if _, _, err := CheckCWTX5Chain(token, roots, ref, VerifyOptions{UnboundSigner: AnyListSigner}); err != nil {
 		t.Errorf("unprotected x5chain: %v", err)
 	}
-	if _, _, err := CheckCWTX5Chain(token, roots, ref, VerifyOptions{X5ChainProtectedOnly: true}); err == nil {
+	if _, _, err := CheckCWTX5Chain(token, roots, ref, VerifyOptions{UnboundSigner: AnyListSigner, X5ChainProtectedOnly: true}); err == nil {
 		t.Error("unprotected x5chain accepted with X5ChainProtectedOnly")
 	}
 }

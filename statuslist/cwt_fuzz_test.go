@@ -35,6 +35,6 @@ func FuzzVerifyTokenCWT(f *testing.F) {
 	f.Add(valid[:len(valid)-1])
 
 	f.Fuzz(func(t *testing.T, token []byte) {
-		_, _ = VerifyTokenCWT(token, &key.PublicKey, cose.ES256, VerifyOptions{})
+		_, _ = VerifyTokenCWT(token, &key.PublicKey, cose.ES256, VerifyOptions{UnboundSigner: AnyListSigner})
 	})
 }

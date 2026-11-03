@@ -253,13 +253,9 @@ func statusOptionsFor(opts statuslist.VerifyOptions, issuer string, issuerKey cr
 		opts.Issuer, opts.IssuerKey = issuer, issuerKey
 		return opts, nil
 	}
-	base := opts.LeafPolicy
-	opts.LeafPolicy = func(leaf *x509.Certificate, chains [][]*x509.Certificate) error {
-		if base != nil {
-			if err := base(leaf, chains); err != nil {
-				return err
-			}
-		}
+	// The signer is the issuer or a Status Issuer: bound here, not by
+	// Issuer or IssuerKey.
+	opts.UnboundSigner = func(leaf *x509.Certificate, chains [][]*x509.Certificate) error {
 		if certchain.SameKey(leaf.PublicKey, issuerKey) || (issuer != "" && certchain.CheckIssuerName(leaf, issuer) == nil) {
 			return nil
 		}
@@ -335,14 +331,15 @@ func mdocStatusChecker(checker statuslist.Checker, vc VerifiedCredential, status
 	c := checker
 	c.Options.RequireExp = true
 	c.Options.X5ChainProtectedOnly = true
-	base := checker.Options.LeafPolicy
+	// An mdoc's list names no issuer: its signer is bound by
+	// UnboundSigner, or by the one certificate its MSO names.
 	if (ref == nil || len(ref.Certificate) == 0) && len(path) == 0 {
 		// Nothing ties the list's signer to the document's issuer but
 		// statusIssuers.
 		if statusIssuers == nil {
 			return checker, errUnboundStatusSigner
 		}
-		c.Options.LeafPolicy = certchain.BothPolicies(base, unnamedStatusIssuer(statusIssuers))
+		c.Options.UnboundSigner = unnamedStatusIssuer(statusIssuers)
 		return c, nil
 	}
 	trust, err := mdoc.StatusTrust(ref, path)
@@ -350,15 +347,12 @@ func mdocStatusChecker(checker statuslist.Checker, vc VerifiedCredential, status
 		return checker, err
 	}
 	if trust.Roots != nil {
+		// The certificate the MSO names is the only root.
 		c.Roots = trust.Roots
+		c.Options.UnboundSigner = statuslist.AnyListSigner
 		return c, nil
 	}
-	c.Options.LeafPolicy = func(leaf *x509.Certificate, chains [][]*x509.Certificate) error {
-		if base != nil {
-			if err := base(leaf, chains); err != nil {
-				return err
-			}
-		}
+	c.Options.UnboundSigner = func(leaf *x509.Certificate, chains [][]*x509.Certificate) error {
 		err := trust.LeafPolicy(leaf, chains)
 		if err != nil && statusIssuers != nil && statusIssuers("", leaf, chains) == nil {
 			return nil

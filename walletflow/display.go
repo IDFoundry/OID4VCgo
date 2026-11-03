@@ -524,7 +524,9 @@ func statusOptionsFor(opts statuslist.VerifyOptions, issuer string, issuerKey cr
 		opts.Issuer, opts.IssuerKey = issuer, issuerKey
 		return opts
 	}
-	opts.LeafPolicy = func(leaf *x509.Certificate, _ [][]*x509.Certificate) error {
+	// The signer is the issuer or a Status Issuer: bound here, not by
+	// Issuer or IssuerKey.
+	opts.UnboundSigner = func(leaf *x509.Certificate, _ [][]*x509.Certificate) error {
 		if certchain.SameKey(leaf.PublicKey, issuerKey) || certchain.CheckIssuerName(leaf, issuer) == nil {
 			return nil
 		}
@@ -582,9 +584,11 @@ func mdocStatusChecker(checker statuslist.Checker, credential string) (statuslis
 		return checker, err
 	}
 	if trust.Roots != nil {
+		// The certificate the MSO names is the only root.
 		checker.Roots = trust.Roots
+		checker.Options.UnboundSigner = statuslist.AnyListSigner
 	} else {
-		checker.Options.LeafPolicy = trust.LeafPolicy
+		checker.Options.UnboundSigner = trust.LeafPolicy
 	}
 	checker.Options.RequireExp = true
 	checker.Options.X5ChainProtectedOnly = true

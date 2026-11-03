@@ -47,7 +47,9 @@ type Fetcher struct {
 	// unless UncheckedTransport is set.
 	HTTP *http.Client
 
-	// MaxBytes bounds a token's size; zero means 1 MiB.
+	// MaxBytes bounds a token's size; zero means DefaultMaxTokenBytes
+	// (1 MiB). A Checker verifies a token up to the same size, unless
+	// its Options.MaxTokenBytes says otherwise.
 	MaxBytes int
 
 	// AllowLoopback permits loopback addresses (127.0.0.0/8, ::1) —
@@ -132,7 +134,7 @@ func (f Fetcher) Fetch(ctx context.Context, uri, mediaType string) ([]byte, erro
 	}
 	limit := f.MaxBytes
 	if limit <= 0 {
-		limit = maxTokenBytes
+		limit = DefaultMaxTokenBytes
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, int64(limit)+1))
 	if err != nil {
@@ -150,11 +152,12 @@ func (f Fetcher) Fetch(ctx context.Context, uri, mediaType string) ([]byte, erro
 // certificate chain to Roots, its sub against the reference, and the
 // status at the reference's index.
 //
-// It doesn't know whose Referenced Token it's checking, so by itself it
-// binds the Status List Token's signer to nothing but Roots: under
-// roots shared by several issuers, any of them could sign a list that
-// decides another's credential's status. Bind the signer to the
-// credential's issuer with Options.Issuer, IssuerKey or LeafPolicy —
+// It doesn't know whose Referenced Token it's checking: under roots
+// shared by several issuers, any of them could sign a list that decides
+// another's credential's status. So it refuses a check unless
+// Options binds the signer to the credential's issuer, with Issuer or
+// IssuerKey, or decides it with UnboundSigner (AnyListSigner where the
+// roots are one issuer's alone) —
 // a verifier.StatusPolicy sets them from a verified credential, for an
 // SD-JWT VC and for an mdoc (ISO/IEC 18013-5 §12.3.6), and is what a
 // Verifier normally uses instead of calling Check directly
@@ -187,21 +190,35 @@ func (c Checker) check(ctx context.Context, ref StatusListRef, cwt bool) (Status
 	if c.Roots == nil {
 		return 0, TokenClaims{}, errors.New("statuslist: Checker.Roots is required")
 	}
+	// Refused before anything is fetched.
+	if _, err := c.Options.signerPolicy(); err != nil {
+		return 0, TokenClaims{}, err
+	}
+	opts := c.Options
+	if opts.MaxTokenBytes == 0 {
+		opts.MaxTokenBytes = c.Fetcher.MaxBytes
+	}
+	if _, err := opts.maxTokenBytes(); err != nil {
+		return 0, TokenClaims{}, err
+	}
+	fetcher := c.Fetcher
+	if fetcher.MaxBytes == 0 {
+		fetcher.MaxBytes = opts.MaxTokenBytes
+	}
 	mediaType := TokenMediaType
 	if cwt {
 		mediaType = CWTTokenMediaType
 	}
-	token, err := c.Fetcher.Fetch(ctx, ref.URI, mediaType)
+	token, err := fetcher.Fetch(ctx, ref.URI, mediaType)
 	if err != nil {
 		return 0, TokenClaims{}, err
 	}
 	// check's result is failClosed by Check.
 	if cwt {
-		opts := c.Options
 		opts.RequireExp, opts.X5ChainProtectedOnly = true, true
 		return checkCWTX5Chain(ctx, token, c.Roots, ref, opts)
 	}
-	return checkX5C(ctx, string(token), c.Roots, ref, c.Options)
+	return checkX5C(ctx, string(token), c.Roots, ref, opts)
 }
 
 // NotValidError is RequireValid's error for a Referenced Token whose

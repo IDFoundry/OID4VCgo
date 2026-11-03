@@ -53,7 +53,15 @@ func CheckX5C(token string, roots *x509.CertPool, ref StatusListRef, opts Verify
 // checkX5C is CheckX5C, before failClosed, with ctx for opts.Revocation.
 func checkX5C(ctx context.Context, token string, roots *x509.CertPool, ref StatusListRef, opts VerifyOptions) (StatusType, TokenClaims, error) {
 	opts = opts.atOneInstant()
-	header, _, err := jose.DecodeUnverifiedMax(token, maxTokenBytes)
+	policy, err := opts.signerPolicy()
+	if err != nil {
+		return 0, TokenClaims{}, err
+	}
+	limit, err := opts.maxTokenBytes()
+	if err != nil {
+		return 0, TokenClaims{}, err
+	}
+	header, _, err := jose.DecodeUnverifiedMax(token, limit)
 	if err != nil {
 		return 0, TokenClaims{}, fmt.Errorf("statuslist: decode token: %w", err)
 	}
@@ -61,7 +69,7 @@ func checkX5C(ctx context.Context, token string, roots *x509.CertPool, ref Statu
 	if err != nil {
 		return 0, TokenClaims{}, fmt.Errorf("statuslist: token signer: %w", err)
 	}
-	leaf, err := verifySigner(ctx, chain, roots, opts)
+	leaf, _, err := certchain.VerifyTrustedChainsAt(ctx, chain, roots, policy, opts.Revocation, opts.now())
 	if err != nil {
 		return 0, TokenClaims{}, fmt.Errorf("statuslist: token signer: %w", err)
 	}
@@ -92,9 +100,17 @@ func CheckCWTX5Chain(token []byte, roots *x509.CertPool, ref StatusListRef, opts
 // opts.Revocation.
 func checkCWTX5Chain(ctx context.Context, token []byte, roots *x509.CertPool, ref StatusListRef, opts VerifyOptions) (StatusType, TokenClaims, error) {
 	opts = opts.atOneInstant()
+	policy, err := opts.signerPolicy()
+	if err != nil {
+		return 0, TokenClaims{}, err
+	}
+	limit, err := opts.maxTokenBytes()
+	if err != nil {
+		return 0, TokenClaims{}, err
+	}
 	leaf, alg, err := cose.X5ChainSigner(ctx, token, cose.X5ChainTrust{
-		MaxBytes: maxTokenBytes, ProtectedOnly: opts.X5ChainProtectedOnly, Roots: roots,
-		Policy: opts.LeafPolicy, Revocation: opts.Revocation, Now: opts.now(),
+		MaxBytes: limit, ProtectedOnly: opts.X5ChainProtectedOnly, Roots: roots,
+		Policy: policy, Revocation: opts.Revocation, Now: opts.now(),
 	})
 	if err != nil {
 		return 0, TokenClaims{}, fmt.Errorf("statuslist: %w", err)
@@ -106,18 +122,10 @@ func checkCWTX5Chain(ctx context.Context, token []byte, roots *x509.CertPool, re
 	return CheckCWT(token, leaf.PublicKey, alg, ref, opts)
 }
 
-// verifySigner verifies a token signer's certificate chain to roots,
-// on a path opts.LeafPolicy approves and opts.Revocation passes, and
-// returns its leaf.
-func verifySigner(ctx context.Context, chain [][]byte, roots *x509.CertPool, opts VerifyOptions) (*x509.Certificate, error) {
-	leaf, _, err := certchain.VerifyTrustedChainsAt(ctx, chain, roots, opts.LeafPolicy, opts.Revocation, opts.now())
-	return leaf, err
-}
-
-// checkSignerIsIssuer checks a JWT token's signer is the Referenced
-// Token's issuer, as far as opts says who that is: it signs with
-// IssuerKey, or its certificate names Issuer. With neither set the
-// signer isn't bound beyond Roots.
+// checkSignerIsIssuer checks a token's signer is the Referenced Token's
+// issuer, as far as opts says who that is: it signs with IssuerKey, or
+// its certificate names Issuer. With neither set, opts.UnboundSigner
+// has already decided the signer (signerPolicy).
 func checkSignerIsIssuer(leaf *x509.Certificate, opts VerifyOptions) error {
 	if (opts.Issuer == "" && opts.IssuerKey == nil) || certchain.SameKey(leaf.PublicKey, opts.IssuerKey) {
 		return nil

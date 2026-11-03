@@ -10,6 +10,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/internal/strictcbor"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
+	"github.com/idfoundry/oid4vcgo/internal/b64url"
 	"github.com/idfoundry/oid4vcgo/internal/cose"
 	"github.com/idfoundry/oid4vcgo/internal/jwtdate"
 )
@@ -26,6 +27,7 @@ const CWTTokenMediaType = "application/statuslist+cwt" //nolint:gosec // a conte
 // these if IANA assigns different values before this package is relied
 // on in production.
 const (
+	cwtClaimIss        = 1
 	cwtClaimSub        = 2
 	cwtClaimExp        = 4
 	cwtClaimNbf        = 5
@@ -53,7 +55,7 @@ type cwtStatusList struct {
 }
 
 func toCWTStatusList(sl StatusList) (cwtStatusList, error) {
-	raw, err := base64.RawURLEncoding.DecodeString(sl.Lst)
+	raw, err := b64url.Encoding{}.DecodeString(sl.Lst)
 	if err != nil {
 		return cwtStatusList{}, fmt.Errorf("statuslist: decode lst: %w", err)
 	}
@@ -129,7 +131,11 @@ func VerifyTokenCWT(token []byte, pub crypto.PublicKey, alg oid4vci.COSEAlg, opt
 	// of the CWT tag, which no draft-14 example uses.
 	// As large as a JWT Status List Token may be: a CWT list grows with
 	// the credentials it covers just the same.
-	protected, _, raw, err := cose.VerifyMax(alg, pub, token, nil, maxTokenBytes)
+	limit, err := opts.maxTokenBytes()
+	if err != nil {
+		return TokenClaims{}, err
+	}
+	protected, _, raw, err := cose.VerifyMax(alg, pub, token, nil, limit)
 	if err != nil {
 		return TokenClaims{}, fmt.Errorf("statuslist: verify CWT signature: %w", err)
 	}
@@ -148,6 +154,17 @@ func VerifyTokenCWT(token []byte, pub crypto.PublicKey, alg oid4vci.COSEAlg, opt
 	}
 	if !claims.StatusList.Bits.valid() {
 		return TokenClaims{}, fmt.Errorf("statuslist: token's status_list.bits is invalid")
+	}
+	// As for the JWT form: a token naming another issuer isn't this
+	// one's.
+	if v, ok := decoded[cwtClaimIss]; ok {
+		iss, isString := v.(string)
+		if !isString {
+			return TokenClaims{}, fmt.Errorf("statuslist: CWT iss claim isn't a text string")
+		}
+		if iss != "" && opts.Issuer != "" && iss != opts.Issuer {
+			return TokenClaims{}, fmt.Errorf("statuslist: token iss %q isn't the referenced token's issuer %q", iss, opts.Issuer)
+		}
 	}
 
 	var nbf *int64
