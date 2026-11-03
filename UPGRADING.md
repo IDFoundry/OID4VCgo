@@ -6,7 +6,7 @@ everything else. A release that pins a new FAPIgo release passes on
 that release's own breaking changes: see FAPIgo's UPGRADING.md for
 them.
 
-## v0.61.0 → next
+## v0.61.0 → v0.62.0
 
 ### Authorization details (`oid4vci`)
 
