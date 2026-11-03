@@ -148,6 +148,32 @@ earlier, are now accepted, as OpenID4VCI 1.0 Appendix F.1 allows.
   nested object, or a Disclosure named `_sd_alg`, is refused (RFC 9901
   §4.1.1).
 
+### Wallet (`walletflow`, `wallet`)
+
+- **`PendingDeferred` keeps the type requested.** It has `Format`,
+  `VCT` and `DocType`: a `DeferredStore` of your own must keep them
+  (`walletflow/storetest` checks every field; sqlstore's and the mobile
+  stores do). A deferred credential polled after a restart, whose
+  configuration now issues another type, is refused with
+  `ErrReissueRequired` and settled, not stored. Records stored before
+  aren't checked.
+- **A refresh keeps the type too.** `RefreshCredential` returns
+  `ErrReissueRequired` when the configuration's format, vct or doctype
+  differs from the stored credential's: receive it again from a new
+  offer.
+- **Revoked and expired credentials aren't picked.** A copy
+  `CheckStatus` found revoked ranks with an expired one, so a valid copy
+  is presented first; `StoredCredential.Presentable` reports whether a
+  Verifier could accept a credential now, a presentation lists those it
+  couldn't last, and `DefaultSelection` never picks them (it returns
+  `ErrNoMatchingCredential` when only those would answer).
+- **Wallet invocation schemes in `redirect_uri`.** A Verifier's
+  `redirect_uri` to `openid4vp`, `haip-vp`, `openid-credential-offer` or
+  `haip-vci` is refused, as `http` and `javascript` were.
+- **A signed presentation is sent even when its context is cancelled.**
+  `Respond` posts on a context detached from the caller's, for up to 30
+  seconds, once the presentation is signed.
+
 ## v0.61.0 → v0.62.0
 
 ### Authorization details (`oid4vci`)
