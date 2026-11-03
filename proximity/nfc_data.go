@@ -13,9 +13,9 @@ const nfcDataType = "iso.org:18013:nfc"
 
 // NFCDataParameters are classic NFC carrier APDU data-field limits, excluding
 // APDU headers and status words: the command limit 255–65535 and the
-// response limit 256–65536, as ISO/IEC 18013-5 §11.2 (NOTE 2) bounds them,
-// since the mdoc supports short APDUs at least. Platforms must additionally
-// apply their own limits.
+// response limit 256–65536, as ISO/IEC 18013-5 (second edition) §11.2
+// (NOTE 2) bounds them, since the mdoc supports short APDUs at least.
+// Platforms must additionally apply their own limits.
 type NFCDataParameters struct {
 	MaxCommand  int
 	MaxResponse int
@@ -24,14 +24,15 @@ type NFCDataParameters struct {
 // NewNFCDataDeviceSession constructs static NFC engagement for classic NFC-only
 // retrieval (ISO/IEC 18013-5:2021 8.2.2.2 and 8.3.3.1.2). The native platform
 // carries whole encrypted messages using DO53/ENVELOPE/GET RESPONSE.
-func NewNFCDataDeviceSession(random io.Reader, parameters NFCDataParameters) (*DeviceSession, error) {
+//
+// The first argument is unused: NFC-only engagement has no BLE UUID, and
+// key generation always uses the crypto package's own source, as
+// NewDeviceSession's does.
+func NewNFCDataDeviceSession(_ io.Reader, parameters NFCDataParameters) (*DeviceSession, error) {
 	if err := parameters.validate(); err != nil {
 		return nil, err
 	}
-	if random == nil {
-		random = rand.Reader
-	}
-	key, err := ecdsa.GenerateKey(elliptic.P256(), random)
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return nil, fmt.Errorf("proximity: NFC key: %w", err)
 	}
@@ -106,8 +107,9 @@ func ParseNFCDataHandover(hs []byte) (NFCDataParameters, error) {
 
 // parseNFCDataCarriers finds the one classic NFC carrier among carriers
 // and parses its fields. An mdoc's (limits) must carry both data-field
-// limits; a reader's needn't, since ISO/IEC 18013-5 §9.2.2 (Table 1)
-// has the reader not use them, and any it sends are parsed and ignored.
+// limits; a reader's needn't, since ISO/IEC 18013-5 (second edition)
+// §9.2.2 Table 1 has the reader not use them, and any it sends are
+// parsed and ignored.
 func parseNFCDataCarriers(carriers []ndefRecord, limits bool) (NFCDataParameters, error) {
 	var selected *NFCDataParameters
 	for _, carrier := range carriers {
@@ -246,8 +248,9 @@ func NewNFCNegotiatedDataReaderSession(hs, hr []byte, opts ...ReaderOption) (*Re
 // NewNFCHandoverRequestWithNFCData offers classic NFC in addition to the BLE
 // modes. The resulting original Hr must be retained until session construction.
 //
-// The NFC carrier carries its version alone: ISO/IEC 18013-5 §9.2.2 (Table 1)
-// has the data-field limits be the mdoc's, not the reader's. parameters is
+// The NFC carrier carries its version alone: ISO/IEC 18013-5 (second
+// edition) §9.2.2 Table 1 has the data-field limits be the mdoc's, not
+// the reader's. parameters is
 // still checked, as the reader's own limits, but isn't sent; the reader
 // passes its controller's limit to the exchanges instead (nfcapdu.Transact).
 func NewNFCHandoverRequestWithNFCData(random io.Reader, parameters NFCDataParameters, modes ...BLEMode) ([]byte, error) {
