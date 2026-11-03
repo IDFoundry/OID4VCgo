@@ -186,6 +186,22 @@ type StoreAssurance interface {
 	Capabilities() StoreCapabilities
 }
 
+// SealingStore is implemented by a TransactionStore that says whether it
+// seals each transaction's response decryption key and Result where
+// it's stored, as a TransactionCodec with a Sealer does. Under
+// AssuranceProduction, NewTransactions requires a store that seals
+// them, unless TransactionsConfig.UnsealedStore says the store is as
+// protected as the Verifier's own keys.
+type SealingStore interface {
+	SealsTransactions() bool
+}
+
+// MaxProductionTransactionLifetime is the longest
+// TransactionsConfig.Lifetime AssuranceProduction accepts: a request
+// stays answerable for its Lifetime, and its result is kept for as long
+// again.
+const MaxProductionTransactionLifetime = time.Hour
+
 // Errors Transactions returns.
 var (
 	ErrTransactionUnknown  = errors.New("verifier: unknown presentation request")
@@ -207,8 +223,18 @@ type TransactionsConfig struct {
 	// A same-device response_code expires with its request, not
 	// Lifetime after the answer: one answered just before the request
 	// expires leaves the browser little time to redeem it. Zero means
-	// 10 minutes.
+	// 10 minutes; under AssuranceProduction it's at most
+	// MaxProductionTransactionLifetime, since a completed request's
+	// claims are kept for twice it.
 	Lifetime time.Duration
+
+	// UnsealedStore accepts, under AssuranceProduction, a store that
+	// doesn't seal transactions' response decryption keys and Results
+	// (see SealingStore): whoever can read the store, or its backups,
+	// then reads the claims holders disclosed, and can decrypt answers
+	// in flight. Set it only where the store is as protected as the
+	// Verifier's own keys (process memory, say).
+	UnsealedStore bool
 
 	// Verify is the verification every answer gets: its IssuerKeys,
 	// MdocIssuerKeys, TrustedAuthorities, MaxKeyBindingAge and Now.
@@ -550,6 +576,12 @@ func checkProductionTransactions(store TransactionStore, cfg TransactionsConfig)
 	asserter, ok := store.(StoreAssurance)
 	if !ok || !asserter.Capabilities().Durable || !asserter.Capabilities().AtomicUpdate {
 		return errors.New("verifier: transactions: the store must implement verifier.StoreAssurance with Durable and AtomicUpdate under AssuranceProduction")
+	}
+	if sealing, ok := store.(SealingStore); (!ok || !sealing.SealsTransactions()) && !cfg.UnsealedStore {
+		return errors.New("verifier: transactions: under AssuranceProduction, the store must seal transactions (verifier.SealingStore: a TransactionCodec with a Sealer, such as verifier.AESGCMSealer), or set unsealed_store where it's as protected as the Verifier's keys")
+	}
+	if cfg.Lifetime > MaxProductionTransactionLifetime {
+		return fmt.Errorf("verifier: transactions: lifetime is %v; under AssuranceProduction it must be at most %v", cfg.Lifetime, MaxProductionTransactionLifetime)
 	}
 	if err := checkProductionKeySources(cfg.Verify); err != nil {
 		return fmt.Errorf("verifier: transactions: %w", err)

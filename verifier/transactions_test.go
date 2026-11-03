@@ -495,6 +495,27 @@ func TestNewTransactions_Validates(t *testing.T) {
 			t.Errorf("%s under AssuranceProduction: %v", name, err)
 		}
 	}
+	// The store seals what it keeps, or the config says it needn't; and
+	// a request isn't answerable, nor its claims kept, for long.
+	sound := verifier.TransactionsConfig{RequestURIBase: txBase, Verify: verify, NoStatusCheck: true}
+	for name, s := range map[string]verifier.TransactionStore{"unsealed": unsealedTransactionStore{store}, "not saying": struct {
+		verifier.TransactionStore
+		verifier.StoreAssurance
+	}{store, assured}} {
+		if _, err := verifier.NewTransactions(prod, s, sound); err == nil || !strings.Contains(err.Error(), "unsealed_store") {
+			t.Errorf("%s store under AssuranceProduction: %v", name, err)
+		}
+		allowed := sound
+		allowed.UnsealedStore = true
+		if _, err := verifier.NewTransactions(prod, s, allowed); err != nil {
+			t.Errorf("%s store with UnsealedStore: %v", name, err)
+		}
+	}
+	long := sound
+	long.Lifetime = verifier.MaxProductionTransactionLifetime + time.Second
+	if _, err := verifier.NewTransactions(prod, assured, long); err == nil || !strings.Contains(err.Error(), "lifetime") {
+		t.Errorf("lifetime past the production cap: %v", err)
+	}
 	// Status is decided on the transactions config, not per request.
 	withVerifyStatus := verify
 	withVerifyStatus.NoStatusCheck = true
@@ -510,6 +531,18 @@ type assuredTransactionStore struct{ verifier.TransactionStore }
 func (assuredTransactionStore) Capabilities() verifier.StoreCapabilities {
 	return verifier.StoreCapabilities{Durable: true, AtomicUpdate: true}
 }
+
+func (assuredTransactionStore) SealsTransactions() bool { return true }
+
+// unsealedTransactionStore is durable and atomic, but keeps its
+// transactions unsealed.
+type unsealedTransactionStore struct{ verifier.TransactionStore }
+
+func (unsealedTransactionStore) Capabilities() verifier.StoreCapabilities {
+	return verifier.StoreCapabilities{Durable: true, AtomicUpdate: true}
+}
+
+func (unsealedTransactionStore) SealsTransactions() bool { return false }
 
 func TestTransactions_HandlerEdges(t *testing.T) {
 	f := newTxFixture(t, func(c *verifier.TransactionsConfig) { c.Verify.Now = nil }) // the real clock
