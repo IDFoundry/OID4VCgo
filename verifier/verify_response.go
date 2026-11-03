@@ -348,7 +348,9 @@ type DiscardedPresentation struct {
 // req.ExpectedNonce per §14.1.2/Appendix A.4, requiring it exactly when
 // the Credential Query's own RequiresCryptographicHolderBinding is
 // true), and checks the result via
-// dcql.CredentialQuery.SatisfiedBySDJWTVCClaims (§8.6 point 3).
+// dcql.CredentialQuery.SatisfiedBySDJWTVCPresentation (§8.6 point 3),
+// which can't check an array element's position: a presentation
+// leaves out the elements it doesn't disclose.
 //
 // For "mso_mdoc", it base64url-decodes the Presentation into an
 // oid4vpmdoc.Document, resolves the Issuer key via req.MdocIssuerKeys
@@ -755,7 +757,7 @@ func (v *Verifier) verifySDJWTVCPresentation(ctx context.Context, cq dcql.Creden
 		return nil, nil, newError(reason, "verify", err)
 	}
 
-	if err := cq.SatisfiedBySDJWTVCClaims(claims); err != nil {
+	if err := cq.SatisfiedBySDJWTVCPresentation(claims); err != nil {
 		return nil, nil, newError(ReasonNotAnswered, "satisfied by sdjwtvc claims", err)
 	}
 	if !req.AllowUnrequestedClaims {
