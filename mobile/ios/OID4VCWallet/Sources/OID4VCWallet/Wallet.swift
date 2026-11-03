@@ -658,7 +658,7 @@ public final class Wallet: @unchecked Sendable {
         /// as it was when the issuer deferred the new one.
         public let credential: CredentialSummary
         /// The deferred credential to poll, when the issuer deferred it:
-        /// it settles as a new credential.
+        /// once issued, it replaces the credential under the same ID.
         public let deferred: DeferredCredential?
     }
 

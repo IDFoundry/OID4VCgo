@@ -676,7 +676,7 @@ public class Wallet(
          * it was when the issuer deferred the new one.
          */
         val credential: CredentialSummary,
-        /** The deferred credential to poll, when the issuer deferred it: it settles as a new credential. */
+        /** The deferred credential to poll, when the issuer deferred it: once issued, it replaces the credential under the same ID. */
         val deferred: DeferredCredential? = null,
     )
 
