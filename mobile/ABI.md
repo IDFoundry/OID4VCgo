@@ -751,16 +751,16 @@ been published in a release.
 |---|---|
 | `Wallet.StartNFCProximityPresentationWithModes(modesJSON)` | Static NFC handover to BLE; modes use the existing JSON string array |
 | `Wallet.StartNFCNegotiatedProximityPresentationWithModes(modesJSON)` | Prepare negotiated handover; finish it before starting the selected BLE transport |
-| `Wallet.StartNFCDataProximityPresentation(maxCommand, maxResponse)` | Static NFC-only engagement; APDU data-field limits 1–65535 and 1–65536, excluding headers/status |
-| `Wallet.StartNFCNegotiatedDataProximityPresentation(maxCommand, maxResponse)` | Negotiated NFC-only engagement; complete Hr/Hs before retrieval |
+| `Wallet.StartNFCDataProximityPresentation(maxCommand, maxResponse)` | Static NFC-only engagement; APDU data-field limits 255–65535 and 256–65536 (ISO/IEC 18013-5 (second edition) §11.2), excluding headers/status |
+| `Wallet.StartNFCNegotiatedDataProximityPresentation(maxCommand, maxResponse)` | Negotiated NFC-only engagement; complete Hr/Hs before retrieval. The Hs carries these limits whatever the reader's Hr holds |
 | `ProximityPresentation.HandoverSelect()` | Copy of NDEF Hs without NLEN; nil for QR or before negotiated selection |
 | `ProximityPresentation.HandleHandoverRequest(hr)` | Complete NDEF Hr to Hs; freezes the accepted selection; repeated identical Hr is idempotent before establishment |
 | `NewNFCHandoverRequest(modesJSON)` | Reader's Hr for supported mdoc BLE modes; retain exact returned bytes |
-| `NewNFCHandoverRequestWithNFCData(modesJSON, maxCommand, maxResponse)` | Offer BLE plus classic NFC; retain exact Hr |
+| `NewNFCHandoverRequestWithNFCData(modesJSON, maxCommand, maxResponse)` | Offer BLE plus classic NFC; retain exact Hr. The limits are checked but not sent: the carrier holds its version alone (ISO/IEC 18013-5 (second edition) §9.2.2), and the reader keeps to the mdoc's limits from the Hs |
 | `ProximityReader.StartFromHandover(hs)` | Start a reader from a static NDEF Hs |
 | `ProximityReader.StartFromNegotiatedHandover(hs, hr)` | Start from the exact negotiated NDEF messages |
 | `ProximityReader.StartFromNFCDataHandover(hs)` | Classic NFC-only reader with the same authentication and issuer policy |
-| `ProximityReader.StartFromNegotiatedNFCDataHandover(hs, hr)` | Validate negotiated NFC carrier limits against Hr; bind both exact messages |
+| `ProximityReader.StartFromNegotiatedNFCDataHandover(hs, hr)` | Check Hr offered classic NFC and Hs selected it with the mdoc's limits; bind both exact messages |
 | `ParseNfcDataParameters(hs)` | Validate an NFC-only Hs; return `{"abi", "max_command", "max_response"}` |
 
 For NFC, `Engagement().qr_code` is empty. Static roles share one UUID;
@@ -792,11 +792,11 @@ and cancellation.
 | `NFCHolder.RefuseMessage()` | Drop a message the session couldn't take; returns the `6985` response |
 | `NFCHolder.Deactivate(handoverCommitted, qrSelected)` | Field loss: `NFCDeactivation.Cancel` (a negotiated Hs was answered but not read: end the presentation) and `DataClosed` (NFC data retrieval ended) |
 | `NFCHolder.Close()` | End NFC data retrieval |
-| `ClassifyNFCCommand(apdu)` | `NFCCommandOther`, `NFCCommandSelectNDEF`, `NFCCommandSelectData`, `NFCCommandSelectDataNoFCI` or `NFCCommandSelectOther`, for QR/NFC arbitration |
+| `ClassifyNFCCommand(apdu)` | `NFCCommandOther`, `NFCCommandSelectNDEF`, `NFCCommandSelectData` (a SELECT of the NFC data application with P2 `0C`, ISO/IEC 18013-5 Table 8, or `00`) or `NFCCommandSelectOther`, for QR/NFC arbitration. `NFCCommandSelectDataNoFCI` is kept for compatibility and no longer reported |
 | `NewNFCHandoverRead(maxTransceive, hr)` | Reader: an `NFCExchange` reading the Hs, negotiating with `hr` when the tag offers TNEP (refused when `hr` is nil). `Negotiated()` afterwards |
 | `NewNFCTransact(maxTransceive, maxCommand, maxResponse, message)` | Reader: an `NFCExchange` sending one session message to the NFC data application and reading the answer |
 | `NFCExchange.Done()`, `Command()`, `WaitMillis()`, `Next(response)`, `Result()`, `Close()` | Until `Done`: wait `WaitMillis` (TNEP's waiting time; native code sleeps, so cancellation can interrupt it), send `Command`, pass the response to `Next`. Then `Result` is the Hs or the answer (`invalid_input` on a protocol failure). Safe from any thread: each call waits for one in progress, except `Close`, which ends a waiting `Next`. `Close` an abandoned exchange: until it's done, it holds a goroutine |
-| `NFCSelectDataApplication()`, `CheckNFCDataApplicationSelected(response)` | Reader: select the NFC data application and check its response |
+| `NFCSelectDataApplication()`, `CheckNFCDataApplicationSelected(response)` | Reader: select the NFC data application (ISO/IEC 18013-5 Table 8: P2 `0C`, no Le) and check its response (success; data in it is ignored) |
 
 ### QR and BLE presentation
 
@@ -853,6 +853,12 @@ verifier asking for an mdoc over BLE. It doesn't need a `Wallet`.
 may be nil for a reader that doesn't sign. Its `Start(qrCode)` begins a
 `ProximityReaderSession` for the holder's QR code. A QR code the reader
 can't use is `invalid_input`.
+
+The reader verifies IssuerAuth and the device signature with ES256
+(P-256) or EdDSA (Ed25519) only: an mdoc whose document signer or device
+key is on another curve is refused, with an error naming the curve. The
+session's ephemeral keys are P-256 (cipher suite 1); the mdoc's may come
+compressed.
 
 The configuration is `{"issuer_roots", "issuer_roots_by_doctype",
 "reader_key_id", "reader_chain", "max_clock_skew_seconds",

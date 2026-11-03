@@ -95,8 +95,74 @@ func TestNFCDataNegotiatedRejectsUnofferedCarrier(t *testing.T) {
 	}
 }
 
+// TestNFCDataRequestCarriesNoLimits: ISO/IEC 18013-5 (second edition)
+// §9.2.2 Table 1 has the data-field limits be the mdoc's, not used by the
+// reader. Our Hr's NFC
+// carrier is its version alone; the mdoc answers a reader's, with or without
+// limits (as earlier readers sent them), with its own.
+func TestNFCDataRequestCarriesNoLimits(t *testing.T) {
+	own := NFCDataParameters{1000, 2000}
+	hr, err := NewNFCHandoverRequestWithNFCData(nil, NFCDataParameters{255, 256})
+	if err != nil {
+		t.Fatal(err)
+	}
+	carriers, err := parseNFCRequestCarriers(hr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range carriers {
+		if string(c.typ) == nfcDataType && !bytes.Equal(c.payload, []byte{1}) {
+			t.Errorf("Hr NFC carrier = %X, want its version alone", c.payload)
+		}
+	}
+	legacy := func(payload []byte) []byte {
+		embedded, err := encodeNDEF([]ndefRecord{
+			{tnf: 1, typ: []byte("cr"), payload: []byte{1, 2}},
+			{tnf: 1, typ: []byte("ac"), payload: []byte{1, 3, 'n', 'f', 'c', 0}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		hr, err := encodeNDEF([]ndefRecord{
+			{tnf: 1, typ: []byte("Hr"), payload: append([]byte{0x15}, embedded...)},
+			{tnf: 4, typ: []byte(nfcDataType), id: []byte("nfc"), payload: payload},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return hr
+	}
+	for name, hr := range map[string][]byte{
+		"ours":         hr,
+		"version only": legacy([]byte{1}),
+		"with limits":  legacy(nfcDataPayload(NFCDataParameters{255, 256})),
+	} {
+		h, err := NewNFCNegotiatedDataDeviceSession(nil, own)
+		if err != nil {
+			t.Fatal(err)
+		}
+		hs, err := h.HandleHandoverRequest(hr)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if got, err := ParseNFCDataHandover(hs); err != nil || got != own {
+			t.Errorf("%s: selected %+v, %v; want the mdoc's own %+v", name, got, err, own)
+		}
+		if _, err := NewNFCNegotiatedDataReaderSession(hs, hr, devReader()...); err != nil {
+			t.Errorf("%s: reader: %v", name, err)
+		}
+	}
+	h, err := NewNFCNegotiatedDataDeviceSession(nil, own)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.HandleHandoverRequest(legacy([]byte{2})); err == nil {
+		t.Error("accepted an NFC carrier of another version")
+	}
+}
+
 func TestNFCDataInvalidLimits(t *testing.T) {
-	for _, p := range []NFCDataParameters{{0, 256}, {256, 0}, {65536, 256}, {255, 65537}, {-1, 1}} {
+	for _, p := range []NFCDataParameters{{0, 256}, {256, 0}, {254, 256}, {255, 255}, {65536, 256}, {255, 65537}, {-1, 1}} {
 		if _, err := NewNFCDataDeviceSession(nil, p); err == nil {
 			t.Fatalf("accepted %+v", p)
 		}
@@ -128,7 +194,7 @@ func FuzzNFCDataRequest(f *testing.F) {
 	f.Fuzz(func(t *testing.T, b []byte) {
 		carriers, err := parseNFCRequestCarriers(b)
 		if err == nil {
-			_, _ = parseNFCDataCarriers(carriers)
+			_, _ = parseNFCDataCarriers(carriers, false)
 		}
 	})
 }

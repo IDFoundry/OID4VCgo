@@ -55,7 +55,6 @@ internal class CombinedEngagementArbiter(
         if (closed || selected.value == SelectedEngagement.QR) return false
         return when (kind) {
             NfcCommandKind.SELECT_DATA -> nfcData && dataReady && select(true)
-            NfcCommandKind.SELECT_DATA_NO_FCI -> false
             else -> true // Type 4 discovery does not commit a handover.
         }
     }

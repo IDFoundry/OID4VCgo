@@ -362,15 +362,17 @@ func (t *type4Reader) command(c []byte, wait time.Duration) ([]byte, error) {
 func uint16At(b []byte, i int) int { return int(b[i])<<8 | int(b[i+1]) }
 
 // SelectDataApplication is the command selecting the mdoc's NFC data
-// application; its response must be success alone.
+// application, as ISO/IEC 18013-5 (second edition) §11.2 Table 8 has
+// it: P2 0x0C and no Le.
 func SelectDataApplication() []byte {
-	return concat([]byte{0, insSelect, 4, 0, lo(len(DataApplication))}, DataApplication, []byte{0})
+	return concat([]byte{0, insSelect, 4, 0x0c, lo(len(DataApplication))}, DataApplication)
 }
 
 // CheckDataApplicationSelected checks the response to
-// SelectDataApplication.
+// SelectDataApplication: success. Table 9's response has no data, but
+// one an mdoc sends with data (an FCI) is accepted too.
 func CheckDataApplicationSelected(resp []byte) error {
-	if !bytes.Equal(resp, response(swOK, nil)) {
+	if _, sw, err := status(resp); err != nil || sw != swOK {
 		return errors.New("nfcapdu: NFC data application unavailable")
 	}
 	return nil

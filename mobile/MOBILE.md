@@ -29,9 +29,28 @@ Annex D; Kotlin host tests cover arbitration, the handover gate,
 transports and cancellation.
 Physical interop with Multipaz passed in every mode and both directions
 at 6aef12e (#659), when the APDU protocols ran in Kotlin; the Go
-`nfcapdu` path hasn't been re-tested on phones. Normative specification
-review remains pending. See `ABI.md`'s NFC additions and
-`../proximity/README.md`.
+`nfcapdu` path hasn't been re-tested on phones. A review against the
+ISO/IEC 18013-5 second-edition draft (2026-11) found and fixed four
+interop gaps:
+- **SELECT.** The holder refused the data application SELECT §11.2
+  Table 8 specifies (P2 `0C`, no Le), accepting only P2 `00`, and our
+  reader sent P2 `00` with an Le. The holder now accepts both, and the
+  reader sends Table 8's and tolerates a response with data. Multipaz
+  passed because its reader evidently sends P2 `00`.
+- **Hr limits.** The data-field limits are the mdoc's alone (§9.2.2
+  Table 1): our negotiated holder refused a reader's Hr without them,
+  and our reader sent them. The reader's carrier is now its version
+  alone, the holder answers with its own limits, and the limits are at
+  least 255/256 (§11.2 NOTE 2).
+- **Compressed EDeviceKey.** §12.7.2 lets the mdoc compress its
+  ephemeral key; the reader now accepts it.
+- **LE Role 0x02.** A static Hs offering both roles, peripheral
+  preferred, now gets mdoc central client mode, as §11.1.3.1 says the
+  reader should take.
+A holder from before these fixes refuses our reader's NFC data SELECT
+and a negotiated Hr without limits, so both sides need the same
+release. Other normative review remains pending. See `ABI.md`'s NFC
+additions and `../proximity/README.md`.
 
 The Kotlin owner delays BLE resource creation until all Hs bytes have
 been read. Replacing it awaits bounded cleanup; HCE services never

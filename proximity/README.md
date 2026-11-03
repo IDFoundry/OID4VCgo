@@ -46,12 +46,24 @@ For classic NFC-only retrieval, use `NewNFCDataDeviceSession` with
 available through `ParseNFCDataHandover`. For TNEP NFC-only, use
 `NewNFCNegotiatedDataDeviceSession`,
 `NewNFCHandoverRequestWithNFCData`, and `NewNFCNegotiatedDataReaderSession`.
-The reader checks the selected limits against its original offer.
+The data-field limits are the mdoc's (at least 255 and 256 bytes): the
+reader's Hr carries the NFC carrier's version alone, and the mdoc's Hs
+its own limits, which the reader keeps to (ISO/IEC 18013-5 second
+edition §9.2.2 and §11.2). The reader selects the data application with
+P2 `0C` and no Le (§11.2 Table 8); the holder also accepts P2 `00`.
 `nfcapdu` wraps complete encrypted messages in DO53 and implements
 ENVELOPE/GET RESPONSE. Unit tests include the exact Annex D
 negotiated transcript and credential verification for all three paths;
 real-device interoperability and specification review remain required
 before claiming conformance.
+
+Keys and algorithms: the session uses cipher suite 1, so both ephemeral
+keys are P-256; the reader accepts the mdoc's EDeviceKey compressed or
+uncompressed, and sends EReaderKey uncompressed. IssuerAuth and the
+device signature are verified with ES256 (P-256) or EdDSA (Ed25519)
+only, as `credential/mdoc` supports: an mdoc whose document signer or
+device key is on another curve (P-384, P-521, brainpool) is refused with
+an error naming the curve.
 
 The BLE details below follow ISO/IEC 18013-5:2021 §8.3.3.1.1 (Tables 11–13),
 cross-checked against [Multipaz](https://github.com/openwallet-foundation/multipaz)'s

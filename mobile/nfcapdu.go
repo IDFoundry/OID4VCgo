@@ -7,12 +7,15 @@ import (
 	"github.com/idfoundry/oid4vcgo/proximity/nfcapdu"
 )
 
-// What a command APDU selects, from ClassifyNFCCommand.
+// What a command APDU selects, from ClassifyNFCCommand. A SELECT of the
+// NFC data application, with P2 0x0C (ISO/IEC 18013-5 Table 8) or 0, is
+// NFCCommandSelectData; NFCCommandSelectDataNoFCI keeps its value within
+// the ABI but is no longer reported.
 const (
 	NFCCommandOther           = int(nfcapdu.CommandOther)
 	NFCCommandSelectNDEF      = int(nfcapdu.CommandSelectNDEF)
 	NFCCommandSelectData      = int(nfcapdu.CommandSelectData)
-	NFCCommandSelectDataNoFCI = int(nfcapdu.CommandSelectDataNoFCI)
+	NFCCommandSelectDataNoFCI = NFCCommandSelectData + 1
 	NFCCommandSelectOther     = int(nfcapdu.CommandSelectOther)
 )
 

@@ -2,6 +2,9 @@ package proximity
 
 import (
 	"bytes"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"errors"
 	"testing"
 
@@ -140,5 +143,44 @@ func TestDecodeSessionDataRefusesItemFlood(t *testing.T) {
 		if allocs > 100 {
 			t.Errorf("inner %d: decodeSessionData made %v allocations, want it refused before decoding", inner, allocs)
 		}
+	}
+}
+
+// TestCompressedEDeviceKey: an mdoc may send EDeviceKey as a compressed
+// point, y its sign bit (ISO/IEC 18013-5 second edition §12.7.2); EReaderKey, and
+// a point off the curve, stay refused.
+func TestCompressedEDeviceKey(t *testing.T) {
+	for range 4 {
+		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, err := key.PublicKey.Bytes()
+		if err != nil {
+			t.Fatal(err)
+		}
+		compressed := mustCBOR(t, map[int]any{1: 2, -1: 1, -2: b[1:33], -3: b[64]&1 == 1})
+		edkb, err := wrapTag24(compressed)
+		if err != nil {
+			t.Fatal(err)
+		}
+		de, err := encodeQREngagement(mustCBOR(t, []any{1, cbor.RawMessage(edkb)}), make([]byte, 16), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		parsed, err := parseDeviceEngagement(de)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !parsed.eDeviceKey.Equal(&key.PublicKey) {
+			t.Error("the decompressed EDeviceKey isn't the mdoc's key")
+		}
+		if _, err := decodeCoseKey(compressed); err == nil {
+			t.Error("a compressed EReaderKey was accepted")
+		}
+	}
+	offCurve := mustCBOR(t, map[int]any{1: 2, -1: 1, -2: bytes.Repeat([]byte{0xff}, 32), -3: true})
+	if _, err := decodeEDeviceKey(offCurve); err == nil {
+		t.Error("a compressed point off P-256 was accepted")
 	}
 }

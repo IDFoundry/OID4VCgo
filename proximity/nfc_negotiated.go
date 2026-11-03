@@ -175,8 +175,12 @@ func selectNFCBLE(payload []byte, offers []nfcBLEOffer) (BLEMode, []byte, error)
 	if err != nil {
 		return 0, nil, err
 	}
+	// LE Role 0 is peripheral only (mdoc peripheral server mode), 1 central
+	// only. 2 and 3 offer both, preferring one; the reader takes mdoc
+	// central client mode either way, as ISO/IEC 18013-5 (second edition)
+	// §11.1.3.1 says it should when the mdoc supports both.
 	mode := CentralClient
-	if role == 0 || role == 2 {
+	if role == 0 {
 		mode = PeripheralServer
 	}
 	if offers == nil {
