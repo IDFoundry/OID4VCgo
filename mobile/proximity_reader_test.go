@@ -22,7 +22,7 @@ import (
 // readerDecisions are the decisions a production reader's configuration
 // makes, as JSON object members: any IACA in issuer_roots for any
 // document type, and no revocation checks.
-const readerDecisions = `"any_issuer_for_any_type": true, "no_revocation_check": ["issuer", "status"]`
+const readerDecisions = `"any_issuer_for_any_type": true, "no_revocation_check": ["issuer", "status"], "status": "decline"`
 
 // readerConfig is a production ProximityReader's configuration
 // accepting h's issuer, signing as reader when it isn't nil, and the
@@ -30,7 +30,7 @@ const readerDecisions = `"any_issuer_for_any_type": true, "no_revocation_check":
 func readerConfig(t *testing.T, h harness, reader *testReader, extra map[string]any) (string, KeyStore) {
 	t.Helper()
 	cfg := map[string]any{
-		"issuer_roots": issuerRootsPEM(t, h), "any_issuer_for_any_type": true, "no_revocation_check": []string{"issuer", "status"},
+		"issuer_roots": issuerRootsPEM(t, h), "any_issuer_for_any_type": true, "no_revocation_check": []string{"issuer", "status"}, "status": "decline",
 	}
 	var ks KeyStore
 	if reader != nil {
@@ -81,7 +81,7 @@ func TestSessions_ProximityReader(t *testing.T) {
 			mdocID = c.ID
 		}
 	}
-	cfg, ks := readerConfig(t, h, &reader, nil)
+	cfg, ks := readerConfig(t, h, &reader, map[string]any{"status": "check"})
 	rd, err := NewProximityReader(cfg, ks)
 	if err != nil {
 		t.Fatal(err)
@@ -103,11 +103,12 @@ func TestSessions_ProximityReader(t *testing.T) {
 		BLEMode     string `json:"ble_mode"`
 		Ident       string
 		Signed      bool
+		CheckStatus bool `json:"check_status"`
 	}](t, s.Engagement())
 	holderUUID := decode[struct {
 		ServiceUUID string `json:"service_uuid"`
 	}](t, holder.Engagement()).ServiceUUID
-	if eng.ServiceUUID != holderUUID || eng.BLEMode != "peripheral_server" || eng.Ident == "" || !eng.Signed {
+	if eng.ServiceUUID != holderUUID || eng.BLEMode != "peripheral_server" || eng.Ident == "" || !eng.Signed || !eng.CheckStatus {
 		t.Errorf("Engagement = %s", s.Engagement())
 	}
 
@@ -424,7 +425,7 @@ func TestNewProximityReader_Refuses(t *testing.T) {
 // types, so a production reader needs no any_issuer_for_any_type.
 func TestNewProximityReader_RootsByDocType(t *testing.T) {
 	h := newHarness(t, false)
-	cfg := `{"issuer_roots_by_doctype": {"org.example.test.1": ` + mustJSON(issuerRootsPEM(t, h)) + `}, "no_revocation_check": ["issuer", "status"]}`
+	cfg := `{"issuer_roots_by_doctype": {"org.example.test.1": ` + mustJSON(issuerRootsPEM(t, h)) + `}, "no_revocation_check": ["issuer", "status"], "status": "decline"}`
 	if _, err := NewProximityReader(cfg, nil); err != nil {
 		t.Errorf("NewProximityReader with issuer_roots_by_doctype only: %v", err)
 	}
@@ -448,6 +449,9 @@ func TestNewProximityReader_Decisions(t *testing.T) {
 		"named and declined":              {`{` + roots + `, "any_issuer_for_any_type": true, "revocation": ["issuer", "status"], "no_revocation_check": ["issuer"]}`, "both"},
 		"an unknown role":                 {`{` + roots + `, "any_issuer_for_any_type": true, "no_revocation_check": ["issuer", "status", "verifier"]}`, "verifier"},
 		"the removed production":          {`{` + roots + `, ` + readerDecisions + `, "production": true}`, `"production"`},
+		"status undecided":                {`{` + roots + `, "any_issuer_for_any_type": true, "no_revocation_check": ["issuer", "status"]}`, `status is unset`},
+		"status misspelt":                 {`{` + roots + `, "any_issuer_for_any_type": true, "no_revocation_check": ["issuer", "status"], "status": "checked"}`, `"checked"`},
+		"status checked":                  {`{` + roots + `, "any_issuer_for_any_type": true, "no_revocation_check": ["issuer", "status"], "status": "check"}`, ""},
 		"decided":                         {`{` + roots + `, ` + readerDecisions + `}`, ""},
 		"development, explicitly off":     {`{` + roots + `, ` + readerDecisions + `, "development": false}`, ""},
 		"development":                     {`{` + roots + `, "development": true}`, ""},

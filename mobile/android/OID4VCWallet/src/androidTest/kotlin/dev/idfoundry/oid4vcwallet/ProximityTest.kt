@@ -95,6 +95,7 @@ class ProximityTest {
         val env = TestEnv().also { envs += it }
         val readerSetup = json.parseToJsonElement(env.env.proximityReader(KeyStoreAdapter(keys))).jsonObject
         val readerConfig = json.decodeFromString(ProximityReaderConfiguration.serializer(), readerSetup["reader_config"]!!.jsonPrimitive.content)
+            .copy(statusCheck = ProximityReaderConfiguration.StatusCheck.CHECK)
         val wallet = Wallet(
             env.configuration.copy(
                 mdocReaderRoots = readerSetup["mdoc_reader_roots"]!!.jsonPrimitive.content,
@@ -145,13 +146,19 @@ class ProximityTest {
             assertEquals(WalletException.Code.invalidInput, e.code)
         }
         ProximityReader(ProximityReaderConfiguration(issuerRoots = issuerRoots, development = true))
-        ProximityReader(
-            ProximityReaderConfiguration(
-                issuerRoots = issuerRoots,
-                noRevocationCheck = listOf(ProximityReaderConfiguration.RevocationRole.ISSUER, ProximityReaderConfiguration.RevocationRole.STATUS),
-                anyIssuerForAnyType = true,
-            ),
+        val decided = ProximityReaderConfiguration(
+            issuerRoots = issuerRoots,
+            noRevocationCheck = listOf(ProximityReaderConfiguration.RevocationRole.ISSUER, ProximityReaderConfiguration.RevocationRole.STATUS),
+            anyIssuerForAnyType = true,
         )
+        // The status decision is one of a production reader's.
+        try {
+            ProximityReader(decided)
+            throw AssertionError("a production reader without a status decision was configured")
+        } catch (e: WalletException) {
+            assertEquals(WalletException.Code.invalidInput, e.code)
+        }
+        ProximityReader(decided.copy(statusCheck = ProximityReaderConfiguration.StatusCheck.CHECK))
     }
 
     @Test
@@ -181,6 +188,8 @@ class ProximityTest {
         assertEquals(setOf("family_name"), claims.keys)
         assertEquals("signature", verified.deviceAuth)
         assertTrue(verified.statusList != null)
+        assertTrue(reader.checksStatus)
+        assertEquals("checked before the session reported it verified", MdocStatus.Valid, verified.status)
         assertTrue(verified.issuerChain.size >= 2)
         assertEquals(ProximityPresentation.State.Presented(false), awaitFinal(holder.state) { it.isFinal })
 
@@ -188,6 +197,20 @@ class ProximityTest {
         assertEquals(MdocStatus.Valid, reader.checkStatus())
         s.env.env.revoke()
         assertEquals(MdocStatus.Revoked, reader.checkStatus())
+    }
+
+    /** A reader that checks status never reports a revoked document verified: the session fails with `document_not_valid`. */
+    @Test
+    fun readerRefusesARevokedDocument(): Unit = runBlocking {
+        val s = setup()
+        s.env.env.revoke()
+        val (holder, reader) = start(s)
+        awaitRequest(holder)
+        holder.respond(0, s.mdocID, listOf(MdocPresentation.Element(NAMESPACE, "family_name")))
+        val result = awaitFinal(reader.state) { it.isFinal }
+        val error = ((result as? ProximityReaderSession.State.Failed)?.error as? WalletException) ?: throw AssertionError("reader: $result")
+        assertEquals(WalletException.Code.documentNotValid, error.code)
+        assertEquals("invalid", error.protocolError)
     }
 
     /** Actual Kotlin/Go bindings and Keystore, simulated NFC APDUs and BLE messages. */

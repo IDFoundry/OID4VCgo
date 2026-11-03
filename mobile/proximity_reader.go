@@ -34,7 +34,15 @@ type ProximityReader struct {
 	// list's signer.
 	crls             *crlSet
 	statusRevocation certrevocation.Checker
+	// checksStatus is the configuration's "status": "check".
+	checksStatus bool
 }
+
+// A reader configuration's "status" values.
+const (
+	statusCheck   = "check"
+	statusDecline = "decline"
+)
 
 // proximityReaderConfig is NewProximityReader's configuration.
 type proximityReaderConfig struct {
@@ -90,6 +98,15 @@ type proximityReaderConfig struct {
 	// IssuerRoots needs it: otherwise name each document type's IACAs in
 	// IssuerRootsByDocType.
 	AnyIssuerForAnyType bool `json:"any_issuer_for_any_type,omitempty"`
+	// Status is whether a verified document's revocation status is
+	// checked before the session reports it: "check" or "decline"
+	// (statusCheck, statusDecline). Outside Development, one is required.
+	// With "check", the wrappers call CheckStatus themselves once the
+	// holder's answer verifies, and report the session verified only on
+	// "valid" or "none" (check_status in Engagement); with "decline",
+	// nothing checks it, for a reader where something else stands in.
+	// In development, unset is "decline".
+	Status string `json:"status,omitempty"`
 	// Development relaxes what production requires, for a reader trying
 	// out a development issuer's documents. Never ship an app with it
 	// set. Without it, the reader runs at production assurance
@@ -167,6 +184,9 @@ func NewProximityReader(configJSON string, keys KeyStore) (*ProximityReader, err
 	if err := r.configureRevocation(cfg); err != nil {
 		return nil, err
 	}
+	if err := r.configureStatus(cfg); err != nil {
+		return nil, err
+	}
 	switch {
 	case cfg.ReaderKeyID == "" && cfg.ReaderChain == "":
 	case cfg.ReaderKeyID == "" || cfg.ReaderChain == "" || keys == nil:
@@ -211,6 +231,25 @@ func (r *ProximityReader) configureDecisions(cfg proximityReaderConfig) error {
 	// issuer_roots_by_doctype is the decision of which IACAs issue which
 	// type; issuer_roots, any_issuer_for_any_type's.
 	r.opts = append(r.opts, proximity.WithAssurance(assurance), proximity.WithAnyIssuerForAnyType(), proximity.WithNoStatusCheck())
+	return nil
+}
+
+// configureStatus records cfg's "status" decision, refusing, outside
+// development, a configuration that leaves it open: the Go session
+// checks no status itself (HandleMessage runs no network request), so
+// without it a document is reported verified whatever its revocation.
+func (r *ProximityReader) configureStatus(cfg proximityReaderConfig) error {
+	switch cfg.Status {
+	case statusCheck:
+		r.checksStatus = true
+	case statusDecline:
+	case "":
+		if !cfg.Development {
+			return newError(CodeInvalidInput, errors.New(`status is unset: outside development, set "check" to check a verified document's revocation status before the session reports it, or "decline" where something else stands in`))
+		}
+	default:
+		return newError(CodeInvalidInput, fmt.Errorf(`status is %q, not "check" or "decline"`, cfg.Status))
+	}
 	return nil
 }
 
@@ -321,7 +360,7 @@ func (r *ProximityReader) StartFromHandover(handoverSelect []byte) (*ProximityRe
 }
 
 // Engagement returns {"abi", "service_uuid", "ble_mode", "ident",
-// "signed"}. ble_mode is the mode the reader uses, from those the holder
+// "signed", "check_status"}. ble_mode is the mode the reader uses, from those the holder
 // offers (central client mode when it offers both, §8.3.3.1.1):
 //   - "peripheral_server": the holder advertises service_uuid and is
 //     the GATT server; the reader scans, connects, and is the GATT
@@ -331,6 +370,10 @@ func (r *ProximityReader) StartFromHandover(handoverSelect []byte) (*ProximityRe
 //     the holder connects.
 //
 // signed is whether the request will carry reader authentication.
+// check_status is the configuration's "status": "check": once
+// HandleMessage reports "verified", call CheckStatus, and treat the
+// document as verified only when it's "valid" or "none" — the Swift and
+// Kotlin sessions do, reporting another status as document_not_valid.
 func (p *ProximityReaderSession) Engagement() string {
 	mode := "peripheral_server"
 	if p.s.BLEMode() == proximity.CentralClient {
@@ -342,7 +385,8 @@ func (p *ProximityReaderSession) Engagement() string {
 		BLEMode     string `json:"ble_mode"`
 		Ident       string `json:"ident"`
 		Signed      bool   `json:"signed"`
-	}{result{ABIVersion}, p.s.ServiceUUID(), mode, base64.StdEncoding.EncodeToString(p.s.BLEIdent()), p.r.readerCN != ""})
+		CheckStatus bool   `json:"check_status"`
+	}{result{ABIVersion}, p.s.ServiceUUID(), mode, base64.StdEncoding.EncodeToString(p.s.BLEIdent()), p.r.readerCN != "", p.r.checksStatus})
 	return text
 }
 

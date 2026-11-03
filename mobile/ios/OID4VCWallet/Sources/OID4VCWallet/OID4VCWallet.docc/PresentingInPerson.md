@@ -98,28 +98,31 @@ reader authentication extended key usage
 (``ProximityReaderConfiguration``). The reader is a production one: it
 refuses (`invalidInput`) a configuration that leaves a decision open:
 which IACAs issue which document types (`anyIssuerForAnyType`, or
-`issuerRootsByDocType`), and each role's revocation (`revocation` with
-`crls`, or `noRevocationCheck` to decline). `development` relaxes
+`issuerRootsByDocType`), each role's revocation (`revocation` with
+`crls`, or `noRevocationCheck` to decline), and whether a document's
+revocation status is checked (`statusCheck`). `development` relaxes
 this, for trying out a development issuer's documents; never ship an
 app with it set. ``ProximityReader/start(qrCode:docType:elements:timeouts:)``
 takes the holder's QR code and what to ask for.
 
 ```swift
 /// Reads an mDL's name and portrait from the holder whose QR code was
-/// scanned. Returns the verified mdoc, or nil if the holder declined or
-/// the mdoc isn't known to be unrevoked.
+/// scanned. Returns the verified mdoc, its status checked, or nil if the
+/// holder declined.
 func readInPerson(qrCode: String, issuerRoots: String, crls: String) async throws -> VerifiedMdoc? {
     let reader = try ProximityReader(configuration: ProximityReaderConfiguration(
         issuerRoots: issuerRoots, crls: crls, revocation: [.issuer, .status],
-        anyIssuerForAnyType: true))
+        anyIssuerForAnyType: true, statusCheck: .check))
     let session = try reader.start(qrCode: qrCode, docType: "org.iso.18013.5.1.mDL",
                                    elements: ["org.iso.18013.5.1": ["given_name", "family_name", "portrait"]])
     for await state in session.states {
         switch state {
         case .verified(let mdoc):
-            let status = try await session.checkStatus()
-            return status == .valid || status == .noStatus ? mdoc : nil
+            // Its status was checked first: valid, or it names none.
+            return mdoc
         case .failed(let error):
+            // A revoked or suspended document is WalletError
+            // .documentNotValid.
             throw error
         case let state where state.isFinal:
             return nil
@@ -137,10 +140,16 @@ accept on ``VerifiedMdoc/issuerChain``, the verified certificate path:
 ``VerifiedMdoc/issuer`` and ``VerifiedMdoc/trustAnchor`` are names any
 document signer under a trusted IACA can choose, for display.
 
-The session doesn't check revocation itself:
-``ProximityReaderSession/checkStatus()`` does, once the session is
-`.verified`. It fetches the issuer's status list over the network, so
-the reader needs a connection then, and verifies the list is signed
-under the certificate the document names or the CA that signed the
-document signer (ISO/IEC 18013-5 §12.3.6). Rely on the document only
-when it's ``MdocStatus/valid`` or ``MdocStatus/noStatus``.
+With `statusCheck: .check`, the session checks the document's
+revocation status before it's `.verified`, as
+``ProximityReaderSession/checkStatus()`` does: it closes the
+connection, fetches the issuer's status list over the network, so the
+reader needs a connection then, and verifies the list is signed under
+the certificate the document names or the CA that signed the document
+signer (ISO/IEC 18013-5 §12.3.6). Only a document that's
+``MdocStatus/valid``, or names no status (``MdocStatus/noStatus``), is
+`.verified`, with ``VerifiedMdoc/status`` set; any other status fails
+the session with ``WalletError`` `.documentNotValid`, its
+`protocolError` the status. With `.decline`, nothing checks it:
+for a reader where something else stands in, which then calls
+``ProximityReaderSession/checkStatus()`` itself or checks otherwise.

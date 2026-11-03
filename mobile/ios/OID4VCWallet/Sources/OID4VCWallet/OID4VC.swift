@@ -80,6 +80,11 @@ public struct WalletError: Error, Equatable, CustomStringConvertible, LocalizedE
         /// or with something the wallet refuses. `WalletError.protocolError`
         /// carries its OAuth error code, when it gave one.
         public static let protocolError = Code(rawValue: MobileCodeProtocol)
+        /// A reader whose configuration checks status
+        /// (`ProximityReaderConfiguration.statusCheck`) verified a
+        /// document whose revocation status isn't valid: `protocolError`
+        /// is the status, such as `invalid` (revoked) or `suspended`.
+        public static let documentNotValid = Code(rawValue: MobileCodeDocumentNotValid)
         /// A bug.
         public static let internalError = Code(rawValue: MobileCodeInternal)
     }
@@ -135,6 +140,8 @@ public struct WalletError: Error, Equatable, CustomStringConvertible, LocalizedE
         case .profileViolation, .clientAuthUnsupported, .proofUnsupported: "This wallet can't receive credentials from this issuer."
         case .protocolError where protocolError == "invalid_grant": "That code or PIN wasn't accepted."
         case .protocolError: "The service refused the request."
+        case .documentNotValid where protocolError == "suspended": "This document is suspended."
+        case .documentNotValid: "This document has been revoked or can't be confirmed as valid."
         case .platform: "The wallet couldn't use its keys or storage."
         case .invalidInput where protocolError == MobileDetailNotConfigured: "This wallet isn't set up for that."
         case .invalidInput: "That link or code isn't valid."
@@ -192,7 +199,7 @@ public enum OID4VC {
     /// isn't made on a framework of another — a stale build, or the Go
     /// side changed without these sources — rather than misreading its
     /// JSON. The Go tests keep it equal to the mobile package's.
-    public static let expectedABIVersion = 13
+    public static let expectedABIVersion = 14
 
     /// Whether the linked framework is the test build, carrying an
     /// in-process test issuer and Verifier (`-tags mobiletest`): an app

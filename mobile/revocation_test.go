@@ -275,7 +275,7 @@ type revocationCheckers [6]certrevocation.Checker
 func TestNewProximityReader_Revocation(t *testing.T) {
 	ca, caKey := testcert.CA(t, "IACA")
 	roots := pemOf("CERTIFICATE", ca.Raw)
-	r, err := NewProximityReader(`{"issuer_roots": `+jsonString(roots)+`, "revocation": ["issuer", "status"], "any_issuer_for_any_type": true}`, nil)
+	r, err := NewProximityReader(`{"issuer_roots": `+jsonString(roots)+`, "revocation": ["issuer", "status"], "any_issuer_for_any_type": true, "status": "check"}`, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

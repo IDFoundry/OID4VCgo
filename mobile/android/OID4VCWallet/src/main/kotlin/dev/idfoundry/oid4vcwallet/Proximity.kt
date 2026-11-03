@@ -592,6 +592,17 @@ public data class ProximityReaderConfiguration(
      */
     @SerialName("any_issuer_for_any_type") val anyIssuerForAnyType: Boolean = false,
     /**
+     * Whether a session checks a verified document's revocation status
+     * before reporting it. Outside [development], it's required: null
+     * throws `invalid_input`. With [StatusCheck.CHECK], a session reports
+     * [ProximityReaderSession.State.Verified] only for a document whose
+     * status is valid, or that has none ([VerifiedMdoc.status]), and fails
+     * with `document_not_valid` otherwise; with [StatusCheck.DECLINE],
+     * nothing checks it, for a reader where something else stands in. In
+     * development, null is [StatusCheck.DECLINE].
+     */
+    @SerialName("status") val statusCheck: StatusCheck? = null,
+    /**
      * Relaxes what production requires, for a reader trying out a
      * development issuer's documents. Never ship an app with it set.
      * Without it, [ProximityReader] requires a production reader's
@@ -610,6 +621,16 @@ public data class ProximityReaderConfiguration(
 
         /** A status list signer's, in `checkStatus`. */
         @SerialName("status") STATUS,
+    }
+
+    /** Whether a reader session checks a verified document's revocation status before reporting it. */
+    @Serializable
+    public enum class StatusCheck {
+        /** Checked: a session reports [ProximityReaderSession.State.Verified] only for a document whose status is valid, or that has none. */
+        @SerialName("check") CHECK,
+
+        /** Not checked, for a reader where something else stands in. */
+        @SerialName("decline") DECLINE,
     }
 }
 
@@ -778,6 +799,12 @@ public class ProximityReaderSession internal constructor(
     /** Whether requests carry reader authentication. */
     public val signed: Boolean = engagement.signed
 
+    /**
+     * Whether the session checks a verified document's revocation status before reporting it
+     * [State.Verified] ([ProximityReaderConfiguration.statusCheck]).
+     */
+    public val checksStatus: Boolean = engagement.checkStatus
+
     /** The BLE mode selected; meaningful only when [usesNfcData] is false. */
     public val mode: ProximityBLEMode = ProximityBLEMode.entries.first { it.rawValue == engagement.bleMode }
 
@@ -815,7 +842,7 @@ public class ProximityReaderSession internal constructor(
             sendLast(event)
             finish(
                 when {
-                    event.event == "verified" && event.verified != null -> State.Verified(event.verified.toVerified())
+                    event.event == "verified" && event.verified != null -> settled(event.verified.toVerified())
                     event.reason == "declined" -> State.Declined
                     else -> State.Failed(WalletException.from(Exception(event.error ?: "[protocol] the session failed")))
                 },
@@ -832,6 +859,29 @@ public class ProximityReaderSession internal constructor(
             finish(State.Failed(e))
         } catch (e: Exception) {
             finish(State.Failed(WalletException(WalletException.Code.internal, null, e.toString())))
+        }
+    }
+
+    /**
+     * The final state for [mdoc], which verified: [State.Verified], unless the configuration
+     * checks status and it isn't [MdocStatus.Valid] or [MdocStatus.NoStatus] (a
+     * [WalletException] `document_not_valid`, its [WalletException.protocolError] the status as
+     * the list says it), or the check failed. The connection is closed first: the status list is
+     * fetched over the network. Cancellation propagates.
+     */
+    private suspend fun settled(mdoc: VerifiedMdoc): State {
+        if (!checksStatus) return State.Verified(mdoc)
+        transport.close()
+        return try {
+            val text = decode<MdocStatusJSON>(OID4VC.cancellable { op -> handle.checkStatus(op) }).status
+            when (val status = mdocStatusOf(text)) {
+                MdocStatus.Valid, MdocStatus.NoStatus -> State.Verified(mdoc.copy(status = status))
+                else -> State.Failed(
+                    WalletException(WalletException.Code.documentNotValid, text, "the document's revocation status is $text"),
+                )
+            }
+        } catch (e: WalletException) {
+            State.Failed(e)
         }
     }
 
@@ -940,6 +990,13 @@ public data class VerifiedMdoc(
      * [ProximityReaderSession.checkStatus] checks both.
      */
     val identifierList: IdentifierListReference? = null,
+    /**
+     * Its revocation status as the session checked it, [MdocStatus.Valid] or
+     * [MdocStatus.NoStatus], when the configuration's
+     * [ProximityReaderConfiguration.statusCheck] is [ProximityReaderConfiguration.StatusCheck.CHECK];
+     * null when it's [ProximityReaderConfiguration.StatusCheck.DECLINE].
+     */
+    val status: MdocStatus? = null,
 ) {
     /**
      * Where the mdoc's status is published: a Token Status List at [uri], and the mdoc's [index]
@@ -966,6 +1023,7 @@ internal data class ReaderEngagementJSON(
     @SerialName("ble_mode") val bleMode: String,
     val ident: String = "",
     val signed: Boolean = false,
+    @SerialName("check_status") val checkStatus: Boolean = false,
 )
 
 @Serializable

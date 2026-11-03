@@ -1,12 +1,22 @@
 # OID4VCgo mobile ABI
 
 The API the Go `mobile` package exposes through gomobile: version
-**13** (`ABIVersion`). The Swift package `ios/OID4VCWallet` wraps it in
+**14** (`ABIVersion`). The Swift package `ios/OID4VCWallet` wraps it in
 typed Swift (`Wallet`, `Issuance`, `Presentation`, `WalletError`), and
 the Kotlin library `android/OID4VCWallet` in Kotlin (the same types,
 with suspend functions, `WalletException` and `StateFlow`s); this
 document is the contract underneath, for those wrappers or an app
 calling the framework directly.
+
+Version 14 (OID4VCWallet 0.25.0) has a ProximityReader decide whether
+a verified document's revocation status is checked: its configuration's
+`"status"` is `"check"` or `"decline"`, and outside development one is
+required (`invalid_input` otherwise). With `"check"`, the Swift and
+Kotlin sessions call `CheckStatus` before reporting a document
+verified, and end a session whose document isn't valid with the new
+`document_not_valid` code; `Engagement()` carries `check_status`. A
+version-13 reader configuration adds `"status"`; the wrappers refuse a
+framework of another version, as before.
 
 Version 13 adds `CompareAndSwap` to the `CredentialStore` the app
 implements (see CredentialStore), which the wallet now changes every
@@ -108,6 +118,7 @@ format or error code below changes incompatibly.
 | `proof_unsupported` | the wallet can't hold an offered credential, or the issuer takes no proof it can give: one bound to no key (which the wallet doesn't receive) or by a method other than `jwk`/`cose_key`, both refused before the holder sees the offer; or, when the credentials are requested, no proof type signed with ES256, or a key attestation without a provider |
 | `request_refused` | the wallet refused an authentic presentation request it must not answer (`transaction_data` it doesn't support, or a parameter OpenID4VP forbids), and sent the Verifier the error OpenID4VP requires: the detail is that error code, such as `invalid_transaction_data`. For a DC API request, the start call's error is what goes back to the platform. For a redirect request, `TakeRefusalRedirect` returns the `redirect_uri` the Verifier answered with, to open |
 | `protocol` | an issuer, Authorization Server or Verifier answered with an error, or with something the wallet refuses |
+| `document_not_valid` | a reader configured with `"status": "check"` verified a document whose revocation status isn't valid; the detail is the status (`invalid`, `suspended`, `unknown` or `0x…`). The Swift and Kotlin reader sessions end with it; the Go side doesn't return it (ABI 14) |
 | `internal` | a bug |
 
 An error's message is fit for an app's logs. It never carries a remote
@@ -563,8 +574,8 @@ presentation's candidates `"shown_to_verifier"` and `"linkable_here"`.
   revoked by `CheckStatus`, and its `status` isn't `invalid` or
   `suspended`. A presentation lists the others after it, and
   `DefaultSelection` never picks them; a presentation never uses a
-  revoked copy while a valid one is left. Added within ABI 13, from
-  OID4VCWallet 0.25.0.
+  revoked copy while a valid one is left. Added in ABI 14
+  (OID4VCWallet 0.25.0).
 
 - `holder_key_present` is false when the key store no longer holds the
   credential's key, for example after a restore to another device, so
@@ -872,7 +883,7 @@ The configuration is `{"issuer_roots", "issuer_roots_by_doctype",
 "reader_key_id", "reader_chain", "max_clock_skew_seconds",
 "require_mdl_signer_eku", "accept_mdl_signer_without_eku", "crls",
 "revocation", "crl_issuers", "no_revocation_check",
-"any_issuer_for_any_type", "development"}`:
+"any_issuer_for_any_type", "status", "development"}`:
 - `issuer_roots` (PEM) are the IACAs whose mdocs are accepted, of any
   document type `issuer_roots_by_doctype` doesn't name.
 - `issuer_roots_by_doctype` (an object of document type to PEM) are each
@@ -910,22 +921,32 @@ The configuration is `{"issuer_roots", "issuer_roots_by_doctype",
   it; a role can't be in both (`invalid_input`).
   `any_issuer_for_any_type` declares that every IACA in `issuer_roots`
   may issue every document type the reader asks for.
+- `status` is `"check"` or `"decline"`: whether a verified document's
+  revocation status is checked before the session reports it.
+  `HandleMessage` runs no network request, so it checks none itself;
+  with `"check"`, `Engagement()`'s `check_status` is true, and the Swift
+  and Kotlin sessions call `CheckStatus` once the answer verifies and
+  report the document verified only when it's `valid` or `none`,
+  failing with `document_not_valid` (its detail the status) otherwise.
+  An app calling this API directly does the same. `"decline"` checks
+  nothing, for a reader where something else stands in. From ABI 14.
 - The reader is a production one (`proximity.WithAssurance` at
   production): `NewProximityReader` is `invalid_input` for a
   configuration whose `issuer` or `status` role is in neither
   `revocation` nor `no_revocation_check`, its message naming the roots'
-  key, or that sets `issuer_roots` without `any_issuer_for_any_type`
+  key, that sets `issuer_roots` without `any_issuer_for_any_type`
   (name each document type's IACAs in `issuer_roots_by_doctype`
-  instead).
+  instead), or that leaves `status` unset.
 - `development` relaxes what production requires, for a reader trying
   out a development issuer's documents. Never ship an app with it set.
   With it, the reader runs at development assurance: a role in neither
-  `revocation` nor `no_revocation_check` checks no revocation, and any
-  IACA in `issuer_roots` may issue any document type. A role named in
-  both is `invalid_input` in development too.
+  `revocation` nor `no_revocation_check` checks no revocation, any
+  IACA in `issuer_roots` may issue any document type, and an unset
+  `status` is `"decline"`. A role named in both is `invalid_input` in
+  development too.
 
   `HandleMessage` checks no document status either way: `CheckStatus`
-  does. Within ABI 12, these decisions were an opt-in, `production`;
+  does, called by the wrappers under `"status": "check"`. Within ABI 12, these decisions were an opt-in, `production`;
   ABI 13 makes them the default, with `development` to opt out, and has
   no `production` key (`invalid_input`, as any unknown key).
   `no_revocation_check` and `any_issuer_for_any_type` came within ABI
@@ -933,7 +954,7 @@ The configuration is `{"issuer_roots", "issuer_roots_by_doctype",
 
 | Method | Result |
 |---|---|
-| `Engagement()` | `{"service_uuid", "ble_mode", "ident", "signed"}`. `ble_mode` is the BLE mode the reader uses, from those the holder offers, preferring `central_client` (§8.3.3.1.1). In `peripheral_server` mode the holder advertises `service_uuid`, and the reader scans, connects and is the GATT client. In `central_client` mode the reader advertises `service_uuid` and is the GATT server, serving `ident` (base64) on the Ident characteristic. `signed` is whether the request will carry reader authentication |
+| `Engagement()` | `{"service_uuid", "ble_mode", "ident", "signed", "check_status"}`. `ble_mode` is the BLE mode the reader uses, from those the holder offers, preferring `central_client` (§8.3.3.1.1). In `peripheral_server` mode the holder advertises `service_uuid`, and the reader scans, connects and is the GATT client. In `central_client` mode the reader advertises `service_uuid` and is the GATT server, serving `ident` (base64) on the Ident characteristic. `signed` is whether the request will carry reader authentication. `check_status` is the configuration's `"status": "check"`: call `CheckStatus` once `HandleMessage` verifies, and rely on the document only on `valid` or `none` (ABI 14) |
 | `Request(docType, elementsJSON)` | `{"send"}`: send the base64 SessionEstablishment once connected. `elementsJSON` is `{namespace: [identifiers]}`. A reader key requiring user presence prompts now. Once per session (`wrong_step` otherwise) |
 | `HandleMessage(message)` | `{"event", "verified", "send", "reason", "error"}` for the holder's answer. The session is then over: send `send` if present, write `0x02` to State, and disconnect. `event` is `verified` or `ended`. `reason`, for `ended`, is `declined` (status 20, which isn't authenticated) or `error`, with `error` the failing call's text (`protocol` for a response that doesn't verify) |
 | `Terminate()` | `{"send"}`: the reader cancelled or timed out. Send `send` (status 20) if connected, then disconnect |

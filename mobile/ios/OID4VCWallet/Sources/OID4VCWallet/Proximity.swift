@@ -571,6 +571,14 @@ public struct ProximityReaderConfiguration: Codable, Sendable {
     /// type the reader asks for. Outside `development`, `issuerRoots`
     /// needs it; otherwise name each type's IACAs in `issuerRootsByDocType`.
     public var anyIssuerForAnyType: Bool
+    /// Whether a session checks a verified document's revocation status
+    /// before reporting it. Outside `development`, it's required: nil
+    /// fails with `invalidInput`. With `.check`, a session reports
+    /// `.verified` only for a document whose status is valid, or that
+    /// has none (`VerifiedMdoc.status`), and fails with `.documentNotValid`
+    /// otherwise; with `.decline`, nothing checks it, for a reader where
+    /// something else stands in. In development, nil is `.decline`.
+    public var statusCheck: StatusCheck?
     /// Relaxes what production requires, for a reader trying out a
     /// development issuer's documents. Never ship an app with it set.
     /// Without it, `ProximityReader` requires a production reader's
@@ -591,13 +599,23 @@ public struct ProximityReaderConfiguration: Codable, Sendable {
         case status
     }
 
+    /// Whether a reader session checks a verified document's revocation
+    /// status before reporting it.
+    public enum StatusCheck: String, Codable, Sendable {
+        /// Checked: a session reports `.verified` only for a document
+        /// whose status is valid, or that has none.
+        case check
+        /// Not checked, for a reader where something else stands in.
+        case decline
+    }
+
     /// A configuration accepting mdocs under `issuerRoots`; with `readerKeyID`
     /// and `readerChain`, requests are signed.
     public init(issuerRoots: String, readerKeyID: String? = nil, readerChain: String? = nil,
                 maxClockSkewSeconds: Int? = nil, requireMDLSignerEKU: Bool = false, acceptMDLSignerWithoutEKU: Bool = false,
                 issuerRootsByDocType: [String: String] = [:], crls: String = "", revocation: [RevocationRole] = [],
                 crlIssuers: String = "", noRevocationCheck: [RevocationRole] = [], anyIssuerForAnyType: Bool = false,
-                development: Bool = false) {
+                statusCheck: StatusCheck? = nil, development: Bool = false) {
         self.issuerRoots = issuerRoots
         self.readerKeyID = readerKeyID
         self.readerChain = readerChain
@@ -610,6 +628,7 @@ public struct ProximityReaderConfiguration: Codable, Sendable {
         self.crlIssuers = crlIssuers
         self.noRevocationCheck = noRevocationCheck
         self.anyIssuerForAnyType = anyIssuerForAnyType
+        self.statusCheck = statusCheck
         self.development = development
     }
 
@@ -620,6 +639,7 @@ public struct ProximityReaderConfiguration: Codable, Sendable {
         case issuerRootsByDocType = "issuer_roots_by_doctype"
         case crls, revocation, crlIssuers = "crl_issuers"
         case noRevocationCheck = "no_revocation_check", anyIssuerForAnyType = "any_issuer_for_any_type", development
+        case statusCheck = "status"
     }
 
     public init(from decoder: any Decoder) throws {
@@ -636,6 +656,7 @@ public struct ProximityReaderConfiguration: Codable, Sendable {
         crlIssuers = try c.decodeIfPresent(String.self, forKey: .crlIssuers) ?? ""
         noRevocationCheck = try c.decodeIfPresent([RevocationRole].self, forKey: .noRevocationCheck) ?? []
         anyIssuerForAnyType = try c.decodeIfPresent(Bool.self, forKey: .anyIssuerForAnyType) ?? false
+        statusCheck = try c.decodeIfPresent(StatusCheck.self, forKey: .statusCheck)
         development = try c.decodeIfPresent(Bool.self, forKey: .development) ?? false
     }
 }
@@ -701,11 +722,14 @@ struct ReaderEngagement: Decodable {
     let bleMode: String
     let ident: Data
     let signed: Bool
+    /// The configuration's `statusCheck` is `.check`: the session checks
+    /// a verified document's status before reporting it.
+    let checkStatus: Bool?
 
     var uuid: UUID { UUID(uuidString: serviceUUID) ?? UUID() }
 
     enum CodingKeys: String, CodingKey {
-        case serviceUUID = "service_uuid", bleMode = "ble_mode", ident, signed
+        case serviceUUID = "service_uuid", bleMode = "ble_mode", ident, signed, checkStatus = "check_status"
     }
 }
 
@@ -717,7 +741,8 @@ public final class ProximityReaderSession: @unchecked Sendable {
         case connecting
         /// Connected: the request is sent, and the holder is deciding.
         case waitingForResponse
-        /// The mdoc verified.
+        /// The mdoc verified, and, when the configuration checks status,
+        /// its status is `.valid` or `.noStatus` (`VerifiedMdoc.status`).
         case verified(VerifiedMdoc)
         /// The holder declined (not authenticated: anyone nearby could send that).
         case declined
@@ -745,6 +770,10 @@ public final class ProximityReaderSession: @unchecked Sendable {
 
     /// Whether requests carry reader authentication.
     public let signed: Bool
+    /// Whether the session checks a verified document's revocation status
+    /// before reporting it `.verified`
+    /// (`ProximityReaderConfiguration.statusCheck`).
+    public let checksStatus: Bool
     /// The BLE mode this session uses, of those the holder offered:
     /// central client mode when it offered both.
     public let mode: ProximityBLEMode
@@ -762,6 +791,7 @@ public final class ProximityReaderSession: @unchecked Sendable {
         self.elementsJSON = String(decoding: try JSONEncoder().encode(elements), as: UTF8.self)
         self.timeouts = timeouts
         self.signed = e.signed
+        self.checksStatus = e.checkStatus ?? false
         guard let mode = ProximityBLEMode(rawValue: e.bleMode) else {
             throw WalletError(code: .internalError, message: "an unknown BLE mode")
         }
@@ -791,7 +821,7 @@ public final class ProximityReaderSession: @unchecked Sendable {
             let event = try decode(ReaderEventJSON.self, handle.handleMessage(answer))
             if let send = event.send { try? await transport.send(send) }
             if event.event == "verified", let v = event.verified {
-                finish(.verified(v.mdoc))
+                finish(await settled(v.mdoc))
             } else if event.reason == "declined" {
                 finish(.declined)
             } else {
@@ -809,6 +839,34 @@ public final class ProximityReaderSession: @unchecked Sendable {
             finish(.failed(e))
         } catch {
             finish(.failed(WalletError(code: .internalError, message: "\(error)")))
+        }
+    }
+
+    /// The final state for `mdoc`, which verified: `.verified`, unless the
+    /// configuration checks status and it isn't `.valid` or `.noStatus`
+    /// (`WalletError` `.documentNotValid`, its `protocolError` the status
+    /// as the list says it), or the check failed. The connection is
+    /// closed first: the status list is fetched over the network.
+    private func settled(_ mdoc: VerifiedMdoc) async -> State {
+        guard checksStatus else { return .verified(mdoc) }
+        transport.close()
+        do {
+            let s = handle
+            let json = try await OID4VC.cancellable { op in try OID4VC.call { s.checkStatus(op, error: $0) } }
+            let text = try decode(StatusJSON.self, json).status
+            let status = MdocStatus(text)
+            guard status == .valid || status == .noStatus else {
+                return .failed(WalletError(code: .documentNotValid, protocolError: text, message: "the document's revocation status is \(text)"))
+            }
+            var checked = mdoc
+            checked.status = status
+            return .verified(checked)
+        } catch is CancellationError {
+            return .cancelled
+        } catch let e as WalletError {
+            return .failed(e)
+        } catch {
+            return .failed(WalletError(code: .internalError, message: "\(error)"))
         }
     }
 
@@ -922,6 +980,10 @@ public struct VerifiedMdoc: Sendable {
     /// ending at the IACA in `ProximityReaderConfiguration.issuerRoots`
     /// it chains to: decide which issuers to accept on it.
     public let issuerChain: [SecCertificate]
+    /// Its revocation status as the session checked it, `.valid` or
+    /// `.noStatus`, when the configuration's `statusCheck` is `.check`;
+    /// nil when it's `.decline`.
+    public internal(set) var status: MdocStatus? = nil
 
     /// Where the mdoc's status is published: a Token Status List, and its index
     /// in it.

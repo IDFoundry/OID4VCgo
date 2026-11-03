@@ -1028,6 +1028,7 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
                     issuerRoots = r.issuerRoots, readerKeyID = DemoReaderKeys.ID, readerChain = r.readerChain, maxClockSkewSeconds = 300,
                     noRevocationCheck = listOf(ProximityReaderConfiguration.RevocationRole.ISSUER, ProximityReaderConfiguration.RevocationRole.STATUS),
                     anyIssuerForAnyType = true,
+                    statusCheck = ProximityReaderConfiguration.StatusCheck.CHECK,
                 ),
                 DemoReaderKeys(r),
             )
