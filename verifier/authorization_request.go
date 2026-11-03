@@ -9,11 +9,29 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 
+	"github.com/idfoundry/oid4vcgo/credential/mdoc"
+	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcgo/dcql"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/internal/jwe"
 	"github.com/idfoundry/oid4vcgo/internal/jwk"
 )
+
+// checkQueryFormats refuses a query asking for a credential format this
+// package doesn't verify, or one Config.VPFormatsSupported doesn't
+// advertise: every answer to it would be refused, or the Wallet would
+// refuse the request.
+func (v *Verifier) checkQueryFormats(query dcql.Query) error {
+	for _, cq := range query.Credentials {
+		if cq.Format != sdjwtvc.CredentialFormat && cq.Format != mdoc.CredentialFormat {
+			return fmt.Errorf("credential query %q asks for format %q, which this Verifier can't verify (%q or %q)", cq.ID, cq.Format, sdjwtvc.CredentialFormat, mdoc.CredentialFormat)
+		}
+		if _, ok := v.cfg.VPFormatsSupported[cq.Format]; !ok {
+			return fmt.Errorf("credential query %q asks for format %q, which config.vp_formats_supported doesn't list", cq.ID, cq.Format)
+		}
+	}
+	return nil
+}
 
 // requestObjectTyp is the Request Object JWS's own "typ" header value
 // (§5, RFC9101) — Wallets MUST reject a Request Object where it's
@@ -110,6 +128,9 @@ type BuildAuthorizationRequestResult struct {
 // doc comment for what's still missing.
 func (v *Verifier) BuildAuthorizationRequest(req BuildAuthorizationRequestRequest) (BuildAuthorizationRequestResult, error) {
 	if err := req.Query.Validate(); err != nil {
+		return BuildAuthorizationRequestResult{}, fmt.Errorf("verifier: build authorization request: dcql_query: %w", err)
+	}
+	if err := v.checkQueryFormats(req.Query); err != nil {
 		return BuildAuthorizationRequestResult{}, fmt.Errorf("verifier: build authorization request: dcql_query: %w", err)
 	}
 

@@ -97,6 +97,9 @@ func (v *Verifier) BuildDCAPIAuthorizationRequest(req BuildDCAPIAuthorizationReq
 	if err := req.Query.Validate(); err != nil {
 		return BuildDCAPIAuthorizationRequestResult{}, fmt.Errorf("verifier: build dc api authorization request: dcql_query: %w", err)
 	}
+	if err := v.checkQueryFormats(req.Query); err != nil {
+		return BuildDCAPIAuthorizationRequestResult{}, fmt.Errorf("verifier: build dc api authorization request: dcql_query: %w", err)
+	}
 	if len(req.ExpectedOrigins) == 0 {
 		return BuildDCAPIAuthorizationRequestResult{}, fmt.Errorf("verifier: build dc api authorization request: expected_origins must be non-empty")
 	}
