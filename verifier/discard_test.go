@@ -3,6 +3,7 @@ package verifier_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -83,6 +84,14 @@ func TestVerifyResponse_DiscardsFailedPresentations(t *testing.T) {
 		}
 		if len(result.Credentials) != tc.wantVerified || len(result.Discarded) != 1 || result.Discarded[0].CredentialQueryID != tc.wantDiscarded || result.Discarded[0].Reason == "" {
 			t.Errorf("%s: %d verified, discarded %+v", name, len(result.Credentials), result.Discarded)
+			continue
+		}
+		// The stored Reason is fixed text for its Code; the error, with
+		// what the sender wrote, is kept apart.
+		d := result.Discarded[0]
+		var verr *verifier.Error
+		if !errors.As(d.Err, &verr) || verr.Reason() != d.Code || !strings.HasSuffix(d.Reason, "("+string(d.Code)+")") || strings.Contains(d.Reason, "verifier:") {
+			t.Errorf("%s: discarded %+v, want a fixed Reason for its Code and the error apart", name, d)
 		}
 	}
 }

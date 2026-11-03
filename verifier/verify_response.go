@@ -320,9 +320,17 @@ type VerifyResponseResult struct {
 type DiscardedPresentation struct {
 	// CredentialQueryID is the Credential Query it answered.
 	CredentialQueryID string
-	// Reason is why it failed verification: the error's text, kept as
-	// a string so a stored Transaction's result serializes.
+	// Code is why it failed verification.
+	Code Reason
+	// Reason is a fixed description of Code, never text the
+	// presentation's sender chose, so a stored Transaction's result can
+	// be shown as it is.
 	Reason string
+	// Err is the verification error, with the detail Reason leaves out,
+	// some of it the sender's: for logs, not for display. It isn't
+	// stored, so a result Transactions reads back from its store has
+	// none.
+	Err error `json:"-"`
 }
 
 // Most Verifiers want Transactions, which calls VerifyResponse for each
@@ -639,7 +647,9 @@ func (v *Verifier) verifyCredentialQuery(ctx context.Context, cq dcql.Credential
 		if errors.As(err, &failed) {
 			// The presentation failed, not the response or the
 			// configuration: discard it (§8.6).
-			discarded = append(discarded, DiscardedPresentation{CredentialQueryID: cq.ID, Reason: err.Error()})
+			discarded = append(discarded, DiscardedPresentation{
+				CredentialQueryID: cq.ID, Code: failed.Reason(), Reason: failed.Reason().description(), Err: err,
+			})
 			if firstErr == nil {
 				firstErr = err
 			}
