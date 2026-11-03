@@ -85,6 +85,9 @@ func IssueWith(t testing.TB, mutate func(*mdoc.Claims)) Fixture {
 	return Fixture{IssuerKey: issuerKey, DeviceKey: deviceKey, IssuerSigned: issuerSigned}
 }
 
+// msoErrFormat reports a failure re-encoding WithMSOStatus's MSO.
+const msoErrFormat = "testmdoc: MSO: %v"
+
 // WithMSOStatus is f with its MSO's "status" member replaced by status,
 // any CBOR value (one naming a mechanism mdoc.Status doesn't model, say),
 // and IssuerAuth signed again with f.IssuerKey, so it still verifies.
@@ -104,20 +107,20 @@ func WithMSOStatus(t testing.TB, f Fixture, status any) Fixture {
 	}
 	var mso map[string]cbor.RawMessage
 	if err := cbor.Unmarshal(msoBytes, &mso); err != nil {
-		t.Fatalf("testmdoc: MSO: %v", err)
+		t.Fatalf(msoErrFormat, err)
 	}
 	if mso["status"], err = cbor.Marshal(status); err != nil {
 		t.Fatalf("testmdoc: status: %v", err)
 	}
 	if msoBytes, err = cbor.Marshal(mso); err != nil {
-		t.Fatalf("testmdoc: MSO: %v", err)
+		t.Fatalf(msoErrFormat, err)
 	}
 	content, err := cbor.Marshal(msoBytes)
 	if err != nil {
-		t.Fatalf("testmdoc: MSO: %v", err)
+		t.Fatalf(msoErrFormat, err)
 	}
 	if payload, err = cbor.Marshal(cbor.RawTag{Number: 24, Content: content}); err != nil {
-		t.Fatalf("testmdoc: MSO: %v", err)
+		t.Fatalf(msoErrFormat, err)
 	}
 	if f.IssuerSigned.IssuerAuth, err = cose.Sign(cose.ES256, f.IssuerKey, protected, unprotected, payload, []byte{}); err != nil {
 		t.Fatalf("testmdoc: sign IssuerAuth: %v", err)
