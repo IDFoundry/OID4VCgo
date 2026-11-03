@@ -494,6 +494,13 @@ public data class CredentialSummary(
      */
     val linkable: Boolean = false,
     /**
+     * Whether a Verifier could accept it now, as far as the wallet
+     * knows: a copy is neither expired nor found revoked, and its status
+     * as last checked isn't revoked or suspended. A presentation lists
+     * the others after it, and the default selection never picks them.
+     */
+    val presentable: Boolean = true,
+    /**
      * Set only on a presentation's candidates ([Presentation.queries]):
      * whether the Verifier asking has been shown this credential before,
      * and whether presenting it now would hand it a copy another

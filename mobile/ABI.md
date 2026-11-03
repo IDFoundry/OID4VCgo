@@ -555,8 +555,16 @@ then. Added within ABI version 12.
 A credential **summary** is `{"id", "credential_issuer",
 "configuration_id", "format", "vct", "doctype", "received_at",
 "holder_key_present", "display", "valid_until", "status", "copies",
-"copies_left", "linkable", "refreshable"}`, and on a
+"copies_left", "linkable", "refreshable", "presentable"}`, and on a
 presentation's candidates `"shown_to_verifier"` and `"linkable_here"`.
+
+- `presentable` is whether a Verifier could accept the credential now,
+  as far as the wallet knows: a copy is neither expired nor found
+  revoked by `CheckStatus`, and its `status` isn't `invalid` or
+  `suspended`. A presentation lists the others after it, and
+  `DefaultSelection` never picks them; a presentation never uses a
+  revoked copy while a valid one is left. Added within ABI 13, from
+  OID4VCWallet 0.25.0.
 
 - `holder_key_present` is false when the key store no longer holds the
   credential's key, for example after a restore to another device, so

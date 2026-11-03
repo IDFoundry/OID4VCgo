@@ -467,6 +467,11 @@ public struct CredentialSummary: Decodable, Equatable, Sendable {
     /// those Verifiers could link the holder's presentations. Refreshing
     /// gives it copies no Verifier has seen.
     public let linkable: Bool
+    /// Whether a Verifier could accept it now, as far as the wallet
+    /// knows: a copy is neither expired nor found revoked, and its status
+    /// as last checked isn't revoked or suspended. A presentation lists
+    /// the others after it, and the default selection never picks them.
+    public let presentable: Bool
     /// Set only on a presentation's candidates (`Presentation.queries`):
     /// whether the Verifier asking has been shown this credential before,
     /// and whether presenting it now would hand it a copy another
@@ -483,7 +488,7 @@ public struct CredentialSummary: Decodable, Equatable, Sendable {
         case id, format, vct, doctype, display, status
         case credentialIssuer = "credential_issuer", configurationID = "configuration_id", receivedAt = "received_at"
         case holderKeyPresent = "holder_key_present", validUntil = "valid_until"
-        case copies, copiesLeft = "copies_left", refreshable, linkable
+        case copies, copiesLeft = "copies_left", refreshable, linkable, presentable
         case shownToVerifier = "shown_to_verifier", linkableHere = "linkable_here"
     }
 }

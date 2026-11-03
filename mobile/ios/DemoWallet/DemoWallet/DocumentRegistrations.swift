@@ -26,8 +26,8 @@ enum DocumentRegistrations {
         let authorities = SharedWallet.subjectKeyIdentifiers(pem: readerRootsPEM)
         let now = Date()
         let wanted = credentials.filter { c in
-            c.format == "mso_mdoc" && doctypes.contains(c.doctype ?? "") && !c.isExpired(at: now) && c.holderKeyPresent != false
-                && c.status?.value != .revoked && c.status?.value != .suspended
+            c.format == "mso_mdoc" && doctypes.contains(c.doctype ?? "") && c.presentable && !c.isExpired(at: now)
+                && c.holderKeyPresent != false
         }
         // A registration is current while its credential is wanted and
         // expires when it does: a refresh can change that.

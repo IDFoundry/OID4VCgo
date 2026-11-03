@@ -291,6 +291,11 @@ type credentialSummary struct {
 	// (walletflow.StoredCredential.Linkable). Refreshing gives it copies
 	// no Verifier has seen.
 	Linkable bool `json:"linkable"`
+	// Presentable is whether a Verifier could accept it now, as far as
+	// the wallet knows: a copy is neither expired nor found revoked, and
+	// its status as last checked isn't revoked or suspended
+	// (walletflow.StoredCredential.Presentable).
+	Presentable bool `json:"presentable"`
 	// ShownToVerifier and LinkableHere, set only for a presentation's
 	// candidates (Presentation.Queries): whether the Verifier asking has
 	// been shown this credential before, and whether presenting it now
@@ -309,6 +314,7 @@ func summaryOf(c walletflow.StoredCredential) credentialSummary {
 		ID: c.ID, CredentialIssuer: c.CredentialIssuer, ConfigurationID: c.ConfigurationID, Format: c.Format,
 		VCT: c.VCT, DocType: c.DocType, ReceivedAt: c.ReceivedAt, Display: displayOf(c.Display),
 		Copies: len(c.AllCopies()), CopiesLeft: c.CopiesLeft(), Refreshable: c.GrantID != "", Linkable: c.Linkable(),
+		Presentable: c.Presentable(time.Now()),
 	}
 	if !c.ValidUntil.IsZero() {
 		s.ValidUntil = &c.ValidUntil
