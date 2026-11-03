@@ -75,6 +75,7 @@ func validConfig(t testing.TB) issuer.Config {
 			CredentialOfferLifetime:      time.Hour,
 			DeferredIssuancePollInterval: 10 * time.Second,
 			DeferredTransactionLifetime:  time.Hour,
+			NotificationLifetime:         24 * time.Hour,
 		},
 		CredentialConfigurationsSupported: validCredentialConfigurations(),
 		CredentialOfferEndpoint:           mustEndpointURL(t, testCredentialOfferEndpoint),

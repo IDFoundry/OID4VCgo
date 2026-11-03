@@ -212,3 +212,33 @@ func TestNewMetadataHandler_RefusesMisconfiguredSigner(t *testing.T) {
 		t.Errorf("no signer (JSON only): %v", err)
 	}
 }
+
+// The deprecated MetadataHandler serves unsigned metadata when its
+// signer is refused, but not under AssuranceProduction, where it
+// answers with a server error instead.
+func TestMetadataHandler_MisconfiguredSignerUnderProduction(t *testing.T) {
+	other, _ := testSignerAndCert(t)
+	_, cert := testSignerAndCert(t)
+	for name, tc := range map[string]struct {
+		assurance issuer.AssuranceLevel
+		want      int
+	}{
+		"development": {issuer.AssuranceDevelopment, http.StatusOK},
+		"production":  {issuer.AssuranceProduction, http.StatusInternalServerError},
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg, deps := productionIssuer(t)
+			cfg.Assurance = tc.assurance
+			iss, err := issuer.New(cfg, deps)
+			if err != nil {
+				t.Fatal(err)
+			}
+			h := issuer.MetadataHandler(iss, other, jose.ES256, cert) //nolint:staticcheck // the deprecated handler under test
+			rec := httptest.NewRecorder()
+			h(rec, httptest.NewRequest(http.MethodGet, "/.well-known/openid-credential-issuer", nil))
+			if rec.Code != tc.want {
+				t.Errorf("status = %d, want %d", rec.Code, tc.want)
+			}
+		})
+	}
+}

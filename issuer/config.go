@@ -116,7 +116,9 @@ type Limits struct {
 	// notification_id IssueNotificationID hands out is accepted by
 	// RequestNotification (NotificationRecord.ExpiresAt), so a store
 	// can drop its record afterwards. Zero means a notification_id
-	// never expires. A Wallet notifies once it has stored or discarded
+	// never expires, and its record, naming the client and subject,
+	// is kept for ever: AssuranceProduction refuses zero when
+	// Endpoints.Notification is set. A Wallet notifies once it has stored or discarded
 	// the Credential (§11), so a lifetime of days is ample. It runs from
 	// when the notification_id is issued, which for a deferred issuance
 	// is when the transaction is resolved (IssueDeferredCredential), so

@@ -261,7 +261,10 @@ func parseAcceptPart(part string) (mediaType string, q float64, ok bool) {
 // instead of falling back to unsigned metadata when it's misconfigured,
 // signs once per MetadataSigner.Refresh rather than per request, and
 // reads the Accept header's q values. MetadataHandler is
-// NewMetadataHandler, serving JSON only when the signer is refused.
+// NewMetadataHandler, serving JSON only when the signer is refused —
+// except under AssuranceProduction, where it then answers every
+// request with a server error rather than metadata a Wallet relying
+// on the signature couldn't trust.
 func MetadataHandler(iss *Issuer, signer crypto.Signer, alg oid4vci.JOSEAlg, cert *x509.Certificate, intermediates ...*x509.Certificate) http.HandlerFunc {
 	var ms *MetadataSigner
 	if signer != nil {
@@ -269,6 +272,11 @@ func MetadataHandler(iss *Issuer, signer crypto.Signer, alg oid4vci.JOSEAlg, cer
 	}
 	h, err := NewMetadataHandler(iss, ms)
 	if err != nil {
+		if iss.cfg.Assurance == AssuranceProduction {
+			return func(w http.ResponseWriter, _ *http.Request) {
+				http.Error(w, "the Credential Issuer Metadata signer is misconfigured", http.StatusInternalServerError)
+			}
+		}
 		h, _ = NewMetadataHandler(iss, nil)
 	}
 	return h.ServeHTTP

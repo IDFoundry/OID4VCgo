@@ -201,6 +201,11 @@ func checkProductionAssurance(cfg Config, deps Dependencies) []error {
 	if deps.Audit == nil {
 		errs = append(errs, fmt.Errorf("dependencies.audit is required under AssuranceProduction"))
 	}
+	if !cfg.Endpoints.Notification.IsZero() && cfg.Limits.NotificationLifetime <= 0 {
+		// A record naming the client and subject would otherwise be
+		// kept, and Sweep keep it, for ever.
+		errs = append(errs, fmt.Errorf("config: limits.notification_lifetime must be positive under AssuranceProduction when endpoints.notification is set"))
+	}
 	errs = append(errs,
 		checkProductionHTTPS(cfg),
 		checkProductionAttestationProofType(cfg),
