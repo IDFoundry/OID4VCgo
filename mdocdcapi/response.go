@@ -21,6 +21,10 @@ import (
 	"github.com/idfoundry/oid4vcgo/verifier"
 )
 
+// ErrRequestExpired is VerifyResponse's error for a response to a
+// request past its Pending.ExpiresAt.
+var ErrRequestExpired = errors.New("mdocdcapi: the request has expired")
+
 // MaxResponseBytes bounds the base64url response VerifyResponse
 // decodes: room for a document with a sizeable portrait, base64url
 // encoded.
@@ -159,8 +163,15 @@ func VerifyResponse(ctx context.Context, p VerifyParams) (Verified, error) {
 	if p.MaxClockSkew < 0 || p.MaxClockSkew > verifier.MaxAllowedClockSkew {
 		return Verified{}, fmt.Errorf("mdocdcapi: MaxClockSkew %s is outside 0..%s", p.MaxClockSkew, verifier.MaxAllowedClockSkew)
 	}
-	if p.Pending.RecipientKey == nil || p.Pending.EncryptionInfo == "" {
+	if p.Pending.RecipientKey == nil || p.Pending.EncryptionInfo == "" || p.Pending.ExpiresAt.IsZero() {
 		return Verified{}, errors.New("mdocdcapi: Pending is incomplete")
+	}
+	now := time.Now
+	if p.Now != nil {
+		now = p.Now
+	}
+	if !now().Before(p.Pending.ExpiresAt) {
+		return Verified{}, ErrRequestExpired
 	}
 	transcript, err := sessionTranscript(p.Pending.EncryptionInfo, p.Pending.Origin)
 	if err != nil {
