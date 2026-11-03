@@ -205,6 +205,17 @@ type CredentialRequest struct {
 	// RequestCredential finds it with ResolveCredentialConfiguration.
 	ResolvedConfigurationID string
 
+	// AuthorizedClaims are the claims the access token's authorization
+	// detail for the request asks for (its "claims", §5.1.1, Appendix
+	// B.1), nil when it names none, or the token grants the
+	// configuration by scope: then every claim is asked for.
+	// CredentialHandler sets it before Prepare, with
+	// ResolvedConfigurationID; it's ignored on input. Prepare should
+	// issue only these, and the claims the Credential always carries,
+	// rather than the whole dataset. A direct caller of
+	// RequestCredential finds them with ResolveAuthorizedClaims.
+	AuthorizedClaims []oid4vci.ClaimsDescription
+
 	// Proofs is §8.2's own "proofs" parameter: exactly one proof type
 	// (a key in this map, either oid4vci.ProofTypeJWT or
 	// oid4vci.ProofTypeAttestation) mapped to a non-empty array of raw
@@ -387,6 +398,7 @@ func (iss *Issuer) requestCredential(ctx context.Context, auth AuthorizedRequest
 	}
 	if prepare != nil {
 		req.ResolvedConfigurationID = configID
+		req.AuthorizedClaims = iss.authorizedClaims(auth, req, configID)
 		if err := prepare(ctx, &req); err != nil {
 			return oid4vci.CredentialResponse{}, err
 		}
@@ -822,6 +834,48 @@ func jwkHeaderKey(header map[string]any) (json.RawMessage, error) {
 func (iss *Issuer) ResolveCredentialConfiguration(auth AuthorizedRequest, req CredentialRequest) (string, error) {
 	id, _, err := iss.resolveCredentialConfiguration(auth, req)
 	return id, err
+}
+
+// ResolveAuthorizedClaims is what CredentialHandler sets as
+// req.AuthorizedClaims: the claims auth's authorization detail for req
+// asks for, nil for every claim. It resolves req as
+// ResolveCredentialConfiguration does, with the same errors.
+func (iss *Issuer) ResolveAuthorizedClaims(auth AuthorizedRequest, req CredentialRequest) ([]oid4vci.ClaimsDescription, error) {
+	id, _, err := iss.resolveCredentialConfiguration(auth, req)
+	if err != nil {
+		return nil, err
+	}
+	return iss.authorizedClaims(auth, req, id), nil
+}
+
+// authorizedClaims are the claims the authorization details granting
+// req, for configuration configID, ask for: those of the detail holding
+// req.CredentialIdentifier, or of every detail for this issuer naming
+// configID. nil, every claim, when one of them names none, or none
+// grants it (a scope does).
+func (iss *Issuer) authorizedClaims(auth AuthorizedRequest, req CredentialRequest, configID string) []oid4vci.ClaimsDescription {
+	var claims []oid4vci.ClaimsDescription
+	for _, d := range auth.AuthorizationDetails {
+		if !iss.credentialDetail(d) || d.CredentialConfigurationID != configID {
+			continue
+		}
+		if req.CredentialIdentifier != "" && !slices.Contains(d.CredentialIdentifiers, req.CredentialIdentifier) {
+			continue
+		}
+		if len(d.Claims) == 0 {
+			return nil
+		}
+		claims = append(claims, d.Claims...)
+	}
+	return cloneClaims(claims)
+}
+
+// cloneClaims is a copy of claims Prepare can change freely.
+func cloneClaims(claims []oid4vci.ClaimsDescription) []oid4vci.ClaimsDescription {
+	if claims == nil {
+		return nil
+	}
+	return cloneCredentialMetadata(&oid4vci.CredentialMetadata{Claims: claims}).Claims
 }
 
 // checkInstanceType refuses to sign a credential of another type than
