@@ -453,9 +453,9 @@ func TestLargeResponseChainsAndWaitsForConsent(t *testing.T) {
 }
 
 // TestSelectDataApplication selects the NFC data application with ISO/IEC
-// 18013-5 §11.2 Table 8's command (P2 0x0C, no Le), and with P2 0 and an
-// Le as some readers send it: both get 9000 alone (Table 9). Our reader
-// sends Table 8's, and takes a success carrying data too.
+// 18013-5 (second edition) §11.2 Table 8's command (P2 0x0C, no Le), and
+// with P2 0 and an Le as some readers send it: both get 9000 alone (Table
+// 9). Our reader sends Table 8's, and takes a success carrying data too.
 func TestSelectDataApplication(t *testing.T) {
 	table8 := concat([]byte{0, insSelect, 4, 0x0c, 7}, DataApplication)
 	if !bytes.Equal(SelectDataApplication(), table8) {

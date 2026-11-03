@@ -158,8 +158,8 @@ const (
 	// discovering the handover, which doesn't yet commit to NFC.
 	CommandSelectNDEF
 	// CommandSelectData selects the NFC data application: with P2 0x0C
-	// and no Le, as ISO/IEC 18013-5 §11.2 (Table 8) has it, or with P2
-	// 0.
+	// and no Le, as ISO/IEC 18013-5 (second edition) §11.2 Table 8 has
+	// it, or with P2 0.
 	CommandSelectData
 	// CommandSelectDataNoFCI is no longer reported: Classify reports
 	// either SELECT of the NFC data application as CommandSelectData.

@@ -362,8 +362,8 @@ func (t *type4Reader) command(c []byte, wait time.Duration) ([]byte, error) {
 func uint16At(b []byte, i int) int { return int(b[i])<<8 | int(b[i+1]) }
 
 // SelectDataApplication is the command selecting the mdoc's NFC data
-// application, as ISO/IEC 18013-5 §11.2 (Table 8) has it: P2 0x0C and
-// no Le.
+// application, as ISO/IEC 18013-5 (second edition) §11.2 Table 8 has
+// it: P2 0x0C and no Le.
 func SelectDataApplication() []byte {
 	return concat([]byte{0, insSelect, 4, 0x0c, lo(len(DataApplication))}, DataApplication)
 }

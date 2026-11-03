@@ -95,8 +95,9 @@ func TestNFCDataNegotiatedRejectsUnofferedCarrier(t *testing.T) {
 	}
 }
 
-// TestNFCDataRequestCarriesNoLimits: ISO/IEC 18013-5 §9.2.2 (Table 1) has
-// the data-field limits be the mdoc's, not used by the reader. Our Hr's NFC
+// TestNFCDataRequestCarriesNoLimits: ISO/IEC 18013-5 (second edition)
+// §9.2.2 Table 1 has the data-field limits be the mdoc's, not used by the
+// reader. Our Hr's NFC
 // carrier is its version alone; the mdoc answers a reader's, with or without
 // limits (as earlier readers sent them), with its own.
 func TestNFCDataRequestCarriesNoLimits(t *testing.T) {

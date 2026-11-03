@@ -215,9 +215,9 @@ func (d *dataHolder) process(apdu []byte) Step {
 		return Step{Response: response(swWrongLength, nil)}
 	}
 	if c.INS == insSelect {
-		// ISO/IEC 18013-5 §11.2 (Table 8) selects with P2 0x0C and no
-		// Le; some readers ask with P2 0. Either way the answer carries
-		// no data (Table 9).
+		// ISO/IEC 18013-5 (second edition) §11.2 Table 8 selects with
+		// P2 0x0C and no Le; some readers ask with P2 0. Either way the
+		// answer carries no data (Table 9).
 		if !c.isSelectByName() || !bytes.Equal(c.Data, DataApplication) {
 			return Step{Response: response(swFileNotFound, nil)}
 		}

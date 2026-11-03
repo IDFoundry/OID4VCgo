@@ -169,18 +169,19 @@ func checkRequested(req DocRequest, elements [][2]string) error {
 
 // keyAlg is the COSE algorithm a key signs with — a device key, or a
 // document signer's: ES256 for P-256, EdDSA for Ed25519, the two
-// credential/mdoc supports.
+// credential/mdoc supports. Its errors name the key's curve or type;
+// the caller says whose key it is.
 func keyAlg(pub crypto.PublicKey) (oid4vci.COSEAlg, error) {
 	switch k := pub.(type) {
 	case *ecdsa.PublicKey:
 		if k.Curve != elliptic.P256() {
-			return 0, fmt.Errorf("unsupported device key curve %s", k.Curve.Params().Name)
+			return 0, fmt.Errorf("unsupported EC curve %s: only P-256 (ES256) and Ed25519 (EdDSA) are supported", k.Curve.Params().Name)
 		}
 		return cose.ES256, nil
 	case ed25519.PublicKey:
 		return cose.EdDSA, nil
 	default:
-		return 0, fmt.Errorf("unsupported device key type %T", pub)
+		return 0, fmt.Errorf("unsupported key type %T: only P-256 (ES256) and Ed25519 (EdDSA) are supported", pub)
 	}
 }
 
