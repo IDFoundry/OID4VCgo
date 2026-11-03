@@ -6,8 +6,10 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
+	"math/big"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/internal/testcert"
@@ -56,6 +58,40 @@ func TestCRLs_Parse(t *testing.T) {
 	}
 	if _, err := newCRLSet("not PEM", ""); code(err) != CodeInvalidInput || !strings.Contains(err.Error(), "crls") {
 		t.Errorf("newCRLSet: %v, want invalid_input naming crls", err)
+	}
+}
+
+// SetCRLs refuses a CA's list older than the one it holds — by CRL
+// number, or by thisUpdate where either has none — so a replayed list
+// can't un-revoke a certificate; a newer list, another CA's, or removing
+// them all is taken.
+func TestCRLs_RefusesAnOlderList(t *testing.T) {
+	ca, caKey := testcert.CA(t, "revocation test CA")
+	other, otherKey := testcert.CA(t, "another CA")
+	at := func(n int64, hoursAgo int) string {
+		tmpl := &x509.RevocationList{Number: big.NewInt(n), ThisUpdate: time.Now().Add(-time.Duration(hoursAgo) * time.Hour)}
+		return pemOf("X509 CRL", testcert.CRLFromTemplate(t, tmpl, ca, caKey).Raw)
+	}
+	s, err := newCRLSet(at(5, 2), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.set(at(4, 1)); err == nil || !strings.Contains(err.Error(), "older") {
+		t.Errorf("a lower CRL number: %v, want refused as older", err)
+	}
+	if got, _ := s.checker().Lists(context.Background()); len(got) != 1 || got[0].Number.Int64() != 5 {
+		t.Errorf("after a refused set, %v, want number 5 kept", got)
+	}
+	for _, step := range []struct{ name, text string }{ // in order
+		{"the same list", at(5, 2)},
+		{"a newer list", at(6, 1)},
+		{"another CA's", pemOf("X509 CRL", testcert.CRL(t, other, otherKey).Raw)},
+		{"removing them", ""},
+		{"after removing", at(1, 3)},
+	} {
+		if err := s.set(step.text); err != nil {
+			t.Errorf("%s: %v", step.name, err)
+		}
 	}
 }
 
@@ -239,7 +275,7 @@ type revocationCheckers [6]certrevocation.Checker
 func TestNewProximityReader_Revocation(t *testing.T) {
 	ca, caKey := testcert.CA(t, "IACA")
 	roots := pemOf("CERTIFICATE", ca.Raw)
-	r, err := NewProximityReader(`{"issuer_roots": `+jsonString(roots)+`, "revocation": ["issuer", "status"], "any_issuer_for_any_type": true}`, nil)
+	r, err := NewProximityReader(`{"issuer_roots": `+jsonString(roots)+`, "revocation": ["issuer", "status"], "any_issuer_for_any_type": true, "status": "check"}`, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

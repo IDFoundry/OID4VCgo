@@ -88,7 +88,9 @@ public data class WalletConfiguration(
      * neither [revocation] nor [noRevocationCheck] is checked for nothing;
      * skips the check that different roles' roots share no anchor; and
      * skips the production checks on receiving credentials: durable
-     * stores and keys, and the random source.
+     * stores and keys, and the random source. Refused (`invalid_input`)
+     * unless the app called [OID4VC.allowDevelopment], from a debuggable
+     * build only.
      */
     val development: Boolean = false,
     /**
@@ -494,6 +496,13 @@ public data class CredentialSummary(
      */
     val linkable: Boolean = false,
     /**
+     * Whether a Verifier could accept it now, as far as the wallet
+     * knows: a copy is neither expired nor found revoked, and its status
+     * as last checked isn't revoked or suspended. A presentation lists
+     * the others after it, and the default selection never picks them.
+     */
+    val presentable: Boolean = true,
+    /**
      * Set only on a presentation's candidates ([Presentation.queries]):
      * whether the Verifier asking has been shown this credential before,
      * and whether presenting it now would hand it a copy another
@@ -607,6 +616,7 @@ public class Wallet(
                 "the linked Go library has ABI ${OID4VC.abiVersion}, these sources ABI ${OID4VC.expectedABIVersion}: rebuild it",
             )
         }
+        OID4VC.checkDevelopment(configuration.development)
         // Keys are made over the provider's attestation challenges, and
         // reach it with their attestation chains.
         val created = CreatedKeys()
@@ -666,7 +676,7 @@ public class Wallet(
          * it was when the issuer deferred the new one.
          */
         val credential: CredentialSummary,
-        /** The deferred credential to poll, when the issuer deferred it: it settles as a new credential. */
+        /** The deferred credential to poll, when the issuer deferred it: once issued, it replaces the credential under the same ID. */
         val deferred: DeferredCredential? = null,
     )
 
@@ -688,10 +698,12 @@ public class Wallet(
      * [WalletConfiguration.revocation] roles are checked against with
      * [pem]'s `X509 CRL` blocks, for every check from now on. CRLs expire
      * at their nextUpdate: fetch fresh ones and call this before then.
-     * Text holding anything else, or a list that doesn't parse, throws
-     * `invalidInput` and keeps the lists as they were; empty text removes
-     * them all, and a role checked then fails closed. Makes no network
-     * calls.
+     * Text holding anything else, a list that doesn't parse, or a CA's
+     * list older than the one held (a lower CRL number, or an earlier
+     * thisUpdate) throws `invalidInput` and keeps the lists as they were,
+     * so a replayed list can't un-revoke a certificate; empty text
+     * removes them all, and a role checked then fails closed. Makes no
+     * network calls.
      */
     public suspend fun setCRLs(pem: String) {
         OID4VC.offMain { handle.setCRLs(pem) }

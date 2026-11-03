@@ -11,7 +11,7 @@ import (
 // ABIVersion is the version of this package's API across the gomobile
 // boundary: its functions, objects, JSON results and error codes. It
 // changes whenever any of them changes incompatibly.
-const ABIVersion = 13
+const ABIVersion = 14
 
 // Error codes, at the start of every error's text in brackets.
 const (
@@ -85,6 +85,12 @@ const (
 	// (walletflow.ErrRequestRefused). Detail is the OpenID4VP error code
 	// sent, such as invalid_transaction_data.
 	CodeRequestRefused = "request_refused"
+	// CodeDocumentNotValid: a reader configured with "status": "check"
+	// verified a document whose revocation status isn't valid: Detail is
+	// the status CheckStatus reported ("invalid", "suspended", "unknown"
+	// or "0x" and a value). The Swift and Kotlin reader sessions end
+	// with it; the Go side doesn't return it.
+	CodeDocumentNotValid = "document_not_valid"
 	// CodeProtocol: an issuer, Authorization Server or Verifier answered
 	// with an error, or with something the wallet refuses.
 	CodeProtocol = "protocol"

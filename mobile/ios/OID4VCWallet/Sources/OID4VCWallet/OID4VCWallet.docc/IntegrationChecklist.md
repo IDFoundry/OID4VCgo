@@ -167,14 +167,14 @@ is a complete, working app on this package to compare against.
   asking.
 - `development` not set, with each role (`issuer`, `status`) in
   `revocation` (with `crls`, refreshed by `setCRLs`) or
-  `noRevocationCheck`, and `anyIssuerForAnyType` or
-  `issuerRootsByDocType` deciding which IACAs issue which document type.
+  `noRevocationCheck`, `anyIssuerForAnyType` or
+  `issuerRootsByDocType` deciding which IACAs issue which document type,
+  and `statusCheck: .check`, so a session is `.verified` only for a
+  document that isn't revoked or suspended.
 - ``ProximityReader/start(qrCode:docType:elements:timeouts:)`` with the
   scanned code, following the session's states.
-- Call ``ProximityReaderSession/checkStatus()`` once the session is
-  `.verified`, and rely on the document only on ``MdocStatus/valid`` or
-  ``MdocStatus/noStatus``. Decide which issuers to accept on
-  ``VerifiedMdoc/issuerChain``, not on its ``VerifiedMdoc/issuer`` name.
+- Decide which issuers to accept on ``VerifiedMdoc/issuerChain``, not
+  on its ``VerifiedMdoc/issuer`` name.
 - *Check:* a holder verifies; an mdoc from an issuer outside the
   reader's `issuerRoots` is refused. (<doc:PresentingInPerson>)
 

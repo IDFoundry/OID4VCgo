@@ -136,6 +136,14 @@ public class WalletException internal constructor(
              * when it gave one.
              */
             public val protocol: Code = Code(Mobile.CodeProtocol)
+            /**
+             * A reader whose configuration checks status
+             * ([ProximityReaderConfiguration.statusCheck]) verified a
+             * document whose revocation status isn't valid:
+             * [WalletException.protocolError] is the status, such as
+             * `invalid` (revoked) or `suspended`.
+             */
+            public val documentNotValid: Code = Code(Mobile.CodeDocumentNotValid)
             /** A bug. */
             public val internal: Code = Code(Mobile.CodeInternal)
         }
@@ -174,6 +182,8 @@ public class WalletException internal constructor(
             code == Code.invalidSelection -> "Those credentials don't answer this request."
             code == Code.reissueRequired -> "This credential can't be refreshed. Receive it again from the issuer."
             code == Code.deliveryUnknown -> "Your response may not have reached the verifier. Check with them before sharing again."
+            code == Code.documentNotValid && protocolError == "suspended" -> "This document is suspended."
+            code == Code.documentNotValid -> "This document has been revoked or can't be confirmed as valid."
             code == Code.untrustedVerifier -> "This verifier isn't one your wallet trusts, so its request wasn't opened."
             code == Code.requestRefused -> "This verifier's request asks for something this wallet doesn't support, so it was refused."
             code == Code.profileViolation || code == Code.clientAuthUnsupported || code == Code.proofUnsupported ->
@@ -235,7 +245,7 @@ public object OID4VC {
      * side changed without these sources — rather than misreading its
      * JSON. The Go tests keep it equal to the mobile package's.
      */
-    public const val expectedABIVersion: Int = 13
+    public const val expectedABIVersion: Int = 14
 
     /**
      * Whether the linked Go library is the test build, carrying an
@@ -243,6 +253,31 @@ public object OID4VC {
      * should refuse to run on it.
      */
     public val isTestBuild: Boolean = Mobile.isTestBuild()
+
+    @Volatile
+    private var developmentAllowed = false
+
+    /**
+     * Lets this process make a [Wallet] or [ProximityReader] from a configuration with
+     * `development` set, which it otherwise refuses (`invalid_input`): `development` relaxes what
+     * production requires, so a staging configuration shipped by mistake must not take effect.
+     * The library can't see the app's build type: call it from a debuggable build only, e.g.
+     * `if (BuildConfig.DEBUG) OID4VC.allowDevelopment()`. The test build ([isTestBuild]) needs no
+     * call.
+     */
+    public fun allowDevelopment() {
+        developmentAllowed = true
+    }
+
+    /** Refuses a configuration with `development` set unless [allowDevelopment] was called. */
+    internal fun checkDevelopment(development: Boolean) {
+        if (development && !developmentAllowed && !isTestBuild) {
+            throw WalletException(
+                WalletException.Code.invalidInput, null,
+                "development is set, but OID4VC.allowDevelopment() wasn't called: never ship a development configuration",
+            )
+        }
+    }
 
     /**
      * Parses an OpenID4VP request link (`openid4vp://…`) into its parts, without fetching

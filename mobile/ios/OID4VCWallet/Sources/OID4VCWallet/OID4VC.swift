@@ -1,5 +1,6 @@
 import Foundation
 import Mobile
+import os
 
 /// An error from OID4VCgo: a stable `code`, the issuer's, Authorization
 /// Server's or Verifier's own error code when it gave one
@@ -80,6 +81,11 @@ public struct WalletError: Error, Equatable, CustomStringConvertible, LocalizedE
         /// or with something the wallet refuses. `WalletError.protocolError`
         /// carries its OAuth error code, when it gave one.
         public static let protocolError = Code(rawValue: MobileCodeProtocol)
+        /// A reader whose configuration checks status
+        /// (`ProximityReaderConfiguration.statusCheck`) verified a
+        /// document whose revocation status isn't valid: `protocolError`
+        /// is the status, such as `invalid` (revoked) or `suspended`.
+        public static let documentNotValid = Code(rawValue: MobileCodeDocumentNotValid)
         /// A bug.
         public static let internalError = Code(rawValue: MobileCodeInternal)
     }
@@ -135,6 +141,8 @@ public struct WalletError: Error, Equatable, CustomStringConvertible, LocalizedE
         case .profileViolation, .clientAuthUnsupported, .proofUnsupported: "This wallet can't receive credentials from this issuer."
         case .protocolError where protocolError == "invalid_grant": "That code or PIN wasn't accepted."
         case .protocolError: "The service refused the request."
+        case .documentNotValid where protocolError == "suspended": "This document is suspended."
+        case .documentNotValid: "This document has been revoked or can't be confirmed as valid."
         case .platform: "The wallet couldn't use its keys or storage."
         case .invalidInput where protocolError == MobileDetailNotConfigured: "This wallet isn't set up for that."
         case .invalidInput: "That link or code isn't valid."
@@ -192,12 +200,38 @@ public enum OID4VC {
     /// isn't made on a framework of another — a stale build, or the Go
     /// side changed without these sources — rather than misreading its
     /// JSON. The Go tests keep it equal to the mobile package's.
-    public static let expectedABIVersion = 13
+    public static let expectedABIVersion = 14
 
     /// Whether the linked framework is the test build, carrying an
     /// in-process test issuer and Verifier (`-tags mobiletest`): an app
     /// should refuse to run on it.
     public static let isTestBuild = MobileIsTestBuild()
+
+    /// Lets a release build make a `Wallet` or `ProximityReader` from a
+    /// configuration with `development` set, which it otherwise refuses
+    /// (`invalidInput`): `development` relaxes what production requires,
+    /// so a staging configuration shipped by mistake must not take
+    /// effect. A debug build (`DEBUG`), or one on the test framework,
+    /// needs no call. Call it only for an internal build that must run a
+    /// development configuration.
+    public static func allowDevelopmentInRelease() {
+        developmentInRelease.withLock { $0 = true }
+    }
+
+    private static let developmentInRelease = OSAllocatedUnfairLock(initialState: false)
+
+    /// Refuses a configuration with `development` set in a release build
+    /// that hasn't called `allowDevelopmentInRelease()`.
+    static func checkDevelopment(_ development: Bool) throws {
+        #if DEBUG
+        let release = false
+        #else
+        let release = true
+        #endif
+        guard development, release, !isTestBuild, !developmentInRelease.withLock({ $0 }) else { return }
+        throw WalletError(code: .invalidInput,
+                          message: "development is set in a release build: never ship a development configuration (OID4VC.allowDevelopmentInRelease() allows one in an internal build)")
+    }
 
     /// Parses an OpenID4VP request link (`openid4vp://…`) into its parts,
     /// without fetching anything. `Wallet.startPresentation(request:)` does

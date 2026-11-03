@@ -3,6 +3,7 @@ package wallet
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/idfoundry/fapigo/fapihttp"
 
@@ -30,7 +31,10 @@ type Responded struct {
 // nil answers only queries that name none.
 //
 // Show the holder PreviewPresentation's view of the same request and
-// credentials first: Respond sends without asking.
+// credentials first: Respond sends without asking. Once the
+// presentation is signed, cancelling ctx no longer stops it: it's sent,
+// within 30 seconds, so the holder isn't left not knowing whether the
+// Verifier has it.
 //
 // client posts to response_uri, the Verifier's choice: in production it
 // must be one fapihttp.NewClient built, as SubmitDirectPostResponse
@@ -69,9 +73,20 @@ func respond(ctx context.Context, client fapihttp.HTTPClient, req AuthorizationR
 	if err != nil {
 		return Responded{}, fmt.Errorf("wallet: respond: %w", err)
 	}
-	reply, err := SubmitDirectPostResponse(ctx, client, req.ResponseURI, responseJWE)
+	// Signed, the presentation is what the holder consented to send:
+	// it's sent even when ctx is cancelled meanwhile (the holder leaving
+	// the screen, say), within submitTimeout, rather than cut off
+	// mid-request, leaving the holder not knowing whether the Verifier
+	// has it.
+	sendCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), submitTimeout)
+	defer cancel()
+	reply, err := SubmitDirectPostResponse(sendCtx, client, req.ResponseURI, responseJWE)
 	if err != nil {
 		return Responded{}, fmt.Errorf("wallet: respond: %w", err)
 	}
 	return Responded{VPToken: vpToken, Reply: reply}, nil
 }
+
+// submitTimeout bounds sending a signed presentation once its caller's
+// context no longer can.
+const submitTimeout = 30 * time.Second

@@ -83,7 +83,8 @@ final class ProximityTests: XCTestCase {
                                 provider: env.env.provider(), agreement: KeyAgreementAdapter(keys))
         let result = try await SessionTests.receive(env, wallet)
         let mdocID = try XCTUnwrap(result.credentials.first { $0.format == "mso_mdoc" }?.id)
-        let readerConfig = try JSONDecoder().decode(ProximityReaderConfiguration.self, from: Data(readerSetup.readerConfig.utf8))
+        var readerConfig = try JSONDecoder().decode(ProximityReaderConfiguration.self, from: Data(readerSetup.readerConfig.utf8))
+        readerConfig.statusCheck = .check
         let reader = signed
             ? try ProximityReader(configuration: readerConfig, keys: adapter)
             : try ProximityReader(configuration: ProximityReaderConfiguration(issuerRoots: readerConfig.issuerRoots, development: true), keys: nil)
@@ -122,8 +123,29 @@ final class ProximityTests: XCTestCase {
             XCTAssertEqual(($0 as? WalletError)?.code, .invalidInput)
         }
         XCTAssertNoThrow(try ProximityReader(configuration: ProximityReaderConfiguration(issuerRoots: issuerRoots, development: true), keys: nil))
+        // The status decision is one of a production reader's.
+        XCTAssertThrowsError(try ProximityReader(configuration: ProximityReaderConfiguration(
+            issuerRoots: issuerRoots, noRevocationCheck: [.issuer, .status], anyIssuerForAnyType: true), keys: nil)) {
+            XCTAssertEqual(($0 as? WalletError)?.code, .invalidInput)
+        }
         XCTAssertNoThrow(try ProximityReader(configuration: ProximityReaderConfiguration(
-            issuerRoots: issuerRoots, noRevocationCheck: [.issuer, .status], anyIssuerForAnyType: true), keys: nil))
+            issuerRoots: issuerRoots, noRevocationCheck: [.issuer, .status], anyIssuerForAnyType: true, statusCheck: .check), keys: nil))
+    }
+
+    /// A reader that checks status never reports a revoked document
+    /// verified: the session fails with `.documentNotValid`.
+    func testReaderRefusesARevokedDocument() async throws {
+        var s = try await setup()
+        defer { s.env.close() }
+        s.env.env.revoke()
+        let (holder, reader) = try start(&s)
+        _ = try await request(holder)
+        _ = try await holder.respond(document: 0, credentialID: s.mdocID,
+                                     elements: [.init(namespace: Self.namespace, identifier: "family_name", retain: false)])
+        let result = try await final(reader.states) { $0.isFinal }
+        guard case .failed(let e) = result, let w = e as? WalletError else { return XCTFail("reader: \(result)") }
+        XCTAssertEqual(w.code, .documentNotValid)
+        XCTAssertEqual(w.protocolError, "invalid")
     }
 
     func testPresentAndVerify() async throws {
@@ -156,6 +178,8 @@ final class ProximityTests: XCTestCase {
         XCTAssertNil(v.claims[Self.namespace]?["given_name"])
         XCTAssertEqual(v.deviceAuth, "signature")
         XCTAssertNotNil(v.statusList)
+        XCTAssertTrue(reader.checksStatus)
+        XCTAssertEqual(v.status, .valid, "checked before the session reported it verified")
         XCTAssertGreaterThanOrEqual(v.issuerChain.count, 2)
         let held = try await final(holder.states) { $0.isFinal }
         guard case .presented(linkable: false) = held else { return XCTFail("holder: \(held)") }

@@ -160,7 +160,7 @@ func refreshGrant(raw []byte) (walletflow.RefreshGrant, error) {
 // summary, "deferred": deferred credential or null}: the credential, its
 // ID unchanged, with every copy unused; or, when the issuer deferred
 // the new one, the credential as it was and the deferred credential to
-// poll, which settles as a new credential. A credential that can't be
+// poll, which replaces it under the same ID once issued. A credential that can't be
 // refreshed is reissue_required: receive it again from a new offer.
 func (w *Wallet) RefreshCredential(op *Operation, credentialID string) (string, error) {
 	c, d, err := w.w.RefreshCredential(op.context(), credentialID)

@@ -1359,6 +1359,25 @@ Decisions taken 2026-10-06 (tracked in [#482](https://github.com/IDFoundry/OID4V
   identifier list too (`identifierlist.Checker`, its signer bound the
   same way), and `unknown` is left for a status naming no mechanism it
   knows.
+- **The status check is a production decision (ABI 14):** with status
+  a separate, optional call, the Swift and Kotlin sessions reported
+  `verified` before any status check, and an app accepting on that
+  (an age check, say) accepted a revoked mDL, where Go's production
+  reader requires a status decision. A reader configuration now
+  decides, `"status": "check"` or `"decline"`, required outside
+  development. With `"check"`, the wrappers close the connection, call
+  `CheckStatus`, and report the session verified only on `valid` or
+  `none`, failing it with `document_not_valid` otherwise. The check
+  stays out of `HandleMessage`, which runs on the BLE path; the
+  wrappers learn the decision from `Engagement()`'s `check_status`.
+- **`development` needs the app's consent:** `development` is a field
+  of a serialized configuration (Codable, `@Serializable`), so a staging
+  configuration from shared defaults or remote config could ship with it
+  set, and nothing refused it. The Swift wrapper now refuses it in a
+  release build unless the app calls `OID4VC.allowDevelopmentInRelease()`;
+  the Kotlin library, which can't see the app's build type, refuses it
+  unless the app calls `OID4VC.allowDevelopment()`, from a debuggable
+  build. The test frameworks need neither.
 
 ### Phase 10 findings: the Android SDK
 

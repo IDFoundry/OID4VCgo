@@ -88,7 +88,8 @@ public struct WalletConfiguration: Codable, Sendable {
     /// `noRevocationCheck` is checked for nothing; skips the check that
     /// different roles' roots share no anchor; and skips the production
     /// checks on receiving credentials: durable stores and keys, and the
-    /// random source.
+    /// random source. A release build refuses it (`invalidInput`) unless
+    /// the app called `OID4VC.allowDevelopmentInRelease()`.
     public var development: Bool
     /// The holder's preferred languages (BCP 47, most preferred first),
     /// for issuers' display metadata. `Locale.preferredLanguages` is the
@@ -467,6 +468,11 @@ public struct CredentialSummary: Decodable, Equatable, Sendable {
     /// those Verifiers could link the holder's presentations. Refreshing
     /// gives it copies no Verifier has seen.
     public let linkable: Bool
+    /// Whether a Verifier could accept it now, as far as the wallet
+    /// knows: a copy is neither expired nor found revoked, and its status
+    /// as last checked isn't revoked or suspended. A presentation lists
+    /// the others after it, and the default selection never picks them.
+    public let presentable: Bool
     /// Set only on a presentation's candidates (`Presentation.queries`):
     /// whether the Verifier asking has been shown this credential before,
     /// and whether presenting it now would hand it a copy another
@@ -483,7 +489,7 @@ public struct CredentialSummary: Decodable, Equatable, Sendable {
         case id, format, vct, doctype, display, status
         case credentialIssuer = "credential_issuer", configurationID = "configuration_id", receivedAt = "received_at"
         case holderKeyPresent = "holder_key_present", validUntil = "valid_until"
-        case copies, copiesLeft = "copies_left", refreshable, linkable
+        case copies, copiesLeft = "copies_left", refreshable, linkable, presentable
         case shownToVerifier = "shown_to_verifier", linkableHere = "linkable_here"
     }
 }
@@ -591,6 +597,7 @@ public final class Wallet: @unchecked Sendable {
             throw WalletError(code: .internalError,
                               message: "the linked framework has ABI \(OID4VC.abiVersion), these sources ABI \(OID4VC.expectedABIVersion): rebuild it")
         }
+        try OID4VC.checkDevelopment(configuration.development)
         let json = String(decoding: try JSONEncoder().encode(configuration), as: UTF8.self)
         handle = try OID4VC.call { MobileNewWallet(json, keys, credentials, provider, $0) }!
         // A key store that also agrees keys answers in person with deviceMac
@@ -651,7 +658,7 @@ public final class Wallet: @unchecked Sendable {
         /// as it was when the issuer deferred the new one.
         public let credential: CredentialSummary
         /// The deferred credential to poll, when the issuer deferred it:
-        /// it settles as a new credential.
+        /// once issued, it replaces the credential under the same ID.
         public let deferred: DeferredCredential?
     }
 
@@ -672,10 +679,12 @@ public final class Wallet: @unchecked Sendable {
     /// `revocation` roles are checked against with `pem`'s `X509 CRL`
     /// blocks, for every check from now on. CRLs expire at their
     /// nextUpdate: fetch fresh ones and call this before then. Text
-    /// holding anything else, or a list that doesn't parse, throws
-    /// `invalidInput` and keeps the lists as they were; empty text removes
-    /// them all, and a role checked then fails closed. Makes no network
-    /// calls.
+    /// holding anything else, a list that doesn't parse, or a CA's list
+    /// older than the one held (a lower CRL number, or an earlier
+    /// thisUpdate) throws `invalidInput` and keeps the lists as they were,
+    /// so a replayed list can't un-revoke a certificate; empty text
+    /// removes them all, and a role checked then fails closed. Makes no
+    /// network calls.
     public func setCRLs(_ pem: String) async throws {
         let wallet = handle
         try await OID4VC.offMain { try OID4VC.wrap { try wallet.setCRLs(pem) } }

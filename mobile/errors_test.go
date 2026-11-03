@@ -130,6 +130,12 @@ func TestClassify_DeliveryUnknown(t *testing.T) {
 	if code(classify(err)) != CodeDeliveryUnknown {
 		t.Errorf("classify = %v, want delivery_unknown, not the retryable network", classify(err))
 	}
+	// Cancelled as it was sent: the Verifier may have it, so not
+	// "cancelled", which says nothing was.
+	err = fmt.Errorf("walletflow: respond: %w: %w", walletflow.ErrDeliveryUnknown, context.Canceled)
+	if code(classify(err)) != CodeDeliveryUnknown {
+		t.Errorf("classify = %v, want delivery_unknown, not cancelled", classify(err))
+	}
 }
 
 // A refused request is request_refused with the OpenID4VP error code

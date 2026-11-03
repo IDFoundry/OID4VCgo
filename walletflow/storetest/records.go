@@ -112,6 +112,8 @@ func fullDeferred(id string, v int) walletflow.PendingDeferred {
 		TransactionID: text("transaction"), CredentialIdentifier: text("dataset"), AccessToken: fapi.NewSecret(text("token")),
 		AccessTokenExpiresAt: at(20, v), DPoPKeyID: text("dpop"), HolderKeyIDs: []string{text("key0"), text("key1"), text("key2")},
 		Interval: time.Duration(5+v) * time.Second, DeferredAt: at(4, v), GrantID: text("grant"), Replaces: text("replaces"),
-		TokenType: "Bearer",
+		// Not a real configuration's type: every field set, to check each
+		// is kept.
+		TokenType: "Bearer", Format: text("format"), VCT: "https://vct.example/" + text("vct"), DocType: text("doctype"),
 	}
 }

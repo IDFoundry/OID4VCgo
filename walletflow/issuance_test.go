@@ -363,6 +363,40 @@ func surviveARestart(t *testing.T, grant walletflow.Grant) {
 	}
 }
 
+// A deferred credential keeps the type it was requested as: polled
+// after a restart, when the issuer's configuration now issues another
+// type, it's refused (ErrReissueRequired) and not kept.
+func TestDeferred_RefusesAnotherTypeAfterARestart(t *testing.T) {
+	f := newFixture(t, walletflowtest.Options{Defer: true})
+	ctx := context.Background()
+	store := walletflow.NewMemoryDeferredStore()
+	id := deferUntilClosed(t, f, store, walletflow.GrantAuthorizationCode)
+	kept, err := store.ListDeferred(ctx)
+	if err != nil || len(kept) != 1 || kept[0].ID != id || kept[0].Format != "dc+sd-jwt" || kept[0].VCT == "" {
+		t.Fatalf("stored = %+v, %v; want its type kept", kept, err)
+	}
+	// As if the issuer had remapped the configuration meanwhile.
+	kept[0].VCT = "https://vct.example/loyalty-card"
+	if err := store.PutDeferred(ctx, kept[0]); err != nil {
+		t.Fatal(err)
+	}
+	relaunched := f.newWalletWith(t, store)
+	pending, err := relaunched.Deferred(ctx)
+	if err != nil || len(pending) != 1 {
+		t.Fatalf("Deferred = %v, %v", pending, err)
+	}
+	f.env.Decide(true)
+	if stored, err := pending[0].Poll(ctx); stored != nil || !errors.Is(err, walletflow.ErrReissueRequired) {
+		t.Fatalf("Poll = %v, %v; want ErrReissueRequired", stored, err)
+	}
+	if left, _ := relaunched.Deferred(ctx); len(left) != 0 {
+		t.Errorf("%d still pending; want it settled", len(left))
+	}
+	if held, _ := relaunched.Credentials(ctx); len(held) != 0 {
+		t.Errorf("credentials = %d; want none kept", len(held))
+	}
+}
+
 // newWalletAuthorizing is a wallet keeping its authorizations in auth,
 // on clock.
 func (f fixture) newWalletAuthorizing(t *testing.T, auth walletflow.AuthorizationStore, clock func() time.Time) *walletflow.Wallet {

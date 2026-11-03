@@ -88,8 +88,8 @@ public object DigitalCredentials {
 
     /**
      * Registers the wallet's presentable credentials with Credential
-     * Manager — each unexpired SD-JWT VC and mdoc whose key is on the
-     * device, with its claims — replacing what was registered before,
+     * Manager — each [CredentialSummary.presentable] SD-JWT VC and mdoc
+     * whose key is on the device, with its claims — replacing what was registered before,
      * and returns how many. Call it after every issuance, deletion and
      * restore. It throws where the device has no Credential Manager
      * registry (no Google Play services, say): the wallet then works as
@@ -99,7 +99,7 @@ public object DigitalCredentials {
      */
     public suspend fun register(context: Context, wallet: Wallet, options: RegistrationOptions = RegistrationOptions()): Int {
         val now = Instant.now()
-        val entries = wallet.credentials().filter { !it.isExpired(now) && it.holderKeyPresent != false }.mapNotNull { c ->
+        val entries = wallet.credentials().filter { it.presentable && !it.isExpired(now) && it.holderKeyPresent != false }.mapNotNull { c ->
             val claims = if (c.format == "dc+sd-jwt" || c.format == "mso_mdoc") wallet.credential(c.id).claims else return@mapNotNull null
             entry(c, claims, options)
         }

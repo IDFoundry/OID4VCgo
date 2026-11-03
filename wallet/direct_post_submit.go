@@ -214,5 +214,12 @@ func doWithoutRedirects(client fapihttp.HTTPClient, req *http.Request) (*http.Re
 // unsafeRedirectSchemes are the URI schemes a redirect_uri may not
 // have: each runs code, or reads local data, in whatever opens it.
 // Plain http too: HAIP requires TLS, and a same-device return over it
-// could be read or rewritten on the way.
-var unsafeRedirectSchemes = map[string]bool{"http": true, "javascript": true, "data": true, "file": true, "vbscript": true, "blob": true, "about": true}
+// could be read or rewritten on the way. And the schemes that invoke a
+// Wallet (OpenID4VP 1.0 §13.1.1, OpenID4VCI 1.0 §4.1, HAIP 1.0 §5 and
+// §4.1): a Verifier's redirect back is to its own page or app, and one
+// to a Wallet's scheme would start another presentation or issuance
+// straight after the holder consented to this one.
+var unsafeRedirectSchemes = map[string]bool{
+	"http": true, "javascript": true, "data": true, "file": true, "vbscript": true, "blob": true, "about": true,
+	"openid4vp": true, "haip-vp": true, "openid-credential-offer": true, "haip-vci": true,
+}

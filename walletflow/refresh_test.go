@@ -117,6 +117,22 @@ func TestRefreshCredential_ReissueRequired(t *testing.T) {
 			t.Errorf("RefreshCredential = %v, want ErrReissueRequired", err)
 		}
 	})
+	t.Run("the configuration now issues another type", func(t *testing.T) {
+		f := newFixture(t, walletflowtest.Options{})
+		w := f.newRefreshingWallet(t, nil, walletflow.NewMemoryGrantStore())
+		c := receive(t, f, w, walletflowtest.SDJWTConfigurationID)[0]
+		// As if the issuer had remapped the configuration since: what
+		// the holder agreed to differs from what it now issues.
+		if err := f.store.Update(ctx, c.ID, func(s *walletflow.StoredCredential) error {
+			s.VCT = "https://vct.example/loyalty-card"
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := w.RefreshCredential(ctx, c.ID); !errors.Is(err, walletflow.ErrReissueRequired) || !strings.Contains(err.Error(), "loyalty-card") {
+			t.Errorf("RefreshCredential = %v, want ErrReissueRequired naming the type", err)
+		}
+	})
 	t.Run("the grant revoked", func(t *testing.T) {
 		f := newFixture(t, walletflowtest.Options{})
 		grants := walletflow.NewMemoryGrantStore()

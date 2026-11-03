@@ -83,7 +83,11 @@ chain.
   ``WalletConfiguration/mdocReaderRequireEKU``, and
   ``WalletConfiguration/requireTrustedMdocReader`` where every reader
   must be a known one.
-- Never ship with ``WalletConfiguration/development`` set.
+- Never ship with ``WalletConfiguration/development`` set. A release
+  build refuses it, and ``ProximityReaderConfiguration/development``,
+  with `invalidInput`, unless the app called
+  ``OID4VC/allowDevelopmentInRelease()``: a staging configuration
+  shipped by mistake fails instead of relaxing production's checks.
 - To pin your services' certificates, set
   ``WalletConfiguration/tlsPins``: host → base64 SHA-256 digests of a
   certificate's SubjectPublicKeyInfo. Pin a CA's key, so a leaf renewal

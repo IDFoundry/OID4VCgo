@@ -78,6 +78,9 @@ func displayFor(metadata oid4vci.Metadata, configID string, locales []string) Di
 const (
 	maxDisplayName        = 200
 	maxDisplayDescription = 1000
+	// maxTxCodeDescription is OpenID4VCI 1.0 §4.1.1's limit on a
+	// tx_code's description.
+	maxTxCodeDescription = 300
 )
 
 // displayText is s, from an issuer's metadata, fit to show the holder

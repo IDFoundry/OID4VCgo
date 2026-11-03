@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"sync"
 	"sync/atomic"
 
 	"github.com/idfoundry/oid4vcgo/certrevocation"
@@ -18,6 +19,8 @@ import (
 // expire (their nextUpdate), so an app fetches fresh ones and hands
 // them over without rebuilding the wallet.
 type crlSet struct {
+	// mu orders replacements, each checked against the lists before it.
+	mu    sync.Mutex
 	lists atomic.Pointer[[]*x509.RevocationList]
 	// issuers are the certificates of the CAs that issued certificates
 	// pinned in the roots (certrevocation.CRLs.Issuers): a pinned leaf's
@@ -39,14 +42,49 @@ func newCRLSet(crls, issuers string) (*crlSet, error) {
 	return s, nil
 }
 
-// set replaces s's lists with pemText's.
+// set replaces s's lists with pemText's. A list older than the one held
+// for the same CA — an earlier thisUpdate, or a lower CRL number — is
+// refused, and the lists left as they were: a CRL fetched over plain
+// http, as distribution points usually are, could otherwise be replayed
+// to un-revoke a certificate revoked since, while still before its
+// nextUpdate.
 func (s *crlSet) set(pemText string) error {
 	lists, err := parseCRLs(pemText)
 	if err != nil {
 		return err
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if held := s.lists.Load(); held != nil {
+		for i, l := range lists {
+			for _, h := range *held {
+				if sameCRLIssuer(l, h) && olderCRL(l, h) {
+					return fmt.Errorf("CRL %d (%q) is older than the one held for its CA", i, l.Issuer)
+				}
+			}
+		}
+	}
 	s.lists.Store(&lists)
 	return nil
+}
+
+// sameCRLIssuer reports whether a and b are lists of the same CA: the
+// same issuer name and, where both say, the same key.
+func sameCRLIssuer(a, b *x509.RevocationList) bool {
+	if !bytes.Equal(a.RawIssuer, b.RawIssuer) {
+		return false
+	}
+	return len(a.AuthorityKeyId) == 0 || len(b.AuthorityKeyId) == 0 || bytes.Equal(a.AuthorityKeyId, b.AuthorityKeyId)
+}
+
+// olderCRL reports whether l was issued before held: by its CRL number,
+// where both have one (RFC 5280 §5.2.3: monotonically increasing), and
+// otherwise by thisUpdate.
+func olderCRL(l, held *x509.RevocationList) bool {
+	if l.Number != nil && held.Number != nil {
+		return l.Number.Cmp(held.Number) < 0
+	}
+	return l.ThisUpdate.Before(held.ThisUpdate)
 }
 
 // checker is a certrevocation.CRLs over s's current lists and its

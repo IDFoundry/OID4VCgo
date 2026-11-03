@@ -139,7 +139,8 @@ final class InPersonModel {
                 reader = try ProximityReader(
                     configuration: ProximityReaderConfiguration(issuerRoots: r.issuerRoots, readerKeyID: DemoReaderKeys.id,
                                                                 readerChain: r.readerChain, maxClockSkewSeconds: 300,
-                                                                noRevocationCheck: [.issuer, .status], anyIssuerForAnyType: true),
+                                                                noRevocationCheck: [.issuer, .status], anyIssuerForAnyType: true,
+                                                                statusCheck: .check),
                     keyStore: try DemoReaderKeys(r))
             }
             guard let reader else { return }

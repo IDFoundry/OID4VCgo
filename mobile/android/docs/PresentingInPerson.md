@@ -65,7 +65,6 @@ import dev.idfoundry.oid4vcwallet.NfcPresentation
 import dev.idfoundry.oid4vcwallet.ProximityBLEMode
 import dev.idfoundry.oid4vcwallet.ProximityDiagnostics
 import dev.idfoundry.oid4vcwallet.MdocPresentation
-import dev.idfoundry.oid4vcwallet.MdocStatus
 import dev.idfoundry.oid4vcwallet.ProximityPresentation
 import dev.idfoundry.oid4vcwallet.ProximityReader
 import dev.idfoundry.oid4vcwallet.ProximityReaderConfiguration
@@ -124,15 +123,16 @@ in a `KeyStore` and its certificate chain, with the reader
 authentication extended key usage (`ProximityReaderConfiguration`). The
 reader is a production one: it refuses (`invalid_input`) a
 configuration that leaves a decision open: which IACAs issue which
-document types (`anyIssuerForAnyType`, or `issuerRootsByDocType`), and
+document types (`anyIssuerForAnyType`, or `issuerRootsByDocType`),
 each role's revocation (`revocation` with `crls`, or
-`noRevocationCheck` to decline). `development` relaxes this, for trying
+`noRevocationCheck` to decline), and whether a document's revocation
+status is checked (`statusCheck`). `development` relaxes this, for trying
 out a development issuer's documents; never ship an app with it set. `start` takes the holder's QR code and what to ask for.
 
 ```kotlin
 /**
  * Reads an mDL's name and portrait from the holder whose QR code was scanned. Returns the verified
- * mdoc, or null if the holder declined or the mdoc isn't known to be unrevoked.
+ * mdoc, its status checked, or null if the holder declined.
  */
 suspend fun readInPerson(context: Context, qrCode: String, issuerRoots: String, crls: String): VerifiedMdoc? {
     val reader = ProximityReader(
@@ -140,6 +140,7 @@ suspend fun readInPerson(context: Context, qrCode: String, issuerRoots: String, 
             issuerRoots = issuerRoots, crls = crls,
             revocation = listOf(ProximityReaderConfiguration.RevocationRole.ISSUER, ProximityReaderConfiguration.RevocationRole.STATUS),
             anyIssuerForAnyType = true,
+            statusCheck = ProximityReaderConfiguration.StatusCheck.CHECK,
         ),
     )
     val session = reader.start(
@@ -147,10 +148,9 @@ suspend fun readInPerson(context: Context, qrCode: String, issuerRoots: String, 
         mapOf("org.iso.18013.5.1" to listOf("given_name", "family_name", "portrait")),
     )
     return when (val state = session.state.first { it.isFinal }) {
-        is ProximityReaderSession.State.Verified -> when (session.checkStatus()) {
-            MdocStatus.Valid, MdocStatus.NoStatus -> state.result
-            else -> null
-        }
+        // Its status was checked first: valid, or it names none.
+        is ProximityReaderSession.State.Verified -> state.result
+        // A revoked or suspended document is WalletException document_not_valid.
         is ProximityReaderSession.State.Failed -> throw state.error
         else -> null
     }
@@ -163,13 +163,19 @@ on `issuerChain`, the verified certificate path: `issuer` and
 `trustAnchor` are names any document signer under a trusted IACA can
 choose, for display.
 
-The session doesn't check revocation itself: `session.checkStatus()`
-does, once the session is `Verified`. It fetches the issuer's status
-list over the network, so the reader needs a connection then, and
-verifies the list is signed under the certificate the document names or
-the CA that signed the document signer (ISO/IEC 18013-5 §12.3.6). Rely
-on the document only when it's `MdocStatus.Valid` or
-`MdocStatus.NoStatus`.
+With `statusCheck = StatusCheck.CHECK`, the session checks the
+document's revocation status before it's `Verified`, as
+`session.checkStatus()` does: it closes the connection, fetches the
+issuer's status list over the network, so the reader needs a connection
+then, and verifies the list is signed under the certificate the
+document names or the CA that signed the document signer (ISO/IEC
+18013-5 §12.3.6). Only a document that's `MdocStatus.Valid`, or names
+no status (`MdocStatus.NoStatus`), is `Verified`, with
+`VerifiedMdoc.status` set; any other status fails the session with a
+`WalletException` `document_not_valid`, its `protocolError` the
+status. With `StatusCheck.DECLINE`, nothing checks it: for a reader
+where something else stands in, which then calls
+`session.checkStatus()` itself or checks otherwise.
 
 ## NFC holder and reader
 
