@@ -79,7 +79,6 @@ class CombinedHostTest {
         val arbiter = CombinedEngagementArbiter(true) {}
         assertTrue(arbiter.acceptNfc(NfcCommandKind.OTHER, false))
         assertTrue(arbiter.acceptNfc(NfcCommandKind.SELECT_OTHER, false))
-        assertFalse(arbiter.acceptNfc(NfcCommandKind.SELECT_DATA_NO_FCI, false))
         assertFalse("data before the handover was read", arbiter.acceptNfc(NfcCommandKind.SELECT_DATA, false))
         assertNull(arbiter.state.value)
         assertTrue(arbiter.select(false))

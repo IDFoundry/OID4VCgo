@@ -792,11 +792,11 @@ and cancellation.
 | `NFCHolder.RefuseMessage()` | Drop a message the session couldn't take; returns the `6985` response |
 | `NFCHolder.Deactivate(handoverCommitted, qrSelected)` | Field loss: `NFCDeactivation.Cancel` (a negotiated Hs was answered but not read: end the presentation) and `DataClosed` (NFC data retrieval ended) |
 | `NFCHolder.Close()` | End NFC data retrieval |
-| `ClassifyNFCCommand(apdu)` | `NFCCommandOther`, `NFCCommandSelectNDEF`, `NFCCommandSelectData`, `NFCCommandSelectDataNoFCI` or `NFCCommandSelectOther`, for QR/NFC arbitration |
+| `ClassifyNFCCommand(apdu)` | `NFCCommandOther`, `NFCCommandSelectNDEF`, `NFCCommandSelectData` (a SELECT of the NFC data application with P2 `0C`, ISO/IEC 18013-5 Table 8, or `00`) or `NFCCommandSelectOther`, for QR/NFC arbitration. `NFCCommandSelectDataNoFCI` is kept for compatibility and no longer reported |
 | `NewNFCHandoverRead(maxTransceive, hr)` | Reader: an `NFCExchange` reading the Hs, negotiating with `hr` when the tag offers TNEP (refused when `hr` is nil). `Negotiated()` afterwards |
 | `NewNFCTransact(maxTransceive, maxCommand, maxResponse, message)` | Reader: an `NFCExchange` sending one session message to the NFC data application and reading the answer |
 | `NFCExchange.Done()`, `Command()`, `WaitMillis()`, `Next(response)`, `Result()`, `Close()` | Until `Done`: wait `WaitMillis` (TNEP's waiting time; native code sleeps, so cancellation can interrupt it), send `Command`, pass the response to `Next`. Then `Result` is the Hs or the answer (`invalid_input` on a protocol failure). Safe from any thread: each call waits for one in progress, except `Close`, which ends a waiting `Next`. `Close` an abandoned exchange: until it's done, it holds a goroutine |
-| `NFCSelectDataApplication()`, `CheckNFCDataApplicationSelected(response)` | Reader: select the NFC data application and check its response |
+| `NFCSelectDataApplication()`, `CheckNFCDataApplicationSelected(response)` | Reader: select the NFC data application (ISO/IEC 18013-5 Table 8: P2 `0C`, no Le) and check its response (success; data in it is ignored) |
 
 ### QR and BLE presentation
 

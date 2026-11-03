@@ -173,7 +173,6 @@ class CombinedNfcHandoverTest {
     @Test fun dataSelectBeforeHsIsReadIsRefused() {
         val f = Offers(data = true)
         assertArrayEquals(nfcResponse(0x6985), f.exchange(ScriptedHolder.command(NfcCommandKind.SELECT_DATA)))
-        assertArrayEquals(nfcResponse(0x6985), f.exchange(ScriptedHolder.command(NfcCommandKind.SELECT_DATA_NO_FCI)))
         assertNull(f.arbiter.state.value)
         f.combined.close()
     }

@@ -100,7 +100,9 @@ func TestClassify(t *testing.T) {
 	}{
 		{selectNDEF, CommandSelectNDEF},
 		{data, CommandSelectData},
-		{concat([]byte{0, insSelect, 4, 0x0c, 7}, DataApplication), CommandSelectDataNoFCI},
+		// ISO/IEC 18013-5 Table 8's own form: P2 0x0C, no Le.
+		{concat([]byte{0, insSelect, 4, 0x0c, 7}, DataApplication), CommandSelectData},
+		{concat([]byte{0, insSelect, 4, 0x04, 7}, DataApplication), CommandOther},
 		{concat([]byte{0, insSelect, 4, 0, 1}, []byte{1}), CommandSelectOther},
 		{concat([]byte{1, insSelect, 4, 0, 7}, NDEFApplication), CommandOther},
 		{[]byte{0, insReadBinary, 0, 0, 2}, CommandOther},
@@ -447,6 +449,35 @@ func TestLargeResponseChainsAndWaitsForConsent(t *testing.T) {
 	}
 	if _, err := h.Respond(portrait); err == nil {
 		t.Error("Respond without a pending message succeeded")
+	}
+}
+
+// TestSelectDataApplication selects the NFC data application with ISO/IEC
+// 18013-5 §11.2 Table 8's command (P2 0x0C, no Le), and with P2 0 and an
+// Le as some readers send it: both get 9000 alone (Table 9). Our reader
+// sends Table 8's, and takes a success carrying data too.
+func TestSelectDataApplication(t *testing.T) {
+	table8 := concat([]byte{0, insSelect, 4, 0x0c, 7}, DataApplication)
+	if !bytes.Equal(SelectDataApplication(), table8) {
+		t.Errorf("SelectDataApplication = %X, want %X", SelectDataApplication(), table8)
+	}
+	for _, c := range [][]byte{table8, concat([]byte{0, insSelect, 4, 0, 7}, DataApplication, []byte{0})} {
+		h, _ := newDataHolder(t)
+		if step := h.Process(c); !bytes.Equal(step.Response, response(swOK, nil)) || !step.DataSelected {
+			t.Errorf("SELECT %X = %X, selected %v", c, step.Response, step.DataSelected)
+		}
+	}
+	h, _ := newDataHolder(t)
+	if step := h.Process(concat([]byte{0, insSelect, 4, 0x04, 7}, DataApplication)); step.DataSelected {
+		t.Error("SELECT with P2 04 selected the data application")
+	}
+	if err := CheckDataApplicationSelected(response(swOK, []byte{0x6f, 0})); err != nil {
+		t.Errorf("success with an FCI: %v", err)
+	}
+	for _, resp := range [][]byte{response(swFileNotFound, nil), {0x90}} {
+		if CheckDataApplicationSelected(resp) == nil {
+			t.Errorf("CheckDataApplicationSelected(%X) succeeded", resp)
+		}
 	}
 }
 

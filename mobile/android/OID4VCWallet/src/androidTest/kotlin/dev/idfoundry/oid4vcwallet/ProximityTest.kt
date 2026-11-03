@@ -332,7 +332,6 @@ class ProximityTest {
             "NFCCommandOther" to NfcCommandKind.OTHER,
             "NFCCommandSelectNDEF" to NfcCommandKind.SELECT_NDEF,
             "NFCCommandSelectData" to NfcCommandKind.SELECT_DATA,
-            "NFCCommandSelectDataNoFCI" to NfcCommandKind.SELECT_DATA_NO_FCI,
             "NFCCommandSelectOther" to NfcCommandKind.SELECT_OTHER,
         )) assertEquals(name, mobile.getField(name).getLong(null), kind.toLong())
         assertEquals(NfcCommandKind.SELECT_NDEF.toLong(), dev.idfoundry.oid4vcwallet.gomobile.mobile.Mobile.classifyNFCCommand(byteArrayOf(0, 0xa4.toByte(), 4, 0, 7) + NDEF_AID))

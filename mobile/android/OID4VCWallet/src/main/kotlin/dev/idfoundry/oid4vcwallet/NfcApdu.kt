@@ -13,7 +13,6 @@ internal object NfcCommandKind {
     const val OTHER = 0
     const val SELECT_NDEF = 1
     const val SELECT_DATA = 2
-    const val SELECT_DATA_NO_FCI = 3
     const val SELECT_OTHER = 4
 }
 
