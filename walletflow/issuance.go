@@ -336,8 +336,13 @@ func checkBindable(conf oid4vci.CredentialConfigurationMetadata) error {
 
 func describeOffer(offer oid4vci.CredentialOffer, metadata oid4vci.Metadata, grant Grant, locales []string) Offer {
 	o := Offer{CredentialIssuer: offer.CredentialIssuer, Grant: grant}
-	if g := offer.Grants; grant == GrantPreAuthorizedCode && g != nil && g.PreAuthorizedCode != nil {
-		o.TxCode = g.PreAuthorizedCode.TxCode
+	if g := offer.Grants; grant == GrantPreAuthorizedCode && g != nil && g.PreAuthorizedCode != nil && g.PreAuthorizedCode.TxCode != nil {
+		// Its description is shown where the holder enters the PIN, and
+		// anyone can make an offer: cleaned as every issuer text is
+		// (displayText), so it can't reorder or hide what's around it.
+		tx := *g.PreAuthorizedCode.TxCode
+		tx.Description = displayText(tx.Description, maxTxCodeDescription)
+		o.TxCode = &tx
 	}
 	for _, id := range offer.CredentialConfigurationIDs {
 		conf := metadata.CredentialConfigurationsSupported[id]
