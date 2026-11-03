@@ -41,7 +41,13 @@ func TestRedeemPreAuthorizedCode_AuthorizationDetails(t *testing.T) {
 	t.Run("requested and granted by scope", func(t *testing.T) {
 		f := newFixture(t, true)
 		f.issue(t, "code-1", record(f))
-		got, err := redeem(f, "code-1", detail("IdentityCredential"))
+		// §5.1.1: with authorization_servers, a detail names its location.
+		if _, err := redeem(f, "code-1", detail("IdentityCredential")); err == nil || !strings.Contains(err.Error(), "locations is required") {
+			t.Fatalf("redeem without locations = %v, want it refused", err)
+		}
+		here := detail("IdentityCredential")
+		here.Locations = []string{testIssuer}
+		got, err := redeem(f, "code-1", here)
 		if err != nil {
 			t.Fatalf("redeem: %v", err)
 		}

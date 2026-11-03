@@ -610,6 +610,10 @@ func (iss *Issuer) requestedConfigurations(details []oid4vci.AuthorizationDetail
 			problem = "credential_identifiers are the Authorization Server's to issue"
 		case len(d.Locations) > 0 && !slices.Contains(d.Locations, iss.cfg.Issuer.String()):
 			problem = "locations doesn't include this Credential Issuer"
+		case len(d.Locations) == 0 && len(iss.cfg.AuthorizationServers) > 0:
+			// §5.1.1: with authorization_servers in the metadata, locations
+			// "MUST be set to the Credential Issuer Identifier value".
+			problem = "locations is required, since this Credential Issuer lists authorization_servers"
 		}
 		if problem != "" {
 			return nil, newError(ErrorInvalidAuthorizationDetails, 400, fmt.Sprintf("authorization_details[%d]: %s", i, problem), nil)

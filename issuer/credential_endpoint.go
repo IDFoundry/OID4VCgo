@@ -80,7 +80,8 @@ type AuthorizedRequest struct {
 	// CredentialIdentifiers, in which case the Wallet MUST use one of
 	// those instead (§8.2) and the request is refused. An entry whose
 	// Locations is present and doesn't include Config.Issuer is for
-	// another resource server and grants nothing here (§5.1.1).
+	// another resource server and grants nothing here (§5.1.1), as does
+	// one without Locations when Config.AuthorizationServers is set.
 	// RequestCredential resolves CredentialRequest.CredentialIdentifier
 	// against this to find which CredentialConfiguration applies,
 	// entirely bypassing the CredentialConfigurationID/Scopes check —
@@ -490,12 +491,22 @@ func (iss *Issuer) resolveCredentialConfiguration(auth AuthorizedRequest, req Cr
 }
 
 // credentialDetail reports whether d is an "openid_credential"
-// authorization detail for this Credential Issuer: one whose locations,
-// when present, include its identifier (§5.1.1, RFC 9396 §2.2). A
-// detail meant for another location grants nothing here.
+// authorization detail for this Credential Issuer: one whose locations
+// include its identifier (§5.1.1, RFC 9396 §2.2). A detail meant for
+// another location grants nothing here. One without locations does
+// only when this issuer lists no authorization_servers: with them,
+// §5.1.1 and §6.2 say locations "MUST be set to the Credential Issuer
+// Identifier", and an Authorization Server they share would otherwise
+// grant one issuer's configuration at every issuer with a configuration
+// of that ID.
 func (iss *Issuer) credentialDetail(d oid4vci.AuthorizationDetail) bool {
-	return d.Type == oid4vci.AuthorizationDetailsTypeOpenIDCredential &&
-		(len(d.Locations) == 0 || slices.Contains(d.Locations, iss.cfg.Issuer.String()))
+	if d.Type != oid4vci.AuthorizationDetailsTypeOpenIDCredential {
+		return false
+	}
+	if len(d.Locations) == 0 {
+		return len(iss.cfg.AuthorizationServers) == 0
+	}
+	return slices.Contains(d.Locations, iss.cfg.Issuer.String())
 }
 
 // grantsConfiguration reports whether auth grants configuration id at
