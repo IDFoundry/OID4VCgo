@@ -99,11 +99,11 @@ binding its records to additional data of its own. Sweep each. See
 - **Sealing**: with `Options.Sealer` every issuer and walletflow record
   is sealed, bound to its table and key. Keys, Owners, hashes and expiry
   times stay readable, for lookups and sweeping. A verifier transaction
-  isn't sealed whole: its `TransactionCodec` seals only the response
-  decryption key and the verified claims, and leaves the other fields
-  (status, owner, same-device flag, browser binding hash, query)
-  readable and unprotected, so the database must be trusted for their
-  integrity. To change the key, use fapigo/sqlstore's `RotatingSealer`,
+  isn't sealed whole: its `TransactionCodec`, with its own Sealer or the
+  DB's, seals only the response decryption key and the verified claims,
+  bound to the owner, same-device flag, browser binding hash, origin and
+  query, which stay readable. Its status, expiry and response_code hash
+  are unprotected, so the database must be trusted for their integrity. To change the key, use fapigo/sqlstore's `RotatingSealer`,
   and keep the previous key while records it sealed exist: a wallet's
   credentials and keys never expire.
 - **Sharing**: Credential Issuers may share the issuer tables (every

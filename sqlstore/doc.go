@@ -20,7 +20,9 @@
 //     AssuranceProduction requires.
 //   - verifier.NewTransactions's store: Transactions, with the
 //     verifier.TransactionCodec that encodes each transaction, and
-//     seals its secret fields. It declares Durable and AtomicUpdate.
+//     seals its secret fields with its Sealer, or the DB's when it has
+//     none. It declares Durable and AtomicUpdate, and whether it seals
+//     (verifier.SealingStore), as AssuranceProduction requires.
 //   - walletflow.Dependencies: Credentials, Authorizations, Grants,
 //     Deferred and, with a Sealer, Keys. Authorizations and Grants
 //     report Durable, Keys declares durable custody.
@@ -167,10 +169,12 @@
 // the stores look records up and sweep them by stay readable: keys,
 // Owners, the Transaction Code hash and expiry times. The verifier's
 // transactions aren't sealed whole: their TransactionCodec's own
-// Sealer, which may be the same one, seals only each one's response
-// decryption key and verified claims. Its other fields — status, Owner,
-// same-device flag, browser binding hash, query — stay readable and
-// unprotected, so the database must be trusted for their integrity.
+// Sealer, or the DB's when it has none, seals only each one's response
+// decryption key and verified claims, bound to its Owner, same-device
+// flag, browser binding hash, origin and query, which stay readable:
+// changing one leaves the record unreadable. Its status, expiry and
+// response_code hash are unprotected, so the database must be trusted
+// for their integrity.
 // KeyStore refuses to work without a Sealer.
 //
 // Sealing keeps a record's contents from whoever can read the

@@ -6,6 +6,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"errors"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -34,6 +35,44 @@ func TestTransactionStoreDeclaresProductionCapabilities(t *testing.T) {
 	c := newSQLiteDB(t, sqlstore.Options{}).Transactions(verifier.TransactionCodec{}).Capabilities()
 	if !c.Durable || !c.AtomicUpdate {
 		t.Errorf("Capabilities() = %+v, want Durable and AtomicUpdate", c)
+	}
+}
+
+// A codec without a Sealer takes the DB's, and the store says whether
+// it seals.
+func TestTransactionStoreSealsWithTheDBsSealer(t *testing.T) {
+	ctx := context.Background()
+	if newSQLiteDB(t, sqlstore.Options{}).Transactions(verifier.TransactionCodec{}).SealsTransactions() {
+		t.Error("a DB and codec without a Sealer: SealsTransactions() = true")
+	}
+	sealer := testSealer(t)
+	path := filepath.Join(t.TempDir(), "store.db")
+	d, _ := openSQLite(t, path, sqlstore.Options{Sealer: sealer})
+	if err := d.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	store := d.Transactions(verifier.TransactionCodec{})
+	if !store.SealsTransactions() {
+		t.Error("a DB with a Sealer: SealsTransactions() = false")
+	}
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx := verifier.Transaction{
+		ID: "tx-1", KeyID: "kid-1", Owner: "o", ResponseDecryptionKey: key,
+		ExpiresAt: time.Now().Add(time.Hour), Status: verifier.TransactionPending,
+	}
+	if err := store.Create(ctx, tx); err != nil {
+		t.Fatal(err)
+	}
+	// Sealed with the DB's Sealer: a codec naming it reads the record.
+	if _, err := d.Transactions(verifier.TransactionCodec{Sealer: sealer}).Get(ctx, "tx-1"); err != nil {
+		t.Errorf("Get with the DB's Sealer: %v", err)
+	}
+	unsealed, _ := openSQLite(t, path, sqlstore.Options{})
+	if _, err := unsealed.Transactions(verifier.TransactionCodec{}).Get(ctx, "tx-1"); !errors.Is(err, sqlstore.ErrRecordFormat) {
+		t.Errorf("Get without a Sealer = %v, want ErrRecordFormat: the record is sealed", err)
 	}
 }
 
