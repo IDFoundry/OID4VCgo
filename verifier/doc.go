@@ -122,10 +122,9 @@
 // An mdoc requested over the DC API with the "org-iso-mdoc" protocol,
 // as Safari does, isn't OpenID4VP: package mdocdcapi builds and verifies
 // that.
-// request_uri hosting/dereferencing (and, for the DC API flow, actually
-// invoking the Digital Credentials API itself) are out of scope for
-// this package regardless — like issuer.CreateCredentialOffer's own
-// by-reference split, hosting the built Request Object at a
-// request_uri, or handing it to the DC API, is the caller's own job.
-// See ARCHITECTURE.md for the full roadmap.
+// Transactions hosts each request's Request Object at its request_uri
+// (RequestObjectHandler). Invoking the Digital Credentials API itself,
+// in the page, is the caller's: BeginDCAPI gives the request to hand
+// it, and HandleDCAPIResponse takes its answer. See ARCHITECTURE.md for
+// the full roadmap.
 package verifier

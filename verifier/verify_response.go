@@ -336,8 +336,9 @@ type DiscardedPresentation struct {
 // Most Verifiers want Transactions, which calls VerifyResponse for each
 // answer and also does what it leaves to the caller: routing the answer
 // to its request, consuming the nonce, and binding the result to the
-// browser that asked. Call VerifyResponse directly only for flows
-// Transactions doesn't cover, such as the DC API.
+// browser that asked, for the redirect flows and OpenID4VP over the
+// Digital Credentials API (BeginDCAPI, HandleDCAPIResponse) alike. Call
+// VerifyResponse directly only for flows Transactions doesn't cover.
 //
 // VerifyResponse implements §8.6's own VP Token Validation for both
 // the "dc+sd-jwt" and "mso_mdoc" formats, and for both the redirect

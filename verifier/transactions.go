@@ -260,6 +260,14 @@ type TransactionsConfig struct {
 	// only one completes it. Keep it free of side effects, or tie what
 	// it records to the result that completed (TransactionView.Result).
 	//
+	// It runs on the Wallet's answer, before any browser comes back for
+	// the result: nothing yet shows the browser that asked is the one
+	// that will get it (a same-device request's Redeem, Lookup's
+	// browser binding). So it decides whether the answer is acceptable,
+	// never what follows from it: sign the holder in, link an account
+	// or release anything only once Redeem or Lookup has given the
+	// result to the browser bound to the request.
+	//
 	// Its error's text is LastError (see Transaction.LastError): keep it
 	// to what the Verifier's own display may show.
 	Accept func(ctx context.Context, id string, result VerifyResponseResult) error

@@ -53,11 +53,10 @@ type ParsedResponse struct {
 	// non-required) has no entry here (§8.1's own "omit the key
 	// entirely" rule).
 	//
-	// A DC API caller (VerifyResponseRequest.Origin set) builds this
-	// struct directly from whatever the platform handed it, with no
-	// upstream size-bounding step ParseDirectPostJWTResponse's own JWE
-	// decrypt gives the redirect flow for free — found missing in a
-	// repo-wide security review. VerifyResponse is safe either way:
+	// A DC API answer (dc_api.jwt) is parsed by
+	// ParseDirectPostJWTResponse too, as HandleDCAPIResponse does; a
+	// caller building this struct itself gets no size bound from a JWE
+	// decrypt. VerifyResponse is safe either way:
 	// sdjwtvc.Parse/oid4vpmdoc.UnmarshalDeviceResponse each reject an
 	// oversized entry (sdjwtvc.MaxBytes/oid4vpmdoc.MaxBytes) before
 	// doing any real parsing work on it, regardless of which flow
