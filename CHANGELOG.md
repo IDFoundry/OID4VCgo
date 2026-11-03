@@ -1,5 +1,57 @@
 # Changelog
 
+## [0.63.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.62.0...v0.63.0) (2026-11-03)
+
+
+### ⚠ BREAKING CHANGES
+
+* **walletflow:** PendingDeferred has Format, VCT and DocType fields. A DeferredStore of your own must keep them (walletflow/storetest's contract checks every field); sqlstore's and the mobile stores do. RefreshCredential and Deferred.Poll return ErrReissueRequired when the issuer's configuration now issues another type of credential.
+* **statuslist:** statuslist.Checker, CheckX5C and CheckCWTX5Chain refuse a check whose VerifyOptions sets neither Issuer, IssuerKey nor UnboundSigner; set UnboundSigner to statuslist.AnyListSigner where every signer under the roots may decide every credential's status. A Publisher with a sub-second TTL or Lifetime, or a TTL over its Lifetime, now fails to sign.
+* **mdocdcapi:** VerifyResponse refuses a Pending whose ExpiresAt is zero; keep the Pending BuildRequest returns whole, ExpiresAt with it.
+* **verifier:** a query asking for a format other than dc+sd-jwt or mso_mdoc, or for one Config.VPFormatsSupported doesn't list, is refused; list every format the Verifier asks for (MdocFormatSupport, SDJWTVCFormatSupport).
+* **verifier:** under AssuranceProduction, NewTransactions refuses a store that doesn't implement verifier.SealingStore returning true (sqlstore's TransactionStore does when its codec, or its DB, has a Sealer), unless TransactionsConfig.UnsealedStore is set, and a Lifetime over an hour.
+* **issuer:** under AssuranceProduction, New refuses a Notification Endpoint without a positive Limits.NotificationLifetime, and the deprecated MetadataHandler answers 500 rather than unsigned metadata when its signer is refused.
+* **issuer:** under AssuranceProduction with AnonymousPreAuthorizedCode, CreatePreAuthorizedOffer refuses an offer with neither CreatePreAuthorizedOfferRequest.TxCode nor NoTxCode.
+* **issuer:** with Config.AuthorizationServers set, an access token's authorization detail must list Config.Issuer in its locations to grant a configuration, and a pre-authorized Token Request's authorization_details must carry locations.
+* **issuer:** under AssuranceProduction, New refuses an AttestationVerifier or ProofBindingKeys of your own that embeds an X5CAttestationVerifier or X5CProofBindingKeyResolver whose Revocation is nil, or an X5CAttestationVerifier with no explicit IssuerBinding, as it already refused them unwrapped.
+
+### Features
+
+* **issuer:** give Prepare the claims an authorization detail asks for ([71f8042](https://github.com/IDFoundry/OID4VCgo/commit/71f8042c6dece6396ae8b86f75d78a85a0009972))
+
+
+### Bug Fixes
+
+* compare every JOSE typ as a media type ([b01f66f](https://github.com/IDFoundry/OID4VCgo/commit/b01f66f08adf523574c18eb9af1573387d639353))
+* **issuer:** accept jwt proofs that carry a key attestation as OpenID4VCI allows ([bcfbabb](https://github.com/IDFoundry/OID4VCgo/commit/bcfbabb5006290eeaac5c0a78376cabc73fffd1c))
+* **issuer:** keep an X5C verifier's checks when it's wrapped ([9737c88](https://github.com/IDFoundry/OID4VCgo/commit/9737c8806c6092db800988f1f4ff82a70fe376f3))
+* **issuer:** keep New's own copy of the Config, and hand out copies from Metadata ([b20a02f](https://github.com/IDFoundry/OID4VCgo/commit/b20a02fd3da6be13c0e36dd316729c703e9a3165))
+* **issuer:** refuse a PerCredential that drops a Credential's claims ([088099d](https://github.com/IDFoundry/OID4VCgo/commit/088099ddd0f2202d101fad0ef2c35e86a888e1cc))
+* **issuer:** require a notification lifetime, and signed metadata, under production ([cc93ded](https://github.com/IDFoundry/OID4VCgo/commit/cc93deda9cd0445969f2146341da5520d6d4c75a))
+* **issuer:** require a Transaction Code for anonymous pre-authorized offers in production ([46918b9](https://github.com/IDFoundry/OID4VCgo/commit/46918b9ac216599d6b9189aba19ce3c6bbb295a6))
+* **issuer:** require locations in authorization details when authorization_servers is set ([024cfd2](https://github.com/IDFoundry/OID4VCgo/commit/024cfd2b44b372232c9ee0b039bdb03f214ad92d))
+* **issuer:** state the granted scope in the pre-authorized Token Response ([d695107](https://github.com/IDFoundry/OID4VCgo/commit/d6951071b42a2cbb3dd2cb405c53ab1ed4c34fbb))
+* **mdocdcapi:** give a request an expiry its response is checked against ([27777cf](https://github.com/IDFoundry/OID4VCgo/commit/27777cf96aadf3b2f9d6976573ed3eec3e270b91))
+* **proximity:** accept a compressed EDeviceKey ([475715c](https://github.com/IDFoundry/OID4VCgo/commit/475715ca7eeb46e48989c2466bd56bd2a099d8c8))
+* **proximity:** generate the NFC-only engagement key from crypto/rand ([3cb662d](https://github.com/IDFoundry/OID4VCgo/commit/3cb662d1cda1bf0f8ca9e25bcc5515a55da3a886))
+* **proximity:** leave the NFC data-field limits out of the reader's Handover Request ([753c6f3](https://github.com/IDFoundry/OID4VCgo/commit/753c6f31a06339412d8ab7e32f82f9e7d0e973cb))
+* **proximity:** select the NFC data application as ISO/IEC 18013-5 Table 8 has it ([905b016](https://github.com/IDFoundry/OID4VCgo/commit/905b016211c022dbaf8431270d7d19e0e388d073))
+* **proximity:** take mdoc central client mode when a static handover offers both ([3e4315e](https://github.com/IDFoundry/OID4VCgo/commit/3e4315e80fb7b68304b165c0b6bcba05fe7f2a27))
+* read Request Object, signed metadata and Key Attestation times as range-checked NumericDates ([adc1966](https://github.com/IDFoundry/OID4VCgo/commit/adc196613956ee1cf7cb8761dfec62278fabd280))
+* refuse a small-order Ed25519 key when verifying JWS and COSE signatures ([9226ce0](https://github.com/IDFoundry/OID4VCgo/commit/9226ce04aa87e8c67248e70b2317d719bddc8113))
+* **sdjwtvc:** refuse _sd_alg anywhere but the payload's top level ([b9f7e04](https://github.com/IDFoundry/OID4VCgo/commit/b9f7e04d8071b83ae2cdb18d352d771d024afd65))
+* **statuslist:** bind a Status List Token's signer by default, and size tokens to match ([778cae4](https://github.com/IDFoundry/OID4VCgo/commit/778cae44eeff390b673ff8160d959ef5afa4bacb))
+* **verifier:** describe a discarded presentation with fixed text ([22c7b9d](https://github.com/IDFoundry/OID4VCgo/commit/22c7b9df42adedc1ddd4f53e98e27d51bbba968e))
+* **verifier:** discard the rest of a credential set option a failed presentation leaves incomplete ([d18eb94](https://github.com/IDFoundry/OID4VCgo/commit/d18eb94c18855ad95cb001dcb29e4346eaa30e94))
+* **verifier:** find an SD-JWT VC's array index among the disclosed elements ([1bf2b70](https://github.com/IDFoundry/OID4VCgo/commit/1bf2b70d11cd7b6be32d447b71c8fd647ef42855))
+* **verifier:** refuse a request for a format the Verifier doesn't verify or advertise ([c9b687a](https://github.com/IDFoundry/OID4VCgo/commit/c9b687a912bf2e288c5191f216febf1c9abca27d))
+* **verifier:** require a sealing transaction store and a bounded lifetime in production ([caf2329](https://github.com/IDFoundry/OID4VCgo/commit/caf2329c17945133551de5fa94b361366cb4f136))
+* **wallet:** finish sending a signed presentation when its context is cancelled ([ccbe7f5](https://github.com/IDFoundry/OID4VCgo/commit/ccbe7f5e59a6f29678155833a17b2beadb9fd62e))
+* **walletflow:** clean a tx_code's description before it reaches the PIN prompt ([d3ae36b](https://github.com/IDFoundry/OID4VCgo/commit/d3ae36b2dcbaed7da740e163ea30018142cfffb1))
+* **walletflow:** keep a refreshed or deferred credential the type the holder agreed to ([bf739ec](https://github.com/IDFoundry/OID4VCgo/commit/bf739ec238f0fc3a4bc2479d9a8fec6ebff7b37b))
+* **walletflow:** never present a revoked copy while a valid one is left ([06544d6](https://github.com/IDFoundry/OID4VCgo/commit/06544d66b1bac1ae8d644fc1a7dbebca04de76e2))
+* **wallet:** refuse a Verifier's redirect_uri to a Wallet invocation scheme ([22e760d](https://github.com/IDFoundry/OID4VCgo/commit/22e760d495b6d807bb30eee230274e9aa17643c6))
+
 ## [0.62.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.61.0...v0.62.0) (2026-11-02)
 
 
