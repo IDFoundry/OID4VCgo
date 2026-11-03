@@ -285,7 +285,7 @@ func TestNFCBLEBothRolePreferences(t *testing.T) {
 	for _, tc := range []struct {
 		role byte
 		want BLEMode
-	}{{2, PeripheralServer}, {3, CentralClient}} {
+	}{{0, PeripheralServer}, {1, CentralClient}, {2, CentralClient}, {3, CentralClient}} {
 		got, _, err := selectNFCBLE(nfcBLEPayload(tc.role, uuid), nil)
 		if err != nil || got != tc.want {
 			t.Fatalf("role %d: %v %v", tc.role, got, err)
