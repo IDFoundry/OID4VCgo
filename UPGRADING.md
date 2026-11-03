@@ -58,6 +58,46 @@ a `key_attestation`, carrying an optional `key_attestation` an issuer
 doesn't verify, or, without a Nonce Endpoint, a key attestation issued
 earlier, are now accepted, as OpenID4VCI 1.0 Appendix F.1 allows.
 
+### Verifier (`verifier`, `mdocdcapi`)
+
+- **Production needs a store that seals transactions.** Under
+  `AssuranceProduction`, `NewTransactions` refuses a store that doesn't
+  implement the new `verifier.SealingStore` returning true: one that
+  keeps each transaction's response decryption key and disclosed claims
+  in plaintext. `sqlstore`'s `TransactionStore` seals when its
+  `TransactionCodec` has a `Sealer`, or now, when it has none, when its
+  DB has one. A store of your own implements `SealsTransactions`. Where
+  the store is as protected as the Verifier's keys, set
+  `TransactionsConfig.UnsealedStore`.
+- **`sqlstore` seals transactions with the DB's Sealer.** On a DB with
+  `Options.Sealer`, `DB.Transactions(verifier.TransactionCodec{})` now
+  seals, and no longer reads the unsealed transactions it wrote before:
+  a request in flight when you upgrade fails. Upgrade when none is.
+- **Production bounds `TransactionsConfig.Lifetime`** by
+  `MaxProductionTransactionLifetime`, an hour.
+- **A request for a format the Verifier can't verify is refused.**
+  `BuildAuthorizationRequest` and `BuildDCAPIAuthorizationRequest`, and
+  so `Begin` and `BeginDCAPI`, refuse a credential query whose format
+  isn't `dc+sd-jwt` or `mso_mdoc`, or isn't in
+  `Config.VPFormatsSupported`. List each format you ask for
+  (`SDJWTVCFormatSupport`, `MdocFormatSupport`).
+- **`DiscardedPresentation.Reason` is fixed text.** It describes the new
+  `Code` field rather than repeating the verification error, some of
+  which the presentation's sender wrote; `Err` keeps the error, for logs
+  only, and isn't stored.
+- **An SD-JWT VC's array index matches any disclosed element.** A
+  presentation leaves out the array elements it doesn't disclose, so the
+  verifier can't check an index's position: `["nationalities", 1]` is
+  answered by any disclosed nationality, and its `values` by any
+  disclosed one's. This library's Wallet's answer to an index past 0,
+  refused before, now verifies. Don't rely on an element's position in
+  a presented SD-JWT VC.
+- **`mdocdcapi` requests expire.** `BuildRequest` sets
+  `Pending.ExpiresAt` (`RequestParams.Lifetime`, five minutes by
+  default, at most an hour), and `VerifyResponse` refuses a response
+  after it (`ErrRequestExpired`), or a `Pending` without one. Keep the
+  `Pending` whole, and server-side.
+
 ## v0.61.0 → v0.62.0
 
 ### Authorization details (`oid4vci`)
