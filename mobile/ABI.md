@@ -550,7 +550,7 @@ then. Added within ABI version 12.
 | `ResumeIssuance(op, redirect)` | an `Issuance` ready for `RequestCredentials`: completes the authorization in progress that the redirect's `state` names, after the app was killed during the browser step. One that matches nothing, has already been used, or has expired is `not_found` |
 | `StartPresentation(op, requestLink)` | a `Presentation`. The `request_uri` is fetched by GET, or, for a link with `request_uri_method=post`, by POST with a fresh `wallet_nonce` and the wallet's metadata (OpenID4VP 1.0 §5.10), the Request Object then having to carry that `wallet_nonce` |
 | `TakeRefusalRedirect()` | once, the `redirect_uri` the Verifier answered the latest `request_refused` with, `""` for none: open it (OpenID4VP §8.2). Added within ABI 12 |
-| `SetCRLs(pem)` | replaces the lists the `revocation` roles check against, for every check from then on, with `pem`'s `X509 CRL` blocks. Anything but CRLs is `invalid_input`, and the lists are left as they were; `""` removes them all, so every role named then refuses. No network calls. Added within ABI 12 |
+| `SetCRLs(pem)` | replaces the lists the `revocation` roles check against, for every check from then on, with `pem`'s `X509 CRL` blocks. Anything but CRLs is `invalid_input`, and the lists are left as they were; so, from OID4VCWallet 0.25.0, is a CA's list older than the one held for it (a lower CRL number, or an earlier thisUpdate where either has none), so a replayed list can't un-revoke a certificate; `""` removes them all, so every role named then refuses. No network calls. Added within ABI 12 |
 
 A credential **summary** is `{"id", "credential_issuer",
 "configuration_id", "format", "vct", "doctype", "received_at",
@@ -900,8 +900,8 @@ The configuration is `{"issuer_roots", "issuer_roots_by_doctype",
   intermediate is revoked doesn't verify; `status`, a status list
   signer's in `CheckStatus`) work as a Wallet's: a role named fails
   closed for a CA without a current list, `SetCRLs(pem)` replaces the
-  lists for sessions started before or after, and anything but CRLs is
-  `invalid_input`. An MSO's status list chaining to the certificate its
+  lists for sessions started before or after, and anything but CRLs, or
+  a CA's list older than the one held, is `invalid_input`. An MSO's status list chaining to the certificate its
   status names needs that certificate's list too. `crl_issuers` are
   the CAs of certificates pinned in the roots, as a Wallet's. Additive
   within ABI 12.

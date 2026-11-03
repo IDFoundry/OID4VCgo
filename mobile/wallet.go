@@ -346,7 +346,10 @@ func walletRevocation(cfg config, wcfg *walletflow.Config) (*crlSet, error) {
 // blocks, for every check from now on: call it whenever fresh lists are
 // fetched, before the current ones' nextUpdate passes. Text holding
 // anything else, or a list that doesn't parse, is invalid_input, and the
-// lists are left as they were. Empty text removes them all, and a role
+// lists are left as they were; so is a CA's list older than the one
+// held for it (a lower CRL number, or an earlier thisUpdate where either
+// has none), so a list replayed from a plain-http distribution point
+// can't un-revoke a certificate. Empty text removes them all, and a role
 // checked then fails closed.
 func (w *Wallet) SetCRLs(pemText string) error {
 	if err := w.crls.set(pemText); err != nil {

@@ -679,8 +679,9 @@ public final class ProximityReader: @unchecked Sendable {
     /// `revocation` roles are checked against with `pem`'s `X509 CRL`
     /// blocks, for sessions already started too. CRLs expire at their
     /// nextUpdate: fetch fresh ones and call this before then. Text holding
-    /// anything else throws `invalidInput` and keeps the lists as they
-    /// were; empty text removes them all.
+    /// anything else, or a CA's list older than the one held, throws
+    /// `invalidInput` and keeps the lists as they were; empty text removes
+    /// them all.
     public func setCRLs(_ pem: String) throws {
         let reader = handle
         try OID4VC.wrap { try reader.setCRLs(pem) }

@@ -677,10 +677,12 @@ public final class Wallet: @unchecked Sendable {
     /// `revocation` roles are checked against with `pem`'s `X509 CRL`
     /// blocks, for every check from now on. CRLs expire at their
     /// nextUpdate: fetch fresh ones and call this before then. Text
-    /// holding anything else, or a list that doesn't parse, throws
-    /// `invalidInput` and keeps the lists as they were; empty text removes
-    /// them all, and a role checked then fails closed. Makes no network
-    /// calls.
+    /// holding anything else, a list that doesn't parse, or a CA's list
+    /// older than the one held (a lower CRL number, or an earlier
+    /// thisUpdate) throws `invalidInput` and keeps the lists as they were,
+    /// so a replayed list can't un-revoke a certificate; empty text
+    /// removes them all, and a role checked then fails closed. Makes no
+    /// network calls.
     public func setCRLs(_ pem: String) async throws {
         let wallet = handle
         try await OID4VC.offMain { try OID4VC.wrap { try wallet.setCRLs(pem) } }
