@@ -227,6 +227,20 @@ func (w *Wallet) newPresentation(ctx context.Context, req wallet.AuthorizationRe
 	if err != nil {
 		return nil, fmt.Errorf("walletflow: list credentials: %w", err)
 	}
+	// Those a Verifier would refuse — expired, revoked, suspended — come
+	// after the others, so neither the holder nor DefaultSelection picks
+	// one ahead of a credential that would be accepted.
+	now := w.deps.Clock()
+	slices.SortStableFunc(stored, func(a, b StoredCredential) int {
+		pa, pb := a.Presentable(now), b.Presentable(now)
+		switch {
+		case pa == pb:
+			return 0
+		case pa:
+			return -1
+		}
+		return 1
+	})
 	p := &Presentation{w: w, req: req, byID: make(map[string]StoredCredential, len(stored))}
 	held := make([]wallet.HeldCredential, 0, len(stored))
 	byCredential := make(map[string]StoredCredential, len(stored))
@@ -323,16 +337,20 @@ func (p *Presentation) CredentialSets() []CredentialSet {
 // application with no policy of its own, or to start from: the first
 // answerable option of each credential set, and each query's first
 // credential, as Queries lists them, even when it takes several: the
-// holder adds the others. It returns ErrNoMatchingCredential when the
-// request can't be answered.
+// holder adds the others. It never picks a credential a Verifier would
+// refuse (StoredCredential.Presentable): expired, revoked or suspended.
+// It returns ErrNoMatchingCredential when the request can't be answered
+// with the others.
 func (p *Presentation) DefaultSelection(ctx context.Context) (Selection, error) {
 	held := make([]wallet.HeldCredential, 0, len(p.byID))
 	byCredential := make(map[string]string, len(p.byID))
+	now := p.w.deps.Clock()
 	for _, id := range p.order {
 		c := p.byID[id]
 		h := heldCredential(c, nil)
-		// As the queries offer: what the Verifier can take.
-		if !p.req.VPFormats.Accepts(h) {
+		// As the queries offer: what the Verifier can take, and would
+		// accept (StoredCredential.Presentable).
+		if !p.req.VPFormats.Accepts(h) || !c.Presentable(now) {
 			continue
 		}
 		held = append(held, h)
