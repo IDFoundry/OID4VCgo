@@ -164,15 +164,14 @@ func requireClientIdentityDecision(auth AuthorizedRequest) error {
 // encryption (§10) are supported via the separate
 // DecryptRequestBody/EncryptResponseBody — see their own doc comments
 // and ResponseEncryption/RequestWasEncrypted below for how a caller
-// wires them in; RequestCredential itself only enforces §8.2-18's own
-// "Credential Request encryption MUST be used if the
-// credential_response_encryption parameter is included." RequestCredential
-// itself never defers
-// issuance — it always issues immediately or fails outright; see
-// RequestDeferredCredential for the Deferred Credential Endpoint (§9)
-// this repo does implement, for a transaction some other,
-// deployment-specific process has already decided to defer. A
-// CredentialConfiguration with no
+// wires them in; RequestCredential itself enforces §8.2's "Credential
+// Request encryption MUST be used if the credential_response_encryption
+// parameter is included", and the encryption_required this issuer's
+// RequestEncryption and ResponseEncryption declare. RequestCredential
+// issues immediately unless Defer is set, when it starts a deferred
+// transaction (§9) that IssueDeferredCredential or
+// DenyDeferredCredential resolves and RequestDeferredCredential
+// answers. A CredentialConfiguration with no
 // ProofTypesSupported at all (an unbound credential, §14.2) isn't
 // supported either, since credential/mdoc's Claims.DeviceKey is
 // unconditionally required — there is no way to satisfy "no binding"
@@ -650,6 +649,9 @@ func (iss *Issuer) issueBatch(ctx context.Context, cc CredentialConfiguration, r
 		if req.PerCredential != nil {
 			if err := req.PerCredential(ctx, &instance); err != nil {
 				return nil, fmt.Errorf("issuer: request credential: per-credential claims: %w", err)
+			}
+			if (cc.Format == sdjwtvc.CredentialFormat) != (instance.SDJWTClaims != nil) || (cc.Format == mdoc.CredentialFormat) != (instance.MdocClaims != nil) {
+				return nil, fmt.Errorf("issuer: request credential: per-credential claims: credential %d's claims for format %q were removed or replaced by another format's", i, cc.Format)
 			}
 		}
 		if ref, ok := instance.statusRef(); ok {
