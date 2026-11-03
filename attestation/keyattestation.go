@@ -194,12 +194,32 @@ func Parse(compact string) (KeyAttestation, error) {
 	if err != nil {
 		return KeyAttestation{}, fmt.Errorf("attestation: %w", err)
 	}
-	var wire wireClaims
-	if err := strictjson.Unmarshal(payload, &wire); err != nil {
+	// iat and exp are NumericDates, which may be fractional (RFC 7519
+	// §2): read as numbers, their fraction dropped.
+	var in struct {
+		wireClaims
+		IssuedAt  float64  `json:"iat"`
+		ExpiresAt *float64 `json:"exp,omitempty"`
+	}
+	if err := strictjson.Unmarshal(payload, &in); err != nil {
 		return KeyAttestation{}, fmt.Errorf("attestation: unmarshal claims: %w", err)
 	}
-	if wire.IssuedAt == 0 {
+	if in.IssuedAt == 0 {
 		return KeyAttestation{}, fmt.Errorf("attestation: claims are missing the required iat")
+	}
+	wire := in.wireClaims
+	iat, err := jwtdate.FromFloat(in.IssuedAt)
+	if err != nil {
+		return KeyAttestation{}, fmt.Errorf("attestation: iat: %w", err)
+	}
+	wire.IssuedAt = iat.Unix()
+	if in.ExpiresAt != nil {
+		exp, err := jwtdate.FromFloat(*in.ExpiresAt)
+		if err != nil {
+			return KeyAttestation{}, fmt.Errorf("attestation: exp: %w", err)
+		}
+		expUnix := exp.Unix()
+		wire.ExpiresAt = &expUnix
 	}
 	if len(wire.AttestedKeys) == 0 {
 		return KeyAttestation{}, fmt.Errorf("attestation: claims are missing the required, non-empty attested_keys")

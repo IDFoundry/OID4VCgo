@@ -9,8 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/idfoundry/oid4vcgo/internal/strictjson"
-	"math"
 	"net/url"
 	"reflect"
 	"slices"
@@ -24,6 +22,8 @@ import (
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/internal/jwe"
 	"github.com/idfoundry/oid4vcgo/internal/jwk"
+	"github.com/idfoundry/oid4vcgo/internal/jwtdate"
+	"github.com/idfoundry/oid4vcgo/internal/strictjson"
 )
 
 // requestObjectTyp is the Request Object JWS's own mandatory "typ"
@@ -661,20 +661,25 @@ func checkRequestObjectClaims(wire wireRequestObjectPayload, nowFunc func() time
 	if nowFunc != nil {
 		now = nowFunc()
 	}
-	if wire.Exp != nil && !now.Before(numericDateTime(*wire.Exp).Add(requestObjectClockSkew)) {
-		return errors.New("the Request Object has expired (exp)")
+	if wire.Exp != nil {
+		exp, err := jwtdate.FromFloat(*wire.Exp)
+		if err != nil {
+			return fmt.Errorf("exp: %w", err)
+		}
+		if !now.Before(exp.Add(requestObjectClockSkew)) {
+			return errors.New("the Request Object has expired (exp)")
+		}
 	}
-	if wire.Nbf != nil && now.Add(requestObjectClockSkew).Before(numericDateTime(*wire.Nbf)) {
-		return errors.New("the Request Object isn't valid yet (nbf)")
+	if wire.Nbf != nil {
+		nbf, err := jwtdate.FromFloat(*wire.Nbf)
+		if err != nil {
+			return fmt.Errorf("nbf: %w", err)
+		}
+		if now.Add(requestObjectClockSkew).Before(nbf) {
+			return errors.New("the Request Object isn't valid yet (nbf)")
+		}
 	}
 	return nil
-}
-
-// numericDateTime is a JWT NumericDate, seconds since the epoch with
-// any fraction, as a time.
-func numericDateTime(v float64) time.Time {
-	sec := math.Floor(v)
-	return time.Unix(int64(sec), int64((v-sec)*1e9))
 }
 
 // prepareQuery is a request's DCQL query as the Wallet answers it,
