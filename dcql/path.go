@@ -191,6 +191,18 @@ func selectWildcard(selection []any) ([]any, error) {
 	return next, nil
 }
 
+// withIndicesWidened is p with each index component a Wildcard.
+func (p Path) withIndicesWidened() Path {
+	out := make(Path, len(p))
+	for i, elem := range p {
+		if elem.IsIndex() {
+			elem = Wildcard
+		}
+		out[i] = elem
+	}
+	return out
+}
+
 func selectIndex(index int, selection []any) ([]any, error) {
 	var next []any
 	for _, v := range selection {

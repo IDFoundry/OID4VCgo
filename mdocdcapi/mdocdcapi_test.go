@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/fxamacker/cbor/v2"
 
@@ -161,6 +162,25 @@ func TestRoundTrip(t *testing.T) {
 	}
 	if got.DocType != testmdoc.DocType || got.NameSpaces[isoNS]["given_name"] != "Alice" || got.NameSpaces[isoNS]["family_name"] != "Doe" {
 		t.Errorf("Verified = %+v", got)
+	}
+}
+
+// A request is answerable until its Pending's ExpiresAt, DefaultLifetime
+// after it's built, and a Pending without one is refused.
+func TestVerifyResponseRefusesAnExpiredRequest(t *testing.T) {
+	h := newHarness(t, bothNames())
+	if want := time.Now().Add(DefaultLifetime); h.request.Pending.ExpiresAt.After(want) || h.request.Pending.ExpiresAt.Before(want.Add(-time.Minute)) {
+		t.Errorf("ExpiresAt = %v, want about %v", h.request.Pending.ExpiresAt, want)
+	}
+	response := respond(t, h.request.Data, testOrigin, h.f)
+	_, err := verify(t, h, response, func(p *VerifyParams) {
+		p.Now = func() time.Time { return h.request.Pending.ExpiresAt }
+	})
+	if !errors.Is(err, ErrRequestExpired) {
+		t.Errorf("at ExpiresAt: %v, want ErrRequestExpired", err)
+	}
+	if _, err := verify(t, h, response, func(p *VerifyParams) { p.Pending.ExpiresAt = time.Time{} }); err == nil {
+		t.Error("a Pending without ExpiresAt: verified")
 	}
 }
 
@@ -361,6 +381,8 @@ func TestBuildRequestRefuses(t *testing.T) {
 		"empty namespace":         {Origin: testOrigin, DocType: testmdoc.DocType, Elements: map[string]map[string]bool{isoNS: {}}},
 		"reader key isn't leaf's": {Origin: testOrigin, DocType: testmdoc.DocType, Elements: bothNames(), Readers: []ReaderKey{{Signer: otherKey, Chain: []*x509.Certificate{cert}}}},
 		"reader without chain":    {Origin: testOrigin, DocType: testmdoc.DocType, Elements: bothNames(), Readers: []ReaderKey{{Signer: key}}},
+		"a negative lifetime":     {Origin: testOrigin, DocType: testmdoc.DocType, Elements: bothNames(), Lifetime: -time.Second},
+		"too long a lifetime":     {Origin: testOrigin, DocType: testmdoc.DocType, Elements: bothNames(), Lifetime: MaxLifetime + time.Second},
 	} {
 		if _, err := BuildRequest(p); err == nil {
 			t.Errorf("%s: accepted", name)

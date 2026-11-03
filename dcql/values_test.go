@@ -108,6 +108,31 @@ func TestSelectedSDJWTVCClaimPaths_ValuesSelectClaimSetOption(t *testing.T) {
 	}
 }
 
+// TestSatisfiedBySDJWTVCPresentation_IndexIsAnyElement: in a
+// presentation, which holds only the disclosed elements, an index
+// selects any of them; a credential held whole is checked by position.
+func TestSatisfiedBySDJWTVCPresentation_IndexIsAnyElement(t *testing.T) {
+	second := dcql.Path{dcql.PathKey("nationalities"), dcql.PathIndex(1)}
+	q := sdjwtQuery(t, []dcql.ClaimsQuery{{Path: second, Values: []any{"DE"}}}, nil)
+	presented := map[string]any{"vct": "urn:test", "nationalities": []any{"DE"}}
+	if err := q.SatisfiedBySDJWTVCPresentation(presented); err != nil {
+		t.Errorf("presentation: %v", err)
+	}
+	if err := q.SatisfiedBySDJWTVCClaims(presented); err == nil {
+		t.Error("held credential: index 1 of a one-element array satisfied")
+	}
+	if err := q.SatisfiedBySDJWTVCPresentation(map[string]any{"vct": "urn:test", "nationalities": []any{"FR"}}); err == nil {
+		t.Error("presentation without DE: satisfied")
+	}
+	if err := q.SatisfiedBySDJWTVCPresentation(map[string]any{"vct": "urn:other", "nationalities": []any{"DE"}}); err == nil {
+		t.Error("presentation of another vct: satisfied")
+	}
+	malformed := dcql.CredentialQuery{ID: "q", Format: "dc+sd-jwt", Meta: json.RawMessage(`[]`)}
+	if err := malformed.SatisfiedBySDJWTVCPresentation(presented); err == nil {
+		t.Error("malformed meta: satisfied")
+	}
+}
+
 func TestSatisfiedByMdocClaims_EnforcesValues(t *testing.T) {
 	meta, err := dcql.NewMdocMeta(dcql.MdocMeta{DoctypeValue: "org.test"})
 	if err != nil {

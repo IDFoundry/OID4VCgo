@@ -36,4 +36,8 @@
 // minimal-disclosure trimming need to know which Disclosures/namespace
 // elements to keep, not just the pass/fail outcome
 // SatisfiedBySDJWTVCClaims/SatisfiedByMdocClaims themselves return.
+// A Verifier checks a presented SD-JWT VC with
+// SatisfiedBySDJWTVCPresentation instead: a presentation leaves out the
+// array elements it doesn't disclose, so an index there selects any
+// disclosed element, not the one at that position.
 package dcql

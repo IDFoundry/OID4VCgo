@@ -15,17 +15,22 @@ import (
 // one — beside the columns its lookups and Sweep go by: KeyID,
 // ResponseCodeHash, Owner and RetainUntil.
 type TransactionStore struct {
-	t *table[verifier.Transaction]
+	t      *table[verifier.Transaction]
+	sealed bool
 }
 
 // Transactions returns d's verifier.TransactionStore, encoding
-// transactions with codec. Give codec a Sealer (verifier.AESGCMSealer,
-// with a key kept outside the database) wherever the database is
-// shared, backed up or readable by more than the Verifier: it seals
-// each transaction's response decryption key and the claims the holder
-// disclosed. The DB's own Options.Sealer doesn't apply here.
+// transactions with codec. The codec's Sealer (verifier.AESGCMSealer,
+// with a key kept outside the database) seals each transaction's
+// response decryption key and the claims the holder disclosed: set one
+// wherever the database is shared, backed up or readable by more than
+// the Verifier. A codec without one takes the DB's Options.Sealer, if
+// it has one, so a DB that seals its other records seals these too.
 func (d *DB) Transactions(codec verifier.TransactionCodec) *TransactionStore {
-	return &TransactionStore{&table[verifier.Transaction]{
+	if codec.Sealer == nil && d.sealer != nil {
+		codec.Sealer = d.sealer
+	}
+	return &TransactionStore{sealed: codec.Sealer != nil, t: &table[verifier.Transaction]{
 		d: d, name: "verifier_transactions", sql: tableSQL{
 			insert: d.sql.txInsert, get: d.sql.txGet, getForUpdate: d.sql.txGetForUpdate, update: d.sql.txUpdate,
 		},
@@ -112,4 +117,10 @@ func (s *TransactionStore) scanID(r *sql.Row) (string, error) {
 // AtomicUpdate across every process sharing the database.
 func (s *TransactionStore) Capabilities() verifier.StoreCapabilities {
 	return verifier.StoreCapabilities{Durable: true, AtomicUpdate: true}
+}
+
+// SealsTransactions implements verifier.SealingStore: whether the
+// store's codec has a Sealer, its own or the DB's.
+func (s *TransactionStore) SealsTransactions() bool {
+	return s.sealed
 }

@@ -125,6 +125,7 @@ func TestVerifyResponse_RefusesUnrequestedSDJWTVCClaims(t *testing.T) {
 		"no claims: those always disclosed alone": {nil, []dcql.Path{}},
 		"every nationality":                       {[]dcql.Path{path("nationalities", nil)}, []dcql.Path{path("nationalities", nil)}},
 		"the first nationality":                   {[]dcql.Path{path("nationalities", 0)}, []dcql.Path{path("nationalities", 0)}},
+		"the second nationality":                  {[]dcql.Path{path("nationalities", 1)}, []dcql.Path{path("nationalities", 1)}},
 	}
 	for name, c := range accepted {
 		result, err := f.verify(t, c.asked, c.disclosed, false)
@@ -138,6 +139,41 @@ func TestVerifyResponse_RefusesUnrequestedSDJWTVCClaims(t *testing.T) {
 	result, err := f.verify(t, []dcql.Path{givenName}, nil, true)
 	if vc := testverify.RequireOneCredential(t, result, err, "identity_credential"); vc.Claims["national_id"] != "123-45-6789" {
 		t.Errorf("AllowUnrequestedClaims: claims %v, want national_id kept", vc.Claims)
+	}
+}
+
+// TestVerifyResponse_SDJWTVCArrayIndexIsAnyDisclosedElement: an index
+// counts the Holder's credential's elements, the Wallet discloses the
+// one there, and the presentation leaves out the rest, so the Verifier
+// finds it among the disclosed elements, wherever it was: values match
+// any of them, and its position isn't checked.
+func TestVerifyResponse_SDJWTVCArrayIndexIsAnyDisclosedElement(t *testing.T) {
+	f := newOverDisclosureFixture(t)
+	verify := func(asked dcql.ClaimsQuery, disclosed dcql.Path) error {
+		presented, err := wallet.PresentSDJWTVCSelective(f.held, f.v.ClientID(), f.nonce, []dcql.Path{disclosed})
+		if err != nil {
+			t.Fatal(err)
+		}
+		query := testIdentityQuery(t)
+		query.Credentials[0].Claims = []dcql.ClaimsQuery{asked}
+		_, err = f.v.VerifyResponse(context.Background(), verifier.VerifyResponseRequest{
+			Query:         query,
+			Response:      verifier.ParsedResponse{VPToken: map[string][]string{"identity_credential": {presented}}},
+			ExpectedNonce: f.nonce, IssuerKeys: f.resolver, MaxKeyBindingAge: time.Hour,
+		})
+		return err
+	}
+	second := path("nationalities", 1)
+	if err := verify(dcql.ClaimsQuery{Path: second, Values: []any{"DE"}}, second); err != nil {
+		t.Errorf("the second nationality, DE: %v", err)
+	}
+	if err := verify(dcql.ClaimsQuery{Path: second, Values: []any{"FR"}}, second); err == nil {
+		t.Error("the second nationality, FR: verified; DE was disclosed")
+	}
+	// The first element is asked for, and the second disclosed: a
+	// presentation can't show which it was.
+	if err := verify(dcql.ClaimsQuery{Path: path("nationalities", 0), Values: []any{"DE"}}, second); err != nil {
+		t.Errorf("an index's position: %v, want it unchecked", err)
 	}
 }
 

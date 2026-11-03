@@ -72,7 +72,7 @@ func validConfig(t testing.TB) (verifier.Config, verifier.Dependencies) {
 			ResponseURI:        testResponseURI(t),
 			SigningAlg:         jose.ES256,
 			EncValuesSupported: []jwe.Enc{jwe.A128GCM, jwe.A256GCM},
-			VPFormatsSupported: map[string]any{"dc+sd-jwt": map[string]any{"sd-jwt_alg_values": []string{"ES256"}}},
+			VPFormatsSupported: map[string]any{"dc+sd-jwt": map[string]any{"sd-jwt_alg_values": []string{"ES256"}}, "mso_mdoc": map[string]any{}},
 		}, verifier.Dependencies{
 			Signer: key,
 			Random: rand.Reader,

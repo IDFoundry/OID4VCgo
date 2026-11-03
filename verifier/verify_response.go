@@ -320,16 +320,25 @@ type VerifyResponseResult struct {
 type DiscardedPresentation struct {
 	// CredentialQueryID is the Credential Query it answered.
 	CredentialQueryID string
-	// Reason is why it failed verification: the error's text, kept as
-	// a string so a stored Transaction's result serializes.
+	// Code is why it failed verification.
+	Code Reason
+	// Reason is a fixed description of Code, never text the
+	// presentation's sender chose, so a stored Transaction's result can
+	// be shown as it is.
 	Reason string
+	// Err is the verification error, with the detail Reason leaves out,
+	// some of it the sender's: for logs, not for display. It isn't
+	// stored, so a result Transactions reads back from its store has
+	// none.
+	Err error `json:"-"`
 }
 
 // Most Verifiers want Transactions, which calls VerifyResponse for each
 // answer and also does what it leaves to the caller: routing the answer
 // to its request, consuming the nonce, and binding the result to the
-// browser that asked. Call VerifyResponse directly only for flows
-// Transactions doesn't cover, such as the DC API.
+// browser that asked, for the redirect flows and OpenID4VP over the
+// Digital Credentials API (BeginDCAPI, HandleDCAPIResponse) alike. Call
+// VerifyResponse directly only for flows Transactions doesn't cover.
 //
 // VerifyResponse implements §8.6's own VP Token Validation for both
 // the "dc+sd-jwt" and "mso_mdoc" formats, and for both the redirect
@@ -348,7 +357,9 @@ type DiscardedPresentation struct {
 // req.ExpectedNonce per §14.1.2/Appendix A.4, requiring it exactly when
 // the Credential Query's own RequiresCryptographicHolderBinding is
 // true), and checks the result via
-// dcql.CredentialQuery.SatisfiedBySDJWTVCClaims (§8.6 point 3).
+// dcql.CredentialQuery.SatisfiedBySDJWTVCPresentation (§8.6 point 3),
+// which can't check an array element's position: a presentation
+// leaves out the elements it doesn't disclose.
 //
 // For "mso_mdoc", it base64url-decodes the Presentation into an
 // oid4vpmdoc.Document, resolves the Issuer key via req.MdocIssuerKeys
@@ -478,7 +489,12 @@ func (v *Verifier) VerifyResponse(ctx context.Context, req VerifyResponseRequest
 	}
 	if len(result.Discarded) > 0 {
 		// §8.6: what's left must still answer the query (§6.4); if it
-		// doesn't, the first failure is why.
+		// doesn't, the first failure is why. A credential set option a
+		// discarded presentation left incomplete answers nothing, so the
+		// rest of it is discarded too, and what's left checked again.
+		if req.Query.CheckAnswered(verifiedIDs) != nil && len(req.Query.CredentialSets) > 0 {
+			result, verifiedIDs = keepCompleteOptions(req.Query, result, verifiedIDs)
+		}
 		if err := req.Query.CheckAnswered(verifiedIDs); err != nil {
 			if firstFailure == nil {
 				firstFailure = fmt.Errorf("verifier: verify response: %w", newError(ReasonNotAnswered, "what verified doesn't answer the query as it asks", err))
@@ -637,7 +653,9 @@ func (v *Verifier) verifyCredentialQuery(ctx context.Context, cq dcql.Credential
 		if errors.As(err, &failed) {
 			// The presentation failed, not the response or the
 			// configuration: discard it (§8.6).
-			discarded = append(discarded, DiscardedPresentation{CredentialQueryID: cq.ID, Reason: err.Error()})
+			discarded = append(discarded, DiscardedPresentation{
+				CredentialQueryID: cq.ID, Code: failed.Reason(), Reason: failed.Reason().description(), Err: err,
+			})
 			if firstErr == nil {
 				firstErr = err
 			}
@@ -689,6 +707,37 @@ func sdjwtvcSignedPart(compact string) []byte {
 // failed verification: VerifyResponse discards them, and reports the
 // first's error only if the rest of the response doesn't answer the
 // query.
+// keepCompleteOptions is result and verified without the credentials
+// of queries no credential set option they're part of verified in
+// full: discarding one presentation of an option leaves the option
+// unanswered, and the others in it answering nothing. Each of those is
+// discarded, as ReasonNotAnswered.
+func keepCompleteOptions(q dcql.Query, result VerifyResponseResult, verified map[string]bool) (VerifyResponseResult, map[string]bool) {
+	kept := make(map[string]bool, len(verified))
+	for _, set := range q.CredentialSets {
+		for _, option := range set.Options {
+			if !slices.ContainsFunc(option, func(id string) bool { return !verified[id] }) {
+				for _, id := range option {
+					kept[id] = true
+				}
+			}
+		}
+	}
+	credentials := result.Credentials[:0:0]
+	for _, vc := range result.Credentials {
+		if kept[vc.CredentialQueryID] {
+			credentials = append(credentials, vc)
+			continue
+		}
+		result.Discarded = append(result.Discarded, DiscardedPresentation{
+			CredentialQueryID: vc.CredentialQueryID, Code: ReasonNotAnswered, Reason: ReasonNotAnswered.description(),
+			Err: newError(ReasonNotAnswered, "its credential set option lost a discarded presentation", nil),
+		})
+	}
+	result.Credentials = credentials
+	return result, kept
+}
+
 type discardedError struct{ err error }
 
 func (e *discardedError) Error() string { return e.err.Error() }
@@ -755,7 +804,7 @@ func (v *Verifier) verifySDJWTVCPresentation(ctx context.Context, cq dcql.Creden
 		return nil, nil, newError(reason, "verify", err)
 	}
 
-	if err := cq.SatisfiedBySDJWTVCClaims(claims); err != nil {
+	if err := cq.SatisfiedBySDJWTVCPresentation(claims); err != nil {
 		return nil, nil, newError(ReasonNotAnswered, "satisfied by sdjwtvc claims", err)
 	}
 	if !req.AllowUnrequestedClaims {

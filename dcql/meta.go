@@ -106,13 +106,10 @@ func (c CredentialQuery) MdocMeta() (MdocMeta, error) {
 // claimsSatisfiedBy). Returns a non-nil error naming the first unmet
 // constraint otherwise.
 //
-// This is the one piece of matching logic a Verifier (checking a
-// returned Presentation actually carries what was asked for) and a
-// Wallet (deciding which held credential can satisfy a Credential
-// Query at all) need identically — c.Claims/c.Meta express the same
-// constraint regardless of which side is asking, so this package
-// holds the check once rather than each role package reimplementing
-// it.
+// This is the Wallet's check, on a credential it holds whole: whether
+// it can satisfy a Credential Query at all. A Verifier checking what a
+// presentation discloses uses SatisfiedBySDJWTVCPresentation, which
+// differs only in array indices.
 func (c CredentialQuery) SatisfiedBySDJWTVCClaims(claims map[string]any) error {
 	_, err := c.SelectedSDJWTVCClaimPaths(claims)
 	return err
@@ -140,6 +137,32 @@ func (c CredentialQuery) SelectedSDJWTVCClaimPaths(claims map[string]any) ([]Pat
 	return c.selectedClaimPaths(func(p Path) ([]any, error) {
 		return p.Select(claims)
 	})
+}
+
+// SatisfiedBySDJWTVCPresentation is SatisfiedBySDJWTVCClaims for what a
+// Verifier receives: claims is a presented SD-JWT VC's Processed SD-JWT
+// Payload, holding only the disclosures the Wallet sent. An array index
+// in a claims path counts the elements of the Holder's credential
+// (§7.1), but a presentation drops the array elements it doesn't
+// disclose (RFC 9901 §7.1) and can't say where the ones it does sat.
+// So each index component is evaluated here as a Wildcard: the claim
+// is present when any disclosed element is, and its Values match when
+// any disclosed element's value does. A Verifier can't learn an
+// element's position in the credential from a presentation, and must
+// not rely on it.
+func (c CredentialQuery) SatisfiedBySDJWTVCPresentation(claims map[string]any) error {
+	meta, err := c.SDJWTVCMeta()
+	if err != nil {
+		return fmt.Errorf("meta: %w", err)
+	}
+	if len(meta.VCTValues) > 0 && !slices.ContainsFunc(credentialTypes(claims), func(t string) bool { return slices.Contains(meta.VCTValues, t) }) {
+		vct, _ := claims["vct"].(string)
+		return fmt.Errorf("credential's own vct %q, and its aka_vcts, are not among the requested vct_values %v", vct, meta.VCTValues)
+	}
+	_, err = c.selectedClaimPaths(func(p Path) ([]any, error) {
+		return p.withIndicesWidened().Select(claims)
+	})
+	return err
 }
 
 // SatisfiedByMdocClaims reports whether docType/nameSpaces — an

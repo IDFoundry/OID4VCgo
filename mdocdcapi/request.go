@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/fxamacker/cbor/v2"
 
@@ -71,7 +72,21 @@ type RequestParams struct {
 	// Random supplies the nonce and the response encryption key. nil
 	// means crypto/rand.
 	Random io.Reader
+	// Lifetime is how long the request stays answerable
+	// (Pending.ExpiresAt). Zero means DefaultLifetime; at most
+	// MaxLifetime.
+	Lifetime time.Duration
+	// Now is the time the request is built at. nil means time.Now.
+	Now func() time.Time
 }
+
+// DefaultLifetime is RequestParams.Lifetime's default, and MaxLifetime
+// its largest value: a request is answered while the page waits on
+// navigator.credentials.get.
+const (
+	DefaultLifetime = 5 * time.Minute
+	MaxLifetime     = time.Hour
+)
 
 // RequestData is the request's "data" member for
 // navigator.credentials.get (Annex C.2), as JSON.
@@ -93,7 +108,9 @@ type RequestData struct {
 // both find it — before calling VerifyResponse, and don't put it back.
 // VerifyResponse keeps no state: a response verifies as often as it's
 // presented with the same Pending, so one that's been captured could
-// otherwise be replayed for as long as the Pending is kept.
+// otherwise be replayed for as long as the Pending is kept, up to its
+// ExpiresAt. Keep it server-side, never in a cookie or other
+// client-held session: RecipientKey is a private key.
 type Pending struct {
 	// Origin is the page's origin the request was built for: the
 	// response's session transcript binds it.
@@ -106,6 +123,10 @@ type Pending struct {
 	EncryptionInfo string
 	// RecipientKey is the private key the response is sealed to.
 	RecipientKey *ecdh.PrivateKey
+	// ExpiresAt is when the request stops being answerable:
+	// VerifyResponse refuses a response after it, or a Pending without
+	// one.
+	ExpiresAt time.Time
 }
 
 // Request is BuildRequest's result.
@@ -140,6 +161,14 @@ func BuildRequest(p RequestParams) (Request, error) {
 	if random == nil {
 		random = rand.Reader
 	}
+	now := time.Now
+	if p.Now != nil {
+		now = p.Now
+	}
+	lifetime := p.Lifetime
+	if lifetime == 0 {
+		lifetime = DefaultLifetime
+	}
 
 	recipient, err := ecdh.P256().GenerateKey(random)
 	if err != nil {
@@ -161,7 +190,7 @@ func BuildRequest(p RequestParams) (Request, error) {
 		Data: RequestData{DeviceRequest: deviceRequest, EncryptionInfo: encryptionInfo},
 		Pending: Pending{
 			Origin: p.Origin, DocType: p.DocType, Elements: cloneElements(p.Elements),
-			EncryptionInfo: encryptionInfo, RecipientKey: recipient,
+			EncryptionInfo: encryptionInfo, RecipientKey: recipient, ExpiresAt: now().Add(lifetime),
 		},
 	}, nil
 }
@@ -172,6 +201,9 @@ func checkRequestParams(p RequestParams) error {
 	}
 	if err := checkAllowed(p.Origin, p.Origins, true); err != nil {
 		return err
+	}
+	if p.Lifetime < 0 || p.Lifetime > MaxLifetime {
+		return fmt.Errorf("mdocdcapi: Lifetime %s is outside 0..%s", p.Lifetime, MaxLifetime)
 	}
 	if p.DocType == "" {
 		return errors.New("mdocdcapi: DocType is required")
