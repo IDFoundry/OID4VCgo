@@ -10,7 +10,7 @@ import (
 // issuer text is: no bidi overrides or line breaks to reorder or hide
 // what's around it. The offer itself is left as it was.
 func TestDescribeOffer_CleansTxCodeDescription(t *testing.T) {
-	tx := &oid4vci.TxCode{Length: 6, Description: "Enter‮ the code\nyour bank sent"}
+	tx := &oid4vci.TxCode{Length: 6, Description: "Enter\u202e the code\nyour bank sent"}
 	offer := oid4vci.CredentialOffer{
 		CredentialIssuer: "https://issuer.example",
 		Grants:           &oid4vci.Grants{PreAuthorizedCode: &oid4vci.GrantPreAuthorizedCode{PreAuthorizedCode: "c", TxCode: tx}},
@@ -19,7 +19,7 @@ func TestDescribeOffer_CleansTxCodeDescription(t *testing.T) {
 	if o.TxCode == nil || o.TxCode.Description != "Enter the code your bank sent" || o.TxCode.Length != 6 {
 		t.Errorf("TxCode = %+v", o.TxCode)
 	}
-	if tx.Description != "Enter‮ the code\nyour bank sent" {
+	if tx.Description != "Enter\u202e the code\nyour bank sent" {
 		t.Error("the offer's own tx_code was changed")
 	}
 }
