@@ -50,6 +50,8 @@ func TestSubmitDirectPostResponse(t *testing.T) {
 		"http redirect_uri":     {200, "application/json", `{"redirect_uri":"http://verifier.example/cb"}`, "", "isn't an absolute URI the Wallet can follow"},
 		"relative redirect_uri": {200, "application/json", `{"redirect_uri":"/cb"}`, "", "isn't an absolute URI the Wallet can follow"},
 		"javascript redirect":   {200, "application/json", `{"redirect_uri":"javascript:alert(1)"}`, "", "isn't an absolute URI the Wallet can follow"},
+		"wallet scheme":         {200, "application/json", `{"redirect_uri":"openid4vp://?request_uri=https://v.example/r"}`, "", "isn't an absolute URI the Wallet can follow"},
+		"offer scheme":          {200, "application/json", `{"redirect_uri":"HAIP-VCI://?credential_offer_uri=x"}`, "", "isn't an absolute URI the Wallet can follow"},
 		// OpenID4VP §8.2: any absolute URI, which HAIP 1.0 §5.1 has the
 		// Wallet follow: the Verifier's own app's, say.
 		"app scheme redirect_uri": {200, "application/json", `{"redirect_uri":"com.example.verifier:/done?response_code=abc"}`, "com.example.verifier:/done?response_code=abc", ""},
