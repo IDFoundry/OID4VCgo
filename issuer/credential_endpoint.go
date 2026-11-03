@@ -80,7 +80,8 @@ type AuthorizedRequest struct {
 	// CredentialIdentifiers, in which case the Wallet MUST use one of
 	// those instead (§8.2) and the request is refused. An entry whose
 	// Locations is present and doesn't include Config.Issuer is for
-	// another resource server and grants nothing here (§5.1.1).
+	// another resource server and grants nothing here (§5.1.1), as does
+	// one without Locations when Config.AuthorizationServers is set.
 	// RequestCredential resolves CredentialRequest.CredentialIdentifier
 	// against this to find which CredentialConfiguration applies,
 	// entirely bypassing the CredentialConfigurationID/Scopes check —
@@ -163,15 +164,14 @@ func requireClientIdentityDecision(auth AuthorizedRequest) error {
 // encryption (§10) are supported via the separate
 // DecryptRequestBody/EncryptResponseBody — see their own doc comments
 // and ResponseEncryption/RequestWasEncrypted below for how a caller
-// wires them in; RequestCredential itself only enforces §8.2-18's own
-// "Credential Request encryption MUST be used if the
-// credential_response_encryption parameter is included." RequestCredential
-// itself never defers
-// issuance — it always issues immediately or fails outright; see
-// RequestDeferredCredential for the Deferred Credential Endpoint (§9)
-// this repo does implement, for a transaction some other,
-// deployment-specific process has already decided to defer. A
-// CredentialConfiguration with no
+// wires them in; RequestCredential itself enforces §8.2's "Credential
+// Request encryption MUST be used if the credential_response_encryption
+// parameter is included", and the encryption_required this issuer's
+// RequestEncryption and ResponseEncryption declare. RequestCredential
+// issues immediately unless Defer is set, when it starts a deferred
+// transaction (§9) that IssueDeferredCredential or
+// DenyDeferredCredential resolves and RequestDeferredCredential
+// answers. A CredentialConfiguration with no
 // ProofTypesSupported at all (an unbound credential, §14.2) isn't
 // supported either, since credential/mdoc's Claims.DeviceKey is
 // unconditionally required — there is no way to satisfy "no binding"
@@ -203,6 +203,17 @@ type CredentialRequest struct {
 	// token authorized; it's ignored on input. A direct caller of
 	// RequestCredential finds it with ResolveCredentialConfiguration.
 	ResolvedConfigurationID string
+
+	// AuthorizedClaims are the claims the access token's authorization
+	// detail for the request asks for (its "claims", §5.1.1, Appendix
+	// B.1), nil when it names none, or the token grants the
+	// configuration by scope: then every claim is asked for.
+	// CredentialHandler sets it before Prepare, with
+	// ResolvedConfigurationID; it's ignored on input. Prepare should
+	// issue only these, and the claims the Credential always carries,
+	// rather than the whole dataset. A direct caller of
+	// RequestCredential finds them with ResolveAuthorizedClaims.
+	AuthorizedClaims []oid4vci.ClaimsDescription
 
 	// Proofs is §8.2's own "proofs" parameter: exactly one proof type
 	// (a key in this map, either oid4vci.ProofTypeJWT or
@@ -386,6 +397,7 @@ func (iss *Issuer) requestCredential(ctx context.Context, auth AuthorizedRequest
 	}
 	if prepare != nil {
 		req.ResolvedConfigurationID = configID
+		req.AuthorizedClaims = iss.authorizedClaims(auth, req, configID)
 		if err := prepare(ctx, &req); err != nil {
 			return oid4vci.CredentialResponse{}, err
 		}
@@ -490,12 +502,22 @@ func (iss *Issuer) resolveCredentialConfiguration(auth AuthorizedRequest, req Cr
 }
 
 // credentialDetail reports whether d is an "openid_credential"
-// authorization detail for this Credential Issuer: one whose locations,
-// when present, include its identifier (§5.1.1, RFC 9396 §2.2). A
-// detail meant for another location grants nothing here.
+// authorization detail for this Credential Issuer: one whose locations
+// include its identifier (§5.1.1, RFC 9396 §2.2). A detail meant for
+// another location grants nothing here. One without locations does
+// only when this issuer lists no authorization_servers: with them,
+// §5.1.1 and §6.2 say locations "MUST be set to the Credential Issuer
+// Identifier", and an Authorization Server they share would otherwise
+// grant one issuer's configuration at every issuer with a configuration
+// of that ID.
 func (iss *Issuer) credentialDetail(d oid4vci.AuthorizationDetail) bool {
-	return d.Type == oid4vci.AuthorizationDetailsTypeOpenIDCredential &&
-		(len(d.Locations) == 0 || slices.Contains(d.Locations, iss.cfg.Issuer.String()))
+	if d.Type != oid4vci.AuthorizationDetailsTypeOpenIDCredential {
+		return false
+	}
+	if len(d.Locations) == 0 {
+		return len(iss.cfg.AuthorizationServers) == 0
+	}
+	return slices.Contains(d.Locations, iss.cfg.Issuer.String())
 }
 
 // grantsConfiguration reports whether auth grants configuration id at
@@ -627,6 +649,9 @@ func (iss *Issuer) issueBatch(ctx context.Context, cc CredentialConfiguration, r
 		if req.PerCredential != nil {
 			if err := req.PerCredential(ctx, &instance); err != nil {
 				return nil, fmt.Errorf("issuer: request credential: per-credential claims: %w", err)
+			}
+			if (cc.Format == sdjwtvc.CredentialFormat) != (instance.SDJWTClaims != nil) || (cc.Format == mdoc.CredentialFormat) != (instance.MdocClaims != nil) {
+				return nil, fmt.Errorf("issuer: request credential: per-credential claims: credential %d's claims for format %q were removed or replaced by another format's", i, cc.Format)
 			}
 		}
 		if ref, ok := instance.statusRef(); ok {
@@ -811,6 +836,48 @@ func jwkHeaderKey(header map[string]any) (json.RawMessage, error) {
 func (iss *Issuer) ResolveCredentialConfiguration(auth AuthorizedRequest, req CredentialRequest) (string, error) {
 	id, _, err := iss.resolveCredentialConfiguration(auth, req)
 	return id, err
+}
+
+// ResolveAuthorizedClaims is what CredentialHandler sets as
+// req.AuthorizedClaims: the claims auth's authorization detail for req
+// asks for, nil for every claim. It resolves req as
+// ResolveCredentialConfiguration does, with the same errors.
+func (iss *Issuer) ResolveAuthorizedClaims(auth AuthorizedRequest, req CredentialRequest) ([]oid4vci.ClaimsDescription, error) {
+	id, _, err := iss.resolveCredentialConfiguration(auth, req)
+	if err != nil {
+		return nil, err
+	}
+	return iss.authorizedClaims(auth, req, id), nil
+}
+
+// authorizedClaims are the claims the authorization details granting
+// req, for configuration configID, ask for: those of the detail holding
+// req.CredentialIdentifier, or of every detail for this issuer naming
+// configID. nil, every claim, when one of them names none, or none
+// grants it (a scope does).
+func (iss *Issuer) authorizedClaims(auth AuthorizedRequest, req CredentialRequest, configID string) []oid4vci.ClaimsDescription {
+	var claims []oid4vci.ClaimsDescription
+	for _, d := range auth.AuthorizationDetails {
+		if !iss.credentialDetail(d) || d.CredentialConfigurationID != configID {
+			continue
+		}
+		if req.CredentialIdentifier != "" && !slices.Contains(d.CredentialIdentifiers, req.CredentialIdentifier) {
+			continue
+		}
+		if len(d.Claims) == 0 {
+			return nil
+		}
+		claims = append(claims, d.Claims...)
+	}
+	return cloneClaims(claims)
+}
+
+// cloneClaims is a copy of claims Prepare can change freely.
+func cloneClaims(claims []oid4vci.ClaimsDescription) []oid4vci.ClaimsDescription {
+	if claims == nil {
+		return nil
+	}
+	return cloneCredentialMetadata(&oid4vci.CredentialMetadata{Claims: claims}).Claims
 }
 
 // checkInstanceType refuses to sign a credential of another type than

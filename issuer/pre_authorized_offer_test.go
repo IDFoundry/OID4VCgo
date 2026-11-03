@@ -115,10 +115,20 @@ func TestCreateCredentialOffer_ProductionRefusesPreAuthorizedGrant(t *testing.T)
 	for name, req := range map[string]issuer.CreatePreAuthorizedOfferRequest{
 		"a 4-digit tx_code":  {CredentialConfigurationIDs: []string{"IdentityCredential"}, Scopes: []string{"identity_credential"}, Subject: "holder-1", TxCode: "4821", Lifetime: time.Minute},
 		"a month's lifetime": {CredentialConfigurationIDs: []string{"IdentityCredential"}, Scopes: []string{"identity_credential"}, Subject: "holder-1", TxCode: "482193", Lifetime: 30 * 24 * time.Hour},
+		// AnonymousPreAuthorizedCode authenticates no client: whoever
+		// sees an offer without a Transaction Code redeems it.
+		"no tx_code, anonymously redeemed": {CredentialConfigurationIDs: []string{"IdentityCredential"}, Scopes: []string{"identity_credential"}, Subject: "holder-1", Lifetime: time.Minute},
+		"no_tx_code with a tx_code":        {CredentialConfigurationIDs: []string{"IdentityCredential"}, Scopes: []string{"identity_credential"}, Subject: "holder-1", TxCode: "482193", NoTxCode: true, Lifetime: time.Minute},
 	} {
 		if _, err := iss.CreatePreAuthorizedOffer(ctx, req); err == nil {
 			t.Errorf("%s under production: accepted", name)
 		}
+	}
+	if _, err := iss.CreatePreAuthorizedOffer(ctx, issuer.CreatePreAuthorizedOfferRequest{
+		CredentialConfigurationIDs: []string{"IdentityCredential"}, Scopes: []string{"identity_credential"},
+		Subject: "holder-1", NoTxCode: true, Lifetime: time.Minute,
+	}); err != nil {
+		t.Errorf("CreatePreAuthorizedOffer declaring no_tx_code under production: %v", err)
 	}
 	if _, err := iss.CreateCredentialOffer(ctx, issuer.CreateCredentialOfferRequest{CredentialConfigurationIDs: []string{"IdentityCredential"}}); err != nil {
 		t.Errorf("CreateCredentialOffer without a pre-authorized grant: %v", err)

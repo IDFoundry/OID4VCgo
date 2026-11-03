@@ -10,6 +10,7 @@ import (
 	"io"
 	"maps"
 	"math/big"
+	"reflect"
 	"slices"
 	"strings"
 	"time"
@@ -115,7 +116,9 @@ type Limits struct {
 	// notification_id IssueNotificationID hands out is accepted by
 	// RequestNotification (NotificationRecord.ExpiresAt), so a store
 	// can drop its record afterwards. Zero means a notification_id
-	// never expires. A Wallet notifies once it has stored or discarded
+	// never expires, and its record, naming the client and subject,
+	// is kept for ever: AssuranceProduction refuses zero when
+	// Endpoints.Notification is set. A Wallet notifies once it has stored or discarded
 	// the Credential (§11), so a lifetime of days is ample. It runs from
 	// when the notification_id is issued, which for a deferred issuance
 	// is when the transaction is resolved (IssueDeferredCredential), so
@@ -560,6 +563,31 @@ type ProofBindingKeyResolver interface {
 // ProofBindingKeyResolver and AttestationVerifier.
 var ErrProofKeyTrustUndecided = errors.New("issuer: the proof key's trust can't be decided now")
 
+// ConfigurationCheck is implemented by a dependency that checks its own
+// configuration, as X5CAttestationVerifier and
+// X5CProofBindingKeyResolver do. New calls CheckConfiguration, with the
+// issuer's assurance level, on Dependencies.AttestationVerifier and
+// Dependencies.ProofBindingKeys when they implement it, and refuses
+// what it reports. A type of your own that embeds one of them (to count
+// its calls, say) has its method promoted, so it keeps its checks; one
+// that holds it in a named field implements CheckConfiguration by
+// calling the field's.
+type ConfigurationCheck interface {
+	CheckConfiguration(assurance AssuranceLevel) error
+}
+
+// checkConfiguration runs dep's ConfigurationCheck, if it has one.
+func checkConfiguration(dep any, assurance AssuranceLevel) error {
+	checked, ok := dep.(ConfigurationCheck)
+	if !ok {
+		return nil
+	}
+	if v := reflect.ValueOf(dep); v.Kind() == reflect.Pointer && v.IsNil() {
+		return fmt.Errorf("is a nil %T", dep)
+	}
+	return checked.CheckConfiguration(assurance)
+}
+
 // CredentialDPoPNonceIssuer issues a DPoP nonce the Credential Endpoint
 // will accept. fapigo/resource's *Verifier implements it
 // (IssueDPoPNonce, FAPIgo v0.60.0 or later), returning "" when it
@@ -720,6 +748,9 @@ type Issuer struct {
 // It reports every problem it finds in cfg and deps, joined
 // (errors.Join), not just the first.
 func New(cfg Config, deps Dependencies) (*Issuer, error) {
+	// Validated and kept as a copy: the caller's Config, a template
+	// shared between issuers say, can change afterwards.
+	cfg = cloneConfig(cfg)
 	var errs []error
 	var err error
 	cfg.PreAuthorizedCodeClientAuthentication, err = normalizeClientAuthentication(cfg.PreAuthorizedCodeClientAuthentication)
@@ -733,8 +764,8 @@ func New(cfg Config, deps Dependencies) (*Issuer, error) {
 		validatePreAuthorizedCodeDependencies(cfg, deps),
 		validateEncryption(cfg),
 		prefixError(dependenciesPrefix, validateSignerDependencies(cfg, deps)),
-		prefixError(dependenciesPrefix, validateAttestationVerifier(deps.AttestationVerifier)),
-		prefixError(dependenciesPrefix, validateProofBindingKeys(deps.ProofBindingKeys)),
+		prefixError(dependenciesPrefix+"attestation_verifier: ", checkConfiguration(deps.AttestationVerifier, cfg.Assurance)),
+		prefixError(dependenciesPrefix+"proof_binding_keys: ", checkConfiguration(deps.ProofBindingKeys, cfg.Assurance)),
 	)
 	if deps.Random == nil {
 		errs = append(errs, fmt.Errorf("issuer: dependencies: random is required"))

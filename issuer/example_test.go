@@ -6,6 +6,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"net/http"
@@ -22,6 +23,15 @@ import (
 	"github.com/idfoundry/oid4vcgo/storage"
 )
 
+// randomState is a 256-bit random issuer_state, base64url encoded.
+func randomState() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(b), nil
+}
+
 func exampleURL(parse func(string, ...fapi.URLOption) (fapi.URL, error), raw string) fapi.URL {
 	u, err := parse(raw)
 	if err != nil {
@@ -33,10 +43,18 @@ func exampleURL(parse func(string, ...fapi.URLOption) (fapi.URL, error), raw str
 // A Credential Issuer of one SD-JWT VC, with the endpoints it publishes
 // and the stores it keeps, making a Credential Offer for the
 // authorization code flow. In production, set Assurance to
-// AssuranceProduction, which also requires durable stores, a signer
-// certificate issued by a CA, and a status check on key attestations.
+// AssuranceProduction, which also requires durable stores (sqlstore's),
+// a signer certificate issued by a CA, an Audit sink, and a status
+// check on key attestations.
 func ExampleNew() {
 	signer, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		panic(err)
+	}
+	// Unguessable, and kept with the holder it's for: issuer_state names
+	// the offer, but anyone the offer reaches can send it, so the
+	// consent step authenticates the holder and checks it's this one.
+	issuerState, err := randomState()
 	if err != nil {
 		panic(err)
 	}
@@ -59,7 +77,7 @@ func ExampleNew() {
 			},
 		},
 	}, issuer.Dependencies{
-		Clock: issuer.ClockFunc(time.Now), Random: rand.Reader,
+		Random:      rand.Reader, // and a nil Clock, the system's
 		SDJWTSigner: &issuer.SDJWTSigner{Signer: signer, Alg: oid4vci.ES256},
 		Nonces:      storage.NewNonceStore(), CredentialOffers: storage.NewCredentialOfferStore(),
 		DeferredTransactions: storage.NewDeferredTransactionStore(), Notifications: storage.NewNotificationStore(),
@@ -70,11 +88,9 @@ func ExampleNew() {
 
 	// Serve iss.Metadata() at /.well-known/openid-credential-issuer, and
 	// the Credential Endpoint as ExampleIssuer_CredentialHandler shows.
-	// issuer_state ties the authorization the Wallet gets back to this
-	// offer's holder.
 	offer, err := iss.CreateCredentialOffer(context.Background(), issuer.CreateCredentialOfferRequest{
 		CredentialConfigurationIDs: []string{"pid"},
-		Grants:                     &oid4vci.Grants{AuthorizationCode: &oid4vci.GrantAuthorizationCode{IssuerState: "holder-session-1"}},
+		Grants:                     &oid4vci.Grants{AuthorizationCode: &oid4vci.GrantAuthorizationCode{IssuerState: issuerState}},
 	})
 	if err != nil {
 		panic(err)

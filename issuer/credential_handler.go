@@ -73,7 +73,9 @@ type CredentialHandlerConfig struct {
 	// instance) — or sets req.Defer to defer issuance, which the
 	// handler answers with 202 and a transaction_id (§8.3). Those are
 	// the only fields of req read after it; req.ResolvedConfigurationID
-	// names the configuration to build the claims of. Returning a *Error — typically
+	// names the configuration to build the claims of, and
+	// req.AuthorizedClaims the claims the token's authorization detail
+	// asks for (nil for all of them). Returning a *Error — typically
 	// NewError(ErrorCredentialRequestDenied, ...) — refuses the request
 	// with that error; any other error is a 500 whose detail the Wallet
 	// never sees. REQUIRED.

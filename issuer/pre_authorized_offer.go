@@ -42,6 +42,16 @@ type CreatePreAuthorizedOfferRequest struct {
 	// all digits, and its length.
 	TxCode string
 
+	// NoTxCode declares that the offer deliberately asks for no
+	// Transaction Code. Under AssuranceProduction with
+	// AnonymousPreAuthorizedCode, which authenticates no client,
+	// CreatePreAuthorizedOffer requires TxCode or NoTxCode: without a
+	// Transaction Code, whoever sees the offer (a QR code over the
+	// holder's shoulder, a forwarded link) redeems it, so OpenID4VCI
+	// §3.5 has the issuer mitigate that some other way, a short
+	// Lifetime say. It can't be set with TxCode.
+	NoTxCode bool
+
 	// TxCodeDescription, OPTIONAL, tells the holder where to find the
 	// Transaction Code (§4.1.1: at most 300 characters).
 	TxCodeDescription string
@@ -224,11 +234,17 @@ func (iss *Issuer) checkPreAuthorizedGrant(req CreatePreAuthorizedOfferRequest) 
 			return fmt.Errorf("the code wouldn't grant %q: give scopes including its scope, or set credential_identifiers", id)
 		}
 	}
+	if req.NoTxCode && req.TxCode != "" {
+		return errors.New("no_tx_code and tx_code are both set")
+	}
 	if iss.cfg.Assurance != AssuranceProduction {
 		return nil
 	}
 	if req.TxCode != "" && utf8.RuneCountInString(req.TxCode) < MinProductionTxCodeLength {
 		return fmt.Errorf("tx_code must be at least %d characters under AssuranceProduction", MinProductionTxCodeLength)
+	}
+	if _, anonymous := iss.cfg.PreAuthorizedCodeClientAuthentication.(AnonymousPreAuthorizedCode); anonymous && req.TxCode == "" && !req.NoTxCode {
+		return errors.New("tx_code is required under AssuranceProduction with AnonymousPreAuthorizedCode, which authenticates no client: whoever sees the offer could redeem it (OpenID4VCI §3.5); set no_tx_code to offer without one deliberately")
 	}
 	if req.Lifetime > MaxProductionPreAuthorizedLifetime {
 		return fmt.Errorf("lifetime %s is over the %s allowed under AssuranceProduction", req.Lifetime, MaxProductionPreAuthorizedLifetime)

@@ -373,16 +373,23 @@ func TestExchangePreAuthorizedCodeResult_WriteJSON_IncludesAuthorizationDetails(
 		AuthorizationDetails: []oid4vci.AuthorizationDetail{
 			{Type: "openid_credential", CredentialConfigurationID: "IdentityCredential", CredentialIdentifiers: []string{"id-1"}},
 		},
+		Scope: []string{"identity_credential", "mdl"},
 	}.WriteJSON(rec)
 
 	var body struct {
 		AuthorizationDetails []oid4vci.AuthorizationDetail `json:"authorization_details"`
+		Scope                string                        `json:"scope"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("unmarshal response body: %v", err)
 	}
 	if len(body.AuthorizationDetails) != 1 || body.AuthorizationDetails[0].CredentialConfigurationID != "IdentityCredential" {
 		t.Errorf("authorization_details = %v", body.AuthorizationDetails)
+	}
+	// RFC 6749 §5.1: the request asked for no scope, so the response
+	// states the scope granted.
+	if body.Scope != "identity_credential mdl" {
+		t.Errorf("scope = %q, want the record's scopes, space-separated", body.Scope)
 	}
 }
 

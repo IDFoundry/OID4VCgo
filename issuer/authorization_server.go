@@ -120,4 +120,4 @@ package issuer
 //     status list indices, which are shared by every credential.
 //
 // For the pre-authorized code grant, server.Server.IssueRefreshToken
-// issues one for PreAuthorizedCodeTokenResponse.RefreshToken.
+// issues one for ExchangePreAuthorizedCodeResult.RefreshToken.

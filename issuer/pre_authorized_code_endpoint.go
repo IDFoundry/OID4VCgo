@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
+	"strings"
 	"time"
 
 	fapi "github.com/idfoundry/fapigo"
@@ -121,8 +122,10 @@ type ExchangePreAuthorizedCodeResult struct {
 // DPoP-Nonce header when NextDPoPNonce is non-empty (RFC 9449 §8), HTTP
 // 200, application/json, {"access_token","token_type","expires_in"},
 // plus "authorization_details" (RFC 9396 §6.2) when
-// AuthorizationDetails is non-empty. Must be called before anything
-// else writes to w.
+// AuthorizationDetails is non-empty, and "scope" when Scope is: a
+// pre-authorized Token Request asks for none, so the scope granted
+// differs from the one requested, which RFC 6749 §5.1 requires the
+// response to state. Must be called before anything else writes to w.
 func (r ExchangePreAuthorizedCodeResult) WriteJSON(w http.ResponseWriter) {
 	if r.NextDPoPNonce != "" {
 		w.Header().Set("DPoP-Nonce", r.NextDPoPNonce)
@@ -138,10 +141,11 @@ func (r ExchangePreAuthorizedCodeResult) WriteJSON(w http.ResponseWriter) {
 		TokenType            string                        `json:"token_type"`
 		ExpiresIn            int64                         `json:"expires_in"`
 		RefreshToken         string                        `json:"refresh_token,omitempty"`
+		Scope                string                        `json:"scope,omitempty"`
 		AuthorizationDetails []oid4vci.AuthorizationDetail `json:"authorization_details,omitempty"`
 	}{
 		AccessToken: r.AccessToken, TokenType: r.TokenType, ExpiresIn: int64(r.ExpiresIn.Seconds()),
-		RefreshToken: r.RefreshToken.Reveal(), AuthorizationDetails: r.AuthorizationDetails,
+		RefreshToken: r.RefreshToken.Reveal(), Scope: strings.Join(r.Scope, " "), AuthorizationDetails: r.AuthorizationDetails,
 	})
 }
 
@@ -610,6 +614,10 @@ func (iss *Issuer) requestedConfigurations(details []oid4vci.AuthorizationDetail
 			problem = "credential_identifiers are the Authorization Server's to issue"
 		case len(d.Locations) > 0 && !slices.Contains(d.Locations, iss.cfg.Issuer.String()):
 			problem = "locations doesn't include this Credential Issuer"
+		case len(d.Locations) == 0 && len(iss.cfg.AuthorizationServers) > 0:
+			// §5.1.1: with authorization_servers in the metadata, locations
+			// "MUST be set to the Credential Issuer Identifier value".
+			problem = "locations is required, since this Credential Issuer lists authorization_servers"
 		}
 		if problem != "" {
 			return nil, newError(ErrorInvalidAuthorizationDetails, 400, fmt.Sprintf("authorization_details[%d]: %s", i, problem), nil)
