@@ -488,7 +488,12 @@ func (v *Verifier) VerifyResponse(ctx context.Context, req VerifyResponseRequest
 	}
 	if len(result.Discarded) > 0 {
 		// §8.6: what's left must still answer the query (§6.4); if it
-		// doesn't, the first failure is why.
+		// doesn't, the first failure is why. A credential set option a
+		// discarded presentation left incomplete answers nothing, so the
+		// rest of it is discarded too, and what's left checked again.
+		if req.Query.CheckAnswered(verifiedIDs) != nil && len(req.Query.CredentialSets) > 0 {
+			result, verifiedIDs = keepCompleteOptions(req.Query, result, verifiedIDs)
+		}
 		if err := req.Query.CheckAnswered(verifiedIDs); err != nil {
 			if firstFailure == nil {
 				firstFailure = fmt.Errorf("verifier: verify response: %w", newError(ReasonNotAnswered, "what verified doesn't answer the query as it asks", err))
@@ -701,6 +706,37 @@ func sdjwtvcSignedPart(compact string) []byte {
 // failed verification: VerifyResponse discards them, and reports the
 // first's error only if the rest of the response doesn't answer the
 // query.
+// keepCompleteOptions is result and verified without the credentials
+// of queries no credential set option they're part of verified in
+// full: discarding one presentation of an option leaves the option
+// unanswered, and the others in it answering nothing. Each of those is
+// discarded, as ReasonNotAnswered.
+func keepCompleteOptions(q dcql.Query, result VerifyResponseResult, verified map[string]bool) (VerifyResponseResult, map[string]bool) {
+	kept := make(map[string]bool, len(verified))
+	for _, set := range q.CredentialSets {
+		for _, option := range set.Options {
+			if !slices.ContainsFunc(option, func(id string) bool { return !verified[id] }) {
+				for _, id := range option {
+					kept[id] = true
+				}
+			}
+		}
+	}
+	credentials := result.Credentials[:0:0]
+	for _, vc := range result.Credentials {
+		if kept[vc.CredentialQueryID] {
+			credentials = append(credentials, vc)
+			continue
+		}
+		result.Discarded = append(result.Discarded, DiscardedPresentation{
+			CredentialQueryID: vc.CredentialQueryID, Code: ReasonNotAnswered, Reason: ReasonNotAnswered.description(),
+			Err: newError(ReasonNotAnswered, "its credential set option lost a discarded presentation", nil),
+		})
+	}
+	result.Credentials = credentials
+	return result, kept
+}
+
 type discardedError struct{ err error }
 
 func (e *discardedError) Error() string { return e.err.Error() }

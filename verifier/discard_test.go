@@ -96,6 +96,54 @@ func TestVerifyResponse_DiscardsFailedPresentations(t *testing.T) {
 	}
 }
 
+// One presentation of an optional set's option failing leaves the
+// option unanswered: the option's other presentation is discarded with
+// it, and the required set's answer stands (OpenID4VP §8.6).
+func TestVerifyResponse_DiscardsTheRestOfAnIncompleteOption(t *testing.T) {
+	falseVal := false
+	query := dcql.Query{
+		Credentials: []dcql.CredentialQuery{vctCredentialQuery(t, "a"), vctCredentialQuery(t, "b"), vctCredentialQuery(t, "c")},
+		CredentialSets: []dcql.CredentialSetQuery{
+			{Required: &falseVal, Options: [][]string{{"a", "b"}}},
+			{Options: [][]string{{"c"}}},
+		},
+	}
+	cfg, deps := validConfig(t)
+	v, err := verifier.New(cfg, deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	built, err := v.BuildAuthorizationRequest(verifier.BuildAuthorizationRequestRequest{Query: query})
+	if err != nil {
+		t.Fatal(err)
+	}
+	issuerKey := testP256Key(t)
+	good := func() string {
+		return newSDJWTVCPresentationWithIssuer(t, issuerKey, v.ClientID(), built.Nonce).compact
+	}
+	bad := newSDJWTVCPresentationWithIssuer(t, testP256Key(t), v.ClientID(), built.Nonce).compact
+	result, err := v.VerifyResponse(context.Background(), verifier.VerifyResponseRequest{
+		Query:            query,
+		Response:         verifier.ParsedResponse{VPToken: map[string][]string{"a": {good()}, "b": {bad}, "c": {good()}}},
+		ExpectedNonce:    built.Nonce,
+		IssuerKeys:       fixedSDJWTVCIssuerKeyResolver{pub: &issuerKey.PublicKey, alg: jose.ES256},
+		MaxKeyBindingAge: time.Hour,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Credentials) != 1 || result.Credentials[0].CredentialQueryID != "c" {
+		t.Errorf("verified %+v, want c alone", result.Credentials)
+	}
+	discarded := map[string]verifier.Reason{}
+	for _, d := range result.Discarded {
+		discarded[d.CredentialQueryID] = d.Code
+	}
+	if len(discarded) != 2 || discarded["a"] != verifier.ReasonNotAnswered || discarded["b"] == "" {
+		t.Errorf("discarded %+v, want a (not answered) and b", result.Discarded)
+	}
+}
+
 // A presentation bound to another request's nonce or audience isn't
 // just discarded: the whole response is refused (OpenID4VP §14.1.2),
 // even when the rest would answer the query.
