@@ -180,7 +180,7 @@ func decodeEngagementSecurity(raw cbor.RawMessage) (*ecdsa.PublicKey, []byte, er
 	if err != nil {
 		return nil, nil, fmt.Errorf("proximity: decode EDeviceKeyBytes: %w: %w", ErrCBORDecoding, err)
 	}
-	eDeviceKey, err := decodeCoseKey(coseKey)
+	eDeviceKey, err := decodeEDeviceKey(coseKey)
 	if err != nil {
 		return nil, nil, fmt.Errorf("proximity: EDeviceKey: %w", err)
 	}

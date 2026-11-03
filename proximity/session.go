@@ -5,6 +5,7 @@ import (
 	"crypto/cipher"
 	"crypto/ecdh"
 	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
@@ -178,6 +179,49 @@ func decodeCoseKey(b []byte) (*ecdsa.PublicKey, error) {
 		return nil, fmt.Errorf("proximity: COSE_Key: cipher suite 1 needs a P-256 key, got %T", pub)
 	}
 	return ec, nil
+}
+
+// compressedCoseKey is a COSE_Key whose y may be a bool, the sign bit of
+// a compressed point (RFC 9053 §7.1.1).
+type compressedCoseKey struct {
+	Kty int64           `cbor:"1,keyasint"`
+	Crv int64           `cbor:"-1,keyasint"`
+	X   []byte          `cbor:"-2,keyasint"`
+	Y   cbor.RawMessage `cbor:"-3,keyasint"`
+}
+
+// decodeEDeviceKey decodes the mdoc's ephemeral key's COSE_Key bytes,
+// which, unlike EReaderKey, may hold a compressed point (ISO/IEC 18013-5
+// second edition §12.7.2): y the bool sign bit.
+func decodeEDeviceKey(b []byte) (*ecdsa.PublicKey, error) {
+	var key compressedCoseKey
+	if err := decMode.Unmarshal(b, &key); err != nil {
+		return nil, fmt.Errorf("proximity: decode COSE_Key: %w: %w", ErrCBORDecoding, err)
+	}
+	var odd bool
+	if key.Y == nil || decMode.Unmarshal(key.Y, &odd) != nil {
+		return decodeCoseKey(b)
+	}
+	if key.Kty != 2 || key.Crv != 1 || len(key.X) != 32 {
+		return nil, fmt.Errorf("proximity: COSE_Key: cipher suite 1 needs a P-256 key")
+	}
+	prefix := byte(2)
+	if odd {
+		prefix = 3
+	}
+	x, y := elliptic.UnmarshalCompressed(elliptic.P256(), append([]byte{prefix}, key.X...))
+	if x == nil {
+		return nil, fmt.Errorf("proximity: COSE_Key: compressed point isn't on P-256")
+	}
+	uncompressed := make([]byte, 65)
+	uncompressed[0] = 4
+	x.FillBytes(uncompressed[1:33])
+	y.FillBytes(uncompressed[33:])
+	pub, err := ecdsa.ParseUncompressedPublicKey(elliptic.P256(), uncompressed)
+	if err != nil {
+		return nil, fmt.Errorf("proximity: COSE_Key: %w", err)
+	}
+	return pub, nil
 }
 
 // decodeSessionData size-checks and decodes msg as a SessionData.
