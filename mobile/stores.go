@@ -554,6 +554,11 @@ type deferredRecord struct {
 	// CredentialIdentifier: absent from a record written before it was
 	// kept, or for a credential requested by its configuration.
 	CredentialIdentifier string `json:"credential_identifier,omitempty"`
+	// Format, VCT and DocType: the kind of credential requested; absent
+	// from a record written before they were kept.
+	Format  string `json:"format,omitempty"`
+	VCT     string `json:"vct,omitempty"`
+	DocType string `json:"doctype,omitempty"`
 }
 
 // deferredStoreID is the CredentialStore ID a pending deferred
@@ -571,6 +576,7 @@ func (s deferredStore) PutDeferred(_ context.Context, p walletflow.PendingDeferr
 		TransactionID: p.TransactionID, AccessToken: p.AccessToken.Reveal(),
 		DPoPKeyID: p.DPoPKeyID, HolderKeyIDs: p.HolderKeyIDs, IntervalSeconds: p.Interval.Seconds(), DeferredAt: p.DeferredAt,
 		GrantID: p.GrantID, Replaces: p.Replaces, TokenType: p.TokenType, CredentialIdentifier: p.CredentialIdentifier,
+		Format: p.Format, VCT: p.VCT, DocType: p.DocType,
 	}
 	if !p.AccessTokenExpiresAt.IsZero() {
 		r.AccessTokenExpiresAt = &p.AccessTokenExpiresAt
@@ -609,6 +615,7 @@ func (s deferredStore) ListDeferred(context.Context) ([]walletflow.PendingDeferr
 			AccessToken: fapi.NewSecret(r.AccessToken), DPoPKeyID: r.DPoPKeyID, HolderKeyIDs: r.HolderKeyIDs,
 			Interval: time.Duration(r.IntervalSeconds * float64(time.Second)), DeferredAt: r.DeferredAt,
 			GrantID: r.GrantID, Replaces: r.Replaces, TokenType: r.TokenType, CredentialIdentifier: r.CredentialIdentifier,
+			Format: r.Format, VCT: r.VCT, DocType: r.DocType,
 		}
 		if r.AccessTokenExpiresAt != nil {
 			p.AccessTokenExpiresAt = *r.AccessTokenExpiresAt

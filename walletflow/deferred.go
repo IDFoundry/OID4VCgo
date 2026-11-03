@@ -30,6 +30,12 @@ type PendingDeferred struct {
 	CredentialIssuer string
 	ConfigurationID  string
 	TransactionID    string
+	// Format, VCT and DocType are the kind of credential the
+	// configuration issued when it was requested. A Poll after a restart
+	// fetches the issuer's metadata again, and refuses
+	// (ErrReissueRequired) a configuration that now issues another kind.
+	// Empty in one stored before they were kept: not checked then.
+	Format, VCT, DocType string
 	// CredentialIdentifier is the credential_identifier it was requested
 	// by, "" for none (StoredCredential.CredentialIdentifier).
 	CredentialIdentifier string
@@ -235,14 +241,19 @@ func (d *Deferred) Poll(ctx context.Context) (*StoredCredential, error) {
 	if err != nil {
 		return nil, err
 	}
-	stored, err := d.w.accept(ctx, issued{
+	c := issued{
 		issuer: d.p.CredentialIssuer, metadata: *d.metadata, resource: d.resource,
 		configID: d.p.ConfigurationID, identifier: d.p.CredentialIdentifier, holders: holders, result: result,
 		grantID: d.p.GrantID, replace: d.p.Replaces,
-	})
-	if errors.Is(err, errInvalidCredential) || d.p.Replaces != "" && errors.Is(err, ErrNotFound) {
-		// Invalid, or a refresh of a credential deleted meanwhile: the
-		// new copies aren't kept.
+	}
+	if d.p.Format != "" {
+		// One deferred before the type was kept has none to hold to.
+		c.want = &credentialType{Format: d.p.Format, VCT: d.p.VCT, DocType: d.p.DocType}
+	}
+	stored, err := d.w.accept(ctx, c)
+	if errors.Is(err, errInvalidCredential) || errors.Is(err, ErrReissueRequired) || d.p.Replaces != "" && errors.Is(err, ErrNotFound) {
+		// Invalid, now of another type than requested, or a refresh of
+		// a credential deleted meanwhile: the new copies aren't kept.
 		_ = d.settle(cleanup, true)
 		return nil, err
 	}

@@ -293,6 +293,12 @@ func (w *Wallet) RefreshCredential(ctx context.Context, id string) (StoredCreden
 	if err := checkBindable(conf); err != nil {
 		return StoredCredential{}, nil, fmt.Errorf("walletflow: refresh credential: %w: %w", ErrReissueRequired, err)
 	}
+	// Nor one that now issues another kind of credential under the same
+	// configuration: a refresh is the same credential, updated (§14.5),
+	// and the holder agreed to this one's type.
+	if got, want := typeOf(conf), (credentialType{Format: old.Format, VCT: old.VCT, DocType: old.DocType}); got != want {
+		return StoredCredential{}, nil, fmt.Errorf("walletflow: refresh credential: the configuration now issues %s, not %s: %w", got, want, ErrReissueRequired)
+	}
 	s := &Issuance{
 		w: w, metadata: metadata, grantID: g.ID, grantStored: true, replace: old.ID, grant: GrantAuthorizationCode,
 		authorizationServer: g.AuthorizationServer,

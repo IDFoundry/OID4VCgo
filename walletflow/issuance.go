@@ -1136,6 +1136,8 @@ func (s *Issuance) deferred(ctx context.Context, configID, identifier string, ho
 		HolderKeyIDs: keyIDs(holders), Interval: result.Interval, DeferredAt: s.w.deps.Clock().UTC(),
 		GrantID: grantID, Replaces: s.replace,
 	}
+	conf := s.metadata.CredentialConfigurationsSupported[configID]
+	p.Format, p.VCT, p.DocType = conf.Format, conf.VCT, conf.DocType
 	if s.tokenType == wallet.TokenTypeBearer {
 		p.TokenType = wallet.TokenTypeBearer
 	} else {
@@ -1197,6 +1199,24 @@ type issued struct {
 	// grantID is the RefreshGrant that can refresh it, if any; replace,
 	// the stored credential it replaces, if any.
 	grantID, replace string
+	// want, if set, is the type the credential was requested as: a
+	// deferred credential's, whose metadata is fetched again after a
+	// restart.
+	want *credentialType
+}
+
+// credentialType is what kind of credential a configuration issues.
+type credentialType struct{ Format, VCT, DocType string }
+
+func typeOf(conf oid4vci.CredentialConfigurationMetadata) credentialType {
+	return credentialType{Format: conf.Format, VCT: conf.VCT, DocType: conf.DocType}
+}
+
+func (t credentialType) String() string {
+	if t.DocType != "" {
+		return t.Format + " " + t.DocType
+	}
+	return t.Format + " " + t.VCT
 }
 
 // accept checks every copy c's result carries, each bound to one of
@@ -1208,6 +1228,11 @@ func (w *Wallet) accept(ctx context.Context, c issued) (StoredCredential, error)
 		// The issuer's metadata changed since the request: a deferred
 		// credential's, re-fetched after a restart.
 		return StoredCredential{}, fmt.Errorf("walletflow: credential %q: %w", c.configID, err)
+	}
+	if c.want != nil && typeOf(conf) != *c.want {
+		// So did the kind of credential the configuration issues: not
+		// what the holder agreed to.
+		return StoredCredential{}, fmt.Errorf("walletflow: credential %q: the configuration now issues %s, not %s: %w", c.configID, typeOf(conf), *c.want, ErrReissueRequired)
 	}
 	if n := len(c.result.Credentials); n == 0 || n > len(c.holders) {
 		return StoredCredential{}, fmt.Errorf("walletflow: credential %q: got %d copies for %d keys", c.configID, n, len(c.holders))
