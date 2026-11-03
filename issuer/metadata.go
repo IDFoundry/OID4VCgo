@@ -172,6 +172,9 @@ func (c CredentialConfiguration) validateBindingAndProofTypes() error {
 }
 
 // Metadata returns this issuer's Credential Issuer Metadata document.
+// It's the caller's own copy: changing it (localising or trimming it
+// before serving, say) changes neither what the Issuer enforces nor
+// what Metadata returns next.
 func (iss *Issuer) Metadata() oid4vci.Metadata {
 	md := oid4vci.Metadata{
 		CredentialIssuer:                  iss.cfg.Issuer,
@@ -200,21 +203,23 @@ func (iss *Issuer) Metadata() oid4vci.Metadata {
 			jwks[i] = oid4vci.JWK{JWK: wireJWK, Kid: k.KeyID, Alg: jwe.ECDHES}
 		}
 		md.CredentialRequestEncryption = &oid4vci.RequestEncryptionMetadata{
-			JWKS: oid4vci.JWKSet{Keys: jwks}, EncValuesSupported: rs.EncValuesSupported,
-			ZipValuesSupported: rs.ZipValuesSupported, EncryptionRequired: rs.Required,
+			JWKS: oid4vci.JWKSet{Keys: jwks}, EncValuesSupported: slices.Clone(rs.EncValuesSupported),
+			ZipValuesSupported: slices.Clone(rs.ZipValuesSupported), EncryptionRequired: rs.Required,
 		}
 	}
 	if rs := iss.cfg.ResponseEncryption; rs != nil {
 		md.CredentialResponseEncryption = &oid4vci.ResponseEncryptionMetadata{
 			AlgValuesSupported: []jwe.Alg{jwe.ECDHES},
-			EncValuesSupported: rs.EncValuesSupported, ZipValuesSupported: rs.ZipValuesSupported, EncryptionRequired: rs.Required,
+			EncValuesSupported: slices.Clone(rs.EncValuesSupported), ZipValuesSupported: slices.Clone(rs.ZipValuesSupported), EncryptionRequired: rs.Required,
 		}
 	}
 	if b := iss.cfg.BatchCredentialIssuance; b != nil {
-		md.BatchCredentialIssuance = b
+		batch := *b
+		md.BatchCredentialIssuance = &batch
 	}
-	md.Display = iss.cfg.Display
+	md.Display = cloneDisplays(iss.cfg.Display)
 	for id, c := range iss.cfg.CredentialConfigurationsSupported {
+		c = cloneConfiguration(c)
 		wire := oid4vci.CredentialConfigurationMetadata{
 			Format: c.Format, Scope: c.Scope,
 			CryptographicBindingMethodsSupported: c.CryptographicBindingMethodsSupported,

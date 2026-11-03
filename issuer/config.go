@@ -720,6 +720,9 @@ type Issuer struct {
 // It reports every problem it finds in cfg and deps, joined
 // (errors.Join), not just the first.
 func New(cfg Config, deps Dependencies) (*Issuer, error) {
+	// Validated and kept as a copy: the caller's Config, a template
+	// shared between issuers say, can change afterwards.
+	cfg = cloneConfig(cfg)
 	var errs []error
 	var err error
 	cfg.PreAuthorizedCodeClientAuthentication, err = normalizeClientAuthentication(cfg.PreAuthorizedCodeClientAuthentication)
