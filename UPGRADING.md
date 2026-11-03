@@ -6,6 +6,58 @@ everything else. A release that pins a new FAPIgo release passes on
 that release's own breaking changes: see FAPIgo's UPGRADING.md for
 them.
 
+## v0.62.0 → next
+
+### Issuer (`issuer`)
+
+- **A wrapped X5C verifier keeps its production checks.** New ran
+  `X5CAttestationVerifier`'s and `X5CProofBindingKeyResolver`'s checks
+  only when the dependency was one of those types itself. They're now
+  each type's `CheckConfiguration` method (`ConfigurationCheck`), which
+  New calls on any `AttestationVerifier` or `ProofBindingKeys`
+  implementing it, so a type of your own embedding one is held to
+  them: under `AssuranceProduction`, a `Revocation` choice
+  (`certrevocation.NoCheck{}` to decline) and an explicit
+  `IssuerBinding`. A wrapper holding one in a named field should
+  implement `CheckConfiguration` by calling the field's.
+- **`locations` is required with `authorization_servers`.** With
+  `Config.AuthorizationServers` set, an access token's
+  `openid_credential` authorization detail grants a configuration only
+  when its `locations` lists `Config.Issuer` (OpenID4VCI 1.0 §5.1.1,
+  §6.2), and `RedeemPreAuthorizedCode` refuses a Token Request's
+  detail without `locations`, with `invalid_authorization_details`.
+  Without it, a token from an Authorization Server several issuers
+  share granted one issuer's configuration at every issuer with a
+  configuration of that ID. Tokens this package mints already carry
+  `locations` there; have your Authorization Server keep the ones the
+  Wallet asked for.
+- **Anonymous pre-authorized offers need a Transaction Code in
+  production.** Under `AssuranceProduction` with
+  `AnonymousPreAuthorizedCode`, `CreatePreAuthorizedOffer` refuses an
+  offer with neither `TxCode` nor the new `NoTxCode`: without client
+  authentication, whoever sees such an offer redeems it (OpenID4VCI
+  §3.5). Set `NoTxCode` to offer without one deliberately, with a
+  short `Lifetime`.
+- **A Notification Endpoint needs a lifetime in production.** Under
+  `AssuranceProduction`, New refuses `Endpoints.Notification` without
+  a positive `Limits.NotificationLifetime`: each record names the
+  client and subject, and one that never expired was never swept.
+- **The deprecated `MetadataHandler` doesn't fall back to unsigned
+  metadata in production.** Given a signer `NewMetadataHandler`
+  refuses, it now answers every request with a server error under
+  `AssuranceProduction`. Use `NewMetadataHandler`, which refuses the
+  signer up front.
+
+Not breaking, but worth knowing: `New` now keeps its own copy of the
+`Config`, and `Metadata` returns a copy, so changing either afterwards
+no longer changes what the Issuer enforces. `Prepare` gets the claims
+the token's authorization detail asks for
+(`CredentialRequest.AuthorizedClaims`, or `ResolveAuthorizedClaims`
+for a direct caller). And jwt proofs naming their key by `kid` beside
+a `key_attestation`, carrying an optional `key_attestation` an issuer
+doesn't verify, or, without a Nonce Endpoint, a key attestation issued
+earlier, are now accepted, as OpenID4VCI 1.0 Appendix F.1 allows.
+
 ## v0.61.0 → v0.62.0
 
 ### Authorization details (`oid4vci`)
