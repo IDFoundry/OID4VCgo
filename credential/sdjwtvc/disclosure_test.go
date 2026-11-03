@@ -140,7 +140,7 @@ func TestNewObjectDisclosure_RoundTrip(t *testing.T) {
 }
 
 func TestNewObjectDisclosure_RejectsReservedNames(t *testing.T) {
-	for _, name := range []string{"_sd", "..."} {
+	for _, name := range []string{"_sd", "_sd_alg", "..."} {
 		if _, err := NewObjectDisclosure(name, "v"); err == nil {
 			t.Errorf("NewObjectDisclosure(%q, ...) succeeded, want error", name)
 		}
@@ -148,10 +148,11 @@ func TestNewObjectDisclosure_RejectsReservedNames(t *testing.T) {
 }
 
 func TestParseDisclosure_RejectsReservedNames(t *testing.T) {
-	// ["salt", "_sd", "v"] base64url-encoded.
-	d := mustEncodeJSONArray(t, []any{"c2FsdA", "_sd", "v"})
-	if _, err := ParseDisclosure(d); err == nil {
-		t.Errorf("ParseDisclosure accepted claim name \"_sd\"")
+	for _, name := range []string{"_sd", "_sd_alg", "..."} {
+		d := mustEncodeJSONArray(t, []any{"c2FsdA", name, "v"})
+		if _, err := ParseDisclosure(d); err == nil {
+			t.Errorf("ParseDisclosure accepted claim name %q", name)
+		}
 	}
 }
 

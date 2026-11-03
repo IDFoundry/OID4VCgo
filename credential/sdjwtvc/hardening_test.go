@@ -50,6 +50,20 @@ func TestVerify_RefusesNonStringSDAlg(t *testing.T) {
 	}
 }
 
+// _sd_alg belongs at the payload's top level alone: "It MUST NOT be
+// used in any object nested within the payload" (RFC 9901 §4.1.1).
+func TestVerify_RefusesNestedSDAlg(t *testing.T) {
+	key := testKey(t)
+	payload, _ := json.Marshal(map[string]any{"vct": "vc-type", "address": map[string]any{"_sd_alg": "sha-256", "street": "x"}})
+	jwt, err := jose.Sign(jose.ES256, key, map[string]any{"typ": "dc+sd-jwt"}, payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := Verify(jwt+"~", &key.PublicKey, jose.ES256, VerifyOptions{RequireKeyBinding: KeyBindingNotRequired}); err == nil || !strings.Contains(err.Error(), "_sd_alg") {
+		t.Errorf("a nested _sd_alg: %v, want refused", err)
+	}
+}
+
 // Issue refuses a credential its own Verify couldn't accept: here an
 // issuer JWT over jose.MaxCompactBytes.
 func TestIssue_RefusesAnIssuerJWTVerifyWouldRefuse(t *testing.T) {

@@ -84,6 +84,11 @@ func resolveValue(v any, byDigest map[string]Disclosure, usedDigests, seenDigest
 func resolveMap(m map[string]any, byDigest map[string]Disclosure, usedDigests, seenDigests map[string]bool, depth, maxDepth int) (map[string]any, error) {
 	out := make(map[string]any, len(m))
 	for k, v := range m {
+		// _sd_alg "MUST NOT be used in any object nested within the
+		// payload" (RFC 9901 §4.1.1).
+		if k == "_sd_alg" && depth > 0 {
+			return nil, fmt.Errorf("sdjwtvc: _sd_alg appears in a nested object, not at the payload's top level")
+		}
 		if k == "_sd" || k == "_sd_alg" {
 			continue
 		}

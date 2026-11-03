@@ -46,9 +46,10 @@ func newSalt() (string, error) {
 }
 
 // NewObjectDisclosure creates a Disclosure for an object property named
-// name with value (RFC 9901 §4.2.1). name must not be "_sd" or "...".
+// name with value (RFC 9901 §4.2.1). name must not be "_sd", "_sd_alg"
+// or "...".
 func NewObjectDisclosure(name string, value any) (Disclosure, error) {
-	if name == "_sd" || name == "..." {
+	if name == "_sd" || name == "_sd_alg" || name == "..." {
 		return Disclosure{}, fmt.Errorf("sdjwtvc: claim name %q is reserved", name)
 	}
 	salt, err := newSalt()
@@ -133,7 +134,9 @@ func ParseDisclosure(s string) (Disclosure, error) {
 			return Disclosure{}, fmt.Errorf("sdjwtvc: disclosure name: %w", err)
 		}
 		d.named = true
-		if d.Name == "_sd" || d.Name == "..." {
+		// _sd_alg belongs at the payload's top level alone (RFC 9901
+		// §4.1.1), never in a disclosure.
+		if d.Name == "_sd" || d.Name == "_sd_alg" || d.Name == "..." {
 			return Disclosure{}, fmt.Errorf("sdjwtvc: disclosure claim name %q is reserved", d.Name)
 		}
 		var v any
