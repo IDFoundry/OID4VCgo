@@ -247,25 +247,7 @@ func (w *Wallet) CheckStatus(ctx context.Context, id string) (StoredCredential, 
 	if len(live) == 0 && len(identified) == 0 && !listed {
 		return c, nil
 	}
-	status := statuslist.StatusValid
-	var revokedRefs []statuslist.StatusListRef
-	if len(live) > 0 {
-		if status, revokedRefs, err = w.checkStatusLists(ctx, c, live); err != nil {
-			return StoredCredential{}, fmt.Errorf("walletflow: credential %q's status: %w", id, err)
-		}
-	}
-	// Checked even when a status list revokes a copy, as it may revoke
-	// another.
-	var listedEntries []identifierListEntry
-	if len(identified) > 0 {
-		if listedEntries, err = w.checkIdentifierLists(ctx, c, identified); err != nil {
-			return StoredCredential{}, fmt.Errorf("walletflow: credential %q's status: %w", id, err)
-		}
-		if len(listedEntries) > 0 {
-			status = statuslist.StatusInvalid
-		}
-	}
-	revoked, err := revokedCopies(c, now, revokedRefs, listedEntries)
+	status, revoked, err := w.checkLists(ctx, c, now, live, identified)
 	if err != nil {
 		return StoredCredential{}, fmt.Errorf("walletflow: credential %q's status: %w", id, err)
 	}
@@ -296,6 +278,37 @@ func (w *Wallet) CheckStatus(ctx context.Context, id string) (StoredCredential, 
 		return StoredCredential{}, fmt.Errorf("walletflow: store credential %q's status: %w", id, err)
 	}
 	return cur, nil
+}
+
+// checkLists is c's status on its status list entries live and its
+// identifier lists identified, and the copies live at now that either
+// revokes, by their Credential.
+func (w *Wallet) checkLists(ctx context.Context, c StoredCredential, now time.Time, live []statuslist.StatusListRef, identified []identifierListEntry) (statuslist.StatusType, map[string]bool, error) {
+	status := statuslist.StatusValid
+	var revokedRefs []statuslist.StatusListRef
+	if len(live) > 0 {
+		var err error
+		if status, revokedRefs, err = w.checkStatusLists(ctx, c, live); err != nil {
+			return 0, nil, err
+		}
+	}
+	// Checked even when a status list revokes a copy, as it may revoke
+	// another.
+	var listedEntries []identifierListEntry
+	if len(identified) > 0 {
+		var err error
+		if listedEntries, err = w.checkIdentifierLists(ctx, c, identified); err != nil {
+			return 0, nil, err
+		}
+		if len(listedEntries) > 0 {
+			status = statuslist.StatusInvalid
+		}
+	}
+	revoked, err := revokedCopies(c, now, revokedRefs, listedEntries)
+	if err != nil {
+		return 0, nil, err
+	}
+	return status, revoked, nil
 }
 
 // revokedNow reports whether a copy of c live at now has been found
