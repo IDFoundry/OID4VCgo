@@ -57,6 +57,15 @@ func (iss *Issuer) resolveJWTProofKeys(
 			return nil, err
 		}
 		switch {
+		case keyAttestation != "" && iss.deps.AttestationVerifier == nil && ptc.KeyAttestationsRequired == nil:
+			// The header is OPTIONAL (Appendix F.1), and a Wallet MAY send
+			// one (Appendix D): an issuer that verifies none binds the
+			// proof's own key, as without one.
+			keyHeader, err := proofKeyHeader(header)
+			if err != nil {
+				return nil, err
+			}
+			keys = append(keys, resolvedKey{Public: pub, JWKRaw: jwkRaw, ProofKeyHeader: keyHeader})
 		case keyAttestation != "":
 			attested, err := iss.resolveKeyAttestationHeader(ctx, keyAttestation, pub, expectedNonce, i, ptc)
 			if err != nil {
@@ -135,8 +144,11 @@ func keyAttestationHeader(header map[string]any, i int) (string, error) {
 //     JWT proof type";
 //   - its nonce, which must be the c_nonce the proof itself carried
 //     (F.1: "the nonce claim in the key attestation MUST be set to a
-//     server-provided c_nonce"), or, without a Nonce Endpoint, its iat
-//     within Limits.MaxProofAge;
+//     server-provided c_nonce"). Without a Nonce Endpoint its age isn't
+//     bounded beyond its exp: the proof carrying it is dated
+//     (Limits.MaxProofAge), and is signed by a key it attests, so a
+//     Wallet may present one its Wallet Provider issued earlier (HAIP
+//     1.0 §9.2), which only the key's holder can use;
 //   - that the proof is "signed by a key contained in the attestation"
 //     (D.1);
 //   - key_attestations_required, and its status, after its freshness.
@@ -156,9 +168,6 @@ func (iss *Issuer) resolveKeyAttestationHeader(
 	}
 	if !iss.cfg.Endpoints.Nonce.IsZero() && verified.Nonce != nonce {
 		return nil, newError(ErrorInvalidNonce, 400, fmt.Sprintf("proof %d: its key_attestation's nonce isn't the proof's c_nonce", i), nil)
-	}
-	if err := iss.checkProofAge(verified.IssuedAt.Unix(), i); err != nil {
-		return nil, err
 	}
 	attested, err := verified.KeyAttested(proofKey)
 	if err != nil || !attested {
@@ -233,6 +242,13 @@ func (iss *Issuer) verifyJWTProof(ctx context.Context, auth AuthorizedRequest, r
 	if !slices.Contains(ptc.ProofSigningAlgValuesSupported, algStr) {
 		return nil, nil, "", newError(ErrorInvalidProof, 400, fmt.Sprintf("proof %d alg %q is not supported", i, algStr), nil)
 	}
+	if compact, ok := header["key_attestation"].(string); ok && namesAttestedKey(header) && iss.deps.AttestationVerifier != nil {
+		pub, jwkRaw, err := iss.attestedProofKey(ctx, header, compact, raw, i, ptc)
+		if err != nil {
+			return nil, nil, "", err
+		}
+		return iss.verifyJWTProofBody(auth, raw, jose.Alg(algStr), pub, jwkRaw, i)
+	}
 	pub, alg, jwkRaw, err := iss.resolveProofBindingKey(ctx, header)
 	if err != nil && trustUndecided(err) {
 		// As for a key attestation's signer (verifyOneAttestation): the
@@ -256,6 +272,13 @@ func (iss *Issuer) verifyJWTProof(ctx context.Context, auth AuthorizedRequest, r
 	// still cleanly refused. For a jwk-conveyed key (self-asserted, no
 	// external trust resolution — the same proof-of-possession model
 	// wallet's own DPoP proofs use), alg is exactly algStr.
+	return iss.verifyJWTProofBody(auth, raw, alg, pub, jwkRaw, i)
+}
+
+// verifyJWTProofBody verifies jwt proof i's signature by pub, with alg,
+// and its body's aud, iat and iss, and returns pub, jwkRaw and the
+// body's nonce, as verifyJWTProof does.
+func (iss *Issuer) verifyJWTProofBody(auth AuthorizedRequest, raw string, alg jose.Alg, pub crypto.PublicKey, jwkRaw json.RawMessage, i int) (crypto.PublicKey, json.RawMessage, string, error) {
 	_, payload, err := jose.Verify(alg, pub, raw)
 	if err != nil {
 		return nil, nil, "", newError(ErrorInvalidProof, 400, fmt.Sprintf("proof %d: signature verification failed", i), err)
@@ -384,6 +407,52 @@ func (iss *Issuer) resolveProofKey(ctx context.Context, header map[string]any) (
 		return nil, "", fmt.Errorf("resolve proof binding key: %w", err)
 	}
 	return pub, alg, nil
+}
+
+// namesAttestedKey reports whether a jwt proof's header names its key
+// by kid alone, which beside a key_attestation is one of the keys it
+// attests (Appendix F.1's second example).
+func namesAttestedKey(header map[string]any) bool {
+	_, hasJWK := header["jwk"]
+	_, hasKID := header["kid"]
+	_, hasX5C := header["x5c"]
+	return hasKID && !hasJWK && !hasX5C
+}
+
+// attestedProofKey is the key jwt proof i, naming its key by kid beside
+// compact, its key_attestation, is signed with: the attested key whose
+// JWK has that kid, or, where none has, the attested key the proof
+// verifies under. The attestation is verified here only to read its
+// keys; resolveKeyAttestationHeader checks it in full.
+func (iss *Issuer) attestedProofKey(ctx context.Context, header map[string]any, compact, raw string, i int, ptc oid4vci.ProofTypeConfiguration) (crypto.PublicKey, json.RawMessage, error) {
+	signed, err := iss.verifyOneAttestation(ctx, compact, i, iss.deps.Clock.Now(), ptc.ProofSigningAlgValuesSupported)
+	if err != nil {
+		return nil, nil, err
+	}
+	kid, _ := header["kid"].(string)
+	alg, _ := header["alg"].(string)
+	attested := signed.Claims.AttestedKeys
+	if limit := iss.maxBatchSize(); len(attested) > limit {
+		return nil, nil, newError(ErrorInvalidProof, 400, fmt.Sprintf("proof %d: its key_attestation attests more keys than this issuer's batch_size (%d)", i, limit), nil)
+	}
+	var tried []resolvedKey
+	for j, attestedJWK := range attested {
+		key, err := bindingKeyFromJWK(attestedJWK)
+		if err != nil {
+			return nil, nil, newError(ErrorInvalidProof, 400, fmt.Sprintf("proof %d: its key_attestation's attested_keys[%d]: parse jwk", i, j), err)
+		}
+		var member map[string]any
+		if strictjson.Unmarshal(attestedJWK, &member) == nil && kid != "" && member["kid"] == kid {
+			return key.Public, key.JWKRaw, nil
+		}
+		tried = append(tried, key)
+	}
+	for _, key := range tried {
+		if _, _, err := jose.Verify(jose.Alg(alg), key.Public, raw); err == nil {
+			return key.Public, key.JWKRaw, nil
+		}
+	}
+	return nil, nil, newError(ErrorInvalidProof, 400, fmt.Sprintf("proof %d: its kid names no key its key_attestation attests", i), nil)
 }
 
 // publicJWK encodes pub as the JWK a credential's holder binding
