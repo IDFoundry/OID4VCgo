@@ -233,10 +233,12 @@ func (a *App) resolveDeferred(ctx context.Context, _ issuer.Grant, transactionID
 		return err
 	}
 	var statusIdxs []int
-	err = a.iss().IssueDeferredCredential(ctx, transactionID, issuer.DeferredIssuance{
+	// Issued by the current signer's Issuer, so recorded as its.
+	s := a.current()
+	err = s.issuer.IssueDeferredCredential(ctx, transactionID, issuer.DeferredIssuance{
 		MdocClaims: mdocClaims, SDJWTClaims: sdjwtClaims,
 		PerCredential: func(_ context.Context, c *issuer.CredentialInstance) error {
-			idx, err := a.statusList.allocate(credentialFormat(rv.configID), !rv.evidence.Checks.PassiveAuthentication, a.now())
+			idx, err := a.statusList.allocate(credentialFormat(rv.configID), !rv.evidence.Checks.PassiveAuthentication, signerID(s.cert), a.now())
 			if err != nil {
 				return err
 			}

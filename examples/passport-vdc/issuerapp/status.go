@@ -72,6 +72,12 @@ type IssuedStatus struct {
 	// Unchecked marks a credential issued without Passive Authentication
 	// (Config.AllowSampleDocument): nothing in the credential says so.
 	Unchecked bool
+	// Signer is the serial number of the document signer certificate
+	// whose key signed the credential (signerID): revoking that signer
+	// revokes the credential too (RevokeDocumentSigner). An entry saved
+	// before entries named their signer is taken to be the signer's in
+	// use when the issuer starts (statusList.attribute).
+	Signer string `json:",omitempty"`
 }
 
 // statusList is this issuer's Token Status List (draft-14): one bit per
@@ -80,16 +86,20 @@ type statusList struct {
 	mu      sync.Mutex
 	revoked []uint8
 	entries map[int]*IssuedStatus
-	path    string // where it's saved on every change; "" keeps it in memory
+	// revokedSigners are the signers revokeSigner has revoked since the
+	// process started: a credential that a request already under way
+	// signs with one of them is revoked as its index is allocated.
+	revokedSigners map[string]bool
+	path           string // where it's saved on every change; "" keeps it in memory
 }
 
 func newStatusList() *statusList {
-	return &statusList{revoked: make([]uint8, statusListSize), entries: map[int]*IssuedStatus{}}
+	return &statusList{revoked: make([]uint8, statusListSize), entries: map[int]*IssuedStatus{}, revokedSigners: map[string]bool{}}
 }
 
 // allocate reserves a random unused index for a credential of format,
-// issued unchecked or not.
-func (s *statusList) allocate(format string, unchecked bool, now time.Time) (int, error) {
+// issued unchecked or not, signed by signer (signerID).
+func (s *statusList) allocate(format string, unchecked bool, signer string, now time.Time) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if len(s.entries) >= statusListSize/2 {
@@ -106,10 +116,16 @@ func (s *statusList) allocate(format string, unchecked bool, now time.Time) (int
 			if err != nil {
 				return 0, err
 			}
-			s.entries[idx] = &IssuedStatus{Idx: idx, Handle: handle, Format: format, IssuedAt: now, Unchecked: unchecked}
+			// A signer revoked while the request was under way: its
+			// credential is revoked from the start.
+			e := &IssuedStatus{Idx: idx, Handle: handle, Format: format, IssuedAt: now, Unchecked: unchecked, Signer: signer, Revoked: s.revokedSigners[signer]}
+			s.entries[idx] = e
 			if err := s.save(); err != nil {
 				delete(s.entries, idx)
 				return 0, err
+			}
+			if e.Revoked {
+				s.revoked[idx] = 1
 			}
 			return idx, nil
 		}
@@ -139,6 +155,41 @@ func (s *statusList) revoke(idx int) bool {
 		log.Printf("issuerapp: %v (the revocation holds until restart)", err)
 	}
 	return true
+}
+
+// revokeSigner revokes every credential signer (signerID) signed, and
+// any it's yet to sign, saving the list before it returns. It returns
+// how many it revoked.
+func (s *statusList) revokeSigner(signer string) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.revokedSigners[signer] = true
+	n := 0
+	for idx, e := range s.entries {
+		if e.Signer == signer && !e.Revoked {
+			e.Revoked, s.revoked[idx] = true, 1
+			n++
+		}
+	}
+	if n == 0 {
+		return 0, nil
+	}
+	return n, s.save()
+}
+
+// attribute names signer as the signer of every entry naming none:
+// those saved before entries recorded their signer, taken to be the
+// signer's in use when the issuer starts. One that an earlier signer
+// signed is refused anyway: that signer was revoked, or its CA
+// replaced.
+func (s *statusList) attribute(signer string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, e := range s.entries {
+		if e.Signer == "" {
+			e.Signer = signer
+		}
+	}
 }
 
 // revokeHandle revokes the credential whose entry has handle; false if
@@ -251,12 +302,12 @@ var statusTemplate = parsePage("status", pageHead+`</head><body>
 <p class="card empty">None yet.</p>
 {{end}}
 <h2 id="signer">Document signer</h2>
-<p>Every credential, and the status list, is signed by the issuer's document signer, which the demo CA certified. The CA publishes a Certificate Revocation List at <code>{{.CRLURL}}</code>, the distribution point its certificates name. Revoking the document signer adds it to that list and has the CA certify a new one: credentials issued from then on verify as before, while every credential the revoked signer signed is refused by each verifier, or phone, that has fetched the list since.</p>
+<p>Every credential, and the status list, is signed by the issuer's document signer, which the demo CA certified. The CA publishes a Certificate Revocation List at <code>{{.CRLURL}}</code>, the distribution point its certificates name. Revoking the document signer, as an issuer does when its key is compromised, revokes every credential it signed on the status list, adds it to that CRL, and has the CA certify a new one. Credentials issued from then on verify as before. Every credential the revoked signer signed is refused by each verifier, and shown as revoked by each wallet, that checks its status, and by each that has fetched the CRL since.</p>
 <div class="card">
 <dl class="facts"><dt>Serial number</dt><dd><code>{{.Signer.Serial}}</code></dd><dt>Valid until</dt><dd>{{.Signer.NotAfter}}</dd></dl>
 <details class="confirm"><summary class="btn secondary danger"><span class="when-closed">Revoke document signer…</span><span class="when-open">Cancel</span></summary>
 <form method="post" action="/demo/signer/revoke">
-<p class="note">Revoking can't be undone: every credential this signer signed is refused from then on, and its holders have to receive them again.</p>
+<p class="note">Revoking can't be undone: every credential this signer signed is revoked on the status list and refused from then on, and its holders have to receive them again.</p>
 <button class="btn danger">Confirm revoke</button></form>
 </details>
 </div>

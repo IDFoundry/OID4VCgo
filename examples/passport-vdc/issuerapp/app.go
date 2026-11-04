@@ -351,6 +351,7 @@ func (a *App) buildIssuer() error {
 		return err
 	}
 	a.signing.Store(s)
+	a.statusList.attribute(signerID(s.cert))
 	return nil
 }
 
@@ -454,7 +455,7 @@ func (a *App) newSigning(key *ecdsa.PrivateKey, cert *x509.Certificate) (*signin
 	}); err != nil {
 		return nil, fmt.Errorf("issuerapp: %w", err)
 	}
-	if s.credential, err = a.credentialHandler(s.issuer); err != nil {
+	if s.credential, err = a.credentialHandler(s.issuer, signerID(cert)); err != nil {
 		return nil, err
 	}
 	if s.deferred, s.notification, err = a.protectedHandlers(s.issuer); err != nil {
@@ -524,10 +525,10 @@ func newIssuerIdentityWithSignerEKUs(now time.Time, crlURL string, dsEKUs ...asn
 	if err != nil {
 		return issuerIdentity{}, fmt.Errorf("issuerapp: %w", err)
 	}
-	if id.documentSigner, id.documentSignerCert, err = issueSigner(now, documentSignerName, id.caCert, caKey, crlURL, dsEKUs...); err != nil {
+	if id.documentSigner, id.documentSignerCert, err = issueSigner(now, documentSignerName, id.caCert, caKey, crlURL, "", dsEKUs...); err != nil {
 		return issuerIdentity{}, err
 	}
-	if id.metadataSigner, id.metadataSignerCert, err = issueSigner(now, metadataSignerName, id.caCert, caKey, crlURL); err != nil {
+	if id.metadataSigner, id.metadataSignerCert, err = issueSigner(now, metadataSignerName, id.caCert, caKey, crlURL, ""); err != nil {
 		return issuerIdentity{}, err
 	}
 	return id, nil
@@ -549,8 +550,10 @@ const demoCountry = "ZZ"
 // extended key usages ekus, if any: the document signer's is ISO/IEC
 // 18013-5's mDL document signer's (Annex B.1.4), which verifiers
 // require of the certificate signing an mdoc. It's valid for two years,
-// or until the CA expires if that's sooner.
-func issueSigner(now time.Time, name string, ca *x509.Certificate, caKey *ecdsa.PrivateKey, crlURL string, ekus ...asn1.ObjectIdentifier) (*ecdsa.PrivateKey, *x509.Certificate, error) {
+// or until the CA expires if that's sooner. A non-empty issuerURI is
+// named as a uniformResourceIdentifier subject alternative name (see
+// RevokeDocumentSigner).
+func issueSigner(now time.Time, name string, ca *x509.Certificate, caKey *ecdsa.PrivateKey, crlURL, issuerURI string, ekus ...asn1.ObjectIdentifier) (*ecdsa.PrivateKey, *x509.Certificate, error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return nil, nil, fmt.Errorf("issuerapp: %s key: %w", name, err)
@@ -559,11 +562,19 @@ func issueSigner(now time.Time, name string, ca *x509.Certificate, caKey *ecdsa.
 	if notAfter.After(ca.NotAfter) {
 		notAfter = ca.NotAfter
 	}
+	var uris []*url.URL
+	if issuerURI != "" {
+		u, err := url.Parse(issuerURI)
+		if err != nil {
+			return nil, nil, fmt.Errorf("issuerapp: %s URI: %w", name, err)
+		}
+		uris = []*url.URL{u}
+	}
 	cert, err := democert.Create(&x509.Certificate{
 		Subject:   pkix.Name{CommonName: name, Organization: []string{"IDFoundry demo"}, Country: []string{demoCountry}},
 		NotBefore: now.Add(-certificateBackdate), NotAfter: notAfter,
 		KeyUsage: x509.KeyUsageDigitalSignature, UnknownExtKeyUsage: ekus,
-		CRLDistributionPoints: []string{crlURL},
+		CRLDistributionPoints: []string{crlURL}, URIs: uris,
 	}, ca, &key.PublicKey, caKey)
 	if err != nil {
 		return nil, nil, fmt.Errorf("issuerapp: %w", err)

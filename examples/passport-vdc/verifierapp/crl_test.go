@@ -11,6 +11,7 @@ import (
 
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/democrl"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/demotest"
+	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/issuerapp"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/verifierapp"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/walletapp"
 )
@@ -59,6 +60,57 @@ func TestEndToEnd_RevokedDocumentSigner(t *testing.T) {
 		// cause).
 		if reason := env.Verifier.LastError(id); !strings.Contains(reason, "untrusted_issuer") {
 			t.Errorf("%s: the verifier recorded %q, want its issuer refused", format, reason)
+		}
+	}
+
+	fresh := receiveInto(t, env, demotest.SyntheticEvidence())
+	for _, format := range []string{"mso_mdoc", "dc+sd-jwt"} {
+		if out := present(t, env, fresh, verifierapp.ScenarioSignup, format); out.Status != "valid" {
+			t.Errorf("%s from the new signer: Status = %q", format, out.Status)
+		}
+	}
+}
+
+// TestEndToEnd_RevokedDocumentSignerStatus: revoking the document
+// signer revokes its credentials on the status list too, so a verifier
+// that hasn't fetched the CA's new CRL yet still refuses them, on their
+// status, at once.
+func TestEndToEnd_RevokedDocumentSignerStatus(t *testing.T) {
+	// Not told to fetch the CRL: the verifier keeps the one it holds,
+	// which doesn't list the signer.
+	env := demotest.New(t, nil, func(c *issuerapp.Config) { c.OnSignerRevoked = nil })
+	env.StartVerifier(t, nil)
+	store := receiveInto(t, env, demotest.SyntheticEvidence())
+	for _, format := range []string{"mso_mdoc", "dc+sd-jwt"} {
+		if out := present(t, env, store, verifierapp.ScenarioSignup, format); out.Status != "valid" {
+			t.Fatalf("%s before the revocation: Status = %q", format, out.Status)
+		}
+	}
+
+	req, err := http.NewRequest(http.MethodPost, env.IssuerURL+"/demo/signer/revoke", strings.NewReader(""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := env.HTTP.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || len(env.Issuer.RevokedSigners()) != 1 {
+		t.Fatalf("revoking the document signer: status %d", resp.StatusCode)
+	}
+
+	for _, format := range []string{"mso_mdoc", "dc+sd-jwt"} {
+		id, link, err := env.Verifier.CreateRequest(verifierapp.ScenarioSignup)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := walletapp.Present(context.Background(), link, store, walletapp.PresentOptions{Format: format, HTTP: env.HTTP, VerifierTrust: env.VerifierTrust()}); err == nil {
+			t.Errorf("%s signed by the revoked signer was accepted", format)
+		}
+		if reason := env.Verifier.LastError(id); !strings.Contains(reason, "revoked") {
+			t.Errorf("%s: the verifier recorded %q, want the credential's revocation", format, reason)
 		}
 	}
 

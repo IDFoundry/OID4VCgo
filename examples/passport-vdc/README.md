@@ -392,12 +392,15 @@ the other format is still accepted. The verifier fetches the status
 list on every check, so a revocation applies at once.
 
 Further down the same page, **Revoke document signer…** revokes the key
-that signed every credential so far: the issuer's CA lists it on its
-CRL and certifies a new one. Verify again with any credential received
-before: the verifier, which `cmd/demo` has fetch the CRL at once,
-rejects it (its issuer isn't trusted); receive a new one and it's
-accepted. A phone shows the same once it refreshes its revocation lists
-(see [Certificate revocation](#certificate-revocation)).
+that signed every credential so far, as an issuer does when that key
+is compromised: every credential it signed is revoked on the status
+list, and the issuer's CA lists it on its CRL and certifies a new one.
+Verify again with any credential received before: the verifier, which
+`cmd/demo` has drop its kept status lists and fetch the CRL at once,
+rejects it; receive a new one and it's accepted. A wallet checking the
+status of one received before finds it revoked, and a phone's Verify
+tab refuses its mdoc once it refreshes its revocation lists (see
+[Certificate revocation](#certificate-revocation)).
 
 **From the terminal (CLI wallet)** — `-state` points it at the demo's
 store and trust files, so both wallets see the same credentials; like
@@ -691,18 +694,28 @@ The verifier fetches the issuer CA's CRL with a
 least hourly), and fetches it on a check when it holds no current one;
 `cmd/demo`'s issuer also has it fetch the list as soon as the document
 signer is revoked (`issuerapp.Config.OnSignerRevoked`), as it has it
-drop its kept status lists on a credential's revocation. The phones
+drop its kept status lists (`issuerapp.Config.OnRevoke`) on a
+credential's revocation, and on the signer's, which revokes its
+credentials too. The phones
 fetch every list with the mobile library's `RefreshCRLs`, at launch and
 from the app's settings (see the iOS and Android demo apps' READMEs).
 
 **Revoking the document signer** (the issuer's `/demo/status` page)
-lists it on the issuer CA's CRL and has the CA certify a new one,
-saved in the state directory: credentials and status lists from then
-on are signed by the new one, and every credential the revoked one
-signed is refused by each relying party that has fetched the CRL
-since. A wallet that has received such a credential keeps showing it —
-it checks a credential's signer on receipt, and its status list after —
-but a verifier refuses it; receive it again for a new one.
+is what an issuer does when that key is compromised. It sets every
+credential the signer signed to INVALID on the status list, saved
+before the page answers; then it has the CA certify a new signer,
+saved in the state directory, and lists the old one on the CA's CRL.
+Credentials and status lists from then on are signed by the new
+signer, whose certificate also names the issuer's URL: an SD-JWT VC's
+`iss`, so a wallet or verifier takes a list the new signer signs as
+the issuer's for credentials the old one signed. Each status list
+entry records its signer's serial number (`IssuedStatus.Signer`); an
+entry saved before entries did is taken to be the signer's in use when
+the issuer starts. Every credential the revoked signer signed is then
+refused by each relying party that checks its status, or has fetched
+the CRL since, and a wallet that checks its status shows it revoked.
+`cmd/demo`'s issuer has its verifier drop its kept status lists, and
+fetch the CRL, at once. Receive it again for a new one.
 
 **State from before CRLs** is replaced once, logged: an issuer or
 verifier identity whose CAs kept no key can't sign a CRL, so the demo
