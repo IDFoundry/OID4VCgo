@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
 	"net/url"
 	"slices"
 	"strings"
@@ -46,6 +47,31 @@ type crlRefreshConfig struct {
 	// requireHTTPS is "crl_require_https", development the
 	// configuration's "development".
 	requireHTTPS, development bool
+	// http, set in development for "development_roots", is the client
+	// the lists are fetched with, trusting those roots beside the
+	// system's (developmentClient), as the configuration's other
+	// requests do; nil fetches with certrevocation's own client, from
+	// public addresses only outside development.
+	http *http.Client
+}
+
+// crlHTTP is the client RefreshCRLs fetches with for a configuration
+// with developmentRoots, its "development_roots", in development: one
+// trusting them, as the wallet's other requests do in development
+// (developmentClient). nil, for certrevocation's own client, without
+// them; outside development they're refused, as the wallet refuses them.
+func crlHTTP(development bool, developmentRoots string) (*http.Client, error) {
+	if developmentRoots == "" {
+		return nil, nil
+	}
+	if !development {
+		return nil, newError(CodeInvalidInput, errors.New("development_roots needs development"))
+	}
+	client, err := developmentClient(developmentRoots)
+	if err != nil {
+		return nil, newError(CodeInvalidInput, fmt.Errorf("development_roots: %w", err))
+	}
+	return client, nil
 }
 
 // Bounds of the schedule RefreshCRLs reports in next_refresh.
@@ -134,14 +160,17 @@ func fetchableURL(u string, requireHTTPS bool) bool {
 // refresher is a certrevocation.Refresher fetching p alone, bound to
 // its issuer, with floors as the lists it may not be older than: it
 // fetches from public addresses only, outside development, caps the
-// response's size, and follows redirects only on p's host.
+// response's size, and follows redirects only on p's host. With
+// development_roots, in development, it fetches with cfg.http, which
+// trusts them.
 func (p crlPoint) refresher(cfg crlRefreshConfig, floors []*x509.RevocationList, now func() time.Time) (*certrevocation.Refresher, error) {
 	return certrevocation.NewRefresher(certrevocation.RefresherConfig{
 		URLs:          []string{p.url},
 		Issuers:       []*x509.Certificate{p.issuer},
 		URLIssuers:    map[string]*x509.Certificate{p.url: p.issuer},
 		RequireHTTPS:  cfg.requireHTTPS,
-		AllowLoopback: cfg.development,
+		HTTPClient:    cfg.http,
+		AllowLoopback: cfg.development && cfg.http == nil,
 		Floors:        floors,
 		Clock:         now,
 	})

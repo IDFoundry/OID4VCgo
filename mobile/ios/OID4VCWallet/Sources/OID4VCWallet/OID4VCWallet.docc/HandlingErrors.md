@@ -66,6 +66,20 @@ func describe(_ error: Error) -> (message: String, canRetry: Bool) {
 | ``WalletError/Code/platform`` | The key store, credential store or Wallet Provider failed | Check the app's implementation |
 | ``WalletError/Code/internalError`` | Unexpected | Log it |
 
+### Revoked certificates and out-of-date revocation lists
+
+Where a trust role is checked against Certificate Revocation Lists
+(`revocation`), a refusal for a revoked certificate has
+``WalletError/isCertificateRevoked`` set, and one for want of a current
+list from the certificate's CA ``WalletError/isNoCurrentCRL``, whatever
+the ``WalletError/code`` (``WalletError/Code/protocolError`` for a
+credential or a document a ``ProximityReader`` verified,
+``WalletError/Code/untrustedVerifier`` for a Verifier): tell the holder
+which, and for the second refresh the lists (``Wallet/refreshCRLs()``)
+and try again. A held credential's status says the same:
+``CredentialStatus/reason`` is ``CredentialStatus/Reason/issuerCertificateRevoked``
+or ``CredentialStatus/Reason/noCurrentCRL``.
+
 ### Cancel
 
 Every call that waits on the network or the holder runs in the calling

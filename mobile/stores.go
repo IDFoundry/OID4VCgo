@@ -112,13 +112,17 @@ type copyJSON struct {
 	// Revoked: absent when the copy hasn't been found revoked, and from a
 	// record written before it was kept.
 	Revoked bool `json:"revoked,omitempty"`
+	// IssuerUntrusted: absent when the latest check found the copy's
+	// issuer certificate chain trusted, and from a record written before
+	// it was kept (walletflow.CredentialCopy.IssuerUntrusted).
+	IssuerUntrusted bool `json:"issuer_untrusted,omitempty"`
 	// Reservation: the latest presentation reserving the copy, absent
 	// when none may still undo it.
 	Reservation string `json:"reservation,omitempty"`
 }
 
 func copyOf(cp walletflow.CredentialCopy) copyJSON {
-	r := copyJSON{Credential: cp.Credential, HolderKeyID: cp.HolderKeyID, Presented: cp.Presented, ShownTo: cp.ShownTo, Revoked: cp.Revoked, Reservation: cp.Reservation}
+	r := copyJSON{Credential: cp.Credential, HolderKeyID: cp.HolderKeyID, Presented: cp.Presented, ShownTo: cp.ShownTo, Revoked: cp.Revoked, IssuerUntrusted: cp.IssuerUntrusted, Reservation: cp.Reservation}
 	if cp.StatusList != nil {
 		r.StatusList = &statusListJSON{Idx: cp.StatusList.Idx, URI: cp.StatusList.URI}
 	}
@@ -129,7 +133,7 @@ func copyOf(cp walletflow.CredentialCopy) copyJSON {
 }
 
 func (r copyJSON) copy() walletflow.CredentialCopy {
-	cp := walletflow.CredentialCopy{Credential: r.Credential, HolderKeyID: r.HolderKeyID, Presented: r.Presented, ShownTo: r.ShownTo, Revoked: r.Revoked, Reservation: r.Reservation}
+	cp := walletflow.CredentialCopy{Credential: r.Credential, HolderKeyID: r.HolderKeyID, Presented: r.Presented, ShownTo: r.ShownTo, Revoked: r.Revoked, IssuerUntrusted: r.IssuerUntrusted, Reservation: r.Reservation}
 	if r.StatusList != nil {
 		cp.StatusList = &statuslist.StatusListRef{Idx: r.StatusList.Idx, URI: r.StatusList.URI}
 	}
@@ -196,10 +200,21 @@ type statusListJSON struct {
 	URI string `json:"uri"`
 }
 
-// statusJSON is a walletflow.CredentialStatus.
+// statusJSON is a walletflow.CredentialStatus. Reason is why it's
+// what it is (walletflow's Reason constants), absent for "valid" and
+// for a status recorded before reasons were kept.
 type statusJSON struct {
 	Value     string    `json:"value"`
+	Reason    string    `json:"reason,omitempty"`
 	CheckedAt time.Time `json:"checked_at"`
+}
+
+// statusOf is status as JSON, nil when it's never been checked.
+func statusOf(status walletflow.CredentialStatus) *statusJSON {
+	if status.Value == "" {
+		return nil
+	}
+	return &statusJSON{Value: status.Value, Reason: status.Reason, CheckedAt: status.CheckedAt}
 }
 
 func recordOf(c walletflow.StoredCredential) (credentialRecord, error) {
@@ -218,9 +233,7 @@ func recordOf(c walletflow.StoredCredential) (credentialRecord, error) {
 	if c.StatusList != nil {
 		r.StatusList = &statusListJSON{Idx: c.StatusList.Idx, URI: c.StatusList.URI}
 	}
-	if c.Status.Value != "" {
-		r.Status = &statusJSON{Value: c.Status.Value, CheckedAt: c.Status.CheckedAt}
-	}
+	r.Status = statusOf(c.Status)
 	if c.Claims != nil {
 		raw, err := json.Marshal(jsonClaims(c.Claims))
 		if err != nil {
@@ -248,7 +261,7 @@ func (r credentialRecord) stored() (walletflow.StoredCredential, error) {
 		c.StatusList = &statuslist.StatusListRef{Idx: r.StatusList.Idx, URI: r.StatusList.URI}
 	}
 	if r.Status != nil {
-		c.Status = walletflow.CredentialStatus{Value: r.Status.Value, CheckedAt: r.Status.CheckedAt}
+		c.Status = walletflow.CredentialStatus{Value: r.Status.Value, Reason: r.Status.Reason, CheckedAt: r.Status.CheckedAt}
 	}
 	if len(r.Claims) > 0 {
 		if err := json.Unmarshal(r.Claims, &c.Claims); err != nil {
@@ -292,7 +305,8 @@ type credentialSummary struct {
 	// no Verifier has seen.
 	Linkable bool `json:"linkable"`
 	// Presentable is whether a Verifier could accept it now, as far as
-	// the wallet knows: a copy is neither expired nor found revoked, and
+	// the wallet knows: a copy is neither expired nor found revoked, nor
+	// signed under an issuer certificate the latest check refused, and
 	// its status as last checked isn't revoked or suspended
 	// (walletflow.StoredCredential.Presentable).
 	Presentable bool `json:"presentable"`
@@ -319,9 +333,7 @@ func summaryOf(c walletflow.StoredCredential) credentialSummary {
 	if !c.ValidUntil.IsZero() {
 		s.ValidUntil = &c.ValidUntil
 	}
-	if c.Status.Value != "" {
-		s.Status = &statusJSON{Value: c.Status.Value, CheckedAt: c.Status.CheckedAt}
-	}
+	s.Status = statusOf(c.Status)
 	return s
 }
 

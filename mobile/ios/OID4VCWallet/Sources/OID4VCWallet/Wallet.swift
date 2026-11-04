@@ -413,8 +413,10 @@ public struct CredentialDisplay: Decodable, Equatable, Sendable {
     }
 }
 
-/// A credential's revocation status in the issuer's status list, as last
-/// checked (`Wallet.checkStatus(id:)`).
+/// A credential's revocation status, as last checked
+/// (`Wallet.checkStatus(id:)`): in the issuer's status list, and, from
+/// OID4VCWallet 0.27.0, its issuer's certificate chain against the
+/// revocation lists held then.
 public struct CredentialStatus: Decodable, Equatable, Sendable {
     /// A status in the issuer's list.
     public enum Value: Equatable, Sendable {
@@ -427,8 +429,48 @@ public struct CredentialStatus: Decodable, Equatable, Sendable {
         /// (ISO/IEC 18013-5 §12.3.6.4), which is now checked.
         case unknown
     }
+    /// Why the status is what it is.
+    public enum Reason: Equatable, Sendable {
+        /// The issuer's Token Status List gives it: ``Value/revoked``
+        /// (final), ``Value/suspended`` or ``Value/other(_:)``.
+        case statusList
+        /// The mdoc is on its issuer's identifier list: ``Value/revoked``,
+        /// final.
+        case identifierList
+        /// ``Value/revoked``: the issuer's signing certificate, or a CA
+        /// above it, is on its CA's revocation list. Not final: a later
+        /// check with a list that no longer names it makes it valid again.
+        case issuerCertificateRevoked
+        /// ``Value/revoked``: the issuer's certificate chain no longer
+        /// verifies under the configured roots, or has expired.
+        case issuerUntrusted
+        /// ``Value/unknown``: there's no current revocation list to check
+        /// the issuer's chain, or its status list's signer's, against.
+        /// Refresh them (``Wallet/refreshCRLs()``) and check again.
+        case noCurrentCRL
+        /// ``Value/unknown``: a status naming no mechanism the wallet
+        /// knows.
+        case unrecognizedStatus
+        /// A reason this version doesn't know, as the library gave it.
+        case other(String)
+
+        init(_ raw: String) {
+            switch raw {
+            case "status_list": self = .statusList
+            case "identifier_list": self = .identifierList
+            case "issuer_certificate_revoked": self = .issuerCertificateRevoked
+            case "issuer_untrusted": self = .issuerUntrusted
+            case "no_current_crl": self = .noCurrentCRL
+            case "unrecognized_status": self = .unrecognizedStatus
+            default: self = .other(raw)
+            }
+        }
+    }
     /// The status found.
     public let value: Value
+    /// Why, for the app to tell the holder: nil for ``Value/valid``, and
+    /// for a status recorded before OID4VCWallet 0.27.0.
+    public let reason: Reason?
     /// When it was checked.
     public let checkedAt: Date
 
@@ -441,9 +483,10 @@ public struct CredentialStatus: Decodable, Equatable, Sendable {
         case "unknown": value = .unknown
         case let v: value = .other(v)
         }
+        reason = try c.decodeIfPresent(String.self, forKey: .reason).map(Reason.init)
         checkedAt = try c.decode(Date.self, forKey: .checkedAt)
     }
-    enum Keys: String, CodingKey { case value, checkedAt = "checked_at" }
+    enum Keys: String, CodingKey { case value, reason, checkedAt = "checked_at" }
 }
 
 /// A credential the wallet holds, as the app shows it.

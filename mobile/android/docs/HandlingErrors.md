@@ -74,6 +74,19 @@ fun describe(error: Throwable): Pair<String, Boolean> = when (error) {
 | `platform` | The key store, credential store or Wallet Provider failed: refused to attest a key, say | Check the app's implementation |
 | `internal` | Unexpected | Log it |
 
+## Revoked certificates and out-of-date revocation lists
+
+Where a trust role is checked against Certificate Revocation Lists
+(`revocation`), a refusal for a revoked certificate has
+`isCertificateRevoked` set, and one for want of a current list from the
+certificate's CA `isNoCurrentCRL`, whatever the `code` (`protocol` for a
+credential or a document a `ProximityReader` verified,
+`untrustedVerifier` for a Verifier): tell the holder which, and for the
+second refresh the lists (`Wallet.refreshCRLs()`) and try again. A held
+credential's status says the same: `CredentialStatus.reason` is
+`CredentialStatus.Reason.IssuerCertificateRevoked` or
+`CredentialStatus.Reason.NoCurrentCRL`.
+
 ## Cancel
 
 Every call that waits on the network or the holder is a `suspend`

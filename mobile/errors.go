@@ -12,6 +12,7 @@ import (
 
 	"github.com/idfoundry/fapigo/client"
 
+	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/internal/displaytext"
 	"github.com/idfoundry/oid4vcgo/wallet"
 	"github.com/idfoundry/oid4vcgo/walletflow"
@@ -23,11 +24,59 @@ import (
 // error_description, an error body), a URL's path or query (which can
 // carry a pre-authorized code, a request_uri or a response_code), or
 // control characters. The remote party's OAuth error code, checked to be
-// a plain token, is the Detail.
+// a plain token, is the Detail. An error the remote party gave no code
+// for, caused by a certificate revocation check, has the wallet's own
+// (revocationDetail).
 func classify(err error) error {
 	if err == nil {
 		return nil
 	}
+	return revocationDetail(classifyCode(err), err)
+}
+
+// DetailCertificateRevoked is the detail of an error whose cause is a
+// certificate in a chain the wallet or reader checked being revoked
+// (certrevocation.ErrRevoked): a credential's issuer on receipt, a
+// Verifier's or mdoc reader's request signer, a status list's signer,
+// or, from a ProximityReader, a document's signer. The code is the one
+// the error has anyway (protocol, untrusted_verifier); the message names
+// the certificate.
+const DetailCertificateRevoked = "certificate_revoked"
+
+// DetailNoCurrentCRL is the detail of an error whose cause is a
+// revocation check that couldn't be decided because the CA's
+// Certificate Revocation List held isn't current, or none is held
+// (certrevocation.ErrNoCurrentCRL): refresh the lists (RefreshCRLs, or
+// SetCRLs) and try again.
+const DetailNoCurrentCRL = "no_current_crl"
+
+// revocationDetail is classified, err as it crosses the boundary, with
+// DetailCertificateRevoked or DetailNoCurrentCRL as its detail when err
+// was caused by a certificate revocation check and it has no detail of
+// its own.
+func revocationDetail(classified, err error) error {
+	var e *Error
+	if !errors.As(classified, &e) || e.Detail != "" {
+		return classified
+	}
+	e.Detail = revocationCause(err)
+	return e
+}
+
+// revocationCause is DetailCertificateRevoked or DetailNoCurrentCRL
+// when err was caused by a certificate revocation check, "" otherwise.
+func revocationCause(err error) string {
+	switch {
+	case errors.Is(err, certrevocation.ErrRevoked):
+		return DetailCertificateRevoked
+	case errors.Is(err, certrevocation.ErrNoCurrentCRL):
+		return DetailNoCurrentCRL
+	}
+	return ""
+}
+
+// classifyCode is classify's code and message for err.
+func classifyCode(err error) error {
 	var mobileErr *Error
 	var denied *walletflow.AuthorizationDeniedError
 	var protocol *wallet.Error

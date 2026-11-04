@@ -26,7 +26,9 @@ public class WalletException internal constructor(
     public val code: Code,
     /**
      * The remote party's OAuth error code, such as `invalid_grant` (a wrong PIN) or
-     * `access_denied`, when it gave one. For [Code.invalidInput] it's `not_configured`
+     * `access_denied`, when it gave one; or the wallet's own for a revocation check, on any
+     * code: `certificate_revoked` or `no_current_crl` ([isCertificateRevoked],
+     * [isNoCurrentCRL]). For [Code.invalidInput] it's `not_configured`
      * (`Mobile.DetailNotConfigured`) when the wallet's configuration lacks what the call
      * needs — such as `issuerRoots` or `redirectURI` to receive credentials, or
      * `verifierRoots` to present them — rather than an argument being malformed: the
@@ -152,6 +154,24 @@ public class WalletException internal constructor(
     /** Detail for logs: it never carries personal data, a remote party's own description, or a URL's path or query. */
     override val message: String get() = super.message ?: ""
 
+    /**
+     * Whether a certificate revocation check caused this: a certificate in a chain checked
+     * under `revocation` is on its CA's revocation list — a credential's issuer on receipt, a
+     * Verifier's or reader's request signer, a status list's signer, or a document's signer a
+     * [ProximityReader] verified. [protocolError] is then `certificate_revoked`
+     * (`Mobile.DetailCertificateRevoked`), whatever the [code]. From OID4VCWallet 0.27.0.
+     */
+    public val isCertificateRevoked: Boolean get() = protocolError == Mobile.DetailCertificateRevoked
+
+    /**
+     * Whether a certificate revocation check couldn't be decided for want of a current
+     * revocation list from the certificate's CA, so the chain was refused: refresh the lists
+     * ([Wallet.refreshCRLs], [ProximityReader.refreshCRLs]) and try again. [protocolError] is
+     * then `no_current_crl` (`Mobile.DetailNoCurrentCRL`), whatever the [code]. From
+     * OID4VCWallet 0.27.0.
+     */
+    public val isNoCurrentCRL: Boolean get() = protocolError == Mobile.DetailNoCurrentCRL
+
     /** The code, the remote party's error code if any, and the message, for logs. */
     override fun toString(): String =
         protocolError?.let { "[${code.rawValue}:$it] $message" } ?: "[${code.rawValue}] $message"
@@ -173,6 +193,8 @@ public class WalletException internal constructor(
     /** A sentence fit to show the holder. */
     public val description: String
         get() = when {
+            isCertificateRevoked -> "A certificate this depends on has been revoked by its authority."
+            isNoCurrentCRL -> "The wallet's revocation lists are out of date. Refresh them and try again."
             code == Code.network -> "The service couldn't be reached. Check your connection and try again."
             code == Code.unavailable -> "The service is unavailable just now. Try again later."
             code == Code.cancelled -> "Cancelled."
