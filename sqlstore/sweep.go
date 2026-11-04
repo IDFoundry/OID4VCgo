@@ -28,7 +28,8 @@ import (
 // deleting the authorization here would orphan its keys in the
 // KeyStore, which can't list them. A wallet's credentials, refresh
 // grants, pending deferred credentials and keys have no expiry here
-// either: walletflow deletes them itself.
+// either: walletflow deletes them itself. Nor does it touch the Status
+// List indices StatusIndices records, which are never freed.
 func (d *DB) Sweep(ctx context.Context, now time.Time) (int64, error) {
 	// What each table's records say they're good until.
 	sweeps := []struct{ table, statement string }{

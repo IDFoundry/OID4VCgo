@@ -1,7 +1,7 @@
 # sqlstore
 
-Durable stores for OID4VCgo's `issuer`, `verifier` and `walletflow`
-packages, in PostgreSQL or SQLite through `database/sql`. It's a Go
+Durable stores for OID4VCgo's `issuer`, `verifier`, `walletflow` and
+`statuslist` packages, in PostgreSQL or SQLite through `database/sql`. It's a Go
 module of its own, `github.com/idfoundry/oid4vcgo/sqlstore`, so the
 library itself takes no database driver.
 
@@ -41,6 +41,18 @@ txs, err := verifier.NewTransactions(v, db.Transactions(verifier.TransactionCode
 
 walletflow's stores are `db.Credentials()`, `db.Authorizations()`,
 `db.Grants()`, `db.Deferred()` and, with a Sealer, `db.Keys()`.
+
+A `statuslist.Allocator`'s `Store` is `db.StatusIndices()`: the Status
+List indices handed out, and their statuses, kept durably and shared
+between processes, so no index is handed out twice. `Reserve` is one
+`INSERT` on the `(uri, idx)` primary key.
+
+```go
+alloc := &statuslist.Allocator{
+	Lists: []statuslist.AllocatorList{{URI: "https://issuer.example/statuslists/1", Size: 1 << 16}},
+	Store: db.StatusIndices(),
+}
+```
 
 SQLite (for example [modernc.org/sqlite](https://pkg.go.dev/modernc.org/sqlite),
 pure Go, no cgo) needs WAL mode and a busy timeout:
@@ -96,6 +108,8 @@ binding its records to additional data of its own. Sweep each. See
   authorization, with its keys, when `Wallet.KeysInUse` lists the
   authorizations or `ResumeIssuance` is called for it: a wallet should
   call `KeysInUse` periodically, or abandoned authorizations stay.
+  Status List indices are never swept or freed: an index once handed
+  out is never reused.
 - **Sealing**: with `Options.Sealer` every issuer and walletflow record
   is sealed, bound to its table and key. Keys, Owners, hashes and expiry
   times stay readable, for lookups and sweeping. A verifier transaction

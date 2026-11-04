@@ -44,6 +44,9 @@ type queries struct {
 	// oid4vc_wallet_keys: KeyStore.
 	keyInsert, keyGet, keyDelete string
 
+	// oid4vc_status_indices: statuslist.IndexStore.
+	statusIndexReserve, statusIndexCount, statusIndexSet, statusIndexGet, statusIndexList string
+
 	// oid4vc_schema_migrations: Migrate and CheckSchema.
 	migrationsCreate, migrationApplied, migrationRecord, migrationVersions string
 }

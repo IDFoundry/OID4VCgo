@@ -1,0 +1,355 @@
+package sqlstore_test
+
+import (
+	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"errors"
+	"math"
+	"math/big"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	oid4vci "github.com/idfoundry/oid4vcgo"
+	"github.com/idfoundry/oid4vcgo/issuer"
+	"github.com/idfoundry/oid4vcgo/sqlstore"
+	"github.com/idfoundry/oid4vcgo/statuslist"
+)
+
+const (
+	statusListA = "https://issuer.example/statuslists/1"
+	statusListB = "https://issuer.example/statuslists/2"
+)
+
+// The statuslist.IndexStore contract: a reservation is made once and
+// never released, statuses round-trip, and an index never reserved is
+// reported as such.
+func TestStatusIndexStoreContract(t *testing.T) {
+	forEachDialect(t, func(t *testing.T, e *env) {
+		ctx := context.Background()
+		s := e.db().StatusIndices()
+
+		if n, err := s.Reserved(ctx, statusListA); err != nil || n != 0 {
+			t.Fatalf("Reserved of an unseen list = %d, %v", n, err)
+		}
+		for _, idx := range []uint64{0, 7, math.MaxInt64} {
+			if err := s.Reserve(ctx, statusListA, idx); err != nil {
+				t.Fatalf("Reserve(%d): %v", idx, err)
+			}
+		}
+		if err := s.Reserve(ctx, statusListA, 7); !errors.Is(err, statuslist.ErrIndexTaken) {
+			t.Errorf("Reserve of a reserved index = %v, want ErrIndexTaken", err)
+		}
+		// The same index of another list is another index.
+		if err := s.Reserve(ctx, statusListB, 7); err != nil {
+			t.Errorf("Reserve of another list's index: %v", err)
+		}
+		if n, err := s.Reserved(ctx, statusListA); err != nil || n != 3 {
+			t.Errorf("Reserved = %d, %v; want 3", n, err)
+		}
+
+		if got, err := s.Status(ctx, statusListA, 7); err != nil || got != statuslist.StatusValid {
+			t.Errorf("Status of a new reservation = %v, %v; want VALID", got, err)
+		}
+		if err := s.SetStatus(ctx, statusListA, 7, statuslist.StatusSuspended); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.SetStatus(ctx, statusListA, 0, 0xff); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := s.Status(ctx, statusListA, 7); err != nil || got != statuslist.StatusSuspended {
+			t.Errorf("Status = %v, %v; want SUSPENDED", got, err)
+		}
+		if got, err := s.Status(ctx, statusListB, 7); err != nil || got != statuslist.StatusValid {
+			t.Errorf("another list's Status = %v, %v; want VALID", got, err)
+		}
+		// Setting a status again, even to the same one, is no new reservation.
+		if err := s.SetStatus(ctx, statusListA, 7, statuslist.StatusSuspended); err != nil {
+			t.Errorf("SetStatus to the same status: %v", err)
+		}
+
+		for name, c := range map[string]struct {
+			uri string
+			idx uint64
+		}{
+			"unreserved index": {statusListA, 1}, "unseen list": {"https://issuer.example/statuslists/9", 0},
+			"index above MaxInt64": {statusListA, math.MaxUint64}, "invalid UTF-8 uri": {"https://issuer.example/\xff", 0},
+			"NUL in uri": {"https://issuer.example/\x00", 0},
+		} {
+			if err := s.SetStatus(ctx, c.uri, c.idx, statuslist.StatusInvalid); !errors.Is(err, statuslist.ErrIndexNotReserved) {
+				t.Errorf("%s: SetStatus = %v, want ErrIndexNotReserved", name, err)
+			}
+			if got, err := s.Status(ctx, c.uri, c.idx); !errors.Is(err, statuslist.ErrIndexNotReserved) || got != statuslist.StatusInvalid {
+				t.Errorf("%s: Status = %v, %v; want INVALID, ErrIndexNotReserved", name, got, err)
+			}
+		}
+		for name, c := range map[string]struct {
+			uri string
+			idx uint64
+		}{
+			"index above MaxInt64": {statusListA, math.MaxInt64 + 1}, "invalid UTF-8 uri": {"https://issuer.example/\xff", 0},
+			"NUL in uri": {"https://issuer.example/\x00", 0},
+		} {
+			if err := s.Reserve(ctx, c.uri, c.idx); err == nil || errors.Is(err, statuslist.ErrIndexTaken) {
+				t.Errorf("%s: Reserve = %v, want it refused", name, err)
+			}
+		}
+		if n, err := s.Reserved(ctx, "https://issuer.example/\xff"); err != nil || n != 0 {
+			t.Errorf("Reserved of an unstorable uri = %d, %v", n, err)
+		}
+		if n, err := s.Reserved(ctx, statusListA); err != nil || n != 3 {
+			t.Errorf("Reserved after the refusals = %d, %v; want 3", n, err)
+		}
+		if got, err := s.Statuses(ctx, "https://issuer.example/\xff", 8); err != nil || len(got) != 8 {
+			t.Errorf("Statuses of an unstorable uri = %v, %v; want 8 VALID", got, err)
+		}
+	})
+}
+
+// Statuses has one entry per index of the list, VALID where none is
+// reserved, and refuses a list with an index reserved beyond its size.
+func TestStatusIndexStoreStatuses(t *testing.T) {
+	forEachDialect(t, func(t *testing.T, e *env) {
+		ctx := context.Background()
+		s := e.db().StatusIndices()
+		for idx, status := range map[uint64]statuslist.StatusType{0: statuslist.StatusInvalid, 3: statuslist.StatusValid, 9: statuslist.StatusSuspended, 15: 0x0f} {
+			if err := s.Reserve(ctx, statusListA, idx); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.SetStatus(ctx, statusListA, idx, status); err != nil {
+				t.Fatal(err)
+			}
+		}
+		got, err := s.Statuses(ctx, statusListA, 16)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := []uint8{1, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0x0f}
+		if string(got) != string(want) {
+			t.Errorf("Statuses = %v, want %v", got, want)
+		}
+		if got, err := s.Statuses(ctx, statusListB, 0); err != nil || len(got) != 0 {
+			t.Errorf("Statuses of an empty list of no indices = %v, %v", got, err)
+		}
+		if _, err := s.Statuses(ctx, statusListA, -1); err == nil {
+			t.Error("Statuses with a negative size = nil error")
+		}
+		// Index 15 is reserved with a status, index 3 VALID: each is
+		// outside a list of fewer indices.
+		for _, size := range []int{15, 8, 4} {
+			if _, err := s.Statuses(ctx, statusListA, size); err == nil || !strings.Contains(err.Error(), "outside") {
+				t.Errorf("Statuses(size %d) = %v, want an index outside it refused", size, err)
+			}
+		}
+	})
+}
+
+// Of concurrent Reserves of one index, from separate handles as from
+// separate processes, exactly one succeeds; the others find it taken.
+func TestStatusIndexStoreConcurrentReserve(t *testing.T) {
+	forEachDialect(t, func(t *testing.T, e *env) {
+		ctx := context.Background()
+		open := e.storage()
+		const n = 16
+		stores := make([]*sqlstore.StatusIndexStore, n)
+		for i := range stores {
+			stores[i] = open().StatusIndices()
+		}
+		errs := make([]error, n)
+		var wg sync.WaitGroup
+		for i, s := range stores {
+			wg.Go(func() { errs[i] = s.Reserve(ctx, statusListA, 42) })
+		}
+		wg.Wait()
+		won := 0
+		for _, err := range errs {
+			switch {
+			case err == nil:
+				won++
+			case !errors.Is(err, statuslist.ErrIndexTaken):
+				t.Errorf("concurrent Reserve: %v", err)
+			}
+		}
+		if won != 1 {
+			t.Errorf("%d concurrent Reserves of one index succeeded, want 1", won)
+		}
+		if got, err := stores[0].Reserved(ctx, statusListA); err != nil || got != 1 {
+			t.Errorf("Reserved = %d, %v; want 1", got, err)
+		}
+	})
+}
+
+// A store that couldn't answer never reports an index as unreserved.
+func TestStatusIndexStoreOutageIsNotUnreserved(t *testing.T) {
+	forEachDialect(t, func(t *testing.T, e *env) {
+		ctx := context.Background()
+		s := e.db().StatusIndices()
+		e.closeAll()
+		if err := s.Reserve(ctx, statusListA, 1); err == nil || errors.Is(err, statuslist.ErrIndexTaken) {
+			t.Errorf("Reserve on a closed database = %v", err)
+		}
+		if _, err := s.Reserved(ctx, statusListA); err == nil {
+			t.Error("Reserved on a closed database = nil error")
+		}
+		err := s.SetStatus(ctx, statusListA, 1, statuslist.StatusInvalid)
+		requireOutage(t, "SetStatus", err, statuslist.ErrIndexNotReserved)
+		_, err = s.Status(ctx, statusListA, 1)
+		requireOutage(t, "Status", err, statuslist.ErrIndexNotReserved)
+		if _, err := s.Statuses(ctx, statusListA, 8); err == nil {
+			t.Error("Statuses on a closed database = nil error")
+		}
+	})
+}
+
+// A statuslist.Allocator on the DB's store hands out indices a second
+// handle, as after a restart, never hands out again, and its
+// Publisher serves the statuses set through either.
+func TestStatusIndexStoreWithAllocator(t *testing.T) {
+	forEachDialect(t, func(t *testing.T, e *env) {
+		ctx := context.Background()
+		open := e.storage()
+		lists := []statuslist.AllocatorList{{URI: statusListA, Size: 64}}
+		first := &statuslist.Allocator{Lists: lists, Store: open().StatusIndices(), Bits: statuslist.Bits2}
+		refs := map[statuslist.StatusListRef]bool{}
+		for range 16 {
+			ref, err := first.Allocate(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			refs[ref] = true
+		}
+		restarted := &statuslist.Allocator{Lists: lists, Store: open().StatusIndices(), Bits: statuslist.Bits2}
+		for range 16 {
+			ref, err := restarted.Allocate(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if refs[ref] {
+				t.Fatalf("index %d handed out twice", ref.Idx)
+			}
+			refs[ref] = true
+		}
+		// Filled to the default limit, half the list.
+		if _, err := restarted.Allocate(ctx); !errors.Is(err, statuslist.ErrListsFull) {
+			t.Errorf("Allocate past the fill limit = %v, want ErrListsFull", err)
+		}
+
+		want := map[statuslist.StatusListRef]statuslist.StatusType{}
+		i := 0
+		for ref := range refs {
+			status := []statuslist.StatusType{statuslist.StatusValid, statuslist.StatusInvalid, statuslist.StatusSuspended}[i%3]
+			i++
+			if err := []*statuslist.Allocator{first, restarted}[i%2].SetStatus(ctx, ref, status); err != nil {
+				t.Fatal(err)
+			}
+			want[ref] = status
+		}
+		for idx := uint64(0); idx < 64; idx++ {
+			if ref := (statuslist.StatusListRef{Idx: idx, URI: statusListA}); !refs[ref] {
+				want[ref] = statuslist.StatusValid
+				if err := first.SetStatus(ctx, ref, statuslist.StatusInvalid); !errors.Is(err, statuslist.ErrIndexNotReserved) {
+					t.Errorf("SetStatus of an index never handed out = %v", err)
+				}
+				break
+			}
+		}
+
+		key, chain := statusListSigner(t)
+		p := &statuslist.Publisher{URI: statusListA, Signer: key, Chain: chain, Statuses: restarted.Statuses(statusListA), Bits: statuslist.Bits2}
+		token, err := p.Token(ctx, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for ref, status := range want {
+			got, _, err := statuslist.Check(string(token), &key.PublicKey, oid4vci.ES256, ref, statuslist.VerifyOptions{UnboundSigner: statuslist.AnyListSigner})
+			if err != nil || got != status {
+				t.Errorf("index %d: %v, %v; want %v", ref.Idx, got, err, status)
+			}
+		}
+	})
+}
+
+// A database migrated by an earlier release, to version 3, migrates to
+// the status index table with its records kept; until then,
+// CheckSchema fails and the store reports an error, never an index
+// unreserved.
+func TestMigrateAddsStatusIndices(t *testing.T) {
+	forEachDialect(t, func(t *testing.T, e *env) {
+		ctx := context.Background()
+		d, err := sqlstore.New(e.location()(), e.dialect, sqlstore.Options{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := sqlstore.MigrateTo(ctx, d, 3); err != nil {
+			t.Fatal(err)
+		}
+		if err := d.Notifications().Issue(ctx, "n", issuer.NotificationRecord{}); err != nil {
+			t.Fatal(err)
+		}
+		if err := d.CheckSchema(ctx); err == nil || !strings.Contains(err.Error(), "0004_status_indices.sql") {
+			t.Errorf("CheckSchema at version 3 = %v, want migration 0004 missing", err)
+		}
+		_, err = d.StatusIndices().Status(ctx, statusListA, 0)
+		requireOutage(t, "Status before migration 0004", err, statuslist.ErrIndexNotReserved)
+
+		if err := d.Migrate(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if err := d.CheckSchema(ctx); err != nil {
+			t.Errorf("CheckSchema after Migrate: %v", err)
+		}
+		if _, err := d.Notifications().Get(ctx, "n"); err != nil {
+			t.Errorf("a record from before the migration: %v", err)
+		}
+		if err := d.StatusIndices().Reserve(ctx, statusListA, 0); err != nil {
+			t.Errorf("Reserve after migration: %v", err)
+		}
+	})
+}
+
+// statusListSigner is a Status List signing key and its certificate
+// chain, under a CA of its own.
+func statusListSigner(t *testing.T) (*ecdsa.PrivateKey, []*x509.Certificate) {
+	t.Helper()
+	now := time.Now()
+	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	caTmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "Test Status CA"},
+		NotBefore: now.Add(-time.Hour), NotAfter: now.Add(time.Hour),
+		IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign,
+	}
+	caDER, err := x509.CreateCertificate(rand.Reader, caTmpl, caTmpl, &caKey.PublicKey, caKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ca, err := x509.ParseCertificate(caDER)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(2), Subject: pkix.Name{CommonName: "Test Status List Signer"},
+		NotBefore: now.Add(-time.Hour), NotAfter: now.Add(time.Hour),
+		KeyUsage: x509.KeyUsageDigitalSignature,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, ca, &key.PublicKey, caKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leaf, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return key, []*x509.Certificate{leaf}
+}
