@@ -44,6 +44,8 @@ class CRLRefreshResultTest {
             crlDistributionPoints = listOf(CRLDistributionPoint("http://ca.example/ca.crl", "PEM")),
             crlDistributionPointsFromRoots = true,
             crlRequireHTTPS = true,
+            // The default reads the device's locales, an Android API.
+            locales = listOf("en"),
         )
         val o = json.parseToJsonElement(json.encodeToString(WalletConfiguration.serializer(), config)).jsonObject
         val point = o["crl_distribution_points"]!!.jsonArray[0] as JsonObject
